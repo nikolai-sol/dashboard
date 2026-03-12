@@ -1,0 +1,20 @@
+platform: git
+display_name: GetIntent (Programmatic)
+source: mysql
+
+tables:
+  campaigns:
+    table: git_name
+    id_col: campaign_id
+    name_col: campaign_name
+  stats:
+    table: git_statistic
+    join_to: campaigns
+    join_on: campaign_id
+    date_col: date
+    metrics:
+      - { col: impressions, label: Impressions, type: int }
+      - { col: clicks, label: Clicks, type: int }
+      - { col: spend, label: Spend, type: decimal, currency: EUR }
+      - { col: ctr, label: CTR, type: decimal, format: percent }
+      - { col: cpm, label: CPM, type: decimal, currency: EUR }

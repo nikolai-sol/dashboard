@@ -9,7 +9,16 @@ type Profile = {
   ctrMax: number;
   budgetPlan: number;
   budgetFact: number;
-  targetCpm: number;
+};
+
+type PlanBlueprint = {
+  channel: string;
+  buyType: "CPM" | "CPC" | "CPV" | "CPA";
+  impressionsPlan?: number;
+  clicksPlan?: number;
+  viewsPlan?: number;
+  conversionsPlan?: number;
+  reachPlan?: number;
 };
 
 const PROFILES: Profile[] = [
@@ -21,7 +30,6 @@ const PROFILES: Profile[] = [
     ctrMax: 1.5,
     budgetPlan: 5200,
     budgetFact: 4890,
-    targetCpm: 29.8,
   },
   {
     platform: "reddit",
@@ -31,7 +39,6 @@ const PROFILES: Profile[] = [
     ctrMax: 0.8,
     budgetPlan: 3200,
     budgetFact: 2910,
-    targetCpm: 11.2,
   },
   {
     platform: "meta",
@@ -41,7 +48,6 @@ const PROFILES: Profile[] = [
     ctrMax: 1.5,
     budgetPlan: 5100,
     budgetFact: 5340,
-    targetCpm: 15.6,
   },
   {
     platform: "google",
@@ -51,7 +57,6 @@ const PROFILES: Profile[] = [
     ctrMax: 0.5,
     budgetPlan: 3900,
     budgetFact: 3640,
-    targetCpm: 5.3,
   },
   {
     platform: "git",
@@ -61,7 +66,6 @@ const PROFILES: Profile[] = [
     ctrMax: 0.3,
     budgetPlan: 2400,
     budgetFact: 2060,
-    targetCpm: 3.3,
   },
   {
     platform: "vk",
@@ -71,9 +75,56 @@ const PROFILES: Profile[] = [
     ctrMax: 0.5,
     budgetPlan: 1700,
     budgetFact: 1510,
-    targetCpm: 2.0,
   },
 ];
+
+const PLAN_BLUEPRINTS: Record<string, PlanBlueprint> = {
+  linkedin: {
+    channel: "LinkedIn Lead Gen",
+    buyType: "CPA",
+    impressionsPlan: 150000,
+    clicksPlan: 2250,
+    conversionsPlan: 500,
+    reachPlan: 50000,
+  },
+  reddit: {
+    channel: "Reddit Contextual",
+    buyType: "CPC",
+    impressionsPlan: 285000,
+    clicksPlan: 1850,
+    reachPlan: 110000,
+  },
+  meta: {
+    channel: "Meta Video Views",
+    buyType: "CPV",
+    impressionsPlan: 340000,
+    clicksPlan: 3100,
+    viewsPlan: 178000,
+    reachPlan: 120000,
+  },
+  google: {
+    channel: "Google Display Awareness",
+    buyType: "CPM",
+    impressionsPlan: 730000,
+    clicksPlan: 2500,
+    reachPlan: 300000,
+  },
+  git: {
+    channel: "Programmatic OLV",
+    buyType: "CPV",
+    impressionsPlan: 660000,
+    clicksPlan: 1600,
+    viewsPlan: 420000,
+    reachPlan: 220000,
+  },
+  vk: {
+    channel: "VK Feed Posts",
+    buyType: "CPC",
+    impressionsPlan: 710000,
+    clicksPlan: 4100,
+    reachPlan: 175000,
+  },
+};
 
 function seededRandom(seed: number): () => number {
   let state = seed >>> 0;
@@ -153,6 +204,9 @@ function aggregatePlatform(points: TimeSeriesPoint[]): PlatformStats[] {
         ctr: 0,
         cpm: 0,
         conversions: 0,
+        views: 0,
+        reach: 0,
+        frequency: 0,
       });
     }
 
@@ -166,12 +220,17 @@ function aggregatePlatform(points: TimeSeriesPoint[]): PlatformStats[] {
     const ctr = stat.impressions > 0 ? (stat.clicks / stat.impressions) * 100 : 0;
     const cpm = stat.impressions > 0 ? (stat.spend / stat.impressions) * 1000 : 0;
     const baseCvRate = clamp(0.015 + rng() * 0.02, 0.01, 0.05);
+    const reach = Math.max(1, Math.round(stat.impressions * clamp(0.32 + rng() * 0.18, 0.2, 0.65)));
+    const views = Math.round(stat.impressions * clamp(0.12 + rng() * 0.2, 0.05, 0.45));
     return {
       ...stat,
       spend: Number(stat.spend.toFixed(2)),
       ctr: Number(ctr.toFixed(2)),
       cpm: Number(cpm.toFixed(2)),
       conversions: Math.round(stat.clicks * baseCvRate),
+      views,
+      reach,
+      frequency: Number((stat.impressions / Math.max(reach, 1)).toFixed(2)),
     };
   });
 }
@@ -179,19 +238,48 @@ function aggregatePlatform(points: TimeSeriesPoint[]): PlatformStats[] {
 function buildPlanVsFact(platforms: PlatformStats[]): PlanVsFactRow[] {
   return PROFILES.map((profile) => {
     const stats = platforms.find((item) => item.id === profile.platform)!;
-    const impressionsPlan = Math.round((profile.budgetPlan / profile.targetCpm) * 1000);
+    const blueprint = PLAN_BLUEPRINTS[profile.platform];
+
+    const budgetPlan = profile.budgetPlan;
+    const impressionsPlan = blueprint.impressionsPlan ?? Math.round((budgetPlan / 8) * 1000);
+    const clicksPlan = blueprint.clicksPlan ?? Math.round(impressionsPlan * 0.008);
+    const viewsPlan = blueprint.viewsPlan ?? Math.round(impressionsPlan * 0.2);
+    const conversionsPlan = blueprint.conversionsPlan ?? Math.round(clicksPlan * 0.05);
+
+    const cpmPlan = impressionsPlan > 0 ? (budgetPlan / impressionsPlan) * 1000 : 0;
+    const cpcPlan = clicksPlan > 0 ? budgetPlan / clicksPlan : 0;
+    const cpvPlan = viewsPlan > 0 ? budgetPlan / viewsPlan : 0;
+    const cpaPlan = conversionsPlan > 0 ? budgetPlan / conversionsPlan : 0;
+
     const cpmFact = stats.impressions > 0 ? (stats.spend / stats.impressions) * 1000 : 0;
+    const cpcFact = stats.clicks > 0 ? stats.spend / stats.clicks : 0;
+    const cpvFact = stats.views > 0 ? stats.spend / stats.views : 0;
+    const cpaFact = stats.conversions > 0 ? stats.spend / stats.conversions : 0;
+
     return {
-      platform: profile.platform,
-      platform_label: PLATFORM_COLORS[profile.platform].label,
-      color: PLATFORM_COLORS[profile.platform].hex,
-      budget_plan: profile.budgetPlan,
+      channel: blueprint.channel,
+      buy_type: blueprint.buyType,
+      platforms: [profile.platform],
+      platform_colors: [PLATFORM_COLORS[profile.platform].hex],
+      budget_plan: Number(budgetPlan.toFixed(2)),
       budget_fact: Number(stats.spend.toFixed(2)),
+      pacing: budgetPlan > 0 ? Number((stats.spend / budgetPlan).toFixed(3)) : 0,
       impressions_plan: impressionsPlan,
       impressions_fact: stats.impressions,
-      cpm_plan: profile.targetCpm,
+      clicks_plan: clicksPlan,
+      clicks_fact: stats.clicks,
+      views_plan: viewsPlan,
+      views_fact: stats.views,
+      conversions_plan: conversionsPlan,
+      conversions_fact: stats.conversions,
+      cpm_plan: Number(cpmPlan.toFixed(2)),
       cpm_fact: Number(cpmFact.toFixed(2)),
-      pacing: Number((stats.spend / profile.budgetPlan).toFixed(3)),
+      cpc_plan: Number(cpcPlan.toFixed(2)),
+      cpc_fact: Number(cpcFact.toFixed(2)),
+      cpv_plan: Number(cpvPlan.toFixed(4)),
+      cpv_fact: Number(cpvFact.toFixed(4)),
+      cpa_plan: Number(cpaPlan.toFixed(2)),
+      cpa_fact: Number(cpaFact.toFixed(2)),
     };
   });
 }
@@ -233,6 +321,7 @@ export const mockDashboardData: DashboardData = {
     },
     currency: "EUR",
   },
+  kpi_config: ["impressions", "clicks", "ctr", "cpm", "spend"],
   kpi,
   platforms,
   timeseries,

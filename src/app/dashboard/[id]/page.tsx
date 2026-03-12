@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { useParams } from "next/navigation";
 import ChannelMix from "@/components/ChannelMix";
 import DashboardHeader from "@/components/DashboardHeader";
@@ -11,7 +11,7 @@ import PlanVsFact from "@/components/PlanVsFact";
 import SpendByPlatform from "@/components/SpendByPlatform";
 import TrendChart from "@/components/TrendChart";
 import { ACTIVE_PLATFORM_IDS, PLATFORM_COLORS } from "@/lib/platform-colors";
-import { mockDashboardData } from "@/lib/mock-data";
+import type { DashboardData } from "@/lib/types";
 
 function money(value: number) {
   return `€${value.toLocaleString("en-US", { maximumFractionDigits: 0 })}`;
@@ -23,76 +23,179 @@ function compact(value: number) {
   return `${Math.round(value)}`;
 }
 
-function dayLabel(isoDate: string) {
+function formatPeriodDate(isoDate: string) {
   const d = new Date(`${isoDate}T00:00:00Z`);
-  return d.toLocaleDateString("en-GB", { day: "numeric", month: "short" });
+  return d.toLocaleDateString("en-GB", { day: "numeric", month: "short", year: "numeric" });
+}
+
+async function getDashboardData(id: string): Promise<{
+  data: DashboardData;
+  demoMode: boolean;
+  errorMessage: string | null;
+}> {
+  try {
+    const response = await fetch(`/api/dashboard/${id}`, { cache: "no-store" });
+    if (!response.ok) {
+      throw new Error(`API returned ${response.status}`);
+    }
+
+    const data = (await response.json()) as DashboardData;
+    const hasLiveMetrics =
+      data.platforms.some((platform) => platform.impressions > 0 || platform.spend > 0) ||
+      data.timeseries.length > 0;
+    if (!hasLiveMetrics) {
+      throw new Error("API returned empty dataset");
+    }
+    return { data, demoMode: false, errorMessage: null };
+  } catch (error) {
+    console.warn("API unavailable, using mock data:", error);
+    const { mockDashboardData } = await import("@/lib/mock-data");
+    const message = error instanceof Error ? error.message : "Unknown API error";
+    return { data: mockDashboardData, demoMode: true, errorMessage: message };
+  }
 }
 
 export default function DashboardByIdPage() {
   const params = useParams<{ id: string }>();
-  const dashboard = mockDashboardData;
+  const dashboardId = params?.id ? String(params.id).toLowerCase() : "rag_mp";
+
+  const [dashboard, setDashboard] = useState<DashboardData | null>(null);
   const [selectedPlatforms, setSelectedPlatforms] = useState<string[]>(ACTIVE_PLATFORM_IDS);
+  const [isLoading, setIsLoading] = useState(true);
+  const [isDemoMode, setIsDemoMode] = useState(false);
+  const [apiError, setApiError] = useState<string | null>(null);
+
+  useEffect(() => {
+    let cancelled = false;
+
+    async function load() {
+      setIsLoading(true);
+
+      const result = await getDashboardData(dashboardId);
+      if (cancelled) {
+        return;
+      }
+
+      setDashboard(result.data);
+      setIsDemoMode(result.demoMode);
+      setApiError(result.errorMessage);
+
+      const availablePlatforms = result.data.platforms.map((platform) => platform.id);
+      setSelectedPlatforms(availablePlatforms.length ? availablePlatforms : ACTIVE_PLATFORM_IDS);
+      setIsLoading(false);
+    }
+
+    load();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [dashboardId]);
 
   const selectedSet = useMemo(() => new Set(selectedPlatforms), [selectedPlatforms]);
 
-  const filteredPlatforms = useMemo(
-    () => dashboard.platforms.filter((item) => selectedSet.has(item.id)),
-    [dashboard.platforms, selectedSet],
-  );
+  const filteredPlatforms = useMemo(() => {
+    if (!dashboard) return [];
+    return dashboard.platforms.filter((item) => selectedSet.has(item.id));
+  }, [dashboard, selectedSet]);
 
-  const filteredTimeseries = useMemo(
-    () => dashboard.timeseries.filter((item) => selectedSet.has(item.platform)),
-    [dashboard.timeseries, selectedSet],
-  );
+  const filteredTimeseries = useMemo(() => {
+    if (!dashboard) return [];
+    return dashboard.timeseries.filter((item) => selectedSet.has(item.platform));
+  }, [dashboard, selectedSet]);
 
-  const filteredPlanVsFact = useMemo(
-    () => dashboard.plan_vs_fact.filter((item) => selectedSet.has(item.platform)),
-    [dashboard.plan_vs_fact, selectedSet],
-  );
+  const filteredPlanVsFact = useMemo(() => {
+    if (!dashboard) return [];
+    return dashboard.plan_vs_fact.filter((item) =>
+      item.platforms.some((platformId) => selectedSet.has(platformId)),
+    );
+  }, [dashboard, selectedSet]);
 
   const totals = useMemo(() => {
     const totalImpressions = filteredPlatforms.reduce((sum, item) => sum + item.impressions, 0);
     const totalClicks = filteredPlatforms.reduce((sum, item) => sum + item.clicks, 0);
     const totalSpend = filteredPlatforms.reduce((sum, item) => sum + item.spend, 0);
+    const totalConversions = filteredPlatforms.reduce((sum, item) => sum + item.conversions, 0);
+    const totalViews = filteredPlatforms.reduce((sum, item) => sum + item.views, 0);
+    const totalReach = filteredPlatforms.reduce((sum, item) => sum + item.reach, 0);
     const avgCtr = totalImpressions > 0 ? (totalClicks / totalImpressions) * 100 : 0;
     const avgCpm = totalImpressions > 0 ? (totalSpend / totalImpressions) * 1000 : 0;
+    const avgCpc = totalClicks > 0 ? totalSpend / totalClicks : 0;
+    const avgCpv = totalViews > 0 ? totalSpend / totalViews : 0;
+    const avgCpa = totalConversions > 0 ? totalSpend / totalConversions : 0;
+    const avgFrequency = totalReach > 0 ? totalImpressions / totalReach : 0;
     return {
       totalImpressions,
       totalClicks,
       totalSpend,
+      totalConversions,
+      totalViews,
+      totalReach,
       avgCtr,
       avgCpm,
+      avgCpc,
+      avgCpv,
+      avgCpa,
+      avgFrequency,
     };
   }, [filteredPlatforms]);
 
   const scales = useMemo(() => {
-    const kpi = dashboard.kpi;
+    const kpi = dashboard?.kpi;
+    if (!kpi) {
+      return { impressions: 0.9, clicks: 0.9, spend: 0.95 };
+    }
+
     return {
       impressions: kpi.total_impressions > 0 ? kpi.prev_impressions / kpi.total_impressions : 0.9,
       clicks: kpi.total_clicks > 0 ? kpi.prev_clicks / kpi.total_clicks : 0.9,
       spend: kpi.total_spend > 0 ? kpi.prev_spend / kpi.total_spend : 0.95,
     };
-  }, [dashboard.kpi]);
+  }, [dashboard?.kpi]);
 
   const previousTotals = useMemo(() => {
     const prevImpressions = totals.totalImpressions * scales.impressions;
     const prevClicks = totals.totalClicks * scales.clicks;
     const prevSpend = totals.totalSpend * scales.spend;
+    const prevViews = totals.totalViews * scales.impressions;
+    const prevConversions = totals.totalConversions * scales.clicks;
+    const prevReach = totals.totalReach * scales.impressions;
     const prevCtr = prevImpressions > 0 ? (prevClicks / prevImpressions) * 100 : 0;
     const prevCpm = prevImpressions > 0 ? (prevSpend / prevImpressions) * 1000 : 0;
+    const prevCpc = prevClicks > 0 ? prevSpend / prevClicks : 0;
+    const prevCpv = prevViews > 0 ? prevSpend / prevViews : 0;
+    const prevCpa = prevConversions > 0 ? prevSpend / prevConversions : 0;
+    const prevFrequency = prevReach > 0 ? prevImpressions / prevReach : 0;
     return {
       prevImpressions,
       prevClicks,
       prevSpend,
+      prevViews,
+      prevConversions,
+      prevReach,
       prevCtr,
       prevCpm,
+      prevCpc,
+      prevCpv,
+      prevCpa,
+      prevFrequency,
     };
-  }, [scales.clicks, scales.impressions, scales.spend, totals.totalClicks, totals.totalImpressions, totals.totalSpend]);
+  }, [
+    scales.clicks,
+    scales.impressions,
+    scales.spend,
+    totals.totalClicks,
+    totals.totalConversions,
+    totals.totalImpressions,
+    totals.totalReach,
+    totals.totalSpend,
+    totals.totalViews,
+  ]);
 
   const aggregatedDaily = useMemo(() => {
     const byDate = new Map<
       string,
-      { impressions: number; clicks: number; spend: number; conversions: number }
+      { impressions: number; clicks: number; spend: number; conversions: number; views: number }
     >();
     const cvByPlatform = new Map(
       filteredPlatforms.map((platform) => [
@@ -100,16 +203,23 @@ export default function DashboardByIdPage() {
         platform.clicks > 0 ? platform.conversions / platform.clicks : 0,
       ]),
     );
+    const viewByPlatform = new Map(
+      filteredPlatforms.map((platform) => [
+        platform.id,
+        platform.impressions > 0 ? platform.views / platform.impressions : 0,
+      ]),
+    );
 
     filteredTimeseries.forEach((point) => {
       if (!byDate.has(point.date)) {
-        byDate.set(point.date, { impressions: 0, clicks: 0, spend: 0, conversions: 0 });
+        byDate.set(point.date, { impressions: 0, clicks: 0, spend: 0, conversions: 0, views: 0 });
       }
       const row = byDate.get(point.date)!;
       row.impressions += point.impressions;
       row.clicks += point.clicks;
       row.spend += point.spend;
       row.conversions += point.clicks * (cvByPlatform.get(point.platform) ?? 0);
+      row.views += point.impressions * (viewByPlatform.get(point.platform) ?? 0);
     });
 
     return [...byDate.entries()]
@@ -119,9 +229,12 @@ export default function DashboardByIdPage() {
 
   const latestTrend = useMemo(() => aggregatedDaily.slice(-30), [aggregatedDaily]);
 
-  const kpiCards = useMemo(
-    () => [
-      {
+  const kpiCards = useMemo(() => {
+    const kpiConfig =
+      dashboard?.kpi_config?.slice(0, 5) ?? ["impressions", "clicks", "ctr", "cpm", "spend"];
+
+    const metricMap = {
+      impressions: {
         title: "Impressions",
         value: totals.totalImpressions,
         prev: previousTotals.prevImpressions,
@@ -129,7 +242,7 @@ export default function DashboardByIdPage() {
         format: compact,
         trend: latestTrend.map((item) => item.impressions),
       },
-      {
+      clicks: {
         title: "Clicks",
         value: totals.totalClicks,
         prev: previousTotals.prevClicks,
@@ -137,7 +250,7 @@ export default function DashboardByIdPage() {
         format: compact,
         trend: latestTrend.map((item) => item.clicks),
       },
-      {
+      ctr: {
         title: "CTR",
         value: totals.avgCtr,
         prev: previousTotals.prevCtr,
@@ -147,7 +260,7 @@ export default function DashboardByIdPage() {
           item.impressions > 0 ? (item.clicks / item.impressions) * 100 : 0,
         ),
       },
-      {
+      cpm: {
         title: "CPM",
         value: totals.avgCpm,
         prev: previousTotals.prevCpm,
@@ -157,7 +270,15 @@ export default function DashboardByIdPage() {
           item.impressions > 0 ? (item.spend / item.impressions) * 1000 : 0,
         ),
       },
-      {
+      cpc: {
+        title: "CPC",
+        value: totals.avgCpc,
+        prev: previousTotals.prevCpc,
+        color: "#6366f1",
+        format: (value: number) => money(value),
+        trend: latestTrend.map((item) => (item.clicks > 0 ? item.spend / item.clicks : 0)),
+      },
+      spend: {
         title: "Spend",
         value: totals.totalSpend,
         prev: previousTotals.prevSpend,
@@ -165,27 +286,79 @@ export default function DashboardByIdPage() {
         format: money,
         trend: latestTrend.map((item) => item.spend),
       },
-    ],
-    [
-      latestTrend,
-      previousTotals.prevClicks,
-      previousTotals.prevCpm,
-      previousTotals.prevCtr,
-      previousTotals.prevImpressions,
-      previousTotals.prevSpend,
-      totals.avgCpm,
-      totals.avgCtr,
-      totals.totalClicks,
-      totals.totalImpressions,
-      totals.totalSpend,
-    ],
-  );
+      views: {
+        title: "Views",
+        value: totals.totalViews,
+        prev: previousTotals.prevViews,
+        color: "#ec4899",
+        format: compact,
+        trend: latestTrend.map((item) => item.views),
+      },
+      cpv: {
+        title: "CPV",
+        value: totals.avgCpv,
+        prev: previousTotals.prevCpv,
+        color: "#d946ef",
+        format: (value: number) => money(value),
+        trend: latestTrend.map((item) => (item.views > 0 ? item.spend / item.views : 0)),
+      },
+      conversions: {
+        title: "Conversions",
+        value: totals.totalConversions,
+        prev: previousTotals.prevConversions,
+        color: "#059669",
+        format: compact,
+        trend: latestTrend.map((item) => item.conversions),
+      },
+      cpa: {
+        title: "CPA",
+        value: totals.avgCpa,
+        prev: previousTotals.prevCpa,
+        color: "#dc2626",
+        format: (value: number) => money(value),
+        trend: latestTrend.map((item) =>
+          item.conversions > 0 ? item.spend / item.conversions : 0,
+        ),
+      },
+      roas: {
+        title: "ROAS",
+        value: 0,
+        prev: 0,
+        color: "#0f766e",
+        format: (value: number) => `${value.toFixed(2)}x`,
+        trend: latestTrend.map(() => 0),
+      },
+      reach: {
+        title: "Reach",
+        value: totals.totalReach,
+        prev: previousTotals.prevReach,
+        color: "#14b8a6",
+        format: compact,
+        trend: latestTrend.map((item) => item.impressions * 0.35),
+      },
+      frequency: {
+        title: "Frequency",
+        value: totals.avgFrequency,
+        prev: previousTotals.prevFrequency,
+        color: "#f59e0b",
+        format: (value: number) => value.toFixed(2),
+        trend: latestTrend.map((item) =>
+          item.impressions > 0 ? item.impressions / Math.max(item.impressions * 0.35, 1) : 0,
+        ),
+      },
+    } as const;
+
+    return kpiConfig
+      .map((key) => metricMap[key as keyof typeof metricMap] ?? metricMap.impressions)
+      .slice(0, 5);
+  }, [dashboard?.kpi_config, latestTrend, previousTotals, totals]);
 
   const togglePlatform = (platformId: string) => {
     setSelectedPlatforms((prev) => {
       if (prev.includes(platformId)) {
         const next = prev.filter((item) => item !== platformId);
-        return next.length ? next : ACTIVE_PLATFORM_IDS;
+        const fallback = dashboard?.platforms.map((platform) => platform.id) ?? ACTIVE_PLATFORM_IDS;
+        return next.length ? next : fallback;
       }
       return [...prev, platformId];
     });
@@ -195,10 +368,18 @@ export default function DashboardByIdPage() {
     setSelectedPlatforms(Object.keys(PLATFORM_COLORS));
   };
 
-  const periodLabel = `${dayLabel(dashboard.dashboard.period.from)} 2025 - ${dayLabel(
+  if (isLoading || !dashboard) {
+    return (
+      <main className="mx-auto flex min-h-screen w-full max-w-[1400px] items-center justify-center px-4 py-6 sm:px-6 lg:px-8">
+        <p className="text-sm text-slate-500">Loading dashboard...</p>
+      </main>
+    );
+  }
+
+  const periodLabel = `${formatPeriodDate(dashboard.dashboard.period.from)} - ${formatPeriodDate(
     dashboard.dashboard.period.to,
-  )} 2025`;
-  const clientName = params.id ? params.id.toUpperCase() : dashboard.dashboard.client_name;
+  )}`;
+  const clientName = dashboard.dashboard.client_name || dashboardId.toUpperCase();
 
   return (
     <main className="mx-auto min-h-screen w-full max-w-[1400px] px-4 py-6 sm:px-6 lg:px-8">
@@ -207,6 +388,13 @@ export default function DashboardByIdPage() {
         title={dashboard.dashboard.dashboard_name}
         periodLabel={periodLabel}
       />
+
+      {isDemoMode ? (
+        <div className="mb-4 rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-800">
+          Demo mode: API unavailable, showing mock data.
+          {apiError ? ` (${apiError})` : ""}
+        </div>
+      ) : null}
 
       <PlatformFilter
         selected={selectedPlatforms}

@@ -1,0 +1,279 @@
+"use client";
+
+import { useEffect, useMemo, useState } from "react";
+import { useRouter } from "next/navigation";
+import DashboardPreview from "@/components/admin/DashboardPreview";
+import WizardStep1 from "@/components/admin/WizardStep1";
+import WizardStep2 from "@/components/admin/WizardStep2";
+import WizardStep3 from "@/components/admin/WizardStep3";
+import WizardStep4 from "@/components/admin/WizardStep4";
+import type { DashboardFormData, DashboardSourceForm, PlatformMeta } from "@/lib/admin-ui-types";
+
+type DashboardWizardProps = {
+  dashboardId?: string;
+};
+
+const STEPS = ["Basic", "Sources", "Filters", "Metrics"];
+
+function defaultForm(): DashboardFormData {
+  return {
+    client_id: "",
+    client_name: "",
+    dashboard_name: "",
+    dashboard_type: "awareness",
+    config: {
+      currency: "EUR",
+      period_from: "2025-01-01",
+      period_to: "2025-03-31",
+      visible_metrics: ["impressions", "clicks", "ctr", "cpm", "spend"],
+      show_spend: true,
+      show_ai_summary: false,
+      kpi_cards: ["impressions", "clicks", "ctr", "cpm", "spend"],
+    },
+    sources: [],
+  };
+}
+
+function normalizeSources(raw: unknown): DashboardSourceForm[] {
+  if (!Array.isArray(raw)) return [];
+  return raw.map((source) => {
+    const item = source as Partial<DashboardSourceForm>;
+    return {
+      id: item.id,
+      platform: String(item.platform ?? "").toLowerCase(),
+      schema_file: String(item.schema_file ?? ""),
+      role: item.role === "plan" ? "plan" : "actual",
+      source_config:
+        item.source_config && typeof item.source_config === "object"
+          ? (item.source_config as Record<string, unknown>)
+          : null,
+      filters: Array.isArray(item.filters) && item.filters.length
+        ? item.filters.map((filter) => ({
+            filter_type:
+              filter.filter_type === "name_pattern" || filter.filter_type === "id_list"
+                ? filter.filter_type
+                : "all",
+            filter_value: filter.filter_value ? String(filter.filter_value) : null,
+          }))
+        : [{ filter_type: "all", filter_value: null }],
+    };
+  });
+}
+
+export default function DashboardWizard({ dashboardId }: DashboardWizardProps) {
+  const router = useRouter();
+  const [step, setStep] = useState(0);
+  const [formData, setFormData] = useState<DashboardFormData>(defaultForm());
+  const [platforms, setPlatforms] = useState<PlatformMeta[]>([]);
+  const [loading, setLoading] = useState(Boolean(dashboardId));
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  const isEdit = Boolean(dashboardId);
+
+  useEffect(() => {
+    async function loadPlatforms() {
+      try {
+        const response = await fetch("/api/admin/platforms");
+        const json = await response.json();
+        setPlatforms(json.platforms ?? []);
+      } catch {
+        setPlatforms([]);
+      }
+    }
+
+    void loadPlatforms();
+  }, []);
+
+  useEffect(() => {
+    if (!dashboardId) return;
+
+    async function loadDashboard() {
+      setLoading(true);
+      try {
+        const response = await fetch(`/api/admin/dashboards/${dashboardId}`);
+        if (!response.ok) throw new Error(`HTTP ${response.status}`);
+        const json = await response.json();
+        const dash = json.dashboard;
+        if (!dash) throw new Error("Dashboard payload is empty");
+
+        const config = (dash.config ?? {}) as Record<string, unknown>;
+        setFormData({
+          client_id: String(dash.client_id ?? ""),
+          client_name: String(dash.client_name ?? ""),
+          dashboard_name: String(dash.dashboard_name ?? ""),
+          dashboard_type: dash.dashboard_type ?? "awareness",
+          config: {
+            currency: (String(config.currency ?? "EUR") as "EUR" | "USD" | "RUB"),
+            period_from: String(config.period_from ?? "2025-01-01"),
+            period_to: String(config.period_to ?? "2025-03-31"),
+            visible_metrics: Array.isArray(config.visible_metrics)
+              ? config.visible_metrics.map((item) => String(item))
+              : ["impressions", "clicks", "ctr", "cpm", "spend"],
+            show_spend: Boolean(config.show_spend ?? true),
+            show_ai_summary: Boolean(config.show_ai_summary ?? false),
+            kpi_cards: Array.isArray(config.kpi_cards)
+              ? config.kpi_cards.map((item) => String(item)).slice(0, 5)
+              : ["impressions", "clicks", "ctr", "cpm", "spend"],
+          },
+          sources: normalizeSources(dash.sources),
+        });
+      } catch (err) {
+        setError(err instanceof Error ? err.message : "Failed to load dashboard");
+      } finally {
+        setLoading(false);
+      }
+    }
+
+    void loadDashboard();
+  }, [dashboardId]);
+
+  const stepValid = useMemo(() => {
+    if (step === 0) {
+      return (
+        Boolean(formData.client_id) &&
+        Boolean(formData.client_name) &&
+        Boolean(formData.dashboard_name) &&
+        Boolean(formData.config.period_from) &&
+        Boolean(formData.config.period_to)
+      );
+    }
+
+    if (step === 1) {
+      const actualCount = formData.sources.filter((source) => source.role === "actual").length;
+      if (actualCount === 0) return false;
+      const plan = formData.sources.find((source) => source.role === "plan");
+      if (plan) {
+        return Boolean(String(plan.source_config?.sheet_url ?? "").trim());
+      }
+      return true;
+    }
+
+    if (step === 2) {
+      return formData.sources
+        .filter((source) => source.role === "actual")
+        .every((source) => {
+          const filter = source.filters[0] ?? { filter_type: "all", filter_value: null };
+          if (filter.filter_type === "id_list") {
+            return Boolean(filter.filter_value && filter.filter_value.trim());
+          }
+          if (filter.filter_type === "name_pattern") {
+            return Boolean(filter.filter_value && filter.filter_value.trim());
+          }
+          return true;
+        });
+    }
+
+    if (step === 3) {
+      return (formData.config.kpi_cards ?? []).length >= 5;
+    }
+
+    return true;
+  }, [formData, step]);
+
+  const submit = async () => {
+    setSaving(true);
+    setError(null);
+
+    try {
+      const endpoint = isEdit ? `/api/admin/dashboards/${dashboardId}` : "/api/admin/dashboards";
+      const method = isEdit ? "PUT" : "POST";
+
+      const response = await fetch(endpoint, {
+        method,
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(formData),
+      });
+
+      const json = await response.json();
+      if (!response.ok) {
+        throw new Error(json.error ?? `HTTP ${response.status}`);
+      }
+
+      router.push("/admin/dashboards");
+      router.refresh();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Save failed");
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  if (loading) {
+    return <p className="text-sm text-slate-500">Loading dashboard...</p>;
+  }
+
+  return (
+    <section className="space-y-4">
+      <div className="rounded-xl border border-slate-200 bg-white p-4">
+        <div className="flex flex-wrap gap-2">
+          {STEPS.map((label, idx) => (
+            <div
+              key={label}
+              className={`rounded-full px-3 py-1 text-xs font-semibold ${
+                idx === step
+                  ? "bg-indigo-600 text-white"
+                  : idx < step
+                    ? "bg-indigo-100 text-indigo-700"
+                    : "bg-slate-100 text-slate-500"
+              }`}
+            >
+              {idx + 1}. {label}
+            </div>
+          ))}
+        </div>
+      </div>
+
+      <div className="rounded-xl border border-slate-200 bg-white p-5">
+        {step === 0 ? <WizardStep1 data={formData} onChange={setFormData} /> : null}
+        {step === 1 ? <WizardStep2 data={formData} platforms={platforms} onChange={setFormData} /> : null}
+        {step === 2 ? <WizardStep3 data={formData} onChange={setFormData} /> : null}
+        {step === 3 ? (
+          <div className="space-y-4">
+            <WizardStep4 data={formData} onChange={setFormData} />
+            <DashboardPreview data={formData} />
+          </div>
+        ) : null}
+      </div>
+
+      {error ? (
+        <div className="rounded-xl border border-rose-200 bg-rose-50 px-4 py-3 text-sm text-rose-700">
+          {error}
+        </div>
+      ) : null}
+
+      <div className="flex flex-wrap items-center justify-between gap-2">
+        <button
+          type="button"
+          onClick={() => setStep((prev) => Math.max(prev - 1, 0))}
+          disabled={step === 0}
+          className="rounded-lg border border-slate-300 px-4 py-2 text-sm disabled:cursor-not-allowed disabled:opacity-50"
+        >
+          Back
+        </button>
+
+        <div className="flex gap-2">
+          {step < STEPS.length - 1 ? (
+            <button
+              type="button"
+              onClick={() => setStep((prev) => Math.min(prev + 1, STEPS.length - 1))}
+              disabled={!stepValid}
+              className="rounded-lg bg-indigo-600 px-4 py-2 text-sm text-white disabled:cursor-not-allowed disabled:opacity-50"
+            >
+              Next
+            </button>
+          ) : (
+            <button
+              type="button"
+              onClick={submit}
+              disabled={!stepValid || saving}
+              className="rounded-lg bg-indigo-600 px-4 py-2 text-sm text-white disabled:cursor-not-allowed disabled:opacity-50"
+            >
+              {saving ? "Saving..." : isEdit ? "Save changes" : "Create dashboard"}
+            </button>
+          )}
+        </div>
+      </div>
+    </section>
+  );
+}
