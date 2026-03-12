@@ -8,6 +8,12 @@ import {
   validateDashboardPayload,
 } from "@/lib/admin-dashboards";
 
+function defaultKpiCards(type: string): string[] {
+  if (type === "performance") return ["conversions", "cpa", "clicks", "cpc", "spend"];
+  if (type === "overview") return ["impressions", "clicks", "ctr", "spend", "conversions"];
+  return ["impressions", "clicks", "ctr", "cpm", "spend"];
+}
+
 export async function GET(
   _request: Request,
   context: { params: Promise<{ id: string }> | { id: string } },
@@ -52,6 +58,13 @@ export async function PUT(
     return NextResponse.json({ error: validationError }, { status: 400 });
   }
 
+  const config = {
+    ...payload.config,
+    kpi_cards: Array.isArray(payload.config.kpi_cards)
+      ? payload.config.kpi_cards
+      : defaultKpiCards(payload.dashboard_type),
+  };
+
   const conn = await pool.getConnection();
   try {
     await conn.beginTransaction();
@@ -65,7 +78,7 @@ export async function PUT(
         payload.client_name,
         payload.dashboard_name,
         payload.dashboard_type,
-        JSON.stringify(payload.config),
+        JSON.stringify(config),
         dashboardId,
       ],
     );

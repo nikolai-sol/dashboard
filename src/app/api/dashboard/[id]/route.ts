@@ -4,10 +4,12 @@ import pool from "@/lib/db";
 import { loadSchema } from "@/lib/schema-parser";
 import { buildAggregateQuery, buildTimeseriesQuery } from "@/lib/query-builder";
 import {
+  aggregatePlanByPlatform,
   aggregatePlanByChannel,
   fetchMediaPlan,
   type ChannelPlanAggregate,
   type MediaPlanRow,
+  type PlatformPlanAggregate,
 } from "@/lib/gsheet-fetcher";
 import { PLATFORM_COLORS } from "@/lib/platform-colors";
 import type { DashboardData, PlatformStats, TimeSeriesPoint } from "@/lib/types";
@@ -201,17 +203,43 @@ function mergeTimeseries(items: TimeSeriesPoint[]): TimeSeriesPoint[] {
 function buildPlanVsFactRows(
   channels: ChannelPlanAggregate[],
   platformMap: Map<string, PlatformStats>,
+  planByPlatform: Map<string, PlatformPlanAggregate>,
 ): DashboardData["plan_vs_fact"] {
+  const platformChannelCount = channels.reduce((acc, channelAgg) => {
+    channelAgg.platforms.forEach((platformId) => {
+      acc.set(platformId, (acc.get(platformId) ?? 0) + 1);
+    });
+    return acc;
+  }, new Map<string, number>());
+
   return channels.map((channelAgg) => {
+    const channelBudgetByPlatform = channelAgg.lines.reduce((acc, line) => {
+      const platform = String(line.platform ?? "").toLowerCase().trim();
+      if (!platform) return acc;
+      acc.set(platform, (acc.get(platform) ?? 0) + asNumber(line.budget_plan));
+      return acc;
+    }, new Map<string, number>());
+
     const facts = channelAgg.platforms.reduce(
       (acc, platformId) => {
         const stat = platformMap.get(platformId);
         if (!stat) return acc;
-        acc.budget_fact += stat.spend;
-        acc.impressions_fact += stat.impressions;
-        acc.clicks_fact += stat.clicks;
-        acc.views_fact += stat.views;
-        acc.conversions_fact += stat.conversions;
+
+        const platformPlan = planByPlatform.get(platformId);
+        const platformPlanBudget = asNumber(platformPlan?.budget_plan);
+        const channelPlanBudget = asNumber(channelBudgetByPlatform.get(platformId));
+        const fallbackShare = 1 / Math.max(1, platformChannelCount.get(platformId) ?? 1);
+
+        const share =
+          platformPlanBudget > 0 && channelPlanBudget > 0
+            ? Math.min(1, Math.max(0, channelPlanBudget / platformPlanBudget))
+            : fallbackShare;
+
+        acc.budget_fact += stat.spend * share;
+        acc.impressions_fact += stat.impressions * share;
+        acc.clicks_fact += stat.clicks * share;
+        acc.views_fact += stat.views * share;
+        acc.conversions_fact += stat.conversions * share;
         return acc;
       },
       {
@@ -406,8 +434,9 @@ export async function GET(
     };
 
     const planByChannel = aggregatePlanByChannel(planRows);
+    const planByPlatform = aggregatePlanByPlatform(planRows);
     const platformMap = new Map(platformResults.map((item) => [item.id, item]));
-    const planVsFact = buildPlanVsFactRows(planByChannel, platformMap);
+    const planVsFact = buildPlanVsFactRows(planByChannel, platformMap, planByPlatform);
 
     const response: DashboardData = {
       dashboard: {

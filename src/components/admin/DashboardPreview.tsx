@@ -1,15 +1,86 @@
 "use client";
 
+import { useEffect, useState } from "react";
 import type { DashboardFormData } from "@/lib/admin-ui-types";
 
 type DashboardPreviewProps = {
   data: DashboardFormData;
 };
 
+type PreviewResponse = {
+  summary?: {
+    actual: Array<{
+      platform: string;
+      campaigns: number;
+      status: "ok" | "empty" | "error";
+      message?: string;
+    }>;
+    plan: {
+      status: "connected" | "missing_url" | "error" | "not_configured";
+      rows: number;
+      channels: number;
+      platforms: number;
+      message?: string;
+    };
+    totals: {
+      actual_sources: number;
+      actual_campaigns: number;
+    };
+  };
+};
+
 export default function DashboardPreview({ data }: DashboardPreviewProps) {
+  const [preview, setPreview] = useState<PreviewResponse["summary"] | null>(null);
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
   const actualSources = data.sources.filter((source) => source.role === "actual");
   const planSource = data.sources.find((source) => source.role === "plan");
   const sheetUrl = String(planSource?.source_config?.sheet_url ?? "");
+
+  useEffect(() => {
+    let cancelled = false;
+    const hasMinimum =
+      Boolean(data.client_id && data.client_name && data.dashboard_name) && actualSources.length > 0;
+    if (!hasMinimum) {
+      setPreview(null);
+      setError(null);
+      return;
+    }
+
+    const timer = setTimeout(async () => {
+      setLoading(true);
+      setError(null);
+      try {
+        const response = await fetch("/api/dashboard/preview", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(data),
+        });
+        const json = (await response.json()) as PreviewResponse;
+        if (!response.ok) {
+          throw new Error((json as { error?: string }).error ?? `HTTP ${response.status}`);
+        }
+        if (!cancelled) {
+          setPreview(json.summary ?? null);
+        }
+      } catch (err) {
+        if (!cancelled) {
+          setPreview(null);
+          setError(err instanceof Error ? err.message : "Failed to load preview");
+        }
+      } finally {
+        if (!cancelled) {
+          setLoading(false);
+        }
+      }
+    }, 350);
+
+    return () => {
+      cancelled = true;
+      clearTimeout(timer);
+    };
+  }, [actualSources.length, data, sheetUrl]);
 
   return (
     <section className="rounded-xl border border-slate-200 bg-slate-50 p-4">
@@ -48,6 +119,27 @@ export default function DashboardPreview({ data }: DashboardPreviewProps) {
           <p className="mt-2 truncate">
             <span className="font-medium text-slate-900">Sheet URL:</span> {sheetUrl || "(empty)"}
           </p>
+        ) : null}
+      </div>
+
+      <div className="mt-3 rounded-lg border border-slate-200 bg-white p-3 text-xs text-slate-600">
+        <p className="mb-1 font-medium text-slate-900">Data check</p>
+        {loading ? <p>Loading preview...</p> : null}
+        {error ? <p className="text-rose-600">{error}</p> : null}
+
+        {!loading && !error && preview ? (
+          <div className="space-y-1">
+            {preview.actual.map((item) => (
+              <p key={item.platform}>
+                {item.platform}: {item.campaigns} campaigns
+                {item.message ? ` (${item.message})` : ""}
+              </p>
+            ))}
+            <p>
+              Media plan: {preview.plan.rows} rows, {preview.plan.channels} channels, {preview.plan.platforms} platforms
+              {preview.plan.message ? ` (${preview.plan.message})` : ""}
+            </p>
+          </div>
         ) : null}
       </div>
     </section>
