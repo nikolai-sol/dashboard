@@ -1,0 +1,14 @@
+platform: media_plan
+display_name: Media Plan (Google Sheets)
+source: gsheet
+sheet_url: "${GSHEET_MEDIA_PLAN_URL}"
+
+columns:
+  - { col: campaign_name, label: Campaign, type: string }
+  - { col: platform, label: Platform, type: string }
+  - { col: budget_plan, label: Budget Plan, type: number, currency: EUR }
+  - { col: impressions_plan, label: Impressions Plan, type: number }
+  - { col: cpm_plan, label: CPM Plan, type: number, currency: EUR }
+  - { col: cpc_plan, label: CPC Plan, type: number, currency: EUR }
+
+join_hint: "match on platform field to source platform id"

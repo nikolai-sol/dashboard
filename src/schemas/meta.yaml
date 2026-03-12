@@ -1,0 +1,25 @@
+platform: meta
+display_name: Meta Ads
+source: mysql
+
+tables:
+  campaigns:
+    table: ad_campaigns
+    filter: "platform = 'meta'"
+    id_col: campaign_id
+    name_col: name
+  stats:
+    table: ad_analytics_daily
+    join_to: campaigns
+    join_on: campaign_id
+    filter: "platform = 'meta'"
+    date_col: report_date
+    metrics:
+      - { col: impressions, label: Impressions, type: int }
+      - { col: clicks, label: Clicks, type: int }
+      - { col: cost_local, label: Spend, type: decimal, currency: EUR }
+      - { col: conversions, label: Conversions, type: int }
+      - { col: video_views, label: Video Views, type: int }
+      - { col: ctr, label: CTR, type: decimal, format: percent }
+      - { col: cpm, label: CPM, type: decimal, currency: EUR }
+      - { col: cpc, label: CPC, type: decimal, currency: EUR }
