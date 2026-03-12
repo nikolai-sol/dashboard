@@ -1,14 +1,25 @@
 platform: media_plan
 display_name: Media Plan (Google Sheets)
 source: gsheet
-sheet_url: "${GSHEET_MEDIA_PLAN_URL}"
 
 columns:
-  - { col: campaign_name, label: Campaign, type: string }
   - { col: platform, label: Platform, type: string }
+  - { col: channel, label: Channel, type: string }
+  - { col: format, label: Format, type: string }
+  - { col: buy_type, label: Buy Type, type: string }
+  - { col: units_plan, label: Units Plan, type: number }
+  - { col: unit_price, label: Unit Price, type: number, currency: EUR }
   - { col: budget_plan, label: Budget Plan, type: number, currency: EUR }
   - { col: impressions_plan, label: Impressions Plan, type: number }
+  - { col: reach_plan, label: Reach Plan, type: number }
+  - { col: frequency_plan, label: Frequency Plan, type: number }
+  - { col: views_plan, label: Views Plan, type: number }
+  - { col: clicks_plan, label: Clicks Plan, type: number }
+  - { col: conversions_plan, label: Conversions Plan, type: number }
+  - { col: ctr_plan, label: CTR Plan, type: number }
   - { col: cpm_plan, label: CPM Plan, type: number, currency: EUR }
   - { col: cpc_plan, label: CPC Plan, type: number, currency: EUR }
+  - { col: cpv_plan, label: CPV Plan, type: number, currency: EUR }
+  - { col: cpa_plan, label: CPA Plan, type: number, currency: EUR }
 
-join_hint: "match on platform field to source platform id"
+join_hint: "Channel is used for plan_vs_fact grouping; platform supports cross-chart aggregation."
