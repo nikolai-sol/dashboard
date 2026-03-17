@@ -14,6 +14,12 @@ export type DashboardSourceInput = {
   filters: DashboardFilterInput[];
 };
 
+export type MediaPlanBindingInput = {
+  channel: string;
+  source_key: string;
+  platform_campaign_id: string;
+};
+
 export type DashboardUpsertPayload = {
   client_id: string;
   client_name: string;
@@ -21,6 +27,7 @@ export type DashboardUpsertPayload = {
   dashboard_type: "awareness" | "performance" | "overview";
   config: Record<string, unknown>;
   sources: DashboardSourceInput[];
+  media_plan_bindings: MediaPlanBindingInput[];
 };
 
 export type DashboardWithSources = {
@@ -41,6 +48,7 @@ export type DashboardWithSources = {
     source_config: Record<string, unknown> | null;
     filters: DashboardFilterInput[];
   }>;
+  media_plan_bindings: MediaPlanBindingInput[];
 };
 
 function parseJsonField(value: unknown): Record<string, unknown> {
@@ -89,6 +97,21 @@ function normalizeSource(raw: unknown): DashboardSourceInput {
   };
 }
 
+function normalizeMediaPlanBinding(raw: unknown): MediaPlanBindingInput | null {
+  const input = (raw ?? {}) as Partial<MediaPlanBindingInput>;
+  const channel = String(input.channel ?? "").trim();
+  const sourceKey = String(input.source_key ?? "").trim().toLowerCase();
+  const campaignId = String(input.platform_campaign_id ?? "").trim();
+  if (!channel || !sourceKey || !campaignId) {
+    return null;
+  }
+  return {
+    channel,
+    source_key: sourceKey,
+    platform_campaign_id: campaignId,
+  };
+}
+
 export function normalizeDashboardPayload(raw: unknown): DashboardUpsertPayload {
   const input = (raw ?? {}) as Partial<DashboardUpsertPayload>;
   const dashboardType =
@@ -103,6 +126,10 @@ export function normalizeDashboardPayload(raw: unknown): DashboardUpsertPayload 
 
   const sourcesInput = Array.isArray(input.sources) ? input.sources : [];
   const sources = sourcesInput.map((source) => normalizeSource(source));
+  const bindingsInput = Array.isArray(input.media_plan_bindings) ? input.media_plan_bindings : [];
+  const mediaPlanBindings = bindingsInput
+    .map((binding) => normalizeMediaPlanBinding(binding))
+    .filter((binding): binding is MediaPlanBindingInput => Boolean(binding));
 
   return {
     client_id: String(input.client_id ?? "")
@@ -114,6 +141,7 @@ export function normalizeDashboardPayload(raw: unknown): DashboardUpsertPayload 
     dashboard_type: dashboardType,
     config,
     sources,
+    media_plan_bindings: mediaPlanBindings,
   };
 }
 
@@ -131,6 +159,12 @@ export function validateDashboardPayload(payload: DashboardUpsertPayload): strin
   for (const source of payload.sources) {
     if (!source.platform) return "Source platform is required";
     if (!source.schema_file) return "Source schema_file is required";
+  }
+
+  for (const binding of payload.media_plan_bindings) {
+    if (!binding.channel || !binding.source_key || !binding.platform_campaign_id) {
+      return "Each media plan binding must include channel, source_key and platform_campaign_id";
+    }
   }
 
   return null;
@@ -169,6 +203,25 @@ export async function insertSourcesWithFilters(
   }
 }
 
+export async function replaceMediaPlanBindings(
+  conn: PoolConnection,
+  dashboardId: number,
+  bindings: MediaPlanBindingInput[],
+): Promise<void> {
+  await conn.execute("DELETE FROM media_plan_bindings WHERE dashboard_id = ?", [dashboardId]);
+  if (!bindings.length) {
+    return;
+  }
+
+  for (const binding of bindings) {
+    await conn.execute(
+      `INSERT INTO media_plan_bindings (dashboard_id, channel, source_key, platform_campaign_id)
+       VALUES (?, ?, ?, ?)`,
+      [dashboardId, binding.channel, binding.source_key, binding.platform_campaign_id],
+    );
+  }
+}
+
 export async function loadDashboardWithSources(
   conn: PoolConnection,
   dashboardId: number,
@@ -186,6 +239,13 @@ export async function loadDashboardWithSources(
      LEFT JOIN dashboard_campaign_filters dcf ON dcf.dashboard_source_id = ds.id
      WHERE ds.dashboard_id = ?
      ORDER BY ds.id`,
+    [dashboardId],
+  );
+  const [bindingRows] = await conn.execute<RowDataPacket[]>(
+    `SELECT channel, source_key, platform_campaign_id
+     FROM media_plan_bindings
+     WHERE dashboard_id = ?
+     ORDER BY channel, source_key, platform_campaign_id`,
     [dashboardId],
   );
 
@@ -224,6 +284,11 @@ export async function loadDashboardWithSources(
     sources: Array.from(sourceMap.values()).map((source) => ({
       ...source,
       filters: source.filters.length ? source.filters : [{ filter_type: "all", filter_value: null }],
+    })),
+    media_plan_bindings: bindingRows.map((row) => ({
+      channel: String(row.channel ?? ""),
+      source_key: String(row.source_key ?? ""),
+      platform_campaign_id: String(row.platform_campaign_id ?? ""),
     })),
   };
 }

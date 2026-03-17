@@ -1,6 +1,9 @@
 platform: linkedin
 display_name: LinkedIn Ads
 source: mysql
+source_key: linkedin
+source_type: ads
+canonical_table: canonical_fact_ads_daily
 
 tables:
   campaigns:

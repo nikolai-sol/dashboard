@@ -5,6 +5,7 @@ import {
   insertSourcesWithFilters,
   loadDashboardWithSources,
   normalizeDashboardPayload,
+  replaceMediaPlanBindings,
   validateDashboardPayload,
 } from "@/lib/admin-dashboards";
 
@@ -90,6 +91,7 @@ export async function PUT(
 
     await conn.execute("DELETE FROM dashboard_sources WHERE dashboard_id = ?", [dashboardId]);
     await insertSourcesWithFilters(conn, dashboardId, payload.sources);
+    await replaceMediaPlanBindings(conn, dashboardId, payload.media_plan_bindings);
 
     await conn.commit();
     return NextResponse.json({

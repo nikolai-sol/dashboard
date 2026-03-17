@@ -1,6 +1,9 @@
 platform: yandex
 display_name: Yandex Direct
 source: mysql
+source_key: yandex_direct
+source_type: ads
+canonical_table: canonical_fact_ads_daily
 
 tables:
   campaigns:

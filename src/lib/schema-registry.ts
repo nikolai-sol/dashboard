@@ -7,6 +7,9 @@ export type SchemaMeta = {
   display_name: string;
   source: PlatformSchema["source"];
   schema_file: string;
+  source_key: string;
+  source_type: PlatformSchema["source_type"] | null;
+  canonical_table: string | null;
 };
 
 function schemasDir() {
@@ -29,6 +32,9 @@ export function listSchemaMetas(): SchemaMeta[] {
       display_name: schema.display_name,
       source: schema.source,
       schema_file: schemaFile,
+      source_key: schema.source_key ?? schema.platform,
+      source_type: schema.source_type ?? (schema.source === "gsheet" ? "gsheet" : "ads"),
+      canonical_table: schema.canonical_table ?? null,
     });
   }
 

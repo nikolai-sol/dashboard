@@ -6,6 +6,9 @@ export interface PlatformSchema {
   platform: string;
   display_name: string;
   source: "mysql" | "gsheet";
+  source_key?: string;
+  source_type?: "ads" | "analytics" | "gsheet";
+  canonical_table?: string;
   tables?: {
     campaigns: {
       table: string;

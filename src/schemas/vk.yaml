@@ -1,6 +1,9 @@
 platform: vk
 display_name: VK Ads
 source: mysql
+source_key: vk_ads_v2
+source_type: ads
+canonical_table: canonical_fact_ads_daily
 
 tables:
   campaigns:

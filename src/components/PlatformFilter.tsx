@@ -1,22 +1,33 @@
 "use client";
 
-import { PLATFORM_COLORS } from "@/lib/platform-colors";
+type PlatformOption = {
+  id: string;
+  name: string;
+  color: string;
+};
 
 type PlatformFilterProps = {
+  platforms: PlatformOption[];
   selected: string[];
   onToggle: (platformId: string) => void;
   onSelectAll: () => void;
+  className?: string;
 };
 
 export default function PlatformFilter({
+  platforms,
   selected,
   onToggle,
   onSelectAll,
+  className,
 }: PlatformFilterProps) {
-  const allEnabled = selected.length === Object.keys(PLATFORM_COLORS).length;
+  const availablePlatformIds = platforms.map((platform) => platform.id);
+  const allEnabled =
+    availablePlatformIds.length > 0 &&
+    availablePlatformIds.every((platformId) => selected.includes(platformId));
 
   return (
-    <section className="card-surface mb-6 p-4">
+    <section className={`card-surface mb-6 p-4 ${className ?? ""}`.trim()}>
       <div className="flex flex-wrap items-center gap-2">
         <button
           type="button"
@@ -30,7 +41,8 @@ export default function PlatformFilter({
           All
         </button>
 
-        {Object.entries(PLATFORM_COLORS).map(([platformId, meta]) => {
+        {platforms.map((platform) => {
+          const platformId = platform.id;
           const active = selected.includes(platformId);
           return (
             <button
@@ -45,9 +57,9 @@ export default function PlatformFilter({
             >
               <span
                 className="h-2.5 w-2.5 rounded-full"
-                style={{ backgroundColor: meta.hex }}
+                style={{ backgroundColor: platform.color }}
               />
-              {meta.label}
+              {platform.name}
             </button>
           );
         })}

@@ -1,11 +1,27 @@
 "use client";
 
-import type { PlanVsFactRow } from "@/lib/types";
+import type { PlanVsFactItem } from "@/lib/types";
 
 type PlanVsFactProps = {
-  rows: PlanVsFactRow[];
+  rows: PlanVsFactItem[];
   currencyFormatter: (value: number) => string;
 };
+
+function compactNumber(value: number) {
+  if (value >= 1_000_000) return `${(value / 1_000_000).toFixed(2)}M`;
+  if (value >= 1_000) return `${(value / 1_000).toFixed(1)}K`;
+  return `${Math.round(value)}`;
+}
+
+function formatMonthlyPlan(row: PlanVsFactItem) {
+  return Object.entries(row.monthly_plan ?? {})
+    .filter(([, value]) => Number(value) > 0)
+    .map(([month, value]) => ({
+      month,
+      units: Number(value) || 0,
+      budget: Number(row.monthly_breakdown?.[month]?.budget || 0),
+    }));
+}
 
 function getPacingColor(pacing: number) {
   if (pacing >= 0.9) return "bg-emerald-500";
@@ -13,7 +29,14 @@ function getPacingColor(pacing: number) {
   return "bg-rose-500";
 }
 
-function metricSummary(row: PlanVsFactRow): { label: string; plan: number; fact: number; pricePlan: number; priceFact: number; priceLabel: string } {
+function metricSummary(row: PlanVsFactItem): {
+  label: string;
+  plan: number;
+  fact: number;
+  pricePlan: number;
+  priceFact: number;
+  priceLabel: string;
+} {
   const buyType = row.buy_type.toUpperCase();
   if (buyType === "CPV") {
     return {
@@ -71,7 +94,7 @@ export default function PlanVsFact({ rows, currencyFormatter }: PlanVsFactProps)
 
       {rows.length === 0 ? (
         <div className="rounded-lg border border-slate-200 bg-slate-50 p-4 text-sm text-slate-500">
-          No media plan rows connected. Add a published `for_dashboard` CSV URL in dashboard sources.
+          No media plan rows connected. Add a published Google Sheets URL or CSV URL in dashboard sources.
         </div>
       ) : (
         <div className="space-y-3">
@@ -79,46 +102,85 @@ export default function PlanVsFact({ rows, currencyFormatter }: PlanVsFactProps)
             const progress = Math.max(0, Math.min(140, row.pacing * 100));
             const metric = metricSummary(row);
             const metricPacing = metric.plan > 0 ? (metric.fact / metric.plan) * 100 : 0;
+            const planOnly = row.campaign_count === 0;
+            const monthlyPlan = formatMonthlyPlan(row);
 
             return (
-              <article key={`${row.channel}-${row.buy_type}`} className="rounded-lg border border-slate-100 p-3">
+              <article
+                key={`${row.channel}-${row.buy_type}`}
+                className={`rounded-lg border p-3 ${planOnly ? "border-slate-200 bg-slate-50" : "border-slate-100"}`}
+              >
                 <div className="mb-2 flex flex-wrap items-center justify-between gap-2">
                   <div className="flex items-center gap-2">
                     <p className="text-sm font-semibold text-slate-900">{row.channel}</p>
                     <span className="rounded-md border border-slate-200 px-2 py-0.5 text-[10px] font-semibold tracking-wide text-slate-600">
+                      {row.instrument || "Instrument"}
+                    </span>
+                    {row.format && (
+                      <span className="rounded-md border border-slate-200 px-2 py-0.5 text-[10px] font-semibold tracking-wide text-slate-600">
+                        {row.format}
+                      </span>
+                    )}
+                    <span className="rounded-md border border-slate-200 px-2 py-0.5 text-[10px] font-semibold tracking-wide text-slate-600">
                       {row.buy_type.toUpperCase()}
                     </span>
                     <div className="flex items-center gap-1">
-                      {row.platform_colors.map((color, idx) => (
+                      {row.platforms.map((platform) => (
                         <span
-                          key={`${row.channel}-color-${idx}`}
+                          key={`${row.channel}-${platform.source_key}`}
                           className="h-2.5 w-2.5 rounded-full"
-                          style={{ backgroundColor: color }}
-                          title={row.platforms[idx]}
+                          style={{ backgroundColor: platform.color }}
+                          title={platform.label}
                         />
                       ))}
                     </div>
                   </div>
                   <p className="font-mono text-xs text-slate-600">
-                    {currencyFormatter(row.budget_fact)} / {currencyFormatter(row.budget_plan)} ({(row.pacing * 100).toFixed(0)}%)
+                    {currencyFormatter(row.budget_fact)} / {currencyFormatter(row.budget_plan)} (
+                    {(row.pacing * 100).toFixed(0)}%)
                   </p>
                 </div>
 
                 <div className="h-2.5 overflow-hidden rounded-full bg-slate-100">
                   <div
-                    className={`h-full rounded-full transition-all duration-1000 ${getPacingColor(row.pacing)}`}
+                    className={`h-full rounded-full transition-all duration-1000 ${
+                      planOnly ? "bg-slate-300" : getPacingColor(row.pacing)
+                    }`}
                     style={{ width: `${progress}%` }}
                   />
                 </div>
 
                 <div className="mt-2 flex flex-wrap items-center justify-between gap-3 text-xs text-slate-500">
                   <span>
-                    {metric.label}: {metric.fact.toLocaleString("en-US")} / {metric.plan.toLocaleString("en-US")} ({metricPacing.toFixed(0)}%)
+                    {metric.label}: {metric.fact.toLocaleString("en-US")} /{" "}
+                    {metric.plan.toLocaleString("en-US")} ({metricPacing.toFixed(0)}%)
                   </span>
                   <span>
-                    {metric.priceLabel}: {currencyFormatter(metric.priceFact)} (plan {currencyFormatter(metric.pricePlan)})
+                    {metric.priceLabel}: {currencyFormatter(metric.priceFact)} (plan{" "}
+                    {currencyFormatter(metric.pricePlan)})
                   </span>
                 </div>
+                {monthlyPlan.length ? (
+                  <div className="mt-2 flex flex-wrap gap-2 text-xs text-slate-500">
+                    {monthlyPlan.map((item) => (
+                      <span
+                        key={`${row.channel}-${item.month}`}
+                        className="rounded-md border border-slate-200 bg-white px-2 py-1"
+                      >
+                        {item.month}: {compactNumber(item.units)} {metric.label.toLowerCase()} •{" "}
+                        {currencyFormatter(item.budget)}
+                      </span>
+                    ))}
+                  </div>
+                ) : null}
+                {planOnly ? (
+                  <p className="mt-2 text-xs text-slate-500">Plan-only row: no campaign bindings yet.</p>
+                ) : (
+                  <p className="mt-2 text-xs text-slate-500">
+                    Bound campaigns: {row.campaign_count} | Platforms:{" "}
+                    {row.platforms.map((platform) => platform.label).join(", ")}
+                  </p>
+                )}
               </article>
             );
           })}

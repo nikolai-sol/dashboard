@@ -1,6 +1,9 @@
 platform: hybrid
 display_name: Hybrid
 source: mysql
+source_key: hybrid
+source_type: ads
+canonical_table: canonical_fact_ads_daily
 
 tables:
   campaigns:

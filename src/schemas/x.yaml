@@ -1,6 +1,9 @@
 platform: x
 display_name: X Ads
 source: mysql
+source_key: x
+source_type: ads
+canonical_table: canonical_fact_ads_daily
 
 tables:
   campaigns:

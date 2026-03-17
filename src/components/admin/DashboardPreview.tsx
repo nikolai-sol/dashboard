@@ -37,6 +37,12 @@ export default function DashboardPreview({ data }: DashboardPreviewProps) {
   const actualSources = data.sources.filter((source) => source.role === "actual");
   const planSource = data.sources.find((source) => source.role === "plan");
   const sheetUrl = String(planSource?.source_config?.sheet_url ?? "");
+  const planReview =
+    planSource?.source_config &&
+    typeof planSource.source_config.review === "object" &&
+    planSource.source_config.review
+      ? (planSource.source_config.review as Record<string, unknown>)
+      : null;
 
   useEffect(() => {
     let cancelled = false;
@@ -112,12 +118,29 @@ export default function DashboardPreview({ data }: DashboardPreviewProps) {
           {data.sources.map((source, idx) => (
             <li key={`${source.platform}-${idx}`}>
               {source.role.toUpperCase()} - {source.platform} ({source.schema_file})
+              {source.role === "actual" ? (
+                <span>
+                  {" "}
+                  - accounts:{" "}
+                  {Array.isArray(source.source_config?.account_ids) &&
+                  source.source_config?.account_ids.length
+                    ? source.source_config.account_ids.length
+                    : "all active"}
+                </span>
+              ) : null}
             </li>
           ))}
         </ul>
         {planSource ? (
           <p className="mt-2 truncate">
             <span className="font-medium text-slate-900">Sheet URL:</span> {sheetUrl || "(empty)"}
+          </p>
+        ) : null}
+        {planReview ? (
+          <p className="mt-2">
+            <span className="font-medium text-slate-900">Media plan review:</span>{" "}
+            {String(planReview.status ?? "confirmed")}
+            {planReview.confirmed_at ? ` at ${String(planReview.confirmed_at)}` : ""}
           </p>
         ) : null}
       </div>
