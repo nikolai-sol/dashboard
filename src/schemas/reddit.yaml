@@ -1,6 +1,9 @@
 platform: reddit
 display_name: Reddit Ads
 source: mysql
+source_key: reddit
+source_type: ads
+canonical_table: canonical_fact_ads_daily
 
 tables:
   campaigns:

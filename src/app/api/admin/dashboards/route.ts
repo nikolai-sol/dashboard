@@ -4,6 +4,7 @@ import pool from "@/lib/db";
 import {
   insertSourcesWithFilters,
   normalizeDashboardPayload,
+  replaceMediaPlanBindings,
   validateDashboardPayload,
 } from "@/lib/admin-dashboards";
 
@@ -78,6 +79,7 @@ export async function POST(request: Request) {
     );
 
     await insertSourcesWithFilters(conn, dashResult.insertId, payload.sources);
+    await replaceMediaPlanBindings(conn, dashResult.insertId, payload.media_plan_bindings);
 
     await conn.commit();
     return NextResponse.json({

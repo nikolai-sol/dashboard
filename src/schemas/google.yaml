@@ -1,6 +1,9 @@
 platform: google
 display_name: Google Ads
 source: mysql
+source_key: google
+source_type: ads
+canonical_table: canonical_fact_ads_daily
 
 tables:
   campaigns:

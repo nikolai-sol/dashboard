@@ -1,6 +1,9 @@
 platform: git
 display_name: GetIntent (Programmatic)
 source: mysql
+source_key: getintent
+source_type: ads
+canonical_table: canonical_fact_ads_daily
 
 tables:
   campaigns:

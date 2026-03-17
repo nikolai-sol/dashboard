@@ -150,3 +150,49 @@
     transform: translateY(0);
   }
 }
+
+@media print {
+  @page {
+    size: A4 portrait;
+    margin: 12mm;
+  }
+
+  html,
+  body {
+    background: #fff !important;
+  }
+
+  body {
+    background-image: none !important;
+    min-height: auto !important;
+    color: #0f172a !important;
+  }
+
+  .no-print {
+    display: none !important;
+  }
+
+  main {
+    max-width: none !important;
+    min-height: auto !important;
+    padding: 0 !important;
+  }
+
+  .card-surface {
+    break-inside: avoid;
+    border-color: #dbe3ee !important;
+    box-shadow: none !important;
+    animation: none !important;
+  }
+
+  button,
+  a {
+    box-shadow: none !important;
+  }
+
+  svg,
+  canvas,
+  img {
+    max-width: 100% !important;
+  }
+}

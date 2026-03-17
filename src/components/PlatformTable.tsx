@@ -16,14 +16,16 @@ type PlatformTableProps = {
   rows: PlatformStats[];
   timeseries: TimeSeriesPoint[];
   currencyFormatter: (value: number) => string;
+  showSpend?: boolean;
 };
 
 export default function PlatformTable({
   rows,
   timeseries,
   currencyFormatter,
+  showSpend = true,
 }: PlatformTableProps) {
-  const [sortKey, setSortKey] = useState<SortKey>("spend");
+  const [sortKey, setSortKey] = useState<SortKey>(showSpend ? "spend" : "impressions");
   const [direction, setDirection] = useState<"asc" | "desc">("desc");
 
   const sortedRows = useMemo(() => {
@@ -112,16 +114,20 @@ export default function PlatformTable({
                   CTR {sortIcon("ctr")}
                 </button>
               </th>
-              <th className="px-3 py-2 text-right">
-                <button type="button" onClick={() => handleSort("cpm")} className="inline-flex items-center gap-1">
-                  CPM {sortIcon("cpm")}
-                </button>
-              </th>
-              <th className="px-3 py-2 text-right">
-                <button type="button" onClick={() => handleSort("spend")} className="inline-flex items-center gap-1">
-                  Spend {sortIcon("spend")}
-                </button>
-              </th>
+              {showSpend ? (
+                <>
+                  <th className="px-3 py-2 text-right">
+                    <button type="button" onClick={() => handleSort("cpm")} className="inline-flex items-center gap-1">
+                      CPM {sortIcon("cpm")}
+                    </button>
+                  </th>
+                  <th className="px-3 py-2 text-right">
+                    <button type="button" onClick={() => handleSort("spend")} className="inline-flex items-center gap-1">
+                      Spend {sortIcon("spend")}
+                    </button>
+                  </th>
+                </>
+              ) : null}
               <th className="px-3 py-2 text-right">Trend</th>
             </tr>
           </thead>
@@ -137,8 +143,12 @@ export default function PlatformTable({
                 <td className="px-3 py-2 text-right">{row.impressions.toLocaleString("en-US")}</td>
                 <td className="px-3 py-2 text-right">{row.clicks.toLocaleString("en-US")}</td>
                 <td className="px-3 py-2 text-right">{row.ctr.toFixed(2)}%</td>
-                <td className="px-3 py-2 text-right">{currencyFormatter(row.cpm)}</td>
-                <td className="px-3 py-2 text-right font-mono">{currencyFormatter(row.spend)}</td>
+                {showSpend ? (
+                  <>
+                    <td className="px-3 py-2 text-right">{currencyFormatter(row.cpm)}</td>
+                    <td className="px-3 py-2 text-right font-mono">{currencyFormatter(row.spend)}</td>
+                  </>
+                ) : null}
                 <td className="px-3 py-2">
                   <div className="ml-auto h-10 w-28">
                     <ResponsiveContainer width="100%" height="100%">
@@ -173,8 +183,12 @@ export default function PlatformTable({
               <td className="px-3 py-2 text-right text-slate-900">{totals.impressions.toLocaleString("en-US")}</td>
               <td className="px-3 py-2 text-right text-slate-900">{totals.clicks.toLocaleString("en-US")}</td>
               <td className="px-3 py-2 text-right text-slate-900">{totalCtr.toFixed(2)}%</td>
-              <td className="px-3 py-2 text-right text-slate-900">{currencyFormatter(totalCpm)}</td>
-              <td className="px-3 py-2 text-right font-mono text-slate-900">{currencyFormatter(totals.spend)}</td>
+              {showSpend ? (
+                <>
+                  <td className="px-3 py-2 text-right text-slate-900">{currencyFormatter(totalCpm)}</td>
+                  <td className="px-3 py-2 text-right font-mono text-slate-900">{currencyFormatter(totals.spend)}</td>
+                </>
+              ) : null}
               <td className="px-3 py-2 text-right text-slate-400">-</td>
             </tr>
           </tbody>

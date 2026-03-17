@@ -1,6 +1,9 @@
 platform: meta
 display_name: Meta Ads
 source: mysql
+source_key: meta
+source_type: ads
+canonical_table: canonical_fact_ads_daily
 
 tables:
   campaigns:

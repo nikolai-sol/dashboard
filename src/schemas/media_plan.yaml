@@ -1,6 +1,8 @@
 platform: media_plan
 display_name: Media Plan (Google Sheets)
 source: gsheet
+source_key: media_plan
+source_type: gsheet
 
 columns:
   - { col: platform, label: Platform, type: string }

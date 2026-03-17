@@ -1,10 +1,19 @@
 export type DashboardType = "awareness" | "performance" | "overview";
+export type DashboardSectionId =
+  | "kpi_grid"
+  | "spend_section"
+  | "trend_chart"
+  | "plan_vs_fact"
+  | "platform_table";
 
 export type PlatformMeta = {
   id: string;
   display_name: string;
   source: "mysql" | "gsheet";
   schema_file: string;
+  source_key?: string;
+  source_type?: "ads" | "analytics" | "gsheet" | null;
+  canonical_table?: string | null;
 };
 
 export type DashboardFilterForm = {
@@ -21,6 +30,12 @@ export type DashboardSourceForm = {
   filters: DashboardFilterForm[];
 };
 
+export type MediaPlanBindingForm = {
+  channel: string;
+  source_key: string;
+  platform_campaign_id: string;
+};
+
 export type DashboardFormData = {
   client_id: string;
   client_name: string;
@@ -30,12 +45,16 @@ export type DashboardFormData = {
     currency: "EUR" | "USD" | "RUB";
     period_from: string;
     period_to: string;
+    logo_url?: string;
+    spend_source?: "platform_actual" | "media_plan_derived";
     visible_metrics: string[];
+    section_order?: DashboardSectionId[];
     show_spend: boolean;
     show_ai_summary: boolean;
     kpi_cards: string[];
   };
   sources: DashboardSourceForm[];
+  media_plan_bindings: MediaPlanBindingForm[];
 };
 
 export type DashboardListItem = {

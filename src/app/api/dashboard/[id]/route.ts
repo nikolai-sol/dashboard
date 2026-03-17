@@ -2,18 +2,38 @@ import { NextResponse } from "next/server";
 import type { RowDataPacket } from "mysql2";
 import pool from "@/lib/db";
 import { loadSchema } from "@/lib/schema-parser";
-import { buildAggregateQuery, buildTimeseriesQuery } from "@/lib/query-builder";
+import {
+  getAdsAggregate,
+  getAdsTimeseries,
+  getAnalyticsAggregate,
+  getAnalyticsTimeseries,
+  getFactByCampaignIds,
+  getTimeseriesByCampaignIds,
+  type CanonicalFilter,
+} from "@/lib/canonical-adapter";
 import {
   aggregatePlanByPlatform,
-  aggregatePlanByChannel,
-  fetchMediaPlan,
-  type ChannelPlanAggregate,
+  fetchMediaPlanFromSourceConfig,
+  groupByChannel,
+  type ChannelGroup,
   type MediaPlanRow,
   type PlatformPlanAggregate,
 } from "@/lib/gsheet-fetcher";
 import { PLATFORM_COLORS } from "@/lib/platform-colors";
-import type { DashboardData, PlatformStats, TimeSeriesPoint } from "@/lib/types";
-
+import {
+  resolvePlatformIdFromSourceKey,
+  resolveSourceKey,
+  resolveSourceType,
+} from "@/lib/source-mapping";
+import type {
+  AnalyticsKPI,
+  AnalyticsTimeSeriesPoint,
+  DashboardData,
+  DashboardSectionId,
+  PlatformStats,
+  TimeSeriesPoint,
+  PlanVsFactItem,
+} from "@/lib/types";
 export const dynamic = "force-dynamic";
 
 type JsonRecord = Record<string, unknown>;
@@ -38,24 +58,26 @@ type SourceRow = RowDataPacket & {
   filter_value: string | null;
 };
 
-type AggregateRow = RowDataPacket & {
-  total_impressions: number | string | null;
-  total_clicks: number | string | null;
-  total_spend: number | string | null;
-  total_conversions: number | string | null;
-  total_views: number | string | null;
-  total_reach: number | string | null;
-  avg_frequency: number | string | null;
-  avg_ctr: number | string | null;
-  avg_cpm: number | string | null;
+type BindingRow = RowDataPacket & {
+  channel: string;
+  source_key: string;
+  platform_campaign_id: string;
 };
 
-type TimeseriesRow = RowDataPacket & {
-  date: string | Date;
-  impressions: number | string | null;
-  clicks: number | string | null;
-  spend: number | string | null;
-};
+const SPEND_RELATED_METRICS = new Set(["spend", "cpm", "cpc", "cpv", "cpa", "roas"]);
+const DEFAULT_SECTION_ORDER_WITH_SPEND: DashboardSectionId[] = [
+  "kpi_grid",
+  "spend_section",
+  "trend_chart",
+  "plan_vs_fact",
+  "platform_table",
+];
+const DEFAULT_SECTION_ORDER_NO_SPEND: DashboardSectionId[] = [
+  "kpi_grid",
+  "trend_chart",
+  "plan_vs_fact",
+  "platform_table",
+];
 
 function asNumber(value: unknown): number {
   const parsed = Number(value);
@@ -84,10 +106,24 @@ function parseJson(value: unknown): JsonRecord {
   return {};
 }
 
+function parseAccountIds(value: unknown): string[] {
+  if (!Array.isArray(value)) return [];
+  return value.map((item) => String(item).trim()).filter(Boolean);
+}
+
 function shiftDate(dateIso: string, days: number): string {
   const date = new Date(`${dateIso}T00:00:00Z`);
   date.setUTCDate(date.getUTCDate() + days);
   return date.toISOString().slice(0, 10);
+}
+
+function currentMonthRange(): { from: string; to: string } {
+  const now = new Date();
+  const year = now.getUTCFullYear();
+  const month = now.getUTCMonth();
+  const from = new Date(Date.UTC(year, month, 1)).toISOString().slice(0, 10);
+  const to = new Date(Date.UTC(year, month + 1, 0)).toISOString().slice(0, 10);
+  return { from, to };
 }
 
 function resolveDateRange(
@@ -99,8 +135,9 @@ function resolveDateRange(
   const toQuery = params.get("to");
   const daysQuery = params.get("days");
 
-  const configFrom = String(config.period_from ?? "2025-01-01");
-  const configTo = String(config.period_to ?? "2025-03-31");
+  const fallbackRange = currentMonthRange();
+  const configFrom = String(config.period_from ?? fallbackRange.from);
+  const configTo = String(config.period_to ?? fallbackRange.to);
 
   if (fromQuery && toQuery) {
     return { from: fromQuery, to: toQuery };
@@ -128,28 +165,52 @@ function buildPreviousPeriod(dateFrom: string, dateTo: string): { from: string; 
   return { from: prevFrom, to: prevTo };
 }
 
-function defaultKpiConfig(type: DashboardData["dashboard"]["type"]): string[] {
+function defaultKpiConfig(type: DashboardData["dashboard"]["type"], showSpend: boolean): string[] {
   if (type === "performance") {
-    return ["conversions", "cpa", "clicks", "cpc", "spend"];
+    return showSpend
+      ? ["conversions", "cpa", "clicks", "cpc", "spend"]
+      : ["conversions", "clicks", "ctr", "impressions", "reach"];
   }
   if (type === "overview") {
-    return ["impressions", "clicks", "ctr", "spend", "conversions"];
+    return showSpend
+      ? ["impressions", "clicks", "ctr", "spend", "conversions"]
+      : ["impressions", "clicks", "ctr", "conversions", "reach"];
   }
-  return ["impressions", "clicks", "ctr", "cpm", "spend"];
+  return showSpend
+    ? ["impressions", "clicks", "ctr", "cpm", "spend"]
+    : ["impressions", "clicks", "ctr", "views", "reach"];
 }
 
-function getKpiConfig(config: JsonRecord, type: DashboardData["dashboard"]["type"]): string[] {
+function getKpiConfig(
+  config: JsonRecord,
+  type: DashboardData["dashboard"]["type"],
+  showSpend: boolean,
+): string[] {
   const raw = config.kpi_cards;
   if (Array.isArray(raw)) {
     const values = raw
       .map((item) => String(item).trim().toLowerCase())
+      .filter((item) => showSpend || !SPEND_RELATED_METRICS.has(item))
       .filter(Boolean)
       .slice(0, 5);
-    if (values.length === 5) {
+    if (values.length > 0) {
       return values;
     }
   }
-  return defaultKpiConfig(type);
+  return defaultKpiConfig(type, showSpend);
+}
+
+function getSectionOrder(config: JsonRecord, showSpend: boolean): DashboardSectionId[] {
+  const allowed = showSpend
+    ? DEFAULT_SECTION_ORDER_WITH_SPEND
+    : DEFAULT_SECTION_ORDER_NO_SPEND;
+  if (!Array.isArray(config.section_order)) {
+    return allowed;
+  }
+  const raw = config.section_order.map((item) => String(item) as DashboardSectionId);
+  const seen = new Set<DashboardSectionId>();
+  const filtered = raw.filter((item) => allowed.includes(item) && !seen.has(item) && seen.add(item));
+  return [...filtered, ...allowed.filter((item) => !seen.has(item))];
 }
 
 function mergePlatformStats(items: PlatformStats[]): PlatformStats[] {
@@ -200,94 +261,371 @@ function mergeTimeseries(items: TimeSeriesPoint[]): TimeSeriesPoint[] {
   return [...map.values()].sort((a, b) => a.date.localeCompare(b.date));
 }
 
-function buildPlanVsFactRows(
-  channels: ChannelPlanAggregate[],
-  platformMap: Map<string, PlatformStats>,
-  planByPlatform: Map<string, PlatformPlanAggregate>,
-): DashboardData["plan_vs_fact"] {
-  const platformChannelCount = channels.reduce((acc, channelAgg) => {
-    channelAgg.platforms.forEach((platformId) => {
-      acc.set(platformId, (acc.get(platformId) ?? 0) + 1);
-    });
-    return acc;
-  }, new Map<string, number>());
+function mergeAnalyticsKpi(items: AnalyticsKPI[]): AnalyticsKPI {
+  if (!items.length) {
+    return {
+      total_visits: 0,
+      total_users: 0,
+      total_pageviews: 0,
+      avg_bounce_rate: 0,
+      avg_visit_duration: 0,
+    };
+  }
 
-  return channels.map((channelAgg) => {
-    const channelBudgetByPlatform = channelAgg.lines.reduce((acc, line) => {
-      const platform = String(line.platform ?? "").toLowerCase().trim();
-      if (!platform) return acc;
-      acc.set(platform, (acc.get(platform) ?? 0) + asNumber(line.budget_plan));
+  const totals = items.reduce(
+    (acc, item) => {
+      acc.total_visits += item.total_visits;
+      acc.total_users += item.total_users;
+      acc.total_pageviews += item.total_pageviews;
+      acc.avg_bounce_rate += item.avg_bounce_rate;
+      acc.avg_visit_duration += item.avg_visit_duration;
       return acc;
-    }, new Map<string, number>());
+    },
+    {
+      total_visits: 0,
+      total_users: 0,
+      total_pageviews: 0,
+      avg_bounce_rate: 0,
+      avg_visit_duration: 0,
+    },
+  );
 
-    const facts = channelAgg.platforms.reduce(
-      (acc, platformId) => {
-        const stat = platformMap.get(platformId);
-        if (!stat) return acc;
+  return {
+    total_visits: totals.total_visits,
+    total_users: totals.total_users,
+    total_pageviews: totals.total_pageviews,
+    avg_bounce_rate: Number((totals.avg_bounce_rate / items.length).toFixed(2)),
+    avg_visit_duration: Number((totals.avg_visit_duration / items.length).toFixed(2)),
+  };
+}
 
-        const platformPlan = planByPlatform.get(platformId);
-        const platformPlanBudget = asNumber(platformPlan?.budget_plan);
-        const channelPlanBudget = asNumber(channelBudgetByPlatform.get(platformId));
-        const fallbackShare = 1 / Math.max(1, platformChannelCount.get(platformId) ?? 1);
+function mergeAnalyticsTimeseries(items: AnalyticsTimeSeriesPoint[]): AnalyticsTimeSeriesPoint[] {
+  const map = new Map<string, AnalyticsTimeSeriesPoint>();
 
-        const share =
-          platformPlanBudget > 0 && channelPlanBudget > 0
-            ? Math.min(1, Math.max(0, channelPlanBudget / platformPlanBudget))
-            : fallbackShare;
+  for (const item of items) {
+    const existing = map.get(item.date);
+    if (!existing) {
+      map.set(item.date, { ...item });
+      continue;
+    }
 
-        acc.budget_fact += stat.spend * share;
-        acc.impressions_fact += stat.impressions * share;
-        acc.clicks_fact += stat.clicks * share;
-        acc.views_fact += stat.views * share;
-        acc.conversions_fact += stat.conversions * share;
+    existing.visits += item.visits;
+    existing.users += item.users;
+    existing.pageviews += item.pageviews;
+    existing.bounce_rate = Number(((existing.bounce_rate + item.bounce_rate) / 2).toFixed(2));
+  }
+
+  return [...map.values()].sort((a, b) => a.date.localeCompare(b.date));
+}
+
+async function buildPlanVsFactRowsByChannel(
+  channelGroups: ChannelGroup[],
+  bindingsByChannel: Map<string, Array<{ source_key: string; platform_campaign_id: string }>>,
+  actualAdsSourceKeys: Set<string>,
+  dateFrom: string,
+  dateTo: string,
+): Promise<PlanVsFactItem[]> {
+  const factPromises = channelGroups.map(async (group) => {
+    const bindings = bindingsByChannel.get(group.channel) ?? [];
+    if (bindings.length === 0) {
+      const fallbackSourceKey = resolveSourceKey(group.instrument);
+      if (!actualAdsSourceKeys.has(fallbackSourceKey)) {
+        return null;
+      }
+      return getFactByCampaignIds(fallbackSourceKey, [], dateFrom, dateTo);
+    }
+
+    const bySource = new Map<string, string[]>();
+    bindings.forEach((binding) => {
+      if (!bySource.has(binding.source_key)) {
+        bySource.set(binding.source_key, []);
+      }
+      bySource.get(binding.source_key)!.push(binding.platform_campaign_id);
+    });
+
+    const results = await Promise.all(
+      Array.from(bySource.entries()).map(([sourceKey, ids]) =>
+        getFactByCampaignIds(sourceKey, ids, dateFrom, dateTo),
+      ),
+    );
+
+    return results.reduce(
+      (acc, item) => {
+        acc.total_impressions += asNumber(item?.total_impressions);
+        acc.total_clicks += asNumber(item?.total_clicks);
+        acc.total_spend += asNumber(item?.total_spend);
+        acc.total_conversions += asNumber(item?.total_conversions);
+        acc.total_views += asNumber(item?.total_views);
         return acc;
       },
       {
-        budget_fact: 0,
-        impressions_fact: 0,
-        clicks_fact: 0,
-        views_fact: 0,
-        conversions_fact: 0,
+        total_impressions: 0,
+        total_clicks: 0,
+        total_spend: 0,
+        total_conversions: 0,
+        total_views: 0,
       },
     );
+  });
 
-    const cpm_fact =
-      facts.impressions_fact > 0 ? (facts.budget_fact / facts.impressions_fact) * 1000 : 0;
-    const cpc_fact = facts.clicks_fact > 0 ? facts.budget_fact / facts.clicks_fact : 0;
-    const cpv_fact = facts.views_fact > 0 ? facts.budget_fact / facts.views_fact : 0;
-    const cpa_fact =
-      facts.conversions_fact > 0 ? facts.budget_fact / facts.conversions_fact : 0;
+  const facts = await Promise.all(factPromises);
+
+  return channelGroups.map((group, index) => {
+    const fact = facts[index] ?? null;
+    const bindings = bindingsByChannel.get(group.channel) ?? [];
+    const platforms =
+      bindings.length > 0
+        ? Array.from(new Set(bindings.map((binding) => binding.source_key))).map((sourceKey) => {
+            const platformId = resolvePlatformIdFromSourceKey(sourceKey);
+            const meta = PLATFORM_COLORS[platformId];
+            return {
+              source_key: sourceKey,
+              label: meta?.label ?? sourceKey,
+              color: meta?.hex ?? "#94a3b8",
+            };
+          })
+        : (() => {
+            const fallbackSourceKey = resolveSourceKey(group.instrument);
+            if (!actualAdsSourceKeys.has(fallbackSourceKey)) return [];
+            const platformId = resolvePlatformIdFromSourceKey(fallbackSourceKey);
+            const meta = PLATFORM_COLORS[platformId];
+            return [
+              {
+                source_key: fallbackSourceKey,
+                label: meta?.label ?? fallbackSourceKey,
+                color: meta?.hex ?? "#94a3b8",
+              },
+            ];
+          })();
+
+    const totalImpressions = asNumber(fact?.total_impressions);
+    const totalClicks = asNumber(fact?.total_clicks);
+    const totalViews = asNumber(fact?.total_views);
+    const totalConversions = asNumber(fact?.total_conversions);
+    const totalSpend = Number(asNumber(fact?.total_spend).toFixed(2));
+
+    const budgetPlan = Number(group.budget_plan || 0);
+    const impressionsPlan = Number(group.impressions_plan || 0);
+    const clicksPlan = Number(group.clicks_plan || 0);
+    const viewsPlan = Number(group.views_plan || 0);
+    const conversionsPlan = Number(group.conversions_plan || 0);
+
+    const pacing = budgetPlan > 0 ? totalSpend / budgetPlan : 0;
+
+    const cpmPlan = impressionsPlan > 0 ? (budgetPlan / impressionsPlan) * 1000 : 0;
+    const cpcPlan = clicksPlan > 0 ? budgetPlan / clicksPlan : 0;
+    const cpvPlan = viewsPlan > 0 ? budgetPlan / viewsPlan : 0;
+    const cpaPlan = conversionsPlan > 0 ? budgetPlan / conversionsPlan : 0;
+
+    const cpmFact = totalImpressions > 0 ? (totalSpend / totalImpressions) * 1000 : 0;
+    const cpcFact = totalClicks > 0 ? totalSpend / totalClicks : 0;
+    const cpvFact = totalViews > 0 ? totalSpend / totalViews : 0;
+    const cpaFact = totalConversions > 0 ? totalSpend / totalConversions : 0;
 
     return {
-      channel: channelAgg.channel,
-      buy_type: channelAgg.buy_type,
-      platforms: channelAgg.platforms,
-      platform_colors: channelAgg.platforms.map(
-        (platform) => PLATFORM_COLORS[platform]?.hex ?? "#94a3b8",
+      channel: group.channel,
+      instrument: group.instrument,
+      format: group.format,
+      buy_type: group.buy_type,
+      platforms,
+      campaign_count: bindings.length,
+
+      budget_plan: Number(budgetPlan.toFixed(2)),
+      impressions_plan: impressionsPlan,
+      clicks_plan: clicksPlan,
+      views_plan: viewsPlan,
+      conversions_plan: conversionsPlan,
+      monthly_plan: { ...group.monthly },
+      monthly_breakdown: Object.fromEntries(
+        Object.entries(group.monthly_breakdown ?? {}).map(([month, item]) => [
+          month,
+          {
+            units: Number(item.units || 0),
+            budget: Number((item.budget || 0).toFixed(2)),
+            impressions: Math.round(item.impressions || 0),
+            clicks: Math.round(item.clicks || 0),
+            views: Math.round(item.views || 0),
+            conversions: Math.round(item.conversions || 0),
+            reach: Math.round(item.reach || 0),
+            ctr: Number((item.ctr || 0).toFixed(4)),
+          },
+        ]),
       ),
-      budget_plan: Number(channelAgg.budget_plan.toFixed(2)),
-      budget_fact: Number(facts.budget_fact.toFixed(2)),
-      pacing:
-        channelAgg.budget_plan > 0
-          ? Number((facts.budget_fact / channelAgg.budget_plan).toFixed(3))
-          : 0,
-      impressions_plan: channelAgg.impressions_plan,
-      impressions_fact: Math.round(facts.impressions_fact),
-      clicks_plan: channelAgg.clicks_plan,
-      clicks_fact: Math.round(facts.clicks_fact),
-      views_plan: channelAgg.views_plan,
-      views_fact: Math.round(facts.views_fact),
-      conversions_plan: channelAgg.conversions_plan,
-      conversions_fact: Math.round(facts.conversions_fact),
-      cpm_plan: Number(channelAgg.cpm_plan.toFixed(4)),
-      cpm_fact: Number(cpm_fact.toFixed(4)),
-      cpc_plan: Number(channelAgg.cpc_plan.toFixed(4)),
-      cpc_fact: Number(cpc_fact.toFixed(4)),
-      cpv_plan: Number(channelAgg.cpv_plan.toFixed(4)),
-      cpv_fact: Number(cpv_fact.toFixed(4)),
-      cpa_plan: Number(channelAgg.cpa_plan.toFixed(4)),
-      cpa_fact: Number(cpa_fact.toFixed(4)),
+      budget_fact: Number(totalSpend.toFixed(2)),
+      impressions_fact: Math.round(totalImpressions),
+      clicks_fact: Math.round(totalClicks),
+      views_fact: Math.round(totalViews),
+      conversions_fact: Math.round(totalConversions),
+      pacing,
+
+      cpm_plan: Number(cpmPlan.toFixed(4)),
+      cpm_fact: Number(cpmFact.toFixed(4)),
+      cpc_plan: Number(cpcPlan.toFixed(4)),
+      cpc_fact: Number(cpcFact.toFixed(4)),
+      cpv_plan: Number(cpvPlan.toFixed(4)),
+      cpv_fact: Number(cpvFact.toFixed(4)),
+      cpa_plan: Number(cpaPlan.toFixed(4)),
+      cpa_fact: Number(cpaFact.toFixed(4)),
     };
+  });
+}
+
+async function buildChannelTimeseries(
+  channelGroups: ChannelGroup[],
+  bindingsByChannel: Map<string, Array<{ source_key: string; platform_campaign_id: string }>>,
+  actualAdsSourceKeys: Set<string>,
+  dateFrom: string,
+  dateTo: string,
+): Promise<DashboardData["channel_timeseries"]> {
+  const timeseries = await Promise.all(
+    channelGroups.map(async (group) => {
+      const bindings = bindingsByChannel.get(group.channel) ?? [];
+      const bySource = new Map<string, string[]>();
+
+      if (bindings.length === 0) {
+        const fallbackSourceKey = resolveSourceKey(group.instrument);
+        if (actualAdsSourceKeys.has(fallbackSourceKey)) {
+          bySource.set(fallbackSourceKey, []);
+        }
+      } else {
+        bindings.forEach((binding) => {
+          if (!bySource.has(binding.source_key)) {
+            bySource.set(binding.source_key, []);
+          }
+          bySource.get(binding.source_key)!.push(binding.platform_campaign_id);
+        });
+      }
+
+      if (!bySource.size) return [];
+
+      const sourceResults = await Promise.all(
+        Array.from(bySource.entries()).map(([sourceKey, ids]) =>
+          getTimeseriesByCampaignIds(sourceKey, ids, dateFrom, dateTo),
+        ),
+      );
+
+      const byDate = new Map<
+        string,
+        { impressions: number; clicks: number; spend: number; views: number; conversions: number }
+      >();
+
+      sourceResults.flat().forEach((row) => {
+        const date = toIsoDate(row.date);
+        if (!byDate.has(date)) {
+          byDate.set(date, { impressions: 0, clicks: 0, spend: 0, views: 0, conversions: 0 });
+        }
+        const item = byDate.get(date)!;
+        item.impressions += asNumber(row.impressions);
+        item.clicks += asNumber(row.clicks);
+        item.spend += asNumber(row.spend);
+        item.views += asNumber(row.views);
+        item.conversions += asNumber(row.conversions);
+      });
+
+      return Array.from(byDate.entries()).map(([date, item]) => ({
+        date,
+        channel: group.channel,
+        instrument: group.instrument,
+        impressions: item.impressions,
+        clicks: item.clicks,
+        spend: Number(item.spend.toFixed(2)),
+        views: item.views,
+        conversions: item.conversions,
+      }));
+    }),
+  );
+
+  return timeseries.flat().sort((a, b) => a.date.localeCompare(b.date) || a.channel.localeCompare(b.channel));
+}
+
+function buildPlanBasedPlatformSpend(
+  platformStats: PlatformStats[],
+  planRows: MediaPlanRow[],
+): Map<string, number> {
+  const rowsByPlatform = new Map<string, MediaPlanRow[]>();
+  for (const row of planRows) {
+    const platformId = String(row.platform ?? "").trim().toLowerCase();
+    if (!platformId) continue;
+    if (!rowsByPlatform.has(platformId)) {
+      rowsByPlatform.set(platformId, []);
+    }
+    rowsByPlatform.get(platformId)!.push(row);
+  }
+
+  const spendByPlatform = new Map<string, number>();
+  for (const stat of platformStats) {
+    const planPlatformRows = rowsByPlatform.get(stat.id) ?? [];
+    if (!planPlatformRows.length) continue;
+
+    const totalPlanBudget = planPlatformRows.reduce((sum, row) => sum + asNumber(row.budget_plan), 0);
+    const derivedSpend = planPlatformRows.reduce((sum, row) => {
+      const budgetShare =
+        totalPlanBudget > 0 ? asNumber(row.budget_plan) / totalPlanBudget : 1 / planPlatformRows.length;
+      const impressions = stat.impressions * budgetShare;
+      const clicks = stat.clicks * budgetShare;
+      const views = stat.views * budgetShare;
+      const conversions = stat.conversions * budgetShare;
+
+      if (row.buy_type === "CPC" && row.cpc_plan > 0) {
+        return sum + clicks * row.cpc_plan;
+      }
+      if (row.buy_type === "CPV" && row.cpv_plan > 0) {
+        return sum + views * row.cpv_plan;
+      }
+      if (row.buy_type === "CPA" && row.cpa_plan > 0) {
+        return sum + conversions * row.cpa_plan;
+      }
+      if (row.cpm_plan > 0) {
+        return sum + (impressions / 1000) * row.cpm_plan;
+      }
+      return sum;
+    }, 0);
+
+    if (derivedSpend > 0) {
+      spendByPlatform.set(stat.id, Number(derivedSpend.toFixed(2)));
+    }
+  }
+
+  return spendByPlatform;
+}
+
+function buildPlanBasedTimeseriesSpend(
+  timeseries: TimeSeriesPoint[],
+  planRows: MediaPlanRow[],
+): void {
+  const rowsByPlatform = new Map<string, MediaPlanRow[]>();
+  for (const row of planRows) {
+    const platformId = String(row.platform ?? "").trim().toLowerCase();
+    if (!platformId) continue;
+    if (!rowsByPlatform.has(platformId)) {
+      rowsByPlatform.set(platformId, []);
+    }
+    rowsByPlatform.get(platformId)!.push(row);
+  }
+
+  timeseries.forEach((point) => {
+    const planPlatformRows = rowsByPlatform.get(point.platform) ?? [];
+    if (!planPlatformRows.length) return;
+
+    const totalPlanBudget = planPlatformRows.reduce((sum, row) => sum + asNumber(row.budget_plan), 0);
+    const derivedSpend = planPlatformRows.reduce((sum, row) => {
+      const budgetShare =
+        totalPlanBudget > 0 ? asNumber(row.budget_plan) / totalPlanBudget : 1 / planPlatformRows.length;
+      const impressions = point.impressions * budgetShare;
+      const clicks = point.clicks * budgetShare;
+
+      if (row.buy_type === "CPC" && row.cpc_plan > 0) {
+        return sum + clicks * row.cpc_plan;
+      }
+      if (row.cpm_plan > 0) {
+        return sum + (impressions / 1000) * row.cpm_plan;
+      }
+      return sum;
+    }, 0);
+
+    if (derivedSpend > 0) {
+      point.spend = Number(derivedSpend.toFixed(2));
+    }
   });
 }
 
@@ -309,6 +647,11 @@ export async function GET(
     }
 
     const config = parseJson(dashboard.config);
+    const showSpend = Boolean(config.show_spend ?? true);
+    const spendSource =
+      String(config.spend_source ?? "platform_actual") === "media_plan_derived"
+        ? "media_plan_derived"
+        : "platform_actual";
     const range = resolveDateRange(request, config);
     const previousRange = buildPreviousPeriod(range.from, range.to);
 
@@ -324,82 +667,120 @@ export async function GET(
     const timeseriesRaw: TimeSeriesPoint[] = [];
     const prevStatsRaw: PlatformStats[] = [];
     const planRows: MediaPlanRow[] = [];
+    const analyticsKpiRaw: AnalyticsKPI[] = [];
+    const analyticsTimeseriesRaw: AnalyticsTimeSeriesPoint[] = [];
+    const actualAdsSourceKeys = new Set<string>();
 
     for (const source of sourceRows) {
       try {
         const schema = loadSchema(source.schema_file);
+        const sourceKey = schema.source_key ?? resolveSourceKey(source.platform);
+        const sourceType = schema.source_type ?? resolveSourceType(sourceKey);
+        const sourceConfig = parseJson(source.source_config);
 
-        if (source.role === "plan" && schema.source === "gsheet") {
-          const sourceConfig = parseJson(source.source_config);
-          const sheetUrl = String(sourceConfig.sheet_url ?? "").trim();
-          if (sheetUrl) {
-            const rows = await fetchMediaPlan(sheetUrl);
-            planRows.push(...rows);
+        if (source.role === "plan" && (schema.source === "gsheet" || sourceType === "gsheet")) {
+          const rows = await fetchMediaPlanFromSourceConfig(sourceConfig);
+          planRows.push(...rows);
+          continue;
+        }
+
+        if (schema.source !== "mysql") {
+          continue;
+        }
+
+        const filter: CanonicalFilter = {
+          source_key: sourceKey,
+          date_from: range.from,
+          date_to: range.to,
+          account_ids: parseAccountIds(sourceConfig.account_ids),
+          campaign_filter: {
+            filter_type: source.filter_type ?? "all",
+            filter_value: source.filter_value,
+          },
+        };
+
+        if (sourceType === "ads") {
+          actualAdsSourceKeys.add(sourceKey);
+          const aggregate = await getAdsAggregate(filter);
+
+          const platformMeta = PLATFORM_COLORS[source.platform];
+          const impressions = asNumber(aggregate?.total_impressions);
+          const clicks = asNumber(aggregate?.total_clicks);
+          const spend = Number(asNumber(aggregate?.total_spend).toFixed(2));
+          const reach = Math.round(asNumber(aggregate?.total_reach));
+
+          platformStatsRaw.push({
+            id: source.platform,
+            name: platformMeta?.label ?? schema.display_name,
+            color: platformMeta?.hex ?? "#94a3b8",
+            impressions,
+            clicks,
+            spend,
+            conversions: Math.round(asNumber(aggregate?.total_conversions)),
+            views: Math.round(asNumber(aggregate?.total_views)),
+            reach,
+            frequency: reach > 0 ? Number((impressions / reach).toFixed(2)) : 0,
+            ctr: Number(asNumber(aggregate?.avg_ctr).toFixed(2)),
+            cpm: Number(asNumber(aggregate?.avg_cpm).toFixed(2)),
+          });
+
+          const prevAggregate = await getAdsAggregate({
+            ...filter,
+            date_from: previousRange.from,
+            date_to: previousRange.to,
+          });
+          const prevImpressionsRaw = asNumber(prevAggregate?.total_impressions);
+          const prevClicksRaw = asNumber(prevAggregate?.total_clicks);
+          const prevSpendRaw = Number(asNumber(prevAggregate?.total_spend).toFixed(2));
+          const prevReach = Math.round(asNumber(prevAggregate?.total_reach));
+          prevStatsRaw.push({
+            id: source.platform,
+            name: platformMeta?.label ?? schema.display_name,
+            color: platformMeta?.hex ?? "#94a3b8",
+            impressions: prevImpressionsRaw,
+            clicks: prevClicksRaw,
+            spend: prevSpendRaw,
+            conversions: Math.round(asNumber(prevAggregate?.total_conversions)),
+            views: Math.round(asNumber(prevAggregate?.total_views)),
+            reach: prevReach,
+            frequency: prevReach > 0 ? Number((prevImpressionsRaw / prevReach).toFixed(2)) : 0,
+            ctr: Number(asNumber(prevAggregate?.avg_ctr).toFixed(2)),
+            cpm: Number(asNumber(prevAggregate?.avg_cpm).toFixed(2)),
+          });
+
+          const timeseriesRows = await getAdsTimeseries(filter);
+          for (const row of timeseriesRows) {
+            timeseriesRaw.push({
+              date: toIsoDate(row.date),
+              platform: source.platform,
+              impressions: asNumber(row.impressions),
+              clicks: asNumber(row.clicks),
+              spend: Number(asNumber(row.spend).toFixed(2)),
+            });
           }
           continue;
         }
 
-        if (schema.source !== "mysql" || !schema.tables) {
-          continue;
-        }
-
-        const filter = {
-          filter_type: source.filter_type ?? "all",
-          filter_value: source.filter_value,
-        };
-
-        const aggregateQuery = buildAggregateQuery(schema, filter, range.from, range.to);
-        const [aggregateRows] = await pool.execute<AggregateRow[]>(aggregateQuery.sql, aggregateQuery.params);
-        const aggregate = aggregateRows[0];
-
-        const platformMeta = PLATFORM_COLORS[source.platform];
-        platformStatsRaw.push({
-          id: source.platform,
-          name: platformMeta?.label ?? schema.display_name,
-          color: platformMeta?.hex ?? "#94a3b8",
-          impressions: asNumber(aggregate?.total_impressions),
-          clicks: asNumber(aggregate?.total_clicks),
-          spend: Number(asNumber(aggregate?.total_spend).toFixed(2)),
-          conversions: Math.round(asNumber(aggregate?.total_conversions)),
-          views: Math.round(asNumber(aggregate?.total_views)),
-          reach: Math.round(asNumber(aggregate?.total_reach)),
-          frequency: Number(asNumber(aggregate?.avg_frequency).toFixed(2)),
-          ctr: Number(asNumber(aggregate?.avg_ctr).toFixed(2)),
-          cpm: Number(asNumber(aggregate?.avg_cpm).toFixed(2)),
-        });
-
-        const prevAggregateQuery = buildAggregateQuery(schema, filter, previousRange.from, previousRange.to);
-        const [prevAggregateRows] = await pool.execute<AggregateRow[]>(
-          prevAggregateQuery.sql,
-          prevAggregateQuery.params,
-        );
-        const prevAggregate = prevAggregateRows[0];
-        prevStatsRaw.push({
-          id: source.platform,
-          name: platformMeta?.label ?? schema.display_name,
-          color: platformMeta?.hex ?? "#94a3b8",
-          impressions: asNumber(prevAggregate?.total_impressions),
-          clicks: asNumber(prevAggregate?.total_clicks),
-          spend: Number(asNumber(prevAggregate?.total_spend).toFixed(2)),
-          conversions: Math.round(asNumber(prevAggregate?.total_conversions)),
-          views: Math.round(asNumber(prevAggregate?.total_views)),
-          reach: Math.round(asNumber(prevAggregate?.total_reach)),
-          frequency: Number(asNumber(prevAggregate?.avg_frequency).toFixed(2)),
-          ctr: Number(asNumber(prevAggregate?.avg_ctr).toFixed(2)),
-          cpm: Number(asNumber(prevAggregate?.avg_cpm).toFixed(2)),
-        });
-
-        const timeseriesQuery = buildTimeseriesQuery(schema, filter, range.from, range.to);
-        const [timeseriesRows] = await pool.execute<TimeseriesRow[]>(timeseriesQuery.sql, timeseriesQuery.params);
-
-        for (const row of timeseriesRows) {
-          timeseriesRaw.push({
-            date: toIsoDate(row.date),
-            platform: source.platform,
-            impressions: asNumber(row.impressions),
-            clicks: asNumber(row.clicks),
-            spend: Number(asNumber(row.spend).toFixed(2)),
+        if (sourceType === "analytics") {
+          const aggregate = await getAnalyticsAggregate(filter);
+          analyticsKpiRaw.push({
+            total_visits: Math.round(asNumber(aggregate?.total_visits)),
+            total_users: Math.round(asNumber(aggregate?.total_users)),
+            total_pageviews: Math.round(asNumber(aggregate?.total_pageviews)),
+            avg_bounce_rate: Number(asNumber(aggregate?.avg_bounce_rate).toFixed(2)),
+            avg_visit_duration: Number(asNumber(aggregate?.avg_visit_duration).toFixed(2)),
           });
+
+          const timeseriesRows = await getAnalyticsTimeseries(filter);
+          for (const row of timeseriesRows) {
+            analyticsTimeseriesRaw.push({
+              date: toIsoDate(row.date),
+              visits: Math.round(asNumber(row.visits)),
+              users: Math.round(asNumber(row.users)),
+              pageviews: Math.round(asNumber(row.pageviews)),
+              bounce_rate: Number(asNumber(row.bounce_rate).toFixed(2)),
+            });
+          }
         }
       } catch (sourceError) {
         console.warn(`Skipping source ${source.platform}:`, sourceError);
@@ -409,6 +790,27 @@ export async function GET(
     const platformResults = mergePlatformStats(platformStatsRaw);
     const prevPlatformResults = mergePlatformStats(prevStatsRaw);
     const timeseriesResults = mergeTimeseries(timeseriesRaw);
+
+    if (spendSource === "media_plan_derived") {
+      buildPlanBasedTimeseriesSpend(timeseriesResults, planRows);
+
+      const planSpendByPlatform = buildPlanBasedPlatformSpend(platformResults, planRows);
+      const prevPlanSpendByPlatform = buildPlanBasedPlatformSpend(prevPlatformResults, planRows);
+
+      platformResults.forEach((row) => {
+        const derivedSpend = planSpendByPlatform.get(row.id);
+        if (derivedSpend === undefined) return;
+        row.spend = derivedSpend;
+        row.cpm = row.impressions > 0 ? Number(((derivedSpend / row.impressions) * 1000).toFixed(2)) : 0;
+      });
+
+      prevPlatformResults.forEach((row) => {
+        const derivedSpend = prevPlanSpendByPlatform.get(row.id);
+        if (derivedSpend === undefined) return;
+        row.spend = derivedSpend;
+        row.cpm = row.impressions > 0 ? Number(((derivedSpend / row.impressions) * 1000).toFixed(2)) : 0;
+      });
+    }
 
     const totalImpressions = platformResults.reduce((sum, row) => sum + row.impressions, 0);
     const totalClicks = platformResults.reduce((sum, row) => sum + row.clicks, 0);
@@ -433,27 +835,69 @@ export async function GET(
         prevImpressions > 0 ? Number(((prevSpend / prevImpressions) * 1000).toFixed(2)) : 0,
     };
 
-    const planByChannel = aggregatePlanByChannel(planRows);
+    const planByChannel = groupByChannel(planRows);
     const planByPlatform = aggregatePlanByPlatform(planRows);
-    const platformMap = new Map(platformResults.map((item) => [item.id, item]));
-    const planVsFact = buildPlanVsFactRows(planByChannel, platformMap, planByPlatform);
+    const [bindingRows] = await pool.execute<BindingRow[]>(
+      `SELECT channel, source_key, platform_campaign_id
+       FROM media_plan_bindings
+       WHERE dashboard_id = ?`,
+      [dashboard.id],
+    );
+    const bindingsByChannel = bindingRows.reduce((acc, row) => {
+      const channel = String(row.channel ?? "");
+      if (!acc.has(channel)) {
+        acc.set(channel, []);
+      }
+      acc.get(channel)!.push({
+        source_key: String(row.source_key ?? ""),
+        platform_campaign_id: String(row.platform_campaign_id ?? ""),
+      });
+      return acc;
+    }, new Map<string, Array<{ source_key: string; platform_campaign_id: string }>>());
+    const planVsFact = await buildPlanVsFactRowsByChannel(
+      planByChannel,
+      bindingsByChannel,
+      actualAdsSourceKeys,
+      range.from,
+      range.to,
+    );
+    const channelTimeseries = await buildChannelTimeseries(
+      planByChannel,
+      bindingsByChannel,
+      actualAdsSourceKeys,
+      range.from,
+      range.to,
+    );
+    const analyticsKpi = mergeAnalyticsKpi(analyticsKpiRaw);
+    const analyticsTimeseries = mergeAnalyticsTimeseries(analyticsTimeseriesRaw);
 
     const response: DashboardData = {
       dashboard: {
         client_name: dashboard.client_name,
         dashboard_name: dashboard.dashboard_name,
+        logo_url: typeof config.logo_url === "string" ? config.logo_url : null,
         type: dashboard.dashboard_type,
         period: {
           from: range.from,
           to: range.to,
         },
         currency: String(config.currency ?? "EUR"),
+        show_spend: showSpend,
+        section_order: getSectionOrder(config, showSpend),
       },
-      kpi_config: getKpiConfig(config, dashboard.dashboard_type),
+      kpi_config: getKpiConfig(config, dashboard.dashboard_type, showSpend),
       kpi,
       platforms: platformResults,
       timeseries: timeseriesResults,
       plan_vs_fact: planVsFact,
+      channel_timeseries: channelTimeseries,
+      analytics:
+        analyticsKpiRaw.length > 0
+          ? {
+              kpi: analyticsKpi,
+              timeseries: analyticsTimeseries,
+            }
+          : undefined,
     };
 
     return NextResponse.json(response);

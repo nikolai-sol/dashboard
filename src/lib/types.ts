@@ -1,14 +1,23 @@
 export type DashboardKind = "awareness" | "performance" | "overview";
+export type DashboardSectionId =
+  | "kpi_grid"
+  | "spend_section"
+  | "trend_chart"
+  | "plan_vs_fact"
+  | "platform_table";
 
 export interface DashboardMeta {
   client_name: string;
   dashboard_name: string;
+  logo_url?: string | null;
   type: DashboardKind;
   period: {
     from: string;
     to: string;
   };
   currency: string;
+  show_spend: boolean;
+  section_order: DashboardSectionId[];
 }
 
 export interface DashboardKPI {
@@ -47,22 +56,42 @@ export interface TimeSeriesPoint {
   spend: number;
 }
 
-export interface PlanVsFactRow {
+export interface PlanVsFactItem {
   channel: string;
+  instrument: string;
+  format: string;
   buy_type: string;
-  platforms: string[];
-  platform_colors: string[];
+  platforms: Array<{ source_key: string; label: string; color: string }>;
+  campaign_count: number;
+
   budget_plan: number;
-  budget_fact: number;
-  pacing: number;
   impressions_plan: number;
-  impressions_fact: number;
   clicks_plan: number;
-  clicks_fact: number;
   views_plan: number;
-  views_fact: number;
   conversions_plan: number;
+  monthly_plan: Record<string, number>;
+  monthly_breakdown: Record<
+    string,
+    {
+      units: number;
+      budget: number;
+      impressions: number;
+      clicks: number;
+      views: number;
+      conversions: number;
+      reach: number;
+      ctr: number;
+    }
+  >;
+
+  budget_fact: number;
+  impressions_fact: number;
+  clicks_fact: number;
+  views_fact: number;
   conversions_fact: number;
+
+  pacing: number;
+
   cpm_plan: number;
   cpm_fact: number;
   cpc_plan: number;
@@ -73,11 +102,42 @@ export interface PlanVsFactRow {
   cpa_fact: number;
 }
 
+export interface AnalyticsKPI {
+  total_visits: number;
+  total_users: number;
+  total_pageviews: number;
+  avg_bounce_rate: number;
+  avg_visit_duration: number;
+}
+
+export interface AnalyticsTimeSeriesPoint {
+  date: string;
+  visits: number;
+  users: number;
+  pageviews: number;
+  bounce_rate: number;
+}
+
 export interface DashboardData {
   dashboard: DashboardMeta;
   kpi_config: string[];
   kpi: DashboardKPI;
   platforms: PlatformStats[];
   timeseries: TimeSeriesPoint[];
-  plan_vs_fact: PlanVsFactRow[];
+  plan_vs_fact: PlanVsFactItem[];
+  analytics?: {
+    kpi: AnalyticsKPI;
+    timeseries: AnalyticsTimeSeriesPoint[];
+  };
+  // optional channel timeseries for future "by channel" view
+  channel_timeseries?: Array<{
+    date: string;
+    channel: string;
+    instrument?: string;
+    impressions: number;
+    clicks: number;
+    spend: number;
+    views: number;
+    conversions: number;
+  }>;
 }

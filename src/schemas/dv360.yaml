@@ -1,6 +1,9 @@
 platform: dv360
 display_name: DV360
 source: mysql
+source_key: dv360
+source_type: ads
+canonical_table: canonical_fact_ads_daily
 
 tables:
   campaigns:

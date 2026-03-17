@@ -7,6 +7,7 @@ type Campaign = {
   id: string;
   name: string;
   platform: string;
+  copyable_id?: string;
 };
 
 type WizardStep3Props = {
@@ -20,6 +21,11 @@ function parseIdList(value: string | null): string[] {
     .split(",")
     .map((item) => item.trim())
     .filter(Boolean);
+}
+
+function parseAccountIds(value: unknown): string[] {
+  if (!Array.isArray(value)) return [];
+  return value.map((item) => String(item).trim()).filter(Boolean);
 }
 
 export default function WizardStep3({ data, onChange }: WizardStep3Props) {
@@ -57,6 +63,10 @@ export default function WizardStep3({ data, onChange }: WizardStep3Props) {
     try {
       const params = new URLSearchParams({ platform: source.platform });
       if (search) params.set("search", search);
+      const accountIds = parseAccountIds(source.source_config?.account_ids);
+      if (accountIds.length) {
+        params.set("account_ids", accountIds.join(","));
+      }
       const response = await fetch(`/api/admin/campaigns?${params.toString()}`);
       const json = await response.json();
       setCampaignsBySource((prev) => ({ ...prev, [sourceIndex]: json.campaigns ?? [] }));
@@ -165,26 +175,42 @@ export default function WizardStep3({ data, onChange }: WizardStep3Props) {
                         campaigns.map((campaign) => {
                           const checked = selectedIds.includes(campaign.id);
                           return (
-                            <label key={campaign.id} className="flex items-center gap-2 py-1 text-xs">
-                              <input
-                                type="checkbox"
-                                checked={checked}
-                                onChange={(e) => {
-                                  const next = new Set(selectedIds);
-                                  if (e.target.checked) {
-                                    next.add(campaign.id);
-                                  } else {
-                                    next.delete(campaign.id);
+                            <div key={campaign.id} className="flex items-center justify-between gap-2 py-1 text-xs">
+                              <label className="flex flex-1 items-center gap-2">
+                                <input
+                                  type="checkbox"
+                                  checked={checked}
+                                  onChange={(e) => {
+                                    const next = new Set(selectedIds);
+                                    if (e.target.checked) {
+                                      next.add(campaign.id);
+                                    } else {
+                                      next.delete(campaign.id);
+                                    }
+                                    updateFilter(index, {
+                                      filter_type: "id_list",
+                                      filter_value: Array.from(next).join(","),
+                                    });
+                                  }}
+                                />
+                                <span className="font-mono text-slate-500">{campaign.id}</span>
+                                <span className="truncate">{campaign.name}</span>
+                              </label>
+                              <button
+                                type="button"
+                                onClick={async () => {
+                                  const value = campaign.copyable_id ?? campaign.id;
+                                  try {
+                                    await navigator.clipboard.writeText(value);
+                                  } catch {
+                                    // ignore clipboard errors
                                   }
-                                  updateFilter(index, {
-                                    filter_type: "id_list",
-                                    filter_value: Array.from(next).join(","),
-                                  });
                                 }}
-                              />
-                              <span className="font-mono text-slate-500">{campaign.id}</span>
-                              <span>{campaign.name}</span>
-                            </label>
+                                className="shrink-0 rounded border border-slate-300 px-2 py-0.5 text-[10px] text-slate-600 hover:bg-slate-50"
+                              >
+                                Copy ID
+                              </button>
+                            </div>
                           );
                         })
                       )}

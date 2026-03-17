@@ -1,0 +1,6 @@
+platform: yandex_metrika
+display_name: Яндекс.Метрика
+source: mysql
+source_key: yandex_metrika
+source_type: analytics
+canonical_table: canonical_fact_site_analytics_daily

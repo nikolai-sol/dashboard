@@ -1,12 +1,13 @@
 import { NextResponse } from "next/server";
-import type { RowDataPacket } from "mysql2";
-import pool from "@/lib/db";
 import { getSchemaMetaByPlatform } from "@/lib/schema-registry";
-import { loadSchema } from "@/lib/schema-parser";
+import { getCampaignNames } from "@/lib/canonical-adapter";
+import { resolveSourceType } from "@/lib/source-mapping";
 
-function qualifyFilter(filter: string): string {
-  if (filter.includes(".")) return filter;
-  return filter.replace(/^\s*([a-zA-Z_][a-zA-Z0-9_]*)/, "c.$1");
+function parseAccountIds(value: string): string[] {
+  return value
+    .split(",")
+    .map((item) => item.trim())
+    .filter(Boolean);
 }
 
 export async function GET(request: Request) {
@@ -16,6 +17,7 @@ export async function GET(request: Request) {
       .trim()
       .toLowerCase();
     const search = String(url.searchParams.get("search") ?? "").trim();
+    const accountIds = parseAccountIds(String(url.searchParams.get("account_ids") ?? ""));
 
     if (!platform) {
       return NextResponse.json({ error: "platform query param is required" }, { status: 400 });
@@ -26,66 +28,32 @@ export async function GET(request: Request) {
       return NextResponse.json({ campaigns: [], total: 0, message: "Platform schema not found" });
     }
 
-    const schema = loadSchema(schemaMeta.schema_file);
-    if (schema.source !== "mysql" || !schema.tables) {
-      return NextResponse.json({ campaigns: [], total: 0, message: "Platform is not mysql source" });
-    }
-
-    const campaigns = schema.tables.campaigns;
-    const wheres: string[] = [];
-    const params: Array<string | number | Date | null> = [];
-
-    if (campaigns.filter) {
-      wheres.push(qualifyFilter(campaigns.filter));
-    }
-    if (search) {
-      wheres.push(`c.${campaigns.name_col} LIKE ?`);
-      params.push(`%${search}%`);
-    }
-
-    const whereSql = wheres.length ? ` WHERE ${wheres.join(" AND ")}` : "";
-
-    const sql = `
-      SELECT
-        c.${campaigns.id_col} as id,
-        c.${campaigns.name_col} as name
-      FROM ${campaigns.table} c
-      ${whereSql}
-      ORDER BY c.${campaigns.name_col}
-      LIMIT 200
-    `;
-
-    const countSql = `
-      SELECT COUNT(*) as total
-      FROM ${campaigns.table} c
-      ${whereSql}
-    `;
-
-    const [rows] = await pool.execute<RowDataPacket[]>(sql, params);
-    const [countRows] = await pool.execute<RowDataPacket[]>(countSql, params);
-
-    const result = rows.map((row) => ({
-      id: String(row.id),
-      name: String(row.name),
-      platform,
-    }));
-
-    return NextResponse.json({
-      campaigns: result,
-      total: Number(countRows[0]?.total ?? result.length),
-    });
-  } catch (error: unknown) {
-    const err = error as { code?: string; message?: string };
-    if (err.code === "ER_NO_SUCH_TABLE") {
+    const sourceType = schemaMeta.source_type ?? resolveSourceType(schemaMeta.source_key);
+    if (sourceType !== "ads") {
       return NextResponse.json({
         campaigns: [],
         total: 0,
-        message: "No campaigns table yet for this platform. Run ETL first.",
+        message: "Platform does not use campaign dictionary",
       });
     }
+    const campaigns = await getCampaignNames(schemaMeta.source_key, search, accountIds);
+    const result = campaigns.map((row) => {
+      const id = String(row.id);
+      return {
+        id,
+        name: String(row.name),
+        platform,
+        copyable_id: id,
+      };
+    });
 
+    return NextResponse.json({
+      campaigns: result,
+      total: result.length,
+    });
+  } catch (error: unknown) {
     return NextResponse.json(
-      { error: "Failed to load campaigns", details: err.message ?? String(error) },
+      { error: "Failed to load campaigns", details: error instanceof Error ? error.message : String(error) },
       { status: 500 },
     );
   }

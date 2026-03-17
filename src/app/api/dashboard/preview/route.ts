@@ -1,16 +1,15 @@
 import { NextResponse } from "next/server";
-import type { RowDataPacket } from "mysql2/promise";
-import pool from "@/lib/db";
 import { normalizeDashboardPayload } from "@/lib/admin-dashboards";
-import { aggregatePlanByChannel, fetchMediaPlan } from "@/lib/gsheet-fetcher";
+import { groupByChannel, fetchMediaPlanFromSourceConfig } from "@/lib/gsheet-fetcher";
 import { loadSchema } from "@/lib/schema-parser";
+import {
+  countAdsCampaigns,
+  countAnalyticsAccounts,
+  type CanonicalFilter,
+} from "@/lib/canonical-adapter";
+import { resolveSourceKey, resolveSourceType } from "@/lib/source-mapping";
 
 export const dynamic = "force-dynamic";
-
-function qualifyFilter(filter: string): string {
-  if (filter.includes(".")) return filter;
-  return filter.replace(/^\s*([a-zA-Z_][a-zA-Z0-9_]*)/, "c.$1");
-}
 
 function parseSourceConfig(value: unknown): Record<string, unknown> {
   if (!value) return {};
@@ -25,6 +24,11 @@ function parseSourceConfig(value: unknown): Record<string, unknown> {
     return value as Record<string, unknown>;
   }
   return {};
+}
+
+function parseAccountIds(value: unknown): string[] {
+  if (!Array.isArray(value)) return [];
+  return value.map((item) => String(item).trim()).filter(Boolean);
 }
 
 export async function POST(request: Request) {
@@ -45,7 +49,10 @@ export async function POST(request: Request) {
     for (const source of actualSources) {
       try {
         const schema = loadSchema(source.schema_file);
-        if (schema.source !== "mysql" || !schema.tables) {
+        const sourceKey = schema.source_key ?? resolveSourceKey(source.platform);
+        const sourceType = schema.source_type ?? resolveSourceType(sourceKey);
+
+        if (schema.source !== "mysql" && sourceType !== "gsheet") {
           actualSummary.push({
             platform: source.platform,
             campaigns: 0,
@@ -55,49 +62,38 @@ export async function POST(request: Request) {
           continue;
         }
 
-        const campaigns = schema.tables.campaigns;
-        const filter = source.filters[0] ?? { filter_type: "all" as const, filter_value: null };
-        const wheres: string[] = [];
-        const params: Array<string | number> = [];
-
-        if (campaigns.filter) {
-          wheres.push(qualifyFilter(campaigns.filter));
+        if (sourceType === "gsheet") {
+          continue;
         }
 
-        if (filter.filter_type === "name_pattern" && filter.filter_value) {
-          wheres.push(`c.${campaigns.name_col} LIKE ?`);
-          params.push(filter.filter_value);
-        } else if (filter.filter_type === "id_list" && filter.filter_value) {
-          const ids = filter.filter_value
-            .split(",")
-            .map((item) => item.trim())
-            .filter(Boolean);
-          if (ids.length > 0) {
-            wheres.push(`c.${campaigns.id_col} IN (${ids.map(() => "?").join(",")})`);
-            params.push(...ids);
-          }
-        }
+        const filter: CanonicalFilter = {
+          source_key: sourceKey,
+          date_from: "1900-01-01",
+          date_to: "2999-12-31",
+          account_ids: parseAccountIds(source.source_config?.account_ids),
+          campaign_filter: source.filters[0] ?? {
+            filter_type: "all",
+            filter_value: null,
+          },
+        };
 
-        const whereSql = wheres.length ? ` WHERE ${wheres.join(" AND ")}` : "";
-        const sql = `SELECT COUNT(*) as total FROM ${campaigns.table} c${whereSql}`;
-        const [rows] = await pool.execute<RowDataPacket[]>(sql, params);
-        const total = Number(rows[0]?.total ?? 0);
+        const total =
+          sourceType === "analytics"
+            ? await countAnalyticsAccounts(sourceKey, filter.account_ids)
+            : await countAdsCampaigns(filter);
 
         actualSummary.push({
           platform: source.platform,
           campaigns: total,
           status: total > 0 ? "ok" : "empty",
+          message: sourceType === "analytics" ? "Analytics source checked by account presence." : undefined,
         });
       } catch (error) {
-        const err = error as { code?: string; message?: string };
         actualSummary.push({
           platform: source.platform,
           campaigns: 0,
           status: "error",
-          message:
-            err.code === "ER_NO_SUCH_TABLE"
-              ? "No campaigns table yet for this platform."
-              : err.message ?? "Failed to load campaigns",
+          message: error instanceof Error ? error.message : "Failed to load canonical source",
         });
       }
     }
@@ -110,14 +106,17 @@ export async function POST(request: Request) {
 
     if (planSource) {
       const sourceConfig = parseSourceConfig(planSource.source_config);
-      const sheetUrl = String(sourceConfig.sheet_url ?? "").trim();
-      if (!sheetUrl) {
+      const hasInput =
+        Boolean(String(sourceConfig.sheet_url ?? "").trim()) ||
+        Array.isArray(sourceConfig.inline_rows) ||
+        Boolean(sourceConfig.upload_file);
+      if (!hasInput) {
         planStatus = "missing_url";
-        planMessage = "Sheet URL is empty.";
+        planMessage = "Sheet URL is empty and no uploaded plan is attached.";
       } else {
         try {
-          const rows = await fetchMediaPlan(sheetUrl);
-          const channels = aggregatePlanByChannel(rows);
+          const rows = await fetchMediaPlanFromSourceConfig(sourceConfig);
+          const channels = groupByChannel(rows);
           const platforms = new Set(rows.map((row) => row.platform).filter(Boolean));
           planRows = rows.length;
           planChannels = channels.length;

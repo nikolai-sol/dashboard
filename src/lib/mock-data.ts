@@ -1,5 +1,5 @@
 import { ACTIVE_PLATFORM_IDS, PLATFORM_COLORS } from "@/lib/platform-colors";
-import type { DashboardData, PlanVsFactRow, PlatformStats, TimeSeriesPoint } from "@/lib/types";
+import type { DashboardData, PlanVsFactItem, PlatformStats, TimeSeriesPoint } from "@/lib/types";
 
 type Profile = {
   platform: string;
@@ -235,7 +235,7 @@ function aggregatePlatform(points: TimeSeriesPoint[]): PlatformStats[] {
   });
 }
 
-function buildPlanVsFact(platforms: PlatformStats[]): PlanVsFactRow[] {
+function buildPlanVsFact(platforms: PlatformStats[]): PlanVsFactItem[] {
   return PROFILES.map((profile) => {
     const stats = platforms.find((item) => item.id === profile.platform)!;
     const blueprint = PLAN_BLUEPRINTS[profile.platform];
@@ -258,19 +258,29 @@ function buildPlanVsFact(platforms: PlatformStats[]): PlanVsFactRow[] {
 
     return {
       channel: blueprint.channel,
+      instrument: profile.platform.toUpperCase(),
+      format: "",
       buy_type: blueprint.buyType,
-      platforms: [profile.platform],
-      platform_colors: [PLATFORM_COLORS[profile.platform].hex],
+      platforms: [
+        {
+          source_key: profile.platform,
+          label: PLATFORM_COLORS[profile.platform].label,
+          color: PLATFORM_COLORS[profile.platform].hex,
+        },
+      ],
+      campaign_count: 1,
       budget_plan: Number(budgetPlan.toFixed(2)),
+      impressions_plan: impressionsPlan,
+      clicks_plan: clicksPlan,
+      views_plan: viewsPlan,
+      conversions_plan: conversionsPlan,
+      monthly_plan: {},
+      monthly_breakdown: {},
       budget_fact: Number(stats.spend.toFixed(2)),
       pacing: budgetPlan > 0 ? Number((stats.spend / budgetPlan).toFixed(3)) : 0,
-      impressions_plan: impressionsPlan,
       impressions_fact: stats.impressions,
-      clicks_plan: clicksPlan,
       clicks_fact: stats.clicks,
-      views_plan: viewsPlan,
       views_fact: stats.views,
-      conversions_plan: conversionsPlan,
       conversions_fact: stats.conversions,
       cpm_plan: Number(cpmPlan.toFixed(2)),
       cpm_fact: Number(cpmFact.toFixed(2)),
@@ -320,6 +330,8 @@ export const mockDashboardData: DashboardData = {
       to: "2025-03-31",
     },
     currency: "EUR",
+    show_spend: true,
+    section_order: ["kpi_grid", "spend_section", "trend_chart", "plan_vs_fact", "platform_table"],
   },
   kpi_config: ["impressions", "clicks", "ctr", "cpm", "spend"],
   kpi,

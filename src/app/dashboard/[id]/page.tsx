@@ -10,11 +10,17 @@ import PlatformTable from "@/components/PlatformTable";
 import PlanVsFact from "@/components/PlanVsFact";
 import SpendByPlatform from "@/components/SpendByPlatform";
 import TrendChart from "@/components/TrendChart";
-import { ACTIVE_PLATFORM_IDS, PLATFORM_COLORS } from "@/lib/platform-colors";
 import type { DashboardData } from "@/lib/types";
+import { resolvePlatformIdFromSourceKey } from "@/lib/source-mapping";
 
-function money(value: number) {
-  return `€${value.toLocaleString("en-US", { maximumFractionDigits: 0 })}`;
+const SPEND_RELATED_KPIS = new Set(["spend", "cpm", "cpc", "cpv", "cpa", "roas"]);
+
+function money(value: number, currency = "EUR") {
+  return new Intl.NumberFormat("en-US", {
+    style: "currency",
+    currency,
+    maximumFractionDigits: 0,
+  }).format(value);
 }
 
 function compact(value: number) {
@@ -40,12 +46,6 @@ async function getDashboardData(id: string): Promise<{
     }
 
     const data = (await response.json()) as DashboardData;
-    const hasLiveMetrics =
-      data.platforms.some((platform) => platform.impressions > 0 || platform.spend > 0) ||
-      data.timeseries.length > 0;
-    if (!hasLiveMetrics) {
-      throw new Error("API returned empty dataset");
-    }
     return { data, demoMode: false, errorMessage: null };
   } catch (error) {
     console.warn("API unavailable, using mock data:", error);
@@ -60,7 +60,7 @@ export default function DashboardByIdPage() {
   const dashboardId = params?.id ? String(params.id).toLowerCase() : "rag_mp";
 
   const [dashboard, setDashboard] = useState<DashboardData | null>(null);
-  const [selectedPlatforms, setSelectedPlatforms] = useState<string[]>(ACTIVE_PLATFORM_IDS);
+  const [selectedPlatforms, setSelectedPlatforms] = useState<string[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [isDemoMode, setIsDemoMode] = useState(false);
   const [apiError, setApiError] = useState<string | null>(null);
@@ -81,7 +81,7 @@ export default function DashboardByIdPage() {
       setApiError(result.errorMessage);
 
       const availablePlatforms = result.data.platforms.map((platform) => platform.id);
-      setSelectedPlatforms(availablePlatforms.length ? availablePlatforms : ACTIVE_PLATFORM_IDS);
+      setSelectedPlatforms(availablePlatforms);
       setIsLoading(false);
     }
 
@@ -106,10 +106,16 @@ export default function DashboardByIdPage() {
 
   const filteredPlanVsFact = useMemo(() => {
     if (!dashboard) return [];
-    return dashboard.plan_vs_fact.filter((item) =>
-      item.platforms.some((platformId) => selectedSet.has(platformId)),
+    return dashboard.plan_vs_fact.filter(
+      (item) =>
+        item.platforms.length === 0 ||
+        item.platforms.some((platform) => selectedSet.has(resolvePlatformIdFromSourceKey(platform.source_key))),
     );
   }, [dashboard, selectedSet]);
+
+  const currencyCode = dashboard?.dashboard.currency || "EUR";
+  const showSpend = dashboard?.dashboard.show_spend ?? true;
+  const sectionOrder = dashboard?.dashboard.section_order ?? [];
 
   const totals = useMemo(() => {
     const totalImpressions = filteredPlatforms.reduce((sum, item) => sum + item.impressions, 0);
@@ -230,8 +236,8 @@ export default function DashboardByIdPage() {
   const latestTrend = useMemo(() => aggregatedDaily.slice(-30), [aggregatedDaily]);
 
   const kpiCards = useMemo(() => {
-    const kpiConfig =
-      dashboard?.kpi_config?.slice(0, 5) ?? ["impressions", "clicks", "ctr", "cpm", "spend"];
+    const kpiConfig = (dashboard?.kpi_config?.slice(0, 5) ?? ["impressions", "clicks", "ctr", "cpm", "spend"])
+      .filter((metric) => showSpend || !SPEND_RELATED_KPIS.has(metric));
 
     const metricMap = {
       impressions: {
@@ -265,7 +271,7 @@ export default function DashboardByIdPage() {
         value: totals.avgCpm,
         prev: previousTotals.prevCpm,
         color: "#f97316",
-        format: (value: number) => money(value),
+        format: (value: number) => money(value, currencyCode),
         trend: latestTrend.map((item) =>
           item.impressions > 0 ? (item.spend / item.impressions) * 1000 : 0,
         ),
@@ -275,7 +281,7 @@ export default function DashboardByIdPage() {
         value: totals.avgCpc,
         prev: previousTotals.prevCpc,
         color: "#6366f1",
-        format: (value: number) => money(value),
+        format: (value: number) => money(value, currencyCode),
         trend: latestTrend.map((item) => (item.clicks > 0 ? item.spend / item.clicks : 0)),
       },
       spend: {
@@ -283,7 +289,7 @@ export default function DashboardByIdPage() {
         value: totals.totalSpend,
         prev: previousTotals.prevSpend,
         color: "#0ea5e9",
-        format: money,
+        format: (value: number) => money(value, currencyCode),
         trend: latestTrend.map((item) => item.spend),
       },
       views: {
@@ -299,7 +305,7 @@ export default function DashboardByIdPage() {
         value: totals.avgCpv,
         prev: previousTotals.prevCpv,
         color: "#d946ef",
-        format: (value: number) => money(value),
+        format: (value: number) => money(value, currencyCode),
         trend: latestTrend.map((item) => (item.views > 0 ? item.spend / item.views : 0)),
       },
       conversions: {
@@ -315,7 +321,7 @@ export default function DashboardByIdPage() {
         value: totals.avgCpa,
         prev: previousTotals.prevCpa,
         color: "#dc2626",
-        format: (value: number) => money(value),
+        format: (value: number) => money(value, currencyCode),
         trend: latestTrend.map((item) =>
           item.conversions > 0 ? item.spend / item.conversions : 0,
         ),
@@ -351,13 +357,83 @@ export default function DashboardByIdPage() {
     return kpiConfig
       .map((key) => metricMap[key as keyof typeof metricMap] ?? metricMap.impressions)
       .slice(0, 5);
-  }, [dashboard?.kpi_config, latestTrend, previousTotals, totals]);
+  }, [currencyCode, dashboard?.kpi_config, latestTrend, previousTotals, showSpend, totals]);
+
+  const renderSection = (sectionId: string) => {
+    if (sectionId === "kpi_grid") {
+      return (
+        <section key={sectionId} className="mb-6 grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-5">
+          {kpiCards.map((card) => (
+            <KPICard
+              key={card.title}
+              title={card.title}
+              value={card.value}
+              prevValue={card.prev}
+              color={card.color}
+              format={card.format}
+              trend={card.trend}
+            />
+          ))}
+        </section>
+      );
+    }
+
+    if (sectionId === "spend_section" && showSpend) {
+      return (
+        <section key={sectionId} className="mb-6 grid grid-cols-1 gap-4 xl:grid-cols-5">
+          <div className="xl:col-span-3">
+            <SpendByPlatform data={filteredPlatforms} currencyFormatter={(value) => money(value, currencyCode)} />
+          </div>
+          <div className="xl:col-span-2">
+            <ChannelMix data={filteredPlatforms} currencyFormatter={(value) => money(value, currencyCode)} />
+          </div>
+        </section>
+      );
+    }
+
+    if (sectionId === "trend_chart") {
+      return (
+        <section key={sectionId} className="mb-6">
+          <TrendChart
+            points={filteredTimeseries}
+            selectedPlatforms={selectedPlatforms}
+            onTogglePlatform={togglePlatform}
+            currencyFormatter={(value) => money(value, currencyCode)}
+            showSpend={showSpend}
+          />
+        </section>
+      );
+    }
+
+    if (sectionId === "plan_vs_fact") {
+      return (
+        <section key={sectionId} className="mb-6">
+          <PlanVsFact rows={filteredPlanVsFact} currencyFormatter={(value) => money(value, currencyCode)} />
+        </section>
+      );
+    }
+
+    if (sectionId === "platform_table") {
+      return (
+        <section key={sectionId} className="pb-4">
+          <PlatformTable
+            rows={filteredPlatforms}
+            timeseries={filteredTimeseries}
+            currencyFormatter={(value) => money(value, currencyCode)}
+            showSpend={showSpend}
+          />
+        </section>
+      );
+    }
+
+    return null;
+  };
 
   const togglePlatform = (platformId: string) => {
     setSelectedPlatforms((prev) => {
       if (prev.includes(platformId)) {
         const next = prev.filter((item) => item !== platformId);
-        const fallback = dashboard?.platforms.map((platform) => platform.id) ?? ACTIVE_PLATFORM_IDS;
+        const fallback = dashboard?.platforms.map((platform) => platform.id) ?? [];
         return next.length ? next : fallback;
       }
       return [...prev, platformId];
@@ -365,7 +441,12 @@ export default function DashboardByIdPage() {
   };
 
   const selectAll = () => {
-    setSelectedPlatforms(Object.keys(PLATFORM_COLORS));
+    setSelectedPlatforms(dashboard?.platforms.map((platform) => platform.id) ?? []);
+  };
+
+  const exportPdf = () => {
+    if (typeof window === "undefined") return;
+    window.print();
   };
 
   if (isLoading || !dashboard) {
@@ -387,64 +468,30 @@ export default function DashboardByIdPage() {
         clientName={clientName}
         title={dashboard.dashboard.dashboard_name}
         periodLabel={periodLabel}
+        logoUrl={dashboard.dashboard.logo_url}
+        onExportPdf={exportPdf}
       />
 
       {isDemoMode ? (
-        <div className="mb-4 rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-800">
+        <div className="no-print mb-4 rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-800">
           Demo mode: API unavailable, showing mock data.
           {apiError ? ` (${apiError})` : ""}
         </div>
       ) : null}
 
       <PlatformFilter
+        className="no-print"
+        platforms={dashboard.platforms.map((platform) => ({
+          id: platform.id,
+          name: platform.name,
+          color: platform.color,
+        }))}
         selected={selectedPlatforms}
         onToggle={togglePlatform}
         onSelectAll={selectAll}
       />
 
-      <section className="mb-6 grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-5">
-        {kpiCards.map((card) => (
-          <KPICard
-            key={card.title}
-            title={card.title}
-            value={card.value}
-            prevValue={card.prev}
-            color={card.color}
-            format={card.format}
-            trend={card.trend}
-          />
-        ))}
-      </section>
-
-      <section className="mb-6 grid grid-cols-1 gap-4 xl:grid-cols-5">
-        <div className="xl:col-span-3">
-          <SpendByPlatform data={filteredPlatforms} currencyFormatter={money} />
-        </div>
-        <div className="xl:col-span-2">
-          <ChannelMix data={filteredPlatforms} currencyFormatter={money} />
-        </div>
-      </section>
-
-      <section className="mb-6">
-        <TrendChart
-          points={filteredTimeseries}
-          selectedPlatforms={selectedPlatforms}
-          onTogglePlatform={togglePlatform}
-          currencyFormatter={money}
-        />
-      </section>
-
-      <section className="mb-6">
-        <PlanVsFact rows={filteredPlanVsFact} currencyFormatter={money} />
-      </section>
-
-      <section className="pb-4">
-        <PlatformTable
-          rows={filteredPlatforms}
-          timeseries={filteredTimeseries}
-          currencyFormatter={money}
-        />
-      </section>
+      {sectionOrder.map((sectionId) => renderSection(sectionId))}
     </main>
   );
 }

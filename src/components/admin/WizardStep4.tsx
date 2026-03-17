@@ -1,6 +1,7 @@
 "use client";
 
-import type { DashboardFormData } from "@/lib/admin-ui-types";
+import { ArrowDown, ArrowUp } from "lucide-react";
+import type { DashboardFormData, DashboardSectionId } from "@/lib/admin-ui-types";
 
 type WizardStep4Props = {
   data: DashboardFormData;
@@ -23,38 +24,85 @@ const KPI_POOL = [
   "frequency",
 ];
 
+const SPEND_RELATED_METRICS = new Set(["spend", "cpm", "cpc", "cpv", "cpa", "roas"]);
+const SECTION_OPTIONS: Array<{ id: DashboardSectionId; label: string; spendRelated?: boolean }> = [
+  { id: "kpi_grid", label: "KPI cards" },
+  { id: "spend_section", label: "Spend by platform + channel mix", spendRelated: true },
+  { id: "trend_chart", label: "Trend chart" },
+  { id: "plan_vs_fact", label: "Plan vs fact" },
+  { id: "platform_table", label: "Platform table" },
+];
+
 const PRESETS: Record<string, string[]> = {
   awareness: ["impressions", "clicks", "ctr", "cpm", "spend"],
   video: ["views", "cpv", "impressions", "cpm", "spend"],
   performance: ["conversions", "cpa", "clicks", "cpc", "spend"],
 };
 
+const NON_SPEND_FALLBACK = ["impressions", "clicks", "ctr", "views", "reach"];
+
+function sanitizeMetricPool(showSpend: boolean) {
+  return showSpend ? KPI_POOL : KPI_POOL.filter((metric) => !SPEND_RELATED_METRICS.has(metric));
+}
+
+function sanitizeCards(cards: string[], showSpend: boolean): string[] {
+  const allowed = sanitizeMetricPool(showSpend);
+  const filtered = cards.filter((metric) => allowed.includes(metric));
+  const next = [...filtered];
+  const fallback = showSpend ? PRESETS.awareness : NON_SPEND_FALLBACK;
+  while (next.length < 5) {
+    next.push(fallback[next.length] ?? allowed[0] ?? "impressions");
+  }
+  return next.slice(0, 5);
+}
+
+function sanitizeVisibleMetrics(metrics: string[], showSpend: boolean): string[] {
+  const allowed = new Set(sanitizeMetricPool(showSpend));
+  return metrics.filter((metric) => allowed.has(metric));
+}
+
+function sanitizeSectionOrder(
+  order: DashboardSectionId[] | undefined,
+  showSpend: boolean,
+  fillDefaults = false,
+): DashboardSectionId[] {
+  const allowed = SECTION_OPTIONS.filter((section) => showSpend || !section.spendRelated).map((section) => section.id);
+  const fromConfig = Array.isArray(order) ? order.filter((sectionId) => allowed.includes(sectionId)) : [];
+  const seen = new Set(fromConfig);
+  if (fillDefaults) {
+    return [...fromConfig, ...allowed.filter((sectionId) => !seen.has(sectionId))];
+  }
+  return fromConfig;
+}
+
 export default function WizardStep4({ data, onChange }: WizardStep4Props) {
   const config = data.config;
-  const kpiCards = [...(config.kpi_cards ?? [])];
-  while (kpiCards.length < 5) {
-    kpiCards.push(PRESETS.awareness[kpiCards.length] ?? "impressions");
-  }
+  const showSpend = Boolean(config.show_spend);
+  const metricPool = sanitizeMetricPool(showSpend);
+  const kpiCards = sanitizeCards(config.kpi_cards ?? [], showSpend);
+  const sectionOrder = sanitizeSectionOrder(config.section_order, showSpend, true);
 
-  const setKpiCard = (index: number, value: string) => {
-    const nextCards = [...kpiCards];
-    nextCards[index] = value;
+  const patchConfig = (patch: Partial<DashboardFormData["config"]>) => {
     onChange({
       ...data,
       config: {
         ...config,
-        kpi_cards: nextCards,
+        ...patch,
       },
     });
   };
 
+  const setKpiCard = (index: number, value: string) => {
+    const nextCards = [...kpiCards];
+    nextCards[index] = value;
+    patchConfig({
+      kpi_cards: sanitizeCards(nextCards, showSpend),
+    });
+  };
+
   const setPreset = (presetKey: keyof typeof PRESETS) => {
-    onChange({
-      ...data,
-      config: {
-        ...config,
-        kpi_cards: PRESETS[presetKey],
-      },
+    patchConfig({
+      kpi_cards: sanitizeCards(PRESETS[presetKey], showSpend),
     });
   };
 
@@ -63,12 +111,35 @@ export default function WizardStep4({ data, onChange }: WizardStep4Props) {
     if (checked) set.add(metric);
     else set.delete(metric);
 
-    onChange({
-      ...data,
-      config: {
-        ...config,
-        visible_metrics: Array.from(set),
-      },
+    patchConfig({
+      visible_metrics: sanitizeVisibleMetrics(Array.from(set), showSpend),
+    });
+  };
+
+  const toggleSection = (sectionId: DashboardSectionId, checked: boolean) => {
+    const next = checked
+      ? sanitizeSectionOrder([...sectionOrder, sectionId], showSpend, false)
+      : sanitizeSectionOrder(sectionOrder.filter((item) => item !== sectionId), showSpend, false);
+    patchConfig({ section_order: next });
+  };
+
+  const moveSection = (sectionId: DashboardSectionId, direction: -1 | 1) => {
+    const currentIndex = sectionOrder.indexOf(sectionId);
+    if (currentIndex < 0) return;
+    const nextIndex = currentIndex + direction;
+    if (nextIndex < 0 || nextIndex >= sectionOrder.length) return;
+    const next = [...sectionOrder];
+    const [item] = next.splice(currentIndex, 1);
+    next.splice(nextIndex, 0, item);
+    patchConfig({ section_order: next });
+  };
+
+  const toggleShowSpend = (checked: boolean) => {
+    patchConfig({
+      show_spend: checked,
+      kpi_cards: sanitizeCards(config.kpi_cards ?? [], checked),
+      visible_metrics: sanitizeVisibleMetrics(config.visible_metrics ?? [], checked),
+      section_order: sanitizeSectionOrder(config.section_order, checked, false),
     });
   };
 
@@ -85,7 +156,7 @@ export default function WizardStep4({ data, onChange }: WizardStep4Props) {
                 value={metric}
                 onChange={(e) => setKpiCard(index, e.target.value)}
               >
-                {KPI_POOL.map((item) => (
+                {metricPool.map((item) => (
                   <option key={item} value={item}>
                     {item.toUpperCase()}
                   </option>
@@ -123,7 +194,7 @@ export default function WizardStep4({ data, onChange }: WizardStep4Props) {
       <div className="rounded-xl border border-slate-200 p-4">
         <h4 className="text-sm font-semibold text-slate-900">Visible metrics</h4>
         <div className="mt-3 grid gap-2 sm:grid-cols-3">
-          {KPI_POOL.map((metric) => (
+          {metricPool.map((metric) => (
             <label key={metric} className="inline-flex items-center gap-2 text-sm text-slate-700">
               <input
                 type="checkbox"
@@ -137,24 +208,111 @@ export default function WizardStep4({ data, onChange }: WizardStep4Props) {
       </div>
 
       <div className="rounded-xl border border-slate-200 p-4">
+        <h4 className="text-sm font-semibold text-slate-900">Dashboard sections</h4>
+        <p className="mt-1 text-xs text-slate-500">
+          Choose which dashboard blocks are shown and reorder them. Spend-related blocks are removed automatically when
+          `Show spend` is off.
+        </p>
+        <div className="mt-3 space-y-2">
+          {SECTION_OPTIONS.filter((section) => showSpend || !section.spendRelated).map((section) => {
+            const enabled = sectionOrder.includes(section.id);
+            const index = sectionOrder.indexOf(section.id);
+            return (
+              <div
+                key={section.id}
+                className="flex items-center justify-between gap-3 rounded-lg border border-slate-200 p-3"
+              >
+                <label className="inline-flex items-center gap-2 text-sm text-slate-800">
+                  <input
+                    type="checkbox"
+                    checked={enabled}
+                    onChange={(e) => toggleSection(section.id, e.target.checked)}
+                  />
+                  {section.label}
+                </label>
+                <div className="flex items-center gap-2">
+                  <span className="text-xs text-slate-500">{enabled ? `#${index + 1}` : "hidden"}</span>
+                  <button
+                    type="button"
+                    disabled={!enabled || index <= 0}
+                    onClick={() => moveSection(section.id, -1)}
+                    className="rounded border border-slate-300 p-1 disabled:opacity-40"
+                  >
+                    <ArrowUp className="h-3.5 w-3.5" />
+                  </button>
+                  <button
+                    type="button"
+                    disabled={!enabled || index === -1 || index >= sectionOrder.length - 1}
+                    onClick={() => moveSection(section.id, 1)}
+                    className="rounded border border-slate-300 p-1 disabled:opacity-40"
+                  >
+                    <ArrowDown className="h-3.5 w-3.5" />
+                  </button>
+                </div>
+              </div>
+            );
+          })}
+        </div>
+      </div>
+
+      <div className="rounded-xl border border-slate-200 p-4">
         <h4 className="text-sm font-semibold text-slate-900">Additional options</h4>
         <div className="mt-3 space-y-2 text-sm text-slate-700">
+          <div className="space-y-2">
+            <p className="font-medium text-slate-900">Spend source</p>
+            <label className="flex items-start gap-2 rounded-lg border border-slate-200 p-3">
+              <input
+                type="radio"
+                name="spend_source"
+                checked={(config.spend_source ?? "platform_actual") === "platform_actual"}
+                onChange={() =>
+                  onChange({
+                    ...data,
+                    config: {
+                      ...config,
+                      spend_source: "platform_actual",
+                    },
+                  })
+                }
+              />
+              <span>
+                <span className="block font-medium text-slate-900">Platform actual</span>
+                <span className="block text-xs text-slate-500">
+                  Use source-native spend from ad platforms.
+                </span>
+              </span>
+            </label>
+            <label className="flex items-start gap-2 rounded-lg border border-slate-200 p-3">
+              <input
+                type="radio"
+                name="spend_source"
+                checked={(config.spend_source ?? "platform_actual") === "media_plan_derived"}
+                onChange={() =>
+                  onChange({
+                    ...data,
+                    config: {
+                      ...config,
+                      spend_source: "media_plan_derived",
+                    },
+                  })
+                }
+              />
+              <span>
+                <span className="block font-medium text-slate-900">Media plan derived</span>
+                <span className="block text-xs text-slate-500">
+                  Recalculate dashboard spend using media plan KPI unit cost when a media plan is connected.
+                </span>
+              </span>
+            </label>
+          </div>
           <label className="inline-flex items-center gap-2">
-            <input
-              type="checkbox"
-              checked={config.show_spend}
-              onChange={(e) =>
-                onChange({
-                  ...data,
-                  config: {
-                    ...config,
-                    show_spend: e.target.checked,
-                  },
-                })
-              }
-            />
-            Show spend
-          </label>
+              <input
+                type="checkbox"
+                checked={config.show_spend}
+                onChange={(e) => toggleShowSpend(e.target.checked)}
+              />
+              Show spend
+            </label>
           <label className="inline-flex items-center gap-2">
             <input
               type="checkbox"

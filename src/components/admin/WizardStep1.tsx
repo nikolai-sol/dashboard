@@ -22,6 +22,24 @@ export default function WizardStep1({ data, onChange }: WizardStep1Props) {
     });
   };
 
+  const handleLogoFileChange = async (file: File | null) => {
+    if (!file) return;
+    if (!file.type.startsWith("image/")) {
+      return;
+    }
+    if (file.size > 1024 * 1024) {
+      return;
+    }
+
+    const reader = new FileReader();
+    reader.onload = () => {
+      if (typeof reader.result === "string") {
+        setConfig("logo_url", reader.result);
+      }
+    };
+    reader.readAsDataURL(file);
+  };
+
   return (
     <section className="space-y-4">
       <div className="grid gap-4 md:grid-cols-2">
@@ -55,6 +73,53 @@ export default function WizardStep1({ data, onChange }: WizardStep1Props) {
           placeholder="Awareness Q1 2025"
         />
       </label>
+
+      <label className="text-sm">
+        <span className="mb-1 block font-medium text-slate-700">Logo URL</span>
+        <input
+          className="w-full rounded-lg border border-slate-300 px-3 py-2"
+          value={data.config.logo_url ?? ""}
+          onChange={(e) => setConfig("logo_url", e.target.value)}
+          placeholder="https://.../logo.png"
+        />
+      </label>
+
+      <div className="grid gap-4 md:grid-cols-[1fr_auto] md:items-end">
+        <label className="text-sm">
+          <span className="mb-1 block font-medium text-slate-700">Upload logo from disk</span>
+          <input
+            type="file"
+            accept="image/*"
+            className="w-full rounded-lg border border-slate-300 px-3 py-2"
+            onChange={(e) => void handleLogoFileChange(e.target.files?.[0] ?? null)}
+          />
+          <span className="mt-1 block text-xs text-slate-500">
+            Image only. Stored as data URL in dashboard config. Max 1 MB.
+          </span>
+        </label>
+
+        <button
+          type="button"
+          onClick={() => setConfig("logo_url", "")}
+          className="rounded-lg border border-slate-300 px-3 py-2 text-sm hover:bg-slate-50"
+        >
+          Clear logo
+        </button>
+      </div>
+
+      {data.config.logo_url ? (
+        <div className="w-fit rounded-xl border border-slate-200 bg-slate-50 p-3">
+          {/* eslint-disable-next-line @next/next/no-img-element */}
+          <div className="flex h-16 w-16 items-center justify-center overflow-hidden rounded-lg border border-slate-200 bg-white">
+            {/* eslint-disable-next-line @next/next/no-img-element */}
+            <img
+              src={data.config.logo_url}
+              alt="Logo preview"
+              className="h-full w-full object-contain object-center p-1.5"
+            />
+          </div>
+        </div>
+      ) : null}
 
       <div className="grid gap-4 md:grid-cols-3">
         <label className="text-sm">

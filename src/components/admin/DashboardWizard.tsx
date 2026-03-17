@@ -6,16 +6,39 @@ import DashboardPreview from "@/components/admin/DashboardPreview";
 import WizardStep1 from "@/components/admin/WizardStep1";
 import WizardStep2 from "@/components/admin/WizardStep2";
 import WizardStep3 from "@/components/admin/WizardStep3";
+import WizardStepBinding from "@/components/admin/WizardStepBinding";
 import WizardStep4 from "@/components/admin/WizardStep4";
-import type { DashboardFormData, DashboardSourceForm, PlatformMeta } from "@/lib/admin-ui-types";
+import type {
+  DashboardFormData,
+  DashboardSectionId,
+  DashboardSourceForm,
+  PlatformMeta,
+} from "@/lib/admin-ui-types";
 
 type DashboardWizardProps = {
   dashboardId?: string;
 };
 
-const STEPS = ["Basic", "Sources", "Filters", "Metrics"];
+const STEPS = ["Basic", "Sources", "Filters", "Bindings", "Metrics"];
+
+function defaultSectionOrder(showSpend: boolean): DashboardSectionId[] {
+  return showSpend
+    ? ["kpi_grid", "spend_section", "trend_chart", "plan_vs_fact", "platform_table"]
+    : ["kpi_grid", "trend_chart", "plan_vs_fact", "platform_table"];
+}
+
+function currentMonthRange(): { from: string; to: string } {
+  const now = new Date();
+  const year = now.getFullYear();
+  const month = now.getMonth();
+
+  const from = new Date(Date.UTC(year, month, 1)).toISOString().slice(0, 10);
+  const to = new Date(Date.UTC(year, month + 1, 0)).toISOString().slice(0, 10);
+  return { from, to };
+}
 
 function defaultForm(): DashboardFormData {
+  const range = currentMonthRange();
   return {
     client_id: "",
     client_name: "",
@@ -23,14 +46,18 @@ function defaultForm(): DashboardFormData {
     dashboard_type: "awareness",
     config: {
       currency: "EUR",
-      period_from: "2025-01-01",
-      period_to: "2025-03-31",
+      period_from: range.from,
+      period_to: range.to,
+      logo_url: "",
+      spend_source: "platform_actual",
       visible_metrics: ["impressions", "clicks", "ctr", "cpm", "spend"],
+      section_order: defaultSectionOrder(true),
       show_spend: true,
       show_ai_summary: false,
       kpi_cards: ["impressions", "clicks", "ctr", "cpm", "spend"],
     },
     sources: [],
+    media_plan_bindings: [],
   };
 }
 
@@ -98,6 +125,7 @@ export default function DashboardWizard({ dashboardId }: DashboardWizardProps) {
         if (!dash) throw new Error("Dashboard payload is empty");
 
         const config = (dash.config ?? {}) as Record<string, unknown>;
+        const fallbackRange = currentMonthRange();
         setFormData({
           client_id: String(dash.client_id ?? ""),
           client_name: String(dash.client_name ?? ""),
@@ -105,11 +133,19 @@ export default function DashboardWizard({ dashboardId }: DashboardWizardProps) {
           dashboard_type: dash.dashboard_type ?? "awareness",
           config: {
             currency: (String(config.currency ?? "EUR") as "EUR" | "USD" | "RUB"),
-            period_from: String(config.period_from ?? "2025-01-01"),
-            period_to: String(config.period_to ?? "2025-03-31"),
+            period_from: String(config.period_from ?? fallbackRange.from),
+            period_to: String(config.period_to ?? fallbackRange.to),
+            logo_url: String(config.logo_url ?? ""),
+            spend_source:
+              String(config.spend_source ?? "platform_actual") === "media_plan_derived"
+                ? "media_plan_derived"
+                : "platform_actual",
             visible_metrics: Array.isArray(config.visible_metrics)
               ? config.visible_metrics.map((item) => String(item))
               : ["impressions", "clicks", "ctr", "cpm", "spend"],
+            section_order: Array.isArray(config.section_order)
+              ? config.section_order.map((item) => String(item) as DashboardSectionId)
+              : defaultSectionOrder(Boolean(config.show_spend ?? true)),
             show_spend: Boolean(config.show_spend ?? true),
             show_ai_summary: Boolean(config.show_ai_summary ?? false),
             kpi_cards: Array.isArray(config.kpi_cards)
@@ -117,6 +153,25 @@ export default function DashboardWizard({ dashboardId }: DashboardWizardProps) {
               : ["impressions", "clicks", "ctr", "cpm", "spend"],
           },
           sources: normalizeSources(dash.sources),
+          media_plan_bindings: Array.isArray(dash.media_plan_bindings)
+            ? dash.media_plan_bindings
+                .map((binding: unknown) => {
+                  const item =
+                    binding && typeof binding === "object" ? (binding as Record<string, unknown>) : {};
+                  return {
+                    channel: String(item.channel ?? "").trim(),
+                    source_key: String(item.source_key ?? "").trim().toLowerCase(),
+                    platform_campaign_id: String(item.platform_campaign_id ?? "").trim(),
+                  };
+                })
+                .filter(
+                  (binding: {
+                    channel: string;
+                    source_key: string;
+                    platform_campaign_id: string;
+                  }) => binding.channel && binding.source_key && binding.platform_campaign_id,
+                )
+            : [],
         });
       } catch (err) {
         setError(err instanceof Error ? err.message : "Failed to load dashboard");
@@ -144,7 +199,13 @@ export default function DashboardWizard({ dashboardId }: DashboardWizardProps) {
       if (actualCount === 0) return false;
       const plan = formData.sources.find((source) => source.role === "plan");
       if (plan) {
-        return Boolean(String(plan.source_config?.sheet_url ?? "").trim());
+        const sheetUrl = String(plan.source_config?.sheet_url ?? "").trim();
+        const hasUpload =
+          !!plan.source_config &&
+          typeof plan.source_config.upload_file === "object" &&
+          plan.source_config.upload_file;
+        const hasInline = !!plan.source_config && Array.isArray(plan.source_config.inline_rows);
+        return Boolean(sheetUrl || hasUpload || hasInline);
       }
       return true;
     }
@@ -164,7 +225,7 @@ export default function DashboardWizard({ dashboardId }: DashboardWizardProps) {
         });
     }
 
-    if (step === 3) {
+    if (step === 4) {
       return (formData.config.kpi_cards ?? []).length >= 5;
     }
 
@@ -229,6 +290,9 @@ export default function DashboardWizard({ dashboardId }: DashboardWizardProps) {
         {step === 1 ? <WizardStep2 data={formData} platforms={platforms} onChange={setFormData} /> : null}
         {step === 2 ? <WizardStep3 data={formData} onChange={setFormData} /> : null}
         {step === 3 ? (
+          <WizardStepBinding data={formData} onChange={setFormData} />
+        ) : null}
+        {step === 4 ? (
           <div className="space-y-4">
             <WizardStep4 data={formData} onChange={setFormData} />
             <DashboardPreview data={formData} />
