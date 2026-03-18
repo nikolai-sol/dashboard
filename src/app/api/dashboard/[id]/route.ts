@@ -15,6 +15,7 @@ import {
   aggregatePlanByPlatform,
   fetchMediaPlanFromSourceConfig,
   groupByChannel,
+  MONTH_COLUMNS,
   type ChannelGroup,
   type MediaPlanRow,
   type PlatformPlanAggregate,
@@ -33,6 +34,8 @@ import type {
   PlatformStats,
   TimeSeriesPoint,
   PlanVsFactItem,
+  ChannelPerformanceItem,
+  ChannelPerformanceMetric,
 } from "@/lib/types";
 export const dynamic = "force-dynamic";
 
@@ -69,14 +72,16 @@ const DEFAULT_SECTION_ORDER_WITH_SPEND: DashboardSectionId[] = [
   "kpi_grid",
   "spend_section",
   "trend_chart",
-  "plan_vs_fact",
   "platform_table",
+  "channel_table",
+  "plan_vs_fact",
 ];
 const DEFAULT_SECTION_ORDER_NO_SPEND: DashboardSectionId[] = [
   "kpi_grid",
   "trend_chart",
-  "plan_vs_fact",
   "platform_table",
+  "channel_table",
+  "plan_vs_fact",
 ];
 
 function asNumber(value: unknown): number {
@@ -163,6 +168,139 @@ function buildPreviousPeriod(dateFrom: string, dateTo: string): { from: string; 
   const prevTo = shiftDate(dateFrom, -1);
   const prevFrom = shiftDate(prevTo, -(spanDays - 1));
   return { from: prevFrom, to: prevTo };
+}
+
+function monthStart(dateIso: string): string {
+  return `${dateIso.slice(0, 7)}-01`;
+}
+
+function monthEnd(dateIso: string): string {
+  const date = new Date(`${monthStart(dateIso)}T00:00:00Z`);
+  date.setUTCMonth(date.getUTCMonth() + 1, 0);
+  return date.toISOString().slice(0, 10);
+}
+
+function minIso(a: string, b: string): string {
+  return a <= b ? a : b;
+}
+
+function maxIso(a: string, b: string): string {
+  return a >= b ? a : b;
+}
+
+function inclusiveDays(dateFrom: string, dateTo: string): number {
+  const fromDate = new Date(`${dateFrom}T00:00:00Z`);
+  const toDate = new Date(`${dateTo}T00:00:00Z`);
+  return Math.max(0, Math.round((toDate.getTime() - fromDate.getTime()) / 86400000) + 1);
+}
+
+function formatMonthLabel(monthKey: string): string {
+  return monthKey.charAt(0).toUpperCase() + monthKey.slice(1);
+}
+
+function buildPeriodMonths(dateFrom: string, dateTo: string) {
+  const months: Array<{
+    key: string;
+    label: string;
+    from: string;
+    to: string;
+    days_in_month: number;
+    selected_days: number;
+  }> = [];
+  let cursor = monthStart(dateFrom);
+  while (cursor <= dateTo) {
+    const cursorMonthEnd = monthEnd(cursor);
+    const from = maxIso(dateFrom, cursor);
+    const to = minIso(dateTo, cursorMonthEnd);
+    const monthIndex = new Date(`${cursor}T00:00:00Z`).getUTCMonth();
+    const key = MONTH_COLUMNS[monthIndex];
+    months.push({
+      key,
+      label: formatMonthLabel(key),
+      from,
+      to,
+      days_in_month: inclusiveDays(cursor, cursorMonthEnd),
+      selected_days: inclusiveDays(from, to),
+    });
+    cursor = shiftDate(cursorMonthEnd, 1);
+  }
+  return months;
+}
+
+function roundMetric(value: number, metric: string): number {
+  if (metric === "ctr" || metric === "cpm" || metric === "cpc" || metric === "cpv" || metric === "cpa") {
+    return Number(value.toFixed(4));
+  }
+  if (metric === "spend") return Number(value.toFixed(2));
+  return Math.round(value);
+}
+
+function buildCompletionStatus(metric: string, completionPct: number | null): ChannelPerformanceMetric["status"] {
+  if (completionPct === null) return null;
+  if (metric === "spend") {
+    if (completionPct < 70) return "red";
+    if (completionPct < 90) return "yellow";
+    if (completionPct <= 110) return "green";
+    if (completionPct <= 125) return "yellow";
+    return "red";
+  }
+  if (completionPct < 70) return "red";
+  if (completionPct < 90) return "yellow";
+  return "green";
+}
+
+function buildMetricSummary(metric: string, fact: number, plan: number): ChannelPerformanceMetric {
+  const completionPct =
+    metric === "ctr" || metric === "cpm" || metric === "cpc" || metric === "cpv" || metric === "cpa"
+      ? null
+      : plan > 0
+        ? (fact / plan) * 100
+        : null;
+  return {
+    fact: roundMetric(fact, metric),
+    plan: roundMetric(plan, metric),
+    completion_pct: completionPct === null ? null : Number(completionPct.toFixed(1)),
+    status: buildCompletionStatus(metric, completionPct),
+  };
+}
+
+function sumFactRows(rows: NonNullable<DashboardData["channel_timeseries"]>) {
+  return rows.reduce(
+    (acc, row) => {
+      acc.impressions += asNumber(row.impressions);
+      acc.clicks += asNumber(row.clicks);
+      acc.views += asNumber(row.views);
+      acc.conversions += asNumber(row.conversions);
+      acc.spend += asNumber(row.spend);
+      return acc;
+    },
+    { impressions: 0, clicks: 0, views: 0, conversions: 0, spend: 0 },
+  );
+}
+
+function buildNormalizedPlanMetrics(
+  row: PlanVsFactItem,
+  months: Array<{ key: string; selected_days: number; days_in_month: number }>,
+) {
+  const totals = { impressions: 0, clicks: 0, views: 0, conversions: 0, spend: 0 };
+  months.forEach((month) => {
+    const item = row.monthly_breakdown?.[month.key];
+    if (!item) return;
+    const ratio = month.days_in_month > 0 ? month.selected_days / month.days_in_month : 0;
+    totals.impressions += asNumber(item.impressions) * ratio;
+    totals.clicks += asNumber(item.clicks) * ratio;
+    totals.views += asNumber(item.views) * ratio;
+    totals.conversions += asNumber(item.conversions) * ratio;
+    totals.spend += asNumber(item.budget) * ratio;
+  });
+
+  const ctr = totals.impressions > 0 ? (totals.clicks / totals.impressions) * 100 : 0;
+  const cpm = totals.impressions > 0 ? (totals.spend / totals.impressions) * 1000 : 0;
+  const cpc = totals.clicks > 0 ? totals.spend / totals.clicks : 0;
+  const cpv = totals.views > 0 ? totals.spend / totals.views : 0;
+  const cpa = totals.conversions > 0 ? totals.spend / totals.conversions : 0;
+
+  return { ...totals, ctr, cpm, cpc, cpv, cpa };
 }
 
 function defaultKpiConfig(type: DashboardData["dashboard"]["type"], showSpend: boolean): string[] {
@@ -538,6 +676,120 @@ async function buildChannelTimeseries(
   return timeseries.flat().sort((a, b) => a.date.localeCompare(b.date) || a.channel.localeCompare(b.channel));
 }
 
+function buildChannelPerformance(
+  planVsFact: PlanVsFactItem[],
+  channelTimeseries: DashboardData["channel_timeseries"],
+  dateFrom: string,
+  dateTo: string,
+): ChannelPerformanceItem[] {
+  const periodMonths = buildPeriodMonths(dateFrom, dateTo);
+  const factRowsByChannel = new Map<string, NonNullable<DashboardData["channel_timeseries"]>>();
+
+  (channelTimeseries ?? []).forEach((row) => {
+    if (!factRowsByChannel.has(row.channel)) {
+      factRowsByChannel.set(row.channel, []);
+    }
+    factRowsByChannel.get(row.channel)!.push(row);
+  });
+
+  return planVsFact.map((row) => {
+    const planOnly = row.campaign_count === 0;
+    const factRows = planOnly ? [] : factRowsByChannel.get(row.channel) ?? [];
+    const summaryFacts = sumFactRows(factRows);
+    const summaryPlan = buildNormalizedPlanMetrics(row, periodMonths);
+    const metrics: ChannelPerformanceItem["metrics"] = {
+      impressions: buildMetricSummary("impressions", summaryFacts.impressions, summaryPlan.impressions),
+      clicks: buildMetricSummary("clicks", summaryFacts.clicks, summaryPlan.clicks),
+      views: buildMetricSummary("views", summaryFacts.views, summaryPlan.views),
+      conversions: buildMetricSummary("conversions", summaryFacts.conversions, summaryPlan.conversions),
+      spend: buildMetricSummary("spend", summaryFacts.spend, summaryPlan.spend),
+      ctr: buildMetricSummary(
+        "ctr",
+        summaryFacts.impressions > 0 ? (summaryFacts.clicks / summaryFacts.impressions) * 100 : 0,
+        summaryPlan.ctr,
+      ),
+      cpm: buildMetricSummary(
+        "cpm",
+        summaryFacts.impressions > 0 ? (summaryFacts.spend / summaryFacts.impressions) * 1000 : 0,
+        summaryPlan.cpm,
+      ),
+      cpc: buildMetricSummary(
+        "cpc",
+        summaryFacts.clicks > 0 ? summaryFacts.spend / summaryFacts.clicks : 0,
+        summaryPlan.cpc,
+      ),
+      cpv: buildMetricSummary(
+        "cpv",
+        summaryFacts.views > 0 ? summaryFacts.spend / summaryFacts.views : 0,
+        summaryPlan.cpv,
+      ),
+      cpa: buildMetricSummary(
+        "cpa",
+        summaryFacts.conversions > 0 ? summaryFacts.spend / summaryFacts.conversions : 0,
+        summaryPlan.cpa,
+      ),
+    };
+
+    const months =
+      periodMonths.length > 1
+        ? periodMonths.map((month) => {
+            const monthlyFacts = sumFactRows(
+              factRows.filter((factRow) => factRow.date >= month.from && factRow.date <= month.to),
+            );
+            const monthlyPlan = buildNormalizedPlanMetrics(row, [month]);
+            return {
+              month: month.label,
+              from: month.from,
+              to: month.to,
+              metrics: {
+                impressions: buildMetricSummary("impressions", monthlyFacts.impressions, monthlyPlan.impressions),
+                clicks: buildMetricSummary("clicks", monthlyFacts.clicks, monthlyPlan.clicks),
+                views: buildMetricSummary("views", monthlyFacts.views, monthlyPlan.views),
+                conversions: buildMetricSummary("conversions", monthlyFacts.conversions, monthlyPlan.conversions),
+                spend: buildMetricSummary("spend", monthlyFacts.spend, monthlyPlan.spend),
+                ctr: buildMetricSummary(
+                  "ctr",
+                  monthlyFacts.impressions > 0 ? (monthlyFacts.clicks / monthlyFacts.impressions) * 100 : 0,
+                  monthlyPlan.ctr,
+                ),
+                cpm: buildMetricSummary(
+                  "cpm",
+                  monthlyFacts.impressions > 0 ? (monthlyFacts.spend / monthlyFacts.impressions) * 1000 : 0,
+                  monthlyPlan.cpm,
+                ),
+                cpc: buildMetricSummary(
+                  "cpc",
+                  monthlyFacts.clicks > 0 ? monthlyFacts.spend / monthlyFacts.clicks : 0,
+                  monthlyPlan.cpc,
+                ),
+                cpv: buildMetricSummary(
+                  "cpv",
+                  monthlyFacts.views > 0 ? monthlyFacts.spend / monthlyFacts.views : 0,
+                  monthlyPlan.cpv,
+                ),
+                cpa: buildMetricSummary(
+                  "cpa",
+                  monthlyFacts.conversions > 0 ? monthlyFacts.spend / monthlyFacts.conversions : 0,
+                  monthlyPlan.cpa,
+                ),
+              },
+            };
+          })
+        : undefined;
+
+    return {
+      channel: row.channel,
+      instrument: row.instrument,
+      buy_type: row.buy_type,
+      platforms: row.platforms,
+      campaign_count: row.campaign_count,
+      plan_only: planOnly,
+      metrics,
+      months,
+    };
+  });
+}
+
 function buildPlanBasedPlatformSpend(
   platformStats: PlatformStats[],
   planRows: MediaPlanRow[],
@@ -868,6 +1120,7 @@ export async function GET(
       range.from,
       range.to,
     );
+    const channelPerformance = buildChannelPerformance(planVsFact, channelTimeseries, range.from, range.to);
     const analyticsKpi = mergeAnalyticsKpi(analyticsKpiRaw);
     const analyticsTimeseries = mergeAnalyticsTimeseries(analyticsTimeseriesRaw);
 
@@ -890,6 +1143,7 @@ export async function GET(
       platforms: platformResults,
       timeseries: timeseriesResults,
       plan_vs_fact: planVsFact,
+      channel_performance: channelPerformance,
       channel_timeseries: channelTimeseries,
       analytics:
         analyticsKpiRaw.length > 0

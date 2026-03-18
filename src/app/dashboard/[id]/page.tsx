@@ -1,8 +1,9 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
-import { useParams } from "next/navigation";
+import { useParams, useRouter, useSearchParams } from "next/navigation";
 import ChannelMix from "@/components/ChannelMix";
+import ChannelPerformanceTable from "@/components/ChannelPerformanceTable";
 import DashboardHeader from "@/components/DashboardHeader";
 import KPICard from "@/components/KPICard";
 import PlatformFilter from "@/components/PlatformFilter";
@@ -34,13 +35,22 @@ function formatPeriodDate(isoDate: string) {
   return d.toLocaleDateString("en-GB", { day: "numeric", month: "short", year: "numeric" });
 }
 
-async function getDashboardData(id: string): Promise<{
+async function getDashboardData(
+  id: string,
+  range?: { from: string; to: string },
+): Promise<{
   data: DashboardData;
   demoMode: boolean;
   errorMessage: string | null;
 }> {
   try {
-    const response = await fetch(`/api/dashboard/${id}`, { cache: "no-store" });
+    const params = new URLSearchParams();
+    if (range?.from && range?.to) {
+      params.set("from", range.from);
+      params.set("to", range.to);
+    }
+    const query = params.toString();
+    const response = await fetch(`/api/dashboard/${id}${query ? `?${query}` : ""}`, { cache: "no-store" });
     if (!response.ok) {
       throw new Error(`API returned ${response.status}`);
     }
@@ -57,13 +67,22 @@ async function getDashboardData(id: string): Promise<{
 
 export default function DashboardByIdPage() {
   const params = useParams<{ id: string }>();
+  const router = useRouter();
+  const searchParams = useSearchParams();
   const dashboardId = params?.id ? String(params.id).toLowerCase() : "rag_mp";
+  const initialFrom = searchParams.get("from") ?? "";
+  const initialTo = searchParams.get("to") ?? "";
 
   const [dashboard, setDashboard] = useState<DashboardData | null>(null);
   const [selectedPlatforms, setSelectedPlatforms] = useState<string[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [isDemoMode, setIsDemoMode] = useState(false);
   const [apiError, setApiError] = useState<string | null>(null);
+  const [dateRange, setDateRange] = useState<{ from: string; to: string }>({ from: initialFrom, to: initialTo });
+  const [draftDateRange, setDraftDateRange] = useState<{ from: string; to: string }>({
+    from: initialFrom,
+    to: initialTo,
+  });
 
   useEffect(() => {
     let cancelled = false;
@@ -71,7 +90,10 @@ export default function DashboardByIdPage() {
     async function load() {
       setIsLoading(true);
 
-      const result = await getDashboardData(dashboardId);
+      const result = await getDashboardData(
+        dashboardId,
+        dateRange.from && dateRange.to ? dateRange : undefined,
+      );
       if (cancelled) {
         return;
       }
@@ -82,6 +104,10 @@ export default function DashboardByIdPage() {
 
       const availablePlatforms = result.data.platforms.map((platform) => platform.id);
       setSelectedPlatforms(availablePlatforms);
+      setDraftDateRange((prev) => ({
+        from: prev.from || result.data.dashboard.period.from,
+        to: prev.to || result.data.dashboard.period.to,
+      }));
       setIsLoading(false);
     }
 
@@ -90,7 +116,7 @@ export default function DashboardByIdPage() {
     return () => {
       cancelled = true;
     };
-  }, [dashboardId]);
+  }, [dashboardId, dateRange]);
 
   const selectedSet = useMemo(() => new Set(selectedPlatforms), [selectedPlatforms]);
 
@@ -112,6 +138,21 @@ export default function DashboardByIdPage() {
         item.platforms.some((platform) => selectedSet.has(resolvePlatformIdFromSourceKey(platform.source_key))),
     );
   }, [dashboard, selectedSet]);
+
+  const filteredChannelPerformance = useMemo(() => {
+    if (!dashboard?.channel_performance) return [];
+    return dashboard.channel_performance.filter(
+      (item) =>
+        item.platforms.length === 0 ||
+        item.platforms.some((platform) => selectedSet.has(resolvePlatformIdFromSourceKey(platform.source_key))),
+    );
+  }, [dashboard?.channel_performance, selectedSet]);
+
+  const filteredChannelTimeseries = useMemo(() => {
+    if (!dashboard?.channel_timeseries) return [];
+    const visibleChannels = new Set(filteredPlanVsFact.map((item) => item.channel));
+    return dashboard.channel_timeseries.filter((item) => visibleChannels.has(item.channel));
+  }, [dashboard?.channel_timeseries, filteredPlanVsFact]);
 
   const currencyCode = dashboard?.dashboard.currency || "EUR";
   const showSpend = dashboard?.dashboard.show_spend ?? true;
@@ -408,7 +449,12 @@ export default function DashboardByIdPage() {
     if (sectionId === "plan_vs_fact") {
       return (
         <section key={sectionId} className="mb-6">
-          <PlanVsFact rows={filteredPlanVsFact} currencyFormatter={(value) => money(value, currencyCode)} />
+          <PlanVsFact
+            rows={filteredChannelPerformance}
+            selectedMetrics={dashboard?.kpi_config ?? []}
+            showSpend={showSpend && (dashboard?.kpi_config ?? []).includes("spend")}
+            currencyFormatter={(value) => money(value, currencyCode)}
+          />
         </section>
       );
     }
@@ -419,6 +465,19 @@ export default function DashboardByIdPage() {
           <PlatformTable
             rows={filteredPlatforms}
             timeseries={filteredTimeseries}
+            currencyFormatter={(value) => money(value, currencyCode)}
+            showSpend={showSpend}
+          />
+        </section>
+      );
+    }
+
+    if (sectionId === "channel_table") {
+      return (
+        <section key={sectionId} className="pb-4">
+          <ChannelPerformanceTable
+            rows={filteredPlanVsFact}
+            timeseries={filteredChannelTimeseries}
             currencyFormatter={(value) => money(value, currencyCode)}
             showSpend={showSpend}
           />
@@ -449,6 +508,15 @@ export default function DashboardByIdPage() {
     window.print();
   };
 
+  const applyDateRange = () => {
+    if (!draftDateRange.from || !draftDateRange.to) return;
+    setDateRange(draftDateRange);
+    const params = new URLSearchParams(searchParams.toString());
+    params.set("from", draftDateRange.from);
+    params.set("to", draftDateRange.to);
+    router.replace(`/dashboard/${dashboardId}?${params.toString()}`, { scroll: false });
+  };
+
   if (isLoading || !dashboard) {
     return (
       <main className="mx-auto flex min-h-screen w-full max-w-[1400px] items-center justify-center px-4 py-6 sm:px-6 lg:px-8">
@@ -469,6 +537,12 @@ export default function DashboardByIdPage() {
         title={dashboard.dashboard.dashboard_name}
         periodLabel={periodLabel}
         logoUrl={dashboard.dashboard.logo_url}
+        dateFrom={draftDateRange.from}
+        dateTo={draftDateRange.to}
+        onDateFromChange={(value) => setDraftDateRange((prev) => ({ ...prev, from: value }))}
+        onDateToChange={(value) => setDraftDateRange((prev) => ({ ...prev, to: value }))}
+        onApplyDateRange={applyDateRange}
+        isUpdatingRange={isLoading}
         onExportPdf={exportPdf}
       />
 

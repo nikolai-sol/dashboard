@@ -3,6 +3,7 @@ export type DashboardSectionId =
   | "kpi_grid"
   | "spend_section"
   | "trend_chart"
+  | "channel_table"
   | "plan_vs_fact"
   | "platform_table";
 

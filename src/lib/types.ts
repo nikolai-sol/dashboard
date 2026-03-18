@@ -3,6 +3,7 @@ export type DashboardSectionId =
   | "kpi_grid"
   | "spend_section"
   | "trend_chart"
+  | "channel_table"
   | "plan_vs_fact"
   | "platform_table";
 
@@ -102,6 +103,41 @@ export interface PlanVsFactItem {
   cpa_fact: number;
 }
 
+export interface ChannelPerformanceMetric {
+  fact: number;
+  plan: number;
+  completion_pct: number | null;
+  status?: "green" | "yellow" | "red" | null;
+}
+
+export interface ChannelPerformanceMonth {
+  month: string;
+  from: string;
+  to: string;
+  metrics: Partial<
+    Record<
+      "impressions" | "clicks" | "views" | "conversions" | "spend" | "ctr" | "cpm" | "cpc" | "cpv" | "cpa",
+      ChannelPerformanceMetric
+    >
+  >;
+}
+
+export interface ChannelPerformanceItem {
+  channel: string;
+  instrument: string;
+  buy_type: string;
+  platforms: Array<{ source_key: string; label: string; color: string }>;
+  campaign_count: number;
+  plan_only: boolean;
+  metrics: Partial<
+    Record<
+      "impressions" | "clicks" | "views" | "conversions" | "spend" | "ctr" | "cpm" | "cpc" | "cpv" | "cpa",
+      ChannelPerformanceMetric
+    >
+  >;
+  months?: ChannelPerformanceMonth[];
+}
+
 export interface AnalyticsKPI {
   total_visits: number;
   total_users: number;
@@ -125,6 +161,7 @@ export interface DashboardData {
   platforms: PlatformStats[];
   timeseries: TimeSeriesPoint[];
   plan_vs_fact: PlanVsFactItem[];
+  channel_performance?: ChannelPerformanceItem[];
   analytics?: {
     kpi: AnalyticsKPI;
     timeseries: AnalyticsTimeSeriesPoint[];
