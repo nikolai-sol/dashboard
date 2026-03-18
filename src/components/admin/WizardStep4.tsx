@@ -81,7 +81,7 @@ export default function WizardStep4({ data, onChange }: WizardStep4Props) {
   const showSpend = Boolean(config.show_spend);
   const metricPool = sanitizeMetricPool(showSpend);
   const kpiCards = sanitizeCards(config.kpi_cards ?? [], showSpend);
-  const sectionOrder = sanitizeSectionOrder(config.section_order, showSpend, true);
+  const sectionOrder = sanitizeSectionOrder(config.section_order, showSpend, false);
 
   const patchConfig = (patch: Partial<DashboardFormData["config"]>) => {
     onChange({
