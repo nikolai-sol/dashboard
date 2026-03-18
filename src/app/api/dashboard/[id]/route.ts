@@ -16,7 +16,6 @@ import {
   aggregatePlanByPlatform,
   fetchMediaPlanFromSourceConfig,
   groupByChannel,
-  MONTH_COLUMNS,
   type ChannelGroup,
   type MediaPlanRow,
   type PlatformPlanAggregate,
@@ -28,6 +27,10 @@ import {
   resolveSourceType,
 } from "@/lib/source-mapping";
 import { normalizeDashboardLanguage } from "@/lib/dashboard-i18n";
+import {
+  buildPeriodMonths as buildNormalizedPeriodMonths,
+  normalizeChannelPlan,
+} from "@/lib/plan-normalizer";
 import type {
   AnalyticsKPI,
   AnalyticsTimeSeriesPoint,
@@ -194,61 +197,10 @@ function monthKeyFromDate(dateIso: string): string {
   return dateIso.slice(0, 7);
 }
 
-function monthStart(dateIso: string): string {
-  return `${dateIso.slice(0, 7)}-01`;
-}
-
-function monthEnd(dateIso: string): string {
-  const date = new Date(`${monthStart(dateIso)}T00:00:00Z`);
-  date.setUTCMonth(date.getUTCMonth() + 1, 0);
-  return date.toISOString().slice(0, 10);
-}
-
-function minIso(a: string, b: string): string {
-  return a <= b ? a : b;
-}
-
-function maxIso(a: string, b: string): string {
-  return a >= b ? a : b;
-}
-
 function inclusiveDays(dateFrom: string, dateTo: string): number {
   const fromDate = new Date(`${dateFrom}T00:00:00Z`);
   const toDate = new Date(`${dateTo}T00:00:00Z`);
   return Math.max(0, Math.round((toDate.getTime() - fromDate.getTime()) / 86400000) + 1);
-}
-
-function formatMonthLabel(monthKey: string): string {
-  return monthKey.charAt(0).toUpperCase() + monthKey.slice(1);
-}
-
-function buildPeriodMonths(dateFrom: string, dateTo: string) {
-  const months: Array<{
-    key: string;
-    label: string;
-    from: string;
-    to: string;
-    days_in_month: number;
-    selected_days: number;
-  }> = [];
-  let cursor = monthStart(dateFrom);
-  while (cursor <= dateTo) {
-    const cursorMonthEnd = monthEnd(cursor);
-    const from = maxIso(dateFrom, cursor);
-    const to = minIso(dateTo, cursorMonthEnd);
-    const monthIndex = new Date(`${cursor}T00:00:00Z`).getUTCMonth();
-    const key = MONTH_COLUMNS[monthIndex];
-    months.push({
-      key,
-      label: formatMonthLabel(key),
-      from,
-      to,
-      days_in_month: inclusiveDays(cursor, cursorMonthEnd),
-      selected_days: inclusiveDays(from, to),
-    });
-    cursor = shiftDate(cursorMonthEnd, 1);
-  }
-  return months;
 }
 
 function roundMetric(value: number, metric: string): number {
@@ -272,7 +224,7 @@ function buildCompletionStatus(metric: string, completionPct: number | null): Ch
     if (completionPct < 70) return "red";
     if (completionPct < 90) return "yellow";
     if (completionPct <= 110) return "green";
-    if (completionPct <= 125) return "yellow";
+    if (completionPct <= 130) return "yellow";
     return "red";
   }
   if (completionPct < 70) return "red";
@@ -370,33 +322,6 @@ function sumFactRows(rows: NonNullable<DashboardData["channel_timeseries"]>) {
     },
     { impressions: 0, reach: 0, clicks: 0, views: 0, conversions: 0, spend: 0 },
   );
-}
-
-function buildNormalizedPlanMetrics(
-  row: PlanVsFactItem,
-  months: Array<{ key: string; selected_days: number; days_in_month: number }>,
-) {
-  const totals = { impressions: 0, reach: 0, clicks: 0, views: 0, conversions: 0, spend: 0 };
-  months.forEach((month) => {
-    const item = row.monthly_breakdown?.[month.key];
-    if (!item) return;
-    const ratio = month.days_in_month > 0 ? month.selected_days / month.days_in_month : 0;
-    totals.impressions += asNumber(item.impressions) * ratio;
-    totals.reach += asNumber(item.reach) * ratio;
-    totals.clicks += asNumber(item.clicks) * ratio;
-    totals.views += asNumber(item.views) * ratio;
-    totals.conversions += asNumber(item.conversions) * ratio;
-    totals.spend += asNumber(item.budget) * ratio;
-  });
-
-  const frequency = totals.reach > 0 ? totals.impressions / totals.reach : 0;
-  const ctr = totals.impressions > 0 ? (totals.clicks / totals.impressions) * 100 : 0;
-  const cpm = totals.impressions > 0 ? (totals.spend / totals.impressions) * 1000 : 0;
-  const cpc = totals.clicks > 0 ? totals.spend / totals.clicks : 0;
-  const cpv = totals.views > 0 ? totals.spend / totals.views : 0;
-  const cpa = totals.conversions > 0 ? totals.spend / totals.conversions : 0;
-
-  return { ...totals, frequency, ctr, cpm, cpc, cpv, cpa };
 }
 
 function defaultKpiConfig(type: DashboardData["dashboard"]["type"], showSpend: boolean): string[] {
@@ -865,8 +790,10 @@ function buildChannelPerformance(
   channelTimeseries: DashboardData["channel_timeseries"],
   dateFrom: string,
   dateTo: string,
+  configFrom: string,
+  configTo: string,
 ): ChannelPerformanceItem[] {
-  const periodMonths = buildPeriodMonths(dateFrom, dateTo);
+  const periodMonths = buildNormalizedPeriodMonths(dateFrom, dateTo);
   const factRowsByChannel = new Map<string, NonNullable<DashboardData["channel_timeseries"]>>();
 
   (channelTimeseries ?? []).forEach((row) => {
@@ -880,7 +807,7 @@ function buildChannelPerformance(
     const planOnly = row.campaign_count === 0;
     const factRows = planOnly ? [] : factRowsByChannel.get(row.channel) ?? [];
     const summaryFacts = sumFactRows(factRows);
-    const summaryPlan = buildNormalizedPlanMetrics(row, periodMonths);
+    const summaryPlan = normalizeChannelPlan(row, dateFrom, dateTo, configFrom, configTo);
     const metrics: ChannelPerformanceItem["metrics"] = {
       impressions: buildMetricSummary("impressions", summaryFacts.impressions, summaryPlan.impressions),
       reach: buildMetricSummary("reach", summaryFacts.reach, summaryPlan.reach),
@@ -926,7 +853,7 @@ function buildChannelPerformance(
             const monthlyFacts = sumFactRows(
               factRows.filter((factRow) => factRow.date >= month.from && factRow.date <= month.to),
             );
-            const monthlyPlan = buildNormalizedPlanMetrics(row, [month]);
+            const monthlyPlan = normalizeChannelPlan(row, month.from, month.to, configFrom, configTo);
             return {
               month: month.label,
               from: month.from,
@@ -1332,7 +1259,14 @@ export async function GET(
       range.to,
       frequencyOverrideMap,
     );
-    const channelPerformance = buildChannelPerformance(planVsFact, channelTimeseries, range.from, range.to);
+    const channelPerformance = buildChannelPerformance(
+      planVsFact,
+      channelTimeseries,
+      range.from,
+      range.to,
+      String(config.period_from ?? range.from),
+      String(config.period_to ?? range.to),
+    );
     const analyticsKpi = mergeAnalyticsKpi(analyticsKpiRaw);
     const analyticsTimeseries = mergeAnalyticsTimeseries(analyticsTimeseriesRaw);
 

@@ -16,6 +16,7 @@ type KPICardProps = {
   color: string;
   format: (value: number) => string;
   trend: number[];
+  pdfMode?: boolean;
 };
 
 export default function KPICard({
@@ -25,10 +26,15 @@ export default function KPICard({
   color,
   format,
   trend,
+  pdfMode = false,
 }: KPICardProps) {
   const [animatedValue, setAnimatedValue] = useState(0);
 
   useEffect(() => {
+    if (pdfMode) {
+      setAnimatedValue(value);
+      return;
+    }
     const duration = 1200;
     const start = performance.now();
 
@@ -43,7 +49,7 @@ export default function KPICard({
     };
     raf = requestAnimationFrame(tick);
     return () => cancelAnimationFrame(raf);
-  }, [value]);
+  }, [pdfMode, value]);
 
   const delta = useMemo(() => {
     if (prevValue === 0) {
@@ -93,8 +99,8 @@ export default function KPICard({
               stroke={color}
               strokeWidth={2}
               dot={false}
-              isAnimationActive
-              animationDuration={900}
+              isAnimationActive={!pdfMode}
+              animationDuration={pdfMode ? 0 : 900}
             />
           </LineChart>
         </ResponsiveContainer>

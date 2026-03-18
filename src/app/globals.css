@@ -140,6 +140,20 @@
   }
 }
 
+.pdf-mode {
+  background: #fff !important;
+}
+
+.pdf-mode .card-surface {
+  animation: none !important;
+  box-shadow: none !important;
+}
+
+.pdf-mode button,
+.pdf-mode a {
+  box-shadow: none !important;
+}
+
 @keyframes rise-in {
   from {
     opacity: 0;
@@ -153,8 +167,8 @@
 
 @media print {
   @page {
-    size: A4 portrait;
-    margin: 12mm;
+    size: A4 landscape;
+    margin: 10mm;
   }
 
   html,

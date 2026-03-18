@@ -18,6 +18,7 @@ type PlatformTableProps = {
   currencyFormatter: (value: number) => string;
   showSpend?: boolean;
   locale?: string;
+  pdfMode?: boolean;
   labels?: {
     title: string;
     platform: string;
@@ -37,6 +38,7 @@ export default function PlatformTable({
   currencyFormatter,
   showSpend = true,
   locale = "en-US",
+  pdfMode = false,
   labels,
 }: PlatformTableProps) {
   const copy = labels ?? {
@@ -193,8 +195,8 @@ export default function PlatformTable({
                           stroke={row.color}
                           strokeWidth={2}
                           dot={false}
-                          isAnimationActive
-                          animationDuration={700}
+                          isAnimationActive={!pdfMode}
+                          animationDuration={pdfMode ? 0 : 700}
                         />
                       </LineChart>
                     </ResponsiveContainer>

@@ -9,6 +9,7 @@ type PlanVsFactProps = {
   showSpend?: boolean;
   currencyFormatter: (value: number) => string;
   locale?: string;
+  pdfMode?: boolean;
   labels?: {
     title: string;
     noRows: string;
@@ -85,13 +86,6 @@ function statusDotClass(status?: ChannelPerformanceMetric["status"] | null) {
   if (status === "yellow") return "bg-amber-400";
   if (status === "red") return "bg-rose-500";
   return "bg-slate-300";
-}
-
-function statusHint(status?: ChannelPerformanceMetric["status"] | null) {
-  if (status === "green") return "On track";
-  if (status === "yellow") return "Watch";
-  if (status === "red") return "Off track";
-  return "No status";
 }
 
 function metricTooltip(
@@ -245,6 +239,7 @@ export default function PlanVsFact({
   showSpend = true,
   currencyFormatter,
   locale = "en-US",
+  pdfMode = false,
   labels,
 }: PlanVsFactProps) {
   const copy = labels ?? {
@@ -290,7 +285,7 @@ export default function PlanVsFact({
             <tbody>
               {rows.map((row) => {
                 const expandable = (row.months?.length ?? 0) > 1;
-                const expanded = Boolean(expandedRows[row.channel]);
+                const expanded = pdfMode || Boolean(expandedRows[row.channel]);
                 return (
                   <Fragment key={`${row.channel}-group`}>
                     <tr
@@ -299,7 +294,8 @@ export default function PlanVsFact({
                       <td className="px-3 py-3 font-medium text-slate-800">
                         <button
                           type="button"
-                          disabled={!expandable}
+                          disabled={!expandable || pdfMode}
+                          aria-expanded={expanded}
                           onClick={() =>
                             expandable &&
                             setExpandedRows((prev) => ({ ...prev, [row.channel]: !prev[row.channel] }))
@@ -336,8 +332,8 @@ export default function PlanVsFact({
                               summary={month.metrics[metric]}
                               currencyFormatter={currencyFormatter}
                               muted={row.plan_only}
-                            locale={locale}
-                            labels={copy}
+                              locale={locale}
+                              labels={copy}
                             />
                           </td>
                         ))}
