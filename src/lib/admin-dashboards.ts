@@ -151,6 +151,7 @@ export function normalizeDashboardPayload(raw: unknown): DashboardUpsertPayload 
   config.campaign_frequency_overrides = frequencyOverridesInput
     .map((item) => normalizeCampaignFrequencyOverride(item))
     .filter(Boolean);
+  config.language = String(config.language ?? "en") === "ru" ? "ru" : "en";
   config.filter_scope =
     String(config.filter_scope ?? "both") === "channel"
       ? "channel"

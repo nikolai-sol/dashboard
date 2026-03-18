@@ -27,6 +27,7 @@ import {
   resolveSourceKey,
   resolveSourceType,
 } from "@/lib/source-mapping";
+import { normalizeDashboardLanguage } from "@/lib/dashboard-i18n";
 import type {
   AnalyticsKPI,
   AnalyticsTimeSeriesPoint,
@@ -1346,6 +1347,7 @@ export async function GET(
           to: range.to,
         },
         currency: String(config.currency ?? "EUR"),
+        language: normalizeDashboardLanguage(config.language),
         show_spend: showSpend,
         filter_scope: getFilterScope(config),
         section_order: getSectionOrder(config, showSpend),

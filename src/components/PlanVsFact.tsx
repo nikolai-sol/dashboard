@@ -8,6 +8,23 @@ type PlanVsFactProps = {
   selectedMetrics: string[];
   showSpend?: boolean;
   currencyFormatter: (value: number) => string;
+  locale?: string;
+  labels?: {
+    title: string;
+    noRows: string;
+    total: string;
+    channel: string;
+    metrics: Record<string, string>;
+    planOnlyTitle: string;
+    fact: string;
+    plan: string;
+    completion: string;
+    status: string;
+    onTrack: string;
+    watch: string;
+    offTrack: string;
+    noStatus: string;
+  };
 };
 
 const SUPPORTED_METRICS = [
@@ -52,6 +69,7 @@ function formatMetricValue(
   value: number,
   metric: MetricKey,
   currencyFormatter: (value: number) => string,
+  locale: string,
 ) {
   if (isMoneyMetric(metric)) return currencyFormatter(value);
   if (metric === "ctr") return `${value.toFixed(2)}%`;
@@ -59,7 +77,7 @@ function formatMetricValue(
   if (metric === "cpm" || metric === "cpc" || metric === "cpv" || metric === "cpa") {
     return currencyFormatter(value);
   }
-  return Math.round(value).toLocaleString("en-US");
+  return Math.round(value).toLocaleString(locale);
 }
 
 function statusDotClass(status?: ChannelPerformanceMetric["status"] | null) {
@@ -80,12 +98,22 @@ function metricTooltip(
   metric: MetricKey,
   summary: ChannelPerformanceMetric | undefined,
   currencyFormatter: (value: number) => string,
+  locale: string,
+  labels: NonNullable<PlanVsFactProps["labels"]>,
 ) {
   if (!summary) return "";
-  const fact = formatMetricValue(summary.fact, metric, currencyFormatter);
-  const plan = formatMetricValue(summary.plan, metric, currencyFormatter);
+  const fact = formatMetricValue(summary.fact, metric, currencyFormatter, locale);
+  const plan = formatMetricValue(summary.plan, metric, currencyFormatter, locale);
   const completion = summary.completion_pct === null ? "n/a" : `${summary.completion_pct.toFixed(1)}%`;
-  return `Fact: ${fact}\nPlan: ${plan}\nCompletion: ${completion}\nStatus: ${statusHint(summary.status)}`;
+  const status =
+    summary.status === "green"
+      ? labels.onTrack
+      : summary.status === "yellow"
+        ? labels.watch
+        : summary.status === "red"
+          ? labels.offTrack
+          : labels.noStatus;
+  return `${labels.fact}: ${fact}\n${labels.plan}: ${plan}\n${labels.completion}: ${completion}\n${labels.status}: ${status}`;
 }
 
 function sumMetric(rows: ChannelPerformanceItem[], metric: MetricKey): ChannelPerformanceMetric {
@@ -177,25 +205,29 @@ function MetricCell({
   summary,
   currencyFormatter,
   muted = false,
+  locale,
+  labels,
 }: {
   metric: MetricKey;
   summary?: ChannelPerformanceMetric;
   currencyFormatter: (value: number) => string;
   muted?: boolean;
+  locale: string;
+  labels: NonNullable<PlanVsFactProps["labels"]>;
 }) {
   if (!summary) {
     return <div className="text-right text-sm text-slate-300">-</div>;
   }
 
-  const fact = formatMetricValue(summary.fact, metric, currencyFormatter);
-  const plan = formatMetricValue(summary.plan, metric, currencyFormatter);
+  const fact = formatMetricValue(summary.fact, metric, currencyFormatter, locale);
+  const plan = formatMetricValue(summary.plan, metric, currencyFormatter, locale);
   const completionText =
     summary.completion_pct === null ? null : `${summary.completion_pct.toFixed(0)}%`;
 
   return (
     <div
       className={`text-right ${muted ? "text-slate-400" : "text-slate-700"}`}
-      title={metricTooltip(metric, summary, currencyFormatter)}
+      title={metricTooltip(metric, summary, currencyFormatter, locale, labels)}
     >
       <div className={`text-base font-semibold ${muted ? "text-slate-400" : "text-slate-800"}`}>{fact}</div>
       <div className="mt-0.5 flex items-center justify-end gap-1 text-[11px]">
@@ -212,27 +244,45 @@ export default function PlanVsFact({
   selectedMetrics,
   showSpend = true,
   currencyFormatter,
+  locale = "en-US",
+  labels,
 }: PlanVsFactProps) {
+  const copy = labels ?? {
+    title: "Channel Performance Plan / Fact",
+    noRows: "No media plan rows connected. Add a published Google Sheets URL or CSV URL in dashboard sources.",
+    total: "Total",
+    channel: "Channel",
+    metrics: {},
+    planOnlyTitle: "Plan-only row: no campaign bindings yet.",
+    fact: "Fact",
+    plan: "Plan",
+    completion: "Completion",
+    status: "Status",
+    onTrack: "On track",
+    watch: "Watch",
+    offTrack: "Off track",
+    noStatus: "No status",
+  };
   const [expandedRows, setExpandedRows] = useState<Record<string, boolean>>({});
   const metrics = resolveMetrics(selectedMetrics, showSpend);
 
   return (
     <section className="card-surface overflow-hidden p-5">
-      <h3 className="mb-4 text-base font-semibold text-slate-900">Channel Performance Plan / Fact</h3>
+      <h3 className="mb-4 text-base font-semibold text-slate-900">{copy.title}</h3>
 
       {rows.length === 0 ? (
         <div className="rounded-lg border border-slate-200 bg-slate-50 p-4 text-sm text-slate-500">
-          No media plan rows connected. Add a published Google Sheets URL or CSV URL in dashboard sources.
+          {copy.noRows}
         </div>
       ) : (
         <div className="overflow-x-auto">
           <table className="w-full min-w-[860px] border-collapse text-sm">
             <thead>
               <tr className="border-b border-slate-200 text-xs uppercase tracking-[0.08em] text-slate-500">
-                <th className="px-3 py-2 text-left">Channel</th>
+                <th className="px-3 py-2 text-left">{copy.channel}</th>
                 {metrics.map((metric) => (
                   <th key={metric} className="px-3 py-2 text-right">
-                    {metricLabel(metric)}
+                    {copy.metrics[metric] ?? metricLabel(metric)}
                   </th>
                 ))}
               </tr>
@@ -255,7 +305,7 @@ export default function PlanVsFact({
                             setExpandedRows((prev) => ({ ...prev, [row.channel]: !prev[row.channel] }))
                           }
                           className="flex items-center gap-2 text-left disabled:cursor-default"
-                          title={row.plan_only ? "Plan-only row: no campaign bindings yet." : row.channel}
+                          title={row.plan_only ? copy.planOnlyTitle : row.channel}
                         >
                           {expandable ? <span className="text-slate-400">{expanded ? "−" : "+"}</span> : null}
                           <span className={row.plan_only ? "text-slate-500" : ""}>{row.channel}</span>
@@ -268,6 +318,8 @@ export default function PlanVsFact({
                             summary={row.metrics[metric]}
                             currencyFormatter={currencyFormatter}
                             muted={row.plan_only}
+                            locale={locale}
+                            labels={copy}
                           />
                         </td>
                       ))}
@@ -284,6 +336,8 @@ export default function PlanVsFact({
                               summary={month.metrics[metric]}
                               currencyFormatter={currencyFormatter}
                               muted={row.plan_only}
+                            locale={locale}
+                            labels={copy}
                             />
                           </td>
                         ))}
@@ -293,10 +347,16 @@ export default function PlanVsFact({
                 );
               })}
               <tr className="bg-slate-50 font-semibold">
-                <td className="px-3 py-3 text-slate-900">Total</td>
+                <td className="px-3 py-3 text-slate-900">{copy.total}</td>
                 {metrics.map((metric) => (
                   <td key={`total-${metric}`} className="px-3 py-3 align-top">
-                    <MetricCell metric={metric} summary={sumMetric(rows, metric)} currencyFormatter={currencyFormatter} />
+                    <MetricCell
+                      metric={metric}
+                      summary={sumMetric(rows, metric)}
+                      currencyFormatter={currencyFormatter}
+                      locale={locale}
+                      labels={copy}
+                    />
                   </td>
                 ))}
               </tr>

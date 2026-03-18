@@ -11,28 +11,30 @@ import PlatformTable from "@/components/PlatformTable";
 import PlanVsFact from "@/components/PlanVsFact";
 import SpendByPlatform from "@/components/SpendByPlatform";
 import TrendChart from "@/components/TrendChart";
+import { getDashboardI18n } from "@/lib/dashboard-i18n";
 import type { DashboardData } from "@/lib/types";
 import { resolvePlatformIdFromSourceKey } from "@/lib/source-mapping";
 
 const SPEND_RELATED_KPIS = new Set(["spend", "cpm", "cpc", "cpv", "cpa", "roas"]);
 
-function money(value: number, currency = "EUR") {
-  return new Intl.NumberFormat("en-US", {
+function money(value: number, currency = "EUR", locale = "en-US") {
+  return new Intl.NumberFormat(locale, {
     style: "currency",
     currency,
     maximumFractionDigits: 0,
   }).format(value);
 }
 
-function compact(value: number) {
-  if (value >= 1_000_000) return `${(value / 1_000_000).toFixed(2)}M`;
-  if (value >= 1_000) return `${(value / 1_000).toFixed(1)}K`;
-  return `${Math.round(value)}`;
+function compact(value: number, locale = "en-US") {
+  return new Intl.NumberFormat(locale, {
+    notation: "compact",
+    maximumFractionDigits: value >= 1_000_000 ? 2 : 1,
+  }).format(Math.round(value));
 }
 
-function formatPeriodDate(isoDate: string) {
+function formatPeriodDate(isoDate: string, locale = "en-GB") {
   const d = new Date(`${isoDate}T00:00:00Z`);
-  return d.toLocaleDateString("en-GB", { day: "numeric", month: "short", year: "numeric" });
+  return d.toLocaleDateString(locale, { day: "numeric", month: "short", year: "numeric" });
 }
 
 async function getDashboardData(
@@ -181,6 +183,9 @@ export default function DashboardByIdPage() {
   }, [dashboard?.channel_performance, effectiveFilterMode, selectedChannelSet, selectedSet]);
 
   const currencyCode = dashboard?.dashboard.currency || "EUR";
+  const dashboardLanguage = dashboard?.dashboard.language ?? "en";
+  const i18n = useMemo(() => getDashboardI18n(dashboardLanguage), [dashboardLanguage]);
+  const locale = i18n.locale;
   const showSpend = dashboard?.dashboard.show_spend ?? true;
   const sectionOrder = dashboard?.dashboard.section_order ?? [];
   const channelOptions = useMemo(
@@ -317,23 +322,23 @@ export default function DashboardByIdPage() {
 
     const metricMap = {
       impressions: {
-        title: "Impressions",
+        title: i18n.metrics.impressions,
         value: totals.totalImpressions,
         prev: previousTotals.prevImpressions,
         color: "#2563eb",
-        format: compact,
+        format: (value: number) => compact(value, locale),
         trend: latestTrend.map((item) => item.impressions),
       },
       clicks: {
-        title: "Clicks",
+        title: i18n.metrics.clicks,
         value: totals.totalClicks,
         prev: previousTotals.prevClicks,
         color: "#7c3aed",
-        format: compact,
+        format: (value: number) => compact(value, locale),
         trend: latestTrend.map((item) => item.clicks),
       },
       ctr: {
-        title: "CTR",
+        title: i18n.metrics.ctr,
         value: totals.avgCtr,
         prev: previousTotals.prevCtr,
         color: "#16a34a",
@@ -343,67 +348,67 @@ export default function DashboardByIdPage() {
         ),
       },
       cpm: {
-        title: "CPM",
+        title: i18n.metrics.cpm,
         value: totals.avgCpm,
         prev: previousTotals.prevCpm,
         color: "#f97316",
-        format: (value: number) => money(value, currencyCode),
+        format: (value: number) => money(value, currencyCode, locale),
         trend: latestTrend.map((item) =>
           item.impressions > 0 ? (item.spend / item.impressions) * 1000 : 0,
         ),
       },
       cpc: {
-        title: "CPC",
+        title: i18n.metrics.cpc,
         value: totals.avgCpc,
         prev: previousTotals.prevCpc,
         color: "#6366f1",
-        format: (value: number) => money(value, currencyCode),
+        format: (value: number) => money(value, currencyCode, locale),
         trend: latestTrend.map((item) => (item.clicks > 0 ? item.spend / item.clicks : 0)),
       },
       spend: {
-        title: "Spend",
+        title: i18n.metrics.spend,
         value: totals.totalSpend,
         prev: previousTotals.prevSpend,
         color: "#0ea5e9",
-        format: (value: number) => money(value, currencyCode),
+        format: (value: number) => money(value, currencyCode, locale),
         trend: latestTrend.map((item) => item.spend),
       },
       views: {
-        title: "Views",
+        title: i18n.metrics.views,
         value: totals.totalViews,
         prev: previousTotals.prevViews,
         color: "#ec4899",
-        format: compact,
+        format: (value: number) => compact(value, locale),
         trend: latestTrend.map((item) => item.views),
       },
       cpv: {
-        title: "CPV",
+        title: i18n.metrics.cpv,
         value: totals.avgCpv,
         prev: previousTotals.prevCpv,
         color: "#d946ef",
-        format: (value: number) => money(value, currencyCode),
+        format: (value: number) => money(value, currencyCode, locale),
         trend: latestTrend.map((item) => (item.views > 0 ? item.spend / item.views : 0)),
       },
       conversions: {
-        title: "Conversions",
+        title: i18n.metrics.conversions,
         value: totals.totalConversions,
         prev: previousTotals.prevConversions,
         color: "#059669",
-        format: compact,
+        format: (value: number) => compact(value, locale),
         trend: latestTrend.map((item) => item.conversions),
       },
       cpa: {
-        title: "CPA",
+        title: i18n.metrics.cpa,
         value: totals.avgCpa,
         prev: previousTotals.prevCpa,
         color: "#dc2626",
-        format: (value: number) => money(value, currencyCode),
+        format: (value: number) => money(value, currencyCode, locale),
         trend: latestTrend.map((item) =>
           item.conversions > 0 ? item.spend / item.conversions : 0,
         ),
       },
       roas: {
-        title: "ROAS",
+        title: i18n.metrics.roas,
         value: 0,
         prev: 0,
         color: "#0f766e",
@@ -411,15 +416,15 @@ export default function DashboardByIdPage() {
         trend: latestTrend.map(() => 0),
       },
       reach: {
-        title: "Reach",
+        title: i18n.metrics.reach,
         value: totals.totalReach,
         prev: previousTotals.prevReach,
         color: "#14b8a6",
-        format: compact,
+        format: (value: number) => compact(value, locale),
         trend: latestTrend.map((item) => item.impressions * 0.35),
       },
       frequency: {
-        title: "Frequency",
+        title: i18n.metrics.frequency,
         value: totals.avgFrequency,
         prev: previousTotals.prevFrequency,
         color: "#f59e0b",
@@ -433,7 +438,7 @@ export default function DashboardByIdPage() {
     return kpiConfig
       .map((key) => metricMap[key as keyof typeof metricMap] ?? metricMap.impressions)
       .slice(0, 5);
-  }, [currencyCode, dashboard?.kpi_config, latestTrend, previousTotals, showSpend, totals]);
+  }, [currencyCode, dashboard?.kpi_config, i18n.metrics, latestTrend, locale, previousTotals, showSpend, totals]);
 
   const renderSection = (sectionId: string) => {
     if (sectionId === "kpi_grid") {
@@ -458,10 +463,29 @@ export default function DashboardByIdPage() {
       return (
         <section key={sectionId} className="mb-6 grid grid-cols-1 gap-4 xl:grid-cols-5">
           <div className="xl:col-span-3">
-            <SpendByPlatform data={filteredPlatforms} currencyFormatter={(value) => money(value, currencyCode)} />
+            <SpendByPlatform
+              data={filteredPlatforms}
+              currencyFormatter={(value) => money(value, currencyCode, locale)}
+              labels={{
+                title: i18n.sections.spendByPlatform,
+                shareOfTotal: i18n.spend.shareOfTotal,
+              }}
+            />
           </div>
           <div className="xl:col-span-2">
-            <ChannelMix data={filteredPlatforms} currencyFormatter={(value) => money(value, currencyCode)} />
+            <ChannelMix
+              data={filteredPlatforms}
+              currencyFormatter={(value) => money(value, currencyCode, locale)}
+              locale={locale}
+              labels={{
+                title: i18n.sections.channelMix,
+                noData: i18n.common.noDataForSelectedPlatforms,
+                totalSpend: i18n.spend.totalSpend,
+                spend: i18n.spend.spend,
+                impressions: i18n.spend.impressions,
+                clicks: i18n.spend.clicks,
+              }}
+            />
           </div>
         </section>
       );
@@ -474,8 +498,17 @@ export default function DashboardByIdPage() {
             points={filteredTimeseries}
             selectedPlatforms={selectedPlatforms}
             onTogglePlatform={togglePlatform}
-            currencyFormatter={(value) => money(value, currencyCode)}
+            currencyFormatter={(value) => money(value, currencyCode, locale)}
             showSpend={showSpend}
+            locale={locale}
+            labels={{
+              title: i18n.sections.trendByDay,
+              metrics: {
+                impressions: i18n.metrics.impressions,
+                clicks: i18n.metrics.clicks,
+                spend: i18n.metrics.spend,
+              },
+            }}
           />
         </section>
       );
@@ -488,7 +521,24 @@ export default function DashboardByIdPage() {
             rows={filteredChannelPerformance}
             selectedMetrics={dashboard?.kpi_config ?? []}
             showSpend={showSpend}
-            currencyFormatter={(value) => money(value, currencyCode)}
+            currencyFormatter={(value) => money(value, currencyCode, locale)}
+            locale={locale}
+            labels={{
+              title: i18n.sections.channelPerformancePlanFact,
+              noRows: i18n.planFact.noRows,
+              total: i18n.common.total,
+              channel: i18n.common.channel,
+              metrics: i18n.metrics,
+              planOnlyTitle: i18n.planFact.planOnlyTitle,
+              fact: i18n.planFact.fact,
+              plan: i18n.planFact.plan,
+              completion: i18n.planFact.completion,
+              status: i18n.planFact.status,
+              onTrack: i18n.planFact.onTrack,
+              watch: i18n.planFact.watch,
+              offTrack: i18n.planFact.offTrack,
+              noStatus: i18n.planFact.noStatus,
+            }}
           />
         </section>
       );
@@ -500,8 +550,20 @@ export default function DashboardByIdPage() {
           <PlatformTable
             rows={filteredPlatforms}
             timeseries={filteredTimeseries}
-            currencyFormatter={(value) => money(value, currencyCode)}
+            currencyFormatter={(value) => money(value, currencyCode, locale)}
             showSpend={showSpend}
+            locale={locale}
+            labels={{
+              title: i18n.sections.platformPerformance,
+              platform: i18n.common.platform,
+              impressions: i18n.metrics.impressions,
+              clicks: i18n.metrics.clicks,
+              ctr: i18n.metrics.ctr,
+              cpm: i18n.metrics.cpm,
+              spend: i18n.metrics.spend,
+              trend: i18n.common.trend,
+              total: i18n.common.total,
+            }}
           />
         </section>
       );
@@ -513,8 +575,18 @@ export default function DashboardByIdPage() {
           <ChannelPerformanceTable
             rows={filteredPlanVsFact}
             selectedMetrics={dashboard?.kpi_config ?? []}
-            currencyFormatter={(value) => money(value, currencyCode)}
+            currencyFormatter={(value) => money(value, currencyCode, locale)}
             showSpend={showSpend}
+            locale={locale}
+            labels={{
+              title: i18n.sections.channelPerformance,
+              noRows: i18n.channelTable.noRows,
+              total: i18n.common.total,
+              channel: i18n.common.channel,
+              instrument: i18n.common.instrument,
+              buyType: i18n.common.buyType,
+              metrics: i18n.metrics,
+            }}
           />
         </section>
       );
@@ -570,13 +642,14 @@ export default function DashboardByIdPage() {
   if (isLoading || !dashboard) {
     return (
       <main className="mx-auto flex min-h-screen w-full max-w-[1400px] items-center justify-center px-4 py-6 sm:px-6 lg:px-8">
-        <p className="text-sm text-slate-500">Loading dashboard...</p>
+        <p className="text-sm text-slate-500">{i18n.common.loadingDashboard}</p>
       </main>
     );
   }
 
-  const periodLabel = `${formatPeriodDate(dashboard.dashboard.period.from)} - ${formatPeriodDate(
+  const periodLabel = `${formatPeriodDate(dashboard.dashboard.period.from, locale)} - ${formatPeriodDate(
     dashboard.dashboard.period.to,
+    locale,
   )}`;
   const clientName = dashboard.dashboard.client_name || dashboardId.toUpperCase();
 
@@ -587,6 +660,7 @@ export default function DashboardByIdPage() {
         title={dashboard.dashboard.dashboard_name}
         periodLabel={periodLabel}
         logoUrl={dashboard.dashboard.logo_url}
+        labels={i18n.header}
         dateFrom={draftDateRange.from}
         dateTo={draftDateRange.to}
         onDateFromChange={(value) => setDraftDateRange((prev) => ({ ...prev, from: value }))}
@@ -598,7 +672,7 @@ export default function DashboardByIdPage() {
 
       {isDemoMode ? (
         <div className="no-print mb-4 rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-800">
-          Demo mode: API unavailable, showing mock data.
+          {i18n.common.demoMode}
           {apiError ? ` (${apiError})` : ""}
         </div>
       ) : null}
@@ -617,6 +691,7 @@ export default function DashboardByIdPage() {
         selected={effectiveFilterMode === "channel" ? selectedChannels : selectedPlatforms}
         onToggle={effectiveFilterMode === "channel" ? toggleChannel : togglePlatform}
         onSelectAll={effectiveFilterMode === "channel" ? selectAllChannels : selectAll}
+        labels={i18n.filter}
         mode={filterMode}
         onModeChange={setFilterMode}
         filterScope={channelOptions.length > 0 ? filterScope : "platform"}

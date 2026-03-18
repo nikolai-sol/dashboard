@@ -1,3 +1,5 @@
+import type { DashboardLanguage } from "@/lib/dashboard-i18n";
+
 export type DashboardType = "awareness" | "performance" | "overview";
 export type DashboardSectionId =
   | "kpi_grid"
@@ -53,6 +55,7 @@ export type DashboardFormData = {
   dashboard_type: DashboardType;
   config: {
     currency: "EUR" | "USD" | "RUB";
+    language?: DashboardLanguage;
     period_from: string;
     period_to: string;
     logo_url?: string;
