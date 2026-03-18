@@ -369,6 +369,7 @@ export const mockDashboardData: DashboardData = {
     },
     currency: "EUR",
     show_spend: true,
+    filter_scope: "both",
     section_order: ["kpi_grid", "spend_section", "trend_chart", "platform_table", "channel_table", "plan_vs_fact"],
   },
   kpi_config: ["impressions", "clicks", "ctr", "cpm", "spend"],

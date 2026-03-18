@@ -260,6 +260,51 @@ export default function WizardStep4({ data, onChange }: WizardStep4Props) {
         <h4 className="text-sm font-semibold text-slate-900">Additional options</h4>
         <div className="mt-3 space-y-2 text-sm text-slate-700">
           <div className="space-y-2">
+            <p className="font-medium text-slate-900">Dashboard filter scope</p>
+            <label className="flex items-start gap-2 rounded-lg border border-slate-200 p-3">
+              <input
+                type="radio"
+                name="filter_scope"
+                checked={(config.filter_scope ?? "both") === "both"}
+                onChange={() => patchConfig({ filter_scope: "both" })}
+              />
+              <span>
+                <span className="block font-medium text-slate-900">Platforms + Channels</span>
+                <span className="block text-xs text-slate-500">
+                  Let users switch between platform and channel chips in the dashboard filter.
+                </span>
+              </span>
+            </label>
+            <label className="flex items-start gap-2 rounded-lg border border-slate-200 p-3">
+              <input
+                type="radio"
+                name="filter_scope"
+                checked={(config.filter_scope ?? "both") === "platform"}
+                onChange={() => patchConfig({ filter_scope: "platform" })}
+              />
+              <span>
+                <span className="block font-medium text-slate-900">Platforms only</span>
+                <span className="block text-xs text-slate-500">
+                  Show only platform chips in the dashboard filter.
+                </span>
+              </span>
+            </label>
+            <label className="flex items-start gap-2 rounded-lg border border-slate-200 p-3">
+              <input
+                type="radio"
+                name="filter_scope"
+                checked={(config.filter_scope ?? "both") === "channel"}
+                onChange={() => patchConfig({ filter_scope: "channel" })}
+              />
+              <span>
+                <span className="block font-medium text-slate-900">Channels only</span>
+                <span className="block text-xs text-slate-500">
+                  Show only channel chips in the dashboard filter.
+                </span>
+              </span>
+            </label>
+          </div>
+          <div className="space-y-2">
             <p className="font-medium text-slate-900">Spend source</p>
             <label className="flex items-start gap-2 rounded-lg border border-slate-200 p-3">
               <input

@@ -13,7 +13,7 @@ type PlatformFilterProps = {
   onSelectAll: () => void;
   mode?: "platform" | "channel";
   onModeChange?: (mode: "platform" | "channel") => void;
-  allowChannelMode?: boolean;
+  filterScope?: "both" | "platform" | "channel";
   className?: string;
 };
 
@@ -24,7 +24,7 @@ export default function PlatformFilter({
   onSelectAll,
   mode = "platform",
   onModeChange,
-  allowChannelMode = false,
+  filterScope = "both",
   className,
 }: PlatformFilterProps) {
   const availablePlatformIds = options.map((platform) => platform.id);
@@ -34,7 +34,7 @@ export default function PlatformFilter({
 
   return (
     <section className={`card-surface mb-6 p-4 ${className ?? ""}`.trim()}>
-      {allowChannelMode ? (
+      {filterScope === "both" ? (
         <div className="mb-3 flex items-center gap-2">
           <span className="text-xs font-medium uppercase tracking-[0.08em] text-slate-500">Filter by</span>
           <div className="inline-flex rounded-full border border-slate-200 bg-slate-50 p-1">

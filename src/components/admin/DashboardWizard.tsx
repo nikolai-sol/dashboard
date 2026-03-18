@@ -51,6 +51,7 @@ function defaultForm(): DashboardFormData {
       period_to: range.to,
       logo_url: "",
       spend_source: "platform_actual",
+        filter_scope: "both",
       visible_metrics: ["impressions", "clicks", "ctr", "cpm", "spend"],
       section_order: defaultSectionOrder(true),
       show_spend: true,
@@ -191,6 +192,12 @@ export default function DashboardWizard({ dashboardId }: DashboardWizardProps) {
               String(config.spend_source ?? "platform_actual") === "media_plan_derived"
                 ? "media_plan_derived"
                 : "platform_actual",
+            filter_scope:
+              String(config.filter_scope ?? "both") === "channel"
+                ? "channel"
+                : String(config.filter_scope ?? "both") === "platform"
+                  ? "platform"
+                  : "both",
             visible_metrics: Array.isArray(config.visible_metrics)
               ? config.visible_metrics.map((item) => String(item))
               : ["impressions", "clicks", "ctr", "cpm", "spend"],

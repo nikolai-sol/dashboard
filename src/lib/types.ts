@@ -18,6 +18,7 @@ export interface DashboardMeta {
   };
   currency: string;
   show_spend: boolean;
+  filter_scope: "both" | "platform" | "channel";
   section_order: DashboardSectionId[];
 }
 

@@ -44,6 +44,8 @@ export type CampaignFrequencyOverrideForm = {
   frequency: number;
 };
 
+export type DashboardFilterScope = "both" | "platform" | "channel";
+
 export type DashboardFormData = {
   client_id: string;
   client_name: string;
@@ -55,6 +57,7 @@ export type DashboardFormData = {
     period_to: string;
     logo_url?: string;
     spend_source?: "platform_actual" | "media_plan_derived";
+    filter_scope?: DashboardFilterScope;
     visible_metrics: string[];
     section_order?: DashboardSectionId[];
     show_spend: boolean;
