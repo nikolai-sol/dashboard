@@ -63,6 +63,55 @@ function defaultForm(): DashboardFormData {
   };
 }
 
+function isStepComplete(step: number, formData: DashboardFormData) {
+  if (step === 0) {
+    return (
+      Boolean(formData.client_id) &&
+      Boolean(formData.client_name) &&
+      Boolean(formData.dashboard_name) &&
+      Boolean(formData.config.period_from) &&
+      Boolean(formData.config.period_to)
+    );
+  }
+
+  if (step === 1) {
+    const actualCount = formData.sources.filter((source) => source.role === "actual").length;
+    if (actualCount === 0) return false;
+    const plan = formData.sources.find((source) => source.role === "plan");
+    if (plan) {
+      const sheetUrl = String(plan.source_config?.sheet_url ?? "").trim();
+      const hasUpload =
+        !!plan.source_config &&
+        typeof plan.source_config.upload_file === "object" &&
+        plan.source_config.upload_file;
+      const hasInline = !!plan.source_config && Array.isArray(plan.source_config.inline_rows);
+      return Boolean(sheetUrl || hasUpload || hasInline);
+    }
+    return true;
+  }
+
+  if (step === 2) {
+    return formData.sources
+      .filter((source) => source.role === "actual")
+      .every((source) => {
+        const filter = source.filters[0] ?? { filter_type: "all", filter_value: null };
+        if (filter.filter_type === "id_list") {
+          return Boolean(filter.filter_value && filter.filter_value.trim());
+        }
+        if (filter.filter_type === "name_pattern") {
+          return Boolean(filter.filter_value && filter.filter_value.trim());
+        }
+        return true;
+      });
+  }
+
+  if (step === 5) {
+    return (formData.config.kpi_cards ?? []).length >= 5;
+  }
+
+  return true;
+}
+
 function normalizeSources(raw: unknown): DashboardSourceForm[] {
   if (!Array.isArray(raw)) return [];
   return raw.map((source) => {
@@ -206,54 +255,19 @@ export default function DashboardWizard({ dashboardId }: DashboardWizardProps) {
     void loadDashboard();
   }, [dashboardId]);
 
-  const stepValid = useMemo(() => {
-    if (step === 0) {
-      return (
-        Boolean(formData.client_id) &&
-        Boolean(formData.client_name) &&
-        Boolean(formData.dashboard_name) &&
-        Boolean(formData.config.period_from) &&
-        Boolean(formData.config.period_to)
-      );
-    }
-
-    if (step === 1) {
-      const actualCount = formData.sources.filter((source) => source.role === "actual").length;
-      if (actualCount === 0) return false;
-      const plan = formData.sources.find((source) => source.role === "plan");
-      if (plan) {
-        const sheetUrl = String(plan.source_config?.sheet_url ?? "").trim();
-        const hasUpload =
-          !!plan.source_config &&
-          typeof plan.source_config.upload_file === "object" &&
-          plan.source_config.upload_file;
-        const hasInline = !!plan.source_config && Array.isArray(plan.source_config.inline_rows);
-        return Boolean(sheetUrl || hasUpload || hasInline);
+  const stepValid = useMemo(() => isStepComplete(step, formData), [formData, step]);
+  const furthestAvailableStep = useMemo(() => {
+    let furthest = 0;
+    for (let index = 0; index < STEPS.length - 1; index += 1) {
+      if (!isStepComplete(index, formData)) {
+        break;
       }
-      return true;
+      furthest = index + 1;
     }
+    return furthest;
+  }, [formData]);
 
-    if (step === 2) {
-      return formData.sources
-        .filter((source) => source.role === "actual")
-        .every((source) => {
-          const filter = source.filters[0] ?? { filter_type: "all", filter_value: null };
-          if (filter.filter_type === "id_list") {
-            return Boolean(filter.filter_value && filter.filter_value.trim());
-          }
-          if (filter.filter_type === "name_pattern") {
-            return Boolean(filter.filter_value && filter.filter_value.trim());
-          }
-          return true;
-        });
-    }
-
-    if (step === 5) {
-      return (formData.config.kpi_cards ?? []).length >= 5;
-    }
-
-    return true;
-  }, [formData, step]);
+  const canJumpToStep = (targetStep: number) => targetStep <= furthestAvailableStep;
 
   const submit = async () => {
     setSaving(true);
@@ -292,18 +306,21 @@ export default function DashboardWizard({ dashboardId }: DashboardWizardProps) {
       <div className="rounded-xl border border-slate-200 bg-white p-4">
         <div className="flex flex-wrap gap-2">
           {STEPS.map((label, idx) => (
-            <div
+            <button
+              type="button"
               key={label}
+              onClick={() => canJumpToStep(idx) && setStep(idx)}
+              disabled={!canJumpToStep(idx)}
               className={`rounded-full px-3 py-1 text-xs font-semibold ${
                 idx === step
                   ? "bg-indigo-600 text-white"
                   : idx < step
                     ? "bg-indigo-100 text-indigo-700"
                     : "bg-slate-100 text-slate-500"
-              }`}
+              } ${canJumpToStep(idx) ? "cursor-pointer hover:bg-slate-200" : "cursor-not-allowed opacity-50"}`}
             >
               {idx + 1}. {label}
-            </div>
+            </button>
           ))}
         </div>
       </div>
