@@ -15,6 +15,14 @@ export interface CanonicalFilter {
 
 type SqlParam = string | number | boolean | Date | null;
 
+type CampaignCatalogOptions = {
+  search?: string;
+  accountIds?: string[];
+  dateFrom?: string;
+  dateTo?: string;
+  requireFactInRange?: boolean;
+};
+
 type AggregateRow = RowDataPacket & {
   total_impressions: number | string | null;
   total_clicks: number | string | null;
@@ -406,51 +414,70 @@ export async function getAnalyticsTimeseries(filter: CanonicalFilter) {
   return rows;
 }
 
-export async function getCampaignNames(sourceKey: string, search?: string, accountIds?: string[]) {
-  let sql = `
-    SELECT platform_campaign_id as id, campaign_name as name
-    FROM canonical_source_campaigns
-    WHERE source_key = ?
-  `;
-  const params: SqlParam[] = [sourceKey];
-
-  const normalizedAccountIds = Array.isArray(accountIds)
-    ? accountIds.map((item) => String(item).trim()).filter(Boolean)
-    : [];
-  if (normalizedAccountIds.length) {
-    sql += ` AND platform_account_id IN (${normalizedAccountIds.map(() => '?').join(',')})`;
-    params.push(...normalizedAccountIds);
-  }
-
-  if (search) {
-    sql += ` AND campaign_name LIKE ?`;
-    params.push(`%${search}%`);
-  }
-
-  sql += ` ORDER BY campaign_name LIMIT 500`;
-  const [rows] = await pool.execute<RowDataPacket[]>(sql, params);
-  return rows as Array<{ id: string; name: string }>;
+export async function getCampaignNames(
+  sourceKey: string,
+  search?: string,
+  accountIds?: string[],
+  options?: Omit<CampaignCatalogOptions, 'search' | 'accountIds'>,
+) {
+  return getCampaignCatalog(sourceKey, {
+    search,
+    accountIds,
+    ...options,
+  }).then((rows) => rows.map((row) => ({ id: row.id, name: row.name })));
 }
 
-export async function getCampaignCatalog(sourceKey: string, accountIds?: string[]) {
+export async function getCampaignCatalog(sourceKey: string, accountIdsOrOptions?: string[] | CampaignCatalogOptions) {
+  const options: CampaignCatalogOptions = Array.isArray(accountIdsOrOptions)
+    ? { accountIds: accountIdsOrOptions }
+    : (accountIdsOrOptions ?? {});
   let sql = `
-    SELECT
-      platform_campaign_id AS id,
-      campaign_name AS name
-    FROM canonical_source_campaigns
-    WHERE source_key = ?
+    SELECT DISTINCT
+      c.platform_campaign_id AS id,
+      c.campaign_name AS name
+    FROM canonical_source_campaigns c
+    WHERE c.source_key = ?
   `;
   const params: SqlParam[] = [sourceKey];
 
-  const normalizedAccountIds = Array.isArray(accountIds)
-    ? accountIds.map((item) => String(item).trim()).filter(Boolean)
+  const normalizedAccountIds = Array.isArray(options.accountIds)
+    ? options.accountIds.map((item) => String(item).trim()).filter(Boolean)
     : [];
   if (normalizedAccountIds.length) {
-    sql += ` AND platform_account_id IN (${normalizedAccountIds.map(() => '?').join(',')})`;
+    sql += ` AND c.platform_account_id IN (${normalizedAccountIds.map(() => '?').join(',')})`;
     params.push(...normalizedAccountIds);
   }
 
-  sql += ` ORDER BY campaign_name LIMIT 5000`;
+  if (options.search) {
+    sql += ` AND c.campaign_name LIKE ?`;
+    params.push(`%${options.search}%`);
+  }
+
+  if (options.requireFactInRange && options.dateFrom && options.dateTo) {
+    sql += `
+      AND EXISTS (
+        SELECT 1
+        FROM canonical_fact_ads_daily f
+        WHERE f.source_key = ?
+          AND f.platform_account_id = c.platform_account_id
+          AND f.platform_campaign_id = c.platform_campaign_id
+          AND f.fact_scope = ?
+          AND f.report_date >= ?
+          AND f.report_date <= ?
+          AND (
+            COALESCE(f.spend, 0) <> 0
+            OR COALESCE(f.impressions, 0) <> 0
+            OR COALESCE(f.clicks, 0) <> 0
+            OR COALESCE(f.conversions, 0) <> 0
+            OR COALESCE(f.views, 0) <> 0
+            OR COALESCE(f.reach, 0) <> 0
+          )
+      )
+    `;
+    params.push(sourceKey, authorityFactScope(sourceKey), options.dateFrom, options.dateTo);
+  }
+
+  sql += ` ORDER BY c.campaign_name LIMIT 5000`;
   const [rows] = await pool.execute<RowDataPacket[]>(sql, params);
   return rows as Array<{ id: string; name: string }>;
 }
