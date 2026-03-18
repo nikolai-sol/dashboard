@@ -41,6 +41,17 @@ type AdsTimeseriesRow = RowDataPacket & {
   conversions: number | string | null;
 };
 
+type CampaignDailyAdsRow = RowDataPacket & {
+  date: string | Date;
+  platform_campaign_id: string;
+  impressions: number | string | null;
+  reach: number | string | null;
+  clicks: number | string | null;
+  spend: number | string | null;
+  views: number | string | null;
+  conversions: number | string | null;
+};
+
 type AnalyticsAggregateRow = RowDataPacket & {
   total_visits: number | string | null;
   total_users: number | string | null;
@@ -305,6 +316,47 @@ export async function getTimeseriesByCampaignIds(
   `;
 
   const [rows] = await pool.execute<AdsTimeseriesRow[]>(sql, params);
+  return rows;
+}
+
+export async function getCampaignDailyFactsByIds(
+  sourceKey: string,
+  campaignIds: string[],
+  dateFrom: string,
+  dateTo: string,
+) {
+  const normalizedIds = Array.isArray(campaignIds)
+    ? campaignIds.map((id) => String(id).trim()).filter(Boolean)
+    : [];
+  if (!normalizedIds.length) {
+    return [] as CampaignDailyAdsRow[];
+  }
+
+  const factScope = authorityFactScope(sourceKey);
+  const params: SqlParam[] = [sourceKey, factScope, dateFrom, dateTo, ...normalizedIds];
+  const placeholders = normalizedIds.map(() => "?").join(",");
+
+  const sql = `
+    SELECT
+      f.report_date as date,
+      f.platform_campaign_id,
+      COALESCE(SUM(f.impressions), 0) as impressions,
+      COALESCE(SUM(f.reach), 0) as reach,
+      COALESCE(SUM(f.clicks), 0) as clicks,
+      COALESCE(SUM(f.spend), 0) as spend,
+      COALESCE(SUM(f.views), 0) as views,
+      COALESCE(SUM(f.conversions), 0) as conversions
+    FROM canonical_fact_ads_daily f
+    WHERE f.source_key = ?
+      AND f.fact_scope = ?
+      AND f.report_date >= ?
+      AND f.report_date <= ?
+      AND f.platform_campaign_id IN (${placeholders})
+    GROUP BY f.report_date, f.platform_campaign_id
+    ORDER BY f.report_date, f.platform_campaign_id
+  `;
+
+  const [rows] = await pool.execute<CampaignDailyAdsRow[]>(sql, params);
   return rows;
 }
 

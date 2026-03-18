@@ -112,6 +112,28 @@ function normalizeMediaPlanBinding(raw: unknown): MediaPlanBindingInput | null {
   };
 }
 
+function normalizeCampaignFrequencyOverride(raw: unknown) {
+  const input = (raw ?? {}) as {
+    source_key?: unknown;
+    platform_campaign_id?: unknown;
+    month_key?: unknown;
+    frequency?: unknown;
+  };
+  const sourceKey = String(input.source_key ?? "").trim().toLowerCase();
+  const campaignId = String(input.platform_campaign_id ?? "").trim();
+  const monthKey = String(input.month_key ?? "").trim();
+  const frequency = Number(input.frequency ?? 0);
+  if (!sourceKey || !campaignId || !/^\d{4}-\d{2}$/.test(monthKey) || !Number.isFinite(frequency) || frequency <= 0) {
+    return null;
+  }
+  return {
+    source_key: sourceKey,
+    platform_campaign_id: campaignId,
+    month_key: monthKey,
+    frequency: Number(frequency.toFixed(4)),
+  };
+}
+
 export function normalizeDashboardPayload(raw: unknown): DashboardUpsertPayload {
   const input = (raw ?? {}) as Partial<DashboardUpsertPayload>;
   const dashboardType =
@@ -123,6 +145,12 @@ export function normalizeDashboardPayload(raw: unknown): DashboardUpsertPayload 
     input.config && typeof input.config === "object"
       ? { ...(input.config as Record<string, unknown>) }
       : {};
+  const frequencyOverridesInput = Array.isArray(config.campaign_frequency_overrides)
+    ? config.campaign_frequency_overrides
+    : [];
+  config.campaign_frequency_overrides = frequencyOverridesInput
+    .map((item) => normalizeCampaignFrequencyOverride(item))
+    .filter(Boolean);
 
   const sourcesInput = Array.isArray(input.sources) ? input.sources : [];
   const sources = sourcesInput.map((source) => normalizeSource(source));
@@ -164,6 +192,27 @@ export function validateDashboardPayload(payload: DashboardUpsertPayload): strin
   for (const binding of payload.media_plan_bindings) {
     if (!binding.channel || !binding.source_key || !binding.platform_campaign_id) {
       return "Each media plan binding must include channel, source_key and platform_campaign_id";
+    }
+  }
+
+  const frequencyOverrides = Array.isArray(payload.config.campaign_frequency_overrides)
+    ? payload.config.campaign_frequency_overrides
+    : [];
+  for (const item of frequencyOverrides) {
+    const row = item as {
+      source_key?: unknown;
+      platform_campaign_id?: unknown;
+      month_key?: unknown;
+      frequency?: unknown;
+    };
+    if (
+      !String(row.source_key ?? "").trim() ||
+      !String(row.platform_campaign_id ?? "").trim() ||
+      !/^\d{4}-\d{2}$/.test(String(row.month_key ?? "").trim()) ||
+      !Number.isFinite(Number(row.frequency ?? 0)) ||
+      Number(row.frequency ?? 0) <= 0
+    ) {
+      return "Each campaign frequency override must include source_key, platform_campaign_id, month_key and positive frequency";
     }
   }
 

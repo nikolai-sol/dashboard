@@ -7,6 +7,7 @@ import WizardStep1 from "@/components/admin/WizardStep1";
 import WizardStep2 from "@/components/admin/WizardStep2";
 import WizardStep3 from "@/components/admin/WizardStep3";
 import WizardStepBinding from "@/components/admin/WizardStepBinding";
+import WizardStepFrequency from "@/components/admin/WizardStepFrequency";
 import WizardStep4 from "@/components/admin/WizardStep4";
 import type {
   DashboardFormData,
@@ -19,7 +20,7 @@ type DashboardWizardProps = {
   dashboardId?: string;
 };
 
-const STEPS = ["Basic", "Sources", "Filters", "Bindings", "Metrics"];
+const STEPS = ["Basic", "Sources", "Filters", "Bindings", "Frequency", "Metrics"];
 
 function defaultSectionOrder(showSpend: boolean): DashboardSectionId[] {
   return showSpend
@@ -55,6 +56,7 @@ function defaultForm(): DashboardFormData {
       show_spend: true,
       show_ai_summary: false,
       kpi_cards: ["impressions", "clicks", "ctr", "cpm", "spend"],
+        campaign_frequency_overrides: [],
     },
     sources: [],
     media_plan_bindings: [],
@@ -151,6 +153,27 @@ export default function DashboardWizard({ dashboardId }: DashboardWizardProps) {
             kpi_cards: Array.isArray(config.kpi_cards)
               ? config.kpi_cards.map((item) => String(item)).slice(0, 5)
               : ["impressions", "clicks", "ctr", "cpm", "spend"],
+            campaign_frequency_overrides: Array.isArray(config.campaign_frequency_overrides)
+              ? config.campaign_frequency_overrides
+                  .map((item) => {
+                    const row =
+                      item && typeof item === "object" ? (item as Record<string, unknown>) : {};
+                    return {
+                      source_key: String(row.source_key ?? "").trim().toLowerCase(),
+                      platform_campaign_id: String(row.platform_campaign_id ?? "").trim(),
+                      month_key: String(row.month_key ?? "").trim(),
+                      frequency: Number(row.frequency ?? 0),
+                    };
+                  })
+                  .filter(
+                    (item) =>
+                      item.source_key &&
+                      item.platform_campaign_id &&
+                      /^\d{4}-\d{2}$/.test(item.month_key) &&
+                      Number.isFinite(item.frequency) &&
+                      item.frequency > 0,
+                  )
+              : [],
           },
           sources: normalizeSources(dash.sources),
           media_plan_bindings: Array.isArray(dash.media_plan_bindings)
@@ -225,7 +248,7 @@ export default function DashboardWizard({ dashboardId }: DashboardWizardProps) {
         });
     }
 
-    if (step === 4) {
+    if (step === 5) {
       return (formData.config.kpi_cards ?? []).length >= 5;
     }
 
@@ -293,6 +316,9 @@ export default function DashboardWizard({ dashboardId }: DashboardWizardProps) {
           <WizardStepBinding data={formData} onChange={setFormData} />
         ) : null}
         {step === 4 ? (
+          <WizardStepFrequency data={formData} onChange={setFormData} />
+        ) : null}
+        {step === 5 ? (
           <div className="space-y-4">
             <WizardStep4 data={formData} onChange={setFormData} />
             <DashboardPreview data={formData} />

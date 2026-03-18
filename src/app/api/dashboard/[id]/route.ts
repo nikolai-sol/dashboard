@@ -4,6 +4,7 @@ import pool from "@/lib/db";
 import { loadSchema } from "@/lib/schema-parser";
 import {
   getAdsAggregate,
+  getCampaignDailyFactsByIds,
   getAdsTimeseries,
   getAnalyticsAggregate,
   getAnalyticsTimeseries,
@@ -65,6 +66,24 @@ type BindingRow = RowDataPacket & {
   channel: string;
   source_key: string;
   platform_campaign_id: string;
+};
+
+type FrequencyOverrideItem = {
+  source_key: string;
+  platform_campaign_id: string;
+  month_key: string;
+  frequency: number;
+};
+
+type CampaignDailyFactRow = {
+  date: string;
+  platform_campaign_id: string;
+  impressions: number;
+  reach: number;
+  clicks: number;
+  spend: number;
+  views: number;
+  conversions: number;
 };
 
 const SPEND_RELATED_METRICS = new Set(["spend", "cpm", "cpc", "cpv", "cpa", "roas"]);
@@ -170,6 +189,10 @@ function buildPreviousPeriod(dateFrom: string, dateTo: string): { from: string; 
   return { from: prevFrom, to: prevTo };
 }
 
+function monthKeyFromDate(dateIso: string): string {
+  return dateIso.slice(0, 7);
+}
+
 function monthStart(dateIso: string): string {
   return `${dateIso.slice(0, 7)}-01`;
 }
@@ -269,6 +292,68 @@ function buildMetricSummary(metric: string, fact: number, plan: number): Channel
     completion_pct: completionPct === null ? null : Number(completionPct.toFixed(1)),
     status: buildCompletionStatus(metric, completionPct),
   };
+}
+
+function normalizeFrequencyOverrides(config: JsonRecord): FrequencyOverrideItem[] {
+  const raw = config.campaign_frequency_overrides;
+  if (!Array.isArray(raw)) return [];
+  return raw
+    .map((item) => {
+      const row = item && typeof item === "object" ? (item as Record<string, unknown>) : {};
+      const sourceKey = String(row.source_key ?? "").trim().toLowerCase();
+      const campaignId = String(row.platform_campaign_id ?? "").trim();
+      const monthKey = String(row.month_key ?? "").trim();
+      const frequency = Number(row.frequency ?? 0);
+      if (!sourceKey || !campaignId || !/^\d{4}-\d{2}$/.test(monthKey) || !Number.isFinite(frequency) || frequency <= 0) {
+        return null;
+      }
+      return {
+        source_key: sourceKey,
+        platform_campaign_id: campaignId,
+        month_key: monthKey,
+        frequency: Number(frequency.toFixed(4)),
+      };
+    })
+    .filter((item): item is FrequencyOverrideItem => Boolean(item));
+}
+
+function buildFrequencyOverrideMap(items: FrequencyOverrideItem[]) {
+  return new Map(
+    items.map((item) => [
+      `${item.source_key}:${item.platform_campaign_id}:${item.month_key}`,
+      item.frequency,
+    ]),
+  );
+}
+
+function applyFrequencyOverride(
+  sourceKey: string,
+  row: CampaignDailyFactRow,
+  overrideMap: Map<string, number>,
+): CampaignDailyFactRow {
+  const override = overrideMap.get(`${sourceKey}:${row.platform_campaign_id}:${monthKeyFromDate(row.date)}`);
+  if (!override || override <= 0) {
+    return row;
+  }
+  return {
+    ...row,
+    reach: row.impressions > 0 ? row.impressions / override : 0,
+  };
+}
+
+function sumCampaignDailyFacts(rows: CampaignDailyFactRow[]) {
+  return rows.reduce(
+    (acc, row) => {
+      acc.impressions += row.impressions;
+      acc.reach += row.reach;
+      acc.clicks += row.clicks;
+      acc.spend += row.spend;
+      acc.views += row.views;
+      acc.conversions += row.conversions;
+      return acc;
+    },
+    { impressions: 0, reach: 0, clicks: 0, spend: 0, views: 0, conversions: 0 },
+  );
 }
 
 function sumFactRows(rows: NonNullable<DashboardData["channel_timeseries"]>) {
@@ -466,12 +551,79 @@ function mergeAnalyticsTimeseries(items: AnalyticsTimeSeriesPoint[]): AnalyticsT
   return [...map.values()].sort((a, b) => a.date.localeCompare(b.date));
 }
 
+async function loadAdjustedCampaignDailyFacts(
+  sourceKey: string,
+  campaignIds: string[],
+  dateFrom: string,
+  dateTo: string,
+  overrideMap: Map<string, number>,
+): Promise<CampaignDailyFactRow[]> {
+  const rows = await getCampaignDailyFactsByIds(sourceKey, campaignIds, dateFrom, dateTo);
+  return rows.map((row) =>
+    applyFrequencyOverride(
+      sourceKey,
+      {
+        date: toIsoDate(row.date),
+        platform_campaign_id: String(row.platform_campaign_id ?? ""),
+        impressions: asNumber(row.impressions),
+        reach: asNumber(row.reach),
+        clicks: asNumber(row.clicks),
+        spend: Number(asNumber(row.spend).toFixed(2)),
+        views: asNumber(row.views),
+        conversions: asNumber(row.conversions),
+      },
+      overrideMap,
+    ),
+  );
+}
+
+async function applyAggregateReachOverrides(
+  sourceKey: string,
+  aggregate: Awaited<ReturnType<typeof getAdsAggregate>>,
+  dateFrom: string,
+  dateTo: string,
+  overrideMap: Map<string, number>,
+) {
+  const overrideCampaignIds = Array.from(
+    new Set(
+      Array.from(overrideMap.keys())
+        .filter((key) => key.startsWith(`${sourceKey}:`))
+        .map((key) => key.split(":")[1])
+        .filter(Boolean),
+    ),
+  );
+  if (!overrideCampaignIds.length || !aggregate) {
+    return aggregate;
+  }
+
+  const rawRows = await getCampaignDailyFactsByIds(sourceKey, overrideCampaignIds, dateFrom, dateTo);
+  if (!rawRows.length) {
+    return aggregate;
+  }
+
+  const rawReach = rawRows.reduce((sum, row) => sum + asNumber(row.reach), 0);
+  const adjustedRows = await loadAdjustedCampaignDailyFacts(
+    sourceKey,
+    overrideCampaignIds,
+    dateFrom,
+    dateTo,
+    overrideMap,
+  );
+  const adjustedReach = adjustedRows.reduce((sum, row) => sum + row.reach, 0);
+  const nextReach = Math.max(0, asNumber(aggregate.total_reach) - rawReach + adjustedReach);
+  return {
+    ...aggregate,
+    total_reach: nextReach,
+  };
+}
+
 async function buildPlanVsFactRowsByChannel(
   channelGroups: ChannelGroup[],
   bindingsByChannel: Map<string, Array<{ source_key: string; platform_campaign_id: string }>>,
   actualAdsSourceKeys: Set<string>,
   dateFrom: string,
   dateTo: string,
+  overrideMap: Map<string, number>,
 ): Promise<PlanVsFactItem[]> {
   const factPromises = channelGroups.map(async (group) => {
     const bindings = bindingsByChannel.get(group.channel) ?? [];
@@ -493,29 +645,19 @@ async function buildPlanVsFactRowsByChannel(
 
     const results = await Promise.all(
       Array.from(bySource.entries()).map(([sourceKey, ids]) =>
-        getFactByCampaignIds(sourceKey, ids, dateFrom, dateTo),
+        loadAdjustedCampaignDailyFacts(sourceKey, ids, dateFrom, dateTo, overrideMap),
       ),
     );
 
-    return results.reduce(
-      (acc, item) => {
-        acc.total_impressions += asNumber(item?.total_impressions);
-        acc.total_reach += asNumber(item?.total_reach);
-        acc.total_clicks += asNumber(item?.total_clicks);
-        acc.total_spend += asNumber(item?.total_spend);
-        acc.total_conversions += asNumber(item?.total_conversions);
-        acc.total_views += asNumber(item?.total_views);
-        return acc;
-      },
-      {
-        total_impressions: 0,
-        total_reach: 0,
-        total_clicks: 0,
-        total_spend: 0,
-        total_conversions: 0,
-        total_views: 0,
-      },
-    );
+    const totals = sumCampaignDailyFacts(results.flat());
+    return {
+      total_impressions: totals.impressions,
+      total_reach: totals.reach,
+      total_clicks: totals.clicks,
+      total_spend: totals.spend,
+      total_conversions: totals.conversions,
+      total_views: totals.views,
+    };
   });
 
   const facts = await Promise.all(factPromises);
@@ -634,6 +776,7 @@ async function buildChannelTimeseries(
   actualAdsSourceKeys: Set<string>,
   dateFrom: string,
   dateTo: string,
+  overrideMap: Map<string, number>,
 ): Promise<DashboardData["channel_timeseries"]> {
   const timeseries = await Promise.all(
     channelGroups.map(async (group) => {
@@ -658,7 +801,20 @@ async function buildChannelTimeseries(
 
       const sourceResults = await Promise.all(
         Array.from(bySource.entries()).map(([sourceKey, ids]) =>
-          getTimeseriesByCampaignIds(sourceKey, ids, dateFrom, dateTo),
+          ids.length
+            ? loadAdjustedCampaignDailyFacts(sourceKey, ids, dateFrom, dateTo, overrideMap)
+            : getTimeseriesByCampaignIds(sourceKey, ids, dateFrom, dateTo).then((rows) =>
+                rows.map((row) => ({
+                  date: toIsoDate(row.date),
+                  platform_campaign_id: "",
+                  impressions: asNumber(row.impressions),
+                  reach: asNumber(row.reach),
+                  clicks: asNumber(row.clicks),
+                  spend: Number(asNumber(row.spend).toFixed(2)),
+                  views: asNumber(row.views),
+                  conversions: asNumber(row.conversions),
+                })),
+              ),
         ),
       );
 
@@ -722,7 +878,11 @@ function buildChannelPerformance(
     const metrics: ChannelPerformanceItem["metrics"] = {
       impressions: buildMetricSummary("impressions", summaryFacts.impressions, summaryPlan.impressions),
       reach: buildMetricSummary("reach", summaryFacts.reach, summaryPlan.reach),
-      frequency: buildMetricSummary("frequency", row.frequency_fact, summaryPlan.frequency),
+      frequency: buildMetricSummary(
+        "frequency",
+        summaryFacts.reach > 0 ? summaryFacts.impressions / summaryFacts.reach : 0,
+        summaryPlan.frequency,
+      ),
       clicks: buildMetricSummary("clicks", summaryFacts.clicks, summaryPlan.clicks),
       views: buildMetricSummary("views", summaryFacts.views, summaryPlan.views),
       conversions: buildMetricSummary("conversions", summaryFacts.conversions, summaryPlan.conversions),
@@ -929,6 +1089,8 @@ export async function GET(
     }
 
     const config = parseJson(dashboard.config);
+    const frequencyOverrides = normalizeFrequencyOverrides(config);
+    const frequencyOverrideMap = buildFrequencyOverrideMap(frequencyOverrides);
     const showSpend = Boolean(config.show_spend ?? true);
     const spendSource =
       String(config.spend_source ?? "platform_actual") === "media_plan_derived"
@@ -983,7 +1145,13 @@ export async function GET(
 
         if (sourceType === "ads") {
           actualAdsSourceKeys.add(sourceKey);
-          const aggregate = await getAdsAggregate(filter);
+          const aggregate = await applyAggregateReachOverrides(
+            sourceKey,
+            await getAdsAggregate(filter),
+            range.from,
+            range.to,
+            frequencyOverrideMap,
+          );
 
           const platformMeta = PLATFORM_COLORS[source.platform];
           const impressions = asNumber(aggregate?.total_impressions);
@@ -1006,11 +1174,17 @@ export async function GET(
             cpm: Number(asNumber(aggregate?.avg_cpm).toFixed(2)),
           });
 
-          const prevAggregate = await getAdsAggregate({
-            ...filter,
-            date_from: previousRange.from,
-            date_to: previousRange.to,
-          });
+          const prevAggregate = await applyAggregateReachOverrides(
+            sourceKey,
+            await getAdsAggregate({
+              ...filter,
+              date_from: previousRange.from,
+              date_to: previousRange.to,
+            }),
+            previousRange.from,
+            previousRange.to,
+            frequencyOverrideMap,
+          );
           const prevImpressionsRaw = asNumber(prevAggregate?.total_impressions);
           const prevClicksRaw = asNumber(prevAggregate?.total_clicks);
           const prevSpendRaw = Number(asNumber(prevAggregate?.total_spend).toFixed(2));
@@ -1142,6 +1316,7 @@ export async function GET(
       actualAdsSourceKeys,
       range.from,
       range.to,
+      frequencyOverrideMap,
     );
     const channelTimeseries = await buildChannelTimeseries(
       planByChannel,
@@ -1149,6 +1324,7 @@ export async function GET(
       actualAdsSourceKeys,
       range.from,
       range.to,
+      frequencyOverrideMap,
     );
     const channelPerformance = buildChannelPerformance(planVsFact, channelTimeseries, range.from, range.to);
     const analyticsKpi = mergeAnalyticsKpi(analyticsKpiRaw);
