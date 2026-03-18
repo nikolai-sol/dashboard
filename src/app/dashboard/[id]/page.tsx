@@ -74,6 +74,7 @@ export default function DashboardByIdPage() {
   const dashboardId = params?.id ? String(params.id).toLowerCase() : "rag_mp";
   const initialFrom = searchParams.get("from") ?? "";
   const initialTo = searchParams.get("to") ?? "";
+  const isPdfMode = searchParams.get("pdf") === "true";
 
   const [dashboard, setDashboard] = useState<DashboardData | null>(null);
   const [selectedPlatforms, setSelectedPlatforms] = useState<string[]>([]);
@@ -453,6 +454,7 @@ export default function DashboardByIdPage() {
               color={card.color}
               format={card.format}
               trend={card.trend}
+              pdfMode={isPdfMode}
             />
           ))}
         </section>
@@ -466,6 +468,7 @@ export default function DashboardByIdPage() {
             <SpendByPlatform
               data={filteredPlatforms}
               currencyFormatter={(value) => money(value, currencyCode, locale)}
+              pdfMode={isPdfMode}
               labels={{
                 title: i18n.sections.spendByPlatform,
                 shareOfTotal: i18n.spend.shareOfTotal,
@@ -477,6 +480,7 @@ export default function DashboardByIdPage() {
               data={filteredPlatforms}
               currencyFormatter={(value) => money(value, currencyCode, locale)}
               locale={locale}
+              pdfMode={isPdfMode}
               labels={{
                 title: i18n.sections.channelMix,
                 noData: i18n.common.noDataForSelectedPlatforms,
@@ -501,6 +505,7 @@ export default function DashboardByIdPage() {
             currencyFormatter={(value) => money(value, currencyCode, locale)}
             showSpend={showSpend}
             locale={locale}
+            pdfMode={isPdfMode}
             labels={{
               title: i18n.sections.trendByDay,
               metrics: {
@@ -523,6 +528,7 @@ export default function DashboardByIdPage() {
             showSpend={showSpend}
             currencyFormatter={(value) => money(value, currencyCode, locale)}
             locale={locale}
+            pdfMode={isPdfMode}
             labels={{
               title: i18n.sections.channelPerformancePlanFact,
               noRows: i18n.planFact.noRows,
@@ -553,6 +559,7 @@ export default function DashboardByIdPage() {
             currencyFormatter={(value) => money(value, currencyCode, locale)}
             showSpend={showSpend}
             locale={locale}
+            pdfMode={isPdfMode}
             labels={{
               title: i18n.sections.platformPerformance,
               platform: i18n.common.platform,
@@ -627,7 +634,12 @@ export default function DashboardByIdPage() {
 
   const exportPdf = () => {
     if (typeof window === "undefined") return;
-    window.print();
+    const params = new URLSearchParams();
+    const from = dateRange.from || dashboard?.dashboard.period.from;
+    const to = dateRange.to || dashboard?.dashboard.period.to;
+    if (from) params.set("from", from);
+    if (to) params.set("to", to);
+    window.open(`/api/dashboard/${dashboardId}/pdf?${params.toString()}`, "_blank", "noopener,noreferrer");
   };
 
   const applyDateRange = () => {
@@ -641,7 +653,12 @@ export default function DashboardByIdPage() {
 
   if (isLoading || !dashboard) {
     return (
-      <main className="mx-auto flex min-h-screen w-full max-w-[1400px] items-center justify-center px-4 py-6 sm:px-6 lg:px-8">
+      <main
+        data-dashboard-ready="false"
+        className={`mx-auto flex min-h-screen w-full max-w-[1400px] items-center justify-center px-4 py-6 sm:px-6 lg:px-8 ${
+          isPdfMode ? "pdf-mode" : ""
+        }`}
+      >
         <p className="text-sm text-slate-500">{i18n.common.loadingDashboard}</p>
       </main>
     );
@@ -654,12 +671,16 @@ export default function DashboardByIdPage() {
   const clientName = dashboard.dashboard.client_name || dashboardId.toUpperCase();
 
   return (
-    <main className="mx-auto min-h-screen w-full max-w-[1400px] px-4 py-6 sm:px-6 lg:px-8">
+    <main
+      data-dashboard-ready="true"
+      className={`mx-auto min-h-screen w-full max-w-[1400px] px-4 py-6 sm:px-6 lg:px-8 ${isPdfMode ? "pdf-mode" : ""}`}
+    >
       <DashboardHeader
         clientName={clientName}
         title={dashboard.dashboard.dashboard_name}
         periodLabel={periodLabel}
         logoUrl={dashboard.dashboard.logo_url}
+        pdfMode={isPdfMode}
         labels={i18n.header}
         dateFrom={draftDateRange.from}
         dateTo={draftDateRange.to}
@@ -677,25 +698,27 @@ export default function DashboardByIdPage() {
         </div>
       ) : null}
 
-      <PlatformFilter
-        className="no-print"
-        options={
-          effectiveFilterMode === "channel"
-            ? channelOptions
-            : dashboard.platforms.map((platform) => ({
-                id: platform.id,
-                name: platform.name,
-                color: platform.color,
-              }))
-        }
-        selected={effectiveFilterMode === "channel" ? selectedChannels : selectedPlatforms}
-        onToggle={effectiveFilterMode === "channel" ? toggleChannel : togglePlatform}
-        onSelectAll={effectiveFilterMode === "channel" ? selectAllChannels : selectAll}
-        labels={i18n.filter}
-        mode={filterMode}
-        onModeChange={setFilterMode}
-        filterScope={channelOptions.length > 0 ? filterScope : "platform"}
-      />
+      {!isPdfMode ? (
+        <PlatformFilter
+          className="no-print"
+          options={
+            effectiveFilterMode === "channel"
+              ? channelOptions
+              : dashboard.platforms.map((platform) => ({
+                  id: platform.id,
+                  name: platform.name,
+                  color: platform.color,
+                }))
+          }
+          selected={effectiveFilterMode === "channel" ? selectedChannels : selectedPlatforms}
+          onToggle={effectiveFilterMode === "channel" ? toggleChannel : togglePlatform}
+          onSelectAll={effectiveFilterMode === "channel" ? selectAllChannels : selectAll}
+          labels={i18n.filter}
+          mode={filterMode}
+          onModeChange={setFilterMode}
+          filterScope={channelOptions.length > 0 ? filterScope : "platform"}
+        />
+      ) : null}
 
       {sectionOrder.map((sectionId) => renderSection(sectionId))}
     </main>

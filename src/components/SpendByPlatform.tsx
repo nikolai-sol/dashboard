@@ -6,6 +6,7 @@ import type { PlatformStats } from "@/lib/types";
 type SpendByPlatformProps = {
   data: PlatformStats[];
   currencyFormatter: (value: number) => string;
+  pdfMode?: boolean;
   labels?: {
     title: string;
     shareOfTotal: string;
@@ -15,6 +16,7 @@ type SpendByPlatformProps = {
 export default function SpendByPlatform({
   data,
   currencyFormatter,
+  pdfMode = false,
   labels,
 }: SpendByPlatformProps) {
   const copy = labels ?? {
@@ -46,8 +48,8 @@ export default function SpendByPlatform({
           labelSkipWidth={12}
           labelSkipHeight={12}
           labelTextColor="#0f172a"
-          animate
-          motionConfig="wobbly"
+          animate={!pdfMode}
+          motionConfig={pdfMode ? "default" : "wobbly"}
           axisTop={null}
           axisRight={null}
           axisBottom={{

@@ -7,6 +7,7 @@ type DashboardHeaderProps = {
   title: string;
   periodLabel: string;
   logoUrl?: string | null;
+  pdfMode?: boolean;
   labels?: {
     to: string;
     apply: string;
@@ -38,6 +39,7 @@ export default function DashboardHeader({
   title,
   periodLabel,
   logoUrl,
+  pdfMode = false,
   labels,
   dateFrom,
   dateTo,
@@ -78,44 +80,46 @@ export default function DashboardHeader({
         </div>
       </div>
 
-      <div className="no-print flex flex-col gap-2 sm:items-end">
-        <div className="flex flex-wrap items-end gap-2">
-          <label className="flex items-center gap-2 rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm text-slate-700">
-            <CalendarRange className="h-4 w-4 text-slate-500" />
-            <input
-              type="date"
-              value={dateFrom ?? ""}
-              onChange={(e) => onDateFromChange?.(e.target.value)}
-              className="bg-transparent outline-none"
-            />
-          </label>
-          <label className="flex items-center gap-2 rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm text-slate-700">
-            <span className="text-slate-500">{copy.to}</span>
-            <input
-              type="date"
-              value={dateTo ?? ""}
-              onChange={(e) => onDateToChange?.(e.target.value)}
-              className="bg-transparent outline-none"
-            />
-          </label>
-          <button
-            type="button"
-            onClick={onApplyDateRange}
-            disabled={!dateFrom || !dateTo || isUpdatingRange}
-            className="rounded-lg border border-slate-200 bg-white px-4 py-2 text-sm font-medium text-slate-700 transition hover:border-slate-300 hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-50"
-          >
-            {isUpdatingRange ? copy.updating : copy.apply}
-          </button>
-          <button
-            type="button"
-            onClick={onExportPdf}
-            className="inline-flex items-center gap-2 rounded-lg border border-slate-200 bg-white px-4 py-2 text-sm font-medium text-slate-700 transition hover:border-slate-300 hover:bg-slate-50"
-          >
-            <Download className="h-4 w-4" />
-            {copy.exportPdf}
-          </button>
+      {!pdfMode ? (
+        <div className="no-print flex flex-col gap-2 sm:items-end">
+          <div className="flex flex-wrap items-end gap-2">
+            <label className="flex items-center gap-2 rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm text-slate-700">
+              <CalendarRange className="h-4 w-4 text-slate-500" />
+              <input
+                type="date"
+                value={dateFrom ?? ""}
+                onChange={(e) => onDateFromChange?.(e.target.value)}
+                className="bg-transparent outline-none"
+              />
+            </label>
+            <label className="flex items-center gap-2 rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm text-slate-700">
+              <span className="text-slate-500">{copy.to}</span>
+              <input
+                type="date"
+                value={dateTo ?? ""}
+                onChange={(e) => onDateToChange?.(e.target.value)}
+                className="bg-transparent outline-none"
+              />
+            </label>
+            <button
+              type="button"
+              onClick={onApplyDateRange}
+              disabled={!dateFrom || !dateTo || isUpdatingRange}
+              className="rounded-lg border border-slate-200 bg-white px-4 py-2 text-sm font-medium text-slate-700 transition hover:border-slate-300 hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-50"
+            >
+              {isUpdatingRange ? copy.updating : copy.apply}
+            </button>
+            <button
+              type="button"
+              onClick={onExportPdf}
+              className="inline-flex items-center gap-2 rounded-lg border border-slate-200 bg-white px-4 py-2 text-sm font-medium text-slate-700 transition hover:border-slate-300 hover:bg-slate-50"
+            >
+              <Download className="h-4 w-4" />
+              {copy.exportPdf}
+            </button>
+          </div>
         </div>
-      </div>
+      ) : null}
     </header>
   );
 }

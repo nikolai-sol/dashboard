@@ -8,6 +8,7 @@ type ChannelMixProps = {
   data: PlatformStats[];
   currencyFormatter: (value: number) => string;
   locale?: string;
+  pdfMode?: boolean;
   labels?: {
     title: string;
     noData: string;
@@ -18,7 +19,13 @@ type ChannelMixProps = {
   };
 };
 
-export default function ChannelMix({ data, currencyFormatter, locale = "en-US", labels }: ChannelMixProps) {
+export default function ChannelMix({
+  data,
+  currencyFormatter,
+  locale = "en-US",
+  pdfMode = false,
+  labels,
+}: ChannelMixProps) {
   const copy = labels ?? {
     title: "Channel Mix",
     noData: "No data for selected platforms",
@@ -77,9 +84,9 @@ export default function ChannelMix({ data, currencyFormatter, locale = "en-US", 
           arcLabel={(arc) => `${arc.label} ${arc.formattedValue}`}
           arcLabelsSkipAngle={7}
           arcLabelsTextColor="#0f172a"
-          onClick={(datum) => setActiveId(String(datum.id))}
-          animate
-          motionConfig="wobbly"
+          onClick={pdfMode ? undefined : (datum) => setActiveId(String(datum.id))}
+          animate={!pdfMode}
+          motionConfig={pdfMode ? "default" : "wobbly"}
           tooltip={({ datum }) => (
             <div className="rounded-lg border border-slate-200 bg-white px-3 py-2 text-xs shadow-lg">
               <p className="font-semibold text-slate-900">{String(datum.label)}</p>

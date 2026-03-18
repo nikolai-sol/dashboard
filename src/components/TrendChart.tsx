@@ -14,6 +14,7 @@ type TrendChartProps = {
   currencyFormatter: (value: number) => string;
   showSpend?: boolean;
   locale?: string;
+  pdfMode?: boolean;
   labels?: {
     title: string;
     metrics: {
@@ -38,6 +39,7 @@ export default function TrendChart({
   currencyFormatter,
   showSpend = true,
   locale = "en-US",
+  pdfMode = false,
   labels,
 }: TrendChartProps) {
   const copy = labels ?? {
@@ -90,22 +92,24 @@ export default function TrendChart({
     <section className="card-surface p-5">
       <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
         <h3 className="text-base font-semibold text-slate-900">{copy.title}</h3>
-        <div className="inline-flex rounded-lg border border-slate-200 bg-white p-1">
-          {metricOptions.map((item) => (
-            <button
-              key={item}
-              type="button"
-              onClick={() => setMetric(item)}
-              className={`rounded-md px-3 py-1.5 text-xs font-semibold capitalize transition ${
-                item === metric
-                  ? "bg-slate-900 text-white"
-                  : "text-slate-500 hover:bg-slate-50 hover:text-slate-700"
-              }`}
-            >
-              {copy.metrics[item]}
-            </button>
-          ))}
-        </div>
+        {!pdfMode ? (
+          <div className="inline-flex rounded-lg border border-slate-200 bg-white p-1">
+            {metricOptions.map((item) => (
+              <button
+                key={item}
+                type="button"
+                onClick={() => setMetric(item)}
+                className={`rounded-md px-3 py-1.5 text-xs font-semibold capitalize transition ${
+                  item === metric
+                    ? "bg-slate-900 text-white"
+                    : "text-slate-500 hover:bg-slate-50 hover:text-slate-700"
+                }`}
+              >
+                {copy.metrics[item]}
+              </button>
+            ))}
+          </div>
+        ) : null}
       </div>
 
       <div className="h-[360px]">
@@ -144,8 +148,8 @@ export default function TrendChart({
           areaOpacity={0.08}
           useMesh
           curve="monotoneX"
-          animate
-          motionConfig="gentle"
+          animate={!pdfMode}
+          motionConfig={pdfMode ? "default" : "gentle"}
           tooltip={({ point }) => {
             const label = String(point.data.x);
             const value = Number(point.data.y);
@@ -166,23 +170,25 @@ export default function TrendChart({
         />
       </div>
 
-      <div className="mt-3 flex flex-wrap gap-2">
-        {selectedPlatforms.map((platformId) => {
-          const meta = PLATFORM_COLORS[platformId];
-          if (!meta) return null;
-          return (
-            <button
-              key={platformId}
-              type="button"
-              onClick={() => onTogglePlatform(platformId)}
-              className="inline-flex items-center gap-2 rounded-full border border-slate-200 bg-white px-3 py-1.5 text-xs font-medium text-slate-700 transition hover:border-slate-300"
-            >
-              <span className="h-2.5 w-2.5 rounded-full" style={{ backgroundColor: meta.hex }} />
-              {meta.label}
-            </button>
-          );
-        })}
-      </div>
+      {!pdfMode ? (
+        <div className="mt-3 flex flex-wrap gap-2">
+          {selectedPlatforms.map((platformId) => {
+            const meta = PLATFORM_COLORS[platformId];
+            if (!meta) return null;
+            return (
+              <button
+                key={platformId}
+                type="button"
+                onClick={() => onTogglePlatform(platformId)}
+                className="inline-flex items-center gap-2 rounded-full border border-slate-200 bg-white px-3 py-1.5 text-xs font-medium text-slate-700 transition hover:border-slate-300"
+              >
+                <span className="h-2.5 w-2.5 rounded-full" style={{ backgroundColor: meta.hex }} />
+                {meta.label}
+              </button>
+            );
+          })}
+        </div>
+      ) : null}
     </section>
   );
 }
