@@ -151,6 +151,12 @@ export function normalizeDashboardPayload(raw: unknown): DashboardUpsertPayload 
   config.campaign_frequency_overrides = frequencyOverridesInput
     .map((item) => normalizeCampaignFrequencyOverride(item))
     .filter(Boolean);
+  config.filter_scope =
+    String(config.filter_scope ?? "both") === "channel"
+      ? "channel"
+      : String(config.filter_scope ?? "both") === "platform"
+        ? "platform"
+        : "both";
 
   const sourcesInput = Array.isArray(input.sources) ? input.sources : [];
   const sources = sourcesInput.map((source) => normalizeSource(source));

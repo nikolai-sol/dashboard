@@ -108,6 +108,7 @@ export default function DashboardByIdPage() {
       setSelectedPlatforms(availablePlatforms);
       const availableChannels = (result.data.channel_performance ?? []).map((item) => item.channel);
       setSelectedChannels(availableChannels);
+      setFilterMode(result.data.dashboard.filter_scope === "channel" ? "channel" : "platform");
       setDraftDateRange((prev) => ({
         from: prev.from || result.data.dashboard.period.from,
         to: prev.to || result.data.dashboard.period.to,
@@ -124,16 +125,34 @@ export default function DashboardByIdPage() {
 
   const selectedSet = useMemo(() => new Set(selectedPlatforms), [selectedPlatforms]);
   const selectedChannelSet = useMemo(() => new Set(selectedChannels), [selectedChannels]);
+  const filterScope = dashboard?.dashboard.filter_scope ?? "both";
+  const effectiveFilterMode = filterScope === "both" ? filterMode : filterScope;
+
+  const channelVisiblePlatformIds = useMemo(() => {
+    if (!dashboard) return new Set<string>();
+    const ids = new Set<string>();
+    dashboard.plan_vs_fact.forEach((item) => {
+      if (!selectedChannelSet.has(item.channel)) return;
+      item.platforms.forEach((platform) => ids.add(resolvePlatformIdFromSourceKey(platform.source_key)));
+    });
+    return ids;
+  }, [dashboard, selectedChannelSet]);
 
   const filteredPlatforms = useMemo(() => {
     if (!dashboard) return [];
+    if (effectiveFilterMode === "channel") {
+      return dashboard.platforms.filter((item) => channelVisiblePlatformIds.has(item.id));
+    }
     return dashboard.platforms.filter((item) => selectedSet.has(item.id));
-  }, [dashboard, selectedSet]);
+  }, [channelVisiblePlatformIds, dashboard, effectiveFilterMode, selectedSet]);
 
   const filteredTimeseries = useMemo(() => {
     if (!dashboard) return [];
+    if (effectiveFilterMode === "channel") {
+      return dashboard.timeseries.filter((item) => channelVisiblePlatformIds.has(item.platform));
+    }
     return dashboard.timeseries.filter((item) => selectedSet.has(item.platform));
-  }, [dashboard, selectedSet]);
+  }, [channelVisiblePlatformIds, dashboard, effectiveFilterMode, selectedSet]);
 
   const filteredPlanVsFact = useMemo(() => {
     if (!dashboard) return [];
@@ -142,11 +161,11 @@ export default function DashboardByIdPage() {
         item.platforms.length === 0 ||
         item.platforms.some((platform) => selectedSet.has(resolvePlatformIdFromSourceKey(platform.source_key))),
     );
-    if (filterMode === "channel") {
+    if (effectiveFilterMode === "channel") {
       return platformFiltered.filter((item) => selectedChannelSet.has(item.channel));
     }
     return platformFiltered;
-  }, [dashboard, filterMode, selectedChannelSet, selectedSet]);
+  }, [dashboard, effectiveFilterMode, selectedChannelSet, selectedSet]);
 
   const filteredChannelPerformance = useMemo(() => {
     if (!dashboard?.channel_performance) return [];
@@ -155,11 +174,11 @@ export default function DashboardByIdPage() {
         item.platforms.length === 0 ||
         item.platforms.some((platform) => selectedSet.has(resolvePlatformIdFromSourceKey(platform.source_key))),
     );
-    if (filterMode === "channel") {
+    if (effectiveFilterMode === "channel") {
       return platformFiltered.filter((item) => selectedChannelSet.has(item.channel));
     }
     return platformFiltered;
-  }, [dashboard?.channel_performance, filterMode, selectedChannelSet, selectedSet]);
+  }, [dashboard?.channel_performance, effectiveFilterMode, selectedChannelSet, selectedSet]);
 
   const currencyCode = dashboard?.dashboard.currency || "EUR";
   const showSpend = dashboard?.dashboard.show_spend ?? true;
@@ -587,7 +606,7 @@ export default function DashboardByIdPage() {
       <PlatformFilter
         className="no-print"
         options={
-          filterMode === "channel"
+          effectiveFilterMode === "channel"
             ? channelOptions
             : dashboard.platforms.map((platform) => ({
                 id: platform.id,
@@ -595,12 +614,12 @@ export default function DashboardByIdPage() {
                 color: platform.color,
               }))
         }
-        selected={filterMode === "channel" ? selectedChannels : selectedPlatforms}
-        onToggle={filterMode === "channel" ? toggleChannel : togglePlatform}
-        onSelectAll={filterMode === "channel" ? selectAllChannels : selectAll}
+        selected={effectiveFilterMode === "channel" ? selectedChannels : selectedPlatforms}
+        onToggle={effectiveFilterMode === "channel" ? toggleChannel : togglePlatform}
+        onSelectAll={effectiveFilterMode === "channel" ? selectAllChannels : selectAll}
         mode={filterMode}
         onModeChange={setFilterMode}
-        allowChannelMode={channelOptions.length > 0}
+        filterScope={channelOptions.length > 0 ? filterScope : "platform"}
       />
 
       {sectionOrder.map((sectionId) => renderSection(sectionId))}

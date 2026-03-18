@@ -445,6 +445,12 @@ function getSectionOrder(config: JsonRecord, showSpend: boolean): DashboardSecti
   return raw.filter((item) => allowed.includes(item) && !seen.has(item) && seen.add(item));
 }
 
+function getFilterScope(config: JsonRecord): "both" | "platform" | "channel" {
+  const value = String(config.filter_scope ?? "both");
+  if (value === "platform" || value === "channel") return value;
+  return "both";
+}
+
 function mergePlatformStats(items: PlatformStats[]): PlatformStats[] {
   const byId = new Map<string, PlatformStats>();
 
@@ -1341,6 +1347,7 @@ export async function GET(
         },
         currency: String(config.currency ?? "EUR"),
         show_spend: showSpend,
+        filter_scope: getFilterScope(config),
         section_order: getSectionOrder(config, showSpend),
       },
       kpi_config: getKpiConfig(config, dashboard.dashboard_type, showSpend),
