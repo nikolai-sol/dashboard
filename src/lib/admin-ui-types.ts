@@ -37,6 +37,13 @@ export type MediaPlanBindingForm = {
   platform_campaign_id: string;
 };
 
+export type CampaignFrequencyOverrideForm = {
+  source_key: string;
+  platform_campaign_id: string;
+  month_key: string;
+  frequency: number;
+};
+
 export type DashboardFormData = {
   client_id: string;
   client_name: string;
@@ -53,6 +60,7 @@ export type DashboardFormData = {
     show_spend: boolean;
     show_ai_summary: boolean;
     kpi_cards: string[];
+    campaign_frequency_overrides?: CampaignFrequencyOverrideForm[];
   };
   sources: DashboardSourceForm[];
   media_plan_bindings: MediaPlanBindingForm[];
