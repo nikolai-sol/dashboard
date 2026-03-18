@@ -24,6 +24,8 @@ export async function GET(request: Request) {
   try {
     const url = new URL(request.url);
     const dashboardId = Number(url.searchParams.get("dashboard_id") ?? "");
+    let dateFrom = String(url.searchParams.get("date_from") ?? "").trim();
+    let dateTo = String(url.searchParams.get("date_to") ?? "").trim();
     const sourceKeys = String(url.searchParams.get("source_keys") ?? "")
       .split(",")
       .map((item) => item.trim())
@@ -48,6 +50,9 @@ export async function GET(request: Request) {
               : [];
             resolvedSources.push({ source_key: sourceKey, account_ids: accountIds });
           });
+        const config = (dashboard.config ?? {}) as Record<string, unknown>;
+        dateFrom = dateFrom || String(config.period_from ?? "").trim();
+        dateTo = dateTo || String(config.period_to ?? "").trim();
       } finally {
         conn.release();
       }
@@ -76,7 +81,12 @@ export async function GET(request: Request) {
     const campaigns = (
       await Promise.all(
         Array.from(dedupedSources.entries()).map(async ([sourceKey, accountIds]) => {
-          const items = await getCampaignCatalog(sourceKey, accountIds);
+          const items = await getCampaignCatalog(sourceKey, {
+            accountIds,
+            dateFrom,
+            dateTo,
+            requireFactInRange: sourceKey === "yandex_direct" && Boolean(dateFrom && dateTo),
+          });
           return items.map((item) => ({
             source_key: sourceKey,
             platform_campaign_id: String(item.id),

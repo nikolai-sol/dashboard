@@ -37,6 +37,16 @@ export default function WizardStep3({ data, onChange }: WizardStep3Props) {
     () => data.sources.filter((source) => source.role === "actual"),
     [data.sources],
   );
+  const actualSourcesKey = useMemo(
+    () =>
+      actualSources
+        .map(
+          (source) =>
+            `${source.platform}:${parseAccountIds(source.source_config?.account_ids).join(",")}`,
+        )
+        .join("|"),
+    [actualSources],
+  );
   const planSource = data.sources.find((source) => source.role === "plan");
 
   const setActualSources = (nextActual: DashboardSourceForm[]) => {
@@ -67,6 +77,8 @@ export default function WizardStep3({ data, onChange }: WizardStep3Props) {
       if (accountIds.length) {
         params.set("account_ids", accountIds.join(","));
       }
+      if (data.config.period_from) params.set("date_from", data.config.period_from);
+      if (data.config.period_to) params.set("date_to", data.config.period_to);
       const response = await fetch(`/api/admin/campaigns?${params.toString()}`);
       const json = await response.json();
       setCampaignsBySource((prev) => ({ ...prev, [sourceIndex]: json.campaigns ?? [] }));
@@ -79,12 +91,10 @@ export default function WizardStep3({ data, onChange }: WizardStep3Props) {
 
   useEffect(() => {
     actualSources.forEach((_, idx) => {
-      if (!campaignsBySource[idx]) {
-        void loadCampaigns(idx);
-      }
+      void loadCampaigns(idx);
     });
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [actualSources.map((source) => source.platform).join("|")]);
+  }, [actualSourcesKey, data.config.period_from, data.config.period_to]);
 
   return (
     <section className="space-y-4">

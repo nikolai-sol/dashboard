@@ -18,6 +18,8 @@ export async function GET(request: Request) {
       .toLowerCase();
     const search = String(url.searchParams.get("search") ?? "").trim();
     const accountIds = parseAccountIds(String(url.searchParams.get("account_ids") ?? ""));
+    const dateFrom = String(url.searchParams.get("date_from") ?? "").trim();
+    const dateTo = String(url.searchParams.get("date_to") ?? "").trim();
 
     if (!platform) {
       return NextResponse.json({ error: "platform query param is required" }, { status: 400 });
@@ -36,7 +38,11 @@ export async function GET(request: Request) {
         message: "Platform does not use campaign dictionary",
       });
     }
-    const campaigns = await getCampaignNames(schemaMeta.source_key, search, accountIds);
+    const campaigns = await getCampaignNames(schemaMeta.source_key, search, accountIds, {
+      dateFrom,
+      dateTo,
+      requireFactInRange: schemaMeta.source_key === "yandex_direct" && Boolean(dateFrom && dateTo),
+    });
     const result = campaigns.map((row) => {
       const id = String(row.id);
       return {

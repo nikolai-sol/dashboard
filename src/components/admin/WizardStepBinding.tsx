@@ -155,6 +155,8 @@ export default function WizardStepBinding({ data, onChange }: WizardStepBindingP
         const params = new URLSearchParams({
           sources: JSON.stringify(sources),
         });
+        if (data.config.period_from) params.set("date_from", data.config.period_from);
+        if (data.config.period_to) params.set("date_to", data.config.period_to);
         const response = await fetch(`/api/admin/campaigns/all?${params.toString()}`);
         const json = (await response.json()) as { campaigns?: CampaignItem[]; error?: string };
         if (!response.ok) {
@@ -179,7 +181,7 @@ export default function WizardStepBinding({ data, onChange }: WizardStepBindingP
     return () => {
       cancelled = true;
     };
-  }, [actualSources]);
+  }, [actualSources, data.config.period_from, data.config.period_to]);
 
   const groupedCampaigns = useMemo(() => {
     const filtered = campaigns.filter((campaign) => {
