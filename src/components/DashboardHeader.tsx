@@ -7,6 +7,12 @@ type DashboardHeaderProps = {
   title: string;
   periodLabel: string;
   logoUrl?: string | null;
+  labels?: {
+    to: string;
+    apply: string;
+    updating: string;
+    exportPdf: string;
+  };
   dateFrom?: string;
   dateTo?: string;
   onDateFromChange?: (value: string) => void;
@@ -32,6 +38,7 @@ export default function DashboardHeader({
   title,
   periodLabel,
   logoUrl,
+  labels,
   dateFrom,
   dateTo,
   onDateFromChange,
@@ -40,6 +47,12 @@ export default function DashboardHeader({
   isUpdatingRange = false,
   onExportPdf,
 }: DashboardHeaderProps) {
+  const copy = labels ?? {
+    to: "to",
+    apply: "Apply",
+    updating: "Updating...",
+    exportPdf: "Export PDF",
+  };
   const initials = getInitials(clientName);
 
   return (
@@ -77,7 +90,7 @@ export default function DashboardHeader({
             />
           </label>
           <label className="flex items-center gap-2 rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm text-slate-700">
-            <span className="text-slate-500">to</span>
+            <span className="text-slate-500">{copy.to}</span>
             <input
               type="date"
               value={dateTo ?? ""}
@@ -91,7 +104,7 @@ export default function DashboardHeader({
             disabled={!dateFrom || !dateTo || isUpdatingRange}
             className="rounded-lg border border-slate-200 bg-white px-4 py-2 text-sm font-medium text-slate-700 transition hover:border-slate-300 hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-50"
           >
-            {isUpdatingRange ? "Updating..." : "Apply"}
+            {isUpdatingRange ? copy.updating : copy.apply}
           </button>
           <button
             type="button"
@@ -99,7 +112,7 @@ export default function DashboardHeader({
             className="inline-flex items-center gap-2 rounded-lg border border-slate-200 bg-white px-4 py-2 text-sm font-medium text-slate-700 transition hover:border-slate-300 hover:bg-slate-50"
           >
             <Download className="h-4 w-4" />
-            Export PDF
+            {copy.exportPdf}
           </button>
         </div>
       </div>

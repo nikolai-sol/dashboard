@@ -17,6 +17,18 @@ type PlatformTableProps = {
   timeseries: TimeSeriesPoint[];
   currencyFormatter: (value: number) => string;
   showSpend?: boolean;
+  locale?: string;
+  labels?: {
+    title: string;
+    platform: string;
+    impressions: string;
+    clicks: string;
+    ctr: string;
+    cpm: string;
+    spend: string;
+    trend: string;
+    total: string;
+  };
 };
 
 export default function PlatformTable({
@@ -24,7 +36,20 @@ export default function PlatformTable({
   timeseries,
   currencyFormatter,
   showSpend = true,
+  locale = "en-US",
+  labels,
 }: PlatformTableProps) {
+  const copy = labels ?? {
+    title: "Platform Performance",
+    platform: "Platform",
+    impressions: "Impressions",
+    clicks: "Clicks",
+    ctr: "CTR",
+    cpm: "CPM",
+    spend: "Spend",
+    trend: "Trend",
+    total: "Total",
+  };
   const [sortKey, setSortKey] = useState<SortKey>(showSpend ? "spend" : "impressions");
   const [direction, setDirection] = useState<"asc" | "desc">("desc");
 
@@ -88,7 +113,7 @@ export default function PlatformTable({
 
   return (
     <section className="card-surface overflow-hidden p-5">
-      <h3 className="mb-4 text-base font-semibold text-slate-900">Platform Performance</h3>
+      <h3 className="mb-4 text-base font-semibold text-slate-900">{copy.title}</h3>
 
       <div className="overflow-x-auto">
         <table className="w-full min-w-[930px] border-collapse text-sm">
@@ -96,39 +121,39 @@ export default function PlatformTable({
             <tr className="border-b border-slate-200 text-xs uppercase tracking-[0.08em] text-slate-500">
               <th className="px-3 py-2 text-left">
                 <button type="button" onClick={() => handleSort("name")} className="inline-flex items-center gap-1">
-                  Platform {sortIcon("name")}
+                  {copy.platform} {sortIcon("name")}
                 </button>
               </th>
               <th className="px-3 py-2 text-right">
                 <button type="button" onClick={() => handleSort("impressions")} className="inline-flex items-center gap-1">
-                  Impressions {sortIcon("impressions")}
+                  {copy.impressions} {sortIcon("impressions")}
                 </button>
               </th>
               <th className="px-3 py-2 text-right">
                 <button type="button" onClick={() => handleSort("clicks")} className="inline-flex items-center gap-1">
-                  Clicks {sortIcon("clicks")}
+                  {copy.clicks} {sortIcon("clicks")}
                 </button>
               </th>
               <th className="px-3 py-2 text-right">
                 <button type="button" onClick={() => handleSort("ctr")} className="inline-flex items-center gap-1">
-                  CTR {sortIcon("ctr")}
+                  {copy.ctr} {sortIcon("ctr")}
                 </button>
               </th>
               {showSpend ? (
                 <>
                   <th className="px-3 py-2 text-right">
                     <button type="button" onClick={() => handleSort("cpm")} className="inline-flex items-center gap-1">
-                      CPM {sortIcon("cpm")}
+                      {copy.cpm} {sortIcon("cpm")}
                     </button>
                   </th>
                   <th className="px-3 py-2 text-right">
                     <button type="button" onClick={() => handleSort("spend")} className="inline-flex items-center gap-1">
-                      Spend {sortIcon("spend")}
+                      {copy.spend} {sortIcon("spend")}
                     </button>
                   </th>
                 </>
               ) : null}
-              <th className="px-3 py-2 text-right">Trend</th>
+              <th className="px-3 py-2 text-right">{copy.trend}</th>
             </tr>
           </thead>
           <tbody>
@@ -140,8 +165,8 @@ export default function PlatformTable({
                     {row.name}
                   </div>
                 </td>
-                <td className="px-3 py-2 text-right">{row.impressions.toLocaleString("en-US")}</td>
-                <td className="px-3 py-2 text-right">{row.clicks.toLocaleString("en-US")}</td>
+                <td className="px-3 py-2 text-right">{row.impressions.toLocaleString(locale)}</td>
+                <td className="px-3 py-2 text-right">{row.clicks.toLocaleString(locale)}</td>
                 <td className="px-3 py-2 text-right">{row.ctr.toFixed(2)}%</td>
                 {showSpend ? (
                   <>
@@ -154,7 +179,7 @@ export default function PlatformTable({
                     <ResponsiveContainer width="100%" height="100%">
                       <LineChart data={sparklineMap.get(row.id) ?? []}>
                         <RechartsTooltip
-                          formatter={(value) => Number(value).toLocaleString("en-US")}
+                          formatter={(value) => Number(value).toLocaleString(locale)}
                           labelStyle={{ color: "#64748b" }}
                           contentStyle={{
                             borderRadius: "10px",
@@ -179,9 +204,9 @@ export default function PlatformTable({
             ))}
 
             <tr className="bg-slate-50 font-semibold">
-              <td className="px-3 py-2 text-slate-900">Total</td>
-              <td className="px-3 py-2 text-right text-slate-900">{totals.impressions.toLocaleString("en-US")}</td>
-              <td className="px-3 py-2 text-right text-slate-900">{totals.clicks.toLocaleString("en-US")}</td>
+              <td className="px-3 py-2 text-slate-900">{copy.total}</td>
+              <td className="px-3 py-2 text-right text-slate-900">{totals.impressions.toLocaleString(locale)}</td>
+              <td className="px-3 py-2 text-right text-slate-900">{totals.clicks.toLocaleString(locale)}</td>
               <td className="px-3 py-2 text-right text-slate-900">{totalCtr.toFixed(2)}%</td>
               {showSpend ? (
                 <>

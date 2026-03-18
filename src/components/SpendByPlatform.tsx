@@ -6,12 +6,21 @@ import type { PlatformStats } from "@/lib/types";
 type SpendByPlatformProps = {
   data: PlatformStats[];
   currencyFormatter: (value: number) => string;
+  labels?: {
+    title: string;
+    shareOfTotal: string;
+  };
 };
 
 export default function SpendByPlatform({
   data,
   currencyFormatter,
+  labels,
 }: SpendByPlatformProps) {
+  const copy = labels ?? {
+    title: "Spend by Platform",
+    shareOfTotal: "% of total",
+  };
   const sorted = [...data].sort((a, b) => b.spend - a.spend);
   const total = sorted.reduce((sum, item) => sum + item.spend, 0);
   const chartData = sorted.map((item) => ({
@@ -22,7 +31,7 @@ export default function SpendByPlatform({
 
   return (
     <section className="card-surface p-5">
-      <h3 className="mb-4 text-base font-semibold text-slate-900">Spend by Platform</h3>
+      <h3 className="mb-4 text-base font-semibold text-slate-900">{copy.title}</h3>
       <div className="h-[320px]">
         <ResponsiveBar
           data={chartData}
@@ -59,7 +68,7 @@ export default function SpendByPlatform({
                   {String(indexValue)}
                 </p>
                 <p className="text-slate-700">{currencyFormatter(spend)}</p>
-                <p className="text-slate-500">{share.toFixed(1)}% of total</p>
+                <p className="text-slate-500">{share.toFixed(1)}{copy.shareOfTotal}</p>
               </div>
             );
           }}

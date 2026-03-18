@@ -7,9 +7,26 @@ import type { PlatformStats } from "@/lib/types";
 type ChannelMixProps = {
   data: PlatformStats[];
   currencyFormatter: (value: number) => string;
+  locale?: string;
+  labels?: {
+    title: string;
+    noData: string;
+    totalSpend: string;
+    spend: string;
+    impressions: string;
+    clicks: string;
+  };
 };
 
-export default function ChannelMix({ data, currencyFormatter }: ChannelMixProps) {
+export default function ChannelMix({ data, currencyFormatter, locale = "en-US", labels }: ChannelMixProps) {
+  const copy = labels ?? {
+    title: "Channel Mix",
+    noData: "No data for selected platforms",
+    totalSpend: "Total Spend",
+    spend: "Spend",
+    impressions: "Impressions",
+    clicks: "Clicks",
+  };
   const [activeId, setActiveId] = useState<string | null>(null);
 
   const pieData = useMemo(() => {
@@ -35,9 +52,9 @@ export default function ChannelMix({ data, currencyFormatter }: ChannelMixProps)
   if (pieData.length === 0) {
     return (
       <section className="card-surface p-5">
-        <h3 className="mb-4 text-base font-semibold text-slate-900">Channel Mix</h3>
+        <h3 className="mb-4 text-base font-semibold text-slate-900">{copy.title}</h3>
         <div className="flex h-[320px] items-center justify-center rounded-lg border border-slate-100 bg-slate-50 text-sm text-slate-500">
-          No data for selected platforms
+          {copy.noData}
         </div>
       </section>
     );
@@ -45,7 +62,7 @@ export default function ChannelMix({ data, currencyFormatter }: ChannelMixProps)
 
   return (
     <section className="card-surface p-5">
-      <h3 className="mb-4 text-base font-semibold text-slate-900">Channel Mix</h3>
+      <h3 className="mb-4 text-base font-semibold text-slate-900">{copy.title}</h3>
 
       <div className="relative h-[320px]">
         <ResponsivePie
@@ -71,7 +88,7 @@ export default function ChannelMix({ data, currencyFormatter }: ChannelMixProps)
           )}
         />
         <div className="pointer-events-none absolute inset-0 flex flex-col items-center justify-center">
-          <p className="text-xs uppercase tracking-[0.1em] text-slate-500">Total Spend</p>
+          <p className="text-xs uppercase tracking-[0.1em] text-slate-500">{copy.totalSpend}</p>
           <p className="font-mono text-xl font-semibold text-slate-900">
             {currencyFormatter(totalSpend)}
           </p>
@@ -81,9 +98,9 @@ export default function ChannelMix({ data, currencyFormatter }: ChannelMixProps)
       {active ? (
         <div className="rounded-lg border border-slate-200 bg-slate-50 p-3 text-sm">
           <p className="font-semibold text-slate-900">{active.label}</p>
-          <p className="text-slate-600">Spend: {currencyFormatter(Number(active.value))}</p>
-          <p className="text-slate-600">Impressions: {active.impressions.toLocaleString("en-US")}</p>
-          <p className="text-slate-600">Clicks: {active.clicks.toLocaleString("en-US")}</p>
+          <p className="text-slate-600">{copy.spend}: {currencyFormatter(Number(active.value))}</p>
+          <p className="text-slate-600">{copy.impressions}: {active.impressions.toLocaleString(locale)}</p>
+          <p className="text-slate-600">{copy.clicks}: {active.clicks.toLocaleString(locale)}</p>
         </div>
       ) : null}
     </section>

@@ -368,6 +368,7 @@ export const mockDashboardData: DashboardData = {
       to: "2025-03-31",
     },
     currency: "EUR",
+    language: "en",
     show_spend: true,
     filter_scope: "both",
     section_order: ["kpi_grid", "spend_section", "trend_chart", "platform_table", "channel_table", "plan_vs_fact"],

@@ -1,3 +1,5 @@
+import type { DashboardLanguage } from "@/lib/dashboard-i18n";
+
 export type DashboardKind = "awareness" | "performance" | "overview";
 export type DashboardSectionId =
   | "kpi_grid"
@@ -17,6 +19,7 @@ export interface DashboardMeta {
     to: string;
   };
   currency: string;
+  language: DashboardLanguage;
   show_spend: boolean;
   filter_scope: "both" | "platform" | "channel";
   section_order: DashboardSectionId[];

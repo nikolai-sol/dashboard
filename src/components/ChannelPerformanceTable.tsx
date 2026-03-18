@@ -28,6 +28,16 @@ type ChannelPerformanceTableProps = {
   selectedMetrics: string[];
   currencyFormatter: (value: number) => string;
   showSpend?: boolean;
+  locale?: string;
+  labels?: {
+    title: string;
+    noRows: string;
+    total: string;
+    channel: string;
+    instrument: string;
+    buyType: string;
+    metrics: Record<string, string>;
+  };
 };
 
 const MONEY_METRICS = new Set(["spend", "cpm", "cpc", "cpv", "cpa"]);
@@ -82,11 +92,12 @@ function formatMetricValue(
   value: number,
   metric: MetricKey,
   currencyFormatter: (value: number) => string,
+  locale: string,
 ) {
   if (metric === "ctr") return `${value.toFixed(2)}%`;
   if (metric === "frequency") return value.toFixed(2);
   if (MONEY_METRICS.has(metric)) return currencyFormatter(value);
-  return Math.round(value).toLocaleString("en-US");
+  return Math.round(value).toLocaleString(locale);
 }
 
 function sumMetric(rows: PlanVsFactItem[], metric: MetricKey) {
@@ -132,7 +143,18 @@ export default function ChannelPerformanceTable({
   selectedMetrics,
   currencyFormatter,
   showSpend = true,
+  locale = "en-US",
+  labels,
 }: ChannelPerformanceTableProps) {
+  const copy = labels ?? {
+    title: "Channel Performance",
+    noRows: "No media plan channels available for channel performance.",
+    total: "Total",
+    channel: "Channel",
+    instrument: "Instrument",
+    buyType: "Buy type",
+    metrics: {},
+  };
   const metrics = useMemo(() => resolveMetrics(selectedMetrics, showSpend), [selectedMetrics, showSpend]);
   const [sortKey, setSortKey] = useState<SortKey>(showSpend ? "spend" : "impressions");
   const [direction, setDirection] = useState<"asc" | "desc">("desc");
@@ -171,11 +193,11 @@ export default function ChannelPerformanceTable({
 
   return (
     <section className="card-surface overflow-hidden p-5">
-      <h3 className="mb-4 text-base font-semibold text-slate-900">Channel Performance</h3>
+      <h3 className="mb-4 text-base font-semibold text-slate-900">{copy.title}</h3>
 
       {rows.length === 0 ? (
         <div className="rounded-lg border border-slate-200 bg-slate-50 p-4 text-sm text-slate-500">
-          No media plan channels available for channel performance.
+          {copy.noRows}
         </div>
       ) : (
         <div className="overflow-x-auto">
@@ -184,15 +206,15 @@ export default function ChannelPerformanceTable({
               <tr className="border-b border-slate-200 text-xs uppercase tracking-[0.08em] text-slate-500">
                 <th className="px-3 py-2 text-left">
                   <button type="button" onClick={() => handleSort("name")} className="inline-flex items-center gap-1">
-                    Channel {sortIcon("name")}
+                    {copy.channel} {sortIcon("name")}
                   </button>
                 </th>
-                <th className="px-3 py-2 text-left">Instrument</th>
-                <th className="px-3 py-2 text-left">Buy type</th>
+                <th className="px-3 py-2 text-left">{copy.instrument}</th>
+                <th className="px-3 py-2 text-left">{copy.buyType}</th>
                 {metrics.map((metric) => (
                   <th key={metric} className="px-3 py-2 text-right">
                     <button type="button" onClick={() => handleSort(metric)} className="inline-flex items-center gap-1">
-                      {metricLabel(metric)} {sortIcon(metric)}
+                      {copy.metrics[metric] ?? metricLabel(metric)} {sortIcon(metric)}
                     </button>
                   </th>
                 ))}
@@ -206,19 +228,19 @@ export default function ChannelPerformanceTable({
                   <td className="px-3 py-2 text-slate-600">{row.buy_type.toUpperCase()}</td>
                   {metrics.map((metric) => (
                     <td key={`${row.channel}-${metric}`} className="px-3 py-2 text-right">
-                      {formatMetricValue(metricValue(row, metric), metric, currencyFormatter)}
+                      {formatMetricValue(metricValue(row, metric), metric, currencyFormatter, locale)}
                     </td>
                   ))}
                 </tr>
               ))}
 
               <tr className="bg-slate-50 font-semibold">
-                <td className="px-3 py-2 text-slate-900">Total</td>
+                <td className="px-3 py-2 text-slate-900">{copy.total}</td>
                 <td className="px-3 py-2 text-slate-400">-</td>
                 <td className="px-3 py-2 text-slate-400">-</td>
                 {metrics.map((metric) => (
                   <td key={`total-${metric}`} className="px-3 py-2 text-right text-slate-900">
-                    {formatMetricValue(sumMetric(rows, metric), metric, currencyFormatter)}
+                    {formatMetricValue(sumMetric(rows, metric), metric, currencyFormatter, locale)}
                   </td>
                 ))}
               </tr>

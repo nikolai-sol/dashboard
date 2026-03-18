@@ -121,7 +121,7 @@ export default function WizardStep1({ data, onChange }: WizardStep1Props) {
         </div>
       ) : null}
 
-      <div className="grid gap-4 md:grid-cols-3">
+      <div className="grid gap-4 md:grid-cols-4">
         <label className="text-sm">
           <span className="mb-1 block font-medium text-slate-700">Type</span>
           <select
@@ -132,6 +132,18 @@ export default function WizardStep1({ data, onChange }: WizardStep1Props) {
             <option value="awareness">Awareness</option>
             <option value="performance">Performance</option>
             <option value="overview">Overview</option>
+          </select>
+        </label>
+
+        <label className="text-sm">
+          <span className="mb-1 block font-medium text-slate-700">Dashboard language</span>
+          <select
+            className="w-full rounded-lg border border-slate-300 px-3 py-2"
+            value={data.config.language ?? "en"}
+            onChange={(e) => setConfig("language", e.target.value)}
+          >
+            <option value="en">English</option>
+            <option value="ru">Russian</option>
           </select>
         </label>
 

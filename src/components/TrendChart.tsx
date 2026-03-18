@@ -13,13 +13,22 @@ type TrendChartProps = {
   onTogglePlatform: (platformId: string) => void;
   currencyFormatter: (value: number) => string;
   showSpend?: boolean;
+  locale?: string;
+  labels?: {
+    title: string;
+    metrics: {
+      impressions: string;
+      clicks: string;
+      spend: string;
+    };
+  };
 };
 
-function formatMetric(metric: MetricType, value: number, currencyFormatter: (v: number) => string) {
+function formatMetric(metric: MetricType, value: number, currencyFormatter: (v: number) => string, locale: string) {
   if (metric === "spend") {
     return currencyFormatter(value);
   }
-  return value.toLocaleString("en-US");
+  return value.toLocaleString(locale);
 }
 
 export default function TrendChart({
@@ -28,7 +37,17 @@ export default function TrendChart({
   onTogglePlatform,
   currencyFormatter,
   showSpend = true,
+  locale = "en-US",
+  labels,
 }: TrendChartProps) {
+  const copy = labels ?? {
+    title: "Trend by Day",
+    metrics: {
+      impressions: "Impressions",
+      clicks: "Clicks",
+      spend: "Spend",
+    },
+  };
   const [metric, setMetric] = useState<MetricType>("impressions");
   const metricOptions = showSpend
     ? (["impressions", "clicks", "spend"] as MetricType[])
@@ -70,7 +89,7 @@ export default function TrendChart({
   return (
     <section className="card-surface p-5">
       <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
-        <h3 className="text-base font-semibold text-slate-900">Trend by Day</h3>
+        <h3 className="text-base font-semibold text-slate-900">{copy.title}</h3>
         <div className="inline-flex rounded-lg border border-slate-200 bg-white p-1">
           {metricOptions.map((item) => (
             <button
@@ -83,7 +102,7 @@ export default function TrendChart({
                   : "text-slate-500 hover:bg-slate-50 hover:text-slate-700"
               }`}
             >
-              {item}
+              {copy.metrics[item]}
             </button>
           ))}
         </div>
@@ -134,7 +153,7 @@ export default function TrendChart({
               <div className="rounded-lg border border-slate-200 bg-white px-3 py-2 text-xs shadow-lg">
                 <p className="font-semibold text-slate-900">{point.seriesId}</p>
                 <p className="text-slate-500">{label}</p>
-                <p className="text-slate-700">{formatMetric(metric, value, currencyFormatter)}</p>
+                <p className="text-slate-700">{formatMetric(metric, value, currencyFormatter, locale)}</p>
               </div>
             );
           }}

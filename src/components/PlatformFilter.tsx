@@ -11,6 +11,12 @@ type PlatformFilterProps = {
   selected: string[];
   onToggle: (optionId: string) => void;
   onSelectAll: () => void;
+  labels?: {
+    filterBy: string;
+    platforms: string;
+    channels: string;
+    all: string;
+  };
   mode?: "platform" | "channel";
   onModeChange?: (mode: "platform" | "channel") => void;
   filterScope?: "both" | "platform" | "channel";
@@ -22,11 +28,18 @@ export default function PlatformFilter({
   selected,
   onToggle,
   onSelectAll,
+  labels,
   mode = "platform",
   onModeChange,
   filterScope = "both",
   className,
 }: PlatformFilterProps) {
+  const copy = labels ?? {
+    filterBy: "Filter by",
+    platforms: "Platforms",
+    channels: "Channels",
+    all: "All",
+  };
   const availablePlatformIds = options.map((platform) => platform.id);
   const allEnabled =
     availablePlatformIds.length > 0 &&
@@ -36,7 +49,7 @@ export default function PlatformFilter({
     <section className={`card-surface mb-6 p-4 ${className ?? ""}`.trim()}>
       {filterScope === "both" ? (
         <div className="mb-3 flex items-center gap-2">
-          <span className="text-xs font-medium uppercase tracking-[0.08em] text-slate-500">Filter by</span>
+          <span className="text-xs font-medium uppercase tracking-[0.08em] text-slate-500">{copy.filterBy}</span>
           <div className="inline-flex rounded-full border border-slate-200 bg-slate-50 p-1">
             <button
               type="button"
@@ -45,7 +58,7 @@ export default function PlatformFilter({
                 mode === "platform" ? "bg-slate-900 text-white" : "text-slate-600"
               }`}
             >
-              Platforms
+              {copy.platforms}
             </button>
             <button
               type="button"
@@ -54,7 +67,7 @@ export default function PlatformFilter({
                 mode === "channel" ? "bg-slate-900 text-white" : "text-slate-600"
               }`}
             >
-              Channels
+              {copy.channels}
             </button>
           </div>
         </div>
@@ -69,7 +82,7 @@ export default function PlatformFilter({
               : "border-slate-200 bg-white text-slate-600 hover:border-slate-300"
           }`}
         >
-          All
+          {copy.all}
         </button>
 
         {options.map((platform) => {
