@@ -75,6 +75,8 @@ export default function DashboardByIdPage() {
 
   const [dashboard, setDashboard] = useState<DashboardData | null>(null);
   const [selectedPlatforms, setSelectedPlatforms] = useState<string[]>([]);
+  const [selectedChannels, setSelectedChannels] = useState<string[]>([]);
+  const [filterMode, setFilterMode] = useState<"platform" | "channel">("platform");
   const [isLoading, setIsLoading] = useState(true);
   const [isDemoMode, setIsDemoMode] = useState(false);
   const [apiError, setApiError] = useState<string | null>(null);
@@ -104,6 +106,8 @@ export default function DashboardByIdPage() {
 
       const availablePlatforms = result.data.platforms.map((platform) => platform.id);
       setSelectedPlatforms(availablePlatforms);
+      const availableChannels = (result.data.channel_performance ?? []).map((item) => item.channel);
+      setSelectedChannels(availableChannels);
       setDraftDateRange((prev) => ({
         from: prev.from || result.data.dashboard.period.from,
         to: prev.to || result.data.dashboard.period.to,
@@ -119,6 +123,7 @@ export default function DashboardByIdPage() {
   }, [dashboardId, dateRange]);
 
   const selectedSet = useMemo(() => new Set(selectedPlatforms), [selectedPlatforms]);
+  const selectedChannelSet = useMemo(() => new Set(selectedChannels), [selectedChannels]);
 
   const filteredPlatforms = useMemo(() => {
     if (!dashboard) return [];
@@ -132,25 +137,42 @@ export default function DashboardByIdPage() {
 
   const filteredPlanVsFact = useMemo(() => {
     if (!dashboard) return [];
-    return dashboard.plan_vs_fact.filter(
+    const platformFiltered = dashboard.plan_vs_fact.filter(
       (item) =>
         item.platforms.length === 0 ||
         item.platforms.some((platform) => selectedSet.has(resolvePlatformIdFromSourceKey(platform.source_key))),
     );
-  }, [dashboard, selectedSet]);
+    if (filterMode === "channel") {
+      return platformFiltered.filter((item) => selectedChannelSet.has(item.channel));
+    }
+    return platformFiltered;
+  }, [dashboard, filterMode, selectedChannelSet, selectedSet]);
 
   const filteredChannelPerformance = useMemo(() => {
     if (!dashboard?.channel_performance) return [];
-    return dashboard.channel_performance.filter(
+    const platformFiltered = dashboard.channel_performance.filter(
       (item) =>
         item.platforms.length === 0 ||
         item.platforms.some((platform) => selectedSet.has(resolvePlatformIdFromSourceKey(platform.source_key))),
     );
-  }, [dashboard?.channel_performance, selectedSet]);
+    if (filterMode === "channel") {
+      return platformFiltered.filter((item) => selectedChannelSet.has(item.channel));
+    }
+    return platformFiltered;
+  }, [dashboard?.channel_performance, filterMode, selectedChannelSet, selectedSet]);
 
   const currencyCode = dashboard?.dashboard.currency || "EUR";
   const showSpend = dashboard?.dashboard.show_spend ?? true;
   const sectionOrder = dashboard?.dashboard.section_order ?? [];
+  const channelOptions = useMemo(
+    () =>
+      (dashboard?.channel_performance ?? []).map((item) => ({
+        id: item.channel,
+        name: item.channel,
+        color: item.platforms[0]?.color ?? "#94a3b8",
+      })),
+    [dashboard?.channel_performance],
+  );
 
   const totals = useMemo(() => {
     const totalImpressions = filteredPlatforms.reduce((sum, item) => sum + item.impressions, 0);
@@ -497,6 +519,21 @@ export default function DashboardByIdPage() {
     setSelectedPlatforms(dashboard?.platforms.map((platform) => platform.id) ?? []);
   };
 
+  const toggleChannel = (channel: string) => {
+    setSelectedChannels((prev) => {
+      if (prev.includes(channel)) {
+        const next = prev.filter((item) => item !== channel);
+        const fallback = (dashboard?.channel_performance ?? []).map((item) => item.channel);
+        return next.length ? next : fallback;
+      }
+      return [...prev, channel];
+    });
+  };
+
+  const selectAllChannels = () => {
+    setSelectedChannels((dashboard?.channel_performance ?? []).map((item) => item.channel));
+  };
+
   const exportPdf = () => {
     if (typeof window === "undefined") return;
     window.print();
@@ -549,14 +586,21 @@ export default function DashboardByIdPage() {
 
       <PlatformFilter
         className="no-print"
-        platforms={dashboard.platforms.map((platform) => ({
-          id: platform.id,
-          name: platform.name,
-          color: platform.color,
-        }))}
-        selected={selectedPlatforms}
-        onToggle={togglePlatform}
-        onSelectAll={selectAll}
+        options={
+          filterMode === "channel"
+            ? channelOptions
+            : dashboard.platforms.map((platform) => ({
+                id: platform.id,
+                name: platform.name,
+                color: platform.color,
+              }))
+        }
+        selected={filterMode === "channel" ? selectedChannels : selectedPlatforms}
+        onToggle={filterMode === "channel" ? toggleChannel : togglePlatform}
+        onSelectAll={filterMode === "channel" ? selectAllChannels : selectAll}
+        mode={filterMode}
+        onModeChange={setFilterMode}
+        allowChannelMode={channelOptions.length > 0}
       />
 
       {sectionOrder.map((sectionId) => renderSection(sectionId))}

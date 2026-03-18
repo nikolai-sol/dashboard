@@ -442,8 +442,7 @@ function getSectionOrder(config: JsonRecord, showSpend: boolean): DashboardSecti
   }
   const raw = config.section_order.map((item) => String(item) as DashboardSectionId);
   const seen = new Set<DashboardSectionId>();
-  const filtered = raw.filter((item) => allowed.includes(item) && !seen.has(item) && seen.add(item));
-  return [...filtered, ...allowed.filter((item) => !seen.has(item))];
+  return raw.filter((item) => allowed.includes(item) && !seen.has(item) && seen.add(item));
 }
 
 function mergePlatformStats(items: PlatformStats[]): PlatformStats[] {
