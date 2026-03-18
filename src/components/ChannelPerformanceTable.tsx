@@ -1,52 +1,148 @@
 "use client";
 
 import { useMemo, useState } from "react";
-import {
-  Line,
-  LineChart,
-  ResponsiveContainer,
-  Tooltip as RechartsTooltip,
-} from "recharts";
 import { ArrowDown, ArrowUp } from "lucide-react";
-import type { DashboardData, PlanVsFactItem } from "@/lib/types";
+import type { PlanVsFactItem } from "@/lib/types";
 
-type SortKey = "name" | "impressions" | "clicks" | "ctr" | "cpm" | "spend" | "campaigns";
+const SUPPORTED_METRICS = [
+  "impressions",
+  "reach",
+  "frequency",
+  "clicks",
+  "views",
+  "conversions",
+  "ctr",
+  "cpm",
+  "cpc",
+  "cpv",
+  "cpa",
+  "spend",
+] as const;
+
+type MetricKey = (typeof SUPPORTED_METRICS)[number];
+type SortKey = "name" | MetricKey;
+type SortableRow = { row: PlanVsFactItem; name: string } & Record<MetricKey, number>;
 
 type ChannelPerformanceTableProps = {
   rows: PlanVsFactItem[];
-  timeseries?: DashboardData["channel_timeseries"];
+  selectedMetrics: string[];
   currencyFormatter: (value: number) => string;
   showSpend?: boolean;
 };
 
-function trendValue(row: PlanVsFactItem, point: NonNullable<DashboardData["channel_timeseries"]>[number]) {
-  const buyType = row.buy_type.toUpperCase();
-  if (buyType === "CPV") return point.views;
-  if (buyType === "CPA") return point.conversions;
-  if (buyType === "CPC") return point.clicks;
-  return point.impressions;
+const MONEY_METRICS = new Set(["spend", "cpm", "cpc", "cpv", "cpa"]);
+
+function resolveMetrics(selectedMetrics: string[], showSpend: boolean) {
+  const filtered = selectedMetrics.filter((metric) =>
+    SUPPORTED_METRICS.includes(metric as MetricKey),
+  ) as MetricKey[];
+  const metrics = filtered.filter((metric) => (showSpend ? true : !MONEY_METRICS.has(metric)));
+  if (metrics.length) return metrics;
+  return showSpend
+    ? (["impressions", "clicks", "ctr", "spend"] as MetricKey[])
+    : (["impressions", "clicks", "ctr", "reach", "frequency"] as MetricKey[]);
+}
+
+function metricLabel(metric: MetricKey) {
+  return metric.toUpperCase();
+}
+
+function metricValue(row: PlanVsFactItem, metric: MetricKey) {
+  switch (metric) {
+    case "impressions":
+      return row.impressions_fact;
+    case "reach":
+      return row.reach_fact;
+    case "frequency":
+      return row.frequency_fact;
+    case "clicks":
+      return row.clicks_fact;
+    case "views":
+      return row.views_fact;
+    case "conversions":
+      return row.conversions_fact;
+    case "ctr":
+      return row.impressions_fact > 0 ? (row.clicks_fact / row.impressions_fact) * 100 : 0;
+    case "cpm":
+      return row.cpm_fact;
+    case "cpc":
+      return row.cpc_fact;
+    case "cpv":
+      return row.cpv_fact;
+    case "cpa":
+      return row.cpa_fact;
+    case "spend":
+      return row.budget_fact;
+    default:
+      return 0;
+  }
+}
+
+function formatMetricValue(
+  value: number,
+  metric: MetricKey,
+  currencyFormatter: (value: number) => string,
+) {
+  if (metric === "ctr") return `${value.toFixed(2)}%`;
+  if (metric === "frequency") return value.toFixed(2);
+  if (MONEY_METRICS.has(metric)) return currencyFormatter(value);
+  return Math.round(value).toLocaleString("en-US");
+}
+
+function sumMetric(rows: PlanVsFactItem[], metric: MetricKey) {
+  const impressions = rows.reduce((sum, row) => sum + row.impressions_fact, 0);
+  const reach = rows.reduce((sum, row) => sum + row.reach_fact, 0);
+  const clicks = rows.reduce((sum, row) => sum + row.clicks_fact, 0);
+  const views = rows.reduce((sum, row) => sum + row.views_fact, 0);
+  const conversions = rows.reduce((sum, row) => sum + row.conversions_fact, 0);
+  const spend = rows.reduce((sum, row) => sum + row.budget_fact, 0);
+
+  switch (metric) {
+    case "impressions":
+      return impressions;
+    case "reach":
+      return reach;
+    case "frequency":
+      return reach > 0 ? impressions / reach : 0;
+    case "clicks":
+      return clicks;
+    case "views":
+      return views;
+    case "conversions":
+      return conversions;
+    case "ctr":
+      return impressions > 0 ? (clicks / impressions) * 100 : 0;
+    case "cpm":
+      return impressions > 0 ? (spend / impressions) * 1000 : 0;
+    case "cpc":
+      return clicks > 0 ? spend / clicks : 0;
+    case "cpv":
+      return views > 0 ? spend / views : 0;
+    case "cpa":
+      return conversions > 0 ? spend / conversions : 0;
+    case "spend":
+      return spend;
+    default:
+      return 0;
+  }
 }
 
 export default function ChannelPerformanceTable({
   rows,
-  timeseries,
+  selectedMetrics,
   currencyFormatter,
   showSpend = true,
 }: ChannelPerformanceTableProps) {
+  const metrics = useMemo(() => resolveMetrics(selectedMetrics, showSpend), [selectedMetrics, showSpend]);
   const [sortKey, setSortKey] = useState<SortKey>(showSpend ? "spend" : "impressions");
   const [direction, setDirection] = useState<"asc" | "desc">("desc");
 
   const sortedRows = useMemo(() => {
-    const list = rows.map((row) => ({
+    const list: SortableRow[] = rows.map((row) => ({
       row,
       name: row.channel,
-      impressions: row.impressions_fact,
-      clicks: row.clicks_fact,
-      ctr: row.impressions_fact > 0 ? (row.clicks_fact / row.impressions_fact) * 100 : 0,
-      cpm: row.cpm_fact,
-      spend: row.budget_fact,
-      campaigns: row.campaign_count,
-    }));
+      ...Object.fromEntries(metrics.map((metric) => [metric, metricValue(row, metric)])),
+    })) as SortableRow[];
     list.sort((a, b) => {
       const aVal = a[sortKey];
       const bVal = b[sortKey];
@@ -57,33 +153,7 @@ export default function ChannelPerformanceTable({
       return direction === "asc" ? diff : -diff;
     });
     return list;
-  }, [direction, rows, sortKey]);
-
-  const sparklineMap = useMemo(() => {
-    const map = new Map<string, { x: string; y: number }[]>();
-    rows.forEach((row) => {
-      const data = (timeseries ?? [])
-        .filter((point) => point.channel === row.channel)
-        .slice(-30)
-        .map((point) => ({ x: point.date.slice(5), y: trendValue(row, point) }));
-      map.set(row.channel, data);
-    });
-    return map;
-  }, [rows, timeseries]);
-
-  const totals = rows.reduce(
-    (acc, row) => {
-      acc.impressions += row.impressions_fact;
-      acc.clicks += row.clicks_fact;
-      acc.spend += row.budget_fact;
-      acc.campaigns += row.campaign_count;
-      return acc;
-    },
-    { impressions: 0, clicks: 0, spend: 0, campaigns: 0 },
-  );
-
-  const totalCtr = totals.impressions > 0 ? (totals.clicks / totals.impressions) * 100 : 0;
-  const totalCpm = totals.impressions > 0 ? (totals.spend / totals.impressions) * 1000 : 0;
+  }, [direction, metrics, rows, sortKey]);
 
   const handleSort = (key: SortKey) => {
     if (key === sortKey) {
@@ -109,7 +179,7 @@ export default function ChannelPerformanceTable({
         </div>
       ) : (
         <div className="overflow-x-auto">
-          <table className="w-full min-w-[1080px] border-collapse text-sm">
+          <table className="w-full min-w-[820px] border-collapse text-sm">
             <thead>
               <tr className="border-b border-slate-200 text-xs uppercase tracking-[0.08em] text-slate-500">
                 <th className="px-3 py-2 text-left">
@@ -119,85 +189,26 @@ export default function ChannelPerformanceTable({
                 </th>
                 <th className="px-3 py-2 text-left">Instrument</th>
                 <th className="px-3 py-2 text-left">Buy type</th>
-                <th className="px-3 py-2 text-right">
-                  <button type="button" onClick={() => handleSort("impressions")} className="inline-flex items-center gap-1">
-                    Impressions {sortIcon("impressions")}
-                  </button>
-                </th>
-                <th className="px-3 py-2 text-right">
-                  <button type="button" onClick={() => handleSort("clicks")} className="inline-flex items-center gap-1">
-                    Clicks {sortIcon("clicks")}
-                  </button>
-                </th>
-                <th className="px-3 py-2 text-right">
-                  <button type="button" onClick={() => handleSort("ctr")} className="inline-flex items-center gap-1">
-                    CTR {sortIcon("ctr")}
-                  </button>
-                </th>
-                {showSpend ? (
-                  <>
-                    <th className="px-3 py-2 text-right">
-                      <button type="button" onClick={() => handleSort("cpm")} className="inline-flex items-center gap-1">
-                        CPM {sortIcon("cpm")}
-                      </button>
-                    </th>
-                    <th className="px-3 py-2 text-right">
-                      <button type="button" onClick={() => handleSort("spend")} className="inline-flex items-center gap-1">
-                        Spend {sortIcon("spend")}
-                      </button>
-                    </th>
-                  </>
-                ) : null}
-                <th className="px-3 py-2 text-right">
-                  <button type="button" onClick={() => handleSort("campaigns")} className="inline-flex items-center gap-1">
-                    Campaigns {sortIcon("campaigns")}
-                  </button>
-                </th>
-                <th className="px-3 py-2 text-right">Trend</th>
+                {metrics.map((metric) => (
+                  <th key={metric} className="px-3 py-2 text-right">
+                    <button type="button" onClick={() => handleSort(metric)} className="inline-flex items-center gap-1">
+                      {metricLabel(metric)} {sortIcon(metric)}
+                    </button>
+                  </th>
+                ))}
               </tr>
             </thead>
             <tbody>
-              {sortedRows.map(({ row, impressions, clicks, ctr, cpm, spend, campaigns }) => (
+              {sortedRows.map(({ row }) => (
                 <tr key={`${row.channel}-${row.buy_type}`} className="border-b border-slate-100">
                   <td className="px-3 py-2 font-medium text-slate-800">{row.channel}</td>
                   <td className="px-3 py-2 text-slate-600">{row.instrument || "-"}</td>
                   <td className="px-3 py-2 text-slate-600">{row.buy_type.toUpperCase()}</td>
-                  <td className="px-3 py-2 text-right">{Math.round(impressions).toLocaleString("en-US")}</td>
-                  <td className="px-3 py-2 text-right">{Math.round(clicks).toLocaleString("en-US")}</td>
-                  <td className="px-3 py-2 text-right">{ctr.toFixed(2)}%</td>
-                  {showSpend ? (
-                    <>
-                      <td className="px-3 py-2 text-right">{currencyFormatter(cpm)}</td>
-                      <td className="px-3 py-2 text-right font-mono">{currencyFormatter(spend)}</td>
-                    </>
-                  ) : null}
-                  <td className="px-3 py-2 text-right">{campaigns}</td>
-                  <td className="px-3 py-2">
-                    <div className="ml-auto h-10 w-28">
-                      <ResponsiveContainer width="100%" height="100%">
-                        <LineChart data={sparklineMap.get(row.channel) ?? []}>
-                          <RechartsTooltip
-                            formatter={(value) => Number(value).toLocaleString("en-US")}
-                            labelStyle={{ color: "#64748b" }}
-                            contentStyle={{
-                              borderRadius: "10px",
-                              borderColor: "#e2e8f0",
-                              fontSize: "12px",
-                            }}
-                          />
-                          <Line
-                            type="monotone"
-                            dataKey="y"
-                            stroke={row.platforms[0]?.color ?? "#64748b"}
-                            strokeWidth={2}
-                            dot={false}
-                            isAnimationActive
-                            animationDuration={700}
-                          />
-                        </LineChart>
-                      </ResponsiveContainer>
-                    </div>
-                  </td>
+                  {metrics.map((metric) => (
+                    <td key={`${row.channel}-${metric}`} className="px-3 py-2 text-right">
+                      {formatMetricValue(metricValue(row, metric), metric, currencyFormatter)}
+                    </td>
+                  ))}
                 </tr>
               ))}
 
@@ -205,17 +216,11 @@ export default function ChannelPerformanceTable({
                 <td className="px-3 py-2 text-slate-900">Total</td>
                 <td className="px-3 py-2 text-slate-400">-</td>
                 <td className="px-3 py-2 text-slate-400">-</td>
-                <td className="px-3 py-2 text-right text-slate-900">{Math.round(totals.impressions).toLocaleString("en-US")}</td>
-                <td className="px-3 py-2 text-right text-slate-900">{Math.round(totals.clicks).toLocaleString("en-US")}</td>
-                <td className="px-3 py-2 text-right text-slate-900">{totalCtr.toFixed(2)}%</td>
-                {showSpend ? (
-                  <>
-                    <td className="px-3 py-2 text-right text-slate-900">{currencyFormatter(totalCpm)}</td>
-                    <td className="px-3 py-2 text-right font-mono text-slate-900">{currencyFormatter(totals.spend)}</td>
-                  </>
-                ) : null}
-                <td className="px-3 py-2 text-right text-slate-900">{totals.campaigns}</td>
-                <td className="px-3 py-2 text-right text-slate-400">-</td>
+                {metrics.map((metric) => (
+                  <td key={`total-${metric}`} className="px-3 py-2 text-right text-slate-900">
+                    {formatMetricValue(sumMetric(rows, metric), metric, currencyFormatter)}
+                  </td>
+                ))}
               </tr>
             </tbody>
           </table>

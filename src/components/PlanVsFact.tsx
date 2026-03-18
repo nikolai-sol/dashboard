@@ -12,6 +12,8 @@ type PlanVsFactProps = {
 
 const SUPPORTED_METRICS = [
   "impressions",
+  "reach",
+  "frequency",
   "clicks",
   "views",
   "conversions",
@@ -53,6 +55,7 @@ function formatMetricValue(
 ) {
   if (isMoneyMetric(metric)) return currencyFormatter(value);
   if (metric === "ctr") return `${value.toFixed(2)}%`;
+  if (metric === "frequency") return value.toFixed(2);
   if (metric === "cpm" || metric === "cpc" || metric === "cpv" || metric === "cpa") {
     return currencyFormatter(value);
   }
@@ -143,6 +146,18 @@ function sumMetric(rows: ChannelPerformanceItem[], metric: MetricKey): ChannelPe
       fact: conversionsFact > 0 ? spendFact / conversionsFact : 0,
       plan: conversionsPlan > 0 ? spendPlan / conversionsPlan : 0,
       completion_pct: null,
+      status: null,
+    };
+  }
+  if (metric === "frequency") {
+    const impressionsFact = rows.reduce((sum, row) => sum + (row.metrics.impressions?.fact ?? 0), 0);
+    const reachFact = rows.reduce((sum, row) => sum + (row.metrics.reach?.fact ?? 0), 0);
+    const impressionsPlan = rows.reduce((sum, row) => sum + (row.metrics.impressions?.plan ?? 0), 0);
+    const reachPlan = rows.reduce((sum, row) => sum + (row.metrics.reach?.plan ?? 0), 0);
+    return {
+      fact: reachFact > 0 ? impressionsFact / reachFact : 0,
+      plan: reachPlan > 0 ? impressionsPlan / reachPlan : 0,
+      completion_pct: reachPlan > 0 ? ((reachFact > 0 ? impressionsFact / reachFact : 0) / (impressionsPlan / reachPlan)) * 100 : null,
       status: null,
     };
   }

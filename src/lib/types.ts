@@ -67,6 +67,7 @@ export interface PlanVsFactItem {
 
   budget_plan: number;
   impressions_plan: number;
+  reach_plan: number;
   clicks_plan: number;
   views_plan: number;
   conversions_plan: number;
@@ -87,11 +88,14 @@ export interface PlanVsFactItem {
 
   budget_fact: number;
   impressions_fact: number;
+  reach_fact: number;
   clicks_fact: number;
   views_fact: number;
   conversions_fact: number;
 
   pacing: number;
+  frequency_plan: number;
+  frequency_fact: number;
 
   cpm_plan: number;
   cpm_fact: number;
@@ -116,7 +120,7 @@ export interface ChannelPerformanceMonth {
   to: string;
   metrics: Partial<
     Record<
-      "impressions" | "clicks" | "views" | "conversions" | "spend" | "ctr" | "cpm" | "cpc" | "cpv" | "cpa",
+      "impressions" | "reach" | "frequency" | "clicks" | "views" | "conversions" | "spend" | "ctr" | "cpm" | "cpc" | "cpv" | "cpa",
       ChannelPerformanceMetric
     >
   >;
@@ -131,7 +135,7 @@ export interface ChannelPerformanceItem {
   plan_only: boolean;
   metrics: Partial<
     Record<
-      "impressions" | "clicks" | "views" | "conversions" | "spend" | "ctr" | "cpm" | "cpc" | "cpv" | "cpa",
+      "impressions" | "reach" | "frequency" | "clicks" | "views" | "conversions" | "spend" | "ctr" | "cpm" | "cpc" | "cpv" | "cpa",
       ChannelPerformanceMetric
     >
   >;
@@ -172,6 +176,7 @@ export interface DashboardData {
     channel: string;
     instrument?: string;
     impressions: number;
+    reach?: number;
     clicks: number;
     spend: number;
     views: number;

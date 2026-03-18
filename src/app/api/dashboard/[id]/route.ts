@@ -228,7 +228,14 @@ function buildPeriodMonths(dateFrom: string, dateTo: string) {
 }
 
 function roundMetric(value: number, metric: string): number {
-  if (metric === "ctr" || metric === "cpm" || metric === "cpc" || metric === "cpv" || metric === "cpa") {
+  if (
+    metric === "ctr" ||
+    metric === "cpm" ||
+    metric === "cpc" ||
+    metric === "cpv" ||
+    metric === "cpa" ||
+    metric === "frequency"
+  ) {
     return Number(value.toFixed(4));
   }
   if (metric === "spend") return Number(value.toFixed(2));
@@ -268,13 +275,14 @@ function sumFactRows(rows: NonNullable<DashboardData["channel_timeseries"]>) {
   return rows.reduce(
     (acc, row) => {
       acc.impressions += asNumber(row.impressions);
+      acc.reach += asNumber(row.reach);
       acc.clicks += asNumber(row.clicks);
       acc.views += asNumber(row.views);
       acc.conversions += asNumber(row.conversions);
       acc.spend += asNumber(row.spend);
       return acc;
     },
-    { impressions: 0, clicks: 0, views: 0, conversions: 0, spend: 0 },
+    { impressions: 0, reach: 0, clicks: 0, views: 0, conversions: 0, spend: 0 },
   );
 }
 
@@ -282,25 +290,27 @@ function buildNormalizedPlanMetrics(
   row: PlanVsFactItem,
   months: Array<{ key: string; selected_days: number; days_in_month: number }>,
 ) {
-  const totals = { impressions: 0, clicks: 0, views: 0, conversions: 0, spend: 0 };
+  const totals = { impressions: 0, reach: 0, clicks: 0, views: 0, conversions: 0, spend: 0 };
   months.forEach((month) => {
     const item = row.monthly_breakdown?.[month.key];
     if (!item) return;
     const ratio = month.days_in_month > 0 ? month.selected_days / month.days_in_month : 0;
     totals.impressions += asNumber(item.impressions) * ratio;
+    totals.reach += asNumber(item.reach) * ratio;
     totals.clicks += asNumber(item.clicks) * ratio;
     totals.views += asNumber(item.views) * ratio;
     totals.conversions += asNumber(item.conversions) * ratio;
     totals.spend += asNumber(item.budget) * ratio;
   });
 
+  const frequency = totals.reach > 0 ? totals.impressions / totals.reach : 0;
   const ctr = totals.impressions > 0 ? (totals.clicks / totals.impressions) * 100 : 0;
   const cpm = totals.impressions > 0 ? (totals.spend / totals.impressions) * 1000 : 0;
   const cpc = totals.clicks > 0 ? totals.spend / totals.clicks : 0;
   const cpv = totals.views > 0 ? totals.spend / totals.views : 0;
   const cpa = totals.conversions > 0 ? totals.spend / totals.conversions : 0;
 
-  return { ...totals, ctr, cpm, cpc, cpv, cpa };
+  return { ...totals, frequency, ctr, cpm, cpc, cpv, cpa };
 }
 
 function defaultKpiConfig(type: DashboardData["dashboard"]["type"], showSpend: boolean): string[] {
@@ -490,6 +500,7 @@ async function buildPlanVsFactRowsByChannel(
     return results.reduce(
       (acc, item) => {
         acc.total_impressions += asNumber(item?.total_impressions);
+        acc.total_reach += asNumber(item?.total_reach);
         acc.total_clicks += asNumber(item?.total_clicks);
         acc.total_spend += asNumber(item?.total_spend);
         acc.total_conversions += asNumber(item?.total_conversions);
@@ -498,6 +509,7 @@ async function buildPlanVsFactRowsByChannel(
       },
       {
         total_impressions: 0,
+        total_reach: 0,
         total_clicks: 0,
         total_spend: 0,
         total_conversions: 0,
@@ -537,6 +549,7 @@ async function buildPlanVsFactRowsByChannel(
           })();
 
     const totalImpressions = asNumber(fact?.total_impressions);
+    const totalReach = asNumber(fact?.total_reach);
     const totalClicks = asNumber(fact?.total_clicks);
     const totalViews = asNumber(fact?.total_views);
     const totalConversions = asNumber(fact?.total_conversions);
@@ -544,12 +557,15 @@ async function buildPlanVsFactRowsByChannel(
 
     const budgetPlan = Number(group.budget_plan || 0);
     const impressionsPlan = Number(group.impressions_plan || 0);
+    const reachPlan = Number(group.reach_plan || 0);
     const clicksPlan = Number(group.clicks_plan || 0);
     const viewsPlan = Number(group.views_plan || 0);
     const conversionsPlan = Number(group.conversions_plan || 0);
 
     const pacing = budgetPlan > 0 ? totalSpend / budgetPlan : 0;
 
+    const frequencyPlan = reachPlan > 0 ? impressionsPlan / reachPlan : 0;
+    const frequencyFact = totalReach > 0 ? totalImpressions / totalReach : 0;
     const cpmPlan = impressionsPlan > 0 ? (budgetPlan / impressionsPlan) * 1000 : 0;
     const cpcPlan = clicksPlan > 0 ? budgetPlan / clicksPlan : 0;
     const cpvPlan = viewsPlan > 0 ? budgetPlan / viewsPlan : 0;
@@ -570,6 +586,7 @@ async function buildPlanVsFactRowsByChannel(
 
       budget_plan: Number(budgetPlan.toFixed(2)),
       impressions_plan: impressionsPlan,
+      reach_plan: Math.round(reachPlan),
       clicks_plan: clicksPlan,
       views_plan: viewsPlan,
       conversions_plan: conversionsPlan,
@@ -591,10 +608,13 @@ async function buildPlanVsFactRowsByChannel(
       ),
       budget_fact: Number(totalSpend.toFixed(2)),
       impressions_fact: Math.round(totalImpressions),
+      reach_fact: Math.round(totalReach),
       clicks_fact: Math.round(totalClicks),
       views_fact: Math.round(totalViews),
       conversions_fact: Math.round(totalConversions),
       pacing,
+      frequency_plan: Number(frequencyPlan.toFixed(4)),
+      frequency_fact: Number(frequencyFact.toFixed(4)),
 
       cpm_plan: Number(cpmPlan.toFixed(4)),
       cpm_fact: Number(cpmFact.toFixed(4)),
@@ -644,16 +664,17 @@ async function buildChannelTimeseries(
 
       const byDate = new Map<
         string,
-        { impressions: number; clicks: number; spend: number; views: number; conversions: number }
+        { impressions: number; reach: number; clicks: number; spend: number; views: number; conversions: number }
       >();
 
       sourceResults.flat().forEach((row) => {
         const date = toIsoDate(row.date);
         if (!byDate.has(date)) {
-          byDate.set(date, { impressions: 0, clicks: 0, spend: 0, views: 0, conversions: 0 });
+          byDate.set(date, { impressions: 0, reach: 0, clicks: 0, spend: 0, views: 0, conversions: 0 });
         }
         const item = byDate.get(date)!;
         item.impressions += asNumber(row.impressions);
+        item.reach += asNumber(row.reach);
         item.clicks += asNumber(row.clicks);
         item.spend += asNumber(row.spend);
         item.views += asNumber(row.views);
@@ -665,6 +686,7 @@ async function buildChannelTimeseries(
         channel: group.channel,
         instrument: group.instrument,
         impressions: item.impressions,
+        reach: item.reach,
         clicks: item.clicks,
         spend: Number(item.spend.toFixed(2)),
         views: item.views,
@@ -699,6 +721,8 @@ function buildChannelPerformance(
     const summaryPlan = buildNormalizedPlanMetrics(row, periodMonths);
     const metrics: ChannelPerformanceItem["metrics"] = {
       impressions: buildMetricSummary("impressions", summaryFacts.impressions, summaryPlan.impressions),
+      reach: buildMetricSummary("reach", summaryFacts.reach, summaryPlan.reach),
+      frequency: buildMetricSummary("frequency", row.frequency_fact, summaryPlan.frequency),
       clicks: buildMetricSummary("clicks", summaryFacts.clicks, summaryPlan.clicks),
       views: buildMetricSummary("views", summaryFacts.views, summaryPlan.views),
       conversions: buildMetricSummary("conversions", summaryFacts.conversions, summaryPlan.conversions),
@@ -743,6 +767,12 @@ function buildChannelPerformance(
               to: month.to,
               metrics: {
                 impressions: buildMetricSummary("impressions", monthlyFacts.impressions, monthlyPlan.impressions),
+                reach: buildMetricSummary("reach", monthlyFacts.reach, monthlyPlan.reach),
+                frequency: buildMetricSummary(
+                  "frequency",
+                  monthlyFacts.reach > 0 ? monthlyFacts.impressions / monthlyFacts.reach : 0,
+                  monthlyPlan.frequency,
+                ),
                 clicks: buildMetricSummary("clicks", monthlyFacts.clicks, monthlyPlan.clicks),
                 views: buildMetricSummary("views", monthlyFacts.views, monthlyPlan.views),
                 conversions: buildMetricSummary("conversions", monthlyFacts.conversions, monthlyPlan.conversions),

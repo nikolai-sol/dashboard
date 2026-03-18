@@ -148,12 +148,6 @@ export default function DashboardByIdPage() {
     );
   }, [dashboard?.channel_performance, selectedSet]);
 
-  const filteredChannelTimeseries = useMemo(() => {
-    if (!dashboard?.channel_timeseries) return [];
-    const visibleChannels = new Set(filteredPlanVsFact.map((item) => item.channel));
-    return dashboard.channel_timeseries.filter((item) => visibleChannels.has(item.channel));
-  }, [dashboard?.channel_timeseries, filteredPlanVsFact]);
-
   const currencyCode = dashboard?.dashboard.currency || "EUR";
   const showSpend = dashboard?.dashboard.show_spend ?? true;
   const sectionOrder = dashboard?.dashboard.section_order ?? [];
@@ -452,7 +446,7 @@ export default function DashboardByIdPage() {
           <PlanVsFact
             rows={filteredChannelPerformance}
             selectedMetrics={dashboard?.kpi_config ?? []}
-            showSpend={showSpend && (dashboard?.kpi_config ?? []).includes("spend")}
+            showSpend={showSpend}
             currencyFormatter={(value) => money(value, currencyCode)}
           />
         </section>
@@ -477,7 +471,7 @@ export default function DashboardByIdPage() {
         <section key={sectionId} className="pb-4">
           <ChannelPerformanceTable
             rows={filteredPlanVsFact}
-            timeseries={filteredChannelTimeseries}
+            selectedMetrics={dashboard?.kpi_config ?? []}
             currencyFormatter={(value) => money(value, currencyCode)}
             showSpend={showSpend}
           />

@@ -80,6 +80,8 @@ export interface ChannelGroup {
   buy_type: string;
   budget_plan: number;
   impressions_plan: number;
+  reach_plan: number;
+  frequency_plan: number;
   clicks_plan: number;
   views_plan: number;
   conversions_plan: number;
@@ -587,6 +589,8 @@ export function groupByChannel(rows: MediaPlanRow[]): ChannelGroup[] {
         buy_type: (row.buy_type || "CPM").toUpperCase(),
         budget_plan: 0,
         impressions_plan: 0,
+        reach_plan: 0,
+        frequency_plan: 0,
         clicks_plan: 0,
         views_plan: 0,
         conversions_plan: 0,
@@ -600,6 +604,7 @@ export function groupByChannel(rows: MediaPlanRow[]): ChannelGroup[] {
     const group = map.get(ch)!;
     group.budget_plan += Number(row.budget_plan) || 0;
     group.impressions_plan += Number(row.impressions_plan) || 0;
+    group.reach_plan += Number(row.reach_plan) || 0;
     group.clicks_plan += Number(row.clicks_plan) || 0;
     group.views_plan += Number(row.views_plan) || 0;
     group.conversions_plan += Number(row.conversions_plan) || 0;
@@ -631,6 +636,8 @@ export function groupByChannel(rows: MediaPlanRow[]): ChannelGroup[] {
       existing.reach += item.reach;
       existing.ctr = existing.impressions > 0 ? (existing.clicks / existing.impressions) * 100 : 0;
     }
+    group.frequency_plan =
+      group.reach_plan > 0 ? group.impressions_plan / group.reach_plan : 0;
   }
 
   return Array.from(map.values());
