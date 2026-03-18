@@ -1,5 +1,11 @@
 import { ACTIVE_PLATFORM_IDS, PLATFORM_COLORS } from "@/lib/platform-colors";
-import type { DashboardData, PlanVsFactItem, PlatformStats, TimeSeriesPoint } from "@/lib/types";
+import type {
+  ChannelPerformanceItem,
+  DashboardData,
+  PlanVsFactItem,
+  PlatformStats,
+  TimeSeriesPoint,
+} from "@/lib/types";
 
 type Profile = {
   platform: string;
@@ -294,6 +300,29 @@ function buildPlanVsFact(platforms: PlatformStats[]): PlanVsFactItem[] {
   });
 }
 
+function buildChannelPerformance(rows: PlanVsFactItem[]): ChannelPerformanceItem[] {
+  return rows.map((row) => ({
+    channel: row.channel,
+    instrument: row.instrument,
+    buy_type: row.buy_type,
+    platforms: row.platforms,
+    campaign_count: row.campaign_count,
+    plan_only: row.campaign_count === 0,
+    metrics: {
+      impressions: { fact: row.impressions_fact, plan: row.impressions_plan, completion_pct: row.impressions_plan > 0 ? (row.impressions_fact / row.impressions_plan) * 100 : null, status: null },
+      clicks: { fact: row.clicks_fact, plan: row.clicks_plan, completion_pct: row.clicks_plan > 0 ? (row.clicks_fact / row.clicks_plan) * 100 : null, status: null },
+      views: { fact: row.views_fact, plan: row.views_plan, completion_pct: row.views_plan > 0 ? (row.views_fact / row.views_plan) * 100 : null, status: null },
+      conversions: { fact: row.conversions_fact, plan: row.conversions_plan, completion_pct: row.conversions_plan > 0 ? (row.conversions_fact / row.conversions_plan) * 100 : null, status: null },
+      spend: { fact: row.budget_fact, plan: row.budget_plan, completion_pct: row.budget_plan > 0 ? (row.budget_fact / row.budget_plan) * 100 : null, status: null },
+      ctr: { fact: row.impressions_fact > 0 ? (row.clicks_fact / row.impressions_fact) * 100 : 0, plan: row.impressions_plan > 0 ? (row.clicks_plan / row.impressions_plan) * 100 : 0, completion_pct: null, status: null },
+      cpm: { fact: row.cpm_fact, plan: row.cpm_plan, completion_pct: null, status: null },
+      cpc: { fact: row.cpc_fact, plan: row.cpc_plan, completion_pct: null, status: null },
+      cpv: { fact: row.cpv_fact, plan: row.cpv_plan, completion_pct: null, status: null },
+      cpa: { fact: row.cpa_fact, plan: row.cpa_plan, completion_pct: null, status: null },
+    },
+  }));
+}
+
 function buildKpi(platforms: PlatformStats[]) {
   const totalImpressions = platforms.reduce((sum, item) => sum + item.impressions, 0);
   const totalClicks = platforms.reduce((sum, item) => sum + item.clicks, 0);
@@ -318,6 +347,7 @@ function buildKpi(platforms: PlatformStats[]) {
 const timeseries = generateTimeSeries();
 const platforms = aggregatePlatform(timeseries).filter((item) => ACTIVE_PLATFORM_IDS.includes(item.id));
 const planVsFact = buildPlanVsFact(platforms);
+const channelPerformance = buildChannelPerformance(planVsFact);
 const kpi = buildKpi(platforms);
 
 export const mockDashboardData: DashboardData = {
@@ -331,11 +361,12 @@ export const mockDashboardData: DashboardData = {
     },
     currency: "EUR",
     show_spend: true,
-    section_order: ["kpi_grid", "spend_section", "trend_chart", "plan_vs_fact", "platform_table"],
+    section_order: ["kpi_grid", "spend_section", "trend_chart", "platform_table", "channel_table", "plan_vs_fact"],
   },
   kpi_config: ["impressions", "clicks", "ctr", "cpm", "spend"],
   kpi,
   platforms,
   timeseries,
   plan_vs_fact: planVsFact,
+  channel_performance: channelPerformance,
 };

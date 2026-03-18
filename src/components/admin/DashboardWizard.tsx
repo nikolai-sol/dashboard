@@ -23,8 +23,8 @@ const STEPS = ["Basic", "Sources", "Filters", "Bindings", "Metrics"];
 
 function defaultSectionOrder(showSpend: boolean): DashboardSectionId[] {
   return showSpend
-    ? ["kpi_grid", "spend_section", "trend_chart", "plan_vs_fact", "platform_table"]
-    : ["kpi_grid", "trend_chart", "plan_vs_fact", "platform_table"];
+    ? ["kpi_grid", "spend_section", "trend_chart", "platform_table", "channel_table", "plan_vs_fact"]
+    : ["kpi_grid", "trend_chart", "platform_table", "channel_table", "plan_vs_fact"];
 }
 
 function currentMonthRange(): { from: string; to: string } {
