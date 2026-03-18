@@ -34,6 +34,7 @@ type AggregateRow = RowDataPacket & {
 type AdsTimeseriesRow = RowDataPacket & {
   date: string | Date;
   impressions: number | string | null;
+  reach: number | string | null;
   clicks: number | string | null;
   spend: number | string | null;
   views: number | string | null;
@@ -240,6 +241,7 @@ export async function getAdsTimeseries(filter: CanonicalFilter) {
     SELECT
       f.report_date as date,
       COALESCE(SUM(f.impressions), 0) as impressions,
+      COALESCE(SUM(f.reach), 0) as reach,
       COALESCE(SUM(f.clicks), 0) as clicks,
       COALESCE(SUM(f.spend), 0) as spend,
       COALESCE(SUM(f.views), 0) as views,
@@ -287,6 +289,7 @@ export async function getTimeseriesByCampaignIds(
     SELECT 
       f.report_date as date,
       COALESCE(SUM(f.impressions), 0) as impressions,
+      COALESCE(SUM(f.reach), 0) as reach,
       COALESCE(SUM(f.clicks), 0) as clicks,
       COALESCE(SUM(f.spend), 0) as spend,
       COALESCE(SUM(f.views), 0) as views,

@@ -248,10 +248,12 @@ function buildPlanVsFact(platforms: PlatformStats[]): PlanVsFactItem[] {
 
     const budgetPlan = profile.budgetPlan;
     const impressionsPlan = blueprint.impressionsPlan ?? Math.round((budgetPlan / 8) * 1000);
+    const reachPlan = blueprint.reachPlan ?? Math.max(1, Math.round(impressionsPlan * 0.45));
     const clicksPlan = blueprint.clicksPlan ?? Math.round(impressionsPlan * 0.008);
     const viewsPlan = blueprint.viewsPlan ?? Math.round(impressionsPlan * 0.2);
     const conversionsPlan = blueprint.conversionsPlan ?? Math.round(clicksPlan * 0.05);
 
+    const frequencyPlan = reachPlan > 0 ? impressionsPlan / reachPlan : 0;
     const cpmPlan = impressionsPlan > 0 ? (budgetPlan / impressionsPlan) * 1000 : 0;
     const cpcPlan = clicksPlan > 0 ? budgetPlan / clicksPlan : 0;
     const cpvPlan = viewsPlan > 0 ? budgetPlan / viewsPlan : 0;
@@ -277,6 +279,7 @@ function buildPlanVsFact(platforms: PlatformStats[]): PlanVsFactItem[] {
       campaign_count: 1,
       budget_plan: Number(budgetPlan.toFixed(2)),
       impressions_plan: impressionsPlan,
+      reach_plan: reachPlan,
       clicks_plan: clicksPlan,
       views_plan: viewsPlan,
       conversions_plan: conversionsPlan,
@@ -285,9 +288,12 @@ function buildPlanVsFact(platforms: PlatformStats[]): PlanVsFactItem[] {
       budget_fact: Number(stats.spend.toFixed(2)),
       pacing: budgetPlan > 0 ? Number((stats.spend / budgetPlan).toFixed(3)) : 0,
       impressions_fact: stats.impressions,
+      reach_fact: stats.reach,
       clicks_fact: stats.clicks,
       views_fact: stats.views,
       conversions_fact: stats.conversions,
+      frequency_plan: Number(frequencyPlan.toFixed(4)),
+      frequency_fact: stats.frequency,
       cpm_plan: Number(cpmPlan.toFixed(2)),
       cpm_fact: Number(cpmFact.toFixed(2)),
       cpc_plan: Number(cpcPlan.toFixed(2)),
@@ -310,6 +316,8 @@ function buildChannelPerformance(rows: PlanVsFactItem[]): ChannelPerformanceItem
     plan_only: row.campaign_count === 0,
     metrics: {
       impressions: { fact: row.impressions_fact, plan: row.impressions_plan, completion_pct: row.impressions_plan > 0 ? (row.impressions_fact / row.impressions_plan) * 100 : null, status: null },
+      reach: { fact: row.reach_fact, plan: row.reach_plan, completion_pct: row.reach_plan > 0 ? (row.reach_fact / row.reach_plan) * 100 : null, status: null },
+      frequency: { fact: row.frequency_fact, plan: row.frequency_plan, completion_pct: row.frequency_plan > 0 ? (row.frequency_fact / row.frequency_plan) * 100 : null, status: null },
       clicks: { fact: row.clicks_fact, plan: row.clicks_plan, completion_pct: row.clicks_plan > 0 ? (row.clicks_fact / row.clicks_plan) * 100 : null, status: null },
       views: { fact: row.views_fact, plan: row.views_plan, completion_pct: row.views_plan > 0 ? (row.views_fact / row.views_plan) * 100 : null, status: null },
       conversions: { fact: row.conversions_fact, plan: row.conversions_plan, completion_pct: row.conversions_plan > 0 ? (row.conversions_fact / row.conversions_plan) * 100 : null, status: null },
