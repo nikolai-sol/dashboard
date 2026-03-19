@@ -109,7 +109,6 @@ export default function WizardStep1({ data, onChange }: WizardStep1Props) {
 
       {data.config.logo_url ? (
         <div className="w-fit rounded-xl border border-slate-200 bg-slate-50 p-3">
-          {/* eslint-disable-next-line @next/next/no-img-element */}
           <div className="flex h-16 w-16 items-center justify-center overflow-hidden rounded-lg border border-slate-200 bg-white">
             {/* eslint-disable-next-line @next/next/no-img-element */}
             <img

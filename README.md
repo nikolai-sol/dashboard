@@ -1,3 +1,19 @@
+This is the `dashboard-next` app for public dashboards and admin configuration.
+
+Operational admin/dashboard flow is documented in [ADMIN-FLOW.md](/Users/nicko/ReportingDash/dashboard-next/ADMIN-FLOW.md).
+
+Key production behaviors currently covered there:
+
+- source roles: `actual`, `plan`, `custom_table`
+- `manual_data` preview/data-check flow
+- dashboard create/update detailed error handling
+- media plan analyze/confirm review flow
+- spend source selection and platform visibility rules
+
+The rest of this README is still the default Next.js scaffold and should be treated as secondary.
+
+---
+
 This is a [Next.js](https://nextjs.org) project bootstrapped with [`create-next-app`](https://nextjs.org/docs/app/api-reference/cli/create-next-app).
 
 ## Getting Started

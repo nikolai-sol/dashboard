@@ -11,6 +11,7 @@ export type DashboardI18n = {
     trendByDay: string;
     spendByPlatform: string;
     channelMix: string;
+    manualData: string;
   };
   filter: {
     filterBy: string;
@@ -75,6 +76,8 @@ const DICTIONARY: Record<DashboardLanguage, Omit<DashboardI18n, "language" | "lo
       roas: "ROAS",
       reach: "Reach",
       frequency: "Frequency",
+      sessions: "Sessions",
+      cr: "CR",
     },
     sections: {
       platformPerformance: "Platform Performance",
@@ -83,6 +86,7 @@ const DICTIONARY: Record<DashboardLanguage, Omit<DashboardI18n, "language" | "lo
       trendByDay: "Trend by Day",
       spendByPlatform: "Spend by Platform",
       channelMix: "Channel Mix",
+      manualData: "Additional Sources",
     },
     filter: {
       filterBy: "Filter by",
@@ -145,6 +149,8 @@ const DICTIONARY: Record<DashboardLanguage, Omit<DashboardI18n, "language" | "lo
       roas: "ROAS",
       reach: "Охват",
       frequency: "Частота",
+      sessions: "Сессии",
+      cr: "CR",
     },
     sections: {
       platformPerformance: "Эффективность платформ",
@@ -153,6 +159,7 @@ const DICTIONARY: Record<DashboardLanguage, Omit<DashboardI18n, "language" | "lo
       trendByDay: "Динамика по дням",
       spendByPlatform: "Расход по платформам",
       channelMix: "Микс каналов",
+      manualData: "Дополнительные источники",
     },
     filter: {
       filterBy: "Фильтр по",

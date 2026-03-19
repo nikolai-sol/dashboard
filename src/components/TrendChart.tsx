@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useMemo, useState } from "react";
 import { ResponsiveLine } from "@nivo/line";
 import { PLATFORM_COLORS } from "@/lib/platform-colors";
 import type { TimeSeriesPoint } from "@/lib/types";
@@ -54,12 +54,7 @@ export default function TrendChart({
   const metricOptions = showSpend
     ? (["impressions", "clicks", "spend"] as MetricType[])
     : (["impressions", "clicks"] as MetricType[]);
-
-  useEffect(() => {
-    if (!showSpend && metric === "spend") {
-      setMetric("impressions");
-    }
-  }, [metric, showSpend]);
+  const effectiveMetric: MetricType = !showSpend && metric === "spend" ? "impressions" : metric;
 
   const dates = useMemo(
     () => [...new Set(points.map((point) => point.date))].sort((a, b) => a.localeCompare(b)),
@@ -75,7 +70,7 @@ export default function TrendChart({
           const row = byDate.get(date);
           return {
             x: date,
-            y: row ? Number(row[metric]) : 0,
+            y: row ? Number(row[effectiveMetric]) : 0,
           };
         });
         return {
@@ -86,7 +81,7 @@ export default function TrendChart({
         };
       })
       .filter((item) => item.data.some((point) => point.y > 0));
-  }, [dates, metric, points, selectedPlatforms]);
+  }, [dates, effectiveMetric, points, selectedPlatforms]);
 
   return (
     <section className="card-surface p-5">
@@ -100,7 +95,7 @@ export default function TrendChart({
                 type="button"
                 onClick={() => setMetric(item)}
                 className={`rounded-md px-3 py-1.5 text-xs font-semibold capitalize transition ${
-                  item === metric
+                  item === effectiveMetric
                     ? "bg-slate-900 text-white"
                     : "text-slate-500 hover:bg-slate-50 hover:text-slate-700"
                 }`}
@@ -131,7 +126,7 @@ export default function TrendChart({
             tickPadding: 8,
             format: (value) => {
               const n = Number(value);
-              if (metric === "spend") {
+              if (effectiveMetric === "spend") {
                 return currencyFormatter(n);
               }
               if (n >= 1_000_000) return `${(n / 1_000_000).toFixed(1)}M`;
@@ -157,7 +152,7 @@ export default function TrendChart({
               <div className="rounded-lg border border-slate-200 bg-white px-3 py-2 text-xs shadow-lg">
                 <p className="font-semibold text-slate-900">{point.seriesId}</p>
                 <p className="text-slate-500">{label}</p>
-                <p className="text-slate-700">{formatMetric(metric, value, currencyFormatter, locale)}</p>
+                <p className="text-slate-700">{formatMetric(effectiveMetric, value, currencyFormatter, locale)}</p>
               </div>
             );
           }}

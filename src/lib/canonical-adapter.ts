@@ -523,10 +523,13 @@ export async function countAnalyticsAccounts(sourceKey: string, accountIds?: str
 export async function getActiveAccounts(
   sourceKey: string,
   sourceType: 'ads' | 'analytics',
-  options?: { search?: string; client_name?: string },
+  options?: { search?: string; client_name?: string; date_from?: string; date_to?: string },
 ) {
   const search = String(options?.search ?? '').trim();
   const clientName = String(options?.client_name ?? '').trim();
+  const dateFrom = String(options?.date_from ?? '').trim();
+  const dateTo = String(options?.date_to ?? '').trim();
+  const usePeriodFilter = dateFrom.length === 10 && dateTo.length === 10;
 
   if (sourceType === 'analytics') {
     let sql = `
@@ -581,10 +584,33 @@ export async function getActiveAccounts(
   }
 
   const factScope = authorityFactScope(sourceKey);
+  const dateClause =
+    usePeriodFilter
+      ? `AND f.report_date >= ? AND f.report_date <= ?`
+      : `AND f.report_date >= DATE_SUB(
+        (SELECT MAX(report_date)
+           FROM canonical_fact_ads_daily
+          WHERE source_key = ?
+            AND fact_scope = ?),
+        INTERVAL 60 DAY
+      )`;
+  const isYandex = sourceKey === 'yandex_direct';
+  const nameExpr = isYandex
+    ? `CASE
+        WHEN a.platform_account_id LIKE 'campaign::%' THEN
+          COALESCE(
+            (SELECT c.campaign_name FROM canonical_source_campaigns c
+             WHERE c.source_key = a.source_key AND c.platform_account_id = a.platform_account_id
+             LIMIT 1),
+            a.account_name
+          )
+        ELSE a.account_name
+      END`
+    : 'a.account_name';
   let sql = `
     SELECT
       a.platform_account_id AS id,
-      a.account_name AS name,
+      ${nameExpr} AS name,
       MAX(f.report_date) AS latest_report_date,
       COUNT(*) AS fact_rows,
       COALESCE(SUM(f.spend), 0) AS total_spend
@@ -594,19 +620,24 @@ export async function getActiveAccounts(
      AND f.platform_account_id = a.platform_account_id
      AND f.fact_scope = ?
     WHERE a.source_key = ?
-      AND f.report_date >= DATE_SUB(
-        (SELECT MAX(report_date)
-           FROM canonical_fact_ads_daily
-          WHERE source_key = ?
-            AND fact_scope = ?),
-        INTERVAL 60 DAY
-      )
+      ${dateClause}
   `;
-  const params: SqlParam[] = [factScope, sourceKey, sourceKey, factScope];
+  const params: SqlParam[] = usePeriodFilter
+    ? [factScope, sourceKey, dateFrom, dateTo]
+    : [factScope, sourceKey, sourceKey, factScope];
 
   if (search) {
-    sql += ` AND a.account_name LIKE ?`;
-    params.push(`%${search}%`);
+    const searchPattern = `%${search}%`;
+    if (isYandex) {
+      sql += ` AND (a.account_name LIKE ? OR a.platform_account_id IN (
+        SELECT platform_account_id FROM canonical_source_campaigns
+        WHERE source_key = ? AND platform_account_id = a.platform_account_id AND campaign_name LIKE ?
+      ))`;
+      params.push(searchPattern, sourceKey, searchPattern);
+    } else {
+      sql += ` AND a.account_name LIKE ?`;
+      params.push(searchPattern);
+    }
   }
 
   sql += `

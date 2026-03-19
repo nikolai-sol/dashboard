@@ -1,6 +1,7 @@
 import type { DashboardUpsertPayload } from '@/lib/admin-dashboards';
 import { getActiveAccounts, getCampaignCatalog } from '@/lib/canonical-adapter';
 import { parseMediaPlanSource, type MediaPlanRow, type MediaPlanFormat } from '@/lib/gsheet-fetcher';
+import { fetchManualData, aggregateByChannel } from '@/lib/manual-data-fetcher';
 import { resolveSourceKey, resolveSourceType } from '@/lib/source-mapping';
 
 export type MediaPlanIssueSeverity = 'error' | 'warn' | 'info';
@@ -274,20 +275,70 @@ function scoreCandidate(
   return best;
 }
 
+function scoreManualCandidate(row: MediaPlanRow, manual: { id: string; name: string }): number {
+  const rowChannel = normalizeText(String(row.channel ?? ''));
+  const name = String(manual.name).trim();
+  const normalizedName = normalizeText(name);
+  if (!rowChannel) return 0.5;
+  if (rowChannel === normalizedName) return 0.95;
+  if (normalizedName.includes(rowChannel) || rowChannel.includes(normalizedName)) return 0.85;
+  const rowTokens = tokenize(rowChannel);
+  const nameTokens = tokenize(normalizedName);
+  const overlap = rowTokens.filter((t) => nameTokens.includes(t)).length;
+  if (overlap > 0) return Math.max(0.5, 0.5 + overlap * 0.1);
+  return 0.5;
+}
+
 async function buildRowBindings(
   rows: MediaPlanRow[],
   actualSources: DashboardUpsertPayload['sources'],
   aliasMemory: MediaPlanAliasMemory,
   rowOverrides: MediaPlanRowOverrideMap = {},
+  periodFrom?: string,
+  periodTo?: string,
 ): Promise<MediaPlanRowBinding[]> {
   const catalogByPlatform = new Map<string, Array<{ id: string; name: string }>>();
+  const manualChannelsByPlatform = new Map<string, Array<{ id: string; name: string }>>();
 
   for (const source of actualSources) {
     const sourceKey = resolveSourceKey(source.platform);
     const sourceType = resolveSourceType(sourceKey);
+
+    if (source.platform === 'manual_data' && sourceType === 'manual') {
+      const sheetUrl = String(source.source_config?.sheet_url ?? '').trim();
+      if (sheetUrl) {
+        try {
+          const manualRows = await fetchManualData(sheetUrl);
+          const byChannel = aggregateByChannel(manualRows);
+          for (const ch of byChannel) {
+            const platform = ch.platform.toLowerCase();
+            const id = `manual:${ch.platform}|${ch.channel}`;
+            const name = `${ch.platform} / ${ch.channel}`;
+            if (!manualChannelsByPlatform.has(platform)) {
+              manualChannelsByPlatform.set(platform, []);
+            }
+            manualChannelsByPlatform.get(platform)!.push({ id, name });
+          }
+        } catch {
+          // skip failed manual fetch
+        }
+      }
+      continue;
+    }
+
     if (sourceType !== 'ads') continue;
     const accountIds = parseAccountIds(source.source_config?.account_ids);
-    catalogByPlatform.set(source.platform, await getCampaignCatalog(sourceKey, accountIds));
+    const isYandex = sourceKey === 'yandex_direct';
+    const opts =
+      isYandex && periodFrom && periodTo
+        ? {
+            accountIds,
+            dateFrom: periodFrom,
+            dateTo: periodTo,
+            requireFactInRange: true,
+          }
+        : accountIds;
+    catalogByPlatform.set(source.platform, await getCampaignCatalog(sourceKey, opts));
   }
 
   return rows.map((row, index) => {
@@ -307,8 +358,18 @@ async function buildRowBindings(
       };
     }
 
-    const catalog = catalogByPlatform.get(row.platform);
-    if (!catalog) {
+    const catalog = catalogByPlatform.get(row.platform) ?? [];
+    const manualChannels = manualChannelsByPlatform.get(row.platform) ?? [];
+    const allCandidates = [
+      ...catalog.map((c) => ({ campaign_id: c.id, campaign_name: c.name, score: scoreCandidate(row, { id: c.id, name: c.name }, aliasMemory[row.platform]?.[aliasKey(row)]) })),
+      ...manualChannels.map((m) => ({
+        campaign_id: m.id,
+        campaign_name: m.name,
+        score: scoreManualCandidate(row, m),
+      })),
+    ];
+
+    if (catalog.length === 0 && manualChannels.length === 0) {
       return {
         row_key: rowKey,
         platform: row.platform,
@@ -322,16 +383,10 @@ async function buildRowBindings(
       };
     }
 
-    const aliasEntry = aliasMemory[row.platform]?.[aliasKey(row)];
-    const candidates = catalog
-      .map((campaign) => ({
-        campaign_id: campaign.id,
-        campaign_name: campaign.name,
-        score: scoreCandidate(row, campaign, aliasEntry),
-      }))
-      .filter((candidate) => candidate.score > 0)
+    const candidates = allCandidates
+      .filter((c) => c.score > 0)
       .sort((a, b) => b.score - a.score)
-      .slice(0, 3);
+      .slice(0, 5);
 
     if (override?.action === 'bind') {
       const chosen = candidates.find((candidate) => candidate.campaign_id === override.campaign_id);
@@ -514,8 +569,13 @@ export async function analyzeMediaPlanPayload(
     const sourceType = resolveSourceType(sourceKey);
     if (sourceType !== 'ads' && sourceType !== 'analytics') continue;
 
+    const isYandex = sourceKey === 'yandex_direct';
+    const periodFrom = String(payload.config?.period_from ?? '').trim();
+    const periodTo = String(payload.config?.period_to ?? '').trim();
     const activeAccounts = await getActiveAccounts(sourceKey, sourceType, {
       client_name: payload.client_name,
+      date_from: isYandex && periodFrom.length === 10 ? periodFrom : undefined,
+      date_to: isYandex && periodTo.length === 10 ? periodTo : undefined,
     });
     const selectedAccountIds = parseAccountIds(source.source_config?.account_ids);
     const hasPlanRows = planPlatforms.includes(source.platform);
@@ -531,7 +591,16 @@ export async function analyzeMediaPlanPayload(
     });
   }
 
-  const rowBindings = await buildRowBindings(parsed.rows, actualSources, existingAliasMemory, rowOverrides);
+  const periodFrom = String(payload.config?.period_from ?? '').trim();
+  const periodTo = String(payload.config?.period_to ?? '').trim();
+  const rowBindings = await buildRowBindings(
+    parsed.rows,
+    actualSources,
+    existingAliasMemory,
+    rowOverrides,
+    periodFrom.length === 10 ? periodFrom : undefined,
+    periodTo.length === 10 ? periodTo : undefined,
+  );
   const bindingSummary = buildBindingSummary(rowBindings);
   const aliasMemory = buildAliasMemoryFromBindings(rowBindings, existingAliasMemory);
 

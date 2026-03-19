@@ -12,14 +12,14 @@ import {
   getTimeseriesByCampaignIds,
   type CanonicalFilter,
 } from "@/lib/canonical-adapter";
+import { fetchCustomTable, fetchMediaPlanFromSourceConfig, groupByChannel, type ChannelGroup, type MediaPlanRow } from "@/lib/gsheet-fetcher";
 import {
-  aggregatePlanByPlatform,
-  fetchMediaPlanFromSourceConfig,
-  groupByChannel,
-  type ChannelGroup,
-  type MediaPlanRow,
-  type PlatformPlanAggregate,
-} from "@/lib/gsheet-fetcher";
+  aggregateByChannel,
+  aggregateByPlatform,
+  fetchManualData,
+  filterByDateRange,
+  getTimeseries,
+} from "@/lib/manual-data-fetcher";
 import { PLATFORM_COLORS } from "@/lib/platform-colors";
 import {
   resolvePlatformIdFromSourceKey,
@@ -34,8 +34,10 @@ import {
 import type {
   AnalyticsKPI,
   AnalyticsTimeSeriesPoint,
+  CustomTableData,
   DashboardData,
   DashboardSectionId,
+  ManualChannelData,
   PlatformStats,
   TimeSeriesPoint,
   PlanVsFactItem,
@@ -60,7 +62,7 @@ type SourceRow = RowDataPacket & {
   dashboard_id: number;
   platform: string;
   schema_file: string;
-  role: "actual" | "plan";
+  role: "actual" | "plan" | "custom_table";
   source_config: string | JsonRecord | null;
   filter_type: "name_pattern" | "id_list" | "all" | null;
   filter_value: string | null;
@@ -195,12 +197,6 @@ function buildPreviousPeriod(dateFrom: string, dateTo: string): { from: string; 
 
 function monthKeyFromDate(dateIso: string): string {
   return dateIso.slice(0, 7);
-}
-
-function inclusiveDays(dateFrom: string, dateTo: string): number {
-  const fromDate = new Date(`${dateFrom}T00:00:00Z`);
-  const toDate = new Date(`${dateTo}T00:00:00Z`);
-  return Math.max(0, Math.round((toDate.getTime() - fromDate.getTime()) / 86400000) + 1);
 }
 
 function roundMetric(value: number, metric: string): number {
@@ -548,6 +544,30 @@ async function applyAggregateReachOverrides(
   };
 }
 
+function sumManualChannels(
+  manualChannels: ManualChannelData[],
+  platformCampaignIds: string[],
+): { impressions: number; reach: number; clicks: number; spend: number; conversions: number; views: number } {
+  const ids = new Set(platformCampaignIds.map((id) => id.replace(/^manual:/, "")));
+  let impressions = 0;
+  const reach = 0;
+  let clicks = 0;
+  let spend = 0;
+  let conversions = 0;
+  let views = 0;
+  for (const ch of manualChannels) {
+    const key = `${ch.platform}|${ch.channel}`;
+    if (ids.has(key)) {
+      impressions += ch.impressions;
+      clicks += ch.clicks;
+      spend += ch.spend;
+      conversions += ch.conversions;
+      views += ch.views;
+    }
+  }
+  return { impressions, reach, clicks, spend, conversions, views };
+}
+
 async function buildPlanVsFactRowsByChannel(
   channelGroups: ChannelGroup[],
   bindingsByChannel: Map<string, Array<{ source_key: string; platform_campaign_id: string }>>,
@@ -555,6 +575,7 @@ async function buildPlanVsFactRowsByChannel(
   dateFrom: string,
   dateTo: string,
   overrideMap: Map<string, number>,
+  manualChannels: ManualChannelData[],
 ): Promise<PlanVsFactItem[]> {
   const factPromises = channelGroups.map(async (group) => {
     const bindings = bindingsByChannel.get(group.channel) ?? [];
@@ -566,28 +587,39 @@ async function buildPlanVsFactRowsByChannel(
       return getFactByCampaignIds(fallbackSourceKey, [], dateFrom, dateTo);
     }
 
-    const bySource = new Map<string, string[]>();
-    bindings.forEach((binding) => {
-      if (!bySource.has(binding.source_key)) {
-        bySource.set(binding.source_key, []);
-      }
-      bySource.get(binding.source_key)!.push(binding.platform_campaign_id);
-    });
+    const canonicalBindings = bindings.filter((b) => b.source_key !== "manual_data");
+    const manualBindings = bindings.filter((b) => b.source_key === "manual_data");
 
-    const results = await Promise.all(
-      Array.from(bySource.entries()).map(([sourceKey, ids]) =>
-        loadAdjustedCampaignDailyFacts(sourceKey, ids, dateFrom, dateTo, overrideMap),
-      ),
-    );
+    let canonicalTotals = { impressions: 0, reach: 0, clicks: 0, spend: 0, conversions: 0, views: 0 };
+    if (canonicalBindings.length > 0) {
+      const bySource = new Map<string, string[]>();
+      canonicalBindings.forEach((binding) => {
+        if (!bySource.has(binding.source_key)) bySource.set(binding.source_key, []);
+        bySource.get(binding.source_key)!.push(binding.platform_campaign_id);
+      });
+      const results = await Promise.all(
+        Array.from(bySource.entries()).map(([sourceKey, ids]) =>
+          loadAdjustedCampaignDailyFacts(sourceKey, ids, dateFrom, dateTo, overrideMap),
+        ),
+      );
+      canonicalTotals = sumCampaignDailyFacts(results.flat());
+    }
 
-    const totals = sumCampaignDailyFacts(results.flat());
+    const manualTotals =
+      manualBindings.length > 0
+        ? sumManualChannels(
+            manualChannels,
+            manualBindings.map((b) => b.platform_campaign_id),
+          )
+        : { impressions: 0, reach: 0, clicks: 0, spend: 0, conversions: 0, views: 0 };
+
     return {
-      total_impressions: totals.impressions,
-      total_reach: totals.reach,
-      total_clicks: totals.clicks,
-      total_spend: totals.spend,
-      total_conversions: totals.conversions,
-      total_views: totals.views,
+      total_impressions: canonicalTotals.impressions + manualTotals.impressions,
+      total_reach: canonicalTotals.reach + manualTotals.reach,
+      total_clicks: canonicalTotals.clicks + manualTotals.clicks,
+      total_spend: canonicalTotals.spend + manualTotals.spend,
+      total_conversions: canonicalTotals.conversions + manualTotals.conversions,
+      total_views: canonicalTotals.views + manualTotals.views,
     };
   });
 
@@ -1047,9 +1079,102 @@ export async function GET(
     const analyticsKpiRaw: AnalyticsKPI[] = [];
     const analyticsTimeseriesRaw: AnalyticsTimeSeriesPoint[] = [];
     const actualAdsSourceKeys = new Set<string>();
+    const customTables: CustomTableData[] = [];
+    let manualChannels: ManualChannelData[] = [];
+    let manualTableTitle = "";
 
     for (const source of sourceRows) {
       try {
+        if (source.platform === "manual_data" && source.role === "actual") {
+          const sourceConfig = parseJson(source.source_config);
+          const sheetUrl = String(sourceConfig?.sheet_url ?? "").trim();
+          if (sheetUrl) {
+            try {
+              const allRows = await fetchManualData(sheetUrl);
+              const filtered = filterByDateRange(allRows, range.from, range.to);
+
+              const byPlatform = aggregateByPlatform(filtered);
+              for (const p of byPlatform) {
+                const platformId = `manual_${p.platform}`;
+                const meta = PLATFORM_COLORS[p.platform];
+                platformStatsRaw.push({
+                  id: platformId,
+                  name: meta?.label ?? p.platform.charAt(0).toUpperCase() + p.platform.slice(1),
+                  color: meta?.hex ?? "#94a3b8",
+                  impressions: p.impressions,
+                  clicks: p.clicks,
+                  spend: p.spend,
+                  conversions: p.conversions,
+                  views: p.views,
+                  reach: p.reach,
+                  frequency: p.reach > 0 ? p.impressions / p.reach : 0,
+                  ctr: p.impressions > 0 ? Number(((p.clicks / p.impressions) * 100).toFixed(2)) : 0,
+                  cpm: p.impressions > 0 ? Number(((p.spend / p.impressions) * 1000).toFixed(2)) : 0,
+                });
+              }
+
+              const prevFiltered = filterByDateRange(allRows, previousRange.from, previousRange.to);
+              const prevByPlatform = aggregateByPlatform(prevFiltered);
+              for (const p of prevByPlatform) {
+                const platformId = `manual_${p.platform}`;
+                const meta = PLATFORM_COLORS[p.platform];
+                prevStatsRaw.push({
+                  id: platformId,
+                  name: meta?.label ?? p.platform.charAt(0).toUpperCase() + p.platform.slice(1),
+                  color: meta?.hex ?? "#94a3b8",
+                  impressions: p.impressions,
+                  clicks: p.clicks,
+                  spend: p.spend,
+                  conversions: p.conversions,
+                  views: p.views,
+                  reach: p.reach,
+                  frequency: p.reach > 0 ? p.impressions / p.reach : 0,
+                  ctr: p.impressions > 0 ? Number(((p.clicks / p.impressions) * 100).toFixed(2)) : 0,
+                  cpm: p.impressions > 0 ? Number(((p.spend / p.impressions) * 1000).toFixed(2)) : 0,
+                });
+              }
+
+              const ts = getTimeseries(filtered);
+              for (const t of ts) {
+                timeseriesRaw.push({
+                  date: t.date,
+                  platform: "manual_combined",
+                  impressions: t.impressions,
+                  clicks: t.clicks,
+                  spend: t.spend,
+                });
+              }
+
+              const byChannel = aggregateByChannel(filtered);
+              manualChannels = [...manualChannels, ...byChannel];
+              if (!manualTableTitle && String(sourceConfig?.title ?? "").trim()) {
+                manualTableTitle = String(sourceConfig.title).trim();
+              }
+            } catch (e) {
+              console.warn("Manual data fetch failed:", e);
+            }
+          }
+          continue;
+        }
+
+        if (source.role === "custom_table") {
+          const sourceConfig = parseJson(source.source_config);
+          const sheetUrl = String(sourceConfig?.sheet_url ?? "").trim();
+          if (sheetUrl) {
+            try {
+              const table = await fetchCustomTable(sheetUrl);
+              customTables.push({
+                title: String(sourceConfig?.title ?? "Custom Data").trim() || "Custom Data",
+                headers: table.headers,
+                rows: table.rows,
+              });
+            } catch (e) {
+              console.warn("Custom table fetch failed:", e);
+            }
+          }
+          continue;
+        }
+
         const schema = loadSchema(source.schema_file);
         const sourceKey = schema.source_key ?? resolveSourceKey(source.platform);
         const sourceType = schema.source_type ?? resolveSourceType(sourceKey);
@@ -1176,6 +1301,39 @@ export async function GET(
       }
     }
 
+    if (manualChannels.length > 0) {
+      const manualTotals = manualChannels.reduce(
+        (acc, r) => ({
+          impressions: acc.impressions + r.impressions,
+          clicks: acc.clicks + r.clicks,
+          spend: acc.spend + r.spend,
+          conversions: acc.conversions + r.conversions,
+          views: acc.views + r.views,
+        }),
+        { impressions: 0, clicks: 0, spend: 0, conversions: 0, views: 0 },
+      );
+      platformStatsRaw.push({
+        id: "manual_combined",
+        name: "Manual (combined)",
+        color: "#94a3b8",
+        impressions: manualTotals.impressions,
+        clicks: manualTotals.clicks,
+        spend: manualTotals.spend,
+        conversions: manualTotals.conversions,
+        views: manualTotals.views,
+        reach: 0,
+        frequency: 0,
+        ctr:
+          manualTotals.impressions > 0
+            ? Number(((manualTotals.clicks / manualTotals.impressions) * 100).toFixed(2))
+            : 0,
+        cpm:
+          manualTotals.impressions > 0
+            ? Number(((manualTotals.spend / manualTotals.impressions) * 1000).toFixed(2))
+            : 0,
+      });
+    }
+
     const platformResults = mergePlatformStats(platformStatsRaw);
     const prevPlatformResults = mergePlatformStats(prevStatsRaw);
     const timeseriesResults = mergeTimeseries(timeseriesRaw);
@@ -1225,7 +1383,6 @@ export async function GET(
     };
 
     const planByChannel = groupByChannel(planRows);
-    const planByPlatform = aggregatePlanByPlatform(planRows);
     const [bindingRows] = await pool.execute<BindingRow[]>(
       `SELECT channel, source_key, platform_campaign_id
        FROM media_plan_bindings
@@ -1250,6 +1407,7 @@ export async function GET(
       range.from,
       range.to,
       frequencyOverrideMap,
+      manualChannels,
     );
     const channelTimeseries = await buildChannelTimeseries(
       planByChannel,
@@ -1293,6 +1451,13 @@ export async function GET(
       plan_vs_fact: planVsFact,
       channel_performance: channelPerformance,
       channel_timeseries: channelTimeseries,
+      custom_tables: customTables.length > 0 ? customTables : undefined,
+      manual_channels:
+        manualChannels.length > 0 ? manualChannels : undefined,
+      manual_table_title:
+        manualChannels.length > 0
+          ? (manualTableTitle || "Additional sources")
+          : undefined,
       analytics:
         analyticsKpiRaw.length > 0
           ? {

@@ -12,6 +12,10 @@ export const PLATFORM_COLORS: Record<
   git: { hex: "#8B5CF6", label: "GetIntent", type: "programmatic" },
   dv360: { hex: "#0D9488", label: "DV360", type: "programmatic" },
   hybrid: { hex: "#EC4899", label: "Hybrid", type: "programmatic" },
+  brevo: { hex: "#0B7285", label: "Brevo", type: "email" },
+  telegram: { hex: "#26A5E4", label: "Telegram", type: "social" },
+  google_ads: { hex: "#34A853", label: "Google Ads", type: "search" },
+  manual: { hex: "#64748B", label: "Manual", type: "manual" },
 };
 
 export const ACTIVE_PLATFORM_IDS = ["linkedin", "reddit", "meta", "google", "git", "vk"];

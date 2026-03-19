@@ -11,6 +11,8 @@ export async function GET(request: Request) {
       .toLowerCase();
     const search = String(url.searchParams.get("search") ?? "").trim();
     const clientName = String(url.searchParams.get("client_name") ?? "").trim();
+    const dateFrom = String(url.searchParams.get("date_from") ?? "").trim();
+    const dateTo = String(url.searchParams.get("date_to") ?? "").trim();
 
     if (!platform) {
       return NextResponse.json({ error: "platform query param is required" }, { status: 400 });
@@ -22,7 +24,7 @@ export async function GET(request: Request) {
     }
 
     const sourceType = schemaMeta.source_type ?? resolveSourceType(schemaMeta.source_key);
-    if (sourceType === "gsheet") {
+    if (sourceType === "gsheet" || sourceType === "manual") {
       return NextResponse.json({
         accounts: [],
         total: 0,
@@ -30,9 +32,12 @@ export async function GET(request: Request) {
       });
     }
 
+    const isYandex = schemaMeta.source_key === "yandex_direct";
     const accounts = await getActiveAccounts(schemaMeta.source_key, sourceType, {
       search,
       client_name: clientName,
+      date_from: isYandex && dateFrom && dateTo ? dateFrom : undefined,
+      date_to: isYandex && dateFrom && dateTo ? dateTo : undefined,
     });
 
     return NextResponse.json({

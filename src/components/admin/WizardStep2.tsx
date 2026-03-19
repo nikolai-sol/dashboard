@@ -135,6 +135,10 @@ export default function WizardStep2({ data, platforms, onChange }: WizardStep2Pr
   const [accountsBySource, setAccountsBySource] = useState<Record<number, AccountItem[]>>({});
   const [accountSearchBySource, setAccountSearchBySource] = useState<Record<number, string>>({});
   const [accountsLoadingBySource, setAccountsLoadingBySource] = useState<Record<number, boolean>>({});
+  const [customTablePreview, setCustomTablePreview] = useState<Record<number, { headers: string[]; rows: string[][] } | null>>({});
+  const [customTablePreviewLoading, setCustomTablePreviewLoading] = useState<Record<number, boolean>>({});
+  const [manualDataPreview, setManualDataPreview] = useState<Record<number, Array<Record<string, unknown>> | null>>({});
+  const [manualDataPreviewLoading, setManualDataPreviewLoading] = useState<Record<number, boolean>>({});
 
   const mysqlPlatforms = useMemo(
     () => platforms.filter((platform) => platform.source === "mysql"),
@@ -145,24 +149,38 @@ export default function WizardStep2({ data, platforms, onChange }: WizardStep2Pr
     [platforms],
   );
 
-  const actualSources = data.sources.filter((source) => source.role === "actual");
+  const actualSources = data.sources.filter(
+    (source) => source.role === "actual" && source.platform !== "manual_data",
+  );
   const planSource = data.sources.find((source) => source.role === "plan");
-  const existingReviewResolutions =
-    planSource?.source_config &&
-    typeof planSource.source_config.review === "object" &&
-    planSource.source_config.review &&
-    typeof (planSource.source_config.review as Record<string, unknown>).resolutions === "object"
-      ? ((planSource.source_config.review as Record<string, unknown>).resolutions as Record<
-          string,
-          ResolutionAction
-        >)
-      : {};
+  const customTableSources = data.sources.filter((source) => source.role === "custom_table");
+  const manualDataSources = data.sources.filter((source) => source.platform === "manual_data");
+  const existingReviewResolutions = useMemo(
+    () =>
+      planSource?.source_config &&
+      typeof planSource.source_config.review === "object" &&
+      planSource.source_config.review &&
+      typeof (planSource.source_config.review as Record<string, unknown>).resolutions === "object"
+        ? ((planSource.source_config.review as Record<string, unknown>).resolutions as Record<
+            string,
+            ResolutionAction
+          >)
+        : {},
+    [planSource],
+  );
+  const actualSourcePlatformKey = useMemo(
+    () => actualSources.map((source) => source.platform).join("|"),
+    [actualSources],
+  );
 
-  const setSources = (nextActual: DashboardSourceForm[], nextPlan: DashboardSourceForm | undefined) => {
-    onChange({
-      ...data,
-      sources: nextPlan ? [...nextActual, nextPlan] : nextActual,
-    });
+  const setSources = (
+    nextActual: DashboardSourceForm[],
+    nextPlan: DashboardSourceForm | undefined,
+    nextCustom: DashboardSourceForm[] = customTableSources,
+    nextManual: DashboardSourceForm[] = manualDataSources,
+  ) => {
+    const parts = [...nextActual, ...(nextPlan ? [nextPlan] : []), ...nextCustom, ...nextManual];
+    onChange({ ...data, sources: parts });
   };
 
   const updateActualSourceConfig = (index: number, patch: Record<string, unknown>) => {
@@ -211,6 +229,8 @@ export default function WizardStep2({ data, platforms, onChange }: WizardStep2Pr
         client_name: data.client_name,
       });
       if (search) params.set("search", search);
+      if (data.config.period_from) params.set("date_from", data.config.period_from);
+      if (data.config.period_to) params.set("date_to", data.config.period_to);
       const response = await fetch(`/api/admin/accounts?${params.toString()}`);
       const json = await response.json();
       const accounts = Array.isArray(json.accounts) ? (json.accounts as AccountItem[]) : [];
@@ -232,7 +252,7 @@ export default function WizardStep2({ data, platforms, onChange }: WizardStep2Pr
       void loadAccounts(idx);
     });
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [data.client_name, actualSources.map((source) => source.platform).join("|")]);
+  }, [actualSourcePlatformKey, data.client_name, data.config.period_from, data.config.period_to]);
 
   const removeActual = (index: number) => {
     const next = actualSources.filter((_, idx) => idx !== index);
@@ -459,6 +479,130 @@ export default function WizardStep2({ data, platforms, onChange }: WizardStep2Pr
     }
   };
 
+  const addCustomTable = () => {
+    setSources(actualSources, planSource, [
+      ...customTableSources,
+      {
+        platform: "custom_table",
+        schema_file: "custom_table",
+        role: "custom_table",
+        source_config: { sheet_url: "", title: "Custom Data" },
+        filters: [{ filter_type: "all", filter_value: null }],
+      },
+    ]);
+  };
+
+  const updateCustomTable = (index: number, patch: { title?: string; sheet_url?: string }) => {
+    const source = customTableSources[index];
+    if (!source) return;
+    const next = [...customTableSources];
+    next[index] = {
+      ...source,
+      source_config: {
+        ...(source.source_config ?? {}),
+        ...patch,
+      },
+    };
+    setSources(actualSources, planSource, next);
+    setCustomTablePreview((prev) => ({ ...prev, [index]: null }));
+  };
+
+  const removeCustomTable = (index: number) => {
+    const next = customTableSources.filter((_, i) => i !== index);
+    setSources(actualSources, planSource, next);
+    setCustomTablePreview((prev) => {
+      const copy = { ...prev };
+      delete copy[index];
+      return copy;
+    });
+  };
+
+  const addManualDataSource = () => {
+    setSources(actualSources, planSource, customTableSources, [
+      ...manualDataSources,
+      {
+        platform: "manual_data",
+        schema_file: "schemas/manual_data.yaml",
+        role: "actual",
+        source_config: { sheet_url: "", title: "Additional sources" },
+        filters: [{ filter_type: "all", filter_value: null }],
+      },
+    ]);
+  };
+
+  const updateManualDataSource = (index: number, patch: { title?: string; sheet_url?: string }) => {
+    const source = manualDataSources[index];
+    if (!source) return;
+    const next = [...manualDataSources];
+    next[index] = {
+      ...source,
+      source_config: { ...(source.source_config ?? {}), ...patch },
+    };
+    setSources(actualSources, planSource, customTableSources, next);
+    setManualDataPreview((prev) => ({ ...prev, [index]: null }));
+  };
+
+  const removeManualDataSource = (index: number) => {
+    const next = manualDataSources.filter((_, i) => i !== index);
+    setSources(actualSources, planSource, customTableSources, next);
+    setManualDataPreview((prev) => {
+      const copy = { ...prev };
+      delete copy[index];
+      return copy;
+    });
+  };
+
+  const previewManualDataSource = async (index: number) => {
+    const source = manualDataSources[index];
+    const url = String(source?.source_config?.sheet_url ?? "").trim();
+    if (!url) return;
+    setManualDataPreviewLoading((prev) => ({ ...prev, [index]: true }));
+    setManualDataPreview((prev) => ({ ...prev, [index]: null }));
+    try {
+      const response = await fetch(`/api/admin/manual-data/preview?url=${encodeURIComponent(url)}`);
+      const json = await response.json();
+      if (response.ok && Array.isArray(json.rows)) {
+        setManualDataPreview((prev) => ({ ...prev, [index]: json.rows }));
+      } else {
+        setManualDataPreview((prev) => ({ ...prev, [index]: [{ error: json.error ?? "Fetch failed" }] }));
+      }
+    } catch {
+      setManualDataPreview((prev) => ({ ...prev, [index]: [{ error: "Network error" }] }));
+    } finally {
+      setManualDataPreviewLoading((prev) => ({ ...prev, [index]: false }));
+    }
+  };
+
+  const previewCustomTable = async (index: number) => {
+    const source = customTableSources[index];
+    const url = String(source?.source_config?.sheet_url ?? "").trim();
+    if (!url) return;
+    setCustomTablePreviewLoading((prev) => ({ ...prev, [index]: true }));
+    setCustomTablePreview((prev) => ({ ...prev, [index]: null }));
+    try {
+      const response = await fetch(`/api/admin/custom-table/preview?url=${encodeURIComponent(url)}`);
+      const json = await response.json();
+      if (response.ok && json.headers) {
+        setCustomTablePreview((prev) => ({
+          ...prev,
+          [index]: { headers: json.headers, rows: json.rows ?? [] },
+        }));
+      } else {
+        setCustomTablePreview((prev) => ({
+          ...prev,
+          [index]: { headers: [], rows: [[json.error ?? "Fetch failed"]] },
+        }));
+      }
+    } catch {
+      setCustomTablePreview((prev) => ({
+        ...prev,
+        [index]: { headers: [], rows: [["Network error"]] },
+      }));
+    } finally {
+      setCustomTablePreviewLoading((prev) => ({ ...prev, [index]: false }));
+    }
+  };
+
   return (
     <section className="space-y-4">
       <div>
@@ -594,7 +738,12 @@ export default function WizardStep2({ data, platforms, onChange }: WizardStep2Pr
                                 </span>
                               ) : null}
                             </span>
-                            <span className="block font-mono text-slate-500">{account.id}</span>
+                            <span className="block font-mono text-slate-500 text-[11px]">
+                              {source.platform?.toLowerCase().includes("yandex") &&
+                              account.id.startsWith("campaign::")
+                                ? account.id.replace(/^campaign::/, "")
+                                : account.id}
+                            </span>
                             <span className="block text-slate-400">
                               latest={account.latest_report_date ?? "-"} rows={account.fact_rows}
                               {account.total_spend > 0 ? ` spend=${account.total_spend.toFixed(2)}` : ""}
@@ -1022,6 +1171,186 @@ export default function WizardStep2({ data, platforms, onChange }: WizardStep2Pr
             ) : null}
           </div>
         ) : null}
+      </div>
+
+      <div className="rounded-xl border border-slate-200 p-4">
+        <h4 className="text-sm font-semibold text-slate-900">Дополнительные таблицы</h4>
+        <p className="mt-1 text-xs text-slate-500">
+          Google Sheets CSV — данные отображаются как есть, без фильтрации и маппинга
+        </p>
+        <div className="mt-3 space-y-3">
+          {customTableSources.map((source, index) => (
+            <div key={`custom-${index}`} className="rounded-xl border border-slate-200 p-3">
+              <div className="grid gap-3 md:grid-cols-[1fr_1fr_auto] md:items-end">
+                <label className="text-sm">
+                  <span className="mb-1 block font-medium text-slate-700">Заголовок</span>
+                  <input
+                    className="w-full rounded-lg border border-slate-300 px-3 py-2"
+                    value={String(source.source_config?.title ?? "")}
+                    onChange={(e) => updateCustomTable(index, { title: e.target.value })}
+                    placeholder="Лиды по источникам"
+                  />
+                </label>
+                <label className="text-sm">
+                  <span className="mb-1 block font-medium text-slate-700">URL (export?format=csv или pub?output=csv)</span>
+                  <input
+                    className="w-full rounded-lg border border-slate-300 px-3 py-2"
+                    value={String(source.source_config?.sheet_url ?? "")}
+                    onChange={(e) => updateCustomTable(index, { sheet_url: e.target.value })}
+                    placeholder="https://docs.google.com/.../export?format=csv"
+                  />
+                </label>
+                <div className="flex gap-2">
+                  <button
+                    type="button"
+                    onClick={() => previewCustomTable(index)}
+                    disabled={!String(source.source_config?.sheet_url ?? "").trim() || customTablePreviewLoading[index]}
+                    className="rounded-lg border border-slate-300 px-3 py-2 text-sm hover:bg-slate-50 disabled:opacity-50"
+                  >
+                    {customTablePreviewLoading[index] ? "..." : "Preview"}
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => removeCustomTable(index)}
+                    className="rounded-lg border border-rose-200 px-3 py-2 text-sm text-rose-600 hover:bg-rose-50"
+                  >
+                    Удалить
+                  </button>
+                </div>
+              </div>
+              {customTablePreview[index] ? (
+                <div className="mt-3 overflow-x-auto rounded-lg border border-slate-200">
+                  <table className="min-w-full text-xs">
+                    <thead className="bg-slate-100">
+                      <tr>
+                        {customTablePreview[index]!.headers.map((h, i) => (
+                          <th key={i} className="px-2 py-1 text-left text-slate-700">
+                            {h}
+                          </th>
+                        ))}
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {customTablePreview[index]!.rows.map((row, ri) => (
+                        <tr key={ri} className="border-t border-slate-200">
+                          {row.map((cell, ci) => (
+                            <td key={ci} className="px-2 py-1 text-slate-600">
+                              {cell}
+                            </td>
+                          ))}
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                  <p className="px-2 py-1 text-[10px] text-slate-400">первые 5 строк</p>
+                </div>
+              ) : null}
+            </div>
+          ))}
+        </div>
+        <button
+          type="button"
+          onClick={addCustomTable}
+          className="mt-3 rounded-lg border border-slate-300 px-3 py-2 text-sm hover:bg-slate-50"
+        >
+          + Добавить таблицу
+        </button>
+      </div>
+
+      <div className="rounded-xl border border-slate-200 p-4">
+        <h4 className="text-sm font-semibold text-slate-900">Ручные данные (Manual Data Source)</h4>
+        <p className="mt-1 text-xs text-slate-500">
+          Структурированная таблица date/platform/channel — фильтрация по дате, агрегация по platform/channel. Brevo,
+          Telegram, Google Ads без коллектора и т.д.
+        </p>
+        <div className="mt-3 space-y-3">
+          {manualDataSources.map((source, index) => (
+            <div key={`manual-${index}`} className="rounded-xl border border-slate-200 p-3">
+              <div className="grid gap-3 md:grid-cols-[1fr_1fr_auto] md:items-end">
+                <label className="text-sm">
+                  <span className="mb-1 block font-medium text-slate-700">Заголовок</span>
+                  <input
+                    className="w-full rounded-lg border border-slate-300 px-3 py-2"
+                    value={String(source.source_config?.title ?? "")}
+                    onChange={(e) => updateManualDataSource(index, { title: e.target.value })}
+                    placeholder="Дополнительные источники"
+                  />
+                </label>
+                <label className="text-sm">
+                  <span className="mb-1 block font-medium text-slate-700">Google Sheets CSV URL</span>
+                  <input
+                    className="w-full rounded-lg border border-slate-300 px-3 py-2"
+                    value={String(source.source_config?.sheet_url ?? "")}
+                    onChange={(e) => updateManualDataSource(index, { sheet_url: e.target.value })}
+                    placeholder="https://docs.google.com/.../export?format=csv"
+                  />
+                </label>
+                <div className="flex flex-wrap gap-2">
+                  <a
+                    href="/manual_data_template.csv"
+                    download="manual_data_template.csv"
+                    className="rounded-lg border border-slate-300 px-3 py-2 text-sm hover:bg-slate-50"
+                  >
+                    📥 Скачать шаблон
+                  </a>
+                  <button
+                    type="button"
+                    onClick={() => previewManualDataSource(index)}
+                    disabled={
+                      !String(source.source_config?.sheet_url ?? "").trim() ||
+                      manualDataPreviewLoading[index]
+                    }
+                    className="rounded-lg border border-slate-300 px-3 py-2 text-sm hover:bg-slate-50 disabled:opacity-50"
+                  >
+                    {manualDataPreviewLoading[index] ? "..." : "🔍 Preview"}
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => removeManualDataSource(index)}
+                    className="rounded-lg border border-rose-200 px-3 py-2 text-sm text-rose-600 hover:bg-rose-50"
+                  >
+                    ✕
+                  </button>
+                </div>
+              </div>
+              {manualDataPreview[index] ? (
+                <div className="mt-3 overflow-x-auto rounded-lg border border-slate-200">
+                  <table className="min-w-full text-xs">
+                    <thead className="bg-slate-100">
+                      <tr>
+                        {manualDataPreview[index]!.length > 0 &&
+                          Object.keys(manualDataPreview[index]![0] as object).map((h) => (
+                            <th key={h} className="px-2 py-1 text-left text-slate-700">
+                              {h}
+                            </th>
+                          ))}
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {manualDataPreview[index]!.map((row, ri) => (
+                        <tr key={ri} className="border-t border-slate-200">
+                          {Object.values(row as Record<string, unknown>).map((cell, ci) => (
+                            <td key={ci} className="px-2 py-1 text-slate-600">
+                              {String(cell ?? "")}
+                            </td>
+                          ))}
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                  <p className="px-2 py-1 text-[10px] text-slate-400">первые 5 строк</p>
+                </div>
+              ) : null}
+            </div>
+          ))}
+        </div>
+        <button
+          type="button"
+          onClick={addManualDataSource}
+          className="mt-3 rounded-lg border border-slate-300 px-3 py-2 text-sm hover:bg-slate-50"
+        >
+          + Добавить ручной источник данных
+        </button>
       </div>
     </section>
   );

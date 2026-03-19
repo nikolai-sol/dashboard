@@ -134,6 +134,59 @@ const KNOWN_SOURCE_IDS = new Set([
 const cacheByUrl = new Map<string, { data: MediaPlanRow[]; timestamp: number }>();
 const CACHE_TTL = 5 * 60 * 1000;
 
+const customTableCache = new Map<string, { headers: string[]; rows: string[][]; timestamp: number }>();
+
+export interface CustomTableData {
+  title: string;
+  headers: string[];
+  rows: string[][];
+}
+
+function normalizeCustomTableSheetUrl(sheetUrl: string): string {
+  const trimmed = sheetUrl.trim();
+  if (!trimmed) return "";
+  const url = new URL(trimmed);
+  if (url.pathname.includes("/spreadsheets/d/")) {
+    const idMatch = url.pathname.match(/\/spreadsheets\/d\/([a-zA-Z0-9-_]+)/);
+    if (idMatch) {
+      return `https://docs.google.com/spreadsheets/d/${idMatch[1]}/export?format=csv`;
+    }
+  }
+  if (!url.searchParams.get("format") && !url.searchParams.get("output")) {
+    url.searchParams.set("format", "csv");
+  }
+  return url.toString();
+}
+
+export async function fetchCustomTable(sheetUrl: string): Promise<{ headers: string[]; rows: string[][] }> {
+  const fetchUrl = normalizeCustomTableSheetUrl(sheetUrl);
+  if (!fetchUrl) return { headers: [], rows: [] };
+
+  const cached = customTableCache.get(fetchUrl);
+  if (cached && Date.now() - cached.timestamp < CACHE_TTL) {
+    return { headers: cached.headers, rows: cached.rows };
+  }
+
+  const response = await fetch(fetchUrl, { cache: "no-store", redirect: "follow" });
+  if (!response.ok) {
+    throw new Error(`Custom table fetch failed with status ${response.status}`);
+  }
+
+  const csvText = await response.text();
+  const parsed = Papa.parse<string[]>(csvText, { header: false, skipEmptyLines: true });
+  const allRows = (parsed.data ?? []) as unknown[][];
+  if (allRows.length === 0) {
+    return { headers: [], rows: [] };
+  }
+
+  const toStringArray = (arr: unknown[]): string[] =>
+    Array.isArray(arr) ? arr.map((cell) => (cell != null ? String(cell) : "")) : [];
+  const headers = toStringArray(allRows[0] ?? []);
+  const rows = allRows.slice(1).map(toStringArray);
+  customTableCache.set(fetchUrl, { headers, rows, timestamp: Date.now() });
+  return { headers, rows };
+}
+
 function normalizeHeader(header: string): string {
   return header.trim().toLowerCase().replace(/\s+/g, "_");
 }

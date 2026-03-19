@@ -145,13 +145,23 @@ export default function WizardStepBinding({ data, onChange }: WizardStepBindingP
 
       setLoadingCampaigns(true);
       try {
-        const sources = actualSources.map((source) => ({
-          platform: source.platform,
-          source_key: resolveSourceKey(source.platform),
-          account_ids: Array.isArray(source.source_config?.account_ids)
-            ? source.source_config.account_ids.map((item) => String(item).trim()).filter(Boolean)
-            : [],
-        }));
+        const sources = actualSources.map((source) => {
+          const base = {
+            platform: source.platform,
+            source_key: resolveSourceKey(source.platform),
+            account_ids: Array.isArray(source.source_config?.account_ids)
+              ? source.source_config.account_ids.map((item) => String(item).trim()).filter(Boolean)
+              : [],
+          };
+          if (source.platform === "manual_data") {
+            return {
+              ...base,
+              source_key: "manual_data",
+              sheet_url: String(source.source_config?.sheet_url ?? "").trim(),
+            };
+          }
+          return base;
+        });
         const params = new URLSearchParams({
           sources: JSON.stringify(sources),
         });
@@ -346,7 +356,7 @@ export default function WizardStepBinding({ data, onChange }: WizardStepBindingP
             <div className="flex items-start justify-between gap-3">
               <div>
                 <h4 className="text-base font-semibold text-slate-900">
-                  Привязка кампаний к "{activeChannel}"
+                  {`Привязка кампаний к "${activeChannel}"`}
                 </h4>
                 <p className="mt-1 text-xs text-slate-500">
                   Можно выбрать кампании с нескольких платформ одновременно.
