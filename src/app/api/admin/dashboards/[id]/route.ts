@@ -6,6 +6,7 @@ import {
   loadDashboardWithSources,
   normalizeDashboardPayload,
   replaceMediaPlanBindings,
+  summarizeDashboardPayloadForLog,
   validateDashboardPayload,
 } from "@/lib/admin-dashboards";
 
@@ -54,8 +55,14 @@ export async function PUT(
 
   const body = await request.json().catch(() => null);
   const payload = normalizeDashboardPayload(body);
+  const payloadSummary = summarizeDashboardPayloadForLog(payload);
   const validationError = validateDashboardPayload(payload);
   if (validationError) {
+    console.warn("[PUT /api/admin/dashboards] validation_failed", {
+      dashboardId,
+      validationError,
+      payload: payloadSummary,
+    });
     return NextResponse.json({ error: validationError }, { status: 400 });
   }
 
@@ -68,6 +75,10 @@ export async function PUT(
 
   const conn = await pool.getConnection();
   try {
+    console.info("[PUT /api/admin/dashboards] update_attempt", {
+      dashboardId,
+      payload: payloadSummary,
+    });
     await conn.beginTransaction();
 
     const [updateResult] = await conn.execute<ResultSetHeader>(
@@ -101,7 +112,11 @@ export async function PUT(
     });
   } catch (error) {
     await conn.rollback();
-    console.error("[PUT /api/admin/dashboards]", error);
+    console.error("[PUT /api/admin/dashboards] update_failed", {
+      dashboardId,
+      error,
+      payload: payloadSummary,
+    });
     const err = error as { message?: string; code?: string; sqlMessage?: string; errno?: number };
     const message = err?.message ?? String(error);
     const parts: string[] = [message];
