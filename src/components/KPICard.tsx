@@ -28,13 +28,10 @@ export default function KPICard({
   trend,
   pdfMode = false,
 }: KPICardProps) {
-  const [animatedValue, setAnimatedValue] = useState(0);
+  const [animatedValue, setAnimatedValue] = useState(() => (pdfMode ? value : 0));
 
   useEffect(() => {
-    if (pdfMode) {
-      setAnimatedValue(value);
-      return;
-    }
+    if (pdfMode) return;
     const duration = 1200;
     const start = performance.now();
 
@@ -50,6 +47,8 @@ export default function KPICard({
     raf = requestAnimationFrame(tick);
     return () => cancelAnimationFrame(raf);
   }, [pdfMode, value]);
+
+  const displayedValue = pdfMode ? value : animatedValue;
 
   const delta = useMemo(() => {
     if (prevValue === 0) {
@@ -69,7 +68,7 @@ export default function KPICard({
             {title}
           </p>
           <p className="mt-2 text-2xl font-bold text-slate-900 sm:text-3xl" title={format(value)}>
-            {format(animatedValue)}
+            {format(displayedValue)}
           </p>
         </div>
         <div

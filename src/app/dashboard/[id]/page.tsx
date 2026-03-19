@@ -4,6 +4,8 @@ import { useEffect, useMemo, useState } from "react";
 import { useParams, useRouter, useSearchParams } from "next/navigation";
 import ChannelMix from "@/components/ChannelMix";
 import ChannelPerformanceTable from "@/components/ChannelPerformanceTable";
+import CustomTable from "@/components/CustomTable";
+import ManualDataTable from "@/components/ManualDataTable";
 import DashboardHeader from "@/components/DashboardHeader";
 import KPICard from "@/components/KPICard";
 import PlatformFilter from "@/components/PlatformFilter";
@@ -181,7 +183,7 @@ export default function DashboardByIdPage() {
       return platformFiltered.filter((item) => selectedChannelSet.has(item.channel));
     }
     return platformFiltered;
-  }, [dashboard?.channel_performance, effectiveFilterMode, selectedChannelSet, selectedSet]);
+  }, [dashboard, effectiveFilterMode, selectedChannelSet, selectedSet]);
 
   const currencyCode = dashboard?.dashboard.currency || "EUR";
   const dashboardLanguage = dashboard?.dashboard.language ?? "en";
@@ -721,6 +723,31 @@ export default function DashboardByIdPage() {
       ) : null}
 
       {sectionOrder.map((sectionId) => renderSection(sectionId))}
+
+      {dashboard?.custom_tables?.map((table, i) => (
+        <CustomTable key={i} data={table} locale={locale} pdfMode={isPdfMode} />
+      ))}
+
+      {dashboard?.manual_channels && dashboard.manual_channels.length > 0 ? (
+        <ManualDataTable
+          title={dashboard.manual_table_title ?? i18n.sections.manualData}
+          rows={dashboard.manual_channels}
+          currencyFormatter={(value) => money(value, currencyCode, locale)}
+          locale={locale}
+          pdfMode={isPdfMode}
+          labels={{
+            source: `${i18n.common.platform} / ${i18n.common.channel}`,
+            impressions: i18n.metrics.impressions,
+            clicks: i18n.metrics.clicks,
+            sessions: i18n.metrics.sessions,
+            ctr: i18n.metrics.ctr,
+            cr: i18n.metrics.cr,
+            conversions: i18n.metrics.conversions,
+            spend: i18n.metrics.spend,
+            total: i18n.common.total,
+          }}
+        />
+      ) : null}
     </main>
   );
 }

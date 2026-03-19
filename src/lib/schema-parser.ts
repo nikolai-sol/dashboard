@@ -7,7 +7,7 @@ export interface PlatformSchema {
   display_name: string;
   source: "mysql" | "gsheet";
   source_key?: string;
-  source_type?: "ads" | "analytics" | "gsheet";
+  source_type?: "ads" | "analytics" | "gsheet" | "manual";
   canonical_table?: string;
   tables?: {
     campaigns: {

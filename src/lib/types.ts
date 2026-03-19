@@ -162,6 +162,23 @@ export interface AnalyticsTimeSeriesPoint {
   bounce_rate: number;
 }
 
+export interface CustomTableData {
+  title: string;
+  headers: string[];
+  rows: string[][];
+}
+
+export interface ManualChannelData {
+  platform: string;
+  channel: string;
+  impressions: number;
+  clicks: number;
+  spend: number;
+  views: number;
+  conversions: number;
+  sessions: number;
+}
+
 export interface DashboardData {
   dashboard: DashboardMeta;
   kpi_config: string[];
@@ -170,6 +187,9 @@ export interface DashboardData {
   timeseries: TimeSeriesPoint[];
   plan_vs_fact: PlanVsFactItem[];
   channel_performance?: ChannelPerformanceItem[];
+  custom_tables?: CustomTableData[];
+  manual_channels?: ManualChannelData[];
+  manual_table_title?: string;
   analytics?: {
     kpi: AnalyticsKPI;
     timeseries: AnalyticsTimeSeriesPoint[];

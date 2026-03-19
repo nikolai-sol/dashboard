@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
-import type { CampaignFrequencyOverrideForm, DashboardFormData } from "@/lib/admin-ui-types";
+import type { DashboardFormData } from "@/lib/admin-ui-types";
 import { PLATFORM_COLORS } from "@/lib/platform-colors";
 import { resolvePlatformIdFromSourceKey, resolveSourceKey } from "@/lib/source-mapping";
 

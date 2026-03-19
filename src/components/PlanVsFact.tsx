@@ -62,10 +62,6 @@ function isMoneyMetric(metric: MetricKey) {
   return MONEY_METRICS.has(metric);
 }
 
-function isRateMetric(metric: MetricKey) {
-  return metric === "ctr" || metric === "cpm" || metric === "cpc" || metric === "cpv" || metric === "cpa";
-}
-
 function formatMetricValue(
   value: number,
   metric: MetricKey,
