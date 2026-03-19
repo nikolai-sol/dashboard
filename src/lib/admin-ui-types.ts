@@ -28,7 +28,7 @@ export type DashboardSourceForm = {
   id?: number;
   platform: string;
   schema_file: string;
-  role: "actual" | "plan";
+  role: "actual" | "plan" | "custom_table";
   source_config: Record<string, unknown> | null;
   filters: DashboardFilterForm[];
 };

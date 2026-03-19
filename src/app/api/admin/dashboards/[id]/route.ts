@@ -101,8 +101,18 @@ export async function PUT(
     });
   } catch (error) {
     await conn.rollback();
+    console.error("[PUT /api/admin/dashboards]", error);
+    const err = error as { message?: string; code?: string; sqlMessage?: string; errno?: number };
+    const message = err?.message ?? String(error);
+    const parts: string[] = [message];
+    if (err?.code) parts.push(`code: ${err.code}`);
+    if (err?.sqlMessage && err.sqlMessage !== message) parts.push(err.sqlMessage);
+    if (err?.errno) parts.push(`errno: ${err.errno}`);
     return NextResponse.json(
-      { error: "Failed to update dashboard", details: String(error) },
+      {
+        error: "Failed to update dashboard",
+        details: parts.join(" · "),
+      },
       { status: 500 },
     );
   } finally {
