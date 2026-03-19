@@ -9,7 +9,7 @@ export type DashboardSourceInput = {
   id?: number;
   platform: string;
   schema_file: string;
-  role: "actual" | "plan";
+  role: "actual" | "plan" | "custom_table";
   source_config: Record<string, unknown> | null;
   filters: DashboardFilterInput[];
 };
@@ -44,7 +44,7 @@ export type DashboardWithSources = {
     id: number;
     platform: string;
     schema_file: string;
-    role: "actual" | "plan";
+    role: "actual" | "plan" | "custom_table";
     source_config: Record<string, unknown> | null;
     filters: DashboardFilterInput[];
   }>;
@@ -80,14 +80,27 @@ function normalizeFilter(raw: unknown): DashboardFilterInput {
 
 function normalizeSource(raw: unknown): DashboardSourceInput {
   const input = (raw ?? {}) as Partial<DashboardSourceInput>;
-  const role = input.role === "plan" ? "plan" : "actual";
+  const role =
+    input.role === "plan"
+      ? "plan"
+      : input.role === "custom_table"
+        ? "custom_table"
+        : "actual";
   const filtersInput = Array.isArray(input.filters) ? input.filters : [{ filter_type: "all", filter_value: null }];
   const filters = filtersInput.map((filter) => normalizeFilter(filter));
+  const platform =
+    role === "custom_table"
+      ? "custom_table"
+      : String(input.platform ?? "").trim().toLowerCase();
+  const schemaFile =
+    role === "custom_table"
+      ? "custom_table"
+      : String(input.schema_file ?? "").trim();
 
   return {
     id: input.id,
-    platform: String(input.platform ?? "").trim().toLowerCase(),
-    schema_file: String(input.schema_file ?? "").trim(),
+    platform,
+    schema_file: schemaFile,
     role,
     source_config:
       input.source_config && typeof input.source_config === "object"
@@ -191,9 +204,27 @@ export function validateDashboardPayload(payload: DashboardUpsertPayload): strin
   const planSources = payload.sources.filter((source) => source.role === "plan");
   if (planSources.length > 1) return "Only one plan source is allowed";
 
+  const hasActual = payload.sources.some((source) => source.role === "actual");
+  const hasCustomTable = payload.sources.some((source) => source.role === "custom_table");
+  if (!hasActual && !hasCustomTable) return "At least one actual or custom_table source is required";
+
   for (const source of payload.sources) {
     if (!source.platform) return "Source platform is required";
-    if (!source.schema_file) return "Source schema_file is required";
+    if (source.role !== "custom_table" && !source.schema_file) return "Source schema_file is required";
+    if (source.role === "custom_table") {
+      const sheetUrl =
+        source.source_config && typeof source.source_config.sheet_url === "string"
+          ? String(source.source_config.sheet_url).trim()
+          : "";
+      if (!sheetUrl) return "Custom table source requires source_config.sheet_url";
+    }
+    if (source.platform === "manual_data") {
+      const sheetUrl =
+        source.source_config && typeof source.source_config.sheet_url === "string"
+          ? String(source.source_config.sheet_url).trim()
+          : "";
+      if (!sheetUrl) return "Manual data source requires source_config.sheet_url";
+    }
   }
 
   for (const binding of payload.media_plan_bindings) {
@@ -313,7 +344,7 @@ export async function loadDashboardWithSources(
         id: sourceId,
         platform: String(row.platform),
         schema_file: String(row.schema_file),
-        role: row.role === "plan" ? "plan" : "actual",
+        role: row.role === "plan" ? "plan" : row.role === "custom_table" ? "custom_table" : "actual",
         source_config: parseJsonField(row.source_config),
         filters: [],
       });

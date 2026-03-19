@@ -77,8 +77,19 @@ function isStepComplete(step: number, formData: DashboardFormData) {
   }
 
   if (step === 1) {
-    const actualCount = formData.sources.filter((source) => source.role === "actual").length;
-    if (actualCount === 0) return false;
+    const actualCount = formData.sources.filter(
+      (source) => source.role === "actual" && source.platform !== "manual_data",
+    ).length;
+    const customTableCount = formData.sources.filter((source) => source.role === "custom_table").length;
+    const manualDataCount = formData.sources.filter((source) => source.platform === "manual_data").length;
+    if (actualCount === 0 && customTableCount === 0 && manualDataCount === 0) return false;
+    const manualDataSources = formData.sources.filter((source) => source.platform === "manual_data");
+    if (manualDataCount > 0) {
+      const allManualHaveUrl = manualDataSources.every(
+        (s) => String(s.source_config?.sheet_url ?? "").trim().length > 0,
+      );
+      if (!allManualHaveUrl) return false;
+    }
     const plan = formData.sources.find((source) => source.role === "plan");
     if (plan) {
       const sheetUrl = String(plan.source_config?.sheet_url ?? "").trim();
@@ -118,11 +129,29 @@ function normalizeSources(raw: unknown): DashboardSourceForm[] {
   if (!Array.isArray(raw)) return [];
   return raw.map((source) => {
     const item = source as Partial<DashboardSourceForm>;
+    const role =
+      item.role === "plan"
+        ? "plan"
+        : item.role === "custom_table"
+          ? "custom_table"
+          : "actual";
+    const platform =
+      role === "custom_table"
+        ? "custom_table"
+        : item.platform === "manual_data"
+          ? "manual_data"
+          : String(item.platform ?? "").toLowerCase();
+    const schemaFile =
+      role === "custom_table"
+        ? "custom_table"
+        : item.platform === "manual_data"
+          ? "schemas/manual_data.yaml"
+          : String(item.schema_file ?? "");
     return {
       id: item.id,
-      platform: String(item.platform ?? "").toLowerCase(),
-      schema_file: String(item.schema_file ?? ""),
-      role: item.role === "plan" ? "plan" : "actual",
+      platform,
+      schema_file: schemaFile,
+      role,
       source_config:
         item.source_config && typeof item.source_config === "object"
           ? (item.source_config as Record<string, unknown>)
@@ -292,9 +321,16 @@ export default function DashboardWizard({ dashboardId }: DashboardWizardProps) {
         body: JSON.stringify(formData),
       });
 
-      const json = await response.json();
+      const json = (await response.json()) as {
+        error?: string;
+        details?: string;
+        message?: string;
+      };
       if (!response.ok) {
-        throw new Error(json.error ?? `HTTP ${response.status}`);
+        const msg = json.error ?? `HTTP ${response.status}`;
+        const details = json.details ?? json.message;
+        setError(details ? `${msg}: ${details}` : msg);
+        return;
       }
 
       router.push("/admin/dashboards");
