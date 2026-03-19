@@ -158,6 +158,8 @@ export default function WizardStepBinding({ data, onChange }: WizardStepBindingP
               ...base,
               source_key: "manual_data",
               sheet_url: String(source.source_config?.sheet_url ?? "").trim(),
+              default_platform: String(source.source_config?.platform ?? "").trim(),
+              default_channel: String(source.source_config?.channel ?? "").trim(),
             };
           }
           return base;

@@ -18,14 +18,106 @@ export interface ManualDataRow {
   cpv: number | null;
 }
 
+export interface ManualDataFetchOptions {
+  defaultPlatform?: string;
+  defaultChannel?: string;
+}
+
 const cache = new Map<string, { data: ManualDataRow[]; ts: number }>();
 const TTL = 5 * 60 * 1000;
 
+const PLATFORM_ALIASES: Record<string, string> = {
+  linkedin: "linkedin",
+  "linked in": "linkedin",
+  reddit: "reddit",
+  meta: "meta",
+  facebook: "meta",
+  instagram: "meta",
+  x: "x",
+  twitter: "x",
+  "x twitter": "x",
+  google: "google",
+  "google ads": "google",
+  google_ads: "google",
+  yandex: "yandex",
+  "yandex direct": "yandex",
+  "yandex_direct": "yandex",
+  "яндекс": "yandex",
+  "яндекс директ": "yandex",
+  "яндекс.директ": "yandex",
+  vk: "vk",
+  vkontakte: "vk",
+  "vk ads": "vk",
+  "вконтакте": "vk",
+  getintent: "git",
+  git: "git",
+  dv360: "dv360",
+  "display video 360": "dv360",
+  hybrid: "hybrid",
+  brevo: "brevo",
+  telegram: "telegram",
+};
+
+function normalizeToken(value: string): string {
+  return value
+    .trim()
+    .toLowerCase()
+    .replace(/[._-]+/g, " ")
+    .replace(/\s+/g, " ");
+}
+
+export function normalizeManualPlatformId(raw: unknown): string {
+  const value = String(raw ?? "").trim();
+  if (!value) return "";
+  const normalized = normalizeToken(value);
+  return PLATFORM_ALIASES[normalized] ?? normalized.replace(/\s+/g, "_");
+}
+
+function normalizeDate(raw: unknown): string {
+  const value = String(raw ?? "").trim();
+  if (!value) return "";
+
+  if (/^\d{4}-\d{2}-\d{2}$/.test(value)) {
+    return value;
+  }
+
+  const dmY = value.match(/^(\d{1,2})[./-](\d{1,2})[./-](\d{2,4})$/);
+  if (dmY) {
+    const day = Number(dmY[1]);
+    const month = Number(dmY[2]);
+    let year = Number(dmY[3]);
+    if (year < 100) year += year >= 70 ? 1900 : 2000;
+    if (month >= 1 && month <= 12 && day >= 1 && day <= 31) {
+      return `${String(year).padStart(4, "0")}-${String(month).padStart(2, "0")}-${String(day).padStart(2, "0")}`;
+    }
+  }
+
+  const parsed = new Date(value);
+  if (!Number.isNaN(parsed.getTime())) {
+    const year = parsed.getUTCFullYear();
+    const month = String(parsed.getUTCMonth() + 1).padStart(2, "0");
+    const day = String(parsed.getUTCDate()).padStart(2, "0");
+    return `${year}-${month}-${day}`;
+  }
+
+  return "";
+}
+
+function toNum(value: unknown): number | null {
+  if (value === null || value === undefined || value === "") return null;
+  if (typeof value === "number") return Number.isFinite(value) ? value : null;
+  const normalized = String(value)
+    .trim()
+    .replace(/\s+/g, "")
+    .replace(/,/g, ".");
+  if (!normalized) return null;
+  const n = Number(normalized);
+  return Number.isFinite(n) ? n : null;
+}
+
 function parsePercent(val: unknown): number | null {
   if (val === null || val === undefined) return null;
-  const s = String(val).replace(/%/g, "").trim();
-  const n = Number(s);
-  return Number.isNaN(n) ? null : n;
+  return toNum(String(val).replace(/%/g, "").trim());
 }
 
 function normalizeSheetUrl(sheetUrl: string): string {
@@ -48,13 +140,17 @@ function normalizeSheetUrl(sheetUrl: string): string {
   }
 }
 
-export async function fetchManualData(sheetUrl: string): Promise<ManualDataRow[]> {
+export async function fetchManualData(
+  sheetUrl: string,
+  options: ManualDataFetchOptions = {},
+): Promise<ManualDataRow[]> {
   if (!sheetUrl) return [];
 
   const fetchUrl = normalizeSheetUrl(sheetUrl);
   if (!fetchUrl) return [];
 
-  const cached = cache.get(fetchUrl);
+  const cacheKey = `${fetchUrl}::${options.defaultPlatform ?? ""}::${options.defaultChannel ?? ""}`;
+  const cached = cache.get(cacheKey);
   if (cached && Date.now() - cached.ts < TTL) return cached.data;
 
   const res = await fetch(fetchUrl, { cache: "no-store", redirect: "follow" });
@@ -71,19 +167,44 @@ export async function fetchManualData(sheetUrl: string): Promise<ManualDataRow[]
     transformHeader: (h: string) => h.trim().toLowerCase().replace(/\s+/g, "_"),
   });
 
-  const toNum = (v: unknown): number | null => {
-    if (v === null || v === undefined || v === "") return null;
-    if (typeof v === "number") return Number.isFinite(v) ? v : null;
-    const n = Number(v);
-    return Number.isFinite(n) ? n : null;
-  };
-
   const data = (parsed.data ?? [])
-    .filter((r) => r.date && r.platform)
+    .map((r) => {
+      const date = normalizeDate(r.date ?? r.report_date ?? r.day);
+      const platform = normalizeManualPlatformId(r.platform ?? r.source_platform ?? options.defaultPlatform);
+      const channel = String(
+        r.channel ??
+          r.campaign ??
+          r.campaign_name ??
+          r.campaign_title ??
+          r.source ??
+          options.defaultChannel ??
+          r.platform ??
+          "",
+      ).trim();
+
+      return {
+        date,
+        platform,
+        channel,
+        impressions: toNum(r.impressions),
+        clicks: toNum(r.clicks),
+        spend: toNum(r.spend),
+        views: toNum(r.views),
+        conversions: toNum(r.conversions),
+        reach: toNum(r.reach),
+        sessions: toNum(r.sessions),
+        cr: parsePercent(r.cr),
+        ctr: parsePercent(r.ctr),
+        cpc: toNum(r.cpc),
+        cpm: toNum(r.cpm),
+        cpv: toNum(r.cpv),
+      };
+    })
+    .filter((r) => r.date && r.platform && r.channel)
     .map((r) => ({
-      date: String(r.date).trim().slice(0, 10),
-      platform: String(r.platform).trim().toLowerCase(),
-      channel: String(r.channel ?? r.platform ?? "").trim(),
+      date: r.date,
+      platform: r.platform,
+      channel: r.channel,
       impressions: toNum(r.impressions),
       clicks: toNum(r.clicks),
       spend: toNum(r.spend),
@@ -98,7 +219,7 @@ export async function fetchManualData(sheetUrl: string): Promise<ManualDataRow[]
       cpv: toNum(r.cpv),
     })) as ManualDataRow[];
 
-  cache.set(fetchUrl, { data, ts: Date.now() });
+  cache.set(cacheKey, { data, ts: Date.now() });
   return data;
 }
 
@@ -207,4 +328,25 @@ export function getTimeseries(
     a.views += r.views ?? 0;
   }
   return Array.from(map.values()).sort((a, b) => a.date.localeCompare(b.date));
+}
+
+export function getTimeseriesByPlatform(
+  rows: ManualDataRow[],
+): Array<{ date: string; platform: string; impressions: number; clicks: number; spend: number; views: number }> {
+  const map = new Map<
+    string,
+    { date: string; platform: string; impressions: number; clicks: number; spend: number; views: number }
+  >();
+  for (const r of rows) {
+    const key = `${r.platform}|${r.date}`;
+    if (!map.has(key)) {
+      map.set(key, { date: r.date, platform: r.platform, impressions: 0, clicks: 0, spend: 0, views: 0 });
+    }
+    const a = map.get(key)!;
+    a.impressions += r.impressions ?? 0;
+    a.clicks += r.clicks ?? 0;
+    a.spend += r.spend ?? 0;
+    a.views += r.views ?? 0;
+  }
+  return Array.from(map.values()).sort((a, b) => a.date.localeCompare(b.date) || a.platform.localeCompare(b.platform));
 }
