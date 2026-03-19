@@ -18,7 +18,8 @@ import {
   aggregateByPlatform,
   fetchManualData,
   filterByDateRange,
-  getTimeseries,
+  getTimeseriesByPlatform,
+  normalizeManualPlatformId,
 } from "@/lib/manual-data-fetcher";
 import { PLATFORM_COLORS } from "@/lib/platform-colors";
 import {
@@ -577,6 +578,28 @@ async function buildPlanVsFactRowsByChannel(
   overrideMap: Map<string, number>,
   manualChannels: ManualChannelData[],
 ): Promise<PlanVsFactItem[]> {
+  const resolveBindingPlatform = (binding: { source_key: string; platform_campaign_id: string }) => {
+    if (binding.source_key === "manual_data" && binding.platform_campaign_id.startsWith("manual:")) {
+      const payload = binding.platform_campaign_id.slice("manual:".length);
+      const platformId = normalizeManualPlatformId(payload.split("|")[0] ?? "");
+      const sourceKey = resolveSourceKey(platformId);
+      const meta = PLATFORM_COLORS[platformId];
+      return {
+        source_key: sourceKey,
+        label: meta?.label ?? platformId,
+        color: meta?.hex ?? "#94a3b8",
+      };
+    }
+
+    const platformId = resolvePlatformIdFromSourceKey(binding.source_key);
+    const meta = PLATFORM_COLORS[platformId];
+    return {
+      source_key: binding.source_key,
+      label: meta?.label ?? binding.source_key,
+      color: meta?.hex ?? "#94a3b8",
+    };
+  };
+
   const factPromises = channelGroups.map(async (group) => {
     const bindings = bindingsByChannel.get(group.channel) ?? [];
     if (bindings.length === 0) {
@@ -630,15 +653,12 @@ async function buildPlanVsFactRowsByChannel(
     const bindings = bindingsByChannel.get(group.channel) ?? [];
     const platforms =
       bindings.length > 0
-        ? Array.from(new Set(bindings.map((binding) => binding.source_key))).map((sourceKey) => {
-            const platformId = resolvePlatformIdFromSourceKey(sourceKey);
-            const meta = PLATFORM_COLORS[platformId];
-            return {
-              source_key: sourceKey,
-              label: meta?.label ?? sourceKey,
-              color: meta?.hex ?? "#94a3b8",
-            };
-          })
+        ? Array.from(
+            new Map(bindings.map((binding) => {
+              const platform = resolveBindingPlatform(binding);
+              return [platform.source_key, platform];
+            })).values(),
+          )
         : (() => {
             const fallbackSourceKey = resolveSourceKey(group.instrument);
             if (!actualAdsSourceKeys.has(fallbackSourceKey)) return [];
@@ -838,7 +858,16 @@ function buildChannelPerformance(
   return planVsFact.map((row) => {
     const planOnly = row.campaign_count === 0;
     const factRows = planOnly ? [] : factRowsByChannel.get(row.channel) ?? [];
-    const summaryFacts = sumFactRows(factRows);
+    const summaryFacts = factRows.length
+      ? sumFactRows(factRows)
+      : {
+          impressions: row.impressions_fact,
+          reach: row.reach_fact,
+          clicks: row.clicks_fact,
+          spend: row.budget_fact,
+          views: row.views_fact,
+          conversions: row.conversions_fact,
+        };
     const summaryPlan = normalizeChannelPlan(row, dateFrom, dateTo, configFrom, configTo);
     const metrics: ChannelPerformanceItem["metrics"] = {
       impressions: buildMetricSummary("impressions", summaryFacts.impressions, summaryPlan.impressions),
@@ -943,6 +972,68 @@ function buildChannelPerformance(
       months,
     };
   });
+}
+
+function mergeManualChannelPerformance(
+  channelPerformance: ChannelPerformanceItem[],
+  manualChannels: ManualChannelData[],
+): ChannelPerformanceItem[] {
+  if (!manualChannels.length) {
+    return channelPerformance;
+  }
+
+  const existingKeys = new Set<string>();
+  channelPerformance.forEach((item) => {
+    if (item.platforms.length === 0) {
+      existingKeys.add(`${item.channel}|*`);
+      return;
+    }
+    item.platforms.forEach((platform) => {
+      existingKeys.add(`${item.channel}|${resolvePlatformIdFromSourceKey(platform.source_key)}`);
+    });
+  });
+
+  const additions = manualChannels
+    .filter((row) => !existingKeys.has(`${row.channel}|${row.platform}`) && !existingKeys.has(`${row.channel}|*`))
+    .map((row) => {
+      const platformId = row.platform;
+      const sourceKey = resolveSourceKey(platformId);
+      const meta = PLATFORM_COLORS[platformId];
+      const impressions = row.impressions;
+      const clicks = row.clicks;
+      const spend = row.spend;
+      const views = row.views;
+      const conversions = row.conversions;
+
+      return {
+        channel: row.channel,
+        instrument: meta?.label ?? platformId,
+        buy_type: "Manual",
+        platforms: [
+          {
+            source_key: sourceKey,
+            label: meta?.label ?? platformId,
+            color: meta?.hex ?? "#94a3b8",
+          },
+        ],
+        campaign_count: 1,
+        plan_only: false,
+        metrics: {
+          impressions: buildMetricSummary("impressions", impressions, 0),
+          clicks: buildMetricSummary("clicks", clicks, 0),
+          views: buildMetricSummary("views", views, 0),
+          conversions: buildMetricSummary("conversions", conversions, 0),
+          spend: buildMetricSummary("spend", spend, 0),
+          ctr: buildMetricSummary("ctr", impressions > 0 ? (clicks / impressions) * 100 : 0, 0),
+          cpm: buildMetricSummary("cpm", impressions > 0 ? (spend / impressions) * 1000 : 0, 0),
+          cpc: buildMetricSummary("cpc", clicks > 0 ? spend / clicks : 0, 0),
+          cpv: buildMetricSummary("cpv", views > 0 ? spend / views : 0, 0),
+          cpa: buildMetricSummary("cpa", conversions > 0 ? spend / conversions : 0, 0),
+        },
+      } satisfies ChannelPerformanceItem;
+    });
+
+  return [...channelPerformance, ...additions];
 }
 
 function buildPlanBasedPlatformSpend(
@@ -1090,13 +1181,16 @@ export async function GET(
           const sheetUrl = String(sourceConfig?.sheet_url ?? "").trim();
           if (sheetUrl) {
             try {
-              const allRows = await fetchManualData(sheetUrl);
+              const allRows = await fetchManualData(sheetUrl, {
+                defaultPlatform: String(sourceConfig?.platform ?? "").trim(),
+                defaultChannel: String(sourceConfig?.channel ?? "").trim(),
+              });
               const filtered = filterByDateRange(allRows, range.from, range.to);
 
               const byPlatform = aggregateByPlatform(filtered);
               for (const p of byPlatform) {
-                const platformId = `manual_${p.platform}`;
-                const meta = PLATFORM_COLORS[p.platform];
+                const platformId = p.platform;
+                const meta = PLATFORM_COLORS[platformId];
                 platformStatsRaw.push({
                   id: platformId,
                   name: meta?.label ?? p.platform.charAt(0).toUpperCase() + p.platform.slice(1),
@@ -1116,8 +1210,8 @@ export async function GET(
               const prevFiltered = filterByDateRange(allRows, previousRange.from, previousRange.to);
               const prevByPlatform = aggregateByPlatform(prevFiltered);
               for (const p of prevByPlatform) {
-                const platformId = `manual_${p.platform}`;
-                const meta = PLATFORM_COLORS[p.platform];
+                const platformId = p.platform;
+                const meta = PLATFORM_COLORS[platformId];
                 prevStatsRaw.push({
                   id: platformId,
                   name: meta?.label ?? p.platform.charAt(0).toUpperCase() + p.platform.slice(1),
@@ -1134,11 +1228,11 @@ export async function GET(
                 });
               }
 
-              const ts = getTimeseries(filtered);
+              const ts = getTimeseriesByPlatform(filtered);
               for (const t of ts) {
                 timeseriesRaw.push({
                   date: t.date,
-                  platform: "manual_combined",
+                  platform: t.platform,
                   impressions: t.impressions,
                   clicks: t.clicks,
                   spend: t.spend,
@@ -1301,39 +1395,6 @@ export async function GET(
       }
     }
 
-    if (manualChannels.length > 0) {
-      const manualTotals = manualChannels.reduce(
-        (acc, r) => ({
-          impressions: acc.impressions + r.impressions,
-          clicks: acc.clicks + r.clicks,
-          spend: acc.spend + r.spend,
-          conversions: acc.conversions + r.conversions,
-          views: acc.views + r.views,
-        }),
-        { impressions: 0, clicks: 0, spend: 0, conversions: 0, views: 0 },
-      );
-      platformStatsRaw.push({
-        id: "manual_combined",
-        name: "Manual (combined)",
-        color: "#94a3b8",
-        impressions: manualTotals.impressions,
-        clicks: manualTotals.clicks,
-        spend: manualTotals.spend,
-        conversions: manualTotals.conversions,
-        views: manualTotals.views,
-        reach: 0,
-        frequency: 0,
-        ctr:
-          manualTotals.impressions > 0
-            ? Number(((manualTotals.clicks / manualTotals.impressions) * 100).toFixed(2))
-            : 0,
-        cpm:
-          manualTotals.impressions > 0
-            ? Number(((manualTotals.spend / manualTotals.impressions) * 1000).toFixed(2))
-            : 0,
-      });
-    }
-
     const platformResults = mergePlatformStats(platformStatsRaw);
     const prevPlatformResults = mergePlatformStats(prevStatsRaw);
     const timeseriesResults = mergeTimeseries(timeseriesRaw);
@@ -1417,14 +1478,14 @@ export async function GET(
       range.to,
       frequencyOverrideMap,
     );
-    const channelPerformance = buildChannelPerformance(
+    const channelPerformance = mergeManualChannelPerformance(buildChannelPerformance(
       planVsFact,
       channelTimeseries,
       range.from,
       range.to,
       String(config.period_from ?? range.from),
       String(config.period_to ?? range.to),
-    );
+    ), manualChannels);
     const analyticsKpi = mergeAnalyticsKpi(analyticsKpiRaw);
     const analyticsTimeseries = mergeAnalyticsTimeseries(analyticsTimeseriesRaw);
 
@@ -1452,12 +1513,8 @@ export async function GET(
       channel_performance: channelPerformance,
       channel_timeseries: channelTimeseries,
       custom_tables: customTables.length > 0 ? customTables : undefined,
-      manual_channels:
-        manualChannels.length > 0 ? manualChannels : undefined,
-      manual_table_title:
-        manualChannels.length > 0
-          ? (manualTableTitle || "Additional sources")
-          : undefined,
+      manual_channels: manualChannels.length > 0 ? manualChannels : undefined,
+      manual_table_title: manualChannels.length > 0 ? (manualTableTitle || "Additional sources") : undefined,
       analytics:
         analyticsKpiRaw.length > 0
           ? {

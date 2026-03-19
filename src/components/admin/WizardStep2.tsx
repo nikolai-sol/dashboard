@@ -524,13 +524,16 @@ export default function WizardStep2({ data, platforms, onChange }: WizardStep2Pr
         platform: "manual_data",
         schema_file: "schemas/manual_data.yaml",
         role: "actual",
-        source_config: { sheet_url: "", title: "Additional sources" },
+        source_config: { sheet_url: "", title: "Additional sources", platform: "", channel: "" },
         filters: [{ filter_type: "all", filter_value: null }],
       },
     ]);
   };
 
-  const updateManualDataSource = (index: number, patch: { title?: string; sheet_url?: string }) => {
+  const updateManualDataSource = (
+    index: number,
+    patch: { title?: string; sheet_url?: string; platform?: string; channel?: string },
+  ) => {
     const source = manualDataSources[index];
     if (!source) return;
     const next = [...manualDataSources];
@@ -559,7 +562,12 @@ export default function WizardStep2({ data, platforms, onChange }: WizardStep2Pr
     setManualDataPreviewLoading((prev) => ({ ...prev, [index]: true }));
     setManualDataPreview((prev) => ({ ...prev, [index]: null }));
     try {
-      const response = await fetch(`/api/admin/manual-data/preview?url=${encodeURIComponent(url)}`);
+      const params = new URLSearchParams({ url });
+      const defaultPlatform = String(source?.source_config?.platform ?? "").trim();
+      const defaultChannel = String(source?.source_config?.channel ?? "").trim();
+      if (defaultPlatform) params.set("platform", defaultPlatform);
+      if (defaultChannel) params.set("channel", defaultChannel);
+      const response = await fetch(`/api/admin/manual-data/preview?${params.toString()}`);
       const json = await response.json();
       if (response.ok && Array.isArray(json.rows)) {
         setManualDataPreview((prev) => ({ ...prev, [index]: json.rows }));
@@ -1260,13 +1268,13 @@ export default function WizardStep2({ data, platforms, onChange }: WizardStep2Pr
       <div className="rounded-xl border border-slate-200 p-4">
         <h4 className="text-sm font-semibold text-slate-900">Ручные данные (Manual Data Source)</h4>
         <p className="mt-1 text-xs text-slate-500">
-          Структурированная таблица date/platform/channel — фильтрация по дате, агрегация по platform/channel. Brevo,
-          Telegram, Google Ads без коллектора и т.д.
+          Структурированная таблица с date и метриками. Platform/channel можно брать из колонок файла или задать здесь
+          как fallback, чтобы строки попадали в общий platform/channel breakdown дашборда.
         </p>
         <div className="mt-3 space-y-3">
           {manualDataSources.map((source, index) => (
             <div key={`manual-${index}`} className="rounded-xl border border-slate-200 p-3">
-              <div className="grid gap-3 md:grid-cols-[1fr_1fr_auto] md:items-end">
+              <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-[1fr_1fr_220px_220px_auto] xl:items-end">
                 <label className="text-sm">
                   <span className="mb-1 block font-medium text-slate-700">Заголовок</span>
                   <input
@@ -1283,6 +1291,24 @@ export default function WizardStep2({ data, platforms, onChange }: WizardStep2Pr
                     value={String(source.source_config?.sheet_url ?? "")}
                     onChange={(e) => updateManualDataSource(index, { sheet_url: e.target.value })}
                     placeholder="https://docs.google.com/.../export?format=csv"
+                  />
+                </label>
+                <label className="text-sm">
+                  <span className="mb-1 block font-medium text-slate-700">Платформа</span>
+                  <input
+                    className="w-full rounded-lg border border-slate-300 px-3 py-2"
+                    value={String(source.source_config?.platform ?? "")}
+                    onChange={(e) => updateManualDataSource(index, { platform: e.target.value })}
+                    placeholder="linkedin / vk / telegram / brevo"
+                  />
+                </label>
+                <label className="text-sm">
+                  <span className="mb-1 block font-medium text-slate-700">Channel</span>
+                  <input
+                    className="w-full rounded-lg border border-slate-300 px-3 py-2"
+                    value={String(source.source_config?.channel ?? "")}
+                    onChange={(e) => updateManualDataSource(index, { channel: e.target.value })}
+                    placeholder="Fallback if file has no channel/campaign column"
                   />
                 </label>
                 <div className="flex flex-wrap gap-2">

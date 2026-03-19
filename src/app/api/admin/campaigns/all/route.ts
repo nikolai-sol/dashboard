@@ -10,6 +10,8 @@ type SourceSpec = {
   source_key?: string;
   account_ids?: string[];
   sheet_url?: string;
+  default_platform?: string;
+  default_channel?: string;
 };
 
 function parseSourcesQuery(value: string): SourceSpec[] {
@@ -34,7 +36,13 @@ export async function GET(request: Request) {
       .filter(Boolean);
     const sourceSpecs = parseSourcesQuery(String(url.searchParams.get("sources") ?? ""));
 
-    const resolvedSources: Array<{ source_key: string; account_ids?: string[]; sheet_url?: string }> = [];
+    const resolvedSources: Array<{
+      source_key: string;
+      account_ids?: string[];
+      sheet_url?: string;
+      default_platform?: string;
+      default_channel?: string;
+    }> = [];
 
     if (Number.isFinite(dashboardId) && dashboardId > 0) {
       const conn = await pool.getConnection();
@@ -49,7 +57,13 @@ export async function GET(request: Request) {
             const sourceKey = resolveSourceKey(source.platform);
             if (source.platform === "manual_data") {
               const sheetUrl = String(source.source_config?.sheet_url ?? "").trim();
-              resolvedSources.push({ source_key: "manual_data", account_ids: [], sheet_url: sheetUrl });
+              resolvedSources.push({
+                source_key: "manual_data",
+                account_ids: [],
+                sheet_url: sheetUrl,
+                default_platform: String(source.source_config?.platform ?? "").trim(),
+                default_channel: String(source.source_config?.channel ?? "").trim(),
+              });
             } else {
               const accountIds = Array.isArray(source.source_config?.account_ids)
                 ? source.source_config.account_ids.map((item) => String(item).trim()).filter(Boolean)
@@ -69,7 +83,13 @@ export async function GET(request: Request) {
         if (!sourceKey) return;
         if (sourceKey === "manual_data" || source.platform === "manual_data") {
           const sheetUrl = String(source.sheet_url ?? "").trim();
-          resolvedSources.push({ source_key: "manual_data", account_ids: [], sheet_url: sheetUrl });
+          resolvedSources.push({
+            source_key: "manual_data",
+            account_ids: [],
+            sheet_url: sheetUrl,
+            default_platform: String(source.default_platform ?? "").trim(),
+            default_channel: String(source.default_channel ?? "").trim(),
+          });
         } else {
           const accountIds = Array.isArray(source.account_ids)
             ? source.account_ids.map((item) => String(item).trim()).filter(Boolean)
@@ -114,7 +134,10 @@ export async function GET(request: Request) {
     const manualCampaigns: Array<{ source_key: string; platform_campaign_id: string; campaign_name: string }> = [];
     for (const source of manualSources) {
       try {
-        const rows = await fetchManualData(source.sheet_url!);
+        const rows = await fetchManualData(source.sheet_url!, {
+          defaultPlatform: source.default_platform,
+          defaultChannel: source.default_channel,
+        });
         const byChannel = aggregateByChannel(rows);
         for (const ch of byChannel) {
           manualCampaigns.push({

@@ -70,7 +70,10 @@ export async function POST(request: Request) {
             continue;
           }
           try {
-            const rows = await fetchManualData(sheetUrl);
+            const rows = await fetchManualData(sheetUrl, {
+              defaultPlatform: String(sourceConfig?.platform ?? "").trim(),
+              defaultChannel: String(sourceConfig?.channel ?? "").trim(),
+            });
             const channels = aggregateByChannel(rows);
             const count = channels.length;
             actualSummary.push({
