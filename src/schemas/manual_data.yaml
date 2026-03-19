@@ -1,0 +1,6 @@
+platform: manual_data
+display_name: Manual Data (Google Sheets)
+source: gsheet
+source_key: manual_data
+source_type: manual
+canonical_table: null
