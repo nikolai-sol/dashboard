@@ -8,6 +8,7 @@ import {
   type CanonicalFilter,
 } from "@/lib/canonical-adapter";
 import { resolveSourceKey, resolveSourceType } from "@/lib/source-mapping";
+import { fetchManualData, aggregateByChannel } from "@/lib/manual-data-fetcher";
 
 export const dynamic = "force-dynamic";
 
@@ -52,17 +53,50 @@ export async function POST(request: Request) {
         const sourceKey = schema.source_key ?? resolveSourceKey(source.platform);
         const sourceType = schema.source_type ?? resolveSourceType(sourceKey);
 
-        if (schema.source !== "mysql" && sourceType !== "gsheet") {
+        if (sourceType === "gsheet") {
+          continue;
+        }
+
+        if (sourceType === "manual") {
+          const sourceConfig = parseSourceConfig(source.source_config);
+          const sheetUrl = String(sourceConfig?.sheet_url ?? "").trim();
+          if (!sheetUrl) {
+            actualSummary.push({
+              platform: source.platform,
+              campaigns: 0,
+              status: "error",
+              message: "Sheet URL is empty",
+            });
+            continue;
+          }
+          try {
+            const rows = await fetchManualData(sheetUrl);
+            const channels = aggregateByChannel(rows);
+            const count = channels.length;
+            actualSummary.push({
+              platform: source.platform,
+              campaigns: count,
+              status: count > 0 ? "ok" : "empty",
+              message: count > 0 ? "Manual sheet loaded" : "Sheet has no parsable rows",
+            });
+          } catch (err) {
+            actualSummary.push({
+              platform: source.platform,
+              campaigns: 0,
+              status: "error",
+              message: err instanceof Error ? err.message : "Failed to load manual sheet",
+            });
+          }
+          continue;
+        }
+
+        if (schema.source !== "mysql") {
           actualSummary.push({
             platform: source.platform,
             campaigns: 0,
             status: "error",
             message: "Source is not mysql",
           });
-          continue;
-        }
-
-        if (sourceType === "gsheet") {
           continue;
         }
 

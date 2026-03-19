@@ -152,8 +152,8 @@ export default function DashboardPreview({ data }: DashboardPreviewProps) {
 
         {!loading && !error && preview ? (
           <div className="space-y-1">
-            {preview.actual.map((item) => (
-              <p key={item.platform}>
+            {preview.actual.map((item, idx) => (
+              <p key={`${item.platform}-${idx}`}>
                 {item.platform}: {item.campaigns} campaigns
                 {item.message ? ` (${item.message})` : ""}
               </p>
