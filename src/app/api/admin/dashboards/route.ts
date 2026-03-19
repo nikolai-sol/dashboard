@@ -5,6 +5,7 @@ import {
   insertSourcesWithFilters,
   normalizeDashboardPayload,
   replaceMediaPlanBindings,
+  summarizeDashboardPayloadForLog,
   validateDashboardPayload,
 } from "@/lib/admin-dashboards";
 
@@ -49,9 +50,14 @@ export async function GET() {
 export async function POST(request: Request) {
   const body = await request.json().catch(() => null);
   const payload = normalizeDashboardPayload(body);
+  const payloadSummary = summarizeDashboardPayloadForLog(payload);
   const validationError = validateDashboardPayload(payload);
 
   if (validationError) {
+    console.warn("[POST /api/admin/dashboards] validation_failed", {
+      validationError,
+      payload: payloadSummary,
+    });
     return NextResponse.json({ error: validationError }, { status: 400 });
   }
 
@@ -64,6 +70,9 @@ export async function POST(request: Request) {
 
   const conn = await pool.getConnection();
   try {
+    console.info("[POST /api/admin/dashboards] create_attempt", {
+      payload: payloadSummary,
+    });
     await conn.beginTransaction();
 
     const [dashResult] = await conn.execute<ResultSetHeader>(
@@ -89,7 +98,10 @@ export async function POST(request: Request) {
     });
   } catch (error) {
     await conn.rollback();
-    console.error("[POST /api/admin/dashboards]", error);
+    console.error("[POST /api/admin/dashboards] create_failed", {
+      error,
+      payload: payloadSummary,
+    });
     const err = error as { message?: string; code?: string; sqlMessage?: string; errno?: number };
     const message = err?.message ?? String(error);
     const parts: string[] = [message];

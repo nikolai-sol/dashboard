@@ -51,6 +51,36 @@ export type DashboardWithSources = {
   media_plan_bindings: MediaPlanBindingInput[];
 };
 
+export type DashboardPayloadLogSummary = {
+  client_id: string;
+  client_name: string;
+  dashboard_name: string;
+  dashboard_type: DashboardUpsertPayload["dashboard_type"];
+  config: {
+    period_from?: string;
+    period_to?: string;
+    currency?: string;
+    language?: string;
+    show_spend?: boolean;
+    spend_source?: string;
+    kpi_cards_count: number;
+    visible_metrics_count: number;
+    section_order_count: number;
+  };
+  sources: Array<{
+    platform: string;
+    role: DashboardSourceInput["role"];
+    schema_file: string;
+    filters_count: number;
+    has_sheet_url: boolean;
+    account_ids_count: number;
+    has_inline_rows: boolean;
+    has_review: boolean;
+  }>;
+  media_plan_bindings_count: number;
+  campaign_frequency_overrides_count: number;
+};
+
 function parseJsonField(value: unknown): Record<string, unknown> {
   if (!value) return {};
   if (typeof value === "string") {
@@ -255,6 +285,61 @@ export function validateDashboardPayload(payload: DashboardUpsertPayload): strin
   }
 
   return null;
+}
+
+export function summarizeDashboardPayloadForLog(
+  payload: DashboardUpsertPayload,
+): DashboardPayloadLogSummary {
+  return {
+    client_id: payload.client_id,
+    client_name: payload.client_name,
+    dashboard_name: payload.dashboard_name,
+    dashboard_type: payload.dashboard_type,
+    config: {
+      period_from:
+        typeof payload.config.period_from === "string" ? payload.config.period_from : undefined,
+      period_to:
+        typeof payload.config.period_to === "string" ? payload.config.period_to : undefined,
+      currency:
+        typeof payload.config.currency === "string" ? payload.config.currency : undefined,
+      language:
+        typeof payload.config.language === "string" ? payload.config.language : undefined,
+      show_spend:
+        typeof payload.config.show_spend === "boolean" ? payload.config.show_spend : undefined,
+      spend_source:
+        typeof payload.config.spend_source === "string"
+          ? payload.config.spend_source
+          : undefined,
+      kpi_cards_count: Array.isArray(payload.config.kpi_cards) ? payload.config.kpi_cards.length : 0,
+      visible_metrics_count: Array.isArray(payload.config.visible_metrics)
+        ? payload.config.visible_metrics.length
+        : 0,
+      section_order_count: Array.isArray(payload.config.section_order)
+        ? payload.config.section_order.length
+        : 0,
+    },
+    sources: payload.sources.map((source) => {
+      const sourceConfig = source.source_config ?? {};
+      const accountIds = Array.isArray(sourceConfig.account_ids) ? sourceConfig.account_ids : [];
+      const inlineRows = Array.isArray(sourceConfig.inline_rows) ? sourceConfig.inline_rows : [];
+      return {
+        platform: source.platform,
+        role: source.role,
+        schema_file: source.schema_file,
+        filters_count: Array.isArray(source.filters) ? source.filters.length : 0,
+        has_sheet_url:
+          typeof sourceConfig.sheet_url === "string" && sourceConfig.sheet_url.trim().length > 0,
+        account_ids_count: accountIds.length,
+        has_inline_rows: inlineRows.length > 0,
+        has_review:
+          Boolean(sourceConfig.review) && typeof sourceConfig.review === "object",
+      };
+    }),
+    media_plan_bindings_count: payload.media_plan_bindings.length,
+    campaign_frequency_overrides_count: Array.isArray(payload.config.campaign_frequency_overrides)
+      ? payload.config.campaign_frequency_overrides.length
+      : 0,
+  };
 }
 
 export async function insertSourcesWithFilters(
