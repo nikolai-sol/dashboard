@@ -34,6 +34,22 @@ type PieDatum = {
 const OTHER_ID = "other";
 const OTHER_COLOR = "#94A3B8";
 
+const PLATFORM_BADGE_LABELS: Record<string, string> = {
+  linkedin: "in",
+  reddit: "r",
+  google: "g",
+  google_ads: "g",
+  vk: "vk",
+  meta: "m",
+  yandex: "ya",
+  x: "x",
+  git: "gi",
+  dv360: "dv",
+  hybrid: "hy",
+  telegram: "tg",
+  other: "…",
+};
+
 function resolveBrandColor(platformId: string, fallbackColor: string) {
   return PLATFORM_COLORS[platformId]?.hex ?? fallbackColor;
 }
@@ -84,6 +100,18 @@ function buildPieData(data: PlatformStats[]): PieDatum[] {
   }
 
   return major.sort((a, b) => b.value - a.value);
+}
+
+function badgeText(id: string, label: string) {
+  const known = PLATFORM_BADGE_LABELS[id];
+  if (known) return known.toUpperCase();
+  const trimmed = label.trim();
+  if (!trimmed) return "•";
+  const parts = trimmed.split(/\s+/).filter(Boolean);
+  if (parts.length >= 2) {
+    return `${parts[0][0] ?? ""}${parts[1][0] ?? ""}`.toUpperCase();
+  }
+  return trimmed.slice(0, 2).toUpperCase();
 }
 
 function CenterLayer({
@@ -214,7 +242,6 @@ export default function ChannelMix({
 
   const layers: PieSvgProps<PieDatum>["layers"] = [
     "arcs",
-    "arcLabels",
     (props: PieCustomLayerProps<PieDatum>) => (
       <CenterLayer
         centerX={props.centerX}
@@ -224,17 +251,16 @@ export default function ChannelMix({
         labels={copy}
       />
     ),
-    "legends",
   ];
 
   return (
     <section className="card-surface p-5">
       <h3 className="mb-4 text-base font-semibold text-slate-900">{copy.title}</h3>
 
-      <div className="relative h-[360px]">
+      <div className="relative h-[320px]">
         <ResponsivePie
           data={pieData}
-          margin={{ top: 12, right: 20, bottom: 72, left: 20 }}
+          margin={{ top: 12, right: 20, bottom: 20, left: 20 }}
           sortByValue
           innerRadius={0.55}
           padAngle={1.5}
@@ -243,12 +269,9 @@ export default function ChannelMix({
           colors={({ data: item }) => String(item.color)}
           borderWidth={1}
           borderColor={{ from: "color", modifiers: [["darker", 0.18]] }}
-          arcLabel={(arc) => {
-            const share = Number(arc.data.sharePct ?? 0);
-            if (share < 5) return "";
-            return `${arc.label} ${currencyFormatter(Number(arc.value))}`;
-          }}
-          arcLabelsSkipAngle={15}
+          arcLabel={() => ""}
+          enableArcLabels={false}
+          arcLabelsSkipAngle={360}
           arcLabelsTextColor="#FFFFFF"
           enableArcLinkLabels={false}
           arcLinkLabelsSkipAngle={360}
@@ -263,20 +286,6 @@ export default function ChannelMix({
           animate={!pdfMode}
           motionConfig={pdfMode ? "default" : "gentle"}
           layers={layers}
-          legends={[
-            {
-              anchor: "bottom",
-              direction: "row",
-              justify: false,
-              translateY: 56,
-              itemWidth: 90,
-              itemHeight: 16,
-              itemsSpacing: 10,
-              symbolSize: 10,
-              symbolShape: "circle",
-              itemTextColor: "#475569",
-            },
-          ]}
           theme={{
             labels: {
               text: {
@@ -297,6 +306,23 @@ export default function ChannelMix({
             },
           }}
         />
+      </div>
+
+      <div className="mt-3 flex flex-wrap items-center gap-2">
+        {pieData.map((item) => (
+          <div
+            key={item.id}
+            title={item.label}
+            aria-label={item.label}
+            className="flex h-8 min-w-8 items-center justify-center rounded-full border border-slate-200 bg-white px-2 text-[11px] font-semibold uppercase tracking-[0.06em] text-slate-700 shadow-sm"
+          >
+            <span
+              className="mr-1.5 inline-block h-2.5 w-2.5 rounded-full"
+              style={{ backgroundColor: item.color }}
+            />
+            <span>{badgeText(item.id, item.label)}</span>
+          </div>
+        ))}
       </div>
     </section>
   );
