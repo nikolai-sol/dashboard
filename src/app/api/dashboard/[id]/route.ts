@@ -1175,6 +1175,28 @@ function applyPlanBasedPlanVsFactSpend(rows: PlanVsFactItem[]): PlanVsFactItem[]
   }));
 }
 
+function buildPlatformSpendFromPlanVsFact(rows: PlanVsFactItem[]): Map<string, number> {
+  const totals = new Map<string, number>();
+
+  for (const row of rows) {
+    const platformIds = row.platforms
+      .map((platform) => resolvePlatformIdFromSourceKey(platform.source_key))
+      .filter(Boolean);
+
+    if (!platformIds.length) continue;
+
+    const split = platformIds.length;
+    for (const platformId of platformIds) {
+      totals.set(
+        platformId,
+        Number(((totals.get(platformId) ?? 0) + row.budget_fact / split).toFixed(2)),
+      );
+    }
+  }
+
+  return totals;
+}
+
 function applyPlatformConversions(
   rows: PlatformStats[],
   conversionsByPlatform: Record<string, number>,
@@ -1544,15 +1566,7 @@ export async function GET(
     if (spendSource === "media_plan_derived") {
       buildPlanBasedTimeseriesSpend(timeseriesResults, planRows);
 
-      const planSpendByPlatform = buildPlanBasedPlatformSpend(platformResults, planRows);
       const prevPlanSpendByPlatform = buildPlanBasedPlatformSpend(prevPlatformResults, planRows);
-
-      platformResults.forEach((row) => {
-        const derivedSpend = planSpendByPlatform.get(row.id);
-        if (derivedSpend === undefined) return;
-        row.spend = derivedSpend;
-        row.cpm = row.impressions > 0 ? Number(((derivedSpend / row.impressions) * 1000).toFixed(2)) : 0;
-      });
 
       prevPlatformResults.forEach((row) => {
         const derivedSpend = prevPlanSpendByPlatform.get(row.id);
@@ -1561,29 +1575,6 @@ export async function GET(
         row.cpm = row.impressions > 0 ? Number(((derivedSpend / row.impressions) * 1000).toFixed(2)) : 0;
       });
     }
-
-    const totalImpressions = platformResults.reduce((sum, row) => sum + row.impressions, 0);
-    const totalClicks = platformResults.reduce((sum, row) => sum + row.clicks, 0);
-    const totalSpend = platformResults.reduce((sum, row) => sum + row.spend, 0);
-
-    const prevImpressions = prevPlatformResults.reduce((sum, row) => sum + row.impressions, 0);
-    const prevClicks = prevPlatformResults.reduce((sum, row) => sum + row.clicks, 0);
-    const prevSpend = prevPlatformResults.reduce((sum, row) => sum + row.spend, 0);
-
-    const kpi = {
-      total_impressions: totalImpressions,
-      total_clicks: totalClicks,
-      total_spend: Number(totalSpend.toFixed(2)),
-      avg_ctr: totalImpressions > 0 ? Number(((totalClicks / totalImpressions) * 100).toFixed(2)) : 0,
-      avg_cpm: totalImpressions > 0 ? Number(((totalSpend / totalImpressions) * 1000).toFixed(2)) : 0,
-      prev_impressions: prevImpressions,
-      prev_clicks: prevClicks,
-      prev_spend: Number(prevSpend.toFixed(2)),
-      prev_ctr:
-        prevImpressions > 0 ? Number(((prevClicks / prevImpressions) * 100).toFixed(2)) : 0,
-      prev_cpm:
-        prevImpressions > 0 ? Number(((prevSpend / prevImpressions) * 1000).toFixed(2)) : 0,
-    };
 
     const planByChannel = groupByChannel(planRows);
     const [bindingRows] = await pool.execute<BindingRow[]>(
@@ -1645,6 +1636,17 @@ export async function GET(
       spendSource === "media_plan_derived"
         ? applyPlanBasedPlanVsFactSpend(planVsFactBase)
         : planVsFactBase;
+
+    if (spendSource === "media_plan_derived") {
+      const currentPlanSpendByPlatform = buildPlatformSpendFromPlanVsFact(planVsFact);
+      platformResults.forEach((row) => {
+        const derivedSpend = currentPlanSpendByPlatform.get(row.id);
+        if (derivedSpend === undefined) return;
+        row.spend = derivedSpend;
+        row.cpm = row.impressions > 0 ? Number(((derivedSpend / row.impressions) * 1000).toFixed(2)) : 0;
+      });
+    }
+
     const channelPerformance = mergeManualChannelPerformance(buildChannelPerformance(
       planVsFact,
       channelTimeseries,
@@ -1655,6 +1657,29 @@ export async function GET(
     ), manualChannels);
     const analyticsKpi = mergeAnalyticsKpi(analyticsKpiRaw);
     const analyticsTimeseries = mergeAnalyticsTimeseries(analyticsTimeseriesRaw);
+
+    const totalImpressions = platformResults.reduce((sum, row) => sum + row.impressions, 0);
+    const totalClicks = platformResults.reduce((sum, row) => sum + row.clicks, 0);
+    const totalSpend = platformResults.reduce((sum, row) => sum + row.spend, 0);
+
+    const prevImpressions = prevPlatformResults.reduce((sum, row) => sum + row.impressions, 0);
+    const prevClicks = prevPlatformResults.reduce((sum, row) => sum + row.clicks, 0);
+    const prevSpend = prevPlatformResults.reduce((sum, row) => sum + row.spend, 0);
+
+    const kpi = {
+      total_impressions: totalImpressions,
+      total_clicks: totalClicks,
+      total_spend: Number(totalSpend.toFixed(2)),
+      avg_ctr: totalImpressions > 0 ? Number(((totalClicks / totalImpressions) * 100).toFixed(2)) : 0,
+      avg_cpm: totalImpressions > 0 ? Number(((totalSpend / totalImpressions) * 1000).toFixed(2)) : 0,
+      prev_impressions: prevImpressions,
+      prev_clicks: prevClicks,
+      prev_spend: Number(prevSpend.toFixed(2)),
+      prev_ctr:
+        prevImpressions > 0 ? Number(((prevClicks / prevImpressions) * 100).toFixed(2)) : 0,
+      prev_cpm:
+        prevImpressions > 0 ? Number(((prevSpend / prevImpressions) * 1000).toFixed(2)) : 0,
+    };
 
     const response: DashboardData = {
       dashboard: {
