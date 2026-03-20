@@ -45,7 +45,39 @@ export default function CustomTable({ data, locale = "en-US", pdfMode = false }:
       >
         {title}
       </h3>
-      <div className="overflow-x-auto rounded-xl border border-slate-200 bg-white">
+      {!pdfMode ? (
+        <div className="space-y-3 sm:hidden">
+          {rows.map((row, rowIndex) => (
+            <div key={rowIndex} className="rounded-xl border border-slate-200 bg-white p-3 shadow-sm">
+              <div className="space-y-2">
+                {headers.map((header, colIndex) => {
+                  const cell = row[colIndex] ?? "";
+                  const numeric = isNumeric(cell);
+                  return (
+                    <div
+                      key={colIndex}
+                      className="grid grid-cols-[minmax(0,120px)_1fr] items-start gap-3 border-b border-slate-100 pb-2 last:border-b-0 last:pb-0"
+                    >
+                      <div className="text-[10px] font-medium uppercase tracking-[0.08em] text-slate-500">
+                        {header}
+                      </div>
+                      <div
+                        className={`break-words text-sm text-slate-700 ${
+                          numeric ? "text-right font-mono tabular-nums" : "text-left"
+                        }`}
+                      >
+                        {formatCell(cell, locale)}
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
+          ))}
+        </div>
+      ) : null}
+
+      <div className={`overflow-x-auto rounded-xl border border-slate-200 bg-white ${pdfMode ? "" : "hidden sm:block"}`}>
         <table className="min-w-full divide-y divide-slate-200 text-sm">
           <thead>
             <tr>
