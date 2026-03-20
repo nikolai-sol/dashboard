@@ -1,5 +1,6 @@
 "use client";
 
+import type { CSSProperties } from "react";
 import { useEffect, useMemo, useState } from "react";
 import { useParams, useRouter, useSearchParams } from "next/navigation";
 import ChannelMix from "@/components/ChannelMix";
@@ -501,7 +502,11 @@ export default function DashboardByIdPage() {
   const renderSection = (sectionId: string) => {
     if (sectionId === "kpi_grid") {
       return (
-        <section key={sectionId} className="mb-6 grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-5">
+        <section
+          key={sectionId}
+          className="kpi-grid mb-6"
+          style={{ ["--kpi-cols" as string]: String(Math.max(1, Math.min(kpiCards.length, 8))) } as CSSProperties}
+        >
           {kpiCards.map((card) => (
             <KPICard
               key={card.key}
