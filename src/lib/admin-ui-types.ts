@@ -16,7 +16,7 @@ export type PlatformMeta = {
   source: "mysql" | "gsheet";
   schema_file: string;
   source_key?: string;
-  source_type?: "ads" | "analytics" | "gsheet" | null;
+  source_type?: "ads" | "analytics" | "gsheet" | "manual" | "leads" | null;
   canonical_table?: string | null;
 };
 

@@ -61,7 +61,7 @@ export default function WizardStepFrequency({ data, onChange }: WizardStepFreque
   const [error, setError] = useState<string | null>(null);
 
   const actualSources = useMemo(
-    () => data.sources.filter((source) => source.role === "actual"),
+    () => data.sources.filter((source) => source.role === "actual" && source.platform !== "leads"),
     [data.sources],
   );
   const selectedBindings = useMemo(() => uniqueBindings(data), [data]);

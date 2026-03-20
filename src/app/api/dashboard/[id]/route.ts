@@ -1272,10 +1272,18 @@ export async function GET(
           continue;
         }
 
+        if (source.platform === "leads" && source.role === "actual") {
+          continue;
+        }
+
         const schema = loadSchema(source.schema_file);
         const sourceKey = schema.source_key ?? resolveSourceKey(source.platform);
         const sourceType = schema.source_type ?? resolveSourceType(sourceKey);
         const sourceConfig = parseJson(source.source_config);
+
+        if (sourceType === "leads") {
+          continue;
+        }
 
         if (source.role === "plan" && (schema.source === "gsheet" || sourceType === "gsheet")) {
           const rows = await fetchMediaPlanFromSourceConfig(sourceConfig);

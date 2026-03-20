@@ -17,6 +17,8 @@ Dashboard sources now support three roles:
   - currently `media_plan`
 - `custom_table`
   - standalone uploaded/linked reporting tables rendered as separate dashboard sections
+  - display-only by rule
+  - never participates in KPI, platform totals, channel performance, or plan/fact
 
 Special cases:
 
@@ -146,6 +148,21 @@ Manual data endpoints:
 Custom table preview:
 
 - `GET /api/admin/custom-table/preview`
+
+## Leads Handling Rule
+
+Leads must not be loaded through `custom_table`.
+
+Reason:
+- `custom_table` is intentionally free-form and display-only
+- leads require binding semantics and can distort dashboard metrics if injected without review
+
+Current rule:
+- if a team wants to show raw leads as a table, `custom_table` is fine
+- if a team wants leads to affect conversions/KPI/platform/channel sections, that must go through a dedicated leads-binding flow
+
+See:
+- [LEADS-BINDING-SPEC.md](/Users/nicko/ReportingDash/dashboard-next/LEADS-BINDING-SPEC.md)
 
 ## Recommended Commit Split For Current Local Diff
 

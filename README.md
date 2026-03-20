@@ -1,6 +1,7 @@
 This is the `dashboard-next` app for public dashboards and admin configuration.
 
 Operational admin/dashboard flow is documented in [ADMIN-FLOW.md](/Users/nicko/ReportingDash/dashboard-next/ADMIN-FLOW.md).
+Separate leads-binding design is documented in [LEADS-BINDING-SPEC.md](/Users/nicko/ReportingDash/dashboard-next/LEADS-BINDING-SPEC.md).
 
 Key production behaviors currently covered there:
 
@@ -9,6 +10,7 @@ Key production behaviors currently covered there:
 - dashboard create/update detailed error handling
 - media plan analyze/confirm review flow
 - spend source selection and platform visibility rules
+- dedicated future leads-binding flow; `custom_table` stays display-only
 
 The rest of this README is still the default Next.js scaffold and should be treated as secondary.
 

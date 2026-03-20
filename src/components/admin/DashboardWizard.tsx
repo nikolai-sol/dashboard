@@ -90,17 +90,30 @@ function isStepComplete(step: number, formData: DashboardFormData) {
 
   if (step === 1) {
     const actualCount = formData.sources.filter(
-      (source) => source.role === "actual" && source.platform !== "manual_data",
+      (source) => source.role === "actual" && source.platform !== "manual_data" && source.platform !== "leads",
     ).length;
     const customTableCount = formData.sources.filter((source) => source.role === "custom_table").length;
     const manualDataCount = formData.sources.filter((source) => source.platform === "manual_data").length;
+    const leadsSources = formData.sources.filter((source) => source.platform === "leads");
     if (actualCount === 0 && customTableCount === 0 && manualDataCount === 0) return false;
     const manualDataSources = formData.sources.filter((source) => source.platform === "manual_data");
     if (manualDataCount > 0) {
       const allManualHaveUrl = manualDataSources.every(
         (s) => String(s.source_config?.sheet_url ?? "").trim().length > 0,
-      );
+        );
       if (!allManualHaveUrl) return false;
+    }
+    if (leadsSources.length > 0) {
+      const allLeadsHaveInput = leadsSources.every((source) => {
+        const sheetUrl = String(source.source_config?.sheet_url ?? "").trim();
+        const hasUpload =
+          !!source.source_config &&
+          typeof source.source_config.upload_file === "object" &&
+          source.source_config.upload_file;
+        const hasInline = !!source.source_config && Array.isArray(source.source_config.inline_rows);
+        return Boolean(sheetUrl || hasUpload || hasInline);
+      });
+      if (!allLeadsHaveInput) return false;
     }
     const plan = formData.sources.find((source) => source.role === "plan");
     if (plan) {
@@ -117,7 +130,7 @@ function isStepComplete(step: number, formData: DashboardFormData) {
 
   if (step === 2) {
     return formData.sources
-      .filter((source) => source.role === "actual")
+      .filter((source) => source.role === "actual" && source.platform !== "leads")
       .every((source) => {
         const filter = source.filters[0] ?? { filter_type: "all", filter_value: null };
         if (filter.filter_type === "id_list") {
@@ -152,12 +165,16 @@ function normalizeSources(raw: unknown): DashboardSourceForm[] {
         ? "custom_table"
         : item.platform === "manual_data"
           ? "manual_data"
+          : item.platform === "leads"
+            ? "leads"
           : String(item.platform ?? "").toLowerCase();
     const schemaFile =
       role === "custom_table"
         ? "custom_table"
         : item.platform === "manual_data"
           ? "schemas/manual_data.yaml"
+          : item.platform === "leads"
+            ? "schemas/leads.yaml"
           : String(item.schema_file ?? "");
     return {
       id: item.id,

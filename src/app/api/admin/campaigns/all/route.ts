@@ -52,7 +52,7 @@ export async function GET(request: Request) {
           return NextResponse.json({ campaigns: [], total: 0, message: "Dashboard not found" }, { status: 404 });
         }
         dashboard.sources
-          .filter((source) => source.role === "actual")
+          .filter((source) => source.role === "actual" && source.platform !== "leads")
           .forEach((source) => {
             const sourceKey = resolveSourceKey(source.platform);
             if (source.platform === "manual_data") {
@@ -81,6 +81,9 @@ export async function GET(request: Request) {
       sourceSpecs.forEach((source) => {
         const sourceKey = String(source.source_key ?? resolveSourceKey(String(source.platform ?? ""))).trim();
         if (!sourceKey) return;
+        if (sourceKey === "leads" || source.platform === "leads") {
+          return;
+        }
         if (sourceKey === "manual_data" || source.platform === "manual_data") {
           const sheetUrl = String(source.sheet_url ?? "").trim();
           resolvedSources.push({

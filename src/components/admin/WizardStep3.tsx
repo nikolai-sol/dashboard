@@ -34,7 +34,7 @@ export default function WizardStep3({ data, onChange }: WizardStep3Props) {
   const [loadingBySource, setLoadingBySource] = useState<Record<number, boolean>>({});
 
   const actualSources = useMemo(
-    () => data.sources.filter((source) => source.role === "actual"),
+    () => data.sources.filter((source) => source.role === "actual" && source.platform !== "leads"),
     [data.sources],
   );
   const actualSourcesKey = useMemo(
