@@ -21,6 +21,13 @@ import {
   getTimeseriesByPlatform,
   normalizeManualPlatformId,
 } from "@/lib/manual-data-fetcher";
+import {
+  aggregateLeadsByChannelPlatform,
+  aggregateLeadsByPlatform,
+  filterLeadsByDateRange,
+  parseLeadRows,
+  type LeadRow,
+} from "@/lib/leads-fetcher";
 import { PLATFORM_COLORS } from "@/lib/platform-colors";
 import {
   resolvePlatformIdFromSourceKey,
@@ -1039,6 +1046,83 @@ function mergeManualChannelPerformance(
   return [...channelPerformance, ...additions];
 }
 
+function applyLeadConversionsToPlatforms(platforms: PlatformStats[], leadRows: LeadRow[]): PlatformStats[] {
+  if (!leadRows.length) {
+    return platforms;
+  }
+
+  const byPlatform = new Map(platforms.map((row) => [row.id, { ...row }]));
+  for (const lead of aggregateLeadsByPlatform(leadRows)) {
+    const existing = byPlatform.get(lead.platform);
+    if (existing) {
+      existing.conversions += Math.round(lead.leads);
+      continue;
+    }
+
+    const meta = PLATFORM_COLORS[lead.platform];
+    byPlatform.set(lead.platform, {
+      id: lead.platform,
+      name: meta?.label ?? lead.platform,
+      color: meta?.hex ?? "#94a3b8",
+      impressions: 0,
+      clicks: 0,
+      spend: 0,
+      ctr: 0,
+      cpm: 0,
+      conversions: Math.round(lead.leads),
+      views: 0,
+      reach: 0,
+      frequency: 0,
+    });
+  }
+
+  return Array.from(byPlatform.values());
+}
+
+function applyLeadConversionsToPlanVsFact(
+  rows: PlanVsFactItem[],
+  leadRows: LeadRow[],
+): PlanVsFactItem[] {
+  if (!leadRows.length) {
+    return rows;
+  }
+
+  const byChannel = new Map<string, number>();
+  const byChannelPlatform = new Map<string, number>();
+  for (const lead of aggregateLeadsByChannelPlatform(leadRows)) {
+    const key = `${lead.channel}||${lead.platform}`;
+    byChannelPlatform.set(key, (byChannelPlatform.get(key) ?? 0) + lead.leads);
+    byChannel.set(lead.channel, (byChannel.get(lead.channel) ?? 0) + lead.leads);
+  }
+
+  return rows.map((row) => {
+    const platformIds = row.platforms.map((platform) => resolvePlatformIdFromSourceKey(platform.source_key));
+    let extraConversions = 0;
+
+    if (platformIds.length > 0) {
+      for (const platformId of platformIds) {
+        extraConversions += byChannelPlatform.get(`${row.channel}||${platformId}`) ?? 0;
+      }
+      if (!extraConversions) {
+        extraConversions = byChannel.get(row.channel) ?? 0;
+      }
+    } else {
+      extraConversions = byChannel.get(row.channel) ?? 0;
+    }
+
+    if (!extraConversions) {
+      return row;
+    }
+
+    const conversionsFact = row.conversions_fact + Math.round(extraConversions);
+    return {
+      ...row,
+      conversions_fact: conversionsFact,
+      cpa_fact: conversionsFact > 0 ? Number((row.budget_fact / conversionsFact).toFixed(4)) : 0,
+    };
+  });
+}
+
 function buildPlanBasedPlatformSpend(
   platformStats: PlatformStats[],
   planRows: MediaPlanRow[],
@@ -1176,6 +1260,8 @@ export async function GET(
     const customTables: CustomTableData[] = [];
     let manualChannels: ManualChannelData[] = [];
     let manualTableTitle = "";
+    let currentLeadRows: LeadRow[] = [];
+    let previousLeadRows: LeadRow[] = [];
 
     for (const source of sourceRows) {
       try {
@@ -1260,6 +1346,17 @@ export async function GET(
           if (sheetUrl) {
             try {
               const table = await fetchCustomTable(sheetUrl);
+              const leadRows = parseLeadRows(table.headers, table.rows);
+              if (leadRows.length > 0) {
+                const hasDatedRows = leadRows.some((row) => Boolean(row.date));
+                currentLeadRows = [...currentLeadRows, ...filterLeadsByDateRange(leadRows, range.from, range.to)];
+                if (hasDatedRows) {
+                  previousLeadRows = [
+                    ...previousLeadRows,
+                    ...filterLeadsByDateRange(leadRows, previousRange.from, previousRange.to),
+                  ];
+                }
+              }
               customTables.push({
                 title: String(sourceConfig?.title ?? "Custom Data").trim() || "Custom Data",
                 headers: table.headers,
@@ -1398,8 +1495,8 @@ export async function GET(
       }
     }
 
-    const platformResults = mergePlatformStats(platformStatsRaw);
-    const prevPlatformResults = mergePlatformStats(prevStatsRaw);
+    const platformResults = applyLeadConversionsToPlatforms(mergePlatformStats(platformStatsRaw), currentLeadRows);
+    const prevPlatformResults = applyLeadConversionsToPlatforms(mergePlatformStats(prevStatsRaw), previousLeadRows);
     const timeseriesResults = mergeTimeseries(timeseriesRaw);
 
     if (spendSource === "media_plan_derived") {
@@ -1464,7 +1561,7 @@ export async function GET(
       });
       return acc;
     }, new Map<string, Array<{ source_key: string; platform_campaign_id: string }>>());
-    const planVsFact = await buildPlanVsFactRowsByChannel(
+    const planVsFactBase = await buildPlanVsFactRowsByChannel(
       planByChannel,
       bindingsByChannel,
       actualAdsSourceKeys,
@@ -1473,6 +1570,7 @@ export async function GET(
       frequencyOverrideMap,
       manualChannels,
     );
+    const planVsFact = applyLeadConversionsToPlanVsFact(planVsFactBase, currentLeadRows);
     const channelTimeseries = await buildChannelTimeseries(
       planByChannel,
       bindingsByChannel,
