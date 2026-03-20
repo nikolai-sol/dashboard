@@ -25,6 +25,7 @@ export type DashboardI18n = {
     apply: string;
     updating: string;
     exportPdf: string;
+    exportExcel: string;
   };
   common: {
     total: string;
@@ -101,6 +102,7 @@ const DICTIONARY: Record<DashboardLanguage, Omit<DashboardI18n, "language" | "lo
       apply: "Apply",
       updating: "Updating...",
       exportPdf: "Export PDF",
+      exportExcel: "Export Excel",
     },
     common: {
       total: "Total",
@@ -175,6 +177,7 @@ const DICTIONARY: Record<DashboardLanguage, Omit<DashboardI18n, "language" | "lo
       apply: "Применить",
       updating: "Обновление...",
       exportPdf: "Экспорт PDF",
+      exportExcel: "Экспорт Excel",
     },
     common: {
       total: "Итого",

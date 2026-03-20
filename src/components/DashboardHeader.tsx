@@ -13,6 +13,7 @@ type DashboardHeaderProps = {
     apply: string;
     updating: string;
     exportPdf: string;
+    exportExcel: string;
   };
   dateFrom?: string;
   dateTo?: string;
@@ -21,6 +22,7 @@ type DashboardHeaderProps = {
   onApplyDateRange?: () => void;
   isUpdatingRange?: boolean;
   onExportPdf?: () => void;
+  onExportExcel?: () => void;
 };
 
 function getInitials(name: string): string {
@@ -48,12 +50,14 @@ export default function DashboardHeader({
   onApplyDateRange,
   isUpdatingRange = false,
   onExportPdf,
+  onExportExcel,
 }: DashboardHeaderProps) {
   const copy = labels ?? {
     to: "to",
     apply: "Apply",
     updating: "Updating...",
     exportPdf: "Export PDF",
+    exportExcel: "Export Excel",
   };
   const initials = getInitials(clientName);
 
@@ -108,6 +112,14 @@ export default function DashboardHeader({
               className="rounded-lg border border-slate-200 bg-white px-4 py-2 text-sm font-medium text-slate-700 transition hover:border-slate-300 hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-50"
             >
               {isUpdatingRange ? copy.updating : copy.apply}
+            </button>
+            <button
+              type="button"
+              onClick={onExportExcel}
+              className="inline-flex items-center gap-2 rounded-lg border border-slate-200 bg-white px-4 py-2 text-sm font-medium text-slate-700 transition hover:border-slate-300 hover:bg-slate-50"
+            >
+              <Download className="h-4 w-4" />
+              {copy.exportExcel}
             </button>
             <button
               type="button"

@@ -737,6 +737,16 @@ export default function DashboardByIdPage() {
     window.open(`/api/dashboard/${dashboardId}/pdf?${params.toString()}`, "_blank", "noopener,noreferrer");
   };
 
+  const exportExcel = () => {
+    if (typeof window === "undefined") return;
+    const params = new URLSearchParams();
+    const from = dateRange.from || dashboard?.dashboard.period.from;
+    const to = dateRange.to || dashboard?.dashboard.period.to;
+    if (from) params.set("from", from);
+    if (to) params.set("to", to);
+    window.open(`/api/dashboard/${dashboardId}/excel?${params.toString()}`, "_blank", "noopener,noreferrer");
+  };
+
   const applyDateRange = () => {
     if (!draftDateRange.from || !draftDateRange.to) return;
     setDateRange(draftDateRange);
@@ -785,6 +795,7 @@ export default function DashboardByIdPage() {
         onDateToChange={(value) => setDraftDateRange((prev) => ({ ...prev, to: value }))}
         onApplyDateRange={applyDateRange}
         isUpdatingRange={isLoading}
+        onExportExcel={exportExcel}
         onExportPdf={exportPdf}
       />
 

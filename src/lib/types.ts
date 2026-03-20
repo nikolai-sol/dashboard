@@ -67,6 +67,8 @@ export interface TimeSeriesPoint {
   impressions: number;
   clicks: number;
   spend: number;
+  views?: number;
+  conversions?: number;
 }
 
 export interface PlanVsFactItem {
