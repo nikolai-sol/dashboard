@@ -71,7 +71,7 @@ export default function WizardStepBinding({ data, onChange }: WizardStepBindingP
   const [search, setSearch] = useState("");
 
   const actualSources = useMemo(
-    () => data.sources.filter((source) => source.role === "actual"),
+    () => data.sources.filter((source) => source.role === "actual" && source.platform !== "leads"),
     [data.sources],
   );
   const planSource = useMemo(

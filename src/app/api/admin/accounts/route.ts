@@ -24,7 +24,7 @@ export async function GET(request: Request) {
     }
 
     const sourceType = schemaMeta.source_type ?? resolveSourceType(schemaMeta.source_key);
-    if (sourceType === "gsheet" || sourceType === "manual") {
+    if (sourceType === "gsheet" || sourceType === "manual" || sourceType === "leads") {
       return NextResponse.json({
         accounts: [],
         total: 0,

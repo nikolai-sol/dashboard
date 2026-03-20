@@ -1,0 +1,6 @@
+platform: leads
+display_name: Leads (Binding Review)
+source: gsheet
+source_key: leads
+source_type: leads
+canonical_table: null

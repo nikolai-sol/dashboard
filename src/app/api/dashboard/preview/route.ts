@@ -9,6 +9,7 @@ import {
 } from "@/lib/canonical-adapter";
 import { resolveSourceKey, resolveSourceType } from "@/lib/source-mapping";
 import { fetchManualData, aggregateByChannel } from "@/lib/manual-data-fetcher";
+import { analyzeLeadSourceConfig } from "@/lib/leads-fetcher";
 
 export const dynamic = "force-dynamic";
 
@@ -40,6 +41,10 @@ export async function POST(request: Request) {
     const actualSources = payload.sources.filter((source) => source.role === "actual");
     const planSource = payload.sources.find((source) => source.role === "plan");
 
+    const selectedActualPlatforms = payload.sources
+      .filter((source) => source.role === "actual" && source.platform !== "leads")
+      .map((source) => source.platform);
+
     const actualSummary: Array<{
       platform: string;
       campaigns: number;
@@ -54,6 +59,26 @@ export async function POST(request: Request) {
         const sourceType = schema.source_type ?? resolveSourceType(sourceKey);
 
         if (sourceType === "gsheet") {
+          continue;
+        }
+
+        if (sourceType === "leads") {
+          const sourceConfig = parseSourceConfig(source.source_config);
+          const analysis = await analyzeLeadSourceConfig(sourceConfig, selectedActualPlatforms);
+          actualSummary.push({
+            platform: source.platform,
+            campaigns: analysis.rows_parsed,
+            status:
+              analysis.status === "error"
+                ? "error"
+                : analysis.rows_parsed > 0
+                  ? "ok"
+                  : "empty",
+            message:
+              analysis.rows_parsed > 0
+                ? `Leads rows loaded · bound=${analysis.binding_summary.canonical_bound} unresolved=${analysis.binding_summary.unresolved}`
+                : analysis.issues[0]?.message ?? "No parsable leads rows",
+          });
           continue;
         }
 

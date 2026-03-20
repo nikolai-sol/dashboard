@@ -102,6 +102,47 @@ type ConfirmResponse = {
   updated_sources: DashboardSourceForm[];
 };
 
+type LeadsAnalysis = {
+  status: "ok" | "warn" | "error";
+  sheet_url_input: string;
+  sheet_url_fetch: string;
+  rows_total: number;
+  rows_parsed: number;
+  dated_rows: number;
+  channels: number;
+  platforms_detected: string[];
+  selected_platforms: string[];
+  binding_summary: {
+    canonical_bound: number;
+    unresolved: number;
+    ignored: number;
+  };
+  platform_review: Array<{
+    input_platform: string;
+    normalized_platform: string;
+    row_count: number;
+    channels: string[];
+    status: "canonical_bound" | "unresolved" | "ignored";
+    bound_platform: string | null;
+    available_targets: string[];
+  }>;
+  issues: Array<{
+    severity: "error" | "warn" | "info";
+    code: string;
+    message: string;
+  }>;
+  sample_rows: Array<{
+    date: string;
+    platform: string;
+    channel: string;
+    source: string;
+    leads: number;
+    qualified_leads: number;
+    revenue: number;
+    notes: string;
+  }>;
+};
+
 function severityClass(severity: "error" | "warn" | "info") {
   if (severity === "error") return "border-rose-200 bg-rose-50 text-rose-700";
   if (severity === "warn") return "border-amber-200 bg-amber-50 text-amber-700";
@@ -139,6 +180,9 @@ export default function WizardStep2({ data, platforms, onChange }: WizardStep2Pr
   const [customTablePreviewLoading, setCustomTablePreviewLoading] = useState<Record<number, boolean>>({});
   const [manualDataPreview, setManualDataPreview] = useState<Record<number, Array<Record<string, unknown>> | null>>({});
   const [manualDataPreviewLoading, setManualDataPreviewLoading] = useState<Record<number, boolean>>({});
+  const [leadsAnalysisBySource, setLeadsAnalysisBySource] = useState<Record<number, LeadsAnalysis | null>>({});
+  const [leadsAnalysisLoadingBySource, setLeadsAnalysisLoadingBySource] = useState<Record<number, boolean>>({});
+  const [leadsAnalysisErrorBySource, setLeadsAnalysisErrorBySource] = useState<Record<number, string | null>>({});
 
   const mysqlPlatforms = useMemo(
     () => platforms.filter((platform) => platform.source === "mysql"),
@@ -150,11 +194,22 @@ export default function WizardStep2({ data, platforms, onChange }: WizardStep2Pr
   );
 
   const actualSources = data.sources.filter(
-    (source) => source.role === "actual" && source.platform !== "manual_data",
+    (source) => source.role === "actual" && source.platform !== "manual_data" && source.platform !== "leads",
   );
   const planSource = data.sources.find((source) => source.role === "plan");
   const customTableSources = data.sources.filter((source) => source.role === "custom_table");
   const manualDataSources = data.sources.filter((source) => source.platform === "manual_data");
+  const leadsSources = data.sources.filter((source) => source.platform === "leads");
+  const leadMeta = useMemo(
+    () => platforms.find((platform) => platform.id === "leads") ?? null,
+    [platforms],
+  );
+  const leadsBindingTargets = useMemo(() => {
+    const manualTargets = manualDataSources
+      .map((source) => String(source.source_config?.platform ?? "").trim().toLowerCase())
+      .filter(Boolean);
+    return Array.from(new Set([...actualSources.map((source) => source.platform), ...manualTargets]));
+  }, [actualSources, manualDataSources]);
   const existingReviewResolutions = useMemo(
     () =>
       planSource?.source_config &&
@@ -178,8 +233,9 @@ export default function WizardStep2({ data, platforms, onChange }: WizardStep2Pr
     nextPlan: DashboardSourceForm | undefined,
     nextCustom: DashboardSourceForm[] = customTableSources,
     nextManual: DashboardSourceForm[] = manualDataSources,
+    nextLeads: DashboardSourceForm[] = leadsSources,
   ) => {
-    const parts = [...nextActual, ...(nextPlan ? [nextPlan] : []), ...nextCustom, ...nextManual];
+    const parts = [...nextActual, ...(nextPlan ? [nextPlan] : []), ...nextCustom, ...nextManual, ...nextLeads];
     onChange({ ...data, sources: parts });
   };
 
@@ -579,6 +635,169 @@ export default function WizardStep2({ data, platforms, onChange }: WizardStep2Pr
     } finally {
       setManualDataPreviewLoading((prev) => ({ ...prev, [index]: false }));
     }
+  };
+
+  const addLeadsSource = () => {
+    setSources(actualSources, planSource, customTableSources, manualDataSources, [
+      ...leadsSources,
+      {
+        platform: "leads",
+        schema_file: leadMeta?.schema_file ?? "schemas/leads.yaml",
+        role: "actual",
+        source_config: { sheet_url: "", title: "Leads", review: { platform_bindings: {} } },
+        filters: [{ filter_type: "all", filter_value: null }],
+      },
+    ]);
+  };
+
+  const updateLeadsSource = (
+    index: number,
+    patch: { title?: string; sheet_url?: string; review?: Record<string, unknown>; upload_file?: unknown | null },
+  ) => {
+    const source = leadsSources[index];
+    if (!source) return;
+    const next = [...leadsSources];
+    next[index] = {
+      ...source,
+      source_config: {
+        ...(source.source_config ?? {}),
+        ...patch,
+      },
+    };
+    setSources(actualSources, planSource, customTableSources, manualDataSources, next);
+    if (patch.sheet_url !== undefined || patch.upload_file !== undefined) {
+      setLeadsAnalysisBySource((prev) => ({ ...prev, [index]: null }));
+      setLeadsAnalysisErrorBySource((prev) => ({ ...prev, [index]: null }));
+    }
+  };
+
+  const removeLeadsSource = (index: number) => {
+    const next = leadsSources.filter((_, i) => i !== index);
+    setSources(actualSources, planSource, customTableSources, manualDataSources, next);
+    setLeadsAnalysisBySource((prev) => {
+      const copy = { ...prev };
+      delete copy[index];
+      return copy;
+    });
+    setLeadsAnalysisErrorBySource((prev) => {
+      const copy = { ...prev };
+      delete copy[index];
+      return copy;
+    });
+  };
+
+  const updateLeadsUploadFile = async (index: number, file: File | null) => {
+    if (!file) {
+      updateLeadsSource(index, { upload_file: null });
+      return;
+    }
+    const contentBase64 = await fileToBase64(file);
+    updateLeadsSource(index, {
+      upload_file: {
+        filename: file.name,
+        mime_type: file.type,
+        content_base64: contentBase64,
+      },
+    });
+  };
+
+  const analyzeLeadsSource = async (index: number) => {
+    const source = leadsSources[index];
+    if (!source) return;
+    setLeadsAnalysisLoadingBySource((prev) => ({ ...prev, [index]: true }));
+    setLeadsAnalysisErrorBySource((prev) => ({ ...prev, [index]: null }));
+    try {
+      const response = await fetch("/api/admin/leads/preview", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          source_config: source.source_config ?? {},
+          selected_platforms: leadsBindingTargets,
+        }),
+      });
+      const json = await response.json();
+      if (!response.ok) {
+        throw new Error(json.error ?? `HTTP ${response.status}`);
+      }
+      setLeadsAnalysisBySource((prev) => ({ ...prev, [index]: json.analysis as LeadsAnalysis }));
+    } catch (error) {
+      setLeadsAnalysisBySource((prev) => ({ ...prev, [index]: null }));
+      setLeadsAnalysisErrorBySource((prev) => ({
+        ...prev,
+        [index]: error instanceof Error ? error.message : "Failed to analyze leads source",
+      }));
+    } finally {
+      setLeadsAnalysisLoadingBySource((prev) => ({ ...prev, [index]: false }));
+    }
+  };
+
+  const setLeadsPlatformBinding = (sourceIndex: number, inputPlatform: string, target: string) => {
+    const source = leadsSources[sourceIndex];
+    if (!source) return;
+    const review =
+      source.source_config?.review && typeof source.source_config.review === "object"
+        ? { ...(source.source_config.review as Record<string, unknown>) }
+        : {};
+    const existingBindings =
+      review.platform_bindings && typeof review.platform_bindings === "object"
+        ? { ...(review.platform_bindings as Record<string, unknown>) }
+        : {};
+    if (!target) {
+      delete existingBindings[inputPlatform];
+    } else {
+      existingBindings[inputPlatform] = target;
+    }
+    updateLeadsSource(sourceIndex, {
+      review: {
+        ...review,
+        status: "reviewed",
+        reviewed_at: new Date().toISOString(),
+        platform_bindings: existingBindings,
+      },
+    });
+    setLeadsAnalysisBySource((prev) => {
+      const current = prev[sourceIndex];
+      if (!current) return prev;
+      const nextPlatformReview: LeadsAnalysis["platform_review"] = current.platform_review.map((item) => {
+        if (item.input_platform !== inputPlatform) {
+          return item;
+        }
+        const nextStatus: LeadsAnalysis["platform_review"][number]["status"] =
+          target === "__ignore__"
+            ? "ignored"
+            : target
+              ? "canonical_bound"
+              : item.available_targets.includes(item.normalized_platform)
+                ? "canonical_bound"
+                : "unresolved";
+        const nextBoundPlatform =
+          target === "__ignore__"
+            ? null
+            : target
+              ? target
+              : item.available_targets.includes(item.normalized_platform)
+                ? item.normalized_platform
+                : null;
+        return {
+          ...item,
+          status: nextStatus,
+          bound_platform: nextBoundPlatform,
+        };
+      });
+      const binding_summary = {
+        canonical_bound: nextPlatformReview.filter((item) => item.status === "canonical_bound").length,
+        unresolved: nextPlatformReview.filter((item) => item.status === "unresolved").length,
+        ignored: nextPlatformReview.filter((item) => item.status === "ignored").length,
+      };
+      return {
+        ...prev,
+        [sourceIndex]: {
+          ...current,
+          platform_review: nextPlatformReview,
+          binding_summary,
+        },
+      };
+    });
   };
 
   const previewCustomTable = async (index: number) => {
@@ -1179,6 +1398,230 @@ export default function WizardStep2({ data, platforms, onChange }: WizardStep2Pr
             ) : null}
           </div>
         ) : null}
+      </div>
+
+      <div className="rounded-xl border border-slate-200 p-4">
+        <h4 className="text-sm font-semibold text-slate-900">Leads Binding Source</h4>
+        <p className="mt-1 text-xs text-slate-500">
+          Отдельный intake для лидов. Здесь лиды только валидируются и привязываются к уже выбранным платформам.
+          В public dashboard этот source пока не участвует.
+        </p>
+        <div className="mt-3 space-y-3">
+          {leadsSources.map((source, index) => {
+            const analysis = leadsAnalysisBySource[index];
+            const review =
+              source.source_config?.review && typeof source.source_config.review === "object"
+                ? (source.source_config.review as Record<string, unknown>)
+                : {};
+            const platformBindings =
+              review.platform_bindings && typeof review.platform_bindings === "object"
+                ? (review.platform_bindings as Record<string, unknown>)
+                : {};
+
+            return (
+              <div key={`leads-${index}`} className="rounded-xl border border-slate-200 p-3">
+                <div className="grid gap-3 md:grid-cols-[1fr_1fr_auto] md:items-end">
+                  <label className="text-sm">
+                    <span className="mb-1 block font-medium text-slate-700">Заголовок</span>
+                    <input
+                      className="w-full rounded-lg border border-slate-300 px-3 py-2"
+                      value={String(source.source_config?.title ?? "")}
+                      onChange={(e) => updateLeadsSource(index, { title: e.target.value })}
+                      placeholder="Leads"
+                    />
+                  </label>
+                  <label className="text-sm">
+                    <span className="mb-1 block font-medium text-slate-700">CSV / Google Sheets URL</span>
+                    <input
+                      className="w-full rounded-lg border border-slate-300 px-3 py-2"
+                      value={String(source.source_config?.sheet_url ?? "")}
+                      onChange={(e) => updateLeadsSource(index, { sheet_url: e.target.value })}
+                      placeholder="https://docs.google.com/.../export?format=csv"
+                    />
+                  </label>
+                  <div className="flex gap-2">
+                    <button
+                      type="button"
+                      onClick={() => void analyzeLeadsSource(index)}
+                      disabled={leadsAnalysisLoadingBySource[index]}
+                      className="rounded-lg border border-slate-300 px-3 py-2 text-sm hover:bg-slate-50 disabled:opacity-50"
+                    >
+                      {leadsAnalysisLoadingBySource[index] ? "..." : "Analyze"}
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => removeLeadsSource(index)}
+                      className="rounded-lg border border-rose-200 px-3 py-2 text-sm text-rose-600 hover:bg-rose-50"
+                    >
+                      Удалить
+                    </button>
+                  </div>
+                </div>
+
+                <div className="mt-3 rounded-lg border border-slate-200 p-3">
+                  <p className="mb-2 text-sm font-medium text-slate-700">Or upload leads file</p>
+                  <div className="flex flex-wrap items-center gap-3">
+                    <input
+                      type="file"
+                      accept=".csv,.xlsx,.xls"
+                      onChange={(e) => {
+                        const file = e.target.files?.[0] ?? null;
+                        void updateLeadsUploadFile(index, file);
+                      }}
+                      className="block text-sm text-slate-600"
+                    />
+                    {source.source_config?.upload_file &&
+                    typeof source.source_config.upload_file === "object" ? (
+                      <span className="rounded-full border border-slate-200 bg-slate-50 px-2 py-1 text-xs text-slate-700">
+                        uploaded: {String((source.source_config.upload_file as Record<string, unknown>).filename ?? "file")}
+                      </span>
+                    ) : null}
+                    <button
+                      type="button"
+                      onClick={() => void updateLeadsUploadFile(index, null)}
+                      className="rounded border border-slate-300 px-2 py-1 text-xs hover:bg-slate-50"
+                    >
+                      Clear upload
+                    </button>
+                    <a
+                      href="/leads_template_v2.csv"
+                      download="leads_template_v2.csv"
+                      className="rounded border border-slate-300 px-2 py-1 text-xs hover:bg-slate-50"
+                    >
+                      Скачать шаблон v2
+                    </a>
+                  </div>
+                  <p className="mt-2 text-xs text-slate-500">
+                    Формат: date | platform | channel | source | leads | qualified_leads | revenue | notes
+                  </p>
+                </div>
+
+                {leadsAnalysisErrorBySource[index] ? (
+                  <p className="mt-3 text-sm text-rose-600">{leadsAnalysisErrorBySource[index]}</p>
+                ) : null}
+
+                {analysis ? (
+                  <div className="mt-3 space-y-3 rounded-xl border border-slate-200 bg-slate-50 p-3">
+                    <div className="flex flex-wrap items-center gap-2">
+                      <span
+                        className={`rounded-full border px-2 py-1 text-xs font-semibold ${severityClass(
+                          analysis.status === "error" ? "error" : analysis.status === "warn" ? "warn" : "info",
+                        )}`}
+                      >
+                        {analysis.status.toUpperCase()}
+                      </span>
+                      <span className="rounded-full border border-slate-200 bg-white px-2 py-1 text-xs text-slate-700">
+                        rows: {analysis.rows_parsed}/{analysis.rows_total}
+                      </span>
+                      <span className="rounded-full border border-slate-200 bg-white px-2 py-1 text-xs text-slate-700">
+                        dated: {analysis.dated_rows}
+                      </span>
+                      <span className="rounded-full border border-slate-200 bg-white px-2 py-1 text-xs text-slate-700">
+                        channels: {analysis.channels}
+                      </span>
+                      <span className="rounded-full border border-slate-200 bg-white px-2 py-1 text-xs text-slate-700">
+                        bound: {analysis.binding_summary.canonical_bound}
+                      </span>
+                      <span className="rounded-full border border-slate-200 bg-white px-2 py-1 text-xs text-slate-700">
+                        unresolved: {analysis.binding_summary.unresolved}
+                      </span>
+                    </div>
+
+                    {analysis.issues.length ? (
+                      <div className="space-y-2">
+                        {analysis.issues.map((issue, issueIndex) => (
+                          <div
+                            key={`${issue.code}-${issueIndex}`}
+                            className={`rounded border px-3 py-2 text-xs ${severityClass(issue.severity)}`}
+                          >
+                            <span className="font-semibold uppercase">{issue.severity}</span>: {issue.message}
+                          </div>
+                        ))}
+                      </div>
+                    ) : null}
+
+                    <div className="rounded-lg border border-slate-200 bg-white p-3">
+                      <p className="mb-2 text-sm font-medium text-slate-900">Platform binding review</p>
+                      <div className="space-y-2 text-xs text-slate-700">
+                        {analysis.platform_review.map((item) => {
+                          const bindingValue = String(platformBindings[item.input_platform] ?? "");
+                          return (
+                            <div key={item.input_platform} className="rounded border border-slate-200 px-3 py-2">
+                              <p className="font-medium text-slate-900">
+                                {item.normalized_platform} · {item.status}
+                              </p>
+                              <p>
+                                rows={item.row_count}
+                                {item.channels.length ? ` · channels=${item.channels.join(", ")}` : ""}
+                              </p>
+                              <div className="mt-2 flex flex-wrap items-center gap-2">
+                                <select
+                                  className="rounded border border-slate-300 px-2 py-1 text-xs"
+                                  value={bindingValue}
+                                  onChange={(e) => setLeadsPlatformBinding(index, item.input_platform, e.target.value)}
+                                >
+                                  <option value="">Leave unresolved</option>
+                                  {item.available_targets.map((target) => (
+                                    <option key={target} value={target}>
+                                      Bind to {target}
+                                    </option>
+                                  ))}
+                                  <option value="__ignore__">Ignore platform group</option>
+                                </select>
+                                <span className="text-slate-500">
+                                  auto target: {item.bound_platform ?? "none"}
+                                </span>
+                              </div>
+                            </div>
+                          );
+                        })}
+                      </div>
+                    </div>
+
+                    {analysis.sample_rows.length ? (
+                      <div className="overflow-x-auto rounded-lg border border-slate-200 bg-white">
+                        <table className="min-w-full text-xs">
+                          <thead className="bg-slate-100 text-slate-700">
+                            <tr>
+                              <th className="px-2 py-1 text-left">Date</th>
+                              <th className="px-2 py-1 text-left">Platform</th>
+                              <th className="px-2 py-1 text-left">Channel</th>
+                              <th className="px-2 py-1 text-left">Source</th>
+                              <th className="px-2 py-1 text-right">Leads</th>
+                              <th className="px-2 py-1 text-right">Qualified</th>
+                              <th className="px-2 py-1 text-right">Revenue</th>
+                            </tr>
+                          </thead>
+                          <tbody>
+                            {analysis.sample_rows.map((row, rowIndex) => (
+                              <tr key={`${row.platform}-${row.channel}-${rowIndex}`} className="border-t">
+                                <td className="px-2 py-1">{row.date || "-"}</td>
+                                <td className="px-2 py-1">{row.platform}</td>
+                                <td className="px-2 py-1">{row.channel}</td>
+                                <td className="px-2 py-1">{row.source}</td>
+                                <td className="px-2 py-1 text-right">{row.leads}</td>
+                                <td className="px-2 py-1 text-right">{row.qualified_leads}</td>
+                                <td className="px-2 py-1 text-right">{row.revenue}</td>
+                              </tr>
+                            ))}
+                          </tbody>
+                        </table>
+                        <p className="px-2 py-1 text-[10px] text-slate-400">первые 5 строк</p>
+                      </div>
+                    ) : null}
+                  </div>
+                ) : null}
+              </div>
+            );
+          })}
+        </div>
+        <button
+          type="button"
+          onClick={addLeadsSource}
+          className="mt-3 rounded-lg border border-slate-300 px-3 py-2 text-sm hover:bg-slate-50"
+        >
+          + Добавить leads source
+        </button>
       </div>
 
       <div className="rounded-xl border border-slate-200 p-4">

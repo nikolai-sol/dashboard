@@ -234,9 +234,13 @@ export function validateDashboardPayload(payload: DashboardUpsertPayload): strin
   const planSources = payload.sources.filter((source) => source.role === "plan");
   if (planSources.length > 1) return "Only one plan source is allowed";
 
-  const hasActual = payload.sources.some((source) => source.role === "actual");
   const hasCustomTable = payload.sources.some((source) => source.role === "custom_table");
-  if (!hasActual && !hasCustomTable) return "At least one actual or custom_table source is required";
+  const hasRenderableActual = payload.sources.some(
+    (source) => source.role === "actual" && source.platform !== "leads",
+  );
+  if (!hasRenderableActual && !hasCustomTable) {
+    return "At least one actual source (excluding leads-only intake) or custom_table source is required";
+  }
 
   for (const source of payload.sources) {
     if (!source.platform) return "Source platform is required";
@@ -254,6 +258,21 @@ export function validateDashboardPayload(payload: DashboardUpsertPayload): strin
           ? String(source.source_config.sheet_url).trim()
           : "";
       if (!sheetUrl) return "Manual data source requires source_config.sheet_url";
+    }
+    if (source.platform === "leads") {
+      const sheetUrl =
+        source.source_config && typeof source.source_config.sheet_url === "string"
+          ? String(source.source_config.sheet_url).trim()
+          : "";
+      const hasUpload =
+        Boolean(source.source_config) &&
+        typeof source.source_config?.upload_file === "object" &&
+        source.source_config?.upload_file;
+      const hasInline =
+        Boolean(source.source_config) && Array.isArray(source.source_config?.inline_rows);
+      if (!sheetUrl && !hasUpload && !hasInline) {
+        return "Leads source requires source_config.sheet_url, upload_file, or inline_rows";
+      }
     }
   }
 

@@ -14,6 +14,7 @@ export const PLATFORM_TO_SOURCE_KEY: Record<string, string> = {
   dv360: "dv360",
   media_plan: "media_plan",
   manual_data: "manual_data",
+  leads: "leads",
 };
 
 export const SOURCE_KEY_TO_PLATFORM: Record<string, string> = {
@@ -30,9 +31,10 @@ export const SOURCE_KEY_TO_PLATFORM: Record<string, string> = {
   google: 'google',
   dv360: 'dv360',
   media_plan: 'media_plan',
+  leads: 'leads',
 };
 
-export const SOURCE_TYPE: Record<string, "ads" | "analytics" | "gsheet" | "manual"> = {
+export const SOURCE_TYPE: Record<string, "ads" | "analytics" | "gsheet" | "manual" | "leads"> = {
   linkedin: "ads",
   reddit: "ads",
   vk_ads_v2: "ads",
@@ -46,6 +48,7 @@ export const SOURCE_TYPE: Record<string, "ads" | "analytics" | "gsheet" | "manua
   dv360: "ads",
   media_plan: "gsheet",
   manual_data: "manual",
+  leads: "leads",
 };
 
 export const ADS_AUTHORITY_FACT_SCOPE: Record<string, 'campaign' | 'delivery_entity'> = {
@@ -68,7 +71,7 @@ export function resolveSourceKey(platform: string): string {
 
 export function resolveSourceType(
   platformOrSourceKey: string,
-): "ads" | "analytics" | "gsheet" | "manual" {
+): "ads" | "analytics" | "gsheet" | "manual" | "leads" {
   const normalized = String(platformOrSourceKey ?? "").trim().toLowerCase();
   const t = SOURCE_TYPE[normalized];
   if (t) return t;
