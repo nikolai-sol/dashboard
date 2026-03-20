@@ -366,10 +366,10 @@ function getSectionOrder(config: JsonRecord, showSpend: boolean): DashboardSecti
   if (!Array.isArray(config.section_order)) {
     return allowed;
   }
-  const raw = config.section_order.map((item) => String(item) as DashboardSectionId);
   const seen = new Set<DashboardSectionId>();
-  const normalized = raw.filter((item) => allowed.includes(item) && !seen.has(item) && seen.add(item));
-  return [...normalized, ...allowed.filter((item) => !seen.has(item))];
+  return config.section_order
+    .map((item) => String(item) as DashboardSectionId)
+    .filter((item) => allowed.includes(item) && !seen.has(item) && seen.add(item));
 }
 
 function getFilterScope(config: JsonRecord): "both" | "platform" | "channel" {
