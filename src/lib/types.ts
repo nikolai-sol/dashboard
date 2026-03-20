@@ -7,6 +7,7 @@ export type DashboardSectionId =
   | "trend_chart"
   | "channel_table"
   | "plan_vs_fact"
+  | "platform_plan_fact"
   | "platform_table";
 
 export interface DashboardMeta {

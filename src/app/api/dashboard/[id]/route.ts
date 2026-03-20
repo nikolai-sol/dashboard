@@ -99,6 +99,7 @@ const DEFAULT_SECTION_ORDER_WITH_SPEND: DashboardSectionId[] = [
   "spend_section",
   "trend_chart",
   "platform_table",
+  "platform_plan_fact",
   "channel_table",
   "plan_vs_fact",
 ];
@@ -106,6 +107,7 @@ const DEFAULT_SECTION_ORDER_NO_SPEND: DashboardSectionId[] = [
   "kpi_grid",
   "trend_chart",
   "platform_table",
+  "platform_plan_fact",
   "channel_table",
   "plan_vs_fact",
 ];
@@ -365,7 +367,8 @@ function getSectionOrder(config: JsonRecord, showSpend: boolean): DashboardSecti
   }
   const raw = config.section_order.map((item) => String(item) as DashboardSectionId);
   const seen = new Set<DashboardSectionId>();
-  return raw.filter((item) => allowed.includes(item) && !seen.has(item) && seen.add(item));
+  const normalized = raw.filter((item) => allowed.includes(item) && !seen.has(item) && seen.add(item));
+  return [...normalized, ...allowed.filter((item) => !seen.has(item))];
 }
 
 function getFilterScope(config: JsonRecord): "both" | "platform" | "channel" {

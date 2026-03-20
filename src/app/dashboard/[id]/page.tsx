@@ -8,6 +8,7 @@ import CustomTable from "@/components/CustomTable";
 import DashboardHeader from "@/components/DashboardHeader";
 import KPICard from "@/components/KPICard";
 import PlatformFilter from "@/components/PlatformFilter";
+import PlatformPlanVsFact from "@/components/PlatformPlanVsFact";
 import PlatformTable from "@/components/PlatformTable";
 import PlanVsFact from "@/components/PlanVsFact";
 import SpendByPlatform from "@/components/SpendByPlatform";
@@ -571,6 +572,33 @@ export default function DashboardByIdPage() {
               spend: i18n.metrics.spend,
               trend: i18n.common.trend,
               total: i18n.common.total,
+            }}
+          />
+        </section>
+      );
+    }
+
+    if (sectionId === "platform_plan_fact") {
+      return (
+        <section key={sectionId} className="mb-6">
+          <PlatformPlanVsFact
+            rows={filteredPlanVsFact}
+            selectedMetrics={dashboard?.kpi_config ?? []}
+            showSpend={showSpend}
+            currencyFormatter={(value) => money(value, currencyCode, locale)}
+            locale={locale}
+            labels={{
+              title: i18n.sections.platformPerformancePlanFact,
+              noRows:
+                i18n.language === "ru"
+                  ? "Нет доступных строк платформ План / Факт."
+                  : "No platform plan/fact rows available.",
+              total: i18n.common.total,
+              platform: i18n.common.platform,
+              metrics: i18n.metrics,
+              fact: i18n.planFact.fact,
+              plan: i18n.planFact.plan,
+              completion: i18n.planFact.completion,
             }}
           />
         </section>
