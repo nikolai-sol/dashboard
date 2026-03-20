@@ -122,6 +122,12 @@ export type LeadsConfirmResult = {
 };
 
 export type LeadsPlatformConversions = Record<string, number>;
+export type ConfirmedLeadChannelRow = {
+  date: string;
+  bound_platform: string;
+  bound_channel: string;
+  leads: number;
+};
 
 const CACHE_TTL = 5 * 60 * 1000;
 const cacheByUrl = new Map<string, { parsed: LeadsParseResult; ts: number }>();
@@ -677,4 +683,85 @@ export async function aggregateConfirmedLeadsByPlatform(
   }
 
   return totals;
+}
+
+export async function aggregateConfirmedLeadsByCanonicalChannel(
+  sourceConfig: LeadsSourceConfig,
+  allowedPlatformIds: string[],
+  allowedChannels: string[],
+  dateFrom: string,
+  dateTo: string,
+): Promise<ConfirmedLeadChannelRow[]> {
+  if (reviewStatus(sourceConfig) !== "confirmed") {
+    return [];
+  }
+
+  const allowedPlatforms = Array.from(
+    new Set(allowedPlatformIds.map((item) => normalizeManualPlatformId(item)).filter(Boolean)),
+  );
+  const allowedPlatformSet = new Set(allowedPlatforms);
+  const normalizedChannelMap = new Map(
+    allowedChannels
+      .map((channel) => String(channel).trim())
+      .filter(Boolean)
+      .map((channel) => [normalizeChannelValue(channel), channel] as const),
+  );
+
+  if (!allowedPlatformSet.size || normalizedChannelMap.size === 0) {
+    return [];
+  }
+
+  const analysis = await analyzeLeadSourceConfig(sourceConfig, allowedPlatforms, Array.from(normalizedChannelMap.values()));
+  const canonicalBindings = new Map(
+    analysis.channel_review
+      .filter((item) => item.status === "canonical_bound" && item.bound_platform && item.bound_channel)
+      .map((item) => [
+        item.binding_key,
+        {
+          bound_platform: normalizeManualPlatformId(item.bound_platform!),
+          bound_channel: item.bound_channel!,
+        },
+      ] as const),
+  );
+
+  if (!canonicalBindings.size) {
+    return [];
+  }
+
+  const rows = (await fetchLeadsFromSourceConfig(sourceConfig)).rows;
+  const aggregated = new Map<string, ConfirmedLeadChannelRow>();
+
+  for (const row of rows) {
+    if (!row.date || row.date < dateFrom || row.date > dateTo) {
+      continue;
+    }
+
+    const binding = canonicalBindings.get(makeChannelBindingKey(row.platform, row.channel));
+    if (!binding) {
+      continue;
+    }
+
+    if (!allowedPlatformSet.has(binding.bound_platform)) {
+      continue;
+    }
+
+    const normalizedChannel = normalizeChannelValue(binding.bound_channel);
+    const runtimeChannel = normalizedChannelMap.get(normalizedChannel);
+    if (!runtimeChannel) {
+      continue;
+    }
+
+    const key = `${row.date}|${binding.bound_platform}|${runtimeChannel}`;
+    if (!aggregated.has(key)) {
+      aggregated.set(key, {
+        date: row.date,
+        bound_platform: binding.bound_platform,
+        bound_channel: runtimeChannel,
+        leads: 0,
+      });
+    }
+    aggregated.get(key)!.leads += Math.max(0, row.leads);
+  }
+
+  return Array.from(aggregated.values());
 }
