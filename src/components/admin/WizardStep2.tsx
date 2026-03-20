@@ -126,6 +126,27 @@ type LeadsAnalysis = {
     bound_platform: string | null;
     available_targets: string[];
   }>;
+  channel_binding_summary: {
+    canonical_bound: number;
+    platform_only: number;
+    unresolved: number;
+  };
+  channel_review: Array<{
+    binding_key: string;
+    input_platform: string;
+    bound_platform: string | null;
+    input_channel: string;
+    normalized_channel: string;
+    row_count: number;
+    leads: number;
+    status: "canonical_bound" | "platform_only" | "unresolved";
+    bound_channel: string | null;
+    available_targets: string[];
+    candidates: Array<{
+      channel: string;
+      score: number;
+    }>;
+  }>;
   issues: Array<{
     severity: "error" | "warn" | "info";
     code: string;
@@ -734,6 +755,7 @@ export default function WizardStep2({ data, platforms, onChange }: WizardStep2Pr
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           source_config: source.source_config ?? {},
+          dashboard: data,
           selected_platforms: leadsBindingTargets,
         }),
       });
@@ -811,12 +833,92 @@ export default function WizardStep2({ data, platforms, onChange }: WizardStep2Pr
         unresolved: nextPlatformReview.filter((item) => item.status === "unresolved").length,
         ignored: nextPlatformReview.filter((item) => item.status === "ignored").length,
       };
+      const nextChannelReview = current.channel_review.map((item) => {
+        if (item.input_platform !== inputPlatform) {
+          return item;
+        }
+        if (target === "__ignore__" || !target) {
+          return {
+            ...item,
+            bound_platform: null,
+            status: "unresolved" as const,
+            bound_channel: null,
+          };
+        }
+        return {
+          ...item,
+          bound_platform: target,
+          status: item.bound_channel ? ("canonical_bound" as const) : ("platform_only" as const),
+        };
+      });
+      const channel_binding_summary = {
+        canonical_bound: nextChannelReview.filter((item) => item.status === "canonical_bound").length,
+        platform_only: nextChannelReview.filter((item) => item.status === "platform_only").length,
+        unresolved: nextChannelReview.filter((item) => item.status === "unresolved").length,
+      };
       return {
         ...prev,
         [sourceIndex]: {
           ...current,
           platform_review: nextPlatformReview,
           binding_summary,
+          channel_review: nextChannelReview,
+          channel_binding_summary,
+        },
+      };
+    });
+  };
+
+  const setLeadsChannelBinding = (sourceIndex: number, bindingKey: string, target: string) => {
+    const source = leadsSources[sourceIndex];
+    if (!source) return;
+    const review =
+      source.source_config?.review && typeof source.source_config.review === "object"
+        ? { ...(source.source_config.review as Record<string, unknown>) }
+        : {};
+    const existingBindings =
+      review.channel_bindings && typeof review.channel_bindings === "object"
+        ? { ...(review.channel_bindings as Record<string, unknown>) }
+        : {};
+    if (!target) {
+      delete existingBindings[bindingKey];
+    } else {
+      existingBindings[bindingKey] = target;
+    }
+    updateLeadsSource(sourceIndex, {
+      review: {
+        ...review,
+        status: "reviewed",
+        reviewed_at: new Date().toISOString(),
+        channel_bindings: existingBindings,
+      },
+    });
+    setLeadsAnalysisBySource((prev) => {
+      const current = prev[sourceIndex];
+      if (!current) return prev;
+      const nextChannelReview = current.channel_review.map((item) => {
+        if (item.binding_key !== bindingKey) {
+          return item;
+        }
+        const nextStatus: LeadsAnalysis["channel_review"][number]["status"] =
+          !item.bound_platform ? "unresolved" : target ? "canonical_bound" : "platform_only";
+        return {
+          ...item,
+          status: nextStatus,
+          bound_channel: nextStatus === "canonical_bound" ? target : null,
+        };
+      });
+      const channel_binding_summary = {
+        canonical_bound: nextChannelReview.filter((item) => item.status === "canonical_bound").length,
+        platform_only: nextChannelReview.filter((item) => item.status === "platform_only").length,
+        unresolved: nextChannelReview.filter((item) => item.status === "unresolved").length,
+      };
+      return {
+        ...prev,
+        [sourceIndex]: {
+          ...current,
+          channel_review: nextChannelReview,
+          channel_binding_summary,
         },
       };
     });
@@ -839,6 +941,15 @@ export default function WizardStep2({ data, platforms, onChange }: WizardStep2Pr
             ]),
           )
         : {};
+    const channelBindings =
+      review.channel_bindings && typeof review.channel_bindings === "object"
+        ? Object.fromEntries(
+            Object.entries(review.channel_bindings as Record<string, unknown>).map(([key, value]) => [
+              key,
+              String(value ?? ""),
+            ]),
+          )
+        : {};
 
     setLeadsConfirmLoadingBySource((prev) => ({ ...prev, [index]: true }));
     setLeadsConfirmErrorBySource((prev) => ({ ...prev, [index]: null }));
@@ -850,8 +961,10 @@ export default function WizardStep2({ data, platforms, onChange }: WizardStep2Pr
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           source_config: source.source_config ?? {},
+          dashboard: data,
           selected_platforms: leadsBindingTargets,
           platform_bindings: platformBindings,
+          channel_bindings: channelBindings,
         }),
       });
       const json = (await response.json()) as Partial<LeadsConfirmResponse> & { error?: string };
@@ -1504,6 +1617,10 @@ export default function WizardStep2({ data, platforms, onChange }: WizardStep2Pr
               review.platform_bindings && typeof review.platform_bindings === "object"
                 ? (review.platform_bindings as Record<string, unknown>)
                 : {};
+            const channelBindings =
+              review.channel_bindings && typeof review.channel_bindings === "object"
+                ? (review.channel_bindings as Record<string, unknown>)
+                : {};
 
             return (
               <div key={`leads-${index}`} className="rounded-xl border border-slate-200 p-3">
@@ -1618,6 +1735,12 @@ export default function WizardStep2({ data, platforms, onChange }: WizardStep2Pr
                       <span className="rounded-full border border-slate-200 bg-white px-2 py-1 text-xs text-slate-700">
                         unresolved: {analysis.binding_summary.unresolved}
                       </span>
+                      <span className="rounded-full border border-slate-200 bg-white px-2 py-1 text-xs text-slate-700">
+                        channel bound: {analysis.channel_binding_summary.canonical_bound}
+                      </span>
+                      <span className="rounded-full border border-slate-200 bg-white px-2 py-1 text-xs text-slate-700">
+                        platform only: {analysis.channel_binding_summary.platform_only}
+                      </span>
                     </div>
 
                     {analysis.issues.length ? (
@@ -1673,6 +1796,61 @@ export default function WizardStep2({ data, platforms, onChange }: WizardStep2Pr
                                 </select>
                                 <span className="text-slate-500">
                                   auto target: {item.bound_platform ?? "none"}
+                                </span>
+                              </div>
+                            </div>
+                          );
+                        })}
+                      </div>
+                    </div>
+
+                    <div className="rounded-lg border border-slate-200 bg-white p-3">
+                      <p className="mb-2 text-sm font-medium text-slate-900">Channel binding review</p>
+                      <div className="mb-3 flex flex-wrap gap-2 text-xs text-slate-700">
+                        <span className="rounded-full border border-emerald-200 bg-emerald-50 px-2 py-1">
+                          canonical_bound: {analysis.channel_binding_summary.canonical_bound}
+                        </span>
+                        <span className="rounded-full border border-amber-200 bg-amber-50 px-2 py-1">
+                          platform_only: {analysis.channel_binding_summary.platform_only}
+                        </span>
+                        <span className="rounded-full border border-slate-200 bg-slate-50 px-2 py-1">
+                          unresolved: {analysis.channel_binding_summary.unresolved}
+                        </span>
+                      </div>
+                      <div className="space-y-2 text-xs text-slate-700">
+                        {analysis.channel_review.map((item) => {
+                          const bindingValue = String(channelBindings[item.binding_key] ?? item.bound_channel ?? "");
+                          return (
+                            <div key={item.binding_key} className="rounded border border-slate-200 px-3 py-2">
+                              <p className="font-medium text-slate-900">
+                                {item.input_platform} · {item.input_channel || "(empty channel)"} · {item.status}
+                              </p>
+                              <p>
+                                rows={item.row_count} · leads={item.leads}
+                                {item.bound_platform ? ` · platform=${item.bound_platform}` : ""}
+                              </p>
+                              <div className="mt-2 flex flex-wrap items-center gap-2">
+                                <select
+                                  className="rounded border border-slate-300 px-2 py-1 text-xs"
+                                  value={bindingValue}
+                                  onChange={(e) => setLeadsChannelBinding(index, item.binding_key, e.target.value)}
+                                  disabled={!item.bound_platform}
+                                >
+                                  <option value="">
+                                    {item.bound_platform ? "Leave platform-only" : "Platform unresolved"}
+                                  </option>
+                                  {item.available_targets.map((target) => (
+                                    <option key={target} value={target}>
+                                      Bind to {target}
+                                    </option>
+                                  ))}
+                                </select>
+                                <span className="text-slate-500">
+                                  {item.candidates.length
+                                    ? `best candidates: ${item.candidates
+                                        .map((candidate) => `${candidate.channel} (${candidate.score})`)
+                                        .join("; ")}`
+                                    : "no channel candidates"}
                                 </span>
                               </div>
                             </div>
