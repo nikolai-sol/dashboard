@@ -332,21 +332,22 @@ export function getTimeseries(
 
 export function getTimeseriesByPlatform(
   rows: ManualDataRow[],
-): Array<{ date: string; platform: string; impressions: number; clicks: number; spend: number; views: number }> {
+): Array<{ date: string; platform: string; impressions: number; clicks: number; spend: number; views: number; conversions: number }> {
   const map = new Map<
     string,
-    { date: string; platform: string; impressions: number; clicks: number; spend: number; views: number }
+    { date: string; platform: string; impressions: number; clicks: number; spend: number; views: number; conversions: number }
   >();
   for (const r of rows) {
     const key = `${r.platform}|${r.date}`;
     if (!map.has(key)) {
-      map.set(key, { date: r.date, platform: r.platform, impressions: 0, clicks: 0, spend: 0, views: 0 });
+      map.set(key, { date: r.date, platform: r.platform, impressions: 0, clicks: 0, spend: 0, views: 0, conversions: 0 });
     }
     const a = map.get(key)!;
     a.impressions += r.impressions ?? 0;
     a.clicks += r.clicks ?? 0;
     a.spend += r.spend ?? 0;
     a.views += r.views ?? 0;
+    a.conversions += r.conversions ?? 0;
   }
   return Array.from(map.values()).sort((a, b) => a.date.localeCompare(b.date) || a.platform.localeCompare(b.platform));
 }
