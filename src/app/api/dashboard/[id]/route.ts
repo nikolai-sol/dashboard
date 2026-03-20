@@ -21,6 +21,7 @@ import {
   getTimeseriesByPlatform,
   normalizeManualPlatformId,
 } from "@/lib/manual-data-fetcher";
+import { aggregateConfirmedLeadsByPlatform } from "@/lib/leads-fetcher";
 import { PLATFORM_COLORS } from "@/lib/platform-colors";
 import {
   resolvePlatformIdFromSourceKey,
@@ -1130,6 +1131,17 @@ function buildPlanBasedTimeseriesSpend(
   });
 }
 
+function applyPlatformConversions(
+  rows: PlatformStats[],
+  conversionsByPlatform: Record<string, number>,
+): void {
+  for (const row of rows) {
+    const extraConversions = Math.max(0, asNumber(conversionsByPlatform[row.id]));
+    if (!extraConversions) continue;
+    row.conversions += Math.round(extraConversions);
+  }
+}
+
 export async function GET(
   request: Request,
   context: { params: Promise<{ id: string }> | { id: string } },
@@ -1409,6 +1421,36 @@ export async function GET(
     const platformResults = mergePlatformStats(platformStatsRaw);
     const prevPlatformResults = mergePlatformStats(prevStatsRaw);
     const timeseriesResults = mergeTimeseries(timeseriesRaw);
+
+    const availablePlatformIds = Array.from(new Set(platformResults.map((row) => row.id)));
+    const availablePrevPlatformIds = Array.from(new Set(prevPlatformResults.map((row) => row.id)));
+
+    for (const source of sourceRows) {
+      if (source.platform !== "leads" || source.role !== "actual") {
+        continue;
+      }
+
+      try {
+        const sourceConfig = parseJson(source.source_config);
+        const currentConversions = await aggregateConfirmedLeadsByPlatform(
+          sourceConfig,
+          availablePlatformIds,
+          range.from,
+          range.to,
+        );
+        applyPlatformConversions(platformResults, currentConversions);
+
+        const previousConversions = await aggregateConfirmedLeadsByPlatform(
+          sourceConfig,
+          availablePrevPlatformIds,
+          previousRange.from,
+          previousRange.to,
+        );
+        applyPlatformConversions(prevPlatformResults, previousConversions);
+      } catch (leadsError) {
+        console.warn("Confirmed leads merge failed:", leadsError);
+      }
+    }
 
     if (spendSource === "media_plan_derived") {
       buildPlanBasedTimeseriesSpend(timeseriesResults, planRows);
