@@ -5,6 +5,9 @@ export type DashboardSectionId =
   | "kpi_grid"
   | "spend_section"
   | "trend_chart"
+  | "conversion_funnel"
+  | "campaign_table"
+  | "scatter_plot"
   | "channel_table"
   | "plan_vs_fact"
   | "platform_plan_fact"
@@ -37,13 +40,37 @@ export interface DashboardKPI {
   total_impressions: number;
   total_clicks: number;
   total_spend: number;
+  total_conversions: number;
   avg_ctr: number;
   avg_cpm: number;
   prev_impressions: number;
   prev_clicks: number;
   prev_spend: number;
+  prev_conversions: number;
   prev_ctr: number;
   prev_cpm: number;
+}
+
+export interface FunnelStep {
+  id: string;
+  label: string;
+  value: number;
+  conversion_rate?: number;
+}
+
+export interface CampaignBreakdownItem {
+  campaign_id: string;
+  campaign_name: string;
+  source_key: string;
+  platform_label: string;
+  platform_color: string;
+  impressions: number;
+  clicks: number;
+  spend: number;
+  conversions: number;
+  cpa: number;
+  cpc: number;
+  ctr: number;
 }
 
 export interface PlatformStats {
@@ -217,4 +244,6 @@ export interface DashboardData {
     views: number;
     conversions: number;
   }>;
+  campaign_breakdown?: CampaignBreakdownItem[];
+  funnel?: FunnelStep[];
 }

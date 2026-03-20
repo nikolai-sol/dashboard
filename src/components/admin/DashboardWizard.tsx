@@ -9,10 +9,14 @@ import WizardStep3 from "@/components/admin/WizardStep3";
 import WizardStepBinding from "@/components/admin/WizardStepBinding";
 import WizardStepFrequency from "@/components/admin/WizardStepFrequency";
 import WizardStep4 from "@/components/admin/WizardStep4";
+import {
+  getDefaultKpiCards,
+  getDefaultSectionOrder,
+  sanitizeSectionOrder as sanitizeDashboardSectionOrder,
+} from "@/lib/dashboard-presets";
 import type {
   CustomKpiCardForm,
   DashboardFormData,
-  DashboardSectionId,
   DashboardSourceForm,
   PlatformMeta,
 } from "@/lib/admin-ui-types";
@@ -22,24 +26,6 @@ type DashboardWizardProps = {
 };
 
 const STEPS = ["Basic", "Sources", "Filters", "Bindings", "Frequency", "Metrics"];
-
-function defaultSectionOrder(showSpend: boolean): DashboardSectionId[] {
-  return showSpend
-    ? ["kpi_grid", "spend_section", "trend_chart", "platform_table", "platform_plan_fact", "channel_table", "plan_vs_fact"]
-    : ["kpi_grid", "trend_chart", "platform_table", "platform_plan_fact", "channel_table", "plan_vs_fact"];
-}
-
-function normalizeSectionOrder(raw: unknown, showSpend: boolean): DashboardSectionId[] {
-  const defaults = defaultSectionOrder(showSpend);
-  if (!Array.isArray(raw)) {
-    return defaults;
-  }
-  const seen = new Set<DashboardSectionId>();
-  const normalized = raw
-    .map((item) => String(item) as DashboardSectionId)
-    .filter((item) => defaults.includes(item) && !seen.has(item) && seen.add(item));
-  return [...normalized, ...defaults.filter((item) => !seen.has(item))];
-}
 
 function currentMonthRange(): { from: string; to: string } {
   const now = new Date();
@@ -67,10 +53,10 @@ function defaultForm(): DashboardFormData {
       spend_source: "platform_actual",
       filter_scope: "both",
       visible_metrics: ["impressions", "clicks", "ctr", "cpm", "spend"],
-      section_order: defaultSectionOrder(true),
+      section_order: getDefaultSectionOrder("awareness", true),
       show_spend: true,
       show_ai_summary: false,
-      kpi_cards: ["impressions", "clicks", "ctr", "cpm", "spend"],
+      kpi_cards: getDefaultKpiCards("awareness", true),
       custom_kpi_cards: [],
       campaign_frequency_overrides: [],
     },
@@ -275,9 +261,11 @@ export default function DashboardWizard({ dashboardId }: DashboardWizardProps) {
             visible_metrics: Array.isArray(config.visible_metrics)
               ? config.visible_metrics.map((item) => String(item))
               : ["impressions", "clicks", "ctr", "cpm", "spend"],
-            section_order: normalizeSectionOrder(
+            section_order: sanitizeDashboardSectionOrder(
               config.section_order,
+              (dash.dashboard_type ?? "awareness"),
               Boolean(config.show_spend ?? true),
+              true,
             ),
             show_spend: Boolean(config.show_spend ?? true),
             show_ai_summary: Boolean(config.show_ai_summary ?? false),

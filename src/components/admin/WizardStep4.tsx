@@ -2,6 +2,10 @@
 
 import { ArrowDown, ArrowUp } from "lucide-react";
 import type { CustomKpiCardForm, DashboardFormData, DashboardSectionId } from "@/lib/admin-ui-types";
+import {
+  sanitizeSectionOrder as sanitizeDashboardSectionOrder,
+  SPEND_RELATED_METRICS,
+} from "@/lib/dashboard-presets";
 
 type WizardStep4Props = {
   data: DashboardFormData;
@@ -24,11 +28,13 @@ const KPI_POOL = [
   "frequency",
 ];
 
-const SPEND_RELATED_METRICS = new Set(["spend", "cpm", "cpc", "cpv", "cpa", "roas"]);
-const SECTION_OPTIONS: Array<{ id: DashboardSectionId; label: string; spendRelated?: boolean }> = [
+const SECTION_OPTIONS: Array<{ id: DashboardSectionId; label: string; spendRelated?: boolean; performanceOnly?: boolean }> = [
   { id: "kpi_grid", label: "KPI cards" },
   { id: "spend_section", label: "Spend by platform + channel mix", spendRelated: true },
   { id: "trend_chart", label: "Trend chart" },
+  { id: "conversion_funnel", label: "Conversion funnel", performanceOnly: true },
+  { id: "campaign_table", label: "Campaign performance", spendRelated: true, performanceOnly: true },
+  { id: "scatter_plot", label: "Spend vs conversions scatter", spendRelated: true, performanceOnly: true },
   { id: "platform_plan_fact", label: "Platform performance plan/fact" },
   { id: "channel_table", label: "Channel performance" },
   { id: "plan_vs_fact", label: "Channel performance plan/fact" },
@@ -85,16 +91,11 @@ function sanitizeCustomKpiCards(cards: CustomKpiCardForm[] | undefined, showSpen
 
 function sanitizeSectionOrder(
   order: DashboardSectionId[] | undefined,
+  dashboardType: DashboardFormData["dashboard_type"],
   showSpend: boolean,
   fillDefaults = false,
 ): DashboardSectionId[] {
-  const allowed = SECTION_OPTIONS.filter((section) => showSpend || !section.spendRelated).map((section) => section.id);
-  const fromConfig = Array.isArray(order) ? order.filter((sectionId) => allowed.includes(sectionId)) : [];
-  const seen = new Set(fromConfig);
-  if (fillDefaults) {
-    return [...fromConfig, ...allowed.filter((sectionId) => !seen.has(sectionId))];
-  }
-  return fromConfig;
+  return sanitizeDashboardSectionOrder(order, dashboardType, showSpend, fillDefaults);
 }
 
 function createCustomKpiCard(index: number): CustomKpiCardForm {
@@ -111,8 +112,13 @@ export default function WizardStep4({ data, onChange }: WizardStep4Props) {
   const showSpend = Boolean(config.show_spend);
   const metricPool = sanitizeMetricPool(showSpend);
   const kpiCards = sanitizeCards(config.kpi_cards ?? [], showSpend);
-  const sectionOrder = sanitizeSectionOrder(config.section_order, showSpend, false);
+  const sectionOrder = sanitizeSectionOrder(config.section_order, data.dashboard_type, showSpend, false);
   const customKpiCards = sanitizeCustomKpiCards(config.custom_kpi_cards, showSpend);
+  const visibleSectionOptions = SECTION_OPTIONS.filter(
+    (section) =>
+      (data.dashboard_type === "performance" || !section.performanceOnly) &&
+      (showSpend || !section.spendRelated),
+  );
 
   const patchConfig = (patch: Partial<DashboardFormData["config"]>) => {
     onChange({
@@ -150,8 +156,8 @@ export default function WizardStep4({ data, onChange }: WizardStep4Props) {
 
   const toggleSection = (sectionId: DashboardSectionId, checked: boolean) => {
     const next = checked
-      ? sanitizeSectionOrder([...sectionOrder, sectionId], showSpend, false)
-      : sanitizeSectionOrder(sectionOrder.filter((item) => item !== sectionId), showSpend, false);
+      ? sanitizeSectionOrder([...sectionOrder, sectionId], data.dashboard_type, showSpend, false)
+      : sanitizeSectionOrder(sectionOrder.filter((item) => item !== sectionId), data.dashboard_type, showSpend, false);
     patchConfig({ section_order: next });
   };
 
@@ -171,7 +177,7 @@ export default function WizardStep4({ data, onChange }: WizardStep4Props) {
       show_spend: checked,
       kpi_cards: sanitizeCards(config.kpi_cards ?? [], checked),
       visible_metrics: sanitizeVisibleMetrics(config.visible_metrics ?? [], checked),
-      section_order: sanitizeSectionOrder(config.section_order, checked, false),
+      section_order: sanitizeSectionOrder(config.section_order, data.dashboard_type, checked, false),
       custom_kpi_cards: sanitizeCustomKpiCards(config.custom_kpi_cards, checked),
     });
   };
@@ -346,7 +352,7 @@ export default function WizardStep4({ data, onChange }: WizardStep4Props) {
           `Show spend` is off.
         </p>
         <div className="mt-3 space-y-2">
-          {SECTION_OPTIONS.filter((section) => showSpend || !section.spendRelated).map((section) => {
+          {visibleSectionOptions.map((section) => {
             const enabled = sectionOrder.includes(section.id);
             const index = sectionOrder.indexOf(section.id);
             return (

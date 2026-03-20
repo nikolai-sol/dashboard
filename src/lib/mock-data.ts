@@ -335,6 +335,7 @@ function buildKpi(platforms: PlatformStats[]) {
   const totalImpressions = platforms.reduce((sum, item) => sum + item.impressions, 0);
   const totalClicks = platforms.reduce((sum, item) => sum + item.clicks, 0);
   const totalSpend = platforms.reduce((sum, item) => sum + item.spend, 0);
+  const totalConversions = platforms.reduce((sum, item) => sum + item.conversions, 0);
   const avgCtr = totalImpressions > 0 ? (totalClicks / totalImpressions) * 100 : 0;
   const avgCpm = totalImpressions > 0 ? (totalSpend / totalImpressions) * 1000 : 0;
 
@@ -342,11 +343,13 @@ function buildKpi(platforms: PlatformStats[]) {
     total_impressions: totalImpressions,
     total_clicks: totalClicks,
     total_spend: Number(totalSpend.toFixed(2)),
+    total_conversions: totalConversions,
     avg_ctr: Number(avgCtr.toFixed(2)),
     avg_cpm: Number(avgCpm.toFixed(2)),
     prev_impressions: Math.round(totalImpressions * 0.91),
     prev_clicks: Math.round(totalClicks * 0.88),
     prev_spend: Number((totalSpend * 0.94).toFixed(2)),
+    prev_conversions: Math.round(totalConversions * 0.9),
     prev_ctr: Number((avgCtr * 0.96).toFixed(2)),
     prev_cpm: Number((avgCpm * 1.03).toFixed(2)),
   };

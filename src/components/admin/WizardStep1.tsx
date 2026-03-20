@@ -1,11 +1,17 @@
 "use client";
 
 import type { DashboardFormData } from "@/lib/admin-ui-types";
+import { getDefaultKpiCards, getDefaultSectionOrder } from "@/lib/dashboard-presets";
 
 type WizardStep1Props = {
   data: DashboardFormData;
   onChange: (next: DashboardFormData) => void;
 };
+
+function sameStringArray(a: string[] | undefined, b: string[]) {
+  const left = Array.isArray(a) ? a : [];
+  return left.length === b.length && left.every((item, index) => item === b[index]);
+}
 
 export default function WizardStep1({ data, onChange }: WizardStep1Props) {
   const setField = (key: keyof DashboardFormData, value: string) => {
@@ -126,7 +132,28 @@ export default function WizardStep1({ data, onChange }: WizardStep1Props) {
           <select
             className="w-full rounded-lg border border-slate-300 px-3 py-2"
             value={data.dashboard_type}
-            onChange={(e) => onChange({ ...data, dashboard_type: e.target.value as DashboardFormData["dashboard_type"] })}
+            onChange={(e) => {
+              const nextType = e.target.value as DashboardFormData["dashboard_type"];
+              const showSpend = Boolean(data.config.show_spend);
+              const currentDefaultSections = getDefaultSectionOrder(data.dashboard_type, showSpend);
+              const currentDefaultKpis = getDefaultKpiCards(data.dashboard_type, showSpend);
+              const next: DashboardFormData = {
+                ...data,
+                dashboard_type: nextType,
+                config: {
+                  ...data.config,
+                  section_order:
+                    sameStringArray(data.config.section_order, currentDefaultSections)
+                      ? getDefaultSectionOrder(nextType, showSpend)
+                      : data.config.section_order,
+                  kpi_cards:
+                    sameStringArray(data.config.kpi_cards, currentDefaultKpis)
+                      ? getDefaultKpiCards(nextType, showSpend)
+                      : data.config.kpi_cards,
+                },
+              };
+              onChange(next);
+            }}
           >
             <option value="awareness">Awareness</option>
             <option value="performance">Performance</option>

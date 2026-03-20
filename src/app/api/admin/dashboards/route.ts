@@ -8,12 +8,7 @@ import {
   summarizeDashboardPayloadForLog,
   validateDashboardPayload,
 } from "@/lib/admin-dashboards";
-
-function defaultKpiCards(type: string): string[] {
-  if (type === "performance") return ["conversions", "cpa", "clicks", "cpc", "spend"];
-  if (type === "overview") return ["impressions", "clicks", "ctr", "spend", "conversions"];
-  return ["impressions", "clicks", "ctr", "cpm", "spend"];
-}
+import { getDefaultKpiCards, getDefaultSectionOrder } from "@/lib/dashboard-presets";
 
 export async function GET() {
   try {
@@ -65,7 +60,10 @@ export async function POST(request: Request) {
     ...payload.config,
     kpi_cards: Array.isArray(payload.config.kpi_cards)
       ? payload.config.kpi_cards
-      : defaultKpiCards(payload.dashboard_type),
+      : getDefaultKpiCards(payload.dashboard_type, Boolean(payload.config.show_spend ?? true)),
+    section_order: Array.isArray(payload.config.section_order)
+      ? payload.config.section_order
+      : getDefaultSectionOrder(payload.dashboard_type, Boolean(payload.config.show_spend ?? true)),
   };
 
   const conn = await pool.getConnection();
