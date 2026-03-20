@@ -328,6 +328,20 @@ function sumFactRows(rows: NonNullable<DashboardData["channel_timeseries"]>) {
   );
 }
 
+function mergeChannelSummaryFacts(
+  row: PlanVsFactItem,
+  factSummary: { impressions: number; reach: number; clicks: number; views: number; conversions: number; spend: number },
+) {
+  return {
+    impressions: Math.max(factSummary.impressions, row.impressions_fact),
+    reach: Math.max(factSummary.reach, row.reach_fact),
+    clicks: Math.max(factSummary.clicks, row.clicks_fact),
+    views: Math.max(factSummary.views, row.views_fact),
+    conversions: Math.max(factSummary.conversions, row.conversions_fact),
+    spend: Math.max(factSummary.spend, row.budget_fact),
+  };
+}
+
 function defaultKpiConfig(type: DashboardData["dashboard"]["type"], showSpend: boolean): string[] {
   if (type === "performance") {
     return showSpend
@@ -866,16 +880,19 @@ function buildChannelPerformance(
   return planVsFact.map((row) => {
     const planOnly = row.campaign_count === 0;
     const factRows = planOnly ? [] : factRowsByChannel.get(row.channel) ?? [];
-    const summaryFacts = factRows.length
-      ? sumFactRows(factRows)
-      : {
-          impressions: row.impressions_fact,
-          reach: row.reach_fact,
-          clicks: row.clicks_fact,
-          spend: row.budget_fact,
-          views: row.views_fact,
-          conversions: row.conversions_fact,
-        };
+    const summaryFacts = mergeChannelSummaryFacts(
+      row,
+      factRows.length
+        ? sumFactRows(factRows)
+        : {
+            impressions: 0,
+            reach: 0,
+            clicks: 0,
+            spend: 0,
+            views: 0,
+            conversions: 0,
+          },
+    );
     const summaryPlan = normalizeChannelPlan(row, dateFrom, dateTo, configFrom, configTo);
     const metrics: ChannelPerformanceItem["metrics"] = {
       impressions: buildMetricSummary("impressions", summaryFacts.impressions, summaryPlan.impressions),
