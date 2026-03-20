@@ -36,11 +36,11 @@ const OTHER_COLOR = "#94A3B8";
 
 const PLATFORM_BADGE_LABELS: Record<string, string> = {
   linkedin: "in",
-  reddit: "r",
-  google: "g",
-  google_ads: "g",
+  reddit: "rd",
+  google: "go",
+  google_ads: "go",
   vk: "vk",
-  meta: "m",
+  meta: "me",
   yandex: "ya",
   x: "x",
   git: "gi",
@@ -135,15 +135,17 @@ function CenterLayer({
     impressions: "Impressions",
     clicks: "Clicks",
   };
+  const totalLabel = currencyFormatter(totalSpend);
+  const amountFontSize = totalLabel.length >= 10 ? 18 : totalLabel.length >= 8 ? 20 : 22;
 
   return (
     <g transform={`translate(${centerX}, ${centerY})`}>
       <text
         textAnchor="middle"
         dominantBaseline="central"
-        y={-14}
+        y={-12}
         style={{
-          fontSize: 10,
+          fontSize: 9,
           fontWeight: 600,
           letterSpacing: "0.18em",
           textTransform: "uppercase",
@@ -155,14 +157,14 @@ function CenterLayer({
       <text
         textAnchor="middle"
         dominantBaseline="central"
-        y={14}
+        y={12}
         style={{
-          fontSize: 24,
+          fontSize: amountFontSize,
           fontWeight: 700,
           fill: "#0F172A",
         }}
       >
-        {currencyFormatter(totalSpend)}
+        {totalLabel}
       </text>
     </g>
   );
@@ -314,7 +316,7 @@ export default function ChannelMix({
             key={item.id}
             title={item.label}
             aria-label={item.label}
-            className="flex h-8 min-w-8 items-center justify-center rounded-full border border-slate-200 bg-white px-2 text-[11px] font-semibold uppercase tracking-[0.06em] text-slate-700 shadow-sm"
+            className="flex h-8 min-w-10 items-center justify-center rounded-full border border-slate-200 bg-white px-2 text-[11px] font-semibold uppercase tracking-[0.06em] text-slate-700 shadow-sm"
           >
             <span
               className="mr-1.5 inline-block h-2.5 w-2.5 rounded-full"
