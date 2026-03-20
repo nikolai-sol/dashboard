@@ -50,6 +50,23 @@ export type LeadsPlatformReview = {
   available_targets: string[];
 };
 
+export type LeadsChannelReview = {
+  binding_key: string;
+  input_platform: string;
+  bound_platform: string | null;
+  input_channel: string;
+  normalized_channel: string;
+  row_count: number;
+  leads: number;
+  status: "canonical_bound" | "platform_only" | "unresolved";
+  bound_channel: string | null;
+  available_targets: string[];
+  candidates: Array<{
+    channel: string;
+    score: number;
+  }>;
+};
+
 export type LeadsPreviewAnalysis = {
   status: "ok" | "warn" | "error";
   sheet_url_input: string;
@@ -66,11 +83,18 @@ export type LeadsPreviewAnalysis = {
     ignored: number;
   };
   platform_review: LeadsPlatformReview[];
+  channel_binding_summary: {
+    canonical_bound: number;
+    platform_only: number;
+    unresolved: number;
+  };
+  channel_review: LeadsChannelReview[];
   issues: LeadsPreviewIssue[];
   sample_rows: LeadRow[];
 };
 
 export type LeadsPlatformBindingMap = Record<string, string>;
+export type LeadsChannelBindingMap = Record<string, string>;
 
 export type LeadsReviewedConfig = {
   review_version: 1;
@@ -86,6 +110,9 @@ export type LeadsReviewedConfig = {
   selected_platforms: string[];
   platform_bindings: LeadsPlatformBindingMap;
   binding_summary: LeadsPreviewAnalysis["binding_summary"];
+  selected_channels: string[];
+  channel_bindings: LeadsChannelBindingMap;
+  channel_binding_summary: LeadsPreviewAnalysis["channel_binding_summary"];
   issues: LeadsPreviewIssue[];
 };
 
@@ -193,6 +220,49 @@ function normalizeLeadRow(raw: Record<string, unknown>): LeadRow {
   };
 }
 
+function normalizeChannelValue(raw: unknown): string {
+  return String(raw ?? "")
+    .trim()
+    .toLowerCase()
+    .replace(/[._-]+/g, " ")
+    .replace(/\s+/g, " ");
+}
+
+function tokenizeChannel(raw: string): string[] {
+  return normalizeChannelValue(raw)
+    .split(" ")
+    .map((token) => token.trim())
+    .filter(Boolean);
+}
+
+function makeChannelBindingKey(platform: string, channel: string): string {
+  return `${normalizeManualPlatformId(platform)}|${normalizeChannelValue(channel)}`;
+}
+
+function scoreChannelMatch(inputChannel: string, candidateChannel: string): number {
+  const left = normalizeChannelValue(inputChannel);
+  const right = normalizeChannelValue(candidateChannel);
+  if (!left || !right) return 0;
+  if (left === right) return 1;
+
+  const leftTokens = new Set(tokenizeChannel(inputChannel));
+  const rightTokens = new Set(tokenizeChannel(candidateChannel));
+  if (!leftTokens.size || !rightTokens.size) return 0;
+
+  let intersection = 0;
+  for (const token of leftTokens) {
+    if (rightTokens.has(token)) intersection += 1;
+  }
+  const union = new Set([...leftTokens, ...rightTokens]).size;
+  const jaccard = union > 0 ? intersection / union : 0;
+
+  if (left.includes(right) || right.includes(left)) {
+    return Math.max(jaccard, 0.9);
+  }
+
+  return Number(jaccard.toFixed(4));
+}
+
 function parseCsvText(csvText: string): { headers: string[]; raw_rows: number; rows: LeadRow[] } {
   const parsed = Papa.parse<Record<string, unknown>>(csvText, {
     header: true,
@@ -237,6 +307,16 @@ function extractReviewBindings(sourceConfig: LeadsSourceConfig): Record<string, 
   const review = sourceConfig.review;
   if (!review || typeof review !== "object") return {};
   const bindings = (review as Record<string, unknown>).platform_bindings;
+  if (!bindings || typeof bindings !== "object") return {};
+  return Object.fromEntries(
+    Object.entries(bindings as Record<string, unknown>).map(([key, value]) => [key, String(value ?? "")]),
+  );
+}
+
+function extractReviewChannelBindings(sourceConfig: LeadsSourceConfig): Record<string, string> {
+  const review = sourceConfig.review;
+  if (!review || typeof review !== "object") return {};
+  const bindings = (review as Record<string, unknown>).channel_bindings;
   if (!bindings || typeof bindings !== "object") return {};
   return Object.fromEntries(
     Object.entries(bindings as Record<string, unknown>).map(([key, value]) => [key, String(value ?? "")]),
@@ -302,11 +382,21 @@ export async function fetchLeadsFromSourceConfig(sourceConfig: LeadsSourceConfig
 export async function analyzeLeadSourceConfig(
   sourceConfig: LeadsSourceConfig,
   selectedPlatforms: string[],
+  selectedChannels: string[] = [],
 ): Promise<LeadsPreviewAnalysis> {
   const parsed = await fetchLeadsFromSourceConfig(sourceConfig);
   const issues: LeadsPreviewIssue[] = [];
   const savedBindings = extractReviewBindings(sourceConfig);
+  const savedChannelBindings = extractReviewChannelBindings(sourceConfig);
   const selectedSet = new Set(selectedPlatforms.map((item) => normalizeManualPlatformId(item)).filter(Boolean));
+  const normalizedChannelTargets = Array.from(
+    new Map(
+      selectedChannels
+        .map((channel) => String(channel).trim())
+        .filter(Boolean)
+        .map((channel) => [normalizeChannelValue(channel), channel] as const),
+    ).values(),
+  );
 
   if (!parsed.fetch_url && !parsed.rows.length) {
     issues.push({ severity: "error", code: "MISSING_INPUT", message: "Sheet URL is empty and no uploaded leads file is attached." });
@@ -366,6 +456,87 @@ export async function analyzeLeadSourceConfig(
     issues.push({ severity: "warn", code: "NO_TARGET_PLATFORMS", message: "No dashboard platforms are currently available for leads binding." });
   }
 
+  const platformBindingByInput = new Map(
+    platformReview.map((item) => [item.input_platform, item.status === "canonical_bound" ? item.bound_platform : null] as const),
+  );
+
+  const channelGroups = new Map<
+    string,
+    { input_platform: string; channel: string; row_count: number; leads: number }
+  >();
+  for (const row of parsed.rows) {
+    const key = makeChannelBindingKey(row.platform, row.channel);
+    if (!channelGroups.has(key)) {
+      channelGroups.set(key, {
+        input_platform: row.platform,
+        channel: row.channel,
+        row_count: 0,
+        leads: 0,
+      });
+    }
+    const group = channelGroups.get(key)!;
+    group.row_count += 1;
+    group.leads += row.leads;
+  }
+
+  const channelReview: LeadsChannelReview[] = Array.from(channelGroups.entries())
+    .sort((a, b) => a[1].input_platform.localeCompare(b[1].input_platform) || a[1].channel.localeCompare(b[1].channel))
+    .map(([bindingKey, group]) => {
+      const boundPlatform = platformBindingByInput.get(group.input_platform) ?? null;
+      const explicitBinding = String(savedChannelBindings[bindingKey] ?? "").trim();
+      const normalizedExplicit = explicitBinding ? normalizeChannelValue(explicitBinding) : "";
+      const candidates = normalizedChannelTargets
+        .map((channel) => ({
+          channel,
+          score: scoreChannelMatch(group.channel, channel),
+        }))
+        .filter((item) => item.score > 0)
+        .sort((a, b) => b.score - a.score || a.channel.localeCompare(b.channel))
+        .slice(0, 6);
+
+      const exactAuto = normalizedChannelTargets.find(
+        (channel) => normalizeChannelValue(channel) === normalizeChannelValue(group.channel),
+      );
+      const bestCandidate = candidates[0];
+      const autoBinding = exactAuto ?? (bestCandidate && bestCandidate.score >= 0.9 ? bestCandidate.channel : null);
+      const boundChannel =
+        normalizedExplicit
+          ? normalizedChannelTargets.find((channel) => normalizeChannelValue(channel) === normalizedExplicit) ?? explicitBinding
+          : autoBinding;
+
+      const status: LeadsChannelReview["status"] = !boundPlatform
+        ? "unresolved"
+        : boundChannel
+          ? "canonical_bound"
+          : "platform_only";
+
+      return {
+        binding_key: bindingKey,
+        input_platform: group.input_platform,
+        bound_platform: boundPlatform,
+        input_channel: group.channel,
+        normalized_channel: normalizeChannelValue(group.channel),
+        row_count: group.row_count,
+        leads: group.leads,
+        status,
+        bound_channel: status === "canonical_bound" ? boundChannel : null,
+        available_targets: normalizedChannelTargets,
+        candidates,
+      };
+    });
+
+  const channelBindingSummary = {
+    canonical_bound: channelReview.filter((item) => item.status === "canonical_bound").length,
+    platform_only: channelReview.filter((item) => item.status === "platform_only").length,
+    unresolved: channelReview.filter((item) => item.status === "unresolved").length,
+  };
+
+  if (selectedPlatforms.length && !normalizedChannelTargets.length) {
+    issues.push({ severity: "info", code: "NO_TARGET_CHANNELS", message: "No dashboard channels are currently available for leads channel binding." });
+  } else if (channelBindingSummary.platform_only > 0) {
+    issues.push({ severity: "info", code: "PLATFORM_ONLY_CHANNELS", message: `${channelBindingSummary.platform_only} lead channel groups are platform-bound but not channel-bound yet.` });
+  }
+
   const hasErrors = issues.some((issue) => issue.severity === "error");
   const hasWarns = issues.some((issue) => issue.severity === "warn");
 
@@ -385,6 +556,8 @@ export async function analyzeLeadSourceConfig(
       ignored: ignoredCount,
     },
     platform_review: platformReview,
+    channel_binding_summary: channelBindingSummary,
+    channel_review: channelReview,
     issues,
     sample_rows: parsed.rows.slice(0, 5),
   };
@@ -393,14 +566,23 @@ export async function analyzeLeadSourceConfig(
 export async function applyLeadsReview(
   sourceConfig: LeadsSourceConfig,
   selectedPlatforms: string[],
+  selectedChannels: string[],
   platformBindings: LeadsPlatformBindingMap,
+  channelBindings: LeadsChannelBindingMap,
 ): Promise<LeadsConfirmResult> {
   const existingBindings = extractReviewBindings(sourceConfig);
+  const existingChannelBindings = extractReviewChannelBindings(sourceConfig);
   const normalizedBindings = Object.fromEntries(
     Object.entries({
       ...existingBindings,
       ...platformBindings,
     }).map(([key, value]) => [normalizeManualPlatformId(key), String(value ?? "").trim()]),
+  );
+  const normalizedChannelBindings = Object.fromEntries(
+    Object.entries({
+      ...existingChannelBindings,
+      ...channelBindings,
+    }).map(([key, value]) => [key, String(value ?? "").trim()]),
   );
 
   const nextSourceConfig: LeadsSourceConfig = {
@@ -410,10 +592,11 @@ export async function applyLeadsReview(
         ? (sourceConfig.review as Record<string, unknown>)
         : {}),
       platform_bindings: normalizedBindings,
+      channel_bindings: normalizedChannelBindings,
     },
   };
 
-  const analysis = await analyzeLeadSourceConfig(nextSourceConfig, selectedPlatforms);
+  const analysis = await analyzeLeadSourceConfig(nextSourceConfig, selectedPlatforms, selectedChannels);
   const reviewedSourceConfig: Record<string, unknown> = {
     ...(sourceConfig as Record<string, unknown>),
     inline_rows: (await fetchLeadsFromSourceConfig(nextSourceConfig)).rows.map((row) => ({ ...row })),
@@ -432,6 +615,9 @@ export async function applyLeadsReview(
       selected_platforms: analysis.selected_platforms,
       platform_bindings: normalizedBindings,
       binding_summary: analysis.binding_summary,
+      selected_channels: selectedChannels,
+      channel_bindings: normalizedChannelBindings,
+      channel_binding_summary: analysis.channel_binding_summary,
       issues: analysis.issues,
     } satisfies LeadsReviewedConfig,
   };
