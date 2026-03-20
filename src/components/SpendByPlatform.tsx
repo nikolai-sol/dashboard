@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { ResponsiveBar } from "@nivo/bar";
 import type { PlatformStats } from "@/lib/types";
 import { PLATFORM_COLORS } from "@/lib/platform-colors";
@@ -23,6 +23,22 @@ function resolveBrandColor(platformId: string, fallback: string) {
   return PLATFORM_COLORS[platformId]?.hex ?? fallback;
 }
 
+function compactCurrencyTick(
+  value: number,
+  currencyFormatter: (value: number) => string,
+  locale: string,
+) {
+  const sample = currencyFormatter(0);
+  const match = sample.match(/^([^\d-]*)(?:-?[\d\s.,\u00A0\u202F]+)([^\d]*)$/u);
+  const prefix = match?.[1] ?? "";
+  const suffix = match?.[2] ?? "";
+  const compactNumber = new Intl.NumberFormat(locale, {
+    notation: "compact",
+    maximumFractionDigits: value >= 1000 ? 1 : 0,
+  }).format(value);
+  return `${prefix}${compactNumber}${suffix}`;
+}
+
 export default function SpendByPlatform({
   data,
   currencyFormatter,
@@ -40,6 +56,21 @@ export default function SpendByPlatform({
 
   const sorted = useMemo(() => [...data].sort((a, b) => b.spend - a.spend), [data]);
   const total = useMemo(() => sorted.reduce((sum, item) => sum + item.spend, 0), [sorted]);
+  const [viewportWidth, setViewportWidth] = useState(1280);
+
+  useEffect(() => {
+    const update = () => setViewportWidth(window.innerWidth);
+    update();
+    window.addEventListener("resize", update);
+    return () => window.removeEventListener("resize", update);
+  }, []);
+
+  const isMobile = viewportWidth < 640;
+  const chartMargin = isMobile
+    ? { top: 10, right: 10, bottom: 28, left: 94 }
+    : { top: 10, right: 90, bottom: 20, left: 110 };
+  const axisTickFormatter = (value: number) =>
+    isMobile ? compactCurrencyTick(Number(value), currencyFormatter, locale) : currencyFormatter(Number(value));
   const chartData = useMemo(
     () =>
       sorted.map((item) => ({
@@ -62,13 +93,13 @@ export default function SpendByPlatform({
           keys={["spend"]}
           indexBy="platform"
           layout="horizontal"
-          margin={{ top: 10, right: 90, bottom: 20, left: 110 }}
+          margin={chartMargin}
           valueScale={{ type: "linear" }}
           indexScale={{ type: "band", round: true }}
           colors={({ data: row }) => String(row.color)}
           colorBy="indexValue"
           borderRadius={8}
-          labelSkipWidth={12}
+          labelSkipWidth={isMobile ? 42 : 12}
           labelSkipHeight={12}
           label={(item) => currencyFormatter(Number(item.value))}
           labelTextColor="#FFFFFF"
@@ -78,12 +109,13 @@ export default function SpendByPlatform({
           axisRight={null}
           axisBottom={{
             tickSize: 0,
-            tickPadding: 8,
-            format: (value) => currencyFormatter(Number(value)),
+            tickPadding: isMobile ? 4 : 8,
+            tickValues: isMobile ? 4 : undefined,
+            format: axisTickFormatter,
           }}
           axisLeft={{
             tickSize: 0,
-            tickPadding: 10,
+            tickPadding: isMobile ? 8 : 10,
           }}
           tooltip={({ value, indexValue, color }) => {
             const spend = Number(value);
@@ -116,13 +148,13 @@ export default function SpendByPlatform({
               ticks: {
                 text: {
                   fill: "#64748B",
-                  fontSize: 12,
+                  fontSize: isMobile ? 8 : 12,
                 },
               },
             },
             labels: {
               text: {
-                fontSize: 11,
+                fontSize: isMobile ? 9 : 11,
                 fontWeight: 700,
               },
             },
