@@ -21,7 +21,11 @@ import {
   getTimeseriesByPlatform,
   normalizeManualPlatformId,
 } from "@/lib/manual-data-fetcher";
-import { aggregateConfirmedLeadsByPlatform } from "@/lib/leads-fetcher";
+import {
+  aggregateConfirmedLeadsByCanonicalChannel,
+  aggregateConfirmedLeadsByPlatform,
+  type ConfirmedLeadChannelRow,
+} from "@/lib/leads-fetcher";
 import { PLATFORM_COLORS } from "@/lib/platform-colors";
 import {
   resolvePlatformIdFromSourceKey,
@@ -1165,6 +1169,51 @@ function applyPlatformConversions(
   }
 }
 
+function applyChannelLeadConversions(
+  planVsFactRows: PlanVsFactItem[],
+  channelTimeseries: NonNullable<DashboardData["channel_timeseries"]>,
+  leadRows: ConfirmedLeadChannelRow[],
+  spendSource: "platform_actual" | "media_plan_derived",
+): void {
+  if (!leadRows.length) return;
+
+  const planRowByChannel = new Map(planVsFactRows.map((row) => [row.channel, row] as const));
+
+  for (const leadRow of leadRows) {
+    const planRow = planRowByChannel.get(leadRow.bound_channel);
+    if (!planRow) continue;
+
+    planRow.conversions_fact += leadRow.leads;
+
+    let factRow = channelTimeseries.find(
+      (row) => row.date === leadRow.date && row.channel === leadRow.bound_channel,
+    );
+
+    if (!factRow) {
+      factRow = {
+        date: leadRow.date,
+        channel: leadRow.bound_channel,
+        instrument: planRow.instrument,
+        impressions: 0,
+        reach: 0,
+        clicks: 0,
+        spend: 0,
+        views: 0,
+        conversions: 0,
+      };
+      channelTimeseries.push(factRow);
+    }
+
+    factRow.conversions += leadRow.leads;
+
+    if (spendSource === "media_plan_derived" && planRow.buy_type === "CPA" && planRow.cpa_plan > 0) {
+      factRow.spend = Number((factRow.spend + leadRow.leads * planRow.cpa_plan).toFixed(2));
+    }
+  }
+
+  channelTimeseries.sort((a, b) => a.date.localeCompare(b.date) || a.channel.localeCompare(b.channel));
+}
+
 export async function GET(
   request: Request,
   context: { params: Promise<{ id: string }> | { id: string } },
@@ -1546,10 +1595,6 @@ export async function GET(
       frequencyOverrideMap,
       manualChannels,
     );
-    const planVsFact =
-      spendSource === "media_plan_derived"
-        ? applyPlanBasedPlanVsFactSpend(planVsFactBase)
-        : planVsFactBase;
     const channelTimeseries = await buildChannelTimeseries(
       planByChannel,
       bindingsByChannel,
@@ -1558,6 +1603,31 @@ export async function GET(
       range.to,
       frequencyOverrideMap,
     );
+
+    for (const source of sourceRows) {
+      if (source.platform !== "leads" || source.role !== "actual") {
+        continue;
+      }
+
+      try {
+        const sourceConfig = parseJson(source.source_config);
+        const currentChannelConversions = await aggregateConfirmedLeadsByCanonicalChannel(
+          sourceConfig,
+          availablePlatformIds,
+          planVsFactBase.map((row) => row.channel),
+          range.from,
+          range.to,
+        );
+        applyChannelLeadConversions(planVsFactBase, channelTimeseries ?? [], currentChannelConversions, spendSource);
+      } catch (leadsError) {
+        console.warn("Confirmed leads channel merge failed:", leadsError);
+      }
+    }
+
+    const planVsFact =
+      spendSource === "media_plan_derived"
+        ? applyPlanBasedPlanVsFactSpend(planVsFactBase)
+        : planVsFactBase;
     const channelPerformance = mergeManualChannelPerformance(buildChannelPerformance(
       planVsFact,
       channelTimeseries,
