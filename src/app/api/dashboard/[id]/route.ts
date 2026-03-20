@@ -1131,6 +1131,29 @@ function buildPlanBasedTimeseriesSpend(
   });
 }
 
+function deriveFactSpendFromPlanRow(row: PlanVsFactItem): number {
+  if (row.buy_type === "CPC" && row.cpc_plan > 0) {
+    return row.clicks_fact * row.cpc_plan;
+  }
+  if (row.buy_type === "CPV" && row.cpv_plan > 0) {
+    return row.views_fact * row.cpv_plan;
+  }
+  if (row.buy_type === "CPA" && row.cpa_plan > 0) {
+    return row.conversions_fact * row.cpa_plan;
+  }
+  if (row.cpm_plan > 0) {
+    return (row.impressions_fact / 1000) * row.cpm_plan;
+  }
+  return 0;
+}
+
+function applyPlanBasedPlanVsFactSpend(rows: PlanVsFactItem[]): PlanVsFactItem[] {
+  return rows.map((row) => ({
+    ...row,
+    budget_fact: Number(deriveFactSpendFromPlanRow(row).toFixed(2)),
+  }));
+}
+
 function applyPlatformConversions(
   rows: PlatformStats[],
   conversionsByPlatform: Record<string, number>,
@@ -1523,7 +1546,10 @@ export async function GET(
       frequencyOverrideMap,
       manualChannels,
     );
-    const planVsFact = planVsFactBase;
+    const planVsFact =
+      spendSource === "media_plan_derived"
+        ? applyPlanBasedPlanVsFactSpend(planVsFactBase)
+        : planVsFactBase;
     const channelTimeseries = await buildChannelTimeseries(
       planByChannel,
       bindingsByChannel,
