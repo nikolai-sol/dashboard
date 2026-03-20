@@ -215,12 +215,12 @@ function MetricCell({
     summary.completion_pct === null ? null : `${summary.completion_pct.toFixed(0)}%`;
 
   return (
-    <div
+      <div
       className={`text-right ${muted ? "text-slate-400" : "text-slate-700"}`}
       title={metricTooltip(metric, summary, currencyFormatter, locale, labels)}
     >
-      <div className={`text-base font-semibold ${muted ? "text-slate-400" : "text-slate-800"}`}>{fact}</div>
-      <div className="mt-0.5 flex items-center justify-end gap-1 text-[11px]">
+      <div className={`text-sm font-semibold sm:text-base ${muted ? "text-slate-400" : "text-slate-800"}`}>{fact}</div>
+      <div className="mt-0.5 flex items-center justify-end gap-1 text-[10px] sm:text-[11px]">
         {summary.completion_pct !== null ? <span className={`h-2 w-2 rounded-full ${statusDotClass(summary.status)}`} /> : null}
         <span>{plan}</span>
         {completionText ? <span className="text-slate-400">· {completionText}</span> : null}
@@ -266,13 +266,13 @@ export default function PlanVsFact({
           {copy.noRows}
         </div>
       ) : (
-        <div className="overflow-x-auto">
-          <table className="w-full min-w-[860px] border-collapse text-sm">
+      <div className="overflow-x-auto">
+          <table className="w-full min-w-[760px] border-collapse text-xs sm:min-w-[860px] sm:text-sm">
             <thead>
-              <tr className="border-b border-slate-200 text-xs uppercase tracking-[0.08em] text-slate-500">
-                <th className="px-3 py-2 text-left">{copy.channel}</th>
+              <tr className="border-b border-slate-200 text-[10px] uppercase tracking-[0.08em] text-slate-500 sm:text-xs">
+                <th className="px-2 py-2 text-left sm:px-3">{copy.channel}</th>
                 {metrics.map((metric) => (
-                  <th key={metric} className="px-3 py-2 text-right">
+                  <th key={metric} className="px-2 py-2 text-right sm:px-3">
                     {copy.metrics[metric] ?? metricLabel(metric)}
                   </th>
                 ))}
@@ -287,7 +287,7 @@ export default function PlanVsFact({
                     <tr
                       className={`border-b border-slate-100 ${row.plan_only ? "bg-slate-50" : ""}`}
                     >
-                      <td className="px-3 py-3 font-medium text-slate-800">
+                      <td className="px-2 py-3 font-medium text-slate-800 sm:px-3">
                         <button
                           type="button"
                           disabled={!expandable || pdfMode}
@@ -304,7 +304,7 @@ export default function PlanVsFact({
                         </button>
                       </td>
                       {metrics.map((metric) => (
-                        <td key={`${row.channel}-${metric}`} className="px-3 py-3 align-top">
+                        <td key={`${row.channel}-${metric}`} className="px-2 py-3 align-top sm:px-3">
                           <MetricCell
                             metric={metric}
                             summary={row.metrics[metric]}
@@ -318,11 +318,11 @@ export default function PlanVsFact({
                     </tr>
                     {expanded && row.months?.map((month) => (
                       <tr key={`${row.channel}-${month.month}`} className="border-b border-slate-100 bg-slate-50/60">
-                        <td className="px-3 py-2 pl-8 text-xs font-medium uppercase tracking-[0.08em] text-slate-500">
+                        <td className="px-2 py-2 pl-6 text-[10px] font-medium uppercase tracking-[0.08em] text-slate-500 sm:px-3 sm:pl-8 sm:text-xs">
                           {month.month}
                         </td>
                         {metrics.map((metric) => (
-                          <td key={`${row.channel}-${month.month}-${metric}`} className="px-3 py-2 align-top">
+                          <td key={`${row.channel}-${month.month}-${metric}`} className="px-2 py-2 align-top sm:px-3">
                             <MetricCell
                               metric={metric}
                               summary={month.metrics[metric]}
@@ -339,9 +339,9 @@ export default function PlanVsFact({
                 );
               })}
               <tr className="bg-slate-50 font-semibold">
-                <td className="px-3 py-3 text-slate-900">{copy.total}</td>
+                <td className="px-2 py-3 text-slate-900 sm:px-3">{copy.total}</td>
                 {metrics.map((metric) => (
-                  <td key={`total-${metric}`} className="px-3 py-3 align-top">
+                  <td key={`total-${metric}`} className="px-2 py-3 align-top sm:px-3">
                     <MetricCell
                       metric={metric}
                       summary={sumMetric(rows, metric)}

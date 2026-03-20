@@ -293,12 +293,12 @@ export default function PlatformPlanVsFact({
         </div>
       ) : (
         <div className="overflow-x-auto">
-          <table className="w-full min-w-[860px] border-collapse text-sm">
+          <table className="w-full min-w-[760px] border-collapse text-xs sm:min-w-[860px] sm:text-sm">
             <thead>
-              <tr className="border-b border-slate-200 text-xs uppercase tracking-[0.08em] text-slate-500">
-                <th className="px-3 py-2 text-left">{copy.platform}</th>
+              <tr className="border-b border-slate-200 text-[10px] uppercase tracking-[0.08em] text-slate-500 sm:text-xs">
+                <th className="px-2 py-2 text-left sm:px-3">{copy.platform}</th>
                 {metrics.map((metric) => (
-                  <th key={metric} className="px-3 py-2 text-right">
+                  <th key={metric} className="px-2 py-2 text-right sm:px-3">
                     {copy.metrics[metric] ?? metric.toUpperCase()}
                   </th>
                 ))}
@@ -307,7 +307,7 @@ export default function PlatformPlanVsFact({
             <tbody>
               {platformRows.map((row) => (
                 <tr key={row.id} className="border-b border-slate-100">
-                  <td className="px-3 py-2 font-medium text-slate-800">{row.label}</td>
+                  <td className="px-2 py-2 font-medium text-slate-800 sm:px-3">{row.label}</td>
                   {metrics.map((metric) => {
                     const summary = summarizeMetric(row, metric);
                     const fact = formatMetricValue(summary.fact, metric, currencyFormatter, locale);
@@ -315,9 +315,9 @@ export default function PlatformPlanVsFact({
                     const completion =
                       summary.completion_pct === null ? null : `${summary.completion_pct.toFixed(0)}%`;
                     return (
-                      <td key={`${row.id}-${metric}`} className="px-3 py-2 text-right">
-                        <div className="text-base font-semibold text-slate-800">{fact}</div>
-                        <div className="mt-0.5 text-[11px] text-slate-500">
+                      <td key={`${row.id}-${metric}`} className="px-2 py-2 text-right sm:px-3">
+                        <div className="text-sm font-semibold text-slate-800 sm:text-base">{fact}</div>
+                        <div className="mt-0.5 text-[10px] text-slate-500 sm:text-[11px]">
                           {plan}
                           {completion ? <span className="text-slate-400"> · {completion}</span> : null}
                         </div>
@@ -327,7 +327,7 @@ export default function PlatformPlanVsFact({
                 </tr>
               ))}
               <tr className="bg-slate-50 font-semibold">
-                <td className="px-3 py-2 text-slate-900">{copy.total}</td>
+                <td className="px-2 py-2 text-slate-900 sm:px-3">{copy.total}</td>
                 {metrics.map((metric) => {
                   const summary = summarizeMetric(totalRow, metric);
                   const fact = formatMetricValue(summary.fact, metric, currencyFormatter, locale);
@@ -335,9 +335,9 @@ export default function PlatformPlanVsFact({
                   const completion =
                     summary.completion_pct === null ? null : `${summary.completion_pct.toFixed(0)}%`;
                   return (
-                    <td key={`total-${metric}`} className="px-3 py-2 text-right text-slate-900">
+                    <td key={`total-${metric}`} className="px-2 py-2 text-right text-slate-900 sm:px-3">
                       <div>{fact}</div>
-                      <div className="mt-0.5 text-[11px] text-slate-500">
+                      <div className="mt-0.5 text-[10px] text-slate-500 sm:text-[11px]">
                         {plan}
                         {completion ? <span className="text-slate-400"> · {completion}</span> : null}
                       </div>

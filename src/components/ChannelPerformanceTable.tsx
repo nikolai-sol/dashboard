@@ -201,18 +201,18 @@ export default function ChannelPerformanceTable({
         </div>
       ) : (
         <div className="overflow-x-auto">
-          <table className="w-full min-w-[820px] border-collapse text-sm">
+          <table className="w-full min-w-[760px] border-collapse text-xs sm:min-w-[820px] sm:text-sm">
             <thead>
-              <tr className="border-b border-slate-200 text-xs uppercase tracking-[0.08em] text-slate-500">
-                <th className="px-3 py-2 text-left">
+              <tr className="border-b border-slate-200 text-[10px] uppercase tracking-[0.08em] text-slate-500 sm:text-xs">
+                <th className="px-2 py-2 text-left sm:px-3">
                   <button type="button" onClick={() => handleSort("name")} className="inline-flex items-center gap-1">
                     {copy.channel} {sortIcon("name")}
                   </button>
                 </th>
-                <th className="px-3 py-2 text-left">{copy.instrument}</th>
-                <th className="px-3 py-2 text-left">{copy.buyType}</th>
+                <th className="px-2 py-2 text-left sm:px-3">{copy.instrument}</th>
+                <th className="px-2 py-2 text-left sm:px-3">{copy.buyType}</th>
                 {metrics.map((metric) => (
-                  <th key={metric} className="px-3 py-2 text-right">
+                  <th key={metric} className="px-2 py-2 text-right sm:px-3">
                     <button type="button" onClick={() => handleSort(metric)} className="inline-flex items-center gap-1">
                       {copy.metrics[metric] ?? metricLabel(metric)} {sortIcon(metric)}
                     </button>
@@ -223,11 +223,11 @@ export default function ChannelPerformanceTable({
             <tbody>
               {sortedRows.map(({ row }) => (
                 <tr key={`${row.channel}-${row.buy_type}`} className="border-b border-slate-100">
-                  <td className="px-3 py-2 font-medium text-slate-800">{row.channel}</td>
-                  <td className="px-3 py-2 text-slate-600">{row.instrument || "-"}</td>
-                  <td className="px-3 py-2 text-slate-600">{row.buy_type.toUpperCase()}</td>
+                  <td className="px-2 py-2 font-medium text-slate-800 sm:px-3">{row.channel}</td>
+                  <td className="px-2 py-2 text-slate-600 sm:px-3">{row.instrument || "-"}</td>
+                  <td className="px-2 py-2 text-slate-600 sm:px-3">{row.buy_type.toUpperCase()}</td>
                   {metrics.map((metric) => (
-                    <td key={`${row.channel}-${metric}`} className="px-3 py-2 text-right">
+                    <td key={`${row.channel}-${metric}`} className="px-2 py-2 text-right sm:px-3">
                       {formatMetricValue(metricValue(row, metric), metric, currencyFormatter, locale)}
                     </td>
                   ))}
@@ -235,11 +235,11 @@ export default function ChannelPerformanceTable({
               ))}
 
               <tr className="bg-slate-50 font-semibold">
-                <td className="px-3 py-2 text-slate-900">{copy.total}</td>
-                <td className="px-3 py-2 text-slate-400">-</td>
-                <td className="px-3 py-2 text-slate-400">-</td>
+                <td className="px-2 py-2 text-slate-900 sm:px-3">{copy.total}</td>
+                <td className="px-2 py-2 text-slate-400 sm:px-3">-</td>
+                <td className="px-2 py-2 text-slate-400 sm:px-3">-</td>
                 {metrics.map((metric) => (
-                  <td key={`total-${metric}`} className="px-3 py-2 text-right text-slate-900">
+                  <td key={`total-${metric}`} className="px-2 py-2 text-right text-slate-900 sm:px-3">
                     {formatMetricValue(sumMetric(rows, metric), metric, currencyFormatter, locale)}
                   </td>
                 ))}

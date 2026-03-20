@@ -118,66 +118,66 @@ export default function PlatformTable({
       <h3 className="mb-4 text-base font-semibold text-slate-900">{copy.title}</h3>
 
       <div className="overflow-x-auto">
-        <table className="w-full min-w-[930px] border-collapse text-sm">
+        <table className="w-full min-w-[760px] border-collapse text-xs sm:min-w-[930px] sm:text-sm">
           <thead>
-            <tr className="border-b border-slate-200 text-xs uppercase tracking-[0.08em] text-slate-500">
-              <th className="px-3 py-2 text-left">
+            <tr className="border-b border-slate-200 text-[10px] uppercase tracking-[0.08em] text-slate-500 sm:text-xs">
+              <th className="px-2 py-2 text-left sm:px-3">
                 <button type="button" onClick={() => handleSort("name")} className="inline-flex items-center gap-1">
                   {copy.platform} {sortIcon("name")}
                 </button>
               </th>
-              <th className="px-3 py-2 text-right">
+              <th className="px-2 py-2 text-right sm:px-3">
                 <button type="button" onClick={() => handleSort("impressions")} className="inline-flex items-center gap-1">
                   {copy.impressions} {sortIcon("impressions")}
                 </button>
               </th>
-              <th className="px-3 py-2 text-right">
+              <th className="px-2 py-2 text-right sm:px-3">
                 <button type="button" onClick={() => handleSort("clicks")} className="inline-flex items-center gap-1">
                   {copy.clicks} {sortIcon("clicks")}
                 </button>
               </th>
-              <th className="px-3 py-2 text-right">
+              <th className="px-2 py-2 text-right sm:px-3">
                 <button type="button" onClick={() => handleSort("ctr")} className="inline-flex items-center gap-1">
                   {copy.ctr} {sortIcon("ctr")}
                 </button>
               </th>
               {showSpend ? (
                 <>
-                  <th className="px-3 py-2 text-right">
+                  <th className="px-2 py-2 text-right sm:px-3">
                     <button type="button" onClick={() => handleSort("cpm")} className="inline-flex items-center gap-1">
                       {copy.cpm} {sortIcon("cpm")}
                     </button>
                   </th>
-                  <th className="px-3 py-2 text-right">
+                  <th className="px-2 py-2 text-right sm:px-3">
                     <button type="button" onClick={() => handleSort("spend")} className="inline-flex items-center gap-1">
                       {copy.spend} {sortIcon("spend")}
                     </button>
                   </th>
                 </>
               ) : null}
-              <th className="px-3 py-2 text-right">{copy.trend}</th>
+              <th className="px-2 py-2 text-right sm:px-3">{copy.trend}</th>
             </tr>
           </thead>
           <tbody>
             {sortedRows.map((row) => (
               <tr key={row.id} className="border-b border-slate-100">
-                <td className="px-3 py-2">
+                <td className="px-2 py-2 sm:px-3">
                   <div className="flex items-center gap-2 font-medium text-slate-800">
                     <span className="h-2.5 w-2.5 rounded-full" style={{ backgroundColor: row.color }} />
                     {row.name}
                   </div>
                 </td>
-                <td className="px-3 py-2 text-right">{row.impressions.toLocaleString(locale)}</td>
-                <td className="px-3 py-2 text-right">{row.clicks.toLocaleString(locale)}</td>
-                <td className="px-3 py-2 text-right">{row.ctr.toFixed(2)}%</td>
+                <td className="px-2 py-2 text-right sm:px-3">{row.impressions.toLocaleString(locale)}</td>
+                <td className="px-2 py-2 text-right sm:px-3">{row.clicks.toLocaleString(locale)}</td>
+                <td className="px-2 py-2 text-right sm:px-3">{row.ctr.toFixed(2)}%</td>
                 {showSpend ? (
                   <>
-                    <td className="px-3 py-2 text-right">{currencyFormatter(row.cpm)}</td>
-                    <td className="px-3 py-2 text-right font-mono">{currencyFormatter(row.spend)}</td>
+                    <td className="px-2 py-2 text-right sm:px-3">{currencyFormatter(row.cpm)}</td>
+                    <td className="px-2 py-2 text-right font-mono sm:px-3">{currencyFormatter(row.spend)}</td>
                   </>
                 ) : null}
-                <td className="px-3 py-2">
-                  <div className="ml-auto h-10 w-28">
+                <td className="px-2 py-2 sm:px-3">
+                  <div className="ml-auto h-10 w-20 sm:w-28">
                     <ResponsiveContainer width="100%" height="100%">
                       <LineChart data={sparklineMap.get(row.id) ?? []}>
                         <RechartsTooltip
@@ -206,17 +206,17 @@ export default function PlatformTable({
             ))}
 
             <tr className="bg-slate-50 font-semibold">
-              <td className="px-3 py-2 text-slate-900">{copy.total}</td>
-              <td className="px-3 py-2 text-right text-slate-900">{totals.impressions.toLocaleString(locale)}</td>
-              <td className="px-3 py-2 text-right text-slate-900">{totals.clicks.toLocaleString(locale)}</td>
-              <td className="px-3 py-2 text-right text-slate-900">{totalCtr.toFixed(2)}%</td>
+              <td className="px-2 py-2 text-slate-900 sm:px-3">{copy.total}</td>
+              <td className="px-2 py-2 text-right text-slate-900 sm:px-3">{totals.impressions.toLocaleString(locale)}</td>
+              <td className="px-2 py-2 text-right text-slate-900 sm:px-3">{totals.clicks.toLocaleString(locale)}</td>
+              <td className="px-2 py-2 text-right text-slate-900 sm:px-3">{totalCtr.toFixed(2)}%</td>
               {showSpend ? (
                 <>
-                  <td className="px-3 py-2 text-right text-slate-900">{currencyFormatter(totalCpm)}</td>
-                  <td className="px-3 py-2 text-right font-mono text-slate-900">{currencyFormatter(totals.spend)}</td>
+                  <td className="px-2 py-2 text-right text-slate-900 sm:px-3">{currencyFormatter(totalCpm)}</td>
+                  <td className="px-2 py-2 text-right font-mono text-slate-900 sm:px-3">{currencyFormatter(totals.spend)}</td>
                 </>
               ) : null}
-              <td className="px-3 py-2 text-right text-slate-400">-</td>
+              <td className="px-2 py-2 text-right text-slate-400 sm:px-3">-</td>
             </tr>
           </tbody>
         </table>
