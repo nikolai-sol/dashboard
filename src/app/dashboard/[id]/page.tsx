@@ -89,6 +89,7 @@ export default function DashboardByIdPage() {
   const initialFrom = searchParams.get("from") ?? "";
   const initialTo = searchParams.get("to") ?? "";
   const isPdfMode = searchParams.get("pdf") === "true";
+  const isMobileMode = searchParams.get("mobile") === "1";
 
   const [dashboard, setDashboard] = useState<DashboardData | null>(null);
   const [selectedPlatforms, setSelectedPlatforms] = useState<string[]>([]);
@@ -532,6 +533,7 @@ export default function DashboardByIdPage() {
               data={filteredPlatforms}
               currencyFormatter={(value) => money(value, currencyCode, locale)}
               pdfMode={isPdfMode}
+              forceMobile={isMobileMode}
               labels={{
                 title: i18n.sections.spendByPlatform,
                 shareOfTotal: i18n.spend.shareOfTotal,
@@ -751,6 +753,7 @@ export default function DashboardByIdPage() {
         className={`mx-auto flex min-h-screen w-full max-w-[1400px] items-center justify-center px-4 py-6 sm:px-6 lg:px-8 ${
           isPdfMode ? "pdf-mode" : ""
         }`}
+        style={isMobileMode ? ({ maxWidth: "430px" } as CSSProperties) : undefined}
       >
         <p className="text-sm text-slate-500">{i18n.common.loadingDashboard}</p>
       </main>
@@ -767,6 +770,7 @@ export default function DashboardByIdPage() {
     <main
       data-dashboard-ready="true"
       className={`mx-auto min-h-screen w-full max-w-[1400px] px-4 py-6 sm:px-6 lg:px-8 ${isPdfMode ? "pdf-mode" : ""}`}
+      style={isMobileMode ? ({ maxWidth: "430px" } as CSSProperties) : undefined}
     >
       <DashboardHeader
         clientName={clientName}

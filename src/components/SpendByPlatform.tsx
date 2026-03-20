@@ -9,6 +9,7 @@ type SpendByPlatformProps = {
   data: PlatformStats[];
   currencyFormatter: (value: number) => string;
   pdfMode?: boolean;
+  forceMobile?: boolean;
   locale?: string;
   labels?: {
     title: string;
@@ -43,6 +44,7 @@ export default function SpendByPlatform({
   data,
   currencyFormatter,
   pdfMode = false,
+  forceMobile = false,
   locale = "en-US",
   labels,
 }: SpendByPlatformProps) {
@@ -65,7 +67,7 @@ export default function SpendByPlatform({
     return () => window.removeEventListener("resize", update);
   }, []);
 
-  const isMobile = viewportWidth < 640;
+  const isMobile = forceMobile || viewportWidth < 640;
   const chartMargin = isMobile
     ? { top: 10, right: 10, bottom: 28, left: 94 }
     : { top: 10, right: 90, bottom: 20, left: 110 };
