@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import DashboardPreview from "@/components/admin/DashboardPreview";
 import WizardStep1 from "@/components/admin/WizardStep1";
@@ -206,8 +206,19 @@ export default function DashboardWizard({ dashboardId }: DashboardWizardProps) {
   const [loading, setLoading] = useState(Boolean(dashboardId));
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [saveMessage, setSaveMessage] = useState<string | null>(null);
+  const [dirty, setDirty] = useState(false);
+  const isHydratingRef = useRef(false);
 
   const isEdit = Boolean(dashboardId);
+
+  const handleFormChange = (next: DashboardFormData) => {
+    setFormData(next);
+    if (!isHydratingRef.current) {
+      setDirty(true);
+      setSaveMessage(null);
+    }
+  };
 
   useEffect(() => {
     async function loadPlatforms() {
@@ -237,6 +248,7 @@ export default function DashboardWizard({ dashboardId }: DashboardWizardProps) {
 
         const config = (dash.config ?? {}) as Record<string, unknown>;
         const fallbackRange = currentMonthRange();
+        isHydratingRef.current = true;
         setFormData({
           client_id: String(dash.client_id ?? ""),
           client_name: String(dash.client_name ?? ""),
@@ -313,9 +325,13 @@ export default function DashboardWizard({ dashboardId }: DashboardWizardProps) {
                 )
             : [],
         });
+        setDirty(false);
+        setSaveMessage(null);
+        setError(null);
       } catch (err) {
         setError(err instanceof Error ? err.message : "Failed to load dashboard");
       } finally {
+        isHydratingRef.current = false;
         setLoading(false);
       }
     }
@@ -337,21 +353,100 @@ export default function DashboardWizard({ dashboardId }: DashboardWizardProps) {
 
   const canJumpToStep = (targetStep: number) => targetStep <= furthestAvailableStep;
 
-  const submit = async () => {
+  const prepareFormDataForSave = async (input: DashboardFormData): Promise<DashboardFormData> => {
+    const nextSources = [...input.sources];
+    let changed = false;
+
+    for (let index = 0; index < nextSources.length; index += 1) {
+      const source = nextSources[index];
+      if (source.platform !== "leads" || source.role !== "actual") {
+        continue;
+      }
+
+      const sourceConfig =
+        source.source_config && typeof source.source_config === "object"
+          ? (source.source_config as Record<string, unknown>)
+          : {};
+      const review =
+        sourceConfig.review && typeof sourceConfig.review === "object"
+          ? (sourceConfig.review as Record<string, unknown>)
+          : {};
+      const status = String(review.status ?? "").trim().toLowerCase();
+      const hasInlineRows = Array.isArray(sourceConfig.inline_rows) && sourceConfig.inline_rows.length > 0;
+
+      if (status === "confirmed" && hasInlineRows) {
+        continue;
+      }
+
+      const response = await fetch("/api/admin/leads/confirm", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          source_config: sourceConfig,
+          dashboard: {
+            ...input,
+            sources: nextSources,
+          },
+        }),
+      });
+      const json = (await response.json()) as {
+        error?: string;
+        details?: string;
+        reviewed_source_config?: Record<string, unknown>;
+      };
+      if (!response.ok || !json.reviewed_source_config) {
+        throw new Error(
+          json.details
+            ? `${json.error ?? "Failed to confirm leads source"}: ${json.details}`
+            : json.error ?? "Failed to confirm leads source",
+        );
+      }
+
+      nextSources[index] = {
+        ...source,
+        source_config: json.reviewed_source_config,
+      };
+      changed = true;
+    }
+
+    if (!changed) {
+      return input;
+    }
+
+    return {
+      ...input,
+      sources: nextSources,
+    };
+  };
+
+  const persistDashboard = async (opts?: { manual?: boolean }): Promise<boolean> => {
+    const manual = Boolean(opts?.manual);
+    if (saving) return false;
+
     setSaving(true);
     setError(null);
+    if (manual) {
+      setSaveMessage(null);
+    }
 
     try {
+      const prepared = await prepareFormDataForSave(formData);
+      if (prepared !== formData) {
+        isHydratingRef.current = true;
+        setFormData(prepared);
+        isHydratingRef.current = false;
+      }
+
       const endpoint = isEdit ? `/api/admin/dashboards/${dashboardId}` : "/api/admin/dashboards";
       const method = isEdit ? "PUT" : "POST";
-
       const response = await fetch(endpoint, {
         method,
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(formData),
+        body: JSON.stringify(prepared),
       });
 
       const json = (await response.json()) as {
+        id?: number;
         error?: string;
         details?: string;
         message?: string;
@@ -360,16 +455,36 @@ export default function DashboardWizard({ dashboardId }: DashboardWizardProps) {
         const msg = json.error ?? `HTTP ${response.status}`;
         const details = json.details ?? json.message;
         setError(details ? `${msg}: ${details}` : msg);
-        return;
+        return false;
       }
 
-      router.push("/admin/dashboards");
+      setDirty(false);
+      setSaveMessage(manual ? "Changes saved." : "Changes auto-saved.");
+
+      if (!isEdit && json.id) {
+        router.replace(`/admin/dashboards/${json.id}/edit`);
+      }
       router.refresh();
+      return true;
     } catch (err) {
       setError(err instanceof Error ? err.message : "Save failed");
+      return false;
     } finally {
       setSaving(false);
     }
+  };
+
+  const handleStepChange = async (targetStep: number) => {
+    if (targetStep === step || !canJumpToStep(targetStep)) return;
+    if (isEdit && dirty) {
+      const saved = await persistDashboard();
+      if (!saved) return;
+    }
+    setStep(targetStep);
+  };
+
+  const submit = async () => {
+    await persistDashboard({ manual: true });
   };
 
   if (loading) {
@@ -384,8 +499,8 @@ export default function DashboardWizard({ dashboardId }: DashboardWizardProps) {
             <button
               type="button"
               key={label}
-              onClick={() => canJumpToStep(idx) && setStep(idx)}
-              disabled={!canJumpToStep(idx)}
+              onClick={() => void handleStepChange(idx)}
+              disabled={!canJumpToStep(idx) || saving}
               className={`rounded-full px-3 py-1 text-xs font-semibold ${
                 idx === step
                   ? "bg-indigo-600 text-white"
@@ -401,22 +516,28 @@ export default function DashboardWizard({ dashboardId }: DashboardWizardProps) {
       </div>
 
       <div className="rounded-xl border border-slate-200 bg-white p-5">
-        {step === 0 ? <WizardStep1 data={formData} onChange={setFormData} /> : null}
-        {step === 1 ? <WizardStep2 data={formData} platforms={platforms} onChange={setFormData} /> : null}
-        {step === 2 ? <WizardStep3 data={formData} onChange={setFormData} /> : null}
+        {step === 0 ? <WizardStep1 data={formData} onChange={handleFormChange} /> : null}
+        {step === 1 ? <WizardStep2 data={formData} platforms={platforms} onChange={handleFormChange} /> : null}
+        {step === 2 ? <WizardStep3 data={formData} onChange={handleFormChange} /> : null}
         {step === 3 ? (
-          <WizardStepBinding data={formData} onChange={setFormData} />
+          <WizardStepBinding data={formData} onChange={handleFormChange} />
         ) : null}
         {step === 4 ? (
-          <WizardStepFrequency data={formData} onChange={setFormData} />
+          <WizardStepFrequency data={formData} onChange={handleFormChange} />
         ) : null}
         {step === 5 ? (
           <div className="space-y-4">
-            <WizardStep4 data={formData} onChange={setFormData} />
+            <WizardStep4 data={formData} onChange={handleFormChange} />
             <DashboardPreview data={formData} />
           </div>
         ) : null}
       </div>
+
+      {saveMessage ? (
+        <div className="rounded-xl border border-emerald-200 bg-emerald-50 px-4 py-3 text-sm text-emerald-700">
+          {saveMessage}
+        </div>
+      ) : null}
 
       {error ? (
         <div className="rounded-xl border border-rose-200 bg-rose-50 px-4 py-3 text-sm text-rose-700">
@@ -427,8 +548,8 @@ export default function DashboardWizard({ dashboardId }: DashboardWizardProps) {
       <div className="flex flex-wrap items-center justify-between gap-2">
         <button
           type="button"
-          onClick={() => setStep((prev) => Math.max(prev - 1, 0))}
-          disabled={step === 0}
+          onClick={() => void handleStepChange(Math.max(step - 1, 0))}
+          disabled={step === 0 || saving}
           className="rounded-lg border border-slate-300 px-4 py-2 text-sm disabled:cursor-not-allowed disabled:opacity-50"
         >
           Back
@@ -438,11 +559,11 @@ export default function DashboardWizard({ dashboardId }: DashboardWizardProps) {
           {step < STEPS.length - 1 ? (
             <button
               type="button"
-              onClick={() => setStep((prev) => Math.min(prev + 1, STEPS.length - 1))}
-              disabled={!stepValid}
+              onClick={() => void handleStepChange(Math.min(step + 1, STEPS.length - 1))}
+              disabled={!stepValid || saving}
               className="rounded-lg bg-indigo-600 px-4 py-2 text-sm text-white disabled:cursor-not-allowed disabled:opacity-50"
             >
-              Next
+              {saving ? "Saving..." : "Next"}
             </button>
           ) : (
             <button
