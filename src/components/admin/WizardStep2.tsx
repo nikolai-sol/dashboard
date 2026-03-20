@@ -143,6 +143,11 @@ type LeadsAnalysis = {
   }>;
 };
 
+type LeadsConfirmResponse = {
+  analysis: LeadsAnalysis;
+  reviewed_source_config: Record<string, unknown>;
+};
+
 function severityClass(severity: "error" | "warn" | "info") {
   if (severity === "error") return "border-rose-200 bg-rose-50 text-rose-700";
   if (severity === "warn") return "border-amber-200 bg-amber-50 text-amber-700";
@@ -183,6 +188,9 @@ export default function WizardStep2({ data, platforms, onChange }: WizardStep2Pr
   const [leadsAnalysisBySource, setLeadsAnalysisBySource] = useState<Record<number, LeadsAnalysis | null>>({});
   const [leadsAnalysisLoadingBySource, setLeadsAnalysisLoadingBySource] = useState<Record<number, boolean>>({});
   const [leadsAnalysisErrorBySource, setLeadsAnalysisErrorBySource] = useState<Record<number, string | null>>({});
+  const [leadsConfirmLoadingBySource, setLeadsConfirmLoadingBySource] = useState<Record<number, boolean>>({});
+  const [leadsConfirmErrorBySource, setLeadsConfirmErrorBySource] = useState<Record<number, string | null>>({});
+  const [leadsConfirmMessageBySource, setLeadsConfirmMessageBySource] = useState<Record<number, string | null>>({});
 
   const mysqlPlatforms = useMemo(
     () => platforms.filter((platform) => platform.source === "mysql"),
@@ -668,6 +676,8 @@ export default function WizardStep2({ data, platforms, onChange }: WizardStep2Pr
     if (patch.sheet_url !== undefined || patch.upload_file !== undefined) {
       setLeadsAnalysisBySource((prev) => ({ ...prev, [index]: null }));
       setLeadsAnalysisErrorBySource((prev) => ({ ...prev, [index]: null }));
+      setLeadsConfirmErrorBySource((prev) => ({ ...prev, [index]: null }));
+      setLeadsConfirmMessageBySource((prev) => ({ ...prev, [index]: null }));
     }
   };
 
@@ -680,6 +690,16 @@ export default function WizardStep2({ data, platforms, onChange }: WizardStep2Pr
       return copy;
     });
     setLeadsAnalysisErrorBySource((prev) => {
+      const copy = { ...prev };
+      delete copy[index];
+      return copy;
+    });
+    setLeadsConfirmErrorBySource((prev) => {
+      const copy = { ...prev };
+      delete copy[index];
+      return copy;
+    });
+    setLeadsConfirmMessageBySource((prev) => {
       const copy = { ...prev };
       delete copy[index];
       return copy;
@@ -706,6 +726,8 @@ export default function WizardStep2({ data, platforms, onChange }: WizardStep2Pr
     if (!source) return;
     setLeadsAnalysisLoadingBySource((prev) => ({ ...prev, [index]: true }));
     setLeadsAnalysisErrorBySource((prev) => ({ ...prev, [index]: null }));
+    setLeadsConfirmErrorBySource((prev) => ({ ...prev, [index]: null }));
+    setLeadsConfirmMessageBySource((prev) => ({ ...prev, [index]: null }));
     try {
       const response = await fetch("/api/admin/leads/preview", {
         method: "POST",
@@ -798,6 +820,71 @@ export default function WizardStep2({ data, platforms, onChange }: WizardStep2Pr
         },
       };
     });
+  };
+
+  const confirmLeadsSource = async (index: number) => {
+    const source = leadsSources[index];
+    if (!source) return;
+
+    const review =
+      source.source_config?.review && typeof source.source_config.review === "object"
+        ? (source.source_config.review as Record<string, unknown>)
+        : {};
+    const platformBindings =
+      review.platform_bindings && typeof review.platform_bindings === "object"
+        ? Object.fromEntries(
+            Object.entries(review.platform_bindings as Record<string, unknown>).map(([key, value]) => [
+              key,
+              String(value ?? ""),
+            ]),
+          )
+        : {};
+
+    setLeadsConfirmLoadingBySource((prev) => ({ ...prev, [index]: true }));
+    setLeadsConfirmErrorBySource((prev) => ({ ...prev, [index]: null }));
+    setLeadsConfirmMessageBySource((prev) => ({ ...prev, [index]: null }));
+
+    try {
+      const response = await fetch("/api/admin/leads/confirm", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          source_config: source.source_config ?? {},
+          selected_platforms: leadsBindingTargets,
+          platform_bindings: platformBindings,
+        }),
+      });
+      const json = (await response.json()) as Partial<LeadsConfirmResponse> & { error?: string };
+      if (!response.ok) {
+        throw new Error(json.error ?? `HTTP ${response.status}`);
+      }
+      if (!json.reviewed_source_config) {
+        throw new Error("Confirm endpoint returned no reviewed source config.");
+      }
+
+      const nextLeads = [...leadsSources];
+      nextLeads[index] = {
+        ...source,
+        source_config: json.reviewed_source_config,
+      };
+      setSources(actualSources, planSource, customTableSources, manualDataSources, nextLeads);
+
+      if (json.analysis) {
+        setLeadsAnalysisBySource((prev) => ({ ...prev, [index]: json.analysis as LeadsAnalysis }));
+      }
+
+      setLeadsConfirmMessageBySource((prev) => ({
+        ...prev,
+        [index]: "Leads review confirmed. Normalized rows are now stored in dashboard config.",
+      }));
+    } catch (error) {
+      setLeadsConfirmErrorBySource((prev) => ({
+        ...prev,
+        [index]: error instanceof Error ? error.message : "Failed to confirm leads review",
+      }));
+    } finally {
+      setLeadsConfirmLoadingBySource((prev) => ({ ...prev, [index]: false }));
+    }
   };
 
   const previewCustomTable = async (index: number) => {
@@ -1499,6 +1586,12 @@ export default function WizardStep2({ data, platforms, onChange }: WizardStep2Pr
                 {leadsAnalysisErrorBySource[index] ? (
                   <p className="mt-3 text-sm text-rose-600">{leadsAnalysisErrorBySource[index]}</p>
                 ) : null}
+                {leadsConfirmErrorBySource[index] ? (
+                  <p className="mt-3 text-sm text-rose-600">{leadsConfirmErrorBySource[index]}</p>
+                ) : null}
+                {leadsConfirmMessageBySource[index] ? (
+                  <p className="mt-3 text-sm text-emerald-700">{leadsConfirmMessageBySource[index]}</p>
+                ) : null}
 
                 {analysis ? (
                   <div className="mt-3 space-y-3 rounded-xl border border-slate-200 bg-slate-50 p-3">
@@ -1541,7 +1634,17 @@ export default function WizardStep2({ data, platforms, onChange }: WizardStep2Pr
                     ) : null}
 
                     <div className="rounded-lg border border-slate-200 bg-white p-3">
-                      <p className="mb-2 text-sm font-medium text-slate-900">Platform binding review</p>
+                      <div className="mb-2 flex items-center justify-between gap-2">
+                        <p className="text-sm font-medium text-slate-900">Platform binding review</p>
+                        <button
+                          type="button"
+                          onClick={() => void confirmLeadsSource(index)}
+                          disabled={analysis.status === "error" || leadsConfirmLoadingBySource[index]}
+                          className="rounded-lg bg-slate-900 px-3 py-2 text-sm text-white disabled:cursor-not-allowed disabled:opacity-50"
+                        >
+                          {leadsConfirmLoadingBySource[index] ? "Applying..." : "Confirm review"}
+                        </button>
+                      </div>
                       <div className="space-y-2 text-xs text-slate-700">
                         {analysis.platform_review.map((item) => {
                           const bindingValue = String(platformBindings[item.input_platform] ?? "");
