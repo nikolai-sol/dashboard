@@ -10,6 +10,7 @@ import WizardStepBinding from "@/components/admin/WizardStepBinding";
 import WizardStepFrequency from "@/components/admin/WizardStepFrequency";
 import WizardStep4 from "@/components/admin/WizardStep4";
 import type {
+  CustomKpiCardForm,
   DashboardFormData,
   DashboardSectionId,
   DashboardSourceForm,
@@ -70,6 +71,7 @@ function defaultForm(): DashboardFormData {
       show_spend: true,
       show_ai_summary: false,
       kpi_cards: ["impressions", "clicks", "ctr", "cpm", "spend"],
+      custom_kpi_cards: [],
       campaign_frequency_overrides: [],
     },
     sources: [],
@@ -282,6 +284,25 @@ export default function DashboardWizard({ dashboardId }: DashboardWizardProps) {
             kpi_cards: Array.isArray(config.kpi_cards)
               ? config.kpi_cards.map((item) => String(item)).slice(0, 5)
               : ["impressions", "clicks", "ctr", "cpm", "spend"],
+            custom_kpi_cards: Array.isArray(config.custom_kpi_cards)
+              ? config.custom_kpi_cards
+                  .map((item) => {
+                    const row =
+                      item && typeof item === "object" ? (item as Record<string, unknown>) : {};
+                    const id = String(row.id ?? "").trim();
+                    const title = String(row.title ?? "").trim();
+                    const value = Number(row.value ?? 0);
+                    const trendSource = String(row.trend_source ?? "").trim().toLowerCase();
+                    if (!id || !title || !Number.isFinite(value) || !trendSource) return null;
+                    return {
+                      id,
+                      title,
+                      value,
+                      trend_source: trendSource,
+                    } satisfies CustomKpiCardForm;
+                  })
+                  .filter(Boolean) as CustomKpiCardForm[]
+              : [],
             campaign_frequency_overrides: Array.isArray(config.campaign_frequency_overrides)
               ? config.campaign_frequency_overrides
                   .map((item) => {

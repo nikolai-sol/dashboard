@@ -377,6 +377,46 @@ function getKpiConfig(
   return defaultKpiConfig(type, showSpend);
 }
 
+function getCustomKpiCards(config: JsonRecord, showSpend: boolean): NonNullable<DashboardData["custom_kpi_cards"]> {
+  const raw = config.custom_kpi_cards;
+  if (!Array.isArray(raw)) return [];
+  const allowedTrendSources = new Set(
+    defaultKpiConfig("overview", showSpend).concat([
+      "impressions",
+      "clicks",
+      "ctr",
+      "cpm",
+      "cpc",
+      "spend",
+      "views",
+      "cpv",
+      "conversions",
+      "cpa",
+      "roas",
+      "reach",
+      "frequency",
+    ]).filter((item) => showSpend || !SPEND_RELATED_METRICS.has(item)),
+  );
+  return raw
+    .map((item, index) => {
+      const row = item && typeof item === "object" ? (item as Record<string, unknown>) : {};
+      const id = String(row.id ?? "").trim() || `custom_${index + 1}`;
+      const title = String(row.title ?? "").trim();
+      const value = Number(row.value ?? 0);
+      const trendSource = String(row.trend_source ?? "").trim().toLowerCase();
+      if (!title || !Number.isFinite(value) || !trendSource || !allowedTrendSources.has(trendSource)) {
+        return null;
+      }
+      return {
+        id,
+        title,
+        value,
+        trend_source: trendSource,
+      };
+    })
+    .filter((item): item is NonNullable<DashboardData["custom_kpi_cards"]>[number] => Boolean(item));
+}
+
 function getSectionOrder(config: JsonRecord, showSpend: boolean): DashboardSectionId[] {
   const allowed = showSpend
     ? DEFAULT_SECTION_ORDER_WITH_SPEND
@@ -1698,6 +1738,7 @@ export async function GET(
         section_order: getSectionOrder(config, showSpend),
       },
       kpi_config: getKpiConfig(config, dashboard.dashboard_type, showSpend),
+      custom_kpi_cards: getCustomKpiCards(config, showSpend),
       kpi,
       platforms: platformResults,
       timeseries: timeseriesResults,

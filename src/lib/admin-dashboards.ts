@@ -66,6 +66,7 @@ export type DashboardPayloadLogSummary = {
     kpi_cards_count: number;
     visible_metrics_count: number;
     section_order_count: number;
+    custom_kpi_cards_count?: number;
   };
   sources: Array<{
     platform: string;
@@ -177,6 +178,28 @@ function normalizeCampaignFrequencyOverride(raw: unknown) {
   };
 }
 
+function normalizeCustomKpiCard(raw: unknown) {
+  const input = (raw ?? {}) as {
+    id?: unknown;
+    title?: unknown;
+    value?: unknown;
+    trend_source?: unknown;
+  };
+  const id = String(input.id ?? "").trim();
+  const title = String(input.title ?? "").trim();
+  const value = Number(input.value ?? 0);
+  const trendSource = String(input.trend_source ?? "").trim().toLowerCase();
+  if (!id || !title || !Number.isFinite(value) || !trendSource) {
+    return null;
+  }
+  return {
+    id,
+    title,
+    value,
+    trend_source: trendSource,
+  };
+}
+
 export function normalizeDashboardPayload(raw: unknown): DashboardUpsertPayload {
   const input = (raw ?? {}) as Partial<DashboardUpsertPayload>;
   const dashboardType =
@@ -193,6 +216,10 @@ export function normalizeDashboardPayload(raw: unknown): DashboardUpsertPayload 
     : [];
   config.campaign_frequency_overrides = frequencyOverridesInput
     .map((item) => normalizeCampaignFrequencyOverride(item))
+    .filter(Boolean);
+  const customKpiCardsInput = Array.isArray(config.custom_kpi_cards) ? config.custom_kpi_cards : [];
+  config.custom_kpi_cards = customKpiCardsInput
+    .map((item) => normalizeCustomKpiCard(item))
     .filter(Boolean);
   config.language = String(config.language ?? "en") === "ru" ? "ru" : "en";
   config.filter_scope =
@@ -335,6 +362,9 @@ export function summarizeDashboardPayloadForLog(
         : 0,
       section_order_count: Array.isArray(payload.config.section_order)
         ? payload.config.section_order.length
+        : 0,
+      custom_kpi_cards_count: Array.isArray(payload.config.custom_kpi_cards)
+        ? payload.config.custom_kpi_cards.length
         : 0,
     },
     sources: payload.sources.map((source) => {

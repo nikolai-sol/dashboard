@@ -26,6 +26,13 @@ export interface DashboardMeta {
   section_order: DashboardSectionId[];
 }
 
+export interface CustomKpiCard {
+  id: string;
+  title: string;
+  value: number;
+  trend_source: string;
+}
+
 export interface DashboardKPI {
   total_impressions: number;
   total_clicks: number;
@@ -183,6 +190,7 @@ export interface ManualChannelData {
 export interface DashboardData {
   dashboard: DashboardMeta;
   kpi_config: string[];
+  custom_kpi_cards?: CustomKpiCard[];
   kpi: DashboardKPI;
   platforms: PlatformStats[];
   timeseries: TimeSeriesPoint[];

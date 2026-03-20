@@ -17,6 +17,7 @@ type KPICardProps = {
   format: (value: number) => string;
   trend: number[];
   pdfMode?: boolean;
+  deltaOverride?: number | null;
 };
 
 export default function KPICard({
@@ -27,6 +28,7 @@ export default function KPICard({
   format,
   trend,
   pdfMode = false,
+  deltaOverride,
 }: KPICardProps) {
   const [animatedValue, setAnimatedValue] = useState(() => (pdfMode ? value : 0));
 
@@ -51,11 +53,14 @@ export default function KPICard({
   const displayedValue = pdfMode ? value : animatedValue;
 
   const delta = useMemo(() => {
+    if (typeof deltaOverride === "number" && Number.isFinite(deltaOverride)) {
+      return deltaOverride;
+    }
     if (prevValue === 0) {
       return 0;
     }
     return ((value - prevValue) / prevValue) * 100;
-  }, [prevValue, value]);
+  }, [deltaOverride, prevValue, value]);
 
   const trendData = trend.map((item, idx) => ({ x: idx, value: item }));
   const positive = delta >= 0;

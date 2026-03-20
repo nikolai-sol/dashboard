@@ -19,6 +19,17 @@ import { resolvePlatformIdFromSourceKey } from "@/lib/source-mapping";
 
 const SPEND_RELATED_KPIS = new Set(["spend", "cpm", "cpc", "cpv", "cpa", "roas"]);
 
+type RenderableKpiCard = {
+  key: string;
+  title: string;
+  value: number;
+  prev: number;
+  color: string;
+  format: (value: number) => string;
+  trend: number[];
+  deltaOverride?: number | null;
+};
+
 function money(value: number, currency = "EUR", locale = "en-US") {
   return new Intl.NumberFormat(locale, {
     style: "currency",
@@ -319,12 +330,13 @@ export default function DashboardByIdPage() {
 
   const latestTrend = useMemo(() => aggregatedDaily.slice(-30), [aggregatedDaily]);
 
-  const kpiCards = useMemo(() => {
+  const kpiCards = useMemo<RenderableKpiCard[]>(() => {
     const kpiConfig = (dashboard?.kpi_config?.slice(0, 5) ?? ["impressions", "clicks", "ctr", "cpm", "spend"])
       .filter((metric) => showSpend || !SPEND_RELATED_KPIS.has(metric));
 
     const metricMap = {
       impressions: {
+        key: "impressions",
         title: i18n.metrics.impressions,
         value: totals.totalImpressions,
         prev: previousTotals.prevImpressions,
@@ -333,6 +345,7 @@ export default function DashboardByIdPage() {
         trend: latestTrend.map((item) => item.impressions),
       },
       clicks: {
+        key: "clicks",
         title: i18n.metrics.clicks,
         value: totals.totalClicks,
         prev: previousTotals.prevClicks,
@@ -341,6 +354,7 @@ export default function DashboardByIdPage() {
         trend: latestTrend.map((item) => item.clicks),
       },
       ctr: {
+        key: "ctr",
         title: i18n.metrics.ctr,
         value: totals.avgCtr,
         prev: previousTotals.prevCtr,
@@ -351,6 +365,7 @@ export default function DashboardByIdPage() {
         ),
       },
       cpm: {
+        key: "cpm",
         title: i18n.metrics.cpm,
         value: totals.avgCpm,
         prev: previousTotals.prevCpm,
@@ -361,6 +376,7 @@ export default function DashboardByIdPage() {
         ),
       },
       cpc: {
+        key: "cpc",
         title: i18n.metrics.cpc,
         value: totals.avgCpc,
         prev: previousTotals.prevCpc,
@@ -369,6 +385,7 @@ export default function DashboardByIdPage() {
         trend: latestTrend.map((item) => (item.clicks > 0 ? item.spend / item.clicks : 0)),
       },
       spend: {
+        key: "spend",
         title: i18n.metrics.spend,
         value: totals.totalSpend,
         prev: previousTotals.prevSpend,
@@ -377,6 +394,7 @@ export default function DashboardByIdPage() {
         trend: latestTrend.map((item) => item.spend),
       },
       views: {
+        key: "views",
         title: i18n.metrics.views,
         value: totals.totalViews,
         prev: previousTotals.prevViews,
@@ -385,6 +403,7 @@ export default function DashboardByIdPage() {
         trend: latestTrend.map((item) => item.views),
       },
       cpv: {
+        key: "cpv",
         title: i18n.metrics.cpv,
         value: totals.avgCpv,
         prev: previousTotals.prevCpv,
@@ -393,6 +412,7 @@ export default function DashboardByIdPage() {
         trend: latestTrend.map((item) => (item.views > 0 ? item.spend / item.views : 0)),
       },
       conversions: {
+        key: "conversions",
         title: i18n.metrics.conversions,
         value: totals.totalConversions,
         prev: previousTotals.prevConversions,
@@ -401,6 +421,7 @@ export default function DashboardByIdPage() {
         trend: latestTrend.map((item) => item.conversions),
       },
       cpa: {
+        key: "cpa",
         title: i18n.metrics.cpa,
         value: totals.avgCpa,
         prev: previousTotals.prevCpa,
@@ -411,6 +432,7 @@ export default function DashboardByIdPage() {
         ),
       },
       roas: {
+        key: "roas",
         title: i18n.metrics.roas,
         value: 0,
         prev: 0,
@@ -419,6 +441,7 @@ export default function DashboardByIdPage() {
         trend: latestTrend.map(() => 0),
       },
       reach: {
+        key: "reach",
         title: i18n.metrics.reach,
         value: totals.totalReach,
         prev: previousTotals.prevReach,
@@ -427,6 +450,7 @@ export default function DashboardByIdPage() {
         trend: latestTrend.map((item) => item.impressions * 0.35),
       },
       frequency: {
+        key: "frequency",
         title: i18n.metrics.frequency,
         value: totals.avgFrequency,
         prev: previousTotals.prevFrequency,
@@ -438,10 +462,41 @@ export default function DashboardByIdPage() {
       },
     } as const;
 
-    return kpiConfig
+    const baseCards: RenderableKpiCard[] = kpiConfig
       .map((key) => metricMap[key as keyof typeof metricMap] ?? metricMap.impressions)
+      .map((card) => ({
+        key: card.key,
+        title: card.title,
+        value: card.value,
+        prev: card.prev,
+        color: card.color,
+        format: card.format,
+        trend: card.trend,
+      }))
       .slice(0, 5);
-  }, [currencyCode, dashboard?.kpi_config, i18n.metrics, latestTrend, locale, previousTotals, showSpend, totals]);
+
+    const customCards: RenderableKpiCard[] = (dashboard?.custom_kpi_cards ?? [])
+      .map((card) => {
+        const sourceMetric =
+          metricMap[card.trend_source as keyof typeof metricMap] ?? metricMap.impressions;
+        const deltaOverride =
+          sourceMetric.prev !== 0
+            ? ((sourceMetric.value - sourceMetric.prev) / sourceMetric.prev) * 100
+            : 0;
+        return {
+          key: card.id,
+          title: card.title,
+          value: card.value,
+          prev: card.value,
+          color: sourceMetric.color,
+          format: sourceMetric.format,
+          trend: sourceMetric.trend,
+          deltaOverride,
+        };
+      });
+
+    return [...baseCards, ...customCards];
+  }, [currencyCode, dashboard?.custom_kpi_cards, dashboard?.kpi_config, i18n.metrics, latestTrend, locale, previousTotals, showSpend, totals]);
 
   const renderSection = (sectionId: string) => {
     if (sectionId === "kpi_grid") {
@@ -449,7 +504,7 @@ export default function DashboardByIdPage() {
         <section key={sectionId} className="mb-6 grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-5">
           {kpiCards.map((card) => (
             <KPICard
-              key={card.title}
+              key={card.key}
               title={card.title}
               value={card.value}
               prevValue={card.prev}
@@ -457,6 +512,7 @@ export default function DashboardByIdPage() {
               format={card.format}
               trend={card.trend}
               pdfMode={isPdfMode}
+              deltaOverride={card.deltaOverride}
             />
           ))}
         </section>
