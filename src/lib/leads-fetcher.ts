@@ -70,6 +70,30 @@ export type LeadsPreviewAnalysis = {
   sample_rows: LeadRow[];
 };
 
+export type LeadsPlatformBindingMap = Record<string, string>;
+
+export type LeadsReviewedConfig = {
+  review_version: 1;
+  status: "confirmed";
+  confirmed_at: string;
+  sheet_url_input: string;
+  sheet_url_fetch: string;
+  rows_total: number;
+  rows_parsed: number;
+  dated_rows: number;
+  channels: number;
+  platforms_detected: string[];
+  selected_platforms: string[];
+  platform_bindings: LeadsPlatformBindingMap;
+  binding_summary: LeadsPreviewAnalysis["binding_summary"];
+  issues: LeadsPreviewIssue[];
+};
+
+export type LeadsConfirmResult = {
+  analysis: LeadsPreviewAnalysis;
+  reviewed_source_config: Record<string, unknown>;
+};
+
 const CACHE_TTL = 5 * 60 * 1000;
 const cacheByUrl = new Map<string, { parsed: LeadsParseResult; ts: number }>();
 
@@ -363,5 +387,57 @@ export async function analyzeLeadSourceConfig(
     platform_review: platformReview,
     issues,
     sample_rows: parsed.rows.slice(0, 5),
+  };
+}
+
+export async function applyLeadsReview(
+  sourceConfig: LeadsSourceConfig,
+  selectedPlatforms: string[],
+  platformBindings: LeadsPlatformBindingMap,
+): Promise<LeadsConfirmResult> {
+  const existingBindings = extractReviewBindings(sourceConfig);
+  const normalizedBindings = Object.fromEntries(
+    Object.entries({
+      ...existingBindings,
+      ...platformBindings,
+    }).map(([key, value]) => [normalizeManualPlatformId(key), String(value ?? "").trim()]),
+  );
+
+  const nextSourceConfig: LeadsSourceConfig = {
+    ...sourceConfig,
+    review: {
+      ...(sourceConfig.review && typeof sourceConfig.review === "object"
+        ? (sourceConfig.review as Record<string, unknown>)
+        : {}),
+      platform_bindings: normalizedBindings,
+    },
+  };
+
+  const analysis = await analyzeLeadSourceConfig(nextSourceConfig, selectedPlatforms);
+  const reviewedSourceConfig: Record<string, unknown> = {
+    ...(sourceConfig as Record<string, unknown>),
+    inline_rows: (await fetchLeadsFromSourceConfig(nextSourceConfig)).rows.map((row) => ({ ...row })),
+    upload_file: undefined,
+    review: {
+      review_version: 1,
+      status: "confirmed",
+      confirmed_at: new Date().toISOString(),
+      sheet_url_input: analysis.sheet_url_input,
+      sheet_url_fetch: analysis.sheet_url_fetch,
+      rows_total: analysis.rows_total,
+      rows_parsed: analysis.rows_parsed,
+      dated_rows: analysis.dated_rows,
+      channels: analysis.channels,
+      platforms_detected: analysis.platforms_detected,
+      selected_platforms: analysis.selected_platforms,
+      platform_bindings: normalizedBindings,
+      binding_summary: analysis.binding_summary,
+      issues: analysis.issues,
+    } satisfies LeadsReviewedConfig,
+  };
+
+  return {
+    analysis,
+    reviewed_source_config: reviewedSourceConfig,
   };
 }
