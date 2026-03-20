@@ -6,6 +6,7 @@ export type DashboardI18n = {
   metrics: Record<string, string>;
   sections: {
     platformPerformance: string;
+    platformPerformancePlanFact: string;
     channelPerformance: string;
     channelPerformancePlanFact: string;
     trendByDay: string;
@@ -81,6 +82,7 @@ const DICTIONARY: Record<DashboardLanguage, Omit<DashboardI18n, "language" | "lo
     },
     sections: {
       platformPerformance: "Platform Performance",
+      platformPerformancePlanFact: "Platform Performance Plan / Fact",
       channelPerformance: "Channel Performance",
       channelPerformancePlanFact: "Channel Performance Plan / Fact",
       trendByDay: "Trend by Day",
@@ -154,6 +156,7 @@ const DICTIONARY: Record<DashboardLanguage, Omit<DashboardI18n, "language" | "lo
     },
     sections: {
       platformPerformance: "Эффективность платформ",
+      platformPerformancePlanFact: "Эффективность платформ План / Факт",
       channelPerformance: "Эффективность каналов",
       channelPerformancePlanFact: "Эффективность каналов План / Факт",
       trendByDay: "Динамика по дням",

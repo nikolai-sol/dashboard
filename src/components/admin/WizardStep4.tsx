@@ -29,6 +29,7 @@ const SECTION_OPTIONS: Array<{ id: DashboardSectionId; label: string; spendRelat
   { id: "kpi_grid", label: "KPI cards" },
   { id: "spend_section", label: "Spend by platform + channel mix", spendRelated: true },
   { id: "trend_chart", label: "Trend chart" },
+  { id: "platform_plan_fact", label: "Platform performance plan/fact" },
   { id: "channel_table", label: "Channel performance" },
   { id: "plan_vs_fact", label: "Channel performance plan/fact" },
   { id: "platform_table", label: "Platform table" },
