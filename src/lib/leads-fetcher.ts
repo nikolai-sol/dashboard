@@ -121,6 +121,8 @@ export type LeadsConfirmResult = {
   reviewed_source_config: Record<string, unknown>;
 };
 
+export type LeadsPlatformConversions = Record<string, number>;
+
 const CACHE_TTL = 5 * 60 * 1000;
 const cacheByUrl = new Map<string, { parsed: LeadsParseResult; ts: number }>();
 
@@ -321,6 +323,12 @@ function extractReviewChannelBindings(sourceConfig: LeadsSourceConfig): Record<s
   return Object.fromEntries(
     Object.entries(bindings as Record<string, unknown>).map(([key, value]) => [key, String(value ?? "")]),
   );
+}
+
+function reviewStatus(sourceConfig: LeadsSourceConfig): string {
+  const review = sourceConfig.review;
+  if (!review || typeof review !== "object") return "";
+  return String((review as Record<string, unknown>).status ?? "").trim().toLowerCase();
 }
 
 export async function fetchLeadsFromSourceConfig(sourceConfig: LeadsSourceConfig): Promise<LeadsParseResult> {
@@ -626,4 +634,47 @@ export async function applyLeadsReview(
     analysis,
     reviewed_source_config: reviewedSourceConfig,
   };
+}
+
+export async function aggregateConfirmedLeadsByPlatform(
+  sourceConfig: LeadsSourceConfig,
+  allowedPlatformIds: string[],
+  dateFrom: string,
+  dateTo: string,
+): Promise<LeadsPlatformConversions> {
+  if (reviewStatus(sourceConfig) !== "confirmed") {
+    return {};
+  }
+
+  const allowed = new Set(allowedPlatformIds.map((item) => normalizeManualPlatformId(item)).filter(Boolean));
+  if (!allowed.size) {
+    return {};
+  }
+
+  const rows = (await fetchLeadsFromSourceConfig(sourceConfig)).rows;
+  const bindings = extractReviewBindings(sourceConfig);
+  const totals: LeadsPlatformConversions = {};
+
+  for (const row of rows) {
+    if (!row.date || row.date < dateFrom || row.date > dateTo) {
+      continue;
+    }
+
+    const explicit = String(bindings[row.platform] ?? "").trim();
+    if (explicit === "__ignore__") {
+      continue;
+    }
+
+    const boundPlatform = explicit
+      ? normalizeManualPlatformId(explicit)
+      : normalizeManualPlatformId(row.platform);
+
+    if (!boundPlatform || !allowed.has(boundPlatform)) {
+      continue;
+    }
+
+    totals[boundPlatform] = (totals[boundPlatform] ?? 0) + Math.max(0, row.leads);
+  }
+
+  return totals;
 }
