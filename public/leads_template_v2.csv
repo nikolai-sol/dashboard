@@ -1,0 +1,13 @@
+date,platform,channel,source,leads,qualified_leads,revenue,notes
+2026-03-01,hybrid,Мегаслим Программатик,tilda_form,3,1,,Форма на лендинге
+2026-03-01,hybrid,ОЛВ Сериальные,tilda_form,1,0,,
+2026-03-01,linkedin,LinkedIn Lead Gen,linkedin_leadgen,4,2,,Lead Gen Forms
+2026-03-01,google_ads,Google Brand,tilda_form,2,1,15000,
+2026-03-01,vk,VK Посты,tilda_form,1,0,,
+2026-03-02,hybrid,Мегаслим Программатик,tilda_form,5,2,,
+2026-03-02,hybrid,ОЛВ Сериальные,tilda_form,2,1,,
+2026-03-02,linkedin,LinkedIn Lead Gen,linkedin_leadgen,6,3,,
+2026-03-02,google_ads,Google Brand,tilda_form,3,1,22000,Включая звонки
+2026-03-03,hybrid,Мегаслим Программатик,tilda_form,4,2,,
+2026-03-03,getintent,ОЛВ Сериальные,tilda_form,3,1,,Лиды с GetIntent OLV
+2026-03-03,telegram,Telegram каналы,manual_count,8,3,,Ручной подсчёт из чатов
