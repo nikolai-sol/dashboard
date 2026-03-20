@@ -1,7 +1,7 @@
 "use client";
 
 import { ArrowDown, ArrowUp } from "lucide-react";
-import type { DashboardFormData, DashboardSectionId } from "@/lib/admin-ui-types";
+import type { CustomKpiCardForm, DashboardFormData, DashboardSectionId } from "@/lib/admin-ui-types";
 
 type WizardStep4Props = {
   data: DashboardFormData;
@@ -63,6 +63,26 @@ function sanitizeVisibleMetrics(metrics: string[], showSpend: boolean): string[]
   return metrics.filter((metric) => allowed.has(metric));
 }
 
+function sanitizeCustomKpiCards(cards: CustomKpiCardForm[] | undefined, showSpend: boolean): CustomKpiCardForm[] {
+  const allowed = sanitizeMetricPool(showSpend);
+  const fallbackTrendSource = allowed[0] ?? "impressions";
+  if (!Array.isArray(cards)) return [];
+  return cards
+    .map((card, index) => {
+      const title = String(card.title ?? "").trim();
+      const value = Number(card.value ?? 0);
+      const trendSource = allowed.includes(card.trend_source) ? card.trend_source : fallbackTrendSource;
+      if (!title || !Number.isFinite(value)) return null;
+      return {
+        id: String(card.id ?? "").trim() || `custom_${Date.now()}_${index}`,
+        title,
+        value,
+        trend_source: trendSource,
+      };
+    })
+    .filter((card): card is CustomKpiCardForm => Boolean(card));
+}
+
 function sanitizeSectionOrder(
   order: DashboardSectionId[] | undefined,
   showSpend: boolean,
@@ -77,12 +97,22 @@ function sanitizeSectionOrder(
   return fromConfig;
 }
 
+function createCustomKpiCard(index: number): CustomKpiCardForm {
+  return {
+    id: `custom_${Date.now()}_${index}`,
+    title: `Custom KPI ${index + 1}`,
+    value: 0,
+    trend_source: "conversions",
+  };
+}
+
 export default function WizardStep4({ data, onChange }: WizardStep4Props) {
   const config = data.config;
   const showSpend = Boolean(config.show_spend);
   const metricPool = sanitizeMetricPool(showSpend);
   const kpiCards = sanitizeCards(config.kpi_cards ?? [], showSpend);
   const sectionOrder = sanitizeSectionOrder(config.section_order, showSpend, false);
+  const customKpiCards = sanitizeCustomKpiCards(config.custom_kpi_cards, showSpend);
 
   const patchConfig = (patch: Partial<DashboardFormData["config"]>) => {
     onChange({
@@ -142,7 +172,36 @@ export default function WizardStep4({ data, onChange }: WizardStep4Props) {
       kpi_cards: sanitizeCards(config.kpi_cards ?? [], checked),
       visible_metrics: sanitizeVisibleMetrics(config.visible_metrics ?? [], checked),
       section_order: sanitizeSectionOrder(config.section_order, checked, false),
+      custom_kpi_cards: sanitizeCustomKpiCards(config.custom_kpi_cards, checked),
     });
+  };
+
+  const patchCustomKpiCards = (cards: CustomKpiCardForm[]) => {
+    patchConfig({ custom_kpi_cards: sanitizeCustomKpiCards(cards, showSpend) });
+  };
+
+  const addCustomKpiCard = () => {
+    patchCustomKpiCards([...customKpiCards, createCustomKpiCard(customKpiCards.length)]);
+  };
+
+  const updateCustomKpiCard = (
+    id: string,
+    patch: Partial<CustomKpiCardForm>,
+  ) => {
+    patchCustomKpiCards(
+      customKpiCards.map((card) =>
+        card.id === id
+          ? {
+              ...card,
+              ...patch,
+            }
+          : card,
+      ),
+    );
+  };
+
+  const removeCustomKpiCard = (id: string) => {
+    patchCustomKpiCards(customKpiCards.filter((card) => card.id !== id));
   };
 
   return (
@@ -191,6 +250,77 @@ export default function WizardStep4({ data, onChange }: WizardStep4Props) {
             Performance
           </button>
         </div>
+      </div>
+
+      <div className="rounded-xl border border-slate-200 p-4">
+        <div className="flex items-center justify-between gap-3">
+          <div>
+            <h4 className="text-sm font-semibold text-slate-900">Custom KPI cards</h4>
+            <p className="mt-1 text-xs text-slate-500">
+              Add static KPI values that are always shown as entered. Trend and delta are borrowed from the selected base KPI.
+            </p>
+          </div>
+          <button
+            type="button"
+            onClick={addCustomKpiCard}
+            className="rounded-lg border border-slate-300 px-3 py-1.5 text-xs hover:bg-slate-50"
+          >
+            Add custom KPI card
+          </button>
+        </div>
+
+        {customKpiCards.length ? (
+          <div className="mt-3 space-y-3">
+            {customKpiCards.map((card, index) => (
+              <div key={card.id} className="rounded-lg border border-slate-200 p-3">
+                <div className="mb-3 flex items-center justify-between gap-3">
+                  <p className="text-sm font-medium text-slate-900">Custom card #{index + 1}</p>
+                  <button
+                    type="button"
+                    onClick={() => removeCustomKpiCard(card.id)}
+                    className="rounded-lg border border-rose-200 px-2.5 py-1 text-xs text-rose-600 hover:bg-rose-50"
+                  >
+                    Remove
+                  </button>
+                </div>
+                <div className="grid gap-3 md:grid-cols-3">
+                  <label className="text-sm text-slate-700">
+                    <span className="mb-1 block">Title</span>
+                    <input
+                      className="w-full rounded-lg border border-slate-300 px-3 py-2"
+                      value={card.title}
+                      onChange={(e) => updateCustomKpiCard(card.id, { title: e.target.value })}
+                    />
+                  </label>
+                  <label className="text-sm text-slate-700">
+                    <span className="mb-1 block">Value</span>
+                    <input
+                      type="number"
+                      step="any"
+                      className="w-full rounded-lg border border-slate-300 px-3 py-2"
+                      value={card.value}
+                      onChange={(e) => updateCustomKpiCard(card.id, { value: Number(e.target.value || 0) })}
+                    />
+                  </label>
+                  <label className="text-sm text-slate-700">
+                    <span className="mb-1 block">Trend source</span>
+                    <select
+                      className="w-full rounded-lg border border-slate-300 px-3 py-2"
+                      value={card.trend_source}
+                      onChange={(e) => updateCustomKpiCard(card.id, { trend_source: e.target.value })}
+                    >
+                      {metricPool.map((metric) => (
+                        <option key={metric} value={metric}>
+                          {metric.toUpperCase()}
+                        </option>
+                      ))}
+                    </select>
+                  </label>
+                </div>
+              </div>
+            ))}
+          </div>
+        ) : null}
       </div>
 
       <div className="rounded-xl border border-slate-200 p-4">

@@ -49,6 +49,13 @@ export type CampaignFrequencyOverrideForm = {
 
 export type DashboardFilterScope = "both" | "platform" | "channel";
 
+export type CustomKpiCardForm = {
+  id: string;
+  title: string;
+  value: number;
+  trend_source: string;
+};
+
 export type DashboardFormData = {
   client_id: string;
   client_name: string;
@@ -67,6 +74,7 @@ export type DashboardFormData = {
     show_spend: boolean;
     show_ai_summary: boolean;
     kpi_cards: string[];
+    custom_kpi_cards?: CustomKpiCardForm[];
     campaign_frequency_overrides?: CampaignFrequencyOverrideForm[];
   };
   sources: DashboardSourceForm[];
