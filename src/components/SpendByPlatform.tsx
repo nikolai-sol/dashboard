@@ -1,35 +1,57 @@
 "use client";
 
+import { useMemo } from "react";
 import { ResponsiveBar } from "@nivo/bar";
 import type { PlatformStats } from "@/lib/types";
+import { PLATFORM_COLORS } from "@/lib/platform-colors";
 
 type SpendByPlatformProps = {
   data: PlatformStats[];
   currencyFormatter: (value: number) => string;
   pdfMode?: boolean;
+  locale?: string;
   labels?: {
     title: string;
     shareOfTotal: string;
+    spend: string;
+    impressions: string;
+    clicks: string;
   };
 };
+
+function resolveBrandColor(platformId: string, fallback: string) {
+  return PLATFORM_COLORS[platformId]?.hex ?? fallback;
+}
 
 export default function SpendByPlatform({
   data,
   currencyFormatter,
   pdfMode = false,
+  locale = "en-US",
   labels,
 }: SpendByPlatformProps) {
   const copy = labels ?? {
     title: "Spend by Platform",
     shareOfTotal: "% of total",
+    spend: "Spend",
+    impressions: "Impressions",
+    clicks: "Clicks",
   };
-  const sorted = [...data].sort((a, b) => b.spend - a.spend);
-  const total = sorted.reduce((sum, item) => sum + item.spend, 0);
-  const chartData = sorted.map((item) => ({
-    platform: item.name,
-    spend: item.spend,
-    color: item.color,
-  }));
+
+  const sorted = useMemo(() => [...data].sort((a, b) => b.spend - a.spend), [data]);
+  const total = useMemo(() => sorted.reduce((sum, item) => sum + item.spend, 0), [sorted]);
+  const chartData = useMemo(
+    () =>
+      sorted.map((item) => ({
+        id: item.id,
+        platform: item.name,
+        spend: Number(item.spend.toFixed(2)),
+        color: resolveBrandColor(item.id, item.color),
+        impressions: item.impressions,
+        clicks: item.clicks,
+      })),
+    [sorted],
+  );
 
   return (
     <section className="card-surface p-5">
@@ -44,12 +66,14 @@ export default function SpendByPlatform({
           valueScale={{ type: "linear" }}
           indexScale={{ type: "band", round: true }}
           colors={({ data: row }) => String(row.color)}
+          colorBy="indexValue"
           borderRadius={8}
           labelSkipWidth={12}
           labelSkipHeight={12}
-          labelTextColor="#0f172a"
+          label={(item) => currencyFormatter(Number(item.value))}
+          labelTextColor="#FFFFFF"
           animate={!pdfMode}
-          motionConfig={pdfMode ? "default" : "wobbly"}
+          motionConfig={pdfMode ? "default" : "gentle"}
           axisTop={null}
           axisRight={null}
           axisBottom={{
@@ -64,15 +88,50 @@ export default function SpendByPlatform({
           tooltip={({ value, indexValue, color }) => {
             const spend = Number(value);
             const share = total > 0 ? (spend / total) * 100 : 0;
+            const row = chartData.find((item) => item.platform === String(indexValue));
             return (
-              <div className="rounded-lg border border-slate-200 bg-white px-3 py-2 text-xs shadow-lg">
+              <div className="rounded-xl border border-slate-200 bg-white px-3 py-2 text-xs shadow-[0_12px_32px_rgba(15,23,42,0.15)]">
                 <p className="font-semibold text-slate-900" style={{ color }}>
                   {String(indexValue)}
                 </p>
-                <p className="text-slate-700">{currencyFormatter(spend)}</p>
-                <p className="text-slate-500">{share.toFixed(1)}{copy.shareOfTotal}</p>
+                <div className="space-y-0.5 text-slate-700">
+                  <p>
+                    {copy.spend}: {currencyFormatter(spend)}
+                  </p>
+                  <p>
+                    {share.toFixed(1)} {copy.shareOfTotal}
+                  </p>
+                  <p>
+                    {copy.impressions}: {(row?.impressions ?? 0).toLocaleString(locale)}
+                  </p>
+                  <p>
+                    {copy.clicks}: {(row?.clicks ?? 0).toLocaleString(locale)}
+                  </p>
+                </div>
               </div>
             );
+          }}
+          theme={{
+            axis: {
+              ticks: {
+                text: {
+                  fill: "#64748B",
+                  fontSize: 12,
+                },
+              },
+            },
+            labels: {
+              text: {
+                fontSize: 11,
+                fontWeight: 700,
+              },
+            },
+            tooltip: {
+              container: {
+                background: "transparent",
+                boxShadow: "none",
+              },
+            },
           }}
         />
       </div>

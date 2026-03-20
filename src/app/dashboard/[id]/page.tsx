@@ -474,6 +474,9 @@ export default function DashboardByIdPage() {
               labels={{
                 title: i18n.sections.spendByPlatform,
                 shareOfTotal: i18n.spend.shareOfTotal,
+                spend: i18n.spend.spend,
+                impressions: i18n.spend.impressions,
+                clicks: i18n.spend.clicks,
               }}
             />
           </div>
