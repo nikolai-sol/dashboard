@@ -4,7 +4,9 @@ import type { CSSProperties } from "react";
 import { useEffect, useMemo, useState } from "react";
 import { useParams, useRouter, useSearchParams } from "next/navigation";
 import ChannelMix from "@/components/ChannelMix";
+import CampaignPerformanceTable from "@/components/CampaignPerformanceTable";
 import ChannelPerformanceTable from "@/components/ChannelPerformanceTable";
+import ConversionFunnel from "@/components/ConversionFunnel";
 import CustomTable from "@/components/CustomTable";
 import DashboardHeader from "@/components/DashboardHeader";
 import KPICard from "@/components/KPICard";
@@ -13,6 +15,7 @@ import PlatformPlanVsFact from "@/components/PlatformPlanVsFact";
 import PlatformTable from "@/components/PlatformTable";
 import PlanVsFact from "@/components/PlanVsFact";
 import SpendByPlatform from "@/components/SpendByPlatform";
+import SpendConversionsScatter from "@/components/SpendConversionsScatter";
 import TrendChart from "@/components/TrendChart";
 import { getDashboardI18n } from "@/lib/dashboard-i18n";
 import type { DashboardData } from "@/lib/types";
@@ -204,6 +207,7 @@ export default function DashboardByIdPage() {
   const locale = i18n.locale;
   const showSpend = dashboard?.dashboard.show_spend ?? true;
   const sectionOrder = dashboard?.dashboard.section_order ?? [];
+  const dashboardType = dashboard?.dashboard.type ?? "awareness";
   const channelOptions = useMemo(
     () =>
       (dashboard?.channel_performance ?? []).map((item) => ({
@@ -581,6 +585,68 @@ export default function DashboardByIdPage() {
                 clicks: i18n.metrics.clicks,
                 spend: i18n.metrics.spend,
               },
+            }}
+          />
+        </section>
+      );
+    }
+
+    if (sectionId === "conversion_funnel") {
+      if (dashboardType !== "performance" || !dashboard?.funnel?.length) return null;
+      return (
+        <section key={sectionId} className="mb-6">
+          <ConversionFunnel
+            data={dashboard.funnel}
+            pdfMode={isPdfMode}
+            locale={locale}
+            labels={{
+              title: "Conversion Funnel",
+              previousRate: "From previous",
+              overallRate: "Overall",
+            }}
+          />
+        </section>
+      );
+    }
+
+    if (sectionId === "campaign_table") {
+      if (dashboardType !== "performance" || !dashboard?.campaign_breakdown?.length) return null;
+      return (
+        <section key={sectionId} className="mb-6">
+          <CampaignPerformanceTable
+            campaigns={dashboard.campaign_breakdown}
+            currencyFormatter={(value) => money(value, currencyCode, locale)}
+            locale={locale}
+            labels={{
+              title: "Campaign Performance",
+              noRows: "No campaign rows available.",
+              campaign: "Campaign",
+              platform: i18n.common.platform,
+              spend: i18n.metrics.spend,
+              conversions: "Conversions",
+              cpa: i18n.metrics.cpa,
+              clicks: i18n.metrics.clicks,
+              cpc: i18n.metrics.cpc,
+              total: i18n.common.total,
+            }}
+          />
+        </section>
+      );
+    }
+
+    if (sectionId === "scatter_plot") {
+      if (dashboardType !== "performance" || !dashboard?.campaign_breakdown?.length) return null;
+      return (
+        <section key={sectionId} className="mb-6">
+          <SpendConversionsScatter
+            campaigns={dashboard.campaign_breakdown}
+            currencyFormatter={(value) => money(value, currencyCode, locale)}
+            labels={{
+              title: "Spend vs Conversions",
+              noRows: "No campaign rows available.",
+              spend: i18n.metrics.spend,
+              conversions: "Conversions",
+              cpa: i18n.metrics.cpa,
             }}
           />
         </section>

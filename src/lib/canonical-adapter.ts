@@ -60,6 +60,19 @@ type CampaignDailyAdsRow = RowDataPacket & {
   conversions: number | string | null;
 };
 
+type CampaignBreakdownRow = RowDataPacket & {
+  campaign_id: string;
+  campaign_name: string | null;
+  source_key: string;
+  impressions: number | string | null;
+  clicks: number | string | null;
+  spend: number | string | null;
+  conversions: number | string | null;
+  cpa: number | string | null;
+  cpc: number | string | null;
+  ctr: number | string | null;
+};
+
 type AnalyticsAggregateRow = RowDataPacket & {
   total_visits: number | string | null;
   total_users: number | string | null;
@@ -366,6 +379,76 @@ export async function getCampaignDailyFactsByIds(
 
   const [rows] = await pool.execute<CampaignDailyAdsRow[]>(sql, params);
   return rows;
+}
+
+export async function getCampaignBreakdown(filter: CanonicalFilter) {
+  const params: SqlParam[] = [filter.source_key, authorityFactScope(filter.source_key), filter.date_from, filter.date_to];
+  const accountWhere = buildAccountWhereAds(filter, params);
+  const campaignWhere = buildCampaignWhere(filter, params);
+
+  const sql = `
+    SELECT
+      f.platform_campaign_id as campaign_id,
+      COALESCE(MAX(c.campaign_name), f.platform_campaign_id) as campaign_name,
+      f.source_key as source_key,
+      COALESCE(SUM(f.impressions), 0) as impressions,
+      COALESCE(SUM(f.clicks), 0) as clicks,
+      COALESCE(SUM(f.spend), 0) as spend,
+      COALESCE(SUM(f.conversions), 0) as conversions,
+      CASE
+        WHEN COALESCE(SUM(f.conversions), 0) > 0
+          THEN COALESCE(SUM(f.spend), 0) / SUM(f.conversions)
+        ELSE 0
+      END as cpa,
+      CASE
+        WHEN COALESCE(SUM(f.clicks), 0) > 0
+          THEN COALESCE(SUM(f.spend), 0) / SUM(f.clicks)
+        ELSE 0
+      END as cpc,
+      CASE
+        WHEN COALESCE(SUM(f.impressions), 0) > 0
+          THEN COALESCE(SUM(f.clicks), 0) / SUM(f.impressions) * 100
+        ELSE 0
+      END as ctr
+    FROM canonical_fact_ads_daily f
+    LEFT JOIN canonical_source_campaigns c
+      ON c.source_key = f.source_key
+     AND c.platform_campaign_id = f.platform_campaign_id
+     AND c.platform_account_id = f.platform_account_id
+    WHERE f.source_key = ?
+      AND f.fact_scope = ?
+      AND f.report_date >= ?
+      AND f.report_date <= ?
+      ${accountWhere}
+      ${campaignWhere}
+    GROUP BY f.platform_campaign_id, f.source_key
+    HAVING
+      COALESCE(SUM(f.spend), 0) > 0
+      OR COALESCE(SUM(f.clicks), 0) > 0
+      OR COALESCE(SUM(f.conversions), 0) > 0
+    ORDER BY
+      CASE
+        WHEN COALESCE(SUM(f.conversions), 0) > 0
+          THEN COALESCE(SUM(f.spend), 0) / SUM(f.conversions)
+        ELSE 999999999
+      END ASC,
+      COALESCE(SUM(f.conversions), 0) DESC,
+      COALESCE(SUM(f.spend), 0) DESC
+  `;
+
+  const [rows] = await pool.execute<CampaignBreakdownRow[]>(sql, params);
+  return rows.map((row) => ({
+    campaign_id: String(row.campaign_id ?? ""),
+    campaign_name: String(row.campaign_name ?? row.campaign_id ?? ""),
+    source_key: String(row.source_key ?? filter.source_key),
+    impressions: Number(row.impressions ?? 0),
+    clicks: Number(row.clicks ?? 0),
+    spend: Number(Number(row.spend ?? 0).toFixed(2)),
+    conversions: Number(row.conversions ?? 0),
+    cpa: Number(Number(row.cpa ?? 0).toFixed(2)),
+    cpc: Number(Number(row.cpc ?? 0).toFixed(2)),
+    ctr: Number(Number(row.ctr ?? 0).toFixed(2)),
+  }));
 }
 
 export async function getAnalyticsAggregate(filter: CanonicalFilter) {

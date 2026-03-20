@@ -3,6 +3,7 @@ import pool from "@/lib/db";
 import { loadSchema } from "@/lib/schema-parser";
 import {
   getAdsAggregate,
+  getCampaignBreakdown,
   getCampaignDailyFactsByIds,
   getAdsTimeseries,
   getAnalyticsAggregate,
@@ -35,15 +36,22 @@ import {
 } from "@/lib/source-mapping";
 import { normalizeDashboardLanguage } from "@/lib/dashboard-i18n";
 import {
+  getDefaultKpiCards,
+  sanitizeSectionOrder as sanitizeDashboardSectionOrder,
+  SPEND_RELATED_METRICS,
+} from "@/lib/dashboard-presets";
+import {
   buildPeriodMonths as buildNormalizedPeriodMonths,
   normalizeChannelPlan,
 } from "@/lib/plan-normalizer";
 import type {
   AnalyticsKPI,
   AnalyticsTimeSeriesPoint,
+  CampaignBreakdownItem,
   CustomTableData,
   DashboardData,
   DashboardSectionId,
+  FunnelStep,
   ManualChannelData,
   PlatformStats,
   TimeSeriesPoint,
@@ -103,25 +111,6 @@ type CampaignDailyFactRow = {
   views: number;
   conversions: number;
 };
-
-const SPEND_RELATED_METRICS = new Set(["spend", "cpm", "cpc", "cpv", "cpa", "roas"]);
-const DEFAULT_SECTION_ORDER_WITH_SPEND: DashboardSectionId[] = [
-  "kpi_grid",
-  "spend_section",
-  "trend_chart",
-  "platform_table",
-  "platform_plan_fact",
-  "channel_table",
-  "plan_vs_fact",
-];
-const DEFAULT_SECTION_ORDER_NO_SPEND: DashboardSectionId[] = [
-  "kpi_grid",
-  "trend_chart",
-  "platform_table",
-  "platform_plan_fact",
-  "channel_table",
-  "plan_vs_fact",
-];
 
 function asNumber(value: unknown): number {
   const parsed = Number(value);
@@ -348,22 +337,6 @@ function mergeChannelSummaryFacts(
   };
 }
 
-function defaultKpiConfig(type: DashboardData["dashboard"]["type"], showSpend: boolean): string[] {
-  if (type === "performance") {
-    return showSpend
-      ? ["conversions", "cpa", "clicks", "cpc", "spend"]
-      : ["conversions", "clicks", "ctr", "impressions", "reach"];
-  }
-  if (type === "overview") {
-    return showSpend
-      ? ["impressions", "clicks", "ctr", "spend", "conversions"]
-      : ["impressions", "clicks", "ctr", "conversions", "reach"];
-  }
-  return showSpend
-    ? ["impressions", "clicks", "ctr", "cpm", "spend"]
-    : ["impressions", "clicks", "ctr", "views", "reach"];
-}
-
 function getKpiConfig(
   config: JsonRecord,
   type: DashboardData["dashboard"]["type"],
@@ -380,14 +353,14 @@ function getKpiConfig(
       return values;
     }
   }
-  return defaultKpiConfig(type, showSpend);
+  return getDefaultKpiCards(type, showSpend);
 }
 
 function getCustomKpiCards(config: JsonRecord, showSpend: boolean): NonNullable<DashboardData["custom_kpi_cards"]> {
   const raw = config.custom_kpi_cards;
   if (!Array.isArray(raw)) return [];
   const allowedTrendSources = new Set(
-    defaultKpiConfig("overview", showSpend).concat([
+    getDefaultKpiCards("overview", showSpend).concat([
       "impressions",
       "clicks",
       "ctr",
@@ -423,17 +396,12 @@ function getCustomKpiCards(config: JsonRecord, showSpend: boolean): NonNullable<
     .filter((item): item is NonNullable<DashboardData["custom_kpi_cards"]>[number] => Boolean(item));
 }
 
-function getSectionOrder(config: JsonRecord, showSpend: boolean): DashboardSectionId[] {
-  const allowed = showSpend
-    ? DEFAULT_SECTION_ORDER_WITH_SPEND
-    : DEFAULT_SECTION_ORDER_NO_SPEND;
-  if (!Array.isArray(config.section_order)) {
-    return allowed;
-  }
-  const seen = new Set<DashboardSectionId>();
-  return config.section_order
-    .map((item) => String(item) as DashboardSectionId)
-    .filter((item) => allowed.includes(item) && !seen.has(item) && seen.add(item));
+function getSectionOrder(
+  config: JsonRecord,
+  type: DashboardData["dashboard"]["type"],
+  showSpend: boolean,
+): DashboardSectionId[] {
+  return sanitizeDashboardSectionOrder(config.section_order, type, showSpend, true);
 }
 
 function getFilterScope(config: JsonRecord): "both" | "platform" | "channel" {
@@ -490,6 +458,66 @@ function mergeTimeseries(items: TimeSeriesPoint[]): TimeSeriesPoint[] {
   }
 
   return [...map.values()].sort((a, b) => a.date.localeCompare(b.date));
+}
+
+function mergeCampaignBreakdown(items: CampaignBreakdownItem[]): CampaignBreakdownItem[] {
+  const byKey = new Map<string, CampaignBreakdownItem>();
+
+  for (const item of items) {
+    const key = `${item.source_key}:${item.campaign_id}`;
+    const existing = byKey.get(key);
+    if (!existing) {
+      byKey.set(key, { ...item });
+      continue;
+    }
+
+    existing.impressions += item.impressions;
+    existing.clicks += item.clicks;
+    existing.spend += item.spend;
+    existing.conversions += item.conversions;
+    existing.cpc = existing.clicks > 0 ? Number((existing.spend / existing.clicks).toFixed(2)) : 0;
+    existing.cpa =
+      existing.conversions > 0 ? Number((existing.spend / existing.conversions).toFixed(2)) : 0;
+    existing.ctr =
+      existing.impressions > 0 ? Number(((existing.clicks / existing.impressions) * 100).toFixed(2)) : 0;
+  }
+
+  return [...byKey.values()].sort((a, b) => {
+    const aCpa = a.conversions > 0 ? a.cpa : Number.POSITIVE_INFINITY;
+    const bCpa = b.conversions > 0 ? b.cpa : Number.POSITIVE_INFINITY;
+    if (aCpa !== bCpa) return aCpa - bCpa;
+    return b.conversions - a.conversions || b.spend - a.spend;
+  });
+}
+
+function buildFunnel(impressions: number, clicks: number, conversions: number): FunnelStep[] {
+  const steps: FunnelStep[] = [
+    {
+      id: "impressions",
+      label: "Impressions",
+      value: impressions,
+    },
+  ];
+
+  if (clicks > 0) {
+    steps.push({
+      id: "clicks",
+      label: "Clicks",
+      value: clicks,
+      conversion_rate: impressions > 0 ? Number(((clicks / impressions) * 100).toFixed(2)) : 0,
+    });
+  }
+
+  if (conversions > 0) {
+    steps.push({
+      id: "conversions",
+      label: "Conversions",
+      value: conversions,
+      conversion_rate: clicks > 0 ? Number(((conversions / clicks) * 100).toFixed(2)) : 0,
+    });
+  }
+
+  return steps;
 }
 
 function mergeAnalyticsKpi(items: AnalyticsKPI[]): AnalyticsKPI {
@@ -1321,6 +1349,7 @@ export async function loadDashboardData(
   const frequencyOverrides = normalizeFrequencyOverrides(config);
   const frequencyOverrideMap = buildFrequencyOverrideMap(frequencyOverrides);
   const showSpend = Boolean(config.show_spend ?? true);
+  const dashboardType = dashboard.dashboard_type;
   const spendSource =
     String(config.spend_source ?? "platform_actual") === "media_plan_derived"
       ? "media_plan_derived"
@@ -1339,6 +1368,7 @@ export async function loadDashboardData(
   const platformStatsRaw: PlatformStats[] = [];
   const timeseriesRaw: TimeSeriesPoint[] = [];
   const prevStatsRaw: PlatformStats[] = [];
+  const campaignBreakdownRaw: CampaignBreakdownItem[] = [];
   const planRows: MediaPlanRow[] = [];
   const analyticsKpiRaw: AnalyticsKPI[] = [];
   const analyticsTimeseriesRaw: AnalyticsTimeSeriesPoint[] = [];
@@ -1552,6 +1582,27 @@ export async function loadDashboardData(
               conversions: Math.round(asNumber(row.conversions)),
             });
           }
+
+          if (dashboardType === "performance") {
+            const campaignRows = await getCampaignBreakdown(filter);
+            const platformMeta = PLATFORM_COLORS[source.platform];
+            for (const row of campaignRows) {
+              campaignBreakdownRaw.push({
+                campaign_id: row.campaign_id,
+                campaign_name: row.campaign_name,
+                source_key: row.source_key,
+                platform_label: platformMeta?.label ?? schema.display_name,
+                platform_color: platformMeta?.hex ?? "#94a3b8",
+                impressions: row.impressions,
+                clicks: row.clicks,
+                spend: row.spend,
+                conversions: row.conversions,
+                cpa: row.cpa,
+                cpc: row.cpc,
+                ctr: row.ctr,
+              });
+            }
+          }
           continue;
         }
 
@@ -1584,6 +1635,9 @@ export async function loadDashboardData(
     const platformResults = mergePlatformStats(platformStatsRaw);
     const prevPlatformResults = mergePlatformStats(prevStatsRaw);
     const timeseriesResults = mergeTimeseries(timeseriesRaw);
+    const campaignBreakdown = dashboardType === "performance"
+      ? mergeCampaignBreakdown(campaignBreakdownRaw)
+      : [];
 
     const availablePlatformIds = Array.from(new Set(platformResults.map((row) => row.id)));
     const availablePrevPlatformIds = Array.from(new Set(prevPlatformResults.map((row) => row.id)));
@@ -1717,32 +1771,39 @@ export async function loadDashboardData(
     const totalImpressions = platformResults.reduce((sum, row) => sum + row.impressions, 0);
     const totalClicks = platformResults.reduce((sum, row) => sum + row.clicks, 0);
     const totalSpend = platformResults.reduce((sum, row) => sum + row.spend, 0);
+    const totalConversions = platformResults.reduce((sum, row) => sum + row.conversions, 0);
 
     const prevImpressions = prevPlatformResults.reduce((sum, row) => sum + row.impressions, 0);
     const prevClicks = prevPlatformResults.reduce((sum, row) => sum + row.clicks, 0);
     const prevSpend = prevPlatformResults.reduce((sum, row) => sum + row.spend, 0);
+    const prevConversions = prevPlatformResults.reduce((sum, row) => sum + row.conversions, 0);
 
     const kpi = {
       total_impressions: totalImpressions,
       total_clicks: totalClicks,
       total_spend: Number(totalSpend.toFixed(2)),
+      total_conversions: totalConversions,
       avg_ctr: totalImpressions > 0 ? Number(((totalClicks / totalImpressions) * 100).toFixed(2)) : 0,
       avg_cpm: totalImpressions > 0 ? Number(((totalSpend / totalImpressions) * 1000).toFixed(2)) : 0,
       prev_impressions: prevImpressions,
       prev_clicks: prevClicks,
       prev_spend: Number(prevSpend.toFixed(2)),
+      prev_conversions: prevConversions,
       prev_ctr:
         prevImpressions > 0 ? Number(((prevClicks / prevImpressions) * 100).toFixed(2)) : 0,
       prev_cpm:
         prevImpressions > 0 ? Number(((prevSpend / prevImpressions) * 1000).toFixed(2)) : 0,
     };
+    const funnel = dashboardType === "performance"
+      ? buildFunnel(totalImpressions, totalClicks, totalConversions)
+      : undefined;
 
     const response: DashboardData = {
       dashboard: {
         client_name: dashboard.client_name,
         dashboard_name: dashboard.dashboard_name,
         logo_url: typeof config.logo_url === "string" ? config.logo_url : null,
-        type: dashboard.dashboard_type,
+        type: dashboardType,
         period: {
           from: range.from,
           to: range.to,
@@ -1751,9 +1812,9 @@ export async function loadDashboardData(
         language: normalizeDashboardLanguage(config.language),
         show_spend: showSpend,
         filter_scope: getFilterScope(config),
-        section_order: getSectionOrder(config, showSpend),
+        section_order: getSectionOrder(config, dashboardType, showSpend),
       },
-      kpi_config: getKpiConfig(config, dashboard.dashboard_type, showSpend),
+      kpi_config: getKpiConfig(config, dashboardType, showSpend),
       custom_kpi_cards: getCustomKpiCards(config, showSpend),
       kpi,
       platforms: platformResults,
@@ -1764,6 +1825,8 @@ export async function loadDashboardData(
       custom_tables: customTables.length > 0 ? customTables : undefined,
       manual_channels: manualChannels.length > 0 ? manualChannels : undefined,
       manual_table_title: manualChannels.length > 0 ? (manualTableTitle || "Additional sources") : undefined,
+      campaign_breakdown: campaignBreakdown.length > 0 ? campaignBreakdown : undefined,
+      funnel,
       analytics:
         analyticsKpiRaw.length > 0
           ? {
