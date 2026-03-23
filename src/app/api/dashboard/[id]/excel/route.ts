@@ -10,14 +10,6 @@ import type {
   PlatformStats,
 } from "@/lib/types";
 
-type KpiExportRow = {
-  metric: string;
-  value: number;
-  previous: number;
-  change_pct: number | null;
-  format: "number" | "percent" | "currency" | "decimal";
-};
-
 type PlatformPlanAggregate = {
   id: string;
   label: string;
@@ -191,48 +183,6 @@ function totalsFromPlatforms(rows: PlatformStats[]) {
   };
 }
 
-function buildKpiRows(data: DashboardData, previousPlatforms: PlatformStats[]): KpiExportRow[] {
-  const i18n = getDashboardI18n(data.dashboard.language);
-  const current = totalsFromPlatforms(data.platforms);
-  const previous = totalsFromPlatforms(previousPlatforms);
-  const showSpend = data.dashboard.show_spend;
-  const config = (data.kpi_config ?? []).filter((metric) => showSpend || !SPEND_RELATED_METRICS.has(metric));
-  const visibleBase = (config.length ? config : ["impressions", "clicks", "ctr", "cpm", "spend"]).slice(0, 5);
-
-  const metricMap: Record<string, Omit<KpiExportRow, "metric">> = {
-    impressions: { value: current.impressions, previous: previous.impressions, change_pct: previous.impressions ? ((current.impressions - previous.impressions) / previous.impressions) * 100 : null, format: "number" },
-    clicks: { value: current.clicks, previous: previous.clicks, change_pct: previous.clicks ? ((current.clicks - previous.clicks) / previous.clicks) * 100 : null, format: "number" },
-    ctr: { value: current.ctr, previous: previous.ctr, change_pct: previous.ctr ? ((current.ctr - previous.ctr) / previous.ctr) * 100 : null, format: "percent" },
-    cpm: { value: current.cpm, previous: previous.cpm, change_pct: previous.cpm ? ((current.cpm - previous.cpm) / previous.cpm) * 100 : null, format: "currency" },
-    cpc: { value: current.cpc, previous: previous.cpc, change_pct: previous.cpc ? ((current.cpc - previous.cpc) / previous.cpc) * 100 : null, format: "currency" },
-    spend: { value: current.spend, previous: previous.spend, change_pct: previous.spend ? ((current.spend - previous.spend) / previous.spend) * 100 : null, format: "currency" },
-    views: { value: current.views, previous: previous.views, change_pct: previous.views ? ((current.views - previous.views) / previous.views) * 100 : null, format: "number" },
-    cpv: { value: current.cpv, previous: previous.cpv, change_pct: previous.cpv ? ((current.cpv - previous.cpv) / previous.cpv) * 100 : null, format: "currency" },
-    conversions: { value: current.conversions, previous: previous.conversions, change_pct: previous.conversions ? ((current.conversions - previous.conversions) / previous.conversions) * 100 : null, format: "number" },
-    cpa: { value: current.cpa, previous: previous.cpa, change_pct: previous.cpa ? ((current.cpa - previous.cpa) / previous.cpa) * 100 : null, format: "currency" },
-    reach: { value: current.reach, previous: previous.reach, change_pct: previous.reach ? ((current.reach - previous.reach) / previous.reach) * 100 : null, format: "number" },
-    frequency: { value: current.frequency, previous: previous.frequency, change_pct: previous.frequency ? ((current.frequency - previous.frequency) / previous.frequency) * 100 : null, format: "decimal" },
-  };
-
-  const rows: KpiExportRow[] = visibleBase.map((metric) => ({
-    metric: compactMetricLabel(metric, i18n.metrics),
-    ...(metricMap[metric] ?? metricMap.impressions),
-  }));
-
-  for (const card of data.custom_kpi_cards ?? []) {
-    const source = metricMap[card.trend_source] ?? metricMap.impressions;
-    rows.push({
-      metric: card.title,
-      value: card.value,
-      previous: card.value,
-      change_pct: source.change_pct,
-      format: source.format,
-    });
-  }
-
-  return rows;
-}
-
 function aggregatePlanByPlatform(rows: PlanVsFactItem[]): PlatformPlanAggregate[] {
   const grouped = new Map<string, PlatformPlanAggregate>();
 
@@ -386,7 +336,7 @@ export async function GET(
 ) {
   try {
     const { id } = await Promise.resolve(context.params);
-    const { data, previous_platforms, leads_rows } = await loadDashboardData(request, id);
+    const { data, leads_rows } = await loadDashboardData(request, id);
     const i18n = getDashboardI18n(data.dashboard.language);
     const currency = data.dashboard.currency || "EUR";
     const workbook = new ExcelJS.Workbook();
@@ -397,10 +347,9 @@ export async function GET(
     const usedSheetNames = new Set<string>();
     const subtitle = `Period: ${data.dashboard.period.from} — ${data.dashboard.period.to}`;
 
-    const showSummaryKpi = worksheetHasSection(data, "kpi_grid");
-    const showSummaryPlatforms = worksheetHasSection(data, "platform_table");
-    const showSummarySheet = showSummaryKpi || showSummaryPlatforms;
     const showChannelSheet = worksheetHasSection(data, "plan_vs_fact") || worksheetHasSection(data, "channel_table");
+    const showSummaryPlatforms = worksheetHasSection(data, "platform_table");
+    const showSummarySheet = showChannelSheet || showSummaryPlatforms;
     const showPlatformPlanSheet = worksheetHasSection(data, "platform_plan_fact");
     const showDailySheet = worksheetHasSection(data, "trend_chart");
     const showCustomTableSheets = (data.custom_tables?.length ?? 0) > 0;
@@ -414,35 +363,102 @@ export async function GET(
       addWorksheetTitle(summary, `${data.dashboard.client_name} — ${data.dashboard.dashboard_name}`, subtitle, 8);
       let summaryRow = 4;
 
-      if (showSummaryKpi) {
-        summary.getCell(summaryRow, 1).value = "KPI";
+      if (showChannelSheet) {
+        summary.getCell(summaryRow, 1).value = i18n.sections.channelPerformancePlanFact;
         summary.getCell(summaryRow, 1).font = { bold: true, size: 12 };
         summaryRow += 1;
         const header = summary.getRow(summaryRow);
-        header.values = ["Metric", "Value", "Previous", "Change %"];
+        header.values = [
+          "Channel",
+          "Instrument",
+          "Buy Type",
+          "Impressions Plan",
+          "Impressions Fact",
+          "Impr %",
+          "Clicks Plan",
+          "Clicks Fact",
+          "Clicks %",
+          "Views Plan",
+          "Views Fact",
+          "Views %",
+          ...(data.dashboard.show_spend ? ["Budget Plan", "Budget Fact", "Budget %"] : []),
+          "Conversions Plan",
+          "Conversions Fact",
+          "Conv %",
+        ];
         styleHeaderRow(header);
         summaryRow += 1;
 
-        for (const row of buildKpiRows(data, previous_platforms)) {
+        for (const row of data.channel_performance ?? []) {
+          const spendMetric = row.metrics.spend;
           const excelRow = summary.getRow(summaryRow);
-          excelRow.values = [row.metric, row.value, row.previous, row.change_pct === null ? "" : row.change_pct / 100];
+          excelRow.values = [
+            row.channel,
+            row.instrument,
+            row.buy_type,
+            row.metrics.impressions?.plan ?? 0,
+            row.metrics.impressions?.fact ?? 0,
+            (row.metrics.impressions?.completion_pct ?? 0) / 100,
+            row.metrics.clicks?.plan ?? 0,
+            row.metrics.clicks?.fact ?? 0,
+            (row.metrics.clicks?.completion_pct ?? 0) / 100,
+            row.metrics.views?.plan ?? 0,
+            row.metrics.views?.fact ?? 0,
+            (row.metrics.views?.completion_pct ?? 0) / 100,
+            ...(data.dashboard.show_spend ? [spendMetric?.plan ?? 0, spendMetric?.fact ?? 0, ((spendMetric?.completion_pct ?? 0) / 100)] : []),
+            row.metrics.conversions?.plan ?? 0,
+            row.metrics.conversions?.fact ?? 0,
+            (row.metrics.conversions?.completion_pct ?? 0) / 100,
+          ];
           styleBodyRow(excelRow, summaryRow % 2 === 0);
-          if (row.format === "currency") {
-            setNumFmt(excelRow.getCell(2), currencyFormat(currency));
-            setNumFmt(excelRow.getCell(3), currencyFormat(currency));
-          } else if (row.format === "percent") {
-            setNumFmt(excelRow.getCell(2), "0.00%");
-            setNumFmt(excelRow.getCell(3), "0.00%");
-          } else if (row.format === "decimal") {
-            setNumFmt(excelRow.getCell(2), "0.00");
-            setNumFmt(excelRow.getCell(3), "0.00");
-          } else {
-            setNumFmt(excelRow.getCell(2), "#,##0");
-            setNumFmt(excelRow.getCell(3), "#,##0");
+          for (const col of [6, 9, 12, ...(data.dashboard.show_spend ? [15] : []), data.dashboard.show_spend ? 18 : 15]) {
+            setNumFmt(excelRow.getCell(col), "0.0%");
+            applyCompletionFill(excelRow.getCell(col), typeof excelRow.getCell(col).value === "number" ? Number(excelRow.getCell(col).value) * 100 : null);
           }
-          setNumFmt(excelRow.getCell(4), "0.00%");
+          if (data.dashboard.show_spend) {
+            setNumFmt(excelRow.getCell(13), currencyFormat(currency));
+            setNumFmt(excelRow.getCell(14), currencyFormat(currency));
+          }
           summaryRow += 1;
         }
+
+        const totals = (data.channel_performance ?? []).reduce(
+          (acc, row) => {
+            acc.impressionsPlan += row.metrics.impressions?.plan ?? 0;
+            acc.impressionsFact += row.metrics.impressions?.fact ?? 0;
+            acc.clicksPlan += row.metrics.clicks?.plan ?? 0;
+            acc.clicksFact += row.metrics.clicks?.fact ?? 0;
+            acc.viewsPlan += row.metrics.views?.plan ?? 0;
+            acc.viewsFact += row.metrics.views?.fact ?? 0;
+            acc.spendPlan += row.metrics.spend?.plan ?? 0;
+            acc.spendFact += row.metrics.spend?.fact ?? 0;
+            acc.conversionsPlan += row.metrics.conversions?.plan ?? 0;
+            acc.conversionsFact += row.metrics.conversions?.fact ?? 0;
+            return acc;
+          },
+          { impressionsPlan: 0, impressionsFact: 0, clicksPlan: 0, clicksFact: 0, viewsPlan: 0, viewsFact: 0, spendPlan: 0, spendFact: 0, conversionsPlan: 0, conversionsFact: 0 },
+        );
+        const totalRow = summary.getRow(summaryRow);
+        totalRow.values = [
+          i18n.common.total,
+          "",
+          "",
+          totals.impressionsPlan,
+          totals.impressionsFact,
+          (percentFromPlanFact(totals.impressionsFact, totals.impressionsPlan) ?? 0) / 100,
+          totals.clicksPlan,
+          totals.clicksFact,
+          (percentFromPlanFact(totals.clicksFact, totals.clicksPlan) ?? 0) / 100,
+          totals.viewsPlan,
+          totals.viewsFact,
+          (percentFromPlanFact(totals.viewsFact, totals.viewsPlan) ?? 0) / 100,
+          ...(data.dashboard.show_spend ? [totals.spendPlan, totals.spendFact, (percentFromPlanFact(totals.spendFact, totals.spendPlan) ?? 0) / 100] : []),
+          totals.conversionsPlan,
+          totals.conversionsFact,
+          (percentFromPlanFact(totals.conversionsFact, totals.conversionsPlan) ?? 0) / 100,
+        ];
+        styleTotalRow(totalRow);
+        summaryRow += 1;
         summaryRow += 1;
       }
 
