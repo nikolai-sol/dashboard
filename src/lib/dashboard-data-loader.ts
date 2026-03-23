@@ -48,6 +48,7 @@ import type {
   AnalyticsKPI,
   AnalyticsTimeSeriesPoint,
   CampaignBreakdownItem,
+  ComparisonChannelItem,
   ComparisonData,
   ComparisonMetricDelta,
   ComparisonPlatformItem,
@@ -287,6 +288,56 @@ function buildPlatformsComparison(dataA: DashboardData, dataB: DashboardData): C
     });
 }
 
+function buildChannelsComparison(dataA: DashboardData, dataB: DashboardData): ComparisonChannelItem[] {
+  const mapA = new Map((dataA.channel_performance ?? []).map((row) => [row.channel, row]));
+  const mapB = new Map((dataB.channel_performance ?? []).map((row) => [row.channel, row]));
+  const channels = Array.from(new Set([...mapA.keys(), ...mapB.keys()]));
+
+  return channels
+    .map((channel) => {
+      const rowA = mapA.get(channel);
+      const rowB = mapB.get(channel);
+      const impressionsA = rowA?.metrics.impressions?.fact ?? 0;
+      const impressionsB = rowB?.metrics.impressions?.fact ?? 0;
+      const clicksA = rowA?.metrics.clicks?.fact ?? 0;
+      const clicksB = rowB?.metrics.clicks?.fact ?? 0;
+      const spendA = rowA?.metrics.spend?.fact ?? 0;
+      const spendB = rowB?.metrics.spend?.fact ?? 0;
+      const conversionsA = rowA?.metrics.conversions?.fact ?? 0;
+      const conversionsB = rowB?.metrics.conversions?.fact ?? 0;
+      const viewsA = rowA?.metrics.views?.fact ?? 0;
+      const viewsB = rowB?.metrics.views?.fact ?? 0;
+      const reachA = rowA?.metrics.reach?.fact ?? 0;
+      const reachB = rowB?.metrics.reach?.fact ?? 0;
+      const ctrA = rowA?.metrics.ctr?.fact ?? (impressionsA > 0 ? (clicksA / impressionsA) * 100 : 0);
+      const ctrB = rowB?.metrics.ctr?.fact ?? (impressionsB > 0 ? (clicksB / impressionsB) * 100 : 0);
+      const cpmA = rowA?.metrics.cpm?.fact ?? (impressionsA > 0 ? (spendA / impressionsA) * 1000 : 0);
+      const cpmB = rowB?.metrics.cpm?.fact ?? (impressionsB > 0 ? (spendB / impressionsB) * 1000 : 0);
+
+      return {
+        channel,
+        instrument: rowA?.instrument ?? rowB?.instrument,
+        metrics: {
+          impressions: buildMetricDelta(impressionsA, impressionsB),
+          clicks: buildMetricDelta(clicksA, clicksB),
+          spend: buildMetricDelta(spendA, spendB),
+          conversions: buildMetricDelta(conversionsA, conversionsB),
+          views: buildMetricDelta(viewsA, viewsB),
+          reach: buildMetricDelta(reachA, reachB),
+          ctr: buildMetricDelta(ctrA, ctrB),
+          cpm: buildMetricDelta(cpmA, cpmB),
+        },
+      };
+    })
+    .sort((left, right) => {
+      const spendDelta =
+        Math.abs((right.metrics.spend?.value_a ?? 0) - (right.metrics.spend?.value_b ?? 0)) -
+        Math.abs((left.metrics.spend?.value_a ?? 0) - (left.metrics.spend?.value_b ?? 0));
+      if (spendDelta !== 0) return spendDelta;
+      return left.channel.localeCompare(right.channel);
+    });
+}
+
 function buildComparisonTimeseries(points: TimeSeriesPoint[]): ComparisonTimeSeriesPoint[] {
   const sortedDates = [...new Set(points.map((point) => point.date))].sort((a, b) => a.localeCompare(b));
   const byDate = new Map<
@@ -334,7 +385,10 @@ function buildComparison(dataA: DashboardData, dataB: DashboardData): Comparison
     },
     kpi_comparison: buildKpiComparison(dataA, dataB),
     platforms_comparison: buildPlatformsComparison(dataA, dataB),
+    channels_comparison: buildChannelsComparison(dataA, dataB),
     timeseries_b: buildComparisonTimeseries(dataB.timeseries),
+    timeseries_b_raw: dataB.timeseries,
+    channel_timeseries_b: dataB.channel_timeseries ?? [],
   };
 }
 

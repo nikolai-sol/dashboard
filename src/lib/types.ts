@@ -70,6 +70,12 @@ export interface ComparisonPlatformItem {
   metrics: ComparisonPlatformMetrics;
 }
 
+export interface ComparisonChannelItem {
+  channel: string;
+  instrument?: string;
+  metrics: ComparisonPlatformMetrics;
+}
+
 export interface ComparisonTimeSeriesPoint {
   date: string;
   day_index: number;
@@ -85,7 +91,20 @@ export interface ComparisonData {
   period_b: { from: string; to: string; label: string };
   kpi_comparison: Record<string, ComparisonMetricDelta>;
   platforms_comparison: ComparisonPlatformItem[];
+  channels_comparison: ComparisonChannelItem[];
   timeseries_b: ComparisonTimeSeriesPoint[];
+  timeseries_b_raw: TimeSeriesPoint[];
+  channel_timeseries_b: Array<{
+    date: string;
+    channel: string;
+    instrument?: string;
+    impressions: number;
+    reach?: number;
+    clicks: number;
+    spend: number;
+    views: number;
+    conversions: number;
+  }>;
 }
 
 export interface FunnelStep {
