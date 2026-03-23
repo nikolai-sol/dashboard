@@ -11,16 +11,12 @@ type MetricKey = "impressions" | "clicks" | "views" | "conversions" | "spend" | 
 
 type ComparisonSectionProps = {
   comparison: ComparisonData;
+  detailMode: "platform" | "channel";
   selectedMetrics: string[];
   selectedPlatforms: string[];
-  currentTimeseries: Array<{
-    date: string;
-    impressions: number;
-    clicks: number;
-    spend: number;
-    views: number;
-    conversions: number;
-  }>;
+  selectedChannels: string[];
+  currentTimeseries: ComparisonData["timeseries_b_raw"];
+  currentChannelTimeseries: ComparisonData["channel_timeseries_b"];
   currencyFormatter: (value: number) => string;
   locale: string;
   language: "en" | "ru";
@@ -30,8 +26,18 @@ type ComparisonSectionProps = {
     metrics: Record<string, string>;
     total: string;
     platform: string;
+    channel: string;
     noData: string;
   };
+};
+
+type TrendAggregatePoint = {
+  date: string;
+  impressions: number;
+  clicks: number;
+  spend: number;
+  views: number;
+  conversions: number;
 };
 
 function compactNumber(value: number, locale: string) {
@@ -66,8 +72,34 @@ function deltaClass(metric: string, delta: number) {
   return positive ? "text-emerald-600" : "text-rose-600";
 }
 
+function aggregateTrendRows(
+  rows:
+    | ComparisonSectionProps["currentTimeseries"]
+    | ComparisonSectionProps["currentChannelTimeseries"],
+) {
+  const byDate = new Map<string, { impressions: number; clicks: number; spend: number; views: number; conversions: number }>();
+  for (const row of rows) {
+    if (!byDate.has(row.date)) {
+      byDate.set(row.date, { impressions: 0, clicks: 0, spend: 0, views: 0, conversions: 0 });
+    }
+    const item = byDate.get(row.date)!;
+    item.impressions += row.impressions;
+    item.clicks += row.clicks;
+    item.spend += row.spend;
+    item.views += row.views ?? 0;
+    item.conversions += row.conversions ?? 0;
+  }
+  return Array.from(byDate.entries())
+    .sort((a, b) => a[0].localeCompare(b[0]))
+    .map(([date, metrics]) => ({ date, ...metrics }));
+}
+
 function getTrendMetricValue(
-  point: ComparisonSectionProps["currentTimeseries"][number] | ComparisonData["timeseries_b"][number],
+  point:
+    | TrendAggregatePoint
+    | ComparisonSectionProps["currentTimeseries"][number]
+    | ComparisonData["timeseries_b"][number]
+    | ComparisonSectionProps["currentChannelTimeseries"][number],
   metric: MetricKey,
 ) {
   if (metric === "ctr") {
@@ -80,19 +112,24 @@ function getTrendMetricValue(
     return point.clicks > 0 ? point.spend / point.clicks : 0;
   }
   if (metric === "cpv") {
-    return point.views > 0 ? point.spend / point.views : 0;
+    const views = point.views ?? 0;
+    return views > 0 ? point.spend / views : 0;
   }
   if (metric === "cpa") {
-    return point.conversions > 0 ? point.spend / point.conversions : 0;
+    const conversions = point.conversions ?? 0;
+    return conversions > 0 ? point.spend / conversions : 0;
   }
   return Number(point[metric]);
 }
 
 export default function ComparisonSection({
   comparison,
+  detailMode,
   selectedMetrics,
   selectedPlatforms,
+  selectedChannels,
   currentTimeseries,
+  currentChannelTimeseries,
   currencyFormatter,
   locale,
   language,
@@ -129,21 +166,51 @@ export default function ComparisonSection({
 
   const effectiveTrendMetric = trendMetricOptions.includes(trendMetric) ? trendMetric : trendMetricOptions[0];
 
-  const platformRows = useMemo(() => {
+  const detailRows = useMemo(() => {
+    if (detailMode === "channel") {
+      const source = comparison.channels_comparison;
+      if (!selectedChannels.length) return source;
+      const set = new Set(selectedChannels);
+      return source.filter((item) => set.has(item.channel));
+    }
     const source = comparison.platforms_comparison;
     if (!selectedPlatforms.length) return source;
     const set = new Set(selectedPlatforms);
     return source.filter((item) => set.has(item.platform));
-  }, [comparison.platforms_comparison, selectedPlatforms]);
+  }, [comparison.channels_comparison, comparison.platforms_comparison, detailMode, selectedChannels, selectedPlatforms]);
+
+  const currentTrendSource = useMemo(() => {
+    if (detailMode === "channel") {
+      if (!selectedChannels.length) return currentChannelTimeseries;
+      const set = new Set(selectedChannels);
+      return currentChannelTimeseries.filter((point) => set.has(point.channel));
+    }
+    if (!selectedPlatforms.length) return currentTimeseries;
+    const set = new Set(selectedPlatforms);
+    return currentTimeseries.filter((point) => set.has(point.platform));
+  }, [currentChannelTimeseries, currentTimeseries, detailMode, selectedChannels, selectedPlatforms]);
+
+  const compareTrendSource = useMemo(() => {
+    if (detailMode === "channel") {
+      if (!selectedChannels.length) return comparison.channel_timeseries_b;
+      const set = new Set(selectedChannels);
+      return comparison.channel_timeseries_b.filter((point) => set.has(point.channel));
+    }
+    if (!selectedPlatforms.length) return comparison.timeseries_b_raw;
+    const set = new Set(selectedPlatforms);
+    return comparison.timeseries_b_raw.filter((point) => set.has(point.platform));
+  }, [comparison.channel_timeseries_b, comparison.timeseries_b_raw, detailMode, selectedChannels, selectedPlatforms]);
 
   const normalizedSeries = useMemo(() => {
-    const pointsA = currentTimeseries.map((point, index) => ({
+    const aggregatedA = aggregateTrendRows(currentTrendSource);
+    const aggregatedB = aggregateTrendRows(compareTrendSource);
+    const pointsA = aggregatedA.map((point, index) => ({
       x: language === "ru" ? `День ${index + 1}` : `Day ${index + 1}`,
       y: getTrendMetricValue(point, effectiveTrendMetric),
       realDate: point.date,
     }));
-    const pointsB = comparison.timeseries_b.map((point) => ({
-      x: language === "ru" ? `День ${point.day_index + 1}` : `Day ${point.day_index + 1}`,
+    const pointsB = aggregatedB.map((point, index) => ({
+      x: language === "ru" ? `День ${index + 1}` : `Day ${index + 1}`,
       y: getTrendMetricValue(point, effectiveTrendMetric),
       realDate: point.date,
     }));
@@ -159,7 +226,7 @@ export default function ComparisonSection({
         data: pointsB,
       },
     };
-  }, [comparison.period_a.label, comparison.period_b.label, comparison.timeseries_b, currentTimeseries, effectiveTrendMetric, language]);
+  }, [compareTrendSource, comparison.period_a.label, comparison.period_b.label, currentTrendSource, effectiveTrendMetric, language]);
 
   const toggleLabel = language === "ru" ? (collapsed ? "Развернуть" : "Свернуть") : collapsed ? "Expand" : "Collapse";
 
@@ -207,7 +274,9 @@ export default function ComparisonSection({
         <table className="min-w-full divide-y divide-slate-200 text-sm">
           <thead className="bg-slate-50">
             <tr>
-              <th className="px-4 py-3 text-left font-semibold text-slate-700">{labels.platform}</th>
+              <th className="px-4 py-3 text-left font-semibold text-slate-700">
+                {detailMode === "channel" ? labels.channel : labels.platform}
+              </th>
               {summaryMetrics.map((metric) => (
                 <th key={metric} className="px-4 py-3 text-left font-semibold text-slate-700">
                   {labels.metrics[metric] ?? metric}
@@ -216,32 +285,56 @@ export default function ComparisonSection({
             </tr>
           </thead>
           <tbody className="divide-y divide-slate-100 bg-white">
-            {platformRows.length === 0 ? (
+            {detailRows.length === 0 ? (
               <tr>
                 <td colSpan={summaryMetrics.length + 1} className="px-4 py-6 text-center text-slate-500">
                   {labels.noData}
                 </td>
               </tr>
             ) : (
-              platformRows.map((row) => (
-                <tr key={row.platform}>
-                  <td className="px-4 py-3 font-medium text-slate-900">{row.platform_label}</td>
-                  {summaryMetrics.map((metric) => {
-                    const item = row.metrics[metric];
-                    return (
-                      <td key={metric} className="px-4 py-3 align-top">
-                        <div className={`font-semibold ${deltaClass(metric, item.delta)}`}>
-                          {deltaText(metric, item.delta, item.delta_pct)}
-                        </div>
-                        <div className="text-xs text-slate-500">
-                          {metricFormatter(metric, item.value_a, currencyFormatter, locale)} →{" "}
-                          {metricFormatter(metric, item.value_b, currencyFormatter, locale)}
-                        </div>
-                      </td>
-                    );
-                  })}
-                </tr>
-              ))
+              detailMode === "channel"
+                ? comparison.channels_comparison
+                    .filter((row) => !selectedChannels.length || selectedChannels.includes(row.channel))
+                    .map((row) => (
+                      <tr key={row.channel}>
+                        <td className="px-4 py-3 font-medium text-slate-900">{row.channel}</td>
+                        {summaryMetrics.map((metric) => {
+                          const item = row.metrics[metric];
+                          return (
+                            <td key={metric} className="px-4 py-3 align-top">
+                              <div className={`font-semibold ${deltaClass(metric, item.delta)}`}>
+                                {deltaText(metric, item.delta, item.delta_pct)}
+                              </div>
+                              <div className="text-xs text-slate-500">
+                                {metricFormatter(metric, item.value_a, currencyFormatter, locale)} →{" "}
+                                {metricFormatter(metric, item.value_b, currencyFormatter, locale)}
+                              </div>
+                            </td>
+                          );
+                        })}
+                      </tr>
+                    ))
+                : comparison.platforms_comparison
+                    .filter((row) => !selectedPlatforms.length || selectedPlatforms.includes(row.platform))
+                    .map((row) => (
+                      <tr key={row.platform}>
+                        <td className="px-4 py-3 font-medium text-slate-900">{row.platform_label}</td>
+                        {summaryMetrics.map((metric) => {
+                          const item = row.metrics[metric];
+                          return (
+                            <td key={metric} className="px-4 py-3 align-top">
+                              <div className={`font-semibold ${deltaClass(metric, item.delta)}`}>
+                                {deltaText(metric, item.delta, item.delta_pct)}
+                              </div>
+                              <div className="text-xs text-slate-500">
+                                {metricFormatter(metric, item.value_a, currencyFormatter, locale)} →{" "}
+                                {metricFormatter(metric, item.value_b, currencyFormatter, locale)}
+                              </div>
+                            </td>
+                          );
+                        })}
+                      </tr>
+                    ))
             )}
           </tbody>
         </table>

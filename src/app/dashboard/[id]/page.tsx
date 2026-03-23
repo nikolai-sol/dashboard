@@ -291,6 +291,14 @@ export default function DashboardByIdPage() {
     return platformFiltered;
   }, [dashboard, effectiveFilterMode, selectedChannelSet, selectedSet]);
 
+  const filteredChannelTimeseries = useMemo(() => {
+    if (!dashboard?.channel_timeseries) return [];
+    if (effectiveFilterMode === "channel") {
+      return dashboard.channel_timeseries.filter((item) => selectedChannelSet.has(item.channel));
+    }
+    return dashboard.channel_timeseries;
+  }, [dashboard, effectiveFilterMode, selectedChannelSet]);
+
   const currencyCode = dashboard?.dashboard.currency || "EUR";
   const dashboardLanguage = dashboard?.dashboard.language ?? "en";
   const i18n = useMemo(() => getDashboardI18n(dashboardLanguage), [dashboardLanguage]);
@@ -1035,13 +1043,16 @@ export default function DashboardByIdPage() {
       {dashboard.comparison ? (
         <ComparisonSection
           comparison={dashboard.comparison}
+          detailMode={effectiveFilterMode === "channel" ? "channel" : "platform"}
           selectedMetrics={(dashboard.kpi_config ?? []).filter((metric) => showSpend || !SPEND_RELATED_KPIS.has(metric))}
           selectedPlatforms={
             effectiveFilterMode === "channel"
               ? Array.from(channelVisiblePlatformIds)
               : selectedPlatforms
           }
-          currentTimeseries={aggregatedDaily}
+          selectedChannels={selectedChannels}
+          currentTimeseries={filteredTimeseries}
+          currentChannelTimeseries={filteredChannelTimeseries}
           currencyFormatter={(value) => money(value, currencyCode, locale)}
           locale={locale}
           language={dashboardLanguage}
@@ -1051,6 +1062,7 @@ export default function DashboardByIdPage() {
             metrics: i18n.metrics,
             total: i18n.common.total,
             platform: i18n.common.platform,
+            channel: i18n.common.channel,
             noData: i18n.common.noDataForSelectedPlatforms,
           }}
         />
