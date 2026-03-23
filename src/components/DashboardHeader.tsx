@@ -1,6 +1,8 @@
 "use client";
 
 import { CalendarRange, Download } from "lucide-react";
+import ComparisonToggle, { type ComparisonPreset } from "@/components/ComparisonToggle";
+import type { DashboardLanguage } from "@/lib/dashboard-i18n";
 
 type DashboardHeaderProps = {
   clientName: string;
@@ -12,15 +14,38 @@ type DashboardHeaderProps = {
     to: string;
     apply: string;
     updating: string;
+    compare: string;
+    compareApply: string;
+    compareClose: string;
+    compareTitle: string;
+    compareCurrent: string;
+    comparePrevious: string;
+    compareMonth: string;
+    compareWeek: string;
+    compareYear: string;
+    compareCustom: string;
+    compareFrom: string;
+    compareTo: string;
     exportPdf: string;
     exportExcel: string;
   };
+  language?: DashboardLanguage;
   dateFrom?: string;
   dateTo?: string;
   onDateFromChange?: (value: string) => void;
   onDateToChange?: (value: string) => void;
   onApplyDateRange?: () => void;
   isUpdatingRange?: boolean;
+  compareOpen?: boolean;
+  comparePreset?: ComparisonPreset;
+  compareFrom?: string;
+  compareTo?: string;
+  onToggleCompare?: () => void;
+  onComparePresetChange?: (preset: ComparisonPreset) => void;
+  onCompareFromChange?: (value: string) => void;
+  onCompareToChange?: (value: string) => void;
+  onApplyCompare?: () => void;
+  onClearCompare?: () => void;
   onExportPdf?: () => void;
   onExportExcel?: () => void;
 };
@@ -43,12 +68,23 @@ export default function DashboardHeader({
   logoUrl,
   pdfMode = false,
   labels,
+  language = "en",
   dateFrom,
   dateTo,
   onDateFromChange,
   onDateToChange,
   onApplyDateRange,
   isUpdatingRange = false,
+  compareOpen = false,
+  comparePreset = "month",
+  compareFrom = "",
+  compareTo = "",
+  onToggleCompare,
+  onComparePresetChange,
+  onCompareFromChange,
+  onCompareToChange,
+  onApplyCompare,
+  onClearCompare,
   onExportPdf,
   onExportExcel,
 }: DashboardHeaderProps) {
@@ -56,6 +92,18 @@ export default function DashboardHeader({
     to: "to",
     apply: "Apply",
     updating: "Updating...",
+    compare: "Compare",
+    compareApply: "Apply comparison",
+    compareClose: "Close",
+    compareTitle: "Period comparison",
+    compareCurrent: "Current period",
+    comparePrevious: "Previous period",
+    compareMonth: "Month to month",
+    compareWeek: "Week to week",
+    compareYear: "Year over year",
+    compareCustom: "Custom period",
+    compareFrom: "from",
+    compareTo: "to",
     exportPdf: "Export PDF",
     exportExcel: "Export Excel",
   };
@@ -113,6 +161,35 @@ export default function DashboardHeader({
             >
               {isUpdatingRange ? copy.updating : copy.apply}
             </button>
+            <ComparisonToggle
+              open={compareOpen}
+              currentFrom={dateFrom ?? ""}
+              currentTo={dateTo ?? ""}
+              compareFrom={compareFrom}
+              compareTo={compareTo}
+              preset={comparePreset}
+              language={language}
+              labels={{
+                compare: copy.compare,
+                compareApply: copy.compareApply,
+                compareClose: copy.compareClose,
+                compareTitle: copy.compareTitle,
+                compareCurrent: copy.compareCurrent,
+                comparePrevious: copy.comparePrevious,
+                compareMonth: copy.compareMonth,
+                compareWeek: copy.compareWeek,
+                compareYear: copy.compareYear,
+                compareCustom: copy.compareCustom,
+                compareFrom: copy.compareFrom,
+                compareTo: copy.compareTo,
+              }}
+              onToggleOpen={() => onToggleCompare?.()}
+              onPresetChange={(preset) => onComparePresetChange?.(preset)}
+              onCompareFromChange={(value) => onCompareFromChange?.(value)}
+              onCompareToChange={(value) => onCompareToChange?.(value)}
+              onApply={() => onApplyCompare?.()}
+              onClear={() => onClearCompare?.()}
+            />
             <button
               type="button"
               onClick={onExportExcel}

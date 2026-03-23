@@ -4,15 +4,16 @@ export type DashboardI18n = {
   language: DashboardLanguage;
   locale: string;
   metrics: Record<string, string>;
-  sections: {
-    platformPerformance: string;
-    platformPerformancePlanFact: string;
-    channelPerformance: string;
-    channelPerformancePlanFact: string;
-    trendByDay: string;
-    spendByPlatform: string;
-    channelMix: string;
-    manualData: string;
+    sections: {
+      platformPerformance: string;
+      platformPerformancePlanFact: string;
+      channelPerformance: string;
+      channelPerformancePlanFact: string;
+      trendByDay: string;
+      comparison: string;
+      spendByPlatform: string;
+      channelMix: string;
+      manualData: string;
   };
   filter: {
     filterBy: string;
@@ -22,11 +23,23 @@ export type DashboardI18n = {
   };
   header: {
     to: string;
-    apply: string;
-    updating: string;
-    exportPdf: string;
-    exportExcel: string;
-  };
+      apply: string;
+      updating: string;
+      compare: string;
+      compareApply: string;
+      compareClose: string;
+      compareTitle: string;
+      compareCurrent: string;
+      comparePrevious: string;
+      compareMonth: string;
+      compareWeek: string;
+      compareYear: string;
+      compareCustom: string;
+      compareFrom: string;
+      compareTo: string;
+      exportPdf: string;
+      exportExcel: string;
+    };
   common: {
     total: string;
     trend: string;
@@ -87,6 +100,7 @@ const DICTIONARY: Record<DashboardLanguage, Omit<DashboardI18n, "language" | "lo
       channelPerformance: "Channel Performance",
       channelPerformancePlanFact: "Channel Performance Plan / Fact",
       trendByDay: "Trend by Day",
+      comparison: "Period Comparison",
       spendByPlatform: "Spend by Platform",
       channelMix: "Channel Mix",
       manualData: "Additional Sources",
@@ -101,6 +115,18 @@ const DICTIONARY: Record<DashboardLanguage, Omit<DashboardI18n, "language" | "lo
       to: "to",
       apply: "Apply",
       updating: "Updating...",
+      compare: "Compare",
+      compareApply: "Apply comparison",
+      compareClose: "Close",
+      compareTitle: "Period comparison",
+      compareCurrent: "Current period",
+      comparePrevious: "Previous period",
+      compareMonth: "Month to month",
+      compareWeek: "Week to week",
+      compareYear: "Year over year",
+      compareCustom: "Custom period",
+      compareFrom: "from",
+      compareTo: "to",
       exportPdf: "Export PDF",
       exportExcel: "Export Excel",
     },
@@ -162,6 +188,7 @@ const DICTIONARY: Record<DashboardLanguage, Omit<DashboardI18n, "language" | "lo
       channelPerformance: "Эффективность каналов",
       channelPerformancePlanFact: "Эффективность каналов План / Факт",
       trendByDay: "Динамика по дням",
+      comparison: "Сравнение периодов",
       spendByPlatform: "Расход по платформам",
       channelMix: "Микс каналов",
       manualData: "Дополнительные источники",
@@ -176,6 +203,18 @@ const DICTIONARY: Record<DashboardLanguage, Omit<DashboardI18n, "language" | "lo
       to: "по",
       apply: "Применить",
       updating: "Обновление...",
+      compare: "Сравнить",
+      compareApply: "Применить сравнение",
+      compareClose: "Закрыть",
+      compareTitle: "Сравнение периодов",
+      compareCurrent: "Текущий период",
+      comparePrevious: "Предыдущий период",
+      compareMonth: "Месяц к месяцу",
+      compareWeek: "Неделя к неделе",
+      compareYear: "Год к году",
+      compareCustom: "Свой период",
+      compareFrom: "с",
+      compareTo: "по",
       exportPdf: "Экспорт PDF",
       exportExcel: "Экспорт Excel",
     },

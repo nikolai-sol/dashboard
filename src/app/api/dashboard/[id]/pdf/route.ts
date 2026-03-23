@@ -7,11 +7,15 @@ function buildDashboardUrl(request: Request, dashboardId: string) {
   const { searchParams } = new URL(request.url);
   const from = searchParams.get("from");
   const to = searchParams.get("to");
+  const compareFrom = searchParams.get("compare_from");
+  const compareTo = searchParams.get("compare_to");
   const baseUrl = process.env.INTERNAL_BASE_URL || "http://127.0.0.1:3001";
   const url = new URL(`/dashboard/${dashboardId}`, baseUrl);
   url.searchParams.set("pdf", "true");
   if (from) url.searchParams.set("from", from);
   if (to) url.searchParams.set("to", to);
+  if (compareFrom) url.searchParams.set("compare_from", compareFrom);
+  if (compareTo) url.searchParams.set("compare_to", compareTo);
   return url.toString();
 }
 

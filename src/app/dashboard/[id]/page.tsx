@@ -6,6 +6,7 @@ import { useParams, useRouter, useSearchParams } from "next/navigation";
 import ChannelMix from "@/components/ChannelMix";
 import CampaignPerformanceTable from "@/components/CampaignPerformanceTable";
 import ChannelPerformanceTable from "@/components/ChannelPerformanceTable";
+import ComparisonSection from "@/components/ComparisonSection";
 import ConversionFunnel from "@/components/ConversionFunnel";
 import CustomTable from "@/components/CustomTable";
 import DashboardHeader from "@/components/DashboardHeader";
@@ -57,6 +58,7 @@ function formatPeriodDate(isoDate: string, locale = "en-GB") {
 async function getDashboardData(
   id: string,
   range?: { from: string; to: string },
+  compareRange?: { from: string; to: string } | null,
 ): Promise<{
   data: DashboardData;
   demoMode: boolean;
@@ -67,6 +69,10 @@ async function getDashboardData(
     if (range?.from && range?.to) {
       params.set("from", range.from);
       params.set("to", range.to);
+    }
+    if (compareRange?.from && compareRange?.to) {
+      params.set("compare_from", compareRange.from);
+      params.set("compare_to", compareRange.to);
     }
     const query = params.toString();
     const response = await fetch(`/api/dashboard/${id}${query ? `?${query}` : ""}`, { cache: "no-store" });
@@ -84,6 +90,61 @@ async function getDashboardData(
   }
 }
 
+function shiftDate(isoDate: string, days: number) {
+  const date = new Date(`${isoDate}T00:00:00Z`);
+  date.setUTCDate(date.getUTCDate() + days);
+  return date.toISOString().slice(0, 10);
+}
+
+function shiftMonth(isoDate: string, months: number) {
+  const [year, month, day] = isoDate.split("-").map(Number);
+  const targetMonth = month - 1 + months;
+  const targetDate = new Date(Date.UTC(year, targetMonth + 1, 0));
+  const clampedDay = Math.min(day, targetDate.getUTCDate());
+  return new Date(Date.UTC(year, targetMonth, clampedDay)).toISOString().slice(0, 10);
+}
+
+function shiftYear(isoDate: string, years: number) {
+  const [year, month, day] = isoDate.split("-").map(Number);
+  const lastDay = new Date(Date.UTC(year + years, month, 0)).getUTCDate();
+  const clampedDay = Math.min(day, lastDay);
+  return new Date(Date.UTC(year + years, month - 1, clampedDay)).toISOString().slice(0, 10);
+}
+
+function daysBetween(from: string, to: string) {
+  const fromDate = new Date(`${from}T00:00:00Z`);
+  const toDate = new Date(`${to}T00:00:00Z`);
+  return Math.max(1, Math.round((toDate.getTime() - fromDate.getTime()) / 86400000) + 1);
+}
+
+function buildCompareRange(
+  preset: "previous" | "month" | "week" | "year" | "custom",
+  from: string,
+  to: string,
+  customFrom: string,
+  customTo: string,
+) {
+  if (!from || !to) return { from: "", to: "" };
+  const span = daysBetween(from, to);
+  if (preset === "custom") {
+    return { from: customFrom, to: customTo };
+  }
+  if (preset === "previous") {
+    const compareTo = shiftDate(from, -1);
+    const compareFrom = shiftDate(compareTo, -(span - 1));
+    return { from: compareFrom, to: compareTo };
+  }
+  if (preset === "month") {
+    return { from: shiftMonth(from, -1), to: shiftMonth(to, -1) };
+  }
+  if (preset === "week") {
+    const compareTo = shiftDate(to, -7);
+    const compareFrom = shiftDate(compareTo, -6);
+    return { from: compareFrom, to: compareTo };
+  }
+  return { from: shiftYear(from, -1), to: shiftYear(to, -1) };
+}
+
 export default function DashboardByIdPage() {
   const params = useParams<{ id: string }>();
   const router = useRouter();
@@ -91,6 +152,8 @@ export default function DashboardByIdPage() {
   const dashboardId = params?.id ? String(params.id).toLowerCase() : "rag_mp";
   const initialFrom = searchParams.get("from") ?? "";
   const initialTo = searchParams.get("to") ?? "";
+  const initialCompareFrom = searchParams.get("compare_from") ?? "";
+  const initialCompareTo = searchParams.get("compare_to") ?? "";
   const isPdfMode = searchParams.get("pdf") === "true";
   const isMobileMode = searchParams.get("mobile") === "1";
 
@@ -106,6 +169,16 @@ export default function DashboardByIdPage() {
     from: initialFrom,
     to: initialTo,
   });
+  const [compareOpen, setCompareOpen] = useState(Boolean(initialCompareFrom && initialCompareTo));
+  const [comparePreset, setComparePreset] = useState<"previous" | "month" | "week" | "year" | "custom">("month");
+  const [compareRange, setCompareRange] = useState<{ from: string; to: string }>({
+    from: initialCompareFrom,
+    to: initialCompareTo,
+  });
+  const [draftCompareRange, setDraftCompareRange] = useState<{ from: string; to: string }>({
+    from: initialCompareFrom,
+    to: initialCompareTo,
+  });
 
   useEffect(() => {
     let cancelled = false;
@@ -116,6 +189,7 @@ export default function DashboardByIdPage() {
       const result = await getDashboardData(
         dashboardId,
         dateRange.from && dateRange.to ? dateRange : undefined,
+        compareRange.from && compareRange.to ? compareRange : null,
       );
       if (cancelled) {
         return;
@@ -142,7 +216,23 @@ export default function DashboardByIdPage() {
     return () => {
       cancelled = true;
     };
-  }, [dashboardId, dateRange]);
+  }, [compareRange, dashboardId, dateRange]);
+
+  const effectiveDraftCompareRange = useMemo(() => {
+    const effectiveFrom = draftDateRange.from || dashboard?.dashboard.period.from || "";
+    const effectiveTo = draftDateRange.to || dashboard?.dashboard.period.to || "";
+    if (comparePreset === "custom") {
+      return draftCompareRange;
+    }
+    return buildCompareRange(comparePreset, effectiveFrom, effectiveTo, draftCompareRange.from, draftCompareRange.to);
+  }, [
+    comparePreset,
+    dashboard?.dashboard.period.from,
+    dashboard?.dashboard.period.to,
+    draftCompareRange,
+    draftDateRange.from,
+    draftDateRange.to,
+  ]);
 
   const selectedSet = useMemo(() => new Set(selectedPlatforms), [selectedPlatforms]);
   const selectedChannelSet = useMemo(() => new Set(selectedChannels), [selectedChannels]);
@@ -800,6 +890,10 @@ export default function DashboardByIdPage() {
     const to = dateRange.to || dashboard?.dashboard.period.to;
     if (from) params.set("from", from);
     if (to) params.set("to", to);
+    if (compareRange.from && compareRange.to) {
+      params.set("compare_from", compareRange.from);
+      params.set("compare_to", compareRange.to);
+    }
     window.open(`/api/dashboard/${dashboardId}/pdf?${params.toString()}`, "_blank", "noopener,noreferrer");
   };
 
@@ -810,6 +904,10 @@ export default function DashboardByIdPage() {
     const to = dateRange.to || dashboard?.dashboard.period.to;
     if (from) params.set("from", from);
     if (to) params.set("to", to);
+    if (compareRange.from && compareRange.to) {
+      params.set("compare_from", compareRange.from);
+      params.set("compare_to", compareRange.to);
+    }
     window.open(`/api/dashboard/${dashboardId}/excel?${params.toString()}`, "_blank", "noopener,noreferrer");
   };
 
@@ -819,6 +917,35 @@ export default function DashboardByIdPage() {
     const params = new URLSearchParams(searchParams.toString());
     params.set("from", draftDateRange.from);
     params.set("to", draftDateRange.to);
+    if (compareRange.from && compareRange.to) {
+      params.set("compare_from", compareRange.from);
+      params.set("compare_to", compareRange.to);
+    } else {
+      params.delete("compare_from");
+      params.delete("compare_to");
+    }
+    router.replace(`/dashboard/${dashboardId}?${params.toString()}`, { scroll: false });
+  };
+
+  const applyCompareRange = () => {
+    if (!effectiveDraftCompareRange.from || !effectiveDraftCompareRange.to) return;
+    setCompareRange(effectiveDraftCompareRange);
+    setCompareOpen(false);
+    const params = new URLSearchParams(searchParams.toString());
+    if (dateRange.from) params.set("from", dateRange.from);
+    if (dateRange.to) params.set("to", dateRange.to);
+    params.set("compare_from", effectiveDraftCompareRange.from);
+    params.set("compare_to", effectiveDraftCompareRange.to);
+    router.replace(`/dashboard/${dashboardId}?${params.toString()}`, { scroll: false });
+  };
+
+  const clearCompareRange = () => {
+    setCompareOpen(false);
+    setCompareRange({ from: "", to: "" });
+    setDraftCompareRange({ from: "", to: "" });
+    const params = new URLSearchParams(searchParams.toString());
+    params.delete("compare_from");
+    params.delete("compare_to");
     router.replace(`/dashboard/${dashboardId}?${params.toString()}`, { scroll: false });
   };
 
@@ -854,6 +981,7 @@ export default function DashboardByIdPage() {
         periodLabel={periodLabel}
         logoUrl={dashboard.dashboard.logo_url}
         pdfMode={isPdfMode}
+        language={dashboardLanguage}
         labels={i18n.header}
         dateFrom={draftDateRange.from}
         dateTo={draftDateRange.to}
@@ -861,6 +989,16 @@ export default function DashboardByIdPage() {
         onDateToChange={(value) => setDraftDateRange((prev) => ({ ...prev, to: value }))}
         onApplyDateRange={applyDateRange}
         isUpdatingRange={isLoading}
+        compareOpen={compareOpen}
+        comparePreset={comparePreset}
+        compareFrom={effectiveDraftCompareRange.from}
+        compareTo={effectiveDraftCompareRange.to}
+        onToggleCompare={() => setCompareOpen((prev) => !prev)}
+        onComparePresetChange={setComparePreset}
+        onCompareFromChange={(value) => setDraftCompareRange((prev) => ({ ...prev, from: value }))}
+        onCompareToChange={(value) => setDraftCompareRange((prev) => ({ ...prev, to: value }))}
+        onApplyCompare={applyCompareRange}
+        onClearCompare={clearCompareRange}
         onExportExcel={exportExcel}
         onExportPdf={exportPdf}
       />
@@ -891,6 +1029,29 @@ export default function DashboardByIdPage() {
           mode={filterMode}
           onModeChange={setFilterMode}
           filterScope={channelOptions.length > 0 ? filterScope : "platform"}
+        />
+      ) : null}
+
+      {dashboard.comparison ? (
+        <ComparisonSection
+          comparison={dashboard.comparison}
+          selectedMetrics={dashboard.kpi_config ?? []}
+          selectedPlatforms={
+            effectiveFilterMode === "channel"
+              ? Array.from(channelVisiblePlatformIds)
+              : selectedPlatforms
+          }
+          currentTimeseries={aggregatedDaily}
+          currencyFormatter={(value) => money(value, currencyCode, locale)}
+          locale={locale}
+          language={dashboardLanguage}
+          labels={{
+            title: i18n.sections.comparison,
+            metrics: i18n.metrics,
+            total: i18n.common.total,
+            platform: i18n.common.platform,
+            noData: i18n.common.noDataForSelectedPlatforms,
+          }}
         />
       ) : null}
 

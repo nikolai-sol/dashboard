@@ -391,6 +391,7 @@ export async function GET(
     const showDailySheet = worksheetHasSection(data, "trend_chart");
     const showCustomTableSheets = (data.custom_tables?.length ?? 0) > 0;
     const showLeadsSheet = false;
+    const showComparisonSheet = Boolean(data.comparison);
 
     if (showSummarySheet) {
       const summary = workbook.addWorksheet(truncateSheetName("Summary", usedSheetNames), {
@@ -679,6 +680,96 @@ export async function GET(
         }
         rowIndex += 1;
       }
+      autoFit(ws);
+    }
+
+    if (showComparisonSheet && data.comparison) {
+      const ws = workbook.addWorksheet(truncateSheetName("Comparison", usedSheetNames), {
+        views: [{ state: "frozen", ySplit: 4 }],
+      });
+      const comparisonSubtitle = `${data.comparison.period_a.label} vs ${data.comparison.period_b.label}`;
+      addWorksheetTitle(ws, i18n.sections.comparison, comparisonSubtitle, 10);
+
+      let rowIndex = 4;
+      const summaryHeader = ws.getRow(rowIndex);
+      summaryHeader.values = ["Metric", "Period A", "Period B", "Delta", "Delta %"];
+      styleHeaderRow(summaryHeader);
+      rowIndex += 1;
+
+      const comparisonMetrics = (data.kpi_config?.length ? data.kpi_config : ["impressions", "clicks", "ctr", "spend", "conversions"])
+        .filter((metric) => data.comparison?.kpi_comparison[metric])
+        .slice(0, 5);
+
+      for (const metric of comparisonMetrics) {
+        const item = data.comparison.kpi_comparison[metric];
+        const label = compactMetricLabel(metric, i18n.metrics);
+        const row = ws.getRow(rowIndex);
+        row.values = [
+          label,
+          item.value_a,
+          item.value_b,
+          metric === "ctr" ? item.delta / 100 : item.delta,
+          metric === "ctr" ? item.delta_pct / 100 : item.delta_pct / 100,
+        ];
+        styleBodyRow(row, rowIndex % 2 === 0);
+        if (metric === "spend" || metric === "cpm" || metric === "cpc" || metric === "cpv" || metric === "cpa") {
+          setNumFmt(row.getCell(2), currencyFormat(currency));
+          setNumFmt(row.getCell(3), currencyFormat(currency));
+          setNumFmt(row.getCell(4), currencyFormat(currency));
+        } else if (metric === "ctr") {
+          setNumFmt(row.getCell(2), "0.00%");
+          setNumFmt(row.getCell(3), "0.00%");
+          row.getCell(4).value = item.delta / 100;
+          setNumFmt(row.getCell(4), "0.00%");
+        } else {
+          setNumFmt(row.getCell(2), "#,##0");
+          setNumFmt(row.getCell(3), "#,##0");
+          setNumFmt(row.getCell(4), "#,##0");
+        }
+        setNumFmt(row.getCell(5), "0.00%");
+        rowIndex += 1;
+      }
+
+      rowIndex += 1;
+      const platformHeader = ws.getRow(rowIndex);
+      platformHeader.values = ["Platform", "Impressions A", "Impressions B", "Impr Δ%", "Clicks A", "Clicks B", "Clicks Δ%", ...(data.dashboard.show_spend ? ["Spend A", "Spend B", "Spend Δ%"] : []), "CTR A", "CTR B", "CTR Δpp"];
+      styleHeaderRow(platformHeader);
+      rowIndex += 1;
+
+      for (const rowData of data.comparison.platforms_comparison) {
+        const row = ws.getRow(rowIndex);
+        row.values = [
+          rowData.platform_label,
+          rowData.metrics.impressions.value_a,
+          rowData.metrics.impressions.value_b,
+          rowData.metrics.impressions.delta_pct / 100,
+          rowData.metrics.clicks.value_a,
+          rowData.metrics.clicks.value_b,
+          rowData.metrics.clicks.delta_pct / 100,
+          ...(data.dashboard.show_spend ? [rowData.metrics.spend.value_a, rowData.metrics.spend.value_b, rowData.metrics.spend.delta_pct / 100] : []),
+          rowData.metrics.ctr.value_a / 100,
+          rowData.metrics.ctr.value_b / 100,
+          rowData.metrics.ctr.delta / 100,
+        ];
+        styleBodyRow(row, rowIndex % 2 === 0);
+        setNumFmt(row.getCell(2), "#,##0");
+        setNumFmt(row.getCell(3), "#,##0");
+        setNumFmt(row.getCell(4), "0.00%");
+        setNumFmt(row.getCell(5), "#,##0");
+        setNumFmt(row.getCell(6), "#,##0");
+        setNumFmt(row.getCell(7), "0.00%");
+        const ctrStart = data.dashboard.show_spend ? 11 : 8;
+        if (data.dashboard.show_spend) {
+          setNumFmt(row.getCell(8), currencyFormat(currency));
+          setNumFmt(row.getCell(9), currencyFormat(currency));
+          setNumFmt(row.getCell(10), "0.00%");
+        }
+        setNumFmt(row.getCell(ctrStart), "0.00%");
+        setNumFmt(row.getCell(ctrStart + 1), "0.00%");
+        setNumFmt(row.getCell(ctrStart + 2), "0.00%");
+        rowIndex += 1;
+      }
+
       autoFit(ws);
     }
 
