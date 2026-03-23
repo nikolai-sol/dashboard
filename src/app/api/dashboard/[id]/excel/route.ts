@@ -697,6 +697,7 @@ export async function GET(
       rowIndex += 1;
 
       const comparisonMetrics = (data.kpi_config?.length ? data.kpi_config : ["impressions", "clicks", "ctr", "spend", "conversions"])
+        .filter((metric) => data.dashboard.show_spend || !SPEND_RELATED_METRICS.has(metric))
         .filter((metric) => data.comparison?.kpi_comparison[metric])
         .slice(0, 5);
 
