@@ -289,6 +289,20 @@ function percentFromPlanFact(fact: number, plan: number): number | null {
   return plan > 0 ? Number((((fact / plan) * 100)).toFixed(1)) : null;
 }
 
+function buildChannelDailyMap(channelTimeseries: DashboardData["channel_timeseries"]) {
+  const grouped = new Map<string, NonNullable<DashboardData["channel_timeseries"]>>();
+  for (const row of channelTimeseries ?? []) {
+    if (!grouped.has(row.channel)) {
+      grouped.set(row.channel, []);
+    }
+    grouped.get(row.channel)!.push(row);
+  }
+  for (const rows of grouped.values()) {
+    rows.sort((a, b) => a.date.localeCompare(b.date));
+  }
+  return grouped;
+}
+
 function buildDailyExport(data: DashboardData):
   | { mode: DailyExportMode; rows: DailyExportRow[] }
   | null {
@@ -503,6 +517,7 @@ export async function GET(
       const ws = workbook.addWorksheet(truncateSheetName("Channel Performance", usedSheetNames), {
         views: [{ state: "frozen", ySplit: 4 }],
       });
+      ws.properties.outlineLevelRow = 1;
       addWorksheetTitle(ws, i18n.sections.channelPerformancePlanFact, subtitle, 15);
       const headerRow = ws.getRow(4);
       headerRow.values = [
@@ -525,6 +540,7 @@ export async function GET(
       ];
       styleHeaderRow(headerRow);
       let rowIndex = 5;
+      const dailyRowsByChannel = buildChannelDailyMap(data.channel_timeseries);
       for (const row of data.channel_performance ?? []) {
         const spendMetric = row.metrics.spend;
         const excelRow = ws.getRow(rowIndex);
@@ -556,6 +572,43 @@ export async function GET(
           setNumFmt(excelRow.getCell(14), currencyFormat(currency));
         }
         rowIndex += 1;
+
+        const dailyRows = dailyRowsByChannel.get(row.channel) ?? [];
+        for (const daily of dailyRows) {
+          const dailyRow = ws.getRow(rowIndex);
+          dailyRow.values = [
+            `${daily.date}`,
+            "",
+            "",
+            "",
+            daily.impressions,
+            "",
+            "",
+            daily.clicks,
+            "",
+            "",
+            daily.views,
+            "",
+            ...(data.dashboard.show_spend ? ["", daily.spend, ""] : []),
+            "",
+            daily.conversions,
+            "",
+          ];
+          dailyRow.outlineLevel = 1;
+          styleBodyRow(dailyRow, true);
+          dailyRow.getCell(1).alignment = { indent: 1, horizontal: "left", vertical: "middle" };
+          dailyRow.getCell(1).font = { italic: true, color: { argb: "FF64748B" } };
+          setNumFmt(dailyRow.getCell(5), "#,##0");
+          setNumFmt(dailyRow.getCell(8), "#,##0");
+          setNumFmt(dailyRow.getCell(11), "#,##0");
+          if (data.dashboard.show_spend) {
+            setNumFmt(dailyRow.getCell(14), currencyFormat(currency));
+            setNumFmt(dailyRow.getCell(17), "#,##0");
+          } else {
+            setNumFmt(dailyRow.getCell(14), "#,##0");
+          }
+          rowIndex += 1;
+        }
       }
 
       const totals = (data.channel_performance ?? []).reduce(

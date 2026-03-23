@@ -840,6 +840,7 @@ export default function DashboardByIdPage() {
         <section key={sectionId} className="pb-4">
           <ChannelPerformanceTable
             rows={filteredPlanVsFact}
+            channelTimeseries={filteredChannelTimeseries}
             selectedMetrics={dashboard?.kpi_config ?? []}
             currencyFormatter={(value) => money(value, currencyCode, locale)}
             showSpend={showSpend}

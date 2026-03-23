@@ -1,8 +1,8 @@
 "use client";
 
-import { useMemo, useState } from "react";
-import { ArrowDown, ArrowUp } from "lucide-react";
-import type { PlanVsFactItem } from "@/lib/types";
+import { Fragment, useMemo, useState } from "react";
+import { ArrowDown, ArrowUp, ChevronDown, ChevronRight } from "lucide-react";
+import type { DashboardData, PlanVsFactItem } from "@/lib/types";
 
 const SUPPORTED_METRICS = [
   "impressions",
@@ -25,6 +25,7 @@ type SortableRow = { row: PlanVsFactItem; name: string } & Record<MetricKey, num
 
 type ChannelPerformanceTableProps = {
   rows: PlanVsFactItem[];
+  channelTimeseries?: DashboardData["channel_timeseries"];
   selectedMetrics: string[];
   currencyFormatter: (value: number) => string;
   showSpend?: boolean;
@@ -140,6 +141,7 @@ function sumMetric(rows: PlanVsFactItem[], metric: MetricKey) {
 
 export default function ChannelPerformanceTable({
   rows,
+  channelTimeseries = [],
   selectedMetrics,
   currencyFormatter,
   showSpend = true,
@@ -158,6 +160,21 @@ export default function ChannelPerformanceTable({
   const metrics = useMemo(() => resolveMetrics(selectedMetrics, showSpend), [selectedMetrics, showSpend]);
   const [sortKey, setSortKey] = useState<SortKey>(showSpend ? "spend" : "impressions");
   const [direction, setDirection] = useState<"asc" | "desc">("desc");
+  const [expandedChannels, setExpandedChannels] = useState<Record<string, boolean>>({});
+
+  const dailyRowsByChannel = useMemo(() => {
+    const grouped = new Map<string, NonNullable<DashboardData["channel_timeseries"]>>();
+    for (const row of channelTimeseries ?? []) {
+      if (!grouped.has(row.channel)) {
+        grouped.set(row.channel, []);
+      }
+      grouped.get(row.channel)!.push(row);
+    }
+    for (const rowsForChannel of grouped.values()) {
+      rowsForChannel.sort((a, b) => a.date.localeCompare(b.date));
+    }
+    return grouped;
+  }, [channelTimeseries]);
 
   const sortedRows = useMemo(() => {
     const list: SortableRow[] = rows.map((row) => ({
@@ -191,6 +208,10 @@ export default function ChannelPerformanceTable({
     return direction === "asc" ? <ArrowUp className="h-3.5 w-3.5" /> : <ArrowDown className="h-3.5 w-3.5" />;
   };
 
+  const toggleExpanded = (channel: string) => {
+    setExpandedChannels((prev) => ({ ...prev, [channel]: !prev[channel] }));
+  };
+
   return (
     <section className="card-surface overflow-hidden p-5">
       <h3 className="mb-4 text-base font-semibold text-slate-900">{copy.title}</h3>
@@ -221,18 +242,91 @@ export default function ChannelPerformanceTable({
               </tr>
             </thead>
             <tbody>
-              {sortedRows.map(({ row }) => (
-                <tr key={`${row.channel}-${row.buy_type}`} className="border-b border-slate-100">
-                  <td className="px-2 py-2 font-medium text-slate-800 sm:px-3">{row.channel}</td>
-                  <td className="px-2 py-2 text-slate-600 sm:px-3">{row.instrument || "-"}</td>
-                  <td className="px-2 py-2 text-slate-600 sm:px-3">{row.buy_type.toUpperCase()}</td>
-                  {metrics.map((metric) => (
-                    <td key={`${row.channel}-${metric}`} className="px-2 py-2 text-right sm:px-3">
-                      {formatMetricValue(metricValue(row, metric), metric, currencyFormatter, locale)}
-                    </td>
-                  ))}
-                </tr>
-              ))}
+              {sortedRows.map(({ row }) => {
+                const dailyRows = dailyRowsByChannel.get(row.channel) ?? [];
+                const isExpanded = Boolean(expandedChannels[row.channel]);
+
+                return (
+                  <Fragment key={`${row.channel}-${row.buy_type}`}>
+                    <tr key={`${row.channel}-${row.buy_type}`} className="border-b border-slate-100">
+                      <td className="px-2 py-2 font-medium text-slate-800 sm:px-3">
+                        <div className="flex items-center gap-2">
+                          {dailyRows.length > 0 ? (
+                            <button
+                              type="button"
+                              onClick={() => toggleExpanded(row.channel)}
+                              className="inline-flex h-5 w-5 items-center justify-center rounded border border-slate-200 bg-white text-slate-500 transition hover:bg-slate-50"
+                              aria-label={isExpanded ? "Collapse channel days" : "Expand channel days"}
+                            >
+                              {isExpanded ? <ChevronDown className="h-3.5 w-3.5" /> : <ChevronRight className="h-3.5 w-3.5" />}
+                            </button>
+                          ) : (
+                            <span className="inline-block h-5 w-5" />
+                          )}
+                          <span>{row.channel}</span>
+                        </div>
+                      </td>
+                      <td className="px-2 py-2 text-slate-600 sm:px-3">{row.instrument || "-"}</td>
+                      <td className="px-2 py-2 text-slate-600 sm:px-3">{row.buy_type.toUpperCase()}</td>
+                      {metrics.map((metric) => (
+                        <td key={`${row.channel}-${metric}`} className="px-2 py-2 text-right sm:px-3">
+                          {formatMetricValue(metricValue(row, metric), metric, currencyFormatter, locale)}
+                        </td>
+                      ))}
+                    </tr>
+
+                    {isExpanded
+                      ? dailyRows.map((daily) => {
+                          const dailyMetricValue = (metric: MetricKey) => {
+                            switch (metric) {
+                              case "impressions":
+                                return daily.impressions;
+                              case "reach":
+                                return daily.reach ?? 0;
+                              case "frequency":
+                                return (daily.reach ?? 0) > 0 ? daily.impressions / (daily.reach ?? 1) : 0;
+                              case "clicks":
+                                return daily.clicks;
+                              case "views":
+                                return daily.views;
+                              case "conversions":
+                                return daily.conversions;
+                              case "ctr":
+                                return daily.impressions > 0 ? (daily.clicks / daily.impressions) * 100 : 0;
+                              case "cpm":
+                                return daily.impressions > 0 ? (daily.spend / daily.impressions) * 1000 : 0;
+                              case "cpc":
+                                return daily.clicks > 0 ? daily.spend / daily.clicks : 0;
+                              case "cpv":
+                                return daily.views > 0 ? daily.spend / daily.views : 0;
+                              case "cpa":
+                                return daily.conversions > 0 ? daily.spend / daily.conversions : 0;
+                              case "spend":
+                                return daily.spend;
+                              default:
+                                return 0;
+                            }
+                          };
+
+                          return (
+                            <tr key={`${row.channel}-${daily.date}`} className="border-b border-slate-100 bg-slate-50/70">
+                              <td className="px-2 py-2 text-slate-700 sm:px-3">
+                                <div className="pl-7 text-xs sm:text-sm">{daily.date}</div>
+                              </td>
+                              <td className="px-2 py-2 text-slate-400 sm:px-3">-</td>
+                              <td className="px-2 py-2 text-slate-400 sm:px-3">-</td>
+                              {metrics.map((metric) => (
+                                <td key={`${row.channel}-${daily.date}-${metric}`} className="px-2 py-2 text-right text-slate-700 sm:px-3">
+                                  {formatMetricValue(dailyMetricValue(metric), metric, currencyFormatter, locale)}
+                                </td>
+                              ))}
+                            </tr>
+                          );
+                        })
+                      : null}
+                  </Fragment>
+                );
+              })}
 
               <tr className="bg-slate-50 font-semibold">
                 <td className="px-2 py-2 text-slate-900 sm:px-3">{copy.total}</td>
