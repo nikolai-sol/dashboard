@@ -1035,7 +1035,7 @@ export default function DashboardByIdPage() {
       {dashboard.comparison ? (
         <ComparisonSection
           comparison={dashboard.comparison}
-          selectedMetrics={dashboard.kpi_config ?? []}
+          selectedMetrics={(dashboard.kpi_config ?? []).filter((metric) => showSpend || !SPEND_RELATED_KPIS.has(metric))}
           selectedPlatforms={
             effectiveFilterMode === "channel"
               ? Array.from(channelVisiblePlatformIds)
@@ -1045,6 +1045,7 @@ export default function DashboardByIdPage() {
           currencyFormatter={(value) => money(value, currencyCode, locale)}
           locale={locale}
           language={dashboardLanguage}
+          showSpend={showSpend}
           labels={{
             title: i18n.sections.comparison,
             metrics: i18n.metrics,

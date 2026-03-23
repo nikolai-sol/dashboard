@@ -4,7 +4,10 @@ import { useMemo, useState } from "react";
 import { ResponsiveLine } from "@nivo/line";
 import type { ComparisonData } from "@/lib/types";
 
-type MetricKey = "impressions" | "clicks" | "spend";
+const MONEY_METRICS = new Set(["spend", "cpm", "cpc", "cpv", "cpa", "roas"]);
+const TREND_METRICS = new Set(["impressions", "clicks", "views", "conversions", "spend", "ctr", "cpm", "cpc", "cpv", "cpa"]);
+
+type MetricKey = "impressions" | "clicks" | "views" | "conversions" | "spend" | "ctr" | "cpm" | "cpc" | "cpv" | "cpa";
 
 type ComparisonSectionProps = {
   comparison: ComparisonData;
@@ -21,6 +24,7 @@ type ComparisonSectionProps = {
   currencyFormatter: (value: number) => string;
   locale: string;
   language: "en" | "ru";
+  showSpend: boolean;
   labels: {
     title: string;
     metrics: Record<string, string>;
@@ -62,6 +66,28 @@ function deltaClass(metric: string, delta: number) {
   return positive ? "text-emerald-600" : "text-rose-600";
 }
 
+function getTrendMetricValue(
+  point: ComparisonSectionProps["currentTimeseries"][number] | ComparisonData["timeseries_b"][number],
+  metric: MetricKey,
+) {
+  if (metric === "ctr") {
+    return point.impressions > 0 ? (point.clicks / point.impressions) * 100 : 0;
+  }
+  if (metric === "cpm") {
+    return point.impressions > 0 ? (point.spend / point.impressions) * 1000 : 0;
+  }
+  if (metric === "cpc") {
+    return point.clicks > 0 ? point.spend / point.clicks : 0;
+  }
+  if (metric === "cpv") {
+    return point.views > 0 ? point.spend / point.views : 0;
+  }
+  if (metric === "cpa") {
+    return point.conversions > 0 ? point.spend / point.conversions : 0;
+  }
+  return Number(point[metric]);
+}
+
 export default function ComparisonSection({
   comparison,
   selectedMetrics,
@@ -70,13 +96,38 @@ export default function ComparisonSection({
   currencyFormatter,
   locale,
   language,
+  showSpend,
   labels,
 }: ComparisonSectionProps) {
-  const [trendMetric, setTrendMetric] = useState<MetricKey>("impressions");
-  const summaryMetrics = useMemo(() => {
+  const [collapsed, setCollapsed] = useState(false);
+  const availableMetrics = useMemo(() => {
     const preferred = selectedMetrics.length > 0 ? selectedMetrics : ["impressions", "clicks", "ctr", "spend", "conversions"];
-    return preferred.filter((metric) => comparison.kpi_comparison[metric]).slice(0, 5);
-  }, [comparison.kpi_comparison, selectedMetrics]);
+    return preferred.filter((metric) => {
+      if (!comparison.kpi_comparison[metric]) return false;
+      if (!showSpend && MONEY_METRICS.has(metric)) return false;
+      return true;
+    });
+  }, [comparison.kpi_comparison, selectedMetrics, showSpend]);
+
+  const summaryMetrics = useMemo(
+    () => availableMetrics.slice(0, 5),
+    [availableMetrics],
+  );
+
+  const trendMetricOptions = useMemo(() => {
+    const selected = availableMetrics.filter((metric): metric is MetricKey => TREND_METRICS.has(metric));
+    if (selected.length > 0) {
+      return selected;
+    }
+    return (showSpend
+      ? ["impressions", "clicks", "spend"]
+      : ["impressions", "clicks", "views", "conversions"]
+    ) as MetricKey[];
+  }, [availableMetrics, showSpend]);
+
+  const [trendMetric, setTrendMetric] = useState<MetricKey>(showSpend ? "impressions" : "impressions");
+
+  const effectiveTrendMetric = trendMetricOptions.includes(trendMetric) ? trendMetric : trendMetricOptions[0];
 
   const platformRows = useMemo(() => {
     const source = comparison.platforms_comparison;
@@ -88,12 +139,12 @@ export default function ComparisonSection({
   const normalizedSeries = useMemo(() => {
     const pointsA = currentTimeseries.map((point, index) => ({
       x: language === "ru" ? `День ${index + 1}` : `Day ${index + 1}`,
-      y: Number(point[trendMetric]),
+      y: getTrendMetricValue(point, effectiveTrendMetric),
       realDate: point.date,
     }));
     const pointsB = comparison.timeseries_b.map((point) => ({
       x: language === "ru" ? `День ${point.day_index + 1}` : `Day ${point.day_index + 1}`,
-      y: Number(point[trendMetric]),
+      y: getTrendMetricValue(point, effectiveTrendMetric),
       realDate: point.date,
     }));
     return {
@@ -108,17 +159,30 @@ export default function ComparisonSection({
         data: pointsB,
       },
     };
-  }, [comparison.period_a.label, comparison.period_b.label, comparison.timeseries_b, currentTimeseries, language, trendMetric]);
+  }, [comparison.period_a.label, comparison.period_b.label, comparison.timeseries_b, currentTimeseries, effectiveTrendMetric, language]);
+
+  const toggleLabel = language === "ru" ? (collapsed ? "Развернуть" : "Свернуть") : collapsed ? "Expand" : "Collapse";
 
   return (
     <section className="card-surface mb-6 p-5">
-      <div className="mb-4">
-        <h3 className="text-base font-semibold text-slate-900">{labels.title}</h3>
-        <p className="mt-1 text-sm text-slate-500">
-          {comparison.period_a.label} vs {comparison.period_b.label}
-        </p>
+      <div className="mb-4 flex items-start justify-between gap-3">
+        <div>
+          <h3 className="text-base font-semibold text-slate-900">{labels.title}</h3>
+          <p className="mt-1 text-sm text-slate-500">
+            {comparison.period_a.label} vs {comparison.period_b.label}
+          </p>
+        </div>
+        <button
+          type="button"
+          onClick={() => setCollapsed((prev) => !prev)}
+          className="rounded-lg border border-slate-200 bg-white px-3 py-1.5 text-xs font-medium text-slate-600 transition hover:bg-slate-50"
+        >
+          {toggleLabel}
+        </button>
       </div>
 
+      {!collapsed ? (
+        <>
       <div className="mb-6 grid grid-cols-1 gap-3 xl:grid-cols-5">
         {summaryMetrics.map((metric) => {
           const item = comparison.kpi_comparison[metric];
@@ -187,13 +251,13 @@ export default function ComparisonSection({
         <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
           <h4 className="text-sm font-semibold text-slate-900">{labels.title}</h4>
           <div className="inline-flex rounded-lg border border-slate-200 bg-white p-1">
-            {(["impressions", "clicks", "spend"] as MetricKey[]).map((metric) => (
+            {trendMetricOptions.map((metric) => (
               <button
                 key={metric}
                 type="button"
                 onClick={() => setTrendMetric(metric)}
                 className={`rounded-md px-3 py-1.5 text-xs font-semibold capitalize transition ${
-                  trendMetric === metric
+                  effectiveTrendMetric === metric
                     ? "bg-slate-900 text-white"
                     : "text-slate-500 hover:bg-slate-50 hover:text-slate-700"
                 }`}
@@ -216,7 +280,7 @@ export default function ComparisonSection({
               tickSize: 0,
               tickPadding: 8,
               format: (value) =>
-                trendMetric === "spend"
+                MONEY_METRICS.has(effectiveTrendMetric)
                   ? currencyFormatter(Number(value))
                   : compactNumber(Number(value), locale),
             }}
@@ -240,7 +304,7 @@ export default function ComparisonSection({
                 <p className="font-semibold text-slate-900">{String(point.seriesId)}</p>
                 <p className="text-slate-500">{String(point.data.x)}</p>
                 <p className="text-slate-700">
-                  {trendMetric === "spend"
+                  {MONEY_METRICS.has(effectiveTrendMetric)
                     ? currencyFormatter(Number(point.data.y))
                     : compactNumber(Number(point.data.y), locale)}
                 </p>
@@ -261,6 +325,8 @@ export default function ComparisonSection({
           />
         </div>
       </div>
+        </>
+      ) : null}
     </section>
   );
 }
