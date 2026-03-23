@@ -48,6 +48,10 @@ import type {
   AnalyticsKPI,
   AnalyticsTimeSeriesPoint,
   CampaignBreakdownItem,
+  ComparisonData,
+  ComparisonMetricDelta,
+  ComparisonPlatformItem,
+  ComparisonTimeSeriesPoint,
   CustomTableData,
   DashboardData,
   DashboardSectionId,
@@ -196,6 +200,142 @@ function buildPreviousPeriod(dateFrom: string, dateTo: string): { from: string; 
   const prevTo = shiftDate(dateFrom, -1);
   const prevFrom = shiftDate(prevTo, -(spanDays - 1));
   return { from: prevFrom, to: prevTo };
+}
+
+function getCompareRange(request: Request): { from: string; to: string } | null {
+  const params = new URL(request.url).searchParams;
+  const from = params.get("compare_from");
+  const to = params.get("compare_to");
+  if (!from || !to) return null;
+  return { from, to };
+}
+
+function buildRangeLabel(range: { from: string; to: string }): string {
+  return `${range.from} — ${range.to}`;
+}
+
+function buildMetricDelta(valueA: number, valueB: number): ComparisonMetricDelta {
+  const delta = valueA - valueB;
+  const deltaPct = valueB !== 0 ? (delta / valueB) * 100 : valueA !== 0 ? 100 : 0;
+  return {
+    value_a: valueA,
+    value_b: valueB,
+    delta,
+    delta_pct: Number(deltaPct.toFixed(2)),
+    direction: delta > 0 ? "up" : delta < 0 ? "down" : "same",
+  };
+}
+
+function buildKpiComparison(dataA: DashboardData, dataB: DashboardData): ComparisonData["kpi_comparison"] {
+  const totalViewsA = dataA.platforms.reduce((sum, row) => sum + row.views, 0);
+  const totalViewsB = dataB.platforms.reduce((sum, row) => sum + row.views, 0);
+  const totalReachA = dataA.platforms.reduce((sum, row) => sum + row.reach, 0);
+  const totalReachB = dataB.platforms.reduce((sum, row) => sum + row.reach, 0);
+  const avgCpcA = dataA.kpi.total_clicks > 0 ? dataA.kpi.total_spend / dataA.kpi.total_clicks : 0;
+  const avgCpcB = dataB.kpi.total_clicks > 0 ? dataB.kpi.total_spend / dataB.kpi.total_clicks : 0;
+  const avgCpvA = totalViewsA > 0 ? dataA.kpi.total_spend / totalViewsA : 0;
+  const avgCpvB = totalViewsB > 0 ? dataB.kpi.total_spend / totalViewsB : 0;
+  const avgCpaA = dataA.kpi.total_conversions > 0 ? dataA.kpi.total_spend / dataA.kpi.total_conversions : 0;
+  const avgCpaB = dataB.kpi.total_conversions > 0 ? dataB.kpi.total_spend / dataB.kpi.total_conversions : 0;
+
+  return {
+    impressions: buildMetricDelta(dataA.kpi.total_impressions, dataB.kpi.total_impressions),
+    clicks: buildMetricDelta(dataA.kpi.total_clicks, dataB.kpi.total_clicks),
+    spend: buildMetricDelta(dataA.kpi.total_spend, dataB.kpi.total_spend),
+    conversions: buildMetricDelta(dataA.kpi.total_conversions, dataB.kpi.total_conversions),
+    ctr: buildMetricDelta(dataA.kpi.avg_ctr, dataB.kpi.avg_ctr),
+    cpm: buildMetricDelta(dataA.kpi.avg_cpm, dataB.kpi.avg_cpm),
+    cpc: buildMetricDelta(avgCpcA, avgCpcB),
+    cpv: buildMetricDelta(avgCpvA, avgCpvB),
+    cpa: buildMetricDelta(avgCpaA, avgCpaB),
+    views: buildMetricDelta(totalViewsA, totalViewsB),
+    reach: buildMetricDelta(totalReachA, totalReachB),
+  };
+}
+
+function buildPlatformsComparison(dataA: DashboardData, dataB: DashboardData): ComparisonPlatformItem[] {
+  const mapA = new Map(dataA.platforms.map((row) => [row.id, row]));
+  const mapB = new Map(dataB.platforms.map((row) => [row.id, row]));
+  const ids = Array.from(new Set([...mapA.keys(), ...mapB.keys()]));
+  return ids
+    .map((id) => {
+      const rowA = mapA.get(id);
+      const rowB = mapB.get(id);
+      const label = rowA?.name ?? rowB?.name ?? id;
+      const color = rowA?.color ?? rowB?.color ?? "#94a3b8";
+      return {
+        platform: id,
+        platform_label: label,
+        color,
+        metrics: {
+          impressions: buildMetricDelta(rowA?.impressions ?? 0, rowB?.impressions ?? 0),
+          clicks: buildMetricDelta(rowA?.clicks ?? 0, rowB?.clicks ?? 0),
+          spend: buildMetricDelta(rowA?.spend ?? 0, rowB?.spend ?? 0),
+          conversions: buildMetricDelta(rowA?.conversions ?? 0, rowB?.conversions ?? 0),
+          views: buildMetricDelta(rowA?.views ?? 0, rowB?.views ?? 0),
+          reach: buildMetricDelta(rowA?.reach ?? 0, rowB?.reach ?? 0),
+          ctr: buildMetricDelta(rowA?.ctr ?? 0, rowB?.ctr ?? 0),
+          cpm: buildMetricDelta(rowA?.cpm ?? 0, rowB?.cpm ?? 0),
+        },
+      };
+    })
+    .sort((left, right) => {
+      const spendDelta = Math.abs((right.metrics.spend?.value_a ?? 0) - (right.metrics.spend?.value_b ?? 0))
+        - Math.abs((left.metrics.spend?.value_a ?? 0) - (left.metrics.spend?.value_b ?? 0));
+      if (spendDelta !== 0) return spendDelta;
+      return left.platform_label.localeCompare(right.platform_label);
+    });
+}
+
+function buildComparisonTimeseries(points: TimeSeriesPoint[]): ComparisonTimeSeriesPoint[] {
+  const sortedDates = [...new Set(points.map((point) => point.date))].sort((a, b) => a.localeCompare(b));
+  const byDate = new Map<
+    string,
+    { impressions: number; clicks: number; spend: number; views: number; conversions: number }
+  >();
+
+  for (const point of points) {
+    if (!byDate.has(point.date)) {
+      byDate.set(point.date, { impressions: 0, clicks: 0, spend: 0, views: 0, conversions: 0 });
+    }
+    const row = byDate.get(point.date)!;
+    row.impressions += point.impressions;
+    row.clicks += point.clicks;
+    row.spend += point.spend;
+    row.views += point.views ?? 0;
+    row.conversions += point.conversions ?? 0;
+  }
+
+  return sortedDates.map((date, index) => {
+    const row = byDate.get(date) ?? { impressions: 0, clicks: 0, spend: 0, views: 0, conversions: 0 };
+    return {
+      date,
+      day_index: index,
+      impressions: row.impressions,
+      clicks: row.clicks,
+      spend: Number(row.spend.toFixed(2)),
+      views: row.views,
+      conversions: row.conversions,
+    };
+  });
+}
+
+function buildComparison(dataA: DashboardData, dataB: DashboardData): ComparisonData {
+  return {
+    period_a: {
+      from: dataA.dashboard.period.from,
+      to: dataA.dashboard.period.to,
+      label: buildRangeLabel(dataA.dashboard.period),
+    },
+    period_b: {
+      from: dataB.dashboard.period.from,
+      to: dataB.dashboard.period.to,
+      label: buildRangeLabel(dataB.dashboard.period),
+    },
+    kpi_comparison: buildKpiComparison(dataA, dataB),
+    platforms_comparison: buildPlatformsComparison(dataA, dataB),
+    timeseries_b: buildComparisonTimeseries(dataB.timeseries),
+  };
 }
 
 function monthKeyFromDate(dateIso: string): string {
@@ -401,6 +541,9 @@ function getSectionOrder(
   type: DashboardData["dashboard"]["type"],
   showSpend: boolean,
 ): DashboardSectionId[] {
+  if (Array.isArray(config.section_order)) {
+    return sanitizeDashboardSectionOrder(config.section_order, type, showSpend, false);
+  }
   return sanitizeDashboardSectionOrder(config.section_order, type, showSpend, true);
 }
 
@@ -1355,6 +1498,7 @@ export async function loadDashboardData(
       ? "media_plan_derived"
       : "platform_actual";
   const range = resolveDateRange(request, config);
+  const compareRange = getCompareRange(request);
   const previousRange = buildPreviousPeriod(range.from, range.to);
 
   const [sourceRows] = await pool.execute<SourceRow[]>(
@@ -1835,6 +1979,17 @@ export async function loadDashboardData(
             }
           : undefined,
     };
+
+  if (compareRange) {
+    const compareUrl = new URL(request.url);
+    compareUrl.searchParams.set("from", compareRange.from);
+    compareUrl.searchParams.set("to", compareRange.to);
+    compareUrl.searchParams.delete("compare_from");
+    compareUrl.searchParams.delete("compare_to");
+    const compareRequest = new Request(compareUrl.toString(), { method: "GET" });
+    const compareResult = await loadDashboardData(compareRequest, requestedId);
+    response.comparison = buildComparison(response, compareResult.data);
+  }
 
   return {
     data: response,

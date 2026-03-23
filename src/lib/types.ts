@@ -51,6 +51,43 @@ export interface DashboardKPI {
   prev_cpm: number;
 }
 
+export interface ComparisonMetricDelta {
+  value_a: number;
+  value_b: number;
+  delta: number;
+  delta_pct: number;
+  direction: "up" | "down" | "same";
+}
+
+export interface ComparisonPlatformMetrics {
+  [metric: string]: ComparisonMetricDelta;
+}
+
+export interface ComparisonPlatformItem {
+  platform: string;
+  platform_label: string;
+  color: string;
+  metrics: ComparisonPlatformMetrics;
+}
+
+export interface ComparisonTimeSeriesPoint {
+  date: string;
+  day_index: number;
+  impressions: number;
+  clicks: number;
+  spend: number;
+  views: number;
+  conversions: number;
+}
+
+export interface ComparisonData {
+  period_a: { from: string; to: string; label: string };
+  period_b: { from: string; to: string; label: string };
+  kpi_comparison: Record<string, ComparisonMetricDelta>;
+  platforms_comparison: ComparisonPlatformItem[];
+  timeseries_b: ComparisonTimeSeriesPoint[];
+}
+
 export interface FunnelStep {
   id: string;
   label: string;
@@ -246,4 +283,5 @@ export interface DashboardData {
   }>;
   campaign_breakdown?: CampaignBreakdownItem[];
   funnel?: FunnelStep[];
+  comparison?: ComparisonData;
 }
