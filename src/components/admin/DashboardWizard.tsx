@@ -197,8 +197,72 @@ export default function DashboardWizard({ dashboardId }: DashboardWizardProps) {
   const [saveMessage, setSaveMessage] = useState<string | null>(null);
   const [dirty, setDirty] = useState(false);
   const isHydratingRef = useRef(false);
+  const dirtyRef = useRef(false);
+  const allowNavigationRef = useRef(false);
 
   const isEdit = Boolean(dashboardId);
+
+  useEffect(() => {
+    dirtyRef.current = dirty;
+  }, [dirty]);
+
+  useEffect(() => {
+    if (!dirty) return;
+
+    const handleBeforeUnload = (event: BeforeUnloadEvent) => {
+      event.preventDefault();
+      event.returnValue = "";
+    };
+
+    window.addEventListener("beforeunload", handleBeforeUnload);
+    return () => window.removeEventListener("beforeunload", handleBeforeUnload);
+  }, [dirty]);
+
+  useEffect(() => {
+    const confirmLeave = () => {
+      if (!dirtyRef.current || allowNavigationRef.current) return true;
+      const confirmed = window.confirm("You have unsaved changes. Leave this page?");
+      if (confirmed) {
+        allowNavigationRef.current = true;
+      }
+      return confirmed;
+    };
+
+    const handleDocumentClick = (event: MouseEvent) => {
+      const target = event.target;
+      if (!(target instanceof Element)) return;
+      const link = target.closest("a");
+      if (!(link instanceof HTMLAnchorElement)) return;
+      if (!link.href || link.target === "_blank" || link.hasAttribute("download")) return;
+
+      const nextUrl = new URL(link.href, window.location.href);
+      const currentUrl = new URL(window.location.href);
+      const isSameDocument =
+        nextUrl.origin === currentUrl.origin &&
+        nextUrl.pathname === currentUrl.pathname &&
+        nextUrl.search === currentUrl.search &&
+        nextUrl.hash === currentUrl.hash;
+      if (isSameDocument) return;
+
+      if (!confirmLeave()) {
+        event.preventDefault();
+        event.stopPropagation();
+      }
+    };
+
+    const handlePopState = () => {
+      if (confirmLeave()) return;
+      window.history.pushState(null, "", window.location.href);
+    };
+
+    document.addEventListener("click", handleDocumentClick, true);
+    window.addEventListener("popstate", handlePopState);
+
+    return () => {
+      document.removeEventListener("click", handleDocumentClick, true);
+      window.removeEventListener("popstate", handlePopState);
+    };
+  }, []);
 
   const handleFormChange = (next: DashboardFormData) => {
     setFormData(next);
@@ -261,12 +325,19 @@ export default function DashboardWizard({ dashboardId }: DashboardWizardProps) {
             visible_metrics: Array.isArray(config.visible_metrics)
               ? config.visible_metrics.map((item) => String(item))
               : ["impressions", "clicks", "ctr", "cpm", "spend"],
-            section_order: sanitizeDashboardSectionOrder(
-              config.section_order,
-              (dash.dashboard_type ?? "awareness"),
-              Boolean(config.show_spend ?? true),
-              true,
-            ),
+            section_order: Array.isArray(config.section_order)
+              ? sanitizeDashboardSectionOrder(
+                  config.section_order,
+                  (dash.dashboard_type ?? "awareness"),
+                  Boolean(config.show_spend ?? true),
+                  false,
+                )
+              : sanitizeDashboardSectionOrder(
+                  config.section_order,
+                  (dash.dashboard_type ?? "awareness"),
+                  Boolean(config.show_spend ?? true),
+                  true,
+                ),
             show_spend: Boolean(config.show_spend ?? true),
             show_ai_summary: Boolean(config.show_ai_summary ?? false),
             kpi_cards: Array.isArray(config.kpi_cards)
@@ -468,7 +539,9 @@ export default function DashboardWizard({ dashboardId }: DashboardWizardProps) {
       }
 
       setDirty(false);
-      setSaveMessage(manual ? "Changes saved." : "Changes auto-saved.");
+      dirtyRef.current = false;
+      allowNavigationRef.current = false;
+      setSaveMessage(manual ? "Changes saved." : null);
 
       if (!isEdit && json.id) {
         router.replace(`/admin/dashboards/${json.id}/edit`);
@@ -485,10 +558,8 @@ export default function DashboardWizard({ dashboardId }: DashboardWizardProps) {
 
   const handleStepChange = async (targetStep: number) => {
     if (targetStep === step || !canJumpToStep(targetStep)) return;
-    if (isEdit && dirty) {
-      const saved = await persistDashboard();
-      if (!saved) return;
-    }
+    setError(null);
+    setSaveMessage(null);
     setStep(targetStep);
   };
 
@@ -503,24 +574,38 @@ export default function DashboardWizard({ dashboardId }: DashboardWizardProps) {
   return (
     <section className="space-y-4">
       <div className="rounded-xl border border-slate-200 bg-white p-4">
-        <div className="flex flex-wrap gap-2">
-          {STEPS.map((label, idx) => (
-            <button
-              type="button"
-              key={label}
-              onClick={() => void handleStepChange(idx)}
-              disabled={!canJumpToStep(idx) || saving}
-              className={`rounded-full px-3 py-1 text-xs font-semibold ${
-                idx === step
-                  ? "bg-indigo-600 text-white"
-                  : idx < step
-                    ? "bg-indigo-100 text-indigo-700"
-                    : "bg-slate-100 text-slate-500"
-              } ${canJumpToStep(idx) ? "cursor-pointer hover:bg-slate-200" : "cursor-not-allowed opacity-50"}`}
-            >
-              {idx + 1}. {label}
-            </button>
-          ))}
+        <div className="flex flex-wrap items-center justify-between gap-3">
+          <div className="flex flex-wrap gap-2">
+            {STEPS.map((label, idx) => (
+              <button
+                type="button"
+                key={label}
+                onClick={() => void handleStepChange(idx)}
+                disabled={!canJumpToStep(idx) || saving}
+                className={`rounded-full px-3 py-1 text-xs font-semibold ${
+                  idx === step
+                    ? "bg-indigo-600 text-white"
+                    : idx < step
+                      ? "bg-indigo-100 text-indigo-700"
+                      : "bg-slate-100 text-slate-500"
+                } ${canJumpToStep(idx) ? "cursor-pointer hover:bg-slate-200" : "cursor-not-allowed opacity-50"}`}
+              >
+                {idx + 1}. {label}
+              </button>
+            ))}
+          </div>
+
+          <div className="flex items-center gap-2 text-xs">
+            {dirty ? (
+              <span className="rounded-full border border-amber-200 bg-amber-50 px-3 py-1 font-semibold text-amber-700">
+                Unsaved changes
+              </span>
+            ) : (
+              <span className="rounded-full border border-emerald-200 bg-emerald-50 px-3 py-1 font-semibold text-emerald-700">
+                All changes saved
+              </span>
+            )}
+          </div>
         </div>
       </div>
 
@@ -565,6 +650,16 @@ export default function DashboardWizard({ dashboardId }: DashboardWizardProps) {
         </button>
 
         <div className="flex gap-2">
+          {isEdit && step < STEPS.length - 1 ? (
+            <button
+              type="button"
+              onClick={submit}
+              disabled={saving || !dirty}
+              className="rounded-lg border border-slate-300 px-4 py-2 text-sm disabled:cursor-not-allowed disabled:opacity-50"
+            >
+              {saving ? "Saving..." : "Save"}
+            </button>
+          ) : null}
           {step < STEPS.length - 1 ? (
             <button
               type="button"
@@ -578,7 +673,7 @@ export default function DashboardWizard({ dashboardId }: DashboardWizardProps) {
             <button
               type="button"
               onClick={submit}
-              disabled={!stepValid || saving}
+              disabled={!stepValid || saving || (isEdit && !dirty)}
               className="rounded-lg bg-indigo-600 px-4 py-2 text-sm text-white disabled:cursor-not-allowed disabled:opacity-50"
             >
               {saving ? "Saving..." : isEdit ? "Save changes" : "Create dashboard"}
