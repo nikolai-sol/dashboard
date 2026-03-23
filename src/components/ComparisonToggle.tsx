@@ -72,7 +72,7 @@ export default function ComparisonToggle({
   );
 
   return (
-    <div className="relative">
+    <div className="relative z-[70]">
       <button
         type="button"
         onClick={onToggleOpen}
@@ -86,7 +86,7 @@ export default function ComparisonToggle({
       </button>
 
       {open ? (
-        <div className="absolute right-0 z-20 mt-2 w-[min(92vw,560px)] rounded-2xl border border-slate-200 bg-white p-4 shadow-xl">
+        <div className="absolute right-0 z-[80] mt-2 w-[min(92vw,560px)] rounded-2xl border border-slate-200 bg-white p-4 shadow-2xl">
           <div className="flex items-center justify-between gap-3">
             <h4 className="text-sm font-semibold text-slate-900">{labels.compareTitle}</h4>
             <button

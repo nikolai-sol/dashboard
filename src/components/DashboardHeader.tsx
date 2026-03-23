@@ -110,7 +110,7 @@ export default function DashboardHeader({
   const initials = getInitials(clientName);
 
   return (
-    <header className="card-surface mb-6 flex flex-col gap-4 p-5 sm:flex-row sm:items-center sm:justify-between">
+    <header className="card-surface relative z-[60] mb-6 overflow-visible flex flex-col gap-4 p-5 sm:flex-row sm:items-center sm:justify-between">
       <div className="flex items-center gap-4">
         <div className="flex h-12 w-12 items-center justify-center overflow-hidden rounded-xl border border-slate-200 bg-white text-sm font-bold text-slate-900 shadow-sm">
           {logoUrl ? (
