@@ -1,10 +1,15 @@
 import { NextResponse } from "next/server";
 import {
+  VIEWER_PORTAL_SESSION_COOKIE,
   cookieOptions,
+  createViewerPortalSession,
   createViewerSession,
   viewerCookieName,
 } from "@/lib/access-auth";
-import { verifyDashboardAccessCredentials } from "@/lib/dashboard-access";
+import {
+  listAccessibleDashboardsByCredentials,
+  verifyDashboardAccessCredentials,
+} from "@/lib/dashboard-access";
 
 export async function POST(request: Request) {
   const body = await request.json().catch(() => null);
@@ -20,6 +25,7 @@ export async function POST(request: Request) {
   if (!context) {
     return NextResponse.json({ error: "Invalid credentials" }, { status: 401 });
   }
+  const accessibleDashboards = await listAccessibleDashboardsByCredentials(email, password);
 
   const response = NextResponse.json({
     ok: true,
@@ -35,6 +41,10 @@ export async function POST(request: Request) {
     createViewerSession(context.id, email),
     cookieOptions(60 * 60 * 24 * 30),
   );
+  response.cookies.set(
+    VIEWER_PORTAL_SESSION_COOKIE,
+    createViewerPortalSession(email, accessibleDashboards.map((dashboard) => dashboard.id)),
+    cookieOptions(60 * 60 * 24 * 30),
+  );
   return response;
 }
-
