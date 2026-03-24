@@ -2,6 +2,7 @@
 
 import type { CSSProperties } from "react";
 import { useEffect, useMemo, useState } from "react";
+import Link from "next/link";
 import { useParams, useRouter, useSearchParams } from "next/navigation";
 import ChannelMix from "@/components/ChannelMix";
 import CampaignPerformanceTable from "@/components/CampaignPerformanceTable";
@@ -74,6 +75,7 @@ async function getDashboardData(
   errorMessage: string | null;
   authRequired: boolean;
   authMeta: DashboardAuthMeta | null;
+  notFound: boolean;
 }> {
   try {
     const params = new URLSearchParams();
@@ -100,6 +102,17 @@ async function getDashboardData(
         errorMessage: null,
         authRequired: true,
         authMeta: json?.dashboard ?? null,
+        notFound: false,
+      };
+    }
+    if (response.status === 404) {
+      return {
+        data: null,
+        demoMode: false,
+        errorMessage: "Dashboard not found",
+        authRequired: false,
+        authMeta: null,
+        notFound: true,
       };
     }
     if (!response.ok) {
@@ -107,7 +120,7 @@ async function getDashboardData(
     }
 
     const data = (await response.json()) as DashboardData;
-    return { data, demoMode: false, errorMessage: null, authRequired: false, authMeta: null };
+    return { data, demoMode: false, errorMessage: null, authRequired: false, authMeta: null, notFound: false };
   } catch (error) {
     console.warn("API unavailable, using mock data:", error);
     const { mockDashboardData } = await import("@/lib/mock-data");
@@ -118,6 +131,7 @@ async function getDashboardData(
       errorMessage: message,
       authRequired: false,
       authMeta: null,
+      notFound: false,
     };
   }
 }
@@ -199,6 +213,7 @@ export default function DashboardByIdPage() {
   const [apiError, setApiError] = useState<string | null>(null);
   const [authRequired, setAuthRequired] = useState(false);
   const [authMeta, setAuthMeta] = useState<DashboardAuthMeta | null>(null);
+  const [notFound, setNotFound] = useState(false);
   const [reloadKey, setReloadKey] = useState(0);
   const [dateRange, setDateRange] = useState<{ from: string; to: string }>({ from: initialFrom, to: initialTo });
   const [draftDateRange, setDraftDateRange] = useState<{ from: string; to: string }>({
@@ -238,6 +253,17 @@ export default function DashboardByIdPage() {
         setApiError(null);
         setAuthRequired(true);
         setAuthMeta(result.authMeta);
+        setNotFound(false);
+        setIsLoading(false);
+        return;
+      }
+      if (result.notFound) {
+        setDashboard(null);
+        setIsDemoMode(false);
+        setApiError(result.errorMessage);
+        setAuthRequired(false);
+        setAuthMeta(null);
+        setNotFound(true);
         setIsLoading(false);
         return;
       }
@@ -247,6 +273,7 @@ export default function DashboardByIdPage() {
       setApiError(result.errorMessage);
       setAuthRequired(false);
       setAuthMeta(null);
+      setNotFound(false);
 
       const availablePlatforms = result.data?.platforms.map((platform) => platform.id) ?? [];
       setSelectedPlatforms(availablePlatforms);
@@ -1020,6 +1047,30 @@ export default function DashboardByIdPage() {
           clientName={authMeta.client_name}
           onSuccess={() => setReloadKey((value) => value + 1)}
         />
+      </main>
+    );
+  }
+
+  if (!isLoading && notFound) {
+    return (
+      <main
+        data-dashboard-ready="false"
+        className={`mx-auto min-h-screen w-full max-w-[1000px] px-4 py-12 sm:px-6 lg:px-8 ${isPdfMode ? "pdf-mode" : ""}`}
+        style={isMobileMode ? ({ maxWidth: "430px" } as CSSProperties) : undefined}
+      >
+        <section className="mx-auto max-w-xl rounded-2xl border border-slate-200 bg-white p-6 text-center shadow-sm">
+          <p className="text-sm font-medium uppercase tracking-[0.2em] text-slate-500">Dashboard Portal</p>
+          <h1 className="mt-3 text-2xl font-semibold text-slate-900">Дашборд не найден</h1>
+          <p className="mt-3 text-sm text-slate-600">
+            Проверьте ссылку или войдите в личный кабинет, чтобы открыть доступный дашборд.
+          </p>
+          <Link
+            href="/"
+            className="mt-5 inline-flex rounded-lg bg-slate-900 px-4 py-2 text-sm font-medium text-white"
+          >
+            Перейти в личный кабинет
+          </Link>
+        </section>
       </main>
     );
   }

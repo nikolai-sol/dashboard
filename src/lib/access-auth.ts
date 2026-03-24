@@ -2,6 +2,7 @@ import crypto from "crypto";
 
 export const ADMIN_SESSION_COOKIE = "dashboard_admin_session";
 export const VIEWER_SESSION_COOKIE_PREFIX = "dashboard_viewer_";
+export const VIEWER_PORTAL_SESSION_COOKIE = "dashboard_viewer_portal_session";
 
 type SessionType = "admin" | "viewer" | "viewer_export";
 
@@ -9,6 +10,7 @@ type SessionPayload = {
   type: SessionType;
   email?: string;
   dashboard_id?: number;
+  dashboard_ids?: number[];
   exp: number;
 };
 
@@ -126,6 +128,23 @@ export function createViewerExportToken(dashboardId: number) {
   });
 }
 
+export function createViewerPortalSession(email: string, dashboardIds: number[]) {
+  return createSignedSession({
+    type: "viewer",
+    email: normalizeEmail(email),
+    dashboard_ids: dashboardIds,
+    exp: Math.floor(Date.now() / 1000) + 60 * 60 * 24 * 30,
+  });
+}
+
+export function verifyViewerPortalSession(token: string | null | undefined) {
+  const payload = verifySignedSession(token);
+  if (!payload || payload.type !== "viewer" || !payload.email || !Array.isArray(payload.dashboard_ids)) {
+    return null;
+  }
+  return payload as SessionPayload & { type: "viewer"; email: string; dashboard_ids: number[] };
+}
+
 export function verifyViewerSession(
   token: string | null | undefined,
   dashboardId: number,
@@ -170,4 +189,3 @@ export function verifyPassword(password: string, storedHash: string) {
   const actualHash = crypto.scryptSync(password, salt, 64).toString("hex");
   return safeEqual(actualHash, expectedHash);
 }
-

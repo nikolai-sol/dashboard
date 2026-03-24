@@ -48,6 +48,14 @@ export type DashboardAccessUserInput = {
   password?: string;
 };
 
+export type ViewerPortalDashboard = {
+  id: number;
+  client_id: string;
+  client_name: string;
+  dashboard_name: string;
+  url: string;
+};
+
 function normalizeEmail(value: string) {
   return String(value ?? "").trim().toLowerCase();
 }
@@ -204,6 +212,60 @@ export async function verifyDashboardAccessCredentials(
   return verifyPassword(password, user.password_hash) ? context : null;
 }
 
+export async function listAccessibleDashboardsByCredentials(email: string, password: string) {
+  const normalizedEmail = normalizeEmail(email);
+  const [rows] = await pool.execute<(DashboardAccessUserRow & DashboardAccessContextRow)[]>(
+    `SELECT
+       dau.id,
+       dau.dashboard_id,
+       dau.email,
+       dau.password_hash,
+       dau.is_active,
+       dau.created_at,
+       dau.updated_at,
+       d.client_id,
+       d.client_name,
+       d.dashboard_name
+     FROM dashboard_access_users dau
+     INNER JOIN dashboards d ON d.id = dau.dashboard_id
+     WHERE dau.email = ? AND dau.is_active = TRUE AND d.is_active = TRUE
+     ORDER BY d.client_name ASC, d.dashboard_name ASC`,
+    [normalizedEmail],
+  );
+
+  return rows
+    .filter((row) => verifyPassword(password, row.password_hash))
+    .map((row) => ({
+      id: Number(row.dashboard_id),
+      client_id: String(row.client_id),
+      client_name: String(row.client_name),
+      dashboard_name: String(row.dashboard_name),
+      url: `/dashboard/${row.client_id}`,
+    }));
+}
+
+export async function listViewerPortalDashboards(dashboardIds: number[]) {
+  if (!dashboardIds.length) return [];
+  const ids = [...new Set(dashboardIds.filter((id) => Number.isFinite(id)))];
+  if (!ids.length) return [];
+  const placeholders = ids.map(() => "?").join(", ");
+  const [rows] = await pool.execute<RowDataPacket[]>(
+    `SELECT id, client_id, client_name, dashboard_name
+     FROM dashboards
+     WHERE is_active = TRUE AND id IN (${placeholders})
+     ORDER BY client_name ASC, dashboard_name ASC`,
+    ids,
+  );
+
+  return rows.map((row) => ({
+    id: Number(row.id),
+    client_id: String(row.client_id),
+    client_name: String(row.client_name),
+    dashboard_name: String(row.dashboard_name),
+    url: `/dashboard/${row.client_id}`,
+  })) as ViewerPortalDashboard[];
+}
+
 export async function isDashboardAccessAuthorized(request: Request, identifier: string | number) {
   const context = await getDashboardAccessContext(identifier);
   if (!context) {
@@ -223,4 +285,3 @@ export async function isDashboardAccessAuthorized(request: Request, identifier: 
   }
   return { context, authorized: true, reason: "authorized" as const, payload };
 }
-
