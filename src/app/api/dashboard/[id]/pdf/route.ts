@@ -1,9 +1,11 @@
 import { NextResponse } from "next/server";
 import puppeteer from "puppeteer";
+import { createViewerExportToken } from "@/lib/access-auth";
+import { isDashboardAccessAuthorized } from "@/lib/dashboard-access";
 
 export const dynamic = "force-dynamic";
 
-function buildDashboardUrl(request: Request, dashboardId: string) {
+function buildDashboardUrl(request: Request, dashboardId: string, accessToken?: string) {
   const { searchParams } = new URL(request.url);
   const from = searchParams.get("from");
   const to = searchParams.get("to");
@@ -16,6 +18,7 @@ function buildDashboardUrl(request: Request, dashboardId: string) {
   if (to) url.searchParams.set("to", to);
   if (compareFrom) url.searchParams.set("compare_from", compareFrom);
   if (compareTo) url.searchParams.set("compare_to", compareTo);
+  if (accessToken) url.searchParams.set("access_token", accessToken);
   return url.toString();
 }
 
@@ -24,7 +27,18 @@ export async function GET(
   context: { params: Promise<{ id: string }> | { id: string } },
 ) {
   const { id } = await Promise.resolve(context.params);
-  const dashboardUrl = buildDashboardUrl(request, id);
+  const access = await isDashboardAccessAuthorized(request, id);
+  if (!access.context) {
+    return NextResponse.json({ error: "Dashboard not found" }, { status: 404 });
+  }
+  if (!access.authorized) {
+    return NextResponse.json({ error: "Authentication required" }, { status: 401 });
+  }
+  const dashboardUrl = buildDashboardUrl(
+    request,
+    id,
+    access.context.access_users_count > 0 ? createViewerExportToken(access.context.id) : undefined,
+  );
   const filenameDate = new Date().toISOString().slice(0, 10);
   let browser: Awaited<ReturnType<typeof puppeteer.launch>> | null = null;
 

@@ -1,4 +1,5 @@
 import { NextResponse } from "next/server";
+import { isDashboardAccessAuthorized } from "@/lib/dashboard-access";
 import { loadDashboardData } from "@/lib/dashboard-data-loader";
 
 export const dynamic = "force-dynamic";
@@ -9,6 +10,25 @@ export async function GET(
 ) {
   try {
     const { id } = await Promise.resolve(context.params);
+    const access = await isDashboardAccessAuthorized(request, id);
+    if (!access.context) {
+      return NextResponse.json({ error: "Dashboard not found" }, { status: 404 });
+    }
+    if (!access.authorized) {
+      return NextResponse.json(
+        {
+          error: "Authentication required",
+          auth_required: true,
+          dashboard: {
+            id: access.context.id,
+            client_id: access.context.client_id,
+            client_name: access.context.client_name,
+            dashboard_name: access.context.dashboard_name,
+          },
+        },
+        { status: 401 },
+      );
+    }
     const { data } = await loadDashboardData(request, id);
     return NextResponse.json(data);
   } catch (error) {

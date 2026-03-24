@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import ExcelJS from "exceljs";
+import { isDashboardAccessAuthorized } from "@/lib/dashboard-access";
 import { loadDashboardData } from "@/lib/dashboard-data-loader";
 import { getDashboardI18n } from "@/lib/dashboard-i18n";
 import { PLATFORM_COLORS } from "@/lib/platform-colors";
@@ -336,6 +337,13 @@ export async function GET(
 ) {
   try {
     const { id } = await Promise.resolve(context.params);
+    const access = await isDashboardAccessAuthorized(request, id);
+    if (!access.context) {
+      return NextResponse.json({ error: "Dashboard not found" }, { status: 404 });
+    }
+    if (!access.authorized) {
+      return NextResponse.json({ error: "Authentication required" }, { status: 401 });
+    }
     const { data, leads_rows } = await loadDashboardData(request, id);
     const i18n = getDashboardI18n(data.dashboard.language);
     const currency = data.dashboard.currency || "EUR";
