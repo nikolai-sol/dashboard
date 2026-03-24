@@ -20,6 +20,11 @@ export default function AdminLayout({ children }: { children: ReactNode }) {
             <Link href="/admin/settings" className="block rounded px-3 py-2 hover:bg-slate-800">
               Settings
             </Link>
+            <form action="/api/admin/auth/logout" method="post" className="px-3 py-2">
+              <button type="submit" className="text-left text-slate-300 hover:text-white">
+                Logout
+              </button>
+            </form>
           </nav>
         </details>
       </div>
@@ -37,6 +42,11 @@ export default function AdminLayout({ children }: { children: ReactNode }) {
             <Link href="/admin/settings" className="block rounded px-3 py-2 hover:bg-slate-800">
               Settings
             </Link>
+            <form action="/api/admin/auth/logout" method="post" className="px-3 py-2">
+              <button type="submit" className="text-left text-slate-300 hover:text-white">
+                Logout
+              </button>
+            </form>
           </nav>
         </aside>
 

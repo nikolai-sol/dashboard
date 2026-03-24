@@ -5,6 +5,7 @@ import { useEffect, useMemo, useState } from "react";
 import { useParams, useRouter, useSearchParams } from "next/navigation";
 import ChannelMix from "@/components/ChannelMix";
 import CampaignPerformanceTable from "@/components/CampaignPerformanceTable";
+import DashboardAccessGate from "@/components/DashboardAccessGate";
 import ChannelPerformanceTable from "@/components/ChannelPerformanceTable";
 import ComparisonSection from "@/components/ComparisonSection";
 import ConversionFunnel from "@/components/ConversionFunnel";
@@ -35,6 +36,13 @@ type RenderableKpiCard = {
   deltaOverride?: number | null;
 };
 
+type DashboardAuthMeta = {
+  id: number;
+  client_id: string;
+  client_name: string;
+  dashboard_name: string;
+};
+
 function money(value: number, currency = "EUR", locale = "en-US") {
   return new Intl.NumberFormat(locale, {
     style: "currency",
@@ -59,10 +67,13 @@ async function getDashboardData(
   id: string,
   range?: { from: string; to: string },
   compareRange?: { from: string; to: string } | null,
+  accessToken?: string,
 ): Promise<{
-  data: DashboardData;
+  data: DashboardData | null;
   demoMode: boolean;
   errorMessage: string | null;
+  authRequired: boolean;
+  authMeta: DashboardAuthMeta | null;
 }> {
   try {
     const params = new URLSearchParams();
@@ -74,19 +85,40 @@ async function getDashboardData(
       params.set("compare_from", compareRange.from);
       params.set("compare_to", compareRange.to);
     }
+    if (accessToken) {
+      params.set("access_token", accessToken);
+    }
     const query = params.toString();
     const response = await fetch(`/api/dashboard/${id}${query ? `?${query}` : ""}`, { cache: "no-store" });
+    if (response.status === 401) {
+      const json = (await response.json().catch(() => null)) as
+        | { dashboard?: DashboardAuthMeta }
+        | null;
+      return {
+        data: null,
+        demoMode: false,
+        errorMessage: null,
+        authRequired: true,
+        authMeta: json?.dashboard ?? null,
+      };
+    }
     if (!response.ok) {
       throw new Error(`API returned ${response.status}`);
     }
 
     const data = (await response.json()) as DashboardData;
-    return { data, demoMode: false, errorMessage: null };
+    return { data, demoMode: false, errorMessage: null, authRequired: false, authMeta: null };
   } catch (error) {
     console.warn("API unavailable, using mock data:", error);
     const { mockDashboardData } = await import("@/lib/mock-data");
     const message = error instanceof Error ? error.message : "Unknown API error";
-    return { data: mockDashboardData, demoMode: true, errorMessage: message };
+    return {
+      data: mockDashboardData,
+      demoMode: true,
+      errorMessage: message,
+      authRequired: false,
+      authMeta: null,
+    };
   }
 }
 
@@ -154,6 +186,7 @@ export default function DashboardByIdPage() {
   const initialTo = searchParams.get("to") ?? "";
   const initialCompareFrom = searchParams.get("compare_from") ?? "";
   const initialCompareTo = searchParams.get("compare_to") ?? "";
+  const accessToken = searchParams.get("access_token") ?? "";
   const isPdfMode = searchParams.get("pdf") === "true";
   const isMobileMode = searchParams.get("mobile") === "1";
 
@@ -164,6 +197,9 @@ export default function DashboardByIdPage() {
   const [isLoading, setIsLoading] = useState(true);
   const [isDemoMode, setIsDemoMode] = useState(false);
   const [apiError, setApiError] = useState<string | null>(null);
+  const [authRequired, setAuthRequired] = useState(false);
+  const [authMeta, setAuthMeta] = useState<DashboardAuthMeta | null>(null);
+  const [reloadKey, setReloadKey] = useState(0);
   const [dateRange, setDateRange] = useState<{ from: string; to: string }>({ from: initialFrom, to: initialTo });
   const [draftDateRange, setDraftDateRange] = useState<{ from: string; to: string }>({
     from: initialFrom,
@@ -190,23 +226,36 @@ export default function DashboardByIdPage() {
         dashboardId,
         dateRange.from && dateRange.to ? dateRange : undefined,
         compareRange.from && compareRange.to ? compareRange : null,
+        accessToken || undefined,
       );
       if (cancelled) {
+        return;
+      }
+
+      if (result.authRequired) {
+        setDashboard(null);
+        setIsDemoMode(false);
+        setApiError(null);
+        setAuthRequired(true);
+        setAuthMeta(result.authMeta);
+        setIsLoading(false);
         return;
       }
 
       setDashboard(result.data);
       setIsDemoMode(result.demoMode);
       setApiError(result.errorMessage);
+      setAuthRequired(false);
+      setAuthMeta(null);
 
-      const availablePlatforms = result.data.platforms.map((platform) => platform.id);
+      const availablePlatforms = result.data?.platforms.map((platform) => platform.id) ?? [];
       setSelectedPlatforms(availablePlatforms);
-      const availableChannels = (result.data.channel_performance ?? []).map((item) => item.channel);
+      const availableChannels = (result.data?.channel_performance ?? []).map((item) => item.channel);
       setSelectedChannels(availableChannels);
-      setFilterMode(result.data.dashboard.filter_scope === "channel" ? "channel" : "platform");
+      setFilterMode(result.data?.dashboard.filter_scope === "channel" ? "channel" : "platform");
       setDraftDateRange((prev) => ({
-        from: prev.from || result.data.dashboard.period.from,
-        to: prev.to || result.data.dashboard.period.to,
+        from: prev.from || result.data?.dashboard.period.from || "",
+        to: prev.to || result.data?.dashboard.period.to || "",
       }));
       setIsLoading(false);
     }
@@ -216,7 +265,7 @@ export default function DashboardByIdPage() {
     return () => {
       cancelled = true;
     };
-  }, [compareRange, dashboardId, dateRange]);
+  }, [accessToken, compareRange, dashboardId, dateRange, reloadKey]);
 
   const effectiveDraftCompareRange = useMemo(() => {
     const effectiveFrom = draftDateRange.from || dashboard?.dashboard.period.from || "";
@@ -957,6 +1006,23 @@ export default function DashboardByIdPage() {
     params.delete("compare_to");
     router.replace(`/dashboard/${dashboardId}?${params.toString()}`, { scroll: false });
   };
+
+  if (!isLoading && authRequired && authMeta) {
+    return (
+      <main
+        data-dashboard-ready="false"
+        className={`mx-auto min-h-screen w-full max-w-[1400px] px-4 py-6 sm:px-6 lg:px-8 ${isPdfMode ? "pdf-mode" : ""}`}
+        style={isMobileMode ? ({ maxWidth: "430px" } as CSSProperties) : undefined}
+      >
+        <DashboardAccessGate
+          dashboardId={dashboardId}
+          dashboardName={authMeta.dashboard_name}
+          clientName={authMeta.client_name}
+          onSuccess={() => setReloadKey((value) => value + 1)}
+        />
+      </main>
+    );
+  }
 
   if (isLoading || !dashboard) {
     return (
