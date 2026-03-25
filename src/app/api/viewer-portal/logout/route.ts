@@ -1,8 +1,18 @@
 import { NextResponse } from "next/server";
 import { VIEWER_PORTAL_SESSION_COOKIE } from "@/lib/access-auth";
 
-export async function POST() {
-  const response = NextResponse.json({ ok: true });
+function getPublicRootUrl(request: Request) {
+  const forwardedProto = request.headers.get("x-forwarded-proto");
+  const forwardedHost = request.headers.get("x-forwarded-host");
+  if (forwardedProto && forwardedHost) {
+    return `${forwardedProto}://${forwardedHost}/`;
+  }
+  const requestUrl = new URL(request.url);
+  return new URL("/", requestUrl).toString();
+}
+
+function clearViewerPortalSession(request: Request) {
+  const response = NextResponse.redirect(getPublicRootUrl(request), { status: 303 });
   response.cookies.set(VIEWER_PORTAL_SESSION_COOKIE, "", {
     httpOnly: true,
     sameSite: "lax",
@@ -13,3 +23,10 @@ export async function POST() {
   return response;
 }
 
+export async function POST(request: Request) {
+  return clearViewerPortalSession(request);
+}
+
+export async function GET(request: Request) {
+  return clearViewerPortalSession(request);
+}
