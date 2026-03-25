@@ -200,7 +200,7 @@ export default function DashboardByIdPage() {
   const initialTo = searchParams.get("to") ?? "";
   const initialCompareFrom = searchParams.get("compare_from") ?? "";
   const initialCompareTo = searchParams.get("compare_to") ?? "";
-  const accessToken = searchParams.get("access_token") ?? "";
+  const initialAccessToken = searchParams.get("access_token") ?? "";
   const isPdfMode = searchParams.get("pdf") === "true";
   const isMobileMode = searchParams.get("mobile") === "1";
 
@@ -214,6 +214,7 @@ export default function DashboardByIdPage() {
   const [authRequired, setAuthRequired] = useState(false);
   const [authMeta, setAuthMeta] = useState<DashboardAuthMeta | null>(null);
   const [notFound, setNotFound] = useState(false);
+  const [viewerAccessToken, setViewerAccessToken] = useState(initialAccessToken);
   const [reloadKey, setReloadKey] = useState(0);
   const [dateRange, setDateRange] = useState<{ from: string; to: string }>({ from: initialFrom, to: initialTo });
   const [draftDateRange, setDraftDateRange] = useState<{ from: string; to: string }>({
@@ -241,7 +242,7 @@ export default function DashboardByIdPage() {
         dashboardId,
         dateRange.from && dateRange.to ? dateRange : undefined,
         compareRange.from && compareRange.to ? compareRange : null,
-        accessToken || undefined,
+        viewerAccessToken || undefined,
       );
       if (cancelled) {
         return;
@@ -292,7 +293,7 @@ export default function DashboardByIdPage() {
     return () => {
       cancelled = true;
     };
-  }, [accessToken, compareRange, dashboardId, dateRange, reloadKey]);
+  }, [compareRange, dashboardId, dateRange, reloadKey, viewerAccessToken]);
 
   const effectiveDraftCompareRange = useMemo(() => {
     const effectiveFrom = draftDateRange.from || dashboard?.dashboard.period.from || "";
@@ -979,6 +980,9 @@ export default function DashboardByIdPage() {
       params.set("compare_from", compareRange.from);
       params.set("compare_to", compareRange.to);
     }
+    if (viewerAccessToken) {
+      params.set("access_token", viewerAccessToken);
+    }
     window.open(`/api/dashboard/${dashboardId}/pdf?${params.toString()}`, "_blank", "noopener,noreferrer");
   };
 
@@ -992,6 +996,9 @@ export default function DashboardByIdPage() {
     if (compareRange.from && compareRange.to) {
       params.set("compare_from", compareRange.from);
       params.set("compare_to", compareRange.to);
+    }
+    if (viewerAccessToken) {
+      params.set("access_token", viewerAccessToken);
     }
     window.open(`/api/dashboard/${dashboardId}/excel?${params.toString()}`, "_blank", "noopener,noreferrer");
   };
@@ -1045,7 +1052,15 @@ export default function DashboardByIdPage() {
           dashboardId={dashboardId}
           dashboardName={authMeta.dashboard_name}
           clientName={authMeta.client_name}
-          onSuccess={() => setReloadKey((value) => value + 1)}
+          onSuccess={(accessToken) => {
+            if (accessToken) {
+              setViewerAccessToken(accessToken);
+              const params = new URLSearchParams(searchParams.toString());
+              params.set("access_token", accessToken);
+              router.replace(`/dashboard/${dashboardId}?${params.toString()}`, { scroll: false });
+            }
+            setReloadKey((value) => value + 1);
+          }}
         />
       </main>
     );

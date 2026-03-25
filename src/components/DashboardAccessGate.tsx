@@ -6,7 +6,7 @@ type DashboardAccessGateProps = {
   dashboardId: string;
   dashboardName: string;
   clientName: string;
-  onSuccess: () => void;
+  onSuccess: (accessToken?: string) => void;
 };
 
 export default function DashboardAccessGate({
@@ -38,7 +38,7 @@ export default function DashboardAccessGate({
       if (!response.ok) {
         throw new Error(String(json?.error ?? "Login failed"));
       }
-      onSuccess();
+      onSuccess(typeof json?.access_token === "string" ? json.access_token : undefined);
     } catch (submitError) {
       setError(submitError instanceof Error ? submitError.message : "Login failed");
     } finally {
@@ -89,4 +89,3 @@ export default function DashboardAccessGate({
     </div>
   );
 }
-
