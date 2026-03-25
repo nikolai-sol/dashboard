@@ -26,9 +26,11 @@ export async function POST(request: Request) {
     return NextResponse.json({ error: "Invalid credentials" }, { status: 401 });
   }
   const accessibleDashboards = await listAccessibleDashboardsByCredentials(email, password);
+  const viewerSessionToken = createViewerSession(context.id, email);
 
   const response = NextResponse.json({
     ok: true,
+    access_token: viewerSessionToken,
     dashboard: {
       id: context.id,
       client_id: context.client_id,
@@ -38,7 +40,7 @@ export async function POST(request: Request) {
   });
   response.cookies.set(
     viewerCookieName(context.id),
-    createViewerSession(context.id, email),
+    viewerSessionToken,
     cookieOptions(60 * 60 * 24 * 30, "none"),
   );
   response.cookies.set(
