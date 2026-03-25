@@ -39,12 +39,12 @@ export async function POST(request: Request) {
   response.cookies.set(
     viewerCookieName(context.id),
     createViewerSession(context.id, email),
-    cookieOptions(60 * 60 * 24 * 30),
+    cookieOptions(60 * 60 * 24 * 30, "none"),
   );
   response.cookies.set(
     VIEWER_PORTAL_SESSION_COOKIE,
     createViewerPortalSession(email, accessibleDashboards.map((dashboard) => dashboard.id)),
-    cookieOptions(60 * 60 * 24 * 30),
+    cookieOptions(60 * 60 * 24 * 30, "none"),
   );
   return response;
 }

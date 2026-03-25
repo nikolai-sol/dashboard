@@ -167,10 +167,10 @@ export function isValidAdminCredentials(email: string, password: string) {
   return normalizeEmail(email) === configuredEmail && safeEqual(password, configuredPassword);
 }
 
-export function cookieOptions(maxAgeSeconds: number) {
+export function cookieOptions(maxAgeSeconds: number, sameSite: "lax" | "none" = "lax") {
   return {
     httpOnly: true,
-    sameSite: "lax" as const,
+    sameSite,
     secure: process.env.NODE_ENV === "production",
     path: "/",
     maxAge: maxAgeSeconds,
