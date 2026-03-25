@@ -24,8 +24,7 @@ export async function POST(request: Request) {
   response.cookies.set(
     VIEWER_PORTAL_SESSION_COOKIE,
     createViewerPortalSession(email, dashboards.map((dashboard) => dashboard.id)),
-    cookieOptions(60 * 60 * 24 * 30),
+    cookieOptions(60 * 60 * 24 * 30, "none"),
   );
   return response;
 }
-

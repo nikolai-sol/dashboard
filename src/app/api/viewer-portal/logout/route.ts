@@ -15,7 +15,7 @@ function clearViewerPortalSession(request: Request) {
   const response = NextResponse.redirect(getPublicRootUrl(request), { status: 303 });
   response.cookies.set(VIEWER_PORTAL_SESSION_COOKIE, "", {
     httpOnly: true,
-    sameSite: "lax",
+    sameSite: "none",
     secure: process.env.NODE_ENV === "production",
     path: "/",
     expires: new Date(0),
