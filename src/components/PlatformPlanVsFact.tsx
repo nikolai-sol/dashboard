@@ -45,6 +45,7 @@ type PlatformPlanVsFactProps = {
   selectedMetrics: string[];
   showSpend?: boolean;
   currencyFormatter: (value: number) => string;
+  currencyCode?: string;
   locale?: string;
   labels?: {
     title: string;
@@ -71,6 +72,9 @@ function resolveMetrics(selectedMetrics: string[], showSpend: boolean) {
     SUPPORTED_METRICS.includes(metric as MetricKey),
   ) as MetricKey[];
   const metrics = filtered.filter((metric) => (showSpend ? true : !MONEY_METRICS.has(metric)));
+  if (showSpend && metrics.includes("views") && !metrics.includes("cpv")) {
+    metrics.push("cpv");
+  }
   if (metrics.length) return metrics;
   return showSpend
     ? (["impressions", "clicks", "ctr", "spend"] as MetricKey[])
@@ -81,8 +85,17 @@ function formatMetricValue(
   value: number,
   metric: MetricKey,
   currencyFormatter: (value: number) => string,
+  currencyCode: string,
   locale: string,
 ) {
+  if (metric === "cpv") {
+    return new Intl.NumberFormat(locale, {
+      style: "currency",
+      currency: currencyCode,
+      minimumFractionDigits: 2,
+      maximumFractionDigits: 2,
+    }).format(value);
+  }
   if (MONEY_METRICS.has(metric)) return currencyFormatter(value);
   if (metric === "ctr") return `${value.toFixed(2)}%`;
   if (metric === "frequency") return value.toFixed(2);
@@ -231,6 +244,7 @@ export default function PlatformPlanVsFact({
   selectedMetrics,
   showSpend = true,
   currencyFormatter,
+  currencyCode = "EUR",
   locale = "en-US",
   labels,
 }: PlatformPlanVsFactProps) {
@@ -310,8 +324,8 @@ export default function PlatformPlanVsFact({
                   <td className="px-2 py-2 font-medium text-slate-800 sm:px-3">{row.label}</td>
                   {metrics.map((metric) => {
                     const summary = summarizeMetric(row, metric);
-                    const fact = formatMetricValue(summary.fact, metric, currencyFormatter, locale);
-                    const plan = formatMetricValue(summary.plan, metric, currencyFormatter, locale);
+                    const fact = formatMetricValue(summary.fact, metric, currencyFormatter, currencyCode, locale);
+                    const plan = formatMetricValue(summary.plan, metric, currencyFormatter, currencyCode, locale);
                     const completion =
                       summary.completion_pct === null ? null : `${summary.completion_pct.toFixed(0)}%`;
                     return (
@@ -330,8 +344,8 @@ export default function PlatformPlanVsFact({
                 <td className="px-2 py-2 text-slate-900 sm:px-3">{copy.total}</td>
                 {metrics.map((metric) => {
                   const summary = summarizeMetric(totalRow, metric);
-                  const fact = formatMetricValue(summary.fact, metric, currencyFormatter, locale);
-                  const plan = formatMetricValue(summary.plan, metric, currencyFormatter, locale);
+                  const fact = formatMetricValue(summary.fact, metric, currencyFormatter, currencyCode, locale);
+                  const plan = formatMetricValue(summary.plan, metric, currencyFormatter, currencyCode, locale);
                   const completion =
                     summary.completion_pct === null ? null : `${summary.completion_pct.toFixed(0)}%`;
                   return (

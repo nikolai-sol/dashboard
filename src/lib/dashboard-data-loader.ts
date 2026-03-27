@@ -550,6 +550,47 @@ function getKpiConfig(
   return getDefaultKpiCards(type, showSpend);
 }
 
+function getVisibleMetrics(
+  config: JsonRecord,
+  type: DashboardData["dashboard"]["type"],
+  showSpend: boolean,
+): string[] {
+  const raw = config.visible_metrics;
+  const allowed = new Set([
+    "impressions",
+    "clicks",
+    "ctr",
+    "cpm",
+    "cpc",
+    "spend",
+    "views",
+    "cpv",
+    "conversions",
+    "cpa",
+    "roas",
+    "reach",
+    "frequency",
+  ].filter((item) => showSpend || !SPEND_RELATED_METRICS.has(item)));
+
+  if (Array.isArray(raw)) {
+    const values = Array.from(new Set(raw
+      .map((item) => String(item).trim().toLowerCase())
+      .filter((item) => allowed.has(item))));
+    if (showSpend && values.includes("views") && !values.includes("cpv")) {
+      values.push("cpv");
+    }
+    if (values.length > 0) {
+      return values;
+    }
+  }
+
+  const fallback = getDefaultKpiCards(type, showSpend);
+  if (showSpend && fallback.includes("views") && !fallback.includes("cpv")) {
+    return [...fallback, "cpv"];
+  }
+  return fallback;
+}
+
 function getCustomKpiCards(config: JsonRecord, showSpend: boolean): NonNullable<DashboardData["custom_kpi_cards"]> {
   const raw = config.custom_kpi_cards;
   if (!Array.isArray(raw)) return [];
@@ -2013,6 +2054,7 @@ export async function loadDashboardData(
         section_order: getSectionOrder(config, dashboardType, showSpend),
       },
       kpi_config: getKpiConfig(config, dashboardType, showSpend),
+      visible_metrics: getVisibleMetrics(config, dashboardType, showSpend),
       custom_kpi_cards: getCustomKpiCards(config, showSpend),
       kpi,
       platforms: platformResults,

@@ -5,30 +5,43 @@ import { ResponsiveLine } from "@nivo/line";
 import { PLATFORM_COLORS } from "@/lib/platform-colors";
 import type { TimeSeriesPoint } from "@/lib/types";
 
-type MetricType = "impressions" | "clicks" | "spend";
+type MetricType = "impressions" | "clicks" | "spend" | "views" | "conversions" | "ctr" | "cpm" | "cpc" | "cpv" | "cpa";
 
 type TrendChartProps = {
   points: TimeSeriesPoint[];
   selectedPlatforms: string[];
   onTogglePlatform: (platformId: string) => void;
+  selectedMetrics?: string[];
   currencyFormatter: (value: number) => string;
+  currencyCode?: string;
   showSpend?: boolean;
   locale?: string;
   pdfMode?: boolean;
   labels?: {
     title: string;
-    metrics: {
-      impressions: string;
-      clicks: string;
-      spend: string;
-    };
+    metrics: Record<string, string>;
   };
 };
 
-function formatMetric(metric: MetricType, value: number, currencyFormatter: (v: number) => string, locale: string) {
-  if (metric === "spend") {
+function formatMetric(
+  metric: MetricType,
+  value: number,
+  currencyFormatter: (v: number) => string,
+  currencyCode: string,
+  locale: string,
+) {
+  if (metric === "cpv") {
+    return new Intl.NumberFormat(locale, {
+      style: "currency",
+      currency: currencyCode,
+      minimumFractionDigits: 2,
+      maximumFractionDigits: 2,
+    }).format(value);
+  }
+  if (metric === "spend" || metric === "cpm" || metric === "cpc" || metric === "cpa") {
     return currencyFormatter(value);
   }
+  if (metric === "ctr") return `${value.toFixed(2)}%`;
   return value.toLocaleString(locale);
 }
 
@@ -36,7 +49,9 @@ export default function TrendChart({
   points,
   selectedPlatforms,
   onTogglePlatform,
+  selectedMetrics = [],
   currencyFormatter,
+  currencyCode = "EUR",
   showSpend = true,
   locale = "en-US",
   pdfMode = false,
@@ -44,17 +59,21 @@ export default function TrendChart({
 }: TrendChartProps) {
   const copy = labels ?? {
     title: "Trend by Day",
-    metrics: {
-      impressions: "Impressions",
-      clicks: "Clicks",
-      spend: "Spend",
-    },
+    metrics: {},
   };
   const [metric, setMetric] = useState<MetricType>("impressions");
-  const metricOptions = showSpend
-    ? (["impressions", "clicks", "spend"] as MetricType[])
-    : (["impressions", "clicks"] as MetricType[]);
-  const effectiveMetric: MetricType = !showSpend && metric === "spend" ? "impressions" : metric;
+  const metricOptions = useMemo(() => {
+    const trendable = new Set<MetricType>(["impressions", "clicks", "spend", "views", "conversions", "ctr", "cpm", "cpc", "cpv", "cpa"]);
+    const metrics = selectedMetrics.filter((item): item is MetricType => trendable.has(item as MetricType));
+    const filtered = metrics.filter((item) =>
+      showSpend ? true : !["spend", "cpm", "cpc", "cpv", "cpa"].includes(item),
+    );
+    if (showSpend && filtered.includes("views") && !filtered.includes("cpv")) {
+      filtered.push("cpv");
+    }
+    return filtered.length > 0 ? filtered : (showSpend ? (["impressions", "clicks", "spend"] as MetricType[]) : (["impressions", "clicks"] as MetricType[]));
+  }, [selectedMetrics, showSpend]);
+  const effectiveMetric: MetricType = metricOptions.includes(metric) ? metric : metricOptions[0];
 
   const dates = useMemo(
     () => [...new Set(points.map((point) => point.date))].sort((a, b) => a.localeCompare(b)),
@@ -70,7 +89,19 @@ export default function TrendChart({
           const row = byDate.get(date);
           return {
             x: date,
-            y: row ? Number(row[effectiveMetric]) : 0,
+            y: row
+              ? effectiveMetric === "ctr"
+                ? row.impressions > 0 ? (row.clicks / row.impressions) * 100 : 0
+                : effectiveMetric === "cpm"
+                  ? row.impressions > 0 ? (row.spend / row.impressions) * 1000 : 0
+                  : effectiveMetric === "cpc"
+                    ? row.clicks > 0 ? row.spend / row.clicks : 0
+                    : effectiveMetric === "cpv"
+                      ? (row.views ?? 0) > 0 ? row.spend / (row.views ?? 0) : 0
+                      : effectiveMetric === "cpa"
+                        ? (row.conversions ?? 0) > 0 ? row.spend / (row.conversions ?? 0) : 0
+                        : Number(row[effectiveMetric] ?? 0)
+              : 0,
           };
         });
         return {
@@ -100,7 +131,7 @@ export default function TrendChart({
                     : "text-slate-500 hover:bg-slate-50 hover:text-slate-700"
                 }`}
               >
-                {copy.metrics[item]}
+                {copy.metrics[item] ?? item.toUpperCase()}
               </button>
             ))}
           </div>
@@ -126,6 +157,9 @@ export default function TrendChart({
             tickPadding: 8,
             format: (value) => {
               const n = Number(value);
+              if (effectiveMetric === "cpv") {
+                return formatMetric(effectiveMetric, n, currencyFormatter, currencyCode, locale);
+              }
               if (effectiveMetric === "spend") {
                 return currencyFormatter(n);
               }
@@ -152,7 +186,7 @@ export default function TrendChart({
               <div className="rounded-lg border border-slate-200 bg-white px-3 py-2 text-xs shadow-lg">
                 <p className="font-semibold text-slate-900">{point.seriesId}</p>
                 <p className="text-slate-500">{label}</p>
-                <p className="text-slate-700">{formatMetric(effectiveMetric, value, currencyFormatter, locale)}</p>
+                <p className="text-slate-700">{formatMetric(effectiveMetric, value, currencyFormatter, currencyCode, locale)}</p>
               </div>
             );
           }}

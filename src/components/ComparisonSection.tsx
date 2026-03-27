@@ -18,6 +18,7 @@ type ComparisonSectionProps = {
   currentTimeseries: ComparisonData["timeseries_b_raw"];
   currentChannelTimeseries: ComparisonData["channel_timeseries_b"];
   currencyFormatter: (value: number) => string;
+  currencyCode: string;
   locale: string;
   language: "en" | "ru";
   showSpend: boolean;
@@ -47,8 +48,22 @@ function compactNumber(value: number, locale: string) {
   }).format(Math.round(value));
 }
 
-function metricFormatter(metric: string, value: number, currencyFormatter: (value: number) => string, locale: string) {
-  if (metric === "spend" || metric === "cpm" || metric === "cpc" || metric === "cpv" || metric === "cpa") {
+function metricFormatter(
+  metric: string,
+  value: number,
+  currencyFormatter: (value: number) => string,
+  currencyCode: string,
+  locale: string,
+) {
+  if (metric === "cpv") {
+    return new Intl.NumberFormat(locale, {
+      style: "currency",
+      currency: currencyCode,
+      minimumFractionDigits: 2,
+      maximumFractionDigits: 2,
+    }).format(value);
+  }
+  if (metric === "spend" || metric === "cpm" || metric === "cpc" || metric === "cpa") {
     return currencyFormatter(value);
   }
   if (metric === "ctr") return `${value.toFixed(2)}%`;
@@ -131,6 +146,7 @@ export default function ComparisonSection({
   currentTimeseries,
   currentChannelTimeseries,
   currencyFormatter,
+  currencyCode,
   locale,
   language,
   showSpend,
@@ -139,11 +155,15 @@ export default function ComparisonSection({
   const [collapsed, setCollapsed] = useState(false);
   const availableMetrics = useMemo(() => {
     const preferred = selectedMetrics.length > 0 ? selectedMetrics : ["impressions", "clicks", "ctr", "spend", "conversions"];
-    return preferred.filter((metric) => {
+    const filtered = preferred.filter((metric) => {
       if (!comparison.kpi_comparison[metric]) return false;
       if (!showSpend && MONEY_METRICS.has(metric)) return false;
       return true;
     });
+    if (showSpend && filtered.includes("views") && !filtered.includes("cpv") && comparison.kpi_comparison.cpv) {
+      filtered.push("cpv");
+    }
+    return filtered;
   }, [comparison.kpi_comparison, selectedMetrics, showSpend]);
 
   const summaryMetrics = useMemo(
@@ -262,8 +282,8 @@ export default function ComparisonSection({
                 {deltaText(metric, item.delta, item.delta_pct)}
               </p>
               <p className="mt-2 text-xs text-slate-500">
-                {metricFormatter(metric, item.value_a, currencyFormatter, locale)} →{" "}
-                {metricFormatter(metric, item.value_b, currencyFormatter, locale)}
+                {metricFormatter(metric, item.value_a, currencyFormatter, currencyCode, locale)} →{" "}
+                {metricFormatter(metric, item.value_b, currencyFormatter, currencyCode, locale)}
               </p>
             </article>
           );
@@ -306,8 +326,8 @@ export default function ComparisonSection({
                                 {deltaText(metric, item.delta, item.delta_pct)}
                               </div>
                               <div className="text-xs text-slate-500">
-                                {metricFormatter(metric, item.value_a, currencyFormatter, locale)} →{" "}
-                                {metricFormatter(metric, item.value_b, currencyFormatter, locale)}
+                                {metricFormatter(metric, item.value_a, currencyFormatter, currencyCode, locale)} →{" "}
+                                {metricFormatter(metric, item.value_b, currencyFormatter, currencyCode, locale)}
                               </div>
                             </td>
                           );
@@ -327,8 +347,8 @@ export default function ComparisonSection({
                                 {deltaText(metric, item.delta, item.delta_pct)}
                               </div>
                               <div className="text-xs text-slate-500">
-                                {metricFormatter(metric, item.value_a, currencyFormatter, locale)} →{" "}
-                                {metricFormatter(metric, item.value_b, currencyFormatter, locale)}
+                                {metricFormatter(metric, item.value_a, currencyFormatter, currencyCode, locale)} →{" "}
+                                {metricFormatter(metric, item.value_b, currencyFormatter, currencyCode, locale)}
                               </div>
                             </td>
                           );
@@ -374,7 +394,7 @@ export default function ComparisonSection({
               tickPadding: 8,
               format: (value) =>
                 MONEY_METRICS.has(effectiveTrendMetric)
-                  ? currencyFormatter(Number(value))
+                  ? metricFormatter(effectiveTrendMetric, Number(value), currencyFormatter, currencyCode, locale)
                   : compactNumber(Number(value), locale),
             }}
             colors={({ color }) => color as string}
@@ -398,7 +418,7 @@ export default function ComparisonSection({
                 <p className="text-slate-500">{String(point.data.x)}</p>
                 <p className="text-slate-700">
                   {MONEY_METRICS.has(effectiveTrendMetric)
-                    ? currencyFormatter(Number(point.data.y))
+                    ? metricFormatter(effectiveTrendMetric, Number(point.data.y), currencyFormatter, currencyCode, locale)
                     : compactNumber(Number(point.data.y), locale)}
                 </p>
               </div>

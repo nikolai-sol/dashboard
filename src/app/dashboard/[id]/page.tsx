@@ -52,6 +52,15 @@ function money(value: number, currency = "EUR", locale = "en-US") {
   }).format(value);
 }
 
+function moneyFixed2(value: number, currency = "EUR", locale = "en-US") {
+  return new Intl.NumberFormat(locale, {
+    style: "currency",
+    currency,
+    minimumFractionDigits: 2,
+    maximumFractionDigits: 2,
+  }).format(value);
+}
+
 function compact(value: number, locale = "en-US") {
   return new Intl.NumberFormat(locale, {
     notation: "compact",
@@ -383,6 +392,9 @@ export default function DashboardByIdPage() {
   const showSpend = dashboard?.dashboard.show_spend ?? true;
   const sectionOrder = dashboard?.dashboard.section_order ?? [];
   const dashboardType = dashboard?.dashboard.type ?? "awareness";
+  const visibleMetrics = (dashboard?.visible_metrics ?? dashboard?.kpi_config ?? []).filter(
+    (metric) => showSpend || !SPEND_RELATED_KPIS.has(metric),
+  );
   const channelOptions = useMemo(
     () =>
       (dashboard?.channel_performance ?? []).map((item) => ({
@@ -589,7 +601,7 @@ export default function DashboardByIdPage() {
         value: totals.avgCpv,
         prev: previousTotals.prevCpv,
         color: "#d946ef",
-        format: (value: number) => money(value, currencyCode, locale),
+        format: (value: number) => moneyFixed2(value, currencyCode, locale),
         trend: latestTrend.map((item) => (item.views > 0 ? item.spend / item.views : 0)),
       },
       conversions: {
@@ -749,7 +761,9 @@ export default function DashboardByIdPage() {
             points={filteredTimeseries}
             selectedPlatforms={selectedPlatforms}
             onTogglePlatform={togglePlatform}
+            selectedMetrics={visibleMetrics}
             currencyFormatter={(value) => money(value, currencyCode, locale)}
+            currencyCode={currencyCode}
             showSpend={showSpend}
             locale={locale}
             pdfMode={isPdfMode}
@@ -833,9 +847,10 @@ export default function DashboardByIdPage() {
         <section key={sectionId} className="mb-6">
           <PlanVsFact
             rows={filteredChannelPerformance}
-            selectedMetrics={dashboard?.kpi_config ?? []}
+            selectedMetrics={visibleMetrics}
             showSpend={showSpend}
             currencyFormatter={(value) => money(value, currencyCode, locale)}
+            currencyCode={currencyCode}
             locale={locale}
             pdfMode={isPdfMode}
             labels={{
@@ -865,18 +880,16 @@ export default function DashboardByIdPage() {
           <PlatformTable
             rows={filteredPlatforms}
             timeseries={filteredTimeseries}
+            selectedMetrics={visibleMetrics}
             currencyFormatter={(value) => money(value, currencyCode, locale)}
+            currencyCode={currencyCode}
             showSpend={showSpend}
             locale={locale}
             pdfMode={isPdfMode}
             labels={{
               title: i18n.sections.platformPerformance,
               platform: i18n.common.platform,
-              impressions: i18n.metrics.impressions,
-              clicks: i18n.metrics.clicks,
-              ctr: i18n.metrics.ctr,
-              cpm: i18n.metrics.cpm,
-              spend: i18n.metrics.spend,
+              metrics: i18n.metrics,
               trend: i18n.common.trend,
               total: i18n.common.total,
             }}
@@ -890,9 +903,10 @@ export default function DashboardByIdPage() {
         <section key={sectionId} className="mb-6">
           <PlatformPlanVsFact
             rows={filteredPlanVsFact}
-            selectedMetrics={dashboard?.kpi_config ?? []}
+            selectedMetrics={visibleMetrics}
             showSpend={showSpend}
             currencyFormatter={(value) => money(value, currencyCode, locale)}
+            currencyCode={currencyCode}
             locale={locale}
             labels={{
               title: i18n.sections.platformPerformancePlanFact,
@@ -918,8 +932,9 @@ export default function DashboardByIdPage() {
           <ChannelPerformanceTable
             rows={filteredPlanVsFact}
             channelTimeseries={filteredChannelTimeseries}
-            selectedMetrics={dashboard?.kpi_config ?? []}
+            selectedMetrics={visibleMetrics}
             currencyFormatter={(value) => money(value, currencyCode, locale)}
+            currencyCode={currencyCode}
             showSpend={showSpend}
             locale={locale}
             labels={{
@@ -1177,7 +1192,7 @@ export default function DashboardByIdPage() {
         <ComparisonSection
           comparison={dashboard.comparison}
           detailMode={effectiveFilterMode === "channel" ? "channel" : "platform"}
-          selectedMetrics={(dashboard.kpi_config ?? []).filter((metric) => showSpend || !SPEND_RELATED_KPIS.has(metric))}
+          selectedMetrics={visibleMetrics}
           selectedPlatforms={
             effectiveFilterMode === "channel"
               ? Array.from(channelVisiblePlatformIds)
@@ -1187,6 +1202,7 @@ export default function DashboardByIdPage() {
           currentTimeseries={filteredTimeseries}
           currentChannelTimeseries={filteredChannelTimeseries}
           currencyFormatter={(value) => money(value, currencyCode, locale)}
+          currencyCode={currencyCode}
           locale={locale}
           language={dashboardLanguage}
           showSpend={showSpend}

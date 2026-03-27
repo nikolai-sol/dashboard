@@ -8,6 +8,7 @@ type PlanVsFactProps = {
   selectedMetrics: string[];
   showSpend?: boolean;
   currencyFormatter: (value: number) => string;
+  currencyCode?: string;
   locale?: string;
   pdfMode?: boolean;
   labels?: {
@@ -50,6 +51,9 @@ function resolveMetrics(selectedMetrics: string[], showSpend: boolean) {
     SUPPORTED_METRICS.includes(metric as MetricKey),
   );
   const metrics = filtered.filter((metric) => (showSpend ? true : !MONEY_METRICS.has(metric))) as MetricKey[];
+  if (showSpend && metrics.includes("views") && !metrics.includes("cpv")) {
+    metrics.push("cpv");
+  }
   if (metrics.length) return metrics;
   return showSpend ? (["impressions", "clicks", "ctr", "spend"] as MetricKey[]) : (["impressions", "clicks", "ctr"] as MetricKey[]);
 }
@@ -66,14 +70,20 @@ function formatMetricValue(
   value: number,
   metric: MetricKey,
   currencyFormatter: (value: number) => string,
+  currencyCode: string,
   locale: string,
 ) {
+  if (metric === "cpv") {
+    return new Intl.NumberFormat(locale, {
+      style: "currency",
+      currency: currencyCode,
+      minimumFractionDigits: 2,
+      maximumFractionDigits: 2,
+    }).format(value);
+  }
   if (isMoneyMetric(metric)) return currencyFormatter(value);
   if (metric === "ctr") return `${value.toFixed(2)}%`;
   if (metric === "frequency") return value.toFixed(2);
-  if (metric === "cpm" || metric === "cpc" || metric === "cpv" || metric === "cpa") {
-    return currencyFormatter(value);
-  }
   return Math.round(value).toLocaleString(locale);
 }
 
@@ -88,12 +98,13 @@ function metricTooltip(
   metric: MetricKey,
   summary: ChannelPerformanceMetric | undefined,
   currencyFormatter: (value: number) => string,
+  currencyCode: string,
   locale: string,
   labels: NonNullable<PlanVsFactProps["labels"]>,
 ) {
   if (!summary) return "";
-  const fact = formatMetricValue(summary.fact, metric, currencyFormatter, locale);
-  const plan = formatMetricValue(summary.plan, metric, currencyFormatter, locale);
+  const fact = formatMetricValue(summary.fact, metric, currencyFormatter, currencyCode, locale);
+  const plan = formatMetricValue(summary.plan, metric, currencyFormatter, currencyCode, locale);
   const completion = summary.completion_pct === null ? "n/a" : `${summary.completion_pct.toFixed(1)}%`;
   const status =
     summary.status === "green"
@@ -194,6 +205,7 @@ function MetricCell({
   metric,
   summary,
   currencyFormatter,
+  currencyCode,
   muted = false,
   locale,
   labels,
@@ -201,6 +213,7 @@ function MetricCell({
   metric: MetricKey;
   summary?: ChannelPerformanceMetric;
   currencyFormatter: (value: number) => string;
+  currencyCode: string;
   muted?: boolean;
   locale: string;
   labels: NonNullable<PlanVsFactProps["labels"]>;
@@ -209,15 +222,15 @@ function MetricCell({
     return <div className="text-right text-sm text-slate-300">-</div>;
   }
 
-  const fact = formatMetricValue(summary.fact, metric, currencyFormatter, locale);
-  const plan = formatMetricValue(summary.plan, metric, currencyFormatter, locale);
+  const fact = formatMetricValue(summary.fact, metric, currencyFormatter, currencyCode, locale);
+  const plan = formatMetricValue(summary.plan, metric, currencyFormatter, currencyCode, locale);
   const completionText =
     summary.completion_pct === null ? null : `${summary.completion_pct.toFixed(0)}%`;
 
   return (
       <div
       className={`text-right ${muted ? "text-slate-400" : "text-slate-700"}`}
-      title={metricTooltip(metric, summary, currencyFormatter, locale, labels)}
+      title={metricTooltip(metric, summary, currencyFormatter, currencyCode, locale, labels)}
     >
       <div className={`text-sm font-semibold sm:text-base ${muted ? "text-slate-400" : "text-slate-800"}`}>{fact}</div>
       <div className="mt-0.5 flex items-center justify-end gap-1 text-[10px] sm:text-[11px]">
@@ -234,6 +247,7 @@ export default function PlanVsFact({
   selectedMetrics,
   showSpend = true,
   currencyFormatter,
+  currencyCode = "EUR",
   locale = "en-US",
   pdfMode = false,
   labels,
@@ -305,13 +319,14 @@ export default function PlanVsFact({
                       </td>
                       {metrics.map((metric) => (
                         <td key={`${row.channel}-${metric}`} className="px-2 py-3 align-top sm:px-3">
-                          <MetricCell
-                            metric={metric}
-                            summary={row.metrics[metric]}
-                            currencyFormatter={currencyFormatter}
-                            muted={row.plan_only}
-                            locale={locale}
-                            labels={copy}
+                            <MetricCell
+                              metric={metric}
+                              summary={row.metrics[metric]}
+                              currencyFormatter={currencyFormatter}
+                              currencyCode={currencyCode}
+                              muted={row.plan_only}
+                              locale={locale}
+                              labels={copy}
                           />
                         </td>
                       ))}
@@ -327,6 +342,7 @@ export default function PlanVsFact({
                               metric={metric}
                               summary={month.metrics[metric]}
                               currencyFormatter={currencyFormatter}
+                              currencyCode={currencyCode}
                               muted={row.plan_only}
                               locale={locale}
                               labels={copy}
@@ -346,6 +362,7 @@ export default function PlanVsFact({
                       metric={metric}
                       summary={sumMetric(rows, metric)}
                       currencyFormatter={currencyFormatter}
+                      currencyCode={currencyCode}
                       locale={locale}
                       labels={copy}
                     />

@@ -28,6 +28,7 @@ type ChannelPerformanceTableProps = {
   channelTimeseries?: DashboardData["channel_timeseries"];
   selectedMetrics: string[];
   currencyFormatter: (value: number) => string;
+  currencyCode?: string;
   showSpend?: boolean;
   locale?: string;
   labels?: {
@@ -48,6 +49,9 @@ function resolveMetrics(selectedMetrics: string[], showSpend: boolean) {
     SUPPORTED_METRICS.includes(metric as MetricKey),
   ) as MetricKey[];
   const metrics = filtered.filter((metric) => (showSpend ? true : !MONEY_METRICS.has(metric)));
+  if (showSpend && metrics.includes("views") && !metrics.includes("cpv")) {
+    metrics.push("cpv");
+  }
   if (metrics.length) return metrics;
   return showSpend
     ? (["impressions", "clicks", "ctr", "spend"] as MetricKey[])
@@ -93,8 +97,17 @@ function formatMetricValue(
   value: number,
   metric: MetricKey,
   currencyFormatter: (value: number) => string,
+  currencyCode: string,
   locale: string,
 ) {
+  if (metric === "cpv") {
+    return new Intl.NumberFormat(locale, {
+      style: "currency",
+      currency: currencyCode,
+      minimumFractionDigits: 2,
+      maximumFractionDigits: 2,
+    }).format(value);
+  }
   if (metric === "ctr") return `${value.toFixed(2)}%`;
   if (metric === "frequency") return value.toFixed(2);
   if (MONEY_METRICS.has(metric)) return currencyFormatter(value);
@@ -144,6 +157,7 @@ export default function ChannelPerformanceTable({
   channelTimeseries = [],
   selectedMetrics,
   currencyFormatter,
+  currencyCode = "EUR",
   showSpend = true,
   locale = "en-US",
   labels,
@@ -270,7 +284,7 @@ export default function ChannelPerformanceTable({
                       <td className="px-2 py-2 text-slate-600 sm:px-3">{row.buy_type.toUpperCase()}</td>
                       {metrics.map((metric) => (
                         <td key={`${row.channel}-${metric}`} className="px-2 py-2 text-right sm:px-3">
-                          {formatMetricValue(metricValue(row, metric), metric, currencyFormatter, locale)}
+                          {formatMetricValue(metricValue(row, metric), metric, currencyFormatter, currencyCode, locale)}
                         </td>
                       ))}
                     </tr>
@@ -317,7 +331,7 @@ export default function ChannelPerformanceTable({
                               <td className="px-2 py-2 text-slate-400 sm:px-3">-</td>
                               {metrics.map((metric) => (
                                 <td key={`${row.channel}-${daily.date}-${metric}`} className="px-2 py-2 text-right text-slate-700 sm:px-3">
-                                  {formatMetricValue(dailyMetricValue(metric), metric, currencyFormatter, locale)}
+                                  {formatMetricValue(dailyMetricValue(metric), metric, currencyFormatter, currencyCode, locale)}
                                 </td>
                               ))}
                             </tr>
@@ -334,7 +348,7 @@ export default function ChannelPerformanceTable({
                 <td className="px-2 py-2 text-slate-400 sm:px-3">-</td>
                 {metrics.map((metric) => (
                   <td key={`total-${metric}`} className="px-2 py-2 text-right text-slate-900 sm:px-3">
-                    {formatMetricValue(sumMetric(rows, metric), metric, currencyFormatter, locale)}
+                    {formatMetricValue(sumMetric(rows, metric), metric, currencyFormatter, currencyCode, locale)}
                   </td>
                 ))}
               </tr>
