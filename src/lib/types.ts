@@ -275,6 +275,7 @@ export interface ManualChannelData {
 export interface DashboardData {
   dashboard: DashboardMeta;
   kpi_config: string[];
+  visible_metrics?: string[];
   custom_kpi_cards?: CustomKpiCard[];
   kpi: DashboardKPI;
   platforms: PlatformStats[];
