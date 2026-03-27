@@ -15,6 +15,7 @@ export type DashboardSourceInput = {
 };
 
 export type MediaPlanBindingInput = {
+  line_key?: string;
   channel: string;
   source_key: string;
   platform_campaign_id: string;
@@ -144,12 +145,14 @@ function normalizeSource(raw: unknown): DashboardSourceInput {
 function normalizeMediaPlanBinding(raw: unknown): MediaPlanBindingInput | null {
   const input = (raw ?? {}) as Partial<MediaPlanBindingInput>;
   const channel = String(input.channel ?? "").trim();
+  const lineKey = String(input.line_key ?? channel).trim();
   const sourceKey = String(input.source_key ?? "").trim().toLowerCase();
   const campaignId = String(input.platform_campaign_id ?? "").trim();
-  if (!channel || !sourceKey || !campaignId) {
+  if (!channel || !lineKey || !sourceKey || !campaignId) {
     return null;
   }
   return {
+    line_key: lineKey,
     channel,
     source_key: sourceKey,
     platform_campaign_id: campaignId,
@@ -304,8 +307,8 @@ export function validateDashboardPayload(payload: DashboardUpsertPayload): strin
   }
 
   for (const binding of payload.media_plan_bindings) {
-    if (!binding.channel || !binding.source_key || !binding.platform_campaign_id) {
-      return "Each media plan binding must include channel, source_key and platform_campaign_id";
+    if (!binding.channel || !(binding.line_key ?? binding.channel) || !binding.source_key || !binding.platform_campaign_id) {
+      return "Each media plan binding must include line_key, channel, source_key and platform_campaign_id";
     }
   }
 
@@ -436,9 +439,9 @@ export async function replaceMediaPlanBindings(
 
   for (const binding of bindings) {
     await conn.execute(
-      `INSERT INTO media_plan_bindings (dashboard_id, channel, source_key, platform_campaign_id)
-       VALUES (?, ?, ?, ?)`,
-      [dashboardId, binding.channel, binding.source_key, binding.platform_campaign_id],
+      `INSERT INTO media_plan_bindings (dashboard_id, line_key, channel, source_key, platform_campaign_id)
+       VALUES (?, ?, ?, ?, ?)`,
+      [dashboardId, binding.line_key ?? binding.channel, binding.channel, binding.source_key, binding.platform_campaign_id],
     );
   }
 }
@@ -463,10 +466,10 @@ export async function loadDashboardWithSources(
     [dashboardId],
   );
   const [bindingRows] = await conn.execute<RowDataPacket[]>(
-    `SELECT channel, source_key, platform_campaign_id
+    `SELECT line_key, channel, source_key, platform_campaign_id
      FROM media_plan_bindings
      WHERE dashboard_id = ?
-     ORDER BY channel, source_key, platform_campaign_id`,
+     ORDER BY COALESCE(line_key, channel), source_key, platform_campaign_id`,
     [dashboardId],
   );
 
@@ -507,6 +510,7 @@ export async function loadDashboardWithSources(
       filters: source.filters.length ? source.filters : [{ filter_type: "all", filter_value: null }],
     })),
     media_plan_bindings: bindingRows.map((row) => ({
+      line_key: String(row.line_key ?? row.channel ?? ""),
       channel: String(row.channel ?? ""),
       source_key: String(row.source_key ?? ""),
       platform_campaign_id: String(row.platform_campaign_id ?? ""),

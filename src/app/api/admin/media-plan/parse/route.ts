@@ -26,6 +26,7 @@ export async function GET(request: Request) {
 
     return NextResponse.json({
       rows: result.rows.map((row) => ({
+        line_key: row.line_key,
         instrument: row.platform,
         channel: row.channel,
         format: row.format,
@@ -64,6 +65,7 @@ export async function POST(request: Request) {
 
     return NextResponse.json({
       rows: result.rows.map((row) => ({
+        line_key: row.line_key,
         instrument: row.platform,
         channel: row.channel,
         format: row.format,

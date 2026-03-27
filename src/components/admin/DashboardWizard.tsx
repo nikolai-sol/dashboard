@@ -391,6 +391,7 @@ export default function DashboardWizard({ dashboardId }: DashboardWizardProps) {
                   const item =
                     binding && typeof binding === "object" ? (binding as Record<string, unknown>) : {};
                   return {
+                    line_key: String(item.line_key ?? item.channel ?? "").trim(),
                     channel: String(item.channel ?? "").trim(),
                     source_key: String(item.source_key ?? "").trim().toLowerCase(),
                     platform_campaign_id: String(item.platform_campaign_id ?? "").trim(),
@@ -398,10 +399,11 @@ export default function DashboardWizard({ dashboardId }: DashboardWizardProps) {
                 })
                 .filter(
                   (binding: {
+                    line_key?: string;
                     channel: string;
                     source_key: string;
                     platform_campaign_id: string;
-                  }) => binding.channel && binding.source_key && binding.platform_campaign_id,
+                  }) => (binding.line_key || binding.channel) && binding.channel && binding.source_key && binding.platform_campaign_id,
                 )
             : [],
         });

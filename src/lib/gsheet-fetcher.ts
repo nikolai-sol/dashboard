@@ -3,6 +3,7 @@ import * as XLSX from "xlsx";
 
 export interface MediaPlanRow {
   platform: string; // instrument/channel from the media plan, not necessarily a DSP source
+  line_key: string;
   channel: string;
   format: string;
   buy_type: "CPM" | "CPC" | "CPV" | "CPA";
@@ -26,6 +27,7 @@ export interface MediaPlanRow {
 }
 
 export interface ChannelPlanAggregate {
+  line_key: string;
   channel: string;
   buy_type: string;
   platforms: string[];
@@ -74,6 +76,7 @@ export type MediaPlanSourceConfig = {
 };
 
 export interface ChannelGroup {
+  line_key: string;
   channel: string;
   instrument: string;
   format: string;
@@ -195,11 +198,12 @@ function toObjectsFromWorksheet(worksheet: XLSX.WorkSheet): Record<string, unkno
   return XLSX.utils.sheet_to_json<Record<string, unknown>>(worksheet, {
     defval: "",
     raw: true,
-  }).map((row) => {
+  }).map((row, index) => {
     const normalized: Record<string, unknown> = {};
     for (const [key, value] of Object.entries(row)) {
       normalized[normalizeHeader(key)] = value;
     }
+    normalized.__row_index = index + 2;
     return normalized;
   });
 }
@@ -300,7 +304,12 @@ function parseUploadPayload(value: unknown): MediaPlanUploadPayload | null {
 function parseInlineRows(value: unknown): MediaPlanRow[] {
   if (!Array.isArray(value)) return [];
   return value
-    .map((row) => normalizeRow((row ?? {}) as Record<string, unknown>))
+    .map((row, index) =>
+      normalizeRow({
+        ...((row ?? {}) as Record<string, unknown>),
+        __row_index: index + 1,
+      }),
+    )
     .filter((row) => Boolean(row.platform));
 }
 
@@ -344,6 +353,23 @@ function firstPresent(raw: Record<string, unknown>, keys: string[]): unknown {
   return undefined;
 }
 
+function buildMediaPlanLineKey(
+  raw: Record<string, unknown>,
+  channel: string,
+  platform: string,
+  format: string,
+): string {
+  const explicit = String(firstPresent(raw, ["line_key", "row_key", "line_id", "row_id", "id"]) ?? "").trim();
+  if (explicit) return explicit;
+
+  const rowIndex = String(raw.__row_index ?? "").trim();
+  if (rowIndex) {
+    return `${channel || "row"}::${platform || "platform"}::${format || "format"}::${rowIndex}`;
+  }
+
+  return `${channel || "row"}::${platform || "platform"}::${format || "format"}`;
+}
+
 function normalizeRow(raw: Record<string, unknown>): MediaPlanRow {
   const buyType = normalizeBuyType(firstPresent(raw, ["buy_type", "report_type"]));
   const budgetPlan = parseNumeric(firstPresent(raw, ["budget_plan", "planned_budget", "budget"]));
@@ -371,11 +397,15 @@ function normalizeRow(raw: Record<string, unknown>): MediaPlanRow {
   }
 
   const monthly = parseMonthly(raw);
+  const platform = normalizeMediaPlanPlatform(firstPresent(raw, ["platform"]));
+  const channel = String(firstPresent(raw, ["channel", "campaign_name", "format"]) ?? "").trim();
+  const format = String(firstPresent(raw, ["format", "campaign_name"]) ?? "").trim();
 
   return {
-    platform: normalizeMediaPlanPlatform(firstPresent(raw, ["platform"])),
-    channel: String(firstPresent(raw, ["channel", "campaign_name", "format"]) ?? "").trim(),
-    format: String(firstPresent(raw, ["format", "campaign_name"]) ?? "").trim(),
+    platform,
+    line_key: buildMediaPlanLineKey(raw, channel, platform, format),
+    channel,
+    format,
     buy_type: buyType,
     units_plan: parseNumeric(firstPresent(raw, ["units_plan", "planned_units"])),
     unit_price: parseNumeric(firstPresent(raw, ["unit_price"])),
@@ -631,11 +661,13 @@ export function groupByChannel(rows: MediaPlanRow[]): ChannelGroup[] {
   const map = new Map<string, ChannelGroup>();
 
   for (const row of rows) {
+    const key = row.line_key?.trim() || row.channel?.trim();
     const ch = row.channel?.trim();
-    if (!ch) continue;
+    if (!key || !ch) continue;
 
-    if (!map.has(ch)) {
-      map.set(ch, {
+    if (!map.has(key)) {
+      map.set(key, {
+        line_key: key,
         channel: ch,
         instrument: row.platform,
         format: row.format || "",
@@ -654,7 +686,7 @@ export function groupByChannel(rows: MediaPlanRow[]): ChannelGroup[] {
       });
     }
 
-    const group = map.get(ch)!;
+    const group = map.get(key)!;
     group.budget_plan += Number(row.budget_plan) || 0;
     group.impressions_plan += Number(row.impressions_plan) || 0;
     group.reach_plan += Number(row.reach_plan) || 0;
@@ -710,6 +742,8 @@ export function aggregatePlanByChannel(rows: MediaPlanRow[]): ChannelPlanAggrega
   const byChannel = new Map<
     string,
     {
+      line_key: string;
+      channel: string;
       platforms: Set<string>;
       budget_plan: number;
       impressions_plan: number;
@@ -722,11 +756,14 @@ export function aggregatePlanByChannel(rows: MediaPlanRow[]): ChannelPlanAggrega
   >();
 
   for (const row of rows) {
+    const lineKey = row.line_key?.trim() || row.channel?.trim();
     const channel = row.channel?.trim();
-    if (!channel) continue;
+    if (!lineKey || !channel) continue;
 
-    if (!byChannel.has(channel)) {
-      byChannel.set(channel, {
+    if (!byChannel.has(lineKey)) {
+      byChannel.set(lineKey, {
+        line_key: lineKey,
+        channel,
         platforms: new Set<string>(),
         budget_plan: 0,
         impressions_plan: 0,
@@ -738,7 +775,7 @@ export function aggregatePlanByChannel(rows: MediaPlanRow[]): ChannelPlanAggrega
       });
     }
 
-    const agg = byChannel.get(channel)!;
+    const agg = byChannel.get(lineKey)!;
     if (row.platform) agg.platforms.add(row.platform.toLowerCase());
     agg.budget_plan += row.budget_plan || 0;
     agg.impressions_plan += row.impressions_plan || 0;
@@ -750,14 +787,15 @@ export function aggregatePlanByChannel(rows: MediaPlanRow[]): ChannelPlanAggrega
   }
 
   const result: ChannelPlanAggregate[] = [];
-  for (const [channel, agg] of byChannel.entries()) {
+  for (const [, agg] of byChannel.entries()) {
     const cpm_plan = agg.impressions_plan > 0 ? (agg.budget_plan / agg.impressions_plan) * 1000 : 0;
     const cpc_plan = agg.clicks_plan > 0 ? agg.budget_plan / agg.clicks_plan : 0;
     const cpv_plan = agg.views_plan > 0 ? agg.budget_plan / agg.views_plan : 0;
     const cpa_plan = agg.conversions_plan > 0 ? agg.budget_plan / agg.conversions_plan : 0;
 
     result.push({
-      channel,
+      line_key: agg.line_key,
+      channel: agg.channel,
       buy_type: dominantBuyType(agg.lines),
       platforms: Array.from(agg.platforms),
       budget_plan: Number(agg.budget_plan.toFixed(2)),

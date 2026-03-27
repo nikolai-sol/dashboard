@@ -6,6 +6,7 @@ import { PLATFORM_COLORS } from "@/lib/platform-colors";
 import { resolvePlatformIdFromSourceKey, resolveSourceKey } from "@/lib/source-mapping";
 
 type ParsedPlanRow = {
+  line_key: string;
   instrument: string;
   channel: string;
   format: string;
@@ -67,7 +68,7 @@ export default function WizardStepBinding({ data, onChange }: WizardStepBindingP
   const [loadingRows, setLoadingRows] = useState(false);
   const [loadingCampaigns, setLoadingCampaigns] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [activeChannel, setActiveChannel] = useState<string | null>(null);
+  const [activeLineKey, setActiveLineKey] = useState<string | null>(null);
   const [search, setSearch] = useState("");
 
   const actualSources = useMemo(
@@ -215,18 +216,25 @@ export default function WizardStepBinding({ data, onChange }: WizardStepBindingP
     return groups;
   }, [campaigns, search]);
 
-  const bindingsByChannel = useMemo(() => {
+  const bindingsByLineKey = useMemo(() => {
     const map = new Map<string, MediaPlanBindingForm[]>();
     data.media_plan_bindings.forEach((binding) => {
-      if (!map.has(binding.channel)) {
-        map.set(binding.channel, []);
+      const lineKey = String(binding.line_key ?? binding.channel ?? "").trim();
+      if (!lineKey) return;
+      if (!map.has(lineKey)) {
+        map.set(lineKey, []);
       }
-      map.get(binding.channel)!.push(binding);
+      map.get(lineKey)!.push(binding);
     });
     return map;
   }, [data.media_plan_bindings]);
 
-  const activeBindings = activeChannel ? bindingsByChannel.get(activeChannel) ?? [] : [];
+  const activeBindings = activeLineKey ? bindingsByLineKey.get(activeLineKey) ?? [] : [];
+  const activeRow = useMemo(
+    () => rows.find((row) => row.line_key === activeLineKey) ?? null,
+    [rows, activeLineKey],
+  );
+  const activeLabel = activeRow?.channel ?? activeLineKey ?? "";
 
   const updateBindings = (nextBindings: MediaPlanBindingForm[]) => {
     onChange({
@@ -235,24 +243,29 @@ export default function WizardStepBinding({ data, onChange }: WizardStepBindingP
     });
   };
 
-  const toggleBinding = (channel: string, sourceKey: string, campaignId: string, checked: boolean) => {
-    const current = data.media_plan_bindings.filter((binding) => binding.channel !== channel);
-    const channelBindings = data.media_plan_bindings.filter((binding) => binding.channel === channel);
-    const key = `${channel}:${sourceKey}:${campaignId}`;
+  const toggleBinding = (lineKey: string, channel: string, sourceKey: string, campaignId: string, checked: boolean) => {
+    const current = data.media_plan_bindings.filter(
+      (binding) => String(binding.line_key ?? binding.channel ?? "").trim() !== lineKey,
+    );
+    const channelBindings = data.media_plan_bindings.filter(
+      (binding) => String(binding.line_key ?? binding.channel ?? "").trim() === lineKey,
+    );
+    const key = `${lineKey}:${sourceKey}:${campaignId}`;
     const nextChannelBindings = checked
       ? [
           ...channelBindings,
-          { channel, source_key: sourceKey, platform_campaign_id: campaignId },
+          { line_key: lineKey, channel, source_key: sourceKey, platform_campaign_id: campaignId },
         ].filter(
           (binding, index, list) =>
             list.findIndex(
               (item) =>
-                `${item.channel}:${item.source_key}:${item.platform_campaign_id}` ===
-                `${binding.channel}:${binding.source_key}:${binding.platform_campaign_id}`,
+                `${item.line_key ?? item.channel}:${item.source_key}:${item.platform_campaign_id}` ===
+                `${binding.line_key ?? binding.channel}:${binding.source_key}:${binding.platform_campaign_id}`,
             ) === index,
         )
       : channelBindings.filter(
-          (binding) => `${binding.channel}:${binding.source_key}:${binding.platform_campaign_id}` !== key,
+          (binding) =>
+            `${binding.line_key ?? binding.channel}:${binding.source_key}:${binding.platform_campaign_id}` !== key,
         );
 
     updateBindings([...current, ...nextChannelBindings]);
@@ -301,10 +314,10 @@ export default function WizardStepBinding({ data, onChange }: WizardStepBindingP
         {rows.length ? (
           <div className="mt-4 space-y-3">
             {rows.map((row, index) => {
-              const bound = bindingsByChannel.get(row.channel) ?? [];
+              const bound = bindingsByLineKey.get(row.line_key) ?? [];
               const platformCount = new Set(bound.map((item) => item.source_key)).size;
               return (
-                <div key={`${row.channel}-${index}`} className="rounded-lg border border-slate-200 bg-white p-3">
+                <div key={row.line_key || `${row.channel}-${index}`} className="rounded-lg border border-slate-200 bg-white p-3">
                   <div className="flex flex-wrap items-start justify-between gap-3">
                     <div>
                       <p className="text-sm font-semibold text-slate-900">{row.channel}</p>
@@ -336,7 +349,7 @@ export default function WizardStepBinding({ data, onChange }: WizardStepBindingP
                       <button
                         type="button"
                         onClick={() => {
-                          setActiveChannel(row.channel);
+                          setActiveLineKey(row.line_key);
                           setSearch("");
                         }}
                         className="mt-2 rounded-lg border border-slate-300 px-3 py-2 text-sm hover:bg-slate-50"
@@ -352,13 +365,13 @@ export default function WizardStepBinding({ data, onChange }: WizardStepBindingP
         ) : null}
       </div>
 
-      {activeChannel ? (
+      {activeLineKey ? (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/40 p-4">
           <div className="max-h-[90vh] w-full max-w-4xl overflow-y-auto rounded-2xl bg-white p-5 shadow-2xl">
             <div className="flex items-start justify-between gap-3">
               <div>
                 <h4 className="text-base font-semibold text-slate-900">
-                  {`Привязка кампаний к "${activeChannel}"`}
+                  {`Привязка кампаний к "${activeLabel}"`}
                 </h4>
                 <p className="mt-1 text-xs text-slate-500">
                   Можно выбрать кампании с нескольких платформ одновременно.
@@ -366,7 +379,7 @@ export default function WizardStepBinding({ data, onChange }: WizardStepBindingP
               </div>
               <button
                 type="button"
-                onClick={() => setActiveChannel(null)}
+                onClick={() => setActiveLineKey(null)}
                 className="rounded-lg border border-slate-300 px-3 py-1.5 text-sm hover:bg-slate-50"
               >
                 Закрыть
@@ -413,7 +426,8 @@ export default function WizardStepBinding({ data, onChange }: WizardStepBindingP
                                 checked={checked}
                                 onChange={(e) =>
                                   toggleBinding(
-                                    activeChannel,
+                                    activeLineKey,
+                                    activeLabel,
                                     sourceKey,
                                     campaign.platform_campaign_id,
                                     e.target.checked,
@@ -445,7 +459,7 @@ export default function WizardStepBinding({ data, onChange }: WizardStepBindingP
               </p>
               <button
                 type="button"
-                onClick={() => setActiveChannel(null)}
+                onClick={() => setActiveLineKey(null)}
                 className="rounded-lg bg-slate-900 px-4 py-2 text-sm text-white hover:bg-slate-800"
               >
                 Сохранить
