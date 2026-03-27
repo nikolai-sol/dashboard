@@ -94,6 +94,7 @@ type SourceRow = RowDataPacket & {
 };
 
 type BindingRow = RowDataPacket & {
+  line_key: string | null;
   channel: string;
   source_key: string;
   platform_campaign_id: string;
@@ -907,7 +908,7 @@ function sumManualChannels(
 
 async function buildPlanVsFactRowsByChannel(
   channelGroups: ChannelGroup[],
-  bindingsByChannel: Map<string, Array<{ source_key: string; platform_campaign_id: string }>>,
+  bindingsByLineKey: Map<string, Array<{ source_key: string; platform_campaign_id: string }>>,
   actualAdsSourceKeys: Set<string>,
   dateFrom: string,
   dateTo: string,
@@ -937,7 +938,7 @@ async function buildPlanVsFactRowsByChannel(
   };
 
   const factPromises = channelGroups.map(async (group) => {
-    const bindings = bindingsByChannel.get(group.channel) ?? [];
+    const bindings = bindingsByLineKey.get(group.line_key || group.channel) ?? [];
     if (bindings.length === 0) {
       const fallbackSourceKey = resolveSourceKey(group.instrument);
       if (!actualAdsSourceKeys.has(fallbackSourceKey)) {
@@ -986,7 +987,7 @@ async function buildPlanVsFactRowsByChannel(
 
   return channelGroups.map((group, index) => {
     const fact = facts[index] ?? null;
-    const bindings = bindingsByChannel.get(group.channel) ?? [];
+    const bindings = bindingsByLineKey.get(group.line_key || group.channel) ?? [];
     const platforms =
       bindings.length > 0
         ? Array.from(
@@ -1091,7 +1092,7 @@ async function buildPlanVsFactRowsByChannel(
 
 async function buildChannelTimeseries(
   channelGroups: ChannelGroup[],
-  bindingsByChannel: Map<string, Array<{ source_key: string; platform_campaign_id: string }>>,
+  bindingsByLineKey: Map<string, Array<{ source_key: string; platform_campaign_id: string }>>,
   actualAdsSourceKeys: Set<string>,
   dateFrom: string,
   dateTo: string,
@@ -1099,7 +1100,7 @@ async function buildChannelTimeseries(
 ): Promise<DashboardData["channel_timeseries"]> {
   const timeseries = await Promise.all(
     channelGroups.map(async (group) => {
-      const bindings = bindingsByChannel.get(group.channel) ?? [];
+      const bindings = bindingsByLineKey.get(group.line_key || group.channel) ?? [];
       const bySource = new Map<string, string[]>();
 
       if (bindings.length === 0) {
@@ -1927,17 +1928,17 @@ export async function loadDashboardData(
 
     const planByChannel = groupByChannel(planRows);
     const [bindingRows] = await pool.execute<BindingRow[]>(
-      `SELECT channel, source_key, platform_campaign_id
+      `SELECT line_key, channel, source_key, platform_campaign_id
        FROM media_plan_bindings
        WHERE dashboard_id = ?`,
       [dashboard.id],
     );
-    const bindingsByChannel = bindingRows.reduce((acc, row) => {
-      const channel = String(row.channel ?? "");
-      if (!acc.has(channel)) {
-        acc.set(channel, []);
+    const bindingsByLineKey = bindingRows.reduce((acc, row) => {
+      const lineKey = String(row.line_key ?? row.channel ?? "");
+      if (!acc.has(lineKey)) {
+        acc.set(lineKey, []);
       }
-      acc.get(channel)!.push({
+      acc.get(lineKey)!.push({
         source_key: String(row.source_key ?? ""),
         platform_campaign_id: String(row.platform_campaign_id ?? ""),
       });
@@ -1945,7 +1946,7 @@ export async function loadDashboardData(
     }, new Map<string, Array<{ source_key: string; platform_campaign_id: string }>>());
     const planVsFactBase = await buildPlanVsFactRowsByChannel(
       planByChannel,
-      bindingsByChannel,
+      bindingsByLineKey,
       actualAdsSourceKeys,
       range.from,
       range.to,
@@ -1954,7 +1955,7 @@ export async function loadDashboardData(
     );
     const channelTimeseries = await buildChannelTimeseries(
       planByChannel,
-      bindingsByChannel,
+      bindingsByLineKey,
       actualAdsSourceKeys,
       range.from,
       range.to,

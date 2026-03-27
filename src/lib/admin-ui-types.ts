@@ -38,6 +38,7 @@ export type DashboardSourceForm = {
 };
 
 export type MediaPlanBindingForm = {
+  line_key?: string;
   channel: string;
   source_key: string;
   platform_campaign_id: string;
