@@ -724,7 +724,7 @@ export async function getActiveAccounts(
   }
 
   sql += `
-    GROUP BY a.platform_account_id, a.account_name
+    GROUP BY a.source_key, a.platform_account_id, a.account_name
   `;
 
   const [rows] = await pool.execute<ActiveAccountRow[]>(sql, params);
