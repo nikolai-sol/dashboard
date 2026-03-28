@@ -1,0 +1,314 @@
+# PLATFORMS ACCESS MEMORY
+
+Working memory for:
+- canonical collectors
+- cron behavior
+- platform API access
+- auth credentials flow
+- source-specific operational caveats
+
+Use this file first when the task is about:
+- "что собираем по платформе"
+- "какой сейчас крон"
+- "какой доступ / токен / логин используется"
+- "почему collector не даёт метрику"
+- "какой endpoint работает сейчас"
+
+If platform access or cron behavior changes, update this file in the same turn.
+
+## Runtime and paths
+
+- Root collectors workspace: `/Users/nicko/ReportingDash`
+- Canonical runtime on VPS: `/root/reportingdash-canonical`
+- Python venv on VPS: `/root/reportingdash-canonical/venv`
+- Logs: `/root/reportingdash-canonical/logs`
+- Scheduler: root `crontab`
+
+Main production DBs:
+- primary: `report_bd`
+- tech: `report_bd_tech`
+
+## Current canonical cron
+
+Daily jobs on VPS:
+- `06:20` LinkedIn
+- `06:30` Reddit
+- `06:32` GetIntent
+- `06:34` Yandex Direct
+- `06:35` VK Ads v2
+- `06:37` Hybrid
+- `06:40` canonical monitor
+- `06:50` Telegram summary
+
+Important runtime rule:
+- cron does not collect the current day
+- with `--days-back 2`, cron window is:
+  - `yesterday - 1 day`
+  - through `yesterday`
+
+This was changed intentionally to avoid partial current-day data in morning runs.
+
+## Daily operations
+
+Check latest collector runs:
+
+```bash
+ssh beget "mysql -N -B -e \"SELECT id,source_key,status,run_type,date_from,date_to,started_at,finished_at FROM report_bd.canonical_collector_runs ORDER BY id DESC LIMIT 30\""
+```
+
+Check public / app health:
+
+```bash
+curl -s https://dashboards.adreports.ru/api/health
+ssh beget 'curl -s http://127.0.0.1:3001/api/health'
+```
+
+Check PM2:
+
+```bash
+ssh beget 'pm2 status'
+```
+
+## Source status summary
+
+### LinkedIn
+
+- collector: `/Users/nicko/ReportingDash/fetch_linkedin_canonical.py`
+- cron enabled
+- canonical-only accepted source
+- monitored
+
+### Reddit
+
+- collector: `/Users/nicko/ReportingDash/fetch_reddit_canonical.py`
+- cron enabled
+- canonical-only accepted source
+- monitored
+
+### VK Ads v2
+
+- collector: `/Users/nicko/ReportingDash/fetch_vk_ads_v2_canonical.py`
+- cron enabled
+- bridged source
+- monitored non-blocking
+
+### GetIntent
+
+- collector: `/Users/nicko/ReportingDash/fetch_getintent_canonical.py`
+- cron enabled
+- bridged source
+- monitored non-blocking
+
+### Hybrid
+
+- collector: `/Users/nicko/ReportingDash/fetch_hybrid_canonical.py`
+- cron enabled
+- bridged source
+- monitored non-blocking
+
+Important current state:
+- stable production path is still the old `advertiser/BannerName` API family
+- cookie-based console path exists only as a temporary research / bridge mechanism
+- do not assume console-session auth is acceptable as a long-term production solution
+
+### Yandex Direct
+
+- collector: `/Users/nicko/ReportingDash/fetch_yandex_direct_canonical.py`
+- cron enabled
+- monitored non-blocking
+- working source, but account bridge is still imperfect
+
+### Yandex Metrika
+
+- collector: `/Users/nicko/ReportingDash/fetch_yandex_metrika_canonical.py`
+- implemented
+- monitored
+- cron currently not enabled unless explicitly changed later
+
+## Platform-specific access notes
+
+### Hybrid
+
+Current stable request used by legacy and stable canonical mode:
+
+```http
+GET https://api.hybrid.ru/v3.0/advertiser/BannerName
+Authorization: Bearer <token>
+Content-Type: application/x-www-form-urlencoded
+
+?from=YYYY-MM-DD
+&to=YYYY-MM-DD
+&advertiserId=<ADVERTISER_ID>
+&limit=1000
+```
+
+What stable path returns:
+- impressions
+- clicks
+- views
+- reach
+- quartiles
+- ctr
+- viewability
+- frequency
+- now also confirmed:
+  - `ECPM`
+  - `ECPC`
+
+What stable path does not currently return:
+- native `TotalSum`
+- native `Spend`
+
+Current canonical rule for Hybrid:
+- `cpm = ECPM`
+- `cpc = ECPC`
+- `spend` may be derived when native spend is absent:
+  - prefer `impressions / 1000 * ECPM`
+  - fallback `clicks * ECPC`
+
+Important caution:
+- derived spend is not native spend
+- document clearly when discussing Hybrid spend quality
+
+Console path that was probed:
+
+```http
+POST https://console.hybrid.ru/core/agencyStatistic/GetMultiSplit
+```
+
+This path can return:
+- `totalSum`
+- `eCPM`
+- `eCPC`
+
+But:
+- it works via browser session / cookies
+- it is not currently accepted as a stable production machine-auth path
+
+Hybrid data integrity rule:
+- if console spend enrichment path is used, do not overwrite missing optional metrics with zero
+- especially do not wipe:
+  - `views`
+  - quartiles
+  - related video metrics
+
+This bug already happened once and was repaired.
+
+### Yandex Direct
+
+Upstream bridge uses:
+- endpoint:
+  - `POST https://api.direct.yandex.com/json/v5/reports`
+- headers:
+  - `Authorization: Bearer <token>`
+  - `Client-Login: <req_system.name>`
+
+Legacy bridge code:
+- `/Users/nicko/ReportingDash/nest-second/src/services/direct/direct.service.ts`
+
+Canonical authority tables:
+- `report_bd.yandex_new`
+- `report_bd.yandex_names`
+- `report_bd.yandex_group_names`
+
+API login list comes from:
+- `report_bd_tech.req_system`
+
+Check active Yandex Direct API logins:
+
+```bash
+ssh beget "mysql -N -B -e \"SELECT id,name,media,active FROM report_bd_tech.req_system WHERE active=1 ORDER BY id\""
+```
+
+Known current active logins included:
+- `solgoood`
+- `direct.reports`
+- `tssystem.web`
+- `armstrong.tire`
+- `zaruku.direct`
+- `kotlyakovo-samoprivoz`
+- `ecobidge`
+- `leovit-mtg`
+- `e-20049220`
+- `e-20080761`
+- `porg-47e7bbnx`
+
+#### Passport organization case
+
+For passport organization logins such as:
+- `porg-47e7bbnx`
+
+Important rule:
+- ordinary old tokens do not work
+- token must be issued with:
+  - `direct:api`
+  - `passport:business`
+- token must be issued in organization context:
+  - "Войти как сотрудник"
+
+Important current blocker already confirmed:
+- even with valid org token, `Direct API` can return:
+  - `error_code = 58`
+  - `Незавершенная регистрация`
+- this means:
+  - OAuth app is not yet approved in Yandex Direct API interface
+
+So the correct troubleshooting order for org logins is:
+1. confirm exact `Client-Login`
+2. issue new token with `passport:business`
+3. verify token through `login.yandex.ru/info`
+4. if `error 58`, complete Direct API app registration and wait for approval
+
+### Yandex ID token verification
+
+Useful endpoint:
+
+```http
+GET https://login.yandex.ru/info?format=json
+Authorization: OAuth <token>
+```
+
+Use it to confirm:
+- token is valid
+- token belongs to expected `client_id`
+- org context is present
+
+This verifies token validity, but does not guarantee Direct API access.
+
+## Telegram and monitoring
+
+Daily Telegram summary is enabled.
+
+Current cron:
+
+```cron
+50 6 * * * cd /root/reportingdash-canonical && /root/reportingdash-canonical/venv/bin/python send_canonical_telegram_report.py --mode summary >> /root/reportingdash-canonical/logs/canonical-telegram-summary.log 2>&1
+```
+
+Meaning:
+- summary mode is active
+- not alert-only mode
+
+## Known completed operational changes
+
+Already done and should not be rediscovered:
+
+1. canonical cron no longer includes the current day
+2. Telegram summary switched from alert-only to daily summary mode
+3. Hybrid `views` wipe regression from console backfill was repaired
+4. Hybrid collector was patched to avoid wiping optional metrics when absent
+5. Hybrid stable API path now yields `ECPM` / `ECPC`
+6. Hybrid canonical can derive `spend` from `ECPM` / `ECPC` when native spend is absent
+7. Yandex Direct new passport-organization flow was investigated
+8. Yandex org token with `passport:business` was successfully validated through Yandex ID
+9. Yandex Direct org access currently blocks on `error 58` until app registration is approved
+10. `porg-47e7bbnx` was added into `report_bd_tech.req_system` as an active Direct API login
+11. Direct API access for `porg-47e7bbnx` is now confirmed working at HTTP level; current-day probe returns an empty report header, not an auth error
+
+## Working rule for future platform-access tasks
+
+When returning to collector / cron / platform API tasks:
+1. read `PLATFORMS-ACCESS-MEMORY.md`
+2. then inspect the relevant collector file
+3. then inspect DB state / latest runs
+4. only after that reconstruct old chat context if still needed
