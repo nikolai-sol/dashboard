@@ -215,6 +215,27 @@ Current note:
 - active Yandex Direct API logins are stored in `report_bd_tech.req_system`
 - canonical currently maps many account bridges as fallback `campaign::<campaign_id>` rows in `canonical_source_accounts`
 
+## Yandex Promopages specifics
+
+- no production canonical collector yet
+- access currently confirmed through direct API probing only
+- OAuth scope required:
+  - `promopages:api`
+- organization-linked tokens may also require:
+  - `passport:business`
+- confirmed API base:
+  - `https://promopages.yandex.ru/api/promo/v1`
+- current validated endpoints:
+  - `GET /permissions/user`
+  - `GET /campaigns`
+  - `POST /reports/campaigns-daily-stats`
+  - `GET /reports/{report_id}?format=json`
+- reports are asynchronous:
+  - expect `reportId`
+  - then poll report endpoint with backoff
+- current Promopages access details and latest probe results are tracked in:
+  - `PLATFORMS-ACCESS-MEMORY.md`
+
 ## Operational shortcuts
 
 Check PM2 runtime:
