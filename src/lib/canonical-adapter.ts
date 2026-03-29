@@ -129,6 +129,14 @@ type PromopagesTimeseriesRow = RowDataPacket & {
   metrica_visits: number | string | null;
 };
 
+type PromopagesCampaignAggregateRow = RowDataPacket & {
+  total_impressions: number | string | null;
+  total_reach: number | string | null;
+  total_views: number | string | null;
+  total_clicks: number | string | null;
+  total_budget: number | string | null;
+};
+
 type PromopagesCampaignRow = RowDataPacket & {
   platform_account_id: string;
   account_name: string | null;
@@ -304,6 +312,47 @@ export async function getPromopagesAggregate(filter: PromopagesFilter) {
   return rows[0] ?? null;
 }
 
+export async function getPromopagesAggregateByCampaignIds(
+  sourceKey: string,
+  campaignIds: string[],
+  dateFrom: string,
+  dateTo: string,
+) {
+  const normalizedIds = Array.isArray(campaignIds)
+    ? campaignIds.map((id) => String(id).trim()).filter(Boolean)
+    : [];
+
+  if (!normalizedIds.length) {
+    return {
+      total_impressions: 0,
+      total_reach: 0,
+      total_views: 0,
+      total_clicks: 0,
+      total_budget: 0,
+    };
+  }
+
+  const placeholders = normalizedIds.map(() => '?').join(',');
+  const params: SqlParam[] = [sourceKey, dateFrom, dateTo, ...normalizedIds];
+
+  const sql = `
+    SELECT
+      COALESCE(SUM(f.impressions), 0) AS total_impressions,
+      COALESCE(SUM(f.reach), 0) AS total_reach,
+      COALESCE(SUM(f.views), 0) AS total_views,
+      COALESCE(SUM(f.clicks), 0) AS total_clicks,
+      COALESCE(SUM(f.budget), 0) AS total_budget
+    FROM canonical_fact_promopages_daily f
+    WHERE f.source_key = ?
+      AND f.report_date >= ?
+      AND f.report_date <= ?
+      AND f.platform_campaign_id IN (${placeholders})
+  `;
+
+  const [rows] = await pool.execute<PromopagesCampaignAggregateRow[]>(sql, params);
+  return rows[0] ?? null;
+}
+
 // Aggregate facts by explicit campaign id list within canonical_fact_ads_daily.
 // If campaignIds is empty, falls back to generic aggregate for the source.
 export async function getFactByCampaignIds(
@@ -420,6 +469,52 @@ export async function getPromopagesTimeseries(filter: PromopagesFilter) {
     clickouts: Number(row.clickouts ?? 0),
     full_reads: Number(row.full_reads ?? 0),
     metrica_visits: Number(row.metrica_visits ?? 0),
+  }));
+}
+
+export async function getPromopagesTimeseriesByCampaignIds(
+  sourceKey: string,
+  campaignIds: string[],
+  dateFrom: string,
+  dateTo: string,
+) {
+  const normalizedIds = Array.isArray(campaignIds)
+    ? campaignIds.map((id) => String(id).trim()).filter(Boolean)
+    : [];
+
+  if (!normalizedIds.length) {
+    return [];
+  }
+
+  const placeholders = normalizedIds.map(() => '?').join(',');
+  const params: SqlParam[] = [sourceKey, dateFrom, dateTo, ...normalizedIds];
+  const sql = `
+    SELECT
+      f.report_date AS date,
+      COALESCE(SUM(f.impressions), 0) AS impressions,
+      COALESCE(SUM(f.reach), 0) AS reach,
+      COALESCE(SUM(f.views), 0) AS views,
+      COALESCE(SUM(f.clicks), 0) AS clicks,
+      COALESCE(SUM(f.budget), 0) AS budget
+    FROM canonical_fact_promopages_daily f
+    WHERE f.source_key = ?
+      AND f.report_date >= ?
+      AND f.report_date <= ?
+      AND f.platform_campaign_id IN (${placeholders})
+    GROUP BY f.report_date
+    ORDER BY f.report_date
+  `;
+  const [rows] = await pool.execute<PromopagesTimeseriesRow[]>(sql, params);
+  return rows.map((row) => ({
+    date: toIsoDateOrNull(row.date) ?? '',
+    impressions: Number(row.impressions ?? 0),
+    reach: Number(row.reach ?? 0),
+    views: Number(row.views ?? 0),
+    clicks: Number(row.clicks ?? 0),
+    budget: Number(Number(row.budget ?? 0).toFixed(2)),
+    clickouts: 0,
+    full_reads: 0,
+    metrica_visits: 0,
   }));
 }
 

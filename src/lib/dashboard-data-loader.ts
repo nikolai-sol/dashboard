@@ -10,8 +10,10 @@ import {
   getAnalyticsTimeseries,
   getFactByCampaignIds,
   getPromopagesAggregate,
+  getPromopagesAggregateByCampaignIds,
   getPromopagesCampaignBreakdown,
   getPromopagesTimeseries,
+  getPromopagesTimeseriesByCampaignIds,
   getTimeseriesByCampaignIds,
   type CanonicalFilter,
   type PromopagesFilter,
@@ -67,6 +69,8 @@ import type {
   PlanVsFactItem,
   ChannelPerformanceItem,
   ChannelPerformanceMetric,
+  BoundPromopagesChannelOverlay,
+  BoundPromopagesTimeSeriesOverlay,
   PromopagesCampaignItem,
   PromopagesTimeSeriesPoint,
 } from "@/lib/types";
@@ -945,6 +949,62 @@ function sumManualChannels(
   return { impressions, reach, clicks, spend, conversions, views };
 }
 
+async function buildBoundPromopagesOverlay(
+  channelGroups: ChannelGroup[],
+  bindingsByLineKey: Map<string, Array<{ source_key: string; platform_campaign_id: string }>>,
+  dateFrom: string,
+  dateTo: string,
+): Promise<{
+  byChannel: BoundPromopagesChannelOverlay[];
+  timeseries: BoundPromopagesTimeSeriesOverlay[];
+}> {
+  const overlayRows = await Promise.all(
+    channelGroups.map(async (group) => {
+      const bindings = (bindingsByLineKey.get(group.line_key || group.channel) ?? []).filter(
+        (binding) => binding.source_key === "yandex_promopages",
+      );
+      const campaignIds = Array.from(new Set(bindings.map((binding) => binding.platform_campaign_id).filter(Boolean)));
+      if (!campaignIds.length) {
+        return null;
+      }
+
+      const aggregate = await getPromopagesAggregateByCampaignIds("yandex_promopages", campaignIds, dateFrom, dateTo);
+      const timeseries = await getPromopagesTimeseriesByCampaignIds("yandex_promopages", campaignIds, dateFrom, dateTo);
+
+      return {
+        totals: {
+          channel: group.channel,
+          instrument: group.instrument,
+          impressions: asNumber(aggregate?.total_impressions),
+          reach: asNumber(aggregate?.total_reach),
+          clicks: asNumber(aggregate?.total_clicks),
+          spend: Number(asNumber(aggregate?.total_budget).toFixed(2)),
+          views: asNumber(aggregate?.total_views),
+        },
+        timeseries: timeseries.map((row) => ({
+          date: row.date,
+          channel: group.channel,
+          impressions: asNumber(row.impressions),
+          reach: asNumber(row.reach),
+          clicks: asNumber(row.clicks),
+          spend: Number(asNumber(row.budget).toFixed(2)),
+          views: asNumber(row.views),
+        })),
+      };
+    }),
+  );
+
+  return {
+    byChannel: overlayRows
+      .filter((row): row is NonNullable<typeof row> => Boolean(row))
+      .map((row) => row.totals),
+    timeseries: overlayRows
+      .filter((row): row is NonNullable<typeof row> => Boolean(row))
+      .flatMap((row) => row.timeseries)
+      .sort((a, b) => a.date.localeCompare(b.date) || a.channel.localeCompare(b.channel)),
+  };
+}
+
 async function buildPlanVsFactRowsByChannel(
   channelGroups: ChannelGroup[],
   bindingsByLineKey: Map<string, Array<{ source_key: string; platform_campaign_id: string }>>,
@@ -986,7 +1046,8 @@ async function buildPlanVsFactRowsByChannel(
       return getFactByCampaignIds(fallbackSourceKey, [], dateFrom, dateTo);
     }
 
-    const canonicalBindings = bindings.filter((b) => b.source_key !== "manual_data");
+    const canonicalBindings = bindings.filter((b) => b.source_key !== "manual_data" && b.source_key !== "yandex_promopages");
+    const promopagesBindings = bindings.filter((b) => b.source_key === "yandex_promopages");
     const manualBindings = bindings.filter((b) => b.source_key === "manual_data");
 
     let canonicalTotals = { impressions: 0, reach: 0, clicks: 0, spend: 0, conversions: 0, views: 0 };
@@ -1012,13 +1073,29 @@ async function buildPlanVsFactRowsByChannel(
           )
         : { impressions: 0, reach: 0, clicks: 0, spend: 0, conversions: 0, views: 0 };
 
+    const promopagesIds = Array.from(
+      new Set(promopagesBindings.map((binding) => binding.platform_campaign_id).filter(Boolean)),
+    );
+    const promopagesAggregate =
+      promopagesIds.length > 0
+        ? await getPromopagesAggregateByCampaignIds("yandex_promopages", promopagesIds, dateFrom, dateTo)
+        : null;
+    const promopagesTotals = {
+      impressions: asNumber(promopagesAggregate?.total_impressions),
+      reach: asNumber(promopagesAggregate?.total_reach),
+      clicks: asNumber(promopagesAggregate?.total_clicks),
+      spend: Number(asNumber(promopagesAggregate?.total_budget).toFixed(2)),
+      conversions: 0,
+      views: asNumber(promopagesAggregate?.total_views),
+    };
+
     return {
-      total_impressions: canonicalTotals.impressions + manualTotals.impressions,
-      total_reach: canonicalTotals.reach + manualTotals.reach,
-      total_clicks: canonicalTotals.clicks + manualTotals.clicks,
-      total_spend: canonicalTotals.spend + manualTotals.spend,
+      total_impressions: canonicalTotals.impressions + manualTotals.impressions + promopagesTotals.impressions,
+      total_reach: canonicalTotals.reach + manualTotals.reach + promopagesTotals.reach,
+      total_clicks: canonicalTotals.clicks + manualTotals.clicks + promopagesTotals.clicks,
+      total_spend: canonicalTotals.spend + manualTotals.spend + promopagesTotals.spend,
       total_conversions: canonicalTotals.conversions + manualTotals.conversions,
-      total_views: canonicalTotals.views + manualTotals.views,
+      total_views: canonicalTotals.views + manualTotals.views + promopagesTotals.views,
     };
   });
 
@@ -1136,6 +1213,7 @@ async function buildChannelTimeseries(
   dateFrom: string,
   dateTo: string,
   overrideMap: Map<string, number>,
+  boundPromopagesTimeseries?: Map<string, BoundPromopagesTimeSeriesOverlay[]>,
 ): Promise<DashboardData["channel_timeseries"]> {
   const timeseries = await Promise.all(
     channelGroups.map(async (group) => {
@@ -1149,6 +1227,9 @@ async function buildChannelTimeseries(
         }
       } else {
         bindings.forEach((binding) => {
+          if (binding.source_key === "yandex_promopages") {
+            return;
+          }
           if (!bySource.has(binding.source_key)) {
             bySource.set(binding.source_key, []);
           }
@@ -1156,7 +1237,8 @@ async function buildChannelTimeseries(
         });
       }
 
-      if (!bySource.size) return [];
+      const promoRows = boundPromopagesTimeseries?.get(group.channel) ?? [];
+      if (!bySource.size && promoRows.length === 0) return [];
 
       const sourceResults = await Promise.all(
         Array.from(bySource.entries()).map(([sourceKey, ids]) =>
@@ -1194,6 +1276,19 @@ async function buildChannelTimeseries(
         item.spend += asNumber(row.spend);
         item.views += asNumber(row.views);
         item.conversions += asNumber(row.conversions);
+      });
+
+      promoRows.forEach((row) => {
+        const date = toIsoDate(row.date);
+        if (!byDate.has(date)) {
+          byDate.set(date, { impressions: 0, reach: 0, clicks: 0, spend: 0, views: 0, conversions: 0 });
+        }
+        const item = byDate.get(date)!;
+        item.impressions += asNumber(row.impressions);
+        item.reach += asNumber(row.reach);
+        item.clicks += asNumber(row.clicks);
+        item.spend += asNumber(row.spend);
+        item.views += asNumber(row.views);
       });
 
       return Array.from(byDate.entries()).map(([date, item]) => ({
@@ -2024,6 +2119,25 @@ export async function loadDashboardData(
       });
       return acc;
     }, new Map<string, Array<{ source_key: string; platform_campaign_id: string }>>());
+    const boundPromopagesOverlay = await buildBoundPromopagesOverlay(
+      planByChannel,
+      bindingsByLineKey,
+      range.from,
+      range.to,
+    );
+    const boundPromopagesOverlayPrev = await buildBoundPromopagesOverlay(
+      planByChannel,
+      bindingsByLineKey,
+      previousRange.from,
+      previousRange.to,
+    );
+    const boundPromopagesTimeseriesByChannel = boundPromopagesOverlay.timeseries.reduce((acc, row) => {
+      if (!acc.has(row.channel)) {
+        acc.set(row.channel, []);
+      }
+      acc.get(row.channel)!.push(row);
+      return acc;
+    }, new Map<string, BoundPromopagesTimeSeriesOverlay[]>());
     const planVsFactBase = await buildPlanVsFactRowsByChannel(
       planByChannel,
       bindingsByLineKey,
@@ -2040,6 +2154,7 @@ export async function loadDashboardData(
       range.from,
       range.to,
       frequencyOverrideMap,
+      boundPromopagesTimeseriesByChannel,
     );
 
     for (const source of sourceRows) {
@@ -2134,27 +2249,55 @@ export async function loadDashboardData(
     const totalClicks = platformResults.reduce((sum, row) => sum + row.clicks, 0);
     const totalSpend = platformResults.reduce((sum, row) => sum + row.spend, 0);
     const totalConversions = platformResults.reduce((sum, row) => sum + row.conversions, 0);
+    const boundPromopagesTotals = boundPromopagesOverlay.byChannel.reduce(
+      (acc, row) => {
+        acc.impressions += row.impressions;
+        acc.clicks += row.clicks;
+        acc.spend += row.spend;
+        return acc;
+      },
+      { impressions: 0, clicks: 0, spend: 0 },
+    );
 
     const prevImpressions = prevPlatformResults.reduce((sum, row) => sum + row.impressions, 0);
     const prevClicks = prevPlatformResults.reduce((sum, row) => sum + row.clicks, 0);
     const prevSpend = prevPlatformResults.reduce((sum, row) => sum + row.spend, 0);
     const prevConversions = prevPlatformResults.reduce((sum, row) => sum + row.conversions, 0);
+    const boundPromopagesPrevTotals = boundPromopagesOverlayPrev.byChannel.reduce(
+      (acc, row) => {
+        acc.impressions += row.impressions;
+        acc.clicks += row.clicks;
+        acc.spend += row.spend;
+        return acc;
+      },
+      { impressions: 0, clicks: 0, spend: 0 },
+    );
 
     const kpi = {
-      total_impressions: totalImpressions,
-      total_clicks: totalClicks,
-      total_spend: Number(totalSpend.toFixed(2)),
+      total_impressions: totalImpressions + boundPromopagesTotals.impressions,
+      total_clicks: totalClicks + boundPromopagesTotals.clicks,
+      total_spend: Number((totalSpend + boundPromopagesTotals.spend).toFixed(2)),
       total_conversions: totalConversions,
-      avg_ctr: totalImpressions > 0 ? Number(((totalClicks / totalImpressions) * 100).toFixed(2)) : 0,
-      avg_cpm: totalImpressions > 0 ? Number(((totalSpend / totalImpressions) * 1000).toFixed(2)) : 0,
-      prev_impressions: prevImpressions,
-      prev_clicks: prevClicks,
-      prev_spend: Number(prevSpend.toFixed(2)),
+      avg_ctr:
+        totalImpressions + boundPromopagesTotals.impressions > 0
+          ? Number((((totalClicks + boundPromopagesTotals.clicks) / (totalImpressions + boundPromopagesTotals.impressions)) * 100).toFixed(2))
+          : 0,
+      avg_cpm:
+        totalImpressions + boundPromopagesTotals.impressions > 0
+          ? Number((((totalSpend + boundPromopagesTotals.spend) / (totalImpressions + boundPromopagesTotals.impressions)) * 1000).toFixed(2))
+          : 0,
+      prev_impressions: prevImpressions + boundPromopagesPrevTotals.impressions,
+      prev_clicks: prevClicks + boundPromopagesPrevTotals.clicks,
+      prev_spend: Number((prevSpend + boundPromopagesPrevTotals.spend).toFixed(2)),
       prev_conversions: prevConversions,
       prev_ctr:
-        prevImpressions > 0 ? Number(((prevClicks / prevImpressions) * 100).toFixed(2)) : 0,
+        prevImpressions + boundPromopagesPrevTotals.impressions > 0
+          ? Number((((prevClicks + boundPromopagesPrevTotals.clicks) / (prevImpressions + boundPromopagesPrevTotals.impressions)) * 100).toFixed(2))
+          : 0,
       prev_cpm:
-        prevImpressions > 0 ? Number(((prevSpend / prevImpressions) * 1000).toFixed(2)) : 0,
+        prevImpressions + boundPromopagesPrevTotals.impressions > 0
+          ? Number((((prevSpend + boundPromopagesPrevTotals.spend) / (prevImpressions + boundPromopagesPrevTotals.impressions)) * 1000).toFixed(2))
+          : 0,
     };
     const funnel = dashboardType === "performance"
       ? buildFunnel(totalImpressions, totalClicks, totalConversions)
@@ -2203,6 +2346,13 @@ export async function loadDashboardData(
               kpi: promopagesKpi,
               timeseries: promopagesTimeseries,
               campaigns: promopagesCampaigns,
+            }
+          : undefined,
+      bound_promopages:
+        boundPromopagesOverlay.byChannel.length > 0
+          ? {
+              by_channel: boundPromopagesOverlay.byChannel,
+              timeseries: boundPromopagesOverlay.timeseries,
             }
           : undefined,
     };

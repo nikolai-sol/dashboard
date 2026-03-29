@@ -138,9 +138,10 @@ Important current state:
   - collector writes source accounts, source campaigns, and isolated promopages facts
   - dashboard section is separate from normal awareness plan/fact
 - phase 2 status:
-  - not implemented
-  - no media plan binding yet
-  - no inclusion in overall awareness spend totals yet
+  - implemented for bound campaign rows
+  - Promopages campaign ids can be attached through `media_plan_bindings`
+  - bound rows participate in awareness `plan_vs_fact`, `channel_timeseries`, and KPI totals
+  - unbound Promopages remains isolated in dedicated section
 - daily cron status:
   - enabled on VPS at `06:36`
   - log file:

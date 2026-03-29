@@ -8,20 +8,22 @@ type BindingsRequestBody = {
 
 function normalizeBindings(value: unknown): MediaPlanBindingInput[] {
   if (!Array.isArray(value)) return [];
-  return value
-    .map((item) => {
-      const input = (item ?? {}) as Partial<MediaPlanBindingInput>;
-      const channel = String(input.channel ?? "").trim();
-      const sourceKey = String(input.source_key ?? "").trim().toLowerCase();
-      const campaignId = String(input.platform_campaign_id ?? "").trim();
-      if (!channel || !sourceKey || !campaignId) return null;
-      return {
-        channel,
-        source_key: sourceKey,
-        platform_campaign_id: campaignId,
-      };
-    })
-    .filter((item): item is MediaPlanBindingInput => Boolean(item));
+  const result: MediaPlanBindingInput[] = [];
+  for (const item of value) {
+    const input = (item ?? {}) as Partial<MediaPlanBindingInput>;
+    const channel = String(input.channel ?? "").trim();
+    const lineKey = String(input.line_key ?? channel).trim();
+    const sourceKey = String(input.source_key ?? "").trim().toLowerCase();
+    const campaignId = String(input.platform_campaign_id ?? "").trim();
+    if (!channel || !lineKey || !sourceKey || !campaignId) continue;
+    result.push({
+      line_key: lineKey,
+      channel,
+      source_key: sourceKey,
+      platform_campaign_id: campaignId,
+    });
+  }
+  return result;
 }
 
 export async function POST(

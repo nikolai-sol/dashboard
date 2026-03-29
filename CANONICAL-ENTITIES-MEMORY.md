@@ -257,9 +257,10 @@ Status:
   - collector writes isolated promopages facts here
   - dashboard loader reads from this table only for dedicated `promopages` section
 - current phase 2 runtime:
-  - not implemented
-  - no media plan bindings
-  - no inclusion in standard awareness spend totals
+  - implemented at dashboard-loader layer for bound campaign ids
+  - `media_plan_bindings` may now point at `source_key = yandex_promopages`
+  - bound Promopages facts participate in awareness totals and channel-level plan/fact
+  - source still remains physically isolated in `canonical_fact_promopages_daily`
 
 ### 7. `canonical_collector_runs`
 
