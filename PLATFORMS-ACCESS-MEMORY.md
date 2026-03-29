@@ -125,6 +125,13 @@ Important current state:
 - monitored
 - cron currently not enabled unless explicitly changed later
 
+### Yandex Promopages
+
+- no canonical collector yet
+- API access confirmed
+- currently in research / probe mode only
+- no DB writes approved yet
+
 ## Platform-specific access notes
 
 ### Hybrid
@@ -258,6 +265,78 @@ So the correct troubleshooting order for org logins is:
 2. issue new token with `passport:business`
 3. verify token through `login.yandex.ru/info`
 4. if `error 58`, complete Direct API app registration and wait for approval
+
+### Yandex Promopages
+
+Official access doc:
+- `https://yandex.ru/dev/promopages-api/doc/ru/concepts/promo-access`
+
+Current required OAuth scopes:
+- `promopages:api`
+- and when organization context is needed:
+  - `passport:business`
+
+Confirmed working API base:
+
+```http
+https://promopages.yandex.ru/api/promo/v1
+```
+
+Confirmed working endpoints:
+- `GET /permissions/user`
+- `GET /campaigns?publisherId=...&pageLimit=...`
+- `GET /publishers/balances?publisherIds=...`
+- `POST /reports/campaigns-daily-stats`
+- `GET /reports/{report_id}?format=json`
+
+Confirmed behavior:
+- report generation is asynchronous
+- `POST /reports/campaigns-daily-stats` returns `reportId`
+- `GET /reports/{report_id}?format=json` may return:
+  - `202` while report is not ready
+  - `429` if polled too aggressively
+  - `200` with final stats payload
+
+Current verified access with active token:
+- `SolGoood`
+  - `publisherId = 67483e5de9010d4549c8773a`
+- `Landsail`
+  - `publisherId = 6748458227933c00367b9682`
+  - `clientId = 306606827`
+- `Doublestar`
+  - `publisherId = 6756d4464ca67f3c078e9db2`
+  - `clientId = 308385627`
+- `Armstrong`
+  - `publisherId = 6819f94d11f2443fdd968296`
+  - `clientId = 110719699`
+
+Verified yesterday daily stats probe for `2026-03-28`:
+- `SolGoood`
+  - campaigns: `0`
+- `Landsail`
+  - campaigns: `5`
+  - stats returned `200`
+  - sample metric payload:
+    - `impressions = 91672`
+    - `reach = 81387`
+    - `budget = 7126.4`
+    - `cpm = 77.74`
+    - `clicks = 1291`
+    - `views = 1248`
+    - `clickouts = 637`
+    - `fullReads = 741`
+- `Doublestar`
+  - campaigns: `2`
+  - stats returned `200`
+  - `statistics = []`
+- `Armstrong`
+  - campaigns: `1`
+  - stats returned `200`
+  - `statistics = []`
+
+Operational rule:
+- Promopages `clientId` must not be assumed to map 1:1 to Yandex Direct business identity without verification
+- first integration step should remain no-write probing until canonical grain and source-key model are agreed
 
 ### Yandex ID token verification
 
