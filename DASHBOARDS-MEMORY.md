@@ -189,11 +189,18 @@ Current implementation direction:
 - add optional media plan binding for Promopages
 - allow Promopages spend to participate in overall awareness spend totals when explicitly connected and mapped
 - status:
-  - not implemented
+  - implemented for bound campaign rows
+  - media plan bindings can now point to `yandex_promopages` campaign ids
+  - bound Promopages facts participate in:
+    - `plan_vs_fact`
+    - `channel_timeseries`
+    - top awareness KPI totals and trend overlays
+  - Promopages still remains a separate dedicated section as well
 
 Current rule:
-- until phase 2 bindings exist, Promopages must stay isolated as its own section and source path
-- do not silently fold Promopages facts into ordinary paid-media plan/fact sections
+- unbound Promopages stays isolated in its own section and source path
+- only explicitly bound Promopages campaign ids are folded into awareness totals
+- ordinary platform sections remain based on normal paid-media sources; Promopages is not force-mixed into them
 
 ## Metrics rules
 

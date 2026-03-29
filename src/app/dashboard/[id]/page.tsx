@@ -357,7 +357,10 @@ export default function DashboardByIdPage() {
     const platformFiltered = dashboard.plan_vs_fact.filter(
       (item) =>
         item.platforms.length === 0 ||
-        item.platforms.some((platform) => selectedSet.has(resolvePlatformIdFromSourceKey(platform.source_key))),
+        item.platforms.some((platform) => {
+          const platformId = resolvePlatformIdFromSourceKey(platform.source_key);
+          return platformId === "yandex_promopages" || selectedSet.has(platformId);
+        }),
     );
     if (effectiveFilterMode === "channel") {
       return platformFiltered.filter((item) => selectedChannelSet.has(item.channel));
@@ -370,7 +373,10 @@ export default function DashboardByIdPage() {
     const platformFiltered = dashboard.channel_performance.filter(
       (item) =>
         item.platforms.length === 0 ||
-        item.platforms.some((platform) => selectedSet.has(resolvePlatformIdFromSourceKey(platform.source_key))),
+        item.platforms.some((platform) => {
+          const platformId = resolvePlatformIdFromSourceKey(platform.source_key);
+          return platformId === "yandex_promopages" || selectedSet.has(platformId);
+        }),
     );
     if (effectiveFilterMode === "channel") {
       return platformFiltered.filter((item) => selectedChannelSet.has(item.channel));
@@ -385,6 +391,20 @@ export default function DashboardByIdPage() {
     }
     return dashboard.channel_timeseries;
   }, [dashboard, effectiveFilterMode, selectedChannelSet]);
+
+  const filteredBoundPromopages = useMemo(() => {
+    if (!dashboard?.bound_promopages) {
+      return {
+        byChannel: [],
+        timeseries: [],
+      };
+    }
+    const visibleChannels = new Set(filteredPlanVsFact.map((item) => item.channel));
+    return {
+      byChannel: dashboard.bound_promopages.by_channel.filter((item) => visibleChannels.has(item.channel)),
+      timeseries: dashboard.bound_promopages.timeseries.filter((item) => visibleChannels.has(item.channel)),
+    };
+  }, [dashboard, filteredPlanVsFact]);
 
   const currencyCode = dashboard?.dashboard.currency || "EUR";
   const dashboardLanguage = dashboard?.dashboard.language ?? "en";
@@ -407,12 +427,22 @@ export default function DashboardByIdPage() {
   );
 
   const totals = useMemo(() => {
-    const totalImpressions = filteredPlatforms.reduce((sum, item) => sum + item.impressions, 0);
-    const totalClicks = filteredPlatforms.reduce((sum, item) => sum + item.clicks, 0);
-    const totalSpend = filteredPlatforms.reduce((sum, item) => sum + item.spend, 0);
+    const baseImpressions = filteredPlatforms.reduce((sum, item) => sum + item.impressions, 0);
+    const baseClicks = filteredPlatforms.reduce((sum, item) => sum + item.clicks, 0);
+    const baseSpend = filteredPlatforms.reduce((sum, item) => sum + item.spend, 0);
     const totalConversions = filteredPlatforms.reduce((sum, item) => sum + item.conversions, 0);
-    const totalViews = filteredPlatforms.reduce((sum, item) => sum + item.views, 0);
-    const totalReach = filteredPlatforms.reduce((sum, item) => sum + item.reach, 0);
+    const baseViews = filteredPlatforms.reduce((sum, item) => sum + item.views, 0);
+    const baseReach = filteredPlatforms.reduce((sum, item) => sum + item.reach, 0);
+    const promoImpressions = filteredBoundPromopages.byChannel.reduce((sum, item) => sum + item.impressions, 0);
+    const promoClicks = filteredBoundPromopages.byChannel.reduce((sum, item) => sum + item.clicks, 0);
+    const promoSpend = filteredBoundPromopages.byChannel.reduce((sum, item) => sum + item.spend, 0);
+    const promoViews = filteredBoundPromopages.byChannel.reduce((sum, item) => sum + item.views, 0);
+    const promoReach = filteredBoundPromopages.byChannel.reduce((sum, item) => sum + item.reach, 0);
+    const totalImpressions = baseImpressions + promoImpressions;
+    const totalClicks = baseClicks + promoClicks;
+    const totalSpend = baseSpend + promoSpend;
+    const totalViews = baseViews + promoViews;
+    const totalReach = baseReach + promoReach;
     const avgCtr = totalImpressions > 0 ? (totalClicks / totalImpressions) * 100 : 0;
     const avgCpm = totalImpressions > 0 ? (totalSpend / totalImpressions) * 1000 : 0;
     const avgCpc = totalClicks > 0 ? totalSpend / totalClicks : 0;
@@ -433,7 +463,7 @@ export default function DashboardByIdPage() {
       avgCpa,
       avgFrequency,
     };
-  }, [filteredPlatforms]);
+  }, [filteredBoundPromopages.byChannel, filteredPlatforms]);
 
   const scales = useMemo(() => {
     const kpi = dashboard?.kpi;
@@ -517,10 +547,21 @@ export default function DashboardByIdPage() {
       row.views += point.impressions * (viewByPlatform.get(point.platform) ?? 0);
     });
 
+    filteredBoundPromopages.timeseries.forEach((point) => {
+      if (!byDate.has(point.date)) {
+        byDate.set(point.date, { impressions: 0, clicks: 0, spend: 0, conversions: 0, views: 0 });
+      }
+      const row = byDate.get(point.date)!;
+      row.impressions += point.impressions;
+      row.clicks += point.clicks;
+      row.spend += point.spend;
+      row.views += point.views;
+    });
+
     return [...byDate.entries()]
       .map(([date, data]) => ({ date, ...data }))
       .sort((a, b) => a.date.localeCompare(b.date));
-  }, [filteredPlatforms, filteredTimeseries]);
+  }, [filteredBoundPromopages.timeseries, filteredPlatforms, filteredTimeseries]);
 
   const latestTrend = useMemo(() => aggregatedDaily.slice(-30), [aggregatedDaily]);
 

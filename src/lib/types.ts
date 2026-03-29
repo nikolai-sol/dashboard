@@ -328,6 +328,26 @@ export interface PromopagesData {
   campaigns: PromopagesCampaignItem[];
 }
 
+export interface BoundPromopagesChannelOverlay {
+  channel: string;
+  instrument: string;
+  impressions: number;
+  reach: number;
+  clicks: number;
+  spend: number;
+  views: number;
+}
+
+export interface BoundPromopagesTimeSeriesOverlay {
+  date: string;
+  channel: string;
+  impressions: number;
+  reach: number;
+  clicks: number;
+  spend: number;
+  views: number;
+}
+
 export interface DashboardData {
   dashboard: DashboardMeta;
   kpi_config: string[];
@@ -346,6 +366,10 @@ export interface DashboardData {
     timeseries: AnalyticsTimeSeriesPoint[];
   };
   promopages?: PromopagesData;
+  bound_promopages?: {
+    by_channel: BoundPromopagesChannelOverlay[];
+    timeseries: BoundPromopagesTimeSeriesOverlay[];
+  };
   // optional channel timeseries for future "by channel" view
   channel_timeseries?: Array<{
     date: string;
