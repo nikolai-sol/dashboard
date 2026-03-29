@@ -609,7 +609,14 @@ export default function WizardStep2({ data, platforms, onChange }: WizardStep2Pr
         platform: "manual_data",
         schema_file: "schemas/manual_data.yaml",
         role: "actual",
-        source_config: { sheet_url: "", title: "Additional sources", platform: "", channel: "" },
+        source_config: {
+          sheet_url: "",
+          upload_file: null,
+          title: "Additional sources",
+          platform: "",
+          channel: "",
+          force_fallback_channel: false,
+        },
         filters: [{ filter_type: "all", filter_value: null }],
       },
     ]);
@@ -617,7 +624,14 @@ export default function WizardStep2({ data, platforms, onChange }: WizardStep2Pr
 
   const updateManualDataSource = (
     index: number,
-    patch: { title?: string; sheet_url?: string; platform?: string; channel?: string },
+    patch: {
+      title?: string;
+      sheet_url?: string;
+      platform?: string;
+      channel?: string;
+      upload_file?: unknown | null;
+      force_fallback_channel?: boolean;
+    },
   ) => {
     const source = manualDataSources[index];
     if (!source) return;
@@ -628,6 +642,24 @@ export default function WizardStep2({ data, platforms, onChange }: WizardStep2Pr
     };
     setSources(actualSources, planSource, customTableSources, next);
     setManualDataPreview((prev) => ({ ...prev, [index]: null }));
+  };
+
+  const updateManualDataUploadFile = async (index: number, file: File | null) => {
+    if (!manualDataSources[index]) return;
+
+    if (!file) {
+      updateManualDataSource(index, { upload_file: null });
+      return;
+    }
+
+    const contentBase64 = await fileToBase64(file);
+    updateManualDataSource(index, {
+      upload_file: {
+        filename: file.name,
+        mime_type: file.type,
+        content_base64: contentBase64,
+      },
+    });
   };
 
   const removeManualDataSource = (index: number) => {
@@ -642,17 +674,18 @@ export default function WizardStep2({ data, platforms, onChange }: WizardStep2Pr
 
   const previewManualDataSource = async (index: number) => {
     const source = manualDataSources[index];
-    const url = String(source?.source_config?.sheet_url ?? "").trim();
-    if (!url) return;
+    const hasInput =
+      Boolean(String(source?.source_config?.sheet_url ?? "").trim()) ||
+      (typeof source?.source_config?.upload_file === "object" && source?.source_config?.upload_file);
+    if (!hasInput) return;
     setManualDataPreviewLoading((prev) => ({ ...prev, [index]: true }));
     setManualDataPreview((prev) => ({ ...prev, [index]: null }));
     try {
-      const params = new URLSearchParams({ url });
-      const defaultPlatform = String(source?.source_config?.platform ?? "").trim();
-      const defaultChannel = String(source?.source_config?.channel ?? "").trim();
-      if (defaultPlatform) params.set("platform", defaultPlatform);
-      if (defaultChannel) params.set("channel", defaultChannel);
-      const response = await fetch(`/api/admin/manual-data/preview?${params.toString()}`);
+      const response = await fetch("/api/admin/manual-data/preview", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ source_config: source?.source_config ?? {} }),
+      });
       const json = await response.json();
       if (response.ok && Array.isArray(json.rows)) {
         setManualDataPreview((prev) => ({ ...prev, [index]: json.rows }));
@@ -2035,6 +2068,14 @@ export default function WizardStep2({ data, platforms, onChange }: WizardStep2Pr
                     placeholder="Fallback if file has no channel/campaign column"
                   />
                 </label>
+                <label className="flex items-center gap-2 rounded-lg border border-slate-200 bg-slate-50 px-3 py-2 text-sm text-slate-700">
+                  <input
+                    type="checkbox"
+                    checked={Boolean(source.source_config?.force_fallback_channel)}
+                    onChange={(e) => updateManualDataSource(index, { force_fallback_channel: e.target.checked })}
+                  />
+                  <span>Force fallback channel for every imported row</span>
+                </label>
                 <div className="flex flex-wrap gap-2">
                   <a
                     href="/manual_data_template.csv"
@@ -2047,7 +2088,8 @@ export default function WizardStep2({ data, platforms, onChange }: WizardStep2Pr
                     type="button"
                     onClick={() => previewManualDataSource(index)}
                     disabled={
-                      !String(source.source_config?.sheet_url ?? "").trim() ||
+                      (!String(source.source_config?.sheet_url ?? "").trim() &&
+                        !(typeof source.source_config?.upload_file === "object" && source.source_config?.upload_file)) ||
                       manualDataPreviewLoading[index]
                     }
                     className="rounded-lg border border-slate-300 px-3 py-2 text-sm hover:bg-slate-50 disabled:opacity-50"
@@ -2061,6 +2103,42 @@ export default function WizardStep2({ data, platforms, onChange }: WizardStep2Pr
                   >
                     ✕
                   </button>
+                </div>
+
+                <div className="mt-3 rounded-lg border border-slate-200 p-3">
+                  <p className="mb-2 text-sm font-medium text-slate-700">Or upload manual data file</p>
+                  <div className="flex flex-wrap items-center gap-3">
+                    <input
+                      type="file"
+                      accept=".csv,.xlsx,.xls"
+                      onChange={(e) => {
+                        const file = e.target.files?.[0] ?? null;
+                        void updateManualDataUploadFile(index, file);
+                      }}
+                      className="block text-sm text-slate-600"
+                    />
+                    {source.source_config?.upload_file &&
+                    typeof source.source_config.upload_file === "object" ? (
+                      <span className="rounded-full border border-slate-200 bg-slate-50 px-2 py-1 text-xs text-slate-700">
+                        uploaded: {String((source.source_config.upload_file as Record<string, unknown>).filename ?? "file")}
+                      </span>
+                    ) : null}
+                    <button
+                      type="button"
+                      onClick={() => void updateManualDataUploadFile(index, null)}
+                      className="rounded border border-slate-300 px-2 py-1 text-xs hover:bg-slate-50"
+                    >
+                      Clear upload
+                    </button>
+                  </div>
+                  <p className="mt-2 text-xs text-slate-500">
+                    Supported: CSV, XLSX. Uploaded manual file is stored in dashboard config and used by preview and runtime.
+                  </p>
+                  {source.source_config?.force_fallback_channel ? (
+                    <p className="mt-2 text-xs text-slate-500">
+                      File channel column will be ignored. Every row will use the fallback channel above.
+                    </p>
+                  ) : null}
                 </div>
               </div>
               {manualDataPreview[index] ? (

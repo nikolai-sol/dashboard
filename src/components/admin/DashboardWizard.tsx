@@ -93,10 +93,15 @@ function isStepComplete(step: number, formData: DashboardFormData) {
     if (actualCount === 0 && customTableCount === 0 && manualDataCount === 0) return false;
     const manualDataSources = formData.sources.filter((source) => source.platform === "manual_data");
     if (manualDataCount > 0) {
-      const allManualHaveUrl = manualDataSources.every(
-        (s) => String(s.source_config?.sheet_url ?? "").trim().length > 0,
-        );
-      if (!allManualHaveUrl) return false;
+      const allManualHaveInput = manualDataSources.every((source) => {
+        const sheetUrl = String(source.source_config?.sheet_url ?? "").trim();
+        const hasUpload =
+          !!source.source_config &&
+          typeof source.source_config.upload_file === "object" &&
+          source.source_config.upload_file;
+        return Boolean(sheetUrl || hasUpload);
+      });
+      if (!allManualHaveInput) return false;
     }
     if (leadsSources.length > 0) {
       const allLeadsHaveInput = leadsSources.every((source) => {

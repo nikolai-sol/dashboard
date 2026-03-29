@@ -52,6 +52,42 @@ type MultibrandSummary = MultibrandBrandSummary & {
   platforms_count: number;
 };
 
+function buildAwarenessTotals(data: DashboardData | null | undefined) {
+  const platforms = data?.platforms ?? [];
+  const boundPromopages = data?.bound_promopages?.by_channel ?? [];
+
+  const baseImpressions = platforms.reduce((sum, item) => sum + item.impressions, 0);
+  const baseClicks = platforms.reduce((sum, item) => sum + item.clicks, 0);
+  const baseSpend = platforms.reduce((sum, item) => sum + item.spend, 0);
+  const baseConversions = platforms.reduce((sum, item) => sum + item.conversions, 0);
+  const baseViews = platforms.reduce((sum, item) => sum + item.views, 0);
+  const baseReach = platforms.reduce((sum, item) => sum + item.reach, 0);
+
+  const promoImpressions = boundPromopages.reduce((sum, item) => sum + item.impressions, 0);
+  const promoClicks = boundPromopages.reduce((sum, item) => sum + item.clicks, 0);
+  const promoSpend = boundPromopages.reduce((sum, item) => sum + item.spend, 0);
+  const promoViews = boundPromopages.reduce((sum, item) => sum + item.views, 0);
+  const promoReach = boundPromopages.reduce((sum, item) => sum + item.reach, 0);
+
+  const totalImpressions = baseImpressions + promoImpressions;
+  const totalClicks = baseClicks + promoClicks;
+  const totalSpend = baseSpend + promoSpend;
+  const totalConversions = baseConversions;
+  const totalViews = baseViews + promoViews;
+  const totalReach = baseReach + promoReach;
+  const avgCtr = totalImpressions > 0 ? (totalClicks / totalImpressions) * 100 : 0;
+
+  return {
+    totalImpressions,
+    totalClicks,
+    totalSpend,
+    totalConversions,
+    totalViews,
+    totalReach,
+    avgCtr,
+  };
+}
+
 function money(value: number, currency = "EUR", locale = "en-US") {
   return new Intl.NumberFormat(locale, {
     style: "currency",
@@ -465,18 +501,19 @@ export default function DashboardByIdPage() {
             brand.id,
           );
           const brandData = result.data;
+          const brandTotals = buildAwarenessTotals(brandData);
           return {
             id: brand.id,
             label: brand.label,
             color: brand.color,
             description: brand.description,
-            total_impressions: brandData?.kpi.total_impressions ?? 0,
-            total_clicks: brandData?.kpi.total_clicks ?? 0,
-            total_spend: brandData?.kpi.total_spend ?? 0,
-            total_conversions: brandData?.kpi.total_conversions ?? 0,
-            avg_ctr: brandData?.kpi.avg_ctr ?? 0,
-            total_views: brandData?.platforms.reduce((s, p) => s + p.views, 0) ?? 0,
-            total_reach: brandData?.platforms.reduce((s, p) => s + p.reach, 0) ?? 0,
+            total_impressions: brandTotals.totalImpressions,
+            total_clicks: brandTotals.totalClicks,
+            total_spend: brandTotals.totalSpend,
+            total_conversions: brandTotals.totalConversions,
+            avg_ctr: brandTotals.avgCtr,
+            total_views: brandTotals.totalViews,
+            total_reach: brandTotals.totalReach,
             platforms_count: brandData?.platforms.length ?? 0,
             channels_count: brandData?.channel_performance?.length ?? 0,
           } satisfies MultibrandSummary;
@@ -494,6 +531,27 @@ export default function DashboardByIdPage() {
       cancelled = true;
     };
   }, [dashboard?.dashboard.multibrand, dashboardId, dateRange, viewerAccessToken]);
+
+  const multibrandExecutiveTotals = useMemo(() => {
+    return brandSummaries.reduce(
+      (acc, brand) => {
+        acc.impressions += brand.total_impressions;
+        acc.clicks += brand.total_clicks;
+        acc.spend += brand.total_spend;
+        acc.conversions += brand.total_conversions;
+        acc.views += brand.total_views;
+        acc.reach += brand.total_reach;
+        return acc;
+      },
+      { impressions: 0, clicks: 0, spend: 0, conversions: 0, views: 0, reach: 0 },
+    );
+  }, [brandSummaries]);
+
+  const multibrandExecutiveCtr = useMemo(() => {
+    return multibrandExecutiveTotals.impressions > 0
+      ? (multibrandExecutiveTotals.clicks / multibrandExecutiveTotals.impressions) * 100
+      : 0;
+  }, [multibrandExecutiveTotals.clicks, multibrandExecutiveTotals.impressions]);
 
   const totals = useMemo(() => {
     const baseImpressions = filteredPlatforms.reduce((sum, item) => sum + item.impressions, 0);
@@ -1306,13 +1364,27 @@ export default function DashboardByIdPage() {
 
   // ── Multibrand executive page: show when type=multibrand and no brand selected ──
   if (dashboardType === "multibrand" && !selectedBrandId && multibrand?.enabled && !isPdfMode) {
-    const totalReach = dashboard.platforms.reduce((s, p) => s + p.reach, 0);
-    const totalViews = dashboard.platforms.reduce((s, p) => s + p.views, 0);
     const execKpis = [
-      { key: "impressions", label: "Показы", formatted: compact(dashboard.kpi.total_impressions, locale) },
-      { key: "clicks", label: "Клики", formatted: compact(dashboard.kpi.total_clicks, locale) },
-      { key: "ctr", label: "CTR", formatted: `${dashboard.kpi.avg_ctr.toFixed(2)}%` },
-      { key: "reach", label: "Охват", formatted: compact(totalReach, locale) },
+      {
+        key: "impressions",
+        label: "Показы",
+        formatted: compact(multibrandExecutiveTotals.impressions, locale),
+      },
+      {
+        key: "clicks",
+        label: "Клики",
+        formatted: compact(multibrandExecutiveTotals.clicks, locale),
+      },
+      {
+        key: "ctr",
+        label: "CTR",
+        formatted: `${multibrandExecutiveCtr.toFixed(2)}%`,
+      },
+      {
+        key: "reach",
+        label: "Охват",
+        formatted: compact(multibrandExecutiveTotals.reach, locale),
+      },
     ];
 
     return (

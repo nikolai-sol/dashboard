@@ -22,7 +22,7 @@ import { fetchCustomTable, fetchMediaPlanFromSourceConfig, groupByChannel, type 
 import {
   aggregateByChannel,
   aggregateByPlatform,
-  fetchManualData,
+  fetchManualDataFromSourceConfig,
   filterByDateRange,
   getTimeseriesByPlatform,
   type ManualDataRow,
@@ -942,7 +942,7 @@ function sumManualChannels(
 ): { impressions: number; reach: number; clicks: number; spend: number; conversions: number; views: number } {
   const ids = new Set(platformCampaignIds.map((id) => id.replace(/^manual:/, "")));
   let impressions = 0;
-  const reach = 0;
+  let reach = 0;
   let clicks = 0;
   let spend = 0;
   let conversions = 0;
@@ -951,6 +951,7 @@ function sumManualChannels(
     const key = `${ch.platform}|${ch.channel}`;
     if (ids.has(key)) {
       impressions += ch.impressions;
+      reach += ch.reach;
       clicks += ch.clicks;
       spend += ch.spend;
       conversions += ch.conversions;
@@ -1213,6 +1214,7 @@ async function buildPlanVsFactRowsByChannel(
       cpv_fact: Number(cpvFact.toFixed(4)),
       cpa_plan: Number(cpaPlan.toFixed(4)),
       cpa_fact: Number(cpaFact.toFixed(4)),
+      __manual_backed: bindings.some((binding) => binding.source_key === "manual_data"),
     };
   });
 }
@@ -1485,10 +1487,12 @@ function mergeManualChannelPerformance(
       const sourceKey = resolveSourceKey(platformId);
       const meta = PLATFORM_COLORS[platformId];
       const impressions = row.impressions;
+      const reach = row.reach;
       const clicks = row.clicks;
       const spend = row.spend;
       const views = row.views;
       const conversions = row.conversions;
+      const frequency = reach > 0 ? impressions / reach : 0;
 
       return {
         channel: row.channel,
@@ -1505,6 +1509,8 @@ function mergeManualChannelPerformance(
         plan_only: false,
         metrics: {
           impressions: buildMetricSummary("impressions", impressions, 0),
+          reach: buildMetricSummary("reach", reach, 0),
+          frequency: buildMetricSummary("frequency", frequency, 0),
           clicks: buildMetricSummary("clicks", clicks, 0),
           views: buildMetricSummary("views", views, 0),
           conversions: buildMetricSummary("conversions", conversions, 0),
@@ -1524,6 +1530,7 @@ function mergeManualChannelPerformance(
 function buildPlanBasedPlatformSpend(
   platformStats: PlatformStats[],
   planRows: MediaPlanRow[],
+  excludedPlatformIds: Set<string> = new Set(),
 ): Map<string, number> {
   const rowsByPlatform = new Map<string, MediaPlanRow[]>();
   for (const row of planRows) {
@@ -1537,6 +1544,7 @@ function buildPlanBasedPlatformSpend(
 
   const spendByPlatform = new Map<string, number>();
   for (const stat of platformStats) {
+    if (excludedPlatformIds.has(stat.id)) continue;
     const planPlatformRows = rowsByPlatform.get(stat.id) ?? [];
     if (!planPlatformRows.length) continue;
 
@@ -1575,6 +1583,7 @@ function buildPlanBasedPlatformSpend(
 function buildPlanBasedTimeseriesSpend(
   timeseries: TimeSeriesPoint[],
   planRows: MediaPlanRow[],
+  excludedPlatformIds: Set<string> = new Set(),
 ): void {
   const rowsByPlatform = new Map<string, MediaPlanRow[]>();
   for (const row of planRows) {
@@ -1587,6 +1596,7 @@ function buildPlanBasedTimeseriesSpend(
   }
 
   timeseries.forEach((point) => {
+    if (excludedPlatformIds.has(point.platform)) return;
     const planPlatformRows = rowsByPlatform.get(point.platform) ?? [];
     if (!planPlatformRows.length) return;
 
@@ -1629,10 +1639,16 @@ function deriveFactSpendFromPlanRow(row: PlanVsFactItem): number {
 }
 
 function applyPlanBasedPlanVsFactSpend(rows: PlanVsFactItem[]): PlanVsFactItem[] {
-  return rows.map((row) => ({
-    ...row,
-    budget_fact: Number(deriveFactSpendFromPlanRow(row).toFixed(2)),
-  }));
+  return rows.map((row) => {
+    const manualBacked = Boolean((row as PlanVsFactItem & { __manual_backed?: boolean }).__manual_backed);
+    if (manualBacked) {
+      return row;
+    }
+    return {
+      ...row,
+      budget_fact: Number(deriveFactSpendFromPlanRow(row).toFixed(2)),
+    };
+  });
 }
 
 function buildPlatformSpendFromPlanVsFact(rows: PlanVsFactItem[]): Map<string, number> {
@@ -1775,6 +1791,7 @@ export async function loadDashboardData(
   const promopagesTimeseriesRaw: PromopagesTimeSeriesPoint[] = [];
   const promopagesCampaignsRaw: PromopagesCampaignItem[] = [];
   const actualAdsSourceKeys = new Set<string>();
+  const manualPlatformIds = new Set<string>();
   const customTables: CustomTableData[] = [];
   const leadsRows: LeadRow[] = [];
   let manualChannels: ManualChannelData[] = [];
@@ -1784,13 +1801,12 @@ export async function loadDashboardData(
       try {
         if (source.platform === "manual_data" && source.role === "actual") {
           const sourceConfig = parseJson(source.source_config);
-          const sheetUrl = String(sourceConfig?.sheet_url ?? "").trim();
-          if (sheetUrl) {
+          const hasManualInput =
+            Boolean(String(sourceConfig?.sheet_url ?? "").trim()) ||
+            (typeof sourceConfig?.upload_file === "object" && sourceConfig?.upload_file);
+          if (hasManualInput) {
             try {
-              const allRows = await fetchManualData(sheetUrl, {
-                defaultPlatform: String(sourceConfig?.platform ?? "").trim(),
-                defaultChannel: String(sourceConfig?.channel ?? "").trim(),
-              });
+              const allRows = await fetchManualDataFromSourceConfig(sourceConfig);
               const filtered = filterManualRowsByBrand(
                 filterByDateRange(allRows, range.from, range.to),
                 activeBrand?.channel_patterns ?? [],
@@ -1799,6 +1815,7 @@ export async function loadDashboardData(
               const byPlatform = aggregateByPlatform(filtered);
               for (const p of byPlatform) {
                 const platformId = p.platform;
+                manualPlatformIds.add(platformId);
                 const meta = PLATFORM_COLORS[platformId];
                 platformStatsRaw.push({
                   id: platformId,
@@ -2110,9 +2127,9 @@ export async function loadDashboardData(
     }
 
     if (spendSource === "media_plan_derived") {
-      buildPlanBasedTimeseriesSpend(timeseriesResults, planRows);
+      buildPlanBasedTimeseriesSpend(timeseriesResults, planRows, manualPlatformIds);
 
-      const prevPlanSpendByPlatform = buildPlanBasedPlatformSpend(prevPlatformResults, planRows);
+      const prevPlanSpendByPlatform = buildPlanBasedPlatformSpend(prevPlatformResults, planRows, manualPlatformIds);
 
       prevPlatformResults.forEach((row) => {
         const derivedSpend = prevPlanSpendByPlatform.get(row.id);
@@ -2210,6 +2227,7 @@ export async function loadDashboardData(
     if (spendSource === "media_plan_derived") {
       const currentPlanSpendByPlatform = buildPlatformSpendFromPlanVsFact(planVsFact);
       platformResults.forEach((row) => {
+        if (manualPlatformIds.has(row.id)) return;
         const derivedSpend = currentPlanSpendByPlatform.get(row.id);
         if (derivedSpend === undefined) return;
         row.spend = derivedSpend;

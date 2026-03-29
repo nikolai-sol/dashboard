@@ -196,6 +196,36 @@ export default function WizardStepBinding({ data, onChange }: WizardStepBindingP
     };
   }, [actualSources, data.config.period_from, data.config.period_to]);
 
+  useEffect(() => {
+    if (loadingCampaigns) return;
+
+    const activeSourceKeys = new Set(
+      actualSources.map((source) => (source.platform === "manual_data" ? "manual_data" : resolveSourceKey(source.platform))),
+    );
+    const validManualBindingIds = new Set(
+      campaigns
+        .filter((campaign) => campaign.source_key === "manual_data")
+        .map((campaign) => campaign.platform_campaign_id),
+    );
+
+    const sanitizedBindings = data.media_plan_bindings.filter((binding) => {
+      if (!activeSourceKeys.has(binding.source_key)) {
+        return false;
+      }
+      if (binding.source_key === "manual_data") {
+        return validManualBindingIds.has(binding.platform_campaign_id);
+      }
+      return true;
+    });
+
+    if (sanitizedBindings.length !== data.media_plan_bindings.length) {
+      onChange({
+        ...data,
+        media_plan_bindings: sanitizedBindings,
+      });
+    }
+  }, [actualSources, campaigns, data, loadingCampaigns, onChange]);
+
   const groupedCampaigns = useMemo(() => {
     const filtered = campaigns.filter((campaign) => {
       const match = search.trim().toLowerCase();

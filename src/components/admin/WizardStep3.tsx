@@ -351,7 +351,7 @@ export default function WizardStep3({ data, onChange }: WizardStep3Props) {
             <div>
               <h4 className="text-sm font-semibold text-slate-900">Multibrand filters</h4>
               <p className="mt-1 text-xs text-slate-500">
-                Define the brands for the new overlay. Channel patterns drive plan/channel layers, while source filters narrow actual source data per brand.
+                Define the executive brand slices for this dashboard. Each brand card behaves like its own awareness dashboard: source filters narrow actual campaign data, and brand channel rules map plan rows and fact channels to the same brand.
               </p>
             </div>
             <button
@@ -424,7 +424,7 @@ export default function WizardStep3({ data, onChange }: WizardStep3Props) {
                   </label>
 
                   <label className="text-sm">
-                    <span className="mb-1 block font-medium text-slate-700">Channel patterns</span>
+                    <span className="mb-1 block font-medium text-slate-700">Brand channel rules</span>
                     <input
                       className="w-full rounded-lg border border-slate-300 px-3 py-2"
                       value={brand.channel_patterns.join(", ")}
@@ -436,10 +436,10 @@ export default function WizardStep3({ data, onChange }: WizardStep3Props) {
                             .filter(Boolean),
                         })
                       }
-                      placeholder="ХЗН, %ХЗН%"
+                      placeholder="ХЗН, HZN, exact channel name"
                     />
                     <span className="mt-1 block text-xs text-slate-500">
-                      Used for media plan rows and channel-level brand matching.
+                      Used for media plan rows and channel-level brand matching. You can list brand words, SQL-like patterns with % and _, or exact fact channel names to assign a channel directly to this brand.
                     </span>
                   </label>
                 </div>
@@ -448,6 +448,9 @@ export default function WizardStep3({ data, onChange }: WizardStep3Props) {
                   <div className="text-xs font-semibold uppercase tracking-[0.16em] text-slate-500">
                     Source Filters
                   </div>
+                  <p className="text-xs text-slate-500">
+                    These filters build the actual awareness slice for the brand. Leave a platform on <span className="font-medium text-slate-700">All campaigns</span> only if that platform is not used for brand separation.
+                  </p>
                   {actualSources.map((source) => {
                     const brandFilter = getBrandSourceFilter(brandIndex, source.platform);
                     return (

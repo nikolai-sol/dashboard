@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import { fetchManualData } from "@/lib/manual-data-fetcher";
+import { fetchManualData, fetchManualDataFromSourceConfig } from "@/lib/manual-data-fetcher";
 
 export async function GET(request: Request) {
   const url = new URL(request.url);
@@ -14,6 +14,23 @@ export async function GET(request: Request) {
     const rows = await fetchManualData(sheetUrl, { defaultPlatform, defaultChannel });
     const preview = rows.slice(0, 5);
     return NextResponse.json({ rows: preview });
+  } catch (error) {
+    return NextResponse.json(
+      { error: "Failed to fetch manual data", details: String(error) },
+      { status: 502 },
+    );
+  }
+}
+
+export async function POST(request: Request) {
+  const body = (await request.json().catch(() => ({}))) as { source_config?: unknown };
+  const sourceConfig = body.source_config;
+
+  try {
+    const rows = await fetchManualDataFromSourceConfig(
+      sourceConfig && typeof sourceConfig === "object" ? (sourceConfig as Record<string, unknown>) : null,
+    );
+    return NextResponse.json({ rows: rows.slice(0, 5) });
   } catch (error) {
     return NextResponse.json(
       { error: "Failed to fetch manual data", details: String(error) },

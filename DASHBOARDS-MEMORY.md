@@ -157,6 +157,13 @@ Current expectations:
 - Brand selection is passed through the public dashboard route via query param:
   - `brand=<brand_id>`
 - Brand selection works by applying brand-specific source filters and channel patterns on top of the existing awareness loader, not by replacing the shared dashboard architecture.
+- Executive totals for a `multibrand` dashboard must be calculated only as the sum of brand cards.
+- Each brand card must behave like a normal awareness slice for that brand.
+- `multibrand` must not introduce a separate KPI math path for awareness metrics.
+- Brand setup semantics:
+  - `source_filters` define which actual source campaigns belong to the brand
+  - `channel_patterns` define which media-plan rows and fact channel names belong to the brand
+  - exact channel names are allowed in `channel_patterns` and are treated as direct brand assignment for channel-level facts
 - Admin manager setup lives in Step 1 and Step 3:
   - Step 1 enables multibrand mode and executive title/subtitle
   - Step 3 defines brands, channel patterns, and per-source brand filters

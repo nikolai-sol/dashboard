@@ -14,6 +14,7 @@ type ManualDataTableProps = {
   labels?: {
     source: string;
     impressions: string;
+    reach: string;
     clicks: string;
     sessions: string;
     ctr: string;
@@ -47,6 +48,7 @@ export default function ManualDataTable({
       labels ?? {
         source: "Source / Channel",
         impressions: "Impressions",
+        reach: "Reach",
         clicks: "Clicks",
         sessions: "Sessions",
         ctr: "CTR",
@@ -68,6 +70,7 @@ export default function ManualDataTable({
     }
 
     const hasImpressions = rows.some((r) => r.impressions > 0);
+    const hasReach = rows.some((r) => r.reach > 0);
     const hasClicks = rows.some((r) => r.clicks > 0);
     const hasSessions = rows.some((r) => r.sessions > 0);
     const hasCtr = rows.some((r) => r.impressions > 0 && r.clicks > 0);
@@ -77,6 +80,7 @@ export default function ManualDataTable({
 
     const cols: Array<{ key: string; label: string; format: "num" | "pct" | "currency" }> = [];
     if (hasImpressions) cols.push({ key: "impressions", label: copy.impressions, format: "num" });
+    if (hasReach) cols.push({ key: "reach", label: copy.reach, format: "num" });
     if (hasClicks) cols.push({ key: "clicks", label: copy.clicks, format: "num" });
     if (hasSessions) cols.push({ key: "sessions", label: copy.sessions, format: "num" });
     if (hasCtr) cols.push({ key: "ctr", label: copy.ctr, format: "pct" });
@@ -104,6 +108,7 @@ export default function ManualDataTable({
         platform,
         channel: "",
         impressions: sortedChannels.reduce((s, r) => s + r.impressions, 0),
+        reach: sortedChannels.reduce((s, r) => s + r.reach, 0),
         clicks: sortedChannels.reduce((s, r) => s + r.clicks, 0),
         spend: sortedChannels.reduce((s, r) => s + r.spend, 0),
         views: sortedChannels.reduce((s, r) => s + r.views, 0),
@@ -117,6 +122,7 @@ export default function ManualDataTable({
       platform: "",
       channel: "",
       impressions: rows.reduce((s, r) => s + r.impressions, 0),
+      reach: rows.reduce((s, r) => s + r.reach, 0),
       clicks: rows.reduce((s, r) => s + r.clicks, 0),
       spend: rows.reduce((s, r) => s + r.spend, 0),
       views: rows.reduce((s, r) => s + r.views, 0),
@@ -142,6 +148,7 @@ export default function ManualDataTable({
     col: (typeof columns)[number],
   ): string | number => {
     if (col.key === "impressions") return row.impressions;
+    if (col.key === "reach") return row.reach;
     if (col.key === "clicks") return row.clicks;
     if (col.key === "sessions") return row.sessions;
     if (col.key === "ctr")

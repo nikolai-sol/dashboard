@@ -2,7 +2,7 @@ import { NextResponse } from "next/server";
 import pool from "@/lib/db";
 import { loadDashboardWithSources } from "@/lib/admin-dashboards";
 import { getCampaignCatalog } from "@/lib/canonical-adapter";
-import { fetchManualData, aggregateByChannel } from "@/lib/manual-data-fetcher";
+import { fetchManualDataFromSourceConfig, aggregateByChannel } from "@/lib/manual-data-fetcher";
 import { resolveSourceKey } from "@/lib/source-mapping";
 
 type SourceSpec = {
@@ -10,6 +10,7 @@ type SourceSpec = {
   source_key?: string;
   account_ids?: string[];
   sheet_url?: string;
+  upload_file?: unknown;
   default_platform?: string;
   default_channel?: string;
 };
@@ -40,6 +41,7 @@ export async function GET(request: Request) {
       source_key: string;
       account_ids?: string[];
       sheet_url?: string;
+      upload_file?: unknown;
       default_platform?: string;
       default_channel?: string;
     }> = [];
@@ -61,6 +63,7 @@ export async function GET(request: Request) {
                 source_key: "manual_data",
                 account_ids: [],
                 sheet_url: sheetUrl,
+                upload_file: source.source_config?.upload_file,
                 default_platform: String(source.source_config?.platform ?? "").trim(),
                 default_channel: String(source.source_config?.channel ?? "").trim(),
               });
@@ -85,11 +88,11 @@ export async function GET(request: Request) {
           return;
         }
         if (sourceKey === "manual_data" || source.platform === "manual_data") {
-          const sheetUrl = String(source.sheet_url ?? "").trim();
           resolvedSources.push({
             source_key: "manual_data",
             account_ids: [],
-            sheet_url: sheetUrl,
+            sheet_url: String(source.sheet_url ?? "").trim(),
+            upload_file: source.upload_file,
             default_platform: String(source.default_platform ?? "").trim(),
             default_channel: String(source.default_channel ?? "").trim(),
           });
@@ -106,7 +109,9 @@ export async function GET(request: Request) {
       });
     }
 
-    const manualSources = resolvedSources.filter((s) => s.source_key === "manual_data" && s.sheet_url);
+    const manualSources = resolvedSources.filter(
+      (s) => s.source_key === "manual_data" && (s.sheet_url || s.upload_file),
+    );
     const canonicalSources = resolvedSources.filter((s) => s.source_key !== "manual_data");
 
     const dedupedSources = new Map<string, string[]>();
@@ -137,9 +142,11 @@ export async function GET(request: Request) {
     const manualCampaigns: Array<{ source_key: string; platform_campaign_id: string; campaign_name: string }> = [];
     for (const source of manualSources) {
       try {
-        const rows = await fetchManualData(source.sheet_url!, {
-          defaultPlatform: source.default_platform,
-          defaultChannel: source.default_channel,
+        const rows = await fetchManualDataFromSourceConfig({
+          sheet_url: source.sheet_url,
+          upload_file: source.upload_file,
+          platform: source.default_platform,
+          channel: source.default_channel,
         });
         const byChannel = aggregateByChannel(rows);
         for (const ch of byChannel) {

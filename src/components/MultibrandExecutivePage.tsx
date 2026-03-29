@@ -31,12 +31,6 @@ type Props = {
   onSelectBrand: (brandId: string) => void;
 };
 
-function pctColor(pct: number): string {
-  if (pct >= 70) return "text-emerald-600";
-  if (pct >= 40) return "text-amber-600";
-  return "text-red-500";
-}
-
 function maxOf(brands: MultibrandBrandSummary[], key: keyof MultibrandBrandSummary): number {
   return Math.max(1, ...brands.map((b) => Number(b[key])));
 }

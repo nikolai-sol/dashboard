@@ -291,7 +291,11 @@ export function validateDashboardPayload(payload: DashboardUpsertPayload): strin
         source.source_config && typeof source.source_config.sheet_url === "string"
           ? String(source.source_config.sheet_url).trim()
           : "";
-      if (!sheetUrl) return "Manual data source requires source_config.sheet_url";
+      const hasUpload =
+        Boolean(source.source_config) &&
+        typeof source.source_config?.upload_file === "object" &&
+        source.source_config?.upload_file;
+      if (!sheetUrl && !hasUpload) return "Manual data source requires source_config.sheet_url or upload_file";
     }
     if (source.platform === "leads") {
       const sheetUrl =

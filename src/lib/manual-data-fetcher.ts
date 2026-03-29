@@ -1,4 +1,5 @@
 import Papa from "papaparse";
+import * as XLSX from "xlsx";
 
 export interface ManualDataRow {
   date: string;
@@ -21,7 +22,22 @@ export interface ManualDataRow {
 export interface ManualDataFetchOptions {
   defaultPlatform?: string;
   defaultChannel?: string;
+  forceDefaultChannel?: boolean;
 }
+
+export type ManualDataUploadPayload = {
+  filename: string;
+  mime_type?: string;
+  content_base64: string;
+};
+
+export type ManualDataSourceConfig = {
+  sheet_url?: string;
+  upload_file?: unknown;
+  platform?: string;
+  channel?: string;
+  force_fallback_channel?: unknown;
+};
 
 const cache = new Map<string, { data: ManualDataRow[]; ts: number }>();
 const TTL = 5 * 60 * 1000;
@@ -74,8 +90,24 @@ export function normalizeManualPlatformId(raw: unknown): string {
 }
 
 function normalizeDate(raw: unknown): string {
+  if (typeof raw === "number" && Number.isFinite(raw)) {
+    const serial = Math.trunc(raw);
+    if (serial > 0 && serial < 100000) {
+      const excelEpoch = Date.UTC(1899, 11, 30);
+      const date = new Date(excelEpoch + serial * 24 * 60 * 60 * 1000);
+      const year = date.getUTCFullYear();
+      const month = String(date.getUTCMonth() + 1).padStart(2, "0");
+      const day = String(date.getUTCDate()).padStart(2, "0");
+      return `${year}-${month}-${day}`;
+    }
+  }
+
   const value = String(raw ?? "").trim();
   if (!value) return "";
+
+  if (/^\d{5}$/.test(value)) {
+    return normalizeDate(Number(value));
+  }
 
   if (/^\d{4}-\d{2}-\d{2}$/.test(value)) {
     return value;
@@ -106,10 +138,39 @@ function normalizeDate(raw: unknown): string {
 function toNum(value: unknown): number | null {
   if (value === null || value === undefined || value === "") return null;
   if (typeof value === "number") return Number.isFinite(value) ? value : null;
-  const normalized = String(value)
+  const raw = String(value)
     .trim()
-    .replace(/\s+/g, "")
-    .replace(/,/g, ".");
+    .replace(/[\s\u00A0\u202F]+/g, "");
+  if (!raw) return null;
+
+  let normalized = raw;
+  const hasComma = normalized.includes(",");
+  const hasDot = normalized.includes(".");
+
+  // Handle locale/thousands separators from Sheets exports.
+  if (hasComma && hasDot) {
+    if (normalized.lastIndexOf(".") > normalized.lastIndexOf(",")) {
+      normalized = normalized.replace(/,/g, "");
+    } else {
+      normalized = normalized.replace(/\./g, "").replace(/,/g, ".");
+    }
+  } else if (hasComma) {
+    const commaCount = (normalized.match(/,/g) ?? []).length;
+    if (commaCount > 1) {
+      normalized = normalized.replace(/,/g, "");
+    } else {
+      const [left, right = ""] = normalized.split(",");
+      normalized = right.length === 3 ? `${left}${right}` : `${left}.${right}`;
+    }
+  } else if (hasDot) {
+    const dotCount = (normalized.match(/\./g) ?? []).length;
+    if (dotCount > 1) {
+      const parts = normalized.split(".");
+      const last = parts.pop() ?? "";
+      normalized = last.length === 3 ? [...parts, last].join("") : `${parts.join("")}.${last}`;
+    }
+  }
+
   if (!normalized) return null;
   const n = Number(normalized);
   return Number.isFinite(n) ? n : null;
@@ -140,6 +201,102 @@ function normalizeSheetUrl(sheetUrl: string): string {
   }
 }
 
+function parseUploadPayload(value: unknown): ManualDataUploadPayload | null {
+  if (!value || typeof value !== "object") return null;
+  const input = value as Partial<ManualDataUploadPayload>;
+  const filename = String(input.filename ?? "").trim();
+  const contentBase64 = String(input.content_base64 ?? "").trim();
+  if (!filename || !contentBase64) return null;
+  return {
+    filename,
+    mime_type: input.mime_type ? String(input.mime_type) : undefined,
+    content_base64: contentBase64,
+  };
+}
+
+function normalizeManualDataRow(
+  r: Record<string, unknown>,
+  options: ManualDataFetchOptions = {},
+): ManualDataRow | null {
+  const date = normalizeDate(r.date ?? r.report_date ?? r.day);
+  const platform = normalizeManualPlatformId(r.platform ?? r.source_platform ?? options.defaultPlatform);
+  const channel = options.forceDefaultChannel && options.defaultChannel
+    ? String(options.defaultChannel).trim()
+    : String(
+        r.channel ??
+          r.campaign ??
+          r.campaign_name ??
+          r.campaign_title ??
+          r.source ??
+          options.defaultChannel ??
+          r.platform ??
+          "",
+      ).trim();
+
+  if (!date || !platform || !channel) return null;
+
+  return {
+    date,
+    platform,
+    channel,
+    impressions: toNum(r.impressions),
+    clicks: toNum(r.clicks),
+    spend: toNum(r.spend),
+    views: toNum(r.views),
+    conversions: toNum(r.conversions),
+    reach: toNum(r.reach),
+    sessions: toNum(r.sessions),
+    cr: parsePercent(r.cr),
+    ctr: parsePercent(r.ctr),
+    cpc: toNum(r.cpc),
+    cpm: toNum(r.cpm),
+    cpv: toNum(r.cpv),
+  };
+}
+
+function toObjectsFromWorksheet(worksheet: XLSX.WorkSheet): Record<string, unknown>[] {
+  return XLSX.utils.sheet_to_json<Record<string, unknown>>(worksheet, {
+    defval: "",
+    raw: true,
+  }).map((row) => {
+    const normalized: Record<string, unknown> = {};
+    for (const [key, value] of Object.entries(row)) {
+      normalized[key.trim().toLowerCase().replace(/\s+/g, "_")] = value;
+    }
+    return normalized;
+  });
+}
+
+function parseRows(rows: Record<string, unknown>[], options: ManualDataFetchOptions = {}): ManualDataRow[] {
+  return rows.map((row) => normalizeManualDataRow(row, options)).filter((row): row is ManualDataRow => Boolean(row));
+}
+
+function parseUploadFile(upload: ManualDataUploadPayload, options: ManualDataFetchOptions = {}): ManualDataRow[] {
+  const filename = upload.filename.toLowerCase();
+  const mimeType = String(upload.mime_type ?? "").toLowerCase();
+  const buffer = Buffer.from(upload.content_base64, "base64");
+
+  if (
+    filename.endsWith(".xlsx") ||
+    filename.endsWith(".xls") ||
+    mimeType.includes("spreadsheet") ||
+    mimeType.includes("excel")
+  ) {
+    const workbook = XLSX.read(buffer, { type: "buffer" });
+    const firstSheetName = workbook.SheetNames[0];
+    if (!firstSheetName) return [];
+    return parseRows(toObjectsFromWorksheet(workbook.Sheets[firstSheetName]), options);
+  }
+
+  const parsed = Papa.parse<Record<string, unknown>>(buffer.toString("utf8"), {
+    header: true,
+    skipEmptyLines: true,
+    dynamicTyping: true,
+    transformHeader: (h: string) => h.trim().toLowerCase().replace(/\s+/g, "_"),
+  });
+  return parseRows(parsed.data ?? [], options);
+}
+
 export async function fetchManualData(
   sheetUrl: string,
   options: ManualDataFetchOptions = {},
@@ -149,7 +306,7 @@ export async function fetchManualData(
   const fetchUrl = normalizeSheetUrl(sheetUrl);
   if (!fetchUrl) return [];
 
-  const cacheKey = `${fetchUrl}::${options.defaultPlatform ?? ""}::${options.defaultChannel ?? ""}`;
+  const cacheKey = `${fetchUrl}::${options.defaultPlatform ?? ""}::${options.defaultChannel ?? ""}::${options.forceDefaultChannel ? "force" : "auto"}`;
   const cached = cache.get(cacheKey);
   if (cached && Date.now() - cached.ts < TTL) return cached.data;
 
@@ -166,61 +323,26 @@ export async function fetchManualData(
     dynamicTyping: true,
     transformHeader: (h: string) => h.trim().toLowerCase().replace(/\s+/g, "_"),
   });
-
-  const data = (parsed.data ?? [])
-    .map((r) => {
-      const date = normalizeDate(r.date ?? r.report_date ?? r.day);
-      const platform = normalizeManualPlatformId(r.platform ?? r.source_platform ?? options.defaultPlatform);
-      const channel = String(
-        r.channel ??
-          r.campaign ??
-          r.campaign_name ??
-          r.campaign_title ??
-          r.source ??
-          options.defaultChannel ??
-          r.platform ??
-          "",
-      ).trim();
-
-      return {
-        date,
-        platform,
-        channel,
-        impressions: toNum(r.impressions),
-        clicks: toNum(r.clicks),
-        spend: toNum(r.spend),
-        views: toNum(r.views),
-        conversions: toNum(r.conversions),
-        reach: toNum(r.reach),
-        sessions: toNum(r.sessions),
-        cr: parsePercent(r.cr),
-        ctr: parsePercent(r.ctr),
-        cpc: toNum(r.cpc),
-        cpm: toNum(r.cpm),
-        cpv: toNum(r.cpv),
-      };
-    })
-    .filter((r) => r.date && r.platform && r.channel)
-    .map((r) => ({
-      date: r.date,
-      platform: r.platform,
-      channel: r.channel,
-      impressions: toNum(r.impressions),
-      clicks: toNum(r.clicks),
-      spend: toNum(r.spend),
-      views: toNum(r.views),
-      conversions: toNum(r.conversions),
-      reach: toNum(r.reach),
-      sessions: toNum(r.sessions),
-      cr: parsePercent(r.cr),
-      ctr: parsePercent(r.ctr),
-      cpc: toNum(r.cpc),
-      cpm: toNum(r.cpm),
-      cpv: toNum(r.cpv),
-    })) as ManualDataRow[];
+  const data = parseRows(parsed.data ?? [], options);
 
   cache.set(cacheKey, { data, ts: Date.now() });
   return data;
+}
+
+export async function fetchManualDataFromSourceConfig(
+  sourceConfig: ManualDataSourceConfig | null | undefined,
+): Promise<ManualDataRow[]> {
+  const config = sourceConfig ?? {};
+  const options: ManualDataFetchOptions = {
+    defaultPlatform: String(config.platform ?? "").trim(),
+    defaultChannel: String(config.channel ?? "").trim(),
+    forceDefaultChannel: Boolean(config.force_fallback_channel),
+  };
+  const upload = parseUploadPayload(config.upload_file);
+  if (upload) {
+    return parseUploadFile(upload, options);
+  }
+  return fetchManualData(String(config.sheet_url ?? ""), options);
 }
 
 export function filterByDateRange(rows: ManualDataRow[], from: string, to: string): ManualDataRow[] {
@@ -274,6 +396,7 @@ export function aggregateByChannel(
   platform: string;
   channel: string;
   impressions: number;
+  reach: number;
   clicks: number;
   spend: number;
   views: number;
@@ -283,7 +406,17 @@ export function aggregateByChannel(
   const key = (r: ManualDataRow) => `${r.platform}|${r.channel}`;
   const map = new Map<
     string,
-    { platform: string; channel: string; impressions: number; clicks: number; spend: number; views: number; conversions: number; sessions: number }
+    {
+      platform: string;
+      channel: string;
+      impressions: number;
+      reach: number;
+      clicks: number;
+      spend: number;
+      views: number;
+      conversions: number;
+      sessions: number;
+    }
   >();
   for (const r of rows) {
     const k = key(r);
@@ -292,6 +425,7 @@ export function aggregateByChannel(
         platform: r.platform,
         channel: r.channel,
         impressions: 0,
+        reach: 0,
         clicks: 0,
         spend: 0,
         views: 0,
@@ -301,6 +435,7 @@ export function aggregateByChannel(
     }
     const a = map.get(k)!;
     a.impressions += r.impressions ?? 0;
+    a.reach += r.reach ?? 0;
     a.clicks += r.clicks ?? 0;
     a.spend += r.spend ?? 0;
     a.views += r.views ?? 0;

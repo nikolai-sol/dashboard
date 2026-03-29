@@ -268,6 +268,7 @@ export interface ManualChannelData {
   platform: string;
   channel: string;
   impressions: number;
+  reach: number;
   clicks: number;
   spend: number;
   views: number;
