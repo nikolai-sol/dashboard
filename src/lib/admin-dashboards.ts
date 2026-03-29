@@ -1,4 +1,5 @@
 import type { PoolConnection, ResultSetHeader, RowDataPacket } from "mysql2/promise";
+import { normalizeMultibrandConfig } from "@/lib/multibrand";
 
 export type DashboardFilterInput = {
   filter_type: "name_pattern" | "id_list" | "all";
@@ -25,7 +26,7 @@ export type DashboardUpsertPayload = {
   client_id: string;
   client_name: string;
   dashboard_name: string;
-  dashboard_type: "awareness" | "performance" | "overview";
+  dashboard_type: "awareness" | "performance" | "overview" | "multibrand";
   config: Record<string, unknown>;
   sources: DashboardSourceInput[];
   media_plan_bindings: MediaPlanBindingInput[];
@@ -36,7 +37,7 @@ export type DashboardWithSources = {
   client_id: string;
   client_name: string;
   dashboard_name: string;
-  dashboard_type: "awareness" | "performance" | "overview";
+  dashboard_type: "awareness" | "performance" | "overview" | "multibrand";
   is_active: number | boolean;
   config: Record<string, unknown>;
   created_at?: string;
@@ -68,6 +69,8 @@ export type DashboardPayloadLogSummary = {
     visible_metrics_count: number;
     section_order_count: number;
     custom_kpi_cards_count?: number;
+    multibrand_enabled?: boolean;
+    multibrand_brands_count?: number;
   };
   sources: Array<{
     platform: string;
@@ -206,7 +209,7 @@ function normalizeCustomKpiCard(raw: unknown) {
 export function normalizeDashboardPayload(raw: unknown): DashboardUpsertPayload {
   const input = (raw ?? {}) as Partial<DashboardUpsertPayload>;
   const dashboardType =
-    input.dashboard_type === "performance" || input.dashboard_type === "overview"
+    input.dashboard_type === "performance" || input.dashboard_type === "overview" || input.dashboard_type === "multibrand"
       ? input.dashboard_type
       : "awareness";
 
@@ -224,6 +227,7 @@ export function normalizeDashboardPayload(raw: unknown): DashboardUpsertPayload 
   config.custom_kpi_cards = customKpiCardsInput
     .map((item) => normalizeCustomKpiCard(item))
     .filter(Boolean);
+  config.multibrand = normalizeMultibrandConfig(config.multibrand);
   config.language = String(config.language ?? "en") === "ru" ? "ru" : "en";
   config.filter_scope =
     String(config.filter_scope ?? "both") === "channel"
@@ -369,6 +373,16 @@ export function summarizeDashboardPayloadForLog(
       custom_kpi_cards_count: Array.isArray(payload.config.custom_kpi_cards)
         ? payload.config.custom_kpi_cards.length
         : 0,
+      multibrand_enabled:
+        !!payload.config.multibrand &&
+        typeof payload.config.multibrand === "object" &&
+        Boolean((payload.config.multibrand as { enabled?: unknown }).enabled),
+      multibrand_brands_count:
+        !!payload.config.multibrand &&
+        typeof payload.config.multibrand === "object" &&
+        Array.isArray((payload.config.multibrand as { brands?: unknown[] }).brands)
+          ? ((payload.config.multibrand as { brands?: unknown[] }).brands?.length ?? 0)
+          : 0,
     },
     sources: payload.sources.map((source) => {
       const sourceConfig = source.source_config ?? {};

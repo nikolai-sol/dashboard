@@ -25,6 +25,7 @@ import {
   fetchManualData,
   filterByDateRange,
   getTimeseriesByPlatform,
+  type ManualDataRow,
   normalizeManualPlatformId,
 } from "@/lib/manual-data-fetcher";
 import {
@@ -41,6 +42,11 @@ import {
   resolveSourceType,
 } from "@/lib/source-mapping";
 import { normalizeDashboardLanguage } from "@/lib/dashboard-i18n";
+import {
+  findMultibrandBrand,
+  matchesAnyMultibrandPattern,
+  normalizeMultibrandConfig,
+} from "@/lib/multibrand";
 import {
   getDefaultKpiCards,
   sanitizeSectionOrder as sanitizeDashboardSectionOrder,
@@ -158,6 +164,11 @@ function parseJson(value: unknown): JsonRecord {
 function parseAccountIds(value: unknown): string[] {
   if (!Array.isArray(value)) return [];
   return value.map((item) => String(item).trim()).filter(Boolean);
+}
+
+function filterManualRowsByBrand(rows: ManualDataRow[], patterns: string[]): ManualDataRow[] {
+  if (!patterns.length) return rows;
+  return rows.filter((row) => matchesAnyMultibrandPattern(row.channel, patterns));
 }
 
 function shiftDate(dateIso: string, days: number): string {
@@ -1719,6 +1730,9 @@ export async function loadDashboardData(
   }
 
   const config = parseJson(dashboard.config);
+  const multibrandConfig = normalizeMultibrandConfig(config.multibrand);
+  const requestedBrandId = new URL(request.url).searchParams.get("brand");
+  const activeBrand = findMultibrandBrand(multibrandConfig, requestedBrandId);
   const frequencyOverrides = normalizeFrequencyOverrides(config);
   const frequencyOverrideMap = buildFrequencyOverrideMap(frequencyOverrides);
   const showSpend = Boolean(config.show_spend ?? true);
@@ -1777,7 +1791,10 @@ export async function loadDashboardData(
                 defaultPlatform: String(sourceConfig?.platform ?? "").trim(),
                 defaultChannel: String(sourceConfig?.channel ?? "").trim(),
               });
-              const filtered = filterByDateRange(allRows, range.from, range.to);
+              const filtered = filterManualRowsByBrand(
+                filterByDateRange(allRows, range.from, range.to),
+                activeBrand?.channel_patterns ?? [],
+              );
 
               const byPlatform = aggregateByPlatform(filtered);
               for (const p of byPlatform) {
@@ -1799,7 +1816,10 @@ export async function loadDashboardData(
                 });
               }
 
-              const prevFiltered = filterByDateRange(allRows, previousRange.from, previousRange.to);
+              const prevFiltered = filterManualRowsByBrand(
+                filterByDateRange(allRows, previousRange.from, previousRange.to),
+                activeBrand?.channel_patterns ?? [],
+              );
               const prevByPlatform = aggregateByPlatform(prevFiltered);
               for (const p of prevByPlatform) {
                 const platformId = p.platform;
@@ -1886,14 +1906,15 @@ export async function loadDashboardData(
           continue;
         }
 
+        const brandSourceFilter = activeBrand?.source_filters.find((item) => item.platform === source.platform);
         const filter: CanonicalFilter = {
           source_key: sourceKey,
           date_from: range.from,
           date_to: range.to,
           account_ids: parseAccountIds(sourceConfig.account_ids),
           campaign_filter: {
-            filter_type: source.filter_type ?? "all",
-            filter_value: source.filter_value,
+            filter_type: brandSourceFilter?.filter_type ?? source.filter_type ?? "all",
+            filter_value: brandSourceFilter?.filter_value ?? source.filter_value,
           },
         };
 
@@ -2101,7 +2122,11 @@ export async function loadDashboardData(
       });
     }
 
-    const planByChannel = groupByChannel(planRows);
+    const planByChannel = groupByChannel(
+      activeBrand?.channel_patterns?.length
+        ? planRows.filter((row) => matchesAnyMultibrandPattern(row.channel, activeBrand.channel_patterns))
+        : planRows,
+    );
     const [bindingRows] = await pool.execute<BindingRow[]>(
       `SELECT line_key, channel, source_key, platform_campaign_id
        FROM media_plan_bindings
@@ -2318,6 +2343,13 @@ export async function loadDashboardData(
         show_spend: showSpend,
         filter_scope: getFilterScope(config),
         section_order: getSectionOrder(config, dashboardType, showSpend),
+        multibrand:
+          multibrandConfig?.enabled
+            ? {
+                ...multibrandConfig,
+                active_brand_id: activeBrand?.id ?? null,
+              }
+            : null,
       },
       kpi_config: getKpiConfig(config, dashboardType, showSpend),
       visible_metrics: getVisibleMetrics(config, dashboardType, showSpend),

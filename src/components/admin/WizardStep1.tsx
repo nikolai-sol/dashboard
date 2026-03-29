@@ -28,6 +28,26 @@ export default function WizardStep1({ data, onChange }: WizardStep1Props) {
     });
   };
 
+  const multibrand = data.config.multibrand ?? {
+    enabled: false,
+    executive_title: "",
+    executive_subtitle: "",
+    brands: [],
+  };
+
+  const patchMultibrand = (patch: Partial<typeof multibrand>) => {
+    onChange({
+      ...data,
+      config: {
+        ...data.config,
+        multibrand: {
+          ...multibrand,
+          ...patch,
+        },
+      },
+    });
+  };
+
   const handleLogoFileChange = async (file: File | null) => {
     if (!file) return;
     if (!file.type.startsWith("image/")) {
@@ -156,6 +176,7 @@ export default function WizardStep1({ data, onChange }: WizardStep1Props) {
             }}
           >
             <option value="awareness">Awareness</option>
+            <option value="multibrand">Multibrand</option>
             <option value="performance">Performance</option>
             <option value="overview">Overview</option>
           </select>
@@ -206,6 +227,47 @@ export default function WizardStep1({ data, onChange }: WizardStep1Props) {
           <option value="RUB">RUB</option>
         </select>
       </label>
+
+      <section className="rounded-xl border border-slate-200 bg-slate-50 p-4">
+        <label className="flex items-start gap-3">
+          <input
+            type="checkbox"
+            className="mt-1"
+            checked={Boolean(multibrand.enabled)}
+            onChange={(e) => patchMultibrand({ enabled: e.target.checked })}
+          />
+          <span className="text-sm text-slate-700">
+            <span className="block font-medium text-slate-900">Enable multibrand overlay</span>
+            <span className="mt-1 block text-xs text-slate-500">
+              Adds an executive layer and brand switcher on top of this dashboard only. Existing dashboards stay unchanged.
+            </span>
+          </span>
+        </label>
+
+        {multibrand.enabled ? (
+          <div className="mt-4 grid gap-4 md:grid-cols-2">
+            <label className="text-sm">
+              <span className="mb-1 block font-medium text-slate-700">Executive panel title</span>
+              <input
+                className="w-full rounded-lg border border-slate-300 px-3 py-2"
+                value={multibrand.executive_title ?? ""}
+                onChange={(e) => patchMultibrand({ executive_title: e.target.value })}
+                placeholder="Леовит · 2026"
+              />
+            </label>
+
+            <label className="text-sm">
+              <span className="mb-1 block font-medium text-slate-700">Executive subtitle</span>
+              <input
+                className="w-full rounded-lg border border-slate-300 px-3 py-2"
+                value={multibrand.executive_subtitle ?? ""}
+                onChange={(e) => patchMultibrand({ executive_subtitle: e.target.value })}
+                placeholder="Multi-brand · 3 бренда · 17 каналов"
+              />
+            </label>
+          </div>
+        ) : null}
+      </section>
     </section>
   );
 }
