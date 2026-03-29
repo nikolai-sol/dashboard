@@ -158,6 +158,7 @@ Canonical daily jobs on VPS:
 - `06:30` Reddit
 - `06:32` GetIntent
 - `06:34` Yandex Direct
+- `06:36` Yandex Promopages
 - `06:35` VK Ads v2
 - `06:37` Hybrid
 - `06:40` canonical monitor
@@ -240,6 +241,14 @@ Current note:
   - `/Users/nicko/ReportingDash/fetch_yandex_promopages_canonical.py`
 - collector runtime on VPS:
   - `/root/reportingdash-canonical/fetch_yandex_promopages_canonical.py`
+- cron slot on VPS:
+  - `06:36`
+- collector log on VPS:
+  - `/root/reportingdash-canonical/logs/yandex-promopages-canonical-cron.log`
+- current confirmed production cron run:
+  - `run 146`
+  - `success`
+  - window `2026-03-27 .. 2026-03-28`
 - current phase 1 rule:
   - Promopages stays isolated from normal awareness `plan_vs_fact`, `channel_table`, and `platform_table`
   - dashboard rendering goes through a dedicated `promopages` section

@@ -141,6 +141,10 @@ Important current state:
   - not implemented
   - no media plan binding yet
   - no inclusion in overall awareness spend totals yet
+- daily cron status:
+  - enabled on VPS at `06:36`
+  - log file:
+    - `/root/reportingdash-canonical/logs/yandex-promopages-canonical-cron.log`
 
 ## Platform-specific access notes
 
@@ -357,6 +361,11 @@ Operational rule:
 - current production confirmation:
   - run `145` succeeded for `2026-03-28`
   - facts written for `Landsail`
+  - run `146` succeeded in `cron` mode for window `2026-03-27 .. 2026-03-28`
+  - rows:
+    - `rows_read = 2`
+    - `rows_written = 14`
+    - `rows_updated = 14`
 
 ### Yandex ID token verification
 
