@@ -7,6 +7,7 @@ export const PLATFORM_TO_SOURCE_KEY: Record<string, string> = {
   getintent: "getintent",
   yandex: "yandex_direct",
   yandex_direct: "yandex_direct",
+  yandex_promopages: "yandex_promopages",
   yandex_metrika: "yandex_metrika",
   meta: "meta",
   x: "x",
@@ -25,6 +26,7 @@ export const SOURCE_KEY_TO_PLATFORM: Record<string, string> = {
   hybrid: 'hybrid',
   getintent: 'git',
   yandex_direct: 'yandex',
+  yandex_promopages: 'yandex_promopages',
   yandex_metrika: 'yandex_metrika',
   meta: 'meta',
   x: 'x',
@@ -34,13 +36,14 @@ export const SOURCE_KEY_TO_PLATFORM: Record<string, string> = {
   leads: 'leads',
 };
 
-export const SOURCE_TYPE: Record<string, "ads" | "analytics" | "gsheet" | "manual" | "leads"> = {
+export const SOURCE_TYPE: Record<string, "ads" | "analytics" | "gsheet" | "manual" | "leads" | "promopages"> = {
   linkedin: "ads",
   reddit: "ads",
   vk_ads_v2: "ads",
   hybrid: "ads",
   getintent: "ads",
   yandex_direct: "ads",
+  yandex_promopages: "promopages",
   yandex_metrika: "analytics",
   meta: "ads",
   x: "ads",
@@ -71,7 +74,7 @@ export function resolveSourceKey(platform: string): string {
 
 export function resolveSourceType(
   platformOrSourceKey: string,
-): "ads" | "analytics" | "gsheet" | "manual" | "leads" {
+): "ads" | "analytics" | "gsheet" | "manual" | "leads" | "promopages" {
   const normalized = String(platformOrSourceKey ?? "").trim().toLowerCase();
   const t = SOURCE_TYPE[normalized];
   if (t) return t;

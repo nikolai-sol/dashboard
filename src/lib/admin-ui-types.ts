@@ -11,7 +11,8 @@ export type DashboardSectionId =
   | "channel_table"
   | "plan_vs_fact"
   | "platform_plan_fact"
-  | "platform_table";
+  | "platform_table"
+  | "promopages";
 
 export type PlatformMeta = {
   id: string;
@@ -19,7 +20,7 @@ export type PlatformMeta = {
   source: "mysql" | "gsheet";
   schema_file: string;
   source_key?: string;
-  source_type?: "ads" | "analytics" | "gsheet" | "manual" | "leads" | null;
+  source_type?: "ads" | "analytics" | "gsheet" | "manual" | "leads" | "promopages" | null;
   canonical_table?: string | null;
 };
 

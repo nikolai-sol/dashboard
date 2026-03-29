@@ -1,0 +1,6 @@
+platform: yandex_promopages
+display_name: Yandex Promopages
+source: mysql
+source_key: yandex_promopages
+source_type: promopages
+canonical_table: canonical_fact_promopages_daily

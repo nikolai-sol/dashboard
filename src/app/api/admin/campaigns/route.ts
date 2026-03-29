@@ -31,7 +31,7 @@ export async function GET(request: Request) {
     }
 
     const sourceType = schemaMeta.source_type ?? resolveSourceType(schemaMeta.source_key);
-    if (sourceType !== "ads") {
+    if (sourceType !== "ads" && sourceType !== "promopages") {
       return NextResponse.json({
         campaigns: [],
         total: 0,

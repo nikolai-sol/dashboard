@@ -13,6 +13,13 @@ export interface CanonicalFilter {
   };
 }
 
+export interface PromopagesFilter {
+  source_key: string;
+  date_from: string;
+  date_to: string;
+  account_ids?: string[];
+}
+
 type SqlParam = string | number | boolean | Date | null;
 
 type CampaignCatalogOptions = {
@@ -97,6 +104,55 @@ type ActiveAccountRow = RowDataPacket & {
   total_spend: number | string | null;
 };
 
+type PromopagesAggregateRow = RowDataPacket & {
+  total_impressions: number | string | null;
+  total_reach: number | string | null;
+  total_views: number | string | null;
+  total_clicks: number | string | null;
+  total_budget: number | string | null;
+  total_clickouts: number | string | null;
+  total_full_reads: number | string | null;
+  total_metrica_visits: number | string | null;
+  avg_ctr: number | string | null;
+  avg_cpm: number | string | null;
+};
+
+type PromopagesTimeseriesRow = RowDataPacket & {
+  date: string | Date;
+  impressions: number | string | null;
+  reach: number | string | null;
+  views: number | string | null;
+  clicks: number | string | null;
+  budget: number | string | null;
+  clickouts: number | string | null;
+  full_reads: number | string | null;
+  metrica_visits: number | string | null;
+};
+
+type PromopagesCampaignRow = RowDataPacket & {
+  platform_account_id: string;
+  account_name: string | null;
+  platform_campaign_id: string;
+  campaign_name: string | null;
+  report_date: string | Date;
+  impressions: number | string | null;
+  reach: number | string | null;
+  views: number | string | null;
+  clicks: number | string | null;
+  ctr: number | string | null;
+  budget: number | string | null;
+  cpm: number | string | null;
+  clickouts: number | string | null;
+  clickout_cost: number | string | null;
+  clickout_percent: number | string | null;
+  full_reads: number | string | null;
+  full_read_percent: number | string | null;
+  full_read_time_sec: number | string | null;
+  metrica_visits: number | string | null;
+  metrica_visit_percent: number | string | null;
+  metrica_visit_cost: number | string | null;
+};
+
 function normalizeMatch(value: string): string {
   return value
     .toLowerCase()
@@ -127,6 +183,15 @@ function isSuggestedAccount(accountName: string, clientName?: string): boolean {
 }
 
 function buildAccountWhereAds(filter: CanonicalFilter, params: SqlParam[]): string {
+  const accountIds = Array.isArray(filter.account_ids)
+    ? filter.account_ids.map((item) => String(item).trim()).filter(Boolean)
+    : [];
+  if (!accountIds.length) return '';
+  params.push(...accountIds);
+  return `AND f.platform_account_id IN (${accountIds.map(() => '?').join(',')})`;
+}
+
+function buildAccountWherePromopages(filter: PromopagesFilter, params: SqlParam[]): string {
   const accountIds = Array.isArray(filter.account_ids)
     ? filter.account_ids.map((item) => String(item).trim()).filter(Boolean)
     : [];
@@ -207,6 +272,35 @@ export async function getAdsAggregate(filter: CanonicalFilter) {
   `;
 
   const [rows] = await pool.execute<AggregateRow[]>(sql, params);
+  return rows[0] ?? null;
+}
+
+export async function getPromopagesAggregate(filter: PromopagesFilter) {
+  const params: SqlParam[] = [filter.source_key, filter.date_from, filter.date_to];
+  const accountWhere = buildAccountWherePromopages(filter, params);
+
+  const sql = `
+    SELECT
+      COALESCE(SUM(f.impressions), 0) AS total_impressions,
+      COALESCE(SUM(f.reach), 0) AS total_reach,
+      COALESCE(SUM(f.views), 0) AS total_views,
+      COALESCE(SUM(f.clicks), 0) AS total_clicks,
+      COALESCE(SUM(f.budget), 0) AS total_budget,
+      COALESCE(SUM(f.clickouts), 0) AS total_clickouts,
+      COALESCE(SUM(f.full_reads), 0) AS total_full_reads,
+      COALESCE(SUM(f.metrica_visits), 0) AS total_metrica_visits,
+      CASE WHEN COALESCE(SUM(f.impressions), 0) > 0
+        THEN COALESCE(SUM(f.clicks), 0) / SUM(f.impressions) * 100 ELSE 0 END AS avg_ctr,
+      CASE WHEN COALESCE(SUM(f.impressions), 0) > 0
+        THEN COALESCE(SUM(f.budget), 0) / SUM(f.impressions) * 1000 ELSE 0 END AS avg_cpm
+    FROM canonical_fact_promopages_daily f
+    WHERE f.source_key = ?
+      AND f.report_date >= ?
+      AND f.report_date <= ?
+      ${accountWhere}
+  `;
+
+  const [rows] = await pool.execute<PromopagesAggregateRow[]>(sql, params);
   return rows[0] ?? null;
 }
 
@@ -291,6 +385,124 @@ export async function getAdsTimeseries(filter: CanonicalFilter) {
 
   const [rows] = await pool.execute<AdsTimeseriesRow[]>(sql, params);
   return rows;
+}
+
+export async function getPromopagesTimeseries(filter: PromopagesFilter) {
+  const params: SqlParam[] = [filter.source_key, filter.date_from, filter.date_to];
+  const accountWhere = buildAccountWherePromopages(filter, params);
+  const sql = `
+    SELECT
+      f.report_date AS date,
+      COALESCE(SUM(f.impressions), 0) AS impressions,
+      COALESCE(SUM(f.reach), 0) AS reach,
+      COALESCE(SUM(f.views), 0) AS views,
+      COALESCE(SUM(f.clicks), 0) AS clicks,
+      COALESCE(SUM(f.budget), 0) AS budget,
+      COALESCE(SUM(f.clickouts), 0) AS clickouts,
+      COALESCE(SUM(f.full_reads), 0) AS full_reads,
+      COALESCE(SUM(f.metrica_visits), 0) AS metrica_visits
+    FROM canonical_fact_promopages_daily f
+    WHERE f.source_key = ?
+      AND f.report_date >= ?
+      AND f.report_date <= ?
+      ${accountWhere}
+    GROUP BY f.report_date
+    ORDER BY f.report_date
+  `;
+  const [rows] = await pool.execute<PromopagesTimeseriesRow[]>(sql, params);
+  return rows.map((row) => ({
+    date: toIsoDateOrNull(row.date) ?? '',
+    impressions: Number(row.impressions ?? 0),
+    reach: Number(row.reach ?? 0),
+    views: Number(row.views ?? 0),
+    clicks: Number(row.clicks ?? 0),
+    budget: Number(Number(row.budget ?? 0).toFixed(2)),
+    clickouts: Number(row.clickouts ?? 0),
+    full_reads: Number(row.full_reads ?? 0),
+    metrica_visits: Number(row.metrica_visits ?? 0),
+  }));
+}
+
+export async function getPromopagesCampaignBreakdown(filter: PromopagesFilter) {
+  const params: SqlParam[] = [filter.source_key, filter.source_key, filter.date_from, filter.date_to];
+  const accountWhere = buildAccountWherePromopages(filter, params);
+  const sql = `
+    SELECT
+      f.platform_account_id,
+      COALESCE(a.account_name, f.platform_account_id) AS account_name,
+      f.platform_campaign_id,
+      COALESCE(c.campaign_name, f.platform_campaign_id) AS campaign_name,
+      f.report_date,
+      COALESCE(SUM(f.impressions), 0) AS impressions,
+      COALESCE(SUM(f.reach), 0) AS reach,
+      COALESCE(SUM(f.views), 0) AS views,
+      COALESCE(SUM(f.clicks), 0) AS clicks,
+      CASE WHEN COALESCE(SUM(f.impressions), 0) > 0
+        THEN COALESCE(SUM(f.clicks), 0) / SUM(f.impressions) * 100 ELSE 0 END AS ctr,
+      COALESCE(SUM(f.budget), 0) AS budget,
+      CASE WHEN COALESCE(SUM(f.impressions), 0) > 0
+        THEN COALESCE(SUM(f.budget), 0) / SUM(f.impressions) * 1000 ELSE 0 END AS cpm,
+      COALESCE(SUM(f.clickouts), 0) AS clickouts,
+      CASE WHEN COALESCE(SUM(f.clickouts), 0) > 0
+        THEN COALESCE(SUM(f.budget), 0) / SUM(f.clickouts) ELSE 0 END AS clickout_cost,
+      CASE WHEN COALESCE(SUM(f.views), 0) > 0
+        THEN COALESCE(SUM(f.clickouts), 0) / SUM(f.views) * 100 ELSE 0 END AS clickout_percent,
+      COALESCE(SUM(f.full_reads), 0) AS full_reads,
+      CASE WHEN COALESCE(SUM(f.views), 0) > 0
+        THEN COALESCE(SUM(f.full_reads), 0) / SUM(f.views) * 100 ELSE 0 END AS full_read_percent,
+      AVG(COALESCE(f.full_read_time_sec, 0)) AS full_read_time_sec,
+      COALESCE(SUM(f.metrica_visits), 0) AS metrica_visits,
+      CASE WHEN COALESCE(SUM(f.clickouts), 0) > 0
+        THEN COALESCE(SUM(f.metrica_visits), 0) / SUM(f.clickouts) * 100 ELSE 0 END AS metrica_visit_percent,
+      CASE WHEN COALESCE(SUM(f.metrica_visits), 0) > 0
+        THEN COALESCE(SUM(f.budget), 0) / SUM(f.metrica_visits) ELSE 0 END AS metrica_visit_cost
+    FROM canonical_fact_promopages_daily f
+    LEFT JOIN canonical_source_accounts a
+      ON a.source_key = ?
+     AND a.platform_account_id = f.platform_account_id
+    LEFT JOIN canonical_source_campaigns c
+      ON c.source_key = ?
+     AND c.platform_campaign_id = f.platform_campaign_id
+     AND c.platform_account_id = f.platform_account_id
+    WHERE f.source_key = ?
+      AND f.report_date >= ?
+      AND f.report_date <= ?
+      ${accountWhere}
+    GROUP BY
+      f.platform_account_id,
+      account_name,
+      f.platform_campaign_id,
+      campaign_name,
+      f.report_date
+    ORDER BY f.report_date DESC, budget DESC, impressions DESC
+  `;
+  const [rows] = await pool.execute<PromopagesCampaignRow[]>(
+    sql,
+    [filter.source_key, filter.source_key, ...params],
+  );
+  return rows.map((row) => ({
+    platform_account_id: String(row.platform_account_id),
+    account_name: String(row.account_name ?? row.platform_account_id),
+    platform_campaign_id: String(row.platform_campaign_id),
+    campaign_name: String(row.campaign_name ?? row.platform_campaign_id),
+    report_date: toIsoDateOrNull(row.report_date) ?? '',
+    impressions: Number(row.impressions ?? 0),
+    reach: Number(row.reach ?? 0),
+    views: Number(row.views ?? 0),
+    clicks: Number(row.clicks ?? 0),
+    ctr: Number(Number(row.ctr ?? 0).toFixed(2)),
+    budget: Number(Number(row.budget ?? 0).toFixed(2)),
+    cpm: Number(Number(row.cpm ?? 0).toFixed(2)),
+    clickouts: Number(row.clickouts ?? 0),
+    clickout_cost: Number(Number(row.clickout_cost ?? 0).toFixed(2)),
+    clickout_percent: Number(Number(row.clickout_percent ?? 0).toFixed(2)),
+    full_reads: Number(row.full_reads ?? 0),
+    full_read_percent: Number(Number(row.full_read_percent ?? 0).toFixed(2)),
+    full_read_time_sec: Number(Number(row.full_read_time_sec ?? 0).toFixed(2)),
+    metrica_visits: Number(row.metrica_visits ?? 0),
+    metrica_visit_percent: Number(Number(row.metrica_visit_percent ?? 0).toFixed(2)),
+    metrica_visit_cost: Number(Number(row.metrica_visit_cost ?? 0).toFixed(2)),
+  }));
 }
 
 // Timeseries restricted to a specific set of campaign ids.
@@ -583,6 +795,21 @@ export async function countAdsCampaigns(filter: CanonicalFilter): Promise<number
   return Number(rows[0]?.total ?? 0);
 }
 
+export async function countPromopagesCampaigns(filter: PromopagesFilter): Promise<number> {
+  const params: SqlParam[] = [filter.source_key, filter.date_from, filter.date_to];
+  const accountWhere = buildAccountWherePromopages(filter, params);
+  const sql = `
+    SELECT COUNT(DISTINCT f.platform_campaign_id) AS total
+    FROM canonical_fact_promopages_daily f
+    WHERE f.source_key = ?
+      AND f.report_date >= ?
+      AND f.report_date <= ?
+      ${accountWhere}
+  `;
+  const [rows] = await pool.execute<RowDataPacket[]>(sql, params);
+  return Number(rows[0]?.total ?? 0);
+}
+
 export async function countAnalyticsAccounts(sourceKey: string, accountIds?: string[]): Promise<number> {
   const filter: CanonicalFilter = {
     source_key: sourceKey,
@@ -605,7 +832,7 @@ export async function countAnalyticsAccounts(sourceKey: string, accountIds?: str
 
 export async function getActiveAccounts(
   sourceKey: string,
-  sourceType: 'ads' | 'analytics',
+  sourceType: 'ads' | 'analytics' | 'promopages',
   options?: { search?: string; client_name?: string; date_from?: string; date_to?: string },
 ) {
   const search = String(options?.search ?? '').trim();
@@ -662,6 +889,61 @@ export async function getActiveAccounts(
       })
       .sort((a, b) => {
         if (a.suggested !== b.suggested) return a.suggested ? -1 : 1;
+        return a.name.localeCompare(b.name);
+      });
+  }
+
+  if (sourceType === 'promopages') {
+    let sql = `
+      SELECT
+        a.platform_account_id AS id,
+        a.account_name AS name,
+        MAX(f.report_date) AS latest_report_date,
+        COUNT(*) AS fact_rows,
+        COALESCE(SUM(f.budget), 0) AS total_spend
+      FROM canonical_source_accounts a
+      JOIN canonical_fact_promopages_daily f
+        ON f.source_key = a.source_key
+       AND f.platform_account_id = a.platform_account_id
+      WHERE a.source_key = ?
+    `;
+    const params: SqlParam[] = [sourceKey];
+
+    if (usePeriodFilter) {
+      sql += ` AND f.report_date >= ? AND f.report_date <= ?`;
+      params.push(dateFrom, dateTo);
+    } else {
+      sql += ` AND f.report_date >= DATE_SUB(
+        (SELECT MAX(report_date)
+           FROM canonical_fact_promopages_daily
+          WHERE source_key = ?),
+        INTERVAL 60 DAY
+      )`;
+      params.push(sourceKey);
+    }
+
+    if (search) {
+      sql += ` AND a.account_name LIKE ?`;
+      params.push(`%${search}%`);
+    }
+
+    sql += ` GROUP BY a.source_key, a.platform_account_id, a.account_name`;
+    const [rows] = await pool.execute<ActiveAccountRow[]>(sql, params);
+    return rows
+      .map((row) => {
+        const name = String(row.name ?? row.id);
+        return {
+          id: String(row.id),
+          name,
+          latest_report_date: toIsoDateOrNull(row.latest_report_date),
+          fact_rows: Number(row.fact_rows ?? 0),
+          total_spend: Number(Number(row.total_spend ?? 0).toFixed(2)),
+          suggested: isSuggestedAccount(name, clientName),
+        };
+      })
+      .sort((a, b) => {
+        if (a.suggested !== b.suggested) return a.suggested ? -1 : 1;
+        if (b.total_spend !== a.total_spend) return b.total_spend - a.total_spend;
         return a.name.localeCompare(b.name);
       });
   }

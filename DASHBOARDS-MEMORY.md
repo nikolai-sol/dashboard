@@ -166,6 +166,35 @@ Main files:
 - `src/components/ComparisonSection.tsx`
 - `src/app/dashboard/[id]/page.tsx`
 
+## Promopages direction
+
+Current implementation direction:
+
+### Phase 1
+
+- add a new actual source:
+  - `Yandex Promopages`
+- add a dedicated canonical collector contour for this source
+- render Promopages in a dedicated dashboard section:
+  - `promopages`
+- do not mix Promopages into normal awareness `plan_vs_fact`, `channel_table`, or `platform_table` in v1
+- status:
+  - implemented
+  - section is available in Step 6 `Dashboard sections`
+  - loader reads isolated Promopages data into `dashboard.promopages`
+  - public dashboard renders it only through dedicated `PromopagesSection`
+
+### Phase 2
+
+- add optional media plan binding for Promopages
+- allow Promopages spend to participate in overall awareness spend totals when explicitly connected and mapped
+- status:
+  - not implemented
+
+Current rule:
+- until phase 2 bindings exist, Promopages must stay isolated as its own section and source path
+- do not silently fold Promopages facts into ordinary paid-media plan/fact sections
+
 ## Metrics rules
 
 ### Spend-related visibility
