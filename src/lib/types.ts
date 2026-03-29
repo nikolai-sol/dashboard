@@ -11,7 +11,8 @@ export type DashboardSectionId =
   | "channel_table"
   | "plan_vs_fact"
   | "platform_plan_fact"
-  | "platform_table";
+  | "platform_table"
+  | "promopages";
 
 export interface DashboardMeta {
   client_name: string;
@@ -272,6 +273,61 @@ export interface ManualChannelData {
   sessions: number;
 }
 
+export interface PromopagesKPI {
+  total_impressions: number;
+  total_reach: number;
+  total_views: number;
+  total_clicks: number;
+  total_budget: number;
+  avg_ctr: number;
+  avg_cpm: number;
+  total_clickouts: number;
+  total_full_reads: number;
+  total_metrica_visits: number;
+}
+
+export interface PromopagesCampaignItem {
+  platform_account_id: string;
+  account_name: string;
+  platform_campaign_id: string;
+  campaign_name: string;
+  report_date?: string;
+  impressions: number;
+  reach: number;
+  views: number;
+  clicks: number;
+  ctr: number;
+  budget: number;
+  cpm: number;
+  clickouts: number;
+  clickout_cost: number;
+  clickout_percent: number;
+  full_reads: number;
+  full_read_percent: number;
+  full_read_time_sec: number;
+  metrica_visits: number;
+  metrica_visit_percent: number;
+  metrica_visit_cost: number;
+}
+
+export interface PromopagesTimeSeriesPoint {
+  date: string;
+  impressions: number;
+  reach: number;
+  views: number;
+  clicks: number;
+  budget: number;
+  clickouts: number;
+  full_reads: number;
+  metrica_visits: number;
+}
+
+export interface PromopagesData {
+  kpi: PromopagesKPI;
+  timeseries: PromopagesTimeSeriesPoint[];
+  campaigns: PromopagesCampaignItem[];
+}
+
 export interface DashboardData {
   dashboard: DashboardMeta;
   kpi_config: string[];
@@ -289,6 +345,7 @@ export interface DashboardData {
     kpi: AnalyticsKPI;
     timeseries: AnalyticsTimeSeriesPoint[];
   };
+  promopages?: PromopagesData;
   // optional channel timeseries for future "by channel" view
   channel_timeseries?: Array<{
     date: string;

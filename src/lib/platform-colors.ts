@@ -8,6 +8,7 @@ export const PLATFORM_COLORS: Record<
   x: { hex: "#1DA1F2", label: "X", type: "social" },
   google: { hex: "#34A853", label: "Google Ads", type: "search" },
   yandex: { hex: "#FC3F1D", label: "Яндекс.Директ", type: "search" },
+  yandex_promopages: { hex: "#E11D48", label: "Яндекс.ПромоСтраницы", type: "content" },
   vk: { hex: "#5181B8", label: "ВКонтакте", type: "social" },
   git: { hex: "#8B5CF6", label: "GetIntent", type: "programmatic" },
   dv360: { hex: "#0D9488", label: "DV360", type: "programmatic" },

@@ -17,6 +17,7 @@ import PlatformFilter from "@/components/PlatformFilter";
 import PlatformPlanVsFact from "@/components/PlatformPlanVsFact";
 import PlatformTable from "@/components/PlatformTable";
 import PlanVsFact from "@/components/PlanVsFact";
+import PromopagesSection from "@/components/PromopagesSection";
 import SpendByPlatform from "@/components/SpendByPlatform";
 import SpendConversionsScatter from "@/components/SpendConversionsScatter";
 import TrendChart from "@/components/TrendChart";
@@ -948,6 +949,30 @@ export default function DashboardByIdPage() {
             }}
           />
         </section>
+      );
+    }
+
+    if (sectionId === "promopages") {
+      if (!dashboard?.promopages) return null;
+      return (
+        <PromopagesSection
+          key={sectionId}
+          data={dashboard.promopages}
+          selectedMetrics={visibleMetrics}
+          currencyFormatter={(value) => money(value, currencyCode, locale)}
+          locale={locale}
+          labels={{
+            title: i18n.sections.promopages,
+            noRows:
+              i18n.language === "ru"
+                ? "Нет доступных данных ПромоСтраниц за выбранный период."
+                : "No Promopages data available for the selected period.",
+            metrics: i18n.metrics,
+            campaign: i18n.language === "ru" ? "Кампания" : "Campaign",
+            date: i18n.language === "ru" ? "Дата" : "Date",
+            account: i18n.language === "ru" ? "Аккаунт" : "Account",
+          }}
+        />
       );
     }
 

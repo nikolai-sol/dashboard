@@ -127,10 +127,20 @@ Important current state:
 
 ### Yandex Promopages
 
-- no canonical collector yet
-- API access confirmed
-- currently in research / probe mode only
-- no DB writes approved yet
+- canonical collector exists:
+  - `/Users/nicko/ReportingDash/fetch_yandex_promopages_canonical.py`
+- source key:
+  - `yandex_promopages`
+- canonical fact table:
+  - `report_bd.canonical_fact_promopages_daily`
+- phase 1 status:
+  - implemented
+  - collector writes source accounts, source campaigns, and isolated promopages facts
+  - dashboard section is separate from normal awareness plan/fact
+- phase 2 status:
+  - not implemented
+  - no media plan binding yet
+  - no inclusion in overall awareness spend totals yet
 
 ## Platform-specific access notes
 
@@ -336,7 +346,17 @@ Verified yesterday daily stats probe for `2026-03-28`:
 
 Operational rule:
 - Promopages `clientId` must not be assumed to map 1:1 to Yandex Direct business identity without verification
-- first integration step should remain no-write probing until canonical grain and source-key model are agreed
+- canonical grain for phase 1 is:
+  - `platform_account_id + platform_campaign_id + report_date`
+- current collector behavior:
+  - requests publishers and campaigns first
+  - creates async `campaigns-daily-stats` reports
+  - polls with backoff
+  - currently uses `trafficSource=total`
+  - writes only isolated Promopages facts, not `canonical_fact_ads_daily`
+- current production confirmation:
+  - run `145` succeeded for `2026-03-28`
+  - facts written for `Landsail`
 
 ### Yandex ID token verification
 

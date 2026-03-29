@@ -216,6 +216,51 @@ Operational notes:
 - separate domain from `canonical_fact_ads_daily`
 - use for web/session/goal data, not ad spend facts
 
+### 6a. `canonical_fact_promopages_daily`
+
+Purpose:
+- dedicated fact table for Yandex Promopages
+- separate from ordinary paid-media ads facts
+
+Agreed reason for separate table:
+- Promopages uses a different metric model and should not be forced into `canonical_fact_ads_daily`
+- source-specific metrics include:
+  - `full_reads`
+  - `full_read_percent`
+  - `clickouts`
+  - `clickout_cost`
+  - `clickout_percent`
+  - `metrica_visits`
+  - `metrica_visit_percent`
+  - `metrica_visit_cost`
+  - `budget`
+  - `cpm`
+
+Agreed v1 grain:
+- `platform_account_id + platform_campaign_id + report_date`
+
+Agreed implementation phases:
+- Phase 1:
+  - separate source key: `yandex_promopages`
+  - separate collector contour
+  - separate dashboard section
+  - no mixing into standard awareness plan/fact
+- Phase 2:
+  - optional media plan binding
+  - optional inclusion into overall awareness spend totals
+
+Status:
+- implemented in production schema
+- current source key:
+  - `yandex_promopages`
+- current phase 1 runtime:
+  - collector writes isolated promopages facts here
+  - dashboard loader reads from this table only for dedicated `promopages` section
+- current phase 2 runtime:
+  - not implemented
+  - no media plan bindings
+  - no inclusion in standard awareness spend totals
+
 ### 7. `canonical_collector_runs`
 
 Purpose:

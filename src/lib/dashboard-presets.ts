@@ -11,6 +11,7 @@ export const SPEND_RELATED_SECTIONS = new Set<DashboardSectionId>([
   "campaign_table",
   "scatter_plot",
 ]);
+export const OPTIONAL_SECTIONS: DashboardSectionId[] = ["promopages"];
 
 const DEFAULT_SECTIONS: Record<DashboardKind, DashboardSectionId[]> = {
   awareness: [
@@ -69,13 +70,14 @@ export function sanitizeSectionOrder(
   showSpend: boolean,
   fillDefaults = true,
 ): DashboardSectionId[] {
-  const allowed = getDefaultSectionOrder(type, showSpend);
+  const defaults = getDefaultSectionOrder(type, showSpend);
+  const allowed = [...defaults, ...OPTIONAL_SECTIONS.filter((item) => showSpend || !SPEND_RELATED_SECTIONS.has(item))];
   if (!Array.isArray(raw)) {
-    return allowed;
+    return defaults;
   }
   const seen = new Set<DashboardSectionId>();
   const normalized = raw
     .map((item) => String(item) as DashboardSectionId)
     .filter((item) => allowed.includes(item) && !seen.has(item) && seen.add(item));
-  return fillDefaults ? [...normalized, ...allowed.filter((item) => !seen.has(item))] : normalized;
+  return fillDefaults ? [...normalized, ...defaults.filter((item) => !seen.has(item))] : normalized;
 }

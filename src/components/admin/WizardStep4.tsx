@@ -32,6 +32,7 @@ const SECTION_OPTIONS: Array<{ id: DashboardSectionId; label: string; spendRelat
   { id: "kpi_grid", label: "KPI cards" },
   { id: "spend_section", label: "Spend by platform + channel mix", spendRelated: true },
   { id: "trend_chart", label: "Trend chart" },
+  { id: "promopages", label: "Promopages" },
   { id: "conversion_funnel", label: "Conversion funnel", performanceOnly: true },
   { id: "campaign_table", label: "Campaign performance", spendRelated: true, performanceOnly: true },
   { id: "scatter_plot", label: "Spend vs conversions scatter", spendRelated: true, performanceOnly: true },

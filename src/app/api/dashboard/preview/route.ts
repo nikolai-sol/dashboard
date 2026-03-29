@@ -5,6 +5,7 @@ import { loadSchema } from "@/lib/schema-parser";
 import {
   countAdsCampaigns,
   countAnalyticsAccounts,
+  countPromopagesCampaigns,
   type CanonicalFilter,
 } from "@/lib/canonical-adapter";
 import { resolveSourceKey, resolveSourceType } from "@/lib/source-mapping";
@@ -142,13 +143,25 @@ export async function POST(request: Request) {
         const total =
           sourceType === "analytics"
             ? await countAnalyticsAccounts(sourceKey, filter.account_ids)
-            : await countAdsCampaigns(filter);
+            : sourceType === "promopages"
+              ? await countPromopagesCampaigns({
+                  source_key: sourceKey,
+                  date_from: filter.date_from,
+                  date_to: filter.date_to,
+                  account_ids: filter.account_ids,
+                })
+              : await countAdsCampaigns(filter);
 
         actualSummary.push({
           platform: source.platform,
           campaigns: total,
           status: total > 0 ? "ok" : "empty",
-          message: sourceType === "analytics" ? "Analytics source checked by account presence." : undefined,
+          message:
+            sourceType === "analytics"
+              ? "Analytics source checked by account presence."
+              : sourceType === "promopages"
+                ? "Promopages source checked by campaign presence."
+                : undefined,
         });
       } catch (error) {
         actualSummary.push({

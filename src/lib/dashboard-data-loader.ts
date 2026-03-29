@@ -9,8 +9,12 @@ import {
   getAnalyticsAggregate,
   getAnalyticsTimeseries,
   getFactByCampaignIds,
+  getPromopagesAggregate,
+  getPromopagesCampaignBreakdown,
+  getPromopagesTimeseries,
   getTimeseriesByCampaignIds,
   type CanonicalFilter,
+  type PromopagesFilter,
 } from "@/lib/canonical-adapter";
 import { fetchCustomTable, fetchMediaPlanFromSourceConfig, groupByChannel, type ChannelGroup, type MediaPlanRow } from "@/lib/gsheet-fetcher";
 import {
@@ -63,6 +67,8 @@ import type {
   PlanVsFactItem,
   ChannelPerformanceItem,
   ChannelPerformanceMetric,
+  PromopagesCampaignItem,
+  PromopagesTimeSeriesPoint,
 } from "@/lib/types";
 
 type JsonRecord = Record<string, unknown>;
@@ -697,6 +703,39 @@ function mergeTimeseries(items: TimeSeriesPoint[]): TimeSeriesPoint[] {
   }
 
   return [...map.values()].sort((a, b) => a.date.localeCompare(b.date));
+}
+
+function mergePromopagesTimeseries(items: PromopagesTimeSeriesPoint[]): PromopagesTimeSeriesPoint[] {
+  const byDate = new Map<string, PromopagesTimeSeriesPoint>();
+  for (const item of items) {
+    const existing = byDate.get(item.date);
+    if (!existing) {
+      byDate.set(item.date, { ...item });
+      continue;
+    }
+    existing.impressions += item.impressions;
+    existing.reach += item.reach;
+    existing.views += item.views;
+    existing.clicks += item.clicks;
+    existing.budget += item.budget;
+    existing.clickouts += item.clickouts;
+    existing.full_reads += item.full_reads;
+    existing.metrica_visits += item.metrica_visits;
+  }
+  return [...byDate.values()]
+    .map((item) => ({
+      ...item,
+      budget: Number(item.budget.toFixed(2)),
+    }))
+    .sort((a, b) => a.date.localeCompare(b.date));
+}
+
+function mergePromopagesCampaigns(items: PromopagesCampaignItem[]): PromopagesCampaignItem[] {
+  return [...items].sort((a, b) => {
+    if (b.budget !== a.budget) return b.budget - a.budget;
+    if (b.impressions !== a.impressions) return b.impressions - a.impressions;
+    return a.campaign_name.localeCompare(b.campaign_name);
+  });
 }
 
 function mergeCampaignBreakdown(items: CampaignBreakdownItem[]): CampaignBreakdownItem[] {
@@ -1612,6 +1651,20 @@ export async function loadDashboardData(
   const planRows: MediaPlanRow[] = [];
   const analyticsKpiRaw: AnalyticsKPI[] = [];
   const analyticsTimeseriesRaw: AnalyticsTimeSeriesPoint[] = [];
+  const promopagesKpiRaw: Array<{
+    total_impressions: number;
+    total_reach: number;
+    total_views: number;
+    total_clicks: number;
+    total_budget: number;
+    avg_ctr: number;
+    avg_cpm: number;
+    total_clickouts: number;
+    total_full_reads: number;
+    total_metrica_visits: number;
+  }> = [];
+  const promopagesTimeseriesRaw: PromopagesTimeSeriesPoint[] = [];
+  const promopagesCampaignsRaw: PromopagesCampaignItem[] = [];
   const actualAdsSourceKeys = new Set<string>();
   const customTables: CustomTableData[] = [];
   const leadsRows: LeadRow[] = [];
@@ -1846,6 +1899,33 @@ export async function loadDashboardData(
           continue;
         }
 
+        if (sourceType === "promopages") {
+          const promoFilter: PromopagesFilter = {
+            source_key: sourceKey,
+            date_from: range.from,
+            date_to: range.to,
+            account_ids: parseAccountIds(sourceConfig.account_ids),
+          };
+
+          const aggregate = await getPromopagesAggregate(promoFilter);
+          promopagesKpiRaw.push({
+            total_impressions: Math.round(asNumber(aggregate?.total_impressions)),
+            total_reach: Math.round(asNumber(aggregate?.total_reach)),
+            total_views: Math.round(asNumber(aggregate?.total_views)),
+            total_clicks: Math.round(asNumber(aggregate?.total_clicks)),
+            total_budget: Number(asNumber(aggregate?.total_budget).toFixed(2)),
+            avg_ctr: Number(asNumber(aggregate?.avg_ctr).toFixed(2)),
+            avg_cpm: Number(asNumber(aggregate?.avg_cpm).toFixed(2)),
+            total_clickouts: Math.round(asNumber(aggregate?.total_clickouts)),
+            total_full_reads: Math.round(asNumber(aggregate?.total_full_reads)),
+            total_metrica_visits: Math.round(asNumber(aggregate?.total_metrica_visits)),
+          });
+
+          promopagesTimeseriesRaw.push(...(await getPromopagesTimeseries(promoFilter)));
+          promopagesCampaignsRaw.push(...(await getPromopagesCampaignBreakdown(promoFilter)));
+          continue;
+        }
+
         if (sourceType === "analytics") {
           const aggregate = await getAnalyticsAggregate(filter);
           analyticsKpiRaw.push({
@@ -2007,6 +2087,48 @@ export async function loadDashboardData(
     ), manualChannels);
     const analyticsKpi = mergeAnalyticsKpi(analyticsKpiRaw);
     const analyticsTimeseries = mergeAnalyticsTimeseries(analyticsTimeseriesRaw);
+    const promopagesTimeseries = mergePromopagesTimeseries(promopagesTimeseriesRaw);
+    const promopagesCampaigns = mergePromopagesCampaigns(promopagesCampaignsRaw);
+    const promopagesKpi =
+      promopagesKpiRaw.length > 0
+        ? promopagesKpiRaw.reduce(
+            (acc, item) => {
+              acc.total_impressions += item.total_impressions;
+              acc.total_reach += item.total_reach;
+              acc.total_views += item.total_views;
+              acc.total_clicks += item.total_clicks;
+              acc.total_budget += item.total_budget;
+              acc.total_clickouts += item.total_clickouts;
+              acc.total_full_reads += item.total_full_reads;
+              acc.total_metrica_visits += item.total_metrica_visits;
+              return acc;
+            },
+            {
+              total_impressions: 0,
+              total_reach: 0,
+              total_views: 0,
+              total_clicks: 0,
+              total_budget: 0,
+              avg_ctr: 0,
+              avg_cpm: 0,
+              total_clickouts: 0,
+              total_full_reads: 0,
+              total_metrica_visits: 0,
+            },
+          )
+        : null;
+
+    if (promopagesKpi) {
+      promopagesKpi.total_budget = Number(promopagesKpi.total_budget.toFixed(2));
+      promopagesKpi.avg_ctr =
+        promopagesKpi.total_impressions > 0
+          ? Number(((promopagesKpi.total_clicks / promopagesKpi.total_impressions) * 100).toFixed(2))
+          : 0;
+      promopagesKpi.avg_cpm =
+        promopagesKpi.total_impressions > 0
+          ? Number(((promopagesKpi.total_budget / promopagesKpi.total_impressions) * 1000).toFixed(2))
+          : 0;
+    }
 
     const totalImpressions = platformResults.reduce((sum, row) => sum + row.impressions, 0);
     const totalClicks = platformResults.reduce((sum, row) => sum + row.clicks, 0);
@@ -2073,6 +2195,14 @@ export async function loadDashboardData(
           ? {
               kpi: analyticsKpi,
               timeseries: analyticsTimeseries,
+            }
+          : undefined,
+      promopages:
+        promopagesKpi && (promopagesCampaigns.length > 0 || promopagesTimeseries.length > 0)
+          ? {
+              kpi: promopagesKpi,
+              timeseries: promopagesTimeseries,
+              campaigns: promopagesCampaigns,
             }
           : undefined,
     };

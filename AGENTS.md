@@ -217,8 +217,11 @@ Current note:
 
 ## Yandex Promopages specifics
 
-- no production canonical collector yet
-- access currently confirmed through direct API probing only
+- production canonical collector exists
+- source key:
+  - `yandex_promopages`
+- canonical fact table:
+  - `canonical_fact_promopages_daily`
 - OAuth scope required:
   - `promopages:api`
 - organization-linked tokens may also require:
@@ -233,6 +236,14 @@ Current note:
 - reports are asynchronous:
   - expect `reportId`
   - then poll report endpoint with backoff
+- current canonical collector file:
+  - `/Users/nicko/ReportingDash/fetch_yandex_promopages_canonical.py`
+- collector runtime on VPS:
+  - `/root/reportingdash-canonical/fetch_yandex_promopages_canonical.py`
+- current phase 1 rule:
+  - Promopages stays isolated from normal awareness `plan_vs_fact`, `channel_table`, and `platform_table`
+  - dashboard rendering goes through a dedicated `promopages` section
+  - phase 2 binding to media plan and inclusion in awareness spend totals is not enabled yet
 - current Promopages access details and latest probe results are tracked in:
   - `PLATFORMS-ACCESS-MEMORY.md`
 
