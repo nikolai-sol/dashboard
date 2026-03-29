@@ -2,6 +2,7 @@
 
 import { useEffect, useMemo, useState } from "react";
 import type { DashboardFormData, DashboardSourceForm } from "@/lib/admin-ui-types";
+import { buildDefaultBrandId } from "@/lib/multibrand";
 
 type Campaign = {
   id: string;
@@ -48,11 +49,27 @@ export default function WizardStep3({ data, onChange }: WizardStep3Props) {
     [actualSources],
   );
   const planSource = data.sources.find((source) => source.role === "plan");
+  const multibrand = data.config.multibrand ?? {
+    enabled: false,
+    executive_title: "",
+    executive_subtitle: "",
+    brands: [],
+  };
 
   const setActualSources = (nextActual: DashboardSourceForm[]) => {
     onChange({
       ...data,
       sources: planSource ? [...nextActual, planSource] : nextActual,
+    });
+  };
+
+  const setMultibrand = (nextMultibrand: typeof multibrand) => {
+    onChange({
+      ...data,
+      config: {
+        ...data.config,
+        multibrand: nextMultibrand,
+      },
     });
   };
 
@@ -95,6 +112,79 @@ export default function WizardStep3({ data, onChange }: WizardStep3Props) {
     });
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [actualSourcesKey, data.config.period_from, data.config.period_to]);
+
+  const addBrand = () => {
+    const index = multibrand.brands.length;
+    const label = `Brand ${index + 1}`;
+    setMultibrand({
+      ...multibrand,
+      brands: [
+        ...multibrand.brands,
+        {
+          id: buildDefaultBrandId(label, index),
+          label,
+          color: ["#2563eb", "#e11d48", "#059669", "#7c3aed", "#ea580c", "#0891b2"][index % 6],
+          description: "",
+          channel_patterns: [],
+          source_filters: actualSources.map((source) => ({
+            platform: source.platform,
+            filter_type: "name_pattern" as const,
+            filter_value: "",
+          })),
+        },
+      ],
+    });
+  };
+
+  const updateBrand = (brandIndex: number, patch: Record<string, unknown>) => {
+    const nextBrands = [...multibrand.brands];
+    nextBrands[brandIndex] = {
+      ...nextBrands[brandIndex],
+      ...patch,
+    };
+    if (!String(nextBrands[brandIndex].id ?? "").trim()) {
+      nextBrands[brandIndex].id = buildDefaultBrandId(String(nextBrands[brandIndex].label ?? ""), brandIndex);
+    }
+    setMultibrand({ ...multibrand, brands: nextBrands });
+  };
+
+  const removeBrand = (brandIndex: number) => {
+    setMultibrand({
+      ...multibrand,
+      brands: multibrand.brands.filter((_, index) => index !== brandIndex),
+    });
+  };
+
+  const updateBrandSourceFilter = (
+    brandIndex: number,
+    platform: string,
+    patch: { filter_type?: "all" | "name_pattern" | "id_list"; filter_value?: string | null },
+  ) => {
+    const brand = multibrand.brands[brandIndex];
+    if (!brand) return;
+    const nextFilters = [...brand.source_filters];
+    const existingIndex = nextFilters.findIndex((item) => item.platform === platform);
+    if (existingIndex >= 0) {
+      nextFilters[existingIndex] = {
+        ...nextFilters[existingIndex],
+        ...patch,
+      };
+    } else {
+      nextFilters.push({
+        platform,
+        filter_type: patch.filter_type ?? "all",
+        filter_value: patch.filter_value ?? null,
+      });
+    }
+    updateBrand(brandIndex, { source_filters: nextFilters });
+  };
+
+  const getBrandSourceFilter = (brandIndex: number, platform: string) =>
+    multibrand.brands[brandIndex]?.source_filters.find((item) => item.platform === platform) ?? {
+      platform,
+      filter_type: "all" as const,
+      filter_value: null,
+    };
 
   return (
     <section className="space-y-4">
@@ -254,6 +344,155 @@ export default function WizardStep3({ data, onChange }: WizardStep3Props) {
           </article>
         );
       })}
+
+      {multibrand.enabled ? (
+        <section className="rounded-xl border border-slate-200 bg-slate-50 p-4">
+          <div className="flex items-center justify-between gap-3">
+            <div>
+              <h4 className="text-sm font-semibold text-slate-900">Multibrand filters</h4>
+              <p className="mt-1 text-xs text-slate-500">
+                Define the brands for the new overlay. Channel patterns drive plan/channel layers, while source filters narrow actual source data per brand.
+              </p>
+            </div>
+            <button
+              type="button"
+              onClick={addBrand}
+              className="rounded-lg border border-slate-300 px-3 py-2 text-xs hover:bg-white"
+            >
+              Add brand
+            </button>
+          </div>
+
+          <div className="mt-4 space-y-4">
+            {multibrand.brands.length === 0 ? (
+              <div className="rounded-lg border border-dashed border-slate-300 bg-white px-4 py-6 text-sm text-slate-500">
+                Add at least one brand to enable the multibrand dashboard layer.
+              </div>
+            ) : null}
+
+            {multibrand.brands.map((brand, brandIndex) => (
+              <article key={`${brand.id}-${brandIndex}`} className="rounded-xl border border-slate-200 bg-white p-4">
+                <div className="grid gap-4 md:grid-cols-[1.2fr_1.2fr_140px_auto] md:items-end">
+                  <label className="text-sm">
+                    <span className="mb-1 block font-medium text-slate-700">Brand label</span>
+                    <input
+                      className="w-full rounded-lg border border-slate-300 px-3 py-2"
+                      value={brand.label}
+                      onChange={(e) => updateBrand(brandIndex, { label: e.target.value })}
+                      placeholder="ХЗН"
+                    />
+                  </label>
+
+                  <label className="text-sm">
+                    <span className="mb-1 block font-medium text-slate-700">Brand ID</span>
+                    <input
+                      className="w-full rounded-lg border border-slate-300 px-3 py-2"
+                      value={brand.id}
+                      onChange={(e) => updateBrand(brandIndex, { id: e.target.value.trim().toLowerCase() })}
+                      placeholder="xzn"
+                    />
+                  </label>
+
+                  <label className="text-sm">
+                    <span className="mb-1 block font-medium text-slate-700">Color</span>
+                    <input
+                      type="color"
+                      className="h-10 w-full rounded-lg border border-slate-300 bg-white px-2 py-1"
+                      value={brand.color}
+                      onChange={(e) => updateBrand(brandIndex, { color: e.target.value })}
+                    />
+                  </label>
+
+                  <button
+                    type="button"
+                    onClick={() => removeBrand(brandIndex)}
+                    className="rounded-lg border border-rose-200 px-3 py-2 text-xs text-rose-700 hover:bg-rose-50"
+                  >
+                    Remove
+                  </button>
+                </div>
+
+                <div className="mt-4 grid gap-4 md:grid-cols-2">
+                  <label className="text-sm">
+                    <span className="mb-1 block font-medium text-slate-700">Description</span>
+                    <input
+                      className="w-full rounded-lg border border-slate-300 px-3 py-2"
+                      value={brand.description ?? ""}
+                      onChange={(e) => updateBrand(brandIndex, { description: e.target.value })}
+                      placeholder="7 channels"
+                    />
+                  </label>
+
+                  <label className="text-sm">
+                    <span className="mb-1 block font-medium text-slate-700">Channel patterns</span>
+                    <input
+                      className="w-full rounded-lg border border-slate-300 px-3 py-2"
+                      value={brand.channel_patterns.join(", ")}
+                      onChange={(e) =>
+                        updateBrand(brandIndex, {
+                          channel_patterns: e.target.value
+                            .split(",")
+                            .map((item) => item.trim())
+                            .filter(Boolean),
+                        })
+                      }
+                      placeholder="ХЗН, %ХЗН%"
+                    />
+                    <span className="mt-1 block text-xs text-slate-500">
+                      Used for media plan rows and channel-level brand matching.
+                    </span>
+                  </label>
+                </div>
+
+                <div className="mt-4 space-y-3">
+                  <div className="text-xs font-semibold uppercase tracking-[0.16em] text-slate-500">
+                    Source Filters
+                  </div>
+                  {actualSources.map((source) => {
+                    const brandFilter = getBrandSourceFilter(brandIndex, source.platform);
+                    return (
+                      <div key={`${brand.id}-${source.platform}`} className="grid gap-3 rounded-lg border border-slate-200 p-3 md:grid-cols-[160px_160px_1fr]">
+                        <div className="text-sm font-medium text-slate-900">{source.platform}</div>
+
+                        <select
+                          className="rounded-lg border border-slate-300 px-3 py-2 text-sm"
+                          value={brandFilter.filter_type}
+                          onChange={(e) =>
+                            updateBrandSourceFilter(brandIndex, source.platform, {
+                              filter_type: e.target.value as "all" | "name_pattern" | "id_list",
+                              filter_value: e.target.value === "all" ? null : brandFilter.filter_value,
+                            })
+                          }
+                        >
+                          <option value="all">All campaigns</option>
+                          <option value="name_pattern">Name pattern</option>
+                          <option value="id_list">ID list</option>
+                        </select>
+
+                        <input
+                          className="rounded-lg border border-slate-300 px-3 py-2 text-sm"
+                          value={brandFilter.filter_value ?? ""}
+                          onChange={(e) =>
+                            updateBrandSourceFilter(brandIndex, source.platform, {
+                              filter_value: e.target.value,
+                            })
+                          }
+                          disabled={brandFilter.filter_type === "all"}
+                          placeholder={
+                            brandFilter.filter_type === "id_list"
+                              ? "123,456,789"
+                              : `%${brand.label || source.platform}%`
+                          }
+                        />
+                      </div>
+                    );
+                  })}
+                </div>
+              </article>
+            ))}
+          </div>
+        </section>
+      ) : null}
     </section>
   );
 }

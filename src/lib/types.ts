@@ -1,6 +1,7 @@
 import type { DashboardLanguage } from "@/lib/dashboard-i18n";
+import type { MultibrandConfig } from "@/lib/multibrand";
 
-export type DashboardKind = "awareness" | "performance" | "overview";
+export type DashboardKind = "awareness" | "performance" | "overview" | "multibrand";
 export type DashboardSectionId =
   | "kpi_grid"
   | "spend_section"
@@ -28,6 +29,7 @@ export interface DashboardMeta {
   show_spend: boolean;
   filter_scope: "both" | "platform" | "channel";
   section_order: DashboardSectionId[];
+  multibrand?: (MultibrandConfig & { active_brand_id?: string | null }) | null;
 }
 
 export interface CustomKpiCard {

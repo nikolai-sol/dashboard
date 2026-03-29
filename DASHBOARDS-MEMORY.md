@@ -147,6 +147,20 @@ Current expectations:
 - PDF follows public dashboard rendering
 - It already respects saved `section_order`
 
+## Multibrand overlay
+
+- Multibrand is not a new global dashboard runtime for every board.
+- It is an opt-in config layer in `dashboard.config.multibrand`.
+- Admin `Basic -> Type` now also supports `multibrand` as an explicit dashboard type.
+- Existing dashboards must keep their current behavior when `multibrand.enabled` is false or missing.
+- The multibrand layer is intended for a dedicated dashboard such as `multibrand` only.
+- Brand selection is passed through the public dashboard route via query param:
+  - `brand=<brand_id>`
+- Brand selection works by applying brand-specific source filters and channel patterns on top of the existing awareness loader, not by replacing the shared dashboard architecture.
+- Admin manager setup lives in Step 1 and Step 3:
+  - Step 1 enables multibrand mode and executive title/subtitle
+  - Step 3 defines brands, channel patterns, and per-source brand filters
+
 ## Comparison section
 
 Comparison is optional and uses:

@@ -14,6 +14,7 @@ import {
   getDefaultSectionOrder,
   sanitizeSectionOrder as sanitizeDashboardSectionOrder,
 } from "@/lib/dashboard-presets";
+import { normalizeMultibrandConfig } from "@/lib/multibrand";
 import type {
   CustomKpiCardForm,
   DashboardFormData,
@@ -59,6 +60,12 @@ function defaultForm(): DashboardFormData {
       kpi_cards: getDefaultKpiCards("awareness", true),
       custom_kpi_cards: [],
       campaign_frequency_overrides: [],
+      multibrand: {
+        enabled: false,
+        executive_title: "",
+        executive_subtitle: "",
+        brands: [],
+      },
     },
     sources: [],
     media_plan_bindings: [],
@@ -117,7 +124,7 @@ function isStepComplete(step: number, formData: DashboardFormData) {
   }
 
   if (step === 2) {
-    return formData.sources
+    const filtersValid = formData.sources
       .filter((source) => source.role === "actual" && source.platform !== "leads")
       .every((source) => {
         const filter = source.filters[0] ?? { filter_type: "all", filter_value: null };
@@ -129,6 +136,14 @@ function isStepComplete(step: number, formData: DashboardFormData) {
         }
         return true;
       });
+
+    const multibrand = formData.config.multibrand;
+    if (!multibrand?.enabled) {
+      return filtersValid;
+    }
+
+    const multibrandValid = multibrand.brands.length > 0 && multibrand.brands.every((brand) => brand.id && brand.label);
+    return filtersValid && multibrandValid;
   }
 
   if (step === 5) {
@@ -383,6 +398,12 @@ export default function DashboardWizard({ dashboardId }: DashboardWizardProps) {
                       item.frequency > 0,
                   )
               : [],
+            multibrand: normalizeMultibrandConfig(config.multibrand) ?? {
+              enabled: false,
+              executive_title: "",
+              executive_subtitle: "",
+              brands: [],
+            },
           },
           sources: normalizeSources(dash.sources),
           media_plan_bindings: Array.isArray(dash.media_plan_bindings)

@@ -1,6 +1,7 @@
 import type { DashboardLanguage } from "@/lib/dashboard-i18n";
+import type { MultibrandConfig } from "@/lib/multibrand";
 
-export type DashboardType = "awareness" | "performance" | "overview";
+export type DashboardType = "awareness" | "performance" | "overview" | "multibrand";
 export type DashboardSectionId =
   | "kpi_grid"
   | "spend_section"
@@ -81,6 +82,7 @@ export type DashboardFormData = {
     kpi_cards: string[];
     custom_kpi_cards?: CustomKpiCardForm[];
     campaign_frequency_overrides?: CampaignFrequencyOverrideForm[];
+    multibrand?: MultibrandConfig | null;
   };
   sources: DashboardSourceForm[];
   media_plan_bindings: MediaPlanBindingForm[];

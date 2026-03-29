@@ -21,6 +21,9 @@ import PromopagesSection from "@/components/PromopagesSection";
 import SpendByPlatform from "@/components/SpendByPlatform";
 import SpendConversionsScatter from "@/components/SpendConversionsScatter";
 import TrendChart from "@/components/TrendChart";
+import MultibrandPanel from "@/components/MultibrandPanel";
+import MultibrandExecutivePage from "@/components/MultibrandExecutivePage";
+import type { MultibrandBrandSummary } from "@/components/MultibrandExecutivePage";
 import { getDashboardI18n } from "@/lib/dashboard-i18n";
 import type { DashboardData } from "@/lib/types";
 import { resolvePlatformIdFromSourceKey } from "@/lib/source-mapping";
@@ -43,6 +46,10 @@ type DashboardAuthMeta = {
   client_id: string;
   client_name: string;
   dashboard_name: string;
+};
+
+type MultibrandSummary = MultibrandBrandSummary & {
+  platforms_count: number;
 };
 
 function money(value: number, currency = "EUR", locale = "en-US") {
@@ -79,6 +86,7 @@ async function getDashboardData(
   range?: { from: string; to: string },
   compareRange?: { from: string; to: string } | null,
   accessToken?: string,
+  brandId?: string | null,
 ): Promise<{
   data: DashboardData | null;
   demoMode: boolean;
@@ -99,6 +107,9 @@ async function getDashboardData(
     }
     if (accessToken) {
       params.set("access_token", accessToken);
+    }
+    if (brandId) {
+      params.set("brand", brandId);
     }
     const query = params.toString();
     const response = await fetch(`/api/dashboard/${id}${query ? `?${query}` : ""}`, { cache: "no-store" });
@@ -211,6 +222,7 @@ export default function DashboardByIdPage() {
   const initialCompareFrom = searchParams.get("compare_from") ?? "";
   const initialCompareTo = searchParams.get("compare_to") ?? "";
   const initialAccessToken = searchParams.get("access_token") ?? "";
+  const initialBrandId = searchParams.get("brand") ?? "";
   const isPdfMode = searchParams.get("pdf") === "true";
   const isMobileMode = searchParams.get("mobile") === "1";
 
@@ -225,6 +237,8 @@ export default function DashboardByIdPage() {
   const [authMeta, setAuthMeta] = useState<DashboardAuthMeta | null>(null);
   const [notFound, setNotFound] = useState(false);
   const [viewerAccessToken, setViewerAccessToken] = useState(initialAccessToken);
+  const [selectedBrandId, setSelectedBrandId] = useState(initialBrandId);
+  const [brandSummaries, setBrandSummaries] = useState<MultibrandSummary[]>([]);
   const [reloadKey, setReloadKey] = useState(0);
   const [dateRange, setDateRange] = useState<{ from: string; to: string }>({ from: initialFrom, to: initialTo });
   const [draftDateRange, setDraftDateRange] = useState<{ from: string; to: string }>({
@@ -253,6 +267,7 @@ export default function DashboardByIdPage() {
         dateRange.from && dateRange.to ? dateRange : undefined,
         compareRange.from && compareRange.to ? compareRange : null,
         viewerAccessToken || undefined,
+        selectedBrandId || undefined,
       );
       if (cancelled) {
         return;
@@ -303,7 +318,11 @@ export default function DashboardByIdPage() {
     return () => {
       cancelled = true;
     };
-  }, [compareRange, dashboardId, dateRange, reloadKey, viewerAccessToken]);
+  }, [compareRange, dashboardId, dateRange, reloadKey, selectedBrandId, viewerAccessToken]);
+
+  useEffect(() => {
+    setSelectedBrandId(initialBrandId);
+  }, [initialBrandId]);
 
   const effectiveDraftCompareRange = useMemo(() => {
     const effectiveFrom = draftDateRange.from || dashboard?.dashboard.period.from || "";
@@ -411,6 +430,7 @@ export default function DashboardByIdPage() {
   const i18n = useMemo(() => getDashboardI18n(dashboardLanguage), [dashboardLanguage]);
   const locale = i18n.locale;
   const showSpend = dashboard?.dashboard.show_spend ?? true;
+  const multibrand = dashboard?.dashboard.multibrand;
   const sectionOrder = dashboard?.dashboard.section_order ?? [];
   const dashboardType = dashboard?.dashboard.type ?? "awareness";
   const visibleMetrics = (dashboard?.visible_metrics ?? dashboard?.kpi_config ?? []).filter(
@@ -425,6 +445,55 @@ export default function DashboardByIdPage() {
       })),
     [dashboard?.channel_performance],
   );
+
+  useEffect(() => {
+    let cancelled = false;
+
+    async function loadBrandSummaries() {
+      if (!dashboard?.dashboard.multibrand?.enabled || !dashboard.dashboard.multibrand.brands.length) {
+        setBrandSummaries([]);
+        return;
+      }
+
+      const summaries = await Promise.all(
+        dashboard.dashboard.multibrand.brands.map(async (brand) => {
+          const result = await getDashboardData(
+            dashboardId,
+            dateRange.from && dateRange.to ? dateRange : undefined,
+            null,
+            viewerAccessToken || undefined,
+            brand.id,
+          );
+          const brandData = result.data;
+          return {
+            id: brand.id,
+            label: brand.label,
+            color: brand.color,
+            description: brand.description,
+            total_impressions: brandData?.kpi.total_impressions ?? 0,
+            total_clicks: brandData?.kpi.total_clicks ?? 0,
+            total_spend: brandData?.kpi.total_spend ?? 0,
+            total_conversions: brandData?.kpi.total_conversions ?? 0,
+            avg_ctr: brandData?.kpi.avg_ctr ?? 0,
+            total_views: brandData?.platforms.reduce((s, p) => s + p.views, 0) ?? 0,
+            total_reach: brandData?.platforms.reduce((s, p) => s + p.reach, 0) ?? 0,
+            platforms_count: brandData?.platforms.length ?? 0,
+            channels_count: brandData?.channel_performance?.length ?? 0,
+          } satisfies MultibrandSummary;
+        }),
+      );
+
+      if (!cancelled) {
+        setBrandSummaries(summaries);
+      }
+    }
+
+    void loadBrandSummaries();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [dashboard?.dashboard.multibrand, dashboardId, dateRange, viewerAccessToken]);
 
   const totals = useMemo(() => {
     const baseImpressions = filteredPlatforms.reduce((sum, item) => sum + item.impressions, 0);
@@ -1064,6 +1133,9 @@ export default function DashboardByIdPage() {
     if (viewerAccessToken) {
       params.set("access_token", viewerAccessToken);
     }
+    if (selectedBrandId) {
+      params.set("brand", selectedBrandId);
+    }
     window.open(`/api/dashboard/${dashboardId}/pdf?${params.toString()}`, "_blank", "noopener,noreferrer");
   };
 
@@ -1081,6 +1153,9 @@ export default function DashboardByIdPage() {
     if (viewerAccessToken) {
       params.set("access_token", viewerAccessToken);
     }
+    if (selectedBrandId) {
+      params.set("brand", selectedBrandId);
+    }
     window.open(`/api/dashboard/${dashboardId}/excel?${params.toString()}`, "_blank", "noopener,noreferrer");
   };
 
@@ -1097,6 +1172,11 @@ export default function DashboardByIdPage() {
       params.delete("compare_from");
       params.delete("compare_to");
     }
+    if (selectedBrandId) {
+      params.set("brand", selectedBrandId);
+    } else {
+      params.delete("brand");
+    }
     router.replace(`/dashboard/${dashboardId}?${params.toString()}`, { scroll: false });
   };
 
@@ -1109,6 +1189,11 @@ export default function DashboardByIdPage() {
     if (dateRange.to) params.set("to", dateRange.to);
     params.set("compare_from", effectiveDraftCompareRange.from);
     params.set("compare_to", effectiveDraftCompareRange.to);
+    if (selectedBrandId) {
+      params.set("brand", selectedBrandId);
+    } else {
+      params.delete("brand");
+    }
     router.replace(`/dashboard/${dashboardId}?${params.toString()}`, { scroll: false });
   };
 
@@ -1119,6 +1204,31 @@ export default function DashboardByIdPage() {
     const params = new URLSearchParams(searchParams.toString());
     params.delete("compare_from");
     params.delete("compare_to");
+    if (selectedBrandId) {
+      params.set("brand", selectedBrandId);
+    } else {
+      params.delete("brand");
+    }
+    router.replace(`/dashboard/${dashboardId}?${params.toString()}`, { scroll: false });
+  };
+
+  const applyBrandSelection = (brandId: string | null) => {
+    setSelectedBrandId(brandId ?? "");
+    const params = new URLSearchParams(searchParams.toString());
+    if (dateRange.from) params.set("from", dateRange.from);
+    if (dateRange.to) params.set("to", dateRange.to);
+    if (compareRange.from && compareRange.to) {
+      params.set("compare_from", compareRange.from);
+      params.set("compare_to", compareRange.to);
+    }
+    if (viewerAccessToken) {
+      params.set("access_token", viewerAccessToken);
+    }
+    if (brandId) {
+      params.set("brand", brandId);
+    } else {
+      params.delete("brand");
+    }
     router.replace(`/dashboard/${dashboardId}?${params.toString()}`, { scroll: false });
   };
 
@@ -1138,6 +1248,9 @@ export default function DashboardByIdPage() {
               setViewerAccessToken(accessToken);
               const params = new URLSearchParams(searchParams.toString());
               params.set("access_token", accessToken);
+              if (selectedBrandId) {
+                params.set("brand", selectedBrandId);
+              }
               router.replace(`/dashboard/${dashboardId}?${params.toString()}`, { scroll: false });
             }
             setReloadKey((value) => value + 1);
@@ -1191,6 +1304,69 @@ export default function DashboardByIdPage() {
   )}`;
   const clientName = dashboard.dashboard.client_name || dashboardId.toUpperCase();
 
+  // ── Multibrand executive page: show when type=multibrand and no brand selected ──
+  if (dashboardType === "multibrand" && !selectedBrandId && multibrand?.enabled && !isPdfMode) {
+    const totalReach = dashboard.platforms.reduce((s, p) => s + p.reach, 0);
+    const totalViews = dashboard.platforms.reduce((s, p) => s + p.views, 0);
+    const execKpis = [
+      { key: "impressions", label: "Показы", formatted: compact(dashboard.kpi.total_impressions, locale) },
+      { key: "clicks", label: "Клики", formatted: compact(dashboard.kpi.total_clicks, locale) },
+      { key: "ctr", label: "CTR", formatted: `${dashboard.kpi.avg_ctr.toFixed(2)}%` },
+      { key: "reach", label: "Охват", formatted: compact(totalReach, locale) },
+    ];
+
+    return (
+      <main
+        data-dashboard-ready="true"
+        className="mx-auto min-h-screen w-full max-w-[1400px] px-4 py-6 sm:px-6 lg:px-8"
+      >
+        <DashboardHeader
+          clientName={clientName}
+          title={dashboard.dashboard.dashboard_name}
+          periodLabel={periodLabel}
+          logoUrl={dashboard.dashboard.logo_url}
+          pdfMode={false}
+          language={dashboardLanguage}
+          labels={i18n.header}
+          dateFrom={draftDateRange.from}
+          dateTo={draftDateRange.to}
+          onDateFromChange={(value) => setDraftDateRange((prev) => ({ ...prev, from: value }))}
+          onDateToChange={(value) => setDraftDateRange((prev) => ({ ...prev, to: value }))}
+          onApplyDateRange={applyDateRange}
+          isUpdatingRange={isLoading}
+          compareOpen={false}
+          comparePreset={comparePreset}
+          compareFrom=""
+          compareTo=""
+          onToggleCompare={() => {}}
+          onComparePresetChange={setComparePreset}
+          onCompareFromChange={() => {}}
+          onCompareToChange={() => {}}
+          onApplyCompare={() => {}}
+          onClearCompare={() => {}}
+          onExportExcel={exportExcel}
+          onExportPdf={exportPdf}
+        />
+        {brandSummaries.length === 0 && (
+          <div className="flex h-40 items-center justify-center text-sm text-slate-400">
+            Загружаем данные по брендам…
+          </div>
+        )}
+        {brandSummaries.length > 0 && (
+          <MultibrandExecutivePage
+            title={multibrand.executive_title || clientName}
+            subtitle={multibrand.executive_subtitle}
+            brands={brandSummaries}
+            execKpis={execKpis}
+            formatCompact={(v) => compact(v, locale)}
+            formatCtr={(v) => `${v.toFixed(2)}%`}
+            onSelectBrand={applyBrandSelection}
+          />
+        )}
+      </main>
+    );
+  }
+
   return (
     <main
       data-dashboard-ready="true"
@@ -1230,6 +1406,43 @@ export default function DashboardByIdPage() {
           {i18n.common.demoMode}
           {apiError ? ` (${apiError})` : ""}
         </div>
+      ) : null}
+
+      {/* Back to executive overview when a brand is selected */}
+      {!isPdfMode && dashboardType === "multibrand" && selectedBrandId && multibrand?.enabled ? (
+        <div className="no-print mb-4 flex items-center gap-3">
+          <button
+            type="button"
+            onClick={() => applyBrandSelection(null)}
+            className="flex items-center gap-2 rounded-xl border border-slate-200 bg-white px-4 py-2 text-sm font-medium text-slate-700 shadow-sm transition hover:border-slate-300 hover:bg-slate-50"
+          >
+            <svg width="14" height="14" viewBox="0 0 16 16" fill="none">
+              <path d="M10 4L6 8l4 4" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"/>
+            </svg>
+            Все бренды
+          </button>
+          {(() => {
+            const activeBrand = multibrand.brands.find((b) => b.id === selectedBrandId);
+            return activeBrand ? (
+              <div className="flex items-center gap-2">
+                <div className="h-2.5 w-2.5 rounded-full" style={{ backgroundColor: activeBrand.color }} />
+                <span className="text-sm font-semibold text-slate-950">{activeBrand.label}</span>
+              </div>
+            ) : null;
+          })()}
+        </div>
+      ) : null}
+
+      {!isPdfMode && multibrand?.enabled && brandSummaries.length > 0 && dashboardType !== "multibrand" ? (
+        <MultibrandPanel
+          title={multibrand.executive_title || dashboard.dashboard.client_name}
+          subtitle={multibrand.executive_subtitle}
+          brands={brandSummaries}
+          selectedBrandId={selectedBrandId || null}
+          currencyFormatter={(value) => money(value, currencyCode, locale)}
+          formatCompact={(value) => compact(value, locale)}
+          onSelectBrand={applyBrandSelection}
+        />
       ) : null}
 
       {!isPdfMode ? (

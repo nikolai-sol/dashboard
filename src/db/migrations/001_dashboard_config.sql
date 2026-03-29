@@ -5,7 +5,7 @@ CREATE TABLE IF NOT EXISTS dashboards (
     client_id VARCHAR(50) NOT NULL,
     client_name VARCHAR(200) NOT NULL,
     dashboard_name VARCHAR(200) NOT NULL,
-    dashboard_type ENUM('awareness', 'performance', 'overview') DEFAULT 'awareness',
+    dashboard_type ENUM('awareness', 'performance', 'overview', 'multibrand') DEFAULT 'awareness',
     config JSON,
     is_active BOOLEAN DEFAULT TRUE,
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
