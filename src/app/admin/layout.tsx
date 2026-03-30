@@ -17,6 +17,9 @@ export default function AdminLayout({ children }: { children: ReactNode }) {
             <Link href="/admin/platforms" className="block rounded px-3 py-2 hover:bg-slate-800">
               Platforms
             </Link>
+            <Link href="/admin/collection" className="block rounded px-3 py-2 hover:bg-slate-800">
+              Collection
+            </Link>
             <Link href="/admin/settings" className="block rounded px-3 py-2 hover:bg-slate-800">
               Settings
             </Link>
@@ -38,6 +41,9 @@ export default function AdminLayout({ children }: { children: ReactNode }) {
             </Link>
             <Link href="/admin/platforms" className="block rounded px-3 py-2 hover:bg-slate-800">
               Platforms
+            </Link>
+            <Link href="/admin/collection" className="block rounded px-3 py-2 hover:bg-slate-800">
+              Collection
             </Link>
             <Link href="/admin/settings" className="block rounded px-3 py-2 hover:bg-slate-800">
               Settings

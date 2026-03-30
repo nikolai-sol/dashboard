@@ -100,3 +100,31 @@ export type DashboardListItem = {
   sources_count: number;
   url: string;
 };
+
+export type SourceCollectionMode =
+  | "ads_only"
+  | "ads_plus_seo"
+  | "ads_plus_seo_plus_user_behavior";
+
+export type SourceAccountCollectionRow = {
+  source_key: string;
+  source_label: string;
+  platform_account_id: string;
+  account_name: string;
+  is_active: boolean;
+  cron_enabled: boolean;
+  collection_mode: SourceCollectionMode | null;
+  collection_mode_supported: boolean;
+  settings_exists: boolean;
+  last_run_at: string | null;
+  last_run_status: "running" | "success" | "partial" | "failed" | null;
+  latest_data_date: string | null;
+};
+
+export type SourceAccountCollectionSettingInput = {
+  source_key: string;
+  platform_account_id: string;
+  is_active: boolean;
+  cron_enabled: boolean;
+  collection_mode: SourceCollectionMode | null;
+};
