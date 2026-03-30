@@ -11,6 +11,7 @@ type SqlSourceAccountCollectionRow = RowDataPacket & {
   source_key: string;
   platform_account_id: string;
   account_name: string | null;
+  base_is_active: number | boolean | null;
   settings_is_active: number | boolean | null;
   settings_cron_enabled: number | boolean | null;
   settings_collection_mode: string | null;
@@ -60,10 +61,64 @@ export async function listSourceAccountCollectionRows(): Promise<SourceAccountCo
   const schemaMetaMap = new Map(listSchemaMetas().map((meta) => [meta.source_key, meta.display_name]));
 
   const sql = `
+    WITH base_accounts_raw AS (
+      SELECT
+        a.source_key,
+        a.platform_account_id,
+        CASE
+          WHEN a.source_key = 'yandex_direct' THEN COALESCE(yn.name, NULLIF(a.account_name, ''), NULLIF(a.advertiser_name, ''), a.platform_account_id)
+          ELSE COALESCE(NULLIF(a.account_name, ''), NULLIF(a.advertiser_name, ''), a.platform_account_id)
+        END AS account_name,
+        1 AS base_is_active,
+        1 AS priority
+      FROM canonical_source_accounts a
+      LEFT JOIN yandex_names yn
+        ON a.source_key = 'yandex_direct'
+       AND CAST(SUBSTRING_INDEX(a.platform_account_id, '::', -1) AS UNSIGNED) = yn.campaign_id
+
+      UNION ALL
+
+      SELECT
+        'yandex_metrika' AS source_key,
+        CAST(n.counter_id AS CHAR) AS platform_account_id,
+        COALESCE(NULLIF(CAST(n.name AS CHAR), ''), CAST(n.counter_id AS CHAR)) AS account_name,
+        COALESCE(n.active, 1) AS base_is_active,
+        1 AS priority
+      FROM yandex_metrika_names n
+      WHERE n.counter_id IS NOT NULL
+
+      UNION ALL
+
+      SELECT
+        s.source_key,
+        s.platform_account_id,
+        s.platform_account_id AS account_name,
+        1 AS base_is_active,
+        9 AS priority
+      FROM canonical_source_account_collection_settings s
+    ),
+    base_accounts AS (
+      SELECT
+        source_key,
+        platform_account_id,
+        account_name,
+        base_is_active
+      FROM (
+        SELECT
+          raw.*,
+          ROW_NUMBER() OVER (
+            PARTITION BY raw.source_key, raw.platform_account_id
+            ORDER BY raw.priority ASC
+          ) AS row_num
+        FROM base_accounts_raw raw
+      ) ranked
+      WHERE row_num = 1
+    )
     SELECT
       a.source_key,
       a.platform_account_id,
-      COALESCE(NULLIF(a.account_name, ''), NULLIF(a.advertiser_name, ''), a.platform_account_id) AS account_name,
+      a.account_name,
+      a.base_is_active,
       s.is_active AS settings_is_active,
       s.cron_enabled AS settings_cron_enabled,
       s.collection_mode AS settings_collection_mode,
@@ -71,7 +126,7 @@ export async function listSourceAccountCollectionRows(): Promise<SourceAccountCo
       lr.status AS last_run_status,
       COALESCE(lr.finished_at, lr.started_at) AS last_run_at,
       ld.latest_data_date
-    FROM canonical_source_accounts a
+    FROM base_accounts a
     LEFT JOIN canonical_source_account_collection_settings s
       ON s.source_key = a.source_key
      AND s.platform_account_id = a.platform_account_id
@@ -115,7 +170,10 @@ export async function listSourceAccountCollectionRows(): Promise<SourceAccountCo
       source_label: schemaMetaMap.get(sourceKey) ?? sourceKey,
       platform_account_id: String(row.platform_account_id),
       account_name: String(row.account_name ?? row.platform_account_id),
-      is_active: asBoolean(row.settings_is_active, true),
+      is_active: asBoolean(
+        row.settings_is_active,
+        sourceKey === "yandex_metrika" ? asBoolean(row.base_is_active, true) : true,
+      ),
       cron_enabled: asBoolean(row.settings_cron_enabled, true),
       collection_mode: collectionModeSupported ? normalizeMode(sourceKey, row.settings_collection_mode) : null,
       collection_mode_supported: collectionModeSupported,
