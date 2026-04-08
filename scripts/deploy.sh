@@ -12,7 +12,7 @@ trap cleanup EXIT
 
 echo "Building standalone bundle..."
 npm ci
-npm run build
+NODE_ENV=production npm run build
 
 echo "Rendering production env from VPS secrets..."
 bash scripts/render-production-env.sh "$TMP_ENV"

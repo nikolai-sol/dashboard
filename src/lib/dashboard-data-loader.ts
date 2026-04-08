@@ -43,6 +43,10 @@ import {
 } from "@/lib/source-mapping";
 import { normalizeDashboardLanguage } from "@/lib/dashboard-i18n";
 import {
+  buildDashboardAiSummaryFromOverrideText,
+  normalizeDashboardAiSummaryAuthoring,
+} from "@/lib/dashboard-ai-summary";
+import {
   findMultibrandBrand,
   matchesAnyMultibrandPattern,
   normalizeMultibrandConfig,
@@ -66,6 +70,7 @@ import type {
   ComparisonPlatformItem,
   ComparisonTimeSeriesPoint,
   CustomTableData,
+  DashboardAiSummary,
   DashboardData,
   DashboardSectionId,
   FunnelStep,
@@ -87,6 +92,9 @@ export type LoadedDashboardData = {
   data: DashboardData;
   previous_platforms: PlatformStats[];
   leads_rows?: LeadRow[];
+  ai_summary_enabled: boolean;
+  ai_summary_override_text?: string | null;
+  ai_summary_override?: DashboardAiSummary | null;
 };
 
 type DashboardRow = RowDataPacket & {
@@ -1752,6 +1760,11 @@ export async function loadDashboardData(
   const frequencyOverrides = normalizeFrequencyOverrides(config);
   const frequencyOverrideMap = buildFrequencyOverrideMap(frequencyOverrides);
   const showSpend = Boolean(config.show_spend ?? true);
+  const aiSummaryEnabled = Boolean(config.show_ai_summary ?? false);
+  const aiSummaryAuthoring = normalizeDashboardAiSummaryAuthoring(config.ai_summary_authoring);
+  const aiSummaryOverride = aiSummaryAuthoring
+    ? buildDashboardAiSummaryFromOverrideText(aiSummaryAuthoring.override_text, aiSummaryAuthoring.updated_at)
+    : null;
   const dashboardType = dashboard.dashboard_type;
   const spendSource =
     String(config.spend_source ?? "platform_actual") === "media_plan_derived"
@@ -2422,5 +2435,8 @@ export async function loadDashboardData(
     data: response,
     previous_platforms: prevPlatformResults,
     leads_rows: leadsRows.length > 0 ? leadsRows : undefined,
+    ai_summary_enabled: aiSummaryEnabled,
+    ai_summary_override_text: aiSummaryAuthoring?.override_text ?? null,
+    ai_summary_override: aiSummaryOverride,
   };
 }

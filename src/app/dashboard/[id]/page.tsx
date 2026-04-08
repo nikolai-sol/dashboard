@@ -11,6 +11,7 @@ import ChannelPerformanceTable from "@/components/ChannelPerformanceTable";
 import ComparisonSection from "@/components/ComparisonSection";
 import ConversionFunnel from "@/components/ConversionFunnel";
 import CustomTable from "@/components/CustomTable";
+import DashboardAiSummaryCard from "@/components/DashboardAiSummaryCard";
 import DashboardHeader from "@/components/DashboardHeader";
 import KPICard from "@/components/KPICard";
 import PlatformFilter from "@/components/PlatformFilter";
@@ -1472,6 +1473,8 @@ export default function DashboardByIdPage() {
         onExportExcel={exportExcel}
         onExportPdf={exportPdf}
       />
+
+      <DashboardAiSummaryCard summary={dashboard.ai_summary} labels={i18n.aiSummary} />
 
       {isDemoMode ? (
         <div className="no-print mb-4 rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-800">
