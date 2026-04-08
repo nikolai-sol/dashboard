@@ -23,6 +23,9 @@ const pool =
     user,
     password,
     database,
+    // Preserve SQL DATE values as raw strings so daily facts keep the exact
+    // calendar date from MySQL and do not shift through JS timezone conversion.
+    dateStrings: ["DATE"],
     waitForConnections: true,
     connectionLimit: 5,
     queueLimit: 0,
