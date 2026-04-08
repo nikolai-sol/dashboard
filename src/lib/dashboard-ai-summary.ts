@@ -24,6 +24,7 @@ type ProviderConfig = {
   model: string;
   timeoutMs: number;
   cacheTtlMs: number;
+  maxOutputTokens: number;
 };
 
 type SummaryPromptPayload = {
@@ -81,9 +82,11 @@ type ChatCompletionResponse = {
 const MONEY_METRICS = new Set(["spend", "cpm", "cpc", "cpv", "cpa", "roas"]);
 const DEFAULT_TIMEOUT_MS = 1_800;
 const DEFAULT_CACHE_TTL_MS = 5 * 60 * 1_000;
+const DEFAULT_MAX_OUTPUT_TOKENS = 220;
 const MAX_TOP_PLATFORMS = 5;
 const MAX_CHANNEL_WATCHOUTS = 3;
 const summaryCache = new Map<string, { expiresAt: number; value: DashboardAiSummary }>();
+const PROMPT_NUMBER_FORMAT = new Intl.NumberFormat("en-US", { maximumFractionDigits: 2 });
 
 function toPositiveInt(value: string | undefined, fallback: number): number {
   const parsed = Number(value);
@@ -105,6 +108,7 @@ function getProviderConfig(): ProviderConfig | null {
     ).replace(/\/+$/, ""),
     timeoutMs: toPositiveInt(process.env.AI_SUMMARY_TIMEOUT_MS, DEFAULT_TIMEOUT_MS),
     cacheTtlMs: toPositiveInt(process.env.AI_SUMMARY_CACHE_TTL_MS, DEFAULT_CACHE_TTL_MS),
+    maxOutputTokens: toPositiveInt(process.env.AI_SUMMARY_MAX_TOKENS, DEFAULT_MAX_OUTPUT_TOKENS),
   };
 }
 
@@ -320,7 +324,7 @@ function buildSystemPrompt(language: DashboardData["dashboard"]["language"]): st
   return [
     "You are writing a concise dashboard narrative for a paid media report.",
     outputLanguage,
-    "Use only the provided JSON payload. Do not infer missing metrics or mention unavailable comparisons.",
+    "Use only the provided markdown brief. Do not infer missing metrics or mention unavailable comparisons.",
     "Return valid JSON with this exact shape: {\"headline\": string, \"bullets\": string[], \"watchout\": string | null}.",
     "Constraints:",
     "- headline must be one short sentence.",
@@ -329,12 +333,104 @@ function buildSystemPrompt(language: DashboardData["dashboard"]["language"]): st
     "- If comparison data is absent, comment only on the current period.",
     "- Respect show_spend: never reference spend-derived metrics when show_spend is false.",
     "- Every statement must be traceable to the payload.",
+    "- Do not mention industry benchmarks, typical ranges, or external context.",
+    "- Keep wording compact and information-dense.",
     "- Do not include markdown, numbering, or extra keys.",
   ].join("\n");
 }
 
+function formatPromptValue(value: string | number | null | undefined): string {
+  if (value === null || value === undefined || value === "") {
+    return "n/a";
+  }
+
+  if (typeof value === "number") {
+    if (!Number.isFinite(value)) {
+      return "n/a";
+    }
+    return PROMPT_NUMBER_FORMAT.format(value);
+  }
+
+  return value;
+}
+
+function formatPeriod(
+  period: DashboardData["dashboard"]["period"] | ComparisonData["period_b"],
+): string {
+  return `${period.from} -> ${period.to}`;
+}
+
 function buildUserPrompt(payload: SummaryPromptPayload): string {
-  return JSON.stringify(payload, null, 2);
+  const lines = [
+    "# Dashboard Summary Brief",
+    "## Context",
+    `- Client: ${formatPromptValue(payload.context.client_name)}`,
+    `- Dashboard: ${formatPromptValue(payload.context.dashboard_name)}`,
+    `- Type: ${formatPromptValue(payload.context.dashboard_type)}`,
+    `- Language: ${formatPromptValue(payload.context.language)}`,
+    `- Currency: ${formatPromptValue(payload.context.currency)}`,
+    `- Period: ${formatPeriod(payload.context.period)}`,
+    `- Show spend: ${payload.display_rules.show_spend ? "yes" : "no"}`,
+    `- Visible metrics: ${payload.display_rules.visible_metrics.join(", ") || "none"}`,
+  ];
+
+  if (payload.context.active_brand) {
+    lines.push(`- Active brand: ${formatPromptValue(payload.context.active_brand)}`);
+  }
+
+  if (payload.context.compare_period) {
+    lines.push(`- Compare period: ${formatPeriod(payload.context.compare_period)}`);
+  }
+
+  lines.push("## KPI Snapshot");
+  for (const [metric, value] of Object.entries(payload.kpi_snapshot)) {
+    lines.push(`- ${metric}: ${formatPromptValue(value)}`);
+  }
+
+  if (payload.comparison?.length) {
+    lines.push("## Comparison");
+    for (const item of payload.comparison) {
+      lines.push(
+        `- ${item.metric}: current ${formatPromptValue(item.value_a)}, compare ${formatPromptValue(item.value_b)}, delta ${formatPromptValue(item.delta)}, delta_pct ${formatPromptValue(item.delta_pct)}%, direction ${formatPromptValue(item.direction)}`,
+      );
+    }
+  }
+
+  lines.push("## Top Platforms");
+  if (payload.top_platforms.length) {
+    for (const platform of payload.top_platforms) {
+      const details = Object.entries(platform)
+        .map(([key, value]) => `${key}: ${formatPromptValue(value as string | number)}`)
+        .join(", ");
+      lines.push(`- ${details}`);
+    }
+  } else {
+    lines.push("- none");
+  }
+
+  lines.push("## Channel Watchouts");
+  if (payload.channel_watchouts.length) {
+    for (const item of payload.channel_watchouts) {
+      lines.push(
+        `- channel ${item.channel}, instrument ${item.instrument}, metric ${item.metric}, completion_pct ${formatPromptValue(item.completion_pct)}%, status ${formatPromptValue(item.status)}, fact ${formatPromptValue(item.fact)}, plan ${formatPromptValue(item.plan)}`,
+      );
+    }
+  } else {
+    lines.push("- none");
+  }
+
+  if (payload.promopages) {
+    lines.push("## Promopages");
+    for (const [key, value] of Object.entries(payload.promopages)) {
+      lines.push(`- ${key}: ${formatPromptValue(value)}`);
+    }
+  }
+
+  return lines.join("\n");
+}
+
+function isMoonshotProvider(config: ProviderConfig): boolean {
+  return config.baseUrl.includes("moonshot.ai") || config.model.startsWith("kimi-") || config.model.startsWith("moonshot-");
 }
 
 function extractMessageText(response: ChatCompletionResponse): string {
@@ -399,20 +495,28 @@ async function requestSummaryFromProvider(
   config: ProviderConfig,
   signal: AbortSignal,
 ): Promise<DashboardAiSummary> {
+  const requestBody: Record<string, unknown> = {
+    model: config.model,
+    max_tokens: config.maxOutputTokens,
+    messages: [
+      { role: "system", content: buildSystemPrompt(payload.context.language) },
+      { role: "user", content: buildUserPrompt(payload) },
+    ],
+  };
+
+  if (isMoonshotProvider(config)) {
+    requestBody.thinking = { type: "disabled" };
+  } else {
+    requestBody.temperature = 0.2;
+  }
+
   const response = await fetch(`${config.baseUrl}/chat/completions`, {
     method: "POST",
     headers: {
       "Content-Type": "application/json",
       Authorization: `Bearer ${config.apiKey}`,
     },
-    body: JSON.stringify({
-      model: config.model,
-      temperature: 0.2,
-      messages: [
-        { role: "system", content: buildSystemPrompt(payload.context.language) },
-        { role: "user", content: buildUserPrompt(payload) },
-      ],
-    }),
+    body: JSON.stringify(requestBody),
     signal,
   });
 
@@ -463,6 +567,17 @@ export function buildDashboardAiSummaryCacheKey(request: Request, dashboardId: s
     .map((key) => `${key}=${url.searchParams.get(key) ?? ""}`)
     .join("&");
   return `${dashboardId}:${params}`;
+}
+
+export function buildDashboardAiSummaryPromptPreview(data: DashboardData): {
+  systemPrompt: string;
+  userPrompt: string;
+} {
+  const payload = buildPromptPayload(data);
+  return {
+    systemPrompt: buildSystemPrompt(payload.context.language),
+    userPrompt: buildUserPrompt(payload),
+  };
 }
 
 export function normalizeDashboardAiSummaryAuthoring(value: unknown): DashboardAiSummaryAuthoring | null {
