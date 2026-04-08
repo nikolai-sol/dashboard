@@ -1,7 +1,7 @@
 import type { DashboardLanguage } from "@/lib/dashboard-i18n";
 import type { MultibrandConfig } from "@/lib/multibrand";
 
-export type DashboardKind = "awareness" | "performance" | "overview" | "multibrand";
+export type DashboardKind = "awareness" | "performance" | "overview" | "multibrand" | "abbott_bi";
 export type DashboardSectionId =
   | "kpi_grid"
   | "spend_section"
@@ -258,6 +258,98 @@ export interface AnalyticsTimeSeriesPoint {
   bounce_rate: number;
 }
 
+export interface AbbottBiUserSummaryRow {
+  user_id: string;
+  traffic_source: string;
+  direction: string | null;
+  visits: number;
+  users: number;
+  new_users: number;
+  page_depth: number;
+  avg_duration: number;
+  bounce_rate: number;
+}
+
+export interface AbbottBiUserActionRow {
+  user_id: string;
+  traffic_source: string;
+  direction: string | null;
+  start_url: string;
+  end_url: string;
+  visits: number;
+  page_depth: number;
+  avg_duration: number;
+}
+
+export interface AbbottBiPageStatRow {
+  page_title: string;
+  url: string;
+  direction: string | null;
+  material_type: string | null;
+  access: string | null;
+  pageviews: number;
+  users: number;
+}
+
+export interface AbbottBiExternalEventRow {
+  title: string;
+  direction: string | null;
+  registration_url: string;
+  access: string | null;
+}
+
+export interface AbbottBiExternalClickRow {
+  title: string | null;
+  direction: string | null;
+  external_url: string;
+  outbound_clicks: number;
+}
+
+export interface AbbottBiTimeBucketRow {
+  bucket_id: "lt_1m" | "1_2m" | "2_5m" | "gt_5m";
+  label: string;
+  users: number;
+}
+
+export interface AbbottBiTimeBucketPage {
+  url: string;
+  buckets: AbbottBiTimeBucketRow[];
+}
+
+export interface AbbottBiTimeBuckets {
+  overall: AbbottBiTimeBucketRow[];
+  materials: AbbottBiTimeBucketRow[];
+  by_page: AbbottBiTimeBucketPage[];
+}
+
+export interface AbbottBiReturningRow {
+  url: string;
+  direction: string | null;
+  visits: number;
+  returning_1_day: number;
+  returning_2_7_days: number;
+  returning_8_31_days: number;
+}
+
+export interface AbbottBiMaterialRow {
+  material_name: string;
+  url: string;
+  pageviews: number;
+  users: number;
+}
+
+export interface AbbottBiData {
+  counters: string[];
+  users_summary: AbbottBiUserSummaryRow[];
+  user_actions: AbbottBiUserActionRow[];
+  page_stats: AbbottBiPageStatRow[];
+  external_events: AbbottBiExternalEventRow[];
+  external_clicks: AbbottBiExternalClickRow[];
+  time_buckets: AbbottBiTimeBuckets;
+  returning: AbbottBiReturningRow[];
+  general_materials: AbbottBiMaterialRow[];
+}
+
 export interface CustomTableData {
   title: string;
   headers: string[];
@@ -351,6 +443,25 @@ export interface BoundPromopagesTimeSeriesOverlay {
   views: number;
 }
 
+export type DashboardAiSummaryStatus = "ready" | "unavailable" | "timeout" | "error";
+
+export type DashboardAiSummaryReason =
+  | "insufficient_data"
+  | "provider_not_configured"
+  | "request_failed"
+  | "invalid_response"
+  | "response_empty"
+  | "timeout";
+
+export interface DashboardAiSummary {
+  status: DashboardAiSummaryStatus;
+  headline?: string;
+  bullets?: string[];
+  watchout?: string | null;
+  reason?: DashboardAiSummaryReason;
+  generated_at?: string;
+}
+
 export interface DashboardData {
   dashboard: DashboardMeta;
   kpi_config: string[];
@@ -368,6 +479,7 @@ export interface DashboardData {
     kpi: AnalyticsKPI;
     timeseries: AnalyticsTimeSeriesPoint[];
   };
+  abbott_bi?: AbbottBiData;
   promopages?: PromopagesData;
   bound_promopages?: {
     by_channel: BoundPromopagesChannelOverlay[];
@@ -388,4 +500,5 @@ export interface DashboardData {
   campaign_breakdown?: CampaignBreakdownItem[];
   funnel?: FunnelStep[];
   comparison?: ComparisonData;
+  ai_summary?: DashboardAiSummary;
 }

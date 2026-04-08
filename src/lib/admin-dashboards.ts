@@ -26,7 +26,7 @@ export type DashboardUpsertPayload = {
   client_id: string;
   client_name: string;
   dashboard_name: string;
-  dashboard_type: "awareness" | "performance" | "overview" | "multibrand";
+  dashboard_type: "awareness" | "performance" | "overview" | "multibrand" | "abbott_bi";
   config: Record<string, unknown>;
   sources: DashboardSourceInput[];
   media_plan_bindings: MediaPlanBindingInput[];
@@ -37,7 +37,7 @@ export type DashboardWithSources = {
   client_id: string;
   client_name: string;
   dashboard_name: string;
-  dashboard_type: "awareness" | "performance" | "overview" | "multibrand";
+  dashboard_type: "awareness" | "performance" | "overview" | "multibrand" | "abbott_bi";
   is_active: number | boolean;
   config: Record<string, unknown>;
   created_at?: string;
@@ -209,7 +209,10 @@ function normalizeCustomKpiCard(raw: unknown) {
 export function normalizeDashboardPayload(raw: unknown): DashboardUpsertPayload {
   const input = (raw ?? {}) as Partial<DashboardUpsertPayload>;
   const dashboardType =
-    input.dashboard_type === "performance" || input.dashboard_type === "overview" || input.dashboard_type === "multibrand"
+    input.dashboard_type === "performance" ||
+    input.dashboard_type === "overview" ||
+    input.dashboard_type === "multibrand" ||
+    input.dashboard_type === "abbott_bi"
       ? input.dashboard_type
       : "awareness";
 

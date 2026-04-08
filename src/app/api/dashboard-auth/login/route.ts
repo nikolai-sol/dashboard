@@ -17,16 +17,20 @@ export async function POST(request: Request) {
   const email = String(body?.email ?? "").trim().toLowerCase();
   const password = String(body?.password ?? "");
 
-  if (!identifier || !email || !password) {
-    return NextResponse.json({ error: "Dashboard, email, and password are required" }, { status: 400 });
+  if (!identifier || !password) {
+    return NextResponse.json({ error: "Dashboard and password are required" }, { status: 400 });
   }
 
   const context = await verifyDashboardAccessCredentials(identifier, email, password);
   if (!context) {
     return NextResponse.json({ error: "Invalid credentials" }, { status: 401 });
   }
-  const accessibleDashboards = await listAccessibleDashboardsByCredentials(email, password);
-  const viewerSessionToken = createViewerSession(context.id, email);
+  const normalizedEmail = email || `shared-access+${context.client_id}@dashboard.local`;
+  const accessibleDashboards =
+    context.auth_mode === "email_password"
+      ? await listAccessibleDashboardsByCredentials(email, password)
+      : [{ id: context.id, client_id: context.client_id, client_name: context.client_name, dashboard_name: context.dashboard_name, url: `/dashboard/${context.client_id}` }];
+  const viewerSessionToken = createViewerSession(context.id, normalizedEmail);
 
   const response = NextResponse.json({
     ok: true,
@@ -45,7 +49,7 @@ export async function POST(request: Request) {
   );
   response.cookies.set(
     VIEWER_PORTAL_SESSION_COOKIE,
-    createViewerPortalSession(email, accessibleDashboards.map((dashboard) => dashboard.id)),
+    createViewerPortalSession(normalizedEmail, accessibleDashboards.map((dashboard) => dashboard.id)),
     cookieOptions(60 * 60 * 24 * 30, "none"),
   );
   return response;

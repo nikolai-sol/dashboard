@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { isDashboardAccessAuthorized } from "@/lib/dashboard-access";
+import { buildDashboardAiSummaryCacheKey, generateDashboardAiSummary } from "@/lib/dashboard-ai-summary";
 import { loadDashboardData } from "@/lib/dashboard-data-loader";
 
 export const dynamic = "force-dynamic";
@@ -24,12 +25,20 @@ export async function GET(
             client_id: access.context.client_id,
             client_name: access.context.client_name,
             dashboard_name: access.context.dashboard_name,
+            auth_mode: access.context.auth_mode,
           },
         },
         { status: 401 },
       );
     }
-    const { data } = await loadDashboardData(request, id);
+    const { data, ai_summary_enabled, ai_summary_override } = await loadDashboardData(request, id);
+    if (ai_summary_enabled) {
+      data.ai_summary =
+        ai_summary_override ??
+        await generateDashboardAiSummary(data, {
+          cacheKey: buildDashboardAiSummaryCacheKey(request, id),
+        });
+    }
     return NextResponse.json(data);
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);

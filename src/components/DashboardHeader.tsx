@@ -108,6 +108,15 @@ export default function DashboardHeader({
     exportExcel: "Export Excel",
   };
   const initials = getInitials(clientName);
+  const showCompare = Boolean(
+    onToggleCompare &&
+      onComparePresetChange &&
+      onCompareFromChange &&
+      onCompareToChange &&
+      onApplyCompare &&
+      onClearCompare,
+  );
+  const showExport = Boolean(onExportExcel || onExportPdf);
 
   return (
     <header className="card-surface relative z-[60] mb-6 overflow-visible flex flex-col gap-4 p-5 sm:flex-row sm:items-center sm:justify-between">
@@ -161,51 +170,57 @@ export default function DashboardHeader({
             >
               {isUpdatingRange ? copy.updating : copy.apply}
             </button>
-            <ComparisonToggle
-              open={compareOpen}
-              currentFrom={dateFrom ?? ""}
-              currentTo={dateTo ?? ""}
-              compareFrom={compareFrom}
-              compareTo={compareTo}
-              preset={comparePreset}
-              language={language}
-              labels={{
-                compare: copy.compare,
-                compareApply: copy.compareApply,
-                compareClose: copy.compareClose,
-                compareTitle: copy.compareTitle,
-                compareCurrent: copy.compareCurrent,
-                comparePrevious: copy.comparePrevious,
-                compareMonth: copy.compareMonth,
-                compareWeek: copy.compareWeek,
-                compareYear: copy.compareYear,
-                compareCustom: copy.compareCustom,
-                compareFrom: copy.compareFrom,
-                compareTo: copy.compareTo,
-              }}
-              onToggleOpen={() => onToggleCompare?.()}
-              onPresetChange={(preset) => onComparePresetChange?.(preset)}
-              onCompareFromChange={(value) => onCompareFromChange?.(value)}
-              onCompareToChange={(value) => onCompareToChange?.(value)}
-              onApply={() => onApplyCompare?.()}
-              onClear={() => onClearCompare?.()}
-            />
-            <button
-              type="button"
-              onClick={onExportExcel}
-              className="inline-flex items-center gap-2 rounded-lg border border-slate-200 bg-white px-4 py-2 text-sm font-medium text-slate-700 transition hover:border-slate-300 hover:bg-slate-50"
-            >
-              <Download className="h-4 w-4" />
-              {copy.exportExcel}
-            </button>
-            <button
-              type="button"
-              onClick={onExportPdf}
-              className="inline-flex items-center gap-2 rounded-lg border border-slate-200 bg-white px-4 py-2 text-sm font-medium text-slate-700 transition hover:border-slate-300 hover:bg-slate-50"
-            >
-              <Download className="h-4 w-4" />
-              {copy.exportPdf}
-            </button>
+            {showCompare ? (
+              <ComparisonToggle
+                open={compareOpen}
+                currentFrom={dateFrom ?? ""}
+                currentTo={dateTo ?? ""}
+                compareFrom={compareFrom}
+                compareTo={compareTo}
+                preset={comparePreset}
+                language={language}
+                labels={{
+                  compare: copy.compare,
+                  compareApply: copy.compareApply,
+                  compareClose: copy.compareClose,
+                  compareTitle: copy.compareTitle,
+                  compareCurrent: copy.compareCurrent,
+                  comparePrevious: copy.comparePrevious,
+                  compareMonth: copy.compareMonth,
+                  compareWeek: copy.compareWeek,
+                  compareYear: copy.compareYear,
+                  compareCustom: copy.compareCustom,
+                  compareFrom: copy.compareFrom,
+                  compareTo: copy.compareTo,
+                }}
+                onToggleOpen={() => onToggleCompare?.()}
+                onPresetChange={(preset) => onComparePresetChange?.(preset)}
+                onCompareFromChange={(value) => onCompareFromChange?.(value)}
+                onCompareToChange={(value) => onCompareToChange?.(value)}
+                onApply={() => onApplyCompare?.()}
+                onClear={() => onClearCompare?.()}
+              />
+            ) : null}
+            {showExport && onExportExcel ? (
+              <button
+                type="button"
+                onClick={onExportExcel}
+                className="inline-flex items-center gap-2 rounded-lg border border-slate-200 bg-white px-4 py-2 text-sm font-medium text-slate-700 transition hover:border-slate-300 hover:bg-slate-50"
+              >
+                <Download className="h-4 w-4" />
+                {copy.exportExcel}
+              </button>
+            ) : null}
+            {showExport && onExportPdf ? (
+              <button
+                type="button"
+                onClick={onExportPdf}
+                className="inline-flex items-center gap-2 rounded-lg border border-slate-200 bg-white px-4 py-2 text-sm font-medium text-slate-700 transition hover:border-slate-300 hover:bg-slate-50"
+              >
+                <Download className="h-4 w-4" />
+                {copy.exportPdf}
+              </button>
+            ) : null}
           </div>
         </div>
       ) : null}

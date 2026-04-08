@@ -1,5 +1,6 @@
 import type { RowDataPacket } from "mysql2";
 import pool from "@/lib/db";
+import { getDefaultAbbottCounterIds, loadAbbottBiData } from "@/lib/abbott-bi";
 import { loadSchema } from "@/lib/schema-parser";
 import {
   getAdsAggregate,
@@ -43,6 +44,10 @@ import {
 } from "@/lib/source-mapping";
 import { normalizeDashboardLanguage } from "@/lib/dashboard-i18n";
 import {
+  buildDashboardAiSummaryFromOverrideText,
+  normalizeDashboardAiSummaryAuthoring,
+} from "@/lib/dashboard-ai-summary";
+import {
   findMultibrandBrand,
   matchesAnyMultibrandPattern,
   normalizeMultibrandConfig,
@@ -66,6 +71,7 @@ import type {
   ComparisonPlatformItem,
   ComparisonTimeSeriesPoint,
   CustomTableData,
+  DashboardAiSummary,
   DashboardData,
   DashboardSectionId,
   FunnelStep,
@@ -84,9 +90,13 @@ import type {
 type JsonRecord = Record<string, unknown>;
 
 export type LoadedDashboardData = {
+  dashboard_id: number;
   data: DashboardData;
   previous_platforms: PlatformStats[];
   leads_rows?: LeadRow[];
+  ai_summary_enabled: boolean;
+  ai_summary_override_text?: string | null;
+  ai_summary_override?: DashboardAiSummary | null;
 };
 
 type DashboardRow = RowDataPacket & {
@@ -146,6 +156,13 @@ function toIsoDate(value: string | Date): string {
   return String(value).slice(0, 10);
 }
 
+function isValidIsoDate(value: string | null | undefined): value is string {
+  if (!value) return false;
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(value)) return false;
+  const date = new Date(`${value}T00:00:00Z`);
+  return Number.isFinite(date.getTime()) && date.toISOString().slice(0, 10) === value;
+}
+
 function parseJson(value: unknown): JsonRecord {
   if (!value) return {};
   if (typeof value === "string") {
@@ -164,6 +181,20 @@ function parseJson(value: unknown): JsonRecord {
 function parseAccountIds(value: unknown): string[] {
   if (!Array.isArray(value)) return [];
   return value.map((item) => String(item).trim()).filter(Boolean);
+}
+
+function resolveAbbottCounterIds(sourceRows: SourceRow[]): string[] {
+  const ids = sourceRows.flatMap((source) => {
+    const schema = loadSchema(source.schema_file);
+    const sourceKey = schema.source_key ?? resolveSourceKey(source.platform);
+    const sourceType = schema.source_type ?? resolveSourceType(sourceKey);
+    if (sourceType !== "analytics" || sourceKey !== "yandex_metrika") {
+      return [];
+    }
+    return parseAccountIds(parseJson(source.source_config).account_ids);
+  });
+
+  return Array.from(new Set(ids)).filter(Boolean);
 }
 
 function filterManualRowsByBrand(rows: ManualDataRow[], patterns: string[]): ManualDataRow[] {
@@ -196,10 +227,12 @@ function resolveDateRange(
   const daysQuery = params.get("days");
 
   const fallbackRange = currentMonthRange();
-  const configFrom = String(config.period_from ?? fallbackRange.from);
-  const configTo = String(config.period_to ?? fallbackRange.to);
+  const configFromRaw = String(config.period_from ?? fallbackRange.from);
+  const configToRaw = String(config.period_to ?? fallbackRange.to);
+  const configFrom = isValidIsoDate(configFromRaw) ? configFromRaw : fallbackRange.from;
+  const configTo = isValidIsoDate(configToRaw) ? configToRaw : fallbackRange.to;
 
-  if (fromQuery && toQuery) {
+  if (isValidIsoDate(fromQuery) && isValidIsoDate(toQuery)) {
     return { from: fromQuery, to: toQuery };
   }
 
@@ -229,7 +262,7 @@ function getCompareRange(request: Request): { from: string; to: string } | null 
   const params = new URL(request.url).searchParams;
   const from = params.get("compare_from");
   const to = params.get("compare_to");
-  if (!from || !to) return null;
+  if (!isValidIsoDate(from) || !isValidIsoDate(to)) return null;
   return { from, to };
 }
 
@@ -1020,6 +1053,7 @@ async function buildBoundPromopagesOverlay(
 async function buildPlanVsFactRowsByChannel(
   channelGroups: ChannelGroup[],
   bindingsByLineKey: Map<string, Array<{ source_key: string; platform_campaign_id: string }>>,
+  hasExplicitBindings: boolean,
   actualAdsSourceKeys: Set<string>,
   dateFrom: string,
   dateTo: string,
@@ -1051,6 +1085,9 @@ async function buildPlanVsFactRowsByChannel(
   const factPromises = channelGroups.map(async (group) => {
     const bindings = bindingsByLineKey.get(group.line_key || group.channel) ?? [];
     if (bindings.length === 0) {
+      if (hasExplicitBindings) {
+        return null;
+      }
       const fallbackSourceKey = resolveSourceKey(group.instrument);
       if (!actualAdsSourceKeys.has(fallbackSourceKey)) {
         return null;
@@ -1125,6 +1162,7 @@ async function buildPlanVsFactRowsByChannel(
             })).values(),
           )
         : (() => {
+            if (hasExplicitBindings) return [];
             const fallbackSourceKey = resolveSourceKey(group.instrument);
             if (!actualAdsSourceKeys.has(fallbackSourceKey)) return [];
             const platformId = resolvePlatformIdFromSourceKey(fallbackSourceKey);
@@ -1222,6 +1260,7 @@ async function buildPlanVsFactRowsByChannel(
 async function buildChannelTimeseries(
   channelGroups: ChannelGroup[],
   bindingsByLineKey: Map<string, Array<{ source_key: string; platform_campaign_id: string }>>,
+  hasExplicitBindings: boolean,
   actualAdsSourceKeys: Set<string>,
   dateFrom: string,
   dateTo: string,
@@ -1234,6 +1273,9 @@ async function buildChannelTimeseries(
       const bySource = new Map<string, string[]>();
 
       if (bindings.length === 0) {
+        if (hasExplicitBindings) {
+          return [];
+        }
         const fallbackSourceKey = resolveSourceKey(group.instrument);
         if (actualAdsSourceKeys.has(fallbackSourceKey)) {
           bySource.set(fallbackSourceKey, []);
@@ -1752,6 +1794,11 @@ export async function loadDashboardData(
   const frequencyOverrides = normalizeFrequencyOverrides(config);
   const frequencyOverrideMap = buildFrequencyOverrideMap(frequencyOverrides);
   const showSpend = Boolean(config.show_spend ?? true);
+  const aiSummaryEnabled = Boolean(config.show_ai_summary ?? false);
+  const aiSummaryAuthoring = normalizeDashboardAiSummaryAuthoring(config.ai_summary_authoring);
+  const aiSummaryOverride = aiSummaryAuthoring
+    ? buildDashboardAiSummaryFromOverrideText(aiSummaryAuthoring.override_text, aiSummaryAuthoring.updated_at)
+    : null;
   const dashboardType = dashboard.dashboard_type;
   const spendSource =
     String(config.spend_source ?? "platform_actual") === "media_plan_derived"
@@ -1768,6 +1815,64 @@ export async function loadDashboardData(
      WHERE ds.dashboard_id = ?`,
     [dashboard.id],
   );
+
+  if (dashboardType === "abbott_bi") {
+    const counterIds = resolveAbbottCounterIds(sourceRows);
+    const abbottData = await loadAbbottBiData(
+      counterIds.length > 0 ? counterIds : getDefaultAbbottCounterIds(),
+      range.from,
+      range.to,
+    );
+
+    const response: DashboardData = {
+      dashboard: {
+        client_name: dashboard.client_name,
+        dashboard_name: dashboard.dashboard_name,
+        logo_url: typeof config.logo_url === "string" ? config.logo_url : null,
+        type: dashboardType,
+        period: {
+          from: range.from,
+          to: range.to,
+        },
+        currency: String(config.currency ?? "RUB"),
+        language: normalizeDashboardLanguage(config.language),
+        show_spend: false,
+        filter_scope: "platform",
+        section_order: [],
+        multibrand: null,
+      },
+      kpi_config: [],
+      visible_metrics: [],
+      kpi: {
+        total_impressions: 0,
+        total_clicks: 0,
+        total_spend: 0,
+        total_conversions: 0,
+        avg_ctr: 0,
+        avg_cpm: 0,
+        prev_impressions: 0,
+        prev_clicks: 0,
+        prev_spend: 0,
+        prev_conversions: 0,
+        prev_ctr: 0,
+        prev_cpm: 0,
+      },
+      platforms: [],
+      timeseries: [],
+      plan_vs_fact: [],
+      abbott_bi: abbottData,
+    };
+
+    return {
+      dashboard_id: dashboard.id,
+      data: response,
+      previous_platforms: [],
+      leads_rows: [],
+      ai_summary_enabled: aiSummaryEnabled,
+      ai_summary_override_text: aiSummaryAuthoring?.override_text ?? null,
+      ai_summary_override: aiSummaryOverride,
+    };
+  }
 
   const platformStatsRaw: PlatformStats[] = [];
   const timeseriesRaw: TimeSeriesPoint[] = [];
@@ -2161,6 +2266,7 @@ export async function loadDashboardData(
       });
       return acc;
     }, new Map<string, Array<{ source_key: string; platform_campaign_id: string }>>());
+    const hasExplicitBindings = bindingRows.length > 0;
     const boundPromopagesOverlay = await buildBoundPromopagesOverlay(
       planByChannel,
       bindingsByLineKey,
@@ -2183,6 +2289,7 @@ export async function loadDashboardData(
     const planVsFactBase = await buildPlanVsFactRowsByChannel(
       planByChannel,
       bindingsByLineKey,
+      hasExplicitBindings,
       actualAdsSourceKeys,
       range.from,
       range.to,
@@ -2192,6 +2299,7 @@ export async function loadDashboardData(
     const channelTimeseries = await buildChannelTimeseries(
       planByChannel,
       bindingsByLineKey,
+      hasExplicitBindings,
       actualAdsSourceKeys,
       range.from,
       range.to,
@@ -2419,8 +2527,12 @@ export async function loadDashboardData(
   }
 
   return {
+    dashboard_id: dashboard.id,
     data: response,
     previous_platforms: prevPlatformResults,
     leads_rows: leadsRows.length > 0 ? leadsRows : undefined,
+    ai_summary_enabled: aiSummaryEnabled,
+    ai_summary_override_text: aiSummaryAuthoring?.override_text ?? null,
+    ai_summary_override: aiSummaryOverride,
   };
 }

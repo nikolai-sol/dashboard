@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import type { ResultSetHeader } from "mysql2/promise";
+import type { ResultSetHeader, RowDataPacket } from "mysql2/promise";
 import pool from "@/lib/db";
 import {
   insertSourcesWithFilters,
@@ -10,6 +10,25 @@ import {
   validateDashboardPayload,
 } from "@/lib/admin-dashboards";
 import { getDefaultKpiCards, getDefaultSectionOrder } from "@/lib/dashboard-presets";
+
+function parseConfig(value: unknown): Record<string, unknown> {
+  if (!value) return {};
+  if (typeof value === "string") {
+    try {
+      return JSON.parse(value) as Record<string, unknown>;
+    } catch {
+      return {};
+    }
+  }
+  if (typeof value === "object") {
+    return value as Record<string, unknown>;
+  }
+  return {};
+}
+
+type DashboardConfigRow = RowDataPacket & {
+  config: string | Record<string, unknown> | null;
+};
 
 export async function GET(
   _request: Request,
@@ -61,7 +80,7 @@ export async function PUT(
     return NextResponse.json({ error: validationError }, { status: 400 });
   }
 
-  const config = {
+  const config: Record<string, unknown> = {
     ...payload.config,
     kpi_cards: Array.isArray(payload.config.kpi_cards)
       ? payload.config.kpi_cards
@@ -78,6 +97,24 @@ export async function PUT(
       payload: payloadSummary,
     });
     await conn.beginTransaction();
+
+    const [existingRows] = await conn.execute<DashboardConfigRow[]>(
+      "SELECT config FROM dashboards WHERE id = ? LIMIT 1",
+      [dashboardId],
+    );
+    const existingRow = existingRows[0];
+    if (!existingRow) {
+      await conn.rollback();
+      return NextResponse.json({ error: "Dashboard not found" }, { status: 404 });
+    }
+
+    const existingConfig = parseConfig(existingRow.config);
+    if (
+      !Object.prototype.hasOwnProperty.call(payload.config, "ai_summary_authoring") &&
+      Object.prototype.hasOwnProperty.call(existingConfig, "ai_summary_authoring")
+    ) {
+      config.ai_summary_authoring = existingConfig.ai_summary_authoring;
+    }
 
     const [updateResult] = await conn.execute<ResultSetHeader>(
       `UPDATE dashboards

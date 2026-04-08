@@ -120,6 +120,12 @@ Relevant files:
 - Viewer cookies were switched to iframe-compatible mode:
   - `SameSite=None`
   - `Secure`
+- Abbott also supports a permanent embed query key:
+  - `embed_key`
+  - current shared key source:
+    - `process.env.ABBOTT_DASHBOARD_EMBED_KEY`
+    - fallback default: `Terasic1!`
+  - this is intended for iframe embedding without expiring `access_token`
 
 ## Embed rules
 
@@ -127,6 +133,13 @@ Relevant files:
 - Admin pages must not be embeddable
 - Current embed uses:
   - `https://dashboards.adreports.ru/dashboard/<id>`
+- Protected Abbott embed can also use:
+  - `https://dashboards.adreports.ru/dashboard/abbott?embed_key=...`
+- Dashboard page runtime must preserve `embed_key` in:
+  - API fetches
+  - date range changes
+  - brand changes
+  - PDF / Excel export links
 
 Known note:
 - Full-width embed mode is still a separate enhancement

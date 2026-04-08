@@ -11,6 +11,7 @@ import ChannelPerformanceTable from "@/components/ChannelPerformanceTable";
 import ComparisonSection from "@/components/ComparisonSection";
 import ConversionFunnel from "@/components/ConversionFunnel";
 import CustomTable from "@/components/CustomTable";
+import DashboardAiSummaryCard from "@/components/DashboardAiSummaryCard";
 import DashboardHeader from "@/components/DashboardHeader";
 import KPICard from "@/components/KPICard";
 import PlatformFilter from "@/components/PlatformFilter";
@@ -23,6 +24,7 @@ import SpendConversionsScatter from "@/components/SpendConversionsScatter";
 import TrendChart from "@/components/TrendChart";
 import MultibrandPanel from "@/components/MultibrandPanel";
 import MultibrandExecutivePage from "@/components/MultibrandExecutivePage";
+import AbbottBiDashboard from "@/components/AbbottBiDashboard";
 import type { MultibrandBrandSummary } from "@/components/MultibrandExecutivePage";
 import { getDashboardI18n } from "@/lib/dashboard-i18n";
 import type { DashboardData } from "@/lib/types";
@@ -46,6 +48,7 @@ type DashboardAuthMeta = {
   client_id: string;
   client_name: string;
   dashboard_name: string;
+  auth_mode?: "email_password" | "password_only";
 };
 
 type MultibrandSummary = MultibrandBrandSummary & {
@@ -113,7 +116,9 @@ function compact(value: number, locale = "en-US") {
 }
 
 function formatPeriodDate(isoDate: string, locale = "en-GB") {
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(isoDate)) return isoDate || "—";
   const d = new Date(`${isoDate}T00:00:00Z`);
+  if (!Number.isFinite(d.getTime())) return isoDate || "—";
   return d.toLocaleDateString(locale, { day: "numeric", month: "short", year: "numeric" });
 }
 
@@ -122,6 +127,7 @@ async function getDashboardData(
   range?: { from: string; to: string },
   compareRange?: { from: string; to: string } | null,
   accessToken?: string,
+  embedKey?: string,
   brandId?: string | null,
 ): Promise<{
   data: DashboardData | null;
@@ -143,6 +149,9 @@ async function getDashboardData(
     }
     if (accessToken) {
       params.set("access_token", accessToken);
+    }
+    if (embedKey) {
+      params.set("embed_key", embedKey);
     }
     if (brandId) {
       params.set("brand", brandId);
@@ -258,6 +267,7 @@ export default function DashboardByIdPage() {
   const initialCompareFrom = searchParams.get("compare_from") ?? "";
   const initialCompareTo = searchParams.get("compare_to") ?? "";
   const initialAccessToken = searchParams.get("access_token") ?? "";
+  const initialEmbedKey = searchParams.get("embed_key") ?? "";
   const initialBrandId = searchParams.get("brand") ?? "";
   const isPdfMode = searchParams.get("pdf") === "true";
   const isMobileMode = searchParams.get("mobile") === "1";
@@ -273,6 +283,7 @@ export default function DashboardByIdPage() {
   const [authMeta, setAuthMeta] = useState<DashboardAuthMeta | null>(null);
   const [notFound, setNotFound] = useState(false);
   const [viewerAccessToken, setViewerAccessToken] = useState(initialAccessToken);
+  const [viewerEmbedKey] = useState(initialEmbedKey);
   const [selectedBrandId, setSelectedBrandId] = useState(initialBrandId);
   const [brandSummaries, setBrandSummaries] = useState<MultibrandSummary[]>([]);
   const [reloadKey, setReloadKey] = useState(0);
@@ -303,6 +314,7 @@ export default function DashboardByIdPage() {
         dateRange.from && dateRange.to ? dateRange : undefined,
         compareRange.from && compareRange.to ? compareRange : null,
         viewerAccessToken || undefined,
+        viewerEmbedKey || undefined,
         selectedBrandId || undefined,
       );
       if (cancelled) {
@@ -354,7 +366,7 @@ export default function DashboardByIdPage() {
     return () => {
       cancelled = true;
     };
-  }, [compareRange, dashboardId, dateRange, reloadKey, selectedBrandId, viewerAccessToken]);
+  }, [compareRange, dashboardId, dateRange, reloadKey, selectedBrandId, viewerAccessToken, viewerEmbedKey]);
 
   useEffect(() => {
     setSelectedBrandId(initialBrandId);
@@ -1191,6 +1203,9 @@ export default function DashboardByIdPage() {
     if (viewerAccessToken) {
       params.set("access_token", viewerAccessToken);
     }
+    if (viewerEmbedKey) {
+      params.set("embed_key", viewerEmbedKey);
+    }
     if (selectedBrandId) {
       params.set("brand", selectedBrandId);
     }
@@ -1210,6 +1225,9 @@ export default function DashboardByIdPage() {
     }
     if (viewerAccessToken) {
       params.set("access_token", viewerAccessToken);
+    }
+    if (viewerEmbedKey) {
+      params.set("embed_key", viewerEmbedKey);
     }
     if (selectedBrandId) {
       params.set("brand", selectedBrandId);
@@ -1282,6 +1300,9 @@ export default function DashboardByIdPage() {
     if (viewerAccessToken) {
       params.set("access_token", viewerAccessToken);
     }
+    if (viewerEmbedKey) {
+      params.set("embed_key", viewerEmbedKey);
+    }
     if (brandId) {
       params.set("brand", brandId);
     } else {
@@ -1301,6 +1322,7 @@ export default function DashboardByIdPage() {
           dashboardId={dashboardId}
           dashboardName={authMeta.dashboard_name}
           clientName={authMeta.client_name}
+          authMode={authMeta.auth_mode}
           onSuccess={(accessToken) => {
             if (accessToken) {
               setViewerAccessToken(accessToken);
@@ -1361,6 +1383,41 @@ export default function DashboardByIdPage() {
     locale,
   )}`;
   const clientName = dashboard.dashboard.client_name || dashboardId.toUpperCase();
+
+  if (dashboardType === "abbott_bi" && dashboard.abbott_bi) {
+    return (
+      <main
+        data-dashboard-ready="true"
+        className={`mx-auto min-h-screen w-full max-w-[1600px] px-4 py-6 sm:px-6 lg:px-8 ${isPdfMode ? "pdf-mode" : ""}`}
+        style={isMobileMode ? ({ maxWidth: "430px" } as CSSProperties) : undefined}
+      >
+        <DashboardHeader
+          clientName={clientName}
+          title={dashboard.dashboard.dashboard_name}
+          periodLabel={periodLabel}
+          logoUrl={dashboard.dashboard.logo_url}
+          pdfMode={isPdfMode}
+          language={dashboardLanguage}
+          labels={i18n.header}
+          dateFrom={draftDateRange.from}
+          dateTo={draftDateRange.to}
+          onDateFromChange={(value) => setDraftDateRange((prev) => ({ ...prev, from: value }))}
+          onDateToChange={(value) => setDraftDateRange((prev) => ({ ...prev, to: value }))}
+          onApplyDateRange={applyDateRange}
+          isUpdatingRange={isLoading}
+        />
+
+        {isDemoMode ? (
+          <div className="mb-4 rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-800">
+            {i18n.common.demoMode}
+            {apiError ? ` (${apiError})` : ""}
+          </div>
+        ) : null}
+
+        <AbbottBiDashboard data={dashboard.abbott_bi} locale={locale} />
+      </main>
+    );
+  }
 
   // ── Multibrand executive page: show when type=multibrand and no brand selected ──
   if (dashboardType === "multibrand" && !selectedBrandId && multibrand?.enabled && !isPdfMode) {
@@ -1472,6 +1529,8 @@ export default function DashboardByIdPage() {
         onExportExcel={exportExcel}
         onExportPdf={exportPdf}
       />
+
+      <DashboardAiSummaryCard summary={dashboard.ai_summary} labels={i18n.aiSummary} />
 
       {isDemoMode ? (
         <div className="no-print mb-4 rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-800">

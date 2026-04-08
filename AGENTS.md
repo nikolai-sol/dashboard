@@ -32,6 +32,11 @@ For dashboard work, use this file first:
 
 It contains the current dashboard runtime rules, auth model, export rules, comparison behavior, and latest completed dashboard changes.
 
+Current auth note:
+- Abbott dashboard supports:
+  - password-only viewer access
+  - permanent iframe access through `embed_key`
+
 ## Platform access / cron memory
 
 For collector, cron, and ad-platform API access work, use this file first:
@@ -89,6 +94,8 @@ then memory must be cleaned, not only appended to.
 
 Files on VPS:
 - app dir: `/var/www/dashboard`
+- staged releases: `/var/www/dashboard-releases`
+- rollback backups: `/var/www/dashboard-backups`
 - PM2 config: `/var/www/dashboard/ecosystem.config.js`
 - app logs:
   - `/var/log/dashboard-next-out.log`
@@ -182,8 +189,19 @@ npm run deploy
 What deploy does:
 - builds locally
 - packages `.next/standalone`
-- uploads to `/var/www/dashboard`
+- renders `.env` from `/var/www/www-root/data/.production.env`
+- validates required runtime secrets before upload
+- uploads the build into a staged release dir
+- swaps the staged release into `/var/www/dashboard`
 - restarts PM2 app `dashboard-next`
+- rolls back automatically if PM2 restart or local health check fails
+
+Manual rollback:
+
+```bash
+cd dashboard-next
+npm run deploy:rollback
+```
 
 After deploy always verify:
 
@@ -192,6 +210,10 @@ ssh beget 'pm2 status'
 ssh beget 'curl -s http://127.0.0.1:3001/api/health'
 curl -s https://dashboards.adreports.ru/api/health
 ```
+
+Bootstrap assumptions:
+- nginx should render `dashboards.adreports.ru`
+- TLS should point at the real cert/key for that domain, not the ISPmanager fallback cert
 
 ## Yandex Direct specifics
 

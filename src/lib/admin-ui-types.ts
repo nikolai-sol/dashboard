@@ -1,7 +1,7 @@
 import type { DashboardLanguage } from "@/lib/dashboard-i18n";
 import type { MultibrandConfig } from "@/lib/multibrand";
 
-export type DashboardType = "awareness" | "performance" | "overview" | "multibrand";
+export type DashboardType = "awareness" | "performance" | "overview" | "multibrand" | "abbott_bi";
 export type DashboardSectionId =
   | "kpi_grid"
   | "spend_section"

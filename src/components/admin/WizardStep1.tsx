@@ -179,6 +179,7 @@ export default function WizardStep1({ data, onChange }: WizardStep1Props) {
             <option value="multibrand">Multibrand</option>
             <option value="performance">Performance</option>
             <option value="overview">Overview</option>
+            <option value="abbott_bi">Abbott BI</option>
           </select>
         </label>
 

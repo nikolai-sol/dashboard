@@ -1,0 +1,107 @@
+"use client";
+
+import { AlertTriangle, Sparkles } from "lucide-react";
+import type { DashboardAiSummary } from "@/lib/types";
+
+type DashboardAiSummaryLabels = {
+  title: string;
+  subtitle: string;
+  watchout: string;
+  unavailableTitle: string;
+  unavailableBody: string;
+  errorTitle: string;
+  errorBody: string;
+};
+
+type DashboardAiSummaryCardProps = {
+  summary?: DashboardAiSummary;
+  labels: DashboardAiSummaryLabels;
+};
+
+function renderFallbackCopy(
+  summary: DashboardAiSummary,
+  labels: DashboardAiSummaryLabels,
+): { title: string; body: string } {
+  if (summary.status === "timeout" || summary.status === "error") {
+    return {
+      title: labels.errorTitle,
+      body: labels.errorBody,
+    };
+  }
+
+  return {
+    title: labels.unavailableTitle,
+    body: labels.unavailableBody,
+  };
+}
+
+export default function DashboardAiSummaryCard({
+  summary,
+  labels,
+}: DashboardAiSummaryCardProps) {
+  if (!summary) return null;
+
+  const isReady = summary.status === "ready";
+
+  if (!isReady) {
+    const fallback = renderFallbackCopy(summary, labels);
+
+    return (
+      <section className="card-surface mb-6 p-5">
+        <div className="flex items-start gap-3">
+          <div className="mt-0.5 flex h-10 w-10 shrink-0 items-center justify-center rounded-xl border border-slate-200 bg-slate-50 text-slate-500">
+            <AlertTriangle className="h-5 w-5" />
+          </div>
+          <div className="min-w-0">
+            <p className="text-xs font-semibold uppercase tracking-[0.16em] text-slate-500">
+              {labels.title}
+            </p>
+            <h2 className="mt-2 text-lg font-semibold text-slate-900">{fallback.title}</h2>
+            <p className="mt-2 max-w-3xl text-sm leading-6 text-slate-600">{fallback.body}</p>
+          </div>
+        </div>
+      </section>
+    );
+  }
+
+  return (
+    <section className="card-surface mb-6 p-5">
+      <div className="flex items-start gap-3">
+        <div className="mt-0.5 flex h-10 w-10 shrink-0 items-center justify-center rounded-xl border border-emerald-200 bg-emerald-50 text-emerald-700">
+          <Sparkles className="h-5 w-5" />
+        </div>
+        <div className="min-w-0 flex-1">
+          <div className="flex flex-col gap-1 sm:flex-row sm:items-baseline sm:justify-between">
+            <div>
+              <p className="text-xs font-semibold uppercase tracking-[0.16em] text-slate-500">
+                {labels.title}
+              </p>
+              <h2 className="mt-1 text-lg font-semibold text-slate-900">{summary.headline}</h2>
+            </div>
+            <p className="text-sm text-slate-500">{labels.subtitle}</p>
+          </div>
+
+          {summary.bullets?.length ? (
+            <ul className="mt-4 space-y-2 text-sm leading-6 text-slate-700">
+              {summary.bullets.map((bullet) => (
+                <li key={bullet} className="flex items-start gap-3">
+                  <span className="mt-2 h-1.5 w-1.5 shrink-0 rounded-full bg-emerald-500" />
+                  <span>{bullet}</span>
+                </li>
+              ))}
+            </ul>
+          ) : null}
+
+          {summary.watchout ? (
+            <div className="mt-4 rounded-2xl border border-amber-200 bg-amber-50/80 px-4 py-3">
+              <p className="text-xs font-semibold uppercase tracking-[0.14em] text-amber-800">
+                {labels.watchout}
+              </p>
+              <p className="mt-1 text-sm leading-6 text-amber-900">{summary.watchout}</p>
+            </div>
+          ) : null}
+        </div>
+      </div>
+    </section>
+  );
+}

@@ -6,6 +6,7 @@ type DashboardAccessGateProps = {
   dashboardId: string;
   dashboardName: string;
   clientName: string;
+  authMode?: "email_password" | "password_only";
   onSuccess: (accessToken?: string) => void;
 };
 
@@ -13,6 +14,7 @@ export default function DashboardAccessGate({
   dashboardId,
   dashboardName,
   clientName,
+  authMode = "email_password",
   onSuccess,
 }: DashboardAccessGateProps) {
   const [email, setEmail] = useState("");
@@ -30,7 +32,7 @@ export default function DashboardAccessGate({
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           dashboard_id: dashboardId,
-          email,
+          email: authMode === "password_only" ? "" : email,
           password,
         }),
       });
@@ -51,20 +53,24 @@ export default function DashboardAccessGate({
       <section className="w-full rounded-2xl border border-slate-200 bg-white p-6 shadow-sm">
         <h1 className="text-2xl font-semibold text-slate-900">{dashboardName}</h1>
         <p className="mt-2 text-sm text-slate-600">
-          {clientName} dashboard is protected. Enter your login and password to continue.
+          {authMode === "password_only"
+            ? `${clientName} dashboard is protected. Enter the password to continue.`
+            : `${clientName} dashboard is protected. Enter your login and password to continue.`}
         </p>
         <form className="mt-6 space-y-4" onSubmit={handleSubmit}>
-          <label className="block text-sm text-slate-700">
-            Email
-            <input
-              className="mt-1 w-full rounded-lg border border-slate-300 px-3 py-2"
-              type="email"
-              value={email}
-              onChange={(event) => setEmail(event.target.value)}
-              autoComplete="email"
-              required
-            />
-          </label>
+          {authMode === "password_only" ? null : (
+            <label className="block text-sm text-slate-700">
+              Email
+              <input
+                className="mt-1 w-full rounded-lg border border-slate-300 px-3 py-2"
+                type="email"
+                value={email}
+                onChange={(event) => setEmail(event.target.value)}
+                autoComplete="email"
+                required
+              />
+            </label>
+          )}
           <label className="block text-sm text-slate-700">
             Password
             <input

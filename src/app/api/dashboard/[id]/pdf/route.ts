@@ -11,6 +11,7 @@ function buildDashboardUrl(request: Request, dashboardId: string, accessToken?: 
   const to = searchParams.get("to");
   const compareFrom = searchParams.get("compare_from");
   const compareTo = searchParams.get("compare_to");
+  const embedKey = searchParams.get("embed_key");
   const baseUrl = process.env.INTERNAL_BASE_URL || "http://127.0.0.1:3001";
   const url = new URL(`/dashboard/${dashboardId}`, baseUrl);
   url.searchParams.set("pdf", "true");
@@ -19,6 +20,7 @@ function buildDashboardUrl(request: Request, dashboardId: string, accessToken?: 
   if (compareFrom) url.searchParams.set("compare_from", compareFrom);
   if (compareTo) url.searchParams.set("compare_to", compareTo);
   if (accessToken) url.searchParams.set("access_token", accessToken);
+  if (embedKey) url.searchParams.set("embed_key", embedKey);
   return url.toString();
 }
 

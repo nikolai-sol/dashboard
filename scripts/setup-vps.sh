@@ -1,14 +1,34 @@
 #!/bin/bash
 set -euo pipefail
 
-APP_DIR="/var/www/dashboard"
-NGINX_CONF="/etc/nginx/conf.d/dashboard-next.conf"
-TLS_CERT="/usr/local/mgr5/etc/manager.crt"
-TLS_KEY="/usr/local/mgr5/etc/manager.key"
+APP_DIR="${APP_DIR:-/var/www/dashboard}"
+APP_PORT="${APP_PORT:-3001}"
+DOMAIN="${DOMAIN:-dashboards.adreports.ru}"
+SERVER_ALIASES="${SERVER_ALIASES:-5.35.85.218}"
+SERVER_NAMES="${SERVER_NAMES:-$DOMAIN $SERVER_ALIASES}"
+NGINX_CONF="${NGINX_CONF:-/etc/nginx/conf.d/dashboard-next.conf}"
+TLS_CERT="${TLS_CERT:-/etc/letsencrypt/live/$DOMAIN/fullchain.pem}"
+TLS_KEY="${TLS_KEY:-/etc/letsencrypt/live/$DOMAIN/privkey.pem}"
+APP_PARENT_DIR="$(dirname "$APP_DIR")"
+APP_BASENAME="$(basename "$APP_DIR")"
+RELEASES_DIR="${RELEASES_DIR:-$APP_PARENT_DIR/${APP_BASENAME}-releases}"
+BACKUPS_DIR="${BACKUPS_DIR:-$APP_PARENT_DIR/${APP_BASENAME}-backups}"
 
 echo "=== Setup dashboard-next on Beget VPS ==="
 
-mkdir -p "$APP_DIR" /var/log
+mkdir -p "$APP_DIR" "$RELEASES_DIR" "$BACKUPS_DIR" /var/log
+
+for required_bin in node pm2 nginx; do
+  command -v "$required_bin" >/dev/null 2>&1 || {
+    echo "Missing required binary: $required_bin" >&2
+    exit 1
+  }
+done
+
+if [[ ! -f "$TLS_CERT" || ! -f "$TLS_KEY" ]]; then
+  echo "TLS certificate files not found: $TLS_CERT / $TLS_KEY" >&2
+  exit 1
+fi
 
 node -v
 pm2 -v
@@ -17,20 +37,20 @@ nginx -v
 cat > "$NGINX_CONF" <<NGINX
 server {
     listen 80;
-    server_name dashboard.bayesly.digital 5.35.85.218;
+    server_name $SERVER_NAMES;
 
     add_header X-Frame-Options "SAMEORIGIN" always;
     add_header X-Content-Type-Options "nosniff" always;
 
     location /_next/static/ {
-        alias /var/www/dashboard/.next/static/;
+        alias $APP_DIR/.next/static/;
         expires 365d;
         access_log off;
         add_header Cache-Control "public, immutable";
     }
 
     location / {
-        proxy_pass http://127.0.0.1:3001;
+        proxy_pass http://127.0.0.1:$APP_PORT;
         proxy_http_version 1.1;
         proxy_set_header Upgrade \$http_upgrade;
         proxy_set_header Connection 'upgrade';
@@ -47,26 +67,26 @@ server {
 
 server {
     listen 443 ssl;
-    server_name dashboard.bayesly.digital 5.35.85.218;
+    server_name $SERVER_NAMES;
 
     ssl_certificate "$TLS_CERT";
     ssl_certificate_key "$TLS_KEY";
-    ssl_ciphers EECDH:+AES256:-3DES:RSA+AES:!NULL:!RC4;
+    ssl_ciphers HIGH:!aNULL:!MD5;
     ssl_prefer_server_ciphers on;
-    ssl_protocols TLSv1 TLSv1.1 TLSv1.2 TLSv1.3;
+    ssl_protocols TLSv1.2 TLSv1.3;
 
     add_header X-Frame-Options "SAMEORIGIN" always;
     add_header X-Content-Type-Options "nosniff" always;
 
     location /_next/static/ {
-        alias /var/www/dashboard/.next/static/;
+        alias $APP_DIR/.next/static/;
         expires 365d;
         access_log off;
         add_header Cache-Control "public, immutable";
     }
 
     location / {
-        proxy_pass http://127.0.0.1:3001;
+        proxy_pass http://127.0.0.1:$APP_PORT;
         proxy_http_version 1.1;
         proxy_set_header Upgrade \$http_upgrade;
         proxy_set_header Connection 'upgrade';
@@ -86,4 +106,7 @@ nginx -t
 systemctl reload nginx
 
 echo "=== Setup complete ==="
+echo "App dir: $APP_DIR"
+echo "Releases dir: $RELEASES_DIR"
+echo "Backups dir: $BACKUPS_DIR"
 echo "Next step: npm run deploy"

@@ -14,6 +14,8 @@
 - PM2 app: `dashboard-next`
 - bind: `127.0.0.1:3001`
 - app dir: `/var/www/dashboard`
+- staged releases dir: `/var/www/dashboard-releases`
+- rollback backups dir: `/var/www/dashboard-backups`
 - public URL: `https://dashboards.adreports.ru`
 
 Legacy runtime отдельно:
@@ -125,6 +127,12 @@ systemctl reload nginx
 /etc/nginx/conf.d/dashboard-next.conf
 ```
 
+Важно:
+
+- bootstrap script `scripts/setup-vps.sh` должен рендерить `dashboards.adreports.ru`
+- TLS должен смотреть на реальный cert/key этого домена
+- не возвращать старый `dashboard.bayesly.digital` или ISPmanager cert как default
+
 ## PM2 app
 
 ### PM2 config
@@ -148,11 +156,37 @@ cd dashboard-next
 npm run deploy
 ```
 
+Что делает deploy теперь:
+
+- локально выполняет `npm ci` и `npm run build`
+- тянет production secrets из `/var/www/www-root/data/.production.env`
+- валидирует обязательные env до upload
+- загружает сборку в staging release dir на VPS
+- атомарно меняет `/var/www/dashboard` на новую release-папку
+- автоматически откатывает релиз, если `pm2 restart` или local health check не проходят
+
 После deploy проверить:
 
 ```bash
 ssh beget 'pm2 status'
 ssh beget 'curl -s http://127.0.0.1:3001/api/health'
+curl -s https://dashboards.adreports.ru/api/health
+```
+
+## Rollback
+
+Откатить на последний backup-релиз:
+
+```bash
+cd dashboard-next
+npm run deploy:rollback
+```
+
+Откатить на конкретный backup-директори:
+
+```bash
+cd dashboard-next
+bash scripts/rollback-release.sh /var/www/dashboard-backups/<release-id>-previous
 ```
 
 ## SSL

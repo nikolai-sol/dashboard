@@ -1,3 +1,4 @@
+import crypto from "crypto";
 import type { PoolConnection, ResultSetHeader, RowDataPacket } from "mysql2/promise";
 import pool from "@/lib/db";
 import {
@@ -7,6 +8,8 @@ import {
   verifyViewerSession,
   viewerCookieName,
 } from "@/lib/access-auth";
+
+export type DashboardAuthMode = "public" | "email_password" | "password_only";
 
 type DashboardAccessContextRow = RowDataPacket & {
   id: number;
@@ -34,6 +37,7 @@ export type DashboardAccessContext = {
   dashboard_name: string;
   is_active: boolean;
   access_users_count: number;
+  auth_mode: DashboardAuthMode;
 };
 
 export type DashboardAccessUser = {
@@ -60,14 +64,44 @@ function normalizeEmail(value: string) {
   return String(value ?? "").trim().toLowerCase();
 }
 
+function safeEqualText(a: string, b: string) {
+  const aBuffer = Buffer.from(String(a ?? ""));
+  const bBuffer = Buffer.from(String(b ?? ""));
+  if (aBuffer.length !== bBuffer.length) return false;
+  return crypto.timingSafeEqual(aBuffer, bBuffer);
+}
+
+function getSharedDashboardPassword(clientId: string) {
+  if (String(clientId).trim().toLowerCase() === "abbott") {
+    return process.env.ABBOTT_DASHBOARD_PASSWORD || "Abbott2026";
+  }
+  return null;
+}
+
+function getSharedDashboardEmbedKey(clientId: string) {
+  if (String(clientId).trim().toLowerCase() === "abbott") {
+    return process.env.ABBOTT_DASHBOARD_EMBED_KEY || "Terasic1!";
+  }
+  return null;
+}
+
+function resolveAuthMode(clientId: string, accessUsersCount: number): DashboardAuthMode {
+  if (accessUsersCount > 0) return "email_password";
+  if (getSharedDashboardPassword(clientId)) return "password_only";
+  return "public";
+}
+
 function rowToContext(row: DashboardAccessContextRow): DashboardAccessContext {
+  const clientId = String(row.client_id);
+  const accessUsersCount = Number(row.access_users_count ?? 0);
   return {
     id: Number(row.id),
-    client_id: String(row.client_id),
+    client_id: clientId,
     client_name: String(row.client_name),
     dashboard_name: String(row.dashboard_name),
     is_active: Boolean(row.is_active),
-    access_users_count: Number(row.access_users_count ?? 0),
+    access_users_count: accessUsersCount,
+    auth_mode: resolveAuthMode(clientId, accessUsersCount),
   };
 }
 
@@ -197,7 +231,11 @@ export async function verifyDashboardAccessCredentials(
 ) {
   const context = await getDashboardAccessContext(identifier);
   if (!context) return null;
-  if (context.access_users_count === 0) return context;
+  if (context.auth_mode === "public") return context;
+  if (context.auth_mode === "password_only") {
+    const expectedPassword = getSharedDashboardPassword(context.client_id);
+    return expectedPassword && safeEqualText(password, expectedPassword) ? context : null;
+  }
 
   const normalizedEmail = normalizeEmail(email);
   const [rows] = await pool.execute<DashboardAccessUserRow[]>(
@@ -271,11 +309,16 @@ export async function isDashboardAccessAuthorized(request: Request, identifier: 
   if (!context) {
     return { context: null, authorized: false, reason: "not_found" as const };
   }
-  if (context.access_users_count === 0) {
+  if (context.auth_mode === "public") {
     return { context, authorized: true, reason: "public" as const };
   }
 
   const url = new URL(request.url);
+  const embedKey = url.searchParams.get("embed_key");
+  const expectedEmbedKey = getSharedDashboardEmbedKey(context.client_id);
+  if (expectedEmbedKey && embedKey && safeEqualText(embedKey, expectedEmbedKey)) {
+    return { context, authorized: true, reason: "embed_key" as const };
+  }
   const queryToken = url.searchParams.get("access_token");
   const cookieToken = parseCookieValue(request.headers.get("cookie"), viewerCookieName(context.id));
   const token = queryToken || cookieToken;
