@@ -351,6 +351,25 @@ export interface BoundPromopagesTimeSeriesOverlay {
   views: number;
 }
 
+export type DashboardAiSummaryStatus = "ready" | "unavailable" | "timeout" | "error";
+
+export type DashboardAiSummaryReason =
+  | "insufficient_data"
+  | "provider_not_configured"
+  | "request_failed"
+  | "invalid_response"
+  | "response_empty"
+  | "timeout";
+
+export interface DashboardAiSummary {
+  status: DashboardAiSummaryStatus;
+  headline?: string;
+  bullets?: string[];
+  watchout?: string | null;
+  reason?: DashboardAiSummaryReason;
+  generated_at?: string;
+}
+
 export interface DashboardData {
   dashboard: DashboardMeta;
   kpi_config: string[];
@@ -388,4 +407,5 @@ export interface DashboardData {
   campaign_breakdown?: CampaignBreakdownItem[];
   funnel?: FunnelStep[];
   comparison?: ComparisonData;
+  ai_summary?: DashboardAiSummary;
 }
