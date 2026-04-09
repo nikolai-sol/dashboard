@@ -53,7 +53,20 @@ export default function PromopagesSection({
   locale,
   labels,
 }: PromopagesSectionProps) {
-  const selected = selectedMetrics.length > 0 ? selectedMetrics : ["impressions", "views", "clicks", "spend", "ctr", "cpm"];
+  const hasAnyData =
+    data.campaigns.length > 0 ||
+    data.timeseries.length > 0 ||
+    data.kpi.total_impressions > 0 ||
+    data.kpi.total_reach > 0 ||
+    data.kpi.total_budget > 0 ||
+    data.kpi.total_views > 0 ||
+    data.kpi.total_clickouts > 0 ||
+    data.kpi.total_full_reads > 0 ||
+    data.kpi.total_metrica_visits > 0;
+  const selected =
+    selectedMetrics.length > 0
+      ? selectedMetrics.map((metric) => (metric === "clicks" ? "clickouts" : metric))
+      : ["impressions", "views", "clickouts", "spend", "ctr", "cpm"];
   const summaryMetrics = Array.from(
     new Set(
       [
@@ -66,7 +79,6 @@ export default function PromopagesSection({
           "impressions",
           "reach",
           "views",
-          "clicks",
           "budget",
           "ctr",
           "cpm",
@@ -82,7 +94,6 @@ export default function PromopagesSection({
     impressions: data.kpi.total_impressions,
     reach: data.kpi.total_reach,
     views: data.kpi.total_views,
-    clicks: data.kpi.total_clicks,
     budget: data.kpi.total_budget,
     ctr: data.kpi.avg_ctr,
     cpm: data.kpi.avg_cpm,
@@ -110,11 +121,11 @@ export default function PromopagesSection({
         ))}
       </div>
 
-      {data.campaigns.length === 0 ? (
+      {!hasAnyData ? (
         <div className="rounded-2xl border border-dashed border-slate-300 px-4 py-8 text-sm text-slate-500">
           {labels.noRows}
         </div>
-      ) : (
+      ) : data.campaigns.length > 0 ? (
         <div className="overflow-x-auto">
           <table className="min-w-full border-collapse text-sm">
             <thead>
@@ -125,10 +136,9 @@ export default function PromopagesSection({
                 <th className="px-3 py-3">{metricLabel("impressions", labels.metrics)}</th>
                 <th className="px-3 py-3">{metricLabel("reach", labels.metrics)}</th>
                 <th className="px-3 py-3">{metricLabel("views", labels.metrics)}</th>
-                <th className="px-3 py-3">{metricLabel("clicks", labels.metrics)}</th>
+                <th className="px-3 py-3">{metricLabel("clickouts", labels.metrics)}</th>
                 <th className="px-3 py-3">{metricLabel("budget", labels.metrics)}</th>
                 <th className="px-3 py-3">{metricLabel("cpm", labels.metrics)}</th>
-                <th className="px-3 py-3">{metricLabel("clickouts", labels.metrics)}</th>
                 <th className="px-3 py-3">{metricLabel("full_reads", labels.metrics)}</th>
                 <th className="px-3 py-3">{metricLabel("metrica_visits", labels.metrics)}</th>
               </tr>
@@ -145,10 +155,9 @@ export default function PromopagesSection({
                   <td className="px-3 py-3 text-slate-700">{compact(row.impressions, locale)}</td>
                   <td className="px-3 py-3 text-slate-700">{compact(row.reach, locale)}</td>
                   <td className="px-3 py-3 text-slate-700">{compact(row.views, locale)}</td>
-                  <td className="px-3 py-3 text-slate-700">{compact(row.clicks, locale)}</td>
+                  <td className="px-3 py-3 text-slate-700">{compact(row.clickouts, locale)}</td>
                   <td className="px-3 py-3 text-slate-700">{currencyFormatter(row.budget)}</td>
                   <td className="px-3 py-3 text-slate-700">{currencyFormatter(row.cpm)}</td>
-                  <td className="px-3 py-3 text-slate-700">{compact(row.clickouts, locale)}</td>
                   <td className="px-3 py-3 text-slate-700">{compact(row.full_reads, locale)}</td>
                   <td className="px-3 py-3 text-slate-700">{compact(row.metrica_visits, locale)}</td>
                 </tr>
@@ -156,7 +165,7 @@ export default function PromopagesSection({
             </tbody>
           </table>
         </div>
-      )}
+      ) : null}
     </section>
   );
 }
