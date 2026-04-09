@@ -12,6 +12,7 @@ export type DashboardI18n = {
     trendByDay: string;
     comparison: string;
     promopages: string;
+    analytics: string;
     spendByPlatform: string;
     channelMix: string;
     manualData: string;
@@ -112,6 +113,7 @@ const DICTIONARY: Record<DashboardLanguage, Omit<DashboardI18n, "language" | "lo
       trendByDay: "Trend by Day",
       comparison: "Period Comparison",
       promopages: "Promopages",
+      analytics: "Website Analytics",
       spendByPlatform: "Spend by Platform",
       channelMix: "Channel Mix",
       manualData: "Additional Sources",
@@ -210,6 +212,7 @@ const DICTIONARY: Record<DashboardLanguage, Omit<DashboardI18n, "language" | "lo
       trendByDay: "Динамика по дням",
       comparison: "Сравнение периодов",
       promopages: "ПромоСтраницы",
+      analytics: "Аналитика сайта",
       spendByPlatform: "Расход по платформам",
       channelMix: "Микс каналов",
       manualData: "Дополнительные источники",

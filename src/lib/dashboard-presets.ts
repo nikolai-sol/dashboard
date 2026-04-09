@@ -11,7 +11,7 @@ export const SPEND_RELATED_SECTIONS = new Set<DashboardSectionId>([
   "campaign_table",
   "scatter_plot",
 ]);
-export const OPTIONAL_SECTIONS: DashboardSectionId[] = ["promopages"];
+export const OPTIONAL_SECTIONS: DashboardSectionId[] = ["promopages", "analytics"];
 
 const DEFAULT_SECTIONS: Record<DashboardKind, DashboardSectionId[]> = {
   awareness: [

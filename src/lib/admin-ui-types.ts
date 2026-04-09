@@ -6,6 +6,7 @@ export type DashboardSectionId =
   | "kpi_grid"
   | "spend_section"
   | "trend_chart"
+  | "analytics"
   | "conversion_funnel"
   | "campaign_table"
   | "scatter_plot"

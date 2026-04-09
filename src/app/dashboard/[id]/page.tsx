@@ -19,6 +19,7 @@ import PlatformPlanVsFact from "@/components/PlatformPlanVsFact";
 import PlatformTable from "@/components/PlatformTable";
 import PlanVsFact from "@/components/PlanVsFact";
 import PromopagesSection from "@/components/PromopagesSection";
+import AnalyticsSection from "@/components/AnalyticsSection";
 import SpendByPlatform from "@/components/SpendByPlatform";
 import SpendConversionsScatter from "@/components/SpendConversionsScatter";
 import TrendChart from "@/components/TrendChart";
@@ -1151,6 +1152,28 @@ export default function DashboardByIdPage() {
             campaign: i18n.language === "ru" ? "Кампания" : "Campaign",
             date: i18n.language === "ru" ? "Дата" : "Date",
             account: i18n.language === "ru" ? "Аккаунт" : "Account",
+          }}
+        />
+      );
+    }
+
+    if (sectionId === "analytics") {
+      if (!dashboard?.analytics) return null;
+      return (
+        <AnalyticsSection
+          key={sectionId}
+          kpi={dashboard.analytics.kpi}
+          timeseries={dashboard.analytics.timeseries}
+          locale={locale}
+          labels={{
+            title: i18n.sections.analytics,
+            date: i18n.language === "ru" ? "Дата" : "Date",
+            visits: i18n.language === "ru" ? "Визиты" : "Visits",
+            users: i18n.language === "ru" ? "Пользователи" : "Users",
+            pageviews: i18n.language === "ru" ? "Просмотры страниц" : "Pageviews",
+            bounceRate: i18n.language === "ru" ? "Отказы" : "Bounce rate",
+            avgVisitDuration: i18n.language === "ru" ? "Ср. длительность визита" : "Avg visit duration",
+            total: i18n.common.total,
           }}
         />
       );
