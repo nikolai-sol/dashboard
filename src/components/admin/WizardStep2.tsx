@@ -7,6 +7,7 @@ type WizardStep2Props = {
   data: DashboardFormData;
   platforms: PlatformMeta[];
   onChange: (next: DashboardFormData) => void;
+  dashboardId?: string;
 };
 
 const TEMPLATE_HEADERS =
@@ -169,6 +170,20 @@ type LeadsConfirmResponse = {
   reviewed_source_config: Record<string, unknown>;
 };
 
+type ManualDataConfirmResponse = {
+  reviewed_source_config: Record<string, unknown>;
+  confirmed_manual_data?: {
+    status: "confirmed";
+    confirmed_at: string;
+    rows: number;
+    date_from: string | null;
+    date_to: string | null;
+    source_upload_name: string | null;
+  };
+  rows_written?: number;
+  deleted?: boolean;
+};
+
 function severityClass(severity: "error" | "warn" | "info") {
   if (severity === "error") return "border-rose-200 bg-rose-50 text-rose-700";
   if (severity === "warn") return "border-amber-200 bg-amber-50 text-amber-700";
@@ -190,7 +205,7 @@ async function fileToBase64(file: File): Promise<string> {
   return btoa(binary);
 }
 
-export default function WizardStep2({ data, platforms, onChange }: WizardStep2Props) {
+export default function WizardStep2({ data, platforms, onChange, dashboardId }: WizardStep2Props) {
   const [analysis, setAnalysis] = useState<MediaPlanAnalysis | null>(null);
   const [analysisError, setAnalysisError] = useState<string | null>(null);
   const [analysisLoading, setAnalysisLoading] = useState(false);
@@ -206,6 +221,9 @@ export default function WizardStep2({ data, platforms, onChange }: WizardStep2Pr
   const [customTablePreviewLoading, setCustomTablePreviewLoading] = useState<Record<number, boolean>>({});
   const [manualDataPreview, setManualDataPreview] = useState<Record<number, Array<Record<string, unknown>> | null>>({});
   const [manualDataPreviewLoading, setManualDataPreviewLoading] = useState<Record<number, boolean>>({});
+  const [manualDataConfirmLoading, setManualDataConfirmLoading] = useState<Record<number, boolean>>({});
+  const [manualDataConfirmError, setManualDataConfirmError] = useState<Record<number, string | null>>({});
+  const [manualDataConfirmMessage, setManualDataConfirmMessage] = useState<Record<number, string | null>>({});
   const [leadsAnalysisBySource, setLeadsAnalysisBySource] = useState<Record<number, LeadsAnalysis | null>>({});
   const [leadsAnalysisLoadingBySource, setLeadsAnalysisLoadingBySource] = useState<Record<number, boolean>>({});
   const [leadsAnalysisErrorBySource, setLeadsAnalysisErrorBySource] = useState<Record<number, string | null>>({});
@@ -661,6 +679,8 @@ export default function WizardStep2({ data, platforms, onChange }: WizardStep2Pr
     };
     setSources(actualSources, planSource, customTableSources, next);
     setManualDataPreview((prev) => ({ ...prev, [index]: null }));
+    setManualDataConfirmError((prev) => ({ ...prev, [index]: null }));
+    setManualDataConfirmMessage((prev) => ({ ...prev, [index]: null }));
   };
 
   const updateManualDataUploadFile = async (index: number, file: File | null) => {
@@ -685,6 +705,16 @@ export default function WizardStep2({ data, platforms, onChange }: WizardStep2Pr
     const next = manualDataSources.filter((_, i) => i !== index);
     setSources(actualSources, planSource, customTableSources, next);
     setManualDataPreview((prev) => {
+      const copy = { ...prev };
+      delete copy[index];
+      return copy;
+    });
+    setManualDataConfirmError((prev) => {
+      const copy = { ...prev };
+      delete copy[index];
+      return copy;
+    });
+    setManualDataConfirmMessage((prev) => {
       const copy = { ...prev };
       delete copy[index];
       return copy;
@@ -715,6 +745,101 @@ export default function WizardStep2({ data, platforms, onChange }: WizardStep2Pr
       setManualDataPreview((prev) => ({ ...prev, [index]: [{ error: "Network error" }] }));
     } finally {
       setManualDataPreviewLoading((prev) => ({ ...prev, [index]: false }));
+    }
+  };
+
+  const confirmManualDataSource = async (index: number) => {
+    const source = manualDataSources[index];
+    const sourceId = Number(source?.id);
+    const numericDashboardId = Number(dashboardId);
+    if (!source || !Number.isFinite(sourceId) || !Number.isFinite(numericDashboardId)) return;
+
+    setManualDataConfirmLoading((prev) => ({ ...prev, [index]: true }));
+    setManualDataConfirmError((prev) => ({ ...prev, [index]: null }));
+    setManualDataConfirmMessage((prev) => ({ ...prev, [index]: null }));
+
+    try {
+      const response = await fetch("/api/admin/manual-data/confirm", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          dashboard_id: numericDashboardId,
+          source_id: sourceId,
+          source_config: source.source_config ?? {},
+        }),
+      });
+      const json = (await response.json()) as Partial<ManualDataConfirmResponse> & { error?: string };
+      if (!response.ok) {
+        throw new Error(json.error ?? `HTTP ${response.status}`);
+      }
+      if (!json.reviewed_source_config) {
+        throw new Error("Confirm endpoint returned no reviewed source config.");
+      }
+
+      const nextManual = [...manualDataSources];
+      nextManual[index] = {
+        ...source,
+        source_config: json.reviewed_source_config,
+      };
+      setSources(actualSources, planSource, customTableSources, nextManual, leadsSources);
+      setManualDataConfirmMessage((prev) => ({
+        ...prev,
+        [index]: `Manual data confirmed and stored in DB${json.rows_written ? ` (${json.rows_written} daily rows)` : ""}.`,
+      }));
+    } catch (error) {
+      setManualDataConfirmError((prev) => ({
+        ...prev,
+        [index]: error instanceof Error ? error.message : "Failed to confirm manual data",
+      }));
+    } finally {
+      setManualDataConfirmLoading((prev) => ({ ...prev, [index]: false }));
+    }
+  };
+
+  const deleteConfirmedManualData = async (index: number) => {
+    const source = manualDataSources[index];
+    const sourceId = Number(source?.id);
+    const numericDashboardId = Number(dashboardId);
+    if (!source || !Number.isFinite(sourceId) || !Number.isFinite(numericDashboardId)) return;
+
+    setManualDataConfirmLoading((prev) => ({ ...prev, [index]: true }));
+    setManualDataConfirmError((prev) => ({ ...prev, [index]: null }));
+    setManualDataConfirmMessage((prev) => ({ ...prev, [index]: null }));
+
+    try {
+      const response = await fetch("/api/admin/manual-data/confirm", {
+        method: "DELETE",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          dashboard_id: numericDashboardId,
+          source_id: sourceId,
+        }),
+      });
+      const json = (await response.json()) as Partial<ManualDataConfirmResponse> & { error?: string };
+      if (!response.ok) {
+        throw new Error(json.error ?? `HTTP ${response.status}`);
+      }
+      if (!json.reviewed_source_config) {
+        throw new Error("Delete endpoint returned no reviewed source config.");
+      }
+
+      const nextManual = [...manualDataSources];
+      nextManual[index] = {
+        ...source,
+        source_config: json.reviewed_source_config,
+      };
+      setSources(actualSources, planSource, customTableSources, nextManual, leadsSources);
+      setManualDataConfirmMessage((prev) => ({
+        ...prev,
+        [index]: "Confirmed manual data deleted.",
+      }));
+    } catch (error) {
+      setManualDataConfirmError((prev) => ({
+        ...prev,
+        [index]: error instanceof Error ? error.message : "Failed to delete manual data",
+      }));
+    } finally {
+      setManualDataConfirmLoading((prev) => ({ ...prev, [index]: false }));
     }
   };
 
@@ -2057,6 +2182,24 @@ export default function WizardStep2({ data, platforms, onChange }: WizardStep2Pr
         <div className="mt-3 space-y-3">
           {manualDataSources.map((source, index) => (
             <div key={`manual-${index}`} className="rounded-xl border border-slate-200 p-3">
+              {source.source_config?.confirmed_manual_data &&
+              typeof source.source_config.confirmed_manual_data === "object" ? (
+                <div className="mb-3 flex flex-wrap items-center gap-2 rounded-lg border border-emerald-200 bg-emerald-50 px-3 py-2 text-xs text-emerald-800">
+                  <span className="font-medium">Confirmed in DB</span>
+                  <span>
+                    rows: {String((source.source_config.confirmed_manual_data as Record<string, unknown>).rows ?? "0")}
+                  </span>
+                  <span>
+                    period: {String((source.source_config.confirmed_manual_data as Record<string, unknown>).date_from ?? "—")} -{" "}
+                    {String((source.source_config.confirmed_manual_data as Record<string, unknown>).date_to ?? "—")}
+                  </span>
+                  {String((source.source_config.confirmed_manual_data as Record<string, unknown>).source_upload_name ?? "").trim() ? (
+                    <span>
+                      file: {String((source.source_config.confirmed_manual_data as Record<string, unknown>).source_upload_name)}
+                    </span>
+                  ) : null}
+                </div>
+              ) : null}
               <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-[1fr_1fr_220px_220px_auto] xl:items-end">
                 <label className="text-sm">
                   <span className="mb-1 block font-medium text-slate-700">Заголовок</span>
@@ -2124,6 +2267,33 @@ export default function WizardStep2({ data, platforms, onChange }: WizardStep2Pr
                   </button>
                   <button
                     type="button"
+                    onClick={() => void confirmManualDataSource(index)}
+                    disabled={
+                      !dashboardId ||
+                      manualDataConfirmLoading[index] ||
+                      (!String(source.source_config?.sheet_url ?? "").trim() &&
+                        !(typeof source.source_config?.upload_file === "object" && source.source_config?.upload_file))
+                    }
+                    className="rounded-lg border border-emerald-300 px-3 py-2 text-sm text-emerald-700 hover:bg-emerald-50 disabled:opacity-50"
+                  >
+                    {manualDataConfirmLoading[index] ? "..." : "Confirm to DB"}
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => void deleteConfirmedManualData(index)}
+                    disabled={
+                      manualDataConfirmLoading[index] ||
+                      !(
+                        source.source_config?.confirmed_manual_data &&
+                        typeof source.source_config.confirmed_manual_data === "object"
+                      )
+                    }
+                    className="rounded-lg border border-amber-300 px-3 py-2 text-sm text-amber-700 hover:bg-amber-50 disabled:opacity-50"
+                  >
+                    Delete confirmed data
+                  </button>
+                  <button
+                    type="button"
                     onClick={() => removeManualDataSource(index)}
                     className="rounded-lg border border-rose-200 px-3 py-2 text-sm text-rose-600 hover:bg-rose-50"
                   >
@@ -2158,12 +2328,23 @@ export default function WizardStep2({ data, platforms, onChange }: WizardStep2Pr
                     </button>
                   </div>
                   <p className="mt-2 text-xs text-slate-500">
-                    Supported: CSV, XLSX. Uploaded manual file is stored in dashboard config and used by preview and runtime.
+                    Supported: CSV, XLSX. Upload stays pending until you confirm it. After confirm, normalized rows are stored in DB and runtime reads them from there.
                   </p>
+                  {!dashboardId ? (
+                    <p className="mt-2 text-xs text-amber-600">
+                      Save the dashboard first to enable Confirm to DB for manual data.
+                    </p>
+                  ) : null}
                   {source.source_config?.force_fallback_channel ? (
                     <p className="mt-2 text-xs text-slate-500">
                       File channel column will be ignored. Every row will use the fallback channel above.
                     </p>
+                  ) : null}
+                  {manualDataConfirmError[index] ? (
+                    <p className="mt-2 text-xs text-rose-600">{manualDataConfirmError[index]}</p>
+                  ) : null}
+                  {manualDataConfirmMessage[index] ? (
+                    <p className="mt-2 text-xs text-emerald-700">{manualDataConfirmMessage[index]}</p>
                   ) : null}
                 </div>
               </div>

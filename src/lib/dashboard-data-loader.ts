@@ -36,6 +36,7 @@ import {
   type ConfirmedLeadChannelRow,
   type LeadRow,
 } from "@/lib/leads-fetcher";
+import { loadDashboardManualFacts } from "@/lib/manual-data-store";
 import { PLATFORM_COLORS } from "@/lib/platform-colors";
 import {
   resolvePlatformIdFromSourceKey,
@@ -248,6 +249,26 @@ function resolveDashboardMetrikaAccountIds(sourceRows: SourceRow[]): string[] {
 function filterManualRowsByBrand(rows: ManualDataRow[], patterns: string[]): ManualDataRow[] {
   if (!patterns.length) return rows;
   return rows.filter((row) => matchesAnyMultibrandPattern(row.channel, patterns));
+}
+
+function adaptStoredManualFacts(rows: Awaited<ReturnType<typeof loadDashboardManualFacts>>): ManualDataRow[] {
+  return rows.map((row) => ({
+    date: row.date,
+    platform: row.platform,
+    channel: row.channel,
+    impressions: row.impressions,
+    clicks: row.clicks,
+    spend: row.spend,
+    views: row.views,
+    conversions: row.conversions,
+    reach: row.reach,
+    sessions: row.sessions,
+    cr: null,
+    ctr: null,
+    cpc: null,
+    cpm: null,
+    cpv: null,
+  }));
 }
 
 function shiftDate(dateIso: string, days: number): string {
@@ -2197,12 +2218,18 @@ export async function loadDashboardData(
       try {
         if (source.platform === "manual_data" && source.role === "actual") {
           const sourceConfig = parseJson(source.source_config);
+          const manualSourceKey = String(sourceConfig?.manual_source_key ?? "").trim();
+          const hasConfirmedManualData =
+            Boolean(manualSourceKey) &&
+            Boolean(sourceConfig?.confirmed_manual_data && typeof sourceConfig.confirmed_manual_data === "object");
           const hasManualInput =
             Boolean(String(sourceConfig?.sheet_url ?? "").trim()) ||
             (typeof sourceConfig?.upload_file === "object" && sourceConfig?.upload_file);
-          if (hasManualInput) {
+          if (hasConfirmedManualData || hasManualInput) {
             try {
-              const allRows = await fetchManualDataFromSourceConfig(sourceConfig);
+              const allRows = hasConfirmedManualData
+                ? adaptStoredManualFacts(await loadDashboardManualFacts(dashboard.id, manualSourceKey, previousRange.from, range.to))
+                : await fetchManualDataFromSourceConfig(sourceConfig);
               const filtered = filterManualRowsByBrand(
                 filterByDateRange(allRows, range.from, range.to),
                 activeBrand?.channel_patterns ?? [],

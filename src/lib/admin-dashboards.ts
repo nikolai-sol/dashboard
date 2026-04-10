@@ -1,5 +1,6 @@
 import type { PoolConnection, ResultSetHeader, RowDataPacket } from "mysql2/promise";
 import { normalizeMultibrandConfig } from "@/lib/multibrand";
+import { buildManualSourceKey, deleteDashboardManualFactsExceptKeys } from "@/lib/manual-data-store";
 
 export type DashboardFilterInput = {
   filter_type: "name_pattern" | "id_list" | "all";
@@ -132,15 +133,23 @@ function normalizeSource(raw: unknown): DashboardSourceInput {
       ? "custom_table"
       : String(input.schema_file ?? "").trim();
 
-  const sourceConfig =
+  const sourceConfigBase =
     input.source_config && typeof input.source_config === "object"
       ? { ...(input.source_config as Record<string, unknown>) }
-      : null;
+      : {};
+  const sourceConfig: Record<string, unknown> | null = sourceConfigBase;
 
   if (role === "plan" && sourceConfig) {
     const hasInlineRows = Array.isArray(sourceConfig.inline_rows) && sourceConfig.inline_rows.length > 0;
     if (hasInlineRows) {
       delete sourceConfig.upload_file;
+    }
+  }
+
+  if (platform === "manual_data") {
+    const sourceKey = String(sourceConfig?.manual_source_key ?? "").trim();
+    if (!sourceKey) {
+      sourceConfig.manual_source_key = buildManualSourceKey();
     }
   }
 
@@ -307,7 +316,13 @@ export function validateDashboardPayload(payload: DashboardUpsertPayload): strin
         Boolean(source.source_config) &&
         typeof source.source_config?.upload_file === "object" &&
         source.source_config?.upload_file;
-      if (!sheetUrl && !hasUpload) return "Manual data source requires source_config.sheet_url or upload_file";
+      const hasConfirmed =
+        Boolean(source.source_config) &&
+        typeof source.source_config?.confirmed_manual_data === "object" &&
+        source.source_config?.confirmed_manual_data;
+      if (!sheetUrl && !hasUpload && !hasConfirmed) {
+        return "Manual data source requires source_config.sheet_url, upload_file, or confirmed stored data";
+      }
     }
     if (source.platform === "leads") {
       const sheetUrl =
@@ -474,6 +489,19 @@ export async function replaceMediaPlanBindings(
       [dashboardId, binding.line_key ?? binding.channel, binding.channel, binding.source_key, binding.platform_campaign_id],
     );
   }
+}
+
+export async function cleanupRemovedManualDataSources(
+  conn: PoolConnection,
+  dashboardId: number,
+  sources: DashboardSourceInput[],
+): Promise<void> {
+  const retainedKeys = sources
+    .filter((source) => source.platform === "manual_data")
+    .map((source) => String(source.source_config?.manual_source_key ?? "").trim())
+    .filter(Boolean);
+
+  await deleteDashboardManualFactsExceptKeys(conn, dashboardId, retainedKeys);
 }
 
 export async function loadDashboardWithSources(

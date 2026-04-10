@@ -657,7 +657,14 @@ export default function DashboardWizard({ dashboardId }: DashboardWizardProps) {
 
       <div className="rounded-xl border border-slate-200 bg-white p-5">
         {step === 0 ? <WizardStep1 data={formData} onChange={handleFormChange} /> : null}
-        {step === 1 ? <WizardStep2 data={formData} platforms={platforms} onChange={handleFormChange} /> : null}
+        {step === 1 ? (
+          <WizardStep2
+            data={formData}
+            platforms={platforms}
+            onChange={handleFormChange}
+            dashboardId={dashboardId}
+          />
+        ) : null}
         {step === 2 ? <WizardStep3 data={formData} onChange={handleFormChange} /> : null}
         {step === 3 ? <WizardStepBinding data={formData} onChange={handleFormChange} /> : null}
         {utmMatchingStepIndex >= 0 && step === utmMatchingStepIndex ? (
