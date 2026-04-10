@@ -166,12 +166,15 @@ export default function WizardStepBinding({ data, onChange }: WizardStepBindingP
           }
           return base;
         });
-        const params = new URLSearchParams({
-          sources: JSON.stringify(sources),
+        const response = await fetch("/api/admin/campaigns/all", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            sources,
+            date_from: data.config.period_from,
+            date_to: data.config.period_to,
+          }),
         });
-        if (data.config.period_from) params.set("date_from", data.config.period_from);
-        if (data.config.period_to) params.set("date_to", data.config.period_to);
-        const response = await fetch(`/api/admin/campaigns/all?${params.toString()}`);
         const json = (await response.json()) as { campaigns?: CampaignItem[]; error?: string };
         if (!response.ok) {
           throw new Error(json.error ?? `HTTP ${response.status}`);
