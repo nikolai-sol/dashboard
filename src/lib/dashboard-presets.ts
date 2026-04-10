@@ -11,13 +11,14 @@ export const SPEND_RELATED_SECTIONS = new Set<DashboardSectionId>([
   "campaign_table",
   "scatter_plot",
 ]);
-export const OPTIONAL_SECTIONS: DashboardSectionId[] = ["promopages", "analytics"];
+export const OPTIONAL_SECTIONS: DashboardSectionId[] = ["promopages", "analytics", "postclick_analytics"];
 
 const DEFAULT_SECTIONS: Record<DashboardKind, DashboardSectionId[]> = {
   awareness: [
     "kpi_grid",
     "spend_section",
     "trend_chart",
+    "postclick_analytics",
     "platform_table",
     "platform_plan_fact",
     "channel_table",
@@ -29,6 +30,7 @@ const DEFAULT_SECTIONS: Record<DashboardKind, DashboardSectionId[]> = {
     "campaign_table",
     "spend_section",
     "trend_chart",
+    "postclick_analytics",
     "channel_table",
     "plan_vs_fact",
   ],
@@ -36,6 +38,7 @@ const DEFAULT_SECTIONS: Record<DashboardKind, DashboardSectionId[]> = {
     "kpi_grid",
     "spend_section",
     "trend_chart",
+    "postclick_analytics",
     "platform_table",
     "platform_plan_fact",
     "channel_table",
@@ -45,6 +48,7 @@ const DEFAULT_SECTIONS: Record<DashboardKind, DashboardSectionId[]> = {
     "kpi_grid",
     "spend_section",
     "trend_chart",
+    "postclick_analytics",
     "platform_table",
     "platform_plan_fact",
     "channel_table",
@@ -54,6 +58,7 @@ const DEFAULT_SECTIONS: Record<DashboardKind, DashboardSectionId[]> = {
     "kpi_grid",
     "spend_section",
     "trend_chart",
+    "postclick_analytics",
     "platform_table",
     "platform_plan_fact",
     "channel_table",

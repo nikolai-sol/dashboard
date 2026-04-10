@@ -45,6 +45,7 @@ import {
 import { normalizeDashboardLanguage } from "@/lib/dashboard-i18n";
 import {
   buildDashboardAiSummaryFromOverrideText,
+  getMatchingDashboardAiSummarySnapshot,
   normalizeDashboardAiSummaryAuthoring,
 } from "@/lib/dashboard-ai-summary";
 import {
@@ -64,6 +65,8 @@ import {
 import type {
   AnalyticsKPI,
   AnalyticsTimeSeriesPoint,
+  PostClickAnalyticsRow,
+  PostClickAnalyticsTimeSeriesPoint,
   CampaignBreakdownItem,
   ComparisonChannelItem,
   ComparisonData,
@@ -97,6 +100,7 @@ export type LoadedDashboardData = {
   ai_summary_enabled: boolean;
   ai_summary_override_text?: string | null;
   ai_summary_override?: DashboardAiSummary | null;
+  ai_summary_snapshot?: DashboardAiSummary | null;
 };
 
 type DashboardRow = RowDataPacket & {
@@ -124,6 +128,30 @@ type BindingRow = RowDataPacket & {
   channel: string;
   source_key: string;
   platform_campaign_id: string;
+};
+
+type UtmBindingRow = RowDataPacket & {
+  line_key: string | null;
+  channel: string | null;
+  utm_source: string | null;
+};
+
+type PostClickTrafficFactRow = RowDataPacket & {
+  line_key: string | null;
+  channel: string | null;
+  date: string | null;
+  visits: number | string | null;
+  users: number | string | null;
+  pageviews: number | string | null;
+  bounce_rate: number | string | null;
+  avg_visit_duration: number | string | null;
+};
+
+type PostClickGoalFactRow = RowDataPacket & {
+  line_key: string | null;
+  channel: string | null;
+  date: string | null;
+  goal_reaches: number | string | null;
 };
 
 type FrequencyOverrideItem = {
@@ -185,6 +213,26 @@ function parseAccountIds(value: unknown): string[] {
 
 function resolveAbbottCounterIds(sourceRows: SourceRow[]): string[] {
   const ids = sourceRows.flatMap((source) => {
+    if (source.role === "custom_table") {
+      return [];
+    }
+    const schema = loadSchema(source.schema_file);
+    const sourceKey = schema.source_key ?? resolveSourceKey(source.platform);
+    const sourceType = schema.source_type ?? resolveSourceType(sourceKey);
+    if (sourceType !== "analytics" || sourceKey !== "yandex_metrika") {
+      return [];
+    }
+    return parseAccountIds(parseJson(source.source_config).account_ids);
+  });
+
+  return Array.from(new Set(ids)).filter(Boolean);
+}
+
+function resolveDashboardMetrikaAccountIds(sourceRows: SourceRow[]): string[] {
+  const ids = sourceRows.flatMap((source) => {
+    if (source.role === "custom_table") {
+      return [];
+    }
     const schema = loadSchema(source.schema_file);
     const sourceKey = schema.source_key ?? resolveSourceKey(source.platform);
     const sourceType = schema.source_type ?? resolveSourceType(sourceKey);
@@ -695,6 +743,25 @@ function getSectionOrder(
     return sanitizeDashboardSectionOrder(config.section_order, type, showSpend, false);
   }
   return sanitizeDashboardSectionOrder(config.section_order, type, showSpend, true);
+}
+
+function withOptionalSection(
+  sections: DashboardSectionId[],
+  sectionId: DashboardSectionId,
+  afterSectionId: DashboardSectionId,
+): DashboardSectionId[] {
+  if (sections.includes(sectionId)) {
+    return sections;
+  }
+  const anchorIndex = sections.indexOf(afterSectionId);
+  if (anchorIndex === -1) {
+    return [...sections, sectionId];
+  }
+  return [
+    ...sections.slice(0, anchorIndex + 1),
+    sectionId,
+    ...sections.slice(anchorIndex + 1),
+  ];
 }
 
 function getFilterScope(config: JsonRecord): "both" | "platform" | "channel" {
@@ -1503,9 +1570,185 @@ function buildChannelPerformance(
   });
 }
 
+async function buildPostClickAnalytics(
+  dashboardId: number,
+  channelGroups: ChannelGroup[],
+  metrikaAccountIds: string[],
+  dateFrom: string,
+  dateTo: string,
+): Promise<DashboardData["postclick_analytics"] | undefined> {
+  if (!metrikaAccountIds.length) {
+    return undefined;
+  }
+
+  const [utmBindings] = await pool.execute<UtmBindingRow[]>(
+    `SELECT line_key, channel, utm_source
+     FROM dashboard_utm_source_bindings
+     WHERE dashboard_id = ?`,
+    [dashboardId],
+  );
+
+  const normalizedBindings = utmBindings
+    .map((row) => ({
+      line_key: String(row.line_key ?? row.channel ?? "").trim(),
+      channel: String(row.channel ?? "").trim(),
+      utm_source: String(row.utm_source ?? "").trim(),
+    }))
+    .filter((row) => row.line_key && row.utm_source);
+
+  if (!normalizedBindings.length) {
+    return undefined;
+  }
+
+  const utmSourcesByLineKey = normalizedBindings.reduce((acc, row) => {
+    if (!acc.has(row.line_key)) acc.set(row.line_key, new Set<string>());
+    acc.get(row.line_key)!.add(row.utm_source);
+    return acc;
+  }, new Map<string, Set<string>>());
+
+  const accountPlaceholders = metrikaAccountIds.map(() => "?").join(",");
+
+  const [trafficRows] = await pool.execute<PostClickTrafficFactRow[]>(
+    `
+      SELECT
+        b.line_key AS line_key,
+        MAX(b.channel) AS channel,
+        f.report_date AS date,
+        COALESCE(SUM(f.visits), 0) AS visits,
+        COALESCE(SUM(f.users), 0) AS users,
+        COALESCE(SUM(f.pageviews), 0) AS pageviews,
+        CASE
+          WHEN COALESCE(SUM(f.visits), 0) > 0
+            THEN COALESCE(SUM(COALESCE(f.bounce_rate, 0) * COALESCE(f.visits, 0)) / SUM(f.visits), 0)
+          ELSE 0
+        END AS bounce_rate,
+        CASE
+          WHEN COALESCE(SUM(f.visits), 0) > 0
+            THEN COALESCE(SUM(COALESCE(f.avg_visit_duration_seconds, 0) * COALESCE(f.visits, 0)) / SUM(f.visits), 0)
+          ELSE 0
+        END AS avg_visit_duration
+      FROM dashboard_utm_source_bindings b
+      JOIN canonical_fact_site_analytics_daily f
+        ON b.dashboard_id = ?
+       AND b.utm_source = NULLIF(TRIM(f.utm_source), '')
+      WHERE f.source_key = 'yandex_metrika'
+        AND f.analytics_scope = 'traffic'
+        AND f.report_date >= ?
+        AND f.report_date <= ?
+        AND f.analytics_account_id IN (${accountPlaceholders})
+      GROUP BY b.line_key, f.report_date
+      ORDER BY f.report_date, b.line_key
+    `,
+    [dashboardId, dateFrom, dateTo, ...metrikaAccountIds],
+  );
+
+  const [goalRows] = await pool.execute<PostClickGoalFactRow[]>(
+    `
+      SELECT
+        b.line_key AS line_key,
+        MAX(b.channel) AS channel,
+        f.report_date AS date,
+        COALESCE(SUM(f.goal_reaches), 0) AS goal_reaches
+      FROM dashboard_utm_source_bindings b
+      JOIN canonical_fact_site_analytics_daily f
+        ON b.dashboard_id = ?
+       AND b.utm_source = NULLIF(TRIM(f.utm_source), '')
+      WHERE f.source_key = 'yandex_metrika'
+        AND f.analytics_scope = 'goal'
+        AND f.report_date >= ?
+        AND f.report_date <= ?
+        AND f.analytics_account_id IN (${accountPlaceholders})
+      GROUP BY b.line_key, f.report_date
+      ORDER BY f.report_date, b.line_key
+    `,
+    [dashboardId, dateFrom, dateTo, ...metrikaAccountIds],
+  );
+
+  const goalsByLineDate = new Map(
+    goalRows.map((row) => [
+      `${String(row.line_key ?? "").trim()}::${String(row.date ?? "").slice(0, 10)}`,
+      Number(row.goal_reaches ?? 0),
+    ] as const),
+  );
+
+  const dailyByLineKey = new Map<string, PostClickAnalyticsTimeSeriesPoint[]>();
+
+  for (const row of trafficRows) {
+    const lineKey = String(row.line_key ?? "").trim();
+    const date = String(row.date ?? "").slice(0, 10);
+    if (!lineKey || !date) continue;
+    const visits = Number(row.visits ?? 0);
+    const goalReaches = goalsByLineDate.get(`${lineKey}::${date}`) ?? 0;
+    const point: PostClickAnalyticsTimeSeriesPoint = {
+      date,
+      line_key: lineKey,
+      channel: String(row.channel ?? "").trim(),
+      visits,
+      users: Number(row.users ?? 0),
+      pageviews: Number(row.pageviews ?? 0),
+      goal_reaches: goalReaches,
+      bounce_rate: Number(Number(row.bounce_rate ?? 0).toFixed(2)),
+      avg_visit_duration: Number(Number(row.avg_visit_duration ?? 0).toFixed(2)),
+      conversion_rate: visits > 0 ? Number(((goalReaches / visits) * 100).toFixed(2)) : 0,
+    };
+    if (!dailyByLineKey.has(lineKey)) dailyByLineKey.set(lineKey, []);
+    dailyByLineKey.get(lineKey)!.push(point);
+  }
+
+  const channelGroupByLineKey = new Map(channelGroups.map((group) => [group.line_key, group] as const));
+
+  const rows: PostClickAnalyticsRow[] = Array.from(utmSourcesByLineKey.entries())
+    .map(([lineKey, sources]) => {
+      const group = channelGroupByLineKey.get(lineKey);
+      if (!group) return null;
+      const daily = (dailyByLineKey.get(lineKey) ?? []).sort((a, b) => a.date.localeCompare(b.date));
+      const totals = daily.reduce(
+        (acc, item) => {
+          acc.visits += item.visits;
+          acc.users += item.users;
+          acc.pageviews += item.pageviews;
+          acc.goal_reaches += item.goal_reaches;
+          acc.bounce_weighted += item.bounce_rate * item.visits;
+          acc.duration_weighted += item.avg_visit_duration * item.visits;
+          return acc;
+        },
+        { visits: 0, users: 0, pageviews: 0, goal_reaches: 0, bounce_weighted: 0, duration_weighted: 0 },
+      );
+
+      return {
+        line_key: lineKey,
+        channel: group.channel,
+        instrument: group.instrument,
+        buy_type: group.buy_type,
+        utm_sources: Array.from(sources).sort((a, b) => a.localeCompare(b, "ru")),
+        visits: totals.visits,
+        users: totals.users,
+        pageviews: totals.pageviews,
+        goal_reaches: totals.goal_reaches,
+        bounce_rate: totals.visits > 0 ? Number((totals.bounce_weighted / totals.visits).toFixed(2)) : 0,
+        avg_visit_duration: totals.visits > 0 ? Number((totals.duration_weighted / totals.visits).toFixed(2)) : 0,
+        conversion_rate: totals.visits > 0 ? Number(((totals.goal_reaches / totals.visits) * 100).toFixed(2)) : 0,
+      } satisfies PostClickAnalyticsRow;
+    })
+    .filter((row): row is PostClickAnalyticsRow => Boolean(row))
+    .sort((a, b) => b.visits - a.visits || a.channel.localeCompare(b.channel, "ru"));
+
+  if (!rows.length) {
+    return undefined;
+  }
+
+  return {
+    rows,
+    timeseries: Array.from(dailyByLineKey.values())
+      .flat()
+      .sort((a, b) => a.date.localeCompare(b.date) || a.channel.localeCompare(b.channel, "ru")),
+  };
+}
+
 function mergeManualChannelPerformance(
   channelPerformance: ChannelPerformanceItem[],
   manualChannels: ManualChannelData[],
+  boundManualChannelKeys: Set<string> = new Set(),
 ): ChannelPerformanceItem[] {
   if (!manualChannels.length) {
     return channelPerformance;
@@ -1523,7 +1766,14 @@ function mergeManualChannelPerformance(
   });
 
   const additions = manualChannels
-    .filter((row) => !existingKeys.has(`${row.channel}|${row.platform}`) && !existingKeys.has(`${row.channel}|*`))
+    .filter((row) => {
+      const rowKey = `${row.platform}|${row.channel}`;
+      return (
+        !boundManualChannelKeys.has(rowKey) &&
+        !existingKeys.has(`${row.channel}|${row.platform}`) &&
+        !existingKeys.has(`${row.channel}|*`)
+      );
+    })
     .map((row) => {
       const platformId = row.platform;
       const sourceKey = resolveSourceKey(platformId);
@@ -1648,15 +1898,55 @@ function buildPlanBasedTimeseriesSpend(
         totalPlanBudget > 0 ? asNumber(row.budget_plan) / totalPlanBudget : 1 / planPlatformRows.length;
       const impressions = point.impressions * budgetShare;
       const clicks = point.clicks * budgetShare;
+      const views = asNumber(point.views) * budgetShare;
+      const conversions = (point.conversions ?? 0) * budgetShare;
 
       if (row.buy_type === "CPC" && row.cpc_plan > 0) {
         return sum + clicks * row.cpc_plan;
+      }
+      if (row.buy_type === "CPV" && row.cpv_plan > 0) {
+        return sum + views * row.cpv_plan;
+      }
+      if (row.buy_type === "CPA" && row.cpa_plan > 0) {
+        return sum + conversions * row.cpa_plan;
       }
       if (row.cpm_plan > 0) {
         return sum + (impressions / 1000) * row.cpm_plan;
       }
       return sum;
     }, 0);
+
+    if (derivedSpend > 0) {
+      point.spend = Number(derivedSpend.toFixed(2));
+    }
+  });
+}
+
+function applyPlanBasedChannelTimeseriesSpend(
+  channelTimeseries: NonNullable<DashboardData["channel_timeseries"]>,
+  channelGroups: ChannelGroup[],
+): void {
+  const groupsByChannel = new Map(channelGroups.map((group) => [group.channel, group] as const));
+
+  channelTimeseries.forEach((point) => {
+    const group = groupsByChannel.get(point.channel);
+    if (!group) return;
+
+    const cpmPlan = group.impressions_plan > 0 ? (group.budget_plan / group.impressions_plan) * 1000 : 0;
+    const cpcPlan = group.clicks_plan > 0 ? group.budget_plan / group.clicks_plan : 0;
+    const cpvPlan = group.views_plan > 0 ? group.budget_plan / group.views_plan : 0;
+    const cpaPlan = group.conversions_plan > 0 ? group.budget_plan / group.conversions_plan : 0;
+
+    let derivedSpend = 0;
+    if (group.buy_type === "CPC" && cpcPlan > 0) {
+      derivedSpend = point.clicks * cpcPlan;
+    } else if (group.buy_type === "CPV" && cpvPlan > 0) {
+      derivedSpend = (point.views ?? 0) * cpvPlan;
+    } else if (group.buy_type === "CPA" && cpaPlan > 0) {
+      derivedSpend = (point.conversions ?? 0) * cpaPlan;
+    } else if (cpmPlan > 0) {
+      derivedSpend = (point.impressions / 1000) * cpmPlan;
+    }
 
     if (derivedSpend > 0) {
       point.spend = Number(derivedSpend.toFixed(2));
@@ -1682,13 +1972,11 @@ function deriveFactSpendFromPlanRow(row: PlanVsFactItem): number {
 
 function applyPlanBasedPlanVsFactSpend(rows: PlanVsFactItem[]): PlanVsFactItem[] {
   return rows.map((row) => {
-    const manualBacked = Boolean((row as PlanVsFactItem & { __manual_backed?: boolean }).__manual_backed);
-    if (manualBacked) {
-      return row;
-    }
+    const derivedSpend = deriveFactSpendFromPlanRow(row);
+    const nextBudgetFact = derivedSpend > 0 ? derivedSpend : row.budget_fact;
     return {
       ...row,
-      budget_fact: Number(deriveFactSpendFromPlanRow(row).toFixed(2)),
+      budget_fact: Number(nextBudgetFact.toFixed(2)),
     };
   });
 }
@@ -1815,6 +2103,7 @@ export async function loadDashboardData(
      WHERE ds.dashboard_id = ?`,
     [dashboard.id],
   );
+  const metrikaAccountIds = resolveDashboardMetrikaAccountIds(sourceRows);
 
   if (dashboardType === "abbott_bi") {
     const counterIds = resolveAbbottCounterIds(sourceRows);
@@ -1841,6 +2130,7 @@ export async function loadDashboardData(
         section_order: [],
         multibrand: null,
       },
+      ai_summary_enabled: aiSummaryEnabled,
       kpi_config: [],
       visible_metrics: [],
       kpi: {
@@ -1862,6 +2152,7 @@ export async function loadDashboardData(
       plan_vs_fact: [],
       abbott_bi: abbottData,
     };
+    const aiSummarySnapshot = getMatchingDashboardAiSummarySnapshot(config.ai_summary_snapshot, response);
 
     return {
       dashboard_id: dashboard.id,
@@ -1871,6 +2162,7 @@ export async function loadDashboardData(
       ai_summary_enabled: aiSummaryEnabled,
       ai_summary_override_text: aiSummaryAuthoring?.override_text ?? null,
       ai_summary_override: aiSummaryOverride,
+      ai_summary_snapshot: aiSummarySnapshot?.summary ?? null,
     };
   }
 
@@ -1896,7 +2188,6 @@ export async function loadDashboardData(
   const promopagesTimeseriesRaw: PromopagesTimeSeriesPoint[] = [];
   const promopagesCampaignsRaw: PromopagesCampaignItem[] = [];
   const actualAdsSourceKeys = new Set<string>();
-  const manualPlatformIds = new Set<string>();
   const customTables: CustomTableData[] = [];
   const leadsRows: LeadRow[] = [];
   let manualChannels: ManualChannelData[] = [];
@@ -1920,7 +2211,6 @@ export async function loadDashboardData(
               const byPlatform = aggregateByPlatform(filtered);
               for (const p of byPlatform) {
                 const platformId = p.platform;
-                manualPlatformIds.add(platformId);
                 const meta = PLATFORM_COLORS[platformId];
                 platformStatsRaw.push({
                   id: platformId,
@@ -2232,9 +2522,9 @@ export async function loadDashboardData(
     }
 
     if (spendSource === "media_plan_derived") {
-      buildPlanBasedTimeseriesSpend(timeseriesResults, planRows, manualPlatformIds);
+      buildPlanBasedTimeseriesSpend(timeseriesResults, planRows);
 
-      const prevPlanSpendByPlatform = buildPlanBasedPlatformSpend(prevPlatformResults, planRows, manualPlatformIds);
+      const prevPlanSpendByPlatform = buildPlanBasedPlatformSpend(prevPlatformResults, planRows);
 
       prevPlatformResults.forEach((row) => {
         const derivedSpend = prevPlanSpendByPlatform.get(row.id);
@@ -2266,6 +2556,19 @@ export async function loadDashboardData(
       });
       return acc;
     }, new Map<string, Array<{ source_key: string; platform_campaign_id: string }>>());
+    const boundManualChannelKeys = bindingRows.reduce((acc, row) => {
+      if (row.source_key !== "manual_data") return acc;
+      const payload = String(row.platform_campaign_id ?? "");
+      if (!payload.startsWith("manual:")) return acc;
+      const raw = payload.slice("manual:".length);
+      const [platformRaw, ...channelParts] = raw.split("|");
+      const platformId = normalizeManualPlatformId(platformRaw);
+      const channel = channelParts.join("|").trim();
+      if (platformId && channel) {
+        acc.add(`${platformId}|${channel}`);
+      }
+      return acc;
+    }, new Set<string>());
     const hasExplicitBindings = bindingRows.length > 0;
     const boundPromopagesOverlay = await buildBoundPromopagesOverlay(
       planByChannel,
@@ -2327,6 +2630,10 @@ export async function loadDashboardData(
       }
     }
 
+    if (spendSource === "media_plan_derived" && channelTimeseries) {
+      applyPlanBasedChannelTimeseriesSpend(channelTimeseries, planByChannel);
+    }
+
     const planVsFact =
       spendSource === "media_plan_derived"
         ? applyPlanBasedPlanVsFactSpend(planVsFactBase)
@@ -2335,7 +2642,6 @@ export async function loadDashboardData(
     if (spendSource === "media_plan_derived") {
       const currentPlanSpendByPlatform = buildPlatformSpendFromPlanVsFact(planVsFact);
       platformResults.forEach((row) => {
-        if (manualPlatformIds.has(row.id)) return;
         const derivedSpend = currentPlanSpendByPlatform.get(row.id);
         if (derivedSpend === undefined) return;
         row.spend = derivedSpend;
@@ -2350,9 +2656,20 @@ export async function loadDashboardData(
       range.to,
       String(config.period_from ?? range.from),
       String(config.period_to ?? range.to),
-    ), manualChannels);
+    ), manualChannels, boundManualChannelKeys);
     const analyticsKpi = mergeAnalyticsKpi(analyticsKpiRaw);
     const analyticsTimeseries = mergeAnalyticsTimeseries(analyticsTimeseriesRaw);
+    const postclickAnalytics = await buildPostClickAnalytics(
+      dashboard.id,
+      planByChannel,
+      metrikaAccountIds,
+      range.from,
+      range.to,
+    );
+    let sectionOrder = getSectionOrder(config, dashboardType, showSpend);
+    if (postclickAnalytics && postclickAnalytics.rows.length > 0) {
+      sectionOrder = withOptionalSection(sectionOrder, "postclick_analytics", "plan_vs_fact");
+    }
     const promopagesTimeseries = mergePromopagesTimeseries(promopagesTimeseriesRaw);
     const promopagesCampaigns = mergePromopagesCampaigns(promopagesCampaignsRaw);
     const promopagesKpi =
@@ -2468,7 +2785,7 @@ export async function loadDashboardData(
         language: normalizeDashboardLanguage(config.language),
         show_spend: showSpend,
         filter_scope: getFilterScope(config),
-        section_order: getSectionOrder(config, dashboardType, showSpend),
+        section_order: sectionOrder,
         multibrand:
           multibrandConfig?.enabled
             ? {
@@ -2477,6 +2794,7 @@ export async function loadDashboardData(
               }
             : null,
       },
+      ai_summary_enabled: aiSummaryEnabled,
       kpi_config: getKpiConfig(config, dashboardType, showSpend),
       visible_metrics: getVisibleMetrics(config, dashboardType, showSpend),
       custom_kpi_cards: getCustomKpiCards(config, showSpend),
@@ -2498,6 +2816,7 @@ export async function loadDashboardData(
               timeseries: analyticsTimeseries,
             }
           : undefined,
+      postclick_analytics: postclickAnalytics,
       promopages:
         promopagesKpi && (promopagesCampaigns.length > 0 || promopagesTimeseries.length > 0)
           ? {
@@ -2526,6 +2845,8 @@ export async function loadDashboardData(
     response.comparison = buildComparison(response, compareResult.data);
   }
 
+  const aiSummarySnapshot = getMatchingDashboardAiSummarySnapshot(config.ai_summary_snapshot, response);
+
   return {
     dashboard_id: dashboard.id,
     data: response,
@@ -2534,5 +2855,6 @@ export async function loadDashboardData(
     ai_summary_enabled: aiSummaryEnabled,
     ai_summary_override_text: aiSummaryAuthoring?.override_text ?? null,
     ai_summary_override: aiSummaryOverride,
+    ai_summary_snapshot: aiSummarySnapshot?.summary ?? null,
   };
 }

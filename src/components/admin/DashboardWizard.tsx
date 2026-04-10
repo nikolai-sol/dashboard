@@ -3,10 +3,12 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import DashboardPreview from "@/components/admin/DashboardPreview";
+import DashboardAiSummaryAuthoringPanel from "@/components/admin/DashboardAiSummaryAuthoringPanel";
 import WizardStep1 from "@/components/admin/WizardStep1";
 import WizardStep2 from "@/components/admin/WizardStep2";
 import WizardStep3 from "@/components/admin/WizardStep3";
 import WizardStepBinding from "@/components/admin/WizardStepBinding";
+import DashboardUtmSourceMatching from "@/components/admin/DashboardUtmSourceMatching";
 import WizardStepFrequency from "@/components/admin/WizardStepFrequency";
 import WizardStep4 from "@/components/admin/WizardStep4";
 import {
@@ -15,6 +17,7 @@ import {
   sanitizeSectionOrder as sanitizeDashboardSectionOrder,
 } from "@/lib/dashboard-presets";
 import { normalizeMultibrandConfig } from "@/lib/multibrand";
+import { resolveSourceKey } from "@/lib/source-mapping";
 import type {
   CustomKpiCardForm,
   DashboardFormData,
@@ -25,8 +28,6 @@ import type {
 type DashboardWizardProps = {
   dashboardId?: string;
 };
-
-const STEPS = ["Basic", "Sources", "Filters", "Bindings", "Frequency", "Metrics"];
 
 function currentMonthRange(): { from: string; to: string } {
   const now = new Date();
@@ -151,10 +152,6 @@ function isStepComplete(step: number, formData: DashboardFormData) {
     return filtersValid && multibrandValid;
   }
 
-  if (step === 5) {
-    return (formData.config.kpi_cards ?? []).length >= 5;
-  }
-
   return true;
 }
 
@@ -221,6 +218,20 @@ export default function DashboardWizard({ dashboardId }: DashboardWizardProps) {
   const allowNavigationRef = useRef(false);
 
   const isEdit = Boolean(dashboardId);
+  const hasMetrikaSource = useMemo(
+    () => formData.sources.some((source) => source.role === "actual" && resolveSourceKey(source.platform) === "yandex_metrika"),
+    [formData.sources],
+  );
+  const steps = useMemo(
+    () =>
+      isEdit && hasMetrikaSource
+        ? ["Basic", "Sources", "Filters", "Bindings", "UTM Match", "Frequency", "Metrics"]
+        : ["Basic", "Sources", "Filters", "Bindings", "Frequency", "Metrics"],
+    [hasMetrikaSource, isEdit],
+  );
+  const utmMatchingStepIndex = isEdit && hasMetrikaSource ? 4 : -1;
+  const frequencyStepIndex = utmMatchingStepIndex >= 0 ? 5 : 4;
+  const metricsStepIndex = utmMatchingStepIndex >= 0 ? 6 : 5;
 
   useEffect(() => {
     dirtyRef.current = dirty;
@@ -447,17 +458,24 @@ export default function DashboardWizard({ dashboardId }: DashboardWizardProps) {
     void loadDashboard();
   }, [dashboardId]);
 
-  const stepValid = useMemo(() => isStepComplete(step, formData), [formData, step]);
+  const stepValid = useMemo(() => {
+    if (step === metricsStepIndex) {
+      return (formData.config.kpi_cards ?? []).length >= 5;
+    }
+    return isStepComplete(step, formData);
+  }, [formData, metricsStepIndex, step]);
   const furthestAvailableStep = useMemo(() => {
     let furthest = 0;
-    for (let index = 0; index < STEPS.length - 1; index += 1) {
-      if (!isStepComplete(index, formData)) {
+    for (let index = 0; index < steps.length - 1; index += 1) {
+      const complete =
+        index === metricsStepIndex ? (formData.config.kpi_cards ?? []).length >= 5 : isStepComplete(index, formData);
+      if (!complete) {
         break;
       }
       furthest = index + 1;
     }
     return furthest;
-  }, [formData]);
+  }, [formData, metricsStepIndex, steps.length]);
 
   const canJumpToStep = (targetStep: number) => targetStep <= furthestAvailableStep;
 
@@ -604,7 +622,7 @@ export default function DashboardWizard({ dashboardId }: DashboardWizardProps) {
       <div className="rounded-xl border border-slate-200 bg-white p-4">
         <div className="flex flex-wrap items-center justify-between gap-3">
           <div className="flex flex-wrap gap-2">
-            {STEPS.map((label, idx) => (
+            {steps.map((label, idx) => (
               <button
                 type="button"
                 key={label}
@@ -641,16 +659,18 @@ export default function DashboardWizard({ dashboardId }: DashboardWizardProps) {
         {step === 0 ? <WizardStep1 data={formData} onChange={handleFormChange} /> : null}
         {step === 1 ? <WizardStep2 data={formData} platforms={platforms} onChange={handleFormChange} /> : null}
         {step === 2 ? <WizardStep3 data={formData} onChange={handleFormChange} /> : null}
-        {step === 3 ? (
-          <WizardStepBinding data={formData} onChange={handleFormChange} />
+        {step === 3 ? <WizardStepBinding data={formData} onChange={handleFormChange} /> : null}
+        {utmMatchingStepIndex >= 0 && step === utmMatchingStepIndex ? (
+          <DashboardUtmSourceMatching dashboardId={String(dashboardId)} />
         ) : null}
-        {step === 4 ? (
+        {step === frequencyStepIndex ? (
           <WizardStepFrequency data={formData} onChange={handleFormChange} />
         ) : null}
-        {step === 5 ? (
+        {step === metricsStepIndex ? (
           <div className="space-y-4">
             <WizardStep4 data={formData} onChange={handleFormChange} />
             <DashboardPreview data={formData} />
+            {dashboardId ? <DashboardAiSummaryAuthoringPanel dashboardId={dashboardId} /> : null}
           </div>
         ) : null}
       </div>
@@ -678,7 +698,7 @@ export default function DashboardWizard({ dashboardId }: DashboardWizardProps) {
         </button>
 
         <div className="flex gap-2">
-          {isEdit && step < STEPS.length - 1 ? (
+          {isEdit && step < steps.length - 1 ? (
             <button
               type="button"
               onClick={submit}
@@ -688,10 +708,10 @@ export default function DashboardWizard({ dashboardId }: DashboardWizardProps) {
               {saving ? "Saving..." : "Save"}
             </button>
           ) : null}
-          {step < STEPS.length - 1 ? (
+          {step < steps.length - 1 ? (
             <button
               type="button"
-              onClick={() => void handleStepChange(Math.min(step + 1, STEPS.length - 1))}
+              onClick={() => void handleStepChange(Math.min(step + 1, steps.length - 1))}
               disabled={!stepValid || saving}
               className="rounded-lg bg-indigo-600 px-4 py-2 text-sm text-white disabled:cursor-not-allowed disabled:opacity-50"
             >

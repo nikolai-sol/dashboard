@@ -18,12 +18,36 @@ export type DashboardAiSummaryAuthoring = {
   updated_by?: string | null;
 };
 
+export type DashboardAiSummarySnapshotContext = {
+  period_from: string;
+  period_to: string;
+  compare_from: string | null;
+  compare_to: string | null;
+  brand_id: string | null;
+  dashboard_type: DashboardData["dashboard"]["type"];
+  language: DashboardData["dashboard"]["language"];
+  show_spend: boolean;
+  visible_metrics: string[];
+};
+
+export type DashboardAiSummarySnapshot = {
+  version: 1;
+  context: DashboardAiSummarySnapshotContext;
+  summary: DashboardAiSummary;
+  updated_at: string;
+  updated_by?: string | null;
+};
+
 type ProviderConfig = {
   apiKey: string;
   baseUrl: string;
   model: string;
+  temperature: number;
   timeoutMs: number;
   cacheTtlMs: number;
+  maxTokens: number;
+  disableThinking: boolean;
+  forceJsonObject: boolean;
 };
 
 type SummaryPromptPayload = {
@@ -79,8 +103,10 @@ type ChatCompletionResponse = {
 };
 
 const MONEY_METRICS = new Set(["spend", "cpm", "cpc", "cpv", "cpa", "roas"]);
-const DEFAULT_TIMEOUT_MS = 1_800;
+const DEFAULT_TIMEOUT_MS = 18_000;
 const DEFAULT_CACHE_TTL_MS = 5 * 60 * 1_000;
+const DEFAULT_MAX_TOKENS = 220;
+const KIMI_MIN_TIMEOUT_MS = 30_000;
 const MAX_TOP_PLATFORMS = 5;
 const MAX_CHANNEL_WATCHOUTS = 3;
 const summaryCache = new Map<string, { expiresAt: number; value: DashboardAiSummary }>();
@@ -90,21 +116,40 @@ function toPositiveInt(value: string | undefined, fallback: number): number {
   return Number.isFinite(parsed) && parsed > 0 ? Math.round(parsed) : fallback;
 }
 
+function toFiniteNumber(value: string | undefined, fallback: number): number {
+  if (value == null || value.trim() === "") {
+    return fallback;
+  }
+  const parsed = Number(value);
+  return Number.isFinite(parsed) ? parsed : fallback;
+}
+
 function getProviderConfig(): ProviderConfig | null {
   const apiKey = process.env.AI_SUMMARY_API_KEY?.trim();
   if (!apiKey) {
     return null;
   }
 
+  const model = process.env.AI_SUMMARY_MODEL?.trim() || "gemini-2.5-flash";
+  const isKimiModel = model.toLowerCase().startsWith("kimi-");
+  const defaultTemperature = isKimiModel ? 0.6 : 0.2;
+  const configuredTimeoutMs = toPositiveInt(process.env.AI_SUMMARY_TIMEOUT_MS, DEFAULT_TIMEOUT_MS);
+
   return {
     apiKey,
-    model: process.env.AI_SUMMARY_MODEL?.trim() || "gemini-2.5-flash",
+    model,
     baseUrl: (
       process.env.AI_SUMMARY_BASE_URL?.trim() ||
       "https://generativelanguage.googleapis.com/v1beta/openai"
     ).replace(/\/+$/, ""),
-    timeoutMs: toPositiveInt(process.env.AI_SUMMARY_TIMEOUT_MS, DEFAULT_TIMEOUT_MS),
+    temperature: toFiniteNumber(process.env.AI_SUMMARY_TEMPERATURE, defaultTemperature),
+    timeoutMs: isKimiModel
+      ? Math.max(configuredTimeoutMs, KIMI_MIN_TIMEOUT_MS)
+      : configuredTimeoutMs,
     cacheTtlMs: toPositiveInt(process.env.AI_SUMMARY_CACHE_TTL_MS, DEFAULT_CACHE_TTL_MS),
+    maxTokens: toPositiveInt(process.env.AI_SUMMARY_MAX_TOKENS, DEFAULT_MAX_TOKENS),
+    disableThinking: isKimiModel,
+    forceJsonObject: isKimiModel,
   };
 }
 
@@ -151,6 +196,10 @@ function getVisibleMetrics(data: DashboardData): string[] {
   return data.dashboard.show_spend
     ? ["impressions", "clicks", "ctr", "spend", "conversions"]
     : ["impressions", "clicks", "ctr", "conversions"];
+}
+
+function normalizeVisibleMetrics(values: string[]): string[] {
+  return Array.from(new Set(values.map((value) => value.trim()).filter(Boolean))).sort();
 }
 
 function hasMeaningfulData(data: DashboardData): boolean {
@@ -407,7 +456,10 @@ async function requestSummaryFromProvider(
     },
     body: JSON.stringify({
       model: config.model,
-      temperature: 0.2,
+      temperature: config.temperature,
+      max_tokens: config.maxTokens,
+      ...(config.disableThinking ? { thinking: { type: "disabled" } } : {}),
+      ...(config.forceJsonObject ? { response_format: { type: "json_object" } } : {}),
       messages: [
         { role: "system", content: buildSystemPrompt(payload.context.language) },
         { role: "user", content: buildUserPrompt(payload) },
@@ -465,6 +517,22 @@ export function buildDashboardAiSummaryCacheKey(request: Request, dashboardId: s
   return `${dashboardId}:${params}`;
 }
 
+export function buildDashboardAiSummarySnapshotContext(
+  data: DashboardData,
+): DashboardAiSummarySnapshotContext {
+  return {
+    period_from: data.dashboard.period.from,
+    period_to: data.dashboard.period.to,
+    compare_from: data.comparison?.period_b.from ?? null,
+    compare_to: data.comparison?.period_b.to ?? null,
+    brand_id: data.dashboard.multibrand?.active_brand_id ?? null,
+    dashboard_type: data.dashboard.type,
+    language: data.dashboard.language,
+    show_spend: data.dashboard.show_spend,
+    visible_metrics: normalizeVisibleMetrics(getVisibleMetrics(data)),
+  };
+}
+
 export function normalizeDashboardAiSummaryAuthoring(value: unknown): DashboardAiSummaryAuthoring | null {
   if (!value || typeof value !== "object") {
     return null;
@@ -486,6 +554,151 @@ export function normalizeDashboardAiSummaryAuthoring(value: unknown): DashboardA
           ? null
           : undefined,
   };
+}
+
+function normalizeSnapshotContext(value: unknown): DashboardAiSummarySnapshotContext | null {
+  if (!value || typeof value !== "object") {
+    return null;
+  }
+
+  const candidate = value as Record<string, unknown>;
+  const periodFrom = String(candidate.period_from ?? "").trim();
+  const periodTo = String(candidate.period_to ?? "").trim();
+  const dashboardType = String(candidate.dashboard_type ?? "").trim() as DashboardData["dashboard"]["type"];
+  const language = String(candidate.language ?? "").trim() as DashboardData["dashboard"]["language"];
+  const visibleMetrics = Array.isArray(candidate.visible_metrics)
+    ? normalizeVisibleMetrics(candidate.visible_metrics.map((item) => String(item)))
+    : [];
+
+  if (!periodFrom || !periodTo || !dashboardType || !language || visibleMetrics.length === 0) {
+    return null;
+  }
+
+  return {
+    period_from: periodFrom,
+    period_to: periodTo,
+    compare_from:
+      typeof candidate.compare_from === "string" && candidate.compare_from.trim()
+        ? candidate.compare_from
+        : null,
+    compare_to:
+      typeof candidate.compare_to === "string" && candidate.compare_to.trim()
+        ? candidate.compare_to
+        : null,
+    brand_id:
+      typeof candidate.brand_id === "string" && candidate.brand_id.trim() ? candidate.brand_id : null,
+    dashboard_type: dashboardType,
+    language,
+    show_spend: Boolean(candidate.show_spend),
+    visible_metrics: visibleMetrics,
+  };
+}
+
+function normalizeDashboardAiSummary(value: unknown): DashboardAiSummary | null {
+  if (!value || typeof value !== "object") {
+    return null;
+  }
+
+  const candidate = value as Record<string, unknown>;
+  const status = String(candidate.status ?? "").trim();
+  if (!status) {
+    return null;
+  }
+
+  return {
+    status: status as DashboardAiSummary["status"],
+    headline: typeof candidate.headline === "string" ? candidate.headline.trim() : undefined,
+    bullets: Array.isArray(candidate.bullets)
+      ? candidate.bullets.map((item) => String(item).trim()).filter(Boolean)
+      : undefined,
+    watchout:
+      typeof candidate.watchout === "string"
+        ? candidate.watchout.trim() || null
+        : candidate.watchout === null
+          ? null
+          : undefined,
+    reason:
+      typeof candidate.reason === "string"
+        ? (candidate.reason as DashboardAiSummaryReason)
+        : undefined,
+    generated_at:
+      typeof candidate.generated_at === "string" && candidate.generated_at.trim()
+        ? candidate.generated_at
+        : undefined,
+  };
+}
+
+export function normalizeDashboardAiSummarySnapshot(value: unknown): DashboardAiSummarySnapshot | null {
+  if (!value || typeof value !== "object") {
+    return null;
+  }
+
+  const candidate = value as Record<string, unknown>;
+  const context = normalizeSnapshotContext(candidate.context);
+  const summary = normalizeDashboardAiSummary(candidate.summary);
+  const updatedAt = typeof candidate.updated_at === "string" ? candidate.updated_at.trim() : "";
+
+  if (!context || !summary || !updatedAt) {
+    return null;
+  }
+
+  return {
+    version: 1,
+    context,
+    summary,
+    updated_at: updatedAt,
+    updated_by:
+      typeof candidate.updated_by === "string"
+        ? candidate.updated_by
+        : candidate.updated_by === null
+          ? null
+          : undefined,
+  };
+}
+
+function snapshotContextsMatch(
+  left: DashboardAiSummarySnapshotContext,
+  right: DashboardAiSummarySnapshotContext,
+): boolean {
+  return (
+    left.period_from === right.period_from &&
+    left.period_to === right.period_to &&
+    left.compare_from === right.compare_from &&
+    left.compare_to === right.compare_to &&
+    left.brand_id === right.brand_id &&
+    left.dashboard_type === right.dashboard_type &&
+    left.language === right.language &&
+    left.show_spend === right.show_spend &&
+    left.visible_metrics.length === right.visible_metrics.length &&
+    left.visible_metrics.every((metric, index) => metric === right.visible_metrics[index])
+  );
+}
+
+export function buildDashboardAiSummarySnapshot(
+  data: DashboardData,
+  summary: DashboardAiSummary,
+  updatedBy?: string | null,
+): DashboardAiSummarySnapshot {
+  return {
+    version: 1,
+    context: buildDashboardAiSummarySnapshotContext(data),
+    summary,
+    updated_at: new Date().toISOString(),
+    updated_by: updatedBy ?? null,
+  };
+}
+
+export function getMatchingDashboardAiSummarySnapshot(
+  value: unknown,
+  data: DashboardData,
+): DashboardAiSummarySnapshot | null {
+  const snapshot = normalizeDashboardAiSummarySnapshot(value);
+  if (!snapshot) {
+    return null;
+  }
+
+  const currentContext = buildDashboardAiSummarySnapshotContext(data);
+  return snapshotContextsMatch(snapshot.context, currentContext) ? snapshot : null;
 }
 
 export function buildDashboardAiSummaryFromOverrideText(

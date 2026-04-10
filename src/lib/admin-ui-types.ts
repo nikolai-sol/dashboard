@@ -7,6 +7,7 @@ export type DashboardSectionId =
   | "spend_section"
   | "trend_chart"
   | "analytics"
+  | "postclick_analytics"
   | "conversion_funnel"
   | "campaign_table"
   | "scatter_plot"
@@ -45,6 +46,13 @@ export type MediaPlanBindingForm = {
   channel: string;
   source_key: string;
   platform_campaign_id: string;
+};
+
+export type DashboardUtmSourceBindingForm = {
+  utm_source: string;
+  line_key: string;
+  channel: string;
+  source_key?: string | null;
 };
 
 export type CampaignFrequencyOverrideForm = {
@@ -87,6 +95,44 @@ export type DashboardFormData = {
   };
   sources: DashboardSourceForm[];
   media_plan_bindings: MediaPlanBindingForm[];
+};
+
+export type DashboardUtmObservedSourceRow = {
+  utm_source: string;
+  visits: number;
+  users: number;
+  pageviews: number;
+  goal_reaches: number;
+  first_seen: string | null;
+  last_seen: string | null;
+  mediums_preview: string[];
+  campaigns_preview: string[];
+  medium_count: number;
+  campaign_count: number;
+  current_line_key: string | null;
+  current_channel: string | null;
+  current_source_key: string | null;
+  suggested_line_key: string | null;
+};
+
+export type DashboardUtmMatchingPayload = {
+  dashboard: {
+    id: number;
+    client_id: string;
+    client_name: string;
+    dashboard_name: string;
+    period_from: string | null;
+    period_to: string | null;
+    metrika_account_ids: string[];
+  };
+  media_plan_rows: Array<{
+    line_key: string;
+    channel: string;
+    instrument: string;
+    platform: string;
+    bound_source_keys: string[];
+  }>;
+  observed_sources: DashboardUtmObservedSourceRow[];
 };
 
 export type DashboardListItem = {

@@ -7,6 +7,7 @@ export type DashboardSectionId =
   | "spend_section"
   | "trend_chart"
   | "analytics"
+  | "postclick_analytics"
   | "conversion_funnel"
   | "campaign_table"
   | "scatter_plot"
@@ -259,6 +260,34 @@ export interface AnalyticsTimeSeriesPoint {
   bounce_rate: number;
 }
 
+export interface PostClickAnalyticsRow {
+  line_key: string;
+  channel: string;
+  instrument: string;
+  buy_type: string;
+  utm_sources: string[];
+  visits: number;
+  users: number;
+  pageviews: number;
+  goal_reaches: number;
+  bounce_rate: number;
+  avg_visit_duration: number;
+  conversion_rate: number;
+}
+
+export interface PostClickAnalyticsTimeSeriesPoint {
+  date: string;
+  line_key: string;
+  channel: string;
+  visits: number;
+  users: number;
+  pageviews: number;
+  goal_reaches: number;
+  bounce_rate: number;
+  avg_visit_duration: number;
+  conversion_rate: number;
+}
+
 export interface AbbottBiUserSummaryRow {
   user_id: string;
   traffic_source: string;
@@ -480,6 +509,10 @@ export interface DashboardData {
     kpi: AnalyticsKPI;
     timeseries: AnalyticsTimeSeriesPoint[];
   };
+  postclick_analytics?: {
+    rows: PostClickAnalyticsRow[];
+    timeseries: PostClickAnalyticsTimeSeriesPoint[];
+  };
   abbott_bi?: AbbottBiData;
   promopages?: PromopagesData;
   bound_promopages?: {
@@ -502,4 +535,5 @@ export interface DashboardData {
   funnel?: FunnelStep[];
   comparison?: ComparisonData;
   ai_summary?: DashboardAiSummary;
+  ai_summary_enabled?: boolean;
 }

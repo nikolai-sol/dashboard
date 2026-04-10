@@ -1,11 +1,7 @@
 import { NextResponse } from "next/server";
 import type { ResultSetHeader, RowDataPacket } from "mysql2/promise";
 import pool from "@/lib/db";
-import {
-  ADMIN_SESSION_COOKIE,
-  parseCookieValue,
-  verifyAdminSession,
-} from "@/lib/access-auth";
+import { isDashboardAccessAuthorized } from "@/lib/dashboard-access";
 import {
   buildDashboardAiSummarySnapshot,
   generateDashboardAiSummary,
@@ -32,15 +28,7 @@ function parseConfig(value: unknown): Record<string, unknown> {
   return {};
 }
 
-function getDashboardId(rawId: string): number | null {
-  const dashboardId = Number(rawId);
-  return Number.isFinite(dashboardId) ? dashboardId : null;
-}
-
-function getAdminEmailFromRequest(request: Request): string | null {
-  const token = parseCookieValue(request.headers.get("cookie"), ADMIN_SESSION_COOKIE);
-  return verifyAdminSession(token)?.email ?? null;
-}
+export const dynamic = "force-dynamic";
 
 export async function POST(
   request: Request,
@@ -48,25 +36,31 @@ export async function POST(
 ) {
   try {
     const { id } = await Promise.resolve(context.params);
-    const dashboardId = getDashboardId(id);
-    if (dashboardId === null) {
-      return NextResponse.json({ error: "Invalid dashboard id" }, { status: 400 });
+    const access = await isDashboardAccessAuthorized(request, id);
+    if (!access.context) {
+      return NextResponse.json({ error: "Dashboard not found" }, { status: 404 });
+    }
+    if (!access.authorized) {
+      return NextResponse.json(
+        {
+          error: "Authentication required",
+          auth_required: true,
+          dashboard: {
+            id: access.context.id,
+            client_id: access.context.client_id,
+            client_name: access.context.client_name,
+            dashboard_name: access.context.dashboard_name,
+            auth_mode: access.context.auth_mode,
+          },
+        },
+        { status: 401 },
+      );
     }
 
-    const {
-      data,
-      ai_summary_enabled,
-      ai_summary_override_text,
-      ai_summary_override,
-      ai_summary_snapshot,
-    } = await loadDashboardData(
-      request,
-      String(dashboardId),
-    );
-
+    const { dashboard_id, data, ai_summary_enabled } = await loadDashboardData(request, id);
     if (!ai_summary_enabled) {
       return NextResponse.json(
-        { error: "AI summary authoring is disabled for this dashboard" },
+        { error: "AI summary is disabled for this dashboard" },
         { status: 409 },
       );
     }
@@ -85,10 +79,9 @@ export async function POST(
     const conn = await pool.getConnection();
     try {
       await conn.beginTransaction();
-
       const [rows] = await conn.execute<DashboardConfigRow[]>(
         "SELECT id, config FROM dashboards WHERE id = ? LIMIT 1",
-        [dashboardId],
+        [dashboard_id],
       );
       const row = rows[0];
       if (!row) {
@@ -100,7 +93,7 @@ export async function POST(
       if (!Boolean(config.show_ai_summary ?? false)) {
         await conn.rollback();
         return NextResponse.json(
-          { error: "AI summary authoring is disabled for this dashboard" },
+          { error: "AI summary is disabled for this dashboard" },
           { status: 409 },
         );
       }
@@ -108,14 +101,13 @@ export async function POST(
       config.ai_summary_snapshot = buildDashboardAiSummarySnapshot(
         data,
         candidate,
-        getAdminEmailFromRequest(request),
+        "public_dashboard",
       );
 
       await conn.execute<ResultSetHeader>(
         "UPDATE dashboards SET config = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?",
-        [JSON.stringify(config), dashboardId],
+        [JSON.stringify(config), dashboard_id],
       );
-
       await conn.commit();
     } catch (error) {
       await conn.rollback();
@@ -129,21 +121,17 @@ export async function POST(
 
     return NextResponse.json({
       enabled: true,
-      source: ai_summary_override ? "override" : "snapshot",
-      override_text: ai_summary_override_text ?? null,
-      effective_summary: ai_summary_override ?? candidate,
+      effective_summary: candidate,
       snapshot_summary: candidate,
       has_snapshot: true,
-      previous_snapshot_summary: ai_summary_snapshot ?? null,
     });
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
     if (message === "Dashboard not found") {
       return NextResponse.json({ error: message }, { status: 404 });
     }
-
     return NextResponse.json(
-      { error: "Failed to generate AI summary candidate", details: message },
+      { error: "Failed to generate AI summary", details: message },
       { status: 500 },
     );
   }

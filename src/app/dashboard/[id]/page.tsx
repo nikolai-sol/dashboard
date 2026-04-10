@@ -20,6 +20,7 @@ import PlatformTable from "@/components/PlatformTable";
 import PlanVsFact from "@/components/PlanVsFact";
 import PromopagesSection from "@/components/PromopagesSection";
 import AnalyticsSection from "@/components/AnalyticsSection";
+import PostClickAnalyticsTable from "@/components/PostClickAnalyticsTable";
 import SpendByPlatform from "@/components/SpendByPlatform";
 import SpendConversionsScatter from "@/components/SpendConversionsScatter";
 import TrendChart from "@/components/TrendChart";
@@ -288,6 +289,8 @@ export default function DashboardByIdPage() {
   const [selectedBrandId, setSelectedBrandId] = useState(initialBrandId);
   const [brandSummaries, setBrandSummaries] = useState<MultibrandSummary[]>([]);
   const [reloadKey, setReloadKey] = useState(0);
+  const [isGeneratingAiSummary, setIsGeneratingAiSummary] = useState(false);
+  const [aiSummaryError, setAiSummaryError] = useState<string | null>(null);
   const [dateRange, setDateRange] = useState<{ from: string; to: string }>({ from: initialFrom, to: initialTo });
   const [draftDateRange, setDraftDateRange] = useState<{ from: string; to: string }>({
     from: initialFrom,
@@ -346,6 +349,7 @@ export default function DashboardByIdPage() {
       setDashboard(result.data);
       setIsDemoMode(result.demoMode);
       setApiError(result.errorMessage);
+      setAiSummaryError(null);
       setAuthRequired(false);
       setAuthMeta(null);
       setNotFound(false);
@@ -368,6 +372,63 @@ export default function DashboardByIdPage() {
       cancelled = true;
     };
   }, [compareRange, dashboardId, dateRange, reloadKey, selectedBrandId, viewerAccessToken, viewerEmbedKey]);
+
+  async function generateAiSummary() {
+    if (!dashboard?.ai_summary_enabled || isGeneratingAiSummary) {
+      return;
+    }
+
+    setIsGeneratingAiSummary(true);
+    setAiSummaryError(null);
+
+    try {
+      const params = new URLSearchParams();
+      if (dateRange.from && dateRange.to) {
+        params.set("from", dateRange.from);
+        params.set("to", dateRange.to);
+      }
+      if (compareRange.from && compareRange.to) {
+        params.set("compare_from", compareRange.from);
+        params.set("compare_to", compareRange.to);
+      }
+      if (viewerAccessToken) {
+        params.set("access_token", viewerAccessToken);
+      }
+      if (viewerEmbedKey) {
+        params.set("embed_key", viewerEmbedKey);
+      }
+      if (selectedBrandId) {
+        params.set("brand", selectedBrandId);
+      }
+
+      const query = params.toString();
+      const response = await fetch(
+        `/api/dashboard/${dashboardId}/ai-summary/generate${query ? `?${query}` : ""}`,
+        { method: "POST" },
+      );
+      const payload = (await response.json().catch(() => null)) as
+        | { effective_summary?: DashboardData["ai_summary"]; error?: string; details?: string }
+        | null;
+
+      if (!response.ok || !payload?.effective_summary) {
+        throw new Error(payload?.error || payload?.details || `API returned ${response.status}`);
+      }
+
+      setDashboard((prev) =>
+        prev
+          ? {
+              ...prev,
+              ai_summary: payload.effective_summary,
+              ai_summary_enabled: true,
+            }
+          : prev,
+      );
+    } catch (error) {
+      setAiSummaryError(error instanceof Error ? error.message : "Failed to generate summary");
+    } finally {
+      setIsGeneratingAiSummary(false);
+    }
+  }
 
   useEffect(() => {
     setSelectedBrandId(initialBrandId);
@@ -471,6 +532,20 @@ export default function DashboardByIdPage() {
     return {
       byChannel: dashboard.bound_promopages.by_channel.filter((item) => visibleChannels.has(item.channel)),
       timeseries: dashboard.bound_promopages.timeseries.filter((item) => visibleChannels.has(item.channel)),
+    };
+  }, [dashboard, filteredPlanVsFact]);
+
+  const filteredPostClickAnalytics = useMemo(() => {
+    if (!dashboard?.postclick_analytics) {
+      return {
+        rows: [],
+        timeseries: [],
+      };
+    }
+    const visibleChannels = new Set(filteredPlanVsFact.map((item) => item.channel));
+    return {
+      rows: dashboard.postclick_analytics.rows.filter((item) => visibleChannels.has(item.channel)),
+      timeseries: dashboard.postclick_analytics.timeseries.filter((item) => visibleChannels.has(item.channel)),
     };
   }, [dashboard, filteredPlanVsFact]);
 
@@ -1179,6 +1254,41 @@ export default function DashboardByIdPage() {
       );
     }
 
+    if (sectionId === "postclick_analytics") {
+      if (!filteredPostClickAnalytics.rows.length) return null;
+      return (
+        <section key={sectionId} className="mb-6">
+          <PostClickAnalyticsTable
+            rows={filteredPostClickAnalytics.rows}
+            timeseries={filteredPostClickAnalytics.timeseries}
+            locale={locale}
+            labels={{
+              title: i18n.sections.postclickAnalytics,
+              sourceNote:
+                i18n.language === "ru"
+                  ? "Достижения целей берутся из Yandex Metrika на том же UTM-grain: daily rows из analytics_scope='goal' суммируются по привязанным utm_source для каждой строки медиаплана."
+                  : "Goal reaches come from Yandex Metrika on the same UTM grain: daily analytics_scope='goal' rows are summed across bound utm_source values for each media plan row.",
+              noRows:
+                i18n.language === "ru"
+                  ? "Нет доступных строк постклик аналитики за выбранный период."
+                  : "No post-click analytics rows available for the selected period.",
+              total: i18n.common.total,
+              channel: i18n.common.channel,
+              instrument: i18n.common.instrument,
+              visits: i18n.language === "ru" ? "Визиты" : "Visits",
+              users: i18n.language === "ru" ? "Пользователи" : "Users",
+              pageviews: i18n.language === "ru" ? "Просмотры страниц" : "Pageviews",
+              goalReaches: i18n.language === "ru" ? "Достижения целей" : "Goal reaches",
+              conversionRate: i18n.language === "ru" ? "CR" : "CR",
+              bounceRate: i18n.language === "ru" ? "Отказы" : "Bounce rate",
+              avgVisitDuration: i18n.language === "ru" ? "Ср. длительность визита" : "Avg visit duration",
+              utmSources: i18n.language === "ru" ? "UTM source" : "UTM sources",
+            }}
+          />
+        </section>
+      );
+    }
+
     return null;
   };
 
@@ -1553,7 +1663,14 @@ export default function DashboardByIdPage() {
         onExportPdf={exportPdf}
       />
 
-      <DashboardAiSummaryCard summary={dashboard.ai_summary} labels={i18n.aiSummary} />
+      <DashboardAiSummaryCard
+        summary={dashboard.ai_summary}
+        enabled={Boolean(dashboard.ai_summary_enabled)}
+        labels={i18n.aiSummary}
+        onGenerate={dashboard.ai_summary_enabled ? generateAiSummary : undefined}
+        isGenerating={isGeneratingAiSummary}
+        generateError={aiSummaryError}
+      />
 
       {isDemoMode ? (
         <div className="no-print mb-4 rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-800">

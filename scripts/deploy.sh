@@ -114,7 +114,19 @@ else
 fi
 
 pm2 save || rollback "pm2 save failed"
-curl -fsS "http://127.0.0.1:$APP_PORT/api/health" >/dev/null || rollback "health check failed"
+
+health_ok=0
+for attempt in $(seq 1 20); do
+  if curl -fsS "http://127.0.0.1:$APP_PORT/api/health" >/dev/null; then
+    health_ok=1
+    break
+  fi
+  sleep 1
+done
+
+if [ "$health_ok" -ne 1 ]; then
+  rollback "health check failed"
+fi
 
 find "$BACKUPS_DIR" -mindepth 1 -maxdepth 1 -type d | sort -r | awk "NR>$KEEP_BACKUPS" | while IFS= read -r stale_backup; do
   rm -rf "$stale_backup"

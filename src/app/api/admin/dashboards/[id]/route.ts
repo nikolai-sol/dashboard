@@ -115,6 +115,12 @@ export async function PUT(
     ) {
       config.ai_summary_authoring = existingConfig.ai_summary_authoring;
     }
+    if (
+      !Object.prototype.hasOwnProperty.call(payload.config, "ai_summary_snapshot") &&
+      Object.prototype.hasOwnProperty.call(existingConfig, "ai_summary_snapshot")
+    ) {
+      config.ai_summary_snapshot = existingConfig.ai_summary_snapshot;
+    }
 
     const [updateResult] = await conn.execute<ResultSetHeader>(
       `UPDATE dashboards

@@ -13,6 +13,7 @@ export type DashboardI18n = {
     comparison: string;
     promopages: string;
     analytics: string;
+    postclickAnalytics: string;
     spendByPlatform: string;
     channelMix: string;
     manualData: string;
@@ -57,6 +58,8 @@ export type DashboardI18n = {
     title: string;
     subtitle: string;
     watchout: string;
+    generate: string;
+    generating: string;
     unavailableTitle: string;
     unavailableBody: string;
     errorTitle: string;
@@ -114,6 +117,7 @@ const DICTIONARY: Record<DashboardLanguage, Omit<DashboardI18n, "language" | "lo
       comparison: "Period Comparison",
       promopages: "Promopages",
       analytics: "Website Analytics",
+      postclickAnalytics: "Post-click Analytics",
       spendByPlatform: "Spend by Platform",
       channelMix: "Channel Mix",
       manualData: "Additional Sources",
@@ -158,6 +162,8 @@ const DICTIONARY: Record<DashboardLanguage, Omit<DashboardI18n, "language" | "lo
       title: "AI Summary",
       subtitle: "Generated from the current dashboard view",
       watchout: "Watchout",
+      generate: "Generate summary",
+      generating: "Generating...",
       unavailableTitle: "Summary unavailable for this report",
       unavailableBody: "There is not enough grounded report data yet to generate a reliable summary.",
       errorTitle: "Summary unavailable right now",
@@ -213,6 +219,7 @@ const DICTIONARY: Record<DashboardLanguage, Omit<DashboardI18n, "language" | "lo
       comparison: "Сравнение периодов",
       promopages: "ПромоСтраницы",
       analytics: "Аналитика сайта",
+      postclickAnalytics: "Постклик аналитика",
       spendByPlatform: "Расход по платформам",
       channelMix: "Микс каналов",
       manualData: "Дополнительные источники",
@@ -257,6 +264,8 @@ const DICTIONARY: Record<DashboardLanguage, Omit<DashboardI18n, "language" | "lo
       title: "AI Summary",
       subtitle: "Сформировано по текущему состоянию дашборда",
       watchout: "Риск",
+      generate: "Сгенерировать сводку",
+      generating: "Генерация...",
       unavailableTitle: "Сводка пока недоступна для этого отчета",
       unavailableBody: "Для надежной AI-сводки в текущем отчете пока недостаточно подтвержденных данных.",
       errorTitle: "Сводка сейчас недоступна",

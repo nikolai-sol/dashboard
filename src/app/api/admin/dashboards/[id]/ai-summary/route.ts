@@ -7,9 +7,7 @@ import {
   verifyAdminSession,
 } from "@/lib/access-auth";
 import {
-  buildDashboardAiSummaryCacheKey,
   buildDashboardAiSummaryFromOverrideText,
-  generateDashboardAiSummary,
 } from "@/lib/dashboard-ai-summary";
 import { loadDashboardData } from "@/lib/dashboard-data-loader";
 
@@ -43,42 +41,81 @@ function getAdminEmailFromRequest(request: Request): string | null {
   return verifyAdminSession(token)?.email ?? null;
 }
 
-async function loadEffectiveSummary(request: Request, dashboardId: string) {
-  const {
-    data,
-    ai_summary_enabled,
-    ai_summary_override,
-    ai_summary_override_text,
-  } = await loadDashboardData(request, dashboardId);
+type AiSummaryStateResponse = {
+  enabled: boolean;
+  source: "disabled" | "none" | "snapshot" | "override";
+  override_text: string | null;
+  effective_summary: ReturnType<typeof buildDashboardAiSummaryFromOverrideText>;
+  snapshot_summary: ReturnType<typeof buildDashboardAiSummaryFromOverrideText>;
+  has_snapshot: boolean;
+};
 
-  if (!ai_summary_enabled) {
+function buildSummaryState(params: {
+  enabled: boolean;
+  overrideText?: string | null;
+  overrideSummary?: ReturnType<typeof buildDashboardAiSummaryFromOverrideText>;
+  snapshotSummary?: ReturnType<typeof buildDashboardAiSummaryFromOverrideText>;
+}): AiSummaryStateResponse {
+  const overrideText = params.overrideText ?? null;
+  const snapshotSummary = params.snapshotSummary ?? null;
+  const overrideSummary = params.overrideSummary ?? null;
+
+  if (!params.enabled) {
     return {
       enabled: false,
-      source: "disabled" as const,
-      override_text: ai_summary_override_text ?? null,
+      source: "disabled",
+      override_text: overrideText,
       effective_summary: null,
+      snapshot_summary: snapshotSummary,
+      has_snapshot: Boolean(snapshotSummary),
     };
   }
 
-  if (ai_summary_override) {
+  if (overrideSummary) {
     return {
       enabled: true,
-      source: "override" as const,
-      override_text: ai_summary_override_text ?? null,
-      effective_summary: ai_summary_override,
+      source: "override",
+      override_text: overrideText,
+      effective_summary: overrideSummary,
+      snapshot_summary: snapshotSummary,
+      has_snapshot: Boolean(snapshotSummary),
     };
   }
 
-  const effectiveSummary = await generateDashboardAiSummary(data, {
-    cacheKey: buildDashboardAiSummaryCacheKey(request, dashboardId),
-  });
+  if (snapshotSummary) {
+    return {
+      enabled: true,
+      source: "snapshot",
+      override_text: overrideText,
+      effective_summary: snapshotSummary,
+      snapshot_summary: snapshotSummary,
+      has_snapshot: true,
+    };
+  }
 
   return {
     enabled: true,
-    source: "generated" as const,
-    override_text: null,
-    effective_summary: effectiveSummary,
+    source: "none",
+    override_text: overrideText,
+    effective_summary: null,
+    snapshot_summary: null,
+    has_snapshot: false,
   };
+}
+
+async function loadEffectiveSummary(request: Request, dashboardId: string) {
+  const {
+    ai_summary_enabled,
+    ai_summary_override,
+    ai_summary_override_text,
+    ai_summary_snapshot,
+  } = await loadDashboardData(request, dashboardId);
+  return buildSummaryState({
+    enabled: ai_summary_enabled,
+    overrideText: ai_summary_override_text ?? null,
+    overrideSummary: ai_summary_override ?? null,
+    snapshotSummary: ai_summary_snapshot ?? null,
+  });
 }
 
 export async function GET(
@@ -160,12 +197,8 @@ export async function PUT(
 
     await conn.commit();
 
-    return NextResponse.json({
-      enabled: true,
-      source: "override",
-      override_text: overrideText,
-      effective_summary: buildDashboardAiSummaryFromOverrideText(overrideText, updatedAt),
-    });
+    const summary = await loadEffectiveSummary(request, String(dashboardId));
+    return NextResponse.json(summary);
   } catch (error) {
     await conn.rollback();
     return NextResponse.json(

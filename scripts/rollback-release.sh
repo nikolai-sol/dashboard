@@ -74,7 +74,19 @@ else
   pm2 start ecosystem.config.js --only "$APP_NAME" || restore_current "pm2 start failed"
 fi
 pm2 save || restore_current "pm2 save failed"
-curl -fsS "http://127.0.0.1:$APP_PORT/api/health" >/dev/null || restore_current "health check failed"
+
+health_ok=0
+for attempt in $(seq 1 20); do
+  if curl -fsS "http://127.0.0.1:$APP_PORT/api/health" >/dev/null; then
+    health_ok=1
+    break
+  fi
+  sleep 1
+done
+
+if [ "$health_ok" -ne 1 ]; then
+  restore_current "health check failed"
+fi
 
 echo "Rolled back using $(basename "$TARGET_BACKUP")."
 REMOTE
