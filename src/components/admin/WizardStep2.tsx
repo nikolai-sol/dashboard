@@ -410,6 +410,25 @@ export default function WizardStep2({ data, platforms, onChange }: WizardStep2Pr
     setSources(actualSources, nextPlan);
   };
 
+  const clearPlanStoredData = () => {
+    if (!planSource) return;
+    setConfirmError(null);
+    setConfirmMessage(null);
+    setAnalysis(null);
+    const nextSourceConfig = {
+      ...(planSource.source_config ?? {}),
+      upload_file: null,
+      inline_rows: undefined,
+      review: undefined,
+    } as Record<string, unknown>;
+    delete nextSourceConfig.inline_rows;
+    delete nextSourceConfig.review;
+    setSources(actualSources, {
+      ...planSource,
+      source_config: nextSourceConfig,
+    }, customTableSources, manualDataSources, leadsSources);
+  };
+
   const copyTemplate = async () => {
     try {
       await navigator.clipboard.writeText(TEMPLATE_HEADERS);
@@ -1274,6 +1293,13 @@ export default function WizardStep2({ data, platforms, onChange }: WizardStep2Pr
                   className="rounded border border-slate-300 px-2 py-1 text-xs hover:bg-slate-50"
                 >
                   Clear upload
+                </button>
+                <button
+                  type="button"
+                  onClick={clearPlanStoredData}
+                  className="rounded border border-rose-200 px-2 py-1 text-xs text-rose-600 hover:bg-rose-50"
+                >
+                  Delete stored plan data
                 </button>
               </div>
               <p className="mt-2 text-xs text-slate-500">

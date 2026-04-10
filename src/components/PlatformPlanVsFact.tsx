@@ -63,6 +63,7 @@ type MetricSummary = {
   fact: number;
   plan: number;
   completion_pct: number | null;
+  status?: "green" | "yellow" | "red" | null;
 };
 
 const MONEY_METRICS = new Set(["spend", "cpm", "cpc", "cpv", "cpa"]);
@@ -102,19 +103,44 @@ function formatMetricValue(
   return Math.round(value).toLocaleString(locale);
 }
 
+function buildCompletionStatus(metric: MetricKey, completionPct: number | null): MetricSummary["status"] {
+  if (completionPct === null) return null;
+  if (metric === "spend") {
+    if (completionPct < 70) return "red";
+    if (completionPct < 90) return "yellow";
+    if (completionPct <= 110) return "green";
+    if (completionPct <= 130) return "yellow";
+    return "red";
+  }
+  if (completionPct < 70) return "red";
+  if (completionPct < 90) return "yellow";
+  return "green";
+}
+
+function statusDotClass(status?: MetricSummary["status"]) {
+  if (status === "green") return "bg-emerald-500";
+  if (status === "yellow") return "bg-amber-400";
+  if (status === "red") return "bg-rose-500";
+  return "bg-slate-300";
+}
+
 function summarizeMetric(row: PlatformAggregate, metric: MetricKey): MetricSummary {
   if (metric === "impressions") {
+    const completion_pct = row.impressions_plan > 0 ? (row.impressions_fact / row.impressions_plan) * 100 : null;
     return {
       fact: row.impressions_fact,
       plan: row.impressions_plan,
-      completion_pct: row.impressions_plan > 0 ? (row.impressions_fact / row.impressions_plan) * 100 : null,
+      completion_pct,
+      status: buildCompletionStatus(metric, completion_pct),
     };
   }
   if (metric === "reach") {
+    const completion_pct = row.reach_plan > 0 ? (row.reach_fact / row.reach_plan) * 100 : null;
     return {
       fact: row.reach_fact,
       plan: row.reach_plan,
-      completion_pct: row.reach_plan > 0 ? (row.reach_fact / row.reach_plan) * 100 : null,
+      completion_pct,
+      status: buildCompletionStatus(metric, completion_pct),
     };
   }
   if (metric === "frequency") {
@@ -124,34 +150,43 @@ function summarizeMetric(row: PlatformAggregate, metric: MetricKey): MetricSumma
       fact,
       plan,
       completion_pct: null,
+      status: null,
     };
   }
   if (metric === "clicks") {
+    const completion_pct = row.clicks_plan > 0 ? (row.clicks_fact / row.clicks_plan) * 100 : null;
     return {
       fact: row.clicks_fact,
       plan: row.clicks_plan,
-      completion_pct: row.clicks_plan > 0 ? (row.clicks_fact / row.clicks_plan) * 100 : null,
+      completion_pct,
+      status: buildCompletionStatus(metric, completion_pct),
     };
   }
   if (metric === "views") {
+    const completion_pct = row.views_plan > 0 ? (row.views_fact / row.views_plan) * 100 : null;
     return {
       fact: row.views_fact,
       plan: row.views_plan,
-      completion_pct: row.views_plan > 0 ? (row.views_fact / row.views_plan) * 100 : null,
+      completion_pct,
+      status: buildCompletionStatus(metric, completion_pct),
     };
   }
   if (metric === "conversions") {
+    const completion_pct = row.conversions_plan > 0 ? (row.conversions_fact / row.conversions_plan) * 100 : null;
     return {
       fact: row.conversions_fact,
       plan: row.conversions_plan,
-      completion_pct: row.conversions_plan > 0 ? (row.conversions_fact / row.conversions_plan) * 100 : null,
+      completion_pct,
+      status: buildCompletionStatus(metric, completion_pct),
     };
   }
   if (metric === "spend") {
+    const completion_pct = row.spend_plan > 0 ? (row.spend_fact / row.spend_plan) * 100 : null;
     return {
       fact: row.spend_fact,
       plan: row.spend_plan,
-      completion_pct: row.spend_plan > 0 ? (row.spend_fact / row.spend_plan) * 100 : null,
+      completion_pct,
+      status: buildCompletionStatus(metric, completion_pct),
     };
   }
   if (metric === "ctr") {
@@ -159,6 +194,7 @@ function summarizeMetric(row: PlatformAggregate, metric: MetricKey): MetricSumma
       fact: row.impressions_fact > 0 ? (row.clicks_fact / row.impressions_fact) * 100 : 0,
       plan: row.impressions_plan > 0 ? (row.clicks_plan / row.impressions_plan) * 100 : 0,
       completion_pct: null,
+      status: null,
     };
   }
   if (metric === "cpm") {
@@ -166,6 +202,7 @@ function summarizeMetric(row: PlatformAggregate, metric: MetricKey): MetricSumma
       fact: row.impressions_fact > 0 ? (row.spend_fact / row.impressions_fact) * 1000 : 0,
       plan: row.impressions_plan > 0 ? (row.spend_plan / row.impressions_plan) * 1000 : 0,
       completion_pct: null,
+      status: null,
     };
   }
   if (metric === "cpc") {
@@ -173,6 +210,7 @@ function summarizeMetric(row: PlatformAggregate, metric: MetricKey): MetricSumma
       fact: row.clicks_fact > 0 ? row.spend_fact / row.clicks_fact : 0,
       plan: row.clicks_plan > 0 ? row.spend_plan / row.clicks_plan : 0,
       completion_pct: null,
+      status: null,
     };
   }
   if (metric === "cpv") {
@@ -180,12 +218,14 @@ function summarizeMetric(row: PlatformAggregate, metric: MetricKey): MetricSumma
       fact: row.views_fact > 0 ? row.spend_fact / row.views_fact : 0,
       plan: row.views_plan > 0 ? row.spend_plan / row.views_plan : 0,
       completion_pct: null,
+      status: null,
     };
   }
   return {
     fact: row.conversions_fact > 0 ? row.spend_fact / row.conversions_fact : 0,
     plan: row.conversions_plan > 0 ? row.spend_plan / row.conversions_plan : 0,
     completion_pct: null,
+    status: null,
   };
 }
 
@@ -332,7 +372,12 @@ export default function PlatformPlanVsFact({
                       <td key={`${row.id}-${metric}`} className="px-2 py-2 text-right sm:px-3">
                         <div className="text-sm font-semibold text-slate-800 sm:text-base">{fact}</div>
                         <div className="mt-0.5 text-[10px] text-slate-500 sm:text-[11px]">
-                          {plan}
+                          <span className="inline-flex items-center gap-1">
+                            {summary.completion_pct !== null ? (
+                              <span className={`h-2 w-2 rounded-full ${statusDotClass(summary.status)}`} />
+                            ) : null}
+                            <span>{plan}</span>
+                          </span>
                           {completion ? <span className="text-slate-400"> · {completion}</span> : null}
                         </div>
                       </td>

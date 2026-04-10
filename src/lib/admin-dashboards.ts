@@ -132,15 +132,24 @@ function normalizeSource(raw: unknown): DashboardSourceInput {
       ? "custom_table"
       : String(input.schema_file ?? "").trim();
 
+  const sourceConfig =
+    input.source_config && typeof input.source_config === "object"
+      ? { ...(input.source_config as Record<string, unknown>) }
+      : null;
+
+  if (role === "plan" && sourceConfig) {
+    const hasInlineRows = Array.isArray(sourceConfig.inline_rows) && sourceConfig.inline_rows.length > 0;
+    if (hasInlineRows) {
+      delete sourceConfig.upload_file;
+    }
+  }
+
   return {
     id: input.id,
     platform,
     schema_file: schemaFile,
     role,
-    source_config:
-      input.source_config && typeof input.source_config === "object"
-        ? (input.source_config as Record<string, unknown>)
-        : null,
+    source_config: sourceConfig,
     filters: filters.length ? filters : [{ filter_type: "all", filter_value: null }],
   };
 }
