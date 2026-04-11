@@ -1,5 +1,9 @@
 import type { DashboardLanguage } from "@/lib/dashboard-i18n";
-import type { DashboardMetrikaTrafficMetricId } from "@/lib/admin-ui-types";
+import type {
+  DashboardMetrikaTrafficMetricId,
+  DashboardPostClickFieldId,
+  DashboardPromopagesFieldId,
+} from "@/lib/admin-ui-types";
 import type { MultibrandConfig } from "@/lib/multibrand";
 
 export type DashboardKind = "awareness" | "performance" | "overview" | "multibrand" | "abbott_bi";
@@ -516,9 +520,15 @@ export interface DashboardData {
   postclick_analytics?: {
     rows: PostClickAnalyticsRow[];
     timeseries: PostClickAnalyticsTimeSeriesPoint[];
+    selected_columns?: DashboardPostClickFieldId[];
   };
   abbott_bi?: AbbottBiData;
   promopages?: PromopagesData;
+  section_field_overrides?: {
+    promopages?: {
+      visible_metrics: DashboardPromopagesFieldId[];
+    };
+  };
   bound_promopages?: {
     by_channel: BoundPromopagesChannelOverlay[];
     timeseries: BoundPromopagesTimeSeriesOverlay[];

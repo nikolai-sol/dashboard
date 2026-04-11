@@ -1214,7 +1214,11 @@ export default function DashboardByIdPage() {
         <PromopagesSection
           key={sectionId}
           data={dashboard.promopages}
-          selectedMetrics={visibleMetrics}
+          selectedMetrics={
+            dashboard.section_field_overrides?.promopages?.visible_metrics?.length
+              ? dashboard.section_field_overrides.promopages.visible_metrics
+              : visibleMetrics
+          }
           currencyFormatter={(value) => money(value, currencyCode, locale)}
           locale={locale}
           labels={{
@@ -1262,6 +1266,7 @@ export default function DashboardByIdPage() {
           <PostClickAnalyticsTable
             rows={filteredPostClickAnalytics.rows}
             timeseries={filteredPostClickAnalytics.timeseries}
+            selectedColumns={dashboard?.postclick_analytics?.selected_columns}
             locale={locale}
             labels={{
               title: i18n.sections.postclickAnalytics,

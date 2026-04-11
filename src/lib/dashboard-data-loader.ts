@@ -50,6 +50,7 @@ import {
   normalizeDashboardAiSummaryAuthoring,
 } from "@/lib/dashboard-ai-summary";
 import { normalizeDashboardMetrikaSettings } from "@/lib/dashboard-metrika-settings";
+import { normalizeDashboardSectionFieldOverrides } from "@/lib/dashboard-section-fields";
 import {
   findMultibrandBrand,
   matchesAnyMultibrandPattern,
@@ -790,6 +791,10 @@ function getFilterScope(config: JsonRecord): "both" | "platform" | "channel" {
   const value = String(config.filter_scope ?? "both");
   if (value === "platform" || value === "channel") return value;
   return "both";
+}
+
+function getSectionFieldOverrides(config: JsonRecord) {
+  return normalizeDashboardSectionFieldOverrides(config.section_field_overrides);
 }
 
 function mergePlatformStats(items: PlatformStats[]): PlatformStats[] {
@@ -2143,6 +2148,7 @@ export async function loadDashboardData(
     [dashboard.id],
   );
   const metrikaAccountIds = resolveDashboardMetrikaAccountIds(sourceRows);
+  const sectionFieldOverrides = getSectionFieldOverrides(config);
 
   if (dashboardType === "abbott_bi") {
     const counterIds = resolveAbbottCounterIds(sourceRows);
@@ -2864,7 +2870,12 @@ export async function loadDashboardData(
               selected_metrics: metrikaSettings.selected_traffic_metrics,
             }
           : undefined,
-      postclick_analytics: postclickAnalytics,
+      postclick_analytics: postclickAnalytics
+        ? {
+            ...postclickAnalytics,
+            selected_columns: sectionFieldOverrides.postclick_analytics?.visible_fields,
+          }
+        : undefined,
       promopages:
         promopagesKpi && (promopagesCampaigns.length > 0 || promopagesTimeseries.length > 0)
           ? {
@@ -2873,6 +2884,11 @@ export async function loadDashboardData(
               campaigns: promopagesCampaigns,
             }
           : undefined,
+      section_field_overrides: {
+        promopages: {
+          visible_metrics: sectionFieldOverrides.promopages?.visible_metrics ?? [],
+        },
+      },
       bound_promopages:
         boundPromopagesOverlay.byChannel.length > 0
           ? {

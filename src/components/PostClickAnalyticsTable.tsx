@@ -3,10 +3,12 @@
 import { Fragment, useMemo, useState } from "react";
 import { ChevronDown, ChevronRight } from "lucide-react";
 import type { PostClickAnalyticsRow, PostClickAnalyticsTimeSeriesPoint } from "@/lib/types";
+import type { DashboardPostClickFieldId } from "@/lib/admin-ui-types";
 
 type Props = {
   rows: PostClickAnalyticsRow[];
   timeseries?: PostClickAnalyticsTimeSeriesPoint[];
+  selectedColumns?: DashboardPostClickFieldId[];
   locale: string;
   labels: {
     title: string;
@@ -25,6 +27,16 @@ type Props = {
     utmSources: string;
   };
 };
+
+const DEFAULT_COLUMNS: DashboardPostClickFieldId[] = [
+  "visits",
+  "users",
+  "pageviews",
+  "goal_reaches",
+  "conversion_rate",
+  "bounce_rate",
+  "avg_visit_duration",
+];
 
 function compact(value: number, locale: string) {
   return new Intl.NumberFormat(locale, {
@@ -67,7 +79,13 @@ function sumRows(rows: PostClickAnalyticsRow[]) {
   };
 }
 
-export default function PostClickAnalyticsTable({ rows, timeseries = [], locale, labels }: Props) {
+export default function PostClickAnalyticsTable({
+  rows,
+  timeseries = [],
+  selectedColumns = DEFAULT_COLUMNS,
+  locale,
+  labels,
+}: Props) {
   const [expanded, setExpanded] = useState<Record<string, boolean>>({});
 
   const sortedRows = useMemo(
@@ -93,6 +111,10 @@ export default function PostClickAnalyticsTable({ rows, timeseries = [], locale,
     setExpanded((prev) => ({ ...prev, [lineKey]: !prev[lineKey] }));
   };
 
+  const visible = new Set<DashboardPostClickFieldId>(
+    selectedColumns.length ? selectedColumns : DEFAULT_COLUMNS,
+  );
+
   return (
     <section className="card-surface overflow-hidden p-5">
       <h3 className="mb-4 text-base font-semibold text-slate-900">{labels.title}</h3>
@@ -110,13 +132,21 @@ export default function PostClickAnalyticsTable({ rows, timeseries = [], locale,
             <thead>
               <tr className="border-b border-slate-200 text-left text-[10px] uppercase tracking-[0.08em] text-slate-500 sm:text-xs">
                 <th className="px-2 py-2 sm:px-3">{labels.channel}</th>
-                <th className="px-2 py-2 text-right sm:px-3">{labels.visits}</th>
-                <th className="px-2 py-2 text-right sm:px-3">{labels.users}</th>
-                <th className="px-2 py-2 text-right sm:px-3">{labels.pageviews}</th>
-                <th className="px-2 py-2 text-right sm:px-3">{labels.goalReaches}</th>
-                <th className="px-2 py-2 text-right sm:px-3">{labels.conversionRate}</th>
-                <th className="px-2 py-2 text-right sm:px-3">{labels.bounceRate}</th>
-                <th className="px-2 py-2 text-right sm:px-3">{labels.avgVisitDuration}</th>
+                {visible.has("visits") ? <th className="px-2 py-2 text-right sm:px-3">{labels.visits}</th> : null}
+                {visible.has("users") ? <th className="px-2 py-2 text-right sm:px-3">{labels.users}</th> : null}
+                {visible.has("pageviews") ? <th className="px-2 py-2 text-right sm:px-3">{labels.pageviews}</th> : null}
+                {visible.has("goal_reaches") ? (
+                  <th className="px-2 py-2 text-right sm:px-3">{labels.goalReaches}</th>
+                ) : null}
+                {visible.has("conversion_rate") ? (
+                  <th className="px-2 py-2 text-right sm:px-3">{labels.conversionRate}</th>
+                ) : null}
+                {visible.has("bounce_rate") ? (
+                  <th className="px-2 py-2 text-right sm:px-3">{labels.bounceRate}</th>
+                ) : null}
+                {visible.has("avg_visit_duration") ? (
+                  <th className="px-2 py-2 text-right sm:px-3">{labels.avgVisitDuration}</th>
+                ) : null}
               </tr>
             </thead>
             <tbody>
@@ -145,13 +175,27 @@ export default function PostClickAnalyticsTable({ rows, timeseries = [], locale,
                           </div>
                         </div>
                       </td>
-                      <td className="px-2 py-2 text-right sm:px-3">{compact(row.visits, locale)}</td>
-                      <td className="px-2 py-2 text-right sm:px-3">{compact(row.users, locale)}</td>
-                      <td className="px-2 py-2 text-right sm:px-3">{compact(row.pageviews, locale)}</td>
-                      <td className="px-2 py-2 text-right sm:px-3">{compact(row.goal_reaches, locale)}</td>
-                      <td className="px-2 py-2 text-right sm:px-3">{row.conversion_rate.toFixed(2)}%</td>
-                      <td className="px-2 py-2 text-right sm:px-3">{row.bounce_rate.toFixed(2)}%</td>
-                      <td className="px-2 py-2 text-right sm:px-3">{formatSeconds(row.avg_visit_duration)}</td>
+                      {visible.has("visits") ? (
+                        <td className="px-2 py-2 text-right sm:px-3">{compact(row.visits, locale)}</td>
+                      ) : null}
+                      {visible.has("users") ? (
+                        <td className="px-2 py-2 text-right sm:px-3">{compact(row.users, locale)}</td>
+                      ) : null}
+                      {visible.has("pageviews") ? (
+                        <td className="px-2 py-2 text-right sm:px-3">{compact(row.pageviews, locale)}</td>
+                      ) : null}
+                      {visible.has("goal_reaches") ? (
+                        <td className="px-2 py-2 text-right sm:px-3">{compact(row.goal_reaches, locale)}</td>
+                      ) : null}
+                      {visible.has("conversion_rate") ? (
+                        <td className="px-2 py-2 text-right sm:px-3">{row.conversion_rate.toFixed(2)}%</td>
+                      ) : null}
+                      {visible.has("bounce_rate") ? (
+                        <td className="px-2 py-2 text-right sm:px-3">{row.bounce_rate.toFixed(2)}%</td>
+                      ) : null}
+                      {visible.has("avg_visit_duration") ? (
+                        <td className="px-2 py-2 text-right sm:px-3">{formatSeconds(row.avg_visit_duration)}</td>
+                      ) : null}
                     </tr>
 
                     {isExpanded
@@ -160,13 +204,27 @@ export default function PostClickAnalyticsTable({ rows, timeseries = [], locale,
                             <td className="px-2 py-2 text-slate-700 sm:px-3">
                               <div className="pl-7 text-xs sm:text-sm">{daily.date}</div>
                             </td>
-                            <td className="px-2 py-2 text-right sm:px-3">{compact(daily.visits, locale)}</td>
-                            <td className="px-2 py-2 text-right sm:px-3">{compact(daily.users, locale)}</td>
-                            <td className="px-2 py-2 text-right sm:px-3">{compact(daily.pageviews, locale)}</td>
-                            <td className="px-2 py-2 text-right sm:px-3">{compact(daily.goal_reaches, locale)}</td>
-                            <td className="px-2 py-2 text-right sm:px-3">{daily.conversion_rate.toFixed(2)}%</td>
-                            <td className="px-2 py-2 text-right sm:px-3">{daily.bounce_rate.toFixed(2)}%</td>
-                            <td className="px-2 py-2 text-right sm:px-3">{formatSeconds(daily.avg_visit_duration)}</td>
+                            {visible.has("visits") ? (
+                              <td className="px-2 py-2 text-right sm:px-3">{compact(daily.visits, locale)}</td>
+                            ) : null}
+                            {visible.has("users") ? (
+                              <td className="px-2 py-2 text-right sm:px-3">{compact(daily.users, locale)}</td>
+                            ) : null}
+                            {visible.has("pageviews") ? (
+                              <td className="px-2 py-2 text-right sm:px-3">{compact(daily.pageviews, locale)}</td>
+                            ) : null}
+                            {visible.has("goal_reaches") ? (
+                              <td className="px-2 py-2 text-right sm:px-3">{compact(daily.goal_reaches, locale)}</td>
+                            ) : null}
+                            {visible.has("conversion_rate") ? (
+                              <td className="px-2 py-2 text-right sm:px-3">{daily.conversion_rate.toFixed(2)}%</td>
+                            ) : null}
+                            {visible.has("bounce_rate") ? (
+                              <td className="px-2 py-2 text-right sm:px-3">{daily.bounce_rate.toFixed(2)}%</td>
+                            ) : null}
+                            {visible.has("avg_visit_duration") ? (
+                              <td className="px-2 py-2 text-right sm:px-3">{formatSeconds(daily.avg_visit_duration)}</td>
+                            ) : null}
                           </tr>
                         ))
                       : null}
@@ -176,13 +234,27 @@ export default function PostClickAnalyticsTable({ rows, timeseries = [], locale,
 
               <tr className="bg-slate-50 font-semibold">
                 <td className="px-2 py-2 text-slate-900 sm:px-3">{labels.total}</td>
-                <td className="px-2 py-2 text-right text-slate-900 sm:px-3">{compact(totals.visits, locale)}</td>
-                <td className="px-2 py-2 text-right text-slate-900 sm:px-3">{compact(totals.users, locale)}</td>
-                <td className="px-2 py-2 text-right text-slate-900 sm:px-3">{compact(totals.pageviews, locale)}</td>
-                <td className="px-2 py-2 text-right text-slate-900 sm:px-3">{compact(totals.goal_reaches, locale)}</td>
-                <td className="px-2 py-2 text-right text-slate-900 sm:px-3">{totals.conversion_rate.toFixed(2)}%</td>
-                <td className="px-2 py-2 text-right text-slate-900 sm:px-3">{totals.bounce_rate.toFixed(2)}%</td>
-                <td className="px-2 py-2 text-right text-slate-900 sm:px-3">{formatSeconds(totals.avg_visit_duration)}</td>
+                {visible.has("visits") ? (
+                  <td className="px-2 py-2 text-right text-slate-900 sm:px-3">{compact(totals.visits, locale)}</td>
+                ) : null}
+                {visible.has("users") ? (
+                  <td className="px-2 py-2 text-right text-slate-900 sm:px-3">{compact(totals.users, locale)}</td>
+                ) : null}
+                {visible.has("pageviews") ? (
+                  <td className="px-2 py-2 text-right text-slate-900 sm:px-3">{compact(totals.pageviews, locale)}</td>
+                ) : null}
+                {visible.has("goal_reaches") ? (
+                  <td className="px-2 py-2 text-right text-slate-900 sm:px-3">{compact(totals.goal_reaches, locale)}</td>
+                ) : null}
+                {visible.has("conversion_rate") ? (
+                  <td className="px-2 py-2 text-right text-slate-900 sm:px-3">{totals.conversion_rate.toFixed(2)}%</td>
+                ) : null}
+                {visible.has("bounce_rate") ? (
+                  <td className="px-2 py-2 text-right text-slate-900 sm:px-3">{totals.bounce_rate.toFixed(2)}%</td>
+                ) : null}
+                {visible.has("avg_visit_duration") ? (
+                  <td className="px-2 py-2 text-right text-slate-900 sm:px-3">{formatSeconds(totals.avg_visit_duration)}</td>
+                ) : null}
               </tr>
             </tbody>
           </table>

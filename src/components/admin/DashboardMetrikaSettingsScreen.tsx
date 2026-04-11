@@ -4,6 +4,7 @@ import { useEffect, useMemo, useState } from "react";
 import Link from "next/link";
 import type { DashboardFormData } from "@/lib/admin-ui-types";
 import { normalizeDashboardMetrikaSettings } from "@/lib/dashboard-metrika-settings";
+import { normalizeDashboardSectionFieldOverrides } from "@/lib/dashboard-section-fields";
 import WizardStepMetrika from "@/components/admin/WizardStepMetrika";
 
 type DashboardMetrikaSettingsScreenProps = {
@@ -26,6 +27,7 @@ function buildDefaultForm(): DashboardFormData {
       kpi_cards: [],
       section_order: [],
       metrika_settings: normalizeDashboardMetrikaSettings(undefined),
+      section_field_overrides: normalizeDashboardSectionFieldOverrides(undefined),
     },
     sources: [],
     media_plan_bindings: [],

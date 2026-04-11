@@ -68,6 +68,35 @@ export type DashboardMetrikaSettingsForm = {
   selected_goal_ids: string[];
 };
 
+export type DashboardPostClickFieldId =
+  | "visits"
+  | "users"
+  | "pageviews"
+  | "goal_reaches"
+  | "conversion_rate"
+  | "bounce_rate"
+  | "avg_visit_duration";
+
+export type DashboardPromopagesFieldId =
+  | "impressions"
+  | "reach"
+  | "views"
+  | "budget"
+  | "ctr"
+  | "cpm"
+  | "clickouts"
+  | "full_reads"
+  | "metrica_visits";
+
+export type DashboardSectionFieldOverridesForm = {
+  postclick_analytics?: {
+    visible_fields: DashboardPostClickFieldId[];
+  };
+  promopages?: {
+    visible_metrics: DashboardPromopagesFieldId[];
+  };
+};
+
 export type CampaignFrequencyOverrideForm = {
   source_key: string;
   platform_campaign_id: string;
@@ -105,6 +134,7 @@ export type DashboardFormData = {
     custom_kpi_cards?: CustomKpiCardForm[];
     campaign_frequency_overrides?: CampaignFrequencyOverrideForm[];
     metrika_settings?: DashboardMetrikaSettingsForm;
+    section_field_overrides?: DashboardSectionFieldOverridesForm;
     multibrand?: MultibrandConfig | null;
   };
   sources: DashboardSourceForm[];

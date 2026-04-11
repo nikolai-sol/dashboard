@@ -18,6 +18,7 @@ import {
   sanitizeSectionOrder as sanitizeDashboardSectionOrder,
 } from "@/lib/dashboard-presets";
 import { normalizeDashboardMetrikaSettings } from "@/lib/dashboard-metrika-settings";
+import { normalizeDashboardSectionFieldOverrides } from "@/lib/dashboard-section-fields";
 import { normalizeMultibrandConfig } from "@/lib/multibrand";
 import { resolveSourceKey } from "@/lib/source-mapping";
 import type {
@@ -64,6 +65,7 @@ function defaultForm(): DashboardFormData {
       custom_kpi_cards: [],
       campaign_frequency_overrides: [],
       metrika_settings: normalizeDashboardMetrikaSettings(undefined),
+      section_field_overrides: normalizeDashboardSectionFieldOverrides(undefined),
       multibrand: {
         enabled: false,
         executive_title: "",
@@ -419,6 +421,7 @@ export default function DashboardWizard({ dashboardId }: DashboardWizardProps) {
                   )
               : [],
             metrika_settings: normalizeDashboardMetrikaSettings(config.metrika_settings),
+            section_field_overrides: normalizeDashboardSectionFieldOverrides(config.section_field_overrides),
             multibrand: normalizeMultibrandConfig(config.multibrand) ?? {
               enabled: false,
               executive_title: "",

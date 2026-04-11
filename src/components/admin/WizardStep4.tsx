@@ -1,11 +1,18 @@
 "use client";
 
 import { ArrowDown, ArrowUp } from "lucide-react";
-import type { CustomKpiCardForm, DashboardFormData, DashboardSectionId } from "@/lib/admin-ui-types";
+import type {
+  CustomKpiCardForm,
+  DashboardFormData,
+  DashboardPostClickFieldId,
+  DashboardPromopagesFieldId,
+  DashboardSectionId,
+} from "@/lib/admin-ui-types";
 import {
   sanitizeSectionOrder as sanitizeDashboardSectionOrder,
   SPEND_RELATED_METRICS,
 } from "@/lib/dashboard-presets";
+import { normalizeDashboardSectionFieldOverrides } from "@/lib/dashboard-section-fields";
 
 type WizardStep4Props = {
   data: DashboardFormData;
@@ -51,6 +58,28 @@ const PRESETS: Record<string, string[]> = {
 };
 
 const NON_SPEND_FALLBACK = ["impressions", "clicks", "ctr", "views", "reach"];
+
+const POSTCLICK_FIELD_OPTIONS: Array<{ id: DashboardPostClickFieldId; label: string }> = [
+  { id: "visits", label: "Visits" },
+  { id: "users", label: "Users" },
+  { id: "pageviews", label: "Pageviews" },
+  { id: "goal_reaches", label: "Goal reaches" },
+  { id: "conversion_rate", label: "Conversion rate" },
+  { id: "bounce_rate", label: "Bounce rate" },
+  { id: "avg_visit_duration", label: "Avg visit duration" },
+];
+
+const PROMOPAGES_FIELD_OPTIONS: Array<{ id: DashboardPromopagesFieldId; label: string }> = [
+  { id: "impressions", label: "Impressions" },
+  { id: "reach", label: "Reach" },
+  { id: "views", label: "Views" },
+  { id: "budget", label: "Budget" },
+  { id: "ctr", label: "CTR" },
+  { id: "cpm", label: "CPM" },
+  { id: "clickouts", label: "Clickouts" },
+  { id: "full_reads", label: "Full reads" },
+  { id: "metrica_visits", label: "Metrika visits" },
+];
 
 function sanitizeMetricPool(showSpend: boolean) {
   return showSpend ? KPI_POOL : KPI_POOL.filter((metric) => !SPEND_RELATED_METRICS.has(metric));
@@ -113,6 +142,7 @@ function createCustomKpiCard(index: number): CustomKpiCardForm {
 export default function WizardStep4({ data, onChange }: WizardStep4Props) {
   const config = data.config;
   const showSpend = Boolean(config.show_spend);
+  const sectionFieldOverrides = normalizeDashboardSectionFieldOverrides(config.section_field_overrides);
   const metricPool = sanitizeMetricPool(showSpend);
   const kpiCards = sanitizeCards(config.kpi_cards ?? [], showSpend);
   const sectionOrder = sanitizeSectionOrder(config.section_order, data.dashboard_type, showSpend, false);
@@ -128,6 +158,17 @@ export default function WizardStep4({ data, onChange }: WizardStep4Props) {
       ...data,
       config: {
         ...config,
+        ...patch,
+      },
+    });
+  };
+
+  const patchSectionFieldOverrides = (
+    patch: Partial<NonNullable<DashboardFormData["config"]["section_field_overrides"]>>,
+  ) => {
+    patchConfig({
+      section_field_overrides: {
+        ...sectionFieldOverrides,
         ...patch,
       },
     });
@@ -211,6 +252,28 @@ export default function WizardStep4({ data, onChange }: WizardStep4Props) {
 
   const removeCustomKpiCard = (id: string) => {
     patchCustomKpiCards(customKpiCards.filter((card) => card.id !== id));
+  };
+
+  const togglePostclickField = (fieldId: DashboardPostClickFieldId, checked: boolean) => {
+    const current = new Set(sectionFieldOverrides.postclick_analytics?.visible_fields ?? []);
+    if (checked) current.add(fieldId);
+    else current.delete(fieldId);
+    patchSectionFieldOverrides({
+      postclick_analytics: {
+        visible_fields: Array.from(current) as DashboardPostClickFieldId[],
+      },
+    });
+  };
+
+  const togglePromopagesField = (fieldId: DashboardPromopagesFieldId, checked: boolean) => {
+    const current = new Set(sectionFieldOverrides.promopages?.visible_metrics ?? []);
+    if (checked) current.add(fieldId);
+    else current.delete(fieldId);
+    patchSectionFieldOverrides({
+      promopages: {
+        visible_metrics: Array.from(current) as DashboardPromopagesFieldId[],
+      },
+    });
   };
 
   return (
@@ -393,6 +456,48 @@ export default function WizardStep4({ data, onChange }: WizardStep4Props) {
               </div>
             );
           })}
+        </div>
+      </div>
+
+      <div className="rounded-xl border border-slate-200 p-4">
+        <h4 className="text-sm font-semibold text-slate-900">Section field controls</h4>
+        <p className="mt-1 text-xs text-slate-500">
+          Configure which fields each optional section exposes. Website analytics metrics are managed in the
+          Yandex Metrika screen because they use dashboard-level Metrika settings and selected conversion goals.
+        </p>
+
+        <div className="mt-4 grid gap-4 lg:grid-cols-2">
+          <div className="rounded-lg border border-slate-200 p-4">
+            <h5 className="text-sm font-semibold text-slate-900">Post-click analytics columns</h5>
+            <div className="mt-3 grid gap-2 sm:grid-cols-2">
+              {POSTCLICK_FIELD_OPTIONS.map((field) => (
+                <label key={field.id} className="inline-flex items-center gap-2 text-sm text-slate-700">
+                  <input
+                    type="checkbox"
+                    checked={sectionFieldOverrides.postclick_analytics?.visible_fields.includes(field.id) ?? false}
+                    onChange={(e) => togglePostclickField(field.id, e.target.checked)}
+                  />
+                  {field.label}
+                </label>
+              ))}
+            </div>
+          </div>
+
+          <div className="rounded-lg border border-slate-200 p-4">
+            <h5 className="text-sm font-semibold text-slate-900">Promopages metrics</h5>
+            <div className="mt-3 grid gap-2 sm:grid-cols-2">
+              {PROMOPAGES_FIELD_OPTIONS.map((field) => (
+                <label key={field.id} className="inline-flex items-center gap-2 text-sm text-slate-700">
+                  <input
+                    type="checkbox"
+                    checked={sectionFieldOverrides.promopages?.visible_metrics.includes(field.id) ?? false}
+                    onChange={(e) => togglePromopagesField(field.id, e.target.checked)}
+                  />
+                  {field.label}
+                </label>
+              ))}
+            </div>
+          </div>
         </div>
       </div>
 

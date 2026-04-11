@@ -101,6 +101,7 @@ export default function PromopagesSection({
     full_reads: data.kpi.total_full_reads,
     metrica_visits: data.kpi.total_metrica_visits,
   };
+  const visibleMetricSet = new Set(selected);
 
   return (
     <section className="mb-6 rounded-3xl border border-slate-200 bg-white p-5 shadow-sm">
@@ -133,14 +134,30 @@ export default function PromopagesSection({
                 <th className="px-3 py-3">{labels.account}</th>
                 <th className="px-3 py-3">{labels.campaign}</th>
                 <th className="px-3 py-3">{labels.date}</th>
-                <th className="px-3 py-3">{metricLabel("impressions", labels.metrics)}</th>
-                <th className="px-3 py-3">{metricLabel("reach", labels.metrics)}</th>
-                <th className="px-3 py-3">{metricLabel("views", labels.metrics)}</th>
-                <th className="px-3 py-3">{metricLabel("clickouts", labels.metrics)}</th>
-                <th className="px-3 py-3">{metricLabel("budget", labels.metrics)}</th>
-                <th className="px-3 py-3">{metricLabel("cpm", labels.metrics)}</th>
-                <th className="px-3 py-3">{metricLabel("full_reads", labels.metrics)}</th>
-                <th className="px-3 py-3">{metricLabel("metrica_visits", labels.metrics)}</th>
+                {visibleMetricSet.has("impressions") ? (
+                  <th className="px-3 py-3">{metricLabel("impressions", labels.metrics)}</th>
+                ) : null}
+                {visibleMetricSet.has("reach") ? (
+                  <th className="px-3 py-3">{metricLabel("reach", labels.metrics)}</th>
+                ) : null}
+                {visibleMetricSet.has("views") ? (
+                  <th className="px-3 py-3">{metricLabel("views", labels.metrics)}</th>
+                ) : null}
+                {visibleMetricSet.has("clickouts") ? (
+                  <th className="px-3 py-3">{metricLabel("clickouts", labels.metrics)}</th>
+                ) : null}
+                {visibleMetricSet.has("budget") ? (
+                  <th className="px-3 py-3">{metricLabel("budget", labels.metrics)}</th>
+                ) : null}
+                {visibleMetricSet.has("cpm") ? (
+                  <th className="px-3 py-3">{metricLabel("cpm", labels.metrics)}</th>
+                ) : null}
+                {visibleMetricSet.has("full_reads") ? (
+                  <th className="px-3 py-3">{metricLabel("full_reads", labels.metrics)}</th>
+                ) : null}
+                {visibleMetricSet.has("metrica_visits") ? (
+                  <th className="px-3 py-3">{metricLabel("metrica_visits", labels.metrics)}</th>
+                ) : null}
               </tr>
             </thead>
             <tbody>
@@ -152,14 +169,30 @@ export default function PromopagesSection({
                   <td className="px-3 py-3 text-slate-700">{row.account_name}</td>
                   <td className="px-3 py-3 font-medium text-slate-900">{row.campaign_name}</td>
                   <td className="px-3 py-3 text-slate-700">{row.report_date}</td>
-                  <td className="px-3 py-3 text-slate-700">{compact(row.impressions, locale)}</td>
-                  <td className="px-3 py-3 text-slate-700">{compact(row.reach, locale)}</td>
-                  <td className="px-3 py-3 text-slate-700">{compact(row.views, locale)}</td>
-                  <td className="px-3 py-3 text-slate-700">{compact(row.clickouts, locale)}</td>
-                  <td className="px-3 py-3 text-slate-700">{currencyFormatter(row.budget)}</td>
-                  <td className="px-3 py-3 text-slate-700">{currencyFormatter(row.cpm)}</td>
-                  <td className="px-3 py-3 text-slate-700">{compact(row.full_reads, locale)}</td>
-                  <td className="px-3 py-3 text-slate-700">{compact(row.metrica_visits, locale)}</td>
+                  {visibleMetricSet.has("impressions") ? (
+                    <td className="px-3 py-3 text-slate-700">{compact(row.impressions, locale)}</td>
+                  ) : null}
+                  {visibleMetricSet.has("reach") ? (
+                    <td className="px-3 py-3 text-slate-700">{compact(row.reach, locale)}</td>
+                  ) : null}
+                  {visibleMetricSet.has("views") ? (
+                    <td className="px-3 py-3 text-slate-700">{compact(row.views, locale)}</td>
+                  ) : null}
+                  {visibleMetricSet.has("clickouts") ? (
+                    <td className="px-3 py-3 text-slate-700">{compact(row.clickouts, locale)}</td>
+                  ) : null}
+                  {visibleMetricSet.has("budget") ? (
+                    <td className="px-3 py-3 text-slate-700">{currencyFormatter(row.budget)}</td>
+                  ) : null}
+                  {visibleMetricSet.has("cpm") ? (
+                    <td className="px-3 py-3 text-slate-700">{currencyFormatter(row.cpm)}</td>
+                  ) : null}
+                  {visibleMetricSet.has("full_reads") ? (
+                    <td className="px-3 py-3 text-slate-700">{compact(row.full_reads, locale)}</td>
+                  ) : null}
+                  {visibleMetricSet.has("metrica_visits") ? (
+                    <td className="px-3 py-3 text-slate-700">{compact(row.metrica_visits, locale)}</td>
+                  ) : null}
                 </tr>
               ))}
             </tbody>
