@@ -81,6 +81,21 @@ const PROMOPAGES_FIELD_OPTIONS: Array<{ id: DashboardPromopagesFieldId; label: s
   { id: "metrica_visits", label: "Metrika visits" },
 ];
 
+const PLAN_FACT_FIELD_OPTIONS: Array<{ id: string; label: string }> = [
+  { id: "impressions", label: "Impressions" },
+  { id: "reach", label: "Reach" },
+  { id: "frequency", label: "Frequency" },
+  { id: "clicks", label: "Clicks" },
+  { id: "views", label: "Views" },
+  { id: "conversions", label: "Conversions" },
+  { id: "ctr", label: "CTR" },
+  { id: "cpm", label: "CPM" },
+  { id: "cpc", label: "CPC" },
+  { id: "cpv", label: "CPV" },
+  { id: "cpa", label: "CPA" },
+  { id: "spend", label: "Spend" },
+];
+
 function sanitizeMetricPool(showSpend: boolean) {
   return showSpend ? KPI_POOL : KPI_POOL.filter((metric) => !SPEND_RELATED_METRICS.has(metric));
 }
@@ -272,6 +287,21 @@ export default function WizardStep4({ data, onChange }: WizardStep4Props) {
     patchSectionFieldOverrides({
       promopages: {
         visible_metrics: Array.from(current) as DashboardPromopagesFieldId[],
+      },
+    });
+  };
+
+  const togglePlanFactField = (
+    section: "plan_vs_fact" | "platform_plan_fact" | "channel_table",
+    fieldId: string,
+    checked: boolean,
+  ) => {
+    const current = new Set(sectionFieldOverrides[section]?.visible_metrics ?? []);
+    if (checked) current.add(fieldId);
+    else current.delete(fieldId);
+    patchSectionFieldOverrides({
+      [section]: {
+        visible_metrics: Array.from(current),
       },
     });
   };
@@ -492,6 +522,56 @@ export default function WizardStep4({ data, onChange }: WizardStep4Props) {
                     type="checkbox"
                     checked={sectionFieldOverrides.promopages?.visible_metrics.includes(field.id) ?? false}
                     onChange={(e) => togglePromopagesField(field.id, e.target.checked)}
+                  />
+                  {field.label}
+                </label>
+              ))}
+            </div>
+          </div>
+        </div>
+
+        <div className="mt-4 grid gap-4 xl:grid-cols-3">
+          <div className="rounded-lg border border-slate-200 p-4">
+            <h5 className="text-sm font-semibold text-slate-900">Channel plan/fact metrics</h5>
+            <div className="mt-3 grid gap-2 sm:grid-cols-2">
+              {PLAN_FACT_FIELD_OPTIONS.map((field) => (
+                <label key={`plan-${field.id}`} className="inline-flex items-center gap-2 text-sm text-slate-700">
+                  <input
+                    type="checkbox"
+                    checked={sectionFieldOverrides.plan_vs_fact?.visible_metrics.includes(field.id) ?? false}
+                    onChange={(e) => togglePlanFactField("plan_vs_fact", field.id, e.target.checked)}
+                  />
+                  {field.label}
+                </label>
+              ))}
+            </div>
+          </div>
+
+          <div className="rounded-lg border border-slate-200 p-4">
+            <h5 className="text-sm font-semibold text-slate-900">Platform plan/fact metrics</h5>
+            <div className="mt-3 grid gap-2 sm:grid-cols-2">
+              {PLAN_FACT_FIELD_OPTIONS.map((field) => (
+                <label key={`platform-${field.id}`} className="inline-flex items-center gap-2 text-sm text-slate-700">
+                  <input
+                    type="checkbox"
+                    checked={sectionFieldOverrides.platform_plan_fact?.visible_metrics.includes(field.id) ?? false}
+                    onChange={(e) => togglePlanFactField("platform_plan_fact", field.id, e.target.checked)}
+                  />
+                  {field.label}
+                </label>
+              ))}
+            </div>
+          </div>
+
+          <div className="rounded-lg border border-slate-200 p-4">
+            <h5 className="text-sm font-semibold text-slate-900">Channel table metrics</h5>
+            <div className="mt-3 grid gap-2 sm:grid-cols-2">
+              {PLAN_FACT_FIELD_OPTIONS.map((field) => (
+                <label key={`channel-${field.id}`} className="inline-flex items-center gap-2 text-sm text-slate-700">
+                  <input
+                    type="checkbox"
+                    checked={sectionFieldOverrides.channel_table?.visible_metrics.includes(field.id) ?? false}
+                    onChange={(e) => togglePlanFactField("channel_table", field.id, e.target.checked)}
                   />
                   {field.label}
                 </label>

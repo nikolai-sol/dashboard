@@ -26,8 +26,24 @@ export const DEFAULT_PROMOPAGES_FIELDS: DashboardPromopagesFieldId[] = [
   "metrica_visits",
 ];
 
+export const DEFAULT_PLAN_FACT_FIELDS = [
+  "impressions",
+  "reach",
+  "frequency",
+  "clicks",
+  "views",
+  "conversions",
+  "ctr",
+  "cpm",
+  "cpc",
+  "cpv",
+  "cpa",
+  "spend",
+] as const;
+
 const POSTCLICK_SET = new Set<DashboardPostClickFieldId>(DEFAULT_POSTCLICK_FIELDS);
 const PROMOPAGES_SET = new Set<DashboardPromopagesFieldId>(DEFAULT_PROMOPAGES_FIELDS);
+const PLAN_FACT_SET = new Set<string>(DEFAULT_PLAN_FACT_FIELDS);
 
 function normalizePostclickFields(value: unknown): DashboardPostClickFieldId[] {
   if (!Array.isArray(value)) return [...DEFAULT_POSTCLICK_FIELDS];
@@ -45,6 +61,15 @@ function normalizePromopagesFields(value: unknown): DashboardPromopagesFieldId[]
     .map((item) => String(item) as DashboardPromopagesFieldId)
     .filter((item) => PROMOPAGES_SET.has(item) && !seen.has(item) && seen.add(item));
   return normalized.length ? normalized : [...DEFAULT_PROMOPAGES_FIELDS];
+}
+
+function normalizePlanFactFields(value: unknown): string[] {
+  if (!Array.isArray(value)) return [...DEFAULT_PLAN_FACT_FIELDS];
+  const seen = new Set<string>();
+  const normalized = value
+    .map((item) => String(item))
+    .filter((item) => PLAN_FACT_SET.has(item) && !seen.has(item) && seen.add(item));
+  return normalized.length ? normalized : [...DEFAULT_PLAN_FACT_FIELDS];
 }
 
 export function normalizeDashboardSectionFieldOverrides(
@@ -66,6 +91,27 @@ export function normalizeDashboardSectionFieldOverrides(
     },
     promopages: {
       visible_metrics: normalizePromopagesFields(promopagesRaw.visible_metrics),
+    },
+    plan_vs_fact: {
+      visible_metrics: normalizePlanFactFields(
+        input.plan_vs_fact && typeof input.plan_vs_fact === "object"
+          ? (input.plan_vs_fact as Record<string, unknown>).visible_metrics
+          : undefined,
+      ),
+    },
+    platform_plan_fact: {
+      visible_metrics: normalizePlanFactFields(
+        input.platform_plan_fact && typeof input.platform_plan_fact === "object"
+          ? (input.platform_plan_fact as Record<string, unknown>).visible_metrics
+          : undefined,
+      ),
+    },
+    channel_table: {
+      visible_metrics: normalizePlanFactFields(
+        input.channel_table && typeof input.channel_table === "object"
+          ? (input.channel_table as Record<string, unknown>).visible_metrics
+          : undefined,
+      ),
     },
   };
 }

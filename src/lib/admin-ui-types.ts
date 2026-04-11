@@ -95,6 +95,15 @@ export type DashboardSectionFieldOverridesForm = {
   promopages?: {
     visible_metrics: DashboardPromopagesFieldId[];
   };
+  plan_vs_fact?: {
+    visible_metrics: string[];
+  };
+  platform_plan_fact?: {
+    visible_metrics: string[];
+  };
+  channel_table?: {
+    visible_metrics: string[];
+  };
 };
 
 export type CampaignFrequencyOverrideForm = {

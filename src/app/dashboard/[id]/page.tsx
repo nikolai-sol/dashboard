@@ -1104,7 +1104,11 @@ export default function DashboardByIdPage() {
         <section key={sectionId} className="mb-6">
           <PlanVsFact
             rows={filteredChannelPerformance}
-            selectedMetrics={visibleMetrics}
+            selectedMetrics={
+              dashboard?.section_field_overrides?.plan_vs_fact?.visible_metrics?.length
+                ? dashboard.section_field_overrides.plan_vs_fact.visible_metrics
+                : visibleMetrics
+            }
             showSpend={showSpend}
             currencyFormatter={(value) => money(value, currencyCode, locale)}
             currencyCode={currencyCode}
@@ -1160,7 +1164,11 @@ export default function DashboardByIdPage() {
         <section key={sectionId} className="mb-6">
           <PlatformPlanVsFact
             rows={filteredPlanVsFact}
-            selectedMetrics={visibleMetrics}
+            selectedMetrics={
+              dashboard?.section_field_overrides?.platform_plan_fact?.visible_metrics?.length
+                ? dashboard.section_field_overrides.platform_plan_fact.visible_metrics
+                : visibleMetrics
+            }
             showSpend={showSpend}
             currencyFormatter={(value) => money(value, currencyCode, locale)}
             currencyCode={currencyCode}
@@ -1189,7 +1197,11 @@ export default function DashboardByIdPage() {
           <ChannelPerformanceTable
             rows={filteredPlanVsFact}
             channelTimeseries={filteredChannelTimeseries}
-            selectedMetrics={visibleMetrics}
+            selectedMetrics={
+              dashboard?.section_field_overrides?.channel_table?.visible_metrics?.length
+                ? dashboard.section_field_overrides.channel_table.visible_metrics
+                : visibleMetrics
+            }
             currencyFormatter={(value) => money(value, currencyCode, locale)}
             currencyCode={currencyCode}
             showSpend={showSpend}

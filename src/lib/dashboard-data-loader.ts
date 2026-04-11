@@ -2888,6 +2888,15 @@ export async function loadDashboardData(
         promopages: {
           visible_metrics: sectionFieldOverrides.promopages?.visible_metrics ?? [],
         },
+        plan_vs_fact: {
+          visible_metrics: sectionFieldOverrides.plan_vs_fact?.visible_metrics ?? [],
+        },
+        platform_plan_fact: {
+          visible_metrics: sectionFieldOverrides.platform_plan_fact?.visible_metrics ?? [],
+        },
+        channel_table: {
+          visible_metrics: sectionFieldOverrides.channel_table?.visible_metrics ?? [],
+        },
       },
       bound_promopages:
         boundPromopagesOverlay.byChannel.length > 0
