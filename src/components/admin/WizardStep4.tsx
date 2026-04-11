@@ -96,6 +96,19 @@ const PLAN_FACT_FIELD_OPTIONS: Array<{ id: string; label: string }> = [
   { id: "spend", label: "Spend" },
 ];
 
+const TREND_FIELD_OPTIONS: Array<{ id: string; label: string }> = [
+  { id: "impressions", label: "Impressions" },
+  { id: "clicks", label: "Clicks" },
+  { id: "views", label: "Views" },
+  { id: "conversions", label: "Conversions" },
+  { id: "ctr", label: "CTR" },
+  { id: "cpm", label: "CPM" },
+  { id: "cpc", label: "CPC" },
+  { id: "cpv", label: "CPV" },
+  { id: "cpa", label: "CPA" },
+  { id: "spend", label: "Spend" },
+];
+
 function sanitizeMetricPool(showSpend: boolean) {
   return showSpend ? KPI_POOL : KPI_POOL.filter((metric) => !SPEND_RELATED_METRICS.has(metric));
 }
@@ -292,7 +305,7 @@ export default function WizardStep4({ data, onChange }: WizardStep4Props) {
   };
 
   const togglePlanFactField = (
-    section: "plan_vs_fact" | "platform_plan_fact" | "channel_table",
+    section: "trend_chart" | "platform_table" | "plan_vs_fact" | "platform_plan_fact" | "channel_table",
     fieldId: string,
     checked: boolean,
   ) => {
@@ -493,10 +506,27 @@ export default function WizardStep4({ data, onChange }: WizardStep4Props) {
         <h4 className="text-sm font-semibold text-slate-900">Section field controls</h4>
         <p className="mt-1 text-xs text-slate-500">
           Configure which fields each optional section exposes. Website analytics metrics are managed in the
-          Yandex Metrika screen because they use dashboard-level Metrika settings and selected conversion goals.
+          Yandex Metrika screen because they use dashboard-level Metrika settings and selected conversion goals. KPI grid
+          cards are configured above in the dedicated KPI cards block.
         </p>
 
         <div className="mt-4 grid gap-4 lg:grid-cols-2">
+          <div className="rounded-lg border border-slate-200 p-4">
+            <h5 className="text-sm font-semibold text-slate-900">Trend chart metrics</h5>
+            <div className="mt-3 grid gap-2 sm:grid-cols-2">
+              {TREND_FIELD_OPTIONS.map((field) => (
+                <label key={`trend-${field.id}`} className="inline-flex items-center gap-2 text-sm text-slate-700">
+                  <input
+                    type="checkbox"
+                    checked={sectionFieldOverrides.trend_chart?.visible_metrics.includes(field.id) ?? false}
+                    onChange={(e) => togglePlanFactField("trend_chart", field.id, e.target.checked)}
+                  />
+                  {field.label}
+                </label>
+              ))}
+            </div>
+          </div>
+
           <div className="rounded-lg border border-slate-200 p-4">
             <h5 className="text-sm font-semibold text-slate-900">Post-click analytics columns</h5>
             <div className="mt-3 grid gap-2 sm:grid-cols-2">
@@ -522,6 +552,22 @@ export default function WizardStep4({ data, onChange }: WizardStep4Props) {
                     type="checkbox"
                     checked={sectionFieldOverrides.promopages?.visible_metrics.includes(field.id) ?? false}
                     onChange={(e) => togglePromopagesField(field.id, e.target.checked)}
+                  />
+                  {field.label}
+                </label>
+              ))}
+            </div>
+          </div>
+
+          <div className="rounded-lg border border-slate-200 p-4">
+            <h5 className="text-sm font-semibold text-slate-900">Platform table metrics</h5>
+            <div className="mt-3 grid gap-2 sm:grid-cols-2">
+              {PLAN_FACT_FIELD_OPTIONS.map((field) => (
+                <label key={`platform-table-${field.id}`} className="inline-flex items-center gap-2 text-sm text-slate-700">
+                  <input
+                    type="checkbox"
+                    checked={sectionFieldOverrides.platform_table?.visible_metrics.includes(field.id) ?? false}
+                    onChange={(e) => togglePlanFactField("platform_table", field.id, e.target.checked)}
                   />
                   {field.label}
                 </label>

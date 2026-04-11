@@ -2885,8 +2885,14 @@ export async function loadDashboardData(
             }
           : undefined,
       section_field_overrides: {
+        trend_chart: {
+          visible_metrics: sectionFieldOverrides.trend_chart?.visible_metrics ?? [],
+        },
         promopages: {
           visible_metrics: sectionFieldOverrides.promopages?.visible_metrics ?? [],
+        },
+        platform_table: {
+          visible_metrics: sectionFieldOverrides.platform_table?.visible_metrics ?? [],
         },
         plan_vs_fact: {
           visible_metrics: sectionFieldOverrides.plan_vs_fact?.visible_metrics ?? [],

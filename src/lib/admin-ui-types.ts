@@ -89,8 +89,14 @@ export type DashboardPromopagesFieldId =
   | "metrica_visits";
 
 export type DashboardSectionFieldOverridesForm = {
+  trend_chart?: {
+    visible_metrics: string[];
+  };
   postclick_analytics?: {
     visible_fields: DashboardPostClickFieldId[];
+  };
+  platform_table?: {
+    visible_metrics: string[];
   };
   promopages?: {
     visible_metrics: DashboardPromopagesFieldId[];

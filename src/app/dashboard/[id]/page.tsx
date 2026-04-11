@@ -1018,7 +1018,11 @@ export default function DashboardByIdPage() {
             points={filteredTimeseries}
             selectedPlatforms={selectedPlatforms}
             onTogglePlatform={togglePlatform}
-            selectedMetrics={visibleMetrics}
+            selectedMetrics={
+              dashboard?.section_field_overrides?.trend_chart?.visible_metrics?.length
+                ? dashboard.section_field_overrides.trend_chart.visible_metrics
+                : visibleMetrics
+            }
             currencyFormatter={(value) => money(value, currencyCode, locale)}
             currencyCode={currencyCode}
             showSpend={showSpend}
@@ -1141,7 +1145,11 @@ export default function DashboardByIdPage() {
           <PlatformTable
             rows={filteredPlatforms}
             timeseries={filteredTimeseries}
-            selectedMetrics={visibleMetrics}
+            selectedMetrics={
+              dashboard?.section_field_overrides?.platform_table?.visible_metrics?.length
+                ? dashboard.section_field_overrides.platform_table.visible_metrics
+                : visibleMetrics
+            }
             currencyFormatter={(value) => money(value, currencyCode, locale)}
             currencyCode={currencyCode}
             showSpend={showSpend}

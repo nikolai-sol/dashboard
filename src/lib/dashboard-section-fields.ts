@@ -41,9 +41,23 @@ export const DEFAULT_PLAN_FACT_FIELDS = [
   "spend",
 ] as const;
 
+export const DEFAULT_TREND_FIELDS = [
+  "impressions",
+  "clicks",
+  "views",
+  "conversions",
+  "ctr",
+  "cpm",
+  "cpc",
+  "cpv",
+  "cpa",
+  "spend",
+] as const;
+
 const POSTCLICK_SET = new Set<DashboardPostClickFieldId>(DEFAULT_POSTCLICK_FIELDS);
 const PROMOPAGES_SET = new Set<DashboardPromopagesFieldId>(DEFAULT_PROMOPAGES_FIELDS);
 const PLAN_FACT_SET = new Set<string>(DEFAULT_PLAN_FACT_FIELDS);
+const TREND_SET = new Set<string>(DEFAULT_TREND_FIELDS);
 
 function normalizePostclickFields(value: unknown): DashboardPostClickFieldId[] {
   if (!Array.isArray(value)) return [...DEFAULT_POSTCLICK_FIELDS];
@@ -72,6 +86,15 @@ function normalizePlanFactFields(value: unknown): string[] {
   return normalized.length ? normalized : [...DEFAULT_PLAN_FACT_FIELDS];
 }
 
+function normalizeTrendFields(value: unknown): string[] {
+  if (!Array.isArray(value)) return [...DEFAULT_TREND_FIELDS];
+  const seen = new Set<string>();
+  const normalized = value
+    .map((item) => String(item))
+    .filter((item) => TREND_SET.has(item) && !seen.has(item) && seen.add(item));
+  return normalized.length ? normalized : [...DEFAULT_TREND_FIELDS];
+}
+
 export function normalizeDashboardSectionFieldOverrides(
   value: unknown,
 ): DashboardSectionFieldOverridesForm {
@@ -86,8 +109,22 @@ export function normalizeDashboardSectionFieldOverrides(
       : {};
 
   return {
+    trend_chart: {
+      visible_metrics: normalizeTrendFields(
+        input.trend_chart && typeof input.trend_chart === "object"
+          ? (input.trend_chart as Record<string, unknown>).visible_metrics
+          : undefined,
+      ),
+    },
     postclick_analytics: {
       visible_fields: normalizePostclickFields(postclickRaw.visible_fields),
+    },
+    platform_table: {
+      visible_metrics: normalizePlanFactFields(
+        input.platform_table && typeof input.platform_table === "object"
+          ? (input.platform_table as Record<string, unknown>).visible_metrics
+          : undefined,
+      ),
     },
     promopages: {
       visible_metrics: normalizePromopagesFields(promopagesRaw.visible_metrics),

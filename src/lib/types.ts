@@ -525,8 +525,14 @@ export interface DashboardData {
   abbott_bi?: AbbottBiData;
   promopages?: PromopagesData;
   section_field_overrides?: {
+    trend_chart?: {
+      visible_metrics: string[];
+    };
     promopages?: {
       visible_metrics: DashboardPromopagesFieldId[];
+    };
+    platform_table?: {
+      visible_metrics: string[];
     };
     plan_vs_fact?: {
       visible_metrics: string[];
