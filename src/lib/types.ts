@@ -1,4 +1,5 @@
 import type { DashboardLanguage } from "@/lib/dashboard-i18n";
+import type { DashboardMetrikaTrafficMetricId } from "@/lib/admin-ui-types";
 import type { MultibrandConfig } from "@/lib/multibrand";
 
 export type DashboardKind = "awareness" | "performance" | "overview" | "multibrand" | "abbott_bi";
@@ -260,6 +261,12 @@ export interface AnalyticsTimeSeriesPoint {
   bounce_rate: number;
 }
 
+export interface DashboardAnalyticsData {
+  kpi: AnalyticsKPI;
+  timeseries: AnalyticsTimeSeriesPoint[];
+  selected_metrics?: DashboardMetrikaTrafficMetricId[];
+}
+
 export interface PostClickAnalyticsRow {
   line_key: string;
   channel: string;
@@ -505,10 +512,7 @@ export interface DashboardData {
   custom_tables?: CustomTableData[];
   manual_channels?: ManualChannelData[];
   manual_table_title?: string;
-  analytics?: {
-    kpi: AnalyticsKPI;
-    timeseries: AnalyticsTimeSeriesPoint[];
-  };
+  analytics?: DashboardAnalyticsData;
   postclick_analytics?: {
     rows: PostClickAnalyticsRow[];
     timeseries: PostClickAnalyticsTimeSeriesPoint[];

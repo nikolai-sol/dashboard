@@ -1239,6 +1239,7 @@ export default function DashboardByIdPage() {
           key={sectionId}
           kpi={dashboard.analytics.kpi}
           timeseries={dashboard.analytics.timeseries}
+          selectedMetrics={dashboard.analytics.selected_metrics}
           locale={locale}
           labels={{
             title: i18n.sections.analytics,

@@ -9,6 +9,7 @@ import WizardStep2 from "@/components/admin/WizardStep2";
 import WizardStep3 from "@/components/admin/WizardStep3";
 import WizardStepBinding from "@/components/admin/WizardStepBinding";
 import DashboardUtmSourceMatching from "@/components/admin/DashboardUtmSourceMatching";
+import WizardStepMetrika from "@/components/admin/WizardStepMetrika";
 import WizardStepFrequency from "@/components/admin/WizardStepFrequency";
 import WizardStep4 from "@/components/admin/WizardStep4";
 import {
@@ -16,6 +17,7 @@ import {
   getDefaultSectionOrder,
   sanitizeSectionOrder as sanitizeDashboardSectionOrder,
 } from "@/lib/dashboard-presets";
+import { normalizeDashboardMetrikaSettings } from "@/lib/dashboard-metrika-settings";
 import { normalizeMultibrandConfig } from "@/lib/multibrand";
 import { resolveSourceKey } from "@/lib/source-mapping";
 import type {
@@ -61,6 +63,7 @@ function defaultForm(): DashboardFormData {
       kpi_cards: getDefaultKpiCards("awareness", true),
       custom_kpi_cards: [],
       campaign_frequency_overrides: [],
+      metrika_settings: normalizeDashboardMetrikaSettings(undefined),
       multibrand: {
         enabled: false,
         executive_title: "",
@@ -225,13 +228,14 @@ export default function DashboardWizard({ dashboardId }: DashboardWizardProps) {
   const steps = useMemo(
     () =>
       isEdit && hasMetrikaSource
-        ? ["Basic", "Sources", "Filters", "Bindings", "UTM Match", "Frequency", "Metrics"]
+        ? ["Basic", "Sources", "Filters", "Bindings", "UTM Match", "Metrika", "Frequency", "Metrics"]
         : ["Basic", "Sources", "Filters", "Bindings", "Frequency", "Metrics"],
     [hasMetrikaSource, isEdit],
   );
   const utmMatchingStepIndex = isEdit && hasMetrikaSource ? 4 : -1;
-  const frequencyStepIndex = utmMatchingStepIndex >= 0 ? 5 : 4;
-  const metricsStepIndex = utmMatchingStepIndex >= 0 ? 6 : 5;
+  const metrikaStepIndex = utmMatchingStepIndex >= 0 ? 5 : -1;
+  const frequencyStepIndex = utmMatchingStepIndex >= 0 ? 6 : 4;
+  const metricsStepIndex = utmMatchingStepIndex >= 0 ? 7 : 5;
 
   useEffect(() => {
     dirtyRef.current = dirty;
@@ -414,6 +418,7 @@ export default function DashboardWizard({ dashboardId }: DashboardWizardProps) {
                       item.frequency > 0,
                   )
               : [],
+            metrika_settings: normalizeDashboardMetrikaSettings(config.metrika_settings),
             multibrand: normalizeMultibrandConfig(config.multibrand) ?? {
               enabled: false,
               executive_title: "",
@@ -669,6 +674,9 @@ export default function DashboardWizard({ dashboardId }: DashboardWizardProps) {
         {step === 3 ? <WizardStepBinding data={formData} onChange={handleFormChange} /> : null}
         {utmMatchingStepIndex >= 0 && step === utmMatchingStepIndex ? (
           <DashboardUtmSourceMatching dashboardId={String(dashboardId)} />
+        ) : null}
+        {metrikaStepIndex >= 0 && step === metrikaStepIndex ? (
+          <WizardStepMetrika dashboardId={dashboardId} data={formData} onChange={handleFormChange} />
         ) : null}
         {step === frequencyStepIndex ? (
           <WizardStepFrequency data={formData} onChange={handleFormChange} />

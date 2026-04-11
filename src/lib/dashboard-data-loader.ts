@@ -49,6 +49,7 @@ import {
   getMatchingDashboardAiSummarySnapshot,
   normalizeDashboardAiSummaryAuthoring,
 } from "@/lib/dashboard-ai-summary";
+import { normalizeDashboardMetrikaSettings } from "@/lib/dashboard-metrika-settings";
 import {
   findMultibrandBrand,
   matchesAnyMultibrandPattern,
@@ -1597,6 +1598,8 @@ async function buildPostClickAnalytics(
   metrikaAccountIds: string[],
   dateFrom: string,
   dateTo: string,
+  selectedGoalIds: string[],
+  goalMode: "all" | "selected",
 ): Promise<DashboardData["postclick_analytics"] | undefined> {
   if (!metrikaAccountIds.length) {
     return undefined;
@@ -1663,27 +1666,41 @@ async function buildPostClickAnalytics(
     [dashboardId, dateFrom, dateTo, ...metrikaAccountIds],
   );
 
-  const [goalRows] = await pool.execute<PostClickGoalFactRow[]>(
-    `
-      SELECT
-        b.line_key AS line_key,
-        MAX(b.channel) AS channel,
-        f.report_date AS date,
-        COALESCE(SUM(f.goal_reaches), 0) AS goal_reaches
-      FROM dashboard_utm_source_bindings b
-      JOIN canonical_fact_site_analytics_daily f
-        ON b.dashboard_id = ?
-       AND b.utm_source = NULLIF(TRIM(f.utm_source), '')
-      WHERE f.source_key = 'yandex_metrika'
-        AND f.analytics_scope = 'goal'
-        AND f.report_date >= ?
-        AND f.report_date <= ?
-        AND f.analytics_account_id IN (${accountPlaceholders})
-      GROUP BY b.line_key, f.report_date
-      ORDER BY f.report_date, b.line_key
-    `,
-    [dashboardId, dateFrom, dateTo, ...metrikaAccountIds],
-  );
+  let goalRows: PostClickGoalFactRow[] = [];
+  if (!(goalMode === "selected" && selectedGoalIds.length === 0)) {
+    const goalPlaceholders = selectedGoalIds.map(() => "?").join(",");
+    const goalFilter =
+      goalMode === "selected" && selectedGoalIds.length > 0
+        ? ` AND f.goal_id IN (${goalPlaceholders})`
+        : "";
+    const goalParams: Array<string | number> = [dashboardId, dateFrom, dateTo, ...metrikaAccountIds];
+    if (goalMode === "selected" && selectedGoalIds.length > 0) {
+      goalParams.push(...selectedGoalIds);
+    }
+    const [rows] = await pool.execute<PostClickGoalFactRow[]>(
+      `
+        SELECT
+          b.line_key AS line_key,
+          MAX(b.channel) AS channel,
+          f.report_date AS date,
+          COALESCE(SUM(f.goal_reaches), 0) AS goal_reaches
+        FROM dashboard_utm_source_bindings b
+        JOIN canonical_fact_site_analytics_daily f
+          ON b.dashboard_id = ?
+         AND b.utm_source = NULLIF(TRIM(f.utm_source), '')
+        WHERE f.source_key = 'yandex_metrika'
+          AND f.analytics_scope = 'goal'
+          AND f.report_date >= ?
+          AND f.report_date <= ?
+          AND f.analytics_account_id IN (${accountPlaceholders})
+          ${goalFilter}
+        GROUP BY b.line_key, f.report_date
+        ORDER BY f.report_date, b.line_key
+      `,
+      goalParams,
+    );
+    goalRows = rows;
+  }
 
   const goalsByLineDate = new Map(
     goalRows.map((row) => [
@@ -2103,6 +2120,7 @@ export async function loadDashboardData(
   const frequencyOverrides = normalizeFrequencyOverrides(config);
   const frequencyOverrideMap = buildFrequencyOverrideMap(frequencyOverrides);
   const showSpend = Boolean(config.show_spend ?? true);
+  const metrikaSettings = normalizeDashboardMetrikaSettings(config.metrika_settings);
   const aiSummaryEnabled = Boolean(config.show_ai_summary ?? false);
   const aiSummaryAuthoring = normalizeDashboardAiSummaryAuthoring(config.ai_summary_authoring);
   const aiSummaryOverride = aiSummaryAuthoring
@@ -2692,6 +2710,8 @@ export async function loadDashboardData(
       metrikaAccountIds,
       range.from,
       range.to,
+      metrikaSettings.selected_goal_ids,
+      metrikaSettings.goal_mode,
     );
     let sectionOrder = getSectionOrder(config, dashboardType, showSpend);
     if (postclickAnalytics && postclickAnalytics.rows.length > 0) {
@@ -2841,6 +2861,7 @@ export async function loadDashboardData(
           ? {
               kpi: analyticsKpi,
               timeseries: analyticsTimeseries,
+              selected_metrics: metrikaSettings.selected_traffic_metrics,
             }
           : undefined,
       postclick_analytics: postclickAnalytics,

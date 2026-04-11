@@ -55,6 +55,19 @@ export type DashboardUtmSourceBindingForm = {
   source_key?: string | null;
 };
 
+export type DashboardMetrikaTrafficMetricId =
+  | "visits"
+  | "users"
+  | "pageviews"
+  | "bounce_rate"
+  | "avg_visit_duration";
+
+export type DashboardMetrikaSettingsForm = {
+  selected_traffic_metrics: DashboardMetrikaTrafficMetricId[];
+  goal_mode: "all" | "selected";
+  selected_goal_ids: string[];
+};
+
 export type CampaignFrequencyOverrideForm = {
   source_key: string;
   platform_campaign_id: string;
@@ -91,10 +104,38 @@ export type DashboardFormData = {
     kpi_cards: string[];
     custom_kpi_cards?: CustomKpiCardForm[];
     campaign_frequency_overrides?: CampaignFrequencyOverrideForm[];
+    metrika_settings?: DashboardMetrikaSettingsForm;
     multibrand?: MultibrandConfig | null;
   };
   sources: DashboardSourceForm[];
   media_plan_bindings: MediaPlanBindingForm[];
+};
+
+export type DashboardMetrikaObservedGoalRow = {
+  goal_id: string;
+  goal_name: string;
+  total_goal_reaches: number;
+  rows_count: number;
+  min_date: string | null;
+  max_date: string | null;
+  selected: boolean;
+};
+
+export type DashboardMetrikaSettingsPayload = {
+  dashboard: {
+    id: number;
+    client_id: string;
+    dashboard_name: string;
+    period_from: string | null;
+    period_to: string | null;
+    metrika_account_ids: string[];
+  };
+  traffic_metrics: Array<{
+    id: DashboardMetrikaTrafficMetricId;
+    label: string;
+    description: string;
+  }>;
+  goals: DashboardMetrikaObservedGoalRow[];
 };
 
 export type DashboardUtmObservedSourceRow = {
