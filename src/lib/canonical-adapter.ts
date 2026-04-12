@@ -134,6 +134,7 @@ type PromopagesCampaignAggregateRow = RowDataPacket & {
   total_reach: number | string | null;
   total_views: number | string | null;
   total_clicks: number | string | null;
+  total_clickouts: number | string | null;
   total_budget: number | string | null;
 };
 
@@ -328,6 +329,7 @@ export async function getPromopagesAggregateByCampaignIds(
       total_reach: 0,
       total_views: 0,
       total_clicks: 0,
+      total_clickouts: 0,
       total_budget: 0,
     };
   }
@@ -341,6 +343,7 @@ export async function getPromopagesAggregateByCampaignIds(
       COALESCE(SUM(f.reach), 0) AS total_reach,
       COALESCE(SUM(f.views), 0) AS total_views,
       COALESCE(SUM(f.clicks), 0) AS total_clicks,
+      COALESCE(SUM(f.clickouts), 0) AS total_clickouts,
       COALESCE(SUM(f.budget), 0) AS total_budget
     FROM canonical_fact_promopages_daily f
     WHERE f.source_key = ?
@@ -496,6 +499,8 @@ export async function getPromopagesTimeseriesByCampaignIds(
       COALESCE(SUM(f.views), 0) AS views,
       COALESCE(SUM(f.clicks), 0) AS clicks,
       COALESCE(SUM(f.budget), 0) AS budget
+      ,
+      COALESCE(SUM(f.clickouts), 0) AS clickouts
     FROM canonical_fact_promopages_daily f
     WHERE f.source_key = ?
       AND f.report_date >= ?
@@ -512,7 +517,7 @@ export async function getPromopagesTimeseriesByCampaignIds(
     views: Number(row.views ?? 0),
     clicks: Number(row.clicks ?? 0),
     budget: Number(Number(row.budget ?? 0).toFixed(2)),
-    clickouts: 0,
+    clickouts: Number(row.clickouts ?? 0),
     full_reads: 0,
     metrica_visits: 0,
   }));
