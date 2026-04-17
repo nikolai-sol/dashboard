@@ -1,6 +1,13 @@
 import type { PoolConnection, ResultSetHeader, RowDataPacket } from "mysql2/promise";
 import { normalizeMultibrandConfig } from "@/lib/multibrand";
 import { buildManualSourceKey, deleteDashboardManualFactsExceptKeys } from "@/lib/manual-data-store";
+import {
+  buildAliasMemoryFromRows,
+  loadDashboardMediaPlanAliases,
+  loadDashboardMediaPlanRows,
+  replaceDashboardMediaPlanAliases,
+  replaceDashboardMediaPlanRows,
+} from "@/lib/media-plan-store";
 
 export type DashboardFilterInput = {
   filter_type: "name_pattern" | "id_list" | "all";
@@ -102,6 +109,16 @@ function parseJsonField(value: unknown): Record<string, unknown> {
   return {};
 }
 
+function countAliasEntries(value: unknown): number {
+  if (!value || typeof value !== "object") return 0;
+  let count = 0;
+  for (const aliases of Object.values(value as Record<string, unknown>)) {
+    if (!aliases || typeof aliases !== "object") continue;
+    count += Object.keys(aliases as Record<string, unknown>).length;
+  }
+  return count;
+}
+
 function normalizeFilter(raw: unknown): DashboardFilterInput {
   const input = (raw ?? {}) as Partial<DashboardFilterInput>;
   const filterType = input.filter_type ?? "all";
@@ -140,10 +157,23 @@ function normalizeSource(raw: unknown): DashboardSourceInput {
   const sourceConfig: Record<string, unknown> | null = sourceConfigBase;
 
   if (role === "plan" && sourceConfig) {
-    const hasInlineRows = Array.isArray(sourceConfig.inline_rows) && sourceConfig.inline_rows.length > 0;
+    const inlineRows = Array.isArray(sourceConfig.inline_rows) ? sourceConfig.inline_rows : [];
+    const hasInlineRows = inlineRows.length > 0;
     if (hasInlineRows) {
       delete sourceConfig.upload_file;
     }
+    const review =
+      sourceConfig.review && typeof sourceConfig.review === "object"
+        ? { ...(sourceConfig.review as Record<string, unknown>) }
+        : null;
+    const aliasEntriesCount = countAliasEntries(review?.alias_memory);
+    if (review && Object.prototype.hasOwnProperty.call(review, "alias_memory")) {
+      delete review.alias_memory;
+      sourceConfig.review = review;
+    }
+    sourceConfig.storage_mode = "db_backed";
+    sourceConfig.stored_rows_count = inlineRows.length;
+    sourceConfig.stored_aliases_count = aliasEntriesCount;
   }
 
   if (platform === "manual_data") {
@@ -491,6 +521,28 @@ export async function replaceMediaPlanBindings(
   }
 }
 
+export async function syncDashboardMediaPlanStorage(
+  conn: PoolConnection,
+  dashboardId: number,
+  sources: DashboardSourceInput[],
+): Promise<void> {
+  const planSource = sources.find((source) => source.role === "plan");
+  if (!planSource) {
+    await replaceDashboardMediaPlanRows(conn, dashboardId, []);
+    await replaceDashboardMediaPlanAliases(conn, dashboardId, {});
+    return;
+  }
+
+  const sourceConfig = planSource.source_config ?? {};
+  const review =
+    sourceConfig.review && typeof sourceConfig.review === "object"
+      ? (sourceConfig.review as Record<string, unknown>)
+      : {};
+
+  await replaceDashboardMediaPlanRows(conn, dashboardId, sourceConfig.inline_rows);
+  await replaceDashboardMediaPlanAliases(conn, dashboardId, review.alias_memory);
+}
+
 export async function cleanupRemovedManualDataSources(
   conn: PoolConnection,
   dashboardId: number,
@@ -530,6 +582,9 @@ export async function loadDashboardWithSources(
      ORDER BY COALESCE(line_key, channel), source_key, platform_campaign_id`,
     [dashboardId],
   );
+  const storedPlanRows = await loadDashboardMediaPlanRows(conn, dashboardId);
+  const storedPlanAliases = await loadDashboardMediaPlanAliases(conn, dashboardId);
+  const aliasMemory = buildAliasMemoryFromRows(storedPlanAliases);
 
   const sourceMap = new Map<number, DashboardWithSources["sources"][number]>();
   for (const row of sourceRows) {
@@ -553,6 +608,33 @@ export async function loadDashboardWithSources(
     }
   }
 
+  const sources = Array.from(sourceMap.values()).map((source) => {
+    const sourceConfig = source.source_config ?? {};
+    if (source.role === "plan") {
+      const review =
+        sourceConfig.review && typeof sourceConfig.review === "object"
+          ? { ...(sourceConfig.review as Record<string, unknown>) }
+          : {};
+      if (storedPlanRows.length) {
+        sourceConfig.inline_rows = storedPlanRows.map((row) => ({ ...row }));
+      }
+      if (storedPlanAliases.length) {
+        review.alias_memory = aliasMemory;
+      }
+      if (Object.keys(review).length) {
+        sourceConfig.review = review;
+      }
+    }
+
+    return {
+      ...source,
+      source_config: sourceConfig,
+      filters: source.filters.length
+        ? source.filters
+        : [{ filter_type: "all" as const, filter_value: null }],
+    };
+  });
+
   return {
     id: Number(dash.id),
     client_id: String(dash.client_id),
@@ -563,10 +645,7 @@ export async function loadDashboardWithSources(
     config: parseJsonField(dash.config),
     created_at: dash.created_at ? new Date(dash.created_at).toISOString() : undefined,
     updated_at: dash.updated_at ? new Date(dash.updated_at).toISOString() : undefined,
-    sources: Array.from(sourceMap.values()).map((source) => ({
-      ...source,
-      filters: source.filters.length ? source.filters : [{ filter_type: "all", filter_value: null }],
-    })),
+    sources,
     media_plan_bindings: bindingRows.map((row) => ({
       line_key: String(row.line_key ?? row.channel ?? ""),
       channel: String(row.channel ?? ""),

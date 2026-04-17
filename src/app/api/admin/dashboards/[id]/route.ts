@@ -8,6 +8,7 @@ import {
   normalizeDashboardPayload,
   replaceMediaPlanBindings,
   summarizeDashboardPayloadForLog,
+  syncDashboardMediaPlanStorage,
   validateDashboardPayload,
 } from "@/lib/admin-dashboards";
 import { getDefaultKpiCards, getDefaultSectionOrder } from "@/lib/dashboard-presets";
@@ -145,6 +146,7 @@ export async function PUT(
     await conn.execute("DELETE FROM dashboard_sources WHERE dashboard_id = ?", [dashboardId]);
     await insertSourcesWithFilters(conn, dashboardId, payload.sources);
     await replaceMediaPlanBindings(conn, dashboardId, payload.media_plan_bindings);
+    await syncDashboardMediaPlanStorage(conn, dashboardId, payload.sources);
     await cleanupRemovedManualDataSources(conn, dashboardId, payload.sources);
 
     await conn.commit();

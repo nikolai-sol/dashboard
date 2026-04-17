@@ -20,6 +20,12 @@ export default async function EditDashboardPage({
             Media Plan
           </Link>
           <Link
+            href={`/admin/dashboards/${id}/media-plan-aliases`}
+            className="rounded-lg border border-slate-300 px-3 py-2 text-sm font-medium text-slate-700 hover:bg-slate-50"
+          >
+            Plan Aliases
+          </Link>
+          <Link
             href={`/admin/dashboards/${id}/metrika`}
             className="rounded-lg border border-slate-300 px-3 py-2 text-sm font-medium text-slate-700 hover:bg-slate-50"
           >

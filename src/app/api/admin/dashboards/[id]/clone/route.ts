@@ -1,7 +1,12 @@
 import { NextResponse } from "next/server";
 import type { ResultSetHeader } from "mysql2/promise";
 import pool from "@/lib/db";
-import { insertSourcesWithFilters, loadDashboardWithSources, replaceMediaPlanBindings } from "@/lib/admin-dashboards";
+import {
+  insertSourcesWithFilters,
+  loadDashboardWithSources,
+  replaceMediaPlanBindings,
+  syncDashboardMediaPlanStorage,
+} from "@/lib/admin-dashboards";
 
 export async function POST(
   request: Request,
@@ -56,6 +61,17 @@ export async function POST(
       })),
     );
     await replaceMediaPlanBindings(conn, insertResult.insertId, original.media_plan_bindings);
+    await syncDashboardMediaPlanStorage(
+      conn,
+      insertResult.insertId,
+      original.sources.map((source) => ({
+        platform: source.platform,
+        schema_file: source.schema_file,
+        role: source.role,
+        source_config: source.source_config,
+        filters: source.filters,
+      })),
+    );
 
     await conn.commit();
     return NextResponse.json({

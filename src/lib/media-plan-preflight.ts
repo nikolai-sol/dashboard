@@ -50,6 +50,7 @@ export type MediaPlanBindingCandidate = {
 };
 
 export type MediaPlanAliasMemoryEntry = {
+  source_key?: string | null;
   campaign_id: string;
   campaign_name: string;
 };
@@ -153,8 +154,10 @@ function parseAliasMemory(value: unknown): MediaPlanAliasMemory {
       const data = entry as Record<string, unknown>;
       const campaignId = String(data.campaign_id ?? '').trim();
       const campaignName = String(data.campaign_name ?? '').trim();
+      const sourceKey = String(data.source_key ?? '').trim().toLowerCase() || null;
       if (!campaignId || !campaignName) continue;
       result[platform][alias] = {
+        source_key: sourceKey,
         campaign_id: campaignId,
         campaign_name: campaignName,
       };

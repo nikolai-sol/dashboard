@@ -6,6 +6,7 @@ import {
   normalizeDashboardPayload,
   replaceMediaPlanBindings,
   summarizeDashboardPayloadForLog,
+  syncDashboardMediaPlanStorage,
   validateDashboardPayload,
 } from "@/lib/admin-dashboards";
 import { getDefaultKpiCards, getDefaultSectionOrder } from "@/lib/dashboard-presets";
@@ -87,6 +88,7 @@ export async function POST(request: Request) {
 
     await insertSourcesWithFilters(conn, dashResult.insertId, payload.sources);
     await replaceMediaPlanBindings(conn, dashResult.insertId, payload.media_plan_bindings);
+    await syncDashboardMediaPlanStorage(conn, dashResult.insertId, payload.sources);
 
     await conn.commit();
     return NextResponse.json({

@@ -37,6 +37,7 @@ import {
   type LeadRow,
 } from "@/lib/leads-fetcher";
 import { loadDashboardManualFacts } from "@/lib/manual-data-store";
+import { loadDashboardMediaPlanRows } from "@/lib/media-plan-store";
 import { PLATFORM_COLORS } from "@/lib/platform-colors";
 import {
   resolvePlatformIdFromSourceKey,
@@ -2564,6 +2565,7 @@ export async function loadDashboardData(
      WHERE ds.dashboard_id = ?`,
     [dashboard.id],
   );
+  const storedMediaPlanRows = await loadDashboardMediaPlanRows(pool, dashboard.id);
   const metrikaAccountIds = resolveDashboardMetrikaAccountIds(sourceRows);
   const sectionFieldOverrides = getSectionFieldOverrides(config);
 
@@ -2771,6 +2773,9 @@ export async function loadDashboardData(
         const sourceKey = schema.source_key ?? resolveSourceKey(source.platform);
         const sourceType = schema.source_type ?? resolveSourceType(sourceKey);
         const sourceConfig = parseJson(source.source_config);
+        if (source.role === "plan" && storedMediaPlanRows.length) {
+          sourceConfig.inline_rows = storedMediaPlanRows.map((row) => ({ ...row }));
+        }
 
         if (sourceType === "leads") {
           continue;

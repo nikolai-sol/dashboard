@@ -1,0 +1,50 @@
+CREATE TABLE IF NOT EXISTS dashboard_media_plan_rows (
+  id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
+  dashboard_id INT NOT NULL,
+  line_key VARCHAR(500) NOT NULL,
+  row_order INT NOT NULL DEFAULT 0,
+  platform VARCHAR(128) NOT NULL,
+  channel VARCHAR(500) NOT NULL,
+  format VARCHAR(500) NOT NULL DEFAULT '',
+  buy_type VARCHAR(16) NOT NULL DEFAULT 'CPM',
+  units_plan DECIMAL(18, 6) NOT NULL DEFAULT 0,
+  unit_price DECIMAL(18, 6) NOT NULL DEFAULT 0,
+  budget_plan DECIMAL(18, 6) NOT NULL DEFAULT 0,
+  impressions_plan DECIMAL(18, 6) NOT NULL DEFAULT 0,
+  reach_plan DECIMAL(18, 6) NOT NULL DEFAULT 0,
+  frequency_plan DECIMAL(18, 6) NOT NULL DEFAULT 0,
+  views_plan DECIMAL(18, 6) NOT NULL DEFAULT 0,
+  clicks_plan DECIMAL(18, 6) NOT NULL DEFAULT 0,
+  conversions_plan DECIMAL(18, 6) NOT NULL DEFAULT 0,
+  ctr_plan DECIMAL(18, 6) NOT NULL DEFAULT 0,
+  cpm_plan DECIMAL(18, 6) NOT NULL DEFAULT 0,
+  cpc_plan DECIMAL(18, 6) NOT NULL DEFAULT 0,
+  cpv_plan DECIMAL(18, 6) NOT NULL DEFAULT 0,
+  cpa_plan DECIMAL(18, 6) NOT NULL DEFAULT 0,
+  monthly_json JSON NULL,
+  raw_json JSON NULL,
+  created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+  PRIMARY KEY (id),
+  UNIQUE KEY uq_dashboard_media_plan_rows (dashboard_id, line_key(191)),
+  KEY idx_dashboard_media_plan_rows_lookup (dashboard_id, row_order, line_key(191)),
+  CONSTRAINT fk_dashboard_media_plan_rows_dashboard
+    FOREIGN KEY (dashboard_id) REFERENCES dashboards(id) ON DELETE CASCADE
+);
+
+CREATE TABLE IF NOT EXISTS dashboard_media_plan_aliases (
+  id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
+  dashboard_id INT NOT NULL,
+  platform VARCHAR(128) NOT NULL,
+  alias_key VARCHAR(500) NOT NULL,
+  source_key VARCHAR(64) NULL,
+  platform_campaign_id VARCHAR(200) NOT NULL,
+  campaign_name VARCHAR(500) NOT NULL,
+  created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+  PRIMARY KEY (id),
+  UNIQUE KEY uq_dashboard_media_plan_aliases (dashboard_id, platform, alias_key(191)),
+  KEY idx_dashboard_media_plan_aliases_lookup (dashboard_id, platform, alias_key(191)),
+  CONSTRAINT fk_dashboard_media_plan_aliases_dashboard
+    FOREIGN KEY (dashboard_id) REFERENCES dashboards(id) ON DELETE CASCADE
+);
