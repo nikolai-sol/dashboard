@@ -1,0 +1,2 @@
+# Bootstrap placeholder.
+# Copy and reconcile with the live collector root requirements before first repo cutover.
