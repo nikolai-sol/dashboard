@@ -105,6 +105,12 @@ export default function DashboardList({ dashboards, loading = false, onRefresh }
                       >
                         Edit
                       </Link>
+                      <Link
+                        href={`/admin/dashboards/${dashboard.id}/media-plan`}
+                        className="rounded border border-slate-300 px-2 py-1 hover:bg-slate-50"
+                      >
+                        Plan
+                      </Link>
                       <button
                         type="button"
                         onClick={() => cloneDashboard(dashboard.id, dashboard.client_id, dashboard.client_name)}
