@@ -309,7 +309,7 @@ export async function getPromopagesAggregate(filter: PromopagesFilter) {
       ${accountWhere}
   `;
 
-  const [rows] = await pool.execute<PromopagesAggregateRow[]>(sql, params);
+  const [rows] = await pool.query<PromopagesAggregateRow[]>(sql, params);
   return rows[0] ?? null;
 }
 
@@ -352,7 +352,7 @@ export async function getPromopagesAggregateByCampaignIds(
       AND f.platform_campaign_id IN (${placeholders})
   `;
 
-  const [rows] = await pool.execute<PromopagesCampaignAggregateRow[]>(sql, params);
+  const [rows] = await pool.query<PromopagesCampaignAggregateRow[]>(sql, params);
   return rows[0] ?? null;
 }
 
@@ -461,7 +461,7 @@ export async function getPromopagesTimeseries(filter: PromopagesFilter) {
     GROUP BY f.report_date
     ORDER BY f.report_date
   `;
-  const [rows] = await pool.execute<PromopagesTimeseriesRow[]>(sql, params);
+  const [rows] = await pool.query<PromopagesTimeseriesRow[]>(sql, params);
   return rows.map((row) => ({
     date: toIsoDateOrNull(row.date) ?? '',
     impressions: Number(row.impressions ?? 0),
@@ -509,7 +509,7 @@ export async function getPromopagesTimeseriesByCampaignIds(
     GROUP BY f.report_date
     ORDER BY f.report_date
   `;
-  const [rows] = await pool.execute<PromopagesTimeseriesRow[]>(sql, params);
+  const [rows] = await pool.query<PromopagesTimeseriesRow[]>(sql, params);
   return rows.map((row) => ({
     date: toIsoDateOrNull(row.date) ?? '',
     impressions: Number(row.impressions ?? 0),
@@ -524,7 +524,7 @@ export async function getPromopagesTimeseriesByCampaignIds(
 }
 
 export async function getPromopagesCampaignBreakdown(filter: PromopagesFilter) {
-  const params: SqlParam[] = [filter.source_key, filter.source_key, filter.date_from, filter.date_to];
+  const params: SqlParam[] = [filter.date_from, filter.date_to];
   const accountWhere = buildAccountWherePromopages(filter, params);
   const sql = `
     SELECT
@@ -576,9 +576,9 @@ export async function getPromopagesCampaignBreakdown(filter: PromopagesFilter) {
       f.report_date
     ORDER BY f.report_date DESC, budget DESC, impressions DESC
   `;
-  const [rows] = await pool.execute<PromopagesCampaignRow[]>(
+  const [rows] = await pool.query<PromopagesCampaignRow[]>(
     sql,
-    [filter.source_key, filter.source_key, ...params],
+    [filter.source_key, filter.source_key, filter.source_key, ...params],
   );
   return rows.map((row) => ({
     platform_account_id: String(row.platform_account_id),
@@ -873,7 +873,7 @@ export async function getCampaignCatalog(sourceKey: string, accountIdsOrOptions?
   }
 
   sql += ` ORDER BY c.campaign_name LIMIT 5000`;
-  const [rows] = await pool.execute<RowDataPacket[]>(sql, params);
+  const [rows] = await pool.query<RowDataPacket[]>(sql, params);
   return rows as Array<{ id: string; name: string }>;
 }
 
@@ -974,7 +974,7 @@ export async function getActiveAccounts(
       GROUP BY a.platform_account_id, a.account_name
     `;
 
-    const [rows] = await pool.execute<ActiveAccountRow[]>(sql, params);
+    const [rows] = await pool.query<ActiveAccountRow[]>(sql, params);
     return rows
       .map((row) => {
         const name = String(row.name ?? row.id);
