@@ -14,6 +14,27 @@ export const DEFAULT_POSTCLICK_FIELDS: DashboardPostClickFieldId[] = [
   "avg_visit_duration",
 ];
 
+const ALL_POSTCLICK_FIELDS: DashboardPostClickFieldId[] = [
+  "source_keys",
+  "platform_account_ids",
+  "platform_campaign_ids",
+  "platform_delivery_entity_ids",
+  "platform_creative_ids",
+  ...DEFAULT_POSTCLICK_FIELDS,
+  "impressions",
+  "clicks",
+  "views",
+  "reach",
+  "spend",
+  "ctr",
+  "cpm",
+  "cpc",
+  "video_views_25",
+  "video_views_50",
+  "video_views_75",
+  "video_views_100",
+];
+
 export const DEFAULT_PROMOPAGES_FIELDS: DashboardPromopagesFieldId[] = [
   "impressions",
   "reach",
@@ -54,7 +75,7 @@ export const DEFAULT_TREND_FIELDS = [
   "spend",
 ] as const;
 
-const POSTCLICK_SET = new Set<DashboardPostClickFieldId>(DEFAULT_POSTCLICK_FIELDS);
+const POSTCLICK_SET = new Set<DashboardPostClickFieldId>(ALL_POSTCLICK_FIELDS);
 const PROMOPAGES_SET = new Set<DashboardPromopagesFieldId>(DEFAULT_PROMOPAGES_FIELDS);
 const PLAN_FACT_SET = new Set<string>(DEFAULT_PLAN_FACT_FIELDS);
 const TREND_SET = new Set<string>(DEFAULT_TREND_FIELDS);

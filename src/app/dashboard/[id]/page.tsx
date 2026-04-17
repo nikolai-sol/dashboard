@@ -12,7 +12,7 @@ import ComparisonSection from "@/components/ComparisonSection";
 import ConversionFunnel from "@/components/ConversionFunnel";
 import CustomTable from "@/components/CustomTable";
 import DashboardAiSummaryCard from "@/components/DashboardAiSummaryCard";
-import DashboardHeader from "@/components/DashboardHeader";
+import DashboardHeader, { type DashboardQuickRangePreset } from "@/components/DashboardHeader";
 import KPICard from "@/components/KPICard";
 import PlatformFilter from "@/components/PlatformFilter";
 import PlatformPlanVsFact from "@/components/PlatformPlanVsFact";
@@ -56,6 +56,8 @@ type DashboardAuthMeta = {
 type MultibrandSummary = MultibrandBrandSummary & {
   platforms_count: number;
 };
+
+const TECH_ISSUES_MESSAGE = "Извините тех проблемы. мы скоро вернем все на место!";
 
 function buildAwarenessTotals(data: DashboardData | null | undefined) {
   const platforms = data?.platforms ?? [];
@@ -190,12 +192,11 @@ async function getDashboardData(
     const data = (await response.json()) as DashboardData;
     return { data, demoMode: false, errorMessage: null, authRequired: false, authMeta: null, notFound: false };
   } catch (error) {
-    console.warn("API unavailable, using mock data:", error);
-    const { mockDashboardData } = await import("@/lib/mock-data");
+    console.warn("API unavailable, showing unavailable state:", error);
     const message = error instanceof Error ? error.message : "Unknown API error";
     return {
-      data: mockDashboardData,
-      demoMode: true,
+      data: null,
+      demoMode: false,
       errorMessage: message,
       authRequired: false,
       authMeta: null,
@@ -208,6 +209,44 @@ function shiftDate(isoDate: string, days: number) {
   const date = new Date(`${isoDate}T00:00:00Z`);
   date.setUTCDate(date.getUTCDate() + days);
   return date.toISOString().slice(0, 10);
+}
+
+function isoToday() {
+  return new Date().toISOString().slice(0, 10);
+}
+
+function startOfCurrentMonth() {
+  const now = new Date();
+  return new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), 1)).toISOString().slice(0, 10);
+}
+
+function startOfCurrentWeek() {
+  const now = new Date();
+  const day = now.getUTCDay();
+  const diffToMonday = day === 0 ? -6 : 1 - day;
+  return shiftDate(now.toISOString().slice(0, 10), diffToMonday);
+}
+
+function buildQuickRange(preset: Exclude<DashboardQuickRangePreset, "custom">) {
+  const today = isoToday();
+  if (preset === "this_month") {
+    return { from: startOfCurrentMonth(), to: today };
+  }
+  if (preset === "this_week") {
+    return { from: startOfCurrentWeek(), to: today };
+  }
+  return { from: shiftDate(today, -1), to: shiftDate(today, -1) };
+}
+
+function detectQuickRangePreset(from: string, to: string): DashboardQuickRangePreset {
+  if (!from || !to) return "custom";
+  const thisMonth = buildQuickRange("this_month");
+  if (from === thisMonth.from && to === thisMonth.to) return "this_month";
+  const thisWeek = buildQuickRange("this_week");
+  if (from === thisWeek.from && to === thisWeek.to) return "this_week";
+  const yesterday = buildQuickRange("yesterday");
+  if (from === yesterday.from && to === yesterday.to) return "yesterday";
+  return "custom";
 }
 
 function shiftMonth(isoDate: string, months: number) {
@@ -263,7 +302,7 @@ export default function DashboardByIdPage() {
   const params = useParams<{ id: string }>();
   const router = useRouter();
   const searchParams = useSearchParams();
-  const dashboardId = params?.id ? String(params.id).toLowerCase() : "rag_mp";
+  const dashboardId = params?.id ? String(params.id).toLowerCase() : "";
   const initialFrom = searchParams.get("from") ?? "";
   const initialTo = searchParams.get("to") ?? "";
   const initialCompareFrom = searchParams.get("compare_from") ?? "";
@@ -296,6 +335,9 @@ export default function DashboardByIdPage() {
     from: initialFrom,
     to: initialTo,
   });
+  const [quickRangePreset, setQuickRangePreset] = useState<DashboardQuickRangePreset>(
+    detectQuickRangePreset(initialFrom, initialTo),
+  );
   const [compareOpen, setCompareOpen] = useState(Boolean(initialCompareFrom && initialCompareTo));
   const [comparePreset, setComparePreset] = useState<"previous" | "month" | "week" | "year" | "custom">("month");
   const [compareRange, setCompareRange] = useState<{ from: string; to: string }>({
@@ -311,6 +353,16 @@ export default function DashboardByIdPage() {
     let cancelled = false;
 
     async function load() {
+      if (!dashboardId) {
+        setDashboard(null);
+        setIsDemoMode(false);
+        setApiError("Dashboard id is missing in URL.");
+        setAuthRequired(false);
+        setAuthMeta(null);
+        setNotFound(true);
+        setIsLoading(false);
+        return;
+      }
       setIsLoading(true);
 
       const result = await getDashboardData(
@@ -338,7 +390,7 @@ export default function DashboardByIdPage() {
       if (result.notFound) {
         setDashboard(null);
         setIsDemoMode(false);
-        setApiError(result.errorMessage);
+        setApiError(TECH_ISSUES_MESSAGE);
         setAuthRequired(false);
         setAuthMeta(null);
         setNotFound(true);
@@ -348,7 +400,7 @@ export default function DashboardByIdPage() {
 
       setDashboard(result.data);
       setIsDemoMode(result.demoMode);
-      setApiError(result.errorMessage);
+      setApiError(result.errorMessage ? TECH_ISSUES_MESSAGE : null);
       setAiSummaryError(null);
       setAuthRequired(false);
       setAuthMeta(null);
@@ -359,10 +411,20 @@ export default function DashboardByIdPage() {
       const availableChannels = (result.data?.channel_performance ?? []).map((item) => item.channel);
       setSelectedChannels(availableChannels);
       setFilterMode(result.data?.dashboard.filter_scope === "channel" ? "channel" : "platform");
-      setDraftDateRange((prev) => ({
-        from: prev.from || result.data?.dashboard.period.from || "",
-        to: prev.to || result.data?.dashboard.period.to || "",
+      const resolvedPeriod = {
+        from: result.data?.dashboard.period.from || "",
+        to: result.data?.dashboard.period.to || "",
+      };
+      const effectivePreset = detectQuickRangePreset(resolvedPeriod.from, resolvedPeriod.to);
+      setDateRange((prev) => ({
+        from: prev.from || resolvedPeriod.from,
+        to: prev.to || resolvedPeriod.to,
       }));
+      setDraftDateRange((prev) => ({
+        from: prev.from || resolvedPeriod.from,
+        to: prev.to || resolvedPeriod.to,
+      }));
+      setQuickRangePreset((prev) => (prev === "custom" ? effectivePreset : prev));
       setIsLoading(false);
     }
 
@@ -1309,6 +1371,23 @@ export default function DashboardByIdPage() {
               bounceRate: i18n.language === "ru" ? "Отказы" : "Bounce rate",
               avgVisitDuration: i18n.language === "ru" ? "Ср. длительность визита" : "Avg visit duration",
               utmSources: i18n.language === "ru" ? "UTM source" : "UTM sources",
+              sourceKeys: i18n.language === "ru" ? "Источник" : "Source keys",
+              platformAccountIds: i18n.language === "ru" ? "ID аккаунтов" : "Account IDs",
+              platformCampaignIds: i18n.language === "ru" ? "ID кампаний" : "Campaign IDs",
+              platformDeliveryEntityIds: i18n.language === "ru" ? "ID delivery entities" : "Delivery entity IDs",
+              platformCreativeIds: i18n.language === "ru" ? "ID креативов" : "Creative IDs",
+              impressions: i18n.language === "ru" ? "Показы" : "Impressions",
+              clicks: i18n.language === "ru" ? "Клики" : "Clicks",
+              views: i18n.language === "ru" ? "Просмотры" : "Views",
+              reach: i18n.language === "ru" ? "Охват" : "Reach",
+              spend: i18n.language === "ru" ? "Бюджет" : "Spend",
+              ctr: "CTR",
+              cpm: "CPM",
+              cpc: "CPC",
+              videoViews25: i18n.language === "ru" ? "VTR 25%" : "Video views 25%",
+              videoViews50: i18n.language === "ru" ? "VTR 50%" : "Video views 50%",
+              videoViews75: i18n.language === "ru" ? "VTR 75%" : "Video views 75%",
+              videoViews100: i18n.language === "ru" ? "VTR 100%" : "Video views 100%",
             }}
           />
         </section>
@@ -1394,8 +1473,31 @@ export default function DashboardByIdPage() {
     window.open(`/api/dashboard/${dashboardId}/excel?${params.toString()}`, "_blank", "noopener,noreferrer");
   };
 
+  const applyImmediateDateRange = (range: { from: string; to: string }, preset: DashboardQuickRangePreset) => {
+    setQuickRangePreset(preset);
+    setDraftDateRange(range);
+    setDateRange(range);
+    const params = new URLSearchParams(searchParams.toString());
+    params.set("from", range.from);
+    params.set("to", range.to);
+    if (compareRange.from && compareRange.to) {
+      params.set("compare_from", compareRange.from);
+      params.set("compare_to", compareRange.to);
+    } else {
+      params.delete("compare_from");
+      params.delete("compare_to");
+    }
+    if (selectedBrandId) {
+      params.set("brand", selectedBrandId);
+    } else {
+      params.delete("brand");
+    }
+    router.replace(`/dashboard/${dashboardId}?${params.toString()}`, { scroll: false });
+  };
+
   const applyDateRange = () => {
     if (!draftDateRange.from || !draftDateRange.to) return;
+    setQuickRangePreset(detectQuickRangePreset(draftDateRange.from, draftDateRange.to));
     setDateRange(draftDateRange);
     const params = new URLSearchParams(searchParams.toString());
     params.set("from", draftDateRange.from);
@@ -1413,6 +1515,14 @@ export default function DashboardByIdPage() {
       params.delete("brand");
     }
     router.replace(`/dashboard/${dashboardId}?${params.toString()}`, { scroll: false });
+  };
+
+  const handleQuickRangePresetChange = (preset: DashboardQuickRangePreset) => {
+    if (preset === "custom") {
+      setQuickRangePreset("custom");
+      return;
+    }
+    applyImmediateDateRange(buildQuickRange(preset), preset);
   };
 
   const applyCompareRange = () => {
@@ -1470,6 +1580,16 @@ export default function DashboardByIdPage() {
     router.replace(`/dashboard/${dashboardId}?${params.toString()}`, { scroll: false });
   };
 
+  const handleDraftDateFromChange = (value: string) => {
+    setQuickRangePreset("custom");
+    setDraftDateRange((prev) => ({ ...prev, from: value }));
+  };
+
+  const handleDraftDateToChange = (value: string) => {
+    setQuickRangePreset("custom");
+    setDraftDateRange((prev) => ({ ...prev, to: value }));
+  };
+
   if (!isLoading && authRequired && authMeta) {
     return (
       <main
@@ -1523,6 +1643,21 @@ export default function DashboardByIdPage() {
     );
   }
 
+  if (!isLoading && !dashboard && apiError) {
+    return (
+      <main
+        data-dashboard-ready="false"
+        className={`mx-auto min-h-screen w-full max-w-[1000px] px-4 py-12 sm:px-6 lg:px-8 ${isPdfMode ? "pdf-mode" : ""}`}
+        style={isMobileMode ? ({ maxWidth: "430px" } as CSSProperties) : undefined}
+      >
+        <section className="mx-auto max-w-xl rounded-2xl border border-slate-200 bg-white p-6 text-center shadow-sm">
+          <p className="text-sm font-medium uppercase tracking-[0.2em] text-slate-500">Dashboard Portal</p>
+          <h1 className="mt-3 text-2xl font-semibold text-slate-900">{TECH_ISSUES_MESSAGE}</h1>
+        </section>
+      </main>
+    );
+  }
+
   if (isLoading || !dashboard) {
     return (
       <main
@@ -1560,9 +1695,11 @@ export default function DashboardByIdPage() {
           labels={i18n.header}
           dateFrom={draftDateRange.from}
           dateTo={draftDateRange.to}
-          onDateFromChange={(value) => setDraftDateRange((prev) => ({ ...prev, from: value }))}
-          onDateToChange={(value) => setDraftDateRange((prev) => ({ ...prev, to: value }))}
+          onDateFromChange={handleDraftDateFromChange}
+          onDateToChange={handleDraftDateToChange}
           onApplyDateRange={applyDateRange}
+          quickRangePreset={quickRangePreset}
+          onQuickRangePresetChange={handleQuickRangePresetChange}
           isUpdatingRange={isLoading}
         />
 
@@ -1618,9 +1755,11 @@ export default function DashboardByIdPage() {
           labels={i18n.header}
           dateFrom={draftDateRange.from}
           dateTo={draftDateRange.to}
-          onDateFromChange={(value) => setDraftDateRange((prev) => ({ ...prev, from: value }))}
-          onDateToChange={(value) => setDraftDateRange((prev) => ({ ...prev, to: value }))}
+          onDateFromChange={handleDraftDateFromChange}
+          onDateToChange={handleDraftDateToChange}
           onApplyDateRange={applyDateRange}
+          quickRangePreset={quickRangePreset}
+          onQuickRangePresetChange={handleQuickRangePresetChange}
           isUpdatingRange={isLoading}
           compareOpen={false}
           comparePreset={comparePreset}
@@ -1671,9 +1810,11 @@ export default function DashboardByIdPage() {
         labels={i18n.header}
         dateFrom={draftDateRange.from}
         dateTo={draftDateRange.to}
-        onDateFromChange={(value) => setDraftDateRange((prev) => ({ ...prev, from: value }))}
-        onDateToChange={(value) => setDraftDateRange((prev) => ({ ...prev, to: value }))}
+        onDateFromChange={handleDraftDateFromChange}
+        onDateToChange={handleDraftDateToChange}
         onApplyDateRange={applyDateRange}
+        quickRangePreset={quickRangePreset}
+        onQuickRangePresetChange={handleQuickRangePresetChange}
         isUpdatingRange={isLoading}
         compareOpen={compareOpen}
         comparePreset={comparePreset}

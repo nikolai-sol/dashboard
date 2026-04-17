@@ -66,15 +66,24 @@ export async function listSourceAccountCollectionRows(): Promise<SourceAccountCo
         a.source_key,
         a.platform_account_id,
         CASE
-          WHEN a.source_key = 'yandex_direct' THEN COALESCE(yn.name, NULLIF(a.account_name, ''), NULLIF(a.advertiser_name, ''), a.platform_account_id)
+          WHEN a.source_key = 'yandex_direct' THEN COALESCE(yc.campaign_name, NULLIF(a.account_name, ''), NULLIF(a.advertiser_name, ''), a.platform_account_id)
           ELSE COALESCE(NULLIF(a.account_name, ''), NULLIF(a.advertiser_name, ''), a.platform_account_id)
         END AS account_name,
         1 AS base_is_active,
         1 AS priority
       FROM canonical_source_accounts a
-      LEFT JOIN yandex_names yn
+      LEFT JOIN (
+        SELECT
+          source_key,
+          platform_account_id,
+          MAX(NULLIF(campaign_name, '')) AS campaign_name
+        FROM canonical_source_campaigns
+        WHERE source_key = 'yandex_direct'
+        GROUP BY source_key, platform_account_id
+      ) yc
         ON a.source_key = 'yandex_direct'
-       AND CAST(SUBSTRING_INDEX(a.platform_account_id, '::', -1) AS UNSIGNED) = yn.campaign_id
+       AND yc.source_key = a.source_key
+       AND yc.platform_account_id = a.platform_account_id
 
       UNION ALL
 

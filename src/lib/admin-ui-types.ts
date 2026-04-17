@@ -69,13 +69,30 @@ export type DashboardMetrikaSettingsForm = {
 };
 
 export type DashboardPostClickFieldId =
+  | "source_keys"
+  | "platform_account_ids"
+  | "platform_campaign_ids"
+  | "platform_delivery_entity_ids"
+  | "platform_creative_ids"
   | "visits"
   | "users"
   | "pageviews"
   | "goal_reaches"
   | "conversion_rate"
   | "bounce_rate"
-  | "avg_visit_duration";
+  | "avg_visit_duration"
+  | "impressions"
+  | "clicks"
+  | "views"
+  | "reach"
+  | "spend"
+  | "ctr"
+  | "cpm"
+  | "cpc"
+  | "video_views_25"
+  | "video_views_50"
+  | "video_views_75"
+  | "video_views_100";
 
 export type DashboardPromopagesFieldId =
   | "impressions"

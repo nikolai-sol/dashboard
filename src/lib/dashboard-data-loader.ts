@@ -150,6 +150,64 @@ type PostClickTrafficFactRow = RowDataPacket & {
   avg_visit_duration: number | string | null;
 };
 
+type PostClickAdsFactRow = RowDataPacket & {
+  line_key: string | null;
+  date: string | null;
+  source_keys: string | null;
+  platform_account_ids: string | null;
+  platform_campaign_ids: string | null;
+  platform_delivery_entity_ids: string | null;
+  platform_creative_ids: string | null;
+  impressions: number | string | null;
+  clicks: number | string | null;
+  views: number | string | null;
+  reach: number | string | null;
+  spend: number | string | null;
+  video_views_25: number | string | null;
+  video_views_50: number | string | null;
+  video_views_75: number | string | null;
+  video_views_100: number | string | null;
+};
+
+type PostClickCampaignTrafficFactRow = RowDataPacket & {
+  line_key: string | null;
+  channel: string | null;
+  date: string | null;
+  utm_campaign: string | null;
+  visits: number | string | null;
+  users: number | string | null;
+  pageviews: number | string | null;
+  bounce_rate: number | string | null;
+  avg_visit_duration: number | string | null;
+};
+
+type PostClickCampaignGoalFactRow = RowDataPacket & {
+  line_key: string | null;
+  date: string | null;
+  utm_campaign: string | null;
+  goal_reaches: number | string | null;
+};
+
+type PostClickCampaignAdsFactRow = RowDataPacket & {
+  line_key: string | null;
+  date: string | null;
+  utm_campaign: string | null;
+  source_keys: string | null;
+  platform_account_ids: string | null;
+  platform_campaign_ids: string | null;
+  platform_delivery_entity_ids: string | null;
+  platform_creative_ids: string | null;
+  impressions: number | string | null;
+  clicks: number | string | null;
+  views: number | string | null;
+  reach: number | string | null;
+  spend: number | string | null;
+  video_views_25: number | string | null;
+  video_views_50: number | string | null;
+  video_views_75: number | string | null;
+  video_views_100: number | string | null;
+};
+
 type PostClickGoalFactRow = RowDataPacket & {
   line_key: string | null;
   channel: string | null;
@@ -291,6 +349,7 @@ function currentMonthRange(): { from: string; to: string } {
 function resolveDateRange(
   request: Request,
   config: JsonRecord,
+  dashboardType?: string,
 ): { from: string; to: string } {
   const params = new URL(request.url).searchParams;
   const fromQuery = params.get("from");
@@ -298,6 +357,9 @@ function resolveDateRange(
   const daysQuery = params.get("days");
 
   const fallbackRange = currentMonthRange();
+  if (dashboardType === "multibrand" && !isValidIsoDate(fromQuery) && !isValidIsoDate(toQuery) && !daysQuery) {
+    return fallbackRange;
+  }
   const configFromRaw = String(config.period_from ?? fallbackRange.from);
   const configToRaw = String(config.period_to ?? fallbackRange.to);
   const configFrom = isValidIsoDate(configFromRaw) ? configFromRaw : fallbackRange.from;
@@ -1671,6 +1733,82 @@ async function buildPostClickAnalytics(
     [dashboardId, dateFrom, dateTo, ...metrikaAccountIds],
   );
 
+  const [adsRows] = await pool.execute<PostClickAdsFactRow[]>(
+    `
+      SELECT
+        b.line_key AS line_key,
+        f.report_date AS date,
+        GROUP_CONCAT(DISTINCT b.source_key ORDER BY b.source_key SEPARATOR '|||') AS source_keys,
+        GROUP_CONCAT(DISTINCT NULLIF(TRIM(f.platform_account_id), '') ORDER BY f.platform_account_id SEPARATOR '|||') AS platform_account_ids,
+        GROUP_CONCAT(DISTINCT NULLIF(TRIM(f.platform_campaign_id), '') ORDER BY f.platform_campaign_id SEPARATOR '|||') AS platform_campaign_ids,
+        GROUP_CONCAT(
+          DISTINCT NULLIF(TRIM(CASE WHEN f.platform_delivery_entity_id = '__campaign__' THEN '' ELSE f.platform_delivery_entity_id END), '')
+          ORDER BY f.platform_delivery_entity_id
+          SEPARATOR '|||'
+        ) AS platform_delivery_entity_ids,
+        GROUP_CONCAT(
+          DISTINCT NULLIF(TRIM(CASE WHEN f.platform_creative_id = '__campaign__' THEN '' ELSE f.platform_creative_id END), '')
+          ORDER BY f.platform_creative_id
+          SEPARATOR '|||'
+        ) AS platform_creative_ids,
+        COALESCE(SUM(f.impressions), 0) AS impressions,
+        COALESCE(SUM(f.clicks), 0) AS clicks,
+        COALESCE(SUM(f.views), 0) AS views,
+        COALESCE(SUM(f.reach), 0) AS reach,
+        COALESCE(SUM(f.spend), 0) AS spend,
+        COALESCE(SUM(f.video_views_25), 0) AS video_views_25,
+        COALESCE(SUM(f.video_views_50), 0) AS video_views_50,
+        COALESCE(SUM(f.video_views_75), 0) AS video_views_75,
+        COALESCE(SUM(f.video_views_100), 0) AS video_views_100
+      FROM media_plan_bindings b
+      JOIN canonical_fact_ads_daily f
+        ON f.source_key COLLATE utf8mb4_unicode_ci = b.source_key
+       AND f.platform_campaign_id COLLATE utf8mb4_unicode_ci = b.platform_campaign_id
+      WHERE b.dashboard_id = ?
+        AND f.report_date >= ?
+        AND f.report_date <= ?
+      GROUP BY b.line_key, f.report_date
+      ORDER BY f.report_date, b.line_key
+    `,
+    [dashboardId, dateFrom, dateTo],
+  );
+
+  const [campaignTrafficRows] = await pool.execute<PostClickCampaignTrafficFactRow[]>(
+    `
+      SELECT
+        b.line_key AS line_key,
+        MAX(b.channel) AS channel,
+        f.report_date AS date,
+        NULLIF(TRIM(f.utm_campaign), '') AS utm_campaign,
+        COALESCE(SUM(f.visits), 0) AS visits,
+        COALESCE(SUM(f.users), 0) AS users,
+        COALESCE(SUM(f.pageviews), 0) AS pageviews,
+        CASE
+          WHEN COALESCE(SUM(f.visits), 0) > 0
+            THEN COALESCE(SUM(COALESCE(f.bounce_rate, 0) * COALESCE(f.visits, 0)) / SUM(f.visits), 0)
+          ELSE 0
+        END AS bounce_rate,
+        CASE
+          WHEN COALESCE(SUM(f.visits), 0) > 0
+            THEN COALESCE(SUM(COALESCE(f.avg_visit_duration_seconds, 0) * COALESCE(f.visits, 0)) / SUM(f.visits), 0)
+          ELSE 0
+        END AS avg_visit_duration
+      FROM dashboard_utm_source_bindings b
+      JOIN canonical_fact_site_analytics_daily f
+        ON b.dashboard_id = ?
+       AND b.utm_source = NULLIF(TRIM(f.utm_source), '')
+      WHERE f.source_key = 'yandex_metrika'
+        AND f.analytics_scope = 'traffic'
+        AND f.report_date >= ?
+        AND f.report_date <= ?
+        AND f.analytics_account_id IN (${accountPlaceholders})
+        AND NULLIF(TRIM(f.utm_campaign), '') IS NOT NULL
+      GROUP BY b.line_key, f.report_date, NULLIF(TRIM(f.utm_campaign), '')
+      ORDER BY f.report_date, b.line_key
+    `,
+    [dashboardId, dateFrom, dateTo, ...metrikaAccountIds],
+  );
+
   let goalRows: PostClickGoalFactRow[] = [];
   if (!(goalMode === "selected" && selectedGoalIds.length === 0)) {
     const goalPlaceholders = selectedGoalIds.map(() => "?").join(",");
@@ -1707,12 +1845,217 @@ async function buildPostClickAnalytics(
     goalRows = rows;
   }
 
+  let campaignGoalRows: PostClickCampaignGoalFactRow[] = [];
+  if (!(goalMode === "selected" && selectedGoalIds.length === 0)) {
+    const goalPlaceholders = selectedGoalIds.map(() => "?").join(",");
+    const goalFilter =
+      goalMode === "selected" && selectedGoalIds.length > 0
+        ? ` AND f.goal_id IN (${goalPlaceholders})`
+        : "";
+    const goalParams: Array<string | number> = [dashboardId, dateFrom, dateTo, ...metrikaAccountIds];
+    if (goalMode === "selected" && selectedGoalIds.length > 0) {
+      goalParams.push(...selectedGoalIds);
+    }
+    const [rows] = await pool.execute<PostClickCampaignGoalFactRow[]>(
+      `
+        SELECT
+          b.line_key AS line_key,
+          f.report_date AS date,
+          NULLIF(TRIM(f.utm_campaign), '') AS utm_campaign,
+          COALESCE(SUM(f.goal_reaches), 0) AS goal_reaches
+        FROM dashboard_utm_source_bindings b
+        JOIN canonical_fact_site_analytics_daily f
+          ON b.dashboard_id = ?
+         AND b.utm_source = NULLIF(TRIM(f.utm_source), '')
+        WHERE f.source_key = 'yandex_metrika'
+          AND f.analytics_scope = 'goal'
+          AND f.report_date >= ?
+          AND f.report_date <= ?
+          AND f.analytics_account_id IN (${accountPlaceholders})
+          AND NULLIF(TRIM(f.utm_campaign), '') IS NOT NULL
+          ${goalFilter}
+        GROUP BY b.line_key, f.report_date, NULLIF(TRIM(f.utm_campaign), '')
+        ORDER BY f.report_date, b.line_key
+      `,
+      goalParams,
+    );
+    campaignGoalRows = rows;
+  }
+
+  const [campaignAdsRows] = await pool.execute<PostClickCampaignAdsFactRow[]>(
+    `
+      SELECT
+        b.line_key AS line_key,
+        m.report_date AS date,
+        NULLIF(TRIM(m.utm_campaign), '') AS utm_campaign,
+        GROUP_CONCAT(DISTINCT b.source_key ORDER BY b.source_key SEPARATOR '|||') AS source_keys,
+        GROUP_CONCAT(DISTINCT NULLIF(TRIM(f.platform_account_id), '') ORDER BY f.platform_account_id SEPARATOR '|||') AS platform_account_ids,
+        GROUP_CONCAT(DISTINCT NULLIF(TRIM(f.platform_campaign_id), '') ORDER BY f.platform_campaign_id SEPARATOR '|||') AS platform_campaign_ids,
+        GROUP_CONCAT(
+          DISTINCT NULLIF(TRIM(CASE WHEN f.platform_delivery_entity_id = '__campaign__' THEN '' ELSE f.platform_delivery_entity_id END), '')
+          ORDER BY f.platform_delivery_entity_id
+          SEPARATOR '|||'
+        ) AS platform_delivery_entity_ids,
+        GROUP_CONCAT(
+          DISTINCT NULLIF(TRIM(CASE WHEN f.platform_creative_id = '__campaign__' THEN '' ELSE f.platform_creative_id END), '')
+          ORDER BY f.platform_creative_id
+          SEPARATOR '|||'
+        ) AS platform_creative_ids,
+        COALESCE(SUM(f.impressions), 0) AS impressions,
+        COALESCE(SUM(f.clicks), 0) AS clicks,
+        COALESCE(SUM(f.views), 0) AS views,
+        COALESCE(SUM(f.reach), 0) AS reach,
+        COALESCE(SUM(f.spend), 0) AS spend,
+        COALESCE(SUM(f.video_views_25), 0) AS video_views_25,
+        COALESCE(SUM(f.video_views_50), 0) AS video_views_50,
+        COALESCE(SUM(f.video_views_75), 0) AS video_views_75,
+        COALESCE(SUM(f.video_views_100), 0) AS video_views_100
+      FROM dashboard_utm_source_bindings b
+      JOIN canonical_fact_site_analytics_daily m
+        ON b.dashboard_id = ?
+       AND b.utm_source COLLATE utf8mb4_unicode_ci = NULLIF(TRIM(m.utm_source), '') COLLATE utf8mb4_unicode_ci
+       AND m.source_key = 'yandex_metrika'
+       AND m.analytics_scope = 'traffic'
+       AND m.report_date >= ?
+       AND m.report_date <= ?
+       AND m.analytics_account_id IN (${accountPlaceholders})
+       AND NULLIF(TRIM(m.utm_campaign), '') IS NOT NULL
+      JOIN media_plan_bindings mp
+        ON mp.dashboard_id = b.dashboard_id
+       AND mp.line_key COLLATE utf8mb4_unicode_ci = b.line_key COLLATE utf8mb4_unicode_ci
+      JOIN canonical_fact_ads_daily f
+        ON f.source_key COLLATE utf8mb4_unicode_ci = mp.source_key
+       AND f.report_date = m.report_date
+       AND (
+         f.platform_campaign_id COLLATE utf8mb4_unicode_ci = NULLIF(TRIM(m.utm_campaign), '')
+         OR f.platform_delivery_entity_id COLLATE utf8mb4_unicode_ci = NULLIF(TRIM(m.utm_campaign), '')
+         OR f.platform_creative_id COLLATE utf8mb4_unicode_ci = NULLIF(TRIM(m.utm_campaign), '')
+       )
+      GROUP BY b.line_key, m.report_date, NULLIF(TRIM(m.utm_campaign), '')
+      ORDER BY m.report_date, b.line_key
+    `,
+    [dashboardId, dateFrom, dateTo, ...metrikaAccountIds],
+  );
+
   const goalsByLineDate = new Map(
     goalRows.map((row) => [
       `${String(row.line_key ?? "").trim()}::${String(row.date ?? "").slice(0, 10)}`,
       Number(row.goal_reaches ?? 0),
     ] as const),
   );
+
+  const splitPipeValues = (raw: string | null | undefined): string[] =>
+    String(raw ?? "")
+      .split("|||")
+      .map((item) => item.trim())
+      .filter(Boolean);
+
+  const adsByLineDate = new Map(
+    adsRows.map((row) => {
+      const lineKey = String(row.line_key ?? "").trim();
+      const date = String(row.date ?? "").slice(0, 10);
+      return [
+        `${lineKey}::${date}`,
+        {
+          source_keys: splitPipeValues(row.source_keys),
+          platform_account_ids: splitPipeValues(row.platform_account_ids),
+          platform_campaign_ids: splitPipeValues(row.platform_campaign_ids),
+          platform_delivery_entity_ids: splitPipeValues(row.platform_delivery_entity_ids),
+          platform_creative_ids: splitPipeValues(row.platform_creative_ids),
+          impressions: Number(row.impressions ?? 0),
+          clicks: Number(row.clicks ?? 0),
+          views: Number(row.views ?? 0),
+          reach: Number(row.reach ?? 0),
+          spend: Number(row.spend ?? 0),
+          video_views_25: Number(row.video_views_25 ?? 0),
+          video_views_50: Number(row.video_views_50 ?? 0),
+          video_views_75: Number(row.video_views_75 ?? 0),
+          video_views_100: Number(row.video_views_100 ?? 0),
+        },
+      ] as const;
+    }),
+  );
+
+  const campaignGoalsByLineDate = new Map(
+    campaignGoalRows.map((row) => [
+      `${String(row.line_key ?? "").trim()}::${String(row.date ?? "").slice(0, 10)}::${String(row.utm_campaign ?? "").trim()}`,
+      Number(row.goal_reaches ?? 0),
+    ] as const),
+  );
+
+  const campaignAdsByLineDate = new Map(
+    campaignAdsRows.map((row) => {
+      const lineKey = String(row.line_key ?? "").trim();
+      const date = String(row.date ?? "").slice(0, 10);
+      const campaign = String(row.utm_campaign ?? "").trim();
+      return [
+        `${lineKey}::${date}::${campaign}`,
+        {
+          source_keys: splitPipeValues(row.source_keys),
+          platform_account_ids: splitPipeValues(row.platform_account_ids),
+          platform_campaign_ids: splitPipeValues(row.platform_campaign_ids),
+          platform_delivery_entity_ids: splitPipeValues(row.platform_delivery_entity_ids),
+          platform_creative_ids: splitPipeValues(row.platform_creative_ids),
+          impressions: Number(row.impressions ?? 0),
+          clicks: Number(row.clicks ?? 0),
+          views: Number(row.views ?? 0),
+          reach: Number(row.reach ?? 0),
+          spend: Number(row.spend ?? 0),
+          video_views_25: Number(row.video_views_25 ?? 0),
+          video_views_50: Number(row.video_views_50 ?? 0),
+          video_views_75: Number(row.video_views_75 ?? 0),
+          video_views_100: Number(row.video_views_100 ?? 0),
+        },
+      ] as const;
+    }),
+  );
+
+  const campaignByLineDate = new Map<string, PostClickAnalyticsTimeSeriesPoint["campaign_breakdown"]>();
+  for (const row of campaignTrafficRows) {
+    const lineKey = String(row.line_key ?? "").trim();
+    const date = String(row.date ?? "").slice(0, 10);
+    const campaign = String(row.utm_campaign ?? "").trim();
+    if (!lineKey || !date || !campaign) continue;
+    const visits = Number(row.visits ?? 0);
+    const goalReaches = campaignGoalsByLineDate.get(`${lineKey}::${date}::${campaign}`) ?? 0;
+    const adsMetrics = campaignAdsByLineDate.get(`${lineKey}::${date}::${campaign}`);
+    const impressions = adsMetrics?.impressions ?? 0;
+    const clicks = adsMetrics?.clicks ?? 0;
+    const spend = adsMetrics?.spend ?? 0;
+    const item = {
+      date,
+      line_key: lineKey,
+      channel: String(row.channel ?? "").trim(),
+      utm_campaign: campaign,
+      source_keys: adsMetrics?.source_keys ?? [],
+      platform_account_ids: adsMetrics?.platform_account_ids ?? [],
+      platform_campaign_ids: adsMetrics?.platform_campaign_ids ?? [],
+      platform_delivery_entity_ids: adsMetrics?.platform_delivery_entity_ids ?? [],
+      platform_creative_ids: adsMetrics?.platform_creative_ids ?? [],
+      visits,
+      users: Number(row.users ?? 0),
+      pageviews: Number(row.pageviews ?? 0),
+      goal_reaches: goalReaches,
+      bounce_rate: Number(Number(row.bounce_rate ?? 0).toFixed(2)),
+      avg_visit_duration: Number(Number(row.avg_visit_duration ?? 0).toFixed(2)),
+      conversion_rate: visits > 0 ? Number(((goalReaches / visits) * 100).toFixed(2)) : 0,
+      impressions,
+      clicks,
+      views: adsMetrics?.views ?? 0,
+      reach: adsMetrics?.reach ?? 0,
+      spend,
+      ctr: impressions > 0 ? Number(((clicks / impressions) * 100).toFixed(2)) : 0,
+      cpm: impressions > 0 ? Number(((spend / impressions) * 1000).toFixed(2)) : 0,
+      cpc: clicks > 0 ? Number((spend / clicks).toFixed(2)) : 0,
+      video_views_25: adsMetrics?.video_views_25 ?? 0,
+      video_views_50: adsMetrics?.video_views_50 ?? 0,
+      video_views_75: adsMetrics?.video_views_75 ?? 0,
+      video_views_100: adsMetrics?.video_views_100 ?? 0,
+    };
+    const key = `${lineKey}::${date}`;
+    if (!campaignByLineDate.has(key)) campaignByLineDate.set(key, []);
+    campaignByLineDate.get(key)!.push(item);
+  }
 
   const dailyByLineKey = new Map<string, PostClickAnalyticsTimeSeriesPoint[]>();
 
@@ -1722,10 +2065,19 @@ async function buildPostClickAnalytics(
     if (!lineKey || !date) continue;
     const visits = Number(row.visits ?? 0);
     const goalReaches = goalsByLineDate.get(`${lineKey}::${date}`) ?? 0;
+    const adsMetrics = adsByLineDate.get(`${lineKey}::${date}`);
+    const impressions = adsMetrics?.impressions ?? 0;
+    const clicks = adsMetrics?.clicks ?? 0;
+    const spend = adsMetrics?.spend ?? 0;
     const point: PostClickAnalyticsTimeSeriesPoint = {
       date,
       line_key: lineKey,
       channel: String(row.channel ?? "").trim(),
+      source_keys: adsMetrics?.source_keys ?? [],
+      platform_account_ids: adsMetrics?.platform_account_ids ?? [],
+      platform_campaign_ids: adsMetrics?.platform_campaign_ids ?? [],
+      platform_delivery_entity_ids: adsMetrics?.platform_delivery_entity_ids ?? [],
+      platform_creative_ids: adsMetrics?.platform_creative_ids ?? [],
       visits,
       users: Number(row.users ?? 0),
       pageviews: Number(row.pageviews ?? 0),
@@ -1733,6 +2085,19 @@ async function buildPostClickAnalytics(
       bounce_rate: Number(Number(row.bounce_rate ?? 0).toFixed(2)),
       avg_visit_duration: Number(Number(row.avg_visit_duration ?? 0).toFixed(2)),
       conversion_rate: visits > 0 ? Number(((goalReaches / visits) * 100).toFixed(2)) : 0,
+      impressions,
+      clicks,
+      views: adsMetrics?.views ?? 0,
+      reach: adsMetrics?.reach ?? 0,
+      spend,
+      ctr: impressions > 0 ? Number(((clicks / impressions) * 100).toFixed(2)) : 0,
+      cpm: impressions > 0 ? Number(((spend / impressions) * 1000).toFixed(2)) : 0,
+      cpc: clicks > 0 ? Number((spend / clicks).toFixed(2)) : 0,
+      video_views_25: adsMetrics?.video_views_25 ?? 0,
+      video_views_50: adsMetrics?.video_views_50 ?? 0,
+      video_views_75: adsMetrics?.video_views_75 ?? 0,
+      video_views_100: adsMetrics?.video_views_100 ?? 0,
+      campaign_breakdown: (campaignByLineDate.get(`${lineKey}::${date}`) ?? []).sort((a, b) => b.visits - a.visits),
     };
     if (!dailyByLineKey.has(lineKey)) dailyByLineKey.set(lineKey, []);
     dailyByLineKey.get(lineKey)!.push(point);
@@ -1745,17 +2110,52 @@ async function buildPostClickAnalytics(
       const group = channelGroupByLineKey.get(lineKey);
       if (!group) return null;
       const daily = (dailyByLineKey.get(lineKey) ?? []).sort((a, b) => a.date.localeCompare(b.date));
+      const sourceKeys = new Set<string>();
+      const platformAccountIds = new Set<string>();
+      const platformCampaignIds = new Set<string>();
+      const platformDeliveryEntityIds = new Set<string>();
+      const platformCreativeIds = new Set<string>();
       const totals = daily.reduce(
         (acc, item) => {
+          item.source_keys.forEach((value) => sourceKeys.add(value));
+          item.platform_account_ids.forEach((value) => platformAccountIds.add(value));
+          item.platform_campaign_ids.forEach((value) => platformCampaignIds.add(value));
+          item.platform_delivery_entity_ids.forEach((value) => platformDeliveryEntityIds.add(value));
+          item.platform_creative_ids.forEach((value) => platformCreativeIds.add(value));
           acc.visits += item.visits;
           acc.users += item.users;
           acc.pageviews += item.pageviews;
           acc.goal_reaches += item.goal_reaches;
           acc.bounce_weighted += item.bounce_rate * item.visits;
           acc.duration_weighted += item.avg_visit_duration * item.visits;
+          acc.impressions += item.impressions;
+          acc.clicks += item.clicks;
+          acc.views += item.views;
+          acc.reach += item.reach;
+          acc.spend += item.spend;
+          acc.video_views_25 += item.video_views_25;
+          acc.video_views_50 += item.video_views_50;
+          acc.video_views_75 += item.video_views_75;
+          acc.video_views_100 += item.video_views_100;
           return acc;
         },
-        { visits: 0, users: 0, pageviews: 0, goal_reaches: 0, bounce_weighted: 0, duration_weighted: 0 },
+        {
+          visits: 0,
+          users: 0,
+          pageviews: 0,
+          goal_reaches: 0,
+          bounce_weighted: 0,
+          duration_weighted: 0,
+          impressions: 0,
+          clicks: 0,
+          views: 0,
+          reach: 0,
+          spend: 0,
+          video_views_25: 0,
+          video_views_50: 0,
+          video_views_75: 0,
+          video_views_100: 0,
+        },
       );
 
       return {
@@ -1764,6 +2164,11 @@ async function buildPostClickAnalytics(
         instrument: group.instrument,
         buy_type: group.buy_type,
         utm_sources: Array.from(sources).sort((a, b) => a.localeCompare(b, "ru")),
+        source_keys: Array.from(sourceKeys).sort((a, b) => a.localeCompare(b, "ru")),
+        platform_account_ids: Array.from(platformAccountIds).sort((a, b) => a.localeCompare(b, "ru")),
+        platform_campaign_ids: Array.from(platformCampaignIds).sort((a, b) => a.localeCompare(b, "ru")),
+        platform_delivery_entity_ids: Array.from(platformDeliveryEntityIds).sort((a, b) => a.localeCompare(b, "ru")),
+        platform_creative_ids: Array.from(platformCreativeIds).sort((a, b) => a.localeCompare(b, "ru")),
         visits: totals.visits,
         users: totals.users,
         pageviews: totals.pageviews,
@@ -1771,6 +2176,18 @@ async function buildPostClickAnalytics(
         bounce_rate: totals.visits > 0 ? Number((totals.bounce_weighted / totals.visits).toFixed(2)) : 0,
         avg_visit_duration: totals.visits > 0 ? Number((totals.duration_weighted / totals.visits).toFixed(2)) : 0,
         conversion_rate: totals.visits > 0 ? Number(((totals.goal_reaches / totals.visits) * 100).toFixed(2)) : 0,
+        impressions: totals.impressions,
+        clicks: totals.clicks,
+        views: totals.views,
+        reach: totals.reach,
+        spend: totals.spend,
+        ctr: totals.impressions > 0 ? Number(((totals.clicks / totals.impressions) * 100).toFixed(2)) : 0,
+        cpm: totals.impressions > 0 ? Number(((totals.spend / totals.impressions) * 1000).toFixed(2)) : 0,
+        cpc: totals.clicks > 0 ? Number((totals.spend / totals.clicks).toFixed(2)) : 0,
+        video_views_25: totals.video_views_25,
+        video_views_50: totals.video_views_50,
+        video_views_75: totals.video_views_75,
+        video_views_100: totals.video_views_100,
       } satisfies PostClickAnalyticsRow;
     })
     .filter((row): row is PostClickAnalyticsRow => Boolean(row))
@@ -2136,7 +2553,7 @@ export async function loadDashboardData(
     String(config.spend_source ?? "platform_actual") === "media_plan_derived"
       ? "media_plan_derived"
       : "platform_actual";
-  const range = resolveDateRange(request, config);
+  const range = resolveDateRange(request, config, dashboardType);
   const compareRange = getCompareRange(request);
   const previousRange = buildPreviousPeriod(range.from, range.to);
 

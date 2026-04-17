@@ -277,6 +277,11 @@ export interface PostClickAnalyticsRow {
   instrument: string;
   buy_type: string;
   utm_sources: string[];
+  source_keys: string[];
+  platform_account_ids: string[];
+  platform_campaign_ids: string[];
+  platform_delivery_entity_ids: string[];
+  platform_creative_ids: string[];
   visits: number;
   users: number;
   pageviews: number;
@@ -284,12 +289,29 @@ export interface PostClickAnalyticsRow {
   bounce_rate: number;
   avg_visit_duration: number;
   conversion_rate: number;
+  impressions: number;
+  clicks: number;
+  views: number;
+  reach: number;
+  spend: number;
+  ctr: number;
+  cpm: number;
+  cpc: number;
+  video_views_25: number;
+  video_views_50: number;
+  video_views_75: number;
+  video_views_100: number;
 }
 
 export interface PostClickAnalyticsTimeSeriesPoint {
   date: string;
   line_key: string;
   channel: string;
+  source_keys: string[];
+  platform_account_ids: string[];
+  platform_campaign_ids: string[];
+  platform_delivery_entity_ids: string[];
+  platform_creative_ids: string[];
   visits: number;
   users: number;
   pageviews: number;
@@ -297,6 +319,50 @@ export interface PostClickAnalyticsTimeSeriesPoint {
   bounce_rate: number;
   avg_visit_duration: number;
   conversion_rate: number;
+  impressions: number;
+  clicks: number;
+  views: number;
+  reach: number;
+  spend: number;
+  ctr: number;
+  cpm: number;
+  cpc: number;
+  video_views_25: number;
+  video_views_50: number;
+  video_views_75: number;
+  video_views_100: number;
+  campaign_breakdown?: PostClickAnalyticsCampaignPoint[];
+}
+
+export interface PostClickAnalyticsCampaignPoint {
+  date: string;
+  line_key: string;
+  channel: string;
+  utm_campaign: string;
+  source_keys: string[];
+  platform_account_ids: string[];
+  platform_campaign_ids: string[];
+  platform_delivery_entity_ids: string[];
+  platform_creative_ids: string[];
+  visits: number;
+  users: number;
+  pageviews: number;
+  goal_reaches: number;
+  bounce_rate: number;
+  avg_visit_duration: number;
+  conversion_rate: number;
+  impressions: number;
+  clicks: number;
+  views: number;
+  reach: number;
+  spend: number;
+  ctr: number;
+  cpm: number;
+  cpc: number;
+  video_views_25: number;
+  video_views_50: number;
+  video_views_75: number;
+  video_views_100: number;
 }
 
 export interface AbbottBiUserSummaryRow {

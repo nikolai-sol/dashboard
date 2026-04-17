@@ -60,6 +60,11 @@ const PRESETS: Record<string, string[]> = {
 const NON_SPEND_FALLBACK = ["impressions", "clicks", "ctr", "views", "reach"];
 
 const POSTCLICK_FIELD_OPTIONS: Array<{ id: DashboardPostClickFieldId; label: string }> = [
+  { id: "source_keys", label: "Source keys" },
+  { id: "platform_account_ids", label: "Platform account IDs" },
+  { id: "platform_campaign_ids", label: "Platform campaign IDs" },
+  { id: "platform_delivery_entity_ids", label: "Platform delivery entity IDs" },
+  { id: "platform_creative_ids", label: "Platform creative IDs" },
   { id: "visits", label: "Visits" },
   { id: "users", label: "Users" },
   { id: "pageviews", label: "Pageviews" },
@@ -67,6 +72,18 @@ const POSTCLICK_FIELD_OPTIONS: Array<{ id: DashboardPostClickFieldId; label: str
   { id: "conversion_rate", label: "Conversion rate" },
   { id: "bounce_rate", label: "Bounce rate" },
   { id: "avg_visit_duration", label: "Avg visit duration" },
+  { id: "impressions", label: "Impressions" },
+  { id: "clicks", label: "Clicks" },
+  { id: "views", label: "Views" },
+  { id: "reach", label: "Reach" },
+  { id: "spend", label: "Spend" },
+  { id: "ctr", label: "CTR" },
+  { id: "cpm", label: "CPM" },
+  { id: "cpc", label: "CPC" },
+  { id: "video_views_25", label: "Video views 25%" },
+  { id: "video_views_50", label: "Video views 50%" },
+  { id: "video_views_75", label: "Video views 75%" },
+  { id: "video_views_100", label: "Video views 100%" },
 ];
 
 const PROMOPAGES_FIELD_OPTIONS: Array<{ id: DashboardPromopagesFieldId; label: string }> = [
