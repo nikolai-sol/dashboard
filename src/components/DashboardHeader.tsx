@@ -4,6 +4,8 @@ import { CalendarRange, Download } from "lucide-react";
 import ComparisonToggle, { type ComparisonPreset } from "@/components/ComparisonToggle";
 import type { DashboardLanguage } from "@/lib/dashboard-i18n";
 
+export type DashboardQuickRangePreset = "this_month" | "this_week" | "yesterday" | "custom";
+
 type DashboardHeaderProps = {
   clientName: string;
   title: string;
@@ -28,6 +30,10 @@ type DashboardHeaderProps = {
     compareTo: string;
     exportPdf: string;
     exportExcel: string;
+    quickThisMonth: string;
+    quickThisWeek: string;
+    quickYesterday: string;
+    quickCustom: string;
   };
   language?: DashboardLanguage;
   dateFrom?: string;
@@ -35,6 +41,8 @@ type DashboardHeaderProps = {
   onDateFromChange?: (value: string) => void;
   onDateToChange?: (value: string) => void;
   onApplyDateRange?: () => void;
+  quickRangePreset?: DashboardQuickRangePreset;
+  onQuickRangePresetChange?: (preset: DashboardQuickRangePreset) => void;
   isUpdatingRange?: boolean;
   compareOpen?: boolean;
   comparePreset?: ComparisonPreset;
@@ -74,6 +82,8 @@ export default function DashboardHeader({
   onDateFromChange,
   onDateToChange,
   onApplyDateRange,
+  quickRangePreset = "custom",
+  onQuickRangePresetChange,
   isUpdatingRange = false,
   compareOpen = false,
   comparePreset = "month",
@@ -106,6 +116,10 @@ export default function DashboardHeader({
     compareTo: "to",
     exportPdf: "Export PDF",
     exportExcel: "Export Excel",
+    quickThisMonth: "This month",
+    quickThisWeek: "This week",
+    quickYesterday: "Yesterday",
+    quickCustom: "Choose period",
   };
   const initials = getInitials(clientName);
   const showCompare = Boolean(
@@ -143,6 +157,30 @@ export default function DashboardHeader({
 
       {!pdfMode ? (
         <div className="no-print flex flex-col gap-2 sm:items-end">
+          <div className="flex flex-wrap gap-2 sm:justify-end">
+            {[
+              { key: "this_month", label: copy.quickThisMonth },
+              { key: "this_week", label: copy.quickThisWeek },
+              { key: "yesterday", label: copy.quickYesterday },
+              { key: "custom", label: copy.quickCustom },
+            ].map((item) => {
+              const active = quickRangePreset === item.key;
+              return (
+                <button
+                  key={item.key}
+                  type="button"
+                  onClick={() => onQuickRangePresetChange?.(item.key as DashboardQuickRangePreset)}
+                  className={`rounded-full px-3 py-1.5 text-sm font-medium transition ${
+                    active
+                      ? "bg-slate-900 text-white shadow-sm"
+                      : "border border-slate-200 bg-white text-slate-600 hover:border-slate-300 hover:bg-slate-50"
+                  }`}
+                >
+                  {item.label}
+                </button>
+              );
+            })}
+          </div>
           <div className="flex flex-wrap items-end gap-2">
             <label className="flex items-center gap-2 rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm text-slate-700">
               <CalendarRange className="h-4 w-4 text-slate-500" />

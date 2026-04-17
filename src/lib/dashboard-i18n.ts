@@ -26,23 +26,27 @@ export type DashboardI18n = {
   };
   header: {
     to: string;
-      apply: string;
-      updating: string;
-      compare: string;
-      compareApply: string;
-      compareClose: string;
-      compareTitle: string;
-      compareCurrent: string;
-      comparePrevious: string;
-      compareMonth: string;
-      compareWeek: string;
-      compareYear: string;
-      compareCustom: string;
-      compareFrom: string;
-      compareTo: string;
-      exportPdf: string;
-      exportExcel: string;
-    };
+    apply: string;
+    updating: string;
+    compare: string;
+    compareApply: string;
+    compareClose: string;
+    compareTitle: string;
+    compareCurrent: string;
+    comparePrevious: string;
+    compareMonth: string;
+    compareWeek: string;
+    compareYear: string;
+    compareCustom: string;
+    compareFrom: string;
+    compareTo: string;
+    exportPdf: string;
+    exportExcel: string;
+    quickThisMonth: string;
+    quickThisWeek: string;
+    quickYesterday: string;
+    quickCustom: string;
+  };
   common: {
     total: string;
     trend: string;
@@ -146,6 +150,10 @@ const DICTIONARY: Record<DashboardLanguage, Omit<DashboardI18n, "language" | "lo
       compareTo: "to",
       exportPdf: "Export PDF",
       exportExcel: "Export Excel",
+      quickThisMonth: "This month",
+      quickThisWeek: "This week",
+      quickYesterday: "Yesterday",
+      quickCustom: "Choose period",
     },
     common: {
       total: "Total",
@@ -248,6 +256,10 @@ const DICTIONARY: Record<DashboardLanguage, Omit<DashboardI18n, "language" | "lo
       compareTo: "по",
       exportPdf: "Экспорт PDF",
       exportExcel: "Экспорт Excel",
+      quickThisMonth: "Этот месяц",
+      quickThisWeek: "Эта неделя",
+      quickYesterday: "Вчера",
+      quickCustom: "Выбрать период",
     },
     common: {
       total: "Итого",
