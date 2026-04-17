@@ -416,14 +416,20 @@ export default function DashboardByIdPage() {
         to: result.data?.dashboard.period.to || "",
       };
       const effectivePreset = detectQuickRangePreset(resolvedPeriod.from, resolvedPeriod.to);
-      setDateRange((prev) => ({
-        from: prev.from || resolvedPeriod.from,
-        to: prev.to || resolvedPeriod.to,
-      }));
-      setDraftDateRange((prev) => ({
-        from: prev.from || resolvedPeriod.from,
-        to: prev.to || resolvedPeriod.to,
-      }));
+      setDateRange((prev) => {
+        const next = {
+          from: prev.from || resolvedPeriod.from,
+          to: prev.to || resolvedPeriod.to,
+        };
+        return prev.from === next.from && prev.to === next.to ? prev : next;
+      });
+      setDraftDateRange((prev) => {
+        const next = {
+          from: prev.from || resolvedPeriod.from,
+          to: prev.to || resolvedPeriod.to,
+        };
+        return prev.from === next.from && prev.to === next.to ? prev : next;
+      });
       setQuickRangePreset((prev) => (prev === "custom" ? effectivePreset : prev));
       setIsLoading(false);
     }
