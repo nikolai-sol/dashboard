@@ -259,6 +259,42 @@ CREATE TABLE IF NOT EXISTS canonical_fact_site_analytics_daily (
     KEY idx_canonical_fact_site_analytics_daily_run (ingestion_run_id)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT='Grain: 1 day x 1 analytics account x 1 analytics slice';
 
+CREATE TABLE IF NOT EXISTS canonical_fact_user_behavior_daily (
+    id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
+    source_key VARCHAR(64) NOT NULL,
+    analytics_account_id VARCHAR(128) NOT NULL DEFAULT '',
+    report_date DATE NOT NULL,
+    scope_hash CHAR(64) NOT NULL,
+    user_id TEXT NOT NULL,
+    traffic_source_id VARCHAR(64) DEFAULT NULL,
+    traffic_source VARCHAR(255) DEFAULT NULL,
+    start_url TEXT DEFAULT NULL,
+    end_url TEXT DEFAULT NULL,
+    visits BIGINT DEFAULT NULL,
+    users BIGINT DEFAULT NULL,
+    new_users BIGINT DEFAULT NULL,
+    page_depth DECIMAL(18,6) DEFAULT NULL,
+    bounce_rate DECIMAL(18,6) DEFAULT NULL,
+    avg_visit_duration_seconds DECIMAL(18,6) DEFAULT NULL,
+    up_to_day_user_recency_percentage DECIMAL(18,6) DEFAULT NULL,
+    up_to_week_user_recency_percentage DECIMAL(18,6) DEFAULT NULL,
+    up_to_month_user_recency_percentage DECIMAL(18,6) DEFAULT NULL,
+    ingestion_run_id BIGINT UNSIGNED DEFAULT NULL,
+    created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+    PRIMARY KEY (id),
+    UNIQUE KEY uniq_canonical_fact_user_behavior_daily (
+        source_key,
+        analytics_account_id,
+        report_date,
+        scope_hash
+    ),
+    KEY idx_canonical_fact_user_behavior_daily_source_date (source_key, report_date),
+    KEY idx_canonical_fact_user_behavior_daily_account_date (analytics_account_id, report_date),
+    KEY idx_canonical_fact_user_behavior_daily_user_date (user_id(128), report_date),
+    KEY idx_canonical_fact_user_behavior_daily_run (ingestion_run_id)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT='Grain: 1 day x 1 analytics account x 1 user x traffic source x start URL x end URL';
+
 CREATE TABLE IF NOT EXISTS canonical_parity_daily (
     id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
     source_key VARCHAR(64) NOT NULL,

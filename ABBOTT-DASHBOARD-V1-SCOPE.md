@@ -13,12 +13,12 @@ Access:
 Pages included in Abbott web dashboard v1:
 
 1. `Общая таблица по пользователям`
-   - source: `yandex_metrika_params`
+   - source: `canonical_fact_user_behavior_daily`
    - enrichment: `id` sheet for direction
    - current grain: `UserID + traffic source`
 
 2. `Действия пользователя на сайте`
-   - source: `yandex_metrika_params`
+   - source: `canonical_fact_user_behavior_daily`
    - mapping: `yandex_metrika_traffic`
    - current grain: `UserID + traffic source + startURL + endURL`
 
@@ -40,7 +40,7 @@ Pages included in Abbott web dashboard v1:
    - mixed legacy/external page
 
 7. `Время на сайте`
-   - source: `yandex_metrika_params`
+   - source: `canonical_fact_user_behavior_daily`
    - overall grain: `UserID` over selected date range
    - materials filter: `general_materials.url -> params.endURL`
    - metric logic: weighted avg duration by visits, then user bucket counts

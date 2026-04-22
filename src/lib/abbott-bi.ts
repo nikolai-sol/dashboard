@@ -92,6 +92,19 @@ type LegacyUserActionRow = RowDataPacket & {
   avg_duration: number | string | null;
 };
 
+type CanonicalUserBehaviorRow = RowDataPacket & {
+  user_id: number | string;
+  traffic_source: string | null;
+  start_url?: string | null;
+  end_url?: string | null;
+  visits: number | string | null;
+  users?: number | string | null;
+  new_users?: number | string | null;
+  page_depth: number | string | null;
+  avg_duration: number | string | null;
+  bounce_rate?: number | string | null;
+};
+
 type LegacyPageStatRow = RowDataPacket & {
   page_title: string | null;
   url: string | null;
@@ -694,7 +707,81 @@ function normalizeTimeBuckets(rows: LegacyTimeBucketCountRow[]): AbbottBiTimeBuc
   }));
 }
 
-async function queryUserSummary(counterIds: string[], from: string, to: string): Promise<AbbottBiUserSummaryRow[]> {
+async function hasCanonicalUserBehaviorRows(counterIds: string[], from: string, to: string) {
+  const sql = `
+    SELECT COUNT(*) AS row_count
+    FROM canonical_fact_user_behavior_daily
+    WHERE source_key = 'yandex_metrika'
+      AND analytics_account_id IN (${buildInClause(counterIds)})
+      AND report_date >= ?
+      AND report_date <= ?
+  `;
+  try {
+    const [rows] = await pool.execute<Array<RowDataPacket & { row_count: number | string }>>(sql, [
+      ...counterIds,
+      from,
+      to,
+    ]);
+    return asNumber(rows[0]?.row_count) > 0;
+  } catch (error) {
+    console.warn("Abbott canonical user behavior table is not available, falling back to legacy", error);
+    return false;
+  }
+}
+
+async function queryCanonicalUserSummary(
+  counterIds: string[],
+  from: string,
+  to: string,
+): Promise<AbbottBiUserSummaryRow[]> {
+  const sql = `
+    SELECT
+      CAST(user_id AS UNSIGNED) AS user_id,
+      MAX(COALESCE(traffic_source, CONCAT('traffic_id:', COALESCE(traffic_source_id, 'unknown')))) AS traffic_source,
+      COALESCE(SUM(visits), 0) AS visits,
+      COALESCE(SUM(users), 0) AS users,
+      COALESCE(SUM(new_users), 0) AS new_users,
+      CASE WHEN COALESCE(SUM(visits), 0) > 0
+        THEN ROUND(SUM(COALESCE(page_depth, 0) * visits) / SUM(visits), 2)
+        ELSE 0
+      END AS page_depth,
+      CASE WHEN COALESCE(SUM(visits), 0) > 0
+        THEN ROUND(SUM(COALESCE(avg_visit_duration_seconds, 0) * visits) / SUM(visits), 2)
+        ELSE 0
+      END AS avg_duration,
+      CASE WHEN COALESCE(SUM(visits), 0) > 0
+        THEN ROUND(SUM(COALESCE(bounce_rate, 0) * visits) / SUM(visits), 2)
+        ELSE 0
+      END AS bounce_rate
+    FROM canonical_fact_user_behavior_daily
+    WHERE source_key = 'yandex_metrika'
+      AND analytics_account_id IN (${buildInClause(counterIds)})
+      AND report_date >= ?
+      AND report_date <= ?
+      AND user_id REGEXP '^[0-9]+$'
+      AND CAST(user_id AS UNSIGNED) > 0
+    GROUP BY CAST(user_id AS UNSIGNED), COALESCE(traffic_source_id, traffic_source, '')
+    ORDER BY visits DESC, user_id ASC, traffic_source ASC
+  `;
+  const [rows] = await pool.execute<CanonicalUserBehaviorRow[]>(sql, [...counterIds, from, to]);
+  const { userDirections } = loadWorkbookData();
+  return rows.map((row) => {
+    const userId = String(Math.trunc(asNumber(row.user_id)));
+    return {
+      user_id: userId,
+      traffic_source: asString(row.traffic_source) || "Unknown traffic",
+      direction: userDirections.get(userId) ?? null,
+      visits: Math.round(asNumber(row.visits)),
+      users: Math.round(asNumber(row.users)),
+      new_users: Math.round(asNumber(row.new_users)),
+      page_depth: Number(asNumber(row.page_depth).toFixed(2)),
+      avg_duration: Number(asNumber(row.avg_duration).toFixed(2)),
+      bounce_rate: Number(asNumber(row.bounce_rate).toFixed(2)),
+    };
+  });
+}
+
+async function queryLegacyUserSummary(counterIds: string[], from: string, to: string): Promise<AbbottBiUserSummaryRow[]> {
   const trafficSourceSql = buildTrafficSourceSql("params.traffic_id");
   const sql = `
     SELECT
@@ -744,6 +831,13 @@ async function queryUserSummary(counterIds: string[], from: string, to: string):
   });
 }
 
+async function queryUserSummary(counterIds: string[], from: string, to: string): Promise<AbbottBiUserSummaryRow[]> {
+  if (await hasCanonicalUserBehaviorRows(counterIds, from, to)) {
+    return queryCanonicalUserSummary(counterIds, from, to);
+  }
+  return queryLegacyUserSummary(counterIds, from, to);
+}
+
 function normalizeTimeBucketsByPage(rows: LegacyTimeBucketPageRow[]) {
   const byUrl = new Map<string, LegacyTimeBucketCountRow[]>();
   rows.forEach((row) => {
@@ -762,7 +856,55 @@ function normalizeTimeBucketsByPage(rows: LegacyTimeBucketPageRow[]) {
   }));
 }
 
-async function queryUserActions(counterIds: string[], from: string, to: string): Promise<AbbottBiUserActionRow[]> {
+async function queryCanonicalUserActions(
+  counterIds: string[],
+  from: string,
+  to: string,
+): Promise<AbbottBiUserActionRow[]> {
+  const sql = `
+    SELECT
+      CAST(user_id AS UNSIGNED) AS user_id,
+      MAX(COALESCE(traffic_source, CONCAT('traffic_id:', COALESCE(traffic_source_id, 'unknown')))) AS traffic_source,
+      MAX(COALESCE(start_url, '')) AS start_url,
+      MAX(COALESCE(end_url, '')) AS end_url,
+      COALESCE(SUM(visits), 0) AS visits,
+      CASE WHEN COALESCE(SUM(visits), 0) > 0
+        THEN ROUND(SUM(COALESCE(page_depth, 0) * visits) / SUM(visits), 2)
+        ELSE 0
+      END AS page_depth,
+      CASE WHEN COALESCE(SUM(visits), 0) > 0
+        THEN ROUND(SUM(COALESCE(avg_visit_duration_seconds, 0) * visits) / SUM(visits), 2)
+        ELSE 0
+      END AS avg_duration
+    FROM canonical_fact_user_behavior_daily
+    WHERE source_key = 'yandex_metrika'
+      AND analytics_account_id IN (${buildInClause(counterIds)})
+      AND report_date >= ?
+      AND report_date <= ?
+      AND user_id REGEXP '^[0-9]+$'
+      AND CAST(user_id AS UNSIGNED) > 0
+    GROUP BY
+      CAST(user_id AS UNSIGNED),
+      COALESCE(traffic_source_id, traffic_source, ''),
+      COALESCE(start_url, ''),
+      COALESCE(end_url, '')
+    ORDER BY user_id ASC, visits DESC, traffic_source ASC, start_url ASC, end_url ASC
+  `;
+  const [rows] = await pool.execute<CanonicalUserBehaviorRow[]>(sql, [...counterIds, from, to]);
+  const { userDirections } = loadWorkbookData();
+  return rows.map((row) => ({
+    user_id: String(Math.trunc(asNumber(row.user_id))),
+    traffic_source: asString(row.traffic_source) || "Unknown traffic",
+    direction: userDirections.get(String(Math.trunc(asNumber(row.user_id)))) ?? null,
+    start_url: asString(row.start_url),
+    end_url: asString(row.end_url),
+    visits: Math.round(asNumber(row.visits)),
+    page_depth: Number(asNumber(row.page_depth).toFixed(2)),
+    avg_duration: Number(asNumber(row.avg_duration).toFixed(2)),
+  }));
+}
+
+async function queryLegacyUserActions(counterIds: string[], from: string, to: string): Promise<AbbottBiUserActionRow[]> {
   const trafficSourceSql = buildTrafficSourceSql("params.traffic_id");
   const sql = `
     SELECT
@@ -806,6 +948,13 @@ async function queryUserActions(counterIds: string[], from: string, to: string):
     page_depth: Number(asNumber(row.page_depth).toFixed(2)),
     avg_duration: Number(asNumber(row.avg_duration).toFixed(2)),
   }));
+}
+
+async function queryUserActions(counterIds: string[], from: string, to: string): Promise<AbbottBiUserActionRow[]> {
+  if (await hasCanonicalUserBehaviorRows(counterIds, from, to)) {
+    return queryCanonicalUserActions(counterIds, from, to);
+  }
+  return queryLegacyUserActions(counterIds, from, to);
 }
 
 async function queryPageStats(counterIds: string[], from: string, to: string): Promise<AbbottBiPageStatRow[]> {
@@ -869,7 +1018,100 @@ async function queryReturningFallback(counterIds: string[], from: string, to: st
     .filter((row) => row.url);
 }
 
-async function queryTimeBuckets(counterIds: string[], from: string, to: string): Promise<AbbottBiTimeBuckets> {
+async function queryCanonicalTimeBuckets(counterIds: string[], from: string, to: string): Promise<AbbottBiTimeBuckets> {
+  const { generalMaterials } = loadWorkbookData();
+  const materialUrls = [...new Set(generalMaterials.map((row) => row.url).filter(Boolean))];
+  const overallBucketCase = buildTimeBucketCase(
+    "SUM(COALESCE(avg_visit_duration_seconds, 0) * visits) / SUM(visits)",
+  );
+  const baseParams = [...counterIds, from, to];
+
+  const overallSql = `
+    SELECT bucket_id, COUNT(*) AS users
+    FROM (
+      SELECT
+        CAST(user_id AS UNSIGNED) AS user_id,
+        ${overallBucketCase} AS bucket_id
+      FROM canonical_fact_user_behavior_daily
+      WHERE source_key = 'yandex_metrika'
+        AND analytics_account_id IN (${buildInClause(counterIds)})
+        AND report_date >= ?
+        AND report_date <= ?
+        AND user_id REGEXP '^[0-9]+$'
+        AND CAST(user_id AS UNSIGNED) > 0
+      GROUP BY CAST(user_id AS UNSIGNED)
+    ) grouped_users
+    GROUP BY bucket_id
+  `;
+  const [overallRows] = await pool.execute<LegacyTimeBucketCountRow[]>(overallSql, baseParams);
+
+  let materialsRows: LegacyTimeBucketCountRow[] = [];
+  if (materialUrls.length > 0) {
+    const materialsBucketCase = buildTimeBucketCase(
+      "SUM(COALESCE(avg_visit_duration_seconds, 0) * visits) / SUM(visits)",
+    );
+    const materialsSql = `
+      SELECT bucket_id, COUNT(*) AS users
+      FROM (
+        SELECT
+          CAST(user_id AS UNSIGNED) AS user_id,
+          ${materialsBucketCase} AS bucket_id
+        FROM canonical_fact_user_behavior_daily
+        WHERE source_key = 'yandex_metrika'
+          AND analytics_account_id IN (${buildInClause(counterIds)})
+          AND report_date >= ?
+          AND report_date <= ?
+          AND user_id REGEXP '^[0-9]+$'
+          AND CAST(user_id AS UNSIGNED) > 0
+          AND end_url IN (${buildInClause(materialUrls)})
+        GROUP BY CAST(user_id AS UNSIGNED)
+      ) grouped_material_users
+      GROUP BY bucket_id
+    `;
+    const [rawMaterialsRows] = await pool.execute<LegacyTimeBucketCountRow[]>(materialsSql, [
+      ...counterIds,
+      from,
+      to,
+      ...materialUrls,
+    ]);
+    materialsRows = rawMaterialsRows;
+  }
+
+  const perPageBucketCase = buildTimeBucketCase(
+    "SUM(COALESCE(avg_visit_duration_seconds, 0) * visits) / SUM(visits)",
+  );
+  const perPageSql = `
+    SELECT
+      end_url AS url,
+      bucket_id,
+      COUNT(*) AS users
+    FROM (
+      SELECT
+        CAST(user_id AS UNSIGNED) AS user_id,
+        COALESCE(end_url, '') AS end_url,
+        ${perPageBucketCase} AS bucket_id
+      FROM canonical_fact_user_behavior_daily
+      WHERE source_key = 'yandex_metrika'
+        AND analytics_account_id IN (${buildInClause(counterIds)})
+        AND report_date >= ?
+        AND report_date <= ?
+        AND user_id REGEXP '^[0-9]+$'
+        AND CAST(user_id AS UNSIGNED) > 0
+        AND COALESCE(end_url, '') <> ''
+      GROUP BY CAST(user_id AS UNSIGNED), COALESCE(end_url, '')
+    ) grouped_page_users
+    GROUP BY end_url, bucket_id
+  `;
+  const [perPageRows] = await pool.execute<LegacyTimeBucketPageRow[]>(perPageSql, baseParams);
+
+  return {
+    overall: normalizeTimeBuckets(overallRows),
+    materials: normalizeTimeBuckets(materialsRows),
+    by_page: normalizeTimeBucketsByPage(perPageRows),
+  };
+}
+
+async function queryLegacyTimeBuckets(counterIds: string[], from: string, to: string): Promise<AbbottBiTimeBuckets> {
   const { generalMaterials } = loadWorkbookData();
   const materialUrls = [...new Set(generalMaterials.map((row) => row.url).filter(Boolean))];
   const overallBucketCase = buildTimeBucketCase("SUM(COALESCE(avgVDS, 0) * visits) / SUM(visits)");
@@ -951,6 +1193,13 @@ async function queryTimeBuckets(counterIds: string[], from: string, to: string):
     materials: normalizeTimeBuckets(materialsRows),
     by_page: normalizeTimeBucketsByPage(perPageRows),
   };
+}
+
+async function queryTimeBuckets(counterIds: string[], from: string, to: string): Promise<AbbottBiTimeBuckets> {
+  if (await hasCanonicalUserBehaviorRows(counterIds, from, to)) {
+    return queryCanonicalTimeBuckets(counterIds, from, to);
+  }
+  return queryLegacyTimeBuckets(counterIds, from, to);
 }
 
 async function queryExternalFactDaily(from: string, to: string) {

@@ -67,7 +67,8 @@ const TABS: TabConfig[] = [
   {
     id: "users_summary",
     label: "1. Общая таблица по пользователям",
-    description: "Источник: yandex_metrika_params + yandex_metrika_traffic. Grain: UserID + Источник, только numeric UserID > 0.",
+    description:
+      "Источник: canonical_fact_user_behavior_daily. Grain: UserID + Источник, только numeric UserID > 0.",
   },
   {
     id: "user_actions",
@@ -97,7 +98,8 @@ const TABS: TabConfig[] = [
   {
     id: "time_buckets",
     label: "7. Время на сайте",
-    description: "Источник: yandex_metrika_params. Бакеты по weighted avg duration на UserID, отдельно overall и по material URLs.",
+    description:
+      "Источник: canonical_fact_user_behavior_daily. Бакеты по weighted avg duration на UserID, отдельно overall и по material URLs.",
   },
 ];
 

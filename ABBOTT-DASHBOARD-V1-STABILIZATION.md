@@ -4,25 +4,25 @@
 
 ### 1. Общая таблица по пользователям
 - grain: `UserID + Источник` over selected date range
-- current fact source: `yandex_metrika_params`
+- current fact source: `canonical_fact_user_behavior_daily`
 - external mapping:
   - `id` sheet from `Abbott names.xlsx` for `Направление`
   - `yandex_metrika_traffic` for source labels
 - fallback logic:
   - in-app traffic label fallback for missing `traffic_id` dictionary values
-- current status: `legacy-backed`
+- current status: `canonical-backed`
 - future migration target:
   - optional future `user_behavior` / user proxy scope
 
 ### 2. Действия пользователя на сайте
 - grain: `UserID + Источник + Start URL + End URL`
-- current fact source: `yandex_metrika_params`
+- current fact source: `canonical_fact_user_behavior_daily`
 - external mapping:
   - `id` sheet from `Abbott names.xlsx` for `Направление`
   - `yandex_metrika_traffic` for source labels
 - fallback logic:
   - in-app traffic label fallback for missing `traffic_id` dictionary values
-- current status: `legacy-backed`
+- current status: `canonical-backed`
 - future migration target:
   - future `user_behavior` layer if session-level contour is introduced
 
@@ -91,7 +91,7 @@
 
 ## Known Limitations
 
-- Pages 1 and 2 still rely on legacy user-proxy data, not a true session/user layer.
+- Pages 1 and 2 now use canonical user-proxy data, not a true session/user layer.
 - Page 3 enrichment is incomplete for some pages and still depends on workbook coverage.
 - Page 4 is Abbott-specific and not yet a generalized outbound analytics contour.
 - Page 5 API path is Abbott-only and on-demand, not collector-backed.
@@ -100,6 +100,6 @@
 
 ## Production Support Note
 
-- Abbott v1 is production-ready, but intentionally hybrid: legacy facts, workbook enrichment, and one Abbott-specific API-backed path for `Вернувшиеся`.
+- Abbott v1 is production-ready, but intentionally hybrid: canonical user behavior facts, legacy page facts, workbook enrichment, and one Abbott-specific API-backed path for `Вернувшиеся`.
 - If page 5 returns to zeros, first verify `METRIKA_TOKEN` and Metrika API availability.
 - No cron or schema dependency was introduced for the final Abbott stabilization; support should treat this as dashboard-runtime logic, not collector infrastructure.
