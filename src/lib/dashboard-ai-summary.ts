@@ -92,14 +92,22 @@ type SummaryPromptPayload = {
     full_reads: number;
     metrica_visits: number;
   };
+  /** Present when the prompt was reduced to stay within provider limits. */
+  truncation_note?: string;
+};
+
+type ChatCompletionMessage = {
+  content?: string | Array<{ type?: string; text?: string }>;
+  /** Some Gemini OpenAI-compat responses put the body here when `content` is empty. */
+  reasoning_content?: string;
 };
 
 type ChatCompletionResponse = {
   choices?: Array<{
-    message?: {
-      content?: string | Array<{ type?: string; text?: string }>;
-    };
+    finish_reason?: string;
+    message?: ChatCompletionMessage;
   }>;
+  error?: { message?: string; type?: string };
 };
 
 const MONEY_METRICS = new Set(["spend", "cpm", "cpc", "cpv", "cpa", "roas"]);
@@ -107,8 +115,12 @@ const DEFAULT_TIMEOUT_MS = 18_000;
 const DEFAULT_CACHE_TTL_MS = 5 * 60 * 1_000;
 const DEFAULT_MAX_TOKENS = 220;
 const KIMI_MIN_TIMEOUT_MS = 30_000;
+/** Large dashboard JSON + Gemini reasoning needs more wall time than legacy 18s default. */
+const GEMINI_MIN_TIMEOUT_MS = 90_000;
 const MAX_TOP_PLATFORMS = 5;
 const MAX_CHANNEL_WATCHOUTS = 3;
+/** Large awareness dashboards (many plan rows) can exceed provider input limits; trim before chat/completions. */
+const DEFAULT_PROMPT_JSON_MAX_CHARS = 120_000;
 const summaryCache = new Map<string, { expiresAt: number; value: DashboardAiSummary }>();
 
 function toPositiveInt(value: string | undefined, fallback: number): number {
@@ -131,25 +143,44 @@ function getProviderConfig(): ProviderConfig | null {
   }
 
   const model = process.env.AI_SUMMARY_MODEL?.trim() || "gemini-2.5-flash";
-  const isKimiModel = model.toLowerCase().startsWith("kimi-");
+  const modelLower = model.toLowerCase();
+  const isKimiModel = modelLower.startsWith("kimi-");
+  const baseUrl = (
+    process.env.AI_SUMMARY_BASE_URL?.trim() ||
+    "https://generativelanguage.googleapis.com/v1beta/openai"
+  ).replace(/\/+$/, "");
+  const baseUrlLower = baseUrl.toLowerCase();
+  const isGeminiOpenAiCompat =
+    !isKimiModel &&
+    (modelLower.startsWith("gemini") || baseUrlLower.includes("generativelanguage.googleapis.com"));
   const defaultTemperature = isKimiModel ? 0.6 : 0.2;
   const configuredTimeoutMs = toPositiveInt(process.env.AI_SUMMARY_TIMEOUT_MS, DEFAULT_TIMEOUT_MS);
+  /** Google OpenAI-compat endpoint rejects non-1 temperatures for several Gemini models ("only 1 is allowed"). */
+  const temperature = isGeminiOpenAiCompat
+    ? 1
+    : toFiniteNumber(process.env.AI_SUMMARY_TEMPERATURE, defaultTemperature);
 
   return {
     apiKey,
     model,
-    baseUrl: (
-      process.env.AI_SUMMARY_BASE_URL?.trim() ||
-      "https://generativelanguage.googleapis.com/v1beta/openai"
-    ).replace(/\/+$/, ""),
-    temperature: toFiniteNumber(process.env.AI_SUMMARY_TEMPERATURE, defaultTemperature),
+    baseUrl,
+    temperature,
     timeoutMs: isKimiModel
       ? Math.max(configuredTimeoutMs, KIMI_MIN_TIMEOUT_MS)
-      : configuredTimeoutMs,
+      : isGeminiOpenAiCompat
+        ? Math.max(configuredTimeoutMs, GEMINI_MIN_TIMEOUT_MS)
+        : configuredTimeoutMs,
     cacheTtlMs: toPositiveInt(process.env.AI_SUMMARY_CACHE_TTL_MS, DEFAULT_CACHE_TTL_MS),
-    maxTokens: toPositiveInt(process.env.AI_SUMMARY_MAX_TOKENS, DEFAULT_MAX_TOKENS),
+    /**
+     * Gemini 2.x often spends budget on internal reasoning; 220 output tokens routinely hits
+     * `finish_reason=length` with empty `content` for large dashboard JSON (e.g. Landsail).
+     */
+    maxTokens: isGeminiOpenAiCompat
+      ? Math.max(8192, toPositiveInt(process.env.AI_SUMMARY_MAX_TOKENS, DEFAULT_MAX_TOKENS))
+      : toPositiveInt(process.env.AI_SUMMARY_MAX_TOKENS, DEFAULT_MAX_TOKENS),
     disableThinking: isKimiModel,
-    forceJsonObject: isKimiModel,
+    /** Kimi always; Gemini OpenAI-compat often needs json_object so `content` is non-empty JSON. */
+    forceJsonObject: isKimiModel || isGeminiOpenAiCompat,
   };
 }
 
@@ -373,27 +404,92 @@ function buildSystemPrompt(language: DashboardData["dashboard"]["language"]): st
     "Return valid JSON with this exact shape: {\"headline\": string, \"bullets\": string[], \"watchout\": string | null}.",
     "Constraints:",
     "- headline must be one short sentence.",
-    "- bullets must contain 1 to 3 grounded insights.",
+    "- bullets must contain 1 to 3 grounded insights (each bullet under 140 characters to fit output limits).",
     "- watchout is optional and should only be set when there is a clear decline, pacing risk, or missing comparison context.",
     "- If comparison data is absent, comment only on the current period.",
     "- Respect show_spend: never reference spend-derived metrics when show_spend is false.",
     "- Every statement must be traceable to the payload.",
     "- Do not include markdown, numbering, or extra keys.",
+    "- If the payload includes truncation_note, you still must ground the summary in the fields that are present.",
   ].join("\n");
 }
 
+function shrinkSummaryPromptPayload(
+  payload: SummaryPromptPayload,
+  topPlatforms: number,
+  comparisons: number,
+  watchouts: number,
+  includePromopages: boolean,
+): SummaryPromptPayload {
+  return {
+    ...payload,
+    comparison: payload.comparison?.slice(0, comparisons),
+    top_platforms: payload.top_platforms.slice(0, topPlatforms),
+    channel_watchouts: payload.channel_watchouts.slice(0, watchouts),
+    promopages: includePromopages ? payload.promopages : undefined,
+  };
+}
+
 function buildUserPrompt(payload: SummaryPromptPayload): string {
-  return JSON.stringify(payload, null, 2);
+  const maxChars = toPositiveInt(process.env.AI_SUMMARY_PROMPT_JSON_MAX_CHARS, DEFAULT_PROMPT_JSON_MAX_CHARS);
+  // Compact JSON (no pretty-print) first — large dashboards can exceed provider limits.
+  const steps: SummaryPromptPayload[] = [
+    payload,
+    shrinkSummaryPromptPayload(payload, 5, 5, 3, true),
+    shrinkSummaryPromptPayload(payload, 4, 4, 2, true),
+    shrinkSummaryPromptPayload(payload, 3, 3, 2, false),
+    {
+      context: payload.context,
+      display_rules: payload.display_rules,
+      kpi_snapshot: payload.kpi_snapshot,
+      top_platforms: payload.top_platforms.slice(0, 2),
+      channel_watchouts: payload.channel_watchouts.slice(0, 1),
+      truncation_note:
+        "Heavy dashboard: only KPI snapshot and top platform rows are included; omit granular claims.",
+    },
+  ];
+
+  for (const candidate of steps) {
+    const raw = JSON.stringify(candidate);
+    if (raw.length <= maxChars) {
+      return raw;
+    }
+  }
+
+  const minimal: SummaryPromptPayload = {
+    context: payload.context,
+    display_rules: payload.display_rules,
+    kpi_snapshot: payload.kpi_snapshot,
+    top_platforms: [],
+    channel_watchouts: [],
+    truncation_note:
+      "Payload was too large even after shrinking; rely on KPI snapshot and period context only.",
+  };
+  return JSON.stringify(minimal);
 }
 
 function extractMessageText(response: ChatCompletionResponse): string {
-  const content = response.choices?.[0]?.message?.content;
-  if (typeof content === "string") {
+  const message = response.choices?.[0]?.message;
+  if (!message) {
+    return "";
+  }
+
+  const content = message.content;
+  if (typeof content === "string" && content.trim()) {
     return content;
   }
   if (Array.isArray(content)) {
-    return content.map((part) => part.text ?? "").join("").trim();
+    const joined = content.map((part) => part.text ?? "").join("").trim();
+    if (joined) {
+      return joined;
+    }
   }
+
+  const reasoning = message.reasoning_content;
+  if (typeof reasoning === "string" && reasoning.trim()) {
+    return reasoning;
+  }
+
   return "";
 }
 
@@ -401,9 +497,48 @@ function extractJsonObject(rawText: string): string | null {
   const trimmed = rawText.trim();
   if (!trimmed) return null;
   const start = trimmed.indexOf("{");
-  const end = trimmed.lastIndexOf("}");
-  if (start < 0 || end < start) return null;
-  return trimmed.slice(start, end + 1);
+  if (start < 0) return null;
+
+  let depth = 0;
+  let inString = false;
+  let escape = false;
+  let stringQuote: '"' | "'" | null = null;
+
+  for (let i = start; i < trimmed.length; i++) {
+    const ch = trimmed[i];
+    if (inString) {
+      if (escape) {
+        escape = false;
+        continue;
+      }
+      if (ch === "\\") {
+        escape = true;
+        continue;
+      }
+      if (stringQuote && ch === stringQuote) {
+        inString = false;
+        stringQuote = null;
+      }
+      continue;
+    }
+
+    if (ch === '"' || ch === "'") {
+      inString = true;
+      stringQuote = ch;
+      continue;
+    }
+
+    if (ch === "{") {
+      depth += 1;
+    } else if (ch === "}") {
+      depth -= 1;
+      if (depth === 0) {
+        return trimmed.slice(start, i + 1);
+      }
+    }
+  }
+
+  return null;
 }
 
 function normalizeModelOutput(rawText: string): DashboardAiSummary {
@@ -473,6 +608,9 @@ async function requestSummaryFromProvider(
   }
 
   const body = (await response.json()) as ChatCompletionResponse;
+  if (body.error?.message) {
+    throw new Error(`provider_error:${body.error.type ?? "unknown"}:${body.error.message}`);
+  }
   const content = extractMessageText(body);
   return normalizeModelOutput(content);
 }

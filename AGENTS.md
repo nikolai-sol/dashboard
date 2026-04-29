@@ -105,6 +105,10 @@ Health checks:
 - local VPS: `curl -s http://127.0.0.1:3001/api/health`
 - public: `curl -s https://dashboards.adreports.ru/api/health`
 
+Dashboard AI summary (`/api/dashboard/[id]/ai-summary/generate`):
+- Uses `AI_SUMMARY_*` env from `/var/www/dashboard/.env` (rendered from `.production.env` on deploy).
+- Gemini via `generativelanguage.googleapis.com` OpenAI-compat: API rejects `temperature` other than `1` for some models; output JSON needs enough `max_tokens` (large Russian bullets truncate easily). Parser must balance `{` `}` outside strings (headlines/bullets may contain `}`).
+
 Do not assume `systemd` or port `3002` for `dashboard-next`.
 Current truth is `PM2 + 3001`.
 
