@@ -111,6 +111,12 @@ export default function DashboardList({ dashboards, loading = false, onRefresh }
                       >
                         Plan
                       </Link>
+                      <Link
+                        href={`/admin/dashboards/${dashboard.id}/google-ads`}
+                        className="rounded border border-slate-300 px-2 py-1 hover:bg-slate-50"
+                      >
+                        GAds
+                      </Link>
                       <button
                         type="button"
                         onClick={() => cloneDashboard(dashboard.id, dashboard.client_id, dashboard.client_name)}

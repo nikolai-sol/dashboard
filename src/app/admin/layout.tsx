@@ -20,6 +20,9 @@ export default function AdminLayout({ children }: { children: ReactNode }) {
             <Link href="/admin/collection" className="block rounded px-3 py-2 hover:bg-slate-800">
               Collection Settings
             </Link>
+            <Link href="/admin/dashboards/24/google-ads" className="block rounded px-3 py-2 hover:bg-slate-800">
+              Google Ads Ops
+            </Link>
             <Link href="/admin/settings" className="block rounded px-3 py-2 hover:bg-slate-800">
               Settings
             </Link>
@@ -44,6 +47,9 @@ export default function AdminLayout({ children }: { children: ReactNode }) {
             </Link>
             <Link href="/admin/collection" className="block rounded px-3 py-2 hover:bg-slate-800">
               Collection Settings
+            </Link>
+            <Link href="/admin/dashboards/24/google-ads" className="block rounded px-3 py-2 hover:bg-slate-800">
+              Google Ads Ops
             </Link>
             <Link href="/admin/settings" className="block rounded px-3 py-2 hover:bg-slate-800">
               Settings

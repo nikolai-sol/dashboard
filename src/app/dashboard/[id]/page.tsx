@@ -96,10 +96,12 @@ function buildAwarenessTotals(data: DashboardData | null | undefined) {
 }
 
 function money(value: number, currency = "EUR", locale = "en-US") {
+  const fractionDigits = Math.abs(value) > 0 && Math.abs(value) < 100 ? 2 : 0;
   return new Intl.NumberFormat(locale, {
     style: "currency",
     currency,
-    maximumFractionDigits: 0,
+    minimumFractionDigits: fractionDigits,
+    maximumFractionDigits: fractionDigits,
   }).format(value);
 }
 

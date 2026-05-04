@@ -162,6 +162,7 @@ CREATE TABLE IF NOT EXISTS canonical_fact_ads_daily (
     clicks BIGINT DEFAULT NULL,
     views BIGINT DEFAULT NULL,
     conversions BIGINT DEFAULT NULL,
+    conversion_value DECIMAL(18,6) DEFAULT NULL,
     reach BIGINT DEFAULT NULL,
     frequency DECIMAL(18,6) DEFAULT NULL,
     ctr DECIMAL(18,6) DEFAULT NULL,
