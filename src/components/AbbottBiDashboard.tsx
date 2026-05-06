@@ -1519,7 +1519,7 @@ export default function AbbottBiDashboard({ data, locale = "ru-RU" }: AbbottBiDa
               activeTab === "page_stats"
                 ? "xl:grid-cols-4"
                 : activeTab === "users_summary"
-                  ? "md:grid-cols-2 2xl:grid-cols-4"
+                  ? "sm:grid-cols-2 lg:grid-cols-4"
                   : "xl:grid-cols-3"
             }`}
           >
