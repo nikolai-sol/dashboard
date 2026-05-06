@@ -247,6 +247,20 @@ function extractAbbottSlugFromUrl(rawUrl: string | null | undefined) {
   }
 }
 
+function normalizeAbbottPageUrl(rawUrl: string | null | undefined) {
+  const value = asString(rawUrl).replaceAll("&amp;", "&");
+  if (!value) return "";
+  try {
+    const url = new URL(value);
+    const protocol = url.protocol.toLowerCase();
+    const host = url.host.toLowerCase();
+    const pathname = url.pathname.replace(/\/+$/, "") || "/";
+    return `${protocol}//${host}${pathname}`;
+  } catch {
+    return value.split("#")[0]?.split("?")[0]?.replace(/\/+$/, "") || value;
+  }
+}
+
 const ABBOTT_DIRECTION_BY_PREFIX: Record<string, string> = {
   cardio: "Кардиология [262338]",
   gastro: "Гастроэнтерология [262340]",
@@ -996,28 +1010,43 @@ async function queryPageStats(counterIds: string[], from: string, to: string): P
   `;
   const [rows] = await pool.execute<LegacyPageStatRow[]>(sql, [...counterIds, from, to]);
   const { contentByTitle, contentByTitleAndType, contentBySlug, userDirections } = loadWorkbookData();
-  return rows
-    .map((row) => {
+  const byPage = new Map<string, AbbottBiPageStatRow & { is_hidden?: boolean }>();
+  rows
+    .forEach((row) => {
       const pageTitle = asString(row.page_title);
-      const url = asString(row.url);
+      const url = normalizeAbbottPageUrl(row.url);
       const inferredMaterialType = inferAbbottMaterialTypeFromUrl(url);
       const contentMeta =
         (inferredMaterialType ? contentByTitleAndType.get(`${inferredMaterialType}::${pageTitle}`) : null) ??
         contentByTitle.get(pageTitle) ??
         contentBySlug.get(extractAbbottSlugFromUrl(url) ?? "");
-      return {
+      const key = `${pageTitle}\n${url}`;
+      const current = byPage.get(key) ?? {
         page_title: pageTitle,
         url,
         direction: contentMeta?.direction ?? inferAbbottDirectionFromUrl(row.url, userDirections) ?? null,
         material_type: contentMeta?.material_type ?? inferredMaterialType ?? null,
         access: contentMeta?.access ?? null,
         is_hidden: contentMeta?.is_active === false,
-        pageviews: Math.round(asNumber(row.pageviews)),
-        users: Math.round(asNumber(row.users)),
+        pageviews: 0,
+        users: 0,
       };
+      current.direction = current.direction ?? contentMeta?.direction ?? inferAbbottDirectionFromUrl(row.url, userDirections) ?? null;
+      current.material_type = current.material_type ?? contentMeta?.material_type ?? inferredMaterialType ?? null;
+      current.access = current.access ?? contentMeta?.access ?? null;
+      current.is_hidden = current.is_hidden || contentMeta?.is_active === false;
+      current.pageviews += Math.round(asNumber(row.pageviews));
+      current.users += Math.round(asNumber(row.users));
+      byPage.set(key, current);
     })
+  return Array.from(byPage.values())
     .filter((row) => !row.is_hidden)
-    .filter((row) => row.url || row.page_title);
+    .filter((row) => row.url || row.page_title)
+    .sort((a, b) => {
+      if (b.pageviews !== a.pageviews) return b.pageviews - a.pageviews;
+      if (b.users !== a.users) return b.users - a.users;
+      return a.page_title.localeCompare(b.page_title, "ru");
+    });
 }
 
 async function queryReturningFallback(counterIds: string[], from: string, to: string) {

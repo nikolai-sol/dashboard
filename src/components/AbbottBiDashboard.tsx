@@ -1052,6 +1052,7 @@ export default function AbbottBiDashboard({ data, locale = "ru-RU" }: AbbottBiDa
     totalPages = pageStatsPage.totalPages;
     tableColumns = [
       { key: "page_title", label: "Заголовок страниц", className: "min-w-[220px]" },
+      { key: "url", label: "URL", className: "min-w-[280px] break-all" },
       { key: "direction", label: "Направление" },
       { key: "material_type", label: "Тип материала" },
       { key: "access", label: "Доступ" },
@@ -1060,6 +1061,7 @@ export default function AbbottBiDashboard({ data, locale = "ru-RU" }: AbbottBiDa
     ];
     tableRows = pageStatsPage.pageRows.map((row) => ({
       page_title: row.page_title || "—",
+      url: row.url || "—",
       direction: row.direction ?? "—",
       material_type: row.material_type ?? "—",
       access: row.access ?? "—",
