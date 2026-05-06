@@ -1120,17 +1120,17 @@ export default function AbbottBiDashboard({ data, locale = "ru-RU" }: AbbottBiDa
     users_summary: (
       <>
         <SelectField
-          label="User ID"
-          value={filtersByTab.users_summary.user_id}
-          options={usersSummaryOptions.user_id}
-          onChange={(value) => setSelectFilter("users_summary", "user_id", value)}
-          theme={theme}
-        />
-        <SelectField
           label="Трафик"
           value={filtersByTab.users_summary.user_id_traffic}
           options={USER_ID_TRAFFIC_OPTIONS}
           onChange={(value) => setSelectFilter("users_summary", "user_id_traffic", value)}
+          theme={theme}
+        />
+        <SelectField
+          label="User ID"
+          value={filtersByTab.users_summary.user_id}
+          options={usersSummaryOptions.user_id}
+          onChange={(value) => setSelectFilter("users_summary", "user_id", value)}
           theme={theme}
         />
         <SelectField
@@ -1514,7 +1514,15 @@ export default function AbbottBiDashboard({ data, locale = "ru-RU" }: AbbottBiDa
         </div>
 
         {tabFilterContent[activeTab] ? (
-          <div className={`grid gap-4 ${activeTab === "page_stats" ? "xl:grid-cols-4" : "xl:grid-cols-3"}`}>
+          <div
+            className={`grid gap-4 ${
+              activeTab === "page_stats"
+                ? "xl:grid-cols-4"
+                : activeTab === "users_summary"
+                  ? "md:grid-cols-2 2xl:grid-cols-4"
+                  : "xl:grid-cols-3"
+            }`}
+          >
             {tabFilterContent[activeTab]}
           </div>
         ) : null}
