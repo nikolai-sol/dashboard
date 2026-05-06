@@ -1,0 +1,1 @@
+45 6 * * * cd /Users/nafanya/ReportingDash && PYTHONPATH=.pydeps /opt/homebrew/bin/python3 fetch_google_ads_canonical.py collect --run-type cron --campaign-ids 23798592231 >> /Users/nafanya/ReportingDash/logs/google-ads-at-canonical-cron.log 2>&1
