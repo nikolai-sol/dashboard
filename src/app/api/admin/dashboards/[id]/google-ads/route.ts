@@ -1,13 +1,21 @@
 import { NextResponse } from "next/server";
 import pool from "@/lib/db";
+import { ADMIN_SESSION_COOKIE, parseCookieValue, verifyAdminSession } from "@/lib/access-auth";
 import {
+  analyzeGoogleAdsRecommendationWithAi,
   approveGoogleAdsRecommendation,
+  getGoogleAdsRecommendationById,
+  getGoogleAdsControlSettings,
+  getLatestGoogleAdsRecommendationAiAnalyses,
   getGoogleAdsRecommendationSummary,
   listGoogleAdsMutationLog,
   listGoogleAdsRecommendations,
+  listGoogleAdsSearchTerms,
   loadGoogleAdsDashboardContext,
   rejectGoogleAdsRecommendation,
   runGoogleAdsCollectorCommand,
+  upsertGoogleAdsControlSettings,
+  updateGoogleAdsRecommendation,
   validateDashboardGoogleAdsTarget,
 } from "@/lib/google-ads-admin";
 
@@ -31,12 +39,28 @@ function normalizeStatus(value: unknown): string {
   return STATUS_VALUES.has(status) ? status : "pending";
 }
 
+function normalizeBool(value: unknown, fallback = false): boolean {
+  if (typeof value === "boolean") return value;
+  const text = String(value ?? "").trim().toLowerCase();
+  if (["1", "true", "yes", "on"].includes(text)) return true;
+  if (["0", "false", "no", "off"].includes(text)) return false;
+  return fallback;
+}
+
+function normalizeMatchType(value: unknown): "PHRASE" | "EXACT" | "BROAD" | null {
+  const text = String(value ?? "").trim().toUpperCase();
+  if (text === "PHRASE" || text === "EXACT" || text === "BROAD") return text;
+  return null;
+}
+
 async function buildPayload(options: {
   dashboardId: number;
   customerId?: string;
   campaignId?: string;
   status?: string;
   limit?: number;
+  dateFrom?: string;
+  dateTo?: string;
   commandOutput?: { stdout: string; stderr: string } | null;
 }) {
   const context = await loadGoogleAdsDashboardContext(options.dashboardId);
@@ -59,6 +83,24 @@ async function buildPayload(options: {
     customerId && campaignId
       ? await listGoogleAdsMutationLog(customerId, campaignId, 20)
       : [];
+  const settings =
+    customerId && campaignId
+      ? await getGoogleAdsControlSettings(options.dashboardId, customerId, campaignId)
+      : null;
+
+  const aiAnalysisByRecommendation = recommendations.length
+    ? await getLatestGoogleAdsRecommendationAiAnalyses(recommendations.map((row) => row.id))
+    : {};
+  const searchTerms =
+    customerId && campaignId
+      ? await listGoogleAdsSearchTerms({
+        customerId,
+        campaignId,
+        dateFrom: normalizeDate(options.dateFrom),
+        dateTo: normalizeDate(options.dateTo),
+        limit: 500,
+      })
+      : [];
 
   return {
     context,
@@ -67,10 +109,15 @@ async function buildPayload(options: {
       campaign_id: campaignId,
       status,
       limit,
+      date_from: normalizeDate(options.dateFrom),
+      date_to: normalizeDate(options.dateTo),
     },
     summary,
     recommendations,
     mutation_log: mutationLog,
+    ai_analysis_by_recommendation: aiAnalysisByRecommendation,
+    search_terms: searchTerms,
+    settings,
     command_output: options.commandOutput ?? null,
   };
 }
@@ -92,6 +139,8 @@ export async function GET(
       campaignId: String(url.searchParams.get("campaign_id") ?? "").trim(),
       status: String(url.searchParams.get("status") ?? "pending"),
       limit: normalizeLimit(url.searchParams.get("limit"), 50),
+      dateFrom: String(url.searchParams.get("date_from") ?? "").trim(),
+      dateTo: String(url.searchParams.get("date_to") ?? "").trim(),
     });
     if (!payload) {
       return NextResponse.json({ error: "Dashboard not found" }, { status: 404 });
@@ -122,9 +171,11 @@ export async function POST(
   const status = normalizeStatus(body.status);
   const limit = normalizeLimit(body.limit, 50);
   let commandOutput: { stdout: string; stderr: string } | null = null;
+  const controlActions = new Set(["approve", "reject", "recommend", "apply-dry-run", "apply-confirm", "update-recommendation", "analyze-recommendation-ai"]);
+  const readOnlyActions = new Set(["validate"]);
 
   try {
-    if (["recommend", "validate", "apply-dry-run", "apply-confirm"].includes(action)) {
+    if (action === "update-settings" || controlActions.has(action) || readOnlyActions.has(action)) {
       if (!customerId || !campaignId) {
         return NextResponse.json({ error: "customer_id and campaign_id are required" }, { status: 400 });
       }
@@ -136,7 +187,101 @@ export async function POST(
       }
     }
 
-    if (action === "approve") {
+    if (action === "update-settings") {
+      await upsertGoogleAdsControlSettings({
+        dashboard_id: dashboardId,
+        customer_id: customerId,
+        campaign_id: campaignId,
+        control_enabled: normalizeBool(body.control_enabled, false),
+        negative_recommendations_enabled: normalizeBool(body.negative_recommendations_enabled, false),
+        ai_analysis_enabled: normalizeBool(body.ai_analysis_enabled, false),
+        apply_enabled: normalizeBool(body.apply_enabled, false),
+        auto_collect_enabled: normalizeBool(body.auto_collect_enabled, true),
+        lookback_days: normalizeLimit(body.lookback_days, 14),
+        min_cost_threshold: Number(body.min_cost_threshold ?? 0) || 0,
+        min_clicks_threshold: normalizeLimit(body.min_clicks_threshold, 1),
+        max_apply_per_run: normalizeLimit(body.max_apply_per_run, 20),
+      });
+    } else if (controlActions.has(action) || readOnlyActions.has(action)) {
+      const settings = await getGoogleAdsControlSettings(dashboardId, customerId, campaignId);
+      if (controlActions.has(action) && !settings.control_enabled) {
+        const message = "Google Ads control actions are disabled: control_enabled=false";
+        console.warn(`[google-ads-admin] blocked action=${action} dashboard=${dashboardId} customer=${customerId} campaign=${campaignId}: ${message}`);
+        return NextResponse.json({ error: message }, { status: 403 });
+      }
+      if (action === "recommend" && !settings.negative_recommendations_enabled) {
+        const message = "Recommendation generation is disabled: negative_recommendations_enabled=false";
+        console.warn(`[google-ads-admin] blocked action=${action} dashboard=${dashboardId} customer=${customerId} campaign=${campaignId}: ${message}`);
+        return NextResponse.json({ error: message }, { status: 403 });
+      }
+      if (action === "apply-confirm" && !settings.apply_enabled) {
+        const message = "Live apply is disabled: apply_enabled=false";
+        console.warn(`[google-ads-admin] blocked action=${action} dashboard=${dashboardId} customer=${customerId} campaign=${campaignId}: ${message}`);
+        return NextResponse.json({ error: message }, { status: 403 });
+      }
+      if (action === "analyze-recommendation-ai" && !settings.ai_analysis_enabled) {
+        const message = "AI analysis is disabled: ai_analysis_enabled=false";
+        console.warn(`[google-ads-admin] blocked action=${action} dashboard=${dashboardId} customer=${customerId} campaign=${campaignId}: ${message}`);
+        return NextResponse.json({ error: message }, { status: 403 });
+      }
+    }
+
+    if (action === "update-settings") {
+      // settings are already saved above, payload refresh below
+    } else if (action === "analyze-recommendation-ai") {
+      const recommendationId = Number(body.recommendation_id);
+      if (!Number.isFinite(recommendationId) || recommendationId <= 0) {
+        return NextResponse.json({ error: "recommendation_id is required" }, { status: 400 });
+      }
+      const recommendation = await getGoogleAdsRecommendationById(recommendationId);
+      if (!recommendation) {
+        return NextResponse.json({ error: "Recommendation not found" }, { status: 404 });
+      }
+      if (recommendation.customer_id !== customerId || recommendation.campaign_id !== campaignId) {
+        return NextResponse.json({ error: "Recommendation does not belong to selected customer/campaign" }, { status: 409 });
+      }
+      if (!(recommendation.status === "pending" || recommendation.status === "approved")) {
+        return NextResponse.json(
+          { error: `AI analysis is allowed only for pending/approved recommendations, got ${recommendation.status}` },
+          { status: 409 },
+        );
+      }
+      await analyzeGoogleAdsRecommendationWithAi(recommendation);
+    } else if (action === "update-recommendation") {
+      const recommendationId = Number(body.recommendation_id);
+      if (!Number.isFinite(recommendationId) || recommendationId <= 0) {
+        return NextResponse.json({ error: "recommendation_id is required" }, { status: 400 });
+      }
+      const suggestedNegativeKeyword = String(body.suggested_negative_keyword ?? "").trim();
+      if (!suggestedNegativeKeyword) {
+        return NextResponse.json({ error: "suggested_negative_keyword must be non-empty" }, { status: 400 });
+      }
+      const matchType = normalizeMatchType(body.match_type);
+      if (!matchType) {
+        return NextResponse.json({ error: "match_type must be one of PHRASE, EXACT, BROAD" }, { status: 400 });
+      }
+      const reviewNoteRaw = String(body.review_note ?? "").trim();
+      const reviewNote = reviewNoteRaw ? reviewNoteRaw : null;
+      const adminToken = parseCookieValue(request.headers.get("cookie"), ADMIN_SESSION_COOKIE);
+      const adminSession = verifyAdminSession(adminToken);
+      const editedBy = adminSession?.email || "admin";
+      const updated = await updateGoogleAdsRecommendation(
+        recommendationId,
+        suggestedNegativeKeyword,
+        matchType,
+        reviewNote,
+        editedBy,
+      );
+      if (!updated) {
+        return NextResponse.json({ error: "Recommendation not found" }, { status: 404 });
+      }
+      if (updated.status === "applied") {
+        return NextResponse.json({ error: "Applied recommendations cannot be edited" }, { status: 409 });
+      }
+      if (!(updated.status === "pending" || updated.status === "approved")) {
+        return NextResponse.json({ error: `Recommendation status ${updated.status} cannot be edited` }, { status: 409 });
+      }
+    } else if (action === "approve") {
       await approveGoogleAdsRecommendation(Number(body.recommendation_id));
     } else if (action === "reject") {
       await rejectGoogleAdsRecommendation(Number(body.recommendation_id), String(body.note ?? "").trim());
@@ -175,6 +320,7 @@ export async function POST(
         dateTo,
       ]);
     } else if (action === "apply-dry-run") {
+      const settings = await getGoogleAdsControlSettings(dashboardId, customerId, campaignId);
       commandOutput = await runGoogleAdsCollectorCommand([
         "apply-approved-negatives",
         "--customer-id",
@@ -183,12 +329,13 @@ export async function POST(
         campaignId,
         "--dry-run",
         "--limit",
-        String(normalizeLimit(body.apply_limit, 20)),
+        String(normalizeLimit(body.apply_limit, settings.max_apply_per_run || 20)),
       ]);
     } else if (action === "apply-confirm") {
       if (String(body.confirm_text ?? "").trim() !== "APPLY") {
         return NextResponse.json({ error: "Type APPLY to confirm live Google Ads mutation" }, { status: 400 });
       }
+      const settings = await getGoogleAdsControlSettings(dashboardId, customerId, campaignId);
       commandOutput = await runGoogleAdsCollectorCommand([
         "apply-approved-negatives",
         "--customer-id",
@@ -197,7 +344,7 @@ export async function POST(
         campaignId,
         "--confirm-apply",
         "--limit",
-        String(normalizeLimit(body.apply_limit, 20)),
+        String(normalizeLimit(body.apply_limit, settings.max_apply_per_run || 20)),
       ]);
     } else {
       return NextResponse.json({ error: "Unknown Google Ads admin action" }, { status: 400 });
@@ -209,6 +356,8 @@ export async function POST(
       campaignId,
       status,
       limit,
+      dateFrom: String(body.date_from ?? "").trim(),
+      dateTo: String(body.date_to ?? "").trim(),
       commandOutput,
     });
     if (!payload) {

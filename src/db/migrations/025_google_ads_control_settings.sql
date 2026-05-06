@@ -1,0 +1,21 @@
+CREATE TABLE IF NOT EXISTS google_ads_control_settings (
+  id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
+  dashboard_id BIGINT UNSIGNED NOT NULL,
+  customer_id VARCHAR(64) NOT NULL,
+  campaign_id VARCHAR(64) NOT NULL,
+  control_enabled TINYINT(1) NOT NULL DEFAULT 0,
+  negative_recommendations_enabled TINYINT(1) NOT NULL DEFAULT 0,
+  ai_analysis_enabled TINYINT(1) NOT NULL DEFAULT 0,
+  apply_enabled TINYINT(1) NOT NULL DEFAULT 0,
+  auto_collect_enabled TINYINT(1) NOT NULL DEFAULT 1,
+  lookback_days INT NOT NULL DEFAULT 14,
+  min_cost_threshold DECIMAL(18,6) NOT NULL DEFAULT 0,
+  min_clicks_threshold INT NOT NULL DEFAULT 1,
+  max_apply_per_run INT NOT NULL DEFAULT 20,
+  created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+  PRIMARY KEY (id),
+  UNIQUE KEY uq_google_ads_control_settings_scope (dashboard_id, customer_id, campaign_id),
+  KEY idx_google_ads_control_settings_dashboard (dashboard_id),
+  KEY idx_google_ads_control_settings_customer_campaign (customer_id, campaign_id)
+);

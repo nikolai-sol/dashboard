@@ -3,6 +3,7 @@ set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 APP_SOURCE_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
+REPO_ROOT_DIR="$(cd "$APP_SOURCE_DIR/.." && pwd)"
 
 VPS="${VPS:-beget}"
 APP_DIR="${APP_DIR:-/var/www/dashboard}"
@@ -45,6 +46,15 @@ cp ecosystem.config.js .next/standalone/
 cp package.json .next/standalone/
 cp scripts/rollback-release.sh .next/standalone/scripts/
 cp src/schemas/*.yaml .next/standalone/src/schemas/
+if [ -f "$REPO_ROOT_DIR/fetch_google_ads_canonical.py" ]; then
+  cp "$REPO_ROOT_DIR/fetch_google_ads_canonical.py" .next/standalone/
+fi
+if [ -f "$REPO_ROOT_DIR/google_ads_api_client.py" ]; then
+  cp "$REPO_ROOT_DIR/google_ads_api_client.py" .next/standalone/
+fi
+if [ -f "$REPO_ROOT_DIR/canonical_writer.py" ]; then
+  cp "$REPO_ROOT_DIR/canonical_writer.py" .next/standalone/
+fi
 
 echo "Uploading staged release to VPS..."
 ssh "$VPS" "mkdir -p '$RELEASES_DIR' '$BACKUPS_DIR' /var/log"
@@ -105,6 +115,14 @@ mv "$STAGE_DIR" "$APP_DIR"
 
 if ! cd "$APP_DIR"; then
   rollback "unable to enter app directory"
+fi
+
+if [ -f "$APP_DIR/fetch_google_ads_canonical.py" ]; then
+  if [ ! -x "$APP_DIR/.gads-venv/bin/python" ]; then
+    python3 -m venv "$APP_DIR/.gads-venv" || rollback "unable to create Google Ads Python venv"
+  fi
+  "$APP_DIR/.gads-venv/bin/python" -m pip install --upgrade pip >/dev/null || rollback "unable to upgrade Google Ads Python venv pip"
+  "$APP_DIR/.gads-venv/bin/python" -m pip install python-dotenv google-ads mysql-connector-python >/dev/null || rollback "unable to install Google Ads Python dependencies"
 fi
 
 if pm2 describe "$APP_NAME" >/dev/null 2>&1; then
