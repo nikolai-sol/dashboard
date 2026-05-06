@@ -72,7 +72,8 @@ type ContentSheetConfig = {
 };
 
 type LegacyUserSummaryRow = RowDataPacket & {
-  user_id: number | string;
+  user_id: number | string | null;
+  has_user_id: number | string | null;
   traffic_source: string | null;
   visits: number | string | null;
   users: number | string | null;
@@ -83,7 +84,8 @@ type LegacyUserSummaryRow = RowDataPacket & {
 };
 
 type LegacyUserActionRow = RowDataPacket & {
-  user_id: number | string;
+  user_id: number | string | null;
+  has_user_id: number | string | null;
   traffic_source: string | null;
   start_url: string | null;
   end_url: string | null;
@@ -93,7 +95,8 @@ type LegacyUserActionRow = RowDataPacket & {
 };
 
 type CanonicalUserBehaviorRow = RowDataPacket & {
-  user_id: number | string;
+  user_id: number | string | null;
+  has_user_id?: number | string | null;
   traffic_source: string | null;
   start_url?: string | null;
   end_url?: string | null;
@@ -734,9 +737,12 @@ async function queryCanonicalUserSummary(
   from: string,
   to: string,
 ): Promise<AbbottBiUserSummaryRow[]> {
+  const hasUserIdExpr = "(user_id REGEXP '^[0-9]+$' AND CAST(user_id AS UNSIGNED) > 0)";
+  const userIdExpr = `CASE WHEN ${hasUserIdExpr} THEN CAST(user_id AS UNSIGNED) ELSE NULL END`;
   const sql = `
     SELECT
-      CAST(user_id AS UNSIGNED) AS user_id,
+      ${userIdExpr} AS user_id,
+      CASE WHEN ${hasUserIdExpr} THEN 1 ELSE 0 END AS has_user_id,
       MAX(COALESCE(traffic_source, CONCAT('traffic_id:', COALESCE(traffic_source_id, 'unknown')))) AS traffic_source,
       COALESCE(SUM(visits), 0) AS visits,
       COALESCE(SUM(users), 0) AS users,
@@ -758,19 +764,19 @@ async function queryCanonicalUserSummary(
       AND analytics_account_id IN (${buildInClause(counterIds)})
       AND report_date >= ?
       AND report_date <= ?
-      AND user_id REGEXP '^[0-9]+$'
-      AND CAST(user_id AS UNSIGNED) > 0
-    GROUP BY CAST(user_id AS UNSIGNED), COALESCE(traffic_source_id, traffic_source, '')
-    ORDER BY visits DESC, user_id ASC, traffic_source ASC
+    GROUP BY ${userIdExpr}, CASE WHEN ${hasUserIdExpr} THEN 1 ELSE 0 END, COALESCE(traffic_source_id, traffic_source, '')
+    ORDER BY visits DESC, has_user_id DESC, user_id ASC, traffic_source ASC
   `;
   const [rows] = await pool.execute<CanonicalUserBehaviorRow[]>(sql, [...counterIds, from, to]);
   const { userDirections } = loadWorkbookData();
   return rows.map((row) => {
-    const userId = String(Math.trunc(asNumber(row.user_id)));
+    const hasUserId = asNumber(row.has_user_id) === 1;
+    const userId = hasUserId ? String(Math.trunc(asNumber(row.user_id))) : "";
     return {
       user_id: userId,
+      has_user_id: hasUserId,
       traffic_source: asString(row.traffic_source) || "Unknown traffic",
-      direction: userDirections.get(userId) ?? null,
+      direction: hasUserId ? userDirections.get(userId) ?? null : null,
       visits: Math.round(asNumber(row.visits)),
       users: Math.round(asNumber(row.users)),
       new_users: Math.round(asNumber(row.new_users)),
@@ -783,9 +789,12 @@ async function queryCanonicalUserSummary(
 
 async function queryLegacyUserSummary(counterIds: string[], from: string, to: string): Promise<AbbottBiUserSummaryRow[]> {
   const trafficSourceSql = buildTrafficSourceSql("params.traffic_id");
+  const hasUserIdExpr = "(param_level_2 REGEXP '^[0-9]+$' AND CAST(param_level_2 AS UNSIGNED) > 0)";
+  const userIdExpr = `CASE WHEN ${hasUserIdExpr} THEN CAST(param_level_2 AS UNSIGNED) ELSE NULL END`;
   const sql = `
     SELECT
-      CAST(param_level_2 AS UNSIGNED) AS user_id,
+      ${userIdExpr} AS user_id,
+      CASE WHEN ${hasUserIdExpr} THEN 1 ELSE 0 END AS has_user_id,
       ${trafficSourceSql} AS traffic_source,
       COALESCE(SUM(visits), 0) AS visits,
       COALESCE(SUM(users), 0) AS users,
@@ -808,19 +817,19 @@ async function queryLegacyUserSummary(counterIds: string[], from: string, to: st
     WHERE params.counter_id IN (${buildInClause(counterIds)})
       AND date >= ?
       AND date <= ?
-      AND param_level_2 REGEXP '^[0-9]+$'
-      AND CAST(param_level_2 AS UNSIGNED) > 0
-    GROUP BY CAST(param_level_2 AS UNSIGNED), params.traffic_id
-    ORDER BY visits DESC, user_id ASC, traffic_source ASC
+    GROUP BY ${userIdExpr}, CASE WHEN ${hasUserIdExpr} THEN 1 ELSE 0 END, params.traffic_id
+    ORDER BY visits DESC, has_user_id DESC, user_id ASC, traffic_source ASC
   `;
   const [rows] = await pool.execute<LegacyUserSummaryRow[]>(sql, [...counterIds, from, to]);
   const { userDirections } = loadWorkbookData();
   return rows.map((row) => {
-    const userId = String(Math.trunc(asNumber(row.user_id)));
+    const hasUserId = asNumber(row.has_user_id) === 1;
+    const userId = hasUserId ? String(Math.trunc(asNumber(row.user_id))) : "";
     return {
       user_id: userId,
+      has_user_id: hasUserId,
       traffic_source: asString(row.traffic_source) || "Unknown traffic",
-      direction: userDirections.get(userId) ?? null,
+      direction: hasUserId ? userDirections.get(userId) ?? null : null,
       visits: Math.round(asNumber(row.visits)),
       users: Math.round(asNumber(row.users)),
       new_users: Math.round(asNumber(row.new_users)),
@@ -861,9 +870,12 @@ async function queryCanonicalUserActions(
   from: string,
   to: string,
 ): Promise<AbbottBiUserActionRow[]> {
+  const hasUserIdExpr = "(user_id REGEXP '^[0-9]+$' AND CAST(user_id AS UNSIGNED) > 0)";
+  const userIdExpr = `CASE WHEN ${hasUserIdExpr} THEN CAST(user_id AS UNSIGNED) ELSE NULL END`;
   const sql = `
     SELECT
-      CAST(user_id AS UNSIGNED) AS user_id,
+      ${userIdExpr} AS user_id,
+      CASE WHEN ${hasUserIdExpr} THEN 1 ELSE 0 END AS has_user_id,
       MAX(COALESCE(traffic_source, CONCAT('traffic_id:', COALESCE(traffic_source_id, 'unknown')))) AS traffic_source,
       MAX(COALESCE(start_url, '')) AS start_url,
       MAX(COALESCE(end_url, '')) AS end_url,
@@ -881,34 +893,41 @@ async function queryCanonicalUserActions(
       AND analytics_account_id IN (${buildInClause(counterIds)})
       AND report_date >= ?
       AND report_date <= ?
-      AND user_id REGEXP '^[0-9]+$'
-      AND CAST(user_id AS UNSIGNED) > 0
     GROUP BY
-      CAST(user_id AS UNSIGNED),
+      ${userIdExpr},
+      CASE WHEN ${hasUserIdExpr} THEN 1 ELSE 0 END,
       COALESCE(traffic_source_id, traffic_source, ''),
       COALESCE(start_url, ''),
       COALESCE(end_url, '')
-    ORDER BY user_id ASC, visits DESC, traffic_source ASC, start_url ASC, end_url ASC
+    ORDER BY has_user_id DESC, user_id ASC, visits DESC, traffic_source ASC, start_url ASC, end_url ASC
   `;
   const [rows] = await pool.execute<CanonicalUserBehaviorRow[]>(sql, [...counterIds, from, to]);
   const { userDirections } = loadWorkbookData();
-  return rows.map((row) => ({
-    user_id: String(Math.trunc(asNumber(row.user_id))),
-    traffic_source: asString(row.traffic_source) || "Unknown traffic",
-    direction: userDirections.get(String(Math.trunc(asNumber(row.user_id)))) ?? null,
-    start_url: asString(row.start_url),
-    end_url: asString(row.end_url),
-    visits: Math.round(asNumber(row.visits)),
-    page_depth: Number(asNumber(row.page_depth).toFixed(2)),
-    avg_duration: Number(asNumber(row.avg_duration).toFixed(2)),
-  }));
+  return rows.map((row) => {
+    const hasUserId = asNumber(row.has_user_id) === 1;
+    const userId = hasUserId ? String(Math.trunc(asNumber(row.user_id))) : "";
+    return {
+      user_id: userId,
+      has_user_id: hasUserId,
+      traffic_source: asString(row.traffic_source) || "Unknown traffic",
+      direction: hasUserId ? userDirections.get(userId) ?? null : null,
+      start_url: asString(row.start_url),
+      end_url: asString(row.end_url),
+      visits: Math.round(asNumber(row.visits)),
+      page_depth: Number(asNumber(row.page_depth).toFixed(2)),
+      avg_duration: Number(asNumber(row.avg_duration).toFixed(2)),
+    };
+  });
 }
 
 async function queryLegacyUserActions(counterIds: string[], from: string, to: string): Promise<AbbottBiUserActionRow[]> {
   const trafficSourceSql = buildTrafficSourceSql("params.traffic_id");
+  const hasUserIdExpr = "(params.param_level_2 REGEXP '^[0-9]+$' AND CAST(params.param_level_2 AS UNSIGNED) > 0)";
+  const userIdExpr = `CASE WHEN ${hasUserIdExpr} THEN CAST(params.param_level_2 AS UNSIGNED) ELSE NULL END`;
   const sql = `
     SELECT
-      CAST(params.param_level_2 AS UNSIGNED) AS user_id,
+      ${userIdExpr} AS user_id,
+      CASE WHEN ${hasUserIdExpr} THEN 1 ELSE 0 END AS has_user_id,
       ${trafficSourceSql} AS traffic_source,
       COALESCE(params.startURL, '') AS start_url,
       COALESCE(params.endURL, '') AS end_url,
@@ -927,27 +946,31 @@ async function queryLegacyUserActions(counterIds: string[], from: string, to: st
     WHERE params.counter_id IN (${buildInClause(counterIds)})
       AND params.date >= ?
       AND params.date <= ?
-      AND params.param_level_2 REGEXP '^[0-9]+$'
-      AND CAST(params.param_level_2 AS UNSIGNED) > 0
     GROUP BY
-      CAST(params.param_level_2 AS UNSIGNED),
+      ${userIdExpr},
+      CASE WHEN ${hasUserIdExpr} THEN 1 ELSE 0 END,
       params.traffic_id,
       COALESCE(params.startURL, ''),
       COALESCE(params.endURL, '')
-    ORDER BY user_id ASC, visits DESC, traffic_source ASC, start_url ASC, end_url ASC
+    ORDER BY has_user_id DESC, user_id ASC, visits DESC, traffic_source ASC, start_url ASC, end_url ASC
   `;
   const [rows] = await pool.execute<LegacyUserActionRow[]>(sql, [...counterIds, from, to]);
   const { userDirections } = loadWorkbookData();
-  return rows.map((row) => ({
-    user_id: String(Math.trunc(asNumber(row.user_id))),
-    traffic_source: asString(row.traffic_source) || "Unknown traffic",
-    direction: userDirections.get(String(Math.trunc(asNumber(row.user_id)))) ?? null,
-    start_url: asString(row.start_url),
-    end_url: asString(row.end_url),
-    visits: Math.round(asNumber(row.visits)),
-    page_depth: Number(asNumber(row.page_depth).toFixed(2)),
-    avg_duration: Number(asNumber(row.avg_duration).toFixed(2)),
-  }));
+  return rows.map((row) => {
+    const hasUserId = asNumber(row.has_user_id) === 1;
+    const userId = hasUserId ? String(Math.trunc(asNumber(row.user_id))) : "";
+    return {
+      user_id: userId,
+      has_user_id: hasUserId,
+      traffic_source: asString(row.traffic_source) || "Unknown traffic",
+      direction: hasUserId ? userDirections.get(userId) ?? null : null,
+      start_url: asString(row.start_url),
+      end_url: asString(row.end_url),
+      visits: Math.round(asNumber(row.visits)),
+      page_depth: Number(asNumber(row.page_depth).toFixed(2)),
+      avg_duration: Number(asNumber(row.avg_duration).toFixed(2)),
+    };
+  });
 }
 
 async function queryUserActions(counterIds: string[], from: string, to: string): Promise<AbbottBiUserActionRow[]> {

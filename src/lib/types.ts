@@ -367,6 +367,7 @@ export interface PostClickAnalyticsCampaignPoint {
 
 export interface AbbottBiUserSummaryRow {
   user_id: string;
+  has_user_id: boolean;
   traffic_source: string;
   direction: string | null;
   visits: number;
@@ -379,6 +380,7 @@ export interface AbbottBiUserSummaryRow {
 
 export interface AbbottBiUserActionRow {
   user_id: string;
+  has_user_id: boolean;
   traffic_source: string;
   direction: string | null;
   start_url: string;

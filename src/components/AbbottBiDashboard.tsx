@@ -105,6 +105,11 @@ const TABS: TabConfig[] = [
 
 const PAGE_SIZE = 100;
 
+const USER_ID_TRAFFIC_OPTIONS: SelectOption[] = [
+  { value: "with_user_id", label: "Трафик с User ID" },
+  { value: "without_user_id", label: "Трафик без User ID" },
+];
+
 const TAB_THEMES: Record<TabId, ThemeConfig> = {
   users_summary: {
     accent: "#dd6b78",
@@ -684,6 +689,10 @@ function excludeUnnamedChartGroups(rows: Array<{ label: string; value: number }>
   return rows.filter((row) => !hiddenLabels.has(row.label.trim()));
 }
 
+function userIdLabel(userId: string, hasUserId: boolean) {
+  return hasUserId ? userId : "Без User ID";
+}
+
 export default function AbbottBiDashboard({ data, locale = "ru-RU" }: AbbottBiDashboardProps) {
   const [activeTab, setActiveTab] = useState<TabId>("users_summary");
   const [queryByTab, setQueryByTab] = useState<Record<TabId, string>>({
@@ -705,8 +714,8 @@ export default function AbbottBiDashboard({ data, locale = "ru-RU" }: AbbottBiDa
     general_materials: 1,
   });
   const [filtersByTab, setFiltersByTab] = useState<Record<TabId, Record<string, string>>>({
-    users_summary: { user_id: "", traffic_source: "", direction: "" },
-    user_actions: { user_id: "", traffic_source: "", direction: "" },
+    users_summary: { user_id: "", user_id_traffic: "", traffic_source: "", direction: "" },
+    user_actions: { user_id: "", user_id_traffic: "", traffic_source: "", direction: "" },
     page_stats: { page_title: "", direction: "", material_type: "", access: "" },
     external_events: { direction: "" },
     time_buckets: { page_url: "" },
@@ -744,7 +753,7 @@ export default function AbbottBiDashboard({ data, locale = "ru-RU" }: AbbottBiDa
 
   const userActionsOptions = useMemo(
     () => ({
-      user_id: uniqOptions(data.user_actions.map((row) => row.user_id)),
+      user_id: uniqOptions(data.user_actions.filter((row) => row.has_user_id).map((row) => row.user_id)),
       traffic_source: uniqOptions(data.user_actions.map((row) => row.traffic_source)),
       direction: uniqOptions(data.user_actions.map((row) => row.direction)),
     }),
@@ -796,8 +805,10 @@ export default function AbbottBiDashboard({ data, locale = "ru-RU" }: AbbottBiDa
     const query = queryByTab.users_summary;
     const filters = filtersByTab.users_summary;
     return data.users_summary.filter((row) => {
-      if (!matchesQuery([row.user_id, row.traffic_source, row.direction, row.visits, row.users, row.new_users], query)) return false;
+      if (!matchesQuery([userIdLabel(row.user_id, row.has_user_id), row.traffic_source, row.direction, row.visits, row.bounce_rate], query)) return false;
       if (filters.user_id && row.user_id !== filters.user_id) return false;
+      if (filters.user_id_traffic === "with_user_id" && !row.has_user_id) return false;
+      if (filters.user_id_traffic === "without_user_id" && row.has_user_id) return false;
       if (filters.traffic_source && row.traffic_source !== filters.traffic_source) return false;
       if (filters.direction && (row.direction ?? "") !== filters.direction) return false;
       return true;
@@ -808,8 +819,10 @@ export default function AbbottBiDashboard({ data, locale = "ru-RU" }: AbbottBiDa
     const query = queryByTab.user_actions;
     const filters = filtersByTab.user_actions;
     return data.user_actions.filter((row) => {
-      if (!matchesQuery([row.user_id, row.traffic_source, row.direction, row.start_url, row.end_url, row.visits], query)) return false;
+      if (!matchesQuery([userIdLabel(row.user_id, row.has_user_id), row.traffic_source, row.direction, row.start_url, row.end_url, row.visits], query)) return false;
       if (filters.user_id && row.user_id !== filters.user_id) return false;
+      if (filters.user_id_traffic === "with_user_id" && !row.has_user_id) return false;
+      if (filters.user_id_traffic === "without_user_id" && row.has_user_id) return false;
       if (filters.traffic_source && row.traffic_source !== filters.traffic_source) return false;
       if (filters.direction && (row.direction ?? "") !== filters.direction) return false;
       return true;
@@ -1001,14 +1014,16 @@ export default function AbbottBiDashboard({ data, locale = "ru-RU" }: AbbottBiDa
       { key: "user_id", label: "User ID" },
       { key: "direction", label: "Направление" },
       { key: "traffic_source", label: "Источник" },
+      { key: "visits", label: "Сессии", className: "text-right" },
       { key: "bounce_rate", label: "Процент отказов", className: "text-right" },
       { key: "avg_duration", label: "Продолжительность визита, мин", className: "text-right" },
       { key: "page_depth", label: "Глубина просмотра", className: "text-right" },
     ];
     tableRows = usersSummaryPage.pageRows.map((row) => ({
-      user_id: row.user_id,
+      user_id: userIdLabel(row.user_id, row.has_user_id),
       direction: row.direction ?? "—",
       traffic_source: row.traffic_source,
+      visits: formatNumber(row.visits, locale),
       bounce_rate: formatPercent(row.bounce_rate, locale),
       avg_duration: formatDurationMinutes(row.avg_duration, locale),
       page_depth: formatDecimal(row.page_depth, locale),
@@ -1025,7 +1040,7 @@ export default function AbbottBiDashboard({ data, locale = "ru-RU" }: AbbottBiDa
       { key: "page_depth", label: "Глубина просмотра", className: "text-right" },
     ];
     tableRows = userActionsPage.pageRows.map((row) => ({
-      user_id: row.user_id,
+      user_id: userIdLabel(row.user_id, row.has_user_id),
       traffic_source: row.traffic_source,
       direction: row.direction ?? "—",
       end_url: row.end_url || "—",
@@ -1112,6 +1127,13 @@ export default function AbbottBiDashboard({ data, locale = "ru-RU" }: AbbottBiDa
           theme={theme}
         />
         <SelectField
+          label="Трафик"
+          value={filtersByTab.users_summary.user_id_traffic}
+          options={USER_ID_TRAFFIC_OPTIONS}
+          onChange={(value) => setSelectFilter("users_summary", "user_id_traffic", value)}
+          theme={theme}
+        />
+        <SelectField
           label="Источник"
           value={filtersByTab.users_summary.traffic_source}
           options={usersSummaryOptions.traffic_source}
@@ -1134,6 +1156,13 @@ export default function AbbottBiDashboard({ data, locale = "ru-RU" }: AbbottBiDa
           value={filtersByTab.user_actions.user_id}
           options={userActionsOptions.user_id}
           onChange={(value) => setSelectFilter("user_actions", "user_id", value)}
+          theme={theme}
+        />
+        <SelectField
+          label="Трафик"
+          value={filtersByTab.user_actions.user_id_traffic}
+          options={USER_ID_TRAFFIC_OPTIONS}
+          onChange={(value) => setSelectFilter("user_actions", "user_id_traffic", value)}
           theme={theme}
         />
         <SelectField
@@ -1241,8 +1270,17 @@ export default function AbbottBiDashboard({ data, locale = "ru-RU" }: AbbottBiDa
         <ChartCard title="Сводка">
           <div className="grid gap-3">
             <StatsPill
-              label="Users"
-              value={formatNumber(usersSummaryRows.reduce((sum, row) => sum + row.users, 0), locale)}
+              label="Сессии"
+              value={formatNumber(usersSummaryRows.reduce((sum, row) => sum + row.visits, 0), locale)}
+              theme={theme}
+            />
+            <StatsPill
+              label="% отказа"
+              value={formatPercent(
+                usersSummaryRows.reduce((sum, row) => sum + row.bounce_rate * row.visits, 0) /
+                  Math.max(1, usersSummaryRows.reduce((sum, row) => sum + row.visits, 0)),
+                locale,
+              )}
               theme={theme}
             />
             <StatsPill
