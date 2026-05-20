@@ -239,25 +239,32 @@ export default function DashboardHeader({
                 onClear={() => onClearCompare?.()}
               />
             ) : null}
-            {showExport && onExportExcel ? (
-              <button
-                type="button"
-                onClick={onExportExcel}
-                className="inline-flex items-center gap-2 rounded-lg border border-slate-200 bg-white px-4 py-2 text-sm font-medium text-slate-700 transition hover:border-slate-300 hover:bg-slate-50"
-              >
-                <Download className="h-4 w-4" />
-                {copy.exportExcel}
-              </button>
-            ) : null}
-            {showExport && onExportPdf ? (
-              <button
-                type="button"
-                onClick={onExportPdf}
-                className="inline-flex items-center gap-2 rounded-lg border border-slate-200 bg-white px-4 py-2 text-sm font-medium text-slate-700 transition hover:border-slate-300 hover:bg-slate-50"
-              >
-                <Download className="h-4 w-4" />
-                {copy.exportPdf}
-              </button>
+            {showExport ? (
+              <details className="relative">
+                <summary className="flex h-10 w-10 cursor-pointer list-none items-center justify-center rounded-lg border border-slate-200 bg-white text-slate-700 transition hover:border-slate-300 hover:bg-slate-50 [&::-webkit-details-marker]:hidden">
+                  <Download className="h-4 w-4" />
+                </summary>
+                <div className="absolute right-0 z-50 mt-2 min-w-[140px] rounded-lg border border-slate-200 bg-white p-1 shadow-lg">
+                  {onExportExcel ? (
+                    <button
+                      type="button"
+                      onClick={onExportExcel}
+                      className="block w-full rounded-md px-3 py-2 text-left text-sm text-slate-700 hover:bg-slate-50"
+                    >
+                      Excel
+                    </button>
+                  ) : null}
+                  {onExportPdf ? (
+                    <button
+                      type="button"
+                      onClick={onExportPdf}
+                      className="block w-full rounded-md px-3 py-2 text-left text-sm text-slate-700 hover:bg-slate-50"
+                    >
+                      PDF
+                    </button>
+                  ) : null}
+                </div>
+              </details>
             ) : null}
           </div>
         </div>
