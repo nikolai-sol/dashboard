@@ -193,9 +193,29 @@ export default function DashboardMediaPlanEditorScreen({
         if (!active) return;
 
         const planSource = dashboard.sources.find((source) => source.role === "plan");
-        const inlineRows = Array.isArray(planSource?.source_config?.inline_rows)
+        let inlineRows = Array.isArray(planSource?.source_config?.inline_rows)
           ? (planSource?.source_config?.inline_rows as Array<Record<string, unknown>>)
           : [];
+
+        if (
+          inlineRows.length === 0 &&
+          planSource?.source_config &&
+          (planSource.source_config.upload_file || String(planSource.source_config.sheet_url ?? "").trim())
+        ) {
+          try {
+            const parseResponse = await fetch("/api/admin/media-plan/parse", {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({ source_config: planSource.source_config }),
+            });
+            const parsePayload = await parseResponse.json().catch(() => ({}));
+            if (parseResponse.ok && Array.isArray(parsePayload?.rows)) {
+              inlineRows = parsePayload.rows as Array<Record<string, unknown>>;
+            }
+          } catch {
+            // keep fallback to empty state if parsing fails
+          }
+        }
 
         setFormData(dashboard);
         setRows(inlineRows.map((row, index) => toEditableRow(row, index)));
