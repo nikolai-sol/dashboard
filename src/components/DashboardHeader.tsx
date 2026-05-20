@@ -1,6 +1,6 @@
 "use client";
 
-import { CalendarRange, Download } from "lucide-react";
+import { CalendarRange, Download, FileSpreadsheet, FileText } from "lucide-react";
 import ComparisonToggle, { type ComparisonPreset } from "@/components/ComparisonToggle";
 import type { DashboardLanguage } from "@/lib/dashboard-i18n";
 
@@ -244,23 +244,27 @@ export default function DashboardHeader({
                 <summary className="flex h-10 w-10 cursor-pointer list-none items-center justify-center rounded-lg border border-slate-200 bg-white text-slate-700 transition hover:border-slate-300 hover:bg-slate-50 [&::-webkit-details-marker]:hidden">
                   <Download className="h-4 w-4" />
                 </summary>
-                <div className="absolute right-0 z-50 mt-2 min-w-[140px] rounded-lg border border-slate-200 bg-white p-1 shadow-lg">
+                <div className="absolute right-0 z-50 mt-2 flex items-center gap-1 rounded-lg border border-slate-200 bg-white p-1 shadow-lg">
                   {onExportExcel ? (
                     <button
                       type="button"
                       onClick={onExportExcel}
-                      className="block w-full rounded-md px-3 py-2 text-left text-sm text-slate-700 hover:bg-slate-50"
+                      title="Excel"
+                      aria-label="Export Excel"
+                      className="flex h-9 w-9 items-center justify-center rounded-md text-slate-700 hover:bg-slate-50"
                     >
-                      Excel
+                      <FileSpreadsheet className="h-4 w-4" />
                     </button>
                   ) : null}
                   {onExportPdf ? (
                     <button
                       type="button"
                       onClick={onExportPdf}
-                      className="block w-full rounded-md px-3 py-2 text-left text-sm text-slate-700 hover:bg-slate-50"
+                      title="PDF"
+                      aria-label="Export PDF"
+                      className="flex h-9 w-9 items-center justify-center rounded-md text-slate-700 hover:bg-slate-50"
                     >
-                      PDF
+                      <FileText className="h-4 w-4" />
                     </button>
                   ) : null}
                 </div>
