@@ -1,6 +1,6 @@
 "use client";
 
-import { CalendarRange, Download, FileSpreadsheet, FileText } from "lucide-react";
+import { CalendarRange, Download } from "lucide-react";
 import ComparisonToggle, { type ComparisonPreset } from "@/components/ComparisonToggle";
 import type { DashboardLanguage } from "@/lib/dashboard-i18n";
 
@@ -251,9 +251,9 @@ export default function DashboardHeader({
                       onClick={onExportExcel}
                       title="Excel"
                       aria-label="Export Excel"
-                      className="flex h-9 w-9 items-center justify-center rounded-md text-slate-700 hover:bg-slate-50"
+                      className="flex h-9 min-w-[44px] items-center justify-center rounded-md px-2 text-xs font-semibold text-slate-700 hover:bg-slate-50"
                     >
-                      <FileSpreadsheet className="h-4 w-4" />
+                      EXC
                     </button>
                   ) : null}
                   {onExportPdf ? (
@@ -262,9 +262,9 @@ export default function DashboardHeader({
                       onClick={onExportPdf}
                       title="PDF"
                       aria-label="Export PDF"
-                      className="flex h-9 w-9 items-center justify-center rounded-md text-slate-700 hover:bg-slate-50"
+                      className="flex h-9 min-w-[44px] items-center justify-center rounded-md px-2 text-xs font-semibold text-slate-700 hover:bg-slate-50"
                     >
-                      <FileText className="h-4 w-4" />
+                      PDF
                     </button>
                   ) : null}
                 </div>
