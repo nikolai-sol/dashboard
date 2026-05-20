@@ -210,7 +210,13 @@ export default function DashboardMediaPlanEditorScreen({
             });
             const parsePayload = await parseResponse.json().catch(() => ({}));
             if (parseResponse.ok && Array.isArray(parsePayload?.rows)) {
-              inlineRows = parsePayload.rows as Array<Record<string, unknown>>;
+              inlineRows = (parsePayload.rows as Array<Record<string, unknown>>).map((row) => {
+                if (row.platform || !row.instrument) return row;
+                return {
+                  ...row,
+                  platform: row.instrument,
+                };
+              });
             }
           } catch {
             // keep fallback to empty state if parsing fails
