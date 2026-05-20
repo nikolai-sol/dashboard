@@ -1,7 +1,7 @@
 "use client";
 
 import { useMemo, useState } from "react";
-import { ResponsiveLine } from "@nivo/line";
+import { Line, ResponsiveLine } from "@nivo/line";
 import { PLATFORM_COLORS } from "@/lib/platform-colors";
 import type { TimeSeriesPoint } from "@/lib/types";
 
@@ -114,6 +114,65 @@ export default function TrendChart({
       .filter((item) => item.data.some((point) => point.y > 0));
   }, [dates, effectiveMetric, points, selectedPlatforms]);
 
+  const chartCommonProps = {
+    data,
+    margin: { top: 20, right: 20, bottom: 70, left: 60 },
+    xScale: { type: "point" as const },
+    yScale: { type: "linear" as const, min: 0, max: "auto" as const, stacked: false, reverse: false },
+    axisTop: null,
+    axisRight: null,
+    axisBottom: {
+      tickValues: dates.filter((_, idx) => idx % 12 === 0),
+      tickSize: 0,
+      tickPadding: 8,
+      format: (value: string | number) => String(value).slice(5),
+    },
+    axisLeft: {
+      tickSize: 0,
+      tickPadding: 8,
+      format: (value: string | number) => {
+        const n = Number(value);
+        if (effectiveMetric === "cpv") {
+          return formatMetric(effectiveMetric, n, currencyFormatter, currencyCode, locale);
+        }
+        if (effectiveMetric === "spend") {
+          return currencyFormatter(n);
+        }
+        if (n >= 1_000_000) return `${(n / 1_000_000).toFixed(1)}M`;
+        if (n >= 1_000) return `${(n / 1_000).toFixed(0)}K`;
+        return `${n}`;
+      },
+    },
+    colors: ({ color }: { color: string | number }) => color as string,
+    lineWidth: 2.5,
+    pointSize: 4,
+    pointBorderWidth: 1,
+    pointBorderColor: { from: "serieColor" as const },
+    enableArea: true,
+    areaOpacity: 0.08,
+    useMesh: true,
+    curve: "monotoneX" as const,
+    animate: !pdfMode,
+    motionConfig: (pdfMode ? "default" : "gentle") as "default" | "gentle",
+    tooltip: ({ point }: { point: { data: { x: string | number; y: string | number }; seriesId: string | number } }) => {
+      const label = String(point.data.x);
+      const value = Number(point.data.y);
+      return (
+        <div className="rounded-lg border border-slate-200 bg-white px-3 py-2 text-xs shadow-lg">
+          <p className="font-semibold text-slate-900">{point.seriesId}</p>
+          <p className="text-slate-500">{label}</p>
+          <p className="text-slate-700">{formatMetric(effectiveMetric, value, currencyFormatter, currencyCode, locale)}</p>
+        </div>
+      );
+    },
+    theme: {
+      axis: {
+        ticks: { text: { fill: "#64748b", fontSize: 11 } },
+      },
+      grid: { line: { stroke: "#e2e8f0", strokeDasharray: "4 4" } },
+    },
+  };
+
   return (
     <section className="card-surface p-5">
       <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
@@ -139,64 +198,11 @@ export default function TrendChart({
       </div>
 
       <div className="h-[360px]">
-        <ResponsiveLine
-          data={data}
-          margin={{ top: 20, right: 20, bottom: 70, left: 60 }}
-          xScale={{ type: "point" }}
-          yScale={{ type: "linear", min: 0, max: "auto", stacked: false, reverse: false }}
-          axisTop={null}
-          axisRight={null}
-          axisBottom={{
-            tickValues: dates.filter((_, idx) => idx % 12 === 0),
-            tickSize: 0,
-            tickPadding: 8,
-            format: (value) => String(value).slice(5),
-          }}
-          axisLeft={{
-            tickSize: 0,
-            tickPadding: 8,
-            format: (value) => {
-              const n = Number(value);
-              if (effectiveMetric === "cpv") {
-                return formatMetric(effectiveMetric, n, currencyFormatter, currencyCode, locale);
-              }
-              if (effectiveMetric === "spend") {
-                return currencyFormatter(n);
-              }
-              if (n >= 1_000_000) return `${(n / 1_000_000).toFixed(1)}M`;
-              if (n >= 1_000) return `${(n / 1_000).toFixed(0)}K`;
-              return `${n}`;
-            },
-          }}
-          colors={({ color }) => color as string}
-          lineWidth={2.5}
-          pointSize={4}
-          pointBorderWidth={1}
-          pointBorderColor={{ from: "serieColor" }}
-          enableArea
-          areaOpacity={0.08}
-          useMesh
-          curve="monotoneX"
-          animate={!pdfMode}
-          motionConfig={pdfMode ? "default" : "gentle"}
-          tooltip={({ point }) => {
-            const label = String(point.data.x);
-            const value = Number(point.data.y);
-            return (
-              <div className="rounded-lg border border-slate-200 bg-white px-3 py-2 text-xs shadow-lg">
-                <p className="font-semibold text-slate-900">{point.seriesId}</p>
-                <p className="text-slate-500">{label}</p>
-                <p className="text-slate-700">{formatMetric(effectiveMetric, value, currencyFormatter, currencyCode, locale)}</p>
-              </div>
-            );
-          }}
-          theme={{
-            axis: {
-              ticks: { text: { fill: "#64748b", fontSize: 11 } },
-            },
-            grid: { line: { stroke: "#e2e8f0", strokeDasharray: "4 4" } },
-          }}
-        />
+        {pdfMode ? (
+          <Line width={1200} height={360} {...chartCommonProps} />
+        ) : (
+          <ResponsiveLine {...chartCommonProps} />
+        )}
       </div>
 
       {!pdfMode ? (
