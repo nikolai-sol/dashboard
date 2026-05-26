@@ -300,12 +300,31 @@ export default function WizardStep4({ data, onChange }: WizardStep4Props) {
   };
 
   const togglePostclickField = (fieldId: DashboardPostClickFieldId, checked: boolean) => {
-    const current = new Set(sectionFieldOverrides.postclick_analytics?.visible_fields ?? []);
-    if (checked) current.add(fieldId);
-    else current.delete(fieldId);
+    const current = sectionFieldOverrides.postclick_analytics?.visible_fields ?? [];
+    const next = checked
+      ? current.includes(fieldId)
+        ? current
+        : [...current, fieldId]
+      : current.filter((item) => item !== fieldId);
     patchSectionFieldOverrides({
       postclick_analytics: {
-        visible_fields: Array.from(current) as DashboardPostClickFieldId[],
+        visible_fields: next as DashboardPostClickFieldId[],
+      },
+    });
+  };
+
+  const movePostclickField = (fieldId: DashboardPostClickFieldId, direction: -1 | 1) => {
+    const current = sectionFieldOverrides.postclick_analytics?.visible_fields ?? [];
+    const index = current.indexOf(fieldId);
+    if (index < 0) return;
+    const nextIndex = index + direction;
+    if (nextIndex < 0 || nextIndex >= current.length) return;
+    const next = [...current];
+    const [item] = next.splice(index, 1);
+    next.splice(nextIndex, 0, item);
+    patchSectionFieldOverrides({
+      postclick_analytics: {
+        visible_fields: next as DashboardPostClickFieldId[],
       },
     });
   };
@@ -546,17 +565,49 @@ export default function WizardStep4({ data, onChange }: WizardStep4Props) {
 
           <div className="rounded-lg border border-slate-200 p-4">
             <h5 className="text-sm font-semibold text-slate-900">Post-click analytics columns</h5>
-            <div className="mt-3 grid gap-2 sm:grid-cols-2">
-              {POSTCLICK_FIELD_OPTIONS.map((field) => (
-                <label key={field.id} className="inline-flex items-center gap-2 text-sm text-slate-700">
-                  <input
-                    type="checkbox"
-                    checked={sectionFieldOverrides.postclick_analytics?.visible_fields.includes(field.id) ?? false}
-                    onChange={(e) => togglePostclickField(field.id, e.target.checked)}
-                  />
-                  {field.label}
-                </label>
-              ))}
+            <p className="mt-1 text-xs text-slate-500">
+              Turn columns on/off and set their order in the analytics table.
+            </p>
+            <div className="mt-3 space-y-2">
+              {POSTCLICK_FIELD_OPTIONS.map((field) => {
+                const enabled = sectionFieldOverrides.postclick_analytics?.visible_fields.includes(field.id) ?? false;
+                const order = sectionFieldOverrides.postclick_analytics?.visible_fields.indexOf(field.id) ?? -1;
+                return (
+                  <div key={field.id} className="flex items-center justify-between gap-3 rounded-lg border border-slate-200 p-2">
+                    <label className="inline-flex items-center gap-2 text-sm text-slate-700">
+                      <input
+                        type="checkbox"
+                        checked={enabled}
+                        onChange={(e) => togglePostclickField(field.id, e.target.checked)}
+                      />
+                      {field.label}
+                    </label>
+                    <div className="flex items-center gap-2">
+                      <span className="text-xs text-slate-500">{enabled ? `#${order + 1}` : "hidden"}</span>
+                      <button
+                        type="button"
+                        disabled={!enabled || order <= 0}
+                        onClick={() => movePostclickField(field.id, -1)}
+                        className="rounded border border-slate-300 p-1 disabled:opacity-40"
+                      >
+                        <ArrowUp className="h-3.5 w-3.5" />
+                      </button>
+                      <button
+                        type="button"
+                        disabled={
+                          !enabled ||
+                          order === -1 ||
+                          order >= (sectionFieldOverrides.postclick_analytics?.visible_fields.length ?? 0) - 1
+                        }
+                        onClick={() => movePostclickField(field.id, 1)}
+                        className="rounded border border-slate-300 p-1 disabled:opacity-40"
+                      >
+                        <ArrowDown className="h-3.5 w-3.5" />
+                      </button>
+                    </div>
+                  </div>
+                );
+              })}
             </div>
           </div>
 

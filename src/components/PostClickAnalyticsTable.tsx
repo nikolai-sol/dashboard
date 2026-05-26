@@ -55,6 +55,33 @@ const DEFAULT_COLUMNS: DashboardPostClickFieldId[] = [
   "avg_visit_duration",
 ];
 
+const ALL_COLUMNS: DashboardPostClickFieldId[] = [
+  "source_keys",
+  "platform_account_ids",
+  "platform_campaign_ids",
+  "platform_delivery_entity_ids",
+  "platform_creative_ids",
+  "visits",
+  "users",
+  "pageviews",
+  "goal_reaches",
+  "conversion_rate",
+  "bounce_rate",
+  "avg_visit_duration",
+  "impressions",
+  "clicks",
+  "views",
+  "reach",
+  "spend",
+  "ctr",
+  "cpm",
+  "cpc",
+  "video_views_25",
+  "video_views_50",
+  "video_views_75",
+  "video_views_100",
+];
+
 function compact(value: number, locale: string) {
   return new Intl.NumberFormat(locale, {
     notation: "compact",
@@ -74,6 +101,25 @@ function formatSeconds(value: number) {
 function formatList(values: string[]) {
   if (!values.length) return "-";
   return values.join(", ");
+}
+
+function isListColumn(column: DashboardPostClickFieldId) {
+  return (
+    column === "source_keys" ||
+    column === "platform_account_ids" ||
+    column === "platform_campaign_ids" ||
+    column === "platform_delivery_entity_ids" ||
+    column === "platform_creative_ids"
+  );
+}
+
+function getListValue(
+  row: PostClickAnalyticsRow | PostClickAnalyticsTimeSeriesPoint | ReturnType<typeof sumRows>,
+  column: DashboardPostClickFieldId,
+) {
+  if (!isListColumn(column)) return [];
+  const value = (row as Partial<Record<DashboardPostClickFieldId, unknown>>)[column];
+  return Array.isArray(value) ? (value as string[]) : [];
 }
 
 function sumRows(rows: PostClickAnalyticsRow[]) {
@@ -178,6 +224,82 @@ export default function PostClickAnalyticsTable({
   const visible = new Set<DashboardPostClickFieldId>(
     selectedColumns.length ? selectedColumns : DEFAULT_COLUMNS,
   );
+  const orderedColumns = useMemo(() => {
+    const preferred = selectedColumns.length ? selectedColumns : DEFAULT_COLUMNS;
+    const uniquePreferred = preferred.filter((column, index) => preferred.indexOf(column) === index);
+    const filtered = uniquePreferred.filter((column) => ALL_COLUMNS.includes(column));
+    return ALL_COLUMNS.filter((column) => visible.has(column)).sort(
+      (a, b) => filtered.indexOf(a) - filtered.indexOf(b),
+    );
+  }, [selectedColumns, visible]);
+
+  const labelByColumn: Record<DashboardPostClickFieldId, string> = {
+    source_keys: labels.sourceKeys,
+    platform_account_ids: labels.platformAccountIds,
+    platform_campaign_ids: labels.platformCampaignIds,
+    platform_delivery_entity_ids: labels.platformDeliveryEntityIds,
+    platform_creative_ids: labels.platformCreativeIds,
+    visits: labels.visits,
+    users: labels.users,
+    pageviews: labels.pageviews,
+    goal_reaches: labels.goalReaches,
+    conversion_rate: labels.conversionRate,
+    bounce_rate: labels.bounceRate,
+    avg_visit_duration: labels.avgVisitDuration,
+    impressions: labels.impressions,
+    clicks: labels.clicks,
+    views: labels.views,
+    reach: labels.reach,
+    spend: labels.spend,
+    ctr: labels.ctr,
+    cpm: labels.cpm,
+    cpc: labels.cpc,
+    video_views_25: labels.videoViews25,
+    video_views_50: labels.videoViews50,
+    video_views_75: labels.videoViews75,
+    video_views_100: labels.videoViews100,
+  };
+
+  const renderColumnValue = (
+    row: PostClickAnalyticsRow | PostClickAnalyticsTimeSeriesPoint | ReturnType<typeof sumRows>,
+    column: DashboardPostClickFieldId,
+    isTotal = false,
+  ) => {
+    if (isTotal && isListColumn(column)) return "-";
+    switch (column) {
+      case "source_keys":
+      case "platform_account_ids":
+      case "platform_campaign_ids":
+      case "platform_delivery_entity_ids":
+      case "platform_creative_ids":
+        return formatList(getListValue(row, column));
+      case "visits":
+      case "users":
+      case "pageviews":
+      case "goal_reaches":
+      case "impressions":
+      case "clicks":
+      case "views":
+      case "reach":
+      case "video_views_25":
+      case "video_views_50":
+      case "video_views_75":
+      case "video_views_100":
+        return compact(row[column] as number, locale);
+      case "conversion_rate":
+      case "bounce_rate":
+      case "ctr":
+        return `${Number(row[column] ?? 0).toFixed(2)}%`;
+      case "avg_visit_duration":
+        return formatSeconds(Number(row[column] ?? 0));
+      case "spend":
+      case "cpm":
+      case "cpc":
+        return Number(row[column] ?? 0).toFixed(2);
+      default:
+        return "-";
+    }
+  };
 
   return (
     <section className="card-surface overflow-hidden p-5">
@@ -196,54 +318,14 @@ export default function PostClickAnalyticsTable({
             <thead>
               <tr className="border-b border-slate-200 text-left text-[10px] uppercase tracking-[0.08em] text-slate-500 sm:text-xs">
                 <th className="px-2 py-2 sm:px-3">{labels.channel}</th>
-                {visible.has("visits") ? <th className="px-2 py-2 text-right sm:px-3">{labels.visits}</th> : null}
-                {visible.has("users") ? <th className="px-2 py-2 text-right sm:px-3">{labels.users}</th> : null}
-                {visible.has("pageviews") ? <th className="px-2 py-2 text-right sm:px-3">{labels.pageviews}</th> : null}
-                {visible.has("goal_reaches") ? (
-                  <th className="px-2 py-2 text-right sm:px-3">{labels.goalReaches}</th>
-                ) : null}
-                {visible.has("conversion_rate") ? (
-                  <th className="px-2 py-2 text-right sm:px-3">{labels.conversionRate}</th>
-                ) : null}
-                {visible.has("bounce_rate") ? (
-                  <th className="px-2 py-2 text-right sm:px-3">{labels.bounceRate}</th>
-                ) : null}
-                {visible.has("avg_visit_duration") ? (
-                  <th className="px-2 py-2 text-right sm:px-3">{labels.avgVisitDuration}</th>
-                ) : null}
-                {visible.has("source_keys") ? <th className="px-2 py-2 sm:px-3">{labels.sourceKeys}</th> : null}
-                {visible.has("platform_account_ids") ? (
-                  <th className="px-2 py-2 sm:px-3">{labels.platformAccountIds}</th>
-                ) : null}
-                {visible.has("platform_campaign_ids") ? (
-                  <th className="px-2 py-2 sm:px-3">{labels.platformCampaignIds}</th>
-                ) : null}
-                {visible.has("platform_delivery_entity_ids") ? (
-                  <th className="px-2 py-2 sm:px-3">{labels.platformDeliveryEntityIds}</th>
-                ) : null}
-                {visible.has("platform_creative_ids") ? (
-                  <th className="px-2 py-2 sm:px-3">{labels.platformCreativeIds}</th>
-                ) : null}
-                {visible.has("impressions") ? <th className="px-2 py-2 text-right sm:px-3">{labels.impressions}</th> : null}
-                {visible.has("clicks") ? <th className="px-2 py-2 text-right sm:px-3">{labels.clicks}</th> : null}
-                {visible.has("views") ? <th className="px-2 py-2 text-right sm:px-3">{labels.views}</th> : null}
-                {visible.has("reach") ? <th className="px-2 py-2 text-right sm:px-3">{labels.reach}</th> : null}
-                {visible.has("spend") ? <th className="px-2 py-2 text-right sm:px-3">{labels.spend}</th> : null}
-                {visible.has("ctr") ? <th className="px-2 py-2 text-right sm:px-3">{labels.ctr}</th> : null}
-                {visible.has("cpm") ? <th className="px-2 py-2 text-right sm:px-3">{labels.cpm}</th> : null}
-                {visible.has("cpc") ? <th className="px-2 py-2 text-right sm:px-3">{labels.cpc}</th> : null}
-                {visible.has("video_views_25") ? (
-                  <th className="px-2 py-2 text-right sm:px-3">{labels.videoViews25}</th>
-                ) : null}
-                {visible.has("video_views_50") ? (
-                  <th className="px-2 py-2 text-right sm:px-3">{labels.videoViews50}</th>
-                ) : null}
-                {visible.has("video_views_75") ? (
-                  <th className="px-2 py-2 text-right sm:px-3">{labels.videoViews75}</th>
-                ) : null}
-                {visible.has("video_views_100") ? (
-                  <th className="px-2 py-2 text-right sm:px-3">{labels.videoViews100}</th>
-                ) : null}
+                {orderedColumns.map((column) => (
+                  <th
+                    key={`header-${column}`}
+                    className={`px-2 py-2 sm:px-3 ${isListColumn(column) ? "" : "text-right"}`}
+                  >
+                    {labelByColumn[column]}
+                  </th>
+                ))}
               </tr>
             </thead>
             <tbody>
@@ -272,70 +354,14 @@ export default function PostClickAnalyticsTable({
                           </div>
                         </div>
                       </td>
-                      {visible.has("visits") ? (
-                        <td className="px-2 py-2 text-right sm:px-3">{compact(row.visits, locale)}</td>
-                      ) : null}
-                      {visible.has("users") ? (
-                        <td className="px-2 py-2 text-right sm:px-3">{compact(row.users, locale)}</td>
-                      ) : null}
-                      {visible.has("pageviews") ? (
-                        <td className="px-2 py-2 text-right sm:px-3">{compact(row.pageviews, locale)}</td>
-                      ) : null}
-                      {visible.has("goal_reaches") ? (
-                        <td className="px-2 py-2 text-right sm:px-3">{compact(row.goal_reaches, locale)}</td>
-                      ) : null}
-                      {visible.has("conversion_rate") ? (
-                        <td className="px-2 py-2 text-right sm:px-3">{row.conversion_rate.toFixed(2)}%</td>
-                      ) : null}
-                      {visible.has("bounce_rate") ? (
-                        <td className="px-2 py-2 text-right sm:px-3">{row.bounce_rate.toFixed(2)}%</td>
-                      ) : null}
-                      {visible.has("avg_visit_duration") ? (
-                        <td className="px-2 py-2 text-right sm:px-3">{formatSeconds(row.avg_visit_duration)}</td>
-                      ) : null}
-                      {visible.has("source_keys") ? <td className="px-2 py-2 sm:px-3">{formatList(row.source_keys)}</td> : null}
-                      {visible.has("platform_account_ids") ? (
-                        <td className="px-2 py-2 sm:px-3">{formatList(row.platform_account_ids)}</td>
-                      ) : null}
-                      {visible.has("platform_campaign_ids") ? (
-                        <td className="px-2 py-2 sm:px-3">{formatList(row.platform_campaign_ids)}</td>
-                      ) : null}
-                      {visible.has("platform_delivery_entity_ids") ? (
-                        <td className="px-2 py-2 sm:px-3">{formatList(row.platform_delivery_entity_ids)}</td>
-                      ) : null}
-                      {visible.has("platform_creative_ids") ? (
-                        <td className="px-2 py-2 sm:px-3">{formatList(row.platform_creative_ids)}</td>
-                      ) : null}
-                      {visible.has("impressions") ? (
-                        <td className="px-2 py-2 text-right sm:px-3">{compact(row.impressions, locale)}</td>
-                      ) : null}
-                      {visible.has("clicks") ? (
-                        <td className="px-2 py-2 text-right sm:px-3">{compact(row.clicks, locale)}</td>
-                      ) : null}
-                      {visible.has("views") ? (
-                        <td className="px-2 py-2 text-right sm:px-3">{compact(row.views, locale)}</td>
-                      ) : null}
-                      {visible.has("reach") ? (
-                        <td className="px-2 py-2 text-right sm:px-3">{compact(row.reach, locale)}</td>
-                      ) : null}
-                      {visible.has("spend") ? (
-                        <td className="px-2 py-2 text-right sm:px-3">{row.spend.toFixed(2)}</td>
-                      ) : null}
-                      {visible.has("ctr") ? <td className="px-2 py-2 text-right sm:px-3">{row.ctr.toFixed(2)}%</td> : null}
-                      {visible.has("cpm") ? <td className="px-2 py-2 text-right sm:px-3">{row.cpm.toFixed(2)}</td> : null}
-                      {visible.has("cpc") ? <td className="px-2 py-2 text-right sm:px-3">{row.cpc.toFixed(2)}</td> : null}
-                      {visible.has("video_views_25") ? (
-                        <td className="px-2 py-2 text-right sm:px-3">{compact(row.video_views_25, locale)}</td>
-                      ) : null}
-                      {visible.has("video_views_50") ? (
-                        <td className="px-2 py-2 text-right sm:px-3">{compact(row.video_views_50, locale)}</td>
-                      ) : null}
-                      {visible.has("video_views_75") ? (
-                        <td className="px-2 py-2 text-right sm:px-3">{compact(row.video_views_75, locale)}</td>
-                      ) : null}
-                      {visible.has("video_views_100") ? (
-                        <td className="px-2 py-2 text-right sm:px-3">{compact(row.video_views_100, locale)}</td>
-                      ) : null}
+                      {orderedColumns.map((column) => (
+                        <td
+                          key={`${row.line_key}-${column}`}
+                          className={`px-2 py-2 sm:px-3 ${isListColumn(column) ? "" : "text-right"}`}
+                        >
+                          {renderColumnValue(row, column)}
+                        </td>
+                      ))}
                     </tr>
 
                     {isExpanded
@@ -361,70 +387,14 @@ export default function PostClickAnalyticsTable({
                                   <span>{daily.date}</span>
                                 </div>
                               </td>
-                              {visible.has("visits") ? (
-                                <td className="px-2 py-2 text-right sm:px-3">{compact(daily.visits, locale)}</td>
-                              ) : null}
-                              {visible.has("users") ? (
-                                <td className="px-2 py-2 text-right sm:px-3">{compact(daily.users, locale)}</td>
-                              ) : null}
-                              {visible.has("pageviews") ? (
-                                <td className="px-2 py-2 text-right sm:px-3">{compact(daily.pageviews, locale)}</td>
-                              ) : null}
-                              {visible.has("goal_reaches") ? (
-                                <td className="px-2 py-2 text-right sm:px-3">{compact(daily.goal_reaches, locale)}</td>
-                              ) : null}
-                              {visible.has("conversion_rate") ? (
-                                <td className="px-2 py-2 text-right sm:px-3">{daily.conversion_rate.toFixed(2)}%</td>
-                              ) : null}
-                              {visible.has("bounce_rate") ? (
-                                <td className="px-2 py-2 text-right sm:px-3">{daily.bounce_rate.toFixed(2)}%</td>
-                              ) : null}
-                              {visible.has("avg_visit_duration") ? (
-                                <td className="px-2 py-2 text-right sm:px-3">{formatSeconds(daily.avg_visit_duration)}</td>
-                              ) : null}
-                              {visible.has("source_keys") ? <td className="px-2 py-2 sm:px-3">{formatList(daily.source_keys)}</td> : null}
-                              {visible.has("platform_account_ids") ? (
-                                <td className="px-2 py-2 sm:px-3">{formatList(daily.platform_account_ids)}</td>
-                              ) : null}
-                              {visible.has("platform_campaign_ids") ? (
-                                <td className="px-2 py-2 sm:px-3">{formatList(daily.platform_campaign_ids)}</td>
-                              ) : null}
-                              {visible.has("platform_delivery_entity_ids") ? (
-                                <td className="px-2 py-2 sm:px-3">{formatList(daily.platform_delivery_entity_ids)}</td>
-                              ) : null}
-                              {visible.has("platform_creative_ids") ? (
-                                <td className="px-2 py-2 sm:px-3">{formatList(daily.platform_creative_ids)}</td>
-                              ) : null}
-                              {visible.has("impressions") ? (
-                                <td className="px-2 py-2 text-right sm:px-3">{compact(daily.impressions, locale)}</td>
-                              ) : null}
-                              {visible.has("clicks") ? (
-                                <td className="px-2 py-2 text-right sm:px-3">{compact(daily.clicks, locale)}</td>
-                              ) : null}
-                              {visible.has("views") ? (
-                                <td className="px-2 py-2 text-right sm:px-3">{compact(daily.views, locale)}</td>
-                              ) : null}
-                              {visible.has("reach") ? (
-                                <td className="px-2 py-2 text-right sm:px-3">{compact(daily.reach, locale)}</td>
-                              ) : null}
-                              {visible.has("spend") ? (
-                                <td className="px-2 py-2 text-right sm:px-3">{daily.spend.toFixed(2)}</td>
-                              ) : null}
-                              {visible.has("ctr") ? <td className="px-2 py-2 text-right sm:px-3">{daily.ctr.toFixed(2)}%</td> : null}
-                              {visible.has("cpm") ? <td className="px-2 py-2 text-right sm:px-3">{daily.cpm.toFixed(2)}</td> : null}
-                              {visible.has("cpc") ? <td className="px-2 py-2 text-right sm:px-3">{daily.cpc.toFixed(2)}</td> : null}
-                              {visible.has("video_views_25") ? (
-                                <td className="px-2 py-2 text-right sm:px-3">{compact(daily.video_views_25, locale)}</td>
-                              ) : null}
-                              {visible.has("video_views_50") ? (
-                                <td className="px-2 py-2 text-right sm:px-3">{compact(daily.video_views_50, locale)}</td>
-                              ) : null}
-                              {visible.has("video_views_75") ? (
-                                <td className="px-2 py-2 text-right sm:px-3">{compact(daily.video_views_75, locale)}</td>
-                              ) : null}
-                              {visible.has("video_views_100") ? (
-                                <td className="px-2 py-2 text-right sm:px-3">{compact(daily.video_views_100, locale)}</td>
-                              ) : null}
+                              {orderedColumns.map((column) => (
+                                <td
+                                  key={`${dailyKey}-${column}`}
+                                  className={`px-2 py-2 sm:px-3 ${isListColumn(column) ? "" : "text-right"}`}
+                                >
+                                  {renderColumnValue(daily, column)}
+                                </td>
+                              ))}
                             </tr>
                           );
                           const campaignRows = dailyExpanded[dailyKey]
@@ -438,70 +408,14 @@ export default function PostClickAnalyticsTable({
                                       {daily.date} / <span className="font-medium">{campaign.utm_campaign}</span>
                                     </div>
                                   </td>
-                                  {visible.has("visits") ? (
-                                    <td className="px-2 py-2 text-right sm:px-3">{compact(campaign.visits, locale)}</td>
-                                  ) : null}
-                                  {visible.has("users") ? (
-                                    <td className="px-2 py-2 text-right sm:px-3">{compact(campaign.users, locale)}</td>
-                                  ) : null}
-                                  {visible.has("pageviews") ? (
-                                    <td className="px-2 py-2 text-right sm:px-3">{compact(campaign.pageviews, locale)}</td>
-                                  ) : null}
-                                  {visible.has("goal_reaches") ? (
-                                    <td className="px-2 py-2 text-right sm:px-3">{compact(campaign.goal_reaches, locale)}</td>
-                                  ) : null}
-                                  {visible.has("conversion_rate") ? (
-                                    <td className="px-2 py-2 text-right sm:px-3">{campaign.conversion_rate.toFixed(2)}%</td>
-                                  ) : null}
-                                  {visible.has("bounce_rate") ? (
-                                    <td className="px-2 py-2 text-right sm:px-3">{campaign.bounce_rate.toFixed(2)}%</td>
-                                  ) : null}
-                                  {visible.has("avg_visit_duration") ? (
-                                    <td className="px-2 py-2 text-right sm:px-3">{formatSeconds(campaign.avg_visit_duration)}</td>
-                                  ) : null}
-                                  {visible.has("source_keys") ? <td className="px-2 py-2 sm:px-3">{formatList(campaign.source_keys)}</td> : null}
-                                  {visible.has("platform_account_ids") ? (
-                                    <td className="px-2 py-2 sm:px-3">{formatList(campaign.platform_account_ids)}</td>
-                                  ) : null}
-                                  {visible.has("platform_campaign_ids") ? (
-                                    <td className="px-2 py-2 sm:px-3">{formatList(campaign.platform_campaign_ids)}</td>
-                                  ) : null}
-                                  {visible.has("platform_delivery_entity_ids") ? (
-                                    <td className="px-2 py-2 sm:px-3">{formatList(campaign.platform_delivery_entity_ids)}</td>
-                                  ) : null}
-                                  {visible.has("platform_creative_ids") ? (
-                                    <td className="px-2 py-2 sm:px-3">{formatList(campaign.platform_creative_ids)}</td>
-                                  ) : null}
-                                  {visible.has("impressions") ? (
-                                    <td className="px-2 py-2 text-right sm:px-3">{compact(campaign.impressions, locale)}</td>
-                                  ) : null}
-                                  {visible.has("clicks") ? (
-                                    <td className="px-2 py-2 text-right sm:px-3">{compact(campaign.clicks, locale)}</td>
-                                  ) : null}
-                                  {visible.has("views") ? (
-                                    <td className="px-2 py-2 text-right sm:px-3">{compact(campaign.views, locale)}</td>
-                                  ) : null}
-                                  {visible.has("reach") ? (
-                                    <td className="px-2 py-2 text-right sm:px-3">{compact(campaign.reach, locale)}</td>
-                                  ) : null}
-                                  {visible.has("spend") ? (
-                                    <td className="px-2 py-2 text-right sm:px-3">{campaign.spend.toFixed(2)}</td>
-                                  ) : null}
-                                  {visible.has("ctr") ? <td className="px-2 py-2 text-right sm:px-3">{campaign.ctr.toFixed(2)}%</td> : null}
-                                  {visible.has("cpm") ? <td className="px-2 py-2 text-right sm:px-3">{campaign.cpm.toFixed(2)}</td> : null}
-                                  {visible.has("cpc") ? <td className="px-2 py-2 text-right sm:px-3">{campaign.cpc.toFixed(2)}</td> : null}
-                                  {visible.has("video_views_25") ? (
-                                    <td className="px-2 py-2 text-right sm:px-3">{compact(campaign.video_views_25, locale)}</td>
-                                  ) : null}
-                                  {visible.has("video_views_50") ? (
-                                    <td className="px-2 py-2 text-right sm:px-3">{compact(campaign.video_views_50, locale)}</td>
-                                  ) : null}
-                                  {visible.has("video_views_75") ? (
-                                    <td className="px-2 py-2 text-right sm:px-3">{compact(campaign.video_views_75, locale)}</td>
-                                  ) : null}
-                                  {visible.has("video_views_100") ? (
-                                    <td className="px-2 py-2 text-right sm:px-3">{compact(campaign.video_views_100, locale)}</td>
-                                  ) : null}
+                                  {orderedColumns.map((column) => (
+                                    <td
+                                      key={`${dailyKey}-${campaign.utm_campaign}-${column}`}
+                                      className={`px-2 py-2 sm:px-3 ${isListColumn(column) ? "" : "text-right"}`}
+                                    >
+                                      {renderColumnValue(campaign, column)}
+                                    </td>
+                                  ))}
                                 </tr>
                               ))
                             : [];
@@ -514,68 +428,14 @@ export default function PostClickAnalyticsTable({
 
               <tr className="bg-slate-50 font-semibold">
                 <td className="px-2 py-2 text-slate-900 sm:px-3">{labels.total}</td>
-                {visible.has("visits") ? (
-                  <td className="px-2 py-2 text-right text-slate-900 sm:px-3">{compact(totals.visits, locale)}</td>
-                ) : null}
-                {visible.has("users") ? (
-                  <td className="px-2 py-2 text-right text-slate-900 sm:px-3">{compact(totals.users, locale)}</td>
-                ) : null}
-                {visible.has("pageviews") ? (
-                  <td className="px-2 py-2 text-right text-slate-900 sm:px-3">{compact(totals.pageviews, locale)}</td>
-                ) : null}
-                {visible.has("goal_reaches") ? (
-                  <td className="px-2 py-2 text-right text-slate-900 sm:px-3">{compact(totals.goal_reaches, locale)}</td>
-                ) : null}
-                {visible.has("conversion_rate") ? (
-                  <td className="px-2 py-2 text-right text-slate-900 sm:px-3">{totals.conversion_rate.toFixed(2)}%</td>
-                ) : null}
-                {visible.has("bounce_rate") ? (
-                  <td className="px-2 py-2 text-right text-slate-900 sm:px-3">{totals.bounce_rate.toFixed(2)}%</td>
-                ) : null}
-                {visible.has("avg_visit_duration") ? (
-                  <td className="px-2 py-2 text-right text-slate-900 sm:px-3">{formatSeconds(totals.avg_visit_duration)}</td>
-                ) : null}
-                {visible.has("source_keys") ? <td className="px-2 py-2 text-slate-900 sm:px-3">-</td> : null}
-                {visible.has("platform_account_ids") ? <td className="px-2 py-2 text-slate-900 sm:px-3">-</td> : null}
-                {visible.has("platform_campaign_ids") ? <td className="px-2 py-2 text-slate-900 sm:px-3">-</td> : null}
-                {visible.has("platform_delivery_entity_ids") ? <td className="px-2 py-2 text-slate-900 sm:px-3">-</td> : null}
-                {visible.has("platform_creative_ids") ? <td className="px-2 py-2 text-slate-900 sm:px-3">-</td> : null}
-                {visible.has("impressions") ? (
-                  <td className="px-2 py-2 text-right text-slate-900 sm:px-3">{compact(totals.impressions, locale)}</td>
-                ) : null}
-                {visible.has("clicks") ? (
-                  <td className="px-2 py-2 text-right text-slate-900 sm:px-3">{compact(totals.clicks, locale)}</td>
-                ) : null}
-                {visible.has("views") ? (
-                  <td className="px-2 py-2 text-right text-slate-900 sm:px-3">{compact(totals.views, locale)}</td>
-                ) : null}
-                {visible.has("reach") ? (
-                  <td className="px-2 py-2 text-right text-slate-900 sm:px-3">{compact(totals.reach, locale)}</td>
-                ) : null}
-                {visible.has("spend") ? (
-                  <td className="px-2 py-2 text-right text-slate-900 sm:px-3">{totals.spend.toFixed(2)}</td>
-                ) : null}
-                {visible.has("ctr") ? (
-                  <td className="px-2 py-2 text-right text-slate-900 sm:px-3">{totals.ctr.toFixed(2)}%</td>
-                ) : null}
-                {visible.has("cpm") ? (
-                  <td className="px-2 py-2 text-right text-slate-900 sm:px-3">{totals.cpm.toFixed(2)}</td>
-                ) : null}
-                {visible.has("cpc") ? (
-                  <td className="px-2 py-2 text-right text-slate-900 sm:px-3">{totals.cpc.toFixed(2)}</td>
-                ) : null}
-                {visible.has("video_views_25") ? (
-                  <td className="px-2 py-2 text-right text-slate-900 sm:px-3">{compact(totals.video_views_25, locale)}</td>
-                ) : null}
-                {visible.has("video_views_50") ? (
-                  <td className="px-2 py-2 text-right text-slate-900 sm:px-3">{compact(totals.video_views_50, locale)}</td>
-                ) : null}
-                {visible.has("video_views_75") ? (
-                  <td className="px-2 py-2 text-right text-slate-900 sm:px-3">{compact(totals.video_views_75, locale)}</td>
-                ) : null}
-                {visible.has("video_views_100") ? (
-                  <td className="px-2 py-2 text-right text-slate-900 sm:px-3">{compact(totals.video_views_100, locale)}</td>
-                ) : null}
+                {orderedColumns.map((column) => (
+                  <td
+                    key={`total-${column}`}
+                    className={`px-2 py-2 text-slate-900 sm:px-3 ${isListColumn(column) ? "" : "text-right"}`}
+                  >
+                    {renderColumnValue(totals, column, true)}
+                  </td>
+                ))}
               </tr>
             </tbody>
           </table>
