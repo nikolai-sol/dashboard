@@ -1,10 +1,12 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import type { DashboardUtmMatchingPayload } from "@/lib/admin-ui-types";
 
 type Props = {
   dashboardId: string;
+  onDirtyChange?: (dirty: boolean) => void;
+  registerSaveHandler?: (handler: (() => Promise<boolean>) | null) => void;
 };
 
 type BindingMap = Record<string, string>;
@@ -16,7 +18,7 @@ function compact(value: number) {
   }).format(value);
 }
 
-export default function DashboardUtmSourceMatching({ dashboardId }: Props) {
+export default function DashboardUtmSourceMatching({ dashboardId, onDirtyChange, registerSaveHandler }: Props) {
   const [payload, setPayload] = useState<DashboardUtmMatchingPayload | null>(null);
   const [bindings, setBindings] = useState<BindingMap>({});
   const [loading, setLoading] = useState(true);
@@ -68,6 +70,10 @@ export default function DashboardUtmSourceMatching({ dashboardId }: Props) {
     return payload.observed_sources.filter((row) => (bindings[row.utm_source] ?? "") !== (row.current_line_key ?? "")).length;
   }, [bindings, payload]);
 
+  useEffect(() => {
+    onDirtyChange?.(dirtyCount > 0);
+  }, [dirtyCount, onDirtyChange]);
+
   const bindingsByLineKey = useMemo(() => {
     const map = new Map<string, DashboardUtmMatchingPayload["observed_sources"]>();
     for (const row of payload?.observed_sources ?? []) {
@@ -105,8 +111,8 @@ export default function DashboardUtmSourceMatching({ dashboardId }: Props) {
     });
   };
 
-  const save = async () => {
-    if (!payload) return;
+  const save = useCallback(async (): Promise<boolean> => {
+    if (!payload) return true;
     setSaving(true);
     setError(null);
     setMessage(null);
@@ -136,12 +142,19 @@ export default function DashboardUtmSourceMatching({ dashboardId }: Props) {
       }
       setMessage(json.message ?? "Saved");
       await load();
+      return true;
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to save UTM matching");
+      return false;
     } finally {
       setSaving(false);
     }
-  };
+  }, [bindings, dashboardId, mediaPlanRowByKey, payload]);
+
+  useEffect(() => {
+    registerSaveHandler?.(save);
+    return () => registerSaveHandler?.(null);
+  }, [registerSaveHandler, save]);
 
   return (
     <section className="space-y-4">

@@ -218,9 +218,11 @@ export default function DashboardWizard({ dashboardId }: DashboardWizardProps) {
   const [error, setError] = useState<string | null>(null);
   const [saveMessage, setSaveMessage] = useState<string | null>(null);
   const [dirty, setDirty] = useState(false);
+  const [utmDirty, setUtmDirty] = useState(false);
   const isHydratingRef = useRef(false);
   const dirtyRef = useRef(false);
   const allowNavigationRef = useRef(false);
+  const utmSaveHandlerRef = useRef<(() => Promise<boolean>) | null>(null);
 
   const isEdit = Boolean(dashboardId);
   const hasMetrikaSource = useMemo(
@@ -239,12 +241,14 @@ export default function DashboardWizard({ dashboardId }: DashboardWizardProps) {
   const frequencyStepIndex = utmMatchingStepIndex >= 0 ? 6 : 4;
   const metricsStepIndex = utmMatchingStepIndex >= 0 ? 7 : 5;
 
-  useEffect(() => {
-    dirtyRef.current = dirty;
-  }, [dirty]);
+  const hasUnsavedChanges = dirty || utmDirty;
 
   useEffect(() => {
-    if (!dirty) return;
+    dirtyRef.current = hasUnsavedChanges;
+  }, [hasUnsavedChanges]);
+
+  useEffect(() => {
+    if (!hasUnsavedChanges) return;
 
     const handleBeforeUnload = (event: BeforeUnloadEvent) => {
       event.preventDefault();
@@ -253,7 +257,7 @@ export default function DashboardWizard({ dashboardId }: DashboardWizardProps) {
 
     window.addEventListener("beforeunload", handleBeforeUnload);
     return () => window.removeEventListener("beforeunload", handleBeforeUnload);
-  }, [dirty]);
+  }, [hasUnsavedChanges]);
 
   useEffect(() => {
     const confirmLeave = () => {
@@ -593,9 +597,18 @@ export default function DashboardWizard({ dashboardId }: DashboardWizardProps) {
       }
 
       setDirty(false);
+      setUtmDirty(false);
       dirtyRef.current = false;
       allowNavigationRef.current = false;
       setSaveMessage(manual ? "Changes saved." : null);
+
+      if (isEdit && utmSaveHandlerRef.current && utmDirty) {
+        const utmSaved = await utmSaveHandlerRef.current();
+        if (!utmSaved) {
+          setError("Dashboard settings were saved, but UTM bindings failed to save.");
+          return false;
+        }
+      }
 
       if (!isEdit && json.id) {
         router.replace(`/admin/dashboards/${json.id}/edit`);
@@ -650,7 +663,7 @@ export default function DashboardWizard({ dashboardId }: DashboardWizardProps) {
           </div>
 
           <div className="flex items-center gap-2 text-xs">
-            {dirty ? (
+            {hasUnsavedChanges ? (
               <span className="rounded-full border border-amber-200 bg-amber-50 px-3 py-1 font-semibold text-amber-700">
                 Unsaved changes
               </span>
@@ -676,7 +689,13 @@ export default function DashboardWizard({ dashboardId }: DashboardWizardProps) {
         {step === 2 ? <WizardStep3 data={formData} onChange={handleFormChange} /> : null}
         {step === 3 ? <WizardStepBinding data={formData} onChange={handleFormChange} /> : null}
         {utmMatchingStepIndex >= 0 && step === utmMatchingStepIndex ? (
-          <DashboardUtmSourceMatching dashboardId={String(dashboardId)} />
+          <DashboardUtmSourceMatching
+            dashboardId={String(dashboardId)}
+            onDirtyChange={setUtmDirty}
+            registerSaveHandler={(handler) => {
+              utmSaveHandlerRef.current = handler;
+            }}
+          />
         ) : null}
         {metrikaStepIndex >= 0 && step === metrikaStepIndex ? (
           <WizardStepMetrika dashboardId={dashboardId} data={formData} onChange={handleFormChange} />
@@ -720,7 +739,7 @@ export default function DashboardWizard({ dashboardId }: DashboardWizardProps) {
             <button
               type="button"
               onClick={submit}
-              disabled={saving || !dirty}
+              disabled={saving || !hasUnsavedChanges}
               className="rounded-lg border border-slate-300 px-4 py-2 text-sm disabled:cursor-not-allowed disabled:opacity-50"
             >
               {saving ? "Saving..." : "Save"}
@@ -739,7 +758,7 @@ export default function DashboardWizard({ dashboardId }: DashboardWizardProps) {
             <button
               type="button"
               onClick={submit}
-              disabled={!stepValid || saving || (isEdit && !dirty)}
+              disabled={!stepValid || saving || (isEdit && !hasUnsavedChanges)}
               className="rounded-lg bg-indigo-600 px-4 py-2 text-sm text-white disabled:cursor-not-allowed disabled:opacity-50"
             >
               {saving ? "Saving..." : isEdit ? "Save changes" : "Create dashboard"}
