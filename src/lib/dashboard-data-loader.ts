@@ -147,6 +147,7 @@ type PostClickTrafficFactRow = RowDataPacket & {
   visits: number | string | null;
   users: number | string | null;
   pageviews: number | string | null;
+  page_depth: number | string | null;
   bounce_rate: number | string | null;
   avg_visit_duration: number | string | null;
 };
@@ -178,6 +179,7 @@ type PostClickCampaignTrafficFactRow = RowDataPacket & {
   visits: number | string | null;
   users: number | string | null;
   pageviews: number | string | null;
+  page_depth: number | string | null;
   bounce_rate: number | string | null;
   avg_visit_duration: number | string | null;
 };
@@ -1711,6 +1713,11 @@ async function buildPostClickAnalytics(
         COALESCE(SUM(f.pageviews), 0) AS pageviews,
         CASE
           WHEN COALESCE(SUM(f.visits), 0) > 0
+            THEN COALESCE(SUM(COALESCE(f.page_depth, 0) * COALESCE(f.visits, 0)) / SUM(f.visits), 0)
+          ELSE 0
+        END AS page_depth,
+        CASE
+          WHEN COALESCE(SUM(f.visits), 0) > 0
             THEN COALESCE(SUM(COALESCE(f.bounce_rate, 0) * COALESCE(f.visits, 0)) / SUM(f.visits), 0)
           ELSE 0
         END AS bounce_rate,
@@ -1784,6 +1791,11 @@ async function buildPostClickAnalytics(
         COALESCE(SUM(f.visits), 0) AS visits,
         COALESCE(SUM(f.users), 0) AS users,
         COALESCE(SUM(f.pageviews), 0) AS pageviews,
+        CASE
+          WHEN COALESCE(SUM(f.visits), 0) > 0
+            THEN COALESCE(SUM(COALESCE(f.page_depth, 0) * COALESCE(f.visits, 0)) / SUM(f.visits), 0)
+          ELSE 0
+        END AS page_depth,
         CASE
           WHEN COALESCE(SUM(f.visits), 0) > 0
             THEN COALESCE(SUM(COALESCE(f.bounce_rate, 0) * COALESCE(f.visits, 0)) / SUM(f.visits), 0)
@@ -2036,6 +2048,7 @@ async function buildPostClickAnalytics(
       visits,
       users: Number(row.users ?? 0),
       pageviews: Number(row.pageviews ?? 0),
+      page_depth: Number(Number(row.page_depth ?? 0).toFixed(2)),
       goal_reaches: goalReaches,
       bounce_rate: Number(Number(row.bounce_rate ?? 0).toFixed(2)),
       avg_visit_duration: Number(Number(row.avg_visit_duration ?? 0).toFixed(2)),
@@ -2082,6 +2095,7 @@ async function buildPostClickAnalytics(
       visits,
       users: Number(row.users ?? 0),
       pageviews: Number(row.pageviews ?? 0),
+      page_depth: Number(Number(row.page_depth ?? 0).toFixed(2)),
       goal_reaches: goalReaches,
       bounce_rate: Number(Number(row.bounce_rate ?? 0).toFixed(2)),
       avg_visit_duration: Number(Number(row.avg_visit_duration ?? 0).toFixed(2)),
@@ -2126,6 +2140,7 @@ async function buildPostClickAnalytics(
           acc.visits += item.visits;
           acc.users += item.users;
           acc.pageviews += item.pageviews;
+          acc.page_depth_weighted += item.page_depth * item.visits;
           acc.goal_reaches += item.goal_reaches;
           acc.bounce_weighted += item.bounce_rate * item.visits;
           acc.duration_weighted += item.avg_visit_duration * item.visits;
@@ -2145,6 +2160,7 @@ async function buildPostClickAnalytics(
           users: 0,
           pageviews: 0,
           goal_reaches: 0,
+          page_depth_weighted: 0,
           bounce_weighted: 0,
           duration_weighted: 0,
           impressions: 0,
@@ -2173,6 +2189,7 @@ async function buildPostClickAnalytics(
         visits: totals.visits,
         users: totals.users,
         pageviews: totals.pageviews,
+        page_depth: totals.visits > 0 ? Number((totals.page_depth_weighted / totals.visits).toFixed(2)) : 0,
         goal_reaches: totals.goal_reaches,
         bounce_rate: totals.visits > 0 ? Number((totals.bounce_weighted / totals.visits).toFixed(2)) : 0,
         avg_visit_duration: totals.visits > 0 ? Number((totals.duration_weighted / totals.visits).toFixed(2)) : 0,

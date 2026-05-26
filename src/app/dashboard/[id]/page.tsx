@@ -1342,7 +1342,7 @@ export default function DashboardByIdPage() {
             users: i18n.language === "ru" ? "Пользователи" : "Users",
             pageviews: i18n.language === "ru" ? "Просмотры страниц" : "Pageviews",
             bounceRate: i18n.language === "ru" ? "Отказы" : "Bounce rate",
-            avgVisitDuration: i18n.language === "ru" ? "Ср. длительность визита" : "Avg visit duration",
+            avgVisitDuration: i18n.language === "ru" ? "Время на сайте" : "Avg visit duration",
             total: i18n.common.total,
           }}
         />
@@ -1374,10 +1374,11 @@ export default function DashboardByIdPage() {
               visits: i18n.language === "ru" ? "Визиты" : "Visits",
               users: i18n.language === "ru" ? "Пользователи" : "Users",
               pageviews: i18n.language === "ru" ? "Просмотры страниц" : "Pageviews",
+              pageDepth: i18n.language === "ru" ? "Глубина просмотра" : "Page depth",
               goalReaches: i18n.language === "ru" ? "Достижения целей" : "Goal reaches",
               conversionRate: i18n.language === "ru" ? "CR" : "CR",
               bounceRate: i18n.language === "ru" ? "Отказы" : "Bounce rate",
-              avgVisitDuration: i18n.language === "ru" ? "Ср. длительность визита" : "Avg visit duration",
+              avgVisitDuration: i18n.language === "ru" ? "Время на сайте" : "Avg visit duration",
               utmSources: i18n.language === "ru" ? "UTM source" : "UTM sources",
               sourceKeys: i18n.language === "ru" ? "Источник" : "Source keys",
               platformAccountIds: i18n.language === "ru" ? "ID аккаунтов" : "Account IDs",

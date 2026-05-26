@@ -8,6 +8,7 @@ export const DEFAULT_POSTCLICK_FIELDS: DashboardPostClickFieldId[] = [
   "visits",
   "users",
   "pageviews",
+  "page_depth",
   "goal_reaches",
   "conversion_rate",
   "bounce_rate",

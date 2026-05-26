@@ -68,6 +68,7 @@ const POSTCLICK_FIELD_OPTIONS: Array<{ id: DashboardPostClickFieldId; label: str
   { id: "visits", label: "Visits" },
   { id: "users", label: "Users" },
   { id: "pageviews", label: "Pageviews" },
+  { id: "page_depth", label: "Page depth" },
   { id: "goal_reaches", label: "Goal reaches" },
   { id: "conversion_rate", label: "Conversion rate" },
   { id: "bounce_rate", label: "Bounce rate" },

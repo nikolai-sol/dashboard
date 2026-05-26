@@ -20,6 +20,7 @@ type Props = {
     visits: string;
     users: string;
     pageviews: string;
+    pageDepth: string;
     goalReaches: string;
     conversionRate: string;
     bounceRate: string;
@@ -49,6 +50,7 @@ const DEFAULT_COLUMNS: DashboardPostClickFieldId[] = [
   "visits",
   "users",
   "pageviews",
+  "page_depth",
   "goal_reaches",
   "conversion_rate",
   "bounce_rate",
@@ -64,6 +66,7 @@ const ALL_COLUMNS: DashboardPostClickFieldId[] = [
   "visits",
   "users",
   "pageviews",
+  "page_depth",
   "goal_reaches",
   "conversion_rate",
   "bounce_rate",
@@ -128,6 +131,7 @@ function sumRows(rows: PostClickAnalyticsRow[]) {
       acc.visits += row.visits;
       acc.users += row.users;
       acc.pageviews += row.pageviews;
+      acc.page_depth_weighted += row.page_depth * row.visits;
       acc.goal_reaches += row.goal_reaches;
       acc.bounce_weighted += row.bounce_rate * row.visits;
       acc.duration_weighted += row.avg_visit_duration * row.visits;
@@ -146,6 +150,7 @@ function sumRows(rows: PostClickAnalyticsRow[]) {
       visits: 0,
       users: 0,
       pageviews: 0,
+      page_depth_weighted: 0,
       goal_reaches: 0,
       bounce_weighted: 0,
       duration_weighted: 0,
@@ -165,6 +170,7 @@ function sumRows(rows: PostClickAnalyticsRow[]) {
     visits: totals.visits,
     users: totals.users,
     pageviews: totals.pageviews,
+    page_depth: totals.visits > 0 ? totals.page_depth_weighted / totals.visits : 0,
     goal_reaches: totals.goal_reaches,
     conversion_rate: totals.visits > 0 ? (totals.goal_reaches / totals.visits) * 100 : 0,
     bounce_rate: totals.visits > 0 ? totals.bounce_weighted / totals.visits : 0,
@@ -242,6 +248,7 @@ export default function PostClickAnalyticsTable({
     visits: labels.visits,
     users: labels.users,
     pageviews: labels.pageviews,
+    page_depth: labels.pageDepth,
     goal_reaches: labels.goalReaches,
     conversion_rate: labels.conversionRate,
     bounce_rate: labels.bounceRate,
@@ -292,6 +299,8 @@ export default function PostClickAnalyticsTable({
         return `${Number(row[column] ?? 0).toFixed(2)}%`;
       case "avg_visit_duration":
         return formatSeconds(Number(row[column] ?? 0));
+      case "page_depth":
+        return Number(row[column] ?? 0).toFixed(2);
       case "spend":
       case "cpm":
       case "cpc":

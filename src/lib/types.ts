@@ -285,6 +285,7 @@ export interface PostClickAnalyticsRow {
   visits: number;
   users: number;
   pageviews: number;
+  page_depth: number;
   goal_reaches: number;
   bounce_rate: number;
   avg_visit_duration: number;
@@ -315,6 +316,7 @@ export interface PostClickAnalyticsTimeSeriesPoint {
   visits: number;
   users: number;
   pageviews: number;
+  page_depth: number;
   goal_reaches: number;
   bounce_rate: number;
   avg_visit_duration: number;
@@ -347,6 +349,7 @@ export interface PostClickAnalyticsCampaignPoint {
   visits: number;
   users: number;
   pageviews: number;
+  page_depth: number;
   goal_reaches: number;
   bounce_rate: number;
   avg_visit_duration: number;

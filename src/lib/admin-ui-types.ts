@@ -77,6 +77,7 @@ export type DashboardPostClickFieldId =
   | "visits"
   | "users"
   | "pageviews"
+  | "page_depth"
   | "goal_reaches"
   | "conversion_rate"
   | "bounce_rate"
