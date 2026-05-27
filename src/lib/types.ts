@@ -12,6 +12,7 @@ export type DashboardSectionId =
   | "spend_section"
   | "trend_chart"
   | "analytics"
+  | "traffic_sources"
   | "postclick_analytics"
   | "conversion_funnel"
   | "campaign_table"
@@ -269,6 +270,17 @@ export interface DashboardAnalyticsData {
   kpi: AnalyticsKPI;
   timeseries: AnalyticsTimeSeriesPoint[];
   selected_metrics?: DashboardMetrikaTrafficMetricId[];
+}
+
+export interface TrafficSourceRow {
+  traffic_source: string;
+  visits: number;
+  users: number;
+  new_users: number;
+  pageviews: number;
+  bounce_rate: number;
+  page_depth: number;
+  avg_visit_duration: number;
 }
 
 export interface PostClickAnalyticsRow {
@@ -588,6 +600,7 @@ export interface DashboardData {
   manual_channels?: ManualChannelData[];
   manual_table_title?: string;
   analytics?: DashboardAnalyticsData;
+  traffic_sources?: TrafficSourceRow[];
   postclick_analytics?: {
     rows: PostClickAnalyticsRow[];
     timeseries: PostClickAnalyticsTimeSeriesPoint[];

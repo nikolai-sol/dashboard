@@ -7,6 +7,7 @@ export type DashboardSectionId =
   | "spend_section"
   | "trend_chart"
   | "analytics"
+  | "traffic_sources"
   | "postclick_analytics"
   | "conversion_funnel"
   | "campaign_table"

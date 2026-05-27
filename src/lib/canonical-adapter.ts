@@ -96,6 +96,17 @@ type AnalyticsTimeseriesRow = RowDataPacket & {
   bounce_rate: number | string | null;
 };
 
+type AnalyticsTrafficSourceRow = RowDataPacket & {
+  traffic_source: string | null;
+  visits: number | string | null;
+  users: number | string | null;
+  new_users: number | string | null;
+  pageviews: number | string | null;
+  bounce_rate: number | string | null;
+  page_depth: number | string | null;
+  avg_visit_duration: number | string | null;
+};
+
 type ActiveAccountRow = RowDataPacket & {
   id: string;
   name: string | null;
@@ -806,6 +817,46 @@ export async function getAnalyticsTimeseries(filter: CanonicalFilter) {
   `;
 
   const [rows] = await pool.execute<AnalyticsTimeseriesRow[]>(sql, params);
+  return rows;
+}
+
+export async function getAnalyticsTrafficSources(filter: CanonicalFilter) {
+  const params: SqlParam[] = [filter.source_key, filter.date_from, filter.date_to];
+  const accountWhere = buildAccountWhereAnalytics(filter, params);
+  const sql = `
+    SELECT
+      NULLIF(TRIM(traffic_source), '') AS traffic_source,
+      COALESCE(SUM(visits), 0) AS visits,
+      COALESCE(SUM(users), 0) AS users,
+      COALESCE(SUM(new_users), 0) AS new_users,
+      COALESCE(SUM(pageviews), 0) AS pageviews,
+      CASE
+        WHEN COALESCE(SUM(visits), 0) > 0
+          THEN COALESCE(SUM(COALESCE(bounce_rate, 0) * COALESCE(visits, 0)) / SUM(visits), 0)
+        ELSE 0
+      END AS bounce_rate,
+      CASE
+        WHEN COALESCE(SUM(visits), 0) > 0
+          THEN COALESCE(SUM(COALESCE(page_depth, 0) * COALESCE(visits, 0)) / SUM(visits), 0)
+        ELSE 0
+      END AS page_depth,
+      CASE
+        WHEN COALESCE(SUM(visits), 0) > 0
+          THEN COALESCE(SUM(COALESCE(avg_visit_duration_seconds, 0) * COALESCE(visits, 0)) / SUM(visits), 0)
+        ELSE 0
+      END AS avg_visit_duration
+    FROM canonical_fact_site_analytics_daily
+    WHERE source_key = ?
+      AND report_date >= ?
+      AND report_date <= ?
+      ${accountWhere}
+      AND analytics_scope = 'other'
+    GROUP BY NULLIF(TRIM(traffic_source), '')
+    HAVING traffic_source IS NOT NULL
+    ORDER BY visits DESC, users DESC
+  `;
+
+  const [rows] = await pool.execute<AnalyticsTrafficSourceRow[]>(sql, params);
   return rows;
 }
 

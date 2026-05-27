@@ -40,6 +40,7 @@ const SECTION_OPTIONS: Array<{ id: DashboardSectionId; label: string; spendRelat
   { id: "spend_section", label: "Spend by platform + channel mix", spendRelated: true },
   { id: "trend_chart", label: "Trend chart" },
   { id: "analytics", label: "Website analytics" },
+  { id: "traffic_sources", label: "Traffic sources" },
   { id: "postclick_analytics", label: "Post-click analytics" },
   { id: "promopages", label: "Promopages" },
   { id: "conversion_funnel", label: "Conversion funnel", performanceOnly: true },

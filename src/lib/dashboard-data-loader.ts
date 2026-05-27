@@ -8,6 +8,7 @@ import {
   getCampaignDailyFactsByIds,
   getAdsTimeseries,
   getAnalyticsAggregate,
+  getAnalyticsTrafficSources,
   getAnalyticsTimeseries,
   getFactByCampaignIds,
   getPromopagesAggregate,
@@ -69,6 +70,7 @@ import {
 import type {
   AnalyticsKPI,
   AnalyticsTimeSeriesPoint,
+  TrafficSourceRow,
   PostClickAnalyticsRow,
   PostClickAnalyticsTimeSeriesPoint,
   CampaignBreakdownItem,
@@ -1060,6 +1062,36 @@ function mergeAnalyticsTimeseries(items: AnalyticsTimeSeriesPoint[]): AnalyticsT
   }
 
   return [...map.values()].sort((a, b) => a.date.localeCompare(b.date));
+}
+
+function mergeTrafficSources(items: TrafficSourceRow[]): TrafficSourceRow[] {
+  const map = new Map<string, TrafficSourceRow>();
+
+  for (const item of items) {
+    const key = item.traffic_source;
+    const existing = map.get(key);
+    if (!existing) {
+      map.set(key, { ...item });
+      continue;
+    }
+
+    const visits = existing.visits + item.visits;
+    existing.users += item.users;
+    existing.new_users += item.new_users;
+    existing.pageviews += item.pageviews;
+    existing.bounce_rate = visits > 0
+      ? Number(((existing.bounce_rate * existing.visits + item.bounce_rate * item.visits) / visits).toFixed(2))
+      : 0;
+    existing.page_depth = visits > 0
+      ? Number(((existing.page_depth * existing.visits + item.page_depth * item.visits) / visits).toFixed(2))
+      : 0;
+    existing.avg_visit_duration = visits > 0
+      ? Number(((existing.avg_visit_duration * existing.visits + item.avg_visit_duration * item.visits) / visits).toFixed(2))
+      : 0;
+    existing.visits = visits;
+  }
+
+  return [...map.values()].sort((a, b) => b.visits - a.visits || b.users - a.users);
 }
 
 async function loadAdjustedCampaignDailyFacts(
@@ -2654,6 +2686,7 @@ export async function loadDashboardData(
   const planRows: MediaPlanRow[] = [];
   const analyticsKpiRaw: AnalyticsKPI[] = [];
   const analyticsTimeseriesRaw: AnalyticsTimeSeriesPoint[] = [];
+  const trafficSourcesRaw: TrafficSourceRow[] = [];
   const promopagesKpiRaw: Array<{
     total_impressions: number;
     total_reach: number;
@@ -2964,6 +2997,21 @@ export async function loadDashboardData(
               bounce_rate: Number(asNumber(row.bounce_rate).toFixed(2)),
             });
           }
+          const trafficSourceRows = await getAnalyticsTrafficSources(filter);
+          for (const row of trafficSourceRows) {
+            const trafficSource = String(row.traffic_source ?? "").trim();
+            if (!trafficSource) continue;
+            trafficSourcesRaw.push({
+              traffic_source: trafficSource,
+              visits: Math.round(asNumber(row.visits)),
+              users: Math.round(asNumber(row.users)),
+              new_users: Math.round(asNumber(row.new_users)),
+              pageviews: Math.round(asNumber(row.pageviews)),
+              bounce_rate: Number(asNumber(row.bounce_rate).toFixed(2)),
+              page_depth: Number(asNumber(row.page_depth).toFixed(2)),
+              avg_visit_duration: Number(asNumber(row.avg_visit_duration).toFixed(2)),
+            });
+          }
         }
       } catch (sourceError) {
         console.warn(`Skipping source ${source.platform}:`, sourceError);
@@ -3149,6 +3197,7 @@ export async function loadDashboardData(
     ), manualChannels, boundManualChannelKeys);
     const analyticsKpi = mergeAnalyticsKpi(analyticsKpiRaw);
     const analyticsTimeseries = mergeAnalyticsTimeseries(analyticsTimeseriesRaw);
+    const trafficSources = mergeTrafficSources(trafficSourcesRaw);
     const postclickAnalytics = await buildPostClickAnalytics(
       dashboard.id,
       planByChannel,
@@ -3161,6 +3210,9 @@ export async function loadDashboardData(
     let sectionOrder = getSectionOrder(config, dashboardType, showSpend);
     if (postclickAnalytics && postclickAnalytics.rows.length > 0) {
       sectionOrder = withOptionalSection(sectionOrder, "postclick_analytics", "plan_vs_fact");
+    }
+    if (trafficSources.length > 0) {
+      sectionOrder = withOptionalSection(sectionOrder, "traffic_sources", "postclick_analytics");
     }
     const promopagesTimeseries = mergePromopagesTimeseries(promopagesTimeseriesRaw);
     const promopagesCampaigns = mergePromopagesCampaigns(promopagesCampaignsRaw);
@@ -3309,6 +3361,7 @@ export async function loadDashboardData(
               selected_metrics: metrikaSettings.selected_traffic_metrics,
             }
           : undefined,
+      traffic_sources: trafficSources.length > 0 ? trafficSources : undefined,
       postclick_analytics: postclickAnalytics
         ? {
             ...postclickAnalytics,

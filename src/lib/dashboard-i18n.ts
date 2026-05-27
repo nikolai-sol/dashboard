@@ -13,6 +13,7 @@ export type DashboardI18n = {
     comparison: string;
     promopages: string;
     analytics: string;
+    trafficSources: string;
     postclickAnalytics: string;
     spendByPlatform: string;
     channelMix: string;
@@ -121,6 +122,7 @@ const DICTIONARY: Record<DashboardLanguage, Omit<DashboardI18n, "language" | "lo
       comparison: "Period Comparison",
       promopages: "Promopages",
       analytics: "Website Analytics",
+      trafficSources: "Traffic Sources",
       postclickAnalytics: "Post-click Analytics",
       spendByPlatform: "Spend by Platform",
       channelMix: "Channel Mix",
@@ -227,6 +229,7 @@ const DICTIONARY: Record<DashboardLanguage, Omit<DashboardI18n, "language" | "lo
       comparison: "Сравнение периодов",
       promopages: "ПромоСтраницы",
       analytics: "Аналитика сайта",
+      trafficSources: "Источники трафика",
       postclickAnalytics: "Постклик аналитика",
       spendByPlatform: "Расход по платформам",
       channelMix: "Микс каналов",

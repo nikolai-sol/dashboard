@@ -20,6 +20,7 @@ import PlatformTable from "@/components/PlatformTable";
 import PlanVsFact from "@/components/PlanVsFact";
 import PromopagesSection from "@/components/PromopagesSection";
 import AnalyticsSection from "@/components/AnalyticsSection";
+import TrafficSourcesSection from "@/components/TrafficSourcesSection";
 import PostClickAnalyticsTable from "@/components/PostClickAnalyticsTable";
 import SpendByPlatform from "@/components/SpendByPlatform";
 import SpendConversionsScatter from "@/components/SpendConversionsScatter";
@@ -1400,6 +1401,32 @@ export default function DashboardByIdPage() {
             }}
           />
         </section>
+      );
+    }
+
+    if (sectionId === "traffic_sources") {
+      if (!dashboard?.traffic_sources?.length) return null;
+      return (
+        <TrafficSourcesSection
+          key={sectionId}
+          rows={dashboard.traffic_sources}
+          locale={locale}
+          labels={{
+            title: i18n.sections.trafficSources,
+            source: i18n.language === "ru" ? "Источник трафика" : "Traffic source",
+            visits: i18n.language === "ru" ? "Визиты" : "Visits",
+            users: i18n.language === "ru" ? "Посетители" : "Users",
+            newUsers: i18n.language === "ru" ? "Новые посетители" : "New users",
+            pageviews: i18n.language === "ru" ? "Просмотры страниц" : "Pageviews",
+            bounceRate: i18n.language === "ru" ? "Отказы" : "Bounce rate",
+            pageDepth: i18n.language === "ru" ? "Глубина просмотра" : "Page depth",
+            avgVisitDuration: i18n.language === "ru" ? "Время на сайте" : "Avg visit duration",
+            noRows:
+              i18n.language === "ru"
+                ? "Нет данных по источникам трафика за выбранный период."
+                : "No traffic source rows for the selected period.",
+          }}
+        />
       );
     }
 
