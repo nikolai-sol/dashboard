@@ -24,6 +24,7 @@ type TabId =
   | "users_summary"
   | "user_actions"
   | "page_stats"
+  | "bitrix_pages"
   | "external_events"
   | "time_buckets"
   | "returning"
@@ -79,6 +80,11 @@ const TABS: TabConfig[] = [
     id: "page_stats",
     label: "3. Статистика страниц на сайте ABBOTT",
     description: "Источник: yandex_metrika_internal + Abbott names workbook enrichment.",
+  },
+  {
+    id: "bitrix_pages",
+    label: "3.1 Bitrix: страницы и сессии",
+    description: "Источник: b_stat_hit + b_stat_session из Bitrix dump. Grain: normalized URL, очищено от ботов и технических URL.",
   },
   {
     id: "external_events",
@@ -140,6 +146,16 @@ const TAB_THEMES: Record<TabId, ThemeConfig> = {
     headerClass: "bg-lime-500 text-white",
     barColor: "#88c55a",
     pieColors: ["#84cc16", "#a3e635", "#bef264", "#d9f99d", "#ecfccb"],
+  },
+  bitrix_pages: {
+    accent: "#0f766e",
+    accentSoft: "#f0fdfa",
+    borderClass: "border-teal-200",
+    textClass: "text-teal-700",
+    pillClass: "bg-teal-50 text-teal-700 border-teal-200",
+    headerClass: "bg-teal-600 text-white",
+    barColor: "#0f766e",
+    pieColors: ["#0f766e", "#14b8a6", "#2dd4bf", "#5eead4", "#99f6e4"],
   },
   external_events: {
     accent: "#7c6ad4",
@@ -699,6 +715,7 @@ export default function AbbottBiDashboard({ data, locale = "ru-RU" }: AbbottBiDa
     users_summary: "",
     user_actions: "",
     page_stats: "",
+    bitrix_pages: "",
     external_events: "",
     time_buckets: "",
     returning: "",
@@ -708,6 +725,7 @@ export default function AbbottBiDashboard({ data, locale = "ru-RU" }: AbbottBiDa
     users_summary: 1,
     user_actions: 1,
     page_stats: 1,
+    bitrix_pages: 1,
     external_events: 1,
     time_buckets: 1,
     returning: 1,
@@ -717,6 +735,7 @@ export default function AbbottBiDashboard({ data, locale = "ru-RU" }: AbbottBiDa
     users_summary: { user_id: "", user_id_traffic: "", traffic_source: "", direction: "" },
     user_actions: { user_id: "", user_id_traffic: "", traffic_source: "", direction: "" },
     page_stats: { page_title: "", direction: "", material_type: "", access: "" },
+    bitrix_pages: { direction: "", material_type: "", access: "" },
     external_events: { direction: "" },
     time_buckets: { page_url: "" },
     returning: { url: "", direction: "" },
@@ -768,6 +787,15 @@ export default function AbbottBiDashboard({ data, locale = "ru-RU" }: AbbottBiDa
       access: uniqOptions(data.page_stats.map((row) => row.access)),
     }),
     [data.page_stats],
+  );
+
+  const bitrixPageOptions = useMemo(
+    () => ({
+      direction: uniqOptions(data.bitrix_pages.map((row) => row.direction)),
+      material_type: uniqOptions(data.bitrix_pages.map((row) => row.material_type)),
+      access: uniqOptions(data.bitrix_pages.map((row) => row.access)),
+    }),
+    [data.bitrix_pages],
   );
 
   const returningOptions = useMemo(
@@ -833,7 +861,24 @@ export default function AbbottBiDashboard({ data, locale = "ru-RU" }: AbbottBiDa
     const query = queryByTab.page_stats;
     const filters = filtersByTab.page_stats;
     return data.page_stats.filter((row) => {
-      if (!matchesQuery([row.page_title, row.url, row.direction, row.material_type, row.access, row.pageviews, row.users], query)) return false;
+      if (
+        !matchesQuery(
+          [
+            row.page_title,
+            row.url,
+            row.direction,
+            row.material_type,
+            row.access,
+            row.pageviews,
+            row.users,
+            row.bitrix_pageviews,
+            row.bitrix_sessions,
+            row.bitrix_users,
+          ],
+          query,
+        )
+      )
+        return false;
       if (filters.page_title && row.page_title !== filters.page_title) return false;
       if (filters.direction && (row.direction ?? "") !== filters.direction) return false;
       if (filters.material_type && (row.material_type ?? "") !== filters.material_type) return false;
@@ -841,6 +886,36 @@ export default function AbbottBiDashboard({ data, locale = "ru-RU" }: AbbottBiDa
       return true;
     });
   }, [data.page_stats, filtersByTab.page_stats, queryByTab.page_stats]);
+
+  const bitrixPageRows = useMemo(() => {
+    const query = queryByTab.bitrix_pages;
+    const filters = filtersByTab.bitrix_pages;
+    return data.bitrix_pages.filter((row) => {
+      if (
+        !matchesQuery(
+          [
+            row.url,
+            row.path,
+            row.direction,
+            row.material_type,
+            row.access,
+            row.pageviews,
+            row.sessions,
+            row.users,
+            row.top_utm_source,
+            row.top_utm_medium,
+            row.top_utm_campaign,
+          ],
+          query,
+        )
+      )
+        return false;
+      if (filters.direction && (row.direction ?? "") !== filters.direction) return false;
+      if (filters.material_type && (row.material_type ?? "") !== filters.material_type) return false;
+      if (filters.access && (row.access ?? "") !== filters.access) return false;
+      return true;
+    });
+  }, [data.bitrix_pages, filtersByTab.bitrix_pages, queryByTab.bitrix_pages]);
 
   const externalEventRows = useMemo(() => {
     const query = queryByTab.external_events;
@@ -899,6 +974,7 @@ export default function AbbottBiDashboard({ data, locale = "ru-RU" }: AbbottBiDa
     users_summary: usersSummaryRows,
     user_actions: userActionRows,
     page_stats: pageStatRows,
+    bitrix_pages: bitrixPageRows,
     external_events: externalEventRows,
     time_buckets: timeBucketSections.overall,
     returning: returningRows,
@@ -946,6 +1022,18 @@ export default function AbbottBiDashboard({ data, locale = "ru-RU" }: AbbottBiDa
   const pageAccessData = useMemo(
     () => excludeUnnamedChartGroups(groupNumberRows(pageStatRows, (row) => row.access, (row) => row.users)),
     [pageStatRows],
+  );
+  const bitrixDirectionData = useMemo(
+    () => excludeUnnamedChartGroups(groupNumberRows(bitrixPageRows, (row) => row.direction, (row) => row.sessions)).slice(0, 8),
+    [bitrixPageRows],
+  );
+  const bitrixMaterialData = useMemo(
+    () => excludeUnnamedChartGroups(groupNumberRows(bitrixPageRows, (row) => row.material_type, (row) => row.pageviews)).slice(0, 8),
+    [bitrixPageRows],
+  );
+  const bitrixTopPages = useMemo(
+    () => bitrixPageRows.map((row) => ({ label: row.path || row.url, pageviews: row.pageviews })).slice(0, 12),
+    [bitrixPageRows],
   );
   const externalTopRows = useMemo(
     () => externalEventRows.map((row) => ({ label: row.title ?? row.external_url, clicks: row.outbound_clicks })).slice(0, 10),
@@ -997,6 +1085,7 @@ export default function AbbottBiDashboard({ data, locale = "ru-RU" }: AbbottBiDa
   const usersSummaryPage = sliceRows(usersSummaryRows, pageByTab.users_summary);
   const userActionsPage = sliceRows(userActionRows, pageByTab.user_actions);
   const pageStatsPage = sliceRows(pageStatRows, pageByTab.page_stats);
+  const bitrixPagesPage = sliceRows(bitrixPageRows, pageByTab.bitrix_pages);
   const externalEventsPage = sliceRows(externalEventRows, pageByTab.external_events);
   const returningPage = sliceRows(returningRows, pageByTab.returning);
   const generalMaterialsPage = sliceRows(generalMaterialRows, pageByTab.general_materials);
@@ -1058,6 +1147,9 @@ export default function AbbottBiDashboard({ data, locale = "ru-RU" }: AbbottBiDa
       { key: "access", label: "Доступ" },
       { key: "pageviews", label: "Просмотры", className: "text-right" },
       { key: "users", label: "Посетители", className: "text-right" },
+      { key: "bitrix_pageviews", label: "Bitrix просмотры", className: "text-right" },
+      { key: "bitrix_sessions", label: "Bitrix сессии", className: "text-right" },
+      { key: "bitrix_users", label: "Bitrix User ID", className: "text-right" },
     ];
     tableRows = pageStatsPage.pageRows.map((row) => ({
       page_title: row.page_title || "—",
@@ -1067,6 +1159,40 @@ export default function AbbottBiDashboard({ data, locale = "ru-RU" }: AbbottBiDa
       access: row.access ?? "—",
       pageviews: formatNumber(row.pageviews, locale),
       users: formatNumber(row.users, locale),
+      bitrix_pageviews: formatNumber(row.bitrix_pageviews, locale),
+      bitrix_sessions: formatNumber(row.bitrix_sessions, locale),
+      bitrix_users: formatNumber(row.bitrix_users, locale),
+    }));
+  } else if (activeTab === "bitrix_pages") {
+    currentPage = bitrixPagesPage.currentPage;
+    totalPages = bitrixPagesPage.totalPages;
+    tableColumns = [
+      { key: "url", label: "URL", className: "min-w-[320px] break-all" },
+      { key: "direction", label: "Направление" },
+      { key: "material_type", label: "Тип материала" },
+      { key: "access", label: "Доступ" },
+      { key: "pageviews", label: "Просмотры", className: "text-right" },
+      { key: "sessions", label: "Сессии", className: "text-right" },
+      { key: "users", label: "User ID", className: "text-right" },
+      { key: "logged_in_sessions", label: "Сессии с User ID", className: "text-right" },
+      { key: "anonymous_sessions", label: "Сессии без User ID", className: "text-right" },
+      { key: "avg_session_duration", label: "Средняя сессия, мин", className: "text-right" },
+      { key: "top_utm_source", label: "UTM source" },
+      { key: "top_utm_campaign", label: "UTM campaign" },
+    ];
+    tableRows = bitrixPagesPage.pageRows.map((row) => ({
+      url: row.url,
+      direction: row.direction ?? "—",
+      material_type: row.material_type ?? "—",
+      access: row.access ?? "—",
+      pageviews: formatNumber(row.pageviews, locale),
+      sessions: formatNumber(row.sessions, locale),
+      users: formatNumber(row.users, locale),
+      logged_in_sessions: formatNumber(row.logged_in_sessions, locale),
+      anonymous_sessions: formatNumber(row.anonymous_sessions, locale),
+      avg_session_duration: formatDurationMinutes(row.avg_session_duration, locale),
+      top_utm_source: row.top_utm_source || "—",
+      top_utm_campaign: row.top_utm_campaign || "—",
     }));
   } else if (activeTab === "external_events") {
     currentPage = externalEventsPage.currentPage;
@@ -1215,6 +1341,31 @@ export default function AbbottBiDashboard({ data, locale = "ru-RU" }: AbbottBiDa
         />
       </>
     ),
+    bitrix_pages: (
+      <>
+        <SelectField
+          label="Направление"
+          value={filtersByTab.bitrix_pages.direction}
+          options={bitrixPageOptions.direction}
+          onChange={(value) => setSelectFilter("bitrix_pages", "direction", value)}
+          theme={theme}
+        />
+        <SelectField
+          label="Тип материала"
+          value={filtersByTab.bitrix_pages.material_type}
+          options={bitrixPageOptions.material_type}
+          onChange={(value) => setSelectFilter("bitrix_pages", "material_type", value)}
+          theme={theme}
+        />
+        <SelectField
+          label="Доступ"
+          value={filtersByTab.bitrix_pages.access}
+          options={bitrixPageOptions.access}
+          onChange={(value) => setSelectFilter("bitrix_pages", "access", value)}
+          theme={theme}
+        />
+      </>
+    ),
     external_events: (
       <SelectField
         label="Направление"
@@ -1333,6 +1484,44 @@ export default function AbbottBiDashboard({ data, locale = "ru-RU" }: AbbottBiDa
         <ChartCard title="Посетители по типу материала">
           <AbbottPieChart data={pageMaterialData} colors={[...theme.pieColors].reverse()} locale={locale} />
         </ChartCard>
+      </div>
+    );
+  } else if (activeTab === "bitrix_pages") {
+    const excludedTotal = data.bitrix_summary
+      ? Object.values(data.bitrix_summary.excluded).reduce((sum, value) => sum + value, 0)
+      : 0;
+    chartContent = (
+      <div className="grid gap-4 xl:grid-cols-3">
+        <ChartCard title="Сводка Bitrix dump">
+          <div className="grid gap-3">
+            <StatsPill
+              label="Чистые хиты"
+              value={formatNumber(data.bitrix_summary?.clean_hit_rows ?? 0, locale)}
+              theme={theme}
+            />
+            <StatsPill
+              label="URL после чистки"
+              value={formatNumber(data.bitrix_summary?.unique_clean_urls ?? 0, locale)}
+              theme={theme}
+            />
+            <StatsPill
+              label="Исключено"
+              value={formatNumber(excludedTotal, locale)}
+              theme={theme}
+            />
+          </div>
+        </ChartCard>
+        <ChartCard title="Сессии по направлению">
+          <AbbottPieChart data={bitrixDirectionData} colors={theme.pieColors} locale={locale} />
+        </ChartCard>
+        <ChartCard title="Просмотры по типу материала">
+          <AbbottPieChart data={bitrixMaterialData} colors={[...theme.pieColors].reverse()} locale={locale} />
+        </ChartCard>
+        <div className="xl:col-span-3">
+          <ChartCard title="Топ Bitrix URL по просмотрам">
+            <AbbottBarChart data={bitrixTopPages} dataKey="pageviews" color={theme.barColor} locale={locale} layout="horizontal" />
+          </ChartCard>
+        </div>
       </div>
     );
   } else if (activeTab === "external_events") {

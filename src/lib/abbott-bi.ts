@@ -5,6 +5,8 @@ import * as XLSX from "xlsx";
 import pool from "@/lib/db";
 import type {
   AbbottBiData,
+  AbbottBiBitrixPageRow,
+  AbbottBiBitrixSummary,
   AbbottBiExternalClickRow,
   AbbottBiExternalEventRow,
   AbbottBiMaterialRow,
@@ -60,6 +62,41 @@ type ParsedAbbottWorkbook = {
     returning_1_day: number;
     returning_2_7_days: number;
     returning_8_31_days: number;
+  }>;
+};
+
+type ParsedBitrixAnalytics = {
+  summary: AbbottBiBitrixSummary | null;
+  rows: AbbottBiBitrixPageRow[];
+};
+
+type RawBitrixAnalyticsPayload = {
+  summary?: {
+    raw_hit_rows?: number;
+    clean_hit_rows?: number;
+    sessions_loaded?: number;
+    unique_clean_urls?: number;
+    excluded?: Record<string, number>;
+  };
+  rows?: Array<{
+    url?: string;
+    normalized_url?: string;
+    path?: string;
+    material_type_hint?: string;
+    pageviews?: number;
+    sessions?: number;
+    users?: number;
+    guests?: number;
+    logged_in_hits?: number;
+    anonymous_hits?: number;
+    logged_in_sessions?: number;
+    anonymous_sessions?: number;
+    entry_sessions?: number;
+    exit_sessions?: number;
+    avg_session_duration_seconds?: number;
+    top_utm_source?: string;
+    top_utm_medium?: string;
+    top_utm_campaign?: string;
   }>;
 };
 
@@ -174,6 +211,10 @@ function workbookXlsxCandidates() {
   return [path.join(process.cwd(), "public", "abbott", "Abbott names.xlsx")];
 }
 
+function bitrixAnalyticsCandidates() {
+  return [path.join(process.cwd(), "public", "abbott", "bitrix-analytics.json")];
+}
+
 function resolveWorkbookJsonPath() {
   const match = workbookJsonCandidates().find((candidate) => fs.existsSync(candidate));
   if (!match) {
@@ -184,6 +225,10 @@ function resolveWorkbookJsonPath() {
 
 function resolveWorkbookXlsxPath() {
   return workbookXlsxCandidates().find((candidate) => fs.existsSync(candidate)) ?? null;
+}
+
+function resolveBitrixAnalyticsPath() {
+  return bitrixAnalyticsCandidates().find((candidate) => fs.existsSync(candidate)) ?? null;
 }
 
 function getContentValue(row: Record<string, unknown>, key: string) {
@@ -259,6 +304,17 @@ function normalizeAbbottPageUrl(rawUrl: string | null | undefined) {
   } catch {
     return value.split("#")[0]?.split("?")[0]?.replace(/\/+$/, "") || value;
   }
+}
+
+function emptyBitrixMetrics() {
+  return {
+    bitrix_pageviews: 0,
+    bitrix_sessions: 0,
+    bitrix_users: 0,
+    bitrix_logged_in_sessions: 0,
+    bitrix_anonymous_sessions: 0,
+    bitrix_avg_session_duration: 0,
+  };
 }
 
 const ABBOTT_DIRECTION_BY_PREFIX: Record<string, string> = {
@@ -528,6 +584,89 @@ function loadWorkbookData(): ParsedAbbottWorkbook {
   };
   global.__abbottWorkbookCache = { versionKey, data };
   return data;
+}
+
+function loadBitrixAnalyticsData(): ParsedBitrixAnalytics {
+  const bitrixPath = resolveBitrixAnalyticsPath();
+  if (!bitrixPath) {
+    return { summary: null, rows: [] };
+  }
+
+  const payload = JSON.parse(fs.readFileSync(bitrixPath, "utf-8")) as RawBitrixAnalyticsPayload;
+  const { contentByTitle, contentBySlug, userDirections } = loadWorkbookData();
+  const summary: AbbottBiBitrixSummary | null = payload.summary
+    ? {
+        raw_hit_rows: Math.round(asNumber(payload.summary.raw_hit_rows)),
+        clean_hit_rows: Math.round(asNumber(payload.summary.clean_hit_rows)),
+        sessions_loaded: Math.round(asNumber(payload.summary.sessions_loaded)),
+        unique_clean_urls: Math.round(asNumber(payload.summary.unique_clean_urls)),
+        excluded: Object.fromEntries(
+          Object.entries(payload.summary.excluded ?? {}).map(([key, value]) => [key, Math.round(asNumber(value))]),
+        ),
+      }
+    : null;
+
+  const rows = (payload.rows ?? [])
+    .map<AbbottBiBitrixPageRow>((row) => {
+      const url = normalizeAbbottPageUrl(row.normalized_url || row.url || "");
+      const slug = extractAbbottSlugFromUrl(url) ?? "";
+      const contentMeta = contentBySlug.get(slug) ?? contentByTitle.get(asString(row.path));
+      const inferredMaterialType = inferAbbottMaterialTypeFromUrl(url) || asString(row.material_type_hint) || null;
+      return {
+        url,
+        path: asString(row.path),
+        direction: contentMeta?.direction ?? inferAbbottDirectionFromUrl(url, userDirections) ?? null,
+        material_type: contentMeta?.material_type ?? inferredMaterialType,
+        access: contentMeta?.access ?? null,
+        pageviews: Math.round(asNumber(row.pageviews)),
+        sessions: Math.round(asNumber(row.sessions)),
+        users: Math.round(asNumber(row.users)),
+        guests: Math.round(asNumber(row.guests)),
+        logged_in_hits: Math.round(asNumber(row.logged_in_hits)),
+        anonymous_hits: Math.round(asNumber(row.anonymous_hits)),
+        logged_in_sessions: Math.round(asNumber(row.logged_in_sessions)),
+        anonymous_sessions: Math.round(asNumber(row.anonymous_sessions)),
+        entry_sessions: Math.round(asNumber(row.entry_sessions)),
+        exit_sessions: Math.round(asNumber(row.exit_sessions)),
+        avg_session_duration: Number(asNumber(row.avg_session_duration_seconds).toFixed(2)),
+        top_utm_source: asString(row.top_utm_source),
+        top_utm_medium: asString(row.top_utm_medium),
+        top_utm_campaign: asString(row.top_utm_campaign),
+      };
+    })
+    .filter((row) => row.url)
+    .sort((a, b) => {
+      if (b.pageviews !== a.pageviews) return b.pageviews - a.pageviews;
+      if (b.sessions !== a.sessions) return b.sessions - a.sessions;
+      return a.url.localeCompare(b.url);
+    });
+
+  return { summary, rows };
+}
+
+function enrichPageStatsWithBitrix(
+  pageStats: AbbottBiPageStatRow[],
+  bitrixRows: AbbottBiBitrixPageRow[],
+): AbbottBiPageStatRow[] {
+  const bitrixByUrl = new Map(bitrixRows.map((row) => [normalizeAbbottPageUrl(row.url), row]));
+  return pageStats.map((row) => {
+    const bitrix = bitrixByUrl.get(normalizeAbbottPageUrl(row.url));
+    if (!bitrix) {
+      return {
+        ...row,
+        ...emptyBitrixMetrics(),
+      };
+    }
+    return {
+      ...row,
+      bitrix_pageviews: bitrix.pageviews,
+      bitrix_sessions: bitrix.sessions,
+      bitrix_users: bitrix.users,
+      bitrix_logged_in_sessions: bitrix.logged_in_sessions,
+      bitrix_anonymous_sessions: bitrix.anonymous_sessions,
+      bitrix_avg_session_duration: bitrix.avg_session_duration,
+    };
+  });
 }
 
 function buildInClause(values: readonly string[]) {
@@ -1030,6 +1169,7 @@ async function queryPageStats(counterIds: string[], from: string, to: string): P
         is_hidden: contentMeta?.is_active === false,
         pageviews: 0,
         users: 0,
+        ...emptyBitrixMetrics(),
       };
       current.direction = current.direction ?? contentMeta?.direction ?? inferAbbottDirectionFromUrl(row.url, userDirections) ?? null;
       current.material_type = current.material_type ?? contentMeta?.material_type ?? inferredMaterialType ?? null;
@@ -1372,6 +1512,7 @@ export function getDefaultAbbottCounterIds() {
 
 export async function loadAbbottBiData(counterIds: string[], from: string, to: string): Promise<AbbottBiData> {
   const normalizedCounterIds = counterIds.length > 0 ? counterIds : getDefaultAbbottCounterIds();
+  const bitrixAnalytics = loadBitrixAnalyticsData();
   const [usersSummary, userActions, pageStats, returningFallback, externalFactDaily, timeBuckets, returningApiPrototype] = await Promise.all([
     queryUserSummary(normalizedCounterIds, from, to),
     queryUserActions(normalizedCounterIds, from, to),
@@ -1385,16 +1526,19 @@ export async function loadAbbottBiData(counterIds: string[], from: string, to: s
   ]);
 
   const { externalEvents } = loadWorkbookData();
+  const enrichedPageStats = enrichPageStatsWithBitrix(pageStats, bitrixAnalytics.rows);
 
   return {
     counters: normalizedCounterIds,
     users_summary: usersSummary,
     user_actions: userActions,
-    page_stats: pageStats,
+    page_stats: enrichedPageStats,
+    bitrix_pages: bitrixAnalytics.rows,
+    bitrix_summary: bitrixAnalytics.summary,
     external_events: externalEvents,
     external_clicks: buildExternalClickRows(externalFactDaily),
     time_buckets: timeBuckets,
     returning: returningApiPrototype.length > 0 ? returningApiPrototype : buildReturningRows(from, to, returningFallback),
-    general_materials: buildGeneralMaterialsRows(pageStats),
+    general_materials: buildGeneralMaterialsRows(enrichedPageStats),
   };
 }

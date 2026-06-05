@@ -413,6 +413,42 @@ export interface AbbottBiPageStatRow {
   access: string | null;
   pageviews: number;
   users: number;
+  bitrix_pageviews: number;
+  bitrix_sessions: number;
+  bitrix_users: number;
+  bitrix_logged_in_sessions: number;
+  bitrix_anonymous_sessions: number;
+  bitrix_avg_session_duration: number;
+}
+
+export interface AbbottBiBitrixPageRow {
+  url: string;
+  path: string;
+  direction: string | null;
+  material_type: string | null;
+  access: string | null;
+  pageviews: number;
+  sessions: number;
+  users: number;
+  guests: number;
+  logged_in_hits: number;
+  anonymous_hits: number;
+  logged_in_sessions: number;
+  anonymous_sessions: number;
+  entry_sessions: number;
+  exit_sessions: number;
+  avg_session_duration: number;
+  top_utm_source: string;
+  top_utm_medium: string;
+  top_utm_campaign: string;
+}
+
+export interface AbbottBiBitrixSummary {
+  raw_hit_rows: number;
+  clean_hit_rows: number;
+  sessions_loaded: number;
+  unique_clean_urls: number;
+  excluded: Record<string, number>;
 }
 
 export interface AbbottBiExternalEventRow {
@@ -467,6 +503,8 @@ export interface AbbottBiData {
   users_summary: AbbottBiUserSummaryRow[];
   user_actions: AbbottBiUserActionRow[];
   page_stats: AbbottBiPageStatRow[];
+  bitrix_pages: AbbottBiBitrixPageRow[];
+  bitrix_summary: AbbottBiBitrixSummary | null;
   external_events: AbbottBiExternalEventRow[];
   external_clicks: AbbottBiExternalClickRow[];
   time_buckets: AbbottBiTimeBuckets;
