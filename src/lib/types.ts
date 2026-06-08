@@ -446,6 +446,10 @@ export interface AbbottBiBitrixPageRow {
 export interface AbbottBiBitrixSummary {
   raw_hit_rows: number;
   clean_hit_rows: number;
+  raw_date_from: string;
+  raw_date_to: string;
+  date_from: string;
+  date_to: string;
   sessions_loaded: number;
   unique_clean_urls: number;
   excluded: Record<string, number>;

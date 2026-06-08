@@ -248,6 +248,10 @@ def build_bitrix_analytics(dump_path: Path, limit: int) -> dict[str, Any]:
     session_hit_bounds: dict[int, tuple[datetime, datetime, str, str]] = {}
     hit_rows = 0
     clean_hits = 0
+    raw_date_from = ""
+    raw_date_to = ""
+    clean_date_from = ""
+    clean_date_to = ""
     excluded = Counter()
     url_aggs: dict[str, UrlAgg] = {}
     pending_entry_exit: dict[int, tuple[str, str]] = {}
@@ -264,6 +268,10 @@ def build_bitrix_analytics(dump_path: Path, limit: int) -> dict[str, Any]:
             if len(row) < 18:
                 excluded["short_hit_row"] += 1
                 continue
+            date_hit = clean_text(row[2])
+            if date_hit:
+                raw_date_from = date_hit if not raw_date_from or date_hit < raw_date_from else raw_date_from
+                raw_date_to = date_hit if not raw_date_to or date_hit > raw_date_to else raw_date_to
             session_id = safe_int(row[1])
             user_id = safe_int(row[5])
             guest_id = safe_int(row[3])
@@ -307,6 +315,9 @@ def build_bitrix_analytics(dump_path: Path, limit: int) -> dict[str, Any]:
                         last_url = normalized
                     session_hit_bounds[session_id] = (first_dt, last_dt, first_url, last_url)
             clean_hits += 1
+            if date_hit:
+                clean_date_from = date_hit if not clean_date_from or date_hit < clean_date_from else clean_date_from
+                clean_date_to = date_hit if not clean_date_to or date_hit > clean_date_to else clean_date_to
             agg = url_aggs.get(normalized)
             if not agg:
                 agg = UrlAgg(url=normalized)
@@ -406,6 +417,10 @@ def build_bitrix_analytics(dump_path: Path, limit: int) -> dict[str, Any]:
         "summary": {
             "raw_hit_rows": hit_rows,
             "clean_hit_rows": clean_hits,
+            "raw_date_from": raw_date_from,
+            "raw_date_to": raw_date_to,
+            "date_from": clean_date_from,
+            "date_to": clean_date_to,
             "sessions_loaded": len(sessions),
             "unique_clean_urls": len(url_aggs),
             "excluded": dict(excluded),

@@ -1,5 +1,5 @@
 {
-  "generated_at": "2026-06-05T16:03:12.497320+00:00",
+  "generated_at": "2026-06-08T11:51:50.399987+00:00",
   "source_dump": "abbott_reader_analytics_abbottpro_db_2026-05-29_11-14-33.sql",
   "grain": "normalized_url",
   "join_key": "normalized_url = normalized current ABBOTT page_stats.url",
@@ -33,6 +33,10 @@
   "summary": {
     "raw_hit_rows": 287896,
     "clean_hit_rows": 113215,
+    "raw_date_from": "2026-05-18 00:00:01",
+    "raw_date_to": "2026-05-29 11:14:46",
+    "date_from": "2026-05-18 00:00:14",
+    "date_to": "2026-05-29 11:14:46",
     "sessions_loaded": 12384,
     "unique_clean_urls": 28013,
     "excluded": {

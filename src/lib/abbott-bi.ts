@@ -74,6 +74,10 @@ type RawBitrixAnalyticsPayload = {
   summary?: {
     raw_hit_rows?: number;
     clean_hit_rows?: number;
+    raw_date_from?: string;
+    raw_date_to?: string;
+    date_from?: string;
+    date_to?: string;
     sessions_loaded?: number;
     unique_clean_urls?: number;
     excluded?: Record<string, number>;
@@ -598,6 +602,10 @@ function loadBitrixAnalyticsData(): ParsedBitrixAnalytics {
     ? {
         raw_hit_rows: Math.round(asNumber(payload.summary.raw_hit_rows)),
         clean_hit_rows: Math.round(asNumber(payload.summary.clean_hit_rows)),
+        raw_date_from: asString(payload.summary.raw_date_from),
+        raw_date_to: asString(payload.summary.raw_date_to),
+        date_from: asString(payload.summary.date_from),
+        date_to: asString(payload.summary.date_to),
         sessions_loaded: Math.round(asNumber(payload.summary.sessions_loaded)),
         unique_clean_urls: Math.round(asNumber(payload.summary.unique_clean_urls)),
         excluded: Object.fromEntries(

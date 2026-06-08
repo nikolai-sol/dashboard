@@ -219,6 +219,24 @@ function formatDurationMinutes(seconds: number, locale: string) {
   return formatDecimal(seconds / 60, locale);
 }
 
+function formatDateTimeRange(from: string | null | undefined, to: string | null | undefined, locale: string) {
+  const formatValue = (value: string | null | undefined) => {
+    const normalized = String(value ?? "").trim();
+    if (!normalized) return "—";
+    const parsed = new Date(normalized.replace(" ", "T") + (normalized.includes("Z") ? "" : "Z"));
+    if (Number.isNaN(parsed.getTime())) return normalized;
+    return new Intl.DateTimeFormat(locale, {
+      year: "numeric",
+      month: "long",
+      day: "numeric",
+      hour: "2-digit",
+      minute: "2-digit",
+      timeZone: "Europe/Moscow",
+    }).format(parsed);
+  };
+  return `${formatValue(from)} — ${formatValue(to)}`;
+}
+
 function matchesQuery(values: Array<string | number | null | undefined>, query: string) {
   if (!query) return true;
   const normalized = query.trim().toLowerCase();
@@ -1089,6 +1107,9 @@ export default function AbbottBiDashboard({ data, locale = "ru-RU" }: AbbottBiDa
   const externalEventsPage = sliceRows(externalEventRows, pageByTab.external_events);
   const returningPage = sliceRows(returningRows, pageByTab.returning);
   const generalMaterialsPage = sliceRows(generalMaterialRows, pageByTab.general_materials);
+  const bitrixMatchedPageStats = data.page_stats.filter((row) => row.bitrix_sessions > 0).length;
+  const bitrixMatchCoveragePct =
+    data.page_stats.length > 0 ? (bitrixMatchedPageStats / data.page_stats.length) * 100 : 0;
 
   let tableColumns: TableColumn[] = [];
   let tableRows: Array<Record<string, string>> = [];
@@ -1490,9 +1511,15 @@ export default function AbbottBiDashboard({ data, locale = "ru-RU" }: AbbottBiDa
     const excludedTotal = data.bitrix_summary
       ? Object.values(data.bitrix_summary.excluded).reduce((sum, value) => sum + value, 0)
       : 0;
+    const totalBitrixSessions = bitrixPageRows.reduce((sum, row) => sum + row.sessions, 0);
+    const loggedInBitrixSessions = bitrixPageRows.reduce((sum, row) => sum + row.logged_in_sessions, 0);
+    const anonymousBitrixSessions = bitrixPageRows.reduce((sum, row) => sum + row.anonymous_sessions, 0);
+    const exclusionRows = Object.entries(data.bitrix_summary?.excluded ?? {})
+      .map(([label, value]) => ({ label, value }))
+      .sort((a, b) => b.value - a.value);
     chartContent = (
       <div className="grid gap-4 xl:grid-cols-3">
-        <ChartCard title="Сводка Bitrix dump">
+        <ChartCard title="Сводка парсинга дампа">
           <div className="grid gap-3">
             <StatsPill
               label="Чистые хиты"
@@ -1511,11 +1538,61 @@ export default function AbbottBiDashboard({ data, locale = "ru-RU" }: AbbottBiDa
             />
           </div>
         </ChartCard>
+        <ChartCard title="Результат соединения">
+          <div className="grid gap-3">
+            <StatsPill
+              label="Страницы Метрики с Bitrix-данными"
+              value={`${formatNumber(bitrixMatchedPageStats, locale)} из ${formatNumber(data.page_stats.length, locale)}`}
+              theme={theme}
+            />
+            <StatsPill
+              label="Покрытие страниц Метрики"
+              value={formatPercent(bitrixMatchCoveragePct, locale)}
+              theme={theme}
+            />
+            <StatsPill
+              label="Сессии по выбранным URL"
+              value={formatNumber(totalBitrixSessions, locale)}
+              theme={theme}
+            />
+          </div>
+        </ChartCard>
+        <ChartCard title="Авторизация в Bitrix-сессиях">
+          <div className="grid gap-3">
+            <StatsPill
+              label="Сессии с User ID"
+              value={formatNumber(loggedInBitrixSessions, locale)}
+              theme={theme}
+            />
+            <StatsPill
+              label="Сессии без User ID"
+              value={formatNumber(anonymousBitrixSessions, locale)}
+              theme={theme}
+            />
+            <StatsPill
+              label="Доля с User ID"
+              value={formatPercent(
+                totalBitrixSessions > 0 ? (loggedInBitrixSessions / totalBitrixSessions) * 100 : 0,
+                locale,
+              )}
+              theme={theme}
+            />
+          </div>
+        </ChartCard>
         <ChartCard title="Сессии по направлению">
           <AbbottPieChart data={bitrixDirectionData} colors={theme.pieColors} locale={locale} />
         </ChartCard>
         <ChartCard title="Просмотры по типу материала">
           <AbbottPieChart data={bitrixMaterialData} colors={[...theme.pieColors].reverse()} locale={locale} />
+        </ChartCard>
+        <ChartCard title="Что исключено при очистке">
+          <AbbottBarChart
+            data={exclusionRows}
+            dataKey="value"
+            color={theme.barColor}
+            locale={locale}
+            layout="horizontal"
+          />
         </ChartCard>
         <div className="xl:col-span-3">
           <ChartCard title="Топ Bitrix URL по просмотрам">
@@ -1703,6 +1780,21 @@ export default function AbbottBiDashboard({ data, locale = "ru-RU" }: AbbottBiDa
             )}
           </div>
         </div>
+
+        {activeTab === "bitrix_pages" ? (
+          <div className="border-l-4 border-teal-600 bg-teal-50 px-5 py-4 text-sm text-slate-700">
+            <div className="font-semibold text-slate-900">
+              Фиксированный доступный период:{" "}
+              {formatDateTimeRange(data.bitrix_summary?.date_from, data.bitrix_summary?.date_to, locale)}
+            </div>
+            <p className="mt-1">
+              Этот лист построен из разового парсинга Bitrix SQL dump за указанный период и не меняется при выборе
+              других дат в общем фильтре дашборда. Хиты и сессии очищены от ботов, технических URL, 404 и не-GET
+              запросов. Затем страницы соединены по нормализованному URL с доступными данными Яндекс Метрики и
+              справочником ABBOTT, чтобы дополнить их названием, направлением, типом материала и доступом.
+            </p>
+          </div>
+        ) : null}
 
         {tabFilterContent[activeTab] ? (
           <div
