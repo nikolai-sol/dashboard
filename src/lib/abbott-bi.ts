@@ -1077,6 +1077,30 @@ async function hasCanonicalUserBehaviorRows(counterIds: string[], from: string, 
   }
 }
 
+async function hasCanonicalTrafficSourceRows(counterIds: string[], from: string, to: string) {
+  const sql = `
+    SELECT COUNT(*) AS row_count
+    FROM canonical_fact_site_analytics_daily
+    WHERE source_key = 'yandex_metrika'
+      AND analytics_account_id IN (${buildInClause(counterIds)})
+      AND analytics_scope = 'other'
+      AND report_date >= ?
+      AND report_date <= ?
+      AND (COALESCE(visits, 0) > 0 OR COALESCE(users, 0) > 0)
+  `;
+  try {
+    const [rows] = await pool.execute<Array<RowDataPacket & { row_count: number | string }>>(sql, [
+      ...counterIds,
+      from,
+      to,
+    ]);
+    return asNumber(rows[0]?.row_count) > 0;
+  } catch (error) {
+    console.warn("Abbott canonical traffic-source rows are not available, falling back to UTM traffic", error);
+    return false;
+  }
+}
+
 async function queryCanonicalUserSummary(
   counterIds: string[],
   from: string,
@@ -1196,6 +1220,7 @@ async function queryCanonicalTrafficSummary(
   from: string,
   to: string,
 ): Promise<AbbottBiUserSummaryRow[]> {
+  const trafficScope = (await hasCanonicalTrafficSourceRows(counterIds, from, to)) ? "other" : "traffic";
   const sql = `
     SELECT
       COALESCE(NULLIF(traffic_source, ''), NULLIF(utm_source, ''), 'Unknown traffic') AS traffic_source,
@@ -1217,13 +1242,13 @@ async function queryCanonicalTrafficSummary(
     FROM canonical_fact_site_analytics_daily
     WHERE source_key = 'yandex_metrika'
       AND analytics_account_id IN (${buildInClause(counterIds)})
-      AND analytics_scope = 'traffic'
+      AND analytics_scope = ?
       AND report_date >= ?
       AND report_date <= ?
     GROUP BY COALESCE(NULLIF(traffic_source, ''), NULLIF(utm_source, ''), 'Unknown traffic')
     ORDER BY visits DESC, users DESC, traffic_source ASC
   `;
-  const [rows] = await pool.execute<CanonicalTrafficSummaryRow[]>(sql, [...counterIds, from, to]);
+  const [rows] = await pool.execute<CanonicalTrafficSummaryRow[]>(sql, [...counterIds, trafficScope, from, to]);
   return rows.map((row) => ({
     user_id: "",
     has_user_id: false,

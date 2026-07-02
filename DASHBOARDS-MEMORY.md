@@ -294,7 +294,8 @@ Recent completed changes that should not be rediscovered:
     - source binding: `dashboard_sources.platform = yandex_metrika`, `source_config.account_ids = ["66624469"]`
     - code path: `src/lib/abbott-bi.ts` now exposes `loadZarukuBiData()` through the same BI data shape as Abbott, but without Abbott workbook, Bitrix dump, global external-click table, or Abbott returning API
     - public page renders through `AbbottBiDashboard` with `portalName = "Zaruku"` and hides empty optional tabs
-    - current loaded Zaruku facts are mainly canonical traffic summary and `yandex_metrika_returned`; user-action/page-stat sections will fill only after user behavior or page-scope facts exist
+    - traffic summary prefers canonical `analytics_scope = 'other'` traffic-source rows when present, and falls back to `analytics_scope = 'traffic'` UTM rows otherwise
+    - page stats use canonical `analytics_scope = 'page'`; user-action sections fill only when user behavior / `paramsLevel2` facts exist
 
 ## Working rule for future dashboard tasks
 

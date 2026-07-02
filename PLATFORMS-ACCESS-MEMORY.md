@@ -124,6 +124,16 @@ Important current state:
 - implemented
 - monitored
 - cron currently not enabled unless explicitly changed later
+- supports targeted backfills with `--counter-id` / `--counter-ids`
+- writes canonical site analytics scopes:
+  - `traffic`: UTM / ads-attribution grain
+  - `goal`: goals by UTM / ads-attribution grain
+  - `other`: general traffic-source grain from Metrika
+  - `page`: page URL/title grain from `ym:pv:URL,ym:pv:title`
+- deletion before rewrites is counter-scoped for targeted runs, so a Zaruku backfill does not wipe Abbott rows in the same date window
+- `METRIKA_REQUEST_DELAY_SECONDS` can throttle API requests for long backfills and 429-sensitive counters
+- Zaruku main counter is `66624469`; it must be active in `canonical_source_account_collection_settings` with `collection_mode = ads_plus_seo_plus_user_behavior`
+- If `canonical_fact_user_behavior_daily` stays empty for Zaruku, do not infer a collector failure by itself: the counter may not expose `paramsLevel2` / UserID-style rows.
 
 ### Yandex Promopages
 
@@ -413,6 +423,7 @@ Already done and should not be rediscovered:
 9. Yandex Direct org access currently blocks on `error 58` until app registration is approved
 10. `porg-47e7bbnx` was added into `report_bd_tech.req_system` as an active Direct API login
 11. Direct API access for `porg-47e7bbnx` is now confirmed working at HTTP level; current-day probe returns an empty report header, not an auth error
+12. Yandex Metrika canonical collector now supports targeted counter backfills, counter-scoped deletes, API throttling, and page-level canonical rows; Zaruku `66624469` was enabled for canonical collection.
 
 ## Working rule for future platform-access tasks
 
