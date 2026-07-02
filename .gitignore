@@ -23,6 +23,8 @@ logs/
 
 # Data exports and local artifacts
 *.xlsx
+*.docx
+*.sql
 *.tsv
 Screenshot *.png
 
