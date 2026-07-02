@@ -220,7 +220,7 @@ Recent completed changes that should not be rediscovered:
 8. Viewer portal and per-dashboard viewer auth were added.
 9. Root `/` now shows viewer login / cabinet, not a random dashboard.
 10. Logout redirects to root login page.
-11. Zaruku BI dashboard uses the Abbott BI data shape with `dashboard_type = zaruku_bi`; its traffic summary prefers canonical Yandex Metrika `analytics_scope = 'other'` traffic-source rows when present, and falls back to `analytics_scope = 'traffic'` UTM rows otherwise. Page stats use canonical `analytics_scope = 'page'`. User ID analytics are Abbott/Bitrix-specific and hidden for Zaruku reports.
+11. Zaruku dashboard (`dashboard_type = zaruku_bi`, production dashboard id `28`) now uses a dedicated SEO/GEO UI, not the Abbott BI UI. The data path is `dashboard-next/src/lib/zaruku-seo.ts` and the renderer is `dashboard-next/src/components/ZarukuSeoDashboard.tsx`; API payload is `zaruku_seo`. Current connected source is Yandex Metrika (`66624469`) with canonical traffic/page facts plus live Metrika API cuts for search engines, phrases, organic landings, devices, geo, browser/OS, inferred age/gender/interests. Pending sources are documented in `dashboard-next/ZARUKU-SEO-PENDING-SOURCES.md`: Google Search Console, Yandex Webmaster, DataForSEO / AI visibility. `Cached page traffic` is technical tail, not a primary acquisition channel; User ID analytics remain Abbott/Bitrix-specific and hidden for Zaruku.
 
 ## Working rule for future dashboard tasks
 
