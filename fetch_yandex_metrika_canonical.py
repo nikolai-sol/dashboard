@@ -56,6 +56,8 @@ UTM_ADS_SCOPE_STORAGE = 'traffic'
 GOALS_SCOPE_STORAGE = 'goal'
 TRAFFIC_SOURCES_SCOPE_LOGICAL = 'traffic_sources'
 TRAFFIC_SOURCES_SCOPE_STORAGE = 'other'
+PAGES_SCOPE_LOGICAL = 'pages'
+PAGES_SCOPE_STORAGE = 'page'
 DEFAULT_COLLECTION_MODE = 'ads_only'
 SUPPORTED_COLLECTION_MODES = {
     'ads_only',
@@ -64,6 +66,7 @@ SUPPORTED_COLLECTION_MODES = {
 }
 MAX_RETRIES = 5
 TIMEOUT = 90
+REQUEST_DELAY_SECONDS = float(env_first('METRIKA_REQUEST_DELAY_SECONDS', default='0.35') or 0)
 
 MYSQL_HOST = env_first('MYSQL_HOST', default='localhost')
 MYSQL_PORT = int(env_first('MYSQL_PORT', default='3306'))
@@ -107,6 +110,11 @@ METRIKA_TRAFFIC_SOURCES_METRICS = ','.join([
     'ym:s:avgVisitDurationSeconds',
     'ym:s:pageDepth',
 ])
+METRIKA_PAGES_DIMS = 'ym:pv:URL,ym:pv:title'
+METRIKA_PAGES_METRICS = ','.join([
+    'ym:pv:pageviews',
+    'ym:pv:users',
+])
 METRIKA_USER_BEHAVIOR_DIMS = ','.join([
     'ym:s:paramsLevel2',
     'ym:s:endURL',
@@ -141,6 +149,8 @@ def parse_args():
     parser.add_argument('--date-to', default='')
     parser.add_argument('--days-back', type=int, default=14)
     parser.add_argument('--run-type', default='manual', choices=['manual', 'cron', 'backfill'])
+    parser.add_argument('--counter-id', default='')
+    parser.add_argument('--counter-ids', default='')
     return parser.parse_args()
 
 
@@ -197,6 +207,27 @@ def safe_float(value: Any) -> float:
         return 0.0
 
 
+def parse_csv_values(value: str) -> list[str]:
+    result: list[str] = []
+    for item in str(value or '').replace('\n', ',').split(','):
+        item = item.strip()
+        if item and item not in result:
+            result.append(item)
+    return result
+
+
+def selected_counter_ids(args) -> list[str]:
+    result: list[str] = []
+    for item in parse_csv_values(getattr(args, 'counter_ids', '')):
+        counter_id = ''.join(ch for ch in item if ch.isdigit())
+        if counter_id and counter_id not in result:
+            result.append(counter_id)
+    counter_id = ''.join(ch for ch in str(getattr(args, 'counter_id', '') or '') if ch.isdigit())
+    if counter_id and counter_id not in result:
+        result.insert(0, counter_id)
+    return result
+
+
 def metric_value(metrics: list[Any], index: int) -> float:
     if index >= len(metrics):
         return 0.0
@@ -224,7 +255,8 @@ def fetch_active_counters() -> list[dict]:
         conn.close()
 
 
-def fetch_configured_counters(run_type: str) -> list[dict]:
+def fetch_configured_counters(run_type: str, counter_ids: list[str] | None = None) -> list[dict]:
+    selected_ids = set(counter_ids or [])
     conn = get_db_connection(MYSQL_DB)
     cur = conn.cursor(dictionary=True)
     try:
@@ -251,6 +283,8 @@ def fetch_configured_counters(run_type: str) -> list[dict]:
                 (DEFAULT_COLLECTION_MODE, SOURCE_KEY, run_type),
             )
             rows = cur.fetchall()
+            if selected_ids:
+                rows = [row for row in rows if clean_text(row.get('counter_id')) in selected_ids]
             for row in rows:
                 collection_mode = clean_text(row.get('collection_mode')) or DEFAULT_COLLECTION_MODE
                 row['collection_mode'] = (
@@ -266,6 +300,8 @@ def fetch_configured_counters(run_type: str) -> list[dict]:
                 SOURCE_KEY,
             )
             rows = fetch_active_counters()
+            if selected_ids:
+                rows = [row for row in rows if clean_text(row.get('counter_id')) in selected_ids]
             for row in rows:
                 row['legacy_active'] = row.get('active', 1)
                 row['is_active'] = 1
@@ -322,13 +358,20 @@ def request_with_retry(
         params.update(extra_params)
     sleep_for = 2
     for attempt in range(1, MAX_RETRIES + 1):
+        if REQUEST_DELAY_SECONDS > 0:
+            time.sleep(REQUEST_DELAY_SECONDS)
         response = requests.get(METRIKA_STATS_URL, headers=headers, params=params, timeout=TIMEOUT)
         if response.status_code != 429:
             response.raise_for_status()
             return response.json()
         if attempt == MAX_RETRIES:
             response.raise_for_status()
-        time.sleep(sleep_for)
+        retry_after = response.headers.get('Retry-After')
+        try:
+            retry_after_seconds = max(float(retry_after or 0), 0)
+        except ValueError:
+            retry_after_seconds = 0
+        time.sleep(max(sleep_for, retry_after_seconds))
         sleep_for = min(sleep_for * 2, 60)
     raise RuntimeError(f'Metrika retry loop exhausted for counter {counter_id} day {day}')
 
@@ -468,6 +511,43 @@ def build_traffic_sources_rows(counter_id: str, day: str, response: dict, run_id
     return rows
 
 
+def build_page_rows(counter_id: str, day: str, response: dict, run_id: int) -> list[dict]:
+    rows: list[dict] = []
+    for item in extract_rows(response):
+        dimensions = item.get('dimensions') or []
+        metrics = item.get('metrics') or []
+        url_dim = dimensions[0] if len(dimensions) > 0 and isinstance(dimensions[0], dict) else {}
+        title_dim = dimensions[1] if len(dimensions) > 1 and isinstance(dimensions[1], dict) else {}
+        page_url = clean_dimension_name(url_dim.get('name'))
+        page_title = clean_dimension_name(title_dim.get('name'))
+        if not page_url and not page_title:
+            continue
+        scope_hash = build_scope_hash(
+            PAGES_SCOPE_LOGICAL,
+            [
+                counter_id,
+                day,
+                page_url or '',
+                page_title or '',
+            ],
+        )
+        rows.append(
+            {
+                'source_key': SOURCE_KEY,
+                'analytics_account_id': counter_id,
+                'report_date': day,
+                'analytics_scope': PAGES_SCOPE_STORAGE,
+                'scope_hash': scope_hash,
+                'page_url': page_url,
+                'page_title': page_title,
+                'pageviews': safe_int(metric_value(metrics, 0)),
+                'users': safe_int(metric_value(metrics, 1)),
+                'ingestion_run_id': run_id,
+            }
+        )
+    return rows
+
+
 def should_collect_user_behavior(counter: dict) -> bool:
     collection_mode = clean_text(counter.get('collection_mode')) or DEFAULT_COLLECTION_MODE
     return collection_mode == 'ads_plus_seo_plus_user_behavior' or safe_int(counter.get('legacy_params_enabled')) == 1
@@ -524,18 +604,35 @@ def build_user_behavior_rows(counter_id: str, day: str, response: dict, run_id: 
     return rows
 
 
-def delete_existing_scope_rows(date_from: str, date_to: str):
+def counter_filter_sql(counter_ids: list[str]) -> tuple[str, list[str]]:
+    if not counter_ids:
+        return '', []
+    return f" AND analytics_account_id IN ({','.join(['%s'] * len(counter_ids))})", counter_ids
+
+
+def delete_existing_scope_rows(date_from: str, date_to: str, counter_ids: list[str]):
     conn = get_db_connection(MYSQL_DB)
     cur = conn.cursor()
     try:
+        counter_clause, counter_params = counter_filter_sql(counter_ids)
         cur.execute(
-            """
+            f"""
             DELETE FROM canonical_fact_site_analytics_daily
             WHERE source_key = %s
               AND report_date BETWEEN %s AND %s
-              AND analytics_scope IN (%s, %s, %s)
+              AND analytics_scope IN (%s, %s, %s, %s)
+              {counter_clause}
             """,
-            (SOURCE_KEY, date_from, date_to, UTM_ADS_SCOPE_STORAGE, GOALS_SCOPE_STORAGE, TRAFFIC_SOURCES_SCOPE_STORAGE),
+            (
+                SOURCE_KEY,
+                date_from,
+                date_to,
+                UTM_ADS_SCOPE_STORAGE,
+                GOALS_SCOPE_STORAGE,
+                TRAFFIC_SOURCES_SCOPE_STORAGE,
+                PAGES_SCOPE_STORAGE,
+                *counter_params,
+            ),
         )
         conn.commit()
     finally:
@@ -592,17 +689,19 @@ def ensure_user_behavior_table():
         conn.close()
 
 
-def delete_existing_user_behavior_rows(date_from: str, date_to: str):
+def delete_existing_user_behavior_rows(date_from: str, date_to: str, counter_ids: list[str]):
     conn = get_db_connection(MYSQL_DB)
     cur = conn.cursor()
     try:
+        counter_clause, counter_params = counter_filter_sql(counter_ids)
         cur.execute(
-            """
+            f"""
             DELETE FROM canonical_fact_user_behavior_daily
             WHERE source_key = %s
               AND report_date BETWEEN %s AND %s
+              {counter_clause}
             """,
-            (SOURCE_KEY, date_from, date_to),
+            (SOURCE_KEY, date_from, date_to, *counter_params),
         )
         conn.commit()
     finally:
@@ -615,6 +714,7 @@ def build_payload(counters: list[dict], date_from: str, date_to: str, run_id: in
     utm_ads_rows: list[dict] = []
     goals_rows: list[dict] = []
     traffic_sources_rows: list[dict] = []
+    page_rows: list[dict] = []
     user_behavior_rows: list[dict] = []
     rows_read = 0
     api_empty_rows = 0
@@ -675,6 +775,14 @@ def build_payload(counters: list[dict], date_from: str, date_to: str, run_id: in
                     metrics=METRIKA_TRAFFIC_SOURCES_METRICS,
                     attribution=METRIKA_ATTRIBUTION,
                 )
+                pages_response = request_with_retry(
+                    counter_id,
+                    day,
+                    dimensions=METRIKA_PAGES_DIMS,
+                    metrics=METRIKA_PAGES_METRICS,
+                    attribution=METRIKA_ATTRIBUTION,
+                    extra_params={'accuracy': 'full'},
+                )
                 user_behavior_response = None
                 if collect_user_behavior:
                     user_behavior_response = request_with_retry(
@@ -700,20 +808,22 @@ def build_payload(counters: list[dict], date_from: str, date_to: str, run_id: in
                     log.warning('Skip inaccessible Metrika counter %s (%s): http_%s on %s', counter_id, counter_name, status_code, day)
                     break
                 raise
-            rows_read += 4 if collect_user_behavior else 3
+            rows_read += 5 if collect_user_behavior else 4
             utm_rows_for_day = build_utm_ads_rows(counter_id, day, utm_ads_response, run_id)
             goals_rows_for_day = build_goals_rows(counter_id, day, goals_response, run_id)
             traffic_sources_rows_for_day = build_traffic_sources_rows(counter_id, day, traffic_sources_response, run_id)
+            page_rows_for_day = build_page_rows(counter_id, day, pages_response, run_id)
             user_behavior_rows_for_day = (
                 build_user_behavior_rows(counter_id, day, user_behavior_response, run_id)
                 if user_behavior_response is not None
                 else []
             )
-            if not utm_rows_for_day and not goals_rows_for_day and not traffic_sources_rows_for_day and not user_behavior_rows_for_day:
+            if not utm_rows_for_day and not goals_rows_for_day and not traffic_sources_rows_for_day and not page_rows_for_day and not user_behavior_rows_for_day:
                 api_empty_rows += 1
             utm_ads_rows.extend(utm_rows_for_day)
             goals_rows.extend(goals_rows_for_day)
             traffic_sources_rows.extend(traffic_sources_rows_for_day)
+            page_rows.extend(page_rows_for_day)
             user_behavior_rows.extend(user_behavior_rows_for_day)
         if skip_counter:
             account_rows.pop(counter_id, None)
@@ -723,8 +833,9 @@ def build_payload(counters: list[dict], date_from: str, date_to: str, run_id: in
         'utm_ads_rows': utm_ads_rows,
         'goals_rows': goals_rows,
         'traffic_sources_rows': traffic_sources_rows,
+        'page_rows': page_rows,
         'user_behavior_rows': user_behavior_rows,
-        'facts': utm_ads_rows + goals_rows + traffic_sources_rows,
+        'facts': utm_ads_rows + goals_rows + traffic_sources_rows + page_rows,
         'rows_read': rows_read,
         'api_empty_rows': api_empty_rows,
         'counters': len(account_rows),
@@ -739,6 +850,7 @@ def main() -> int:
         raise RuntimeError('METRIKA_TOKEN is missing from env')
 
     date_from, date_to = date_range(args)
+    target_counter_ids = selected_counter_ids(args)
     run_id = start_collector_run(
         source_key=SOURCE_KEY,
         run_type=args.run_type,
@@ -752,10 +864,13 @@ def main() -> int:
     rows_read = rows_written = rows_updated = 0
     try:
         ensure_user_behavior_table()
-        counters = fetch_configured_counters(args.run_type)
+        counters = fetch_configured_counters(args.run_type, target_counter_ids)
+        if target_counter_ids and not counters:
+            raise RuntimeError(f'No active configured Metrika counters matched --counter-ids={",".join(target_counter_ids)}')
         payload = build_payload(counters, date_from, date_to, run_id)
-        delete_existing_scope_rows(date_from, date_to)
-        delete_existing_user_behavior_rows(date_from, date_to)
+        collected_counter_ids = [clean_text(counter.get('counter_id')) for counter in counters if clean_text(counter.get('counter_id'))]
+        delete_existing_scope_rows(date_from, date_to, collected_counter_ids)
+        delete_existing_user_behavior_rows(date_from, date_to, collected_counter_ids)
         upsert_source_accounts(payload['accounts'])
         site_rows_written = upsert_fact_site_analytics_daily(payload['facts'])
         user_behavior_rows_written = upsert_fact_user_behavior_daily(payload['user_behavior_rows'])
@@ -777,16 +892,20 @@ def main() -> int:
                 'rows_updated': rows_updated,
                 'api_empty_rows': payload['api_empty_rows'],
                 'skipped_counters': payload['skipped_counters'],
-                'logical_scopes': [UTM_ADS_SCOPE_LOGICAL, GOALS_SCOPE_LOGICAL, TRAFFIC_SOURCES_SCOPE_LOGICAL],
-                'storage_scopes': [UTM_ADS_SCOPE_STORAGE, GOALS_SCOPE_STORAGE, TRAFFIC_SOURCES_SCOPE_STORAGE],
+                'target_counter_ids': target_counter_ids,
+                'collected_counter_ids': collected_counter_ids,
+                'logical_scopes': [UTM_ADS_SCOPE_LOGICAL, GOALS_SCOPE_LOGICAL, TRAFFIC_SOURCES_SCOPE_LOGICAL, PAGES_SCOPE_LOGICAL],
+                'storage_scopes': [UTM_ADS_SCOPE_STORAGE, GOALS_SCOPE_STORAGE, TRAFFIC_SOURCES_SCOPE_STORAGE, PAGES_SCOPE_STORAGE],
                 'utm_ads_grain': 'date+counter_id+utm_source+utm_medium+utm_campaign',
                 'goals_grain': 'date+counter_id+utm_source+utm_medium+utm_campaign+goal_id',
                 'traffic_sources_grain': 'date+counter_id+traffic_source',
+                'pages_grain': 'date+counter_id+page_url+page_title',
                 'user_behavior_grain': 'date+counter_id+user_id+traffic_source+start_url+end_url',
                 'user_behavior_storage': 'canonical_fact_user_behavior_daily',
                 'utm_ads_rows': len(payload['utm_ads_rows']),
                 'goals_rows': len(payload['goals_rows']),
                 'traffic_sources_rows': len(payload['traffic_sources_rows']),
+                'page_rows': len(payload['page_rows']),
                 'user_behavior_rows': len(payload['user_behavior_rows']),
                 'site_rows_written': site_rows_written,
                 'user_behavior_rows_written': user_behavior_rows_written,
