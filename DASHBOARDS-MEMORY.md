@@ -209,6 +209,7 @@ Files currently patched for this:
 
 Recent completed changes that should not be rediscovered:
 
+0. PostClick Analytics spend / CPM / CPC now respect `spend_source = media_plan_derived`: row totals use normalized media plan budget for the selected period, daily rows distribute that budget by actual spend share, and campaign drilldown spend is scaled consistently. PostClick rows are based on the full media plan / Plan-Fact channel set, so channels without UTM bindings still appear with zero post-click traffic and available ad/budget metrics. KPI spend for `media_plan_derived` dashboards uses the same media plan `budget_plan` total as PostClick, not derived Plan/Fact `budget_fact`. PostClick counter columns now display full integer values with separators instead of compact K/M notation, so visual checks use the same full values as calculations. Media Plan Editor recalculates `budget_plan` and derived CPM/CPC/CPV/CPA when unit price, buy type, units, or planned metric volumes change.
 1. Hybrid spend / CPM / CPC support was added into canonical via API enrichment and fallback logic.
 2. `Visible metrics` wiring was extended so it now affects all dashboard sections below KPI cards.
 3. `Views -> CPV` auto-rule was added.
