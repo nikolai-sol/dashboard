@@ -85,10 +85,9 @@ const ALL_COLUMNS: DashboardPostClickFieldId[] = [
   "video_views_100",
 ];
 
-function compact(value: number, locale: string) {
+function formatWholeNumber(value: number, locale: string) {
   return new Intl.NumberFormat(locale, {
-    notation: "compact",
-    maximumFractionDigits: value >= 1_000_000 ? 2 : 1,
+    maximumFractionDigits: 0,
   }).format(Math.round(value));
 }
 
@@ -227,17 +226,15 @@ export default function PostClickAnalyticsTable({
     setDailyExpanded((prev) => ({ ...prev, [key]: !prev[key] }));
   };
 
-  const visible = new Set<DashboardPostClickFieldId>(
-    selectedColumns.length ? selectedColumns : DEFAULT_COLUMNS,
-  );
   const orderedColumns = useMemo(() => {
     const preferred = selectedColumns.length ? selectedColumns : DEFAULT_COLUMNS;
+    const visible = new Set<DashboardPostClickFieldId>(preferred);
     const uniquePreferred = preferred.filter((column, index) => preferred.indexOf(column) === index);
     const filtered = uniquePreferred.filter((column) => ALL_COLUMNS.includes(column));
     return ALL_COLUMNS.filter((column) => visible.has(column)).sort(
       (a, b) => filtered.indexOf(a) - filtered.indexOf(b),
     );
-  }, [selectedColumns, visible]);
+  }, [selectedColumns]);
 
   const labelByColumn: Record<DashboardPostClickFieldId, string> = {
     source_keys: labels.sourceKeys,
@@ -292,7 +289,7 @@ export default function PostClickAnalyticsTable({
       case "video_views_50":
       case "video_views_75":
       case "video_views_100":
-        return compact(row[column] as number, locale);
+        return formatWholeNumber(row[column] as number, locale);
       case "conversion_rate":
       case "bounce_rate":
       case "ctr":

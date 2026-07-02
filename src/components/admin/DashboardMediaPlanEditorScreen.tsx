@@ -65,6 +65,60 @@ const NUMERIC_COLUMNS = new Set<string>([
   ...MONTH_COLUMNS,
 ]);
 
+const PRICING_RECALC_COLUMNS = new Set<string>([
+  "buy_type",
+  "units_plan",
+  "unit_price",
+  "budget_plan",
+  "impressions_plan",
+  "views_plan",
+  "clicks_plan",
+  "conversions_plan",
+]);
+
+function asFiniteNumber(value: unknown): number {
+  const parsed = typeof value === "number" ? value : Number(String(value ?? "").trim() || 0);
+  return Number.isFinite(parsed) ? parsed : 0;
+}
+
+function roundMoney(value: number): number {
+  return Number(value.toFixed(6));
+}
+
+function getPrimaryUnits(row: MediaPlanRowForm): number {
+  const buyType = String(row.buy_type ?? "CPM").trim().toUpperCase();
+  if (buyType === "CPC") return asFiniteNumber(row.clicks_plan) || asFiniteNumber(row.units_plan);
+  if (buyType === "CPV") return asFiniteNumber(row.views_plan) || asFiniteNumber(row.units_plan);
+  if (buyType === "CPA") return asFiniteNumber(row.conversions_plan) || asFiniteNumber(row.units_plan);
+  return asFiniteNumber(row.impressions_plan) || asFiniteNumber(row.units_plan);
+}
+
+function recalculatePricing(row: MediaPlanRowForm, recalculateBudget: boolean): MediaPlanRowForm {
+  const buyType = String(row.buy_type ?? "CPM").trim().toUpperCase() || "CPM";
+  const unitPrice = asFiniteNumber(row.unit_price);
+  const primaryUnits = getPrimaryUnits({ ...row, buy_type: buyType });
+  let budget = asFiniteNumber(row.budget_plan);
+
+  if (recalculateBudget && unitPrice > 0 && primaryUnits > 0) {
+    budget = buyType === "CPM" ? (primaryUnits / 1000) * unitPrice : primaryUnits * unitPrice;
+  }
+
+  const impressions = asFiniteNumber(row.impressions_plan);
+  const clicks = asFiniteNumber(row.clicks_plan);
+  const views = asFiniteNumber(row.views_plan);
+  const conversions = asFiniteNumber(row.conversions_plan);
+
+  return {
+    ...row,
+    buy_type: buyType,
+    budget_plan: roundMoney(budget),
+    cpm_plan: impressions > 0 ? roundMoney((budget / impressions) * 1000) : 0,
+    cpc_plan: clicks > 0 ? roundMoney(budget / clicks) : 0,
+    cpv_plan: views > 0 ? roundMoney(budget / views) : 0,
+    cpa_plan: conversions > 0 ? roundMoney(budget / conversions) : 0,
+  };
+}
+
 function buildDefaultForm(): DashboardFormData {
   return {
     client_id: "",
@@ -251,17 +305,26 @@ export default function DashboardMediaPlanEditorScreen({
     setRows((current) =>
       current.map((row, index) => {
         if (index !== rowIndex) return row;
+        let nextRow: MediaPlanRowForm;
         if (NUMERIC_COLUMNS.has(column)) {
           const parsed = Number(value);
-          return {
+          nextRow = {
             ...row,
             [column]: value === "" ? 0 : Number.isFinite(parsed) ? parsed : 0,
           };
+        } else {
+          nextRow = {
+            ...row,
+            [column]: value,
+          };
         }
-        return {
-          ...row,
-          [column]: value,
-        };
+        if (PRICING_RECALC_COLUMNS.has(column)) {
+          return recalculatePricing(
+            nextRow,
+            column !== "budget_plan",
+          );
+        }
+        return nextRow;
       }),
     );
   };
@@ -286,7 +349,7 @@ export default function DashboardMediaPlanEditorScreen({
 
     try {
       const trimmedRows = rows
-        .map((row) => fromEditableRow(row))
+        .map((row) => fromEditableRow(recalculatePricing(row, false)))
         .filter((row) => String(row.platform ?? "").trim() || String(row.channel ?? "").trim());
 
       const nextSources = formData.sources.map((source, index) => {

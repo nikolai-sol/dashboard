@@ -3,7 +3,11 @@
 import { useEffect, useMemo, useState } from "react";
 import type { DashboardFormData, MediaPlanBindingForm } from "@/lib/admin-ui-types";
 import { PLATFORM_COLORS } from "@/lib/platform-colors";
-import { resolvePlatformIdFromSourceKey, resolveSourceKey } from "@/lib/source-mapping";
+import {
+  resolvePlatformIdFromSourceKey,
+  resolveSourceKey,
+  resolveSourceType,
+} from "@/lib/source-mapping";
 
 type ParsedPlanRow = {
   line_key: string;
@@ -53,6 +57,16 @@ function compact(value: number) {
   return `${Math.round(value)}`;
 }
 
+function parseAccountIds(value: unknown): string[] {
+  if (!Array.isArray(value)) return [];
+  return value.map((item) => String(item).trim()).filter(Boolean);
+}
+
+function isCrossPlatformInstrument(instrument: string): boolean {
+  const normalized = instrument.trim().toLowerCase();
+  return !normalized || normalized === "все" || normalized === "all";
+}
+
 function monthSummary(monthly: Record<string, number>): string {
   const parts = Object.entries(monthly)
     .filter(([, value]) => value > 0)
@@ -78,6 +92,21 @@ export default function WizardStepBinding({ data, onChange }: WizardStepBindingP
   const planSource = useMemo(
     () => data.sources.find((source) => source.role === "plan"),
     [data.sources],
+  );
+  const bindingCampaignSources = useMemo(
+    () =>
+      actualSources.filter((source) => {
+        if (source.platform === "manual_data") {
+          return Boolean(
+            String(source.source_config?.sheet_url ?? "").trim() || source.source_config?.upload_file,
+          );
+        }
+        if (resolveSourceType(resolveSourceKey(source.platform)) !== "ads") {
+          return false;
+        }
+        return parseAccountIds(source.source_config?.account_ids).length > 0;
+      }),
+    [actualSources],
   );
 
   useEffect(() => {
@@ -139,20 +168,18 @@ export default function WizardStepBinding({ data, onChange }: WizardStepBindingP
     let cancelled = false;
 
     async function loadCampaigns() {
-      if (!actualSources.length) {
+      if (!bindingCampaignSources.length) {
         setCampaigns([]);
         return;
       }
 
       setLoadingCampaigns(true);
       try {
-        const sources = actualSources.map((source) => {
+        const sources = bindingCampaignSources.map((source) => {
           const base = {
             platform: source.platform,
             source_key: resolveSourceKey(source.platform),
-            account_ids: Array.isArray(source.source_config?.account_ids)
-              ? source.source_config.account_ids.map((item) => String(item).trim()).filter(Boolean)
-              : [],
+            account_ids: parseAccountIds(source.source_config?.account_ids),
           };
           if (source.platform === "manual_data") {
             return {
@@ -198,7 +225,7 @@ export default function WizardStepBinding({ data, onChange }: WizardStepBindingP
     return () => {
       cancelled = true;
     };
-  }, [actualSources, data.config.period_from, data.config.period_to]);
+  }, [bindingCampaignSources, data.config.period_from, data.config.period_to]);
 
   useEffect(() => {
     if (loadingCampaigns) return;
@@ -230,8 +257,28 @@ export default function WizardStepBinding({ data, onChange }: WizardStepBindingP
     }
   }, [actualSources, campaigns, data, loadingCampaigns, onChange]);
 
+  const activeRow = useMemo(
+    () => rows.find((row) => row.line_key === activeLineKey) ?? null,
+    [rows, activeLineKey],
+  );
+
+  const activeRowSourceKeys = useMemo(() => {
+    if (!activeRow) return null;
+    if (isCrossPlatformInstrument(activeRow.instrument)) {
+      return new Set(
+        bindingCampaignSources.map((source) =>
+          source.platform === "manual_data" ? "manual_data" : resolveSourceKey(source.platform),
+        ),
+      );
+    }
+    return new Set([resolveSourceKey(activeRow.instrument)]);
+  }, [activeRow, bindingCampaignSources]);
+
   const groupedCampaigns = useMemo(() => {
     const filtered = campaigns.filter((campaign) => {
+      if (activeRowSourceKeys && !activeRowSourceKeys.has(campaign.source_key)) {
+        return false;
+      }
       const match = search.trim().toLowerCase();
       if (!match) return true;
       return (
@@ -248,7 +295,7 @@ export default function WizardStepBinding({ data, onChange }: WizardStepBindingP
       groups.get(campaign.source_key)!.push(campaign);
     });
     return groups;
-  }, [campaigns, search]);
+  }, [activeRowSourceKeys, campaigns, search]);
 
   const bindingsByLineKey = useMemo(() => {
     const map = new Map<string, MediaPlanBindingForm[]>();
@@ -264,10 +311,6 @@ export default function WizardStepBinding({ data, onChange }: WizardStepBindingP
   }, [data.media_plan_bindings]);
 
   const activeBindings = activeLineKey ? bindingsByLineKey.get(activeLineKey) ?? [] : [];
-  const activeRow = useMemo(
-    () => rows.find((row) => row.line_key === activeLineKey) ?? null,
-    [rows, activeLineKey],
-  );
   const activeLabel = activeRow?.channel ?? activeLineKey ?? "";
 
   const updateBindings = (nextBindings: MediaPlanBindingForm[]) => {
@@ -345,6 +388,12 @@ export default function WizardStepBinding({ data, onChange }: WizardStepBindingP
           <p className="mt-3 text-sm text-slate-500">No parsed media plan rows yet.</p>
         ) : null}
 
+        {!loadingCampaigns && bindingCampaignSources.length < actualSources.filter((s) => s.platform !== "leads" && resolveSourceType(resolveSourceKey(s.platform)) === "ads").length ? (
+          <p className="mt-3 text-sm text-amber-700">
+            Для части рекламных источников не выбраны аккаунты на шаге Sources — их кампании не показываются в привязках.
+          </p>
+        ) : null}
+
         {rows.length ? (
           <div className="mt-4 space-y-3">
             {rows.map((row, index) => {
@@ -408,7 +457,7 @@ export default function WizardStepBinding({ data, onChange }: WizardStepBindingP
                   {`Привязка кампаний к "${activeLabel}"`}
                 </h4>
                 <p className="mt-1 text-xs text-slate-500">
-                  Можно выбрать кампании с нескольких платформ одновременно.
+                  Показываются кампании только из аккаунтов, выбранных на шаге Sources, и только для платформы строки медиаплана.
                 </p>
               </div>
               <button

@@ -96,8 +96,15 @@ async function loadCampaigns(
 
   const dedupedSources = new Map<string, string[]>();
   for (const source of canonicalSources) {
+    const accountIds = Array.isArray(source.account_ids)
+      ? source.account_ids.map((item) => String(item).trim()).filter(Boolean)
+      : [];
+    // Bindings must respect Source-step account selection; empty means no catalog for that source.
+    if (!accountIds.length) {
+      continue;
+    }
     const existing = dedupedSources.get(source.source_key) ?? [];
-    const merged = [...existing, ...(source.account_ids ?? [])];
+    const merged = [...existing, ...accountIds];
     dedupedSources.set(source.source_key, Array.from(new Set(merged)));
   }
 
