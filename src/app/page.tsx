@@ -1,3 +1,4 @@
+import Image from "next/image";
 import Link from "next/link";
 import { cookies } from "next/headers";
 import ViewerPortalLogin from "@/components/ViewerPortalLogin";
@@ -17,13 +18,24 @@ export default async function Home() {
 
   return (
     <main className="mx-auto min-h-screen w-full max-w-[1100px] px-4 py-12 sm:px-6 lg:px-8">
-      <section className="rounded-3xl border border-slate-200 bg-slate-50 p-6 sm:p-8">
+      <section className="grid gap-8 rounded-3xl border border-slate-200 bg-slate-50 p-6 sm:p-8 lg:grid-cols-[1fr_minmax(0,28rem)] lg:items-center">
         <div className="max-w-2xl">
           <p className="text-sm font-medium uppercase tracking-[0.2em] text-slate-500">Dashboard Portal</p>
           <h1 className="mt-3 text-3xl font-semibold text-slate-900 sm:text-4xl">Личный кабинет</h1>
           <p className="mt-3 text-sm text-slate-600 sm:text-base">
             Здесь видны только те дашборды, к которым у пользователя есть viewer-доступ. Редактирование остаётся только в admin части.
           </p>
+        </div>
+        <div className="flex justify-center lg:justify-end">
+          <Image
+            src="/images/portal-hero-natural.png"
+            alt="Две стеклянные чашки с маслом на льняной ткани"
+            width={1024}
+            height={682}
+            className="h-auto w-full max-w-md rounded-2xl border border-slate-200/80 shadow-sm"
+            sizes="(max-width: 1024px) 100vw, 28rem"
+            priority
+          />
         </div>
       </section>
 
