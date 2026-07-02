@@ -28,6 +28,7 @@ import TrendChart from "@/components/TrendChart";
 import MultibrandPanel from "@/components/MultibrandPanel";
 import MultibrandExecutivePage from "@/components/MultibrandExecutivePage";
 import AbbottBiDashboard from "@/components/AbbottBiDashboard";
+import ZarukuSeoDashboard from "@/components/ZarukuSeoDashboard";
 import type { MultibrandBrandSummary } from "@/components/MultibrandExecutivePage";
 import { getDashboardI18n } from "@/lib/dashboard-i18n";
 import type { DashboardData } from "@/lib/types";
@@ -1715,11 +1716,10 @@ export default function DashboardByIdPage() {
   )}`;
   const clientName = dashboard.dashboard.client_name || dashboardId.toUpperCase();
 
-  const portalBiData =
-    dashboardType === "zaruku_bi" ? dashboard.zaruku_bi : dashboardType === "abbott_bi" ? dashboard.abbott_bi : null;
+  const abbottBiData = dashboardType === "abbott_bi" ? dashboard.abbott_bi : null;
+  const zarukuSeoData = dashboardType === "zaruku_bi" ? dashboard.zaruku_seo : null;
 
-  if ((dashboardType === "abbott_bi" || dashboardType === "zaruku_bi") && portalBiData) {
-    const portalName = dashboardType === "zaruku_bi" ? "Zaruku" : "ABBOTT";
+  if (dashboardType === "abbott_bi" && abbottBiData) {
     return (
       <main
         data-dashboard-ready="true"
@@ -1751,12 +1751,44 @@ export default function DashboardByIdPage() {
           </div>
         ) : null}
 
-        <AbbottBiDashboard
-          data={portalBiData}
-          locale={locale}
-          portalName={portalName}
-          showUserIdAnalytics={dashboardType === "abbott_bi"}
+        <AbbottBiDashboard data={abbottBiData} locale={locale} portalName="ABBOTT" />
+      </main>
+    );
+  }
+
+  if (dashboardType === "zaruku_bi" && zarukuSeoData) {
+    return (
+      <main
+        data-dashboard-ready="true"
+        className={`mx-auto min-h-screen w-full max-w-[1600px] px-4 py-6 sm:px-6 lg:px-8 ${isPdfMode ? "pdf-mode" : ""}`}
+        style={isMobileMode ? ({ maxWidth: "430px" } as CSSProperties) : undefined}
+      >
+        <DashboardHeader
+          clientName={clientName}
+          title={dashboard.dashboard.dashboard_name}
+          periodLabel={periodLabel}
+          logoUrl={dashboard.dashboard.logo_url}
+          pdfMode={isPdfMode}
+          language={dashboardLanguage}
+          labels={i18n.header}
+          dateFrom={draftDateRange.from}
+          dateTo={draftDateRange.to}
+          onDateFromChange={handleDraftDateFromChange}
+          onDateToChange={handleDraftDateToChange}
+          onApplyDateRange={applyDateRange}
+          quickRangePreset={quickRangePreset}
+          onQuickRangePresetChange={handleQuickRangePresetChange}
+          isUpdatingRange={isLoading}
         />
+
+        {isDemoMode ? (
+          <div className="mb-4 rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-800">
+            {i18n.common.demoMode}
+            {apiError ? ` (${apiError})` : ""}
+          </div>
+        ) : null}
+
+        <ZarukuSeoDashboard data={zarukuSeoData} locale={locale} />
       </main>
     );
   }

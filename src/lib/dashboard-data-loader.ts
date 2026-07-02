@@ -1,6 +1,7 @@
 import type { RowDataPacket } from "mysql2";
 import pool from "@/lib/db";
-import { getDefaultAbbottCounterIds, getDefaultZarukuCounterIds, loadAbbottBiData, loadZarukuBiData } from "@/lib/abbott-bi";
+import { getDefaultAbbottCounterIds, getDefaultZarukuCounterIds, loadAbbottBiData } from "@/lib/abbott-bi";
+import { loadZarukuSeoData } from "@/lib/zaruku-seo";
 import { loadSchema } from "@/lib/schema-parser";
 import {
   getAdsAggregate,
@@ -2756,10 +2757,11 @@ export async function loadDashboardData(
   if (dashboardType === "abbott_bi" || dashboardType === "zaruku_bi") {
     const counterIds = resolveAbbottCounterIds(sourceRows);
     const defaultCounterIds = dashboardType === "zaruku_bi" ? getDefaultZarukuCounterIds() : getDefaultAbbottCounterIds();
-    const portalBiData =
+    const effectiveCounterIds = counterIds.length > 0 ? counterIds : defaultCounterIds;
+    const portalPayload =
       dashboardType === "zaruku_bi"
-        ? await loadZarukuBiData(counterIds.length > 0 ? counterIds : defaultCounterIds, range.from, range.to)
-        : await loadAbbottBiData(counterIds.length > 0 ? counterIds : defaultCounterIds, range.from, range.to);
+        ? { zaruku_seo: await loadZarukuSeoData(effectiveCounterIds, range.from, range.to) }
+        : { abbott_bi: await loadAbbottBiData(effectiveCounterIds, range.from, range.to) };
 
     const response: DashboardData = {
       dashboard: {
@@ -2798,7 +2800,7 @@ export async function loadDashboardData(
       platforms: [],
       timeseries: [],
       plan_vs_fact: [],
-      ...(dashboardType === "zaruku_bi" ? { zaruku_bi: portalBiData } : { abbott_bi: portalBiData }),
+      ...portalPayload,
     };
     const aiSummarySnapshot = getMatchingDashboardAiSummarySnapshot(config.ai_summary_snapshot, response);
 

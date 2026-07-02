@@ -292,11 +292,12 @@ Recent completed changes that should not be rediscovered:
 11. Zaruku portal BI dashboard was added as `dashboard_type = zaruku_bi`:
     - production DB row: `dashboards.id = 28`, `client_id = zaruku`
     - source binding: `dashboard_sources.platform = yandex_metrika`, `source_config.account_ids = ["66624469"]`
-    - code path: `src/lib/abbott-bi.ts` now exposes `loadZarukuBiData()` through the same BI data shape as Abbott, but without Abbott workbook, Bitrix dump, global external-click table, or Abbott returning API
-    - public page renders through `AbbottBiDashboard` with `portalName = "Zaruku"` and hides empty optional tabs
-    - traffic summary prefers canonical `analytics_scope = 'other'` traffic-source rows when present, and falls back to `analytics_scope = 'traffic'` UTM rows otherwise
-    - page stats use canonical `analytics_scope = 'page'`; user-action sections fill only when user behavior / `paramsLevel2` facts exist
-    - User ID analytics are Abbott/Bitrix-specific; Zaruku reports hide User ID columns, filters, and user-action tabs
+    - Zaruku no longer uses the Abbott BI UI; it renders `src/components/ZarukuSeoDashboard.tsx`
+    - data path: `src/lib/zaruku-seo.ts` returns `zaruku_seo` with measurement layers `onsite / serp / ai`
+    - current connected source is Yandex Metrika: canonical traffic/page facts plus live Metrika API cuts for search engines, phrases, organic landings, devices, geo, browser/OS, inferred age/gender/interests
+    - pending sources are documented in `ZARUKU-SEO-PENDING-SOURCES.md`: Google Search Console, Yandex Webmaster, DataForSEO / AI visibility
+    - `Cached page traffic` is treated as technical tail, not as a primary acquisition channel
+    - User ID analytics are Abbott/Bitrix-specific and stay hidden for Zaruku
 
 ## Working rule for future dashboard tasks
 

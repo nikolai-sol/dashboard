@@ -566,6 +566,97 @@ export interface AbbottBiData {
   general_materials: AbbottBiMaterialRow[];
 }
 
+export type ZarukuSeoLayerId = "onsite" | "serp" | "ai";
+export type ZarukuSeoSourceId = "metrika" | "gsc" | "webmaster" | "dataforseo";
+export type ZarukuSeoSourceStatus = "connected" | "pending" | "partial";
+
+export interface ZarukuSeoLayer {
+  id: ZarukuSeoLayerId;
+  label: string;
+  hint: string;
+}
+
+export interface ZarukuSeoSource {
+  id: ZarukuSeoSourceId;
+  label: string;
+  layer: ZarukuSeoLayerId;
+  color: string;
+  status: ZarukuSeoSourceStatus;
+  note?: string;
+}
+
+export interface ZarukuSeoKpi {
+  key: string;
+  label: string;
+  value: string;
+  raw_value?: number | null;
+  note?: string;
+  source: ZarukuSeoSourceId;
+  layer: ZarukuSeoLayerId;
+  coverage?: number | null;
+}
+
+export interface ZarukuSeoMetricRow {
+  id?: string | null;
+  label: string;
+  secondary_label?: string | null;
+  url?: string | null;
+  visits: number;
+  users: number;
+  pageviews: number;
+  bounce_rate?: number | null;
+  avg_duration_seconds?: number | null;
+  page_depth?: number | null;
+  share?: number | null;
+  source?: ZarukuSeoSourceId;
+  layer?: ZarukuSeoLayerId;
+}
+
+export interface ZarukuSeoPendingRequirement {
+  source: ZarukuSeoSourceId;
+  layer: ZarukuSeoLayerId;
+  title: string;
+  status: "pending" | "partial";
+  reason: string;
+  expected_fields: string[];
+}
+
+export interface ZarukuSeoDataQualityItem {
+  title: string;
+  value: string;
+  note: string;
+  severity: "ok" | "info" | "warning";
+}
+
+export interface ZarukuSeoData {
+  counters: string[];
+  domain: string;
+  period: { from: string; to: string };
+  layers: ZarukuSeoLayer[];
+  sources: ZarukuSeoSource[];
+  pending_requirements: ZarukuSeoPendingRequirement[];
+  kpis: ZarukuSeoKpi[];
+  traffic_channels: ZarukuSeoMetricRow[];
+  technical_tail: ZarukuSeoMetricRow[];
+  organic_trend: Array<{ label: string; visits: number; users: number; pageviews: number }>;
+  search_engines: ZarukuSeoMetricRow[];
+  search_phrases: ZarukuSeoMetricRow[];
+  organic_landing_pages: ZarukuSeoMetricRow[];
+  top_pages: ZarukuSeoMetricRow[];
+  content_sections: ZarukuSeoMetricRow[];
+  geo_countries: ZarukuSeoMetricRow[];
+  geo_cities: ZarukuSeoMetricRow[];
+  devices: ZarukuSeoMetricRow[];
+  source_devices: ZarukuSeoMetricRow[];
+  browsers: ZarukuSeoMetricRow[];
+  operating_systems: ZarukuSeoMetricRow[];
+  age: ZarukuSeoMetricRow[];
+  gender: ZarukuSeoMetricRow[];
+  interests: ZarukuSeoMetricRow[];
+  returning_pages: ZarukuSeoMetricRow[];
+  data_quality: ZarukuSeoDataQualityItem[];
+}
+
 export interface CustomTableData {
   title: string;
   headers: string[];
@@ -700,6 +791,7 @@ export interface DashboardData {
   };
   abbott_bi?: AbbottBiData;
   zaruku_bi?: AbbottBiData;
+  zaruku_seo?: ZarukuSeoData;
   promopages?: PromopagesData;
   section_field_overrides?: {
     trend_chart?: {
