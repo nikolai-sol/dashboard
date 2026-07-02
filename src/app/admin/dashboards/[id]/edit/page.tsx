@@ -37,6 +37,12 @@ export default async function EditDashboardPage({
           >
             Google Ads
           </Link>
+          <Link
+            href={`/admin/dashboards/${id}/yandex-direct`}
+            className="rounded-lg border border-slate-300 px-3 py-2 text-sm font-medium text-slate-700 hover:bg-slate-50"
+          >
+            Yandex Direct
+          </Link>
         </div>
       </div>
       <DashboardWizard dashboardId={id} />

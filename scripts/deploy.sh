@@ -55,6 +55,12 @@ fi
 if [ -f "$REPO_ROOT_DIR/canonical_writer.py" ]; then
   cp "$REPO_ROOT_DIR/canonical_writer.py" .next/standalone/
 fi
+if [ -f "$REPO_ROOT_DIR/fetch_yandex_direct_canonical_api.py" ]; then
+  cp "$REPO_ROOT_DIR/fetch_yandex_direct_canonical_api.py" .next/standalone/
+fi
+if [ -f "$REPO_ROOT_DIR/yandex_direct_shared.py" ]; then
+  cp "$REPO_ROOT_DIR/yandex_direct_shared.py" .next/standalone/
+fi
 
 echo "Uploading staged release to VPS..."
 ssh "$VPS" "mkdir -p '$RELEASES_DIR' '$BACKUPS_DIR' /var/log"
@@ -122,11 +128,11 @@ if [ -f "$APP_DIR/fetch_google_ads_canonical.py" ]; then
     python3 -m venv "$APP_DIR/.gads-venv" || rollback "unable to create Google Ads Python venv"
   fi
   "$APP_DIR/.gads-venv/bin/python" -m pip install --upgrade pip >/dev/null || rollback "unable to upgrade Google Ads Python venv pip"
-  "$APP_DIR/.gads-venv/bin/python" -m pip install python-dotenv google-ads mysql-connector-python >/dev/null || rollback "unable to install Google Ads Python dependencies"
+  "$APP_DIR/.gads-venv/bin/python" -m pip install python-dotenv google-ads mysql-connector-python requests >/dev/null || rollback "unable to install collector Python dependencies"
 fi
 
 if pm2 describe "$APP_NAME" >/dev/null 2>&1; then
-  pm2 restart "$APP_NAME" || rollback "pm2 restart failed"
+  pm2 restart "$APP_NAME" --update-env || rollback "pm2 restart failed"
 else
   pm2 start ecosystem.config.js --only "$APP_NAME" || rollback "pm2 start failed"
 fi

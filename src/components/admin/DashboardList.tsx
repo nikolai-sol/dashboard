@@ -117,6 +117,12 @@ export default function DashboardList({ dashboards, loading = false, onRefresh }
                       >
                         GAds
                       </Link>
+                      <Link
+                        href={`/admin/dashboards/${dashboard.id}/yandex-direct`}
+                        className="rounded border border-slate-300 px-2 py-1 hover:bg-slate-50"
+                      >
+                        YDirect
+                      </Link>
                       <button
                         type="button"
                         onClick={() => cloneDashboard(dashboard.id, dashboard.client_id, dashboard.client_name)}
