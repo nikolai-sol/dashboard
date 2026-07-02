@@ -1,6 +1,6 @@
 import type { RowDataPacket } from "mysql2";
 import pool from "@/lib/db";
-import { getDefaultAbbottCounterIds, loadAbbottBiData } from "@/lib/abbott-bi";
+import { getDefaultAbbottCounterIds, getDefaultZarukuCounterIds, loadAbbottBiData, loadZarukuBiData } from "@/lib/abbott-bi";
 import { loadSchema } from "@/lib/schema-parser";
 import {
   getAdsAggregate,
@@ -66,6 +66,7 @@ import {
 import {
   buildPeriodMonths as buildNormalizedPeriodMonths,
   normalizeChannelPlan,
+  normalizeValueForPeriod,
 } from "@/lib/plan-normalizer";
 import type {
   AnalyticsKPI,
@@ -1700,6 +1701,9 @@ async function buildPostClickAnalytics(
   metrikaAccountIds: string[],
   dateFrom: string,
   dateTo: string,
+  spendSource: "platform_actual" | "media_plan_derived",
+  configFrom: string,
+  configTo: string,
   selectedGoalIds: string[],
   goalMode: "all" | "selected",
 ): Promise<DashboardData["postclick_analytics"] | undefined> {
@@ -1733,6 +1737,30 @@ async function buildPostClickAnalytics(
   }, new Map<string, Set<string>>());
 
   const accountPlaceholders = metrikaAccountIds.map(() => "?").join(",");
+  const planSpendByLineKey =
+    spendSource === "media_plan_derived"
+      ? new Map(
+          channelGroups.map((group) => {
+            const monthlyBudget = Object.fromEntries(
+              Object.entries(group.monthly_breakdown ?? {}).map(([month, item]) => [
+                month,
+                Number(item.budget || 0),
+              ]),
+            );
+            return [
+              group.line_key,
+              normalizeValueForPeriod({
+                total: Number(group.budget_plan || 0),
+                monthly: monthlyBudget,
+                periodFrom: dateFrom,
+                periodTo: dateTo,
+                configFrom,
+                configTo,
+              }),
+            ] as const;
+          }),
+        )
+      : new Map<string, number>();
 
   const [trafficRows] = await pool.execute<PostClickTrafficFactRow[]>(
     `
@@ -1995,10 +2023,55 @@ async function buildPostClickAnalytics(
       .map((item) => item.trim())
       .filter(Boolean);
 
+  const rawSpendByLineKey = adsRows.reduce((acc, row) => {
+    const lineKey = String(row.line_key ?? "").trim();
+    if (!lineKey) return acc;
+    acc.set(lineKey, (acc.get(lineKey) ?? 0) + Number(row.spend ?? 0));
+    return acc;
+  }, new Map<string, number>());
+
+  const reportDatesByLineKey = trafficRows.reduce((acc, row) => {
+    const lineKey = String(row.line_key ?? "").trim();
+    const date = String(row.date ?? "").slice(0, 10);
+    if (!lineKey || !date) return acc;
+    if (!acc.has(lineKey)) acc.set(lineKey, new Set<string>());
+    acc.get(lineKey)!.add(date);
+    return acc;
+  }, new Map<string, Set<string>>());
+  for (const row of adsRows) {
+    const lineKey = String(row.line_key ?? "").trim();
+    const date = String(row.date ?? "").slice(0, 10);
+    if (!lineKey || !date) continue;
+    if (!reportDatesByLineKey.has(lineKey)) reportDatesByLineKey.set(lineKey, new Set<string>());
+    reportDatesByLineKey.get(lineKey)!.add(date);
+  }
+
+  const resolveDailySpend = (lineKey: string, rawSpend: number): number => {
+    if (spendSource !== "media_plan_derived") return rawSpend;
+    const planSpend = planSpendByLineKey.get(lineKey);
+    if (planSpend === undefined) return rawSpend;
+    const rawLineSpend = rawSpendByLineKey.get(lineKey) ?? 0;
+    if (rawLineSpend > 0 && rawSpend > 0) {
+      return Number(((planSpend * rawSpend) / rawLineSpend).toFixed(2));
+    }
+    const reportDatesCount = reportDatesByLineKey.get(lineKey)?.size ?? 0;
+    return reportDatesCount > 0 ? Number((planSpend / reportDatesCount).toFixed(2)) : 0;
+  };
+
+  const dailySpendScaleByLineDate = new Map<string, number>();
+  for (const row of adsRows) {
+    const lineKey = String(row.line_key ?? "").trim();
+    const date = String(row.date ?? "").slice(0, 10);
+    const rawSpend = Number(row.spend ?? 0);
+    if (!lineKey || !date || rawSpend <= 0) continue;
+    dailySpendScaleByLineDate.set(`${lineKey}::${date}`, resolveDailySpend(lineKey, rawSpend) / rawSpend);
+  }
+
   const adsByLineDate = new Map(
     adsRows.map((row) => {
       const lineKey = String(row.line_key ?? "").trim();
       const date = String(row.date ?? "").slice(0, 10);
+      const rawSpend = Number(row.spend ?? 0);
       return [
         `${lineKey}::${date}`,
         {
@@ -2011,7 +2084,7 @@ async function buildPostClickAnalytics(
           clicks: Number(row.clicks ?? 0),
           views: Number(row.views ?? 0),
           reach: Number(row.reach ?? 0),
-          spend: Number(row.spend ?? 0),
+          spend: resolveDailySpend(lineKey, rawSpend),
           video_views_25: Number(row.video_views_25 ?? 0),
           video_views_50: Number(row.video_views_50 ?? 0),
           video_views_75: Number(row.video_views_75 ?? 0),
@@ -2066,7 +2139,11 @@ async function buildPostClickAnalytics(
     const adsMetrics = campaignAdsByLineDate.get(`${lineKey}::${date}::${campaign}`);
     const impressions = adsMetrics?.impressions ?? 0;
     const clicks = adsMetrics?.clicks ?? 0;
-    const spend = adsMetrics?.spend ?? 0;
+    const rawSpend = adsMetrics?.spend ?? 0;
+    const spend =
+      spendSource === "media_plan_derived"
+        ? Number((rawSpend * (dailySpendScaleByLineDate.get(`${lineKey}::${date}`) ?? 1)).toFixed(2))
+        : rawSpend;
     const item = {
       date,
       line_key: lineKey,
@@ -2104,6 +2181,7 @@ async function buildPostClickAnalytics(
   }
 
   const dailyByLineKey = new Map<string, PostClickAnalyticsTimeSeriesPoint[]>();
+  const channelGroupByLineKey = new Map(channelGroups.map((group) => [group.line_key, group] as const));
 
   for (const row of trafficRows) {
     const lineKey = String(row.line_key ?? "").trim();
@@ -2114,7 +2192,7 @@ async function buildPostClickAnalytics(
     const adsMetrics = adsByLineDate.get(`${lineKey}::${date}`);
     const impressions = adsMetrics?.impressions ?? 0;
     const clicks = adsMetrics?.clicks ?? 0;
-    const spend = adsMetrics?.spend ?? 0;
+    const spend = adsMetrics?.spend ?? resolveDailySpend(lineKey, 0);
     const point: PostClickAnalyticsTimeSeriesPoint = {
       date,
       line_key: lineKey,
@@ -2150,12 +2228,62 @@ async function buildPostClickAnalytics(
     dailyByLineKey.get(lineKey)!.push(point);
   }
 
-  const channelGroupByLineKey = new Map(channelGroups.map((group) => [group.line_key, group] as const));
+  const existingDailyKeys = new Set(
+    Array.from(dailyByLineKey.entries()).flatMap(([lineKey, rows]) =>
+      rows.map((row) => `${lineKey}::${row.date}`),
+    ),
+  );
 
-  const rows: PostClickAnalyticsRow[] = Array.from(utmSourcesByLineKey.entries())
-    .map(([lineKey, sources]) => {
-      const group = channelGroupByLineKey.get(lineKey);
-      if (!group) return null;
+  for (const row of adsRows) {
+    const lineKey = String(row.line_key ?? "").trim();
+    const date = String(row.date ?? "").slice(0, 10);
+    if (!lineKey || !date || existingDailyKeys.has(`${lineKey}::${date}`)) continue;
+
+    const group = channelGroupByLineKey.get(lineKey);
+    if (!group) continue;
+    const adsMetrics = adsByLineDate.get(`${lineKey}::${date}`);
+    const impressions = adsMetrics?.impressions ?? 0;
+    const clicks = adsMetrics?.clicks ?? 0;
+    const spend = adsMetrics?.spend ?? resolveDailySpend(lineKey, 0);
+    const point: PostClickAnalyticsTimeSeriesPoint = {
+      date,
+      line_key: lineKey,
+      channel: group.channel,
+      source_keys: adsMetrics?.source_keys ?? [],
+      platform_account_ids: adsMetrics?.platform_account_ids ?? [],
+      platform_campaign_ids: adsMetrics?.platform_campaign_ids ?? [],
+      platform_delivery_entity_ids: adsMetrics?.platform_delivery_entity_ids ?? [],
+      platform_creative_ids: adsMetrics?.platform_creative_ids ?? [],
+      visits: 0,
+      users: 0,
+      pageviews: 0,
+      page_depth: 0,
+      goal_reaches: 0,
+      bounce_rate: 0,
+      avg_visit_duration: 0,
+      conversion_rate: 0,
+      impressions,
+      clicks,
+      views: adsMetrics?.views ?? 0,
+      reach: adsMetrics?.reach ?? 0,
+      spend,
+      ctr: impressions > 0 ? Number(((clicks / impressions) * 100).toFixed(2)) : 0,
+      cpm: impressions > 0 ? Number(((spend / impressions) * 1000).toFixed(2)) : 0,
+      cpc: clicks > 0 ? Number((spend / clicks).toFixed(2)) : 0,
+      video_views_25: adsMetrics?.video_views_25 ?? 0,
+      video_views_50: adsMetrics?.video_views_50 ?? 0,
+      video_views_75: adsMetrics?.video_views_75 ?? 0,
+      video_views_100: adsMetrics?.video_views_100 ?? 0,
+      campaign_breakdown: [],
+    };
+    if (!dailyByLineKey.has(lineKey)) dailyByLineKey.set(lineKey, []);
+    dailyByLineKey.get(lineKey)!.push(point);
+  }
+
+  const rows: PostClickAnalyticsRow[] = channelGroups
+    .map((group) => {
+      const lineKey = group.line_key;
+      const sources = utmSourcesByLineKey.get(lineKey) ?? new Set<string>();
       const daily = (dailyByLineKey.get(lineKey) ?? []).sort((a, b) => a.date.localeCompare(b.date));
       const sourceKeys = new Set<string>();
       const platformAccountIds = new Set<string>();
@@ -2207,6 +2335,11 @@ async function buildPostClickAnalytics(
         },
       );
 
+      const spend =
+        spendSource === "media_plan_derived"
+          ? Number((planSpendByLineKey.get(lineKey) ?? totals.spend).toFixed(2))
+          : totals.spend;
+
       return {
         line_key: lineKey,
         channel: group.channel,
@@ -2230,17 +2363,16 @@ async function buildPostClickAnalytics(
         clicks: totals.clicks,
         views: totals.views,
         reach: totals.reach,
-        spend: totals.spend,
+        spend,
         ctr: totals.impressions > 0 ? Number(((totals.clicks / totals.impressions) * 100).toFixed(2)) : 0,
-        cpm: totals.impressions > 0 ? Number(((totals.spend / totals.impressions) * 1000).toFixed(2)) : 0,
-        cpc: totals.clicks > 0 ? Number((totals.spend / totals.clicks).toFixed(2)) : 0,
+        cpm: totals.impressions > 0 ? Number(((spend / totals.impressions) * 1000).toFixed(2)) : 0,
+        cpc: totals.clicks > 0 ? Number((spend / totals.clicks).toFixed(2)) : 0,
         video_views_25: totals.video_views_25,
         video_views_50: totals.video_views_50,
         video_views_75: totals.video_views_75,
         video_views_100: totals.video_views_100,
       } satisfies PostClickAnalyticsRow;
     })
-    .filter((row): row is PostClickAnalyticsRow => Boolean(row))
     .sort((a, b) => b.visits - a.visits || a.channel.localeCompare(b.channel, "ru"));
 
   if (!rows.length) {
@@ -2491,7 +2623,10 @@ function applyPlanBasedPlanVsFactSpend(rows: PlanVsFactItem[]): PlanVsFactItem[]
   });
 }
 
-function buildPlatformSpendFromPlanVsFact(rows: PlanVsFactItem[]): Map<string, number> {
+function buildPlatformBudgetFromPlanVsFact(
+  rows: PlanVsFactItem[],
+  budgetField: "budget_fact" | "budget_plan",
+): Map<string, number> {
   const totals = new Map<string, number>();
 
   for (const row of rows) {
@@ -2505,7 +2640,7 @@ function buildPlatformSpendFromPlanVsFact(rows: PlanVsFactItem[]): Map<string, n
     for (const platformId of platformIds) {
       totals.set(
         platformId,
-        Number(((totals.get(platformId) ?? 0) + row.budget_fact / split).toFixed(2)),
+        Number(((totals.get(platformId) ?? 0) + row[budgetField] / split).toFixed(2)),
       );
     }
   }
@@ -2618,13 +2753,13 @@ export async function loadDashboardData(
   const metrikaAccountIds = resolveDashboardMetrikaAccountIds(sourceRows);
   const sectionFieldOverrides = getSectionFieldOverrides(config);
 
-  if (dashboardType === "abbott_bi") {
+  if (dashboardType === "abbott_bi" || dashboardType === "zaruku_bi") {
     const counterIds = resolveAbbottCounterIds(sourceRows);
-    const abbottData = await loadAbbottBiData(
-      counterIds.length > 0 ? counterIds : getDefaultAbbottCounterIds(),
-      range.from,
-      range.to,
-    );
+    const defaultCounterIds = dashboardType === "zaruku_bi" ? getDefaultZarukuCounterIds() : getDefaultAbbottCounterIds();
+    const portalBiData =
+      dashboardType === "zaruku_bi"
+        ? await loadZarukuBiData(counterIds.length > 0 ? counterIds : defaultCounterIds, range.from, range.to)
+        : await loadAbbottBiData(counterIds.length > 0 ? counterIds : defaultCounterIds, range.from, range.to);
 
     const response: DashboardData = {
       dashboard: {
@@ -2663,7 +2798,7 @@ export async function loadDashboardData(
       platforms: [],
       timeseries: [],
       plan_vs_fact: [],
-      abbott_bi: abbottData,
+      ...(dashboardType === "zaruku_bi" ? { zaruku_bi: portalBiData } : { abbott_bi: portalBiData }),
     };
     const aiSummarySnapshot = getMatchingDashboardAiSummarySnapshot(config.ai_summary_snapshot, response);
 
@@ -3178,7 +3313,7 @@ export async function loadDashboardData(
         : planVsFactBase;
 
     if (spendSource === "media_plan_derived") {
-      const currentPlanSpendByPlatform = buildPlatformSpendFromPlanVsFact(planVsFact);
+      const currentPlanSpendByPlatform = buildPlatformBudgetFromPlanVsFact(planVsFact, "budget_plan");
       platformResults.forEach((row) => {
         const derivedSpend = currentPlanSpendByPlatform.get(row.id);
         if (derivedSpend === undefined) return;
@@ -3204,6 +3339,9 @@ export async function loadDashboardData(
       metrikaAccountIds,
       range.from,
       range.to,
+      spendSource,
+      String(config.period_from ?? range.from),
+      String(config.period_to ?? range.to),
       metrikaSettings.selected_goal_ids,
       metrikaSettings.goal_mode,
     );

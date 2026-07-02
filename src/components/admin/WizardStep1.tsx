@@ -180,6 +180,7 @@ export default function WizardStep1({ data, onChange }: WizardStep1Props) {
             <option value="performance">Performance</option>
             <option value="overview">Overview</option>
             <option value="abbott_bi">Abbott BI</option>
+            <option value="zaruku_bi">Zaruku BI</option>
           </select>
         </label>
 

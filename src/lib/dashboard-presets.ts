@@ -64,6 +64,16 @@ const DEFAULT_SECTIONS: Record<DashboardKind, DashboardSectionId[]> = {
     "channel_table",
     "plan_vs_fact",
   ],
+  zaruku_bi: [
+    "kpi_grid",
+    "spend_section",
+    "trend_chart",
+    "postclick_analytics",
+    "platform_table",
+    "platform_plan_fact",
+    "channel_table",
+    "plan_vs_fact",
+  ],
 };
 
 export function getDefaultKpiCards(type: DashboardKind, showSpend: boolean): string[] {

@@ -97,7 +97,8 @@ function buildAwarenessTotals(data: DashboardData | null | undefined) {
 }
 
 function money(value: number, currency = "EUR", locale = "en-US") {
-  const fractionDigits = Math.abs(value) > 0 && Math.abs(value) < 100 ? 2 : 0;
+  const roundedToCents = Math.round(value * 100) / 100;
+  const fractionDigits = Number.isInteger(roundedToCents) ? 0 : 2;
   return new Intl.NumberFormat(locale, {
     style: "currency",
     currency,
@@ -1714,7 +1715,11 @@ export default function DashboardByIdPage() {
   )}`;
   const clientName = dashboard.dashboard.client_name || dashboardId.toUpperCase();
 
-  if (dashboardType === "abbott_bi" && dashboard.abbott_bi) {
+  const portalBiData =
+    dashboardType === "zaruku_bi" ? dashboard.zaruku_bi : dashboardType === "abbott_bi" ? dashboard.abbott_bi : null;
+
+  if ((dashboardType === "abbott_bi" || dashboardType === "zaruku_bi") && portalBiData) {
+    const portalName = dashboardType === "zaruku_bi" ? "Zaruku" : "ABBOTT";
     return (
       <main
         data-dashboard-ready="true"
@@ -1746,7 +1751,7 @@ export default function DashboardByIdPage() {
           </div>
         ) : null}
 
-        <AbbottBiDashboard data={dashboard.abbott_bi} locale={locale} />
+        <AbbottBiDashboard data={portalBiData} locale={locale} portalName={portalName} />
       </main>
     );
   }

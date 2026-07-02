@@ -12,6 +12,8 @@ import type {
   AbbottBiMaterialRow,
   AbbottBiPageStatRow,
   AbbottBiReturningRow,
+  AbbottBiSessionJourneyRow,
+  AbbottBiSessionJourneysData,
   AbbottBiTimeBucketRow,
   AbbottBiTimeBuckets,
   AbbottBiUserActionRow,
@@ -63,6 +65,15 @@ type ParsedAbbottWorkbook = {
     returning_2_7_days: number;
     returning_8_31_days: number;
   }>;
+};
+
+type PortalBiConfig = {
+  defaultCounterIds: string[];
+  useWorkbook: boolean;
+  useAbbottMetadata: boolean;
+  useBitrix: boolean;
+  useExternalClicks: boolean;
+  useAbbottReturningApi: boolean;
 };
 
 type ParsedBitrixAnalytics = {
@@ -156,6 +167,23 @@ type LegacyPageStatRow = RowDataPacket & {
   users: number | string | null;
 };
 
+type CanonicalPageStatRow = RowDataPacket & {
+  page_title: string | null;
+  url: string | null;
+  pageviews: number | string | null;
+  users: number | string | null;
+};
+
+type CanonicalTrafficSummaryRow = RowDataPacket & {
+  traffic_source: string | null;
+  visits: number | string | null;
+  users: number | string | null;
+  new_users: number | string | null;
+  page_depth: number | string | null;
+  avg_duration: number | string | null;
+  bounce_rate: number | string | null;
+};
+
 type LegacyReturningFallbackRow = RowDataPacket & {
   url: string | null;
   visits: number | string | null;
@@ -191,6 +219,17 @@ declare global {
   var __abbottWorkbookCache: WorkbookCache | undefined;
 }
 
+const EMPTY_WORKBOOK_DATA: ParsedAbbottWorkbook = {
+  userDirections: new Map(),
+  generalMaterials: [],
+  externalEvents: [],
+  contentByTitle: new Map(),
+  contentByTitleAndType: new Map(),
+  contentBySlug: new Map(),
+  urlReturnDirections: new Map(),
+  ymUrlReturn: [],
+};
+
 function asNumber(value: unknown): number {
   const parsed = Number(value);
   return Number.isFinite(parsed) ? parsed : 0;
@@ -219,6 +258,10 @@ function bitrixAnalyticsCandidates() {
   return [path.join(process.cwd(), "public", "abbott", "bitrix-analytics.json")];
 }
 
+function bitrixSessionJourneysCandidates() {
+  return [path.join(process.cwd(), "public", "abbott", "bitrix-session-journeys.json")];
+}
+
 function resolveWorkbookJsonPath() {
   const match = workbookJsonCandidates().find((candidate) => fs.existsSync(candidate));
   if (!match) {
@@ -233,6 +276,82 @@ function resolveWorkbookXlsxPath() {
 
 function resolveBitrixAnalyticsPath() {
   return bitrixAnalyticsCandidates().find((candidate) => fs.existsSync(candidate)) ?? null;
+}
+
+function resolveBitrixSessionJourneysPath() {
+  return bitrixSessionJourneysCandidates().find((candidate) => fs.existsSync(candidate)) ?? null;
+}
+
+function loadPortalWorkbookData(useWorkbook: boolean): ParsedAbbottWorkbook {
+  return useWorkbook ? loadWorkbookData() : EMPTY_WORKBOOK_DATA;
+}
+
+function emptySessionJourneysData(): AbbottBiSessionJourneysData {
+  return { report_date: "", schema: null, summary: null, rows: [] };
+}
+
+function loadBitrixSessionJourneysData(): AbbottBiSessionJourneysData {
+  const journeysPath = resolveBitrixSessionJourneysPath();
+  if (!journeysPath) {
+    return emptySessionJourneysData();
+  }
+
+  const payload = JSON.parse(fs.readFileSync(journeysPath, "utf-8")) as {
+    report_date?: string;
+    schema?: AbbottBiSessionJourneysData["schema"];
+    summary?: AbbottBiSessionJourneysData["summary"];
+    rows?: Array<{
+      session_id?: number;
+      user_id?: number | null;
+      has_user_id?: boolean;
+      entry_url_day?: string;
+      exit_url_day?: string;
+      entry_url_session?: string;
+      exit_url_session?: string;
+      hits_total?: number;
+      hits_clean?: number;
+      hits_content?: number;
+      steps_content?: number;
+      events_count?: number;
+      duration_seconds?: number;
+      content_path?: string[];
+      content_path_summary?: string;
+      all_path_summary?: string;
+      events_available?: boolean;
+    }>;
+  };
+
+  const rows = (payload.rows ?? [])
+    .map<AbbottBiSessionJourneyRow>((row) => {
+      const hasUserId = Boolean(row.has_user_id) && asNumber(row.user_id) > 0;
+      return {
+        session_id: Math.round(asNumber(row.session_id)),
+        user_id: hasUserId ? String(Math.trunc(asNumber(row.user_id))) : null,
+        has_user_id: hasUserId,
+        entry_url_day: asString(row.entry_url_day),
+        exit_url_day: asString(row.exit_url_day),
+        entry_url_session: asString(row.entry_url_session),
+        exit_url_session: asString(row.exit_url_session),
+        hits_total: Math.round(asNumber(row.hits_total)),
+        hits_clean: Math.round(asNumber(row.hits_clean)),
+        hits_content: Math.round(asNumber(row.hits_content)),
+        steps_content: Math.round(asNumber(row.steps_content)),
+        events_count: Math.round(asNumber(row.events_count)),
+        duration_seconds: Math.round(asNumber(row.duration_seconds)),
+        content_path: (row.content_path ?? []).map((url) => asString(url)).filter(Boolean),
+        content_path_summary: asString(row.content_path_summary),
+        all_path_summary: asString(row.all_path_summary),
+        events_available: Boolean(row.events_available),
+      };
+    })
+    .filter((row) => row.session_id > 0);
+
+  return {
+    report_date: asString(payload.report_date),
+    schema: payload.schema ?? null,
+    summary: payload.summary ?? null,
+    rows,
+  };
 }
 
 function getContentValue(row: Record<string, unknown>, key: string) {
@@ -350,6 +469,65 @@ const ABBOTT_MATERIAL_TYPE_BY_PREFIX: Record<string, string> = {
   tables: "Таблицы",
   calculators: "Калькуляторы",
 };
+
+const ABBOTT_UTILITY_PAGE_PATHS = new Set(["/auth", "/auth_without_phone"]);
+
+function isAbbottUtilityPageUrl(rawUrl: string | null | undefined) {
+  const normalized = normalizeAbbottPageUrl(rawUrl);
+  if (!normalized) return false;
+  try {
+    const pathname = new URL(normalized).pathname.replace(/\/+$/, "") || "/";
+    return ABBOTT_UTILITY_PAGE_PATHS.has(pathname);
+  } catch {
+    return false;
+  }
+}
+
+export function toAbbottDateOnly(value: string | null | undefined) {
+  return asString(value).slice(0, 10);
+}
+
+export function isAbbottBitrixPeriodActive(
+  dashboardFrom: string,
+  dashboardTo: string,
+  summary: AbbottBiBitrixSummary | null,
+) {
+  if (!summary?.date_from || !summary?.date_to) return false;
+  const bitrixFrom = toAbbottDateOnly(summary.date_from);
+  const bitrixTo = toAbbottDateOnly(summary.date_to);
+  const from = toAbbottDateOnly(dashboardFrom);
+  const to = toAbbottDateOnly(dashboardTo);
+  if (!from || !to || !bitrixFrom || !bitrixTo) return false;
+  return from >= bitrixFrom && to <= bitrixTo;
+}
+
+function resolveAbbottPageMetadata(
+  rawUrl: string,
+  pageTitle: string,
+  contentByTitle: ParsedAbbottWorkbook["contentByTitle"],
+  contentByTitleAndType: ParsedAbbottWorkbook["contentByTitleAndType"],
+  contentBySlug: ParsedAbbottWorkbook["contentBySlug"],
+  userDirections: Map<string, string | null>,
+) {
+  const url = normalizeAbbottPageUrl(rawUrl);
+  if (isAbbottUtilityPageUrl(url)) {
+    return {
+      direction: null,
+      material_type: null,
+      access: null,
+    };
+  }
+  const inferredMaterialType = inferAbbottMaterialTypeFromUrl(url);
+  const contentMeta =
+    (inferredMaterialType ? contentByTitleAndType.get(`${inferredMaterialType}::${pageTitle}`) : null) ??
+    contentByTitle.get(pageTitle) ??
+    contentBySlug.get(extractAbbottSlugFromUrl(url) ?? "");
+  return {
+    direction: contentMeta?.direction ?? inferAbbottDirectionFromUrl(rawUrl, userDirections) ?? null,
+    material_type: contentMeta?.material_type ?? inferredMaterialType ?? null,
+    access: contentMeta?.access ?? null,
+  };
+}
 
 function inferAbbottDirectionFromUrl(
   rawUrl: string | null | undefined,
@@ -597,7 +775,7 @@ function loadBitrixAnalyticsData(): ParsedBitrixAnalytics {
   }
 
   const payload = JSON.parse(fs.readFileSync(bitrixPath, "utf-8")) as RawBitrixAnalyticsPayload;
-  const { contentByTitle, contentBySlug, userDirections } = loadWorkbookData();
+  const { contentByTitle, contentByTitleAndType, contentBySlug, userDirections } = loadWorkbookData();
   const summary: AbbottBiBitrixSummary | null = payload.summary
     ? {
         raw_hit_rows: Math.round(asNumber(payload.summary.raw_hit_rows)),
@@ -617,15 +795,21 @@ function loadBitrixAnalyticsData(): ParsedBitrixAnalytics {
   const rows = (payload.rows ?? [])
     .map<AbbottBiBitrixPageRow>((row) => {
       const url = normalizeAbbottPageUrl(row.normalized_url || row.url || "");
-      const slug = extractAbbottSlugFromUrl(url) ?? "";
-      const contentMeta = contentBySlug.get(slug) ?? contentByTitle.get(asString(row.path));
+      const pageMetadata = resolveAbbottPageMetadata(
+        url,
+        asString(row.path),
+        contentByTitle,
+        contentByTitleAndType,
+        contentBySlug,
+        userDirections,
+      );
       const inferredMaterialType = inferAbbottMaterialTypeFromUrl(url) || asString(row.material_type_hint) || null;
       return {
         url,
         path: asString(row.path),
-        direction: contentMeta?.direction ?? inferAbbottDirectionFromUrl(url, userDirections) ?? null,
-        material_type: contentMeta?.material_type ?? inferredMaterialType,
-        access: contentMeta?.access ?? null,
+        direction: pageMetadata.direction,
+        material_type: pageMetadata.material_type ?? inferredMaterialType,
+        access: pageMetadata.access,
         pageviews: Math.round(asNumber(row.pageviews)),
         sessions: Math.round(asNumber(row.sessions)),
         users: Math.round(asNumber(row.users)),
@@ -897,6 +1081,7 @@ async function queryCanonicalUserSummary(
   counterIds: string[],
   from: string,
   to: string,
+  workbookData: ParsedAbbottWorkbook,
 ): Promise<AbbottBiUserSummaryRow[]> {
   const hasUserIdExpr = "(user_id REGEXP '^[0-9]+$' AND CAST(user_id AS UNSIGNED) > 0)";
   const userIdExpr = `CASE WHEN ${hasUserIdExpr} THEN CAST(user_id AS UNSIGNED) ELSE NULL END`;
@@ -929,7 +1114,7 @@ async function queryCanonicalUserSummary(
     ORDER BY visits DESC, has_user_id DESC, user_id ASC, traffic_source ASC
   `;
   const [rows] = await pool.execute<CanonicalUserBehaviorRow[]>(sql, [...counterIds, from, to]);
-  const { userDirections } = loadWorkbookData();
+  const { userDirections } = workbookData;
   return rows.map((row) => {
     const hasUserId = asNumber(row.has_user_id) === 1;
     const userId = hasUserId ? String(Math.trunc(asNumber(row.user_id))) : "";
@@ -948,7 +1133,12 @@ async function queryCanonicalUserSummary(
   });
 }
 
-async function queryLegacyUserSummary(counterIds: string[], from: string, to: string): Promise<AbbottBiUserSummaryRow[]> {
+async function queryLegacyUserSummary(
+  counterIds: string[],
+  from: string,
+  to: string,
+  workbookData: ParsedAbbottWorkbook,
+): Promise<AbbottBiUserSummaryRow[]> {
   const trafficSourceSql = buildTrafficSourceSql("params.traffic_id");
   const hasUserIdExpr = "(param_level_2 REGEXP '^[0-9]+$' AND CAST(param_level_2 AS UNSIGNED) > 0)";
   const userIdExpr = `CASE WHEN ${hasUserIdExpr} THEN CAST(param_level_2 AS UNSIGNED) ELSE NULL END`;
@@ -982,7 +1172,7 @@ async function queryLegacyUserSummary(counterIds: string[], from: string, to: st
     ORDER BY visits DESC, has_user_id DESC, user_id ASC, traffic_source ASC
   `;
   const [rows] = await pool.execute<LegacyUserSummaryRow[]>(sql, [...counterIds, from, to]);
-  const { userDirections } = loadWorkbookData();
+  const { userDirections } = workbookData;
   return rows.map((row) => {
     const hasUserId = asNumber(row.has_user_id) === 1;
     const userId = hasUserId ? String(Math.trunc(asNumber(row.user_id))) : "";
@@ -1001,11 +1191,66 @@ async function queryLegacyUserSummary(counterIds: string[], from: string, to: st
   });
 }
 
-async function queryUserSummary(counterIds: string[], from: string, to: string): Promise<AbbottBiUserSummaryRow[]> {
+async function queryCanonicalTrafficSummary(
+  counterIds: string[],
+  from: string,
+  to: string,
+): Promise<AbbottBiUserSummaryRow[]> {
+  const sql = `
+    SELECT
+      COALESCE(NULLIF(traffic_source, ''), NULLIF(utm_source, ''), 'Unknown traffic') AS traffic_source,
+      COALESCE(SUM(visits), 0) AS visits,
+      COALESCE(SUM(users), 0) AS users,
+      COALESCE(SUM(new_users), 0) AS new_users,
+      CASE WHEN COALESCE(SUM(visits), 0) > 0
+        THEN ROUND(SUM(COALESCE(page_depth, 0) * visits) / SUM(visits), 2)
+        ELSE 0
+      END AS page_depth,
+      CASE WHEN COALESCE(SUM(visits), 0) > 0
+        THEN ROUND(SUM(COALESCE(avg_visit_duration_seconds, 0) * visits) / SUM(visits), 2)
+        ELSE 0
+      END AS avg_duration,
+      CASE WHEN COALESCE(SUM(visits), 0) > 0
+        THEN ROUND(SUM(COALESCE(bounce_rate, 0) * visits) / SUM(visits), 2)
+        ELSE 0
+      END AS bounce_rate
+    FROM canonical_fact_site_analytics_daily
+    WHERE source_key = 'yandex_metrika'
+      AND analytics_account_id IN (${buildInClause(counterIds)})
+      AND analytics_scope = 'traffic'
+      AND report_date >= ?
+      AND report_date <= ?
+    GROUP BY COALESCE(NULLIF(traffic_source, ''), NULLIF(utm_source, ''), 'Unknown traffic')
+    ORDER BY visits DESC, users DESC, traffic_source ASC
+  `;
+  const [rows] = await pool.execute<CanonicalTrafficSummaryRow[]>(sql, [...counterIds, from, to]);
+  return rows.map((row) => ({
+    user_id: "",
+    has_user_id: false,
+    traffic_source: asString(row.traffic_source) || "Unknown traffic",
+    direction: null,
+    visits: Math.round(asNumber(row.visits)),
+    users: Math.round(asNumber(row.users)),
+    new_users: Math.round(asNumber(row.new_users)),
+    page_depth: Number(asNumber(row.page_depth).toFixed(2)),
+    avg_duration: Number(asNumber(row.avg_duration).toFixed(2)),
+    bounce_rate: Number(asNumber(row.bounce_rate).toFixed(2)),
+  }));
+}
+
+async function queryUserSummary(
+  counterIds: string[],
+  from: string,
+  to: string,
+  workbookData: ParsedAbbottWorkbook,
+): Promise<AbbottBiUserSummaryRow[]> {
+  let rows: AbbottBiUserSummaryRow[];
   if (await hasCanonicalUserBehaviorRows(counterIds, from, to)) {
-    return queryCanonicalUserSummary(counterIds, from, to);
+    rows = await queryCanonicalUserSummary(counterIds, from, to, workbookData);
+  } else {
+    rows = await queryLegacyUserSummary(counterIds, from, to, workbookData);
   }
-  return queryLegacyUserSummary(counterIds, from, to);
+  return rows.length > 0 ? rows : queryCanonicalTrafficSummary(counterIds, from, to);
 }
 
 function normalizeTimeBucketsByPage(rows: LegacyTimeBucketPageRow[]) {
@@ -1030,6 +1275,7 @@ async function queryCanonicalUserActions(
   counterIds: string[],
   from: string,
   to: string,
+  workbookData: ParsedAbbottWorkbook,
 ): Promise<AbbottBiUserActionRow[]> {
   const hasUserIdExpr = "(user_id REGEXP '^[0-9]+$' AND CAST(user_id AS UNSIGNED) > 0)";
   const userIdExpr = `CASE WHEN ${hasUserIdExpr} THEN CAST(user_id AS UNSIGNED) ELSE NULL END`;
@@ -1063,7 +1309,7 @@ async function queryCanonicalUserActions(
     ORDER BY has_user_id DESC, user_id ASC, visits DESC, traffic_source ASC, start_url ASC, end_url ASC
   `;
   const [rows] = await pool.execute<CanonicalUserBehaviorRow[]>(sql, [...counterIds, from, to]);
-  const { userDirections } = loadWorkbookData();
+  const { userDirections } = workbookData;
   return rows.map((row) => {
     const hasUserId = asNumber(row.has_user_id) === 1;
     const userId = hasUserId ? String(Math.trunc(asNumber(row.user_id))) : "";
@@ -1081,7 +1327,12 @@ async function queryCanonicalUserActions(
   });
 }
 
-async function queryLegacyUserActions(counterIds: string[], from: string, to: string): Promise<AbbottBiUserActionRow[]> {
+async function queryLegacyUserActions(
+  counterIds: string[],
+  from: string,
+  to: string,
+  workbookData: ParsedAbbottWorkbook,
+): Promise<AbbottBiUserActionRow[]> {
   const trafficSourceSql = buildTrafficSourceSql("params.traffic_id");
   const hasUserIdExpr = "(params.param_level_2 REGEXP '^[0-9]+$' AND CAST(params.param_level_2 AS UNSIGNED) > 0)";
   const userIdExpr = `CASE WHEN ${hasUserIdExpr} THEN CAST(params.param_level_2 AS UNSIGNED) ELSE NULL END`;
@@ -1116,7 +1367,7 @@ async function queryLegacyUserActions(counterIds: string[], from: string, to: st
     ORDER BY has_user_id DESC, user_id ASC, visits DESC, traffic_source ASC, start_url ASC, end_url ASC
   `;
   const [rows] = await pool.execute<LegacyUserActionRow[]>(sql, [...counterIds, from, to]);
-  const { userDirections } = loadWorkbookData();
+  const { userDirections } = workbookData;
   return rows.map((row) => {
     const hasUserId = asNumber(row.has_user_id) === 1;
     const userId = hasUserId ? String(Math.trunc(asNumber(row.user_id))) : "";
@@ -1134,14 +1385,40 @@ async function queryLegacyUserActions(counterIds: string[], from: string, to: st
   });
 }
 
-async function queryUserActions(counterIds: string[], from: string, to: string): Promise<AbbottBiUserActionRow[]> {
+async function queryUserActions(
+  counterIds: string[],
+  from: string,
+  to: string,
+  workbookData: ParsedAbbottWorkbook,
+): Promise<AbbottBiUserActionRow[]> {
   if (await hasCanonicalUserBehaviorRows(counterIds, from, to)) {
-    return queryCanonicalUserActions(counterIds, from, to);
+    return queryCanonicalUserActions(counterIds, from, to, workbookData);
   }
-  return queryLegacyUserActions(counterIds, from, to);
+  return queryLegacyUserActions(counterIds, from, to, workbookData);
 }
 
-async function queryPageStats(counterIds: string[], from: string, to: string): Promise<AbbottBiPageStatRow[]> {
+async function queryCanonicalPageStatRows(counterIds: string[], from: string, to: string) {
+  const sql = `
+    SELECT
+      COALESCE(page_title, '') AS page_title,
+      COALESCE(page_url, '') AS url,
+      COALESCE(SUM(pageviews), 0) AS pageviews,
+      COALESCE(SUM(users), 0) AS users
+    FROM canonical_fact_site_analytics_daily
+    WHERE source_key = 'yandex_metrika'
+      AND analytics_account_id IN (${buildInClause(counterIds)})
+      AND analytics_scope = 'page'
+      AND report_date >= ?
+      AND report_date <= ?
+    GROUP BY COALESCE(page_title, ''), COALESCE(page_url, '')
+    HAVING pageviews > 0 OR users > 0
+    ORDER BY pageviews DESC, users DESC, page_title ASC
+  `;
+  const [rows] = await pool.execute<CanonicalPageStatRow[]>(sql, [...counterIds, from, to]);
+  return rows;
+}
+
+async function queryLegacyPageStatRows(counterIds: string[], from: string, to: string) {
   const sql = `
     SELECT
       COALESCE(page_name, '') AS page_title,
@@ -1156,13 +1433,35 @@ async function queryPageStats(counterIds: string[], from: string, to: string): P
     ORDER BY pageviews DESC, users DESC, page_title ASC
   `;
   const [rows] = await pool.execute<LegacyPageStatRow[]>(sql, [...counterIds, from, to]);
-  const { contentByTitle, contentByTitleAndType, contentBySlug, userDirections } = loadWorkbookData();
+  return rows;
+}
+
+async function queryPageStats(
+  counterIds: string[],
+  from: string,
+  to: string,
+  workbookData: ParsedAbbottWorkbook,
+  useAbbottMetadata: boolean,
+): Promise<AbbottBiPageStatRow[]> {
+  const canonicalRows = await queryCanonicalPageStatRows(counterIds, from, to);
+  const rows = canonicalRows.length > 0 ? canonicalRows : await queryLegacyPageStatRows(counterIds, from, to);
+  const { contentByTitle, contentByTitleAndType, contentBySlug, userDirections } = workbookData;
   const byPage = new Map<string, AbbottBiPageStatRow & { is_hidden?: boolean }>();
   rows
     .forEach((row) => {
       const pageTitle = asString(row.page_title);
       const url = normalizeAbbottPageUrl(row.url);
-      const inferredMaterialType = inferAbbottMaterialTypeFromUrl(url);
+      const pageMetadata = useAbbottMetadata
+        ? resolveAbbottPageMetadata(
+            asString(row.url),
+            pageTitle,
+            contentByTitle,
+            contentByTitleAndType,
+            contentBySlug,
+            userDirections,
+          )
+        : { direction: null, material_type: null, access: null };
+      const inferredMaterialType = useAbbottMetadata ? inferAbbottMaterialTypeFromUrl(url) : null;
       const contentMeta =
         (inferredMaterialType ? contentByTitleAndType.get(`${inferredMaterialType}::${pageTitle}`) : null) ??
         contentByTitle.get(pageTitle) ??
@@ -1171,17 +1470,23 @@ async function queryPageStats(counterIds: string[], from: string, to: string): P
       const current = byPage.get(key) ?? {
         page_title: pageTitle,
         url,
-        direction: contentMeta?.direction ?? inferAbbottDirectionFromUrl(row.url, userDirections) ?? null,
-        material_type: contentMeta?.material_type ?? inferredMaterialType ?? null,
-        access: contentMeta?.access ?? null,
+        direction: pageMetadata.direction,
+        material_type: pageMetadata.material_type,
+        access: pageMetadata.access,
         is_hidden: contentMeta?.is_active === false,
         pageviews: 0,
         users: 0,
         ...emptyBitrixMetrics(),
       };
-      current.direction = current.direction ?? contentMeta?.direction ?? inferAbbottDirectionFromUrl(row.url, userDirections) ?? null;
-      current.material_type = current.material_type ?? contentMeta?.material_type ?? inferredMaterialType ?? null;
-      current.access = current.access ?? contentMeta?.access ?? null;
+      if (!useAbbottMetadata || !isAbbottUtilityPageUrl(url)) {
+        current.direction = current.direction ?? pageMetadata.direction;
+        current.material_type = current.material_type ?? pageMetadata.material_type;
+        current.access = current.access ?? pageMetadata.access;
+      } else {
+        current.direction = null;
+        current.material_type = null;
+        current.access = null;
+      }
       current.is_hidden = current.is_hidden || contentMeta?.is_active === false;
       current.pageviews += Math.round(asNumber(row.pageviews));
       current.users += Math.round(asNumber(row.users));
@@ -1218,8 +1523,13 @@ async function queryReturningFallback(counterIds: string[], from: string, to: st
     .filter((row) => row.url);
 }
 
-async function queryCanonicalTimeBuckets(counterIds: string[], from: string, to: string): Promise<AbbottBiTimeBuckets> {
-  const { generalMaterials } = loadWorkbookData();
+async function queryCanonicalTimeBuckets(
+  counterIds: string[],
+  from: string,
+  to: string,
+  workbookData: ParsedAbbottWorkbook,
+): Promise<AbbottBiTimeBuckets> {
+  const { generalMaterials } = workbookData;
   const materialUrls = [...new Set(generalMaterials.map((row) => row.url).filter(Boolean))];
   const overallBucketCase = buildTimeBucketCase(
     "SUM(COALESCE(avg_visit_duration_seconds, 0) * visits) / SUM(visits)",
@@ -1311,8 +1621,13 @@ async function queryCanonicalTimeBuckets(counterIds: string[], from: string, to:
   };
 }
 
-async function queryLegacyTimeBuckets(counterIds: string[], from: string, to: string): Promise<AbbottBiTimeBuckets> {
-  const { generalMaterials } = loadWorkbookData();
+async function queryLegacyTimeBuckets(
+  counterIds: string[],
+  from: string,
+  to: string,
+  workbookData: ParsedAbbottWorkbook,
+): Promise<AbbottBiTimeBuckets> {
+  const { generalMaterials } = workbookData;
   const materialUrls = [...new Set(generalMaterials.map((row) => row.url).filter(Boolean))];
   const overallBucketCase = buildTimeBucketCase("SUM(COALESCE(avgVDS, 0) * visits) / SUM(visits)");
   const baseParams = [...counterIds, from, to];
@@ -1395,11 +1710,16 @@ async function queryLegacyTimeBuckets(counterIds: string[], from: string, to: st
   };
 }
 
-async function queryTimeBuckets(counterIds: string[], from: string, to: string): Promise<AbbottBiTimeBuckets> {
+async function queryTimeBuckets(
+  counterIds: string[],
+  from: string,
+  to: string,
+  workbookData: ParsedAbbottWorkbook,
+): Promise<AbbottBiTimeBuckets> {
   if (await hasCanonicalUserBehaviorRows(counterIds, from, to)) {
-    return queryCanonicalTimeBuckets(counterIds, from, to);
+    return queryCanonicalTimeBuckets(counterIds, from, to, workbookData);
   }
-  return queryLegacyTimeBuckets(counterIds, from, to);
+  return queryLegacyTimeBuckets(counterIds, from, to, workbookData);
 }
 
 async function queryExternalFactDaily(from: string, to: string) {
@@ -1427,8 +1747,9 @@ async function queryExternalFactDaily(from: string, to: string) {
 
 function buildExternalClickRows(
   dailyRows: Array<{ report_date: string; external_url: string; outbound_clicks: number }>,
+  workbookData: ParsedAbbottWorkbook,
 ): AbbottBiExternalClickRow[] {
-  const { externalEvents } = loadWorkbookData();
+  const { externalEvents } = workbookData;
   const eventByUrl = new Map(
     externalEvents.map((row) => [
       row.registration_url,
@@ -1457,8 +1778,14 @@ function buildExternalClickRows(
   });
 }
 
-function buildReturningRows(from: string, to: string, legacyRows: Array<{ url: string; visits: number }>): AbbottBiReturningRow[] {
-  const { ymUrlReturn, urlReturnDirections, userDirections } = loadWorkbookData();
+function buildReturningRows(
+  from: string,
+  to: string,
+  legacyRows: Array<{ url: string; visits: number }>,
+  workbookData: ParsedAbbottWorkbook,
+  useAbbottMetadata: boolean,
+): AbbottBiReturningRow[] {
+  const { ymUrlReturn, urlReturnDirections, userDirections } = workbookData;
   const workbookTotals = new Map<string, AbbottBiReturningRow>();
 
   ymUrlReturn
@@ -1466,7 +1793,10 @@ function buildReturningRows(from: string, to: string, legacyRows: Array<{ url: s
     .forEach((row) => {
       const current = workbookTotals.get(row.url) ?? {
         url: row.url,
-        direction: urlReturnDirections.get(row.url) ?? inferAbbottDirectionFromUrl(row.url, userDirections) ?? null,
+        direction:
+          urlReturnDirections.get(row.url) ??
+          (useAbbottMetadata ? inferAbbottDirectionFromUrl(row.url, userDirections) : null) ??
+          null,
         visits: 0,
         returning_1_day: 0,
         returning_2_7_days: 0,
@@ -1483,7 +1813,10 @@ function buildReturningRows(from: string, to: string, legacyRows: Array<{ url: s
   legacyRows.forEach((row) => {
     byUrl.set(row.url, {
       url: row.url,
-      direction: urlReturnDirections.get(row.url) ?? inferAbbottDirectionFromUrl(row.url, userDirections) ?? null,
+      direction:
+        urlReturnDirections.get(row.url) ??
+        (useAbbottMetadata ? inferAbbottDirectionFromUrl(row.url, userDirections) : null) ??
+        null,
       visits: row.visits,
       returning_1_day: 0,
       returning_2_7_days: 0,
@@ -1500,8 +1833,8 @@ function buildReturningRows(from: string, to: string, legacyRows: Array<{ url: s
   });
 }
 
-function buildGeneralMaterialsRows(pageStats: AbbottBiPageStatRow[]): AbbottBiMaterialRow[] {
-  const { generalMaterials } = loadWorkbookData();
+function buildGeneralMaterialsRows(pageStats: AbbottBiPageStatRow[], workbookData: ParsedAbbottWorkbook): AbbottBiMaterialRow[] {
+  const { generalMaterials } = workbookData;
   const byUrl = new Map(pageStats.map((row) => [row.url, row]));
   return generalMaterials.map<AbbottBiMaterialRow>((material) => {
     const stats = byUrl.get(material.url);
@@ -1518,23 +1851,36 @@ export function getDefaultAbbottCounterIds() {
   return ["90602537"];
 }
 
-export async function loadAbbottBiData(counterIds: string[], from: string, to: string): Promise<AbbottBiData> {
-  const normalizedCounterIds = counterIds.length > 0 ? counterIds : getDefaultAbbottCounterIds();
-  const bitrixAnalytics = loadBitrixAnalyticsData();
+export function getDefaultZarukuCounterIds() {
+  return ["66624469", "99078698"];
+}
+
+async function loadPortalBiData(
+  counterIds: string[],
+  from: string,
+  to: string,
+  config: PortalBiConfig,
+): Promise<AbbottBiData> {
+  const normalizedCounterIds = counterIds.length > 0 ? counterIds : config.defaultCounterIds;
+  const workbookData = loadPortalWorkbookData(config.useWorkbook);
+  const bitrixAnalytics = config.useBitrix ? loadBitrixAnalyticsData() : { summary: null, rows: [] };
+  const sessionJourneys = config.useBitrix ? loadBitrixSessionJourneysData() : emptySessionJourneysData();
   const [usersSummary, userActions, pageStats, returningFallback, externalFactDaily, timeBuckets, returningApiPrototype] = await Promise.all([
-    queryUserSummary(normalizedCounterIds, from, to),
-    queryUserActions(normalizedCounterIds, from, to),
-    queryPageStats(normalizedCounterIds, from, to),
+    queryUserSummary(normalizedCounterIds, from, to, workbookData),
+    queryUserActions(normalizedCounterIds, from, to, workbookData),
+    queryPageStats(normalizedCounterIds, from, to, workbookData, config.useAbbottMetadata),
     queryReturningFallback(normalizedCounterIds, from, to),
     // This legacy table is Abbott-specific and does not store counter_id,
     // so the external layer is intentionally scoped to the Abbott dashboard only.
-    queryExternalFactDaily(from, to),
-    queryTimeBuckets(normalizedCounterIds, from, to),
-    queryAbbottReturningApi(normalizedCounterIds, from, to).catch(() => []),
+    config.useExternalClicks ? queryExternalFactDaily(from, to) : Promise.resolve([]),
+    queryTimeBuckets(normalizedCounterIds, from, to, workbookData),
+    config.useAbbottReturningApi ? queryAbbottReturningApi(normalizedCounterIds, from, to).catch(() => []) : Promise.resolve([]),
   ]);
 
-  const { externalEvents } = loadWorkbookData();
-  const enrichedPageStats = enrichPageStatsWithBitrix(pageStats, bitrixAnalytics.rows);
+  const bitrixPeriodActive = isAbbottBitrixPeriodActive(from, to, bitrixAnalytics.summary);
+  const enrichedPageStats = bitrixPeriodActive
+    ? enrichPageStatsWithBitrix(pageStats, bitrixAnalytics.rows)
+    : pageStats.map((row) => ({ ...row, ...emptyBitrixMetrics() }));
 
   return {
     counters: normalizedCounterIds,
@@ -1543,10 +1889,37 @@ export async function loadAbbottBiData(counterIds: string[], from: string, to: s
     page_stats: enrichedPageStats,
     bitrix_pages: bitrixAnalytics.rows,
     bitrix_summary: bitrixAnalytics.summary,
-    external_events: externalEvents,
-    external_clicks: buildExternalClickRows(externalFactDaily),
+    bitrix_period_active: bitrixPeriodActive,
+    session_journeys: sessionJourneys,
+    external_events: workbookData.externalEvents,
+    external_clicks: buildExternalClickRows(externalFactDaily, workbookData),
     time_buckets: timeBuckets,
-    returning: returningApiPrototype.length > 0 ? returningApiPrototype : buildReturningRows(from, to, returningFallback),
-    general_materials: buildGeneralMaterialsRows(enrichedPageStats),
+    returning:
+      returningApiPrototype.length > 0
+        ? returningApiPrototype
+        : buildReturningRows(from, to, returningFallback, workbookData, config.useAbbottMetadata),
+    general_materials: buildGeneralMaterialsRows(enrichedPageStats, workbookData),
   };
+}
+
+export async function loadAbbottBiData(counterIds: string[], from: string, to: string): Promise<AbbottBiData> {
+  return loadPortalBiData(counterIds, from, to, {
+    defaultCounterIds: getDefaultAbbottCounterIds(),
+    useWorkbook: true,
+    useAbbottMetadata: true,
+    useBitrix: true,
+    useExternalClicks: true,
+    useAbbottReturningApi: true,
+  });
+}
+
+export async function loadZarukuBiData(counterIds: string[], from: string, to: string): Promise<AbbottBiData> {
+  return loadPortalBiData(counterIds, from, to, {
+    defaultCounterIds: getDefaultZarukuCounterIds(),
+    useWorkbook: false,
+    useAbbottMetadata: false,
+    useBitrix: false,
+    useExternalClicks: false,
+    useAbbottReturningApi: false,
+  });
 }

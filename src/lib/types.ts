@@ -6,7 +6,7 @@ import type {
 } from "@/lib/admin-ui-types";
 import type { MultibrandConfig } from "@/lib/multibrand";
 
-export type DashboardKind = "awareness" | "performance" | "overview" | "multibrand" | "abbott_bi";
+export type DashboardKind = "awareness" | "performance" | "overview" | "multibrand" | "abbott_bi" | "zaruku_bi";
 export type DashboardSectionId =
   | "kpi_grid"
   | "spend_section"
@@ -502,6 +502,54 @@ export interface AbbottBiMaterialRow {
   users: number;
 }
 
+export interface AbbottBiSessionJourneyRow {
+  session_id: number;
+  user_id: string | null;
+  has_user_id: boolean;
+  entry_url_day: string;
+  exit_url_day: string;
+  entry_url_session: string;
+  exit_url_session: string;
+  hits_total: number;
+  hits_clean: number;
+  hits_content: number;
+  steps_content: number;
+  events_count: number;
+  duration_seconds: number;
+  content_path: string[];
+  content_path_summary: string;
+  all_path_summary: string;
+  events_available: boolean;
+}
+
+export interface AbbottBiSessionJourneySchema {
+  grain: string;
+  sources: string[];
+  entry_exit_day: string;
+  entry_exit_session: string;
+  content_path: string;
+  all_path: string;
+  events: string;
+  duration: string;
+}
+
+export interface AbbottBiSessionJourneySummary {
+  sessions_in_day: number;
+  sessions_exported: number;
+  sessions_with_user_id: number;
+  sessions_with_content_path: number;
+  hits_total: number;
+  hits_clean: number;
+  events_available: boolean;
+}
+
+export interface AbbottBiSessionJourneysData {
+  report_date: string;
+  schema: AbbottBiSessionJourneySchema | null;
+  summary: AbbottBiSessionJourneySummary | null;
+  rows: AbbottBiSessionJourneyRow[];
+}
+
 export interface AbbottBiData {
   counters: string[];
   users_summary: AbbottBiUserSummaryRow[];
@@ -509,6 +557,8 @@ export interface AbbottBiData {
   page_stats: AbbottBiPageStatRow[];
   bitrix_pages: AbbottBiBitrixPageRow[];
   bitrix_summary: AbbottBiBitrixSummary | null;
+  bitrix_period_active: boolean;
+  session_journeys: AbbottBiSessionJourneysData;
   external_events: AbbottBiExternalEventRow[];
   external_clicks: AbbottBiExternalClickRow[];
   time_buckets: AbbottBiTimeBuckets;
@@ -649,6 +699,7 @@ export interface DashboardData {
     selected_columns?: DashboardPostClickFieldId[];
   };
   abbott_bi?: AbbottBiData;
+  zaruku_bi?: AbbottBiData;
   promopages?: PromopagesData;
   section_field_overrides?: {
     trend_chart?: {

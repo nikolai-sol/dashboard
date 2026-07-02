@@ -18,6 +18,7 @@ import type { AbbottBiData } from "@/lib/types";
 type AbbottBiDashboardProps = {
   data: AbbottBiData;
   locale?: string;
+  portalName?: string;
 };
 
 type TabId =
@@ -25,6 +26,7 @@ type TabId =
   | "user_actions"
   | "page_stats"
   | "bitrix_pages"
+  | "session_journeys"
   | "external_events"
   | "time_buckets"
   | "returning"
@@ -64,27 +66,35 @@ type ThemeConfig = {
   pieColors: string[];
 };
 
-const TABS: TabConfig[] = [
+function buildTabs(portalName: string): TabConfig[] {
+  return [
   {
     id: "users_summary",
     label: "1. Общая таблица по пользователям",
     description:
-      "Источник: canonical_fact_user_behavior_daily. Grain: UserID + Источник, только numeric UserID > 0.",
+      "Источник: canonical_fact_user_behavior_daily; если UserID-grain недоступен, используется canonical traffic summary.",
   },
   {
     id: "user_actions",
-    label: "2. Действия пользователя на сайте ABBOTT",
+    label: `2. Действия пользователя на сайте ${portalName}`,
     description: "Grain: UserID + Источник + Start URL + End URL. Это aggregated proxy, не session-level.",
   },
   {
     id: "page_stats",
-    label: "3. Статистика страниц на сайте ABBOTT",
-    description: "Источник: yandex_metrika_internal + Abbott names workbook enrichment.",
+    label: `3. Статистика страниц на сайте ${portalName}`,
+    description:
+      "Источник: yandex_metrika_internal/canonical page analytics. При наличии справочника и Bitrix-дампа дополнительно показывается обогащение.",
   },
   {
     id: "bitrix_pages",
     label: "3.1 Bitrix: страницы и сессии",
     description: "Источник: b_stat_hit + b_stat_session из Bitrix dump. Grain: normalized URL, очищено от ботов и технических URL.",
+  },
+  {
+    id: "session_journeys",
+    label: "3.2 Bitrix: путь пользователя",
+    description:
+      "Источник: b_stat_hit + b_stat_session. Пример за один день из дампа: точка входа, контентный путь, выход, хиты и длительность сессии.",
   },
   {
     id: "external_events",
@@ -94,7 +104,7 @@ const TABS: TabConfig[] = [
   {
     id: "returning",
     label: "5. Вернувшиеся",
-    description: "Источник: yandex_metrika_returned + ym_url_return + url_return.",
+    description: "Источник: yandex_metrika_returned и optional workbook/API enrichment.",
   },
   {
     id: "general_materials",
@@ -107,7 +117,8 @@ const TABS: TabConfig[] = [
     description:
       "Источник: canonical_fact_user_behavior_daily. Бакеты по weighted avg duration на UserID, отдельно overall и по material URLs.",
   },
-];
+  ];
+}
 
 const PAGE_SIZE = 100;
 
@@ -156,6 +167,16 @@ const TAB_THEMES: Record<TabId, ThemeConfig> = {
     headerClass: "bg-teal-600 text-white",
     barColor: "#0f766e",
     pieColors: ["#0f766e", "#14b8a6", "#2dd4bf", "#5eead4", "#99f6e4"],
+  },
+  session_journeys: {
+    accent: "#4f46e5",
+    accentSoft: "#eef2ff",
+    borderClass: "border-indigo-200",
+    textClass: "text-indigo-700",
+    pillClass: "bg-indigo-50 text-indigo-700 border-indigo-200",
+    headerClass: "bg-indigo-600 text-white",
+    barColor: "#4f46e5",
+    pieColors: ["#4f46e5", "#6366f1", "#818cf8", "#a5b4fc", "#c7d2fe"],
   },
   external_events: {
     accent: "#7c6ad4",
@@ -310,83 +331,6 @@ function SelectField({
   );
 }
 
-function SearchPickField({
-  label,
-  searchValue,
-  selectedValue,
-  selectedLabel,
-  options,
-  onSearchChange,
-  onSelect,
-  onClear,
-  theme,
-}: {
-  label: string;
-  searchValue: string;
-  selectedValue: string;
-  selectedLabel?: string | null;
-  options: SearchOption[];
-  onSearchChange: (value: string) => void;
-  onSelect: (option: SearchOption) => void;
-  onClear: () => void;
-  theme: ThemeConfig;
-}) {
-  const normalized = searchValue.trim().toLowerCase();
-  const filtered = (normalized
-    ? options.filter((option) => `${option.label} ${option.description ?? ""}`.toLowerCase().includes(normalized))
-    : options
-  ).slice(0, 12);
-
-  return (
-    <label className={`card-surface block p-4 ${theme.borderClass}`}>
-      <div className="mb-2 flex items-center justify-between gap-3">
-        <span className={`block text-sm font-semibold ${theme.textClass}`}>{label}</span>
-        {selectedValue ? (
-          <button
-            type="button"
-            onClick={onClear}
-            className="text-xs font-medium text-slate-500 transition hover:text-slate-700"
-          >
-            Очистить
-          </button>
-        ) : null}
-      </div>
-      <input
-        type="search"
-        value={searchValue}
-        onChange={(event) => onSearchChange(event.target.value)}
-        placeholder="Начните вводить название страницы"
-        className="w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm text-slate-700 outline-none transition focus:border-slate-400"
-      />
-      <div className="mt-3 max-h-56 space-y-2 overflow-y-auto">
-        {filtered.length === 0 ? (
-          <div className="rounded-xl border border-dashed border-slate-200 px-3 py-2 text-sm text-slate-500">
-            Ничего не найдено
-          </div>
-        ) : (
-          filtered.map((option) => {
-            const isSelected = option.value === selectedValue;
-            return (
-              <button
-                key={option.value}
-                type="button"
-                onClick={() => onSelect(option)}
-                className={`w-full rounded-xl border px-3 py-2 text-left transition ${
-                  isSelected ? `${theme.pillClass}` : "border-slate-200 bg-white hover:border-slate-300"
-                }`}
-              >
-                <div className="text-sm font-medium text-slate-800">{option.label}</div>
-                {option.description ? <div className="mt-1 break-all text-xs text-slate-500">{option.description}</div> : null}
-              </button>
-            );
-          })
-        )}
-      </div>
-      {selectedLabel ? <div className="mt-3 text-xs text-slate-500">Выбрано: {selectedLabel}</div> : null}
-    </label>
-  );
-}
-
 function CompactPagePicker({
   label,
   searchValue,
@@ -523,11 +467,17 @@ function DataTable({
   rows,
   emptyText,
   headerClass,
+  rowKey,
+  onRowClick,
+  selectedRowKey,
 }: {
   columns: TableColumn[];
   rows: Array<Record<string, string>>;
   emptyText: string;
   headerClass: string;
+  rowKey?: string;
+  onRowClick?: (row: Record<string, string>) => void;
+  selectedRowKey?: string;
 }) {
   return (
     <div className="overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-sm">
@@ -553,15 +503,23 @@ function DataTable({
                 </td>
               </tr>
             ) : (
-              rows.map((row, index) => (
-                <tr key={`${index}-${row[columns[0]?.key] ?? "row"}`} className="align-top odd:bg-slate-50/60">
+              rows.map((row, index) => {
+                const keyValue = rowKey ? row[rowKey] : `${index}-${row[columns[0]?.key] ?? "row"}`;
+                const isSelected = selectedRowKey && rowKey ? row[rowKey] === selectedRowKey : false;
+                return (
+                <tr
+                  key={keyValue}
+                  className={`align-top odd:bg-slate-50/60 ${onRowClick ? "cursor-pointer hover:bg-indigo-50/80" : ""} ${isSelected ? "bg-indigo-50" : ""}`}
+                  onClick={onRowClick ? () => onRowClick(row) : undefined}
+                >
                   {columns.map((column) => (
                     <td key={column.key} className={`px-4 py-3 text-slate-700 ${column.className ?? ""}`}>
                       {row[column.key] || "—"}
                     </td>
                   ))}
                 </tr>
-              ))
+                );
+              })
             )}
           </tbody>
         </table>
@@ -727,13 +685,15 @@ function userIdLabel(userId: string, hasUserId: boolean) {
   return hasUserId ? userId : "Без User ID";
 }
 
-export default function AbbottBiDashboard({ data, locale = "ru-RU" }: AbbottBiDashboardProps) {
+export default function AbbottBiDashboard({ data, locale = "ru-RU", portalName = "ABBOTT" }: AbbottBiDashboardProps) {
   const [activeTab, setActiveTab] = useState<TabId>("users_summary");
+  const [selectedSessionJourneyId, setSelectedSessionJourneyId] = useState<number | null>(null);
   const [queryByTab, setQueryByTab] = useState<Record<TabId, string>>({
     users_summary: "",
     user_actions: "",
     page_stats: "",
     bitrix_pages: "",
+    session_journeys: "",
     external_events: "",
     time_buckets: "",
     returning: "",
@@ -744,6 +704,7 @@ export default function AbbottBiDashboard({ data, locale = "ru-RU" }: AbbottBiDa
     user_actions: 1,
     page_stats: 1,
     bitrix_pages: 1,
+    session_journeys: 1,
     external_events: 1,
     time_buckets: 1,
     returning: 1,
@@ -754,6 +715,7 @@ export default function AbbottBiDashboard({ data, locale = "ru-RU" }: AbbottBiDa
     user_actions: { user_id: "", user_id_traffic: "", traffic_source: "", direction: "" },
     page_stats: { page_title: "", direction: "", material_type: "", access: "" },
     bitrix_pages: { direction: "", material_type: "", access: "" },
+    session_journeys: { user_id_traffic: "" },
     external_events: { direction: "" },
     time_buckets: { page_url: "" },
     returning: { url: "", direction: "" },
@@ -761,6 +723,24 @@ export default function AbbottBiDashboard({ data, locale = "ru-RU" }: AbbottBiDa
   });
   const [timeBucketPageSearch, setTimeBucketPageSearch] = useState("");
 
+  const tabs = useMemo(
+    () =>
+      buildTabs(portalName).filter((tab) => {
+        if (tab.id === "bitrix_pages") return data.bitrix_pages.length > 0;
+        if (tab.id === "session_journeys") return data.session_journeys.rows.length > 0;
+        if (tab.id === "external_events") return data.external_events.length > 0 || data.external_clicks.length > 0;
+        if (tab.id === "general_materials") return data.general_materials.length > 0;
+        if (tab.id === "time_buckets") {
+          return (
+            data.time_buckets.overall.some((row) => row.users > 0) ||
+            data.time_buckets.materials.some((row) => row.users > 0) ||
+            data.time_buckets.by_page.length > 0
+          );
+        }
+        return true;
+      }),
+    [data, portalName],
+  );
   const theme = TAB_THEMES[activeTab];
 
   const setSelectFilter = (tab: TabId, key: string, value: string) => {
@@ -935,6 +915,44 @@ export default function AbbottBiDashboard({ data, locale = "ru-RU" }: AbbottBiDa
     });
   }, [data.bitrix_pages, filtersByTab.bitrix_pages, queryByTab.bitrix_pages]);
 
+  const sessionJourneyRows = useMemo(() => {
+    const query = queryByTab.session_journeys;
+    const filters = filtersByTab.session_journeys;
+    return data.session_journeys.rows.filter((row) => {
+      if (
+        !matchesQuery(
+          [
+            row.session_id,
+            row.user_id,
+            row.entry_url_day,
+            row.exit_url_day,
+            row.content_path_summary,
+            row.hits_clean,
+            row.steps_content,
+            row.duration_seconds,
+          ],
+          query,
+        )
+      ) {
+        return false;
+      }
+      if (filters.user_id_traffic === "with_user_id" && !row.has_user_id) return false;
+      if (filters.user_id_traffic === "without_user_id" && row.has_user_id) return false;
+      return true;
+    });
+  }, [data.session_journeys.rows, filtersByTab.session_journeys, queryByTab.session_journeys]);
+
+  const selectedSessionJourney = useMemo(() => {
+    if (activeTab !== "session_journeys") return null;
+    return (
+      sessionJourneyRows.find((row) => row.session_id === selectedSessionJourneyId) ??
+      sessionJourneyRows.find((row) => row.steps_content >= 3 && row.has_user_id) ??
+      sessionJourneyRows.find((row) => row.steps_content >= 2) ??
+      sessionJourneyRows[0] ??
+      null
+    );
+  }, [activeTab, selectedSessionJourneyId, sessionJourneyRows]);
+
   const externalEventRows = useMemo(() => {
     const query = queryByTab.external_events;
     const filters = filtersByTab.external_events;
@@ -968,7 +986,7 @@ export default function AbbottBiDashboard({ data, locale = "ru-RU" }: AbbottBiDa
 
   const timeBucketSections = useMemo(() => {
     const query = queryByTab.time_buckets.trim().toLowerCase();
-    const filterRows = (rows: typeof data.time_buckets.overall) =>
+    const filterRows = (rows: AbbottBiData["time_buckets"]["overall"]) =>
       rows.filter((row) => !query || matchesQuery([row.label, row.users], query));
     return {
       overall: filterRows(data.time_buckets.overall),
@@ -988,18 +1006,7 @@ export default function AbbottBiDashboard({ data, locale = "ru-RU" }: AbbottBiDa
     };
   }, [data.time_buckets.by_page, filtersByTab.time_buckets.page_url, timeBucketPageOptions]);
 
-  const tabRows = {
-    users_summary: usersSummaryRows,
-    user_actions: userActionRows,
-    page_stats: pageStatRows,
-    bitrix_pages: bitrixPageRows,
-    external_events: externalEventRows,
-    time_buckets: timeBucketSections.overall,
-    returning: returningRows,
-    general_materials: generalMaterialRows,
-  } as const;
-
-  const currentTab = TABS.find((tab) => tab.id === activeTab) ?? TABS[0];
+  const currentTab = tabs.find((tab) => tab.id === activeTab) ?? tabs[0];
 
   const usersDurationBySource = useMemo(() => {
     const totals = new Map<string, { durationWeighted: number; visits: number }>();
@@ -1098,12 +1105,43 @@ export default function AbbottBiDashboard({ data, locale = "ru-RU" }: AbbottBiDa
     [data.time_buckets.materials, data.time_buckets.overall],
   );
 
-  const themeLabel = currentTab.label.split(". ").slice(1).join(". ") || currentTab.label;
+  const pageStatsDescription = useMemo(() => {
+    const bitrixPeriodLabel = formatDateTimeRange(
+      data.bitrix_summary?.date_from,
+      data.bitrix_summary?.date_to,
+      locale,
+    );
+    const base =
+      "Источник: yandex_metrika_internal + Abbott names workbook enrichment.";
+    if (!data.bitrix_summary?.date_from || !data.bitrix_summary?.date_to) {
+      return base;
+    }
+    if (data.bitrix_period_active) {
+      return `${base} Дополнительно показаны Bitrix-метрики из SQL dump за период ${bitrixPeriodLabel}.`;
+    }
+    return `${base} Колонки Bitrix из SQL dump (${bitrixPeriodLabel}) появятся, если выбранный период полностью попадает в этот диапазон.`;
+  }, [data.bitrix_period_active, data.bitrix_summary, locale]);
+  const sessionJourneysDescription = useMemo(() => {
+    const reportDate = data.session_journeys.report_date;
+    const base = currentTab.description;
+    if (!reportDate) return `${base} Данные пока не собраны.`;
+    return `${base} Примерный день: ${reportDate}. Экспортировано ${formatNumber(
+      data.session_journeys.summary?.sessions_exported ?? data.session_journeys.rows.length,
+      locale,
+    )} сессий из ${formatNumber(data.session_journeys.summary?.sessions_in_day ?? 0, locale)} за сутки.`;
+  }, [currentTab.description, data.session_journeys, locale]);
+  const currentTabDescription =
+    activeTab === "page_stats"
+      ? pageStatsDescription
+      : activeTab === "session_journeys"
+        ? sessionJourneysDescription
+        : currentTab.description;
 
   const usersSummaryPage = sliceRows(usersSummaryRows, pageByTab.users_summary);
   const userActionsPage = sliceRows(userActionRows, pageByTab.user_actions);
   const pageStatsPage = sliceRows(pageStatRows, pageByTab.page_stats);
   const bitrixPagesPage = sliceRows(bitrixPageRows, pageByTab.bitrix_pages);
+  const sessionJourneysPage = sliceRows(sessionJourneyRows, pageByTab.session_journeys);
   const externalEventsPage = sliceRows(externalEventRows, pageByTab.external_events);
   const returningPage = sliceRows(returningRows, pageByTab.returning);
   const generalMaterialsPage = sliceRows(generalMaterialRows, pageByTab.general_materials);
@@ -1168,9 +1206,13 @@ export default function AbbottBiDashboard({ data, locale = "ru-RU" }: AbbottBiDa
       { key: "access", label: "Доступ" },
       { key: "pageviews", label: "Просмотры", className: "text-right" },
       { key: "users", label: "Посетители", className: "text-right" },
-      { key: "bitrix_pageviews", label: "Bitrix просмотры", className: "text-right" },
-      { key: "bitrix_sessions", label: "Bitrix сессии", className: "text-right" },
-      { key: "bitrix_users", label: "Bitrix User ID", className: "text-right" },
+      ...(data.bitrix_period_active
+        ? [
+            { key: "bitrix_pageviews", label: "Bitrix просмотры", className: "text-right" },
+            { key: "bitrix_sessions", label: "Bitrix сессии", className: "text-right" },
+            { key: "bitrix_users", label: "Bitrix User ID", className: "text-right" },
+          ]
+        : []),
     ];
     tableRows = pageStatsPage.pageRows.map((row) => ({
       page_title: row.page_title || "—",
@@ -1180,9 +1222,13 @@ export default function AbbottBiDashboard({ data, locale = "ru-RU" }: AbbottBiDa
       access: row.access ?? "—",
       pageviews: formatNumber(row.pageviews, locale),
       users: formatNumber(row.users, locale),
-      bitrix_pageviews: formatNumber(row.bitrix_pageviews, locale),
-      bitrix_sessions: formatNumber(row.bitrix_sessions, locale),
-      bitrix_users: formatNumber(row.bitrix_users, locale),
+      ...(data.bitrix_period_active
+        ? {
+            bitrix_pageviews: formatNumber(row.bitrix_pageviews, locale),
+            bitrix_sessions: formatNumber(row.bitrix_sessions, locale),
+            bitrix_users: formatNumber(row.bitrix_users, locale),
+          }
+        : {}),
     }));
   } else if (activeTab === "bitrix_pages") {
     currentPage = bitrixPagesPage.currentPage;
@@ -1215,6 +1261,30 @@ export default function AbbottBiDashboard({ data, locale = "ru-RU" }: AbbottBiDa
       top_utm_source: row.top_utm_source || "—",
       top_utm_campaign: row.top_utm_campaign || "—",
     }));
+  } else if (activeTab === "session_journeys") {
+    currentPage = sessionJourneysPage.currentPage;
+    totalPages = sessionJourneysPage.totalPages;
+    tableColumns = [
+      { key: "session_id", label: "Session ID", className: "text-right" },
+      { key: "user_id", label: "User ID" },
+      { key: "entry_url_day", label: "Вход (день)", className: "min-w-[260px] break-all" },
+      { key: "exit_url_day", label: "Выход (день)", className: "min-w-[260px] break-all" },
+      { key: "steps_content", label: "Шагов", className: "text-right" },
+      { key: "hits_clean", label: "Хиты", className: "text-right" },
+      { key: "duration_seconds", label: "Время, мин", className: "text-right" },
+      { key: "content_path_summary", label: "Контентный путь", className: "min-w-[320px] break-all" },
+    ];
+    tableRows = sessionJourneysPage.pageRows.map((row) => ({
+      session_id: String(row.session_id),
+      user_id: row.user_id ?? "Без User ID",
+      entry_url_day: row.entry_url_day || "—",
+      exit_url_day: row.exit_url_day || "—",
+      steps_content: formatNumber(row.steps_content, locale),
+      hits_clean: formatNumber(row.hits_clean, locale),
+      duration_seconds: formatDurationMinutes(row.duration_seconds, locale),
+      content_path_summary: row.content_path_summary || "—",
+    }));
+    emptyText = "Нет сессий за выбранный день в Bitrix dump.";
   } else if (activeTab === "external_events") {
     currentPage = externalEventsPage.currentPage;
     totalPages = externalEventsPage.totalPages;
@@ -1386,6 +1456,15 @@ export default function AbbottBiDashboard({ data, locale = "ru-RU" }: AbbottBiDa
           theme={theme}
         />
       </>
+    ),
+    session_journeys: (
+      <SelectField
+        label="Трафик"
+        value={filtersByTab.session_journeys.user_id_traffic}
+        options={USER_ID_TRAFFIC_OPTIONS}
+        onChange={(value) => setSelectFilter("session_journeys", "user_id_traffic", value)}
+        theme={theme}
+      />
     ),
     external_events: (
       <SelectField
@@ -1601,6 +1680,70 @@ export default function AbbottBiDashboard({ data, locale = "ru-RU" }: AbbottBiDa
         </div>
       </div>
     );
+  } else if (activeTab === "session_journeys") {
+    const summary = data.session_journeys.summary;
+    chartContent = (
+      <div className="grid gap-4 xl:grid-cols-3">
+        <ChartCard title={`Сводка за ${data.session_journeys.report_date || "день"}`}>
+          <div className="grid gap-3">
+            <StatsPill
+              label="Сессий за сутки"
+              value={formatNumber(summary?.sessions_in_day ?? 0, locale)}
+              theme={theme}
+            />
+            <StatsPill
+              label="В выборке"
+              value={formatNumber(summary?.sessions_exported ?? sessionJourneyRows.length, locale)}
+              theme={theme}
+            />
+            <StatsPill
+              label="С User ID"
+              value={formatNumber(summary?.sessions_with_user_id ?? 0, locale)}
+              theme={theme}
+            />
+          </div>
+        </ChartCard>
+        <ChartCard title="Качество путей">
+          <div className="grid gap-3">
+            <StatsPill
+              label="С контентным путём (2+ шага)"
+              value={formatNumber(summary?.sessions_with_content_path ?? 0, locale)}
+              theme={theme}
+            />
+            <StatsPill
+              label="Чистые хиты в выборке"
+              value={formatNumber(summary?.hits_clean ?? 0, locale)}
+              theme={theme}
+            />
+            <StatsPill
+              label="Bitrix events"
+              value={summary?.events_available ? "Доступны" : "Нет в дампе"}
+              theme={theme}
+            />
+          </div>
+        </ChartCard>
+        <ChartCard title="Схема слоя">
+          <div className="space-y-2 text-sm text-slate-600">
+            <p>
+              <span className="font-semibold text-slate-900">Grain:</span>{" "}
+              {data.session_journeys.schema?.grain ?? "session_id x report_date"}
+            </p>
+            <p>
+              <span className="font-semibold text-slate-900">Вход/выход за день:</span> первый и последний clean hit
+              выбранной даты.
+            </p>
+            <p>
+              <span className="font-semibold text-slate-900">Контентный путь:</span> без api/ajax/auth и служебных
+              страниц; подряд идущие одинаковые URL схлопываются.
+            </p>
+            <p>
+              <span className="font-semibold text-slate-900">Ивенты:</span>{" "}
+              {data.session_journeys.schema?.events ?? "не доступны в этом дампе"}.
+            </p>
+          </div>
+        </ChartCard>
+      </div>
+    );
   } else if (activeTab === "external_events") {
     chartContent = (
       <ChartCard title="Топ внешних URL по количеству переходов">
@@ -1721,7 +1864,7 @@ export default function AbbottBiDashboard({ data, locale = "ru-RU" }: AbbottBiDa
       <aside className="card-surface h-fit p-5">
         <div className="mb-6 text-2xl font-semibold text-slate-900">Навигация</div>
         <nav className="space-y-2">
-          {TABS.map((tab) => {
+          {tabs.map((tab) => {
             const isActive = tab.id === activeTab;
             const tabTheme = TAB_THEMES[tab.id];
             return (
@@ -1747,7 +1890,7 @@ export default function AbbottBiDashboard({ data, locale = "ru-RU" }: AbbottBiDa
           <div className="flex flex-col gap-2 md:flex-row md:items-start md:justify-between">
             <div>
               <h2 className="text-2xl font-semibold text-slate-900">{currentTab.label}</h2>
-              <p className="mt-1 text-sm text-slate-600">{currentTab.description}</p>
+              <p className="mt-1 text-sm text-slate-600">{currentTabDescription}</p>
             </div>
             {activeTab === "time_buckets" ? (
               <CompactPagePicker
@@ -1781,6 +1924,20 @@ export default function AbbottBiDashboard({ data, locale = "ru-RU" }: AbbottBiDa
           </div>
         </div>
 
+        {activeTab === "page_stats" && data.bitrix_period_active ? (
+          <div className="border-l-4 border-sky-600 bg-sky-50 px-5 py-4 text-sm text-slate-700">
+            <div className="font-semibold text-slate-900">
+              Bitrix-слой активен для периода:{" "}
+              {formatDateTimeRange(data.bitrix_summary?.date_from, data.bitrix_summary?.date_to, locale)}
+            </div>
+            <p className="mt-1">
+              Колонки Bitrix просмотры / сессии / User ID подставлены из SQL dump Bitrix и соединены с Метрикой по
+              нормализованному URL. Сравнение корректно только пока выбранный период полностью попадает в диапазон
+              дампа.
+            </p>
+          </div>
+        ) : null}
+
         {activeTab === "bitrix_pages" ? (
           <div className="border-l-4 border-teal-600 bg-teal-50 px-5 py-4 text-sm text-slate-700">
             <div className="font-semibold text-slate-900">
@@ -1792,6 +1949,19 @@ export default function AbbottBiDashboard({ data, locale = "ru-RU" }: AbbottBiDa
               других дат в общем фильтре дашборда. Хиты и сессии очищены от ботов, технических URL, 404 и не-GET
               запросов. Затем страницы соединены по нормализованному URL с доступными данными Яндекс Метрики и
               справочником ABBOTT, чтобы дополнить их названием, направлением, типом материала и доступом.
+            </p>
+          </div>
+        ) : null}
+
+        {activeTab === "session_journeys" && data.session_journeys.report_date ? (
+          <div className="border-l-4 border-indigo-600 bg-indigo-50 px-5 py-4 text-sm text-slate-700">
+            <div className="font-semibold text-slate-900">
+              Пример за день: {data.session_journeys.report_date}
+            </div>
+            <p className="mt-1">
+              Показан session replay из Bitrix dump: вход и выход считаются по clean hits выбранного дня, контентный
+              путь строится без api/ajax/auth. Кликните по строке в таблице, чтобы раскрыть полный маршрут. Ивенты
+              Bitrix в этом дампе недоступны.
             </p>
           </div>
         ) : null}
@@ -1814,9 +1984,104 @@ export default function AbbottBiDashboard({ data, locale = "ru-RU" }: AbbottBiDa
 
         {activeTab === "time_buckets" ? null : (
           <div className="card-surface overflow-hidden p-5">
-            <DataTable columns={tableColumns} rows={tableRows} emptyText={emptyText} headerClass={theme.headerClass} />
+            <DataTable
+              columns={tableColumns}
+              rows={tableRows}
+              emptyText={emptyText}
+              headerClass={theme.headerClass}
+              rowKey={activeTab === "session_journeys" ? "session_id" : undefined}
+              selectedRowKey={
+                activeTab === "session_journeys" && selectedSessionJourney
+                  ? String(selectedSessionJourney.session_id)
+                  : undefined
+              }
+              onRowClick={
+                activeTab === "session_journeys"
+                  ? (row) => setSelectedSessionJourneyId(Number(row.session_id))
+                  : undefined
+              }
+            />
           </div>
         )}
+
+        {activeTab === "session_journeys" && selectedSessionJourney ? (
+          <div className="card-surface space-y-4 border border-indigo-200 p-5">
+            <div className="flex flex-col gap-2 md:flex-row md:items-start md:justify-between">
+              <div>
+                <h3 className="text-lg font-semibold text-slate-900">
+                  Пример сессии #{selectedSessionJourney.session_id}
+                </h3>
+                <p className="text-sm text-slate-600">
+                  User ID: {selectedSessionJourney.user_id ?? "Без User ID"} · Хиты:{" "}
+                  {formatNumber(selectedSessionJourney.hits_clean, locale)} clean /{" "}
+                  {formatNumber(selectedSessionJourney.hits_total, locale)} total · Время:{" "}
+                  {formatDurationMinutes(selectedSessionJourney.duration_seconds, locale)} мин
+                </p>
+              </div>
+            </div>
+            <div className="grid gap-4 lg:grid-cols-2">
+              <div className="rounded-2xl border border-slate-200 bg-slate-50 p-4 text-sm">
+                <div className="font-semibold text-slate-900">Точки входа и выхода</div>
+                <dl className="mt-3 space-y-2 text-slate-700">
+                  <div>
+                    <dt className="text-xs uppercase tracking-wide text-slate-500">Вход за день</dt>
+                    <dd className="break-all">{selectedSessionJourney.entry_url_day}</dd>
+                  </div>
+                  <div>
+                    <dt className="text-xs uppercase tracking-wide text-slate-500">Выход за день</dt>
+                    <dd className="break-all">{selectedSessionJourney.exit_url_day}</dd>
+                  </div>
+                  <div>
+                    <dt className="text-xs uppercase tracking-wide text-slate-500">Вход сессии (Bitrix)</dt>
+                    <dd className="break-all">{selectedSessionJourney.entry_url_session}</dd>
+                  </div>
+                  <div>
+                    <dt className="text-xs uppercase tracking-wide text-slate-500">Выход сессии (Bitrix)</dt>
+                    <dd className="break-all">{selectedSessionJourney.exit_url_session}</dd>
+                  </div>
+                </dl>
+              </div>
+              <div className="rounded-2xl border border-slate-200 bg-slate-50 p-4 text-sm">
+                <div className="font-semibold text-slate-900">Сводка пути</div>
+                <dl className="mt-3 space-y-2 text-slate-700">
+                  <div>
+                    <dt className="text-xs uppercase tracking-wide text-slate-500">Контентных шагов</dt>
+                    <dd>{formatNumber(selectedSessionJourney.steps_content, locale)}</dd>
+                  </div>
+                  <div>
+                    <dt className="text-xs uppercase tracking-wide text-slate-500">Ивенты за сессию</dt>
+                    <dd>{selectedSessionJourney.events_available ? formatNumber(selectedSessionJourney.events_count, locale) : "Нет в дампе"}</dd>
+                  </div>
+                  <div>
+                    <dt className="text-xs uppercase tracking-wide text-slate-500">Краткий путь</dt>
+                    <dd className="break-all">{selectedSessionJourney.content_path_summary || "—"}</dd>
+                  </div>
+                  <div>
+                    <dt className="text-xs uppercase tracking-wide text-slate-500">Полный clean path</dt>
+                    <dd className="break-all">{selectedSessionJourney.all_path_summary || "—"}</dd>
+                  </div>
+                </dl>
+              </div>
+            </div>
+            <div className="rounded-2xl border border-slate-200 bg-white p-4">
+              <div className="font-semibold text-slate-900">Контентный маршрут по шагам</div>
+              {selectedSessionJourney.content_path.length > 0 ? (
+                <ol className="mt-3 space-y-2 text-sm text-slate-700">
+                  {selectedSessionJourney.content_path.map((stepUrl, index) => (
+                    <li key={`${selectedSessionJourney.session_id}-${index}-${stepUrl}`} className="flex gap-3">
+                      <span className="mt-0.5 inline-flex h-6 w-6 shrink-0 items-center justify-center rounded-full bg-indigo-100 text-xs font-semibold text-indigo-700">
+                        {index + 1}
+                      </span>
+                      <span className="break-all">{stepUrl}</span>
+                    </li>
+                  ))}
+                </ol>
+              ) : (
+                <p className="mt-3 text-sm text-slate-500">Для этой сессии не осталось контентных шагов после фильтрации.</p>
+              )}
+            </div>
+          </div>
+        ) : null}
 
         {activeTab === "time_buckets" ? null : (
           <Pagination
