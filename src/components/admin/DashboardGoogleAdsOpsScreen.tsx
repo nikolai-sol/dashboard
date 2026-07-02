@@ -2,6 +2,8 @@
 
 import { useEffect, useMemo, useState } from "react";
 import Link from "next/link";
+import { Check, ClipboardCopy, Download, FileSpreadsheet } from "lucide-react";
+import * as XLSX from "xlsx";
 
 type CampaignOption = {
   customer_id: string;
@@ -66,6 +68,48 @@ type SearchTermRow = {
   ad_groups_count: number;
 };
 
+type KeywordRow = {
+  keyword_text: string;
+  match_type: string | null;
+  keyword_status: string | null;
+  impressions: number;
+  clicks: number;
+  cost: number;
+  conversions: number;
+  conversion_value: number;
+  first_date: string | null;
+  last_date: string | null;
+  ad_groups_count: number;
+};
+
+type CampaignHealthRow = {
+  customer_id: string;
+  campaign_id: string;
+  campaign_name: string;
+  campaign_status: string | null;
+  objective: string | null;
+  cost: number;
+  impressions: number;
+  clicks: number;
+  conversions: number;
+  conversion_value: number;
+  ctr: number | null;
+  cpc: number | null;
+  cpa: number | null;
+  products_total: number;
+  products_with_impressions: number;
+  pending_recommendations: number;
+  last_fact_date: string | null;
+  health_score: number;
+  health_status: "critical" | "warning" | "ok";
+  checks: Array<{
+    severity: "critical" | "warning" | "info" | "ok";
+    title: string;
+    detail: string;
+    recommendation: string;
+  }>;
+};
+
 type Payload = {
   context: {
     dashboard: {
@@ -84,10 +128,20 @@ type Payload = {
     limit: number;
     date_from: string;
     date_to: string;
+    health_filter: "active" | "all" | "campaign";
+    health_campaign_id: string;
   };
+  campaign_health: CampaignHealthRow[];
   summary: SummaryRow[];
   recommendations: RecommendationRow[];
   mutation_log: MutationLogRow[];
+  keywords: KeywordRow[];
+  keyword_pagination: {
+    total: number;
+    page: number;
+    per_page: number;
+    total_pages: number;
+  };
   search_terms: SearchTermRow[];
   ai_analysis_by_recommendation: Record<number, {
     id: number;
@@ -129,10 +183,33 @@ type Props = {
 
 const STATUS_OPTIONS = ["pending", "approved", "rejected", "applied", "all"];
 const MATCH_TYPES = ["PHRASE", "EXACT", "BROAD"];
+const SEARCH_TERM_EXPORT_HEADERS = [
+  "Search term",
+  "Cost",
+  "Clicks",
+  "Impressions",
+  "Conversions",
+  "Conversion value",
+  "Ad groups",
+  "First date",
+  "Last date",
+];
 
 function isoDateOffset(daysBack: number): string {
   const date = new Date();
   date.setDate(date.getDate() - daysBack);
+  return date.toISOString().slice(0, 10);
+}
+
+function isoDateTodayUtc(): string {
+  return new Date().toISOString().slice(0, 10);
+}
+
+function isoDateStartOfWeekMonday(): string {
+  const date = new Date();
+  const day = date.getDay();
+  const delta = day === 0 ? 6 : day - 1;
+  date.setDate(date.getDate() - delta);
   return date.toISOString().slice(0, 10);
 }
 
@@ -143,11 +220,32 @@ function formatMoney(value: number): string {
   });
 }
 
+function formatPercent(value: number | null): string {
+  if (value === null || !Number.isFinite(value)) return "-";
+  return `${(value * 100).toFixed(2)}%`;
+}
+
 function formatDateTime(value: string | null): string {
   if (!value) return "-";
   const date = new Date(value);
   if (Number.isNaN(date.getTime())) return value;
   return date.toLocaleString("ru-RU");
+}
+
+function csvCell(value: string | number | null): string {
+  const text = String(value ?? "");
+  return /[",\n\r]/.test(text) ? `"${text.replace(/"/g, '""')}"` : text;
+}
+
+function downloadBlob(blob: Blob, filename: string) {
+  const url = URL.createObjectURL(blob);
+  const anchor = document.createElement("a");
+  anchor.href = url;
+  anchor.download = filename;
+  document.body.appendChild(anchor);
+  anchor.click();
+  anchor.remove();
+  URL.revokeObjectURL(url);
 }
 
 export default function DashboardGoogleAdsOpsScreen({ dashboardId }: Props) {
@@ -159,6 +257,12 @@ export default function DashboardGoogleAdsOpsScreen({ dashboardId }: Props) {
   const [applyLimit, setApplyLimit] = useState(20);
   const [dateFrom, setDateFrom] = useState(() => isoDateOffset(14));
   const [dateTo, setDateTo] = useState(() => isoDateOffset(1));
+  const [keywordPage, setKeywordPage] = useState(1);
+  const [healthFilter, setHealthFilter] = useState<"active" | "all" | "campaign">("active");
+  const [healthCampaignId, setHealthCampaignId] = useState("");
+  const [searchTermExportFormat, setSearchTermExportFormat] = useState<"xlsx" | "csv">("xlsx");
+  const [searchTermsSort, setSearchTermsSort] = useState<"last_date_desc" | "last_date_asc" | "first_date_desc" | "first_date_asc">("last_date_desc");
+  const [searchTermsCopied, setSearchTermsCopied] = useState(false);
   const [confirmText, setConfirmText] = useState("");
   const [busyAction, setBusyAction] = useState<string | null>(null);
   const [rejectingId, setRejectingId] = useState<number | null>(null);
@@ -169,19 +273,37 @@ export default function DashboardGoogleAdsOpsScreen({ dashboardId }: Props) {
 
   const apiUrl = useMemo(() => `/api/admin/dashboards/${dashboardId}/google-ads`, [dashboardId]);
 
-  async function load(next?: Partial<{ customerId: string; campaignId: string; status: string; limit: number }>) {
+  async function load(next?: Partial<{
+    customerId: string;
+    campaignId: string;
+    status: string;
+    limit: number;
+    keywordPage: number;
+    healthFilter: "active" | "all" | "campaign";
+    healthCampaignId: string;
+    dateFrom: string;
+    dateTo: string;
+  }>) {
     setError(null);
     const query = new URLSearchParams();
     const nextCustomerId = next?.customerId ?? customerId;
     const nextCampaignId = next?.campaignId ?? campaignId;
     const nextStatus = next?.status ?? status;
     const nextLimit = next?.limit ?? limit;
+    const nextKeywordPage = next?.keywordPage ?? keywordPage;
+    const nextHealthFilter = next?.healthFilter ?? healthFilter;
+    const nextHealthCampaignId = next?.healthCampaignId ?? healthCampaignId;
+    const nextDateFrom = next?.dateFrom ?? dateFrom;
+    const nextDateTo = next?.dateTo ?? dateTo;
     if (nextCustomerId) query.set("customer_id", nextCustomerId);
     if (nextCampaignId) query.set("campaign_id", nextCampaignId);
     query.set("status", nextStatus);
     query.set("limit", String(nextLimit));
-    if (dateFrom) query.set("date_from", dateFrom);
-    if (dateTo) query.set("date_to", dateTo);
+    query.set("keyword_page", String(nextKeywordPage));
+    query.set("health_filter", nextHealthFilter);
+    if (nextHealthCampaignId) query.set("health_campaign_id", nextHealthCampaignId);
+    if (nextDateFrom) query.set("date_from", nextDateFrom);
+    if (nextDateTo) query.set("date_to", nextDateTo);
     const response = await fetch(`${apiUrl}?${query.toString()}`, { cache: "no-store" });
     const json = await response.json();
     if (!response.ok) {
@@ -193,6 +315,9 @@ export default function DashboardGoogleAdsOpsScreen({ dashboardId }: Props) {
     setCampaignId(nextPayload.selected.campaign_id);
     setStatus(nextPayload.selected.status);
     setLimit(nextPayload.selected.limit);
+    setKeywordPage(nextPayload.keyword_pagination.page);
+    setHealthFilter(nextPayload.selected.health_filter ?? "active");
+    setHealthCampaignId(nextPayload.selected.health_campaign_id ?? "");
     setSettingsDraft(nextPayload.settings);
     setEditDrafts((current) => {
       const nextDrafts = { ...current };
@@ -238,6 +363,9 @@ export default function DashboardGoogleAdsOpsScreen({ dashboardId }: Props) {
           campaign_id: campaignId,
           status,
           limit,
+          keyword_page: keywordPage,
+          health_filter: healthFilter,
+          health_campaign_id: healthCampaignId,
           date_from: dateFrom,
           date_to: dateTo,
           apply_limit: applyLimit,
@@ -267,6 +395,114 @@ export default function DashboardGoogleAdsOpsScreen({ dashboardId }: Props) {
   const recommendationsEnabled = Boolean(settingsDraft?.negative_recommendations_enabled);
   const applyEnabled = Boolean(settingsDraft?.apply_enabled);
   const aiEnabled = Boolean(settingsDraft?.ai_analysis_enabled);
+  const sortedSearchTerms = useMemo(() => {
+    const rows = [...(payload?.search_terms ?? [])];
+    const dateValue = (value: string | null) => {
+      if (!value) return 0;
+      const parsed = Date.parse(value);
+      return Number.isFinite(parsed) ? parsed : 0;
+    };
+    rows.sort((a, b) => {
+      if (searchTermsSort === "last_date_asc") return dateValue(a.last_date) - dateValue(b.last_date);
+      if (searchTermsSort === "first_date_desc") return dateValue(b.first_date) - dateValue(a.first_date);
+      if (searchTermsSort === "first_date_asc") return dateValue(a.first_date) - dateValue(b.first_date);
+      return dateValue(b.last_date) - dateValue(a.last_date);
+    });
+    return rows;
+  }, [payload?.search_terms, searchTermsSort]);
+
+  const searchTermExportRows = useMemo(
+    () => sortedSearchTerms.map((row) => ({
+      [SEARCH_TERM_EXPORT_HEADERS[0]]: row.search_term,
+      [SEARCH_TERM_EXPORT_HEADERS[1]]: row.cost,
+      [SEARCH_TERM_EXPORT_HEADERS[2]]: row.clicks,
+      [SEARCH_TERM_EXPORT_HEADERS[3]]: row.impressions,
+      [SEARCH_TERM_EXPORT_HEADERS[4]]: row.conversions,
+      [SEARCH_TERM_EXPORT_HEADERS[5]]: row.conversion_value,
+      [SEARCH_TERM_EXPORT_HEADERS[6]]: row.ad_groups_count,
+      [SEARCH_TERM_EXPORT_HEADERS[7]]: row.first_date ?? "",
+      [SEARCH_TERM_EXPORT_HEADERS[8]]: row.last_date ?? "",
+    })),
+    [sortedSearchTerms],
+  );
+
+  async function copySearchTermsForAnalysis() {
+    const terms = sortedSearchTerms
+      .map((row) => row.search_term.trim())
+      .filter(Boolean)
+      .join("\n");
+    if (!terms) return;
+    await navigator.clipboard.writeText(terms);
+    setSearchTermsCopied(true);
+    window.setTimeout(() => setSearchTermsCopied(false), 1600);
+  }
+
+  function exportSearchTerms() {
+    if (!searchTermExportRows.length) return;
+    const safeCampaign = (selectedCampaign?.campaign_name || campaignId || "campaign")
+      .replace(/[^a-z0-9а-яё_-]+/gi, "_")
+      .replace(/^_+|_+$/g, "")
+      .slice(0, 80);
+    const dateSuffix = `${dateFrom || "from"}_${dateTo || "to"}`;
+    if (searchTermExportFormat === "csv") {
+      const lines = [
+        SEARCH_TERM_EXPORT_HEADERS.map(csvCell).join(","),
+        ...searchTermExportRows.map((row) =>
+          SEARCH_TERM_EXPORT_HEADERS.map((header) => csvCell(row[header])).join(","),
+        ),
+      ];
+      downloadBlob(
+        new Blob([lines.join("\n")], { type: "text/csv;charset=utf-8" }),
+        `google_ads_search_terms_${safeCampaign}_${dateSuffix}.csv`,
+      );
+      return;
+    }
+    const worksheet = XLSX.utils.json_to_sheet(searchTermExportRows, { header: SEARCH_TERM_EXPORT_HEADERS });
+    worksheet["!cols"] = [
+      { wch: 48 },
+      { wch: 12 },
+      { wch: 10 },
+      { wch: 12 },
+      { wch: 12 },
+      { wch: 16 },
+      { wch: 10 },
+      { wch: 12 },
+      { wch: 12 },
+    ];
+    const workbook = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(workbook, worksheet, "Search terms");
+    XLSX.writeFile(workbook, `google_ads_search_terms_${safeCampaign}_${dateSuffix}.xlsx`);
+  }
+
+  async function applySearchTermDatePreset(preset: "yesterday" | "this_week" | "since_campaign_start") {
+    const yesterday = isoDateOffset(1);
+    if (preset === "yesterday") {
+      setDateFrom(yesterday);
+      setDateTo(yesterday);
+      setKeywordPage(1);
+      await load({ keywordPage: 1, dateFrom: yesterday, dateTo: yesterday });
+      return;
+    }
+    if (preset === "this_week") {
+      const weekStart = isoDateStartOfWeekMonday();
+      setDateTo(yesterday);
+      setDateFrom(weekStart);
+      setKeywordPage(1);
+      await load({ keywordPage: 1, dateFrom: weekStart, dateTo: yesterday });
+      return;
+    }
+    const campaignStart =
+      sortedSearchTerms
+        .map((row) => row.first_date)
+        .filter((value): value is string => Boolean(value))
+        .sort()[0]
+      || isoDateStartOfWeekMonday();
+    const dateToValue = isoDateTodayUtc();
+    setDateFrom(campaignStart);
+    setDateTo(dateToValue);
+    setKeywordPage(1);
+    await load({ keywordPage: 1, dateFrom: campaignStart, dateTo: dateToValue });
+  }
 
   return (
     <section className="space-y-6">
@@ -291,7 +527,7 @@ export default function DashboardGoogleAdsOpsScreen({ dashboardId }: Props) {
       ) : null}
 
       <section className="rounded-lg border border-slate-200 bg-white p-4">
-        <div className="grid gap-3 md:grid-cols-[180px_1fr_150px_120px]">
+        <div className="grid gap-3 md:grid-cols-[180px_180px_1fr_150px_120px]">
           <label className="text-sm text-slate-700">
             Customer
             <select
@@ -301,7 +537,14 @@ export default function DashboardGoogleAdsOpsScreen({ dashboardId }: Props) {
                 const nextCampaign = campaigns.find((campaign) => campaign.customer_id === nextCustomerId);
                 setCustomerId(nextCustomerId);
                 setCampaignId(nextCampaign?.campaign_id ?? "");
-                void load({ customerId: nextCustomerId, campaignId: nextCampaign?.campaign_id ?? "" });
+                setKeywordPage(1);
+                setHealthCampaignId(nextCampaign?.campaign_id ?? "");
+                void load({
+                  customerId: nextCustomerId,
+                  campaignId: nextCampaign?.campaign_id ?? "",
+                  keywordPage: 1,
+                  healthCampaignId: nextCampaign?.campaign_id ?? "",
+                });
               }}
               className="mt-1 w-full rounded-lg border border-slate-300 px-3 py-2"
             >
@@ -313,12 +556,44 @@ export default function DashboardGoogleAdsOpsScreen({ dashboardId }: Props) {
             </select>
           </label>
           <label className="text-sm text-slate-700">
+            Health filter
+            <select
+              value={healthFilter}
+              onChange={(event) => {
+                const nextFilter = (event.target.value === "all" || event.target.value === "campaign")
+                  ? event.target.value
+                  : "active";
+                setHealthFilter(nextFilter);
+                const fallbackCampaignId =
+                  healthCampaignId
+                  || campaigns.find((campaign) => campaign.customer_id === customerId)?.campaign_id
+                  || "";
+                if (nextFilter === "campaign") {
+                  setHealthCampaignId(fallbackCampaignId);
+                  void load({
+                    healthFilter: nextFilter,
+                    healthCampaignId: fallbackCampaignId,
+                    keywordPage: 1,
+                  });
+                  return;
+                }
+                void load({ healthFilter: nextFilter, keywordPage: 1 });
+              }}
+              className="mt-1 w-full rounded-lg border border-slate-300 px-3 py-2"
+            >
+              <option value="active">Active</option>
+              <option value="all">All</option>
+              <option value="campaign">Individual campaign</option>
+            </select>
+          </label>
+          <label className="text-sm text-slate-700">
             Campaign
             <select
               value={campaignId}
               onChange={(event) => {
                 setCampaignId(event.target.value);
-                void load({ campaignId: event.target.value });
+                setKeywordPage(1);
+                void load({ campaignId: event.target.value, keywordPage: 1 });
               }}
               className="mt-1 w-full rounded-lg border border-slate-300 px-3 py-2"
             >
@@ -331,6 +606,26 @@ export default function DashboardGoogleAdsOpsScreen({ dashboardId }: Props) {
                 ))}
             </select>
           </label>
+          {healthFilter === "campaign" ? (
+            <label className="text-sm text-slate-700">
+              Campaign for health
+              <select
+                value={healthCampaignId}
+                onChange={(event) => {
+                  const nextHealthCampaignId = event.target.value;
+                  setHealthCampaignId(nextHealthCampaignId);
+                  void load({ healthFilter: "campaign", healthCampaignId: nextHealthCampaignId, keywordPage: 1 });
+                }}
+                className="mt-1 w-full rounded-lg border border-slate-300 px-3 py-2"
+              >
+                {(campaigns.filter((campaign) => campaign.customer_id === customerId)).map((campaign) => (
+                  <option key={campaign.campaign_id} value={campaign.campaign_id}>
+                    {campaign.campaign_name} / {campaign.campaign_id} / {campaign.campaign_status ?? "unknown"}
+                  </option>
+                ))}
+              </select>
+            </label>
+          ) : null}
           <label className="text-sm text-slate-700">
             Status
             <select
@@ -366,6 +661,93 @@ export default function DashboardGoogleAdsOpsScreen({ dashboardId }: Props) {
             {selectedCampaign.campaign_status ?? "unknown"} / {selectedCampaign.objective ?? "unknown"}
           </p>
         ) : null}
+      </section>
+
+      <section className="rounded-lg border border-slate-200 bg-white p-4">
+        <div className="flex flex-wrap items-end justify-between gap-3">
+          <div>
+            <h2 className="text-lg font-semibold text-slate-900">Campaign Health</h2>
+            <p className="mt-1 text-sm text-slate-600">
+              Account-level checks for serving status, delivery, Shopping product coverage, conversions, CTR, pending
+              negatives, and data freshness in the selected period.
+            </p>
+          </div>
+          <button
+            type="button"
+            onClick={() => load({ keywordPage: 1 })}
+            disabled={Boolean(busyAction)}
+            className="rounded-lg border border-slate-300 px-3 py-2 text-sm font-medium text-slate-700 hover:bg-slate-50 disabled:opacity-50"
+          >
+            Refresh health
+          </button>
+        </div>
+        <div className="mt-4 overflow-x-auto">
+          <table className="min-w-full text-sm">
+            <thead>
+              <tr className="border-b border-slate-200 text-left text-xs uppercase text-slate-500">
+                <th className="px-3 py-2">Campaign</th>
+                <th className="px-3 py-2">Health</th>
+                <th className="px-3 py-2">Delivery</th>
+                <th className="px-3 py-2">Products</th>
+                <th className="px-3 py-2">Recommendations</th>
+              </tr>
+            </thead>
+            <tbody>
+              {(payload?.campaign_health ?? []).map((row) => (
+                <tr key={`${row.customer_id}:${row.campaign_id}`} className="border-b border-slate-100 align-top">
+                  <td className="px-3 py-3">
+                    <div className="font-medium text-slate-900">{row.campaign_name}</div>
+                    <div className="mt-1 text-xs text-slate-500">
+                      {row.customer_id} / {row.campaign_id}
+                    </div>
+                    <div className="mt-1 text-xs text-slate-500">
+                      {row.campaign_status ?? "unknown"} / {row.objective ?? "unknown"}
+                    </div>
+                  </td>
+                  <td className="px-3 py-3">
+                    <div
+                      className={[
+                        "inline-flex rounded-full px-2 py-1 text-xs font-semibold",
+                        row.health_status === "critical"
+                          ? "bg-rose-50 text-rose-700"
+                          : row.health_status === "warning"
+                            ? "bg-amber-50 text-amber-700"
+                            : "bg-emerald-50 text-emerald-700",
+                      ].join(" ")}
+                    >
+                      {row.health_status} / {row.health_score}
+                    </div>
+                    <div className="mt-2 text-xs text-slate-500">latest data {row.last_fact_date ?? "-"}</div>
+                  </td>
+                  <td className="px-3 py-3 text-slate-700">
+                    <div>cost {formatMoney(row.cost)}</div>
+                    <div>impr. {row.impressions} / clicks {row.clicks}</div>
+                    <div>conv. {row.conversions} / CTR {formatPercent(row.ctr)}</div>
+                    <div>CPC {row.cpc === null ? "-" : formatMoney(row.cpc)} / CPA {row.cpa === null ? "-" : formatMoney(row.cpa)}</div>
+                  </td>
+                  <td className="px-3 py-3 text-slate-700">
+                    {row.products_total ? `${row.products_with_impressions}/${row.products_total} with impressions` : "-"}
+                  </td>
+                  <td className="max-w-[520px] px-3 py-3">
+                    <div className="space-y-2">
+                      {row.checks.map((check) => (
+                        <div key={`${row.campaign_id}:${check.title}`} className="rounded border border-slate-200 p-2">
+                          <div className="text-xs font-semibold uppercase text-slate-500">{check.severity}</div>
+                          <div className="mt-1 font-medium text-slate-900">{check.title}</div>
+                          <div className="mt-1 text-xs text-slate-600">{check.detail}</div>
+                          <div className="mt-1 text-xs text-slate-800">{check.recommendation}</div>
+                        </div>
+                      ))}
+                    </div>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+          {payload && payload.campaign_health.length === 0 ? (
+            <p className="py-6 text-sm text-slate-500">No Google Ads campaigns available for health checks.</p>
+          ) : null}
+        </div>
       </section>
 
       <section className="grid gap-4 lg:grid-cols-4">
@@ -811,9 +1193,181 @@ export default function DashboardGoogleAdsOpsScreen({ dashboardId }: Props) {
         </div>
       </section>
 
+      <section className="rounded-lg border border-slate-200 bg-white p-4">
+        <div className="flex flex-wrap items-end justify-between gap-3">
+          <div>
+            <h2 className="text-lg font-semibold text-slate-900">Current Keywords</h2>
+            <p className="mt-1 text-sm text-slate-600">
+              Filtered by the selected period. Showing up to 15 keywords per page.
+            </p>
+          </div>
+          <div className="flex items-center gap-2 text-sm text-slate-600">
+            <button
+              type="button"
+              onClick={() => {
+                const nextPage = Math.max((payload?.keyword_pagination.page ?? keywordPage) - 1, 1);
+                setKeywordPage(nextPage);
+                void load({ keywordPage: nextPage });
+              }}
+              disabled={Boolean(busyAction) || (payload?.keyword_pagination.page ?? 1) <= 1}
+              className="rounded-lg border border-slate-300 px-3 py-2 text-sm font-medium text-slate-700 hover:bg-slate-50 disabled:opacity-50"
+            >
+              Previous
+            </button>
+            <span>
+              Page {payload?.keyword_pagination.page ?? 1} of {payload?.keyword_pagination.total_pages ?? 1}
+              {" "}({payload?.keyword_pagination.total ?? 0})
+            </span>
+            <button
+              type="button"
+              onClick={() => {
+                const currentPage = payload?.keyword_pagination.page ?? keywordPage;
+                const maxPage = payload?.keyword_pagination.total_pages ?? currentPage;
+                const nextPage = Math.min(currentPage + 1, maxPage);
+                setKeywordPage(nextPage);
+                void load({ keywordPage: nextPage });
+              }}
+              disabled={
+                Boolean(busyAction)
+                || (payload?.keyword_pagination.page ?? 1) >= (payload?.keyword_pagination.total_pages ?? 1)
+              }
+              className="rounded-lg border border-slate-300 px-3 py-2 text-sm font-medium text-slate-700 hover:bg-slate-50 disabled:opacity-50"
+            >
+              Next
+            </button>
+          </div>
+        </div>
+        <div className="mt-4 overflow-x-auto">
+          <table className="min-w-full text-sm">
+            <thead>
+              <tr className="border-b border-slate-200 text-left text-xs uppercase text-slate-500">
+                <th className="px-3 py-2">Keyword</th>
+                <th className="px-3 py-2">Match</th>
+                <th className="px-3 py-2">Status</th>
+                <th className="px-3 py-2">Cost</th>
+                <th className="px-3 py-2">Clicks</th>
+                <th className="px-3 py-2">Impr.</th>
+                <th className="px-3 py-2">CTR</th>
+                <th className="px-3 py-2">Conv.</th>
+                <th className="px-3 py-2">Conv. value</th>
+                <th className="px-3 py-2">Dates</th>
+              </tr>
+            </thead>
+            <tbody>
+              {(payload?.keywords ?? []).map((row) => (
+                <tr
+                  key={`${row.keyword_text}-${row.match_type}-${row.keyword_status}-${row.first_date}-${row.last_date}`}
+                  className="border-b border-slate-100"
+                >
+                  <td className="max-w-[360px] px-3 py-2 text-slate-800">{row.keyword_text}</td>
+                  <td className="px-3 py-2 text-slate-700">{row.match_type ?? "-"}</td>
+                  <td className="px-3 py-2 text-slate-700">{row.keyword_status ?? "-"}</td>
+                  <td className="px-3 py-2 text-slate-700">{formatMoney(row.cost)}</td>
+                  <td className="px-3 py-2 text-slate-700">{row.clicks}</td>
+                  <td className="px-3 py-2 text-slate-700">{row.impressions}</td>
+                  <td className="px-3 py-2 text-slate-700">{formatPercent(row.impressions ? row.clicks / row.impressions : null)}</td>
+                  <td className="px-3 py-2 text-slate-700">{row.conversions}</td>
+                  <td className="px-3 py-2 text-slate-700">{formatMoney(row.conversion_value)}</td>
+                  <td className="px-3 py-2 text-slate-500">
+                    {row.first_date ?? "-"} / {row.last_date ?? "-"}
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+          {payload && payload.keywords.length === 0 ? (
+            <p className="py-6 text-sm text-slate-500">
+              No keyword rows for the selected campaign and date range. Shopping-only campaigns may have search terms
+              but no keyword criteria.
+            </p>
+          ) : null}
+        </div>
+      </section>
+
       <details className="rounded-lg border border-slate-200 bg-white p-4">
-        <summary className="cursor-pointer text-lg font-semibold text-slate-900">
-          All Search Terms ({payload?.search_terms.length ?? 0})
+        <summary className="cursor-pointer list-none">
+          <div className="flex flex-wrap items-center justify-between gap-3">
+            <h2 className="text-lg font-semibold text-slate-900">
+              All Search Terms ({payload?.search_terms.length ?? 0})
+            </h2>
+            <div className="flex flex-wrap items-center gap-2" onClick={(event) => event.stopPropagation()}>
+              <select
+                value={searchTermsSort}
+                onChange={(event) =>
+                  setSearchTermsSort(
+                    event.target.value === "last_date_asc"
+                      ? "last_date_asc"
+                      : event.target.value === "first_date_desc"
+                        ? "first_date_desc"
+                        : event.target.value === "first_date_asc"
+                          ? "first_date_asc"
+                          : "last_date_desc",
+                  )
+                }
+                className="h-9 rounded-lg border border-slate-300 px-2 text-sm text-slate-700"
+                title="Sort search terms by date"
+              >
+                <option value="last_date_desc">Last date (newest)</option>
+                <option value="last_date_asc">Last date (oldest)</option>
+                <option value="first_date_desc">First date (newest)</option>
+                <option value="first_date_asc">First date (oldest)</option>
+              </select>
+              <button
+                type="button"
+                onClick={() => void applySearchTermDatePreset("yesterday")}
+                className="h-9 rounded-lg border border-slate-300 px-3 text-sm text-slate-700 hover:bg-slate-50 disabled:opacity-50"
+                disabled={Boolean(busyAction)}
+              >
+                Yesterday
+              </button>
+              <button
+                type="button"
+                onClick={() => void applySearchTermDatePreset("this_week")}
+                className="h-9 rounded-lg border border-slate-300 px-3 text-sm text-slate-700 hover:bg-slate-50 disabled:opacity-50"
+                disabled={Boolean(busyAction)}
+              >
+                This Week
+              </button>
+              <button
+                type="button"
+                onClick={() => void applySearchTermDatePreset("since_campaign_start")}
+                className="h-9 rounded-lg border border-slate-300 px-3 text-sm text-slate-700 hover:bg-slate-50 disabled:opacity-50"
+                disabled={Boolean(busyAction)}
+              >
+                Since Campaign Start
+              </button>
+              <button
+                type="button"
+                onClick={copySearchTermsForAnalysis}
+                disabled={!payload?.search_terms.length}
+                title="Copy all search terms"
+                className="inline-flex h-9 w-9 items-center justify-center rounded-lg border border-slate-300 text-slate-700 hover:bg-slate-50 disabled:opacity-50"
+              >
+                {searchTermsCopied ? <Check className="h-4 w-4 text-emerald-600" /> : <ClipboardCopy className="h-4 w-4" />}
+              </button>
+              <label className="sr-only" htmlFor="search-term-export-format">
+                Export format
+              </label>
+              <select
+                id="search-term-export-format"
+                value={searchTermExportFormat}
+                onChange={(event) => setSearchTermExportFormat(event.target.value === "csv" ? "csv" : "xlsx")}
+                className="h-9 rounded-lg border border-slate-300 px-2 text-sm text-slate-700"
+              >
+                <option value="xlsx">Excel</option>
+                <option value="csv">CSV</option>
+              </select>
+              <button
+                type="button"
+                onClick={exportSearchTerms}
+                disabled={!payload?.search_terms.length}
+                title="Export search terms"
+                className="inline-flex h-9 w-9 items-center justify-center rounded-lg border border-slate-300 text-slate-700 hover:bg-slate-50 disabled:opacity-50"
+              >
+                {searchTermExportFormat === "xlsx" ? <FileSpreadsheet className="h-4 w-4" /> : <Download className="h-4 w-4" />}
+              </button>
+            </div>
+          </div>
         </summary>
         <div className="mt-4 overflow-x-auto">
           <table className="min-w-full text-sm">
@@ -830,7 +1384,7 @@ export default function DashboardGoogleAdsOpsScreen({ dashboardId }: Props) {
               </tr>
             </thead>
             <tbody>
-              {(payload?.search_terms ?? []).map((row) => (
+              {sortedSearchTerms.map((row) => (
                 <tr key={`${row.search_term}-${row.first_date}-${row.last_date}`} className="border-b border-slate-100">
                   <td className="max-w-[420px] px-3 py-2 text-slate-800">{row.search_term}</td>
                   <td className="px-3 py-2 text-slate-700">{formatMoney(row.cost)}</td>

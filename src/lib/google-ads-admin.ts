@@ -80,6 +80,50 @@ export type GoogleAdsSearchTermPerformanceRow = {
   ad_groups_count: number;
 };
 
+export type GoogleAdsKeywordPerformanceRow = {
+  keyword_text: string;
+  match_type: string | null;
+  keyword_status: string | null;
+  impressions: number;
+  clicks: number;
+  cost: number;
+  conversions: number;
+  conversion_value: number;
+  first_date: string | null;
+  last_date: string | null;
+  ad_groups_count: number;
+};
+
+export type GoogleAdsCampaignHealthCheck = {
+  severity: "critical" | "warning" | "info" | "ok";
+  title: string;
+  detail: string;
+  recommendation: string;
+};
+
+export type GoogleAdsCampaignHealthRow = {
+  customer_id: string;
+  campaign_id: string;
+  campaign_name: string;
+  campaign_status: string | null;
+  objective: string | null;
+  cost: number;
+  impressions: number;
+  clicks: number;
+  conversions: number;
+  conversion_value: number;
+  ctr: number | null;
+  cpc: number | null;
+  cpa: number | null;
+  products_total: number;
+  products_with_impressions: number;
+  pending_recommendations: number;
+  last_fact_date: string | null;
+  health_score: number;
+  health_status: "critical" | "warning" | "ok";
+  checks: GoogleAdsCampaignHealthCheck[];
+};
+
 export type GoogleAdsDashboardContext = {
   dashboard: {
     id: number;
@@ -217,13 +261,37 @@ export async function loadGoogleAdsDashboardContext(dashboardId: number): Promis
       `,
       [SOURCE_KEY, ...customerIds],
     );
-    const campaigns = campaignRows.map((row) => ({
+    const dbCampaigns = campaignRows.map((row) => ({
       customer_id: String(row.customer_id ?? ""),
       campaign_id: String(row.campaign_id ?? ""),
       campaign_name: String(row.campaign_name ?? row.campaign_id ?? ""),
       campaign_status: row.campaign_status ? String(row.campaign_status) : null,
       objective: row.objective ? String(row.objective) : null,
     }));
+    let campaigns = dbCampaigns;
+    try {
+      const liveCampaigns = await listGoogleAdsLiveCampaignOptions(customerIds);
+      const merged = new Map<string, GoogleAdsCampaignOption>();
+      for (const campaign of dbCampaigns) {
+        merged.set(`${campaign.customer_id}:${campaign.campaign_id}`, campaign);
+      }
+      for (const campaign of liveCampaigns) {
+        merged.set(`${campaign.customer_id}:${campaign.campaign_id}`, {
+          ...merged.get(`${campaign.customer_id}:${campaign.campaign_id}`),
+          ...campaign,
+        });
+      }
+      campaigns = Array.from(merged.values()).sort((a, b) =>
+        `${a.campaign_status === "ENABLED" ? "0" : "1"}:${a.campaign_name}:${a.campaign_id}`.localeCompare(
+          `${b.campaign_status === "ENABLED" ? "0" : "1"}:${b.campaign_name}:${b.campaign_id}`,
+        ),
+      );
+    } catch (error) {
+      console.warn(
+        "[google-ads-admin] failed to merge live campaign list",
+        error instanceof Error ? error.message : String(error),
+      );
+    }
 
     return {
       dashboard: {
@@ -408,6 +476,329 @@ export async function listGoogleAdsSearchTerms(options: {
     last_date: dateString(row.last_date),
     ad_groups_count: numberValue(row.ad_groups_count),
   }));
+}
+
+export async function listGoogleAdsKeywords(options: {
+  customerId: string;
+  campaignId: string;
+  dateFrom?: string;
+  dateTo?: string;
+  page?: number;
+  perPage?: number;
+}): Promise<{ rows: GoogleAdsKeywordPerformanceRow[]; total: number; page: number; per_page: number; total_pages: number }> {
+  const filters = ["customer_id = ?", "campaign_id = ?"];
+  const params: SqlParam[] = [options.customerId, options.campaignId];
+  if (options.dateFrom) {
+    filters.push("report_date >= ?");
+    params.push(options.dateFrom);
+  }
+  if (options.dateTo) {
+    filters.push("report_date <= ?");
+    params.push(options.dateTo);
+  }
+  const perPage = Math.min(Math.max(Number(options.perPage ?? 15), 1), 15);
+  const page = Math.max(Math.trunc(Number(options.page ?? 1)), 1);
+  const offset = (page - 1) * perPage;
+  const whereSql = filters.join(" AND ");
+  const [countRows] = await pool.execute<RowDataPacket[]>(
+    `
+    SELECT COUNT(*) AS total
+    FROM (
+      SELECT keyword_text, match_type, keyword_status
+      FROM google_ads_keyword_performance_daily
+      WHERE ${whereSql}
+      GROUP BY keyword_text, match_type, keyword_status
+    ) AS grouped_keywords
+    `,
+    params,
+  );
+  const total = numberValue(countRows[0]?.total);
+  const [rows] = await pool.execute<RowDataPacket[]>(
+    `
+    SELECT
+      keyword_text,
+      match_type,
+      keyword_status,
+      COALESCE(SUM(impressions), 0) AS impressions,
+      COALESCE(SUM(clicks), 0) AS clicks,
+      ROUND(COALESCE(SUM(cost), 0), 6) AS cost,
+      ROUND(COALESCE(SUM(conversions), 0), 6) AS conversions,
+      ROUND(COALESCE(SUM(conversion_value), 0), 6) AS conversion_value,
+      MIN(report_date) AS first_date,
+      MAX(report_date) AS last_date,
+      COUNT(DISTINCT NULLIF(ad_group_id, '')) AS ad_groups_count
+    FROM google_ads_keyword_performance_daily
+    WHERE ${whereSql}
+    GROUP BY keyword_text, match_type, keyword_status
+    ORDER BY cost DESC, clicks DESC, impressions DESC, keyword_text
+    LIMIT ${perPage} OFFSET ${offset}
+    `,
+    params,
+  );
+  return {
+    rows: rows.map((row) => ({
+      keyword_text: String(row.keyword_text ?? ""),
+      match_type: row.match_type ? String(row.match_type) : null,
+      keyword_status: row.keyword_status ? String(row.keyword_status) : null,
+      impressions: numberValue(row.impressions),
+      clicks: numberValue(row.clicks),
+      cost: numberValue(row.cost),
+      conversions: numberValue(row.conversions),
+      conversion_value: numberValue(row.conversion_value),
+      first_date: dateString(row.first_date),
+      last_date: dateString(row.last_date),
+      ad_groups_count: numberValue(row.ad_groups_count),
+    })),
+    total,
+    page,
+    per_page: perPage,
+    total_pages: Math.max(Math.ceil(total / perPage), 1),
+  };
+}
+
+async function listGoogleAdsLiveCampaignOptions(customerIds: string[]): Promise<GoogleAdsCampaignOption[]> {
+  const ids = customerIds.map((id) => String(id).trim()).filter(Boolean);
+  if (!ids.length) return [];
+  const output = await runGoogleAdsCollectorCommand(["list-campaigns", "--customer-ids", ids.join(",")]);
+  const campaigns: GoogleAdsCampaignOption[] = [];
+  for (const line of output.stdout.split(/\r?\n/)) {
+    const parts = line.split("\t");
+    if (parts.length < 5) continue;
+    const [customerId, campaignId, campaignName, campaignStatus, objective] = parts;
+    if (!customerId || !campaignId) continue;
+    campaigns.push({
+      customer_id: customerId,
+      campaign_id: campaignId,
+      campaign_name: campaignName || campaignId,
+      campaign_status: campaignStatus || null,
+      objective: objective || null,
+    });
+  }
+  return campaigns;
+}
+
+function ratio(numerator: number, denominator: number): number | null {
+  return denominator > 0 ? Number((numerator / denominator).toFixed(6)) : null;
+}
+
+function addCheck(
+  checks: GoogleAdsCampaignHealthCheck[],
+  severity: GoogleAdsCampaignHealthCheck["severity"],
+  title: string,
+  detail: string,
+  recommendation: string,
+) {
+  checks.push({ severity, title, detail, recommendation });
+}
+
+export async function listGoogleAdsCampaignHealth(options: {
+  customerIds: string[];
+  campaigns?: GoogleAdsCampaignOption[];
+  filterMode?: "active" | "all" | "campaign";
+  filterCampaignId?: string;
+  dateFrom?: string;
+  dateTo?: string;
+}): Promise<GoogleAdsCampaignHealthRow[]> {
+  const customerIds = options.customerIds.map((id) => String(id).trim()).filter(Boolean);
+  if (!customerIds.length) return [];
+  const factDateFilters: string[] = [];
+  const factParams: SqlParam[] = [];
+  const productDateFilters: string[] = [];
+  const productParams: SqlParam[] = [];
+  if (options.dateFrom) {
+    factDateFilters.push("report_date >= ?");
+    productDateFilters.push("report_date >= ?");
+    factParams.push(options.dateFrom);
+    productParams.push(options.dateFrom);
+  }
+  if (options.dateTo) {
+    factDateFilters.push("report_date <= ?");
+    productDateFilters.push("report_date <= ?");
+    factParams.push(options.dateTo);
+    productParams.push(options.dateTo);
+  }
+  const factWhere = factDateFilters.length ? `AND ${factDateFilters.join(" AND ")}` : "";
+  const productWhere = productDateFilters.length ? `AND ${productDateFilters.join(" AND ")}` : "";
+  const placeholders = customerIds.map(() => "?").join(",");
+  const [rows] = await pool.execute<RowDataPacket[]>(
+    `
+    SELECT
+      c.platform_account_id AS customer_id,
+      c.platform_campaign_id AS campaign_id,
+      c.campaign_name,
+      c.campaign_status,
+      c.objective,
+      ROUND(COALESCE(f.cost, 0), 6) AS cost,
+      COALESCE(f.impressions, 0) AS impressions,
+      COALESCE(f.clicks, 0) AS clicks,
+      ROUND(COALESCE(f.conversions, 0), 6) AS conversions,
+      ROUND(COALESCE(f.conversion_value, 0), 6) AS conversion_value,
+      f.last_fact_date,
+      COALESCE(p.products_total, 0) AS products_total,
+      COALESCE(p.products_with_impressions, 0) AS products_with_impressions,
+      COALESCE(r.pending_recommendations, 0) AS pending_recommendations
+    FROM canonical_source_campaigns c
+    LEFT JOIN (
+      SELECT
+        platform_account_id,
+        platform_campaign_id,
+        ROUND(COALESCE(SUM(spend), 0), 6) AS cost,
+        COALESCE(SUM(impressions), 0) AS impressions,
+        COALESCE(SUM(clicks), 0) AS clicks,
+        ROUND(COALESCE(SUM(conversions), 0), 6) AS conversions,
+        ROUND(COALESCE(SUM(conversion_value), 0), 6) AS conversion_value,
+        MAX(report_date) AS last_fact_date
+      FROM canonical_fact_ads_daily
+      WHERE source_key = ?
+        AND fact_scope = 'campaign'
+        AND native_grain = 'campaign'
+        ${factWhere}
+      GROUP BY platform_account_id, platform_campaign_id
+    ) f
+      ON f.platform_account_id = c.platform_account_id
+     AND f.platform_campaign_id = c.platform_campaign_id
+    LEFT JOIN (
+      SELECT
+        customer_id,
+        campaign_id,
+        COUNT(DISTINCT product_key_hash) AS products_total,
+        COUNT(DISTINCT CASE WHEN impressions > 0 THEN product_key_hash END) AS products_with_impressions
+      FROM google_ads_product_performance_daily
+      WHERE 1 = 1
+        ${productWhere}
+      GROUP BY customer_id, campaign_id
+    ) p
+      ON p.customer_id = c.platform_account_id
+     AND p.campaign_id = c.platform_campaign_id
+    LEFT JOIN (
+      SELECT customer_id, campaign_id, COUNT(*) AS pending_recommendations
+      FROM google_ads_negative_keyword_recommendations
+      WHERE status = 'pending'
+      GROUP BY customer_id, campaign_id
+    ) r
+      ON r.customer_id = c.platform_account_id
+     AND r.campaign_id = c.platform_campaign_id
+    WHERE c.source_key = ?
+      AND c.platform_account_id IN (${placeholders})
+    ORDER BY
+      CASE WHEN c.campaign_status = 'ENABLED' THEN 0 ELSE 1 END,
+      c.campaign_name,
+      c.platform_campaign_id
+    `,
+    [SOURCE_KEY, ...factParams, ...productParams, SOURCE_KEY, ...customerIds],
+  );
+
+  const metricRows = new Map(rows.map((row) => [`${row.customer_id}:${row.campaign_id}`, row]));
+  const baseCampaigns = options.campaigns?.length
+    ? options.campaigns
+    : rows.map((row) => ({
+      customer_id: String(row.customer_id ?? ""),
+      campaign_id: String(row.campaign_id ?? ""),
+      campaign_name: String(row.campaign_name ?? row.campaign_id ?? ""),
+      campaign_status: row.campaign_status ? String(row.campaign_status) : null,
+      objective: row.objective ? String(row.objective) : null,
+    }));
+  const filterMode = options.filterMode ?? "active";
+  const filterCampaignId = String(options.filterCampaignId ?? "").trim();
+  const filteredCampaigns = baseCampaigns.filter((campaign) => {
+    if (filterMode === "campaign") {
+      return Boolean(filterCampaignId) && campaign.campaign_id === filterCampaignId;
+    }
+    if (filterMode === "all") return true;
+    return campaign.campaign_status === "ENABLED";
+  });
+
+  return filteredCampaigns.map((campaign) => {
+    const row = metricRows.get(`${campaign.customer_id}:${campaign.campaign_id}`);
+    const campaignStatus = campaign.campaign_status ?? (row?.campaign_status ? String(row.campaign_status) : null);
+    const objective = campaign.objective ?? (row?.objective ? String(row.objective) : null);
+    const cost = numberValue(row?.cost);
+    const impressions = numberValue(row?.impressions);
+    const clicks = numberValue(row?.clicks);
+    const conversions = numberValue(row?.conversions);
+    const conversionValue = numberValue(row?.conversion_value);
+    const productsTotal = numberValue(row?.products_total);
+    const productsWithImpressions = numberValue(row?.products_with_impressions);
+    const pendingRecommendations = numberValue(row?.pending_recommendations);
+    const lastFactDate = dateString(row?.last_fact_date);
+    const checks: GoogleAdsCampaignHealthCheck[] = [];
+    let score = 100;
+
+    if (campaignStatus !== "ENABLED") {
+      score -= 35;
+      addCheck(checks, "critical", "Campaign is not enabled", `Current status is ${campaignStatus ?? "unknown"}.`, "Enable the campaign only if it is intended to serve; otherwise keep it paused and exclude it from active monitoring.");
+    }
+    if (campaignStatus === "ENABLED" && impressions === 0 && cost === 0) {
+      score -= 30;
+      addCheck(checks, "critical", "No delivery in selected period", "The campaign has zero impressions and zero spend.", "Check campaign primary status, policy approvals, product/feed eligibility, targeting, bids, and product/listing group inclusion.");
+    } else if (campaignStatus === "ENABLED" && cost < 1 && impressions > 0) {
+      score -= 15;
+      addCheck(checks, "warning", "Very low spend", `Spend is ${cost.toFixed(2)} with ${impressions} impressions.`, "If the campaign should scale, inspect bids, budget constraints, auction competitiveness, and Shopping product eligibility.");
+    }
+    if (objective === "SHOPPING" || objective === "PERFORMANCE_MAX") {
+      if (productsTotal === 0) {
+        score -= 15;
+        addCheck(checks, "warning", "No product rows collected", "No Shopping product performance rows are available for this period.", "Run product collection and confirm the Merchant Center account/feed is linked to this campaign.");
+      } else if (productsWithImpressions === 0 && campaignStatus === "ENABLED") {
+        score -= 25;
+        addCheck(checks, "critical", "Products are not entering auctions", `${productsTotal} product(s) were seen, but none had impressions.`, "Check product diagnostics for not eligible, paused products, disapprovals, and excluded product/listing groups.");
+      } else if (productsWithImpressions < productsTotal) {
+        score -= 10;
+        addCheck(checks, "warning", "Partial product delivery", `${productsWithImpressions} of ${productsTotal} product(s) received impressions.`, "Review products with zero impressions for low bids, listing group exclusions, feed labels, country targeting, or Merchant Center issues.");
+      }
+    }
+    if (cost > 0 && conversions === 0) {
+      score -= 12;
+      addCheck(checks, "warning", "Spend without conversions", `Spend is ${cost.toFixed(2)} with ${clicks} click(s) and no conversions.`, "Check conversion tracking, landing-page relevance, product pricing, and search terms before increasing budget.");
+    }
+    const ctr = ratio(clicks, impressions);
+    if (impressions >= 100 && clicks === 0) {
+      score -= 12;
+      addCheck(checks, "warning", "Impressions but no clicks", `${impressions} impressions produced no clicks.`, "Review titles/images, competitiveness, query relevance, and bids; add negatives where search terms are irrelevant.");
+    } else if (ctr !== null && impressions >= 200 && ctr < 0.005) {
+      score -= 8;
+      addCheck(checks, "warning", "Low CTR", `CTR is ${(ctr * 100).toFixed(2)}%.`, "Improve product titles/assets, check auction competitiveness, and refine irrelevant traffic.");
+    }
+    if (pendingRecommendations > 0) {
+      score -= Math.min(pendingRecommendations * 2, 10);
+      addCheck(checks, "info", "Pending negative recommendations", `${pendingRecommendations} recommendation(s) are waiting for review.`, "Review pending negatives before scaling spend so irrelevant traffic is filtered intentionally.");
+    }
+    if (options.dateTo && lastFactDate && lastFactDate < options.dateTo) {
+      score -= 10;
+      addCheck(checks, "warning", "Data is stale", `Latest campaign fact is ${lastFactDate}, before selected end date ${options.dateTo}.`, "Run the Google Ads collector for the selected period before making final optimization decisions.");
+    }
+    if (!checks.length) {
+      addCheck(checks, "ok", "No major issues detected", "Delivery and conversion diagnostics do not show an obvious blocker in the selected period.", "Continue monitoring search terms, product coverage, CPA/ROAS, and budget pacing.");
+    }
+    const healthScore = Math.max(Math.min(Math.round(score), 100), 0);
+    const healthStatus = checks.some((check) => check.severity === "critical")
+      ? "critical"
+      : checks.some((check) => check.severity === "warning")
+        ? "warning"
+        : "ok";
+    return {
+      customer_id: campaign.customer_id,
+      campaign_id: campaign.campaign_id,
+      campaign_name: campaign.campaign_name || campaign.campaign_id,
+      campaign_status: campaignStatus,
+      objective,
+      cost,
+      impressions,
+      clicks,
+      conversions,
+      conversion_value: conversionValue,
+      ctr,
+      cpc: ratio(cost, clicks),
+      cpa: ratio(cost, conversions),
+      products_total: productsTotal,
+      products_with_impressions: productsWithImpressions,
+      pending_recommendations: pendingRecommendations,
+      last_fact_date: lastFactDate,
+      health_score: healthScore,
+      health_status: healthStatus,
+      checks,
+    };
+  });
 }
 
 export async function getGoogleAdsControlSettings(
@@ -677,15 +1068,58 @@ function extractJsonObject(text: string): string | null {
   return null;
 }
 
+type GoogleAdsAiConfig = {
+  apiKey: string;
+  baseUrl: string;
+  defaultModel: string;
+  complexModel: string;
+  fallbackModels: string[];
+  maxTokens: number;
+  complexityThreshold: number;
+};
+
+function parseModelList(value: string): string[] {
+  return value
+    .split(",")
+    .map((part) => part.trim())
+    .filter(Boolean);
+}
+
 function getAiConfig() {
   const apiKey = process.env.AI_SUMMARY_API_KEY?.trim();
   if (!apiKey) return null;
+  const explicitDefault = process.env.AI_SUMMARY_MODEL?.trim();
+  const defaultModel = explicitDefault || "gemini-flash-latest";
+  const complexModel = process.env.AI_SUMMARY_COMPLEX_MODEL?.trim() || "gemini-2.5-pro";
+  const fallbackModels = parseModelList(
+    process.env.AI_SUMMARY_FALLBACK_MODELS?.trim() || "gemini-2.5-flash,gemini-2.5-flash-lite",
+  ).filter((model) => model !== defaultModel);
   return {
     apiKey,
     baseUrl: (process.env.AI_SUMMARY_BASE_URL?.trim() || "https://generativelanguage.googleapis.com/v1beta/openai").replace(/\/+$/, ""),
-    model: process.env.AI_SUMMARY_MODEL?.trim() || "gemini-2.5-flash",
+    defaultModel,
+    complexModel,
+    fallbackModels,
     maxTokens: Number(process.env.GOOGLE_ADS_AI_MAX_TOKENS || process.env.AI_SUMMARY_MAX_TOKENS || 1200) || 1200,
-  };
+    complexityThreshold: Number(process.env.AI_SUMMARY_COMPLEXITY_THRESHOLD || 2400) || 2400,
+  } satisfies GoogleAdsAiConfig;
+}
+
+function buildAiInputComplexityScore(input: Record<string, unknown>): number {
+  const serialized = JSON.stringify(input);
+  return serialized.length;
+}
+
+function choosePrimaryModel(config: GoogleAdsAiConfig, input: Record<string, unknown>): string {
+  const score = buildAiInputComplexityScore(input);
+  if (score >= config.complexityThreshold) return config.complexModel;
+  return config.defaultModel;
+}
+
+function buildModelAttemptPlan(config: GoogleAdsAiConfig, input: Record<string, unknown>): string[] {
+  const primary = choosePrimaryModel(config, input);
+  const plan = [primary, config.defaultModel, ...config.fallbackModels];
+  return Array.from(new Set(plan.filter(Boolean)));
 }
 
 function buildGoogleAdsAiPrompt(promptVersion: string, input: Record<string, unknown>) {
@@ -766,44 +1200,78 @@ export async function analyzeGoogleAdsRecommendationWithAi(
     },
   };
   const prompt = buildGoogleAdsAiPrompt(promptVersion, input);
-  const isKimiModel = config.model.toLowerCase().startsWith("kimi-");
+  const modelAttempts = buildModelAttemptPlan(config, input);
+  let selectedModel = "";
+  let output: Record<string, unknown> | null = null;
+  let clean:
+    | {
+      intent_classification: string;
+      recommended_action: string;
+      refined_negative_keyword: string | null;
+      match_type: string;
+      risk_level: string;
+      confidence: string;
+      reasoning_short: string | null;
+      specialist_note: string | null;
+    }
+    | null = null;
+  const attemptErrors: string[] = [];
 
-  const response = await fetch(`${config.baseUrl}/chat/completions`, {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-      Authorization: `Bearer ${config.apiKey}`,
-    },
-    body: JSON.stringify({
-      model: config.model,
-      temperature: isKimiModel ? 0.6 : 1,
-      max_tokens: config.maxTokens,
-      ...(isKimiModel ? { thinking: { type: "disabled" } } : {}),
-      response_format: { type: "json_object" },
-      messages: [
-        {
-          role: "system",
-          content: prompt.system,
+  for (const modelName of modelAttempts) {
+    const isKimiModel = modelName.toLowerCase().startsWith("kimi-");
+    try {
+      const response = await fetch(`${config.baseUrl}/chat/completions`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${config.apiKey}`,
         },
-        {
-          role: "user",
-          content: prompt.user,
-        },
-      ],
-    }),
-  });
-  if (!response.ok) {
-    throw new Error(`AI request failed: ${response.status}`);
+        body: JSON.stringify({
+          model: modelName,
+          temperature: isKimiModel ? 0.6 : 1,
+          max_tokens: config.maxTokens,
+          ...(isKimiModel ? { thinking: { type: "disabled" } } : {}),
+          response_format: { type: "json_object" },
+          messages: [
+            {
+              role: "system",
+              content: prompt.system,
+            },
+            {
+              role: "user",
+              content: prompt.user,
+            },
+          ],
+        }),
+      });
+      if (!response.ok) {
+        attemptErrors.push(`${modelName}: HTTP ${response.status}`);
+        continue;
+      }
+      const body = (await response.json()) as { choices?: Array<{ message?: { content?: string | Array<{ text?: string }> } }> };
+      const rawContent = body.choices?.[0]?.message?.content;
+      const contentText = Array.isArray(rawContent)
+        ? rawContent.map((part) => String(part?.text ?? "")).join("\n")
+        : String(rawContent ?? "");
+      const jsonText = extractJsonObject(contentText);
+      if (!jsonText) {
+        attemptErrors.push(`${modelName}: empty JSON`);
+        continue;
+      }
+      const parsed = JSON.parse(jsonText) as Record<string, unknown>;
+      const sanitized = sanitizeAiAnalysisOutput(parsed);
+      selectedModel = modelName;
+      output = parsed;
+      clean = sanitized;
+      break;
+    } catch (error) {
+      attemptErrors.push(`${modelName}: ${error instanceof Error ? error.message : String(error)}`);
+    }
   }
-  const body = (await response.json()) as { choices?: Array<{ message?: { content?: string | Array<{ text?: string }> } }> };
-  const rawContent = body.choices?.[0]?.message?.content;
-  const contentText = Array.isArray(rawContent)
-    ? rawContent.map((part) => String(part?.text ?? "")).join("\n")
-    : String(rawContent ?? "");
-  const jsonText = extractJsonObject(contentText);
-  if (!jsonText) throw new Error("AI returned empty JSON");
-  const output = JSON.parse(jsonText) as Record<string, unknown>;
-  const clean = sanitizeAiAnalysisOutput(output);
+
+  if (!selectedModel || !output || !clean) {
+    throw new Error(`AI request failed for all models: ${attemptErrors.join(" | ")}`);
+  }
 
   await pool.execute(
     `
@@ -816,7 +1284,7 @@ export async function analyzeGoogleAdsRecommendationWithAi(
     `,
     [
       recommendation.id,
-      config.model,
+      selectedModel,
       promptVersion,
       JSON.stringify(input),
       JSON.stringify(output),
@@ -978,15 +1446,35 @@ export async function runGoogleAdsCollectorCommand(args: string[]) {
     PYTHONPATH: [path.join(repoRoot, ".pydeps"), process.env.PYTHONPATH].filter(Boolean).join(path.delimiter),
     PYTHONWARNINGS: process.env.PYTHONWARNINGS || "ignore",
   };
-  const { stdout, stderr } = await execFileAsync(
-    python,
-    [scriptPath, ...args],
-    {
-      cwd: repoRoot,
-      env,
-      maxBuffer: 1024 * 1024 * 3,
-      timeout: 180000,
-    },
-  );
-  return { stdout, stderr };
+  try {
+    const { stdout, stderr } = await execFileAsync(
+      python,
+      [scriptPath, ...args],
+      {
+        cwd: repoRoot,
+        env,
+        maxBuffer: 1024 * 1024 * 3,
+        timeout: 180000,
+      },
+    );
+    return { stdout, stderr };
+  } catch (error) {
+    const execError = error as {
+      message?: string;
+      stdout?: string;
+      stderr?: string;
+      code?: number | string | null;
+      signal?: string | null;
+    };
+    const stderr = String(execError?.stderr ?? "").trim();
+    const stdout = String(execError?.stdout ?? "").trim();
+    const tail = (value: string) => (value.length > 1200 ? value.slice(-1200) : value);
+    const details = [stderr ? `stderr: ${tail(stderr)}` : "", stdout ? `stdout: ${tail(stdout)}` : ""]
+      .filter(Boolean)
+      .join(" | ");
+    const codePart = execError?.code != null ? ` (exit=${String(execError.code)})` : "";
+    throw new Error(
+      `Google Ads collector command failed${codePart}: ${execError?.message || "unknown error"}${details ? ` | ${details}` : ""}`,
+    );
+  }
 }

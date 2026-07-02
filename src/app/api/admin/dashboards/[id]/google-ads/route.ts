@@ -4,11 +4,13 @@ import { ADMIN_SESSION_COOKIE, parseCookieValue, verifyAdminSession } from "@/li
 import {
   analyzeGoogleAdsRecommendationWithAi,
   approveGoogleAdsRecommendation,
+  listGoogleAdsCampaignHealth,
   getGoogleAdsRecommendationById,
   getGoogleAdsControlSettings,
   getLatestGoogleAdsRecommendationAiAnalyses,
   getGoogleAdsRecommendationSummary,
   listGoogleAdsMutationLog,
+  listGoogleAdsKeywords,
   listGoogleAdsRecommendations,
   listGoogleAdsSearchTerms,
   loadGoogleAdsDashboardContext,
@@ -20,8 +22,10 @@ import {
 } from "@/lib/google-ads-admin";
 
 export const runtime = "nodejs";
+const IS_PRODUCTION = process.env.NODE_ENV === "production";
 
 const STATUS_VALUES = new Set(["all", "pending", "approved", "rejected", "applied"]);
+const HEALTH_FILTER_VALUES = new Set(["active", "all", "campaign"]);
 
 function normalizeDate(value: unknown): string {
   const text = String(value ?? "").trim();
@@ -32,6 +36,12 @@ function normalizeLimit(value: unknown, fallback = 50): number {
   const parsed = Number(value ?? fallback);
   if (!Number.isFinite(parsed)) return fallback;
   return Math.min(Math.max(Math.trunc(parsed), 1), 200);
+}
+
+function normalizePage(value: unknown): number {
+  const parsed = Number(value ?? 1);
+  if (!Number.isFinite(parsed)) return 1;
+  return Math.max(Math.trunc(parsed), 1);
 }
 
 function normalizeStatus(value: unknown): string {
@@ -53,14 +63,23 @@ function normalizeMatchType(value: unknown): "PHRASE" | "EXACT" | "BROAD" | null
   return null;
 }
 
+function normalizeHealthFilter(value: unknown): "active" | "all" | "campaign" {
+  const filter = String(value ?? "active").trim().toLowerCase();
+  if (HEALTH_FILTER_VALUES.has(filter)) return filter as "active" | "all" | "campaign";
+  return "active";
+}
+
 async function buildPayload(options: {
   dashboardId: number;
   customerId?: string;
   campaignId?: string;
+  healthFilter?: "active" | "all" | "campaign";
+  healthCampaignId?: string;
   status?: string;
   limit?: number;
   dateFrom?: string;
   dateTo?: string;
+  keywordPage?: number;
   commandOutput?: { stdout: string; stderr: string } | null;
 }) {
   const context = await loadGoogleAdsDashboardContext(options.dashboardId);
@@ -87,18 +106,41 @@ async function buildPayload(options: {
     customerId && campaignId
       ? await getGoogleAdsControlSettings(options.dashboardId, customerId, campaignId)
       : null;
+  const dateFrom = normalizeDate(options.dateFrom);
+  const dateTo = normalizeDate(options.dateTo);
+  const healthFilter = normalizeHealthFilter(options.healthFilter);
+  const healthCampaignId = String(options.healthCampaignId ?? "").trim();
+  const campaignHealth = await listGoogleAdsCampaignHealth({
+    customerIds: context.customer_ids,
+    campaigns: context.campaigns,
+    filterMode: healthFilter,
+    filterCampaignId: healthCampaignId,
+    dateFrom,
+    dateTo,
+  });
 
   const aiAnalysisByRecommendation = recommendations.length
     ? await getLatestGoogleAdsRecommendationAiAnalyses(recommendations.map((row) => row.id))
     : {};
+  const keywords =
+    customerId && campaignId
+      ? await listGoogleAdsKeywords({
+        customerId,
+        campaignId,
+        dateFrom,
+        dateTo,
+        page: normalizePage(options.keywordPage),
+        perPage: 15,
+      })
+      : { rows: [], total: 0, page: 1, per_page: 15, total_pages: 1 };
   const searchTerms =
     customerId && campaignId
       ? await listGoogleAdsSearchTerms({
         customerId,
         campaignId,
-        dateFrom: normalizeDate(options.dateFrom),
-        dateTo: normalizeDate(options.dateTo),
-        limit: 500,
+        dateFrom,
+        dateTo,
+        limit: 1000,
       })
       : [];
 
@@ -109,13 +151,23 @@ async function buildPayload(options: {
       campaign_id: campaignId,
       status,
       limit,
-      date_from: normalizeDate(options.dateFrom),
-      date_to: normalizeDate(options.dateTo),
+      date_from: dateFrom,
+      date_to: dateTo,
+      health_filter: healthFilter,
+      health_campaign_id: healthCampaignId,
     },
+    campaign_health: campaignHealth,
     summary,
     recommendations,
     mutation_log: mutationLog,
     ai_analysis_by_recommendation: aiAnalysisByRecommendation,
+    keywords: keywords.rows,
+    keyword_pagination: {
+      total: keywords.total,
+      page: keywords.page,
+      per_page: keywords.per_page,
+      total_pages: keywords.total_pages,
+    },
     search_terms: searchTerms,
     settings,
     command_output: options.commandOutput ?? null,
@@ -138,17 +190,24 @@ export async function GET(
       customerId: String(url.searchParams.get("customer_id") ?? "").trim(),
       campaignId: String(url.searchParams.get("campaign_id") ?? "").trim(),
       status: String(url.searchParams.get("status") ?? "pending"),
+      healthFilter: normalizeHealthFilter(url.searchParams.get("health_filter")),
+      healthCampaignId: String(url.searchParams.get("health_campaign_id") ?? "").trim(),
       limit: normalizeLimit(url.searchParams.get("limit"), 50),
       dateFrom: String(url.searchParams.get("date_from") ?? "").trim(),
       dateTo: String(url.searchParams.get("date_to") ?? "").trim(),
+      keywordPage: normalizePage(url.searchParams.get("keyword_page")),
     });
     if (!payload) {
       return NextResponse.json({ error: "Dashboard not found" }, { status: 404 });
     }
     return NextResponse.json(payload);
   } catch (error) {
+    console.error("[google-ads-admin] failed to load dashboard payload", error);
     return NextResponse.json(
-      { error: "Failed to load Google Ads admin data", details: error instanceof Error ? error.message : String(error) },
+      {
+        error: "Failed to load Google Ads admin data",
+        ...(IS_PRODUCTION ? {} : { details: error instanceof Error ? error.message : String(error) }),
+      },
       { status: 500 },
     );
   }
@@ -169,7 +228,10 @@ export async function POST(
   const customerId = String(body.customer_id ?? "").trim();
   const campaignId = String(body.campaign_id ?? "").trim();
   const status = normalizeStatus(body.status);
+  const healthFilter = normalizeHealthFilter(body.health_filter);
+  const healthCampaignId = String(body.health_campaign_id ?? "").trim();
   const limit = normalizeLimit(body.limit, 50);
+  const keywordPage = normalizePage(body.keyword_page);
   let commandOutput: { stdout: string; stderr: string } | null = null;
   const controlActions = new Set(["approve", "reject", "recommend", "apply-dry-run", "apply-confirm", "update-recommendation", "analyze-recommendation-ai"]);
   const readOnlyActions = new Set(["validate"]);
@@ -355,9 +417,12 @@ export async function POST(
       customerId,
       campaignId,
       status,
+      healthFilter,
+      healthCampaignId,
       limit,
       dateFrom: String(body.date_from ?? "").trim(),
       dateTo: String(body.date_to ?? "").trim(),
+      keywordPage,
       commandOutput,
     });
     if (!payload) {
@@ -365,10 +430,11 @@ export async function POST(
     }
     return NextResponse.json(payload);
   } catch (error) {
+    console.error("[google-ads-admin] action failed", error);
     return NextResponse.json(
       {
         error: "Google Ads admin action failed",
-        details: error instanceof Error ? error.message : String(error),
+        ...(IS_PRODUCTION ? {} : { details: error instanceof Error ? error.message : String(error) }),
       },
       { status: 500 },
     );
