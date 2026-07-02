@@ -19,6 +19,7 @@ type AbbottBiDashboardProps = {
   data: AbbottBiData;
   locale?: string;
   portalName?: string;
+  showUserIdAnalytics?: boolean;
 };
 
 type TabId =
@@ -66,13 +67,14 @@ type ThemeConfig = {
   pieColors: string[];
 };
 
-function buildTabs(portalName: string): TabConfig[] {
+function buildTabs(portalName: string, showUserIdAnalytics: boolean): TabConfig[] {
   return [
   {
     id: "users_summary",
-    label: "1. Общая таблица по пользователям",
-    description:
-      "Источник: canonical_fact_user_behavior_daily; если UserID-grain недоступен, используется canonical traffic summary.",
+    label: showUserIdAnalytics ? "1. Общая таблица по пользователям" : "1. Источники трафика",
+    description: showUserIdAnalytics
+      ? "Источник: canonical_fact_user_behavior_daily; если UserID-grain недоступен, используется canonical traffic summary."
+      : "Источник: canonical traffic-source summary из Yandex Metrika.",
   },
   {
     id: "user_actions",
@@ -685,7 +687,12 @@ function userIdLabel(userId: string, hasUserId: boolean) {
   return hasUserId ? userId : "Без User ID";
 }
 
-export default function AbbottBiDashboard({ data, locale = "ru-RU", portalName = "ABBOTT" }: AbbottBiDashboardProps) {
+export default function AbbottBiDashboard({
+  data,
+  locale = "ru-RU",
+  portalName = "ABBOTT",
+  showUserIdAnalytics = true,
+}: AbbottBiDashboardProps) {
   const [activeTab, setActiveTab] = useState<TabId>("users_summary");
   const [selectedSessionJourneyId, setSelectedSessionJourneyId] = useState<number | null>(null);
   const [queryByTab, setQueryByTab] = useState<Record<TabId, string>>({
@@ -725,7 +732,10 @@ export default function AbbottBiDashboard({ data, locale = "ru-RU", portalName =
 
   const tabs = useMemo(
     () =>
-      buildTabs(portalName).filter((tab) => {
+      buildTabs(portalName, showUserIdAnalytics).filter((tab) => {
+        if (!showUserIdAnalytics && (tab.id === "user_actions" || tab.id === "session_journeys" || tab.id === "time_buckets")) {
+          return false;
+        }
         if (tab.id === "bitrix_pages") return data.bitrix_pages.length > 0;
         if (tab.id === "session_journeys") return data.session_journeys.rows.length > 0;
         if (tab.id === "external_events") return data.external_events.length > 0 || data.external_clicks.length > 0;
@@ -739,7 +749,7 @@ export default function AbbottBiDashboard({ data, locale = "ru-RU", portalName =
         }
         return true;
       }),
-    [data, portalName],
+    [data, portalName, showUserIdAnalytics],
   );
   const theme = TAB_THEMES[activeTab];
 
@@ -831,15 +841,20 @@ export default function AbbottBiDashboard({ data, locale = "ru-RU", portalName =
     const query = queryByTab.users_summary;
     const filters = filtersByTab.users_summary;
     return data.users_summary.filter((row) => {
-      if (!matchesQuery([userIdLabel(row.user_id, row.has_user_id), row.traffic_source, row.direction, row.visits, row.bounce_rate], query)) return false;
-      if (filters.user_id && row.user_id !== filters.user_id) return false;
-      if (filters.user_id_traffic === "with_user_id" && !row.has_user_id) return false;
-      if (filters.user_id_traffic === "without_user_id" && row.has_user_id) return false;
+      const searchableValues = showUserIdAnalytics
+        ? [userIdLabel(row.user_id, row.has_user_id), row.traffic_source, row.direction, row.visits, row.bounce_rate]
+        : [row.traffic_source, row.visits, row.bounce_rate];
+      if (!matchesQuery(searchableValues, query)) return false;
+      if (showUserIdAnalytics) {
+        if (filters.user_id && row.user_id !== filters.user_id) return false;
+        if (filters.user_id_traffic === "with_user_id" && !row.has_user_id) return false;
+        if (filters.user_id_traffic === "without_user_id" && row.has_user_id) return false;
+      }
       if (filters.traffic_source && row.traffic_source !== filters.traffic_source) return false;
       if (filters.direction && (row.direction ?? "") !== filters.direction) return false;
       return true;
     });
-  }, [data.users_summary, filtersByTab.users_summary, queryByTab.users_summary]);
+  }, [data.users_summary, filtersByTab.users_summary, queryByTab.users_summary, showUserIdAnalytics]);
 
   const userActionRows = useMemo(() => {
     const query = queryByTab.user_actions;
@@ -1159,8 +1174,8 @@ export default function AbbottBiDashboard({ data, locale = "ru-RU", portalName =
     currentPage = usersSummaryPage.currentPage;
     totalPages = usersSummaryPage.totalPages;
     tableColumns = [
-      { key: "user_id", label: "User ID" },
-      { key: "direction", label: "Направление" },
+      ...(showUserIdAnalytics ? [{ key: "user_id", label: "User ID" }] : []),
+      ...(showUserIdAnalytics ? [{ key: "direction", label: "Направление" }] : []),
       { key: "traffic_source", label: "Источник" },
       { key: "visits", label: "Сессии", className: "text-right" },
       { key: "bounce_rate", label: "Процент отказов", className: "text-right" },
@@ -1168,8 +1183,8 @@ export default function AbbottBiDashboard({ data, locale = "ru-RU", portalName =
       { key: "page_depth", label: "Глубина просмотра", className: "text-right" },
     ];
     tableRows = usersSummaryPage.pageRows.map((row) => ({
-      user_id: userIdLabel(row.user_id, row.has_user_id),
-      direction: row.direction ?? "—",
+      ...(showUserIdAnalytics ? { user_id: userIdLabel(row.user_id, row.has_user_id) } : {}),
+      ...(showUserIdAnalytics ? { direction: row.direction ?? "—" } : {}),
       traffic_source: row.traffic_source,
       visits: formatNumber(row.visits, locale),
       bounce_rate: formatPercent(row.bounce_rate, locale),
@@ -1338,20 +1353,24 @@ export default function AbbottBiDashboard({ data, locale = "ru-RU", portalName =
   const tabFilterContent: Record<TabId, React.ReactNode> = {
     users_summary: (
       <>
-        <SelectField
-          label="Трафик"
-          value={filtersByTab.users_summary.user_id_traffic}
-          options={USER_ID_TRAFFIC_OPTIONS}
-          onChange={(value) => setSelectFilter("users_summary", "user_id_traffic", value)}
-          theme={theme}
-        />
-        <SelectField
-          label="User ID"
-          value={filtersByTab.users_summary.user_id}
-          options={usersSummaryOptions.user_id}
-          onChange={(value) => setSelectFilter("users_summary", "user_id", value)}
-          theme={theme}
-        />
+        {showUserIdAnalytics ? (
+          <>
+            <SelectField
+              label="Трафик"
+              value={filtersByTab.users_summary.user_id_traffic}
+              options={USER_ID_TRAFFIC_OPTIONS}
+              onChange={(value) => setSelectFilter("users_summary", "user_id_traffic", value)}
+              theme={theme}
+            />
+            <SelectField
+              label="User ID"
+              value={filtersByTab.users_summary.user_id}
+              options={usersSummaryOptions.user_id}
+              onChange={(value) => setSelectFilter("users_summary", "user_id", value)}
+              theme={theme}
+            />
+          </>
+        ) : null}
         <SelectField
           label="Источник"
           value={filtersByTab.users_summary.traffic_source}
@@ -1359,13 +1378,15 @@ export default function AbbottBiDashboard({ data, locale = "ru-RU", portalName =
           onChange={(value) => setSelectFilter("users_summary", "traffic_source", value)}
           theme={theme}
         />
-        <SelectField
-          label="Направление"
-          value={filtersByTab.users_summary.direction}
-          options={usersSummaryOptions.direction}
-          onChange={(value) => setSelectFilter("users_summary", "direction", value)}
-          theme={theme}
-        />
+        {showUserIdAnalytics ? (
+          <SelectField
+            label="Направление"
+            value={filtersByTab.users_summary.direction}
+            options={usersSummaryOptions.direction}
+            onChange={(value) => setSelectFilter("users_summary", "direction", value)}
+            theme={theme}
+          />
+        ) : null}
       </>
     ),
     user_actions: (

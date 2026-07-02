@@ -296,6 +296,7 @@ Recent completed changes that should not be rediscovered:
     - public page renders through `AbbottBiDashboard` with `portalName = "Zaruku"` and hides empty optional tabs
     - traffic summary prefers canonical `analytics_scope = 'other'` traffic-source rows when present, and falls back to `analytics_scope = 'traffic'` UTM rows otherwise
     - page stats use canonical `analytics_scope = 'page'`; user-action sections fill only when user behavior / `paramsLevel2` facts exist
+    - User ID analytics are Abbott/Bitrix-specific; Zaruku reports hide User ID columns, filters, and user-action tabs
 
 ## Working rule for future dashboard tasks
 

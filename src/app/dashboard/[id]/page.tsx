@@ -1751,7 +1751,12 @@ export default function DashboardByIdPage() {
           </div>
         ) : null}
 
-        <AbbottBiDashboard data={portalBiData} locale={locale} portalName={portalName} />
+        <AbbottBiDashboard
+          data={portalBiData}
+          locale={locale}
+          portalName={portalName}
+          showUserIdAnalytics={dashboardType === "abbott_bi"}
+        />
       </main>
     );
   }
