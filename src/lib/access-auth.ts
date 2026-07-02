@@ -20,12 +20,10 @@ export type ViewerSessionPayload = SessionPayload & {
 };
 
 function getAuthSecret() {
-  return (
-    process.env.DASHBOARD_AUTH_SECRET ||
-    process.env.DB_PASSWORD ||
-    process.env.MYSQL_PASSWORD ||
-    "dashboard-dev-secret"
-  );
+  const configured = process.env.DASHBOARD_AUTH_SECRET?.trim();
+  if (configured) return configured;
+  if (process.env.NODE_ENV === "production") return null;
+  return "dashboard-dev-secret";
 }
 
 function toBase64Url(input: Buffer | string) {
@@ -44,7 +42,11 @@ function fromBase64Url(input: string) {
 }
 
 function signPart(payloadPart: string) {
-  return toBase64Url(crypto.createHmac("sha256", getAuthSecret()).update(payloadPart).digest());
+  const secret = getAuthSecret();
+  if (!secret) {
+    throw new Error("DASHBOARD_AUTH_SECRET is required in production");
+  }
+  return toBase64Url(crypto.createHmac("sha256", secret).update(payloadPart).digest());
 }
 
 function normalizeEmail(value: string) {
@@ -81,6 +83,7 @@ export function createSignedSession(payload: SessionPayload) {
 }
 
 export function verifySignedSession(token: string | null | undefined): SessionPayload | null {
+  if (!getAuthSecret()) return null;
   if (!token || !token.includes(".")) return null;
   const [payloadPart, signature] = token.split(".", 2);
   if (!payloadPart || !signature) return null;
@@ -158,6 +161,10 @@ export function verifyViewerSession(
 
 export function getAdminEmail() {
   return normalizeEmail(process.env.DASHBOARD_ADMIN_EMAIL || "");
+}
+
+export function isAuthSecretConfigured() {
+  return Boolean(getAuthSecret());
 }
 
 export function isValidAdminCredentials(email: string, password: string) {

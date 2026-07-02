@@ -73,14 +73,14 @@ function safeEqualText(a: string, b: string) {
 
 function getSharedDashboardPassword(clientId: string) {
   if (String(clientId).trim().toLowerCase() === "abbott") {
-    return process.env.ABBOTT_DASHBOARD_PASSWORD || "Abbott2026";
+    return process.env.ABBOTT_DASHBOARD_PASSWORD?.trim() || null;
   }
   return null;
 }
 
 function getSharedDashboardEmbedKey(clientId: string) {
   if (String(clientId).trim().toLowerCase() === "abbott") {
-    return process.env.ABBOTT_DASHBOARD_EMBED_KEY || "Terasic1!";
+    return process.env.ABBOTT_DASHBOARD_EMBED_KEY?.trim() || null;
   }
   return null;
 }

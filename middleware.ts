@@ -3,12 +3,10 @@ import { NextRequest, NextResponse } from "next/server";
 const ADMIN_SESSION_COOKIE = "dashboard_admin_session";
 
 function getAuthSecret() {
-  return (
-    process.env.DASHBOARD_AUTH_SECRET ||
-    process.env.DB_PASSWORD ||
-    process.env.MYSQL_PASSWORD ||
-    "dashboard-dev-secret"
-  );
+  const configured = process.env.DASHBOARD_AUTH_SECRET?.trim();
+  if (configured) return configured;
+  if (process.env.NODE_ENV === "production") return null;
+  return "dashboard-dev-secret";
 }
 
 function fromBase64Url(input: string) {
@@ -32,11 +30,13 @@ function equalBytes(a: Uint8Array, b: Uint8Array) {
 }
 
 async function verifyAdminSession(token: string | undefined) {
+  const secret = getAuthSecret();
+  if (!secret) return false;
   if (!token || !token.includes(".")) return false;
   const [payloadPart, signaturePart] = token.split(".", 2);
   if (!payloadPart || !signaturePart) return false;
 
-  const secretBytes = new TextEncoder().encode(getAuthSecret());
+  const secretBytes = new TextEncoder().encode(secret);
   const key = await crypto.subtle.importKey(
     "raw",
     secretBytes,
