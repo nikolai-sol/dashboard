@@ -7,8 +7,18 @@ Current production source:
 
 The UI is intentionally built around measurement layers, not vendor-specific screens:
 - `onsite`: what happens after a click, currently Yandex Metrika.
-- `serp`: what happens before a click in search results, pending GSC and Yandex Webmaster.
+- `serp`: what happens before a click in search results. Weekly tracked Yandex positions are connected through SEO OS; GSC and Yandex Webmaster remain pending for search-console metrics.
 - `ai`: AI answer visibility / citations, pending DataForSEO or equivalent.
+
+## SEO OS / Weekly Yandex Positions
+
+Status: connected.
+
+SEO OS supplies weekly Yandex tracked-position data, section-level position and coverage trends, opportunity decisions, content tasks, and pipeline run telemetry. The dashboard currently exposes the available SEO OS weeks, clusters, opportunities, tasks, runs, and traffic-versus-visibility views through the `seo_os` payload.
+
+Section assignment is read from `seo_section_patterns`. This database dictionary defines the URL-pattern-to-section mapping used by SEO OS; it is the authoritative section source for position and traffic/visibility views.
+
+SEO OS is not a replacement for GSC or Yandex Webmaster. It provides the current tracked-position operational contour, but it does not provide the complete impressions, clicks, or CTR dataset required for search-console reporting.
 
 ## Google Search Console
 
@@ -33,7 +43,7 @@ Dashboard panels unlocked:
 
 Important distinction:
 - Metrika can show visits from Google after click.
-- GSC is required for impressions and average position before click.
+- GSC is required for Google impressions, clicks, CTR, and average position before click.
 
 ## Yandex Webmaster
 
@@ -57,7 +67,8 @@ Dashboard panels unlocked:
 
 Important distinction:
 - Metrika shows Yandex organic sessions and some search phrases.
-- Webmaster is required for positions, impressions and CTR.
+- SEO OS provides the connected weekly tracked Yandex positions.
+- Webmaster is still required for Yandex impressions, clicks, CTR, and complete query / URL search-console coverage.
 
 ## DataForSEO / AI Visibility
 

@@ -298,6 +298,11 @@ Recent completed changes that should not be rediscovered:
     - pending sources are documented in `ZARUKU-SEO-PENDING-SOURCES.md`: Google Search Console, Yandex Webmaster, DataForSEO / AI visibility
     - `Cached page traffic` is treated as technical tail, not as a primary acquisition channel
     - User ID analytics are Abbott/Bitrix-specific and stay hidden for Zaruku
+12. Zaruku SEO OS is connected as the `seo_os` source in the `serp` layer:
+    - it provides weekly Yandex tracked positions, section coverage and position trends, opportunities, tasks, and pipeline run telemetry
+    - section assignment is read from the authoritative `seo_section_patterns` dictionary
+    - SEO OS does not replace pending Google Search Console or Yandex Webmaster ingestion for impressions, clicks, CTR, and complete query / URL search-console coverage
+    - DataForSEO / AI visibility remains pending
 
 ## Working rule for future dashboard tasks
 
