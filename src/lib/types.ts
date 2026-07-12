@@ -567,7 +567,7 @@ export interface AbbottBiData {
 }
 
 export type ZarukuSeoLayerId = "onsite" | "serp" | "ai";
-export type ZarukuSeoSourceId = "metrika" | "gsc" | "webmaster" | "dataforseo";
+export type ZarukuSeoSourceId = "metrika" | "gsc" | "webmaster" | "dataforseo" | "seo_os";
 export type ZarukuSeoSourceStatus = "connected" | "pending" | "partial";
 
 export interface ZarukuSeoLayer {
@@ -628,6 +628,108 @@ export interface ZarukuSeoDataQualityItem {
   severity: "ok" | "info" | "warning";
 }
 
+export interface ZarukuSeoSectionPattern {
+  section: string;
+  url_pattern: string;
+  priority: number;
+}
+
+export interface ZarukuSeoPositionTrendPoint {
+  week: string;
+  section: string;
+  average_position: number | null;
+  coverage: number;
+  found_rows: number;
+  tracked_rows: number;
+}
+
+export type ZarukuSeoClusterStatus = "found" | "no_data";
+
+export interface ZarukuSeoClusterRow {
+  week: string;
+  section: string;
+  cluster_id: string;
+  query: string;
+  serp_position: number | null;
+  delta_prev: number | null;
+  matched_url: string | null;
+  status: ZarukuSeoClusterStatus;
+}
+
+export type ZarukuSeoOpportunityDecision = "pending" | "approved" | "rejected" | "carried_over";
+export type ZarukuSeoOpportunityPriority = "high" | "medium" | "low";
+
+export interface ZarukuSeoOpportunityRow {
+  week: string;
+  opportunity_id: string;
+  section: string | null;
+  opportunity_type: string;
+  title: string;
+  target_url: string | null;
+  decision: ZarukuSeoOpportunityDecision;
+  reject_reason: string | null;
+  confidence: number;
+  priority: ZarukuSeoOpportunityPriority;
+}
+
+export interface ZarukuSeoOpportunitySummary {
+  week: string;
+  decision: ZarukuSeoOpportunityDecision;
+  count: number;
+}
+
+export type ZarukuSeoTaskStatus = "draft" | "awaiting_medical_review" | "in_progress" | "done" | "cancelled";
+
+export interface ZarukuSeoTaskRow {
+  week: string;
+  task_id: string;
+  section: string | null;
+  title: string;
+  status: ZarukuSeoTaskStatus;
+  notion_url: string | null;
+}
+
+export interface ZarukuSeoTaskSummary {
+  week: string;
+  status: ZarukuSeoTaskStatus;
+  count: number;
+}
+
+export type ZarukuSeoRunStatus = "completed" | "failed" | "noop" | "missing";
+
+export interface ZarukuSeoRunRow {
+  week: string;
+  status: ZarukuSeoRunStatus;
+  serp_requests: number;
+  llm_tokens: number;
+  digest_count: number;
+  stages?: Record<string, unknown>;
+}
+
+export interface ZarukuSeoTrafficVisibilityRow {
+  week: string;
+  section: string;
+  visits: number;
+  users: number;
+  pageviews: number;
+  average_position: number | null;
+  coverage: number | null;
+}
+
+export interface ZarukuSeoOsData {
+  available: boolean;
+  error: string | null;
+  weeks: string[];
+  latest_week: string | null;
+  section_patterns: ZarukuSeoSectionPattern[];
+  position_trend: ZarukuSeoPositionTrendPoint[];
+  clusters: ZarukuSeoClusterRow[];
+  opportunities: ZarukuSeoOpportunityRow[];
+  tasks: ZarukuSeoTaskRow[];
+  runs: ZarukuSeoRunRow[];
+  traffic_visibility: ZarukuSeoTrafficVisibilityRow[];
+}
+
 export interface ZarukuSeoData {
   counters: string[];
   domain: string;
@@ -655,6 +757,7 @@ export interface ZarukuSeoData {
   interests: ZarukuSeoMetricRow[];
   returning_pages: ZarukuSeoMetricRow[];
   data_quality: ZarukuSeoDataQualityItem[];
+  seo_os: ZarukuSeoOsData;
 }
 
 export interface CustomTableData {

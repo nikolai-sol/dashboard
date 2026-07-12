@@ -5,9 +5,24 @@ import type {
   ZarukuSeoDataQualityItem,
   ZarukuSeoKpi,
   ZarukuSeoMetricRow,
+  ZarukuSeoOsData,
   ZarukuSeoPendingRequirement,
   ZarukuSeoSource,
 } from "@/lib/types";
+
+const EMPTY_SEO_OS_DATA: ZarukuSeoOsData = {
+  available: false,
+  error: null,
+  weeks: [],
+  latest_week: null,
+  section_patterns: [],
+  position_trend: [],
+  clusters: [],
+  opportunities: [],
+  tasks: [],
+  runs: [],
+  traffic_visibility: [],
+};
 
 const SOURCE_KEY = "yandex_metrika";
 const METRIKA_API_URL = "https://api-metrika.yandex.net/stat/v1/data";
@@ -653,6 +668,7 @@ export async function loadZarukuSeoData(counterIds: string[], from: string, to: 
     gender: genderReport.rows,
     interests: interestsReport.rows,
     returning_pages: returningPages,
+    seo_os: EMPTY_SEO_OS_DATA,
     data_quality: buildDataQuality({
       technicalTail,
       searchPhrases: searchPhrasesReport.rows,
