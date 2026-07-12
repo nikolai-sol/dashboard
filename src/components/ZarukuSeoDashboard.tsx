@@ -24,6 +24,7 @@ import {
   Search,
   ShieldAlert,
   Users,
+  Workflow,
 } from "lucide-react";
 import ZarukuSeoWeekToolbar from "@/components/ZarukuSeoWeekToolbar";
 import type {
@@ -39,17 +40,20 @@ import {
   type WeekSelectionField,
 } from "@/components/zaruku-seo-week-selection";
 import ZarukuSeoAnalytics from "@/components/ZarukuSeoAnalytics";
+import ZarukuSeoOperations from "@/components/ZarukuSeoOperations";
+import ZarukuTrafficVisibility from "@/components/ZarukuTrafficVisibility";
 
 type Props = {
   data: ZarukuSeoData;
   locale?: string;
 };
 
-type TabId = "overview" | "seo" | "content" | "geo" | "devices" | "audience" | "behavior" | "quality";
+type TabId = "overview" | "seo" | "seo_ops" | "content" | "geo" | "devices" | "audience" | "behavior" | "quality";
 
 const NAV: Array<{ id: TabId; label: string; icon: typeof LayoutGrid }> = [
   { id: "overview", label: "Overview", icon: LayoutGrid },
   { id: "seo", label: "SEO", icon: Search },
+  { id: "seo_ops", label: "SEO Ops", icon: Workflow },
   { id: "content", label: "Контент", icon: FileText },
   { id: "geo", label: "Гео", icon: MapPin },
   { id: "devices", label: "Устройства", icon: MonitorSmartphone },
@@ -370,9 +374,15 @@ function SeoTab({ data, locale, primaryWeek, comparisonWeek }: Props & { primary
   );
 }
 
-function ContentTab({ data, locale }: Props) {
+function ContentTab({ data, locale, primaryWeek, comparisonWeek }: Props & { primaryWeek: string | null; comparisonWeek: string | null }) {
   return (
     <div className="space-y-5">
+      <ZarukuTrafficVisibility
+        seoOs={data.seo_os}
+        primaryWeek={primaryWeek}
+        comparisonWeek={comparisonWeek}
+        source={data.sources.find((source) => source.id === "seo_os")}
+      />
       <Panel data={data} title="Разделы портала" source="metrika" layer="onsite">
         <DataTable rows={data.content_sections} mode="metrics" locale={locale ?? "ru-RU"} />
       </Panel>
@@ -518,8 +528,17 @@ export default function ZarukuSeoDashboard({ data, locale = "ru-RU" }: Props) {
     switch (activeTab) {
       case "seo":
         return <SeoTab data={data} locale={locale} primaryWeek={weekSelection.primaryWeek} comparisonWeek={weekSelection.comparisonWeek} />;
+      case "seo_ops":
+        return (
+          <ZarukuSeoOperations
+            seoOs={data.seo_os}
+            primaryWeek={weekSelection.primaryWeek}
+            comparisonWeek={weekSelection.comparisonWeek}
+            source={data.sources.find((source) => source.id === "seo_os")}
+          />
+        );
       case "content":
-        return <ContentTab data={data} locale={locale} />;
+        return <ContentTab data={data} locale={locale} primaryWeek={weekSelection.primaryWeek} comparisonWeek={weekSelection.comparisonWeek} />;
       case "geo":
         return <GeoTab data={data} locale={locale} />;
       case "devices":
