@@ -25,12 +25,19 @@ import {
   ShieldAlert,
   Users,
 } from "lucide-react";
+import ZarukuSeoWeekToolbar from "@/components/ZarukuSeoWeekToolbar";
 import type {
   ZarukuSeoData,
   ZarukuSeoLayerId,
   ZarukuSeoMetricRow,
   ZarukuSeoSourceId,
 } from "@/lib/types";
+import {
+  createWeekSelection,
+  previousAvailableWeek,
+  updateWeekSelection,
+  type WeekSelectionField,
+} from "@/components/zaruku-seo-week-selection";
 
 type Props = {
   data: ZarukuSeoData;
@@ -482,8 +489,24 @@ function QualityTab({ data }: { data: ZarukuSeoData }) {
 
 export default function ZarukuSeoDashboard({ data, locale = "ru-RU" }: Props) {
   const [activeTab, setActiveTab] = useState<TabId>("overview");
+  const [weekSelection, setWeekSelection] = useState(() => createWeekSelection(data.seo_os.latest_week));
+  const [comparisonEnabled, setComparisonEnabled] = useState(false);
   const activeNav = NAV.find((item) => item.id === activeTab) ?? NAV[0];
   const CurrentIcon = activeNav.icon;
+  const changeWeekSelection = (field: WeekSelectionField, week: string | null) => {
+    setWeekSelection((current) => updateWeekSelection(current, field, week, data.seo_os.weeks));
+  };
+  const changeComparisonMode = (enabled: boolean) => {
+    setComparisonEnabled(enabled);
+    if (!enabled) setWeekSelection((current) => ({ ...current, comparisonWeek: null }));
+  };
+  const comparePreviousWeek = () => {
+    setComparisonEnabled(true);
+    setWeekSelection((current) => ({
+      ...current,
+      comparisonWeek: current.primaryWeek ? previousAvailableWeek(data.seo_os.weeks, current.primaryWeek) : null,
+    }));
+  };
   const content = useMemo(() => {
     switch (activeTab) {
       case "seo":
@@ -579,6 +602,18 @@ export default function ZarukuSeoDashboard({ data, locale = "ru-RU" }: Props) {
                   </span>
                 ))}
               </div>
+            </div>
+            <div className="mt-3">
+              <ZarukuSeoWeekToolbar
+                weeks={data.seo_os.weeks}
+                primaryWeek={weekSelection.primaryWeek}
+                comparisonWeek={weekSelection.comparisonWeek}
+                comparisonEnabled={comparisonEnabled}
+                onComparisonEnabledChange={changeComparisonMode}
+                onPrimaryWeekChange={(week) => changeWeekSelection("primaryWeek", week)}
+                onComparisonWeekChange={(week) => changeWeekSelection("comparisonWeek", week)}
+                onComparePrevious={comparePreviousWeek}
+              />
             </div>
             <div className="mt-3 flex gap-1 overflow-x-auto md:hidden">
               {NAV.map((item) => (
