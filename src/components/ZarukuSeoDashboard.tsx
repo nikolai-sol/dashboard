@@ -38,6 +38,7 @@ import {
   updateWeekSelection,
   type WeekSelectionField,
 } from "@/components/zaruku-seo-week-selection";
+import ZarukuSeoAnalytics from "@/components/ZarukuSeoAnalytics";
 
 type Props = {
   data: ZarukuSeoData;
@@ -130,7 +131,7 @@ function Panel({
 }) {
   return (
     <section className="rounded-lg border border-slate-200 bg-white">
-      <header className="flex items-start justify-between gap-3 border-b border-slate-100 px-5 py-4">
+      <header className="flex flex-col items-start gap-3 border-b border-slate-100 px-5 py-4 md:flex-row md:justify-between">
         <div className="min-w-0">
           <div className="flex flex-wrap items-center gap-2">
             <h3 className="text-base font-semibold text-slate-900">{title}</h3>
@@ -298,7 +299,7 @@ function OverviewTab({ data, locale }: Props) {
   );
 }
 
-function SeoTab({ data, locale }: Props) {
+function SeoTab({ data, locale, primaryWeek, comparisonWeek }: Props & { primaryWeek: string | null; comparisonWeek: string | null }) {
   const phraseCoverage = data.data_quality.find((item) => item.title === "Покрытие поисковых фраз");
   return (
     <div className="space-y-5">
@@ -318,9 +319,9 @@ function SeoTab({ data, locale }: Props) {
             </BarChart>
           </ResponsiveContainer>
         </Panel>
-        <Panel data={data} title="Позиции · показы · CTR" source="gsc" layer="serp" pending>
+        <Panel data={data} title="Показы · клики · CTR" source="gsc" layer="serp" pending right={<span className="text-xs text-slate-400">GSC · Вебмастер</span>}>
           <div className="grid grid-cols-3 gap-3">
-            {["Ср. позиция", "Показы", "CTR"].map((item) => (
+            {["Показы", "Клики", "CTR"].map((item) => (
               <div key={item} className="rounded-lg border border-dashed border-slate-200 px-3 py-6 text-center">
                 <div className="text-xs uppercase text-slate-400">{item}</div>
                 <div className="mt-2 text-xl font-semibold text-slate-300">—</div>
@@ -328,10 +329,16 @@ function SeoTab({ data, locale }: Props) {
             ))}
           </div>
           <p className="mt-3 text-sm leading-relaxed text-slate-500">
-            Метрика не измеряет позиции в выдаче. Этот слой заполнят Search Console и Яндекс Вебмастер.
+            Данные по показам, кликам и CTR ожидаются из Search Console и Яндекс Вебмастера.
           </p>
         </Panel>
       </div>
+      <ZarukuSeoAnalytics
+        seoOs={data.seo_os}
+        primaryWeek={primaryWeek}
+        comparisonWeek={comparisonWeek}
+        source={data.sources.find((source) => source.id === "seo_os")}
+      />
       <Panel data={data} title="Top organic landing pages" source="metrika" layer="onsite" right={<span className="text-xs text-slate-400">SERP columns pending</span>}>
         <DataTable rows={data.organic_landing_pages.slice(0, 12)} mode="cross" locale={locale ?? "ru-RU"} />
       </Panel>
@@ -510,7 +517,7 @@ export default function ZarukuSeoDashboard({ data, locale = "ru-RU" }: Props) {
   const content = useMemo(() => {
     switch (activeTab) {
       case "seo":
-        return <SeoTab data={data} locale={locale} />;
+        return <SeoTab data={data} locale={locale} primaryWeek={weekSelection.primaryWeek} comparisonWeek={weekSelection.comparisonWeek} />;
       case "content":
         return <ContentTab data={data} locale={locale} />;
       case "geo":
@@ -526,7 +533,7 @@ export default function ZarukuSeoDashboard({ data, locale = "ru-RU" }: Props) {
       default:
         return <OverviewTab data={data} locale={locale} />;
     }
-  }, [activeTab, data, locale]);
+  }, [activeTab, data, locale, weekSelection.comparisonWeek, weekSelection.primaryWeek]);
 
   return (
     <div className="min-h-[calc(100vh-160px)] rounded-lg border border-slate-200 bg-slate-50 text-slate-900">
