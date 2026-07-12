@@ -76,16 +76,24 @@ export default function ZarukuSeoWeekToolbar({
         </select>
       </label>
 
-      <button
-        type="button"
-        aria-label="Сравнить с предыдущей доступной неделей"
-        title="Сравнить с предыдущей доступной неделей"
-        disabled={!previousWeek}
-        onClick={onComparePrevious}
-        className="flex h-9 w-9 items-center justify-center rounded-md border border-slate-200 bg-white text-slate-600 hover:bg-slate-50 disabled:cursor-not-allowed disabled:text-slate-300"
+      <span
+        tabIndex={previousWeek ? undefined : 0}
+        title={previousWeek ? undefined : "Нет предыдущей доступной недели для сравнения"}
+        className="flex h-9 w-9 focus-visible:rounded-md focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-teal-600"
       >
-        <History className="h-4 w-4" aria-hidden="true" />
-      </button>
+        <button
+          type="button"
+          aria-label="Сравнить с предыдущей доступной неделей"
+          aria-describedby={previousWeek ? undefined : "zaruku-previous-week-unavailable-description"}
+          title={previousWeek ? "Сравнить с предыдущей доступной неделей" : undefined}
+          disabled={!previousWeek}
+          onClick={onComparePrevious}
+          className="flex h-9 w-9 items-center justify-center rounded-md border border-slate-200 bg-white text-slate-600 hover:bg-slate-50 disabled:cursor-not-allowed disabled:text-slate-300"
+        >
+          <History className="h-4 w-4" aria-hidden="true" />
+        </button>
+        {!previousWeek ? <span id="zaruku-previous-week-unavailable-description" className="sr-only">Нет предыдущей доступной недели для сравнения</span> : null}
+      </span>
     </div>
   );
 }
