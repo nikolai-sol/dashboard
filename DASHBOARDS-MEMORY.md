@@ -221,6 +221,7 @@ Recent completed changes that should not be rediscovered:
 9. Root `/` now shows viewer login / cabinet, not a random dashboard.
 10. Logout redirects to root login page.
 11. Zaruku dashboard (`dashboard_type = zaruku_bi`, production dashboard id `28`) now uses a dedicated SEO/GEO UI, not the Abbott BI UI. The data path is `dashboard-next/src/lib/zaruku-seo.ts` and the renderer is `dashboard-next/src/components/ZarukuSeoDashboard.tsx`; API payload is `zaruku_seo`. Current connected source is Yandex Metrika (`66624469`) with canonical traffic/page facts plus live Metrika API cuts for search engines, phrases, organic landings, devices, geo, browser/OS, inferred age/gender/interests. Pending sources are documented in `dashboard-next/ZARUKU-SEO-PENDING-SOURCES.md`: Google Search Console, Yandex Webmaster, DataForSEO / AI visibility. `Cached page traffic` is technical tail, not a primary acquisition channel; User ID analytics remain Abbott/Bitrix-specific and hidden for Zaruku.
+12. Zaruku SEO OS is connected as the `seo_os` source in the `serp` layer. It supplies weekly Yandex tracked positions, section coverage and position trends, opportunities, tasks, and pipeline run telemetry. The authoritative section dictionary is `seo_section_patterns`. Google Search Console and Yandex Webmaster remain pending for impressions, clicks, CTR, and complete query / URL search-console coverage; DataForSEO / AI visibility remains pending.
 
 ## Working rule for future dashboard tasks
 
