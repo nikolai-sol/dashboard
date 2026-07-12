@@ -74,3 +74,25 @@ test("buildRhythmWeeks inserts missing ISO weeks between available runs", () => 
     ],
   );
 });
+
+test("buildRhythmWeeks accepts and preserves a zero-padded early ISO week 53", () => {
+  assert.deepEqual(
+    buildRhythmWeeks([{ week: "0004-W53", status: "completed", serp_requests: 1, llm_tokens: 0, digest_count: 0 }]),
+    [{ week: "0004-W53", status: "completed", serp_requests: 1, llm_tokens: 0, digest_count: 0 }],
+  );
+});
+
+test("buildRhythmWeeks iterates through a 53-week ISO year boundary", () => {
+  assert.deepEqual(
+    buildRhythmWeeks([
+      { week: "2020-W52", status: "completed", serp_requests: 1, llm_tokens: 0, digest_count: 0 },
+      { week: "2021-W02", status: "completed", serp_requests: 1, llm_tokens: 0, digest_count: 0 },
+    ]).map(({ week, status }) => ({ week, status })),
+    [
+      { week: "2020-W52", status: "completed" },
+      { week: "2020-W53", status: "missing" },
+      { week: "2021-W01", status: "missing" },
+      { week: "2021-W02", status: "completed" },
+    ],
+  );
+});

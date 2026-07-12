@@ -21,13 +21,15 @@ function parseIsoWeek(value: string): IsoWeek {
 }
 
 function isoWeeksInYear(year: number) {
-  const januaryFirst = new Date(Date.UTC(year, 0, 1)).getUTCDay() || 7;
+  const januaryFirstDate = new Date(0);
+  januaryFirstDate.setUTCFullYear(year, 0, 1);
+  const januaryFirst = januaryFirstDate.getUTCDay() || 7;
   const isLeapYear = year % 4 === 0 && (year % 100 !== 0 || year % 400 === 0);
   return januaryFirst === 4 || (januaryFirst === 3 && isLeapYear) ? 53 : 52;
 }
 
 function formatIsoWeek({ year, week }: IsoWeek) {
-  return `${year}-W${String(week).padStart(2, "0")}`;
+  return `${String(year).padStart(4, "0")}-W${String(week).padStart(2, "0")}`;
 }
 
 function nextIsoWeek(value: IsoWeek): IsoWeek {

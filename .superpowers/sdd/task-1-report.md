@@ -75,3 +75,70 @@ fail 0
 ## Concerns
 
 No active blocker. `seo_os` is intentionally unavailable and empty until Task 2 replaces the placeholder with the account-scoped read-only loader.
+
+## Task 1 Review Fix: Early ISO Years
+
+### Fix Details
+
+- `formatIsoWeek` now pads numeric years to four digits, preserving canonical `YYYY-Www` labels while iterating rhythm weeks.
+- `isoWeeksInYear` now uses `setUTCFullYear(year, 0, 1)` on an existing `Date`, avoiding the `Date.UTC` remapping of years `0000` through `0099` to `1900` through `1999`.
+- Added regression coverage for valid `0004-W53` and iteration across the `2020-W53` to `2021-W01` rollover.
+
+### RED
+
+Command:
+
+```bash
+node --import tsx --test --test-name-pattern='buildRhythmWeeks (accepts and preserves a zero-padded early ISO week 53|iterates through a 53-week ISO year boundary)' src/lib/zaruku-seo-os.test.ts
+```
+
+Output (exit 1):
+
+```text
+✖ buildRhythmWeeks accepts and preserves a zero-padded early ISO week 53
+✔ buildRhythmWeeks iterates through a 53-week ISO year boundary
+tests 2
+pass 1
+fail 1
+
+Error: Invalid ISO week: 0004-W53
+```
+
+### GREEN
+
+Focused command:
+
+```bash
+node --import tsx --test --test-name-pattern='buildRhythmWeeks (accepts and preserves a zero-padded early ISO week 53|iterates through a 53-week ISO year boundary)' src/lib/zaruku-seo-os.test.ts
+```
+
+Output (exit 0):
+
+```text
+✔ buildRhythmWeeks accepts and preserves a zero-padded early ISO week 53
+✔ buildRhythmWeeks iterates through a 53-week ISO year boundary
+tests 2
+pass 2
+fail 0
+```
+
+Full verification command:
+
+```bash
+npm test && npm run typecheck
+```
+
+Output (exit 0):
+
+```text
+tests 9
+pass 9
+fail 0
+
+> dashboard-next@0.1.0 typecheck
+> tsc --noEmit
+```
+
+### Review-Fix Concerns
+
+No remaining concerns. The accepted ISO-year range remains exactly four digits (`0000` through `9999`), matching the existing parser contract.
