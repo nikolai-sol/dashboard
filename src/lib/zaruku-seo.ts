@@ -1,28 +1,14 @@
 import type { RowDataPacket } from "mysql2";
 import pool from "@/lib/db";
+import { loadZarukuSeoOsData } from "@/lib/zaruku-seo-os";
 import type {
   ZarukuSeoData,
   ZarukuSeoDataQualityItem,
   ZarukuSeoKpi,
   ZarukuSeoMetricRow,
-  ZarukuSeoOsData,
   ZarukuSeoPendingRequirement,
   ZarukuSeoSource,
 } from "@/lib/types";
-
-const EMPTY_SEO_OS_DATA: ZarukuSeoOsData = {
-  available: false,
-  error: null,
-  weeks: [],
-  latest_week: null,
-  section_patterns: [],
-  position_trend: [],
-  clusters: [],
-  opportunities: [],
-  tasks: [],
-  runs: [],
-  traffic_visibility: [],
-};
 
 const SOURCE_KEY = "yandex_metrika";
 const METRIKA_API_URL = "https://api-metrika.yandex.net/stat/v1/data";
@@ -69,7 +55,7 @@ const PENDING_REQUIREMENTS: ZarukuSeoPendingRequirement[] = [
     layer: "serp",
     title: "Google Search Console",
     status: "pending",
-    reason: "Метрика показывает только визиты после клика; impressions, average position и CTR живут в SERP-слое.",
+    reason: "Для Google остаются нужны показы, клики, CTR и Google-specific позиции из Search Console.",
     expected_fields: ["query", "page", "country", "device", "impressions", "clicks", "ctr", "position"],
   },
   {
@@ -77,7 +63,7 @@ const PENDING_REQUIREMENTS: ZarukuSeoPendingRequirement[] = [
     layer: "serp",
     title: "Яндекс Вебмастер",
     status: "pending",
-    reason: "Для Яндекса нужны показы, позиции и CTR из Вебмастера, а не из Метрики.",
+    reason: "Для Яндекса остаются нужны показы, клики и CTR из Вебмастера; SEO OS покрывает только tracked-позиции.",
     expected_fields: ["query", "url", "region", "device", "impressions", "clicks", "ctr", "position"],
   },
   {
@@ -579,11 +565,12 @@ function buildDataQuality({
 
 export async function loadZarukuSeoData(counterIds: string[], from: string, to: string): Promise<ZarukuSeoData> {
   const normalizedCounterIds = normalizeCounterIds(counterIds);
-  const [trafficRowsRaw, topPages, organicTrend, returningPages] = await Promise.all([
+  const [trafficRowsRaw, topPages, organicTrend, returningPages, seoOs] = await Promise.all([
     queryTrafficRows(normalizedCounterIds, from, to),
     queryTopPages(normalizedCounterIds, from, to),
     queryOrganicTrend(normalizedCounterIds, from, to),
     queryReturningPages(normalizedCounterIds, from, to),
+    loadZarukuSeoOsData(normalizedCounterIds),
   ]);
   const { trafficChannels, technicalTail } = splitTrafficRows(trafficRowsRaw);
 
@@ -642,7 +629,19 @@ export async function loadZarukuSeoData(counterIds: string[], from: string, to: 
       { id: "serp", label: "SERP", hint: "показы, позиции, CTR до клика" },
       { id: "ai", label: "AI-выдача", hint: "цитируемость и presence rate" },
     ],
-    sources: SOURCES,
+    sources: [
+      ...SOURCES,
+      {
+        id: "seo_os",
+        label: "SEO OS",
+        layer: "serp",
+        color: "#16a34a",
+        status: seoOs.available ? "connected" : "partial",
+        note: seoOs.available
+          ? "Еженедельные tracked-позиции Яндекса, opportunities, tasks и telemetry."
+          : "Еженедельный SEO OS временно недоступен; on-site Метрика продолжает работать.",
+      },
+    ],
     pending_requirements: PENDING_REQUIREMENTS,
     kpis: buildKpis({
       trafficChannels,
@@ -668,7 +667,7 @@ export async function loadZarukuSeoData(counterIds: string[], from: string, to: 
     gender: genderReport.rows,
     interests: interestsReport.rows,
     returning_pages: returningPages,
-    seo_os: EMPTY_SEO_OS_DATA,
+    seo_os: seoOs,
     data_quality: buildDataQuality({
       technicalTail,
       searchPhrases: searchPhrasesReport.rows,

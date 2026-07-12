@@ -1,10 +1,14 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import {
+  buildSeoOsAccountQueries,
+  buildSeoOsTrafficQuery,
   buildRhythmWeeks,
   buildSectionPositionTrend,
   calculateApproveRate,
   matchSectionPattern,
+  normalizeSeoClusterRow,
+  normalizeSeoOpportunityRow,
   previousAvailableWeek,
   sortIsoWeeks,
 } from "@/lib/zaruku-seo-os";
@@ -94,5 +98,76 @@ test("buildRhythmWeeks iterates through a 53-week ISO year boundary", () => {
       { week: "2021-W01", status: "missing" },
       { week: "2021-W02", status: "completed" },
     ],
+  );
+});
+
+test("SEO OS row normalizers convert decimal strings while preserving nullable fields", () => {
+  assert.deepEqual(
+    normalizeSeoClusterRow({
+      week: "2026-W28",
+      section: "/map/",
+      cluster_id: "cluster-1",
+      query: "clinic",
+      serp_position: null,
+      delta_prev: "-2.50",
+      matched_url: null,
+      status: "no_data",
+    }),
+    {
+      week: "2026-W28",
+      section: "/map/",
+      cluster_id: "cluster-1",
+      query: "clinic",
+      serp_position: null,
+      delta_prev: -2.5,
+      matched_url: null,
+      status: "no_data",
+    },
+  );
+  assert.deepEqual(
+    normalizeSeoOpportunityRow({
+      week: "2026-W28",
+      opportunity_id: "opportunity-1",
+      section: null,
+      opportunity_type: "content",
+      title: "Add clinic page",
+      target_url: null,
+      decision: "pending",
+      reject_reason: null,
+      confidence: "0.75",
+      priority: "high",
+    }),
+    {
+      week: "2026-W28",
+      opportunity_id: "opportunity-1",
+      section: null,
+      opportunity_type: "content",
+      title: "Add clinic page",
+      target_url: null,
+      decision: "pending",
+      reject_reason: null,
+      confidence: 0.75,
+      priority: "high",
+    },
+  );
+});
+
+test("SEO OS account scope query builders bind account IDs as parameters", () => {
+  const accountIds = ["66624469", "other-account"];
+  const queries = [...Object.values(buildSeoOsAccountQueries(accountIds)), buildSeoOsTrafficQuery(accountIds, "2026-07-06", "2026-07-12")];
+
+  for (const query of queries) {
+    assert.match(query.sql, /analytics_account_id\s+IN\s*\(\?, \?\)/i);
+    assert.deepEqual(query.params.slice(0, accountIds.length), accountIds);
+  }
+  assert.match(queries.at(-1)?.sql ?? "", /source_key\s*=\s*'yandex_metrika'/i);
+  assert.match(queries.at(-1)?.sql ?? "", /analytics_scope\s*=\s*'page'/i);
+  assert.match(queries.at(-1)?.sql ?? "", /report_date\s+BETWEEN\s+\?\s+AND\s+\?/i);
+});
+
+test("buildRhythmWeeks represents SEO weeks without run telemetry as missing", () => {
+  assert.deepEqual(
+    buildRhythmWeeks([], ["2026-W28"]),
+    [{ week: "2026-W28", status: "missing", serp_requests: 0, llm_tokens: 0, digest_count: 0 }],
   );
 });
