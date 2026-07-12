@@ -78,6 +78,7 @@ export default function ZarukuSeoWeekToolbar({
 
       <span
         tabIndex={previousWeek ? undefined : 0}
+        aria-describedby={previousWeek ? undefined : "zaruku-previous-week-unavailable-description"}
         title={previousWeek ? undefined : "Нет предыдущей доступной недели для сравнения"}
         className="flex h-9 w-9 focus-visible:rounded-md focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-teal-600"
       >
