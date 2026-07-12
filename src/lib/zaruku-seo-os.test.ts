@@ -216,7 +216,7 @@ test("loadZarukuSeoOsData normalizes an empty account scope to the Zaruku fallba
   }
 });
 
-test("loadZarukuSeoOsData preserves successful patterns when positions fail", async () => {
+test("loadZarukuSeoOsData preserves successful patterns while marking SEO OS unavailable when positions fail", async () => {
   const data = await loadZarukuSeoOsData(["66624469"], async (query) => {
     if (/FROM seo_section_patterns/i.test(query.sql)) {
       return [{ section: "/map/", url_pattern: "/map/", priority: 1 }];
@@ -225,15 +225,15 @@ test("loadZarukuSeoOsData preserves successful patterns when positions fail", as
     return [];
   });
 
-  assert.equal(data.available, true);
-  assert.equal(data.status, "partial");
+  assert.equal(data.available, false);
+  assert.equal(data.status, "unavailable");
   assert.equal(data.data_availability.section_patterns, true);
   assert.equal(data.data_availability.positions, false);
   assert.deepEqual(data.section_patterns, [{ section: "/map/", url_pattern: "/map/", priority: 1 }]);
   assert.match(data.error ?? "", /positions: positions unavailable/);
 });
 
-test("loadZarukuSeoOsData preserves other successful tables after a partial failure", async () => {
+test("loadZarukuSeoOsData preserves other successful tables while marking SEO OS unavailable after a table failure", async () => {
   const data = await loadZarukuSeoOsData(["66624469"], async (query) => {
     if (/FROM seo_section_patterns/i.test(query.sql)) return [{ section: "/map/", url_pattern: "/map/", priority: 1 }];
     if (/FROM seo_positions_weekly/i.test(query.sql)) {
@@ -243,7 +243,8 @@ test("loadZarukuSeoOsData preserves other successful tables after a partial fail
     return [];
   });
 
-  assert.equal(data.status, "partial");
+  assert.equal(data.available, false);
+  assert.equal(data.status, "unavailable");
   assert.equal(data.data_availability.positions, true);
   assert.equal(data.data_availability.opportunities, false);
   assert.equal(data.data_availability.traffic_visibility, true);

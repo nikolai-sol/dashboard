@@ -570,10 +570,10 @@ export async function loadZarukuSeoOsData(
     runResult.available,
   ];
   const successfulAccountQueries = accountAvailability.filter(Boolean).length;
-  const status = successfulAccountQueries === 0 ? "unavailable" : errors.length > 0 ? "partial" : "available";
+  const status = successfulAccountQueries > 0 && errors.length === 0 ? "available" : "unavailable";
 
   return {
-    available: status !== "unavailable",
+    available: status === "available",
     status,
     error: errors.length > 0 ? errors.join("; ") : null,
     data_availability: {

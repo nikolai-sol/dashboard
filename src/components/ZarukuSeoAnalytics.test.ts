@@ -7,8 +7,8 @@ import type { ZarukuSeoOsData } from "@/lib/types";
 
 test("renders retry-later unavailable state when positions query failed", () => {
   const seoOs: ZarukuSeoOsData = {
-    available: true,
-    status: "partial",
+    available: false,
+    status: "unavailable",
     error: "positions: database unavailable",
     data_availability: {
       section_patterns: true,
