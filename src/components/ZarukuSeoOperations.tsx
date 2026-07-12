@@ -9,6 +9,7 @@ import {
   buildRunComparison,
   buildRhythmRows,
   buildTaskStatusSummary,
+  formatRunMetric,
   normalizeConfidencePercent,
 } from "@/components/zaruku-seo-operations";
 
@@ -156,9 +157,9 @@ export default function ZarukuSeoOperations({ seoOs, primaryWeek, comparisonWeek
             ["SERP requests", "serp_requests", true],
             ["LLM tokens", "llm_tokens", false],
             ["Digest", "digest_count", false],
-          ] as const).map(([label, key, budget]) => <div key={key} className="min-h-28 bg-white px-4 py-3"><div className="text-xs text-slate-500">{label}</div><div className="mt-1 text-xl font-semibold text-slate-900">{runComparison.primary ? `${formatNumber(runComparison.primary[key])}${budget ? " / 50" : ""}` : "—"}</div><ComparisonDetail comparison={runComparison.comparison?.[key] ?? null} delta={runComparison.deltas[key]} /></div>)}
+          ] as const).map(([label, key, budget]) => <div key={key} className="min-h-28 bg-white px-4 py-3"><div className="text-xs text-slate-500">{label}</div><div className="mt-1 text-xl font-semibold text-slate-900">{formatRunMetric(runComparison.primary?.[key] ?? null, budget ? 50 : undefined)}</div><ComparisonDetail comparison={runComparison.comparison?.[key] ?? null} delta={runComparison.deltas[key]} /></div>)}
         </div> : null}
-        <div className="max-h-[360px] overflow-auto px-5 py-4"><table className="w-full min-w-[700px] text-sm"><thead><tr className="text-left text-xs uppercase text-slate-400"><th className="pb-2 font-medium">Неделя</th><th className="pb-2 font-medium">Статус</th><th className="pb-2 text-right font-medium">SERP</th><th className="pb-2 text-right font-medium">LLM tokens</th><th className="pb-2 text-right font-medium">Digest</th></tr></thead><tbody className="divide-y divide-slate-100">{rhythm.map((run) => <tr key={run.week}><td className="py-2.5 font-medium text-slate-700">{run.week}</td><td className="py-2.5"><span className={`inline-flex rounded-md border px-2 py-1 text-xs font-semibold ${runBadgeClass(run.status)}`}>{run.status}</span></td><td className="py-2.5 text-right text-slate-600">{formatNumber(run.serp_requests)} / 50</td><td className="py-2.5 text-right text-slate-600">{formatNumber(run.llm_tokens)}</td><td className="py-2.5 text-right text-slate-600">{formatNumber(run.digest_count)}</td></tr>)}{rhythm.length === 0 ? <tr><td colSpan={5} className="py-6 text-center text-sm text-slate-500">Нет telemetry по календарным неделям.</td></tr> : null}</tbody></table></div>
+        <div className="max-h-[360px] overflow-auto px-5 py-4"><table className="w-full min-w-[700px] text-sm"><thead><tr className="text-left text-xs uppercase text-slate-400"><th className="pb-2 font-medium">Неделя</th><th className="pb-2 font-medium">Статус</th><th className="pb-2 text-right font-medium">SERP</th><th className="pb-2 text-right font-medium">LLM tokens</th><th className="pb-2 text-right font-medium">Digest</th></tr></thead><tbody className="divide-y divide-slate-100">{rhythm.map((run) => <tr key={run.week}><td className="py-2.5 font-medium text-slate-700">{run.week}</td><td className="py-2.5"><span className={`inline-flex rounded-md border px-2 py-1 text-xs font-semibold ${runBadgeClass(run.status)}`}>{run.status}</span></td><td className="py-2.5 text-right text-slate-600">{formatRunMetric(run.serp_requests, 50)}</td><td className="py-2.5 text-right text-slate-600">{formatRunMetric(run.llm_tokens)}</td><td className="py-2.5 text-right text-slate-600">{formatRunMetric(run.digest_count)}</td></tr>)}{rhythm.length === 0 ? <tr><td colSpan={5} className="py-6 text-center text-sm text-slate-500">Нет telemetry по календарным неделям.</td></tr> : null}</tbody></table></div>
       </section>
     </div>
   );

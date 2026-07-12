@@ -105,6 +105,15 @@ export default function ZarukuSeoAnalytics({ seoOs, primaryWeek, comparisonWeek,
   const primaryCoverage = coverageSummary(chartRows, "primary");
   const comparisonCoverage = comparisonWeek ? coverageSummary(chartRows, "comparison") : null;
 
+  if (!seoOs.data_availability.positions) {
+    return (
+      <section className="rounded-lg border border-slate-200 bg-white px-5 py-8">
+        <h3 className="text-base font-semibold text-slate-900">Позиции SEO временно недоступны</h3>
+        <p className="mt-2 text-sm text-slate-500">Не удалось загрузить данные позиций. Повторите попытку позже.</p>
+      </section>
+    );
+  }
+
   return (
     <section className="rounded-lg border border-slate-200 bg-white">
       <header className="flex flex-wrap items-start justify-between gap-3 border-b border-slate-100 px-5 py-4">

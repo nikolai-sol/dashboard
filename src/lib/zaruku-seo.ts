@@ -224,8 +224,9 @@ async function queryTrafficRows(counterIds: string[], from: string, to: string) 
   });
 }
 
-async function queryTopPages(counterIds: string[], from: string, to: string) {
-  const sql = `
+export function buildCanonicalPageRowsQuery(counterIds: string[], from: string, to: string) {
+  return {
+    sql: `
     SELECT
       COALESCE(page_title, '') AS label,
       COALESCE(page_url, '') AS url,
@@ -241,9 +242,14 @@ async function queryTopPages(counterIds: string[], from: string, to: string) {
     GROUP BY COALESCE(page_title, ''), COALESCE(page_url, '')
     HAVING visits > 0 OR pageviews > 0 OR users > 0
     ORDER BY pageviews DESC, users DESC
-    LIMIT 200
-  `;
-  const [rows] = await pool.execute<CanonicalSiteRow[]>(sql, [SOURCE_KEY, ...counterIds, from, to]);
+  `,
+    params: [SOURCE_KEY, ...counterIds, from, to],
+  };
+}
+
+async function queryCanonicalPageRows(counterIds: string[], from: string, to: string) {
+  const query = buildCanonicalPageRowsQuery(counterIds, from, to);
+  const [rows] = await pool.execute<CanonicalSiteRow[]>(query.sql, query.params);
   const totalPageviews = rows.reduce((sum, row) => sum + asNumber(row.pageviews), 0);
   return rows.map((row) => ({
     ...rowFromCanonical(row, totalPageviews),
@@ -362,9 +368,9 @@ async function fetchMetrikaReportsSequential(
 
 const EMPTY_REPORT: MetrikaReport = { ok: false, rows: [], totals: [], error: "Report was not requested" };
 
-export function buildContentSections(topPages: ZarukuSeoMetricRow[], patterns: ZarukuSeoSectionPattern[]) {
+export function buildContentSections(pageRows: ZarukuSeoMetricRow[], patterns: ZarukuSeoSectionPattern[]) {
   const bySection = new Map<string, ZarukuSeoMetricRow>();
-  topPages.forEach((page) => {
+  pageRows.forEach((page) => {
     if (!page.url) return;
     const section = matchSectionPattern(page.url, patterns)?.section;
     if (!section) return;
@@ -392,6 +398,17 @@ export function buildContentSections(topPages: ZarukuSeoMetricRow[], patterns: Z
     }))
     .sort((a, b) => b.pageviews - a.pageviews)
     .slice(0, 12);
+}
+
+export function buildPageCollections(
+  pageRows: ZarukuSeoMetricRow[],
+  patterns: ZarukuSeoSectionPattern[],
+  topPageLimit = 80,
+) {
+  return {
+    topPages: pageRows.slice(0, topPageLimit),
+    contentSections: buildContentSections(pageRows, patterns),
+  };
 }
 
 function buildKpis({
@@ -541,9 +558,9 @@ function buildDataQuality({
 
 export async function loadZarukuSeoData(counterIds: string[], from: string, to: string): Promise<ZarukuSeoData> {
   const normalizedCounterIds = normalizeCounterIds(counterIds);
-  const [trafficRowsRaw, topPages, organicTrend, returningPages, seoOs] = await Promise.all([
+  const [trafficRowsRaw, pageRows, organicTrend, returningPages, seoOs] = await Promise.all([
     queryTrafficRows(normalizedCounterIds, from, to),
-    queryTopPages(normalizedCounterIds, from, to),
+    queryCanonicalPageRows(normalizedCounterIds, from, to),
     queryOrganicTrend(normalizedCounterIds, from, to),
     queryReturningPages(normalizedCounterIds, from, to),
     loadZarukuSeoOsData(normalizedCounterIds),
@@ -595,6 +612,7 @@ export async function loadZarukuSeoData(counterIds: string[], from: string, to: 
   const metrikaErrors = reports.flatMap((report) => (report.ok ? [] : [report.error ?? "Metrika API unavailable"]));
   const organicVisits = trafficChannels.find((row) => row.label === "Organic Search")?.visits ?? 0;
   const searchPhraseVisits = asNumber(searchPhrasesReport.totals[0]);
+  const pageCollections = buildPageCollections(pageRows, seoOs.section_patterns);
 
   return {
     counters: normalizedCounterIds,
@@ -612,10 +630,12 @@ export async function loadZarukuSeoData(counterIds: string[], from: string, to: 
         label: "SEO OS",
         layer: "serp",
         color: "#16a34a",
-        status: seoOs.available ? "connected" : "partial",
-        note: seoOs.available
+        status: seoOs.status === "available" ? "connected" : seoOs.status,
+        note: seoOs.status === "available"
           ? "Еженедельные tracked-позиции Яндекса, opportunities, tasks и telemetry."
-          : "Еженедельный SEO OS временно недоступен; on-site Метрика продолжает работать.",
+          : seoOs.status === "partial"
+            ? "Часть данных SEO OS временно недоступна; успешно загруженные наборы сохранены."
+            : "Еженедельный SEO OS временно недоступен; on-site Метрика продолжает работать.",
       },
     ],
     pending_requirements: PENDING_REQUIREMENTS,
@@ -631,8 +651,8 @@ export async function loadZarukuSeoData(counterIds: string[], from: string, to: 
     search_engines: searchEnginesReport.rows,
     search_phrases: searchPhrasesReport.rows,
     organic_landing_pages: organicLandingReport.rows,
-    top_pages: topPages.slice(0, 80),
-    content_sections: buildContentSections(topPages, seoOs.section_patterns),
+    top_pages: pageCollections.topPages,
+    content_sections: pageCollections.contentSections,
     geo_countries: countriesReport.rows,
     geo_cities: citiesReport.rows,
     devices: devicesReport.rows,

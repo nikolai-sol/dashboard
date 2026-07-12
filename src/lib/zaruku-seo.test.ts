@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { buildContentSections } from "@/lib/zaruku-seo";
+import { buildCanonicalPageRowsQuery, buildContentSections, buildPageCollections } from "@/lib/zaruku-seo";
 import type { ZarukuSeoMetricRow, ZarukuSeoSectionPattern } from "@/lib/types";
 
 function page(url: string, visits: number, users: number, pageviews: number): ZarukuSeoMetricRow {
@@ -45,4 +45,27 @@ test("buildContentSections uses SEO patterns and aggregates visits, users, and p
 
 test("buildContentSections does not invent URL-derived sections without configured patterns", () => {
   assert.deepEqual(buildContentSections([page("https://zaruku.ru/map/clinics/42", 3, 2, 5)], []), []);
+});
+
+test("complete page rows feed section aggregates while top pages remain display-limited", () => {
+  const rows = Array.from({ length: 201 }, (_, index) =>
+    page(`https://zaruku.ru/map/page-${index + 1}`, 1, 1, 1),
+  );
+  rows[200] = page("https://zaruku.ru/map/clinics/beyond-display-limit", 7, 6, 5);
+
+  const result = buildPageCollections(rows, patterns, 200);
+
+  assert.equal(result.topPages.length, 200);
+  assert.equal(result.topPages.some((row) => row.url?.includes("beyond-display-limit")), false);
+  assert.deepEqual(result.contentSections, [
+    { label: "Map", visits: 200, users: 200, pageviews: 200, share: 200 / 205 * 100, source: "metrika", layer: "onsite" },
+    { label: "Clinics", visits: 7, users: 6, pageviews: 5, share: 5 / 205 * 100, source: "metrika", layer: "onsite" },
+  ]);
+});
+
+test("canonical page rows query has no display LIMIT", () => {
+  const query = buildCanonicalPageRowsQuery(["66624469"], "2026-07-01", "2026-07-31");
+
+  assert.doesNotMatch(query.sql, /\bLIMIT\b/i);
+  assert.deepEqual(query.params, ["yandex_metrika", "66624469", "2026-07-01", "2026-07-31"]);
 });

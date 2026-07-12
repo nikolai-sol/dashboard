@@ -34,8 +34,11 @@ import type {
   ZarukuSeoSourceId,
 } from "@/lib/types";
 import {
+  canCompareWeeks,
   createWeekSelection,
   previousAvailableWeek,
+  reconcileWeekSelection,
+  shouldShowSeoWeekToolbar,
   updateWeekSelection,
   type WeekSelectionField,
 } from "@/components/zaruku-seo-week-selection";
@@ -506,39 +509,68 @@ function QualityTab({ data }: { data: ZarukuSeoData }) {
 
 export default function ZarukuSeoDashboard({ data, locale = "ru-RU" }: Props) {
   const [activeTab, setActiveTab] = useState<TabId>("overview");
-  const [weekSelection, setWeekSelection] = useState(() => createWeekSelection(data.seo_os.latest_week));
-  const [comparisonEnabled, setComparisonEnabled] = useState(false);
+  const weeksKey = data.seo_os.weeks.join("\u0000");
+  const [weekState, setWeekState] = useState(() => ({
+    weeksKey,
+    selection: createWeekSelection(data.seo_os.latest_week),
+    comparisonEnabled: false,
+  }));
+  const comparisonAvailable = canCompareWeeks(data.seo_os.weeks);
+  if (weekState.weeksKey !== weeksKey) {
+    setWeekState({
+      weeksKey,
+      selection: reconcileWeekSelection(weekState.selection, data.seo_os.weeks),
+      comparisonEnabled: weekState.comparisonEnabled && comparisonAvailable,
+    });
+  }
+  const reconciledWeekSelection = reconcileWeekSelection(weekState.selection, data.seo_os.weeks);
+  const effectiveComparisonEnabled = weekState.comparisonEnabled && comparisonAvailable;
+  const selectedWeeks = {
+    primaryWeek: reconciledWeekSelection.primaryWeek,
+    comparisonWeek: effectiveComparisonEnabled ? reconciledWeekSelection.comparisonWeek : null,
+  };
   const activeNav = NAV.find((item) => item.id === activeTab) ?? NAV[0];
   const CurrentIcon = activeNav.icon;
+
   const changeWeekSelection = (field: WeekSelectionField, week: string | null) => {
-    setWeekSelection((current) => updateWeekSelection(current, field, week, data.seo_os.weeks));
+    setWeekState((current) => ({
+      ...current,
+      selection: reconcileWeekSelection(updateWeekSelection(current.selection, field, week, data.seo_os.weeks), data.seo_os.weeks),
+    }));
   };
   const changeComparisonMode = (enabled: boolean) => {
-    setComparisonEnabled(enabled);
-    if (!enabled) setWeekSelection((current) => ({ ...current, comparisonWeek: null }));
+    setWeekState((current) => ({
+      ...current,
+      comparisonEnabled: enabled && comparisonAvailable,
+      selection: enabled ? current.selection : { ...current.selection, comparisonWeek: null },
+    }));
   };
   const comparePreviousWeek = () => {
-    setComparisonEnabled(true);
-    setWeekSelection((current) => ({
+    if (!comparisonAvailable) return;
+    setWeekState((current) => ({
       ...current,
-      comparisonWeek: current.primaryWeek ? previousAvailableWeek(data.seo_os.weeks, current.primaryWeek) : null,
+      comparisonEnabled: true,
+      selection: {
+        ...current.selection,
+        comparisonWeek: current.selection.primaryWeek ? previousAvailableWeek(data.seo_os.weeks, current.selection.primaryWeek) : null,
+      },
     }));
   };
   const content = useMemo(() => {
     switch (activeTab) {
       case "seo":
-        return <SeoTab data={data} locale={locale} primaryWeek={weekSelection.primaryWeek} comparisonWeek={weekSelection.comparisonWeek} />;
+        return <SeoTab data={data} locale={locale} primaryWeek={selectedWeeks.primaryWeek} comparisonWeek={selectedWeeks.comparisonWeek} />;
       case "seo_ops":
         return (
           <ZarukuSeoOperations
             seoOs={data.seo_os}
-            primaryWeek={weekSelection.primaryWeek}
-            comparisonWeek={weekSelection.comparisonWeek}
+            primaryWeek={selectedWeeks.primaryWeek}
+            comparisonWeek={selectedWeeks.comparisonWeek}
             source={data.sources.find((source) => source.id === "seo_os")}
           />
         );
       case "content":
-        return <ContentTab data={data} locale={locale} primaryWeek={weekSelection.primaryWeek} comparisonWeek={weekSelection.comparisonWeek} />;
+        return <ContentTab data={data} locale={locale} primaryWeek={selectedWeeks.primaryWeek} comparisonWeek={selectedWeeks.comparisonWeek} />;
       case "geo":
         return <GeoTab data={data} locale={locale} />;
       case "devices":
@@ -552,7 +584,7 @@ export default function ZarukuSeoDashboard({ data, locale = "ru-RU" }: Props) {
       default:
         return <OverviewTab data={data} locale={locale} />;
     }
-  }, [activeTab, data, locale, weekSelection.comparisonWeek, weekSelection.primaryWeek]);
+  }, [activeTab, data, locale, selectedWeeks.comparisonWeek, selectedWeeks.primaryWeek]);
 
   return (
     <div className="min-h-[calc(100vh-160px)] rounded-lg border border-slate-200 bg-slate-50 text-slate-900">
@@ -629,18 +661,18 @@ export default function ZarukuSeoDashboard({ data, locale = "ru-RU" }: Props) {
                 ))}
               </div>
             </div>
-            <div className="mt-3">
+            {shouldShowSeoWeekToolbar(activeTab) ? <div className="mt-3">
               <ZarukuSeoWeekToolbar
                 weeks={data.seo_os.weeks}
-                primaryWeek={weekSelection.primaryWeek}
-                comparisonWeek={weekSelection.comparisonWeek}
-                comparisonEnabled={comparisonEnabled}
+                primaryWeek={selectedWeeks.primaryWeek}
+                comparisonWeek={selectedWeeks.comparisonWeek}
+                comparisonEnabled={effectiveComparisonEnabled}
                 onComparisonEnabledChange={changeComparisonMode}
                 onPrimaryWeekChange={(week) => changeWeekSelection("primaryWeek", week)}
                 onComparisonWeekChange={(week) => changeWeekSelection("comparisonWeek", week)}
                 onComparePrevious={comparePreviousWeek}
               />
-            </div>
+            </div> : null}
             <div className="mt-3 flex gap-1 overflow-x-auto md:hidden">
               {NAV.map((item) => (
                 <button

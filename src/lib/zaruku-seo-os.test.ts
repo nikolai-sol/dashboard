@@ -76,7 +76,7 @@ test("buildRhythmWeeks inserts missing ISO weeks between available runs", () => 
     ]),
     [
       { week: "2026-W28", status: "completed", serp_requests: 50, llm_tokens: 0, digest_count: 1 },
-      { week: "2026-W29", status: "missing", serp_requests: 0, llm_tokens: 0, digest_count: 0 },
+      { week: "2026-W29", status: "missing", serp_requests: null, llm_tokens: null, digest_count: null },
       { week: "2026-W30", status: "noop", serp_requests: 0, llm_tokens: 0, digest_count: 0 },
     ],
   );
@@ -171,7 +171,7 @@ test("SEO OS account scope query builders bind account IDs as parameters", () =>
 test("buildRhythmWeeks represents SEO weeks without run telemetry as missing", () => {
   assert.deepEqual(
     buildRhythmWeeks([], ["2026-W28"]),
-    [{ week: "2026-W28", status: "missing", serp_requests: 0, llm_tokens: 0, digest_count: 0 }],
+    [{ week: "2026-W28", status: "missing", serp_requests: null, llm_tokens: null, digest_count: null }],
   );
 });
 
@@ -208,6 +208,7 @@ test("loadZarukuSeoOsData normalizes an empty account scope to the Zaruku fallba
   });
 
   assert.equal(data.available, true);
+  assert.equal(data.status, "available");
   assert.equal(queries.length, 5);
   for (const query of queries) {
     assert.doesNotMatch(query.sql, /IN\s*\(\s*\)/i);
@@ -215,22 +216,59 @@ test("loadZarukuSeoOsData normalizes an empty account scope to the Zaruku fallba
   }
 });
 
-test("loadZarukuSeoOsData isolates SEO database failures as unavailable data", async () => {
+test("loadZarukuSeoOsData preserves successful patterns when positions fail", async () => {
+  const data = await loadZarukuSeoOsData(["66624469"], async (query) => {
+    if (/FROM seo_section_patterns/i.test(query.sql)) {
+      return [{ section: "/map/", url_pattern: "/map/", priority: 1 }];
+    }
+    if (/FROM seo_positions_weekly/i.test(query.sql)) throw new Error("positions unavailable");
+    return [];
+  });
+
+  assert.equal(data.available, true);
+  assert.equal(data.status, "partial");
+  assert.equal(data.data_availability.section_patterns, true);
+  assert.equal(data.data_availability.positions, false);
+  assert.deepEqual(data.section_patterns, [{ section: "/map/", url_pattern: "/map/", priority: 1 }]);
+  assert.match(data.error ?? "", /positions: positions unavailable/);
+});
+
+test("loadZarukuSeoOsData preserves other successful tables after a partial failure", async () => {
+  const data = await loadZarukuSeoOsData(["66624469"], async (query) => {
+    if (/FROM seo_section_patterns/i.test(query.sql)) return [{ section: "/map/", url_pattern: "/map/", priority: 1 }];
+    if (/FROM seo_positions_weekly/i.test(query.sql)) {
+      return [{ week: "2026-W28", section: "/map/", cluster_id: "map", query: "clinic", serp_position: 4, delta_prev: null, matched_url: null, status: "found" }];
+    }
+    if (/FROM seo_opportunities/i.test(query.sql)) throw new Error("opportunities unavailable");
+    return [];
+  });
+
+  assert.equal(data.status, "partial");
+  assert.equal(data.data_availability.positions, true);
+  assert.equal(data.data_availability.opportunities, false);
+  assert.equal(data.data_availability.traffic_visibility, true);
+  assert.equal(data.clusters.length, 1);
+  assert.deepEqual(data.position_trend, [
+    { week: "2026-W28", section: "/map/", average_position: 4, coverage: 1, found_rows: 1, tracked_rows: 1 },
+  ]);
+});
+
+test("loadZarukuSeoOsData marks total SEO database failure unavailable", async () => {
   const data = await loadZarukuSeoOsData(["66624469"], async () => {
     throw new Error("seo database unavailable");
   });
 
-  assert.deepEqual(data, {
-    available: false,
-    error: "seo database unavailable",
-    weeks: [],
-    latest_week: null,
-    section_patterns: [],
-    position_trend: [],
-    clusters: [],
-    opportunities: [],
-    tasks: [],
-    runs: [],
-    traffic_visibility: [],
+  assert.equal(data.available, false);
+  assert.equal(data.status, "unavailable");
+  assert.deepEqual(data.data_availability, {
+    section_patterns: false,
+    positions: false,
+    opportunities: false,
+    tasks: false,
+    runs: false,
+    traffic_visibility: false,
   });
+  assert.deepEqual(data.section_patterns, []);
+  assert.deepEqual(data.clusters, []);
+  assert.match(data.error ?? "", /positions: seo database unavailable/);
 });

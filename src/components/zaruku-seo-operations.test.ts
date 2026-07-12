@@ -6,6 +6,7 @@ import {
   buildRunComparison,
   buildRhythmRows,
   buildTaskStatusSummary,
+  formatRunMetric,
   normalizeConfidencePercent,
 } from "@/components/zaruku-seo-operations";
 
@@ -57,7 +58,7 @@ const runs: ZarukuSeoRunRow[] = [
 test("buildRhythmRows retains generated missing weeks and failed rows", () => {
   assert.deepEqual(buildRhythmRows(runs, ["2026-W28", "2026-W29", "2026-W30"]), [
     { week: "2026-W28", status: "completed", serp_requests: 12, llm_tokens: 3000, digest_count: 2 },
-    { week: "2026-W29", status: "missing", serp_requests: 0, llm_tokens: 0, digest_count: 0 },
+    { week: "2026-W29", status: "missing", serp_requests: null, llm_tokens: null, digest_count: null },
     { week: "2026-W30", status: "failed", serp_requests: 50, llm_tokens: 0, digest_count: 0 },
   ]);
 });
@@ -68,6 +69,23 @@ test("buildRunComparison returns selected A/B telemetry and numeric deltas", () 
     comparison: { week: "2026-W28", status: "completed", serp_requests: 12, llm_tokens: 3000, digest_count: 2 },
     deltas: { serp_requests: 38, llm_tokens: -3000, digest_count: -2 },
   });
+});
+
+test("buildRunComparison suppresses numeric deltas when either selected run is missing", () => {
+  const rhythm = buildRhythmRows(runs, ["2026-W28", "2026-W29", "2026-W30"]);
+
+  assert.deepEqual(buildRunComparison(rhythm, "2026-W30", "2026-W29").deltas, {
+    serp_requests: null,
+    llm_tokens: null,
+    digest_count: null,
+  });
+});
+
+test("run metric formatting distinguishes unknown telemetry from valid zero values", () => {
+  assert.equal(formatRunMetric(null), "—");
+  assert.equal(formatRunMetric(null, 50), "—");
+  assert.equal(formatRunMetric(0), "0");
+  assert.equal(formatRunMetric(0, 50), "0 / 50");
 });
 
 test("normalizeConfidencePercent preserves canonical 0-100 confidence values", () => {

@@ -101,9 +101,9 @@ type SeoTaskDbRow = {
 type SeoRunDbRow = {
   week: string;
   status: ZarukuSeoRunRow["status"];
-  serp_requests: number | string;
-  llm_tokens: number | string;
-  digest_count: number | string;
+  serp_requests: number | string | null;
+  llm_tokens: number | string | null;
+  digest_count: number | string | null;
   stages: unknown;
 };
 
@@ -200,9 +200,9 @@ export function normalizeSeoRunRow(row: SeoRunDbRow): ZarukuSeoRunRow {
   return {
     week: String(row.week),
     status: row.status,
-    serp_requests: asNumber(row.serp_requests),
-    llm_tokens: asNumber(row.llm_tokens),
-    digest_count: asNumber(row.digest_count),
+    serp_requests: asNullableNumber(row.serp_requests),
+    llm_tokens: asNullableNumber(row.llm_tokens),
+    digest_count: asNullableNumber(row.digest_count),
     stages: parseStages(row.stages),
   };
 }
@@ -361,7 +361,7 @@ export function buildRhythmWeeks(runs: ZarukuSeoRunRow[], availableWeeks = runs.
 
   for (let current = first; current.year < last.year || (current.year === last.year && current.week <= last.week); current = nextIsoWeek(current)) {
     const week = formatIsoWeek(current);
-    rhythm.push(runsByWeek.get(week) ?? { week, status: "missing", serp_requests: 0, llm_tokens: 0, digest_count: 0 });
+    rhythm.push(runsByWeek.get(week) ?? { week, status: "missing", serp_requests: null, llm_tokens: null, digest_count: null });
   }
 
   return rhythm;
@@ -442,7 +442,16 @@ export function buildTrafficVisibility(
 export function emptyZarukuSeoOsData(error: string | null = null): ZarukuSeoOsData {
   return {
     available: false,
+    status: "unavailable",
     error,
+    data_availability: {
+      section_patterns: false,
+      positions: false,
+      opportunities: false,
+      tasks: false,
+      runs: false,
+      traffic_visibility: false,
+    },
     weeks: [],
     latest_week: null,
     section_patterns: [],
@@ -460,66 +469,129 @@ async function executeSeoOsQuery(query: SqlQuery) {
   return rows;
 }
 
+type SeoOsQueryResult<T> = { rows: T[]; available: boolean };
+
+function queryErrorMessage(error: unknown) {
+  return error instanceof Error ? error.message : String(error);
+}
+
+function normalizeSettledRows<DbRow, ResultRow>(
+  result: PromiseSettledResult<unknown[]>,
+  label: string,
+  normalize: (row: DbRow) => ResultRow,
+  errors: string[],
+): SeoOsQueryResult<ResultRow> {
+  if (result.status === "rejected") {
+    errors.push(`${label}: ${queryErrorMessage(result.reason)}`);
+    return { rows: [], available: false };
+  }
+  try {
+    return { rows: result.value.map((row) => normalize(row as DbRow)), available: true };
+  } catch (error) {
+    errors.push(`${label}: ${queryErrorMessage(error)}`);
+    return { rows: [], available: false };
+  }
+}
+
 export async function loadZarukuSeoOsData(
   counterIds: string[],
   executeQuery: SeoOsQueryExecutor = executeSeoOsQuery,
 ): Promise<ZarukuSeoOsData> {
-  try {
-    const normalizedCounterIds = normalizeAccountIds(counterIds);
-    const queries = buildSeoOsAccountQueries(normalizedCounterIds);
-    const [sectionPatternRows, clusterRows, opportunityRows, taskRows, runRows] = await Promise.all([
-      executeQuery(queries.sectionPatterns),
-      executeQuery(queries.positions),
-      executeQuery(queries.opportunities),
-      executeQuery(queries.tasks),
-      executeQuery(queries.runs),
-    ]);
-    const sectionPatterns = (sectionPatternRows as SeoSectionPatternDbRow[]).map(normalizeSeoSectionPatternRow);
-    const clusters = (clusterRows as SeoClusterDbRow[]).map(normalizeSeoClusterRow);
-    const opportunities = (opportunityRows as SeoOpportunityDbRow[]).map(normalizeSeoOpportunityRow);
-    const tasks = (taskRows as SeoTaskDbRow[]).map(normalizeSeoTaskRow);
-    const runRecords = (runRows as SeoRunDbRow[]).map(normalizeSeoRunRow);
-    const weeks = sortIsoWeeks([...new Set([...clusters, ...opportunities, ...tasks, ...runRecords].map((row) => row.week))]);
-    const positionTrend = buildSectionPositionTrend(clusters);
-    const runs = buildRhythmWeeks(runRecords, weeks);
+  const normalizedCounterIds = normalizeAccountIds(counterIds);
+  const queries = buildSeoOsAccountQueries(normalizedCounterIds);
+  const results = await Promise.allSettled([
+    executeQuery(queries.sectionPatterns),
+    executeQuery(queries.positions),
+    executeQuery(queries.opportunities),
+    executeQuery(queries.tasks),
+    executeQuery(queries.runs),
+  ]);
+  const errors: string[] = [];
+  const sectionPatternResult = normalizeSettledRows<SeoSectionPatternDbRow, ZarukuSeoSectionPattern>(
+    results[0],
+    "section_patterns",
+    normalizeSeoSectionPatternRow,
+    errors,
+  );
+  const clusterResult = normalizeSettledRows<SeoClusterDbRow, ZarukuSeoClusterRow>(
+    results[1],
+    "positions",
+    normalizeSeoClusterRow,
+    errors,
+  );
+  const opportunityResult = normalizeSettledRows<SeoOpportunityDbRow, ZarukuSeoOpportunityRow>(
+    results[2],
+    "opportunities",
+    normalizeSeoOpportunityRow,
+    errors,
+  );
+  const taskResult = normalizeSettledRows<SeoTaskDbRow, ZarukuSeoTaskRow>(
+    results[3],
+    "tasks",
+    normalizeSeoTaskRow,
+    errors,
+  );
+  const runResult = normalizeSettledRows<SeoRunDbRow, ZarukuSeoRunRow>(
+    results[4],
+    "runs",
+    normalizeSeoRunRow,
+    errors,
+  );
+  const sectionPatterns = sectionPatternResult.rows;
+  const clusters = clusterResult.rows;
+  const opportunities = opportunityResult.rows;
+  const tasks = taskResult.rows;
+  const runRecords = runResult.rows;
+  const weeks = sortIsoWeeks([...new Set([...clusters, ...opportunities, ...tasks, ...runRecords].map((row) => row.week))]);
+  const positionTrend = buildSectionPositionTrend(clusters);
+  const runs = buildRhythmWeeks(runRecords, weeks);
+  let trafficVisibility: ZarukuSeoTrafficVisibilityRow[] = [];
+  let trafficVisibilityAvailable = weeks.length === 0 && sectionPatternResult.available && clusterResult.available;
 
-    if (weeks.length === 0) {
-      return {
-        available: true,
-        error: null,
-        weeks,
-        latest_week: null,
-        section_patterns: sectionPatterns,
-        position_trend: positionTrend,
-        clusters,
-        opportunities,
-        tasks,
-        runs,
-        traffic_visibility: [],
-      };
-    }
-
+  if (weeks.length > 0) {
     const dateRange = {
       from: isoWeekDateRange(weeks[0]).from,
       to: isoWeekDateRange(weeks[weeks.length - 1]).to,
     };
-    const trafficQuery = buildSeoOsTrafficQuery(normalizedCounterIds, dateRange.from, dateRange.to);
-    const trafficRows = await executeQuery(trafficQuery);
-
-    return {
-      available: true,
-      error: null,
-      weeks,
-      latest_week: weeks[weeks.length - 1],
-      section_patterns: sectionPatterns,
-      position_trend: positionTrend,
-      clusters,
-      opportunities,
-      tasks,
-      runs,
-      traffic_visibility: buildTrafficVisibility(trafficRows as CanonicalPageTrafficDbRow[], sectionPatterns, positionTrend),
-    };
-  } catch (error) {
-    return emptyZarukuSeoOsData(error instanceof Error ? error.message : String(error));
+    try {
+      const trafficRows = await executeQuery(buildSeoOsTrafficQuery(normalizedCounterIds, dateRange.from, dateRange.to));
+      trafficVisibility = buildTrafficVisibility(trafficRows as CanonicalPageTrafficDbRow[], sectionPatterns, positionTrend);
+      trafficVisibilityAvailable = true;
+    } catch (error) {
+      errors.push(`traffic_visibility: ${queryErrorMessage(error)}`);
+    }
   }
+
+  const accountAvailability = [
+    sectionPatternResult.available,
+    clusterResult.available,
+    opportunityResult.available,
+    taskResult.available,
+    runResult.available,
+  ];
+  const successfulAccountQueries = accountAvailability.filter(Boolean).length;
+  const status = successfulAccountQueries === 0 ? "unavailable" : errors.length > 0 ? "partial" : "available";
+
+  return {
+    available: status !== "unavailable",
+    status,
+    error: errors.length > 0 ? errors.join("; ") : null,
+    data_availability: {
+      section_patterns: sectionPatternResult.available,
+      positions: clusterResult.available,
+      opportunities: opportunityResult.available,
+      tasks: taskResult.available,
+      runs: runResult.available,
+      traffic_visibility: trafficVisibilityAvailable,
+    },
+    weeks,
+    latest_week: weeks.at(-1) ?? null,
+    section_patterns: sectionPatterns,
+    position_trend: positionTrend,
+    clusters,
+    opportunities,
+    tasks,
+    runs,
+    traffic_visibility: trafficVisibility,
+  };
 }

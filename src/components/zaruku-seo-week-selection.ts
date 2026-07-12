@@ -10,7 +10,29 @@ export function createWeekSelection(latestWeek: string | null): WeekSelection {
 }
 
 function sortIsoWeeks(weeks: string[]) {
-  return [...weeks].sort((left, right) => (left < right ? -1 : left > right ? 1 : 0));
+  return [...new Set(weeks)].sort((left, right) => (left < right ? -1 : left > right ? 1 : 0));
+}
+
+export function canCompareWeeks(weeks: string[]) {
+  return new Set(weeks).size >= 2;
+}
+
+export function shouldShowSeoWeekToolbar(activeTab: string) {
+  return activeTab === "seo" || activeTab === "seo_ops" || activeTab === "content";
+}
+
+export function reconcileWeekSelection(selection: WeekSelection, weeks: string[]): WeekSelection {
+  const sortedWeeks = sortIsoWeeks(weeks);
+  const primaryWeek = selection.primaryWeek && sortedWeeks.includes(selection.primaryWeek)
+    ? selection.primaryWeek
+    : sortedWeeks.at(-1) ?? null;
+  const comparisonWeek = canCompareWeeks(sortedWeeks)
+    && selection.comparisonWeek
+    && sortedWeeks.includes(selection.comparisonWeek)
+    && selection.comparisonWeek !== primaryWeek
+    ? selection.comparisonWeek
+    : null;
+  return { primaryWeek, comparisonWeek };
 }
 
 export function previousAvailableWeek(weeks: string[], selectedWeek: string) {

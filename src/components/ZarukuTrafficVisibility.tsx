@@ -34,7 +34,7 @@ export default function ZarukuTrafficVisibility({ seoOs, primaryWeek, comparison
     comparison_position: row.comparison?.average_position ?? null,
   }));
 
-  if (!seoOs.available) {
+  if (!seoOs.data_availability.section_patterns || !seoOs.data_availability.traffic_visibility) {
     return <section className="rounded-lg border border-slate-200 bg-white px-5 py-8 text-sm text-slate-500">SEO visibility временно недоступна. Повторите попытку позже.</section>;
   }
 

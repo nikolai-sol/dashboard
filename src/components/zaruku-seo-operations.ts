@@ -21,6 +21,12 @@ export type OpportunityDecisionSummary = {
   approve_rate_delta: number | null;
 };
 
+export function formatRunMetric(value: number | null, budget?: number) {
+  if (value == null) return "—";
+  const formatted = value.toLocaleString("ru-RU", { maximumFractionDigits: 1 });
+  return budget == null ? formatted : `${formatted} / ${budget}`;
+}
+
 export function normalizeConfidencePercent(value: number) {
   return value;
 }
@@ -106,13 +112,19 @@ export function buildRunComparison(
 ) {
   const primary = rows.find((row) => row.week === primaryWeek) ?? null;
   const comparison = rows.find((row) => row.week === comparisonWeek) ?? null;
+  const comparable = primary?.status !== "missing" && comparison?.status !== "missing";
+  const delta = (key: "serp_requests" | "llm_tokens" | "digest_count") => {
+    const primaryValue = primary?.[key];
+    const comparisonValue = comparison?.[key];
+    return comparable && primaryValue != null && comparisonValue != null ? primaryValue - comparisonValue : null;
+  };
   return {
     primary,
     comparison,
     deltas: {
-      serp_requests: primary && comparison ? primary.serp_requests - comparison.serp_requests : null,
-      llm_tokens: primary && comparison ? primary.llm_tokens - comparison.llm_tokens : null,
-      digest_count: primary && comparison ? primary.digest_count - comparison.digest_count : null,
+      serp_requests: delta("serp_requests"),
+      llm_tokens: delta("llm_tokens"),
+      digest_count: delta("digest_count"),
     },
   };
 }
@@ -123,8 +135,8 @@ export function buildRhythmRows(rows: ZarukuSeoRunRow[], weeks: string[]): Zaruk
   return rhythmWeeks.map((week) => byWeek.get(week) ?? {
     week,
     status: "missing" as const,
-    serp_requests: 0,
-    llm_tokens: 0,
-    digest_count: 0,
+    serp_requests: null,
+    llm_tokens: null,
+    digest_count: null,
   });
 }

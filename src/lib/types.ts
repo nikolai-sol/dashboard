@@ -568,7 +568,7 @@ export interface AbbottBiData {
 
 export type ZarukuSeoLayerId = "onsite" | "serp" | "ai";
 export type ZarukuSeoSourceId = "metrika" | "gsc" | "webmaster" | "dataforseo" | "seo_os";
-export type ZarukuSeoSourceStatus = "connected" | "pending" | "partial";
+export type ZarukuSeoSourceStatus = "connected" | "pending" | "partial" | "unavailable";
 
 export interface ZarukuSeoLayer {
   id: ZarukuSeoLayerId;
@@ -700,9 +700,9 @@ export type ZarukuSeoRunStatus = "completed" | "failed" | "noop" | "missing";
 export interface ZarukuSeoRunRow {
   week: string;
   status: ZarukuSeoRunStatus;
-  serp_requests: number;
-  llm_tokens: number;
-  digest_count: number;
+  serp_requests: number | null;
+  llm_tokens: number | null;
+  digest_count: number | null;
   stages?: Record<string, unknown>;
 }
 
@@ -718,7 +718,16 @@ export interface ZarukuSeoTrafficVisibilityRow {
 
 export interface ZarukuSeoOsData {
   available: boolean;
+  status: "available" | "partial" | "unavailable";
   error: string | null;
+  data_availability: {
+    section_patterns: boolean;
+    positions: boolean;
+    opportunities: boolean;
+    tasks: boolean;
+    runs: boolean;
+    traffic_visibility: boolean;
+  };
   weeks: string[];
   latest_week: string | null;
   section_patterns: ZarukuSeoSectionPattern[];

@@ -1,7 +1,7 @@
 "use client";
 
 import { History } from "lucide-react";
-import { previousAvailableWeek } from "@/components/zaruku-seo-week-selection";
+import { canCompareWeeks, previousAvailableWeek } from "@/components/zaruku-seo-week-selection";
 
 type Props = {
   weeks: string[];
@@ -26,6 +26,7 @@ export default function ZarukuSeoWeekToolbar({
 }: Props) {
   const previousWeek = primaryWeek ? previousAvailableWeek(weeks, primaryWeek) : null;
   const hasWeeks = weeks.length > 0;
+  const comparisonAvailable = canCompareWeeks(weeks);
 
   return (
     <div className="grid gap-2 sm:grid-cols-[auto_minmax(10rem,1fr)_minmax(10rem,1fr)_2rem] sm:items-end">
@@ -40,9 +41,11 @@ export default function ZarukuSeoWeekToolbar({
         </button>
         <button
           type="button"
-          aria-pressed={comparisonEnabled}
+          aria-pressed={comparisonEnabled && comparisonAvailable}
+          disabled={!comparisonAvailable}
+          title={comparisonAvailable ? undefined : "Для сравнения нужны как минимум две доступные недели"}
           onClick={() => onComparisonEnabledChange(true)}
-          className={comparisonEnabled ? "rounded bg-slate-900 px-2.5 text-xs font-medium text-white shadow-sm" : "rounded px-2.5 text-xs text-slate-500 hover:text-slate-800"}
+          className={comparisonEnabled && comparisonAvailable ? "rounded bg-slate-900 px-2.5 text-xs font-medium text-white shadow-sm" : "rounded px-2.5 text-xs text-slate-500 hover:text-slate-800 disabled:cursor-not-allowed disabled:text-slate-300"}
         >
           Compare
         </button>
@@ -67,7 +70,7 @@ export default function ZarukuSeoWeekToolbar({
         <select
           aria-label="Сравнительная ISO неделя"
           value={comparisonWeek ?? ""}
-          disabled={!comparisonEnabled || !hasWeeks}
+          disabled={!comparisonEnabled || !comparisonAvailable}
           onChange={(event) => onComparisonWeekChange(event.target.value || null)}
           className="h-9 w-full min-w-0 rounded-md border border-slate-200 bg-white px-2 text-sm text-slate-800 outline-none focus:border-teal-600 disabled:cursor-not-allowed disabled:bg-slate-100 disabled:text-slate-400"
         >
