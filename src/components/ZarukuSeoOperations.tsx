@@ -6,6 +6,7 @@ import type { ZarukuSeoOsData, ZarukuSeoSource, ZarukuSeoTaskStatus } from "@/li
 import { resolveSafeExternalUrl } from "@/components/zaruku-seo-analytics";
 import {
   buildOpportunityDecisionSummary,
+  buildRunComparison,
   buildRhythmRows,
   buildTaskStatusSummary,
   normalizeConfidencePercent,
@@ -39,6 +40,19 @@ function formatNumber(value: number) {
 
 function formatRate(value: number | null) {
   return value == null ? "—" : `${formatNumber(value)}%`;
+}
+
+function formatSigned(value: number) {
+  return `${value > 0 ? "+" : ""}${formatNumber(value)}`;
+}
+
+function ComparisonDetail({ comparison, delta }: { comparison: number | null; delta: number | null }) {
+  return (
+    <div className="mt-1 flex min-h-4 flex-wrap items-center gap-x-2 text-xs text-slate-500">
+      {comparison != null ? <span>B {formatNumber(comparison)}</span> : null}
+      {delta != null ? <span className="font-medium text-slate-700">Δ {formatSigned(delta)}</span> : null}
+    </div>
+  );
 }
 
 function safeLinkLabel(value: string) {
@@ -76,7 +90,10 @@ export default function ZarukuSeoOperations({ seoOs, primaryWeek, comparisonWeek
     () => buildOpportunityDecisionSummary(seoOs.opportunities, primaryWeek, comparisonWeek),
     [comparisonWeek, primaryWeek, seoOs.opportunities],
   );
-  const taskCounts = useMemo(() => buildTaskStatusSummary(seoOs.tasks, primaryWeek), [primaryWeek, seoOs.tasks]);
+  const taskSummary = useMemo(
+    () => buildTaskStatusSummary(seoOs.tasks, primaryWeek, comparisonWeek),
+    [comparisonWeek, primaryWeek, seoOs.tasks],
+  );
   const opportunities = useMemo(
     () => seoOs.opportunities
       .filter((row) => row.week === primaryWeek)
@@ -88,6 +105,10 @@ export default function ZarukuSeoOperations({ seoOs, primaryWeek, comparisonWeek
     [primaryWeek, seoOs.tasks],
   );
   const rhythm = useMemo(() => buildRhythmRows(seoOs.runs, seoOs.weeks), [seoOs.runs, seoOs.weeks]);
+  const runComparison = useMemo(
+    () => buildRunComparison(rhythm, primaryWeek, comparisonWeek),
+    [comparisonWeek, primaryWeek, rhythm],
+  );
 
   if (!seoOs.available) {
     return <section className="rounded-lg border border-slate-200 bg-white px-5 py-8 text-sm text-slate-500">SEO Ops временно недоступен. Повторите попытку позже.</section>;
@@ -99,13 +120,16 @@ export default function ZarukuSeoOperations({ seoOs, primaryWeek, comparisonWeek
         <header className="flex flex-wrap items-start justify-between gap-3 border-b border-slate-100 px-5 py-4">
           <div>
             <h3 className="text-base font-semibold text-slate-900">Воронка SEO-решений</h3>
-            <p className="mt-1 text-xs text-slate-500">{primaryWeek ?? "Выберите основную неделю"}</p>
+            <p className="mt-1 text-xs text-slate-500">A {primaryWeek ?? "не выбрана"}{comparisonWeek ? ` · B ${comparisonWeek}` : ""}</p>
           </div>
           {source ? <span className="inline-flex items-center gap-1.5 rounded-md border border-slate-200 bg-white px-2 py-1 text-xs font-medium text-slate-600"><span className="h-1.5 w-1.5 rounded-full" style={{ background: source.color }} />{source.label}</span> : null}
         </header>
         <div className="grid gap-px bg-slate-100 sm:grid-cols-5">
-          {Object.entries(DECISION_LABELS).map(([decision, label]) => <div key={decision} className="bg-white px-4 py-3"><div className="text-xs text-slate-500">{label}</div><div className="mt-1 text-xl font-semibold text-slate-900">{decisionSummary.counts[decision as keyof typeof decisionSummary.counts]}</div></div>)}
-          <div className="bg-white px-4 py-3"><div className="text-xs text-slate-500">Approve rate</div><div className="mt-1 text-xl font-semibold text-slate-900">{formatRate(decisionSummary.approve_rate)}</div>{comparisonWeek && decisionSummary.approve_rate_delta != null ? <div className={decisionSummary.approve_rate_delta >= 0 ? "text-xs text-teal-700" : "text-xs text-red-700"}>A/B {decisionSummary.approve_rate_delta >= 0 ? "+" : ""}{formatRate(decisionSummary.approve_rate_delta)}</div> : null}</div>
+          {Object.entries(DECISION_LABELS).map(([decision, label]) => {
+            const key = decision as keyof typeof decisionSummary.counts;
+            return <div key={decision} className="min-h-24 bg-white px-4 py-3"><div className="text-xs text-slate-500">{label}</div><div className="mt-1 text-xl font-semibold text-slate-900">{decisionSummary.counts[key]}</div><ComparisonDetail comparison={decisionSummary.comparison_counts?.[key] ?? null} delta={decisionSummary.count_deltas?.[key] ?? null} /></div>;
+          })}
+          <div className="min-h-24 bg-white px-4 py-3"><div className="text-xs text-slate-500">Approve rate</div><div className="mt-1 text-xl font-semibold text-slate-900">{formatRate(decisionSummary.approve_rate)}</div><div className="mt-1 flex min-h-4 flex-wrap items-center gap-x-2 text-xs text-slate-500">{comparisonWeek && decisionSummary.comparison_approve_rate != null ? <span>B {formatRate(decisionSummary.comparison_approve_rate)}</span> : null}{comparisonWeek && decisionSummary.approve_rate_delta != null ? <span className={decisionSummary.approve_rate_delta >= 0 ? "font-medium text-teal-700" : "font-medium text-red-700"}>Δ {decisionSummary.approve_rate_delta > 0 ? "+" : ""}{formatRate(decisionSummary.approve_rate_delta)}</span> : null}</div></div>
         </div>
         <div className="max-h-[360px] overflow-auto px-5 py-4">
           <table className="w-full min-w-[920px] text-sm">
@@ -119,13 +143,21 @@ export default function ZarukuSeoOperations({ seoOs, primaryWeek, comparisonWeek
       </section>
 
       <section className="rounded-lg border border-slate-200 bg-white">
-        <header className="flex items-start gap-2 border-b border-slate-100 px-5 py-4"><ListChecks className="mt-0.5 h-4 w-4 text-teal-700" aria-hidden="true" /><div><h3 className="text-base font-semibold text-slate-900">Задачи</h3><p className="mt-1 text-xs text-slate-500">Статусы задач для {primaryWeek ?? "выбранной недели"}</p></div></header>
-        <div className="grid gap-px bg-slate-100 sm:grid-cols-5">{Object.entries(TASK_LABELS).map(([status, label]) => <div key={status} className="bg-white px-4 py-3"><div className="text-xs text-slate-500">{label}</div><div className={status === "awaiting_medical_review" ? "mt-1 text-xl font-semibold text-red-700" : "mt-1 text-xl font-semibold text-slate-900"}>{taskCounts[status as ZarukuSeoTaskStatus]}</div></div>)}</div>
+        <header className="flex items-start gap-2 border-b border-slate-100 px-5 py-4"><ListChecks className="mt-0.5 h-4 w-4 text-teal-700" aria-hidden="true" /><div><h3 className="text-base font-semibold text-slate-900">Задачи</h3><p className="mt-1 text-xs text-slate-500">A {primaryWeek ?? "не выбрана"}{comparisonWeek ? ` · B ${comparisonWeek}` : ""}</p></div></header>
+        <div className="grid gap-px bg-slate-100 sm:grid-cols-5">{Object.entries(TASK_LABELS).map(([status, label]) => { const key = status as ZarukuSeoTaskStatus; return <div key={status} className="min-h-24 bg-white px-4 py-3"><div className="text-xs text-slate-500">{label}</div><div className={status === "awaiting_medical_review" ? "mt-1 text-xl font-semibold text-red-700" : "mt-1 text-xl font-semibold text-slate-900"}>{taskSummary.counts[key]}</div><ComparisonDetail comparison={taskSummary.comparison_counts?.[key] ?? null} delta={taskSummary.count_deltas?.[key] ?? null} /></div>; })}</div>
         {tasks.length === 0 ? <div className="px-5 py-7 text-center text-sm text-slate-500">ждёт первого approve</div> : <div className="max-h-[300px] overflow-auto px-5 py-4"><table className="w-full min-w-[680px] text-sm"><thead><tr className="text-left text-xs uppercase text-slate-400"><th className="pb-2 font-medium">Задача</th><th className="pb-2 font-medium">Раздел</th><th className="pb-2 font-medium">Статус</th><th className="pb-2 font-medium">Notion</th></tr></thead><tbody className="divide-y divide-slate-100">{tasks.map((task) => <tr key={task.task_id}><td className="py-2.5 font-medium text-slate-700">{task.title}</td><td className="py-2.5 text-slate-500">{task.section ?? "—"}</td><td className="py-2.5"><span className={`inline-flex rounded-md border px-2 py-1 text-xs font-semibold ${taskBadgeClass(task.status)}`}>{TASK_LABELS[task.status]}</span></td><td className="py-2.5"><ExternalUrl value={task.notion_url} label="Открыть" /></td></tr>)}</tbody></table></div>}
       </section>
 
       <section className="rounded-lg border border-slate-200 bg-white">
         <header className="flex items-start gap-2 border-b border-slate-100 px-5 py-4"><Gauge className="mt-0.5 h-4 w-4 text-teal-700" aria-hidden="true" /><div><h3 className="text-base font-semibold text-slate-900">Ритм pipeline</h3><p className="mt-1 text-xs text-slate-500">SERP budget: 50 запросов в календарную неделю</p></div></header>
+        {comparisonWeek ? <div className="grid gap-px bg-slate-100 sm:grid-cols-2 xl:grid-cols-4">
+          <div className="min-h-28 bg-white px-4 py-3"><div className="text-xs text-slate-500">Статус запуска</div><div className="mt-2 flex min-w-0 flex-col gap-2 text-xs"><div className="flex min-w-0 items-center gap-2"><span className="w-4 shrink-0 text-slate-400">A</span><span className="truncate text-slate-600">{primaryWeek}</span>{runComparison.primary ? <span className={`ml-auto inline-flex shrink-0 rounded-md border px-2 py-1 font-semibold ${runBadgeClass(runComparison.primary.status)}`}>{runComparison.primary.status}</span> : <span className="ml-auto text-slate-400">—</span>}</div><div className="flex min-w-0 items-center gap-2"><span className="w-4 shrink-0 text-slate-400">B</span><span className="truncate text-slate-600">{comparisonWeek}</span>{runComparison.comparison ? <span className={`ml-auto inline-flex shrink-0 rounded-md border px-2 py-1 font-semibold ${runBadgeClass(runComparison.comparison.status)}`}>{runComparison.comparison.status}</span> : <span className="ml-auto text-slate-400">—</span>}</div></div></div>
+          {([
+            ["SERP requests", "serp_requests", true],
+            ["LLM tokens", "llm_tokens", false],
+            ["Digest", "digest_count", false],
+          ] as const).map(([label, key, budget]) => <div key={key} className="min-h-28 bg-white px-4 py-3"><div className="text-xs text-slate-500">{label}</div><div className="mt-1 text-xl font-semibold text-slate-900">{runComparison.primary ? `${formatNumber(runComparison.primary[key])}${budget ? " / 50" : ""}` : "—"}</div><ComparisonDetail comparison={runComparison.comparison?.[key] ?? null} delta={runComparison.deltas[key]} /></div>)}
+        </div> : null}
         <div className="max-h-[360px] overflow-auto px-5 py-4"><table className="w-full min-w-[700px] text-sm"><thead><tr className="text-left text-xs uppercase text-slate-400"><th className="pb-2 font-medium">Неделя</th><th className="pb-2 font-medium">Статус</th><th className="pb-2 text-right font-medium">SERP</th><th className="pb-2 text-right font-medium">LLM tokens</th><th className="pb-2 text-right font-medium">Digest</th></tr></thead><tbody className="divide-y divide-slate-100">{rhythm.map((run) => <tr key={run.week}><td className="py-2.5 font-medium text-slate-700">{run.week}</td><td className="py-2.5"><span className={`inline-flex rounded-md border px-2 py-1 text-xs font-semibold ${runBadgeClass(run.status)}`}>{run.status}</span></td><td className="py-2.5 text-right text-slate-600">{formatNumber(run.serp_requests)} / 50</td><td className="py-2.5 text-right text-slate-600">{formatNumber(run.llm_tokens)}</td><td className="py-2.5 text-right text-slate-600">{formatNumber(run.digest_count)}</td></tr>)}{rhythm.length === 0 ? <tr><td colSpan={5} className="py-6 text-center text-sm text-slate-500">Нет telemetry по календарным неделям.</td></tr> : null}</tbody></table></div>
       </section>
     </div>

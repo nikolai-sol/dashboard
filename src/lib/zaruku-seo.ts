@@ -1,12 +1,13 @@
 import type { RowDataPacket } from "mysql2";
 import pool from "@/lib/db";
-import { loadZarukuSeoOsData } from "@/lib/zaruku-seo-os";
+import { loadZarukuSeoOsData, matchSectionPattern } from "@/lib/zaruku-seo-os";
 import type {
   ZarukuSeoData,
   ZarukuSeoDataQualityItem,
   ZarukuSeoKpi,
   ZarukuSeoMetricRow,
   ZarukuSeoPendingRequirement,
+  ZarukuSeoSectionPattern,
   ZarukuSeoSource,
 } from "@/lib/types";
 
@@ -138,33 +139,6 @@ function normalizeCounterIds(counterIds: string[]) {
   return ids.length > 0 ? ids : ["66624469"];
 }
 
-function normalizeUrl(rawUrl: string | null | undefined) {
-  const value = asString(rawUrl).trim();
-  if (!value) return "";
-  try {
-    const url = new URL(value);
-    return `${url.origin}${url.pathname.replace(/\/+$/, "") || "/"}`;
-  } catch {
-    return value.replace(/\/+$/, "");
-  }
-}
-
-function pathFromUrl(rawUrl: string | null | undefined) {
-  const value = normalizeUrl(rawUrl);
-  if (!value) return "/";
-  try {
-    const url = new URL(value);
-    return url.pathname || "/";
-  } catch {
-    return value;
-  }
-}
-
-function sectionFromUrl(rawUrl: string | null | undefined) {
-  const path = pathFromUrl(rawUrl).replace(/^\/+|\/+$/g, "");
-  return path ? path.split("/")[0] : "home";
-}
-
 function readableTrafficSource(label: string) {
   const normalized = label.trim();
   const map: Record<string, string> = {
@@ -257,7 +231,7 @@ async function queryTopPages(counterIds: string[], from: string, to: string) {
       COALESCE(page_url, '') AS url,
       COALESCE(SUM(pageviews), 0) AS pageviews,
       COALESCE(SUM(users), 0) AS users,
-      0 AS visits
+      COALESCE(SUM(visits), 0) AS visits
     FROM canonical_fact_site_analytics_daily
     WHERE source_key = ?
       AND analytics_account_id IN (${buildInClause(counterIds)})
@@ -265,7 +239,7 @@ async function queryTopPages(counterIds: string[], from: string, to: string) {
       AND report_date >= ?
       AND report_date <= ?
     GROUP BY COALESCE(page_title, ''), COALESCE(page_url, '')
-    HAVING pageviews > 0 OR users > 0
+    HAVING visits > 0 OR pageviews > 0 OR users > 0
     ORDER BY pageviews DESC, users DESC
     LIMIT 200
   `;
@@ -273,7 +247,6 @@ async function queryTopPages(counterIds: string[], from: string, to: string) {
   const totalPageviews = rows.reduce((sum, row) => sum + asNumber(row.pageviews), 0);
   return rows.map((row) => ({
     ...rowFromCanonical(row, totalPageviews),
-    visits: 0,
     share: totalPageviews > 0 ? (asNumber(row.pageviews) / totalPageviews) * 100 : 0,
   }));
 }
@@ -389,10 +362,12 @@ async function fetchMetrikaReportsSequential(
 
 const EMPTY_REPORT: MetrikaReport = { ok: false, rows: [], totals: [], error: "Report was not requested" };
 
-function buildContentSections(topPages: ZarukuSeoMetricRow[]) {
+export function buildContentSections(topPages: ZarukuSeoMetricRow[], patterns: ZarukuSeoSectionPattern[]) {
   const bySection = new Map<string, ZarukuSeoMetricRow>();
   topPages.forEach((page) => {
-    const section = sectionFromUrl(page.url);
+    if (!page.url) return;
+    const section = matchSectionPattern(page.url, patterns)?.section;
+    if (!section) return;
     const current =
       bySection.get(section) ??
       ({
@@ -404,6 +379,7 @@ function buildContentSections(topPages: ZarukuSeoMetricRow[]) {
         source: "metrika",
         layer: "onsite",
       } satisfies ZarukuSeoMetricRow);
+    current.visits += page.visits;
     current.users += page.users;
     current.pageviews += page.pageviews;
     bySection.set(section, current);
@@ -656,7 +632,7 @@ export async function loadZarukuSeoData(counterIds: string[], from: string, to: 
     search_phrases: searchPhrasesReport.rows,
     organic_landing_pages: organicLandingReport.rows,
     top_pages: topPages.slice(0, 80),
-    content_sections: buildContentSections(topPages),
+    content_sections: buildContentSections(topPages, seoOs.section_patterns),
     geo_countries: countriesReport.rows,
     geo_cities: citiesReport.rows,
     devices: devicesReport.rows,

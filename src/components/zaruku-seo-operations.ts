@@ -14,17 +14,33 @@ export type TaskStatusCounts = Record<ZarukuSeoTaskStatus, number>;
 
 export type OpportunityDecisionSummary = {
   counts: OpportunityDecisionCounts;
+  comparison_counts: OpportunityDecisionCounts | null;
+  count_deltas: OpportunityDecisionCounts | null;
   approve_rate: number | null;
   comparison_approve_rate: number | null;
   approve_rate_delta: number | null;
 };
 
 export function normalizeConfidencePercent(value: number) {
-  return value >= 0 && value <= 1 ? value * 100 : value;
+  return value;
 }
 
 function emptyDecisionCounts(): OpportunityDecisionCounts {
   return { pending: 0, approved: 0, rejected: 0, carried_over: 0 };
+}
+
+function emptyTaskCounts(): TaskStatusCounts {
+  return { draft: 0, awaiting_medical_review: 0, in_progress: 0, done: 0, cancelled: 0 };
+}
+
+function countDeltas<Key extends string>(
+  primary: Record<Key, number>,
+  comparison: Record<Key, number>,
+  keys: readonly Key[],
+) {
+  const deltas = {} as Record<Key, number>;
+  for (const key of keys) deltas[key] = primary[key] - comparison[key];
+  return deltas;
 }
 
 function approveRate(counts: OpportunityDecisionCounts) {
@@ -48,22 +64,57 @@ export function buildOpportunityDecisionSummary(
 ): OpportunityDecisionSummary {
   const counts = decisionCountsForWeek(rows, primaryWeek);
   const approve_rate = approveRate(counts);
-  const comparison_approve_rate = comparisonWeek ? approveRate(decisionCountsForWeek(rows, comparisonWeek)) : null;
+  const comparison_counts = comparisonWeek ? decisionCountsForWeek(rows, comparisonWeek) : null;
+  const comparison_approve_rate = comparison_counts ? approveRate(comparison_counts) : null;
   return {
     counts,
+    comparison_counts,
+    count_deltas: comparison_counts ? countDeltas(counts, comparison_counts, OPPORTUNITY_DECISIONS) : null,
     approve_rate,
     comparison_approve_rate,
     approve_rate_delta: approve_rate != null && comparison_approve_rate != null ? approve_rate - comparison_approve_rate : null,
   };
 }
 
-export function buildTaskStatusSummary(rows: ZarukuSeoTaskRow[], week: string | null): TaskStatusCounts {
-  const counts: TaskStatusCounts = { draft: 0, awaiting_medical_review: 0, in_progress: 0, done: 0, cancelled: 0 };
+function taskCountsForWeek(rows: ZarukuSeoTaskRow[], week: string | null): TaskStatusCounts {
+  const counts = emptyTaskCounts();
   if (!week) return counts;
   for (const row of rows) {
     if (row.week === week && TASK_STATUSES.includes(row.status)) counts[row.status] += 1;
   }
   return counts;
+}
+
+export function buildTaskStatusSummary(
+  rows: ZarukuSeoTaskRow[],
+  primaryWeek: string | null,
+  comparisonWeek: string | null = null,
+) {
+  const counts = taskCountsForWeek(rows, primaryWeek);
+  const comparison_counts = comparisonWeek ? taskCountsForWeek(rows, comparisonWeek) : null;
+  return {
+    counts,
+    comparison_counts,
+    count_deltas: comparison_counts ? countDeltas(counts, comparison_counts, TASK_STATUSES) : null,
+  };
+}
+
+export function buildRunComparison(
+  rows: ZarukuSeoRunRow[],
+  primaryWeek: string | null,
+  comparisonWeek: string | null,
+) {
+  const primary = rows.find((row) => row.week === primaryWeek) ?? null;
+  const comparison = rows.find((row) => row.week === comparisonWeek) ?? null;
+  return {
+    primary,
+    comparison,
+    deltas: {
+      serp_requests: primary && comparison ? primary.serp_requests - comparison.serp_requests : null,
+      llm_tokens: primary && comparison ? primary.llm_tokens - comparison.llm_tokens : null,
+      digest_count: primary && comparison ? primary.digest_count - comparison.digest_count : null,
+    },
+  };
 }
 
 export function buildRhythmRows(rows: ZarukuSeoRunRow[], weeks: string[]): ZarukuSeoRunRow[] {

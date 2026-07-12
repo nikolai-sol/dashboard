@@ -1,11 +1,14 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import {
+  buildTrafficVisibility,
   buildSeoOsAccountQueries,
   buildSeoOsTrafficQuery,
   buildRhythmWeeks,
   buildSectionPositionTrend,
   calculateApproveRate,
+  isoWeekDateRange,
+  loadZarukuSeoOsData,
   matchSectionPattern,
   normalizeSeoClusterRow,
   normalizeSeoOpportunityRow,
@@ -170,4 +173,64 @@ test("buildRhythmWeeks represents SEO weeks without run telemetry as missing", (
     buildRhythmWeeks([], ["2026-W28"]),
     [{ week: "2026-W28", status: "missing", serp_requests: 0, llm_tokens: 0, digest_count: 0 }],
   );
+});
+
+test("isoWeekDateRange returns deterministic Monday through Sunday boundaries", () => {
+  assert.deepEqual(isoWeekDateRange("2026-W28"), { from: "2026-07-06", to: "2026-07-12" });
+  assert.deepEqual(isoWeekDateRange("2026-W01"), { from: "2025-12-29", to: "2026-01-04" });
+});
+
+test("buildTrafficVisibility aggregates every traffic metric with authoritative pattern precedence", () => {
+  assert.deepEqual(
+    buildTrafficVisibility(
+      [
+        { report_date: "2026-07-06", page_url: "https://zaruku.ru/map/clinics/42", visits: "3", users: "2", pageviews: "5" },
+        { report_date: "2026-07-12", page_url: "https://zaruku.ru/map/clinics/99", visits: 4, users: 3, pageviews: 6 },
+        { report_date: "2026-07-12", page_url: "https://zaruku.ru/priority/test", visits: 7, users: 6, pageviews: 8 },
+        { report_date: "2026-07-13", page_url: "https://zaruku.ru/unknown", visits: 11, users: 10, pageviews: 12 },
+      ],
+      patterns,
+      [],
+    ),
+    [
+      { week: "2026-W28", section: "/map/clinics/", visits: 7, users: 5, pageviews: 11, average_position: null, coverage: null },
+      { week: "2026-W28", section: "/priority-b/", visits: 7, users: 6, pageviews: 8, average_position: null, coverage: null },
+      { week: "2026-W29", section: "/content/", visits: 11, users: 10, pageviews: 12, average_position: null, coverage: null },
+    ],
+  );
+});
+
+test("loadZarukuSeoOsData normalizes an empty account scope to the Zaruku fallback", async () => {
+  const queries: Array<{ sql: string; params: string[] }> = [];
+  const data = await loadZarukuSeoOsData([], async (query) => {
+    queries.push(query);
+    return [];
+  });
+
+  assert.equal(data.available, true);
+  assert.equal(queries.length, 5);
+  for (const query of queries) {
+    assert.doesNotMatch(query.sql, /IN\s*\(\s*\)/i);
+    assert.deepEqual(query.params, ["66624469"]);
+  }
+});
+
+test("loadZarukuSeoOsData isolates SEO database failures as unavailable data", async () => {
+  const data = await loadZarukuSeoOsData(["66624469"], async () => {
+    throw new Error("seo database unavailable");
+  });
+
+  assert.deepEqual(data, {
+    available: false,
+    error: "seo database unavailable",
+    weeks: [],
+    latest_week: null,
+    section_patterns: [],
+    position_trend: [],
+    clusters: [],
+    opportunities: [],
+    tasks: [],
+    runs: [],
+    traffic_visibility: [],
+  });
 });

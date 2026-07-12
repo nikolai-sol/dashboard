@@ -3,6 +3,7 @@ import test from "node:test";
 import type { ZarukuSeoOpportunityRow, ZarukuSeoRunRow, ZarukuSeoTaskRow } from "@/lib/types";
 import {
   buildOpportunityDecisionSummary,
+  buildRunComparison,
   buildRhythmRows,
   buildTaskStatusSummary,
   normalizeConfidencePercent,
@@ -20,6 +21,8 @@ test("buildOpportunityDecisionSummary excludes pending and carried-over opportun
   const summary = buildOpportunityDecisionSummary(opportunities, "2026-W28", "2026-W27");
 
   assert.deepEqual(summary.counts, { pending: 1, approved: 1, rejected: 1, carried_over: 1 });
+  assert.deepEqual(summary.comparison_counts, { pending: 0, approved: 1, rejected: 0, carried_over: 0 });
+  assert.deepEqual(summary.count_deltas, { pending: 1, approved: 0, rejected: 1, carried_over: 1 });
   assert.equal(summary.approve_rate, 50);
   assert.equal(summary.comparison_approve_rate, 100);
   assert.equal(summary.approve_rate_delta, -50);
@@ -38,13 +41,11 @@ const tasks: ZarukuSeoTaskRow[] = [
   { week: "2026-W27", task_id: "done", section: null, title: "Done", status: "done", notion_url: null },
 ];
 
-test("buildTaskStatusSummary returns every status count for the selected week", () => {
-  assert.deepEqual(buildTaskStatusSummary(tasks, "2026-W28"), {
-    draft: 1,
-    awaiting_medical_review: 1,
-    in_progress: 0,
-    done: 0,
-    cancelled: 0,
+test("buildTaskStatusSummary returns A/B counts and deltas for every task status", () => {
+  assert.deepEqual(buildTaskStatusSummary(tasks, "2026-W28", "2026-W27"), {
+    counts: { draft: 1, awaiting_medical_review: 1, in_progress: 0, done: 0, cancelled: 0 },
+    comparison_counts: { draft: 0, awaiting_medical_review: 0, in_progress: 0, done: 1, cancelled: 0 },
+    count_deltas: { draft: 1, awaiting_medical_review: 1, in_progress: 0, done: -1, cancelled: 0 },
   });
 });
 
@@ -61,7 +62,15 @@ test("buildRhythmRows retains generated missing weeks and failed rows", () => {
   ]);
 });
 
-test("normalizeConfidencePercent accepts fraction and percent confidence values", () => {
-  assert.equal(normalizeConfidencePercent(0.6), 60);
+test("buildRunComparison returns selected A/B telemetry and numeric deltas", () => {
+  assert.deepEqual(buildRunComparison(runs, "2026-W30", "2026-W28"), {
+    primary: { week: "2026-W30", status: "failed", serp_requests: 50, llm_tokens: 0, digest_count: 0 },
+    comparison: { week: "2026-W28", status: "completed", serp_requests: 12, llm_tokens: 3000, digest_count: 2 },
+    deltas: { serp_requests: 38, llm_tokens: -3000, digest_count: -2 },
+  });
+});
+
+test("normalizeConfidencePercent preserves canonical 0-100 confidence values", () => {
+  assert.equal(normalizeConfidencePercent(1), 1);
   assert.equal(normalizeConfidencePercent(60), 60);
 });

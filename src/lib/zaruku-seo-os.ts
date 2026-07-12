@@ -56,7 +56,8 @@ function pathnameFromUrl(value: string) {
   }
 }
 
-type SqlQuery = { sql: string; params: string[] };
+export type SqlQuery = { sql: string; params: string[] };
+export type SeoOsQueryExecutor = (query: SqlQuery) => Promise<unknown[]>;
 
 type SeoSectionPatternDbRow = {
   section: string;
@@ -116,6 +117,11 @@ type CanonicalPageTrafficDbRow = {
 
 function buildInClause(values: readonly string[]) {
   return values.map(() => "?").join(", ");
+}
+
+function normalizeAccountIds(counterIds: string[]) {
+  const normalized = counterIds.map((counterId) => counterId.trim()).filter(Boolean);
+  return normalized.length > 0 ? normalized : ["66624469"];
 }
 
 function asNumber(value: unknown) {
@@ -361,7 +367,7 @@ export function buildRhythmWeeks(runs: ZarukuSeoRunRow[], availableWeeks = runs.
   return rhythm;
 }
 
-function isoWeekDateRange(week: string) {
+export function isoWeekDateRange(week: string) {
   const { year, week: weekNumber } = parseIsoWeek(week);
   const januaryFourth = new Date(0);
   januaryFourth.setUTCFullYear(year, 0, 4);
@@ -385,7 +391,7 @@ function isoWeekFromDate(value: string | Date) {
   return formatIsoWeek({ year, week });
 }
 
-function buildTrafficVisibility(
+export function buildTrafficVisibility(
   rows: CanonicalPageTrafficDbRow[],
   patterns: ZarukuSeoSectionPattern[],
   positionTrend: ZarukuSeoPositionTrendPoint[],
@@ -449,21 +455,30 @@ export function emptyZarukuSeoOsData(error: string | null = null): ZarukuSeoOsDa
   };
 }
 
-export async function loadZarukuSeoOsData(counterIds: string[]): Promise<ZarukuSeoOsData> {
+async function executeSeoOsQuery(query: SqlQuery) {
+  const [rows] = await pool.execute<RowDataPacket[]>(query.sql, query.params);
+  return rows;
+}
+
+export async function loadZarukuSeoOsData(
+  counterIds: string[],
+  executeQuery: SeoOsQueryExecutor = executeSeoOsQuery,
+): Promise<ZarukuSeoOsData> {
   try {
-    const queries = buildSeoOsAccountQueries(counterIds);
+    const normalizedCounterIds = normalizeAccountIds(counterIds);
+    const queries = buildSeoOsAccountQueries(normalizedCounterIds);
     const [sectionPatternRows, clusterRows, opportunityRows, taskRows, runRows] = await Promise.all([
-      pool.execute<Array<SeoSectionPatternDbRow & RowDataPacket>>(queries.sectionPatterns.sql, queries.sectionPatterns.params),
-      pool.execute<Array<SeoClusterDbRow & RowDataPacket>>(queries.positions.sql, queries.positions.params),
-      pool.execute<Array<SeoOpportunityDbRow & RowDataPacket>>(queries.opportunities.sql, queries.opportunities.params),
-      pool.execute<Array<SeoTaskDbRow & RowDataPacket>>(queries.tasks.sql, queries.tasks.params),
-      pool.execute<Array<SeoRunDbRow & RowDataPacket>>(queries.runs.sql, queries.runs.params),
+      executeQuery(queries.sectionPatterns),
+      executeQuery(queries.positions),
+      executeQuery(queries.opportunities),
+      executeQuery(queries.tasks),
+      executeQuery(queries.runs),
     ]);
-    const sectionPatterns = sectionPatternRows[0].map(normalizeSeoSectionPatternRow);
-    const clusters = clusterRows[0].map(normalizeSeoClusterRow);
-    const opportunities = opportunityRows[0].map(normalizeSeoOpportunityRow);
-    const tasks = taskRows[0].map(normalizeSeoTaskRow);
-    const runRecords = runRows[0].map(normalizeSeoRunRow);
+    const sectionPatterns = (sectionPatternRows as SeoSectionPatternDbRow[]).map(normalizeSeoSectionPatternRow);
+    const clusters = (clusterRows as SeoClusterDbRow[]).map(normalizeSeoClusterRow);
+    const opportunities = (opportunityRows as SeoOpportunityDbRow[]).map(normalizeSeoOpportunityRow);
+    const tasks = (taskRows as SeoTaskDbRow[]).map(normalizeSeoTaskRow);
+    const runRecords = (runRows as SeoRunDbRow[]).map(normalizeSeoRunRow);
     const weeks = sortIsoWeeks([...new Set([...clusters, ...opportunities, ...tasks, ...runRecords].map((row) => row.week))]);
     const positionTrend = buildSectionPositionTrend(clusters);
     const runs = buildRhythmWeeks(runRecords, weeks);
@@ -488,8 +503,8 @@ export async function loadZarukuSeoOsData(counterIds: string[]): Promise<ZarukuS
       from: isoWeekDateRange(weeks[0]).from,
       to: isoWeekDateRange(weeks[weeks.length - 1]).to,
     };
-    const trafficQuery = buildSeoOsTrafficQuery(counterIds, dateRange.from, dateRange.to);
-    const [trafficRows] = await pool.execute<Array<CanonicalPageTrafficDbRow & RowDataPacket>>(trafficQuery.sql, trafficQuery.params);
+    const trafficQuery = buildSeoOsTrafficQuery(normalizedCounterIds, dateRange.from, dateRange.to);
+    const trafficRows = await executeQuery(trafficQuery);
 
     return {
       available: true,
@@ -502,7 +517,7 @@ export async function loadZarukuSeoOsData(counterIds: string[]): Promise<ZarukuS
       opportunities,
       tasks,
       runs,
-      traffic_visibility: buildTrafficVisibility(trafficRows, sectionPatterns, positionTrend),
+      traffic_visibility: buildTrafficVisibility(trafficRows as CanonicalPageTrafficDbRow[], sectionPatterns, positionTrend),
     };
   } catch (error) {
     return emptyZarukuSeoOsData(error instanceof Error ? error.message : String(error));
