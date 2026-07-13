@@ -7,6 +7,7 @@ import {
   buildHighBouncePages,
   buildMapCityDemand,
   buildPageCollections,
+  enrichRowsWithPageTitles,
   mergeTopPagesWithVisitMetrics,
 } from "@/lib/zaruku-seo";
 import type { ZarukuSeoMetricRow, ZarukuSeoSectionPattern } from "@/lib/types";
@@ -180,6 +181,38 @@ test("top pages keep pageview ranking while visit metrics are merged by URL", ()
       bounce_rate: 40,
       avg_duration_seconds: 75,
       page_depth: 1.5,
+    },
+  ]);
+});
+
+test("enrichRowsWithPageTitles keeps entry URL and replaces URL-like labels with page titles", () => {
+  const entryRows = [
+    pageWithBehavior("https://zaruku.ru/rak-molochnoj-zhelezy/?utm_source=test", 10, 9, 12, 15, 120, 1.2),
+    pageWithBehavior("https://zaruku.ru/unknown/", 5, 4, 6, 20, 60, 1.1),
+    pageWithBehavior("https://zaruku.ru/", 7, 6, 8, 30, 90, 1.4),
+  ];
+  const pageRows = [
+    {
+      ...page("https://zaruku.ru/rak-molochnoj-zhelezy/", 0, 20, 30),
+      label: "Рак молочной железы: основной раздел",
+    },
+    {
+      ...page("https://zaruku.ru/", 0, 12, 18),
+      label: "Unknown",
+    },
+  ];
+
+  assert.deepEqual(enrichRowsWithPageTitles(entryRows, pageRows), [
+    {
+      ...entryRows[0],
+      label: "Рак молочной железы: основной раздел",
+      url: "https://zaruku.ru/rak-molochnoj-zhelezy/?utm_source=test",
+    },
+    entryRows[1],
+    {
+      ...entryRows[2],
+      label: "Главная страница",
+      url: "https://zaruku.ru/",
     },
   ]);
 });

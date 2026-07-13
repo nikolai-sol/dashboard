@@ -228,6 +228,28 @@ export function mergeTopPagesWithVisitMetrics(pageRows: ZarukuSeoMetricRow[], vi
   });
 }
 
+export function enrichRowsWithPageTitles(rows: ZarukuSeoMetricRow[], pageRows: ZarukuSeoMetricRow[]) {
+  if (rows.length === 0 || pageRows.length === 0) return rows;
+  const titlesByUrl = new Map<string, string>();
+  pageRows.forEach((row) => {
+    const key = normalizedUrlKey(row.url ?? row.label);
+    if (!key || !row.label || row.label.startsWith("http") || row.label === "Unknown") return;
+    titlesByUrl.set(key, row.label);
+  });
+
+  return rows.map((row) => {
+    const url = row.url ?? row.label;
+    const key = normalizedUrlKey(url);
+    const title = titlesByUrl.get(key) ?? (key === "zaruku.ru/" ? "Главная страница" : null);
+    if (!title) return row;
+    return {
+      ...row,
+      label: title,
+      url,
+    };
+  });
+}
+
 function isMapUrl(value: string | null | undefined) {
   return normalizedUrlKey(value).includes("zaruku.ru/map/");
 }
@@ -859,7 +881,7 @@ export async function loadZarukuSeoData(counterIds: string[], from: string, to: 
   const metrikaErrors = reports.flatMap((report) => (report.ok ? [] : [report.error ?? "Metrika API unavailable"]));
   const organicVisits = trafficChannels.find((row) => row.label === "Organic Search")?.visits ?? 0;
   const searchPhraseVisits = asNumber(searchPhrasesReport.totals[0]);
-  const entryPageRows = sectionEntrancesReport.ok ? sectionEntrancesReport.rows : [];
+  const entryPageRows = sectionEntrancesReport.ok ? enrichRowsWithPageTitles(sectionEntrancesReport.rows, pageRows) : [];
   const pageCollections = buildPageCollections(
     pageRows,
     seoOs.section_patterns,

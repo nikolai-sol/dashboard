@@ -261,10 +261,12 @@ function DataTable({
   rows,
   mode,
   locale,
+  wrapText = false,
 }: {
   rows: ZarukuSeoMetricRow[];
   mode: "pages" | "metrics" | "cross";
   locale: string;
+  wrapText?: boolean;
 }) {
   return (
     <div className="overflow-x-auto">
@@ -284,11 +286,15 @@ function DataTable({
         <tbody className="divide-y divide-slate-100">
           {rows.map((row, index) => (
             <tr key={`${row.label}-${row.secondary_label ?? ""}-${row.url ?? ""}-${index}`}>
-              <td className="max-w-[420px] py-2.5">
-                <div className="font-medium text-slate-700" title={row.label}>
-                  {truncate(row.label, mode === "pages" ? 72 : 48)}
+              <td className={wrapText ? "max-w-[760px] py-2.5 pr-4" : "max-w-[420px] py-2.5"}>
+                <div className={wrapText ? "font-medium leading-snug text-slate-700" : "font-medium text-slate-700"} title={row.label}>
+                  {wrapText ? row.label : truncate(row.label, mode === "pages" ? 72 : 48)}
                 </div>
-                {row.url ? <div className="text-xs text-slate-400">{truncate(shortUrl(row.url), 86)}</div> : null}
+                {row.url ? (
+                  <div className={wrapText ? "mt-1 break-all text-xs leading-snug text-slate-400" : "text-xs text-slate-400"}>
+                    {wrapText ? shortUrl(row.url) : truncate(shortUrl(row.url), 86)}
+                  </div>
+                ) : null}
               </td>
               {mode === "cross" ? <td className="py-2.5 text-slate-500">{row.secondary_label ?? "—"}</td> : null}
               <td className="py-2.5 text-right text-slate-600">{row.visits ? formatNumber(row.visits, locale) : "—"}</td>
@@ -925,14 +931,12 @@ function BehaviorTab({ data, locale }: Props) {
   const currentLocale = locale ?? "ru-RU";
   return (
     <div className="space-y-5">
-      <div className="grid gap-5 xl:grid-cols-2">
-        <Panel data={data} title="Проблемные входные страницы" source="metrika" layer="onsite" right={<span className="text-xs text-slate-400">startURL · high bounce</span>}>
-          <DataTable rows={data.high_bounce_pages} mode="pages" locale={currentLocale} />
-        </Panel>
-        <Panel data={data} title="Лучшее удержание" source="metrika" layer="onsite" right={<span className="text-xs text-slate-400">startURL · engagement</span>}>
-          <DataTable rows={data.best_engagement_pages} mode="pages" locale={currentLocale} />
-        </Panel>
-      </div>
+      <Panel data={data} title="Лучшее удержание" source="metrika" layer="onsite" right={<span className="text-xs text-slate-400">startURL · engagement</span>}>
+        <DataTable rows={data.best_engagement_pages} mode="pages" locale={currentLocale} wrapText />
+      </Panel>
+      <Panel data={data} title="Проблемные входные страницы" source="metrika" layer="onsite" right={<span className="text-xs text-slate-400">startURL · high bounce</span>}>
+        <DataTable rows={data.high_bounce_pages} mode="pages" locale={currentLocale} wrapText />
+      </Panel>
       <div className="grid gap-5 xl:grid-cols-2">
         <Panel data={data} title="Возвратный контент" source="metrika" layer="onsite" right={<span className="text-xs text-slate-400">returned pageviews</span>}>
           <ReturningPagesTable rows={data.returning_pages.slice(0, 16)} locale={currentLocale} />
