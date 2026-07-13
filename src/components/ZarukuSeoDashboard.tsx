@@ -305,6 +305,37 @@ function DataTable({
   );
 }
 
+function ReturningPagesTable({ rows, locale }: { rows: ZarukuSeoMetricRow[]; locale: string }) {
+  return (
+    <div className="overflow-x-auto">
+      <table className="w-full min-w-[560px] text-sm">
+        <thead>
+          <tr className="text-left text-xs uppercase text-slate-400">
+            <th className="pb-2 font-medium">Страница</th>
+            <th className="pb-2 text-right font-medium">Возвраты</th>
+            <th className="pb-2 text-right font-medium">Просмотры</th>
+            <th className="pb-2 text-right font-medium">Доля</th>
+          </tr>
+        </thead>
+        <tbody className="divide-y divide-slate-100">
+          {rows.map((row, index) => (
+            <tr key={`${row.url ?? row.label}-${index}`}>
+              <td className="max-w-[460px] py-2.5">
+                <div className="font-medium text-slate-700" title={row.url ?? row.label}>
+                  {truncate(shortUrl(row.url ?? row.label), 86)}
+                </div>
+              </td>
+              <td className="py-2.5 text-right text-slate-600">{formatNumber(row.visits, locale)}</td>
+              <td className="py-2.5 text-right text-slate-600">{formatNumber(row.pageviews, locale)}</td>
+              <td className="py-2.5 text-right text-slate-500">{formatPercent(row.share, locale, 1)}</td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </div>
+  );
+}
+
 function PendingPanel({ data }: { data: ZarukuSeoData }) {
   return (
     <Panel data={data} title="Что еще ждем" layer="serp" pending right={<span className="text-xs text-slate-400">{formatPendingRequirementSources(data)}</span>}>
@@ -853,8 +884,8 @@ function AudienceTab({ data, locale }: Props) {
 function BehaviorTab({ data, locale }: Props) {
   return (
     <div className="space-y-5">
-      <Panel data={data} title="Возвраты по URL" source="metrika" layer="onsite">
-        <DataTable rows={data.returning_pages.slice(0, 16)} mode="pages" locale={locale ?? "ru-RU"} />
+      <Panel data={data} title="Возвраты по URL" source="metrika" layer="onsite" right={<span className="text-xs text-slate-400">returned pageviews</span>}>
+        <ReturningPagesTable rows={data.returning_pages.slice(0, 16)} locale={locale ?? "ru-RU"} />
       </Panel>
       <Panel data={data} title="Поведенческие сигналы" source="metrika" layer="onsite">
         <div className="grid gap-3 md:grid-cols-3">

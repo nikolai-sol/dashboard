@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { buildCanonicalPageRowsQuery, buildContentSections, buildPageCollections } from "@/lib/zaruku-seo";
+import { buildCanonicalPageRowsQuery, buildContentSections, buildPageCollections, mergeTopPagesWithVisitMetrics } from "@/lib/zaruku-seo";
 import type { ZarukuSeoMetricRow, ZarukuSeoSectionPattern } from "@/lib/types";
 
 function page(url: string, visits: number, users: number, pageviews: number): ZarukuSeoMetricRow {
@@ -142,6 +142,36 @@ test("visit-level section rows can feed content sections without changing top pa
       share: 40,
       source: "metrika",
       layer: "onsite",
+    },
+  ]);
+});
+
+test("top pages keep pageview ranking while visit metrics are merged by URL", () => {
+  const pageRows = [
+    page("https://zaruku.ru/rak-molochnoj-zhelezy/?utm_source=test", 0, 42, 120),
+    page("https://zaruku.ru/map/#clinics", 0, 30, 90),
+  ];
+  const visitRows = [
+    pageWithBehavior("https://zaruku.ru/map/", 12, 11, 18, 40, 75, 1.5),
+    pageWithBehavior("https://zaruku.ru/rak-molochnoj-zhelezy/", 7, 6, 10, 20, 150, 2.2),
+  ];
+
+  assert.deepEqual(mergeTopPagesWithVisitMetrics(pageRows, visitRows), [
+    {
+      ...pageRows[0],
+      visits: 7,
+      users: 6,
+      bounce_rate: 20,
+      avg_duration_seconds: 150,
+      page_depth: 2.2,
+    },
+    {
+      ...pageRows[1],
+      visits: 12,
+      users: 11,
+      bounce_rate: 40,
+      avg_duration_seconds: 75,
+      page_depth: 1.5,
     },
   ]);
 });

@@ -193,6 +193,41 @@ function rowFromMetrika(item: MetrikaReportRow, totalVisits: number): ZarukuSeoM
   };
 }
 
+function normalizedUrlKey(value: string | null | undefined) {
+  const raw = asString(value).trim();
+  if (!raw) return "";
+  try {
+    const url = new URL(raw, "https://zaruku.ru");
+    const path = url.pathname.replace(/\/{2,}/g, "/");
+    return `${url.hostname.replace(/^www\./, "")}${path.endsWith("/") ? path : `${path}/`}`;
+  } catch {
+    return raw.split(/[?#]/, 1)[0].replace(/\/?$/, "/");
+  }
+}
+
+export function mergeTopPagesWithVisitMetrics(pageRows: ZarukuSeoMetricRow[], visitRows: ZarukuSeoMetricRow[]) {
+  if (visitRows.length === 0) return pageRows;
+  const byUrl = new Map<string, ZarukuSeoMetricRow>();
+  visitRows.forEach((row) => {
+    const key = normalizedUrlKey(row.url ?? row.label);
+    if (!key) return;
+    byUrl.set(key, row);
+  });
+
+  return pageRows.map((row) => {
+    const visitRow = byUrl.get(normalizedUrlKey(row.url ?? row.label));
+    if (!visitRow) return row;
+    return {
+      ...row,
+      visits: visitRow.visits,
+      users: visitRow.users,
+      bounce_rate: visitRow.bounce_rate ?? row.bounce_rate,
+      avg_duration_seconds: visitRow.avg_duration_seconds ?? row.avg_duration_seconds,
+      page_depth: visitRow.page_depth ?? row.page_depth,
+    };
+  });
+}
+
 async function queryTrafficRows(counterIds: string[], from: string, to: string) {
   const sql = `
     SELECT
@@ -444,8 +479,9 @@ export function buildPageCollections(
   topPageLimit = 80,
   sectionRows: ZarukuSeoMetricRow[] = pageRows,
 ) {
+  const visitRows = sectionRows.length > 0 ? sectionRows : [];
   return {
-    topPages: pageRows.slice(0, topPageLimit),
+    topPages: mergeTopPagesWithVisitMetrics(pageRows.slice(0, topPageLimit), visitRows),
     contentSections: buildContentSections(sectionRows.length > 0 ? sectionRows : pageRows, patterns),
   };
 }
