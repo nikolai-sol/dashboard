@@ -230,7 +230,10 @@ export function buildCanonicalPageRowsQuery(counterIds: string[], from: string, 
       COALESCE(page_url, '') AS url,
       COALESCE(SUM(pageviews), 0) AS pageviews,
       COALESCE(SUM(users), 0) AS users,
-      COALESCE(SUM(visits), 0) AS visits
+      COALESCE(SUM(visits), 0) AS visits,
+      CASE WHEN COALESCE(SUM(visits), 0) > 0 THEN SUM(COALESCE(bounce_rate, 0) * visits) / SUM(visits) ELSE NULL END AS bounce_rate,
+      CASE WHEN COALESCE(SUM(visits), 0) > 0 THEN SUM(COALESCE(avg_visit_duration_seconds, 0) * visits) / SUM(visits) ELSE NULL END AS avg_duration,
+      CASE WHEN COALESCE(SUM(visits), 0) > 0 THEN SUM(COALESCE(page_depth, 0) * visits) / SUM(visits) ELSE NULL END AS page_depth
     FROM canonical_fact_site_analytics_daily
     WHERE source_key = ?
       AND analytics_account_id IN (${buildInClause(counterIds)})
@@ -439,10 +442,11 @@ export function buildPageCollections(
   pageRows: ZarukuSeoMetricRow[],
   patterns: ZarukuSeoSectionPattern[],
   topPageLimit = 80,
+  sectionRows: ZarukuSeoMetricRow[] = pageRows,
 ) {
   return {
     topPages: pageRows.slice(0, topPageLimit),
-    contentSections: buildContentSections(pageRows, patterns),
+    contentSections: buildContentSections(sectionRows.length > 0 ? sectionRows : pageRows, patterns),
   };
 }
 
@@ -670,6 +674,7 @@ export async function loadZarukuSeoData(counterIds: string[], from: string, to: 
     { key: "searchEngines", dimensions: "ym:s:searchEngine", limit: 12 },
     { key: "searchPhrases", dimensions: "ym:s:searchPhrase", limit: 30 },
     { key: "organicLanding", dimensions: "ym:s:searchEngine,ym:s:startURL", limit: 30 },
+    { key: "sectionEntrances", dimensions: "ym:s:startURL", limit: 10000 },
     { key: "devices", dimensions: "ym:s:deviceCategory", limit: 8 },
     { key: "browsers", dimensions: "ym:s:browser", limit: 10 },
     { key: "os", dimensions: "ym:s:operatingSystem", limit: 10 },
@@ -684,6 +689,7 @@ export async function loadZarukuSeoData(counterIds: string[], from: string, to: 
   const searchEnginesReport = metrikaReports.get("searchEngines") ?? EMPTY_REPORT;
   const searchPhrasesReport = metrikaReports.get("searchPhrases") ?? EMPTY_REPORT;
   const organicLandingReport = metrikaReports.get("organicLanding") ?? EMPTY_REPORT;
+  const sectionEntrancesReport = metrikaReports.get("sectionEntrances") ?? EMPTY_REPORT;
   const devicesReport = metrikaReports.get("devices") ?? EMPTY_REPORT;
   const browsersReport = metrikaReports.get("browsers") ?? EMPTY_REPORT;
   const osReport = metrikaReports.get("os") ?? EMPTY_REPORT;
@@ -698,6 +704,7 @@ export async function loadZarukuSeoData(counterIds: string[], from: string, to: 
     searchEnginesReport,
     searchPhrasesReport,
     organicLandingReport,
+    sectionEntrancesReport,
     devicesReport,
     browsersReport,
     osReport,
@@ -711,7 +718,12 @@ export async function loadZarukuSeoData(counterIds: string[], from: string, to: 
   const metrikaErrors = reports.flatMap((report) => (report.ok ? [] : [report.error ?? "Metrika API unavailable"]));
   const organicVisits = trafficChannels.find((row) => row.label === "Organic Search")?.visits ?? 0;
   const searchPhraseVisits = asNumber(searchPhrasesReport.totals[0]);
-  const pageCollections = buildPageCollections(pageRows, seoOs.section_patterns);
+  const pageCollections = buildPageCollections(
+    pageRows,
+    seoOs.section_patterns,
+    80,
+    sectionEntrancesReport.ok ? sectionEntrancesReport.rows : [],
+  );
   const [webmaster, aiVisibility, seoIntelligence] = await Promise.all([
     loadZarukuYandexWebmasterData(normalizedCounterIds, seoOs.weeks),
     loadZarukuAiVisibilityData(normalizedCounterIds, seoOs.weeks),

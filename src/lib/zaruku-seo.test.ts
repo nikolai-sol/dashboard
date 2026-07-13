@@ -105,6 +105,47 @@ test("complete page rows feed section aggregates while top pages remain display-
   ]);
 });
 
+test("visit-level section rows can feed content sections without changing top pages", () => {
+  const pageRows = [
+    page("https://zaruku.ru/map/page", 0, 10, 20),
+    page("https://zaruku.ru/map/clinics/page", 0, 5, 8),
+  ];
+  const visitRows = [
+    pageWithBehavior("https://zaruku.ru/map/landing", 4, 4, 12, 25, 90, 3),
+    pageWithBehavior("https://zaruku.ru/map/clinics/landing", 6, 5, 18, 15, 150, 4),
+  ];
+
+  const result = buildPageCollections(pageRows, patterns, 1, visitRows);
+
+  assert.deepEqual(result.topPages, [pageRows[0]]);
+  assert.deepEqual(result.contentSections, [
+    {
+      label: "Clinics",
+      visits: 6,
+      users: 5,
+      pageviews: 18,
+      bounce_rate: 15,
+      avg_duration_seconds: 150,
+      page_depth: 4,
+      share: 60,
+      source: "metrika",
+      layer: "onsite",
+    },
+    {
+      label: "Map",
+      visits: 4,
+      users: 4,
+      pageviews: 12,
+      bounce_rate: 25,
+      avg_duration_seconds: 90,
+      page_depth: 3,
+      share: 40,
+      source: "metrika",
+      layer: "onsite",
+    },
+  ]);
+});
+
 test("canonical page rows query has no display LIMIT", () => {
   const query = buildCanonicalPageRowsQuery(["66624469"], "2026-07-01", "2026-07-31");
 
