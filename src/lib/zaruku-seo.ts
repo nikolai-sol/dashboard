@@ -32,11 +32,11 @@ const SOURCES: ZarukuSeoSource[] = [
   },
   {
     id: "gsc",
-    label: "Search Console",
+    label: "Google Search Console",
     layer: "serp",
     color: "#2563eb",
     status: "pending",
-    note: "Показы, позиции и CTR в Google Search.",
+    note: "Показы, позиции и CTR в Google Search Console.",
   },
   {
     id: "webmaster",
@@ -48,11 +48,11 @@ const SOURCES: ZarukuSeoSource[] = [
   },
   {
     id: "yandex_gen_search",
-    label: "AI visibility",
+    label: "AI-видимость",
     layer: "ai",
     color: "#0891b2",
     status: "pending",
-    note: "AI visibility: Яндекс Вебмастер / vendor snapshots.",
+    note: "AI-видимость: Яндекс Вебмастер / внешние снимки.",
   },
 ];
 
@@ -62,7 +62,7 @@ const PENDING_REQUIREMENTS: ZarukuSeoPendingRequirement[] = [
     layer: "serp",
     title: "Google Search Console",
     status: "pending",
-    reason: "Для Google остаются нужны показы, клики, CTR и Google-specific позиции из Search Console.",
+    reason: "Для Google нужны показы, клики, CTR и позиции из Google Search Console.",
     expected_fields: ["query", "page", "country", "device", "impressions", "clicks", "ctr", "position"],
   },
   {
@@ -70,7 +70,7 @@ const PENDING_REQUIREMENTS: ZarukuSeoPendingRequirement[] = [
     layer: "serp",
     title: "Яндекс Вебмастер",
     status: "pending",
-    reason: "Для Яндекса остаются нужны показы, клики и CTR из Вебмастера; SEO OS покрывает только tracked-позиции.",
+    reason: "Для Яндекса нужны показы, клики и CTR из Вебмастера; SEO OS покрывает только отслеживаемые позиции.",
     expected_fields: ["query", "url", "region", "device", "impressions", "clicks", "ctr", "position"],
   },
 ];
@@ -137,27 +137,53 @@ function normalizeCounterIds(counterIds: string[]) {
   return ids.length > 0 ? ids : ["66624469"];
 }
 
-function readableTrafficSource(label: string) {
+export function readableTrafficSource(label: string) {
   const normalized = label.trim();
   const map: Record<string, string> = {
-    "Search engine traffic": "Organic Search",
-    "Direct traffic": "Direct",
-    "Link traffic": "Referral",
-    "Social network traffic": "Social",
-    "Messenger traffic": "Messenger",
-    "Mailing traffic": "Email",
-    "Ad traffic": "Ads",
-    "Recommendation system traffic": "Recommendations",
-    "Internal traffic": "Internal",
-    "Cached page traffic": "Cached pages",
+    "Search engine traffic": "Поиск",
+    "Direct traffic": "Прямые заходы",
+    "Link traffic": "Переходы по ссылкам",
+    "Social network traffic": "Соцсети",
+    "Messenger traffic": "Мессенджеры",
+    "Mailing traffic": "Рассылки",
+    "Ad traffic": "Реклама",
+    "Recommendation system traffic": "Рекомендации",
+    "Internal traffic": "Внутренний трафик",
+    "Cached page traffic": "Кешированные страницы",
+    Unknown: "Неизвестно",
   };
-  return map[normalized] ?? (normalized || "Unknown");
+  return map[normalized] ?? (normalized || "Неизвестно");
+}
+
+function readableMetrikaDimension(label: string) {
+  const normalized = label.trim();
+  const map: Record<string, string> = {
+    "Search engine traffic": "Поиск",
+    "Direct traffic": "Прямые заходы",
+    "Link traffic": "Переходы по ссылкам",
+    "Social network traffic": "Соцсети",
+    "Messenger traffic": "Мессенджеры",
+    "Mailing traffic": "Рассылки",
+    "Ad traffic": "Реклама",
+    "Recommendation system traffic": "Рекомендации",
+    "Internal traffic": "Внутренний трафик",
+    "Cached page traffic": "Кешированные страницы",
+    Unknown: "Неизвестно",
+    Russia: "Россия",
+    "Smartphones": "Смартфоны",
+    "Desktop": "Десктоп",
+    "Tablets": "Планшеты",
+    "TVs": "ТВ",
+    "Male": "Мужчины",
+    "Female": "Женщины",
+  };
+  return map[normalized] ?? (normalized || "Не указано");
 }
 
 function rowFromCanonical(row: CanonicalSiteRow, totalVisits: number): ZarukuSeoMetricRow {
   const visits = Math.round(asNumber(row.visits));
   return {
-    label: asString(row.label) || "Unknown",
+    label: asString(row.label) || "Неизвестно",
     secondary_label: asString(row.secondary_label) || null,
     url: asString(row.url) || null,
     visits,
@@ -178,8 +204,8 @@ function rowFromMetrika(item: MetrikaReportRow, totalVisits: number): ZarukuSeoM
   const visits = Math.round(asNumber(metrics[0]));
   return {
     id: dimensions.map((dim) => dim.id).filter(Boolean).join("|") || null,
-    label: asString(dimensions[0]?.name) || "Not specified",
-    secondary_label: dimensions.slice(1).map((dim) => asString(dim.name) || "Not specified").join(" · ") || null,
+    label: readableMetrikaDimension(asString(dimensions[0]?.name)),
+    secondary_label: dimensions.slice(1).map((dim) => readableMetrikaDimension(asString(dim.name))).join(" · ") || null,
     url: dimensions.find((dim) => asString(dim.name).startsWith("http"))?.name ?? null,
     visits,
     users: Math.round(asNumber(metrics[1])),
@@ -233,7 +259,7 @@ export function enrichRowsWithPageTitles(rows: ZarukuSeoMetricRow[], pageRows: Z
   const titlesByUrl = new Map<string, string>();
   pageRows.forEach((row) => {
     const key = normalizedUrlKey(row.url ?? row.label);
-    if (!key || !row.label || row.label.startsWith("http") || row.label === "Unknown") return;
+    if (!key || !row.label || row.label.startsWith("http") || row.label === "Unknown" || row.label === "Неизвестно") return;
     titlesByUrl.set(key, row.label);
   });
 
@@ -274,7 +300,7 @@ export function buildMapCityDemand(rows: ZarukuSeoMetricRow[]) {
   rows.forEach((row) => {
     const url = row.url ?? row.secondary_label;
     if (!isMapUrl(url)) return;
-    const city = row.label.trim() || "Not specified";
+    const city = row.label.trim() || "Не указано";
     const current =
       byCity.get(city) ??
       ({
@@ -641,10 +667,10 @@ function buildKpis({
     },
     { visits: 0, users: 0, pageviews: 0, bounceWeighted: 0, durationWeighted: 0, depthWeighted: 0 },
   );
-  const organicVisits = trafficRows.find((row) => row.label === "Organic Search")?.visits ?? 0;
-  const directVisits = trafficRows.find((row) => row.label === "Direct")?.visits ?? 0;
-  const mobileVisits = devices.find((row) => row.id === "mobile" || row.label === "Smartphones")?.visits ?? 0;
-  const russiaVisits = geoCountries.find((row) => row.label === "Russia")?.visits ?? 0;
+  const organicVisits = trafficRows.find((row) => row.label === "Поиск")?.visits ?? 0;
+  const directVisits = trafficRows.find((row) => row.label === "Прямые заходы")?.visits ?? 0;
+  const mobileVisits = devices.find((row) => row.id === "mobile" || row.label === "Смартфоны" || row.label === "Smartphones")?.visits ?? 0;
+  const russiaVisits = geoCountries.find((row) => row.label === "Россия" || row.label === "Russia")?.visits ?? 0;
 
   return [
     { key: "visits", label: "Визиты", value: formatInteger(totals.visits), raw_value: totals.visits, source: "metrika", layer: "onsite" },
@@ -652,7 +678,7 @@ function buildKpis({
     { key: "pageviews", label: "Просмотры", value: formatInteger(totals.pageviews), raw_value: totals.pageviews, source: "metrika", layer: "onsite" },
     {
       key: "organic_share",
-      label: "Доля organic",
+      label: "Доля органики",
       value: formatPercent(totals.visits > 0 ? (organicVisits / totals.visits) * 100 : 0),
       raw_value: organicVisits,
       source: "metrika",
@@ -660,7 +686,7 @@ function buildKpis({
     },
     {
       key: "direct_share",
-      label: "Доля direct",
+      label: "Доля прямых",
       value: formatPercent(totals.visits > 0 ? (directVisits / totals.visits) * 100 : 0),
       raw_value: directVisits,
       source: "metrika",
@@ -677,7 +703,7 @@ function buildKpis({
     },
     {
       key: "mobile_share",
-      label: "Mobile",
+      label: "Мобильные",
       value: mobileVisits > 0 ? formatPercent((mobileVisits / Math.max(1, totals.visits)) * 100) : "—",
       raw_value: mobileVisits || null,
       source: "metrika",
@@ -712,7 +738,7 @@ function buildKpis({
 }
 
 function splitTrafficRows(rows: ZarukuSeoMetricRow[]) {
-  const technicalLabels = new Set(["Internal", "Cached pages"]);
+  const technicalLabels = new Set(["Внутренний трафик", "Кешированные страницы"]);
   return {
     trafficChannels: rows.filter((row) => !technicalLabels.has(row.label)),
     technicalTail: rows.filter((row) => technicalLabels.has(row.label)),
@@ -755,8 +781,8 @@ function buildSources({
           status: aiStatus,
           note:
             aiStatus === "connected"
-              ? "AI visibility из seo_ai_visibility: presence, mentions и citations."
-              : "Ожидаем снимки AI visibility из SEO OS/vendor.",
+              ? "AI-видимость из seo_ai_visibility: присутствие, упоминания и цитаты."
+              : "Ожидаем снимки AI-видимости из SEO OS / внешнего источника.",
         };
       }
       return source;
@@ -768,10 +794,10 @@ function buildSources({
       color: "#16a34a",
       status: seoOsStatus === "available" ? "connected" : seoOsStatus,
       note: seoOsStatus === "available"
-        ? "Еженедельные tracked-позиции Яндекса, opportunities, tasks и telemetry."
+        ? "Еженедельные отслеживаемые позиции Яндекса, возможности, задачи и телеметрия."
         : seoOsStatus === "partial"
           ? "Часть данных SEO OS временно недоступна; успешно загруженные наборы сохранены."
-          : "Еженедельный SEO OS временно недоступен; on-site Метрика продолжает работать.",
+          : "Еженедельный SEO OS временно недоступен; Метрика на сайте продолжает работать.",
     },
   ];
 }
@@ -796,30 +822,30 @@ function buildDataQuality({
   searchPhraseVisits: number;
   metrikaErrors: string[];
 }): ZarukuSeoDataQualityItem[] {
-  const cached = technicalTail.find((row) => row.label === "Cached pages");
+  const cached = technicalTail.find((row) => row.label === "Кешированные страницы");
   const queryCoverage = organicVisits > 0 ? (searchPhraseVisits / organicVisits) * 100 : 0;
   return [
     {
-      title: "Cached / internal traffic",
+      title: "Кешированный и внутренний трафик",
       value: cached ? `${formatInteger(cached.visits)} визитов` : "0",
-      note: "Служебный tail Метрики; не выводится как основной канал привлечения.",
+      note: "Служебный хвост Метрики; не выводится как основной канал привлечения.",
       severity: "info",
     },
     {
       title: "Покрытие поисковых фраз",
       value: searchPhrases.length > 0 ? formatPercent(queryCoverage) : "—",
-      note: "Google часто скрывает query; поисковые фразы нельзя считать полной SEO-семантикой.",
+      note: "Google часто скрывает запросы; поисковые фразы нельзя считать полной SEO-семантикой.",
       severity: queryCoverage > 0 ? "info" : "warning",
     },
     {
-      title: "Keyword → landing",
+      title: "Запрос → посадочная",
       value: "неполный",
-      note: "Метрика стабильно дает search engine → landing page, но search phrase → landing page может быть пустым.",
+      note: "Метрика стабильно даёт связку поисковая система → посадочная страница, но связка поисковая фраза → посадочная страница может быть пустой.",
       severity: "warning",
     },
     {
-      title: "Metrika API",
-      value: metrikaErrors.length > 0 ? `${metrikaErrors.length} pending` : "ok",
+      title: "API Метрики",
+      value: metrikaErrors.length > 0 ? `${metrikaErrors.length} ожидает` : "ок",
       note: metrikaErrors.length > 0 ? "Часть расширенных разрезов недоступна в текущем окружении." : "Расширенные onsite-разрезы доступны.",
       severity: metrikaErrors.length > 0 ? "warning" : "ok",
     },
@@ -886,7 +912,7 @@ export async function loadZarukuSeoData(counterIds: string[], from: string, to: 
     sourceDevicesReport,
   ];
   const metrikaErrors = reports.flatMap((report) => (report.ok ? [] : [report.error ?? "Metrika API unavailable"]));
-  const organicVisits = trafficChannels.find((row) => row.label === "Organic Search")?.visits ?? 0;
+  const organicVisits = trafficChannels.find((row) => row.label === "Поиск")?.visits ?? 0;
   const searchPhraseVisits = asNumber(searchPhrasesReport.totals[0]);
   const entryPageRows = sectionEntrancesReport.ok ? enrichRowsWithPageTitles(sectionEntrancesReport.rows, pageRows) : [];
   const pageCollections = buildPageCollections(
@@ -906,9 +932,9 @@ export async function loadZarukuSeoData(counterIds: string[], from: string, to: 
     domain: "zaruku.ru",
     period: { from, to },
     layers: [
-      { id: "onsite", label: "On-site", hint: "что происходит после клика" },
+      { id: "onsite", label: "На сайте", hint: "что происходит после клика" },
       { id: "serp", label: "SERP", hint: "показы, позиции, CTR до клика" },
-      { id: "ai", label: "AI-выдача", hint: "цитируемость и presence rate" },
+      { id: "ai", label: "AI-выдача", hint: "цитируемость и доля присутствия" },
     ],
     sources: buildSources({ seoOsStatus: seoOs.status, webmaster, seoIntelligence }),
     pending_requirements: buildPendingRequirements(webmaster),

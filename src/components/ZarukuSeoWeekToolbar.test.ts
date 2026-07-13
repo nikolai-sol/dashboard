@@ -22,7 +22,7 @@ test("associates the unavailable description with the focusable wrapper", () => 
   );
 });
 
-test("disables Compare mode when fewer than two weeks are available", () => {
+test("disables comparison mode when fewer than two weeks are available", () => {
   const html = renderToStaticMarkup(createElement(ZarukuSeoWeekToolbar, {
     weeks: ["2026-W01"],
     primaryWeek: "2026-W01",
@@ -34,5 +34,5 @@ test("disables Compare mode when fewer than two weeks are available", () => {
     onComparePrevious() {},
   }));
 
-  assert.match(html, /<button(?=[^>]*disabled="")(?=[^>]*aria-pressed="false")[^>]*>Compare<\/button>/);
+  assert.match(html, /<button(?=[^>]*disabled="")(?=[^>]*aria-pressed="false")[^>]*>Сравнить<\/button>/);
 });

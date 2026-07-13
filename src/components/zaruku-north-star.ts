@@ -136,7 +136,7 @@ export function buildNorthStarKpis({
       delta: delta(noise?.impressions_share ?? null, BASELINES.noise),
       goal: "down",
       period: noise?.period_label ?? noise?.week ?? null,
-      tooltip: "Доля показов по чужим брендам лабораторий. Intra-host share, не market share",
+      tooltip: "Доля показов по чужим брендам лабораторий. Доля внутри сайта, не рыночная доля",
       series: metricSeries(sovRows, CLUSTERS.noise, "impressions_share"),
     },
     medicalIntent: {
@@ -165,7 +165,7 @@ export function buildNorthStarKpis({
     },
     approveRate: {
       key: "approveRate",
-      label: "Approve rate",
+      label: "Доля принятия",
       value: approveRate.value,
       baseline: BASELINES.approveRate,
       delta: delta(approveRate.value, BASELINES.approveRate),
@@ -215,6 +215,27 @@ function taskStatusSummary(tasks: ZarukuSeoTaskRow[]) {
   return [...counts.entries()].map(([status, count]) => `${TASK_LABELS[status]}: ${count}`).join(", ");
 }
 
+function readableOpportunityType(value: string) {
+  const labels: Record<string, string> = {
+    content_refresh: "обновление контента",
+    internal_linking: "внутренняя перелинковка",
+    new_content: "новый контент",
+    title_meta: "title/meta",
+    section_ranking_gap: "разрыв позиций раздела",
+  };
+  return labels[value] ?? value.replace(/_/g, " ");
+}
+
+function readableRunStatus(value: ZarukuSeoRunRow["status"]) {
+  const labels: Record<ZarukuSeoRunRow["status"], string> = {
+    completed: "завершён",
+    failed: "ошибка",
+    missing: "нет запуска",
+    noop: "без действий",
+  };
+  return labels[value] ?? value;
+}
+
 export function buildWeeklyFocus({
   opportunities,
   aiRows,
@@ -237,13 +258,13 @@ export function buildWeeklyFocus({
 
   return {
     seo: opportunity
-      ? `Фокус SEO: ${opportunity.section ?? opportunity.target_url ?? "раздел не задан"} — ${opportunity.opportunity_type}`
-      : "Фокус SEO: нет pending/approved opportunity на выбранной неделе",
+      ? `Фокус SEO: ${opportunity.section ?? opportunity.target_url ?? "раздел не задан"} — ${readableOpportunityType(opportunity.opportunity_type)}`
+      : "Фокус SEO: нет ожидающих или принятых возможностей на выбранной неделе",
     ai: ai
-      ? `AI: 67% цитирований Алисы приходится на 1 страницу — диверсификация через задачи ${sections || "выбранной недели"}`
-      : `AI: ждём снимок видимости — диверсификация через задачи ${sections || "выбранной недели"}`,
+      ? `ИИ: 67% цитирований Алисы приходится на 1 страницу — диверсификация через задачи ${sections || "выбранной недели"}`
+      : `ИИ: ждём снимок видимости — диверсификация через задачи ${sections || "выбранной недели"}`,
     pipeline: run
-      ? `Pipeline: ${run.week} ${run.status}, digest ${run.digest_count ?? "—"}, ${taskStatusSummary(weekTasks) || "задач нет"}`
-      : `Pipeline: ${effectiveWeek ?? "неделя не выбрана"} без run telemetry, ${taskStatusSummary(weekTasks) || "задач нет"}`,
+      ? `Конвейер: ${run.week} ${readableRunStatus(run.status)}, дайджест ${run.digest_count ?? "—"}, ${taskStatusSummary(weekTasks) || "задач нет"}`
+      : `Конвейер: ${effectiveWeek ?? "неделя не выбрана"} без телеметрии запуска, ${taskStatusSummary(weekTasks) || "задач нет"}`,
   };
 }

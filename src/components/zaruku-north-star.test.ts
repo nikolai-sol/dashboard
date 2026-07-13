@@ -108,8 +108,8 @@ test("buildSemanticHealthRows keeps all latest-week SOV clusters and highlights 
 test("buildWeeklyFocus combines SEO, AI, run, and task facts", () => {
   const focus = buildWeeklyFocus({ opportunities, aiRows, tasks, runs, week: "2026-W29" });
 
-  assert.equal(focus.seo, "Фокус SEO: /rak-molochnoj-zhelezy/ — section_ranking_gap");
+  assert.equal(focus.seo, "Фокус SEO: /rak-molochnoj-zhelezy/ — разрыв позиций раздела");
   assert.match(focus.ai, /67% цитирований Алисы/);
   assert.match(focus.ai, /\/rak-molochnoj-zhelezy\/, \/melanoma\/, \/rak-lyogkogo\//);
-  assert.equal(focus.pipeline, "Pipeline: 2026-W29 completed, digest 6, Медицинская проверка: 3");
+  assert.equal(focus.pipeline, "Конвейер: 2026-W29 завершён, дайджест 6, Медицинская проверка: 3");
 });

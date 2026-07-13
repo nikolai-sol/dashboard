@@ -25,7 +25,7 @@ const NORTH_STAR_LABELS: Record<NorthStarKpi["key"], string> = {
   noise: "Шум",
   medicalIntent: "Мед. интент",
   aiVisibility: "Алиса AI",
-  approveRate: "Approve",
+  approveRate: "Принято",
 };
 
 const NORTH_STAR_TOOLTIP_COPY: Record<NorthStarKpi["key"], { title: string; description: string; importance: string }> = {
@@ -45,7 +45,7 @@ const NORTH_STAR_TOOLTIP_COPY: Record<NorthStarKpi["key"], { title: string; desc
     importance: "Почему важно: присутствие в ИИ-ответах становится отдельным каналом видимости до клика и влияет на то, какие источники пользователь увидит первыми.",
   },
   approveRate: {
-    title: "Что такое approve rate",
+    title: "Что такое доля принятия",
     description: "Доля SEO-возможностей, которые прошли отбор и были приняты в работу среди принятых и отклонённых решений недели.",
     importance: "Почему важно: это скорость превращения инсайтов SEO OS в реальные задачи без перегруза команды нерелевантными рекомендациями.",
   },
@@ -57,10 +57,10 @@ const TRAFFIC_LABELS: Record<string, string> = {
   visits: "Визиты",
   users: "Пользователи",
   pageviews: "Просмотры",
-  organic_share: "Organic",
-  direct_share: "Direct",
+  organic_share: "Органика",
+  direct_share: "Прямые",
   russia_share: "Россия",
-  mobile_share: "Mobile",
+  mobile_share: "Мобильные",
   avg_duration: "Время",
   bounce: "Отказы",
   depth: "Глубина",
@@ -80,8 +80,8 @@ function tooltipForKpi(kpi: NorthStarKpi) {
   const parts = [
     kpi.tooltip,
     kpi.period ? `Окно: ${kpi.period}` : null,
-    kpi.guardValue != null ? `guard clicks_share ${formatTooltipPercent(kpi.guardValue)}` : null,
-    kpi.provenance ? `provenance ${kpi.provenance}` : null,
+    kpi.guardValue != null ? `контроль кликов ${formatTooltipPercent(kpi.guardValue)}` : null,
+    kpi.provenance ? `источник данных ${kpi.provenance}` : null,
     kpi.note,
     "Корреляционные показатели.",
   ];

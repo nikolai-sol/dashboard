@@ -37,7 +37,7 @@ export default function ZarukuSeoWeekToolbar({
           onClick={() => onComparisonEnabledChange(false)}
           className={!comparisonEnabled ? "rounded px-2.5 text-xs font-medium text-slate-950 shadow-sm" : "rounded px-2.5 text-xs text-slate-500 hover:text-slate-800"}
         >
-          Single
+          Одна неделя
         </button>
         <button
           type="button"
@@ -47,7 +47,7 @@ export default function ZarukuSeoWeekToolbar({
           onClick={() => onComparisonEnabledChange(true)}
           className={comparisonEnabled && comparisonAvailable ? "rounded bg-slate-900 px-2.5 text-xs font-medium text-white shadow-sm" : "rounded px-2.5 text-xs text-slate-500 hover:text-slate-800 disabled:cursor-not-allowed disabled:text-slate-300"}
         >
-          Compare
+          Сравнить
         </button>
       </div>
 

@@ -78,9 +78,9 @@ type Props = {
 type TabId = "overview" | "seo" | "seo_ops" | "content" | "geo" | "devices" | "audience" | "behavior" | "quality";
 
 const NAV: Array<{ id: TabId; label: string; icon: typeof LayoutGrid }> = [
-  { id: "overview", label: "Overview", icon: LayoutGrid },
+  { id: "overview", label: "Обзор", icon: LayoutGrid },
   { id: "seo", label: "SEO", icon: Search },
-  { id: "seo_ops", label: "SEO Ops", icon: Workflow },
+  { id: "seo_ops", label: "SEO-операции", icon: Workflow },
   { id: "content", label: "Контент", icon: FileText },
   { id: "geo", label: "Гео", icon: MapPin },
   { id: "devices", label: "Устройства", icon: MonitorSmartphone },
@@ -278,7 +278,7 @@ function DataTable({
             <th className="pb-2 font-medium">{mode === "pages" ? "Страница" : "Сегмент"}</th>
             {mode === "cross" ? <th className="pb-2 font-medium">Разрез</th> : null}
             <th className="pb-2 text-right font-medium">Визиты</th>
-            <th className="pb-2 text-right font-medium">Users</th>
+            <th className="pb-2 text-right font-medium">Пользователи</th>
             <th className="pb-2 text-right font-medium">Просмотры</th>
             <th className="pb-2 text-right font-medium">Отказы</th>
             <th className="pb-2 text-right font-medium">Время</th>
@@ -355,7 +355,7 @@ function MapCityDemandTable({ rows, locale }: { rows: ZarukuSeoMetricRow[]; loca
           <tr className="text-left text-xs uppercase text-slate-400">
             <th className="pb-2 font-medium">Город</th>
             <th className="pb-2 text-right font-medium">Визиты</th>
-            <th className="pb-2 text-right font-medium">Users</th>
+            <th className="pb-2 text-right font-medium">Пользователи</th>
             <th className="pb-2 text-right font-medium">Просмотры</th>
             <th className="pb-2 text-right font-medium">Доля</th>
             <th className="pb-2 text-right font-medium">Отказы</th>
@@ -389,7 +389,7 @@ function MapCityDemandTable({ rows, locale }: { rows: ZarukuSeoMetricRow[]; loca
 
 function PendingPanel({ data }: { data: ZarukuSeoData }) {
   return (
-    <Panel data={data} title="Что еще ждем" layer="serp" pending right={<span className="text-xs text-slate-400">{formatPendingRequirementSources(data)}</span>}>
+    <Panel data={data} title="Что ещё ждём" layer="serp" pending right={<span className="text-xs text-slate-400">{formatPendingRequirementSources(data)}</span>}>
       <div className="grid gap-3 md:grid-cols-3">
         {data.pending_requirements.map((item) => (
           <div key={item.title} className="rounded-lg border border-dashed border-slate-200 p-4">
@@ -477,7 +477,7 @@ function WebmasterPageTable({ rows, locale }: { rows: ZarukuYandexWebmasterPageR
           <div className="text-right text-slate-500">{formatDecimal(row.average_position, locale, 1)}</div>
         </div>
       ))}
-      {rows.length === 0 ? <div className="rounded-md bg-slate-50 px-3 py-8 text-center text-sm text-slate-500">URL-факты Webmaster пока пустые.</div> : null}
+      {rows.length === 0 ? <div className="rounded-md bg-slate-50 px-3 py-8 text-center text-sm text-slate-500">URL-факты Вебмастера пока пустые.</div> : null}
     </div>
   );
 }
@@ -493,7 +493,7 @@ function AiVisibilityPanel({ rows, locale }: { rows: ZarukuAiVisibilityRow[]; lo
         {[
           ["Проверено", formatNumber(summary.checked, locale)],
           ["Упоминания", formatNumber(summary.mentions, locale)],
-          ["Presence", formatPercent(summary.presence_rate, locale, 1)],
+          ["Присутствие", formatPercent(summary.presence_rate, locale, 1)],
           ["Цитаты", formatNumber(summary.citations, locale)],
         ].map(([label, value]) => (
           <div key={label} className="rounded-lg border border-slate-200 bg-slate-50 px-3 py-3">
@@ -508,14 +508,14 @@ function AiVisibilityPanel({ rows, locale }: { rows: ZarukuAiVisibilityRow[]; lo
             <div key={`${row.week}-${row.engine}-${row.cluster_id}`} className="rounded-md bg-slate-50 px-3 py-2">
               <div className="flex items-center justify-between gap-3">
                 <div className="min-w-0 truncate text-sm font-medium text-slate-700" title={row.query}>{row.query}</div>
-                <span className={row.mentioned ? "text-xs font-medium text-teal-700" : "text-xs text-slate-400"}>{row.mentioned ? "mentioned" : "not found"}</span>
+                <span className={row.mentioned ? "text-xs font-medium text-teal-700" : "text-xs text-slate-400"}>{row.mentioned ? "найдено" : "не найдено"}</span>
               </div>
               {row.cited_urls.length ? <div className="mt-1 truncate text-xs text-slate-400">{row.cited_urls.map(shortUrl).join(" · ")}</div> : null}
             </div>
           ))}
         </div>
       ) : (
-        <div className="rounded-md bg-slate-50 px-3 py-8 text-center text-sm text-slate-500">AI visibility snapshot ещё не экспортирован SEO OS.</div>
+        <div className="rounded-md bg-slate-50 px-3 py-8 text-center text-sm text-slate-500">Снимок AI-видимости ещё не экспортирован SEO OS.</div>
       )}
     </div>
   );
@@ -561,7 +561,7 @@ function NorthStarBlock({ data, locale }: Props) {
             </div>
           ))}
         </div>
-        <div className="shrink-0 rounded-md border border-slate-200 bg-white px-2.5 py-1 text-xs font-medium text-slate-500">baseline 13.07.2026</div>
+        <div className="shrink-0 rounded-md border border-slate-200 bg-white px-2.5 py-1 text-xs font-medium text-slate-500">бейзлайн 13.07.2026</div>
       </div>
     </section>
   );
@@ -617,11 +617,11 @@ function AiAggregateVisibilityPanel({ data, locale }: Props) {
   return (
     <Panel
       data={data}
-      title="AI visibility (Yandex WM / vendor)"
+      title="AI-видимость (Яндекс Вебмастер / внешний источник)"
       source="yandex_gen_search"
       layer="ai"
       pending={rows.length === 0}
-      right={<span className="text-xs text-slate-400">{latest?.period ?? "period —"}</span>}
+      right={<span className="text-xs text-slate-400">{latest?.period ?? "период —"}</span>}
     >
       {rows.length ? (
         <div className="space-y-3">
@@ -631,21 +631,21 @@ function AiAggregateVisibilityPanel({ data, locale }: Props) {
               <XAxis dataKey="label" tick={{ fontSize: 12, fill: "#64748b" }} axisLine={false} tickLine={false} />
               <YAxis tick={{ fontSize: 12, fill: "#64748b" }} axisLine={false} tickLine={false} />
               <Tooltip />
-              <Bar dataKey="presence_rate" name="Presence rate" fill="#0891b2" radius={[6, 6, 0, 0]} />
+              <Bar dataKey="presence_rate" name="Доля присутствия" fill="#0891b2" radius={[6, 6, 0, 0]} />
             </BarChart>
           </ResponsiveContainer>
           <div className="grid gap-3 md:grid-cols-3">
-            <div className="rounded-lg border border-slate-200 bg-slate-50 px-3 py-3"><div className="text-xs uppercase text-slate-400">Presence</div><div className="mt-1 text-xl font-semibold text-slate-900">{formatPercent(latest?.presence_rate, locale, 1)}</div></div>
-            <div className="rounded-lg border border-slate-200 bg-slate-50 px-3 py-3"><div className="text-xs uppercase text-slate-400">Mentions</div><div className="mt-1 text-xl font-semibold text-slate-900">{formatNumber(latest?.mentions ?? 0, locale)}</div></div>
-            <div className="rounded-lg border border-slate-200 bg-slate-50 px-3 py-3"><div className="text-xs uppercase text-slate-400">Citations</div><div className="mt-1 text-xl font-semibold text-slate-900">{formatNumber(latest?.citations ?? 0, locale)}</div></div>
+            <div className="rounded-lg border border-slate-200 bg-slate-50 px-3 py-3"><div className="text-xs uppercase text-slate-400">Присутствие</div><div className="mt-1 text-xl font-semibold text-slate-900">{formatPercent(latest?.presence_rate, locale, 1)}</div></div>
+            <div className="rounded-lg border border-slate-200 bg-slate-50 px-3 py-3"><div className="text-xs uppercase text-slate-400">Упоминания</div><div className="mt-1 text-xl font-semibold text-slate-900">{formatNumber(latest?.mentions ?? 0, locale)}</div></div>
+            <div className="rounded-lg border border-slate-200 bg-slate-50 px-3 py-3"><div className="text-xs uppercase text-slate-400">Цитаты</div><div className="mt-1 text-xl font-semibold text-slate-900">{formatNumber(latest?.citations ?? 0, locale)}</div></div>
           </div>
           <p className="text-xs leading-relaxed text-slate-500">
             {latest ? `${formatNumber(latest.mentions, locale)} из ${formatNumber(latest.citations, locale)} примеров, источник №1 во всех случаях.` : ""}
-            {latest?.provenance ? ` Provenance: ${latest.provenance}.` : ""}
+            {latest?.provenance ? ` Источник данных: ${latest.provenance}.` : ""}
           </p>
         </div>
       ) : (
-        <div className="rounded-md bg-slate-50 px-3 py-8 text-center text-sm text-slate-500">AI visibility snapshot ещё не записан в seo_ai_visibility.</div>
+        <div className="rounded-md bg-slate-50 px-3 py-8 text-center text-sm text-slate-500">Снимок AI-видимости ещё не записан в seo_ai_visibility.</div>
       )}
     </Panel>
   );
@@ -666,7 +666,7 @@ function SemanticHealthPanel({ data, locale, primaryWeek }: Props & { primaryWee
   });
   const periodLabel = selectedRows[0]?.period_label ?? primaryWeek ?? data.seo_intelligence.sov.latest_week;
   return (
-    <Panel data={data} title="Семантическое здоровье" source="seo_os" layer="serp" pending={selectedRows.length === 0} right={<span className="text-xs text-slate-400">{periodLabel ?? "week —"}</span>}>
+    <Panel data={data} title="Семантическое здоровье" source="seo_os" layer="serp" pending={selectedRows.length === 0} right={<span className="text-xs text-slate-400">{periodLabel ?? "неделя —"}</span>}>
       <div className="space-y-4">
         <ResponsiveContainer width="100%" height={240}>
           <LineChart data={chartRows} margin={{ top: 8, right: 8, left: -20, bottom: 0 }}>
@@ -674,18 +674,18 @@ function SemanticHealthPanel({ data, locale, primaryWeek }: Props & { primaryWee
             <XAxis dataKey="week" tick={{ fontSize: 12, fill: "#64748b" }} axisLine={false} tickLine={false} />
             <YAxis tick={{ fontSize: 12, fill: "#64748b" }} axisLine={false} tickLine={false} />
             <Tooltip />
-            <Line type="monotone" dataKey="noise" name="Noise share" stroke="#ef4444" strokeWidth={2.5} dot={{ r: 3 }} />
-            <Line type="monotone" dataKey="medical" name="Medical share" stroke="#0d9488" strokeWidth={2.5} dot={{ r: 3 }} />
-            <Line type="monotone" dataKey="noise_baseline" name="Noise baseline" stroke="#ef4444" strokeDasharray="5 5" dot={false} />
-            <Line type="monotone" dataKey="medical_baseline" name="Medical baseline" stroke="#0d9488" strokeDasharray="5 5" dot={false} />
+            <Line type="monotone" dataKey="noise" name="Шум в показах" stroke="#ef4444" strokeWidth={2.5} dot={{ r: 3 }} />
+            <Line type="monotone" dataKey="medical" name="Медицинский интент" stroke="#0d9488" strokeWidth={2.5} dot={{ r: 3 }} />
+            <Line type="monotone" dataKey="noise_baseline" name="Бейзлайн шума" stroke="#ef4444" strokeDasharray="5 5" dot={false} />
+            <Line type="monotone" dataKey="medical_baseline" name="Бейзлайн мед. интента" stroke="#0d9488" strokeDasharray="5 5" dot={false} />
           </LineChart>
         </ResponsiveContainer>
         <div className="overflow-x-auto">
           <table className="w-full min-w-[760px] text-sm">
-            <thead><tr className="text-left text-xs uppercase text-slate-400"><th className="pb-2 font-medium">Cluster</th><th className="pb-2 text-right font-medium">Queries</th><th className="pb-2 text-right font-medium">Показы</th><th className="pb-2 text-right font-medium">Клики</th><th className="pb-2 text-right font-medium">Impr share</th><th className="pb-2 text-right font-medium">Click share</th><th className="pb-2 text-right font-medium">CTR</th></tr></thead>
+            <thead><tr className="text-left text-xs uppercase text-slate-400"><th className="pb-2 font-medium">Кластер</th><th className="pb-2 text-right font-medium">Запросы</th><th className="pb-2 text-right font-medium">Показы</th><th className="pb-2 text-right font-medium">Клики</th><th className="pb-2 text-right font-medium">Доля показов</th><th className="pb-2 text-right font-medium">Доля кликов</th><th className="pb-2 text-right font-medium">CTR</th></tr></thead>
             <tbody className="divide-y divide-slate-100">
-              {selectedRows.map((row) => <tr key={`${row.week}-${row.cluster}`}><td className="py-2.5 font-medium text-slate-700">{row.cluster}{row.isBaselineCluster ? <span className="ml-2 rounded-md bg-slate-100 px-1.5 py-0.5 text-[11px] font-medium text-slate-500">baseline</span> : null}</td><td className="py-2.5 text-right text-slate-600">{formatNumber(row.query_count, locale)}</td><td className="py-2.5 text-right text-slate-600">{formatNumber(row.impressions, locale)}</td><td className="py-2.5 text-right text-slate-600">{formatNumber(row.clicks, locale)}</td><td className="py-2.5 text-right text-slate-600">{formatPercent(row.impressions_share, locale, 2)}</td><td className="py-2.5 text-right text-slate-600">{formatPercent(row.clicks_share, locale, 2)}</td><td className="py-2.5 text-right text-slate-500">{formatPercent(row.ctr, locale, 2)}</td></tr>)}
-              {selectedRows.length === 0 ? <tr><td colSpan={7} className="py-8 text-center text-sm text-slate-500">SOV clusters ещё не записаны.</td></tr> : null}
+              {selectedRows.map((row) => <tr key={`${row.week}-${row.cluster}`}><td className="py-2.5 font-medium text-slate-700">{row.cluster}{row.isBaselineCluster ? <span className="ml-2 rounded-md bg-slate-100 px-1.5 py-0.5 text-[11px] font-medium text-slate-500">бейзлайн</span> : null}</td><td className="py-2.5 text-right text-slate-600">{formatNumber(row.query_count, locale)}</td><td className="py-2.5 text-right text-slate-600">{formatNumber(row.impressions, locale)}</td><td className="py-2.5 text-right text-slate-600">{formatNumber(row.clicks, locale)}</td><td className="py-2.5 text-right text-slate-600">{formatPercent(row.impressions_share, locale, 2)}</td><td className="py-2.5 text-right text-slate-600">{formatPercent(row.clicks_share, locale, 2)}</td><td className="py-2.5 text-right text-slate-500">{formatPercent(row.ctr, locale, 2)}</td></tr>)}
+              {selectedRows.length === 0 ? <tr><td colSpan={7} className="py-8 text-center text-sm text-slate-500">SOV-кластеры ещё не записаны.</td></tr> : null}
             </tbody>
           </table>
         </div>
@@ -728,12 +728,12 @@ function OverviewTab({ data, locale }: Props) {
             {data.technical_tail.length ? (
               <div className="mt-4 rounded-md border border-dashed border-slate-200 bg-slate-50 px-3 py-2 text-xs text-slate-500">
                 Технический хвост:{" "}
-                {data.technical_tail.map((row) => `${row.label}: ${formatNumber(row.visits, locale)}`).join(", ")}. Он не считается отдельным acquisition-каналом.
+                {data.technical_tail.map((row) => `${row.label}: ${formatNumber(row.visits, locale)}`).join(", ")}. Он не считается отдельным каналом привлечения.
               </div>
             ) : null}
           </Panel>
         </div>
-        <Panel data={data} title="Organic по месяцам" source="metrika">
+        <Panel data={data} title="Органика по месяцам" source="metrika">
           <ResponsiveContainer width="100%" height={220}>
             <LineChart data={data.organic_trend} margin={{ top: 8, right: 8, left: -20, bottom: 0 }}>
               <CartesianGrid stroke="#eef2f7" strokeDasharray="3 3" />
@@ -783,7 +783,7 @@ function SeoTab({ data, locale, primaryWeek, comparisonWeek }: Props & { primary
         </Panel>
         <Panel
           data={data}
-          title="Yandex search facts"
+          title="Факты Яндекс Поиска"
           source={webmasterFactsChrome.source}
           layer={webmasterFactsChrome.layer ?? undefined}
           pending={data.webmaster.status === "unavailable"}
@@ -802,7 +802,7 @@ function SeoTab({ data, locale, primaryWeek, comparisonWeek }: Props & { primary
       </div>
       <SemanticHealthPanel data={data} locale={locale} primaryWeek={primaryWeek} />
       <div className="grid gap-5 lg:grid-cols-2">
-        <Panel data={data} title="GSC search facts" source="gsc" layer="serp" pending>
+        <Panel data={data} title="Факты Google Search Console" source="gsc" layer="serp" pending>
           <div className="grid grid-cols-3 gap-3">
             {["Показы", "Клики", "CTR"].map((item) => (
               <div key={item} className="rounded-lg border border-dashed border-slate-200 px-3 py-6 text-center">
@@ -815,11 +815,11 @@ function SeoTab({ data, locale, primaryWeek, comparisonWeek }: Props & { primary
         </Panel>
         <Panel
           data={data}
-          title="AI prompt snapshot"
+          title="Снимок AI-запросов"
           source="yandex_gen_search"
           layer="ai"
           pending={data.ai_visibility.rows.length === 0}
-          right={<span className="text-xs text-slate-400">{aiWeek ?? "week —"}</span>}
+          right={<span className="text-xs text-slate-400">{aiWeek ?? "неделя —"}</span>}
         >
           <AiVisibilityPanel rows={aiRows} locale={currentLocale} />
         </Panel>
@@ -830,19 +830,19 @@ function SeoTab({ data, locale, primaryWeek, comparisonWeek }: Props & { primary
         comparisonWeek={comparisonWeek}
         source={data.sources.find((source) => source.id === "seo_os")}
       />
-      <Panel data={data} title="Top organic landing pages" source="metrika" layer="onsite" right={<span className="text-xs text-slate-400">SERP columns pending</span>}>
+      <Panel data={data} title="Топ органических посадочных страниц" source="metrika" layer="onsite" right={<span className="text-xs text-slate-400">SERP-колонки ожидаются</span>}>
         <DataTable rows={data.organic_landing_pages.slice(0, 12)} mode="cross" locale={currentLocale} />
       </Panel>
       <div className="grid gap-5 lg:grid-cols-2">
-        <Panel data={data} title="Yandex queries" source="webmaster" layer="serp" right={<span className="text-xs text-slate-400">{webmasterQueryMeta.periodLabel} · {webmasterQueries.length} rows</span>}>
+        <Panel data={data} title="Запросы Яндекса" source="webmaster" layer="serp" right={<span className="text-xs text-slate-400">{webmasterQueryMeta.periodLabel} · {webmasterQueries.length} строк</span>}>
           <WebmasterQueryTable rows={topWebmasterQueries(webmasterQueries, 12)} locale={currentLocale} />
         </Panel>
-        <Panel data={data} title="Yandex landing pages" source="webmaster" layer="serp" right={<span className="text-xs text-slate-400">{webmasterPageMeta.periodLabel} · URL facts</span>}>
+        <Panel data={data} title="Посадочные страницы Яндекса" source="webmaster" layer="serp" right={<span className="text-xs text-slate-400">{webmasterPageMeta.periodLabel} · URL-факты</span>}>
           <WebmasterPageTable rows={topWebmasterPages(webmasterPages, 10)} locale={currentLocale} />
         </Panel>
       </div>
       <div className="grid gap-5 lg:grid-cols-2">
-        <Panel data={data} title="Поисковые фразы" source="metrika" layer="onsite" right={<span className="text-xs text-slate-400">{phraseCoverage?.value ?? "coverage —"}</span>}>
+        <Panel data={data} title="Поисковые фразы" source="metrika" layer="onsite" right={<span className="text-xs text-slate-400">{phraseCoverage?.value ?? "покрытие —"}</span>}>
           <div className="space-y-2">
             {data.search_phrases.slice(0, 12).map((row) => (
               <div key={row.label} className="flex items-center justify-between gap-3 rounded-md bg-slate-50 px-3 py-2">
@@ -851,7 +851,7 @@ function SeoTab({ data, locale, primaryWeek, comparisonWeek }: Props & { primary
               </div>
             ))}
           </div>
-          <p className="mt-3 text-xs text-slate-500">Google часто скрывает query, поэтому это не полная SEO-семантика.</p>
+          <p className="mt-3 text-xs text-slate-500">Google часто скрывает запросы, поэтому это не полная SEO-семантика.</p>
         </Panel>
         <AiAggregateVisibilityPanel data={data} locale={locale} />
       </div>
@@ -871,7 +871,7 @@ function ContentTab({ data, locale, primaryWeek, comparisonWeek }: Props & { pri
       <Panel data={data} title="Разделы портала" source="metrika" layer="onsite">
         <DataTable rows={data.content_sections} mode="metrics" locale={locale ?? "ru-RU"} />
       </Panel>
-      <Panel data={data} title="Top pages" source="metrika" layer="onsite">
+      <Panel data={data} title="Топ страниц" source="metrika" layer="onsite">
         <DataTable rows={data.top_pages.slice(0, 20)} mode="pages" locale={locale ?? "ru-RU"} />
       </Panel>
     </div>
@@ -903,7 +903,7 @@ function DevicesTab({ data, locale }: Props) {
         <Panel data={data} title="Типы устройств" source="metrika" layer="onsite">
           <BarList rows={data.devices} locale={locale} />
         </Panel>
-        <Panel data={data} title="Source × device" source="metrika" layer="onsite">
+        <Panel data={data} title="Источник × устройство" source="metrika" layer="onsite">
           <DataTable rows={data.source_devices.slice(0, 12)} mode="cross" locale={locale ?? "ru-RU"} />
         </Panel>
       </div>
@@ -911,7 +911,7 @@ function DevicesTab({ data, locale }: Props) {
         <Panel data={data} title="Браузеры" source="metrika" layer="onsite">
           <BarList rows={data.browsers.slice(0, 10)} locale={locale} />
         </Panel>
-        <Panel data={data} title="OS" source="metrika" layer="onsite">
+        <Panel data={data} title="ОС" source="metrika" layer="onsite">
           <BarList rows={data.operating_systems.slice(0, 10)} locale={locale} />
         </Panel>
       </div>
@@ -923,14 +923,14 @@ function AudienceTab({ data, locale }: Props) {
   return (
     <div className="space-y-5">
       <div className="grid gap-5 lg:grid-cols-2">
-        <Panel data={data} title="Возраст" source="metrika" layer="onsite" right={<span className="text-xs text-slate-400">inferred</span>}>
+        <Panel data={data} title="Возраст" source="metrika" layer="onsite" right={<span className="text-xs text-slate-400">оценка</span>}>
           <BarList rows={data.age} locale={locale} />
         </Panel>
-        <Panel data={data} title="Пол" source="metrika" layer="onsite" right={<span className="text-xs text-slate-400">inferred</span>}>
+        <Panel data={data} title="Пол" source="metrika" layer="onsite" right={<span className="text-xs text-slate-400">оценка</span>}>
           <BarList rows={data.gender} locale={locale} />
         </Panel>
       </div>
-      <Panel data={data} title="Интересы" source="metrika" layer="onsite" right={<span className="text-xs text-slate-400">coverage зависит от Яндекса</span>}>
+      <Panel data={data} title="Интересы" source="metrika" layer="onsite" right={<span className="text-xs text-slate-400">покрытие зависит от Яндекса</span>}>
         <BarList rows={data.interests.slice(0, 12)} locale={locale} />
       </Panel>
     </div>
@@ -941,17 +941,17 @@ function BehaviorTab({ data, locale }: Props) {
   const currentLocale = locale ?? "ru-RU";
   return (
     <div className="space-y-5">
-      <Panel data={data} title="Лучшее удержание" source="metrika" layer="onsite" right={<span className="text-xs text-slate-400">startURL · engagement</span>}>
+      <Panel data={data} title="Лучшее удержание" source="metrika" layer="onsite" right={<span className="text-xs text-slate-400">startURL · удержание</span>}>
         <DataTable rows={data.best_engagement_pages} mode="pages" locale={currentLocale} wrapText />
       </Panel>
-      <Panel data={data} title="Проблемные входные страницы" source="metrika" layer="onsite" right={<span className="text-xs text-slate-400">startURL · high bounce</span>}>
+      <Panel data={data} title="Проблемные входные страницы" source="metrika" layer="onsite" right={<span className="text-xs text-slate-400">startURL · высокие отказы</span>}>
         <DataTable rows={data.high_bounce_pages} mode="pages" locale={currentLocale} wrapText />
       </Panel>
       <div className="grid gap-5 xl:grid-cols-2">
-        <Panel data={data} title="Возвратный контент" source="metrika" layer="onsite" right={<span className="text-xs text-slate-400">returned pageviews</span>}>
+        <Panel data={data} title="Возвратный контент" source="metrika" layer="onsite" right={<span className="text-xs text-slate-400">возвратные просмотры</span>}>
           <ReturningPagesTable rows={data.returning_pages.slice(0, 16)} locale={currentLocale} />
         </Panel>
-        <Panel data={data} title="Поведение по каналам" source="metrika" layer="onsite" right={<span className="text-xs text-slate-400">traffic source</span>}>
+        <Panel data={data} title="Поведение по каналам" source="metrika" layer="onsite" right={<span className="text-xs text-slate-400">источник трафика</span>}>
           <DataTable rows={data.traffic_channels} mode="metrics" locale={currentLocale} />
         </Panel>
       </div>
@@ -1074,7 +1074,7 @@ export default function ZarukuSeoDashboard({ data, locale = "ru-RU" }: Props) {
             <div className="flex h-8 w-8 items-center justify-center rounded-lg bg-teal-600 text-sm font-bold text-white">Z</div>
             <div>
               <div className="text-sm font-semibold leading-tight">Zaruku</div>
-              <div className="text-xs text-slate-400">SEO / GEO dashboard</div>
+              <div className="text-xs text-slate-400">SEO / GEO дашборд</div>
             </div>
           </div>
           <nav className="mt-6 space-y-1">
@@ -1109,7 +1109,7 @@ export default function ZarukuSeoDashboard({ data, locale = "ru-RU" }: Props) {
                     {source.label}
                   </span>
                   <span className={source.status === "connected" ? "text-teal-600" : "text-slate-300"}>
-                    {source.status === "connected" ? "on" : "—"}
+                    {source.status === "connected" ? "подкл." : "—"}
                   </span>
                 </div>
               ))}
@@ -1127,7 +1127,7 @@ export default function ZarukuSeoDashboard({ data, locale = "ru-RU" }: Props) {
                   <div className="mt-0.5 flex flex-wrap items-center gap-2 text-xs text-slate-500">
                     <span>{data.domain}</span>
                     <span>·</span>
-                    <span>counter {data.counters.join(", ")}</span>
+                    <span>счётчик {data.counters.join(", ")}</span>
                     <span>·</span>
                     <span>{data.period.from} — {data.period.to}</span>
                   </div>

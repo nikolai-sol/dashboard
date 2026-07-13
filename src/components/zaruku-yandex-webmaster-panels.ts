@@ -94,7 +94,7 @@ export function buildWebmasterSelectionMeta<T extends { week: string; week_from:
   const firstRow = selection.rows[0];
   const periodLabel = firstRow
     ? `${selection.week ?? firstRow.week} · ${firstRow.week_from} — ${firstRow.week_to}`
-    : (selection.week ?? "week —");
+    : (selection.week ?? "неделя —");
   const fallbackNote = selectedWeek && selection.week && selectedWeek !== selection.week
     ? `Выбрана ${selectedWeek}, но в Яндекс Вебмастере за неё нет строк; показана последняя доступная неделя ${selection.week}.`
     : null;

@@ -10,6 +10,7 @@ import {
   filterSearchEngineRows,
   enrichRowsWithPageTitles,
   mergeTopPagesWithVisitMetrics,
+  readableTrafficSource,
 } from "@/lib/zaruku-seo";
 import type { ZarukuSeoMetricRow, ZarukuSeoSectionPattern } from "@/lib/types";
 
@@ -230,6 +231,13 @@ test("filterSearchEngineRows keeps only Yandex and Google organic engines", () =
     "Yandex: search results",
     "Google: search results",
   ]);
+});
+
+test("readableTrafficSource localizes Metrika traffic source labels for Zaruku UI", () => {
+  assert.equal(readableTrafficSource("Search engine traffic"), "Поиск");
+  assert.equal(readableTrafficSource("Direct traffic"), "Прямые заходы");
+  assert.equal(readableTrafficSource("Cached page traffic"), "Кешированные страницы");
+  assert.equal(readableTrafficSource("Unknown"), "Неизвестно");
 });
 
 test("buildMapCityDemand aggregates only map entry pages by city", () => {
