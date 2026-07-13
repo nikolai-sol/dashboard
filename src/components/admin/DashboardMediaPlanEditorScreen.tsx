@@ -8,7 +8,7 @@ type DashboardMediaPlanEditorScreenProps = {
   dashboardId: string;
 };
 
-type MediaPlanRowForm = Record<string, string | number>;
+type MediaPlanRowForm = Record<string, string | number | string[]>;
 
 const MONTH_COLUMNS = [
   "январь",
@@ -154,6 +154,9 @@ function toEditableRow(row: Record<string, unknown>, index: number): MediaPlanRo
     const raw = monthly[month];
     next[month] = typeof raw === "number" ? raw : Number(raw ?? 0) || 0;
   }
+  if (Array.isArray(row.source_keys)) {
+    next.source_keys = row.source_keys.map((item) => String(item).trim()).filter(Boolean);
+  }
 
   if (!String(next.line_key ?? "").trim()) {
     next.line_key = `manual::${index + 1}`;
@@ -181,6 +184,9 @@ function fromEditableRow(row: MediaPlanRowForm): Record<string, unknown> {
     buy_type: String(row.buy_type ?? "CPM").trim().toUpperCase() || "CPM",
     monthly,
   };
+  if (Array.isArray(row.source_keys)) {
+    next.source_keys = row.source_keys.map((item) => String(item).trim()).filter(Boolean);
+  }
 
   for (const column of BASE_COLUMNS) {
     if (["line_key", "platform", "channel", "format", "buy_type"].includes(column)) continue;

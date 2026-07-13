@@ -22,8 +22,9 @@ export interface MediaPlanRow {
   cpv_plan: number;
   cpa_plan: number;
   monthly: Record<string, number>;
+  source_keys?: string[];
   // allow additional raw fields from parsing
-  [key: string]: string | number | Record<string, number>;
+  [key: string]: string | number | Record<string, number> | string[] | undefined;
 }
 
 export interface ChannelPlanAggregate {
@@ -276,6 +277,20 @@ function parseMonthly(raw: Record<string, unknown>): Record<string, number> {
   return monthly;
 }
 
+function parseSourceKeys(raw: Record<string, unknown>): string[] {
+  const value = firstPresent(raw, ["source_keys", "source_key", "sources"]);
+  if (Array.isArray(value)) {
+    return value.map((item) => String(item).trim()).filter(Boolean);
+  }
+  if (typeof value === "string") {
+    return value
+      .split(/[,\n|]+/)
+      .map((item) => item.trim())
+      .filter(Boolean);
+  }
+  return [];
+}
+
 export function collectMonthsFound(rows: MediaPlanRow[]): string[] {
   const found = new Set<string>();
   for (const row of rows) {
@@ -422,6 +437,7 @@ function normalizeRow(raw: Record<string, unknown>): MediaPlanRow {
     cpv_plan: cpvPlan,
     cpa_plan: cpaPlan,
     monthly,
+    source_keys: parseSourceKeys(raw),
   };
 }
 

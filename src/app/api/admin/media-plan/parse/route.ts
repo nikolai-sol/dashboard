@@ -46,6 +46,7 @@ export async function GET(request: Request) {
         cpv_plan: row.cpv_plan,
         cpa_plan: row.cpa_plan,
         monthly: row.monthly,
+        source_keys: Array.isArray(row.source_keys) ? row.source_keys : [],
       })),
       months_found: collectMonthsFound(result.rows),
     });
@@ -85,6 +86,7 @@ export async function POST(request: Request) {
         cpv_plan: row.cpv_plan,
         cpa_plan: row.cpa_plan,
         monthly: row.monthly,
+        source_keys: Array.isArray(row.source_keys) ? row.source_keys : [],
       })),
       months_found: collectMonthsFound(result.rows),
     });

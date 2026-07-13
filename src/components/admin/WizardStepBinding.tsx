@@ -8,6 +8,10 @@ import {
   resolveSourceKey,
   resolveSourceType,
 } from "@/lib/source-mapping";
+import {
+  resolveMediaPlanRowSourceKeys,
+  toggleMediaPlanRowSourceKey,
+} from "@/components/admin/media-plan-source-selection";
 
 type ParsedPlanRow = {
   line_key: string;
@@ -30,6 +34,7 @@ type ParsedPlanRow = {
   cpv_plan: number;
   cpa_plan: number;
   monthly: Record<string, number>;
+  source_keys?: string[];
 };
 
 type CampaignItem = {
@@ -62,17 +67,38 @@ function parseAccountIds(value: unknown): string[] {
   return value.map((item) => String(item).trim()).filter(Boolean);
 }
 
-function isCrossPlatformInstrument(instrument: string): boolean {
-  const normalized = instrument.trim().toLowerCase();
-  return !normalized || normalized === "все" || normalized === "all";
-}
-
 function monthSummary(monthly: Record<string, number>): string {
   const parts = Object.entries(monthly)
     .filter(([, value]) => value > 0)
     .slice(0, 6)
     .map(([month, value]) => `${month}: ${compact(value)}`);
   return parts.join(" | ");
+}
+
+function parsedRowToInlineRow(row: ParsedPlanRow): Record<string, unknown> {
+  return {
+    line_key: row.line_key,
+    platform: row.instrument,
+    channel: row.channel,
+    format: row.format,
+    buy_type: row.buy_type,
+    budget_plan: row.budget_plan,
+    units_plan: row.units_plan,
+    unit_price: row.unit_price,
+    impressions_plan: row.impressions_plan,
+    reach_plan: row.reach_plan,
+    frequency_plan: row.frequency_plan,
+    views_plan: row.views_plan,
+    clicks_plan: row.clicks_plan,
+    conversions_plan: row.conversions_plan,
+    ctr_plan: row.ctr_plan,
+    cpm_plan: row.cpm_plan,
+    cpc_plan: row.cpc_plan,
+    cpv_plan: row.cpv_plan,
+    cpa_plan: row.cpa_plan,
+    monthly: row.monthly,
+    source_keys: Array.isArray(row.source_keys) ? row.source_keys : [],
+  };
 }
 
 export default function WizardStepBinding({ data, onChange }: WizardStepBindingProps) {
@@ -107,6 +133,29 @@ export default function WizardStepBinding({ data, onChange }: WizardStepBindingP
         return parseAccountIds(source.source_config?.account_ids).length > 0;
       }),
     [actualSources],
+  );
+  const bindingSourceOptions = useMemo(() => {
+    const seen = new Set<string>();
+    return bindingCampaignSources
+      .map((source) => {
+        const sourceKey = source.platform === "manual_data" ? "manual_data" : resolveSourceKey(source.platform);
+        const platformId = resolvePlatformIdFromSourceKey(sourceKey);
+        const meta = PLATFORM_COLORS[platformId];
+        return {
+          sourceKey,
+          label: meta?.label ?? source.platform,
+          color: meta?.hex ?? "#94a3b8",
+        };
+      })
+      .filter((option) => {
+        if (seen.has(option.sourceKey)) return false;
+        seen.add(option.sourceKey);
+        return true;
+      });
+  }, [bindingCampaignSources]);
+  const availableSourceKeys = useMemo(
+    () => bindingSourceOptions.map((option) => option.sourceKey),
+    [bindingSourceOptions],
   );
 
   useEffect(() => {
@@ -264,15 +313,8 @@ export default function WizardStepBinding({ data, onChange }: WizardStepBindingP
 
   const activeRowSourceKeys = useMemo(() => {
     if (!activeRow) return null;
-    if (isCrossPlatformInstrument(activeRow.instrument)) {
-      return new Set(
-        bindingCampaignSources.map((source) =>
-          source.platform === "manual_data" ? "manual_data" : resolveSourceKey(source.platform),
-        ),
-      );
-    }
-    return new Set([resolveSourceKey(activeRow.instrument)]);
-  }, [activeRow, bindingCampaignSources]);
+    return new Set(resolveMediaPlanRowSourceKeys(activeRow, availableSourceKeys));
+  }, [activeRow, availableSourceKeys]);
 
   const groupedCampaigns = useMemo(() => {
     const filtered = campaigns.filter((campaign) => {
@@ -312,6 +354,33 @@ export default function WizardStepBinding({ data, onChange }: WizardStepBindingP
 
   const activeBindings = activeLineKey ? bindingsByLineKey.get(activeLineKey) ?? [] : [];
   const activeLabel = activeRow?.channel ?? activeLineKey ?? "";
+
+  const updateRowSourceKeys = (rowIndex: number, sourceKey: string, checked: boolean) => {
+    setRows((current) => {
+      const nextRows = current.map((row, index) => {
+        if (index !== rowIndex) return row;
+        const currentKeys = resolveMediaPlanRowSourceKeys(row, availableSourceKeys);
+        return {
+          ...row,
+          source_keys: toggleMediaPlanRowSourceKey(currentKeys, sourceKey, checked, availableSourceKeys),
+        };
+      });
+      onChange({
+        ...data,
+        sources: data.sources.map((source) => {
+          if (source.role !== "plan") return source;
+          return {
+            ...source,
+            source_config: {
+              ...(source.source_config ?? {}),
+              inline_rows: nextRows.map(parsedRowToInlineRow),
+            },
+          };
+        }),
+      });
+      return nextRows;
+    });
+  };
 
   const updateBindings = (nextBindings: MediaPlanBindingForm[]) => {
     onChange({
@@ -399,6 +468,7 @@ export default function WizardStepBinding({ data, onChange }: WizardStepBindingP
             {rows.map((row, index) => {
               const bound = bindingsByLineKey.get(row.line_key) ?? [];
               const platformCount = new Set(bound.map((item) => item.source_key)).size;
+              const rowSourceKeys = resolveMediaPlanRowSourceKeys(row, availableSourceKeys);
               return (
                 <div key={row.line_key || `${row.channel}-${index}`} className="rounded-lg border border-slate-200 bg-white p-3">
                   <div className="flex flex-wrap items-start justify-between gap-3">
@@ -423,6 +493,40 @@ export default function WizardStepBinding({ data, onChange }: WizardStepBindingP
                       {monthSummary(row.monthly) ? (
                         <p className="mt-1 text-xs text-slate-500">{monthSummary(row.monthly)}</p>
                       ) : null}
+                      {bindingSourceOptions.length ? (
+                        <div className="mt-3 flex flex-wrap gap-2">
+                          {bindingSourceOptions.map((option) => {
+                            const checked = rowSourceKeys.includes(option.sourceKey);
+                            return (
+                              <label
+                                key={`${row.line_key}-${option.sourceKey}`}
+                                className={`inline-flex items-center gap-1.5 rounded-full border px-2.5 py-1 text-xs ${
+                                  checked
+                                    ? "border-slate-900 bg-slate-900 text-white"
+                                    : "border-slate-200 bg-slate-50 text-slate-700"
+                                }`}
+                              >
+                                <input
+                                  type="checkbox"
+                                  checked={checked}
+                                  onChange={(event) => updateRowSourceKeys(index, option.sourceKey, event.target.checked)}
+                                  className="h-3 w-3"
+                                />
+                                <span
+                                  className="h-2 w-2 rounded-full"
+                                  style={{ backgroundColor: checked ? "#ffffff" : option.color }}
+                                />
+                                {option.label}
+                              </label>
+                            );
+                          })}
+                        </div>
+                      ) : null}
+                      {!rowSourceKeys.length ? (
+                        <p className="mt-2 text-xs text-amber-700">
+                          Выберите источник для этой строки, чтобы увидеть кампании в привязке.
+                        </p>
+                      ) : null}
                     </div>
                     <div className="text-right">
                       <p className="text-xs text-slate-600">
@@ -435,7 +539,8 @@ export default function WizardStepBinding({ data, onChange }: WizardStepBindingP
                           setActiveLineKey(row.line_key);
                           setSearch("");
                         }}
-                        className="mt-2 rounded-lg border border-slate-300 px-3 py-2 text-sm hover:bg-slate-50"
+                        disabled={!rowSourceKeys.length}
+                        className="mt-2 rounded-lg border border-slate-300 px-3 py-2 text-sm hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-50"
                       >
                         Привязать
                       </button>
@@ -533,6 +638,11 @@ export default function WizardStepBinding({ data, onChange }: WizardStepBindingP
                   </div>
                 );
               })}
+              {!groupedCampaigns.size ? (
+                <p className="rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-800">
+                  Для выбранных источников нет кампаний. Проверьте выбор sources у строки или аккаунты на шаге Sources.
+                </p>
+              ) : null}
             </div>
 
             <div className="mt-4 flex items-center justify-between gap-3">

@@ -304,6 +304,20 @@ Recent completed changes that should not be rediscovered:
     - SEO OS does not replace pending Google Search Console or Yandex Webmaster ingestion for impressions, clicks, CTR, and complete query / URL search-console coverage
     - DataForSEO / AI visibility remains pending
 
+13. Gidrofuril dashboard investigation on 2026-07-13:
+    - production DB row: `dashboards.id = 29`, `client_id = gidrofuril`, dashboard name `лето 2026`, period `2026-07-01` to `2026-09-15`
+    - Hybrid advertiser discovery found `Gidrofuril` in both Hybrid credential slots and added them to `report_bd_tech.hyb_systems`:
+      - account `1`: advertiser id `6a4793ff7d258333b061e6f4`
+      - account `2`: advertiser id `6a479553585ccf4ec4e5a036`
+    - Hybrid backfill for `2026-07-01..2026-07-12` succeeded and wrote canonical accounts, four campaigns, and facts; dashboard source `hybrid` is now bound to both account ids in `dashboard_sources.source_config.account_ids`
+    - VK advertiser id `1090736542` was onboarded via VK `agency_client_credentials` token grant and saved into `report_bd_tech.vk_data` as `Гидруфурил`; VK backfill for `2026-07-01..2026-07-12` wrote one canonical account, four campaigns (`144220998`, `144479235`, `144486866`, `144755192`), and July facts; dashboard source `vk` is now bound to account id `1090736542`
+    - `/admin/collection` is backed by canonical/source account discovery plus `canonical_source_account_collection_settings`; it cannot show gidrofuril until Hybrid/VK platform accounts are added to the collector tech tables and collected at least once
+    - uploaded `планплатформы.xlsx` currently sits under a `manual_data` actual source, not a `media_plan` plan source, and `dashboard_media_plan_rows` / `media_plan_bindings` are empty for dashboard `29`
+14. Media plan binding source selection:
+    - `platform` / `instrument` in media plan rows remains the human/imported label and may contain values like `hybrid/between`; do not force it to a canonical source key
+    - binding source correction is stored per row as `source_keys`, for example `["hybrid", "vk_ads_v2"]`
+    - `WizardStepBinding` uses saved `source_keys` before falling back to imported `platform`; unknown imported values show no campaigns until a source is selected on the row
+
 ## Working rule for future dashboard tasks
 
 When returning to dashboard work:
