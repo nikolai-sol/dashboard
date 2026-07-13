@@ -60,6 +60,7 @@ import {
 } from "@/components/zaruku-overview-layout";
 import { formatPendingRequirementSources } from "@/components/zaruku-seo-pending";
 import {
+  buildWebmasterFactsPanelChrome,
   buildWebmasterSelectionMeta,
   resolveRowsForWeek,
   selectRowsForWeek,
@@ -759,6 +760,7 @@ function SeoTab({ data, locale, primaryWeek, comparisonWeek }: Props & { primary
   const webmasterPages = webmasterPageSelection.rows;
   const webmasterQueryMeta = buildWebmasterSelectionMeta(webmasterQuerySelection, webmasterWeek);
   const webmasterPageMeta = buildWebmasterSelectionMeta(webmasterPageSelection, webmasterWeek);
+  const webmasterFactsChrome = buildWebmasterFactsPanelChrome();
   const aiWeek = primaryWeek ?? data.ai_visibility.latest_week;
   const aiRows = selectRowsForWeek(data.ai_visibility.rows, aiWeek, data.ai_visibility.latest_week);
   return (
@@ -782,8 +784,8 @@ function SeoTab({ data, locale, primaryWeek, comparisonWeek }: Props & { primary
         <Panel
           data={data}
           title="Yandex search facts"
-          source="webmaster"
-          layer="serp"
+          source={webmasterFactsChrome.source}
+          layer={webmasterFactsChrome.layer ?? undefined}
           pending={data.webmaster.status === "unavailable"}
           right={<span className="text-xs text-slate-400">{webmasterQueryMeta.periodLabel}</span>}
         >

@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import type { ZarukuAiVisibilityRow, ZarukuYandexWebmasterQueryRow } from "@/lib/types";
 import {
+  buildWebmasterFactsPanelChrome,
   buildWebmasterSelectionMeta,
   resolveRowsForWeek,
   selectRowsForWeek,
@@ -116,5 +117,12 @@ test("buildWebmasterSelectionMeta explains fallback and source period", () => {
     periodLabel: "2026-W28 · 2026-07-06 — 2026-07-12",
     sourceNote: "Источник: Яндекс Вебмастер / seo_webmaster_queries_weekly.",
     fallbackNote: "Выбрана 2026-W29, но в Яндекс Вебмастере за неё нет строк; показана последняя доступная неделя 2026-W28.",
+  });
+});
+
+test("buildWebmasterFactsPanelChrome keeps source badge without layer hint", () => {
+  assert.deepEqual(buildWebmasterFactsPanelChrome(), {
+    source: "webmaster",
+    layer: null,
   });
 });

@@ -80,6 +80,13 @@ export function resolveRowsForWeek<T extends { week: string }>(rows: T[], select
   return latestWeek ? { week: latestWeek, rows: rows.filter((row) => row.week === latestWeek) } : { week: null, rows };
 }
 
+export function buildWebmasterFactsPanelChrome() {
+  return {
+    source: "webmaster" as const,
+    layer: null,
+  };
+}
+
 export function buildWebmasterSelectionMeta<T extends { week: string; week_from: string; week_to: string }>(
   selection: { week: string | null; rows: T[] },
   selectedWeek: string | null,
