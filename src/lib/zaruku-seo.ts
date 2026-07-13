@@ -250,6 +250,13 @@ export function enrichRowsWithPageTitles(rows: ZarukuSeoMetricRow[], pageRows: Z
   });
 }
 
+export function filterSearchEngineRows(rows: ZarukuSeoMetricRow[]) {
+  return rows.filter((row) => {
+    const label = row.label.trim().toLowerCase();
+    return label.includes("yandex") || label.includes("яндекс") || label.includes("google");
+  });
+}
+
 function isMapUrl(value: string | null | undefined) {
   return normalizedUrlKey(value).includes("zaruku.ru/map/");
 }
@@ -914,7 +921,7 @@ export async function loadZarukuSeoData(counterIds: string[], from: string, to: 
     traffic_channels: trafficChannels,
     technical_tail: technicalTail,
     organic_trend: organicTrend,
-    search_engines: searchEnginesReport.rows,
+    search_engines: filterSearchEngineRows(searchEnginesReport.rows),
     search_phrases: searchPhrasesReport.rows,
     organic_landing_pages: organicLandingReport.rows,
     top_pages: pageCollections.topPages,

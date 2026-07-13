@@ -7,6 +7,7 @@ import {
   buildHighBouncePages,
   buildMapCityDemand,
   buildPageCollections,
+  filterSearchEngineRows,
   enrichRowsWithPageTitles,
   mergeTopPagesWithVisitMetrics,
 } from "@/lib/zaruku-seo";
@@ -214,6 +215,20 @@ test("enrichRowsWithPageTitles keeps entry URL and replaces URL-like labels with
       label: "Главная страница",
       url: "https://zaruku.ru/",
     },
+  ]);
+});
+
+test("filterSearchEngineRows keeps only Yandex and Google organic engines", () => {
+  const rows = [
+    page("Yandex: search results", 100, 90, 120),
+    page("Google: search results", 80, 70, 100),
+    page("Bing, search results", 6, 5, 8),
+    page("Yahoo, search results", 3, 2, 4),
+  ];
+
+  assert.deepEqual(filterSearchEngineRows(rows).map((row) => row.label), [
+    "Yandex: search results",
+    "Google: search results",
   ]);
 });
 
