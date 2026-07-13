@@ -10,6 +10,7 @@
     "lint": "eslint .",
     "typecheck": "tsc --noEmit",
     "ci:verify": "npm run lint && npm run typecheck && npm run build",
+    "collect:yandex-webmaster": "node scripts/collect-yandex-webmaster.js",
     "db:migrate": "tsx src/db/run-migration.ts",
     "deploy": "bash scripts/deploy.sh",
     "deploy:rollback": "bash scripts/rollback-release.sh"
