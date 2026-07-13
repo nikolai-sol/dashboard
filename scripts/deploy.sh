@@ -45,6 +45,7 @@ cp "$TMP_ENV" .next/standalone/.env
 cp ecosystem.config.js .next/standalone/
 cp package.json .next/standalone/
 cp scripts/rollback-release.sh .next/standalone/scripts/
+cp scripts/collect-yandex-webmaster.js .next/standalone/scripts/
 cp src/schemas/*.yaml .next/standalone/src/schemas/
 if [ -f "$REPO_ROOT_DIR/fetch_google_ads_canonical.py" ]; then
   cp "$REPO_ROOT_DIR/fetch_google_ads_canonical.py" .next/standalone/

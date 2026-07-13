@@ -9,6 +9,23 @@ const DEFAULT_ACCOUNT_ID = "66624469";
 const DEFAULT_DOMAIN = "zaruku.ru";
 const DEFAULT_DEVICE = "ALL";
 
+function loadEnvFile(filePath) {
+  return fs.readFile(filePath, "utf8").then((content) => {
+    for (const rawLine of content.split(/\r?\n/)) {
+      const line = rawLine.trim();
+      if (!line || line.startsWith("#") || !line.includes("=")) continue;
+      const key = line.slice(0, line.indexOf("=")).trim();
+      let value = line.slice(line.indexOf("=") + 1).trim();
+      if ((value.startsWith('"') && value.endsWith('"')) || (value.startsWith("'") && value.endsWith("'"))) {
+        value = value.slice(1, -1);
+      }
+      if (!process.env[key]) process.env[key] = value;
+    }
+  }).catch((error) => {
+    if (!error || error.code !== "ENOENT") throw error;
+  });
+}
+
 function pad(value) {
   return String(value).padStart(2, "0");
 }
@@ -357,11 +374,11 @@ function requireEnv(name) {
 
 async function createPoolFromEnv() {
   return mysql.createPool({
-    host: process.env.DB_HOST || "127.0.0.1",
-    port: Number(process.env.DB_PORT || 3306),
-    user: requireEnv("DB_USER"),
-    password: requireEnv("DB_PASSWORD"),
-    database: requireEnv("DB_NAME"),
+    host: process.env.DB_HOST || process.env.MYSQL_HOST || "127.0.0.1",
+    port: Number(process.env.DB_PORT || process.env.MYSQL_PORT || 3306),
+    user: process.env.DB_USER || requireEnv("MYSQL_USER"),
+    password: process.env.DB_PASSWORD || requireEnv("MYSQL_PASSWORD"),
+    database: process.env.DB_NAME || process.env.MYSQL_DB || "report_bd",
     waitForConnections: true,
     connectionLimit: 4,
   });
@@ -394,6 +411,8 @@ async function resolveAccessToken(config) {
 }
 
 async function collectYandexWebmaster(options = {}) {
+  await loadEnvFile(path.join(process.cwd(), ".env"));
+  await loadEnvFile(path.join(process.cwd(), ".env.local"));
   if ((process.env.YANDEX_WEBMASTER_ENABLED || "true") === "false") {
     return { status: "skipped", rowsRead: 0, rowsWritten: 0 };
   }
