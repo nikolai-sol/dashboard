@@ -7,8 +7,8 @@ Current production source:
 
 The UI is intentionally built around measurement layers, not vendor-specific screens:
 - `onsite`: what happens after a click, currently Yandex Metrika.
-- `serp`: what happens before a click in search results. Weekly tracked Yandex positions are connected through SEO OS; GSC and Yandex Webmaster remain pending for search-console metrics.
-- `ai`: AI answer visibility / citations, pending DataForSEO or equivalent.
+- `serp`: what happens before a click in search results. Weekly tracked Yandex positions are connected through SEO OS; Yandex Webmaster supplies Yandex search-console facts; GSC remains pending for Google.
+- `ai`: AI answer visibility / citations. The dashboard has a normalized Yandex Gen Search slot and waits for SEO OS exports; external DataForSEO remains pending.
 
 ## SEO OS / Weekly Yandex Positions
 
@@ -47,14 +47,13 @@ Important distinction:
 
 ## Yandex Webmaster
 
-Status: pending.
+Status: connected as a ReportingDash-owned collector and read model.
 
-Needed fields:
+Connected fields:
 - query
 - url
-- region
 - device
-- date
+- ISO week
 - clicks
 - impressions
 - ctr
@@ -68,7 +67,29 @@ Dashboard panels unlocked:
 Important distinction:
 - Metrika shows Yandex organic sessions and some search phrases.
 - SEO OS provides the connected weekly tracked Yandex positions.
-- Webmaster is still required for Yandex impressions, clicks, CTR, and complete query / URL search-console coverage.
+- Webmaster provides real Yandex impressions, clicks, CTR, and query / URL search-console coverage. ReportingDash must not use ordinary Yandex Search API to duplicate SEO OS tracked positions.
+
+## Yandex Gen Search / SEO OS AI Export
+
+Status: UI and database slot connected; export source pending in SEO OS.
+
+Expected fields:
+- cluster_id
+- query
+- engine
+- region
+- language
+- device
+- mentioned
+- mention_count
+- citation_count
+- cited_urls
+- checked_at
+
+Dashboard panels unlocked after export:
+- AI visibility KPI.
+- Mention and citation tables.
+- Quoted Zaruku URLs by tracked oncology cluster.
 
 ## DataForSEO / AI Visibility
 

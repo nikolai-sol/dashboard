@@ -28,10 +28,13 @@ import {
 } from "lucide-react";
 import ZarukuSeoWeekToolbar from "@/components/ZarukuSeoWeekToolbar";
 import type {
+  ZarukuAiVisibilityRow,
   ZarukuSeoData,
   ZarukuSeoLayerId,
   ZarukuSeoMetricRow,
   ZarukuSeoSourceId,
+  ZarukuYandexWebmasterPageRow,
+  ZarukuYandexWebmasterQueryRow,
 } from "@/lib/types";
 import {
   canCompareWeeks,
@@ -45,6 +48,12 @@ import {
 import ZarukuSeoAnalytics from "@/components/ZarukuSeoAnalytics";
 import ZarukuSeoOperations from "@/components/ZarukuSeoOperations";
 import ZarukuTrafficVisibility from "@/components/ZarukuTrafficVisibility";
+import {
+  summarizeAiVisibility,
+  summarizeWebmasterKpis,
+  topWebmasterPages,
+  topWebmasterQueries,
+} from "@/components/zaruku-yandex-webmaster-panels";
 
 type Props = {
   data: ZarukuSeoData;
@@ -74,6 +83,11 @@ function formatNumber(value: number, locale = "ru-RU") {
 function formatPercent(value: number | null | undefined, locale = "ru-RU", digits = 1) {
   if (value == null || !Number.isFinite(value)) return "—";
   return `${value.toLocaleString(locale, { maximumFractionDigits: digits })}%`;
+}
+
+function formatDecimal(value: number | null | undefined, locale = "ru-RU", digits = 1) {
+  if (value == null || !Number.isFinite(value)) return "—";
+  return value.toLocaleString(locale, { maximumFractionDigits: digits });
 }
 
 function formatDuration(seconds: number | null | undefined) {
@@ -273,6 +287,120 @@ function PendingPanel({ data }: { data: ZarukuSeoData }) {
   );
 }
 
+function selectWeekRows<T extends { week: string }>(rows: T[], selectedWeek: string | null, fallbackWeek: string | null) {
+  const week = selectedWeek ?? fallbackWeek;
+  return week ? rows.filter((row) => row.week === week) : rows;
+}
+
+function WebmasterKpiStrip({ rows, locale }: { rows: ZarukuYandexWebmasterQueryRow[]; locale: string }) {
+  const summary = summarizeWebmasterKpis(rows);
+  const cells = [
+    ["Показы", formatNumber(summary.impressions, locale)],
+    ["Клики", formatNumber(summary.clicks, locale)],
+    ["CTR", formatPercent(summary.ctr, locale, 2)],
+    ["Позиция", formatDecimal(summary.average_position, locale, 1)],
+  ];
+  return (
+    <div className="grid grid-cols-2 gap-3 md:grid-cols-4">
+      {cells.map(([label, value]) => (
+        <div key={label} className="rounded-lg border border-slate-200 bg-slate-50 px-3 py-3">
+          <div className="text-xs uppercase text-slate-400">{label}</div>
+          <div className="mt-1 text-xl font-semibold text-slate-900">{value}</div>
+        </div>
+      ))}
+    </div>
+  );
+}
+
+function WebmasterQueryTable({ rows, locale }: { rows: ZarukuYandexWebmasterQueryRow[]; locale: string }) {
+  return (
+    <div className="overflow-x-auto">
+      <table className="w-full min-w-[760px] text-sm">
+        <thead>
+          <tr className="text-left text-xs uppercase text-slate-400">
+            <th className="pb-2 font-medium">Запрос</th>
+            <th className="pb-2 text-right font-medium">Показы</th>
+            <th className="pb-2 text-right font-medium">Клики</th>
+            <th className="pb-2 text-right font-medium">CTR</th>
+            <th className="pb-2 text-right font-medium">Позиция</th>
+          </tr>
+        </thead>
+        <tbody className="divide-y divide-slate-100">
+          {rows.map((row) => (
+            <tr key={`${row.week}-${row.query_id}`}>
+              <td className="py-2.5 pr-3 font-medium text-slate-700" title={row.query}>{truncate(row.query, 80)}</td>
+              <td className="py-2.5 text-right text-slate-600">{formatNumber(row.impressions, locale)}</td>
+              <td className="py-2.5 text-right text-slate-600">{formatNumber(row.clicks, locale)}</td>
+              <td className="py-2.5 text-right text-slate-500">{formatPercent(row.ctr, locale, 2)}</td>
+              <td className="py-2.5 text-right text-slate-500">{formatDecimal(row.average_position, locale, 1)}</td>
+            </tr>
+          ))}
+          {rows.length === 0 ? (
+            <tr>
+              <td colSpan={5} className="py-8 text-center text-sm text-slate-500">Нет Webmaster-запросов для выбранной недели.</td>
+            </tr>
+          ) : null}
+        </tbody>
+      </table>
+    </div>
+  );
+}
+
+function WebmasterPageTable({ rows, locale }: { rows: ZarukuYandexWebmasterPageRow[]; locale: string }) {
+  return (
+    <div className="space-y-2">
+      {rows.map((row) => (
+        <div key={`${row.week}-${row.url}`} className="grid grid-cols-[minmax(0,1fr)_88px_72px_72px] items-center gap-3 rounded-md bg-slate-50 px-3 py-2 text-sm">
+          <div className="min-w-0 truncate font-medium text-slate-700" title={row.url}>{shortUrl(row.url)}</div>
+          <div className="text-right text-slate-600">{formatNumber(row.impressions, locale)}</div>
+          <div className="text-right text-slate-500">{formatNumber(row.clicks, locale)}</div>
+          <div className="text-right text-slate-500">{formatDecimal(row.average_position, locale, 1)}</div>
+        </div>
+      ))}
+      {rows.length === 0 ? <div className="rounded-md bg-slate-50 px-3 py-8 text-center text-sm text-slate-500">URL-факты Webmaster пока пустые.</div> : null}
+    </div>
+  );
+}
+
+function AiVisibilityPanel({ rows, locale }: { rows: ZarukuAiVisibilityRow[]; locale: string }) {
+  const summary = summarizeAiVisibility(rows);
+  const topRows = [...rows]
+    .sort((left, right) => Number(right.mentioned) - Number(left.mentioned) || right.citation_count - left.citation_count)
+    .slice(0, 6);
+  return (
+    <div className="space-y-3">
+      <div className="grid grid-cols-2 gap-3 md:grid-cols-4">
+        {[
+          ["Проверено", formatNumber(summary.checked, locale)],
+          ["Упоминания", formatNumber(summary.mentions, locale)],
+          ["Presence", formatPercent(summary.presence_rate, locale, 1)],
+          ["Цитаты", formatNumber(summary.citations, locale)],
+        ].map(([label, value]) => (
+          <div key={label} className="rounded-lg border border-slate-200 bg-slate-50 px-3 py-3">
+            <div className="text-xs uppercase text-slate-400">{label}</div>
+            <div className="mt-1 text-xl font-semibold text-slate-900">{value}</div>
+          </div>
+        ))}
+      </div>
+      {topRows.length ? (
+        <div className="space-y-2">
+          {topRows.map((row) => (
+            <div key={`${row.week}-${row.engine}-${row.cluster_id}`} className="rounded-md bg-slate-50 px-3 py-2">
+              <div className="flex items-center justify-between gap-3">
+                <div className="min-w-0 truncate text-sm font-medium text-slate-700" title={row.query}>{row.query}</div>
+                <span className={row.mentioned ? "text-xs font-medium text-teal-700" : "text-xs text-slate-400"}>{row.mentioned ? "mentioned" : "not found"}</span>
+              </div>
+              {row.cited_urls.length ? <div className="mt-1 truncate text-xs text-slate-400">{row.cited_urls.map(shortUrl).join(" · ")}</div> : null}
+            </div>
+          ))}
+        </div>
+      ) : (
+        <div className="rounded-md bg-slate-50 px-3 py-8 text-center text-sm text-slate-500">AI visibility snapshot ещё не экспортирован SEO OS.</div>
+      )}
+    </div>
+  );
+}
+
 function OverviewTab({ data, locale }: Props) {
   return (
     <div className="space-y-5">
@@ -308,6 +436,12 @@ function OverviewTab({ data, locale }: Props) {
 
 function SeoTab({ data, locale, primaryWeek, comparisonWeek }: Props & { primaryWeek: string | null; comparisonWeek: string | null }) {
   const phraseCoverage = data.data_quality.find((item) => item.title === "Покрытие поисковых фраз");
+  const currentLocale = locale ?? "ru-RU";
+  const webmasterWeek = primaryWeek ?? data.webmaster.latest_week;
+  const webmasterQueries = selectWeekRows(data.webmaster.queries, webmasterWeek, data.webmaster.latest_week);
+  const webmasterPages = selectWeekRows(data.webmaster.pages, webmasterWeek, data.webmaster.latest_week);
+  const aiWeek = primaryWeek ?? data.ai_visibility.latest_week;
+  const aiRows = selectWeekRows(data.ai_visibility.rows, aiWeek, data.ai_visibility.latest_week);
   return (
     <div className="space-y-5">
       <div className="grid gap-5 lg:grid-cols-2">
@@ -326,7 +460,19 @@ function SeoTab({ data, locale, primaryWeek, comparisonWeek }: Props & { primary
             </BarChart>
           </ResponsiveContainer>
         </Panel>
-        <Panel data={data} title="Показы · клики · CTR" source="gsc" layer="serp" pending right={<span className="text-xs text-slate-400">GSC · Вебмастер</span>}>
+        <Panel
+          data={data}
+          title="Yandex search facts"
+          source="webmaster"
+          layer="serp"
+          pending={data.webmaster.status === "unavailable"}
+          right={<span className="text-xs text-slate-400">{webmasterWeek ?? "week —"}</span>}
+        >
+          <WebmasterKpiStrip rows={webmasterQueries} locale={currentLocale} />
+        </Panel>
+      </div>
+      <div className="grid gap-5 lg:grid-cols-2">
+        <Panel data={data} title="GSC search facts" source="gsc" layer="serp" pending>
           <div className="grid grid-cols-3 gap-3">
             {["Показы", "Клики", "CTR"].map((item) => (
               <div key={item} className="rounded-lg border border-dashed border-slate-200 px-3 py-6 text-center">
@@ -335,9 +481,17 @@ function SeoTab({ data, locale, primaryWeek, comparisonWeek }: Props & { primary
               </div>
             ))}
           </div>
-          <p className="mt-3 text-sm leading-relaxed text-slate-500">
-            Данные по показам, кликам и CTR ожидаются из Search Console и Яндекс Вебмастера.
-          </p>
+          <p className="mt-3 text-sm leading-relaxed text-slate-500">Данные по Google-показам, кликам и CTR ожидаются из Search Console.</p>
+        </Panel>
+        <Panel
+          data={data}
+          title="AI visibility"
+          source="yandex_gen_search"
+          layer="ai"
+          pending={data.ai_visibility.rows.length === 0}
+          right={<span className="text-xs text-slate-400">{aiWeek ?? "week —"}</span>}
+        >
+          <AiVisibilityPanel rows={aiRows} locale={currentLocale} />
         </Panel>
       </div>
       <ZarukuSeoAnalytics
@@ -347,30 +501,30 @@ function SeoTab({ data, locale, primaryWeek, comparisonWeek }: Props & { primary
         source={data.sources.find((source) => source.id === "seo_os")}
       />
       <Panel data={data} title="Top organic landing pages" source="metrika" layer="onsite" right={<span className="text-xs text-slate-400">SERP columns pending</span>}>
-        <DataTable rows={data.organic_landing_pages.slice(0, 12)} mode="cross" locale={locale ?? "ru-RU"} />
+        <DataTable rows={data.organic_landing_pages.slice(0, 12)} mode="cross" locale={currentLocale} />
       </Panel>
+      <div className="grid gap-5 lg:grid-cols-2">
+        <Panel data={data} title="Yandex queries" source="webmaster" layer="serp" right={<span className="text-xs text-slate-400">{webmasterQueries.length} rows</span>}>
+          <WebmasterQueryTable rows={topWebmasterQueries(webmasterQueries, 12)} locale={currentLocale} />
+        </Panel>
+        <Panel data={data} title="Yandex landing pages" source="webmaster" layer="serp" right={<span className="text-xs text-slate-400">URL facts</span>}>
+          <WebmasterPageTable rows={topWebmasterPages(webmasterPages, 10)} locale={currentLocale} />
+        </Panel>
+      </div>
       <div className="grid gap-5 lg:grid-cols-2">
         <Panel data={data} title="Поисковые фразы" source="metrika" layer="onsite" right={<span className="text-xs text-slate-400">{phraseCoverage?.value ?? "coverage —"}</span>}>
           <div className="space-y-2">
             {data.search_phrases.slice(0, 12).map((row) => (
               <div key={row.label} className="flex items-center justify-between gap-3 rounded-md bg-slate-50 px-3 py-2">
                 <span className="min-w-0 text-sm text-slate-700" title={row.label}>{truncate(row.label, 72)}</span>
-                <span className="shrink-0 text-sm text-slate-500">{formatNumber(row.visits, locale)}</span>
+                <span className="shrink-0 text-sm text-slate-500">{formatNumber(row.visits, currentLocale)}</span>
               </div>
             ))}
           </div>
           <p className="mt-3 text-xs text-slate-500">Google часто скрывает query, поэтому это не полная SEO-семантика.</p>
         </Panel>
-        <Panel data={data} title="AI visibility" source="dataforseo" layer="ai" pending>
-          <div className="grid grid-cols-3 gap-3">
-            {["Упоминания", "Доля цитат", "Presence"].map((item) => (
-              <div key={item} className="rounded-lg border border-dashed border-slate-200 px-3 py-6 text-center">
-                <div className="text-xs uppercase text-slate-400">{item}</div>
-                <div className="mt-2 text-xl font-semibold text-slate-300">—</div>
-              </div>
-            ))}
-          </div>
-          <p className="mt-3 text-sm leading-relaxed text-slate-500">Слой DataForSEO/AI будет жить рядом с SERP, не внутри Metrika.</p>
+        <Panel data={data} title="DataForSEO / external AI" source="dataforseo" layer="ai" pending>
+          <div className="rounded-md bg-slate-50 px-3 py-8 text-center text-sm text-slate-500">Внешний AI visibility источник остаётся pending.</div>
         </Panel>
       </div>
     </div>

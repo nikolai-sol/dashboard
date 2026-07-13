@@ -40,7 +40,9 @@ test("refreshYandexToken writes access and refresh token state without returning
   const result = await refreshYandexToken(
     { clientId: "id", clientSecret: "secret", refreshToken: "refresh", tokenStatePath: "/tmp/state.json" },
     async () => ({ access_token: "access2", refresh_token: "refresh2", expires_in: 3600 }),
-    async (path, value) => written.push({ path, value }),
+    async (path, value) => {
+      written.push({ path, value });
+    },
   );
 
   assert.equal(result.accessToken, "access2");
