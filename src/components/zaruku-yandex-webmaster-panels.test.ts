@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import type { ZarukuAiVisibilityRow, ZarukuYandexWebmasterQueryRow } from "@/lib/types";
 import {
+  resolveRowsForWeek,
   selectRowsForWeek,
   summarizeAiVisibility,
   summarizeWebmasterKpis,
@@ -79,4 +80,23 @@ test("selectRowsForWeek falls back when selected week has no rows", () => {
     ], "2026-W29", "2026-W28").map((row) => row.query_id),
     ["latest"],
   );
+});
+
+test("resolveRowsForWeek reports the actual fallback week", () => {
+  const selection = resolveRowsForWeek([
+    query({ week: "2026-W27", query_id: "old" }),
+    query({ week: "2026-W28", query_id: "latest" }),
+  ], "2026-W29", "2026-W28");
+
+  assert.equal(selection.week, "2026-W28");
+  assert.deepEqual(selection.rows.map((row) => row.query_id), ["latest"]);
+});
+
+test("resolveRowsForWeek uses the latest row week when the source fallback is empty", () => {
+  const selection = resolveRowsForWeek([
+    query({ week: "2026-W27", query_id: "page-facts" }),
+  ], "2026-W29", "2026-W28");
+
+  assert.equal(selection.week, "2026-W27");
+  assert.deepEqual(selection.rows.map((row) => row.query_id), ["page-facts"]);
 });

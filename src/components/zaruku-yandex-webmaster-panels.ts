@@ -66,12 +66,22 @@ export function topWebmasterPages(rows: ZarukuYandexWebmasterPageRow[], limit = 
     .slice(0, limit);
 }
 
-export function selectRowsForWeek<T extends { week: string }>(rows: T[], selectedWeek: string | null, fallbackWeek: string | null) {
+export function resolveRowsForWeek<T extends { week: string }>(rows: T[], selectedWeek: string | null, fallbackWeek: string | null) {
   if (selectedWeek) {
     const selectedRows = rows.filter((row) => row.week === selectedWeek);
-    if (selectedRows.length > 0) return selectedRows;
+    if (selectedRows.length > 0) return { week: selectedWeek, rows: selectedRows };
   }
-  return fallbackWeek ? rows.filter((row) => row.week === fallbackWeek) : rows;
+  if (fallbackWeek) {
+    const fallbackRows = rows.filter((row) => row.week === fallbackWeek);
+    if (fallbackRows.length > 0) return { week: fallbackWeek, rows: fallbackRows };
+  }
+
+  const latestWeek = [...new Set(rows.map((row) => row.week))].sort().at(-1) ?? null;
+  return latestWeek ? { week: latestWeek, rows: rows.filter((row) => row.week === latestWeek) } : { week: null, rows };
+}
+
+export function selectRowsForWeek<T extends { week: string }>(rows: T[], selectedWeek: string | null, fallbackWeek: string | null) {
+  return resolveRowsForWeek(rows, selectedWeek, fallbackWeek).rows;
 }
 
 export function summarizeAiVisibility(rows: ZarukuAiVisibilityRow[]): AiVisibilitySummary {

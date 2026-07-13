@@ -50,6 +50,7 @@ import ZarukuSeoOperations from "@/components/ZarukuSeoOperations";
 import ZarukuTrafficVisibility from "@/components/ZarukuTrafficVisibility";
 import { formatPendingRequirementSources } from "@/components/zaruku-seo-pending";
 import {
+  resolveRowsForWeek,
   selectRowsForWeek,
   summarizeAiVisibility,
   summarizeWebmasterKpis,
@@ -435,8 +436,10 @@ function SeoTab({ data, locale, primaryWeek, comparisonWeek }: Props & { primary
   const phraseCoverage = data.data_quality.find((item) => item.title === "Покрытие поисковых фраз");
   const currentLocale = locale ?? "ru-RU";
   const webmasterWeek = primaryWeek ?? data.webmaster.latest_week;
-  const webmasterQueries = selectRowsForWeek(data.webmaster.queries, webmasterWeek, data.webmaster.latest_week);
-  const webmasterPages = selectRowsForWeek(data.webmaster.pages, webmasterWeek, data.webmaster.latest_week);
+  const webmasterQuerySelection = resolveRowsForWeek(data.webmaster.queries, webmasterWeek, data.webmaster.latest_week);
+  const webmasterPageSelection = resolveRowsForWeek(data.webmaster.pages, webmasterWeek, data.webmaster.latest_week);
+  const webmasterQueries = webmasterQuerySelection.rows;
+  const webmasterPages = webmasterPageSelection.rows;
   const aiWeek = primaryWeek ?? data.ai_visibility.latest_week;
   const aiRows = selectRowsForWeek(data.ai_visibility.rows, aiWeek, data.ai_visibility.latest_week);
   return (
@@ -463,7 +466,7 @@ function SeoTab({ data, locale, primaryWeek, comparisonWeek }: Props & { primary
           source="webmaster"
           layer="serp"
           pending={data.webmaster.status === "unavailable"}
-          right={<span className="text-xs text-slate-400">{webmasterWeek ?? "week —"}</span>}
+          right={<span className="text-xs text-slate-400">{webmasterQuerySelection.week ?? "week —"}</span>}
         >
           <WebmasterKpiStrip rows={webmasterQueries} locale={currentLocale} />
         </Panel>
@@ -501,10 +504,10 @@ function SeoTab({ data, locale, primaryWeek, comparisonWeek }: Props & { primary
         <DataTable rows={data.organic_landing_pages.slice(0, 12)} mode="cross" locale={currentLocale} />
       </Panel>
       <div className="grid gap-5 lg:grid-cols-2">
-        <Panel data={data} title="Yandex queries" source="webmaster" layer="serp" right={<span className="text-xs text-slate-400">{webmasterQueries.length} rows</span>}>
+        <Panel data={data} title="Yandex queries" source="webmaster" layer="serp" right={<span className="text-xs text-slate-400">{webmasterQuerySelection.week ?? "week —"} · {webmasterQueries.length} rows</span>}>
           <WebmasterQueryTable rows={topWebmasterQueries(webmasterQueries, 12)} locale={currentLocale} />
         </Panel>
-        <Panel data={data} title="Yandex landing pages" source="webmaster" layer="serp" right={<span className="text-xs text-slate-400">URL facts</span>}>
+        <Panel data={data} title="Yandex landing pages" source="webmaster" layer="serp" right={<span className="text-xs text-slate-400">{webmasterPageSelection.week ?? "week —"} · URL facts</span>}>
           <WebmasterPageTable rows={topWebmasterPages(webmasterPages, 10)} locale={currentLocale} />
         </Panel>
       </div>
