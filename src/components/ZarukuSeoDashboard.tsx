@@ -16,6 +16,7 @@ import {
 import {
   Database,
   FileText,
+  Info,
   LayoutGrid,
   Lock,
   MapPin,
@@ -52,8 +53,11 @@ import {
   buildNorthStarKpis,
   buildSemanticHealthRows,
   buildWeeklyFocus,
-  type NorthStarGoal,
 } from "@/components/zaruku-north-star";
+import {
+  buildNorthStarStripItems,
+  buildTrafficHealthRows,
+} from "@/components/zaruku-overview-layout";
 import { formatPendingRequirementSources } from "@/components/zaruku-seo-pending";
 import {
   resolveRowsForWeek,
@@ -125,16 +129,6 @@ function formatSignedPercent(value: number | null | undefined, locale = "ru-RU",
   return `Δ ${sign}${formatPercent(value, locale, digits)}`;
 }
 
-function trendArrow(value: number | null | undefined) {
-  if (value == null || !Number.isFinite(value) || Math.abs(value) < 0.05) return "→";
-  return value > 0 ? "↑" : "↓";
-}
-
-function favorableTrend(goal: NorthStarGoal, delta: number | null | undefined) {
-  if (delta == null || !Number.isFinite(delta) || Math.abs(delta) < 0.05) return "text-slate-500";
-  return goal === "up" ? (delta > 0 ? "text-teal-700" : "text-red-700") : delta < 0 ? "text-teal-700" : "text-red-700";
-}
-
 function SourceBadge({ data, id }: { data: ZarukuSeoData; id: ZarukuSeoSourceId }) {
   const source = data.sources.find((item) => item.id === id);
   if (!source) return null;
@@ -198,20 +192,6 @@ function Panel({
       </header>
       <div className={pending ? "px-5 py-4 opacity-60" : "px-5 py-4"}>{children}</div>
     </section>
-  );
-}
-
-function KpiGrid({ data }: { data: ZarukuSeoData }) {
-  return (
-    <div className="grid grid-cols-2 gap-3 md:grid-cols-5">
-      {data.kpis.map((kpi) => (
-        <div key={kpi.key} className="rounded-lg border border-slate-200 bg-white px-4 py-3">
-          <div className="text-xs font-medium uppercase text-slate-400">{kpi.label}</div>
-          <div className="mt-1.5 text-2xl font-semibold text-slate-950">{kpi.value}</div>
-          <div className="mt-1 text-xs text-slate-400">{kpi.note ?? kpi.source}</div>
-        </div>
-      ))}
-    </div>
   );
 }
 
@@ -422,48 +402,85 @@ function AiVisibilityPanel({ rows, locale }: { rows: ZarukuAiVisibilityRow[]; lo
 }
 
 function NorthStarBlock({ data, locale }: Props) {
-  const kpis = buildNorthStarKpis({
+  const items = buildNorthStarStripItems(buildNorthStarKpis({
     sovRows: data.seo_intelligence.sov.rows,
     aiRows: data.seo_intelligence.ai.rows,
     opportunities: data.seo_os.opportunities,
-  });
+  }));
+  return (
+    <section className="rounded-lg border border-slate-200 border-t-slate-300 bg-[#f5f7fa] px-5 py-4">
+      <div className="flex flex-col gap-4 lg:flex-row lg:items-center">
+        <div className="flex min-w-0 items-center gap-2 lg:w-[380px]">
+          <h3 className="text-base font-medium text-slate-900 lg:whitespace-nowrap">Цель: целевой органический трафик + ИИ-выдача</h3>
+          <span title="Метрики — корреляционные показатели работы SEO OS." className="inline-flex shrink-0 text-slate-400">
+            <Info className="h-3.5 w-3.5" aria-label="Описание north-star" />
+          </span>
+        </div>
+        <div className="grid flex-1 grid-cols-2 gap-x-6 gap-y-3 md:grid-cols-4">
+          {items.map((item) => (
+            <div key={item.key} className="min-w-0">
+              <div className="flex items-center gap-1.5 text-xs text-slate-500">
+                <span>{item.label}</span>
+                <span title={item.tooltip} className="inline-flex text-slate-400">
+                  <Info className="h-3 w-3" aria-label={`${item.label}: детали`} />
+                </span>
+              </div>
+              <div className="mt-1 flex items-baseline gap-1.5">
+                <span className="text-3xl font-semibold leading-none text-slate-950">{formatPercent(item.value, locale, 1)}</span>
+                <span className="text-sm font-medium text-slate-400">{item.arrow}</span>
+                {item.showDelta ? (
+                  <span className={item.deltaTone === "good" ? "text-xs font-medium text-teal-700" : "text-xs font-medium text-red-700"}>
+                    {formatSignedPercent(item.delta, locale, 1)}
+                  </span>
+                ) : null}
+              </div>
+            </div>
+          ))}
+        </div>
+        <div className="shrink-0 rounded-md border border-slate-200 bg-white px-2.5 py-1 text-xs font-medium text-slate-500">baseline 13.07.2026</div>
+      </div>
+    </section>
+  );
+}
+
+function TrafficHealthStrip({ data }: { data: ZarukuSeoData }) {
+  const [expanded, setExpanded] = useState(false);
+  const rows = buildTrafficHealthRows(data.kpis);
   return (
     <section className="rounded-lg border border-slate-200 bg-white">
-      <header className="border-b border-slate-100 px-5 py-4">
-        <div className="flex flex-wrap items-start justify-between gap-3">
-          <div>
-            <h3 className="text-base font-semibold text-slate-900">Цель: максимальный целевой органический трафик + присутствие в ИИ-выдаче</h3>
-            <p className="mt-1 text-xs text-slate-500">Метрики — корреляционные показатели работы SEO OS.</p>
-          </div>
-          <SourceBadge data={data} id="seo_os" />
+      <header className="flex flex-wrap items-center justify-between gap-3 border-b border-slate-100 px-5 py-3">
+        <h3 className="text-base font-medium text-slate-900">Здоровье трафика</h3>
+        <div className="flex items-center gap-2">
+          <button
+            type="button"
+            onClick={() => setExpanded((current) => !current)}
+            className="rounded-md px-2 py-1 text-xs font-medium text-slate-500 hover:bg-slate-50 hover:text-slate-700"
+            aria-expanded={expanded}
+          >
+            ещё {expanded ? "⌃" : "⌄"}
+          </button>
+          <SourceBadge data={data} id="metrika" />
         </div>
       </header>
-      <div className="grid gap-px bg-slate-100 md:grid-cols-2 xl:grid-cols-4">
-        {Object.values(kpis).map((kpi) => (
-          <div key={kpi.key} className="min-h-44 bg-white px-4 py-3" title={kpi.tooltip}>
-            <div className="flex items-start justify-between gap-3">
-              <div className="text-xs font-medium uppercase text-slate-400">{kpi.label}</div>
-              {kpi.provenance ? <span className="rounded-md bg-slate-100 px-1.5 py-0.5 text-[11px] font-medium text-slate-500">{kpi.provenance}</span> : null}
+      <div className="px-5 py-4">
+        <div className="grid gap-y-4 sm:grid-cols-2 lg:grid-cols-5">
+          {rows.primary.map((item, index) => (
+            <div key={item.key} className={index === 0 ? "min-w-0" : "min-w-0 border-slate-200 sm:border-l sm:pl-5"}>
+              <div className="text-xs text-slate-500">{item.label}</div>
+              <div className="mt-1 text-2xl font-semibold leading-none text-slate-950">{item.value}</div>
             </div>
-            <div className="mt-2 flex items-end gap-2">
-              <div className="text-2xl font-semibold text-slate-950">{formatPercent(kpi.value, locale, 1)}</div>
-              <div className={`mb-1 text-sm font-semibold ${favorableTrend(kpi.goal, kpi.delta)}`}>{trendArrow(kpi.delta)}</div>
-            </div>
-            <div className={`mt-1 text-xs font-medium ${favorableTrend(kpi.goal, kpi.delta)}`}>{formatSignedPercent(kpi.delta, locale, 1)} к baseline 2026-07-13</div>
-            {kpi.guardValue != null ? <div className="mt-2 text-xs text-slate-500">Guard clicks_share {formatPercent(kpi.guardValue, locale, 1)} · baseline {formatPercent(kpi.guardBaseline, locale, 1)}</div> : null}
-            {kpi.note ? <div className="mt-2 text-xs leading-relaxed text-slate-500">{kpi.note}</div> : null}
-            {kpi.period ? <div className="mt-2 text-xs text-slate-400">{kpi.period}</div> : null}
-            {kpi.series.length > 1 ? (
-              <div className="mt-2 h-10">
-                <ResponsiveContainer width="100%" height="100%">
-                  <LineChart data={kpi.series}>
-                    <Line type="monotone" dataKey="value" stroke="#0d9488" strokeWidth={2} dot={false} />
-                  </LineChart>
-                </ResponsiveContainer>
+          ))}
+        </div>
+        {expanded ? (
+          <div className="mt-4 grid gap-y-3 border-t border-slate-100 pt-3 sm:grid-cols-2 lg:grid-cols-5">
+            {rows.secondary.map((item, index) => (
+              <div key={item.key} className={index === 0 ? "min-w-0" : "min-w-0 border-slate-100 sm:border-l sm:pl-5"}>
+                <span className="text-xs text-slate-400">{item.label}</span>
+                <span className="ml-2 text-sm font-medium text-slate-600">{item.value}</span>
               </div>
-            ) : null}
+            ))}
           </div>
-        ))}
+        ) : null}
       </div>
     </section>
   );
@@ -579,10 +596,10 @@ function OverviewTab({ data, locale }: Props) {
   return (
     <div className="space-y-5">
       <NorthStarBlock data={data} locale={locale} />
-      <KpiGrid data={data} />
+      <TrafficHealthStrip data={data} />
       <div className="grid gap-5 lg:grid-cols-3">
         <div className="lg:col-span-2">
-          <Panel data={data} title="Каналы привлечения" source="metrika" layer="onsite">
+          <Panel data={data} title="Каналы привлечения" source="metrika">
             <BarList rows={data.traffic_channels} locale={locale} />
             {data.technical_tail.length ? (
               <div className="mt-4 rounded-md border border-dashed border-slate-200 bg-slate-50 px-3 py-2 text-xs text-slate-500">
@@ -592,7 +609,7 @@ function OverviewTab({ data, locale }: Props) {
             ) : null}
           </Panel>
         </div>
-        <Panel data={data} title="Organic по месяцам" source="metrika" layer="onsite">
+        <Panel data={data} title="Organic по месяцам" source="metrika">
           <ResponsiveContainer width="100%" height={220}>
             <LineChart data={data.organic_trend} margin={{ top: 8, right: 8, left: -20, bottom: 0 }}>
               <CartesianGrid stroke="#eef2f7" strokeDasharray="3 3" />
