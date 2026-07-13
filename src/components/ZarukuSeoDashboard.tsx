@@ -49,6 +49,7 @@ import ZarukuSeoAnalytics from "@/components/ZarukuSeoAnalytics";
 import ZarukuSeoOperations from "@/components/ZarukuSeoOperations";
 import ZarukuTrafficVisibility from "@/components/ZarukuTrafficVisibility";
 import {
+  selectRowsForWeek,
   summarizeAiVisibility,
   summarizeWebmasterKpis,
   topWebmasterPages,
@@ -287,11 +288,6 @@ function PendingPanel({ data }: { data: ZarukuSeoData }) {
   );
 }
 
-function selectWeekRows<T extends { week: string }>(rows: T[], selectedWeek: string | null, fallbackWeek: string | null) {
-  const week = selectedWeek ?? fallbackWeek;
-  return week ? rows.filter((row) => row.week === week) : rows;
-}
-
 function WebmasterKpiStrip({ rows, locale }: { rows: ZarukuYandexWebmasterQueryRow[]; locale: string }) {
   const summary = summarizeWebmasterKpis(rows);
   const cells = [
@@ -438,10 +434,10 @@ function SeoTab({ data, locale, primaryWeek, comparisonWeek }: Props & { primary
   const phraseCoverage = data.data_quality.find((item) => item.title === "Покрытие поисковых фраз");
   const currentLocale = locale ?? "ru-RU";
   const webmasterWeek = primaryWeek ?? data.webmaster.latest_week;
-  const webmasterQueries = selectWeekRows(data.webmaster.queries, webmasterWeek, data.webmaster.latest_week);
-  const webmasterPages = selectWeekRows(data.webmaster.pages, webmasterWeek, data.webmaster.latest_week);
+  const webmasterQueries = selectRowsForWeek(data.webmaster.queries, webmasterWeek, data.webmaster.latest_week);
+  const webmasterPages = selectRowsForWeek(data.webmaster.pages, webmasterWeek, data.webmaster.latest_week);
   const aiWeek = primaryWeek ?? data.ai_visibility.latest_week;
-  const aiRows = selectWeekRows(data.ai_visibility.rows, aiWeek, data.ai_visibility.latest_week);
+  const aiRows = selectRowsForWeek(data.ai_visibility.rows, aiWeek, data.ai_visibility.latest_week);
   return (
     <div className="space-y-5">
       <div className="grid gap-5 lg:grid-cols-2">

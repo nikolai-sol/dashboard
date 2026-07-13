@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import type { ZarukuAiVisibilityRow, ZarukuYandexWebmasterQueryRow } from "@/lib/types";
 import {
+  selectRowsForWeek,
   summarizeAiVisibility,
   summarizeWebmasterKpis,
   topWebmasterQueries,
@@ -67,5 +68,15 @@ test("summarizeAiVisibility counts presence and citations", () => {
       ai({ cluster_id: "b", mentioned: false, mention_count: 0, citation_count: 0 }),
     ]),
     { checked: 2, mentioned: 1, presence_rate: 50, mentions: 2, citations: 1 },
+  );
+});
+
+test("selectRowsForWeek falls back when selected week has no rows", () => {
+  assert.deepEqual(
+    selectRowsForWeek([
+      query({ week: "2026-W27", query_id: "old" }),
+      query({ week: "2026-W28", query_id: "latest" }),
+    ], "2026-W29", "2026-W28").map((row) => row.query_id),
+    ["latest"],
   );
 });

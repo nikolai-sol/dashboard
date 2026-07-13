@@ -66,6 +66,14 @@ export function topWebmasterPages(rows: ZarukuYandexWebmasterPageRow[], limit = 
     .slice(0, limit);
 }
 
+export function selectRowsForWeek<T extends { week: string }>(rows: T[], selectedWeek: string | null, fallbackWeek: string | null) {
+  if (selectedWeek) {
+    const selectedRows = rows.filter((row) => row.week === selectedWeek);
+    if (selectedRows.length > 0) return selectedRows;
+  }
+  return fallbackWeek ? rows.filter((row) => row.week === fallbackWeek) : rows;
+}
+
 export function summarizeAiVisibility(rows: ZarukuAiVisibilityRow[]): AiVisibilitySummary {
   const summary = rows.reduce(
     (total, row) => ({
