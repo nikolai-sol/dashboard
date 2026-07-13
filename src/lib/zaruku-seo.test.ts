@@ -1,6 +1,12 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { buildCanonicalPageRowsQuery, buildContentSections, buildPageCollections, mergeTopPagesWithVisitMetrics } from "@/lib/zaruku-seo";
+import {
+  buildCanonicalPageRowsQuery,
+  buildContentSections,
+  buildMapCityDemand,
+  buildPageCollections,
+  mergeTopPagesWithVisitMetrics,
+} from "@/lib/zaruku-seo";
 import type { ZarukuSeoMetricRow, ZarukuSeoSectionPattern } from "@/lib/types";
 
 function page(url: string, visits: number, users: number, pageviews: number): ZarukuSeoMetricRow {
@@ -172,6 +178,60 @@ test("top pages keep pageview ranking while visit metrics are merged by URL", ()
       bounce_rate: 40,
       avg_duration_seconds: 75,
       page_depth: 1.5,
+    },
+  ]);
+});
+
+test("buildMapCityDemand aggregates only map entry pages by city", () => {
+  const rows: ZarukuSeoMetricRow[] = [
+    {
+      ...pageWithBehavior("https://zaruku.ru/map/", 10, 9, 14, 20, 90, 1.4),
+      label: "Москва",
+      secondary_label: "https://zaruku.ru/map/",
+    },
+    {
+      ...pageWithBehavior("https://zaruku.ru/map/clinics/42/", 5, 4, 7, 40, 150, 2),
+      label: "Москва",
+      secondary_label: "https://zaruku.ru/map/clinics/42/",
+    },
+    {
+      ...pageWithBehavior("https://zaruku.ru/rak-molochnoj-zhelezy/", 20, 18, 25, 50, 60, 1.2),
+      label: "Москва",
+      secondary_label: "https://zaruku.ru/rak-molochnoj-zhelezy/",
+    },
+    {
+      ...pageWithBehavior("https://zaruku.ru/map/", 3, 3, 4, 10, 30, 1),
+      label: "Санкт-Петербург",
+      secondary_label: "https://zaruku.ru/map/",
+    },
+  ];
+
+  assert.deepEqual(buildMapCityDemand(rows), [
+    {
+      label: "Москва",
+      secondary_label: "https://zaruku.ru/map/",
+      visits: 15,
+      users: 13,
+      pageviews: 21,
+      bounce_rate: 26.666666666666668,
+      avg_duration_seconds: 110,
+      page_depth: 1.6,
+      share: 83.33333333333334,
+      source: "metrika",
+      layer: "onsite",
+    },
+    {
+      label: "Санкт-Петербург",
+      secondary_label: "https://zaruku.ru/map/",
+      visits: 3,
+      users: 3,
+      pageviews: 4,
+      bounce_rate: 10,
+      avg_duration_seconds: 30,
+      page_depth: 1,
+      share: 16.666666666666664,
+      source: "metrika",
+      layer: "onsite",
     },
   ]);
 });

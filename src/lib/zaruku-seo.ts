@@ -228,6 +228,82 @@ export function mergeTopPagesWithVisitMetrics(pageRows: ZarukuSeoMetricRow[], vi
   });
 }
 
+function isMapUrl(value: string | null | undefined) {
+  return normalizedUrlKey(value).includes("zaruku.ru/map/");
+}
+
+export function buildMapCityDemand(rows: ZarukuSeoMetricRow[]) {
+  type CityAccumulator = ZarukuSeoMetricRow & {
+    bounceWeighted: number;
+    bounceVisits: number;
+    durationWeighted: number;
+    durationVisits: number;
+    depthWeighted: number;
+    depthVisits: number;
+  };
+  const byCity = new Map<string, CityAccumulator>();
+  rows.forEach((row) => {
+    const url = row.url ?? row.secondary_label;
+    if (!isMapUrl(url)) return;
+    const city = row.label.trim() || "Not specified";
+    const current =
+      byCity.get(city) ??
+      ({
+        label: city,
+        secondary_label: url ?? null,
+        visits: 0,
+        users: 0,
+        pageviews: 0,
+        share: 0,
+        source: "metrika",
+        layer: "onsite",
+        bounceWeighted: 0,
+        bounceVisits: 0,
+        durationWeighted: 0,
+        durationVisits: 0,
+        depthWeighted: 0,
+        depthVisits: 0,
+      } satisfies CityAccumulator);
+    current.visits += row.visits;
+    current.users += row.users;
+    current.pageviews += row.pageviews;
+    if ((row.secondary_label?.length ?? 0) < (current.secondary_label?.length ?? Infinity)) {
+      current.secondary_label = row.secondary_label;
+    }
+    if (row.bounce_rate != null) {
+      current.bounceWeighted += row.bounce_rate * row.visits;
+      current.bounceVisits += row.visits;
+    }
+    if (row.avg_duration_seconds != null) {
+      current.durationWeighted += row.avg_duration_seconds * row.visits;
+      current.durationVisits += row.visits;
+    }
+    if (row.page_depth != null) {
+      current.depthWeighted += row.page_depth * row.visits;
+      current.depthVisits += row.visits;
+    }
+    byCity.set(city, current);
+  });
+
+  const totalVisits = Array.from(byCity.values()).reduce((sum, row) => sum + row.visits, 0);
+  return Array.from(byCity.values())
+    .map((row) => ({
+      label: row.label,
+      secondary_label: row.secondary_label,
+      visits: row.visits,
+      users: row.users,
+      pageviews: row.pageviews,
+      ...(row.bounceVisits > 0 ? { bounce_rate: row.bounceWeighted / row.bounceVisits } : {}),
+      ...(row.durationVisits > 0 ? { avg_duration_seconds: row.durationWeighted / row.durationVisits } : {}),
+      ...(row.depthVisits > 0 ? { page_depth: row.depthWeighted / row.depthVisits } : {}),
+      share: totalVisits > 0 ? (row.visits / totalVisits) * 100 : 0,
+      source: row.source,
+      layer: row.layer,
+    }))
+    .sort((a, b) => b.visits - a.visits)
+    .slice(0, 20);
+}
+
 async function queryTrafficRows(counterIds: string[], from: string, to: string) {
   const sql = `
     SELECT
@@ -711,6 +787,7 @@ export async function loadZarukuSeoData(counterIds: string[], from: string, to: 
     { key: "searchPhrases", dimensions: "ym:s:searchPhrase", limit: 30 },
     { key: "organicLanding", dimensions: "ym:s:searchEngine,ym:s:startURL", limit: 30 },
     { key: "sectionEntrances", dimensions: "ym:s:startURL", limit: 10000 },
+    { key: "mapCityDemand", dimensions: "ym:s:regionCity,ym:s:startURL", limit: 10000 },
     { key: "devices", dimensions: "ym:s:deviceCategory", limit: 8 },
     { key: "browsers", dimensions: "ym:s:browser", limit: 10 },
     { key: "os", dimensions: "ym:s:operatingSystem", limit: 10 },
@@ -726,6 +803,7 @@ export async function loadZarukuSeoData(counterIds: string[], from: string, to: 
   const searchPhrasesReport = metrikaReports.get("searchPhrases") ?? EMPTY_REPORT;
   const organicLandingReport = metrikaReports.get("organicLanding") ?? EMPTY_REPORT;
   const sectionEntrancesReport = metrikaReports.get("sectionEntrances") ?? EMPTY_REPORT;
+  const mapCityDemandReport = metrikaReports.get("mapCityDemand") ?? EMPTY_REPORT;
   const devicesReport = metrikaReports.get("devices") ?? EMPTY_REPORT;
   const browsersReport = metrikaReports.get("browsers") ?? EMPTY_REPORT;
   const osReport = metrikaReports.get("os") ?? EMPTY_REPORT;
@@ -741,6 +819,7 @@ export async function loadZarukuSeoData(counterIds: string[], from: string, to: 
     searchPhrasesReport,
     organicLandingReport,
     sectionEntrancesReport,
+    mapCityDemandReport,
     devicesReport,
     browsersReport,
     osReport,
@@ -791,6 +870,7 @@ export async function loadZarukuSeoData(counterIds: string[], from: string, to: 
     organic_landing_pages: organicLandingReport.rows,
     top_pages: pageCollections.topPages,
     content_sections: pageCollections.contentSections,
+    map_city_demand: mapCityDemandReport.ok ? buildMapCityDemand(mapCityDemandReport.rows) : [],
     geo_countries: countriesReport.rows,
     geo_cities: citiesReport.rows,
     devices: devicesReport.rows,

@@ -336,6 +336,49 @@ function ReturningPagesTable({ rows, locale }: { rows: ZarukuSeoMetricRow[]; loc
   );
 }
 
+function MapCityDemandTable({ rows, locale }: { rows: ZarukuSeoMetricRow[]; locale: string }) {
+  if (rows.length === 0) {
+    return <div className="rounded-md bg-slate-50 px-4 py-5 text-sm text-slate-500">Нет данных по городам для /map за выбранный период.</div>;
+  }
+  return (
+    <div className="overflow-x-auto">
+      <table className="w-full min-w-[760px] text-sm">
+        <thead>
+          <tr className="text-left text-xs uppercase text-slate-400">
+            <th className="pb-2 font-medium">Город</th>
+            <th className="pb-2 text-right font-medium">Визиты</th>
+            <th className="pb-2 text-right font-medium">Users</th>
+            <th className="pb-2 text-right font-medium">Просмотры</th>
+            <th className="pb-2 text-right font-medium">Доля</th>
+            <th className="pb-2 text-right font-medium">Отказы</th>
+            <th className="pb-2 text-right font-medium">Время</th>
+            <th className="pb-2 text-right font-medium">Глубина</th>
+          </tr>
+        </thead>
+        <tbody className="divide-y divide-slate-100">
+          {rows.map((row, index) => (
+            <tr key={`${row.label}-${index}`}>
+              <td className="max-w-[320px] py-2.5">
+                <div className="font-medium text-slate-700" title={row.label}>
+                  {truncate(row.label, 48)}
+                </div>
+                {row.secondary_label ? <div className="text-xs text-slate-400">{truncate(shortUrl(row.secondary_label), 72)}</div> : null}
+              </td>
+              <td className="py-2.5 text-right text-slate-600">{formatNumber(row.visits, locale)}</td>
+              <td className="py-2.5 text-right text-slate-600">{formatNumber(row.users, locale)}</td>
+              <td className="py-2.5 text-right text-slate-600">{formatNumber(row.pageviews, locale)}</td>
+              <td className="py-2.5 text-right text-slate-500">{formatPercent(row.share, locale, 1)}</td>
+              <td className="py-2.5 text-right text-slate-500">{formatPercent(row.bounce_rate, locale, 1)}</td>
+              <td className="py-2.5 text-right text-slate-500">{formatDuration(row.avg_duration_seconds)}</td>
+              <td className="py-2.5 text-right text-slate-500">{formatDecimal(row.page_depth, locale, 1)}</td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </div>
+  );
+}
+
 function PendingPanel({ data }: { data: ZarukuSeoData }) {
   return (
     <Panel data={data} title="Что еще ждем" layer="serp" pending right={<span className="text-xs text-slate-400">{formatPendingRequirementSources(data)}</span>}>
@@ -830,11 +873,8 @@ function GeoTab({ data, locale }: Props) {
           <BarList rows={data.geo_cities.slice(0, 12)} locale={locale} />
         </Panel>
       </div>
-      <Panel data={data} title="Спрос на карту онкоцентров" source="metrika" layer="onsite">
-        <p className="text-sm leading-relaxed text-slate-600">
-          Следующий полезный срез: <code className="rounded-md bg-slate-100 px-1 py-0.5">regionCity × /map</code>. Он покажет,
-          из каких городов приходят к карте центров и где стоит усиливать региональный контент. UI готов под такой cross-tab.
-        </p>
+      <Panel data={data} title="Спрос на карту онкоцентров" source="metrika" layer="onsite" right={<span className="text-xs text-slate-400">regionCity × /map</span>}>
+        <MapCityDemandTable rows={data.map_city_demand} locale={locale ?? "ru-RU"} />
       </Panel>
     </div>
   );
