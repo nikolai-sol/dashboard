@@ -60,8 +60,9 @@ The server-only collector reads:
 - `YANDEX_WEBMASTER_HOST_ID`
 - `YANDEX_WEBMASTER_DEFAULT_DATE_RANGE_DAYS`
 - `YANDEX_WEBMASTER_DEVICE_TYPE`
+- `YANDEX_WEBMASTER_TOKEN_STATE_PATH`
 
-The OAuth access token is sent only in the `Authorization` header. The collector refreshes it through Yandex OAuth when required and accepts the newly returned refresh token. Rotated tokens must be persisted in the server secret store, never in application tables, logs, browser responses, or committed files.
+The OAuth access token is sent only in the `Authorization` header. The collector refreshes it through Yandex OAuth when required and accepts the newly returned refresh token. The env values bootstrap authentication; refreshed access and refresh tokens are written atomically to a mode-`0600` server token-state file outside the release directory. Rotated tokens must never be stored in application tables, logs, browser responses, release artifacts, or committed files.
 
 If `YANDEX_WEBMASTER_HOST_ID` is empty, the collector obtains the Webmaster user ID, lists accessible hosts, and selects the canonical host matching `zaruku.ru`. Ambiguous or missing matches fail explicitly instead of selecting the first host.
 
@@ -94,7 +95,7 @@ Create `seo_webmaster_pages_weekly` with grain:
 
 Fields mirror the available Webmaster URL-level indicators. Query and URL facts remain separate unless the selected Webmaster endpoint provides an authoritative pair. The collector must not manufacture a query-to-page relationship.
 
-Collection run status is written to the existing canonical collector telemetry contour or to an equivalent source-scoped run table. Partial pagination, API errors, token failures, and stale weeks are visible as partial/unavailable source coverage.
+Collection run status is written to the existing canonical collector telemetry contour or to an equivalent source-scoped run table. Rows are staged per ingestion run and promoted in one transaction only after every requested page succeeds. Partial pagination, API errors, token failures, and stale weeks leave the last complete snapshot intact and are visible as partial/unavailable source coverage through run telemetry.
 
 ### Devices
 
@@ -148,7 +149,7 @@ No UI panel combines tracked rank, Webmaster average position, and AI presence i
 
 ## Environment And Secret Handling
 
-Production values live only in `/var/www/www-root/data/.production.env`. `scripts/render-production-env.sh` explicitly whitelists the Webmaster variables needed by ReportingDash. `.env.production.example` contains names and placeholders only.
+Production bootstrap values live only in `/var/www/www-root/data/.production.env`. Refreshed Webmaster tokens live in a separate mode-`0600` state file outside versioned release directories. `scripts/render-production-env.sh` explicitly whitelists the Webmaster variables needed by ReportingDash, including the state-file path. `.env.production.example` contains names and placeholders only.
 
 Ordinary and Generative Search credentials are installed in the SEO OS runtime. ReportingDash should receive Generative Search credentials only if it becomes the agreed collector owner in a later architecture change.
 
@@ -160,7 +161,7 @@ All credentials shared during setup must be rotated because they were exposed ou
 - Expired access token with valid refresh token: refresh and retry once.
 - Refresh failure: abort without erasing prior snapshots.
 - Host discovery ambiguity: fail closed and require explicit host ID.
-- Partial pagination or endpoint failure: preserve successful rows under a partial run; never mark the week complete.
+- Partial pagination or endpoint failure: discard staged rows, preserve the prior complete snapshot, and never mark the week complete.
 - SEO OS or AI export missing for a week: render a source-specific missing-week state.
 - Empty valid response: distinguish zero activity from collection failure.
 
