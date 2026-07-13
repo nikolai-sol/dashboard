@@ -567,7 +567,7 @@ export interface AbbottBiData {
 }
 
 export type ZarukuSeoLayerId = "onsite" | "serp" | "ai";
-export type ZarukuSeoSourceId = "metrika" | "gsc" | "webmaster" | "dataforseo" | "seo_os";
+export type ZarukuSeoSourceId = "metrika" | "gsc" | "webmaster" | "dataforseo" | "seo_os" | "yandex_gen_search";
 export type ZarukuSeoSourceStatus = "connected" | "pending" | "partial" | "unavailable";
 
 export interface ZarukuSeoLayer {
@@ -716,6 +716,69 @@ export interface ZarukuSeoTrafficVisibilityRow {
   coverage: number | null;
 }
 
+export interface ZarukuYandexWebmasterQueryRow {
+  week: string;
+  query_id: string;
+  query: string;
+  device: string;
+  impressions: number;
+  clicks: number;
+  ctr: number | null;
+  average_position: number | null;
+  week_from: string;
+  week_to: string;
+}
+
+export interface ZarukuYandexWebmasterPageRow {
+  week: string;
+  url: string;
+  device: string;
+  impressions: number;
+  clicks: number;
+  ctr: number | null;
+  average_position: number | null;
+  week_from: string;
+  week_to: string;
+}
+
+export interface ZarukuYandexWebmasterData {
+  available: boolean;
+  status: "available" | "partial" | "unavailable";
+  error: string | null;
+  data_availability: {
+    queries: boolean;
+    pages: boolean;
+  };
+  weeks: string[];
+  latest_week: string | null;
+  queries: ZarukuYandexWebmasterQueryRow[];
+  pages: ZarukuYandexWebmasterPageRow[];
+}
+
+export interface ZarukuAiVisibilityRow {
+  week: string;
+  cluster_id: string;
+  query: string;
+  engine: string;
+  region: string;
+  language: string;
+  device: string;
+  mentioned: boolean;
+  mention_count: number;
+  citation_count: number;
+  cited_urls: string[];
+  checked_at: string | null;
+}
+
+export interface ZarukuAiVisibilityData {
+  available: boolean;
+  status: "available" | "unavailable";
+  error: string | null;
+  weeks: string[];
+  latest_week: string | null;
+  rows: ZarukuAiVisibilityRow[];
+}
+
 export interface ZarukuSeoOsData {
   available: boolean;
   status: "available" | "partial" | "unavailable";
@@ -767,6 +830,8 @@ export interface ZarukuSeoData {
   returning_pages: ZarukuSeoMetricRow[];
   data_quality: ZarukuSeoDataQualityItem[];
   seo_os: ZarukuSeoOsData;
+  webmaster: ZarukuYandexWebmasterData;
+  ai_visibility: ZarukuAiVisibilityData;
 }
 
 export interface CustomTableData {
