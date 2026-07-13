@@ -866,6 +866,8 @@ export interface ZarukuSeoData {
   organic_landing_pages: ZarukuSeoMetricRow[];
   top_pages: ZarukuSeoMetricRow[];
   content_sections: ZarukuSeoMetricRow[];
+  high_bounce_pages: ZarukuSeoMetricRow[];
+  best_engagement_pages: ZarukuSeoMetricRow[];
   map_city_demand: ZarukuSeoMetricRow[];
   geo_countries: ZarukuSeoMetricRow[];
   geo_cities: ZarukuSeoMetricRow[];

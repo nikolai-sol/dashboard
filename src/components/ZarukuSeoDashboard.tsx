@@ -922,25 +922,25 @@ function AudienceTab({ data, locale }: Props) {
 }
 
 function BehaviorTab({ data, locale }: Props) {
+  const currentLocale = locale ?? "ru-RU";
   return (
     <div className="space-y-5">
-      <Panel data={data} title="Возвраты по URL" source="metrika" layer="onsite" right={<span className="text-xs text-slate-400">returned pageviews</span>}>
-        <ReturningPagesTable rows={data.returning_pages.slice(0, 16)} locale={locale ?? "ru-RU"} />
-      </Panel>
-      <Panel data={data} title="Поведенческие сигналы" source="metrika" layer="onsite">
-        <div className="grid gap-3 md:grid-cols-3">
-          {[
-            ["High-bounce pages", "Страницы с высоким отказом появятся после сохранения page-level bounce."],
-            ["Entry pages", "Основные landing pages уже есть в SEO-разделе."],
-            ["Scroll / downloads", "Нужны цели Метрики или события для скачивания материалов."],
-          ].map(([title, note]) => (
-            <div key={title} className="rounded-lg border border-slate-200 p-4">
-              <div className="text-sm font-semibold text-slate-700">{title}</div>
-              <div className="mt-1 text-xs leading-relaxed text-slate-500">{note}</div>
-            </div>
-          ))}
-        </div>
-      </Panel>
+      <div className="grid gap-5 xl:grid-cols-2">
+        <Panel data={data} title="Проблемные входные страницы" source="metrika" layer="onsite" right={<span className="text-xs text-slate-400">startURL · high bounce</span>}>
+          <DataTable rows={data.high_bounce_pages} mode="pages" locale={currentLocale} />
+        </Panel>
+        <Panel data={data} title="Лучшее удержание" source="metrika" layer="onsite" right={<span className="text-xs text-slate-400">startURL · engagement</span>}>
+          <DataTable rows={data.best_engagement_pages} mode="pages" locale={currentLocale} />
+        </Panel>
+      </div>
+      <div className="grid gap-5 xl:grid-cols-2">
+        <Panel data={data} title="Возвратный контент" source="metrika" layer="onsite" right={<span className="text-xs text-slate-400">returned pageviews</span>}>
+          <ReturningPagesTable rows={data.returning_pages.slice(0, 16)} locale={currentLocale} />
+        </Panel>
+        <Panel data={data} title="Поведение по каналам" source="metrika" layer="onsite" right={<span className="text-xs text-slate-400">traffic source</span>}>
+          <DataTable rows={data.traffic_channels} mode="metrics" locale={currentLocale} />
+        </Panel>
+      </div>
     </div>
   );
 }

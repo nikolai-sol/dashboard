@@ -304,6 +304,32 @@ export function buildMapCityDemand(rows: ZarukuSeoMetricRow[]) {
     .slice(0, 20);
 }
 
+export function buildHighBouncePages(rows: ZarukuSeoMetricRow[], limit = 12) {
+  return rows
+    .filter((row) => row.visits >= 10 && (row.bounce_rate ?? 0) >= 50)
+    .sort((a, b) => {
+      const aBouncedVisits = a.visits * ((a.bounce_rate ?? 0) / 100);
+      const bBouncedVisits = b.visits * ((b.bounce_rate ?? 0) / 100);
+      return bBouncedVisits - aBouncedVisits || (b.bounce_rate ?? 0) - (a.bounce_rate ?? 0) || b.visits - a.visits;
+    })
+    .slice(0, limit);
+}
+
+export function buildBestEngagementPages(rows: ZarukuSeoMetricRow[], limit = 12) {
+  return rows
+    .filter((row) => row.visits >= 10 && (row.bounce_rate ?? 100) <= 40)
+    .sort((a, b) => {
+      const score = (row: ZarukuSeoMetricRow) => {
+        const retainedVisits = row.visits * ((100 - (row.bounce_rate ?? 100)) / 100);
+        const durationFactor = Math.min(row.avg_duration_seconds ?? 0, 300) / 60;
+        const depthFactor = row.page_depth ?? 1;
+        return retainedVisits * (durationFactor + depthFactor);
+      };
+      return score(b) - score(a) || b.visits - a.visits;
+    })
+    .slice(0, limit);
+}
+
 async function queryTrafficRows(counterIds: string[], from: string, to: string) {
   const sql = `
     SELECT
@@ -833,11 +859,12 @@ export async function loadZarukuSeoData(counterIds: string[], from: string, to: 
   const metrikaErrors = reports.flatMap((report) => (report.ok ? [] : [report.error ?? "Metrika API unavailable"]));
   const organicVisits = trafficChannels.find((row) => row.label === "Organic Search")?.visits ?? 0;
   const searchPhraseVisits = asNumber(searchPhrasesReport.totals[0]);
+  const entryPageRows = sectionEntrancesReport.ok ? sectionEntrancesReport.rows : [];
   const pageCollections = buildPageCollections(
     pageRows,
     seoOs.section_patterns,
     80,
-    sectionEntrancesReport.ok ? sectionEntrancesReport.rows : [],
+    entryPageRows,
   );
   const [webmaster, aiVisibility, seoIntelligence] = await Promise.all([
     loadZarukuYandexWebmasterData(normalizedCounterIds, seoOs.weeks),
@@ -870,6 +897,8 @@ export async function loadZarukuSeoData(counterIds: string[], from: string, to: 
     organic_landing_pages: organicLandingReport.rows,
     top_pages: pageCollections.topPages,
     content_sections: pageCollections.contentSections,
+    high_bounce_pages: buildHighBouncePages(entryPageRows),
+    best_engagement_pages: buildBestEngagementPages(entryPageRows),
     map_city_demand: mapCityDemandReport.ok ? buildMapCityDemand(mapCityDemandReport.rows) : [],
     geo_countries: countriesReport.rows,
     geo_cities: citiesReport.rows,

@@ -2,7 +2,9 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import {
   buildCanonicalPageRowsQuery,
+  buildBestEngagementPages,
   buildContentSections,
+  buildHighBouncePages,
   buildMapCityDemand,
   buildPageCollections,
   mergeTopPagesWithVisitMetrics,
@@ -233,6 +235,35 @@ test("buildMapCityDemand aggregates only map entry pages by city", () => {
       source: "metrika",
       layer: "onsite",
     },
+  ]);
+});
+
+test("buildHighBouncePages ranks entry pages by estimated bounced visits", () => {
+  const rows = [
+    pageWithBehavior("https://zaruku.ru/high-volume-problem/", 100, 95, 120, 70, 20, 1),
+    pageWithBehavior("https://zaruku.ru/small-problem/", 5, 5, 6, 100, 5, 1),
+    pageWithBehavior("https://zaruku.ru/medium-problem/", 40, 38, 45, 80, 15, 1.1),
+    pageWithBehavior("https://zaruku.ru/healthy/", 90, 86, 110, 20, 160, 1.8),
+  ];
+
+  assert.deepEqual(buildHighBouncePages(rows).map((row) => row.url), [
+    "https://zaruku.ru/high-volume-problem/",
+    "https://zaruku.ru/medium-problem/",
+  ]);
+});
+
+test("buildBestEngagementPages ranks entry pages by retained visits and engagement", () => {
+  const rows = [
+    pageWithBehavior("https://zaruku.ru/short-clean/", 100, 90, 110, 20, 20, 1),
+    pageWithBehavior("https://zaruku.ru/deep-long/", 45, 40, 90, 15, 180, 2.2),
+    pageWithBehavior("https://zaruku.ru/longer/", 70, 65, 100, 25, 120, 1.6),
+    pageWithBehavior("https://zaruku.ru/bouncy/", 80, 75, 85, 80, 240, 1.1),
+  ];
+
+  assert.deepEqual(buildBestEngagementPages(rows).map((row) => row.url), [
+    "https://zaruku.ru/deep-long/",
+    "https://zaruku.ru/longer/",
+    "https://zaruku.ru/short-clean/",
   ]);
 });
 
