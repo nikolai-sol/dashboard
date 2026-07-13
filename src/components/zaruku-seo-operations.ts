@@ -7,7 +7,7 @@ import type {
 } from "@/lib/types";
 
 const OPPORTUNITY_DECISIONS: ZarukuSeoOpportunityDecision[] = ["pending", "approved", "rejected", "carried_over"];
-const TASK_STATUSES: ZarukuSeoTaskStatus[] = ["draft", "awaiting_medical_review", "in_progress", "done", "cancelled"];
+const TASK_STATUSES: ZarukuSeoTaskStatus[] = ["draft", "awaiting_medical_review", "needs_target_page", "in_progress", "done", "cancelled"];
 
 export type OpportunityDecisionCounts = Record<ZarukuSeoOpportunityDecision, number>;
 export type TaskStatusCounts = Record<ZarukuSeoTaskStatus, number>;
@@ -36,7 +36,7 @@ function emptyDecisionCounts(): OpportunityDecisionCounts {
 }
 
 function emptyTaskCounts(): TaskStatusCounts {
-  return { draft: 0, awaiting_medical_review: 0, in_progress: 0, done: 0, cancelled: 0 };
+  return { draft: 0, awaiting_medical_review: 0, needs_target_page: 0, in_progress: 0, done: 0, cancelled: 0 };
 }
 
 function countDeltas<Key extends string>(

@@ -8,7 +8,7 @@ Current production source:
 The UI is intentionally built around measurement layers, not vendor-specific screens:
 - `onsite`: what happens after a click, currently Yandex Metrika.
 - `serp`: what happens before a click in search results. Weekly tracked Yandex positions are connected through SEO OS; Yandex Webmaster supplies Yandex search-console facts; GSC remains pending for Google.
-- `ai`: AI answer visibility / citations. The dashboard has a normalized Yandex Gen Search slot and waits for SEO OS exports; external DataForSEO remains pending.
+- `ai`: AI answer visibility / citations. For this dashboard it is connected through the Alisa AI visibility snapshot in `seo_ai_visibility`.
 
 ## SEO OS / Weekly Yandex Positions
 
@@ -69,48 +69,24 @@ Important distinction:
 - SEO OS provides the connected weekly tracked Yandex positions.
 - Webmaster provides real Yandex impressions, clicks, CTR, and query / URL search-console coverage. ReportingDash must not use ordinary Yandex Search API to duplicate SEO OS tracked positions.
 
-## Yandex Gen Search / SEO OS AI Export
+## Alisa AI Visibility / SEO OS Export
 
-Status: UI and database slot connected; export source pending in SEO OS.
+Status: connected through `seo_ai_visibility`.
 
-Expected fields:
-- cluster_id
-- query
+Connected fields:
 - engine
-- region
-- language
-- device
-- mentioned
-- mention_count
-- citation_count
-- cited_urls
-- checked_at
-
-Dashboard panels unlocked after export:
-- AI visibility KPI.
-- Mention and citation tables.
-- Quoted Zaruku URLs by tracked oncology cluster.
-
-## DataForSEO / AI Visibility
-
-Status: pending.
-
-Needed fields:
-- prompt / query
-- engine
-- region
-- date
+- period
+- presence_rate
 - mentions
 - citations
-- quoted_urls
-- competitors
-- presence_rate
+- provenance
+- captured_at
 
 Dashboard panels unlocked:
 - AI visibility KPI.
-- Mention and citation tables.
-- Prompt groups by oncology topic.
-- Quoted Zaruku URLs and competitor comparison.
+- Presence trend by period.
+- Mention and citation totals.
+- Provenance badge for the source snapshot.
 
 Important distinction:
 - AI visibility is not a website session metric.

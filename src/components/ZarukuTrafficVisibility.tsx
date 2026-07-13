@@ -21,6 +21,24 @@ function positionDelta(value: number | null) {
   return `${value > 0 ? "+" : ""}${formatNumber(value)}`;
 }
 
+function isoWeekRange(week: string | null) {
+  const match = /^(\d{4})-W(\d{2})$/.exec(week ?? "");
+  if (!match) return week;
+  const year = Number(match[1]);
+  const weekNumber = Number(match[2]);
+  const januaryFourth = new Date(Date.UTC(year, 0, 4));
+  const day = januaryFourth.getUTCDay() || 7;
+  const monday = new Date(januaryFourth);
+  monday.setUTCDate(januaryFourth.getUTCDate() - day + 1 + (weekNumber - 1) * 7);
+  const sunday = new Date(monday);
+  sunday.setUTCDate(monday.getUTCDate() + 6);
+  const now = new Date();
+  const end = now >= monday && now <= sunday ? now : sunday;
+  const from = monday.toISOString().slice(0, 10);
+  const to = end.toISOString().slice(0, 10);
+  return from === to ? `${week} · actual ${from}` : `${week} · ${from} — ${to}`;
+}
+
 export default function ZarukuTrafficVisibility({ seoOs, primaryWeek, comparisonWeek, source }: Props) {
   const rows = useMemo(
     () => buildTrafficVisibilityRows(seoOs.traffic_visibility, seoOs.section_patterns, primaryWeek, comparisonWeek),
@@ -33,6 +51,8 @@ export default function ZarukuTrafficVisibility({ seoOs, primaryWeek, comparison
     primary_position: row.primary.average_position,
     comparison_position: row.comparison?.average_position ?? null,
   }));
+  const primaryPeriodLabel = isoWeekRange(primaryWeek);
+  const comparisonPeriodLabel = isoWeekRange(comparisonWeek);
 
   if (!seoOs.data_availability.section_patterns || !seoOs.data_availability.traffic_visibility) {
     return <section className="rounded-lg border border-slate-200 bg-white px-5 py-8 text-sm text-slate-500">SEO visibility временно недоступна. Повторите попытку позже.</section>;
@@ -41,7 +61,7 @@ export default function ZarukuTrafficVisibility({ seoOs, primaryWeek, comparison
   return (
     <section className="rounded-lg border border-slate-200 bg-white">
       <header className="flex flex-wrap items-start justify-between gap-3 border-b border-slate-100 px-5 py-4">
-        <div><h3 className="text-base font-semibold text-slate-900">Трафик и видимость по разделам</h3><p className="mt-1 text-xs text-slate-500">Разделы только из словаря SEO patterns. Позиция 1 находится сверху.</p></div>
+        <div><h3 className="text-base font-semibold text-slate-900">Трафик и видимость по разделам</h3><p className="mt-1 text-xs text-slate-500">A {primaryPeriodLabel ?? "не выбрана"}{comparisonWeek ? ` · B ${comparisonPeriodLabel ?? comparisonWeek}` : ""}. Разделы только из словаря SEO patterns. Позиция 1 находится сверху.</p></div>
         {source ? <span className="inline-flex items-center gap-1.5 rounded-md border border-slate-200 bg-white px-2 py-1 text-xs font-medium text-slate-600"><span className="h-1.5 w-1.5 rounded-full" style={{ background: source.color }} />{source.label}</span> : null}
       </header>
       <div className="border-b border-slate-100 px-5 py-4">

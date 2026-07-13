@@ -30,6 +30,7 @@ const DECISION_LABELS = {
 const TASK_LABELS: Record<ZarukuSeoTaskStatus, string> = {
   draft: "Черновик",
   awaiting_medical_review: "Медицинская проверка",
+  needs_target_page: "Нужна целевая страница",
   in_progress: "В работе",
   done: "Готово",
   cancelled: "Отменено",
@@ -74,6 +75,7 @@ function ExternalUrl({ value, label = "Открыть" }: { value: string | null
 
 function taskBadgeClass(status: ZarukuSeoTaskStatus) {
   if (status === "awaiting_medical_review") return "border-red-300 bg-red-100 text-red-800";
+  if (status === "needs_target_page") return "border-violet-200 bg-violet-50 text-violet-800";
   if (status === "done") return "border-teal-200 bg-teal-50 text-teal-700";
   if (status === "cancelled") return "border-slate-200 bg-slate-100 text-slate-500";
   if (status === "in_progress") return "border-amber-200 bg-amber-50 text-amber-800";
@@ -145,7 +147,7 @@ export default function ZarukuSeoOperations({ seoOs, primaryWeek, comparisonWeek
 
       <section className="rounded-lg border border-slate-200 bg-white">
         <header className="flex items-start gap-2 border-b border-slate-100 px-5 py-4"><ListChecks className="mt-0.5 h-4 w-4 text-teal-700" aria-hidden="true" /><div><h3 className="text-base font-semibold text-slate-900">Задачи</h3><p className="mt-1 text-xs text-slate-500">A {primaryWeek ?? "не выбрана"}{comparisonWeek ? ` · B ${comparisonWeek}` : ""}</p></div></header>
-        <div className="grid gap-px bg-slate-100 sm:grid-cols-5">{Object.entries(TASK_LABELS).map(([status, label]) => { const key = status as ZarukuSeoTaskStatus; return <div key={status} className="min-h-24 bg-white px-4 py-3"><div className="text-xs text-slate-500">{label}</div><div className={status === "awaiting_medical_review" ? "mt-1 text-xl font-semibold text-red-700" : "mt-1 text-xl font-semibold text-slate-900"}>{taskSummary.counts[key]}</div><ComparisonDetail comparison={taskSummary.comparison_counts?.[key] ?? null} delta={taskSummary.count_deltas?.[key] ?? null} /></div>; })}</div>
+        <div className="grid gap-px bg-slate-100 sm:grid-cols-2 xl:grid-cols-6">{Object.entries(TASK_LABELS).map(([status, label]) => { const key = status as ZarukuSeoTaskStatus; return <div key={status} className="min-h-24 bg-white px-4 py-3"><div className="text-xs text-slate-500">{label}</div><div className={status === "awaiting_medical_review" ? "mt-1 text-xl font-semibold text-red-700" : "mt-1 text-xl font-semibold text-slate-900"}>{taskSummary.counts[key]}</div><ComparisonDetail comparison={taskSummary.comparison_counts?.[key] ?? null} delta={taskSummary.count_deltas?.[key] ?? null} /></div>; })}</div>
         {tasks.length === 0 ? <div className="px-5 py-7 text-center text-sm text-slate-500">ждёт первого approve</div> : <div className="max-h-[300px] overflow-auto px-5 py-4"><table className="w-full min-w-[680px] text-sm"><thead><tr className="text-left text-xs uppercase text-slate-400"><th className="pb-2 font-medium">Задача</th><th className="pb-2 font-medium">Раздел</th><th className="pb-2 font-medium">Статус</th><th className="pb-2 font-medium">Notion</th></tr></thead><tbody className="divide-y divide-slate-100">{tasks.map((task) => <tr key={task.task_id}><td className="py-2.5 font-medium text-slate-700">{task.title}</td><td className="py-2.5 text-slate-500">{task.section ?? "—"}</td><td className="py-2.5"><span className={`inline-flex rounded-md border px-2 py-1 text-xs font-semibold ${taskBadgeClass(task.status)}`}>{TASK_LABELS[task.status]}</span></td><td className="py-2.5"><ExternalUrl value={task.notion_url} label="Открыть" /></td></tr>)}</tbody></table></div>}
       </section>
 

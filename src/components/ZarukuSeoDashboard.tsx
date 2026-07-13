@@ -48,6 +48,12 @@ import {
 import ZarukuSeoAnalytics from "@/components/ZarukuSeoAnalytics";
 import ZarukuSeoOperations from "@/components/ZarukuSeoOperations";
 import ZarukuTrafficVisibility from "@/components/ZarukuTrafficVisibility";
+import {
+  buildNorthStarKpis,
+  buildSemanticHealthRows,
+  buildWeeklyFocus,
+  type NorthStarGoal,
+} from "@/components/zaruku-north-star";
 import { formatPendingRequirementSources } from "@/components/zaruku-seo-pending";
 import {
   resolveRowsForWeek,
@@ -111,6 +117,22 @@ function shortUrl(url: string | null | undefined) {
 
 function truncate(value: string, max = 84) {
   return value.length > max ? `${value.slice(0, max - 1)}…` : value;
+}
+
+function formatSignedPercent(value: number | null | undefined, locale = "ru-RU", digits = 1) {
+  if (value == null || !Number.isFinite(value)) return "Δ —";
+  const sign = value > 0 ? "+" : "";
+  return `Δ ${sign}${formatPercent(value, locale, digits)}`;
+}
+
+function trendArrow(value: number | null | undefined) {
+  if (value == null || !Number.isFinite(value) || Math.abs(value) < 0.05) return "→";
+  return value > 0 ? "↑" : "↓";
+}
+
+function favorableTrend(goal: NorthStarGoal, delta: number | null | undefined) {
+  if (delta == null || !Number.isFinite(delta) || Math.abs(delta) < 0.05) return "text-slate-500";
+  return goal === "up" ? (delta > 0 ? "text-teal-700" : "text-red-700") : delta < 0 ? "text-teal-700" : "text-red-700";
 }
 
 function SourceBadge({ data, id }: { data: ZarukuSeoData; id: ZarukuSeoSourceId }) {
@@ -399,9 +421,164 @@ function AiVisibilityPanel({ rows, locale }: { rows: ZarukuAiVisibilityRow[]; lo
   );
 }
 
+function NorthStarBlock({ data, locale }: Props) {
+  const kpis = buildNorthStarKpis({
+    sovRows: data.seo_intelligence.sov.rows,
+    aiRows: data.seo_intelligence.ai.rows,
+    opportunities: data.seo_os.opportunities,
+  });
+  return (
+    <section className="rounded-lg border border-slate-200 bg-white">
+      <header className="border-b border-slate-100 px-5 py-4">
+        <div className="flex flex-wrap items-start justify-between gap-3">
+          <div>
+            <h3 className="text-base font-semibold text-slate-900">Цель: максимальный целевой органический трафик + присутствие в ИИ-выдаче</h3>
+            <p className="mt-1 text-xs text-slate-500">Метрики — корреляционные показатели работы SEO OS.</p>
+          </div>
+          <SourceBadge data={data} id="seo_os" />
+        </div>
+      </header>
+      <div className="grid gap-px bg-slate-100 md:grid-cols-2 xl:grid-cols-4">
+        {Object.values(kpis).map((kpi) => (
+          <div key={kpi.key} className="min-h-44 bg-white px-4 py-3" title={kpi.tooltip}>
+            <div className="flex items-start justify-between gap-3">
+              <div className="text-xs font-medium uppercase text-slate-400">{kpi.label}</div>
+              {kpi.provenance ? <span className="rounded-md bg-slate-100 px-1.5 py-0.5 text-[11px] font-medium text-slate-500">{kpi.provenance}</span> : null}
+            </div>
+            <div className="mt-2 flex items-end gap-2">
+              <div className="text-2xl font-semibold text-slate-950">{formatPercent(kpi.value, locale, 1)}</div>
+              <div className={`mb-1 text-sm font-semibold ${favorableTrend(kpi.goal, kpi.delta)}`}>{trendArrow(kpi.delta)}</div>
+            </div>
+            <div className={`mt-1 text-xs font-medium ${favorableTrend(kpi.goal, kpi.delta)}`}>{formatSignedPercent(kpi.delta, locale, 1)} к baseline 2026-07-13</div>
+            {kpi.guardValue != null ? <div className="mt-2 text-xs text-slate-500">Guard clicks_share {formatPercent(kpi.guardValue, locale, 1)} · baseline {formatPercent(kpi.guardBaseline, locale, 1)}</div> : null}
+            {kpi.note ? <div className="mt-2 text-xs leading-relaxed text-slate-500">{kpi.note}</div> : null}
+            {kpi.period ? <div className="mt-2 text-xs text-slate-400">{kpi.period}</div> : null}
+            {kpi.series.length > 1 ? (
+              <div className="mt-2 h-10">
+                <ResponsiveContainer width="100%" height="100%">
+                  <LineChart data={kpi.series}>
+                    <Line type="monotone" dataKey="value" stroke="#0d9488" strokeWidth={2} dot={false} />
+                  </LineChart>
+                </ResponsiveContainer>
+              </div>
+            ) : null}
+          </div>
+        ))}
+      </div>
+    </section>
+  );
+}
+
+function AiAggregateVisibilityPanel({ data, locale }: Props) {
+  const rows = data.seo_intelligence.ai.rows;
+  const chartRows = rows.map((row) => ({ ...row, label: row.period }));
+  const latest = [...rows].sort((left, right) => left.period.localeCompare(right.period)).at(-1) ?? null;
+  return (
+    <Panel
+      data={data}
+      title="AI visibility (Yandex WM / vendor)"
+      source="yandex_gen_search"
+      layer="ai"
+      pending={rows.length === 0}
+      right={<span className="text-xs text-slate-400">{latest?.period ?? "period —"}</span>}
+    >
+      {rows.length ? (
+        <div className="space-y-3">
+          <ResponsiveContainer width="100%" height={220}>
+            <BarChart data={chartRows} margin={{ top: 8, right: 8, left: -20, bottom: 0 }}>
+              <CartesianGrid stroke="#eef2f7" strokeDasharray="3 3" vertical={false} />
+              <XAxis dataKey="label" tick={{ fontSize: 12, fill: "#64748b" }} axisLine={false} tickLine={false} />
+              <YAxis tick={{ fontSize: 12, fill: "#64748b" }} axisLine={false} tickLine={false} />
+              <Tooltip />
+              <Bar dataKey="presence_rate" name="Presence rate" fill="#0891b2" radius={[6, 6, 0, 0]} />
+            </BarChart>
+          </ResponsiveContainer>
+          <div className="grid gap-3 md:grid-cols-3">
+            <div className="rounded-lg border border-slate-200 bg-slate-50 px-3 py-3"><div className="text-xs uppercase text-slate-400">Presence</div><div className="mt-1 text-xl font-semibold text-slate-900">{formatPercent(latest?.presence_rate, locale, 1)}</div></div>
+            <div className="rounded-lg border border-slate-200 bg-slate-50 px-3 py-3"><div className="text-xs uppercase text-slate-400">Mentions</div><div className="mt-1 text-xl font-semibold text-slate-900">{formatNumber(latest?.mentions ?? 0, locale)}</div></div>
+            <div className="rounded-lg border border-slate-200 bg-slate-50 px-3 py-3"><div className="text-xs uppercase text-slate-400">Citations</div><div className="mt-1 text-xl font-semibold text-slate-900">{formatNumber(latest?.citations ?? 0, locale)}</div></div>
+          </div>
+          <p className="text-xs leading-relaxed text-slate-500">
+            {latest ? `${formatNumber(latest.mentions, locale)} из ${formatNumber(latest.citations, locale)} примеров, источник №1 во всех случаях.` : ""}
+            {latest?.provenance ? ` Provenance: ${latest.provenance}.` : ""}
+          </p>
+        </div>
+      ) : (
+        <div className="rounded-md bg-slate-50 px-3 py-8 text-center text-sm text-slate-500">AI visibility snapshot ещё не записан в seo_ai_visibility.</div>
+      )}
+    </Panel>
+  );
+}
+
+function SemanticHealthPanel({ data, locale, primaryWeek }: Props & { primaryWeek: string | null }) {
+  const selectedRows = buildSemanticHealthRows(data.seo_intelligence.sov.rows, primaryWeek ?? data.seo_intelligence.sov.latest_week);
+  const weeks = data.seo_intelligence.sov.weeks;
+  const chartRows = weeks.map((week) => {
+    const rows = data.seo_intelligence.sov.rows.filter((row) => row.week === week);
+    return {
+      week,
+      noise: rows.find((row) => row.cluster === "medical_org_labs_noise")?.impressions_share ?? null,
+      medical: rows.find((row) => row.cluster === "medical_intent_total")?.impressions_share ?? null,
+      noise_baseline: 63.74,
+      medical_baseline: 24.81,
+    };
+  });
+  const periodLabel = selectedRows[0]?.period_label ?? primaryWeek ?? data.seo_intelligence.sov.latest_week;
+  return (
+    <Panel data={data} title="Семантическое здоровье" source="seo_os" layer="serp" pending={selectedRows.length === 0} right={<span className="text-xs text-slate-400">{periodLabel ?? "week —"}</span>}>
+      <div className="space-y-4">
+        <ResponsiveContainer width="100%" height={240}>
+          <LineChart data={chartRows} margin={{ top: 8, right: 8, left: -20, bottom: 0 }}>
+            <CartesianGrid stroke="#eef2f7" strokeDasharray="3 3" />
+            <XAxis dataKey="week" tick={{ fontSize: 12, fill: "#64748b" }} axisLine={false} tickLine={false} />
+            <YAxis tick={{ fontSize: 12, fill: "#64748b" }} axisLine={false} tickLine={false} />
+            <Tooltip />
+            <Line type="monotone" dataKey="noise" name="Noise share" stroke="#ef4444" strokeWidth={2.5} dot={{ r: 3 }} />
+            <Line type="monotone" dataKey="medical" name="Medical share" stroke="#0d9488" strokeWidth={2.5} dot={{ r: 3 }} />
+            <Line type="monotone" dataKey="noise_baseline" name="Noise baseline" stroke="#ef4444" strokeDasharray="5 5" dot={false} />
+            <Line type="monotone" dataKey="medical_baseline" name="Medical baseline" stroke="#0d9488" strokeDasharray="5 5" dot={false} />
+          </LineChart>
+        </ResponsiveContainer>
+        <div className="overflow-x-auto">
+          <table className="w-full min-w-[760px] text-sm">
+            <thead><tr className="text-left text-xs uppercase text-slate-400"><th className="pb-2 font-medium">Cluster</th><th className="pb-2 text-right font-medium">Queries</th><th className="pb-2 text-right font-medium">Показы</th><th className="pb-2 text-right font-medium">Клики</th><th className="pb-2 text-right font-medium">Impr share</th><th className="pb-2 text-right font-medium">Click share</th><th className="pb-2 text-right font-medium">CTR</th></tr></thead>
+            <tbody className="divide-y divide-slate-100">
+              {selectedRows.map((row) => <tr key={`${row.week}-${row.cluster}`}><td className="py-2.5 font-medium text-slate-700">{row.cluster}{row.isBaselineCluster ? <span className="ml-2 rounded-md bg-slate-100 px-1.5 py-0.5 text-[11px] font-medium text-slate-500">baseline</span> : null}</td><td className="py-2.5 text-right text-slate-600">{formatNumber(row.query_count, locale)}</td><td className="py-2.5 text-right text-slate-600">{formatNumber(row.impressions, locale)}</td><td className="py-2.5 text-right text-slate-600">{formatNumber(row.clicks, locale)}</td><td className="py-2.5 text-right text-slate-600">{formatPercent(row.impressions_share, locale, 2)}</td><td className="py-2.5 text-right text-slate-600">{formatPercent(row.clicks_share, locale, 2)}</td><td className="py-2.5 text-right text-slate-500">{formatPercent(row.ctr, locale, 2)}</td></tr>)}
+              {selectedRows.length === 0 ? <tr><td colSpan={7} className="py-8 text-center text-sm text-slate-500">SOV clusters ещё не записаны.</td></tr> : null}
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </Panel>
+  );
+}
+
+function WeeklyFocusPanel({ data, primaryWeek }: Props & { primaryWeek: string | null }) {
+  const focus = buildWeeklyFocus({
+    opportunities: data.seo_os.opportunities,
+    aiRows: data.seo_intelligence.ai.rows,
+    tasks: data.seo_os.tasks,
+    runs: data.seo_os.runs,
+    week: primaryWeek ?? data.seo_os.latest_week,
+  });
+  return (
+    <section className="rounded-lg border border-slate-200 bg-white">
+      <header className="border-b border-slate-100 px-5 py-4">
+        <h3 className="text-base font-semibold text-slate-900">Выводы и фокус недели</h3>
+      </header>
+      <div className="grid gap-px bg-slate-100 md:grid-cols-3">
+        {[focus.seo, focus.ai, focus.pipeline].map((line, index) => (
+          <div key={index} className="min-h-24 bg-white px-4 py-3 text-sm leading-relaxed text-slate-700">{line}</div>
+        ))}
+      </div>
+    </section>
+  );
+}
+
 function OverviewTab({ data, locale }: Props) {
   return (
     <div className="space-y-5">
+      <NorthStarBlock data={data} locale={locale} />
       <KpiGrid data={data} />
       <div className="grid gap-5 lg:grid-cols-3">
         <div className="lg:col-span-2">
@@ -440,6 +617,9 @@ function SeoTab({ data, locale, primaryWeek, comparisonWeek }: Props & { primary
   const webmasterPageSelection = resolveRowsForWeek(data.webmaster.pages, webmasterWeek, data.webmaster.latest_week);
   const webmasterQueries = webmasterQuerySelection.rows;
   const webmasterPages = webmasterPageSelection.rows;
+  const webmasterWindowLabel = webmasterQueries[0]
+    ? `${webmasterQuerySelection.week ?? webmasterQueries[0].week} · ${webmasterQueries[0].week_from} — ${webmasterQueries[0].week_to}`
+    : (webmasterQuerySelection.week ?? "week —");
   const aiWeek = primaryWeek ?? data.ai_visibility.latest_week;
   const aiRows = selectRowsForWeek(data.ai_visibility.rows, aiWeek, data.ai_visibility.latest_week);
   return (
@@ -466,11 +646,12 @@ function SeoTab({ data, locale, primaryWeek, comparisonWeek }: Props & { primary
           source="webmaster"
           layer="serp"
           pending={data.webmaster.status === "unavailable"}
-          right={<span className="text-xs text-slate-400">{webmasterQuerySelection.week ?? "week —"}</span>}
+          right={<span className="text-xs text-slate-400">{webmasterWindowLabel}</span>}
         >
           <WebmasterKpiStrip rows={webmasterQueries} locale={currentLocale} />
         </Panel>
       </div>
+      <SemanticHealthPanel data={data} locale={locale} primaryWeek={primaryWeek} />
       <div className="grid gap-5 lg:grid-cols-2">
         <Panel data={data} title="GSC search facts" source="gsc" layer="serp" pending>
           <div className="grid grid-cols-3 gap-3">
@@ -485,7 +666,7 @@ function SeoTab({ data, locale, primaryWeek, comparisonWeek }: Props & { primary
         </Panel>
         <Panel
           data={data}
-          title="AI visibility"
+          title="AI prompt snapshot"
           source="yandex_gen_search"
           layer="ai"
           pending={data.ai_visibility.rows.length === 0}
@@ -523,9 +704,7 @@ function SeoTab({ data, locale, primaryWeek, comparisonWeek }: Props & { primary
           </div>
           <p className="mt-3 text-xs text-slate-500">Google часто скрывает query, поэтому это не полная SEO-семантика.</p>
         </Panel>
-        <Panel data={data} title="DataForSEO / external AI" source="dataforseo" layer="ai" pending>
-          <div className="rounded-md bg-slate-50 px-3 py-8 text-center text-sm text-slate-500">Внешний AI visibility источник остаётся pending.</div>
-        </Panel>
+        <AiAggregateVisibilityPanel data={data} locale={locale} />
       </div>
     </div>
   );
@@ -716,12 +895,15 @@ export default function ZarukuSeoDashboard({ data, locale = "ru-RU" }: Props) {
         return <SeoTab data={data} locale={locale} primaryWeek={selectedWeeks.primaryWeek} comparisonWeek={selectedWeeks.comparisonWeek} />;
       case "seo_ops":
         return (
-          <ZarukuSeoOperations
-            seoOs={data.seo_os}
-            primaryWeek={selectedWeeks.primaryWeek}
-            comparisonWeek={selectedWeeks.comparisonWeek}
-            source={data.sources.find((source) => source.id === "seo_os")}
-          />
+          <div className="space-y-5">
+            <WeeklyFocusPanel data={data} locale={locale} primaryWeek={selectedWeeks.primaryWeek} />
+            <ZarukuSeoOperations
+              seoOs={data.seo_os}
+              primaryWeek={selectedWeeks.primaryWeek}
+              comparisonWeek={selectedWeeks.comparisonWeek}
+              source={data.sources.find((source) => source.id === "seo_os")}
+            />
+          </div>
         );
       case "content":
         return <ContentTab data={data} locale={locale} primaryWeek={selectedWeeks.primaryWeek} comparisonWeek={selectedWeeks.comparisonWeek} />;

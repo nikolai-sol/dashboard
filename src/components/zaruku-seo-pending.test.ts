@@ -10,7 +10,7 @@ test("formats only currently pending SEO sources", () => {
     sources: [
       { id: "gsc", label: "Search Console", layer: "serp", status: "pending", color: "#000000" },
       { id: "webmaster", label: "Яндекс Вебмастер", layer: "serp", status: "connected", color: "#000000" },
-      { id: "dataforseo", label: "DataForSEO", layer: "ai", status: "pending", color: "#000000" },
+      { id: "yandex_gen_search", label: "AI visibility", layer: "ai", status: "connected", color: "#000000" },
     ],
     pending_requirements: [
       {
@@ -21,18 +21,10 @@ test("formats only currently pending SEO sources", () => {
         reason: "Google SERP layer is not connected yet.",
         expected_fields: ["query"],
       },
-      {
-        source: "dataforseo",
-        layer: "ai",
-        title: "DataForSEO / AI visibility",
-        status: "pending",
-        reason: "External AI visibility source is not connected yet.",
-        expected_fields: ["prompt"],
-      },
     ],
   };
 
-  assert.equal(formatPendingRequirementSources(data), "Search Console · DataForSEO");
+  assert.equal(formatPendingRequirementSources(data), "Search Console");
 });
 
 test("reports complete pending coverage when nothing is pending", () => {

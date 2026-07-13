@@ -295,15 +295,15 @@ Recent completed changes that should not be rediscovered:
     - Zaruku no longer uses the Abbott BI UI; it renders `src/components/ZarukuSeoDashboard.tsx`
     - data path: `src/lib/zaruku-seo.ts` returns `zaruku_seo` with measurement layers `onsite / serp / ai`
     - current connected source is Yandex Metrika: canonical traffic/page facts plus live Metrika API cuts for search engines, phrases, organic landings, devices, geo, browser/OS, inferred age/gender/interests
-    - pending sources are documented in `ZARUKU-SEO-PENDING-SOURCES.md`: Google Search Console, Yandex Webmaster, DataForSEO / AI visibility
+    - pending sources are documented in `ZARUKU-SEO-PENDING-SOURCES.md`: Google Search Console; Yandex Webmaster and Alisa AI visibility are connected
     - `Cached page traffic` is treated as technical tail, not as a primary acquisition channel
     - User ID analytics are Abbott/Bitrix-specific and stay hidden for Zaruku
 12. Zaruku SEO OS is connected as the `seo_os` source in the `serp` layer:
     - it provides weekly Yandex tracked positions, section coverage and position trends, opportunities, tasks, and pipeline run telemetry
     - section assignment is read from the authoritative `seo_section_patterns` dictionary
     - SEO OS does not replace pending Google Search Console or Yandex Webmaster ingestion for impressions, clicks, CTR, and complete query / URL search-console coverage
-    - DataForSEO / AI visibility remains pending
-
+    - SEO task status `needs_target_page` is supported end to end in MySQL types, P4 counters, and task badges; approved opportunities without `target_url` must still create a task with this status
+    - AI visibility for Zaruku is now covered by the Alisa AI snapshot in `seo_ai_visibility`
 13. Gidrofuril dashboard investigation on 2026-07-13:
     - production DB row: `dashboards.id = 29`, `client_id = gidrofuril`, dashboard name `лето 2026`, period `2026-07-01` to `2026-09-15`
     - Hybrid advertiser discovery found `Gidrofuril` in both Hybrid credential slots and added them to `report_bd_tech.hyb_systems`:

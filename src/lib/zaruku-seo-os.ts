@@ -252,7 +252,7 @@ export function buildSeoOsAccountQueries(counterIds: string[]): Record<"sectionP
         SELECT
           week_key AS week,
           task_id,
-          NULL AS section,
+          section,
           CONCAT(opportunity_type, ': ', cluster_id) AS title,
           status,
           notion_url

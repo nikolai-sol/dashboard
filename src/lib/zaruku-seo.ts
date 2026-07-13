@@ -1,10 +1,10 @@
 import type { RowDataPacket } from "mysql2";
 import pool from "@/lib/db";
 import { loadZarukuAiVisibilityData } from "@/lib/zaruku-ai-visibility";
+import { loadZarukuSeoIntelligenceData } from "@/lib/zaruku-seo-intelligence";
 import { loadZarukuSeoOsData, matchSectionPattern } from "@/lib/zaruku-seo-os";
 import { loadZarukuYandexWebmasterData } from "@/lib/zaruku-yandex-webmaster";
 import type {
-  ZarukuAiVisibilityData,
   ZarukuSeoData,
   ZarukuSeoDataQualityItem,
   ZarukuSeoKpi,
@@ -13,6 +13,7 @@ import type {
   ZarukuSeoSectionPattern,
   ZarukuSeoSource,
   ZarukuSeoSourceStatus,
+  ZarukuSeoIntelligenceData,
   ZarukuYandexWebmasterData,
 } from "@/lib/types";
 
@@ -47,19 +48,11 @@ const SOURCES: ZarukuSeoSource[] = [
   },
   {
     id: "yandex_gen_search",
-    label: "Yandex Gen Search",
+    label: "AI visibility",
     layer: "ai",
     color: "#0891b2",
     status: "pending",
-    note: "ИИ-выдача Яндекса: presence, mentions и citations.",
-  },
-  {
-    id: "dataforseo",
-    label: "DataForSEO",
-    layer: "ai",
-    color: "#f59e0b",
-    status: "pending",
-    note: "Дополнительный внешний AI visibility источник.",
+    note: "AI visibility: Яндекс Вебмастер / vendor snapshots.",
   },
 ];
 
@@ -79,14 +72,6 @@ const PENDING_REQUIREMENTS: ZarukuSeoPendingRequirement[] = [
     status: "pending",
     reason: "Для Яндекса остаются нужны показы, клики и CTR из Вебмастера; SEO OS покрывает только tracked-позиции.",
     expected_fields: ["query", "url", "region", "device", "impressions", "clicks", "ctr", "position"],
-  },
-  {
-    source: "dataforseo",
-    layer: "ai",
-    title: "DataForSEO / AI visibility",
-    status: "pending",
-    reason: "AI-выдача измеряет presence/citations до визита на сайт и не склеивается с Metrika sessions one-to-one.",
-    expected_fields: ["prompt", "engine", "region", "mentions", "citations", "presence_rate", "quoted_urls"],
   },
 ];
 
@@ -534,14 +519,14 @@ function sourceStatusFromData(status: "available" | "partial" | "unavailable"): 
 function buildSources({
   seoOsStatus,
   webmaster,
-  aiVisibility,
+  seoIntelligence,
 }: {
   seoOsStatus: "available" | "partial" | "unavailable";
   webmaster: ZarukuYandexWebmasterData;
-  aiVisibility: ZarukuAiVisibilityData;
+  seoIntelligence: ZarukuSeoIntelligenceData;
 }): ZarukuSeoSource[] {
   const webmasterStatus = sourceStatusFromData(webmaster.status);
-  const aiStatus = aiVisibility.rows.length > 0 ? sourceStatusFromData(aiVisibility.status) : "pending";
+  const aiStatus = seoIntelligence.ai.rows.length > 0 ? sourceStatusFromData(seoIntelligence.status) : "pending";
   return [
     ...SOURCES.map((source) => {
       if (source.id === "webmaster") {
@@ -562,8 +547,8 @@ function buildSources({
           status: aiStatus,
           note:
             aiStatus === "connected"
-              ? "Снапшоты AI visibility, экспортированные SEO OS."
-              : "Ожидаем экспорт AI visibility из SEO OS.",
+              ? "AI visibility из seo_ai_visibility: presence, mentions и citations."
+              : "Ожидаем снимки AI visibility из SEO OS/vendor.",
         };
       }
       return source;
@@ -583,10 +568,9 @@ function buildSources({
   ];
 }
 
-function buildPendingRequirements(webmaster: ZarukuYandexWebmasterData, aiVisibility: ZarukuAiVisibilityData) {
+function buildPendingRequirements(webmaster: ZarukuYandexWebmasterData) {
   return PENDING_REQUIREMENTS.filter((item) => {
     if (item.source === "webmaster") return webmaster.status === "unavailable";
-    if (item.source === "dataforseo") return aiVisibility.rows.length === 0;
     return true;
   });
 }
@@ -691,9 +675,10 @@ export async function loadZarukuSeoData(counterIds: string[], from: string, to: 
   const organicVisits = trafficChannels.find((row) => row.label === "Organic Search")?.visits ?? 0;
   const searchPhraseVisits = asNumber(searchPhrasesReport.totals[0]);
   const pageCollections = buildPageCollections(pageRows, seoOs.section_patterns);
-  const [webmaster, aiVisibility] = await Promise.all([
+  const [webmaster, aiVisibility, seoIntelligence] = await Promise.all([
     loadZarukuYandexWebmasterData(normalizedCounterIds, seoOs.weeks),
     loadZarukuAiVisibilityData(normalizedCounterIds, seoOs.weeks),
+    loadZarukuSeoIntelligenceData(normalizedCounterIds),
   ]);
 
   return {
@@ -705,8 +690,8 @@ export async function loadZarukuSeoData(counterIds: string[], from: string, to: 
       { id: "serp", label: "SERP", hint: "показы, позиции, CTR до клика" },
       { id: "ai", label: "AI-выдача", hint: "цитируемость и presence rate" },
     ],
-    sources: buildSources({ seoOsStatus: seoOs.status, webmaster, aiVisibility }),
-    pending_requirements: buildPendingRequirements(webmaster, aiVisibility),
+    sources: buildSources({ seoOsStatus: seoOs.status, webmaster, seoIntelligence }),
+    pending_requirements: buildPendingRequirements(webmaster),
     kpis: buildKpis({
       trafficChannels,
       technicalTail,
@@ -734,6 +719,7 @@ export async function loadZarukuSeoData(counterIds: string[], from: string, to: 
     seo_os: seoOs,
     webmaster,
     ai_visibility: aiVisibility,
+    seo_intelligence: seoIntelligence,
     data_quality: buildDataQuality({
       technicalTail,
       searchPhrases: searchPhrasesReport.rows,

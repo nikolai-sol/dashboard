@@ -38,15 +38,16 @@ test("buildOpportunityDecisionSummary leaves approve rate unavailable without de
 
 const tasks: ZarukuSeoTaskRow[] = [
   { week: "2026-W28", task_id: "medical", section: "/articles/", title: "Medical review", status: "awaiting_medical_review", notion_url: null },
+  { week: "2026-W28", task_id: "missing-target", section: "/articles/", title: "Needs target page", status: "needs_target_page", notion_url: null },
   { week: "2026-W28", task_id: "draft", section: null, title: "Draft", status: "draft", notion_url: null },
   { week: "2026-W27", task_id: "done", section: null, title: "Done", status: "done", notion_url: null },
 ];
 
 test("buildTaskStatusSummary returns A/B counts and deltas for every task status", () => {
   assert.deepEqual(buildTaskStatusSummary(tasks, "2026-W28", "2026-W27"), {
-    counts: { draft: 1, awaiting_medical_review: 1, in_progress: 0, done: 0, cancelled: 0 },
-    comparison_counts: { draft: 0, awaiting_medical_review: 0, in_progress: 0, done: 1, cancelled: 0 },
-    count_deltas: { draft: 1, awaiting_medical_review: 1, in_progress: 0, done: -1, cancelled: 0 },
+    counts: { draft: 1, awaiting_medical_review: 1, needs_target_page: 1, in_progress: 0, done: 0, cancelled: 0 },
+    comparison_counts: { draft: 0, awaiting_medical_review: 0, needs_target_page: 0, in_progress: 0, done: 1, cancelled: 0 },
+    count_deltas: { draft: 1, awaiting_medical_review: 1, needs_target_page: 1, in_progress: 0, done: -1, cancelled: 0 },
   });
 });
 
