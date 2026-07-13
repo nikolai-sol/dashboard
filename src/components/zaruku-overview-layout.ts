@@ -9,6 +9,9 @@ export type NorthStarStripItem = {
   delta: number | null;
   showDelta: boolean;
   deltaTone: "good" | "bad" | "neutral";
+  tooltipTitle: string;
+  tooltipDescription: string;
+  tooltipImportance: string;
   tooltip: string;
 };
 
@@ -23,6 +26,29 @@ const NORTH_STAR_LABELS: Record<NorthStarKpi["key"], string> = {
   medicalIntent: "Мед. интент",
   aiVisibility: "Алиса AI",
   approveRate: "Approve",
+};
+
+const NORTH_STAR_TOOLTIP_COPY: Record<NorthStarKpi["key"], { title: string; description: string; importance: string }> = {
+  noise: {
+    title: "Что такое шум",
+    description: "Доля показов по чужим брендам лабораторий и организаций, где портал виден не за счёт собственных медицинских тем.",
+    importance: "Почему важно: если шум высокий, основная видимость уходит в нерелевантную конкуренцию, а показы хуже превращаются в целевой спрос.",
+  },
+  medicalIntent: {
+    title: "Что такое медицинский интент",
+    description: "Доля показов по запросам, где пользователь ищет медицинскую информацию, маршрутизацию или помощь по онкологическим темам.",
+    importance: "Почему важно: рост этой доли показывает, что SEO приводит целевой органический трафик, а не просто увеличивает общий объём показов.",
+  },
+  aiVisibility: {
+    title: "Что такое Алиса AI",
+    description: "Доля проверенных AI-сценариев, где портал «За руку» присутствует в ответе Алисы или связанном источнике.",
+    importance: "Почему важно: присутствие в ИИ-ответах становится отдельным каналом видимости до клика и влияет на то, какие источники пользователь увидит первыми.",
+  },
+  approveRate: {
+    title: "Что такое approve rate",
+    description: "Доля SEO-возможностей, которые прошли отбор и были приняты в работу среди принятых и отклонённых решений недели.",
+    importance: "Почему важно: это скорость превращения инсайтов SEO OS в реальные задачи без перегруза команды нерелевантными рекомендациями.",
+  },
 };
 
 const PRIMARY_TRAFFIC_KEYS = ["visits", "users", "organic_share", "bounce", "avg_duration"];
@@ -71,6 +97,9 @@ export function buildNorthStarStripItems(kpis: NorthStarKpis): NorthStarStripIte
     delta: kpi.delta,
     showDelta: kpi.delta != null && Number.isFinite(kpi.delta) && Math.abs(kpi.delta) >= 0.05,
     deltaTone: deltaTone(kpi),
+    tooltipTitle: NORTH_STAR_TOOLTIP_COPY[kpi.key].title,
+    tooltipDescription: NORTH_STAR_TOOLTIP_COPY[kpi.key].description,
+    tooltipImportance: NORTH_STAR_TOOLTIP_COPY[kpi.key].importance,
     tooltip: tooltipForKpi(kpi),
   }));
 }

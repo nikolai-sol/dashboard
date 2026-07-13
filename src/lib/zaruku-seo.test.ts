@@ -16,6 +16,23 @@ function page(url: string, visits: number, users: number, pageviews: number): Za
   };
 }
 
+function pageWithBehavior(
+  url: string,
+  visits: number,
+  users: number,
+  pageviews: number,
+  bounceRate: number,
+  avgDurationSeconds: number,
+  pageDepth: number,
+): ZarukuSeoMetricRow {
+  return {
+    ...page(url, visits, users, pageviews),
+    bounce_rate: bounceRate,
+    avg_duration_seconds: avgDurationSeconds,
+    page_depth: pageDepth,
+  };
+}
+
 const patterns: ZarukuSeoSectionPattern[] = [
   { section: "Root", url_pattern: "/", priority: 99 },
   { section: "Map", url_pattern: "/map/", priority: 1 },
@@ -41,6 +58,31 @@ test("buildContentSections uses SEO patterns and aggregates visits, users, and p
       { label: "Priority B", visits: 7, users: 6, pageviews: 8, share: 8 / 31 * 100, source: "metrika", layer: "onsite" },
     ],
   );
+});
+
+test("buildContentSections aggregates behavior metrics by visit weight", () => {
+  const sections = buildContentSections(
+    [
+      pageWithBehavior("https://zaruku.ru/map/clinics/42", 3, 2, 5, 10, 60, 1),
+      pageWithBehavior("https://zaruku.ru/map/clinics/99", 7, 6, 9, 30, 120, 3),
+    ],
+    patterns,
+  );
+
+  assert.deepEqual(sections, [
+    {
+      label: "Clinics",
+      visits: 10,
+      users: 8,
+      pageviews: 14,
+      bounce_rate: 24,
+      avg_duration_seconds: 102,
+      page_depth: 2.4,
+      share: 100,
+      source: "metrika",
+      layer: "onsite",
+    },
+  ]);
 });
 
 test("buildContentSections does not invent URL-derived sections without configured patterns", () => {

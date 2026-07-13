@@ -82,6 +82,27 @@ test("north-star strip hides zero deltas and keeps details in tooltips", () => {
   assert.match(items[2].tooltip, /SoV/);
 });
 
+test("north-star tooltip copy explains what each KPI means and why it matters", () => {
+  const items = buildNorthStarStripItems(northStarKpis);
+  const noise = items.find((item) => item.key === "noise");
+  const medicalIntent = items.find((item) => item.key === "medicalIntent");
+  const aiVisibility = items.find((item) => item.key === "aiVisibility");
+  const approveRate = items.find((item) => item.key === "approveRate");
+
+  assert.equal(noise?.tooltipTitle, "Что такое шум");
+  assert.match(noise?.tooltipDescription ?? "", /чужим брендам лабораторий/i);
+  assert.match(noise?.tooltipImportance ?? "", /основная видимость уходит/i);
+
+  assert.equal(medicalIntent?.tooltipTitle, "Что такое медицинский интент");
+  assert.match(medicalIntent?.tooltipImportance ?? "", /целевой органический трафик/i);
+
+  assert.equal(aiVisibility?.tooltipTitle, "Что такое Алиса AI");
+  assert.match(aiVisibility?.tooltipImportance ?? "", /ИИ-ответах/i);
+
+  assert.equal(approveRate?.tooltipTitle, "Что такое approve rate");
+  assert.match(approveRate?.tooltipImportance ?? "", /скорость превращения инсайтов/i);
+});
+
 test("traffic health promotes five Metrika facts and keeps the rest secondary", () => {
   const rows = buildTrafficHealthRows(metrikaKpis);
 

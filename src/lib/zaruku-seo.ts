@@ -367,7 +367,18 @@ async function fetchMetrikaReportsSequential(
 const EMPTY_REPORT: MetrikaReport = { ok: false, rows: [], totals: [], error: "Report was not requested" };
 
 export function buildContentSections(pageRows: ZarukuSeoMetricRow[], patterns: ZarukuSeoSectionPattern[]) {
-  const bySection = new Map<string, ZarukuSeoMetricRow>();
+  type SectionAccumulator = ZarukuSeoMetricRow & {
+    bounceWeighted: number;
+    bounceVisits: number;
+    durationWeighted: number;
+    durationVisits: number;
+    depthWeighted: number;
+    depthVisits: number;
+  };
+  const bySection = new Map<
+    string,
+    SectionAccumulator
+  >();
   pageRows.forEach((page) => {
     if (!page.url) return;
     const section = matchSectionPattern(page.url, patterns)?.section;
@@ -382,17 +393,43 @@ export function buildContentSections(pageRows: ZarukuSeoMetricRow[], patterns: Z
         share: 0,
         source: "metrika",
         layer: "onsite",
-      } satisfies ZarukuSeoMetricRow);
+        bounceWeighted: 0,
+        bounceVisits: 0,
+        durationWeighted: 0,
+        durationVisits: 0,
+        depthWeighted: 0,
+        depthVisits: 0,
+      } satisfies SectionAccumulator);
     current.visits += page.visits;
     current.users += page.users;
     current.pageviews += page.pageviews;
+    if (page.bounce_rate != null) {
+      current.bounceWeighted += page.bounce_rate * page.visits;
+      current.bounceVisits += page.visits;
+    }
+    if (page.avg_duration_seconds != null) {
+      current.durationWeighted += page.avg_duration_seconds * page.visits;
+      current.durationVisits += page.visits;
+    }
+    if (page.page_depth != null) {
+      current.depthWeighted += page.page_depth * page.visits;
+      current.depthVisits += page.visits;
+    }
     bySection.set(section, current);
   });
   const totalPageviews = Array.from(bySection.values()).reduce((sum, row) => sum + row.pageviews, 0);
   return Array.from(bySection.values())
     .map((row) => ({
-      ...row,
+      label: row.label,
+      visits: row.visits,
+      users: row.users,
+      pageviews: row.pageviews,
+      ...(row.bounceVisits > 0 ? { bounce_rate: row.bounceWeighted / row.bounceVisits } : {}),
+      ...(row.durationVisits > 0 ? { avg_duration_seconds: row.durationWeighted / row.durationVisits } : {}),
+      ...(row.depthVisits > 0 ? { page_depth: row.depthWeighted / row.depthVisits } : {}),
       share: totalPageviews > 0 ? (row.pageviews / totalPageviews) * 100 : 0,
+      source: row.source,
+      layer: row.layer,
     }))
     .sort((a, b) => b.pageviews - a.pageviews)
     .slice(0, 12);

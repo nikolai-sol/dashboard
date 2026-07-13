@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useId, useMemo, useState } from "react";
 import {
   Bar,
   BarChart,
@@ -192,6 +192,44 @@ function Panel({
       </header>
       <div className={pending ? "px-5 py-4 opacity-60" : "px-5 py-4"}>{children}</div>
     </section>
+  );
+}
+
+function InfoTooltip({
+  label,
+  title,
+  description,
+  importance,
+  details,
+}: {
+  label: string;
+  title: string;
+  description: string;
+  importance: string;
+  details?: string;
+}) {
+  const id = useId();
+  return (
+    <span className="group relative inline-flex">
+      <button
+        type="button"
+        aria-label={label}
+        aria-describedby={id}
+        className="inline-flex rounded-full text-slate-400 outline-none transition hover:text-slate-600 focus-visible:ring-2 focus-visible:ring-slate-300 focus-visible:ring-offset-2"
+      >
+        <Info className="h-3 w-3" aria-hidden="true" />
+      </button>
+      <span
+        id={id}
+        role="tooltip"
+        className="pointer-events-none absolute left-1/2 top-5 z-50 hidden w-72 max-w-[calc(100vw-2rem)] -translate-x-1/2 rounded-lg border border-slate-200 bg-white p-3 text-left shadow-lg group-hover:block group-focus-within:block"
+      >
+        <span className="block text-sm font-semibold text-slate-900">{title}</span>
+        <span className="mt-1.5 block text-xs leading-relaxed text-slate-600">{description}</span>
+        <span className="mt-2 block text-xs leading-relaxed text-slate-700">{importance}</span>
+        {details ? <span className="mt-2 block border-t border-slate-100 pt-2 text-[11px] leading-relaxed text-slate-400">{details}</span> : null}
+      </span>
+    </span>
   );
 }
 
@@ -421,9 +459,13 @@ function NorthStarBlock({ data, locale }: Props) {
             <div key={item.key} className="min-w-0">
               <div className="flex items-center gap-1.5 text-xs text-slate-500">
                 <span>{item.label}</span>
-                <span title={item.tooltip} className="inline-flex text-slate-400">
-                  <Info className="h-3 w-3" aria-label={`${item.label}: детали`} />
-                </span>
+                <InfoTooltip
+                  label={`${item.label}: что это и почему важно`}
+                  title={item.tooltipTitle}
+                  description={item.tooltipDescription}
+                  importance={item.tooltipImportance}
+                  details={item.tooltip}
+                />
               </div>
               <div className="mt-1 flex items-baseline gap-1.5">
                 <span className="text-3xl font-semibold leading-none text-slate-950">{formatPercent(item.value, locale, 1)}</span>
