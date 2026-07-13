@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import type { ZarukuAiVisibilityRow, ZarukuYandexWebmasterQueryRow } from "@/lib/types";
 import {
+  buildWebmasterSelectionMeta,
   resolveRowsForWeek,
   selectRowsForWeek,
   summarizeAiVisibility,
@@ -99,4 +100,21 @@ test("resolveRowsForWeek uses the latest row week when the source fallback is em
 
   assert.equal(selection.week, "2026-W27");
   assert.deepEqual(selection.rows.map((row) => row.query_id), ["page-facts"]);
+});
+
+test("buildWebmasterSelectionMeta explains fallback and source period", () => {
+  const selection = resolveRowsForWeek([
+    query({
+      week: "2026-W28",
+      query_id: "latest",
+      week_from: "2026-07-06",
+      week_to: "2026-07-12",
+    }),
+  ], "2026-W29", "2026-W28");
+
+  assert.deepEqual(buildWebmasterSelectionMeta(selection, "2026-W29"), {
+    periodLabel: "2026-W28 · 2026-07-06 — 2026-07-12",
+    sourceNote: "Источник: Яндекс Вебмастер / seo_webmaster_queries_weekly.",
+    fallbackNote: "Выбрана 2026-W29, но в Яндекс Вебмастере за неё нет строк; показана последняя доступная неделя 2026-W28.",
+  });
 });

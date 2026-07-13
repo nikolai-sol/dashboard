@@ -60,6 +60,7 @@ import {
 } from "@/components/zaruku-overview-layout";
 import { formatPendingRequirementSources } from "@/components/zaruku-seo-pending";
 import {
+  buildWebmasterSelectionMeta,
   resolveRowsForWeek,
   selectRowsForWeek,
   summarizeAiVisibility,
@@ -756,9 +757,8 @@ function SeoTab({ data, locale, primaryWeek, comparisonWeek }: Props & { primary
   const webmasterPageSelection = resolveRowsForWeek(data.webmaster.pages, webmasterWeek, data.webmaster.latest_week);
   const webmasterQueries = webmasterQuerySelection.rows;
   const webmasterPages = webmasterPageSelection.rows;
-  const webmasterWindowLabel = webmasterQueries[0]
-    ? `${webmasterQuerySelection.week ?? webmasterQueries[0].week} · ${webmasterQueries[0].week_from} — ${webmasterQueries[0].week_to}`
-    : (webmasterQuerySelection.week ?? "week —");
+  const webmasterQueryMeta = buildWebmasterSelectionMeta(webmasterQuerySelection, webmasterWeek);
+  const webmasterPageMeta = buildWebmasterSelectionMeta(webmasterPageSelection, webmasterWeek);
   const aiWeek = primaryWeek ?? data.ai_visibility.latest_week;
   const aiRows = selectRowsForWeek(data.ai_visibility.rows, aiWeek, data.ai_visibility.latest_week);
   return (
@@ -785,9 +785,17 @@ function SeoTab({ data, locale, primaryWeek, comparisonWeek }: Props & { primary
           source="webmaster"
           layer="serp"
           pending={data.webmaster.status === "unavailable"}
-          right={<span className="text-xs text-slate-400">{webmasterWindowLabel}</span>}
+          right={<span className="text-xs text-slate-400">{webmasterQueryMeta.periodLabel}</span>}
         >
           <WebmasterKpiStrip rows={webmasterQueries} locale={currentLocale} />
+          <div className="mt-3 text-xs leading-relaxed text-slate-500">
+            {webmasterQueryMeta.sourceNote} Период: {webmasterQueryMeta.periodLabel}.
+          </div>
+          {webmasterQueryMeta.fallbackNote ? (
+            <div className="mt-2 rounded-md border border-amber-200 bg-amber-50 px-3 py-2 text-xs leading-relaxed text-amber-800">
+              {webmasterQueryMeta.fallbackNote}
+            </div>
+          ) : null}
         </Panel>
       </div>
       <SemanticHealthPanel data={data} locale={locale} primaryWeek={primaryWeek} />
@@ -824,10 +832,10 @@ function SeoTab({ data, locale, primaryWeek, comparisonWeek }: Props & { primary
         <DataTable rows={data.organic_landing_pages.slice(0, 12)} mode="cross" locale={currentLocale} />
       </Panel>
       <div className="grid gap-5 lg:grid-cols-2">
-        <Panel data={data} title="Yandex queries" source="webmaster" layer="serp" right={<span className="text-xs text-slate-400">{webmasterQuerySelection.week ?? "week —"} · {webmasterQueries.length} rows</span>}>
+        <Panel data={data} title="Yandex queries" source="webmaster" layer="serp" right={<span className="text-xs text-slate-400">{webmasterQueryMeta.periodLabel} · {webmasterQueries.length} rows</span>}>
           <WebmasterQueryTable rows={topWebmasterQueries(webmasterQueries, 12)} locale={currentLocale} />
         </Panel>
-        <Panel data={data} title="Yandex landing pages" source="webmaster" layer="serp" right={<span className="text-xs text-slate-400">{webmasterPageSelection.week ?? "week —"} · URL facts</span>}>
+        <Panel data={data} title="Yandex landing pages" source="webmaster" layer="serp" right={<span className="text-xs text-slate-400">{webmasterPageMeta.periodLabel} · URL facts</span>}>
           <WebmasterPageTable rows={topWebmasterPages(webmasterPages, 10)} locale={currentLocale} />
         </Panel>
       </div>

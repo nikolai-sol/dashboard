@@ -80,6 +80,25 @@ export function resolveRowsForWeek<T extends { week: string }>(rows: T[], select
   return latestWeek ? { week: latestWeek, rows: rows.filter((row) => row.week === latestWeek) } : { week: null, rows };
 }
 
+export function buildWebmasterSelectionMeta<T extends { week: string; week_from: string; week_to: string }>(
+  selection: { week: string | null; rows: T[] },
+  selectedWeek: string | null,
+) {
+  const firstRow = selection.rows[0];
+  const periodLabel = firstRow
+    ? `${selection.week ?? firstRow.week} · ${firstRow.week_from} — ${firstRow.week_to}`
+    : (selection.week ?? "week —");
+  const fallbackNote = selectedWeek && selection.week && selectedWeek !== selection.week
+    ? `Выбрана ${selectedWeek}, но в Яндекс Вебмастере за неё нет строк; показана последняя доступная неделя ${selection.week}.`
+    : null;
+
+  return {
+    periodLabel,
+    sourceNote: "Источник: Яндекс Вебмастер / seo_webmaster_queries_weekly.",
+    fallbackNote,
+  };
+}
+
 export function selectRowsForWeek<T extends { week: string }>(rows: T[], selectedWeek: string | null, fallbackWeek: string | null) {
   return resolveRowsForWeek(rows, selectedWeek, fallbackWeek).rows;
 }
