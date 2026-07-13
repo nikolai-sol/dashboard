@@ -47,6 +47,12 @@ cp package.json .next/standalone/
 cp scripts/rollback-release.sh .next/standalone/scripts/
 cp scripts/collect-yandex-webmaster.js .next/standalone/scripts/
 cp src/schemas/*.yaml .next/standalone/src/schemas/
+for runtime_package in mysql2 aws-ssl-profiles denque generate-function is-property iconv-lite safer-buffer long lru.min named-placeholders sql-escaper; do
+  if [ -d "node_modules/$runtime_package" ]; then
+    mkdir -p ".next/standalone/node_modules/$(dirname "$runtime_package")"
+    cp -R "node_modules/$runtime_package" ".next/standalone/node_modules/$runtime_package"
+  fi
+done
 if [ -f "$REPO_ROOT_DIR/fetch_google_ads_canonical.py" ]; then
   cp "$REPO_ROOT_DIR/fetch_google_ads_canonical.py" .next/standalone/
 fi
