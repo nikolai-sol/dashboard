@@ -126,6 +126,44 @@ export function buildWebmasterAccountQueries(counterIds: string[], weeks?: strin
   };
 }
 
+export function buildLatestWebmasterAccountQueries(counterIds: string[]): Record<"queries" | "pages", SqlQuery> {
+  const normalizedCounterIds = normalizeAccountIds(counterIds);
+  const accountScope = buildInClause(normalizedCounterIds);
+  const queryParams = [...normalizedCounterIds, ...normalizedCounterIds];
+  const pageParams = [...normalizedCounterIds, ...normalizedCounterIds];
+
+  return {
+    queries: {
+      sql: `
+        SELECT week_key, query_id, query_text, device_type, impressions, clicks, ctr, average_position, week_from, week_to
+        FROM seo_webmaster_queries_weekly
+        WHERE analytics_account_id IN (${accountScope})
+          AND week_key = (
+            SELECT MAX(week_key)
+            FROM seo_webmaster_queries_weekly
+            WHERE analytics_account_id IN (${accountScope})
+          )
+        ORDER BY week_key ASC, impressions DESC, clicks DESC, query_text ASC
+      `,
+      params: queryParams,
+    },
+    pages: {
+      sql: `
+        SELECT week_key, page_url, device_type, impressions, clicks, ctr, average_position, week_from, week_to
+        FROM seo_webmaster_pages_weekly
+        WHERE analytics_account_id IN (${accountScope})
+          AND week_key = (
+            SELECT MAX(week_key)
+            FROM seo_webmaster_pages_weekly
+            WHERE analytics_account_id IN (${accountScope})
+          )
+        ORDER BY week_key ASC, impressions DESC, clicks DESC, page_url ASC
+      `,
+      params: pageParams,
+    },
+  };
+}
+
 function errorMessage(error: unknown) {
   return error instanceof Error ? error.message : String(error);
 }
@@ -145,6 +183,22 @@ function normalizeSettledRows<DbRow, ResultRow>(
   } catch (error) {
     errors.push(`${label}: ${errorMessage(error)}`);
     return { rows: [] as ResultRow[], available: false };
+  }
+}
+
+async function loadFallbackRows<DbRow, ResultRow>(
+  query: SqlQuery,
+  label: string,
+  normalize: (row: DbRow) => ResultRow,
+  executeQuery: WebmasterQueryExecutor,
+  errors: string[],
+) {
+  try {
+    const rows = await executeQuery(query);
+    return rows.map((row) => normalize(row as DbRow));
+  } catch (error) {
+    errors.push(`${label}: ${errorMessage(error)}`);
+    return [];
   }
 }
 
@@ -173,9 +227,29 @@ export async function loadZarukuYandexWebmasterData(
     normalizeWebmasterPageRow,
     errors,
   );
+  const hasWeekFilter = (weeks ?? []).map((week) => week.trim()).filter(Boolean).length > 0;
+  const fallbackQueries = hasWeekFilter ? buildLatestWebmasterAccountQueries(counterIds) : null;
+  const queryRows = queryResult.available && queryResult.rows.length === 0 && fallbackQueries
+    ? await loadFallbackRows<WebmasterQueryDbRow, ZarukuYandexWebmasterQueryRow>(
+      fallbackQueries.queries,
+      "queries fallback",
+      normalizeWebmasterQueryRow,
+      executeQuery,
+      errors,
+    )
+    : queryResult.rows;
+  const pageRows = pageResult.available && pageResult.rows.length === 0 && fallbackQueries
+    ? await loadFallbackRows<WebmasterPageDbRow, ZarukuYandexWebmasterPageRow>(
+      fallbackQueries.pages,
+      "pages fallback",
+      normalizeWebmasterPageRow,
+      executeQuery,
+      errors,
+    )
+    : pageResult.rows;
   const successfulQueries = [queryResult.available, pageResult.available].filter(Boolean).length;
   const status = successfulQueries === 2 && errors.length === 0 ? "available" : successfulQueries > 0 ? "partial" : "unavailable";
-  const availableWeeks = [...new Set([...queryResult.rows, ...pageResult.rows].map((row) => row.week))].sort();
+  const availableWeeks = [...new Set([...queryRows, ...pageRows].map((row) => row.week))].sort();
 
   return {
     available: status === "available",
@@ -187,7 +261,7 @@ export async function loadZarukuYandexWebmasterData(
     },
     weeks: availableWeeks,
     latest_week: availableWeeks.at(-1) ?? null,
-    queries: queryResult.rows,
-    pages: pageResult.rows,
+    queries: queryRows,
+    pages: pageRows,
   };
 }
