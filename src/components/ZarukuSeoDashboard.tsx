@@ -48,6 +48,7 @@ import {
 import ZarukuSeoAnalytics from "@/components/ZarukuSeoAnalytics";
 import ZarukuSeoOperations from "@/components/ZarukuSeoOperations";
 import ZarukuTrafficVisibility from "@/components/ZarukuTrafficVisibility";
+import { formatPendingRequirementSources } from "@/components/zaruku-seo-pending";
 import {
   selectRowsForWeek,
   summarizeAiVisibility,
@@ -265,7 +266,7 @@ function DataTable({
 
 function PendingPanel({ data }: { data: ZarukuSeoData }) {
   return (
-    <Panel data={data} title="Что еще ждем" layer="serp" pending right={<span className="text-xs text-slate-400">GSC · Вебмастер · DataForSEO</span>}>
+    <Panel data={data} title="Что еще ждем" layer="serp" pending right={<span className="text-xs text-slate-400">{formatPendingRequirementSources(data)}</span>}>
       <div className="grid gap-3 md:grid-cols-3">
         {data.pending_requirements.map((item) => (
           <div key={item.title} className="rounded-lg border border-dashed border-slate-200 p-4">
