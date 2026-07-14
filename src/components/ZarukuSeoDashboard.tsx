@@ -268,25 +268,44 @@ function DataTable({
   locale: string;
   wrapText?: boolean;
 }) {
+  const tableMinWidth = mode === "pages" ? "min-w-[1080px]" : mode === "cross" ? "min-w-[980px]" : "min-w-[900px]";
+  const labelColumnWidth = mode === "pages" ? "w-[42%]" : mode === "cross" ? "w-[24%]" : "w-[34%]";
+  const secondaryColumnWidth = "w-[18%]";
+  const metricColumnWidth = mode === "pages" ? "w-[9.6%]" : mode === "cross" ? "w-[9.6%]" : "w-[11%]";
+  const headerClass = "px-3 pb-2 text-right font-medium leading-tight whitespace-normal";
+  const labelHeaderClass = "px-3 pb-2 text-left font-medium leading-tight whitespace-normal";
+  const metricCellClass = "whitespace-nowrap px-3 py-2.5 text-right text-slate-600";
+  const secondaryMetricCellClass = "whitespace-nowrap px-3 py-2.5 text-right text-slate-500";
+
   return (
     <div className="overflow-x-auto">
-      <table className="w-full min-w-[760px] text-sm">
+      <table className={`w-full table-fixed ${tableMinWidth} text-sm`}>
+        <colgroup>
+          <col className={labelColumnWidth} />
+          {mode === "cross" ? <col className={secondaryColumnWidth} /> : null}
+          <col className={metricColumnWidth} />
+          <col className={metricColumnWidth} />
+          <col className={metricColumnWidth} />
+          <col className={metricColumnWidth} />
+          <col className={metricColumnWidth} />
+          <col className={metricColumnWidth} />
+        </colgroup>
         <thead>
-          <tr className="text-left text-xs uppercase text-slate-400">
-            <th className="pb-2 font-medium">{mode === "pages" ? "Страница" : "Сегмент"}</th>
-            {mode === "cross" ? <th className="pb-2 font-medium">Разрез</th> : null}
-            <th className="pb-2 text-right font-medium">Визиты</th>
-            <th className="pb-2 text-right font-medium">Пользователи</th>
-            <th className="pb-2 text-right font-medium">Просмотры</th>
-            <th className="pb-2 text-right font-medium">Отказы</th>
-            <th className="pb-2 text-right font-medium">Время</th>
-            <th className="pb-2 text-right font-medium">Глубина</th>
+          <tr className="text-xs text-slate-400">
+            <th className={labelHeaderClass}>{mode === "pages" ? "Страница" : "Сегмент"}</th>
+            {mode === "cross" ? <th className={labelHeaderClass}>Разрез</th> : null}
+            <th className={headerClass}>Визиты</th>
+            <th className={headerClass}>Пользователи</th>
+            <th className={headerClass}>Просмотры</th>
+            <th className={headerClass}>Отказы</th>
+            <th className={headerClass}>Время</th>
+            <th className={headerClass}>Глубина</th>
           </tr>
         </thead>
         <tbody className="divide-y divide-slate-100">
           {rows.map((row, index) => (
             <tr key={`${row.label}-${row.secondary_label ?? ""}-${row.url ?? ""}-${index}`}>
-              <td className={wrapText ? "max-w-[760px] py-2.5 pr-4" : "max-w-[420px] py-2.5"}>
+              <td className="py-2.5 pl-3 pr-5 align-top">
                 <div className={wrapText ? "font-medium leading-snug text-slate-700" : "font-medium text-slate-700"} title={row.label}>
                   {wrapText ? row.label : truncate(row.label, mode === "pages" ? 72 : 48)}
                 </div>
@@ -296,13 +315,13 @@ function DataTable({
                   </div>
                 ) : null}
               </td>
-              {mode === "cross" ? <td className="py-2.5 text-slate-500">{row.secondary_label ?? "—"}</td> : null}
-              <td className="py-2.5 text-right text-slate-600">{row.visits ? formatNumber(row.visits, locale) : "—"}</td>
-              <td className="py-2.5 text-right text-slate-600">{formatNumber(row.users, locale)}</td>
-              <td className="py-2.5 text-right text-slate-600">{formatNumber(row.pageviews, locale)}</td>
-              <td className="py-2.5 text-right text-slate-500">{formatPercent(row.bounce_rate, locale, 1)}</td>
-              <td className="py-2.5 text-right text-slate-500">{formatDuration(row.avg_duration_seconds)}</td>
-              <td className="py-2.5 text-right text-slate-500">{row.page_depth?.toFixed(1) ?? "—"}</td>
+              {mode === "cross" ? <td className="px-3 py-2.5 text-slate-500">{row.secondary_label ?? "—"}</td> : null}
+              <td className={metricCellClass}>{row.visits ? formatNumber(row.visits, locale) : "—"}</td>
+              <td className={metricCellClass}>{formatNumber(row.users, locale)}</td>
+              <td className={metricCellClass}>{formatNumber(row.pageviews, locale)}</td>
+              <td className={secondaryMetricCellClass}>{formatPercent(row.bounce_rate, locale, 1)}</td>
+              <td className={secondaryMetricCellClass}>{formatDuration(row.avg_duration_seconds)}</td>
+              <td className={secondaryMetricCellClass}>{row.page_depth?.toFixed(1) ?? "—"}</td>
             </tr>
           ))}
         </tbody>
