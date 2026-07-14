@@ -29,7 +29,6 @@ import {
 } from "lucide-react";
 import ZarukuSeoWeekToolbar from "@/components/ZarukuSeoWeekToolbar";
 import type {
-  ZarukuAiVisibilityRow,
   ZarukuSeoData,
   ZarukuSeoLayerId,
   ZarukuSeoMetricRow,
@@ -64,8 +63,6 @@ import {
   buildWebmasterFactsPanelChrome,
   buildWebmasterSelectionMeta,
   resolveRowsForWeek,
-  selectRowsForWeek,
-  summarizeAiVisibility,
   summarizeWebmasterKpis,
   topWebmasterPages,
   topWebmasterQueries,
@@ -485,45 +482,6 @@ function WebmasterPageTable({ rows, locale }: { rows: ZarukuYandexWebmasterPageR
   );
 }
 
-function AiVisibilityPanel({ rows, locale }: { rows: ZarukuAiVisibilityRow[]; locale: string }) {
-  const summary = summarizeAiVisibility(rows);
-  const topRows = [...rows]
-    .sort((left, right) => Number(right.mentioned) - Number(left.mentioned) || right.citation_count - left.citation_count)
-    .slice(0, 6);
-  return (
-    <div className="space-y-3">
-      <div className="grid grid-cols-2 gap-3 md:grid-cols-4">
-        {[
-          ["Проверено", formatNumber(summary.checked, locale)],
-          ["Упоминания", formatNumber(summary.mentions, locale)],
-          ["Присутствие", formatPercent(summary.presence_rate, locale, 1)],
-          ["Цитаты", formatNumber(summary.citations, locale)],
-        ].map(([label, value]) => (
-          <div key={label} className="rounded-lg border border-slate-200 bg-slate-50 px-3 py-3">
-            <div className="text-xs uppercase text-slate-400">{label}</div>
-            <div className="mt-1 text-xl font-semibold text-slate-900">{value}</div>
-          </div>
-        ))}
-      </div>
-      {topRows.length ? (
-        <div className="space-y-2">
-          {topRows.map((row) => (
-            <div key={`${row.week}-${row.engine}-${row.cluster_id}`} className="rounded-md bg-slate-50 px-3 py-2">
-              <div className="flex items-center justify-between gap-3">
-                <div className="min-w-0 truncate text-sm font-medium text-slate-700" title={row.query}>{row.query}</div>
-                <span className={row.mentioned ? "text-xs font-medium text-teal-700" : "text-xs text-slate-400"}>{row.mentioned ? "найдено" : "не найдено"}</span>
-              </div>
-              {row.cited_urls.length ? <div className="mt-1 truncate text-xs text-slate-400">{row.cited_urls.map(shortUrl).join(" · ")}</div> : null}
-            </div>
-          ))}
-        </div>
-      ) : (
-        <div className="rounded-md bg-slate-50 px-3 py-8 text-center text-sm text-slate-500">Снимок AI-видимости ещё не экспортирован SEO OS.</div>
-      )}
-    </div>
-  );
-}
-
 function NorthStarBlock({ data, locale }: Props) {
   const items = buildNorthStarStripItems(buildNorthStarKpis({
     sovRows: data.seo_intelligence.sov.rows,
@@ -769,8 +727,6 @@ function SeoTab({ data, locale, primaryWeek, comparisonWeek }: Props & { primary
   const webmasterQueryMeta = buildWebmasterSelectionMeta(webmasterFactsSelection, webmasterWeek);
   const webmasterPageMeta = buildWebmasterSelectionMeta(webmasterPageSelection, webmasterWeek);
   const webmasterFactsChrome = buildWebmasterFactsPanelChrome();
-  const aiWeek = primaryWeek ?? data.ai_visibility.latest_week;
-  const aiRows = selectRowsForWeek(data.ai_visibility.rows, aiWeek, data.ai_visibility.latest_week);
   return (
     <div className="space-y-5">
       <div className="grid gap-5 lg:grid-cols-2">
@@ -821,16 +777,7 @@ function SeoTab({ data, locale, primaryWeek, comparisonWeek }: Props & { primary
           </div>
           <p className="mt-3 text-sm leading-relaxed text-slate-500">Данные по Google-показам, кликам и CTR ожидаются из Search Console.</p>
         </Panel>
-        <Panel
-          data={data}
-          title="Снимок AI-запросов"
-          source="yandex_gen_search"
-          layer="ai"
-          pending={data.ai_visibility.rows.length === 0}
-          right={<span className="text-xs text-slate-400">{aiWeek ?? "неделя —"}</span>}
-        >
-          <AiVisibilityPanel rows={aiRows} locale={currentLocale} />
-        </Panel>
+        <AiAggregateVisibilityPanel data={data} locale={currentLocale} />
       </div>
       <ZarukuSeoAnalytics
         seoOs={data.seo_os}
