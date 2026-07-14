@@ -63,6 +63,7 @@ import {
   buildWebmasterFactsPanelChrome,
   buildWebmasterSelectionMeta,
   resolveRowsForWeek,
+  resolveRowsForWeekOrLatest,
   summarizeWebmasterKpis,
   topWebmasterPages,
   topWebmasterQueries,
@@ -744,7 +745,7 @@ function SeoTab({ data, locale, primaryWeek, comparisonWeek }: Props & { primary
   const currentLocale = locale ?? "ru-RU";
   const webmasterWeek = primaryWeek ?? data.webmaster.latest_week;
   const webmasterSummarySelection = resolveRowsForWeek(data.webmaster.summary, webmasterWeek, data.webmaster.latest_week);
-  const webmasterQuerySelection = resolveRowsForWeek(data.webmaster.queries, webmasterWeek, data.webmaster.latest_week);
+  const webmasterQuerySelection = resolveRowsForWeekOrLatest(data.webmaster.queries, webmasterWeek, data.webmaster.latest_week);
   const webmasterPageSelection = resolveRowsForWeek(data.webmaster.pages, webmasterWeek, data.webmaster.latest_week);
   const webmasterSummaryRows = webmasterSummarySelection.rows;
   const webmasterQueries = webmasterQuerySelection.rows;
@@ -752,7 +753,8 @@ function SeoTab({ data, locale, primaryWeek, comparisonWeek }: Props & { primary
   const webmasterFactsSelection: { week: string | null; rows: WebmasterKpiRow[] } = webmasterSummaryRows.length > 0
     ? webmasterSummarySelection
     : webmasterQuerySelection;
-  const webmasterQueryMeta = buildWebmasterSelectionMeta(webmasterFactsSelection, webmasterWeek);
+  const webmasterFactsMeta = buildWebmasterSelectionMeta(webmasterFactsSelection, webmasterWeek);
+  const webmasterQueryMeta = buildWebmasterSelectionMeta(webmasterQuerySelection, webmasterWeek);
   const webmasterPageMeta = buildWebmasterSelectionMeta(webmasterPageSelection, webmasterWeek);
   const webmasterFactsChrome = buildWebmasterFactsPanelChrome();
   return (
@@ -779,15 +781,15 @@ function SeoTab({ data, locale, primaryWeek, comparisonWeek }: Props & { primary
           source={webmasterFactsChrome.source}
           layer={webmasterFactsChrome.layer ?? undefined}
           pending={data.webmaster.status === "unavailable"}
-          right={<span className="text-xs text-slate-400">{webmasterQueryMeta.periodLabel}</span>}
+          right={<span className="text-xs text-slate-400">{webmasterFactsMeta.periodLabel}</span>}
         >
           <WebmasterKpiStrip rows={webmasterSummaryRows.length > 0 ? webmasterSummaryRows : webmasterQueries} locale={currentLocale} />
           <div className="mt-3 text-xs leading-relaxed text-slate-500">
-            {webmasterQueryMeta.sourceNote} Период: {webmasterQueryMeta.periodLabel}.
+            {webmasterFactsMeta.sourceNote} Период: {webmasterFactsMeta.periodLabel}.
           </div>
-          {webmasterQueryMeta.fallbackNote ? (
+          {webmasterFactsMeta.fallbackNote ? (
             <div className="mt-2 rounded-md border border-amber-200 bg-amber-50 px-3 py-2 text-xs leading-relaxed text-amber-800">
-              {webmasterQueryMeta.fallbackNote}
+              {webmasterFactsMeta.fallbackNote}
             </div>
           ) : null}
         </Panel>
@@ -823,6 +825,11 @@ function SeoTab({ data, locale, primaryWeek, comparisonWeek }: Props & { primary
         <p className="mt-3 text-xs leading-relaxed text-slate-500">
           Это запросы из Яндекс Вебмастера: показы, клики, CTR и средняя позиция до клика. Таблица отсортирована по показам.
         </p>
+        {webmasterQueryMeta.fallbackNote ? (
+          <div className="mt-3 rounded-md border border-amber-200 bg-amber-50 px-3 py-2 text-xs leading-relaxed text-amber-800">
+            {webmasterQueryMeta.fallbackNote}
+          </div>
+        ) : null}
         {webmasterPages.length === 0 ? (
           <div className="mt-3 rounded-md border border-dashed border-slate-200 bg-slate-50 px-3 py-2 text-xs leading-relaxed text-slate-500">
             Посадочные страницы Яндекса пока не показываем: canonical Webmaster collector сейчас собирает запросы и сводку хоста, но не URL-факты.

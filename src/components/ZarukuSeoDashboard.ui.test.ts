@@ -25,3 +25,8 @@ test("SEO tab explains Metrika search phrases and hides empty Yandex landing pag
   assert.match(source, /Фразы, которые Метрика смогла определить после клика/);
   assert.match(source, /webmasterPages\.length > 0/);
 });
+
+test("SEO tab labels Yandex query table from its own week selection", () => {
+  assert.match(source, /const webmasterQueryMeta = buildWebmasterSelectionMeta\(webmasterQuerySelection, webmasterWeek\)/);
+  assert.match(source, /webmasterQueryMeta\.fallbackNote/);
+});

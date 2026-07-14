@@ -5,6 +5,7 @@ import {
   buildWebmasterFactsPanelChrome,
   buildWebmasterSelectionMeta,
   resolveRowsForWeek,
+  resolveRowsForWeekOrLatest,
   selectRowsForWeek,
   summarizeAiVisibility,
   summarizeWebmasterKpis,
@@ -95,6 +96,16 @@ test("resolveRowsForWeek keeps selected empty week without fallback", () => {
   assert.deepEqual(selection.rows.map((row) => row.query_id), []);
 });
 
+test("resolveRowsForWeekOrLatest falls back to latest available row week for sparse query details", () => {
+  const selection = resolveRowsForWeekOrLatest([
+    query({ week: "2026-W27", query_id: "old" }),
+    query({ week: "2026-W28", query_id: "latest" }),
+  ], "2026-W29", "2026-W28");
+
+  assert.equal(selection.week, "2026-W28");
+  assert.deepEqual(selection.rows.map((row) => row.query_id), ["latest"]);
+});
+
 test("resolveRowsForWeek uses the latest row week when no week is selected", () => {
   const selection = resolveRowsForWeek([
     query({ week: "2026-W27", query_id: "page-facts" }),
@@ -119,6 +130,18 @@ test("buildWebmasterSelectionMeta labels partial current week without fallback w
     periodLabel: "2026-W29 · частично, по 14.07",
     sourceNote: "Источник: Яндекс Вебмастер / canonical_fact_webmaster_*_daily.",
     fallbackNote: null,
+  });
+});
+
+test("buildWebmasterSelectionMeta explains when sparse details use the latest available week", () => {
+  const selection = resolveRowsForWeekOrLatest([
+    query({ week: "2026-W28", query_id: "latest" }),
+  ], "2026-W29", "2026-W28");
+
+  assert.deepEqual(buildWebmasterSelectionMeta(selection, "2026-W29"), {
+    periodLabel: "2026-W28 · 2026-07-06 — 2026-07-12",
+    sourceNote: "Источник: Яндекс Вебмастер / canonical_fact_webmaster_*_daily.",
+    fallbackNote: "За выбранную неделю 2026-W29 детальных данных Яндекс Вебмастера пока нет; показываем последнюю доступную неделю 2026-W28.",
   });
 });
 
