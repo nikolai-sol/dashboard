@@ -36,7 +36,7 @@ bash scripts/render-production-env.sh "$TMP_ENV"
 
 echo "Packaging build artifacts..."
 rm -rf .next/standalone/.next/static .next/standalone/public .next/standalone/src .next/standalone/ecosystem.config.js .next/standalone/package.json .next/standalone/.env .next/standalone/scripts
-mkdir -p .next/standalone/.next .next/standalone/src/schemas .next/standalone/scripts
+mkdir -p .next/standalone/.next .next/standalone/src/schemas .next/standalone/src/db .next/standalone/scripts
 cp -R .next/static .next/standalone/.next/static
 if [ -d public ]; then
   cp -R public .next/standalone/public
@@ -46,7 +46,9 @@ cp ecosystem.config.js .next/standalone/
 cp package.json .next/standalone/
 cp scripts/rollback-release.sh .next/standalone/scripts/
 cp scripts/collect-yandex-webmaster.js .next/standalone/scripts/
+cp scripts/collect-yandex-webmaster-canonical.sh .next/standalone/scripts/
 cp src/schemas/*.yaml .next/standalone/src/schemas/
+cp -R src/db/migrations .next/standalone/src/db/migrations
 for runtime_package in mysql2 aws-ssl-profiles denque generate-function is-property iconv-lite safer-buffer long lru.min named-placeholders sql-escaper; do
   if [ -d "node_modules/$runtime_package" ]; then
     mkdir -p ".next/standalone/node_modules/$(dirname "$runtime_package")"
@@ -61,6 +63,9 @@ if [ -f "$REPO_ROOT_DIR/google_ads_api_client.py" ]; then
 fi
 if [ -f "$REPO_ROOT_DIR/canonical_writer.py" ]; then
   cp "$REPO_ROOT_DIR/canonical_writer.py" .next/standalone/
+fi
+if [ -f "$REPO_ROOT_DIR/fetch_yandex_webmaster_canonical.py" ]; then
+  cp "$REPO_ROOT_DIR/fetch_yandex_webmaster_canonical.py" .next/standalone/
 fi
 if [ -f "$REPO_ROOT_DIR/fetch_yandex_direct_canonical_api.py" ]; then
   cp "$REPO_ROOT_DIR/fetch_yandex_direct_canonical_api.py" .next/standalone/

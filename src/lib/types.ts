@@ -727,6 +727,7 @@ export interface ZarukuYandexWebmasterQueryRow {
   average_position: number | null;
   week_from: string;
   week_to: string;
+  is_partial_week?: boolean;
 }
 
 export interface ZarukuYandexWebmasterPageRow {
@@ -739,6 +740,19 @@ export interface ZarukuYandexWebmasterPageRow {
   average_position: number | null;
   week_from: string;
   week_to: string;
+  is_partial_week?: boolean;
+}
+
+export interface ZarukuYandexWebmasterSummaryRow {
+  week: string;
+  device: string;
+  impressions: number;
+  clicks: number;
+  ctr: number | null;
+  average_position: number | null;
+  week_from: string;
+  week_to: string;
+  is_partial_week: boolean;
 }
 
 export interface ZarukuYandexWebmasterData {
@@ -751,6 +765,7 @@ export interface ZarukuYandexWebmasterData {
   };
   weeks: string[];
   latest_week: string | null;
+  summary: ZarukuYandexWebmasterSummaryRow[];
   queries: ZarukuYandexWebmasterQueryRow[];
   pages: ZarukuYandexWebmasterPageRow[];
 }

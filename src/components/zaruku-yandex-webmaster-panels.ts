@@ -2,6 +2,7 @@ import type {
   ZarukuAiVisibilityRow,
   ZarukuYandexWebmasterPageRow,
   ZarukuYandexWebmasterQueryRow,
+  ZarukuYandexWebmasterSummaryRow,
 } from "@/lib/types";
 
 export type WebmasterKpiSummary = {
@@ -38,7 +39,7 @@ function weightedAverage(rows: Array<{ impressions: number; average_position: nu
   return weighted.weight > 0 ? round(weighted.value / weighted.weight, 2) : null;
 }
 
-export function summarizeWebmasterKpis(rows: ZarukuYandexWebmasterQueryRow[]): WebmasterKpiSummary {
+export function summarizeWebmasterKpis(rows: Array<ZarukuYandexWebmasterQueryRow | ZarukuYandexWebmasterSummaryRow>): WebmasterKpiSummary {
   const totals = rows.reduce(
     (total, row) => ({
       impressions: total.impressions + row.impressions,
@@ -69,7 +70,7 @@ export function topWebmasterPages(rows: ZarukuYandexWebmasterPageRow[], limit = 
 export function resolveRowsForWeek<T extends { week: string }>(rows: T[], selectedWeek: string | null, fallbackWeek: string | null) {
   if (selectedWeek) {
     const selectedRows = rows.filter((row) => row.week === selectedWeek);
-    if (selectedRows.length > 0) return { week: selectedWeek, rows: selectedRows };
+    return { week: selectedWeek, rows: selectedRows };
   }
   if (fallbackWeek) {
     const fallbackRows = rows.filter((row) => row.week === fallbackWeek);
@@ -87,21 +88,29 @@ export function buildWebmasterFactsPanelChrome() {
   };
 }
 
-export function buildWebmasterSelectionMeta<T extends { week: string; week_from: string; week_to: string }>(
+function formatShortDate(value: string) {
+  const [, month, day] = value.slice(0, 10).split("-");
+  return day && month ? `${day}.${month}` : value;
+}
+
+export function buildWebmasterSelectionMeta<T extends { week: string; week_from: string; week_to: string; is_partial_week?: boolean }>(
   selection: { week: string | null; rows: T[] },
   selectedWeek: string | null,
 ) {
   const firstRow = selection.rows[0];
-  const periodLabel = firstRow
-    ? `${selection.week ?? firstRow.week} · ${firstRow.week_from} — ${firstRow.week_to}`
-    : (selection.week ?? "неделя —");
-  const fallbackNote = selectedWeek && selection.week && selectedWeek !== selection.week
-    ? `Выбрана ${selectedWeek}, но в Яндекс Вебмастере за неё нет строк; показана последняя доступная неделя ${selection.week}.`
+  const weekLabel = selection.week ?? firstRow?.week ?? selectedWeek ?? "неделя —";
+  const periodLabel = firstRow?.is_partial_week
+    ? `${weekLabel} · частично, по ${formatShortDate(firstRow.week_to)}`
+    : firstRow
+      ? `${weekLabel} · ${firstRow.week_from} — ${firstRow.week_to}`
+      : weekLabel;
+  const fallbackNote = selectedWeek && selection.rows.length === 0
+    ? "За выбранную неделю данных Яндекс Вебмастера пока нет."
     : null;
 
   return {
     periodLabel,
-    sourceNote: "Источник: Яндекс Вебмастер / seo_webmaster_queries_weekly.",
+    sourceNote: "Источник: Яндекс Вебмастер / canonical_fact_webmaster_*_daily.",
     fallbackNote,
   };
 }

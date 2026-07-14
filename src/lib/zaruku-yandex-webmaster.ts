@@ -4,6 +4,7 @@ import type {
   ZarukuYandexWebmasterData,
   ZarukuYandexWebmasterPageRow,
   ZarukuYandexWebmasterQueryRow,
+  ZarukuYandexWebmasterSummaryRow,
 } from "@/lib/types";
 
 export type SqlQuery = { sql: string; params: string[] };
@@ -20,6 +21,7 @@ type WebmasterQueryDbRow = {
   average_position: number | string | null;
   week_from: string | Date;
   week_to: string | Date;
+  is_partial_week?: number | string | boolean | null;
 };
 
 type WebmasterPageDbRow = {
@@ -32,6 +34,19 @@ type WebmasterPageDbRow = {
   average_position: number | string | null;
   week_from: string | Date;
   week_to: string | Date;
+  is_partial_week?: number | string | boolean | null;
+};
+
+type WebmasterSummaryDbRow = {
+  week_key: string;
+  device_type: string;
+  impressions: number | string | null;
+  clicks: number | string | null;
+  ctr: number | string | null;
+  average_position: number | string | null;
+  week_from: string | Date;
+  week_to: string | Date;
+  is_partial_week?: number | string | boolean | null;
 };
 
 function buildInClause(values: readonly string[]) {
@@ -54,6 +69,10 @@ function asNullableNumber(value: unknown) {
   return Number.isFinite(number) ? number : null;
 }
 
+function asBoolean(value: unknown) {
+  return value === true || value === 1 || value === "1" || value === "true";
+}
+
 function formatDate(value: string | Date) {
   return value instanceof Date ? value.toISOString().slice(0, 10) : String(value).slice(0, 10);
 }
@@ -62,7 +81,17 @@ function weekClause(weeks: string[] | undefined, params: string[]) {
   const normalizedWeeks = (weeks ?? []).map((week) => week.trim()).filter(Boolean);
   if (normalizedWeeks.length === 0) return "";
   params.push(...normalizedWeeks);
-  return `AND week_key IN (${buildInClause(normalizedWeeks)})`;
+  return `AND CONCAT(LEFT(YEARWEEK(report_date, 3), 4), '-W', RIGHT(YEARWEEK(report_date, 3), 2)) IN (${buildInClause(normalizedWeeks)})`;
+}
+
+function weightedAveragePositionSql() {
+  return `
+          CASE
+            WHEN SUM(CASE WHEN average_position IS NULL THEN 0 ELSE impressions END) > 0
+              THEN SUM(CASE WHEN average_position IS NULL THEN 0 ELSE average_position * impressions END)
+                / NULLIF(SUM(CASE WHEN average_position IS NULL THEN 0 ELSE impressions END), 0)
+            ELSE AVG(average_position)
+          END`;
 }
 
 export function normalizeWebmasterQueryRow(row: WebmasterQueryDbRow): ZarukuYandexWebmasterQueryRow {
@@ -77,6 +106,7 @@ export function normalizeWebmasterQueryRow(row: WebmasterQueryDbRow): ZarukuYand
     average_position: asNullableNumber(row.average_position),
     week_from: formatDate(row.week_from),
     week_to: formatDate(row.week_to),
+    is_partial_week: asBoolean(row.is_partial_week),
   };
 }
 
@@ -91,75 +121,97 @@ export function normalizeWebmasterPageRow(row: WebmasterPageDbRow): ZarukuYandex
     average_position: asNullableNumber(row.average_position),
     week_from: formatDate(row.week_from),
     week_to: formatDate(row.week_to),
+    is_partial_week: asBoolean(row.is_partial_week),
   };
 }
 
-export function buildWebmasterAccountQueries(counterIds: string[], weeks?: string[]): Record<"queries" | "pages", SqlQuery> {
+export function normalizeWebmasterSummaryRow(row: WebmasterSummaryDbRow): ZarukuYandexWebmasterSummaryRow {
+  return {
+    week: String(row.week_key),
+    device: String(row.device_type),
+    impressions: Math.round(asNumber(row.impressions)),
+    clicks: Math.round(asNumber(row.clicks)),
+    ctr: asNullableNumber(row.ctr),
+    average_position: asNullableNumber(row.average_position),
+    week_from: formatDate(row.week_from),
+    week_to: formatDate(row.week_to),
+    is_partial_week: asBoolean(row.is_partial_week),
+  };
+}
+
+const WEEK_KEY_SQL = "CONCAT(LEFT(YEARWEEK(report_date, 3), 4), '-W', RIGHT(YEARWEEK(report_date, 3), 2))";
+const WEEK_FROM_SQL = "DATE_SUB(report_date, INTERVAL WEEKDAY(report_date) DAY)";
+const WEEK_END_SQL = `DATE_ADD(${WEEK_FROM_SQL}, INTERVAL 6 DAY)`;
+
+export function buildWebmasterAccountQueries(counterIds: string[], weeks?: string[]): Record<"queries" | "pages" | "summary", SqlQuery> {
   const normalizedCounterIds = normalizeAccountIds(counterIds);
   const queryParams = [...normalizedCounterIds];
-  const pageParams = [...normalizedCounterIds];
+  const summaryParams = [...normalizedCounterIds];
   const queryWeekClause = weekClause(weeks, queryParams);
-  const pageWeekClause = weekClause(weeks, pageParams);
+  const summaryWeekClause = weekClause(weeks, summaryParams);
   const accountScope = buildInClause(normalizedCounterIds);
 
   return {
     queries: {
       sql: `
-        SELECT week_key, query_id, query_text, device_type, impressions, clicks, ctr, average_position, week_from, week_to
-        FROM seo_webmaster_queries_weekly
+        SELECT
+          ${WEEK_KEY_SQL} AS week_key,
+          query_hash AS query_id,
+          query_text,
+          device_type,
+          SUM(impressions) AS impressions,
+          SUM(clicks) AS clicks,
+          CASE WHEN SUM(impressions) > 0 THEN SUM(clicks) / SUM(impressions) * 100 ELSE NULL END AS ctr,
+          ${weightedAveragePositionSql()} AS average_position,
+          MIN(${WEEK_FROM_SQL}) AS week_from,
+          MAX(report_date) AS week_to,
+          MAX(report_date) < MAX(${WEEK_END_SQL}) AS is_partial_week
+        FROM canonical_fact_webmaster_queries_daily
         WHERE analytics_account_id IN (${accountScope})
           ${queryWeekClause}
+        GROUP BY week_key, query_hash, query_text, device_type
         ORDER BY week_key ASC, impressions DESC, clicks DESC, query_text ASC
       `,
       params: queryParams,
     },
-    pages: {
+    summary: {
       sql: `
-        SELECT week_key, page_url, device_type, impressions, clicks, ctr, average_position, week_from, week_to
-        FROM seo_webmaster_pages_weekly
+        SELECT
+          ${WEEK_KEY_SQL} AS week_key,
+          device_type,
+          SUM(impressions) AS impressions,
+          SUM(clicks) AS clicks,
+          CASE WHEN SUM(impressions) > 0 THEN SUM(clicks) / SUM(impressions) * 100 ELSE NULL END AS ctr,
+          ${weightedAveragePositionSql()} AS average_position,
+          MIN(${WEEK_FROM_SQL}) AS week_from,
+          MAX(report_date) AS week_to,
+          MAX(report_date) < MAX(${WEEK_END_SQL}) AS is_partial_week
+        FROM canonical_fact_webmaster_summary_daily
         WHERE analytics_account_id IN (${accountScope})
-          ${pageWeekClause}
-        ORDER BY week_key ASC, impressions DESC, clicks DESC, page_url ASC
+          ${summaryWeekClause}
+        GROUP BY week_key, device_type
+        ORDER BY week_key ASC, impressions DESC
       `,
-      params: pageParams,
-    },
-  };
-}
-
-export function buildLatestWebmasterAccountQueries(counterIds: string[]): Record<"queries" | "pages", SqlQuery> {
-  const normalizedCounterIds = normalizeAccountIds(counterIds);
-  const accountScope = buildInClause(normalizedCounterIds);
-  const queryParams = [...normalizedCounterIds, ...normalizedCounterIds];
-  const pageParams = [...normalizedCounterIds, ...normalizedCounterIds];
-
-  return {
-    queries: {
-      sql: `
-        SELECT week_key, query_id, query_text, device_type, impressions, clicks, ctr, average_position, week_from, week_to
-        FROM seo_webmaster_queries_weekly
-        WHERE analytics_account_id IN (${accountScope})
-          AND week_key = (
-            SELECT MAX(week_key)
-            FROM seo_webmaster_queries_weekly
-            WHERE analytics_account_id IN (${accountScope})
-          )
-        ORDER BY week_key ASC, impressions DESC, clicks DESC, query_text ASC
-      `,
-      params: queryParams,
+      params: summaryParams,
     },
     pages: {
       sql: `
-        SELECT week_key, page_url, device_type, impressions, clicks, ctr, average_position, week_from, week_to
-        FROM seo_webmaster_pages_weekly
-        WHERE analytics_account_id IN (${accountScope})
-          AND week_key = (
-            SELECT MAX(week_key)
-            FROM seo_webmaster_pages_weekly
-            WHERE analytics_account_id IN (${accountScope})
-          )
-        ORDER BY week_key ASC, impressions DESC, clicks DESC, page_url ASC
+        SELECT
+          ${WEEK_KEY_SQL} AS week_key,
+          '' AS page_url,
+          device_type,
+          0 AS impressions,
+          0 AS clicks,
+          NULL AS ctr,
+          NULL AS average_position,
+          MIN(${WEEK_FROM_SQL}) AS week_from,
+          MAX(report_date) AS week_to,
+          MAX(report_date) < MAX(${WEEK_END_SQL}) AS is_partial_week
+        FROM canonical_fact_webmaster_queries_daily
+        WHERE 1 = 0
+        GROUP BY week_key, device_type
       `,
-      params: pageParams,
+      params: [],
     },
   };
 }
@@ -186,22 +238,6 @@ function normalizeSettledRows<DbRow, ResultRow>(
   }
 }
 
-async function loadFallbackRows<DbRow, ResultRow>(
-  query: SqlQuery,
-  label: string,
-  normalize: (row: DbRow) => ResultRow,
-  executeQuery: WebmasterQueryExecutor,
-  errors: string[],
-) {
-  try {
-    const rows = await executeQuery(query);
-    return rows.map((row) => normalize(row as DbRow));
-  } catch (error) {
-    errors.push(`${label}: ${errorMessage(error)}`);
-    return [];
-  }
-}
-
 async function executeWebmasterQuery(query: SqlQuery) {
   const [rows] = await pool.execute<RowDataPacket[]>(query.sql, query.params);
   return rows;
@@ -213,7 +249,7 @@ export async function loadZarukuYandexWebmasterData(
   executeQuery: WebmasterQueryExecutor = executeWebmasterQuery,
 ): Promise<ZarukuYandexWebmasterData> {
   const queries = buildWebmasterAccountQueries(counterIds, weeks);
-  const results = await Promise.allSettled([executeQuery(queries.queries), executeQuery(queries.pages)]);
+  const results = await Promise.allSettled([executeQuery(queries.queries), executeQuery(queries.summary)]);
   const errors: string[] = [];
   const queryResult = normalizeSettledRows<WebmasterQueryDbRow, ZarukuYandexWebmasterQueryRow>(
     results[0],
@@ -221,35 +257,18 @@ export async function loadZarukuYandexWebmasterData(
     normalizeWebmasterQueryRow,
     errors,
   );
-  const pageResult = normalizeSettledRows<WebmasterPageDbRow, ZarukuYandexWebmasterPageRow>(
+  const summaryResult = normalizeSettledRows<WebmasterSummaryDbRow, ZarukuYandexWebmasterSummaryRow>(
     results[1],
-    "pages",
-    normalizeWebmasterPageRow,
+    "summary",
+    normalizeWebmasterSummaryRow,
     errors,
   );
-  const hasWeekFilter = (weeks ?? []).map((week) => week.trim()).filter(Boolean).length > 0;
-  const fallbackQueries = hasWeekFilter ? buildLatestWebmasterAccountQueries(counterIds) : null;
-  const queryRows = queryResult.available && queryResult.rows.length === 0 && fallbackQueries
-    ? await loadFallbackRows<WebmasterQueryDbRow, ZarukuYandexWebmasterQueryRow>(
-      fallbackQueries.queries,
-      "queries fallback",
-      normalizeWebmasterQueryRow,
-      executeQuery,
-      errors,
-    )
-    : queryResult.rows;
-  const pageRows = pageResult.available && pageResult.rows.length === 0 && fallbackQueries
-    ? await loadFallbackRows<WebmasterPageDbRow, ZarukuYandexWebmasterPageRow>(
-      fallbackQueries.pages,
-      "pages fallback",
-      normalizeWebmasterPageRow,
-      executeQuery,
-      errors,
-    )
-    : pageResult.rows;
-  const successfulQueries = [queryResult.available, pageResult.available].filter(Boolean).length;
+  const queryRows = queryResult.rows;
+  const summaryRows = summaryResult.rows;
+  const pageRows: ZarukuYandexWebmasterPageRow[] = [];
+  const successfulQueries = [queryResult.available, summaryResult.available].filter(Boolean).length;
   const status = successfulQueries === 2 && errors.length === 0 ? "available" : successfulQueries > 0 ? "partial" : "unavailable";
-  const availableWeeks = [...new Set([...queryRows, ...pageRows].map((row) => row.week))].sort();
+  const availableWeeks = [...new Set([...summaryRows, ...queryRows].map((row) => row.week))].sort();
 
   return {
     available: status === "available",
@@ -257,10 +276,11 @@ export async function loadZarukuYandexWebmasterData(
     error: errors.length > 0 ? errors.join("; ") : null,
     data_availability: {
       queries: queryResult.available,
-      pages: pageResult.available,
+      pages: false,
     },
     weeks: availableWeeks,
     latest_week: availableWeeks.at(-1) ?? null,
+    summary: summaryRows,
     queries: queryRows,
     pages: pageRows,
   };

@@ -23,6 +23,7 @@ function query(partial: Partial<ZarukuYandexWebmasterQueryRow>): ZarukuYandexWeb
     average_position: null,
     week_from: "2026-07-06",
     week_to: "2026-07-12",
+    is_partial_week: false,
     ...partial,
   };
 }
@@ -74,49 +75,58 @@ test("summarizeAiVisibility counts presence and citations", () => {
   );
 });
 
-test("selectRowsForWeek falls back when selected week has no rows", () => {
+test("selectRowsForWeek does not fallback when selected week has no rows", () => {
   assert.deepEqual(
     selectRowsForWeek([
       query({ week: "2026-W27", query_id: "old" }),
       query({ week: "2026-W28", query_id: "latest" }),
     ], "2026-W29", "2026-W28").map((row) => row.query_id),
-    ["latest"],
+    [],
   );
 });
 
-test("resolveRowsForWeek reports the actual fallback week", () => {
+test("resolveRowsForWeek keeps selected empty week without fallback", () => {
   const selection = resolveRowsForWeek([
     query({ week: "2026-W27", query_id: "old" }),
     query({ week: "2026-W28", query_id: "latest" }),
   ], "2026-W29", "2026-W28");
 
-  assert.equal(selection.week, "2026-W28");
-  assert.deepEqual(selection.rows.map((row) => row.query_id), ["latest"]);
+  assert.equal(selection.week, "2026-W29");
+  assert.deepEqual(selection.rows.map((row) => row.query_id), []);
 });
 
-test("resolveRowsForWeek uses the latest row week when the source fallback is empty", () => {
+test("resolveRowsForWeek uses the latest row week when no week is selected", () => {
   const selection = resolveRowsForWeek([
     query({ week: "2026-W27", query_id: "page-facts" }),
-  ], "2026-W29", "2026-W28");
+  ], null, "2026-W28");
 
   assert.equal(selection.week, "2026-W27");
   assert.deepEqual(selection.rows.map((row) => row.query_id), ["page-facts"]);
 });
 
-test("buildWebmasterSelectionMeta explains fallback and source period", () => {
+test("buildWebmasterSelectionMeta labels partial current week without fallback warning", () => {
   const selection = resolveRowsForWeek([
     query({
-      week: "2026-W28",
-      query_id: "latest",
-      week_from: "2026-07-06",
-      week_to: "2026-07-12",
+      week: "2026-W29",
+      query_id: "current",
+      week_from: "2026-07-13",
+      week_to: "2026-07-14",
+      is_partial_week: true,
     }),
-  ], "2026-W29", "2026-W28");
+  ], "2026-W29", "2026-W29");
 
   assert.deepEqual(buildWebmasterSelectionMeta(selection, "2026-W29"), {
-    periodLabel: "2026-W28 · 2026-07-06 — 2026-07-12",
-    sourceNote: "Источник: Яндекс Вебмастер / seo_webmaster_queries_weekly.",
-    fallbackNote: "Выбрана 2026-W29, но в Яндекс Вебмастере за неё нет строк; показана последняя доступная неделя 2026-W28.",
+    periodLabel: "2026-W29 · частично, по 14.07",
+    sourceNote: "Источник: Яндекс Вебмастер / canonical_fact_webmaster_*_daily.",
+    fallbackNote: null,
+  });
+});
+
+test("buildWebmasterSelectionMeta warns only when there is no Webmaster data at all", () => {
+  assert.deepEqual(buildWebmasterSelectionMeta({ week: "2026-W29", rows: [] }, "2026-W29"), {
+    periodLabel: "2026-W29",
+    sourceNote: "Источник: Яндекс Вебмастер / canonical_fact_webmaster_*_daily.",
+    fallbackNote: "За выбранную неделю данных Яндекс Вебмастера пока нет.",
   });
 });
 

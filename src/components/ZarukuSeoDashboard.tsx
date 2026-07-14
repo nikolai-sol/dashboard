@@ -36,6 +36,7 @@ import type {
   ZarukuSeoSourceId,
   ZarukuYandexWebmasterPageRow,
   ZarukuYandexWebmasterQueryRow,
+  ZarukuYandexWebmasterSummaryRow,
 } from "@/lib/types";
 import {
   canCompareWeeks,
@@ -412,7 +413,9 @@ function PendingPanel({ data }: { data: ZarukuSeoData }) {
   );
 }
 
-function WebmasterKpiStrip({ rows, locale }: { rows: ZarukuYandexWebmasterQueryRow[]; locale: string }) {
+type WebmasterKpiRow = ZarukuYandexWebmasterQueryRow | ZarukuYandexWebmasterSummaryRow;
+
+function WebmasterKpiStrip({ rows, locale }: { rows: WebmasterKpiRow[]; locale: string }) {
   const summary = summarizeWebmasterKpis(rows);
   const cells = [
     ["Показы", formatNumber(summary.impressions, locale)],
@@ -754,11 +757,16 @@ function SeoTab({ data, locale, primaryWeek, comparisonWeek }: Props & { primary
   const phraseCoverage = data.data_quality.find((item) => item.title === "Покрытие поисковых фраз");
   const currentLocale = locale ?? "ru-RU";
   const webmasterWeek = primaryWeek ?? data.webmaster.latest_week;
+  const webmasterSummarySelection = resolveRowsForWeek(data.webmaster.summary, webmasterWeek, data.webmaster.latest_week);
   const webmasterQuerySelection = resolveRowsForWeek(data.webmaster.queries, webmasterWeek, data.webmaster.latest_week);
   const webmasterPageSelection = resolveRowsForWeek(data.webmaster.pages, webmasterWeek, data.webmaster.latest_week);
+  const webmasterSummaryRows = webmasterSummarySelection.rows;
   const webmasterQueries = webmasterQuerySelection.rows;
   const webmasterPages = webmasterPageSelection.rows;
-  const webmasterQueryMeta = buildWebmasterSelectionMeta(webmasterQuerySelection, webmasterWeek);
+  const webmasterFactsSelection: { week: string | null; rows: WebmasterKpiRow[] } = webmasterSummaryRows.length > 0
+    ? webmasterSummarySelection
+    : webmasterQuerySelection;
+  const webmasterQueryMeta = buildWebmasterSelectionMeta(webmasterFactsSelection, webmasterWeek);
   const webmasterPageMeta = buildWebmasterSelectionMeta(webmasterPageSelection, webmasterWeek);
   const webmasterFactsChrome = buildWebmasterFactsPanelChrome();
   const aiWeek = primaryWeek ?? data.ai_visibility.latest_week;
@@ -789,7 +797,7 @@ function SeoTab({ data, locale, primaryWeek, comparisonWeek }: Props & { primary
           pending={data.webmaster.status === "unavailable"}
           right={<span className="text-xs text-slate-400">{webmasterQueryMeta.periodLabel}</span>}
         >
-          <WebmasterKpiStrip rows={webmasterQueries} locale={currentLocale} />
+          <WebmasterKpiStrip rows={webmasterSummaryRows.length > 0 ? webmasterSummaryRows : webmasterQueries} locale={currentLocale} />
           <div className="mt-3 text-xs leading-relaxed text-slate-500">
             {webmasterQueryMeta.sourceNote} Период: {webmasterQueryMeta.periodLabel}.
           </div>
