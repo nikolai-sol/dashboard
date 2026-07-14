@@ -28,6 +28,8 @@ const NORTH_STAR_LABELS: Record<NorthStarKpi["key"], string> = {
   approveRate: "Принято",
 };
 
+const OVERVIEW_NORTH_STAR_KEYS: Array<NorthStarKpi["key"]> = ["noise", "medicalIntent", "aiVisibility"];
+
 const NORTH_STAR_TOOLTIP_COPY: Record<NorthStarKpi["key"], { title: string; description: string; importance: string }> = {
   noise: {
     title: "Что такое шум",
@@ -89,7 +91,7 @@ function tooltipForKpi(kpi: NorthStarKpi) {
 }
 
 export function buildNorthStarStripItems(kpis: NorthStarKpis): NorthStarStripItem[] {
-  return Object.values(kpis).map((kpi) => ({
+  return OVERVIEW_NORTH_STAR_KEYS.map((key) => kpis[key]).map((kpi) => ({
     key: kpi.key,
     label: NORTH_STAR_LABELS[kpi.key],
     value: kpi.value,

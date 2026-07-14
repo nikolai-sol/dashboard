@@ -75,8 +75,8 @@ test("north-star strip hides zero deltas and keeps details in tooltips", () => {
     ["noise", "Шум", "↓", false],
     ["medicalIntent", "Мед. интент", "↑", false],
     ["aiVisibility", "Алиса AI", "↑", false],
-    ["approveRate", "Принято", "↑", false],
   ]);
+  assert.equal(items.some((item) => item.key === "approveRate"), false);
   assert.match(items[1].tooltip, /контроль кликов 72,8%/);
   assert.match(items[2].tooltip, /wm_alisa_manual/);
   assert.match(items[2].tooltip, /SoV/);
@@ -87,7 +87,6 @@ test("north-star tooltip copy explains what each KPI means and why it matters", 
   const noise = items.find((item) => item.key === "noise");
   const medicalIntent = items.find((item) => item.key === "medicalIntent");
   const aiVisibility = items.find((item) => item.key === "aiVisibility");
-  const approveRate = items.find((item) => item.key === "approveRate");
 
   assert.equal(noise?.tooltipTitle, "Что такое шум");
   assert.match(noise?.tooltipDescription ?? "", /чужим брендам лабораторий/i);
@@ -98,9 +97,6 @@ test("north-star tooltip copy explains what each KPI means and why it matters", 
 
   assert.equal(aiVisibility?.tooltipTitle, "Что такое Алиса AI");
   assert.match(aiVisibility?.tooltipImportance ?? "", /ИИ-ответах/i);
-
-  assert.equal(approveRate?.tooltipTitle, "Что такое доля принятия");
-  assert.match(approveRate?.tooltipImportance ?? "", /скорость превращения инсайтов/i);
 });
 
 test("traffic health promotes five Metrika facts and keeps the rest secondary", () => {

@@ -497,7 +497,7 @@ function NorthStarBlock({ data, locale }: Props) {
             <Info className="h-3.5 w-3.5" aria-label="Описание north-star" />
           </span>
         </div>
-        <div className="grid flex-1 grid-cols-2 gap-x-6 gap-y-3 md:grid-cols-4">
+        <div className="grid flex-1 grid-cols-2 gap-x-6 gap-y-3 md:grid-cols-3">
           {items.map((item) => (
             <div key={item.key} className="min-w-0">
               <div className="flex items-center gap-1.5 text-xs text-slate-500">
