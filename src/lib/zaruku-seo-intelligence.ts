@@ -226,3 +226,10 @@ export async function loadZarukuSeoIntelligenceData(
     },
   };
 }
+
+export async function loadSeoIntelligenceData(
+  accountId: string,
+  queryExecutor: SeoIntelligenceQueryExecutor = executeQuery,
+): Promise<ZarukuSeoIntelligenceData> {
+  return loadZarukuSeoIntelligenceData([accountId], queryExecutor);
+}

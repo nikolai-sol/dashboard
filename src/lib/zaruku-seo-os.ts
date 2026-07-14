@@ -595,3 +595,10 @@ export async function loadZarukuSeoOsData(
     traffic_visibility: trafficVisibility,
   };
 }
+
+export async function loadSeoProcessData(
+  accountId: string,
+  executeQuery: SeoOsQueryExecutor = executeSeoOsQuery,
+): Promise<ZarukuSeoOsData> {
+  return loadZarukuSeoOsData([accountId], executeQuery);
+}

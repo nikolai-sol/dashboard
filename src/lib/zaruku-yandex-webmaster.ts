@@ -285,3 +285,11 @@ export async function loadZarukuYandexWebmasterData(
     pages: pageRows,
   };
 }
+
+export async function loadYandexWebmasterFacts(
+  accountId: string,
+  weeks?: string[],
+  executeQuery: WebmasterQueryExecutor = executeWebmasterQuery,
+): Promise<ZarukuYandexWebmasterData> {
+  return loadZarukuYandexWebmasterData([accountId], weeks, executeQuery);
+}

@@ -294,6 +294,8 @@ function pageHash(url) {
 async function replaceWeekRowsTransaction(conn, snapshot) {
   try {
     await conn.beginTransaction();
+    // DEPRECATED: legacy weekly Webmaster snapshot tables are kept only until TASK-062 removes the writer.
+    // Dashboard panels must read canonical_fact_webmaster_*_daily aggregated by ISO week instead.
     await conn.execute(
       "DELETE FROM seo_webmaster_queries_weekly WHERE analytics_account_id = ? AND week_key = ? AND device_type = ?",
       [snapshot.accountId, snapshot.weekKey, snapshot.device],

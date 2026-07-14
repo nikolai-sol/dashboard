@@ -1,10 +1,9 @@
 import type { RowDataPacket } from "mysql2";
 import pool from "@/lib/db";
-import { loadZarukuAiVisibilityData } from "@/lib/zaruku-ai-visibility";
-import { loadZarukuSeoIntelligenceData } from "@/lib/zaruku-seo-intelligence";
-import { loadZarukuSeoOsData, matchSectionPattern } from "@/lib/zaruku-seo-os";
-import { loadZarukuYandexWebmasterData } from "@/lib/zaruku-yandex-webmaster";
+import { loadAccountFacts, loadSeoIntelligence, loadSeoProcess } from "@/lib/account-read-models";
+import { matchSectionPattern } from "@/lib/zaruku-seo-os";
 import type {
+  ZarukuAiVisibilityData,
   ZarukuSeoData,
   ZarukuSeoDataQualityItem,
   ZarukuSeoKpi,
@@ -74,6 +73,15 @@ const PENDING_REQUIREMENTS: ZarukuSeoPendingRequirement[] = [
     expected_fields: ["query", "url", "region", "device", "impressions", "clicks", "ctr", "position"],
   },
 ];
+
+const DEPRECATED_EMPTY_WEEKLY_AI_VISIBILITY: ZarukuAiVisibilityData = {
+  available: false,
+  status: "unavailable",
+  error: null,
+  weeks: [],
+  latest_week: null,
+  rows: [],
+};
 
 type CanonicalSiteRow = RowDataPacket & {
   label: string | null;
@@ -854,12 +862,13 @@ function buildDataQuality({
 
 export async function loadZarukuSeoData(counterIds: string[], from: string, to: string): Promise<ZarukuSeoData> {
   const normalizedCounterIds = normalizeCounterIds(counterIds);
+  const accountId = normalizedCounterIds[0];
   const [trafficRowsRaw, pageRows, organicTrend, returningPages, seoOs] = await Promise.all([
     queryTrafficRows(normalizedCounterIds, from, to),
     queryCanonicalPageRows(normalizedCounterIds, from, to),
     queryOrganicTrend(normalizedCounterIds, from, to),
     queryReturningPages(normalizedCounterIds, from, to),
-    loadZarukuSeoOsData(normalizedCounterIds),
+    loadSeoProcess(accountId),
   ]);
   const { trafficChannels, technicalTail } = splitTrafficRows(trafficRowsRaw);
 
@@ -921,11 +930,11 @@ export async function loadZarukuSeoData(counterIds: string[], from: string, to: 
     80,
     entryPageRows,
   );
-  const [webmaster, aiVisibility, seoIntelligence] = await Promise.all([
-    loadZarukuYandexWebmasterData(normalizedCounterIds, seoOs.weeks),
-    loadZarukuAiVisibilityData(normalizedCounterIds, seoOs.weeks),
-    loadZarukuSeoIntelligenceData(normalizedCounterIds),
+  const [facts, seoIntelligence] = await Promise.all([
+    loadAccountFacts(accountId, { from, to }, { weeks: seoOs.weeks }),
+    loadSeoIntelligence(accountId),
   ]);
+  const webmaster = facts.webmaster;
 
   return {
     counters: normalizedCounterIds,
@@ -967,7 +976,7 @@ export async function loadZarukuSeoData(counterIds: string[], from: string, to: 
     returning_pages: returningPages,
     seo_os: seoOs,
     webmaster,
-    ai_visibility: aiVisibility,
+    ai_visibility: DEPRECATED_EMPTY_WEEKLY_AI_VISIBILITY,
     seo_intelligence: seoIntelligence,
     data_quality: buildDataQuality({
       technicalTail,
