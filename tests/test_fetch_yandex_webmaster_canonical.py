@@ -72,6 +72,28 @@ class YandexWebmasterCanonicalTests(unittest.TestCase):
         self.assertEqual(row["ctr"], 5.0)
         self.assertEqual(row["average_position"], 4.2)
 
+    def test_normalize_summary_from_query_rows_calculates_weighted_position(self):
+        from fetch_yandex_webmaster_canonical import normalize_summary_from_query_rows
+
+        row = normalize_summary_from_query_rows(
+            [
+                {"impressions": 100, "clicks": 10, "position": 2},
+                {"impressions": 300, "clicks": 15, "position": 6},
+            ],
+            source_key="yandex_webmaster",
+            analytics_account_id="66624469",
+            host_id="https:zaruku.ru:443",
+            report_date="2026-07-13",
+            device_type="ALL",
+            run_id=42,
+        )
+
+        self.assertEqual(row["impressions"], 400)
+        self.assertEqual(row["clicks"], 25)
+        self.assertEqual(row["ctr"], 6.25)
+        self.assertEqual(row["average_position"], 5)
+        self.assertIn("search-queries/popular", row["raw_payload"])
+
     def test_upsert_queries_is_idempotent_by_host_date_query_hash(self):
         from fetch_yandex_webmaster_canonical import WEBMASTER_QUERY_UPSERT_SQL
 

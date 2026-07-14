@@ -316,6 +316,42 @@ def normalize_summary_row(
     }
 
 
+def normalize_summary_from_query_rows(
+    query_rows: list[dict],
+    *,
+    source_key: str,
+    analytics_account_id: str,
+    host_id: str,
+    report_date: str,
+    device_type: str,
+    run_id: int,
+) -> dict:
+    impressions = sum(safe_int(row.get("impressions")) for row in query_rows)
+    clicks = sum(safe_int(row.get("clicks")) for row in query_rows)
+    weighted_position = 0.0
+    position_weight = 0
+    for row in query_rows:
+        position = safe_float(row.get("position"))
+        row_impressions = safe_int(row.get("impressions"))
+        if position is None or row_impressions <= 0:
+            continue
+        weighted_position += position * row_impressions
+        position_weight += row_impressions
+    return {
+        "source_key": source_key,
+        "analytics_account_id": analytics_account_id,
+        "host_id": host_id,
+        "report_date": report_date,
+        "device_type": device_type,
+        "impressions": impressions,
+        "clicks": clicks,
+        "ctr": calculate_ctr(impressions, clicks),
+        "average_position": round(weighted_position / position_weight, 6) if position_weight > 0 else None,
+        "raw_payload": json.dumps({"derived_from": "search-queries/popular", "query_rows": len(query_rows)}, ensure_ascii=False),
+        "ingestion_run_id": run_id,
+    }
+
+
 def parse_accounts_from_env() -> list[WebmasterAccount]:
     raw = env_first("YANDEX_WEBMASTER_ACCOUNTS", default="")
     accounts: list[WebmasterAccount] = []
@@ -526,26 +562,6 @@ def fetch_query_rows(access_token: str, user_id: str, host_id: str, day: str, de
     return all_rows
 
 
-def fetch_summary_payload(access_token: str, user_id: str, host_id: str, day: str, device: str, run_id: int) -> dict:
-    body = {
-        "offset": 0,
-        "limit": 1,
-        "device_type_indicator": device,
-        "search_location": "ALL_LOCATIONS_ORGANIC",
-        "text_indicator": "TOTAL",
-        "date_from": day,
-        "date_to": day,
-        "sort_by_date": {"date": day, "statistic_field": "IMPRESSIONS", "by": "DESC"},
-    }
-    return request_with_retry(
-        access_token,
-        f"/user/{user_id}/hosts/{quote(host_id, safe='')}/query-analytics/list",
-        run_id=run_id,
-        method="POST",
-        body=body,
-    )
-
-
 def upsert_webmaster_query_rows(rows: list[dict]) -> int:
     if not rows:
         return 0
@@ -680,9 +696,8 @@ def collect(args) -> dict[str, Any]:
                     device_type=DEFAULT_DEVICE,
                     run_id=run_id,
                 )
-                summary_payload = fetch_summary_payload(access_token, user_id, host_id, day, DEFAULT_DEVICE, run_id)
-                summary_row = normalize_summary_row(
-                    summary_payload,
+                summary_row = normalize_summary_from_query_rows(
+                    query_rows,
                     source_key=SOURCE_KEY,
                     analytics_account_id=account.analytics_account_id,
                     host_id=host_id,
@@ -690,7 +705,7 @@ def collect(args) -> dict[str, Any]:
                     device_type=DEFAULT_DEVICE,
                     run_id=run_id,
                 )
-                rows_read += len(raw_queries) + 1
+                rows_read += len(raw_queries)
                 rows_written += upsert_webmaster_query_rows(query_rows)
                 rows_written += upsert_webmaster_summary_rows([summary_row])
                 log_collector_event(
