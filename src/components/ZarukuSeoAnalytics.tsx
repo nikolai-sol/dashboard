@@ -183,7 +183,7 @@ export default function ZarukuSeoAnalytics({ seoOs, primaryWeek, comparisonWeek,
           </div>
         </div>
 
-        <div className="mt-3 max-h-[34rem] overflow-auto rounded-md border border-slate-100">
+        <div className="mt-3 max-h-[29rem] overflow-auto rounded-md border border-slate-100">
           <table className="w-full min-w-[960px] table-fixed text-sm">
             <colgroup>
               <col className="w-[15%]" />

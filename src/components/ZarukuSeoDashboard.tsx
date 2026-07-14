@@ -453,30 +453,39 @@ function WebmasterKpiStrip({ rows, locale }: { rows: WebmasterKpiRow[]; locale: 
 
 function WebmasterQueryTable({ rows, locale }: { rows: ZarukuYandexWebmasterQueryRow[]; locale: string }) {
   return (
-    <div className="overflow-x-auto">
-      <table className="w-full min-w-[760px] text-sm">
-        <thead>
-          <tr className="text-left text-xs uppercase text-slate-400">
-            <th className="pb-2 font-medium">Запрос</th>
-            <th className="pb-2 text-right font-medium">Показы</th>
-            <th className="pb-2 text-right font-medium">Клики</th>
-            <th className="pb-2 text-right font-medium">CTR</th>
-            <th className="pb-2 text-right font-medium">Позиция</th>
+    <div className="max-h-[30rem] overflow-auto rounded-md border border-slate-100">
+      <table className="w-full min-w-[860px] table-fixed text-sm">
+        <colgroup>
+          <col className="w-[56%]" />
+          <col className="w-[12%]" />
+          <col className="w-[10%]" />
+          <col className="w-[10%]" />
+          <col className="w-[12%]" />
+        </colgroup>
+        <thead className="sticky top-0 z-10 bg-slate-50 text-left text-xs text-slate-400 shadow-[0_1px_0_0_rgb(241_245_249)]">
+          <tr>
+            <th className="px-3 py-2.5 font-medium">Запрос</th>
+            <th className="px-3 py-2.5 text-right font-medium">Показы</th>
+            <th className="px-3 py-2.5 text-right font-medium">Клики</th>
+            <th className="px-3 py-2.5 text-right font-medium">CTR</th>
+            <th className="px-3 py-2.5 text-right font-medium">Позиция</th>
           </tr>
         </thead>
         <tbody className="divide-y divide-slate-100">
           {rows.map((row) => (
-            <tr key={`${row.week}-${row.query_id}`}>
-              <td className="py-2.5 pr-3 font-medium text-slate-700" title={row.query}>{truncate(row.query, 80)}</td>
-              <td className="py-2.5 text-right text-slate-600">{formatNumber(row.impressions, locale)}</td>
-              <td className="py-2.5 text-right text-slate-600">{formatNumber(row.clicks, locale)}</td>
-              <td className="py-2.5 text-right text-slate-500">{formatPercent(row.ctr, locale, 2)}</td>
-              <td className="py-2.5 text-right text-slate-500">{formatDecimal(row.average_position, locale, 1)}</td>
+            <tr key={`${row.week}-${row.query_id}`} className="align-top hover:bg-slate-50/70">
+              <td className="px-3 py-2.5 font-medium leading-snug text-slate-700" title={row.query}>
+                <div className="line-clamp-2">{row.query}</div>
+              </td>
+              <td className="whitespace-nowrap px-3 py-2.5 text-right text-slate-600">{formatNumber(row.impressions, locale)}</td>
+              <td className="whitespace-nowrap px-3 py-2.5 text-right text-slate-600">{formatNumber(row.clicks, locale)}</td>
+              <td className="whitespace-nowrap px-3 py-2.5 text-right text-slate-500">{formatPercent(row.ctr, locale, 2)}</td>
+              <td className="whitespace-nowrap px-3 py-2.5 text-right text-slate-500">{formatDecimal(row.average_position, locale, 1)}</td>
             </tr>
           ))}
           {rows.length === 0 ? (
             <tr>
-              <td colSpan={5} className="py-8 text-center text-sm text-slate-500">Нет Webmaster-запросов для выбранной недели.</td>
+              <td colSpan={5} className="px-3 py-8 text-center text-sm text-slate-500">Нет Webmaster-запросов для выбранной недели.</td>
             </tr>
           ) : null}
         </tbody>
@@ -804,19 +813,32 @@ function SeoTab({ data, locale, primaryWeek, comparisonWeek }: Props & { primary
         comparisonWeek={comparisonWeek}
         source={data.sources.find((source) => source.id === "seo_os")}
       />
-      <Panel data={data} title="Топ органических посадочных страниц" source="metrika" layer="onsite" right={<span className="text-xs text-slate-400">SERP-колонки ожидаются</span>}>
-        <DataTable rows={data.organic_landing_pages.slice(0, 12)} mode="cross" locale={currentLocale} />
+      <Panel data={data} title="Топ органических посадочных страниц" source="metrika" layer="onsite" right={<span className="text-xs text-slate-400">Метрика · топ 10</span>}>
+        <div className="max-h-[29rem] overflow-auto rounded-md border border-slate-100">
+          <DataTable rows={data.organic_landing_pages.slice(0, 10)} mode="cross" locale={currentLocale} />
+        </div>
       </Panel>
-      <div className="grid gap-5 lg:grid-cols-2">
-        <Panel data={data} title="Запросы Яндекса" source="webmaster" layer="serp" right={<span className="text-xs text-slate-400">{webmasterQueryMeta.periodLabel} · {webmasterQueries.length} строк</span>}>
-          <WebmasterQueryTable rows={topWebmasterQueries(webmasterQueries, 12)} locale={currentLocale} />
-        </Panel>
+      <Panel data={data} title="Запросы Яндекса" source="webmaster" layer="serp" right={<span className="text-xs text-slate-400">{webmasterQueryMeta.periodLabel} · {webmasterQueries.length} строк</span>}>
+        <WebmasterQueryTable rows={topWebmasterQueries(webmasterQueries, 12)} locale={currentLocale} />
+        <p className="mt-3 text-xs leading-relaxed text-slate-500">
+          Это запросы из Яндекс Вебмастера: показы, клики, CTR и средняя позиция до клика. Таблица отсортирована по показам.
+        </p>
+        {webmasterPages.length === 0 ? (
+          <div className="mt-3 rounded-md border border-dashed border-slate-200 bg-slate-50 px-3 py-2 text-xs leading-relaxed text-slate-500">
+            Посадочные страницы Яндекса пока не показываем: canonical Webmaster collector сейчас собирает запросы и сводку хоста, но не URL-факты.
+          </div>
+        ) : null}
+      </Panel>
+      {webmasterPages.length > 0 ? (
         <Panel data={data} title="Посадочные страницы Яндекса" source="webmaster" layer="serp" right={<span className="text-xs text-slate-400">{webmasterPageMeta.periodLabel} · URL-факты</span>}>
           <WebmasterPageTable rows={topWebmasterPages(webmasterPages, 10)} locale={currentLocale} />
         </Panel>
-      </div>
-      <div className="grid gap-5 lg:grid-cols-2">
-        <Panel data={data} title="Поисковые фразы" source="metrika" layer="onsite" right={<span className="text-xs text-slate-400">{phraseCoverage?.value ?? "покрытие —"}</span>}>
+      ) : null}
+      <Panel data={data} title="Поисковые фразы из Метрики" source="metrika" layer="onsite" right={<span className="text-xs text-slate-400">{phraseCoverage?.value ?? "покрытие —"}</span>}>
+        <p className="mb-3 text-xs leading-relaxed text-slate-500">
+          Фразы, которые Метрика смогла определить после клика. Это не полный список SEO-запросов: часть запросов скрывается поисковиками, а показы и позиции живут в Яндекс Вебмастере.
+        </p>
+        <div className="max-h-[29rem] overflow-auto">
           <div className="space-y-2">
             {data.search_phrases.slice(0, 12).map((row) => (
               <div key={row.label} className="flex items-center justify-between gap-3 rounded-md bg-slate-50 px-3 py-2">
@@ -825,10 +847,8 @@ function SeoTab({ data, locale, primaryWeek, comparisonWeek }: Props & { primary
               </div>
             ))}
           </div>
-          <p className="mt-3 text-xs text-slate-500">Google часто скрывает запросы, поэтому это не полная SEO-семантика.</p>
-        </Panel>
-        <AiAggregateVisibilityPanel data={data} locale={locale} />
-      </div>
+        </div>
+      </Panel>
     </div>
   );
 }
