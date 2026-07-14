@@ -13,4 +13,14 @@ else
   exit 1
 fi
 
-python3 "$COLLECTOR" "$@"
+if [ -n "${YANDEX_WEBMASTER_PYTHON_BIN:-}" ]; then
+  PYTHON_BIN="$YANDEX_WEBMASTER_PYTHON_BIN"
+elif [ -f "$APP_DIR/.gads-venv/bin/python" ]; then
+  PYTHON_BIN="$APP_DIR/.gads-venv/bin/python"
+elif [ -n "${GOOGLE_ADS_PYTHON_BIN:-}" ]; then
+  PYTHON_BIN="$GOOGLE_ADS_PYTHON_BIN"
+else
+  PYTHON_BIN="python3"
+fi
+
+"$PYTHON_BIN" "$COLLECTOR" "$@"
