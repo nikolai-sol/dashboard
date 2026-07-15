@@ -58,6 +58,8 @@ TRAFFIC_SOURCES_SCOPE_LOGICAL = 'traffic_sources'
 TRAFFIC_SOURCES_SCOPE_STORAGE = 'other'
 PAGES_SCOPE_LOGICAL = 'pages'
 PAGES_SCOPE_STORAGE = 'page'
+ENTRY_PAGES_SCOPE_LOGICAL = 'entry_pages'
+ENTRY_PAGES_SCOPE_STORAGE = 'entry_page'
 DEFAULT_COLLECTION_MODE = 'ads_only'
 SUPPORTED_COLLECTION_MODES = {
     'ads_only',
@@ -114,6 +116,15 @@ METRIKA_PAGES_DIMS = 'ym:pv:URL,ym:pv:title'
 METRIKA_PAGES_METRICS = ','.join([
     'ym:pv:pageviews',
     'ym:pv:users',
+])
+METRIKA_ENTRY_PAGES_DIMS = 'ym:s:startURL'
+METRIKA_ENTRY_PAGES_METRICS = ','.join([
+    'ym:s:visits',
+    'ym:s:users',
+    'ym:s:pageviews',
+    'ym:s:bounceRate',
+    'ym:s:avgVisitDurationSeconds',
+    'ym:s:pageDepth',
 ])
 METRIKA_USER_BEHAVIOR_DIMS = ','.join([
     'ym:s:paramsLevel2',
@@ -548,6 +559,44 @@ def build_page_rows(counter_id: str, day: str, response: dict, run_id: int) -> l
     return rows
 
 
+def build_entry_page_rows(counter_id: str, day: str, response: dict, run_id: int) -> list[dict]:
+    rows: list[dict] = []
+    for item in extract_rows(response):
+        dimensions = item.get('dimensions') or []
+        metrics = item.get('metrics') or []
+        url_dim = dimensions[0] if len(dimensions) > 0 and isinstance(dimensions[0], dict) else {}
+        page_url = clean_dimension_name(url_dim.get('name'))
+        if not page_url:
+            continue
+        scope_hash = build_scope_hash(
+            ENTRY_PAGES_SCOPE_LOGICAL,
+            [
+                counter_id,
+                day,
+                page_url,
+            ],
+        )
+        rows.append(
+            {
+                'source_key': SOURCE_KEY,
+                'analytics_account_id': counter_id,
+                'report_date': day,
+                'analytics_scope': ENTRY_PAGES_SCOPE_STORAGE,
+                'scope_hash': scope_hash,
+                'page_url': page_url,
+                'page_title': None,
+                'visits': safe_int(metric_value(metrics, 0)),
+                'users': safe_int(metric_value(metrics, 1)),
+                'pageviews': safe_int(metric_value(metrics, 2)),
+                'bounce_rate': safe_float(metric_value(metrics, 3)),
+                'avg_visit_duration_seconds': safe_float(metric_value(metrics, 4)),
+                'page_depth': safe_float(metric_value(metrics, 5)),
+                'ingestion_run_id': run_id,
+            }
+        )
+    return rows
+
+
 def should_collect_user_behavior(counter: dict) -> bool:
     collection_mode = clean_text(counter.get('collection_mode')) or DEFAULT_COLLECTION_MODE
     return collection_mode == 'ads_plus_seo_plus_user_behavior' or safe_int(counter.get('legacy_params_enabled')) == 1
@@ -620,7 +669,7 @@ def delete_existing_scope_rows(date_from: str, date_to: str, counter_ids: list[s
             DELETE FROM canonical_fact_site_analytics_daily
             WHERE source_key = %s
               AND report_date BETWEEN %s AND %s
-              AND analytics_scope IN (%s, %s, %s, %s)
+              AND analytics_scope IN (%s, %s, %s, %s, %s)
               {counter_clause}
             """,
             (
@@ -631,6 +680,7 @@ def delete_existing_scope_rows(date_from: str, date_to: str, counter_ids: list[s
                 GOALS_SCOPE_STORAGE,
                 TRAFFIC_SOURCES_SCOPE_STORAGE,
                 PAGES_SCOPE_STORAGE,
+                ENTRY_PAGES_SCOPE_STORAGE,
                 *counter_params,
             ),
         )
@@ -715,6 +765,7 @@ def build_payload(counters: list[dict], date_from: str, date_to: str, run_id: in
     goals_rows: list[dict] = []
     traffic_sources_rows: list[dict] = []
     page_rows: list[dict] = []
+    entry_page_rows: list[dict] = []
     user_behavior_rows: list[dict] = []
     rows_read = 0
     api_empty_rows = 0
@@ -783,6 +834,13 @@ def build_payload(counters: list[dict], date_from: str, date_to: str, run_id: in
                     attribution=METRIKA_ATTRIBUTION,
                     extra_params={'accuracy': 'full'},
                 )
+                entry_pages_response = request_with_retry(
+                    counter_id,
+                    day,
+                    dimensions=METRIKA_ENTRY_PAGES_DIMS,
+                    metrics=METRIKA_ENTRY_PAGES_METRICS,
+                    attribution=METRIKA_ATTRIBUTION,
+                )
                 user_behavior_response = None
                 if collect_user_behavior:
                     user_behavior_response = request_with_retry(
@@ -808,22 +866,24 @@ def build_payload(counters: list[dict], date_from: str, date_to: str, run_id: in
                     log.warning('Skip inaccessible Metrika counter %s (%s): http_%s on %s', counter_id, counter_name, status_code, day)
                     break
                 raise
-            rows_read += 5 if collect_user_behavior else 4
+            rows_read += 6 if collect_user_behavior else 5
             utm_rows_for_day = build_utm_ads_rows(counter_id, day, utm_ads_response, run_id)
             goals_rows_for_day = build_goals_rows(counter_id, day, goals_response, run_id)
             traffic_sources_rows_for_day = build_traffic_sources_rows(counter_id, day, traffic_sources_response, run_id)
             page_rows_for_day = build_page_rows(counter_id, day, pages_response, run_id)
+            entry_page_rows_for_day = build_entry_page_rows(counter_id, day, entry_pages_response, run_id)
             user_behavior_rows_for_day = (
                 build_user_behavior_rows(counter_id, day, user_behavior_response, run_id)
                 if user_behavior_response is not None
                 else []
             )
-            if not utm_rows_for_day and not goals_rows_for_day and not traffic_sources_rows_for_day and not page_rows_for_day and not user_behavior_rows_for_day:
+            if not utm_rows_for_day and not goals_rows_for_day and not traffic_sources_rows_for_day and not page_rows_for_day and not entry_page_rows_for_day and not user_behavior_rows_for_day:
                 api_empty_rows += 1
             utm_ads_rows.extend(utm_rows_for_day)
             goals_rows.extend(goals_rows_for_day)
             traffic_sources_rows.extend(traffic_sources_rows_for_day)
             page_rows.extend(page_rows_for_day)
+            entry_page_rows.extend(entry_page_rows_for_day)
             user_behavior_rows.extend(user_behavior_rows_for_day)
         if skip_counter:
             account_rows.pop(counter_id, None)
@@ -834,8 +894,9 @@ def build_payload(counters: list[dict], date_from: str, date_to: str, run_id: in
         'goals_rows': goals_rows,
         'traffic_sources_rows': traffic_sources_rows,
         'page_rows': page_rows,
+        'entry_page_rows': entry_page_rows,
         'user_behavior_rows': user_behavior_rows,
-        'facts': utm_ads_rows + goals_rows + traffic_sources_rows + page_rows,
+        'facts': utm_ads_rows + goals_rows + traffic_sources_rows + page_rows + entry_page_rows,
         'rows_read': rows_read,
         'api_empty_rows': api_empty_rows,
         'counters': len(account_rows),
@@ -894,18 +955,20 @@ def main() -> int:
                 'skipped_counters': payload['skipped_counters'],
                 'target_counter_ids': target_counter_ids,
                 'collected_counter_ids': collected_counter_ids,
-                'logical_scopes': [UTM_ADS_SCOPE_LOGICAL, GOALS_SCOPE_LOGICAL, TRAFFIC_SOURCES_SCOPE_LOGICAL, PAGES_SCOPE_LOGICAL],
-                'storage_scopes': [UTM_ADS_SCOPE_STORAGE, GOALS_SCOPE_STORAGE, TRAFFIC_SOURCES_SCOPE_STORAGE, PAGES_SCOPE_STORAGE],
+                'logical_scopes': [UTM_ADS_SCOPE_LOGICAL, GOALS_SCOPE_LOGICAL, TRAFFIC_SOURCES_SCOPE_LOGICAL, PAGES_SCOPE_LOGICAL, ENTRY_PAGES_SCOPE_LOGICAL],
+                'storage_scopes': [UTM_ADS_SCOPE_STORAGE, GOALS_SCOPE_STORAGE, TRAFFIC_SOURCES_SCOPE_STORAGE, PAGES_SCOPE_STORAGE, ENTRY_PAGES_SCOPE_STORAGE],
                 'utm_ads_grain': 'date+counter_id+utm_source+utm_medium+utm_campaign',
                 'goals_grain': 'date+counter_id+utm_source+utm_medium+utm_campaign+goal_id',
                 'traffic_sources_grain': 'date+counter_id+traffic_source',
                 'pages_grain': 'date+counter_id+page_url+page_title',
+                'entry_pages_grain': 'date+counter_id+page_url',
                 'user_behavior_grain': 'date+counter_id+user_id+traffic_source+start_url+end_url',
                 'user_behavior_storage': 'canonical_fact_user_behavior_daily',
                 'utm_ads_rows': len(payload['utm_ads_rows']),
                 'goals_rows': len(payload['goals_rows']),
                 'traffic_sources_rows': len(payload['traffic_sources_rows']),
                 'page_rows': len(payload['page_rows']),
+                'entry_page_rows': len(payload['entry_page_rows']),
                 'user_behavior_rows': len(payload['user_behavior_rows']),
                 'site_rows_written': site_rows_written,
                 'user_behavior_rows_written': user_behavior_rows_written,
