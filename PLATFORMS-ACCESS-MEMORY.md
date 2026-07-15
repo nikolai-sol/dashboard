@@ -31,6 +31,7 @@ Main production DBs:
 ## Current canonical cron
 
 Daily jobs on VPS:
+- `06:12` Yandex Metrika
 - `06:20` LinkedIn
 - `06:30` Reddit
 - `06:32` GetIntent
@@ -38,7 +39,10 @@ Daily jobs on VPS:
 - `06:35` VK Ads v2
 - `06:37` Hybrid
 - `06:40` canonical monitor
+- `06:50` Yandex Webmaster
 - `06:50` Telegram summary
+
+These times record the audited operations schedule. They do not by themselves assert that the collector changes in the current branch have been deployed, run, or backfilled.
 
 Important runtime rule:
 - cron does not collect the current day
@@ -123,17 +127,42 @@ Important current state:
 - collector: `/Users/nicko/ReportingDash/fetch_yandex_metrika_canonical.py`
 - implemented
 - monitored
-- cron currently not enabled unless explicitly changed later
+- audited operations schedule: `06:12`
 - supports targeted backfills with `--counter-id` / `--counter-ids`
 - writes canonical site analytics scopes:
   - `traffic`: UTM / ads-attribution grain
   - `goal`: goals by UTM / ads-attribution grain
   - `other`: general traffic-source grain from Metrika
   - `page`: page URL/title grain from `ym:pv:URL,ym:pv:title`
+  - `entry_page`: session-scope start URL grain from `ym:s:startURL`, including visits, users, pageviews, bounce rate, average visit duration, and page depth
+- `page` remains pageview-scope; do not merge its users with session-scope `entry_page` users as one metric
 - deletion before rewrites is counter-scoped for targeted runs, so a Zaruku backfill does not wipe Abbott rows in the same date window
 - `METRIKA_REQUEST_DELAY_SECONDS` can throttle API requests for long backfills and 429-sensitive counters
 - Zaruku main counter is `66624469`; it must be active in `canonical_source_account_collection_settings` with `collection_mode = ads_plus_seo_plus_user_behavior`
 - If `canonical_fact_user_behavior_daily` stays empty for Zaruku, do not infer a collector failure by itself: the counter may not expose `paramsLevel2` / UserID-style rows.
+
+### Yandex Webmaster
+
+- collector: `/Users/nicko/ReportingDash/fetch_yandex_webmaster_canonical.py`
+- implemented; audited operations schedule: `06:50`
+- default daily window is four days: yesterday plus the preceding three days (`--lag-days 3`)
+- for every account / host / date / device, query facts use transactional replacement: delete the prior snapshot, insert the complete current query set, and upsert the summary in one commit
+- an empty current query set removes stale query rows; a write failure rolls back the replacement
+
+### External SEO OS
+
+- SEO OS is externally owned and operated; this canonical collector repository consumes its database outputs but does not own its scheduling or execution
+- do not infer an SEO OS deployment or run from changes in this repository
+
+### AI / GEO visibility
+
+- current collection is manual
+- no automated AI/GEO collector or cron is owned by this repository
+
+### Google Search Console
+
+- Google Search Console automation is absent: there is no GSC collector or cron owned by this repository
+- treat GSC as a pending source, not as deployed or backfilled
 
 ## Platform-specific access notes
 
