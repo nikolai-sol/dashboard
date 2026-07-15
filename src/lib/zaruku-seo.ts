@@ -603,7 +603,7 @@ export function buildContentSections(pageRows: ZarukuSeoMetricRow[], patterns: Z
         depthWeighted: 0,
         depthVisits: 0,
       } satisfies SectionAccumulator);
-    const visits = page.visits > 0 ? page.visits : page.users;
+    const visits = page.visits;
     current.visits += visits;
     current.users += page.users;
     current.pageviews += page.pageviews;
