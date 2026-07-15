@@ -32,6 +32,7 @@ import type {
   ZarukuSeoData,
   ZarukuSeoLayerId,
   ZarukuSeoMetricRow,
+  ZarukuSeoSource,
   ZarukuSeoSourceId,
   ZarukuYandexWebmasterPageRow,
   ZarukuYandexWebmasterQueryRow,
@@ -130,6 +131,29 @@ function formatSignedPercent(value: number | null | undefined, locale = "ru-RU",
   return `Δ ${sign}${formatPercent(value, locale, digits)}`;
 }
 
+const SOURCE_STATUS_LABELS: Record<ZarukuSeoSource["status"], string> = {
+  connected: "подключено",
+  pending: "ожидается",
+  partial: "частично",
+  unavailable: "недоступно",
+};
+
+const SOURCE_COLLECTION_MODE_LABELS: Record<ZarukuSeoSource["collection_mode"], string> = {
+  automated: "автоматически",
+  external: "внешний импорт",
+  manual: "вручную",
+  not_connected: "не подключено",
+};
+
+function SourceHealthMeta({ source }: { source: ZarukuSeoSource }) {
+  return (
+    <span className="text-[11px] font-normal text-slate-400">
+      {SOURCE_STATUS_LABELS[source.status]} · {SOURCE_COLLECTION_MODE_LABELS[source.collection_mode]}
+      {source.data_through ? ` · данные по ${source.data_through}` : ""}
+    </span>
+  );
+}
+
 function SourceBadge({ data, id }: { data: ZarukuSeoData; id: ZarukuSeoSourceId }) {
   const source = data.sources.find((item) => item.id === id);
   if (!source) return null;
@@ -137,6 +161,7 @@ function SourceBadge({ data, id }: { data: ZarukuSeoData; id: ZarukuSeoSourceId 
     <span className="inline-flex items-center gap-1.5 rounded-md border border-slate-200 bg-white px-2 py-1 text-xs font-medium text-slate-600">
       <span className="h-1.5 w-1.5 rounded-full" style={{ background: source.color }} />
       {source.label}
+      <SourceHealthMeta source={source} />
       {source.status !== "connected" ? <Lock className="h-3 w-3 text-slate-300" /> : null}
     </span>
   );
@@ -1104,14 +1129,20 @@ export default function ZarukuSeoDashboard({ data, locale = "ru-RU" }: Props) {
             </div>
             <div className="space-y-1.5">
               {data.sources.map((source) => (
-                <div key={source.id} className="flex items-center justify-between gap-2 text-xs">
-                  <span className="flex items-center gap-1.5 text-slate-600">
-                    <span className="h-1.5 w-1.5 rounded-full" style={{ background: source.color }} />
-                    {source.label}
-                  </span>
-                  <span className={source.status === "connected" ? "text-teal-600" : "text-slate-300"}>
-                    {source.status === "connected" ? "подкл." : "—"}
-                  </span>
+                <div key={source.id} className="text-xs">
+                  <div className="flex items-center justify-between gap-2">
+                    <span className="flex items-center gap-1.5 text-slate-600">
+                      <span className="h-1.5 w-1.5 rounded-full" style={{ background: source.color }} />
+                      {source.label}
+                    </span>
+                    <span className={source.status === "connected" ? "text-teal-600" : "text-slate-400"}>
+                      {SOURCE_STATUS_LABELS[source.status]}
+                    </span>
+                  </div>
+                  <div className="ml-3 mt-0.5 text-[11px] leading-tight text-slate-400">
+                    {SOURCE_COLLECTION_MODE_LABELS[source.collection_mode]}
+                    {source.data_through ? ` · данные по ${source.data_through}` : ""}
+                  </div>
                 </div>
               ))}
             </div>

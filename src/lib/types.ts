@@ -582,6 +582,9 @@ export interface ZarukuSeoSource {
   layer: ZarukuSeoLayerId;
   color: string;
   status: ZarukuSeoSourceStatus;
+  collection_mode: "automated" | "external" | "manual" | "not_connected";
+  data_through: string | null;
+  freshness_note?: string;
   note?: string;
 }
 

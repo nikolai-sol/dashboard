@@ -43,3 +43,10 @@ test("SEO tab labels Yandex query table from its own week selection", () => {
   assert.match(source, /const webmasterQueryMeta = buildWebmasterSelectionMeta\(webmasterQuerySelection, webmasterWeek\)/);
   assert.match(source, /webmasterQueryMeta\.fallbackNote/);
 });
+
+test("source health renders collection provenance labels", () => {
+  assert.match(source, /автоматически/);
+  assert.match(source, /внешний импорт/);
+  assert.match(source, /вручную/);
+  assert.match(source, /не подключено/);
+});

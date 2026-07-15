@@ -8,12 +8,19 @@ import {
   buildKpis,
   buildMapCityDemand,
   buildPageCollections,
+  buildSources,
+  deriveSourceDataThrough,
   filterSearchEngineRows,
   enrichRowsWithPageTitles,
   mergeTopPagesWithVisitMetrics,
   readableTrafficSource,
 } from "@/lib/zaruku-seo";
-import type { ZarukuSeoMetricRow, ZarukuSeoSectionPattern } from "@/lib/types";
+import type {
+  ZarukuSeoIntelligenceData,
+  ZarukuSeoMetricRow,
+  ZarukuSeoSectionPattern,
+  ZarukuYandexWebmasterData,
+} from "@/lib/types";
 
 function page(url: string, visits: number, users: number, pageviews: number): ZarukuSeoMetricRow {
   return {
@@ -52,6 +59,105 @@ const patterns: ZarukuSeoSectionPattern[] = [
   { section: "Priority A", url_pattern: "/priority/", priority: 10 },
   { section: "Priority B", url_pattern: "/priority/", priority: 1 },
 ];
+
+test("buildSources exposes collection provenance and preserves explicit data-through values", () => {
+  const webmaster: ZarukuYandexWebmasterData = {
+    available: true,
+    status: "available",
+    error: null,
+    data_availability: { queries: true, pages: false },
+    weeks: ["2026-W28"],
+    latest_week: "2026-W28",
+    summary: [],
+    queries: [],
+    pages: [],
+  };
+  const seoIntelligence: ZarukuSeoIntelligenceData = {
+    available: true,
+    status: "available",
+    error: null,
+    sov: { available: true, weeks: [], latest_week: null, rows: [] },
+    ai: {
+      available: true,
+      periods: ["2026-07"],
+      latest_period: "2026-07",
+      rows: [
+        {
+          engine: "alisa_ai",
+          period: "2026-07",
+          presence_rate: 44,
+          mentions: 89,
+          citations: 155,
+          provenance: "wm_alisa_manual",
+          captured_at: "2026-07-13 14:30:00",
+          ingestion_run_id: "seo_os_ai_visibility_2026-07_alisa_ai",
+        },
+      ],
+    },
+  };
+  const dataThrough = {
+    metrika: null,
+    gsc: null,
+    webmaster: "2026-07-12",
+    seo_os: "2026-W28",
+    yandex_gen_search: "2026-07-13 14:30:00",
+  } as const;
+
+  const sources = buildSources({
+    seoOsStatus: "available",
+    webmaster,
+    seoIntelligence,
+    dataThrough,
+  });
+  const source = (id: (typeof sources)[number]["id"]) => sources.find((item) => item.id === id)!;
+
+  assert.equal(source("metrika").collection_mode, "automated");
+  assert.equal(source("webmaster").collection_mode, "automated");
+  assert.equal(source("seo_os").collection_mode, "external");
+  assert.equal(source("yandex_gen_search").collection_mode, "manual");
+  assert.equal(source("gsc").collection_mode, "not_connected");
+  assert.equal(source("yandex_gen_search").status, "connected");
+  assert.deepEqual(
+    Object.fromEntries(sources.map((item) => [item.id, item.data_through])),
+    dataThrough,
+  );
+});
+
+test("deriveSourceDataThrough uses only loaded Webmaster, SEO OS, and AI freshness facts", () => {
+  assert.deepEqual(
+    deriveSourceDataThrough({
+      webmasterSummary: [
+        { week_to: "2026-07-05" },
+        { week_to: "2026-07-12" },
+        { week_to: "2026-07-10" },
+      ],
+      seoOsLatestWeek: "2026-W28",
+      aiLatestPeriod: "2026-07",
+      aiRows: [
+        { period: "2026-06", captured_at: "2026-07-15 10:00:00" },
+        { period: "2026-07", captured_at: "2026-07-13 14:30:00" },
+      ],
+    }),
+    {
+      metrika: null,
+      gsc: null,
+      webmaster: "2026-07-12",
+      seo_os: "2026-W28",
+      yandex_gen_search: "2026-07-13 14:30:00",
+    },
+  );
+});
+
+test("deriveSourceDataThrough falls back to AI period when capture time is absent", () => {
+  const dataThrough = deriveSourceDataThrough({
+    webmasterSummary: [],
+    seoOsLatestWeek: null,
+    aiLatestPeriod: "2026-07",
+    aiRows: [{ period: "2026-07", captured_at: null }],
+  });
+
+  assert.equal(dataThrough.yandex_gen_search, "2026-07");
+});
 
 test("buildContentSections uses SEO patterns and aggregates visits, users, and pageviews", () => {
   assert.deepEqual(

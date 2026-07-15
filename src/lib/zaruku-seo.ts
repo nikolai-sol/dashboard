@@ -28,6 +28,9 @@ const SOURCES: ZarukuSeoSource[] = [
     layer: "onsite",
     color: "#0d9488",
     status: "connected",
+    collection_mode: "automated",
+    data_through: null,
+    freshness_note: "Live-разрезы запрашиваются для выбранного периода трафика; дата последнего канонического факта пока не проверяется.",
   },
   {
     id: "gsc",
@@ -35,6 +38,8 @@ const SOURCES: ZarukuSeoSource[] = [
     layer: "serp",
     color: "#2563eb",
     status: "pending",
+    collection_mode: "not_connected",
+    data_through: null,
     note: "Показы, позиции и CTR в Google Search Console.",
   },
   {
@@ -43,6 +48,8 @@ const SOURCES: ZarukuSeoSource[] = [
     layer: "serp",
     color: "#9333ea",
     status: "pending",
+    collection_mode: "automated",
+    data_through: null,
     note: "Показы, позиции и CTR в Яндекс Поиске.",
   },
   {
@@ -51,6 +58,8 @@ const SOURCES: ZarukuSeoSource[] = [
     layer: "ai",
     color: "#0891b2",
     status: "pending",
+    collection_mode: "manual",
+    data_through: null,
     note: "AI-видимость: Яндекс Вебмастер / внешние снимки.",
   },
 ];
@@ -768,14 +777,46 @@ function sourceStatusFromData(status: "available" | "partial" | "unavailable"): 
   return status;
 }
 
-function buildSources({
+type SourceDataThrough = Record<ZarukuSeoSource["id"], string | null>;
+
+export function deriveSourceDataThrough({
+  webmasterSummary,
+  seoOsLatestWeek,
+  aiLatestPeriod,
+  aiRows,
+}: {
+  webmasterSummary: Array<{ week_to: string }>;
+  seoOsLatestWeek: string | null;
+  aiLatestPeriod: string | null;
+  aiRows: Array<{ period: string; captured_at: string | null }>;
+}): SourceDataThrough {
+  const latestWebmasterDate = webmasterSummary.map((row) => row.week_to).filter(Boolean).sort().at(-1) ?? null;
+  const latestAiCapture = aiRows
+    .filter((row) => row.period === aiLatestPeriod)
+    .map((row) => row.captured_at)
+    .filter((value): value is string => Boolean(value))
+    .sort()
+    .at(-1) ?? null;
+
+  return {
+    metrika: null,
+    gsc: null,
+    webmaster: latestWebmasterDate,
+    seo_os: seoOsLatestWeek,
+    yandex_gen_search: latestAiCapture ?? aiLatestPeriod,
+  };
+}
+
+export function buildSources({
   seoOsStatus,
   webmaster,
   seoIntelligence,
+  dataThrough,
 }: {
   seoOsStatus: "available" | "partial" | "unavailable";
   webmaster: ZarukuYandexWebmasterData;
   seoIntelligence: ZarukuSeoIntelligenceData;
+  dataThrough: SourceDataThrough;
 }): ZarukuSeoSource[] {
   const webmasterStatus = sourceStatusFromData(webmaster.status);
   const aiStatus = seoIntelligence.ai.rows.length > 0 ? sourceStatusFromData(seoIntelligence.status) : "pending";
@@ -785,6 +826,7 @@ function buildSources({
         return {
           ...source,
           status: webmasterStatus,
+          data_through: dataThrough.webmaster,
           note:
             webmasterStatus === "connected"
               ? "Показы, клики, CTR и средняя позиция Яндекса из Вебмастера."
@@ -797,13 +839,17 @@ function buildSources({
         return {
           ...source,
           status: aiStatus,
+          data_through: dataThrough.yandex_gen_search,
           note:
             aiStatus === "connected"
               ? "AI-видимость из seo_ai_visibility: присутствие, упоминания и цитаты."
               : "Ожидаем снимки AI-видимости из SEO OS / внешнего источника.",
         };
       }
-      return source;
+      return {
+        ...source,
+        data_through: dataThrough[source.id],
+      };
     }),
     {
       id: "seo_os",
@@ -811,6 +857,8 @@ function buildSources({
       layer: "serp",
       color: "#16a34a",
       status: seoOsStatus === "available" ? "connected" : seoOsStatus,
+      collection_mode: "external",
+      data_through: dataThrough.seo_os,
       note: seoOsStatus === "available"
         ? "Еженедельные отслеживаемые позиции Яндекса, возможности, задачи и телеметрия."
         : seoOsStatus === "partial"
@@ -957,7 +1005,17 @@ export async function loadZarukuSeoData(counterIds: string[], from: string, to: 
       { id: "serp", label: "SERP", hint: "показы, позиции, CTR до клика" },
       { id: "ai", label: "AI-выдача", hint: "цитируемость и доля присутствия" },
     ],
-    sources: buildSources({ seoOsStatus: seoOs.status, webmaster, seoIntelligence }),
+    sources: buildSources({
+      seoOsStatus: seoOs.status,
+      webmaster,
+      seoIntelligence,
+      dataThrough: deriveSourceDataThrough({
+        webmasterSummary: webmaster.summary,
+        seoOsLatestWeek: seoOs.latest_week,
+        aiLatestPeriod: seoIntelligence.ai.latest_period,
+        aiRows: seoIntelligence.ai.rows,
+      }),
+    }),
     pending_requirements: buildPendingRequirements(webmaster),
     kpis: buildKpis({
       trafficChannels,
