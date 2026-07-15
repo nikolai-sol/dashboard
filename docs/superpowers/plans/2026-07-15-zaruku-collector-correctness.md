@@ -194,4 +194,3 @@ Expected: documentation terms are present and all tests pass.
 git add CANONICAL-ENTITIES-MEMORY.md PLATFORMS-ACCESS-MEMORY.md
 git commit -m "docs: record zaruku seo collector contracts"
 ```
-
