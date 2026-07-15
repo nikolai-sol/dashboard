@@ -124,9 +124,9 @@ Expected: FAIL because `buildKpis` is not exported and has no `periodUsers` inpu
 
 Add `periodUsers: number | null` to `buildKpis`. Stop accumulating `row.users` for this KPI. Use the Metrika period total when present; otherwise show unavailable. Add a note explaining that the value is unique for the selected traffic period.
 
-- [ ] **Step 4: Select an authoritative Metrika total**
+- [ ] **Step 4: Select the authoritative all-traffic Metrika total**
 
-After building the `reports` array, select the first successful report whose `totals[1]` is finite. Pass that value to `buildKpis`; pass `null` if all live reports failed.
+Use `devicesReport.totals[1]` only when the devices report succeeded and the metric is finite. The device cut covers all traffic; segmented search/landing reports are not valid fallbacks. Pass `null` when the authoritative report failed or omitted the metric.
 
 - [ ] **Step 5: Verify tests**
 
