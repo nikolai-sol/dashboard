@@ -620,13 +620,14 @@ def replace_webmaster_day_rows(query_rows: list[dict], summary_row: dict) -> int
         conn.commit()
         return len(query_rows) + 1
     except Exception:
-        if cur is not None:
-            conn.rollback()
+        conn.rollback()
         raise
     finally:
-        if cur is not None:
-            cur.close()
-        conn.close()
+        try:
+            if cur is not None:
+                cur.close()
+        finally:
+            conn.close()
 
 
 def cron_run_already_completed(today: date | None = None) -> bool:

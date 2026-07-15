@@ -4,8 +4,9 @@ from unittest.mock import patch
 
 
 class FakeCursor:
-    def __init__(self, events, *, fail_on_executemany=False):
+    def __init__(self, events, *, fail_on_close=False, fail_on_executemany=False):
         self.events = events
+        self.fail_on_close = fail_on_close
         self.fail_on_executemany = fail_on_executemany
 
     def execute(self, sql, params):
@@ -18,14 +19,17 @@ class FakeCursor:
 
     def close(self):
         self.events.append(("cursor_close",))
+        if self.fail_on_close:
+            raise RuntimeError("cursor close failed")
 
 
 class FakeConnection:
-    def __init__(self, *, fail_on_cursor=False, fail_on_executemany=False):
+    def __init__(self, *, fail_on_close=False, fail_on_cursor=False, fail_on_executemany=False):
         self.events = []
         self.fail_on_cursor = fail_on_cursor
         self.cursor_instance = FakeCursor(
             self.events,
+            fail_on_close=fail_on_close,
             fail_on_executemany=fail_on_executemany,
         )
         self.commit_calls = 0
@@ -181,8 +185,22 @@ class YandexWebmasterCanonicalTests(unittest.TestCase):
                 replace_webmaster_day_rows(self.query_rows, self.summary_row)
 
         self.assertEqual(connection.commit_calls, 0)
-        self.assertEqual(connection.rollback_calls, 0)
-        self.assertEqual(connection.events, [("cursor",), ("connection_close",)])
+        self.assertEqual(connection.rollback_calls, 1)
+        self.assertEqual(connection.events, [("cursor",), ("rollback",), ("connection_close",)])
+
+    def test_replace_webmaster_day_rows_closes_connection_when_cursor_close_fails(self):
+        from fetch_yandex_webmaster_canonical import replace_webmaster_day_rows
+
+        connection = FakeConnection(fail_on_close=True)
+        with patch(
+            "fetch_yandex_webmaster_canonical.get_db_connection",
+            return_value=connection,
+        ):
+            with self.assertRaisesRegex(RuntimeError, "cursor close failed"):
+                replace_webmaster_day_rows(self.query_rows, self.summary_row)
+
+        self.assertEqual(connection.commit_calls, 1)
+        self.assertEqual(connection.events[-2:], [("cursor_close",), ("connection_close",)])
 
     def test_collection_dates_default_to_yesterday_plus_three_day_lag(self):
         from fetch_yandex_webmaster_canonical import collection_dates
