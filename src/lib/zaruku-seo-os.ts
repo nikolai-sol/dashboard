@@ -285,7 +285,7 @@ export function buildSeoOsTrafficQuery(counterIds: string[], from: string, to: s
         COALESCE(SUM(pageviews), 0) AS pageviews
       FROM canonical_fact_site_analytics_daily
       WHERE source_key = 'yandex_metrika'
-        AND analytics_scope = 'page'
+        AND analytics_scope = 'entry_page'
         AND analytics_account_id IN (${buildInClause(counterIds)})
         AND report_date BETWEEN ? AND ?
       GROUP BY report_date, page_url

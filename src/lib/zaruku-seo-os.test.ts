@@ -157,15 +157,17 @@ test("SEO OS row normalizers convert decimal strings while preserving nullable f
 
 test("SEO OS account scope query builders bind account IDs as parameters", () => {
   const accountIds = ["66624469", "other-account"];
-  const queries = [...Object.values(buildSeoOsAccountQueries(accountIds)), buildSeoOsTrafficQuery(accountIds, "2026-07-06", "2026-07-12")];
+  const query = buildSeoOsTrafficQuery(accountIds, "2026-07-06", "2026-07-12");
+  const queries = [...Object.values(buildSeoOsAccountQueries(accountIds)), query];
 
   for (const query of queries) {
     assert.match(query.sql, /analytics_account_id\s+IN\s*\(\?, \?\)/i);
     assert.deepEqual(query.params.slice(0, accountIds.length), accountIds);
   }
-  assert.match(queries.at(-1)?.sql ?? "", /source_key\s*=\s*'yandex_metrika'/i);
-  assert.match(queries.at(-1)?.sql ?? "", /analytics_scope\s*=\s*'page'/i);
-  assert.match(queries.at(-1)?.sql ?? "", /report_date\s+BETWEEN\s+\?\s+AND\s+\?/i);
+  assert.match(query.sql, /source_key\s*=\s*'yandex_metrika'/i);
+  assert.match(query.sql, /analytics_scope\s*=\s*'entry_page'/i);
+  assert.doesNotMatch(query.sql, /analytics_scope\s*=\s*'page'/i);
+  assert.match(query.sql, /report_date\s+BETWEEN\s+\?\s+AND\s+\?/i);
 });
 
 test("buildRhythmWeeks represents SEO weeks without run telemetry as missing", () => {
