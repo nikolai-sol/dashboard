@@ -68,6 +68,8 @@ DEFAULT_DEVICE = env_first("YANDEX_WEBMASTER_DEVICE_TYPE", default="ALL")
 DEFAULT_LAG_DAYS = int(env_first("YANDEX_WEBMASTER_DAILY_LAG_DAYS", "YANDEX_WEBMASTER_BACKFILL_DAYS", default="3") or 3)
 TOKEN_STATE_PATH = env_first("YANDEX_WEBMASTER_TOKEN_STATE_PATH", default="")
 MAX_RETRIES = 5
+QUERY_PAGE_SIZE = 500
+MAX_QUERY_ROWS = 100000
 TIMEOUT = 90
 REQUEST_DELAY_SECONDS = float(env_first("YANDEX_WEBMASTER_REQUEST_DELAY_SECONDS", default="0.35") or 0)
 
@@ -542,14 +544,15 @@ def discover_host_id(access_token: str, user_id: str, domain: str, run_id: int) 
 
 def fetch_query_rows(access_token: str, user_id: str, host_id: str, day: str, device: str, run_id: int) -> list[dict]:
     all_rows: list[dict] = []
-    for offset in range(0, 100000, 500):
+    reported_count: int | None = None
+    for offset in range(0, MAX_QUERY_ROWS, QUERY_PAGE_SIZE):
         params = {
             "order_by": "TOTAL_SHOWS",
             "device_type_indicator": device,
             "date_from": day,
             "date_to": day,
             "offset": str(offset),
-            "limit": "500",
+            "limit": str(QUERY_PAGE_SIZE),
             "query_indicator": ["TOTAL_SHOWS", "TOTAL_CLICKS", "AVG_SHOW_POSITION"],
         }
         query: list[tuple[str, str]] = []
@@ -565,9 +568,16 @@ def fetch_query_rows(access_token: str, user_id: str, host_id: str, day: str, de
         )
         rows = payload.get("queries") or []
         all_rows.extend(rows)
-        count = safe_int(payload.get("count"))
-        if len(rows) < 500 or len(all_rows) >= count:
+        if payload.get("count") is not None:
+            reported_count = max(reported_count or 0, safe_int(payload.get("count")))
+        if len(rows) < QUERY_PAGE_SIZE or (reported_count is not None and len(all_rows) >= reported_count):
             break
+    if reported_count is not None and reported_count > len(all_rows):
+        raise RuntimeError(
+            'incomplete Yandex Webmaster query response: '
+            f'reported count={reported_count}, fetched_rows={len(all_rows)}, '
+            f'max_query_rows={MAX_QUERY_ROWS}'
+        )
     return all_rows
 
 

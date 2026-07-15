@@ -210,6 +210,29 @@ class YandexWebmasterCanonicalTests(unittest.TestCase):
             ["2026-07-10", "2026-07-11", "2026-07-12", "2026-07-13"],
         )
 
+    def test_fetch_query_rows_raises_when_reported_count_exceeds_maximum(self):
+        from fetch_yandex_webmaster_canonical import MAX_QUERY_ROWS, fetch_query_rows
+
+        page = [{"query_id": f"q{index}"} for index in range(500)]
+        with patch(
+            "fetch_yandex_webmaster_canonical.request_with_retry",
+            return_value={"queries": page, "count": MAX_QUERY_ROWS + 1},
+        ) as request:
+            with self.assertRaisesRegex(
+                RuntimeError,
+                "incomplete Yandex Webmaster query response.*100001.*100000",
+            ):
+                fetch_query_rows(
+                    "token",
+                    "user-id",
+                    "https:zaruku.ru:443",
+                    "2026-07-13",
+                    "ALL",
+                    42,
+                )
+
+        self.assertEqual(request.call_count, MAX_QUERY_ROWS // 500)
+
     def test_normalize_popular_query_rows_builds_daily_canonical_rows(self):
         from fetch_yandex_webmaster_canonical import normalize_popular_query_rows
 
