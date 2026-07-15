@@ -603,20 +603,21 @@ export function buildContentSections(pageRows: ZarukuSeoMetricRow[], patterns: Z
         depthWeighted: 0,
         depthVisits: 0,
       } satisfies SectionAccumulator);
-    current.visits += page.visits;
+    const visits = page.visits > 0 ? page.visits : page.users;
+    current.visits += visits;
     current.users += page.users;
     current.pageviews += page.pageviews;
     if (page.bounce_rate != null) {
-      current.bounceWeighted += page.bounce_rate * page.visits;
-      current.bounceVisits += page.visits;
+      current.bounceWeighted += page.bounce_rate * visits;
+      current.bounceVisits += visits;
     }
     if (page.avg_duration_seconds != null) {
-      current.durationWeighted += page.avg_duration_seconds * page.visits;
-      current.durationVisits += page.visits;
+      current.durationWeighted += page.avg_duration_seconds * visits;
+      current.durationVisits += visits;
     }
     if (page.page_depth != null) {
-      current.depthWeighted += page.page_depth * page.visits;
-      current.depthVisits += page.visits;
+      current.depthWeighted += page.page_depth * visits;
+      current.depthVisits += visits;
     }
     bySection.set(section, current);
   });

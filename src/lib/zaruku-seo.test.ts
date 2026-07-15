@@ -96,6 +96,22 @@ test("buildContentSections aggregates behavior metrics by visit weight", () => {
   ]);
 });
 
+test("buildContentSections uses users as visit proxy for pageview-only canonical rows", () => {
+  assert.deepEqual(
+    buildContentSections(
+      [
+        page("https://zaruku.ru/map/", 0, 42, 48),
+        page("https://zaruku.ru/map/clinics/42", 0, 11, 14),
+      ],
+      patterns,
+    ),
+    [
+      { label: "Map", visits: 42, users: 42, pageviews: 48, share: 48 / 62 * 100, source: "metrika", layer: "onsite" },
+      { label: "Clinics", visits: 11, users: 11, pageviews: 14, share: 14 / 62 * 100, source: "metrika", layer: "onsite" },
+    ],
+  );
+});
+
 test("buildContentSections does not invent URL-derived sections without configured patterns", () => {
   assert.deepEqual(buildContentSections([page("https://zaruku.ru/map/clinics/42", 3, 2, 5)], []), []);
 });
