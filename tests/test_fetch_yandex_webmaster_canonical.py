@@ -21,8 +21,9 @@ class FakeCursor:
 
 
 class FakeConnection:
-    def __init__(self, *, fail_on_executemany=False):
+    def __init__(self, *, fail_on_cursor=False, fail_on_executemany=False):
         self.events = []
+        self.fail_on_cursor = fail_on_cursor
         self.cursor_instance = FakeCursor(
             self.events,
             fail_on_executemany=fail_on_executemany,
@@ -32,6 +33,8 @@ class FakeConnection:
 
     def cursor(self):
         self.events.append(("cursor",))
+        if self.fail_on_cursor:
+            raise RuntimeError("cursor acquisition failed")
         return self.cursor_instance
 
     def commit(self):
@@ -165,6 +168,21 @@ class YandexWebmasterCanonicalTests(unittest.TestCase):
         self.assertEqual(connection.commit_calls, 0)
         self.assertEqual(connection.rollback_calls, 1)
         self.assertEqual(connection.events[-3:], [("rollback",), ("cursor_close",), ("connection_close",)])
+
+    def test_replace_webmaster_day_rows_closes_connection_when_cursor_acquisition_fails(self):
+        from fetch_yandex_webmaster_canonical import replace_webmaster_day_rows
+
+        connection = FakeConnection(fail_on_cursor=True)
+        with patch(
+            "fetch_yandex_webmaster_canonical.get_db_connection",
+            return_value=connection,
+        ):
+            with self.assertRaisesRegex(RuntimeError, "cursor acquisition failed"):
+                replace_webmaster_day_rows(self.query_rows, self.summary_row)
+
+        self.assertEqual(connection.commit_calls, 0)
+        self.assertEqual(connection.rollback_calls, 0)
+        self.assertEqual(connection.events, [("cursor",), ("connection_close",)])
 
     def test_collection_dates_default_to_yesterday_plus_three_day_lag(self):
         from fetch_yandex_webmaster_canonical import collection_dates

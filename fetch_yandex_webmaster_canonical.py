@@ -601,8 +601,9 @@ def upsert_webmaster_summary_rows(rows: list[dict]) -> int:
 
 def replace_webmaster_day_rows(query_rows: list[dict], summary_row: dict) -> int:
     conn = get_db_connection()
-    cur = conn.cursor()
+    cur = None
     try:
+        cur = conn.cursor()
         cur.execute(
             WEBMASTER_QUERY_SNAPSHOT_DELETE_SQL,
             (
@@ -619,10 +620,12 @@ def replace_webmaster_day_rows(query_rows: list[dict], summary_row: dict) -> int
         conn.commit()
         return len(query_rows) + 1
     except Exception:
-        conn.rollback()
+        if cur is not None:
+            conn.rollback()
         raise
     finally:
-        cur.close()
+        if cur is not None:
+            cur.close()
         conn.close()
 
 
