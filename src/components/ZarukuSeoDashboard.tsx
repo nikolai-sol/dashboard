@@ -81,7 +81,7 @@ const NAV: Array<{ id: TabId; label: string; icon: typeof LayoutGrid }> = [
   { id: "seo", label: "SEO", icon: Search },
   { id: "seo_ops", label: "SEO-операции", icon: Workflow },
   { id: "content", label: "Контент", icon: FileText },
-  { id: "geo", label: "Гео", icon: MapPin },
+  { id: "geo", label: "География", icon: MapPin },
   { id: "devices", label: "Устройства", icon: MonitorSmartphone },
   { id: "audience", label: "Аудитория", icon: Users },
   { id: "behavior", label: "Поведение", icon: Repeat },
@@ -1130,6 +1130,7 @@ export default function ZarukuSeoDashboard({ data, locale = "ru-RU" }: Props) {
                     <span>·</span>
                     <span>счётчик {data.counters.join(", ")}</span>
                     <span>·</span>
+                    <span>Период трафика:</span>
                     <span>{data.period.from} — {data.period.to}</span>
                   </div>
                 </div>

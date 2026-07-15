@@ -3,6 +3,19 @@ import { readFileSync } from "node:fs";
 import test from "node:test";
 
 const source = readFileSync(new URL("./ZarukuSeoDashboard.tsx", import.meta.url), "utf8");
+const toolbarSource = readFileSync(new URL("./ZarukuSeoWeekToolbar.tsx", import.meta.url), "utf8");
+
+test("dashboard distinguishes the traffic period from SEO week selection", () => {
+  assert.match(source, /Период трафика:\s*<\/span>\s*<span>\{data\.period\.from\} — \{data\.period\.to\}<\/span>/);
+});
+
+test("SEO week toolbar names its reporting period", () => {
+  assert.match(toolbarSource, /Отчётная SEO-неделя/);
+});
+
+test("navigation uses the full geography label", () => {
+  assert.match(source, /\{ id: "geo", label: "География", icon: MapPin \}/);
+});
 
 test("DataTable keeps behavior metric headers readable with spacing and wrapping", () => {
   assert.match(source, /min-w-\[1080px\]/);
