@@ -85,6 +85,15 @@ logging.basicConfig(
 )
 log = logging.getLogger("yandex_webmaster_canonical")
 
+WEBMASTER_QUERY_SNAPSHOT_DELETE_SQL = """
+DELETE FROM canonical_fact_webmaster_queries_daily
+WHERE source_key = %s
+  AND analytics_account_id = %s
+  AND host_id = %s
+  AND report_date = %s
+  AND device_type = %s
+"""
+
 WEBMASTER_QUERY_UPSERT_SQL = """
 INSERT INTO canonical_fact_webmaster_queries_daily (
     source_key, analytics_account_id, host_id, report_date, device_type,
@@ -590,6 +599,33 @@ def upsert_webmaster_summary_rows(rows: list[dict]) -> int:
         conn.close()
 
 
+def replace_webmaster_day_rows(query_rows: list[dict], summary_row: dict) -> int:
+    conn = get_db_connection()
+    cur = conn.cursor()
+    try:
+        cur.execute(
+            WEBMASTER_QUERY_SNAPSHOT_DELETE_SQL,
+            (
+                summary_row["source_key"],
+                summary_row["analytics_account_id"],
+                summary_row["host_id"],
+                summary_row["report_date"],
+                summary_row["device_type"],
+            ),
+        )
+        if query_rows:
+            cur.executemany(WEBMASTER_QUERY_UPSERT_SQL, query_rows)
+        cur.execute(WEBMASTER_SUMMARY_UPSERT_SQL, summary_row)
+        conn.commit()
+        return len(query_rows) + 1
+    except Exception:
+        conn.rollback()
+        raise
+    finally:
+        cur.close()
+        conn.close()
+
+
 def cron_run_already_completed(today: date | None = None) -> bool:
     day = today or datetime.now(timezone.utc).date()
     conn = get_db_connection()
@@ -706,8 +742,7 @@ def collect(args) -> dict[str, Any]:
                     run_id=run_id,
                 )
                 rows_read += len(raw_queries)
-                rows_written += upsert_webmaster_query_rows(query_rows)
-                rows_written += upsert_webmaster_summary_rows([summary_row])
+                rows_written += replace_webmaster_day_rows(query_rows, summary_row)
                 log_collector_event(
                     run_id,
                     "info",
