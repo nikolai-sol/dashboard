@@ -652,29 +652,30 @@ export function buildPageCollections(
   };
 }
 
-function buildKpis({
+export function buildKpis({
   trafficChannels,
   technicalTail,
   devices,
   geoCountries,
+  periodUsers,
 }: {
   trafficChannels: ZarukuSeoMetricRow[];
   technicalTail: ZarukuSeoMetricRow[];
   devices: ZarukuSeoMetricRow[];
   geoCountries: ZarukuSeoMetricRow[];
+  periodUsers: number | null;
 }): ZarukuSeoKpi[] {
   const trafficRows = [...trafficChannels, ...technicalTail];
   const totals = trafficRows.reduce(
     (acc, row) => {
       acc.visits += row.visits;
-      acc.users += row.users;
       acc.pageviews += row.pageviews;
       acc.bounceWeighted += (row.bounce_rate ?? 0) * row.visits;
       acc.durationWeighted += (row.avg_duration_seconds ?? 0) * row.visits;
       acc.depthWeighted += (row.page_depth ?? 0) * row.visits;
       return acc;
     },
-    { visits: 0, users: 0, pageviews: 0, bounceWeighted: 0, durationWeighted: 0, depthWeighted: 0 },
+    { visits: 0, pageviews: 0, bounceWeighted: 0, durationWeighted: 0, depthWeighted: 0 },
   );
   const organicVisits = trafficRows.find((row) => row.label === "Поиск")?.visits ?? 0;
   const directVisits = trafficRows.find((row) => row.label === "Прямые заходы")?.visits ?? 0;
@@ -683,7 +684,15 @@ function buildKpis({
 
   return [
     { key: "visits", label: "Визиты", value: formatInteger(totals.visits), raw_value: totals.visits, source: "metrika", layer: "onsite" },
-    { key: "users", label: "Пользователи", value: formatInteger(totals.users), raw_value: totals.users, source: "metrika", layer: "onsite" },
+    {
+      key: "users",
+      label: "Пользователи",
+      value: periodUsers == null ? "—" : formatInteger(periodUsers),
+      raw_value: periodUsers,
+      note: "Уникальные пользователи за выбранный период трафика.",
+      source: "metrika",
+      layer: "onsite",
+    },
     { key: "pageviews", label: "Просмотры", value: formatInteger(totals.pageviews), raw_value: totals.pageviews, source: "metrika", layer: "onsite" },
     {
       key: "organic_share",
@@ -921,6 +930,8 @@ export async function loadZarukuSeoData(counterIds: string[], from: string, to: 
     interestsReport,
     sourceDevicesReport,
   ];
+  const periodUsers =
+    devicesReport.ok && Number.isFinite(devicesReport.totals[1]) ? devicesReport.totals[1] : null;
   const metrikaErrors = reports.flatMap((report) => (report.ok ? [] : [report.error ?? "Metrika API unavailable"]));
   const organicVisits = trafficChannels.find((row) => row.label === "Поиск")?.visits ?? 0;
   const searchPhraseVisits = asNumber(searchPhrasesReport.totals[0]);
@@ -953,6 +964,7 @@ export async function loadZarukuSeoData(counterIds: string[], from: string, to: 
       technicalTail,
       devices: devicesReport.rows,
       geoCountries: countriesReport.rows,
+      periodUsers,
     }),
     traffic_channels: trafficChannels,
     technical_tail: technicalTail,

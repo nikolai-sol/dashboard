@@ -5,6 +5,7 @@ import {
   buildBestEngagementPages,
   buildContentSections,
   buildHighBouncePages,
+  buildKpis,
   buildMapCityDemand,
   buildPageCollections,
   filterSearchEngineRows,
@@ -344,4 +345,33 @@ test("canonical page rows query has no display LIMIT", () => {
 
   assert.doesNotMatch(query.sql, /\bLIMIT\b/i);
   assert.deepEqual(query.params, ["yandex_metrika", "66624469", "2026-07-01", "2026-07-31"]);
+});
+
+test("buildKpis uses the unique users total for the selected period", () => {
+  const usersKpi = buildKpis({
+    trafficChannels: [
+      page("Search engine traffic", 1_100, 1_000, 1_300),
+      page("Direct traffic", 1_000, 900, 1_200),
+    ],
+    technicalTail: [],
+    devices: [],
+    geoCountries: [],
+    periodUsers: 1_250,
+  }).find((kpi) => kpi.key === "users");
+
+  assert.equal(usersKpi?.value, (1_250).toLocaleString("ru-RU"));
+  assert.equal(usersKpi?.raw_value, 1_250);
+});
+
+test("buildKpis marks period users unavailable without an authoritative total", () => {
+  const usersKpi = buildKpis({
+    trafficChannels: [page("Search engine traffic", 1_100, 1_000, 1_300)],
+    technicalTail: [page("Internal traffic", 1_000, 900, 1_200)],
+    devices: [],
+    geoCountries: [],
+    periodUsers: null,
+  }).find((kpi) => kpi.key === "users");
+
+  assert.equal(usersKpi?.value, "—");
+  assert.equal(usersKpi?.raw_value, null);
 });
