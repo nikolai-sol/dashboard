@@ -1,6 +1,8 @@
 "use client";
 
 import { useEffect, useMemo, useRef, useState } from "react";
+import { Check, ChevronDown, Download, Search, X } from "lucide-react";
+import * as XLSX from "xlsx";
 import {
   Bar,
   BarChart,
@@ -14,12 +16,19 @@ import {
   YAxis,
 } from "recharts";
 import type { AbbottBiData } from "@/lib/types";
+import {
+  buildAbbottPageStatsExportRows,
+  matchesPageStatsSearch,
+  matchesSelectedMaterialType,
+} from "./abbott-page-stats";
 
 type AbbottBiDashboardProps = {
   data: AbbottBiData;
   locale?: string;
   portalName?: string;
   showUserIdAnalytics?: boolean;
+  periodFrom?: string;
+  periodTo?: string;
 };
 
 type TabId =
@@ -329,6 +338,122 @@ function SelectField({
           </option>
         ))}
       </select>
+    </label>
+  );
+}
+
+function MultiSelectField({
+  label,
+  values,
+  options,
+  onChange,
+  theme,
+}: {
+  label: string;
+  values: string[];
+  options: SelectOption[];
+  onChange: (values: string[]) => void;
+  theme: ThemeConfig;
+}) {
+  const [open, setOpen] = useState(false);
+  const rootRef = useRef<HTMLDivElement | null>(null);
+
+  useEffect(() => {
+    function handleClickOutside(event: MouseEvent) {
+      if (!rootRef.current) return;
+      if (event.target instanceof Node && !rootRef.current.contains(event.target)) {
+        setOpen(false);
+      }
+    }
+    document.addEventListener("mousedown", handleClickOutside);
+    return () => document.removeEventListener("mousedown", handleClickOutside);
+  }, []);
+
+  const selectedLabel = values.length === 0 ? "All" : `Выбрано: ${values.length}`;
+
+  return (
+    <div ref={rootRef} className="relative z-[130] block">
+      <span className={`mb-2 block text-sm font-semibold ${theme.textClass}`}>{label}</span>
+      <button
+        type="button"
+        aria-expanded={open}
+        onClick={() => setOpen((value) => !value)}
+        className={`flex min-h-[42px] w-full items-center justify-between gap-3 rounded-xl border bg-white px-3 py-2 text-left text-sm text-slate-700 outline-none transition hover:border-slate-300 focus:border-slate-400 ${theme.borderClass}`}
+      >
+        <span className="truncate">{selectedLabel}</span>
+        <ChevronDown size={16} className="shrink-0 text-slate-500" aria-hidden="true" />
+      </button>
+      {open ? (
+        <div className="absolute left-0 right-0 top-full z-[150] mt-2 max-h-72 overflow-y-auto rounded-xl border border-slate-200 bg-white p-2 shadow-2xl">
+          <button
+            type="button"
+            onClick={() => onChange([])}
+            className="mb-1 flex w-full items-center justify-between rounded-lg px-3 py-2 text-left text-sm text-slate-600 hover:bg-slate-50"
+          >
+            <span>All</span>
+            {values.length === 0 ? <Check size={16} className="text-emerald-600" aria-hidden="true" /> : null}
+          </button>
+          {options.map((option) => {
+            const selected = values.includes(option.value);
+            return (
+              <label
+                key={option.value}
+                className="flex cursor-pointer items-center gap-3 rounded-lg px-3 py-2 text-sm text-slate-700 hover:bg-slate-50"
+              >
+                <input
+                  type="checkbox"
+                  checked={selected}
+                  onChange={() => {
+                    onChange(selected ? values.filter((value) => value !== option.value) : [...values, option.value]);
+                  }}
+                  className="h-4 w-4 rounded border-slate-300 text-emerald-600 focus:ring-emerald-500"
+                />
+                <span className="min-w-0 truncate">{option.label}</span>
+              </label>
+            );
+          })}
+        </div>
+      ) : null}
+    </div>
+  );
+}
+
+function SearchField({
+  label,
+  value,
+  placeholder,
+  onChange,
+  theme,
+}: {
+  label: string;
+  value: string;
+  placeholder: string;
+  onChange: (value: string) => void;
+  theme: ThemeConfig;
+}) {
+  return (
+    <label className="block">
+      <span className={`mb-2 block text-sm font-semibold ${theme.textClass}`}>{label}</span>
+      <div className="relative">
+        <Search size={16} className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" aria-hidden="true" />
+        <input
+          type="search"
+          value={value}
+          onChange={(event) => onChange(event.target.value)}
+          placeholder={placeholder}
+          className="w-full rounded-xl border border-slate-200 bg-white py-2 pl-9 pr-9 text-sm text-slate-700 outline-none transition focus:border-slate-400"
+        />
+        {value ? (
+          <button
+            type="button"
+            aria-label="Очистить поиск"
+            onClick={() => onChange("")}
+            className="absolute right-2 top-1/2 -translate-y-1/2 rounded-md p-1 text-slate-400 hover:bg-slate-100 hover:text-slate-600"
+          >
+            <X size={15} aria-hidden="true" />
+          </button>
+        ) : null}
+      </div>
     </label>
   );
 }
@@ -687,11 +812,18 @@ function userIdLabel(userId: string, hasUserId: boolean) {
   return hasUserId ? userId : "Без User ID";
 }
 
+function exportDatePart(value: string | undefined) {
+  const normalized = value?.trim().slice(0, 10).replace(/[^0-9-]/g, "");
+  return normalized || "selected-period";
+}
+
 export default function AbbottBiDashboard({
   data,
   locale = "ru-RU",
   portalName = "ABBOTT",
   showUserIdAnalytics = true,
+  periodFrom,
+  periodTo,
 }: AbbottBiDashboardProps) {
   const [activeTab, setActiveTab] = useState<TabId>("users_summary");
   const [selectedSessionJourneyId, setSelectedSessionJourneyId] = useState<number | null>(null);
@@ -720,7 +852,7 @@ export default function AbbottBiDashboard({
   const [filtersByTab, setFiltersByTab] = useState<Record<TabId, Record<string, string>>>({
     users_summary: { user_id: "", user_id_traffic: "", traffic_source: "", direction: "" },
     user_actions: { user_id: "", user_id_traffic: "", traffic_source: "", direction: "" },
-    page_stats: { page_title: "", direction: "", material_type: "", access: "" },
+    page_stats: { page_title_query: "", direction: "", access: "" },
     bitrix_pages: { direction: "", material_type: "", access: "" },
     session_journeys: { user_id_traffic: "" },
     external_events: { direction: "" },
@@ -728,6 +860,7 @@ export default function AbbottBiDashboard({
     returning: { url: "", direction: "" },
     general_materials: { material_name: "" },
   });
+  const [selectedPageMaterialTypes, setSelectedPageMaterialTypes] = useState<string[]>([]);
   const [timeBucketPageSearch, setTimeBucketPageSearch] = useState("");
 
   const tabs = useMemo(
@@ -789,7 +922,6 @@ export default function AbbottBiDashboard({
 
   const pageStatsOptions = useMemo(
     () => ({
-      page_title: uniqOptions(data.page_stats.map((row) => row.page_title)),
       direction: uniqOptions(data.page_stats.map((row) => row.direction)),
       material_type: uniqOptions(data.page_stats.map((row) => row.material_type)),
       access: uniqOptions(data.page_stats.map((row) => row.access)),
@@ -892,13 +1024,13 @@ export default function AbbottBiDashboard({
         )
       )
         return false;
-      if (filters.page_title && row.page_title !== filters.page_title) return false;
+      if (!matchesPageStatsSearch(row.page_title, row.url, filters.page_title_query)) return false;
       if (filters.direction && (row.direction ?? "") !== filters.direction) return false;
-      if (filters.material_type && (row.material_type ?? "") !== filters.material_type) return false;
+      if (!matchesSelectedMaterialType(row.material_type, selectedPageMaterialTypes)) return false;
       if (filters.access && (row.access ?? "") !== filters.access) return false;
       return true;
     });
-  }, [data.page_stats, filtersByTab.page_stats, queryByTab.page_stats]);
+  }, [data.page_stats, filtersByTab.page_stats, queryByTab.page_stats, selectedPageMaterialTypes]);
 
   const bitrixPageRows = useMemo(() => {
     const query = queryByTab.bitrix_pages;
@@ -1151,6 +1283,31 @@ export default function AbbottBiDashboard({
       : activeTab === "session_journeys"
         ? sessionJourneysDescription
         : currentTab.description;
+
+  const exportPageStats = () => {
+    const worksheet = XLSX.utils.json_to_sheet(buildAbbottPageStatsExportRows(pageStatRows));
+    worksheet["!cols"] = [
+      { wch: 52 },
+      { wch: 48 },
+      { wch: 28 },
+      { wch: 24 },
+      { wch: 18 },
+      { wch: 18 },
+      { wch: 28 },
+      { wch: 18 },
+      { wch: 16 },
+      { wch: 16 },
+      { wch: 20 },
+      { wch: 20 },
+      { wch: 28 },
+    ];
+    const workbook = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(workbook, worksheet, "Статистика страниц");
+    XLSX.writeFile(
+      workbook,
+      `abbott-page-stats-${exportDatePart(periodFrom)}-${exportDatePart(periodTo)}.xlsx`,
+    );
+  };
 
   const usersSummaryPage = sliceRows(usersSummaryRows, pageByTab.users_summary);
   const userActionsPage = sliceRows(userActionRows, pageByTab.user_actions);
@@ -1423,18 +1580,21 @@ export default function AbbottBiDashboard({
     ),
     page_stats: (
       <>
-        <SelectField
+        <MultiSelectField
           label="Тип материала"
-          value={filtersByTab.page_stats.material_type}
+          values={selectedPageMaterialTypes}
           options={pageStatsOptions.material_type}
-          onChange={(value) => setSelectFilter("page_stats", "material_type", value)}
+          onChange={(values) => {
+            setSelectedPageMaterialTypes(values);
+            setPageByTab((prev) => ({ ...prev, page_stats: 1 }));
+          }}
           theme={theme}
         />
-        <SelectField
-          label="Заголовок страниц"
-          value={filtersByTab.page_stats.page_title}
-          options={pageStatsOptions.page_title}
-          onChange={(value) => setSelectFilter("page_stats", "page_title", value)}
+        <SearchField
+          label="Заголовок / URL"
+          value={filtersByTab.page_stats.page_title_query}
+          placeholder="Введите часть названия или адреса"
+          onChange={(value) => setSelectFilter("page_stats", "page_title_query", value)}
           theme={theme}
         />
         <SelectField
@@ -1932,15 +2092,27 @@ export default function AbbottBiDashboard({
                 theme={theme}
               />
             ) : (
-              <label className="block md:w-[320px]">
-                <span className={`mb-2 block text-xs font-semibold uppercase tracking-[0.12em] ${theme.textClass}`}>Search</span>
-                <input
-                  className="w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm text-slate-700 outline-none transition focus:border-slate-400"
-                  value={queryByTab[activeTab]}
-                  onChange={(event) => onQueryChange(event.target.value)}
-                  placeholder="Фильтр по текущей странице"
-                />
-              </label>
+              <div className="flex w-full flex-col gap-3 md:w-[360px]">
+                {activeTab === "page_stats" ? (
+                  <button
+                    type="button"
+                    onClick={exportPageStats}
+                    className={`inline-flex items-center justify-center gap-2 rounded-xl border px-4 py-2 text-sm font-semibold transition hover:bg-white ${theme.borderClass} ${theme.textClass}`}
+                  >
+                    <Download size={16} aria-hidden="true" />
+                    Экспорт XLSX ({pageStatRows.length})
+                  </button>
+                ) : null}
+                <label className="block">
+                  <span className={`mb-2 block text-xs font-semibold uppercase tracking-[0.12em] ${theme.textClass}`}>Search</span>
+                  <input
+                    className="w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm text-slate-700 outline-none transition focus:border-slate-400"
+                    value={queryByTab[activeTab]}
+                    onChange={(event) => onQueryChange(event.target.value)}
+                    placeholder="Фильтр по текущей странице"
+                  />
+                </label>
+              </div>
             )}
           </div>
         </div>

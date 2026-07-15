@@ -1751,7 +1751,13 @@ export default function DashboardByIdPage() {
           </div>
         ) : null}
 
-        <AbbottBiDashboard data={abbottBiData} locale={locale} portalName="ABBOTT" />
+        <AbbottBiDashboard
+          data={abbottBiData}
+          locale={locale}
+          portalName="ABBOTT"
+          periodFrom={dashboard.dashboard.period.from}
+          periodTo={dashboard.dashboard.period.to}
+        />
       </main>
     );
   }
