@@ -187,30 +187,76 @@ function stableJson(value: unknown): string {
   return JSON.stringify(sortValue(decoded));
 }
 
-function canonicalPersistedValue(column: string, value: unknown): unknown {
-  if (value === null || value === undefined) return null;
+interface CanonicalPersistedValue {
+  type: string;
+  value: string;
+}
+
+function canonicalPersistedValue(column: string, value: unknown): CanonicalPersistedValue {
+  if (value === null) return { type: "null", value: "" };
+  if (value === undefined) return { type: "undefined", value: "" };
   if (INTEGER_FINGERPRINT_COLUMNS.has(column) || DECIMAL_FINGERPRINT_COLUMNS.has(column)) {
-    return canonicalDecimal(value);
+    return {
+      type: INTEGER_FINGERPRINT_COLUMNS.has(column) ? "integer" : "decimal",
+      value: canonicalDecimal(value),
+    };
   }
   if (BOOLEAN_FINGERPRINT_COLUMNS.has(column)) {
-    if (value === true || value === 1 || value === "1" || String(value).toLowerCase() === "true") return "1";
-    if (value === false || value === 0 || value === "0" || String(value).toLowerCase() === "false") return "0";
+    if (value === true || value === 1 || value === "1" || String(value).toLowerCase() === "true") {
+      return { type: "boolean", value: "1" };
+    }
+    if (value === false || value === 0 || value === "0" || String(value).toLowerCase() === "false") {
+      return { type: "boolean", value: "0" };
+    }
+    return { type: "boolean", value: String(value) };
   }
   if (DATE_FINGERPRINT_COLUMNS.has(column)) {
-    if (value instanceof Date) return value.toISOString().slice(0, 10);
-    return String(value).slice(0, 10);
+    return {
+      type: "date",
+      value: value instanceof Date ? value.toISOString().slice(0, 10) : String(value).slice(0, 10),
+    };
   }
   if (DATETIME_FINGERPRINT_COLUMNS.has(column)) {
-    if (value instanceof Date) return value.toISOString().slice(0, 19).replace("T", " ");
-    return String(value).trim().replace("T", " ").replace(/(?:\.\d+)?Z$/, "").slice(0, 19);
+    return {
+      type: "datetime",
+      value: value instanceof Date
+        ? value.toISOString().slice(0, 19).replace("T", " ")
+        : String(value).trim().replace("T", " ").replace(/(?:\.\d+)?Z$/, "").slice(0, 19),
+    };
   }
-  if (JSON_FINGERPRINT_COLUMNS.has(column)) return stableJson(value);
-  return String(value);
+  if (JSON_FINGERPRINT_COLUMNS.has(column)) return { type: "json", value: stableJson(value) };
+  if (typeof value === "string") return { type: "text", value };
+  if (typeof value === "number") return { type: "number", value: canonicalDecimal(value) };
+  if (typeof value === "bigint") return { type: "integer", value: value.toString() };
+  if (typeof value === "boolean") return { type: "boolean", value: value ? "1" : "0" };
+  if (value instanceof Date) {
+    return { type: "datetime", value: value.toISOString().slice(0, 19).replace("T", " ") };
+  }
+  if (Buffer.isBuffer(value)) return { type: "bytes", value: value.toString("hex") };
+  if (typeof value === "object") return { type: "json", value: stableJson(value) };
+  return { type: typeof value, value: String(value) };
 }
 
 export function canonicalPersistedRowFingerprint(columns: readonly string[], values: readonly unknown[]): string {
   if (columns.length !== values.length) throw new Error("Persisted fingerprint column/value width mismatch");
-  return canonicalRowFingerprint(values.map((value, index) => canonicalPersistedValue(columns[index]!, value)));
+  const hash = createHash("sha256");
+  const appendFrame = (label: string, framedValue: string): void => {
+    hash.update(String(Buffer.byteLength(label, "utf8")));
+    hash.update(":");
+    hash.update(label);
+    hash.update(String(Buffer.byteLength(framedValue, "utf8")));
+    hash.update(":");
+    hash.update(framedValue);
+    hash.update(";");
+  };
+  values.forEach((value, index) => {
+    const column = columns[index]!;
+    const canonical = canonicalPersistedValue(column, value);
+    appendFrame("column", column);
+    appendFrame("type", canonical.type);
+    appendFrame("value", canonical.value);
+  });
+  return hash.digest("hex");
 }
 
 export function normalizeAbbottUrl(rawValue: unknown): string {

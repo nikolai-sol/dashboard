@@ -107,6 +107,21 @@ test("canonicalRowFingerprint is stable, length-delimited, and contains no input
   assert.doesNotMatch(first, /ab|private/i);
 });
 
+test("canonical persisted fingerprints type-frame null, empty, scalar, date, and decimal values", () => {
+  const fingerprints = [
+    canonicalPersistedRowFingerprint(["material_id"], [null]),
+    canonicalPersistedRowFingerprint(["material_id"], [""]),
+    canonicalPersistedRowFingerprint(["untyped_value"], [1]),
+    canonicalPersistedRowFingerprint(["untyped_value"], ["1"]),
+    canonicalPersistedRowFingerprint(["untyped_value"], [false]),
+    canonicalPersistedRowFingerprint(["untyped_value"], ["false"]),
+    canonicalPersistedRowFingerprint(["report_date"], ["2026-05-20"]),
+    canonicalPersistedRowFingerprint(["avg_session_duration_seconds"], ["1.500000"]),
+  ];
+  assert.equal(new Set(fingerprints).size, fingerprints.length);
+  assert.notEqual(fingerprints[0], fingerprints[1]);
+});
+
 function workbookBuffer(sheets: Record<string, Array<Record<string, unknown>>>): Buffer {
   const workbook = XLSX.utils.book_new();
   for (const [name, rows] of Object.entries(sheets)) {
@@ -389,7 +404,7 @@ function source(overrides: Partial<PreparedAbbottSource> = {}): PreparedAbbottSo
         table: "report_bd_private.portal_user_directions_private",
         columns: ["raw_user_id"],
         rows: [["000123"]],
-        fingerprints: [canonicalRowFingerprint(["000123"])],
+        fingerprints: [canonicalPersistedRowFingerprint(["raw_user_id"], ["000123"])],
         verificationColumns: ["raw_user_id"],
       },
     ],
@@ -557,6 +572,39 @@ test("transaction is checksum-idempotent only when the current release rows veri
   })]);
   assert.deepEqual(normalizedResult.idempotentKinds, ["abbott_workbook_json"]);
 
+  const nullFingerprint = canonicalPersistedRowFingerprint(["material_id"], [null]);
+  const nullToEmptyConnection: AbbottImportConnection = {
+    beginTransaction: async () => undefined,
+    execute: async (sql) => {
+      const compact = sql.replace(/\s+/g, " ").trim();
+      if (compact.includes("FROM report_bd.portal_data_releases")) {
+        return [[{ id: 77, dataset_key: "abbott", release_status: "staging", source_snapshot_ids: "[]" }], []];
+      }
+      if (compact.includes("FROM report_bd.portal_dataset_snapshots")) {
+        return [[{ id: 44, import_status: "imported", imported_row_count: 1 }], []];
+      }
+      if (compact.startsWith("SELECT COUNT(*)")) return [[{ row_count: 1 }], []];
+      if (compact.startsWith("SELECT material_id, source_row_fingerprint")) {
+        return [[{ material_id: "", source_row_fingerprint: nullFingerprint }], []];
+      }
+      return [[], []];
+    },
+    commit: async () => undefined,
+    rollback: async () => undefined,
+  };
+  await assert.rejects(
+    () => runAbbottImportTransaction(nullToEmptyConnection, 77, [source({
+      batches: [{
+        table: "report_bd.portal_bitrix_page_facts",
+        columns: ["material_id", "source_row_fingerprint"],
+        rows: [[null, nullFingerprint]],
+        fingerprints: [nullFingerprint],
+        fingerprintColumn: "source_row_fingerprint",
+      }],
+    })]),
+    /import failed/i,
+  );
+
   const unexpectedRowsConnection: AbbottImportConnection = {
     beginTransaction: async () => undefined,
     execute: async (sql) => {
@@ -718,7 +766,7 @@ test("transaction chunks large fact batches on the same connection", async () =>
           table: "report_bd_private.portal_user_directions_private",
           columns: ["raw_user_id"],
           rows,
-          fingerprints: rows.map((row) => canonicalRowFingerprint(row)),
+          fingerprints: rows.map((row) => canonicalPersistedRowFingerprint(["raw_user_id"], row)),
           verificationColumns: ["raw_user_id"],
         },
       ],
