@@ -82,6 +82,7 @@ def day_bundle():
                         "source_denominator": 8,
                         "derived_count": None,
                         "is_derived": 0,
+                        "request_fingerprint": "returning-row-fingerprint",
                     }
                 ],
             ),
@@ -147,6 +148,67 @@ class RecordingConnection:
 
 
 class AtomicMetrikaWriterTest(unittest.TestCase):
+    def test_coverage_rows_persist_all_scope_request_fingerprints(self):
+        import canonical_writer as writer
+
+        bundle = day_bundle()
+        conn = RecordingConnection()
+        with patch.object(writer, "get_db_connection", return_value=conn), patch.object(
+            writer, "require_mutable_candidate_release", return_value={"id": 41}
+        ):
+            writer.publish_metrika_day_bundle(bundle)
+
+        coverage_sql, coverage_values = next(
+            (sql, params)
+            for method, sql, params in conn.sql_calls
+            if method == "executemany" and "source_coverage" in sql
+        )
+        self.assertIn("request_fingerprint", coverage_sql)
+        self.assertEqual(
+            [row[5] for row in coverage_values],
+            [f"fingerprint-{scope}" for scope in SCOPES],
+        )
+        self.assertEqual(len({row[5] for row in coverage_values}), 5)
+        success_empty_rows = [row for row in coverage_values if row[6] == "success_empty"]
+        self.assertGreater(len(success_empty_rows), 0)
+        self.assertTrue(all(row[5] for row in success_empty_rows))
+
+    def test_returning_insert_persists_request_fingerprint(self):
+        import canonical_writer as writer
+
+        conn = RecordingConnection()
+        with patch.object(writer, "get_db_connection", return_value=conn), patch.object(
+            writer, "require_mutable_candidate_release", return_value={"id": 41}
+        ):
+            writer.publish_metrika_day_bundle(day_bundle())
+
+        returning_sql, returning_values = next(
+            (sql, params)
+            for method, sql, params in conn.sql_calls
+            if method == "executemany" and "returning_pages" in sql
+        )
+        self.assertIn("request_fingerprint", returning_sql)
+        self.assertEqual(returning_values[0][-2], "returning-row-fingerprint")
+
+    def test_missing_scope_request_fingerprint_rejects_before_connection(self):
+        import canonical_writer as writer
+
+        mutations = (None, "", "   ")
+        for fingerprint in mutations:
+            with self.subTest(fingerprint=fingerprint):
+                bundle = day_bundle()
+                if fingerprint is None:
+                    delattr(bundle.scopes["page"], "request_fingerprint")
+                else:
+                    bundle.scopes["page"].request_fingerprint = fingerprint
+                with patch.object(writer, "get_db_connection") as connect, patch.object(
+                    writer, "require_mutable_candidate_release"
+                ) as require_release:
+                    with self.assertRaises(writer.MetrikaPublishError):
+                        writer.publish_metrika_day_bundle(bundle)
+                connect.assert_not_called()
+                require_release.assert_not_called()
+
     def test_publish_rejects_non_abbott_counter_before_any_connection(self):
         import canonical_writer as writer
 
@@ -174,6 +236,7 @@ class AtomicMetrikaWriterTest(unittest.TestCase):
                     scope="page",
                     status="failed",
                     error_class="MetrikaPermissionError",
+                    request_fingerprint="failure-request-fingerprint",
                 )
 
         connect.assert_not_called()
@@ -416,6 +479,7 @@ class AtomicMetrikaWriterTest(unittest.TestCase):
                 scope="page",
                 status="failed",
                 error_class="MetrikaPermissionError",
+                request_fingerprint="failure-request-fingerprint",
             )
 
         self.assertFalse(any(sql.startswith("DELETE") for _, sql, _ in conn.sql_calls))
@@ -425,6 +489,8 @@ class AtomicMetrikaWriterTest(unittest.TestCase):
             if method == "execute" and "source_coverage" in sql
         )
         self.assertIn("ON DUPLICATE KEY UPDATE", insert_sql)
+        self.assertIn("request_fingerprint", insert_sql)
+        self.assertIn("failure-request-fingerprint", insert_params)
         self.assertIn("MetrikaPermissionError", insert_params)
         self.assertEqual(conn.events.count(("start_transaction", None)), 1)
         self.assertIn(("commit", None), conn.events)
@@ -445,6 +511,7 @@ class AtomicMetrikaWriterTest(unittest.TestCase):
                     scope="page",
                     status="failed",
                     error_class="MetrikaPermissionError",
+                    request_fingerprint="failure-request-fingerprint",
                 )
 
         self.assertIn(("rollback", None), conn.events)

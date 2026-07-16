@@ -183,6 +183,7 @@ def _insert_returning_rows(cur, rows: Sequence[dict]) -> int:
             row.get('source_denominator'),
             row.get('derived_count'),
             row.get('is_derived', 0),
+            row['request_fingerprint'],
             row['ingestion_run_id'],
         )
         for row in rows
@@ -193,10 +194,11 @@ def _insert_returning_rows(cur, rows: Sequence[dict]) -> int:
             canonical_release_id, counter_id, report_date, raw_page_value,
             raw_page_hash, normalized_page, normalized_page_hash,
             return_bucket_code, return_bucket_label, source_percentage,
-            source_denominator, derived_count, is_derived, ingestion_run_id
+            source_denominator, derived_count, is_derived,
+            request_fingerprint, ingestion_run_id
         ) VALUES (
             %s, %s, %s, %s, %s, %s, %s,
-            %s, %s, %s, %s, %s, %s, %s
+            %s, %s, %s, %s, %s, %s, %s, %s
         )
         """,
         values,
@@ -214,6 +216,7 @@ def _insert_success_coverage_rows(cur, rows: Sequence[dict]) -> int:
             row['counter_id'],
             row['scope_key'],
             row['report_date'],
+            row['request_fingerprint'],
             row['collection_status'],
             row.get('api_total_rows'),
             row['persisted_rows'],
@@ -228,11 +231,11 @@ def _insert_success_coverage_rows(cur, rows: Sequence[dict]) -> int:
         """
         INSERT INTO report_bd.canonical_source_coverage_daily (
             canonical_release_id, source_key, counter_id, scope_key, report_date,
-            collection_status, api_total_rows, persisted_rows,
+            request_fingerprint, collection_status, api_total_rows, persisted_rows,
             pagination_complete, is_sampled, empty_reconciled, collector_run_id,
             failure_code, sanitized_failure_json
         ) VALUES (
-            %s, %s, %s, %s, %s, %s, %s, %s,
+            %s, %s, %s, %s, %s, %s, %s, %s, %s,
             %s, %s, %s, %s, NULL, NULL
         )
         """,
@@ -300,6 +303,13 @@ def _validated_day_bundle(bundle: Any) -> tuple[int, str, str, int, dict, dict]:
             sampled = bool(_field(result, 'sampled'))
             pagination_complete = bool(_field(result, 'pagination_complete'))
             status = _field(result, 'status')
+            request_fingerprint = _field(result, 'request_fingerprint')
+
+            if (
+                not isinstance(request_fingerprint, str)
+                or not request_fingerprint.strip()
+            ):
+                raise MetrikaPublishError("Metrika request fingerprint is missing")
 
             if persisted_rows < 0 or api_total_rows < 0 or persisted_rows != len(rows):
                 raise MetrikaPublishError("Metrika scope row counts are inconsistent")
@@ -326,6 +336,12 @@ def _validated_day_bundle(bundle: Any) -> tuple[int, str, str, int, dict, dict]:
                 )
                 for row in rows
             ]
+            if scope in ('user_behavior', 'returning') and any(
+                not isinstance(row.get('request_fingerprint'), str)
+                or not row['request_fingerprint'].strip()
+                for row in normalized_rows[scope]
+            ):
+                raise MetrikaPublishError("Metrika fact request fingerprint is missing")
     except MetrikaPublishError:
         raise
     except (KeyError, AttributeError, TypeError, ValueError):
@@ -392,6 +408,7 @@ def publish_metrika_day_bundle(bundle: Any) -> MetrikaPublishResult:
                     'counter_id': counter_id,
                     'scope_key': scope,
                     'report_date': report_date,
+                    'request_fingerprint': _field(result, 'request_fingerprint'),
                     'collection_status': status,
                     'api_total_rows': _field(result, 'api_total_rows'),
                     'persisted_rows': _field(result, 'persisted_rows'),
@@ -447,11 +464,14 @@ def record_metrika_day_failure(
     scope: str,
     status: str,
     error_class: str,
+    request_fingerprint: str,
 ) -> None:
     if scope not in _METRIKA_SCOPE_ORDER or status not in _METRIKA_FAILURE_STATUSES:
         raise MetrikaPublishError("Invalid Metrika failure diagnostic")
     if str(counter_id) != ABBOTT_COUNTER_ID:
         raise MetrikaPublishError("Metrika release writer accepts only the Abbott counter")
+    if not isinstance(request_fingerprint, str) or not request_fingerprint.strip():
+        raise MetrikaPublishError("Metrika request fingerprint is missing")
     failure_code = _sanitized_error_class(error_class)
     conn = None
     cur = None
@@ -464,14 +484,15 @@ def record_metrika_day_failure(
             """
             INSERT INTO report_bd.canonical_source_coverage_daily (
                 canonical_release_id, source_key, counter_id, scope_key, report_date,
-                collection_status, api_total_rows, persisted_rows,
+                request_fingerprint, collection_status, api_total_rows, persisted_rows,
                 pagination_complete, is_sampled, empty_reconciled, collector_run_id,
                 failure_code, sanitized_failure_json
             ) VALUES (
                 %s, 'yandex_metrika', %s, %s, %s,
-                %s, NULL, 0, 0, %s, 0, %s, %s, %s
+                %s, %s, NULL, 0, 0, %s, 0, %s, %s, %s
             )
             ON DUPLICATE KEY UPDATE
+                request_fingerprint = VALUES(request_fingerprint),
                 collection_status = VALUES(collection_status),
                 api_total_rows = NULL,
                 persisted_rows = 0,
@@ -487,6 +508,7 @@ def record_metrika_day_failure(
                 counter_id,
                 scope,
                 report_date,
+                request_fingerprint,
                 status,
                 int(status == 'sampled'),
                 run_id,

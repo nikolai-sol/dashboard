@@ -54,6 +54,16 @@ class AbbottSchemaContractTest(unittest.TestCase):
             ["other", "traffic", "page", "user_behavior", "returning"],
         )
 
+    def test_returning_and_coverage_persist_request_fingerprints(self):
+        sql = self._normalized(self._primary_sql())
+        for table in (
+            "canonical_fact_metrika_returning_pages_daily",
+            "canonical_source_coverage_daily",
+        ):
+            definition = sql.split(f"CREATE TABLE IF NOT EXISTS {table} (", 1)[1]
+            definition = definition.split(") ENGINE=InnoDB", 1)[0]
+            self.assertIn("request_fingerprint CHAR(64) NOT NULL", definition)
+
     def test_candidate_fact_unique_keys_are_exact(self):
         sql = self._normalized(self._primary_sql())
         for key in (
