@@ -69,7 +69,7 @@ CREATE TABLE IF NOT EXISTS portal_dataset_snapshots (
   imported_at DATETIME DEFAULT NULL,
   PRIMARY KEY (id),
   UNIQUE KEY uniq_dataset_snapshot_key (snapshot_key),
-  UNIQUE KEY uniq_dataset_snapshot_content (dataset_key, content_sha256),
+  UNIQUE KEY uniq_dataset_snapshot_content (dataset_key, source_kind, content_sha256),
   KEY idx_dataset_snapshot_period (dataset_key, period_min_date, period_max_date)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
   COMMENT='Immutable source and pre-backfill snapshot registry';
@@ -110,12 +110,15 @@ CREATE TABLE IF NOT EXISTS portal_content_catalog (
   id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
   canonical_release_id BIGINT UNSIGNED NOT NULL,
   source_snapshot_id BIGINT UNSIGNED NOT NULL,
-  normalized_url TEXT NOT NULL,
-  normalized_url_hash CHAR(64) NOT NULL,
-  normalized_path TEXT NOT NULL,
-  page_title VARCHAR(1000) DEFAULT NULL,
+  normalized_url TEXT DEFAULT NULL,
+  normalized_url_hash CHAR(64) DEFAULT NULL,
+  normalized_path TEXT DEFAULT NULL,
+  page_title VARCHAR(1000) NOT NULL,
   material_id VARCHAR(255) DEFAULT NULL,
   material_type VARCHAR(128) DEFAULT NULL,
+  source_slug VARCHAR(1000) DEFAULT NULL,
+  source_slug_hash CHAR(64) DEFAULT NULL,
+  source_row_fingerprint CHAR(64) NOT NULL,
   section_key VARCHAR(255) DEFAULT NULL,
   direction_key VARCHAR(255) DEFAULT NULL,
   published_at DATETIME DEFAULT NULL,
@@ -124,8 +127,14 @@ CREATE TABLE IF NOT EXISTS portal_content_catalog (
   created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
   updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
   PRIMARY KEY (id),
-  UNIQUE KEY uniq_content_release_url
+  UNIQUE KEY uniq_content_release_source_row
+    (canonical_release_id, source_snapshot_id, source_row_fingerprint),
+  KEY idx_content_release_url
     (canonical_release_id, source_snapshot_id, normalized_url_hash),
+  KEY idx_content_release_title_type
+    (canonical_release_id, page_title(191), material_type),
+  KEY idx_content_release_slug
+    (canonical_release_id, source_slug_hash),
   KEY idx_content_material (canonical_release_id, material_id),
   KEY idx_content_snapshot (source_snapshot_id),
   CONSTRAINT fk_content_release
@@ -133,7 +142,7 @@ CREATE TABLE IF NOT EXISTS portal_content_catalog (
   CONSTRAINT fk_content_snapshot
     FOREIGN KEY (source_snapshot_id) REFERENCES portal_dataset_snapshots(id)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
-  COMMENT='Release-scoped normalized portal URL and material dictionary';
+  COMMENT='Source-faithful release-scoped portal content and lookup catalog';
 
 CREATE TABLE IF NOT EXISTS portal_general_materials (
   id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
@@ -142,6 +151,8 @@ CREATE TABLE IF NOT EXISTS portal_general_materials (
   material_key VARCHAR(255) NOT NULL,
   material_title VARCHAR(1000) NOT NULL,
   material_type VARCHAR(128) DEFAULT NULL,
+  normalized_url TEXT DEFAULT NULL,
+  normalized_url_hash CHAR(64) DEFAULT NULL,
   normalized_path TEXT DEFAULT NULL,
   normalized_path_hash CHAR(64) DEFAULT NULL,
   direction_key VARCHAR(255) DEFAULT NULL,
@@ -152,6 +163,8 @@ CREATE TABLE IF NOT EXISTS portal_general_materials (
   PRIMARY KEY (id),
   UNIQUE KEY uniq_general_material_release
     (canonical_release_id, source_snapshot_id, material_key),
+  KEY idx_general_material_url
+    (canonical_release_id, normalized_url_hash),
   KEY idx_general_material_direction (canonical_release_id, direction_key),
   CONSTRAINT fk_general_material_release
     FOREIGN KEY (canonical_release_id) REFERENCES portal_data_releases(id),
@@ -159,6 +172,34 @@ CREATE TABLE IF NOT EXISTS portal_general_materials (
     FOREIGN KEY (source_snapshot_id) REFERENCES portal_dataset_snapshots(id)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
   COMMENT='Release-scoped non-identifying portal material metadata';
+
+CREATE TABLE IF NOT EXISTS portal_event_catalog (
+  id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
+  canonical_release_id BIGINT UNSIGNED NOT NULL,
+  source_snapshot_id BIGINT UNSIGNED NOT NULL,
+  event_title VARCHAR(1000) NOT NULL,
+  direction_key VARCHAR(500) DEFAULT NULL,
+  registration_url TEXT DEFAULT NULL,
+  registration_url_hash CHAR(64) DEFAULT NULL,
+  access_label VARCHAR(500) DEFAULT NULL,
+  source_row_fingerprint CHAR(64) NOT NULL,
+  created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+  PRIMARY KEY (id),
+  UNIQUE KEY uniq_event_catalog_source_row
+    (canonical_release_id, source_snapshot_id, source_row_fingerprint),
+  KEY idx_event_catalog_title
+    (canonical_release_id, event_title(191)),
+  KEY idx_event_catalog_direction
+    (canonical_release_id, direction_key),
+  KEY idx_event_catalog_registration
+    (canonical_release_id, registration_url_hash),
+  CONSTRAINT fk_event_catalog_release
+    FOREIGN KEY (canonical_release_id) REFERENCES portal_data_releases(id),
+  CONSTRAINT fk_event_catalog_snapshot
+    FOREIGN KEY (source_snapshot_id) REFERENCES portal_dataset_snapshots(id)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
+  COMMENT='Source-faithful workbook registration-event catalog';
 
 CREATE TABLE IF NOT EXISTS portal_external_events (
   id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
@@ -186,6 +227,34 @@ CREATE TABLE IF NOT EXISTS portal_external_events (
     FOREIGN KEY (source_snapshot_id) REFERENCES portal_dataset_snapshots(id)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
   COMMENT='Release-scoped aggregate-safe external portal events';
+
+CREATE TABLE IF NOT EXISTS portal_bitrix_journey_transitions (
+  id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
+  canonical_release_id BIGINT UNSIGNED NOT NULL,
+  source_snapshot_id BIGINT UNSIGNED NOT NULL,
+  analytics_account_id VARCHAR(128) NOT NULL DEFAULT 'abbott_bitrix',
+  report_date DATE NOT NULL,
+  from_path TEXT NOT NULL,
+  from_path_hash CHAR(64) NOT NULL,
+  to_path TEXT NOT NULL,
+  to_path_hash CHAR(64) NOT NULL,
+  transition_count BIGINT UNSIGNED NOT NULL DEFAULT 0,
+  created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+  PRIMARY KEY (id),
+  UNIQUE KEY uniq_bitrix_transition_release
+    (canonical_release_id, source_snapshot_id, analytics_account_id,
+     report_date, from_path_hash, to_path_hash),
+  KEY idx_bitrix_transition_from
+    (canonical_release_id, report_date, from_path_hash),
+  KEY idx_bitrix_transition_to
+    (canonical_release_id, report_date, to_path_hash),
+  CONSTRAINT fk_bitrix_transition_release
+    FOREIGN KEY (canonical_release_id) REFERENCES portal_data_releases(id),
+  CONSTRAINT fk_bitrix_transition_snapshot
+    FOREIGN KEY (source_snapshot_id) REFERENCES portal_dataset_snapshots(id)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
+  COMMENT='Aggregate-only Bitrix journey transitions safe for ordinary charts';
 
 CREATE TABLE IF NOT EXISTS canonical_fact_metrika_site_analytics_daily (
   id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
