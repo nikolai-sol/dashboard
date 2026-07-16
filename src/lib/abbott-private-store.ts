@@ -105,6 +105,16 @@ function metric(value: unknown): number {
   return 0;
 }
 
+function nullableMetric(value: unknown): number | null {
+  if (value === null || value === undefined || value === "") return null;
+  if (typeof value === "number" && Number.isFinite(value)) return value;
+  if (typeof value === "string" && /^\d+(?:\.\d+)?$/.test(value)) {
+    const parsed = Number(value);
+    return Number.isFinite(parsed) ? parsed : null;
+  }
+  return null;
+}
+
 function booleanOrNull(value: unknown): boolean | null {
   if (value === true || value === 1 || value === "1") return true;
   if (value === false || value === 0 || value === "0") return false;
@@ -225,9 +235,12 @@ async function requireActiveAbbottDashboard(executor: AbbottPrivateQueryExecutor
     executor,
     `SELECT id
      FROM \`report_bd\`.\`dashboards\`
-     WHERE id = ? AND dashboard_type = ? AND is_active = TRUE
+     WHERE id = ?
+       AND LOWER(TRIM(client_id)) = ?
+       AND dashboard_type = ?
+       AND is_active = TRUE
      LIMIT 2`,
-    [dashboardId, "abbott_bi"],
+    [dashboardId, ABBOTT_DATASET_KEY, "abbott_bi"],
   );
   if (rows.length !== 1 || integerId(rows[0]?.id) !== dashboardId) {
     throw storeError("INVALID_DASHBOARD", "Abbott dashboard is unavailable");
@@ -248,6 +261,12 @@ function slugFromPath(path: string): string {
   return parts.at(-1) ?? "";
 }
 
+function addUniqueLookup<T>(map: Map<string, T>, key: string, value: T): void {
+  if (!key) return;
+  if (map.has(key)) throw storeError("PRIVATE_DATA_UNAVAILABLE", PRIVATE_UNAVAILABLE_MESSAGE);
+  map.set(key, value);
+}
+
 async function loadAggregateWorkbook(
   executor: AbbottPrivateQueryExecutor,
   release: AbbottActiveRelease,
@@ -262,7 +281,7 @@ async function loadAggregateWorkbook(
   );
   const materialRows = await queryRows(
     executor,
-    `SELECT material_title, normalized_path
+    `SELECT material_title, normalized_url
      FROM \`report_bd\`.\`portal_general_materials\`
      WHERE canonical_release_id = ? AND source_snapshot_id = ?
      ORDER BY id`,
@@ -285,16 +304,18 @@ async function loadAggregateWorkbook(
     const title = text(row.page_title);
     const path = text(row.normalized_path);
     const metadata = contentMetadata(row);
-    if (title) contentByTitle.set(title, metadata);
-    if (title && metadata.material_type) contentByTitleAndType.set(`${metadata.material_type}::${title}`, metadata);
+    addUniqueLookup(contentByTitle, title, metadata);
+    if (title && metadata.material_type) {
+      addUniqueLookup(contentByTitleAndType, `${metadata.material_type}::${title}`, metadata);
+    }
     const slug = text(row.source_slug) || slugFromPath(path);
-    if (slug) contentBySlug.set(slug, metadata);
-    if (path) urlReturnDirections.set(path, metadata.direction);
+    addUniqueLookup(contentBySlug, slug, metadata);
+    addUniqueLookup(urlReturnDirections, path, metadata.direction);
   });
 
   return {
     generalMaterials: materialRows
-      .map((row) => ({ name: text(row.material_title), url: text(row.normalized_path) }))
+      .map((row) => ({ name: text(row.material_title), url: text(row.normalized_url) }))
       .filter((row) => row.name && row.url),
     externalEvents: eventRows
       .map((row) => ({
@@ -363,9 +384,21 @@ function parseBitrixRows(rows: readonly Record<string, unknown>[]): AbbottBitrix
     url: text(row.normalized_path),
     path: text(row.normalized_path),
     material_id: nullableText(row.material_id),
+    material_type_hint: nullableText(row.material_type_hint),
     pageviews: metric(row.pageviews),
     sessions: metric(row.sessions),
     users: metric(row.users),
+    guests: metric(row.guests),
+    logged_in_hits: metric(row.logged_in_hits),
+    anonymous_hits: metric(row.anonymous_hits),
+    logged_in_sessions: metric(row.logged_in_sessions),
+    anonymous_sessions: metric(row.anonymous_sessions),
+    entry_sessions: metric(row.entry_sessions),
+    exit_sessions: metric(row.exit_sessions),
+    avg_session_duration_seconds: nullableMetric(row.avg_session_duration_seconds),
+    top_utm_source: nullableText(row.top_utm_source),
+    top_utm_medium: nullableText(row.top_utm_medium),
+    top_utm_campaign: nullableText(row.top_utm_campaign),
   }));
 }
 
@@ -383,7 +416,11 @@ async function loadBitrixPagesForRelease(
       : "`report_bd`.`portal_bitrix_page_facts`";
   const rows = await queryRows(
     executor,
-    `SELECT report_date, normalized_path, material_id, pageviews, sessions, users
+    `SELECT report_date, normalized_path, material_id, material_type_hint,
+            pageviews, sessions, users, guests,
+            logged_in_hits, anonymous_hits, logged_in_sessions, anonymous_sessions,
+            entry_sessions, exit_sessions, avg_session_duration_seconds,
+            top_utm_source, top_utm_medium, top_utm_campaign
      FROM ${qualifiedTable}
      WHERE canonical_release_id = ? AND source_snapshot_id = ?
      ORDER BY report_date, normalized_path_hash`,

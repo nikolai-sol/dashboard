@@ -5,10 +5,12 @@ import {
   AbbottPrivateStoreError,
   loadActiveAbbottAggregateDataWithExecutor,
   loadActiveAbbottBitrixAnalyticsWithExecutor,
+  loadActiveAbbottSessionJourneysWithExecutor,
   loadActiveAbbottWorkbookDataWithExecutor,
   resolveActiveAbbottRelease,
   type AbbottPrivateQueryExecutor,
 } from "./abbott-private-store";
+import { ABBOTT_PRIVATE_SOURCE_KINDS } from "./abbott-private-types";
 
 type RecordedQuery = { sql: string; params: readonly unknown[] };
 
@@ -90,6 +92,21 @@ test("missing optional Bitrix pages returns an explicitly labeled empty test dum
   });
 });
 
+test("dashboard validation requires client_id normalized exactly to abbott", async () => {
+  const executor = fakeExecutor(({ sql }) => {
+    if (sql.includes("FROM `report_bd`.`dashboards`")) return [{ id: 7 }];
+    if (sql.includes("portal_active_data_releases")) return [releaseRow];
+    if (sql.includes("portal_dataset_snapshots")) return snapshotRows;
+    return [];
+  });
+
+  await loadActiveAbbottAggregateDataWithExecutor(executor, 7);
+
+  const dashboardQuery = executor.queries[0];
+  assert.match(dashboardQuery?.sql ?? "", /LOWER\(TRIM\(client_id\)\) = \?/);
+  assert.deepEqual(dashboardQuery?.params, [7, "abbott", "abbott_bi"]);
+});
+
 test("manager workbook loading preserves raw identifiers byte-for-byte", async () => {
   const rawIds = ["000123", "900719925474099312345", "doctor-A"];
   const executor = fakeExecutor(({ sql }) => {
@@ -140,9 +157,21 @@ test("manager Bitrix loading uses the private snapshot-bound page table", async 
         report_date: "2026-06-30",
         normalized_path: "/materials/example",
         material_id: "material-1",
+        material_type_hint: "article",
         pageviews: "4",
         sessions: "3",
         users: "2",
+        guests: "1",
+        logged_in_hits: "5",
+        anonymous_hits: "2",
+        logged_in_sessions: "2",
+        anonymous_sessions: "1",
+        entry_sessions: "3",
+        exit_sessions: "2",
+        avg_session_duration_seconds: "42.75",
+        top_utm_source: "email",
+        top_utm_medium: "newsletter",
+        top_utm_campaign: "launch",
       }];
     }
     return [];
@@ -155,14 +184,118 @@ test("manager Bitrix loading uses the private snapshot-bound page table", async 
     url: "/materials/example",
     path: "/materials/example",
     material_id: "material-1",
+    material_type_hint: "article",
     pageviews: 4,
     sessions: 3,
     users: 2,
+    guests: 1,
+    logged_in_hits: 5,
+    anonymous_hits: 2,
+    logged_in_sessions: 2,
+    anonymous_sessions: 1,
+    entry_sessions: 3,
+    exit_sessions: 2,
+    avg_session_duration_seconds: 42.75,
+    top_utm_source: "email",
+    top_utm_medium: "newsletter",
+    top_utm_campaign: "launch",
   });
   assert.equal(
     executor.queries.some(({ sql }) => sql.includes("`report_bd_private`.`portal_bitrix_page_facts`")),
     true,
   );
+});
+
+test("workbook loading uses normalized general-material URLs", async () => {
+  const executor = fakeExecutor(({ sql }) => {
+    if (sql.includes("FROM `report_bd`.`dashboards`")) return [{ id: 7 }];
+    if (sql.includes("portal_active_data_releases")) return [releaseRow];
+    if (sql.includes("portal_dataset_snapshots")) return snapshotRows;
+    if (sql.includes("portal_general_materials")) {
+      return [{ material_title: "Guide", normalized_url: "https://abbott.example/guide" }];
+    }
+    return [];
+  });
+
+  const result = await loadActiveAbbottWorkbookDataWithExecutor(executor, 7);
+  const materialQuery = executor.queries.find(({ sql }) => sql.includes("portal_general_materials"));
+
+  assert.match(materialQuery?.sql ?? "", /SELECT material_title, normalized_url/);
+  assert.deepEqual(result.generalMaterials, [{ name: "Guide", url: "https://abbott.example/guide" }]);
+});
+
+test("workbook loading rejects every ambiguous content lookup key", async () => {
+  const collisionRows = {
+    title: [
+      { page_title: "Shared", material_type: "article", source_slug: "one", normalized_path: "/one" },
+      { page_title: "Shared", material_type: "video", source_slug: "two", normalized_path: "/two" },
+    ],
+    titleAndType: [
+      { page_title: "Shared", material_type: "article", source_slug: "one", normalized_path: "/one" },
+      { page_title: "Shared", material_type: "article", source_slug: "two", normalized_path: "/two" },
+    ],
+    slug: [
+      { page_title: "One", material_type: "article", source_slug: "shared", normalized_path: "/one" },
+      { page_title: "Two", material_type: "video", source_slug: "shared", normalized_path: "/two" },
+    ],
+    path: [
+      { page_title: "One", material_type: "article", source_slug: "one", normalized_path: "/shared" },
+      { page_title: "Two", material_type: "video", source_slug: "two", normalized_path: "/shared" },
+    ],
+  } as const;
+
+  for (const rows of Object.values(collisionRows)) {
+    const executor = fakeExecutor(({ sql }) => {
+      if (sql.includes("FROM `report_bd`.`dashboards`")) return [{ id: 7 }];
+      if (sql.includes("portal_active_data_releases")) return [releaseRow];
+      if (sql.includes("portal_dataset_snapshots")) return snapshotRows;
+      if (sql.includes("portal_content_catalog")) return rows;
+      return [];
+    });
+
+    await assert.rejects(
+      loadActiveAbbottWorkbookDataWithExecutor(executor, 7),
+      (error: unknown) =>
+        error instanceof AbbottPrivateStoreError &&
+        error.code === "PRIVATE_DATA_UNAVAILABLE" &&
+        error.message === "Abbott private data is unavailable",
+    );
+  }
+});
+
+test("manager journey loading groups ordered events and preserves protected identifiers", async () => {
+  const executor = fakeExecutor(({ sql }) => {
+    if (sql.includes("FROM `report_bd`.`dashboards`")) return [{ id: 7 }];
+    if (sql.includes("portal_active_data_releases")) return [releaseRow];
+    if (sql.includes("portal_dataset_snapshots")) return snapshotRows;
+    if (sql.includes("portal_bitrix_journeys_private")) {
+      return [
+        { report_date: "2026-06-30", protected_visit_id: "00009007199254740993", raw_user_id: "000123", event_sequence: "0", event_at: "2026-06-30 10:00:00", normalized_path: "/one", event_kind: "pageview" },
+        { report_date: "2026-06-30", protected_visit_id: "00009007199254740993", raw_user_id: "000123", event_sequence: "1", event_at: "2026-06-30 10:01:00", normalized_path: "/two", event_kind: "pageview" },
+      ];
+    }
+    return [];
+  });
+
+  const result = await loadActiveAbbottSessionJourneysWithExecutor(executor, 7);
+
+  assert.equal(result.source.snapshot_id, 14);
+  assert.deepEqual(result.rows, [{
+    protected_visit_id: "00009007199254740993",
+    raw_user_id: "000123",
+    report_date: "2026-06-30",
+    events: [
+      { sequence: 0, event_at: "2026-06-30 10:00:00", normalized_path: "/one", event_kind: "pageview" },
+      { sequence: 1, event_at: "2026-06-30 10:01:00", normalized_path: "/two", event_kind: "pageview" },
+    ],
+  }]);
+  assert.deepEqual(ABBOTT_PRIVATE_SOURCE_KINDS, {
+    workbookJson: "abbott_workbook_json",
+    workbookCatalog: "abbott_workbook_catalog",
+    bitrixPages: "abbott_bitrix_pages",
+    bitrixJourneys: "abbott_bitrix_journeys",
+  });
+  assert.deepEqual(executor.queries.at(-1)?.params, [41, 14]);
 });
 
 test("store queries match the rollout-safe aggregate schema columns", async () => {
@@ -180,7 +313,10 @@ test("store queries match the rollout-safe aggregate schema columns", async () =
   const sql = executor.queries.map((query) => query.sql).join("\n");
 
   assert.match(sql, /source_slug, access_label, is_active/);
-  assert.match(sql, /pageviews, sessions, users/);
+  assert.match(sql, /material_type_hint,\s+pageviews, sessions, users, guests/);
+  assert.match(sql, /logged_in_hits, anonymous_hits, logged_in_sessions, anonymous_sessions/);
+  assert.match(sql, /entry_sessions, exit_sessions, avg_session_duration_seconds/);
+  assert.match(sql, /top_utm_source, top_utm_medium, top_utm_campaign/);
   assert.doesNotMatch(sql, /\bvisits\b|unique_visitors/);
   assert.match(sql, /SELECT report_date, from_path, to_path, transition_count/);
   assert.deepEqual(result.journeyTransitions.rows, [{

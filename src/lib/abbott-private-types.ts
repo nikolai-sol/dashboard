@@ -71,9 +71,21 @@ export interface AbbottBitrixPageFact {
   url: string;
   path: string;
   material_id: string | null;
+  material_type_hint: string | null;
   pageviews: number;
   sessions: number;
   users: number;
+  guests: number;
+  logged_in_hits: number;
+  anonymous_hits: number;
+  logged_in_sessions: number;
+  anonymous_sessions: number;
+  entry_sessions: number;
+  exit_sessions: number;
+  avg_session_duration_seconds: number | null;
+  top_utm_source: string | null;
+  top_utm_medium: string | null;
+  top_utm_campaign: string | null;
 }
 
 export interface AbbottBitrixSnapshotSummary {
