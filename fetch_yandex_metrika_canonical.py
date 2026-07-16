@@ -26,6 +26,7 @@ from canonical_writer import (
     upsert_fact_user_behavior_daily,
     upsert_source_accounts,
 )
+from metrika_pagination import collect_all_rows
 
 load_dotenv(Path(__file__).parent / '.env')
 
@@ -374,6 +375,31 @@ def request_with_retry(
         time.sleep(max(sleep_for, retry_after_seconds))
         sleep_for = min(sleep_for * 2, 60)
     raise RuntimeError(f'Metrika retry loop exhausted for counter {counter_id} day {day}')
+
+
+def request_all_rows(
+    counter_id: str,
+    day: str,
+    *,
+    dimensions: str,
+    metrics: str,
+    attribution: str,
+    extra_params: dict[str, Any] | None = None,
+) -> dict:
+    def fetch_page(offset: int) -> dict:
+        page_params = dict(extra_params or {})
+        page_params.update({'limit': '10000', 'offset': str(offset)})
+        return request_with_retry(
+            counter_id,
+            day,
+            dimensions=dimensions,
+            metrics=metrics,
+            attribution=attribution,
+            extra_params=page_params,
+        )
+
+    rows = collect_all_rows(fetch_page)
+    return {'data': rows}
 
 
 def extract_rows(data: dict) -> list[dict]:
@@ -775,7 +801,7 @@ def build_payload(counters: list[dict], date_from: str, date_to: str, run_id: in
                     metrics=METRIKA_TRAFFIC_SOURCES_METRICS,
                     attribution=METRIKA_ATTRIBUTION,
                 )
-                pages_response = request_with_retry(
+                pages_response = request_all_rows(
                     counter_id,
                     day,
                     dimensions=METRIKA_PAGES_DIMS,
