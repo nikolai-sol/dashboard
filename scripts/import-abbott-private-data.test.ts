@@ -6,6 +6,7 @@ import test from "node:test";
 import * as XLSX from "xlsx";
 import {
   assertPrivateImportPath,
+  canonicalPersistedRowFingerprint,
   canonicalRowFingerprint,
   normalizeAbbottUrl,
   parseBitrixJourneyPayload,
@@ -209,11 +210,14 @@ test("prepared sources use store source kinds and persist XLSX metadata plus bot
             assert.equal(row[fingerprintIndex], fingerprint);
             assert.equal(
               fingerprint,
-              canonicalRowFingerprint(row.filter((_value, columnIndex) => columnIndex !== fingerprintIndex)),
+              canonicalPersistedRowFingerprint(
+                batch.columns.filter((_column, columnIndex) => columnIndex !== fingerprintIndex),
+                row.filter((_value, columnIndex) => columnIndex !== fingerprintIndex),
+              ),
             );
           } else {
             assert.deepEqual(batch.verificationColumns, batch.columns);
-            assert.equal(fingerprint, canonicalRowFingerprint(row));
+            assert.equal(fingerprint, canonicalPersistedRowFingerprint(batch.columns, row));
           }
         });
       }
@@ -485,8 +489,12 @@ test("transaction is checksum-idempotent only when the current release rows veri
       }
       if (compact.startsWith("SELECT COUNT(*)")) return [[{ row_count: 1 }], []];
       if (compact.startsWith("SELECT raw_user_id FROM")) return [[{ raw_user_id: "000123" }], []];
+      const expectedFingerprint = canonicalPersistedRowFingerprint(["pageviews"], [2]);
       if (compact.startsWith("SELECT source_row_fingerprint")) {
-        return [[{ fingerprint: canonicalRowFingerprint([3]) }], []];
+        return [[{ fingerprint: expectedFingerprint }], []];
+      }
+      if (compact.startsWith("SELECT pageviews, source_row_fingerprint")) {
+        return [[{ pageviews: 3, source_row_fingerprint: expectedFingerprint }], []];
       }
       return [[], []];
     },
@@ -498,13 +506,56 @@ test("transaction is checksum-idempotent only when the current release rows veri
       batches: [{
         table: "report_bd.portal_bitrix_page_facts",
         columns: ["pageviews", "source_row_fingerprint"],
-        rows: [[2, canonicalRowFingerprint([2])]],
-        fingerprints: [canonicalRowFingerprint([2])],
+        rows: [[2, canonicalPersistedRowFingerprint(["pageviews"], [2])]],
+        fingerprints: [canonicalPersistedRowFingerprint(["pageviews"], [2])],
         fingerprintColumn: "source_row_fingerprint",
       }],
     })]),
     /import failed/i,
   );
+
+  const normalizedColumns = ["report_date", "avg_session_duration_seconds", "material_id"];
+  const normalizedFingerprint = canonicalPersistedRowFingerprint(
+    normalizedColumns,
+    ["2026-05-20", 1.5, null],
+  );
+  const normalizedTypesConnection: AbbottImportConnection = {
+    beginTransaction: async () => undefined,
+    execute: async (sql) => {
+      const compact = sql.replace(/\s+/g, " ").trim();
+      if (compact.includes("FROM report_bd.portal_data_releases")) {
+        return [[{ id: 77, dataset_key: "abbott", release_status: "staging", source_snapshot_ids: "[]" }], []];
+      }
+      if (compact.includes("FROM report_bd.portal_dataset_snapshots")) {
+        return [[{ id: 44, import_status: "imported", imported_row_count: 1 }], []];
+      }
+      if (compact.startsWith("SELECT COUNT(*)")) return [[{ row_count: 1 }], []];
+      if (compact.startsWith("SELECT source_row_fingerprint")) {
+        return [[{ fingerprint: normalizedFingerprint }], []];
+      }
+      if (compact.startsWith("SELECT report_date, avg_session_duration_seconds, material_id, source_row_fingerprint")) {
+        return [[{
+          report_date: new Date("2026-05-20T00:00:00.000Z"),
+          avg_session_duration_seconds: "1.500000",
+          material_id: null,
+          source_row_fingerprint: normalizedFingerprint,
+        }], []];
+      }
+      return [[], []];
+    },
+    commit: async () => undefined,
+    rollback: async () => undefined,
+  };
+  const normalizedResult = await runAbbottImportTransaction(normalizedTypesConnection, 77, [source({
+    batches: [{
+      table: "report_bd.portal_bitrix_page_facts",
+      columns: [...normalizedColumns, "source_row_fingerprint"],
+      rows: [["2026-05-20", 1.5, null, normalizedFingerprint]],
+      fingerprints: [normalizedFingerprint],
+      fingerprintColumn: "source_row_fingerprint",
+    }],
+  })]);
+  assert.deepEqual(normalizedResult.idempotentKinds, ["abbott_workbook_json"]);
 
   const unexpectedRowsConnection: AbbottImportConnection = {
     beginTransaction: async () => undefined,

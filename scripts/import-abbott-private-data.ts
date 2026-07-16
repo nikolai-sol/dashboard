@@ -131,6 +131,88 @@ export function canonicalRowFingerprint(fields: readonly unknown[]): string {
   return hash.digest("hex");
 }
 
+const INTEGER_FINGERPRINT_COLUMNS = new Set([
+  "pageviews", "sessions", "users", "guests", "logged_in_hits", "anonymous_hits",
+  "logged_in_sessions", "anonymous_sessions", "entry_sessions", "exit_sessions",
+  "event_sequence", "transition_count",
+]);
+const DECIMAL_FINGERPRINT_COLUMNS = new Set(["avg_session_duration_seconds"]);
+const BOOLEAN_FINGERPRINT_COLUMNS = new Set(["is_active"]);
+const DATE_FINGERPRINT_COLUMNS = new Set(["report_date"]);
+const DATETIME_FINGERPRINT_COLUMNS = new Set(["event_at", "published_at", "valid_from", "valid_to"]);
+const JSON_FINGERPRINT_COLUMNS = new Set(["metadata_json"]);
+
+function canonicalDecimal(value: unknown): string {
+  const raw = String(value).trim();
+  const match = raw.match(/^([+-]?)(\d+)(?:\.(\d*))?(?:[eE]([+-]?\d+))?$/);
+  if (!match) return raw;
+  const sign = match[1] === "-" ? "-" : "";
+  const integer = match[2] ?? "0";
+  const fraction = match[3] ?? "";
+  const exponent = Number(match[4] ?? 0);
+  if (!Number.isSafeInteger(exponent)) return raw;
+  const digits = `${integer}${fraction}`;
+  const decimalIndex = integer.length + exponent;
+  const expanded = decimalIndex <= 0
+    ? `0.${"0".repeat(-decimalIndex)}${digits}`
+    : decimalIndex >= digits.length
+      ? `${digits}${"0".repeat(decimalIndex - digits.length)}`
+      : `${digits.slice(0, decimalIndex)}.${digits.slice(decimalIndex)}`;
+  const [expandedInteger = "0", expandedFraction = ""] = expanded.split(".");
+  const normalizedInteger = expandedInteger.replace(/^0+(?=\d)/, "") || "0";
+  const normalizedFraction = expandedFraction.replace(/0+$/, "");
+  const normalized = normalizedFraction ? `${normalizedInteger}.${normalizedFraction}` : normalizedInteger;
+  return normalized === "0" ? "0" : `${sign}${normalized}`;
+}
+
+function stableJson(value: unknown): string {
+  if (value === null || value === undefined) return "";
+  let decoded = value;
+  if (typeof value === "string") {
+    try {
+      decoded = JSON.parse(value);
+    } catch {
+      return value;
+    }
+  }
+  const sortValue = (candidate: unknown): unknown => {
+    if (Array.isArray(candidate)) return candidate.map(sortValue);
+    if (!candidate || typeof candidate !== "object" || candidate instanceof Date) return candidate;
+    return Object.fromEntries(
+      Object.entries(candidate as Record<string, unknown>)
+        .sort(([left], [right]) => left.localeCompare(right))
+        .map(([key, nested]) => [key, sortValue(nested)]),
+    );
+  };
+  return JSON.stringify(sortValue(decoded));
+}
+
+function canonicalPersistedValue(column: string, value: unknown): unknown {
+  if (value === null || value === undefined) return null;
+  if (INTEGER_FINGERPRINT_COLUMNS.has(column) || DECIMAL_FINGERPRINT_COLUMNS.has(column)) {
+    return canonicalDecimal(value);
+  }
+  if (BOOLEAN_FINGERPRINT_COLUMNS.has(column)) {
+    if (value === true || value === 1 || value === "1" || String(value).toLowerCase() === "true") return "1";
+    if (value === false || value === 0 || value === "0" || String(value).toLowerCase() === "false") return "0";
+  }
+  if (DATE_FINGERPRINT_COLUMNS.has(column)) {
+    if (value instanceof Date) return value.toISOString().slice(0, 10);
+    return String(value).slice(0, 10);
+  }
+  if (DATETIME_FINGERPRINT_COLUMNS.has(column)) {
+    if (value instanceof Date) return value.toISOString().slice(0, 19).replace("T", " ");
+    return String(value).trim().replace("T", " ").replace(/(?:\.\d+)?Z$/, "").slice(0, 19);
+  }
+  if (JSON_FINGERPRINT_COLUMNS.has(column)) return stableJson(value);
+  return String(value);
+}
+
+export function canonicalPersistedRowFingerprint(columns: readonly string[], values: readonly unknown[]): string {
+  if (columns.length !== values.length) throw new Error("Persisted fingerprint column/value width mismatch");
+  return canonicalRowFingerprint(values.map((value, index) => canonicalPersistedValue(columns[index]!, value)));
+}
+
 export function normalizeAbbottUrl(rawValue: unknown): string {
   const raw = text(rawValue).replaceAll("&amp;", "&");
   if (!raw) return "";
@@ -420,7 +502,13 @@ export function parseBitrixPagePayload(payload: unknown) {
       parsed.anonymousHits, parsed.loggedInSessions, parsed.anonymousSessions, parsed.entrySessions, parsed.exitSessions,
       parsed.averageSessionSeconds, parsed.topUtmSource, parsed.topUtmMedium, parsed.topUtmCampaign,
     ];
-    rows.push({ ...parsed, sourceFingerprint: canonicalRowFingerprint(persistedValues) });
+    const persistedColumns = [
+      "analytics_account_id", "report_date", "normalized_path", "normalized_path_hash", "material_id",
+      "material_type_hint", "pageviews", "sessions", "users", "guests", "logged_in_hits", "anonymous_hits",
+      "logged_in_sessions", "anonymous_sessions", "entry_sessions", "exit_sessions",
+      "avg_session_duration_seconds", "top_utm_source", "top_utm_medium", "top_utm_campaign",
+    ];
+    rows.push({ ...parsed, sourceFingerprint: canonicalPersistedRowFingerprint(persistedColumns, persistedValues) });
   }
   if (rows.length === 0) throw new Error("Bitrix page payload has no daily rows");
   const sourceHitRows = requiredManifestCount(completeness, "source_hit_rows", "Bitrix page payload");
@@ -499,10 +587,17 @@ export function parseBitrixJourneyPayload(payload: unknown) {
       normalizedPathHash,
       eventKind,
       targetKeyFingerprint,
-      sourceFingerprint: canonicalRowFingerprint([
-        "abbott_bitrix", reportDate, rawUserId, rawUserIdHash, protectedVisitId, protectedVisitIdHash,
-        sourceEventId, sourceEventIdHash, eventSequence, eventAt, pathValue, normalizedPathHash, eventKind,
-      ]),
+      sourceFingerprint: canonicalPersistedRowFingerprint(
+        [
+          "analytics_account_id", "report_date", "raw_user_id", "raw_user_id_hash", "protected_visit_id",
+          "protected_visit_id_hash", "source_event_id", "source_event_id_hash", "event_sequence", "event_at",
+          "normalized_path", "normalized_path_hash", "event_kind",
+        ],
+        [
+          "abbott_bitrix", reportDate, rawUserId, rawUserIdHash, protectedVisitId, protectedVisitIdHash,
+          sourceEventId, sourceEventIdHash, eventSequence, eventAt, pathValue, normalizedPathHash, eventKind,
+        ],
+      ),
     };
     rows.push(parsed);
     const visitKey = canonicalRowFingerprint([reportDate, protectedVisitId]);
@@ -597,10 +692,11 @@ function assertBatchFingerprintContract(batch: ImportBatch): void {
     assertIdentifier(batch.fingerprintColumn);
     const fingerprintIndex = batch.columns.indexOf(batch.fingerprintColumn);
     if (fingerprintIndex < 0 || batch.verificationColumns) throw new Error("Invalid persisted fingerprint verification");
+    const persistedColumns = batch.columns.filter((_column, columnIndex) => columnIndex !== fingerprintIndex);
     batch.rows.forEach((row, index) => {
       if (row[fingerprintIndex] !== batch.fingerprints[index]) throw new Error("Persisted fingerprint does not match import row");
       const persistedFields = row.filter((_value, columnIndex) => columnIndex !== fingerprintIndex);
-      if (canonicalRowFingerprint(persistedFields) !== batch.fingerprints[index]) {
+      if (canonicalPersistedRowFingerprint(persistedColumns, persistedFields) !== batch.fingerprints[index]) {
         throw new Error("Persisted fingerprint does not cover all persisted columns");
       }
     });
@@ -611,7 +707,7 @@ function assertBatchFingerprintContract(batch: ImportBatch): void {
   }
   batch.verificationColumns.forEach(assertIdentifier);
   batch.rows.forEach((row, index) => {
-    if (canonicalRowFingerprint(row) !== batch.fingerprints[index]) {
+    if (canonicalPersistedRowFingerprint(batch.columns, row) !== batch.fingerprints[index]) {
       throw new Error("Import row fingerprint does not cover all persisted columns");
     }
   });
@@ -635,11 +731,19 @@ async function verifyBatch(
   if (actualCount !== batch.rows.length) throw new Error("Imported row count verification failed");
   if (batch.fingerprintColumn) {
     assertIdentifier(batch.fingerprintColumn);
-    const fingerprintResult = await connection.execute(
-      `SELECT ${batch.fingerprintColumn} AS fingerprint FROM ${batch.table} WHERE canonical_release_id = ? AND source_snapshot_id = ? ORDER BY ${batch.fingerprintColumn}`,
+    const fingerprintIndex = batch.columns.indexOf(batch.fingerprintColumn);
+    const persistedColumns = batch.columns.filter((_column, columnIndex) => columnIndex !== fingerprintIndex);
+    const rowResult = await connection.execute(
+      `SELECT ${batch.columns.join(", ")} FROM ${batch.table} WHERE canonical_release_id = ? AND source_snapshot_id = ? ORDER BY ${batch.fingerprintColumn}`,
       [canonicalReleaseId, snapshotId],
     );
-    const actual = rowsFromResult(fingerprintResult).map((row) => String(row.fingerprint)).sort();
+    const actual = rowsFromResult(rowResult).map((row) => {
+      const evidence = String(row[batch.fingerprintColumn!]);
+      const persistedValues = persistedColumns.map((column) => row[column]);
+      const recomputed = canonicalPersistedRowFingerprint(persistedColumns, persistedValues);
+      if (evidence !== recomputed) throw new Error("Persisted fingerprint evidence does not match row content");
+      return recomputed;
+    }).sort();
     const expected = [...batch.fingerprints].sort();
     if (JSON.stringify(actual) !== JSON.stringify(expected)) throw new Error("Imported fingerprint verification failed");
   } else {
@@ -649,7 +753,10 @@ async function verifyBatch(
       [canonicalReleaseId, snapshotId],
     );
     const actual = rowsFromResult(rowResult)
-      .map((row) => canonicalRowFingerprint(verificationColumns.map((column) => row[column])))
+      .map((row) => canonicalPersistedRowFingerprint(
+        verificationColumns,
+        verificationColumns.map((column) => row[column]),
+      ))
       .sort();
     const expected = [...batch.fingerprints].sort();
     if (JSON.stringify(actual) !== JSON.stringify(expected)) throw new Error("Imported fingerprint verification failed");
@@ -978,7 +1085,10 @@ function workbookJsonSource(parsed: ReturnType<typeof parseWorkbookJson>, source
     row.registrationUrl,
     sha256(row.registrationUrl),
     row.access,
-    canonicalRowFingerprint([row.eventTitle, row.direction, row.registrationUrl, sha256(row.registrationUrl), row.access]),
+    canonicalPersistedRowFingerprint(
+      ["event_title", "direction_key", "registration_url", "registration_url_hash", "access_label"],
+      [row.eventTitle, row.direction, row.registrationUrl, sha256(row.registrationUrl), row.access],
+    ),
   ]);
   const importedRowCount = directionRows.length + materialRows.length + eventRows.length;
   return withSourceMetadata("abbott_workbook_json", sourcePath, bytes, archiveLocator, options, {
@@ -994,14 +1104,20 @@ function workbookJsonSource(parsed: ReturnType<typeof parseWorkbookJson>, source
         table: `${PRIVATE_SCHEMA}.portal_user_directions_private`,
         columns: ["raw_user_id", "raw_user_id_hash", "normalized_direction", "normalized_specialization"],
         rows: directionRows,
-        fingerprints: directionRows.map((row) => canonicalRowFingerprint(row)),
+        fingerprints: directionRows.map((row) => canonicalPersistedRowFingerprint(
+          ["raw_user_id", "raw_user_id_hash", "normalized_direction", "normalized_specialization"],
+          row,
+        )),
         verificationColumns: ["raw_user_id", "raw_user_id_hash", "normalized_direction", "normalized_specialization"],
       },
       {
         table: `${PRIMARY_SCHEMA}.portal_general_materials`,
         columns: ["material_key", "material_title", "material_type", "normalized_url", "normalized_url_hash", "normalized_path", "normalized_path_hash", "direction_key", "published_at", "metadata_json"],
         rows: materialRows,
-        fingerprints: materialRows.map((row) => canonicalRowFingerprint(row)),
+        fingerprints: materialRows.map((row) => canonicalPersistedRowFingerprint(
+          ["material_key", "material_title", "material_type", "normalized_url", "normalized_url_hash", "normalized_path", "normalized_path_hash", "direction_key", "published_at", "metadata_json"],
+          row,
+        )),
         verificationColumns: ["material_key", "material_title", "material_type", "normalized_url", "normalized_url_hash", "normalized_path", "normalized_path_hash", "direction_key", "published_at", "metadata_json"],
       },
       {
@@ -1022,7 +1138,10 @@ function workbookXlsxSource(parsed: ReturnType<typeof parseWorkbookXlsx>, source
       row.sourceSlug ? sha256(row.sourceSlug) : null, row.access, row.isActive,
       null, row.direction, null, "1970-01-01 00:00:00", null,
     ];
-    const sourceFingerprint = canonicalRowFingerprint(persistedFields);
+    const sourceFingerprint = canonicalPersistedRowFingerprint(
+      ["normalized_url", "normalized_url_hash", "normalized_path", "page_title", "material_id", "material_type", "source_slug", "source_slug_hash", "access_label", "is_active", "section_key", "direction_key", "published_at", "valid_from", "valid_to"],
+      persistedFields,
+    );
     return [...persistedFields.slice(0, 10), sourceFingerprint, ...persistedFields.slice(10)];
   });
   return withSourceMetadata("abbott_workbook_catalog", sourcePath, bytes, archiveLocator, options, {
@@ -1107,7 +1226,10 @@ function bitrixJourneySource(parsed: ReturnType<typeof parseBitrixJourneyPayload
         table: `${PRIMARY_SCHEMA}.portal_bitrix_journey_transitions`,
         columns: ["analytics_account_id", "report_date", "from_path", "from_path_hash", "to_path", "to_path_hash", "transition_count"],
         rows: transitions,
-        fingerprints: transitions.map((row) => canonicalRowFingerprint(row)),
+        fingerprints: transitions.map((row) => canonicalPersistedRowFingerprint(
+          ["analytics_account_id", "report_date", "from_path", "from_path_hash", "to_path", "to_path_hash", "transition_count"],
+          row,
+        )),
         verificationColumns: ["analytics_account_id", "report_date", "from_path", "from_path_hash", "to_path", "to_path_hash", "transition_count"],
         countsTowardImportedRows: false,
       },
