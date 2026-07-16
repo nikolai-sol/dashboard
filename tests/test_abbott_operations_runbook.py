@@ -43,6 +43,8 @@ class AbbottOperationsRunbookTest(unittest.TestCase):
         self.assertIn(".next/standalone/.next/static", deploy_gate)
         self.assertIn(".next/standalone/public", deploy_gate)
         self.assertIn("security:public-assets -- --release", deploy_gate)
+        self.assertIn("validate-production-release.sh", deploy_gate)
+        self.assertIn('install -m 600 "$DASHBOARD_OWNER_ENV_FILE"', deploy_gate)
         self.assertIn("sha256sum -c", deploy_gate)
         self.assertNotIn("Run the owner-approved deployment procedure", deploy_gate)
 

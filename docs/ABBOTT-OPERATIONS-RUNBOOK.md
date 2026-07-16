@@ -522,7 +522,12 @@ cp -a "$DASHBOARD_SOURCE_ROOT/.next/static/." \
 install -d "$DASHBOARD_SOURCE_ROOT/.next/standalone/public"
 cp -a "$DASHBOARD_SOURCE_ROOT/public/." \
   "$DASHBOARD_SOURCE_ROOT/.next/standalone/public/"
+install -m 600 "$DASHBOARD_OWNER_ENV_FILE" \
+  "$DASHBOARD_SOURCE_ROOT/.next/standalone/.env"
 npm run security:public-assets -- --release "$DASHBOARD_SOURCE_ROOT/.next/standalone"
+bash scripts/validate-production-release.sh \
+  "$DASHBOARD_SOURCE_ROOT/.next/standalone" \
+  "$DASHBOARD_SOURCE_ROOT/.next/standalone/.env"
 export DASHBOARD_RELEASES_DIR=/var/www/dashboard-releases
 test ! -e "$DASHBOARD_RUNTIME_ROOT" || test -L "$DASHBOARD_RUNTIME_ROOT"
 bash scripts/install-reviewed-release.sh \
