@@ -64,12 +64,6 @@ while IFS= read -r raw_line; do
   key="${line%%=*}"
   value="${line#*=}"
 
-  if [[ "$value" == '"'*'"' ]]; then
-    value="${value:1:${#value}-2}"
-  elif [[ "$value" == "'"*"'" ]]; then
-    value="${value:1:${#value}-2}"
-  fi
-
   case "$key" in
     MYSQL_PORT) MYSQL_PORT_VALUE="$value" ;;
     MYSQL_USER) MYSQL_USER_VALUE="$value" ;;
@@ -133,8 +127,17 @@ missing_keys=()
 require_value() {
   local key_name="$1"
   local key_value="$2"
+  local semantic_value="$key_value"
 
-  if [[ -z "$key_value" ]]; then
+  semantic_value="${semantic_value#"${semantic_value%%[![:space:]]*}"}"
+  semantic_value="${semantic_value%"${semantic_value##*[![:space:]]}"}"
+  if [[ "$semantic_value" == '"'*'"' || "$semantic_value" == "'"*"'" ]]; then
+    semantic_value="${semantic_value:1:${#semantic_value}-2}"
+  else
+    semantic_value="${semantic_value%%#*}"
+  fi
+
+  if [[ ! "$semantic_value" =~ [^[:space:]] ]]; then
     missing_keys+=("$key_name")
   fi
 }

@@ -13,13 +13,20 @@ test("Abbott defaults to current month through yesterday", () => {
 test("Abbott calculates the business date independently of the browser timezone", () => {
   assert.deepEqual(defaultAbbottRange(new Date("2026-06-30T21:30:00Z"), "Europe/Moscow"), {
     from: "2026-07-01",
-    to: "2026-06-30",
+    to: "2026-07-01",
   });
 });
 
 test("Abbott range accepts a configured business timezone", () => {
   assert.deepEqual(defaultAbbottRange(new Date("2026-07-01T23:30:00Z"), "America/New_York"), {
     from: "2026-07-01",
-    to: "2026-06-30",
+    to: "2026-07-01",
   });
+});
+
+test("Abbott default range is never inverted on the first business day of a month", () => {
+  const range = defaultAbbottRange(new Date("2026-11-01T09:00:00Z"), "Europe/Moscow");
+
+  assert.deepEqual(range, { from: "2026-11-01", to: "2026-11-01" });
+  assert.ok(range.from <= range.to);
 });

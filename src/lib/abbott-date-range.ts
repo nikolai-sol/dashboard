@@ -21,8 +21,12 @@ export function defaultAbbottRange(
   timeZone = ABBOTT_BUSINESS_TIME_ZONE,
 ): { from: string; to: string } {
   const today = zonedCalendarDate(now, timeZone);
+  const from = isoDate(today.year, today.month, 1);
+  const yesterday = isoDate(today.year, today.month, today.day - 1);
   return {
-    from: isoDate(today.year, today.month, 1),
-    to: isoDate(today.year, today.month, today.day - 1),
+    from,
+    // On the month's first business date there is no completed current-month day.
+    // Keep the request valid by selecting today's incomplete first-day range.
+    to: yesterday < from ? from : yesterday,
   };
 }

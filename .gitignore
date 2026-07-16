@@ -20,21 +20,26 @@
 # production
 /build
 
-# Abbott private source artifacts must never be web-served. Ordinary images remain allowed.
-/public/[aA][bB][bB][oO][tT][tT]/**/*.[jJ][sS][oO][nN]
-/public/[aA][bB][bB][oO][tT][tT]/**/*.[xX][lL][sS]
-/public/[aA][bB][bB][oO][tT][tT]/**/*.[xX][lL][sS][xX]
-/public/[aA][bB][bB][oO][tT][tT]/**/*.[cC][sS][vV]
-/public/[aA][bB][bB][oO][tT][tT]/**/*.[sS][qQ][lL]
-/public/[aA][bB][bB][oO][tT][tT]/**/*.[zZ][iI][pP]
-/public/[aA][bB][bB][oO][tT][tT]/**/*.[tT][aA][rR]
-/public/[aA][bB][bB][oO][tT][tT]/**/*.[tT][aA][rR].[gG][zZ]
-/public/[aA][bB][bB][oO][tT][tT]/**/*.[tT][gG][zZ]
-/public/[aA][bB][bB][oO][tT][tT]/**/*.[gG][zZ]
-/public/[aA][bB][bB][oO][tT][tT]/**/*.[bB][zZ]2
-/public/[aA][bB][bB][oO][tT][tT]/**/*.[xX][zZ]
-/public/[aA][bB][bB][oO][tT][tT]/**/*.[7][zZ]
-/public/[aA][bB][bB][oO][tT][tT]/**/*.[rR][aA][rR]
+# Local private import/archive inputs. Public paths are intentionally never ignored.
+/.private/
+/private-imports/
+/private-archives/
+/abbott-private-imports/
+/abbott-private-archives/
+/*[aA][bB][bB][oO][tT][tT]*.[jJ][sS][oO][nN]
+/*[aA][bB][bB][oO][tT][tT]*.[xX][lL][sS]
+/*[aA][bB][bB][oO][tT][tT]*.[xX][lL][sS][xX]
+/*[aA][bB][bB][oO][tT][tT]*.[cC][sS][vV]
+/*[aA][bB][bB][oO][tT][tT]*.[sS][qQ][lL]
+/*[aA][bB][bB][oO][tT][tT]*.[zZ][iI][pP]
+/*[aA][bB][bB][oO][tT][tT]*.[tT][aA][rR]
+/*[aA][bB][bB][oO][tT][tT]*.[tT][aA][rR].[gG][zZ]
+/*[aA][bB][bB][oO][tT][tT]*.[tT][gG][zZ]
+/*[aA][bB][bB][oO][tT][tT]*.[gG][zZ]
+/*[aA][bB][bB][oO][tT][tT]*.[bB][zZ]2
+/*[aA][bB][bB][oO][tT][tT]*.[xX][zZ]
+/*[aA][bB][bB][oO][tT][tT]*.7[zZ]
+/*[aA][bB][bB][oO][tT][tT]*.[rR][aA][rR]
 
 # misc
 .DS_Store
