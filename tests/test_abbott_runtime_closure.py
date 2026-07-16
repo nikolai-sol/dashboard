@@ -191,6 +191,75 @@ class AbbottRuntimeClosureTest(unittest.TestCase):
                 with self.assertRaises(launcher.ActiveReleaseLaunchError):
                     launcher.attest_runtime(root, revision, manifest)
 
+    def test_standard_symlink_venv_fails_with_copies_remediation(self):
+        import run_abbott_metrika_active_release as launcher
+
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            revision, manifest = self._committed_runtime(root)
+            (root / ".gitignore").write_text("venv/\n", encoding="utf-8")
+            subprocess.run(["git", "add", ".gitignore"], cwd=root, check=True)
+            subprocess.run(["git", "commit", "-qm", "ignore venv"], cwd=root, check=True)
+            revision = subprocess.run(
+                ["git", "rev-parse", "HEAD"], cwd=root, check=True,
+                capture_output=True, text=True,
+            ).stdout.strip()
+            subprocess.run(
+                [sys.executable, "-m", "venv", str(root / "venv")], check=True
+            )
+
+            with self.assertRaises(launcher.ActiveReleaseLaunchError) as raised:
+                launcher.attest_runtime(root, revision, manifest)
+            self.assertEqual(
+                str(raised.exception),
+                "Canonical runtime venv contains an external symlink; recreate it with python3 -m venv --copies",
+            )
+
+    def test_copies_venv_has_no_external_symlink_and_attests(self):
+        import run_abbott_metrika_active_release as launcher
+
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            revision, manifest = self._committed_runtime(root)
+            (root / ".gitignore").write_text("venv/\n", encoding="utf-8")
+            subprocess.run(["git", "add", ".gitignore"], cwd=root, check=True)
+            subprocess.run(["git", "commit", "-qm", "ignore venv"], cwd=root, check=True)
+            revision = subprocess.run(
+                ["git", "rev-parse", "HEAD"], cwd=root, check=True,
+                capture_output=True, text=True,
+            ).stdout.strip()
+            copy_capable_python = Path("/opt/homebrew/bin/python3")
+            subprocess.run(
+                [
+                    str(copy_capable_python if copy_capable_python.exists() else sys.executable),
+                    "-m",
+                    "venv",
+                    "--copies",
+                    str(root / "venv"),
+                ],
+                check=True,
+            )
+
+            launcher.attest_runtime(root, revision, manifest)
+
+    def test_runbook_and_bootstrap_install_and_verify_copied_pinned_venv(self):
+        runbook = (ROOT / "docs/ABBOTT-OPERATIONS-RUNBOOK.md").read_text()
+        bootstrap = (
+            ROOT / "dashboard-next/reportingdash-canonical-bootstrap/README.md"
+        ).read_text()
+        for document in (runbook, bootstrap):
+            self.assertIn("python3 -m venv --copies", document)
+            self.assertIn("importlib.metadata", document)
+            self.assertIn("pip check", document)
+            self.assertIn("is_symlink()", document)
+            self.assertIn("resolve(strict=False)", document)
+            self.assertIn("No package hashes are claimed", document)
+        cron = runbook.split("Create the new crontab", 1)[1].split(
+            "## Checkpoint 10", 1
+        )[0]
+        self.assertNotIn(" /usr/bin/python", cron)
+        self.assertIn("/root/reportingdash-canonical/venv/bin/python", cron)
+
     def test_attestation_rejects_a_working_manifest_not_committed_at_head(self):
         import run_abbott_metrika_active_release as launcher
 

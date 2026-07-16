@@ -45,6 +45,17 @@ class AbbottOperationsRunbookTest(unittest.TestCase):
             "latest completed `validation_run_id`", " ".join(validation_gate.split())
         )
 
+    def test_reused_snapshot_materializes_candidate_rows_before_evidence(self):
+        import_gate = self.text.split("## Checkpoint 5", 1)[1].split(
+            "## Checkpoint 6", 1
+        )[0]
+        normalized = " ".join(import_gate.split())
+        self.assertIn("materializes the freshly parsed source-specific batches", normalized)
+        self.assertIn("same immutable snapshot ID", normalized)
+        self.assertIn("never copies rows from a predecessor release or another tenant", normalized)
+        self.assertIn("partial candidate batch", normalized)
+        self.assertIn("per-release import execution evidence", normalized)
+
     def test_dashboard_deploy_installs_and_scans_a_full_atomic_release_tree(self):
         deploy_gate = self.text.split("Before validation", 1)[1].split("Only after every gate", 1)[0]
         self.assertIn("scripts/install-reviewed-release.sh", deploy_gate)
