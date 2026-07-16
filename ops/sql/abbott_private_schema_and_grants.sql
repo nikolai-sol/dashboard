@@ -110,7 +110,8 @@ CREATE TABLE IF NOT EXISTS report_bd_private.portal_bitrix_journeys_private (
   UNIQUE KEY uniq_private_bitrix_release_journey
     (canonical_release_id, analytics_account_id, report_date, source_row_fingerprint),
   UNIQUE KEY uniq_private_bitrix_visit_sequence
-    (canonical_release_id, source_snapshot_id, protected_visit_id_hash, event_sequence),
+    (canonical_release_id, source_snapshot_id, analytics_account_id,
+     report_date, protected_visit_id_hash, event_sequence),
   KEY idx_private_bitrix_journey_user
     (canonical_release_id, report_date, raw_user_id_hash),
   KEY idx_private_bitrix_journey_visit
@@ -118,6 +119,246 @@ CREATE TABLE IF NOT EXISTS report_bd_private.portal_bitrix_journeys_private (
   KEY idx_private_bitrix_journey_snapshot (source_snapshot_id)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
   COMMENT='Manager-only ordered Bitrix journeys with lossless internal identifiers';
+
+-- Task 7 compatibility upgrade for installations where the Task 1 tables
+-- already exist. Guarded INFORMATION_SCHEMA checks make repeat execution a
+-- no-op while preserving any legacy rows for reviewed backfill validation.
+
+SET @abbott_private_visit_type := (
+  SELECT DATA_TYPE FROM information_schema.COLUMNS
+  WHERE TABLE_SCHEMA = 'report_bd_private'
+    AND TABLE_NAME = 'canonical_fact_metrika_user_behavior_daily'
+    AND COLUMN_NAME = 'visit_id'
+);
+SET @sql := IF(
+  @abbott_private_visit_type <> 'text',
+  'ALTER TABLE report_bd_private.canonical_fact_metrika_user_behavior_daily MODIFY COLUMN visit_id TEXT DEFAULT NULL',
+  'SELECT ''private behavior visit_id already text-safe'' AS info'
+);
+PREPARE stmt FROM @sql; EXECUTE stmt; DEALLOCATE PREPARE stmt;
+
+SET @abbott_private_column_exists := (
+  SELECT COUNT(*) FROM information_schema.COLUMNS
+  WHERE TABLE_SCHEMA = 'report_bd_private'
+    AND TABLE_NAME = 'canonical_fact_metrika_user_behavior_daily'
+    AND COLUMN_NAME = 'visit_id_hash'
+);
+SET @sql := IF(
+  @abbott_private_column_exists = 0,
+  'ALTER TABLE report_bd_private.canonical_fact_metrika_user_behavior_daily ADD COLUMN visit_id_hash CHAR(64) DEFAULT NULL',
+  'SELECT ''private behavior visit_id_hash already present'' AS info'
+);
+PREPARE stmt FROM @sql; EXECUTE stmt; DEALLOCATE PREPARE stmt;
+
+SET @abbott_private_page_clauses := CONCAT(
+  IF((SELECT COUNT(*) FROM information_schema.COLUMNS WHERE TABLE_SCHEMA = 'report_bd_private' AND TABLE_NAME = 'portal_bitrix_page_facts' AND COLUMN_NAME = 'material_type_hint') = 0,
+     ', ADD COLUMN material_type_hint VARCHAR(500) DEFAULT NULL', ''),
+  IF((SELECT COUNT(*) FROM information_schema.COLUMNS WHERE TABLE_SCHEMA = 'report_bd_private' AND TABLE_NAME = 'portal_bitrix_page_facts' AND COLUMN_NAME = 'sessions') = 0,
+     ', ADD COLUMN sessions BIGINT UNSIGNED NOT NULL DEFAULT 0', ''),
+  IF((SELECT COUNT(*) FROM information_schema.COLUMNS WHERE TABLE_SCHEMA = 'report_bd_private' AND TABLE_NAME = 'portal_bitrix_page_facts' AND COLUMN_NAME = 'users') = 0,
+     ', ADD COLUMN users BIGINT UNSIGNED NOT NULL DEFAULT 0', ''),
+  IF((SELECT COUNT(*) FROM information_schema.COLUMNS WHERE TABLE_SCHEMA = 'report_bd_private' AND TABLE_NAME = 'portal_bitrix_page_facts' AND COLUMN_NAME = 'guests') = 0,
+     ', ADD COLUMN guests BIGINT UNSIGNED NOT NULL DEFAULT 0', ''),
+  IF((SELECT COUNT(*) FROM information_schema.COLUMNS WHERE TABLE_SCHEMA = 'report_bd_private' AND TABLE_NAME = 'portal_bitrix_page_facts' AND COLUMN_NAME = 'logged_in_hits') = 0,
+     ', ADD COLUMN logged_in_hits BIGINT UNSIGNED NOT NULL DEFAULT 0', ''),
+  IF((SELECT COUNT(*) FROM information_schema.COLUMNS WHERE TABLE_SCHEMA = 'report_bd_private' AND TABLE_NAME = 'portal_bitrix_page_facts' AND COLUMN_NAME = 'anonymous_hits') = 0,
+     ', ADD COLUMN anonymous_hits BIGINT UNSIGNED NOT NULL DEFAULT 0', ''),
+  IF((SELECT COUNT(*) FROM information_schema.COLUMNS WHERE TABLE_SCHEMA = 'report_bd_private' AND TABLE_NAME = 'portal_bitrix_page_facts' AND COLUMN_NAME = 'logged_in_sessions') = 0,
+     ', ADD COLUMN logged_in_sessions BIGINT UNSIGNED NOT NULL DEFAULT 0', ''),
+  IF((SELECT COUNT(*) FROM information_schema.COLUMNS WHERE TABLE_SCHEMA = 'report_bd_private' AND TABLE_NAME = 'portal_bitrix_page_facts' AND COLUMN_NAME = 'anonymous_sessions') = 0,
+     ', ADD COLUMN anonymous_sessions BIGINT UNSIGNED NOT NULL DEFAULT 0', ''),
+  IF((SELECT COUNT(*) FROM information_schema.COLUMNS WHERE TABLE_SCHEMA = 'report_bd_private' AND TABLE_NAME = 'portal_bitrix_page_facts' AND COLUMN_NAME = 'entry_sessions') = 0,
+     ', ADD COLUMN entry_sessions BIGINT UNSIGNED NOT NULL DEFAULT 0', ''),
+  IF((SELECT COUNT(*) FROM information_schema.COLUMNS WHERE TABLE_SCHEMA = 'report_bd_private' AND TABLE_NAME = 'portal_bitrix_page_facts' AND COLUMN_NAME = 'exit_sessions') = 0,
+     ', ADD COLUMN exit_sessions BIGINT UNSIGNED NOT NULL DEFAULT 0', ''),
+  IF((SELECT COUNT(*) FROM information_schema.COLUMNS WHERE TABLE_SCHEMA = 'report_bd_private' AND TABLE_NAME = 'portal_bitrix_page_facts' AND COLUMN_NAME = 'avg_session_duration_seconds') = 0,
+     ', ADD COLUMN avg_session_duration_seconds DECIMAL(18,6) DEFAULT NULL', ''),
+  IF((SELECT COUNT(*) FROM information_schema.COLUMNS WHERE TABLE_SCHEMA = 'report_bd_private' AND TABLE_NAME = 'portal_bitrix_page_facts' AND COLUMN_NAME = 'top_utm_source') = 0,
+     ', ADD COLUMN top_utm_source VARCHAR(500) DEFAULT NULL', ''),
+  IF((SELECT COUNT(*) FROM information_schema.COLUMNS WHERE TABLE_SCHEMA = 'report_bd_private' AND TABLE_NAME = 'portal_bitrix_page_facts' AND COLUMN_NAME = 'top_utm_medium') = 0,
+     ', ADD COLUMN top_utm_medium VARCHAR(500) DEFAULT NULL', ''),
+  IF((SELECT COUNT(*) FROM information_schema.COLUMNS WHERE TABLE_SCHEMA = 'report_bd_private' AND TABLE_NAME = 'portal_bitrix_page_facts' AND COLUMN_NAME = 'top_utm_campaign') = 0,
+     ', ADD COLUMN top_utm_campaign VARCHAR(500) DEFAULT NULL', '')
+);
+SET @sql := IF(
+  @abbott_private_page_clauses <> '',
+  CONCAT(
+    'ALTER TABLE report_bd_private.portal_bitrix_page_facts ',
+    SUBSTRING(@abbott_private_page_clauses, 3)
+  ),
+  'SELECT ''private Bitrix page columns already aligned'' AS info'
+);
+PREPARE stmt FROM @sql; EXECUTE stmt; DEALLOCATE PREPARE stmt;
+
+SET @abbott_private_legacy_page_columns := (
+  SELECT COUNT(*) FROM information_schema.COLUMNS
+  WHERE TABLE_SCHEMA = 'report_bd_private'
+    AND TABLE_NAME = 'portal_bitrix_page_facts'
+    AND COLUMN_NAME IN ('visits', 'unique_visitors')
+);
+SET @sql := IF(
+  @abbott_private_legacy_page_columns = 2,
+  'UPDATE report_bd_private.portal_bitrix_page_facts SET sessions = visits, users = unique_visitors WHERE sessions = 0 AND users = 0',
+  'SELECT ''private Bitrix page legacy metrics do not need copying'' AS info'
+);
+PREPARE stmt FROM @sql; EXECUTE stmt; DEALLOCATE PREPARE stmt;
+
+SET @abbott_private_journey_visit_index_columns := (
+  SELECT GROUP_CONCAT(COLUMN_NAME ORDER BY SEQ_IN_INDEX SEPARATOR ',')
+  FROM information_schema.STATISTICS
+  WHERE TABLE_SCHEMA = 'report_bd_private'
+    AND TABLE_NAME = 'portal_bitrix_journeys_private'
+    AND INDEX_NAME = 'idx_private_bitrix_journey_visit'
+);
+SET @sql := IF(
+  @abbott_private_journey_visit_index_columns IS NOT NULL
+    AND @abbott_private_journey_visit_index_columns <> 'canonical_release_id,protected_visit_id_hash,event_sequence',
+  'ALTER TABLE report_bd_private.portal_bitrix_journeys_private DROP INDEX idx_private_bitrix_journey_visit',
+  'SELECT ''private journey legacy visit index does not need removal'' AS info'
+);
+PREPARE stmt FROM @sql; EXECUTE stmt; DEALLOCATE PREPARE stmt;
+
+SET @abbott_private_journey_nullable_columns := (
+  SELECT COUNT(*) FROM information_schema.COLUMNS
+  WHERE TABLE_SCHEMA = 'report_bd_private'
+    AND TABLE_NAME = 'portal_bitrix_journeys_private'
+    AND COLUMN_NAME IN ('raw_user_id', 'raw_user_id_hash')
+    AND IS_NULLABLE = 'NO'
+);
+SET @sql := IF(
+  @abbott_private_journey_nullable_columns > 0,
+  'ALTER TABLE report_bd_private.portal_bitrix_journeys_private MODIFY COLUMN raw_user_id TEXT DEFAULT NULL, MODIFY COLUMN raw_user_id_hash CHAR(64) DEFAULT NULL',
+  'SELECT ''private journey anonymous identity already nullable'' AS info'
+);
+PREPARE stmt FROM @sql; EXECUTE stmt; DEALLOCATE PREPARE stmt;
+
+SET @abbott_private_visit_type := (
+  SELECT DATA_TYPE FROM information_schema.COLUMNS
+  WHERE TABLE_SCHEMA = 'report_bd_private'
+    AND TABLE_NAME = 'portal_bitrix_journeys_private'
+    AND COLUMN_NAME = 'protected_visit_id'
+);
+SET @sql := IF(
+  @abbott_private_visit_type <> 'text',
+  'ALTER TABLE report_bd_private.portal_bitrix_journeys_private MODIFY COLUMN protected_visit_id TEXT NOT NULL',
+  'SELECT ''private journey visit ID already text-safe'' AS info'
+);
+PREPARE stmt FROM @sql; EXECUTE stmt; DEALLOCATE PREPARE stmt;
+
+SET @abbott_private_column_exists := (
+  SELECT COUNT(*) FROM information_schema.COLUMNS
+  WHERE TABLE_SCHEMA = 'report_bd_private'
+    AND TABLE_NAME = 'portal_bitrix_journeys_private'
+    AND COLUMN_NAME = 'protected_visit_id_hash'
+);
+SET @sql := IF(
+  @abbott_private_column_exists = 0,
+  'ALTER TABLE report_bd_private.portal_bitrix_journeys_private ADD COLUMN protected_visit_id_hash CHAR(64) DEFAULT NULL',
+  'SELECT ''private journey protected_visit_id_hash already present'' AS info'
+);
+PREPARE stmt FROM @sql; EXECUTE stmt; DEALLOCATE PREPARE stmt;
+
+UPDATE report_bd_private.portal_bitrix_journeys_private
+SET protected_visit_id_hash = SHA2(protected_visit_id, 256)
+WHERE protected_visit_id_hash IS NULL;
+
+SET @abbott_private_column_nullable := (
+  SELECT IS_NULLABLE FROM information_schema.COLUMNS
+  WHERE TABLE_SCHEMA = 'report_bd_private'
+    AND TABLE_NAME = 'portal_bitrix_journeys_private'
+    AND COLUMN_NAME = 'protected_visit_id_hash'
+);
+SET @sql := IF(
+  @abbott_private_column_nullable = 'YES',
+  'ALTER TABLE report_bd_private.portal_bitrix_journeys_private MODIFY COLUMN protected_visit_id_hash CHAR(64) NOT NULL',
+  'SELECT ''private journey protected_visit_id_hash already required'' AS info'
+);
+PREPARE stmt FROM @sql; EXECUTE stmt; DEALLOCATE PREPARE stmt;
+
+SET @abbott_private_column_exists := (
+  SELECT COUNT(*) FROM information_schema.COLUMNS
+  WHERE TABLE_SCHEMA = 'report_bd_private'
+    AND TABLE_NAME = 'portal_bitrix_journeys_private'
+    AND COLUMN_NAME = 'source_event_id'
+);
+SET @sql := IF(
+  @abbott_private_column_exists = 0,
+  'ALTER TABLE report_bd_private.portal_bitrix_journeys_private ADD COLUMN source_event_id TEXT DEFAULT NULL',
+  'SELECT ''private journey source_event_id already present'' AS info'
+);
+PREPARE stmt FROM @sql; EXECUTE stmt; DEALLOCATE PREPARE stmt;
+
+SET @abbott_private_column_exists := (
+  SELECT COUNT(*) FROM information_schema.COLUMNS
+  WHERE TABLE_SCHEMA = 'report_bd_private'
+    AND TABLE_NAME = 'portal_bitrix_journeys_private'
+    AND COLUMN_NAME = 'source_event_id_hash'
+);
+SET @sql := IF(
+  @abbott_private_column_exists = 0,
+  'ALTER TABLE report_bd_private.portal_bitrix_journeys_private ADD COLUMN source_event_id_hash CHAR(64) DEFAULT NULL',
+  'SELECT ''private journey source_event_id_hash already present'' AS info'
+);
+PREPARE stmt FROM @sql; EXECUTE stmt; DEALLOCATE PREPARE stmt;
+
+UPDATE report_bd_private.portal_bitrix_journeys_private
+SET event_at = TIMESTAMP(report_date)
+WHERE event_at IS NULL;
+SET @abbott_private_column_nullable := (
+  SELECT IS_NULLABLE FROM information_schema.COLUMNS
+  WHERE TABLE_SCHEMA = 'report_bd_private'
+    AND TABLE_NAME = 'portal_bitrix_journeys_private'
+    AND COLUMN_NAME = 'event_at'
+);
+SET @sql := IF(
+  @abbott_private_column_nullable = 'YES',
+  'ALTER TABLE report_bd_private.portal_bitrix_journeys_private MODIFY COLUMN event_at DATETIME NOT NULL',
+  'SELECT ''private journey event_at already required'' AS info'
+);
+PREPARE stmt FROM @sql; EXECUTE stmt; DEALLOCATE PREPARE stmt;
+
+SET @abbott_private_index_exists := (
+  SELECT COUNT(*) FROM information_schema.STATISTICS
+  WHERE TABLE_SCHEMA = 'report_bd_private'
+    AND TABLE_NAME = 'portal_bitrix_journeys_private'
+    AND INDEX_NAME = 'idx_private_bitrix_journey_visit'
+);
+SET @sql := IF(
+  @abbott_private_index_exists = 0,
+  'ALTER TABLE report_bd_private.portal_bitrix_journeys_private ADD INDEX idx_private_bitrix_journey_visit (canonical_release_id, protected_visit_id_hash, event_sequence)',
+  'SELECT ''private journey visit hash index already present'' AS info'
+);
+PREPARE stmt FROM @sql; EXECUTE stmt; DEALLOCATE PREPARE stmt;
+
+SET @abbott_private_journey_unique_columns := (
+  SELECT GROUP_CONCAT(COLUMN_NAME ORDER BY SEQ_IN_INDEX SEPARATOR ',')
+  FROM information_schema.STATISTICS
+  WHERE TABLE_SCHEMA = 'report_bd_private'
+    AND TABLE_NAME = 'portal_bitrix_journeys_private'
+    AND INDEX_NAME = 'uniq_private_bitrix_visit_sequence'
+);
+SET @sql := IF(
+  @abbott_private_journey_unique_columns IS NOT NULL
+    AND @abbott_private_journey_unique_columns <> 'canonical_release_id,source_snapshot_id,analytics_account_id,report_date,protected_visit_id_hash,event_sequence',
+  'ALTER TABLE report_bd_private.portal_bitrix_journeys_private DROP INDEX uniq_private_bitrix_visit_sequence',
+  'SELECT ''private journey visit uniqueness does not need removal'' AS info'
+);
+PREPARE stmt FROM @sql; EXECUTE stmt; DEALLOCATE PREPARE stmt;
+
+SET @abbott_private_journey_unique_columns := (
+  SELECT GROUP_CONCAT(COLUMN_NAME ORDER BY SEQ_IN_INDEX SEPARATOR ',')
+  FROM information_schema.STATISTICS
+  WHERE TABLE_SCHEMA = 'report_bd_private'
+    AND TABLE_NAME = 'portal_bitrix_journeys_private'
+    AND INDEX_NAME = 'uniq_private_bitrix_visit_sequence'
+);
+SET @sql := IF(
+  COALESCE(@abbott_private_journey_unique_columns, '') <>
+    'canonical_release_id,source_snapshot_id,analytics_account_id,report_date,protected_visit_id_hash,event_sequence',
+  'ALTER TABLE report_bd_private.portal_bitrix_journeys_private ADD UNIQUE INDEX uniq_private_bitrix_visit_sequence (canonical_release_id, source_snapshot_id, analytics_account_id, report_date, protected_visit_id_hash, event_sequence)',
+  'SELECT ''private journey visit uniqueness already aligned'' AS info'
+);
+PREPARE stmt FROM @sql; EXECUTE stmt; DEALLOCATE PREPARE stmt;
 
 CREATE ROLE IF NOT EXISTS
   'reportingdash_abbott_collector_role',
@@ -155,6 +396,8 @@ GRANT SELECT, INSERT ON report_bd.portal_general_materials
   TO 'reportingdash_abbott_importer_role';
 GRANT SELECT, INSERT ON report_bd.portal_event_catalog
   TO 'reportingdash_abbott_importer_role';
+GRANT SELECT, INSERT ON report_bd.portal_bitrix_page_facts
+  TO 'reportingdash_abbott_importer_role';
 GRANT SELECT, INSERT ON report_bd.portal_bitrix_journey_transitions
   TO 'reportingdash_abbott_importer_role';
 GRANT SELECT, INSERT ON report_bd_private.portal_user_directions_private
@@ -171,6 +414,8 @@ GRANT SELECT ON report_bd.portal_data_releases
   TO 'reportingdash_abbott_runtime_reader_role';
 GRANT SELECT ON report_bd.portal_active_data_releases
   TO 'reportingdash_abbott_runtime_reader_role';
+GRANT SELECT ON report_bd.dashboards
+  TO 'reportingdash_abbott_runtime_reader_role';
 GRANT SELECT ON report_bd.portal_dataset_snapshots
   TO 'reportingdash_abbott_runtime_reader_role';
 GRANT SELECT ON report_bd.portal_content_catalog
@@ -180,6 +425,8 @@ GRANT SELECT ON report_bd.portal_general_materials
 GRANT SELECT ON report_bd.portal_event_catalog
   TO 'reportingdash_abbott_runtime_reader_role';
 GRANT SELECT ON report_bd.portal_external_events
+  TO 'reportingdash_abbott_runtime_reader_role';
+GRANT SELECT ON report_bd.portal_bitrix_page_facts
   TO 'reportingdash_abbott_runtime_reader_role';
 GRANT SELECT ON report_bd.portal_bitrix_journey_transitions
   TO 'reportingdash_abbott_runtime_reader_role';

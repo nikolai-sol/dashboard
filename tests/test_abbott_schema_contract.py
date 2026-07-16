@@ -245,6 +245,8 @@ class AbbottSchemaContractTest(unittest.TestCase):
             "material_type VARCHAR(128) DEFAULT NULL",
             "source_slug VARCHAR(1000) DEFAULT NULL",
             "source_slug_hash CHAR(64) DEFAULT NULL",
+            "access_label VARCHAR(500) DEFAULT NULL",
+            "is_active TINYINT(1) NOT NULL DEFAULT 1",
             "source_row_fingerprint CHAR(64) NOT NULL",
         ):
             self.assertIn(column, catalog)
@@ -312,6 +314,46 @@ class AbbottSchemaContractTest(unittest.TestCase):
         ):
             self.assertIn(column, facts)
 
+    def test_primary_bitrix_page_projection_is_aggregate_safe(self):
+        facts = self._table_definition(
+            self._primary_sql(), "portal_bitrix_page_facts"
+        )
+        for column in (
+            "canonical_release_id BIGINT UNSIGNED NOT NULL",
+            "source_snapshot_id BIGINT UNSIGNED NOT NULL",
+            "analytics_account_id VARCHAR(128) NOT NULL DEFAULT 'abbott_bitrix'",
+            "report_date DATE NOT NULL",
+            "normalized_path TEXT NOT NULL",
+            "normalized_path_hash CHAR(64) NOT NULL",
+            "material_id VARCHAR(255) DEFAULT NULL",
+            "material_type_hint VARCHAR(500) DEFAULT NULL",
+            "pageviews BIGINT UNSIGNED NOT NULL DEFAULT 0",
+            "sessions BIGINT UNSIGNED NOT NULL DEFAULT 0",
+            "users BIGINT UNSIGNED NOT NULL DEFAULT 0",
+            "guests BIGINT UNSIGNED NOT NULL DEFAULT 0",
+            "logged_in_hits BIGINT UNSIGNED NOT NULL DEFAULT 0",
+            "anonymous_hits BIGINT UNSIGNED NOT NULL DEFAULT 0",
+            "logged_in_sessions BIGINT UNSIGNED NOT NULL DEFAULT 0",
+            "anonymous_sessions BIGINT UNSIGNED NOT NULL DEFAULT 0",
+            "entry_sessions BIGINT UNSIGNED NOT NULL DEFAULT 0",
+            "exit_sessions BIGINT UNSIGNED NOT NULL DEFAULT 0",
+            "avg_session_duration_seconds DECIMAL(18,6) DEFAULT NULL",
+            "top_utm_source VARCHAR(500) DEFAULT NULL",
+            "top_utm_medium VARCHAR(500) DEFAULT NULL",
+            "top_utm_campaign VARCHAR(500) DEFAULT NULL",
+            "source_row_fingerprint CHAR(64) NOT NULL",
+        ):
+            self.assertIn(column, facts)
+        self.assertNotRegex(
+            facts, r"(?i)(raw_user_id|protected_visit_id|source_event_id)"
+        )
+        self.assertIn(
+            "UNIQUE KEY uniq_bitrix_page_release_row "
+            "(canonical_release_id, source_snapshot_id, analytics_account_id, "
+            "report_date, source_row_fingerprint)",
+            facts,
+        )
+
     def test_private_journeys_allow_anonymous_lossless_ordered_events(self):
         journeys = self._table_definition(
             self._private_sql(), "report_bd_private.portal_bitrix_journeys_private"
@@ -332,7 +374,8 @@ class AbbottSchemaContractTest(unittest.TestCase):
             self.assertIn(column, journeys)
         self.assertIn(
             "UNIQUE KEY uniq_private_bitrix_visit_sequence "
-            "(canonical_release_id, source_snapshot_id, protected_visit_id_hash, event_sequence)",
+            "(canonical_release_id, source_snapshot_id, analytics_account_id, "
+            "report_date, protected_visit_id_hash, event_sequence)",
             journeys,
         )
 
@@ -406,6 +449,7 @@ class AbbottSchemaContractTest(unittest.TestCase):
             "portal_content_catalog",
             "portal_general_materials",
             "portal_event_catalog",
+            "portal_bitrix_page_facts",
             "portal_bitrix_journey_transitions",
         ):
             self.assertIn(
@@ -429,9 +473,11 @@ class AbbottSchemaContractTest(unittest.TestCase):
             "portal_content_catalog",
             "portal_general_materials",
             "portal_event_catalog",
+            "portal_bitrix_page_facts",
             "portal_bitrix_journey_transitions",
         ):
             self.assertIn(f"GRANT SELECT ON report_bd.{table} {runtime}", sql)
+        self.assertIn(f"GRANT SELECT ON report_bd.dashboards {runtime}", sql)
         for table in (
             "canonical_fact_metrika_user_behavior_daily",
             "portal_user_directions_private",
@@ -482,6 +528,39 @@ class AbbottSchemaContractTest(unittest.TestCase):
             "portal_bitrix_journey_transitions",
         ):
             self.assertFalse(any(table in grant for grant in collector_grants))
+
+    def test_task7_has_idempotent_alters_for_preexisting_task1_tables(self):
+        primary = self._normalized(self._primary_sql())
+        private = self._normalized(self._private_sql())
+        self.assertIn("information_schema.COLUMNS", primary)
+        self.assertIn("information_schema.STATISTICS", primary)
+        self.assertIn("information_schema.COLUMNS", private)
+        self.assertIn("information_schema.STATISTICS", private)
+
+        for contract in (
+            "ALTER TABLE portal_dataset_snapshots DROP INDEX uniq_dataset_snapshot_content",
+            "ALTER TABLE portal_dataset_snapshots ADD UNIQUE INDEX "
+            "uniq_dataset_snapshot_content (dataset_key, source_kind, content_sha256)",
+            "ALTER TABLE portal_content_catalog ADD COLUMN source_slug VARCHAR(1000) DEFAULT NULL",
+            "ALTER TABLE portal_content_catalog ADD COLUMN access_label VARCHAR(500) DEFAULT NULL",
+            "ALTER TABLE portal_content_catalog ADD COLUMN is_active TINYINT(1) NOT NULL DEFAULT 1",
+            "ALTER TABLE portal_general_materials ADD COLUMN normalized_url TEXT DEFAULT NULL",
+        ):
+            self.assertIn(contract, primary)
+
+        for contract in (
+            "ALTER TABLE report_bd_private.portal_bitrix_page_facts",
+            "ADD COLUMN guests BIGINT UNSIGNED NOT NULL DEFAULT 0",
+            "ALTER TABLE report_bd_private.portal_bitrix_journeys_private MODIFY COLUMN raw_user_id TEXT DEFAULT NULL",
+            "ALTER TABLE report_bd_private.portal_bitrix_journeys_private ADD COLUMN protected_visit_id_hash CHAR(64) DEFAULT NULL",
+            "ALTER TABLE report_bd_private.portal_bitrix_journeys_private ADD UNIQUE INDEX "
+            "uniq_private_bitrix_visit_sequence (canonical_release_id, source_snapshot_id, "
+            "analytics_account_id, report_date, protected_visit_id_hash, event_sequence)",
+        ):
+            self.assertIn(contract, private)
+
+        self.assertGreaterEqual(primary.count("PREPARE stmt FROM @sql"), 6)
+        self.assertGreaterEqual(private.count("PREPARE stmt FROM @sql"), 6)
 
 
 if __name__ == "__main__":
