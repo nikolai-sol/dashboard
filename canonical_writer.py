@@ -5,9 +5,11 @@ from __future__ import annotations
 
 import json
 import os
+import re
+from dataclasses import dataclass
 from datetime import date, datetime
 from pathlib import Path
-from typing import Any
+from typing import Any, Mapping, Sequence
 
 import mysql.connector
 from dotenv import load_dotenv
@@ -31,6 +33,389 @@ def get_db_connection():
         charset='utf8mb4',
         collation='utf8mb4_unicode_ci',
     )
+
+
+def require_mutable_candidate_release(release_id: int, *, portal_key: str = 'abbott') -> dict:
+    from canonical_release_store import require_mutable_candidate_release as require_release
+
+    return require_release(release_id, portal_key=portal_key)
+
+
+class MetrikaPublishError(RuntimeError):
+    """Sanitized error raised when an atomic Metrika publication fails."""
+
+
+@dataclass(frozen=True)
+class MetrikaPublishResult:
+    canonical_release_id: int
+    counter_id: str
+    report_date: str
+    rows_written: int
+    coverage_rows_written: int
+
+
+_METRIKA_SCOPE_ORDER = ('other', 'traffic', 'page', 'user_behavior', 'returning')
+_METRIKA_FAILURE_STATUSES = frozenset(('partial', 'skipped', 'sampled', 'failed'))
+
+
+def _field(value: Any, name: str) -> Any:
+    if isinstance(value, Mapping):
+        return value[name]
+    return getattr(value, name)
+
+
+def _delete_release_day(cur, release_id: int, counter_id: str, report_date: str) -> None:
+    params = (release_id, counter_id, report_date)
+    for table in (
+        'report_bd.canonical_fact_metrika_site_analytics_daily',
+        'report_bd_private.canonical_fact_metrika_user_behavior_daily',
+        'report_bd.canonical_fact_metrika_returning_pages_daily',
+        'report_bd.canonical_source_coverage_daily',
+    ):
+        cur.execute(
+            f"""
+            DELETE FROM {table}
+            WHERE canonical_release_id = %s
+              AND counter_id = %s
+              AND report_date = %s
+            """,
+            params,
+        )
+
+
+def _insert_site_fact_rows(cur, rows: Sequence[dict]) -> int:
+    if not rows:
+        return 0
+    values = [
+        (
+            row['canonical_release_id'],
+            row.get('source_key', 'yandex_metrika'),
+            row['analytics_account_id'],
+            row['counter_id'],
+            row['report_date'],
+            row['analytics_scope'],
+            row['scope_hash'],
+            _json_or_none(row.get('scope_dimensions') or {}),
+            row.get('sessions', row.get('visits', 0)),
+            row.get('users', 0),
+            row.get('pageviews', 0),
+            row.get('bounce_rate'),
+            row.get('average_session_seconds', row.get('avg_visit_duration_seconds')),
+            row.get('goal_conversions', row.get('goal_reaches')),
+            _json_or_none(row.get('raw_payload')),
+            row['ingestion_run_id'],
+        )
+        for row in rows
+    ]
+    cur.executemany(
+        """
+        INSERT INTO report_bd.canonical_fact_metrika_site_analytics_daily (
+            canonical_release_id, source_key, analytics_account_id, counter_id,
+            report_date, analytics_scope, scope_hash, scope_dimensions,
+            sessions, users, pageviews, bounce_rate, average_session_seconds,
+            goal_conversions, raw_payload, ingestion_run_id
+        ) VALUES (
+            %s, %s, %s, %s, %s, %s, %s, %s,
+            %s, %s, %s, %s, %s, %s, %s, %s
+        )
+        """,
+        values,
+    )
+    return len(values)
+
+
+def _insert_private_user_behavior_rows(cur, rows: Sequence[dict]) -> int:
+    if not rows:
+        return 0
+    values = [
+        (
+            row['canonical_release_id'],
+            row['counter_id'],
+            row['report_date'],
+            row['raw_user_id'],
+            row['raw_user_id_hash'],
+            row['start_url'],
+            row['start_url_hash'],
+            row['end_url'],
+            row['end_url_hash'],
+            row.get('visit_id'),
+            row.get('session_started_at'),
+            row.get('session_ended_at'),
+            row.get('pageviews', 0),
+            row['request_fingerprint'],
+            row['ingestion_run_id'],
+        )
+        for row in rows
+    ]
+    cur.executemany(
+        """
+        INSERT INTO report_bd_private.canonical_fact_metrika_user_behavior_daily (
+            canonical_release_id, counter_id, report_date, raw_user_id,
+            raw_user_id_hash, start_url, start_url_hash, end_url, end_url_hash,
+            visit_id, session_started_at, session_ended_at, pageviews,
+            request_fingerprint, ingestion_run_id
+        ) VALUES (
+            %s, %s, %s, %s, %s, %s, %s, %s, %s,
+            %s, %s, %s, %s, %s, %s
+        )
+        """,
+        values,
+    )
+    return len(values)
+
+
+def _insert_returning_rows(cur, rows: Sequence[dict]) -> int:
+    if not rows:
+        return 0
+    values = [
+        (
+            row['canonical_release_id'],
+            row['counter_id'],
+            row['report_date'],
+            row['raw_page_value'],
+            row['raw_page_hash'],
+            row['normalized_page'],
+            row['normalized_page_hash'],
+            row['return_bucket_code'],
+            row.get('return_bucket_label'),
+            row['source_percentage'],
+            row.get('source_denominator'),
+            row.get('derived_count'),
+            row.get('is_derived', 0),
+            row['ingestion_run_id'],
+        )
+        for row in rows
+    ]
+    cur.executemany(
+        """
+        INSERT INTO report_bd.canonical_fact_metrika_returning_pages_daily (
+            canonical_release_id, counter_id, report_date, raw_page_value,
+            raw_page_hash, normalized_page, normalized_page_hash,
+            return_bucket_code, return_bucket_label, source_percentage,
+            source_denominator, derived_count, is_derived, ingestion_run_id
+        ) VALUES (
+            %s, %s, %s, %s, %s, %s, %s,
+            %s, %s, %s, %s, %s, %s, %s
+        )
+        """,
+        values,
+    )
+    return len(values)
+
+
+def _insert_success_coverage_rows(cur, rows: Sequence[dict]) -> int:
+    if not rows:
+        return 0
+    values = [
+        (
+            row['canonical_release_id'],
+            row.get('source_key', 'yandex_metrika'),
+            row['counter_id'],
+            row['scope_key'],
+            row['report_date'],
+            row['collection_status'],
+            row.get('api_total_rows'),
+            row['persisted_rows'],
+            int(bool(row['pagination_complete'])),
+            int(bool(row['is_sampled'])),
+            int(bool(row['empty_reconciled'])),
+            row['collector_run_id'],
+        )
+        for row in rows
+    ]
+    cur.executemany(
+        """
+        INSERT INTO report_bd.canonical_source_coverage_daily (
+            canonical_release_id, source_key, counter_id, scope_key, report_date,
+            collection_status, api_total_rows, persisted_rows,
+            pagination_complete, is_sampled, empty_reconciled, collector_run_id,
+            failure_code, sanitized_failure_json
+        ) VALUES (
+            %s, %s, %s, %s, %s, %s, %s, %s,
+            %s, %s, %s, %s, NULL, NULL
+        )
+        """,
+        values,
+    )
+    return len(values)
+
+
+def _rows_with_bundle_identity(bundle: Any, scope_result: Any) -> list[dict]:
+    rows = []
+    for original in _field(scope_result, 'rows'):
+        row = dict(original)
+        row.setdefault('canonical_release_id', _field(bundle, 'canonical_release_id'))
+        row.setdefault('counter_id', _field(bundle, 'counter_id'))
+        row.setdefault('report_date', _field(bundle, 'report_date'))
+        row.setdefault('ingestion_run_id', _field(bundle, 'run_id'))
+        rows.append(row)
+    return rows
+
+
+def publish_metrika_day_bundle(bundle: Any) -> MetrikaPublishResult:
+    release_id = int(_field(bundle, 'canonical_release_id'))
+    counter_id = str(_field(bundle, 'counter_id'))
+    report_date = str(_field(bundle, 'report_date'))
+    run_id = int(_field(bundle, 'run_id'))
+    scopes = _field(bundle, 'scopes')
+
+    require_mutable_candidate_release(release_id, portal_key='abbott')
+    try:
+        scope_results = {scope: scopes[scope] for scope in _METRIKA_SCOPE_ORDER}
+        for scope, result in scope_results.items():
+            status = _field(result, 'status')
+            if status not in ('success', 'success_empty'):
+                raise MetrikaPublishError(f"Scope {scope} is not publishable")
+            if bool(_field(result, 'sampled')) or not bool(_field(result, 'pagination_complete')):
+                raise MetrikaPublishError(f"Scope {scope} is not complete")
+    except (KeyError, AttributeError, TypeError):
+        raise MetrikaPublishError("Metrika day bundle is incomplete") from None
+
+    conn = None
+    cur = None
+    try:
+        conn = get_db_connection()
+        cur = conn.cursor()
+        conn.start_transaction()
+        _delete_release_day(cur, release_id, counter_id, report_date)
+
+        rows_written = 0
+        for scope in ('other', 'traffic', 'page'):
+            rows_written += _insert_site_fact_rows(
+                cur, _rows_with_bundle_identity(bundle, scope_results[scope])
+            )
+        rows_written += _insert_private_user_behavior_rows(
+            cur, _rows_with_bundle_identity(bundle, scope_results['user_behavior'])
+        )
+        rows_written += _insert_returning_rows(
+            cur, _rows_with_bundle_identity(bundle, scope_results['returning'])
+        )
+
+        coverage_rows = []
+        for scope in _METRIKA_SCOPE_ORDER:
+            result = scope_results[scope]
+            scope_rows = _field(result, 'rows')
+            status = _field(result, 'status')
+            coverage_rows.append(
+                {
+                    'canonical_release_id': release_id,
+                    'counter_id': counter_id,
+                    'scope_key': scope,
+                    'report_date': report_date,
+                    'collection_status': status,
+                    'api_total_rows': _field(result, 'api_total_rows'),
+                    'persisted_rows': len(scope_rows),
+                    'pagination_complete': True,
+                    'is_sampled': False,
+                    'empty_reconciled': status == 'success_empty',
+                    'collector_run_id': run_id,
+                }
+            )
+        coverage_rows_written = _insert_success_coverage_rows(cur, coverage_rows)
+        conn.commit()
+        return MetrikaPublishResult(
+            canonical_release_id=release_id,
+            counter_id=counter_id,
+            report_date=report_date,
+            rows_written=rows_written,
+            coverage_rows_written=coverage_rows_written,
+        )
+    except MetrikaPublishError:
+        if conn is not None:
+            conn.rollback()
+        raise
+    except Exception:
+        if conn is not None:
+            conn.rollback()
+        raise MetrikaPublishError("Metrika day publication failed") from None
+    finally:
+        if cur is not None:
+            try:
+                cur.close()
+            except Exception:
+                pass
+        if conn is not None:
+            try:
+                conn.close()
+            except Exception:
+                pass
+
+
+def _sanitized_error_class(error_class: str) -> str:
+    candidate = str(error_class or '')[:128]
+    if not re.fullmatch(r'[A-Za-z][A-Za-z0-9_.-]{0,127}', candidate):
+        return 'MetrikaCollectionError'
+    return candidate
+
+
+def record_metrika_day_failure(
+    *,
+    release_id: int,
+    counter_id: str,
+    report_date: str,
+    run_id: int,
+    scope: str,
+    status: str,
+    error_class: str,
+) -> None:
+    if scope not in _METRIKA_SCOPE_ORDER or status not in _METRIKA_FAILURE_STATUSES:
+        raise MetrikaPublishError("Invalid Metrika failure diagnostic")
+    failure_code = _sanitized_error_class(error_class)
+    conn = None
+    cur = None
+    try:
+        conn = get_db_connection()
+        cur = conn.cursor()
+        cur.execute(
+            """
+            INSERT INTO report_bd.canonical_source_coverage_daily (
+                canonical_release_id, source_key, counter_id, scope_key, report_date,
+                collection_status, api_total_rows, persisted_rows,
+                pagination_complete, is_sampled, empty_reconciled, collector_run_id,
+                failure_code, sanitized_failure_json
+            ) VALUES (
+                %s, 'yandex_metrika', %s, %s, %s,
+                %s, NULL, 0, 0, %s, 0, %s, %s, %s
+            )
+            ON DUPLICATE KEY UPDATE
+                collection_status = VALUES(collection_status),
+                api_total_rows = NULL,
+                persisted_rows = 0,
+                pagination_complete = 0,
+                is_sampled = VALUES(is_sampled),
+                empty_reconciled = 0,
+                collector_run_id = VALUES(collector_run_id),
+                failure_code = VALUES(failure_code),
+                sanitized_failure_json = VALUES(sanitized_failure_json)
+            """,
+            (
+                release_id,
+                counter_id,
+                scope,
+                report_date,
+                status,
+                int(status == 'sampled'),
+                run_id,
+                failure_code,
+                json.dumps({'error_class': failure_code}),
+            ),
+        )
+        conn.commit()
+    except Exception:
+        if conn is not None:
+            conn.rollback()
+        raise MetrikaPublishError("Unable to record Metrika failure") from None
+    finally:
+        if cur is not None:
+            try:
+                cur.close()
+            except Exception:
+                pass
+        if conn is not None:
+            try:
+                conn.close()
+            except Exception:
+                pass
 
 
 def _json_or_none(value: Any) -> str | None:
