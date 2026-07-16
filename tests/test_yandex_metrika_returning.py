@@ -1,5 +1,6 @@
 from decimal import Decimal
 import unittest
+from unittest.mock import patch
 
 from metrika_pagination import PaginationResult
 
@@ -117,6 +118,54 @@ class MetrikaReturningRowsTests(unittest.TestCase):
                         77,
                         41,
                     )
+
+    def test_blank_returning_source_row_rejects_day_before_publication(self):
+        import fetch_yandex_metrika_canonical as collector
+
+        empty_scope = PaginationResult(
+            rows=(),
+            total_rows=0,
+            pages_fetched=1,
+            pagination_complete=True,
+            sampled=False,
+            sample_share=None,
+        )
+        blank_rows = (
+            {"dimensions": [{"name": ""}], "metrics": [5, 1, 2, 3]},
+            {"dimensions": [{"name": None}], "metrics": [5, 1, "invalid", 3]},
+        )
+        for blank_row in blank_rows:
+            with self.subTest(blank_row=blank_row):
+                returning = PaginationResult(
+                    rows=(
+                        {
+                            "dimensions": [{"name": "https://example.com/material"}],
+                            "metrics": [7, 12.5, 23.5, 34.5],
+                        },
+                        blank_row,
+                    ),
+                    total_rows=2,
+                    pages_fetched=1,
+                    pagination_complete=True,
+                    sampled=False,
+                    sample_share=None,
+                )
+                with patch.object(
+                    collector,
+                    "request_all_pages",
+                    side_effect=[empty_scope, empty_scope, empty_scope, empty_scope, returning],
+                ), patch.object(collector, "publish_metrika_day_bundle") as publish:
+                    summary = collector.run_release_backfill(
+                        [{"counter_id": collector.ABBOTT_COUNTER_ID}],
+                        "2026-01-02",
+                        "2026-01-02",
+                        77,
+                        41,
+                    )
+
+                publish.assert_not_called()
+                self.assertEqual(summary["published_days"], 0)
+                self.assertEqual(summary["failed_days"], ["2026-01-02"])
 
 
 if __name__ == "__main__":

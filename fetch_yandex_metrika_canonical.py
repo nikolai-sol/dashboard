@@ -935,14 +935,18 @@ def build_returning_rows(
     for item in response.rows:
         dimensions = item.get('dimensions') or []
         metrics = item.get('metrics') or []
-        raw_page = _raw_dimension_value(
-            dimensions[0].get('name')
-            if dimensions and isinstance(dimensions[0], dict)
-            else None
-        )
-        if not raw_page:
-            continue
+        if not isinstance(dimensions, (list, tuple)) or not dimensions:
+            raise MetrikaCollectionError('Returning page dimension is missing')
+        page_dimension = dimensions[0]
+        if not isinstance(page_dimension, dict):
+            raise MetrikaCollectionError('Returning page dimension is invalid')
+        raw_value = page_dimension.get('name')
+        if not isinstance(raw_value, str) or not raw_value.strip():
+            raise MetrikaCollectionError('Returning page value is invalid')
+        raw_page = raw_value
         normalized_page = normalize_metrika_page(raw_page)
+        if not normalized_page:
+            raise MetrikaCollectionError('Returning page value is not representable')
         denominator, *percentages = _required_returning_metrics(metrics)
         request_fingerprint = build_scope_hash(
             'returning', [counter_id, day, raw_page]
