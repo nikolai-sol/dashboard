@@ -105,6 +105,7 @@ def cap_duration(seconds: int) -> int:
 def build_session_journeys(dump_path: Path) -> dict[str, Any]:
     sessions: dict[str, SessionInfo] = {}
     hits_by_session: dict[tuple[str, str], SessionHits] = {}
+    source_hit_rows = 0
 
     for table, statement in stream_insert_statements(dump_path, {HIT_TABLE, SESSION_TABLE}):
         for row in parse_mysql_value_tuple(statement):
@@ -114,6 +115,7 @@ def build_session_journeys(dump_path: Path) -> dict[str, Any]:
                     sessions[info.session_id] = info
                 continue
 
+            source_hit_rows += 1
             if len(row) < 18:
                 continue
             source_event_id = raw_identifier(row[0])
@@ -153,8 +155,8 @@ def build_session_journeys(dump_path: Path) -> dict[str, Any]:
     rows: list[dict[str, Any]] = []
     for (report_date, session_id), bucket in sorted(hits_by_session.items()):
         session = sessions.get(session_id)
-        clean_sorted = sorted(bucket.clean_hits, key=lambda hit: (hit.at, hit.source_event_id))
-        for event_sequence, hit in enumerate(clean_sorted):
+        ordered_hits = sorted(bucket.all_hits, key=lambda hit: hit.at)
+        for event_sequence, hit in enumerate(ordered_hits):
             user_id = session.user_id if session and session.user_id and session.user_id != "0" else hit.user_id
             rows.append(
                 {
@@ -188,9 +190,15 @@ def build_session_journeys(dump_path: Path) -> dict[str, Any]:
             "grain": "protected_visit_id x event_sequence",
             "ordered_events": True,
             "sources": ["b_stat_hit", "b_stat_session"],
-            "events": "ordered clean pageview hits; raw identifiers retained as text",
+            "events": "all normalized pageview hits ordered by timestamp with stable source order ties; raw identifiers retained as text",
         },
-        "manifest": {"complete": True, "truncated": False},
+        "manifest": {
+            "complete": True,
+            "truncated": False,
+            "source_hit_rows": source_hit_rows,
+            "emitted_event_rows": len(rows),
+            "rejected_hit_rows": source_hit_rows - len(rows),
+        },
         "summary": summary,
         "rows": rows,
     }

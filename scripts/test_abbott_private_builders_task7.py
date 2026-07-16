@@ -52,7 +52,8 @@ class AbbottPrivateBuildersTask7Test(unittest.TestCase):
             "INSERT INTO `b_stat_hit` VALUES "
             + ",".join(
                 [
-                    sql_tuple(hit("hit-0001", "2026-05-20 10:00:00", "/article/a?token=secret")),
+                    sql_tuple(hit("hit-z", "2026-05-20 10:00:00", "/article/a?token=secret")),
+                    sql_tuple(hit("hit-a", "2026-05-20 10:00:00", "/bitrix/admin?token=secret")),
                     sql_tuple(hit("hit-0002", "2026-05-20 10:01:00", "/article/b#private")),
                     sql_tuple(hit("hit-0003", "2026-05-21 10:02:00", "/article/a?other=secret")),
                 ]
@@ -67,7 +68,17 @@ class AbbottPrivateBuildersTask7Test(unittest.TestCase):
             payload = build_bitrix_analytics(self.make_dump(Path(tmp)))
 
         self.assertEqual(payload["grain"], "normalized_path x report_date")
-        self.assertEqual(payload["manifest"], {"complete": True, "truncated": False})
+        self.assertEqual(
+            payload["manifest"],
+            {
+                "complete": True,
+                "truncated": False,
+                "source_hit_rows": 4,
+                "accepted_hit_rows": 3,
+                "rejected_hit_rows": 1,
+                "output_rows": 3,
+            },
+        )
         self.assertEqual(len(payload["rows"]), 3)
         self.assertEqual(
             [(row["report_date"], row["normalized_path"]) for row in payload["rows"]],
@@ -84,11 +95,24 @@ class AbbottPrivateBuildersTask7Test(unittest.TestCase):
 
         self.assertEqual(payload["schema"]["grain"], "protected_visit_id x event_sequence")
         self.assertTrue(payload["schema"]["ordered_events"])
-        self.assertEqual(payload["manifest"], {"complete": True, "truncated": False})
-        self.assertEqual([row["event_sequence"] for row in payload["rows"]], [0, 1, 0])
+        self.assertEqual(
+            payload["manifest"],
+            {
+                "complete": True,
+                "truncated": False,
+                "source_hit_rows": 4,
+                "emitted_event_rows": 4,
+                "rejected_hit_rows": 0,
+            },
+        )
+        self.assertEqual([row["event_sequence"] for row in payload["rows"]], [0, 1, 2, 0])
+        self.assertEqual(
+            [row["source_event_id"] for row in payload["rows"]],
+            ["hit-z", "hit-a", "hit-0002", "hit-0003"],
+        )
         self.assertEqual(payload["rows"][0]["protected_visit_id"], "0000000000009007199254740993")
         self.assertEqual(payload["rows"][0]["raw_user_id"], "000123")
-        self.assertEqual(payload["rows"][0]["source_event_id"], "hit-0001")
+        self.assertEqual(payload["rows"][1]["normalized_path"], "/bitrix/admin")
         self.assertEqual(payload["rows"][0]["normalized_path"], "/article/a")
 
     def test_private_writer_rejects_public_and_sets_0600(self):

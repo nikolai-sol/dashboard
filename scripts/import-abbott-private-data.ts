@@ -1,5 +1,6 @@
 #!/usr/bin/env node
 import { createHash, randomUUID } from "node:crypto";
+import { existsSync, realpathSync } from "node:fs";
 import { chmod, mkdir, open, readFile, rename, stat, unlink } from "node:fs/promises";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
@@ -9,11 +10,17 @@ import * as XLSX from "xlsx";
 const DATASET_KEY = "abbott";
 const PRIMARY_SCHEMA = "report_bd";
 const PRIVATE_SCHEMA = "report_bd_private";
-const ALLOWED_SOURCE_KINDS = ["workbook_json", "workbook_xlsx", "bitrix_pages", "bitrix_journeys"] as const;
+const ALLOWED_SOURCE_KINDS = [
+  "abbott_workbook_json",
+  "abbott_workbook_catalog",
+  "abbott_bitrix_pages",
+  "abbott_bitrix_journeys",
+] as const;
 const ALLOWED_TABLES = new Set([
   `${PRIMARY_SCHEMA}.portal_content_catalog`,
   `${PRIMARY_SCHEMA}.portal_general_materials`,
   `${PRIMARY_SCHEMA}.portal_event_catalog`,
+  `${PRIMARY_SCHEMA}.portal_bitrix_page_facts`,
   `${PRIMARY_SCHEMA}.portal_bitrix_journey_transitions`,
   `${PRIVATE_SCHEMA}.portal_user_directions_private`,
   `${PRIVATE_SCHEMA}.portal_bitrix_page_facts`,
@@ -37,6 +44,7 @@ export interface ImportBatch {
   rows: unknown[][];
   fingerprints: string[];
   fingerprintColumn?: string;
+  countsTowardImportedRows?: boolean;
 }
 
 export interface PreparedAbbottSource {
@@ -162,6 +170,11 @@ function sanitizedBasename(value: string): string {
 function assertSanitizedEvidence(value: unknown): void {
   const forbiddenKeys = /(?:raw_?user|user_?id|session_?id|visit_?id|protected_?visit|source_locator|archive_locator|normalized_?url|registration_?url|normalized_?path|from_?path|to_?path)/i;
   const visit = (candidate: unknown): void => {
+    if (typeof candidate === "string") {
+      const forbiddenValue = /(?:[a-z][a-z0-9+.-]*:\/\/|^[/\\]|^[A-Za-z]:[\\/]|[?#].*=|\s->\s)/i;
+      if (forbiddenValue.test(candidate)) throw new Error("Manifest contains row-level evidence");
+      return;
+    }
     if (Array.isArray(candidate)) {
       candidate.forEach(visit);
       return;
@@ -177,7 +190,15 @@ function assertSanitizedEvidence(value: unknown): void {
 
 export function assertPrivateImportPath(value: string, label: string): string {
   if (!value || !value.trim()) throw new Error(`${label} requires an explicit path`);
-  const resolved = path.resolve(value);
+  let existingAncestor = path.resolve(value);
+  const missingSegments: string[] = [];
+  while (!existsSync(existingAncestor)) {
+    const parent = path.dirname(existingAncestor);
+    if (parent === existingAncestor) break;
+    missingSegments.unshift(path.basename(existingAncestor));
+    existingAncestor = parent;
+  }
+  const resolved = path.join(realpathSync.native(existingAncestor), ...missingSegments);
   const segments = resolved.split(path.sep).filter(Boolean);
   if (segments.some((segment) => segment.toLowerCase() === "public")) {
     throw new Error(`${label} must not be under public`);
@@ -259,7 +280,7 @@ export function parseWorkbookJson(payload: unknown) {
   }
 
   const manifest = {
-    source_kind: "workbook_json",
+    source_kind: "abbott_workbook_json",
     direction_count: privateUserDirections.length,
     general_material_count: generalMaterials.length,
     event_catalog_count: eventCatalog.length,
@@ -305,9 +326,13 @@ export function parseWorkbookXlsx(buffer: Buffer) {
     sourceSlug: string | null;
     direction: string | null;
     access: string | null;
+    isActive: boolean;
     fingerprint: string;
   }> = [];
   const fingerprints = new Set<string>();
+  const titleKeys = new Set<string>();
+  const titleAndTypeKeys = new Set<string>();
+  const slugKeys = new Set<string>();
   for (const config of CONTENT_SHEETS) {
     const worksheet = workbook.Sheets[config.name];
     if (!worksheet) continue;
@@ -319,28 +344,43 @@ export function parseWorkbookXlsx(buffer: Buffer) {
       const materialType = text(config.typeKey ? row[config.typeKey] : config.materialType) || config.materialType;
       const direction = text(config.directionKey ? row[config.directionKey] : "") || null;
       const access = text(config.accessKey ? row[config.accessKey] : "") || null;
-      const fingerprint = canonicalRowFingerprint([config.name, pageTitle, materialType, sourceSlug, direction, access]);
-      rejectDuplicate(fingerprints, fingerprint, "content target key");
-      rows.push({ pageTitle, materialType, sourceSlug, direction, access, fingerprint });
+      const activeLabel = text(row["Активность"]).toLocaleLowerCase("ru-RU");
+      let isActive = true;
+      if (["нет", "no", "false", "0"].includes(activeLabel)) isActive = false;
+      else if (activeLabel && !["да", "yes", "true", "1"].includes(activeLabel)) {
+        throw new Error(`Workbook content active state is invalid in ${config.name}`);
+      }
+      rejectDuplicate(titleKeys, pageTitle, "content title");
+      rejectDuplicate(titleAndTypeKeys, canonicalRowFingerprint([pageTitle, materialType]), "content title and type");
+      if (sourceSlug) rejectDuplicate(slugKeys, sourceSlug, "content slug");
+      const fingerprint = canonicalRowFingerprint([config.name, pageTitle, materialType, sourceSlug, direction, access, isActive]);
+      rejectDuplicate(fingerprints, fingerprint, "content source row");
+      rows.push({ pageTitle, materialType, sourceSlug, direction, access, isActive, fingerprint });
     }
   }
   if (rows.length === 0) throw new Error("Workbook XLSX has no content catalog rows");
-  const manifest = { source_kind: "workbook_xlsx", content_count: rows.length, rejected_count: 0 };
+  const manifest = { source_kind: "abbott_workbook_catalog", content_count: rows.length, rejected_count: 0 };
   assertSanitizedEvidence(manifest);
   return { rows, manifest };
 }
 
-function assertCompleteManifest(payload: Record<string, unknown>, label: string): void {
+function assertCompleteManifest(payload: Record<string, unknown>, label: string): Record<string, unknown> {
   const manifest = payload.manifest;
   if (!manifest || typeof manifest !== "object") throw new Error(`${label} requires a completeness manifest`);
   const status = manifest as Record<string, unknown>;
   if (status.complete !== true || status.truncated !== false) throw new Error(`${label} is truncated or incomplete`);
+  return status;
+}
+
+function requiredManifestCount(manifest: Record<string, unknown>, key: string, label: string): number {
+  if (!(key in manifest)) throw new Error(`${label} completeness manifest is missing count ${key}`);
+  return nonNegativeInteger(manifest[key], `${label} ${key}`);
 }
 
 export function parseBitrixPagePayload(payload: unknown) {
   if (!payload || typeof payload !== "object" || Array.isArray(payload)) throw new Error("Bitrix page payload must be an object");
   const source = payload as Record<string, unknown>;
-  assertCompleteManifest(source, "Bitrix page payload");
+  const completeness = assertCompleteManifest(source, "Bitrix page payload");
   if (source.grain !== "normalized_path x report_date") throw new Error("Bitrix page payload must contain daily rows");
   const rows: Array<Record<string, unknown>> = [];
   const fingerprints = new Set<string>();
@@ -375,13 +415,24 @@ export function parseBitrixPagePayload(payload: unknown) {
     });
   }
   if (rows.length === 0) throw new Error("Bitrix page payload has no daily rows");
+  const sourceHitRows = requiredManifestCount(completeness, "source_hit_rows", "Bitrix page payload");
+  const acceptedHitRows = requiredManifestCount(completeness, "accepted_hit_rows", "Bitrix page payload");
+  const rejectedHitRows = requiredManifestCount(completeness, "rejected_hit_rows", "Bitrix page payload");
+  const outputRows = requiredManifestCount(completeness, "output_rows", "Bitrix page payload");
+  if (sourceHitRows !== acceptedHitRows + rejectedHitRows || outputRows !== rows.length) {
+    throw new Error("Bitrix page payload completeness counts do not reconcile");
+  }
   const dates = rows.map((row) => String(row.reportDate)).sort();
   const manifest = {
-    source_kind: "bitrix_pages",
+    source_kind: "abbott_bitrix_pages",
     imported_count: rows.length,
     rejected_count: 0,
     period_min_date: dates[0],
     period_max_date: dates.at(-1),
+    source_hit_rows: sourceHitRows,
+    accepted_hit_rows: acceptedHitRows,
+    rejected_hit_rows: rejectedHitRows,
+    output_rows: outputRows,
     complete: true,
     truncated: false,
   };
@@ -396,7 +447,7 @@ export function parseBitrixJourneyPayload(payload: unknown) {
   if (schema?.grain !== "protected_visit_id x event_sequence" || schema.ordered_events !== true) {
     throw new Error("Bitrix journeys require ordered event-grain rows");
   }
-  assertCompleteManifest(source, "Bitrix journey payload");
+  const completeness = assertCompleteManifest(source, "Bitrix journey payload");
   const rows: Array<Record<string, unknown>> = [];
   const eventKeys = new Set<string>();
   const byVisit = new Map<string, Array<Record<string, unknown>>>();
@@ -414,8 +465,9 @@ export function parseBitrixJourneyPayload(payload: unknown) {
     if (!/^\d{4}-\d{2}-\d{2}$/.test(reportDate) || !eventAt || !pathValue || !eventKind) {
       throw new Error("Journey event requires date, time, path, and kind");
     }
+    const databaseKey = canonicalRowFingerprint([reportDate, protectedVisitId, eventSequence]);
+    rejectDuplicate(eventKeys, databaseKey, "journey database key");
     const fingerprint = canonicalRowFingerprint([reportDate, protectedVisitId, eventSequence, eventAt, pathValue, eventKind]);
-    rejectDuplicate(eventKeys, fingerprint, "journey event key");
     const parsed = {
       reportDate,
       protectedVisitId,
@@ -437,6 +489,12 @@ export function parseBitrixJourneyPayload(payload: unknown) {
     byVisit.set(visitKey, events);
   }
   if (rows.length === 0) throw new Error("Bitrix journey payload has no event rows");
+  const sourceHitRows = requiredManifestCount(completeness, "source_hit_rows", "Bitrix journey payload");
+  const emittedEventRows = requiredManifestCount(completeness, "emitted_event_rows", "Bitrix journey payload");
+  const rejectedHitRows = requiredManifestCount(completeness, "rejected_hit_rows", "Bitrix journey payload");
+  if (sourceHitRows !== emittedEventRows + rejectedHitRows || emittedEventRows !== rows.length) {
+    throw new Error("Bitrix journey payload completeness counts do not reconcile");
+  }
 
   const transitionMap = new Map<string, Record<string, unknown>>();
   for (const events of byVisit.values()) {
@@ -468,12 +526,15 @@ export function parseBitrixJourneyPayload(payload: unknown) {
   );
   const dates = rows.map((row) => String(row.reportDate)).sort();
   const manifest = {
-    source_kind: "bitrix_journeys",
+    source_kind: "abbott_bitrix_journeys",
     imported_count: rows.length,
     transition_count: transitions.length,
     rejected_count: 0,
     period_min_date: dates[0],
     period_max_date: dates.at(-1),
+    source_hit_rows: sourceHitRows,
+    emitted_event_rows: emittedEventRows,
+    rejected_hit_rows: rejectedHitRows,
     complete: true,
     truncated: false,
   };
@@ -495,15 +556,46 @@ function insertIdFromResult(result: QueryResult): number {
 function parseSnapshotIds(value: unknown): number[] {
   const decoded = typeof value === "string" ? JSON.parse(value) : value;
   if (!Array.isArray(decoded)) throw new Error("Release source_snapshot_ids must be an array");
-  return decoded.map((item) => {
+  const ids = decoded.map((item) => {
     const id = Number(item);
     if (!Number.isSafeInteger(id) || id <= 0) throw new Error("Release source_snapshot_ids is malformed");
     return id;
   });
+  return [...new Set(ids)];
 }
 
 function assertIdentifier(identifier: string): void {
   if (!/^[a-z_][a-z0-9_]*$/i.test(identifier)) throw new Error("Unsafe SQL identifier");
+}
+
+async function verifyBatch(
+  connection: AbbottImportConnection,
+  canonicalReleaseId: number,
+  snapshotId: number,
+  batch: ImportBatch,
+): Promise<void> {
+  if (!ALLOWED_TABLES.has(batch.table)) throw new Error("Import table is not allowed");
+  batch.columns.forEach(assertIdentifier);
+  if (batch.rows.some((row) => row.length !== batch.columns.length)) throw new Error("Import batch width mismatch");
+  if (batch.rows.length !== batch.fingerprints.length) throw new Error("Import batch fingerprint count mismatch");
+  if (new Set(batch.fingerprints).size !== batch.fingerprints.length) throw new Error("Duplicate import batch fingerprint");
+  if (batch.rows.length === 0) return;
+  const countResult = await connection.execute(
+    `SELECT COUNT(*) AS row_count FROM ${batch.table} WHERE canonical_release_id = ? AND source_snapshot_id = ?`,
+    [canonicalReleaseId, snapshotId],
+  );
+  const actualCount = Number(rowsFromResult(countResult)[0]?.row_count);
+  if (actualCount !== batch.rows.length) throw new Error("Imported row count verification failed");
+  if (batch.fingerprintColumn) {
+    assertIdentifier(batch.fingerprintColumn);
+    const fingerprintResult = await connection.execute(
+      `SELECT ${batch.fingerprintColumn} AS fingerprint FROM ${batch.table} WHERE canonical_release_id = ? AND source_snapshot_id = ? ORDER BY ${batch.fingerprintColumn}`,
+      [canonicalReleaseId, snapshotId],
+    );
+    const actual = rowsFromResult(fingerprintResult).map((row) => String(row.fingerprint)).sort();
+    const expected = [...batch.fingerprints].sort();
+    if (JSON.stringify(actual) !== JSON.stringify(expected)) throw new Error("Imported fingerprint verification failed");
+  }
 }
 
 async function insertAndVerifyBatch(
@@ -528,22 +620,7 @@ async function insertAndVerifyBatch(
       params,
     );
   }
-  const countResult = await connection.execute(
-    `SELECT COUNT(*) AS row_count FROM ${batch.table} WHERE canonical_release_id = ? AND source_snapshot_id = ?`,
-    [canonicalReleaseId, snapshotId],
-  );
-  const actualCount = Number(rowsFromResult(countResult)[0]?.row_count);
-  if (actualCount !== batch.rows.length) throw new Error("Imported row count verification failed");
-  if (batch.fingerprintColumn) {
-    assertIdentifier(batch.fingerprintColumn);
-    const fingerprintResult = await connection.execute(
-      `SELECT ${batch.fingerprintColumn} AS fingerprint FROM ${batch.table} WHERE canonical_release_id = ? AND source_snapshot_id = ? ORDER BY ${batch.fingerprintColumn}`,
-      [canonicalReleaseId, snapshotId],
-    );
-    const actual = rowsFromResult(fingerprintResult).map((row) => String(row.fingerprint)).sort();
-    const expected = [...batch.fingerprints].sort();
-    if (JSON.stringify(actual) !== JSON.stringify(expected)) throw new Error("Imported fingerprint verification failed");
-  }
+  await verifyBatch(connection, canonicalReleaseId, snapshotId, batch);
 }
 
 export async function runAbbottImportTransaction(
@@ -560,6 +637,14 @@ export async function runAbbottImportTransaction(
     kinds.add(source.sourceKind);
     if (!/^[a-f0-9]{64}$/.test(source.contentSha256)) throw new Error("Invalid source checksum");
     assertSanitizedEvidence(source.manifest);
+    if (source.manifest.source_kind !== source.sourceKind) throw new Error("Manifest source kind does not match prepared source");
+    if (source.sourceRowCount !== source.importedRowCount + source.rejectedRowCount) {
+      throw new Error("Source row counts do not reconcile");
+    }
+    const importedBatchRows = source.batches
+      .filter((batch) => batch.countsTowardImportedRows !== false)
+      .reduce((sum, batch) => sum + batch.rows.length, 0);
+    if (importedBatchRows !== source.importedRowCount) throw new Error("Imported batch counts do not reconcile");
   }
 
   await connection.beginTransaction();
@@ -575,7 +660,27 @@ export async function runAbbottImportTransaction(
     if (releaseRows.length !== 1 || releaseRows[0]?.dataset_key !== DATASET_KEY || releaseRows[0]?.release_status !== "staging") {
       throw new Error("Canonical release is not the fixed Abbott staging release");
     }
-    parseSnapshotIds(releaseRows[0].source_snapshot_ids);
+    const existingReferencedIds = parseSnapshotIds(releaseRows[0].source_snapshot_ids);
+    const existingReferencedSnapshots: Array<Record<string, unknown>> = [];
+    const existingReferencedById = new Map<number, Record<string, unknown>>();
+    if (existingReferencedIds.length > 0) {
+      const referencedResult = await connection.execute(
+        `SELECT id, dataset_key, source_kind, import_status
+           FROM ${PRIMARY_SCHEMA}.portal_dataset_snapshots
+          WHERE id IN (${existingReferencedIds.map(() => "?").join(", ")})
+          FOR UPDATE`,
+        existingReferencedIds,
+      );
+      existingReferencedSnapshots.push(...rowsFromResult(referencedResult));
+      existingReferencedSnapshots.forEach((row) => existingReferencedById.set(Number(row.id), row));
+      if (existingReferencedById.size !== existingReferencedIds.length) throw new Error("Release references a missing source snapshot");
+      for (const id of existingReferencedIds) {
+        const row = existingReferencedById.get(id);
+        if (row?.dataset_key !== DATASET_KEY || row.import_status !== "imported" || !text(row.source_kind)) {
+          throw new Error("Release references an invalid source snapshot");
+        }
+      }
+    }
 
     const snapshotIds: Partial<Record<AbbottSourceKind, number>> = {};
     const idempotentKinds: AbbottSourceKind[] = [];
@@ -593,7 +698,12 @@ export async function runAbbottImportTransaction(
         if (existing.import_status !== "imported" || Number(existing.imported_row_count) !== source.importedRowCount) {
           throw new Error("Existing checksum is not an equivalent imported snapshot");
         }
-        snapshotIds[source.sourceKind] = Number(existing.id);
+        const existingSnapshotId = Number(existing.id);
+        if (!Number.isSafeInteger(existingSnapshotId) || existingSnapshotId <= 0) throw new Error("Existing snapshot ID is invalid");
+        for (const batch of source.batches) {
+          await verifyBatch(connection, canonicalReleaseId, existingSnapshotId, batch);
+        }
+        snapshotIds[source.sourceKind] = existingSnapshotId;
         idempotentKinds.push(source.sourceKind);
         continue;
       }
@@ -642,7 +752,12 @@ export async function runAbbottImportTransaction(
       );
     }
 
-    const attachedIds = sources.map((source) => snapshotIds[source.sourceKind]!);
+    const importedKinds = new Set(sources.map((source) => source.sourceKind));
+    const preservedIds = existingReferencedIds.filter((id) => {
+      const row = existingReferencedById.get(id);
+      return row && !importedKinds.has(text(row.source_kind) as AbbottSourceKind);
+    });
+    const attachedIds = [...new Set([...preservedIds, ...sources.map((source) => snapshotIds[source.sourceKind]!)])];
     await connection.execute(
       `UPDATE ${PRIMARY_SCHEMA}.portal_data_releases
           SET source_snapshot_ids = ?
@@ -661,7 +776,7 @@ export async function runAbbottImportTransaction(
   }
 }
 
-interface CliOptions {
+export interface CliOptions {
   canonicalReleaseId: number;
   workbookJsonPath: string;
   workbookXlsxPath: string;
@@ -805,7 +920,7 @@ function workbookJsonSource(parsed: ReturnType<typeof parseWorkbookJson>, source
     row.fingerprint,
   ]);
   const importedRowCount = directionRows.length + materialRows.length + eventRows.length;
-  return withSourceMetadata("workbook_json", sourcePath, bytes, archiveLocator, options, {
+  return withSourceMetadata("abbott_workbook_json", sourcePath, bytes, archiveLocator, options, {
     sourceRowCount: parsed.sourceRowCount,
     importedRowCount,
     rejectedRowCount: parsed.rejectedCount,
@@ -847,6 +962,8 @@ function workbookXlsxSource(parsed: ReturnType<typeof parseWorkbookXlsx>, source
     row.materialType,
     row.sourceSlug,
     row.sourceSlug ? sha256(row.sourceSlug) : null,
+    row.access,
+    row.isActive,
     row.fingerprint,
     null,
     row.direction,
@@ -854,7 +971,7 @@ function workbookXlsxSource(parsed: ReturnType<typeof parseWorkbookXlsx>, source
     "1970-01-01 00:00:00",
     null,
   ]);
-  return withSourceMetadata("workbook_xlsx", sourcePath, bytes, archiveLocator, options, {
+  return withSourceMetadata("abbott_workbook_catalog", sourcePath, bytes, archiveLocator, options, {
     sourceRowCount: rows.length,
     importedRowCount: rows.length,
     rejectedRowCount: 0,
@@ -864,7 +981,7 @@ function workbookXlsxSource(parsed: ReturnType<typeof parseWorkbookXlsx>, source
     manifest: parsed.manifest,
     batches: [{
       table: `${PRIMARY_SCHEMA}.portal_content_catalog`,
-      columns: ["normalized_url", "normalized_url_hash", "normalized_path", "page_title", "material_id", "material_type", "source_slug", "source_slug_hash", "source_row_fingerprint", "section_key", "direction_key", "published_at", "valid_from", "valid_to"],
+      columns: ["normalized_url", "normalized_url_hash", "normalized_path", "page_title", "material_id", "material_type", "source_slug", "source_slug_hash", "access_label", "is_active", "source_row_fingerprint", "section_key", "direction_key", "published_at", "valid_from", "valid_to"],
       rows,
       fingerprints: parsed.rows.map((row) => row.fingerprint),
       fingerprintColumn: "source_row_fingerprint",
@@ -879,7 +996,7 @@ function bitrixPageSource(parsed: ReturnType<typeof parseBitrixPagePayload>, sou
     row.anonymousHits, row.loggedInSessions, row.anonymousSessions, row.entrySessions, row.exitSessions,
     row.averageSessionSeconds, row.topUtmSource, row.topUtmMedium, row.topUtmCampaign, row.fingerprint,
   ]);
-  return withSourceMetadata("bitrix_pages", sourcePath, bytes, archiveLocator, options, {
+  return withSourceMetadata("abbott_bitrix_pages", sourcePath, bytes, archiveLocator, options, {
     sourceRowCount: rows.length,
     importedRowCount: rows.length,
     rejectedRowCount: 0,
@@ -887,13 +1004,23 @@ function bitrixPageSource(parsed: ReturnType<typeof parseBitrixPagePayload>, sou
     periodMaxDate: text(parsed.manifest.period_max_date),
     generatedAt: text(payload.generated_at) || null,
     manifest: parsed.manifest,
-    batches: [{
-      table: `${PRIVATE_SCHEMA}.portal_bitrix_page_facts`,
-      columns: ["analytics_account_id", "report_date", "normalized_path", "normalized_path_hash", "material_id", "material_type_hint", "pageviews", "sessions", "users", "guests", "logged_in_hits", "anonymous_hits", "logged_in_sessions", "anonymous_sessions", "entry_sessions", "exit_sessions", "avg_session_duration_seconds", "top_utm_source", "top_utm_medium", "top_utm_campaign", "source_row_fingerprint"],
-      rows,
-      fingerprints: parsed.rows.map((row) => String(row.fingerprint)),
-      fingerprintColumn: "source_row_fingerprint",
-    }],
+    batches: [
+      {
+        table: `${PRIVATE_SCHEMA}.portal_bitrix_page_facts`,
+        columns: ["analytics_account_id", "report_date", "normalized_path", "normalized_path_hash", "material_id", "material_type_hint", "pageviews", "sessions", "users", "guests", "logged_in_hits", "anonymous_hits", "logged_in_sessions", "anonymous_sessions", "entry_sessions", "exit_sessions", "avg_session_duration_seconds", "top_utm_source", "top_utm_medium", "top_utm_campaign", "source_row_fingerprint"],
+        rows,
+        fingerprints: parsed.rows.map((row) => String(row.fingerprint)),
+        fingerprintColumn: "source_row_fingerprint",
+      },
+      {
+        table: `${PRIMARY_SCHEMA}.portal_bitrix_page_facts`,
+        columns: ["analytics_account_id", "report_date", "normalized_path", "normalized_path_hash", "material_id", "material_type_hint", "pageviews", "sessions", "users", "guests", "logged_in_hits", "anonymous_hits", "logged_in_sessions", "anonymous_sessions", "entry_sessions", "exit_sessions", "avg_session_duration_seconds", "top_utm_source", "top_utm_medium", "top_utm_campaign", "source_row_fingerprint"],
+        rows,
+        fingerprints: parsed.rows.map((row) => String(row.fingerprint)),
+        fingerprintColumn: "source_row_fingerprint",
+        countsTowardImportedRows: false,
+      },
+    ],
   });
 }
 
@@ -906,7 +1033,7 @@ function bitrixJourneySource(parsed: ReturnType<typeof parseBitrixJourneyPayload
   const transitions = parsed.transitions.map((row) => [
     "abbott_bitrix", row.reportDate, row.fromPath, row.fromPathHash, row.toPath, row.toPathHash, row.transitionCount,
   ]);
-  return withSourceMetadata("bitrix_journeys", sourcePath, bytes, archiveLocator, options, {
+  return withSourceMetadata("abbott_bitrix_journeys", sourcePath, bytes, archiveLocator, options, {
     sourceRowCount: rows.length,
     importedRowCount: rows.length,
     rejectedRowCount: 0,
@@ -927,31 +1054,32 @@ function bitrixJourneySource(parsed: ReturnType<typeof parseBitrixJourneyPayload
         columns: ["analytics_account_id", "report_date", "from_path", "from_path_hash", "to_path", "to_path_hash", "transition_count"],
         rows: transitions,
         fingerprints: parsed.transitions.map((row) => canonicalRowFingerprint([row.reportDate, row.fromPath, row.toPath])),
+        countsTowardImportedRows: false,
       },
     ],
   });
 }
 
-async function prepareSources(options: CliOptions): Promise<PreparedAbbottSource[]> {
+export async function prepareAbbottSources(options: CliOptions): Promise<PreparedAbbottSource[]> {
   const specifications: Array<{ kind: AbbottSourceKind; sourcePath: string }> = [
-    { kind: "workbook_json", sourcePath: options.workbookJsonPath },
-    { kind: "workbook_xlsx", sourcePath: options.workbookXlsxPath },
+    { kind: "abbott_workbook_json", sourcePath: options.workbookJsonPath },
+    { kind: "abbott_workbook_catalog", sourcePath: options.workbookXlsxPath },
   ];
-  if (options.bitrixPagesPath) specifications.push({ kind: "bitrix_pages", sourcePath: options.bitrixPagesPath });
-  if (options.bitrixJourneysPath) specifications.push({ kind: "bitrix_journeys", sourcePath: options.bitrixJourneysPath });
+  if (options.bitrixPagesPath) specifications.push({ kind: "abbott_bitrix_pages", sourcePath: options.bitrixPagesPath });
+  if (options.bitrixJourneysPath) specifications.push({ kind: "abbott_bitrix_journeys", sourcePath: options.bitrixJourneysPath });
   const prepared: PreparedAbbottSource[] = [];
   for (const specification of specifications) {
     const bytes = await readFile(specification.sourcePath);
     if ((await stat(specification.sourcePath)).isDirectory()) throw new Error("Source path must be a file");
     let parsed: unknown;
-    if (specification.kind === "workbook_json") parsed = parseWorkbookJson(JSON.parse(bytes.toString("utf8")));
-    else if (specification.kind === "workbook_xlsx") parsed = parseWorkbookXlsx(bytes);
-    else if (specification.kind === "bitrix_pages") parsed = parseBitrixPagePayload(JSON.parse(bytes.toString("utf8")));
+    if (specification.kind === "abbott_workbook_json") parsed = parseWorkbookJson(JSON.parse(bytes.toString("utf8")));
+    else if (specification.kind === "abbott_workbook_catalog") parsed = parseWorkbookXlsx(bytes);
+    else if (specification.kind === "abbott_bitrix_pages") parsed = parseBitrixPagePayload(JSON.parse(bytes.toString("utf8")));
     else parsed = parseBitrixJourneyPayload(JSON.parse(bytes.toString("utf8")));
     const archive = await archiveSource(specification.sourcePath, specification.kind, options.archiveDir, bytes);
-    if (specification.kind === "workbook_json") prepared.push(workbookJsonSource(parsed as ReturnType<typeof parseWorkbookJson>, specification.sourcePath, bytes, archive.destination, options));
-    else if (specification.kind === "workbook_xlsx") prepared.push(workbookXlsxSource(parsed as ReturnType<typeof parseWorkbookXlsx>, specification.sourcePath, bytes, archive.destination, options));
-    else if (specification.kind === "bitrix_pages") {
+    if (specification.kind === "abbott_workbook_json") prepared.push(workbookJsonSource(parsed as ReturnType<typeof parseWorkbookJson>, specification.sourcePath, bytes, archive.destination, options));
+    else if (specification.kind === "abbott_workbook_catalog") prepared.push(workbookXlsxSource(parsed as ReturnType<typeof parseWorkbookXlsx>, specification.sourcePath, bytes, archive.destination, options));
+    else if (specification.kind === "abbott_bitrix_pages") {
       prepared.push(bitrixPageSource(parsed as ReturnType<typeof parseBitrixPagePayload>, specification.sourcePath, bytes, archive.destination, options, JSON.parse(bytes.toString("utf8")) as Record<string, unknown>));
     } else {
       prepared.push(bitrixJourneySource(parsed as ReturnType<typeof parseBitrixJourneyPayload>, specification.sourcePath, bytes, archive.destination, options, JSON.parse(bytes.toString("utf8")) as Record<string, unknown>));
@@ -969,7 +1097,7 @@ function requiredEnv(name: string): string {
 async function main(): Promise<void> {
   try {
     const options = parseCliArgs(process.argv.slice(2));
-    const sources = await prepareSources(options);
+    const sources = await prepareAbbottSources(options);
     const port = Number(requiredEnv("ABBOTT_IMPORT_DB_PORT"));
     if (!Number.isSafeInteger(port) || port < 1 || port > 65535) throw new Error("Invalid importer database port");
     const connection = await mysql.createConnection({

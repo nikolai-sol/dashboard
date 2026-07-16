@@ -408,7 +408,14 @@ def build_bitrix_analytics(dump_path: Path) -> dict[str, Any]:
         "generated_at": datetime.now(timezone.utc).isoformat(),
         "source_dump": dump_path.name,
         "grain": "normalized_path x report_date",
-        "manifest": {"complete": True, "truncated": False},
+        "manifest": {
+            "complete": True,
+            "truncated": False,
+            "source_hit_rows": hit_rows,
+            "accepted_hit_rows": clean_hits,
+            "rejected_hit_rows": hit_rows - clean_hits,
+            "output_rows": len(rows),
+        },
         "filters": {
             "method": "GET or empty",
             "url_404": "exclude Y",

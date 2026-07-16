@@ -1,5 +1,9 @@
 import assert from "node:assert/strict";
+import { mkdtempSync, mkdirSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import path from "node:path";
 import test from "node:test";
+import * as XLSX from "xlsx";
 import {
   assertPrivateImportPath,
   canonicalRowFingerprint,
@@ -7,6 +11,8 @@ import {
   parseBitrixJourneyPayload,
   parseBitrixPagePayload,
   parseWorkbookJson,
+  parseWorkbookXlsx,
+  prepareAbbottSources,
   runAbbottImportTransaction,
   type AbbottImportConnection,
   type PreparedAbbottSource,
@@ -28,6 +34,23 @@ test("assertPrivateImportPath rejects public paths and requires explicit paths",
     /public/i,
   );
   assert.doesNotThrow(() => assertPrivateImportPath("/srv/private/abbott/workbook.json", "workbook JSON"));
+});
+
+test("assertPrivateImportPath rejects a symlink whose real path is under public", () => {
+  const root = mkdtempSync(path.join(tmpdir(), "abbott-import-path-"));
+  try {
+    const publicDir = path.join(root, "public");
+    mkdirSync(publicDir);
+    writeFileSync(path.join(publicDir, "workbook.json"), "{}");
+    const alias = path.join(root, "private-alias");
+    symlinkSync(publicDir, alias, "dir");
+    assert.throws(
+      () => assertPrivateImportPath(path.join(alias, "workbook.json"), "workbook JSON"),
+      /public/i,
+    );
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
 });
 
 test("parseWorkbookJson preserves lossless raw IDs only in private rows and rejects duplicates", () => {
@@ -83,11 +106,95 @@ test("canonicalRowFingerprint is stable, length-delimited, and contains no input
   assert.doesNotMatch(first, /ab|private/i);
 });
 
+function workbookBuffer(sheets: Record<string, Array<Record<string, unknown>>>): Buffer {
+  const workbook = XLSX.utils.book_new();
+  for (const [name, rows] of Object.entries(sheets)) {
+    XLSX.utils.book_append_sheet(workbook, XLSX.utils.json_to_sheet(rows), name);
+  }
+  return Buffer.from(XLSX.write(workbook, { type: "buffer", bookType: "xlsx" }));
+}
+
+test("Workbook XLSX preserves access and active state and rejects ambiguous lookup keys", () => {
+  const parsed = parseWorkbookXlsx(workbookBuffer({
+    "Статьи": [
+      { "Название": "Active guide", "Символьный код": "active-guide", "Доступ": "Врачи", "Активность": "Да" },
+      { "Название": "Archived guide", "Символьный код": "archived-guide", "Доступ": "Все", "Активность": "Нет" },
+    ],
+  }));
+  assert.deepEqual(
+    parsed.rows.map((row) => ({ access: row.access, isActive: row.isActive })),
+    [{ access: "Врачи", isActive: true }, { access: "Все", isActive: false }],
+  );
+
+  assert.throws(
+    () => parseWorkbookXlsx(workbookBuffer({
+      "Статьи": [{ "Название": "Shared title", "Символьный код": "article" }],
+      "Видео": [{ "Название": "Shared title", "Символьный код": "video" }],
+    })),
+    /duplicate.*title/i,
+  );
+  assert.throws(
+    () => parseWorkbookXlsx(workbookBuffer({
+      "Статьи": [
+        { "Название": "One", "Символьный код": "shared-slug" },
+        { "Название": "Two", "Символьный код": "shared-slug" },
+      ],
+    })),
+    /duplicate.*slug/i,
+  );
+});
+
+test("prepared sources use store source kinds and persist XLSX metadata plus both Bitrix page projections", async () => {
+  const root = mkdtempSync(path.join(tmpdir(), "abbott-import-prepare-"));
+  try {
+    const workbookJsonPath = path.join(root, "workbook.json");
+    const workbookXlsxPath = path.join(root, "workbook.xlsx");
+    const bitrixPagesPath = path.join(root, "pages.json");
+    writeFileSync(workbookJsonPath, JSON.stringify({ id: [{ id: "0001", direction: "cardiology" }] }));
+    writeFileSync(workbookXlsxPath, workbookBuffer({
+      "Статьи": [{ "Название": "Guide", "Символьный код": "guide", "Доступ": "Врачи", "Активность": "Нет" }],
+    }));
+    writeFileSync(bitrixPagesPath, JSON.stringify({
+      grain: "normalized_path x report_date",
+      manifest: { complete: true, truncated: false, source_hit_rows: 1, accepted_hit_rows: 1, rejected_hit_rows: 0, output_rows: 1 },
+      rows: [{ report_date: "2026-05-20", normalized_path: "/guide", pageviews: 1 }],
+    }));
+
+    const sources = await prepareAbbottSources({
+      canonicalReleaseId: 77,
+      workbookJsonPath,
+      workbookXlsxPath,
+      bitrixPagesPath,
+      bitrixJourneysPath: null,
+      parserVersion: "task7-test",
+      codeRevision: "deadbeef",
+      archiveDir: path.join(root, "archive"),
+    });
+    assert.deepEqual(sources.map((source) => source.sourceKind), [
+      "abbott_workbook_json",
+      "abbott_workbook_catalog",
+      "abbott_bitrix_pages",
+    ]);
+    const catalogBatch = sources[1]?.batches[0];
+    assert.ok(catalogBatch);
+    assert.ok(catalogBatch.columns.includes("access_label"));
+    assert.ok(catalogBatch.columns.includes("is_active"));
+    assert.equal(catalogBatch.rows[0]?.[catalogBatch.columns.indexOf("access_label")], "Врачи");
+    assert.equal(catalogBatch.rows[0]?.[catalogBatch.columns.indexOf("is_active")], false);
+    assert.deepEqual(
+      sources[2]?.batches.map((batch) => batch.table).sort(),
+      ["report_bd.portal_bitrix_page_facts", "report_bd_private.portal_bitrix_page_facts"],
+    );
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
 test("Bitrix page parser requires complete daily rows and rejects duplicate fingerprints", () => {
   const payload = {
     generated_at: "2026-05-29T11:00:00Z",
     grain: "normalized_path x report_date",
-    manifest: { complete: true, truncated: false },
+    manifest: { complete: true, truncated: false, source_hit_rows: 1, accepted_hit_rows: 1, rejected_hit_rows: 0, output_rows: 1 },
     rows: [
       {
         report_date: "2026-05-20",
@@ -100,9 +207,14 @@ test("Bitrix page parser requires complete daily rows and rejects duplicate fing
   };
   const parsed = parseBitrixPagePayload(payload);
   assert.equal(parsed.rows[0]?.normalizedPath, "/articles/a");
+  assert.equal(parsed.manifest.source_hit_rows, 1);
   assert.throws(
     () => parseBitrixPagePayload({ ...payload, manifest: { complete: false, truncated: true } }),
     /truncat|complete/i,
+  );
+  assert.throws(
+    () => parseBitrixPagePayload({ ...payload, manifest: { complete: true, truncated: false } }),
+    /count|manifest/i,
   );
   assert.throws(
     () => parseBitrixPagePayload({ ...payload, rows: [payload.rows[0], payload.rows[0]] }),
@@ -114,7 +226,7 @@ test("Bitrix journey parser requires ordered lossless event rows", () => {
   const parsed = parseBitrixJourneyPayload({
     generated_at: "2026-05-29T11:00:00Z",
     schema: { grain: "protected_visit_id x event_sequence", ordered_events: true },
-    manifest: { complete: true, truncated: false },
+    manifest: { complete: true, truncated: false, source_hit_rows: 2, emitted_event_rows: 2, rejected_hit_rows: 0 },
     rows: [
       {
         report_date: "2026-05-20",
@@ -140,6 +252,35 @@ test("Bitrix journey parser requires ordered lossless event rows", () => {
   assert.equal(parsed.rows[0]?.rawUserId, "000123");
   assert.equal(parsed.rows[1]?.normalizedPath, "/two");
   assert.equal(parsed.transitions[0]?.transitionCount, 1);
+  assert.equal(parsed.manifest.source_hit_rows, 2);
+
+  assert.throws(
+    () => parseBitrixJourneyPayload({
+      generated_at: "2026-05-29T11:00:00Z",
+      schema: { grain: "protected_visit_id x event_sequence", ordered_events: true },
+      manifest: { complete: true, truncated: false, source_hit_rows: 3, emitted_event_rows: 3, rejected_hit_rows: 0 },
+      rows: [
+        ...parsed.rows.map((row) => ({
+          report_date: row.reportDate,
+          protected_visit_id: row.protectedVisitId,
+          raw_user_id: row.rawUserId,
+          event_sequence: row.eventSequence,
+          event_at: row.eventAt,
+          normalized_path: row.normalizedPath,
+          event_kind: row.eventKind,
+        })),
+        {
+          report_date: "2026-05-20",
+          protected_visit_id: "0000000000009007199254740993",
+          event_sequence: 1,
+          event_at: "2026-05-20 10:02:00",
+          normalized_path: "/different",
+          event_kind: "pageview",
+        },
+      ],
+    }),
+    /duplicate.*journey.*key/i,
+  );
 
   assert.throws(
     () =>
@@ -153,7 +294,7 @@ test("Bitrix journey parser requires ordered lossless event rows", () => {
 
 function source(overrides: Partial<PreparedAbbottSource> = {}): PreparedAbbottSource {
   return {
-    sourceKind: "workbook_json",
+    sourceKind: "abbott_workbook_json" as PreparedAbbottSource["sourceKind"],
     basename: "workbook.json",
     contentSha256: "a".repeat(64),
     contentBytes: 10,
@@ -166,7 +307,7 @@ function source(overrides: Partial<PreparedAbbottSource> = {}): PreparedAbbottSo
     periodMinDate: null,
     periodMaxDate: null,
     generatedAt: null,
-    manifest: { source_kind: "workbook_json", row_count: 1 },
+    manifest: { source_kind: "abbott_workbook_json", row_count: 1 },
     batches: [
       {
         table: "report_bd_private.portal_user_directions_private",
@@ -207,7 +348,7 @@ test("transaction locks one staging Abbott release, writes and verifies, attache
   const result = await runAbbottImportTransaction(connection, 77, [source()]);
 
   assert.equal(snapshotLookupCount, 1);
-  assert.deepEqual(result, { canonicalReleaseId: 77, snapshotIds: { workbook_json: 101 }, idempotentKinds: [] });
+  assert.deepEqual(result, { canonicalReleaseId: 77, snapshotIds: { abbott_workbook_json: 101 }, idempotentKinds: [] });
   assert.equal(calls.filter((call) => call === "begin").length, 1);
   assert.equal(calls.filter((call) => call === "commit").length, 1);
   assert.equal(calls.filter((call) => call === "rollback").length, 0);
@@ -216,7 +357,7 @@ test("transaction locks one staging Abbott release, writes and verifies, attache
   assert.ok(!calls.some((call) => /portal_active_data_releases|SET\s+release_status\s*=/i.test(call)));
 });
 
-test("transaction is checksum-idempotent by dataset and kind and rolls back failures", async () => {
+test("transaction is checksum-idempotent only when the current release rows verify", async () => {
   const idempotentCalls: string[] = [];
   const idempotentConnection: AbbottImportConnection = {
     beginTransaction: async () => idempotentCalls.push("begin"),
@@ -229,14 +370,85 @@ test("transaction is checksum-idempotent by dataset and kind and rolls back fail
       if (compact.includes("FROM report_bd.portal_dataset_snapshots")) {
         return [[{ id: 44, import_status: "imported", imported_row_count: 1 }], []];
       }
+      if (compact.startsWith("SELECT COUNT(*)")) return [[{ row_count: 1 }], []];
       return [[], []];
     },
     commit: async () => idempotentCalls.push("commit"),
     rollback: async () => idempotentCalls.push("rollback"),
   };
   const result = await runAbbottImportTransaction(idempotentConnection, 77, [source()]);
-  assert.deepEqual(result.idempotentKinds, ["workbook_json"]);
+  assert.deepEqual(result.idempotentKinds, ["abbott_workbook_json"]);
   assert.ok(!idempotentCalls.some((call) => call.includes("portal_user_directions_private") && call.startsWith("INSERT")));
+
+  const crossReleaseConnection: AbbottImportConnection = {
+    beginTransaction: async () => undefined,
+    execute: async (sql) => {
+      const compact = sql.replace(/\s+/g, " ").trim();
+      if (compact.includes("FROM report_bd.portal_data_releases")) {
+        return [[{ id: 77, dataset_key: "abbott", release_status: "staging", source_snapshot_ids: "[]" }], []];
+      }
+      if (compact.includes("FROM report_bd.portal_dataset_snapshots")) {
+        return [[{ id: 44, import_status: "imported", imported_row_count: 1 }], []];
+      }
+      if (compact.startsWith("SELECT COUNT(*)")) return [[{ row_count: 0 }], []];
+      return [[], []];
+    },
+    commit: async () => undefined,
+    rollback: async () => undefined,
+  };
+  await assert.rejects(() => runAbbottImportTransaction(crossReleaseConnection, 77, [source()]), /import failed/i);
+});
+
+test("transaction preserves verified existing Metrika and optional snapshot IDs while replacing imported kinds", async () => {
+  let attached: unknown;
+  const connection: AbbottImportConnection = {
+    beginTransaction: async () => undefined,
+    execute: async (sql, params) => {
+      const compact = sql.replace(/\s+/g, " ").trim();
+      if (compact.includes("FROM report_bd.portal_data_releases")) {
+        return [[{ id: 77, dataset_key: "abbott", release_status: "staging", source_snapshot_ids: "[5,6,6,7]" }], []];
+      }
+      if (compact.includes("WHERE id IN")) {
+        return [[
+          { id: 7, dataset_key: "abbott", source_kind: "abbott_workbook_json", import_status: "imported" },
+          { id: 6, dataset_key: "abbott", source_kind: "abbott_bitrix_pages", import_status: "imported" },
+          { id: 5, dataset_key: "abbott", source_kind: "metrika_site", import_status: "imported" },
+        ], []];
+      }
+      if (compact.includes("FROM report_bd.portal_dataset_snapshots")) return [[], []];
+      if (compact.startsWith("INSERT INTO report_bd.portal_dataset_snapshots")) return [{ insertId: 101 }, []];
+      if (compact.startsWith("SELECT COUNT(*)")) return [[{ row_count: 1 }], []];
+      if (compact.startsWith("UPDATE report_bd.portal_data_releases")) attached = params?.[0];
+      return [{ affectedRows: 1 }, []];
+    },
+    commit: async () => undefined,
+    rollback: async () => undefined,
+  };
+
+  await runAbbottImportTransaction(connection, 77, [source()]);
+  assert.deepEqual(JSON.parse(String(attached)), [5, 6, 101]);
+});
+
+test("transaction rejects unreconciled counts and row-level manifest values before mutation", async () => {
+  let began = false;
+  const connection: AbbottImportConnection = {
+    beginTransaction: async () => { began = true; },
+    execute: async () => [[], []],
+    commit: async () => undefined,
+    rollback: async () => undefined,
+  };
+  await assert.rejects(
+    () => runAbbottImportTransaction(connection, 77, [source({ sourceRowCount: 2 })]),
+    /reconcile/i,
+  );
+  await assert.rejects(
+    () => runAbbottImportTransaction(connection, 77, [source({ manifest: { note: "/private/user/000123?token=secret" } })]),
+    /manifest/i,
+  );
+  assert.equal(began, false);
+});
+
+test("transaction rolls back failures with a sanitized error", async () => {
 
   const failureCalls: string[] = [];
   const failingConnection: AbbottImportConnection = {
@@ -286,7 +498,7 @@ test("transaction chunks large fact batches on the same connection", async () =>
     source({
       sourceRowCount: rows.length,
       importedRowCount: rows.length,
-      manifest: { source_kind: "workbook_json", row_count: rows.length },
+      manifest: { source_kind: "abbott_workbook_json", row_count: rows.length },
       batches: [
         {
           table: "report_bd_private.portal_user_directions_private",
