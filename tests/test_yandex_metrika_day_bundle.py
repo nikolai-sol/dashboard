@@ -7,6 +7,11 @@ from unittest.mock import call, patch
 
 import requests
 
+FINGERPRINT_CONTEXT = {
+    "code_revision": "test-revision",
+    "parser_version": "test-parser-v1",
+}
+
 
 def scope_result(scope, rows=(), **overrides):
     from fetch_yandex_metrika_canonical import MetrikaScopeResult
@@ -81,13 +86,16 @@ class MetrikaDayBundleTests(unittest.TestCase):
         with patch.object(
             collector,
             "collect_metrika_scope",
-            side_effect=lambda _counter, _day, scope, _run, _release: collected[scope],
+            side_effect=lambda _counter, _day, scope, _run, _release, **_context: (
+                collected[scope]
+            ),
         ) as collect_scope:
             bundle = collector.collect_metrika_day(
                 {"counter_id": collector.ABBOTT_COUNTER_ID},
                 "2026-01-02",
                 77,
                 41,
+                **FINGERPRINT_CONTEXT,
             )
 
         self.assertEqual(tuple(bundle.scopes), collector.ABBOTT_REQUIRED_SCOPES)
@@ -95,7 +103,14 @@ class MetrikaDayBundleTests(unittest.TestCase):
         self.assertEqual(
             collect_scope.call_args_list,
             [
-                call(collector.ABBOTT_COUNTER_ID, "2026-01-02", scope, 77, 41)
+                call(
+                    collector.ABBOTT_COUNTER_ID,
+                    "2026-01-02",
+                    scope,
+                    77,
+                    41,
+                    **FINGERPRINT_CONTEXT,
+                )
                 for scope in collector.ABBOTT_REQUIRED_SCOPES
             ],
         )
@@ -154,6 +169,7 @@ class MetrikaDayBundleTests(unittest.TestCase):
                         "2026-01-02",
                         77,
                         41,
+                        **FINGERPRINT_CONTEXT,
                     )
 
                 publish.assert_not_called()
@@ -175,6 +191,7 @@ class MetrikaDayBundleTests(unittest.TestCase):
                 "2026-01-02",
                 77,
                 41,
+                **FINGERPRINT_CONTEXT,
             )
 
         publish.assert_not_called()
@@ -214,6 +231,7 @@ class MetrikaDayBundleTests(unittest.TestCase):
                 "page",
                 77,
                 41,
+                **FINGERPRINT_CONTEXT,
             )
 
         self.assertEqual(result.status, "partial")
@@ -240,6 +258,8 @@ class MetrikaDayBundleTests(unittest.TestCase):
             counter_id=collector.ABBOTT_COUNTER_ID,
             counter_ids="",
             canonical_release_id=41,
+            code_revision=FINGERPRINT_CONTEXT["code_revision"],
+            parser_version=FINGERPRINT_CONTEXT["parser_version"],
         )
         summary = {
             "published_days": 1,

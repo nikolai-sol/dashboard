@@ -5,6 +5,7 @@ import os
 from pathlib import Path
 import tempfile
 import unittest
+from unittest.mock import patch
 
 
 class RecordingCursor:
@@ -152,6 +153,8 @@ class AbbottCanonicalControlsTest(unittest.TestCase):
             "accuracy": "full",
             "pagination_limit": 100000,
             "timezone": "Europe/Moscow",
+            "code_revision": "revision-a",
+            "parser_version": "metrika-parser-v1",
         }
         original = api_fingerprint(**base)
         mutations = {
@@ -161,6 +164,8 @@ class AbbottCanonicalControlsTest(unittest.TestCase):
             "accuracy": "medium",
             "pagination_limit": 1000,
             "timezone": "UTC",
+            "code_revision": "revision-b",
+            "parser_version": "metrika-parser-v2",
         }
         for field, changed in mutations.items():
             with self.subTest(field=field):
@@ -168,6 +173,68 @@ class AbbottCanonicalControlsTest(unittest.TestCase):
                     original,
                     api_fingerprint(**{**base, field: changed}),
                 )
+
+    def test_collector_persisted_scope_fingerprint_binds_code_and_parser(self):
+        import fetch_yandex_metrika_canonical as collector
+        from metrika_pagination import PaginationResult
+
+        response = PaginationResult(
+            rows=(
+                {
+                    "dimensions": [
+                        {"name": "https://example.test/material"},
+                        {"name": "Material"},
+                    ],
+                    "metrics": [10, 5],
+                },
+            ),
+            total_rows=1,
+            pages_fetched=1,
+            pagination_complete=True,
+            sampled=False,
+            sample_share=None,
+        )
+        with patch.object(collector, "request_all_pages", return_value=response):
+            first = collector.collect_metrika_scope(
+                collector.ABBOTT_COUNTER_ID,
+                "2026-01-02",
+                "page",
+                77,
+                41,
+                code_revision="revision-a",
+                parser_version="parser-v1",
+            )
+            changed_code = collector.collect_metrika_scope(
+                collector.ABBOTT_COUNTER_ID,
+                "2026-01-02",
+                "page",
+                77,
+                41,
+                code_revision="revision-b",
+                parser_version="parser-v1",
+            )
+            changed_parser = collector.collect_metrika_scope(
+                collector.ABBOTT_COUNTER_ID,
+                "2026-01-02",
+                "page",
+                77,
+                41,
+                code_revision="revision-a",
+                parser_version="parser-v2",
+            )
+
+        self.assertNotEqual(
+            first.request_fingerprint, changed_code.request_fingerprint
+        )
+        self.assertNotEqual(
+            first.request_fingerprint, changed_parser.request_fingerprint
+        )
+        self.assertNotEqual(
+            first.rows[0]["scope_hash"], changed_code.rows[0]["scope_hash"]
+        )
+        self.assertNotEqual(
+            first.rows[0]["scope_hash"], changed_parser.rows[0]["scope_hash"]
+        )
 
     def test_file_snapshot_reads_only_the_explicit_file(self):
         from abbott_canonical_controls import file_snapshot, stable_json_hash
@@ -352,6 +419,16 @@ class AbbottCanonicalControlsTest(unittest.TestCase):
         self.assertEqual(
             fact_params,
             (41, "90602537", "2026-01-01", "2026-07-15"),
+        )
+        coverage_sql, coverage_params = next(
+            (sql, params)
+            for sql, params in conn.cursor_instance.calls
+            if "canonical_source_coverage_daily" in sql
+        )
+        self.assertIn("source_key = %s", coverage_sql)
+        self.assertEqual(
+            coverage_params,
+            (41, "90602537", "yandex_metrika", "2026-01-01", "2026-07-15"),
         )
 
     def test_comparator_fails_when_any_daily_scope_is_not_reconciled(self):

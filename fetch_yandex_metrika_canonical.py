@@ -23,6 +23,7 @@ import mysql.connector
 import requests
 from dotenv import dotenv_values, load_dotenv
 
+from abbott_canonical_controls import api_fingerprint
 from canonical_writer import (
     finish_collector_run,
     log_run_event,
@@ -77,6 +78,8 @@ SUPPORTED_COLLECTION_MODES = {
 MAX_RETRIES = 5
 TIMEOUT = 90
 REQUEST_DELAY_SECONDS = float(env_first('METRIKA_REQUEST_DELAY_SECONDS', default='0.35') or 0)
+METRIKA_PAGE_LIMIT = 10_000
+METRIKA_TIMEZONE = 'Europe/Moscow'
 
 MYSQL_HOST = env_first('MYSQL_HOST', default='localhost')
 MYSQL_PORT = int(env_first('MYSQL_PORT', default='3306'))
@@ -199,6 +202,8 @@ def parse_args():
     parser.add_argument('--counter-id', default='')
     parser.add_argument('--counter-ids', default='')
     parser.add_argument('--canonical-release-id', type=int)
+    parser.add_argument('--code-revision', default='')
+    parser.add_argument('--parser-version', default='')
     return parser.parse_args()
 
 
@@ -398,7 +403,7 @@ def request_with_retry(
         'dimensions': dimensions.replace('<attribution>', render_attribution(attribution)),
         'metrics': metrics,
         'attribution': attribution,
-        'limit': '10000',
+        'limit': str(METRIKA_PAGE_LIMIT),
         'date1': day,
         'date2': day,
     }
@@ -435,7 +440,7 @@ def _request_page_fetcher(
 ) -> Callable[[int], dict]:
     def fetch_page(offset: int) -> dict:
         page_params = dict(extra_params or {})
-        page_params.update({'limit': '10000', 'offset': str(offset)})
+        page_params.update({'limit': str(METRIKA_PAGE_LIMIT), 'offset': str(offset)})
         return request_with_retry(
             counter_id,
             day,
@@ -1019,8 +1024,29 @@ def collect_metrika_scope(
     scope: str,
     run_id: int,
     release_id: int,
+    *,
+    code_revision: str,
+    parser_version: str,
 ) -> MetrikaScopeResult:
     dimensions, metrics, attribution, extra_params = _scope_request(scope)
+    rendered_dimensions = dimensions.replace(
+        '<attribution>', render_attribution(attribution)
+    )
+    api_contract_fingerprint = api_fingerprint(
+        dimensions=parse_csv_values(rendered_dimensions),
+        metrics=parse_csv_values(metrics),
+        filters=clean_text(extra_params.get('filters')),
+        attribution=attribution,
+        accuracy=clean_text(extra_params.get('accuracy')),
+        pagination_limit=METRIKA_PAGE_LIMIT,
+        timezone=METRIKA_TIMEZONE,
+        code_revision=code_revision,
+        parser_version=parser_version,
+    )
+    request_fingerprint = build_scope_hash(
+        scope,
+        [counter_id, day, api_contract_fingerprint],
+    )
     response = request_all_pages(
         counter_id,
         day,
@@ -1036,6 +1062,16 @@ def collect_metrika_scope(
     else:
         rows = build_returning_rows(counter_id, day, response, run_id, release_id)
 
+    for row in rows:
+        if scope in ('other', 'traffic', 'page'):
+            row['scope_hash'] = build_scope_hash(
+                scope, [request_fingerprint, row['scope_hash']]
+            )
+        elif scope in ('user_behavior', 'returning'):
+            row['request_fingerprint'] = build_scope_hash(
+                scope, [request_fingerprint, row['request_fingerprint']]
+            )
+
     if response.sampled:
         status = 'sampled'
     elif not response.pagination_complete:
@@ -1048,10 +1084,6 @@ def collect_metrika_scope(
         status = 'success'
     else:
         status = 'partial'
-    request_fingerprint = build_scope_hash(
-        scope,
-        [counter_id, day, dimensions, metrics, attribution],
-    )
     return MetrikaScopeResult(
         scope=scope,
         rows=tuple(rows),
@@ -1106,12 +1138,23 @@ def collect_metrika_day(
     day: str,
     run_id: int,
     release_id: int,
+    *,
+    code_revision: str,
+    parser_version: str,
 ) -> MetrikaDayBundle:
     counter_id = clean_text(counter.get('counter_id'))
     if counter_id != ABBOTT_COUNTER_ID:
         raise MetrikaCollectionError('Abbott release collection requires the Abbott counter')
     scopes = {
-        scope: collect_metrika_scope(counter_id, day, scope, run_id, release_id)
+        scope: collect_metrika_scope(
+            counter_id,
+            day,
+            scope,
+            run_id,
+            release_id,
+            code_revision=code_revision,
+            parser_version=parser_version,
+        )
         for scope in ABBOTT_REQUIRED_SCOPES
     }
     bundle = MetrikaDayBundle(
@@ -1131,6 +1174,9 @@ def run_release_backfill(
     date_to: str,
     run_id: int,
     release_id: int,
+    *,
+    code_revision: str,
+    parser_version: str,
 ) -> dict[str, Any]:
     counter_ids = [clean_text(counter.get('counter_id')) for counter in counters]
     if counter_ids != [ABBOTT_COUNTER_ID] or int(release_id) <= 0:
@@ -1144,7 +1190,14 @@ def run_release_backfill(
     counter = counters[0]
     for day in daterange(date_from, date_to):
         try:
-            bundle = collect_metrika_day(counter, day, run_id, release_id)
+            bundle = collect_metrika_day(
+                counter,
+                day,
+                run_id,
+                release_id,
+                code_revision=code_revision,
+                parser_version=parser_version,
+            )
             validate_day_bundle(bundle, ABBOTT_REQUIRED_SCOPES)
             result = publish_metrika_day_bundle(bundle)
             published_days += 1
@@ -1426,6 +1479,12 @@ def main() -> int:
         raise MetrikaCollectionError(
             '--canonical-release-id requires explicit --counter-id 90602537'
         )
+    if release_id is not None and (
+        not clean_text(args.code_revision) or not clean_text(args.parser_version)
+    ):
+        raise MetrikaCollectionError(
+            '--canonical-release-id requires code and parser versions'
+        )
     run_id = start_collector_run(
         source_key=SOURCE_KEY,
         run_type=args.run_type,
@@ -1448,6 +1507,8 @@ def main() -> int:
                 date_to,
                 run_id,
                 release_id,
+                code_revision=clean_text(args.code_revision),
+                parser_version=clean_text(args.parser_version),
             )
             rows_read = (summary['published_days'] + len(summary['failed_days'])) * len(
                 ABBOTT_REQUIRED_SCOPES

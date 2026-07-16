@@ -5,6 +5,12 @@ from unittest.mock import patch
 from metrika_pagination import PaginationResult
 
 
+FINGERPRINT_CONTEXT = {
+    "code_revision": "test-revision",
+    "parser_version": "test-parser-v1",
+}
+
+
 class MetrikaReturningRowsTests(unittest.TestCase):
     @staticmethod
     def response_with_metrics(metrics):
@@ -161,6 +167,7 @@ class MetrikaReturningRowsTests(unittest.TestCase):
                         "2026-01-02",
                         77,
                         41,
+                        **FINGERPRINT_CONTEXT,
                     )
 
                 publish.assert_not_called()

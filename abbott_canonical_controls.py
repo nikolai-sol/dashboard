@@ -16,6 +16,7 @@ from typing import Any, Mapping, Sequence
 
 
 ABBOTT_COUNTER_ID = "90602537"
+METRIKA_SOURCE_KEY = "yandex_metrika"
 CONTROL_PACK_SOURCE_KIND = "abbott_canonical_control_pack"
 CONTROL_PACK_PARSER_VERSION = "abbott-controls-v1"
 API_RELATIVE_DELTA_THRESHOLD = Decimal("0.01")
@@ -99,11 +100,17 @@ def api_fingerprint(
     accuracy: str,
     pagination_limit: int,
     timezone: str,
+    code_revision: str,
+    parser_version: str,
 ) -> str:
     """Fingerprint every setting that changes an API control's meaning."""
 
-    if pagination_limit <= 0:
-        raise ValueError("Pagination limit must be positive")
+    if (
+        pagination_limit <= 0
+        or not code_revision.strip()
+        or not parser_version.strip()
+    ):
+        raise ValueError("API fingerprint context is invalid")
     return stable_json_hash(
         {
             "dimensions": list(dimensions),
@@ -113,6 +120,8 @@ def api_fingerprint(
             "accuracy": accuracy,
             "pagination_limit": pagination_limit,
             "timezone": timezone,
+            "code_revision": code_revision,
+            "parser_version": parser_version,
         }
     )
 
@@ -336,11 +345,12 @@ def capture_current_control_pack(
               ON active.canonical_release_id = coverage.canonical_release_id
              AND active.dataset_key = %s
             WHERE coverage.counter_id = %s
+              AND coverage.source_key = %s
               AND coverage.report_date BETWEEN %s AND %s
             GROUP BY coverage.scope_key
             ORDER BY coverage.scope_key
             """,
-            ("abbott", counter_id, date_from, date_to),
+            ("abbott", counter_id, METRIKA_SOURCE_KEY, date_from, date_to),
         )
         coverage_rows = cursor.fetchall()
         controls = _control_values(site_rows, coverage_rows)
@@ -510,6 +520,7 @@ def compare_release_control_pack(
                    ), 0) AS reconciled_days
             FROM canonical_source_coverage_daily
             WHERE canonical_release_id = %s AND counter_id = %s
+              AND source_key = %s
               AND report_date BETWEEN %s AND %s
             GROUP BY scope_key
             ORDER BY scope_key
@@ -517,6 +528,7 @@ def compare_release_control_pack(
             (
                 candidate_release_id,
                 ABBOTT_COUNTER_ID,
+                METRIKA_SOURCE_KEY,
                 date_from,
                 date_to,
             ),

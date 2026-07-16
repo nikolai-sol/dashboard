@@ -13,6 +13,7 @@ from canonical_writer import finish_collector_run, get_db_connection, start_coll
 from fetch_yandex_metrika_canonical import (
     ABBOTT_COUNTER_ID,
     ABBOTT_REQUIRED_SCOPES,
+    SOURCE_KEY as METRIKA_SOURCE_KEY,
     collect_metrika_day,
     publish_metrika_day_bundle,
     validate_day_bundle,
@@ -84,6 +85,8 @@ def coverage_day_is_reconciled(rows: Sequence[Mapping[str, Any]]) -> bool:
         return False
     for scope in ABBOTT_REQUIRED_SCOPES:
         row = by_scope[scope]
+        if row.get("source_key") != METRIKA_SOURCE_KEY:
+            return False
         status = row.get("collection_status")
         if status not in {"success", "success_empty"}:
             return False
@@ -101,15 +104,16 @@ def day_is_reconciled(conn, canonical_release_id: int, day: str) -> bool:
     try:
         cursor.execute(
             """
-            SELECT scope_key, collection_status, pagination_complete,
+            SELECT source_key, scope_key, collection_status, pagination_complete,
                    is_sampled, empty_reconciled
             FROM canonical_source_coverage_daily
             WHERE canonical_release_id = %s
               AND counter_id = %s
+              AND source_key = %s
               AND report_date = %s
             ORDER BY scope_key
             """,
-            (canonical_release_id, ABBOTT_COUNTER_ID, day),
+            (canonical_release_id, ABBOTT_COUNTER_ID, METRIKA_SOURCE_KEY, day),
         )
         return coverage_day_is_reconciled(cursor.fetchall())
     finally:
@@ -150,6 +154,8 @@ def run_backfill(
     *,
     canonical_release_id: int,
     run_id: int,
+    code_revision: str,
+    parser_version: str,
     days: Sequence[str],
     is_reconciled: Callable[[Any, int, str], bool] = day_is_reconciled,
     collect_day: Callable[..., Any] = collect_metrika_day,
@@ -161,6 +167,8 @@ def run_backfill(
 
     if int(canonical_release_id) <= 0:
         raise AbbottBackfillError("Canonical release ID must be positive")
+    if not code_revision.strip() or not parser_version.strip():
+        raise AbbottBackfillError("Backfill fingerprint context is required")
     baseline_guard(conn, canonical_release_id)
     published_days: list[str] = []
     skipped_days: list[str] = []
@@ -172,7 +180,14 @@ def run_backfill(
             skipped_days.append(day)
             continue
         try:
-            bundle = collect_day(counter, day, run_id, canonical_release_id)
+            bundle = collect_day(
+                counter,
+                day,
+                run_id,
+                canonical_release_id,
+                code_revision=code_revision,
+                parser_version=parser_version,
+            )
             if set(bundle.scopes) != set(ABBOTT_REQUIRED_SCOPES):
                 raise AbbottBackfillError("Collected day does not contain all scopes")
             validate_day(bundle, ABBOTT_REQUIRED_SCOPES)
@@ -198,6 +213,8 @@ def build_parser() -> argparse.ArgumentParser:
         description="Backfill the Abbott 2026 candidate release without activation"
     )
     parser.add_argument("--canonical-release-id", type=int, required=True)
+    parser.add_argument("--code-revision", required=True)
+    parser.add_argument("--parser-version", required=True)
     parser.add_argument(
         "--today-utc",
         type=date.fromisoformat,
@@ -222,16 +239,38 @@ def main() -> int:
         date_from=min(days),
         date_to=max(days),
     )
-    conn = get_db_connection()
+    conn = None
+    summary = None
+    orchestration_failed = False
     try:
+        conn = get_db_connection()
         summary = run_backfill(
             conn,
             canonical_release_id=args.canonical_release_id,
             run_id=run_id,
+            code_revision=args.code_revision,
+            parser_version=args.parser_version,
             days=days,
         )
+    except Exception:
+        orchestration_failed = True
     finally:
-        conn.close()
+        if conn is not None:
+            try:
+                conn.close()
+            except Exception:
+                orchestration_failed = True
+    if orchestration_failed or summary is None:
+        finish_collector_run(
+            run_id,
+            status="failed",
+            rows_read=0,
+            rows_written=0,
+            rows_updated=0,
+            error_count=1,
+            error_summary="Abbott backfill orchestration failed",
+        )
+        return 1
     failed = len(summary["failed_days"])
     finish_collector_run(
         run_id,
