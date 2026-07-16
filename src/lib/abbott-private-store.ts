@@ -367,10 +367,13 @@ export async function loadActiveAbbottWorkbookDataWithExecutor(
   return loadManagerWorkbookForRelease(executor, release);
 }
 
-function sourceMetadata(snapshot: AbbottResolvedSnapshot | null): AbbottPrivateSnapshotMetadata {
+function sourceMetadata(
+  snapshot: AbbottResolvedSnapshot | null,
+  status: AbbottPrivateSnapshotMetadata["source_status"] = snapshot ? "test_dump" : "missing",
+): AbbottPrivateSnapshotMetadata {
   return snapshot
     ? {
-        source_status: "test_dump",
+        source_status: status,
         test_dump: true,
         snapshot_id: snapshot.id,
         generated_at: snapshot.generatedAt,
@@ -385,6 +388,27 @@ function sourceMetadata(snapshot: AbbottResolvedSnapshot | null): AbbottPrivateS
         period_from: null,
         period_to: null,
       };
+}
+
+function isValidDateRange(from: string, to: string): boolean {
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(from) || !/^\d{4}-\d{2}-\d{2}$/.test(to) || from > to) return false;
+  const fromDate = new Date(`${from}T00:00:00Z`);
+  const toDate = new Date(`${to}T00:00:00Z`);
+  if (!Number.isFinite(fromDate.getTime()) || !Number.isFinite(toDate.getTime())) return false;
+  return fromDate.toISOString().slice(0, 10) === from && toDate.toISOString().slice(0, 10) === to;
+}
+
+function snapshotOverlapsRange(snapshot: AbbottResolvedSnapshot, from: string, to: string): boolean {
+  if (snapshot.periodFrom && to < snapshot.periodFrom) return false;
+  if (snapshot.periodTo && from > snapshot.periodTo) return false;
+  return true;
+}
+
+function overlapRange(snapshot: AbbottResolvedSnapshot, from: string, to: string): { from: string; to: string } {
+  return {
+    from: snapshot.periodFrom && snapshot.periodFrom > from ? snapshot.periodFrom : from,
+    to: snapshot.periodTo && snapshot.periodTo < to ? snapshot.periodTo : to,
+  };
 }
 
 function parseBitrixRows(rows: readonly Record<string, unknown>[]): AbbottBitrixPageFact[] {
@@ -415,10 +439,15 @@ async function loadBitrixPagesForRelease(
   executor: AbbottPrivateQueryExecutor,
   release: AbbottActiveRelease,
   table: "private" | "aggregate",
+  requestedFrom?: string,
+  requestedTo?: string,
 ): Promise<ParsedBitrixAnalytics> {
   const snapshot = release.snapshots.bitrixPages;
   const source = sourceMetadata(snapshot);
   if (!snapshot) return { source, summary: null, rows: [] };
+  if (requestedFrom && requestedTo && !snapshotOverlapsRange(snapshot, requestedFrom, requestedTo)) {
+    return { source: sourceMetadata(snapshot, "out_of_period"), summary: null, rows: [] };
+  }
   const qualifiedTable =
     table === "private"
       ? "`report_bd_private`.`portal_bitrix_page_facts`"
@@ -431,15 +460,22 @@ async function loadBitrixPagesForRelease(
             entry_sessions, exit_sessions, avg_session_duration_seconds,
             top_utm_source, top_utm_medium, top_utm_campaign
      FROM ${qualifiedTable}
-     WHERE canonical_release_id = ? AND source_snapshot_id = ?
+     WHERE canonical_release_id = ? AND source_snapshot_id = ?${
+       requestedFrom && requestedTo ? "\n       AND report_date >= ? AND report_date <= ?" : ""
+     }
      ORDER BY report_date, normalized_path_hash`,
-    [release.id, snapshot.id],
+    requestedFrom && requestedTo
+      ? [release.id, snapshot.id, requestedFrom, requestedTo]
+      : [release.id, snapshot.id],
   );
+  const summaryRange = requestedFrom && requestedTo
+    ? overlapRange(snapshot, requestedFrom, requestedTo)
+    : { from: snapshot.periodFrom ?? "", to: snapshot.periodTo ?? "" };
   return {
     source,
     summary: {
-      date_from: snapshot.periodFrom ?? "",
-      date_to: snapshot.periodTo ?? "",
+      date_from: summaryRange.from,
+      date_to: summaryRange.to,
       page_rows: rows.length,
     },
     rows: parseBitrixRows(rows),
@@ -458,17 +494,26 @@ export async function loadActiveAbbottBitrixAnalyticsWithExecutor(
 async function loadManagerJourneysForRelease(
   executor: AbbottPrivateQueryExecutor,
   release: AbbottActiveRelease,
+  requestedFrom?: string,
+  requestedTo?: string,
 ): Promise<AbbottPrivateSessionJourneysData> {
   const snapshot = release.snapshots.bitrixJourneys;
   const source = sourceMetadata(snapshot);
   if (!snapshot) return { source, rows: [] };
+  if (requestedFrom && requestedTo && !snapshotOverlapsRange(snapshot, requestedFrom, requestedTo)) {
+    return { source: sourceMetadata(snapshot, "out_of_period"), rows: [] };
+  }
   const rows = await queryRows(
     executor,
     `SELECT report_date, raw_user_id, protected_visit_id, event_sequence, event_at, normalized_path, event_kind
      FROM \`report_bd_private\`.\`portal_bitrix_journeys_private\`
-     WHERE canonical_release_id = ? AND source_snapshot_id = ?
+     WHERE canonical_release_id = ? AND source_snapshot_id = ?${
+       requestedFrom && requestedTo ? "\n       AND report_date >= ? AND report_date <= ?" : ""
+     }
      ORDER BY report_date, protected_visit_id, event_sequence`,
-    [release.id, snapshot.id],
+    requestedFrom && requestedTo
+      ? [release.id, snapshot.id, requestedFrom, requestedTo]
+      : [release.id, snapshot.id],
   );
   const grouped = new Map<string, AbbottPrivateSessionJourneyRow>();
   rows.forEach((row) => {
@@ -540,8 +585,13 @@ export async function loadActiveAbbottReleaseBundleWithExecutor(
   executor: AbbottPrivateQueryExecutor,
   dashboardId: number,
   audience: AbbottPrivateAudience,
+  from: string,
+  to: string,
 ): Promise<AbbottReleaseBundle> {
   if (audience !== "manager" && audience !== "embed") {
+    throw storeError("PRIVATE_DATA_UNAVAILABLE", PRIVATE_UNAVAILABLE_MESSAGE);
+  }
+  if (!isValidDateRange(from, to)) {
     throw storeError("PRIVATE_DATA_UNAVAILABLE", PRIVATE_UNAVAILABLE_MESSAGE);
   }
   await requireActiveAbbottDashboard(executor, dashboardId);
@@ -549,22 +599,24 @@ export async function loadActiveAbbottReleaseBundleWithExecutor(
 
   if (audience === "manager") {
     const workbook = await loadManagerWorkbookForRelease(executor, release);
-    const bitrixPages = await loadBitrixPagesForRelease(executor, release, "private");
-    const journeys = await loadManagerJourneysForRelease(executor, release);
+    const bitrixPages = await loadBitrixPagesForRelease(executor, release, "private", from, to);
+    const journeys = await loadManagerJourneysForRelease(executor, release, from, to);
     return { releaseId: release.id, audience, workbook, bitrixPages, journeys };
   }
 
   const workbook = await loadAggregateWorkbook(executor, release);
-  const bitrixPages = await loadBitrixPagesForRelease(executor, release, "aggregate");
+  const bitrixPages = await loadBitrixPagesForRelease(executor, release, "aggregate", from, to);
   const journeySnapshot = release.snapshots.bitrixJourneys;
-  const transitionRows = journeySnapshot
+  const journeyInRange = journeySnapshot ? snapshotOverlapsRange(journeySnapshot, from, to) : false;
+  const transitionRows = journeySnapshot && journeyInRange
     ? await queryRows(
         executor,
         `SELECT report_date, from_path, to_path, transition_count
          FROM \`report_bd\`.\`portal_bitrix_journey_transitions\`
          WHERE canonical_release_id = ? AND source_snapshot_id = ?
+           AND report_date >= ? AND report_date <= ?
          ORDER BY report_date, from_path, to_path`,
-        [release.id, journeySnapshot.id],
+        [release.id, journeySnapshot.id, from, to],
       )
     : [];
   return {
@@ -573,7 +625,9 @@ export async function loadActiveAbbottReleaseBundleWithExecutor(
     workbook,
     bitrixPages,
     journeyTransitions: {
-      source: sourceMetadata(journeySnapshot),
+      source: journeySnapshot && !journeyInRange
+        ? sourceMetadata(journeySnapshot, "out_of_period")
+        : sourceMetadata(journeySnapshot),
       rows: transitionRows.map((row) => ({
         report_date: text(row.report_date),
         from_path: text(row.from_path),
@@ -679,7 +733,9 @@ export async function loadActiveAbbottAggregateData(dashboardId: number): Promis
 export async function loadActiveAbbottReleaseBundle(
   dashboardId: number,
   audience: AbbottPrivateAudience,
+  from: string,
+  to: string,
 ): Promise<AbbottReleaseBundle> {
   return withReadOnlyPrivateExecutor((executor) =>
-    loadActiveAbbottReleaseBundleWithExecutor(executor, dashboardId, audience));
+    loadActiveAbbottReleaseBundleWithExecutor(executor, dashboardId, audience, from, to));
 }

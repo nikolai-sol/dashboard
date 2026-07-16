@@ -87,7 +87,13 @@ test("release bundle pins one active release for all manager snapshot reads", as
     return [];
   });
 
-  const result = await loadActiveAbbottReleaseBundleWithExecutor(executor, 7, "manager");
+  const result = await loadActiveAbbottReleaseBundleWithExecutor(
+    executor,
+    7,
+    "manager",
+    "2026-06-30",
+    "2026-06-30",
+  );
 
   assert.equal(result.releaseId, 41);
   assert.equal(result.audience, "manager");
@@ -97,6 +103,64 @@ test("release bundle pins one active release for all manager snapshot reads", as
   );
   assert.equal(releaseScopedQueries.length > 0, true);
   releaseScopedQueries.forEach(({ params }) => assert.equal(params[0], 41));
+  const bitrixPageQuery = executor.queries.find(({ sql }) =>
+    sql.includes("`report_bd_private`.`portal_bitrix_page_facts`"));
+  const journeyQuery = executor.queries.find(({ sql }) => sql.includes("portal_bitrix_journeys_private"));
+  assert.deepEqual(bitrixPageQuery?.params, [41, 13, "2026-06-30", "2026-06-30"]);
+  assert.deepEqual(journeyQuery?.params, [41, 14, "2026-06-30", "2026-06-30"]);
+});
+
+test("embed bundle filters aggregate Bitrix data to the requested subrange", async () => {
+  const executor = fakeExecutor(({ sql }) => {
+    if (sql.includes("FROM `report_bd`.`dashboards`")) return [{ id: 7 }];
+    if (sql.includes("portal_active_data_releases")) return [releaseRow];
+    if (sql.includes("portal_dataset_snapshots")) return snapshotRows;
+    return [];
+  });
+
+  await loadActiveAbbottReleaseBundleWithExecutor(
+    executor,
+    7,
+    "embed",
+    "2026-06-30",
+    "2026-06-30",
+  );
+
+  const bitrixPageQuery = executor.queries.find(({ sql }) =>
+    sql.includes("`report_bd`.`portal_bitrix_page_facts`"));
+  const transitionQuery = executor.queries.find(({ sql }) =>
+    sql.includes("portal_bitrix_journey_transitions"));
+  assert.match(bitrixPageQuery?.sql ?? "", /report_date >= \? AND report_date <= \?/);
+  assert.match(transitionQuery?.sql ?? "", /report_date >= \? AND report_date <= \?/);
+  assert.deepEqual(bitrixPageQuery?.params, [41, 13, "2026-06-30", "2026-06-30"]);
+  assert.deepEqual(transitionQuery?.params, [41, 14, "2026-06-30", "2026-06-30"]);
+});
+
+test("out-of-period optional Bitrix snapshots are labeled without querying facts", async () => {
+  const executor = fakeExecutor(({ sql }) => {
+    if (sql.includes("FROM `report_bd`.`dashboards`")) return [{ id: 7 }];
+    if (sql.includes("portal_active_data_releases")) return [releaseRow];
+    if (sql.includes("portal_dataset_snapshots")) return snapshotRows;
+    return [];
+  });
+
+  const result = await loadActiveAbbottReleaseBundleWithExecutor(
+    executor,
+    7,
+    "embed",
+    "2026-07-10",
+    "2026-07-12",
+  );
+
+  if (result.audience !== "embed") assert.fail("expected embed release bundle");
+  assert.equal(result.bitrixPages.source.source_status, "out_of_period");
+  assert.equal(result.bitrixPages.summary, null);
+  assert.equal(result.journeyTransitions.source.source_status, "out_of_period");
+  assert.equal(
+    executor.queries.some(({ sql }) =>
+      sql.includes("portal_bitrix_page_facts") || sql.includes("portal_bitrix_journey_transitions")),
+    false,
+  );
 });
 
 test("fails closed when a required workbook snapshot is missing or not imported", async () => {

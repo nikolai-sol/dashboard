@@ -364,6 +364,116 @@ test("loader maps every Bitrix metric and exposes snapshot metadata", async () =
   assert.deepEqual(result.bitrix_sources?.journeys, source);
 });
 
+test("loader aggregates multi-day Bitrix rows without last-row overwrite", async () => {
+  const aggregate = executor((sql) => {
+    if (sql.includes("canonical_source_coverage_daily")) {
+      return [
+        ...completeCoverage,
+        ...completeCoverage.map((row) => ({ ...row, report_date: "2026-01-02" })),
+      ];
+    }
+    return aggregateRows(sql);
+  });
+  const deps = dependencies(aggregate, executor(() => []));
+  const source = {
+    source_status: "test_dump" as const,
+    test_dump: true as const,
+    snapshot_id: 13,
+    generated_at: "2026-02-01 00:00:00",
+    period_from: "2026-01-01",
+    period_to: "2026-01-31",
+  };
+  deps.loadReleaseBundle = async (_dashboardId, audience, from, to) => {
+    assert.equal(from, "2026-01-01");
+    assert.equal(to, "2026-01-02");
+    return {
+      releaseId: 41,
+      audience: "embed" as const,
+      workbook: aggregateWorkbook,
+      bitrixPages: {
+        source,
+        summary: { date_from: "2026-01-01", date_to: "2026-01-01", page_rows: 2 },
+        rows: [
+          {
+            report_date: "2026-01-01",
+            url: "/same",
+            path: "/same",
+            material_id: "m-1",
+            material_type_hint: "article",
+            pageviews: 100,
+            sessions: 30,
+            users: 20,
+            guests: 10,
+            logged_in_hits: 60,
+            anonymous_hits: 40,
+            logged_in_sessions: 20,
+            anonymous_sessions: 10,
+            entry_sessions: 12,
+            exit_sessions: 11,
+            avg_session_duration_seconds: 10,
+            top_utm_source: null,
+            top_utm_medium: null,
+            top_utm_campaign: null,
+          },
+          {
+            report_date: "2026-01-02",
+            url: "/same",
+            path: "/same",
+            material_id: "m-1",
+            material_type_hint: "article",
+            pageviews: 50,
+            sessions: 10,
+            users: 8,
+            guests: 4,
+            logged_in_hits: 30,
+            anonymous_hits: 20,
+            logged_in_sessions: 6,
+            anonymous_sessions: 4,
+            entry_sessions: 5,
+            exit_sessions: 4,
+            avg_session_duration_seconds: 30,
+            top_utm_source: "social",
+            top_utm_medium: "post",
+            top_utm_campaign: "secondary",
+          },
+        ],
+      },
+      journeyTransitions: { source, rows: [] },
+    };
+  };
+
+  const result = await loadAbbottBiDataWithDependencies(
+    7,
+    ["90602537"],
+    "2026-01-01",
+    "2026-01-02",
+    "embed",
+    deps,
+  );
+
+  assert.deepEqual(result.bitrix_pages, [{
+    url: "/same",
+    path: "/same",
+    direction: null,
+    material_type: "article",
+    access: null,
+    pageviews: 150,
+    sessions: 40,
+    users: 28,
+    guests: 14,
+    logged_in_hits: 90,
+    anonymous_hits: 60,
+    logged_in_sessions: 26,
+    anonymous_sessions: 14,
+    entry_sessions: 17,
+    exit_sessions: 15,
+    avg_session_duration: 15,
+    top_utm_source: "social",
+    top_utm_medium: "post",
+    top_utm_campaign: "secondary",
+  }]);
+});
+
 test("manager preserves raw user IDs as strings and scopes private facts to the active release", async () => {
   const aggregate = executor(aggregateRows);
   const privateDb = executor((sql, params) => {

@@ -74,7 +74,12 @@ export interface AbbottBiQueryExecutor {
 export interface AbbottBiLoaderDependencies {
   aggregateExecutor: AbbottBiQueryExecutor;
   privateExecutor: AbbottBiQueryExecutor;
-  loadReleaseBundle(dashboardId: number, audience: AbbottDashboardAudience): Promise<AbbottReleaseBundle>;
+  loadReleaseBundle(
+    dashboardId: number,
+    audience: AbbottDashboardAudience,
+    from: string,
+    to: string,
+  ): Promise<AbbottReleaseBundle>;
 }
 
 type CoverageRow = Record<string, unknown> & {
@@ -536,31 +541,105 @@ function mapBitrixPages(
   data: ParsedBitrixAnalytics,
   workbook: AbbottAggregatePrivateData["workbook"],
 ): AbbottBiBitrixPageRow[] {
-  return data.rows.map((row) => {
+  type AggregatedBitrixRow = AbbottBiBitrixPageRow & {
+    durationWeight: number;
+    durationSessions: number;
+    representativeSessions: number;
+    representativePageviews: number;
+    representativeDate: string;
+  };
+  const byUrl = new Map<string, AggregatedBitrixRow>();
+  data.rows.forEach((row) => {
     const url = normalizePage(row.url);
     const metadata = metadataForPage(url, "", workbook);
-    return {
-    url,
-    path: normalizePage(row.path),
-    direction: metadata.direction,
-    material_type: row.material_type_hint ?? metadata.material_type,
-    access: metadata.access,
-    pageviews: row.pageviews,
-    sessions: row.sessions,
-    users: row.users,
-    guests: row.guests,
-    logged_in_hits: row.logged_in_hits,
-    anonymous_hits: row.anonymous_hits,
-    logged_in_sessions: row.logged_in_sessions,
-    anonymous_sessions: row.anonymous_sessions,
-    entry_sessions: row.entry_sessions,
-    exit_sessions: row.exit_sessions,
-    avg_session_duration: row.avg_session_duration_seconds ?? 0,
-    top_utm_source: row.top_utm_source ?? "",
-    top_utm_medium: row.top_utm_medium ?? "",
-    top_utm_campaign: row.top_utm_campaign ?? "",
-  };
+    const current = byUrl.get(url) ?? {
+      url,
+      path: normalizePage(row.path),
+      direction: metadata.direction,
+      material_type: row.material_type_hint ?? metadata.material_type,
+      access: metadata.access,
+      pageviews: 0,
+      sessions: 0,
+      users: 0,
+      guests: 0,
+      logged_in_hits: 0,
+      anonymous_hits: 0,
+      logged_in_sessions: 0,
+      anonymous_sessions: 0,
+      entry_sessions: 0,
+      exit_sessions: 0,
+      avg_session_duration: 0,
+      top_utm_source: "",
+      top_utm_medium: "",
+      top_utm_campaign: "",
+      durationWeight: 0,
+      durationSessions: 0,
+      representativeSessions: -1,
+      representativePageviews: -1,
+      representativeDate: "",
+    };
+    current.pageviews += row.pageviews;
+    current.sessions += row.sessions;
+    current.users += row.users;
+    current.guests += row.guests;
+    current.logged_in_hits += row.logged_in_hits;
+    current.anonymous_hits += row.anonymous_hits;
+    current.logged_in_sessions += row.logged_in_sessions;
+    current.anonymous_sessions += row.anonymous_sessions;
+    current.entry_sessions += row.entry_sessions;
+    current.exit_sessions += row.exit_sessions;
+    current.material_type = current.material_type ?? row.material_type_hint;
+    if (row.avg_session_duration_seconds !== null && row.sessions > 0) {
+      current.durationWeight += row.avg_session_duration_seconds * row.sessions;
+      current.durationSessions += row.sessions;
+    }
+
+    // A daily source exposes only its top UTM tuple, not tuple counts. Among
+    // days with a defined tuple, preserve the highest-session day; break ties
+    // by pageviews and earliest date so aggregation is never last-row wins.
+    const hasUtmTuple = row.top_utm_source !== null || row.top_utm_medium !== null || row.top_utm_campaign !== null;
+    const useRepresentative = hasUtmTuple && (
+      row.sessions > current.representativeSessions ||
+      (row.sessions === current.representativeSessions && row.pageviews > current.representativePageviews) ||
+      (row.sessions === current.representativeSessions &&
+        row.pageviews === current.representativePageviews &&
+        (!current.representativeDate || row.report_date < current.representativeDate))
+    );
+    if (useRepresentative) {
+      current.representativeSessions = row.sessions;
+      current.representativePageviews = row.pageviews;
+      current.representativeDate = row.report_date;
+      current.top_utm_source = row.top_utm_source ?? "";
+      current.top_utm_medium = row.top_utm_medium ?? "";
+      current.top_utm_campaign = row.top_utm_campaign ?? "";
+    }
+    byUrl.set(url, current);
   });
+  return [...byUrl.values()]
+    .map((row) => ({
+      url: row.url,
+      path: row.path,
+      direction: row.direction,
+      material_type: row.material_type,
+      access: row.access,
+      pageviews: row.pageviews,
+      sessions: row.sessions,
+      users: row.users,
+      guests: row.guests,
+      logged_in_hits: row.logged_in_hits,
+      anonymous_hits: row.anonymous_hits,
+      logged_in_sessions: row.logged_in_sessions,
+      anonymous_sessions: row.anonymous_sessions,
+      entry_sessions: row.entry_sessions,
+      exit_sessions: row.exit_sessions,
+      avg_session_duration: row.durationSessions > 0
+        ? Number((row.durationWeight / row.durationSessions).toFixed(2))
+        : 0,
+      top_utm_source: row.top_utm_source,
+      top_utm_medium: row.top_utm_medium,
+      top_utm_campaign: row.top_utm_campaign,
+    }))
+    .sort((left, right) => right.pageviews - left.pageviews || left.url.localeCompare(right.url));
 }
 
 function bitrixSummary(data: ParsedBitrixAnalytics): AbbottBiBitrixSummary | null {
@@ -823,7 +902,7 @@ export async function loadAbbottBiDataWithDependencies(
 
   let releaseId: number | null = null;
   try {
-    const releaseBundle = await dependencies.loadReleaseBundle(dashboardId, audience);
+    const releaseBundle = await dependencies.loadReleaseBundle(dashboardId, audience, from, to);
     if (releaseBundle.audience !== audience || positiveInteger(releaseBundle.releaseId) === null) {
       throw new Error("Abbott canonical data is unavailable");
     }

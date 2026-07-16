@@ -10,7 +10,7 @@ export const ABBOTT_PRIVATE_SOURCE_KINDS = {
 export type AbbottPrivateSourceKind =
   (typeof ABBOTT_PRIVATE_SOURCE_KINDS)[keyof typeof ABBOTT_PRIVATE_SOURCE_KINDS];
 
-export type AbbottPrivateSourceStatus = "test_dump" | "missing";
+export type AbbottPrivateSourceStatus = "test_dump" | "missing" | "out_of_period";
 
 export interface AbbottPrivateSnapshotMetadata {
   source_status: AbbottPrivateSourceStatus;

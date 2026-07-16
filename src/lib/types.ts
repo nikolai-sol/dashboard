@@ -456,7 +456,7 @@ export interface AbbottBiBitrixSummary {
 }
 
 export interface AbbottBiPrivateSourceMetadata {
-  source_status: "test_dump" | "missing" | "unavailable";
+  source_status: "test_dump" | "missing" | "out_of_period" | "unavailable";
   test_dump: boolean;
   snapshot_id: number | null;
   generated_at: string | null;
