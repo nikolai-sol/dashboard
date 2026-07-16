@@ -1,4 +1,7 @@
 import crypto from "crypto";
+import type { DashboardAudience } from "./dashboard-access-policy";
+
+export type { DashboardAudience } from "./dashboard-access-policy";
 
 export const ADMIN_SESSION_COOKIE = "dashboard_admin_session";
 export const VIEWER_SESSION_COOKIE_PREFIX = "dashboard_viewer_";
@@ -11,12 +14,14 @@ type SessionPayload = {
   email?: string;
   dashboard_id?: number;
   dashboard_ids?: number[];
+  audience?: DashboardAudience;
   exp: number;
 };
 
 export type ViewerSessionPayload = SessionPayload & {
   type: "viewer" | "viewer_export";
   dashboard_id: number;
+  audience: DashboardAudience;
 };
 
 function getAuthSecret() {
@@ -114,19 +119,25 @@ export function verifyAdminSession(token: string | null | undefined) {
   return payload as SessionPayload & { type: "admin"; email: string };
 }
 
-export function createViewerSession(dashboardId: number, email: string) {
+export function createViewerSession(
+  dashboardId: number,
+  email: string,
+  audience: DashboardAudience,
+) {
   return createSignedSession({
     type: "viewer",
     dashboard_id: dashboardId,
     email: normalizeEmail(email),
+    audience,
     exp: Math.floor(Date.now() / 1000) + 60 * 60 * 24 * 30,
   });
 }
 
-export function createViewerExportToken(dashboardId: number) {
+export function createViewerExportToken(dashboardId: number, audience: DashboardAudience) {
   return createSignedSession({
     type: "viewer_export",
     dashboard_id: dashboardId,
+    audience,
     exp: Math.floor(Date.now() / 1000) + 60 * 10,
   });
 }
@@ -156,6 +167,7 @@ export function verifyViewerSession(
   if (!payload) return null;
   if (payload.type !== "viewer" && payload.type !== "viewer_export") return null;
   if (payload.dashboard_id !== dashboardId) return null;
+  if (payload.audience !== "manager" && payload.audience !== "embed") return null;
   return payload as ViewerSessionPayload;
 }
 

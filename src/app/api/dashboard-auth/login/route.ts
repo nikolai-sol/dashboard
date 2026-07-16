@@ -30,7 +30,7 @@ export async function POST(request: Request) {
     context.auth_mode === "email_password"
       ? await listAccessibleDashboardsByCredentials(email, password)
       : [{ id: context.id, client_id: context.client_id, client_name: context.client_name, dashboard_name: context.dashboard_name, url: `/dashboard/${context.client_id}` }];
-  const viewerSessionToken = createViewerSession(context.id, normalizedEmail);
+  const viewerSessionToken = createViewerSession(context.id, normalizedEmail, "manager");
 
   const response = NextResponse.json({
     ok: true,

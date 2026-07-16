@@ -8,8 +8,13 @@ import {
   verifyViewerSession,
   viewerCookieName,
 } from "@/lib/access-auth";
+import {
+  resolveDashboardAudience,
+  resolveDashboardAuthMode,
+} from "@/lib/dashboard-access-policy";
+import type { DashboardAuthMode } from "@/lib/dashboard-access-policy";
 
-export type DashboardAuthMode = "public" | "email_password" | "password_only";
+export type { DashboardAuthMode } from "@/lib/dashboard-access-policy";
 
 type DashboardAccessContextRow = RowDataPacket & {
   id: number;
@@ -86,9 +91,11 @@ function getSharedDashboardEmbedKey(clientId: string) {
 }
 
 function resolveAuthMode(clientId: string, accessUsersCount: number): DashboardAuthMode {
-  if (accessUsersCount > 0) return "email_password";
-  if (getSharedDashboardPassword(clientId)) return "password_only";
-  return "public";
+  return resolveDashboardAuthMode(
+    clientId,
+    accessUsersCount,
+    Boolean(getSharedDashboardPassword(clientId)),
+  );
 }
 
 function rowToContext(row: DashboardAccessContextRow): DashboardAccessContext {
@@ -307,24 +314,40 @@ export async function listViewerPortalDashboards(dashboardIds: number[]) {
 export async function isDashboardAccessAuthorized(request: Request, identifier: string | number) {
   const context = await getDashboardAccessContext(identifier);
   if (!context) {
-    return { context: null, authorized: false, reason: "not_found" as const };
+    return { context: null, authorized: false as const, reason: "not_found" as const };
   }
   if (context.auth_mode === "public") {
-    return { context, authorized: true, reason: "public" as const };
+    return {
+      context,
+      authorized: true as const,
+      reason: "public" as const,
+      audience: "manager" as const,
+    };
   }
 
   const url = new URL(request.url);
   const embedKey = url.searchParams.get("embed_key");
   const expectedEmbedKey = getSharedDashboardEmbedKey(context.client_id);
   if (expectedEmbedKey && embedKey && safeEqualText(embedKey, expectedEmbedKey)) {
-    return { context, authorized: true, reason: "embed_key" as const };
+    return {
+      context,
+      authorized: true as const,
+      reason: "embed_key" as const,
+      audience: resolveDashboardAudience("embed_key"),
+    };
   }
   const queryToken = url.searchParams.get("access_token");
   const cookieToken = parseCookieValue(request.headers.get("cookie"), viewerCookieName(context.id));
   const token = queryToken || cookieToken;
   const payload = verifyViewerSession(token, context.id);
   if (!payload) {
-    return { context, authorized: false, reason: "auth_required" as const };
+    return { context, authorized: false as const, reason: "auth_required" as const };
   }
-  return { context, authorized: true, reason: "authorized" as const, payload };
+  return {
+    context,
+    authorized: true as const,
+    reason: "authorized" as const,
+    audience: resolveDashboardAudience("authorized", payload),
+    payload,
+  };
 }

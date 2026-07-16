@@ -36,6 +36,10 @@ Current auth note:
 - Abbott dashboard supports:
   - password-only viewer access
   - permanent iframe access through `embed_key`
+- Abbott is always protected: active viewer users select `email_password`; otherwise it stays
+  `password_only`, including when the shared password is missing. Missing credentials fail closed.
+- Signed dashboard viewer and export sessions require an explicit `manager` or `embed` audience;
+  legacy dashboard tokens without an audience are rejected. Viewer portal sessions remain audience-free.
 
 ## Platform access / cron memory
 

@@ -99,6 +99,13 @@ Main file:
 
 - Per-dashboard viewer users are supported
 - If a dashboard has viewer users, public API / Excel / PDF require viewer auth
+- Abbott never becomes public: active viewer users use `email_password`; otherwise Abbott remains
+  `password_only`, and a missing `ABBOTT_DASHBOARD_PASSWORD` makes credential verification fail closed
+- Signed per-dashboard viewer and export tokens carry a mandatory audience:
+  - password/email login => `manager`
+  - `embed_key` access => `embed`
+  - legacy dashboard tokens without an audience are rejected and require re-login
+- Viewer portal sessions keep their existing audience-free payload and behavior
 - Viewer portal root page exists at:
   - `https://dashboards.adreports.ru/`
 - Root page shows:
@@ -122,9 +129,7 @@ Relevant files:
   - `Secure`
 - Abbott also supports a permanent embed query key:
   - `embed_key`
-  - current shared key source:
-    - `process.env.ABBOTT_DASHBOARD_EMBED_KEY`
-    - fallback default: `Terasic1!`
+  - configured only through `process.env.ABBOTT_DASHBOARD_EMBED_KEY`; there is no fallback key
   - this is intended for iframe embedding without expiring `access_token`
 
 ## Embed rules

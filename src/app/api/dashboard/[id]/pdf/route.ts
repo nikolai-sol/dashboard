@@ -39,7 +39,9 @@ export async function GET(
   const dashboardUrl = buildDashboardUrl(
     request,
     id,
-    access.context.access_users_count > 0 ? createViewerExportToken(access.context.id) : undefined,
+    access.context.auth_mode !== "public"
+      ? createViewerExportToken(access.context.id, access.audience)
+      : undefined,
   );
   const filenameDate = new Date().toISOString().slice(0, 10);
   let browser: Awaited<ReturnType<typeof puppeteer.launch>> | null = null;
