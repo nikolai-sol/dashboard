@@ -254,7 +254,7 @@ async function loadAggregateWorkbook(
 ): Promise<AbbottAggregateWorkbookData> {
   const catalogRows = await queryRows(
     executor,
-    `SELECT page_title, material_type, direction_key, normalized_path, access_label, is_active
+    `SELECT page_title, material_type, direction_key, normalized_path, source_slug, access_label, is_active
      FROM \`report_bd\`.\`portal_content_catalog\`
      WHERE canonical_release_id = ? AND source_snapshot_id = ?
      ORDER BY id`,
@@ -287,7 +287,7 @@ async function loadAggregateWorkbook(
     const metadata = contentMetadata(row);
     if (title) contentByTitle.set(title, metadata);
     if (title && metadata.material_type) contentByTitleAndType.set(`${metadata.material_type}::${title}`, metadata);
-    const slug = slugFromPath(path);
+    const slug = text(row.source_slug) || slugFromPath(path);
     if (slug) contentBySlug.set(slug, metadata);
     if (path) urlReturnDirections.set(path, metadata.direction);
   });
@@ -364,8 +364,8 @@ function parseBitrixRows(rows: readonly Record<string, unknown>[]): AbbottBitrix
     path: text(row.normalized_path),
     material_id: nullableText(row.material_id),
     pageviews: metric(row.pageviews),
-    sessions: metric(row.visits),
-    users: metric(row.unique_visitors),
+    sessions: metric(row.sessions),
+    users: metric(row.users),
   }));
 }
 
@@ -383,7 +383,7 @@ async function loadBitrixPagesForRelease(
       : "`report_bd`.`portal_bitrix_page_facts`";
   const rows = await queryRows(
     executor,
-    `SELECT report_date, normalized_path, material_id, pageviews, visits, unique_visitors
+    `SELECT report_date, normalized_path, material_id, pageviews, sessions, users
      FROM ${qualifiedTable}
      WHERE canonical_release_id = ? AND source_snapshot_id = ?
      ORDER BY report_date, normalized_path_hash`,
@@ -463,7 +463,7 @@ export async function loadActiveAbbottAggregateDataWithExecutor(
   const transitionRows = journeySnapshot
     ? await queryRows(
         executor,
-        `SELECT report_date, from_path, to_path, transitions
+        `SELECT report_date, from_path, to_path, transition_count
          FROM \`report_bd\`.\`portal_bitrix_journey_transitions\`
          WHERE canonical_release_id = ? AND source_snapshot_id = ?
          ORDER BY report_date, from_path, to_path`,
@@ -474,7 +474,7 @@ export async function loadActiveAbbottAggregateDataWithExecutor(
     report_date: text(row.report_date),
     from_path: text(row.from_path),
     to_path: text(row.to_path),
-    transitions: metric(row.transitions),
+    transitions: metric(row.transition_count),
   }));
   return {
     workbook,

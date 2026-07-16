@@ -141,8 +141,8 @@ test("manager Bitrix loading uses the private snapshot-bound page table", async 
         normalized_path: "/materials/example",
         material_id: "material-1",
         pageviews: "4",
-        visits: "3",
-        unique_visitors: "2",
+        sessions: "3",
+        users: "2",
       }];
     }
     return [];
@@ -163,6 +163,32 @@ test("manager Bitrix loading uses the private snapshot-bound page table", async 
     executor.queries.some(({ sql }) => sql.includes("`report_bd_private`.`portal_bitrix_page_facts`")),
     true,
   );
+});
+
+test("store queries match the rollout-safe aggregate schema columns", async () => {
+  const executor = fakeExecutor(({ sql }) => {
+    if (sql.includes("FROM `report_bd`.`dashboards`")) return [{ id: 7 }];
+    if (sql.includes("portal_active_data_releases")) return [releaseRow];
+    if (sql.includes("portal_dataset_snapshots")) return snapshotRows;
+    if (sql.includes("portal_bitrix_journey_transitions")) {
+      return [{ report_date: "2026-06-30", from_path: "/one", to_path: "/two", transition_count: "4" }];
+    }
+    return [];
+  });
+
+  const result = await loadActiveAbbottAggregateDataWithExecutor(executor, 7);
+  const sql = executor.queries.map((query) => query.sql).join("\n");
+
+  assert.match(sql, /source_slug, access_label, is_active/);
+  assert.match(sql, /pageviews, sessions, users/);
+  assert.doesNotMatch(sql, /\bvisits\b|unique_visitors/);
+  assert.match(sql, /SELECT report_date, from_path, to_path, transition_count/);
+  assert.deepEqual(result.journeyTransitions.rows, [{
+    report_date: "2026-06-30",
+    from_path: "/one",
+    to_path: "/two",
+    transitions: 4,
+  }]);
 });
 
 test("database errors are sanitized and never expose SQL parameters", async () => {
