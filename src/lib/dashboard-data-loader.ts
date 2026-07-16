@@ -1102,24 +1102,35 @@ async function loadAdjustedCampaignDailyFacts(
   dateFrom: string,
   dateTo: string,
   overrideMap: Map<string, number>,
+  isGidrofuril = false,
 ): Promise<CampaignDailyFactRow[]> {
   const rows = await getCampaignDailyFactsByIds(sourceKey, campaignIds, dateFrom, dateTo);
-  return rows.map((row) =>
-    applyFrequencyOverride(
+  return rows.map((row) => {
+    const impressions = asNumber(row.impressions);
+    let views = asNumber(row.views);
+
+    // TEMPORARY: Gidrofuril VK "views started" approximation
+    // views = impressions * 0.89 (until real video.started / views_started
+    // is collected from VK Ads API into canonical_fact_ads_daily)
+    if (isGidrofuril && sourceKey === "vk_ads_v2") {
+      views = Math.round(impressions * 0.89);
+    }
+
+    return applyFrequencyOverride(
       sourceKey,
       {
         date: toIsoDate(row.date),
         platform_campaign_id: String(row.platform_campaign_id ?? ""),
-        impressions: asNumber(row.impressions),
+        impressions,
         reach: asNumber(row.reach),
         clicks: asNumber(row.clicks),
         spend: Number(asNumber(row.spend).toFixed(2)),
-        views: asNumber(row.views),
+        views,
         conversions: asNumber(row.conversions),
       },
       overrideMap,
-    ),
-  );
+    );
+  });
 }
 
 async function applyAggregateReachOverrides(
@@ -1252,6 +1263,7 @@ async function buildPlanVsFactRowsByChannel(
   dateTo: string,
   overrideMap: Map<string, number>,
   manualChannels: ManualChannelData[],
+  isGidrofuril = false,
 ): Promise<PlanVsFactItem[]> {
   const resolveBindingPlatform = (binding: { source_key: string; platform_campaign_id: string }) => {
     if (binding.source_key === "manual_data" && binding.platform_campaign_id.startsWith("manual:")) {
@@ -1301,7 +1313,7 @@ async function buildPlanVsFactRowsByChannel(
       });
       const results = await Promise.all(
         Array.from(bySource.entries()).map(([sourceKey, ids]) =>
-          loadAdjustedCampaignDailyFacts(sourceKey, ids, dateFrom, dateTo, overrideMap),
+          loadAdjustedCampaignDailyFacts(sourceKey, ids, dateFrom, dateTo, overrideMap, isGidrofuril),
         ),
       );
       canonicalTotals = sumCampaignDailyFacts(results.flat());
@@ -1491,7 +1503,7 @@ async function buildChannelTimeseries(
       const sourceResults = await Promise.all(
         Array.from(bySource.entries()).map(([sourceKey, ids]) =>
           ids.length
-            ? loadAdjustedCampaignDailyFacts(sourceKey, ids, dateFrom, dateTo, overrideMap)
+            ? loadAdjustedCampaignDailyFacts(sourceKey, ids, dateFrom, dateTo, overrideMap, false)
             : getTimeseriesByCampaignIds(sourceKey, ids, dateFrom, dateTo).then((rows) =>
                 rows.map((row) => ({
                   date: toIsoDate(row.date),
@@ -2743,6 +2755,13 @@ export async function loadDashboardData(
   const compareRange = getCompareRange(request);
   const previousRange = buildPreviousPeriod(range.from, range.to);
 
+  // TEMPORARY GIDROFURIL VK STUB
+  // For VK (vk_ads_v2) on this dashboard we approximate "views started"
+  // as impressions * 0.89 because the real metric is not yet collected
+  // in canonical_fact_ads_daily (see loadAdjustedCampaignDailyFacts).
+  const isGidrofuril = dashboard.client_id === 'gidrofuril';
+
+
   const [sourceRows] = await pool.execute<SourceRow[]>(
     `SELECT ds.*, dcf.filter_type, dcf.filter_value
      FROM dashboard_sources ds
@@ -3006,6 +3025,11 @@ export async function loadDashboardData(
           const spend = Number(asNumber(aggregate?.total_spend).toFixed(2));
           const reach = Math.round(asNumber(aggregate?.total_reach));
 
+          let views = Math.round(asNumber(aggregate?.total_views));
+          if (isGidrofuril && sourceKey === "vk_ads_v2") {
+            views = Math.round(impressions * 0.89);
+          }
+
           platformStatsRaw.push({
             id: source.platform,
             name: platformMeta?.label ?? schema.display_name,
@@ -3014,7 +3038,7 @@ export async function loadDashboardData(
             clicks,
             spend,
             conversions: Math.round(asNumber(aggregate?.total_conversions)),
-            views: Math.round(asNumber(aggregate?.total_views)),
+            views,
             reach,
             frequency: reach > 0 ? Number((impressions / reach).toFixed(2)) : 0,
             ctr: Number(asNumber(aggregate?.avg_ctr).toFixed(2)),
@@ -3036,6 +3060,10 @@ export async function loadDashboardData(
           const prevClicksRaw = asNumber(prevAggregate?.total_clicks);
           const prevSpendRaw = Number(asNumber(prevAggregate?.total_spend).toFixed(2));
           const prevReach = Math.round(asNumber(prevAggregate?.total_reach));
+          let prevViews = Math.round(asNumber(prevAggregate?.total_views));
+          if (isGidrofuril && sourceKey === "vk_ads_v2") {
+            prevViews = Math.round(prevImpressionsRaw * 0.89);
+          }
           prevStatsRaw.push({
             id: source.platform,
             name: platformMeta?.label ?? schema.display_name,
@@ -3044,7 +3072,7 @@ export async function loadDashboardData(
             clicks: prevClicksRaw,
             spend: prevSpendRaw,
             conversions: Math.round(asNumber(prevAggregate?.total_conversions)),
-            views: Math.round(asNumber(prevAggregate?.total_views)),
+            views: prevViews,
             reach: prevReach,
             frequency: prevReach > 0 ? Number((prevImpressionsRaw / prevReach).toFixed(2)) : 0,
             ctr: Number(asNumber(prevAggregate?.avg_ctr).toFixed(2)),
@@ -3053,13 +3081,17 @@ export async function loadDashboardData(
 
           const timeseriesRows = await getAdsTimeseries(filter);
           for (const row of timeseriesRows) {
+            let tsViews = Math.round(asNumber(row.views));
+            if (isGidrofuril && sourceKey === "vk_ads_v2") {
+              tsViews = Math.round(asNumber(row.impressions) * 0.89);
+            }
             timeseriesRaw.push({
               date: toIsoDate(row.date),
               platform: source.platform,
               impressions: asNumber(row.impressions),
               clicks: asNumber(row.clicks),
               spend: Number(asNumber(row.spend).toFixed(2)),
-              views: Math.round(asNumber(row.views)),
+              views: tsViews,
               conversions: Math.round(asNumber(row.conversions)),
             });
           }
@@ -3273,6 +3305,7 @@ export async function loadDashboardData(
       range.to,
       frequencyOverrideMap,
       manualChannels,
+      isGidrofuril,
     );
     const channelTimeseries = await buildChannelTimeseries(
       planByChannel,
