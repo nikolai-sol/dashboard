@@ -132,6 +132,18 @@ Important current state:
   - `page`: page URL/title grain from `ym:pv:URL,ym:pv:title`
 - deletion before rewrites is counter-scoped for targeted runs, so a Zaruku backfill does not wipe Abbott rows in the same date window
 - `METRIKA_REQUEST_DELAY_SECONDS` can throttle API requests for long backfills and 429-sensitive counters
+- `METRIKA_TOKEN` is the sole OAuth authority key; token issuance and revocation require the Yandex
+  account owner, and installation is from a mode-`0600` file without printing the value
+- Abbott authority is exact counter `90602537`; the candidate release requires complete, unsampled
+  daily coverage for `other`, `traffic`, `page`, `user_behavior`, and `returning`
+- Abbott 2026 backfill is resume-safe: it processes `2026-03-29..2026-04-07` first and then every
+  remaining completed 2026 date; no candidate activation occurs until the comparator and access gates pass
+- rollout procedure: `../docs/ABBOTT-OPERATIONS-RUNBOOK.md`
+- current production cron remains unchanged until cutover is explicitly accepted; after acceptance only,
+  the planned Abbott schedule is `06:12` canonical, `07:05` deterministic health, `07:10` summary,
+  with the duplicate `06:10` legacy `/metrika` removed
+- legacy launch calls use the `x-internal-token` header backed by `LEGACY_LAUNCH_SECRET`; never put it
+  in a query string
 - Zaruku main counter is `66624469`; it must be active in `canonical_source_account_collection_settings` with `collection_mode = ads_plus_seo_plus_user_behavior`
 - If `canonical_fact_user_behavior_daily` stays empty for Zaruku, do not infer a collector failure by itself: the counter may not expose `paramsLevel2` / UserID-style rows.
 

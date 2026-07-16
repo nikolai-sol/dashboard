@@ -36,6 +36,24 @@ ssh beget 'curl -s http://127.0.0.1:3001/api/health'
 
 ## Current dashboard architecture
 
+### Abbott canonical/private release boundary
+
+- The Abbott canonical/private operator procedure is
+  `../docs/ABBOTT-OPERATIONS-RUNBOOK.md`; packaging the procedure does not mean production cutover
+  has occurred.
+- Production reads after cutover resolve one atomic Abbott active-release pointer. Missing candidate
+  coverage blocks activation; the dashboard never falls back to legacy data within a selected month.
+- Manager-only source/import data and checkpoints remain outside `public`, `.next/static`, standalone
+  public assets, and deployment archives. The release guard must stay enabled.
+- `report_bd_private` is accessed only by the server-side manager read model through required
+  `ABBOTT_PRIVATE_DB_HOST`, `ABBOTT_PRIVATE_DB_PORT`, `ABBOTT_PRIVATE_DB_USER`,
+  `ABBOTT_PRIVATE_DB_PASSWORD`, and `ABBOTT_PRIVATE_DB_NAME=report_bd_private` values.
+- The import CLI uses a separate `ABBOTT_IMPORT_DB_*` account/role and only explicit mode-`0600`
+  source paths. A failed import leaves the previous active pointer unchanged.
+- Embed projection remains aggregate-only and cannot request raw identifiers or private journeys.
+- The synchronized canonical bootstrap manifest records SHA-256 and runtime roles for the Metrika
+  collector, canonical writer, and release store; copied files must remain byte-identical to root.
+
 ### Shared data loader
 
 - Core runtime is built in:
