@@ -22,6 +22,15 @@ class AbbottSchemaContractTest(unittest.TestCase):
     def _normalized(sql):
         return " ".join(sql.split())
 
+    @classmethod
+    def _table_definition(cls, sql, table):
+        normalized = cls._normalized(sql)
+        marker = f"CREATE TABLE IF NOT EXISTS {table} ("
+        if marker not in normalized:
+            raise AssertionError(f"missing table contract: {table}")
+        definition = normalized.split(marker, 1)[1]
+        return definition.split(") ENGINE=InnoDB", 1)[0]
+
     def test_release_keys_and_private_boundary(self):
         primary = self._primary_sql()
         private = self._private_sql()
@@ -191,6 +200,288 @@ class AbbottSchemaContractTest(unittest.TestCase):
             "failed",
         ):
             self.assertIn(f"'{status}'", sql)
+
+    def test_prebackfill_uses_only_the_fixed_abbott_dataset_key(self):
+        sql = (ROOT / "ops/sql/abbott_prebackfill_snapshot.sql").read_text()
+        self.assertNotIn("abbott_portal", sql)
+        self.assertGreaterEqual(sql.count("'abbott'"), 4)
+        self.assertNotRegex(sql, r"@abbott_dataset_key")
+
+    def test_snapshot_checksum_idempotency_is_scoped_by_source_kind(self):
+        snapshots = self._table_definition(
+            self._primary_sql(), "portal_dataset_snapshots"
+        )
+        self.assertIn(
+            "UNIQUE KEY uniq_dataset_snapshot_content "
+            "(dataset_key, source_kind, content_sha256)",
+            snapshots,
+        )
+        self.assertNotIn(
+            "UNIQUE KEY uniq_dataset_snapshot_content (dataset_key, content_sha256)",
+            snapshots,
+        )
+
+    def test_snapshot_status_is_import_lifecycle_not_activation(self):
+        snapshots = self._table_definition(
+            self._primary_sql(), "portal_dataset_snapshots"
+        )
+        status_match = re.search(r"import_status ENUM\(([^)]*)\)", snapshots)
+        self.assertIsNotNone(status_match)
+        self.assertEqual(
+            re.findall(r"'([^']+)'", status_match.group(1)),
+            ["registered", "importing", "imported", "rejected"],
+        )
+        self.assertNotRegex(snapshots, r"(?i)\b(active|retired)\b")
+
+    def test_content_catalog_preserves_source_lookup_grains(self):
+        catalog = self._table_definition(
+            self._primary_sql(), "portal_content_catalog"
+        )
+        for column in (
+            "normalized_url TEXT DEFAULT NULL",
+            "normalized_url_hash CHAR(64) DEFAULT NULL",
+            "normalized_path TEXT DEFAULT NULL",
+            "page_title VARCHAR(1000) NOT NULL",
+            "material_type VARCHAR(128) DEFAULT NULL",
+            "source_slug VARCHAR(1000) DEFAULT NULL",
+            "source_slug_hash CHAR(64) DEFAULT NULL",
+            "source_row_fingerprint CHAR(64) NOT NULL",
+        ):
+            self.assertIn(column, catalog)
+        for key in (
+            "UNIQUE KEY uniq_content_release_source_row "
+            "(canonical_release_id, source_snapshot_id, source_row_fingerprint)",
+            "KEY idx_content_release_title_type "
+            "(canonical_release_id, page_title(191), material_type)",
+            "KEY idx_content_release_slug "
+            "(canonical_release_id, source_slug_hash)",
+        ):
+            self.assertIn(key, catalog)
+
+    def test_workbook_registration_events_have_a_source_faithful_catalog(self):
+        catalog = self._table_definition(self._primary_sql(), "portal_event_catalog")
+        for column in (
+            "event_title VARCHAR(1000) NOT NULL",
+            "direction_key VARCHAR(500) DEFAULT NULL",
+            "registration_url TEXT DEFAULT NULL",
+            "registration_url_hash CHAR(64) DEFAULT NULL",
+            "access_label VARCHAR(500) DEFAULT NULL",
+            "source_row_fingerprint CHAR(64) NOT NULL",
+        ):
+            self.assertIn(column, catalog)
+        self.assertIn(
+            "UNIQUE KEY uniq_event_catalog_source_row "
+            "(canonical_release_id, source_snapshot_id, source_row_fingerprint)",
+            catalog,
+        )
+
+    def test_general_material_catalog_preserves_url_lookup(self):
+        materials = self._table_definition(
+            self._primary_sql(), "portal_general_materials"
+        )
+        for column in (
+            "normalized_url TEXT DEFAULT NULL",
+            "normalized_url_hash CHAR(64) DEFAULT NULL",
+            "normalized_path TEXT DEFAULT NULL",
+            "normalized_path_hash CHAR(64) DEFAULT NULL",
+        ):
+            self.assertIn(column, materials)
+        self.assertIn(
+            "KEY idx_general_material_url "
+            "(canonical_release_id, normalized_url_hash)",
+            materials,
+        )
+
+    def test_bitrix_page_schema_preserves_builder_aggregate_fields(self):
+        facts = self._table_definition(
+            self._private_sql(), "report_bd_private.portal_bitrix_page_facts"
+        )
+        for column in (
+            "material_type_hint VARCHAR(500) DEFAULT NULL",
+            "guests BIGINT UNSIGNED NOT NULL DEFAULT 0",
+            "logged_in_hits BIGINT UNSIGNED NOT NULL DEFAULT 0",
+            "anonymous_hits BIGINT UNSIGNED NOT NULL DEFAULT 0",
+            "logged_in_sessions BIGINT UNSIGNED NOT NULL DEFAULT 0",
+            "anonymous_sessions BIGINT UNSIGNED NOT NULL DEFAULT 0",
+            "entry_sessions BIGINT UNSIGNED NOT NULL DEFAULT 0",
+            "exit_sessions BIGINT UNSIGNED NOT NULL DEFAULT 0",
+            "avg_session_duration_seconds DECIMAL(18,6) DEFAULT NULL",
+            "top_utm_source VARCHAR(500) DEFAULT NULL",
+            "top_utm_medium VARCHAR(500) DEFAULT NULL",
+            "top_utm_campaign VARCHAR(500) DEFAULT NULL",
+        ):
+            self.assertIn(column, facts)
+
+    def test_private_journeys_allow_anonymous_lossless_ordered_events(self):
+        journeys = self._table_definition(
+            self._private_sql(), "report_bd_private.portal_bitrix_journeys_private"
+        )
+        for column in (
+            "raw_user_id TEXT DEFAULT NULL",
+            "raw_user_id_hash CHAR(64) DEFAULT NULL",
+            "protected_visit_id TEXT NOT NULL",
+            "protected_visit_id_hash CHAR(64) NOT NULL",
+            "source_event_id TEXT DEFAULT NULL",
+            "source_event_id_hash CHAR(64) DEFAULT NULL",
+            "event_sequence INT UNSIGNED NOT NULL",
+            "event_at DATETIME NOT NULL",
+            "normalized_path TEXT NOT NULL",
+            "event_kind VARCHAR(128) NOT NULL",
+            "source_row_fingerprint CHAR(64) NOT NULL",
+        ):
+            self.assertIn(column, journeys)
+        self.assertIn(
+            "UNIQUE KEY uniq_private_bitrix_visit_sequence "
+            "(canonical_release_id, source_snapshot_id, protected_visit_id_hash, event_sequence)",
+            journeys,
+        )
+
+    def test_protected_identifiers_are_text_and_private_only(self):
+        primary = self._primary_sql().lower()
+        private = self._private_sql()
+        for identifier in (
+            "raw_user_id",
+            "protected_visit_id",
+            "source_event_id",
+        ):
+            self.assertNotIn(identifier, primary)
+        self.assertNotRegex(private, r"(?i)(raw_user_id|protected_visit_id|source_event_id)\s+(BIGINT|INT|VARCHAR)")
+        self.assertNotRegex(private, r"(?i)CAST\s*\([^)]*AS\s+UNSIGNED")
+
+    def test_aggregate_journey_transitions_are_primary_and_release_scoped(self):
+        transitions = self._table_definition(
+            self._primary_sql(), "portal_bitrix_journey_transitions"
+        )
+        for column in (
+            "canonical_release_id BIGINT UNSIGNED NOT NULL",
+            "source_snapshot_id BIGINT UNSIGNED NOT NULL",
+            "report_date DATE NOT NULL",
+            "from_path TEXT NOT NULL",
+            "from_path_hash CHAR(64) NOT NULL",
+            "to_path TEXT NOT NULL",
+            "to_path_hash CHAR(64) NOT NULL",
+            "transition_count BIGINT UNSIGNED NOT NULL DEFAULT 0",
+        ):
+            self.assertIn(column, transitions)
+        self.assertNotRegex(
+            transitions, r"(?i)(raw_user_id|protected_visit_id|source_event_id)"
+        )
+        self.assertIn(
+            "UNIQUE KEY uniq_bitrix_transition_release "
+            "(canonical_release_id, source_snapshot_id, analytics_account_id, "
+            "report_date, from_path_hash, to_path_hash)",
+            transitions,
+        )
+
+    def test_importer_and_runtime_reader_roles_are_distinct(self):
+        sql = self._normalized(self._private_sql())
+        for role in (
+            "reportingdash_abbott_importer_role",
+            "reportingdash_abbott_runtime_reader_role",
+        ):
+            self.assertIn(f"'{role}'", sql)
+
+        importer = "TO 'reportingdash_abbott_importer_role';"
+        runtime = "TO 'reportingdash_abbott_runtime_reader_role';"
+        self.assertIn(
+            "GRANT SELECT ON report_bd.portal_data_releases " + importer,
+            sql,
+        )
+        self.assertIn(
+            "GRANT UPDATE (source_snapshot_ids) ON report_bd.portal_data_releases "
+            + importer,
+            sql,
+        )
+        self.assertIn(
+            "GRANT SELECT, INSERT ON report_bd.portal_dataset_snapshots " + importer,
+            sql,
+        )
+        self.assertIn(
+            "GRANT UPDATE (import_status, imported_row_count, rejected_row_count, "
+            "manifest_json, imported_at) ON report_bd.portal_dataset_snapshots "
+            + importer,
+            sql,
+        )
+        for table in (
+            "portal_content_catalog",
+            "portal_general_materials",
+            "portal_event_catalog",
+            "portal_bitrix_journey_transitions",
+        ):
+            self.assertIn(
+                f"GRANT SELECT, INSERT ON report_bd.{table} {importer}", sql
+            )
+        for table in (
+            "portal_user_directions_private",
+            "portal_bitrix_page_facts",
+            "portal_bitrix_journeys_private",
+        ):
+            self.assertIn(
+                "GRANT SELECT, INSERT ON "
+                f"report_bd_private.{table} {importer}",
+                sql,
+            )
+
+        for table in (
+            "portal_data_releases",
+            "portal_active_data_releases",
+            "portal_dataset_snapshots",
+            "portal_content_catalog",
+            "portal_general_materials",
+            "portal_event_catalog",
+            "portal_bitrix_journey_transitions",
+        ):
+            self.assertIn(f"GRANT SELECT ON report_bd.{table} {runtime}", sql)
+        for table in (
+            "canonical_fact_metrika_user_behavior_daily",
+            "portal_user_directions_private",
+            "portal_bitrix_page_facts",
+            "portal_bitrix_journeys_private",
+        ):
+            self.assertIn(
+                f"GRANT SELECT ON report_bd_private.{table} {runtime}", sql
+            )
+
+    def test_runtime_reader_cannot_write_and_importer_cannot_activate(self):
+        sql = self._normalized(self._private_sql())
+        grant_statements = re.findall(r"GRANT .*?;", sql, flags=re.IGNORECASE)
+        runtime_grants = [
+            grant
+            for grant in grant_statements
+            if "TO 'reportingdash_abbott_runtime_reader_role'" in grant
+        ]
+        self.assertGreater(len(runtime_grants), 0)
+        for grant in runtime_grants:
+            self.assertRegex(grant, r"^GRANT SELECT ON ")
+
+        importer_grants = [
+            grant
+            for grant in grant_statements
+            if "TO 'reportingdash_abbott_importer_role'" in grant
+        ]
+        self.assertGreater(len(importer_grants), 0)
+        self.assertFalse(
+            any("portal_active_data_releases" in grant for grant in importer_grants)
+        )
+
+    def test_collector_role_does_not_import_workbook_or_bitrix_snapshots(self):
+        sql = self._normalized(self._private_sql())
+        collector_grants = [
+            grant
+            for grant in re.findall(r"GRANT .*?;", sql, flags=re.IGNORECASE)
+            if "TO 'reportingdash_abbott_collector_role'" in grant
+        ]
+        for table in (
+            "portal_dataset_snapshots",
+            "portal_content_catalog",
+            "portal_general_materials",
+            "portal_event_catalog",
+            "portal_user_directions_private",
+            "portal_bitrix_page_facts",
+            "portal_bitrix_journeys_private",
+            "portal_bitrix_journey_transitions",
+        ):
+            self.assertFalse(any(table in grant for grant in collector_grants))
 
 
 if __name__ == "__main__":

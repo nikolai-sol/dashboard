@@ -87,7 +87,7 @@ INSERT INTO report_bd.portal_dataset_snapshots (
   manifest_json
 ) VALUES (
   @abbott_snapshot_key,
-  'abbott_portal',
+  'abbott',
   'prebackfill_manifest',
   @abbott_snapshot_source_locator,
   @abbott_snapshot_sha256,
@@ -118,7 +118,7 @@ SELECT
 FROM report_bd.portal_active_data_releases AS active
 JOIN report_bd.portal_data_releases AS releases
   ON releases.id = active.canonical_release_id
-WHERE active.dataset_key = 'abbott_portal';
+WHERE active.dataset_key = 'abbott';
 
 -- Sanitized aggregate evidence for the currently active primary facts.
 SELECT
@@ -133,7 +133,7 @@ SELECT
 FROM report_bd.canonical_fact_metrika_site_analytics_daily AS facts
 JOIN report_bd.portal_active_data_releases AS active
   ON active.canonical_release_id = facts.canonical_release_id
- AND active.dataset_key = 'abbott_portal'
+ AND active.dataset_key = 'abbott'
 WHERE facts.counter_id = 90602537
 GROUP BY
   facts.canonical_release_id,
@@ -157,7 +157,7 @@ SELECT
 FROM report_bd.canonical_source_coverage_daily AS coverage
 JOIN report_bd.portal_active_data_releases AS active
   ON active.canonical_release_id = coverage.canonical_release_id
- AND active.dataset_key = 'abbott_portal'
+ AND active.dataset_key = 'abbott'
 WHERE coverage.counter_id = 90602537
 ORDER BY coverage.report_date, coverage.scope_key;
 
@@ -173,7 +173,7 @@ SELECT
 FROM report_bd_private.canonical_fact_metrika_user_behavior_daily AS behavior
 JOIN report_bd.portal_active_data_releases AS active
   ON active.canonical_release_id = behavior.canonical_release_id
- AND active.dataset_key = 'abbott_portal'
+ AND active.dataset_key = 'abbott'
 WHERE behavior.counter_id = 90602537
 GROUP BY behavior.canonical_release_id, behavior.counter_id;
 
