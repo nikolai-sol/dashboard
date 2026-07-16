@@ -84,9 +84,9 @@ fi
 WHITESPACE_RELEASE="$TMP_DIR/whitespace-release"
 mkdir -p "$WHITESPACE_RELEASE/public"
 write_valid_env "$WHITESPACE_RELEASE/.env"
-sed -i.bak "s/^METRIKA_TOKEN=.*/METRIKA_TOKEN='   '/" "$WHITESPACE_RELEASE/.env"
+sed -i.bak "s/^METRIKA_TOKEN=.*/METRIKA_TOKEN='   ' # rotated/" "$WHITESPACE_RELEASE/.env"
 if bash "$SCRIPT_DIR/validate-production-release.sh" "$WHITESPACE_RELEASE" "$WHITESPACE_RELEASE/.env" >"$TMP_DIR/whitespace.log" 2>&1; then
-  echo "validate-production-release.sh accepted a whitespace-only required value" >&2
+  echo "validate-production-release.sh accepted a commented whitespace-only required value" >&2
   exit 1
 fi
 grep -Fq 'METRIKA_TOKEN' "$TMP_DIR/whitespace.log"

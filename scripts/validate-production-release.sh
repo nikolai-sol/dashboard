@@ -25,31 +25,43 @@ required_keys=(
   ABBOTT_PRIVATE_DB_NAME
 )
 
-missing_keys=()
-for key in "${required_keys[@]}"; do
-  if ! awk -F= -v required_key="$key" '
-    $1 == required_key {
-      value = substr($0, length($1) + 2)
-      gsub(/^[[:space:]]+|[[:space:]\r]+$/, "", value)
-      first = substr(value, 1, 1)
-      last = substr(value, length(value), 1)
-      single_quote = sprintf("%c", 39)
-      if ((first == "\"" && last == "\"") || (first == single_quote && last == single_quote)) {
-        value = substr(value, 2, length(value) - 2)
-      } else {
-        sub(/#.*/, "", value)
-      }
-      gsub(/^[[:space:]]+|[[:space:]\r]+$/, "", value)
-      if (length(value) > 0) found = 1
-    }
-    END { exit found ? 0 : 1 }
-  ' "$ENV_FILE"; then
-    missing_keys+=("$key")
-  fi
-done
+find_missing_dotenv_keys() {
+  local env_file="$1"
+  shift
+  local node_bin=""
 
-if (( ${#missing_keys[@]} > 0 )); then
-  printf 'Production release is missing required env keys: %s\n' "${missing_keys[*]}" >&2
+  if ! node_bin="$(command -v node)"; then
+    printf '%s ' "$@"
+    return 1
+  fi
+
+  "$node_bin" - "$env_file" "$@" <<'JS'
+const fs = require("node:fs");
+const { parseEnv } = require("node:util");
+
+const [envFile, ...requiredKeys] = process.argv.slice(2);
+let parsed;
+try {
+  if (typeof parseEnv !== "function") throw new Error("dotenv parser unavailable");
+  parsed = parseEnv(fs.readFileSync(envFile, "utf8"));
+} catch {
+  process.stdout.write(requiredKeys.join(" "));
+  process.exit(1);
+}
+
+const missingKeys = requiredKeys.filter((key) =>
+  typeof parsed[key] !== "string" || parsed[key].trim().length === 0
+);
+if (missingKeys.length > 0) {
+  process.stdout.write(missingKeys.join(" "));
+  process.exit(1);
+}
+JS
+}
+
+missing_keys=""
+if ! missing_keys="$(find_missing_dotenv_keys "$ENV_FILE" "${required_keys[@]}")"; then
+  printf 'Production release is missing required env keys: %s\n' "$missing_keys" >&2
   exit 1
 fi
 

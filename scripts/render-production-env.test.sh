@@ -54,11 +54,11 @@ if grep -Fq 'top-secret' "$SUCCESS_LOG"; then
   exit 1
 fi
 
-MISSING_ENV="$(printf '%s\n' "$VALID_ENV" | sed "s/^ABBOTT_PRIVATE_DB_PASSWORD=.*/ABBOTT_PRIVATE_DB_PASSWORD='   '/")"
+MISSING_ENV="$(printf '%s\n' "$VALID_ENV" | sed "s/^ABBOTT_PRIVATE_DB_PASSWORD=.*/ABBOTT_PRIVATE_DB_PASSWORD='   ' # rotated/")"
 MISSING_LOG="$TMP_DIR/missing.log"
 if FAKE_REMOTE_ENV_CONTENT="$MISSING_ENV" PATH="$TMP_DIR/bin:$PATH" \
   bash "$SCRIPT_DIR/render-production-env.sh" "$TMP_DIR/missing.env" >"$MISSING_LOG" 2>&1; then
-  echo "render-production-env.sh accepted a whitespace-only Abbott private DB password" >&2
+  echo "render-production-env.sh accepted a commented whitespace-only Abbott private DB password" >&2
   exit 1
 fi
 

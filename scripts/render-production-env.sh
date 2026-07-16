@@ -7,6 +7,70 @@ TARGET_FILE="${1:-.env.production}"
 DEFAULT_BASE_URL="${DEFAULT_BASE_URL:-https://dashboards.adreports.ru}"
 
 REMOTE_ENV_CONTENT="$(ssh "$VPS" "cat '$REMOTE_ENV_PATH'")"
+SOURCE_ENV_FILE="$(mktemp)"
+
+cleanup() {
+  rm -f "$SOURCE_ENV_FILE"
+}
+trap cleanup EXIT
+chmod 600 "$SOURCE_ENV_FILE"
+printf '%s\n' "$REMOTE_ENV_CONTENT" > "$SOURCE_ENV_FILE"
+
+find_missing_dotenv_keys() {
+  local env_file="$1"
+  shift
+  local node_bin=""
+
+  if ! node_bin="$(command -v node)"; then
+    printf '%s ' "$@"
+    return 1
+  fi
+
+  "$node_bin" - "$env_file" "$@" <<'JS'
+const fs = require("node:fs");
+const { parseEnv } = require("node:util");
+
+const [envFile, ...requiredKeys] = process.argv.slice(2);
+let parsed;
+try {
+  if (typeof parseEnv !== "function") throw new Error("dotenv parser unavailable");
+  parsed = parseEnv(fs.readFileSync(envFile, "utf8"));
+} catch {
+  process.stdout.write(requiredKeys.join(" "));
+  process.exit(1);
+}
+
+const missingKeys = requiredKeys.filter((key) =>
+  typeof parsed[key] !== "string" || parsed[key].trim().length === 0
+);
+if (missingKeys.length > 0) {
+  process.stdout.write(missingKeys.join(" "));
+  process.exit(1);
+}
+JS
+}
+
+source_required_keys=(
+  MYSQL_USER
+  MYSQL_PASSWORD
+  DASHBOARD_ADMIN_EMAIL
+  DASHBOARD_ADMIN_PASSWORD
+  DASHBOARD_AUTH_SECRET
+  ABBOTT_DASHBOARD_PASSWORD
+  ABBOTT_DASHBOARD_EMBED_KEY
+  METRIKA_TOKEN
+  ABBOTT_PRIVATE_DB_HOST
+  ABBOTT_PRIVATE_DB_PORT
+  ABBOTT_PRIVATE_DB_USER
+  ABBOTT_PRIVATE_DB_PASSWORD
+  ABBOTT_PRIVATE_DB_NAME
+)
+
+missing_source_keys=""
+if ! missing_source_keys="$(find_missing_dotenv_keys "$SOURCE_ENV_FILE" "${source_required_keys[@]}")"; then
+  printf 'Missing required production env keys in %s: %s\n' "$REMOTE_ENV_PATH" "$missing_source_keys" >&2
+  exit 1
+fi
 
 MYSQL_PORT_VALUE="3306"
 MYSQL_USER_VALUE=""
