@@ -474,7 +474,53 @@ test("transaction is checksum-idempotent only when the current release rows veri
   assert.deepEqual(result.idempotentKinds, ["abbott_workbook_json"]);
   assert.ok(!idempotentCalls.some((call) => call.includes("portal_user_directions_private") && call.startsWith("INSERT")));
 
+  const successorCalls: Array<{ sql: string; params: readonly unknown[] }> = [];
+  let successorRowsMaterialized = false;
   const crossReleaseConnection: AbbottImportConnection = {
+    beginTransaction: async () => undefined,
+    execute: async (sql, params = []) => {
+      const compact = sql.replace(/\s+/g, " ").trim();
+      successorCalls.push({ sql: compact, params });
+      if (compact.includes("FROM report_bd.portal_data_releases")) {
+        return [[{ id: 77, dataset_key: "abbott", release_status: "staging", source_snapshot_ids: "[]" }], []];
+      }
+      if (compact.includes("FROM report_bd.portal_dataset_snapshots")) {
+        return [[{ id: 44, import_status: "imported", imported_row_count: 1 }], []];
+      }
+      if (compact.startsWith("SELECT COUNT(*)")) {
+        return [[{ row_count: successorRowsMaterialized ? 1 : 0 }], []];
+      }
+      if (compact.startsWith("INSERT INTO report_bd_private.portal_user_directions_private")) {
+        assert.match(compact, /\) VALUES \(\?, \?, \?\)$/);
+        assert.deepEqual(params, [77, 44, "000123"]);
+        successorRowsMaterialized = true;
+        return [{ affectedRows: 1 }, []];
+      }
+      if (compact.startsWith("SELECT raw_user_id FROM")) {
+        return [[{ raw_user_id: "000123" }], []];
+      }
+      return [[], []];
+    },
+    commit: async () => undefined,
+    rollback: async () => undefined,
+  };
+  const successorResult = await runAbbottImportTransaction(crossReleaseConnection, 77, [source()]);
+  assert.deepEqual(successorResult.idempotentKinds, ["abbott_workbook_json"]);
+  assert.equal(successorRowsMaterialized, true);
+  assert.ok(!successorCalls.some((call) => /INSERT\s+.*\s+SELECT/i.test(call.sql)));
+  const materializationIndex = successorCalls.findIndex((call) =>
+    call.sql.startsWith("INSERT INTO report_bd_private.portal_user_directions_private"),
+  );
+  const evidenceIndex = successorCalls.findIndex((call) =>
+    call.sql.startsWith("INSERT INTO report_bd.portal_release_source_imports"),
+  );
+  assert.ok(materializationIndex >= 0 && evidenceIndex > materializationIndex);
+
+  let partialInserted = false;
+  let partialEvidence = false;
+  const partialFingerprintColumns = ["raw_user_id"];
+  const partialRows = [["000123"], ["000456"]];
+  const partialConnection: AbbottImportConnection = {
     beginTransaction: async () => undefined,
     execute: async (sql) => {
       const compact = sql.replace(/\s+/g, " ").trim();
@@ -482,15 +528,32 @@ test("transaction is checksum-idempotent only when the current release rows veri
         return [[{ id: 77, dataset_key: "abbott", release_status: "staging", source_snapshot_ids: "[]" }], []];
       }
       if (compact.includes("FROM report_bd.portal_dataset_snapshots")) {
-        return [[{ id: 44, import_status: "imported", imported_row_count: 1 }], []];
+        return [[{ id: 44, import_status: "imported", imported_row_count: 2 }], []];
       }
-      if (compact.startsWith("SELECT COUNT(*)")) return [[{ row_count: 0 }], []];
+      if (compact.startsWith("SELECT COUNT(*)")) return [[{ row_count: 1 }], []];
+      if (compact.startsWith("INSERT INTO report_bd_private.portal_user_directions_private")) partialInserted = true;
+      if (compact.startsWith("INSERT INTO report_bd.portal_release_source_imports")) partialEvidence = true;
       return [[], []];
     },
     commit: async () => undefined,
     rollback: async () => undefined,
   };
-  await assert.rejects(() => runAbbottImportTransaction(crossReleaseConnection, 77, [source()]), /import failed/i);
+  await assert.rejects(
+    () => runAbbottImportTransaction(partialConnection, 77, [source({
+      sourceRowCount: 2,
+      importedRowCount: 2,
+      batches: [{
+        table: "report_bd_private.portal_user_directions_private",
+        columns: partialFingerprintColumns,
+        rows: partialRows,
+        fingerprints: partialRows.map((row) => canonicalPersistedRowFingerprint(partialFingerprintColumns, row)),
+        verificationColumns: partialFingerprintColumns,
+      }],
+    })]),
+    /import failed/i,
+  );
+  assert.equal(partialInserted, false);
+  assert.equal(partialEvidence, false);
 
   const changedMetricConnection: AbbottImportConnection = {
     beginTransaction: async () => undefined,
@@ -635,6 +698,110 @@ test("transaction is checksum-idempotent only when the current release rows veri
     })]),
     /import failed/i,
   );
+});
+
+test("reused snapshots materialize freshly parsed batches for all four source kinds", async () => {
+  const definitions = [
+    {
+      kind: "abbott_workbook_json",
+      snapshotId: 41,
+      table: "report_bd_private.portal_user_directions_private",
+      column: "raw_user_id",
+      value: "000123",
+      checksumCharacter: "a",
+    },
+    {
+      kind: "abbott_workbook_catalog",
+      snapshotId: 42,
+      table: "report_bd.portal_content_catalog",
+      column: "catalog_key",
+      value: "article:guide",
+      checksumCharacter: "b",
+    },
+    {
+      kind: "abbott_bitrix_pages",
+      snapshotId: 43,
+      table: "report_bd.portal_bitrix_page_facts",
+      column: "normalized_path",
+      value: "/guide",
+      checksumCharacter: "c",
+    },
+    {
+      kind: "abbott_bitrix_journeys",
+      snapshotId: 44,
+      table: "report_bd_private.portal_bitrix_journeys_private",
+      column: "protected_visit_id",
+      value: "visit-0001",
+      checksumCharacter: "d",
+    },
+  ] as const;
+  const sources = definitions.map((definition) => source({
+    sourceKind: definition.kind,
+    basename: `${definition.kind}.json`,
+    contentSha256: definition.checksumCharacter.repeat(64),
+    manifest: { source_kind: definition.kind, row_count: 1 },
+    batches: [{
+      table: definition.table,
+      columns: [definition.column],
+      rows: [[definition.value]],
+      fingerprints: [canonicalPersistedRowFingerprint([definition.column], [definition.value])],
+      verificationColumns: [definition.column],
+    }],
+  }));
+  const calls: Array<{ sql: string; params: readonly unknown[] }> = [];
+  const materializedSnapshotIds = new Set<number>();
+  const connection: AbbottImportConnection = {
+    beginTransaction: async () => undefined,
+    execute: async (sql, params = []) => {
+      const compact = sql.replace(/\s+/g, " ").trim();
+      calls.push({ sql: compact, params });
+      if (compact.includes("FROM report_bd.portal_data_releases")) {
+        return [[{ id: 77, dataset_key: "abbott", release_status: "staging", source_snapshot_ids: "[]" }], []];
+      }
+      if (compact.includes("FROM report_bd.portal_dataset_snapshots")) {
+        const definition = definitions.find(({ kind }) => kind === params[1]);
+        assert.ok(definition);
+        return [[{ id: definition.snapshotId, import_status: "imported", imported_row_count: 1 }], []];
+      }
+      if (compact.startsWith("SELECT COUNT(*)")) {
+        const snapshotId = Number(params[1]);
+        return [[{ row_count: materializedSnapshotIds.has(snapshotId) ? 1 : 0 }], []];
+      }
+      if (compact.startsWith("INSERT INTO report_bd_private.") || compact.startsWith("INSERT INTO report_bd.portal_")) {
+        if (compact.startsWith("INSERT INTO report_bd.portal_release_source_imports")) return [{ affectedRows: 1 }, []];
+        const snapshotId = Number(params[1]);
+        materializedSnapshotIds.add(snapshotId);
+        return [{ affectedRows: 1 }, []];
+      }
+      if (compact.startsWith("SELECT ")) {
+        const definition = definitions.find(({ table }) => compact.includes(` FROM ${table} `));
+        assert.ok(definition);
+        return [[{ [definition.column]: definition.value }], []];
+      }
+      return [[], []];
+    },
+    commit: async () => undefined,
+    rollback: async () => undefined,
+  };
+
+  const result = await runAbbottImportTransaction(connection, 77, sources);
+
+  assert.deepEqual(result.idempotentKinds, definitions.map(({ kind }) => kind));
+  assert.deepEqual([...materializedSnapshotIds].sort(), definitions.map(({ snapshotId }) => snapshotId));
+  assert.ok(!calls.some((call) => /INSERT\s+.*\s+SELECT/i.test(call.sql)));
+  for (const definition of definitions) {
+    const insertIndex = calls.findIndex((call) =>
+      call.sql.startsWith(`INSERT INTO ${definition.table} `)
+      && JSON.stringify(call.params) === JSON.stringify([77, definition.snapshotId, definition.value]),
+    );
+    const evidenceIndex = calls.findIndex((call) =>
+      call.sql.startsWith("INSERT INTO report_bd.portal_release_source_imports")
+      && call.params[1] === definition.snapshotId
+      && call.params[2] === definition.kind,
+    );
+    assert.ok(insertIndex >= 0, `${definition.kind} was not materialized with candidate and snapshot IDs`);
+    assert.ok(evidenceIndex > insertIndex, `${definition.kind} evidence preceded materialization`);
+  }
 });
 
 test("successor release reuse records its own import execution revision", async () => {

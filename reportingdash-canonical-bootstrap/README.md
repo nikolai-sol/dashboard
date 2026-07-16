@@ -73,3 +73,54 @@ checkout:
 
 Then verify every `runtime/` digest against `MIGRATION-MANIFEST.md` before
 packaging it into the private canonical repository.
+
+## Copied, pinned runtime environment
+
+From the installed canonical repository root, create the runtime venv with
+copied executables and verify both its containment and exact dependency pins:
+
+```bash
+export CANONICAL_ROOT=/root/reportingdash-canonical
+test ! -e "$CANONICAL_ROOT/venv"
+python3 -m venv --copies "$CANONICAL_ROOT/venv"
+"$CANONICAL_ROOT/venv/bin/python" -m pip install --disable-pip-version-check \
+  --no-input --requirement "$CANONICAL_ROOT/requirements.txt"
+"$CANONICAL_ROOT/venv/bin/python" - \
+  "$CANONICAL_ROOT/venv" "$CANONICAL_ROOT/requirements.txt" <<'PY'
+import importlib.metadata
+from pathlib import Path
+import re
+import sys
+
+venv, requirements = map(Path, sys.argv[1:])
+for path in venv.rglob("*"):
+    if path.is_symlink():
+        resolved = path.resolve(strict=False)
+        if resolved != venv and venv not in resolved.parents:
+            raise SystemExit("runtime venv contains an external symlink")
+
+pins = {}
+for raw in requirements.read_text(encoding="utf-8").splitlines():
+    line = raw.strip()
+    if not line or line.startswith("#"):
+        continue
+    match = re.fullmatch(r"([A-Za-z0-9_.-]+)==([A-Za-z0-9_.+!-]+)", line)
+    if not match:
+        raise SystemExit("runtime requirement is not exactly pinned")
+    pins[match.group(1)] = match.group(2)
+
+for name, expected in pins.items():
+    try:
+        actual = importlib.metadata.version(name)
+    except importlib.metadata.PackageNotFoundError:
+        raise SystemExit("required runtime distribution is missing") from None
+    if actual != expected:
+        raise SystemExit("required runtime distribution version differs")
+PY
+"$CANONICAL_ROOT/venv/bin/python" -m pip check
+```
+
+No package hashes are claimed by this requirements file. This checkpoint
+verifies exact pins and dependency consistency; only separately reviewed real
+package hashes may be used for a future hash-locked artifact. Stop if the host
+Python cannot create the copied venv.

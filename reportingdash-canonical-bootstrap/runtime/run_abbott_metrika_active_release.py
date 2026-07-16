@@ -89,11 +89,13 @@ def _tracked_worktree_status(root: Path) -> str:
                     resolved = candidate.resolve(strict=False)
                 except OSError:
                     resolved = None
-                if (
-                    resolved is not None
-                    and _inside(root, resolved)
-                    and not _contains_symlink_escape(root, candidate)
-                ):
+                has_symlink_escape = _contains_symlink_escape(root, candidate)
+                if relative.startswith("venv/") and has_symlink_escape:
+                    raise ActiveReleaseLaunchError(
+                        "Canonical runtime venv contains an external symlink; "
+                        "recreate it with python3 -m venv --copies"
+                    )
+                if resolved is not None and _inside(root, resolved) and not has_symlink_escape:
                     continue
         unsafe_entries.append(entry)
     return "\n".join(unsafe_entries)

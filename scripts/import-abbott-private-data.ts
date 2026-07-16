@@ -836,6 +836,31 @@ async function insertAndVerifyBatch(
   await verifyBatch(connection, canonicalReleaseId, snapshotId, batch);
 }
 
+async function materializeOrVerifyBatch(
+  connection: AbbottImportConnection,
+  canonicalReleaseId: number,
+  snapshotId: number,
+  batch: ImportBatch,
+): Promise<void> {
+  if (!ALLOWED_TABLES.has(batch.table)) throw new Error("Import table is not allowed");
+  batch.columns.forEach(assertIdentifier);
+  if (batch.rows.some((row) => row.length !== batch.columns.length)) throw new Error("Import batch width mismatch");
+  assertBatchFingerprintContract(batch);
+  const countResult = await connection.execute(
+    `SELECT COUNT(*) AS row_count FROM ${batch.table} WHERE canonical_release_id = ? AND source_snapshot_id = ?`,
+    [canonicalReleaseId, snapshotId],
+  );
+  const actualCount = Number(rowsFromResult(countResult)[0]?.row_count);
+  if (actualCount === 0 && batch.rows.length > 0) {
+    await insertAndVerifyBatch(connection, canonicalReleaseId, snapshotId, batch);
+    return;
+  }
+  if (actualCount !== batch.rows.length) {
+    throw new Error("Existing candidate batch is partial or mismatched");
+  }
+  await verifyBatch(connection, canonicalReleaseId, snapshotId, batch);
+}
+
 export async function runAbbottImportTransaction(
   connection: AbbottImportConnection,
   canonicalReleaseId: number,
@@ -941,7 +966,7 @@ export async function runAbbottImportTransaction(
         const existingSnapshotId = Number(existing.id);
         if (!Number.isSafeInteger(existingSnapshotId) || existingSnapshotId <= 0) throw new Error("Existing snapshot ID is invalid");
         for (const batch of source.batches) {
-          await verifyBatch(connection, canonicalReleaseId, existingSnapshotId, batch);
+          await materializeOrVerifyBatch(connection, canonicalReleaseId, existingSnapshotId, batch);
         }
         snapshotIds[source.sourceKind] = existingSnapshotId;
         idempotentKinds.push(source.sourceKind);
