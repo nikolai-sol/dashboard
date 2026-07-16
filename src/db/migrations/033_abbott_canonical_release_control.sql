@@ -118,6 +118,8 @@ CREATE TABLE IF NOT EXISTS portal_content_catalog (
   material_type VARCHAR(128) DEFAULT NULL,
   source_slug VARCHAR(1000) DEFAULT NULL,
   source_slug_hash CHAR(64) DEFAULT NULL,
+  access_label VARCHAR(500) DEFAULT NULL,
+  is_active TINYINT(1) NOT NULL DEFAULT 1,
   source_row_fingerprint CHAR(64) NOT NULL,
   section_key VARCHAR(255) DEFAULT NULL,
   direction_key VARCHAR(255) DEFAULT NULL,
@@ -227,6 +229,46 @@ CREATE TABLE IF NOT EXISTS portal_external_events (
     FOREIGN KEY (source_snapshot_id) REFERENCES portal_dataset_snapshots(id)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
   COMMENT='Release-scoped aggregate-safe external portal events';
+
+CREATE TABLE IF NOT EXISTS portal_bitrix_page_facts (
+  id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
+  canonical_release_id BIGINT UNSIGNED NOT NULL,
+  source_snapshot_id BIGINT UNSIGNED NOT NULL,
+  analytics_account_id VARCHAR(128) NOT NULL DEFAULT 'abbott_bitrix',
+  report_date DATE NOT NULL,
+  normalized_path TEXT NOT NULL,
+  normalized_path_hash CHAR(64) NOT NULL,
+  material_id VARCHAR(255) DEFAULT NULL,
+  material_type_hint VARCHAR(500) DEFAULT NULL,
+  pageviews BIGINT UNSIGNED NOT NULL DEFAULT 0,
+  sessions BIGINT UNSIGNED NOT NULL DEFAULT 0,
+  users BIGINT UNSIGNED NOT NULL DEFAULT 0,
+  guests BIGINT UNSIGNED NOT NULL DEFAULT 0,
+  logged_in_hits BIGINT UNSIGNED NOT NULL DEFAULT 0,
+  anonymous_hits BIGINT UNSIGNED NOT NULL DEFAULT 0,
+  logged_in_sessions BIGINT UNSIGNED NOT NULL DEFAULT 0,
+  anonymous_sessions BIGINT UNSIGNED NOT NULL DEFAULT 0,
+  entry_sessions BIGINT UNSIGNED NOT NULL DEFAULT 0,
+  exit_sessions BIGINT UNSIGNED NOT NULL DEFAULT 0,
+  avg_session_duration_seconds DECIMAL(18,6) DEFAULT NULL,
+  top_utm_source VARCHAR(500) DEFAULT NULL,
+  top_utm_medium VARCHAR(500) DEFAULT NULL,
+  top_utm_campaign VARCHAR(500) DEFAULT NULL,
+  source_row_fingerprint CHAR(64) NOT NULL,
+  created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  PRIMARY KEY (id),
+  UNIQUE KEY uniq_bitrix_page_release_row
+    (canonical_release_id, source_snapshot_id, analytics_account_id,
+     report_date, source_row_fingerprint),
+  KEY idx_bitrix_page_snapshot (source_snapshot_id),
+  KEY idx_bitrix_page_path
+    (canonical_release_id, report_date, normalized_path_hash),
+  CONSTRAINT fk_bitrix_page_release
+    FOREIGN KEY (canonical_release_id) REFERENCES portal_data_releases(id),
+  CONSTRAINT fk_bitrix_page_snapshot
+    FOREIGN KEY (source_snapshot_id) REFERENCES portal_dataset_snapshots(id)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
+  COMMENT='Aggregate-safe release-scoped Bitrix page facts';
 
 CREATE TABLE IF NOT EXISTS portal_bitrix_journey_transitions (
   id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
@@ -341,3 +383,251 @@ CREATE TABLE IF NOT EXISTS canonical_source_coverage_daily (
     FOREIGN KEY (canonical_release_id) REFERENCES portal_data_releases(id)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
   COMMENT='Closed-status daily source coverage used by release activation gates';
+
+-- Task 7 compatibility upgrade. Migration 033 was introduced in Task 1 and
+-- may already have created these tables, so the definitions above are
+-- followed by guarded ALTERs. Every statement resolves to a harmless
+-- SELECT when the target already has the Task 7 shape.
+
+SET @abbott_snapshot_index_columns := (
+  SELECT GROUP_CONCAT(COLUMN_NAME ORDER BY SEQ_IN_INDEX SEPARATOR ',')
+  FROM information_schema.STATISTICS
+  WHERE TABLE_SCHEMA = DATABASE()
+    AND TABLE_NAME = 'portal_dataset_snapshots'
+    AND INDEX_NAME = 'uniq_dataset_snapshot_content'
+);
+SET @sql := IF(
+  @abbott_snapshot_index_columns IS NOT NULL
+    AND @abbott_snapshot_index_columns <> 'dataset_key,source_kind,content_sha256',
+  'ALTER TABLE portal_dataset_snapshots DROP INDEX uniq_dataset_snapshot_content',
+  'SELECT ''portal_dataset_snapshots checksum index does not need removal'' AS info'
+);
+PREPARE stmt FROM @sql; EXECUTE stmt; DEALLOCATE PREPARE stmt;
+
+SET @abbott_snapshot_index_columns := (
+  SELECT GROUP_CONCAT(COLUMN_NAME ORDER BY SEQ_IN_INDEX SEPARATOR ',')
+  FROM information_schema.STATISTICS
+  WHERE TABLE_SCHEMA = DATABASE()
+    AND TABLE_NAME = 'portal_dataset_snapshots'
+    AND INDEX_NAME = 'uniq_dataset_snapshot_content'
+);
+SET @sql := IF(
+  COALESCE(@abbott_snapshot_index_columns, '') <> 'dataset_key,source_kind,content_sha256',
+  'ALTER TABLE portal_dataset_snapshots ADD UNIQUE INDEX uniq_dataset_snapshot_content (dataset_key, source_kind, content_sha256)',
+  'SELECT ''portal_dataset_snapshots checksum index already aligned'' AS info'
+);
+PREPARE stmt FROM @sql; EXECUTE stmt; DEALLOCATE PREPARE stmt;
+
+SET @abbott_column_exists := (
+  SELECT COUNT(*) FROM information_schema.COLUMNS
+  WHERE TABLE_SCHEMA = DATABASE()
+    AND TABLE_NAME = 'portal_content_catalog'
+    AND COLUMN_NAME = 'source_slug'
+);
+SET @sql := IF(
+  @abbott_column_exists = 0,
+  'ALTER TABLE portal_content_catalog ADD COLUMN source_slug VARCHAR(1000) DEFAULT NULL',
+  'SELECT ''portal_content_catalog.source_slug already present'' AS info'
+);
+PREPARE stmt FROM @sql; EXECUTE stmt; DEALLOCATE PREPARE stmt;
+
+SET @abbott_column_exists := (
+  SELECT COUNT(*) FROM information_schema.COLUMNS
+  WHERE TABLE_SCHEMA = DATABASE()
+    AND TABLE_NAME = 'portal_content_catalog'
+    AND COLUMN_NAME = 'source_slug_hash'
+);
+SET @sql := IF(
+  @abbott_column_exists = 0,
+  'ALTER TABLE portal_content_catalog ADD COLUMN source_slug_hash CHAR(64) DEFAULT NULL',
+  'SELECT ''portal_content_catalog.source_slug_hash already present'' AS info'
+);
+PREPARE stmt FROM @sql; EXECUTE stmt; DEALLOCATE PREPARE stmt;
+
+SET @abbott_column_exists := (
+  SELECT COUNT(*) FROM information_schema.COLUMNS
+  WHERE TABLE_SCHEMA = DATABASE()
+    AND TABLE_NAME = 'portal_content_catalog'
+    AND COLUMN_NAME = 'access_label'
+);
+SET @sql := IF(
+  @abbott_column_exists = 0,
+  'ALTER TABLE portal_content_catalog ADD COLUMN access_label VARCHAR(500) DEFAULT NULL',
+  'SELECT ''portal_content_catalog.access_label already present'' AS info'
+);
+PREPARE stmt FROM @sql; EXECUTE stmt; DEALLOCATE PREPARE stmt;
+
+SET @abbott_column_exists := (
+  SELECT COUNT(*) FROM information_schema.COLUMNS
+  WHERE TABLE_SCHEMA = DATABASE()
+    AND TABLE_NAME = 'portal_content_catalog'
+    AND COLUMN_NAME = 'is_active'
+);
+SET @sql := IF(
+  @abbott_column_exists = 0,
+  'ALTER TABLE portal_content_catalog ADD COLUMN is_active TINYINT(1) NOT NULL DEFAULT 1',
+  'SELECT ''portal_content_catalog.is_active already present'' AS info'
+);
+PREPARE stmt FROM @sql; EXECUTE stmt; DEALLOCATE PREPARE stmt;
+
+SET @abbott_column_exists := (
+  SELECT COUNT(*) FROM information_schema.COLUMNS
+  WHERE TABLE_SCHEMA = DATABASE()
+    AND TABLE_NAME = 'portal_content_catalog'
+    AND COLUMN_NAME = 'source_row_fingerprint'
+);
+SET @sql := IF(
+  @abbott_column_exists = 0,
+  'ALTER TABLE portal_content_catalog ADD COLUMN source_row_fingerprint CHAR(64) DEFAULT NULL',
+  'SELECT ''portal_content_catalog.source_row_fingerprint already present'' AS info'
+);
+PREPARE stmt FROM @sql; EXECUTE stmt; DEALLOCATE PREPARE stmt;
+
+UPDATE portal_content_catalog
+SET source_row_fingerprint = SHA2(CONCAT('legacy-task1-row:', id), 256)
+WHERE source_row_fingerprint IS NULL;
+
+SET @abbott_column_nullable := (
+  SELECT IS_NULLABLE FROM information_schema.COLUMNS
+  WHERE TABLE_SCHEMA = DATABASE()
+    AND TABLE_NAME = 'portal_content_catalog'
+    AND COLUMN_NAME = 'source_row_fingerprint'
+);
+SET @sql := IF(
+  @abbott_column_nullable = 'YES',
+  'ALTER TABLE portal_content_catalog MODIFY COLUMN source_row_fingerprint CHAR(64) NOT NULL',
+  'SELECT ''portal_content_catalog.source_row_fingerprint already required'' AS info'
+);
+PREPARE stmt FROM @sql; EXECUTE stmt; DEALLOCATE PREPARE stmt;
+
+SET @abbott_content_nullable_columns := (
+  SELECT COUNT(*) FROM information_schema.COLUMNS
+  WHERE TABLE_SCHEMA = DATABASE()
+    AND TABLE_NAME = 'portal_content_catalog'
+    AND COLUMN_NAME IN ('normalized_url', 'normalized_url_hash', 'normalized_path')
+    AND IS_NULLABLE = 'NO'
+);
+SET @sql := IF(
+  @abbott_content_nullable_columns > 0,
+  'ALTER TABLE portal_content_catalog MODIFY COLUMN normalized_url TEXT DEFAULT NULL, MODIFY COLUMN normalized_url_hash CHAR(64) DEFAULT NULL, MODIFY COLUMN normalized_path TEXT DEFAULT NULL',
+  'SELECT ''portal_content_catalog optional locators already nullable'' AS info'
+);
+PREPARE stmt FROM @sql; EXECUTE stmt; DEALLOCATE PREPARE stmt;
+
+UPDATE portal_content_catalog SET page_title = '' WHERE page_title IS NULL;
+SET @abbott_column_nullable := (
+  SELECT IS_NULLABLE FROM information_schema.COLUMNS
+  WHERE TABLE_SCHEMA = DATABASE()
+    AND TABLE_NAME = 'portal_content_catalog'
+    AND COLUMN_NAME = 'page_title'
+);
+SET @sql := IF(
+  @abbott_column_nullable = 'YES',
+  'ALTER TABLE portal_content_catalog MODIFY COLUMN page_title VARCHAR(1000) NOT NULL',
+  'SELECT ''portal_content_catalog.page_title already required'' AS info'
+);
+PREPARE stmt FROM @sql; EXECUTE stmt; DEALLOCATE PREPARE stmt;
+
+SET @abbott_index_exists := (
+  SELECT COUNT(*) FROM information_schema.STATISTICS
+  WHERE TABLE_SCHEMA = DATABASE()
+    AND TABLE_NAME = 'portal_content_catalog'
+    AND INDEX_NAME = 'uniq_content_release_url'
+);
+SET @sql := IF(
+  @abbott_index_exists > 0,
+  'ALTER TABLE portal_content_catalog DROP INDEX uniq_content_release_url',
+  'SELECT ''portal_content_catalog legacy URL uniqueness already removed'' AS info'
+);
+PREPARE stmt FROM @sql; EXECUTE stmt; DEALLOCATE PREPARE stmt;
+
+SET @abbott_index_exists := (
+  SELECT COUNT(*) FROM information_schema.STATISTICS
+  WHERE TABLE_SCHEMA = DATABASE()
+    AND TABLE_NAME = 'portal_content_catalog'
+    AND INDEX_NAME = 'uniq_content_release_source_row'
+);
+SET @sql := IF(
+  @abbott_index_exists = 0,
+  'ALTER TABLE portal_content_catalog ADD UNIQUE INDEX uniq_content_release_source_row (canonical_release_id, source_snapshot_id, source_row_fingerprint)',
+  'SELECT ''portal_content_catalog source-row uniqueness already present'' AS info'
+);
+PREPARE stmt FROM @sql; EXECUTE stmt; DEALLOCATE PREPARE stmt;
+
+SET @abbott_index_exists := (
+  SELECT COUNT(*) FROM information_schema.STATISTICS
+  WHERE TABLE_SCHEMA = DATABASE()
+    AND TABLE_NAME = 'portal_content_catalog'
+    AND INDEX_NAME = 'idx_content_release_url'
+);
+SET @sql := IF(
+  @abbott_index_exists = 0,
+  'ALTER TABLE portal_content_catalog ADD INDEX idx_content_release_url (canonical_release_id, source_snapshot_id, normalized_url_hash)',
+  'SELECT ''portal_content_catalog URL index already present'' AS info'
+);
+PREPARE stmt FROM @sql; EXECUTE stmt; DEALLOCATE PREPARE stmt;
+
+SET @abbott_index_exists := (
+  SELECT COUNT(*) FROM information_schema.STATISTICS
+  WHERE TABLE_SCHEMA = DATABASE()
+    AND TABLE_NAME = 'portal_content_catalog'
+    AND INDEX_NAME = 'idx_content_release_title_type'
+);
+SET @sql := IF(
+  @abbott_index_exists = 0,
+  'ALTER TABLE portal_content_catalog ADD INDEX idx_content_release_title_type (canonical_release_id, page_title(191), material_type)',
+  'SELECT ''portal_content_catalog title/type index already present'' AS info'
+);
+PREPARE stmt FROM @sql; EXECUTE stmt; DEALLOCATE PREPARE stmt;
+
+SET @abbott_index_exists := (
+  SELECT COUNT(*) FROM information_schema.STATISTICS
+  WHERE TABLE_SCHEMA = DATABASE()
+    AND TABLE_NAME = 'portal_content_catalog'
+    AND INDEX_NAME = 'idx_content_release_slug'
+);
+SET @sql := IF(
+  @abbott_index_exists = 0,
+  'ALTER TABLE portal_content_catalog ADD INDEX idx_content_release_slug (canonical_release_id, source_slug_hash)',
+  'SELECT ''portal_content_catalog slug index already present'' AS info'
+);
+PREPARE stmt FROM @sql; EXECUTE stmt; DEALLOCATE PREPARE stmt;
+
+SET @abbott_column_exists := (
+  SELECT COUNT(*) FROM information_schema.COLUMNS
+  WHERE TABLE_SCHEMA = DATABASE()
+    AND TABLE_NAME = 'portal_general_materials'
+    AND COLUMN_NAME = 'normalized_url'
+);
+SET @sql := IF(
+  @abbott_column_exists = 0,
+  'ALTER TABLE portal_general_materials ADD COLUMN normalized_url TEXT DEFAULT NULL',
+  'SELECT ''portal_general_materials.normalized_url already present'' AS info'
+);
+PREPARE stmt FROM @sql; EXECUTE stmt; DEALLOCATE PREPARE stmt;
+
+SET @abbott_column_exists := (
+  SELECT COUNT(*) FROM information_schema.COLUMNS
+  WHERE TABLE_SCHEMA = DATABASE()
+    AND TABLE_NAME = 'portal_general_materials'
+    AND COLUMN_NAME = 'normalized_url_hash'
+);
+SET @sql := IF(
+  @abbott_column_exists = 0,
+  'ALTER TABLE portal_general_materials ADD COLUMN normalized_url_hash CHAR(64) DEFAULT NULL',
+  'SELECT ''portal_general_materials.normalized_url_hash already present'' AS info'
+);
+PREPARE stmt FROM @sql; EXECUTE stmt; DEALLOCATE PREPARE stmt;
+
+SET @abbott_index_exists := (
+  SELECT COUNT(*) FROM information_schema.STATISTICS
+  WHERE TABLE_SCHEMA = DATABASE()
+    AND TABLE_NAME = 'portal_general_materials'
+    AND INDEX_NAME = 'idx_general_material_url'
+);
+SET @sql := IF(
+  @abbott_index_exists = 0,
+  'ALTER TABLE portal_general_materials ADD INDEX idx_general_material_url (canonical_release_id, normalized_url_hash)',
+  'SELECT ''portal_general_materials URL index already present'' AS info'
+);
+PREPARE stmt FROM @sql; EXECUTE stmt; DEALLOCATE PREPARE stmt;
