@@ -10,8 +10,6 @@ from datetime import date, datetime, timedelta
 from decimal import Decimal
 from typing import Dict, List, Optional
 
-from canonical_writer import get_db_connection
-
 SOURCES = {
     'linkedin': {
         'gate_note': 'aggregate delivery_entity facts to campaign/day for parity',
@@ -30,6 +28,12 @@ SOURCES = {
     },
     'yandex_direct': {
         'gate_note': 'prod health uses canonical API-first freshness/run status',
+    },
+    'yandex_metrika': {
+        'gate_note': 'canonical analytics freshness on traffic scope',
+        'source_kind': 'analytics',
+        'gate_scope': 'traffic',
+        'is_blocking_default': False,
     },
 }
 
@@ -107,6 +111,28 @@ LATEST_DATA_SQL = """
 SELECT MAX(report_date) AS max_report_date
 FROM canonical_fact_ads_daily
 WHERE source_key = %s
+"""
+
+ANALYTICS_ROW_COUNTS_SQL = """
+SELECT
+  source_key,
+  analytics_scope AS fact_scope,
+  'analytics_slice' AS native_grain,
+  COUNT(*) AS row_count,
+  MIN(report_date) AS min_date,
+  MAX(report_date) AS max_date
+FROM canonical_fact_site_analytics_daily
+WHERE source_key = %s
+  AND report_date >= %s
+GROUP BY source_key, analytics_scope
+ORDER BY analytics_scope
+"""
+
+ANALYTICS_LATEST_DATA_SQL = """
+SELECT MAX(report_date) AS max_report_date
+FROM canonical_fact_site_analytics_daily
+WHERE source_key = %s
+  AND analytics_scope = %s
 """
 
 DATA_COVERAGE_SQL = """
@@ -902,6 +928,41 @@ def normalize_policy_row(row: Optional[Dict]) -> Optional[Dict]:
     }
 
 
+def source_config(source_key: str) -> Dict:
+    if source_key not in SOURCES:
+        raise ValueError(source_key)
+    config = dict(SOURCES[source_key])
+    config.setdefault('source_kind', 'ads')
+    config.setdefault('gate_scope', 'unknown')
+    config.setdefault('is_blocking_default', True)
+    return config
+
+
+def default_blocking(source_key: str, policy: Optional[Dict]) -> bool:
+    if policy is not None:
+        return bool(policy['is_blocking'])
+    return bool(source_config(source_key)['is_blocking_default'])
+
+
+def build_source_fact_snapshot(cur, source_key: str, recent_from) -> Dict:
+    config = source_config(source_key)
+    if config['source_kind'] == 'analytics':
+        latest_data = fetch_one(
+            cur,
+            ANALYTICS_LATEST_DATA_SQL,
+            (source_key, config['gate_scope']),
+        )
+        recent_counts = fetch_all(
+            cur,
+            ANALYTICS_ROW_COUNTS_SQL,
+            (source_key, recent_from),
+        )
+    else:
+        latest_data = fetch_one(cur, LATEST_DATA_SQL, (source_key,))
+        recent_counts = fetch_all(cur, ROW_COUNTS_SQL, (source_key, recent_from))
+    return {'latest_data': latest_data, 'recent_counts': recent_counts}
+
+
 def parity_sql_for(source_key: str) -> str:
     if source_key == 'linkedin':
         return LINKEDIN_PARITY_SQL
@@ -1069,9 +1130,11 @@ def classify_source(latest_run: Optional[Dict], days_lag: Optional[int], parity_
 def build_source_health(cur, source_key: str, recent_from) -> Dict:
     policy = normalize_policy_row(fetch_one(cur, POLICY_SQL, (source_key,)))
     latest_run = fetch_one(cur, LATEST_RUN_SQL, (source_key,))
-    latest_data = fetch_one(cur, LATEST_DATA_SQL, (source_key,))
-    recent_counts = fetch_all(cur, ROW_COUNTS_SQL, (source_key, recent_from))
-    gate_scope = policy['authority_fact_scope'] if policy else 'unknown'
+    config = source_config(source_key)
+    fact_snapshot = build_source_fact_snapshot(cur, source_key, recent_from)
+    latest_data = fact_snapshot['latest_data']
+    recent_counts = fact_snapshot['recent_counts']
+    gate_scope = policy['authority_fact_scope'] if policy else config['gate_scope']
     freshness = {'latest_report_date': None, 'days_lag': None}
     if latest_data and latest_data.get('max_report_date') is not None:
         max_date = latest_data['max_report_date']
@@ -1082,10 +1145,14 @@ def build_source_health(cur, source_key: str, recent_from) -> Dict:
             'days_lag': (datetime.utcnow().date() - max_date).days,
         }
     parity = None
-    if policy and source_key != 'yandex_direct':
+    if policy and config['source_kind'] == 'ads' and source_key != 'yandex_direct':
         parity = fetch_one(cur, parity_sql_for(source_key), parity_params_for(source_key, policy, recent_from))
     parity_summary = summarize_parity(parity)
-    coverage = build_coverage(source_key, policy, parity, cur, recent_from)
+    coverage = (
+        build_coverage(source_key, policy, parity, cur, recent_from)
+        if config['source_kind'] == 'ads'
+        else None
+    )
     shadow_cutover = (
         build_yandex_shadow_cutover(cur, policy, recent_from)
         if source_key == 'yandex_direct' and YANDEX_DIRECT_SHADOW_CUTOVER_ENABLED
@@ -1112,7 +1179,7 @@ def build_source_health(cur, source_key: str, recent_from) -> Dict:
             'authority_fact_scope': gate_scope,
             'comparison_level': policy['comparison_level'] if policy else None,
             'coverage_mode': policy['coverage_mode'] if policy else None,
-            'blocking': bool(policy['is_blocking']) if policy else None,
+            'blocking': default_blocking(source_key, policy),
         },
         'parity': parity_summary,
         'coverage': coverage or {
@@ -1136,7 +1203,8 @@ def source_list() -> List[str]:
 
 def build_section_maps(cur, items: List[Dict]) -> Dict:
     keys = source_list()
-    params = tuple(keys)
+    ad_keys = [key for key in keys if source_config(key)['source_kind'] == 'ads']
+    params = tuple(ad_keys)
 
     coverage_rows = compact_rows(fetch_all(cur, DATA_COVERAGE_SQL, params))
     freshness_rows = compact_rows(fetch_all(cur, DATA_FRESHNESS_SQL, params))
@@ -1144,6 +1212,34 @@ def build_section_maps(cur, items: List[Dict]) -> Dict:
     window_rows = compact_rows(fetch_all(cur, DATA_WINDOW_SQL, params))
 
     item_map = dict((item['source_key'], item) for item in items)
+    for key in keys:
+        if source_config(key)['source_kind'] != 'analytics':
+            continue
+        item = item_map[key]
+        latest = item['freshness']['latest_report_date']
+        freshness_rows.append({'source_key': key, 'latest_report_date': latest})
+        collector = item['collector']
+        run_rows.append({
+            'source_key': key,
+            'last_run_id': collector['last_run_id'],
+            'status': collector['run_status'],
+            'run_type': collector['run_type'],
+            'started_at': collector['started_at'],
+            'finished_at': collector['finished_at'],
+            'rows_read': collector['rows_read'],
+            'rows_written': collector['rows_written'],
+            'rows_updated': collector['rows_updated'],
+            'error_count': collector['error_count'],
+            'error_summary': collector['error_summary'],
+        })
+        recent = item.get('recent_counts') or []
+        min_dates = [row.get('min_date') for row in recent if row.get('min_date')]
+        max_dates = [row.get('max_date') for row in recent if row.get('max_date')]
+        window_rows.append({
+            'source_key': key,
+            'from_date': min(min_dates) if min_dates else None,
+            'to_date': max(max_dates) if max_dates else None,
+        })
     freshness_map = {}
     for row in freshness_rows:
         latest = row['latest_report_date']
@@ -1340,6 +1436,8 @@ def compute_exit_code(items: List[Dict]) -> int:
 
 
 def main() -> int:
+    from canonical_writer import get_db_connection
+
     args = parse_args()
     recent_from = datetime.utcnow().date() - timedelta(days=args.recent_days)
     conn = get_db_connection()
