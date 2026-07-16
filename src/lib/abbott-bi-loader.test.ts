@@ -120,21 +120,22 @@ function dependencies(
   return {
     aggregateExecutor,
     privateExecutor,
-    async loadAggregateData() {
-      return {
-        workbook: aggregateWorkbook,
-        bitrixPages: missingBitrix,
-        journeyTransitions: { source: missingBitrix.source, rows: [] },
-      };
-    },
-    async loadManagerWorkbook() {
-      return managerWorkbook;
-    },
-    async loadManagerBitrixPages() {
-      return missingBitrix;
-    },
-    async loadManagerJourneys() {
-      return missingJourneys;
+    async loadReleaseBundle(_dashboardId, audience) {
+      return audience === "manager"
+        ? {
+            releaseId: 41,
+            audience,
+            workbook: managerWorkbook,
+            bitrixPages: missingBitrix,
+            journeys: missingJourneys,
+          }
+        : {
+            releaseId: 41,
+            audience,
+            workbook: aggregateWorkbook,
+            bitrixPages: missingBitrix,
+            journeyTransitions: { source: missingBitrix.source, rows: [] },
+          };
     },
   };
 }
@@ -156,9 +157,15 @@ test("incomplete canonical coverage fails closed without querying facts or priva
   });
   let storeCalls = 0;
   const deps = dependencies(aggregate, privateDb);
-  deps.loadAggregateData = async () => {
+  deps.loadReleaseBundle = async () => {
     storeCalls += 1;
-    throw new Error("aggregate store must not be called");
+    return {
+      releaseId: 41,
+      audience: "embed" as const,
+      workbook: aggregateWorkbook,
+      bitrixPages: missingBitrix,
+      journeyTransitions: { source: missingBitrix.source, rows: [] },
+    };
   };
 
   const result = await loadAbbottBiDataWithDependencies(
@@ -176,7 +183,7 @@ test("incomplete canonical coverage fails closed without querying facts or priva
     { counter_id: "90602537", report_date: "2026-01-01", scope: "returning", status: "partial" },
   ]);
   assert.equal(result.page_stats.length, 0);
-  assert.equal(storeCalls, 0);
+  assert.equal(storeCalls, 1);
   assert.equal(privateDb.queries.length, 0);
   assert.equal(aggregate.queries.some((sql) => sql.includes("canonical_fact_metrika_site_analytics_daily")), false);
 });
@@ -188,18 +195,15 @@ test("embed uses aggregate store only and derives returning counts with decimal 
   });
   const deps = dependencies(aggregate, privateDb);
   let aggregateStoreCalls = 0;
-  let managerStoreCalls = 0;
-  deps.loadAggregateData = async () => {
+  deps.loadReleaseBundle = async () => {
     aggregateStoreCalls += 1;
     return {
+      releaseId: 41,
+      audience: "embed" as const,
       workbook: aggregateWorkbook,
       bitrixPages: missingBitrix,
       journeyTransitions: { source: missingBitrix.source, rows: [] },
     };
-  };
-  deps.loadManagerWorkbook = async () => {
-    managerStoreCalls += 1;
-    return managerWorkbook;
   };
 
   const result = await loadAbbottBiDataWithDependencies(
@@ -214,11 +218,14 @@ test("embed uses aggregate store only and derives returning counts with decimal 
   assert.equal(result.access_level, "embed");
   assert.equal(result.data_quality.status, "complete");
   assert.equal(aggregateStoreCalls, 1);
-  assert.equal(managerStoreCalls, 0);
   assert.equal(privateDb.queries.length, 0);
   assert.equal(result.users_summary.length, 0);
   assert.equal(result.user_actions.length, 0);
   assert.equal(result.session_journeys.rows.length, 0);
+  assert.deepEqual(result.bitrix_sources, {
+    pages: missingBitrix.source,
+    journeys: missingBitrix.source,
+  });
   assert.deepEqual(result.returning[0], {
     url: "https://example.test/page",
     direction: "Cardiology",
@@ -229,6 +236,132 @@ test("embed uses aggregate store only and derives returning counts with decimal 
     is_derived: true,
     normalization_collision: false,
   });
+});
+
+test("loader pins every canonical fact query to the store bundle release when the pointer changes", async () => {
+  const aggregate = executor((sql, params) => {
+    assert.doesNotMatch(sql, /portal_active_data_releases/);
+    if (sql.includes("canonical_source_coverage_daily")) {
+      assert.equal(params[0], 41);
+      return completeCoverage;
+    }
+    if (sql.includes("canonical_fact_metrika_site_analytics_daily")) {
+      assert.equal(params[0], 41);
+      return [];
+    }
+    if (sql.includes("canonical_fact_metrika_returning_pages_daily")) {
+      assert.equal(params[0], 41);
+      return [];
+    }
+    if (sql.includes("portal_external_events")) {
+      assert.equal(params[0], 41);
+      return [];
+    }
+    throw new Error(`Unexpected aggregate query: ${sql}`);
+  });
+  const deps = dependencies(aggregate, executor(() => []));
+  let bundleReads = 0;
+  deps.loadReleaseBundle = async () => {
+    bundleReads += 1;
+    return {
+      releaseId: 41,
+      audience: "embed" as const,
+      workbook: aggregateWorkbook,
+      bitrixPages: missingBitrix,
+      journeyTransitions: { source: missingBitrix.source, rows: [] },
+    };
+  };
+
+  const result = await loadAbbottBiDataWithDependencies(
+    7,
+    ["90602537"],
+    "2026-01-01",
+    "2026-01-01",
+    "embed",
+    deps,
+  );
+
+  assert.equal(result.data_quality.release_id, 41);
+  assert.equal(result.data_quality.status, "complete");
+  assert.equal(bundleReads, 1);
+});
+
+test("loader maps every Bitrix metric and exposes snapshot metadata", async () => {
+  const aggregate = executor(aggregateRows);
+  const privateDb = executor(() => []);
+  const deps = dependencies(aggregate, privateDb);
+  const source = {
+    source_status: "test_dump" as const,
+    test_dump: true as const,
+    snapshot_id: 13,
+    generated_at: "2026-07-01 00:00:00",
+    period_from: "2026-01-01",
+    period_to: "2026-01-31",
+  };
+  deps.loadReleaseBundle = async () => ({
+    releaseId: 41,
+    audience: "embed" as const,
+    workbook: aggregateWorkbook,
+    bitrixPages: {
+      source,
+      summary: { date_from: "2026-01-01", date_to: "2026-01-31", page_rows: 1 },
+      rows: [{
+        report_date: "2026-01-01",
+        url: "/page",
+        path: "/page",
+        material_id: "m-1",
+        material_type_hint: "article",
+        pageviews: 11,
+        sessions: 10,
+        users: 9,
+        guests: 8,
+        logged_in_hits: 7,
+        anonymous_hits: 6,
+        logged_in_sessions: 5,
+        anonymous_sessions: 4,
+        entry_sessions: 3,
+        exit_sessions: 2,
+        avg_session_duration_seconds: 42.75,
+        top_utm_source: "email",
+        top_utm_medium: "newsletter",
+        top_utm_campaign: "launch",
+      }],
+    },
+    journeyTransitions: { source, rows: [] },
+  });
+
+  const result = await loadAbbottBiDataWithDependencies(
+    7,
+    ["90602537"],
+    "2026-01-01",
+    "2026-01-01",
+    "embed",
+    deps,
+  );
+
+  assert.deepEqual(result.bitrix_pages[0], {
+    url: "/page",
+    path: "/page",
+    direction: null,
+    material_type: "article",
+    access: null,
+    pageviews: 11,
+    sessions: 10,
+    users: 9,
+    guests: 8,
+    logged_in_hits: 7,
+    anonymous_hits: 6,
+    logged_in_sessions: 5,
+    anonymous_sessions: 4,
+    entry_sessions: 3,
+    exit_sessions: 2,
+    avg_session_duration: 42.75,
+    top_utm_source: "email",
+    top_utm_medium: "newsletter",
+    top_utm_campaign: "launch",
+  });
+  assert.deepEqual(result.bitrix_sources?.pages, source);
+  assert.deepEqual(result.bitrix_sources?.journeys, source);
 });
 
 test("manager preserves raw user IDs as strings and scopes private facts to the active release", async () => {

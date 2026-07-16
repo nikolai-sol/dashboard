@@ -3,6 +3,8 @@ import fs from "node:fs";
 import path from "node:path";
 import test from "node:test";
 
+import { invokeDashboardLoaderWithAudience } from "./dashboard-data-loader";
+
 const root = process.cwd();
 
 function source(relativePath: string): string {
@@ -53,6 +55,33 @@ test("dashboard loader requires Abbott audience and preserves it for comparisons
   const loader = source("src/lib/dashboard-data-loader.ts");
 
   assert.match(loader, /loadAbbottBiData\(dashboard\.id,\s*effectiveCounterIds,\s*range\.from,\s*range\.to,\s*audience\)/);
-  assert.match(loader, /loadDashboardData\(compareRequest,\s*requestedId,\s*audience\)/);
   assert.match(loader, /dashboardType\s*===\s*["']abbott_bi["'][\s\S]{0,500}trusted audience/i);
+});
+
+test("comparison invocation preserves the trusted audience behaviorally", async () => {
+  const calls: Array<{ id: string; audience: string | undefined; url: string }> = [];
+  const result = await invokeDashboardLoaderWithAudience(
+    new Request("https://example.test/api/dashboard/7?from=2026-01-01"),
+    "7",
+    "embed",
+    async (request, id, audience) => {
+      calls.push({ id, audience, url: request.url });
+      return "comparison-result";
+    },
+  );
+
+  assert.equal(result, "comparison-result");
+  assert.deepEqual(calls, [{
+    id: "7",
+    audience: "embed",
+    url: "https://example.test/api/dashboard/7?from=2026-01-01",
+  }]);
+});
+
+test("unused Zaruku BI export is removed while the live Zaruku SEO branch remains", async () => {
+  const abbottModule = await import("./abbott-bi");
+  const dashboardLoader = source("src/lib/dashboard-data-loader.ts");
+
+  assert.equal("loadZarukuBiData" in abbottModule, false);
+  assert.match(dashboardLoader, /dashboardType === "zaruku_bi"[\s\S]{0,500}loadZarukuSeoData/);
 });

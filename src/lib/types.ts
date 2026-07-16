@@ -455,6 +455,15 @@ export interface AbbottBiBitrixSummary {
   excluded: Record<string, number>;
 }
 
+export interface AbbottBiPrivateSourceMetadata {
+  source_status: "test_dump" | "missing" | "unavailable";
+  test_dump: boolean;
+  snapshot_id: number | null;
+  generated_at: string | null;
+  period_from: string | null;
+  period_to: string | null;
+}
+
 export interface AbbottBiExternalEventRow {
   title: string;
   direction: string | null;
@@ -558,6 +567,10 @@ export interface AbbottBiData {
   page_stats: AbbottBiPageStatRow[];
   bitrix_pages: AbbottBiBitrixPageRow[];
   bitrix_summary: AbbottBiBitrixSummary | null;
+  bitrix_sources?: {
+    pages: AbbottBiPrivateSourceMetadata;
+    journeys: AbbottBiPrivateSourceMetadata;
+  };
   bitrix_period_active: boolean;
   session_journeys: AbbottBiSessionJourneysData;
   external_events: AbbottBiExternalEventRow[];

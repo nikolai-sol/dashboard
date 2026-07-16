@@ -135,3 +135,26 @@ export interface AbbottAggregatePrivateData {
     rows: AbbottAggregateJourneyTransition[];
   };
 }
+
+export type AbbottPrivateAudience = "manager" | "embed";
+
+export interface AbbottManagerReleaseBundle {
+  releaseId: number;
+  audience: "manager";
+  workbook: ParsedAbbottWorkbook;
+  bitrixPages: ParsedBitrixAnalytics;
+  journeys: AbbottPrivateSessionJourneysData;
+}
+
+export interface AbbottEmbedReleaseBundle {
+  releaseId: number;
+  audience: "embed";
+  workbook: AbbottAggregateWorkbookData;
+  bitrixPages: ParsedBitrixAnalytics;
+  journeyTransitions: {
+    source: AbbottPrivateSnapshotMetadata;
+    rows: AbbottAggregateJourneyTransition[];
+  };
+}
+
+export type AbbottReleaseBundle = AbbottManagerReleaseBundle | AbbottEmbedReleaseBundle;

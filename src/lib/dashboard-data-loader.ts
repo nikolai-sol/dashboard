@@ -2710,6 +2710,19 @@ function applyChannelLeadConversions(
   channelTimeseries.sort((a, b) => a.date.localeCompare(b.date) || a.channel.localeCompare(b.channel));
 }
 
+export async function invokeDashboardLoaderWithAudience<T>(
+  request: Request,
+  requestedId: string,
+  audience: AbbottDashboardAudience | undefined,
+  loader: (
+    request: Request,
+    requestedId: string,
+    audience?: AbbottDashboardAudience,
+  ) => Promise<T>,
+): Promise<T> {
+  return loader(request, requestedId, audience);
+}
+
 export async function loadDashboardData(
   request: Request,
   requestedId: string,
@@ -3561,7 +3574,12 @@ export async function loadDashboardData(
     compareUrl.searchParams.delete("compare_from");
     compareUrl.searchParams.delete("compare_to");
     const compareRequest = new Request(compareUrl.toString(), { method: "GET" });
-    const compareResult = await loadDashboardData(compareRequest, requestedId, audience);
+    const compareResult = await invokeDashboardLoaderWithAudience(
+      compareRequest,
+      requestedId,
+      audience,
+      loadDashboardData,
+    );
     response.comparison = buildComparison(response, compareResult.data);
   }
 

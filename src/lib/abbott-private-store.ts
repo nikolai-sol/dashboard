@@ -13,6 +13,8 @@ import {
   type AbbottPrivateSessionJourneysData,
   type AbbottPrivateSnapshotMetadata,
   type AbbottPrivateSourceKind,
+  type AbbottPrivateAudience,
+  type AbbottReleaseBundle,
   type AbbottResolvedSnapshot,
   type ParsedAbbottWorkbook,
   type ParsedBitrixAnalytics,
@@ -333,12 +335,10 @@ async function loadAggregateWorkbook(
   };
 }
 
-export async function loadActiveAbbottWorkbookDataWithExecutor(
+async function loadManagerWorkbookForRelease(
   executor: AbbottPrivateQueryExecutor,
-  dashboardId: number,
+  release: AbbottActiveRelease,
 ): Promise<ParsedAbbottWorkbook> {
-  await requireActiveAbbottDashboard(executor, dashboardId);
-  const release = await resolveActiveAbbottRelease(executor);
   const workbook = await loadAggregateWorkbook(executor, release);
   const directionRows = await queryRows(
     executor,
@@ -356,6 +356,15 @@ export async function loadActiveAbbottWorkbookDataWithExecutor(
     userDirections.set(id, nullableText(row.normalized_direction));
   });
   return { ...workbook, userDirections };
+}
+
+export async function loadActiveAbbottWorkbookDataWithExecutor(
+  executor: AbbottPrivateQueryExecutor,
+  dashboardId: number,
+): Promise<ParsedAbbottWorkbook> {
+  await requireActiveAbbottDashboard(executor, dashboardId);
+  const release = await resolveActiveAbbottRelease(executor);
+  return loadManagerWorkbookForRelease(executor, release);
 }
 
 function sourceMetadata(snapshot: AbbottResolvedSnapshot | null): AbbottPrivateSnapshotMetadata {
@@ -446,12 +455,10 @@ export async function loadActiveAbbottBitrixAnalyticsWithExecutor(
   return loadBitrixPagesForRelease(executor, release, "private");
 }
 
-export async function loadActiveAbbottSessionJourneysWithExecutor(
+async function loadManagerJourneysForRelease(
   executor: AbbottPrivateQueryExecutor,
-  dashboardId: number,
+  release: AbbottActiveRelease,
 ): Promise<AbbottPrivateSessionJourneysData> {
-  await requireActiveAbbottDashboard(executor, dashboardId);
-  const release = await resolveActiveAbbottRelease(executor);
   const snapshot = release.snapshots.bitrixJourneys;
   const source = sourceMetadata(snapshot);
   if (!snapshot) return { source, rows: [] };
@@ -488,6 +495,15 @@ export async function loadActiveAbbottSessionJourneysWithExecutor(
   return { source, rows: [...grouped.values()] };
 }
 
+export async function loadActiveAbbottSessionJourneysWithExecutor(
+  executor: AbbottPrivateQueryExecutor,
+  dashboardId: number,
+): Promise<AbbottPrivateSessionJourneysData> {
+  await requireActiveAbbottDashboard(executor, dashboardId);
+  const release = await resolveActiveAbbottRelease(executor);
+  return loadManagerJourneysForRelease(executor, release);
+}
+
 export async function loadActiveAbbottAggregateDataWithExecutor(
   executor: AbbottPrivateQueryExecutor,
   dashboardId: number,
@@ -517,6 +533,54 @@ export async function loadActiveAbbottAggregateDataWithExecutor(
     workbook,
     bitrixPages,
     journeyTransitions: { source: sourceMetadata(journeySnapshot), rows: journeyTransitions },
+  };
+}
+
+export async function loadActiveAbbottReleaseBundleWithExecutor(
+  executor: AbbottPrivateQueryExecutor,
+  dashboardId: number,
+  audience: AbbottPrivateAudience,
+): Promise<AbbottReleaseBundle> {
+  if (audience !== "manager" && audience !== "embed") {
+    throw storeError("PRIVATE_DATA_UNAVAILABLE", PRIVATE_UNAVAILABLE_MESSAGE);
+  }
+  await requireActiveAbbottDashboard(executor, dashboardId);
+  const release = await resolveActiveAbbottRelease(executor);
+
+  if (audience === "manager") {
+    const workbook = await loadManagerWorkbookForRelease(executor, release);
+    const bitrixPages = await loadBitrixPagesForRelease(executor, release, "private");
+    const journeys = await loadManagerJourneysForRelease(executor, release);
+    return { releaseId: release.id, audience, workbook, bitrixPages, journeys };
+  }
+
+  const workbook = await loadAggregateWorkbook(executor, release);
+  const bitrixPages = await loadBitrixPagesForRelease(executor, release, "aggregate");
+  const journeySnapshot = release.snapshots.bitrixJourneys;
+  const transitionRows = journeySnapshot
+    ? await queryRows(
+        executor,
+        `SELECT report_date, from_path, to_path, transition_count
+         FROM \`report_bd\`.\`portal_bitrix_journey_transitions\`
+         WHERE canonical_release_id = ? AND source_snapshot_id = ?
+         ORDER BY report_date, from_path, to_path`,
+        [release.id, journeySnapshot.id],
+      )
+    : [];
+  return {
+    releaseId: release.id,
+    audience,
+    workbook,
+    bitrixPages,
+    journeyTransitions: {
+      source: sourceMetadata(journeySnapshot),
+      rows: transitionRows.map((row) => ({
+        report_date: text(row.report_date),
+        from_path: text(row.from_path),
+        to_path: text(row.to_path),
+        transitions: metric(row.transition_count),
+      })),
+    },
   };
 }
 
@@ -610,4 +674,12 @@ export async function loadActiveAbbottSessionJourneys(
 
 export async function loadActiveAbbottAggregateData(dashboardId: number): Promise<AbbottAggregatePrivateData> {
   return withReadOnlyPrivateExecutor((executor) => loadActiveAbbottAggregateDataWithExecutor(executor, dashboardId));
+}
+
+export async function loadActiveAbbottReleaseBundle(
+  dashboardId: number,
+  audience: AbbottPrivateAudience,
+): Promise<AbbottReleaseBundle> {
+  return withReadOnlyPrivateExecutor((executor) =>
+    loadActiveAbbottReleaseBundleWithExecutor(executor, dashboardId, audience));
 }

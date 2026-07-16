@@ -1,16 +1,14 @@
 import type { Pool, PoolConnection, RowDataPacket } from "mysql2/promise";
 
 import {
-  loadActiveAbbottAggregateData,
-  loadActiveAbbottBitrixAnalytics,
-  loadActiveAbbottSessionJourneys,
-  loadActiveAbbottWorkbookData,
+  loadActiveAbbottReleaseBundle,
 } from "@/lib/abbott-private-store";
 import type {
   AbbottAggregatePrivateData,
   AbbottPrivateSessionJourneysData,
   ParsedAbbottWorkbook,
   ParsedBitrixAnalytics,
+  AbbottReleaseBundle,
 } from "@/lib/abbott-private-types";
 import pool from "@/lib/db";
 import type {
@@ -20,6 +18,7 @@ import type {
   AbbottBiExternalClickRow,
   AbbottBiMaterialRow,
   AbbottBiPageStatRow,
+  AbbottBiPrivateSourceMetadata,
   AbbottBiReturningRow,
   AbbottBiSessionJourneysData,
   AbbottBiTimeBuckets,
@@ -29,7 +28,6 @@ import type {
 
 export type AbbottDashboardAudience = "manager" | "embed";
 
-const ABBOTT_DATASET_KEY = "abbott";
 const ABBOTT_SOURCE_KEY = "yandex_metrika";
 const ABBOTT_COUNTER_ID = "90602537";
 const ABBOTT_CANONICAL_CUTOFF = "2026-01-01";
@@ -76,16 +74,8 @@ export interface AbbottBiQueryExecutor {
 export interface AbbottBiLoaderDependencies {
   aggregateExecutor: AbbottBiQueryExecutor;
   privateExecutor: AbbottBiQueryExecutor;
-  loadAggregateData(dashboardId: number): Promise<AbbottAggregatePrivateData>;
-  loadManagerWorkbook(dashboardId: number): Promise<ParsedAbbottWorkbook>;
-  loadManagerBitrixPages(dashboardId: number): Promise<ParsedBitrixAnalytics>;
-  loadManagerJourneys(dashboardId: number): Promise<AbbottPrivateSessionJourneysData>;
+  loadReleaseBundle(dashboardId: number, audience: AbbottDashboardAudience): Promise<AbbottReleaseBundle>;
 }
-
-type ActiveReleaseRow = Record<string, unknown> & {
-  canonical_release_id?: unknown;
-  release_status?: unknown;
-};
 
 type CoverageRow = Record<string, unknown> & {
   counter_id?: unknown;
@@ -246,6 +236,17 @@ function emptyJourneys(): AbbottBiSessionJourneysData {
   return { report_date: "", schema: null, summary: null, rows: [] };
 }
 
+function unavailableBitrixSource(): AbbottBiPrivateSourceMetadata {
+  return {
+    source_status: "unavailable",
+    test_dump: true,
+    snapshot_id: null,
+    generated_at: null,
+    period_from: null,
+    period_to: null,
+  };
+}
+
 function emptyAbbottData(
   counters: string[],
   audience: AbbottDashboardAudience,
@@ -272,6 +273,10 @@ function emptyAbbottData(
     page_stats: [],
     bitrix_pages: [],
     bitrix_summary: null,
+    bitrix_sources: {
+      pages: unavailableBitrixSource(),
+      journeys: unavailableBitrixSource(),
+    },
     bitrix_period_active: false,
     session_journeys: emptyJourneys(),
     external_events: [],
@@ -280,22 +285,6 @@ function emptyAbbottData(
     returning: [],
     general_materials: [],
   };
-}
-
-async function resolveActiveRelease(executor: AbbottBiQueryExecutor): Promise<number | null> {
-  const rows = (await executor.query(
-    `SELECT active_release.canonical_release_id, data_release.release_status
-     FROM \`report_bd\`.\`portal_active_data_releases\` AS active_release
-     INNER JOIN \`report_bd\`.\`portal_data_releases\` AS data_release
-       ON data_release.dataset_key = active_release.dataset_key
-      AND data_release.id = active_release.canonical_release_id
-     WHERE active_release.dataset_key = ?
-       AND data_release.dataset_key = ?
-     LIMIT 2`,
-    [ABBOTT_DATASET_KEY, ABBOTT_DATASET_KEY],
-  )) as readonly ActiveReleaseRow[];
-  if (rows.length !== 1 || rows[0]?.release_status !== "active") return null;
-  return positiveInteger(rows[0]?.canonical_release_id);
 }
 
 function coverageKey(counterId: string, reportDate: string, scope: string): string {
@@ -543,28 +532,35 @@ function buildPageStats(
     .sort((left, right) => right.pageviews - left.pageviews || right.users - left.users || left.page_title.localeCompare(right.page_title));
 }
 
-function mapBitrixPages(data: ParsedBitrixAnalytics): AbbottBiBitrixPageRow[] {
-  return data.rows.map((row) => ({
-    url: normalizePage(row.url),
+function mapBitrixPages(
+  data: ParsedBitrixAnalytics,
+  workbook: AbbottAggregatePrivateData["workbook"],
+): AbbottBiBitrixPageRow[] {
+  return data.rows.map((row) => {
+    const url = normalizePage(row.url);
+    const metadata = metadataForPage(url, "", workbook);
+    return {
+    url,
     path: normalizePage(row.path),
-    direction: null,
-    material_type: null,
-    access: null,
+    direction: metadata.direction,
+    material_type: row.material_type_hint ?? metadata.material_type,
+    access: metadata.access,
     pageviews: row.pageviews,
     sessions: row.sessions,
     users: row.users,
-    guests: 0,
-    logged_in_hits: 0,
-    anonymous_hits: 0,
-    logged_in_sessions: 0,
-    anonymous_sessions: 0,
-    entry_sessions: 0,
-    exit_sessions: 0,
-    avg_session_duration: 0,
-    top_utm_source: "",
-    top_utm_medium: "",
-    top_utm_campaign: "",
-  }));
+    guests: row.guests,
+    logged_in_hits: row.logged_in_hits,
+    anonymous_hits: row.anonymous_hits,
+    logged_in_sessions: row.logged_in_sessions,
+    anonymous_sessions: row.anonymous_sessions,
+    entry_sessions: row.entry_sessions,
+    exit_sessions: row.exit_sessions,
+    avg_session_duration: row.avg_session_duration_seconds ?? 0,
+    top_utm_source: row.top_utm_source ?? "",
+    top_utm_medium: row.top_utm_medium ?? "",
+    top_utm_campaign: row.top_utm_campaign ?? "",
+  };
+  });
 }
 
 function bitrixSummary(data: ParsedBitrixAnalytics): AbbottBiBitrixSummary | null {
@@ -827,29 +823,13 @@ export async function loadAbbottBiDataWithDependencies(
 
   let releaseId: number | null = null;
   try {
-    releaseId = await resolveActiveRelease(dependencies.aggregateExecutor);
-    if (releaseId === null) {
-      return emptyAbbottData(counters, audience, from, to, null, [{
-        counter_id: ABBOTT_COUNTER_ID,
-        report_date: from,
-        scope: "release",
-        status: "missing",
-      }]);
+    const releaseBundle = await dependencies.loadReleaseBundle(dashboardId, audience);
+    if (releaseBundle.audience !== audience || positiveInteger(releaseBundle.releaseId) === null) {
+      throw new Error("Abbott canonical data is unavailable");
     }
+    releaseId = releaseBundle.releaseId;
     const gaps = await coverageGaps(dependencies.aggregateExecutor, releaseId, counters, from, to);
     if (gaps.length > 0) return emptyAbbottData(counters, audience, from, to, releaseId, gaps);
-
-    const privateData = audience === "manager"
-      ? await Promise.all([
-          dependencies.loadManagerWorkbook(dashboardId),
-          dependencies.loadManagerBitrixPages(dashboardId),
-          dependencies.loadManagerJourneys(dashboardId),
-        ]).then(([workbook, bitrixPages, journeys]) => ({ workbook, bitrixPages, journeys }))
-      : await dependencies.loadAggregateData(dashboardId).then((aggregate) => ({
-          workbook: aggregate.workbook,
-          bitrixPages: aggregate.bitrixPages,
-          journeys: null,
-        }));
 
     const [siteFacts, returningFacts, externalFacts, behaviorFacts] = await Promise.all([
       querySiteFacts(dependencies.aggregateExecutor, releaseId, counters, from, to),
@@ -860,13 +840,13 @@ export async function loadAbbottBiDataWithDependencies(
         : Promise.resolve([]),
     ]);
     const trafficSummary = buildTrafficSummary(siteFacts);
-    const bitrixPages = mapBitrixPages(privateData.bitrixPages);
-    const summary = bitrixSummary(privateData.bitrixPages);
+    const bitrixPages = mapBitrixPages(releaseBundle.bitrixPages, releaseBundle.workbook);
+    const summary = bitrixSummary(releaseBundle.bitrixPages);
     const periodActive = isAbbottBitrixPeriodActive(from, to, summary);
-    const pageStats = buildPageStats(siteFacts, privateData.workbook);
+    const pageStats = buildPageStats(siteFacts, releaseBundle.workbook);
     const enrichedPageStats = periodActive ? enrichWithBitrix(pageStats, bitrixPages) : pageStats;
     const managerBehavior = audience === "manager"
-      ? buildManagerBehavior(behaviorFacts, privateData.workbook as ParsedAbbottWorkbook)
+      ? buildManagerBehavior(behaviorFacts, releaseBundle.workbook as ParsedAbbottWorkbook)
       : { summaries: [], actions: [] };
 
     return {
@@ -877,14 +857,20 @@ export async function loadAbbottBiDataWithDependencies(
       page_stats: enrichedPageStats,
       bitrix_pages: bitrixPages,
       bitrix_summary: summary,
+      bitrix_sources: {
+        pages: releaseBundle.bitrixPages.source,
+        journeys: releaseBundle.audience === "manager"
+          ? releaseBundle.journeys.source
+          : releaseBundle.journeyTransitions.source,
+      },
       bitrix_period_active: periodActive,
-      session_journeys: audience === "manager" && privateData.journeys
-        ? mapJourneys(privateData.journeys)
+      session_journeys: releaseBundle.audience === "manager"
+        ? mapJourneys(releaseBundle.journeys)
         : emptyJourneys(),
-      external_events: privateData.workbook.externalEvents,
-      external_clicks: buildExternalClickRows(externalFacts, privateData.workbook),
-      returning: buildReturning(returningFacts, privateData.workbook),
-      general_materials: buildGeneralMaterials(enrichedPageStats, privateData.workbook),
+      external_events: releaseBundle.workbook.externalEvents,
+      external_clicks: buildExternalClickRows(externalFacts, releaseBundle.workbook),
+      returning: buildReturning(returningFacts, releaseBundle.workbook),
+      general_materials: buildGeneralMaterials(enrichedPageStats, releaseBundle.workbook),
     };
   } catch {
     return emptyAbbottData(counters, audience, from, to, releaseId, [{
@@ -957,10 +943,7 @@ const productionDependencies: AbbottBiLoaderDependencies = {
     },
   },
   privateExecutor: { query: privateQuery },
-  loadAggregateData: loadActiveAbbottAggregateData,
-  loadManagerWorkbook: loadActiveAbbottWorkbookData,
-  loadManagerBitrixPages: loadActiveAbbottBitrixAnalytics,
-  loadManagerJourneys: loadActiveAbbottSessionJourneys,
+  loadReleaseBundle: loadActiveAbbottReleaseBundle,
 };
 
 export function getDefaultAbbottCounterIds(): string[] {
@@ -979,47 +962,4 @@ export async function loadAbbottBiData(
   audience?: AbbottDashboardAudience,
 ): Promise<AbbottCanonicalBiData> {
   return loadAbbottBiDataWithDependencies(dashboardId, counterIds, from, to, audience, productionDependencies);
-}
-
-// Zaruku remains a separate canonical-v1 read model. It cannot reach Abbott's
-// active release, private executor, workbook snapshots, or Bitrix snapshots.
-export async function loadZarukuBiData(counterIds: string[], from: string, to: string): Promise<AbbottBiData> {
-  const counters = counterIds.length > 0 ? counterIds : getDefaultZarukuCounterIds();
-  const sql = `SELECT analytics_scope,
-      COALESCE(traffic_source, utm_source, 'Unknown traffic') AS traffic_source,
-      COALESCE(page_title, '') AS page_title,
-      COALESCE(page_url, '') AS page_url,
-      SUM(visits) AS sessions, SUM(users) AS users, SUM(pageviews) AS pageviews,
-      AVG(bounce_rate) AS bounce_rate, AVG(avg_visit_duration_seconds) AS average_session_seconds
-    FROM canonical_fact_site_analytics_daily
-    WHERE source_key = ? AND analytics_account_id IN (${placeholders(counters)})
-      AND report_date >= ? AND report_date <= ?
-    GROUP BY analytics_scope, traffic_source, page_title, page_url`;
-  const [rawRows] = await pool.execute<RowDataPacket[]>(sql, [ABBOTT_SOURCE_KEY, ...counters, from, to]);
-  const rows = rawRows as unknown as SiteFactRow[];
-  const emptyWorkbook: AbbottAggregatePrivateData["workbook"] = {
-    generalMaterials: [],
-    externalEvents: [],
-    contentByTitle: new Map(),
-    contentByTitleAndType: new Map(),
-    contentBySlug: new Map(),
-    urlReturnDirections: new Map(),
-    ymUrlReturn: [],
-  };
-  return {
-    counters,
-    users_summary: buildTrafficSummary(rows),
-    traffic_summary: buildTrafficSummary(rows),
-    user_actions: [],
-    page_stats: buildPageStats(rows, emptyWorkbook),
-    bitrix_pages: [],
-    bitrix_summary: null,
-    bitrix_period_active: false,
-    session_journeys: emptyJourneys(),
-    external_events: [],
-    external_clicks: [],
-    time_buckets: emptyTimeBuckets(),
-    returning: [],
-    general_materials: [],
-  };
 }

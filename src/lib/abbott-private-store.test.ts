@@ -3,6 +3,7 @@ import test from "node:test";
 
 import {
   AbbottPrivateStoreError,
+  loadActiveAbbottReleaseBundleWithExecutor,
   loadActiveAbbottAggregateDataWithExecutor,
   loadActiveAbbottBitrixAnalyticsWithExecutor,
   loadActiveAbbottSessionJourneysWithExecutor,
@@ -58,6 +59,44 @@ test("resolves only the active Abbott release and its referenced imported snapsh
   assert.deepEqual(executor.queries[1]?.params, ["abbott", 11, 12, 13, 14]);
   assert.match(executor.queries[0]?.sql ?? "", /`report_bd`\.`portal_active_data_releases`/);
   assert.doesNotMatch(executor.queries.map((query) => query.sql).join("\n"), /source_locator|private_archive_locator/i);
+});
+
+test("release bundle pins one active release for all manager snapshot reads", async () => {
+  let pointerReads = 0;
+  const executor = fakeExecutor(({ sql }) => {
+    if (sql.includes("FROM `report_bd`.`dashboards`")) return [{ id: 7 }];
+    if (sql.includes("portal_active_data_releases")) {
+      pointerReads += 1;
+      return [pointerReads === 1 ? releaseRow : { ...releaseRow, canonical_release_id: "99" }];
+    }
+    if (sql.includes("portal_dataset_snapshots")) return snapshotRows;
+    if (sql.includes("portal_user_directions_private")) {
+      return [{ raw_user_id: "000123", normalized_direction: "cardiology" }];
+    }
+    if (sql.includes("portal_bitrix_journeys_private")) {
+      return [{
+        report_date: "2026-06-30",
+        raw_user_id: "000123",
+        protected_visit_id: "visit-A",
+        event_sequence: "0",
+        event_at: "2026-06-30 10:00:00",
+        normalized_path: "/one",
+        event_kind: "pageview",
+      }];
+    }
+    return [];
+  });
+
+  const result = await loadActiveAbbottReleaseBundleWithExecutor(executor, 7, "manager");
+
+  assert.equal(result.releaseId, 41);
+  assert.equal(result.audience, "manager");
+  assert.equal(pointerReads, 1);
+  const releaseScopedQueries = executor.queries.filter(({ sql }) =>
+    /portal_(?:content_catalog|general_materials|event_catalog|user_directions_private|bitrix_page_facts|bitrix_journeys_private)/.test(sql),
+  );
+  assert.equal(releaseScopedQueries.length > 0, true);
+  releaseScopedQueries.forEach(({ params }) => assert.equal(params[0], 41));
 });
 
 test("fails closed when a required workbook snapshot is missing or not imported", async () => {
