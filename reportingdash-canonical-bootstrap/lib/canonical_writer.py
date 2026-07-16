@@ -7,7 +7,7 @@ import json
 import os
 import re
 from dataclasses import dataclass
-from datetime import date, datetime
+from datetime import date, datetime, timezone
 from pathlib import Path
 from typing import Any, Mapping, Sequence
 
@@ -36,9 +36,17 @@ def get_db_connection():
 
 
 def require_mutable_candidate_release(release_id: int, *, portal_key: str = 'abbott') -> dict:
-    from canonical_release_store import require_mutable_candidate_release as require_release
+    """Preflight a release writer target before opening its write transaction.
 
-    return require_release(release_id, portal_key=portal_key)
+    Staging releases remain resumable. The current active release is admitted only
+    to the stricter, transactionally checked append-only path below.
+    """
+    from canonical_release_store import get_release
+
+    release = get_release(release_id, portal_key=portal_key)
+    if release.get('release_status') not in {'staging', 'active'}:
+        raise MetrikaPublishError("Canonical release is immutable")
+    return release
 
 
 class MetrikaPublishError(RuntimeError):
@@ -350,7 +358,14 @@ def _validated_day_bundle(bundle: Any) -> tuple[int, str, str, int, dict, dict]:
     return release_id, counter_id, report_date, run_id, scope_results, normalized_rows
 
 
-def _lock_mutable_abbott_release(cur, release_id: int) -> None:
+def _lock_mutable_abbott_release(
+    cur,
+    release_id: int,
+    *,
+    counter_id: str | None = None,
+    report_date: str | None = None,
+    allow_active_append: bool = False,
+) -> str:
     cur.execute(
         """
         SELECT id, dataset_key, release_status
@@ -365,9 +380,62 @@ def _lock_mutable_abbott_release(cur, release_id: int) -> None:
         not isinstance(release, Mapping)
         or release.get('id') != release_id
         or release.get('dataset_key') != 'abbott'
-        or release.get('release_status') != 'staging'
     ):
         raise MetrikaPublishError("Canonical release is immutable")
+
+    release_status = release.get('release_status')
+    if release_status == 'staging':
+        return release_status
+    if release_status != 'active' or not allow_active_append:
+        raise MetrikaPublishError("Canonical release is immutable")
+    if counter_id != ABBOTT_COUNTER_ID or not report_date:
+        raise MetrikaPublishError("Active canonical append identity is invalid")
+
+    try:
+        append_date = date.fromisoformat(report_date)
+    except ValueError:
+        raise MetrikaPublishError("Active canonical append date is invalid") from None
+    if append_date >= datetime.now(timezone.utc).date():
+        raise MetrikaPublishError("Active canonical append requires a completed UTC day")
+
+    cur.execute(
+        """
+        SELECT canonical_release_id
+        FROM portal_active_data_releases
+        WHERE dataset_key = %s
+        FOR UPDATE
+        """,
+        ('abbott',),
+    )
+    pointer = cur.fetchone()
+    if (
+        not isinstance(pointer, Mapping)
+        or pointer.get('canonical_release_id') != release_id
+    ):
+        raise MetrikaPublishError("Canonical release is not the active pointer")
+
+    params = (release_id, counter_id, report_date)
+    for table in (
+        'report_bd.canonical_source_coverage_daily',
+        'report_bd.canonical_fact_metrika_site_analytics_daily',
+        'report_bd_private.canonical_fact_metrika_user_behavior_daily',
+        'report_bd.canonical_fact_metrika_returning_pages_daily',
+    ):
+        cur.execute(
+            f"""
+            SELECT COUNT(*) AS row_count
+            FROM {table}
+            WHERE canonical_release_id = %s
+              AND counter_id = %s
+              AND report_date = %s
+            FOR UPDATE
+            """,
+            params,
+        )
+        row = cur.fetchone()
+        if not isinstance(row, Mapping) or int(row.get('row_count', -1)) != 0:
+            raise MetrikaPublishError("Active canonical release day already exists")
+    return release_status
 
 
 def publish_metrika_day_bundle(bundle: Any) -> MetrikaPublishResult:
@@ -387,8 +455,15 @@ def publish_metrika_day_bundle(bundle: Any) -> MetrikaPublishResult:
         conn = get_db_connection()
         cur = conn.cursor(dictionary=True)
         conn.start_transaction()
-        _lock_mutable_abbott_release(cur, release_id)
-        _delete_release_day(cur, release_id, counter_id, report_date)
+        release_status = _lock_mutable_abbott_release(
+            cur,
+            release_id,
+            counter_id=counter_id,
+            report_date=report_date,
+            allow_active_append=True,
+        )
+        if release_status == 'staging':
+            _delete_release_day(cur, release_id, counter_id, report_date)
 
         rows_written = 0
         for scope in ('other', 'traffic', 'page'):
