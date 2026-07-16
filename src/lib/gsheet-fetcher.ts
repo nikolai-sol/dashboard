@@ -268,9 +268,13 @@ function normalizeMediaPlanPlatform(raw: unknown): string {
 }
 
 function parseMonthly(raw: Record<string, unknown>): Record<string, number> {
+  const nestedMonthly =
+    raw.monthly && typeof raw.monthly === "object" && !Array.isArray(raw.monthly)
+      ? (raw.monthly as Record<string, unknown>)
+      : {};
   const monthly: Record<string, number> = {};
   for (const month of MONTH_COLUMNS) {
-    const value = firstPresent(raw, [month]);
+    const value = firstPresent(raw, [month]) ?? nestedMonthly[month];
     if (value === undefined) continue;
     monthly[month] = parseNumeric(value);
   }
