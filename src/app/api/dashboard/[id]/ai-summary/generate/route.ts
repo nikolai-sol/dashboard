@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import type { ResultSetHeader, RowDataPacket } from "mysql2/promise";
 import pool from "@/lib/db";
+import { projectAbbottDashboardData } from "@/lib/abbott-data-projection";
 import { isDashboardAccessAuthorized } from "@/lib/dashboard-access";
 import {
   buildDashboardAiSummarySnapshot,
@@ -12,6 +13,15 @@ type DashboardConfigRow = RowDataPacket & {
   id: number;
   config: string | Record<string, unknown> | null;
 };
+
+const PRIVATE_RESPONSE_HEADERS = { "Cache-Control": "private, no-store" };
+
+function privateJson(body: unknown, init?: ResponseInit) {
+  return NextResponse.json(body, {
+    ...init,
+    headers: { ...init?.headers, ...PRIVATE_RESPONSE_HEADERS },
+  });
+}
 
 function parseConfig(value: unknown): Record<string, unknown> {
   if (!value) return {};
@@ -38,10 +48,10 @@ export async function POST(
     const { id } = await Promise.resolve(context.params);
     const access = await isDashboardAccessAuthorized(request, id);
     if (!access.context) {
-      return NextResponse.json({ error: "Dashboard not found" }, { status: 404 });
+      return privateJson({ error: "Dashboard not found" }, { status: 404 });
     }
     if (!access.authorized) {
-      return NextResponse.json(
+      return privateJson(
         {
           error: "Authentication required",
           auth_required: true,
@@ -57,9 +67,10 @@ export async function POST(
       );
     }
 
-    const { dashboard_id, data, ai_summary_enabled } = await loadDashboardData(request, id);
+    const { dashboard_id, data: loadedData, ai_summary_enabled } = await loadDashboardData(request, id);
+    const data = projectAbbottDashboardData(loadedData, access.audience);
     if (!ai_summary_enabled) {
-      return NextResponse.json(
+      return privateJson(
         { error: "AI summary is disabled for this dashboard" },
         { status: 409 },
       );
@@ -67,11 +78,8 @@ export async function POST(
 
     const candidate = await generateDashboardAiSummary(data);
     if (candidate.status !== "ready") {
-      return NextResponse.json(
-        {
-          error: "AI summary generation did not produce a ready summary",
-          candidate,
-        },
+      return privateJson(
+        { error: "AI summary generation did not produce a ready summary" },
         { status: candidate.status === "unavailable" ? 409 : 502 },
       );
     }
@@ -86,13 +94,13 @@ export async function POST(
       const row = rows[0];
       if (!row) {
         await conn.rollback();
-        return NextResponse.json({ error: "Dashboard not found" }, { status: 404 });
+        return privateJson({ error: "Dashboard not found" }, { status: 404 });
       }
 
       const config = parseConfig(row.config);
       if (!Boolean(config.show_ai_summary ?? false)) {
         await conn.rollback();
-        return NextResponse.json(
+        return privateJson(
           { error: "AI summary is disabled for this dashboard" },
           { status: 409 },
         );
@@ -111,15 +119,16 @@ export async function POST(
       await conn.commit();
     } catch (error) {
       await conn.rollback();
-      return NextResponse.json(
-        { error: "Failed to persist AI summary snapshot", details: String(error) },
+      console.error("AI summary persistence error:", error);
+      return privateJson(
+        { error: "Failed to persist AI summary snapshot" },
         { status: 500 },
       );
     } finally {
       conn.release();
     }
 
-    return NextResponse.json({
+    return privateJson({
       enabled: true,
       effective_summary: candidate,
       snapshot_summary: candidate,
@@ -128,10 +137,11 @@ export async function POST(
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
     if (message === "Dashboard not found") {
-      return NextResponse.json({ error: message }, { status: 404 });
+      return privateJson({ error: "Dashboard not found" }, { status: 404 });
     }
-    return NextResponse.json(
-      { error: "Failed to generate AI summary", details: message },
+    console.error("AI summary generation error:", error);
+    return privateJson(
+      { error: "Failed to generate AI summary" },
       { status: 500 },
     );
   }

@@ -105,6 +105,10 @@ Main file:
   - password/email login => `manager`
   - `embed_key` access => `embed`
   - legacy dashboard tokens without an audience are rejected and require re-login
+- Abbott responses are projected server-side by that audience:
+  - `manager` keeps raw User ID and row-level journey data, with URL query strings and fragments removed
+  - `embed` receives aggregate-only Abbott data without User ID fields, session IDs, user actions, or journey rows
+- Dashboard API, Excel, PDF, and AI-summary responses use `Cache-Control: private, no-store`; client-visible errors do not include exception details
 - Viewer portal sessions keep their existing audience-free payload and behavior
 - Viewer portal root page exists at:
   - `https://dashboards.adreports.ru/`
