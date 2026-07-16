@@ -56,6 +56,7 @@ class MetrikaPublishResult:
 
 _METRIKA_SCOPE_ORDER = ('other', 'traffic', 'page', 'user_behavior', 'returning')
 _METRIKA_FAILURE_STATUSES = frozenset(('partial', 'skipped', 'sampled', 'failed'))
+ABBOTT_COUNTER_ID = '90602537'
 
 
 def _field(value: Any, name: str) -> Any:
@@ -240,61 +241,150 @@ def _insert_success_coverage_rows(cur, rows: Sequence[dict]) -> int:
     return len(values)
 
 
-def _rows_with_bundle_identity(bundle: Any, scope_result: Any) -> list[dict]:
-    rows = []
-    for original in _field(scope_result, 'rows'):
-        row = dict(original)
-        row.setdefault('canonical_release_id', _field(bundle, 'canonical_release_id'))
-        row.setdefault('counter_id', _field(bundle, 'counter_id'))
-        row.setdefault('report_date', _field(bundle, 'report_date'))
-        row.setdefault('ingestion_run_id', _field(bundle, 'run_id'))
-        rows.append(row)
-    return rows
+def _bundle_row(
+    original: Mapping[str, Any],
+    *,
+    release_id: int,
+    counter_id: str,
+    report_date: str,
+    run_id: int,
+    scope: str,
+) -> dict:
+    row = dict(original)
+    identity = {
+        'canonical_release_id': release_id,
+        'counter_id': counter_id,
+        'report_date': report_date,
+        'ingestion_run_id': run_id,
+    }
+    for field_name, expected in identity.items():
+        if field_name in row and row[field_name] != expected:
+            raise MetrikaPublishError("Metrika fact identity conflicts with day bundle")
+        row[field_name] = expected
+
+    if scope in ('other', 'traffic', 'page'):
+        if 'analytics_account_id' in row and row['analytics_account_id'] != counter_id:
+            raise MetrikaPublishError("Metrika site account conflicts with day bundle")
+        if 'analytics_scope' in row and row['analytics_scope'] != scope:
+            raise MetrikaPublishError("Metrika site scope conflicts with day bundle")
+        row['analytics_account_id'] = counter_id
+        row['analytics_scope'] = scope
+    return row
+
+
+def _validated_day_bundle(bundle: Any) -> tuple[int, str, str, int, dict, dict]:
+    try:
+        release_id = int(_field(bundle, 'canonical_release_id'))
+        counter_id = str(_field(bundle, 'counter_id'))
+        report_date = str(_field(bundle, 'report_date'))
+        run_id = int(_field(bundle, 'run_id'))
+        scopes = _field(bundle, 'scopes')
+    except (KeyError, AttributeError, TypeError, ValueError):
+        raise MetrikaPublishError("Metrika day bundle identity is invalid") from None
+
+    if counter_id != ABBOTT_COUNTER_ID:
+        raise MetrikaPublishError("Metrika release writer accepts only the Abbott counter")
+    if not isinstance(scopes, Mapping) or set(scopes) != set(_METRIKA_SCOPE_ORDER):
+        raise MetrikaPublishError("Metrika day bundle scopes are invalid")
+
+    scope_results = {}
+    normalized_rows = {}
+    try:
+        for scope in _METRIKA_SCOPE_ORDER:
+            result = scopes[scope]
+            if _field(result, 'scope') != scope:
+                raise MetrikaPublishError("Metrika scope label does not match its map key")
+            rows = tuple(_field(result, 'rows'))
+            persisted_rows = int(_field(result, 'persisted_rows'))
+            api_total_rows = int(_field(result, 'api_total_rows'))
+            sampled = bool(_field(result, 'sampled'))
+            pagination_complete = bool(_field(result, 'pagination_complete'))
+            status = _field(result, 'status')
+
+            if persisted_rows < 0 or api_total_rows < 0 or persisted_rows != len(rows):
+                raise MetrikaPublishError("Metrika scope row counts are inconsistent")
+            if sampled or not pagination_complete:
+                raise MetrikaPublishError("Metrika scope pagination is not publishable")
+            if status == 'success':
+                if not rows or api_total_rows <= 0 or api_total_rows > persisted_rows:
+                    raise MetrikaPublishError("Successful Metrika scope totals are inconsistent")
+            elif status == 'success_empty':
+                if rows or persisted_rows != 0 or api_total_rows != 0:
+                    raise MetrikaPublishError("Empty Metrika scope totals are inconsistent")
+            else:
+                raise MetrikaPublishError("Metrika scope status is not publishable")
+
+            scope_results[scope] = result
+            normalized_rows[scope] = [
+                _bundle_row(
+                    row,
+                    release_id=release_id,
+                    counter_id=counter_id,
+                    report_date=report_date,
+                    run_id=run_id,
+                    scope=scope,
+                )
+                for row in rows
+            ]
+    except MetrikaPublishError:
+        raise
+    except (KeyError, AttributeError, TypeError, ValueError):
+        raise MetrikaPublishError("Metrika day bundle is incomplete") from None
+
+    return release_id, counter_id, report_date, run_id, scope_results, normalized_rows
+
+
+def _lock_mutable_abbott_release(cur, release_id: int) -> None:
+    cur.execute(
+        """
+        SELECT id, dataset_key, release_status
+        FROM portal_data_releases
+        WHERE dataset_key = %s AND id = %s
+        FOR UPDATE
+        """,
+        ('abbott', release_id),
+    )
+    release = cur.fetchone()
+    if (
+        not isinstance(release, Mapping)
+        or release.get('id') != release_id
+        or release.get('dataset_key') != 'abbott'
+        or release.get('release_status') != 'staging'
+    ):
+        raise MetrikaPublishError("Canonical release is immutable")
 
 
 def publish_metrika_day_bundle(bundle: Any) -> MetrikaPublishResult:
-    release_id = int(_field(bundle, 'canonical_release_id'))
-    counter_id = str(_field(bundle, 'counter_id'))
-    report_date = str(_field(bundle, 'report_date'))
-    run_id = int(_field(bundle, 'run_id'))
-    scopes = _field(bundle, 'scopes')
+    (
+        release_id,
+        counter_id,
+        report_date,
+        run_id,
+        scope_results,
+        normalized_rows,
+    ) = _validated_day_bundle(bundle)
 
     require_mutable_candidate_release(release_id, portal_key='abbott')
-    try:
-        scope_results = {scope: scopes[scope] for scope in _METRIKA_SCOPE_ORDER}
-        for scope, result in scope_results.items():
-            status = _field(result, 'status')
-            if status not in ('success', 'success_empty'):
-                raise MetrikaPublishError(f"Scope {scope} is not publishable")
-            if bool(_field(result, 'sampled')) or not bool(_field(result, 'pagination_complete')):
-                raise MetrikaPublishError(f"Scope {scope} is not complete")
-    except (KeyError, AttributeError, TypeError):
-        raise MetrikaPublishError("Metrika day bundle is incomplete") from None
-
     conn = None
     cur = None
     try:
         conn = get_db_connection()
-        cur = conn.cursor()
+        cur = conn.cursor(dictionary=True)
         conn.start_transaction()
+        _lock_mutable_abbott_release(cur, release_id)
         _delete_release_day(cur, release_id, counter_id, report_date)
 
         rows_written = 0
         for scope in ('other', 'traffic', 'page'):
-            rows_written += _insert_site_fact_rows(
-                cur, _rows_with_bundle_identity(bundle, scope_results[scope])
-            )
+            rows_written += _insert_site_fact_rows(cur, normalized_rows[scope])
         rows_written += _insert_private_user_behavior_rows(
-            cur, _rows_with_bundle_identity(bundle, scope_results['user_behavior'])
+            cur, normalized_rows['user_behavior']
         )
-        rows_written += _insert_returning_rows(
-            cur, _rows_with_bundle_identity(bundle, scope_results['returning'])
-        )
+        rows_written += _insert_returning_rows(cur, normalized_rows['returning'])
 
         coverage_rows = []
         for scope in _METRIKA_SCOPE_ORDER:
             result = scope_results[scope]
-            scope_rows = _field(result, 'rows')
             status = _field(result, 'status')
             coverage_rows.append(
                 {
@@ -304,9 +394,9 @@ def publish_metrika_day_bundle(bundle: Any) -> MetrikaPublishResult:
                     'report_date': report_date,
                     'collection_status': status,
                     'api_total_rows': _field(result, 'api_total_rows'),
-                    'persisted_rows': len(scope_rows),
-                    'pagination_complete': True,
-                    'is_sampled': False,
+                    'persisted_rows': _field(result, 'persisted_rows'),
+                    'pagination_complete': _field(result, 'pagination_complete'),
+                    'is_sampled': _field(result, 'sampled'),
                     'empty_reconciled': status == 'success_empty',
                     'collector_run_id': run_id,
                 }
@@ -360,12 +450,16 @@ def record_metrika_day_failure(
 ) -> None:
     if scope not in _METRIKA_SCOPE_ORDER or status not in _METRIKA_FAILURE_STATUSES:
         raise MetrikaPublishError("Invalid Metrika failure diagnostic")
+    if str(counter_id) != ABBOTT_COUNTER_ID:
+        raise MetrikaPublishError("Metrika release writer accepts only the Abbott counter")
     failure_code = _sanitized_error_class(error_class)
     conn = None
     cur = None
     try:
         conn = get_db_connection()
-        cur = conn.cursor()
+        cur = conn.cursor(dictionary=True)
+        conn.start_transaction()
+        _lock_mutable_abbott_release(cur, release_id)
         cur.execute(
             """
             INSERT INTO report_bd.canonical_source_coverage_daily (

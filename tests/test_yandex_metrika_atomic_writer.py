@@ -106,13 +106,21 @@ class RecordingCursor:
         self.connection.maybe_fail(normalized)
         self.rowcount = len(materialized)
 
+    def fetchone(self):
+        return self.connection.lock_row
+
     def close(self):
         self.closed = True
 
 
 class RecordingConnection:
-    def __init__(self, fail_on=None):
+    def __init__(self, fail_on=None, lock_row=None):
         self.fail_on = fail_on
+        self.lock_row = (
+            {"id": 41, "dataset_key": "abbott", "release_status": "staging"}
+            if lock_row is None
+            else lock_row
+        )
         self.events = []
         self.sql_calls = []
         self.cursor_instance = RecordingCursor(self)
@@ -139,6 +147,37 @@ class RecordingConnection:
 
 
 class AtomicMetrikaWriterTest(unittest.TestCase):
+    def test_publish_rejects_non_abbott_counter_before_any_connection(self):
+        import canonical_writer as writer
+
+        bundle = day_bundle()
+        bundle.counter_id = "12345678"
+        with patch.object(writer, "get_db_connection") as connect, patch.object(
+            writer, "require_mutable_candidate_release"
+        ) as require_release:
+            with self.assertRaises(writer.MetrikaPublishError):
+                writer.publish_metrika_day_bundle(bundle)
+
+        connect.assert_not_called()
+        require_release.assert_not_called()
+
+    def test_failure_record_rejects_non_abbott_counter_before_any_connection(self):
+        import canonical_writer as writer
+
+        with patch.object(writer, "get_db_connection") as connect:
+            with self.assertRaises(writer.MetrikaPublishError):
+                writer.record_metrika_day_failure(
+                    release_id=41,
+                    counter_id="12345678",
+                    report_date="2026-01-02",
+                    run_id=77,
+                    scope="page",
+                    status="failed",
+                    error_class="MetrikaPermissionError",
+                )
+
+        connect.assert_not_called()
+
     def test_publish_uses_one_transaction_and_inserts_facts_before_coverage(self):
         import canonical_writer as writer
 
@@ -168,6 +207,16 @@ class AtomicMetrikaWriterTest(unittest.TestCase):
         self.assertEqual(len(coverage_params), 5)
         self.assertEqual(result.coverage_rows_written, 5)
         self.assertEqual(result.rows_written, 3)
+
+        lock_index = next(
+            i for i, (_, sql, _) in enumerate(conn.sql_calls)
+            if "FROM portal_data_releases" in sql and "FOR UPDATE" in sql
+        )
+        delete_index = next(
+            i for i, (_, sql, _) in enumerate(conn.sql_calls) if sql.startswith("DELETE")
+        )
+        self.assertLess(lock_index, delete_index)
+        self.assertEqual(conn.sql_calls[lock_index][2], ("abbott", 41))
 
     def test_deletes_are_scoped_to_exact_release_counter_and_day(self):
         import canonical_writer as writer
@@ -219,6 +268,141 @@ class AtomicMetrikaWriterTest(unittest.TestCase):
 
         self.assertEqual(conn.events, [])
 
+    def test_release_is_rechecked_under_lock_before_any_delete(self):
+        import canonical_writer as writer
+
+        conn = RecordingConnection(
+            lock_row={"id": 41, "dataset_key": "abbott", "release_status": "active"}
+        )
+        with patch.object(writer, "get_db_connection", return_value=conn), patch.object(
+            writer, "require_mutable_candidate_release", return_value={"id": 41}
+        ):
+            with self.assertRaises(writer.MetrikaPublishError):
+                writer.publish_metrika_day_bundle(day_bundle())
+
+        self.assertIn(("rollback", None), conn.events)
+        self.assertFalse(any(sql.startswith("DELETE") for _, sql, _ in conn.sql_calls))
+        self.assertFalse(any(method == "executemany" for method, _, _ in conn.sql_calls))
+
+    def test_conflicting_fact_row_identity_is_rejected_before_transaction(self):
+        import canonical_writer as writer
+
+        conflicts = (
+            ("canonical_release_id", 999),
+            ("counter_id", "12345678"),
+            ("report_date", "2025-12-31"),
+            ("ingestion_run_id", 999),
+        )
+        for field, value in conflicts:
+            with self.subTest(field=field):
+                bundle = day_bundle()
+                bundle.scopes["other"].rows[0][field] = value
+                conn = RecordingConnection()
+                with patch.object(writer, "get_db_connection", return_value=conn), patch.object(
+                    writer, "require_mutable_candidate_release", return_value={"id": 41}
+                ):
+                    with self.assertRaises(writer.MetrikaPublishError):
+                        writer.publish_metrika_day_bundle(bundle)
+                self.assertEqual(conn.events, [])
+
+    def test_site_account_and_scope_must_match_bundle_container(self):
+        import canonical_writer as writer
+
+        for field, value in (
+            ("analytics_account_id", "12345678"),
+            ("analytics_scope", "traffic"),
+        ):
+            with self.subTest(field=field):
+                bundle = day_bundle()
+                bundle.scopes["other"].rows[0][field] = value
+                with patch.object(writer, "get_db_connection") as connect, patch.object(
+                    writer, "require_mutable_candidate_release"
+                ):
+                    with self.assertRaises(writer.MetrikaPublishError):
+                        writer.publish_metrika_day_bundle(bundle)
+                connect.assert_not_called()
+
+    def test_missing_site_account_and_scope_are_forced_from_bundle(self):
+        import canonical_writer as writer
+
+        bundle = day_bundle()
+        del bundle.scopes["other"].rows[0]["analytics_account_id"]
+        del bundle.scopes["other"].rows[0]["analytics_scope"]
+        conn = RecordingConnection()
+        with patch.object(writer, "get_db_connection", return_value=conn), patch.object(
+            writer, "require_mutable_candidate_release", return_value={"id": 41}
+        ):
+            writer.publish_metrika_day_bundle(bundle)
+
+        site_values = next(
+            params
+            for method, sql, params in conn.sql_calls
+            if method == "executemany" and "site_analytics" in sql
+        )
+        self.assertEqual(site_values[0][2], "90602537")
+        self.assertEqual(site_values[0][5], "other")
+
+    def test_scope_map_requires_exact_keys_and_matching_result_labels(self):
+        import canonical_writer as writer
+
+        malformed = []
+        missing = day_bundle()
+        del missing.scopes["returning"]
+        malformed.append(missing)
+        extra = day_bundle()
+        extra.scopes["goal"] = scope_result("goal", [])
+        malformed.append(extra)
+        mislabeled = day_bundle()
+        mislabeled.scopes["page"] = scope_result("traffic", [])
+        malformed.append(mislabeled)
+
+        for bundle in malformed:
+            with self.subTest(scopes=tuple(bundle.scopes)):
+                with patch.object(writer, "get_db_connection") as connect, patch.object(
+                    writer, "require_mutable_candidate_release"
+                ):
+                    with self.assertRaises(writer.MetrikaPublishError):
+                        writer.publish_metrika_day_bundle(bundle)
+                connect.assert_not_called()
+
+    def test_malformed_success_empty_scope_is_rejected(self):
+        import canonical_writer as writer
+
+        base = scope_result("page", [])
+        mutations = (
+            {"rows": ({"unexpected": "row"},), "persisted_rows": 1},
+            {"persisted_rows": 1},
+            {"api_total_rows": 1},
+            {"pagination_complete": False},
+            {"sampled": True},
+        )
+        for mutation in mutations:
+            with self.subTest(mutation=mutation):
+                bundle = day_bundle()
+                values = vars(base).copy()
+                values.update(mutation)
+                bundle.scopes["page"] = SimpleNamespace(**values)
+                with patch.object(writer, "get_db_connection") as connect, patch.object(
+                    writer, "require_mutable_candidate_release"
+                ):
+                    with self.assertRaises(writer.MetrikaPublishError):
+                        writer.publish_metrika_day_bundle(bundle)
+                connect.assert_not_called()
+
+    def test_success_scope_requires_persisted_row_reconciliation(self):
+        import canonical_writer as writer
+
+        bundle = day_bundle()
+        values = vars(bundle.scopes["other"]).copy()
+        values["persisted_rows"] = 9
+        bundle.scopes["other"] = SimpleNamespace(**values)
+        with patch.object(writer, "get_db_connection") as connect, patch.object(
+            writer, "require_mutable_candidate_release"
+        ):
+            with self.assertRaises(writer.MetrikaPublishError):
+                writer.publish_metrika_day_bundle(bundle)
+        connect.assert_not_called()
+
     def test_failure_recording_executes_no_delete(self):
         import canonical_writer as writer
 
@@ -242,7 +426,29 @@ class AtomicMetrikaWriterTest(unittest.TestCase):
         )
         self.assertIn("ON DUPLICATE KEY UPDATE", insert_sql)
         self.assertIn("MetrikaPermissionError", insert_params)
+        self.assertEqual(conn.events.count(("start_transaction", None)), 1)
         self.assertIn(("commit", None), conn.events)
+
+    def test_failure_record_rejects_release_that_became_immutable(self):
+        import canonical_writer as writer
+
+        conn = RecordingConnection(
+            lock_row={"id": 41, "dataset_key": "abbott", "release_status": "active"}
+        )
+        with patch.object(writer, "get_db_connection", return_value=conn):
+            with self.assertRaises(writer.MetrikaPublishError):
+                writer.record_metrika_day_failure(
+                    release_id=41,
+                    counter_id="90602537",
+                    report_date="2026-01-02",
+                    run_id=77,
+                    scope="page",
+                    status="failed",
+                    error_class="MetrikaPermissionError",
+                )
+
+        self.assertIn(("rollback", None), conn.events)
+        self.assertFalse(any("INSERT INTO" in sql for _, sql, _ in conn.sql_calls))
 
 
 if __name__ == "__main__":
