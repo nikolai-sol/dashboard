@@ -19,10 +19,11 @@ class AbbottOperationsRunbookTest(unittest.TestCase):
         self.assertNotIn("--days-back 2", cron)
 
     def test_schema_and_baseline_gates_are_exact(self):
-        self.assertIn('test "$ACTUAL_SCHEMA_TABLE_COUNT" = 12', self.text)
+        self.assertIn('test "$ACTUAL_SCHEMA_TABLE_COUNT" = 13', self.text)
         schema_gate = self.text.split("Verify table and role names only", 1)[1].split("## Checkpoint 2", 1)[0]
         self.assertNotIn("table_schema IN", schema_gate)
         self.assertIn("table_schema='report_bd' AND table_name='portal_data_releases'", schema_gate)
+        self.assertIn("table_schema='report_bd' AND table_name='portal_release_source_imports'", schema_gate)
         self.assertIn("table_schema='report_bd_private' AND table_name='portal_bitrix_page_facts'", schema_gate)
         self.assertIn("abbott_bitrix_pages:$PARSER_VERSION", self.text)
         self.assertIn("abbott_bitrix_journeys:$PARSER_VERSION", self.text)
@@ -36,6 +37,13 @@ class AbbottOperationsRunbookTest(unittest.TestCase):
         self.assertIn("WITH RECURSIVE calendar", gap_gate)
         self.assertIn("2026-03-29", gap_gate)
         self.assertIn("2026-04-07", gap_gate)
+        validation_gate = self.text.split("Only after every gate", 1)[1].split(
+            "## Checkpoint 8", 1
+        )[0]
+        self.assertIn("portal_release_source_imports", validation_gate)
+        self.assertIn(
+            "latest completed `validation_run_id`", " ".join(validation_gate.split())
+        )
 
     def test_dashboard_deploy_installs_and_scans_a_full_atomic_release_tree(self):
         deploy_gate = self.text.split("Before validation", 1)[1].split("Only after every gate", 1)[0]
@@ -47,6 +55,27 @@ class AbbottOperationsRunbookTest(unittest.TestCase):
         self.assertIn('install -m 600 "$DASHBOARD_OWNER_ENV_FILE"', deploy_gate)
         self.assertIn("sha256sum -c", deploy_gate)
         self.assertNotIn("Run the owner-approved deployment procedure", deploy_gate)
+
+    def test_dashboard_build_rejects_every_tracked_or_untracked_source_change(self):
+        deploy_gate = self.text.split("Before validation", 1)[1].split("Only after every gate", 1)[0]
+        self.assertIn(
+            'test -z "$(git -C "$DASHBOARD_SOURCE_ROOT" status --porcelain=v1 --untracked-files=all)"',
+            deploy_gate,
+        )
+
+    def test_first_dashboard_cutover_checkpoints_and_verifies_directory_predecessor(self):
+        deploy_gate = self.text.split("Before validation", 1)[1].split("Only after every gate", 1)[0]
+        checkpoint = deploy_gate.index("--checkpoint-current")
+        install = deploy_gate.index(
+            "bash scripts/install-reviewed-release.sh \\", checkpoint + 1
+        )
+        self.assertLess(checkpoint, install)
+        self.assertIn("DASHBOARD_PREDECESSOR_REVISION", deploy_gate)
+        predecessor_verify = (
+            'sha256sum -c "$DASHBOARD_RELEASES_DIR/'
+            '$DASHBOARD_PREDECESSOR_REVISION.sha256"'
+        )
+        self.assertIn(predecessor_verify, deploy_gate)
 
     def test_secret_installation_and_counter_probe_are_operational(self):
         self.assertIn("probe_yandex_metrika_access.py", self.text)

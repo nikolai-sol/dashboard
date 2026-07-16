@@ -96,7 +96,15 @@ def exact_evidence_rows(*, warning_without_reviewer=False):
     return rows
 
 
-def imported_snapshot_rows(*, failed_kind=None):
+def validation_batch(run_id, *, completed_at="2026-07-16 10:00:00", rows=None):
+    return {
+        "validation_run_id": run_id,
+        "validation_run_completed_at": completed_at,
+        "rows": rows or exact_evidence_rows(),
+    }
+
+
+def imported_snapshot_rows(*, failed_kind=None, manifest_revision="abc123"):
     rows = []
     for index, kind in enumerate(SOURCE_KINDS):
         manifest = {
@@ -104,7 +112,7 @@ def imported_snapshot_rows(*, failed_kind=None):
             "content_sha256": str(index + 1) * 64,
             "content_bytes": 100 + index,
             "parser_version": "parser-v1",
-            "code_revision": "abc123",
+            "code_revision": manifest_revision,
         }
         rows.append(
             {
@@ -122,11 +130,33 @@ def imported_snapshot_rows(*, failed_kind=None):
     return rows
 
 
+def import_execution_rows(
+    *, code_revision="abc123", failed_kind=None, imported_row_count=1
+):
+    return [
+        {
+            "source_snapshot_id": index + 11,
+            "source_kind": kind,
+            "code_revision": code_revision,
+            "import_status": "rejected" if kind == failed_kind else "imported",
+            "imported_row_count": imported_row_count,
+            "rejected_row_count": 0,
+        }
+        for index, kind in enumerate(SOURCE_KINDS)
+    ]
+
+
 class ExactValidationCursor(RecordingCursor):
-    def __init__(self, connection, *, evidence_rows=None, snapshot_rows=None):
+    def __init__(
+        self, connection, *, evidence_rows=None, snapshot_rows=None, execution_rows=None,
+        validation_batches=None,
+    ):
         super().__init__()
-        self.evidence_rows = evidence_rows or exact_evidence_rows()
+        self.validation_batches = validation_batches or [
+            validation_batch("00000000-0000-0000-0000-000000000001", rows=evidence_rows)
+        ]
         self.snapshot_rows = snapshot_rows or imported_snapshot_rows()
+        self.execution_rows = execution_rows or import_execution_rows()
         self.current_one = None
         self.current_many = []
 
@@ -146,18 +176,45 @@ class ExactValidationCursor(RecordingCursor):
             }
         elif normalized.startswith("SELECT manifest_json"):
             self.current_one = {"manifest_json": json.dumps(baseline_manifest())}
+        elif "FROM portal_release_source_imports" in normalized:
+            self.current_many = self.execution_rows
         elif "FROM portal_dataset_snapshots" in normalized:
             self.current_many = self.snapshot_rows
         elif "FROM portal_migration_validation_runs" in normalized:
-            if "COUNT(*) AS evidence_count" in normalized:
+            if normalized.startswith("SELECT validation_run_id"):
+                latest = self.validation_batches[-1]
                 self.current_one = {
-                    "evidence_count": len(self.evidence_rows),
-                    "fail_count": 0,
-                    "unaccepted_warn_count": 0,
-                    "revision_mismatch_count": 0,
+                    "validation_run_id": latest["validation_run_id"],
+                    "validation_run_completed_at": latest["validation_run_completed_at"],
                 }
             else:
-                self.current_many = self.evidence_rows
+                selected_run_id = params[-1] if params and len(params) >= 3 else None
+                if selected_run_id is None:
+                    self.current_many = [
+                        row
+                        for batch in self.validation_batches
+                        for row in batch["rows"]
+                    ]
+                else:
+                    selected_batch = next(
+                        (
+                            batch
+                            for batch in self.validation_batches
+                            if batch["validation_run_id"] == selected_run_id
+                        ),
+                        None,
+                    )
+                    if selected_batch is not None:
+                        self.current_many = [
+                            {
+                                **row,
+                                "validation_run_id": selected_batch["validation_run_id"],
+                                "validation_run_completed_at": selected_batch[
+                                    "validation_run_completed_at"
+                                ],
+                            }
+                            for row in selected_batch["rows"]
+                        ]
         elif normalized.startswith("WITH RECURSIVE calendar"):
             self.current_one = {"missing_date_count": 0}
 
@@ -169,10 +226,17 @@ class ExactValidationCursor(RecordingCursor):
 
 
 class ExactValidationConnection(RecordingConnection):
-    def __init__(self, *, evidence_rows=None, snapshot_rows=None):
+    def __init__(
+        self, *, evidence_rows=None, snapshot_rows=None, execution_rows=None,
+        validation_batches=None,
+    ):
         self.events = []
         self.cursor_instance = ExactValidationCursor(
-            self, evidence_rows=evidence_rows, snapshot_rows=snapshot_rows
+            self,
+            evidence_rows=evidence_rows,
+            snapshot_rows=snapshot_rows,
+            execution_rows=execution_rows,
+            validation_batches=validation_batches,
         )
 
 
@@ -230,6 +294,112 @@ class CanonicalReleaseStoreTest(unittest.TestCase):
                     date_to="2026-01-02",
                     expected_code_revision="abc123",
                 )
+
+    def test_successor_revision_can_validate_reused_immutable_source_snapshots(self):
+        import canonical_release_store as store
+
+        conn = ExactValidationConnection(
+            snapshot_rows=imported_snapshot_rows(
+                manifest_revision="predecessor-revision"
+            )
+        )
+        with patch.object(store, "get_db_connection", return_value=conn):
+            store.validate_release(
+                41,
+                date_from="2026-01-01",
+                date_to="2026-01-02",
+                expected_code_revision="abc123",
+            )
+
+    def test_validation_rejects_wrong_per_release_import_execution_revision(self):
+        import canonical_release_store as store
+
+        conn = ExactValidationConnection(
+            execution_rows=import_execution_rows(code_revision="wrong-revision")
+        )
+        with patch.object(store, "get_db_connection", return_value=conn):
+            with self.assertRaises(store.ValidationGateError):
+                store.validate_release(
+                    41,
+                    date_from="2026-01-01",
+                    date_to="2026-01-02",
+                    expected_code_revision="abc123",
+                )
+
+    def test_validation_rejects_import_execution_count_not_matching_snapshot(self):
+        import canonical_release_store as store
+
+        conn = ExactValidationConnection(
+            execution_rows=import_execution_rows(imported_row_count=99)
+        )
+        with patch.object(store, "get_db_connection", return_value=conn):
+            with self.assertRaises(store.ValidationGateError):
+                store.validate_release(
+                    41,
+                    date_from="2026-01-01",
+                    date_to="2026-01-02",
+                    expected_code_revision="abc123",
+                )
+
+    def test_corrected_latest_validation_run_supersedes_failed_first_run(self):
+        import canonical_release_store as store
+
+        failed_rows = exact_evidence_rows()
+        failed_rows[0] = {**failed_rows[0], "result_status": "fail"}
+        conn = ExactValidationConnection(
+            validation_batches=[
+                validation_batch("00000000-0000-0000-0000-000000000001", rows=failed_rows),
+                validation_batch("00000000-0000-0000-0000-000000000002"),
+            ]
+        )
+        with patch.object(store, "get_db_connection", return_value=conn):
+            store.validate_release(
+                41,
+                date_from="2026-01-01",
+                date_to="2026-01-02",
+                expected_code_revision="abc123",
+            )
+
+    def test_incomplete_latest_validation_run_fails_closed(self):
+        import canonical_release_store as store
+
+        conn = ExactValidationConnection(
+            validation_batches=[
+                validation_batch(
+                    "00000000-0000-0000-0000-000000000003",
+                    completed_at=None,
+                )
+            ]
+        )
+        with patch.object(store, "get_db_connection", return_value=conn):
+            with self.assertRaises(store.ValidationGateError):
+                store.validate_release(
+                    41,
+                    date_from="2026-01-01",
+                    date_to="2026-01-02",
+                    expected_code_revision="abc123",
+                )
+
+    def test_old_wrong_revision_evidence_is_ignored_when_latest_batch_is_valid(self):
+        import canonical_release_store as store
+
+        old_rows = [
+            {**row, "code_revision": "old-revision"}
+            for row in exact_evidence_rows()
+        ]
+        conn = ExactValidationConnection(
+            validation_batches=[
+                validation_batch("00000000-0000-0000-0000-000000000004", rows=old_rows),
+                validation_batch("00000000-0000-0000-0000-000000000005"),
+            ]
+        )
+        with patch.object(store, "get_db_connection", return_value=conn):
+            store.validate_release(
+                41,
+                date_from="2026-01-01",
+                date_to="2026-01-02",
+                expected_code_revision="abc123",
+            )
 
     def test_validation_requires_every_calendar_day_and_exact_scope_set(self):
         import canonical_release_store as store

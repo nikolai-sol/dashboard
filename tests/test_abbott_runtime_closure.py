@@ -31,6 +31,24 @@ REQUIRED_RUNTIME = {
 
 
 class AbbottRuntimeClosureTest(unittest.TestCase):
+    def _committed_runtime(self, root: Path) -> tuple[str, Path]:
+        target = root / "entry.py"
+        target.write_text("# entry\n", encoding="utf-8")
+        manifest = root / "runtime.sha256"
+        manifest.write_text(
+            f"{hashlib.sha256(target.read_bytes()).hexdigest()}  entry.py\n",
+            encoding="utf-8",
+        )
+        subprocess.run(["git", "init", "-q"], cwd=root, check=True)
+        subprocess.run(["git", "config", "user.email", "test@example.invalid"], cwd=root, check=True)
+        subprocess.run(["git", "config", "user.name", "Test"], cwd=root, check=True)
+        subprocess.run(["git", "add", "entry.py", "runtime.sha256"], cwd=root, check=True)
+        subprocess.run(["git", "commit", "-qm", "runtime"], cwd=root, check=True)
+        revision = subprocess.run(
+            ["git", "rev-parse", "HEAD"], cwd=root, check=True, capture_output=True, text=True
+        ).stdout.strip()
+        return revision, manifest
+
     def test_runtime_manifest_covers_runbook_entrypoints_and_local_import_closure(self):
         manifest = (ROOT / "ops/abbott-runtime-manifest.sha256").read_text()
         paths = {line.split("  ", 1)[1] for line in manifest.splitlines() if line}
@@ -106,6 +124,72 @@ class AbbottRuntimeClosureTest(unittest.TestCase):
             ):
                 with self.assertRaises(launcher.ActiveReleaseLaunchError):
                     launcher.attest_runtime(root, "abc123", manifest)
+
+    def test_attestation_rejects_untracked_import_or_executable_shadow_files(self):
+        import run_abbott_metrika_active_release as launcher
+
+        for relative in ("sitecustomize.py", "requests.py", "dotenv.py", "mysql/__init__.py", "other.sh"):
+            with self.subTest(relative=relative), tempfile.TemporaryDirectory() as directory:
+                root = Path(directory)
+                revision, manifest = self._committed_runtime(root)
+                shadow = root / relative
+                shadow.parent.mkdir(parents=True, exist_ok=True)
+                shadow.write_text("# untracked shadow\n", encoding="utf-8")
+
+                with self.assertRaises(launcher.ActiveReleaseLaunchError):
+                    launcher.attest_runtime(root, revision, manifest)
+
+    def test_attestation_allows_only_named_untracked_operational_paths(self):
+        import run_abbott_metrika_active_release as launcher
+
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            revision, manifest = self._committed_runtime(root)
+            (root / ".env").write_text("PROTECTED=placeholder\n", encoding="utf-8")
+            (root / "venv/lib").mkdir(parents=True)
+            (root / "venv/lib/installed.txt").write_text("package\n", encoding="utf-8")
+            (root / "logs").mkdir()
+            (root / "logs/collector.log").write_text("ok\n", encoding="utf-8")
+
+            launcher.attest_runtime(root, revision, manifest)
+
+    def test_attestation_rejects_symlink_escape_from_an_allowed_untracked_path(self):
+        import run_abbott_metrika_active_release as launcher
+
+        with tempfile.TemporaryDirectory() as directory, tempfile.TemporaryDirectory() as outside:
+            root = Path(directory)
+            revision, manifest = self._committed_runtime(root)
+            (root / ".gitignore").write_text("logs/\n", encoding="utf-8")
+            subprocess.run(["git", "add", ".gitignore"], cwd=root, check=True)
+            subprocess.run(["git", "commit", "-qm", "ignore logs"], cwd=root, check=True)
+            revision = subprocess.run(
+                ["git", "rev-parse", "HEAD"], cwd=root, check=True,
+                capture_output=True, text=True,
+            ).stdout.strip()
+            (root / "logs").mkdir()
+            (root / "logs/escape").symlink_to(Path(outside) / "collector.log")
+
+            with self.assertRaises(launcher.ActiveReleaseLaunchError):
+                launcher.attest_runtime(root, revision, manifest)
+
+    def test_attestation_rejects_ignored_files_outside_the_exact_allowlist(self):
+        import run_abbott_metrika_active_release as launcher
+
+        for relative, pattern in (("requests.pyc", "*.pyc"), (".env.local", ".env.*")):
+            with self.subTest(relative=relative), tempfile.TemporaryDirectory() as directory:
+                root = Path(directory)
+                revision, manifest = self._committed_runtime(root)
+                (root / ".gitignore").write_text(pattern + "\n", encoding="utf-8")
+                subprocess.run(["git", "add", ".gitignore"], cwd=root, check=True)
+                subprocess.run(["git", "commit", "-qm", "ignore local file"], cwd=root, check=True)
+                revision = subprocess.run(
+                    ["git", "rev-parse", "HEAD"], cwd=root, check=True,
+                    capture_output=True, text=True,
+                ).stdout.strip()
+                (root / relative).write_bytes(b"ignored shadow\n")
+
+                with self.assertRaises(launcher.ActiveReleaseLaunchError):
+                    launcher.attest_runtime(root, revision, manifest)
 
     def test_attestation_rejects_a_working_manifest_not_committed_at_head(self):
         import run_abbott_metrika_active_release as launcher

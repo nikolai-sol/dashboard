@@ -431,6 +431,35 @@ class AbbottCanonicalControlsTest(unittest.TestCase):
             (41, "90602537", "yandex_metrika", "2026-01-01", "2026-07-15"),
         )
 
+    def test_comparator_persists_one_completed_validation_batch_per_comparison(self):
+        from abbott_canonical_controls import compare_release_control_pack
+
+        conn = ComparatorConnection()
+        compare_release_control_pack(
+            conn, baseline_run_id=33, candidate_release_id=41
+        )
+
+        inserts = [
+            (sql, params)
+            for sql, params in conn.cursor_instance.calls
+            if sql.startswith("INSERT INTO portal_migration_validation_runs")
+        ]
+        self.assertGreater(len(inserts), 1)
+        run_ids = {params[2] for _, params in inserts}
+        self.assertEqual(len(run_ids), 1)
+        validation_run_id = run_ids.pop()
+        self.assertRegex(validation_run_id, r"^[0-9a-f-]{36}$")
+        for sql, _ in inserts:
+            self.assertIn("validation_run_id", sql)
+            self.assertIn("validation_run_completed_at", sql)
+        completion_sql, completion_params = next(
+            (sql, params)
+            for sql, params in conn.cursor_instance.calls
+            if sql.startswith("UPDATE portal_migration_validation_runs")
+        )
+        self.assertIn("validation_run_completed_at = UTC_TIMESTAMP()", completion_sql)
+        self.assertEqual(completion_params, (41, 33, validation_run_id))
+
     def test_comparator_fails_when_any_daily_scope_is_not_reconciled(self):
         from abbott_canonical_controls import compare_release_control_pack
 

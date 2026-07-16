@@ -13,6 +13,7 @@ import os
 from pathlib import Path
 import re
 from typing import Any, Mapping, Sequence
+import uuid
 
 
 ABBOTT_COUNTER_ID = "90602537"
@@ -570,23 +571,26 @@ def compare_release_control_pack(
                     threshold=0,
                 )
             )
+        validation_run_id = str(uuid.uuid4())
         for result in results:
             cursor.execute(
                 """
                 INSERT INTO portal_migration_validation_runs (
                     canonical_release_id, baseline_snapshot_id,
-                    candidate_snapshot_id, candidate_run_id, code_revision,
+                    candidate_snapshot_id, candidate_run_id,
+                    validation_run_id, validation_run_completed_at, code_revision,
                     control_name, expected_value, actual_value,
                     absolute_delta, relative_delta, threshold_value,
                     result_status, diagnostic_json, reviewed_by, accepted_at
                 ) VALUES (
-                    %s, %s, NULL, NULL, %s, %s, %s, %s,
+                    %s, %s, NULL, NULL, %s, NULL, %s, %s, %s, %s,
                     %s, %s, %s, %s, %s, NULL, NULL
                 )
                 """,
                 (
                     candidate_release_id,
                     baseline_run_id,
+                    validation_run_id,
                     release["code_revision"],
                     result.control_name,
                     result.expected_value,
@@ -602,6 +606,17 @@ def compare_release_control_pack(
                     ),
                 ),
             )
+        cursor.execute(
+            """
+            UPDATE portal_migration_validation_runs
+            SET validation_run_completed_at = UTC_TIMESTAMP()
+            WHERE canonical_release_id = %s
+              AND baseline_snapshot_id = %s
+              AND validation_run_id = %s
+              AND validation_run_completed_at IS NULL
+            """,
+            (candidate_release_id, baseline_run_id, validation_run_id),
+        )
         conn.commit()
         return results
     except AbbottControlError:

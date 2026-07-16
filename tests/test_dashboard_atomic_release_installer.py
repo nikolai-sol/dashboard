@@ -21,6 +21,105 @@ def create_release_tree(root: Path) -> None:
 
 
 class DashboardAtomicReleaseInstallerTest(unittest.TestCase):
+    def test_explicit_checkpoint_converts_current_directory_to_verified_rollback_release(self):
+        self.assertTrue(INSTALLER.is_file(), "reviewed release installer is missing")
+        with tempfile.TemporaryDirectory() as directory:
+            base = Path(directory)
+            current = base / "dashboard"
+            current.mkdir()
+            create_release_tree(current)
+            releases = base / "releases"
+            predecessor = "abcdef000001"
+
+            checkpoint = subprocess.run(
+                [
+                    "bash",
+                    str(INSTALLER),
+                    "--checkpoint-current",
+                    str(current),
+                    str(releases),
+                    predecessor,
+                ],
+                cwd=DASHBOARD,
+                capture_output=True,
+                text=True,
+            )
+            self.assertEqual(checkpoint.returncode, 0, checkpoint.stderr)
+            predecessor_release = releases / predecessor
+            predecessor_manifest = releases / f"{predecessor}.sha256"
+            self.assertTrue(current.is_symlink())
+            self.assertEqual(current.resolve(), predecessor_release.resolve())
+            self.assertTrue(predecessor_manifest.is_file())
+            verify = subprocess.run(
+                ["sha256sum", "-c", str(predecessor_manifest)],
+                cwd=predecessor_release,
+                capture_output=True,
+                text=True,
+            )
+            self.assertEqual(verify.returncode, 0, verify.stderr)
+
+            successor_source = base / "successor"
+            successor_source.mkdir()
+            create_release_tree(successor_source)
+            install = subprocess.run(
+                [
+                    "bash",
+                    str(INSTALLER),
+                    str(successor_source),
+                    str(releases),
+                    str(current),
+                    "abcdef000002",
+                ],
+                cwd=DASHBOARD,
+                capture_output=True,
+                text=True,
+            )
+            self.assertEqual(install.returncode, 0, install.stderr)
+            rollback = subprocess.run(
+                [
+                    "bash",
+                    str(INSTALLER),
+                    "--activate-existing",
+                    str(releases),
+                    str(current),
+                    predecessor,
+                ],
+                cwd=DASHBOARD,
+                capture_output=True,
+                text=True,
+            )
+            self.assertEqual(rollback.returncode, 0, rollback.stderr)
+            self.assertEqual(current.resolve(), predecessor_release.resolve())
+
+    def test_checkpoint_rejects_incomplete_or_private_current_tree_without_moving_it(self):
+        for private in (False, True):
+            with self.subTest(private=private), tempfile.TemporaryDirectory() as directory:
+                base = Path(directory)
+                current = base / "dashboard"
+                current.mkdir()
+                if private:
+                    create_release_tree(current)
+                    (current / "public/abbott-users.json").write_text("[]\n", encoding="utf-8")
+                else:
+                    (current / "server.js").write_text("// incomplete\n", encoding="utf-8")
+                result = subprocess.run(
+                    [
+                        "bash",
+                        str(INSTALLER),
+                        "--checkpoint-current",
+                        str(current),
+                        str(base / "releases"),
+                        "abcdef000001",
+                    ],
+                    cwd=DASHBOARD,
+                    capture_output=True,
+                    text=True,
+                )
+                self.assertNotEqual(result.returncode, 0)
+                self.assertTrue(current.is_dir())
+                self.assertFalse(current.is_symlink())
+                self.assertFalse((base / "releases/abcdef000001").exists())
+
     def test_installs_full_tree_manifest_and_flips_active_symlink_atomically(self):
         self.assertTrue(INSTALLER.is_file(), "reviewed release installer is missing")
         with tempfile.TemporaryDirectory() as directory:

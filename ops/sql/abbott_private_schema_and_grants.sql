@@ -401,6 +401,8 @@ GRANT SELECT, INSERT ON report_bd.portal_dataset_snapshots
 GRANT UPDATE (import_status, imported_row_count, rejected_row_count,
               manifest_json, imported_at) ON report_bd.portal_dataset_snapshots
   TO 'reportingdash_abbott_importer_role';
+GRANT SELECT, INSERT, UPDATE ON report_bd.portal_release_source_imports
+  TO 'reportingdash_abbott_importer_role';
 GRANT SELECT, INSERT ON report_bd.portal_content_catalog
   TO 'reportingdash_abbott_importer_role';
 GRANT SELECT, INSERT ON report_bd.portal_general_materials
@@ -426,6 +428,8 @@ GRANT SELECT, INSERT, UPDATE ON report_bd.portal_data_releases
 GRANT SELECT, UPDATE ON report_bd.portal_active_data_releases
   TO 'reportingdash_abbott_release_operator_role';
 GRANT SELECT, INSERT ON report_bd.portal_dataset_snapshots
+  TO 'reportingdash_abbott_release_operator_role';
+GRANT SELECT ON report_bd.portal_release_source_imports
   TO 'reportingdash_abbott_release_operator_role';
 GRANT SELECT, INSERT, UPDATE ON report_bd.portal_migration_validation_runs
   TO 'reportingdash_abbott_release_operator_role';

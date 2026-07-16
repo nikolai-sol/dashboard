@@ -95,7 +95,11 @@ def _required_control_names(manifest: dict) -> set[str]:
 
 
 def _validate_imported_sources(
-    *, release: dict, baseline_manifest: dict, snapshot_rows: list[dict]
+    *,
+    release: dict,
+    baseline_manifest: dict,
+    snapshot_rows: list[dict],
+    execution_rows: list[dict],
 ) -> None:
     raw_ids = _json_value(
         release.get("source_snapshot_ids"),
@@ -126,9 +130,24 @@ def _validate_imported_sources(
     ):
         raise ValidationGateError("Required imported source snapshots are incomplete")
 
+    executions_by_kind = {
+        str(row.get("source_kind")): row
+        for row in execution_rows
+        if isinstance(row, dict)
+    }
+    if (
+        len(execution_rows) != 4
+        or set(executions_by_kind) != set(ABBOTT_REQUIRED_SOURCE_KINDS)
+        or {
+            int(row.get("source_snapshot_id") or 0) for row in execution_rows
+        } != set(raw_ids)
+    ):
+        raise ValidationGateError("Required release import executions are incomplete")
+
     for kind in ABBOTT_REQUIRED_SOURCE_KINDS:
         frozen = frozen_by_kind[kind]
         snapshot = snapshots_by_kind[kind]
+        execution = executions_by_kind[kind]
         source_manifest = _json_value(
             snapshot.get("manifest_json"),
             error_message="Imported source manifest is invalid",
@@ -141,16 +160,24 @@ def _validate_imported_sources(
             or int(snapshot.get("imported_row_count") or 0) <= 0
             or int(snapshot.get("rejected_row_count") or 0) != 0
             or source_manifest.get("source_kind") != kind
-            or source_manifest.get("code_revision") != release.get("code_revision")
             or int(source_manifest.get("rejected_count") or 0) != 0
             or any(snapshot.get(field) != frozen.get(field) for field in fingerprint_fields)
             or any(source_manifest.get(field) != frozen.get(field) for field in fingerprint_fields)
         ):
             raise ValidationGateError("Imported source does not match the frozen baseline")
+        if (
+            execution.get("import_status") != "imported"
+            or execution.get("code_revision") != release.get("code_revision")
+            or int(execution.get("imported_row_count") or 0)
+            != int(snapshot.get("imported_row_count") or 0)
+            or int(execution.get("rejected_row_count") or 0) != 0
+        ):
+            raise ValidationGateError("Release import execution does not match the candidate")
 
 
 def _validate_exact_evidence(
-    rows: list[dict], *, expected_names: set[str], code_revision: str
+    rows: list[dict], *, expected_names: set[str], code_revision: str,
+    validation_run_id: str,
 ) -> None:
     actual_names = {
         str(row.get("control_name")) for row in rows if isinstance(row, dict)
@@ -159,7 +186,11 @@ def _validate_exact_evidence(
         raise ValidationGateError("Canonical validation evidence set is incomplete")
     for row in rows:
         status = row.get("result_status")
-        if row.get("code_revision") != code_revision:
+        if (
+            row.get("code_revision") != code_revision
+            or row.get("validation_run_id") != validation_run_id
+            or row.get("validation_run_completed_at") is None
+        ):
             raise ValidationGateError("Canonical validation revision does not match")
         if status == "pass":
             continue
@@ -345,28 +376,70 @@ def validate_release(
             """,
             (ABBOTT_DATASET_KEY, *source_ids),
         )
+        snapshot_rows = cur.fetchall()
+        cur.execute(
+            f"""
+            SELECT source_snapshot_id, source_kind, code_revision,
+                   import_status, imported_row_count, rejected_row_count
+            FROM portal_release_source_imports
+            WHERE canonical_release_id = %s
+              AND source_snapshot_id IN ({placeholders})
+            ORDER BY source_snapshot_id
+            FOR UPDATE
+            """,
+            (release_id, *source_ids),
+        )
         _validate_imported_sources(
             release=release,
             baseline_manifest=baseline_manifest,
-            snapshot_rows=cur.fetchall(),
+            snapshot_rows=snapshot_rows,
+            execution_rows=cur.fetchall(),
         )
 
         cur.execute(
             """
-            SELECT control_name, result_status, reviewed_by, accepted_at,
-                   code_revision
+            SELECT validation_run_id, validation_run_completed_at
             FROM portal_migration_validation_runs
             WHERE canonical_release_id = %s
               AND baseline_snapshot_id = %s
-            ORDER BY control_name
+            ORDER BY id DESC
+            LIMIT 1
             FOR UPDATE
             """,
             (release_id, release["baseline_validation_run_id"]),
+        )
+        latest_validation = cur.fetchone()
+        if (
+            not isinstance(latest_validation, dict)
+            or not isinstance(latest_validation.get("validation_run_id"), str)
+            or not latest_validation["validation_run_id"].strip()
+            or latest_validation.get("validation_run_completed_at") is None
+        ):
+            raise ValidationGateError("Latest canonical validation run is incomplete")
+
+        cur.execute(
+            """
+            SELECT control_name, result_status, reviewed_by, accepted_at,
+                   code_revision, validation_run_id,
+                   validation_run_completed_at
+            FROM portal_migration_validation_runs
+            WHERE canonical_release_id = %s
+              AND baseline_snapshot_id = %s
+              AND validation_run_id = %s
+            ORDER BY control_name
+            FOR UPDATE
+            """,
+            (
+                release_id,
+                release["baseline_validation_run_id"],
+                latest_validation["validation_run_id"],
+            ),
         )
         _validate_exact_evidence(
             cur.fetchall(),
             expected_names=expected_control_names,
             code_revision=release["code_revision"],
+            validation_run_id=latest_validation["validation_run_id"],
         )
 
         cur.execute(
@@ -418,12 +491,13 @@ def validate_release(
             """
             INSERT INTO portal_migration_validation_runs (
                 canonical_release_id, baseline_snapshot_id,
-                candidate_snapshot_id, candidate_run_id, code_revision,
+                candidate_snapshot_id, candidate_run_id,
+                validation_run_id, validation_run_completed_at, code_revision,
                 control_name, expected_value, actual_value,
                 absolute_delta, relative_delta, threshold_value,
                 result_status, diagnostic_json, reviewed_by, accepted_at
             ) VALUES (
-                %s, %s, NULL, NULL, %s,
+                %s, %s, NULL, NULL, UUID(), NOW(), %s,
                 'release_gate.calendar_complete', 0, 0,
                 0, 0, 0, 'pass', NULL, CURRENT_USER(), NOW()
             )

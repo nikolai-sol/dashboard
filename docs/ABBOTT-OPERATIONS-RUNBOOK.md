@@ -191,13 +191,13 @@ Verify table and role names only; do not query private rows:
 ```bash
 mysql --defaults-extra-file="$ABBOTT_OWNER_MYSQL_DEFAULTS_FILE" \
   --batch --skip-column-names report_bd \
-  --execute="SELECT COUNT(*) FROM information_schema.tables WHERE (table_schema='report_bd' AND table_name='portal_data_releases') OR (table_schema='report_bd' AND table_name='portal_active_data_releases') OR (table_schema='report_bd' AND table_name='portal_dataset_snapshots') OR (table_schema='report_bd' AND table_name='portal_migration_validation_runs') OR (table_schema='report_bd' AND table_name='portal_bitrix_page_facts') OR (table_schema='report_bd' AND table_name='canonical_fact_metrika_site_analytics_daily') OR (table_schema='report_bd' AND table_name='canonical_fact_metrika_returning_pages_daily') OR (table_schema='report_bd' AND table_name='canonical_source_coverage_daily') OR (table_schema='report_bd_private' AND table_name='canonical_fact_metrika_user_behavior_daily') OR (table_schema='report_bd_private' AND table_name='portal_user_directions_private') OR (table_schema='report_bd_private' AND table_name='portal_bitrix_page_facts') OR (table_schema='report_bd_private' AND table_name='portal_bitrix_journeys_private')" \
+  --execute="SELECT COUNT(*) FROM information_schema.tables WHERE (table_schema='report_bd' AND table_name='portal_data_releases') OR (table_schema='report_bd' AND table_name='portal_active_data_releases') OR (table_schema='report_bd' AND table_name='portal_dataset_snapshots') OR (table_schema='report_bd' AND table_name='portal_release_source_imports') OR (table_schema='report_bd' AND table_name='portal_migration_validation_runs') OR (table_schema='report_bd' AND table_name='portal_bitrix_page_facts') OR (table_schema='report_bd' AND table_name='canonical_fact_metrika_site_analytics_daily') OR (table_schema='report_bd' AND table_name='canonical_fact_metrika_returning_pages_daily') OR (table_schema='report_bd' AND table_name='canonical_source_coverage_daily') OR (table_schema='report_bd_private' AND table_name='canonical_fact_metrika_user_behavior_daily') OR (table_schema='report_bd_private' AND table_name='portal_user_directions_private') OR (table_schema='report_bd_private' AND table_name='portal_bitrix_page_facts') OR (table_schema='report_bd_private' AND table_name='portal_bitrix_journeys_private')" \
   > "$CHECKPOINT_DIR/schema-table-count.txt"
 export ACTUAL_SCHEMA_TABLE_COUNT="$(cat "$CHECKPOINT_DIR/schema-table-count.txt")"
-test "$ACTUAL_SCHEMA_TABLE_COUNT" = 12
+test "$ACTUAL_SCHEMA_TABLE_COUNT" = 13
 ```
 
-The exact reviewed query names all 12 schema/table pairs, including distinct
+The exact reviewed query names all 13 schema/table pairs, including distinct
 primary and private `portal_bitrix_page_facts` contracts. Any smaller or larger
 result blocks the rollout; a cross-product `IN` query is forbidden.
 
@@ -511,8 +511,7 @@ git -C "$CANONICAL_ROOT" show HEAD:ops/abbott-runtime-manifest.sha256 | \
   cmp - "$CANONICAL_RUNTIME_MANIFEST"
 (cd "$CANONICAL_ROOT" && sha256sum -c "$CANONICAL_RUNTIME_MANIFEST")
 test "$(git -C "$DASHBOARD_SOURCE_ROOT" rev-parse HEAD)" = "$DASHBOARD_CODE_REVISION"
-git -C "$DASHBOARD_SOURCE_ROOT" diff --quiet
-git -C "$DASHBOARD_SOURCE_ROOT" diff --cached --quiet
+test -z "$(git -C "$DASHBOARD_SOURCE_ROOT" status --porcelain=v1 --untracked-files=all)"
 cd "$DASHBOARD_SOURCE_ROOT"
 npm ci
 npm run build
@@ -529,6 +528,14 @@ bash scripts/validate-production-release.sh \
   "$DASHBOARD_SOURCE_ROOT/.next/standalone" \
   "$DASHBOARD_SOURCE_ROOT/.next/standalone/.env"
 export DASHBOARD_RELEASES_DIR=/var/www/dashboard-releases
+if [[ -d "$DASHBOARD_RUNTIME_ROOT" && ! -L "$DASHBOARD_RUNTIME_ROOT" ]]; then
+  bash scripts/install-reviewed-release.sh --checkpoint-current \
+    "$DASHBOARD_RUNTIME_ROOT" \
+    "$DASHBOARD_RELEASES_DIR" \
+    "$DASHBOARD_PREDECESSOR_REVISION"
+  (cd "$DASHBOARD_RELEASES_DIR/$DASHBOARD_PREDECESSOR_REVISION" && \
+    sha256sum -c "$DASHBOARD_RELEASES_DIR/$DASHBOARD_PREDECESSOR_REVISION.sha256")
+fi
 test ! -e "$DASHBOARD_RUNTIME_ROOT" || test -L "$DASHBOARD_RUNTIME_ROOT"
 bash scripts/install-reviewed-release.sh \
   "$DASHBOARD_SOURCE_ROOT/.next/standalone" \
@@ -548,11 +555,14 @@ asset scan, restart, or health check fails.
 
 Only after every gate passes, execute the tested validation transition. It
 locks the staging release, requires persisted comparator evidence bound to the
-baseline snapshot and candidate code revision, and accepts exactly the frozen
-baseline control names plus five `coverage.*.reconciled_days` controls. A warn
+baseline snapshot and candidate code revision, selects only the latest
+completed `validation_run_id`, and accepts exactly the frozen baseline control
+names plus five `coverage.*.reconciled_days` controls. A warn
 requires both `reviewed_by` and `accepted_at`. It also requires exactly four
-successfully imported source kinds whose SHA-256/byte/parser fingerprints match
-both the frozen baseline and import manifest, uses a recursive calendar CTE to
+successfully imported source kinds whose immutable SHA-256/byte/parser
+fingerprints match both the frozen baseline and import manifest, plus four
+matching candidate-revision executions in `portal_release_source_imports`. It
+uses a recursive calendar CTE to
 detect wholly absent dates, requires the exact five-scope reconciled bundle on
 every date, inserts final gate evidence, and CAS-transitions to `validated` in
 the same transaction:

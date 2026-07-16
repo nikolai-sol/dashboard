@@ -165,6 +165,53 @@ class AbbottSchemaContractTest(unittest.TestCase):
         ):
             self.assertNotIn(f"ON {table} {role}", sql)
 
+    def test_release_source_import_execution_is_release_scoped_and_auditable(self):
+        sql = self._normalized(self._primary_sql())
+        table = sql.split(
+            "CREATE TABLE IF NOT EXISTS portal_release_source_imports", 1
+        )[1].split(") ENGINE=InnoDB", 1)[0]
+        for column in (
+            "canonical_release_id BIGINT UNSIGNED NOT NULL",
+            "source_snapshot_id BIGINT UNSIGNED NOT NULL",
+            "source_kind VARCHAR(64) NOT NULL",
+            "code_revision VARCHAR(64) NOT NULL",
+            "import_status ENUM('imported', 'rejected') NOT NULL",
+            "imported_row_count BIGINT UNSIGNED NOT NULL",
+            "rejected_row_count BIGINT UNSIGNED NOT NULL",
+            "imported_at DATETIME NOT NULL",
+        ):
+            self.assertIn(column, table)
+        self.assertIn(
+            "UNIQUE KEY uniq_release_source_import (canonical_release_id, source_snapshot_id)",
+            table,
+        )
+        grants = self._normalized(self._private_sql())
+        self.assertIn(
+            "GRANT SELECT ON report_bd.portal_release_source_imports TO 'reportingdash_abbott_release_operator_role';",
+            grants,
+        )
+        self.assertNotRegex(
+            grants,
+            r"GRANT [^;]*DELETE[^;]* ON report_bd\.portal_release_source_imports",
+        )
+
+    def test_validation_evidence_batches_are_retryable_and_append_only(self):
+        sql = self._normalized(self._primary_sql())
+        table = sql.split(
+            "CREATE TABLE IF NOT EXISTS portal_migration_validation_runs", 1
+        )[1].split(") ENGINE=InnoDB", 1)[0]
+        self.assertIn("validation_run_id CHAR(36) NOT NULL", table)
+        self.assertIn("validation_run_completed_at DATETIME DEFAULT NULL", table)
+        self.assertIn(
+            "UNIQUE KEY uniq_release_validation_control (canonical_release_id, baseline_snapshot_id, validation_run_id, control_name)",
+            table,
+        )
+        grants = self._normalized(self._private_sql())
+        self.assertNotRegex(
+            grants,
+            r"GRANT [^;]*DELETE[^;]* ON report_bd\.portal_migration_validation_runs",
+        )
+
     def test_prebackfill_requires_every_declared_variable_before_insert(self):
         sql = (ROOT / "ops/sql/abbott_prebackfill_snapshot.sql").read_text()
         guard = sql.split("INSERT INTO report_bd.portal_dataset_snapshots", 1)[0]
@@ -479,6 +526,11 @@ class AbbottSchemaContractTest(unittest.TestCase):
         self.assertIn(
             "GRANT UPDATE (import_status, imported_row_count, rejected_row_count, "
             "manifest_json, imported_at) ON report_bd.portal_dataset_snapshots "
+            + importer,
+            sql,
+        )
+        self.assertIn(
+            "GRANT SELECT, INSERT, UPDATE ON report_bd.portal_release_source_imports "
             + importer,
             sql,
         )
