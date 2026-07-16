@@ -1,6 +1,11 @@
 import type { RowDataPacket } from "mysql2";
 import pool from "@/lib/db";
-import { getDefaultAbbottCounterIds, getDefaultZarukuCounterIds, loadAbbottBiData } from "@/lib/abbott-bi";
+import {
+  getDefaultAbbottCounterIds,
+  getDefaultZarukuCounterIds,
+  loadAbbottBiData,
+  type AbbottDashboardAudience,
+} from "@/lib/abbott-bi";
 import { loadZarukuSeoData } from "@/lib/zaruku-seo";
 import { loadSchema } from "@/lib/schema-parser";
 import {
@@ -2708,6 +2713,7 @@ function applyChannelLeadConversions(
 export async function loadDashboardData(
   request: Request,
   requestedId: string,
+  audience?: AbbottDashboardAudience,
 ): Promise<LoadedDashboardData> {
   const { id: normalizedRequestedId } = { id: requestedId };
 
@@ -2755,13 +2761,16 @@ export async function loadDashboardData(
   const sectionFieldOverrides = getSectionFieldOverrides(config);
 
   if (dashboardType === "abbott_bi" || dashboardType === "zaruku_bi") {
+    if (dashboardType === "abbott_bi" && audience !== "manager" && audience !== "embed") {
+      throw new Error("Abbott trusted audience is required");
+    }
     const counterIds = resolveAbbottCounterIds(sourceRows);
     const defaultCounterIds = dashboardType === "zaruku_bi" ? getDefaultZarukuCounterIds() : getDefaultAbbottCounterIds();
     const effectiveCounterIds = counterIds.length > 0 ? counterIds : defaultCounterIds;
     const portalPayload =
       dashboardType === "zaruku_bi"
         ? { zaruku_seo: await loadZarukuSeoData(effectiveCounterIds, range.from, range.to) }
-        : { abbott_bi: await loadAbbottBiData(effectiveCounterIds, range.from, range.to) };
+        : { abbott_bi: await loadAbbottBiData(dashboard.id, effectiveCounterIds, range.from, range.to, audience) };
 
     const response: DashboardData = {
       dashboard: {
@@ -3552,7 +3561,7 @@ export async function loadDashboardData(
     compareUrl.searchParams.delete("compare_from");
     compareUrl.searchParams.delete("compare_to");
     const compareRequest = new Request(compareUrl.toString(), { method: "GET" });
-    const compareResult = await loadDashboardData(compareRequest, requestedId);
+    const compareResult = await loadDashboardData(compareRequest, requestedId, audience);
     response.comparison = buildComparison(response, compareResult.data);
   }
 

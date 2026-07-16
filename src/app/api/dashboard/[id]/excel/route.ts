@@ -353,7 +353,7 @@ export async function GET(
     if (!access.authorized) {
       return privateJson({ error: "Authentication required" }, { status: 401 });
     }
-    const { data: loadedData, leads_rows } = await loadDashboardData(request, id);
+    const { data: loadedData, leads_rows } = await loadDashboardData(request, id, access.audience);
     const data = projectAbbottDashboardData(loadedData, access.audience);
     const i18n = getDashboardI18n(data.dashboard.language);
     const currency = data.dashboard.currency || "EUR";

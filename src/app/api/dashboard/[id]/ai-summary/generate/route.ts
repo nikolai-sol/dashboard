@@ -67,7 +67,11 @@ export async function POST(
       );
     }
 
-    const { dashboard_id, data: loadedData, ai_summary_enabled } = await loadDashboardData(request, id);
+    const { dashboard_id, data: loadedData, ai_summary_enabled } = await loadDashboardData(
+      request,
+      id,
+      access.audience,
+    );
     const data = projectAbbottDashboardData(loadedData, access.audience);
     if (!ai_summary_enabled) {
       return privateJson(

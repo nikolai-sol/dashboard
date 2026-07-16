@@ -109,7 +109,7 @@ async function loadEffectiveSummary(request: Request, dashboardId: string) {
     ai_summary_override,
     ai_summary_override_text,
     ai_summary_snapshot,
-  } = await loadDashboardData(request, dashboardId);
+  } = await loadDashboardData(request, dashboardId, "manager");
   return buildSummaryState({
     enabled: ai_summary_enabled,
     overrideText: ai_summary_override_text ?? null,

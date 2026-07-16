@@ -1,1961 +1,1025 @@
-import fs from "node:fs";
-import path from "node:path";
-import type { RowDataPacket } from "mysql2";
-import * as XLSX from "xlsx";
+import type { Pool, PoolConnection, RowDataPacket } from "mysql2/promise";
+
+import {
+  loadActiveAbbottAggregateData,
+  loadActiveAbbottBitrixAnalytics,
+  loadActiveAbbottSessionJourneys,
+  loadActiveAbbottWorkbookData,
+} from "@/lib/abbott-private-store";
+import type {
+  AbbottAggregatePrivateData,
+  AbbottPrivateSessionJourneysData,
+  ParsedAbbottWorkbook,
+  ParsedBitrixAnalytics,
+} from "@/lib/abbott-private-types";
 import pool from "@/lib/db";
 import type {
-  AbbottBiData,
   AbbottBiBitrixPageRow,
   AbbottBiBitrixSummary,
+  AbbottBiData,
   AbbottBiExternalClickRow,
-  AbbottBiExternalEventRow,
   AbbottBiMaterialRow,
   AbbottBiPageStatRow,
   AbbottBiReturningRow,
-  AbbottBiSessionJourneyRow,
   AbbottBiSessionJourneysData,
-  AbbottBiTimeBucketRow,
   AbbottBiTimeBuckets,
   AbbottBiUserActionRow,
   AbbottBiUserSummaryRow,
 } from "@/lib/types";
 
-type WorkbookCache = {
-  versionKey: string;
-  data: ParsedAbbottWorkbook;
-};
+export type AbbottDashboardAudience = "manager" | "embed";
 
-type ParsedAbbottWorkbook = {
-  userDirections: Map<string, string | null>;
-  generalMaterials: Array<{ name: string; url: string }>;
-  externalEvents: AbbottBiExternalEventRow[];
-  contentByTitle: Map<
-    string,
-    {
-      direction: string | null;
-      material_type: string | null;
-      access: string | null;
-      is_active: boolean | null;
-    }
-  >;
-  contentByTitleAndType: Map<
-    string,
-    {
-      direction: string | null;
-      material_type: string | null;
-      access: string | null;
-      is_active: boolean | null;
-    }
-  >;
-  contentBySlug: Map<
-    string,
-    {
-      direction: string | null;
-      material_type: string | null;
-      access: string | null;
-      is_active: boolean | null;
-    }
-  >;
-  urlReturnDirections: Map<string, string | null>;
-  ymUrlReturn: Array<{
-    url: string;
-    date: string | null;
-    visits: number;
-    returning_1_day: number;
-    returning_2_7_days: number;
-    returning_8_31_days: number;
-  }>;
-};
+const ABBOTT_DATASET_KEY = "abbott";
+const ABBOTT_SOURCE_KEY = "yandex_metrika";
+const ABBOTT_COUNTER_ID = "90602537";
+const ABBOTT_CANONICAL_CUTOFF = "2026-01-01";
+const ABBOTT_REQUIRED_SCOPES = ["other", "traffic", "page", "user_behavior", "returning"] as const;
 
-type PortalBiConfig = {
-  defaultCounterIds: string[];
-  useWorkbook: boolean;
-  useAbbottMetadata: boolean;
-  useBitrix: boolean;
-  useExternalClicks: boolean;
-  useAbbottReturningApi: boolean;
-};
+type AbbottRequiredScope = (typeof ABBOTT_REQUIRED_SCOPES)[number];
+type AbbottCoverageStatus =
+  | "success"
+  | "success_empty"
+  | "partial"
+  | "skipped"
+  | "sampled"
+  | "failed"
+  | "missing"
+  | "unavailable"
+  | "invalid_request";
 
-type ParsedBitrixAnalytics = {
-  summary: AbbottBiBitrixSummary | null;
-  rows: AbbottBiBitrixPageRow[];
-};
-
-type RawBitrixAnalyticsPayload = {
-  summary?: {
-    raw_hit_rows?: number;
-    clean_hit_rows?: number;
-    raw_date_from?: string;
-    raw_date_to?: string;
-    date_from?: string;
-    date_to?: string;
-    sessions_loaded?: number;
-    unique_clean_urls?: number;
-    excluded?: Record<string, number>;
-  };
-  rows?: Array<{
-    url?: string;
-    normalized_url?: string;
-    path?: string;
-    material_type_hint?: string;
-    pageviews?: number;
-    sessions?: number;
-    users?: number;
-    guests?: number;
-    logged_in_hits?: number;
-    anonymous_hits?: number;
-    logged_in_sessions?: number;
-    anonymous_sessions?: number;
-    entry_sessions?: number;
-    exit_sessions?: number;
-    avg_session_duration_seconds?: number;
-    top_utm_source?: string;
-    top_utm_medium?: string;
-    top_utm_campaign?: string;
-  }>;
-};
-
-type ContentSheetConfig = {
-  name: string;
-  materialType: string | null;
-  directionKey?: string;
-  accessKey?: string;
-  typeKey?: string;
-};
-
-type LegacyUserSummaryRow = RowDataPacket & {
-  user_id: number | string | null;
-  has_user_id: number | string | null;
-  traffic_source: string | null;
-  visits: number | string | null;
-  users: number | string | null;
-  new_users: number | string | null;
-  page_depth: number | string | null;
-  avg_duration: number | string | null;
-  bounce_rate: number | string | null;
-};
-
-type LegacyUserActionRow = RowDataPacket & {
-  user_id: number | string | null;
-  has_user_id: number | string | null;
-  traffic_source: string | null;
-  start_url: string | null;
-  end_url: string | null;
-  visits: number | string | null;
-  page_depth: number | string | null;
-  avg_duration: number | string | null;
-};
-
-type CanonicalUserBehaviorRow = RowDataPacket & {
-  user_id: number | string | null;
-  has_user_id?: number | string | null;
-  traffic_source: string | null;
-  start_url?: string | null;
-  end_url?: string | null;
-  visits: number | string | null;
-  users?: number | string | null;
-  new_users?: number | string | null;
-  page_depth: number | string | null;
-  avg_duration: number | string | null;
-  bounce_rate?: number | string | null;
-};
-
-type LegacyPageStatRow = RowDataPacket & {
-  page_title: string | null;
-  url: string | null;
-  pageviews: number | string | null;
-  users: number | string | null;
-};
-
-type CanonicalPageStatRow = RowDataPacket & {
-  page_title: string | null;
-  url: string | null;
-  pageviews: number | string | null;
-  users: number | string | null;
-};
-
-type CanonicalTrafficSummaryRow = RowDataPacket & {
-  traffic_source: string | null;
-  visits: number | string | null;
-  users: number | string | null;
-  new_users: number | string | null;
-  page_depth: number | string | null;
-  avg_duration: number | string | null;
-  bounce_rate: number | string | null;
-};
-
-type LegacyReturningFallbackRow = RowDataPacket & {
-  url: string | null;
-  visits: number | string | null;
-};
-
-type AbbottReturningApiRow = {
+export interface AbbottCanonicalGap {
+  counter_id: string;
   report_date: string;
-  url: string;
-  visits: number;
-  returning_1_day: number;
-  returning_2_7_days: number;
-  returning_8_31_days: number;
-};
-
-type LegacyExternalFactDailyRow = RowDataPacket & {
-  report_date: string | Date | null;
-  external_url: string | null;
-  outbound_clicks: number | string | null;
-};
-
-type LegacyTimeBucketCountRow = RowDataPacket & {
-  bucket_id: string | null;
-  users: number | string | null;
-};
-
-type LegacyTimeBucketPageRow = RowDataPacket & {
-  url: string | null;
-  bucket_id: string | null;
-  users: number | string | null;
-};
-
-declare global {
-  var __abbottWorkbookCache: WorkbookCache | undefined;
+  scope: AbbottRequiredScope | "release" | "request";
+  status: AbbottCoverageStatus;
 }
 
-const EMPTY_WORKBOOK_DATA: ParsedAbbottWorkbook = {
-  userDirections: new Map(),
-  generalMaterials: [],
-  externalEvents: [],
-  contentByTitle: new Map(),
-  contentByTitleAndType: new Map(),
-  contentBySlug: new Map(),
-  urlReturnDirections: new Map(),
-  ymUrlReturn: [],
+export interface AbbottCanonicalDataQuality {
+  status: "complete" | "incomplete";
+  release_id: number | null;
+  requested_scopes: readonly AbbottRequiredScope[];
+  requested_from: string;
+  requested_to: string;
+  blocking_gaps: AbbottCanonicalGap[];
+}
+
+export type AbbottCanonicalBiData = AbbottBiData & {
+  source: "canonical";
+  access_level: AbbottDashboardAudience;
+  data_quality: AbbottCanonicalDataQuality;
 };
 
-function asNumber(value: unknown): number {
-  const parsed = Number(value);
-  return Number.isFinite(parsed) ? parsed : 0;
+export interface AbbottBiQueryExecutor {
+  query(sql: string, params: readonly unknown[]): Promise<readonly Record<string, unknown>[]>;
 }
 
-function asString(value: unknown): string {
-  return String(value ?? "").trim();
+export interface AbbottBiLoaderDependencies {
+  aggregateExecutor: AbbottBiQueryExecutor;
+  privateExecutor: AbbottBiQueryExecutor;
+  loadAggregateData(dashboardId: number): Promise<AbbottAggregatePrivateData>;
+  loadManagerWorkbook(dashboardId: number): Promise<ParsedAbbottWorkbook>;
+  loadManagerBitrixPages(dashboardId: number): Promise<ParsedBitrixAnalytics>;
+  loadManagerJourneys(dashboardId: number): Promise<AbbottPrivateSessionJourneysData>;
 }
 
-function asDateString(value: unknown): string {
-  if (value instanceof Date) {
-    return value.toISOString().slice(0, 10);
+type ActiveReleaseRow = Record<string, unknown> & {
+  canonical_release_id?: unknown;
+  release_status?: unknown;
+};
+
+type CoverageRow = Record<string, unknown> & {
+  counter_id?: unknown;
+  report_date?: unknown;
+  scope_key?: unknown;
+  collection_status?: unknown;
+  pagination_complete?: unknown;
+  is_sampled?: unknown;
+  empty_reconciled?: unknown;
+};
+
+type SiteFactRow = Record<string, unknown> & {
+  analytics_scope?: unknown;
+  traffic_source?: unknown;
+  utm_source?: unknown;
+  page_url?: unknown;
+  page_title?: unknown;
+  sessions?: unknown;
+  users?: unknown;
+  pageviews?: unknown;
+  bounce_rate?: unknown;
+  average_session_seconds?: unknown;
+};
+
+type ReturningFactRow = Record<string, unknown> & {
+  report_date?: unknown;
+  raw_page_value?: unknown;
+  normalized_page?: unknown;
+  return_bucket_code?: unknown;
+  source_percentage?: unknown;
+  source_denominator?: unknown;
+};
+
+type PrivateBehaviorRow = Record<string, unknown> & {
+  raw_user_id?: unknown;
+  start_url?: unknown;
+  end_url?: unknown;
+  pageviews?: unknown;
+};
+
+type AbbottReturningOutput = AbbottBiReturningRow & {
+  is_derived: true;
+  normalization_collision: boolean;
+};
+
+function text(value: unknown): string {
+  return typeof value === "string" ? value : value === null || value === undefined ? "" : String(value);
+}
+
+function nullableText(value: unknown): string | null {
+  const valueText = text(value);
+  return valueText.length > 0 ? valueText : null;
+}
+
+function rawIdentifier(value: unknown): string {
+  if (typeof value !== "string" || value.length === 0) {
+    throw new Error("Abbott canonical data is unavailable");
   }
-  return asString(value).slice(0, 10);
+  return value;
 }
 
-function workbookJsonCandidates() {
-  return [path.join(process.cwd(), "public", "abbott", "abbott-workbook.json")];
-}
-
-function workbookXlsxCandidates() {
-  return [path.join(process.cwd(), "public", "abbott", "Abbott names.xlsx")];
-}
-
-function bitrixAnalyticsCandidates() {
-  return [path.join(process.cwd(), "public", "abbott", "bitrix-analytics.json")];
-}
-
-function bitrixSessionJourneysCandidates() {
-  return [path.join(process.cwd(), "public", "abbott", "bitrix-session-journeys.json")];
-}
-
-function resolveWorkbookJsonPath() {
-  const match = workbookJsonCandidates().find((candidate) => fs.existsSync(candidate));
-  if (!match) {
-    throw new Error("Abbott workbook JSON not found");
+function numberMetric(value: unknown): number {
+  if (typeof value === "number" && Number.isFinite(value)) return value;
+  if (typeof value === "string" && /^\d+(?:\.\d+)?$/.test(value)) {
+    const parsed = Number(value);
+    return Number.isFinite(parsed) ? parsed : 0;
   }
-  return match;
+  return 0;
 }
 
-function resolveWorkbookXlsxPath() {
-  return workbookXlsxCandidates().find((candidate) => fs.existsSync(candidate)) ?? null;
+function integerMetric(value: unknown): number {
+  return Math.round(numberMetric(value));
 }
 
-function resolveBitrixAnalyticsPath() {
-  return bitrixAnalyticsCandidates().find((candidate) => fs.existsSync(candidate)) ?? null;
+function booleanMetric(value: unknown): boolean {
+  return value === true || value === 1 || value === "1";
 }
 
-function resolveBitrixSessionJourneysPath() {
-  return bitrixSessionJourneysCandidates().find((candidate) => fs.existsSync(candidate)) ?? null;
-}
-
-function loadPortalWorkbookData(useWorkbook: boolean): ParsedAbbottWorkbook {
-  return useWorkbook ? loadWorkbookData() : EMPTY_WORKBOOK_DATA;
-}
-
-function emptySessionJourneysData(): AbbottBiSessionJourneysData {
-  return { report_date: "", schema: null, summary: null, rows: [] };
-}
-
-function loadBitrixSessionJourneysData(): AbbottBiSessionJourneysData {
-  const journeysPath = resolveBitrixSessionJourneysPath();
-  if (!journeysPath) {
-    return emptySessionJourneysData();
+function positiveInteger(value: unknown): number | null {
+  if (typeof value === "number" && Number.isSafeInteger(value) && value > 0) return value;
+  if (typeof value === "string" && /^[1-9]\d*$/.test(value)) {
+    const parsed = Number(value);
+    return Number.isSafeInteger(parsed) ? parsed : null;
   }
-
-  const payload = JSON.parse(fs.readFileSync(journeysPath, "utf-8")) as {
-    report_date?: string;
-    schema?: AbbottBiSessionJourneysData["schema"];
-    summary?: AbbottBiSessionJourneysData["summary"];
-    rows?: Array<{
-      session_id?: number;
-      user_id?: number | null;
-      has_user_id?: boolean;
-      entry_url_day?: string;
-      exit_url_day?: string;
-      entry_url_session?: string;
-      exit_url_session?: string;
-      hits_total?: number;
-      hits_clean?: number;
-      hits_content?: number;
-      steps_content?: number;
-      events_count?: number;
-      duration_seconds?: number;
-      content_path?: string[];
-      content_path_summary?: string;
-      all_path_summary?: string;
-      events_available?: boolean;
-    }>;
-  };
-
-  const rows = (payload.rows ?? [])
-    .map<AbbottBiSessionJourneyRow>((row) => {
-      const hasUserId = Boolean(row.has_user_id) && asNumber(row.user_id) > 0;
-      return {
-        session_id: Math.round(asNumber(row.session_id)),
-        user_id: hasUserId ? String(Math.trunc(asNumber(row.user_id))) : null,
-        has_user_id: hasUserId,
-        entry_url_day: asString(row.entry_url_day),
-        exit_url_day: asString(row.exit_url_day),
-        entry_url_session: asString(row.entry_url_session),
-        exit_url_session: asString(row.exit_url_session),
-        hits_total: Math.round(asNumber(row.hits_total)),
-        hits_clean: Math.round(asNumber(row.hits_clean)),
-        hits_content: Math.round(asNumber(row.hits_content)),
-        steps_content: Math.round(asNumber(row.steps_content)),
-        events_count: Math.round(asNumber(row.events_count)),
-        duration_seconds: Math.round(asNumber(row.duration_seconds)),
-        content_path: (row.content_path ?? []).map((url) => asString(url)).filter(Boolean),
-        content_path_summary: asString(row.content_path_summary),
-        all_path_summary: asString(row.all_path_summary),
-        events_available: Boolean(row.events_available),
-      };
-    })
-    .filter((row) => row.session_id > 0);
-
-  return {
-    report_date: asString(payload.report_date),
-    schema: payload.schema ?? null,
-    summary: payload.summary ?? null,
-    rows,
-  };
-}
-
-function getContentValue(row: Record<string, unknown>, key: string) {
-  return asString(row[key]);
-}
-
-function upsertContentMetadata(
-  map: ParsedAbbottWorkbook["contentByTitle"] | ParsedAbbottWorkbook["contentBySlug"],
-  title: string,
-  next: { direction?: string | null; material_type?: string | null; access?: string | null },
-  isActive?: boolean | null,
-) {
-  if (!title) return;
-  const current = map.get(title) ?? {
-    direction: null,
-    material_type: null,
-    access: null,
-    is_active: null,
-  };
-  const prefersIncoming =
-    current.is_active !== true && isActive === true
-      ? true
-      : current.is_active === null && isActive === false
-        ? true
-        : false;
-  map.set(title, {
-    direction: prefersIncoming ? next.direction ?? null : current.direction ?? next.direction ?? null,
-    material_type: prefersIncoming ? next.material_type ?? null : current.material_type ?? next.material_type ?? null,
-    access: prefersIncoming ? next.access ?? null : current.access ?? next.access ?? null,
-    is_active:
-      current.is_active === true
-        ? true
-        : isActive === true
-          ? true
-          : isActive === false
-            ? false
-            : current.is_active ?? null,
-  });
-}
-
-function normalizeAbbottActivity(value: unknown): boolean | null {
-  const normalized = asString(value).toLowerCase();
-  if (!normalized) return null;
-  if (normalized === "да") return true;
-  if (normalized === "нет") return false;
   return null;
 }
 
-function extractAbbottSlugFromUrl(rawUrl: string | null | undefined) {
-  const value = asString(rawUrl);
-  if (!value) return null;
-  try {
-    const url = new URL(value);
-    const segments = url.pathname.split("/").filter(Boolean);
-    if (segments.length === 0) return null;
-    const lastSegment = segments[segments.length - 1] ?? "";
-    if (!lastSegment || /^\d+$/.test(lastSegment)) return null;
-    return lastSegment;
-  } catch {
-    return null;
-  }
+function placeholders(values: readonly unknown[]): string {
+  if (values.length === 0) throw new Error("Abbott canonical data is unavailable");
+  return values.map(() => "?").join(", ");
 }
 
-function normalizeAbbottPageUrl(rawUrl: string | null | undefined) {
-  const value = asString(rawUrl).replaceAll("&amp;", "&");
+function isIsoDate(value: string): boolean {
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(value)) return false;
+  const parsed = new Date(`${value}T00:00:00Z`);
+  return Number.isFinite(parsed.getTime()) && parsed.toISOString().slice(0, 10) === value;
+}
+
+function listDates(from: string, to: string): string[] {
+  if (!isIsoDate(from) || !isIsoDate(to) || from > to) return [];
+  const result: string[] = [];
+  const cursor = new Date(`${from}T00:00:00Z`);
+  const end = new Date(`${to}T00:00:00Z`);
+  while (cursor <= end) {
+    result.push(cursor.toISOString().slice(0, 10));
+    cursor.setUTCDate(cursor.getUTCDate() + 1);
+  }
+  return result;
+}
+
+function normalizePage(rawValue: unknown): string {
+  const value = text(rawValue).trim().replaceAll("&amp;", "&");
   if (!value) return "";
   try {
     const url = new URL(value);
-    const protocol = url.protocol.toLowerCase();
-    const host = url.host.toLowerCase();
-    const pathname = url.pathname.replace(/\/+$/, "") || "/";
-    return `${protocol}//${host}${pathname}`;
+    url.search = "";
+    url.hash = "";
+    url.protocol = url.protocol.toLowerCase();
+    url.hostname = url.hostname.toLowerCase();
+    url.pathname = url.pathname.replace(/\/{2,}/g, "/").replace(/\/+$/, "") || "/";
+    return url.toString().replace(/\/$/, url.pathname === "/" ? "/" : "");
   } catch {
-    return value.split("#")[0]?.split("?")[0]?.replace(/\/+$/, "") || value;
+    return value.split(/[?#]/, 1)[0]?.replace(/\/{2,}/g, "/").replace(/\/+$/, "") ?? "";
   }
 }
 
-function emptyBitrixMetrics() {
-  return {
-    bitrix_pageviews: 0,
-    bitrix_sessions: 0,
-    bitrix_users: 0,
-    bitrix_logged_in_sessions: 0,
-    bitrix_anonymous_sessions: 0,
-    bitrix_avg_session_duration: 0,
-  };
-}
-
-const ABBOTT_DIRECTION_BY_PREFIX: Record<string, string> = {
-  cardio: "Кардиология [262338]",
-  gastro: "Гастроэнтерология [262340]",
-  nevro: "Неврология и психиатрия [262339]",
-  wh: "Женское здоровье [262337]",
-  pulmo: "Здоровье дыхательной системы [263746]",
-  "respiratory-assistant": "Здоровье дыхательной системы [263746]",
-  farmatsevtam: "Фармацевты",
-  dermatology: "Дерматология",
-};
-
-const ABBOTT_DIRECTION_BY_QUERY_ID: Record<string, string> = {
-  "262337": "Женское здоровье [262337]",
-  "262338": "Кардиология [262338]",
-  "262339": "Неврология и психиатрия [262339]",
-  "262340": "Гастроэнтерология [262340]",
-  "263746": "Здоровье дыхательной системы [263746]",
-  "620888": "Управление сахарным диабетом [620888]",
-};
-
-const ABBOTT_MATERIAL_TYPE_BY_PREFIX: Record<string, string> = {
-  articles: "Статьи",
-  video: "Видео",
-  "klinicheskie-sluchai": "Клинические случаи",
-  "nauchno-obrazovatelnye-broshyury": "Научно-образовательные брошюры",
-  podcasts: "Подкасты",
-  tables: "Таблицы",
-  calculators: "Калькуляторы",
-};
-
-const ABBOTT_UTILITY_PAGE_PATHS = new Set(["/auth", "/auth_without_phone"]);
-
-function isAbbottUtilityPageUrl(rawUrl: string | null | undefined) {
-  const normalized = normalizeAbbottPageUrl(rawUrl);
-  if (!normalized) return false;
-  try {
-    const pathname = new URL(normalized).pathname.replace(/\/+$/, "") || "/";
-    return ABBOTT_UTILITY_PAGE_PATHS.has(pathname);
-  } catch {
-    return false;
-  }
-}
-
-export function toAbbottDateOnly(value: string | null | undefined) {
-  return asString(value).slice(0, 10);
+export function toAbbottDateOnly(value: string | null | undefined): string {
+  return text(value).slice(0, 10);
 }
 
 export function isAbbottBitrixPeriodActive(
   dashboardFrom: string,
   dashboardTo: string,
   summary: AbbottBiBitrixSummary | null,
-) {
+): boolean {
   if (!summary?.date_from || !summary?.date_to) return false;
-  const bitrixFrom = toAbbottDateOnly(summary.date_from);
-  const bitrixTo = toAbbottDateOnly(summary.date_to);
   const from = toAbbottDateOnly(dashboardFrom);
   const to = toAbbottDateOnly(dashboardTo);
-  if (!from || !to || !bitrixFrom || !bitrixTo) return false;
-  return from >= bitrixFrom && to <= bitrixTo;
+  const bitrixFrom = toAbbottDateOnly(summary.date_from);
+  const bitrixTo = toAbbottDateOnly(summary.date_to);
+  return Boolean(from && to && bitrixFrom && bitrixTo && from >= bitrixFrom && to <= bitrixTo);
 }
 
-function resolveAbbottPageMetadata(
+function emptyTimeBuckets(): AbbottBiTimeBuckets {
+  return {
+    overall: [
+      { bucket_id: "lt_1m", label: "Менее 1 мин", users: 0 },
+      { bucket_id: "1_2m", label: "1 - 2 минуты", users: 0 },
+      { bucket_id: "2_5m", label: "2 - 5 минут", users: 0 },
+      { bucket_id: "gt_5m", label: "Более 5 минут", users: 0 },
+    ],
+    materials: [],
+    by_page: [],
+  };
+}
+
+function emptyJourneys(): AbbottBiSessionJourneysData {
+  return { report_date: "", schema: null, summary: null, rows: [] };
+}
+
+function emptyAbbottData(
+  counters: string[],
+  audience: AbbottDashboardAudience,
+  from: string,
+  to: string,
+  releaseId: number | null,
+  gaps: AbbottCanonicalGap[],
+): AbbottCanonicalBiData {
+  return {
+    source: "canonical",
+    access_level: audience,
+    data_quality: {
+      status: gaps.length === 0 ? "complete" : "incomplete",
+      release_id: releaseId,
+      requested_scopes: ABBOTT_REQUIRED_SCOPES,
+      requested_from: from,
+      requested_to: to,
+      blocking_gaps: gaps,
+    },
+    counters,
+    users_summary: [],
+    traffic_summary: [],
+    user_actions: [],
+    page_stats: [],
+    bitrix_pages: [],
+    bitrix_summary: null,
+    bitrix_period_active: false,
+    session_journeys: emptyJourneys(),
+    external_events: [],
+    external_clicks: [],
+    time_buckets: emptyTimeBuckets(),
+    returning: [],
+    general_materials: [],
+  };
+}
+
+async function resolveActiveRelease(executor: AbbottBiQueryExecutor): Promise<number | null> {
+  const rows = (await executor.query(
+    `SELECT active_release.canonical_release_id, data_release.release_status
+     FROM \`report_bd\`.\`portal_active_data_releases\` AS active_release
+     INNER JOIN \`report_bd\`.\`portal_data_releases\` AS data_release
+       ON data_release.dataset_key = active_release.dataset_key
+      AND data_release.id = active_release.canonical_release_id
+     WHERE active_release.dataset_key = ?
+       AND data_release.dataset_key = ?
+     LIMIT 2`,
+    [ABBOTT_DATASET_KEY, ABBOTT_DATASET_KEY],
+  )) as readonly ActiveReleaseRow[];
+  if (rows.length !== 1 || rows[0]?.release_status !== "active") return null;
+  return positiveInteger(rows[0]?.canonical_release_id);
+}
+
+function coverageKey(counterId: string, reportDate: string, scope: string): string {
+  return `${counterId}\n${reportDate}\n${scope}`;
+}
+
+function validCoverageRow(row: CoverageRow): boolean {
+  if (!booleanMetric(row.pagination_complete) || booleanMetric(row.is_sampled)) return false;
+  if (row.collection_status === "success") return true;
+  return row.collection_status === "success_empty" && booleanMetric(row.empty_reconciled);
+}
+
+async function coverageGaps(
+  executor: AbbottBiQueryExecutor,
+  releaseId: number,
+  counterIds: string[],
+  from: string,
+  to: string,
+): Promise<AbbottCanonicalGap[]> {
+  const rows = (await executor.query(
+    `SELECT counter_id, report_date, scope_key, collection_status,
+            pagination_complete, is_sampled, empty_reconciled
+     FROM \`report_bd\`.\`canonical_source_coverage_daily\`
+     WHERE canonical_release_id = ?
+       AND source_key = ?
+       AND counter_id IN (${placeholders(counterIds)})
+       AND report_date >= ?
+       AND report_date <= ?
+     ORDER BY counter_id, report_date, scope_key`,
+    [releaseId, ABBOTT_SOURCE_KEY, ...counterIds, from, to],
+  )) as readonly CoverageRow[];
+  const byKey = new Map(rows.map((row) => [coverageKey(text(row.counter_id), text(row.report_date).slice(0, 10), text(row.scope_key)), row]));
+  const gaps: AbbottCanonicalGap[] = [];
+  for (const counterId of counterIds) {
+    for (const reportDate of listDates(from, to)) {
+      for (const scope of ABBOTT_REQUIRED_SCOPES) {
+        const row = byKey.get(coverageKey(counterId, reportDate, scope));
+        if (!row || !validCoverageRow(row)) {
+          gaps.push({
+            counter_id: counterId,
+            report_date: reportDate,
+            scope,
+            status: row ? (text(row.collection_status) as AbbottCoverageStatus) : "missing",
+          });
+        }
+      }
+    }
+  }
+  return gaps;
+}
+
+async function querySiteFacts(
+  executor: AbbottBiQueryExecutor,
+  releaseId: number,
+  counterIds: string[],
+  from: string,
+  to: string,
+): Promise<readonly SiteFactRow[]> {
+  return (await executor.query(
+    `SELECT analytics_scope,
+            JSON_UNQUOTE(JSON_EXTRACT(scope_dimensions, '$.traffic_source')) AS traffic_source,
+            JSON_UNQUOTE(JSON_EXTRACT(scope_dimensions, '$.utm_source')) AS utm_source,
+            JSON_UNQUOTE(JSON_EXTRACT(scope_dimensions, '$.page_url')) AS page_url,
+            JSON_UNQUOTE(JSON_EXTRACT(scope_dimensions, '$.page_title')) AS page_title,
+            sessions, users, pageviews, bounce_rate, average_session_seconds
+     FROM \`report_bd\`.\`canonical_fact_metrika_site_analytics_daily\`
+     WHERE canonical_release_id = ?
+       AND source_key = ?
+       AND analytics_account_id IN (${placeholders(counterIds)})
+       AND counter_id IN (${placeholders(counterIds)})
+       AND analytics_scope IN ('other', 'traffic', 'page')
+       AND report_date >= ?
+       AND report_date <= ?
+     ORDER BY analytics_scope, scope_hash`,
+    [releaseId, ABBOTT_SOURCE_KEY, ...counterIds, ...counterIds, from, to],
+  )) as readonly SiteFactRow[];
+}
+
+async function queryReturningFacts(
+  executor: AbbottBiQueryExecutor,
+  releaseId: number,
+  counterIds: string[],
+  from: string,
+  to: string,
+): Promise<readonly ReturningFactRow[]> {
+  return (await executor.query(
+    `SELECT report_date, raw_page_value, normalized_page, return_bucket_code,
+            source_percentage, source_denominator
+     FROM \`report_bd\`.\`canonical_fact_metrika_returning_pages_daily\`
+     WHERE canonical_release_id = ?
+       AND counter_id IN (${placeholders(counterIds)})
+       AND report_date >= ?
+       AND report_date <= ?
+       AND return_bucket_code IN ('next_day', 'days_2_7', 'days_8_31')
+     ORDER BY normalized_page_hash, raw_page_hash, report_date, return_bucket_code`,
+    [releaseId, ...counterIds, from, to],
+  )) as readonly ReturningFactRow[];
+}
+
+async function queryExternalClicks(
+  executor: AbbottBiQueryExecutor,
+  releaseId: number,
+  counterIds: string[],
+  from: string,
+  to: string,
+): Promise<readonly Record<string, unknown>[]> {
+  return executor.query(
+    `SELECT normalized_path AS external_url, COUNT(*) AS outbound_clicks
+     FROM \`report_bd\`.\`portal_external_events\`
+     WHERE canonical_release_id = ?
+       AND source_key = ?
+       AND analytics_account_id IN (${placeholders(counterIds)})
+       AND report_date >= ?
+       AND report_date <= ?
+     GROUP BY normalized_path, normalized_path_hash
+     ORDER BY outbound_clicks DESC, normalized_path_hash`,
+    [releaseId, ABBOTT_SOURCE_KEY, ...counterIds, from, to],
+  );
+}
+
+async function queryManagerBehavior(
+  executor: AbbottBiQueryExecutor,
+  releaseId: number,
+  counterIds: string[],
+  from: string,
+  to: string,
+): Promise<readonly PrivateBehaviorRow[]> {
+  return (await executor.query(
+    `SELECT raw_user_id, start_url, end_url, pageviews
+     FROM \`report_bd_private\`.\`canonical_fact_metrika_user_behavior_daily\`
+     WHERE canonical_release_id = ?
+       AND counter_id IN (${placeholders(counterIds)})
+       AND report_date >= ?
+       AND report_date <= ?
+     ORDER BY raw_user_id_hash, report_date, request_fingerprint`,
+    [releaseId, ...counterIds, from, to],
+  )) as readonly PrivateBehaviorRow[];
+}
+
+function metadataForPage(
   rawUrl: string,
   pageTitle: string,
-  contentByTitle: ParsedAbbottWorkbook["contentByTitle"],
-  contentByTitleAndType: ParsedAbbottWorkbook["contentByTitleAndType"],
-  contentBySlug: ParsedAbbottWorkbook["contentBySlug"],
-  userDirections: Map<string, string | null>,
-) {
-  const url = normalizeAbbottPageUrl(rawUrl);
-  if (isAbbottUtilityPageUrl(url)) {
-    return {
-      direction: null,
-      material_type: null,
-      access: null,
-    };
-  }
-  const inferredMaterialType = inferAbbottMaterialTypeFromUrl(url);
-  const contentMeta =
-    (inferredMaterialType ? contentByTitleAndType.get(`${inferredMaterialType}::${pageTitle}`) : null) ??
-    contentByTitle.get(pageTitle) ??
-    contentBySlug.get(extractAbbottSlugFromUrl(url) ?? "");
+  workbook: AbbottAggregatePrivateData["workbook"],
+): { direction: string | null; material_type: string | null; access: string | null; hidden: boolean } {
+  const normalized = normalizePage(rawUrl);
+  const path = (() => {
+    try {
+      return new URL(normalized).pathname;
+    } catch {
+      return normalized;
+    }
+  })();
+  const slug = path.split("/").filter(Boolean).at(-1) ?? "";
+  const metadata = workbook.contentByTitle.get(pageTitle) ?? workbook.contentBySlug.get(slug);
   return {
-    direction: contentMeta?.direction ?? inferAbbottDirectionFromUrl(rawUrl, userDirections) ?? null,
-    material_type: contentMeta?.material_type ?? inferredMaterialType ?? null,
-    access: contentMeta?.access ?? null,
+    direction: metadata?.direction ?? workbook.urlReturnDirections.get(normalized) ?? workbook.urlReturnDirections.get(path) ?? null,
+    material_type: metadata?.material_type ?? null,
+    access: metadata?.access ?? null,
+    hidden: metadata?.is_active === false,
   };
 }
 
-function inferAbbottDirectionFromUrl(
-  rawUrl: string | null | undefined,
-  directionById?: Map<string, string | null>,
-) {
-  const value = asString(rawUrl);
-  if (!value) return null;
-  try {
-    const url = new URL(value);
-    const searchParams = url.searchParams;
-
-    for (const key of ["direction", "direction[]"]) {
-      const matchedDirectionId = searchParams.getAll(key).find((candidate) => ABBOTT_DIRECTION_BY_QUERY_ID[candidate]);
-      if (matchedDirectionId) {
-        return ABBOTT_DIRECTION_BY_QUERY_ID[matchedDirectionId];
-      }
-    }
-
-    if (directionById) {
-      for (const key of ["preparat", "id", "ID", "material", "content_id"]) {
-        const matchedContentId = searchParams.getAll(key).find((candidate) => {
-          const direction = directionById.get(candidate);
-          return typeof direction === "string" && direction.trim().length > 0;
-        });
-        if (matchedContentId) {
-          return directionById.get(matchedContentId) ?? null;
-        }
-      }
-    }
-
-    const [prefix] = url.pathname.split("/").filter(Boolean);
-    if (!prefix) return null;
-    if (ABBOTT_DIRECTION_BY_PREFIX[prefix]) {
-      return ABBOTT_DIRECTION_BY_PREFIX[prefix];
-    }
-
-    if (directionById) {
-      const matchedPathId = url.pathname
-        .split("/")
-        .filter(Boolean)
-        .find((segment) => {
-          if (!/^\d+$/.test(segment)) return false;
-          const direction = directionById.get(segment);
-          return typeof direction === "string" && direction.trim().length > 0;
-        });
-      if (matchedPathId) {
-        return directionById.get(matchedPathId) ?? null;
-      }
-    }
-
-    return null;
-  } catch {
-    return null;
-  }
-}
-
-function inferAbbottMaterialTypeFromUrl(rawUrl: string | null | undefined) {
-  const value = asString(rawUrl);
-  if (!value) return null;
-  try {
-    const url = new URL(value);
-    const [prefix] = url.pathname.split("/").filter(Boolean);
-    if (!prefix) return null;
-    return ABBOTT_MATERIAL_TYPE_BY_PREFIX[prefix] ?? null;
-  } catch {
-    return null;
-  }
-}
-
-function loadWorkbookData(): ParsedAbbottWorkbook {
-  const jsonPath = resolveWorkbookJsonPath();
-  const jsonMtime = fs.statSync(jsonPath).mtimeMs;
-  const xlsxPath = resolveWorkbookXlsxPath();
-  const xlsxMtime = xlsxPath ? fs.statSync(xlsxPath).mtimeMs : 0;
-  const versionKey = `${jsonMtime}:${xlsxMtime}`;
-  if (global.__abbottWorkbookCache?.versionKey === versionKey) {
-    return global.__abbottWorkbookCache.data;
-  }
-
-  const payload = JSON.parse(fs.readFileSync(jsonPath, "utf-8")) as {
-    id?: Array<{ id?: number; direction?: string | null }>;
-    general_materials?: Array<{ name?: string; url?: string }>;
-    events?: Array<{ title?: string; direction?: string | null; registration_url?: string; access?: string | null }>;
-    ym_url_return?: Array<{
-      url?: string;
-      date?: string | null;
-      visits?: number;
-      returning_1_day?: number;
-      returning_2_7_days?: number;
-      returning_8_31_days?: number;
-    }>;
-  };
-
-  const userDirections = new Map<string, string | null>();
-  (payload.id ?? []).forEach((row) => {
-    const numericId = asNumber(row.id);
-    if (!Number.isFinite(numericId) || numericId <= 0) return;
-    userDirections.set(String(Math.trunc(numericId)), asString(row.direction) || null);
+function buildTrafficSummary(rows: readonly SiteFactRow[]): AbbottBiUserSummaryRow[] {
+  const totals = new Map<string, AbbottBiUserSummaryRow & { durationWeight: number; bounceWeight: number }>();
+  rows.filter((row) => row.analytics_scope === "other").forEach((row) => {
+    const source = nullableText(row.traffic_source) ?? "Unknown traffic";
+    const sessions = integerMetric(row.sessions);
+    const current = totals.get(source) ?? {
+      user_id: "",
+      has_user_id: false,
+      traffic_source: source,
+      direction: null,
+      visits: 0,
+      users: 0,
+      new_users: 0,
+      page_depth: 0,
+      avg_duration: 0,
+      bounce_rate: 0,
+      durationWeight: 0,
+      bounceWeight: 0,
+    };
+    current.visits += sessions;
+    current.users += integerMetric(row.users);
+    current.page_depth += integerMetric(row.pageviews);
+    current.durationWeight += numberMetric(row.average_session_seconds) * sessions;
+    current.bounceWeight += numberMetric(row.bounce_rate) * sessions;
+    totals.set(source, current);
   });
-
-  const generalMaterials = (payload.general_materials ?? [])
-    .map((row) => ({
-      name: asString(row.name),
-      url: asString(row.url),
-    }))
-    .filter((row) => row.name && row.url);
-
-  const externalEvents = (payload.events ?? [])
-    .map<AbbottBiExternalEventRow>((row) => ({
-      title: asString(row.title),
-      direction: asString(row.direction) || null,
-      registration_url: asString(row.registration_url),
-      access: asString(row.access) || null,
-    }))
-    .filter((row) => row.title && row.registration_url);
-
-  const ymUrlReturn = (payload.ym_url_return ?? [])
-    .map((row) => ({
-      url: asString(row.url),
-      date: asString(row.date) || null,
-      visits: asNumber(row.visits),
-      returning_1_day: asNumber(row.returning_1_day),
-      returning_2_7_days: asNumber(row.returning_2_7_days),
-      returning_8_31_days: asNumber(row.returning_8_31_days),
-    }))
-    .filter((row) => row.url);
-
-  const contentByTitle = new Map<
-    string,
-    {
-      direction: string | null;
-      material_type: string | null;
-      access: string | null;
-      is_active: boolean | null;
-    }
-  >();
-  const contentByTitleAndType = new Map<
-    string,
-    {
-      direction: string | null;
-      material_type: string | null;
-      access: string | null;
-      is_active: boolean | null;
-    }
-  >();
-  const contentBySlug = new Map<
-    string,
-    {
-      direction: string | null;
-      material_type: string | null;
-      access: string | null;
-      is_active: boolean | null;
-    }
-  >();
-  const urlReturnDirections = new Map<string, string | null>();
-
-  if (xlsxPath) {
-    const workbookBuffer = fs.readFileSync(xlsxPath);
-    const workbook = XLSX.read(workbookBuffer, { type: "buffer" });
-    const contentSheets: ContentSheetConfig[] = [
-      { name: "pages", materialType: null, directionKey: "Направление", accessKey: "Доступ", typeKey: "Тип материала" },
-      { name: "Статьи", materialType: "Статьи", directionKey: "Направление", accessKey: "Доступ" },
-      { name: "Видео", materialType: "Видео", directionKey: "Направление", accessKey: "Доступ" },
-      { name: "Клинические случаи", materialType: "Клинические случаи", directionKey: "Направление", accessKey: "Доступ" },
-      {
-        name: "Научно-образовательные брошюры",
-        materialType: "Научно-образовательные брошюры",
-        directionKey: "Направление",
-        accessKey: "Доступ",
-      },
-      { name: "Подкасты", materialType: "Подкасты", directionKey: "Направление" },
-      { name: "Калькуляторы", materialType: "Калькуляторы", directionKey: "Направление", accessKey: "Доступ" },
-      { name: "Проверить знания", materialType: "Проверить знания", directionKey: "Направление" },
-      { name: "Помощник фармацевта", materialType: "Помощник фармацевта" },
-      { name: "Алгоритмы фармацевтического кон", materialType: "Алгоритмы", directionKey: "Направление" },
-      { name: "Клинические рекомендации", materialType: "Клинические рекомендации", directionKey: "Направления" },
-      { name: "Таблицы", materialType: "Таблицы", directionKey: "Направление", accessKey: "Доступ" },
-    ];
-
-    contentSheets.forEach((sheet) => {
-      const worksheet = workbook.Sheets[sheet.name];
-      if (!worksheet) return;
-      const rows = XLSX.utils.sheet_to_json<Record<string, unknown>>(worksheet, { defval: "" });
-      rows.forEach((row) => {
-        const title = getContentValue(row, "Название");
-        const slug = getContentValue(row, "Символьный код");
-        const direction = sheet.directionKey ? getContentValue(row, sheet.directionKey) || null : null;
-        const access = sheet.accessKey ? getContentValue(row, sheet.accessKey) || null : null;
-        const isActive = normalizeAbbottActivity(row["Активность"]);
-        const materialType = sheet.typeKey
-          ? getContentValue(row, sheet.typeKey) || sheet.materialType || null
-          : sheet.materialType || null;
-        upsertContentMetadata(contentByTitle, title, {
-          direction,
-          access,
-          material_type: materialType,
-        }, isActive);
-        if (title && materialType) {
-          upsertContentMetadata(contentByTitleAndType, `${materialType}::${title}`, {
-            direction,
-            access,
-            material_type: materialType,
-          }, isActive);
-        }
-        if (slug) {
-          upsertContentMetadata(contentBySlug, slug, {
-            direction,
-            access,
-            material_type: materialType,
-          }, isActive);
-        }
-      });
-    });
-
-    const urlReturnSheet = workbook.Sheets.url_return;
-    if (urlReturnSheet) {
-      const rows = XLSX.utils.sheet_to_json<Record<string, unknown>>(urlReturnSheet, { defval: "" });
-      rows.forEach((row) => {
-        const url = getContentValue(row, "url");
-        const direction = getContentValue(row, "Направление") || null;
-        if (!url) return;
-        urlReturnDirections.set(url, direction);
-      });
-    }
-  }
-
-  const data = {
-    userDirections,
-    generalMaterials,
-    externalEvents,
-    contentByTitle,
-    contentByTitleAndType,
-    contentBySlug,
-    urlReturnDirections,
-    ymUrlReturn,
-  };
-  global.__abbottWorkbookCache = { versionKey, data };
-  return data;
+  return [...totals.values()].map(({ durationWeight, bounceWeight, ...row }) => ({
+    ...row,
+    page_depth: row.visits > 0 ? Number((row.page_depth / row.visits).toFixed(2)) : 0,
+    avg_duration: row.visits > 0 ? Number((durationWeight / row.visits).toFixed(2)) : 0,
+    bounce_rate: row.visits > 0 ? Number((bounceWeight / row.visits).toFixed(2)) : 0,
+  })).sort((left, right) => right.visits - left.visits || left.traffic_source.localeCompare(right.traffic_source));
 }
 
-function loadBitrixAnalyticsData(): ParsedBitrixAnalytics {
-  const bitrixPath = resolveBitrixAnalyticsPath();
-  if (!bitrixPath) {
-    return { summary: null, rows: [] };
-  }
-
-  const payload = JSON.parse(fs.readFileSync(bitrixPath, "utf-8")) as RawBitrixAnalyticsPayload;
-  const { contentByTitle, contentByTitleAndType, contentBySlug, userDirections } = loadWorkbookData();
-  const summary: AbbottBiBitrixSummary | null = payload.summary
-    ? {
-        raw_hit_rows: Math.round(asNumber(payload.summary.raw_hit_rows)),
-        clean_hit_rows: Math.round(asNumber(payload.summary.clean_hit_rows)),
-        raw_date_from: asString(payload.summary.raw_date_from),
-        raw_date_to: asString(payload.summary.raw_date_to),
-        date_from: asString(payload.summary.date_from),
-        date_to: asString(payload.summary.date_to),
-        sessions_loaded: Math.round(asNumber(payload.summary.sessions_loaded)),
-        unique_clean_urls: Math.round(asNumber(payload.summary.unique_clean_urls)),
-        excluded: Object.fromEntries(
-          Object.entries(payload.summary.excluded ?? {}).map(([key, value]) => [key, Math.round(asNumber(value))]),
-        ),
-      }
-    : null;
-
-  const rows = (payload.rows ?? [])
-    .map<AbbottBiBitrixPageRow>((row) => {
-      const url = normalizeAbbottPageUrl(row.normalized_url || row.url || "");
-      const pageMetadata = resolveAbbottPageMetadata(
-        url,
-        asString(row.path),
-        contentByTitle,
-        contentByTitleAndType,
-        contentBySlug,
-        userDirections,
-      );
-      const inferredMaterialType = inferAbbottMaterialTypeFromUrl(url) || asString(row.material_type_hint) || null;
-      return {
-        url,
-        path: asString(row.path),
-        direction: pageMetadata.direction,
-        material_type: pageMetadata.material_type ?? inferredMaterialType,
-        access: pageMetadata.access,
-        pageviews: Math.round(asNumber(row.pageviews)),
-        sessions: Math.round(asNumber(row.sessions)),
-        users: Math.round(asNumber(row.users)),
-        guests: Math.round(asNumber(row.guests)),
-        logged_in_hits: Math.round(asNumber(row.logged_in_hits)),
-        anonymous_hits: Math.round(asNumber(row.anonymous_hits)),
-        logged_in_sessions: Math.round(asNumber(row.logged_in_sessions)),
-        anonymous_sessions: Math.round(asNumber(row.anonymous_sessions)),
-        entry_sessions: Math.round(asNumber(row.entry_sessions)),
-        exit_sessions: Math.round(asNumber(row.exit_sessions)),
-        avg_session_duration: Number(asNumber(row.avg_session_duration_seconds).toFixed(2)),
-        top_utm_source: asString(row.top_utm_source),
-        top_utm_medium: asString(row.top_utm_medium),
-        top_utm_campaign: asString(row.top_utm_campaign),
-      };
-    })
-    .filter((row) => row.url)
-    .sort((a, b) => {
-      if (b.pageviews !== a.pageviews) return b.pageviews - a.pageviews;
-      if (b.sessions !== a.sessions) return b.sessions - a.sessions;
-      return a.url.localeCompare(b.url);
-    });
-
-  return { summary, rows };
-}
-
-function enrichPageStatsWithBitrix(
-  pageStats: AbbottBiPageStatRow[],
-  bitrixRows: AbbottBiBitrixPageRow[],
+function buildPageStats(
+  rows: readonly SiteFactRow[],
+  workbook: AbbottAggregatePrivateData["workbook"],
 ): AbbottBiPageStatRow[] {
-  const bitrixByUrl = new Map(bitrixRows.map((row) => [normalizeAbbottPageUrl(row.url), row]));
-  return pageStats.map((row) => {
-    const bitrix = bitrixByUrl.get(normalizeAbbottPageUrl(row.url));
-    if (!bitrix) {
-      return {
-        ...row,
-        ...emptyBitrixMetrics(),
-      };
-    }
-    return {
-      ...row,
-      bitrix_pageviews: bitrix.pageviews,
-      bitrix_sessions: bitrix.sessions,
-      bitrix_users: bitrix.users,
-      bitrix_logged_in_sessions: bitrix.logged_in_sessions,
-      bitrix_anonymous_sessions: bitrix.anonymous_sessions,
-      bitrix_avg_session_duration: bitrix.avg_session_duration,
+  const result = new Map<string, AbbottBiPageStatRow & { hidden: boolean }>();
+  rows.filter((row) => row.analytics_scope === "page").forEach((row) => {
+    const url = normalizePage(row.page_url);
+    const title = text(row.page_title);
+    const metadata = metadataForPage(url, title, workbook);
+    const key = `${title}\n${url}`;
+    const current = result.get(key) ?? {
+      page_title: title,
+      url,
+      direction: metadata.direction,
+      material_type: metadata.material_type,
+      access: metadata.access,
+      pageviews: 0,
+      users: 0,
+      bitrix_pageviews: 0,
+      bitrix_sessions: 0,
+      bitrix_users: 0,
+      bitrix_logged_in_sessions: 0,
+      bitrix_anonymous_sessions: 0,
+      bitrix_avg_session_duration: 0,
+      hidden: metadata.hidden,
     };
+    current.pageviews += integerMetric(row.pageviews);
+    current.users += integerMetric(row.users);
+    current.hidden ||= metadata.hidden;
+    result.set(key, current);
+  });
+  return [...result.values()]
+    .filter((row) => !row.hidden && Boolean(row.url || row.page_title))
+    .map((row) => ({
+      page_title: row.page_title,
+      url: row.url,
+      direction: row.direction,
+      material_type: row.material_type,
+      access: row.access,
+      pageviews: row.pageviews,
+      users: row.users,
+      bitrix_pageviews: row.bitrix_pageviews,
+      bitrix_sessions: row.bitrix_sessions,
+      bitrix_users: row.bitrix_users,
+      bitrix_logged_in_sessions: row.bitrix_logged_in_sessions,
+      bitrix_anonymous_sessions: row.bitrix_anonymous_sessions,
+      bitrix_avg_session_duration: row.bitrix_avg_session_duration,
+    }))
+    .sort((left, right) => right.pageviews - left.pageviews || right.users - left.users || left.page_title.localeCompare(right.page_title));
+}
+
+function mapBitrixPages(data: ParsedBitrixAnalytics): AbbottBiBitrixPageRow[] {
+  return data.rows.map((row) => ({
+    url: normalizePage(row.url),
+    path: normalizePage(row.path),
+    direction: null,
+    material_type: null,
+    access: null,
+    pageviews: row.pageviews,
+    sessions: row.sessions,
+    users: row.users,
+    guests: 0,
+    logged_in_hits: 0,
+    anonymous_hits: 0,
+    logged_in_sessions: 0,
+    anonymous_sessions: 0,
+    entry_sessions: 0,
+    exit_sessions: 0,
+    avg_session_duration: 0,
+    top_utm_source: "",
+    top_utm_medium: "",
+    top_utm_campaign: "",
+  }));
+}
+
+function bitrixSummary(data: ParsedBitrixAnalytics): AbbottBiBitrixSummary | null {
+  if (!data.summary) return null;
+  return {
+    raw_hit_rows: data.rows.reduce((total, row) => total + row.pageviews, 0),
+    clean_hit_rows: data.rows.reduce((total, row) => total + row.pageviews, 0),
+    raw_date_from: data.summary.date_from,
+    raw_date_to: data.summary.date_to,
+    date_from: data.summary.date_from,
+    date_to: data.summary.date_to,
+    sessions_loaded: data.rows.reduce((total, row) => total + row.sessions, 0),
+    unique_clean_urls: data.rows.length,
+    excluded: {},
+  };
+}
+
+function enrichWithBitrix(pageStats: AbbottBiPageStatRow[], bitrixRows: AbbottBiBitrixPageRow[]): AbbottBiPageStatRow[] {
+  const byUrl = new Map(bitrixRows.map((row) => [normalizePage(row.url), row]));
+  return pageStats.map((row) => {
+    const bitrix = byUrl.get(normalizePage(row.url));
+    return bitrix
+      ? {
+          ...row,
+          bitrix_pageviews: bitrix.pageviews,
+          bitrix_sessions: bitrix.sessions,
+          bitrix_users: bitrix.users,
+          bitrix_logged_in_sessions: bitrix.logged_in_sessions,
+          bitrix_anonymous_sessions: bitrix.anonymous_sessions,
+          bitrix_avg_session_duration: bitrix.avg_session_duration,
+        }
+      : row;
   });
 }
 
-function buildInClause(values: readonly string[]) {
-  return values.map(() => "?").join(", ");
+function parseNonNegativeDecimal(value: unknown): { numerator: bigint; scale: bigint } {
+  const normalized = text(value);
+  if (!/^\d+(?:\.\d+)?$/.test(normalized)) throw new Error("Abbott canonical data is unavailable");
+  const [whole, fraction = ""] = normalized.split(".");
+  return {
+    numerator: BigInt(`${whole}${fraction}`),
+    scale: BigInt(10) ** BigInt(fraction.length),
+  };
 }
 
-const TIME_BUCKETS: AbbottBiTimeBucketRow[] = [
-  { bucket_id: "lt_1m", label: "Менее 1 мин", users: 0 },
-  { bucket_id: "1_2m", label: "1 - 2 минуты", users: 0 },
-  { bucket_id: "2_5m", label: "2 - 5 минут", users: 0 },
-  { bucket_id: "gt_5m", label: "Более 5 минут", users: 0 },
-];
-
-const ABBOTT_TRAFFIC_SOURCE_FALLBACKS: Record<string, string> = {
-  "-1": "Internal traffic",
-  "0": "Direct traffic",
-  "1": "Link traffic",
-  "2": "Search engine traffic",
-  "3": "Ad traffic",
-  "4": "Cached page traffic",
-  "7": "Mailing traffic",
-  "8": "Social network traffic",
-  "10": "Messenger traffic",
-  "11": "Clicks by QR code",
-};
-
-const ABBOTT_METRIKA_RETURNING_DIMENSION = "ym:s:endURL";
-const ABBOTT_METRIKA_RETURNING_METRICS = [
-  "ym:s:visits",
-  "ym:s:upToDayUserRecencyPercentage",
-  "ym:s:upToWeekUserRecencyPercentage",
-  "ym:s:upToMonthUserRecencyPercentage",
-].join(",");
-const ABBOTT_RETURNING_PAGE_LIMIT = 10000;
-
-function buildTrafficSourceSql(column: string) {
-  const cases = Object.entries(ABBOTT_TRAFFIC_SOURCE_FALLBACKS)
-    .map(([id, label]) => `WHEN ${column} = ${Number(id)} THEN '${label.replace(/'/g, "''")}'`)
-    .join("\n          ");
-  return `COALESCE(MAX(traffic.traffic_name), CASE
-          ${cases}
-          ELSE CONCAT('traffic_id:', CAST(${column} AS CHAR))
-        END)`;
+function deriveReturningCount(denominatorValue: unknown, percentageValue: unknown): number {
+  const denominatorText = text(denominatorValue);
+  if (!/^\d+$/.test(denominatorText)) throw new Error("Abbott canonical data is unavailable");
+  const denominator = BigInt(denominatorText);
+  const percentage = parseNonNegativeDecimal(percentageValue);
+  const numerator = denominator * percentage.numerator;
+  const divisor = BigInt(100) * percentage.scale;
+  const rounded = (numerator * BigInt(2) + divisor) / (divisor * BigInt(2));
+  if (rounded > BigInt(Number.MAX_SAFE_INTEGER)) throw new Error("Abbott canonical data is unavailable");
+  return Number(rounded);
 }
 
-function buildTimeBucketCase(durationExpr: string) {
-  return `
-    CASE
-      WHEN ${durationExpr} < 60 THEN 'lt_1m'
-      WHEN ${durationExpr} < 120 THEN '1_2m'
-      WHEN ${durationExpr} < 300 THEN '2_5m'
-      ELSE 'gt_5m'
-    END
-  `;
-}
-
-function getMetrikaToken() {
-  return asString(process.env.METRIKA_TOKEN || process.env.YANDEX_METRIKA_TOKEN || process.env.METRIKA_OAUTH_TOKEN);
-}
-
-function parseDate(value: string) {
-  const parsed = new Date(`${value}T00:00:00Z`);
-  if (Number.isNaN(parsed.getTime())) {
-    throw new Error(`Invalid date: ${value}`);
-  }
-  return parsed;
-}
-
-function formatDate(date: Date) {
-  return date.toISOString().slice(0, 10);
-}
-
-function listDatesInclusive(from: string, to: string) {
-  const dates: string[] = [];
-  const current = parseDate(from);
-  const end = parseDate(to);
-  while (current <= end) {
-    dates.push(formatDate(current));
-    current.setUTCDate(current.getUTCDate() + 1);
-  }
-  return dates;
-}
-
-async function fetchAbbottReturningDay(counterId: string, day: string): Promise<AbbottReturningApiRow[]> {
-  const token = getMetrikaToken();
-  if (!token) {
-    throw new Error("Metrika token is not configured");
-  }
-
-  const rows: AbbottReturningApiRow[] = [];
-  let offset = 1;
-
-  for (;;) {
-    const params = new URLSearchParams({
-      ids: counterId,
-      date1: day,
-      date2: day,
-      accuracy: "full",
-      lang: "en",
-      limit: String(ABBOTT_RETURNING_PAGE_LIMIT),
-      offset: String(offset),
-      dimensions: ABBOTT_METRIKA_RETURNING_DIMENSION,
-      metrics: ABBOTT_METRIKA_RETURNING_METRICS,
-    });
-    const response = await fetch(`https://api-metrika.yandex.net/stat/v1/data?${params.toString()}`, {
-      headers: {
-        Authorization: `OAuth ${token}`,
-      },
-      cache: "no-store",
-    });
-
-    if (!response.ok) {
-      const details = await response.text();
-      throw new Error(`Metrika returned ${response.status} for ${day}: ${details}`);
+function buildReturning(
+  rows: readonly ReturningFactRow[],
+  workbook: AbbottAggregatePrivateData["workbook"],
+): AbbottReturningOutput[] {
+  const totals = new Map<string, AbbottReturningOutput & { rawPages: Set<string>; denominatorKeys: Set<string> }>();
+  rows.forEach((row) => {
+    const url = normalizePage(row.normalized_page);
+    const rawPage = rawIdentifier(row.raw_page_value);
+    const reportDate = text(row.report_date).slice(0, 10);
+    const bucket = text(row.return_bucket_code);
+    if (!url || !(["next_day", "days_2_7", "days_8_31"] as string[]).includes(bucket)) {
+      throw new Error("Abbott canonical data is unavailable");
     }
-
-    const payload = (await response.json()) as {
-      data?: Array<{
-        dimensions?: Array<{ name?: string | null }>;
-        metrics?: Array<number | null>;
-      }>;
-      total_rows?: number;
-      sampled?: boolean;
-    };
-
-    for (const row of payload.data ?? []) {
-      const url = asString(row.dimensions?.[0]?.name);
-      const visits = asNumber(row.metrics?.[0]);
-      if (!url || visits <= 0) continue;
-      const returning1 = Math.round(visits * (asNumber(row.metrics?.[1]) / 100));
-      const returning27 = Math.round(visits * (asNumber(row.metrics?.[2]) / 100));
-      const returning831 = Math.round(visits * (asNumber(row.metrics?.[3]) / 100));
-      rows.push({
-        report_date: day,
-        url,
-        visits: Math.round(visits),
-        returning_1_day: returning1,
-        returning_2_7_days: returning27,
-        returning_8_31_days: returning831,
-      });
-    }
-
-    const totalRows = asNumber(payload.total_rows);
-    offset += ABBOTT_RETURNING_PAGE_LIMIT;
-    if ((payload.data?.length ?? 0) < ABBOTT_RETURNING_PAGE_LIMIT || totalRows < offset) {
-      break;
-    }
-  }
-
-  return rows;
-}
-
-async function queryAbbottReturningApi(counterIds: string[], from: string, to: string) {
-  const abbottCounterId = counterIds.includes("90602537") ? "90602537" : null;
-  if (!abbottCounterId) {
-    return [];
-  }
-
-  const dailyRows: AbbottReturningApiRow[] = [];
-  for (const day of listDatesInclusive(from, to)) {
-    const dayRows = await fetchAbbottReturningDay(abbottCounterId, day);
-    dailyRows.push(...dayRows);
-  }
-  const totals = new Map<string, AbbottBiReturningRow>();
-  const { urlReturnDirections, userDirections } = loadWorkbookData();
-
-  dailyRows.forEach((row) => {
-    const current = totals.get(row.url) ?? {
-      url: row.url,
-      direction: urlReturnDirections.get(row.url) ?? inferAbbottDirectionFromUrl(row.url, userDirections) ?? null,
+    const count = deriveReturningCount(row.source_denominator, row.source_percentage);
+    const current = totals.get(url) ?? {
+      url,
+      direction: workbook.urlReturnDirections.get(url) ?? null,
       visits: 0,
       returning_1_day: 0,
       returning_2_7_days: 0,
       returning_8_31_days: 0,
+      is_derived: true,
+      normalization_collision: false,
+      rawPages: new Set<string>(),
+      denominatorKeys: new Set<string>(),
     };
-    current.visits += row.visits;
-    current.returning_1_day += row.returning_1_day;
-    current.returning_2_7_days += row.returning_2_7_days;
-    current.returning_8_31_days += row.returning_8_31_days;
-    totals.set(row.url, current);
+    const denominatorKey = `${reportDate}\n${rawPage}`;
+    if (!current.denominatorKeys.has(denominatorKey)) {
+      current.visits += integerMetric(row.source_denominator);
+      current.denominatorKeys.add(denominatorKey);
+    }
+    current.rawPages.add(rawPage);
+    if (bucket === "next_day") current.returning_1_day += count;
+    if (bucket === "days_2_7") current.returning_2_7_days += count;
+    if (bucket === "days_8_31") current.returning_8_31_days += count;
+    current.normalization_collision = current.rawPages.size > 1;
+    totals.set(url, current);
   });
-
-  return Array.from(totals.values()).sort((a, b) => {
-    if (b.visits !== a.visits) return b.visits - a.visits;
-    return a.url.localeCompare(b.url);
-  });
+  return [...totals.values()].map((row) => ({
+    url: row.url,
+    direction: row.direction,
+    visits: row.visits,
+    returning_1_day: row.returning_1_day,
+    returning_2_7_days: row.returning_2_7_days,
+    returning_8_31_days: row.returning_8_31_days,
+    is_derived: row.is_derived,
+    normalization_collision: row.normalization_collision,
+  }))
+    .sort((left, right) => right.visits - left.visits || left.url.localeCompare(right.url));
 }
 
-function normalizeTimeBuckets(rows: LegacyTimeBucketCountRow[]): AbbottBiTimeBucketRow[] {
-  const byId = new Map(rows.map((row) => [asString(row.bucket_id), Math.round(asNumber(row.users))]));
-  return TIME_BUCKETS.map((bucket) => ({
-    ...bucket,
-    users: byId.get(bucket.bucket_id) ?? 0,
-  }));
-}
-
-async function hasCanonicalUserBehaviorRows(counterIds: string[], from: string, to: string) {
-  const sql = `
-    SELECT COUNT(*) AS row_count
-    FROM canonical_fact_user_behavior_daily
-    WHERE source_key = 'yandex_metrika'
-      AND analytics_account_id IN (${buildInClause(counterIds)})
-      AND report_date >= ?
-      AND report_date <= ?
-  `;
-  try {
-    const [rows] = await pool.execute<Array<RowDataPacket & { row_count: number | string }>>(sql, [
-      ...counterIds,
-      from,
-      to,
-    ]);
-    return asNumber(rows[0]?.row_count) > 0;
-  } catch (error) {
-    console.warn("Abbott canonical user behavior table is not available, falling back to legacy", error);
-    return false;
-  }
-}
-
-async function hasCanonicalTrafficSourceRows(counterIds: string[], from: string, to: string) {
-  const sql = `
-    SELECT COUNT(*) AS row_count
-    FROM canonical_fact_site_analytics_daily
-    WHERE source_key = 'yandex_metrika'
-      AND analytics_account_id IN (${buildInClause(counterIds)})
-      AND analytics_scope = 'other'
-      AND report_date >= ?
-      AND report_date <= ?
-      AND (COALESCE(visits, 0) > 0 OR COALESCE(users, 0) > 0)
-  `;
-  try {
-    const [rows] = await pool.execute<Array<RowDataPacket & { row_count: number | string }>>(sql, [
-      ...counterIds,
-      from,
-      to,
-    ]);
-    return asNumber(rows[0]?.row_count) > 0;
-  } catch (error) {
-    console.warn("Abbott canonical traffic-source rows are not available, falling back to UTM traffic", error);
-    return false;
-  }
-}
-
-async function queryCanonicalUserSummary(
-  counterIds: string[],
-  from: string,
-  to: string,
-  workbookData: ParsedAbbottWorkbook,
-): Promise<AbbottBiUserSummaryRow[]> {
-  const hasUserIdExpr = "(user_id REGEXP '^[0-9]+$' AND CAST(user_id AS UNSIGNED) > 0)";
-  const userIdExpr = `CASE WHEN ${hasUserIdExpr} THEN CAST(user_id AS UNSIGNED) ELSE NULL END`;
-  const sql = `
-    SELECT
-      ${userIdExpr} AS user_id,
-      CASE WHEN ${hasUserIdExpr} THEN 1 ELSE 0 END AS has_user_id,
-      MAX(COALESCE(traffic_source, CONCAT('traffic_id:', COALESCE(traffic_source_id, 'unknown')))) AS traffic_source,
-      COALESCE(SUM(visits), 0) AS visits,
-      COALESCE(SUM(users), 0) AS users,
-      COALESCE(SUM(new_users), 0) AS new_users,
-      CASE WHEN COALESCE(SUM(visits), 0) > 0
-        THEN ROUND(SUM(COALESCE(page_depth, 0) * visits) / SUM(visits), 2)
-        ELSE 0
-      END AS page_depth,
-      CASE WHEN COALESCE(SUM(visits), 0) > 0
-        THEN ROUND(SUM(COALESCE(avg_visit_duration_seconds, 0) * visits) / SUM(visits), 2)
-        ELSE 0
-      END AS avg_duration,
-      CASE WHEN COALESCE(SUM(visits), 0) > 0
-        THEN ROUND(SUM(COALESCE(bounce_rate, 0) * visits) / SUM(visits), 2)
-        ELSE 0
-      END AS bounce_rate
-    FROM canonical_fact_user_behavior_daily
-    WHERE source_key = 'yandex_metrika'
-      AND analytics_account_id IN (${buildInClause(counterIds)})
-      AND report_date >= ?
-      AND report_date <= ?
-    GROUP BY ${userIdExpr}, CASE WHEN ${hasUserIdExpr} THEN 1 ELSE 0 END, COALESCE(traffic_source_id, traffic_source, '')
-    ORDER BY visits DESC, has_user_id DESC, user_id ASC, traffic_source ASC
-  `;
-  const [rows] = await pool.execute<CanonicalUserBehaviorRow[]>(sql, [...counterIds, from, to]);
-  const { userDirections } = workbookData;
-  return rows.map((row) => {
-    const hasUserId = asNumber(row.has_user_id) === 1;
-    const userId = hasUserId ? String(Math.trunc(asNumber(row.user_id))) : "";
+function buildManagerBehavior(
+  rows: readonly PrivateBehaviorRow[],
+  workbook: ParsedAbbottWorkbook,
+): { summaries: AbbottBiUserSummaryRow[]; actions: AbbottBiUserActionRow[] } {
+  const summaries = new Map<string, AbbottBiUserSummaryRow>();
+  const actions = rows.map((row) => {
+    const userId = rawIdentifier(row.raw_user_id);
+    const pageviews = integerMetric(row.pageviews);
+    const summary = summaries.get(userId) ?? {
+      user_id: userId,
+      has_user_id: true,
+      traffic_source: "Registered portal behavior",
+      direction: workbook.userDirections.get(userId) ?? null,
+      visits: 0,
+      users: 1,
+      new_users: 0,
+      page_depth: 0,
+      avg_duration: 0,
+      bounce_rate: 0,
+    };
+    summary.visits += 1;
+    summary.page_depth += pageviews;
+    summaries.set(userId, summary);
     return {
       user_id: userId,
-      has_user_id: hasUserId,
-      traffic_source: asString(row.traffic_source) || "Unknown traffic",
-      direction: hasUserId ? userDirections.get(userId) ?? null : null,
-      visits: Math.round(asNumber(row.visits)),
-      users: Math.round(asNumber(row.users)),
-      new_users: Math.round(asNumber(row.new_users)),
-      page_depth: Number(asNumber(row.page_depth).toFixed(2)),
-      avg_duration: Number(asNumber(row.avg_duration).toFixed(2)),
-      bounce_rate: Number(asNumber(row.bounce_rate).toFixed(2)),
+      has_user_id: true,
+      traffic_source: "Registered portal behavior",
+      direction: workbook.userDirections.get(userId) ?? null,
+      start_url: text(row.start_url),
+      end_url: text(row.end_url),
+      visits: 1,
+      page_depth: pageviews,
+      avg_duration: 0,
     };
   });
-}
-
-async function queryLegacyUserSummary(
-  counterIds: string[],
-  from: string,
-  to: string,
-  workbookData: ParsedAbbottWorkbook,
-): Promise<AbbottBiUserSummaryRow[]> {
-  const trafficSourceSql = buildTrafficSourceSql("params.traffic_id");
-  const hasUserIdExpr = "(param_level_2 REGEXP '^[0-9]+$' AND CAST(param_level_2 AS UNSIGNED) > 0)";
-  const userIdExpr = `CASE WHEN ${hasUserIdExpr} THEN CAST(param_level_2 AS UNSIGNED) ELSE NULL END`;
-  const sql = `
-    SELECT
-      ${userIdExpr} AS user_id,
-      CASE WHEN ${hasUserIdExpr} THEN 1 ELSE 0 END AS has_user_id,
-      ${trafficSourceSql} AS traffic_source,
-      COALESCE(SUM(visits), 0) AS visits,
-      COALESCE(SUM(users), 0) AS users,
-      COALESCE(SUM(newUsers), 0) AS new_users,
-      CASE WHEN COALESCE(SUM(visits), 0) > 0
-        THEN ROUND(SUM(COALESCE(pageDepth, 0) * visits) / SUM(visits), 2)
-        ELSE 0
-      END AS page_depth,
-      CASE WHEN COALESCE(SUM(visits), 0) > 0
-        THEN ROUND(SUM(COALESCE(avgVDS, 0) * visits) / SUM(visits), 2)
-        ELSE 0
-      END AS avg_duration,
-      CASE WHEN COALESCE(SUM(visits), 0) > 0
-        THEN ROUND(SUM(COALESCE(bounceRate, 0) * visits) / SUM(visits), 2)
-        ELSE 0
-      END AS bounce_rate
-    FROM yandex_metrika_params params
-    LEFT JOIN yandex_metrika_traffic traffic
-      ON traffic.traffic_id = params.traffic_id
-    WHERE params.counter_id IN (${buildInClause(counterIds)})
-      AND date >= ?
-      AND date <= ?
-    GROUP BY ${userIdExpr}, CASE WHEN ${hasUserIdExpr} THEN 1 ELSE 0 END, params.traffic_id
-    ORDER BY visits DESC, has_user_id DESC, user_id ASC, traffic_source ASC
-  `;
-  const [rows] = await pool.execute<LegacyUserSummaryRow[]>(sql, [...counterIds, from, to]);
-  const { userDirections } = workbookData;
-  return rows.map((row) => {
-    const hasUserId = asNumber(row.has_user_id) === 1;
-    const userId = hasUserId ? String(Math.trunc(asNumber(row.user_id))) : "";
-    return {
-      user_id: userId,
-      has_user_id: hasUserId,
-      traffic_source: asString(row.traffic_source) || "Unknown traffic",
-      direction: hasUserId ? userDirections.get(userId) ?? null : null,
-      visits: Math.round(asNumber(row.visits)),
-      users: Math.round(asNumber(row.users)),
-      new_users: Math.round(asNumber(row.new_users)),
-      page_depth: Number(asNumber(row.page_depth).toFixed(2)),
-      avg_duration: Number(asNumber(row.avg_duration).toFixed(2)),
-      bounce_rate: Number(asNumber(row.bounce_rate).toFixed(2)),
-    };
-  });
-}
-
-async function queryCanonicalTrafficSummary(
-  counterIds: string[],
-  from: string,
-  to: string,
-): Promise<AbbottBiUserSummaryRow[]> {
-  const trafficScope = (await hasCanonicalTrafficSourceRows(counterIds, from, to)) ? "other" : "traffic";
-  const sql = `
-    SELECT
-      COALESCE(NULLIF(traffic_source, ''), NULLIF(utm_source, ''), 'Unknown traffic') AS traffic_source,
-      COALESCE(SUM(visits), 0) AS visits,
-      COALESCE(SUM(users), 0) AS users,
-      COALESCE(SUM(new_users), 0) AS new_users,
-      CASE WHEN COALESCE(SUM(visits), 0) > 0
-        THEN ROUND(SUM(COALESCE(page_depth, 0) * visits) / SUM(visits), 2)
-        ELSE 0
-      END AS page_depth,
-      CASE WHEN COALESCE(SUM(visits), 0) > 0
-        THEN ROUND(SUM(COALESCE(avg_visit_duration_seconds, 0) * visits) / SUM(visits), 2)
-        ELSE 0
-      END AS avg_duration,
-      CASE WHEN COALESCE(SUM(visits), 0) > 0
-        THEN ROUND(SUM(COALESCE(bounce_rate, 0) * visits) / SUM(visits), 2)
-        ELSE 0
-      END AS bounce_rate
-    FROM canonical_fact_site_analytics_daily
-    WHERE source_key = 'yandex_metrika'
-      AND analytics_account_id IN (${buildInClause(counterIds)})
-      AND analytics_scope = ?
-      AND report_date >= ?
-      AND report_date <= ?
-    GROUP BY COALESCE(NULLIF(traffic_source, ''), NULLIF(utm_source, ''), 'Unknown traffic')
-    ORDER BY visits DESC, users DESC, traffic_source ASC
-  `;
-  const [rows] = await pool.execute<CanonicalTrafficSummaryRow[]>(sql, [...counterIds, trafficScope, from, to]);
-  return rows.map((row) => ({
-    user_id: "",
-    has_user_id: false,
-    traffic_source: asString(row.traffic_source) || "Unknown traffic",
-    direction: null,
-    visits: Math.round(asNumber(row.visits)),
-    users: Math.round(asNumber(row.users)),
-    new_users: Math.round(asNumber(row.new_users)),
-    page_depth: Number(asNumber(row.page_depth).toFixed(2)),
-    avg_duration: Number(asNumber(row.avg_duration).toFixed(2)),
-    bounce_rate: Number(asNumber(row.bounce_rate).toFixed(2)),
-  }));
-}
-
-async function queryCanonicalTrafficSummarySafe(counterIds: string[], from: string, to: string) {
-  try {
-    return await queryCanonicalTrafficSummary(counterIds, from, to);
-  } catch (error) {
-    console.warn("Abbott canonical traffic summary is not available", error);
-    return [];
-  }
-}
-
-async function queryUserSummary(
-  counterIds: string[],
-  from: string,
-  to: string,
-  workbookData: ParsedAbbottWorkbook,
-): Promise<AbbottBiUserSummaryRow[]> {
-  let rows: AbbottBiUserSummaryRow[];
-  if (await hasCanonicalUserBehaviorRows(counterIds, from, to)) {
-    rows = await queryCanonicalUserSummary(counterIds, from, to, workbookData);
-  } else {
-    rows = await queryLegacyUserSummary(counterIds, from, to, workbookData);
-  }
-  return rows.length > 0 ? rows : queryCanonicalTrafficSummary(counterIds, from, to);
-}
-
-function normalizeTimeBucketsByPage(rows: LegacyTimeBucketPageRow[]) {
-  const byUrl = new Map<string, LegacyTimeBucketCountRow[]>();
-  rows.forEach((row) => {
-    const url = asString(row.url);
-    if (!url) return;
-    const current = byUrl.get(url) ?? [];
-    current.push({
-      bucket_id: row.bucket_id,
-      users: row.users,
-    } as LegacyTimeBucketCountRow);
-    byUrl.set(url, current);
-  });
-  return Array.from(byUrl.entries()).map(([url, bucketRows]) => ({
-    url,
-    buckets: normalizeTimeBuckets(bucketRows),
-  }));
-}
-
-async function queryCanonicalUserActions(
-  counterIds: string[],
-  from: string,
-  to: string,
-  workbookData: ParsedAbbottWorkbook,
-): Promise<AbbottBiUserActionRow[]> {
-  const hasUserIdExpr = "(user_id REGEXP '^[0-9]+$' AND CAST(user_id AS UNSIGNED) > 0)";
-  const userIdExpr = `CASE WHEN ${hasUserIdExpr} THEN CAST(user_id AS UNSIGNED) ELSE NULL END`;
-  const sql = `
-    SELECT
-      ${userIdExpr} AS user_id,
-      CASE WHEN ${hasUserIdExpr} THEN 1 ELSE 0 END AS has_user_id,
-      MAX(COALESCE(traffic_source, CONCAT('traffic_id:', COALESCE(traffic_source_id, 'unknown')))) AS traffic_source,
-      MAX(COALESCE(start_url, '')) AS start_url,
-      MAX(COALESCE(end_url, '')) AS end_url,
-      COALESCE(SUM(visits), 0) AS visits,
-      CASE WHEN COALESCE(SUM(visits), 0) > 0
-        THEN ROUND(SUM(COALESCE(page_depth, 0) * visits) / SUM(visits), 2)
-        ELSE 0
-      END AS page_depth,
-      CASE WHEN COALESCE(SUM(visits), 0) > 0
-        THEN ROUND(SUM(COALESCE(avg_visit_duration_seconds, 0) * visits) / SUM(visits), 2)
-        ELSE 0
-      END AS avg_duration
-    FROM canonical_fact_user_behavior_daily
-    WHERE source_key = 'yandex_metrika'
-      AND analytics_account_id IN (${buildInClause(counterIds)})
-      AND report_date >= ?
-      AND report_date <= ?
-    GROUP BY
-      ${userIdExpr},
-      CASE WHEN ${hasUserIdExpr} THEN 1 ELSE 0 END,
-      COALESCE(traffic_source_id, traffic_source, ''),
-      COALESCE(start_url, ''),
-      COALESCE(end_url, '')
-    ORDER BY has_user_id DESC, user_id ASC, visits DESC, traffic_source ASC, start_url ASC, end_url ASC
-  `;
-  const [rows] = await pool.execute<CanonicalUserBehaviorRow[]>(sql, [...counterIds, from, to]);
-  const { userDirections } = workbookData;
-  return rows.map((row) => {
-    const hasUserId = asNumber(row.has_user_id) === 1;
-    const userId = hasUserId ? String(Math.trunc(asNumber(row.user_id))) : "";
-    return {
-      user_id: userId,
-      has_user_id: hasUserId,
-      traffic_source: asString(row.traffic_source) || "Unknown traffic",
-      direction: hasUserId ? userDirections.get(userId) ?? null : null,
-      start_url: asString(row.start_url),
-      end_url: asString(row.end_url),
-      visits: Math.round(asNumber(row.visits)),
-      page_depth: Number(asNumber(row.page_depth).toFixed(2)),
-      avg_duration: Number(asNumber(row.avg_duration).toFixed(2)),
-    };
-  });
-}
-
-async function queryLegacyUserActions(
-  counterIds: string[],
-  from: string,
-  to: string,
-  workbookData: ParsedAbbottWorkbook,
-): Promise<AbbottBiUserActionRow[]> {
-  const trafficSourceSql = buildTrafficSourceSql("params.traffic_id");
-  const hasUserIdExpr = "(params.param_level_2 REGEXP '^[0-9]+$' AND CAST(params.param_level_2 AS UNSIGNED) > 0)";
-  const userIdExpr = `CASE WHEN ${hasUserIdExpr} THEN CAST(params.param_level_2 AS UNSIGNED) ELSE NULL END`;
-  const sql = `
-    SELECT
-      ${userIdExpr} AS user_id,
-      CASE WHEN ${hasUserIdExpr} THEN 1 ELSE 0 END AS has_user_id,
-      ${trafficSourceSql} AS traffic_source,
-      COALESCE(params.startURL, '') AS start_url,
-      COALESCE(params.endURL, '') AS end_url,
-      COALESCE(SUM(visits), 0) AS visits,
-      CASE WHEN COALESCE(SUM(visits), 0) > 0
-        THEN ROUND(SUM(COALESCE(pageDepth, 0) * visits) / SUM(visits), 2)
-        ELSE 0
-      END AS page_depth,
-      CASE WHEN COALESCE(SUM(visits), 0) > 0
-        THEN ROUND(SUM(COALESCE(avgVDS, 0) * visits) / SUM(visits), 2)
-        ELSE 0
-      END AS avg_duration
-    FROM yandex_metrika_params params
-    LEFT JOIN yandex_metrika_traffic traffic
-      ON traffic.traffic_id = params.traffic_id
-    WHERE params.counter_id IN (${buildInClause(counterIds)})
-      AND params.date >= ?
-      AND params.date <= ?
-    GROUP BY
-      ${userIdExpr},
-      CASE WHEN ${hasUserIdExpr} THEN 1 ELSE 0 END,
-      params.traffic_id,
-      COALESCE(params.startURL, ''),
-      COALESCE(params.endURL, '')
-    ORDER BY has_user_id DESC, user_id ASC, visits DESC, traffic_source ASC, start_url ASC, end_url ASC
-  `;
-  const [rows] = await pool.execute<LegacyUserActionRow[]>(sql, [...counterIds, from, to]);
-  const { userDirections } = workbookData;
-  return rows.map((row) => {
-    const hasUserId = asNumber(row.has_user_id) === 1;
-    const userId = hasUserId ? String(Math.trunc(asNumber(row.user_id))) : "";
-    return {
-      user_id: userId,
-      has_user_id: hasUserId,
-      traffic_source: asString(row.traffic_source) || "Unknown traffic",
-      direction: hasUserId ? userDirections.get(userId) ?? null : null,
-      start_url: asString(row.start_url),
-      end_url: asString(row.end_url),
-      visits: Math.round(asNumber(row.visits)),
-      page_depth: Number(asNumber(row.page_depth).toFixed(2)),
-      avg_duration: Number(asNumber(row.avg_duration).toFixed(2)),
-    };
-  });
-}
-
-async function queryUserActions(
-  counterIds: string[],
-  from: string,
-  to: string,
-  workbookData: ParsedAbbottWorkbook,
-): Promise<AbbottBiUserActionRow[]> {
-  if (await hasCanonicalUserBehaviorRows(counterIds, from, to)) {
-    return queryCanonicalUserActions(counterIds, from, to, workbookData);
-  }
-  return queryLegacyUserActions(counterIds, from, to, workbookData);
-}
-
-async function queryCanonicalPageStatRows(counterIds: string[], from: string, to: string) {
-  const sql = `
-    SELECT
-      COALESCE(page_title, '') AS page_title,
-      COALESCE(page_url, '') AS url,
-      COALESCE(SUM(pageviews), 0) AS pageviews,
-      COALESCE(SUM(users), 0) AS users
-    FROM canonical_fact_site_analytics_daily
-    WHERE source_key = 'yandex_metrika'
-      AND analytics_account_id IN (${buildInClause(counterIds)})
-      AND analytics_scope = 'page'
-      AND report_date >= ?
-      AND report_date <= ?
-    GROUP BY COALESCE(page_title, ''), COALESCE(page_url, '')
-    HAVING pageviews > 0 OR users > 0
-    ORDER BY pageviews DESC, users DESC, page_title ASC
-  `;
-  const [rows] = await pool.execute<CanonicalPageStatRow[]>(sql, [...counterIds, from, to]);
-  return rows;
-}
-
-async function queryLegacyPageStatRows(counterIds: string[], from: string, to: string) {
-  const sql = `
-    SELECT
-      COALESCE(page_name, '') AS page_title,
-      COALESCE(url, '') AS url,
-      COALESCE(SUM(page_view), 0) AS pageviews,
-      COALESCE(SUM(users), 0) AS users
-    FROM yandex_metrika_internal
-    WHERE counter_id IN (${buildInClause(counterIds)})
-      AND date >= ?
-      AND date <= ?
-    GROUP BY COALESCE(page_name, ''), COALESCE(url, '')
-    ORDER BY pageviews DESC, users DESC, page_title ASC
-  `;
-  const [rows] = await pool.execute<LegacyPageStatRow[]>(sql, [...counterIds, from, to]);
-  return rows;
-}
-
-async function queryPageStats(
-  counterIds: string[],
-  from: string,
-  to: string,
-  workbookData: ParsedAbbottWorkbook,
-  useAbbottMetadata: boolean,
-): Promise<AbbottBiPageStatRow[]> {
-  const canonicalRows = await queryCanonicalPageStatRows(counterIds, from, to);
-  const rows = canonicalRows.length > 0 ? canonicalRows : await queryLegacyPageStatRows(counterIds, from, to);
-  const { contentByTitle, contentByTitleAndType, contentBySlug, userDirections } = workbookData;
-  const byPage = new Map<string, AbbottBiPageStatRow & { is_hidden?: boolean }>();
-  rows
-    .forEach((row) => {
-      const pageTitle = asString(row.page_title);
-      const url = normalizeAbbottPageUrl(row.url);
-      const pageMetadata = useAbbottMetadata
-        ? resolveAbbottPageMetadata(
-            asString(row.url),
-            pageTitle,
-            contentByTitle,
-            contentByTitleAndType,
-            contentBySlug,
-            userDirections,
-          )
-        : { direction: null, material_type: null, access: null };
-      const inferredMaterialType = useAbbottMetadata ? inferAbbottMaterialTypeFromUrl(url) : null;
-      const contentMeta =
-        (inferredMaterialType ? contentByTitleAndType.get(`${inferredMaterialType}::${pageTitle}`) : null) ??
-        contentByTitle.get(pageTitle) ??
-        contentBySlug.get(extractAbbottSlugFromUrl(url) ?? "");
-      const key = `${pageTitle}\n${url}`;
-      const current = byPage.get(key) ?? {
-        page_title: pageTitle,
-        url,
-        direction: pageMetadata.direction,
-        material_type: pageMetadata.material_type,
-        access: pageMetadata.access,
-        is_hidden: contentMeta?.is_active === false,
-        pageviews: 0,
-        users: 0,
-        ...emptyBitrixMetrics(),
-      };
-      if (!useAbbottMetadata || !isAbbottUtilityPageUrl(url)) {
-        current.direction = current.direction ?? pageMetadata.direction;
-        current.material_type = current.material_type ?? pageMetadata.material_type;
-        current.access = current.access ?? pageMetadata.access;
-      } else {
-        current.direction = null;
-        current.material_type = null;
-        current.access = null;
-      }
-      current.is_hidden = current.is_hidden || contentMeta?.is_active === false;
-      current.pageviews += Math.round(asNumber(row.pageviews));
-      current.users += Math.round(asNumber(row.users));
-      byPage.set(key, current);
-    })
-  return Array.from(byPage.values())
-    .filter((row) => !row.is_hidden)
-    .filter((row) => row.url || row.page_title)
-    .sort((a, b) => {
-      if (b.pageviews !== a.pageviews) return b.pageviews - a.pageviews;
-      if (b.users !== a.users) return b.users - a.users;
-      return a.page_title.localeCompare(b.page_title, "ru");
-    });
-}
-
-async function queryReturningFallback(counterIds: string[], from: string, to: string) {
-  const sql = `
-    SELECT
-      COALESCE(url, '') AS url,
-      COALESCE(SUM(page_view), 0) AS visits
-    FROM yandex_metrika_returned
-    WHERE counter_id IN (${buildInClause(counterIds)})
-      AND date >= ?
-      AND date <= ?
-    GROUP BY COALESCE(url, '')
-    ORDER BY visits DESC, url ASC
-  `;
-  const [rows] = await pool.execute<LegacyReturningFallbackRow[]>(sql, [...counterIds, from, to]);
-  return rows
-    .map((row) => ({
-      url: asString(row.url),
-      visits: Math.round(asNumber(row.visits)),
-    }))
-    .filter((row) => row.url);
-}
-
-async function queryCanonicalTimeBuckets(
-  counterIds: string[],
-  from: string,
-  to: string,
-  workbookData: ParsedAbbottWorkbook,
-): Promise<AbbottBiTimeBuckets> {
-  const { generalMaterials } = workbookData;
-  const materialUrls = [...new Set(generalMaterials.map((row) => row.url).filter(Boolean))];
-  const overallBucketCase = buildTimeBucketCase(
-    "SUM(COALESCE(avg_visit_duration_seconds, 0) * visits) / SUM(visits)",
-  );
-  const baseParams = [...counterIds, from, to];
-
-  const overallSql = `
-    SELECT bucket_id, COUNT(*) AS users
-    FROM (
-      SELECT
-        CAST(user_id AS UNSIGNED) AS user_id,
-        ${overallBucketCase} AS bucket_id
-      FROM canonical_fact_user_behavior_daily
-      WHERE source_key = 'yandex_metrika'
-        AND analytics_account_id IN (${buildInClause(counterIds)})
-        AND report_date >= ?
-        AND report_date <= ?
-        AND user_id REGEXP '^[0-9]+$'
-        AND CAST(user_id AS UNSIGNED) > 0
-      GROUP BY CAST(user_id AS UNSIGNED)
-    ) grouped_users
-    GROUP BY bucket_id
-  `;
-  const [overallRows] = await pool.execute<LegacyTimeBucketCountRow[]>(overallSql, baseParams);
-
-  let materialsRows: LegacyTimeBucketCountRow[] = [];
-  if (materialUrls.length > 0) {
-    const materialsBucketCase = buildTimeBucketCase(
-      "SUM(COALESCE(avg_visit_duration_seconds, 0) * visits) / SUM(visits)",
-    );
-    const materialsSql = `
-      SELECT bucket_id, COUNT(*) AS users
-      FROM (
-        SELECT
-          CAST(user_id AS UNSIGNED) AS user_id,
-          ${materialsBucketCase} AS bucket_id
-        FROM canonical_fact_user_behavior_daily
-        WHERE source_key = 'yandex_metrika'
-          AND analytics_account_id IN (${buildInClause(counterIds)})
-          AND report_date >= ?
-          AND report_date <= ?
-          AND user_id REGEXP '^[0-9]+$'
-          AND CAST(user_id AS UNSIGNED) > 0
-          AND end_url IN (${buildInClause(materialUrls)})
-        GROUP BY CAST(user_id AS UNSIGNED)
-      ) grouped_material_users
-      GROUP BY bucket_id
-    `;
-    const [rawMaterialsRows] = await pool.execute<LegacyTimeBucketCountRow[]>(materialsSql, [
-      ...counterIds,
-      from,
-      to,
-      ...materialUrls,
-    ]);
-    materialsRows = rawMaterialsRows;
-  }
-
-  const perPageBucketCase = buildTimeBucketCase(
-    "SUM(COALESCE(avg_visit_duration_seconds, 0) * visits) / SUM(visits)",
-  );
-  const perPageSql = `
-    SELECT
-      end_url AS url,
-      bucket_id,
-      COUNT(*) AS users
-    FROM (
-      SELECT
-        CAST(user_id AS UNSIGNED) AS user_id,
-        COALESCE(end_url, '') AS end_url,
-        ${perPageBucketCase} AS bucket_id
-      FROM canonical_fact_user_behavior_daily
-      WHERE source_key = 'yandex_metrika'
-        AND analytics_account_id IN (${buildInClause(counterIds)})
-        AND report_date >= ?
-        AND report_date <= ?
-        AND user_id REGEXP '^[0-9]+$'
-        AND CAST(user_id AS UNSIGNED) > 0
-        AND COALESCE(end_url, '') <> ''
-      GROUP BY CAST(user_id AS UNSIGNED), COALESCE(end_url, '')
-    ) grouped_page_users
-    GROUP BY end_url, bucket_id
-  `;
-  const [perPageRows] = await pool.execute<LegacyTimeBucketPageRow[]>(perPageSql, baseParams);
-
   return {
-    overall: normalizeTimeBuckets(overallRows),
-    materials: normalizeTimeBuckets(materialsRows),
-    by_page: normalizeTimeBucketsByPage(perPageRows),
+    summaries: [...summaries.values()].map((row) => ({
+      ...row,
+      page_depth: row.visits > 0 ? Number((row.page_depth / row.visits).toFixed(2)) : 0,
+    })).sort((left, right) => left.user_id.localeCompare(right.user_id)),
+    actions,
   };
 }
 
-async function queryLegacyTimeBuckets(
-  counterIds: string[],
-  from: string,
-  to: string,
-  workbookData: ParsedAbbottWorkbook,
-): Promise<AbbottBiTimeBuckets> {
-  const { generalMaterials } = workbookData;
-  const materialUrls = [...new Set(generalMaterials.map((row) => row.url).filter(Boolean))];
-  const overallBucketCase = buildTimeBucketCase("SUM(COALESCE(avgVDS, 0) * visits) / SUM(visits)");
-  const baseParams = [...counterIds, from, to];
-
-  const overallSql = `
-    SELECT bucket_id, COUNT(*) AS users
-    FROM (
-      SELECT
-        CAST(param_level_2 AS UNSIGNED) AS user_id,
-        ${overallBucketCase} AS bucket_id
-      FROM yandex_metrika_params
-      WHERE counter_id IN (${buildInClause(counterIds)})
-        AND date >= ?
-        AND date <= ?
-        AND param_level_2 REGEXP '^[0-9]+$'
-        AND CAST(param_level_2 AS UNSIGNED) > 0
-      GROUP BY CAST(param_level_2 AS UNSIGNED)
-    ) grouped_users
-    GROUP BY bucket_id
-  `;
-  const [overallRows] = await pool.execute<LegacyTimeBucketCountRow[]>(overallSql, baseParams);
-
-  let materialsRows: LegacyTimeBucketCountRow[] = [];
-  if (materialUrls.length > 0) {
-    const materialsBucketCase = buildTimeBucketCase("SUM(COALESCE(avgVDS, 0) * visits) / SUM(visits)");
-    const materialsSql = `
-      SELECT bucket_id, COUNT(*) AS users
-      FROM (
-        SELECT
-          CAST(param_level_2 AS UNSIGNED) AS user_id,
-          ${materialsBucketCase} AS bucket_id
-        FROM yandex_metrika_params
-        WHERE counter_id IN (${buildInClause(counterIds)})
-          AND date >= ?
-          AND date <= ?
-          AND param_level_2 REGEXP '^[0-9]+$'
-          AND CAST(param_level_2 AS UNSIGNED) > 0
-          AND endURL IN (${buildInClause(materialUrls)})
-        GROUP BY CAST(param_level_2 AS UNSIGNED)
-      ) grouped_material_users
-      GROUP BY bucket_id
-    `;
-    const [rawMaterialsRows] = await pool.execute<LegacyTimeBucketCountRow[]>(materialsSql, [
-      ...counterIds,
-      from,
-      to,
-      ...materialUrls,
-    ]);
-    materialsRows = rawMaterialsRows;
-  }
-
-  const perPageBucketCase = buildTimeBucketCase("SUM(COALESCE(avgVDS, 0) * visits) / SUM(visits)");
-  const perPageSql = `
-    SELECT
-      end_url AS url,
-      bucket_id,
-      COUNT(*) AS users
-    FROM (
-      SELECT
-        CAST(param_level_2 AS UNSIGNED) AS user_id,
-        COALESCE(endURL, '') AS end_url,
-        ${perPageBucketCase} AS bucket_id
-      FROM yandex_metrika_params
-      WHERE counter_id IN (${buildInClause(counterIds)})
-        AND date >= ?
-        AND date <= ?
-        AND param_level_2 REGEXP '^[0-9]+$'
-        AND CAST(param_level_2 AS UNSIGNED) > 0
-        AND COALESCE(endURL, '') <> ''
-      GROUP BY CAST(param_level_2 AS UNSIGNED), COALESCE(endURL, '')
-    ) grouped_page_users
-    GROUP BY end_url, bucket_id
-  `;
-  const [perPageRows] = await pool.execute<LegacyTimeBucketPageRow[]>(perPageSql, baseParams);
-
+function mapJourneys(data: AbbottPrivateSessionJourneysData): AbbottBiSessionJourneysData {
+  const rows = data.rows.map((row, index) => {
+    const paths = row.events.map((event) => normalizePage(event.normalized_path)).filter(Boolean);
+    return {
+      session_id: index + 1,
+      user_id: row.raw_user_id,
+      has_user_id: row.raw_user_id !== null,
+      entry_url_day: paths[0] ?? "",
+      exit_url_day: paths.at(-1) ?? "",
+      entry_url_session: paths[0] ?? "",
+      exit_url_session: paths.at(-1) ?? "",
+      hits_total: row.events.length,
+      hits_clean: paths.length,
+      hits_content: paths.length,
+      steps_content: paths.length,
+      events_count: row.events.length,
+      duration_seconds: 0,
+      content_path: paths,
+      content_path_summary: paths.join(" → "),
+      all_path_summary: paths.join(" → "),
+      events_available: true,
+    };
+  });
+  const reportDate = data.rows.map((row) => row.report_date).sort().at(-1) ?? "";
   return {
-    overall: normalizeTimeBuckets(overallRows),
-    materials: normalizeTimeBuckets(materialsRows),
-    by_page: normalizeTimeBucketsByPage(perPageRows),
+    report_date: reportDate,
+    schema: rows.length > 0
+      ? {
+          grain: "protected visit x report date",
+          sources: ["canonical private Bitrix journey facts"],
+          entry_exit_day: "ordered event path",
+          entry_exit_session: "ordered event path",
+          content_path: "normalized ordered paths",
+          all_path: "normalized ordered paths",
+          events: "available",
+          duration: "not available",
+        }
+      : null,
+    summary: rows.length > 0
+      ? {
+          sessions_in_day: rows.length,
+          sessions_exported: rows.length,
+          sessions_with_user_id: rows.filter((row) => row.has_user_id).length,
+          sessions_with_content_path: rows.filter((row) => row.content_path.length > 0).length,
+          hits_total: rows.reduce((total, row) => total + row.hits_total, 0),
+          hits_clean: rows.reduce((total, row) => total + row.hits_clean, 0),
+          events_available: true,
+        }
+      : null,
+    rows,
   };
-}
-
-async function queryTimeBuckets(
-  counterIds: string[],
-  from: string,
-  to: string,
-  workbookData: ParsedAbbottWorkbook,
-): Promise<AbbottBiTimeBuckets> {
-  if (await hasCanonicalUserBehaviorRows(counterIds, from, to)) {
-    return queryCanonicalTimeBuckets(counterIds, from, to, workbookData);
-  }
-  return queryLegacyTimeBuckets(counterIds, from, to, workbookData);
-}
-
-async function queryExternalFactDaily(from: string, to: string) {
-  const sql = `
-    SELECT
-      DATE(date) AS report_date,
-      COALESCE(url, '') AS external_url,
-      COALESCE(SUM(views), 0) AS outbound_clicks
-    FROM yandex_metrika_external
-    WHERE date >= ?
-      AND date <= ?
-      AND COALESCE(url, '') <> ''
-    GROUP BY DATE(date), COALESCE(url, '')
-    ORDER BY report_date ASC, outbound_clicks DESC, external_url ASC
-  `;
-  const [rows] = await pool.execute<LegacyExternalFactDailyRow[]>(sql, [from, to]);
-  return rows
-    .map((row) => ({
-      report_date: asDateString(row.report_date),
-      external_url: asString(row.external_url),
-      outbound_clicks: Math.round(asNumber(row.outbound_clicks)),
-    }))
-    .filter((row) => row.report_date && row.external_url && row.outbound_clicks > 0);
 }
 
 function buildExternalClickRows(
-  dailyRows: Array<{ report_date: string; external_url: string; outbound_clicks: number }>,
-  workbookData: ParsedAbbottWorkbook,
+  rows: readonly Record<string, unknown>[],
+  workbook: AbbottAggregatePrivateData["workbook"],
 ): AbbottBiExternalClickRow[] {
-  const { externalEvents } = workbookData;
-  const eventByUrl = new Map(
-    externalEvents.map((row) => [
-      row.registration_url,
-      {
-        title: row.title,
-        direction: row.direction,
-      },
-    ]),
-  );
-
-  const totals = new Map<string, AbbottBiExternalClickRow>();
-  dailyRows.forEach((row) => {
-    const current = totals.get(row.external_url) ?? {
-      title: eventByUrl.get(row.external_url)?.title ?? null,
-      direction: eventByUrl.get(row.external_url)?.direction ?? null,
-      external_url: row.external_url,
-      outbound_clicks: 0,
-    };
-    current.outbound_clicks += row.outbound_clicks;
-    totals.set(row.external_url, current);
-  });
-
-  return Array.from(totals.values()).sort((a, b) => {
-    if (b.outbound_clicks !== a.outbound_clicks) return b.outbound_clicks - a.outbound_clicks;
-    return a.external_url.localeCompare(b.external_url);
-  });
-}
-
-function buildReturningRows(
-  from: string,
-  to: string,
-  legacyRows: Array<{ url: string; visits: number }>,
-  workbookData: ParsedAbbottWorkbook,
-  useAbbottMetadata: boolean,
-): AbbottBiReturningRow[] {
-  const { ymUrlReturn, urlReturnDirections, userDirections } = workbookData;
-  const workbookTotals = new Map<string, AbbottBiReturningRow>();
-
-  ymUrlReturn
-    .filter((row) => row.date && row.date >= from && row.date <= to)
-    .forEach((row) => {
-      const current = workbookTotals.get(row.url) ?? {
-        url: row.url,
-        direction:
-          urlReturnDirections.get(row.url) ??
-          (useAbbottMetadata ? inferAbbottDirectionFromUrl(row.url, userDirections) : null) ??
-          null,
-        visits: 0,
-        returning_1_day: 0,
-        returning_2_7_days: 0,
-        returning_8_31_days: 0,
-      };
-      current.visits += Math.round(row.visits);
-      current.returning_1_day += Math.round(row.returning_1_day);
-      current.returning_2_7_days += Math.round(row.returning_2_7_days);
-      current.returning_8_31_days += Math.round(row.returning_8_31_days);
-      workbookTotals.set(row.url, current);
-    });
-
-  const byUrl = new Map<string, AbbottBiReturningRow>();
-  legacyRows.forEach((row) => {
-    byUrl.set(row.url, {
-      url: row.url,
-      direction:
-        urlReturnDirections.get(row.url) ??
-        (useAbbottMetadata ? inferAbbottDirectionFromUrl(row.url, userDirections) : null) ??
-        null,
-      visits: row.visits,
-      returning_1_day: 0,
-      returning_2_7_days: 0,
-      returning_8_31_days: 0,
-    });
-  });
-  workbookTotals.forEach((row, url) => {
-    byUrl.set(url, row);
-  });
-
-  return Array.from(byUrl.values()).sort((a, b) => {
-    if (b.visits !== a.visits) return b.visits - a.visits;
-    return a.url.localeCompare(b.url);
-  });
-}
-
-function buildGeneralMaterialsRows(pageStats: AbbottBiPageStatRow[], workbookData: ParsedAbbottWorkbook): AbbottBiMaterialRow[] {
-  const { generalMaterials } = workbookData;
-  const byUrl = new Map(pageStats.map((row) => [row.url, row]));
-  return generalMaterials.map<AbbottBiMaterialRow>((material) => {
-    const stats = byUrl.get(material.url);
+  const eventByUrl = new Map(workbook.externalEvents.map((event) => [normalizePage(event.registration_url), event]));
+  return rows.map((row) => {
+    const externalUrl = normalizePage(row.external_url);
+    const event = eventByUrl.get(externalUrl);
     return {
-      material_name: material.name,
-      url: material.url,
-      pageviews: stats?.pageviews ?? 0,
-      users: stats?.users ?? 0,
+      title: event?.title ?? null,
+      direction: event?.direction ?? null,
+      external_url: externalUrl,
+      outbound_clicks: integerMetric(row.outbound_clicks),
     };
   });
 }
 
-export function getDefaultAbbottCounterIds() {
-  return ["90602537"];
+function buildGeneralMaterials(
+  pageStats: AbbottBiPageStatRow[],
+  workbook: AbbottAggregatePrivateData["workbook"],
+): AbbottBiMaterialRow[] {
+  const byUrl = new Map(pageStats.map((row) => [normalizePage(row.url), row]));
+  return workbook.generalMaterials.map((material) => {
+    const url = normalizePage(material.url);
+    const stats = byUrl.get(url);
+    return { material_name: material.name, url, pageviews: stats?.pageviews ?? 0, users: stats?.users ?? 0 };
+  });
 }
 
-export function getDefaultZarukuCounterIds() {
-  return ["66624469", "99078698"];
-}
-
-async function loadPortalBiData(
+export async function loadAbbottBiDataWithDependencies(
+  dashboardId: number,
   counterIds: string[],
   from: string,
   to: string,
-  config: PortalBiConfig,
-): Promise<AbbottBiData> {
-  const normalizedCounterIds = counterIds.length > 0 ? counterIds : config.defaultCounterIds;
-  const workbookData = loadPortalWorkbookData(config.useWorkbook);
-  const bitrixAnalytics = config.useBitrix ? loadBitrixAnalyticsData() : { summary: null, rows: [] };
-  const sessionJourneys = config.useBitrix ? loadBitrixSessionJourneysData() : emptySessionJourneysData();
-  const [usersSummary, trafficSummary, userActions, pageStats, returningFallback, externalFactDaily, timeBuckets, returningApiPrototype] = await Promise.all([
-    queryUserSummary(normalizedCounterIds, from, to, workbookData),
-    queryCanonicalTrafficSummarySafe(normalizedCounterIds, from, to),
-    queryUserActions(normalizedCounterIds, from, to, workbookData),
-    queryPageStats(normalizedCounterIds, from, to, workbookData, config.useAbbottMetadata),
-    queryReturningFallback(normalizedCounterIds, from, to),
-    // This legacy table is Abbott-specific and does not store counter_id,
-    // so the external layer is intentionally scoped to the Abbott dashboard only.
-    config.useExternalClicks ? queryExternalFactDaily(from, to) : Promise.resolve([]),
-    queryTimeBuckets(normalizedCounterIds, from, to, workbookData),
-    config.useAbbottReturningApi ? queryAbbottReturningApi(normalizedCounterIds, from, to).catch(() => []) : Promise.resolve([]),
-  ]);
+  audience: AbbottDashboardAudience | undefined,
+  dependencies: AbbottBiLoaderDependencies,
+): Promise<AbbottCanonicalBiData> {
+  if (audience !== "manager" && audience !== "embed") {
+    throw new Error("Abbott trusted audience is required");
+  }
+  const counters = counterIds.length > 0 ? [...new Set(counterIds)] : [ABBOTT_COUNTER_ID];
+  const requestDates = listDates(from, to);
+  if (
+    !Number.isSafeInteger(dashboardId) || dashboardId <= 0 ||
+    requestDates.length === 0 || from < ABBOTT_CANONICAL_CUTOFF ||
+    counters.length !== 1 || counters[0] !== ABBOTT_COUNTER_ID
+  ) {
+    return emptyAbbottData(counters, audience, from, to, null, [{
+      counter_id: counters[0] ?? ABBOTT_COUNTER_ID,
+      report_date: from,
+      scope: "request",
+      status: "invalid_request",
+    }]);
+  }
 
-  const bitrixPeriodActive = isAbbottBitrixPeriodActive(from, to, bitrixAnalytics.summary);
-  const enrichedPageStats = bitrixPeriodActive
-    ? enrichPageStatsWithBitrix(pageStats, bitrixAnalytics.rows)
-    : pageStats.map((row) => ({ ...row, ...emptyBitrixMetrics() }));
+  let releaseId: number | null = null;
+  try {
+    releaseId = await resolveActiveRelease(dependencies.aggregateExecutor);
+    if (releaseId === null) {
+      return emptyAbbottData(counters, audience, from, to, null, [{
+        counter_id: ABBOTT_COUNTER_ID,
+        report_date: from,
+        scope: "release",
+        status: "missing",
+      }]);
+    }
+    const gaps = await coverageGaps(dependencies.aggregateExecutor, releaseId, counters, from, to);
+    if (gaps.length > 0) return emptyAbbottData(counters, audience, from, to, releaseId, gaps);
 
-  return {
-    counters: normalizedCounterIds,
-    users_summary: usersSummary,
-    traffic_summary: trafficSummary,
-    user_actions: userActions,
-    page_stats: enrichedPageStats,
-    bitrix_pages: bitrixAnalytics.rows,
-    bitrix_summary: bitrixAnalytics.summary,
-    bitrix_period_active: bitrixPeriodActive,
-    session_journeys: sessionJourneys,
-    external_events: workbookData.externalEvents,
-    external_clicks: buildExternalClickRows(externalFactDaily, workbookData),
-    time_buckets: timeBuckets,
-    returning:
-      returningApiPrototype.length > 0
-        ? returningApiPrototype
-        : buildReturningRows(from, to, returningFallback, workbookData, config.useAbbottMetadata),
-    general_materials: buildGeneralMaterialsRows(enrichedPageStats, workbookData),
-  };
+    const privateData = audience === "manager"
+      ? await Promise.all([
+          dependencies.loadManagerWorkbook(dashboardId),
+          dependencies.loadManagerBitrixPages(dashboardId),
+          dependencies.loadManagerJourneys(dashboardId),
+        ]).then(([workbook, bitrixPages, journeys]) => ({ workbook, bitrixPages, journeys }))
+      : await dependencies.loadAggregateData(dashboardId).then((aggregate) => ({
+          workbook: aggregate.workbook,
+          bitrixPages: aggregate.bitrixPages,
+          journeys: null,
+        }));
+
+    const [siteFacts, returningFacts, externalFacts, behaviorFacts] = await Promise.all([
+      querySiteFacts(dependencies.aggregateExecutor, releaseId, counters, from, to),
+      queryReturningFacts(dependencies.aggregateExecutor, releaseId, counters, from, to),
+      queryExternalClicks(dependencies.aggregateExecutor, releaseId, counters, from, to),
+      audience === "manager"
+        ? queryManagerBehavior(dependencies.privateExecutor, releaseId, counters, from, to)
+        : Promise.resolve([]),
+    ]);
+    const trafficSummary = buildTrafficSummary(siteFacts);
+    const bitrixPages = mapBitrixPages(privateData.bitrixPages);
+    const summary = bitrixSummary(privateData.bitrixPages);
+    const periodActive = isAbbottBitrixPeriodActive(from, to, summary);
+    const pageStats = buildPageStats(siteFacts, privateData.workbook);
+    const enrichedPageStats = periodActive ? enrichWithBitrix(pageStats, bitrixPages) : pageStats;
+    const managerBehavior = audience === "manager"
+      ? buildManagerBehavior(behaviorFacts, privateData.workbook as ParsedAbbottWorkbook)
+      : { summaries: [], actions: [] };
+
+    return {
+      ...emptyAbbottData(counters, audience, from, to, releaseId, []),
+      users_summary: managerBehavior.summaries,
+      traffic_summary: trafficSummary,
+      user_actions: managerBehavior.actions,
+      page_stats: enrichedPageStats,
+      bitrix_pages: bitrixPages,
+      bitrix_summary: summary,
+      bitrix_period_active: periodActive,
+      session_journeys: audience === "manager" && privateData.journeys
+        ? mapJourneys(privateData.journeys)
+        : emptyJourneys(),
+      external_events: privateData.workbook.externalEvents,
+      external_clicks: buildExternalClickRows(externalFacts, privateData.workbook),
+      returning: buildReturning(returningFacts, privateData.workbook),
+      general_materials: buildGeneralMaterials(enrichedPageStats, privateData.workbook),
+    };
+  } catch {
+    return emptyAbbottData(counters, audience, from, to, releaseId, [{
+      counter_id: ABBOTT_COUNTER_ID,
+      report_date: from,
+      scope: releaseId === null ? "release" : "request",
+      status: "unavailable",
+    }]);
+  }
 }
 
-export async function loadAbbottBiData(counterIds: string[], from: string, to: string): Promise<AbbottBiData> {
-  return loadPortalBiData(counterIds, from, to, {
-    defaultCounterIds: getDefaultAbbottCounterIds(),
-    useWorkbook: true,
-    useAbbottMetadata: true,
-    useBitrix: true,
-    useExternalClicks: true,
-    useAbbottReturningApi: true,
+type PrivatePoolGlobal = typeof globalThis & { __abbottBiPrivateMysqlPool?: Pool };
+
+function requiredPrivateEnvironment(name: string): string {
+  const value = process.env[name];
+  if (typeof value !== "string" || value.length === 0) throw new Error("Abbott private database is not configured");
+  return value;
+}
+
+async function privatePool(): Promise<Pool> {
+  const shared = globalThis as PrivatePoolGlobal;
+  if (shared.__abbottBiPrivateMysqlPool) return shared.__abbottBiPrivateMysqlPool;
+  const rawPort = requiredPrivateEnvironment("ABBOTT_PRIVATE_DB_PORT");
+  const database = requiredPrivateEnvironment("ABBOTT_PRIVATE_DB_NAME");
+  if (!/^\d+$/.test(rawPort) || database !== "report_bd_private") throw new Error("Abbott private database is not configured");
+  const mysql = await import("mysql2/promise");
+  shared.__abbottBiPrivateMysqlPool = mysql.createPool({
+    host: requiredPrivateEnvironment("ABBOTT_PRIVATE_DB_HOST"),
+    port: Number(rawPort),
+    user: requiredPrivateEnvironment("ABBOTT_PRIVATE_DB_USER"),
+    password: requiredPrivateEnvironment("ABBOTT_PRIVATE_DB_PASSWORD"),
+    database,
+    dateStrings: ["DATE", "DATETIME"],
+    waitForConnections: true,
+    connectionLimit: 5,
+    queueLimit: 0,
+    multipleStatements: false,
   });
+  return shared.__abbottBiPrivateMysqlPool;
 }
 
+async function privateQuery(sql: string, params: readonly unknown[]): Promise<readonly Record<string, unknown>[]> {
+  let connection: PoolConnection | undefined;
+  try {
+    connection = await (await privatePool()).getConnection();
+    await connection.query("SET TRANSACTION READ ONLY");
+    await connection.beginTransaction();
+    const [rows] = await connection.execute<RowDataPacket[]>(sql, params as never[]);
+    await connection.commit();
+    return rows as unknown as readonly Record<string, unknown>[];
+  } catch {
+    if (connection) {
+      try {
+        await connection.rollback();
+      } catch {
+        // The caller receives only the typed sanitized incomplete state.
+      }
+    }
+    throw new Error("Abbott private data is unavailable");
+  } finally {
+    connection?.release();
+  }
+}
+
+const productionDependencies: AbbottBiLoaderDependencies = {
+  aggregateExecutor: {
+    async query(sql, params) {
+      const [rows] = await pool.execute<RowDataPacket[]>(sql, params as never[]);
+      return rows as unknown as readonly Record<string, unknown>[];
+    },
+  },
+  privateExecutor: { query: privateQuery },
+  loadAggregateData: loadActiveAbbottAggregateData,
+  loadManagerWorkbook: loadActiveAbbottWorkbookData,
+  loadManagerBitrixPages: loadActiveAbbottBitrixAnalytics,
+  loadManagerJourneys: loadActiveAbbottSessionJourneys,
+};
+
+export function getDefaultAbbottCounterIds(): string[] {
+  return [ABBOTT_COUNTER_ID];
+}
+
+export function getDefaultZarukuCounterIds(): string[] {
+  return ["66624469", "99078698"];
+}
+
+export async function loadAbbottBiData(
+  dashboardId: number,
+  counterIds: string[],
+  from: string,
+  to: string,
+  audience?: AbbottDashboardAudience,
+): Promise<AbbottCanonicalBiData> {
+  return loadAbbottBiDataWithDependencies(dashboardId, counterIds, from, to, audience, productionDependencies);
+}
+
+// Zaruku remains a separate canonical-v1 read model. It cannot reach Abbott's
+// active release, private executor, workbook snapshots, or Bitrix snapshots.
 export async function loadZarukuBiData(counterIds: string[], from: string, to: string): Promise<AbbottBiData> {
-  return loadPortalBiData(counterIds, from, to, {
-    defaultCounterIds: getDefaultZarukuCounterIds(),
-    useWorkbook: false,
-    useAbbottMetadata: false,
-    useBitrix: false,
-    useExternalClicks: false,
-    useAbbottReturningApi: false,
-  });
+  const counters = counterIds.length > 0 ? counterIds : getDefaultZarukuCounterIds();
+  const sql = `SELECT analytics_scope,
+      COALESCE(traffic_source, utm_source, 'Unknown traffic') AS traffic_source,
+      COALESCE(page_title, '') AS page_title,
+      COALESCE(page_url, '') AS page_url,
+      SUM(visits) AS sessions, SUM(users) AS users, SUM(pageviews) AS pageviews,
+      AVG(bounce_rate) AS bounce_rate, AVG(avg_visit_duration_seconds) AS average_session_seconds
+    FROM canonical_fact_site_analytics_daily
+    WHERE source_key = ? AND analytics_account_id IN (${placeholders(counters)})
+      AND report_date >= ? AND report_date <= ?
+    GROUP BY analytics_scope, traffic_source, page_title, page_url`;
+  const [rawRows] = await pool.execute<RowDataPacket[]>(sql, [ABBOTT_SOURCE_KEY, ...counters, from, to]);
+  const rows = rawRows as unknown as SiteFactRow[];
+  const emptyWorkbook: AbbottAggregatePrivateData["workbook"] = {
+    generalMaterials: [],
+    externalEvents: [],
+    contentByTitle: new Map(),
+    contentByTitleAndType: new Map(),
+    contentBySlug: new Map(),
+    urlReturnDirections: new Map(),
+    ymUrlReturn: [],
+  };
+  return {
+    counters,
+    users_summary: buildTrafficSummary(rows),
+    traffic_summary: buildTrafficSummary(rows),
+    user_actions: [],
+    page_stats: buildPageStats(rows, emptyWorkbook),
+    bitrix_pages: [],
+    bitrix_summary: null,
+    bitrix_period_active: false,
+    session_journeys: emptyJourneys(),
+    external_events: [],
+    external_clicks: [],
+    time_buckets: emptyTimeBuckets(),
+    returning: [],
+    general_materials: [],
+  };
 }

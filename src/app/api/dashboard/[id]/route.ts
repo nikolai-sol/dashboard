@@ -43,6 +43,7 @@ export async function GET(
     const { data, ai_summary_enabled, ai_summary_override, ai_summary_snapshot } = await loadDashboardData(
       request,
       id,
+      access.audience,
     );
     if (ai_summary_enabled) {
       data.ai_summary = ai_summary_override ?? ai_summary_snapshot ?? undefined;
