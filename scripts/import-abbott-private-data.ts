@@ -44,6 +44,7 @@ export interface ImportBatch {
   rows: unknown[][];
   fingerprints: string[];
   fingerprintColumn?: string;
+  verificationColumns?: string[];
   countsTowardImportedRows?: boolean;
 }
 
@@ -84,7 +85,7 @@ interface EventCatalogRow {
   direction: string | null;
   registrationUrl: string;
   access: string | null;
-  fingerprint: string;
+  targetKeyFingerprint: string;
 }
 
 function text(value: unknown): string {
@@ -274,9 +275,9 @@ export function parseWorkbookJson(payload: unknown) {
       rejectedCount += 1;
       continue;
     }
-    const fingerprint = canonicalRowFingerprint([eventTitle, direction, registrationUrl, access]);
-    rejectDuplicate(eventKeys, fingerprint, "event catalog target key");
-    eventCatalog.push({ eventTitle, direction, registrationUrl, access, fingerprint });
+    const targetKeyFingerprint = canonicalRowFingerprint([eventTitle, direction, registrationUrl, access]);
+    rejectDuplicate(eventKeys, targetKeyFingerprint, "event catalog target key");
+    eventCatalog.push({ eventTitle, direction, registrationUrl, access, targetKeyFingerprint });
   }
 
   const manifest = {
@@ -327,7 +328,7 @@ export function parseWorkbookXlsx(buffer: Buffer) {
     direction: string | null;
     access: string | null;
     isActive: boolean;
-    fingerprint: string;
+    targetKeyFingerprint: string;
   }> = [];
   const fingerprints = new Set<string>();
   const titleKeys = new Set<string>();
@@ -353,9 +354,9 @@ export function parseWorkbookXlsx(buffer: Buffer) {
       rejectDuplicate(titleKeys, pageTitle, "content title");
       rejectDuplicate(titleAndTypeKeys, canonicalRowFingerprint([pageTitle, materialType]), "content title and type");
       if (sourceSlug) rejectDuplicate(slugKeys, sourceSlug, "content slug");
-      const fingerprint = canonicalRowFingerprint([config.name, pageTitle, materialType, sourceSlug, direction, access, isActive]);
-      rejectDuplicate(fingerprints, fingerprint, "content source row");
-      rows.push({ pageTitle, materialType, sourceSlug, direction, access, isActive, fingerprint });
+      const targetKeyFingerprint = canonicalRowFingerprint([config.name, pageTitle, materialType, sourceSlug, direction, access, isActive]);
+      rejectDuplicate(fingerprints, targetKeyFingerprint, "content source row");
+      rows.push({ pageTitle, materialType, sourceSlug, direction, access, isActive, targetKeyFingerprint });
     }
   }
   if (rows.length === 0) throw new Error("Workbook XLSX has no content catalog rows");
@@ -389,9 +390,9 @@ export function parseBitrixPagePayload(payload: unknown) {
     const reportDate = text(row.report_date).slice(0, 10);
     const pathValue = normalizedPath(row.normalized_path ?? row.url);
     if (!/^\d{4}-\d{2}-\d{2}$/.test(reportDate) || !pathValue) throw new Error("Bitrix page row requires report_date and normalized_path");
-    const fingerprint = canonicalRowFingerprint([reportDate, pathValue]);
-    rejectDuplicate(fingerprints, fingerprint, "Bitrix page fingerprint");
-    rows.push({
+    const targetKeyFingerprint = canonicalRowFingerprint([reportDate, pathValue]);
+    rejectDuplicate(fingerprints, targetKeyFingerprint, "Bitrix page fingerprint");
+    const parsed = {
       reportDate,
       normalizedPath: pathValue,
       normalizedPathHash: sha256(pathValue),
@@ -411,15 +412,27 @@ export function parseBitrixPagePayload(payload: unknown) {
       topUtmSource: text(row.top_utm_source) || null,
       topUtmMedium: text(row.top_utm_medium) || null,
       topUtmCampaign: text(row.top_utm_campaign) || null,
-      fingerprint,
-    });
+      targetKeyFingerprint,
+    };
+    const persistedValues = [
+      "abbott_bitrix", parsed.reportDate, parsed.normalizedPath, parsed.normalizedPathHash, parsed.materialId,
+      parsed.materialTypeHint, parsed.pageviews, parsed.sessions, parsed.users, parsed.guests, parsed.loggedInHits,
+      parsed.anonymousHits, parsed.loggedInSessions, parsed.anonymousSessions, parsed.entrySessions, parsed.exitSessions,
+      parsed.averageSessionSeconds, parsed.topUtmSource, parsed.topUtmMedium, parsed.topUtmCampaign,
+    ];
+    rows.push({ ...parsed, sourceFingerprint: canonicalRowFingerprint(persistedValues) });
   }
   if (rows.length === 0) throw new Error("Bitrix page payload has no daily rows");
   const sourceHitRows = requiredManifestCount(completeness, "source_hit_rows", "Bitrix page payload");
   const acceptedHitRows = requiredManifestCount(completeness, "accepted_hit_rows", "Bitrix page payload");
   const rejectedHitRows = requiredManifestCount(completeness, "rejected_hit_rows", "Bitrix page payload");
   const outputRows = requiredManifestCount(completeness, "output_rows", "Bitrix page payload");
-  if (sourceHitRows !== acceptedHitRows + rejectedHitRows || outputRows !== rows.length) {
+  const persistedPageviews = rows.reduce((sum, row) => sum + Number(row.pageviews), 0);
+  if (
+    sourceHitRows !== acceptedHitRows + rejectedHitRows
+    || outputRows !== rows.length
+    || acceptedHitRows !== persistedPageviews
+  ) {
     throw new Error("Bitrix page payload completeness counts do not reconcile");
   }
   const dates = rows.map((row) => String(row.reportDate)).sort();
@@ -465,22 +478,31 @@ export function parseBitrixJourneyPayload(payload: unknown) {
     if (!/^\d{4}-\d{2}-\d{2}$/.test(reportDate) || !eventAt || !pathValue || !eventKind) {
       throw new Error("Journey event requires date, time, path, and kind");
     }
-    const databaseKey = canonicalRowFingerprint([reportDate, protectedVisitId, eventSequence]);
-    rejectDuplicate(eventKeys, databaseKey, "journey database key");
-    const fingerprint = canonicalRowFingerprint([reportDate, protectedVisitId, eventSequence, eventAt, pathValue, eventKind]);
+    const targetKeyFingerprint = canonicalRowFingerprint([reportDate, protectedVisitId, eventSequence]);
+    rejectDuplicate(eventKeys, targetKeyFingerprint, "journey database key");
+    const rawUserIdHash = rawUserId ? sha256(rawUserId) : null;
+    const protectedVisitIdHash = sha256(protectedVisitId);
+    const sourceEventId = text(row.source_event_id) || null;
+    const sourceEventIdHash = sourceEventId ? sha256(sourceEventId) : null;
+    const normalizedPathHash = sha256(pathValue);
     const parsed = {
       reportDate,
       protectedVisitId,
-      protectedVisitIdHash: sha256(protectedVisitId),
+      protectedVisitIdHash,
       rawUserId,
-      rawUserIdHash: rawUserId ? sha256(rawUserId) : null,
-      sourceEventId: text(row.source_event_id) || null,
+      rawUserIdHash,
+      sourceEventId,
+      sourceEventIdHash,
       eventSequence,
       eventAt,
       normalizedPath: pathValue,
-      normalizedPathHash: sha256(pathValue),
+      normalizedPathHash,
       eventKind,
-      fingerprint,
+      targetKeyFingerprint,
+      sourceFingerprint: canonicalRowFingerprint([
+        "abbott_bitrix", reportDate, rawUserId, rawUserIdHash, protectedVisitId, protectedVisitIdHash,
+        sourceEventId, sourceEventIdHash, eventSequence, eventAt, pathValue, normalizedPathHash, eventKind,
+      ]),
     };
     rows.push(parsed);
     const visitKey = canonicalRowFingerprint([reportDate, protectedVisitId]);
@@ -568,6 +590,33 @@ function assertIdentifier(identifier: string): void {
   if (!/^[a-z_][a-z0-9_]*$/i.test(identifier)) throw new Error("Unsafe SQL identifier");
 }
 
+function assertBatchFingerprintContract(batch: ImportBatch): void {
+  if (batch.rows.length !== batch.fingerprints.length) throw new Error("Import batch fingerprint count mismatch");
+  if (new Set(batch.fingerprints).size !== batch.fingerprints.length) throw new Error("Duplicate import batch fingerprint");
+  if (batch.fingerprintColumn) {
+    assertIdentifier(batch.fingerprintColumn);
+    const fingerprintIndex = batch.columns.indexOf(batch.fingerprintColumn);
+    if (fingerprintIndex < 0 || batch.verificationColumns) throw new Error("Invalid persisted fingerprint verification");
+    batch.rows.forEach((row, index) => {
+      if (row[fingerprintIndex] !== batch.fingerprints[index]) throw new Error("Persisted fingerprint does not match import row");
+      const persistedFields = row.filter((_value, columnIndex) => columnIndex !== fingerprintIndex);
+      if (canonicalRowFingerprint(persistedFields) !== batch.fingerprints[index]) {
+        throw new Error("Persisted fingerprint does not cover all persisted columns");
+      }
+    });
+    return;
+  }
+  if (!batch.verificationColumns || JSON.stringify(batch.verificationColumns) !== JSON.stringify(batch.columns)) {
+    throw new Error("Every import batch requires full-row fingerprint verification");
+  }
+  batch.verificationColumns.forEach(assertIdentifier);
+  batch.rows.forEach((row, index) => {
+    if (canonicalRowFingerprint(row) !== batch.fingerprints[index]) {
+      throw new Error("Import row fingerprint does not cover all persisted columns");
+    }
+  });
+}
+
 async function verifyBatch(
   connection: AbbottImportConnection,
   canonicalReleaseId: number,
@@ -577,9 +626,7 @@ async function verifyBatch(
   if (!ALLOWED_TABLES.has(batch.table)) throw new Error("Import table is not allowed");
   batch.columns.forEach(assertIdentifier);
   if (batch.rows.some((row) => row.length !== batch.columns.length)) throw new Error("Import batch width mismatch");
-  if (batch.rows.length !== batch.fingerprints.length) throw new Error("Import batch fingerprint count mismatch");
-  if (new Set(batch.fingerprints).size !== batch.fingerprints.length) throw new Error("Duplicate import batch fingerprint");
-  if (batch.rows.length === 0) return;
+  assertBatchFingerprintContract(batch);
   const countResult = await connection.execute(
     `SELECT COUNT(*) AS row_count FROM ${batch.table} WHERE canonical_release_id = ? AND source_snapshot_id = ?`,
     [canonicalReleaseId, snapshotId],
@@ -595,6 +642,17 @@ async function verifyBatch(
     const actual = rowsFromResult(fingerprintResult).map((row) => String(row.fingerprint)).sort();
     const expected = [...batch.fingerprints].sort();
     if (JSON.stringify(actual) !== JSON.stringify(expected)) throw new Error("Imported fingerprint verification failed");
+  } else {
+    const verificationColumns = batch.verificationColumns!;
+    const rowResult = await connection.execute(
+      `SELECT ${verificationColumns.join(", ")} FROM ${batch.table} WHERE canonical_release_id = ? AND source_snapshot_id = ?`,
+      [canonicalReleaseId, snapshotId],
+    );
+    const actual = rowsFromResult(rowResult)
+      .map((row) => canonicalRowFingerprint(verificationColumns.map((column) => row[column])))
+      .sort();
+    const expected = [...batch.fingerprints].sort();
+    if (JSON.stringify(actual) !== JSON.stringify(expected)) throw new Error("Imported fingerprint verification failed");
   }
 }
 
@@ -607,9 +665,11 @@ async function insertAndVerifyBatch(
   if (!ALLOWED_TABLES.has(batch.table)) throw new Error("Import table is not allowed");
   batch.columns.forEach(assertIdentifier);
   if (batch.rows.some((row) => row.length !== batch.columns.length)) throw new Error("Import batch width mismatch");
-  if (batch.rows.length !== batch.fingerprints.length) throw new Error("Import batch fingerprint count mismatch");
-  if (new Set(batch.fingerprints).size !== batch.fingerprints.length) throw new Error("Duplicate import batch fingerprint");
-  if (batch.rows.length === 0) return;
+  assertBatchFingerprintContract(batch);
+  if (batch.rows.length === 0) {
+    await verifyBatch(connection, canonicalReleaseId, snapshotId, batch);
+    return;
+  }
   const columns = ["canonical_release_id", "source_snapshot_id", ...batch.columns];
   const placeholders = `(${columns.map(() => "?").join(", ")})`;
   for (let offset = 0; offset < batch.rows.length; offset += 500) {
@@ -645,6 +705,7 @@ export async function runAbbottImportTransaction(
       .filter((batch) => batch.countsTowardImportedRows !== false)
       .reduce((sum, batch) => sum + batch.rows.length, 0);
     if (importedBatchRows !== source.importedRowCount) throw new Error("Imported batch counts do not reconcile");
+    source.batches.forEach(assertBatchFingerprintContract);
   }
 
   await connection.beginTransaction();
@@ -917,7 +978,7 @@ function workbookJsonSource(parsed: ReturnType<typeof parseWorkbookJson>, source
     row.registrationUrl,
     sha256(row.registrationUrl),
     row.access,
-    row.fingerprint,
+    canonicalRowFingerprint([row.eventTitle, row.direction, row.registrationUrl, sha256(row.registrationUrl), row.access]),
   ]);
   const importedRowCount = directionRows.length + materialRows.length + eventRows.length;
   return withSourceMetadata("abbott_workbook_json", sourcePath, bytes, archiveLocator, options, {
@@ -933,19 +994,21 @@ function workbookJsonSource(parsed: ReturnType<typeof parseWorkbookJson>, source
         table: `${PRIVATE_SCHEMA}.portal_user_directions_private`,
         columns: ["raw_user_id", "raw_user_id_hash", "normalized_direction", "normalized_specialization"],
         rows: directionRows,
-        fingerprints: parsed.privateUserDirections.map((row) => canonicalRowFingerprint([row.rawUserId, row.normalizedDirection, row.normalizedSpecialization])),
+        fingerprints: directionRows.map((row) => canonicalRowFingerprint(row)),
+        verificationColumns: ["raw_user_id", "raw_user_id_hash", "normalized_direction", "normalized_specialization"],
       },
       {
         table: `${PRIMARY_SCHEMA}.portal_general_materials`,
         columns: ["material_key", "material_title", "material_type", "normalized_url", "normalized_url_hash", "normalized_path", "normalized_path_hash", "direction_key", "published_at", "metadata_json"],
         rows: materialRows,
-        fingerprints: parsed.generalMaterials.map((row) => canonicalRowFingerprint([row.materialKey, row.materialTitle, row.normalizedUrl])),
+        fingerprints: materialRows.map((row) => canonicalRowFingerprint(row)),
+        verificationColumns: ["material_key", "material_title", "material_type", "normalized_url", "normalized_url_hash", "normalized_path", "normalized_path_hash", "direction_key", "published_at", "metadata_json"],
       },
       {
         table: `${PRIMARY_SCHEMA}.portal_event_catalog`,
         columns: ["event_title", "direction_key", "registration_url", "registration_url_hash", "access_label", "source_row_fingerprint"],
         rows: eventRows,
-        fingerprints: parsed.eventCatalog.map((row) => row.fingerprint),
+        fingerprints: eventRows.map((row) => String(row.at(-1))),
         fingerprintColumn: "source_row_fingerprint",
       },
     ],
@@ -953,24 +1016,15 @@ function workbookJsonSource(parsed: ReturnType<typeof parseWorkbookJson>, source
 }
 
 function workbookXlsxSource(parsed: ReturnType<typeof parseWorkbookXlsx>, sourcePath: string, bytes: Buffer, archiveLocator: string, options: CliOptions) {
-  const rows = parsed.rows.map((row) => [
-    null,
-    null,
-    null,
-    row.pageTitle,
-    null,
-    row.materialType,
-    row.sourceSlug,
-    row.sourceSlug ? sha256(row.sourceSlug) : null,
-    row.access,
-    row.isActive,
-    row.fingerprint,
-    null,
-    row.direction,
-    null,
-    "1970-01-01 00:00:00",
-    null,
-  ]);
+  const rows = parsed.rows.map((row) => {
+    const persistedFields = [
+      null, null, null, row.pageTitle, null, row.materialType, row.sourceSlug,
+      row.sourceSlug ? sha256(row.sourceSlug) : null, row.access, row.isActive,
+      null, row.direction, null, "1970-01-01 00:00:00", null,
+    ];
+    const sourceFingerprint = canonicalRowFingerprint(persistedFields);
+    return [...persistedFields.slice(0, 10), sourceFingerprint, ...persistedFields.slice(10)];
+  });
   return withSourceMetadata("abbott_workbook_catalog", sourcePath, bytes, archiveLocator, options, {
     sourceRowCount: rows.length,
     importedRowCount: rows.length,
@@ -983,7 +1037,7 @@ function workbookXlsxSource(parsed: ReturnType<typeof parseWorkbookXlsx>, source
       table: `${PRIMARY_SCHEMA}.portal_content_catalog`,
       columns: ["normalized_url", "normalized_url_hash", "normalized_path", "page_title", "material_id", "material_type", "source_slug", "source_slug_hash", "access_label", "is_active", "source_row_fingerprint", "section_key", "direction_key", "published_at", "valid_from", "valid_to"],
       rows,
-      fingerprints: parsed.rows.map((row) => row.fingerprint),
+      fingerprints: rows.map((row) => String(row[10])),
       fingerprintColumn: "source_row_fingerprint",
     }],
   });
@@ -994,7 +1048,7 @@ function bitrixPageSource(parsed: ReturnType<typeof parseBitrixPagePayload>, sou
     "abbott_bitrix", row.reportDate, row.normalizedPath, row.normalizedPathHash, row.materialId,
     row.materialTypeHint, row.pageviews, row.sessions, row.users, row.guests, row.loggedInHits,
     row.anonymousHits, row.loggedInSessions, row.anonymousSessions, row.entrySessions, row.exitSessions,
-    row.averageSessionSeconds, row.topUtmSource, row.topUtmMedium, row.topUtmCampaign, row.fingerprint,
+    row.averageSessionSeconds, row.topUtmSource, row.topUtmMedium, row.topUtmCampaign, row.sourceFingerprint,
   ]);
   return withSourceMetadata("abbott_bitrix_pages", sourcePath, bytes, archiveLocator, options, {
     sourceRowCount: rows.length,
@@ -1009,14 +1063,14 @@ function bitrixPageSource(parsed: ReturnType<typeof parseBitrixPagePayload>, sou
         table: `${PRIVATE_SCHEMA}.portal_bitrix_page_facts`,
         columns: ["analytics_account_id", "report_date", "normalized_path", "normalized_path_hash", "material_id", "material_type_hint", "pageviews", "sessions", "users", "guests", "logged_in_hits", "anonymous_hits", "logged_in_sessions", "anonymous_sessions", "entry_sessions", "exit_sessions", "avg_session_duration_seconds", "top_utm_source", "top_utm_medium", "top_utm_campaign", "source_row_fingerprint"],
         rows,
-        fingerprints: parsed.rows.map((row) => String(row.fingerprint)),
+        fingerprints: parsed.rows.map((row) => String(row.sourceFingerprint)),
         fingerprintColumn: "source_row_fingerprint",
       },
       {
         table: `${PRIMARY_SCHEMA}.portal_bitrix_page_facts`,
         columns: ["analytics_account_id", "report_date", "normalized_path", "normalized_path_hash", "material_id", "material_type_hint", "pageviews", "sessions", "users", "guests", "logged_in_hits", "anonymous_hits", "logged_in_sessions", "anonymous_sessions", "entry_sessions", "exit_sessions", "avg_session_duration_seconds", "top_utm_source", "top_utm_medium", "top_utm_campaign", "source_row_fingerprint"],
         rows,
-        fingerprints: parsed.rows.map((row) => String(row.fingerprint)),
+        fingerprints: parsed.rows.map((row) => String(row.sourceFingerprint)),
         fingerprintColumn: "source_row_fingerprint",
         countsTowardImportedRows: false,
       },
@@ -1027,8 +1081,8 @@ function bitrixPageSource(parsed: ReturnType<typeof parseBitrixPagePayload>, sou
 function bitrixJourneySource(parsed: ReturnType<typeof parseBitrixJourneyPayload>, sourcePath: string, bytes: Buffer, archiveLocator: string, options: CliOptions, payload: Record<string, unknown>) {
   const rows = parsed.rows.map((row) => [
     "abbott_bitrix", row.reportDate, row.rawUserId, row.rawUserIdHash, row.protectedVisitId,
-    row.protectedVisitIdHash, row.sourceEventId, row.sourceEventId ? sha256(String(row.sourceEventId)) : null,
-    row.eventSequence, row.eventAt, row.normalizedPath, row.normalizedPathHash, row.eventKind, row.fingerprint,
+    row.protectedVisitIdHash, row.sourceEventId, row.sourceEventIdHash,
+    row.eventSequence, row.eventAt, row.normalizedPath, row.normalizedPathHash, row.eventKind, row.sourceFingerprint,
   ]);
   const transitions = parsed.transitions.map((row) => [
     "abbott_bitrix", row.reportDate, row.fromPath, row.fromPathHash, row.toPath, row.toPathHash, row.transitionCount,
@@ -1046,14 +1100,15 @@ function bitrixJourneySource(parsed: ReturnType<typeof parseBitrixJourneyPayload
         table: `${PRIVATE_SCHEMA}.portal_bitrix_journeys_private`,
         columns: ["analytics_account_id", "report_date", "raw_user_id", "raw_user_id_hash", "protected_visit_id", "protected_visit_id_hash", "source_event_id", "source_event_id_hash", "event_sequence", "event_at", "normalized_path", "normalized_path_hash", "event_kind", "source_row_fingerprint"],
         rows,
-        fingerprints: parsed.rows.map((row) => String(row.fingerprint)),
+        fingerprints: parsed.rows.map((row) => String(row.sourceFingerprint)),
         fingerprintColumn: "source_row_fingerprint",
       },
       {
         table: `${PRIMARY_SCHEMA}.portal_bitrix_journey_transitions`,
         columns: ["analytics_account_id", "report_date", "from_path", "from_path_hash", "to_path", "to_path_hash", "transition_count"],
         rows: transitions,
-        fingerprints: parsed.transitions.map((row) => canonicalRowFingerprint([row.reportDate, row.fromPath, row.toPath])),
+        fingerprints: transitions.map((row) => canonicalRowFingerprint(row)),
+        verificationColumns: ["analytics_account_id", "report_date", "from_path", "from_path_hash", "to_path", "to_path_hash", "transition_count"],
         countsTowardImportedRows: false,
       },
     ],

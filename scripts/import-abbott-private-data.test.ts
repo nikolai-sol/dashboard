@@ -150,7 +150,12 @@ test("prepared sources use store source kinds and persist XLSX metadata plus bot
     const workbookJsonPath = path.join(root, "workbook.json");
     const workbookXlsxPath = path.join(root, "workbook.xlsx");
     const bitrixPagesPath = path.join(root, "pages.json");
-    writeFileSync(workbookJsonPath, JSON.stringify({ id: [{ id: "0001", direction: "cardiology" }] }));
+    const bitrixJourneysPath = path.join(root, "journeys.json");
+    writeFileSync(workbookJsonPath, JSON.stringify({
+      id: [{ id: "0001", direction: "cardiology" }],
+      general_materials: [{ name: "General", url: "/general", material_type: "guide", direction: "cardiology" }],
+      events: [{ title: "Event", registration_url: "/event", direction: "cardiology", access: "Врачи" }],
+    }));
     writeFileSync(workbookXlsxPath, workbookBuffer({
       "Статьи": [{ "Название": "Guide", "Символьный код": "guide", "Доступ": "Врачи", "Активность": "Нет" }],
     }));
@@ -159,13 +164,21 @@ test("prepared sources use store source kinds and persist XLSX metadata plus bot
       manifest: { complete: true, truncated: false, source_hit_rows: 1, accepted_hit_rows: 1, rejected_hit_rows: 0, output_rows: 1 },
       rows: [{ report_date: "2026-05-20", normalized_path: "/guide", pageviews: 1 }],
     }));
+    writeFileSync(bitrixJourneysPath, JSON.stringify({
+      schema: { grain: "protected_visit_id x event_sequence", ordered_events: true },
+      manifest: { complete: true, truncated: false, source_hit_rows: 2, emitted_event_rows: 2, rejected_hit_rows: 0 },
+      rows: [
+        { report_date: "2026-05-20", protected_visit_id: "visit-1", raw_user_id: "user-1", source_event_id: "event-1", event_sequence: 0, event_at: "2026-05-20 10:00:00", normalized_path: "/guide", event_kind: "pageview" },
+        { report_date: "2026-05-20", protected_visit_id: "visit-1", raw_user_id: "user-1", source_event_id: "event-2", event_sequence: 1, event_at: "2026-05-20 10:01:00", normalized_path: "/event", event_kind: "pageview" },
+      ],
+    }));
 
     const sources = await prepareAbbottSources({
       canonicalReleaseId: 77,
       workbookJsonPath,
       workbookXlsxPath,
       bitrixPagesPath,
-      bitrixJourneysPath: null,
+      bitrixJourneysPath,
       parserVersion: "task7-test",
       codeRevision: "deadbeef",
       archiveDir: path.join(root, "archive"),
@@ -174,6 +187,7 @@ test("prepared sources use store source kinds and persist XLSX metadata plus bot
       "abbott_workbook_json",
       "abbott_workbook_catalog",
       "abbott_bitrix_pages",
+      "abbott_bitrix_journeys",
     ]);
     const catalogBatch = sources[1]?.batches[0];
     assert.ok(catalogBatch);
@@ -185,6 +199,25 @@ test("prepared sources use store source kinds and persist XLSX metadata plus bot
       sources[2]?.batches.map((batch) => batch.table).sort(),
       ["report_bd.portal_bitrix_page_facts", "report_bd_private.portal_bitrix_page_facts"],
     );
+    for (const source of sources) {
+      for (const batch of source.batches) {
+        batch.rows.forEach((row, index) => {
+          const fingerprint = batch.fingerprints[index];
+          if (batch.fingerprintColumn) {
+            const fingerprintIndex = batch.columns.indexOf(batch.fingerprintColumn);
+            assert.notEqual(fingerprintIndex, -1);
+            assert.equal(row[fingerprintIndex], fingerprint);
+            assert.equal(
+              fingerprint,
+              canonicalRowFingerprint(row.filter((_value, columnIndex) => columnIndex !== fingerprintIndex)),
+            );
+          } else {
+            assert.deepEqual(batch.verificationColumns, batch.columns);
+            assert.equal(fingerprint, canonicalRowFingerprint(row));
+          }
+        });
+      }
+    }
   } finally {
     rmSync(root, { recursive: true, force: true });
   }
@@ -194,7 +227,7 @@ test("Bitrix page parser requires complete daily rows and rejects duplicate fing
   const payload = {
     generated_at: "2026-05-29T11:00:00Z",
     grain: "normalized_path x report_date",
-    manifest: { complete: true, truncated: false, source_hit_rows: 1, accepted_hit_rows: 1, rejected_hit_rows: 0, output_rows: 1 },
+    manifest: { complete: true, truncated: false, source_hit_rows: 2, accepted_hit_rows: 2, rejected_hit_rows: 0, output_rows: 1 },
     rows: [
       {
         report_date: "2026-05-20",
@@ -207,7 +240,14 @@ test("Bitrix page parser requires complete daily rows and rejects duplicate fing
   };
   const parsed = parseBitrixPagePayload(payload);
   assert.equal(parsed.rows[0]?.normalizedPath, "/articles/a");
-  assert.equal(parsed.manifest.source_hit_rows, 1);
+  assert.equal(parsed.manifest.source_hit_rows, 2);
+  const changedMetrics = parseBitrixPagePayload({
+    ...payload,
+    manifest: { ...payload.manifest, source_hit_rows: 3, accepted_hit_rows: 3 },
+    rows: [{ ...payload.rows[0], pageviews: 3 }],
+  });
+  assert.equal(parsed.rows[0]?.targetKeyFingerprint, changedMetrics.rows[0]?.targetKeyFingerprint);
+  assert.notEqual(parsed.rows[0]?.sourceFingerprint, changedMetrics.rows[0]?.sourceFingerprint);
   assert.throws(
     () => parseBitrixPagePayload({ ...payload, manifest: { complete: false, truncated: true } }),
     /truncat|complete/i,
@@ -215,6 +255,10 @@ test("Bitrix page parser requires complete daily rows and rejects duplicate fing
   assert.throws(
     () => parseBitrixPagePayload({ ...payload, manifest: { complete: true, truncated: false } }),
     /count|manifest/i,
+  );
+  assert.throws(
+    () => parseBitrixPagePayload({ ...payload, manifest: { ...payload.manifest, accepted_hit_rows: 1, source_hit_rows: 1 } }),
+    /pageview|reconcile/i,
   );
   assert.throws(
     () => parseBitrixPagePayload({ ...payload, rows: [payload.rows[0], payload.rows[0]] }),
@@ -253,6 +297,34 @@ test("Bitrix journey parser requires ordered lossless event rows", () => {
   assert.equal(parsed.rows[1]?.normalizedPath, "/two");
   assert.equal(parsed.transitions[0]?.transitionCount, 1);
   assert.equal(parsed.manifest.source_hit_rows, 2);
+  const changedIdentity = parseBitrixJourneyPayload({
+    generated_at: "2026-05-29T11:00:00Z",
+    schema: { grain: "protected_visit_id x event_sequence", ordered_events: true },
+    manifest: { complete: true, truncated: false, source_hit_rows: 2, emitted_event_rows: 2, rejected_hit_rows: 0 },
+    rows: [
+      {
+        report_date: "2026-05-20",
+        protected_visit_id: "0000000000009007199254740993",
+        raw_user_id: "different-user",
+        source_event_id: "different-event",
+        event_sequence: 0,
+        event_at: "2026-05-20 10:00:00",
+        normalized_path: "/one",
+        event_kind: "pageview",
+      },
+      {
+        report_date: "2026-05-20",
+        protected_visit_id: "0000000000009007199254740993",
+        raw_user_id: "000123",
+        event_sequence: 1,
+        event_at: "2026-05-20 10:01:00",
+        normalized_path: "/two",
+        event_kind: "pageview",
+      },
+    ],
+  });
+  assert.equal(parsed.rows[0]?.targetKeyFingerprint, changedIdentity.rows[0]?.targetKeyFingerprint);
+  assert.notEqual(parsed.rows[0]?.sourceFingerprint, changedIdentity.rows[0]?.sourceFingerprint);
 
   assert.throws(
     () => parseBitrixJourneyPayload({
@@ -314,6 +386,7 @@ function source(overrides: Partial<PreparedAbbottSource> = {}): PreparedAbbottSo
         columns: ["raw_user_id"],
         rows: [["000123"]],
         fingerprints: [canonicalRowFingerprint(["000123"])],
+        verificationColumns: ["raw_user_id"],
       },
     ],
     ...overrides,
@@ -339,6 +412,7 @@ test("transaction locks one staging Abbott release, writes and verifies, attache
         return [{ insertId: 101 }, []];
       }
       if (compact.startsWith("SELECT COUNT(*)")) return [[{ row_count: 1 }], []];
+      if (compact.startsWith("SELECT raw_user_id FROM")) return [[{ raw_user_id: "000123" }], []];
       return [[], []];
     },
     commit: async () => calls.push("commit"),
@@ -371,6 +445,7 @@ test("transaction is checksum-idempotent only when the current release rows veri
         return [[{ id: 44, import_status: "imported", imported_row_count: 1 }], []];
       }
       if (compact.startsWith("SELECT COUNT(*)")) return [[{ row_count: 1 }], []];
+      if (compact.startsWith("SELECT raw_user_id FROM")) return [[{ raw_user_id: "000123" }], []];
       return [[], []];
     },
     commit: async () => idempotentCalls.push("commit"),
@@ -397,6 +472,90 @@ test("transaction is checksum-idempotent only when the current release rows veri
     rollback: async () => undefined,
   };
   await assert.rejects(() => runAbbottImportTransaction(crossReleaseConnection, 77, [source()]), /import failed/i);
+
+  const changedMetricConnection: AbbottImportConnection = {
+    beginTransaction: async () => undefined,
+    execute: async (sql) => {
+      const compact = sql.replace(/\s+/g, " ").trim();
+      if (compact.includes("FROM report_bd.portal_data_releases")) {
+        return [[{ id: 77, dataset_key: "abbott", release_status: "staging", source_snapshot_ids: "[]" }], []];
+      }
+      if (compact.includes("FROM report_bd.portal_dataset_snapshots")) {
+        return [[{ id: 44, import_status: "imported", imported_row_count: 1 }], []];
+      }
+      if (compact.startsWith("SELECT COUNT(*)")) return [[{ row_count: 1 }], []];
+      if (compact.startsWith("SELECT raw_user_id FROM")) return [[{ raw_user_id: "000123" }], []];
+      if (compact.startsWith("SELECT source_row_fingerprint")) {
+        return [[{ fingerprint: canonicalRowFingerprint([3]) }], []];
+      }
+      return [[], []];
+    },
+    commit: async () => undefined,
+    rollback: async () => undefined,
+  };
+  await assert.rejects(
+    () => runAbbottImportTransaction(changedMetricConnection, 77, [source({
+      batches: [{
+        table: "report_bd.portal_bitrix_page_facts",
+        columns: ["pageviews", "source_row_fingerprint"],
+        rows: [[2, canonicalRowFingerprint([2])]],
+        fingerprints: [canonicalRowFingerprint([2])],
+        fingerprintColumn: "source_row_fingerprint",
+      }],
+    })]),
+    /import failed/i,
+  );
+
+  const unexpectedRowsConnection: AbbottImportConnection = {
+    beginTransaction: async () => undefined,
+    execute: async (sql) => {
+      const compact = sql.replace(/\s+/g, " ").trim();
+      if (compact.includes("FROM report_bd.portal_data_releases")) {
+        return [[{ id: 77, dataset_key: "abbott", release_status: "staging", source_snapshot_ids: "[]" }], []];
+      }
+      if (compact.includes("FROM report_bd.portal_dataset_snapshots")) {
+        return [[{ id: 44, import_status: "imported", imported_row_count: 0 }], []];
+      }
+      if (compact.startsWith("SELECT COUNT(*)")) return [[{ row_count: 1 }], []];
+      return [[], []];
+    },
+    commit: async () => undefined,
+    rollback: async () => undefined,
+  };
+  await assert.rejects(
+    () => runAbbottImportTransaction(unexpectedRowsConnection, 77, [source({
+      sourceRowCount: 0,
+      importedRowCount: 0,
+      batches: [{
+        table: "report_bd.portal_bitrix_page_facts",
+        columns: ["source_row_fingerprint"],
+        rows: [],
+        fingerprints: [],
+        fingerprintColumn: "source_row_fingerprint",
+      }],
+    })]),
+    /import failed/i,
+  );
+});
+
+test("transaction rejects any batch without deterministic fingerprint verification", async () => {
+  const connection: AbbottImportConnection = {
+    beginTransaction: async () => { throw new Error("must fail before transaction"); },
+    execute: async () => [[], []],
+    commit: async () => undefined,
+    rollback: async () => undefined,
+  };
+  await assert.rejects(
+    () => runAbbottImportTransaction(connection, 77, [source({
+      batches: [{
+        table: "report_bd_private.portal_user_directions_private",
+        columns: ["raw_user_id"],
+        rows: [["000123"]],
+        fingerprints: [canonicalRowFingerprint(["000123"])],
+      }],
+    })]),
+    /fingerprint verification/i,
+  );
 });
 
 test("transaction preserves verified existing Metrika and optional snapshot IDs while replacing imported kinds", async () => {
@@ -418,6 +577,7 @@ test("transaction preserves verified existing Metrika and optional snapshot IDs 
       if (compact.includes("FROM report_bd.portal_dataset_snapshots")) return [[], []];
       if (compact.startsWith("INSERT INTO report_bd.portal_dataset_snapshots")) return [{ insertId: 101 }, []];
       if (compact.startsWith("SELECT COUNT(*)")) return [[{ row_count: 1 }], []];
+      if (compact.startsWith("SELECT raw_user_id FROM")) return [[{ raw_user_id: "000123" }], []];
       if (compact.startsWith("UPDATE report_bd.portal_data_releases")) attached = params?.[0];
       return [{ affectedRows: 1 }, []];
     },
@@ -488,6 +648,9 @@ test("transaction chunks large fact batches on the same connection", async () =>
       if (compact.startsWith("INSERT INTO report_bd.portal_dataset_snapshots")) return [{ insertId: 101 }, []];
       if (compact.startsWith("INSERT INTO report_bd_private.portal_user_directions_private")) factInsertCount += 1;
       if (compact.startsWith("SELECT COUNT(*)")) return [[{ row_count: 501 }], []];
+      if (compact.startsWith("SELECT raw_user_id FROM")) {
+        return [rows.map((row) => ({ raw_user_id: row[0] })), []];
+      }
       return [[], []];
     },
     commit: async () => undefined,
@@ -505,6 +668,7 @@ test("transaction chunks large fact batches on the same connection", async () =>
           columns: ["raw_user_id"],
           rows,
           fingerprints: rows.map((row) => canonicalRowFingerprint(row)),
+          verificationColumns: ["raw_user_id"],
         },
       ],
     }),
