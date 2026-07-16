@@ -33,6 +33,7 @@ import type { MultibrandBrandSummary } from "@/components/MultibrandExecutivePag
 import { getDashboardI18n } from "@/lib/dashboard-i18n";
 import type { DashboardData } from "@/lib/types";
 import { resolvePlatformIdFromSourceKey } from "@/lib/source-mapping";
+import { defaultAbbottRange } from "@/lib/abbott-date-range";
 
 const SPEND_RELATED_KPIS = new Set(["spend", "cpm", "cpc", "cpv", "cpa", "roas"]);
 
@@ -308,8 +309,11 @@ export default function DashboardByIdPage() {
   const router = useRouter();
   const searchParams = useSearchParams();
   const dashboardId = params?.id ? String(params.id).toLowerCase() : "";
-  const initialFrom = searchParams.get("from") ?? "";
-  const initialTo = searchParams.get("to") ?? "";
+  const queryFrom = searchParams.get("from") ?? "";
+  const queryTo = searchParams.get("to") ?? "";
+  const abbottDefaultRange = dashboardId === "abbott" && !queryFrom && !queryTo ? defaultAbbottRange() : null;
+  const initialFrom = abbottDefaultRange?.from ?? queryFrom;
+  const initialTo = abbottDefaultRange?.to ?? queryTo;
   const initialCompareFrom = searchParams.get("compare_from") ?? "";
   const initialCompareTo = searchParams.get("compare_to") ?? "";
   const initialAccessToken = searchParams.get("access_token") ?? "";
