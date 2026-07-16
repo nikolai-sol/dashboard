@@ -16,6 +16,7 @@ CREATE TABLE IF NOT EXISTS portal_data_releases (
   updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
   PRIMARY KEY (id),
   UNIQUE KEY uniq_portal_release_key (dataset_key, release_key),
+  UNIQUE KEY uniq_portal_release_dataset_id (dataset_key, id),
   KEY idx_portal_release_status (dataset_key, release_status),
   KEY idx_portal_release_validation (baseline_validation_run_id),
   KEY idx_portal_release_rollback (rollback_from_release_id),
@@ -34,9 +35,11 @@ CREATE TABLE IF NOT EXISTS portal_active_data_releases (
   updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
   PRIMARY KEY (dataset_key),
   UNIQUE KEY uniq_active_release_id (canonical_release_id),
+  KEY idx_active_release_dataset (dataset_key, canonical_release_id),
   KEY idx_active_previous_release (previous_release_id),
   CONSTRAINT fk_active_canonical_release
-    FOREIGN KEY (canonical_release_id) REFERENCES portal_data_releases(id),
+    FOREIGN KEY (dataset_key, canonical_release_id)
+      REFERENCES portal_data_releases(dataset_key, id),
   CONSTRAINT fk_active_previous_release
     FOREIGN KEY (previous_release_id) REFERENCES portal_data_releases(id)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
