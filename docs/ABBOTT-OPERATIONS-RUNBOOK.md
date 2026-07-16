@@ -25,6 +25,10 @@ them from an ordinary development session.
 - Activation and rollback change the shared active release pointer atomically.
   They never copy facts, delete the candidate, or enable a silent legacy
   fallback.
+- A staging release is resume-safe and may rewrite its own day. The current
+  active release permits only an atomic append of a wholly absent, completed
+  UTC day for the exact five-scope Abbott bundle. Existing active days are
+  immutable; corrections and gap repair require a successor release.
 - The duplicate `06:10` legacy `/metrika` cron is removed only after the
   candidate is active and post-activation checks pass.
 - Revoking or issuing a Yandex token requires the owner’s authenticated Yandex
@@ -47,7 +51,11 @@ export ABBOTT_COUNTER_ID=90602537
 export ABBOTT_OWNER_MYSQL_DEFAULTS_FILE=/root/.config/reportingdash/abbott-owner.cnf
 export ABBOTT_COLLECTOR_ENV_FILE=/root/reportingdash-canonical/.env
 export ABBOTT_IMPORT_ENV_FILE=/root/reportingdash-canonical/.abbott-import.env
+export ABBOTT_RELEASE_ENV_FILE=/root/reportingdash-canonical/.abbott-release-operator.env
 export DASHBOARD_OWNER_ENV_FILE=/var/www/www-root/data/.production.env
+export LEGACY_RUNTIME_ENV_FILE=/var/www/legacy-reporting/.env
+export LEGACY_SERVICE_NAME=<reviewed-systemd-unit>
+export LEGACY_METRIKA_URL=<reviewed-loopback-metrika-url>
 export METRIKA_TOKEN_FILE=/root/.config/reportingdash/metrika-token
 export LEGACY_LAUNCH_SECRET_FILE=/root/.config/reportingdash/legacy-launch-secret
 export ABBOTT_PRIVATE_ARCHIVE_DIR=/root/reportingdash-private/abbott/archive
@@ -56,10 +64,13 @@ export CODE_REVISION=<reviewed-git-revision>
 export DASHBOARD_CODE_REVISION=<reviewed-dashboard-git-revision>
 export PARSER_VERSION=<reviewed-parser-version>
 export BACKFILL_TODAY_UTC=<YYYY-MM-DD>
+export CANONICAL_RUNTIME_MANIFEST="$CANONICAL_ROOT/ops/abbott-runtime-manifest.sha256"
 
 install -d -m 700 /root/.config/reportingdash
 install -d -m 700 "$ABBOTT_PRIVATE_ARCHIVE_DIR" "$ABBOTT_PRIVATE_INPUT_DIR"
 test "$(git -C "$DASHBOARD_SOURCE_ROOT" rev-parse HEAD)" = "$DASHBOARD_CODE_REVISION"
+test "$(git -C "$CANONICAL_ROOT" rev-parse HEAD)" = "$CODE_REVISION"
+(cd "$CANONICAL_ROOT" && sha256sum -c "$CANONICAL_RUNTIME_MANIFEST")
 test "$(stat -c '%a' /root/.config/reportingdash)" = 700
 test "$(stat -c '%a' "$ABBOTT_PRIVATE_ARCHIVE_DIR")" = 700
 ```
@@ -77,13 +88,14 @@ Use a fresh shell with `set +x` if there is any doubt.
 
 ## Database accounts, roles, and environment ownership
 
-Apply least privilege with three separate MySQL accounts. The schema SQL
+Apply least privilege with four separate MySQL accounts. The schema SQL
 creates these roles but intentionally does not create accounts or passwords:
 
 | Process | Role | Runtime environment |
 | --- | --- | --- |
 | Canonical Metrika collector | `reportingdash_abbott_collector_role` | `MYSQL_HOST`, `MYSQL_PORT`, `MYSQL_USER`, `MYSQL_PASSWORD`, `MYSQL_DB=report_bd`, `METRIKA_TOKEN` in `$ABBOTT_COLLECTOR_ENV_FILE` |
 | Private snapshot importer | `reportingdash_abbott_importer_role` | `ABBOTT_IMPORT_DB_HOST`, `ABBOTT_IMPORT_DB_PORT`, `ABBOTT_IMPORT_DB_USER`, `ABBOTT_IMPORT_DB_PASSWORD` in `$ABBOTT_IMPORT_ENV_FILE` |
+| Baseline/comparator/release lifecycle operator | `reportingdash_abbott_release_operator_role` | `ABBOTT_RELEASE_DB_HOST`, `ABBOTT_RELEASE_DB_PORT`, `ABBOTT_RELEASE_DB_USER`, `ABBOTT_RELEASE_DB_PASSWORD`, `ABBOTT_RELEASE_DB_NAME=report_bd` in `$ABBOTT_RELEASE_ENV_FILE` |
 | Server-side Abbott manager read model | `reportingdash_abbott_runtime_reader_role` | `ABBOTT_PRIVATE_DB_HOST`, `ABBOTT_PRIVATE_DB_PORT`, `ABBOTT_PRIVATE_DB_USER`, `ABBOTT_PRIVATE_DB_PASSWORD`, `ABBOTT_PRIVATE_DB_NAME=report_bd_private` in `$DASHBOARD_OWNER_ENV_FILE` |
 
 The general dashboard/embed database account must not receive private-table
@@ -100,6 +112,9 @@ SET DEFAULT ROLE 'reportingdash_abbott_collector_role' TO '<collector-account>'@
 
 GRANT 'reportingdash_abbott_importer_role' TO '<importer-account>'@'<host>';
 SET DEFAULT ROLE 'reportingdash_abbott_importer_role' TO '<importer-account>'@'<host>';
+
+GRANT 'reportingdash_abbott_release_operator_role' TO '<release-operator-account>'@'<host>';
+SET DEFAULT ROLE 'reportingdash_abbott_release_operator_role' TO '<release-operator-account>'@'<host>';
 
 GRANT 'reportingdash_abbott_runtime_reader_role' TO '<reader-account>'@'<host>';
 SET DEFAULT ROLE 'reportingdash_abbott_runtime_reader_role' TO '<reader-account>'@'<host>';
@@ -174,9 +189,13 @@ mysql --defaults-extra-file="$ABBOTT_OWNER_MYSQL_DEFAULTS_FILE" \
   --batch --skip-column-names report_bd \
   --execute="SELECT COUNT(*) FROM information_schema.tables WHERE table_schema IN ('report_bd','report_bd_private') AND table_name IN ('portal_data_releases','portal_active_data_releases','portal_dataset_snapshots','portal_migration_validation_runs','canonical_fact_metrika_site_analytics_daily','canonical_fact_metrika_returning_pages_daily','canonical_source_coverage_daily','canonical_fact_metrika_user_behavior_daily','portal_user_directions_private','portal_bitrix_page_facts','portal_bitrix_journeys_private')" \
   > "$CHECKPOINT_DIR/schema-table-count.txt"
+export ACTUAL_SCHEMA_TABLE_COUNT="$(cat "$CHECKPOINT_DIR/schema-table-count.txt")"
+test "$ACTUAL_SCHEMA_TABLE_COUNT" = 12
 ```
 
-The count must equal the reviewed expected table set before continuing.
+The exact reviewed query returns 12: the 11 named contracts plus both the
+primary and private `portal_bitrix_page_facts` tables. Any smaller or larger
+result blocks the rollout; a merely non-zero count is not sufficient.
 
 ## Checkpoint 2: issue and install owner-controlled secrets
 
@@ -223,15 +242,15 @@ finally:
 PY
 ```
 
-Validate access with a counter-filtered, read-only probe approved by the owner.
-Redirect all output to a protected log and inspect only status/count fields:
+Validate actual read access with the Yandex Management API's read-only counter
+endpoint. The probe verifies the returned counter identity and prints no token
+or response payload:
 
 ```bash
 set -a
 . "$ABBOTT_COLLECTOR_ENV_FILE"
 set +a
-"$CANONICAL_ROOT/venv/bin/python" "$CANONICAL_ROOT/abbott_health_probe.py" \
-  --json --counter-id "$ABBOTT_COUNTER_ID" \
+"$CANONICAL_ROOT/venv/bin/python" "$CANONICAL_ROOT/probe_yandex_metrika_access.py" \
   > "$CHECKPOINT_DIR/abbott-token-probe.json"
 chmod 600 "$CHECKPOINT_DIR/abbott-token-probe.json"
 unset METRIKA_TOKEN
@@ -256,6 +275,62 @@ test "$(stat -c '%a' "$LEGACY_LAUNCH_SECRET_FILE")" = 600
 Clients send this value only as `x-internal-token`. Never append `secret=` to a
 URL. Do not enable or repair the old `/metrika` cron as part of installation.
 
+Install the new value atomically into the owner-managed legacy env by rerunning
+the exact protected-file Python helper above with these arguments:
+
+```bash
+python3 - "$LEGACY_RUNTIME_ENV_FILE" LEGACY_LAUNCH_SECRET "$LEGACY_LAUNCH_SECRET_FILE" <<'PY'
+import os, pathlib, sys, tempfile
+env_path, key, value_path = map(pathlib.Path, (sys.argv[1], sys.argv[2], sys.argv[3]))
+value = value_path.read_text(encoding="utf-8").rstrip("\n")
+if not value or "\n" in value or "\r" in value: raise SystemExit("protected value file is invalid")
+lines = env_path.read_text(encoding="utf-8").splitlines() if env_path.exists() else []
+updated = [line for line in lines if not line.startswith(f"{key}=")]
+updated.append(f"{key}={value}")
+fd, temporary = tempfile.mkstemp(prefix=f".{env_path.name}.", dir=env_path.parent, text=True)
+try:
+    with os.fdopen(fd, "w", encoding="utf-8") as handle:
+        handle.write("\n".join(updated) + "\n"); handle.flush(); os.fsync(handle.fileno())
+    os.chmod(temporary, 0o600); os.replace(temporary, env_path)
+finally:
+    if os.path.exists(temporary): os.unlink(temporary)
+PY
+```
+
+In the reviewed maintenance window, restart the named legacy service and use
+protected curl config files to prove missing/wrong headers return `401` or
+`403`, while the correct `x-internal-token` returns `2xx`. Create the positive
+config from `$LEGACY_LAUNCH_SECRET_FILE` without terminal output, keep all
+configs mode `0600`, run `systemctl restart "$LEGACY_SERVICE_NAME"`, record
+only HTTP status codes, then delete the configs. Do not put the header value on
+the command line or enable the legacy cron.
+
+```bash
+python3 - "$LEGACY_METRIKA_URL" "$LEGACY_LAUNCH_SECRET_FILE" "$CHECKPOINT_DIR" <<'PY'
+import pathlib, sys
+url, secret_file, directory = sys.argv[1], pathlib.Path(sys.argv[2]), pathlib.Path(sys.argv[3])
+secret = secret_file.read_text(encoding="utf-8").strip()
+common = f'url = "{url}"\nrequest = "POST"\nsilent\nshow-error\noutput = "/dev/null"\nwrite-out = "%{{http_code}}"\n'
+configs = {
+    "legacy-auth-missing.curl": common,
+    "legacy-auth-wrong.curl": common + 'header = "x-internal-token: definitely-wrong"\n',
+    "legacy-auth-valid.curl": common + f'header = "x-internal-token: {secret}"\n',
+}
+for name, content in configs.items():
+    path = directory / name; path.write_text(content, encoding="utf-8"); path.chmod(0o600)
+PY
+systemctl restart "$LEGACY_SERVICE_NAME"
+systemctl is-active --quiet "$LEGACY_SERVICE_NAME"
+export MISSING_AUTH_STATUS="$(curl --config "$CHECKPOINT_DIR/legacy-auth-missing.curl")"
+export WRONG_AUTH_STATUS="$(curl --config "$CHECKPOINT_DIR/legacy-auth-wrong.curl")"
+export VALID_AUTH_STATUS="$(curl --config "$CHECKPOINT_DIR/legacy-auth-valid.curl")"
+case "$MISSING_AUTH_STATUS" in 401|403) ;; *) exit 1 ;; esac
+case "$WRONG_AUTH_STATUS" in 401|403) ;; *) exit 1 ;; esac
+case "$VALID_AUTH_STATUS" in 2??) ;; *) exit 1 ;; esac
+rm -f "$CHECKPOINT_DIR"/legacy-auth-*.curl
+unset MISSING_AUTH_STATUS WRONG_AUTH_STATUS VALID_AUTH_STATUS
+```
+
 ## Checkpoint 3: freeze the baseline
 
 The baseline covers `2026-01-01` through the last completed UTC day selected
@@ -263,6 +338,9 @@ for the reviewed backfill. Private source paths are explicit and outside the
 web root. Repeat `--source-file` for every approved input:
 
 ```bash
+set -a
+. "$ABBOTT_RELEASE_ENV_FILE"
+set +a
 export BASELINE_DATE_FROM=2026-01-01
 export BASELINE_DATE_TO=<last-completed-UTC-date>
 
@@ -274,6 +352,8 @@ cd "$CANONICAL_ROOT"
   --code-revision "$CODE_REVISION" \
   --source-file "abbott_workbook_json:$PARSER_VERSION:$ABBOTT_PRIVATE_INPUT_DIR/abbott-workbook.json" \
   --source-file "abbott_workbook_catalog:$PARSER_VERSION:$ABBOTT_PRIVATE_INPUT_DIR/Abbott-names.xlsx" \
+  --source-file "abbott_bitrix_pages:$PARSER_VERSION:$ABBOTT_PRIVATE_INPUT_DIR/bitrix-analytics.json" \
+  --source-file "abbott_bitrix_journeys:$PARSER_VERSION:$ABBOTT_PRIVATE_INPUT_DIR/bitrix-session-journeys.json" \
   > "$CHECKPOINT_DIR/baseline-capture.log"
 chmod 600 "$CHECKPOINT_DIR/baseline-capture.log"
 ```
@@ -292,10 +372,9 @@ required `@abbott_snapshot_*` session variable has been loaded from a protected
 owner SQL file. Never place those values on the command line:
 
 ```bash
+{ cat "$ABBOTT_PREBACKFILL_VARIABLES_SQL_FILE"; \
+  cat "$CANONICAL_ROOT/ops/sql/abbott_prebackfill_snapshot.sql"; } | \
 mysql --defaults-extra-file="$ABBOTT_OWNER_MYSQL_DEFAULTS_FILE" report_bd \
-  < "$ABBOTT_PREBACKFILL_VARIABLES_SQL_FILE"
-mysql --defaults-extra-file="$ABBOTT_OWNER_MYSQL_DEFAULTS_FILE" report_bd \
-  < "$CANONICAL_ROOT/ops/sql/abbott_prebackfill_snapshot.sql" \
   > "$CHECKPOINT_DIR/prebackfill-aggregate-evidence.tsv"
 chmod 600 "$CHECKPOINT_DIR/prebackfill-aggregate-evidence.tsv"
 ```
@@ -303,22 +382,19 @@ chmod 600 "$CHECKPOINT_DIR/prebackfill-aggregate-evidence.tsv"
 ## Checkpoint 4: create the immutable candidate boundary
 
 Create one staging release that points to the frozen baseline and predecessor.
-The command prints only the new numeric release ID:
+The command prints only the new numeric release ID and status fields:
 
 ```bash
+set -a
+. "$ABBOTT_RELEASE_ENV_FILE"
+set +a
 cd "$CANONICAL_ROOT"
-export CANDIDATE_RELEASE_ID="$($CANONICAL_ROOT/venv/bin/python - <<'PY'
-import os
-from canonical_release_store import create_candidate_release
-release_id = create_candidate_release(
-    portal_key="abbott",
-    predecessor_release_id=int(os.environ["PREDECESSOR_RELEASE_ID"]),
-    baseline_validation_run_id=int(os.environ["BASELINE_SNAPSHOT_ID"]),
-    code_revision=os.environ["CODE_REVISION"],
-)
-print(release_id)
-PY
-)"
+export CANDIDATE_RELEASE_RESULT="$($CANONICAL_ROOT/venv/bin/python abbott_release_operator.py create \
+  --predecessor-release-id "$PREDECESSOR_RELEASE_ID" \
+  --baseline-snapshot-id "$BASELINE_SNAPSHOT_ID" \
+  --code-revision "$CODE_REVISION")"
+export CANDIDATE_RELEASE_ID="${CANDIDATE_RELEASE_RESULT#release_id=}"
+export CANDIDATE_RELEASE_ID="${CANDIDATE_RELEASE_ID%% *}"
 case "$CANDIDATE_RELEASE_ID" in *[!0-9]*|'') exit 1 ;; esac
 ```
 
@@ -416,9 +492,42 @@ Abbott health, and a dashboard smoke test. Warnings are accepted only by a
 named human reviewer in the validation table; this runbook does not auto-accept
 them.
 
-Only after every gate passes, a DBA changes `staging` to `validated` with a
-compare-and-set update from a protected SQL file. It must contain the numeric
-candidate ID and must fail unless exactly one `abbott` staging row changes.
+Before validation, re-attest the canonical runtime and prove the deployed
+dashboard came from the reviewed dashboard revision. Build that exact checkout
+into a protected staging directory, perform the separately reviewed dashboard
+deployment, then compare the staged and deployed standalone entrypoint bytes:
+
+```bash
+test "$(git -C "$CANONICAL_ROOT" rev-parse HEAD)" = "$CODE_REVISION"
+(cd "$CANONICAL_ROOT" && sha256sum -c "$CANONICAL_RUNTIME_MANIFEST")
+test "$(git -C "$DASHBOARD_SOURCE_ROOT" rev-parse HEAD)" = "$DASHBOARD_CODE_REVISION"
+cd "$DASHBOARD_SOURCE_ROOT"
+npm ci
+npm run build
+export REVIEWED_DASHBOARD_SERVER="$DASHBOARD_SOURCE_ROOT/.next/standalone/server.js"
+test -s "$REVIEWED_DASHBOARD_SERVER"
+# Run the owner-approved deployment procedure for DASHBOARD_CODE_REVISION here.
+cmp "$REVIEWED_DASHBOARD_SERVER" "$DASHBOARD_RUNTIME_ROOT/server.js"
+sha256sum "$REVIEWED_DASHBOARD_SERVER" "$DASHBOARD_RUNTIME_ROOT/server.js" \
+  > "$CHECKPOINT_DIR/dashboard-reviewed-runtime.sha256"
+```
+
+Do not validate or activate if either revision or byte comparison fails.
+
+Only after every gate passes, execute the tested validation transition. It
+locks the staging release, requires persisted comparator evidence bound to the
+baseline snapshot and candidate code revision, uses a recursive calendar CTE
+to detect wholly absent dates, requires the exact five-scope reconciled bundle
+on every date, inserts the final gate evidence, and CAS-transitions to
+`validated` in the same transaction:
+
+```bash
+"$CANONICAL_ROOT/venv/bin/python" abbott_release_operator.py validate \
+  --release-id "$CANDIDATE_RELEASE_ID" \
+  --date-from 2026-01-01 \
+  --date-to "$BASELINE_DATE_TO" \
+  --code-revision "$CODE_REVISION"
+```
 
 ## Checkpoint 8: atomic activation
 
@@ -427,14 +536,9 @@ the release-store transaction:
 
 ```bash
 cd "$CANONICAL_ROOT"
-"$CANONICAL_ROOT/venv/bin/python" - <<'PY'
-import os
-from canonical_release_store import activate_release
-activate_release(
-    int(os.environ["CANDIDATE_RELEASE_ID"]),
-    expected_active_release_id=int(os.environ["PREDECESSOR_RELEASE_ID"]),
-)
-PY
+"$CANONICAL_ROOT/venv/bin/python" abbott_release_operator.py activate \
+  --release-id "$CANDIDATE_RELEASE_ID" \
+  --expected-active-release-id "$PREDECESSOR_RELEASE_ID"
 ```
 
 This operation locks the pointer, activates only a `validated` candidate,
@@ -469,12 +573,12 @@ new jobs before appending the reviewed schedule:
 
 ```bash
 python3 - "$CHECKPOINT_DIR/root.crontab.before" "$CHECKPOINT_DIR/root.crontab.after" <<'PY'
-import pathlib, sys
+import os, pathlib, sys
 source, target = map(pathlib.Path, sys.argv[1:])
 kept = []
 removed_legacy = 0
 managed = (
-    "fetch_yandex_metrika_canonical.py",
+    "run_abbott_metrika_active_release.py",
     "abbott_health_probe.py",
     "send_canonical_telegram_report.py --mode summary",
 )
@@ -488,8 +592,10 @@ for line in source.read_text(encoding="utf-8").splitlines():
     kept.append(line)
 if removed_legacy != 1:
     raise SystemExit("expected exactly one 06:10 legacy /metrika cron")
+code_revision = os.environ["CODE_REVISION"]
+parser_version = os.environ["PARSER_VERSION"]
 kept.extend([
-    "12 6 * * * cd /root/reportingdash-canonical && /root/reportingdash-canonical/venv/bin/python fetch_yandex_metrika_canonical.py --run-type cron --days-back 2 --counter-id 90602537 >> /root/reportingdash-canonical/logs/yandex-metrika-abbott-cron.log 2>&1",
+    f"12 6 * * * cd /root/reportingdash-canonical && /root/reportingdash-canonical/venv/bin/python run_abbott_metrika_active_release.py --canonical-root /root/reportingdash-canonical --manifest /root/reportingdash-canonical/ops/abbott-runtime-manifest.sha256 --collector /root/reportingdash-canonical/fetch_yandex_metrika_canonical.py --code-revision {code_revision} --parser-version {parser_version} >> /root/reportingdash-canonical/logs/yandex-metrika-abbott-cron.log 2>&1",
     "5 7 * * * cd /root/reportingdash-canonical && /root/reportingdash-canonical/venv/bin/python abbott_health_probe.py --json --counter-id 90602537 >> /root/reportingdash-canonical/logs/abbott-health-cron.log 2>&1",
     "10 7 * * * cd /root/reportingdash-canonical && /root/reportingdash-canonical/venv/bin/python send_canonical_telegram_report.py --mode summary >> /root/reportingdash-canonical/logs/canonical-telegram-summary.log 2>&1",
 ])
@@ -507,6 +613,14 @@ The final Abbott order is canonical collection `06:12`, deterministic health
 `07:05`, and Telegram daily summary `07:10`. The `07:10` summary is not an
 additional duplicate of the old `06:50` line; the helper replaces any existing
 summary entry.
+
+The wrapper resolves and verifies the current Abbott active pointer on every
+run, then invokes the collector with `--days-back 1`: active publication may
+append only the newly completed yesterday UTC bundle. A retry, late correction,
+or gap repair for an existing day requires a successor staging release and
+activation; it may never overwrite the active release. The removed legacy
+`06:10 /metrika` job previously collected a duplicate multi-day window and is
+not retained as a `today-2` fallback.
 
 ## Checkpoint 10: revoke old Yandex credentials
 
@@ -526,14 +640,9 @@ expected current pointer and the frozen predecessor as the target:
 
 ```bash
 cd "$CANONICAL_ROOT"
-"$CANONICAL_ROOT/venv/bin/python" - <<'PY'
-import os
-from canonical_release_store import rollback_release
-rollback_release(
-    from_release_id=int(os.environ["CANDIDATE_RELEASE_ID"]),
-    to_release_id=int(os.environ["PREDECESSOR_RELEASE_ID"]),
-)
-PY
+"$CANONICAL_ROOT/venv/bin/python" abbott_release_operator.py rollback \
+  --from-release-id "$CANDIDATE_RELEASE_ID" \
+  --to-release-id "$PREDECESSOR_RELEASE_ID"
 ```
 
 Then:

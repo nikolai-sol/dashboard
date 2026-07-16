@@ -18,6 +18,14 @@ class RecordingCursor:
     def fetchone(self):
         return self.rows.pop(0) if self.rows else None
 
+    def fetchall(self):
+        if not self.rows:
+            return []
+        if isinstance(self.rows[0], list):
+            return self.rows.pop(0)
+        rows, self.rows = self.rows, []
+        return rows
+
     def close(self):
         self.closed = True
 
@@ -45,10 +53,107 @@ class RecordingConnection:
 
 
 class CanonicalReleaseStoreTest(unittest.TestCase):
+    def test_validation_requires_every_calendar_day_and_exact_scope_set(self):
+        import canonical_release_store as store
+
+        rows = [
+            {"report_date": "2026-01-01", "scope_key": scope}
+            for scope in store.ABBOTT_REQUIRED_METRIKA_SCOPES
+        ]
+        rows.extend(
+            {"report_date": "2026-01-03", "scope_key": scope}
+            for scope in store.ABBOTT_REQUIRED_METRIKA_SCOPES
+        )
+
+        self.assertEqual(
+            store.missing_coverage_dates(rows, date_from="2026-01-01", date_to="2026-01-03"),
+            ["2026-01-02"],
+        )
+
+    def test_validation_persists_staging_to_validated_cas_after_evidence_and_coverage(self):
+        import canonical_release_store as store
+
+        coverage = [
+            {"report_date": day, "scope_key": scope}
+            for day in ("2026-01-01", "2026-01-02")
+            for scope in store.ABBOTT_REQUIRED_METRIKA_SCOPES
+        ]
+        conn = RecordingConnection(
+            [
+                {
+                    "id": 41,
+                    "dataset_key": "abbott",
+                    "release_status": "staging",
+                    "baseline_validation_run_id": 33,
+                    "code_revision": "abc123",
+                },
+                {
+                    "evidence_count": 8,
+                    "fail_count": 0,
+                    "unaccepted_warn_count": 0,
+                    "revision_mismatch_count": 0,
+                },
+                {"missing_date_count": 0},
+            ]
+        )
+        with patch.object(store, "get_db_connection", return_value=conn):
+            store.validate_release(
+                41,
+                date_from="2026-01-01",
+                date_to="2026-01-02",
+                expected_code_revision="abc123",
+            )
+
+        update_sql, params = next(
+            (sql, params)
+            for sql, params in conn.cursor_instance.calls
+            if sql.startswith("UPDATE portal_data_releases")
+        )
+        self.assertIn("release_status = 'validated'", update_sql)
+        self.assertIn("release_status = 'staging'", update_sql)
+        self.assertEqual(params, ("abbott", 41))
+        self.assertIn(("commit", None), conn.events)
+
+    def test_validation_rejects_unaccepted_warning_without_transition(self):
+        import canonical_release_store as store
+
+        conn = RecordingConnection(
+            [
+                {
+                    "id": 41,
+                    "dataset_key": "abbott",
+                    "release_status": "staging",
+                    "baseline_validation_run_id": 33,
+                    "code_revision": "abc123",
+                },
+                {
+                    "evidence_count": 8,
+                    "fail_count": 0,
+                    "unaccepted_warn_count": 1,
+                    "revision_mismatch_count": 0,
+                },
+            ]
+        )
+        with patch.object(store, "get_db_connection", return_value=conn):
+            with self.assertRaises(store.ValidationGateError):
+                store.validate_release(
+                    41,
+                    date_from="2026-01-01",
+                    date_to="2026-01-02",
+                    expected_code_revision="abc123",
+                )
+
+        self.assertFalse(
+            any(sql.startswith("UPDATE portal_data_releases") for sql, _ in conn.cursor_instance.calls)
+        )
+        self.assertIn(("rollback", None), conn.events)
+
     def test_candidate_creation_records_predecessor_baseline_and_revision(self):
         import canonical_release_store as store
 
-        conn = RecordingConnection(lastrowid=41)
+        conn = RecordingConnection(
+            [{"canonical_release_id": 12}], lastrowid=41
+        )
         with patch.object(store, "get_db_connection", return_value=conn):
             release_id = store.create_candidate_release(
                 portal_key="abbott",
@@ -58,7 +163,11 @@ class CanonicalReleaseStoreTest(unittest.TestCase):
             )
 
         self.assertEqual(release_id, 41)
-        insert_sql, params = conn.cursor_instance.calls[0]
+        insert_sql, params = next(
+            (sql, params)
+            for sql, params in conn.cursor_instance.calls
+            if sql.startswith("INSERT INTO portal_data_releases")
+        )
         self.assertIn("INSERT INTO portal_data_releases", insert_sql)
         self.assertIn("rollback_from_release_id", insert_sql)
         self.assertEqual(params[0], "abbott")
@@ -66,6 +175,24 @@ class CanonicalReleaseStoreTest(unittest.TestCase):
         self.assertIn(33, params)
         self.assertIn("abc123", params)
         self.assertIn(("commit", None), conn.events)
+
+    def test_candidate_creation_rejects_a_stale_predecessor_pointer(self):
+        import canonical_release_store as store
+
+        conn = RecordingConnection([{"canonical_release_id": 13}])
+        with patch.object(store, "get_db_connection", return_value=conn):
+            with self.assertRaises(store.ReleasePointerConflictError):
+                store.create_candidate_release(
+                    portal_key="abbott",
+                    predecessor_release_id=12,
+                    baseline_validation_run_id=33,
+                    code_revision="abc123",
+                )
+
+        self.assertFalse(
+            any(sql.startswith("INSERT INTO portal_data_releases") for sql, _ in conn.cursor_instance.calls)
+        )
+        self.assertIn(("rollback", None), conn.events)
 
     def test_mutable_candidate_requires_matching_dataset_and_staging_status(self):
         import canonical_release_store as store

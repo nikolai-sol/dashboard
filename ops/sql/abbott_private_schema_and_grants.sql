@@ -363,11 +363,22 @@ PREPARE stmt FROM @sql; EXECUTE stmt; DEALLOCATE PREPARE stmt;
 CREATE ROLE IF NOT EXISTS
   'reportingdash_abbott_collector_role',
   'reportingdash_abbott_importer_role',
+  'reportingdash_abbott_release_operator_role',
   'reportingdash_abbott_runtime_reader_role';
 
 GRANT SELECT ON report_bd.portal_data_releases
   TO 'reportingdash_abbott_collector_role';
 GRANT SELECT ON report_bd.portal_active_data_releases
+  TO 'reportingdash_abbott_collector_role';
+GRANT SELECT ON report_bd.yandex_metrika_names
+  TO 'reportingdash_abbott_collector_role';
+GRANT SELECT ON report_bd.canonical_source_account_collection_settings
+  TO 'reportingdash_abbott_collector_role';
+GRANT SELECT, INSERT, UPDATE ON report_bd.canonical_source_accounts
+  TO 'reportingdash_abbott_collector_role';
+GRANT SELECT, INSERT, UPDATE ON report_bd.canonical_collector_runs
+  TO 'reportingdash_abbott_collector_role';
+GRANT INSERT ON report_bd.canonical_collector_run_events
   TO 'reportingdash_abbott_collector_role';
 GRANT SELECT, INSERT, UPDATE, DELETE ON report_bd.canonical_fact_metrika_site_analytics_daily
   TO 'reportingdash_abbott_collector_role';
@@ -406,6 +417,26 @@ GRANT SELECT, INSERT ON report_bd_private.portal_bitrix_page_facts
   TO 'reportingdash_abbott_importer_role';
 GRANT SELECT, INSERT ON report_bd_private.portal_bitrix_journeys_private
   TO 'reportingdash_abbott_importer_role';
+
+-- Baseline capture, comparison, candidate creation, validation, activation,
+-- and rollback use a separate operator account. It cannot write canonical or
+-- private facts; only the collector/importer roles can do that.
+GRANT SELECT, INSERT, UPDATE ON report_bd.portal_data_releases
+  TO 'reportingdash_abbott_release_operator_role';
+GRANT SELECT, UPDATE ON report_bd.portal_active_data_releases
+  TO 'reportingdash_abbott_release_operator_role';
+GRANT SELECT, INSERT ON report_bd.portal_dataset_snapshots
+  TO 'reportingdash_abbott_release_operator_role';
+GRANT SELECT, INSERT, UPDATE ON report_bd.portal_migration_validation_runs
+  TO 'reportingdash_abbott_release_operator_role';
+GRANT SELECT ON report_bd.canonical_fact_metrika_site_analytics_daily
+  TO 'reportingdash_abbott_release_operator_role';
+GRANT SELECT ON report_bd.canonical_fact_metrika_returning_pages_daily
+  TO 'reportingdash_abbott_release_operator_role';
+GRANT SELECT ON report_bd.canonical_source_coverage_daily
+  TO 'reportingdash_abbott_release_operator_role';
+GRANT SELECT ON report_bd_private.canonical_fact_metrika_user_behavior_daily
+  TO 'reportingdash_abbott_release_operator_role';
 
 -- The server-side manager runtime is read-only across the release metadata,
 -- aggregate catalogs, and manager-private tables. Embed must use only the

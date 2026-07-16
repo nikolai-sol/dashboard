@@ -11,7 +11,7 @@ from abbott_canonical_controls import (
     capture_current_control_pack,
     file_snapshot,
 )
-from canonical_writer import get_db_connection
+from abbott_release_operator import get_operator_db_connection
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -50,7 +50,7 @@ def _explicit_file_snapshots(specs: list[str]) -> list[dict]:
 def main() -> int:
     args = build_parser().parse_args()
     explicit_file_snapshots = _explicit_file_snapshots(args.source_file)
-    conn = get_db_connection()
+    conn = get_operator_db_connection()
     try:
         snapshot_id = capture_current_control_pack(
             conn,

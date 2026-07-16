@@ -128,6 +128,34 @@ class AbbottSchemaContractTest(unittest.TestCase):
             sql,
         )
 
+    def test_collector_role_can_record_runs_and_read_configuration(self):
+        sql = self._normalized(self._private_sql())
+        for contract in (
+            "GRANT SELECT ON report_bd.yandex_metrika_names TO 'reportingdash_abbott_collector_role';",
+            "GRANT SELECT ON report_bd.canonical_source_account_collection_settings TO 'reportingdash_abbott_collector_role';",
+            "GRANT SELECT, INSERT, UPDATE ON report_bd.canonical_source_accounts TO 'reportingdash_abbott_collector_role';",
+            "GRANT SELECT, INSERT, UPDATE ON report_bd.canonical_collector_runs TO 'reportingdash_abbott_collector_role';",
+            "GRANT INSERT ON report_bd.canonical_collector_run_events TO 'reportingdash_abbott_collector_role';",
+        ):
+            self.assertIn(contract, sql)
+
+    def test_release_operator_can_transition_metadata_but_not_write_facts(self):
+        sql = self._normalized(self._private_sql())
+        role = "'reportingdash_abbott_release_operator_role'"
+        for table in (
+            "portal_data_releases",
+            "portal_active_data_releases",
+            "portal_dataset_snapshots",
+            "portal_migration_validation_runs",
+        ):
+            self.assertRegex(sql, rf"GRANT [^;]+ ON report_bd\.{table} TO {role};")
+        operator_grants = re.findall(
+            rf"GRANT ([^;]+) ON ([^;]+) TO {role};", sql
+        )
+        for privileges, table in operator_grants:
+            if "fact" in table or "coverage" in table:
+                self.assertEqual(privileges, "SELECT")
+
     def test_prebackfill_requires_every_declared_variable_before_insert(self):
         sql = (ROOT / "ops/sql/abbott_prebackfill_snapshot.sql").read_text()
         guard = sql.split("INSERT INTO report_bd.portal_dataset_snapshots", 1)[0]

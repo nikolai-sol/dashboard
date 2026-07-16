@@ -6,7 +6,7 @@ from __future__ import annotations
 import argparse
 
 from abbott_canonical_controls import compare_release_control_pack, cutover_allowed
-from canonical_writer import get_db_connection
+from abbott_release_operator import get_operator_db_connection
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -18,7 +18,7 @@ def build_parser() -> argparse.ArgumentParser:
 
 def main() -> int:
     args = build_parser().parse_args()
-    conn = get_db_connection()
+    conn = get_operator_db_connection()
     try:
         results = compare_release_control_pack(
             conn,
