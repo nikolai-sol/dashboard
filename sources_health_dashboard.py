@@ -939,6 +939,8 @@ def source_config(source_key: str) -> Dict:
 
 
 def default_blocking(source_key: str, policy: Optional[Dict]) -> bool:
+    if source_key == 'yandex_metrika':
+        return False
     if policy is not None:
         return bool(policy['is_blocking'])
     return bool(source_config(source_key)['is_blocking_default'])

@@ -62,6 +62,10 @@ class SourceHealthTests(unittest.TestCase):
         }
         self.assertEqual(health.compute_exit_code([item]), 0)
 
+    def test_policy_cannot_make_generic_metrika_blocking(self):
+        policy = {"is_blocking": True}
+        self.assertFalse(health.default_blocking("yandex_metrika", policy))
+
 
 if __name__ == "__main__":
     unittest.main()

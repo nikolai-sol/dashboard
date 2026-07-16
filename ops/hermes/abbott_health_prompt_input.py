@@ -17,94 +17,16 @@ if str(ROOT) not in sys.path:
 from abbott_health_probe import ABBOTT_COUNTER_ID, REQUIRED_SCOPES, sanitize_snapshot
 
 
-ROOT_KEYS = {
-    "generated_at_utc", "dashboard", "counter_id", "overall", "release",
-    "latest_run", "scopes", "backfill", "skipped_counter", "incidents",
-}
-RELEASE_KEYS = {"id", "status", "pointer_matches"}
-RUN_KEYS = {"id", "status", "run_type", "date_from", "date_to", "finished_at"}
-SCOPE_KEYS = {"scope", "max_date", "rows", "missing_dates", "status_counts"}
-BACKFILL_KEYS = {"lookback_days", "complete_days", "missing_days"}
-INCIDENT_KEYS = {"incident_key", "severity", "check_id", "observed", "expected"}
-EVIDENCE_KEYS = {
-    "status", "pointer_matches", "finished_date", "max_lag_days", "skipped",
-    "missing_dates", "status_counts", "allowed", "rows", "minimum_rows",
-}
-COVERAGE_STATUSES = {"success", "success_empty", "partial", "skipped", "sampled", "failed", "unknown"}
 SAFE_HOST = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.-]*$")
 SAFE_REMOTE_COMMAND = re.compile(r"^[A-Za-z0-9_./ -]+$")
 
 
-def _exact_keys(value: object, keys: set[str], location: str) -> dict:
-    if not isinstance(value, dict):
-        raise ValueError(f"{location} must be an object")
-    if set(value) != keys:
-        raise ValueError(f"{location} schema mismatch")
-    return value
-
-
-def _reject_nested_objects(value: object, location: str) -> None:
-    if isinstance(value, dict):
-        raise ValueError(f"{location} must not contain nested objects")
-    if isinstance(value, list):
-        for index, nested in enumerate(value):
-            _reject_nested_objects(nested, f"{location}[{index}]")
-
-
-def _validate_evidence(value: object, location: str) -> None:
-    if not isinstance(value, dict):
-        raise ValueError(f"{location} must be an object")
-    unknown = set(value) - EVIDENCE_KEYS
-    if unknown:
-        raise ValueError(f"{location} contains unknown keys")
-    status_counts = value.get("status_counts")
-    if status_counts is not None:
-        if not isinstance(status_counts, dict) or set(status_counts) - COVERAGE_STATUSES:
-            raise ValueError(f"{location}.status_counts schema mismatch")
-        if any(not isinstance(count, int) or count < 0 for count in status_counts.values()):
-            raise ValueError(f"{location}.status_counts values are invalid")
-    for key, nested in value.items():
-        if key == "status_counts":
-            continue
-        _reject_nested_objects(nested, f"{location}.{key}")
-
-
 def validate_payload(payload: dict) -> dict:
-    root = _exact_keys(payload, ROOT_KEYS, "payload")
-    if root["dashboard"] != "abbott" or str(root["counter_id"]) != ABBOTT_COUNTER_ID:
-        raise ValueError("payload identity mismatch")
-    if root["overall"] not in {"OK", "WARN", "CRITICAL"}:
-        raise ValueError("payload overall is invalid")
-
-    release = _exact_keys(root["release"], RELEASE_KEYS, "payload.release")
-    if release["status"] not in {None, "active", "staging", "validated", "retired", "failed"}:
-        raise ValueError("payload.release.status is invalid")
-    _exact_keys(root["latest_run"], RUN_KEYS, "payload.latest_run")
-    backfill = _exact_keys(root["backfill"], BACKFILL_KEYS, "payload.backfill")
-    if not isinstance(backfill["missing_days"], list):
-        raise ValueError("payload.backfill.missing_days must be a list")
-    _reject_nested_objects(backfill["missing_days"], "payload.backfill.missing_days")
-
-    if not isinstance(root["scopes"], list):
-        raise ValueError("payload.scopes must be a list")
-    for index, item in enumerate(root["scopes"]):
-        scope = _exact_keys(item, SCOPE_KEYS, f"payload.scopes[{index}]")
-        if scope["scope"] not in REQUIRED_SCOPES:
-            raise ValueError("payload scope is invalid")
-        _reject_nested_objects(scope["missing_dates"], f"payload.scopes[{index}].missing_dates")
-        if not isinstance(scope["status_counts"], dict) or set(scope["status_counts"]) - COVERAGE_STATUSES:
-            raise ValueError("payload scope status counts are invalid")
-
-    if not isinstance(root["incidents"], list):
-        raise ValueError("payload.incidents must be a list")
-    for index, item in enumerate(root["incidents"]):
-        incident = _exact_keys(item, INCIDENT_KEYS, f"payload.incidents[{index}]")
-        if incident["severity"] not in {"WARN", "CRITICAL"}:
-            raise ValueError("payload incident severity is invalid")
-        _validate_evidence(incident["observed"], f"payload.incidents[{index}].observed")
-        _validate_evidence(incident["expected"], f"payload.incidents[{index}].expected")
-
-    return sanitize_snapshot(root)
+    validated = sanitize_snapshot(payload)
+    scope_names = [scope["scope"] for scope in validated["scopes"]]
+    if len(scope_names) != len(REQUIRED_SCOPES) or set(scope_names) != set(REQUIRED_SCOPES):
+        raise ValueError("payload must contain every required scope exactly once")
+    return validated
 
 
 def build_prompt_input(payload: dict) -> str:
@@ -160,9 +82,23 @@ def _failure_payload(host: str, return_code: int | None = None) -> dict:
         "counter_id": ABBOTT_COUNTER_ID,
         "overall": "CRITICAL",
         "release": {"id": None, "status": None, "pointer_matches": False},
-        "latest_run": {"id": None, "status": None, "run_type": None, "date_from": None, "date_to": None, "finished_at": None},
-        "scopes": [],
-        "backfill": {"lookback_days": 10, "complete_days": 0, "missing_days": []},
+        "latest_run": {"id": None, "status": None, "run_type": None, "date_from": None, "date_to": None, "finished_at": None, "counter_id": None},
+        "scopes": [{
+            "scope": scope,
+            "max_date": None,
+            "rows": 0,
+            "missing_dates": [],
+            "status_counts": {"failed": 1},
+            "unexpected_empty": False,
+        } for scope in REQUIRED_SCOPES],
+        "backfill": {
+            "lookback_days": 10,
+            "complete_days": 0,
+            "missing_days": [
+                "1969-12-23", "1969-12-24", "1969-12-25", "1969-12-26", "1969-12-27",
+                "1969-12-28", "1969-12-29", "1969-12-30", "1969-12-31", "1970-01-01",
+            ],
+        },
         "skipped_counter": False,
         "incidents": [{
             "incident_key": f"abbott|{ABBOTT_COUNTER_ID}|adapter|failure",

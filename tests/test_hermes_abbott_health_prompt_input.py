@@ -16,9 +16,11 @@ VALID = {
     "release": {"id": 41, "status": "active", "pointer_matches": True},
     "latest_run": {"id": 77, "status": "success", "run_type": "backfill",
                    "date_from": "2026-07-06", "date_to": "2026-07-15",
-                   "finished_at": "2026-07-16T06:30:00Z"},
-    "scopes": [{"scope": "traffic", "max_date": "2026-07-15", "rows": 3,
-                "missing_dates": [], "status_counts": {"success": 10}}],
+                   "finished_at": "2026-07-16T06:30:00Z", "counter_id": "90602537"},
+    "scopes": [{"scope": scope, "max_date": "2026-07-15", "rows": 3,
+                "missing_dates": [], "status_counts": {"success": 10},
+                "unexpected_empty": False}
+               for scope in ("other", "traffic", "page", "user_behavior", "returning")],
     "backfill": {"lookback_days": 10, "complete_days": 10, "missing_days": []},
     "skipped_counter": False,
     "incidents": [],
@@ -42,6 +44,17 @@ class HermesAdapterTests(unittest.TestCase):
         payload["scopes"][0]["nested"] = {"user_id": "123"}
         with self.assertRaises(ValueError):
             adapter.validate_payload(payload)
+
+    def test_requires_exactly_all_five_scopes_once(self):
+        missing = json.loads(json.dumps(VALID))
+        missing["scopes"].pop()
+        with self.assertRaises(ValueError):
+            adapter.validate_payload(missing)
+
+        duplicate = json.loads(json.dumps(VALID))
+        duplicate["scopes"][-1]["scope"] = "traffic"
+        with self.assertRaises(ValueError):
+            adapter.validate_payload(duplicate)
 
         payload = json.loads(json.dumps(VALID))
         payload["backfill"]["missing_days"] = [{"extra": "2026-07-15"}]

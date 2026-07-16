@@ -171,10 +171,10 @@ def yandex_shadow_warning(source: Dict) -> bool:
 def should_send_alert(payload: Dict, abbott: Dict) -> bool:
     if abbott.get('overall') == 'CRITICAL':
         return True
-    if int(payload.get('summary', {}).get('exit_code') or 0) == 1:
-        return True
     for source in payload.get('sources', []):
-        if source.get('status') == 'CRITICAL':
+        if not bool(source.get('governance', {}).get('blocking')):
+            continue
+        if source.get('status') in {'WARNING', 'CRITICAL'}:
             return True
         if fail_run(source):
             return True
@@ -297,6 +297,14 @@ def build_abbott_lines(snapshot: Dict) -> List[str]:
         '- release: {} ({})'.format(
             html.escape(str(release.get('id') if release.get('id') is not None else 'none')),
             html.escape(str(release.get('status') or 'unknown')),
+        )
+    )
+    latest_run = snapshot.get('latest_run') or {}
+    lines.append(
+        '- run: {} counter={} finished_at={}'.format(
+            html.escape(str(latest_run.get('status') or 'unknown').upper()),
+            html.escape(str(latest_run.get('counter_id') or 'unknown')),
+            html.escape(str(latest_run.get('finished_at') or 'none')),
         )
     )
     backfill = snapshot.get('backfill') or {}

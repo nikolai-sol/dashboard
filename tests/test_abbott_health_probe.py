@@ -1,6 +1,8 @@
 import json
+import os
 import unittest
 from datetime import date
+from unittest import mock
 
 from abbott_health_probe import (
     ABBOTT_COUNTER_ID,
@@ -28,7 +30,7 @@ class SnapshotCursor:
                     "date_from": date(2026, 7, 6), "date_to": date(2026, 7, 15),
                     "finished_at": "2026-07-16T06:30:00Z"}
         if "canonical_collector_run_events" in sql:
-            return {"event_payload": json.dumps({"skipped_counters": [{"counter_id": "999"}]})}
+            return {"event_payload": json.dumps({"counter_id": ABBOTT_COUNTER_ID, "skipped_counters": [{"counter_id": "999"}]})}
         return None
 
     def fetchall(self):
@@ -54,7 +56,8 @@ def healthy_snapshot():
             "run_type": "backfill",
             "date_from": "2026-07-06",
             "date_to": "2026-07-15",
-            "finished_at": "2026-07-16T06:30:00Z",
+                "finished_at": "2026-07-16T06:30:00Z",
+            "counter_id": ABBOTT_COUNTER_ID,
         },
         "scopes": [
             {
@@ -63,6 +66,7 @@ def healthy_snapshot():
                 "rows": 10,
                 "missing_dates": [],
                 "status_counts": {"success": 10},
+                "unexpected_empty": False,
             }
             for scope in REQUIRED_SCOPES
         ],
@@ -79,7 +83,9 @@ class AbbottProbeTests(unittest.TestCase):
 
         coverage_call = next(call for call in cur.calls if "canonical_source_coverage_daily" in call[0])
         run_call = next(call for call in cur.calls if "canonical_collector_runs" in call[0])
-        self.assertEqual(run_call[1], (41,))
+        event_call = next(call for call in cur.calls if "canonical_collector_run_events" in call[0] and "SELECT event_payload" in call[0])
+        self.assertEqual(run_call[1], (41, ABBOTT_COUNTER_ID))
+        self.assertEqual(event_call[1], (77, ABBOTT_COUNTER_ID))
         self.assertEqual(coverage_call[1][0:2], (41, ABBOTT_COUNTER_ID))
         self.assertNotIn("canonical_fact_ads_daily", "\n".join(sql for sql, _ in cur.calls))
         self.assertFalse(snapshot["skipped_counter"])
@@ -113,6 +119,42 @@ class AbbottProbeTests(unittest.TestCase):
             if row["scope"] == "traffic"
         )
         self.assertEqual(traffic["status_counts"], {"sampled": 1})
+
+    def test_reconciled_success_empty_is_complete_and_not_zero_row_incident(self):
+        rows = [{
+            "scope_key": scope,
+            "report_date": date(2026, 7, 15),
+            "collection_status": "success_empty",
+            "persisted_rows": 0,
+            "pagination_complete": 1,
+            "is_sampled": 0,
+            "empty_reconciled": 1,
+        } for scope in REQUIRED_SCOPES]
+        snapshot = healthy_snapshot()
+        snapshot["scopes"] = build_scope_status(rows, date(2026, 7, 15), 1)
+        incidents = evaluate_snapshot(snapshot)
+        self.assertNotIn("scope_rows", {item["check_id"] for item in incidents})
+
+    @mock.patch.dict(os.environ, {
+        "ABBOTT_HEALTH_TIMEZONE": "Europe/Moscow",
+        "ABBOTT_EXPECTED_COMPLETION_HOUR": "9",
+    }, clear=False)
+    def test_freshness_uses_local_completion_boundary(self):
+        before = healthy_snapshot()
+        before["generated_at_utc"] = "2026-07-16T05:59:00Z"
+        before["latest_run"]["finished_at"] = "2026-07-15T06:00:00Z"
+        self.assertNotIn(
+            "latest_release_run_freshness",
+            {item["check_id"] for item in evaluate_snapshot(before)},
+        )
+
+        at_deadline = healthy_snapshot()
+        at_deadline["generated_at_utc"] = "2026-07-16T06:00:00Z"
+        at_deadline["latest_run"]["finished_at"] = "2026-07-16T05:59:59Z"
+        self.assertIn(
+            "latest_release_run_freshness",
+            {item["check_id"] for item in evaluate_snapshot(at_deadline)},
+        )
 
     def test_gap_partial_sampled_and_failed_are_critical(self):
         snapshot = healthy_snapshot()
@@ -180,6 +222,28 @@ class AbbottProbeTests(unittest.TestCase):
                 }]
                 with self.assertRaises(ValueError):
                     sanitize_snapshot(snapshot)
+
+    def test_sanitizer_rejects_unknown_nested_fields_and_opaque_statuses(self):
+        snapshot = healthy_snapshot()
+        snapshot["release"]["benign_extra"] = "opaque"
+        with self.assertRaises(ValueError):
+            sanitize_snapshot(snapshot)
+
+        snapshot = healthy_snapshot()
+        snapshot["incidents"] = [{
+            "incident_key": "abbott|90602537|raw-private-id|inactive",
+            "severity": "CRITICAL",
+            "check_id": "active_release",
+            "observed": {"status": "failed", "pointer_matches": False},
+            "expected": {"status": "active", "pointer_matches": True},
+        }]
+        with self.assertRaises(ValueError):
+            sanitize_snapshot(snapshot)
+
+        snapshot = healthy_snapshot()
+        snapshot["latest_run"]["status"] = "opaque-status"
+        with self.assertRaises(ValueError):
+            sanitize_snapshot(snapshot)
 
 
 if __name__ == "__main__":
