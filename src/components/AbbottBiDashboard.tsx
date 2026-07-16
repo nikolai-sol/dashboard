@@ -21,6 +21,7 @@ import {
   matchesPageStatsSearch,
   matchesSelectedMaterialType,
 } from "./abbott-page-stats";
+import { selectAbbottSummaryRows } from "./abbott-summary";
 
 type AbbottBiDashboardProps = {
   data: AbbottBiData;
@@ -82,7 +83,7 @@ function buildTabs(portalName: string, showUserIdAnalytics: boolean): TabConfig[
     id: "users_summary",
     label: showUserIdAnalytics ? "1. Общая таблица по пользователям" : "1. Источники трафика",
     description: showUserIdAnalytics
-      ? "Источник: canonical_fact_user_behavior_daily; если UserID-grain недоступен, используется canonical traffic summary."
+      ? "По умолчанию сессии и источники берутся из canonical traffic summary, сопоставимого с Метрикой. При выборе User ID, типа трафика или направления включается User ID-детализация."
       : "Источник: canonical traffic-source summary из Yandex Metrika.",
   },
   {
@@ -903,12 +904,18 @@ export default function AbbottBiDashboard({
   };
 
   const usersSummaryOptions = useMemo(
-    () => ({
-      user_id: uniqOptions(data.users_summary.map((row) => row.user_id)),
-      traffic_source: uniqOptions(data.users_summary.map((row) => row.traffic_source)),
-      direction: uniqOptions(data.users_summary.map((row) => row.direction)),
-    }),
-    [data.users_summary],
+    () => {
+      const trafficRows = data.traffic_summary ?? [];
+      return {
+        user_id: uniqOptions(data.users_summary.filter((row) => row.has_user_id).map((row) => row.user_id)),
+        traffic_source: uniqOptions([
+          ...data.users_summary.map((row) => row.traffic_source),
+          ...trafficRows.map((row) => row.traffic_source),
+        ]),
+        direction: uniqOptions(data.users_summary.map((row) => row.direction)),
+      };
+    },
+    [data.traffic_summary, data.users_summary],
   );
 
   const userActionsOptions = useMemo(
@@ -969,10 +976,28 @@ export default function AbbottBiDashboard({
     );
   }, [data.page_stats]);
 
+  const usersSummarySourceRows = useMemo(
+    () =>
+      selectAbbottSummaryRows({
+        trafficRows: data.traffic_summary ?? [],
+        behaviorRows: data.users_summary,
+        filters: {
+          user_id: filtersByTab.users_summary.user_id,
+          user_id_traffic: filtersByTab.users_summary.user_id_traffic,
+          direction: filtersByTab.users_summary.direction,
+        },
+        showUserIdAnalytics,
+      }),
+    [data.traffic_summary, data.users_summary, filtersByTab.users_summary, showUserIdAnalytics],
+  );
+
+  const userBehaviorSummaryActive =
+    usersSummarySourceRows.length === 0 || usersSummarySourceRows === data.users_summary;
+
   const usersSummaryRows = useMemo(() => {
     const query = queryByTab.users_summary;
     const filters = filtersByTab.users_summary;
-    return data.users_summary.filter((row) => {
+    return usersSummarySourceRows.filter((row) => {
       const searchableValues = showUserIdAnalytics
         ? [userIdLabel(row.user_id, row.has_user_id), row.traffic_source, row.direction, row.visits, row.bounce_rate]
         : [row.traffic_source, row.visits, row.bounce_rate];
@@ -986,7 +1011,7 @@ export default function AbbottBiDashboard({
       if (filters.direction && (row.direction ?? "") !== filters.direction) return false;
       return true;
     });
-  }, [data.users_summary, filtersByTab.users_summary, queryByTab.users_summary, showUserIdAnalytics]);
+  }, [filtersByTab.users_summary, queryByTab.users_summary, showUserIdAnalytics, usersSummarySourceRows]);
 
   const userActionRows = useMemo(() => {
     const query = queryByTab.user_actions;
@@ -1331,8 +1356,8 @@ export default function AbbottBiDashboard({
     currentPage = usersSummaryPage.currentPage;
     totalPages = usersSummaryPage.totalPages;
     tableColumns = [
-      ...(showUserIdAnalytics ? [{ key: "user_id", label: "User ID" }] : []),
-      ...(showUserIdAnalytics ? [{ key: "direction", label: "Направление" }] : []),
+      ...(showUserIdAnalytics && userBehaviorSummaryActive ? [{ key: "user_id", label: "User ID" }] : []),
+      ...(showUserIdAnalytics && userBehaviorSummaryActive ? [{ key: "direction", label: "Направление" }] : []),
       { key: "traffic_source", label: "Источник" },
       { key: "visits", label: "Сессии", className: "text-right" },
       { key: "bounce_rate", label: "Процент отказов", className: "text-right" },
@@ -1340,8 +1365,8 @@ export default function AbbottBiDashboard({
       { key: "page_depth", label: "Глубина просмотра", className: "text-right" },
     ];
     tableRows = usersSummaryPage.pageRows.map((row) => ({
-      ...(showUserIdAnalytics ? { user_id: userIdLabel(row.user_id, row.has_user_id) } : {}),
-      ...(showUserIdAnalytics ? { direction: row.direction ?? "—" } : {}),
+      ...(showUserIdAnalytics && userBehaviorSummaryActive ? { user_id: userIdLabel(row.user_id, row.has_user_id) } : {}),
+      ...(showUserIdAnalytics && userBehaviorSummaryActive ? { direction: row.direction ?? "—" } : {}),
       traffic_source: row.traffic_source,
       visits: formatNumber(row.visits, locale),
       bounce_rate: formatPercent(row.bounce_rate, locale),

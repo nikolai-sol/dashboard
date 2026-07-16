@@ -1263,6 +1263,15 @@ async function queryCanonicalTrafficSummary(
   }));
 }
 
+async function queryCanonicalTrafficSummarySafe(counterIds: string[], from: string, to: string) {
+  try {
+    return await queryCanonicalTrafficSummary(counterIds, from, to);
+  } catch (error) {
+    console.warn("Abbott canonical traffic summary is not available", error);
+    return [];
+  }
+}
+
 async function queryUserSummary(
   counterIds: string[],
   from: string,
@@ -1890,8 +1899,9 @@ async function loadPortalBiData(
   const workbookData = loadPortalWorkbookData(config.useWorkbook);
   const bitrixAnalytics = config.useBitrix ? loadBitrixAnalyticsData() : { summary: null, rows: [] };
   const sessionJourneys = config.useBitrix ? loadBitrixSessionJourneysData() : emptySessionJourneysData();
-  const [usersSummary, userActions, pageStats, returningFallback, externalFactDaily, timeBuckets, returningApiPrototype] = await Promise.all([
+  const [usersSummary, trafficSummary, userActions, pageStats, returningFallback, externalFactDaily, timeBuckets, returningApiPrototype] = await Promise.all([
     queryUserSummary(normalizedCounterIds, from, to, workbookData),
+    queryCanonicalTrafficSummarySafe(normalizedCounterIds, from, to),
     queryUserActions(normalizedCounterIds, from, to, workbookData),
     queryPageStats(normalizedCounterIds, from, to, workbookData, config.useAbbottMetadata),
     queryReturningFallback(normalizedCounterIds, from, to),
@@ -1910,6 +1920,7 @@ async function loadPortalBiData(
   return {
     counters: normalizedCounterIds,
     users_summary: usersSummary,
+    traffic_summary: trafficSummary,
     user_actions: userActions,
     page_stats: enrichedPageStats,
     bitrix_pages: bitrixAnalytics.rows,

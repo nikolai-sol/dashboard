@@ -553,6 +553,7 @@ export interface AbbottBiSessionJourneysData {
 export interface AbbottBiData {
   counters: string[];
   users_summary: AbbottBiUserSummaryRow[];
+  traffic_summary?: AbbottBiUserSummaryRow[];
   user_actions: AbbottBiUserActionRow[];
   page_stats: AbbottBiPageStatRow[];
   bitrix_pages: AbbottBiBitrixPageRow[];
