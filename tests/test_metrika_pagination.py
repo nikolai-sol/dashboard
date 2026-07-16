@@ -85,6 +85,25 @@ class MetrikaPaginationTests(unittest.TestCase):
         self.assertEqual(result.total_rows, 4)
         self.assertFalse(result.pagination_complete)
 
+    def test_collect_all_pages_keeps_missing_total_explicit_and_incomplete(self):
+        result = collect_all_pages(lambda _offset: {"data": []}, limit=2)
+
+        self.assertEqual(result.rows, ())
+        self.assertIsNone(result.total_rows)
+        self.assertFalse(result.pagination_complete)
+
+    def test_collect_all_pages_marks_total_unknown_if_a_later_page_omits_it(self):
+        def fetch_page(offset):
+            if offset == 1:
+                return {"total_rows": 4, "data": [{"id": 1}, {"id": 2}]}
+            return {"data": [{"id": 3}]}
+
+        result = collect_all_pages(fetch_page, limit=2)
+
+        self.assertEqual(tuple(row["id"] for row in result.rows), (1, 2, 3))
+        self.assertIsNone(result.total_rows)
+        self.assertFalse(result.pagination_complete)
+
     def test_collects_all_pages_until_reported_total(self):
         calls = []
 
@@ -119,6 +138,22 @@ class MetrikaPaginationTests(unittest.TestCase):
 
         self.assertIsInstance(rows, list)
         self.assertEqual(rows, [{"id": 1}])
+
+    def test_collect_all_rows_preserves_legacy_paging_when_metadata_changes(self):
+        calls = []
+
+        def fetch_page(offset):
+            calls.append(offset)
+            if offset == 1:
+                return {"total_rows": 4, "data": [{"id": 1}, {"id": 2}]}
+            if offset == 3:
+                return {"total_rows": 100, "data": [{"id": 3}, {"id": 4}]}
+            return {"total_rows": 5, "data": [{"id": 5}]}
+
+        rows = collect_all_rows(fetch_page, limit=2)
+
+        self.assertEqual([row["id"] for row in rows], [1, 2, 3, 4, 5])
+        self.assertEqual(calls, [1, 3, 5])
 
 
 if __name__ == "__main__":

@@ -11,7 +11,7 @@ import os
 import sys
 import time
 import uuid
-from collections.abc import Collection, Mapping
+from collections.abc import Callable, Collection, Mapping
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from decimal import Decimal, InvalidOperation
@@ -32,7 +32,7 @@ from canonical_writer import (
     upsert_fact_user_behavior_daily,
     upsert_source_accounts,
 )
-from metrika_pagination import PaginationResult, collect_all_pages
+from metrika_pagination import PaginationResult, collect_all_pages, collect_all_rows
 
 load_dotenv(Path(__file__).parent / '.env')
 
@@ -164,7 +164,7 @@ class MetrikaCollectionError(RuntimeError):
 class MetrikaScopeResult:
     scope: str
     rows: tuple[dict, ...]
-    api_total_rows: int
+    api_total_rows: int | None
     persisted_rows: int
     sampled: bool
     sample_share: float | None
@@ -424,7 +424,7 @@ def request_with_retry(
     raise RuntimeError(f'Metrika retry loop exhausted for counter {counter_id} day {day}')
 
 
-def request_all_pages(
+def _request_page_fetcher(
     counter_id: str,
     day: str,
     *,
@@ -432,7 +432,7 @@ def request_all_pages(
     metrics: str,
     attribution: str,
     extra_params: dict[str, Any] | None = None,
-) -> dict:
+) -> Callable[[int], dict]:
     def fetch_page(offset: int) -> dict:
         page_params = dict(extra_params or {})
         page_params.update({'limit': '10000', 'offset': str(offset)})
@@ -445,7 +445,28 @@ def request_all_pages(
             extra_params=page_params,
         )
 
-    return collect_all_pages(fetch_page)
+    return fetch_page
+
+
+def request_all_pages(
+    counter_id: str,
+    day: str,
+    *,
+    dimensions: str,
+    metrics: str,
+    attribution: str,
+    extra_params: dict[str, Any] | None = None,
+) -> PaginationResult:
+    return collect_all_pages(
+        _request_page_fetcher(
+            counter_id,
+            day,
+            dimensions=dimensions,
+            metrics=metrics,
+            attribution=attribution,
+            extra_params=extra_params,
+        )
+    )
 
 
 def request_all_rows(
@@ -457,15 +478,17 @@ def request_all_rows(
     attribution: str,
     extra_params: dict[str, Any] | None = None,
 ) -> dict:
-    result = request_all_pages(
-        counter_id,
-        day,
-        dimensions=dimensions,
-        metrics=metrics,
-        attribution=attribution,
-        extra_params=extra_params,
+    rows = collect_all_rows(
+        _request_page_fetcher(
+            counter_id,
+            day,
+            dimensions=dimensions,
+            metrics=metrics,
+            attribution=attribution,
+            extra_params=extra_params,
+        )
     )
-    return {'data': list(result.rows)}
+    return {'data': rows}
 
 
 def extract_rows(data: dict) -> list[dict]:
@@ -720,13 +743,26 @@ def normalize_metrika_page(raw_url: str) -> str:
     return without_query.rstrip('/') or value
 
 
-def _decimal_metric(metrics: list[Any], index: int) -> Decimal:
-    if index >= len(metrics):
-        return Decimal('0')
-    try:
-        return max(Decimal(str(metrics[index] if metrics[index] is not None else 0)), Decimal('0'))
-    except (InvalidOperation, ValueError):
-        return Decimal('0')
+def _required_returning_metrics(metrics: Any) -> tuple[int, Decimal, Decimal, Decimal]:
+    if not isinstance(metrics, (list, tuple)):
+        raise MetrikaCollectionError('Returning metrics are invalid')
+    if len(metrics) < 4:
+        raise MetrikaCollectionError('Returning metrics are incomplete')
+    values: list[Decimal] = []
+    for raw_value in metrics[:4]:
+        if raw_value is None or isinstance(raw_value, bool):
+            raise MetrikaCollectionError('Returning metric is invalid')
+        try:
+            value = Decimal(str(raw_value))
+        except (InvalidOperation, ValueError):
+            raise MetrikaCollectionError('Returning metric is invalid') from None
+        if not value.is_finite() or value < 0:
+            raise MetrikaCollectionError('Returning metric is invalid')
+        values.append(value)
+    visits = values[0]
+    if visits != visits.to_integral_value():
+        raise MetrikaCollectionError('Returning visits metric is invalid')
+    return int(visits), values[1], values[2], values[3]
 
 
 def _release_site_rows(
@@ -907,11 +943,11 @@ def build_returning_rows(
         if not raw_page:
             continue
         normalized_page = normalize_metrika_page(raw_page)
-        denominator = safe_int(metric_value(metrics, 0))
+        denominator, *percentages = _required_returning_metrics(metrics)
         request_fingerprint = build_scope_hash(
             'returning', [counter_id, day, raw_page]
         )
-        for index, (bucket, label) in enumerate(zip(RETURN_BUCKETS, labels), start=1):
+        for bucket, label, percentage in zip(RETURN_BUCKETS, labels, percentages):
             rows.append(
                 {
                     'canonical_release_id': release_id,
@@ -923,7 +959,7 @@ def build_returning_rows(
                     'normalized_page_hash': _sha256(normalized_page),
                     'return_bucket_code': bucket,
                     'return_bucket_label': label,
-                    'source_percentage': _decimal_metric(metrics, index),
+                    'source_percentage': percentage,
                     'source_denominator': denominator,
                     'derived_count': None,
                     'is_derived': 0,
@@ -1000,6 +1036,8 @@ def collect_metrika_scope(
         status = 'sampled'
     elif not response.pagination_complete:
         status = 'partial'
+    elif response.total_rows is None:
+        status = 'partial'
     elif response.total_rows == 0 and not rows:
         status = 'success_empty'
     elif response.total_rows > 0 and rows:
@@ -1047,7 +1085,8 @@ def validate_day_bundle(
                 raise MetrikaCollectionError('Empty Metrika scope is not reconciled')
         elif result.status == 'success':
             if (
-                result.api_total_rows <= 0
+                result.api_total_rows is None
+                or result.api_total_rows <= 0
                 or not result.rows
                 or result.api_total_rows > result.persisted_rows
             ):

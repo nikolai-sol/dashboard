@@ -5,6 +5,22 @@ from metrika_pagination import PaginationResult
 
 
 class MetrikaReturningRowsTests(unittest.TestCase):
+    @staticmethod
+    def response_with_metrics(metrics):
+        return PaginationResult(
+            rows=(
+                {
+                    "dimensions": [{"name": "https://example.com/material"}],
+                    "metrics": metrics,
+                },
+            ),
+            total_rows=1,
+            pages_fetched=1,
+            pagination_complete=True,
+            sampled=False,
+            sample_share=None,
+        )
+
     def test_preserves_raw_url_separately_from_normalized_url(self):
         from fetch_yandex_metrika_canonical import build_returning_rows
 
@@ -64,6 +80,43 @@ class MetrikaReturningRowsTests(unittest.TestCase):
         self.assertTrue(all(row["source_denominator"] == 7 for row in rows))
         self.assertTrue(all(row["derived_count"] is None for row in rows))
         self.assertTrue(all(row["is_derived"] == 0 for row in rows))
+
+    def test_missing_required_returning_metric_fails_scope(self):
+        from fetch_yandex_metrika_canonical import (
+            MetrikaCollectionError,
+            build_returning_rows,
+        )
+
+        with self.assertRaises(MetrikaCollectionError):
+            build_returning_rows(
+                "90602537",
+                "2026-01-02",
+                self.response_with_metrics([7, 12.5, 23.5]),
+                77,
+                41,
+            )
+
+    def test_invalid_required_returning_metric_fails_scope(self):
+        from fetch_yandex_metrika_canonical import (
+            MetrikaCollectionError,
+            build_returning_rows,
+        )
+
+        invalid_metric_sets = (
+            ["invalid", 12.5, 23.5, 34.5],
+            [7, 12.5, "invalid", 34.5],
+            [7, 12.5, 23.5, None],
+        )
+        for metrics in invalid_metric_sets:
+            with self.subTest(metrics=metrics):
+                with self.assertRaises(MetrikaCollectionError):
+                    build_returning_rows(
+                        "90602537",
+                        "2026-01-02",
+                        self.response_with_metrics(metrics),
+                        77,
+                        41,
+                    )
 
 
 if __name__ == "__main__":

@@ -8,7 +8,7 @@ from typing import Any
 @dataclass(frozen=True)
 class PaginationResult:
     rows: tuple[dict, ...]
-    total_rows: int
+    total_rows: int | None
     pages_fetched: int
     pagination_complete: bool
     sampled: bool
@@ -17,7 +17,7 @@ class PaginationResult:
 
 def _reported_total(response: dict[str, Any]) -> tuple[int | None, bool]:
     if "total_rows" not in response:
-        return None, True
+        return None, False
     try:
         value = int(response["total_rows"])
     except (TypeError, ValueError):
@@ -50,6 +50,7 @@ def collect_all_pages(
     expected_total: int | None = None
     expected_sampling: tuple[bool, float | None] | None = None
     evidence_consistent = True
+    total_evidence_present = True
 
     while True:
         raw_response = fetch_page(offset)
@@ -61,6 +62,7 @@ def collect_all_pages(
             page_rows = []
 
         reported_total, total_valid = _reported_total(response)
+        total_evidence_present = total_evidence_present and total_valid
         sampled, sample_share, sampling_valid = _sampling_metadata(response)
         if pages_fetched == 1:
             expected_total = reported_total
@@ -86,11 +88,11 @@ def collect_all_pages(
             break
         offset = next_offset
 
-    total_rows = expected_total if expected_total is not None else len(rows)
-    complete = evidence_consistent and (
-        len(rows) == total_rows
-        if expected_total is not None
-        else len(page_rows) < limit
+    total_rows = expected_total if total_evidence_present else None
+    complete = (
+        evidence_consistent
+        and total_rows is not None
+        and len(rows) == total_rows
     )
     result_sampled, result_sample_share = expected_sampling or (False, None)
     return PaginationResult(
@@ -108,4 +110,28 @@ def collect_all_rows(
     *,
     limit: int = 10_000,
 ) -> list[dict[str, Any]]:
-    return list(collect_all_pages(fetch_page, limit=limit).rows)
+    rows: list[dict[str, Any]] = []
+    offset = 1
+
+    while True:
+        response = fetch_page(offset)
+        page_rows = response.get("data") if isinstance(response, dict) else []
+        if not isinstance(page_rows, list):
+            page_rows = []
+        rows.extend(page_rows)
+
+        total_rows = response.get("total_rows") if isinstance(response, dict) else None
+        try:
+            total_rows_value = int(total_rows) if total_rows is not None else None
+        except (TypeError, ValueError):
+            total_rows_value = None
+
+        if not page_rows or len(page_rows) < limit or (
+            total_rows_value is not None and len(rows) >= total_rows_value
+        ):
+            return rows
+
+        next_offset = offset + len(page_rows)
+        if next_offset <= offset:
+            raise RuntimeError("Metrika pagination did not advance")
+        offset = next_offset

@@ -195,6 +195,40 @@ class MetrikaDayBundleTests(unittest.TestCase):
                 day_bundle(scopes), collector.ABBOTT_REQUIRED_SCOPES
             )
 
+    def test_missing_api_total_cannot_be_classified_as_success_empty(self):
+        import fetch_yandex_metrika_canonical as collector
+        from metrika_pagination import PaginationResult
+
+        response = PaginationResult(
+            rows=(),
+            total_rows=None,
+            pages_fetched=1,
+            pagination_complete=False,
+            sampled=False,
+            sample_share=None,
+        )
+        with patch.object(collector, "request_all_pages", return_value=response):
+            result = collector.collect_metrika_scope(
+                collector.ABBOTT_COUNTER_ID,
+                "2026-01-02",
+                "page",
+                77,
+                41,
+            )
+
+        self.assertEqual(result.status, "partial")
+        self.assertIsNone(result.api_total_rows)
+        with self.assertRaises(collector.MetrikaCollectionError):
+            collector.validate_day_bundle(
+                day_bundle(
+                    {
+                        **day_bundle().scopes,
+                        "page": result,
+                    }
+                ),
+                collector.ABBOTT_REQUIRED_SCOPES,
+            )
+
     def test_explicit_release_path_skips_legacy_ddl_and_range_deletes(self):
         import fetch_yandex_metrika_canonical as collector
 
@@ -238,6 +272,35 @@ class MetrikaDayBundleTests(unittest.TestCase):
         ensure_table.assert_not_called()
         delete_site.assert_not_called()
         delete_private.assert_not_called()
+
+    def test_generic_request_all_rows_uses_legacy_pagination_wrapper(self):
+        import fetch_yandex_metrika_canonical as collector
+        from metrika_pagination import PaginationResult
+
+        strict_partial = PaginationResult(
+            rows=({"id": 1}, {"id": 2}, {"id": 3}, {"id": 4}),
+            total_rows=4,
+            pages_fetched=2,
+            pagination_complete=False,
+            sampled=False,
+            sample_share=None,
+        )
+        legacy_rows = [{"id": value} for value in range(1, 6)]
+        with patch.object(
+            collector, "request_all_pages", return_value=strict_partial
+        ), patch.object(
+            collector, "collect_all_rows", create=True, return_value=legacy_rows
+        ) as collect_legacy:
+            response = collector.request_all_rows(
+                "12345678",
+                "2026-01-02",
+                dimensions="dimension",
+                metrics="metric",
+                attribution="last",
+            )
+
+        self.assertEqual(response, {"data": legacy_rows})
+        collect_legacy.assert_called_once()
 
 
 if __name__ == "__main__":
