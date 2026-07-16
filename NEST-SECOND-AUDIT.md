@@ -45,7 +45,7 @@ PM2 процессы:
 Содержимое cron-скрипта:
 
 ```js
-fetch('http://5.35.85.218:5000/launch?secret=nikolay-save-us-pls')
+fetch('http://5.35.85.218:5000/launch') // retired query secret redacted
 ```
 
 Таймзона сервера:
@@ -137,7 +137,7 @@ Endpoint запуска:
 
 Зашито прямо в коде:
 
-- query secret запуска: `nikolay-save-us-pls`
+- query secret запуска: `[REDACTED — owner revocation still required]`
 - hardcoded token в `metrika.service.ts`
 
 Файлы:
@@ -152,7 +152,7 @@ Endpoint запуска:
 
 По факту:
 
-- да, `nikolay-save-us-pls` это тот самый секрет, который используется для защиты `/launch`
+- да, `[REDACTED]` был тем самым секретом, который использовался для защиты `/launch`; владелец должен отозвать его вне репозитория
 - он совпадает в коде и в cron-URL
 
 ## Telegram

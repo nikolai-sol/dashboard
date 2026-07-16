@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import unittest
 from unittest.mock import patch
+import json
 
 
 class RecordingCursor:
@@ -52,7 +53,184 @@ class RecordingConnection:
         self.events.append(("close", None))
 
 
+SOURCE_KINDS = (
+    "abbott_workbook_json",
+    "abbott_workbook_catalog",
+    "abbott_bitrix_pages",
+    "abbott_bitrix_journeys",
+)
+
+
+def baseline_manifest():
+    return {
+        "control_values": {"site.traffic.sessions": 100},
+        "file_snapshots": [
+            {
+                "source_kind": kind,
+                "content_sha256": str(index + 1) * 64,
+                "content_bytes": 100 + index,
+                "parser_version": "parser-v1",
+            }
+            for index, kind in enumerate(SOURCE_KINDS)
+        ],
+    }
+
+
+def exact_evidence_rows(*, warning_without_reviewer=False):
+    controls = ["site.traffic.sessions"] + [
+        f"coverage.{scope}.reconciled_days"
+        for scope in ("other", "traffic", "page", "user_behavior", "returning")
+    ]
+    rows = []
+    for index, control in enumerate(controls):
+        warning = warning_without_reviewer and index == 0
+        rows.append(
+            {
+                "control_name": control,
+                "result_status": "warn" if warning else "pass",
+                "reviewed_by": None,
+                "accepted_at": "2026-07-16 10:00:00" if warning else None,
+                "code_revision": "abc123",
+            }
+        )
+    return rows
+
+
+def imported_snapshot_rows(*, failed_kind=None):
+    rows = []
+    for index, kind in enumerate(SOURCE_KINDS):
+        manifest = {
+            "source_kind": kind,
+            "content_sha256": str(index + 1) * 64,
+            "content_bytes": 100 + index,
+            "parser_version": "parser-v1",
+            "code_revision": "abc123",
+        }
+        rows.append(
+            {
+                "id": index + 11,
+                "source_kind": kind,
+                "content_sha256": manifest["content_sha256"],
+                "content_bytes": manifest["content_bytes"],
+                "parser_version": manifest["parser_version"],
+                "import_status": "failed" if kind == failed_kind else "imported",
+                "imported_row_count": 1,
+                "rejected_row_count": 0,
+                "manifest_json": json.dumps(manifest),
+            }
+        )
+    return rows
+
+
+class ExactValidationCursor(RecordingCursor):
+    def __init__(self, connection, *, evidence_rows=None, snapshot_rows=None):
+        super().__init__()
+        self.evidence_rows = evidence_rows or exact_evidence_rows()
+        self.snapshot_rows = snapshot_rows or imported_snapshot_rows()
+        self.current_one = None
+        self.current_many = []
+
+    def execute(self, sql, params=None):
+        super().execute(sql, params)
+        normalized = " ".join(sql.split())
+        self.current_one = None
+        self.current_many = []
+        if normalized.startswith("SELECT id, dataset_key, release_status"):
+            self.current_one = {
+                "id": 41,
+                "dataset_key": "abbott",
+                "release_status": "staging",
+                "baseline_validation_run_id": 33,
+                "code_revision": "abc123",
+                "source_snapshot_ids": json.dumps([11, 12, 13, 14]),
+            }
+        elif normalized.startswith("SELECT manifest_json"):
+            self.current_one = {"manifest_json": json.dumps(baseline_manifest())}
+        elif "FROM portal_dataset_snapshots" in normalized:
+            self.current_many = self.snapshot_rows
+        elif "FROM portal_migration_validation_runs" in normalized:
+            if "COUNT(*) AS evidence_count" in normalized:
+                self.current_one = {
+                    "evidence_count": len(self.evidence_rows),
+                    "fail_count": 0,
+                    "unaccepted_warn_count": 0,
+                    "revision_mismatch_count": 0,
+                }
+            else:
+                self.current_many = self.evidence_rows
+        elif normalized.startswith("WITH RECURSIVE calendar"):
+            self.current_one = {"missing_date_count": 0}
+
+    def fetchone(self):
+        return self.current_one
+
+    def fetchall(self):
+        return list(self.current_many)
+
+
+class ExactValidationConnection(RecordingConnection):
+    def __init__(self, *, evidence_rows=None, snapshot_rows=None):
+        self.events = []
+        self.cursor_instance = ExactValidationCursor(
+            self, evidence_rows=evidence_rows, snapshot_rows=snapshot_rows
+        )
+
+
 class CanonicalReleaseStoreTest(unittest.TestCase):
+    def test_validation_rejects_arbitrary_pass_evidence_not_in_frozen_control_set(self):
+        import canonical_release_store as store
+
+        conn = ExactValidationConnection(
+            evidence_rows=[
+                {
+                    "control_name": "arbitrary.pass",
+                    "result_status": "pass",
+                    "reviewed_by": None,
+                    "accepted_at": None,
+                    "code_revision": "abc123",
+                }
+            ]
+        )
+        with patch.object(store, "get_db_connection", return_value=conn):
+            with self.assertRaises(store.ValidationGateError):
+                store.validate_release(
+                    41,
+                    date_from="2026-01-01",
+                    date_to="2026-01-02",
+                    expected_code_revision="abc123",
+                )
+        self.assertFalse(any(sql.startswith("UPDATE portal_data_releases") for sql, _ in conn.cursor_instance.calls))
+
+    def test_validation_requires_reviewer_identity_for_an_accepted_warning(self):
+        import canonical_release_store as store
+
+        conn = ExactValidationConnection(
+            evidence_rows=exact_evidence_rows(warning_without_reviewer=True)
+        )
+        with patch.object(store, "get_db_connection", return_value=conn):
+            with self.assertRaises(store.ValidationGateError):
+                store.validate_release(
+                    41,
+                    date_from="2026-01-01",
+                    date_to="2026-01-02",
+                    expected_code_revision="abc123",
+                )
+
+    def test_validation_rejects_failed_or_unimported_required_source(self):
+        import canonical_release_store as store
+
+        conn = ExactValidationConnection(
+            snapshot_rows=imported_snapshot_rows(failed_kind="abbott_bitrix_pages")
+        )
+        with patch.object(store, "get_db_connection", return_value=conn):
+            with self.assertRaises(store.ValidationGateError):
+                store.validate_release(
+                    41,
+                    date_from="2026-01-01",
+                    date_to="2026-01-02",
+                    expected_code_revision="abc123",
+                )
+
     def test_validation_requires_every_calendar_day_and_exact_scope_set(self):
         import canonical_release_store as store
 
@@ -73,29 +251,7 @@ class CanonicalReleaseStoreTest(unittest.TestCase):
     def test_validation_persists_staging_to_validated_cas_after_evidence_and_coverage(self):
         import canonical_release_store as store
 
-        coverage = [
-            {"report_date": day, "scope_key": scope}
-            for day in ("2026-01-01", "2026-01-02")
-            for scope in store.ABBOTT_REQUIRED_METRIKA_SCOPES
-        ]
-        conn = RecordingConnection(
-            [
-                {
-                    "id": 41,
-                    "dataset_key": "abbott",
-                    "release_status": "staging",
-                    "baseline_validation_run_id": 33,
-                    "code_revision": "abc123",
-                },
-                {
-                    "evidence_count": 8,
-                    "fail_count": 0,
-                    "unaccepted_warn_count": 0,
-                    "revision_mismatch_count": 0,
-                },
-                {"missing_date_count": 0},
-            ]
-        )
+        conn = ExactValidationConnection()
         with patch.object(store, "get_db_connection", return_value=conn):
             store.validate_release(
                 41,

@@ -33,14 +33,46 @@ def _git_revision(root: Path) -> str:
     return result.stdout.strip()
 
 
+def _tracked_worktree_status(root: Path) -> str:
+    try:
+        result = subprocess.run(
+            ["git", "-C", str(root), "status", "--porcelain", "--untracked-files=no"],
+            check=True,
+            capture_output=True,
+            text=True,
+        )
+    except (OSError, subprocess.SubprocessError):
+        raise ActiveReleaseLaunchError("Unable to attest canonical worktree state") from None
+    return result.stdout.strip()
+
+
+def _head_blob(root: Path, relative_path: Path) -> bytes:
+    try:
+        result = subprocess.run(
+            ["git", "-C", str(root), "show", f"HEAD:{relative_path.as_posix()}"],
+            check=True,
+            capture_output=True,
+        )
+    except (OSError, subprocess.SubprocessError):
+        raise ActiveReleaseLaunchError("Unable to read committed runtime manifest") from None
+    return result.stdout
+
+
 def attest_runtime(root: Path, expected_revision: str, manifest_path: Path) -> None:
     root = root.resolve(strict=True)
     if _git_revision(root) != expected_revision:
         raise ActiveReleaseLaunchError("Canonical runtime revision does not match")
+    if _tracked_worktree_status(root):
+        raise ActiveReleaseLaunchError("Canonical tracked worktree is not clean")
     try:
-        manifest_lines = manifest_path.resolve(strict=True).read_text(encoding="utf-8").splitlines()
-    except OSError:
+        resolved_manifest = manifest_path.resolve(strict=True)
+        relative_manifest = resolved_manifest.relative_to(root)
+        manifest_bytes = resolved_manifest.read_bytes()
+        manifest_lines = manifest_bytes.decode("utf-8").splitlines()
+    except (OSError, UnicodeDecodeError, ValueError):
         raise ActiveReleaseLaunchError("Canonical runtime manifest is unavailable") from None
+    if _head_blob(root, relative_manifest) != manifest_bytes:
+        raise ActiveReleaseLaunchError("Canonical runtime manifest is not the committed HEAD blob")
     if not manifest_lines:
         raise ActiveReleaseLaunchError("Canonical runtime manifest is empty")
     for line in manifest_lines:

@@ -62,6 +62,7 @@ export ABBOTT_PRIVATE_ARCHIVE_DIR=/root/reportingdash-private/abbott/archive
 export ABBOTT_PRIVATE_INPUT_DIR=/root/reportingdash-private/abbott/import
 export CODE_REVISION=<reviewed-git-revision>
 export DASHBOARD_CODE_REVISION=<reviewed-dashboard-git-revision>
+export DASHBOARD_PREDECESSOR_REVISION=<checkpoint-dashboard-git-revision>
 export PARSER_VERSION=<reviewed-parser-version>
 export BACKFILL_TODAY_UTC=<YYYY-MM-DD>
 export CANONICAL_RUNTIME_MANIFEST="$CANONICAL_ROOT/ops/abbott-runtime-manifest.sha256"
@@ -70,6 +71,10 @@ install -d -m 700 /root/.config/reportingdash
 install -d -m 700 "$ABBOTT_PRIVATE_ARCHIVE_DIR" "$ABBOTT_PRIVATE_INPUT_DIR"
 test "$(git -C "$DASHBOARD_SOURCE_ROOT" rev-parse HEAD)" = "$DASHBOARD_CODE_REVISION"
 test "$(git -C "$CANONICAL_ROOT" rev-parse HEAD)" = "$CODE_REVISION"
+git -C "$CANONICAL_ROOT" diff --quiet
+git -C "$CANONICAL_ROOT" diff --cached --quiet
+git -C "$CANONICAL_ROOT" show HEAD:ops/abbott-runtime-manifest.sha256 | \
+  cmp - "$CANONICAL_RUNTIME_MANIFEST"
 (cd "$CANONICAL_ROOT" && sha256sum -c "$CANONICAL_RUNTIME_MANIFEST")
 test "$(stat -c '%a' /root/.config/reportingdash)" = 700
 test "$(stat -c '%a' "$ABBOTT_PRIVATE_ARCHIVE_DIR")" = 700
@@ -146,11 +151,10 @@ install -m 600 "$DASHBOARD_OWNER_ENV_FILE" "$CHECKPOINT_DIR/dashboard.env.before
 git -C "$CANONICAL_ROOT" rev-parse HEAD > "$CHECKPOINT_DIR/canonical.revision"
 git -C "$DASHBOARD_SOURCE_ROOT" rev-parse HEAD > "$CHECKPOINT_DIR/dashboard.revision"
 sha256sum "$DASHBOARD_RUNTIME_ROOT/server.js" > "$CHECKPOINT_DIR/dashboard-runtime.sha256"
-sha256sum \
-  "$CANONICAL_ROOT/fetch_yandex_metrika_canonical.py" \
-  "$CANONICAL_ROOT/canonical_writer.py" \
-  "$CANONICAL_ROOT/canonical_release_store.py" \
-  > "$CHECKPOINT_DIR/runtime.sha256"
+install -m 600 "$CANONICAL_RUNTIME_MANIFEST" \
+  "$CHECKPOINT_DIR/canonical-runtime-manifest.before.sha256"
+(cd "$CANONICAL_ROOT" && sha256sum -c "$CANONICAL_RUNTIME_MANIFEST") \
+  > "$CHECKPOINT_DIR/runtime-verification.before.txt"
 
 mysql --defaults-extra-file="$ABBOTT_OWNER_MYSQL_DEFAULTS_FILE" \
   --batch --skip-column-names report_bd \
@@ -187,15 +191,15 @@ Verify table and role names only; do not query private rows:
 ```bash
 mysql --defaults-extra-file="$ABBOTT_OWNER_MYSQL_DEFAULTS_FILE" \
   --batch --skip-column-names report_bd \
-  --execute="SELECT COUNT(*) FROM information_schema.tables WHERE table_schema IN ('report_bd','report_bd_private') AND table_name IN ('portal_data_releases','portal_active_data_releases','portal_dataset_snapshots','portal_migration_validation_runs','canonical_fact_metrika_site_analytics_daily','canonical_fact_metrika_returning_pages_daily','canonical_source_coverage_daily','canonical_fact_metrika_user_behavior_daily','portal_user_directions_private','portal_bitrix_page_facts','portal_bitrix_journeys_private')" \
+  --execute="SELECT COUNT(*) FROM information_schema.tables WHERE (table_schema='report_bd' AND table_name='portal_data_releases') OR (table_schema='report_bd' AND table_name='portal_active_data_releases') OR (table_schema='report_bd' AND table_name='portal_dataset_snapshots') OR (table_schema='report_bd' AND table_name='portal_migration_validation_runs') OR (table_schema='report_bd' AND table_name='portal_bitrix_page_facts') OR (table_schema='report_bd' AND table_name='canonical_fact_metrika_site_analytics_daily') OR (table_schema='report_bd' AND table_name='canonical_fact_metrika_returning_pages_daily') OR (table_schema='report_bd' AND table_name='canonical_source_coverage_daily') OR (table_schema='report_bd_private' AND table_name='canonical_fact_metrika_user_behavior_daily') OR (table_schema='report_bd_private' AND table_name='portal_user_directions_private') OR (table_schema='report_bd_private' AND table_name='portal_bitrix_page_facts') OR (table_schema='report_bd_private' AND table_name='portal_bitrix_journeys_private')" \
   > "$CHECKPOINT_DIR/schema-table-count.txt"
 export ACTUAL_SCHEMA_TABLE_COUNT="$(cat "$CHECKPOINT_DIR/schema-table-count.txt")"
 test "$ACTUAL_SCHEMA_TABLE_COUNT" = 12
 ```
 
-The exact reviewed query returns 12: the 11 named contracts plus both the
-primary and private `portal_bitrix_page_facts` tables. Any smaller or larger
-result blocks the rollout; a merely non-zero count is not sufficient.
+The exact reviewed query names all 12 schema/table pairs, including distinct
+primary and private `portal_bitrix_page_facts` contracts. Any smaller or larger
+result blocks the rollout; a cross-product `IN` query is forbidden.
 
 ## Checkpoint 2: issue and install owner-controlled secrets
 
@@ -466,9 +470,10 @@ all complete/unsampled, and the priority gap must have no missing day:
 ```bash
 mysql --defaults-extra-file="$ABBOTT_OWNER_MYSQL_DEFAULTS_FILE" \
   --batch --skip-column-names report_bd \
-  --execute="SELECT report_date,COUNT(*) AS scopes,SUM(collection_status IN ('success','success_empty') AND pagination_complete=1 AND is_sampled=0 AND (collection_status<>'success_empty' OR empty_reconciled=1)) AS reconciled FROM canonical_source_coverage_daily WHERE canonical_release_id=${CANDIDATE_RELEASE_ID} AND source_key='yandex_metrika' AND counter_id=90602537 AND report_date BETWEEN '2026-01-01' AND '${BASELINE_DATE_TO}' GROUP BY report_date HAVING scopes<>5 OR reconciled<>5" \
+  --execute="WITH RECURSIVE calendar(report_date) AS (SELECT DATE('2026-01-01') UNION ALL SELECT DATE_ADD(report_date, INTERVAL 1 DAY) FROM calendar WHERE report_date < DATE('${BASELINE_DATE_TO}')) SELECT calendar.report_date FROM calendar LEFT JOIN canonical_source_coverage_daily AS coverage ON coverage.canonical_release_id=${CANDIDATE_RELEASE_ID} AND coverage.source_key='yandex_metrika' AND coverage.counter_id=90602537 AND coverage.report_date=calendar.report_date AND coverage.collection_status IN ('success','success_empty') AND coverage.pagination_complete=1 AND coverage.is_sampled=0 AND ((coverage.collection_status='success' AND coverage.persisted_rows>0) OR (coverage.collection_status='success_empty' AND coverage.persisted_rows=0 AND coverage.api_total_rows=0 AND coverage.empty_reconciled=1)) GROUP BY calendar.report_date HAVING COUNT(DISTINCT coverage.scope_key)<>5 OR SUM(coverage.scope_key='other')=0 OR SUM(coverage.scope_key='traffic')=0 OR SUM(coverage.scope_key='page')=0 OR SUM(coverage.scope_key='user_behavior')=0 OR SUM(coverage.scope_key='returning')=0" \
   > "$CHECKPOINT_DIR/non-reconciled-days.tsv"
 test ! -s "$CHECKPOINT_DIR/non-reconciled-days.tsv"
+test "$(date -d '2026-04-07' +%s)" -ge "$(date -d '2026-03-29' +%s)"
 ```
 
 ## Checkpoint 7: compare and validate the candidate
@@ -492,34 +497,60 @@ Abbott health, and a dashboard smoke test. Warnings are accepted only by a
 named human reviewer in the validation table; this runbook does not auto-accept
 them.
 
-Before validation, re-attest the canonical runtime and prove the deployed
-dashboard came from the reviewed dashboard revision. Build that exact checkout
-into a protected staging directory, perform the separately reviewed dashboard
-deployment, then compare the staged and deployed standalone entrypoint bytes:
+Before validation, re-attest the canonical runtime and install a deterministic
+full dashboard release from the reviewed revision. The installer copies the
+complete standalone, static, and public trees into a same-filesystem staging
+directory, scans both staging and final trees, writes a sorted SHA-256 manifest,
+atomically renames the release, and atomically flips the active symlink:
 
 ```bash
 test "$(git -C "$CANONICAL_ROOT" rev-parse HEAD)" = "$CODE_REVISION"
+git -C "$CANONICAL_ROOT" diff --quiet
+git -C "$CANONICAL_ROOT" diff --cached --quiet
+git -C "$CANONICAL_ROOT" show HEAD:ops/abbott-runtime-manifest.sha256 | \
+  cmp - "$CANONICAL_RUNTIME_MANIFEST"
 (cd "$CANONICAL_ROOT" && sha256sum -c "$CANONICAL_RUNTIME_MANIFEST")
 test "$(git -C "$DASHBOARD_SOURCE_ROOT" rev-parse HEAD)" = "$DASHBOARD_CODE_REVISION"
+git -C "$DASHBOARD_SOURCE_ROOT" diff --quiet
+git -C "$DASHBOARD_SOURCE_ROOT" diff --cached --quiet
 cd "$DASHBOARD_SOURCE_ROOT"
 npm ci
 npm run build
-export REVIEWED_DASHBOARD_SERVER="$DASHBOARD_SOURCE_ROOT/.next/standalone/server.js"
-test -s "$REVIEWED_DASHBOARD_SERVER"
-# Run the owner-approved deployment procedure for DASHBOARD_CODE_REVISION here.
-cmp "$REVIEWED_DASHBOARD_SERVER" "$DASHBOARD_RUNTIME_ROOT/server.js"
-sha256sum "$REVIEWED_DASHBOARD_SERVER" "$DASHBOARD_RUNTIME_ROOT/server.js" \
-  > "$CHECKPOINT_DIR/dashboard-reviewed-runtime.sha256"
+install -d "$DASHBOARD_SOURCE_ROOT/.next/standalone/.next/static"
+cp -a "$DASHBOARD_SOURCE_ROOT/.next/static/." \
+  "$DASHBOARD_SOURCE_ROOT/.next/standalone/.next/static/"
+install -d "$DASHBOARD_SOURCE_ROOT/.next/standalone/public"
+cp -a "$DASHBOARD_SOURCE_ROOT/public/." \
+  "$DASHBOARD_SOURCE_ROOT/.next/standalone/public/"
+npm run security:public-assets -- --release "$DASHBOARD_SOURCE_ROOT/.next/standalone"
+export DASHBOARD_RELEASES_DIR=/var/www/dashboard-releases
+test ! -e "$DASHBOARD_RUNTIME_ROOT" || test -L "$DASHBOARD_RUNTIME_ROOT"
+bash scripts/install-reviewed-release.sh \
+  "$DASHBOARD_SOURCE_ROOT/.next/standalone" \
+  "$DASHBOARD_RELEASES_DIR" \
+  "$DASHBOARD_RUNTIME_ROOT" \
+  "$DASHBOARD_CODE_REVISION"
+export DEPLOYED_DASHBOARD_RELEASE="$(readlink -f "$DASHBOARD_RUNTIME_ROOT")"
+npm run security:public-assets -- --release "$DEPLOYED_DASHBOARD_RELEASE"
+(cd "$DEPLOYED_DASHBOARD_RELEASE" && \
+  sha256sum -c "$DASHBOARD_RELEASES_DIR/$DASHBOARD_CODE_REVISION.sha256")
+pm2 restart dashboard-next --update-env
+curl -fsS http://127.0.0.1:3001/api/health >/dev/null
 ```
 
-Do not validate or activate if either revision or byte comparison fails.
+Do not validate or activate if any revision, full-tree manifest, deployed-tree
+asset scan, restart, or health check fails.
 
 Only after every gate passes, execute the tested validation transition. It
 locks the staging release, requires persisted comparator evidence bound to the
-baseline snapshot and candidate code revision, uses a recursive calendar CTE
-to detect wholly absent dates, requires the exact five-scope reconciled bundle
-on every date, inserts the final gate evidence, and CAS-transitions to
-`validated` in the same transaction:
+baseline snapshot and candidate code revision, and accepts exactly the frozen
+baseline control names plus five `coverage.*.reconciled_days` controls. A warn
+requires both `reviewed_by` and `accepted_at`. It also requires exactly four
+successfully imported source kinds whose SHA-256/byte/parser fingerprints match
+both the frozen baseline and import manifest, uses a recursive calendar CTE to
+detect wholly absent dates, requires the exact five-scope reconciled bundle on
+every date, inserts final gate evidence, and CAS-transitions to `validated` in
+the same transaction:
 
 ```bash
 "$CANONICAL_ROOT/venv/bin/python" abbott_release_operator.py validate \
@@ -647,10 +678,21 @@ cd "$CANONICAL_ROOT"
 
 Then:
 
-1. verify the active pointer and release-specific aggregate/private smoke tests;
-2. preserve candidate facts and validation evidence for incident analysis;
-3. restore the previous dashboard application release if application rollback
-   is needed;
+1. if application rollback is required, atomically reactivate the already
+   scanned and hash-verified predecessor tree, restart, and health-check it:
+
+   ```bash
+   cd "$DASHBOARD_SOURCE_ROOT"
+   bash scripts/install-reviewed-release.sh --activate-existing \
+     "$DASHBOARD_RELEASES_DIR" \
+     "$DASHBOARD_RUNTIME_ROOT" \
+     "$DASHBOARD_PREDECESSOR_REVISION"
+   pm2 restart dashboard-next --update-env
+   curl -fsS http://127.0.0.1:3001/api/health >/dev/null
+   ```
+
+2. verify the active pointer and release-specific aggregate/private smoke tests;
+3. preserve candidate facts and validation evidence for incident analysis;
 4. restore the protected pre-cutover crontab only after an explicit incident
    decision. If legacy `/metrika` must be temporarily re-enabled, it must use
    `x-internal-token` and the new `LEGACY_LAUNCH_SECRET`, never a query secret;

@@ -156,6 +156,15 @@ class AbbottSchemaContractTest(unittest.TestCase):
             if "fact" in table or "coverage" in table:
                 self.assertEqual(privileges, "SELECT")
 
+    def test_release_operator_has_no_returning_or_raw_user_fact_access(self):
+        sql = self._normalized(self._private_sql())
+        role = "TO 'reportingdash_abbott_release_operator_role';"
+        for table in (
+            "report_bd.canonical_fact_metrika_returning_pages_daily",
+            "report_bd_private.canonical_fact_metrika_user_behavior_daily",
+        ):
+            self.assertNotIn(f"ON {table} {role}", sql)
+
     def test_prebackfill_requires_every_declared_variable_before_insert(self):
         sql = (ROOT / "ops/sql/abbott_prebackfill_snapshot.sql").read_text()
         guard = sql.split("INSERT INTO report_bd.portal_dataset_snapshots", 1)[0]

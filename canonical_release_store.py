@@ -20,6 +20,12 @@ ABBOTT_REQUIRED_METRIKA_SCOPES = (
     "user_behavior",
     "returning",
 )
+ABBOTT_REQUIRED_SOURCE_KINDS = (
+    "abbott_workbook_json",
+    "abbott_workbook_catalog",
+    "abbott_bitrix_pages",
+    "abbott_bitrix_journeys",
+)
 
 
 class ReleaseStoreError(RuntimeError):
@@ -63,6 +69,108 @@ def missing_coverage_dates(
             missing.append(day)
         current += timedelta(days=1)
     return missing
+
+
+def _json_value(value, *, error_message: str):
+    if isinstance(value, str):
+        try:
+            value = json.loads(value)
+        except json.JSONDecodeError:
+            raise ValidationGateError(error_message) from None
+    return value
+
+
+def _required_control_names(manifest: dict) -> set[str]:
+    control_values = manifest.get("control_values")
+    if not isinstance(control_values, dict) or not control_values:
+        raise ValidationGateError("Frozen baseline controls are invalid")
+    names = {str(name) for name in control_values}
+    if any(not name.strip() for name in names) or len(names) != len(control_values):
+        raise ValidationGateError("Frozen baseline controls are invalid")
+    names.update(
+        f"coverage.{scope}.reconciled_days"
+        for scope in ABBOTT_REQUIRED_METRIKA_SCOPES
+    )
+    return names
+
+
+def _validate_imported_sources(
+    *, release: dict, baseline_manifest: dict, snapshot_rows: list[dict]
+) -> None:
+    raw_ids = _json_value(
+        release.get("source_snapshot_ids"),
+        error_message="Canonical release source snapshots are invalid",
+    )
+    if (
+        not isinstance(raw_ids, list)
+        or len(raw_ids) != 4
+        or len(set(raw_ids)) != 4
+        or any(not isinstance(item, int) or isinstance(item, bool) or item <= 0 for item in raw_ids)
+    ):
+        raise ValidationGateError("Canonical release must reference exactly four source snapshots")
+
+    frozen_files = baseline_manifest.get("file_snapshots")
+    if not isinstance(frozen_files, list) or len(frozen_files) != 4:
+        raise ValidationGateError("Frozen baseline source manifest is invalid")
+    frozen_by_kind = {str(item.get("source_kind")): item for item in frozen_files if isinstance(item, dict)}
+    if set(frozen_by_kind) != set(ABBOTT_REQUIRED_SOURCE_KINDS):
+        raise ValidationGateError("Frozen baseline source manifest is invalid")
+
+    snapshots_by_kind = {
+        str(row.get("source_kind")): row for row in snapshot_rows if isinstance(row, dict)
+    }
+    if (
+        len(snapshot_rows) != 4
+        or set(snapshots_by_kind) != set(ABBOTT_REQUIRED_SOURCE_KINDS)
+        or {int(row.get("id") or 0) for row in snapshot_rows} != set(raw_ids)
+    ):
+        raise ValidationGateError("Required imported source snapshots are incomplete")
+
+    for kind in ABBOTT_REQUIRED_SOURCE_KINDS:
+        frozen = frozen_by_kind[kind]
+        snapshot = snapshots_by_kind[kind]
+        source_manifest = _json_value(
+            snapshot.get("manifest_json"),
+            error_message="Imported source manifest is invalid",
+        )
+        if not isinstance(source_manifest, dict):
+            raise ValidationGateError("Imported source manifest is invalid")
+        fingerprint_fields = ("content_sha256", "content_bytes", "parser_version")
+        if (
+            snapshot.get("import_status") != "imported"
+            or int(snapshot.get("imported_row_count") or 0) <= 0
+            or int(snapshot.get("rejected_row_count") or 0) != 0
+            or source_manifest.get("source_kind") != kind
+            or source_manifest.get("code_revision") != release.get("code_revision")
+            or int(source_manifest.get("rejected_count") or 0) != 0
+            or any(snapshot.get(field) != frozen.get(field) for field in fingerprint_fields)
+            or any(source_manifest.get(field) != frozen.get(field) for field in fingerprint_fields)
+        ):
+            raise ValidationGateError("Imported source does not match the frozen baseline")
+
+
+def _validate_exact_evidence(
+    rows: list[dict], *, expected_names: set[str], code_revision: str
+) -> None:
+    actual_names = {
+        str(row.get("control_name")) for row in rows if isinstance(row, dict)
+    }
+    if len(rows) != len(expected_names) or actual_names != expected_names:
+        raise ValidationGateError("Canonical validation evidence set is incomplete")
+    for row in rows:
+        status = row.get("result_status")
+        if row.get("code_revision") != code_revision:
+            raise ValidationGateError("Canonical validation revision does not match")
+        if status == "pass":
+            continue
+        if (
+            status == "warn"
+            and row.get("accepted_at") is not None
+            and isinstance(row.get("reviewed_by"), str)
+            and row["reviewed_by"].strip()
+        ):
+            continue
+        raise ValidationGateError("Canonical validation evidence did not pass review")
 
 
 def _close(cur, conn) -> None:
@@ -181,7 +289,8 @@ def validate_release(
         cur.execute(
             """
             SELECT id, dataset_key, release_status,
-                   baseline_validation_run_id, code_revision
+                   baseline_validation_run_id, code_revision,
+                   source_snapshot_ids
             FROM portal_data_releases
             WHERE dataset_key = %s AND id = %s
             FOR UPDATE
@@ -200,30 +309,65 @@ def validate_release(
 
         cur.execute(
             """
-            SELECT COUNT(*) AS evidence_count,
-                   SUM(result_status = 'fail') AS fail_count,
-                   SUM(result_status = 'warn' AND accepted_at IS NULL)
-                     AS unaccepted_warn_count,
-                   SUM(code_revision <> %s) AS revision_mismatch_count
+            SELECT manifest_json
+            FROM portal_dataset_snapshots
+            WHERE id = %s AND dataset_key = %s
+              AND source_kind = 'abbott_canonical_control_pack'
+            FOR UPDATE
+            """,
+            (release["baseline_validation_run_id"], ABBOTT_DATASET_KEY),
+        )
+        baseline_row = cur.fetchone()
+        baseline_manifest = _json_value(
+            baseline_row.get("manifest_json") if isinstance(baseline_row, dict) else None,
+            error_message="Frozen baseline manifest is invalid",
+        )
+        if not isinstance(baseline_manifest, dict):
+            raise ValidationGateError("Frozen baseline manifest is invalid")
+        expected_control_names = _required_control_names(baseline_manifest)
+
+        source_ids = _json_value(
+            release.get("source_snapshot_ids"),
+            error_message="Canonical release source snapshots are invalid",
+        )
+        if not isinstance(source_ids, list) or not source_ids:
+            raise ValidationGateError("Canonical release source snapshots are invalid")
+        placeholders = ", ".join(["%s"] * len(source_ids))
+        cur.execute(
+            f"""
+            SELECT id, source_kind, content_sha256, content_bytes,
+                   parser_version, import_status, imported_row_count,
+                   rejected_row_count, manifest_json
+            FROM portal_dataset_snapshots
+            WHERE dataset_key = %s AND id IN ({placeholders})
+            ORDER BY id
+            FOR UPDATE
+            """,
+            (ABBOTT_DATASET_KEY, *source_ids),
+        )
+        _validate_imported_sources(
+            release=release,
+            baseline_manifest=baseline_manifest,
+            snapshot_rows=cur.fetchall(),
+        )
+
+        cur.execute(
+            """
+            SELECT control_name, result_status, reviewed_by, accepted_at,
+                   code_revision
             FROM portal_migration_validation_runs
             WHERE canonical_release_id = %s
               AND baseline_snapshot_id = %s
+            ORDER BY control_name
+            FOR UPDATE
             """,
-            (
-                release["code_revision"],
-                release_id,
-                release["baseline_validation_run_id"],
-            ),
+            (release_id, release["baseline_validation_run_id"]),
         )
-        evidence = cur.fetchone()
-        if (
-            not isinstance(evidence, dict)
-            or int(evidence.get("evidence_count") or 0) <= 0
-            or int(evidence.get("fail_count") or 0) != 0
-            or int(evidence.get("unaccepted_warn_count") or 0) != 0
-            or int(evidence.get("revision_mismatch_count") or 0) != 0
-        ):
-            raise ValidationGateError("Canonical validation evidence did not pass")
+        _validate_exact_evidence(
+            cur.fetchall(),
+            expected_names=expected_control_names,
+            code_revision=release["code_revision"],
+        )
 
         cur.execute(
             """
