@@ -59,3 +59,17 @@ See:
 - [MIGRATION-MANIFEST.md](./MIGRATION-MANIFEST.md)
 - [docs/YANDEX-DIRECT-CUTOVER-STATUS.md](./docs/YANDEX-DIRECT-CUTOVER-STATUS.md)
 - [docs/BOOTSTRAP-ROLLOUT-CHECKLIST.md](./docs/BOOTSTRAP-ROLLOUT-CHECKLIST.md)
+
+## Abbott runtime closure smoke test
+
+The flat `runtime/` directory is intentionally self-contained for local Python
+imports. From this bootstrap directory, verify it without reading a parent
+checkout:
+
+```bash
+(cd runtime && PYTHONDONTWRITEBYTECODE=1 python3 -c \
+  'import fetch_yandex_metrika_canonical, canonical_writer, canonical_release_store, run_abbott_metrika_active_release, abbott_release_operator, probe_yandex_metrika_access, capture_abbott_canonical_baseline, compare_abbott_canonical_release, abbott_canonical_controls, metrika_pagination, backfill_abbott_metrika_2026, abbott_health_probe, send_canonical_telegram_report, sources_health_dashboard')
+```
+
+Then verify every `runtime/` digest against `MIGRATION-MANIFEST.md` before
+packaging it into the private canonical repository.

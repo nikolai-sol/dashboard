@@ -1,2 +1,3 @@
-# Bootstrap placeholder.
-# Copy and reconcile with the live collector root requirements before first repo cutover.
+mysql-connector-python==9.4.0
+python-dotenv==1.2.1
+requests==2.32.5

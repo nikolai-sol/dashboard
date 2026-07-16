@@ -8,7 +8,7 @@ Access:
   - `embed_key`
   - current key source:
     - `process.env.ABBOTT_DASHBOARD_EMBED_KEY`
-    - fallback default: `Terasic1!`
+    - retired fallback default: `[REDACTED — rotate externally if still active]`
 
 Pages included in Abbott web dashboard v1:
 
