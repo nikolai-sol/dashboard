@@ -221,6 +221,11 @@ function assertNoForbiddenKeys(value: unknown, forbiddenKeys: Set<string>, path 
 
 test("manager projection retains raw user IDs and journey rows while stripping URL query and fragment values", () => {
   const source = fixture();
+  source.abbott_bi!.general_materials[0]!.material_name = "FAQ/help?answer";
+  source.abbott_bi!.page_stats[0]!.url = "HTTPS://Example.TEST:443/Case?secret=value#chapter";
+  source.abbott_bi!.session_journeys.rows[0]!.entry_url_session = "entry?sid=private#start";
+  source.abbott_bi!.session_journeys.rows[0]!.content_path_summary =
+    "https://example.test/entry?sid=private#start, -> exit?sid=private#end.";
   const projected = projectAbbottDashboardData(source, "manager");
   const abbott = projected.abbott_bi!;
 
@@ -234,11 +239,14 @@ test("manager projection retains raw user IDs and journey rows while stripping U
   ]);
   assert.equal(
     abbott.session_journeys.rows[0]?.content_path_summary,
-    "https://example.test/entry -> https://example.test/exit",
+    "https://example.test/entry, -> exit.",
   );
+  assert.equal(abbott.session_journeys.rows[0]?.entry_url_session, "entry");
   assert.equal(abbott.user_actions[0]?.start_url, "https://example.test/start");
+  assert.equal(abbott.page_stats[0]?.url, "HTTPS://Example.TEST:443/Case");
   assert.equal(abbott.bitrix_pages[0]?.path, "/bitrix");
   assert.equal(abbott.returning[0]?.url, "https://example.test/material");
+  assert.equal(abbott.general_materials[0]?.material_name, "FAQ/help?answer");
 
   assert.equal(source.abbott_bi?.user_actions[0]?.start_url, "https://example.test/start?token=private#section");
   assert.notEqual(projected, source);
@@ -246,14 +254,33 @@ test("manager projection retains raw user IDs and journey rows while stripping U
 
 test("embed projection exposes aggregates without user, action, session, or journey row identifiers", () => {
   const source = fixture();
+  Object.assign(source.abbott_bi!.page_stats[0]!, {
+    raw_user_id: "raw-user-42",
+    visit_id: "visit-42",
+    rawUserId: "raw-user-42",
+    sessionIdentifier: "session-42",
+  });
   const projected = projectAbbottDashboardData(source, "embed");
   const abbott = projected.abbott_bi!;
 
-  assertNoForbiddenKeys(projected, new Set(["user_id", "session_id", "user_actions"]));
+  assertNoForbiddenKeys(
+    projected,
+    new Set([
+      "raw_user_id",
+      "user_id",
+      "session_id",
+      "visit_id",
+      "rawUserId",
+      "sessionIdentifier",
+      "user_actions",
+    ]),
+  );
   assert.equal("users_summary" in abbott, false);
   assert.deepEqual(abbott.session_journeys.rows, []);
   assert.deepEqual(abbott.traffic_summary?.map((row) => row.visits), [50]);
   assert.deepEqual(abbott.page_stats.map((row) => row.pageviews), [10]);
+  assert.deepEqual(abbott.page_stats.map((row) => row.users), [8]);
+  assert.deepEqual(abbott.bitrix_pages.map((row) => row.sessions), [4]);
   assert.deepEqual(abbott.general_materials.map((row) => row.pageviews), [10]);
   assert.deepEqual(abbott.returning.map((row) => row.returning_2_7_days), [3]);
   assert.equal(abbott.page_stats[0]?.url, "https://example.test/material");
