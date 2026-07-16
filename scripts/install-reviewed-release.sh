@@ -17,6 +17,68 @@ os.replace(sys.argv[1], sys.argv[2])
 PY
 }
 
+if [[ "${1:-}" == "--checkpoint-current" ]]; then
+  CURRENT_DIR="${2:?current dashboard directory is required}"
+  RELEASES_DIR="${3:?release directory is required}"
+  REVISION="${4:?predecessor revision is required}"
+  if [[ ! "$REVISION" =~ ^[0-9a-f]{7,64}$ ]]; then
+    echo "Predecessor revision is invalid" >&2
+    exit 1
+  fi
+  if [[ -L "$CURRENT_DIR" || ! -f "$CURRENT_DIR/server.js" || ! -d "$CURRENT_DIR/.next/static" || ! -d "$CURRENT_DIR/public" ]]; then
+    echo "Current dashboard directory is incomplete or already linked" >&2
+    exit 1
+  fi
+  mkdir -p "$RELEASES_DIR"
+  FINAL_RELEASE="$RELEASES_DIR/$REVISION"
+  FINAL_MANIFEST="$RELEASES_DIR/$REVISION.sha256"
+  if [[ -e "$FINAL_RELEASE" || -e "$FINAL_MANIFEST" ]]; then
+    echo "Predecessor checkpoint already exists" >&2
+    exit 1
+  fi
+  python3 - "$CURRENT_DIR" "$RELEASES_DIR" <<'PY'
+import os
+import sys
+if os.stat(sys.argv[1]).st_dev != os.stat(sys.argv[2]).st_dev:
+    raise SystemExit("Current dashboard and releases must share a filesystem")
+PY
+  cd "$APP_SOURCE_DIR"
+  node --import tsx scripts/assert-no-private-public-assets.ts --release "$CURRENT_DIR"
+  CHECKPOINT_MANIFEST="$(mktemp "$RELEASES_DIR/.${REVISION}.manifest.XXXXXX")"
+  MOVED=0
+  checkpoint_cleanup() {
+    rm -f "$CHECKPOINT_MANIFEST" "$FINAL_MANIFEST"
+    if [[ "$MOVED" == 1 && ! -e "$CURRENT_DIR" && -d "$FINAL_RELEASE" ]]; then
+      mv "$FINAL_RELEASE" "$CURRENT_DIR"
+    fi
+  }
+  trap checkpoint_cleanup EXIT
+  python3 - "$CURRENT_DIR" "$CHECKPOINT_MANIFEST" <<'PY'
+from pathlib import Path
+import hashlib
+import sys
+
+root, manifest = map(Path, sys.argv[1:])
+files = sorted(path for path in root.rglob("*") if path.is_file())
+if not files:
+    raise SystemExit("Current dashboard tree is empty")
+with manifest.open("w", encoding="utf-8") as handle:
+    for path in files:
+        relative = path.relative_to(root).as_posix()
+        handle.write(f"{hashlib.sha256(path.read_bytes()).hexdigest()}  {relative}\n")
+PY
+  chmod 600 "$CHECKPOINT_MANIFEST"
+  (cd "$CURRENT_DIR" && sha256sum -c "$CHECKPOINT_MANIFEST" >/dev/null)
+  mv "$CURRENT_DIR" "$FINAL_RELEASE"
+  MOVED=1
+  node --import tsx scripts/assert-no-private-public-assets.ts --release "$FINAL_RELEASE"
+  (cd "$FINAL_RELEASE" && sha256sum -c "$CHECKPOINT_MANIFEST" >/dev/null)
+  mv "$CHECKPOINT_MANIFEST" "$FINAL_MANIFEST"
+  atomic_activate "$FINAL_RELEASE" "$CURRENT_DIR"
+  trap - EXIT
+  exit 0
+fi
+
 if [[ "${1:-}" == "--activate-existing" ]]; then
   RELEASES_DIR="${2:?release directory is required}"
   ACTIVE_LINK="${3:?active symlink is required}"

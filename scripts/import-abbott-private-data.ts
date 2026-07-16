@@ -849,6 +849,7 @@ export async function runAbbottImportTransaction(
     if (kinds.has(source.sourceKind)) throw new Error("Duplicate source kind");
     kinds.add(source.sourceKind);
     if (!/^[a-f0-9]{64}$/.test(source.contentSha256)) throw new Error("Invalid source checksum");
+    if (!text(source.codeRevision)) throw new Error("Source import revision is required");
     assertSanitizedEvidence(source.manifest);
     if (source.manifest.source_kind !== source.sourceKind) throw new Error("Manifest source kind does not match prepared source");
     if (source.sourceRowCount !== source.importedRowCount + source.rejectedRowCount) {
@@ -863,6 +864,31 @@ export async function runAbbottImportTransaction(
 
   await connection.beginTransaction();
   try {
+    const recordImportExecution = async (source: PreparedAbbottSource, snapshotId: number) => {
+      const importStatus = source.rejectedRowCount === 0 ? "imported" : "rejected";
+      await connection.execute(
+        `INSERT INTO ${PRIMARY_SCHEMA}.portal_release_source_imports
+          (canonical_release_id, source_snapshot_id, source_kind, code_revision,
+           import_status, imported_row_count, rejected_row_count, imported_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, UTC_TIMESTAMP())
+         ON DUPLICATE KEY UPDATE
+           source_kind = VALUES(source_kind),
+           code_revision = VALUES(code_revision),
+           import_status = VALUES(import_status),
+           imported_row_count = VALUES(imported_row_count),
+           rejected_row_count = VALUES(rejected_row_count),
+           imported_at = VALUES(imported_at)`,
+        [
+          canonicalReleaseId,
+          snapshotId,
+          source.sourceKind,
+          source.codeRevision,
+          importStatus,
+          source.importedRowCount,
+          source.rejectedRowCount,
+        ],
+      );
+    };
     const releaseResult = await connection.execute(
       `SELECT id, dataset_key, release_status, source_snapshot_ids
          FROM ${PRIMARY_SCHEMA}.portal_data_releases
@@ -919,6 +945,7 @@ export async function runAbbottImportTransaction(
         }
         snapshotIds[source.sourceKind] = existingSnapshotId;
         idempotentKinds.push(source.sourceKind);
+        await recordImportExecution(source, existingSnapshotId);
         continue;
       }
 
@@ -964,6 +991,7 @@ export async function runAbbottImportTransaction(
           source.sourceKind,
         ],
       );
+      await recordImportExecution(source, snapshotId);
     }
 
     const importedKinds = new Set(sources.map((source) => source.sourceKind));

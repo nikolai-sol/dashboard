@@ -637,6 +637,43 @@ test("transaction is checksum-idempotent only when the current release rows veri
   );
 });
 
+test("successor release reuse records its own import execution revision", async () => {
+  const calls: Array<{ sql: string; params: readonly unknown[] }> = [];
+  const connection: AbbottImportConnection = {
+    beginTransaction: async () => undefined,
+    execute: async (sql, params = []) => {
+      const compact = sql.replace(/\s+/g, " ").trim();
+      calls.push({ sql: compact, params });
+      if (compact.includes("FROM report_bd.portal_data_releases")) {
+        return [[{ id: 88, dataset_key: "abbott", release_status: "staging", source_snapshot_ids: "[]" }], []];
+      }
+      if (compact.includes("FROM report_bd.portal_dataset_snapshots")) {
+        return [[{ id: 44, import_status: "imported", imported_row_count: 1 }], []];
+      }
+      if (compact.startsWith("SELECT COUNT(*)")) return [[{ row_count: 1 }], []];
+      if (compact.startsWith("SELECT raw_user_id FROM")) return [[{ raw_user_id: "000123" }], []];
+      return [[], []];
+    },
+    commit: async () => undefined,
+    rollback: async () => undefined,
+  };
+
+  await runAbbottImportTransaction(
+    connection,
+    88,
+    [source({ codeRevision: "successor-revision" })],
+  );
+
+  const execution = calls.find((call) =>
+    call.sql.startsWith("INSERT INTO report_bd.portal_release_source_imports"),
+  );
+  assert.ok(execution, "per-release import execution evidence was not persisted");
+  assert.deepEqual(
+    execution.params.slice(0, 7),
+    [88, 44, "abbott_workbook_json", "successor-revision", "imported", 1, 0],
+  );
+});
+
 test("transaction rejects any batch without deterministic fingerprint verification", async () => {
   const connection: AbbottImportConnection = {
     beginTransaction: async () => { throw new Error("must fail before transaction"); },

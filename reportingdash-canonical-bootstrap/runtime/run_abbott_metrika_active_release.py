@@ -20,6 +20,32 @@ class ActiveReleaseLaunchError(RuntimeError):
     """Sanitized launcher failure that never includes environment values."""
 
 
+def _inside(root: Path, path: Path) -> bool:
+    return path == root or root in path.parents
+
+
+def _contains_symlink_escape(root: Path, candidate: Path) -> bool:
+    paths = []
+    current = candidate
+    while current != root:
+        paths.append(current)
+        current = current.parent
+    if candidate.is_dir() and not candidate.is_symlink():
+        try:
+            paths.extend(candidate.rglob("*"))
+        except OSError:
+            return True
+    for path in paths:
+        if not path.is_symlink():
+            continue
+        try:
+            if not _inside(root, path.resolve(strict=False)):
+                return True
+        except OSError:
+            return True
+    return False
+
+
 def _git_revision(root: Path) -> str:
     try:
         result = subprocess.run(
@@ -36,14 +62,41 @@ def _git_revision(root: Path) -> str:
 def _tracked_worktree_status(root: Path) -> str:
     try:
         result = subprocess.run(
-            ["git", "-C", str(root), "status", "--porcelain", "--untracked-files=no"],
+            [
+                "git",
+                "-C",
+                str(root),
+                "status",
+                "--porcelain=v1",
+                "--untracked-files=all",
+                "--ignored=matching",
+            ],
             check=True,
             capture_output=True,
             text=True,
         )
     except (OSError, subprocess.SubprocessError):
         raise ActiveReleaseLaunchError("Unable to attest canonical worktree state") from None
-    return result.stdout.strip()
+    unsafe_entries = []
+    for entry in result.stdout.splitlines():
+        if entry.startswith(("?? ", "!! ")):
+            relative = entry[3:]
+            if relative == ".env" or relative.startswith(
+                ("venv/", "logs/", ".superpowers/")
+            ):
+                candidate = root / relative
+                try:
+                    resolved = candidate.resolve(strict=False)
+                except OSError:
+                    resolved = None
+                if (
+                    resolved is not None
+                    and _inside(root, resolved)
+                    and not _contains_symlink_escape(root, candidate)
+                ):
+                    continue
+        unsafe_entries.append(entry)
+    return "\n".join(unsafe_entries)
 
 
 def _head_blob(root: Path, relative_path: Path) -> bytes:
@@ -63,7 +116,7 @@ def attest_runtime(root: Path, expected_revision: str, manifest_path: Path) -> N
     if _git_revision(root) != expected_revision:
         raise ActiveReleaseLaunchError("Canonical runtime revision does not match")
     if _tracked_worktree_status(root):
-        raise ActiveReleaseLaunchError("Canonical tracked worktree is not clean")
+        raise ActiveReleaseLaunchError("Canonical runtime worktree contains unsafe changes")
     try:
         resolved_manifest = manifest_path.resolve(strict=True)
         relative_manifest = resolved_manifest.relative_to(root)

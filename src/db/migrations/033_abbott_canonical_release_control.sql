@@ -74,12 +74,36 @@ CREATE TABLE IF NOT EXISTS portal_dataset_snapshots (
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
   COMMENT='Immutable source and pre-backfill snapshot registry';
 
+CREATE TABLE IF NOT EXISTS portal_release_source_imports (
+  id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
+  canonical_release_id BIGINT UNSIGNED NOT NULL,
+  source_snapshot_id BIGINT UNSIGNED NOT NULL,
+  source_kind VARCHAR(64) NOT NULL,
+  code_revision VARCHAR(64) NOT NULL,
+  import_status ENUM('imported', 'rejected') NOT NULL,
+  imported_row_count BIGINT UNSIGNED NOT NULL,
+  rejected_row_count BIGINT UNSIGNED NOT NULL,
+  imported_at DATETIME NOT NULL,
+  created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  PRIMARY KEY (id),
+  UNIQUE KEY uniq_release_source_import
+    (canonical_release_id, source_snapshot_id),
+  KEY idx_release_source_import_revision (canonical_release_id, code_revision),
+  CONSTRAINT fk_release_source_import_release
+    FOREIGN KEY (canonical_release_id) REFERENCES portal_data_releases(id),
+  CONSTRAINT fk_release_source_import_snapshot
+    FOREIGN KEY (source_snapshot_id) REFERENCES portal_dataset_snapshots(id)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
+  COMMENT='Per-release source import execution provenance for immutable snapshots';
+
 CREATE TABLE IF NOT EXISTS portal_migration_validation_runs (
   id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
   canonical_release_id BIGINT UNSIGNED NOT NULL,
   baseline_snapshot_id BIGINT UNSIGNED NOT NULL,
   candidate_snapshot_id BIGINT UNSIGNED DEFAULT NULL,
   candidate_run_id BIGINT UNSIGNED DEFAULT NULL,
+  validation_run_id CHAR(36) NOT NULL,
+  validation_run_completed_at DATETIME DEFAULT NULL,
   code_revision VARCHAR(64) NOT NULL,
   control_name VARCHAR(255) NOT NULL,
   expected_value DECIMAL(30,10) DEFAULT NULL,
@@ -94,7 +118,9 @@ CREATE TABLE IF NOT EXISTS portal_migration_validation_runs (
   created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
   PRIMARY KEY (id),
   UNIQUE KEY uniq_release_validation_control
-    (canonical_release_id, baseline_snapshot_id, control_name),
+    (canonical_release_id, baseline_snapshot_id, validation_run_id, control_name),
+  KEY idx_validation_latest
+    (canonical_release_id, baseline_snapshot_id, id),
   KEY idx_validation_result (canonical_release_id, result_status),
   KEY idx_validation_candidate_snapshot (candidate_snapshot_id),
   CONSTRAINT fk_validation_release
@@ -383,6 +409,99 @@ CREATE TABLE IF NOT EXISTS canonical_source_coverage_daily (
     FOREIGN KEY (canonical_release_id) REFERENCES portal_data_releases(id)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
   COMMENT='Closed-status daily source coverage used by release activation gates';
+
+-- Retryable validation-batch upgrade for installations created before this
+-- migration gained append-only comparison run identity.
+SET @abbott_column_exists := (
+  SELECT COUNT(*) FROM information_schema.COLUMNS
+  WHERE TABLE_SCHEMA = DATABASE()
+    AND TABLE_NAME = 'portal_migration_validation_runs'
+    AND COLUMN_NAME = 'validation_run_id'
+);
+SET @sql := IF(
+  @abbott_column_exists = 0,
+  'ALTER TABLE portal_migration_validation_runs ADD COLUMN validation_run_id CHAR(36) DEFAULT NULL AFTER candidate_run_id',
+  'SELECT ''validation_run_id already present'' AS info'
+);
+PREPARE stmt FROM @sql; EXECUTE stmt; DEALLOCATE PREPARE stmt;
+
+SET @abbott_column_exists := (
+  SELECT COUNT(*) FROM information_schema.COLUMNS
+  WHERE TABLE_SCHEMA = DATABASE()
+    AND TABLE_NAME = 'portal_migration_validation_runs'
+    AND COLUMN_NAME = 'validation_run_completed_at'
+);
+SET @sql := IF(
+  @abbott_column_exists = 0,
+  'ALTER TABLE portal_migration_validation_runs ADD COLUMN validation_run_completed_at DATETIME DEFAULT NULL AFTER validation_run_id',
+  'SELECT ''validation_run_completed_at already present'' AS info'
+);
+PREPARE stmt FROM @sql; EXECUTE stmt; DEALLOCATE PREPARE stmt;
+
+SET @abbott_legacy_validation_run_id := UUID();
+UPDATE portal_migration_validation_runs
+SET validation_run_id = @abbott_legacy_validation_run_id
+WHERE validation_run_id IS NULL;
+UPDATE portal_migration_validation_runs
+SET validation_run_completed_at = created_at
+WHERE validation_run_completed_at IS NULL;
+
+SET @abbott_column_nullable := (
+  SELECT IS_NULLABLE FROM information_schema.COLUMNS
+  WHERE TABLE_SCHEMA = DATABASE()
+    AND TABLE_NAME = 'portal_migration_validation_runs'
+    AND COLUMN_NAME = 'validation_run_id'
+);
+SET @sql := IF(
+  @abbott_column_nullable = 'YES',
+  'ALTER TABLE portal_migration_validation_runs MODIFY COLUMN validation_run_id CHAR(36) NOT NULL',
+  'SELECT ''validation_run_id already required'' AS info'
+);
+PREPARE stmt FROM @sql; EXECUTE stmt; DEALLOCATE PREPARE stmt;
+
+SET @abbott_validation_unique_columns := (
+  SELECT GROUP_CONCAT(COLUMN_NAME ORDER BY SEQ_IN_INDEX SEPARATOR ',')
+  FROM information_schema.STATISTICS
+  WHERE TABLE_SCHEMA = DATABASE()
+    AND TABLE_NAME = 'portal_migration_validation_runs'
+    AND INDEX_NAME = 'uniq_release_validation_control'
+);
+SET @sql := IF(
+  @abbott_validation_unique_columns IS NOT NULL
+    AND @abbott_validation_unique_columns <>
+      'canonical_release_id,baseline_snapshot_id,validation_run_id,control_name',
+  'ALTER TABLE portal_migration_validation_runs DROP INDEX uniq_release_validation_control',
+  'SELECT ''validation run uniqueness does not need removal'' AS info'
+);
+PREPARE stmt FROM @sql; EXECUTE stmt; DEALLOCATE PREPARE stmt;
+
+SET @abbott_validation_unique_columns := (
+  SELECT GROUP_CONCAT(COLUMN_NAME ORDER BY SEQ_IN_INDEX SEPARATOR ',')
+  FROM information_schema.STATISTICS
+  WHERE TABLE_SCHEMA = DATABASE()
+    AND TABLE_NAME = 'portal_migration_validation_runs'
+    AND INDEX_NAME = 'uniq_release_validation_control'
+);
+SET @sql := IF(
+  COALESCE(@abbott_validation_unique_columns, '') <>
+    'canonical_release_id,baseline_snapshot_id,validation_run_id,control_name',
+  'ALTER TABLE portal_migration_validation_runs ADD UNIQUE INDEX uniq_release_validation_control (canonical_release_id, baseline_snapshot_id, validation_run_id, control_name)',
+  'SELECT ''validation run uniqueness already aligned'' AS info'
+);
+PREPARE stmt FROM @sql; EXECUTE stmt; DEALLOCATE PREPARE stmt;
+
+SET @abbott_index_exists := (
+  SELECT COUNT(*) FROM information_schema.STATISTICS
+  WHERE TABLE_SCHEMA = DATABASE()
+    AND TABLE_NAME = 'portal_migration_validation_runs'
+    AND INDEX_NAME = 'idx_validation_latest'
+);
+SET @sql := IF(
+  @abbott_index_exists = 0,
+  'ALTER TABLE portal_migration_validation_runs ADD INDEX idx_validation_latest (canonical_release_id, baseline_snapshot_id, id)',
+  'SELECT ''latest validation run index already present'' AS info'
+);
+PREPARE stmt FROM @sql; EXECUTE stmt; DEALLOCATE PREPARE stmt;
 
 -- Task 7 compatibility upgrade. Migration 033 was introduced in Task 1 and
 -- may already have created these tables, so the definitions above are
