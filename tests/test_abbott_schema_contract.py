@@ -100,6 +100,15 @@ class AbbottSchemaContractTest(unittest.TestCase):
                 sql,
             )
 
+    def test_collector_role_can_atomically_replace_private_behavior(self):
+        sql = self._normalized(self._private_sql())
+        self.assertIn(
+            "GRANT SELECT, INSERT, UPDATE, DELETE "
+            "ON report_bd_private.canonical_fact_metrika_user_behavior_daily "
+            "TO 'reportingdash_abbott_collector_role';",
+            sql,
+        )
+
     def test_prebackfill_requires_every_declared_variable_before_insert(self):
         sql = (ROOT / "ops/sql/abbott_prebackfill_snapshot.sql").read_text()
         guard = sql.split("INSERT INTO report_bd.portal_dataset_snapshots", 1)[0]
@@ -119,6 +128,24 @@ class AbbottSchemaContractTest(unittest.TestCase):
         ):
             self.assertRegex(guard, rf"IF\s+{re.escape(variable)}\s+IS\s+NULL")
 
+    def test_prebackfill_calls_guard_before_transaction_and_insert(self):
+        sql = (ROOT / "ops/sql/abbott_prebackfill_snapshot.sql").read_text()
+        call = "CALL report_bd.assert_abbott_prebackfill_variables();"
+        self.assertEqual(sql.count(call), 1)
+        self.assertLess(sql.index(call), sql.index("START TRANSACTION"))
+        self.assertLess(
+            sql.index(call),
+            sql.index("INSERT INTO report_bd.portal_dataset_snapshots"),
+        )
+
+    def test_prebackfill_is_fixed_to_the_abbott_counter(self):
+        sql = (ROOT / "ops/sql/abbott_prebackfill_snapshot.sql").read_text()
+        counter_filters = re.findall(r"\bcounter_id\s*=\s*(\d+)", sql)
+        self.assertGreater(len(counter_filters), 0)
+        self.assertEqual(set(counter_filters), {"90602537"})
+        self.assertEqual(set(re.findall(r"\b\d{8}\b", sql)), {"90602537"})
+        self.assertNotIn("@abbott_counter_id", sql)
+
     def test_active_release_pointer_is_bound_to_its_dataset(self):
         sql = self._normalized(self._primary_sql())
         self.assertIn(
@@ -129,6 +156,19 @@ class AbbottSchemaContractTest(unittest.TestCase):
             "REFERENCES portal_data_releases(dataset_key, id)",
             sql,
         )
+
+    def test_rollback_lineage_and_target_are_bound_to_their_dataset(self):
+        sql = self._normalized(self._primary_sql())
+        for contract in (
+            "KEY idx_portal_release_rollback "
+            "(dataset_key, rollback_from_release_id)",
+            "FOREIGN KEY (dataset_key, rollback_from_release_id) "
+            "REFERENCES portal_data_releases(dataset_key, id)",
+            "KEY idx_active_previous_release (dataset_key, previous_release_id)",
+            "FOREIGN KEY (dataset_key, previous_release_id) "
+            "REFERENCES portal_data_releases(dataset_key, id)",
+        ):
+            self.assertIn(contract, sql)
 
     def test_required_coverage_status_literals_remain_present(self):
         sql = self._primary_sql()

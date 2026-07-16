@@ -115,7 +115,7 @@ GRANT SELECT, INSERT, UPDATE, DELETE ON report_bd.canonical_fact_metrika_returni
   TO 'reportingdash_abbott_collector_role';
 GRANT SELECT, INSERT, UPDATE, DELETE ON report_bd.canonical_source_coverage_daily
   TO 'reportingdash_abbott_collector_role';
-GRANT SELECT, INSERT, UPDATE ON report_bd_private.canonical_fact_metrika_user_behavior_daily
+GRANT SELECT, INSERT, UPDATE, DELETE ON report_bd_private.canonical_fact_metrika_user_behavior_daily
   TO 'reportingdash_abbott_collector_role';
 GRANT SELECT, INSERT, UPDATE ON report_bd_private.portal_user_directions_private
   TO 'reportingdash_abbott_collector_role';
