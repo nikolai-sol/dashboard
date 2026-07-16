@@ -1,6 +1,6 @@
 -- Run only after the reviewed operator has set every abbott_snapshot_* session
--- variable below from the frozen, restricted baseline manifest. Missing required
--- values fail on the NOT NULL constraints instead of recording partial evidence.
+-- variable below from the frozen, restricted baseline manifest. The guard aborts
+-- before opening the snapshot transaction when any required value is missing.
 --
 -- Required variables:
 --   @abbott_snapshot_key, @abbott_snapshot_source_locator,
@@ -9,6 +9,61 @@
 --   @abbott_snapshot_period_max, @abbott_snapshot_rows,
 --   @abbott_snapshot_parser_version, @abbott_snapshot_archive_locator,
 --   @abbott_snapshot_manifest_json.
+
+DROP PROCEDURE IF EXISTS report_bd.assert_abbott_prebackfill_variables;
+
+DELIMITER //
+CREATE PROCEDURE report_bd.assert_abbott_prebackfill_variables()
+BEGIN
+  IF @abbott_snapshot_key IS NULL THEN
+    SIGNAL SQLSTATE '45000'
+      SET MESSAGE_TEXT = 'Missing required variable: abbott_snapshot_key';
+  END IF;
+  IF @abbott_snapshot_source_locator IS NULL THEN
+    SIGNAL SQLSTATE '45000'
+      SET MESSAGE_TEXT = 'Missing required variable: abbott_snapshot_source_locator';
+  END IF;
+  IF @abbott_snapshot_sha256 IS NULL THEN
+    SIGNAL SQLSTATE '45000'
+      SET MESSAGE_TEXT = 'Missing required variable: abbott_snapshot_sha256';
+  END IF;
+  IF @abbott_snapshot_bytes IS NULL THEN
+    SIGNAL SQLSTATE '45000'
+      SET MESSAGE_TEXT = 'Missing required variable: abbott_snapshot_bytes';
+  END IF;
+  IF @abbott_snapshot_generated_at IS NULL THEN
+    SIGNAL SQLSTATE '45000'
+      SET MESSAGE_TEXT = 'Missing required variable: abbott_snapshot_generated_at';
+  END IF;
+  IF @abbott_snapshot_period_min IS NULL THEN
+    SIGNAL SQLSTATE '45000'
+      SET MESSAGE_TEXT = 'Missing required variable: abbott_snapshot_period_min';
+  END IF;
+  IF @abbott_snapshot_period_max IS NULL THEN
+    SIGNAL SQLSTATE '45000'
+      SET MESSAGE_TEXT = 'Missing required variable: abbott_snapshot_period_max';
+  END IF;
+  IF @abbott_snapshot_rows IS NULL THEN
+    SIGNAL SQLSTATE '45000'
+      SET MESSAGE_TEXT = 'Missing required variable: abbott_snapshot_rows';
+  END IF;
+  IF @abbott_snapshot_parser_version IS NULL THEN
+    SIGNAL SQLSTATE '45000'
+      SET MESSAGE_TEXT = 'Missing required variable: abbott_snapshot_parser_version';
+  END IF;
+  IF @abbott_snapshot_archive_locator IS NULL THEN
+    SIGNAL SQLSTATE '45000'
+      SET MESSAGE_TEXT = 'Missing required variable: abbott_snapshot_archive_locator';
+  END IF;
+  IF @abbott_snapshot_manifest_json IS NULL THEN
+    SIGNAL SQLSTATE '45000'
+      SET MESSAGE_TEXT = 'Missing required variable: abbott_snapshot_manifest_json';
+  END IF;
+END//
+DELIMITER ;
+
+CALL report_bd.assert_abbott_prebackfill_variables();
+DROP PROCEDURE report_bd.assert_abbott_prebackfill_variables;
 
 SET TRANSACTION ISOLATION LEVEL REPEATABLE READ;
 START TRANSACTION WITH CONSISTENT SNAPSHOT;

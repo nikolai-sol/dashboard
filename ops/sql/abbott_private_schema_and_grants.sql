@@ -109,6 +109,12 @@ GRANT SELECT ON report_bd.portal_data_releases
   TO 'reportingdash_abbott_collector_role';
 GRANT SELECT ON report_bd.portal_active_data_releases
   TO 'reportingdash_abbott_collector_role';
+GRANT SELECT, INSERT, UPDATE, DELETE ON report_bd.canonical_fact_metrika_site_analytics_daily
+  TO 'reportingdash_abbott_collector_role';
+GRANT SELECT, INSERT, UPDATE, DELETE ON report_bd.canonical_fact_metrika_returning_pages_daily
+  TO 'reportingdash_abbott_collector_role';
+GRANT SELECT, INSERT, UPDATE, DELETE ON report_bd.canonical_source_coverage_daily
+  TO 'reportingdash_abbott_collector_role';
 GRANT SELECT, INSERT, UPDATE ON report_bd_private.canonical_fact_metrika_user_behavior_daily
   TO 'reportingdash_abbott_collector_role';
 GRANT SELECT, INSERT, UPDATE ON report_bd_private.portal_user_directions_private
