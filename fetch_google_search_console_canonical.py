@@ -67,6 +67,7 @@ GSC_API_BASE = env_first("GSC_API_BASE", default="https://www.googleapis.com/web
 GOOGLE_OAUTH_TOKEN_URL = env_first("GOOGLE_OAUTH_TOKEN_URL", default="https://oauth2.googleapis.com/token")
 DEFAULT_PROPERTY_URL = env_first("GSC_SITE_URL", "GSC_PROPERTY_URL", default="https://zaruku.ru/")
 DEFAULT_LAG_DAYS = int(env_first("GSC_DAILY_LAG_DAYS", default="3") or 3)
+DEFAULT_DATA_DELAY_DAYS = int(env_first("GSC_DATA_DELAY_DAYS", default="3") or 3)
 DEFAULT_DEVICE_TYPES = [
     device.strip().upper()
     for device in env_first("GSC_DEVICE_TYPES", default="DESKTOP,MOBILE,TABLET").split(",")
@@ -180,6 +181,7 @@ def parse_args():
     parser.add_argument("--date-from", default="")
     parser.add_argument("--date-to", default="")
     parser.add_argument("--lag-days", type=int, default=DEFAULT_LAG_DAYS)
+    parser.add_argument("--data-delay-days", type=int, default=DEFAULT_DATA_DELAY_DAYS)
     parser.add_argument("--run-type", default="manual", choices=["manual", "cron", "backfill"])
     parser.add_argument("--property-url", default="")
     parser.add_argument("--force", action="store_true")
@@ -225,9 +227,13 @@ def calculate_ctr(impressions: int, clicks: int) -> float | None:
     return round((clicks / impressions) * 100, 6) if impressions > 0 else None
 
 
-def collection_dates(anchor: date | None = None, lag_days: int = DEFAULT_LAG_DAYS) -> list[str]:
+def collection_dates(
+    anchor: date | None = None,
+    lag_days: int = DEFAULT_LAG_DAYS,
+    data_delay_days: int = DEFAULT_DATA_DELAY_DAYS,
+) -> list[str]:
     effective_anchor = anchor or datetime.now(timezone.utc).date()
-    end = effective_anchor - timedelta(days=1)
+    end = effective_anchor - timedelta(days=max(data_delay_days, 1))
     start = end - timedelta(days=max(lag_days, 0))
     days: list[str] = []
     current = start
@@ -254,7 +260,7 @@ def selected_dates(args) -> list[str]:
         date_to = args.date_to or (today - timedelta(days=1)).strftime("%Y-%m-%d")
         date_from = args.date_from or date_to
         return daterange(date_from, date_to)
-    return collection_dates(lag_days=args.lag_days)
+    return collection_dates(lag_days=args.lag_days, data_delay_days=args.data_delay_days)
 
 
 def stable_hash(value: str) -> str:

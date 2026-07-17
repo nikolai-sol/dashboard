@@ -41,6 +41,7 @@ Daily jobs on VPS:
 - `06:40` canonical monitor
 - `06:50` Yandex Webmaster
 - `06:50` Telegram summary
+- `06:55` Google Search Console
 
 These times record the audited operations schedule. They do not by themselves assert that the collector changes in the current branch have been deployed, run, or backfilled.
 
@@ -49,6 +50,7 @@ Important runtime rule:
 - with `--days-back 2`, cron window is:
   - `yesterday - 1 day`
   - through `yesterday`
+- Google Search Console uses a separate freshness guard: `--data-delay-days 3`, so its daily cron ends at `today - 3 days` and repaints a 4-day window with `--lag-days 3`.
 
 This was changed intentionally to avoid partial current-day data in morning runs.
 
@@ -169,8 +171,10 @@ Important current state:
 - canonical daily tables are `canonical_fact_gsc_queries_daily`, `canonical_fact_gsc_pages_daily`, and `canonical_fact_gsc_summary_daily`
 - daily replacement grain is `source_key + property_url + report_date + device_type`; query/page snapshots are replaced transactionally with their summary row
 - the collector refuses rowLimit-sized Search Analytics responses before deleting existing rows, because they may be incomplete until pagination is added
-- current status: implemented in repository only; not production-deployed, not cron-scheduled, and not backfilled
-- dashboard should still treat GSC as pending/partial until canonical tables exist and contain rows
+- current status: production-deployed on `/root/reportingdash-canonical`, cron-scheduled at `06:55`, and backfilled for `2026-07-01 .. 2026-07-14`
+- confirmed production runs:
+  - backfill run `1436`: `2026-07-01 .. 2026-07-14`, `32921` rows read/written
+  - forced cron smoke run `1437`: `2026-07-11 .. 2026-07-14`, `9199` rows read/written
 
 ## Platform-specific access notes
 

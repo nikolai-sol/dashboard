@@ -1,4 +1,5 @@
 import unittest
+from datetime import date
 from unittest.mock import patch
 
 
@@ -343,6 +344,14 @@ class GoogleSearchConsoleCanonicalTests(unittest.TestCase):
         self.assertIn("canonical_fact_gsc_queries_daily", GSC_QUERY_UPSERT_SQL)
         self.assertIn("canonical_fact_gsc_pages_daily", GSC_PAGE_UPSERT_SQL)
         self.assertIn("canonical_fact_gsc_summary_daily", GSC_SUMMARY_UPSERT_SQL)
+
+    def test_collection_dates_respects_gsc_data_delay(self):
+        from fetch_google_search_console_canonical import collection_dates
+
+        self.assertEqual(
+            collection_dates(anchor=date(2026, 7, 17), lag_days=3, data_delay_days=3),
+            ["2026-07-11", "2026-07-12", "2026-07-13", "2026-07-14"],
+        )
 
 
 if __name__ == "__main__":
