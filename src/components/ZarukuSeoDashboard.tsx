@@ -29,6 +29,9 @@ import {
 } from "lucide-react";
 import ZarukuSeoWeekToolbar from "@/components/ZarukuSeoWeekToolbar";
 import type {
+  ZarukuGoogleSearchConsolePageRow,
+  ZarukuGoogleSearchConsoleQueryRow,
+  ZarukuGoogleSearchConsoleSummaryRow,
   ZarukuSeoData,
   ZarukuSeoLayerId,
   ZarukuSeoMetricRow,
@@ -65,7 +68,10 @@ import {
   buildWebmasterSelectionMeta,
   resolveRowsForWeek,
   resolveRowsForWeekOrLatest,
+  SearchConsoleKpiRow,
   summarizeWebmasterKpis,
+  topGscPages,
+  topGscQueries,
   topWebmasterPages,
   topWebmasterQueries,
 } from "@/components/zaruku-yandex-webmaster-panels";
@@ -456,8 +462,9 @@ function PendingPanel({ data }: { data: ZarukuSeoData }) {
 }
 
 type WebmasterKpiRow = ZarukuYandexWebmasterQueryRow | ZarukuYandexWebmasterSummaryRow;
+type GscKpiRow = ZarukuGoogleSearchConsoleQueryRow | ZarukuGoogleSearchConsoleSummaryRow;
 
-function WebmasterKpiStrip({ rows, locale }: { rows: WebmasterKpiRow[]; locale: string }) {
+function SearchConsoleKpiStrip({ rows, locale }: { rows: SearchConsoleKpiRow[]; locale: string }) {
   const summary = summarizeWebmasterKpis(rows);
   const cells = [
     ["Показы", formatNumber(summary.impressions, locale)],
@@ -477,7 +484,15 @@ function WebmasterKpiStrip({ rows, locale }: { rows: WebmasterKpiRow[]; locale: 
   );
 }
 
-function WebmasterQueryTable({ rows, locale }: { rows: ZarukuYandexWebmasterQueryRow[]; locale: string }) {
+function SearchConsoleQueryTable({
+  rows,
+  locale,
+  emptyLabel,
+}: {
+  rows: Array<ZarukuYandexWebmasterQueryRow | ZarukuGoogleSearchConsoleQueryRow>;
+  locale: string;
+  emptyLabel: string;
+}) {
   return (
     <div className="max-h-[30rem] overflow-auto rounded-md border border-slate-100">
       <table className="w-full min-w-[860px] table-fixed text-sm">
@@ -511,7 +526,7 @@ function WebmasterQueryTable({ rows, locale }: { rows: ZarukuYandexWebmasterQuer
           ))}
           {rows.length === 0 ? (
             <tr>
-              <td colSpan={5} className="px-3 py-8 text-center text-sm text-slate-500">Нет Webmaster-запросов для выбранной недели.</td>
+              <td colSpan={5} className="px-3 py-8 text-center text-sm text-slate-500">{emptyLabel}</td>
             </tr>
           ) : null}
         </tbody>
@@ -520,7 +535,15 @@ function WebmasterQueryTable({ rows, locale }: { rows: ZarukuYandexWebmasterQuer
   );
 }
 
-function WebmasterPageTable({ rows, locale }: { rows: ZarukuYandexWebmasterPageRow[]; locale: string }) {
+function SearchConsolePageTable({
+  rows,
+  locale,
+  emptyLabel,
+}: {
+  rows: Array<ZarukuYandexWebmasterPageRow | ZarukuGoogleSearchConsolePageRow>;
+  locale: string;
+  emptyLabel: string;
+}) {
   return (
     <div className="space-y-2">
       {rows.map((row) => (
@@ -531,9 +554,17 @@ function WebmasterPageTable({ rows, locale }: { rows: ZarukuYandexWebmasterPageR
           <div className="text-right text-slate-500">{formatDecimal(row.average_position, locale, 1)}</div>
         </div>
       ))}
-      {rows.length === 0 ? <div className="rounded-md bg-slate-50 px-3 py-8 text-center text-sm text-slate-500">URL-факты Вебмастера пока пустые.</div> : null}
+      {rows.length === 0 ? <div className="rounded-md bg-slate-50 px-3 py-8 text-center text-sm text-slate-500">{emptyLabel}</div> : null}
     </div>
   );
+}
+
+function WebmasterQueryTable({ rows, locale }: { rows: ZarukuYandexWebmasterQueryRow[]; locale: string }) {
+  return <SearchConsoleQueryTable rows={rows} locale={locale} emptyLabel="Нет Webmaster-запросов для выбранной недели." />;
+}
+
+function WebmasterPageTable({ rows, locale }: { rows: ZarukuYandexWebmasterPageRow[]; locale: string }) {
+  return <SearchConsolePageTable rows={rows} locale={locale} emptyLabel="URL-факты Вебмастера пока пустые." />;
 }
 
 function NorthStarBlock({ data, locale }: Props) {
@@ -768,6 +799,19 @@ function OverviewTab({ data, locale }: Props) {
 function SeoTab({ data, locale, primaryWeek, comparisonWeek }: Props & { primaryWeek: string | null; comparisonWeek: string | null }) {
   const phraseCoverage = data.data_quality.find((item) => item.title === "Покрытие поисковых фраз");
   const currentLocale = locale ?? "ru-RU";
+  const gscWeek = primaryWeek ?? data.gsc.latest_week;
+  const gscSummarySelection = resolveRowsForWeek(data.gsc.summary, gscWeek, data.gsc.latest_week);
+  const gscQuerySelection = resolveRowsForWeekOrLatest(data.gsc.queries, gscWeek, data.gsc.latest_week);
+  const gscPageSelection = resolveRowsForWeekOrLatest(data.gsc.pages, gscWeek, data.gsc.latest_week);
+  const gscSummaryRows = gscSummarySelection.rows;
+  const gscQueries = gscQuerySelection.rows;
+  const gscPages = gscPageSelection.rows;
+  const gscFactsSelection: { week: string | null; rows: GscKpiRow[] } = gscSummaryRows.length > 0
+    ? gscSummarySelection
+    : gscQuerySelection;
+  const gscFactsMeta = buildWebmasterSelectionMeta(gscFactsSelection, gscWeek);
+  const gscQueryMeta = buildWebmasterSelectionMeta(gscQuerySelection, gscWeek);
+  const gscPageMeta = buildWebmasterSelectionMeta(gscPageSelection, gscWeek);
   const webmasterWeek = primaryWeek ?? data.webmaster.latest_week;
   const webmasterSummarySelection = resolveRowsForWeek(data.webmaster.summary, webmasterWeek, data.webmaster.latest_week);
   const webmasterQuerySelection = resolveRowsForWeekOrLatest(data.webmaster.queries, webmasterWeek, data.webmaster.latest_week);
@@ -808,7 +852,7 @@ function SeoTab({ data, locale, primaryWeek, comparisonWeek }: Props & { primary
           pending={data.webmaster.status === "unavailable"}
           right={<span className="text-xs text-slate-400">{webmasterFactsMeta.periodLabel}</span>}
         >
-          <WebmasterKpiStrip rows={webmasterSummaryRows.length > 0 ? webmasterSummaryRows : webmasterQueries} locale={currentLocale} />
+          <SearchConsoleKpiStrip rows={webmasterSummaryRows.length > 0 ? webmasterSummaryRows : webmasterQueries} locale={currentLocale} />
           <div className="mt-3 text-xs leading-relaxed text-slate-500">
             {webmasterFactsMeta.sourceNote} Период: {webmasterFactsMeta.periodLabel}.
           </div>
@@ -821,16 +865,23 @@ function SeoTab({ data, locale, primaryWeek, comparisonWeek }: Props & { primary
       </div>
       <SemanticHealthPanel data={data} locale={locale} primaryWeek={primaryWeek} />
       <div className="grid gap-5 lg:grid-cols-2">
-        <Panel data={data} title="Факты Google Search Console" source="gsc" layer="serp" pending>
-          <div className="grid grid-cols-3 gap-3">
-            {["Показы", "Клики", "CTR"].map((item) => (
-              <div key={item} className="rounded-lg border border-dashed border-slate-200 px-3 py-6 text-center">
-                <div className="text-xs uppercase text-slate-400">{item}</div>
-                <div className="mt-2 text-xl font-semibold text-slate-300">—</div>
-              </div>
-            ))}
+        <Panel
+          data={data}
+          title="Факты Google Search Console"
+          source="gsc"
+          layer="serp"
+          pending={data.gsc.status === "unavailable"}
+          right={<span className="text-xs text-slate-400">{gscFactsMeta.periodLabel}</span>}
+        >
+          <SearchConsoleKpiStrip rows={gscSummaryRows.length > 0 ? gscSummaryRows : gscQueries} locale={currentLocale} />
+          <div className="mt-3 text-xs leading-relaxed text-slate-500">
+            Источник: Google Search Console / canonical_fact_gsc_*_daily. Период: {gscFactsMeta.periodLabel}.
           </div>
-          <p className="mt-3 text-sm leading-relaxed text-slate-500">Данные по Google-показам, кликам и CTR ожидаются из Search Console.</p>
+          {gscFactsMeta.fallbackNote ? (
+            <div className="mt-2 rounded-md border border-amber-200 bg-amber-50 px-3 py-2 text-xs leading-relaxed text-amber-800">
+              {gscFactsMeta.fallbackNote.replaceAll("Яндекс Вебмастера", "Google Search Console")}
+            </div>
+          ) : null}
         </Panel>
         <AiAggregateVisibilityPanel data={data} locale={currentLocale} />
       </div>
@@ -866,6 +917,20 @@ function SeoTab({ data, locale, primaryWeek, comparisonWeek }: Props & { primary
           <WebmasterPageTable rows={topWebmasterPages(webmasterPages, 10)} locale={currentLocale} />
         </Panel>
       ) : null}
+      <Panel data={data} title="Запросы Google" source="gsc" layer="serp" right={<span className="text-xs text-slate-400">{gscQueryMeta.periodLabel} · {gscQueries.length} строк</span>}>
+        <SearchConsoleQueryTable rows={topGscQueries(gscQueries, 12)} locale={currentLocale} emptyLabel="Нет GSC-запросов для выбранной недели." />
+        <p className="mt-3 text-xs leading-relaxed text-slate-500">
+          Это запросы из Google Search Console: показы, клики, CTR и средняя позиция до клика. Таблица отсортирована по показам.
+        </p>
+        {gscQueryMeta.fallbackNote ? (
+          <div className="mt-3 rounded-md border border-amber-200 bg-amber-50 px-3 py-2 text-xs leading-relaxed text-amber-800">
+            {gscQueryMeta.fallbackNote.replaceAll("Яндекс Вебмастера", "Google Search Console")}
+          </div>
+        ) : null}
+      </Panel>
+      <Panel data={data} title="Посадочные страницы Google" source="gsc" layer="serp" right={<span className="text-xs text-slate-400">{gscPageMeta.periodLabel} · URL-факты</span>}>
+        <SearchConsolePageTable rows={topGscPages(gscPages, 10)} locale={currentLocale} emptyLabel="URL-факты GSC пока пустые." />
+      </Panel>
       <Panel data={data} title="Поисковые фразы из Метрики" source="metrika" layer="onsite" right={<span className="text-xs text-slate-400">{phraseCoverage?.value ?? "покрытие —"}</span>}>
         <p className="mb-3 text-xs leading-relaxed text-slate-500">
           Фразы, которые Метрика смогла определить после клика. Это не полный список SEO-запросов: часть запросов скрывается поисковиками, а показы и позиции живут в Яндекс Вебмастере.

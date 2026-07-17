@@ -4,6 +4,7 @@ import { loadAccountFacts, loadSeoIntelligence, loadSeoProcess } from "@/lib/acc
 import { matchSectionPattern } from "@/lib/zaruku-seo-os";
 import type {
   ZarukuAiVisibilityData,
+  ZarukuGoogleSearchConsoleData,
   ZarukuSeoData,
   ZarukuSeoDataQualityItem,
   ZarukuSeoKpi,
@@ -38,7 +39,7 @@ const SOURCES: ZarukuSeoSource[] = [
     layer: "serp",
     color: "#2563eb",
     status: "pending",
-    collection_mode: "not_connected",
+    collection_mode: "automated",
     data_through: null,
     note: "Показы, позиции и CTR в Google Search Console.",
   },
@@ -780,16 +781,19 @@ function sourceStatusFromData(status: "available" | "partial" | "unavailable"): 
 type SourceDataThrough = Record<ZarukuSeoSource["id"], string | null>;
 
 export function deriveSourceDataThrough({
+  gscSummary,
   webmasterSummary,
   seoOsLatestWeek,
   aiLatestPeriod,
   aiRows,
 }: {
+  gscSummary: Array<{ week_to: string }>;
   webmasterSummary: Array<{ week_to: string }>;
   seoOsLatestWeek: string | null;
   aiLatestPeriod: string | null;
   aiRows: Array<{ period: string; captured_at: string | null }>;
 }): SourceDataThrough {
+  const latestGscDate = gscSummary.map((row) => row.week_to).filter(Boolean).sort().at(-1) ?? null;
   const latestWebmasterDate = webmasterSummary.map((row) => row.week_to).filter(Boolean).sort().at(-1) ?? null;
   const latestAiCapture = aiRows
     .filter((row) => row.period === aiLatestPeriod)
@@ -800,7 +804,7 @@ export function deriveSourceDataThrough({
 
   return {
     metrika: null,
-    gsc: null,
+    gsc: latestGscDate,
     webmaster: latestWebmasterDate,
     seo_os: seoOsLatestWeek,
     yandex_gen_search: latestAiCapture ?? aiLatestPeriod,
@@ -809,15 +813,18 @@ export function deriveSourceDataThrough({
 
 export function buildSources({
   seoOsStatus,
+  gsc,
   webmaster,
   seoIntelligence,
   dataThrough,
 }: {
   seoOsStatus: "available" | "partial" | "unavailable";
+  gsc: ZarukuGoogleSearchConsoleData;
   webmaster: ZarukuYandexWebmasterData;
   seoIntelligence: ZarukuSeoIntelligenceData;
   dataThrough: SourceDataThrough;
 }): ZarukuSeoSource[] {
+  const gscStatus = sourceStatusFromData(gsc.status);
   const webmasterStatus = sourceStatusFromData(webmaster.status);
   const aiStatus = seoIntelligence.ai.rows.length > 0 ? sourceStatusFromData(seoIntelligence.status) : "pending";
   return [
@@ -832,6 +839,20 @@ export function buildSources({
               ? "Показы, клики, CTR и средняя позиция Яндекса из Вебмастера."
               : webmasterStatus === "partial"
                 ? "Часть Webmaster-таблиц доступна; панель показывает только подтвержденные факты."
+                : source.note,
+        };
+      }
+      if (source.id === "gsc") {
+        return {
+          ...source,
+          status: gscStatus,
+          collection_mode: gscStatus === "unavailable" ? "not_connected" as const : "automated" as const,
+          data_through: dataThrough.gsc,
+          note:
+            gscStatus === "connected"
+              ? "Показы, клики, CTR и средняя позиция Google из Search Console."
+              : gscStatus === "partial"
+                ? "Часть GSC-таблиц доступна; панель показывает только подтвержденные факты."
                 : source.note,
         };
       }
@@ -868,8 +889,9 @@ export function buildSources({
   ];
 }
 
-function buildPendingRequirements(webmaster: ZarukuYandexWebmasterData) {
+function buildPendingRequirements(gsc: ZarukuGoogleSearchConsoleData, webmaster: ZarukuYandexWebmasterData) {
   return PENDING_REQUIREMENTS.filter((item) => {
+    if (item.source === "gsc") return gsc.status === "unavailable";
     if (item.source === "webmaster") return webmaster.status === "unavailable";
     return true;
   });
@@ -994,6 +1016,7 @@ export async function loadZarukuSeoData(counterIds: string[], from: string, to: 
     loadAccountFacts(accountId, { from, to }, { weeks: seoOs.weeks }),
     loadSeoIntelligence(accountId),
   ]);
+  const gsc = facts.gsc;
   const webmaster = facts.webmaster;
 
   return {
@@ -1007,16 +1030,18 @@ export async function loadZarukuSeoData(counterIds: string[], from: string, to: 
     ],
     sources: buildSources({
       seoOsStatus: seoOs.status,
+      gsc,
       webmaster,
       seoIntelligence,
       dataThrough: deriveSourceDataThrough({
+        gscSummary: gsc.summary,
         webmasterSummary: webmaster.summary,
         seoOsLatestWeek: seoOs.latest_week,
         aiLatestPeriod: seoIntelligence.ai.latest_period,
         aiRows: seoIntelligence.ai.rows,
       }),
     }),
-    pending_requirements: buildPendingRequirements(webmaster),
+    pending_requirements: buildPendingRequirements(gsc, webmaster),
     kpis: buildKpis({
       trafficChannels,
       technicalTail,
@@ -1046,6 +1071,7 @@ export async function loadZarukuSeoData(counterIds: string[], from: string, to: 
     interests: interestsReport.rows,
     returning_pages: returningPages,
     seo_os: seoOs,
+    gsc,
     webmaster,
     ai_visibility: DEPRECATED_EMPTY_WEEKLY_AI_VISIBILITY,
     seo_intelligence: seoIntelligence,

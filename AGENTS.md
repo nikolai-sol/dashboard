@@ -45,7 +45,7 @@ It contains the current dashboard runtime rules, auth model, export rules, compa
 | Yandex Webmaster | Automated daily canonical collection at `06:50` | Yandex query and host-summary facts, aggregated to reporting weeks by the dashboard |
 | SEO OS | External weekly SQL load | Tracked Yandex positions, section and cluster coverage, opportunities, tasks, and pipeline telemetry |
 | AI/GEO visibility | Manual | Manually supplied AI visibility snapshots; automation is not connected |
-| Google Search Console | Not connected / absent | No Google Search Console facts are available; Google impressions, clicks, CTR, and position remain pending |
+| Google Search Console | Local branch implementation; production deploy/backfill pending | Canonical GSC query/page/summary facts for Google impressions, clicks, CTR, and position |
 
 `Geography` means visitor countries/cities from Metrika. It is not `GEO`: in `AI/GEO visibility`, GEO means Generative Engine Optimization.
 

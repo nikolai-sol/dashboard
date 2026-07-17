@@ -1,4 +1,4 @@
-# Zaruku SEO Dashboard Pending Sources
+# Zaruku SEO Dashboard Source Status
 
 Current production source:
 - Yandex Metrika counter `66624469`
@@ -7,7 +7,7 @@ Current production source:
 
 The UI is intentionally built around measurement layers, not vendor-specific screens:
 - `onsite`: what happens after a click, currently Yandex Metrika.
-- `serp`: what happens before a click in search results. Weekly tracked Yandex positions are connected through SEO OS; Yandex Webmaster supplies Yandex search-console facts; GSC remains pending for Google.
+- `serp`: what happens before a click in search results. Weekly tracked Yandex positions are connected through SEO OS; Yandex Webmaster supplies Yandex search-console facts; GSC supplies Google Search Console facts after the collector is deployed and backfilled.
 - `ai`: AI answer visibility / citations. For this dashboard it is connected through the Alisa AI visibility snapshot in `seo_ai_visibility`.
 
 ## SEO OS / Weekly Yandex Positions
@@ -22,7 +22,7 @@ SEO OS is not a replacement for GSC or Yandex Webmaster. It provides the current
 
 ## Google Search Console
 
-Status: pending.
+Status: implemented locally in this branch; production deploy, cron, and backfill are still pending.
 
 Needed fields:
 - query
@@ -35,7 +35,7 @@ Needed fields:
 - ctr
 - position
 
-Dashboard panels unlocked:
+Dashboard panels:
 - SERP KPI: impressions, clicks, CTR, average position.
 - Organic landing page table columns: Google position, Google CTR, Google impressions.
 - Query table with full Google search visibility, not only post-click phrases exposed by Metrika.

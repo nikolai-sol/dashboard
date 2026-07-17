@@ -16,6 +16,7 @@ import {
   readableTrafficSource,
 } from "@/lib/zaruku-seo";
 import type {
+  ZarukuGoogleSearchConsoleData,
   ZarukuSeoIntelligenceData,
   ZarukuSeoMetricRow,
   ZarukuSeoSectionPattern,
@@ -61,6 +62,17 @@ const patterns: ZarukuSeoSectionPattern[] = [
 ];
 
 test("buildSources exposes collection provenance and preserves explicit data-through values", () => {
+  const gsc: ZarukuGoogleSearchConsoleData = {
+    available: true,
+    status: "available",
+    error: null,
+    data_availability: { queries: true, pages: true },
+    weeks: ["2026-W28"],
+    latest_week: "2026-W28",
+    summary: [],
+    queries: [],
+    pages: [],
+  };
   const webmaster: ZarukuYandexWebmasterData = {
     available: true,
     status: "available",
@@ -97,7 +109,7 @@ test("buildSources exposes collection provenance and preserves explicit data-thr
   };
   const dataThrough = {
     metrika: null,
-    gsc: null,
+    gsc: "2026-07-12",
     webmaster: "2026-07-12",
     seo_os: "2026-W28",
     yandex_gen_search: "2026-07-13 14:30:00",
@@ -105,6 +117,7 @@ test("buildSources exposes collection provenance and preserves explicit data-thr
 
   const sources = buildSources({
     seoOsStatus: "available",
+    gsc,
     webmaster,
     seoIntelligence,
     dataThrough,
@@ -112,10 +125,11 @@ test("buildSources exposes collection provenance and preserves explicit data-thr
   const source = (id: (typeof sources)[number]["id"]) => sources.find((item) => item.id === id)!;
 
   assert.equal(source("metrika").collection_mode, "automated");
+  assert.equal(source("gsc").collection_mode, "automated");
   assert.equal(source("webmaster").collection_mode, "automated");
   assert.equal(source("seo_os").collection_mode, "external");
   assert.equal(source("yandex_gen_search").collection_mode, "manual");
-  assert.equal(source("gsc").collection_mode, "not_connected");
+  assert.equal(source("gsc").status, "connected");
   assert.equal(source("yandex_gen_search").status, "connected");
   assert.deepEqual(
     Object.fromEntries(sources.map((item) => [item.id, item.data_through])),
@@ -126,6 +140,7 @@ test("buildSources exposes collection provenance and preserves explicit data-thr
 test("deriveSourceDataThrough uses only loaded Webmaster, SEO OS, and AI freshness facts", () => {
   assert.deepEqual(
     deriveSourceDataThrough({
+      gscSummary: [{ week_to: "2026-07-11" }, { week_to: "2026-07-12" }],
       webmasterSummary: [
         { week_to: "2026-07-05" },
         { week_to: "2026-07-12" },
@@ -140,7 +155,7 @@ test("deriveSourceDataThrough uses only loaded Webmaster, SEO OS, and AI freshne
     }),
     {
       metrika: null,
-      gsc: null,
+      gsc: "2026-07-12",
       webmaster: "2026-07-12",
       seo_os: "2026-W28",
       yandex_gen_search: "2026-07-13 14:30:00",
@@ -150,6 +165,7 @@ test("deriveSourceDataThrough uses only loaded Webmaster, SEO OS, and AI freshne
 
 test("deriveSourceDataThrough falls back to AI period when capture time is absent", () => {
   const dataThrough = deriveSourceDataThrough({
+    gscSummary: [],
     webmasterSummary: [],
     seoOsLatestWeek: null,
     aiLatestPeriod: "2026-07",

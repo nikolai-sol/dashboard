@@ -773,6 +773,61 @@ export interface ZarukuYandexWebmasterData {
   pages: ZarukuYandexWebmasterPageRow[];
 }
 
+export interface ZarukuGoogleSearchConsoleQueryRow {
+  week: string;
+  query_id: string;
+  query: string;
+  device: string;
+  impressions: number;
+  clicks: number;
+  ctr: number | null;
+  average_position: number | null;
+  week_from: string;
+  week_to: string;
+  is_partial_week: boolean;
+}
+
+export interface ZarukuGoogleSearchConsolePageRow {
+  week: string;
+  page_id: string;
+  url: string;
+  device: string;
+  impressions: number;
+  clicks: number;
+  ctr: number | null;
+  average_position: number | null;
+  week_from: string;
+  week_to: string;
+  is_partial_week: boolean;
+}
+
+export interface ZarukuGoogleSearchConsoleSummaryRow {
+  week: string;
+  device: string;
+  impressions: number;
+  clicks: number;
+  ctr: number | null;
+  average_position: number | null;
+  week_from: string;
+  week_to: string;
+  is_partial_week: boolean;
+}
+
+export interface ZarukuGoogleSearchConsoleData {
+  available: boolean;
+  status: "available" | "partial" | "unavailable";
+  error: string | null;
+  data_availability: {
+    queries: boolean;
+    pages: boolean;
+  };
+  weeks: string[];
+  latest_week: string | null;
+  summary: ZarukuGoogleSearchConsoleSummaryRow[];
+  queries: ZarukuGoogleSearchConsoleQueryRow[];
+  pages: ZarukuGoogleSearchConsolePageRow[];
+}
+
 export interface ZarukuAiVisibilityRow {
   week: string;
   cluster_id: string;
@@ -899,6 +954,7 @@ export interface ZarukuSeoData {
   returning_pages: ZarukuSeoMetricRow[];
   data_quality: ZarukuSeoDataQualityItem[];
   seo_os: ZarukuSeoOsData;
+  gsc: ZarukuGoogleSearchConsoleData;
   webmaster: ZarukuYandexWebmasterData;
   ai_visibility: ZarukuAiVisibilityData;
   seo_intelligence: ZarukuSeoIntelligenceData;

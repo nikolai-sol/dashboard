@@ -1,9 +1,18 @@
 import type {
   ZarukuAiVisibilityRow,
+  ZarukuGoogleSearchConsolePageRow,
+  ZarukuGoogleSearchConsoleQueryRow,
+  ZarukuGoogleSearchConsoleSummaryRow,
   ZarukuYandexWebmasterPageRow,
   ZarukuYandexWebmasterQueryRow,
   ZarukuYandexWebmasterSummaryRow,
 } from "@/lib/types";
+
+export type SearchConsoleKpiRow =
+  | ZarukuGoogleSearchConsoleQueryRow
+  | ZarukuGoogleSearchConsoleSummaryRow
+  | ZarukuYandexWebmasterQueryRow
+  | ZarukuYandexWebmasterSummaryRow;
 
 export type WebmasterKpiSummary = {
   impressions: number;
@@ -39,7 +48,7 @@ function weightedAverage(rows: Array<{ impressions: number; average_position: nu
   return weighted.weight > 0 ? round(weighted.value / weighted.weight, 2) : null;
 }
 
-export function summarizeWebmasterKpis(rows: Array<ZarukuYandexWebmasterQueryRow | ZarukuYandexWebmasterSummaryRow>): WebmasterKpiSummary {
+export function summarizeWebmasterKpis(rows: SearchConsoleKpiRow[]): WebmasterKpiSummary {
   const totals = rows.reduce(
     (total, row) => ({
       impressions: total.impressions + row.impressions,
@@ -62,6 +71,18 @@ export function topWebmasterQueries(rows: ZarukuYandexWebmasterQueryRow[], limit
 }
 
 export function topWebmasterPages(rows: ZarukuYandexWebmasterPageRow[], limit = 10) {
+  return [...rows]
+    .sort((left, right) => right.impressions - left.impressions || right.clicks - left.clicks || left.url.localeCompare(right.url))
+    .slice(0, limit);
+}
+
+export function topGscQueries(rows: ZarukuGoogleSearchConsoleQueryRow[], limit = 12) {
+  return [...rows]
+    .sort((left, right) => right.impressions - left.impressions || right.clicks - left.clicks || left.query.localeCompare(right.query))
+    .slice(0, limit);
+}
+
+export function topGscPages(rows: ZarukuGoogleSearchConsolePageRow[], limit = 10) {
   return [...rows]
     .sort((left, right) => right.impressions - left.impressions || right.clicks - left.clicks || left.url.localeCompare(right.url))
     .slice(0, limit);
