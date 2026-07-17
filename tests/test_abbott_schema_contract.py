@@ -351,7 +351,7 @@ class AbbottSchemaContractTest(unittest.TestCase):
             self._primary_sql(), "portal_content_lookup_projection"
         )
         for column in (
-            "lookup_kind ENUM('title', 'title_type', 'slug', 'path') NOT NULL",
+            "lookup_kind ENUM('title', 'slug', 'path') NOT NULL",
             "lookup_key_hash CHAR(64) NOT NULL",
             "candidate_count BIGINT UNSIGNED NOT NULL",
             "metadata_signature_count BIGINT UNSIGNED NOT NULL",
@@ -367,6 +367,12 @@ class AbbottSchemaContractTest(unittest.TestCase):
         )
         for forbidden in ("page_title", "source_slug", "normalized_path"):
             self.assertNotIn(forbidden, projection)
+        self.assertNotIn("title_type", projection)
+        self.assertIn(
+            "ALTER TABLE portal_content_lookup_projection MODIFY COLUMN "
+            "lookup_kind ENUM(''title'', ''slug'', ''path'') NOT NULL",
+            self._normalized(self._primary_sql()),
+        )
 
     def test_workbook_registration_events_have_a_source_faithful_catalog(self):
         catalog = self._table_definition(self._primary_sql(), "portal_event_catalog")
