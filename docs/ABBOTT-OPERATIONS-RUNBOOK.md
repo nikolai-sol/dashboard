@@ -172,6 +172,37 @@ client diagnostics are removed on exit. Setting
 `ABBOTT_REHEARSAL_PRESERVE_ON_FAILURE=1` preserves only the private local
 temporary directory for debugging; the container and volume are still removed.
 
+The copied Bitrix exports used during this rehearsal are exploratory test data,
+not an approved production source. They intentionally fail the canonical import
+contract because they have neither completeness manifests nor the required
+page/event grain. Do not manufacture those claims or transform session paths
+into inferred events. Define mapping, completeness, incremental extraction and
+stable identifiers only when read-only access to the live Bitrix database is
+available; until then, four-source import and release-lifecycle acceptance stay
+deferred.
+
+Run the read-only rollout preflight after the local evidence exists. Supply only
+explicit protected paths; the helper does not search home directories or print
+credential values:
+
+```bash
+umask 077
+python3 abbott_rollout_preflight.py \
+  --local-evidence /tmp/abbott-rollout-rehearsal/evidence \
+  --collector-env /protected/abbott/collector.env \
+  --import-env /protected/abbott/import.env \
+  --release-env /protected/abbott/release.env \
+  --owner-token /protected/abbott/owner-token \
+  > /tmp/abbott-rollout-rehearsal/evidence/external-gates.json
+```
+
+Every supplied credential/token file must be a caller-owned regular file with
+mode `0600`; symlinks, malformed dotenv data and multiline values fail closed.
+Missing files produce a sanitized `blocked` status without contacting Yandex,
+MySQL, cron, Telegram or Hermes. `local_rehearsal=partial` is the expected state
+while the live Bitrix connector and lifecycle evidence are deferred. Cron and
+Hermes always remain `blocked` until their explicit operator/approval steps.
+
 ## Database accounts, roles, and environment ownership
 
 Apply least privilege with four separate MySQL accounts. The schema SQL
