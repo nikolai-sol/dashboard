@@ -3,6 +3,7 @@ import json
 import os
 from pathlib import Path
 import shutil
+import socket
 import stat
 import subprocess
 import sys
@@ -53,7 +54,11 @@ if args and args[0] == "exec" and "mysql" in args:
 with log.open("a", encoding="utf-8") as handle:
     handle.write(json.dumps(entry, sort_keys=True) + "\n")
 
-if args[:2] == ["image", "inspect"]:
+if args[:2] == ["context", "show"]:
+    print("fake-local")
+elif args[:2] == ["context", "inspect"]:
+    print(os.environ["FAKE_DOCKER_ENDPOINT"])
+elif args[:2] == ["image", "inspect"]:
     print("mysql@sha256:" + "a" * 64)
 elif args and args[0] == "exec" and "mysql" in args:
     query = next((item.split("=", 1)[1] for item in args if item.startswith("--execute=")), "")
@@ -77,6 +82,10 @@ sys.exit(0)
         self.bin = root / "bin"
         self.bin.mkdir()
         self.log = root / "docker.jsonl"
+        self.socket_path = root / "docker.sock"
+        sock = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+        sock.bind(str(self.socket_path))
+        sock.close()
         docker = self.bin / "docker"
         docker.write_text(self.SCRIPT, encoding="utf-8")
         docker.chmod(docker.stat().st_mode | stat.S_IXUSR)
@@ -86,6 +95,7 @@ sys.exit(0)
         env.update({
             "PATH": f"{self.bin}{os.pathsep}{env['PATH']}",
             "FAKE_DOCKER_LOG": str(self.log),
+            "FAKE_DOCKER_ENDPOINT": f"unix://{self.socket_path}",
         })
         env.update(updates)
         return env

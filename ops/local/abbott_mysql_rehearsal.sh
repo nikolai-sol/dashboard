@@ -69,6 +69,36 @@ PY
 [[ -z "$INPUTS" ]] || reject_unsafe_external_path "$INPUTS"
 reject_unsafe_external_path "$EVIDENCE"
 
+PRIVATE_BASE_CREATED=0
+if [[ -n "${ABBOTT_REHEARSAL_PRIVATE_BASE:-}" ]]; then
+  PRIVATE_BASE="$ABBOTT_REHEARSAL_PRIVATE_BASE"
+  [[ "$PRIVATE_BASE" = /* && -d "$PRIVATE_BASE" && ! -L "$PRIVATE_BASE" ]] || {
+    printf '%s\n' "Protected rehearsal base is invalid." >&2; exit 2;
+  }
+  reject_unsafe_external_path "$PRIVATE_BASE"
+  [[ "$(stat -f '%Lp' "$PRIVATE_BASE")" == 700 && "$(stat -f '%u' "$PRIVATE_BASE")" == "$(id -u)" ]] || {
+    printf '%s\n' "Protected rehearsal base permissions are invalid." >&2; exit 2;
+  }
+else
+  PRIVATE_BASE="${TMPDIR:-/tmp}"
+  [[ "$PRIVATE_BASE" = /* && -d "$PRIVATE_BASE" && ! -L "$PRIVATE_BASE" ]] || {
+    printf '%s\n' "Protected rehearsal base is invalid." >&2; exit 2;
+  }
+  reject_unsafe_external_path "$PRIVATE_BASE"
+  if [[ "$(stat -f '%Lp' "$PRIVATE_BASE")" != 700 || "$(stat -f '%u' "$PRIVATE_BASE")" != "$(id -u)" ]]; then
+    PRIVATE_BASE="${PRIVATE_BASE%/}/abbott-rehearsal-private-$(id -u)"
+    if [[ ! -e "$PRIVATE_BASE" ]]; then
+      install -d -m 700 "$PRIVATE_BASE"
+      PRIVATE_BASE_CREATED=1
+    fi
+    [[ -d "$PRIVATE_BASE" && ! -L "$PRIVATE_BASE" ]] || { printf '%s\n' "Protected rehearsal base is invalid." >&2; exit 2; }
+    reject_unsafe_external_path "$PRIVATE_BASE"
+    [[ "$(stat -f '%Lp' "$PRIVATE_BASE")" == 700 && "$(stat -f '%u' "$PRIVATE_BASE")" == "$(id -u)" ]] || {
+      printf '%s\n' "Protected rehearsal base permissions are invalid." >&2; exit 2;
+    }
+  fi
+fi
+
 INPUT_NAMES=(abbott-workbook.json Abbott-names.xlsx bitrix-analytics.json bitrix-session-journeys.json)
 if [[ -n "$INPUTS" ]]; then
   [[ "$(stat -f '%Lp' "$INPUTS")" == 700 ]] || { printf '%s\n' "Rehearsal input directory permissions are invalid." >&2; exit 2; }
@@ -94,6 +124,11 @@ readonly MIGRATIONS_DIRECTORY="src/db/migrations"
 readonly PRIVATE_SQL_RELATIVE="ops/sql/abbott_private_schema_and_grants.sql"
 readonly IMPORTER_RELATIVE="scripts/import-abbott-private-data.ts"
 readonly RUNTIME_DIRECTORY="reportingdash-canonical-bootstrap/runtime"
+ROOT_DASHBOARD_REVISION="$(git -C "$ROOT_DIR" rev-parse 'HEAD:dashboard-next')"
+DASHBOARD_REVISION="$(git -C "$MIGRATIONS_REPOSITORY" rev-parse HEAD)"
+[[ "$ROOT_DASHBOARD_REVISION" == "$DASHBOARD_REVISION" ]] || {
+  printf '%s\n' "Reviewed dashboard authority differs from the root gitlink." >&2; exit 1;
+}
 [[ -z "$(git -C "$MIGRATIONS_REPOSITORY" status --porcelain=v1 --untracked-files=all -- "$MIGRATIONS_DIRECTORY")" ]] || { printf '%s\n' "Reviewed migration authority is not clean." >&2; exit 1; }
 MIGRATIONS_THROUGH_033=()
 TRACKED_033_FOUND=0
@@ -127,6 +162,32 @@ fi
 for evidence_name in "${EVIDENCE_NAMES[@]}"; do
   [[ ! -e "$EVIDENCE/$evidence_name" && ! -L "$EVIDENCE/$evidence_name" ]] || { printf '%s\n' "Existing rehearsal evidence path was rejected." >&2; exit 2; }
 done
+
+[[ -z "${DOCKER_HOST:-}" && -z "${DOCKER_CONTEXT:-}" ]] || {
+  printf '%s\n' "Ambient Docker authority was rejected." >&2; exit 2;
+}
+DOCKER_CONTEXT_NAME="$(docker context show)"
+DOCKER_ENDPOINT="$(docker context inspect "$DOCKER_CONTEXT_NAME" --format '{{.Endpoints.docker.Host}}')"
+case "$DOCKER_ENDPOINT" in
+  unix://*) ;;
+  *) printf '%s\n' "Non-local Docker authority was rejected." >&2; exit 2 ;;
+esac
+python3 - "${DOCKER_ENDPOINT#unix://}" <<'PY'
+import os
+from pathlib import Path
+import stat
+import sys
+
+path = Path(sys.argv[1])
+if path.is_symlink():
+    raise SystemExit("Docker socket authority is invalid.")
+try:
+    metadata = path.stat()
+except OSError:
+    raise SystemExit("Docker socket authority is invalid.") from None
+if not stat.S_ISSOCK(metadata.st_mode) or metadata.st_uid != os.getuid():
+    raise SystemExit("Docker socket authority is invalid.")
+PY
 EVIDENCE_STAGE=""
 PRIVATE_ROOT=""
 RUN_ID="$(date -u +%Y%m%dT%H%M%SZ)-$$"
@@ -144,12 +205,13 @@ cleanup() {
       printf '%s\n' "Rehearsal failed; protected local diagnostics were preserved." >&2
     fi
   fi
+  if [[ "$PRIVATE_BASE_CREATED" -eq 1 ]]; then rmdir "$PRIVATE_BASE" >/dev/null 2>&1 || true; fi
   exit "$status"
 }
 trap cleanup EXIT
 trap 'exit 130' INT TERM HUP
 
-PRIVATE_ROOT="$(mktemp -d "${TMPDIR:-/tmp}/abbott-mysql-rehearsal.XXXXXX")"
+PRIVATE_ROOT="$(mktemp -d "$PRIVATE_BASE/abbott-mysql-rehearsal.XXXXXX")"
 EVIDENCE_STAGE="$(mktemp -d "$EVIDENCE/.abbott-evidence.XXXXXX")"
 chmod 700 "$EVIDENCE_STAGE"
 
@@ -160,7 +222,11 @@ OPERATOR_PASSWORD="$(openssl rand -hex 32)"
 READER_PASSWORD="$(openssl rand -hex 32)"
 printf 'MYSQL_ROOT_PASSWORD=%s\n' "$ROOT_PASSWORD" > "$PRIVATE_ROOT/container.env"
 printf '[client]\nuser=root\npassword=%s\n' "$ROOT_PASSWORD" > "$PRIVATE_ROOT/root.cnf"
-chmod 600 "$PRIVATE_ROOT/container.env" "$PRIVATE_ROOT/root.cnf"
+printf '[client]\nuser=abbott_rehearsal_collector\npassword=%s\n' "$COLLECTOR_PASSWORD" > "$PRIVATE_ROOT/collector.cnf"
+printf '[client]\nuser=abbott_rehearsal_importer\npassword=%s\n' "$IMPORTER_PASSWORD" > "$PRIVATE_ROOT/importer.cnf"
+printf '[client]\nuser=abbott_rehearsal_operator\npassword=%s\n' "$OPERATOR_PASSWORD" > "$PRIVATE_ROOT/operator.cnf"
+printf '[client]\nuser=abbott_rehearsal_reader\npassword=%s\n' "$READER_PASSWORD" > "$PRIVATE_ROOT/reader.cnf"
+chmod 600 "$PRIVATE_ROOT/container.env" "$PRIVATE_ROOT"/*.cnf
 
 docker pull "$MYSQL_IMAGE" > "$PRIVATE_ROOT/docker-pull.log" 2>&1
 IMAGE_DIGEST="$(docker image inspect --format '{{index .RepoDigests 0}}' "$MYSQL_IMAGE")"
@@ -176,13 +242,15 @@ fi
 docker run "${DOCKER_RUN_ARGS[@]}" "$MYSQL_IMAGE" > "$PRIVATE_ROOT/container-id"
 docker exec "$CONTAINER_NAME" mkdir -p /run/abbott-rehearsal
 docker exec "$CONTAINER_NAME" chmod 700 /run/abbott-rehearsal
-docker cp "$PRIVATE_ROOT/root.cnf" "$CONTAINER_NAME:/run/abbott-rehearsal/root.cnf" >/dev/null
-docker exec "$CONTAINER_NAME" chmod 600 /run/abbott-rehearsal/root.cnf
+for client_config in root collector importer operator reader; do
+  docker cp "$PRIVATE_ROOT/$client_config.cnf" "$CONTAINER_NAME:/run/abbott-rehearsal/$client_config.cnf" >/dev/null
+  docker exec "$CONTAINER_NAME" chmod 600 "/run/abbott-rehearsal/$client_config.cnf"
+done
 
 ready=0
 for _attempt in $(seq 1 90); do
-  if docker exec "$CONTAINER_NAME" mysqladmin ping \
-      --defaults-extra-file=/run/abbott-rehearsal/root.cnf --silent >/dev/null 2>&1; then
+  if docker exec "$CONTAINER_NAME" mysqladmin \
+      --defaults-extra-file=/run/abbott-rehearsal/root.cnf ping --silent >/dev/null 2>&1; then
     ready=1
     break
   fi
@@ -229,6 +297,42 @@ SET DEFAULT ROLE 'reportingdash_abbott_runtime_reader_role' TO 'abbott_rehearsal
 SQL
 chmod 600 "$PRIVATE_ROOT/accounts.sql"
 mysql_exec < "$PRIVATE_ROOT/accounts.sql" > "$PRIVATE_ROOT/accounts.log" 2>&1
+
+role_mysql() {
+  local role=$1
+  shift
+  docker exec -i "$CONTAINER_NAME" mysql \
+    "--defaults-extra-file=/run/abbott-rehearsal/$role.cnf" \
+    --batch --skip-column-names "$@"
+}
+probe_role() {
+  local role=$1
+  local allow_query=$2
+  local deny_query=$3
+  if ! role_mysql "$role" --execute="$allow_query" > "$PRIVATE_ROOT/role-$role-allow.log" 2>&1; then
+    printf '%s\n' "Expected rehearsal role permission was denied." >&2; exit 1
+  fi
+  if role_mysql "$role" --execute="$deny_query" > "$PRIVATE_ROOT/role-$role-deny.log" 2>&1; then
+    printf '%s\n' "Forbidden rehearsal role permission was accepted." >&2; exit 1
+  fi
+  if ! grep -Eq 'ERROR (1142|1143)[ (]' "$PRIVATE_ROOT/role-$role-deny.log"; then
+    printf '%s\n' "Rehearsal role denial returned an unexpected error class." >&2; exit 1
+  fi
+}
+if [[ "$MODE" != schema ]]; then
+  probe_role collector \
+    'SELECT COUNT(*) FROM report_bd.portal_data_releases /*rehearsal:allow:collector*/' \
+    'SELECT COUNT(*) FROM report_bd_private.portal_bitrix_page_facts /*rehearsal:deny:collector*/'
+  probe_role importer \
+    'SELECT COUNT(*) FROM report_bd.portal_data_releases /*rehearsal:allow:importer*/' \
+    'UPDATE report_bd.portal_active_data_releases SET switched_by=switched_by WHERE 1=0 /*rehearsal:deny:importer*/'
+  probe_role operator \
+    'SELECT COUNT(*) FROM report_bd.portal_data_releases /*rehearsal:allow:operator*/' \
+    'DELETE FROM report_bd.portal_content_catalog WHERE 1=0 /*rehearsal:deny:operator*/'
+  probe_role reader \
+    'SELECT COUNT(*) FROM report_bd.portal_data_releases /*rehearsal:allow:runtime_reader*/' \
+    'UPDATE report_bd.portal_data_releases SET release_status=release_status WHERE 1=0 /*rehearsal:deny:runtime_reader*/'
+fi
 
 capture_schema_signature() {
   local output=$1
@@ -328,6 +432,20 @@ run_release_python() {
   )
 }
 
+expect_release_failure() {
+  local expected_message=$1
+  local protected_log=$2
+  shift 2
+  if "$@" > "$protected_log" 2>&1; then
+    printf '%s\n' "Expected local release gate unexpectedly succeeded." >&2
+    exit 1
+  fi
+  if ! grep -Fq -- "$expected_message" "$protected_log"; then
+    printf '%s\n' "Local release gate returned an unexpected failure class." >&2
+    exit 1
+  fi
+}
+
 seed_release_aggregates() {
   local release_id=$1
   mysql_exec "$PRIMARY_DATABASE" --execute="
@@ -379,12 +497,9 @@ CANDIDATE_RELEASE_ID="${CANDIDATE_RELEASE_ID%% *}"
 
 INCOMPLETE_REJECTED=false
 if [[ "$MODE" == lifecycle ]]; then
-  if run_release_python abbott_release_operator.py validate --release-id "$CANDIDATE_RELEASE_ID" \
-      --date-from "$FIXTURE_DATE" --date-to "$FIXTURE_DATE" --code-revision "$CODE_REVISION" \
-      > "$PRIVATE_ROOT/incomplete-validation.log" 2>&1; then
-    printf '%s\n' "Incomplete local candidate unexpectedly validated." >&2
-    exit 1
-  fi
+  expect_release_failure 'Canonical release source snapshots are invalid' "$PRIVATE_ROOT/incomplete-validation.log" \
+    run_release_python abbott_release_operator.py validate --release-id "$CANDIDATE_RELEASE_ID" \
+      --date-from "$FIXTURE_DATE" --date-to "$FIXTURE_DATE" --code-revision "$CODE_REVISION"
   INCOMPLETE_REJECTED=true
 fi
 
@@ -443,6 +558,7 @@ summary = {
     "rejected_count": int(sys.argv[8]), "provenance_count": int(sys.argv[9]),
     "source_imported_counts": source_counts,
     "source_sha256": {kind: hashlib.sha256((inputs / name).read_bytes()).hexdigest() for kind, name in names.items()},
+    "role_grant_probes": {"collector": True, "importer": True, "operator": True, "runtime_reader": True},
     "cleanup_default": True,
 }
 pathlib.Path(target).write_text(json.dumps(summary, sort_keys=True, indent=2) + "\n", encoding="utf-8")
@@ -465,12 +581,9 @@ mysql_exec "$PRIMARY_DATABASE" --execute="
       AND validation_run_id=@latest_validation AND control_name='site.other.fact_rows';" \
   > "$PRIVATE_ROOT/warning-fixture.log" 2>&1
 UNREVIEWED_REJECTED=false
-if run_release_python abbott_release_operator.py validate --release-id "$CANDIDATE_RELEASE_ID" \
-    --date-from "$FIXTURE_DATE" --date-to "$FIXTURE_DATE" --code-revision "$CODE_REVISION" \
-    > "$PRIVATE_ROOT/unreviewed-validation.log" 2>&1; then
-  printf '%s\n' "Unreviewed local warning unexpectedly validated." >&2
-  exit 1
-fi
+expect_release_failure 'Canonical validation evidence did not pass review' "$PRIVATE_ROOT/unreviewed-validation.log" \
+  run_release_python abbott_release_operator.py validate --release-id "$CANDIDATE_RELEASE_ID" \
+    --date-from "$FIXTURE_DATE" --date-to "$FIXTURE_DATE" --code-revision "$CODE_REVISION"
 UNREVIEWED_REJECTED=true
 mysql_exec "$PRIMARY_DATABASE" --execute="
   UPDATE portal_migration_validation_runs SET reviewed_by='local-rehearsal-reviewer',accepted_at=UTC_TIMESTAMP()
@@ -482,11 +595,9 @@ run_release_python abbott_release_operator.py validate --release-id "$CANDIDATE_
 run_release_python abbott_release_operator.py activate --release-id "$CANDIDATE_RELEASE_ID" \
   --expected-active-release-id "$PREDECESSOR_RELEASE_ID" > "$PRIVATE_ROOT/activation.log" 2>&1
 STALE_CAS_REJECTED=false
-if run_release_python abbott_release_operator.py activate --release-id "$CANDIDATE_RELEASE_ID" \
-    --expected-active-release-id "$PREDECESSOR_RELEASE_ID" > "$PRIVATE_ROOT/stale-cas.log" 2>&1; then
-  printf '%s\n' "Stale local compare-and-swap unexpectedly succeeded." >&2
-  exit 1
-fi
+expect_release_failure 'Active canonical release pointer changed' "$PRIVATE_ROOT/stale-cas.log" \
+  run_release_python abbott_release_operator.py activate --release-id "$CANDIDATE_RELEASE_ID" \
+    --expected-active-release-id "$PREDECESSOR_RELEASE_ID"
 STALE_CAS_REJECTED=true
 run_release_python abbott_release_operator.py rollback --from-release-id "$CANDIDATE_RELEASE_ID" \
   --to-release-id "$PREDECESSOR_RELEASE_ID" > "$PRIVATE_ROOT/rollback.log" 2>&1
@@ -518,6 +629,7 @@ summary = {
     "warning_reviewed_by": "local-rehearsal-reviewer", "validation_succeeded": True,
     "activation_succeeded": True, "stale_cas_rejected": sys.argv[8] == "true",
     "rollback_restored_predecessor": True,
+    "role_grant_probes": {"collector": True, "importer": True, "operator": True, "runtime_reader": True},
     "ambiguity_aggregates": dict(zip(("total", "unique", "identical_collapsed", "ambiguous"), ambiguity)),
     "cleanup_default": True,
 }
