@@ -4,6 +4,12 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 APP_SOURCE_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
 REPO_ROOT_DIR="$(cd "$APP_SOURCE_DIR/.." && pwd)"
+CANONICAL_SOURCE_DIRS=("$REPO_ROOT_DIR")
+if [[ "$APP_SOURCE_DIR" == *"/dashboard-next/.worktrees/"* ]]; then
+  WORKSPACE_ROOT_DIR="${APP_SOURCE_DIR%%/dashboard-next/.worktrees/*}"
+  APP_WORKTREE_NAME="$(basename "$APP_SOURCE_DIR")"
+  CANONICAL_SOURCE_DIRS+=("$WORKSPACE_ROOT_DIR/.worktrees/$APP_WORKTREE_NAME" "$WORKSPACE_ROOT_DIR")
+fi
 
 VPS="${VPS:-beget}"
 APP_DIR="${APP_DIR:-/var/www/dashboard}"
@@ -24,6 +30,18 @@ cleanup() {
   rm -f "$TMP_ENV"
 }
 trap cleanup EXIT
+
+copy_canonical_file() {
+  local file_name="$1"
+  local source_dir
+  for source_dir in "${CANONICAL_SOURCE_DIRS[@]}"; do
+    if [ -f "$source_dir/$file_name" ]; then
+      cp "$source_dir/$file_name" "$PACKAGE_DIR/"
+      return 0
+    fi
+  done
+  return 0
+}
 
 cd "$APP_SOURCE_DIR"
 
@@ -71,27 +89,13 @@ for runtime_package in mysql2 aws-ssl-profiles denque generate-function is-prope
     cp -R "node_modules/$runtime_package" "$PACKAGE_DIR/node_modules/$runtime_package"
   fi
 done
-if [ -f "$REPO_ROOT_DIR/fetch_google_ads_canonical.py" ]; then
-  cp "$REPO_ROOT_DIR/fetch_google_ads_canonical.py" "$PACKAGE_DIR/"
-fi
-if [ -f "$REPO_ROOT_DIR/google_ads_api_client.py" ]; then
-  cp "$REPO_ROOT_DIR/google_ads_api_client.py" "$PACKAGE_DIR/"
-fi
-if [ -f "$REPO_ROOT_DIR/canonical_writer.py" ]; then
-  cp "$REPO_ROOT_DIR/canonical_writer.py" "$PACKAGE_DIR/"
-fi
-if [ -f "$REPO_ROOT_DIR/fetch_yandex_webmaster_canonical.py" ]; then
-  cp "$REPO_ROOT_DIR/fetch_yandex_webmaster_canonical.py" "$PACKAGE_DIR/"
-fi
-if [ -f "$REPO_ROOT_DIR/fetch_google_search_console_canonical.py" ]; then
-  cp "$REPO_ROOT_DIR/fetch_google_search_console_canonical.py" "$PACKAGE_DIR/"
-fi
-if [ -f "$REPO_ROOT_DIR/fetch_yandex_direct_canonical_api.py" ]; then
-  cp "$REPO_ROOT_DIR/fetch_yandex_direct_canonical_api.py" "$PACKAGE_DIR/"
-fi
-if [ -f "$REPO_ROOT_DIR/yandex_direct_shared.py" ]; then
-  cp "$REPO_ROOT_DIR/yandex_direct_shared.py" "$PACKAGE_DIR/"
-fi
+copy_canonical_file fetch_google_ads_canonical.py
+copy_canonical_file google_ads_api_client.py
+copy_canonical_file canonical_writer.py
+copy_canonical_file fetch_yandex_webmaster_canonical.py
+copy_canonical_file fetch_google_search_console_canonical.py
+copy_canonical_file fetch_yandex_direct_canonical_api.py
+copy_canonical_file yandex_direct_shared.py
 
 echo "Uploading staged release to VPS..."
 ssh "$VPS" "mkdir -p '$RELEASES_DIR' '$BACKUPS_DIR' /var/log"
