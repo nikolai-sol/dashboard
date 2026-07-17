@@ -258,11 +258,6 @@ function contentMetadata(row: Record<string, unknown>): AbbottContentMetadata {
   };
 }
 
-function slugFromPath(path: string): string {
-  const parts = path.split("/").filter(Boolean);
-  return parts.at(-1) ?? "";
-}
-
 function addUniqueLookup<T>(map: Map<string, T>, key: string, value: T): void {
   if (!key) return;
   if (map.has(key)) throw storeError("PRIVATE_DATA_UNAVAILABLE", PRIVATE_UNAVAILABLE_MESSAGE);
@@ -275,10 +270,25 @@ async function loadAggregateWorkbook(
 ): Promise<AbbottAggregateWorkbookData> {
   const catalogRows = await queryRows(
     executor,
-    `SELECT page_title, material_type, direction_key, normalized_path, source_slug, access_label, is_active
-     FROM \`report_bd\`.\`portal_content_catalog\`
-     WHERE canonical_release_id = ? AND source_snapshot_id = ?
-     ORDER BY id`,
+    `SELECT projection.lookup_kind, projection.lookup_key_hash, projection.resolution_status,
+            catalog.material_type, catalog.direction_key, catalog.access_label, catalog.is_active
+     FROM \`report_bd\`.\`portal_content_lookup_projection\` AS projection
+     INNER JOIN \`report_bd\`.\`portal_content_catalog\` AS catalog
+       ON catalog.canonical_release_id = projection.canonical_release_id
+      AND catalog.source_snapshot_id = projection.source_snapshot_id
+      AND catalog.source_row_fingerprint = projection.selected_source_row_fingerprint
+     WHERE projection.canonical_release_id = ? AND projection.source_snapshot_id = ?
+       AND projection.resolution_status IN ('unique', 'identical_collapsed')
+     ORDER BY projection.lookup_kind, projection.lookup_key_hash`,
+    [release.id, release.snapshots.workbookCatalog.id],
+  );
+  const qualityRows = await queryRows(
+    executor,
+    `SELECT
+       SUM(resolution_status = 'ambiguous') AS ambiguous_groups,
+       SUM(resolution_status = 'identical_collapsed') AS collapsed_groups
+     FROM \`report_bd\`.\`portal_content_lookup_projection\`
+     WHERE canonical_release_id = ? AND source_snapshot_id = ?`,
     [release.id, release.snapshots.workbookCatalog.id],
   );
   const materialRows = await queryRows(
@@ -303,17 +313,19 @@ async function loadAggregateWorkbook(
   const contentBySlug = new Map<string, AbbottContentMetadata>();
   const urlReturnDirections = new Map<string, string | null>();
   catalogRows.forEach((row) => {
-    const title = text(row.page_title);
-    const path = text(row.normalized_path);
-    const metadata = contentMetadata(row);
-    addUniqueLookup(contentByTitle, title, metadata);
-    if (title && metadata.material_type) {
-      addUniqueLookup(contentByTitleAndType, `${metadata.material_type}::${title}`, metadata);
+    const lookupKind = text(row.lookup_kind);
+    const lookupKeyHash = text(row.lookup_key_hash);
+    if (!/^[a-f0-9]{64}$/.test(lookupKeyHash)) {
+      throw storeError("PRIVATE_DATA_UNAVAILABLE", PRIVATE_UNAVAILABLE_MESSAGE);
     }
-    const slug = text(row.source_slug) || slugFromPath(path);
-    addUniqueLookup(contentBySlug, slug, metadata);
-    addUniqueLookup(urlReturnDirections, path, metadata.direction);
+    const metadata = contentMetadata(row);
+    if (lookupKind === "title") addUniqueLookup(contentByTitle, lookupKeyHash, metadata);
+    else if (lookupKind === "title_type") addUniqueLookup(contentByTitleAndType, lookupKeyHash, metadata);
+    else if (lookupKind === "slug") addUniqueLookup(contentBySlug, lookupKeyHash, metadata);
+    else if (lookupKind === "path") addUniqueLookup(urlReturnDirections, lookupKeyHash, metadata.direction);
+    else throw storeError("PRIVATE_DATA_UNAVAILABLE", PRIVATE_UNAVAILABLE_MESSAGE);
   });
+  const quality = qualityRows[0] ?? {};
 
   return {
     generalMaterials: materialRows
@@ -331,6 +343,10 @@ async function loadAggregateWorkbook(
     contentByTitleAndType,
     contentBySlug,
     urlReturnDirections,
+    lookupQuality: {
+      ambiguousGroups: metric(quality.ambiguous_groups),
+      collapsedGroups: metric(quality.collapsed_groups),
+    },
     ymUrlReturn: [],
   };
 }

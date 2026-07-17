@@ -146,6 +146,8 @@ CREATE TABLE IF NOT EXISTS portal_content_catalog (
   source_slug_hash CHAR(64) DEFAULT NULL,
   access_label VARCHAR(500) DEFAULT NULL,
   is_active TINYINT(1) NOT NULL DEFAULT 1,
+  source_sheet VARCHAR(255) NOT NULL,
+  source_row_ordinal BIGINT UNSIGNED NOT NULL,
   source_row_fingerprint CHAR(64) NOT NULL,
   section_key VARCHAR(255) DEFAULT NULL,
   direction_key VARCHAR(255) DEFAULT NULL,
@@ -156,6 +158,8 @@ CREATE TABLE IF NOT EXISTS portal_content_catalog (
   updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
   PRIMARY KEY (id),
   UNIQUE KEY uniq_content_release_source_row
+    (canonical_release_id, source_snapshot_id, source_sheet, source_row_ordinal),
+  KEY idx_content_release_source_fingerprint
     (canonical_release_id, source_snapshot_id, source_row_fingerprint),
   KEY idx_content_release_url
     (canonical_release_id, source_snapshot_id, normalized_url_hash),
@@ -171,6 +175,32 @@ CREATE TABLE IF NOT EXISTS portal_content_catalog (
     FOREIGN KEY (source_snapshot_id) REFERENCES portal_dataset_snapshots(id)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
   COMMENT='Source-faithful release-scoped portal content and lookup catalog';
+
+CREATE TABLE IF NOT EXISTS portal_content_lookup_projection (
+  id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
+  canonical_release_id BIGINT UNSIGNED NOT NULL,
+  source_snapshot_id BIGINT UNSIGNED NOT NULL,
+  lookup_kind ENUM('title', 'title_type', 'slug', 'path') NOT NULL,
+  lookup_key_hash CHAR(64) NOT NULL,
+  candidate_count BIGINT UNSIGNED NOT NULL,
+  metadata_signature_count BIGINT UNSIGNED NOT NULL,
+  resolution_status ENUM('unique', 'identical_collapsed', 'ambiguous') NOT NULL,
+  selected_source_row_fingerprint CHAR(64) DEFAULT NULL,
+  group_fingerprint CHAR(64) NOT NULL,
+  created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  PRIMARY KEY (id),
+  UNIQUE KEY uniq_content_lookup_release_key
+    (canonical_release_id, source_snapshot_id, lookup_kind, lookup_key_hash),
+  KEY idx_content_lookup_resolution
+    (canonical_release_id, source_snapshot_id, resolution_status),
+  KEY idx_content_lookup_selected
+    (canonical_release_id, source_snapshot_id, selected_source_row_fingerprint),
+  CONSTRAINT fk_content_lookup_release
+    FOREIGN KEY (canonical_release_id) REFERENCES portal_data_releases(id),
+  CONSTRAINT fk_content_lookup_snapshot
+    FOREIGN KEY (source_snapshot_id) REFERENCES portal_dataset_snapshots(id)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
+  COMMENT='Hash-only release-scoped content lookup resolution evidence';
 
 CREATE TABLE IF NOT EXISTS portal_general_materials (
   id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
@@ -593,6 +623,65 @@ SET @abbott_column_exists := (
   SELECT COUNT(*) FROM information_schema.COLUMNS
   WHERE TABLE_SCHEMA = DATABASE()
     AND TABLE_NAME = 'portal_content_catalog'
+    AND COLUMN_NAME = 'source_sheet'
+);
+SET @sql := IF(
+  @abbott_column_exists = 0,
+  'ALTER TABLE portal_content_catalog ADD COLUMN source_sheet VARCHAR(255) DEFAULT NULL',
+  'SELECT ''portal_content_catalog.source_sheet already present'' AS info'
+);
+PREPARE stmt FROM @sql; EXECUTE stmt; DEALLOCATE PREPARE stmt;
+
+SET @abbott_column_exists := (
+  SELECT COUNT(*) FROM information_schema.COLUMNS
+  WHERE TABLE_SCHEMA = DATABASE()
+    AND TABLE_NAME = 'portal_content_catalog'
+    AND COLUMN_NAME = 'source_row_ordinal'
+);
+SET @sql := IF(
+  @abbott_column_exists = 0,
+  'ALTER TABLE portal_content_catalog ADD COLUMN source_row_ordinal BIGINT UNSIGNED DEFAULT NULL',
+  'SELECT ''portal_content_catalog.source_row_ordinal already present'' AS info'
+);
+PREPARE stmt FROM @sql; EXECUTE stmt; DEALLOCATE PREPARE stmt;
+
+UPDATE portal_content_catalog
+SET source_sheet = 'legacy-task1'
+WHERE source_sheet IS NULL;
+UPDATE portal_content_catalog
+SET source_row_ordinal = id
+WHERE source_row_ordinal IS NULL;
+
+SET @abbott_column_nullable := (
+  SELECT IS_NULLABLE FROM information_schema.COLUMNS
+  WHERE TABLE_SCHEMA = DATABASE()
+    AND TABLE_NAME = 'portal_content_catalog'
+    AND COLUMN_NAME = 'source_sheet'
+);
+SET @sql := IF(
+  @abbott_column_nullable = 'YES',
+  'ALTER TABLE portal_content_catalog MODIFY COLUMN source_sheet VARCHAR(255) NOT NULL',
+  'SELECT ''portal_content_catalog.source_sheet already required'' AS info'
+);
+PREPARE stmt FROM @sql; EXECUTE stmt; DEALLOCATE PREPARE stmt;
+
+SET @abbott_column_nullable := (
+  SELECT IS_NULLABLE FROM information_schema.COLUMNS
+  WHERE TABLE_SCHEMA = DATABASE()
+    AND TABLE_NAME = 'portal_content_catalog'
+    AND COLUMN_NAME = 'source_row_ordinal'
+);
+SET @sql := IF(
+  @abbott_column_nullable = 'YES',
+  'ALTER TABLE portal_content_catalog MODIFY COLUMN source_row_ordinal BIGINT UNSIGNED NOT NULL',
+  'SELECT ''portal_content_catalog.source_row_ordinal already required'' AS info'
+);
+PREPARE stmt FROM @sql; EXECUTE stmt; DEALLOCATE PREPARE stmt;
+
+SET @abbott_column_exists := (
+  SELECT COUNT(*) FROM information_schema.COLUMNS
+  WHERE TABLE_SCHEMA = DATABASE()
+    AND TABLE_NAME = 'portal_content_catalog'
     AND COLUMN_NAME = 'source_row_fingerprint'
 );
 SET @sql := IF(
@@ -660,16 +749,45 @@ SET @sql := IF(
 );
 PREPARE stmt FROM @sql; EXECUTE stmt; DEALLOCATE PREPARE stmt;
 
-SET @abbott_index_exists := (
-  SELECT COUNT(*) FROM information_schema.STATISTICS
+SET @abbott_content_source_index_columns := (
+  SELECT GROUP_CONCAT(COLUMN_NAME ORDER BY SEQ_IN_INDEX SEPARATOR ',')
+  FROM information_schema.STATISTICS
   WHERE TABLE_SCHEMA = DATABASE()
     AND TABLE_NAME = 'portal_content_catalog'
     AND INDEX_NAME = 'uniq_content_release_source_row'
 );
 SET @sql := IF(
+  @abbott_content_source_index_columns IS NOT NULL
+    AND @abbott_content_source_index_columns <> 'canonical_release_id,source_snapshot_id,source_sheet,source_row_ordinal',
+  'ALTER TABLE portal_content_catalog DROP INDEX uniq_content_release_source_row',
+  'SELECT ''portal_content_catalog source-row uniqueness does not need removal'' AS info'
+);
+PREPARE stmt FROM @sql; EXECUTE stmt; DEALLOCATE PREPARE stmt;
+
+SET @abbott_content_source_index_columns := (
+  SELECT GROUP_CONCAT(COLUMN_NAME ORDER BY SEQ_IN_INDEX SEPARATOR ',')
+  FROM information_schema.STATISTICS
+  WHERE TABLE_SCHEMA = DATABASE()
+    AND TABLE_NAME = 'portal_content_catalog'
+    AND INDEX_NAME = 'uniq_content_release_source_row'
+);
+SET @sql := IF(
+  COALESCE(@abbott_content_source_index_columns, '') <> 'canonical_release_id,source_snapshot_id,source_sheet,source_row_ordinal',
+  'ALTER TABLE portal_content_catalog ADD UNIQUE INDEX uniq_content_release_source_row (canonical_release_id, source_snapshot_id, source_sheet, source_row_ordinal)',
+  'SELECT ''portal_content_catalog source-row uniqueness already aligned'' AS info'
+);
+PREPARE stmt FROM @sql; EXECUTE stmt; DEALLOCATE PREPARE stmt;
+
+SET @abbott_index_exists := (
+  SELECT COUNT(*) FROM information_schema.STATISTICS
+  WHERE TABLE_SCHEMA = DATABASE()
+    AND TABLE_NAME = 'portal_content_catalog'
+    AND INDEX_NAME = 'idx_content_release_source_fingerprint'
+);
+SET @sql := IF(
   @abbott_index_exists = 0,
-  'ALTER TABLE portal_content_catalog ADD UNIQUE INDEX uniq_content_release_source_row (canonical_release_id, source_snapshot_id, source_row_fingerprint)',
-  'SELECT ''portal_content_catalog source-row uniqueness already present'' AS info'
+  'ALTER TABLE portal_content_catalog ADD INDEX idx_content_release_source_fingerprint (canonical_release_id, source_snapshot_id, source_row_fingerprint)',
+  'SELECT ''portal_content_catalog source fingerprint index already present'' AS info'
 );
 PREPARE stmt FROM @sql; EXECUTE stmt; DEALLOCATE PREPARE stmt;
 

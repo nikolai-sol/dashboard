@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { createHash } from "node:crypto";
 import test from "node:test";
 
 import type {
@@ -23,13 +24,16 @@ const completeCoverage = ["other", "traffic", "page", "user_behavior", "returnin
   empty_reconciled: 0,
 }));
 
+const lookupHash = (value: string) => createHash("sha256").update(value).digest("hex");
+
 const aggregateWorkbook: AbbottAggregatePrivateData["workbook"] = {
   generalMaterials: [],
   externalEvents: [],
   contentByTitle: new Map(),
   contentByTitleAndType: new Map(),
   contentBySlug: new Map(),
-  urlReturnDirections: new Map([["https://example.test/page", "Cardiology"]]),
+  urlReturnDirections: new Map([[lookupHash("/page"), "Cardiology"]]),
+  lookupQuality: { ambiguousGroups: 0, collapsedGroups: 0 },
   ymUrlReturn: [],
 };
 
@@ -238,6 +242,47 @@ test("embed uses aggregate store only and derives returning counts with decimal 
   });
 });
 
+test("ambiguous workbook metadata keeps canonical page metrics visible with null enrichment", async () => {
+  const aggregate = executor(aggregateRows);
+  const deps = dependencies(aggregate, executor(() => []));
+  deps.loadReleaseBundle = async () => ({
+    releaseId: 41,
+    audience: "embed" as const,
+    workbook: {
+      ...aggregateWorkbook,
+      urlReturnDirections: new Map(),
+      lookupQuality: { ambiguousGroups: 3, collapsedGroups: 1 },
+    },
+    bitrixPages: missingBitrix,
+    journeyTransitions: { source: missingBitrix.source, rows: [] },
+  });
+
+  const result = await loadAbbottBiDataWithDependencies(
+    7,
+    ["90602537"],
+    "2026-01-01",
+    "2026-01-01",
+    "embed",
+    deps,
+  );
+
+  assert.equal(result.page_stats.length, 1);
+  assert.deepEqual(
+    {
+      pageviews: result.page_stats[0]?.pageviews,
+      users: result.page_stats[0]?.users,
+      direction: result.page_stats[0]?.direction,
+      material_type: result.page_stats[0]?.material_type,
+      access: result.page_stats[0]?.access,
+    },
+    { pageviews: 4, users: 2, direction: null, material_type: null, access: null },
+  );
+  assert.deepEqual(result.data_quality.content_lookup, {
+    ambiguous_groups: 3,
+    collapsed_groups: 1,
+  });
+});
+
 test("loader pins every canonical fact query to the store bundle release when the pointer changes", async () => {
   const aggregate = executor((sql, params) => {
     assert.doesNotMatch(sql, /portal_active_data_releases/);
@@ -342,7 +387,7 @@ test("loader maps every Bitrix metric and exposes snapshot metadata", async () =
   assert.deepEqual(result.bitrix_pages[0], {
     url: "/page",
     path: "/page",
-    direction: null,
+    direction: "Cardiology",
     material_type: "article",
     access: null,
     pageviews: 11,

@@ -6,6 +6,7 @@ import test from "node:test";
 import * as XLSX from "xlsx";
 import {
   assertPrivateImportPath,
+  buildAbbottContentLookupProjection,
   canonicalPersistedRowFingerprint,
   canonicalRowFingerprint,
   normalizeAbbottUrl,
@@ -150,6 +151,69 @@ test("Workbook XLSX preserves access, active state, and repeated lookup rows", (
   assert.deepEqual(repeated.rows.map((row) => row.sourceSheet), ["Статьи", "Видео"]);
 });
 
+test("content lookup projection resolves unique, identical, and conflicting metadata explicitly", () => {
+  const base = {
+    materialType: "Статьи",
+    sourceSlug: "shared-guide",
+    direction: "Cardiology",
+    access: "Врачи",
+    isActive: true,
+  };
+  const projection = buildAbbottContentLookupProjection([
+    {
+      ...base,
+      sourceSheet: "Статьи",
+      sourceRowOrdinal: 1,
+      pageTitle: "Unique guide",
+      sourceSlug: "unique-guide",
+      normalizedPath: "/approved/unique-guide",
+      targetKeyFingerprint: "1".repeat(64),
+    },
+    {
+      ...base,
+      sourceSheet: "Видео",
+      sourceRowOrdinal: 1,
+      pageTitle: "Identical guide",
+      targetKeyFingerprint: "2".repeat(64),
+    },
+    {
+      ...base,
+      sourceSheet: "Статьи",
+      sourceRowOrdinal: 2,
+      pageTitle: "Identical guide",
+      targetKeyFingerprint: "3".repeat(64),
+    },
+    {
+      ...base,
+      sourceSheet: "Статьи",
+      sourceRowOrdinal: 3,
+      pageTitle: "Conflicting guide",
+      targetKeyFingerprint: "4".repeat(64),
+    },
+    {
+      ...base,
+      sourceSheet: "Видео",
+      sourceRowOrdinal: 2,
+      pageTitle: "Conflicting guide",
+      direction: "Neurology",
+      targetKeyFingerprint: "5".repeat(64),
+    },
+  ]);
+
+  const titleRows = projection.filter((row) => row.lookupKind === "title");
+  const unique = titleRows.find((row) => row.candidateCount === 1);
+  const identical = titleRows.find((row) => row.resolutionStatus === "identical_collapsed");
+  const ambiguous = titleRows.find((row) => row.resolutionStatus === "ambiguous");
+  assert.equal(unique?.resolutionStatus, "unique");
+  assert.equal(identical?.resolutionStatus, "identical_collapsed");
+  assert.equal(identical?.candidateCount, 2);
+  assert.equal(identical?.selectedSourceRowFingerprint, "3".repeat(64));
+  assert.equal(ambiguous?.resolutionStatus, "ambiguous");
+  assert.equal(ambiguous?.selectedSourceRowFingerprint, null);
+  assert.deepEqual(new Set(projection.map((row) => row.lookupKind)), new Set(["title", "title_type", "slug", "path"]));
+  assert.doesNotMatch(JSON.stringify(projection), /Unique guide|Identical guide|Conflicting guide|shared-guide/);
+});
+
 test("prepared sources use store source kinds and persist XLSX metadata plus both Bitrix page projections", async () => {
   const root = mkdtempSync(path.join(tmpdir(), "abbott-import-prepare-"));
   try {
@@ -199,8 +263,19 @@ test("prepared sources use store source kinds and persist XLSX metadata plus bot
     assert.ok(catalogBatch);
     assert.ok(catalogBatch.columns.includes("access_label"));
     assert.ok(catalogBatch.columns.includes("is_active"));
+    assert.ok(catalogBatch.columns.includes("source_sheet"));
+    assert.ok(catalogBatch.columns.includes("source_row_ordinal"));
     assert.equal(catalogBatch.rows[0]?.[catalogBatch.columns.indexOf("access_label")], "Врачи");
     assert.equal(catalogBatch.rows[0]?.[catalogBatch.columns.indexOf("is_active")], false);
+    const projectionBatch = sources[1]?.batches.find((batch) => batch.table === "report_bd.portal_content_lookup_projection");
+    assert.ok(projectionBatch);
+    assert.equal(projectionBatch.countsTowardImportedRows, false);
+    assert.equal(projectionBatch.rows.length, 3);
+    assert.equal(projectionBatch.columns.includes("lookup_key"), false);
+    assert.deepEqual(
+      new Set(projectionBatch.rows.map((row) => row[projectionBatch.columns.indexOf("lookup_kind")])),
+      new Set(["title", "title_type", "slug"]),
+    );
     assert.deepEqual(
       sources[2]?.batches.map((batch) => batch.table).sort(),
       ["report_bd.portal_bitrix_page_facts", "report_bd_private.portal_bitrix_page_facts"],
@@ -829,6 +904,76 @@ test("successor release reuse records its own import execution revision", async 
     execution.params.slice(0, 7),
     [88, 44, "abbott_workbook_json", "successor-revision", "imported", 1, 0],
   );
+});
+
+test("reused workbook snapshot materializes and verifies catalog plus lookup projection before evidence", async () => {
+  const catalogColumns = ["source_sheet", "source_row_ordinal", "source_row_fingerprint"];
+  const catalogRow = ["Статьи", 1, "a".repeat(64)];
+  const projectionColumns = [
+    "lookup_kind", "lookup_key_hash", "candidate_count", "metadata_signature_count", "resolution_status",
+    "selected_source_row_fingerprint", "group_fingerprint",
+  ];
+  const projectionRow = ["title", "b".repeat(64), 1, 1, "unique", "a".repeat(64), "c".repeat(64)];
+  const materialized = new Set<string>();
+  const calls: string[] = [];
+  const connection: AbbottImportConnection = {
+    beginTransaction: async () => undefined,
+    execute: async (sql) => {
+      const compact = sql.replace(/\s+/g, " ").trim();
+      calls.push(compact);
+      if (compact.includes("FROM report_bd.portal_data_releases")) {
+        return [[{ id: 77, dataset_key: "abbott", release_status: "staging", source_snapshot_ids: "[]" }], []];
+      }
+      if (compact.includes("FROM report_bd.portal_dataset_snapshots")) {
+        return [[{ id: 42, import_status: "imported", imported_row_count: 1 }], []];
+      }
+      const table = compact.match(/(?:FROM|INTO) (report_bd\.portal_content_(?:catalog|lookup_projection))/)?.[1];
+      if (compact.startsWith("SELECT COUNT(*)")) return [[{ row_count: table && materialized.has(table) ? 1 : 0 }], []];
+      if (compact.startsWith("INSERT INTO report_bd.portal_content_")) {
+        assert.ok(table);
+        materialized.add(table);
+        return [{ affectedRows: 1 }, []];
+      }
+      if (compact.startsWith("SELECT source_sheet")) {
+        return [[Object.fromEntries(catalogColumns.map((column, index) => [column, catalogRow[index]]))], []];
+      }
+      if (compact.startsWith("SELECT lookup_kind")) {
+        return [[Object.fromEntries(projectionColumns.map((column, index) => [column, projectionRow[index]]))], []];
+      }
+      return [[], []];
+    },
+    commit: async () => undefined,
+    rollback: async () => undefined,
+  };
+
+  await runAbbottImportTransaction(connection, 77, [source({
+    sourceKind: "abbott_workbook_catalog",
+    manifest: { source_kind: "abbott_workbook_catalog", row_count: 1 },
+    batches: [
+      {
+        table: "report_bd.portal_content_catalog",
+        columns: catalogColumns,
+        rows: [catalogRow],
+        fingerprints: [canonicalPersistedRowFingerprint(catalogColumns, catalogRow)],
+        verificationColumns: catalogColumns,
+      },
+      {
+        table: "report_bd.portal_content_lookup_projection",
+        columns: projectionColumns,
+        rows: [projectionRow],
+        fingerprints: [canonicalPersistedRowFingerprint(projectionColumns, projectionRow)],
+        verificationColumns: projectionColumns,
+        countsTowardImportedRows: false,
+      },
+    ],
+  })]);
+
+  assert.deepEqual(materialized, new Set([
+    "report_bd.portal_content_catalog",
+    "report_bd.portal_content_lookup_projection",
+  ]));
+  const evidenceIndex = calls.findIndex((call) => call.startsWith("INSERT INTO report_bd.portal_release_source_imports"));
+  assert.ok(evidenceIndex > calls.findIndex((call) => call.startsWith("SELECT lookup_kind")));
 });
 
 test("transaction rejects any batch without deterministic fingerprint verification", async () => {

@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { createHash } from "node:crypto";
 import test from "node:test";
 
 import {
@@ -327,43 +328,42 @@ test("workbook loading uses normalized general-material URLs", async () => {
   assert.deepEqual(result.generalMaterials, [{ name: "Guide", url: "https://abbott.example/guide" }]);
 });
 
-test("workbook loading rejects every ambiguous content lookup key", async () => {
-  const collisionRows = {
-    title: [
-      { page_title: "Shared", material_type: "article", source_slug: "one", normalized_path: "/one" },
-      { page_title: "Shared", material_type: "video", source_slug: "two", normalized_path: "/two" },
-    ],
-    titleAndType: [
-      { page_title: "Shared", material_type: "article", source_slug: "one", normalized_path: "/one" },
-      { page_title: "Shared", material_type: "article", source_slug: "two", normalized_path: "/two" },
-    ],
-    slug: [
-      { page_title: "One", material_type: "article", source_slug: "shared", normalized_path: "/one" },
-      { page_title: "Two", material_type: "video", source_slug: "shared", normalized_path: "/two" },
-    ],
-    path: [
-      { page_title: "One", material_type: "article", source_slug: "one", normalized_path: "/shared" },
-      { page_title: "Two", material_type: "video", source_slug: "two", normalized_path: "/shared" },
-    ],
-  } as const;
+test("workbook loading uses only resolved hashed projections and reports aggregate ambiguity", async () => {
+  const hash = (value: string) => createHash("sha256").update(value).digest("hex");
+  const resolvedRows = [
+    { lookup_kind: "title", lookup_key_hash: hash("Shared"), resolution_status: "identical_collapsed", direction_key: "Cardiology", material_type: "article", access_label: "Врачи", is_active: 1 },
+    { lookup_kind: "slug", lookup_key_hash: hash("shared"), resolution_status: "unique", direction_key: "Cardiology", material_type: "article", access_label: "Врачи", is_active: 1 },
+    { lookup_kind: "path", lookup_key_hash: hash("/shared"), resolution_status: "unique", direction_key: "Cardiology", material_type: "article", access_label: "Врачи", is_active: 1 },
+  ];
+  const executor = fakeExecutor(({ sql }) => {
+    if (sql.includes("FROM `report_bd`.`dashboards`")) return [{ id: 7 }];
+    if (sql.includes("portal_active_data_releases")) return [releaseRow];
+    if (sql.includes("portal_dataset_snapshots")) return snapshotRows;
+    if (sql.includes("portal_content_lookup_projection") && sql.includes("SUM(")) {
+      return [{ ambiguous_groups: "2", collapsed_groups: "1" }];
+    }
+    if (sql.includes("portal_content_lookup_projection")) return resolvedRows;
+    return [];
+  });
 
-  for (const rows of Object.values(collisionRows)) {
-    const executor = fakeExecutor(({ sql }) => {
-      if (sql.includes("FROM `report_bd`.`dashboards`")) return [{ id: 7 }];
-      if (sql.includes("portal_active_data_releases")) return [releaseRow];
-      if (sql.includes("portal_dataset_snapshots")) return snapshotRows;
-      if (sql.includes("portal_content_catalog")) return rows;
-      return [];
-    });
+  const result = await loadActiveAbbottWorkbookDataWithExecutor(executor, 7);
 
-    await assert.rejects(
-      loadActiveAbbottWorkbookDataWithExecutor(executor, 7),
-      (error: unknown) =>
-        error instanceof AbbottPrivateStoreError &&
-        error.code === "PRIVATE_DATA_UNAVAILABLE" &&
-        error.message === "Abbott private data is unavailable",
-    );
-  }
+  assert.deepEqual(result.contentByTitle.get(hash("Shared")), {
+    direction: "Cardiology",
+    material_type: "article",
+    access: "Врачи",
+    is_active: true,
+  });
+  assert.equal(result.contentBySlug.has("shared"), false);
+  assert.equal(result.contentBySlug.has(hash("shared")), true);
+  assert.equal(result.urlReturnDirections.get(hash("/shared")), "Cardiology");
+  assert.deepEqual(result.lookupQuality, { ambiguousGroups: 2, collapsedGroups: 1 });
+  const projectionSql = executor.queries
+    .filter(({ sql }) => sql.includes("portal_content_lookup_projection"))
+    .map(({ sql }) => sql)
+    .join("\n");
+  assert.match(projectionSql, /resolution_status IN \('unique', 'identical_collapsed'\)/);
+  assert.doesNotMatch(projectionSql, /page_title\s*=\s*\?|source_slug\s*=\s*\?|normalized_path\s*=\s*\?/);
 });
 
 test("manager journey loading groups ordered events and preserves protected identifiers", async () => {
@@ -415,7 +415,9 @@ test("store queries match the rollout-safe aggregate schema columns", async () =
   const result = await loadActiveAbbottAggregateDataWithExecutor(executor, 7);
   const sql = executor.queries.map((query) => query.sql).join("\n");
 
-  assert.match(sql, /source_slug, access_label, is_active/);
+  assert.match(sql, /projection\.lookup_kind, projection\.lookup_key_hash, projection\.resolution_status/);
+  assert.match(sql, /catalog\.source_row_fingerprint = projection\.selected_source_row_fingerprint/);
+  assert.doesNotMatch(sql, /SELECT page_title|SELECT source_slug|SELECT normalized_path/);
   assert.match(sql, /material_type_hint,\s+pageviews, sessions, users, guests/);
   assert.match(sql, /logged_in_hits, anonymous_hits, logged_in_sessions, anonymous_sessions/);
   assert.match(sql, /entry_sessions, exit_sessions, avg_session_duration_seconds/);

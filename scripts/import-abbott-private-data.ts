@@ -5,7 +5,10 @@ import { chmod, mkdir, open, readFile, rename, stat, unlink } from "node:fs/prom
 import path from "node:path";
 import { pathToFileURL } from "node:url";
 import mysql from "mysql2/promise";
-import { parseAbbottWorkbookCatalog } from "../src/lib/abbott-workbook-catalog";
+import {
+  parseAbbottWorkbookCatalog,
+  type AbbottWorkbookCatalogRow,
+} from "../src/lib/abbott-workbook-catalog";
 
 const DATASET_KEY = "abbott";
 const PRIMARY_SCHEMA = "report_bd";
@@ -18,6 +21,7 @@ const ALLOWED_SOURCE_KINDS = [
 ] as const;
 const ALLOWED_TABLES = new Set([
   `${PRIMARY_SCHEMA}.portal_content_catalog`,
+  `${PRIMARY_SCHEMA}.portal_content_lookup_projection`,
   `${PRIMARY_SCHEMA}.portal_general_materials`,
   `${PRIMARY_SCHEMA}.portal_event_catalog`,
   `${PRIMARY_SCHEMA}.portal_bitrix_page_facts`,
@@ -427,6 +431,106 @@ export function parseWorkbookJson(payload: unknown) {
 }
 
 export const parseWorkbookXlsx = parseAbbottWorkbookCatalog;
+
+export type AbbottContentLookupKind = "title" | "title_type" | "slug" | "path";
+export type AbbottContentLookupResolutionStatus = "unique" | "identical_collapsed" | "ambiguous";
+
+export interface AbbottContentLookupProjectionRow {
+  lookupKind: AbbottContentLookupKind;
+  lookupKeyHash: string;
+  candidateCount: number;
+  metadataSignatureCount: number;
+  resolutionStatus: AbbottContentLookupResolutionStatus;
+  selectedSourceRowFingerprint: string | null;
+  groupFingerprint: string;
+}
+
+type AbbottContentLookupCandidate = AbbottWorkbookCatalogRow & {
+  /** Only a real normalized path from persisted input may populate path lookup. */
+  normalizedPath?: string | null;
+};
+
+const WORKBOOK_SHEET_ORDER = [
+  "pages",
+  "Статьи",
+  "Видео",
+  "Клинические случаи",
+  "Научно-образовательные брошюры",
+  "Подкасты",
+  "Калькуляторы",
+  "Проверить знания",
+  "Помощник фармацевта",
+  "Алгоритмы фармацевтического кон",
+  "Клинические рекомендации",
+  "Таблицы",
+] as const;
+
+function sourceOrder(left: AbbottContentLookupCandidate, right: AbbottContentLookupCandidate): number {
+  const leftRank = WORKBOOK_SHEET_ORDER.indexOf(left.sourceSheet as (typeof WORKBOOK_SHEET_ORDER)[number]);
+  const rightRank = WORKBOOK_SHEET_ORDER.indexOf(right.sourceSheet as (typeof WORKBOOK_SHEET_ORDER)[number]);
+  const normalizedLeftRank = leftRank < 0 ? Number.MAX_SAFE_INTEGER : leftRank;
+  const normalizedRightRank = rightRank < 0 ? Number.MAX_SAFE_INTEGER : rightRank;
+  return normalizedLeftRank - normalizedRightRank
+    || left.sourceSheet.localeCompare(right.sourceSheet)
+    || left.sourceRowOrdinal - right.sourceRowOrdinal
+    || left.targetKeyFingerprint.localeCompare(right.targetKeyFingerprint);
+}
+
+export function buildAbbottContentLookupProjection(
+  rows: readonly AbbottContentLookupCandidate[],
+): AbbottContentLookupProjectionRow[] {
+  const groups = new Map<string, { kind: AbbottContentLookupKind; keyHash: string; rows: AbbottContentLookupCandidate[] }>();
+  for (const row of rows) {
+    const keys: Array<[AbbottContentLookupKind, string]> = [["title", row.pageTitle]];
+    if (row.materialType) keys.push(["title_type", `${row.materialType}::${row.pageTitle}`]);
+    if (row.sourceSlug) keys.push(["slug", row.sourceSlug]);
+    if (row.normalizedPath) keys.push(["path", row.normalizedPath]);
+    for (const [kind, value] of keys) {
+      const keyHash = sha256(value);
+      const groupKey = `${kind}:${keyHash}`;
+      const current = groups.get(groupKey) ?? { kind, keyHash, rows: [] };
+      current.rows.push(row);
+      groups.set(groupKey, current);
+    }
+  }
+
+  return [...groups.values()].map((group): AbbottContentLookupProjectionRow => {
+    const ordered = [...group.rows].sort(sourceOrder);
+    const metadataSignatures = new Set(group.rows.map((row) => canonicalRowFingerprint([
+      row.pageTitle,
+      row.materialType,
+      row.sourceSlug,
+      row.normalizedPath ?? null,
+      row.direction,
+      row.access,
+      row.isActive,
+    ])));
+    const resolutionStatus: AbbottContentLookupResolutionStatus = group.rows.length === 1
+      ? "unique"
+      : metadataSignatures.size === 1
+        ? "identical_collapsed"
+        : "ambiguous";
+    const candidateFingerprints = group.rows.map((row) => row.targetKeyFingerprint).sort();
+    return {
+      lookupKind: group.kind,
+      lookupKeyHash: group.keyHash,
+      candidateCount: group.rows.length,
+      metadataSignatureCount: metadataSignatures.size,
+      resolutionStatus,
+      selectedSourceRowFingerprint: resolutionStatus === "ambiguous"
+        ? null
+        : ordered[0]!.targetKeyFingerprint,
+      groupFingerprint: canonicalRowFingerprint([
+        "content-lookup-group",
+        group.kind,
+        group.keyHash,
+        ...candidateFingerprints,
+        ...[...metadataSignatures].sort(),
+      ]),
+    };
+  }).sort((left, right) => left.lookupKind.localeCompare(right.lookupKind)
+    || left.lookupKeyHash.localeCompare(right.lookupKeyHash));
+}
 
 function assertCompleteManifest(payload: Record<string, unknown>, label: string): Record<string, unknown> {
   const manifest = payload.manifest;
@@ -1170,14 +1274,32 @@ function workbookXlsxSource(parsed: ReturnType<typeof parseWorkbookXlsx>, source
     const persistedFields = [
       null, null, null, row.pageTitle, null, row.materialType, row.sourceSlug,
       row.sourceSlug ? sha256(row.sourceSlug) : null, row.access, row.isActive,
+      row.sourceSheet, row.sourceRowOrdinal, row.targetKeyFingerprint,
       null, row.direction, null, "1970-01-01 00:00:00", null,
     ];
-    const sourceFingerprint = canonicalPersistedRowFingerprint(
-      ["normalized_url", "normalized_url_hash", "normalized_path", "page_title", "material_id", "material_type", "source_slug", "source_slug_hash", "access_label", "is_active", "section_key", "direction_key", "published_at", "valid_from", "valid_to"],
-      persistedFields,
-    );
-    return [...persistedFields.slice(0, 10), sourceFingerprint, ...persistedFields.slice(10)];
+    return persistedFields;
   });
+  const catalogColumns = [
+    "normalized_url", "normalized_url_hash", "normalized_path", "page_title", "material_id", "material_type",
+    "source_slug", "source_slug_hash", "access_label", "is_active", "source_sheet", "source_row_ordinal",
+    "source_row_fingerprint", "section_key", "direction_key", "published_at", "valid_from", "valid_to",
+  ];
+  const projection = buildAbbottContentLookupProjection(parsed.rows);
+  const projectionColumns = [
+    "lookup_kind", "lookup_key_hash", "candidate_count", "metadata_signature_count", "resolution_status",
+    "selected_source_row_fingerprint", "group_fingerprint",
+  ];
+  const projectionRows = projection.map((row) => [
+    row.lookupKind,
+    row.lookupKeyHash,
+    row.candidateCount,
+    row.metadataSignatureCount,
+    row.resolutionStatus,
+    row.selectedSourceRowFingerprint,
+    row.groupFingerprint,
+  ]);
+  const ambiguousGroups = projection.filter((row) => row.resolutionStatus === "ambiguous").length;
+  const collapsedGroups = projection.filter((row) => row.resolutionStatus === "identical_collapsed").length;
   return withSourceMetadata("abbott_workbook_catalog", sourcePath, bytes, archiveLocator, options, {
     sourceRowCount: rows.length,
     importedRowCount: rows.length,
@@ -1185,14 +1307,32 @@ function workbookXlsxSource(parsed: ReturnType<typeof parseWorkbookXlsx>, source
     periodMinDate: null,
     periodMaxDate: null,
     generatedAt: null,
-    manifest: parsed.manifest,
-    batches: [{
-      table: `${PRIMARY_SCHEMA}.portal_content_catalog`,
-      columns: ["normalized_url", "normalized_url_hash", "normalized_path", "page_title", "material_id", "material_type", "source_slug", "source_slug_hash", "access_label", "is_active", "source_row_fingerprint", "section_key", "direction_key", "published_at", "valid_from", "valid_to"],
-      rows,
-      fingerprints: rows.map((row) => String(row[10])),
-      fingerprintColumn: "source_row_fingerprint",
-    }],
+    manifest: {
+      ...parsed.manifest,
+      lookup_projection_count: projectionRows.length,
+      ambiguous_groups: ambiguousGroups,
+      collapsed_groups: collapsedGroups,
+      lookup_projection_fingerprint: canonicalRowFingerprint(
+        projection.map((row) => row.groupFingerprint).sort(),
+      ),
+    },
+    batches: [
+      {
+        table: `${PRIMARY_SCHEMA}.portal_content_catalog`,
+        columns: catalogColumns,
+        rows,
+        fingerprints: rows.map((row) => canonicalPersistedRowFingerprint(catalogColumns, row)),
+        verificationColumns: catalogColumns,
+      },
+      {
+        table: `${PRIMARY_SCHEMA}.portal_content_lookup_projection`,
+        columns: projectionColumns,
+        rows: projectionRows,
+        fingerprints: projectionRows.map((row) => canonicalPersistedRowFingerprint(projectionColumns, row)),
+        verificationColumns: projectionColumns,
+        countsTowardImportedRows: false,
+      },
+    ],
   });
 }
 

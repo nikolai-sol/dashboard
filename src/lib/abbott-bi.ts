@@ -1,4 +1,5 @@
 import type { Pool, PoolConnection, RowDataPacket } from "mysql2/promise";
+import { createHash } from "node:crypto";
 
 import {
   loadActiveAbbottReleaseBundle,
@@ -59,6 +60,10 @@ export interface AbbottCanonicalDataQuality {
   requested_from: string;
   requested_to: string;
   blocking_gaps: AbbottCanonicalGap[];
+  content_lookup: {
+    ambiguous_groups: number;
+    collapsed_groups: number;
+  };
 }
 
 export type AbbottCanonicalBiData = AbbottBiData & {
@@ -207,6 +212,18 @@ function normalizePage(rawValue: unknown): string {
   }
 }
 
+function lookupHash(value: string): string {
+  return createHash("sha256").update(value).digest("hex");
+}
+
+function normalizedPagePath(normalized: string): string {
+  try {
+    return new URL(normalized).pathname;
+  } catch {
+    return normalized;
+  }
+}
+
 export function toAbbottDateOnly(value: string | null | undefined): string {
   return text(value).slice(0, 10);
 }
@@ -259,6 +276,10 @@ function emptyAbbottData(
   to: string,
   releaseId: number | null,
   gaps: AbbottCanonicalGap[],
+  lookupQuality: AbbottAggregatePrivateData["workbook"]["lookupQuality"] = {
+    ambiguousGroups: 0,
+    collapsedGroups: 0,
+  },
 ): AbbottCanonicalBiData {
   return {
     source: "canonical",
@@ -270,6 +291,10 @@ function emptyAbbottData(
       requested_from: from,
       requested_to: to,
       blocking_gaps: gaps,
+      content_lookup: {
+        ambiguous_groups: lookupQuality.ambiguousGroups,
+        collapsed_groups: lookupQuality.collapsedGroups,
+      },
     },
     counters,
     users_summary: [],
@@ -435,17 +460,12 @@ function metadataForPage(
   workbook: AbbottAggregatePrivateData["workbook"],
 ): { direction: string | null; material_type: string | null; access: string | null; hidden: boolean } {
   const normalized = normalizePage(rawUrl);
-  const path = (() => {
-    try {
-      return new URL(normalized).pathname;
-    } catch {
-      return normalized;
-    }
-  })();
+  const path = normalizedPagePath(normalized);
   const slug = path.split("/").filter(Boolean).at(-1) ?? "";
-  const metadata = workbook.contentByTitle.get(pageTitle) ?? workbook.contentBySlug.get(slug);
+  const metadata = workbook.contentByTitle.get(lookupHash(pageTitle))
+    ?? workbook.contentBySlug.get(lookupHash(slug));
   return {
-    direction: metadata?.direction ?? workbook.urlReturnDirections.get(normalized) ?? workbook.urlReturnDirections.get(path) ?? null,
+    direction: metadata?.direction ?? workbook.urlReturnDirections.get(lookupHash(path)) ?? null,
     material_type: metadata?.material_type ?? null,
     access: metadata?.access ?? null,
     hidden: metadata?.is_active === false,
@@ -713,7 +733,7 @@ function buildReturning(
     const count = deriveReturningCount(row.source_denominator, row.source_percentage);
     const current = totals.get(url) ?? {
       url,
-      direction: workbook.urlReturnDirections.get(url) ?? null,
+      direction: workbook.urlReturnDirections.get(lookupHash(normalizedPagePath(url))) ?? null,
       visits: 0,
       returning_1_day: 0,
       returning_2_7_days: 0,
@@ -908,7 +928,9 @@ export async function loadAbbottBiDataWithDependencies(
     }
     releaseId = releaseBundle.releaseId;
     const gaps = await coverageGaps(dependencies.aggregateExecutor, releaseId, counters, from, to);
-    if (gaps.length > 0) return emptyAbbottData(counters, audience, from, to, releaseId, gaps);
+    if (gaps.length > 0) {
+      return emptyAbbottData(counters, audience, from, to, releaseId, gaps, releaseBundle.workbook.lookupQuality);
+    }
 
     const [siteFacts, returningFacts, externalFacts, behaviorFacts] = await Promise.all([
       querySiteFacts(dependencies.aggregateExecutor, releaseId, counters, from, to),
@@ -929,7 +951,7 @@ export async function loadAbbottBiDataWithDependencies(
       : { summaries: [], actions: [] };
 
     return {
-      ...emptyAbbottData(counters, audience, from, to, releaseId, []),
+      ...emptyAbbottData(counters, audience, from, to, releaseId, [], releaseBundle.workbook.lookupQuality),
       users_summary: managerBehavior.summaries,
       traffic_summary: trafficSummary,
       user_actions: managerBehavior.actions,

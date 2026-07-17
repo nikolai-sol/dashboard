@@ -58,6 +58,10 @@ export interface AbbottAggregateWorkbookData {
   contentByTitleAndType: Map<string, AbbottContentMetadata>;
   contentBySlug: Map<string, AbbottContentMetadata>;
   urlReturnDirections: Map<string, string | null>;
+  lookupQuality: {
+    ambiguousGroups: number;
+    collapsedGroups: number;
+  };
   ymUrlReturn: [];
 }
 
