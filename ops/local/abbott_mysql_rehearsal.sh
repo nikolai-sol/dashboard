@@ -5,48 +5,86 @@ umask 077
 
 readonly MYSQL_IMAGE="mysql:8.4.10"
 readonly SOURCE_DATABASE="abbott_source_dump_20260529"
+readonly SOURCE_DUMP_DATABASE="analytics_abbottpro_db"
 readonly PRIMARY_DATABASE="report_bd"
 readonly PRIVATE_DATABASE="report_bd_private"
 readonly SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)"
 readonly ROOT_DIR="$(cd "$SCRIPT_DIR/../.." && pwd -P)"
 
 usage() {
-  printf '%s\n' "Usage: $0 schema --inputs ABSOLUTE_DIR --dump ABSOLUTE_SQL --evidence ABSOLUTE_DIR" >&2
+  printf '%s\n' "Usage: $0 schema --dump-sql ABSOLUTE_SQL --evidence ABSOLUTE_DIR" >&2
   exit 2
 }
 
 MODE="${1:-}"
 case "$MODE" in schema) shift ;; *) usage ;; esac
-INPUTS=""
 DUMP_SOURCE=""
 EVIDENCE=""
 while (( $# )); do
   case "$1" in
-    --inputs) [[ $# -ge 2 ]] || usage; INPUTS="$2"; shift 2 ;;
-    --dump) [[ $# -ge 2 ]] || usage; DUMP_SOURCE="$2"; shift 2 ;;
+    --dump-sql) [[ $# -ge 2 ]] || usage; DUMP_SOURCE="$2"; shift 2 ;;
     --evidence) [[ $# -ge 2 ]] || usage; EVIDENCE="$2"; shift 2 ;;
     *) usage ;;
   esac
 done
-[[ -n "$INPUTS" && -n "$DUMP_SOURCE" && -n "$EVIDENCE" ]] || usage
-[[ "$INPUTS" = /* && "$DUMP_SOURCE" = /* && "$EVIDENCE" = /* ]] || usage
-[[ -d "$INPUTS" && -f "$DUMP_SOURCE" ]] || { printf '%s\n' "Required rehearsal input is unavailable." >&2; exit 2; }
+[[ -n "$DUMP_SOURCE" && -n "$EVIDENCE" ]] || usage
+[[ "$DUMP_SOURCE" = /* && "$EVIDENCE" = /* ]] || usage
+[[ -f "$DUMP_SOURCE" ]] || { printf '%s\n' "Required rehearsal dump is unavailable." >&2; exit 2; }
 
-reject_public_path() {
+reject_unsafe_external_path() {
   local resolved
-  if [[ -e "$1" ]]; then
-    resolved="$(realpath "$1")"
-  else
-    resolved="$(realpath "$(dirname "$1")")/$(basename "$1")"
+  local probe
+  [[ ! -L "$1" ]] || { printf '%s\n' "Unsafe rehearsal path was rejected." >&2; exit 2; }
+  resolved="$(python3 - "$1" <<'PY'
+from pathlib import Path
+import sys
+print(Path(sys.argv[1]).resolve(strict=False))
+PY
+)"
+  case "$resolved" in
+    /var/www|/var/www/*|/private/var/www|/private/var/www/*|/srv/http|/srv/http/*|/private/srv/http|/private/srv/http/*)
+      printf '%s\n' "Unsafe rehearsal path was rejected." >&2; exit 2 ;;
+  esac
+  case "/$resolved/" in
+    */public/*|*/.next/*|*/standalone/*|*/static/*|*/build/*|*/dist/*)
+      printf '%s\n' "Unsafe rehearsal path was rejected." >&2; exit 2 ;;
+  esac
+  probe="$resolved"
+  [[ -d "$probe" ]] || probe="$(dirname "$probe")"
+  if git -C "$probe" rev-parse --is-inside-work-tree >/dev/null 2>&1; then
+    printf '%s\n' "Unsafe rehearsal path was rejected." >&2
+    exit 2
   fi
-  case "/$resolved/" in */public/*) printf '%s\n' "Rehearsal inputs under public paths are forbidden." >&2; exit 2 ;; esac
 }
-reject_public_path "$INPUTS"
-reject_public_path "$DUMP_SOURCE"
-reject_public_path "$EVIDENCE"
+reject_unsafe_external_path "$DUMP_SOURCE"
+reject_unsafe_external_path "$EVIDENCE"
+
+assert_clean_tracked_file() {
+  local repository=$1
+  local relative=$2
+  local path="$repository/$relative"
+  [[ -f "$path" && ! -L "$path" ]] || { printf '%s\n' "Reviewed DDL authority is invalid." >&2; exit 1; }
+  git -C "$repository" ls-files --error-unmatch -- "$relative" >/dev/null 2>&1 || { printf '%s\n' "Reviewed DDL authority is untracked." >&2; exit 1; }
+  [[ -z "$(git -C "$repository" status --porcelain=v1 --untracked-files=all -- "$relative")" ]] || { printf '%s\n' "Reviewed DDL authority is not clean." >&2; exit 1; }
+  git -C "$repository" show "HEAD:$relative" | cmp - "$path" || { printf '%s\n' "Reviewed DDL authority differs from HEAD." >&2; exit 1; }
+}
+
+readonly MIGRATIONS_REPOSITORY="$ROOT_DIR/dashboard-next"
+readonly MIGRATIONS_DIRECTORY="src/db/migrations"
+readonly PRIVATE_SQL_RELATIVE="ops/sql/abbott_private_schema_and_grants.sql"
+[[ -z "$(git -C "$MIGRATIONS_REPOSITORY" status --porcelain=v1 --untracked-files=all -- "$MIGRATIONS_DIRECTORY")" ]] || { printf '%s\n' "Reviewed migration authority is not clean." >&2; exit 1; }
+while IFS= read -r authority; do
+  [[ "$authority" == *.sql ]] || continue
+  assert_clean_tracked_file "$MIGRATIONS_REPOSITORY" "$authority"
+done < <(git -C "$MIGRATIONS_REPOSITORY" ls-files -- "$MIGRATIONS_DIRECTORY" | LC_ALL=C sort)
+assert_clean_tracked_file "$ROOT_DIR" "$PRIVATE_SQL_RELATIVE"
 
 install -d -m 700 "$EVIDENCE"
-PRIVATE_ROOT="$(mktemp -d "${TMPDIR:-/tmp}/abbott-mysql-rehearsal.XXXXXX")"
+for evidence_name in rehearsal-summary.json schema-signature.sha256 grant-signature.sha256 dump-schema-probe.txt; do
+  [[ ! -e "$EVIDENCE/$evidence_name" && ! -L "$EVIDENCE/$evidence_name" ]] || { printf '%s\n' "Existing rehearsal evidence path was rejected." >&2; exit 2; }
+done
+EVIDENCE_STAGE=""
+PRIVATE_ROOT=""
 RUN_ID="$(date -u +%Y%m%dT%H%M%SZ)-$$"
 CONTAINER_NAME="abbott-mysql-rehearsal-$RUN_ID"
 VOLUME_NAME="abbott-mysql-rehearsal-$RUN_ID"
@@ -54,20 +92,22 @@ cleanup() {
   local status=$?
   docker rm --force "$CONTAINER_NAME" >/dev/null 2>&1 || true
   docker volume rm --force "$VOLUME_NAME" >/dev/null 2>&1 || true
-  if [[ "$status" -eq 0 || "${ABBOTT_REHEARSAL_PRESERVE_ON_FAILURE:-0}" != 1 ]]; then
-    rm -rf "$PRIVATE_ROOT"
-  else
-    printf '%s\n' "Rehearsal failed; protected local diagnostics were preserved." >&2
+  [[ -z "$EVIDENCE_STAGE" ]] || rm -rf "$EVIDENCE_STAGE"
+  if [[ -n "$PRIVATE_ROOT" ]]; then
+    if [[ "$status" -eq 0 || "${ABBOTT_REHEARSAL_PRESERVE_ON_FAILURE:-0}" != 1 ]]; then
+      rm -rf "$PRIVATE_ROOT"
+    else
+      printf '%s\n' "Rehearsal failed; protected local diagnostics were preserved." >&2
+    fi
   fi
   exit "$status"
 }
 trap cleanup EXIT
 trap 'exit 130' INT TERM HUP
 
-install -d -m 700 "$PRIVATE_ROOT/inputs"
-while IFS= read -r input; do
-  install -m 600 "$input" "$PRIVATE_ROOT/inputs/$(basename "$input")"
-done < <(find "$INPUTS" -maxdepth 1 -type f -print | LC_ALL=C sort)
+PRIVATE_ROOT="$(mktemp -d "${TMPDIR:-/tmp}/abbott-mysql-rehearsal.XXXXXX")"
+EVIDENCE_STAGE="$(mktemp -d "$EVIDENCE/.abbott-evidence.XXXXXX")"
+chmod 700 "$EVIDENCE_STAGE"
 
 ROOT_PASSWORD="$(openssl rand -hex 32)"
 COLLECTOR_PASSWORD="$(openssl rand -hex 32)"
@@ -107,8 +147,8 @@ mysql_exec() {
 mysql_exec --execute="CREATE DATABASE $PRIMARY_DATABASE CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci; CREATE DATABASE $PRIVATE_DATABASE CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci; CREATE DATABASE $SOURCE_DATABASE CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;" \
   > "$PRIVATE_ROOT/database-create.log" 2>&1
 
-MIGRATION_033="$ROOT_DIR/dashboard-next/src/db/migrations/033_abbott_canonical_release_control.sql"
-PRIVATE_SQL="$ROOT_DIR/ops/sql/abbott_private_schema_and_grants.sql"
+MIGRATION_033="$MIGRATIONS_REPOSITORY/$MIGRATIONS_DIRECTORY/033_abbott_canonical_release_control.sql"
+PRIVATE_SQL="$ROOT_DIR/$PRIVATE_SQL_RELATIVE"
 [[ -f "$MIGRATION_033" && -f "$PRIVATE_SQL" ]] || { printf '%s\n' "Reviewed Abbott DDL is unavailable." >&2; exit 1; }
 migration_count=0
 found_033=0
@@ -119,7 +159,7 @@ while IFS= read -r migration; do
     found_033=1
     break
   fi
-done < <(find "$ROOT_DIR/dashboard-next/src/db/migrations" -maxdepth 1 -type f -name '*.sql' -print | LC_ALL=C sort)
+done < <(find "$MIGRATIONS_REPOSITORY/$MIGRATIONS_DIRECTORY" -maxdepth 1 -type f -name '*.sql' -print | LC_ALL=C sort)
 [[ "$found_033" -eq 1 ]] || { printf '%s\n' "Migration 033 was not reached in lexical order." >&2; exit 1; }
 mysql_exec "$PRIMARY_DATABASE" < "$PRIVATE_SQL" > "$PRIVATE_ROOT/private-fresh.log" 2>&1
 
@@ -162,7 +202,8 @@ capture_grant_signature "$PRIVATE_ROOT/grants.after.tsv"
 [[ "$GRANT_SIGNATURE" == "$(signature "$PRIVATE_ROOT/grants.after.tsv")" ]] || { printf '%s\n' "Repeated Abbott DDL changed the grant signature." >&2; exit 1; }
 
 FILTERED_DUMP="$PRIVATE_ROOT/source-schema.sql"
-python3 "$SCRIPT_DIR/abbott_dump_schema_filter.py" < "$DUMP_SOURCE" > "$FILTERED_DUMP"
+python3 "$SCRIPT_DIR/abbott_dump_schema_filter.py" \
+  --source-database "$SOURCE_DUMP_DATABASE" < "$DUMP_SOURCE" > "$FILTERED_DUMP"
 chmod 600 "$FILTERED_DUMP"
 DUMP_ERROR_CLASS="none"
 if ! mysql_exec "$SOURCE_DATABASE" < "$FILTERED_DUMP" > "$PRIVATE_ROOT/dump-load.log" 2> "$PRIVATE_ROOT/dump-load.err"; then
@@ -176,10 +217,10 @@ fi
 DUMP_TABLE_COUNT="$(mysql_exec --execute="SELECT COUNT(*) FROM information_schema.TABLES WHERE TABLE_SCHEMA='$SOURCE_DATABASE' AND TABLE_TYPE='BASE TABLE';")"
 MYSQL_VERSION="$(mysql_exec --execute='SELECT VERSION();')"
 
-printf '%s  schema-and-index-signature\n' "$SCHEMA_SIGNATURE" > "$EVIDENCE/schema-signature.sha256"
-printf '%s  grant-signature\n' "$GRANT_SIGNATURE" > "$EVIDENCE/grant-signature.sha256"
-printf 'schema_only=true\ntable_count=%s\nsql_error_class=%s\n' "$DUMP_TABLE_COUNT" "$DUMP_ERROR_CLASS" > "$EVIDENCE/dump-schema-probe.txt"
-python3 - "$EVIDENCE/rehearsal-summary.json" "$MODE" "$IMAGE_DIGEST" "$MYSQL_VERSION" "$migration_count" "$SCHEMA_SIGNATURE" "$GRANT_SIGNATURE" "$DUMP_TABLE_COUNT" "$DUMP_ERROR_CLASS" <<'PY'
+printf '%s  schema-and-index-signature\n' "$SCHEMA_SIGNATURE" > "$EVIDENCE_STAGE/schema-signature.sha256"
+printf '%s  grant-signature\n' "$GRANT_SIGNATURE" > "$EVIDENCE_STAGE/grant-signature.sha256"
+printf 'schema_only=true\ntable_count=%s\nsql_error_class=%s\n' "$DUMP_TABLE_COUNT" "$DUMP_ERROR_CLASS" > "$EVIDENCE_STAGE/dump-schema-probe.txt"
+python3 - "$EVIDENCE_STAGE/rehearsal-summary.json" "$MODE" "$IMAGE_DIGEST" "$MYSQL_VERSION" "$migration_count" "$SCHEMA_SIGNATURE" "$GRANT_SIGNATURE" "$DUMP_TABLE_COUNT" "$DUMP_ERROR_CLASS" <<'PY'
 import json
 import pathlib
 import sys
@@ -201,7 +242,11 @@ summary = {
 }
 target.write_text(json.dumps(summary, sort_keys=True, indent=2) + "\n", encoding="utf-8")
 PY
-chmod 600 "$EVIDENCE/rehearsal-summary.json" "$EVIDENCE/schema-signature.sha256" \
-  "$EVIDENCE/grant-signature.sha256" "$EVIDENCE/dump-schema-probe.txt"
+chmod 600 "$EVIDENCE_STAGE/rehearsal-summary.json" "$EVIDENCE_STAGE/schema-signature.sha256" \
+  "$EVIDENCE_STAGE/grant-signature.sha256" "$EVIDENCE_STAGE/dump-schema-probe.txt"
+for evidence_name in rehearsal-summary.json schema-signature.sha256 grant-signature.sha256 dump-schema-probe.txt; do
+  [[ ! -e "$EVIDENCE/$evidence_name" && ! -L "$EVIDENCE/$evidence_name" ]] || { printf '%s\n' "Existing rehearsal evidence path was rejected." >&2; exit 2; }
+  mv "$EVIDENCE_STAGE/$evidence_name" "$EVIDENCE/$evidence_name"
+done
 [[ "$DUMP_ERROR_CLASS" == none ]] || exit 1
 printf '%s\n' "Abbott MySQL rehearsal completed; sanitized evidence was written."

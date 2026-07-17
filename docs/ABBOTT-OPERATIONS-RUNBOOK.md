@@ -146,14 +146,13 @@ Use a fresh shell with `set +x` if there is any doubt.
 This local gate does not alter any production checkpoint. With approximately
 32 GiB of free host capacity and an 8.1 GiB MariaDB 10.11 source dump, the
 approved default is a streaming schema-only probe. Do not load source rows or
-attempt a capacity-sensitive full dump rehearsal. Prepare a private mode-`0700`
-input directory outside Git and every web root, install each application input
-into it with mode `0600`, then run:
+attempt a capacity-sensitive full dump rehearsal. Move the dump to a private
+mode-`0600` path outside Git, worktrees, web roots, and release trees without
+making a second 8.1 GiB copy, then run:
 
 ```bash
 ops/local/abbott_mysql_rehearsal.sh schema \
-  --inputs /tmp/abbott-rollout-rehearsal/inputs \
-  --dump /Users/nafanya/ReportingDash/abbott_reader_analytics_abbottpro_db_2026-05-29_11-14-33.sql \
+  --dump-sql /tmp/abbott-rollout-rehearsal/abbott-source-dump.sql \
   --evidence /tmp/abbott-rollout-rehearsal/evidence
 ```
 

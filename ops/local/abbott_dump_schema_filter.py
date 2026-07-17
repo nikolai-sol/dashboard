@@ -1,14 +1,22 @@
 #!/usr/bin/env python3
-"""Stream a mysqldump-compatible input to schema-only, target-neutral SQL."""
+"""Stream a mysqldump input to schema-only, target-neutral SQL."""
 
 from __future__ import annotations
 
+import argparse
 import re
 import sys
+from typing import Iterable, Iterator, TextIO
 
 
-DATABASE = re.compile(r"^\s*(?:CREATE\s+DATABASE(?:\s+IF\s+NOT\s+EXISTS)?|USE)\s+`?([^`;\s]+)`?", re.I)
-DEFINER = re.compile(r"\bDEFINER\s*=\s*(?:`[^`]*`|'[^']*'|[^\s]+)@(?:`[^`]*`|'[^']*'|[^\s]+)\s*", re.I)
+DATABASE_DECLARATION = re.compile(
+    r"^\s*(?:CREATE\s+DATABASE(?:\s+IF\s+NOT\s+EXISTS)?|USE)\b", re.I
+)
+DEFINER = re.compile(
+    r"\bDEFINER\s*=\s*(?:`[^`]*`|'[^']*'|[^\s@]+)@"
+    r"(?:`[^`]*`|'[^']*'|[^\s]+)\s*",
+    re.I,
+)
 SQL_SECURITY_DEFINER = re.compile(r"\bSQL\s+SECURITY\s+DEFINER\b", re.I)
 DDL = re.compile(
     r"^\s*(?:DROP\s+(?:TEMPORARY\s+)?(?:TABLE|VIEW)|ALTER\s+TABLE|"
@@ -17,49 +25,113 @@ DDL = re.compile(
 )
 
 
-def unwrap_version_comment(line: str) -> str:
-    line = re.sub(r"^\s*/\*![0-9]{5}\s?", "", line)
-    line = re.sub(r"\*/\s*;\s*$", ";", line)
-    return re.sub(r"\*/\s*$", "", line)
+def parse_args() -> argparse.Namespace:
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--source-database", required=True)
+    args = parser.parse_args()
+    if not re.fullmatch(r"[A-Za-z0-9_$-]+", args.source_database):
+        parser.error("source database identifier is invalid")
+    return args
 
 
-def strip_source_qualifiers(statement: str, databases: set[str]) -> str:
-    for database in sorted(databases, key=len, reverse=True):
-        statement = re.sub(rf"`{re.escape(database)}`\s*\.", "", statement, flags=re.I)
-        statement = re.sub(rf"(?<![\w`]){re.escape(database)}\s*\.", "", statement, flags=re.I)
-    return statement
+def executable_lines(stream: TextIO) -> Iterable[str]:
+    """Unwrap line-oriented MySQL version comments without retaining comments."""
+    for raw in stream:
+        stripped = raw.lstrip()
+        if stripped.startswith("/*!"):
+            line = re.sub(r"^\s*/\*![0-9]{5,6}\s?", "", raw)
+            line = re.sub(r"\*/\s*;\s*$", ";", line)
+            line = re.sub(r"\*/\s*$", "", line)
+            yield line + ("" if line.endswith("\n") else "\n")
+        else:
+            yield raw
+
+
+def statements(lines: Iterable[str]) -> Iterator[str]:
+    """Split SQL on unquoted semicolons while discarding ordinary comments."""
+    buffer: list[str] = []
+    quote: str | None = None
+    block_comment = False
+    for line in lines:
+        index = 0
+        while index < len(line):
+            char = line[index]
+            following = line[index + 1] if index + 1 < len(line) else ""
+            if block_comment:
+                if char == "*" and following == "/":
+                    block_comment = False
+                    index += 2
+                else:
+                    index += 1
+                continue
+            if quote is not None:
+                buffer.append(char)
+                if char == "\\" and index + 1 < len(line):
+                    buffer.append(following)
+                    index += 2
+                    continue
+                if char == quote:
+                    if following == quote:
+                        buffer.append(following)
+                        index += 2
+                        continue
+                    quote = None
+                index += 1
+                continue
+            if char in {"'", '"', "`"}:
+                quote = char
+                buffer.append(char)
+                index += 1
+                continue
+            if char == "#" or (
+                char == "-" and following == "-"
+                and (index + 2 == len(line) or line[index + 2].isspace())
+            ):
+                break
+            if char == "/" and following == "*":
+                if buffer and not buffer[-1].isspace():
+                    buffer.append(" ")
+                block_comment = True
+                index += 2
+                continue
+            if char == ";":
+                statement = "".join(buffer).strip()
+                buffer.clear()
+                if statement:
+                    yield statement
+                index += 1
+                continue
+            buffer.append(char)
+            index += 1
+        if buffer and (not buffer[-1].isspace()):
+            buffer.append("\n")
+    statement = "".join(buffer).strip()
+    if statement:
+        yield statement
+
+
+def strip_source_qualifiers(statement: str, source_database: str) -> str:
+    statement = re.sub(
+        rf"`{re.escape(source_database)}`\s*\.", "", statement, flags=re.I
+    )
+    return re.sub(
+        rf"(?<![\w`]){re.escape(source_database)}\s*\.", "", statement, flags=re.I
+    )
 
 
 def main() -> int:
-    source_databases: set[str] = set()
-    statement: list[str] = []
-
-    def emit() -> None:
-        if not statement:
-            return
-        sql = "".join(statement).strip()
-        statement.clear()
-        database = DATABASE.match(sql)
-        if database:
-            source_databases.add(database.group(1))
-            return
-        sql = DEFINER.sub("", sql)
-        sql = SQL_SECURITY_DEFINER.sub("SQL SECURITY INVOKER", sql)
-        sql = strip_source_qualifiers(sql, source_databases)
-        if DDL.match(sql):
-            sys.stdout.write(sql.rstrip(";\n") + ";\n")
-
-    for raw in sys.stdin:
-        stripped = raw.lstrip()
-        if stripped.startswith("--") or stripped.startswith("#"):
+    source_database = parse_args().source_database
+    for statement in statements(executable_lines(sys.stdin)):
+        if DATABASE_DECLARATION.match(statement):
             continue
-        line = unwrap_version_comment(raw) if stripped.startswith("/*!") else raw
-        if not line.strip() or line.lstrip().startswith("/*"):
+        statement = DEFINER.sub("", statement)
+        statement = SQL_SECURITY_DEFINER.sub("SQL SECURITY INVOKER", statement)
+        statement = strip_source_qualifiers(statement, source_database)
+        if not DDL.match(statement):
             continue
-        statement.append(line)
-        if ";" in line:
-            emit()
-    emit()
+        if re.search(re.escape(source_database), statement, flags=re.I):
+            raise SystemExit("schema filter rejected residual source database reference")
+        sys.stdout.write(statement.rstrip() + ";\n")
     return 0
 
 
