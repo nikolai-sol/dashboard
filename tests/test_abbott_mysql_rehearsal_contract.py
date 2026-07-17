@@ -149,6 +149,20 @@ class AbbottMysqlRehearsalContractTest(unittest.TestCase):
         self.assertNotIn("private-value", result.stdout)
         self.assertNotIn("leaked_row", result.stdout)
 
+    def test_filter_tracks_open_quotes_across_skipped_row_lines(self):
+        result = run_filter(
+            "INSERT INTO `events` VALUES\n"
+            "('private line;\n"
+            "CREATE TABLE leaked_row (secret text)\n"
+            "still private');\n"
+            "CREATE TABLE `safe_table` (`id` bigint);\n"
+        )
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn("CREATE TABLE `safe_table`", result.stdout)
+        self.assertNotIn("private line", result.stdout)
+        self.assertNotIn("leaked_row", result.stdout)
+        self.assertNotIn("still private", result.stdout)
+
     def test_filter_requires_and_strips_explicit_source_database_without_use(self):
         sql = (
             "CREATE VIEW `event_ids` AS SELECT `id` "

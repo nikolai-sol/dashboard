@@ -25,6 +25,7 @@ DDL = re.compile(
     r"CREATE\s+(?:TEMPORARY\s+)?TABLE|CREATE\b[\s\S]*?\bVIEW)\b",
     re.I,
 )
+SKIPPED_STATEMENT_SPECIAL = re.compile(r"['\"`;/#-]")
 
 
 def parse_args() -> argparse.Namespace:
@@ -49,22 +50,89 @@ def executable_lines(stream: TextIO) -> Iterable[str]:
             yield raw
 
 
+def skipped_statement_tail(
+    line: str, quote: str | None, block_comment: bool
+) -> tuple[str | None, str | None, bool]:
+    """Find an unquoted terminator without retaining skipped statement content."""
+    index = 0
+    while index < len(line):
+        if block_comment:
+            comment_end = line.find("*/", index)
+            if comment_end < 0:
+                return None, quote, True
+            block_comment = False
+            index = comment_end + 2
+            continue
+        if quote is not None:
+            quote_at = line.find(quote, index)
+            escape_at = line.find("\\", index)
+            positions = [position for position in (quote_at, escape_at) if position >= 0]
+            if not positions:
+                return None, quote, block_comment
+            special_at = min(positions)
+            if special_at == escape_at:
+                index = min(special_at + 2, len(line))
+                continue
+            following = line[special_at + 1] if special_at + 1 < len(line) else ""
+            if following == quote:
+                index = special_at + 2
+                continue
+            quote = None
+            index = special_at + 1
+            continue
+
+        match = SKIPPED_STATEMENT_SPECIAL.search(line, index)
+        if match is None:
+            return None, quote, block_comment
+        index = match.start()
+        char = line[index]
+        following = line[index + 1] if index + 1 < len(line) else ""
+        if char in {"'", '"', "`"}:
+            quote = char
+            index += 1
+            continue
+        if char == ";":
+            return line[index + 1 :], None, block_comment
+        if char == "#" or (
+            char == "-"
+            and following == "-"
+            and (index + 2 == len(line) or line[index + 2].isspace())
+        ):
+            return None, quote, block_comment
+        if char == "/" and following == "*":
+            block_comment = True
+            index += 2
+            continue
+        index += 1
+    return None, quote, block_comment
+
+
 def schema_candidate_lines(lines: Iterable[str]) -> Iterator[str]:
-    """Drop complete line-oriented row/lock statements before character parsing."""
+    """Drop row/lock statements through a streaming quote-aware boundary."""
     prefixes = ("INSERT INTO ", "REPLACE INTO ", "LOCK TABLES ", "UNLOCK TABLES")
     skipping_statement = False
+    skipped_quote: str | None = None
+    skipped_block_comment = False
     for line in lines:
-        ddl_tail = re.search(r";\s*(?=(?:CREATE|DROP|ALTER)\b)", line, flags=re.I)
         if skipping_statement:
-            if line.rstrip().endswith(";"):
+            tail, skipped_quote, skipped_block_comment = skipped_statement_tail(
+                line, skipped_quote, skipped_block_comment
+            )
+            if tail is not None:
                 skipping_statement = False
+                skipped_quote = None
+                skipped_block_comment = False
+                if tail.strip():
+                    yield tail
             continue
         stripped = line.lstrip()
         if stripped[:32].upper().startswith(prefixes):
-            if ddl_tail is not None:
-                yield line
-                continue
-            skipping_statement = not stripped.rstrip().endswith(";")
+            tail, skipped_quote, skipped_block_comment = skipped_statement_tail(
+                line, None, False
+            )
+            skipping_statement = tail is None
+            if tail is not None and tail.strip():
+                yield tail
             continue
         yield line
 
