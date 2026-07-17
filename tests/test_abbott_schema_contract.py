@@ -331,18 +331,42 @@ class AbbottSchemaContractTest(unittest.TestCase):
             "source_slug_hash CHAR(64) DEFAULT NULL",
             "access_label VARCHAR(500) DEFAULT NULL",
             "is_active TINYINT(1) NOT NULL DEFAULT 1",
+            "source_sheet VARCHAR(255) NOT NULL",
+            "source_row_ordinal BIGINT UNSIGNED NOT NULL",
             "source_row_fingerprint CHAR(64) NOT NULL",
         ):
             self.assertIn(column, catalog)
         for key in (
             "UNIQUE KEY uniq_content_release_source_row "
-            "(canonical_release_id, source_snapshot_id, source_row_fingerprint)",
+            "(canonical_release_id, source_snapshot_id, source_sheet, source_row_ordinal)",
             "KEY idx_content_release_title_type "
             "(canonical_release_id, page_title(191), material_type)",
             "KEY idx_content_release_slug "
             "(canonical_release_id, source_slug_hash)",
         ):
             self.assertIn(key, catalog)
+
+    def test_content_lookup_projection_is_hashed_release_scoped_and_auditable(self):
+        projection = self._table_definition(
+            self._primary_sql(), "portal_content_lookup_projection"
+        )
+        for column in (
+            "lookup_kind ENUM('title', 'title_type', 'slug', 'path') NOT NULL",
+            "lookup_key_hash CHAR(64) NOT NULL",
+            "candidate_count BIGINT UNSIGNED NOT NULL",
+            "metadata_signature_count BIGINT UNSIGNED NOT NULL",
+            "resolution_status ENUM('unique', 'identical_collapsed', 'ambiguous') NOT NULL",
+            "selected_source_row_fingerprint CHAR(64) DEFAULT NULL",
+            "group_fingerprint CHAR(64) NOT NULL",
+        ):
+            self.assertIn(column, projection)
+        self.assertIn(
+            "UNIQUE KEY uniq_content_lookup_release_key "
+            "(canonical_release_id, source_snapshot_id, lookup_kind, lookup_key_hash)",
+            projection,
+        )
+        for forbidden in ("page_title", "source_slug", "normalized_path"):
+            self.assertNotIn(forbidden, projection)
 
     def test_workbook_registration_events_have_a_source_faithful_catalog(self):
         catalog = self._table_definition(self._primary_sql(), "portal_event_catalog")
@@ -536,6 +560,7 @@ class AbbottSchemaContractTest(unittest.TestCase):
         )
         for table in (
             "portal_content_catalog",
+            "portal_content_lookup_projection",
             "portal_general_materials",
             "portal_event_catalog",
             "portal_bitrix_page_facts",
@@ -560,6 +585,7 @@ class AbbottSchemaContractTest(unittest.TestCase):
             "portal_active_data_releases",
             "portal_dataset_snapshots",
             "portal_content_catalog",
+            "portal_content_lookup_projection",
             "portal_general_materials",
             "portal_event_catalog",
             "portal_bitrix_page_facts",
@@ -609,6 +635,7 @@ class AbbottSchemaContractTest(unittest.TestCase):
         for table in (
             "portal_dataset_snapshots",
             "portal_content_catalog",
+            "portal_content_lookup_projection",
             "portal_general_materials",
             "portal_event_catalog",
             "portal_user_directions_private",
@@ -617,6 +644,29 @@ class AbbottSchemaContractTest(unittest.TestCase):
             "portal_bitrix_journey_transitions",
         ):
             self.assertFalse(any(table in grant for grant in collector_grants))
+
+    def test_lookup_projection_grants_preserve_least_privilege(self):
+        sql = self._normalized(self._private_sql())
+        projection_grants = [
+            grant
+            for grant in re.findall(r"GRANT .*?;", sql, flags=re.IGNORECASE)
+            if "portal_content_lookup_projection" in grant
+        ]
+        self.assertEqual(len(projection_grants), 2)
+        self.assertTrue(any(
+            grant.startswith("GRANT SELECT, INSERT ON ")
+            and "TO 'reportingdash_abbott_importer_role'" in grant
+            for grant in projection_grants
+        ))
+        self.assertTrue(any(
+            grant.startswith("GRANT SELECT ON ")
+            and "TO 'reportingdash_abbott_runtime_reader_role'" in grant
+            for grant in projection_grants
+        ))
+        self.assertFalse(any(
+            "collector_role" in grant or "release_operator_role" in grant
+            for grant in projection_grants
+        ))
 
     def test_task7_has_idempotent_alters_for_preexisting_task1_tables(self):
         primary = self._normalized(self._primary_sql())
@@ -633,6 +683,9 @@ class AbbottSchemaContractTest(unittest.TestCase):
             "ALTER TABLE portal_content_catalog ADD COLUMN source_slug VARCHAR(1000) DEFAULT NULL",
             "ALTER TABLE portal_content_catalog ADD COLUMN access_label VARCHAR(500) DEFAULT NULL",
             "ALTER TABLE portal_content_catalog ADD COLUMN is_active TINYINT(1) NOT NULL DEFAULT 1",
+            "ALTER TABLE portal_content_catalog ADD COLUMN source_sheet VARCHAR(255) DEFAULT NULL",
+            "ALTER TABLE portal_content_catalog ADD COLUMN source_row_ordinal BIGINT UNSIGNED DEFAULT NULL",
+            "ALTER TABLE portal_content_catalog ADD UNIQUE INDEX uniq_content_release_source_row (canonical_release_id, source_snapshot_id, source_sheet, source_row_ordinal)",
             "ALTER TABLE portal_general_materials ADD COLUMN normalized_url TEXT DEFAULT NULL",
         ):
             self.assertIn(contract, primary)

@@ -405,6 +405,8 @@ GRANT SELECT, INSERT, UPDATE ON report_bd.portal_release_source_imports
   TO 'reportingdash_abbott_importer_role';
 GRANT SELECT, INSERT ON report_bd.portal_content_catalog
   TO 'reportingdash_abbott_importer_role';
+GRANT SELECT, INSERT ON report_bd.portal_content_lookup_projection
+  TO 'reportingdash_abbott_importer_role';
 GRANT SELECT, INSERT ON report_bd.portal_general_materials
   TO 'reportingdash_abbott_importer_role';
 GRANT SELECT, INSERT ON report_bd.portal_event_catalog
@@ -450,6 +452,8 @@ GRANT SELECT ON report_bd.dashboards
 GRANT SELECT ON report_bd.portal_dataset_snapshots
   TO 'reportingdash_abbott_runtime_reader_role';
 GRANT SELECT ON report_bd.portal_content_catalog
+  TO 'reportingdash_abbott_runtime_reader_role';
+GRANT SELECT ON report_bd.portal_content_lookup_projection
   TO 'reportingdash_abbott_runtime_reader_role';
 GRANT SELECT ON report_bd.portal_general_materials
   TO 'reportingdash_abbott_runtime_reader_role';
