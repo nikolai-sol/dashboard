@@ -209,7 +209,7 @@ git commit -m "test: require Abbott lookup provenance"
 - Modify: `docs/ABBOTT-OPERATIONS-RUNBOOK.md`
 
 **Interfaces:**
-- Produces: `abbott_mysql_rehearsal.sh schema|import|lifecycle` with explicit source paths and evidence directory.
+- Produces: `abbott_mysql_rehearsal.sh schema --dump-sql PATH --evidence DIR`. The schema mode consumes reviewed migrations from a clean tracked `HEAD` plus the explicit dump path; it does not accept or copy application-import inputs. Other modes fail with a sanitized usage error until Task 4 adds their tested orchestration.
 - Produces: sanitized `rehearsal-summary.json`, `schema-signature.sha256`, `grant-signature.sha256`, and `dump-schema-probe.txt`.
 - Cleans container, volume and private temp credentials by default; `ABBOTT_REHEARSAL_PRESERVE_ON_FAILURE=1` preserves only local private artifacts.
 
@@ -260,14 +260,31 @@ git commit -m "feat: add Abbott MySQL rollout rehearsal"
 ### Task 4: Execute live local schema, import, validation and rollback rehearsal
 
 **Files:**
+- Modify: `ops/local/abbott_mysql_rehearsal.sh`
+- Create: `tests/test_abbott_mysql_candidate_rehearsal.py`
 - Create: `docs/abbott-rehearsal/2026-07-17-summary.md`
 - Modify only if a live-MySQL defect is reproduced first: the exact source/test files covering that defect.
 
 **Interfaces:**
 - Consumes: Tasks 1-3, protected copies of the four approved sources, and the ephemeral MySQL service.
+- Produces: independently runnable `import` and `lifecycle` modes that start from a fresh ephemeral schema, perform their requested phase, capture sanitized evidence and clean up.
 - Produces: a committed sanitized summary and private uncommitted evidence under `/tmp/abbott-rollout-rehearsal/evidence`.
 
-- [ ] **Step 1: Start Docker Desktop and prove the daemon is ready**
+- [ ] **Step 1: Write import/lifecycle orchestration RED tests**
+
+Require `import` to create a predecessor, frozen local baseline, staging candidate and four-source import before verifying counts/provenance. Require `lifecycle` to build on that state and exercise incomplete rejection, warning review, validation, activation, stale-CAS rejection and rollback. Both modes must be standalone and cleanup by default.
+
+```bash
+python3 -m unittest tests.test_abbott_mysql_candidate_rehearsal -v
+```
+
+Expected: failure because Task 3 exposes only `schema`.
+
+- [ ] **Step 2: Implement import and lifecycle modes**
+
+Reuse the protected container/schema helpers from Task 3. Use the real importer and release-operator entrypoints with rehearsal-only protected env files. Generate only aggregate fixture coverage/comparison evidence needed to exercise release gates; never fabricate source-import evidence, which must come from the real four-source importer transaction.
+
+- [ ] **Step 3: Start Docker Desktop and prove the daemon is ready**
 
 ```bash
 open -a Docker
@@ -276,7 +293,7 @@ docker info --format '{{.ServerVersion}}'
 
 Expected: a non-empty Docker server version. Poll in intervals shorter than 60 seconds; do not continue if the daemon remains unavailable.
 
-- [ ] **Step 2: Prepare protected real inputs**
+- [ ] **Step 4: Prepare protected real inputs**
 
 ```bash
 umask 077
@@ -287,7 +304,7 @@ install -m 600 /Users/nafanya/ReportingDash/dashboard-next/public/abbott/bitrix-
 install -m 600 /Users/nafanya/ReportingDash/dashboard-next/public/abbott/bitrix-session-journeys.json /tmp/abbott-rollout-rehearsal/inputs/bitrix-session-journeys.json
 ```
 
-- [ ] **Step 3: Run schema and import modes**
+- [ ] **Step 5: Run schema and import modes**
 
 ```bash
 ops/local/abbott_mysql_rehearsal.sh schema \
@@ -300,7 +317,7 @@ ops/local/abbott_mysql_rehearsal.sh import \
 
 Expected: all four source kinds imported; catalog count is exactly `1769`; rejected count is zero; private raw values appear only in private tables and are never printed.
 
-- [ ] **Step 4: Exercise validation and pointer lifecycle**
+- [ ] **Step 6: Exercise validation and pointer lifecycle**
 
 Run `lifecycle` mode. It must demonstrate, in order: incomplete candidate rejected, unreviewed ambiguity warning rejected, locally named reviewer acceptance recorded, validation succeeds, expected pointer activates, stale compare-and-swap fails, and rollback restores the predecessor.
 
@@ -310,11 +327,11 @@ ops/local/abbott_mysql_rehearsal.sh lifecycle \
   --evidence /tmp/abbott-rollout-rehearsal/evidence
 ```
 
-- [ ] **Step 5: Fix only reproduced integration defects with TDD**
+- [ ] **Step 7: Fix only reproduced integration defects with TDD**
 
 For each defect, add the smallest failing automated integration/contract test, prove RED, implement GREEN, rerun the failed rehearsal mode and focused suite, then commit with a defect-specific message.
 
-- [ ] **Step 6: Write sanitized summary and commit**
+- [ ] **Step 8: Write sanitized summary and commit**
 
 The summary must contain image digest, MySQL version, source hashes/counts, ambiguity aggregates, schema/grant signatures, release lifecycle outcomes and limitations. It must not contain source paths, credentials, hosts, raw rows or lookup keys.
 
