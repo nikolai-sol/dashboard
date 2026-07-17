@@ -165,11 +165,11 @@ CREATE DEFINER=`source_user`@`source_host` VIEW `event_ids` AS SELECT `id` FROM 
         )
         self.assertIn("CREATE TABLE safe_table", skipped_row.stdout)
 
-    def test_schema_cli_has_no_application_inputs_and_unsupported_mode_stops_before_docker(self):
+    def test_unsupported_mode_stops_before_docker_and_usage_keeps_schema_inputs_separate(self):
         with tempfile.TemporaryDirectory() as temporary:
             fake = FakeDocker(Path(temporary))
             result = subprocess.run(
-                [str(HARNESS), "import"],
+                [str(HARNESS), "unsupported"],
                 text=True,
                 stdout=subprocess.PIPE,
                 stderr=subprocess.PIPE,
@@ -180,7 +180,7 @@ CREATE DEFINER=`source_user`@`source_host` VIEW `event_ids` AS SELECT `id` FROM 
         self.assertEqual(result.returncode, 2)
         self.assertEqual(result.stdout, "")
         self.assertRegex(result.stderr, r"^Usage: .* schema --dump-sql")
-        self.assertNotIn("--inputs", result.stderr)
+        self.assertIn("import|lifecycle --inputs", result.stderr)
         self.assertEqual(docker_entries, [])
 
     def test_dirty_migration_authority_stops_before_docker(self):

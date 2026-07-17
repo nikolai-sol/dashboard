@@ -13,23 +13,32 @@ readonly ROOT_DIR="$(cd "$SCRIPT_DIR/../.." && pwd -P)"
 
 usage() {
   printf '%s\n' "Usage: $0 schema --dump-sql ABSOLUTE_SQL --evidence ABSOLUTE_DIR" >&2
+  printf '%s\n' "       $0 import|lifecycle --inputs ABSOLUTE_DIR --evidence ABSOLUTE_DIR" >&2
   exit 2
 }
 
 MODE="${1:-}"
-case "$MODE" in schema) shift ;; *) usage ;; esac
+case "$MODE" in schema|import|lifecycle) shift ;; *) usage ;; esac
 DUMP_SOURCE=""
+INPUTS=""
 EVIDENCE=""
 while (( $# )); do
   case "$1" in
     --dump-sql) [[ $# -ge 2 ]] || usage; DUMP_SOURCE="$2"; shift 2 ;;
+    --inputs) [[ $# -ge 2 ]] || usage; INPUTS="$2"; shift 2 ;;
     --evidence) [[ $# -ge 2 ]] || usage; EVIDENCE="$2"; shift 2 ;;
     *) usage ;;
   esac
 done
-[[ -n "$DUMP_SOURCE" && -n "$EVIDENCE" ]] || usage
-[[ "$DUMP_SOURCE" = /* && "$EVIDENCE" = /* ]] || usage
-[[ -f "$DUMP_SOURCE" ]] || { printf '%s\n' "Required rehearsal dump is unavailable." >&2; exit 2; }
+if [[ "$MODE" == schema ]]; then
+  [[ -n "$DUMP_SOURCE" && -z "$INPUTS" && -n "$EVIDENCE" ]] || usage
+  [[ "$DUMP_SOURCE" = /* && "$EVIDENCE" = /* ]] || usage
+  [[ -f "$DUMP_SOURCE" ]] || { printf '%s\n' "Required rehearsal dump is unavailable." >&2; exit 2; }
+else
+  [[ -z "$DUMP_SOURCE" && -n "$INPUTS" && -n "$EVIDENCE" ]] || usage
+  [[ "$INPUTS" = /* && "$EVIDENCE" = /* ]] || usage
+  [[ -d "$INPUTS" ]] || { printf '%s\n' "Required rehearsal inputs are unavailable." >&2; exit 2; }
+fi
 
 reject_unsafe_external_path() {
   local resolved
@@ -56,8 +65,19 @@ PY
     exit 2
   fi
 }
-reject_unsafe_external_path "$DUMP_SOURCE"
+[[ -z "$DUMP_SOURCE" ]] || reject_unsafe_external_path "$DUMP_SOURCE"
+[[ -z "$INPUTS" ]] || reject_unsafe_external_path "$INPUTS"
 reject_unsafe_external_path "$EVIDENCE"
+
+INPUT_NAMES=(abbott-workbook.json Abbott-names.xlsx bitrix-analytics.json bitrix-session-journeys.json)
+if [[ -n "$INPUTS" ]]; then
+  [[ "$(stat -f '%Lp' "$INPUTS")" == 700 ]] || { printf '%s\n' "Rehearsal input directory permissions are invalid." >&2; exit 2; }
+  for input_name in "${INPUT_NAMES[@]}"; do
+    input_path="$INPUTS/$input_name"
+    [[ -f "$input_path" && ! -L "$input_path" ]] || { printf '%s\n' "A required protected rehearsal input is invalid." >&2; exit 2; }
+    [[ "$(stat -f '%Lp' "$input_path")" == 600 ]] || { printf '%s\n' "Rehearsal input permissions are invalid." >&2; exit 2; }
+  done
+fi
 
 assert_clean_tracked_file() {
   local repository=$1
@@ -72,6 +92,8 @@ assert_clean_tracked_file() {
 readonly MIGRATIONS_REPOSITORY="$ROOT_DIR/dashboard-next"
 readonly MIGRATIONS_DIRECTORY="src/db/migrations"
 readonly PRIVATE_SQL_RELATIVE="ops/sql/abbott_private_schema_and_grants.sql"
+readonly IMPORTER_RELATIVE="scripts/import-abbott-private-data.ts"
+readonly RUNTIME_DIRECTORY="reportingdash-canonical-bootstrap/runtime"
 [[ -z "$(git -C "$MIGRATIONS_REPOSITORY" status --porcelain=v1 --untracked-files=all -- "$MIGRATIONS_DIRECTORY")" ]] || { printf '%s\n' "Reviewed migration authority is not clean." >&2; exit 1; }
 MIGRATIONS_THROUGH_033=()
 TRACKED_033_FOUND=0
@@ -87,9 +109,22 @@ while IFS= read -r authority; do
 done < <(git -C "$MIGRATIONS_REPOSITORY" ls-files -- "$MIGRATIONS_DIRECTORY" | LC_ALL=C sort)
 [[ "$TRACKED_033_FOUND" -eq 1 ]] || { printf '%s\n' "Tracked migration 033 authority is unavailable." >&2; exit 1; }
 assert_clean_tracked_file "$ROOT_DIR" "$PRIVATE_SQL_RELATIVE"
+if [[ "$MODE" != schema ]]; then
+  assert_clean_tracked_file "$MIGRATIONS_REPOSITORY" "$IMPORTER_RELATIVE"
+  for runtime_file in abbott_canonical_controls.py abbott_release_operator.py canonical_release_store.py canonical_writer.py capture_abbott_canonical_baseline.py compare_abbott_canonical_release.py; do
+    assert_clean_tracked_file "$MIGRATIONS_REPOSITORY" "$RUNTIME_DIRECTORY/$runtime_file"
+  done
+fi
 
 install -d -m 700 "$EVIDENCE"
-for evidence_name in rehearsal-summary.json schema-signature.sha256 grant-signature.sha256 dump-schema-probe.txt; do
+if [[ "$MODE" == schema ]]; then
+  EVIDENCE_NAMES=(rehearsal-summary.json schema-signature.sha256 grant-signature.sha256 dump-schema-probe.txt)
+elif [[ "$MODE" == import ]]; then
+  EVIDENCE_NAMES=(import-summary.json)
+else
+  EVIDENCE_NAMES=(lifecycle-summary.json)
+fi
+for evidence_name in "${EVIDENCE_NAMES[@]}"; do
   [[ ! -e "$EVIDENCE/$evidence_name" && ! -L "$EVIDENCE/$evidence_name" ]] || { printf '%s\n' "Existing rehearsal evidence path was rejected." >&2; exit 2; }
 done
 EVIDENCE_STAGE=""
@@ -131,11 +166,15 @@ docker pull "$MYSQL_IMAGE" > "$PRIVATE_ROOT/docker-pull.log" 2>&1
 IMAGE_DIGEST="$(docker image inspect --format '{{index .RepoDigests 0}}' "$MYSQL_IMAGE")"
 [[ "$IMAGE_DIGEST" == *@sha256:* ]] || { printf '%s\n' "Resolved MySQL image digest is unavailable." >&2; exit 1; }
 docker volume create "$VOLUME_NAME" >/dev/null
-docker run --detach --name "$CONTAINER_NAME" \
-  --env-file "$PRIVATE_ROOT/container.env" \
-  --mount "type=volume,source=$VOLUME_NAME,target=/var/lib/mysql" \
-  --mount "type=bind,source=$PRIVATE_ROOT,target=/run/abbott-rehearsal,readonly" \
-  --network none "$MYSQL_IMAGE" > "$PRIVATE_ROOT/container-id"
+DOCKER_RUN_ARGS=(--detach --name "$CONTAINER_NAME" --env-file "$PRIVATE_ROOT/container.env"
+  --mount "type=volume,source=$VOLUME_NAME,target=/var/lib/mysql"
+  --mount "type=bind,source=$PRIVATE_ROOT,target=/run/abbott-rehearsal,readonly")
+if [[ "$MODE" == schema ]]; then
+  DOCKER_RUN_ARGS+=(--network none)
+else
+  DOCKER_RUN_ARGS+=(--publish 127.0.0.1::3306)
+fi
+docker run "${DOCKER_RUN_ARGS[@]}" "$MYSQL_IMAGE" > "$PRIVATE_ROOT/container-id"
 
 ready=0
 for _attempt in $(seq 1 90); do
@@ -209,26 +248,27 @@ capture_grant_signature "$PRIVATE_ROOT/grants.after.tsv"
 [[ "$SCHEMA_SIGNATURE" == "$(signature "$PRIVATE_ROOT/schema.after.tsv")" ]] || { printf '%s\n' "Repeated Abbott DDL changed the schema signature." >&2; exit 1; }
 [[ "$GRANT_SIGNATURE" == "$(signature "$PRIVATE_ROOT/grants.after.tsv")" ]] || { printf '%s\n' "Repeated Abbott DDL changed the grant signature." >&2; exit 1; }
 
-FILTERED_DUMP="$PRIVATE_ROOT/source-schema.sql"
-python3 "$SCRIPT_DIR/abbott_dump_schema_filter.py" \
-  --source-database "$SOURCE_DUMP_DATABASE" < "$DUMP_SOURCE" > "$FILTERED_DUMP"
-chmod 600 "$FILTERED_DUMP"
-DUMP_ERROR_CLASS="none"
-if ! mysql_exec "$SOURCE_DATABASE" < "$FILTERED_DUMP" > "$PRIVATE_ROOT/dump-load.log" 2> "$PRIVATE_ROOT/dump-load.err"; then
-  if grep -Eqi 'syntax|parse' "$PRIVATE_ROOT/dump-load.err"; then DUMP_ERROR_CLASS="syntax_error"
-  elif grep -Eqi 'collation|character set' "$PRIVATE_ROOT/dump-load.err"; then DUMP_ERROR_CLASS="charset_or_collation"
-  elif grep -Eqi 'foreign key|constraint' "$PRIVATE_ROOT/dump-load.err"; then DUMP_ERROR_CLASS="constraint_error"
-  elif grep -Eqi 'unknown|unsupported|not supported' "$PRIVATE_ROOT/dump-load.err"; then DUMP_ERROR_CLASS="unsupported_feature"
-  else DUMP_ERROR_CLASS="other_sql_error"
+if [[ "$MODE" == schema ]]; then
+  FILTERED_DUMP="$PRIVATE_ROOT/source-schema.sql"
+  python3 "$SCRIPT_DIR/abbott_dump_schema_filter.py" \
+    --source-database "$SOURCE_DUMP_DATABASE" < "$DUMP_SOURCE" > "$FILTERED_DUMP"
+  chmod 600 "$FILTERED_DUMP"
+  DUMP_ERROR_CLASS="none"
+  if ! mysql_exec "$SOURCE_DATABASE" < "$FILTERED_DUMP" > "$PRIVATE_ROOT/dump-load.log" 2> "$PRIVATE_ROOT/dump-load.err"; then
+    if grep -Eqi 'syntax|parse' "$PRIVATE_ROOT/dump-load.err"; then DUMP_ERROR_CLASS="syntax_error"
+    elif grep -Eqi 'collation|character set' "$PRIVATE_ROOT/dump-load.err"; then DUMP_ERROR_CLASS="charset_or_collation"
+    elif grep -Eqi 'foreign key|constraint' "$PRIVATE_ROOT/dump-load.err"; then DUMP_ERROR_CLASS="constraint_error"
+    elif grep -Eqi 'unknown|unsupported|not supported' "$PRIVATE_ROOT/dump-load.err"; then DUMP_ERROR_CLASS="unsupported_feature"
+    else DUMP_ERROR_CLASS="other_sql_error"
+    fi
   fi
-fi
-DUMP_TABLE_COUNT="$(mysql_exec --execute="SELECT COUNT(*) FROM information_schema.TABLES WHERE TABLE_SCHEMA='$SOURCE_DATABASE' AND TABLE_TYPE='BASE TABLE';")"
-MYSQL_VERSION="$(mysql_exec --execute='SELECT VERSION();')"
+  DUMP_TABLE_COUNT="$(mysql_exec --execute="SELECT COUNT(*) FROM information_schema.TABLES WHERE TABLE_SCHEMA='$SOURCE_DATABASE' AND TABLE_TYPE='BASE TABLE';")"
+  MYSQL_VERSION="$(mysql_exec --execute='SELECT VERSION();')"
 
-printf '%s  schema-and-index-signature\n' "$SCHEMA_SIGNATURE" > "$EVIDENCE_STAGE/schema-signature.sha256"
-printf '%s  grant-signature\n' "$GRANT_SIGNATURE" > "$EVIDENCE_STAGE/grant-signature.sha256"
-printf 'schema_only=true\ntable_count=%s\nsql_error_class=%s\n' "$DUMP_TABLE_COUNT" "$DUMP_ERROR_CLASS" > "$EVIDENCE_STAGE/dump-schema-probe.txt"
-python3 - "$EVIDENCE_STAGE/rehearsal-summary.json" "$MODE" "$IMAGE_DIGEST" "$MYSQL_VERSION" "$migration_count" "$SCHEMA_SIGNATURE" "$GRANT_SIGNATURE" "$DUMP_TABLE_COUNT" "$DUMP_ERROR_CLASS" <<'PY'
+  printf '%s  schema-and-index-signature\n' "$SCHEMA_SIGNATURE" > "$EVIDENCE_STAGE/schema-signature.sha256"
+  printf '%s  grant-signature\n' "$GRANT_SIGNATURE" > "$EVIDENCE_STAGE/grant-signature.sha256"
+  printf 'schema_only=true\ntable_count=%s\nsql_error_class=%s\n' "$DUMP_TABLE_COUNT" "$DUMP_ERROR_CLASS" > "$EVIDENCE_STAGE/dump-schema-probe.txt"
+  python3 - "$EVIDENCE_STAGE/rehearsal-summary.json" "$MODE" "$IMAGE_DIGEST" "$MYSQL_VERSION" "$migration_count" "$SCHEMA_SIGNATURE" "$GRANT_SIGNATURE" "$DUMP_TABLE_COUNT" "$DUMP_ERROR_CLASS" <<'PY'
 import json
 import pathlib
 import sys
@@ -250,11 +290,236 @@ summary = {
 }
 target.write_text(json.dumps(summary, sort_keys=True, indent=2) + "\n", encoding="utf-8")
 PY
-chmod 600 "$EVIDENCE_STAGE/rehearsal-summary.json" "$EVIDENCE_STAGE/schema-signature.sha256" \
-  "$EVIDENCE_STAGE/grant-signature.sha256" "$EVIDENCE_STAGE/dump-schema-probe.txt"
-for evidence_name in rehearsal-summary.json schema-signature.sha256 grant-signature.sha256 dump-schema-probe.txt; do
-  [[ ! -e "$EVIDENCE/$evidence_name" && ! -L "$EVIDENCE/$evidence_name" ]] || { printf '%s\n' "Existing rehearsal evidence path was rejected." >&2; exit 2; }
-  mv "$EVIDENCE_STAGE/$evidence_name" "$EVIDENCE/$evidence_name"
-done
-[[ "$DUMP_ERROR_CLASS" == none ]] || exit 1
-printf '%s\n' "Abbott MySQL rehearsal completed; sanitized evidence was written."
+  chmod 600 "$EVIDENCE_STAGE/rehearsal-summary.json" "$EVIDENCE_STAGE/schema-signature.sha256" \
+    "$EVIDENCE_STAGE/grant-signature.sha256" "$EVIDENCE_STAGE/dump-schema-probe.txt"
+  for evidence_name in "${EVIDENCE_NAMES[@]}"; do
+    [[ ! -e "$EVIDENCE/$evidence_name" && ! -L "$EVIDENCE/$evidence_name" ]] || { printf '%s\n' "Existing rehearsal evidence path was rejected." >&2; exit 2; }
+    mv "$EVIDENCE_STAGE/$evidence_name" "$EVIDENCE/$evidence_name"
+  done
+  [[ "$DUMP_ERROR_CLASS" == none ]] || exit 1
+  printf '%s\n' "Abbott MySQL rehearsal completed; sanitized evidence was written."
+  exit 0
+fi
+
+HOST_PORT="$(docker port "$CONTAINER_NAME" 3306/tcp | awk -F: 'NR == 1 {print $NF}')"
+[[ "$HOST_PORT" =~ ^[0-9]+$ ]] || { printf '%s\n' "Ephemeral MySQL loopback port is unavailable." >&2; exit 1; }
+printf 'ABBOTT_IMPORT_DB_HOST=127.0.0.1\nABBOTT_IMPORT_DB_PORT=%s\nABBOTT_IMPORT_DB_USER=abbott_rehearsal_importer\nABBOTT_IMPORT_DB_PASSWORD=%s\n' \
+  "$HOST_PORT" "$IMPORTER_PASSWORD" > "$PRIVATE_ROOT/import.env"
+printf 'ABBOTT_RELEASE_DB_HOST=127.0.0.1\nABBOTT_RELEASE_DB_PORT=%s\nABBOTT_RELEASE_DB_USER=abbott_rehearsal_operator\nABBOTT_RELEASE_DB_PASSWORD=%s\nABBOTT_RELEASE_DB_NAME=report_bd\n' \
+  "$HOST_PORT" "$OPERATOR_PASSWORD" > "$PRIVATE_ROOT/release.env"
+chmod 600 "$PRIVATE_ROOT/import.env" "$PRIVATE_ROOT/release.env"
+install -d -m 700 "$PRIVATE_ROOT/source-archive" "$PRIVATE_ROOT/baseline-archive"
+
+readonly FIXTURE_DATE="2026-07-16"
+readonly PARSER_VERSION="task4-local-v1"
+CODE_REVISION="$(git -C "$ROOT_DIR" rev-parse HEAD)"
+RUNTIME_ROOT="$MIGRATIONS_REPOSITORY/$RUNTIME_DIRECTORY"
+
+run_release_python() {
+  (
+    set -a
+    . "$PRIVATE_ROOT/release.env"
+    set +a
+    cd "$RUNTIME_ROOT"
+    python3 "$@"
+  )
+}
+
+seed_release_aggregates() {
+  local release_id=$1
+  mysql_exec "$PRIMARY_DATABASE" --execute="
+    INSERT INTO canonical_fact_metrika_site_analytics_daily
+      (canonical_release_id,source_key,analytics_account_id,counter_id,report_date,analytics_scope,scope_hash,scope_dimensions,sessions,users,pageviews,ingestion_run_id)
+    VALUES
+      ($release_id,'yandex_metrika','abbott_rehearsal',90602537,'$FIXTURE_DATE','other',REPEAT('1',64),JSON_OBJECT(),0,0,0,1),
+      ($release_id,'yandex_metrika','abbott_rehearsal',90602537,'$FIXTURE_DATE','traffic',REPEAT('2',64),JSON_OBJECT(),0,0,0,1),
+      ($release_id,'yandex_metrika','abbott_rehearsal',90602537,'$FIXTURE_DATE','page',REPEAT('3',64),JSON_OBJECT(),0,0,0,1);
+    INSERT INTO canonical_source_coverage_daily
+      (canonical_release_id,source_key,counter_id,scope_key,report_date,request_fingerprint,collection_status,api_total_rows,persisted_rows,pagination_complete,is_sampled,empty_reconciled,collector_run_id)
+    VALUES
+      ($release_id,'yandex_metrika',90602537,'other','$FIXTURE_DATE',REPEAT('4',64),'success_empty',0,0,1,0,1,1),
+      ($release_id,'yandex_metrika',90602537,'traffic','$FIXTURE_DATE',REPEAT('5',64),'success_empty',0,0,1,0,1,1),
+      ($release_id,'yandex_metrika',90602537,'page','$FIXTURE_DATE',REPEAT('6',64),'success_empty',0,0,1,0,1,1),
+      ($release_id,'yandex_metrika',90602537,'user_behavior','$FIXTURE_DATE',REPEAT('7',64),'success_empty',0,0,1,0,1,1),
+      ($release_id,'yandex_metrika',90602537,'returning','$FIXTURE_DATE',REPEAT('8',64),'success_empty',0,0,1,0,1,1);" \
+    > "$PRIVATE_ROOT/aggregate-fixture.log" 2>&1
+}
+
+PREDECESSOR_RELEASE_ID="$(mysql_exec "$PRIMARY_DATABASE" --execute="
+  INSERT INTO portal_data_releases
+    (dataset_key,release_key,source_snapshot_ids,canonical_version_id,code_revision,release_status,activated_at,activated_by)
+  VALUES ('abbott',CONCAT('local-predecessor-',UUID()),JSON_ARRAY(),'local-predecessor','$CODE_REVISION','active',UTC_TIMESTAMP(),'local-rehearsal');
+  SET @predecessor_release_id=LAST_INSERT_ID();
+  INSERT INTO portal_active_data_releases
+    (dataset_key,canonical_release_id,previous_release_id,switched_at,switched_by,switch_reason)
+  VALUES ('abbott',@predecessor_release_id,NULL,UTC_TIMESTAMP(),'local-rehearsal','local predecessor fixture');
+  SELECT @predecessor_release_id /*rehearsal:predecessor*/;")"
+[[ "$PREDECESSOR_RELEASE_ID" =~ ^[0-9]+$ ]] || { printf '%s\n' "Local predecessor creation failed." >&2; exit 1; }
+seed_release_aggregates "$PREDECESSOR_RELEASE_ID"
+
+BASELINE_RESULT="$(run_release_python capture_abbott_canonical_baseline.py \
+  --date-from "$FIXTURE_DATE" --date-to "$FIXTURE_DATE" \
+  --private-archive-dir "$PRIVATE_ROOT/baseline-archive" --code-revision "$CODE_REVISION" \
+  --source-file "abbott_workbook_json:$PARSER_VERSION:$INPUTS/abbott-workbook.json" \
+  --source-file "abbott_workbook_catalog:$PARSER_VERSION:$INPUTS/Abbott-names.xlsx" \
+  --source-file "abbott_bitrix_pages:$PARSER_VERSION:$INPUTS/bitrix-analytics.json" \
+  --source-file "abbott_bitrix_journeys:$PARSER_VERSION:$INPUTS/bitrix-session-journeys.json")"
+BASELINE_SNAPSHOT_ID="${BASELINE_RESULT##* }"
+[[ "$BASELINE_SNAPSHOT_ID" =~ ^[0-9]+$ ]] || { printf '%s\n' "Local baseline capture failed." >&2; exit 1; }
+
+CANDIDATE_RESULT="$(run_release_python abbott_release_operator.py create \
+  --predecessor-release-id "$PREDECESSOR_RELEASE_ID" \
+  --baseline-snapshot-id "$BASELINE_SNAPSHOT_ID" --code-revision "$CODE_REVISION")"
+CANDIDATE_RELEASE_ID="${CANDIDATE_RESULT#release_id=}"
+CANDIDATE_RELEASE_ID="${CANDIDATE_RELEASE_ID%% *}"
+[[ "$CANDIDATE_RELEASE_ID" =~ ^[0-9]+$ ]] || { printf '%s\n' "Local candidate creation failed." >&2; exit 1; }
+
+INCOMPLETE_REJECTED=false
+if [[ "$MODE" == lifecycle ]]; then
+  if run_release_python abbott_release_operator.py validate --release-id "$CANDIDATE_RELEASE_ID" \
+      --date-from "$FIXTURE_DATE" --date-to "$FIXTURE_DATE" --code-revision "$CODE_REVISION" \
+      > "$PRIVATE_ROOT/incomplete-validation.log" 2>&1; then
+    printf '%s\n' "Incomplete local candidate unexpectedly validated." >&2
+    exit 1
+  fi
+  INCOMPLETE_REJECTED=true
+fi
+
+(
+  set -a
+  . "$PRIVATE_ROOT/import.env"
+  set +a
+  cd "$MIGRATIONS_REPOSITORY"
+  node --import tsx scripts/import-abbott-private-data.ts \
+    --canonical-release-id "$CANDIDATE_RELEASE_ID" \
+    --workbook-json "$INPUTS/abbott-workbook.json" \
+    --workbook-xlsx "$INPUTS/Abbott-names.xlsx" \
+    --bitrix-pages "$INPUTS/bitrix-analytics.json" \
+    --bitrix-journeys "$INPUTS/bitrix-session-journeys.json" \
+    --parser-version "$PARSER_VERSION" --code-revision "$CODE_REVISION" \
+    --archive-dir "$PRIVATE_ROOT/source-archive"
+) > "$PRIVATE_ROOT/import.log" 2>&1
+
+IMPORT_AGGREGATES="$(mysql_exec "$PRIMARY_DATABASE" --execute="
+  SELECT COUNT(DISTINCT imports.source_kind),
+         COALESCE(MAX(CASE WHEN imports.source_kind='abbott_workbook_catalog' THEN imports.imported_row_count END),0),
+         COALESCE(SUM(imports.rejected_row_count),0),COUNT(*)
+  FROM portal_release_source_imports AS imports
+  WHERE imports.canonical_release_id=$CANDIDATE_RELEASE_ID
+  /*rehearsal:import-summary*/;")"
+IFS=$'\t' read -r SOURCE_KIND_COUNT CATALOG_COUNT REJECTED_COUNT PROVENANCE_COUNT <<< "$IMPORT_AGGREGATES"
+[[ "$SOURCE_KIND_COUNT" == 4 && "$CATALOG_COUNT" == 1769 && "$REJECTED_COUNT" == 0 && "$PROVENANCE_COUNT" == 4 ]] || {
+  printf '%s\n' "Local four-source import acceptance failed." >&2; exit 1;
+}
+mysql_exec "$PRIMARY_DATABASE" --execute="
+  SELECT source_kind,imported_row_count,rejected_row_count
+  FROM portal_release_source_imports WHERE canonical_release_id=$CANDIDATE_RELEASE_ID ORDER BY source_kind
+  /*rehearsal:source-counts*/;" > "$PRIVATE_ROOT/source-counts.tsv"
+
+if [[ "$MODE" == import ]]; then
+  MYSQL_VERSION="$(mysql_exec --execute='SELECT VERSION();')"
+  python3 - "$EVIDENCE_STAGE/import-summary.json" "$IMAGE_DIGEST" "$MYSQL_VERSION" \
+    "$SCHEMA_SIGNATURE" "$GRANT_SIGNATURE" "$SOURCE_KIND_COUNT" "$CATALOG_COUNT" "$REJECTED_COUNT" "$PROVENANCE_COUNT" \
+    "$PRIVATE_ROOT/source-counts.tsv" "$INPUTS" <<'PY'
+import hashlib, json, pathlib, sys
+target, image, version, schema, grants = sys.argv[1:6]
+source_counts = {}
+for line in pathlib.Path(sys.argv[10]).read_text(encoding="utf-8").splitlines():
+    fields = line.split("\t")
+    if len(fields) == 3:
+        source_counts[fields[0]] = {"imported": int(fields[1]), "rejected": int(fields[2])}
+inputs = pathlib.Path(sys.argv[11])
+names = {
+    "abbott_workbook_json": "abbott-workbook.json", "abbott_workbook_catalog": "Abbott-names.xlsx",
+    "abbott_bitrix_pages": "bitrix-analytics.json", "abbott_bitrix_journeys": "bitrix-session-journeys.json",
+}
+summary = {
+    "mode": "import", "image_digest": image, "mysql_version": version,
+    "schema_signature_sha256": schema, "grant_signature_sha256": grants,
+    "source_kind_count": int(sys.argv[6]), "catalog_count": int(sys.argv[7]),
+    "rejected_count": int(sys.argv[8]), "provenance_count": int(sys.argv[9]),
+    "source_imported_counts": source_counts,
+    "source_sha256": {kind: hashlib.sha256((inputs / name).read_bytes()).hexdigest() for kind, name in names.items()},
+    "cleanup_default": True,
+}
+pathlib.Path(target).write_text(json.dumps(summary, sort_keys=True, indent=2) + "\n", encoding="utf-8")
+PY
+  chmod 600 "$EVIDENCE_STAGE/import-summary.json"
+  mv "$EVIDENCE_STAGE/import-summary.json" "$EVIDENCE/import-summary.json"
+  printf '%s\n' "Abbott import rehearsal completed; sanitized evidence was written."
+  exit 0
+fi
+
+seed_release_aggregates "$CANDIDATE_RELEASE_ID"
+run_release_python compare_abbott_canonical_release.py --baseline-run-id "$BASELINE_SNAPSHOT_ID" \
+  --candidate-release-id "$CANDIDATE_RELEASE_ID" > "$PRIVATE_ROOT/comparison.log" 2>&1
+mysql_exec "$PRIMARY_DATABASE" --execute="
+  SET @latest_validation=(SELECT validation_run_id FROM portal_migration_validation_runs
+    WHERE canonical_release_id=$CANDIDATE_RELEASE_ID AND baseline_snapshot_id=$BASELINE_SNAPSHOT_ID
+    ORDER BY id DESC LIMIT 1);
+  UPDATE portal_migration_validation_runs SET result_status='warn',diagnostic_json=JSON_OBJECT('reason_code','local_ambiguity_review'),reviewed_by=NULL,accepted_at=NULL
+    WHERE canonical_release_id=$CANDIDATE_RELEASE_ID AND baseline_snapshot_id=$BASELINE_SNAPSHOT_ID
+      AND validation_run_id=@latest_validation AND control_name='site.other.fact_rows';" \
+  > "$PRIVATE_ROOT/warning-fixture.log" 2>&1
+UNREVIEWED_REJECTED=false
+if run_release_python abbott_release_operator.py validate --release-id "$CANDIDATE_RELEASE_ID" \
+    --date-from "$FIXTURE_DATE" --date-to "$FIXTURE_DATE" --code-revision "$CODE_REVISION" \
+    > "$PRIVATE_ROOT/unreviewed-validation.log" 2>&1; then
+  printf '%s\n' "Unreviewed local warning unexpectedly validated." >&2
+  exit 1
+fi
+UNREVIEWED_REJECTED=true
+mysql_exec "$PRIMARY_DATABASE" --execute="
+  UPDATE portal_migration_validation_runs SET reviewed_by='local-rehearsal-reviewer',accepted_at=UTC_TIMESTAMP()
+  WHERE canonical_release_id=$CANDIDATE_RELEASE_ID AND baseline_snapshot_id=$BASELINE_SNAPSHOT_ID
+    AND result_status='warn' AND reviewed_by IS NULL;" > "$PRIVATE_ROOT/reviewer-acceptance.log" 2>&1
+run_release_python abbott_release_operator.py validate --release-id "$CANDIDATE_RELEASE_ID" \
+  --date-from "$FIXTURE_DATE" --date-to "$FIXTURE_DATE" --code-revision "$CODE_REVISION" \
+  > "$PRIVATE_ROOT/validation.log" 2>&1
+run_release_python abbott_release_operator.py activate --release-id "$CANDIDATE_RELEASE_ID" \
+  --expected-active-release-id "$PREDECESSOR_RELEASE_ID" > "$PRIVATE_ROOT/activation.log" 2>&1
+STALE_CAS_REJECTED=false
+if run_release_python abbott_release_operator.py activate --release-id "$CANDIDATE_RELEASE_ID" \
+    --expected-active-release-id "$PREDECESSOR_RELEASE_ID" > "$PRIVATE_ROOT/stale-cas.log" 2>&1; then
+  printf '%s\n' "Stale local compare-and-swap unexpectedly succeeded." >&2
+  exit 1
+fi
+STALE_CAS_REJECTED=true
+run_release_python abbott_release_operator.py rollback --from-release-id "$CANDIDATE_RELEASE_ID" \
+  --to-release-id "$PREDECESSOR_RELEASE_ID" > "$PRIVATE_ROOT/rollback.log" 2>&1
+
+LIFECYCLE_STATE="$(mysql_exec "$PRIMARY_DATABASE" --execute="
+  SELECT active.canonical_release_id,predecessor.release_status,candidate.id,candidate.release_status
+  FROM portal_active_data_releases AS active
+  JOIN portal_data_releases AS predecessor ON predecessor.id=$PREDECESSOR_RELEASE_ID
+  JOIN portal_data_releases AS candidate ON candidate.id=$CANDIDATE_RELEASE_ID
+  WHERE active.dataset_key='abbott' /*rehearsal:lifecycle-summary*/;")"
+IFS=$'\t' read -r ACTIVE_RELEASE_ID PREDECESSOR_STATUS FINAL_CANDIDATE_ID CANDIDATE_STATUS <<< "$LIFECYCLE_STATE"
+[[ "$ACTIVE_RELEASE_ID" == "$PREDECESSOR_RELEASE_ID" && "$PREDECESSOR_STATUS" == active && "$FINAL_CANDIDATE_ID" == "$CANDIDATE_RELEASE_ID" && "$CANDIDATE_STATUS" == retired ]] || {
+  printf '%s\n' "Local rollback did not restore the predecessor." >&2; exit 1;
+}
+AMBIGUITY_AGGREGATES="$(mysql_exec "$PRIMARY_DATABASE" --execute="
+  SELECT COUNT(*),SUM(resolution_status='unique'),SUM(resolution_status='identical_collapsed'),SUM(resolution_status='ambiguous')
+  FROM portal_content_lookup_projection WHERE canonical_release_id=$CANDIDATE_RELEASE_ID
+  /*rehearsal:ambiguity-summary*/;")"
+MYSQL_VERSION="$(mysql_exec --execute='SELECT VERSION();')"
+python3 - "$EVIDENCE_STAGE/lifecycle-summary.json" "$IMAGE_DIGEST" "$MYSQL_VERSION" "$SCHEMA_SIGNATURE" "$GRANT_SIGNATURE" \
+  "$INCOMPLETE_REJECTED" "$UNREVIEWED_REJECTED" "$STALE_CAS_REJECTED" "$AMBIGUITY_AGGREGATES" <<'PY'
+import json, pathlib, sys
+ambiguity = [int(value) for value in sys.argv[9].split("\t")]
+summary = {
+    "mode": "lifecycle", "image_digest": sys.argv[2], "mysql_version": sys.argv[3],
+    "schema_signature_sha256": sys.argv[4], "grant_signature_sha256": sys.argv[5],
+    "incomplete_candidate_rejected": sys.argv[6] == "true",
+    "unreviewed_warning_rejected": sys.argv[7] == "true",
+    "warning_reviewed_by": "local-rehearsal-reviewer", "validation_succeeded": True,
+    "activation_succeeded": True, "stale_cas_rejected": sys.argv[8] == "true",
+    "rollback_restored_predecessor": True,
+    "ambiguity_aggregates": dict(zip(("total", "unique", "identical_collapsed", "ambiguous"), ambiguity)),
+    "cleanup_default": True,
+}
+pathlib.Path(sys.argv[1]).write_text(json.dumps(summary, sort_keys=True, indent=2) + "\n", encoding="utf-8")
+PY
+chmod 600 "$EVIDENCE_STAGE/lifecycle-summary.json"
+mv "$EVIDENCE_STAGE/lifecycle-summary.json" "$EVIDENCE/lifecycle-summary.json"
+printf '%s\n' "Abbott lifecycle rehearsal completed; sanitized evidence was written."
