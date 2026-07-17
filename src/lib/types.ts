@@ -801,6 +801,19 @@ export interface ZarukuGoogleSearchConsolePageRow {
   is_partial_week: boolean;
 }
 
+export interface ZarukuGoogleSearchConsoleCountryRow {
+  week: string;
+  country_code: string;
+  device: string;
+  impressions: number;
+  clicks: number;
+  ctr: number | null;
+  average_position: number | null;
+  week_from: string;
+  week_to: string;
+  is_partial_week: boolean;
+}
+
 export interface ZarukuGoogleSearchConsoleSummaryRow {
   week: string;
   device: string;
@@ -820,12 +833,14 @@ export interface ZarukuGoogleSearchConsoleData {
   data_availability: {
     queries: boolean;
     pages: boolean;
+    countries: boolean;
   };
   weeks: string[];
   latest_week: string | null;
   summary: ZarukuGoogleSearchConsoleSummaryRow[];
   queries: ZarukuGoogleSearchConsoleQueryRow[];
   pages: ZarukuGoogleSearchConsolePageRow[];
+  countries: ZarukuGoogleSearchConsoleCountryRow[];
 }
 
 export interface ZarukuAiVisibilityRow {

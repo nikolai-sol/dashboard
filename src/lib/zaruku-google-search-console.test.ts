@@ -3,6 +3,7 @@ import test from "node:test";
 import {
   buildGoogleSearchConsoleAccountQueries,
   loadZarukuGoogleSearchConsoleData,
+  normalizeGscCountryRow,
   normalizeGscPageRow,
   normalizeGscQueryRow,
   normalizeGscSummaryRow,
@@ -13,10 +14,12 @@ test("buildGoogleSearchConsoleAccountQueries scopes canonical GSC rows by proper
 
   assert.match(queries.queries.sql, /canonical_fact_gsc_queries_daily/);
   assert.match(queries.pages.sql, /canonical_fact_gsc_pages_daily/);
+  assert.match(queries.countries.sql, /canonical_fact_gsc_countries_daily/);
   assert.match(queries.summary.sql, /canonical_fact_gsc_summary_daily/);
   assert.match(queries.queries.sql, /YEARWEEK\(report_date, 3\)[\s\S]*IN \(\?\)/);
   assert.deepEqual(queries.queries.params, ["https://zaruku.ru/", "2026-W28"]);
   assert.deepEqual(queries.pages.params, ["https://zaruku.ru/", "2026-W28"]);
+  assert.deepEqual(queries.countries.params, ["https://zaruku.ru/", "2026-W28"]);
   assert.deepEqual(queries.summary.params, ["https://zaruku.ru/", "2026-W28"]);
 });
 
@@ -109,9 +112,39 @@ test("normalizeGscSummaryRow preserves daily summary week coverage", () => {
   );
 });
 
+test("normalizeGscCountryRow preserves country split facts", () => {
+  assert.deepEqual(
+    normalizeGscCountryRow({
+      week_key: "2026-W28",
+      country_code: "RUS",
+      device_type: "MOBILE",
+      impressions: "220",
+      clicks: "11",
+      ctr: "5.000000",
+      average_position: "6.75",
+      week_from: "2026-07-06",
+      week_to: "2026-07-12",
+      is_partial_week: 0,
+    }),
+    {
+      week: "2026-W28",
+      country_code: "RUS",
+      device: "MOBILE",
+      impressions: 220,
+      clicks: 11,
+      ctr: 5,
+      average_position: 6.75,
+      week_from: "2026-07-06",
+      week_to: "2026-07-12",
+      is_partial_week: false,
+    },
+  );
+});
+
 test("loadZarukuGoogleSearchConsoleData is partial when one canonical table is unavailable", async () => {
   const data = await loadZarukuGoogleSearchConsoleData(["https://zaruku.ru/"], ["2026-W28"], async (query) => {
     if (query.sql.includes("canonical_fact_gsc_pages_daily")) throw new Error("missing table");
+    if (query.sql.includes("canonical_fact_gsc_countries_daily")) return [];
     if (query.sql.includes("canonical_fact_gsc_summary_daily")) {
       return [
         {
@@ -145,6 +178,7 @@ test("loadZarukuGoogleSearchConsoleData is partial when one canonical table is u
   assert.equal(data.status, "partial");
   assert.equal(data.queries.length, 1);
   assert.equal(data.pages.length, 0);
+  assert.equal(data.countries.length, 0);
   assert.equal(data.summary.length, 1);
   assert.match(data.error ?? "", /pages/);
 });
@@ -160,5 +194,6 @@ test("loadZarukuGoogleSearchConsoleData does not fallback to latest week when se
   assert.equal(data.latest_week, null);
   assert.deepEqual(data.queries, []);
   assert.deepEqual(data.pages, []);
+  assert.deepEqual(data.countries, []);
   assert.deepEqual(data.summary, []);
 });

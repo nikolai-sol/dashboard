@@ -29,6 +29,7 @@ import {
 } from "lucide-react";
 import ZarukuSeoWeekToolbar from "@/components/ZarukuSeoWeekToolbar";
 import type {
+  ZarukuGoogleSearchConsoleCountryRow,
   ZarukuGoogleSearchConsolePageRow,
   ZarukuGoogleSearchConsoleQueryRow,
   ZarukuGoogleSearchConsoleSummaryRow,
@@ -70,6 +71,7 @@ import {
   resolveRowsForWeekOrLatest,
   SearchConsoleKpiRow,
   summarizeWebmasterKpis,
+  topGscCountries,
   topGscPages,
   topGscQueries,
   topWebmasterPages,
@@ -559,6 +561,48 @@ function SearchConsolePageTable({
   );
 }
 
+function SearchConsoleCountryTable({
+  rows,
+  locale,
+}: {
+  rows: ZarukuGoogleSearchConsoleCountryRow[];
+  locale: string;
+}) {
+  return (
+    <div className="max-h-[24rem] overflow-auto rounded-md border border-slate-100">
+      <table className="w-full min-w-[680px] text-sm">
+        <thead className="sticky top-0 z-10 bg-slate-50 text-left text-xs text-slate-400 shadow-[0_1px_0_0_rgb(241_245_249)]">
+          <tr>
+            <th className="px-3 py-2.5 font-medium">Страна</th>
+            <th className="px-3 py-2.5 font-medium">Устройство</th>
+            <th className="px-3 py-2.5 text-right font-medium">Показы</th>
+            <th className="px-3 py-2.5 text-right font-medium">Клики</th>
+            <th className="px-3 py-2.5 text-right font-medium">CTR</th>
+            <th className="px-3 py-2.5 text-right font-medium">Позиция</th>
+          </tr>
+        </thead>
+        <tbody className="divide-y divide-slate-100">
+          {rows.map((row) => (
+            <tr key={`${row.week}-${row.country_code}-${row.device}`} className="hover:bg-slate-50/70">
+              <td className="px-3 py-2.5 font-medium text-slate-700">{row.country_code}</td>
+              <td className="px-3 py-2.5 text-slate-500">{row.device}</td>
+              <td className="whitespace-nowrap px-3 py-2.5 text-right text-slate-600">{formatNumber(row.impressions, locale)}</td>
+              <td className="whitespace-nowrap px-3 py-2.5 text-right text-slate-600">{formatNumber(row.clicks, locale)}</td>
+              <td className="whitespace-nowrap px-3 py-2.5 text-right text-slate-500">{formatPercent(row.ctr, locale, 2)}</td>
+              <td className="whitespace-nowrap px-3 py-2.5 text-right text-slate-500">{formatDecimal(row.average_position, locale, 1)}</td>
+            </tr>
+          ))}
+          {rows.length === 0 ? (
+            <tr>
+              <td colSpan={6} className="px-3 py-8 text-center text-sm text-slate-500">Country split из GSC пока пустой для выбранной недели.</td>
+            </tr>
+          ) : null}
+        </tbody>
+      </table>
+    </div>
+  );
+}
+
 function WebmasterQueryTable({ rows, locale }: { rows: ZarukuYandexWebmasterQueryRow[]; locale: string }) {
   return <SearchConsoleQueryTable rows={rows} locale={locale} emptyLabel="Нет Webmaster-запросов для выбранной недели." />;
 }
@@ -803,15 +847,18 @@ function SeoTab({ data, locale, primaryWeek, comparisonWeek }: Props & { primary
   const gscSummarySelection = resolveRowsForWeek(data.gsc.summary, gscWeek, data.gsc.latest_week);
   const gscQuerySelection = resolveRowsForWeekOrLatest(data.gsc.queries, gscWeek, data.gsc.latest_week);
   const gscPageSelection = resolveRowsForWeekOrLatest(data.gsc.pages, gscWeek, data.gsc.latest_week);
+  const gscCountrySelection = resolveRowsForWeekOrLatest(data.gsc.countries, gscWeek, data.gsc.latest_week);
   const gscSummaryRows = gscSummarySelection.rows;
   const gscQueries = gscQuerySelection.rows;
   const gscPages = gscPageSelection.rows;
+  const gscCountries = gscCountrySelection.rows;
   const gscFactsSelection: { week: string | null; rows: GscKpiRow[] } = gscSummaryRows.length > 0
     ? gscSummarySelection
     : gscQuerySelection;
   const gscFactsMeta = buildWebmasterSelectionMeta(gscFactsSelection, gscWeek);
   const gscQueryMeta = buildWebmasterSelectionMeta(gscQuerySelection, gscWeek);
   const gscPageMeta = buildWebmasterSelectionMeta(gscPageSelection, gscWeek);
+  const gscCountryMeta = buildWebmasterSelectionMeta(gscCountrySelection, gscWeek);
   const webmasterWeek = primaryWeek ?? data.webmaster.latest_week;
   const webmasterSummarySelection = resolveRowsForWeek(data.webmaster.summary, webmasterWeek, data.webmaster.latest_week);
   const webmasterQuerySelection = resolveRowsForWeekOrLatest(data.webmaster.queries, webmasterWeek, data.webmaster.latest_week);
@@ -930,6 +977,17 @@ function SeoTab({ data, locale, primaryWeek, comparisonWeek }: Props & { primary
       </Panel>
       <Panel data={data} title="Посадочные страницы Google" source="gsc" layer="serp" right={<span className="text-xs text-slate-400">{gscPageMeta.periodLabel} · URL-факты</span>}>
         <SearchConsolePageTable rows={topGscPages(gscPages, 10)} locale={currentLocale} emptyLabel="URL-факты GSC пока пустые." />
+      </Panel>
+      <Panel data={data} title="Страны в Google Search Console" source="gsc" layer="serp" right={<span className="text-xs text-slate-400">{gscCountryMeta.periodLabel} · country/device</span>}>
+        <SearchConsoleCountryTable rows={topGscCountries(gscCountries, 10)} locale={currentLocale} />
+        <p className="mt-3 text-xs leading-relaxed text-slate-500">
+          Это country-разрез Google Search Console до клика. Он показывает спрос в поиске по странам и устройствам; это не вкладка «География» из Метрики после клика.
+        </p>
+        {gscCountryMeta.fallbackNote ? (
+          <div className="mt-3 rounded-md border border-amber-200 bg-amber-50 px-3 py-2 text-xs leading-relaxed text-amber-800">
+            {gscCountryMeta.fallbackNote.replaceAll("Яндекс Вебмастера", "Google Search Console")}
+          </div>
+        ) : null}
       </Panel>
       <Panel data={data} title="Поисковые фразы из Метрики" source="metrika" layer="onsite" right={<span className="text-xs text-slate-400">{phraseCoverage?.value ?? "покрытие —"}</span>}>
         <p className="mb-3 text-xs leading-relaxed text-slate-500">

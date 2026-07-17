@@ -66,12 +66,13 @@ test("buildSources exposes collection provenance and preserves explicit data-thr
     available: true,
     status: "available",
     error: null,
-    data_availability: { queries: true, pages: true },
+    data_availability: { queries: true, pages: true, countries: true },
     weeks: ["2026-W28"],
     latest_week: "2026-W28",
     summary: [],
     queries: [],
     pages: [],
+    countries: [],
   };
   const webmaster: ZarukuYandexWebmasterData = {
     available: true,

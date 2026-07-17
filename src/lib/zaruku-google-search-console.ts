@@ -2,6 +2,7 @@ import type { RowDataPacket } from "mysql2";
 import pool from "@/lib/db";
 import type {
   ZarukuGoogleSearchConsoleData,
+  ZarukuGoogleSearchConsoleCountryRow,
   ZarukuGoogleSearchConsolePageRow,
   ZarukuGoogleSearchConsoleQueryRow,
   ZarukuGoogleSearchConsoleSummaryRow,
@@ -40,6 +41,19 @@ type GscPageDbRow = {
 
 type GscSummaryDbRow = {
   week_key: string;
+  device_type: string;
+  impressions: number | string | null;
+  clicks: number | string | null;
+  ctr: number | string | null;
+  average_position: number | string | null;
+  week_from: string | Date;
+  week_to: string | Date;
+  is_partial_week?: number | string | boolean | null;
+};
+
+type GscCountryDbRow = {
+  week_key: string;
+  country_code: string;
   device_type: string;
   impressions: number | string | null;
   clicks: number | string | null;
@@ -141,18 +155,35 @@ export function normalizeGscSummaryRow(row: GscSummaryDbRow): ZarukuGoogleSearch
   };
 }
 
+export function normalizeGscCountryRow(row: GscCountryDbRow): ZarukuGoogleSearchConsoleCountryRow {
+  return {
+    week: String(row.week_key),
+    country_code: String(row.country_code).toUpperCase(),
+    device: String(row.device_type),
+    impressions: Math.round(asNumber(row.impressions)),
+    clicks: Math.round(asNumber(row.clicks)),
+    ctr: asNullableNumber(row.ctr),
+    average_position: asNullableNumber(row.average_position),
+    week_from: formatDate(row.week_from),
+    week_to: formatDate(row.week_to),
+    is_partial_week: asBoolean(row.is_partial_week),
+  };
+}
+
 const WEEK_KEY_SQL = "CONCAT(LEFT(YEARWEEK(report_date, 3), 4), '-W', RIGHT(YEARWEEK(report_date, 3), 2))";
 const WEEK_FROM_SQL = "DATE_SUB(report_date, INTERVAL WEEKDAY(report_date) DAY)";
 const WEEK_END_SQL = `DATE_ADD(${WEEK_FROM_SQL}, INTERVAL 6 DAY)`;
 
-export function buildGoogleSearchConsoleAccountQueries(propertyUrls: string[], weeks?: string[]): Record<"queries" | "pages" | "summary", SqlQuery> {
+export function buildGoogleSearchConsoleAccountQueries(propertyUrls: string[], weeks?: string[]): Record<"queries" | "pages" | "countries" | "summary", SqlQuery> {
   const normalizedPropertyUrls = normalizePropertyUrls(propertyUrls);
   const propertyScope = buildInClause(normalizedPropertyUrls);
   const queryParams = [...normalizedPropertyUrls];
   const pageParams = [...normalizedPropertyUrls];
+  const countryParams = [...normalizedPropertyUrls];
   const summaryParams = [...normalizedPropertyUrls];
   const queryWeekClause = weekClause(weeks, queryParams);
   const pageWeekClause = weekClause(weeks, pageParams);
+  const countryWeekClause = weekClause(weeks, countryParams);
   const summaryWeekClause = weekClause(weeks, summaryParams);
 
   return {
@@ -199,6 +230,27 @@ export function buildGoogleSearchConsoleAccountQueries(propertyUrls: string[], w
         ORDER BY week_key ASC, impressions DESC, clicks DESC, page_url ASC
       `,
       params: pageParams,
+    },
+    countries: {
+      sql: `
+        SELECT
+          ${WEEK_KEY_SQL} AS week_key,
+          country_code,
+          device_type,
+          SUM(impressions) AS impressions,
+          SUM(clicks) AS clicks,
+          CASE WHEN SUM(impressions) > 0 THEN SUM(clicks) / SUM(impressions) * 100 ELSE NULL END AS ctr,
+          ${weightedAveragePositionSql()} AS average_position,
+          MIN(${WEEK_FROM_SQL}) AS week_from,
+          MAX(report_date) AS week_to,
+          MAX(report_date) < MAX(${WEEK_END_SQL}) AS is_partial_week
+        FROM canonical_fact_gsc_countries_daily
+        WHERE property_url IN (${propertyScope})
+          ${countryWeekClause}
+        GROUP BY week_key, country_code, device_type
+        ORDER BY week_key ASC, impressions DESC, clicks DESC, country_code ASC
+      `,
+      params: countryParams,
     },
     summary: {
       sql: `
@@ -259,6 +311,7 @@ export async function loadZarukuGoogleSearchConsoleData(
   const results = await Promise.allSettled([
     executeQuery(queries.queries),
     executeQuery(queries.pages),
+    executeQuery(queries.countries),
     executeQuery(queries.summary),
   ]);
   const errors: string[] = [];
@@ -274,18 +327,24 @@ export async function loadZarukuGoogleSearchConsoleData(
     normalizeGscPageRow,
     errors,
   );
-  const summaryResult = normalizeSettledRows<GscSummaryDbRow, ZarukuGoogleSearchConsoleSummaryRow>(
+  const countryResult = normalizeSettledRows<GscCountryDbRow, ZarukuGoogleSearchConsoleCountryRow>(
     results[2],
+    "countries",
+    normalizeGscCountryRow,
+    errors,
+  );
+  const summaryResult = normalizeSettledRows<GscSummaryDbRow, ZarukuGoogleSearchConsoleSummaryRow>(
+    results[3],
     "summary",
     normalizeGscSummaryRow,
     errors,
   );
-  const successfulQueries = [queryResult.available, pageResult.available, summaryResult.available].filter(Boolean).length;
+  const successfulQueries = [queryResult.available, pageResult.available, countryResult.available, summaryResult.available].filter(Boolean).length;
   const weeksAvailable = [
-    ...new Set([...summaryResult.rows, ...queryResult.rows, ...pageResult.rows].map((row) => row.week)),
+    ...new Set([...summaryResult.rows, ...queryResult.rows, ...pageResult.rows, ...countryResult.rows].map((row) => row.week)),
   ].sort();
   const hasRows = weeksAvailable.length > 0;
-  const status = successfulQueries === 3 && errors.length === 0 && hasRows
+  const status = successfulQueries === 4 && errors.length === 0 && hasRows
     ? "available"
     : successfulQueries > 0 && hasRows
       ? "partial"
@@ -298,12 +357,14 @@ export async function loadZarukuGoogleSearchConsoleData(
     data_availability: {
       queries: queryResult.available,
       pages: pageResult.available,
+      countries: countryResult.available,
     },
     weeks: weeksAvailable,
     latest_week: weeksAvailable.at(-1) ?? null,
     summary: summaryResult.rows,
     queries: queryResult.rows,
     pages: pageResult.rows,
+    countries: countryResult.rows,
   };
 }
 

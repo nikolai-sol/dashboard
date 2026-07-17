@@ -1,5 +1,6 @@
 import type {
   ZarukuAiVisibilityRow,
+  ZarukuGoogleSearchConsoleCountryRow,
   ZarukuGoogleSearchConsolePageRow,
   ZarukuGoogleSearchConsoleQueryRow,
   ZarukuGoogleSearchConsoleSummaryRow,
@@ -85,6 +86,12 @@ export function topGscQueries(rows: ZarukuGoogleSearchConsoleQueryRow[], limit =
 export function topGscPages(rows: ZarukuGoogleSearchConsolePageRow[], limit = 10) {
   return [...rows]
     .sort((left, right) => right.impressions - left.impressions || right.clicks - left.clicks || left.url.localeCompare(right.url))
+    .slice(0, limit);
+}
+
+export function topGscCountries(rows: ZarukuGoogleSearchConsoleCountryRow[], limit = 10) {
+  return [...rows]
+    .sort((left, right) => right.impressions - left.impressions || right.clicks - left.clicks || left.country_code.localeCompare(right.country_code))
     .slice(0, limit);
 }
 
