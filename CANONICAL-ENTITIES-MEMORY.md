@@ -234,7 +234,34 @@ Operational notes:
 - an empty current query set still deletes stale query rows and writes the summary
 - any failure before commit rolls back both the delete and the writes, so a partial snapshot is not retained
 
-### 8. `canonical_collector_runs`
+### 8. `canonical_fact_gsc_queries_daily`, `canonical_fact_gsc_pages_daily`, and `canonical_fact_gsc_summary_daily`
+
+Purpose:
+- daily Google Search Console Search Analytics snapshots for organic Google SERP facts
+
+Source key:
+- `google_search_console`
+
+Default property:
+- `https://zaruku.ru/`
+
+Current grains:
+- query rows: `source_key + property_url + report_date + device_type + query_hash`
+- page rows: `source_key + property_url + report_date + device_type + page_hash`
+- summary rows: `source_key + property_url + report_date + device_type`
+
+Operational notes:
+- collector file: `fetch_google_search_console_canonical.py`
+- uses Google OAuth refresh-token flow with read-only scope `https://www.googleapis.com/auth/webmasters.readonly`
+- required env keys are `GSC_CLIENT_ID`, `GSC_CLIENT_SECRET`, `GSC_REFRESH_TOKEN`, and optionally `GSC_SITE_URL`; do not store credential values in memory docs
+- daily reruns are transactional per `source_key + property_url + report_date + device_type`
+- each replacement deletes prior query/page rows, inserts the complete current query/page snapshots, and upserts the matching summary row in one commit
+- empty current query/page sets still delete stale query/page rows and write a summary row
+- any failure before commit rolls back deletes and writes, so partial snapshots are not retained
+- rowLimit-sized GSC API responses are refused before replacement because they may be incomplete until explicit pagination is added
+- as of this note, the collector is implemented in the repository but not production-deployed, not cron-scheduled, and not backfilled
+
+### 9. `canonical_collector_runs`
 
 Purpose:
 - canonical ingestion log and run lineage table

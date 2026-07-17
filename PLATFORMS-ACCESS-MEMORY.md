@@ -161,8 +161,16 @@ Important current state:
 
 ### Google Search Console
 
-- Google Search Console automation is absent: there is no GSC collector or cron owned by this repository
-- treat GSC as a pending source, not as deployed or backfilled
+- source key: `google_search_console`
+- default property: `https://zaruku.ru/`
+- collector: `/Users/nafanya/ReportingDash/fetch_google_search_console_canonical.py`
+- OAuth uses Google refresh-token flow with read-only scope `https://www.googleapis.com/auth/webmasters.readonly`
+- local auth was validated through the existing Telegatask callback and ReportingDash `.env` can use `GSC_CLIENT_ID`, `GSC_CLIENT_SECRET`, `GSC_REFRESH_TOKEN`, and `GSC_SITE_URL`; never write credential values into memory docs
+- canonical daily tables are `canonical_fact_gsc_queries_daily`, `canonical_fact_gsc_pages_daily`, and `canonical_fact_gsc_summary_daily`
+- daily replacement grain is `source_key + property_url + report_date + device_type`; query/page snapshots are replaced transactionally with their summary row
+- the collector refuses rowLimit-sized Search Analytics responses before deleting existing rows, because they may be incomplete until pagination is added
+- current status: implemented in repository only; not production-deployed, not cron-scheduled, and not backfilled
+- dashboard should still treat GSC as pending/partial until canonical tables exist and contain rows
 
 ## Platform-specific access notes
 
