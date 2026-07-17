@@ -146,6 +146,36 @@ class GoogleSearchConsoleCanonicalTests(unittest.TestCase):
         self.assertEqual(rows[0]["position"], 8.25)
         self.assertEqual(rows[0]["page_hash"], "2c730850c8e4e79db6769114c41a40b800373cb02abcab1ec32921dadf7fbf65")
 
+    def test_normalize_country_device_rows_preserves_iso_alpha_3_country_code(self):
+        from fetch_google_search_console_canonical import normalize_search_analytics_rows
+
+        rows = normalize_search_analytics_rows(
+            {
+                "rows": [
+                    {
+                        "keys": ["rus", "MOBILE"],
+                        "clicks": 11,
+                        "impressions": 220,
+                        "ctr": 0.05,
+                        "position": 6.75,
+                    }
+                ]
+            },
+            ["country", "device"],
+            source_key="google_search_console",
+            property_url="https://zaruku.ru/",
+            report_date="2026-07-13",
+            run_id=42,
+        )
+
+        self.assertEqual(len(rows), 1)
+        self.assertEqual(rows[0]["country_code"], "RUS")
+        self.assertEqual(rows[0]["device_type"], "MOBILE")
+        self.assertEqual(rows[0]["impressions"], 220)
+        self.assertEqual(rows[0]["clicks"], 11)
+        self.assertEqual(rows[0]["ctr"], 5.0)
+        self.assertEqual(rows[0]["position"], 6.75)
+
     def test_normalize_summary_rows_supports_empty_device_snapshot(self):
         from fetch_google_search_console_canonical import normalize_summary_rows
 
@@ -205,6 +235,8 @@ class GoogleSearchConsoleCanonicalTests(unittest.TestCase):
 
     def test_replace_gsc_day_rows_deletes_both_snapshots_then_writes_and_commits_once(self):
         from fetch_google_search_console_canonical import (
+            GSC_COUNTRY_SNAPSHOT_DELETE_SQL,
+            GSC_COUNTRY_UPSERT_SQL,
             GSC_PAGE_SNAPSHOT_DELETE_SQL,
             GSC_PAGE_UPSERT_SQL,
             GSC_QUERY_SNAPSHOT_DELETE_SQL,
@@ -214,11 +246,18 @@ class GoogleSearchConsoleCanonicalTests(unittest.TestCase):
         )
 
         connection = FakeConnection()
+        country_rows = [
+            {
+                **self.summary_row,
+                "country_code": "RUS",
+                "position": 3.5,
+            }
+        ]
         with patch(
             "fetch_google_search_console_canonical.get_db_connection",
             return_value=connection,
         ):
-            rows_written = replace_gsc_day_rows(self.query_rows, self.page_rows, self.summary_row)
+            rows_written = replace_gsc_day_rows(self.query_rows, self.page_rows, country_rows, self.summary_row)
 
         identity = (
             self.summary_row["source_key"],
@@ -226,7 +265,7 @@ class GoogleSearchConsoleCanonicalTests(unittest.TestCase):
             self.summary_row["report_date"],
             self.summary_row["device_type"],
         )
-        self.assertEqual(rows_written, 3)
+        self.assertEqual(rows_written, 4)
         self.assertEqual(connection.commit_calls, 1)
         self.assertEqual(connection.rollback_calls, 0)
         self.assertEqual(
@@ -235,8 +274,10 @@ class GoogleSearchConsoleCanonicalTests(unittest.TestCase):
                 ("cursor",),
                 ("execute", GSC_QUERY_SNAPSHOT_DELETE_SQL, identity),
                 ("execute", GSC_PAGE_SNAPSHOT_DELETE_SQL, identity),
+                ("execute", GSC_COUNTRY_SNAPSHOT_DELETE_SQL, identity),
                 ("executemany", GSC_QUERY_UPSERT_SQL, self.query_rows),
                 ("executemany", GSC_PAGE_UPSERT_SQL, self.page_rows),
+                ("executemany", GSC_COUNTRY_UPSERT_SQL, country_rows),
                 ("execute", GSC_SUMMARY_UPSERT_SQL, self.summary_row),
                 ("commit",),
                 ("cursor_close",),
@@ -246,6 +287,7 @@ class GoogleSearchConsoleCanonicalTests(unittest.TestCase):
 
     def test_replace_gsc_day_rows_supports_empty_query_and_page_lists(self):
         from fetch_google_search_console_canonical import (
+            GSC_COUNTRY_SNAPSHOT_DELETE_SQL,
             GSC_PAGE_SNAPSHOT_DELETE_SQL,
             GSC_QUERY_SNAPSHOT_DELETE_SQL,
             GSC_SUMMARY_UPSERT_SQL,
@@ -274,6 +316,7 @@ class GoogleSearchConsoleCanonicalTests(unittest.TestCase):
                 ("cursor",),
                 ("execute", GSC_QUERY_SNAPSHOT_DELETE_SQL, identity),
                 ("execute", GSC_PAGE_SNAPSHOT_DELETE_SQL, identity),
+                ("execute", GSC_COUNTRY_SNAPSHOT_DELETE_SQL, identity),
                 ("execute", GSC_SUMMARY_UPSERT_SQL, self.summary_row),
                 ("commit",),
                 ("cursor_close",),
@@ -339,10 +382,11 @@ class GoogleSearchConsoleCanonicalTests(unittest.TestCase):
                 fetch_search_analytics("access-token", "https://zaruku.ru/", "2026-07-13", ["query"])
 
     def test_sql_targets_daily_gsc_canonical_tables(self):
-        from fetch_google_search_console_canonical import GSC_PAGE_UPSERT_SQL, GSC_QUERY_UPSERT_SQL, GSC_SUMMARY_UPSERT_SQL
+        from fetch_google_search_console_canonical import GSC_COUNTRY_UPSERT_SQL, GSC_PAGE_UPSERT_SQL, GSC_QUERY_UPSERT_SQL, GSC_SUMMARY_UPSERT_SQL
 
         self.assertIn("canonical_fact_gsc_queries_daily", GSC_QUERY_UPSERT_SQL)
         self.assertIn("canonical_fact_gsc_pages_daily", GSC_PAGE_UPSERT_SQL)
+        self.assertIn("canonical_fact_gsc_countries_daily", GSC_COUNTRY_UPSERT_SQL)
         self.assertIn("canonical_fact_gsc_summary_daily", GSC_SUMMARY_UPSERT_SQL)
 
     def test_collection_dates_respects_gsc_data_delay(self):

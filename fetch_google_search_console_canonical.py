@@ -110,6 +110,14 @@ WHERE source_key = %s
   AND device_type = %s
 """
 
+GSC_COUNTRY_SNAPSHOT_DELETE_SQL = """
+DELETE FROM canonical_fact_gsc_countries_daily
+WHERE source_key = %s
+  AND property_url = %s
+  AND report_date = %s
+  AND device_type = %s
+"""
+
 GSC_QUERY_UPSERT_SQL = """
 INSERT INTO canonical_fact_gsc_queries_daily (
     source_key, property_url, report_date, device_type,
@@ -143,6 +151,26 @@ INSERT INTO canonical_fact_gsc_pages_daily (
 )
 ON DUPLICATE KEY UPDATE
     page_url = VALUES(page_url),
+    impressions = VALUES(impressions),
+    clicks = VALUES(clicks),
+    ctr = VALUES(ctr),
+    average_position = VALUES(average_position),
+    raw_payload = VALUES(raw_payload),
+    ingestion_run_id = VALUES(ingestion_run_id),
+    updated_at = CURRENT_TIMESTAMP
+"""
+
+GSC_COUNTRY_UPSERT_SQL = """
+INSERT INTO canonical_fact_gsc_countries_daily (
+    source_key, property_url, report_date, device_type,
+    country_code, impressions, clicks, ctr,
+    average_position, raw_payload, ingestion_run_id
+) VALUES (
+    %(source_key)s, %(property_url)s, %(report_date)s, %(device_type)s,
+    %(country_code)s, %(impressions)s, %(clicks)s, %(ctr)s,
+    %(position)s, %(raw_payload)s, %(ingestion_run_id)s
+)
+ON DUPLICATE KEY UPDATE
     impressions = VALUES(impressions),
     clicks = VALUES(clicks),
     ctr = VALUES(ctr),
@@ -335,6 +363,11 @@ def normalize_search_analytics_rows(
             if not page:
                 continue
             rows.append({**base, "page": page, "page_hash": stable_hash(page)})
+        elif "country" in dimensions:
+            country_code = clean_text(mapped.get("country")).upper()
+            if not country_code:
+                continue
+            rows.append({**base, "country_code": country_code})
     return rows
 
 
@@ -533,7 +566,17 @@ def refresh_access_token() -> str:
     return str(token)
 
 
-def replace_gsc_day_rows(query_rows: list[dict], page_rows: list[dict], summary_row: dict) -> int:
+def replace_gsc_day_rows(
+    query_rows: list[dict],
+    page_rows: list[dict],
+    country_rows_or_summary: list[dict] | dict,
+    summary_row: dict | None = None,
+) -> int:
+    if summary_row is None:
+        country_rows: list[dict] = []
+        summary_row = country_rows_or_summary  # type: ignore[assignment]
+    else:
+        country_rows = country_rows_or_summary  # type: ignore[assignment]
     conn = get_db_connection()
     cur = None
     identity = (
@@ -546,13 +589,16 @@ def replace_gsc_day_rows(query_rows: list[dict], page_rows: list[dict], summary_
         cur = conn.cursor()
         cur.execute(GSC_QUERY_SNAPSHOT_DELETE_SQL, identity)
         cur.execute(GSC_PAGE_SNAPSHOT_DELETE_SQL, identity)
+        cur.execute(GSC_COUNTRY_SNAPSHOT_DELETE_SQL, identity)
         if query_rows:
             cur.executemany(GSC_QUERY_UPSERT_SQL, query_rows)
         if page_rows:
             cur.executemany(GSC_PAGE_UPSERT_SQL, page_rows)
+        if country_rows:
+            cur.executemany(GSC_COUNTRY_UPSERT_SQL, country_rows)
         cur.execute(GSC_SUMMARY_UPSERT_SQL, summary_row)
         conn.commit()
-        return len(query_rows) + len(page_rows) + 1
+        return len(query_rows) + len(page_rows) + len(country_rows) + 1
     except Exception:
         conn.rollback()
         raise
@@ -679,6 +725,7 @@ def collect(args) -> dict[str, Any]:
             for day in dates:
                 query_payload = fetch_search_analytics(access_token, gsc_property.property_url, day, ["query", "device"], run_id=run_id)
                 page_payload = fetch_search_analytics(access_token, gsc_property.property_url, day, ["page", "device"], run_id=run_id)
+                country_payload = fetch_search_analytics(access_token, gsc_property.property_url, day, ["country", "device"], run_id=run_id)
                 summary_payload = fetch_search_analytics(access_token, gsc_property.property_url, day, ["device"], run_id=run_id)
                 query_rows = normalize_search_analytics_rows(
                     query_payload,
@@ -696,6 +743,14 @@ def collect(args) -> dict[str, Any]:
                     report_date=day,
                     run_id=run_id,
                 )
+                country_rows = normalize_search_analytics_rows(
+                    country_payload,
+                    ["country", "device"],
+                    source_key=SOURCE_KEY,
+                    property_url=gsc_property.property_url,
+                    report_date=day,
+                    run_id=run_id,
+                )
                 summary_rows = normalize_summary_rows(
                     summary_payload,
                     source_key=SOURCE_KEY,
@@ -706,12 +761,19 @@ def collect(args) -> dict[str, Any]:
                 )
                 query_by_device = _rows_by_device(query_rows)
                 page_by_device = _rows_by_device(page_rows)
-                rows_read += len(query_payload.get("rows") or []) + len(page_payload.get("rows") or []) + len(summary_payload.get("rows") or [])
+                country_by_device = _rows_by_device(country_rows)
+                rows_read += (
+                    len(query_payload.get("rows") or [])
+                    + len(page_payload.get("rows") or [])
+                    + len(country_payload.get("rows") or [])
+                    + len(summary_payload.get("rows") or [])
+                )
                 for summary_row in summary_rows:
                     device = summary_row["device_type"]
                     rows_written += replace_gsc_day_rows(
                         query_by_device.get(device, []),
                         page_by_device.get(device, []),
+                        country_by_device.get(device, []),
                         summary_row,
                     )
                 log_collector_event(
@@ -719,7 +781,12 @@ def collect(args) -> dict[str, Any]:
                     "info",
                     "gsc_day_collected",
                     f"Collected GSC daily facts for {gsc_property.property_url} {day}",
-                    {"query_rows": len(query_rows), "page_rows": len(page_rows), "summary_rows": len(summary_rows)},
+                    {
+                        "query_rows": len(query_rows),
+                        "page_rows": len(page_rows),
+                        "country_rows": len(country_rows),
+                        "summary_rows": len(summary_rows),
+                    },
                 )
         upsert_accounts(account_rows)
         finish_run(run_id, "success", rows_read, rows_written, rows_written)
