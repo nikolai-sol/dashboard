@@ -341,7 +341,7 @@ def normalize_summary_rows(
     run_id: int,
     devices: list[str] | None = None,
 ) -> list[dict]:
-    rows = []
+    rows_by_device: dict[str, dict] = {}
     for raw_row in payload.get("rows") or []:
         base = _base_row(
             raw_row,
@@ -352,40 +352,40 @@ def normalize_summary_rows(
             run_id=run_id,
             default_device="ALL",
         )
-        rows.append(
-            {
-                "source_key": base["source_key"],
-                "property_url": base["property_url"],
-                "report_date": base["report_date"],
-                "device_type": base["device_type"],
-                "impressions": base["impressions"],
-                "clicks": base["clicks"],
-                "ctr": base["ctr"],
-                "average_position": base["position"],
-                "raw_payload": base["raw_payload"],
-                "ingestion_run_id": base["ingestion_run_id"],
-            }
-        )
-    if rows or not devices:
-        return rows
-    return [
-        {
+        rows_by_device[base["device_type"]] = {
+            "source_key": base["source_key"],
+            "property_url": base["property_url"],
+            "report_date": base["report_date"],
+            "device_type": base["device_type"],
+            "impressions": base["impressions"],
+            "clicks": base["clicks"],
+            "ctr": base["ctr"],
+            "average_position": base["position"],
+            "raw_payload": base["raw_payload"],
+            "ingestion_run_id": base["ingestion_run_id"],
+        }
+    if not devices:
+        return list(rows_by_device.values())
+
+    result = []
+    for device in devices:
+        normalized_device = device.upper()
+        result.append(rows_by_device.get(normalized_device) or {
             "source_key": source_key,
             "property_url": property_url,
             "report_date": report_date,
-            "device_type": device.upper(),
+            "device_type": normalized_device,
             "impressions": 0,
             "clicks": 0,
             "ctr": None,
             "average_position": None,
             "raw_payload": json.dumps(
-                {"derived_from": "empty_search_analytics_device_snapshot", "device_type": device.upper()},
+                {"derived_from": "empty_search_analytics_device_snapshot", "device_type": normalized_device},
                 ensure_ascii=False,
             ),
             "ingestion_run_id": run_id,
-        }
-        for device in devices
-    ]
+        })
+    return result
 
 
 def request_with_retry(

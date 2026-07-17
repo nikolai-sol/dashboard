@@ -175,6 +175,33 @@ class GoogleSearchConsoleCanonicalTests(unittest.TestCase):
             ],
         )
 
+    def test_normalize_summary_rows_emits_zero_rows_for_missing_configured_devices(self):
+        from fetch_google_search_console_canonical import normalize_summary_rows
+
+        rows = normalize_summary_rows(
+            {
+                "rows": [
+                    {
+                        "keys": ["DESKTOP"],
+                        "clicks": 7,
+                        "impressions": 100,
+                        "ctr": 0.07,
+                        "position": 3.5,
+                    }
+                ]
+            },
+            source_key="google_search_console",
+            property_url="https://zaruku.ru/",
+            report_date="2026-07-13",
+            run_id=42,
+            devices=["DESKTOP", "MOBILE"],
+        )
+
+        self.assertEqual([row["device_type"] for row in rows], ["DESKTOP", "MOBILE"])
+        self.assertEqual(rows[0]["impressions"], 100)
+        self.assertEqual(rows[1]["impressions"], 0)
+        self.assertIsNone(rows[1]["ctr"])
+
     def test_replace_gsc_day_rows_deletes_both_snapshots_then_writes_and_commits_once(self):
         from fetch_google_search_console_canonical import (
             GSC_PAGE_SNAPSHOT_DELETE_SQL,
