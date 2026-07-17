@@ -130,7 +130,7 @@ function workbookBuffer(sheets: Record<string, Array<Record<string, unknown>>>):
   return Buffer.from(XLSX.write(workbook, { type: "buffer", bookType: "xlsx" }));
 }
 
-test("Workbook XLSX preserves access and active state and rejects ambiguous lookup keys", () => {
+test("Workbook XLSX preserves access, active state, and repeated lookup rows", () => {
   const parsed = parseWorkbookXlsx(workbookBuffer({
     "Статьи": [
       { "Название": "Active guide", "Символьный код": "active-guide", "Доступ": "Врачи", "Активность": "Да" },
@@ -142,22 +142,12 @@ test("Workbook XLSX preserves access and active state and rejects ambiguous look
     [{ access: "Врачи", isActive: true }, { access: "Все", isActive: false }],
   );
 
-  assert.throws(
-    () => parseWorkbookXlsx(workbookBuffer({
-      "Статьи": [{ "Название": "Shared title", "Символьный код": "article" }],
-      "Видео": [{ "Название": "Shared title", "Символьный код": "video" }],
-    })),
-    /duplicate.*title/i,
-  );
-  assert.throws(
-    () => parseWorkbookXlsx(workbookBuffer({
-      "Статьи": [
-        { "Название": "One", "Символьный код": "shared-slug" },
-        { "Название": "Two", "Символьный код": "shared-slug" },
-      ],
-    })),
-    /duplicate.*slug/i,
-  );
+  const repeated = parseWorkbookXlsx(workbookBuffer({
+    "Статьи": [{ "Название": "Shared title", "Символьный код": "shared-slug" }],
+    "Видео": [{ "Название": "Shared title", "Символьный код": "shared-slug" }],
+  }));
+  assert.equal(repeated.rows.length, 2);
+  assert.deepEqual(repeated.rows.map((row) => row.sourceSheet), ["Статьи", "Видео"]);
 });
 
 test("prepared sources use store source kinds and persist XLSX metadata plus both Bitrix page projections", async () => {

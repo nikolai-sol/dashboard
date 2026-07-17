@@ -5,7 +5,7 @@ import { chmod, mkdir, open, readFile, rename, stat, unlink } from "node:fs/prom
 import path from "node:path";
 import { pathToFileURL } from "node:url";
 import mysql from "mysql2/promise";
-import * as XLSX from "xlsx";
+import { parseAbbottWorkbookCatalog } from "../src/lib/abbott-workbook-catalog";
 
 const DATASET_KEY = "abbott";
 const PRIMARY_SCHEMA = "report_bd";
@@ -426,72 +426,7 @@ export function parseWorkbookJson(payload: unknown) {
   };
 }
 
-const CONTENT_SHEETS: Array<{
-  name: string;
-  materialType: string | null;
-  directionKey?: string;
-  accessKey?: string;
-  typeKey?: string;
-}> = [
-  { name: "pages", materialType: null, directionKey: "Направление", accessKey: "Доступ", typeKey: "Тип материала" },
-  { name: "Статьи", materialType: "Статьи", directionKey: "Направление", accessKey: "Доступ" },
-  { name: "Видео", materialType: "Видео", directionKey: "Направление", accessKey: "Доступ" },
-  { name: "Клинические случаи", materialType: "Клинические случаи", directionKey: "Направление", accessKey: "Доступ" },
-  { name: "Научно-образовательные брошюры", materialType: "Научно-образовательные брошюры", directionKey: "Направление", accessKey: "Доступ" },
-  { name: "Подкасты", materialType: "Подкасты", directionKey: "Направление" },
-  { name: "Калькуляторы", materialType: "Калькуляторы", directionKey: "Направление", accessKey: "Доступ" },
-  { name: "Проверить знания", materialType: "Проверить знания", directionKey: "Направление" },
-  { name: "Помощник фармацевта", materialType: "Помощник фармацевта" },
-  { name: "Алгоритмы фармацевтического кон", materialType: "Алгоритмы", directionKey: "Направление" },
-  { name: "Клинические рекомендации", materialType: "Клинические рекомендации", directionKey: "Направления" },
-  { name: "Таблицы", materialType: "Таблицы", directionKey: "Направление", accessKey: "Доступ" },
-];
-
-export function parseWorkbookXlsx(buffer: Buffer) {
-  const workbook = XLSX.read(buffer, { type: "buffer", raw: true });
-  const rows: Array<{
-    pageTitle: string;
-    materialType: string | null;
-    sourceSlug: string | null;
-    direction: string | null;
-    access: string | null;
-    isActive: boolean;
-    targetKeyFingerprint: string;
-  }> = [];
-  const fingerprints = new Set<string>();
-  const titleKeys = new Set<string>();
-  const titleAndTypeKeys = new Set<string>();
-  const slugKeys = new Set<string>();
-  for (const config of CONTENT_SHEETS) {
-    const worksheet = workbook.Sheets[config.name];
-    if (!worksheet) continue;
-    for (const row of XLSX.utils.sheet_to_json<Record<string, unknown>>(worksheet, { defval: "", raw: true })) {
-      const pageTitle = text(row["Название"]);
-      const sourceSlug = text(row["Символьный код"]) || null;
-      if (!pageTitle && !sourceSlug) continue;
-      if (!pageTitle) throw new Error(`Workbook content title is blank in ${config.name}`);
-      const materialType = text(config.typeKey ? row[config.typeKey] : config.materialType) || config.materialType;
-      const direction = text(config.directionKey ? row[config.directionKey] : "") || null;
-      const access = text(config.accessKey ? row[config.accessKey] : "") || null;
-      const activeLabel = text(row["Активность"]).toLocaleLowerCase("ru-RU");
-      let isActive = true;
-      if (["нет", "no", "false", "0"].includes(activeLabel)) isActive = false;
-      else if (activeLabel && !["да", "yes", "true", "1"].includes(activeLabel)) {
-        throw new Error(`Workbook content active state is invalid in ${config.name}`);
-      }
-      rejectDuplicate(titleKeys, pageTitle, "content title");
-      rejectDuplicate(titleAndTypeKeys, canonicalRowFingerprint([pageTitle, materialType]), "content title and type");
-      if (sourceSlug) rejectDuplicate(slugKeys, sourceSlug, "content slug");
-      const targetKeyFingerprint = canonicalRowFingerprint([config.name, pageTitle, materialType, sourceSlug, direction, access, isActive]);
-      rejectDuplicate(fingerprints, targetKeyFingerprint, "content source row");
-      rows.push({ pageTitle, materialType, sourceSlug, direction, access, isActive, targetKeyFingerprint });
-    }
-  }
-  if (rows.length === 0) throw new Error("Workbook XLSX has no content catalog rows");
-  const manifest = { source_kind: "abbott_workbook_catalog", content_count: rows.length, rejected_count: 0 };
-  assertSanitizedEvidence(manifest);
-  return { rows, manifest };
-}
+export const parseWorkbookXlsx = parseAbbottWorkbookCatalog;
 
 function assertCompleteManifest(payload: Record<string, unknown>, label: string): Record<string, unknown> {
   const manifest = payload.manifest;
