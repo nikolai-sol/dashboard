@@ -141,6 +141,38 @@ test "$(stat -c '%a' "$ABBOTT_OWNER_MYSQL_DEFAULTS_FILE")" = 600
 Do not run `cat`, `env`, `set`, `printenv`, or shell tracing in this procedure.
 Use a fresh shell with `set +x` if there is any doubt.
 
+## Local MySQL rehearsal checkpoint (before production Checkpoint 0)
+
+This local gate does not alter any production checkpoint. With approximately
+32 GiB of free host capacity and an 8.1 GiB MariaDB 10.11 source dump, the
+approved default is a streaming schema-only probe. Do not load source rows or
+attempt a capacity-sensitive full dump rehearsal. Prepare a private mode-`0700`
+input directory outside Git and every web root, install each application input
+into it with mode `0600`, then run:
+
+```bash
+ops/local/abbott_mysql_rehearsal.sh schema \
+  --inputs /tmp/abbott-rollout-rehearsal/inputs \
+  --dump /Users/nafanya/ReportingDash/abbott_reader_analytics_abbottpro_db_2026-05-29_11-14-33.sql \
+  --evidence /tmp/abbott-rollout-rehearsal/evidence
+```
+
+The harness pins the official `mysql:8.4.10` image, records its resolved digest,
+uses only container-local MySQL clients, applies all dashboard migrations in
+lexical order through `033` once, and repeats only `033` plus the private
+schema/role script. Acceptance requires identical sorted schema/index and grant
+signatures. The dump filter writes only DDL into a protected temporary file,
+loads that file only into `abbott_source_dump_20260529`, and records an aggregate
+table count and sanitized SQL error class.
+
+Review only `rehearsal-summary.json`, `schema-signature.sha256`,
+`grant-signature.sha256`, and `dump-schema-probe.txt` in the evidence directory.
+They contain no credentials, source paths, database rows, or connection values.
+The container, volume, generated accounts, credentials, filtered SQL, and raw
+client diagnostics are removed on exit. Setting
+`ABBOTT_REHEARSAL_PRESERVE_ON_FAILURE=1` preserves only the private local
+temporary directory for debugging; the container and volume are still removed.
+
 ## Database accounts, roles, and environment ownership
 
 Apply least privilege with four separate MySQL accounts. The schema SQL
