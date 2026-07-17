@@ -149,7 +149,21 @@ cleanup() {
 trap cleanup EXIT
 trap 'exit 130' INT TERM HUP
 
-PRIVATE_ROOT="$(mktemp -d "${TMPDIR:-/tmp}/abbott-mysql-rehearsal.XXXXXX")"
+PRIVATE_BASE="${ABBOTT_REHEARSAL_PRIVATE_BASE:-}"
+if [[ -z "$PRIVATE_BASE" ]]; then
+  if [[ "$(uname -s)" == Darwin ]]; then
+    PRIVATE_BASE="$(python3 - <<'PY'
+from pathlib import Path
+print(Path.home() / ".codex" / "tmp")
+PY
+)"
+  else
+    PRIVATE_BASE="${TMPDIR:-/tmp}"
+  fi
+fi
+[[ "$PRIVATE_BASE" = /* && ! -L "$PRIVATE_BASE" ]] || { printf '%s\n' "Protected rehearsal private base is invalid." >&2; exit 2; }
+install -d -m 700 "$PRIVATE_BASE"
+PRIVATE_ROOT="$(mktemp -d "$PRIVATE_BASE/abbott-mysql-rehearsal.XXXXXX")"
 EVIDENCE_STAGE="$(mktemp -d "$EVIDENCE/.abbott-evidence.XXXXXX")"
 chmod 700 "$EVIDENCE_STAGE"
 

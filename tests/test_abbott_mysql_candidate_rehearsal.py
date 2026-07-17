@@ -23,6 +23,10 @@ log = Path(os.environ["FAKE_REHEARSAL_LOG"])
 with log.open("a", encoding="utf-8") as handle:
     handle.write(json.dumps({"tool": "docker", "args": args}) + "\n")
 
+if args and args[0] == "run" and os.environ.get("FAKE_DOCKER_REQUIRE_SHARED") == "1":
+    mounts = [item for item in args if item.startswith("type=bind,source=")]
+    if any("source=/var/folders/" in item for item in mounts):
+        sys.exit(125)
 if args[:2] == ["image", "inspect"]:
     print("mysql@sha256:" + "b" * 64)
 elif args and args[0] == "port":
@@ -98,13 +102,14 @@ printf '%s\n' 'Abbott import committed release=13 sources=4 idempotent=0'
             path.write_text(body, encoding="utf-8")
             path.chmod(path.stat().st_mode | stat.S_IXUSR)
 
-    def env(self) -> dict[str, str]:
+    def env(self, **updates: str) -> dict[str, str]:
         env = os.environ.copy()
         env.update(
             PATH=f"{self.bin}{os.pathsep}{env['PATH']}",
             FAKE_REHEARSAL_LOG=str(self.log),
             REAL_PYTHON3=subprocess.check_output(["which", "python3"], text=True).strip(),
         )
+        env.update(updates)
         return env
 
     def calls(self) -> list[dict]:
@@ -126,7 +131,7 @@ class AbbottMysqlCandidateRehearsalTest(unittest.TestCase):
             path.chmod(0o600)
         return inputs
 
-    def run_mode(self, mode: str):
+    def run_mode(self, mode: str, **env_updates: str):
         temporary = tempfile.TemporaryDirectory()
         root = Path(temporary.name)
         fake = FakeRehearsalTools(root)
@@ -137,10 +142,25 @@ class AbbottMysqlCandidateRehearsalTest(unittest.TestCase):
             text=True,
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
-            env=fake.env(),
+            env=fake.env(**env_updates),
             check=False,
         )
         return temporary, fake, inputs, evidence, result
+
+    def test_macos_unshared_tmpdir_uses_a_user_private_docker_share(self):
+        temporary, fake, _inputs, _evidence, result = self.run_mode(
+            "import", FAKE_DOCKER_REQUIRE_SHARED="1"
+        )
+        try:
+            self.assertEqual(result.returncode, 0, result.stderr)
+            run = next(
+                call["args"] for call in fake.calls()
+                if call["tool"] == "docker" and call["args"][:1] == ["run"]
+            )
+            bind = next(item for item in run if item.startswith("type=bind,source="))
+            self.assertNotIn("source=/var/folders/", bind)
+        finally:
+            temporary.cleanup()
 
     def test_import_is_standalone_and_runs_baseline_candidate_and_real_importer(self):
         temporary, fake, inputs, evidence, result = self.run_mode("import")
