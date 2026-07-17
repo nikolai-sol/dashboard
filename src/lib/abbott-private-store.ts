@@ -309,9 +309,8 @@ async function loadAggregateWorkbook(
   );
 
   const contentByTitle = new Map<string, AbbottContentMetadata>();
-  const contentByTitleAndType = new Map<string, AbbottContentMetadata>();
   const contentBySlug = new Map<string, AbbottContentMetadata>();
-  const urlReturnDirections = new Map<string, string | null>();
+  const urlReturnDirections = new Map<string, AbbottContentMetadata>();
   catalogRows.forEach((row) => {
     const lookupKind = text(row.lookup_kind);
     const lookupKeyHash = text(row.lookup_key_hash);
@@ -320,9 +319,8 @@ async function loadAggregateWorkbook(
     }
     const metadata = contentMetadata(row);
     if (lookupKind === "title") addUniqueLookup(contentByTitle, lookupKeyHash, metadata);
-    else if (lookupKind === "title_type") addUniqueLookup(contentByTitleAndType, lookupKeyHash, metadata);
     else if (lookupKind === "slug") addUniqueLookup(contentBySlug, lookupKeyHash, metadata);
-    else if (lookupKind === "path") addUniqueLookup(urlReturnDirections, lookupKeyHash, metadata.direction);
+    else if (lookupKind === "path") addUniqueLookup(urlReturnDirections, lookupKeyHash, metadata);
     else throw storeError("PRIVATE_DATA_UNAVAILABLE", PRIVATE_UNAVAILABLE_MESSAGE);
   });
   const quality = qualityRows[0] ?? {};
@@ -340,7 +338,6 @@ async function loadAggregateWorkbook(
       }))
       .filter((row) => row.title && row.registration_url),
     contentByTitle,
-    contentByTitleAndType,
     contentBySlug,
     urlReturnDirections,
     lookupQuality: {

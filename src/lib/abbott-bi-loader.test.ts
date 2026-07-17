@@ -30,9 +30,13 @@ const aggregateWorkbook: AbbottAggregatePrivateData["workbook"] = {
   generalMaterials: [],
   externalEvents: [],
   contentByTitle: new Map(),
-  contentByTitleAndType: new Map(),
   contentBySlug: new Map(),
-  urlReturnDirections: new Map([[lookupHash("/page"), "Cardiology"]]),
+  urlReturnDirections: new Map([[lookupHash("/page"), {
+    direction: "Cardiology",
+    material_type: null,
+    access: null,
+    is_active: true,
+  }]]),
   lookupQuality: { ambiguousGroups: 0, collapsedGroups: 0 },
   ymUrlReturn: [],
 };
@@ -242,7 +246,7 @@ test("embed uses aggregate store only and derives returning counts with decimal 
   });
 });
 
-test("ambiguous workbook metadata keeps canonical page metrics visible with null enrichment", async () => {
+test("ambiguous path lookup keeps canonical page metrics visible with null enrichment", async () => {
   const aggregate = executor(aggregateRows);
   const deps = dependencies(aggregate, executor(() => []));
   deps.loadReleaseBundle = async () => ({
@@ -281,6 +285,55 @@ test("ambiguous workbook metadata keeps canonical page metrics visible with null
     ambiguous_groups: 3,
     collapsed_groups: 1,
   });
+});
+
+test("path-only lookup applies full metadata and hides inactive canonical pages", async () => {
+  const pathMetadata = {
+    direction: "Neurology",
+    material_type: "guide",
+    access: "Врачи",
+    is_active: true,
+  };
+  const activeDeps = dependencies(executor(aggregateRows), executor(() => []));
+  activeDeps.loadReleaseBundle = async () => ({
+    releaseId: 41,
+    audience: "embed" as const,
+    workbook: {
+      ...aggregateWorkbook,
+      contentByTitle: new Map(),
+      contentBySlug: new Map(),
+      urlReturnDirections: new Map([[lookupHash("/page"), pathMetadata]]),
+    },
+    bitrixPages: missingBitrix,
+    journeyTransitions: { source: missingBitrix.source, rows: [] },
+  });
+
+  const active = await loadAbbottBiDataWithDependencies(
+    7, ["90602537"], "2026-01-01", "2026-01-01", "embed", activeDeps,
+  );
+  assert.deepEqual({
+    direction: active.page_stats[0]?.direction,
+    material_type: active.page_stats[0]?.material_type,
+    access: active.page_stats[0]?.access,
+  }, { direction: "Neurology", material_type: "guide", access: "Врачи" });
+
+  const inactiveDeps = dependencies(executor(aggregateRows), executor(() => []));
+  inactiveDeps.loadReleaseBundle = async () => ({
+    releaseId: 41,
+    audience: "embed" as const,
+    workbook: {
+      ...aggregateWorkbook,
+      contentByTitle: new Map(),
+      contentBySlug: new Map(),
+      urlReturnDirections: new Map([[lookupHash("/page"), { ...pathMetadata, is_active: false }]]),
+    },
+    bitrixPages: missingBitrix,
+    journeyTransitions: { source: missingBitrix.source, rows: [] },
+  });
+  const inactive = await loadAbbottBiDataWithDependencies(
+    7, ["90602537"], "2026-01-01", "2026-01-01", "embed", inactiveDeps,
+  );
+  assert.equal(inactive.page_stats.length, 0);
 });
 
 test("loader pins every canonical fact query to the store bundle release when the pointer changes", async () => {

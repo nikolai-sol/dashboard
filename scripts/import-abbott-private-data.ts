@@ -432,7 +432,7 @@ export function parseWorkbookJson(payload: unknown) {
 
 export const parseWorkbookXlsx = parseAbbottWorkbookCatalog;
 
-export type AbbottContentLookupKind = "title" | "title_type" | "slug" | "path";
+export type AbbottContentLookupKind = "title" | "slug" | "path";
 export type AbbottContentLookupResolutionStatus = "unique" | "identical_collapsed" | "ambiguous";
 
 export interface AbbottContentLookupProjectionRow {
@@ -482,7 +482,6 @@ export function buildAbbottContentLookupProjection(
   const groups = new Map<string, { kind: AbbottContentLookupKind; keyHash: string; rows: AbbottContentLookupCandidate[] }>();
   for (const row of rows) {
     const keys: Array<[AbbottContentLookupKind, string]> = [["title", row.pageTitle]];
-    if (row.materialType) keys.push(["title_type", `${row.materialType}::${row.pageTitle}`]);
     if (row.sourceSlug) keys.push(["slug", row.sourceSlug]);
     if (row.normalizedPath) keys.push(["path", row.normalizedPath]);
     for (const [kind, value] of keys) {

@@ -463,9 +463,10 @@ function metadataForPage(
   const path = normalizedPagePath(normalized);
   const slug = path.split("/").filter(Boolean).at(-1) ?? "";
   const metadata = workbook.contentByTitle.get(lookupHash(pageTitle))
-    ?? workbook.contentBySlug.get(lookupHash(slug));
+    ?? workbook.contentBySlug.get(lookupHash(slug))
+    ?? workbook.urlReturnDirections.get(lookupHash(path));
   return {
-    direction: metadata?.direction ?? workbook.urlReturnDirections.get(lookupHash(path)) ?? null,
+    direction: metadata?.direction ?? null,
     material_type: metadata?.material_type ?? null,
     access: metadata?.access ?? null,
     hidden: metadata?.is_active === false,
@@ -733,7 +734,7 @@ function buildReturning(
     const count = deriveReturningCount(row.source_denominator, row.source_percentage);
     const current = totals.get(url) ?? {
       url,
-      direction: workbook.urlReturnDirections.get(lookupHash(normalizedPagePath(url))) ?? null,
+      direction: workbook.urlReturnDirections.get(lookupHash(normalizedPagePath(url)))?.direction ?? null,
       visits: 0,
       returning_1_day: 0,
       returning_2_7_days: 0,

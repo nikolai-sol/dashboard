@@ -180,7 +180,7 @@ CREATE TABLE IF NOT EXISTS portal_content_lookup_projection (
   id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
   canonical_release_id BIGINT UNSIGNED NOT NULL,
   source_snapshot_id BIGINT UNSIGNED NOT NULL,
-  lookup_kind ENUM('title', 'title_type', 'slug', 'path') NOT NULL,
+  lookup_kind ENUM('title', 'slug', 'path') NOT NULL,
   lookup_key_hash CHAR(64) NOT NULL,
   candidate_count BIGINT UNSIGNED NOT NULL,
   metadata_signature_count BIGINT UNSIGNED NOT NULL,
@@ -201,6 +201,22 @@ CREATE TABLE IF NOT EXISTS portal_content_lookup_projection (
     FOREIGN KEY (source_snapshot_id) REFERENCES portal_dataset_snapshots(id)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
   COMMENT='Hash-only release-scoped content lookup resolution evidence';
+
+-- Remove the unconsumed title/type lookup kind introduced by an earlier
+-- application-only draft before narrowing the repeat-safe enum contract.
+DELETE FROM portal_content_lookup_projection WHERE lookup_kind = 'title_type';
+SET @abbott_lookup_kind_type := (
+  SELECT COLUMN_TYPE FROM information_schema.COLUMNS
+  WHERE TABLE_SCHEMA = DATABASE()
+    AND TABLE_NAME = 'portal_content_lookup_projection'
+    AND COLUMN_NAME = 'lookup_kind'
+);
+SET @sql := IF(
+  @abbott_lookup_kind_type <> 'enum(''title'',''slug'',''path'')',
+  'ALTER TABLE portal_content_lookup_projection MODIFY COLUMN lookup_kind ENUM(''title'', ''slug'', ''path'') NOT NULL',
+  'SELECT ''portal_content_lookup_projection lookup kind already aligned'' AS info'
+);
+PREPARE stmt FROM @sql; EXECUTE stmt; DEALLOCATE PREPARE stmt;
 
 CREATE TABLE IF NOT EXISTS portal_general_materials (
   id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,

@@ -356,7 +356,12 @@ test("workbook loading uses only resolved hashed projections and reports aggrega
   });
   assert.equal(result.contentBySlug.has("shared"), false);
   assert.equal(result.contentBySlug.has(hash("shared")), true);
-  assert.equal(result.urlReturnDirections.get(hash("/shared")), "Cardiology");
+  assert.deepEqual(result.urlReturnDirections.get(hash("/shared")), {
+    direction: "Cardiology",
+    material_type: "article",
+    access: "Врачи",
+    is_active: true,
+  });
   assert.deepEqual(result.lookupQuality, { ambiguousGroups: 2, collapsedGroups: 1 });
   const projectionSql = executor.queries
     .filter(({ sql }) => sql.includes("portal_content_lookup_projection"))

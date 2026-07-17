@@ -210,7 +210,7 @@ test("content lookup projection resolves unique, identical, and conflicting meta
   assert.equal(identical?.selectedSourceRowFingerprint, "3".repeat(64));
   assert.equal(ambiguous?.resolutionStatus, "ambiguous");
   assert.equal(ambiguous?.selectedSourceRowFingerprint, null);
-  assert.deepEqual(new Set(projection.map((row) => row.lookupKind)), new Set(["title", "title_type", "slug", "path"]));
+  assert.deepEqual(new Set(projection.map((row) => row.lookupKind)), new Set(["title", "slug", "path"]));
   assert.doesNotMatch(JSON.stringify(projection), /Unique guide|Identical guide|Conflicting guide|shared-guide/);
 });
 
@@ -270,11 +270,11 @@ test("prepared sources use store source kinds and persist XLSX metadata plus bot
     const projectionBatch = sources[1]?.batches.find((batch) => batch.table === "report_bd.portal_content_lookup_projection");
     assert.ok(projectionBatch);
     assert.equal(projectionBatch.countsTowardImportedRows, false);
-    assert.equal(projectionBatch.rows.length, 3);
+    assert.equal(projectionBatch.rows.length, 2);
     assert.equal(projectionBatch.columns.includes("lookup_key"), false);
     assert.deepEqual(
       new Set(projectionBatch.rows.map((row) => row[projectionBatch.columns.indexOf("lookup_kind")])),
-      new Set(["title", "title_type", "slug"]),
+      new Set(["title", "slug"]),
     );
     assert.deepEqual(
       sources[2]?.batches.map((batch) => batch.table).sort(),
