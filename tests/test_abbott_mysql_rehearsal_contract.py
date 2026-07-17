@@ -10,6 +10,8 @@ import sys
 import tempfile
 import unittest
 
+from ops.local import abbott_dump_schema_filter
+
 
 ROOT = Path(__file__).resolve().parents[1]
 HARNESS = ROOT / "ops/local/abbott_mysql_rehearsal.sh"
@@ -107,6 +109,26 @@ sys.exit(0)
 
 
 class AbbottMysqlRehearsalContractTest(unittest.TestCase):
+    def test_filter_fast_skips_complete_row_and_lock_lines_only(self):
+        self.assertTrue(hasattr(abbott_dump_schema_filter, "schema_candidate_lines"))
+        candidate_lines = abbott_dump_schema_filter.schema_candidate_lines
+        create = "CREATE TABLE safe_table (id int);\n"
+        mixed = "CREATE TABLE second_table (id int); INSERT INTO second_table VALUES (1);\n"
+        self.assertEqual(
+            list(candidate_lines([
+                "INSERT INTO t VALUES (1);\n",
+                "REPLACE INTO t VALUES (2);\n",
+                "LOCK TABLES t WRITE;\n",
+                "UNLOCK TABLES;\n",
+                "INSERT INTO multiline VALUES\n",
+                "(1),\n",
+                "(2);\n",
+                create,
+                mixed,
+            ])),
+            [create, mixed],
+        )
+
     def test_filter_splits_multiple_statements_on_one_line(self):
         result = run_filter(
             "CREATE TABLE `events` (`id` bigint); INSERT INTO `events` VALUES (1,'private; row');"

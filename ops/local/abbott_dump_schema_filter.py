@@ -49,6 +49,30 @@ def executable_lines(stream: TextIO) -> Iterable[str]:
             yield raw
 
 
+def schema_candidate_lines(lines: Iterable[str]) -> Iterator[str]:
+    """Drop complete line-oriented row/lock statements before character parsing."""
+    prefixes = ("INSERT INTO ", "REPLACE INTO ", "LOCK TABLES ", "UNLOCK TABLES")
+    skipping_statement = False
+    for line in lines:
+        ddl_tail = re.search(r";\s*(?=(?:CREATE|DROP|ALTER)\b)", line, flags=re.I)
+        if skipping_statement:
+            if ddl_tail is not None:
+                skipping_statement = False
+                yield line[ddl_tail.end():]
+                continue
+            if line.rstrip().endswith(";"):
+                skipping_statement = False
+            continue
+        stripped = line.lstrip()
+        if stripped[:32].upper().startswith(prefixes):
+            if ddl_tail is not None:
+                yield line
+                continue
+            skipping_statement = not stripped.rstrip().endswith(";")
+            continue
+        yield line
+
+
 def statements(lines: Iterable[str]) -> Iterator[str]:
     """Split SQL on unquoted semicolons while discarding ordinary comments."""
     buffer: list[str] = []
@@ -123,7 +147,7 @@ def strip_source_qualifiers(statement: str, source_database: str) -> str:
 
 def main() -> int:
     source_database = parse_args().source_database
-    for statement in statements(executable_lines(sys.stdin)):
+    for statement in statements(schema_candidate_lines(executable_lines(sys.stdin))):
         if DATABASE_DECLARATION.match(statement):
             continue
         statement = DEFINER.sub("", statement)
