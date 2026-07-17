@@ -179,10 +179,10 @@ creates these roles but intentionally does not create accounts or passwords:
 
 | Process | Role | Runtime environment |
 | --- | --- | --- |
-| Canonical Metrika collector | `reportingdash_abbott_collector_role` | `MYSQL_HOST`, `MYSQL_PORT`, `MYSQL_USER`, `MYSQL_PASSWORD`, `MYSQL_DB=report_bd`, `METRIKA_TOKEN` in `$ABBOTT_COLLECTOR_ENV_FILE` |
-| Private snapshot importer | `reportingdash_abbott_importer_role` | `ABBOTT_IMPORT_DB_HOST`, `ABBOTT_IMPORT_DB_PORT`, `ABBOTT_IMPORT_DB_USER`, `ABBOTT_IMPORT_DB_PASSWORD` in `$ABBOTT_IMPORT_ENV_FILE` |
-| Baseline/comparator/release lifecycle operator | `reportingdash_abbott_release_operator_role` | `ABBOTT_RELEASE_DB_HOST`, `ABBOTT_RELEASE_DB_PORT`, `ABBOTT_RELEASE_DB_USER`, `ABBOTT_RELEASE_DB_PASSWORD`, `ABBOTT_RELEASE_DB_NAME=report_bd` in `$ABBOTT_RELEASE_ENV_FILE` |
-| Server-side Abbott manager read model | `reportingdash_abbott_runtime_reader_role` | `ABBOTT_PRIVATE_DB_HOST`, `ABBOTT_PRIVATE_DB_PORT`, `ABBOTT_PRIVATE_DB_USER`, `ABBOTT_PRIVATE_DB_PASSWORD`, `ABBOTT_PRIVATE_DB_NAME=report_bd_private` in `$DASHBOARD_OWNER_ENV_FILE` |
+| Canonical Metrika collector | `abbott_collector_role` | `MYSQL_HOST`, `MYSQL_PORT`, `MYSQL_USER`, `MYSQL_PASSWORD`, `MYSQL_DB=report_bd`, `METRIKA_TOKEN` in `$ABBOTT_COLLECTOR_ENV_FILE` |
+| Private snapshot importer | `abbott_importer_role` | `ABBOTT_IMPORT_DB_HOST`, `ABBOTT_IMPORT_DB_PORT`, `ABBOTT_IMPORT_DB_USER`, `ABBOTT_IMPORT_DB_PASSWORD` in `$ABBOTT_IMPORT_ENV_FILE` |
+| Baseline/comparator/release lifecycle operator | `abbott_release_operator_role` | `ABBOTT_RELEASE_DB_HOST`, `ABBOTT_RELEASE_DB_PORT`, `ABBOTT_RELEASE_DB_USER`, `ABBOTT_RELEASE_DB_PASSWORD`, `ABBOTT_RELEASE_DB_NAME=report_bd` in `$ABBOTT_RELEASE_ENV_FILE` |
+| Server-side Abbott manager read model | `abbott_runtime_reader_role` | `ABBOTT_PRIVATE_DB_HOST`, `ABBOTT_PRIVATE_DB_PORT`, `ABBOTT_PRIVATE_DB_USER`, `ABBOTT_PRIVATE_DB_PASSWORD`, `ABBOTT_PRIVATE_DB_NAME=report_bd_private` in `$DASHBOARD_OWNER_ENV_FILE` |
 
 The general dashboard/embed database account must not receive private-table
 grants. Embed output is aggregate-only even when a manager process has the
@@ -193,17 +193,17 @@ SQL file, never as command-line arguments. Its non-secret role assignment
 template is:
 
 ```sql
-GRANT 'reportingdash_abbott_collector_role' TO '<collector-account>'@'<host>';
-SET DEFAULT ROLE 'reportingdash_abbott_collector_role' TO '<collector-account>'@'<host>';
+GRANT 'abbott_collector_role' TO '<collector-account>'@'<host>';
+SET DEFAULT ROLE 'abbott_collector_role' TO '<collector-account>'@'<host>';
 
-GRANT 'reportingdash_abbott_importer_role' TO '<importer-account>'@'<host>';
-SET DEFAULT ROLE 'reportingdash_abbott_importer_role' TO '<importer-account>'@'<host>';
+GRANT 'abbott_importer_role' TO '<importer-account>'@'<host>';
+SET DEFAULT ROLE 'abbott_importer_role' TO '<importer-account>'@'<host>';
 
-GRANT 'reportingdash_abbott_release_operator_role' TO '<release-operator-account>'@'<host>';
-SET DEFAULT ROLE 'reportingdash_abbott_release_operator_role' TO '<release-operator-account>'@'<host>';
+GRANT 'abbott_release_operator_role' TO '<release-operator-account>'@'<host>';
+SET DEFAULT ROLE 'abbott_release_operator_role' TO '<release-operator-account>'@'<host>';
 
-GRANT 'reportingdash_abbott_runtime_reader_role' TO '<reader-account>'@'<host>';
-SET DEFAULT ROLE 'reportingdash_abbott_runtime_reader_role' TO '<reader-account>'@'<host>';
+GRANT 'abbott_runtime_reader_role' TO '<reader-account>'@'<host>';
+SET DEFAULT ROLE 'abbott_runtime_reader_role' TO '<reader-account>'@'<host>';
 ```
 
 Execute the completed protected file without displaying it:

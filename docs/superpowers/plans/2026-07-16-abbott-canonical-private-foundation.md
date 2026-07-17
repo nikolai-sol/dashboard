@@ -82,7 +82,7 @@ UNIQUE KEY uniq_release_coverage
   (canonical_release_id, source_key, counter_id, scope_key, report_date);
 ```
 
-The private behavior table contains lossless `raw_user_id TEXT NOT NULL`, start/end URL fields, request fingerprint, ingestion run, and the same release/counter/date key. The grants file creates passwordless MySQL roles named `reportingdash_abbott_collector_role` and `reportingdash_abbott_manager_reader_role`; it never creates user accounts or contains passwords. The DBA grants those roles to provisioned accounts during reviewed rollout.
+The private behavior table contains lossless `raw_user_id TEXT NOT NULL`, start/end URL fields, request fingerprint, ingestion run, and the same release/counter/date key. The grants file creates passwordless MySQL roles named `abbott_collector_role`, `abbott_importer_role`, `abbott_release_operator_role`, and `abbott_runtime_reader_role`; it never creates user accounts or contains passwords. The DBA grants those roles to provisioned accounts during reviewed rollout.
 
 - [ ] **Step 4: Run GREEN and contract scan**
 

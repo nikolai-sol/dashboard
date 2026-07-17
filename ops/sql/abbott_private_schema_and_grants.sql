@@ -361,123 +361,123 @@ SET @sql := IF(
 PREPARE stmt FROM @sql; EXECUTE stmt; DEALLOCATE PREPARE stmt;
 
 CREATE ROLE IF NOT EXISTS
-  'reportingdash_abbott_collector_role',
-  'reportingdash_abbott_importer_role',
-  'reportingdash_abbott_release_operator_role',
-  'reportingdash_abbott_runtime_reader_role';
+  'abbott_collector_role',
+  'abbott_importer_role',
+  'abbott_release_operator_role',
+  'abbott_runtime_reader_role';
 
 GRANT SELECT ON report_bd.portal_data_releases
-  TO 'reportingdash_abbott_collector_role';
+  TO 'abbott_collector_role';
 GRANT SELECT ON report_bd.portal_active_data_releases
-  TO 'reportingdash_abbott_collector_role';
+  TO 'abbott_collector_role';
 GRANT SELECT ON report_bd.yandex_metrika_names
-  TO 'reportingdash_abbott_collector_role';
+  TO 'abbott_collector_role';
 GRANT SELECT ON report_bd.canonical_source_account_collection_settings
-  TO 'reportingdash_abbott_collector_role';
+  TO 'abbott_collector_role';
 GRANT SELECT, INSERT, UPDATE ON report_bd.canonical_source_accounts
-  TO 'reportingdash_abbott_collector_role';
+  TO 'abbott_collector_role';
 GRANT SELECT, INSERT, UPDATE ON report_bd.canonical_collector_runs
-  TO 'reportingdash_abbott_collector_role';
+  TO 'abbott_collector_role';
 GRANT INSERT ON report_bd.canonical_collector_run_events
-  TO 'reportingdash_abbott_collector_role';
+  TO 'abbott_collector_role';
 GRANT SELECT, INSERT, UPDATE, DELETE ON report_bd.canonical_fact_metrika_site_analytics_daily
-  TO 'reportingdash_abbott_collector_role';
+  TO 'abbott_collector_role';
 GRANT SELECT, INSERT, UPDATE, DELETE ON report_bd.canonical_fact_metrika_returning_pages_daily
-  TO 'reportingdash_abbott_collector_role';
+  TO 'abbott_collector_role';
 GRANT SELECT, INSERT, UPDATE, DELETE ON report_bd.canonical_source_coverage_daily
-  TO 'reportingdash_abbott_collector_role';
+  TO 'abbott_collector_role';
 GRANT SELECT, INSERT, UPDATE, DELETE ON report_bd_private.canonical_fact_metrika_user_behavior_daily
-  TO 'reportingdash_abbott_collector_role';
+  TO 'abbott_collector_role';
 
 -- The CLI importer uses one connection for a single transaction spanning both
 -- schemas. It may attach imported snapshot IDs to a staging release, but it
 -- cannot write the active-release pointer or change release status.
 GRANT SELECT ON report_bd.portal_data_releases
-  TO 'reportingdash_abbott_importer_role';
+  TO 'abbott_importer_role';
 GRANT UPDATE (source_snapshot_ids) ON report_bd.portal_data_releases
-  TO 'reportingdash_abbott_importer_role';
+  TO 'abbott_importer_role';
 GRANT SELECT, INSERT ON report_bd.portal_dataset_snapshots
-  TO 'reportingdash_abbott_importer_role';
+  TO 'abbott_importer_role';
 GRANT UPDATE (import_status, imported_row_count, rejected_row_count,
               manifest_json, imported_at) ON report_bd.portal_dataset_snapshots
-  TO 'reportingdash_abbott_importer_role';
+  TO 'abbott_importer_role';
 GRANT SELECT, INSERT, UPDATE ON report_bd.portal_release_source_imports
-  TO 'reportingdash_abbott_importer_role';
+  TO 'abbott_importer_role';
 GRANT SELECT, INSERT ON report_bd.portal_content_catalog
-  TO 'reportingdash_abbott_importer_role';
+  TO 'abbott_importer_role';
 GRANT SELECT, INSERT ON report_bd.portal_content_lookup_projection
-  TO 'reportingdash_abbott_importer_role';
+  TO 'abbott_importer_role';
 GRANT SELECT, INSERT ON report_bd.portal_general_materials
-  TO 'reportingdash_abbott_importer_role';
+  TO 'abbott_importer_role';
 GRANT SELECT, INSERT ON report_bd.portal_event_catalog
-  TO 'reportingdash_abbott_importer_role';
+  TO 'abbott_importer_role';
 GRANT SELECT, INSERT ON report_bd.portal_bitrix_page_facts
-  TO 'reportingdash_abbott_importer_role';
+  TO 'abbott_importer_role';
 GRANT SELECT, INSERT ON report_bd.portal_bitrix_journey_transitions
-  TO 'reportingdash_abbott_importer_role';
+  TO 'abbott_importer_role';
 GRANT SELECT, INSERT ON report_bd_private.portal_user_directions_private
-  TO 'reportingdash_abbott_importer_role';
+  TO 'abbott_importer_role';
 GRANT SELECT, INSERT ON report_bd_private.portal_bitrix_page_facts
-  TO 'reportingdash_abbott_importer_role';
+  TO 'abbott_importer_role';
 GRANT SELECT, INSERT ON report_bd_private.portal_bitrix_journeys_private
-  TO 'reportingdash_abbott_importer_role';
+  TO 'abbott_importer_role';
 
 -- Baseline capture, comparison, candidate creation, validation, activation,
 -- and rollback use a separate operator account. It cannot write canonical or
 -- private facts; only the collector/importer roles can do that.
 GRANT SELECT, INSERT, UPDATE ON report_bd.portal_data_releases
-  TO 'reportingdash_abbott_release_operator_role';
+  TO 'abbott_release_operator_role';
 GRANT SELECT, UPDATE ON report_bd.portal_active_data_releases
-  TO 'reportingdash_abbott_release_operator_role';
+  TO 'abbott_release_operator_role';
 GRANT SELECT, INSERT ON report_bd.portal_dataset_snapshots
-  TO 'reportingdash_abbott_release_operator_role';
+  TO 'abbott_release_operator_role';
 GRANT SELECT ON report_bd.portal_release_source_imports
-  TO 'reportingdash_abbott_release_operator_role';
+  TO 'abbott_release_operator_role';
 GRANT SELECT, INSERT, UPDATE ON report_bd.portal_migration_validation_runs
-  TO 'reportingdash_abbott_release_operator_role';
+  TO 'abbott_release_operator_role';
 GRANT SELECT ON report_bd.canonical_fact_metrika_site_analytics_daily
-  TO 'reportingdash_abbott_release_operator_role';
+  TO 'abbott_release_operator_role';
 GRANT SELECT ON report_bd.canonical_source_coverage_daily
-  TO 'reportingdash_abbott_release_operator_role';
+  TO 'abbott_release_operator_role';
 
 -- The server-side manager runtime is read-only across the release metadata,
 -- aggregate catalogs, and manager-private tables. Embed must use only the
 -- aggregate projections even when this role is available to the manager path.
 GRANT SELECT ON report_bd.portal_data_releases
-  TO 'reportingdash_abbott_runtime_reader_role';
+  TO 'abbott_runtime_reader_role';
 GRANT SELECT ON report_bd.portal_active_data_releases
-  TO 'reportingdash_abbott_runtime_reader_role';
+  TO 'abbott_runtime_reader_role';
 GRANT SELECT ON report_bd.dashboards
-  TO 'reportingdash_abbott_runtime_reader_role';
+  TO 'abbott_runtime_reader_role';
 GRANT SELECT ON report_bd.portal_dataset_snapshots
-  TO 'reportingdash_abbott_runtime_reader_role';
+  TO 'abbott_runtime_reader_role';
 GRANT SELECT ON report_bd.portal_content_catalog
-  TO 'reportingdash_abbott_runtime_reader_role';
+  TO 'abbott_runtime_reader_role';
 GRANT SELECT ON report_bd.portal_content_lookup_projection
-  TO 'reportingdash_abbott_runtime_reader_role';
+  TO 'abbott_runtime_reader_role';
 GRANT SELECT ON report_bd.portal_general_materials
-  TO 'reportingdash_abbott_runtime_reader_role';
+  TO 'abbott_runtime_reader_role';
 GRANT SELECT ON report_bd.portal_event_catalog
-  TO 'reportingdash_abbott_runtime_reader_role';
+  TO 'abbott_runtime_reader_role';
 GRANT SELECT ON report_bd.portal_external_events
-  TO 'reportingdash_abbott_runtime_reader_role';
+  TO 'abbott_runtime_reader_role';
 GRANT SELECT ON report_bd.portal_bitrix_page_facts
-  TO 'reportingdash_abbott_runtime_reader_role';
+  TO 'abbott_runtime_reader_role';
 GRANT SELECT ON report_bd.portal_bitrix_journey_transitions
-  TO 'reportingdash_abbott_runtime_reader_role';
+  TO 'abbott_runtime_reader_role';
 GRANT SELECT ON report_bd.canonical_fact_metrika_site_analytics_daily
-  TO 'reportingdash_abbott_runtime_reader_role';
+  TO 'abbott_runtime_reader_role';
 GRANT SELECT ON report_bd.canonical_fact_metrika_returning_pages_daily
-  TO 'reportingdash_abbott_runtime_reader_role';
+  TO 'abbott_runtime_reader_role';
 GRANT SELECT ON report_bd.canonical_source_coverage_daily
-  TO 'reportingdash_abbott_runtime_reader_role';
+  TO 'abbott_runtime_reader_role';
 GRANT SELECT ON report_bd_private.canonical_fact_metrika_user_behavior_daily
-  TO 'reportingdash_abbott_runtime_reader_role';
+  TO 'abbott_runtime_reader_role';
 GRANT SELECT ON report_bd_private.portal_user_directions_private
-  TO 'reportingdash_abbott_runtime_reader_role';
+  TO 'abbott_runtime_reader_role';
 GRANT SELECT ON report_bd_private.portal_bitrix_page_facts
-  TO 'reportingdash_abbott_runtime_reader_role';
+  TO 'abbott_runtime_reader_role';
 GRANT SELECT ON report_bd_private.portal_bitrix_journeys_private
-  TO 'reportingdash_abbott_runtime_reader_role';
+  TO 'abbott_runtime_reader_role';
 
 -- Account creation and role assignment are intentionally left to a reviewed DBA rollout.

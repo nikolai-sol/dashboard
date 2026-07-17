@@ -41,6 +41,13 @@ class AbbottSchemaContractTest(unittest.TestCase):
         self.assertIn("ENGINE=InnoDB", primary)
         self.assertIn("ENGINE=InnoDB", private)
 
+    def test_mysql_role_names_fit_the_mysql_8_account_limit(self):
+        private = self._private_sql()
+        role_block = private.split("CREATE ROLE IF NOT EXISTS", 1)[1].split(";", 1)[0]
+        roles = re.findall(r"'([^']+)'", role_block)
+        self.assertEqual(len(roles), 4)
+        self.assertTrue(all(len(role) <= 32 for role in roles), roles)
+
     def test_coverage_statuses_and_scopes_are_exactly_closed(self):
         sql = self._primary_sql()
         status_match = re.search(r"collection_status\s+ENUM\(([^)]*)\)", sql)
@@ -115,7 +122,7 @@ class AbbottSchemaContractTest(unittest.TestCase):
             self.assertIn(
                 "GRANT SELECT, INSERT, UPDATE, DELETE "
                 f"ON report_bd.{table} "
-                "TO 'reportingdash_abbott_collector_role';",
+                "TO 'abbott_collector_role';",
                 sql,
             )
 
@@ -124,24 +131,24 @@ class AbbottSchemaContractTest(unittest.TestCase):
         self.assertIn(
             "GRANT SELECT, INSERT, UPDATE, DELETE "
             "ON report_bd_private.canonical_fact_metrika_user_behavior_daily "
-            "TO 'reportingdash_abbott_collector_role';",
+            "TO 'abbott_collector_role';",
             sql,
         )
 
     def test_collector_role_can_record_runs_and_read_configuration(self):
         sql = self._normalized(self._private_sql())
         for contract in (
-            "GRANT SELECT ON report_bd.yandex_metrika_names TO 'reportingdash_abbott_collector_role';",
-            "GRANT SELECT ON report_bd.canonical_source_account_collection_settings TO 'reportingdash_abbott_collector_role';",
-            "GRANT SELECT, INSERT, UPDATE ON report_bd.canonical_source_accounts TO 'reportingdash_abbott_collector_role';",
-            "GRANT SELECT, INSERT, UPDATE ON report_bd.canonical_collector_runs TO 'reportingdash_abbott_collector_role';",
-            "GRANT INSERT ON report_bd.canonical_collector_run_events TO 'reportingdash_abbott_collector_role';",
+            "GRANT SELECT ON report_bd.yandex_metrika_names TO 'abbott_collector_role';",
+            "GRANT SELECT ON report_bd.canonical_source_account_collection_settings TO 'abbott_collector_role';",
+            "GRANT SELECT, INSERT, UPDATE ON report_bd.canonical_source_accounts TO 'abbott_collector_role';",
+            "GRANT SELECT, INSERT, UPDATE ON report_bd.canonical_collector_runs TO 'abbott_collector_role';",
+            "GRANT INSERT ON report_bd.canonical_collector_run_events TO 'abbott_collector_role';",
         ):
             self.assertIn(contract, sql)
 
     def test_release_operator_can_transition_metadata_but_not_write_facts(self):
         sql = self._normalized(self._private_sql())
-        role = "'reportingdash_abbott_release_operator_role'"
+        role = "'abbott_release_operator_role'"
         for table in (
             "portal_data_releases",
             "portal_active_data_releases",
@@ -158,7 +165,7 @@ class AbbottSchemaContractTest(unittest.TestCase):
 
     def test_release_operator_has_no_returning_or_raw_user_fact_access(self):
         sql = self._normalized(self._private_sql())
-        role = "TO 'reportingdash_abbott_release_operator_role';"
+        role = "TO 'abbott_release_operator_role';"
         for table in (
             "report_bd.canonical_fact_metrika_returning_pages_daily",
             "report_bd_private.canonical_fact_metrika_user_behavior_daily",
@@ -187,7 +194,7 @@ class AbbottSchemaContractTest(unittest.TestCase):
         )
         grants = self._normalized(self._private_sql())
         self.assertIn(
-            "GRANT SELECT ON report_bd.portal_release_source_imports TO 'reportingdash_abbott_release_operator_role';",
+            "GRANT SELECT ON report_bd.portal_release_source_imports TO 'abbott_release_operator_role';",
             grants,
         )
         self.assertNotRegex(
@@ -533,13 +540,13 @@ class AbbottSchemaContractTest(unittest.TestCase):
     def test_importer_and_runtime_reader_roles_are_distinct(self):
         sql = self._normalized(self._private_sql())
         for role in (
-            "reportingdash_abbott_importer_role",
-            "reportingdash_abbott_runtime_reader_role",
+            "abbott_importer_role",
+            "abbott_runtime_reader_role",
         ):
             self.assertIn(f"'{role}'", sql)
 
-        importer = "TO 'reportingdash_abbott_importer_role';"
-        runtime = "TO 'reportingdash_abbott_runtime_reader_role';"
+        importer = "TO 'abbott_importer_role';"
+        runtime = "TO 'abbott_runtime_reader_role';"
         self.assertIn(
             "GRANT SELECT ON report_bd.portal_data_releases " + importer,
             sql,
@@ -615,7 +622,7 @@ class AbbottSchemaContractTest(unittest.TestCase):
         runtime_grants = [
             grant
             for grant in grant_statements
-            if "TO 'reportingdash_abbott_runtime_reader_role'" in grant
+            if "TO 'abbott_runtime_reader_role'" in grant
         ]
         self.assertGreater(len(runtime_grants), 0)
         for grant in runtime_grants:
@@ -624,7 +631,7 @@ class AbbottSchemaContractTest(unittest.TestCase):
         importer_grants = [
             grant
             for grant in grant_statements
-            if "TO 'reportingdash_abbott_importer_role'" in grant
+            if "TO 'abbott_importer_role'" in grant
         ]
         self.assertGreater(len(importer_grants), 0)
         self.assertFalse(
@@ -636,7 +643,7 @@ class AbbottSchemaContractTest(unittest.TestCase):
         collector_grants = [
             grant
             for grant in re.findall(r"GRANT .*?;", sql, flags=re.IGNORECASE)
-            if "TO 'reportingdash_abbott_collector_role'" in grant
+            if "TO 'abbott_collector_role'" in grant
         ]
         for table in (
             "portal_dataset_snapshots",
@@ -661,12 +668,12 @@ class AbbottSchemaContractTest(unittest.TestCase):
         self.assertEqual(len(projection_grants), 2)
         self.assertTrue(any(
             grant.startswith("GRANT SELECT, INSERT ON ")
-            and "TO 'reportingdash_abbott_importer_role'" in grant
+            and "TO 'abbott_importer_role'" in grant
             for grant in projection_grants
         ))
         self.assertTrue(any(
             grant.startswith("GRANT SELECT ON ")
-            and "TO 'reportingdash_abbott_runtime_reader_role'" in grant
+            and "TO 'abbott_runtime_reader_role'" in grant
             for grant in projection_grants
         ))
         self.assertFalse(any(

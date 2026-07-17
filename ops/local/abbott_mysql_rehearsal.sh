@@ -309,14 +309,14 @@ CREATE USER 'abbott_rehearsal_collector'@'%' IDENTIFIED BY '$COLLECTOR_PASSWORD'
 CREATE USER 'abbott_rehearsal_importer'@'%' IDENTIFIED BY '$IMPORTER_PASSWORD';
 CREATE USER 'abbott_rehearsal_operator'@'%' IDENTIFIED BY '$OPERATOR_PASSWORD';
 CREATE USER 'abbott_rehearsal_reader'@'%' IDENTIFIED BY '$READER_PASSWORD';
-GRANT 'reportingdash_abbott_collector_role' TO 'abbott_rehearsal_collector'@'%';
-SET DEFAULT ROLE 'reportingdash_abbott_collector_role' TO 'abbott_rehearsal_collector'@'%';
-GRANT 'reportingdash_abbott_importer_role' TO 'abbott_rehearsal_importer'@'%';
-SET DEFAULT ROLE 'reportingdash_abbott_importer_role' TO 'abbott_rehearsal_importer'@'%';
-GRANT 'reportingdash_abbott_release_operator_role' TO 'abbott_rehearsal_operator'@'%';
-SET DEFAULT ROLE 'reportingdash_abbott_release_operator_role' TO 'abbott_rehearsal_operator'@'%';
-GRANT 'reportingdash_abbott_runtime_reader_role' TO 'abbott_rehearsal_reader'@'%';
-SET DEFAULT ROLE 'reportingdash_abbott_runtime_reader_role' TO 'abbott_rehearsal_reader'@'%';
+GRANT 'abbott_collector_role' TO 'abbott_rehearsal_collector'@'%';
+SET DEFAULT ROLE 'abbott_collector_role' TO 'abbott_rehearsal_collector'@'%';
+GRANT 'abbott_importer_role' TO 'abbott_rehearsal_importer'@'%';
+SET DEFAULT ROLE 'abbott_importer_role' TO 'abbott_rehearsal_importer'@'%';
+GRANT 'abbott_release_operator_role' TO 'abbott_rehearsal_operator'@'%';
+SET DEFAULT ROLE 'abbott_release_operator_role' TO 'abbott_rehearsal_operator'@'%';
+GRANT 'abbott_runtime_reader_role' TO 'abbott_rehearsal_reader'@'%';
+SET DEFAULT ROLE 'abbott_runtime_reader_role' TO 'abbott_rehearsal_reader'@'%';
 SQL
 chmod 600 "$PRIVATE_ROOT/accounts.sql"
 mysql_exec < "$PRIVATE_ROOT/accounts.sql" > "$PRIVATE_ROOT/accounts.log" 2>&1
@@ -363,7 +363,7 @@ capture_schema_signature() {
 }
 capture_grant_signature() {
   local output=$1
-  mysql_exec --execute="SELECT 'TABLE',GRANTEE,TABLE_SCHEMA,TABLE_NAME,PRIVILEGE_TYPE,IS_GRANTABLE FROM information_schema.TABLE_PRIVILEGES WHERE GRANTEE LIKE CONCAT(CHAR(39),'reportingdash_abbott_%') UNION ALL SELECT 'SCHEMA',GRANTEE,TABLE_SCHEMA,'',PRIVILEGE_TYPE,IS_GRANTABLE FROM information_schema.SCHEMA_PRIVILEGES WHERE GRANTEE LIKE CONCAT(CHAR(39),'reportingdash_abbott_%') UNION ALL SELECT 'COLUMN',GRANTEE,TABLE_SCHEMA,TABLE_NAME,PRIVILEGE_TYPE,COLUMN_NAME FROM information_schema.COLUMN_PRIVILEGES WHERE GRANTEE LIKE CONCAT(CHAR(39),'reportingdash_abbott_%') UNION ALL SELECT 'ROLE',CONCAT(FROM_USER,'@',FROM_HOST),'mysql',CONCAT(TO_USER,'@',TO_HOST),'GRANT','NO' FROM mysql.role_edges WHERE FROM_USER LIKE 'reportingdash_abbott_%' OR TO_USER LIKE 'abbott_rehearsal_%' UNION ALL SELECT 'DEFAULT',CONCAT(USER,'@',HOST),'mysql',CONCAT(DEFAULT_ROLE_USER,'@',DEFAULT_ROLE_HOST),'ROLE','NO' FROM mysql.default_roles WHERE USER LIKE 'abbott_rehearsal_%' ORDER BY 1,2,3,4,5,6;" > "$output"
+  mysql_exec --execute="SELECT 'TABLE',GRANTEE,TABLE_SCHEMA,TABLE_NAME,PRIVILEGE_TYPE,IS_GRANTABLE FROM information_schema.TABLE_PRIVILEGES WHERE GRANTEE LIKE CONCAT(CHAR(39),'abbott_%_role') UNION ALL SELECT 'SCHEMA',GRANTEE,TABLE_SCHEMA,'',PRIVILEGE_TYPE,IS_GRANTABLE FROM information_schema.SCHEMA_PRIVILEGES WHERE GRANTEE LIKE CONCAT(CHAR(39),'abbott_%_role') UNION ALL SELECT 'COLUMN',GRANTEE,TABLE_SCHEMA,TABLE_NAME,PRIVILEGE_TYPE,COLUMN_NAME FROM information_schema.COLUMN_PRIVILEGES WHERE GRANTEE LIKE CONCAT(CHAR(39),'abbott_%_role') UNION ALL SELECT 'ROLE',CONCAT(FROM_USER,'@',FROM_HOST),'mysql',CONCAT(TO_USER,'@',TO_HOST),'GRANT','NO' FROM mysql.role_edges WHERE FROM_USER LIKE 'abbott_%_role' OR TO_USER LIKE 'abbott_rehearsal_%' UNION ALL SELECT 'DEFAULT',CONCAT(USER,'@',HOST),'mysql',CONCAT(DEFAULT_ROLE_USER,'@',DEFAULT_ROLE_HOST),'ROLE','NO' FROM mysql.default_roles WHERE USER LIKE 'abbott_rehearsal_%' ORDER BY 1,2,3,4,5,6;" > "$output"
 }
 signature() { shasum -a 256 "$1" | awk '{print $1}'; }
 capture_schema_signature "$PRIVATE_ROOT/schema.before.tsv"
