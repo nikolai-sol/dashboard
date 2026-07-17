@@ -281,10 +281,15 @@ export async function loadZarukuGoogleSearchConsoleData(
     errors,
   );
   const successfulQueries = [queryResult.available, pageResult.available, summaryResult.available].filter(Boolean).length;
-  const status = successfulQueries === 3 && errors.length === 0 ? "available" : successfulQueries > 0 ? "partial" : "unavailable";
   const weeksAvailable = [
     ...new Set([...summaryResult.rows, ...queryResult.rows, ...pageResult.rows].map((row) => row.week)),
   ].sort();
+  const hasRows = weeksAvailable.length > 0;
+  const status = successfulQueries === 3 && errors.length === 0 && hasRows
+    ? "available"
+    : successfulQueries > 0 && hasRows
+      ? "partial"
+      : "unavailable";
 
   return {
     available: status === "available",

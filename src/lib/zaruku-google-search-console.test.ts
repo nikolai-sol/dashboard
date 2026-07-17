@@ -155,6 +155,7 @@ test("loadZarukuGoogleSearchConsoleData does not fallback to latest week when se
     return [];
   });
 
+  assert.equal(data.status, "unavailable");
   assert.deepEqual(data.weeks, []);
   assert.equal(data.latest_week, null);
   assert.deepEqual(data.queries, []);
