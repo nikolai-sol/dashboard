@@ -17,7 +17,8 @@
 - Never use credentials recovered from Git history. Missing owner-issued or production credentials are a hard blocked gate.
 - No production DB/API write, release activation, deployment, cron edit, Telegram send, Hermes schedule, service restart or OAuth revocation is authorized by this plan.
 - All behavior changes use TDD: demonstrate RED, implement the minimum GREEN change, run focused tests, self-review, commit, then obtain a task-scoped spec/quality review.
-- Do not load the full 8.1 GiB MariaDB dump by default with only 32 GiB free. Run a schema-only compatibility probe and use the completeness-manifested Bitrix JSON for the application import rehearsal.
+- Do not load the full 8.1 GiB MariaDB dump by default with only 32 GiB free. Run a schema-only compatibility probe; application import requires separately verified completeness-manifested Bitrix sources.
+- Execution amendment (2026-07-17): inspection proved the available Bitrix JSON is an older exploratory test format without the required completeness manifests or canonical page/event grains. Treat it only as a rejection fixture. Do not synthesize events or completeness; defer four-source import/lifecycle acceptance until the live Bitrix database connector contract exists.
 
 ---
 
@@ -373,7 +374,8 @@ Use only caller-supplied paths. Do not discover home-directory credentials. Exit
 
 ```bash
 python3 abbott_rollout_preflight.py \
-  --collector-env /Users/nafanya/ReportingDash/.env \
+  --local-evidence /tmp/abbott-rollout-rehearsal/evidence \
+  --collector-env /tmp/abbott-rollout-rehearsal/absent-collector.env \
   --import-env /tmp/abbott-rollout-rehearsal/absent-import.env \
   --release-env /tmp/abbott-rollout-rehearsal/absent-release.env \
   --owner-token /tmp/abbott-rollout-rehearsal/absent-token \

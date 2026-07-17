@@ -50,7 +50,7 @@ The rehearsal uses an ephemeral official MySQL 8.4 container, pinned by the reso
 
 The fresh-schema path applies the normal dashboard migrations through `033`, then the private schema/role script. The repeat path reapplies only the explicitly repeat-safe Abbott migration and private script, comparing `information_schema` signatures and grants before and after.
 
-The source MariaDB dump remains isolated. With only 32 GiB free and an 8.1 GiB SQL file, the default rehearsal performs a streaming schema-only compatibility probe and imports the already generated, completeness-manifested Bitrix JSON into the Abbott candidate. A full dump load is a separate capacity-gated operation and is not required to accept the application-schema rehearsal.
+The source MariaDB dump remains isolated. With only 32 GiB free and an 8.1 GiB SQL file, the default rehearsal performs a streaming schema-only compatibility probe. The available Bitrix JSON was subsequently verified to be an older exploratory, non-manifested format rather than a canonical import source. It remains a test fixture only; no source completeness or event-grain conversion may be fabricated. Candidate import and lifecycle rehearsal therefore remain fail-closed until a live Bitrix database connector and its extraction contract are reviewed. A full dump load is a separate capacity-gated operation and is not required to accept the application-schema rehearsal.
 
 ## Protected inputs and evidence
 
@@ -70,7 +70,7 @@ Committed evidence is sanitized and contains only:
 1. Run parser-only source audit without archive or database writes.
 2. Start ephemeral MySQL, apply fresh migrations and roles, then prove repeat safety.
 3. Create a local staging release and baseline evidence.
-4. Import protected workbook and Bitrix JSON sources transactionally.
+4. Import protected workbook and Bitrix sources transactionally only after every source satisfies the reviewed completeness and grain contract; otherwise stop before committing a snapshot.
 5. Verify source counts, fingerprints, lookup projection and private/aggregate read boundaries.
 6. Exercise validation failure, accepted-warning validation, atomic activation and rollback in the ephemeral database.
 7. Exercise collector/backfill orchestration with deterministic fixtures. A live API read runs only when a newly owner-issued `METRIKA_TOKEN` is supplied through the protected contract.
