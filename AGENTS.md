@@ -45,7 +45,7 @@ It contains the current dashboard runtime rules, auth model, export rules, compa
 | Yandex Webmaster | Automated daily canonical collection at `06:50` | Yandex query and host-summary facts, aggregated to reporting weeks by the dashboard |
 | SEO OS | External weekly SQL load | Tracked Yandex positions, section and cluster coverage, opportunities, tasks, and pipeline telemetry |
 | AI/GEO visibility | Manual | Manually supplied AI visibility snapshots; automation is not connected |
-| Google Search Console | Local branch implementation; production deploy/backfill pending | Canonical GSC query/page/summary facts for Google impressions, clicks, CTR, and position |
+| Google Search Console | Automated daily canonical collection at `06:55` with `--data-delay-days 3`; backfilled for `2026-07-01 .. 2026-07-14` | Canonical GSC query/page/summary facts for Google impressions, clicks, CTR, and position |
 
 `Geography` means visitor countries/cities from Metrika. It is not `GEO`: in `AI/GEO visibility`, GEO means Generative Engine Optimization.
 
@@ -192,12 +192,14 @@ Canonical daily jobs on VPS:
 - `06:37` Hybrid
 - `06:40` canonical monitor
 - `06:50` Yandex Webmaster
+- `06:55` Google Search Console
 
 Important collector rule:
 - cron windows do not include the current day
 - with `--days-back 2` cron now collects:
   - `yesterday - 1 day`
   - through `yesterday`
+- Google Search Console uses `--data-delay-days 3` and `--lag-days 3`, so daily cron ends at `today - 3 days` and repaints a 4-day stable window.
 
 ## Deploy workflow
 

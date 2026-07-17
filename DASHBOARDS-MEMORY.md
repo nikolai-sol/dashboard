@@ -294,8 +294,8 @@ Recent completed changes that should not be rediscovered:
     - source binding: `dashboard_sources.platform = yandex_metrika`, `source_config.account_ids = ["66624469"]`
     - Zaruku no longer uses the Abbott BI UI; it renders `src/components/ZarukuSeoDashboard.tsx`
     - data path: `src/lib/zaruku-seo.ts` returns `zaruku_seo` with measurement layers `onsite / serp / ai`
-    - current connected source is Yandex Metrika: canonical traffic/page facts plus live Metrika API cuts for search engines, phrases, organic landings, devices, geo, browser/OS, inferred age/gender/interests
-    - Google Search Console, Yandex Webmaster, SEO OS, and Alisa AI visibility have dashboard read paths in the current branch; GSC still requires production collector deployment and backfill before production panels fill
+    - current connected onsite source is Yandex Metrika: canonical traffic/page facts plus live Metrika API cuts for search engines, phrases, organic landings, devices, geo, browser/OS, inferred age/gender/interests
+    - Google Search Console, Yandex Webmaster, SEO OS, and Alisa AI visibility have dashboard read paths; GSC is production-deployed, cron-scheduled, and backfilled for `2026-07-01 .. 2026-07-14`
     - `Cached page traffic` is treated as technical tail, not as a primary acquisition channel
     - User ID analytics are Abbott/Bitrix-specific and stay hidden for Zaruku
 12. Zaruku SEO OS is connected as the `seo_os` source in the `serp` layer:

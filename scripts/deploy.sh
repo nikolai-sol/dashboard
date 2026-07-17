@@ -67,6 +67,9 @@ fi
 if [ -f "$REPO_ROOT_DIR/fetch_yandex_webmaster_canonical.py" ]; then
   cp "$REPO_ROOT_DIR/fetch_yandex_webmaster_canonical.py" .next/standalone/
 fi
+if [ -f "$REPO_ROOT_DIR/fetch_google_search_console_canonical.py" ]; then
+  cp "$REPO_ROOT_DIR/fetch_google_search_console_canonical.py" .next/standalone/
+fi
 if [ -f "$REPO_ROOT_DIR/fetch_yandex_direct_canonical_api.py" ]; then
   cp "$REPO_ROOT_DIR/fetch_yandex_direct_canonical_api.py" .next/standalone/
 fi

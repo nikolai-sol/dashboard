@@ -7,7 +7,7 @@ Current production source:
 
 The UI is intentionally built around measurement layers, not vendor-specific screens:
 - `onsite`: what happens after a click, currently Yandex Metrika.
-- `serp`: what happens before a click in search results. Weekly tracked Yandex positions are connected through SEO OS; Yandex Webmaster supplies Yandex search-console facts; GSC supplies Google Search Console facts after the collector is deployed and backfilled.
+- `serp`: what happens before a click in search results. Weekly tracked Yandex positions are connected through SEO OS; Yandex Webmaster supplies Yandex search-console facts; GSC supplies Google Search Console facts through canonical daily tables.
 - `ai`: AI answer visibility / citations. For this dashboard it is connected through the Alisa AI visibility snapshot in `seo_ai_visibility`.
 
 ## SEO OS / Weekly Yandex Positions
@@ -22,7 +22,7 @@ SEO OS is not a replacement for GSC or Yandex Webmaster. It provides the current
 
 ## Google Search Console
 
-Status: implemented locally in this branch; production deploy, cron, and backfill are still pending.
+Status: connected through canonical daily facts. Production collector is deployed on `/root/reportingdash-canonical`, backfilled for `2026-07-01 .. 2026-07-14`, and cron-scheduled daily at `06:55` with a 3-day GSC freshness delay.
 
 Needed fields:
 - query
@@ -39,7 +39,7 @@ Dashboard panels:
 - SERP KPI: impressions, clicks, CTR, average position.
 - Organic landing page table columns: Google position, Google CTR, Google impressions.
 - Query table with full Google search visibility, not only post-click phrases exposed by Metrika.
-- Country/device SERP split.
+- Device SERP split is connected. Country split is still a future extension because the first canonical collector grain is query/page/device/summary.
 
 Important distinction:
 - Metrika can show visits from Google after click.
