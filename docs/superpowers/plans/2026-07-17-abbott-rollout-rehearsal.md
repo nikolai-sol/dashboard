@@ -267,7 +267,7 @@ git commit -m "feat: add Abbott MySQL rollout rehearsal"
 
 **Interfaces:**
 - Consumes: Tasks 1-3, protected copies of the four approved sources, and the ephemeral MySQL service.
-- Produces: independently runnable `import` and `lifecycle` modes that start from a fresh ephemeral schema, perform their requested phase, capture sanitized evidence and clean up.
+- Produces: independently runnable `import --inputs DIR --evidence DIR` and `lifecycle --inputs DIR --evidence DIR` modes that start from a fresh ephemeral application schema, perform their requested phase, capture sanitized evidence and clean up. Only `schema` consumes the 8.1 GiB dump.
 - Produces: a committed sanitized summary and private uncommitted evidence under `/tmp/abbott-rollout-rehearsal/evidence`.
 
 - [ ] **Step 1: Write import/lifecycle orchestration RED tests**
@@ -308,7 +308,7 @@ install -m 600 /Users/nafanya/ReportingDash/dashboard-next/public/abbott/bitrix-
 
 ```bash
 ops/local/abbott_mysql_rehearsal.sh schema \
-  --inputs /tmp/abbott-rollout-rehearsal/inputs \
+  --dump-sql /Users/nafanya/ReportingDash/abbott_reader_analytics_abbottpro_db_2026-05-29_11-14-33.sql \
   --evidence /tmp/abbott-rollout-rehearsal/evidence
 ops/local/abbott_mysql_rehearsal.sh import \
   --inputs /tmp/abbott-rollout-rehearsal/inputs \
