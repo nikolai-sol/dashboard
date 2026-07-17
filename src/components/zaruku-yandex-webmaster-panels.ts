@@ -153,7 +153,7 @@ export function buildWebmasterSelectionMeta<T extends { week: string; week_from:
 
   return {
     periodLabel,
-    sourceNote: "Источник: Яндекс Вебмастер / canonical_fact_webmaster_*_daily.",
+    sourceNote: "Источник: Яндекс Вебмастер API; ежедневная загрузка ReportingDash.",
     fallbackNote,
   };
 }

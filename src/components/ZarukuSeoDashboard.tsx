@@ -139,6 +139,25 @@ function formatSignedPercent(value: number | null | undefined, locale = "ru-RU",
   return `Δ ${sign}${formatPercent(value, locale, digits)}`;
 }
 
+function readableAudienceLabel(label: string) {
+  const normalized = label.trim().toLowerCase();
+  const labels: Record<string, string> = {
+    male: "Мужчины",
+    men: "Мужчины",
+    female: "Женщины",
+    women: "Женщины",
+    undefined: "Не определено",
+    unknown: "Не определено",
+    "not defined": "Не определено",
+    "age undefined": "Возраст не определён",
+    "gender undefined": "Пол не определён",
+  };
+  return labels[normalized] ?? label
+    .replace(/^age:\s*/i, "")
+    .replace(/^gender:\s*/i, "")
+    .replace("years", "лет");
+}
+
 const SOURCE_STATUS_LABELS: Record<ZarukuSeoSource["status"], string> = {
   connected: "подключено",
   pending: "ожидается",
@@ -271,22 +290,25 @@ function BarList({ rows, value = "visits", locale = "ru-RU" }: { rows: ZarukuSeo
   const max = Math.max(1, ...rows.map((row) => row[value]));
   return (
     <div className="space-y-2.5">
-      {rows.map((row, index) => (
-        <div key={`${row.label}-${row.secondary_label ?? ""}-${index}`} className="grid grid-cols-[128px_minmax(0,1fr)_76px] items-center gap-3">
-          <div className="min-w-0 text-sm text-slate-600" title={row.label}>
-            {truncate(row.label, 28)}
-          </div>
-          <div className="h-6 overflow-hidden rounded-md bg-slate-50">
-            <div
-              className="flex h-full items-center rounded-md px-2 text-xs font-medium text-white"
-              style={{ width: `${Math.max(4, (row[value] / max) * 100)}%`, background: COLORS[index % COLORS.length] }}
-            >
-              {row.share != null ? formatPercent(row.share, locale, 1) : ""}
+      {rows.map((row, index) => {
+        const label = readableAudienceLabel(row.label);
+        return (
+          <div key={`${row.label}-${row.secondary_label ?? ""}-${index}`} className="grid grid-cols-[128px_minmax(0,1fr)_76px] items-center gap-3">
+            <div className="min-w-0 text-sm text-slate-600" title={label}>
+              {truncate(label, 28)}
             </div>
+            <div className="h-6 overflow-hidden rounded-md bg-slate-50">
+              <div
+                className="flex h-full items-center rounded-md px-2 text-xs font-medium text-white"
+                style={{ width: `${Math.max(4, (row[value] / max) * 100)}%`, background: COLORS[index % COLORS.length] }}
+              >
+                {row.share != null ? formatPercent(row.share, locale, 1) : ""}
+              </div>
+            </div>
+            <div className="text-right text-sm text-slate-500">{formatNumber(row[value], locale)}</div>
           </div>
-          <div className="text-right text-sm text-slate-500">{formatNumber(row[value], locale)}</div>
-        </div>
-      ))}
+        );
+      })}
     </div>
   );
 }
@@ -418,8 +440,13 @@ function MapCityDemandTable({ rows, locale }: { rows: ZarukuSeoMetricRow[]; loca
           {rows.map((row, index) => (
             <tr key={`${row.label}-${index}`}>
               <td className="max-w-[320px] py-2.5">
-                <div className="font-medium text-slate-700" title={row.label}>
-                  {truncate(row.label, 48)}
+                <div className="flex flex-wrap items-center gap-2">
+                  <span className="font-medium text-slate-700" title={row.label}>
+                    {truncate(row.label, 48)}
+                  </span>
+                  {isMapGeoAnomaly(row) ? (
+                    <span className="rounded-md bg-amber-50 px-1.5 py-0.5 text-[11px] font-medium text-amber-700">проверить</span>
+                  ) : null}
                 </div>
                 {row.secondary_label ? <div className="text-xs text-slate-400">{truncate(shortUrl(row.secondary_label), 72)}</div> : null}
               </td>
@@ -438,7 +465,37 @@ function MapCityDemandTable({ rows, locale }: { rows: ZarukuSeoMetricRow[]; loca
   );
 }
 
+function isMapGeoAnomaly(row: ZarukuSeoMetricRow) {
+  const label = row.label.toLowerCase();
+  const url = row.secondary_label ?? row.url ?? "";
+  const looksLikeKnownOutlier = label.includes("singapore") || label.includes("сингапур");
+  const hasMapPath = url.includes("/map");
+  const highBounceMapDemand = hasMapPath && row.visits >= 20 && (row.bounce_rate ?? 0) >= 80;
+  return looksLikeKnownOutlier || highBounceMapDemand;
+}
+
+function findMapGeoAnomalies(rows: ZarukuSeoMetricRow[]) {
+  return rows.filter(isMapGeoAnomaly).slice(0, 3);
+}
+
 function PendingPanel({ data }: { data: ZarukuSeoData }) {
+  if (data.pending_requirements.length === 0) {
+    return (
+      <Panel data={data} title="Подключения источников" layer="serp" right={<span className="text-xs text-teal-600">Все ключевые источники подключены</span>}>
+        <div className="grid gap-3 md:grid-cols-3">
+          {data.sources.map((source) => (
+            <div key={source.id} className="rounded-lg border border-slate-200 bg-slate-50 p-4">
+              <div className="text-sm font-semibold text-slate-700">{source.label}</div>
+              <div className="mt-1 text-xs leading-relaxed text-slate-500">
+                {SOURCE_STATUS_LABELS[source.status]} · {SOURCE_COLLECTION_MODE_LABELS[source.collection_mode]}
+                {source.data_through ? ` · данные по ${source.data_through}` : ""}
+              </div>
+            </div>
+          ))}
+        </div>
+      </Panel>
+    );
+  }
   return (
     <Panel data={data} title="Что ещё ждём" layer="serp" pending right={<span className="text-xs text-slate-400">{formatPendingRequirementSources(data)}</span>}>
       <div className="grid gap-3 md:grid-cols-3">
@@ -731,7 +788,7 @@ function AiAggregateVisibilityPanel({ data, locale }: Props) {
           </div>
           <p className="text-xs leading-relaxed text-slate-500">
             {latest ? `${formatNumber(latest.mentions, locale)} из ${formatNumber(latest.citations, locale)} примеров, источник №1 во всех случаях.` : ""}
-            {latest?.provenance ? ` Источник данных: ${latest.provenance}.` : ""}
+            {latest?.provenance ? " Источник данных: ручной снимок AI-видимости." : ""}
           </p>
         </div>
       ) : (
@@ -922,7 +979,7 @@ function SeoTab({ data, locale, primaryWeek, comparisonWeek }: Props & { primary
         >
           <SearchConsoleKpiStrip rows={gscSummaryRows.length > 0 ? gscSummaryRows : gscQueries} locale={currentLocale} />
           <div className="mt-3 text-xs leading-relaxed text-slate-500">
-            Источник: Google Search Console / canonical_fact_gsc_*_daily. Период: {gscFactsMeta.periodLabel}.
+            Источник: Google Search Console API; ежедневная загрузка ReportingDash. Период: {gscFactsMeta.periodLabel}.
           </div>
           {gscFactsMeta.fallbackNote ? (
             <div className="mt-2 rounded-md border border-amber-200 bg-amber-50 px-3 py-2 text-xs leading-relaxed text-amber-800">
@@ -1028,8 +1085,12 @@ function ContentTab({ data, locale, primaryWeek, comparisonWeek }: Props & { pri
 }
 
 function GeoTab({ data, locale }: Props) {
+  const mapGeoAnomalies = findMapGeoAnomalies(data.map_city_demand);
   return (
     <div className="space-y-5">
+      <div className="rounded-lg border border-slate-200 bg-white px-5 py-4 text-sm leading-relaxed text-slate-600">
+        География после клика из Метрики: страны, города и спрос на карту показывают уже пришедших пользователей. Для pre-click спроса по странам смотри GSC country/device в SEO-вкладке.
+      </div>
       <div className="grid gap-5 lg:grid-cols-2">
         <Panel data={data} title="Страны" source="metrika" layer="onsite">
           <BarList rows={data.geo_countries.slice(0, 10)} locale={locale} />
@@ -1039,6 +1100,11 @@ function GeoTab({ data, locale }: Props) {
         </Panel>
       </div>
       <Panel data={data} title="Спрос на карту онкоцентров" source="metrika" layer="onsite" right={<span className="text-xs text-slate-400">regionCity × /map</span>}>
+        {mapGeoAnomalies.length > 0 ? (
+          <div className="mb-3 rounded-md border border-amber-200 bg-amber-50 px-3 py-2 text-xs leading-relaxed text-amber-800">
+            Проверить гео/ботов: необычно высокий спрос на карту из {mapGeoAnomalies.map((row) => row.label).join(", ")}. Это не ошибка отчёта, а сигнал для проверки качества трафика.
+          </div>
+        ) : null}
         <MapCityDemandTable rows={data.map_city_demand} locale={locale ?? "ru-RU"} />
       </Panel>
     </div>
@@ -1223,7 +1289,7 @@ export default function ZarukuSeoDashboard({ data, locale = "ru-RU" }: Props) {
             <div className="flex h-8 w-8 items-center justify-center rounded-lg bg-teal-600 text-sm font-bold text-white">Z</div>
             <div>
               <div className="text-sm font-semibold leading-tight">Zaruku</div>
-              <div className="text-xs text-slate-400">SEO / GEO дашборд</div>
+              <div className="text-xs text-slate-400">SEO / AI-поиск</div>
             </div>
           </div>
           <nav className="mt-6 space-y-1">
