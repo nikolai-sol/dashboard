@@ -84,7 +84,17 @@ export function parseAbbottWorkbookCatalog(buffer: Buffer): AbbottWorkbookCatalo
       const sourceRowOrdinal = index + 1;
       const pageTitle = text(row["Название"]);
       const sourceSlug = text(row["Символьный код"]) || null;
-      if (!pageTitle && !sourceSlug) return;
+      if (!pageTitle && !sourceSlug) {
+        const hasRelevantMetadata = [
+          row["Тип материала"],
+          row["Направление"],
+          row["Направления"],
+          row["Доступ"],
+          row["Активность"],
+        ].some((value) => text(value) !== "");
+        if (hasRelevantMetadata) throw new Error("Workbook content identity is blank");
+        return;
+      }
       if (!pageTitle) throw new Error(`Workbook content title is blank in ${config.name}`);
       const materialType = text(config.typeKey ? row[config.typeKey] : config.materialType) || config.materialType;
       const direction = text(config.directionKey ? row[config.directionKey] : "") || null;

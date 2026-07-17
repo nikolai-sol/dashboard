@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
-import { mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, statSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, statSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import test from "node:test";
@@ -42,6 +42,28 @@ test("preserves duplicate lookup rows with stable source provenance", () => {
     repeatedOnOneSheet.rows[0]?.targetKeyFingerprint,
     repeatedOnOneSheet.rows[1]?.targetKeyFingerprint,
   );
+});
+
+test("skips only truly empty relevant rows and rejects populated metadata without an identity", () => {
+  const skipped = parseAbbottWorkbookCatalog(workbookBuffer({
+    pages: [
+      { "Unrelated workbook note": "not catalog metadata" },
+      { "Название": "Valid row", "Символьный код": "valid-row" },
+    ],
+  }));
+  assert.equal(skipped.rows.length, 1);
+
+  for (const populatedMetadata of [
+    { "Направление": "cardiology" },
+    { "Доступ": "registered" },
+    { "Тип материала": "article" },
+    { "Активность": "Да" },
+  ]) {
+    assert.throws(
+      () => parseAbbottWorkbookCatalog(workbookBuffer({ "Помощник фармацевта": [populatedMetadata] })),
+      (error: unknown) => error instanceof Error && error.message === "Workbook content identity is blank",
+    );
+  }
 });
 
 test("reports aggregate lookup conflicts with sorted hashes and no row-level keys", () => {
@@ -147,6 +169,65 @@ test("audit CLI accepts only private input/output flags and writes aggregate evi
     assert.equal(unknownFlag.status, 1);
     assert.equal(unknownFlag.stdout, "");
     assert.equal(unknownFlag.stderr, "Abbott workbook audit failed\n");
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("audit CLI rejects Git, worktree, web, and release roots after resolving symlinks", () => {
+  const root = mkdtempSync(path.join(tmpdir(), "abbott-workbook-audit-roots-"));
+  try {
+    const safeInputDir = path.join(root, "inputs");
+    const safeOutputDir = path.join(root, "evidence");
+    mkdirSync(safeInputDir);
+    mkdirSync(safeOutputDir);
+    const workbook = workbookBuffer({ "Статьи": [{ "Название": "Safe fixture", "Символьный код": "safe-fixture" }] });
+    const safeInput = path.join(safeInputDir, "workbook.xlsx");
+    writeFileSync(safeInput, workbook, { mode: 0o600 });
+    const script = path.resolve("scripts/audit-abbott-workbook.ts");
+    const attempt = (input: string, output: string) => spawnSync(process.execPath, [
+      "--import", "tsx", script,
+      "--workbook-xlsx", input,
+      "--output", output,
+    ], { encoding: "utf8" });
+    const assertRejected = (result: ReturnType<typeof attempt>): void => {
+      assert.equal(result.status, 1);
+      assert.equal(result.stdout, "");
+      assert.equal(result.stderr, "Abbott workbook audit failed\n");
+    };
+
+    const gitRepo = path.join(root, "git-repo");
+    mkdirSync(path.join(gitRepo, ".git"), { recursive: true });
+    const gitRepoInput = path.join(gitRepo, "workbook.xlsx");
+    writeFileSync(gitRepoInput, workbook, { mode: 0o600 });
+    assertRejected(attempt(gitRepoInput, path.join(safeOutputDir, "git-repo-input.json")));
+    assertRejected(attempt(safeInput, path.join(gitRepo, "git-repo-output.json")));
+
+    const gitWorktree = path.join(root, "git-worktree");
+    mkdirSync(gitWorktree);
+    writeFileSync(path.join(gitWorktree, ".git"), "gitdir: ../git-repo/.git/worktrees/test\n");
+    const gitWorktreeInput = path.join(gitWorktree, "workbook.xlsx");
+    writeFileSync(gitWorktreeInput, workbook, { mode: 0o600 });
+    assertRejected(attempt(gitWorktreeInput, path.join(safeOutputDir, "git-worktree-input.json")));
+    assertRejected(attempt(safeInput, path.join(gitWorktree, "git-worktree-output.json")));
+
+    for (const segment of ["public", ".next", "standalone", "static", "build", "dist"]) {
+      const forbiddenRoot = path.join(root, segment);
+      mkdirSync(forbiddenRoot);
+      const forbiddenInput = path.join(forbiddenRoot, "workbook.xlsx");
+      writeFileSync(forbiddenInput, workbook, { mode: 0o600 });
+      assertRejected(attempt(forbiddenInput, path.join(safeOutputDir, `${segment}-input.json`)));
+      assertRejected(attempt(safeInput, path.join(forbiddenRoot, "audit.json")));
+    }
+
+    const alias = path.join(root, "resolved-alias");
+    symlinkSync(path.join(root, "dist"), alias, "dir");
+    assertRejected(attempt(path.join(alias, "workbook.xlsx"), path.join(safeOutputDir, "alias-input.json")));
+    assertRejected(attempt(safeInput, path.join(alias, "alias-output.json")));
+
+    const safeAttempt = attempt(safeInput, path.join(safeOutputDir, "safe-audit.json"));
+    assert.equal(safeAttempt.status, 0, safeAttempt.stderr);
+    assert.equal(safeAttempt.stdout, "Abbott workbook audit complete\n");
   } finally {
     rmSync(root, { recursive: true, force: true });
   }

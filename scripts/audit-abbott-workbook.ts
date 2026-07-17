@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 import { randomUUID } from "node:crypto";
-import { existsSync, realpathSync } from "node:fs";
+import { lstatSync, realpathSync } from "node:fs";
 import { chmod, mkdir, open, readFile, rename, stat, unlink } from "node:fs/promises";
 import path from "node:path";
 import { buildAbbottCatalogAudit, parseAbbottWorkbookCatalog } from "../src/lib/abbott-workbook-catalog";
@@ -10,20 +10,62 @@ interface AuditCliOptions {
   outputPath: string;
 }
 
+const FORBIDDEN_ROOT_SEGMENTS = new Set([
+  ".next",
+  "build",
+  "dashboard-releases",
+  "dist",
+  "htdocs",
+  "public",
+  "public_html",
+  "releases",
+  "standalone",
+  "static",
+  "www",
+  "wwwroot",
+]);
+
+function isMissingPathError(error: unknown): boolean {
+  const code = (error as NodeJS.ErrnoException).code;
+  return code === "ENOENT" || code === "ENOTDIR";
+}
+
+function assertOutsideGitRoots(resolvedPath: string): void {
+  let directory = path.dirname(resolvedPath);
+  while (true) {
+    try {
+      lstatSync(path.join(directory, ".git"));
+      throw new Error("Audit path must be outside Git roots");
+    } catch (error) {
+      if (!isMissingPathError(error)) throw error;
+    }
+    const parent = path.dirname(directory);
+    if (parent === directory) return;
+    directory = parent;
+  }
+}
+
 function privatePath(value: string, label: string): string {
   if (!value.trim()) throw new Error(`${label} requires an explicit path`);
   let existingAncestor = path.resolve(value);
   const missingSegments: string[] = [];
-  while (!existsSync(existingAncestor)) {
-    const parent = path.dirname(existingAncestor);
-    if (parent === existingAncestor) break;
-    missingSegments.unshift(path.basename(existingAncestor));
-    existingAncestor = parent;
+  while (true) {
+    try {
+      lstatSync(existingAncestor);
+      break;
+    } catch (error) {
+      if (!isMissingPathError(error)) throw new Error(`${label} could not be verified`);
+      const parent = path.dirname(existingAncestor);
+      if (parent === existingAncestor) throw new Error(`${label} could not be verified`);
+      missingSegments.unshift(path.basename(existingAncestor));
+      existingAncestor = parent;
+    }
   }
   const resolved = path.join(realpathSync.native(existingAncestor), ...missingSegments);
-  if (resolved.split(path.sep).some((segment) => segment.toLowerCase() === "public")) {
-    throw new Error(`${label} must not be under a web root`);
+  if (resolved.split(path.sep).some((segment) => FORBIDDEN_ROOT_SEGMENTS.has(segment.toLowerCase()))) {
+    throw new Error(`${label} must not be under a web or release root`);
   }
+  assertOutsideGitRoots(resolved);
   return resolved;
 }
 
