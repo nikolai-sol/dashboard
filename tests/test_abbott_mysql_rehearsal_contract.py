@@ -141,6 +141,30 @@ CREATE DEFINER=`source_user`@`source_host` VIEW `event_ids` AS SELECT `id` FROM 
         self.assertNotRegex(result.stdout.upper(), r"INSERT|LOCK TABLES|DEFINER")
         self.assertNotIn("abbottpro_db", result.stdout)
 
+    def test_filter_strips_current_user_definer_forms(self):
+        for definer in ("CURRENT_USER", "CURRENT_USER()"):
+            with self.subTest(definer=definer):
+                result = run_filter(
+                    f"CREATE DEFINER={definer} VIEW `event_ids` AS SELECT 1;"
+                )
+                self.assertIn("CREATE VIEW", result.stdout)
+                self.assertNotRegex(result.stdout, r"(?i)\bDEFINER\b")
+        unsupported = subprocess.run(
+            [sys.executable, str(FILTER), "--source-database", "abbottpro_db"],
+            input="CREATE DEFINER=UNSUPPORTED_AUTHORITY VIEW v AS SELECT 1;",
+            text=True,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            check=False,
+        )
+        self.assertNotEqual(unsupported.returncode, 0)
+        self.assertEqual(unsupported.stdout, "")
+        self.assertIn("residual definer authority", unsupported.stderr)
+        skipped_row = run_filter(
+            "INSERT INTO t VALUES ('DEFINER'); CREATE TABLE safe_table (id int);"
+        )
+        self.assertIn("CREATE TABLE safe_table", skipped_row.stdout)
+
     def test_schema_cli_has_no_application_inputs_and_unsupported_mode_stops_before_docker(self):
         with tempfile.TemporaryDirectory() as temporary:
             fake = FakeDocker(Path(temporary))
@@ -189,6 +213,46 @@ CREATE DEFINER=`source_user`@`source_host` VIEW `event_ids` AS SELECT `id` FROM 
         self.assertNotEqual(result.returncode, 0)
         self.assertIn("migration authority is not clean", result.stderr)
         self.assertEqual(docker_entries, [])
+
+    def test_ignored_untracked_migration_is_never_executed(self):
+        ignored = MIGRATIONS / "000_ignored_rehearsal_test.sql"
+        self.assertFalse(ignored.exists())
+        try:
+            ignored.write_text("CREATE TABLE ignored_rehearsal_table (id int);\n", encoding="utf-8")
+            with tempfile.TemporaryDirectory() as temporary:
+                base = Path(temporary)
+                fake = FakeDocker(base)
+                real_git = shutil.which("git")
+                self.assertIsNotNone(real_git)
+                git = fake.bin / "git"
+                git.write_text(
+                    "#!/bin/sh\n"
+                    "case \" $* \" in\n"
+                    "  *\" status \"*\"src/db/migrations\"*) exit 0 ;;\n"
+                    "esac\n"
+                    f"exec {real_git} \"$@\"\n",
+                    encoding="utf-8",
+                )
+                git.chmod(git.stat().st_mode | stat.S_IXUSR)
+                dump = base / "source.sql"
+                dump.write_text("CREATE TABLE source_table (id int);", encoding="utf-8")
+                result = subprocess.run(
+                    [str(HARNESS), "schema", "--dump-sql", str(dump), "--evidence", str(base / "evidence")],
+                    text=True,
+                    stdout=subprocess.PIPE,
+                    stderr=subprocess.PIPE,
+                    env=fake.env(),
+                    check=False,
+                )
+                stdin_hashes = {
+                    entry["stdin_sha256"]
+                    for entry in fake.entries()
+                    if "stdin_sha256" in entry
+                }
+            self.assertEqual(result.returncode, 0, result.stderr)
+            self.assertNotIn(sha256(ignored), stdin_hashes)
+        finally:
+            ignored.unlink(missing_ok=True)
 
     def test_schema_rejects_git_web_and_symlink_paths_before_docker(self):
         with tempfile.TemporaryDirectory() as temporary:
@@ -287,8 +351,15 @@ CREATE DEFINER=`source_user`@`source_host` VIEW `event_ids` AS SELECT `id` FROM 
             stdin_sequence = [
                 entry["stdin_sha256"] for entry in fake.entries() if "stdin_sha256" in entry
             ]
+            tracked = subprocess.run(
+                ["git", "-C", str(ROOT / "dashboard-next"), "ls-files", "--", "src/db/migrations"],
+                text=True,
+                stdout=subprocess.PIPE,
+                check=True,
+            ).stdout.splitlines()
             expected = []
-            for migration in sorted(MIGRATIONS.glob("*.sql")):
+            for relative in sorted(path for path in tracked if path.endswith(".sql")):
+                migration = ROOT / "dashboard-next" / relative
                 expected.append(migration)
                 if migration == MIGRATION_033:
                     break

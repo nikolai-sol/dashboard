@@ -73,10 +73,19 @@ readonly MIGRATIONS_REPOSITORY="$ROOT_DIR/dashboard-next"
 readonly MIGRATIONS_DIRECTORY="src/db/migrations"
 readonly PRIVATE_SQL_RELATIVE="ops/sql/abbott_private_schema_and_grants.sql"
 [[ -z "$(git -C "$MIGRATIONS_REPOSITORY" status --porcelain=v1 --untracked-files=all -- "$MIGRATIONS_DIRECTORY")" ]] || { printf '%s\n' "Reviewed migration authority is not clean." >&2; exit 1; }
+MIGRATIONS_THROUGH_033=()
+TRACKED_033_FOUND=0
 while IFS= read -r authority; do
   [[ "$authority" == *.sql ]] || continue
   assert_clean_tracked_file "$MIGRATIONS_REPOSITORY" "$authority"
+  if [[ "$TRACKED_033_FOUND" -eq 0 ]]; then
+    MIGRATIONS_THROUGH_033+=("$MIGRATIONS_REPOSITORY/$authority")
+    if [[ "$authority" == "$MIGRATIONS_DIRECTORY/033_abbott_canonical_release_control.sql" ]]; then
+      TRACKED_033_FOUND=1
+    fi
+  fi
 done < <(git -C "$MIGRATIONS_REPOSITORY" ls-files -- "$MIGRATIONS_DIRECTORY" | LC_ALL=C sort)
+[[ "$TRACKED_033_FOUND" -eq 1 ]] || { printf '%s\n' "Tracked migration 033 authority is unavailable." >&2; exit 1; }
 assert_clean_tracked_file "$ROOT_DIR" "$PRIVATE_SQL_RELATIVE"
 
 install -d -m 700 "$EVIDENCE"
@@ -152,14 +161,13 @@ PRIVATE_SQL="$ROOT_DIR/$PRIVATE_SQL_RELATIVE"
 [[ -f "$MIGRATION_033" && -f "$PRIVATE_SQL" ]] || { printf '%s\n' "Reviewed Abbott DDL is unavailable." >&2; exit 1; }
 migration_count=0
 found_033=0
-while IFS= read -r migration; do
+for migration in "${MIGRATIONS_THROUGH_033[@]}"; do
   mysql_exec "$PRIMARY_DATABASE" < "$migration" >> "$PRIVATE_ROOT/migrations-fresh.log" 2>&1
   migration_count=$((migration_count + 1))
   if [[ "$(basename "$migration")" == "033_abbott_canonical_release_control.sql" ]]; then
     found_033=1
-    break
   fi
-done < <(find "$MIGRATIONS_REPOSITORY/$MIGRATIONS_DIRECTORY" -maxdepth 1 -type f -name '*.sql' -print | LC_ALL=C sort)
+done
 [[ "$found_033" -eq 1 ]] || { printf '%s\n' "Migration 033 was not reached in lexical order." >&2; exit 1; }
 mysql_exec "$PRIMARY_DATABASE" < "$PRIVATE_SQL" > "$PRIVATE_ROOT/private-fresh.log" 2>&1
 

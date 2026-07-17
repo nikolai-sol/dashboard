@@ -13,8 +13,10 @@ DATABASE_DECLARATION = re.compile(
     r"^\s*(?:CREATE\s+DATABASE(?:\s+IF\s+NOT\s+EXISTS)?|USE)\b", re.I
 )
 DEFINER = re.compile(
-    r"\bDEFINER\s*=\s*(?:`[^`]*`|'[^']*'|[^\s@]+)@"
-    r"(?:`[^`]*`|'[^']*'|[^\s]+)\s*",
+    r"\bDEFINER\s*=\s*(?:"
+    r"CURRENT_USER(?:\s*\(\s*\))?"
+    r"|(?:`[^`]*`|'[^']*'|[^\s@]+)@(?:`[^`]*`|'[^']*'|[^\s]+)"
+    r")\s*",
     re.I,
 )
 SQL_SECURITY_DEFINER = re.compile(r"\bSQL\s+SECURITY\s+DEFINER\b", re.I)
@@ -129,6 +131,8 @@ def main() -> int:
         statement = strip_source_qualifiers(statement, source_database)
         if not DDL.match(statement):
             continue
+        if re.search(r"\bDEFINER\b", statement, flags=re.I):
+            raise SystemExit("schema filter rejected residual definer authority")
         if re.search(re.escape(source_database), statement, flags=re.I):
             raise SystemExit("schema filter rejected residual source database reference")
         sys.stdout.write(statement.rstrip() + ";\n")
