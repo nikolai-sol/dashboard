@@ -286,7 +286,11 @@ mysql_exec "$PRIMARY_DATABASE" --execute="
     suggested_negative_keyword VARCHAR(255) DEFAULT NULL,
     review_note TEXT DEFAULT NULL,
     PRIMARY KEY (id)
-  ) ENGINE=InnoDB /*rehearsal:legacy-fixture:google_ads_negative_keyword_recommendations*/;" \
+  ) ENGINE=InnoDB /*rehearsal:legacy-fixture:google_ads_negative_keyword_recommendations*/;
+  CREATE TABLE yandex_metrika_names (
+    id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
+    PRIMARY KEY (id)
+  ) ENGINE=InnoDB /*rehearsal:legacy-fixture:yandex_metrika_names*/;" \
   > "$PRIVATE_ROOT/legacy-fixture.log" 2>&1
 
 MIGRATION_033="$MIGRATIONS_REPOSITORY/$MIGRATIONS_DIRECTORY/033_abbott_canonical_release_control.sql"

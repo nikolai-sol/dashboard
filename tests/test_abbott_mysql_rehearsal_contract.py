@@ -429,6 +429,7 @@ CREATE DEFINER=`source_user`@`source_host` VIEW `event_ids` AS SELECT `id` FROM 
             for marker in (
                 "rehearsal:legacy-fixture:hyb_stats",
                 "rehearsal:legacy-fixture:google_ads_negative_keyword_recommendations",
+                "rehearsal:legacy-fixture:yandex_metrika_names",
             )
         }
         first_migration = next(index for index, entry in enumerate(entries) if "stdin_sha256" in entry)
