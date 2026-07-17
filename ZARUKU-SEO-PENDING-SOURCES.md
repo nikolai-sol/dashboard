@@ -39,7 +39,8 @@ Dashboard panels:
 - SERP KPI: impressions, clicks, CTR, average position.
 - Organic landing page table columns: Google position, Google CTR, Google impressions.
 - Query table with full Google search visibility, not only post-click phrases exposed by Metrika.
-- Device SERP split is connected. Country split is still a future extension because the first canonical collector grain is query/page/device/summary.
+- Device SERP split is connected through query/page/summary facts by device.
+- Country SERP split is connected through `canonical_fact_gsc_countries_daily` at `country + device` grain. This is Google Search Console's pre-click country dimension, not the onsite post-click `Geography` tab from Metrika.
 
 Important distinction:
 - Metrika can show visits from Google after click.
