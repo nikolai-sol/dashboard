@@ -130,11 +130,12 @@ git commit -m "fix: preserve Abbott workbook source rows"
 - Modify: `dashboard-next/src/lib/abbott-private-store.test.ts`
 - Modify: `dashboard-next/src/lib/abbott-bi.ts`
 - Modify: `dashboard-next/src/lib/abbott-bi-loader.test.ts`
+- Modify: `ops/sql/abbott_private_schema_and_grants.sql`
 - Modify: `tests/test_abbott_schema_contract.py`
 
 **Interfaces:**
 - Consumes: Task 1 `AbbottWorkbookCatalogRow[]`.
-- Produces: `buildAbbottContentLookupProjection(rows)` with `unique`, `identical_collapsed`, or `ambiguous` resolution rows for `title`, `title_type`, `slug`, and `path` lookup kinds.
+- Produces: `buildAbbottContentLookupProjection(rows)` with `unique`, `identical_collapsed`, or `ambiguous` resolution rows for `title`, `slug`, and `path` lookup kinds. `title_type` is excluded because no current canonical/Bitrix fact carries both inputs.
 - Produces: hashed lookup maps plus `lookupQuality: { ambiguousGroups: number; collapsedGroups: number }`; ambiguous groups have no selected catalog row.
 
 - [ ] **Step 1: Write migration and projection RED tests**
@@ -164,6 +165,8 @@ Expected: failures because provenance columns and projection table/builder do no
 
 Add the new columns/table to the fresh DDL and guard existing-install ALTER/index changes through `INFORMATION_SCHEMA` prepared statements. Store only `lookup_key_hash`, candidate counts, metadata-signature counts, resolution status, selected source fingerprint and a group fingerprint; do not duplicate raw title/slug/path values in the projection.
 
+Grant the importer role `SELECT, INSERT` and the runtime-reader role `SELECT` on `report_bd.portal_content_lookup_projection`. Do not grant the collector or release-operator roles access to the projection.
+
 - [ ] **Step 4: Persist catalog provenance and projection in one importer transaction**
 
 Every catalog batch must include `source_sheet` and `source_row_ordinal`. Projection rows are derived from the freshly parsed batch, inserted with the same release/snapshot, verified by count/fingerprint, and included in per-release import evidence before commit.
@@ -191,7 +194,7 @@ cd dashboard-next
 git add src/db/migrations/033_abbott_canonical_release_control.sql scripts/import-abbott-private-data.ts scripts/import-abbott-private-data.test.ts src/lib/abbott-private-types.ts src/lib/abbott-private-store.ts src/lib/abbott-private-store.test.ts src/lib/abbott-bi.ts src/lib/abbott-bi-loader.test.ts
 git commit -m "feat: resolve Abbott content lookups explicitly"
 cd ..
-git add dashboard-next tests/test_abbott_schema_contract.py
+git add dashboard-next ops/sql/abbott_private_schema_and_grants.sql tests/test_abbott_schema_contract.py
 git commit -m "test: require Abbott lookup provenance"
 ```
 
@@ -424,4 +427,3 @@ Generate review packages from root base `331ad22` and dashboard base `7ab761a`. 
 - [ ] **Step 6: Record final state**
 
 Append Task 1-6 commit ranges and review results to `.superpowers/sdd/progress.md`. Report the branch/HEADs, fresh test counts, local rehearsal outcome, remaining owner/production actions, and whether the known `2026-03-29..2026-04-07` gap was actually downloaded or remains blocked.
-

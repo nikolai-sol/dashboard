@@ -32,7 +32,7 @@ The importer must not first-win, last-win, or silently deduplicate. Exact repeat
 
 ## Lookup-projection decision
 
-Row identity and dashboard lookup are separate concerns. A release-scoped lookup projection groups catalog rows by hashed lookup keys for title, title-and-type, slug, and normalized path.
+Row identity and dashboard lookup are separate concerns. A release-scoped lookup projection groups catalog rows by hashed lookup keys for title, slug, and normalized path. The current canonical page and Bitrix facts never carry both a page title and a material-type hint, so a title-and-type projection would have no real consumer and is intentionally not materialized in this phase.
 
 Resolution is deterministic:
 
@@ -86,4 +86,3 @@ Committed evidence is sanitized and contains only:
 - Local activation and rollback change only the expected Abbott pointer.
 - No private input or secret appears in Git, public/standalone output, logs, or sanitized evidence.
 - Missing owner/production credentials produce a precise blocked gate while all safe local work continues.
-
