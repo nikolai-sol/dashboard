@@ -138,6 +138,17 @@ class AbbottMysqlRehearsalContractTest(unittest.TestCase):
         self.assertNotIn("INSERT", result.stdout.upper())
         self.assertNotIn("private", result.stdout)
 
+    def test_filter_never_resumes_ddl_from_quoted_multiline_row_data(self):
+        result = run_filter(
+            "INSERT INTO `events` VALUES\n"
+            "('private-value; CREATE TABLE leaked_row (secret text)');\n"
+            "CREATE TABLE `safe_table` (`id` bigint);\n"
+        )
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn("CREATE TABLE `safe_table`", result.stdout)
+        self.assertNotIn("private-value", result.stdout)
+        self.assertNotIn("leaked_row", result.stdout)
+
     def test_filter_requires_and_strips_explicit_source_database_without_use(self):
         sql = (
             "CREATE VIEW `event_ids` AS SELECT `id` "

@@ -39,13 +39,13 @@ def parse_args() -> argparse.Namespace:
 
 
 def private_regular_file(path: Path) -> bool:
-    if not path.exists():
-        return False
     try:
         metadata = path.lstat()
+    except FileNotFoundError:
+        return False
     except OSError as error:
         raise UnsafeSuppliedFile from error
-    if path.is_symlink() or not stat.S_ISREG(metadata.st_mode):
+    if stat.S_ISLNK(metadata.st_mode) or not stat.S_ISREG(metadata.st_mode):
         raise UnsafeSuppliedFile
     if metadata.st_uid != os.getuid() or stat.S_IMODE(metadata.st_mode) != 0o600:
         raise UnsafeSuppliedFile
@@ -134,18 +134,7 @@ def local_gate(directory: Path) -> dict[str, str]:
     )
     if not schema_ready:
         return {"status": "blocked", "reason_code": "schema_evidence_failed"}
-    lifecycle = read_private_json(directory / "lifecycle-summary.json")
-    if not lifecycle:
-        return {"status": "partial", "reason_code": "bitrix_contract_deferred"}
-    lifecycle_ready = (
-        lifecycle.get("mode") == "lifecycle"
-        and lifecycle.get("validation_succeeded") is True
-        and lifecycle.get("activation_succeeded") is True
-        and lifecycle.get("rollback_restored_predecessor") is True
-    )
-    if not lifecycle_ready:
-        return {"status": "blocked", "reason_code": "lifecycle_evidence_failed"}
-    return {"status": "ready", "reason_code": "local_lifecycle_verified"}
+    return {"status": "partial", "reason_code": "bitrix_contract_deferred"}
 
 
 def render(report: dict[str, object]) -> None:

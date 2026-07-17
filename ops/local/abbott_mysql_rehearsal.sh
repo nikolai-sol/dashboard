@@ -18,7 +18,14 @@ usage() {
 }
 
 MODE="${1:-}"
-case "$MODE" in schema|import|lifecycle) shift ;; *) usage ;; esac
+case "$MODE" in
+  schema) shift ;;
+  import|lifecycle)
+    printf '%s\n' "Import and lifecycle rehearsals are deferred until the live Bitrix database connector contract is reviewed." >&2
+    exit 2
+    ;;
+  *) usage ;;
+esac
 DUMP_SOURCE=""
 INPUTS=""
 EVIDENCE=""

@@ -73,7 +73,7 @@ class AbbottRolloutPreflightTest(unittest.TestCase):
         for gate in ("owner_token", "release_db", "production_runtime", "cron", "hermes"):
             self.assertEqual(report[gate]["status"], "blocked")
 
-    def test_ready_files_require_mode_0600_and_only_required_key_names(self):
+    def test_external_files_cannot_override_deferred_bitrix_lifecycle(self):
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)
             evidence = self.local_evidence(root, lifecycle=True)
@@ -94,12 +94,39 @@ class AbbottRolloutPreflightTest(unittest.TestCase):
             )
         self.assertEqual(result.returncode, 0, result.stderr)
         report = json.loads(result.stdout)
-        self.assertEqual(report["local_rehearsal"]["status"], "ready")
+        self.assertEqual(report["local_rehearsal"]["status"], "partial")
+        self.assertEqual(report["local_rehearsal"]["reason_code"], "bitrix_contract_deferred")
         self.assertEqual(report["owner_token"]["status"], "ready")
         self.assertEqual(report["release_db"]["status"], "ready")
         self.assertEqual(report["production_runtime"]["status"], "ready")
         self.assertEqual(report["cron"]["status"], "blocked")
         self.assertEqual(report["hermes"]["status"], "blocked")
+
+    def test_dangling_symlink_is_rejected_as_unsafe(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            evidence = self.local_evidence(root)
+            dangling = root / "dangling.env"
+            dangling.symlink_to(root / "missing-target.env")
+            result = subprocess.run(
+                self.command(
+                    evidence,
+                    dangling,
+                    root / "missing-importer",
+                    root / "missing-release",
+                    root / "missing-token",
+                ),
+                text=True,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                check=False,
+            )
+        self.assertEqual(result.returncode, 2)
+        self.assertEqual(result.stderr, "")
+        self.assertEqual(
+            json.loads(result.stdout),
+            {"error": {"status": "invalid", "reason_code": "unsafe_supplied_file"}},
+        )
 
     def test_unsafe_or_multiline_supplied_file_fails_closed_with_sanitized_json(self):
         with tempfile.TemporaryDirectory() as temporary:

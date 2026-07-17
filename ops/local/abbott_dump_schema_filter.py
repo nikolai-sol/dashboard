@@ -56,10 +56,6 @@ def schema_candidate_lines(lines: Iterable[str]) -> Iterator[str]:
     for line in lines:
         ddl_tail = re.search(r";\s*(?=(?:CREATE|DROP|ALTER)\b)", line, flags=re.I)
         if skipping_statement:
-            if ddl_tail is not None:
-                skipping_statement = False
-                yield line[ddl_tail.end():]
-                continue
             if line.rstrip().endswith(";"):
                 skipping_statement = False
             continue
