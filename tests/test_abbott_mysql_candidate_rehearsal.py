@@ -147,7 +147,7 @@ class AbbottMysqlCandidateRehearsalTest(unittest.TestCase):
         )
         return temporary, fake, inputs, evidence, result
 
-    def test_macos_unshared_tmpdir_uses_a_user_private_docker_share(self):
+    def test_macos_unshared_tmpdir_is_not_sent_to_the_daemon_as_a_bind(self):
         temporary, fake, _inputs, _evidence, result = self.run_mode(
             "import", FAKE_DOCKER_REQUIRE_SHARED="1"
         )
@@ -157,8 +157,18 @@ class AbbottMysqlCandidateRehearsalTest(unittest.TestCase):
                 call["args"] for call in fake.calls()
                 if call["tool"] == "docker" and call["args"][:1] == ["run"]
             )
-            bind = next(item for item in run if item.startswith("type=bind,source="))
-            self.assertNotIn("source=/var/folders/", bind)
+            self.assertFalse(any(item.startswith("type=bind,") for item in run))
+        finally:
+            temporary.cleanup()
+
+    def test_container_start_has_no_daemon_side_host_bind_dependency(self):
+        temporary, fake, _inputs, _evidence, result = self.run_mode("import")
+        try:
+            self.assertEqual(result.returncode, 0, result.stderr)
+            docker_calls = [call["args"] for call in fake.calls() if call["tool"] == "docker"]
+            run = next(call for call in docker_calls if call[:1] == ["run"])
+            self.assertFalse(any(item.startswith("type=bind,") for item in run))
+            self.assertTrue(any(call[:1] == ["cp"] for call in docker_calls))
         finally:
             temporary.cleanup()
 

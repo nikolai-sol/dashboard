@@ -149,21 +149,7 @@ cleanup() {
 trap cleanup EXIT
 trap 'exit 130' INT TERM HUP
 
-PRIVATE_BASE="${ABBOTT_REHEARSAL_PRIVATE_BASE:-}"
-if [[ -z "$PRIVATE_BASE" ]]; then
-  if [[ "$(uname -s)" == Darwin ]]; then
-    PRIVATE_BASE="$(python3 - <<'PY'
-from pathlib import Path
-print(Path.home() / ".codex" / "tmp")
-PY
-)"
-  else
-    PRIVATE_BASE="${TMPDIR:-/tmp}"
-  fi
-fi
-[[ "$PRIVATE_BASE" = /* && ! -L "$PRIVATE_BASE" ]] || { printf '%s\n' "Protected rehearsal private base is invalid." >&2; exit 2; }
-install -d -m 700 "$PRIVATE_BASE"
-PRIVATE_ROOT="$(mktemp -d "$PRIVATE_BASE/abbott-mysql-rehearsal.XXXXXX")"
+PRIVATE_ROOT="$(mktemp -d "${TMPDIR:-/tmp}/abbott-mysql-rehearsal.XXXXXX")"
 EVIDENCE_STAGE="$(mktemp -d "$EVIDENCE/.abbott-evidence.XXXXXX")"
 chmod 700 "$EVIDENCE_STAGE"
 
@@ -181,14 +167,17 @@ IMAGE_DIGEST="$(docker image inspect --format '{{index .RepoDigests 0}}' "$MYSQL
 [[ "$IMAGE_DIGEST" == *@sha256:* ]] || { printf '%s\n' "Resolved MySQL image digest is unavailable." >&2; exit 1; }
 docker volume create "$VOLUME_NAME" >/dev/null
 DOCKER_RUN_ARGS=(--detach --name "$CONTAINER_NAME" --env-file "$PRIVATE_ROOT/container.env"
-  --mount "type=volume,source=$VOLUME_NAME,target=/var/lib/mysql"
-  --mount "type=bind,source=$PRIVATE_ROOT,target=/run/abbott-rehearsal,readonly")
+  --mount "type=volume,source=$VOLUME_NAME,target=/var/lib/mysql")
 if [[ "$MODE" == schema ]]; then
   DOCKER_RUN_ARGS+=(--network none)
 else
   DOCKER_RUN_ARGS+=(--publish 127.0.0.1::3306)
 fi
 docker run "${DOCKER_RUN_ARGS[@]}" "$MYSQL_IMAGE" > "$PRIVATE_ROOT/container-id"
+docker exec "$CONTAINER_NAME" mkdir -p /run/abbott-rehearsal
+docker exec "$CONTAINER_NAME" chmod 700 /run/abbott-rehearsal
+docker cp "$PRIVATE_ROOT/root.cnf" "$CONTAINER_NAME:/run/abbott-rehearsal/root.cnf" >/dev/null
+docker exec "$CONTAINER_NAME" chmod 600 /run/abbott-rehearsal/root.cnf
 
 ready=0
 for _attempt in $(seq 1 90); do
