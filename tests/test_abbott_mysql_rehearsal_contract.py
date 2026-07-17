@@ -405,6 +405,30 @@ CREATE DEFINER=`source_user`@`source_host` VIEW `event_ids` AS SELECT `id` FROM 
             self.assertNotEqual(changed_result.returncode, 0)
             self.assertIn("changed the schema signature", changed_result.stderr)
 
+    def test_fresh_rehearsal_seeds_only_the_empty_legacy_migration_precondition(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            base = Path(temporary)
+            fake = FakeDocker(base)
+            dump = base / "source.sql"
+            dump.write_text("CREATE TABLE source_table (id int);", encoding="utf-8")
+            result = subprocess.run(
+                [str(HARNESS), "schema", "--dump-sql", str(dump), "--evidence", str(base / "evidence")],
+                text=True,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                env=fake.env(),
+                check=False,
+            )
+            entries = fake.entries()
+        self.assertEqual(result.returncode, 0, result.stderr)
+        fixture_indexes = [
+            index for index, entry in enumerate(entries)
+            if any("rehearsal:legacy-fixture:hyb_stats" in arg for arg in entry["args"])
+        ]
+        first_migration = next(index for index, entry in enumerate(entries) if "stdin_sha256" in entry)
+        self.assertEqual(len(fixture_indexes), 1)
+        self.assertLess(fixture_indexes[0], first_migration)
+
     def test_runbook_uses_standalone_schema_interface(self):
         runbook = RUNBOOK.read_text(encoding="utf-8")
         local_gate = runbook.split("## Local MySQL rehearsal checkpoint", 1)[1].split(
