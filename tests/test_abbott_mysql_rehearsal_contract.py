@@ -405,7 +405,7 @@ CREATE DEFINER=`source_user`@`source_host` VIEW `event_ids` AS SELECT `id` FROM 
             self.assertNotEqual(changed_result.returncode, 0)
             self.assertIn("changed the schema signature", changed_result.stderr)
 
-    def test_fresh_rehearsal_seeds_only_the_empty_legacy_migration_precondition(self):
+    def test_fresh_rehearsal_seeds_only_empty_legacy_migration_preconditions(self):
         with tempfile.TemporaryDirectory() as temporary:
             base = Path(temporary)
             fake = FakeDocker(base)
@@ -421,13 +421,19 @@ CREATE DEFINER=`source_user`@`source_host` VIEW `event_ids` AS SELECT `id` FROM 
             )
             entries = fake.entries()
         self.assertEqual(result.returncode, 0, result.stderr)
-        fixture_indexes = [
-            index for index, entry in enumerate(entries)
-            if any("rehearsal:legacy-fixture:hyb_stats" in arg for arg in entry["args"])
-        ]
+        fixture_indexes = {
+            marker: [
+                index for index, entry in enumerate(entries)
+                if any(marker in arg for arg in entry["args"])
+            ]
+            for marker in (
+                "rehearsal:legacy-fixture:hyb_stats",
+                "rehearsal:legacy-fixture:google_ads_negative_keyword_recommendations",
+            )
+        }
         first_migration = next(index for index, entry in enumerate(entries) if "stdin_sha256" in entry)
-        self.assertEqual(len(fixture_indexes), 1)
-        self.assertLess(fixture_indexes[0], first_migration)
+        self.assertTrue(all(len(indexes) == 1 for indexes in fixture_indexes.values()))
+        self.assertTrue(all(indexes[0] < first_migration for indexes in fixture_indexes.values()))
 
     def test_runbook_uses_standalone_schema_interface(self):
         runbook = RUNBOOK.read_text(encoding="utf-8")

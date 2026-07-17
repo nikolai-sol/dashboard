@@ -280,7 +280,13 @@ mysql_exec "$PRIMARY_DATABASE" --execute="
     view_50 BIGINT UNSIGNED DEFAULT NULL,
     view_75 BIGINT UNSIGNED DEFAULT NULL,
     view_100 BIGINT UNSIGNED DEFAULT NULL
-  ) ENGINE=InnoDB /*rehearsal:legacy-fixture:hyb_stats*/;" \
+  ) ENGINE=InnoDB /*rehearsal:legacy-fixture:hyb_stats*/;
+  CREATE TABLE google_ads_negative_keyword_recommendations (
+    id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
+    suggested_negative_keyword VARCHAR(255) DEFAULT NULL,
+    review_note TEXT DEFAULT NULL,
+    PRIMARY KEY (id)
+  ) ENGINE=InnoDB /*rehearsal:legacy-fixture:google_ads_negative_keyword_recommendations*/;" \
   > "$PRIVATE_ROOT/legacy-fixture.log" 2>&1
 
 MIGRATION_033="$MIGRATIONS_REPOSITORY/$MIGRATIONS_DIRECTORY/033_abbott_canonical_release_control.sql"
