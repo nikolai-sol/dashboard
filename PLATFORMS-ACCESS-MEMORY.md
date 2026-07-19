@@ -178,9 +178,15 @@ Important current state:
 - source key: `google_search_console`
 - Zaruku property: `https://zaruku.ru/`
 - Zaruku analytics account id: `66624469`
-- writes daily canonical query/page/country/device facts only to `canonical_fact_gsc_queries_daily`
+- writes daily canonical facts:
+  - `canonical_fact_gsc_queries_daily` for query/page/country/device facts
+  - `canonical_fact_gsc_search_appearance_daily` for Search appearance / SERP-feature facts
+  - `canonical_fact_gsc_search_type_daily` for Google result/search type facts
 - cron window: yesterday plus 3-day backfill (`--backfill-days 3`) because GSC can lag by 2-3 days
 - idempotency: upsert by canonical business key `(analytics_account_id, report_date, query, page, device, country)`; `query_hash` is computed from the same canonical fields only for compatibility
+- optional-layer idempotency: Search appearance uses `feature_hash = sha256(search_type, search_appearance, page, country, device)`; result type uses `type_hash = sha256(search_type, page, country, device)`
+- default result types requested by the collector are `web,image,video,news,discover,googleNews`; unsupported or empty optional layers are skipped/empty without failing the whole run
+- 2026-07-19 backfill run `1480` for `2026-07-01..2026-07-18` wrote result-type rows for `web`, `image`, and `video`; Search appearance returned 0 rows for Zaruku through `2026-07-17`
 - legacy columns `property_url`, `query_text`, and `device_type` are nullable compatibility columns and must not be populated by the root collector
 - old temporary collector `fetch_google_search_console_canonical.py` must not be used as a writer for this table
 
@@ -366,7 +372,7 @@ Already done and should not be rediscovered:
 12. Yandex Metrika canonical collector now supports targeted counter backfills, counter-scoped deletes, API throttling, and page-level canonical rows; Zaruku `66624469` was enabled for canonical collection.
 13. Zaruku Metrika counters `29137835`, `105559308`, and `99078698` are on hold/inactive in production collection settings; only counter `66624469` should remain active for Zaruku.
 14. Yandex Webmaster URL/page facts are now canonical daily rows in `canonical_fact_webmaster_pages_daily`; dashboard payload `zaruku_seo.webmaster.data_availability.pages` is true after backfill run `1439`.
-15. Google Search Console is now owned by root collector `fetch_gsc_canonical.py`, cron-enabled at `06:55`, and dashboard-connected through `canonical_fact_gsc_queries_daily`; the old temporary collector is no longer the writer.
+15. Google Search Console is now owned by root collector `fetch_gsc_canonical.py`, cron-enabled at `06:55`, and dashboard-connected through `canonical_fact_gsc_queries_daily`, `canonical_fact_gsc_search_appearance_daily`, and `canonical_fact_gsc_search_type_daily`; the old temporary collector is no longer the writer.
 
 ## Working rule for future platform-access tasks
 
