@@ -292,6 +292,15 @@ def save_state(state: dict[str, Any]) -> None:
     STATE_PATH.write_text(json.dumps(state, ensure_ascii=False, indent=2), encoding="utf-8")
 
 
+def deduplicate_report_rows(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Keep one complete daily-report row per date and channel."""
+    unique: dict[tuple[str, str], dict[str, Any]] = {}
+    for row in rows:
+        key = (row["report_date"], row["channel"])
+        unique.setdefault(key, row)
+    return list(unique.values())
+
+
 def gmail_service():
     from google.auth.transport.requests import Request
     from google.oauth2.credentials import Credentials
@@ -732,30 +741,7 @@ def main(argv: list[str] | None = None) -> int:
         print(json.dumps({"status": "empty", "message": "no rows to ingest"}, ensure_ascii=False, indent=2))
         return 0
 
-    # Aggregate duplicates (same date+channel)
-    agg: dict[tuple[str, str], dict[str, Any]] = {}
-    for r in all_rows:
-        k = (r["report_date"], r["channel"])
-        if k not in agg:
-            agg[k] = dict(r)
-            continue
-        cur = agg[k]
-        for m in (
-            "impressions",
-            "clicks",
-            "sessions",
-            "spend",
-            "views",
-            "conversions",
-            "reach",
-            "video_views_25",
-            "video_views_50",
-            "video_views_75",
-            "video_views_100",
-        ):
-            cur[m] = (cur.get(m) or 0) + (r.get(m) or 0)
-
-    merged = list(agg.values())
+    merged = deduplicate_report_rows(all_rows)
     dashboard_id = None if args.no_dashboard else args.dashboard_id
     result = ingest_rows(
         merged,

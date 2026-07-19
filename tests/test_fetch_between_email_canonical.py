@@ -22,7 +22,7 @@ except ModuleNotFoundError:
 
 import openpyxl
 
-from fetch_between_email_canonical import parse_csv_bytes, parse_xlsx_bytes
+from fetch_between_email_canonical import deduplicate_report_rows, parse_csv_bytes, parse_xlsx_bytes
 
 
 class BetweenReportParsingTests(unittest.TestCase):
@@ -105,6 +105,19 @@ class BetweenReportParsingTests(unittest.TestCase):
         self.assertAlmostEqual(rows[0]["cpc"], 14.609711, places=5)
         self.assertAlmostEqual(rows[0]["cpm"], 167.387646, places=5)
         self.assertAlmostEqual(rows[0]["cpv"], 0.217884, places=5)
+
+    def test_repeated_daily_reports_are_not_summed(self):
+        row = {
+            "report_date": "2026-07-14",
+            "channel": "WL",
+            "impressions": 9950,
+            "clicks": 114,
+        }
+
+        out = deduplicate_report_rows([row, dict(row)])
+
+        self.assertEqual(len(out), 1)
+        self.assertEqual(out[0]["impressions"], 9950)
 
 
 if __name__ == "__main__":
