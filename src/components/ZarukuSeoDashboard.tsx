@@ -56,6 +56,7 @@ import {
 } from "@/components/zaruku-seo-week-selection";
 import ZarukuSeoAnalytics from "@/components/ZarukuSeoAnalytics";
 import ZarukuSeoOperations from "@/components/ZarukuSeoOperations";
+import ZarukuRussiaDemandMap from "@/components/ZarukuRussiaDemandMap";
 import ZarukuTrafficVisibility from "@/components/ZarukuTrafficVisibility";
 import {
   buildNorthStarKpis,
@@ -377,171 +378,6 @@ function ReturningPagesTable({ rows, locale }: { rows: ZarukuSeoMetricRow[]; loc
           ) : null}
         </tbody>
       </table>
-    </div>
-  );
-}
-
-const RUSSIA_CITY_COORDINATES: Array<{ match: RegExp; x: number; y: number }> = [
-  { match: /москв|moscow/i, x: 22, y: 50 },
-  { match: /санкт|петербург|spb|saint/i, x: 18, y: 42 },
-  { match: /казан|kazan/i, x: 30, y: 54 },
-  { match: /нижн|nizhny/i, x: 26, y: 51 },
-  { match: /воронеж|voronezh/i, x: 20, y: 57 },
-  { match: /ростов|rostov/i, x: 20, y: 65 },
-  { match: /краснодар|krasnodar|сочи|sochi/i, x: 18, y: 70 },
-  { match: /нальчик|кавказ/i, x: 23, y: 72 },
-  { match: /самар|samara/i, x: 32, y: 58 },
-  { match: /уф|ufa/i, x: 36, y: 59 },
-  { match: /перм|perm/i, x: 37, y: 51 },
-  { match: /екатеринбург|yekaterinburg|ekaterinburg/i, x: 42, y: 55 },
-  { match: /челябин|chelyabinsk/i, x: 43, y: 60 },
-  { match: /тюмен|tyumen/i, x: 48, y: 57 },
-  { match: /омск|omsk/i, x: 54, y: 61 },
-  { match: /новосибир|novosibirsk/i, x: 60, y: 62 },
-  { match: /краснояр|krasnoyarsk/i, x: 69, y: 58 },
-  { match: /иркут|irkutsk/i, x: 77, y: 66 },
-  { match: /якут|yakutsk/i, x: 80, y: 48 },
-  { match: /хабаров|khabarovsk/i, x: 91, y: 62 },
-  { match: /владивост|vladivostok/i, x: 93, y: 72 },
-  { match: /кубинк|kubinka/i, x: 21, y: 49 },
-];
-
-const NON_RUSSIA_CITY_PATTERN = /singapore|tbilisi|yerevan|almaty|astana|minsk|dubai|istanbul|bangkok|не указано|not set/i;
-
-function isRussiaDemandCity(row: ZarukuSeoMetricRow) {
-  return !NON_RUSSIA_CITY_PATTERN.test(row.label);
-}
-
-function resolveRussiaCityPoint(city: string, index: number) {
-  const known = RUSSIA_CITY_COORDINATES.find((point) => point.match.test(city));
-  if (known) return { x: known.x, y: known.y };
-  return {
-    x: 24 + (index % 8) * 8,
-    y: 44 + Math.floor(index / 8) * 9,
-  };
-}
-
-function RussiaMapOutline() {
-  return (
-    <g aria-label="Контурная карта России">
-      <path
-        d="M50 250 L76 221 L111 209 L126 178 L166 160 L203 166 L225 139 L281 150 L318 123 L360 135 L390 112 L446 130 L493 116 L545 135 L606 123 L662 146 L714 139 L754 165 L810 162 L849 188 L895 202 L941 239 L918 270 L941 304 L899 321 L864 303 L827 329 L779 324 L742 352 L681 338 L641 360 L588 341 L538 361 L482 344 L429 369 L369 348 L310 365 L257 341 L201 347 L161 316 L113 313 L80 286 Z"
-        fill="#f8fafc"
-        stroke="#cbd5e1"
-        strokeWidth="3"
-        vectorEffect="non-scaling-stroke"
-      />
-      <path
-        d="M707 139 L746 113 L806 118 L850 141 L810 162 L754 165 Z"
-        fill="#f8fafc"
-        stroke="#cbd5e1"
-        strokeWidth="3"
-        vectorEffect="non-scaling-stroke"
-      />
-      <path
-        d="M842 332 L866 365 L846 405 L823 372 Z"
-        fill="#f8fafc"
-        stroke="#cbd5e1"
-        strokeWidth="3"
-        vectorEffect="non-scaling-stroke"
-      />
-      <path
-        d="M893 329 L914 344 L902 369 L880 350 Z"
-        fill="#f8fafc"
-        stroke="#cbd5e1"
-        strokeWidth="3"
-        vectorEffect="non-scaling-stroke"
-      />
-      <path
-        d="M925 296 L957 288 L972 313 L946 329 Z"
-        fill="#f8fafc"
-        stroke="#cbd5e1"
-        strokeWidth="3"
-        vectorEffect="non-scaling-stroke"
-      />
-      <path
-        d="M92 263 C181 223 282 214 386 240 C497 267 607 252 704 273 C789 291 861 279 928 247"
-        fill="none"
-        stroke="#dbeafe"
-        strokeDasharray="8 10"
-        strokeWidth="2"
-        vectorEffect="non-scaling-stroke"
-      />
-      <path
-        d="M185 171 C270 188 349 174 425 188 C527 208 626 188 735 210 C806 224 870 226 925 250"
-        fill="none"
-        stroke="#e0f2fe"
-        strokeDasharray="6 12"
-        strokeWidth="2"
-        vectorEffect="non-scaling-stroke"
-      />
-    </g>
-  );
-}
-
-function RussiaDemandBubbleMap({ rows, locale }: { rows: ZarukuSeoMetricRow[]; locale: string }) {
-  if (rows.length === 0) {
-    return <div className="rounded-md bg-slate-50 px-4 py-5 text-sm text-slate-500">Нет данных по городам для /map за выбранный период.</div>;
-  }
-  const topRows = rows.filter(isRussiaDemandCity).slice(0, 14);
-  if (topRows.length === 0) {
-    return <div className="rounded-md bg-slate-50 px-4 py-5 text-sm text-slate-500">Нет данных по российским городам для /map за выбранный период.</div>;
-  }
-  const maxVisits = Math.max(1, ...topRows.map((row) => row.visits));
-
-  return (
-    <div className="grid gap-5 xl:grid-cols-[minmax(0,1.35fr)_minmax(280px,0.65fr)]">
-      <div className="relative overflow-hidden rounded-xl border border-slate-100 bg-gradient-to-br from-sky-50 via-white to-emerald-50 p-4">
-        <div className="mb-3 flex flex-wrap items-center justify-between gap-2 text-xs text-slate-500">
-          <span>Россия · визиты на раздел `/map/`</span>
-          <span>размер круга = визиты</span>
-        </div>
-        <p className="mb-2 text-xs leading-relaxed text-slate-500">
-          Это не весь гео-трафик сайта: карта показывает только города, откуда были визиты на раздел `/map/` с картой организаций.
-        </p>
-        <svg viewBox="0 0 1000 430" role="img" aria-label="Карта России с городскими bubble markers" className="h-[340px] w-full" preserveAspectRatio="xMidYMid meet">
-          <RussiaMapOutline />
-          {topRows.map((row, index) => {
-            const point = resolveRussiaCityPoint(row.label, index);
-            const radius = 10 + Math.sqrt(row.visits / maxVisits) * 24;
-            const cx = point.x * 10;
-            const cy = point.y * 4.3;
-            return (
-              <g key={`${row.label}-${index}`}>
-                <circle cx={cx} cy={cy} r={radius + 5} fill="#14b8a6" opacity="0.12" />
-                <circle cx={cx} cy={cy} r={radius} fill="#0d9488" opacity="0.72" stroke="#ffffff" strokeWidth="2.5" />
-                <text x={Math.min(cx + radius + 8, 900)} y={cy - 2} className="fill-slate-700 text-[19px] font-semibold">
-                  {truncate(row.label, 18)}
-                </text>
-                <text x={Math.min(cx + radius + 8, 900)} y={cy + 20} className="fill-slate-500 text-[16px]">
-                  {formatNumber(row.visits, locale)} · {formatPercent(row.share, locale, 1)}
-                </text>
-              </g>
-            );
-          })}
-        </svg>
-      </div>
-      <div className="rounded-xl border border-slate-100 bg-slate-50/70 p-4">
-        <div className="mb-3 text-sm font-semibold text-slate-800">Группы городов</div>
-        <div className="space-y-2.5">
-          {topRows.map((row, index) => {
-            return (
-              <div key={`${row.label}-legend-${index}`} className="grid grid-cols-[minmax(0,1fr)_auto] gap-3 rounded-lg bg-white px-3 py-2 shadow-sm shadow-slate-100">
-                <div className="min-w-0">
-                  <div className="truncate text-sm font-medium text-slate-700" title={row.label}>
-                    {row.label}
-                  </div>
-                  {row.secondary_label ? <div className="truncate text-xs text-slate-400">{shortUrl(row.secondary_label)}</div> : null}
-                </div>
-                <div className="text-right">
-                  <div className="text-sm font-semibold text-slate-800">{formatNumber(row.visits, locale)}</div>
-                  <div className="text-xs text-slate-500">{formatPercent(row.share, locale, 1)}</div>
-                </div>
-              </div>
-            );
-          })}
-        </div>
-      </div>
     </div>
   );
 }
@@ -1575,7 +1411,7 @@ function GeoTab({ data, locale }: Props) {
   return (
     <div className="space-y-5">
       <Panel data={data} title="Карта спроса по России" source="metrika" layer="onsite" right={<span className="text-xs text-slate-400">визиты на /map/</span>}>
-        <RussiaDemandBubbleMap rows={data.map_city_demand} locale={locale ?? "ru-RU"} />
+        <ZarukuRussiaDemandMap rows={data.map_city_demand} locale={locale ?? "ru-RU"} />
       </Panel>
     </div>
   );

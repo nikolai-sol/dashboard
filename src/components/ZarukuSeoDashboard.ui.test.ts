@@ -3,6 +3,7 @@ import { readFileSync } from "node:fs";
 import test from "node:test";
 
 const source = readFileSync(new URL("./ZarukuSeoDashboard.tsx", import.meta.url), "utf8");
+const russiaMapSource = readFileSync(new URL("./ZarukuRussiaDemandMap.tsx", import.meta.url), "utf8");
 
 test("DataTable keeps behavior metric headers readable with spacing and wrapping", () => {
   assert.match(source, /min-w-\[1080px\]/);
@@ -76,18 +77,26 @@ test("SEO tab renders GSC product enrichment panels", () => {
   assert.match(source, /gscSummaryRows/);
 });
 
-test("Geo tab focuses on a Russia bubble map instead of duplicate country and city lists", () => {
-  assert.match(source, /function RussiaDemandBubbleMap/);
-  assert.match(source, /function RussiaMapOutline/);
-  assert.match(source, /function isRussiaDemandCity/);
-  assert.match(source, /NON_RUSSIA_CITY_PATTERN/);
+test("Geo tab uses the projected Russia demand map instead of manual coordinates", () => {
+  assert.match(source, /import ZarukuRussiaDemandMap from "@\/components\/ZarukuRussiaDemandMap"/);
   assert.match(source, /Карта спроса по России/);
-  assert.match(source, /Контурная карта России/);
-  assert.match(source, /визиты на раздел `\/map\/`/);
-  assert.match(source, /Это не весь гео-трафик сайта/);
-  assert.match(source, /размер круга = визиты/);
-  assert.match(source, /formatPercent\(row\.share, locale, 1\)/);
-  assert.match(source, /<RussiaDemandBubbleMap rows=\{data\.map_city_demand\}/);
+  assert.match(source, /<ZarukuRussiaDemandMap rows=\{data\.map_city_demand\}/);
+  assert.doesNotMatch(source, /function RussiaMapOutline/);
+  assert.doesNotMatch(source, /RUSSIA_CITY_COORDINATES/);
+  assert.doesNotMatch(source, /resolveRussiaCityPoint/);
   assert.doesNotMatch(source, /title="Страны"/);
   assert.doesNotMatch(source, /title="Города"/);
+
+  assert.match(russiaMapSource, /from "@visx\/geo"/);
+  assert.match(russiaMapSource, /RUSSIA_FEATURE/);
+  assert.match(russiaMapSource, /separateMapMarkers/);
+  assert.match(russiaMapSource, /marker\.anchorX/);
+  assert.match(russiaMapSource, /city\.showLabel/);
+  assert.match(russiaMapSource, /aria-label=\{`\$\{city\.row\.label\}:/);
+  assert.match(russiaMapSource, /onPointerEnter/);
+  assert.match(russiaMapSource, /onFocus/);
+  assert.match(russiaMapSource, /Это не весь гео-трафик сайта/);
+  assert.match(russiaMapSource, /визиты на раздел `\/map\/`/);
+  assert.match(russiaMapSource, /размер круга = визиты/);
+  assert.match(russiaMapSource, /formatPercent\(city\.row\.share, locale, 1\)/);
 });
