@@ -22,7 +22,7 @@ except ModuleNotFoundError:
 
 import openpyxl
 
-from fetch_between_email_canonical import parse_xlsx_bytes
+from fetch_between_email_canonical import parse_csv_bytes, parse_xlsx_bytes
 
 
 class BetweenReportParsingTests(unittest.TestCase):
@@ -81,6 +81,30 @@ class BetweenReportParsingTests(unittest.TestCase):
         self.assertAlmostEqual(rows[0]["cpc"], 17.84, places=4)
         self.assertAlmostEqual(rows[0]["cpv"], 0.19, places=4)
         self.assertAlmostEqual(rows[0]["reach"], 7959.2, places=4)
+
+    def test_daily_email_csv_maps_between_export_columns(self):
+        data = (
+            "event_date,campaign_name,campaign_id,imps,clicks,ctr_pct,revenue,"
+            "video_start,video_firstquartile,video_midpoint,video_thirdquartile,video_complete\n"
+            "2026-07-14,\"OLV WL\",24835,9950,114,1.14,1665.50708,10230,9088,8388,7981,7644\n"
+        ).encode()
+
+        rows = parse_csv_bytes(data, source_name="daily-report.csv")
+
+        self.assertEqual(len(rows), 1)
+        self.assertEqual(rows[0]["report_date"], "2026-07-14")
+        self.assertEqual(rows[0]["channel"], "WL")
+        self.assertEqual(rows[0]["impressions"], 9950)
+        self.assertEqual(rows[0]["clicks"], 114)
+        self.assertEqual(rows[0]["views"], 7644)
+        self.assertEqual(rows[0]["video_views_25"], 9088)
+        self.assertEqual(rows[0]["video_views_50"], 8388)
+        self.assertEqual(rows[0]["video_views_75"], 7981)
+        self.assertEqual(rows[0]["video_views_100"], 7644)
+        self.assertAlmostEqual(rows[0]["spend"], 1665.50708, places=5)
+        self.assertAlmostEqual(rows[0]["cpc"], 14.609711, places=5)
+        self.assertAlmostEqual(rows[0]["cpm"], 167.387646, places=5)
+        self.assertAlmostEqual(rows[0]["cpv"], 0.217884, places=5)
 
 
 if __name__ == "__main__":

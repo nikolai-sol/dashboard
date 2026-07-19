@@ -216,7 +216,7 @@ def parse_csv_bytes(data: bytes, source_name: str = "") -> list[dict[str, Any]]:
     rows_out: list[dict[str, Any]] = []
     for rec in reader:
         lower = {str(k or "").strip().lower(): v for k, v in rec.items()}
-        d = as_date(lower.get("date") or lower.get("дата"))
+        d = as_date(lower.get("date") or lower.get("дата") or lower.get("event_date"))
         if not d:
             continue
         channel = norm_channel(
@@ -226,7 +226,7 @@ def parse_csv_bytes(data: bytes, source_name: str = "") -> list[dict[str, Any]]:
             or lower.get("campaign_name")
             or lower.get("название кампании")
         )
-        impressions = int(num(lower.get("impressions")) or 0)
+        impressions = int(num(lower.get("impressions") or lower.get("imps")) or 0)
         clicks = int(num(lower.get("clicks")) or 0)
         views = int(
             num(
@@ -234,11 +234,12 @@ def parse_csv_bytes(data: bytes, source_name: str = "") -> list[dict[str, Any]]:
                 or lower.get("video_views")
                 or lower.get("v complete")
                 or lower.get("v_complete")
+                or lower.get("video_complete")
             )
             or 0
         )
         net_cpm = num(lower.get("net cpm") or lower.get("net_cpm"))
-        spend = num(lower.get("spend") or lower.get("cost"))
+        spend = num(lower.get("spend") or lower.get("cost") or lower.get("revenue"))
         if spend is None and net_cpm is not None and impressions:
             spend = (impressions * net_cpm) / 1000
         frequency = num(lower.get("frequency"))
@@ -258,12 +259,20 @@ def parse_csv_bytes(data: bytes, source_name: str = "") -> list[dict[str, Any]]:
                 "conversions": int(num(lower.get("conversions")) or 0),
                 "reach": float(reach or 0.0),
                 "ctr": num(lower.get("ctr")),
-                "cpc": num(lower.get("cpc") or lower.get("net cpc") or lower.get("net_cpc")),
-                "cpm": net_cpm or num(lower.get("cpm")),
-                "cpv": num(lower.get("cpv") or lower.get("net cpv") or lower.get("net_cpv")),
-                "video_views_25": int(num(lower.get("v firstq") or lower.get("v_firstq")) or 0),
-                "video_views_50": int(num(lower.get("v midpoint") or lower.get("v_midpoint")) or 0),
-                "video_views_75": int(num(lower.get("v thirdq") or lower.get("v_thirdq")) or 0),
+                "cpc": num(lower.get("cpc") or lower.get("net cpc") or lower.get("net_cpc"))
+                or ((spend / clicks) if spend is not None and clicks else None),
+                "cpm": net_cpm or num(lower.get("cpm")) or ((spend / impressions) * 1000 if spend is not None and impressions else None),
+                "cpv": num(lower.get("cpv") or lower.get("net cpv") or lower.get("net_cpv"))
+                or ((spend / views) if spend is not None and views else None),
+                "video_views_25": int(
+                    num(lower.get("v firstq") or lower.get("v_firstq") or lower.get("video_firstquartile")) or 0
+                ),
+                "video_views_50": int(
+                    num(lower.get("v midpoint") or lower.get("v_midpoint") or lower.get("video_midpoint")) or 0
+                ),
+                "video_views_75": int(
+                    num(lower.get("v thirdq") or lower.get("v_thirdq") or lower.get("video_thirdquartile")) or 0
+                ),
                 "video_views_100": views,
                 "source_file": source_name,
                 "sheet": "csv",
@@ -364,7 +373,9 @@ def fetch_gmail_attachments(days_back: int = 60, query_extra: str = "") -> list[
                 if not (low.endswith(".xlsx") or low.endswith(".xls") or low.endswith(".csv")):
                     continue
                 # If subject not interesting, still take files with between in name
-                if not interesting and "between" not in low and "gidro" not in low:
+                if not interesting and not any(
+                    marker in low for marker in ("between", "gidro", "solgoood")
+                ):
                     continue
                 att = (
                     svc.users()
