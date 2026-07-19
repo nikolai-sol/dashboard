@@ -377,26 +377,33 @@ function ReturningPagesTable({ rows, locale }: { rows: ZarukuSeoMetricRow[]; loc
 const RUSSIA_CITY_COORDINATES: Array<{ match: RegExp; x: number; y: number }> = [
   { match: /москв|moscow/i, x: 22, y: 50 },
   { match: /санкт|петербург|spb|saint/i, x: 18, y: 42 },
-  { match: /казан/i, x: 30, y: 54 },
-  { match: /нижн/i, x: 26, y: 51 },
-  { match: /воронеж/i, x: 20, y: 57 },
-  { match: /ростов/i, x: 20, y: 65 },
-  { match: /краснодар|сочи/i, x: 18, y: 70 },
+  { match: /казан|kazan/i, x: 30, y: 54 },
+  { match: /нижн|nizhny/i, x: 26, y: 51 },
+  { match: /воронеж|voronezh/i, x: 20, y: 57 },
+  { match: /ростов|rostov/i, x: 20, y: 65 },
+  { match: /краснодар|krasnodar|сочи|sochi/i, x: 18, y: 70 },
   { match: /нальчик|кавказ/i, x: 23, y: 72 },
-  { match: /самар/i, x: 32, y: 58 },
-  { match: /уф/i, x: 36, y: 59 },
-  { match: /перм/i, x: 37, y: 51 },
-  { match: /екатеринбург/i, x: 42, y: 55 },
-  { match: /челябин/i, x: 43, y: 60 },
-  { match: /тюмен/i, x: 48, y: 57 },
-  { match: /омск/i, x: 54, y: 61 },
-  { match: /новосибир/i, x: 60, y: 62 },
-  { match: /краснояр/i, x: 69, y: 58 },
-  { match: /иркут/i, x: 77, y: 66 },
-  { match: /якут/i, x: 80, y: 48 },
-  { match: /хабаров/i, x: 91, y: 62 },
-  { match: /владивост/i, x: 93, y: 72 },
+  { match: /самар|samara/i, x: 32, y: 58 },
+  { match: /уф|ufa/i, x: 36, y: 59 },
+  { match: /перм|perm/i, x: 37, y: 51 },
+  { match: /екатеринбург|yekaterinburg|ekaterinburg/i, x: 42, y: 55 },
+  { match: /челябин|chelyabinsk/i, x: 43, y: 60 },
+  { match: /тюмен|tyumen/i, x: 48, y: 57 },
+  { match: /омск|omsk/i, x: 54, y: 61 },
+  { match: /новосибир|novosibirsk/i, x: 60, y: 62 },
+  { match: /краснояр|krasnoyarsk/i, x: 69, y: 58 },
+  { match: /иркут|irkutsk/i, x: 77, y: 66 },
+  { match: /якут|yakutsk/i, x: 80, y: 48 },
+  { match: /хабаров|khabarovsk/i, x: 91, y: 62 },
+  { match: /владивост|vladivostok/i, x: 93, y: 72 },
+  { match: /кубинк|kubinka/i, x: 21, y: 49 },
 ];
+
+const NON_RUSSIA_CITY_PATTERN = /singapore|tbilisi|yerevan|almaty|astana|minsk|dubai|istanbul|bangkok|не указано|not set/i;
+
+function isRussiaDemandCity(row: ZarukuSeoMetricRow) {
+  return !NON_RUSSIA_CITY_PATTERN.test(row.label);
+}
 
 function resolveRussiaCityPoint(city: string, index: number) {
   const known = RUSSIA_CITY_COORDINATES.find((point) => point.match.test(city));
@@ -411,9 +418,11 @@ function RussiaDemandBubbleMap({ rows, locale }: { rows: ZarukuSeoMetricRow[]; l
   if (rows.length === 0) {
     return <div className="rounded-md bg-slate-50 px-4 py-5 text-sm text-slate-500">Нет данных по городам для /map за выбранный период.</div>;
   }
-  const topRows = rows.slice(0, 14);
+  const topRows = rows.filter(isRussiaDemandCity).slice(0, 14);
+  if (topRows.length === 0) {
+    return <div className="rounded-md bg-slate-50 px-4 py-5 text-sm text-slate-500">Нет данных по российским городам для /map за выбранный период.</div>;
+  }
   const maxVisits = Math.max(1, ...topRows.map((row) => row.visits));
-  const totalVisits = rows.reduce((sum, row) => sum + row.visits, 0);
 
   return (
     <div className="grid gap-5 xl:grid-cols-[minmax(0,1.35fr)_minmax(280px,0.65fr)]">
@@ -439,7 +448,6 @@ function RussiaDemandBubbleMap({ rows, locale }: { rows: ZarukuSeoMetricRow[]; l
           {topRows.map((row, index) => {
             const point = resolveRussiaCityPoint(row.label, index);
             const radius = 12 + Math.sqrt(row.visits / maxVisits) * 30;
-            const share = totalVisits > 0 ? (row.visits / totalVisits) * 100 : row.share;
             return (
               <g key={`${row.label}-${index}`}>
                 <circle cx={point.x * 10} cy={point.y * 5.6} r={radius + 5} fill="#14b8a6" opacity="0.12" />
@@ -448,7 +456,7 @@ function RussiaDemandBubbleMap({ rows, locale }: { rows: ZarukuSeoMetricRow[]; l
                   {truncate(row.label, 18)}
                 </text>
                 <text x={point.x * 10 + radius + 8} y={point.y * 5.6 + 22} className="fill-slate-500 text-[18px]">
-                  {formatNumber(row.visits, locale)} · {formatPercent(share, locale, 1)}
+                  {formatNumber(row.visits, locale)} · {formatPercent(row.share, locale, 1)}
                 </text>
               </g>
             );
@@ -459,7 +467,6 @@ function RussiaDemandBubbleMap({ rows, locale }: { rows: ZarukuSeoMetricRow[]; l
         <div className="mb-3 text-sm font-semibold text-slate-800">Группы городов</div>
         <div className="space-y-2.5">
           {topRows.map((row, index) => {
-            const share = totalVisits > 0 ? (row.visits / totalVisits) * 100 : row.share;
             return (
               <div key={`${row.label}-legend-${index}`} className="grid grid-cols-[minmax(0,1fr)_auto] gap-3 rounded-lg bg-white px-3 py-2 shadow-sm shadow-slate-100">
                 <div className="min-w-0">
@@ -470,7 +477,7 @@ function RussiaDemandBubbleMap({ rows, locale }: { rows: ZarukuSeoMetricRow[]; l
                 </div>
                 <div className="text-right">
                   <div className="text-sm font-semibold text-slate-800">{formatNumber(row.visits, locale)}</div>
-                  <div className="text-xs text-slate-500">{formatPercent(share, locale, 1)}</div>
+                  <div className="text-xs text-slate-500">{formatPercent(row.share, locale, 1)}</div>
                 </div>
               </div>
             );
