@@ -89,6 +89,7 @@ test("Geo tab uses the projected Russia demand map instead of manual coordinates
 
   assert.match(russiaMapSource, /from "@visx\/geo"/);
   assert.match(russiaMapSource, /RUSSIA_FEATURE/);
+  assert.match(russiaMapSource, /rotate=\{\[-100, 0, 0\]\}/);
   assert.match(russiaMapSource, /separateMapMarkers/);
   assert.match(russiaMapSource, /marker\.anchorX/);
   assert.match(russiaMapSource, /city\.showLabel/);

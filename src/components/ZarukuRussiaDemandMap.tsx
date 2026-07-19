@@ -89,6 +89,7 @@ export default function ZarukuRussiaDemandMap({ rows, locale }: Props) {
         >
           <NaturalEarth
             data={[RUSSIA_FEATURE]}
+            rotate={[-100, 0, 0]}
             fitExtent={[[[30, 28], [970, 402]], RUSSIA_FEATURE]}
           >
             {({ features, projection }) => {
