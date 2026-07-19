@@ -66,17 +66,25 @@ test("SEO tab renders GSC product enrichment panels", () => {
   assert.match(source, /GSC brand vs non-brand/);
   assert.match(source, /GSC countries/);
   assert.match(source, /GSC devices/);
+  assert.match(source, /GSC search appearances/);
+  assert.match(source, /GSC result types/);
   assert.match(source, /data\.gsc\.landing_pages/);
   assert.match(source, /data\.gsc\.brand_split/);
   assert.match(source, /data\.gsc\.country_summary/);
+  assert.match(source, /data\.gsc\.search_appearance/);
+  assert.match(source, /data\.gsc\.search_type_summary/);
   assert.match(source, /gscSummaryRows/);
 });
 
 test("Geo tab focuses on a Russia bubble map instead of duplicate country and city lists", () => {
   assert.match(source, /function RussiaDemandBubbleMap/);
+  assert.match(source, /function RussiaMapOutline/);
   assert.match(source, /function isRussiaDemandCity/);
   assert.match(source, /NON_RUSSIA_CITY_PATTERN/);
   assert.match(source, /Карта спроса по России/);
+  assert.match(source, /Контурная карта России/);
+  assert.match(source, /визиты на раздел `\/map\/`/);
+  assert.match(source, /Это не весь гео-трафик сайта/);
   assert.match(source, /размер круга = визиты/);
   assert.match(source, /formatPercent\(row\.share, locale, 1\)/);
   assert.match(source, /<RussiaDemandBubbleMap rows=\{data\.map_city_demand\}/);

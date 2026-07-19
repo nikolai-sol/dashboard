@@ -122,7 +122,7 @@ Current truth is `PM2 + 3001`.
 Current Zaruku source truth:
 - Yandex Metrika: collect only counter `66624469`; counters `29137835`, `105559308`, and `99078698` are on hold/inactive in `canonical_source_account_collection_settings`.
 - Yandex Webmaster: Zaruku host `https:zaruku.ru:443` is connected for canonical daily summary, query, and URL/page facts. URL/page rows live in `canonical_fact_webmaster_pages_daily`; the dashboard read model should expose `zaruku_seo.webmaster.data_availability.pages = true`.
-- Google Search Console: Zaruku property `https://zaruku.ru/` is connected through root collector `fetch_gsc_canonical.py`, not the old temporary / teletask path. Daily query/page/country/device rows live in `canonical_fact_gsc_queries_daily`; the dashboard read model should expose `zaruku_seo.gsc.status = available` when rows exist.
+- Google Search Console: Zaruku property `https://zaruku.ru/` is connected through root collector `fetch_gsc_canonical.py`, not the old temporary / teletask path. Daily query/page/country/device rows live in `canonical_fact_gsc_queries_daily`; optional Search appearance rows live in `canonical_fact_gsc_search_appearance_daily`; result/search type rows live in `canonical_fact_gsc_search_type_daily`. The dashboard read model should expose `zaruku_seo.gsc.status = available` when rows exist.
 
 ## Databases
 

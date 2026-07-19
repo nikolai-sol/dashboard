@@ -33,6 +33,8 @@ import type {
   ZarukuGscCountrySummaryRow,
   ZarukuGscLandingPageRow,
   ZarukuGscQueryRow,
+  ZarukuGscSearchAppearanceRow,
+  ZarukuGscSearchTypeRow,
   ZarukuGscSummaryRow,
   ZarukuSeoData,
   ZarukuSeoLayerId,
@@ -419,6 +421,64 @@ function resolveRussiaCityPoint(city: string, index: number) {
   };
 }
 
+function RussiaMapOutline() {
+  return (
+    <g aria-label="Контурная карта России">
+      <path
+        d="M50 250 L76 221 L111 209 L126 178 L166 160 L203 166 L225 139 L281 150 L318 123 L360 135 L390 112 L446 130 L493 116 L545 135 L606 123 L662 146 L714 139 L754 165 L810 162 L849 188 L895 202 L941 239 L918 270 L941 304 L899 321 L864 303 L827 329 L779 324 L742 352 L681 338 L641 360 L588 341 L538 361 L482 344 L429 369 L369 348 L310 365 L257 341 L201 347 L161 316 L113 313 L80 286 Z"
+        fill="#f8fafc"
+        stroke="#cbd5e1"
+        strokeWidth="3"
+        vectorEffect="non-scaling-stroke"
+      />
+      <path
+        d="M707 139 L746 113 L806 118 L850 141 L810 162 L754 165 Z"
+        fill="#f8fafc"
+        stroke="#cbd5e1"
+        strokeWidth="3"
+        vectorEffect="non-scaling-stroke"
+      />
+      <path
+        d="M842 332 L866 365 L846 405 L823 372 Z"
+        fill="#f8fafc"
+        stroke="#cbd5e1"
+        strokeWidth="3"
+        vectorEffect="non-scaling-stroke"
+      />
+      <path
+        d="M893 329 L914 344 L902 369 L880 350 Z"
+        fill="#f8fafc"
+        stroke="#cbd5e1"
+        strokeWidth="3"
+        vectorEffect="non-scaling-stroke"
+      />
+      <path
+        d="M925 296 L957 288 L972 313 L946 329 Z"
+        fill="#f8fafc"
+        stroke="#cbd5e1"
+        strokeWidth="3"
+        vectorEffect="non-scaling-stroke"
+      />
+      <path
+        d="M92 263 C181 223 282 214 386 240 C497 267 607 252 704 273 C789 291 861 279 928 247"
+        fill="none"
+        stroke="#dbeafe"
+        strokeDasharray="8 10"
+        strokeWidth="2"
+        vectorEffect="non-scaling-stroke"
+      />
+      <path
+        d="M185 171 C270 188 349 174 425 188 C527 208 626 188 735 210 C806 224 870 226 925 250"
+        fill="none"
+        stroke="#e0f2fe"
+        strokeDasharray="6 12"
+        strokeWidth="2"
+        vectorEffect="non-scaling-stroke"
+      />
+    </g>
+  );
+}
+
 function RussiaDemandBubbleMap({ rows, locale }: { rows: ZarukuSeoMetricRow[]; locale: string }) {
   if (rows.length === 0) {
     return <div className="rounded-md bg-slate-50 px-4 py-5 text-sm text-slate-500">Нет данных по городам для /map за выбранный период.</div>;
@@ -433,34 +493,27 @@ function RussiaDemandBubbleMap({ rows, locale }: { rows: ZarukuSeoMetricRow[]; l
     <div className="grid gap-5 xl:grid-cols-[minmax(0,1.35fr)_minmax(280px,0.65fr)]">
       <div className="relative overflow-hidden rounded-xl border border-slate-100 bg-gradient-to-br from-sky-50 via-white to-emerald-50 p-4">
         <div className="mb-3 flex flex-wrap items-center justify-between gap-2 text-xs text-slate-500">
-          <span>Россия · города с переходами на карту онкоцентров</span>
+          <span>Россия · визиты на раздел `/map/`</span>
           <span>размер круга = визиты</span>
         </div>
-        <svg viewBox="0 0 1000 560" role="img" aria-label="Карта России с городскими bubble markers" className="h-[360px] w-full">
-          <path
-            d="M118 278 C160 215 240 175 336 198 C407 137 520 143 589 185 C679 160 789 183 884 238 C842 276 858 333 791 359 C722 387 650 356 581 384 C512 413 427 384 366 405 C294 429 230 388 184 366 C139 344 100 326 118 278 Z"
-            fill="#ecfeff"
-            stroke="#bae6fd"
-            strokeWidth="3"
-          />
-          <path
-            d="M154 311 C222 273 304 264 388 286 C492 314 597 299 682 319 C748 334 815 317 873 292"
-            fill="none"
-            stroke="#dbeafe"
-            strokeDasharray="8 10"
-            strokeWidth="2"
-          />
+        <p className="mb-2 text-xs leading-relaxed text-slate-500">
+          Это не весь гео-трафик сайта: карта показывает только города, откуда были визиты на раздел `/map/` с картой организаций.
+        </p>
+        <svg viewBox="0 0 1000 430" role="img" aria-label="Карта России с городскими bubble markers" className="h-[340px] w-full" preserveAspectRatio="xMidYMid meet">
+          <RussiaMapOutline />
           {topRows.map((row, index) => {
             const point = resolveRussiaCityPoint(row.label, index);
-            const radius = 12 + Math.sqrt(row.visits / maxVisits) * 30;
+            const radius = 10 + Math.sqrt(row.visits / maxVisits) * 24;
+            const cx = point.x * 10;
+            const cy = point.y * 4.3;
             return (
               <g key={`${row.label}-${index}`}>
-                <circle cx={point.x * 10} cy={point.y * 5.6} r={radius + 5} fill="#14b8a6" opacity="0.12" />
-                <circle cx={point.x * 10} cy={point.y * 5.6} r={radius} fill="#0d9488" opacity="0.72" stroke="#ffffff" strokeWidth="2.5" />
-                <text x={point.x * 10 + radius + 8} y={point.y * 5.6 - 2} className="fill-slate-700 text-[22px] font-semibold">
+                <circle cx={cx} cy={cy} r={radius + 5} fill="#14b8a6" opacity="0.12" />
+                <circle cx={cx} cy={cy} r={radius} fill="#0d9488" opacity="0.72" stroke="#ffffff" strokeWidth="2.5" />
+                <text x={Math.min(cx + radius + 8, 900)} y={cy - 2} className="fill-slate-700 text-[19px] font-semibold">
                   {truncate(row.label, 18)}
                 </text>
-                <text x={point.x * 10 + radius + 8} y={point.y * 5.6 + 22} className="fill-slate-500 text-[18px]">
+                <text x={Math.min(cx + radius + 8, 900)} y={cy + 20} className="fill-slate-500 text-[16px]">
                   {formatNumber(row.visits, locale)} · {formatPercent(row.share, locale, 1)}
                 </text>
               </g>
@@ -901,6 +954,117 @@ function SearchConsoleDeviceSummaryTable({ rows, locale }: { rows: ZarukuGscSumm
   );
 }
 
+function gscSearchAppearanceLabel(value: string) {
+  const normalized = value.toLowerCase();
+  const map: Record<string, string> = {
+    rich_results: "Rich results",
+    good_page_experience: "Good page experience",
+    merchant_listings: "Merchant listings",
+    product_results: "Product results",
+    review_snippet: "Review snippet",
+    video: "Video",
+    unknown: "Unknown",
+  };
+  return map[normalized] ?? value.replace(/_/g, " ");
+}
+
+function gscSearchTypeLabel(value: string) {
+  const map: Record<string, string> = {
+    web: "Web / All",
+    image: "Image",
+    video: "Video",
+    news: "News",
+    discover: "Discover",
+    googleNews: "Google News",
+  };
+  return map[value] ?? value;
+}
+
+function SearchConsoleAppearanceTable({ rows, locale }: { rows: ZarukuGscSearchAppearanceRow[]; locale: string }) {
+  return (
+    <div className="max-h-[22rem] overflow-auto rounded-md border border-slate-100">
+      <table className="w-full min-w-[700px] table-fixed text-sm">
+        <colgroup>
+          <col className="w-[34%]" />
+          <col className="w-[16%]" />
+          <col className="w-[16%]" />
+          <col className="w-[14%]" />
+          <col className="w-[10%]" />
+          <col className="w-[10%]" />
+        </colgroup>
+        <thead className="sticky top-0 z-10 bg-slate-50 text-left text-xs text-slate-400 shadow-[0_1px_0_0_rgb(241_245_249)]">
+          <tr>
+            <th className="px-3 py-2.5 font-medium">Search appearance</th>
+            <th className="px-3 py-2.5 font-medium">Type</th>
+            <th className="px-3 py-2.5 text-right font-medium">Показы</th>
+            <th className="px-3 py-2.5 text-right font-medium">Клики</th>
+            <th className="px-3 py-2.5 text-right font-medium">CTR</th>
+            <th className="px-3 py-2.5 text-right font-medium">Позиция</th>
+          </tr>
+        </thead>
+        <tbody className="divide-y divide-slate-100">
+          {rows.map((row) => (
+            <tr key={`${row.week}-${row.search_type}-${row.search_appearance}`} className="align-top hover:bg-slate-50/70">
+              <td className="px-3 py-2.5 font-medium text-slate-700">{gscSearchAppearanceLabel(row.search_appearance)}</td>
+              <td className="px-3 py-2.5 text-slate-500">{gscSearchTypeLabel(row.search_type)}</td>
+              <td className="whitespace-nowrap px-3 py-2.5 text-right text-slate-600">{formatNumber(row.impressions, locale)}</td>
+              <td className="whitespace-nowrap px-3 py-2.5 text-right text-slate-600">{formatNumber(row.clicks, locale)}</td>
+              <td className="whitespace-nowrap px-3 py-2.5 text-right text-slate-500">{formatPercent(row.ctr, locale, 2)}</td>
+              <td className="whitespace-nowrap px-3 py-2.5 text-right text-slate-500">{formatDecimal(row.average_position, locale, 1)}</td>
+            </tr>
+          ))}
+          {rows.length === 0 ? (
+            <tr>
+              <td colSpan={6} className="px-3 py-8 text-center text-sm text-slate-500">Нет GSC search appearance facts для выбранной недели.</td>
+            </tr>
+          ) : null}
+        </tbody>
+      </table>
+    </div>
+  );
+}
+
+function SearchConsoleResultTypeTable({ rows, locale }: { rows: ZarukuGscSearchTypeRow[]; locale: string }) {
+  return (
+    <div className="overflow-x-auto rounded-md border border-slate-100">
+      <table className="w-full min-w-[620px] table-fixed text-sm">
+        <colgroup>
+          <col className="w-[28%]" />
+          <col className="w-[18%]" />
+          <col className="w-[17%]" />
+          <col className="w-[17%]" />
+          <col className="w-[20%]" />
+        </colgroup>
+        <thead className="bg-slate-50 text-left text-xs text-slate-400">
+          <tr>
+            <th className="px-3 py-2.5 font-medium">Result type</th>
+            <th className="px-3 py-2.5 text-right font-medium">Показы</th>
+            <th className="px-3 py-2.5 text-right font-medium">Клики</th>
+            <th className="px-3 py-2.5 text-right font-medium">CTR</th>
+            <th className="px-3 py-2.5 text-right font-medium">Позиция</th>
+          </tr>
+        </thead>
+        <tbody className="divide-y divide-slate-100">
+          {rows.map((row) => (
+            <tr key={`${row.week}-${row.search_type}`} className="align-top hover:bg-slate-50/70">
+              <td className="px-3 py-2.5 font-medium text-slate-700">{gscSearchTypeLabel(row.search_type)}</td>
+              <td className="whitespace-nowrap px-3 py-2.5 text-right text-slate-600">{formatNumber(row.impressions, locale)}</td>
+              <td className="whitespace-nowrap px-3 py-2.5 text-right text-slate-600">{formatNumber(row.clicks, locale)}</td>
+              <td className="whitespace-nowrap px-3 py-2.5 text-right text-slate-500">{formatPercent(row.ctr, locale, 2)}</td>
+              <td className="whitespace-nowrap px-3 py-2.5 text-right text-slate-500">{formatDecimal(row.average_position, locale, 1)}</td>
+            </tr>
+          ))}
+          {rows.length === 0 ? (
+            <tr>
+              <td colSpan={5} className="px-3 py-8 text-center text-sm text-slate-500">Нет GSC result type facts для выбранной недели.</td>
+            </tr>
+          ) : null}
+        </tbody>
+      </table>
+    </div>
+  );
+}
+
 function buildGscSelectionMeta<T extends { week: string; week_from: string; week_to: string; is_partial_week?: boolean }>(
   selection: { week: string | null; rows: T[] },
   selectedWeek: string | null,
@@ -1179,16 +1343,22 @@ function SeoTab({ data, locale, primaryWeek, comparisonWeek }: Props & { primary
   const gscQuerySelection = resolveRowsForWeekOrLatest(data.gsc.queries, gscWeek, data.gsc.latest_week);
   const gscLandingPageSelection = resolveRowsForWeekOrLatest(data.gsc.landing_pages, gscWeek, data.gsc.latest_week);
   const gscBrandSplitSelection = resolveRowsForWeek(data.gsc.brand_split, gscWeek, data.gsc.latest_week);
+  const gscSearchAppearanceSelection = resolveRowsForWeekOrLatest(data.gsc.search_appearance, gscWeek, data.gsc.latest_week);
+  const gscSearchTypeSelection = resolveRowsForWeek(data.gsc.search_type_summary, gscWeek, data.gsc.latest_week);
   const gscSummaryRows = gscSummarySelection.rows;
   const gscCountrySummaryRows = gscCountrySummarySelection.rows;
   const gscQueries = gscQuerySelection.rows;
   const gscLandingPages = gscLandingPageSelection.rows;
   const gscBrandSplit = gscBrandSplitSelection.rows;
+  const gscSearchAppearanceRows = gscSearchAppearanceSelection.rows;
+  const gscSearchTypeRows = gscSearchTypeSelection.rows;
   const gscFactsMeta = buildGscSelectionMeta(gscSummaryRows.length > 0 ? gscSummarySelection : gscQuerySelection, gscWeek);
   const gscCountrySummaryMeta = buildGscSelectionMeta(gscCountrySummarySelection, gscWeek);
   const gscQueryMeta = buildGscSelectionMeta(gscQuerySelection, gscWeek);
   const gscLandingPageMeta = buildGscSelectionMeta(gscLandingPageSelection, gscWeek);
   const gscBrandSplitMeta = buildGscSelectionMeta(gscBrandSplitSelection, gscWeek);
+  const gscSearchAppearanceMeta = buildGscSelectionMeta(gscSearchAppearanceSelection, gscWeek);
+  const gscSearchTypeMeta = buildGscSelectionMeta(gscSearchTypeSelection, gscWeek);
   return (
     <div className="space-y-5">
       <div className="grid gap-5 lg:grid-cols-2">
@@ -1329,7 +1499,31 @@ function SeoTab({ data, locale, primaryWeek, comparisonWeek }: Props & { primary
           </p>
           {gscBrandSplitMeta.fallbackNote ? (
             <div className="mt-3 rounded-md border border-amber-200 bg-amber-50 px-3 py-2 text-xs leading-relaxed text-amber-800">
-              {gscBrandSplitMeta.fallbackNote}
+            {gscBrandSplitMeta.fallbackNote}
+          </div>
+        ) : null}
+        </Panel>
+      </div>
+      <div className="grid gap-5 lg:grid-cols-2">
+        <Panel data={data} title="GSC search appearances" source="gsc" layer="serp" right={<span className="text-xs text-slate-400">{gscSearchAppearanceMeta.periodLabel} · {gscSearchAppearanceRows.length} features</span>}>
+          <SearchConsoleAppearanceTable rows={gscSearchAppearanceRows.slice(0, 12)} locale={currentLocale} />
+          <p className="mt-3 text-xs leading-relaxed text-slate-500">
+            Search appearance = SERP/rich-result features from canonical_fact_gsc_search_appearance_daily. Это показывает не визиты, а Google-показы/клики до перехода.
+          </p>
+          {gscSearchAppearanceMeta.fallbackNote ? (
+            <div className="mt-3 rounded-md border border-amber-200 bg-amber-50 px-3 py-2 text-xs leading-relaxed text-amber-800">
+              {gscSearchAppearanceMeta.fallbackNote}
+            </div>
+          ) : null}
+        </Panel>
+        <Panel data={data} title="GSC result types" source="gsc" layer="serp" right={<span className="text-xs text-slate-400">{gscSearchTypeMeta.periodLabel}</span>}>
+          <SearchConsoleResultTypeTable rows={gscSearchTypeRows} locale={currentLocale} />
+          <p className="mt-3 text-xs leading-relaxed text-slate-500">
+            Result type layer разделяет Google Search на Web / Image / Video / News / Discover / Google News, когда API отдаёт строки для property.
+          </p>
+          {gscSearchTypeMeta.fallbackNote ? (
+            <div className="mt-3 rounded-md border border-amber-200 bg-amber-50 px-3 py-2 text-xs leading-relaxed text-amber-800">
+              {gscSearchTypeMeta.fallbackNote}
             </div>
           ) : null}
         </Panel>
@@ -1380,7 +1574,7 @@ function ContentTab({ data, locale, primaryWeek, comparisonWeek }: Props & { pri
 function GeoTab({ data, locale }: Props) {
   return (
     <div className="space-y-5">
-      <Panel data={data} title="Карта спроса по России" source="metrika" layer="onsite" right={<span className="text-xs text-slate-400">regionCity × /map</span>}>
+      <Panel data={data} title="Карта спроса по России" source="metrika" layer="onsite" right={<span className="text-xs text-slate-400">визиты на /map/</span>}>
         <RussiaDemandBubbleMap rows={data.map_city_demand} locale={locale ?? "ru-RU"} />
       </Panel>
     </div>

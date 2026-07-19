@@ -860,6 +860,31 @@ export interface ZarukuGscBrandSplitRow {
   is_partial_week: boolean;
 }
 
+export interface ZarukuGscSearchAppearanceRow {
+  week: string;
+  search_type: string;
+  search_appearance: string;
+  impressions: number;
+  clicks: number;
+  ctr: number | null;
+  average_position: number | null;
+  week_from: string;
+  week_to: string;
+  is_partial_week: boolean;
+}
+
+export interface ZarukuGscSearchTypeRow {
+  week: string;
+  search_type: string;
+  impressions: number;
+  clicks: number;
+  ctr: number | null;
+  average_position: number | null;
+  week_from: string;
+  week_to: string;
+  is_partial_week: boolean;
+}
+
 export interface ZarukuGscData {
   available: boolean;
   status: "available" | "partial" | "unavailable";
@@ -870,6 +895,8 @@ export interface ZarukuGscData {
     country_summary: boolean;
     landing_pages: boolean;
     brand_split: boolean;
+    search_appearance: boolean;
+    search_type_summary: boolean;
   };
   weeks: string[];
   latest_week: string | null;
@@ -878,6 +905,8 @@ export interface ZarukuGscData {
   queries: ZarukuGscQueryRow[];
   landing_pages: ZarukuGscLandingPageRow[];
   brand_split: ZarukuGscBrandSplitRow[];
+  search_appearance: ZarukuGscSearchAppearanceRow[];
+  search_type_summary: ZarukuGscSearchTypeRow[];
 }
 
 export interface ZarukuAiVisibilityRow {
