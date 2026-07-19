@@ -46,6 +46,7 @@ test("SEO tab renders Search Console facts from canonical data without pending p
 });
 
 test("pending and returning-content panels explain current state instead of showing misleading empty UI", () => {
+  assert.match(source, /function PendingPanel[\s\S]*if \(data\.pending_requirements\.length === 0\) return null;/);
   assert.match(source, /pending=\{data\.pending_requirements\.length > 0\}/);
   assert.doesNotMatch(source, /title="Что ещё ждём" layer="serp" pending right=/);
   assert.match(source, /Нет возвратного контента за выбранный период/);

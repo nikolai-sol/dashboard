@@ -383,6 +383,8 @@ function ReturningPagesTable({ rows, locale }: { rows: ZarukuSeoMetricRow[]; loc
 }
 
 function PendingPanel({ data }: { data: ZarukuSeoData }) {
+  if (data.pending_requirements.length === 0) return null;
+
   return (
     <Panel data={data} title="Что ещё ждём" layer="serp" pending={data.pending_requirements.length > 0} right={<span className="text-xs text-slate-400">{formatPendingRequirementSources(data)}</span>}>
       <div className="grid gap-3 md:grid-cols-3">
