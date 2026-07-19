@@ -463,6 +463,7 @@ function defaultSchemaFileForPlatform(platform: string): string {
     reddit: 'schemas/reddit.yaml',
     vk: 'schemas/vk.yaml',
     hybrid: 'schemas/hybrid.yaml',
+    between: 'schemas/between.yaml',
     git: 'schemas/git.yaml',
     yandex: 'schemas/yandex.yaml',
     google: 'schemas/google.yaml',

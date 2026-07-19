@@ -12,6 +12,8 @@ const PLATFORM_ALIASES: Record<string, string> = {
   "vk": "vk_ads_v2",
   "vk ads": "vk_ads_v2",
   "hybrid": "hybrid",
+  "between": "between",
+  "between exchange": "between",
 };
 
 function normalizeToken(value: unknown): string {

@@ -1,0 +1,25 @@
+platform: between
+display_name: Between
+source: mysql
+source_key: between
+source_type: ads
+canonical_table: canonical_fact_ads_daily
+
+tables:
+  campaigns:
+    table: canonical_source_campaigns
+    id_col: platform_campaign_id
+    name_col: campaign_name
+  stats:
+    table: canonical_fact_ads_daily
+    date_col: report_date
+    metrics:
+      - { col: impressions, label: Impressions, type: int }
+      - { col: clicks, label: Clicks, type: int }
+      - { col: spend, label: Spend, type: decimal, currency: RUB }
+      - { col: views, label: Video Views, type: int }
+      - { col: conversions, label: Conversions, type: int }
+      - { col: ctr, label: CTR, type: decimal, format: percent }
+      - { col: cpm, label: CPM, type: decimal, currency: RUB }
+      - { col: cpc, label: CPC, type: decimal, currency: RUB }
+      - { col: cpv, label: CPV, type: decimal, currency: RUB }
