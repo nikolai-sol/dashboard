@@ -629,6 +629,27 @@ export interface ZarukuSeoDataQualityItem {
   severity: "ok" | "info" | "warning";
 }
 
+export type ZarukuSourceFreshnessStatus = "healthy" | "delayed" | "failed" | "disabled";
+
+export interface ZarukuSourceFreshnessRow {
+  source_key: string;
+  label: string;
+  collector: string;
+  expected_frequency_hours: number;
+  freshness_status: ZarukuSourceFreshnessStatus;
+  freshness_label: string;
+  last_status: string | null;
+  last_finished_at: string | null;
+  last_success_at: string | null;
+  date_from: string | null;
+  date_to: string | null;
+  rows_read: number;
+  rows_written: number;
+  last_error_at: string | null;
+  last_error_summary: string | null;
+  note: string;
+}
+
 export interface ZarukuSeoSectionPattern {
   section: string;
   url_pattern: string;
@@ -728,7 +749,7 @@ export interface ZarukuYandexWebmasterQueryRow {
   average_position: number | null;
   week_from: string;
   week_to: string;
-  is_partial_week?: boolean;
+  is_partial_week: boolean;
 }
 
 export interface ZarukuYandexWebmasterPageRow {
@@ -741,7 +762,7 @@ export interface ZarukuYandexWebmasterPageRow {
   average_position: number | null;
   week_from: string;
   week_to: string;
-  is_partial_week?: boolean;
+  is_partial_week: boolean;
 }
 
 export interface ZarukuYandexWebmasterSummaryRow {
@@ -769,6 +790,76 @@ export interface ZarukuYandexWebmasterData {
   summary: ZarukuYandexWebmasterSummaryRow[];
   queries: ZarukuYandexWebmasterQueryRow[];
   pages: ZarukuYandexWebmasterPageRow[];
+}
+
+export interface ZarukuGscQueryRow {
+  week: string;
+  query_id: string;
+  query: string;
+  page: string;
+  country: string;
+  device: string;
+  impressions: number;
+  clicks: number;
+  ctr: number | null;
+  average_position: number | null;
+  week_from: string;
+  week_to: string;
+  is_partial_week: boolean;
+}
+
+export interface ZarukuGscSummaryRow {
+  week: string;
+  device: string;
+  impressions: number;
+  clicks: number;
+  ctr: number | null;
+  average_position: number | null;
+  week_from: string;
+  week_to: string;
+  is_partial_week: boolean;
+}
+
+export interface ZarukuGscLandingPageRow {
+  week: string;
+  page: string;
+  impressions: number;
+  clicks: number;
+  ctr: number | null;
+  average_position: number | null;
+  week_from: string;
+  week_to: string;
+  is_partial_week: boolean;
+}
+
+export interface ZarukuGscBrandSplitRow {
+  week: string;
+  bucket: "brand" | "non_brand";
+  impressions: number;
+  clicks: number;
+  ctr: number | null;
+  average_position: number | null;
+  week_from: string;
+  week_to: string;
+  is_partial_week: boolean;
+}
+
+export interface ZarukuGscData {
+  available: boolean;
+  status: "available" | "partial" | "unavailable";
+  error: string | null;
+  data_availability: {
+    queries: boolean;
+    summary: boolean;
+    landing_pages: boolean;
+    brand_split: boolean;
+  };
+  weeks: string[];
+  latest_week: string | null;
+  summary: ZarukuGscSummaryRow[];
+  queries: ZarukuGscQueryRow[];
+  landing_pages: ZarukuGscLandingPageRow[];
+  brand_split: ZarukuGscBrandSplitRow[];
 }
 
 export interface ZarukuAiVisibilityRow {
@@ -895,9 +986,11 @@ export interface ZarukuSeoData {
   gender: ZarukuSeoMetricRow[];
   interests: ZarukuSeoMetricRow[];
   returning_pages: ZarukuSeoMetricRow[];
+  source_freshness: ZarukuSourceFreshnessRow[];
   data_quality: ZarukuSeoDataQualityItem[];
   seo_os: ZarukuSeoOsData;
   webmaster: ZarukuYandexWebmasterData;
+  gsc: ZarukuGscData;
   ai_visibility: ZarukuAiVisibilityData;
   seo_intelligence: ZarukuSeoIntelligenceData;
 }

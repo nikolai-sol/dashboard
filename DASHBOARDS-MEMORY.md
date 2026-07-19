@@ -294,14 +294,19 @@ Recent completed changes that should not be rediscovered:
     - source binding: `dashboard_sources.platform = yandex_metrika`, `source_config.account_ids = ["66624469"]`
     - Zaruku no longer uses the Abbott BI UI; it renders `src/components/ZarukuSeoDashboard.tsx`
     - data path: `src/lib/zaruku-seo.ts` returns `zaruku_seo` with measurement layers `onsite / serp / ai`
-    - current connected source is Yandex Metrika: canonical traffic/page facts plus live Metrika API cuts for search engines, phrases, organic landings, devices, geo, browser/OS, inferred age/gender/interests
-    - pending sources are documented in `ZARUKU-SEO-PENDING-SOURCES.md`: Google Search Console; Yandex Webmaster and Alisa AI visibility are connected
+    - current connected onsite source is Yandex Metrika: canonical traffic/page facts plus live Metrika API cuts for search engines, phrases, organic landings, devices, geo, browser/OS, inferred age/gender/interests
+    - Yandex Webmaster is connected through canonical daily tables for summary, query, and URL/page facts; dashboard payload `zaruku_seo.webmaster.data_availability.pages` should be true when `canonical_fact_webmaster_pages_daily` exists
+    - Google Search Console is connected through root collector `fetch_gsc_canonical.py` and `canonical_fact_gsc_queries_daily`; dashboard payload `zaruku_seo.gsc.status` should be `available` when canonical rows exist, and GSC must not render as a pending source
+    - Zaruku GSC read model now exposes `summary`, `queries`, `landing_pages`, and `brand_split` from the same canonical daily table. `landing_pages` and `brand_split` are dashboard-side aggregations, not new API calls.
+    - Zaruku SEO tab renders GSC panels for search facts, queries, landing pages, and brand vs non-brand. Brand bucket currently matches `zaruku`, `заруку`, `за руку`, and `зараку`; everything else is `non_brand`.
+    - Zaruku Quality tab source freshness is intentionally technical (`cron`, `collector`, `rows`). It must hide stale historical errors after a newer successful cron; show errors only when the latest failed/partial run is newer than or equal to the latest success.
+    - pending / connected source contracts are documented in `ZARUKU-SEO-PENDING-SOURCES.md`: Yandex Metrika, Yandex Webmaster, GSC, SEO OS, and Alisa AI visibility are connected
     - `Cached page traffic` is treated as technical tail, not as a primary acquisition channel
     - User ID analytics are Abbott/Bitrix-specific and stay hidden for Zaruku
 12. Zaruku SEO OS is connected as the `seo_os` source in the `serp` layer:
     - it provides weekly Yandex tracked positions, section coverage and position trends, opportunities, tasks, and pipeline run telemetry
     - section assignment is read from the authoritative `seo_section_patterns` dictionary
-    - SEO OS does not replace pending Google Search Console or Yandex Webmaster ingestion for impressions, clicks, CTR, and complete query / URL search-console coverage
+    - SEO OS does not replace Google Search Console or Yandex Webmaster ingestion for impressions, clicks, CTR, and complete query / URL search-console coverage
     - SEO task status `needs_target_page` is supported end to end in MySQL types, P4 counters, and task badges; approved opportunities without `target_url` must still create a task with this status
     - AI visibility for Zaruku is now covered by the Alisa AI snapshot in `seo_ai_visibility`
 13. Gidrofuril dashboard investigation on 2026-07-13:

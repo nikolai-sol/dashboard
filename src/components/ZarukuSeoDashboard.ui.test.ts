@@ -30,3 +30,29 @@ test("SEO tab labels Yandex query table from its own week selection", () => {
   assert.match(source, /const webmasterQueryMeta = buildWebmasterSelectionMeta\(webmasterQuerySelection, webmasterWeek\)/);
   assert.match(source, /webmasterQueryMeta\.fallbackNote/);
 });
+
+test("Quality tab shows technical collector freshness wording", () => {
+  assert.match(source, /Source freshness/);
+  assert.match(source, /last successful cron/);
+  assert.match(source, /rows written/);
+});
+
+test("SEO tab renders Search Console facts from canonical data without pending placeholder", () => {
+  assert.match(source, /GSC search facts/);
+  assert.match(source, /Search Console · canonical_fact_gsc_queries_daily/);
+  assert.doesNotMatch(source, /title="Факты Google Search Console" source="gsc" layer="serp" pending/);
+  assert.doesNotMatch(source, /Данные по Google-показам, кликам и CTR ожидаются из Search Console/);
+});
+
+test("pending and returning-content panels explain current state instead of showing misleading empty UI", () => {
+  assert.match(source, /pending=\{data\.pending_requirements\.length > 0\}/);
+  assert.doesNotMatch(source, /title="Что ещё ждём" layer="serp" pending right=/);
+  assert.match(source, /Нет возвратного контента за выбранный период/);
+});
+
+test("SEO tab renders GSC product enrichment panels", () => {
+  assert.match(source, /GSC landing pages/);
+  assert.match(source, /GSC brand vs non-brand/);
+  assert.match(source, /data\.gsc\.landing_pages/);
+  assert.match(source, /data\.gsc\.brand_split/);
+});

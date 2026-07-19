@@ -3,6 +3,7 @@ import test from "node:test";
 import {
   buildWebmasterAccountQueries,
   loadZarukuYandexWebmasterData,
+  normalizeWebmasterPageRow,
   normalizeWebmasterQueryRow,
   normalizeWebmasterSummaryRow,
 } from "@/lib/zaruku-yandex-webmaster";
@@ -15,6 +16,8 @@ test("buildWebmasterAccountQueries scopes daily canonical rows by account and op
   assert.deepEqual(queries.queries.params, ["66624469", "2026-W28"]);
   assert.match(queries.summary.sql, /canonical_fact_webmaster_summary_daily/);
   assert.deepEqual(queries.summary.params, ["66624469", "2026-W28"]);
+  assert.match(queries.pages.sql, /canonical_fact_webmaster_pages_daily/);
+  assert.deepEqual(queries.pages.params, ["66624469", "2026-W28"]);
   assert.doesNotMatch(queries.queries.sql, /seo_webmaster_queries_weekly/);
 });
 
@@ -75,9 +78,39 @@ test("normalizeWebmasterSummaryRow preserves daily summary week coverage", () =>
   );
 });
 
+test("normalizeWebmasterPageRow keeps URL page metrics", () => {
+  assert.deepEqual(
+    normalizeWebmasterPageRow({
+      week_key: "2026-W29",
+      page_url: "/rak-molochnoj-zhelezy/reabilitaciya/",
+      device_type: "ALL",
+      impressions: "54",
+      clicks: "5",
+      ctr: "9.259259",
+      average_position: "18.4",
+      week_from: "2026-07-13",
+      week_to: "2026-07-15",
+      is_partial_week: 1,
+    }),
+    {
+      week: "2026-W29",
+      url: "/rak-molochnoj-zhelezy/reabilitaciya/",
+      device: "ALL",
+      impressions: 54,
+      clicks: 5,
+      ctr: 9.259259,
+      average_position: 18.4,
+      week_from: "2026-07-13",
+      week_to: "2026-07-15",
+      is_partial_week: true,
+    },
+  );
+});
+
 test("loadZarukuYandexWebmasterData is partial when one table is unavailable", async () => {
   const data = await loadZarukuYandexWebmasterData(["66624469"], ["2026-W28"], async (query) => {
     if (query.sql.includes("canonical_fact_webmaster_summary_daily")) throw new Error("missing table");
+    if (query.sql.includes("canonical_fact_webmaster_pages_daily")) return [];
     return [
       {
         week_key: "2026-W28",
@@ -97,7 +130,37 @@ test("loadZarukuYandexWebmasterData is partial when one table is unavailable", a
   assert.equal(data.status, "partial");
   assert.equal(data.queries.length, 1);
   assert.equal(data.summary.length, 0);
+  assert.equal(data.pages.length, 0);
   assert.match(data.error ?? "", /summary/);
+});
+
+test("loadZarukuYandexWebmasterData includes page facts when canonical table is present", async () => {
+  const data = await loadZarukuYandexWebmasterData(["66624469"], ["2026-W29"], async (query) => {
+    if (query.sql.includes("canonical_fact_webmaster_queries_daily")) return [];
+    if (query.sql.includes("canonical_fact_webmaster_summary_daily")) return [];
+    if (query.sql.includes("canonical_fact_webmaster_pages_daily")) {
+      return [
+        {
+          week_key: "2026-W29",
+          page_url: "/rak-molochnoj-zhelezy/reabilitaciya/",
+          device_type: "ALL",
+          impressions: 54,
+          clicks: 5,
+          ctr: 9.259259,
+          average_position: 18.4,
+          week_from: "2026-07-13",
+          week_to: "2026-07-15",
+          is_partial_week: 1,
+        },
+      ];
+    }
+    return [];
+  });
+
+  assert.equal(data.status, "available");
+  assert.equal(data.data_availability.pages, true);
+  assert.equal(data.latest_week, "2026-W29");
+  assert.deepEqual(data.pages.map((row) => row.url), ["/rak-molochnoj-zhelezy/reabilitaciya/"]);
 });
 
 test("loadZarukuYandexWebmasterData does not fallback to latest week when selected week is empty", async () => {

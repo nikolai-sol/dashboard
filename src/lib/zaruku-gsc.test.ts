@@ -1,0 +1,217 @@
+import assert from "node:assert/strict";
+import test from "node:test";
+import {
+  buildGscAccountQueries,
+  loadGoogleSearchConsoleFacts,
+  normalizeGscBrandSplitRow,
+  normalizeGscLandingPageRow,
+  normalizeGscQueryRow,
+  normalizeGscSummaryRow,
+} from "@/lib/zaruku-gsc";
+
+test("buildGscAccountQueries scopes canonical GSC rows by account and optional weeks", () => {
+  const queries = buildGscAccountQueries(["66624469"], ["2026-W29"]);
+
+  assert.match(queries.queries.sql, /canonical_fact_gsc_queries_daily/);
+  assert.match(queries.queries.sql, /analytics_account_id IN \(\?\)/);
+  assert.match(queries.queries.sql, /YEARWEEK\(report_date, 3\)[\s\S]*IN \(\?\)/);
+  assert.deepEqual(queries.queries.params, ["66624469", "2026-W29"]);
+  assert.deepEqual(queries.summary.params, ["66624469", "2026-W29"]);
+  assert.deepEqual(queries.landing_pages.params, ["66624469", "2026-W29"]);
+  assert.deepEqual(queries.brand_split.params, ["66624469", "2026-W29"]);
+});
+
+test("normalizeGscSummaryRow preserves partial week coverage", () => {
+  assert.deepEqual(
+    normalizeGscSummaryRow({
+      week_key: "2026-W29",
+      device: "ALL",
+      impressions: "900",
+      clicks: "90",
+      ctr: "10",
+      average_position: "4.5",
+      week_from: "2026-07-13",
+      week_to: "2026-07-15",
+      is_partial_week: 1,
+    }),
+    {
+      week: "2026-W29",
+      device: "ALL",
+      impressions: 900,
+      clicks: 90,
+      ctr: 10,
+      average_position: 4.5,
+      week_from: "2026-07-13",
+      week_to: "2026-07-15",
+      is_partial_week: true,
+    },
+  );
+});
+
+test("normalizeGscQueryRow keeps canonical query page country and device facts", () => {
+  assert.deepEqual(
+    normalizeGscQueryRow({
+      week_key: "2026-W29",
+      query_id: "hash-1",
+      query: "заруку",
+      page: "https://zaruku.ru/",
+      country: "rus",
+      device: "MOBILE",
+      impressions: "100",
+      clicks: "7",
+      ctr: "7",
+      average_position: "3.25",
+      week_from: "2026-07-13",
+      week_to: "2026-07-15",
+      is_partial_week: "1",
+    }),
+    {
+      week: "2026-W29",
+      query_id: "hash-1",
+      query: "заруку",
+      page: "https://zaruku.ru/",
+      country: "rus",
+      device: "MOBILE",
+      impressions: 100,
+      clicks: 7,
+      ctr: 7,
+      average_position: 3.25,
+      week_from: "2026-07-13",
+      week_to: "2026-07-15",
+      is_partial_week: true,
+    },
+  );
+});
+
+test("normalizeGscLandingPageRow aggregates canonical pages", () => {
+  assert.deepEqual(
+    normalizeGscLandingPageRow({
+      week_key: "2026-W29",
+      page: "https://zaruku.ru/rak-molochnoj-zhelezy/",
+      impressions: "100",
+      clicks: "10",
+      ctr: "10",
+      average_position: "4.2",
+      week_from: "2026-07-13",
+      week_to: "2026-07-17",
+      is_partial_week: 1,
+    }),
+    {
+      week: "2026-W29",
+      page: "https://zaruku.ru/rak-molochnoj-zhelezy/",
+      impressions: 100,
+      clicks: 10,
+      ctr: 10,
+      average_position: 4.2,
+      week_from: "2026-07-13",
+      week_to: "2026-07-17",
+      is_partial_week: true,
+    },
+  );
+});
+
+test("normalizeGscBrandSplitRow keeps brand bucket facts", () => {
+  assert.deepEqual(
+    normalizeGscBrandSplitRow({
+      week_key: "2026-W29",
+      brand_bucket: "non_brand",
+      impressions: "100",
+      clicks: "10",
+      ctr: "10",
+      average_position: "4.2",
+      week_from: "2026-07-13",
+      week_to: "2026-07-17",
+      is_partial_week: 1,
+    }),
+    {
+      week: "2026-W29",
+      bucket: "non_brand",
+      impressions: 100,
+      clicks: 10,
+      ctr: 10,
+      average_position: 4.2,
+      week_from: "2026-07-13",
+      week_to: "2026-07-17",
+      is_partial_week: true,
+    },
+  );
+});
+
+test("loadGoogleSearchConsoleFacts marks Search Console available when canonical rows exist", async () => {
+  const data = await loadGoogleSearchConsoleFacts(["66624469"], ["2026-W29"], async (query) => {
+    if (query.sql.includes("GROUP BY week_key, device")) {
+      return [
+        {
+          week_key: "2026-W29",
+          device: "ALL",
+          impressions: 900,
+          clicks: 90,
+          ctr: 10,
+          average_position: 4.5,
+          week_from: "2026-07-13",
+          week_to: "2026-07-15",
+          is_partial_week: 1,
+        },
+      ];
+    }
+    if (query.sql.includes("GROUP BY week_key, page")) {
+      return [
+        {
+          week_key: "2026-W29",
+          page: "https://zaruku.ru/rak-molochnoj-zhelezy/",
+          impressions: 100,
+          clicks: 10,
+          ctr: 10,
+          average_position: 4.2,
+          week_from: "2026-07-13",
+          week_to: "2026-07-17",
+          is_partial_week: 1,
+        },
+      ];
+    }
+    if (query.sql.includes("brand_bucket")) {
+      return [
+        {
+          week_key: "2026-W29",
+          brand_bucket: "non_brand",
+          impressions: 800,
+          clicks: 80,
+          ctr: 10,
+          average_position: 5.1,
+          week_from: "2026-07-13",
+          week_to: "2026-07-17",
+          is_partial_week: 1,
+        },
+      ];
+    }
+    return [
+      {
+        week_key: "2026-W29",
+        query_id: "hash-1",
+        query: "заруку",
+        page: "https://zaruku.ru/",
+        country: "rus",
+        device: "MOBILE",
+        impressions: 100,
+        clicks: 7,
+        ctr: 7,
+        average_position: 3.25,
+        week_from: "2026-07-13",
+        week_to: "2026-07-15",
+        is_partial_week: 1,
+      },
+    ];
+  });
+
+  assert.equal(data.status, "available");
+  assert.equal(data.latest_week, "2026-W29");
+  assert.equal(data.data_availability.queries, true);
+  assert.equal(data.data_availability.landing_pages, true);
+  assert.equal(data.data_availability.brand_split, true);
+  assert.equal(data.summary.length, 1);
+  assert.equal(data.queries.length, 1);
+  assert.equal(data.landing_pages.length, 1);
+  assert.equal(data.landing_pages[0].page, "https://zaruku.ru/rak-molochnoj-zhelezy/");
+  assert.equal(data.brand_split.length, 1);
+  assert.equal(data.brand_split[0].bucket, "non_brand");
+});

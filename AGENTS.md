@@ -119,6 +119,11 @@ Current truth is `PM2 + 3001`.
 - python env: `/root/reportingdash-canonical/venv`
 - collector logs: `/root/reportingdash-canonical/logs`
 
+Current Zaruku source truth:
+- Yandex Metrika: collect only counter `66624469`; counters `29137835`, `105559308`, and `99078698` are on hold/inactive in `canonical_source_account_collection_settings`.
+- Yandex Webmaster: Zaruku host `https:zaruku.ru:443` is connected for canonical daily summary, query, and URL/page facts. URL/page rows live in `canonical_fact_webmaster_pages_daily`; the dashboard read model should expose `zaruku_seo.webmaster.data_availability.pages = true`.
+- Google Search Console: Zaruku property `https://zaruku.ru/` is connected through root collector `fetch_gsc_canonical.py`, not the old temporary / teletask path. Daily query/page/country/device rows live in `canonical_fact_gsc_queries_daily`; the dashboard read model should expose `zaruku_seo.gsc.status = available` when rows exist.
+
 ## Databases
 
 ### Primary reporting DB
@@ -174,6 +179,7 @@ Canonical daily jobs on VPS:
 - `06:37` Hybrid
 - `06:40` canonical monitor
 - `06:50` Telegram summary
+- `06:55` Google Search Console canonical daily collector (`fetch_gsc_canonical.py --backfill-days 3 --run-type cron`)
 
 Important collector rule:
 - cron windows do not include the current day

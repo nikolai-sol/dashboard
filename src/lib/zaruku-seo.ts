@@ -13,6 +13,8 @@ import type {
   ZarukuSeoSource,
   ZarukuSeoSourceStatus,
   ZarukuSeoIntelligenceData,
+  ZarukuSourceFreshnessRow,
+  ZarukuGscData,
   ZarukuYandexWebmasterData,
 } from "@/lib/types";
 
@@ -107,6 +109,43 @@ type MetrikaReport = {
   error?: string;
 };
 
+export type SourceFreshnessDbRow = RowDataPacket & {
+  source_key: string;
+  source_label: string;
+  collector: string;
+  expected_frequency_hours: number | string | null;
+  last_status: string | null;
+  last_finished_at: string | Date | null;
+  last_success_at: string | Date | null;
+  success_date_from: string | Date | null;
+  success_date_to: string | Date | null;
+  success_rows_read: number | string | null;
+  success_rows_written: number | string | null;
+  last_error_at: string | Date | null;
+  last_error_summary: string | null;
+};
+
+const SOURCE_FRESHNESS_CATALOG = [
+  {
+    source_key: "yandex_metrika",
+    source_label: "Яндекс Метрика",
+    collector: "fetch_yandex_metrika_canonical.py",
+    expected_frequency_hours: 24,
+  },
+  {
+    source_key: "yandex_webmaster",
+    source_label: "Яндекс Вебмастер",
+    collector: "fetch_yandex_webmaster_canonical.py",
+    expected_frequency_hours: 24,
+  },
+  {
+    source_key: "google_search_console",
+    source_label: "Google Search Console",
+    collector: "fetch_gsc_canonical.py",
+    expected_frequency_hours: 24,
+  },
+] as const;
+
 function asNumber(value: unknown): number {
   const parsed = Number(value);
   return Number.isFinite(parsed) ? parsed : 0;
@@ -122,6 +161,29 @@ function buildInClause(values: readonly string[]) {
 
 function formatInteger(value: number) {
   return Math.round(value).toLocaleString("ru-RU");
+}
+
+function formatEnglishInteger(value: number) {
+  return Math.round(value).toLocaleString("en-US");
+}
+
+function formatDateTimeValue(value: string | Date | null | undefined): string | null {
+  if (!value) return null;
+  if (value instanceof Date) return value.toISOString().slice(0, 19).replace("T", " ");
+  const text = String(value).trim();
+  if (!text) return null;
+  return text.replace("T", " ").slice(0, 19);
+}
+
+function formatDateOnlyValue(value: string | Date | null | undefined): string | null {
+  const formatted = formatDateTimeValue(value);
+  return formatted ? formatted.slice(0, 10) : null;
+}
+
+function parseDateValue(value: string | Date | null | undefined): Date | null {
+  if (!value) return null;
+  const date = value instanceof Date ? value : new Date(String(value).replace(" ", "T"));
+  return Number.isNaN(date.getTime()) ? null : date;
 }
 
 function formatPercent(value: number | null | undefined, digits = 0) {
@@ -365,6 +427,148 @@ export function buildMapCityDemand(rows: ZarukuSeoMetricRow[]) {
     }))
     .sort((a, b) => b.visits - a.visits)
     .slice(0, 20);
+}
+
+function sourceFreshnessCatalogSql() {
+  return SOURCE_FRESHNESS_CATALOG.map((source, index) => {
+    const selectKeyword = index === 0 ? "SELECT" : "UNION ALL SELECT";
+    return `${selectKeyword} '${source.source_key}' AS source_key, '${source.source_label}' AS source_label, '${source.collector}' AS collector, ${source.expected_frequency_hours} AS expected_frequency_hours`;
+  }).join("\n      ");
+}
+
+export function buildSourceFreshnessQuery(sourceKeys = SOURCE_FRESHNESS_CATALOG.map((source) => source.source_key)) {
+  const scopedSourceKeys = sourceKeys.length > 0 ? sourceKeys : SOURCE_FRESHNESS_CATALOG.map((source) => source.source_key);
+  return {
+    sql: `
+    WITH source_catalog AS (
+      ${sourceFreshnessCatalogSql()}
+    ),
+    scoped_sources AS (
+      SELECT *
+      FROM source_catalog
+      WHERE source_key IN (${buildInClause(scopedSourceKeys)})
+    ),
+    latest_run AS (
+      SELECT r.*
+      FROM canonical_collector_runs r
+      INNER JOIN (
+        SELECT r2.source_key, MAX(r2.id) AS latest_id
+        FROM canonical_collector_runs r2
+        INNER JOIN scoped_sources ss ON ss.source_key = r2.source_key
+        WHERE r2.run_type = 'cron'
+        GROUP BY r2.source_key
+      ) latest ON latest.latest_id = r.id
+    ),
+    latest_success AS (
+      SELECT r.*
+      FROM canonical_collector_runs r
+      INNER JOIN (
+        SELECT r2.source_key, MAX(r2.id) AS latest_success_id
+        FROM canonical_collector_runs r2
+        INNER JOIN scoped_sources ss ON ss.source_key = r2.source_key
+        WHERE r2.run_type = 'cron'
+          AND r2.status = 'success'
+        GROUP BY r2.source_key
+      ) latest ON latest.latest_success_id = r.id
+    ),
+    latest_error AS (
+      SELECT r.*
+      FROM canonical_collector_runs r
+      INNER JOIN (
+        SELECT r2.source_key, MAX(r2.id) AS latest_error_id
+        FROM canonical_collector_runs r2
+        INNER JOIN scoped_sources ss ON ss.source_key = r2.source_key
+        WHERE r2.run_type = 'cron'
+          AND r2.status IN ('failed', 'partial')
+        GROUP BY r2.source_key
+      ) latest ON latest.latest_error_id = r.id
+    )
+    SELECT
+      ss.source_key,
+      ss.source_label,
+      ss.collector,
+      ss.expected_frequency_hours,
+      latest_run.status AS last_status,
+      COALESCE(latest_run.finished_at, latest_run.started_at) AS last_finished_at,
+      latest_success.finished_at AS last_success_at,
+      latest_success.date_from AS success_date_from,
+      latest_success.date_to AS success_date_to,
+      latest_success.rows_read AS success_rows_read,
+      latest_success.rows_written AS success_rows_written,
+      COALESCE(latest_error.finished_at, latest_error.started_at) AS last_error_at,
+      latest_error.error_summary AS last_error_summary
+    FROM scoped_sources ss
+    LEFT JOIN latest_run ON latest_run.source_key = ss.source_key
+    LEFT JOIN latest_success ON latest_success.source_key = ss.source_key
+    LEFT JOIN latest_error ON latest_error.source_key = ss.source_key
+    ORDER BY FIELD(ss.source_key, 'yandex_metrika', 'yandex_webmaster', 'google_search_console')
+  `,
+    params: scopedSourceKeys,
+  };
+}
+
+export function normalizeSourceFreshnessRow(row: SourceFreshnessDbRow, now = new Date()): ZarukuSourceFreshnessRow {
+  const expectedFrequencyHours = asNumber(row.expected_frequency_hours) || 24;
+  const lastFinishedAt = formatDateTimeValue(row.last_finished_at);
+  const lastSuccessAt = formatDateTimeValue(row.last_success_at);
+  const lastErrorAt = formatDateTimeValue(row.last_error_at);
+  const lastFinishedDate = parseDateValue(row.last_finished_at);
+  const lastSuccessDate = parseDateValue(row.last_success_at);
+  const rowsRead = Math.round(asNumber(row.success_rows_read));
+  const rowsWritten = Math.round(asNumber(row.success_rows_written));
+  const importedRowsText = formatEnglishInteger(rowsWritten);
+  const status = asString(row.last_status) || null;
+  const hasNewerProblem =
+    (status === "failed" || status === "partial") &&
+    lastFinishedDate != null &&
+    (lastSuccessDate == null || lastFinishedDate.getTime() >= lastSuccessDate.getTime());
+  const successAgeHours = lastSuccessDate ? (now.getTime() - lastSuccessDate.getTime()) / (60 * 60 * 1000) : Infinity;
+
+  let freshnessStatus: ZarukuSourceFreshnessRow["freshness_status"];
+  let note: string;
+  if (!lastFinishedAt && !lastSuccessAt) {
+    freshnessStatus = "disabled";
+    note = "Cron collector ещё не запускался.";
+  } else if (hasNewerProblem) {
+    freshnessStatus = "failed";
+    note = lastSuccessAt
+      ? `Последний cron collector упал после последнего successful import. Последний successful cron записал ${importedRowsText} rows.`
+      : "Последний cron collector упал; successful import ещё не найден.";
+  } else if (successAgeHours > expectedFrequencyHours * 1.5) {
+    freshnessStatus = "delayed";
+    note = `Последний successful cron collector старше ожидаемого окна; записал ${importedRowsText} rows.`;
+  } else {
+    freshnessStatus = "healthy";
+    note = `Последний successful cron collector записал ${importedRowsText} rows.`;
+  }
+
+  const activeErrorAt = hasNewerProblem ? lastErrorAt : null;
+  const activeErrorSummary = hasNewerProblem ? (row.last_error_summary ?? null) : null;
+
+  return {
+    source_key: row.source_key,
+    label: row.source_label,
+    collector: row.collector,
+    expected_frequency_hours: expectedFrequencyHours,
+    freshness_status: freshnessStatus,
+    freshness_label: freshnessStatus,
+    last_status: status,
+    last_finished_at: lastFinishedAt,
+    last_success_at: lastSuccessAt,
+    date_from: formatDateOnlyValue(row.success_date_from),
+    date_to: formatDateOnlyValue(row.success_date_to),
+    rows_read: rowsRead,
+    rows_written: rowsWritten,
+    last_error_at: activeErrorAt,
+    last_error_summary: activeErrorSummary,
+    note,
+  };
+}
+
+async function querySourceFreshnessRows() {
+  const query = buildSourceFreshnessQuery();
+  const [rows] = await pool.execute<SourceFreshnessDbRow[]>(query.sql, query.params);
+  return rows.map((row) => normalizeSourceFreshnessRow(row));
 }
 
 export function buildHighBouncePages(rows: ZarukuSeoMetricRow[], limit = 12) {
@@ -762,16 +966,31 @@ function sourceStatusFromData(status: "available" | "partial" | "unavailable"): 
 function buildSources({
   seoOsStatus,
   webmaster,
+  gsc,
   seoIntelligence,
 }: {
   seoOsStatus: "available" | "partial" | "unavailable";
   webmaster: ZarukuYandexWebmasterData;
+  gsc: ZarukuGscData;
   seoIntelligence: ZarukuSeoIntelligenceData;
 }): ZarukuSeoSource[] {
   const webmasterStatus = sourceStatusFromData(webmaster.status);
+  const gscStatus = sourceStatusFromData(gsc.status);
   const aiStatus = seoIntelligence.ai.rows.length > 0 ? sourceStatusFromData(seoIntelligence.status) : "pending";
   return [
     ...SOURCES.map((source) => {
+      if (source.id === "gsc") {
+        return {
+          ...source,
+          status: gscStatus,
+          note:
+            gscStatus === "connected"
+              ? "Показы, клики, CTR и средняя позиция Google из canonical_fact_gsc_queries_daily."
+              : gscStatus === "partial"
+                ? "Часть GSC-таблиц доступна; панель показывает только подтвержденные canonical facts."
+                : source.note,
+        };
+      }
       if (source.id === "webmaster") {
         return {
           ...source,
@@ -811,9 +1030,10 @@ function buildSources({
   ];
 }
 
-function buildPendingRequirements(webmaster: ZarukuYandexWebmasterData) {
+function buildPendingRequirements(webmaster: ZarukuYandexWebmasterData, gsc: ZarukuGscData) {
   return PENDING_REQUIREMENTS.filter((item) => {
     if (item.source === "webmaster") return webmaster.status === "unavailable";
+    if (item.source === "gsc") return gsc.status === "unavailable";
     return true;
   });
 }
@@ -864,12 +1084,13 @@ function buildDataQuality({
 export async function loadZarukuSeoData(counterIds: string[], from: string, to: string): Promise<ZarukuSeoData> {
   const normalizedCounterIds = normalizeCounterIds(counterIds);
   const accountId = normalizedCounterIds[0];
-  const [trafficRowsRaw, pageRows, organicTrend, returningPages, seoOs] = await Promise.all([
+  const [trafficRowsRaw, pageRows, organicTrend, returningPages, seoOs, sourceFreshness] = await Promise.all([
     queryTrafficRows(normalizedCounterIds, from, to),
     queryCanonicalPageRows(normalizedCounterIds, from, to),
     queryOrganicTrend(normalizedCounterIds, from, to),
     queryReturningPages(normalizedCounterIds, from, to),
     loadSeoProcess(accountId),
+    querySourceFreshnessRows(),
   ]);
   const { trafficChannels, technicalTail } = splitTrafficRows(trafficRowsRaw);
 
@@ -936,6 +1157,7 @@ export async function loadZarukuSeoData(counterIds: string[], from: string, to: 
     loadSeoIntelligence(accountId),
   ]);
   const webmaster = facts.webmaster;
+  const gsc = facts.gsc;
 
   return {
     counters: normalizedCounterIds,
@@ -946,8 +1168,8 @@ export async function loadZarukuSeoData(counterIds: string[], from: string, to: 
       { id: "serp", label: "SERP", hint: "показы, позиции, CTR до клика" },
       { id: "ai", label: "AI-выдача", hint: "цитируемость и доля присутствия" },
     ],
-    sources: buildSources({ seoOsStatus: seoOs.status, webmaster, seoIntelligence }),
-    pending_requirements: buildPendingRequirements(webmaster),
+    sources: buildSources({ seoOsStatus: seoOs.status, webmaster, gsc, seoIntelligence }),
+    pending_requirements: buildPendingRequirements(webmaster, gsc),
     kpis: buildKpis({
       trafficChannels,
       technicalTail,
@@ -975,8 +1197,10 @@ export async function loadZarukuSeoData(counterIds: string[], from: string, to: 
     gender: genderReport.rows,
     interests: interestsReport.rows,
     returning_pages: returningPages,
+    source_freshness: sourceFreshness,
     seo_os: seoOs,
     webmaster,
+    gsc,
     ai_visibility: DEPRECATED_EMPTY_WEEKLY_AI_VISIBILITY,
     seo_intelligence: seoIntelligence,
     data_quality: buildDataQuality({
