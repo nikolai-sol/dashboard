@@ -7,6 +7,7 @@ import {
   buildHighBouncePages,
   buildMapCityDemand,
   buildPageCollections,
+  buildReturningPagesQuery,
   buildSourceFreshnessQuery,
   filterSearchEngineRows,
   enrichRowsWithPageTitles,
@@ -348,12 +349,29 @@ test("canonical page rows query has no display LIMIT", () => {
   assert.deepEqual(query.params, ["yandex_metrika", "66624469", "2026-07-01", "2026-07-31"]);
 });
 
+test("returning pages query reads canonical returning-content facts", () => {
+  const query = buildReturningPagesQuery(["66624469"], "2026-07-01", "2026-07-13");
+
+  assert.match(query.sql, /canonical_fact_metrika_returning_pages_daily/);
+  assert.doesNotMatch(query.sql, /yandex_metrika_returned/);
+  assert.match(query.sql, /returning_1_day_users/);
+  assert.match(query.sql, /returning_2_7_days_users/);
+  assert.match(query.sql, /returning_8_31_days_users/);
+  assert.deepEqual(query.params, ["66624469", "2026-07-01", "2026-07-13"]);
+});
+
 test("buildSourceFreshnessQuery scopes canonical collectors by source keys", () => {
   const query = buildSourceFreshnessQuery(["yandex_metrika", "yandex_webmaster"]);
 
   assert.match(query.sql, /canonical_collector_runs/);
   assert.match(query.sql, /run_type = 'cron'/);
   assert.deepEqual(query.params, ["yandex_metrika", "yandex_webmaster"]);
+});
+
+test("default source freshness query includes the returning-content collector", () => {
+  const query = buildSourceFreshnessQuery();
+
+  assert.equal(query.params.includes("yandex_metrika_returning"), true);
 });
 
 test("normalizeSourceFreshnessRow marks recent successful cron collector healthy", () => {

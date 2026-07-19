@@ -4,6 +4,7 @@ import {
   buildGscAccountQueries,
   loadGoogleSearchConsoleFacts,
   normalizeGscBrandSplitRow,
+  normalizeGscCountrySummaryRow,
   normalizeGscLandingPageRow,
   normalizeGscQueryRow,
   normalizeGscSummaryRow,
@@ -17,6 +18,7 @@ test("buildGscAccountQueries scopes canonical GSC rows by account and optional w
   assert.match(queries.queries.sql, /YEARWEEK\(report_date, 3\)[\s\S]*IN \(\?\)/);
   assert.deepEqual(queries.queries.params, ["66624469", "2026-W29"]);
   assert.deepEqual(queries.summary.params, ["66624469", "2026-W29"]);
+  assert.deepEqual(queries.country_summary.params, ["66624469", "2026-W29"]);
   assert.deepEqual(queries.landing_pages.params, ["66624469", "2026-W29"]);
   assert.deepEqual(queries.brand_split.params, ["66624469", "2026-W29"]);
 });
@@ -76,6 +78,33 @@ test("normalizeGscQueryRow keeps canonical query page country and device facts",
       clicks: 7,
       ctr: 7,
       average_position: 3.25,
+      week_from: "2026-07-13",
+      week_to: "2026-07-15",
+      is_partial_week: true,
+    },
+  );
+});
+
+test("normalizeGscCountrySummaryRow preserves country-level search facts", () => {
+  assert.deepEqual(
+    normalizeGscCountrySummaryRow({
+      week_key: "2026-W29",
+      country: "rus",
+      impressions: "900",
+      clicks: "90",
+      ctr: "10",
+      average_position: "4.5",
+      week_from: "2026-07-13",
+      week_to: "2026-07-15",
+      is_partial_week: 1,
+    }),
+    {
+      week: "2026-W29",
+      country: "rus",
+      impressions: 900,
+      clicks: 90,
+      ctr: 10,
+      average_position: 4.5,
       week_from: "2026-07-13",
       week_to: "2026-07-15",
       is_partial_week: true,
@@ -154,6 +183,21 @@ test("loadGoogleSearchConsoleFacts marks Search Console available when canonical
         },
       ];
     }
+    if (query.sql.includes("GROUP BY week_key, country")) {
+      return [
+        {
+          week_key: "2026-W29",
+          country: "rus",
+          impressions: 700,
+          clicks: 70,
+          ctr: 10,
+          average_position: 4.7,
+          week_from: "2026-07-13",
+          week_to: "2026-07-15",
+          is_partial_week: 1,
+        },
+      ];
+    }
     if (query.sql.includes("GROUP BY week_key, page")) {
       return [
         {
@@ -206,9 +250,13 @@ test("loadGoogleSearchConsoleFacts marks Search Console available when canonical
   assert.equal(data.status, "available");
   assert.equal(data.latest_week, "2026-W29");
   assert.equal(data.data_availability.queries, true);
+  assert.equal(data.data_availability.summary, true);
+  assert.equal(data.data_availability.country_summary, true);
   assert.equal(data.data_availability.landing_pages, true);
   assert.equal(data.data_availability.brand_split, true);
   assert.equal(data.summary.length, 1);
+  assert.equal(data.country_summary.length, 1);
+  assert.equal(data.country_summary[0].country, "rus");
   assert.equal(data.queries.length, 1);
   assert.equal(data.landing_pages.length, 1);
   assert.equal(data.landing_pages[0].page, "https://zaruku.ru/rak-molochnoj-zhelezy/");

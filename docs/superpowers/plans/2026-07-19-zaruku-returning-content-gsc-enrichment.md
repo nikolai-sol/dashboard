@@ -8,6 +8,18 @@
 
 **Tech Stack:** Python canonical collectors, MySQL `report_bd`, Next.js 16 / React 19, TypeScript read models, Node test runner.
 
+## Execution Status — 2026-07-19
+
+- Done: production table `report_bd.canonical_fact_metrika_returning_pages_daily` exists with canonical idempotency key `(analytics_account_id, report_date, page_hash)`.
+- Done: root collector `/root/reportingdash-canonical/fetch_yandex_metrika_returning_canonical.py` deployed and compiled on VPS.
+- Done: Zaruku backfill for counter `66624469`, `2026-07-01..2026-07-18`, succeeded in runs `1478` and idempotency verification run `1479`; table stayed at `3963` rows after repeat run.
+- Done: daily cron added at `06:18`: `fetch_yandex_metrika_returning_canonical.py --backfill-days 3 --run-type cron --account-id 66624469`.
+- Done: dashboard returning-content panel reads `canonical_fact_metrika_returning_pages_daily`, not legacy `yandex_metrika_returned`, and shows visits plus 1-day / 2–7-day / 8–31-day returning user buckets.
+- Done: Zaruku Quality/source freshness catalog includes `yandex_metrika_returning` with technical wording (`cron`, `collector`, `rows`).
+- Done: GSC country and device panels are dashboard-side aggregations from existing `canonical_fact_gsc_queries_daily`; no new API calls added for these panels.
+- Verified: `python3 -m unittest tests.test_fetch_yandex_metrika_returning_canonical -v`, `python3 -m py_compile fetch_yandex_metrika_returning_canonical.py`, targeted dashboard Node tests, and `npm run build`.
+- Still optional / not implemented in this pass: GSC `searchAppearance` and result `type` collectors/tables. These need an explicit product decision because they add new API calls and new canonical contracts.
+
 ## Global Constraints
 
 - Do not write Zaruku returning facts into legacy table `yandex_metrika_returned`.

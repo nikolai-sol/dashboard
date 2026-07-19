@@ -323,6 +323,8 @@ Recent completed changes that should not be rediscovered:
     - `platform` / `instrument` in media plan rows remains the human/imported label and may contain values like `hybrid/between`; do not force it to a canonical source key
     - binding source correction is stored per row as `source_keys`, for example `["hybrid", "vk_ads_v2"]`
     - `WizardStepBinding` uses saved `source_keys` before falling back to imported `platform`; unknown imported values show no campaigns until a source is selected on the row
+15. Zaruku returning content is canonical as of 2026-07-19. Legacy `yandex_metrika_returned` is no longer the product read model for Zaruku. Root collector `fetch_yandex_metrika_returning_canonical.py` writes `canonical_fact_metrika_returning_pages_daily` in `/root/reportingdash-canonical`; cron runs daily at `06:18` for counter `66624469` with `--backfill-days 3`. The Behavior tab panel `Возвратный контент` reads the canonical table and shows visits plus 1-day / 2–7-day / 8–31-day returning-user buckets. Quality/source freshness includes `yandex_metrika_returning`.
+16. Zaruku GSC enrichment now includes `country_summary` plus device summary panels derived from existing `canonical_fact_gsc_queries_daily`. These are dashboard-side SQL aggregations, not new Google API calls. Optional future GSC expansion remains `searchAppearance` and result `type` canonical collection after product approval.
 
 ## Working rule for future dashboard tasks
 

@@ -92,6 +92,10 @@ type CanonicalSiteRow = RowDataPacket & {
   visits: number | string | null;
   users: number | string | null;
   pageviews: number | string | null;
+  returning_users?: number | string | null;
+  returning_1_day_users?: number | string | null;
+  returning_2_7_days_users?: number | string | null;
+  returning_8_31_days_users?: number | string | null;
   bounce_rate?: number | string | null;
   avg_duration?: number | string | null;
   page_depth?: number | string | null;
@@ -130,6 +134,12 @@ const SOURCE_FRESHNESS_CATALOG = [
     source_key: "yandex_metrika",
     source_label: "Яндекс Метрика",
     collector: "fetch_yandex_metrika_canonical.py",
+    expected_frequency_hours: 24,
+  },
+  {
+    source_key: "yandex_metrika_returning",
+    source_label: "Яндекс Метрика · возвратный контент",
+    collector: "fetch_yandex_metrika_returning_canonical.py",
     expected_frequency_hours: 24,
   },
   {
@@ -691,27 +701,54 @@ async function queryOrganicTrend(counterIds: string[], from: string, to: string)
   }));
 }
 
-async function queryReturningPages(counterIds: string[], from: string, to: string) {
-  const sql = `
+export function buildReturningPagesQuery(counterIds: string[], from: string, to: string) {
+  return {
+    sql: `
     SELECT
-      COALESCE(url, '') AS label,
-      COALESCE(url, '') AS url,
-      COALESCE(SUM(page_view), 0) AS visits,
-      0 AS users,
-      COALESCE(SUM(page_view), 0) AS pageviews
-    FROM yandex_metrika_returned
-    WHERE counter_id IN (${buildInClause(counterIds)})
-      AND date >= ?
-      AND date <= ?
-    GROUP BY COALESCE(url, '')
-    HAVING visits > 0
-    ORDER BY visits DESC
+      COALESCE(page_url, '') AS label,
+      COALESCE(page_url, '') AS url,
+      COALESCE(SUM(visits), 0) AS visits,
+      COALESCE(SUM(visits), 0) AS pageviews,
+      COALESCE(SUM(returning_1_day_users), 0) AS returning_1_day_users,
+      COALESCE(SUM(returning_2_7_days_users), 0) AS returning_2_7_days_users,
+      COALESCE(SUM(returning_8_31_days_users), 0) AS returning_8_31_days_users,
+      COALESCE(SUM(returning_1_day_users + returning_2_7_days_users + returning_8_31_days_users), 0) AS returning_users,
+      COALESCE(SUM(returning_1_day_users + returning_2_7_days_users + returning_8_31_days_users), 0) AS users
+    FROM canonical_fact_metrika_returning_pages_daily
+    WHERE analytics_account_id IN (${buildInClause(counterIds)})
+      AND report_date >= ?
+      AND report_date <= ?
+    GROUP BY COALESCE(page_url, '')
+    HAVING visits > 0 OR returning_users > 0
+    ORDER BY returning_users DESC, visits DESC
     LIMIT 50
-  `;
+  `,
+    params: [...counterIds, from, to],
+  };
+}
+
+async function queryReturningPages(counterIds: string[], from: string, to: string) {
+  const query = buildReturningPagesQuery(counterIds, from, to);
   try {
-    const [rows] = await pool.execute<CanonicalSiteRow[]>(sql, [...counterIds, from, to]);
-    const total = rows.reduce((sum, row) => sum + asNumber(row.visits), 0);
-    return rows.map((row) => rowFromCanonical(row, total));
+    const [rows] = await pool.execute<CanonicalSiteRow[]>(query.sql, query.params);
+    const totalReturning = rows.reduce((sum, row) => sum + asNumber(row.returning_users), 0);
+    return rows.map((row) => {
+      const returningUsers = Math.round(asNumber(row.returning_users));
+      return {
+        label: asString(row.label) || "Неизвестно",
+        url: asString(row.url) || null,
+        visits: Math.round(asNumber(row.visits)),
+        users: returningUsers,
+        pageviews: Math.round(asNumber(row.pageviews)),
+        returning_users: returningUsers,
+        returning_1_day_users: Math.round(asNumber(row.returning_1_day_users)),
+        returning_2_7_days_users: Math.round(asNumber(row.returning_2_7_days_users)),
+        returning_8_31_days_users: Math.round(asNumber(row.returning_8_31_days_users)),
+        share: totalReturning > 0 ? (returningUsers / totalReturning) * 100 : 0,
+        source: "metrika" as const,
+        layer: "onsite" as const,
+      };
+    });
   } catch {
     return [];
   }

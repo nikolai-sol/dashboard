@@ -605,6 +605,10 @@ export interface ZarukuSeoMetricRow {
   visits: number;
   users: number;
   pageviews: number;
+  returning_users?: number | null;
+  returning_1_day_users?: number | null;
+  returning_2_7_days_users?: number | null;
+  returning_8_31_days_users?: number | null;
   bounce_rate?: number | null;
   avg_duration_seconds?: number | null;
   page_depth?: number | null;
@@ -820,6 +824,18 @@ export interface ZarukuGscSummaryRow {
   is_partial_week: boolean;
 }
 
+export interface ZarukuGscCountrySummaryRow {
+  week: string;
+  country: string;
+  impressions: number;
+  clicks: number;
+  ctr: number | null;
+  average_position: number | null;
+  week_from: string;
+  week_to: string;
+  is_partial_week: boolean;
+}
+
 export interface ZarukuGscLandingPageRow {
   week: string;
   page: string;
@@ -851,12 +867,14 @@ export interface ZarukuGscData {
   data_availability: {
     queries: boolean;
     summary: boolean;
+    country_summary: boolean;
     landing_pages: boolean;
     brand_split: boolean;
   };
   weeks: string[];
   latest_week: string | null;
   summary: ZarukuGscSummaryRow[];
+  country_summary: ZarukuGscCountrySummaryRow[];
   queries: ZarukuGscQueryRow[];
   landing_pages: ZarukuGscLandingPageRow[];
   brand_split: ZarukuGscBrandSplitRow[];

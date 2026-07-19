@@ -50,11 +50,26 @@ test("pending and returning-content panels explain current state instead of show
   assert.match(source, /Нет возвратного контента за выбранный период/);
 });
 
+test("Behavior tab exposes canonical returning-content recency buckets", () => {
+  assert.match(source, /возвратные пользователи/);
+  assert.match(source, /1 день/);
+  assert.match(source, /2–7 дней/);
+  assert.match(source, /8–31 день/);
+  assert.match(source, /row\.returning_1_day_users/);
+  assert.match(source, /row\.returning_2_7_days_users/);
+  assert.match(source, /row\.returning_8_31_days_users/);
+}
+);
+
 test("SEO tab renders GSC product enrichment panels", () => {
   assert.match(source, /GSC landing pages/);
   assert.match(source, /GSC brand vs non-brand/);
+  assert.match(source, /GSC countries/);
+  assert.match(source, /GSC devices/);
   assert.match(source, /data\.gsc\.landing_pages/);
   assert.match(source, /data\.gsc\.brand_split/);
+  assert.match(source, /data\.gsc\.country_summary/);
+  assert.match(source, /gscSummaryRows/);
 });
 
 test("Geo tab focuses on a Russia bubble map instead of duplicate country and city lists", () => {

@@ -2,6 +2,7 @@ import type { RowDataPacket } from "mysql2";
 import pool from "@/lib/db";
 import type {
   ZarukuGscBrandSplitRow,
+  ZarukuGscCountrySummaryRow,
   ZarukuGscData,
   ZarukuGscLandingPageRow,
   ZarukuGscQueryRow,
@@ -30,6 +31,18 @@ type GscQueryDbRow = {
 type GscSummaryDbRow = {
   week_key: string;
   device: string;
+  impressions: number | string | null;
+  clicks: number | string | null;
+  ctr: number | string | null;
+  average_position: number | string | null;
+  week_from: string | Date;
+  week_to: string | Date;
+  is_partial_week?: number | string | boolean | null;
+};
+
+type GscCountrySummaryDbRow = {
+  week_key: string;
+  country: string;
   impressions: number | string | null;
   clicks: number | string | null;
   ctr: number | string | null;
@@ -112,14 +125,16 @@ const WEEK_KEY_SQL = "CONCAT(LEFT(YEARWEEK(report_date, 3), 4), '-W', RIGHT(YEAR
 const WEEK_FROM_SQL = "DATE_SUB(report_date, INTERVAL WEEKDAY(report_date) DAY)";
 const WEEK_END_SQL = `DATE_ADD(${WEEK_FROM_SQL}, INTERVAL 6 DAY)`;
 
-export function buildGscAccountQueries(counterIds: string[], weeks?: string[]): Record<"queries" | "summary" | "landing_pages" | "brand_split", SqlQuery> {
+export function buildGscAccountQueries(counterIds: string[], weeks?: string[]): Record<"queries" | "summary" | "country_summary" | "landing_pages" | "brand_split", SqlQuery> {
   const normalizedCounterIds = normalizeAccountIds(counterIds);
   const queryParams = [...normalizedCounterIds];
   const summaryParams = [...normalizedCounterIds];
+  const countrySummaryParams = [...normalizedCounterIds];
   const landingPageParams = [...normalizedCounterIds];
   const brandSplitParams = [...normalizedCounterIds];
   const queryWeekClause = weekClause(weeks, queryParams);
   const summaryWeekClause = weekClause(weeks, summaryParams);
+  const countrySummaryWeekClause = weekClause(weeks, countrySummaryParams);
   const landingPageWeekClause = weekClause(weeks, landingPageParams);
   const brandSplitWeekClause = weekClause(weeks, brandSplitParams);
   const accountScope = buildInClause(normalizedCounterIds);
@@ -168,6 +183,27 @@ export function buildGscAccountQueries(counterIds: string[], weeks?: string[]): 
         ORDER BY week_key ASC, impressions DESC
       `,
       params: summaryParams,
+    },
+    country_summary: {
+      sql: `
+        SELECT
+          ${WEEK_KEY_SQL} AS week_key,
+          COALESCE(NULLIF(country, ''), 'unknown') AS country,
+          SUM(impressions) AS impressions,
+          SUM(clicks) AS clicks,
+          CASE WHEN SUM(impressions) > 0 THEN SUM(clicks) / SUM(impressions) * 100 ELSE NULL END AS ctr,
+          ${weightedAveragePositionSql()} AS average_position,
+          MIN(${WEEK_FROM_SQL}) AS week_from,
+          MAX(report_date) AS week_to,
+          MAX(report_date) < MAX(${WEEK_END_SQL}) AS is_partial_week
+        FROM canonical_fact_gsc_queries_daily
+        WHERE analytics_account_id IN (${accountScope})
+          ${countrySummaryWeekClause}
+        GROUP BY week_key, country
+        ORDER BY week_key ASC, impressions DESC, clicks DESC, country ASC
+        LIMIT 120
+      `,
+      params: countrySummaryParams,
     },
     landing_pages: {
       sql: `
@@ -265,6 +301,20 @@ export function normalizeGscSummaryRow(row: GscSummaryDbRow): ZarukuGscSummaryRo
   };
 }
 
+export function normalizeGscCountrySummaryRow(row: GscCountrySummaryDbRow): ZarukuGscCountrySummaryRow {
+  return {
+    week: String(row.week_key),
+    country: String(row.country),
+    impressions: Math.round(asNumber(row.impressions)),
+    clicks: Math.round(asNumber(row.clicks)),
+    ctr: asNullableNumber(row.ctr),
+    average_position: asNullableNumber(row.average_position),
+    week_from: formatDate(row.week_from),
+    week_to: formatDate(row.week_to),
+    is_partial_week: asBoolean(row.is_partial_week),
+  };
+}
+
 export function normalizeGscLandingPageRow(row: GscLandingPageDbRow): ZarukuGscLandingPageRow {
   return {
     week: String(row.week_key),
@@ -330,6 +380,7 @@ export async function loadGoogleSearchConsoleFacts(
   const results = await Promise.allSettled([
     executeQuery(queries.queries),
     executeQuery(queries.summary),
+    executeQuery(queries.country_summary),
     executeQuery(queries.landing_pages),
     executeQuery(queries.brand_split),
   ]);
@@ -346,26 +397,34 @@ export async function loadGoogleSearchConsoleFacts(
     normalizeGscSummaryRow,
     errors,
   );
-  const landingPageResult = normalizeSettledRows<GscLandingPageDbRow, ZarukuGscLandingPageRow>(
+  const countrySummaryResult = normalizeSettledRows<GscCountrySummaryDbRow, ZarukuGscCountrySummaryRow>(
     results[2],
+    "country_summary",
+    normalizeGscCountrySummaryRow,
+    errors,
+  );
+  const landingPageResult = normalizeSettledRows<GscLandingPageDbRow, ZarukuGscLandingPageRow>(
+    results[3],
     "landing_pages",
     normalizeGscLandingPageRow,
     errors,
   );
   const brandSplitResult = normalizeSettledRows<GscBrandSplitDbRow, ZarukuGscBrandSplitRow>(
-    results[3],
+    results[4],
     "brand_split",
     normalizeGscBrandSplitRow,
     errors,
   );
   const queryRows = queryResult.rows;
   const summaryRows = summaryResult.rows;
+  const countrySummaryRows = countrySummaryResult.rows;
   const landingPageRows = landingPageResult.rows;
   const brandSplitRows = brandSplitResult.rows;
-  const successfulQueries = [queryResult.available, summaryResult.available, landingPageResult.available, brandSplitResult.available].filter(Boolean).length;
-  const status = successfulQueries === 4 && errors.length === 0 ? "available" : successfulQueries > 0 ? "partial" : "unavailable";
+  const successfulQueries = [queryResult.available, summaryResult.available, countrySummaryResult.available, landingPageResult.available, brandSplitResult.available].filter(Boolean).length;
+  const status = successfulQueries === 5 && errors.length === 0 ? "available" : successfulQueries > 0 ? "partial" : "unavailable";
   const weeksList = Array.from(new Set([
     ...summaryRows.map((row) => row.week),
+    ...countrySummaryRows.map((row) => row.week),
     ...queryRows.map((row) => row.week),
     ...landingPageRows.map((row) => row.week),
     ...brandSplitRows.map((row) => row.week),
@@ -377,12 +436,14 @@ export async function loadGoogleSearchConsoleFacts(
     data_availability: {
       queries: queryResult.available && queryRows.length > 0,
       summary: summaryResult.available && summaryRows.length > 0,
+      country_summary: countrySummaryResult.available && countrySummaryRows.length > 0,
       landing_pages: landingPageResult.available && landingPageRows.length > 0,
       brand_split: brandSplitResult.available && brandSplitRows.length > 0,
     },
     weeks: weeksList,
     latest_week: weeksList.at(-1) ?? null,
     summary: summaryRows,
+    country_summary: countrySummaryRows,
     queries: queryRows,
     landing_pages: landingPageRows,
     brand_split: brandSplitRows,
