@@ -68,7 +68,7 @@ checkout:
 
 ```bash
 (cd runtime && PYTHONDONTWRITEBYTECODE=1 python3 -c \
-  'import fetch_yandex_metrika_canonical, canonical_writer, canonical_release_store, run_abbott_metrika_active_release, abbott_release_operator, probe_yandex_metrika_access, capture_abbott_canonical_baseline, compare_abbott_canonical_release, abbott_canonical_controls, metrika_pagination, backfill_abbott_metrika_2026, abbott_health_probe, send_canonical_telegram_report, sources_health_dashboard')
+  'import fetch_yandex_metrika_canonical, canonical_writer, metrika_logs_api, canonical_release_store, run_abbott_metrika_active_release, abbott_release_operator, probe_yandex_metrika_access, capture_abbott_canonical_baseline, compare_abbott_canonical_release, abbott_canonical_controls, metrika_pagination, backfill_abbott_metrika_2026, abbott_health_probe, send_canonical_telegram_report, sources_health_dashboard')
 ```
 
 Then verify every `runtime/` digest against `MIGRATION-MANIFEST.md` before

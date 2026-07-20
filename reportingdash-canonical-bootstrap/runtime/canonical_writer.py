@@ -77,7 +77,7 @@ def _delete_release_day(cur, release_id: int, counter_id: str, report_date: str)
     params = (release_id, counter_id, report_date)
     for table in (
         'report_bd.canonical_fact_metrika_site_analytics_daily',
-        'report_bd_private.canonical_fact_metrika_user_behavior_daily',
+        'report_bd_private.canonical_fact_metrika_visits',
         'report_bd.canonical_fact_metrika_returning_pages_daily',
         'report_bd.canonical_source_coverage_daily',
     ):
@@ -166,6 +166,52 @@ def _insert_private_user_behavior_rows(cur, rows: Sequence[dict]) -> int:
         ) VALUES (
             %s, %s, %s, %s, %s, %s, %s, %s, %s,
             %s, %s, %s, %s, %s, %s
+        )
+        """,
+        values,
+    )
+    return len(values)
+
+
+def _insert_private_metrika_visit_rows(cur, rows: Sequence[dict]) -> int:
+    if not rows:
+        return 0
+    values = [
+        (
+            row['canonical_release_id'],
+            row['counter_id'],
+            row['report_date'],
+            row['visit_id'],
+            row['visit_id_hash'],
+            row.get('client_id_hash'),
+            row.get('raw_user_id'),
+            row.get('raw_user_id_hash'),
+            row['traffic_source'],
+            row['start_url'],
+            row['start_url_hash'],
+            row['end_url'],
+            row['end_url_hash'],
+            row['session_started_at'],
+            row['session_ended_at'],
+            row['pageviews'],
+            row['duration_seconds'],
+            row['is_bounce'],
+            row['request_fingerprint'],
+            row['ingestion_run_id'],
+        )
+        for row in rows
+    ]
+    cur.executemany(
+        """
+        INSERT INTO report_bd_private.canonical_fact_metrika_visits (
+            canonical_release_id, counter_id, report_date, visit_id,
+            visit_id_hash, client_id_hash, raw_user_id, raw_user_id_hash,
+            traffic_source, start_url, start_url_hash, end_url, end_url_hash,
+            session_started_at, session_ended_at, pageviews, duration_seconds,
+            is_bounce, request_fingerprint, ingestion_run_id
+        ) VALUES (
+            %s, %s, %s, %s, %s, %s, %s, %s, %s, %s,
+            %s, %s, %s, %s, %s, %s, %s, %s, %s, %s
         )
         """,
         values,
@@ -324,7 +370,12 @@ def _validated_day_bundle(bundle: Any) -> tuple[int, str, str, int, dict, dict]:
             if sampled or not pagination_complete:
                 raise MetrikaPublishError("Metrika scope pagination is not publishable")
             if status == 'success':
-                if not rows or api_total_rows <= 0 or api_total_rows > persisted_rows:
+                if (
+                    not rows
+                    or api_total_rows <= 0
+                    or api_total_rows > persisted_rows
+                    or (scope == 'user_behavior' and api_total_rows != persisted_rows)
+                ):
                     raise MetrikaPublishError("Successful Metrika scope totals are inconsistent")
             elif status == 'success_empty':
                 if rows or persisted_rows != 0 or api_total_rows != 0:
@@ -418,7 +469,7 @@ def _lock_mutable_abbott_release(
     for table in (
         'report_bd.canonical_source_coverage_daily',
         'report_bd.canonical_fact_metrika_site_analytics_daily',
-        'report_bd_private.canonical_fact_metrika_user_behavior_daily',
+        'report_bd_private.canonical_fact_metrika_visits',
         'report_bd.canonical_fact_metrika_returning_pages_daily',
     ):
         cur.execute(
@@ -468,7 +519,7 @@ def publish_metrika_day_bundle(bundle: Any) -> MetrikaPublishResult:
         rows_written = 0
         for scope in ('other', 'traffic', 'page'):
             rows_written += _insert_site_fact_rows(cur, normalized_rows[scope])
-        rows_written += _insert_private_user_behavior_rows(
+        rows_written += _insert_private_metrika_visit_rows(
             cur, normalized_rows['user_behavior']
         )
         rows_written += _insert_returning_rows(cur, normalized_rows['returning'])

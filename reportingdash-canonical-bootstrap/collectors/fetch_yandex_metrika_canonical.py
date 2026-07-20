@@ -33,6 +33,7 @@ from canonical_writer import (
     upsert_fact_user_behavior_daily,
     upsert_source_accounts,
 )
+from metrika_logs_api import MetrikaLogsClient, MetrikaLogsError, VISIT_FIELDS
 from metrika_pagination import PaginationResult, collect_all_pages, collect_all_rows
 
 load_dotenv(Path(__file__).parent / '.env')
@@ -60,6 +61,12 @@ def env_first(*keys: str, default: str = '') -> str:
 SOURCE_KEY = 'yandex_metrika'
 ABBOTT_COUNTER_ID = '90602537'
 ABBOTT_REQUIRED_SCOPES = ('other', 'traffic', 'page', 'user_behavior', 'returning')
+ABBOTT_USER_ID_CONDITION = "ym:s:paramsLevel1=='UserID' AND ym:s:paramsLevel2!=''"
+ABBOTT_OTHER_SEGMENTS = (
+    ('all', ''),
+    ('with_user_id', f'EXISTS({ABBOTT_USER_ID_CONDITION})'),
+    ('without_user_id', f'NONE({ABBOTT_USER_ID_CONDITION})'),
+)
 RETURN_BUCKETS = ('next_day', 'days_2_7', 'days_8_31')
 UTM_ADS_SCOPE_LOGICAL = 'utm_ads'
 GOALS_SCOPE_LOGICAL = 'goals'
@@ -113,7 +120,7 @@ METRIKA_GOALS_DIMS = ','.join([
     'ym:s:goal',
 ])
 METRIKA_GOALS_METRICS = 'ym:s:sumGoalReachesAny'
-METRIKA_TRAFFIC_SOURCES_DIMS = 'ym:s:lastTrafficSource'
+METRIKA_TRAFFIC_SOURCES_DIMS = 'ym:s:lastsignTrafficSource'
 METRIKA_TRAFFIC_SOURCES_METRICS = ','.join([
     'ym:s:visits',
     'ym:s:users',
@@ -777,12 +784,16 @@ def _release_site_rows(
     response: PaginationResult,
     run_id: int,
     release_id: int,
+    *,
+    user_id_presence: str | None = None,
 ) -> list[dict]:
     rows: list[dict] = []
     for item in response.rows:
         dimensions = item.get('dimensions') or []
         metrics = item.get('metrics') or []
         if scope == 'other':
+            if user_id_presence not in dict(ABBOTT_OTHER_SEGMENTS):
+                raise MetrikaCollectionError('Other scope User ID presence is invalid')
             traffic = dimensions[0] if dimensions and isinstance(dimensions[0], dict) else {}
             traffic_source = clean_dimension_name(traffic.get('name'))
             if not traffic_source:
@@ -790,6 +801,7 @@ def _release_site_rows(
             scope_dimensions = {
                 'traffic_source': traffic_source,
                 'traffic_source_id': clean_dimension_name(traffic.get('id')),
+                'user_id_presence': user_id_presence,
             }
             values = {
                 'sessions': safe_int(metric_value(metrics, 0)),
@@ -928,6 +940,177 @@ def _release_user_behavior_rows(
     return rows
 
 
+_METRIKA_VISIT_KEYS = frozenset(
+    (
+        'visit_id',
+        'date_time',
+        'start_url',
+        'end_url',
+        'page_views',
+        'visit_duration',
+        'bounce',
+        'client_id',
+        'traffic_source',
+        'raw_user_id',
+    )
+)
+
+
+def _collect_metrika_visits(
+    counter_id: str,
+    day: str,
+    client_factory: Callable[[str], Any] | None = None,
+) -> tuple[dict, ...]:
+    if counter_id != ABBOTT_COUNTER_ID:
+        raise MetrikaCollectionError('Abbott release collection requires the Abbott counter')
+    try:
+        parsed_day = datetime.strptime(day, '%Y-%m-%d')
+    except (TypeError, ValueError):
+        raise MetrikaCollectionError('Metrika Logs collection day is invalid') from None
+    if parsed_day.strftime('%Y-%m-%d') != day:
+        raise MetrikaCollectionError('Metrika Logs collection day is invalid')
+
+    try:
+        client = (client_factory or MetrikaLogsClient)(METRIKA_TOKEN)
+        visits = client.collect_visits(counter_id, day, 'lastsign')
+    except MetrikaLogsError:
+        raise MetrikaCollectionError(
+            'Metrika Logs user behavior collection failed'
+        ) from None
+    if not isinstance(visits, (list, tuple)):
+        raise MetrikaCollectionError('Metrika Logs visit collection is invalid')
+    return tuple(visits)
+
+
+def _release_metrika_visit_rows(
+    counter_id: str,
+    day: str,
+    visits: Collection[Mapping[str, Any]],
+    run_id: int,
+    release_id: int,
+    request_fingerprint: str,
+) -> list[dict]:
+    rows: list[dict] = []
+    for visit in visits:
+        if not isinstance(visit, Mapping) or not _METRIKA_VISIT_KEYS.issubset(visit):
+            raise MetrikaCollectionError('Metrika Logs visit row is incomplete')
+
+        visit_id = visit['visit_id']
+        date_time = visit['date_time']
+        start_url = visit['start_url']
+        end_url = visit['end_url']
+        page_views = visit['page_views']
+        visit_duration = visit['visit_duration']
+        bounce = visit['bounce']
+        client_id = visit['client_id']
+        traffic_source = visit['traffic_source']
+        raw_user_id = visit['raw_user_id']
+        if (
+            not isinstance(visit_id, str)
+            or not visit_id.strip()
+            or not isinstance(date_time, str)
+            or not isinstance(start_url, str)
+            or not isinstance(end_url, str)
+            or not isinstance(client_id, str)
+            or not isinstance(traffic_source, str)
+            or not traffic_source.strip()
+            or (raw_user_id is not None and not isinstance(raw_user_id, str))
+            or isinstance(page_views, bool)
+            or not isinstance(page_views, int)
+            or page_views < 0
+            or isinstance(visit_duration, bool)
+            or not isinstance(visit_duration, int)
+            or visit_duration < 0
+            or isinstance(bounce, bool)
+            or not isinstance(bounce, int)
+            or bounce not in (0, 1)
+        ):
+            raise MetrikaCollectionError('Metrika Logs visit row is invalid')
+        try:
+            session_started_at = datetime.strptime(date_time, '%Y-%m-%d %H:%M:%S')
+        except ValueError:
+            raise MetrikaCollectionError('Metrika Logs visit row is invalid') from None
+        if session_started_at.strftime('%Y-%m-%d') != day:
+            raise MetrikaCollectionError('Metrika Logs visit row is invalid')
+
+        visit_id_hash = _sha256(visit_id)
+        rows.append(
+            {
+                'canonical_release_id': release_id,
+                'counter_id': counter_id,
+                'report_date': day,
+                'visit_id': visit_id,
+                'visit_id_hash': visit_id_hash,
+                'client_id_hash': _sha256(client_id) if client_id.strip() else None,
+                'raw_user_id': raw_user_id,
+                'raw_user_id_hash': (
+                    _sha256(raw_user_id) if raw_user_id is not None else None
+                ),
+                'traffic_source': traffic_source,
+                'start_url': start_url,
+                'start_url_hash': _sha256(start_url),
+                'end_url': end_url,
+                'end_url_hash': _sha256(end_url),
+                'session_started_at': session_started_at,
+                'session_ended_at': session_started_at + timedelta(seconds=visit_duration),
+                'pageviews': page_views,
+                'duration_seconds': visit_duration,
+                'is_bounce': bounce,
+                'request_fingerprint': build_scope_hash(
+                    'user_behavior', [request_fingerprint, visit_id_hash]
+                ),
+                'ingestion_run_id': run_id,
+            }
+        )
+    return rows
+
+
+def collect_user_behavior_scope(
+    counter_id: str,
+    day: str,
+    run_id: int,
+    release_id: int,
+    *,
+    code_revision: str,
+    parser_version: str,
+    logs_client_factory: Callable[[str], Any] | None = None,
+) -> MetrikaScopeResult:
+    request_fingerprint = build_scope_hash(
+        'user_behavior',
+        [
+            counter_id,
+            day,
+            'source=visits',
+            ','.join(VISIT_FIELDS),
+            'lastsign',
+            METRIKA_TIMEZONE,
+            code_revision,
+            parser_version,
+        ],
+    )
+    visits = _collect_metrika_visits(counter_id, day, logs_client_factory)
+    rows = _release_metrika_visit_rows(
+        counter_id,
+        day,
+        visits,
+        run_id,
+        release_id,
+        request_fingerprint,
+    )
+    row_count = len(rows)
+    return MetrikaScopeResult(
+        scope='user_behavior',
+        rows=tuple(rows),
+        api_total_rows=row_count,
+        persisted_rows=row_count,
+        sampled=False,
+        sample_share=None,
+        pagination_complete=True,
+        status='success' if rows else 'success_empty',
+        request_fingerprint=request_fingerprint,
+    )
+
+
 def build_returning_rows(
     counter_id: str,
     day: str,
@@ -984,7 +1167,7 @@ def _scope_request(scope: str) -> tuple[str, str, str, dict[str, Any]]:
         'other': (
             METRIKA_TRAFFIC_SOURCES_DIMS,
             METRIKA_TRAFFIC_SOURCES_METRICS,
-            METRIKA_ATTRIBUTION,
+            'lastsign',
             {'accuracy': 'full'},
         ),
         'traffic': (
@@ -1018,6 +1201,140 @@ def _scope_request(scope: str) -> tuple[str, str, str, dict[str, Any]]:
         raise MetrikaCollectionError('Unsupported Metrika scope') from None
 
 
+def validate_other_user_id_partitions(rows: Collection[Mapping[str, Any]]) -> None:
+    presences = tuple(presence for presence, _ in ABBOTT_OTHER_SEGMENTS)
+    totals = {presence: 0 for presence in presences}
+    totals_by_source: dict[str, dict[str, int]] = {}
+    for row in rows:
+        scope_dimensions = row.get('scope_dimensions')
+        if not isinstance(scope_dimensions, Mapping):
+            raise MetrikaCollectionError('Other scope dimensions are invalid')
+        presence = scope_dimensions.get('user_id_presence')
+        source = scope_dimensions.get('traffic_source')
+        sessions = row.get('sessions')
+        if (
+            presence not in totals
+            or not isinstance(source, str)
+            or not source
+            or isinstance(sessions, bool)
+            or not isinstance(sessions, int)
+            or sessions < 0
+        ):
+            raise MetrikaCollectionError('Other scope partition row is invalid')
+        totals[presence] += sessions
+        source_totals = totals_by_source.setdefault(
+            source, {segment: 0 for segment in presences}
+        )
+        source_totals[presence] += sessions
+
+    if totals['all'] != totals['with_user_id'] + totals['without_user_id']:
+        raise MetrikaCollectionError('Other scope User ID partitions do not reconcile')
+    for source_totals in totals_by_source.values():
+        if (
+            source_totals['all']
+            != source_totals['with_user_id'] + source_totals['without_user_id']
+        ):
+            raise MetrikaCollectionError(
+                'Other scope User ID partitions do not reconcile by traffic source'
+            )
+
+
+def collect_other_scope(
+    counter_id: str,
+    day: str,
+    run_id: int,
+    release_id: int,
+    *,
+    code_revision: str,
+    parser_version: str,
+) -> MetrikaScopeResult:
+    rows: list[dict] = []
+    responses: list[PaginationResult] = []
+    segment_fingerprints: list[str] = []
+    for user_id_presence, filters in ABBOTT_OTHER_SEGMENTS:
+        extra_params = {'accuracy': 'full', 'filters': filters}
+        api_contract_fingerprint = api_fingerprint(
+            dimensions=(METRIKA_TRAFFIC_SOURCES_DIMS,),
+            metrics=parse_csv_values(METRIKA_TRAFFIC_SOURCES_METRICS),
+            filters=filters,
+            attribution='lastsign',
+            accuracy='full',
+            pagination_limit=METRIKA_PAGE_LIMIT,
+            timezone=METRIKA_TIMEZONE,
+            code_revision=code_revision,
+            parser_version=parser_version,
+        )
+        segment_fingerprint = build_scope_hash(
+            'other',
+            [counter_id, day, user_id_presence, api_contract_fingerprint],
+        )
+        response = request_all_pages(
+            counter_id,
+            day,
+            dimensions=METRIKA_TRAFFIC_SOURCES_DIMS,
+            metrics=METRIKA_TRAFFIC_SOURCES_METRICS,
+            attribution='lastsign',
+            extra_params=extra_params,
+        )
+        segment_rows = _release_site_rows(
+            counter_id,
+            day,
+            'other',
+            response,
+            run_id,
+            release_id,
+            user_id_presence=user_id_presence,
+        )
+        for row in segment_rows:
+            row['scope_hash'] = build_scope_hash(
+                'other', [segment_fingerprint, row['scope_hash']]
+            )
+        rows.extend(segment_rows)
+        responses.append(response)
+        segment_fingerprints.append(segment_fingerprint)
+
+    sampled = any(response.sampled for response in responses)
+    sample_shares = [
+        response.sample_share
+        for response in responses
+        if response.sample_share is not None
+    ]
+    pagination_complete = all(
+        response.pagination_complete and response.total_rows is not None
+        for response in responses
+    )
+    api_total_rows = (
+        sum(response.total_rows for response in responses if response.total_rows is not None)
+        if all(response.total_rows is not None for response in responses)
+        else None
+    )
+    if sampled:
+        status = 'sampled'
+    elif not pagination_complete or api_total_rows is None:
+        status = 'partial'
+    elif api_total_rows == 0 and not rows:
+        status = 'success_empty'
+    elif api_total_rows > 0 and rows:
+        status = 'success'
+    else:
+        status = 'partial'
+    if status in ('success', 'success_empty'):
+        validate_other_user_id_partitions(rows)
+    return MetrikaScopeResult(
+        scope='other',
+        rows=tuple(rows),
+        api_total_rows=api_total_rows,
+        persisted_rows=len(rows),
+        sampled=sampled,
+        sample_share=min(sample_shares) if sample_shares else None,
+        pagination_complete=pagination_complete,
+        status=status,
+        request_fingerprint=build_scope_hash(
+            'other', [counter_id, day] + segment_fingerprints
+        ),
+    )
+
+
 def collect_metrika_scope(
     counter_id: str,
     day: str,
@@ -1027,7 +1344,27 @@ def collect_metrika_scope(
     *,
     code_revision: str,
     parser_version: str,
+    logs_client_factory: Callable[[str], Any] | None = None,
 ) -> MetrikaScopeResult:
+    if scope == 'other':
+        return collect_other_scope(
+            counter_id,
+            day,
+            run_id,
+            release_id,
+            code_revision=code_revision,
+            parser_version=parser_version,
+        )
+    if scope == 'user_behavior':
+        return collect_user_behavior_scope(
+            counter_id,
+            day,
+            run_id,
+            release_id,
+            code_revision=code_revision,
+            parser_version=parser_version,
+            logs_client_factory=logs_client_factory,
+        )
     dimensions, metrics, attribution, extra_params = _scope_request(scope)
     rendered_dimensions = dimensions.replace(
         '<attribution>', render_attribution(attribution)
@@ -1057,8 +1394,6 @@ def collect_metrika_scope(
     )
     if scope in ('other', 'traffic', 'page'):
         rows = _release_site_rows(counter_id, day, scope, response, run_id, release_id)
-    elif scope == 'user_behavior':
-        rows = _release_user_behavior_rows(counter_id, day, response, run_id, release_id)
     else:
         rows = build_returning_rows(counter_id, day, response, run_id, release_id)
 
@@ -1125,6 +1460,10 @@ def validate_day_bundle(
                 or result.api_total_rows <= 0
                 or not result.rows
                 or result.api_total_rows > result.persisted_rows
+                or (
+                    scope == 'user_behavior'
+                    and result.api_total_rows != result.persisted_rows
+                )
             ):
                 raise MetrikaCollectionError('Successful Metrika scope is not reconciled')
         else:
