@@ -95,6 +95,45 @@ class AbbottOperationsRunbookTest(unittest.TestCase):
         self.assertIn("legacy-auth-valid.curl", self.text)
         self.assertNotIn("?secret=", self.text)
 
+    def test_visit_level_operational_truth_is_exact_across_operator_memories(self):
+        paths = (
+            ROOT / "AGENTS.md",
+            ROOT / "docs/ABBOTT-OPERATIONS-RUNBOOK.md",
+            ROOT / "dashboard-next/DASHBOARDS-MEMORY.md",
+            ROOT / "dashboard-next/CANONICAL-ENTITIES-MEMORY.md",
+        )
+        documents = [path.read_text(encoding="utf-8") for path in paths]
+        for path, document in zip(paths, documents):
+            with self.subTest(path=str(path.relative_to(ROOT))):
+                self.assertIn("## Abbott visit-level operational truth", document)
+
+        combined = "\n".join(documents)
+        required_contracts = (
+            "Reports API attribution `lastsign`",
+            "`all`, `with_user_id`, and `without_user_id`",
+            "`all.sessions = with_user_id.sessions + without_user_id.sessions` is a hard publication gate",
+            "Logs API `source=visits`",
+            "One private database row is one Metrica visit.",
+            "`report_bd_private.canonical_fact_metrika_visits`",
+            "Raw User ID, visit ID, start URL, and end URL are manager-only.",
+            "Raw client ID is never stored; only its hash is persisted.",
+            "evaluate → create → poll → download all parts → clean in finally",
+            "Prepared files count against the 10 GB quota until cleaned.",
+            "`METRIKA_TOKEN` remains the only OAuth environment key.",
+            "Never print it.",
+            "The owner installs or revokes it; this change does not issue or rotate a token.",
+            "collection `06:12`, health `07:05`, and one summary `07:10`",
+            "The summary includes session integrity; a mismatch is `CRITICAL`.",
+            "Logs cannot return the current day.",
+            "Active releases remain append-only",
+            "reviewed successor release/backfill",
+            "Bitrix dump remains test-only; the live connector is deferred.",
+            "No deployment, secret installation, API call, database migration, cron edit, Telegram send, or Hermes schedule occurred.",
+        )
+        for contract in required_contracts:
+            with self.subTest(contract=contract):
+                self.assertIn(contract, combined)
+
     def test_current_tree_contains_no_retired_legacy_launch_literal(self):
         retired_literals = ("nikolay" + "-save-us-pls", "Terasic" + "1!")
         matches = []
