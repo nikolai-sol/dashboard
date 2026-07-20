@@ -60,6 +60,12 @@ def env_first(*keys: str, default: str = '') -> str:
 SOURCE_KEY = 'yandex_metrika'
 ABBOTT_COUNTER_ID = '90602537'
 ABBOTT_REQUIRED_SCOPES = ('other', 'traffic', 'page', 'user_behavior', 'returning')
+ABBOTT_USER_ID_CONDITION = "ym:s:paramsLevel1=='UserID' AND ym:s:paramsLevel2!=''"
+ABBOTT_OTHER_SEGMENTS = (
+    ('all', ''),
+    ('with_user_id', f'EXISTS({ABBOTT_USER_ID_CONDITION})'),
+    ('without_user_id', f'NONE({ABBOTT_USER_ID_CONDITION})'),
+)
 RETURN_BUCKETS = ('next_day', 'days_2_7', 'days_8_31')
 UTM_ADS_SCOPE_LOGICAL = 'utm_ads'
 GOALS_SCOPE_LOGICAL = 'goals'
@@ -113,7 +119,7 @@ METRIKA_GOALS_DIMS = ','.join([
     'ym:s:goal',
 ])
 METRIKA_GOALS_METRICS = 'ym:s:sumGoalReachesAny'
-METRIKA_TRAFFIC_SOURCES_DIMS = 'ym:s:lastTrafficSource'
+METRIKA_TRAFFIC_SOURCES_DIMS = 'ym:s:lastsignTrafficSource'
 METRIKA_TRAFFIC_SOURCES_METRICS = ','.join([
     'ym:s:visits',
     'ym:s:users',
@@ -777,12 +783,16 @@ def _release_site_rows(
     response: PaginationResult,
     run_id: int,
     release_id: int,
+    *,
+    user_id_presence: str | None = None,
 ) -> list[dict]:
     rows: list[dict] = []
     for item in response.rows:
         dimensions = item.get('dimensions') or []
         metrics = item.get('metrics') or []
         if scope == 'other':
+            if user_id_presence not in dict(ABBOTT_OTHER_SEGMENTS):
+                raise MetrikaCollectionError('Other scope User ID presence is invalid')
             traffic = dimensions[0] if dimensions and isinstance(dimensions[0], dict) else {}
             traffic_source = clean_dimension_name(traffic.get('name'))
             if not traffic_source:
@@ -790,6 +800,7 @@ def _release_site_rows(
             scope_dimensions = {
                 'traffic_source': traffic_source,
                 'traffic_source_id': clean_dimension_name(traffic.get('id')),
+                'user_id_presence': user_id_presence,
             }
             values = {
                 'sessions': safe_int(metric_value(metrics, 0)),
@@ -984,7 +995,7 @@ def _scope_request(scope: str) -> tuple[str, str, str, dict[str, Any]]:
         'other': (
             METRIKA_TRAFFIC_SOURCES_DIMS,
             METRIKA_TRAFFIC_SOURCES_METRICS,
-            METRIKA_ATTRIBUTION,
+            'lastsign',
             {'accuracy': 'full'},
         ),
         'traffic': (
@@ -1018,6 +1029,140 @@ def _scope_request(scope: str) -> tuple[str, str, str, dict[str, Any]]:
         raise MetrikaCollectionError('Unsupported Metrika scope') from None
 
 
+def validate_other_user_id_partitions(rows: Collection[Mapping[str, Any]]) -> None:
+    presences = tuple(presence for presence, _ in ABBOTT_OTHER_SEGMENTS)
+    totals = {presence: 0 for presence in presences}
+    totals_by_source: dict[str, dict[str, int]] = {}
+    for row in rows:
+        scope_dimensions = row.get('scope_dimensions')
+        if not isinstance(scope_dimensions, Mapping):
+            raise MetrikaCollectionError('Other scope dimensions are invalid')
+        presence = scope_dimensions.get('user_id_presence')
+        source = scope_dimensions.get('traffic_source')
+        sessions = row.get('sessions')
+        if (
+            presence not in totals
+            or not isinstance(source, str)
+            or not source
+            or isinstance(sessions, bool)
+            or not isinstance(sessions, int)
+            or sessions < 0
+        ):
+            raise MetrikaCollectionError('Other scope partition row is invalid')
+        totals[presence] += sessions
+        source_totals = totals_by_source.setdefault(
+            source, {segment: 0 for segment in presences}
+        )
+        source_totals[presence] += sessions
+
+    if totals['all'] != totals['with_user_id'] + totals['without_user_id']:
+        raise MetrikaCollectionError('Other scope User ID partitions do not reconcile')
+    for source_totals in totals_by_source.values():
+        if (
+            source_totals['all']
+            != source_totals['with_user_id'] + source_totals['without_user_id']
+        ):
+            raise MetrikaCollectionError(
+                'Other scope User ID partitions do not reconcile by traffic source'
+            )
+
+
+def collect_other_scope(
+    counter_id: str,
+    day: str,
+    run_id: int,
+    release_id: int,
+    *,
+    code_revision: str,
+    parser_version: str,
+) -> MetrikaScopeResult:
+    rows: list[dict] = []
+    responses: list[PaginationResult] = []
+    segment_fingerprints: list[str] = []
+    for user_id_presence, filters in ABBOTT_OTHER_SEGMENTS:
+        extra_params = {'accuracy': 'full', 'filters': filters}
+        api_contract_fingerprint = api_fingerprint(
+            dimensions=(METRIKA_TRAFFIC_SOURCES_DIMS,),
+            metrics=parse_csv_values(METRIKA_TRAFFIC_SOURCES_METRICS),
+            filters=filters,
+            attribution='lastsign',
+            accuracy='full',
+            pagination_limit=METRIKA_PAGE_LIMIT,
+            timezone=METRIKA_TIMEZONE,
+            code_revision=code_revision,
+            parser_version=parser_version,
+        )
+        segment_fingerprint = build_scope_hash(
+            'other',
+            [counter_id, day, user_id_presence, api_contract_fingerprint],
+        )
+        response = request_all_pages(
+            counter_id,
+            day,
+            dimensions=METRIKA_TRAFFIC_SOURCES_DIMS,
+            metrics=METRIKA_TRAFFIC_SOURCES_METRICS,
+            attribution='lastsign',
+            extra_params=extra_params,
+        )
+        segment_rows = _release_site_rows(
+            counter_id,
+            day,
+            'other',
+            response,
+            run_id,
+            release_id,
+            user_id_presence=user_id_presence,
+        )
+        for row in segment_rows:
+            row['scope_hash'] = build_scope_hash(
+                'other', [segment_fingerprint, row['scope_hash']]
+            )
+        rows.extend(segment_rows)
+        responses.append(response)
+        segment_fingerprints.append(segment_fingerprint)
+
+    sampled = any(response.sampled for response in responses)
+    sample_shares = [
+        response.sample_share
+        for response in responses
+        if response.sample_share is not None
+    ]
+    pagination_complete = all(
+        response.pagination_complete and response.total_rows is not None
+        for response in responses
+    )
+    api_total_rows = (
+        sum(response.total_rows for response in responses if response.total_rows is not None)
+        if all(response.total_rows is not None for response in responses)
+        else None
+    )
+    if sampled:
+        status = 'sampled'
+    elif not pagination_complete or api_total_rows is None:
+        status = 'partial'
+    elif api_total_rows == 0 and not rows:
+        status = 'success_empty'
+    elif api_total_rows > 0 and rows:
+        status = 'success'
+    else:
+        status = 'partial'
+    if status in ('success', 'success_empty'):
+        validate_other_user_id_partitions(rows)
+    return MetrikaScopeResult(
+        scope='other',
+        rows=tuple(rows),
+        api_total_rows=api_total_rows,
+        persisted_rows=len(rows),
+        sampled=sampled,
+        sample_share=min(sample_shares) if sample_shares else None,
+        pagination_complete=pagination_complete,
+        status=status,
+        request_fingerprint=build_scope_hash(
+            'other', [counter_id, day] + segment_fingerprints
+        ),
+    )
+
+
 def collect_metrika_scope(
     counter_id: str,
     day: str,
@@ -1028,6 +1173,15 @@ def collect_metrika_scope(
     code_revision: str,
     parser_version: str,
 ) -> MetrikaScopeResult:
+    if scope == 'other':
+        return collect_other_scope(
+            counter_id,
+            day,
+            run_id,
+            release_id,
+            code_revision=code_revision,
+            parser_version=parser_version,
+        )
     dimensions, metrics, attribution, extra_params = _scope_request(scope)
     rendered_dimensions = dimensions.replace(
         '<attribution>', render_attribution(attribution)

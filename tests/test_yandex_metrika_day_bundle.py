@@ -115,6 +115,135 @@ class MetrikaDayBundleTests(unittest.TestCase):
             ],
         )
 
+    def test_other_scope_collects_exact_lastsign_user_id_partitions(self):
+        import fetch_yandex_metrika_canonical as collector
+        from metrika_pagination import PaginationResult
+
+        responses = tuple(
+            PaginationResult(
+                rows=(
+                    {
+                        "dimensions": [{"id": "direct", "name": "Direct"}],
+                        "metrics": [sessions, 2, 1, 4, 1.25, 30.0, 1.5],
+                    },
+                ),
+                total_rows=1,
+                pages_fetched=1,
+                pagination_complete=True,
+                sampled=False,
+                sample_share=None,
+            )
+            for sessions in (3, 2, 1)
+        )
+        with patch.object(
+            collector, "request_all_pages", side_effect=responses
+        ) as request_pages:
+            result = collector.collect_metrika_scope(
+                collector.ABBOTT_COUNTER_ID,
+                "2026-01-02",
+                "other",
+                77,
+                41,
+                **FINGERPRINT_CONTEXT,
+            )
+
+        self.assertEqual(
+            request_pages.call_args_list,
+            [
+                call(
+                    collector.ABBOTT_COUNTER_ID,
+                    "2026-01-02",
+                    dimensions="ym:s:lastsignTrafficSource",
+                    metrics=collector.METRIKA_TRAFFIC_SOURCES_METRICS,
+                    attribution="lastsign",
+                    extra_params={"accuracy": "full", "filters": filters},
+                )
+                for _, filters in collector.ABBOTT_OTHER_SEGMENTS
+            ],
+        )
+        self.assertEqual(result.api_total_rows, 3)
+        self.assertEqual(result.persisted_rows, 3)
+        self.assertEqual(
+            [row["scope_dimensions"]["user_id_presence"] for row in result.rows],
+            ["all", "with_user_id", "without_user_id"],
+        )
+        self.assertEqual(len({row["scope_hash"] for row in result.rows}), 3)
+
+    def test_other_user_id_partitions_reconcile_globally_and_per_source(self):
+        import fetch_yandex_metrika_canonical as collector
+
+        def row(presence, source, sessions):
+            return {
+                "scope_dimensions": {
+                    "traffic_source": source,
+                    "user_id_presence": presence,
+                },
+                "sessions": sessions,
+            }
+
+        matching = (
+            row("all", "Direct", 3),
+            row("all", "Search", 4),
+            row("with_user_id", "Direct", 2),
+            row("with_user_id", "Search", 1),
+            row("without_user_id", "Direct", 1),
+            row("without_user_id", "Search", 3),
+        )
+        collector.validate_other_user_id_partitions(matching)
+
+        global_mismatch = matching[:-1] + (row("without_user_id", "Search", 2),)
+        source_mismatch = (
+            row("all", "Direct", 3),
+            row("all", "Search", 4),
+            row("with_user_id", "Direct", 1),
+            row("with_user_id", "Search", 2),
+            row("without_user_id", "Direct", 1),
+            row("without_user_id", "Search", 3),
+        )
+        for rows in (global_mismatch, source_mismatch):
+            with self.subTest(rows=rows):
+                with self.assertRaises(collector.MetrikaCollectionError):
+                    collector.validate_other_user_id_partitions(rows)
+
+    def test_any_incomplete_other_partition_makes_scope_non_publishable(self):
+        import fetch_yandex_metrika_canonical as collector
+        from metrika_pagination import PaginationResult
+
+        complete = PaginationResult(
+            rows=(),
+            total_rows=0,
+            pages_fetched=1,
+            pagination_complete=True,
+            sampled=False,
+            sample_share=None,
+        )
+        incomplete_segments = (
+            PaginationResult((), 0, 1, False, False, None),
+            PaginationResult((), None, 1, True, False, None),
+            PaginationResult((), 0, 1, True, True, 0.5),
+        )
+        for index, incomplete in enumerate(incomplete_segments):
+            with self.subTest(index=index, incomplete=incomplete):
+                responses = [complete, complete, complete]
+                responses[index] = incomplete
+                with patch.object(
+                    collector, "request_all_pages", side_effect=responses
+                ):
+                    result = collector.collect_other_scope(
+                        collector.ABBOTT_COUNTER_ID,
+                        "2026-01-02",
+                        77,
+                        41,
+                        **FINGERPRINT_CONTEXT,
+                    )
+
+                self.assertIn(result.status, ("partial", "sampled"))
+                with self.assertRaises(collector.MetrikaCollectionError):
+                    collector.validate_day_bundle(
+                        day_bundle({**day_bundle().scopes, "other": result}),
+                        collector.ABBOTT_REQUIRED_SCOPES,
+                    )
+
     def test_validate_day_bundle_requires_exact_scope_set(self):
         import fetch_yandex_metrika_canonical as collector
 

@@ -151,6 +151,57 @@ class RecordingConnection:
 
 
 class AtomicMetrikaWriterTest(unittest.TestCase):
+    def test_other_partition_mismatch_prevents_fact_and_success_coverage_writes(self):
+        import fetch_yandex_metrika_canonical as collector
+        from metrika_pagination import PaginationResult
+
+        def response(sessions):
+            return PaginationResult(
+                rows=(
+                    {
+                        "dimensions": [{"id": "direct", "name": "Direct"}],
+                        "metrics": [sessions, 2, 1, 4, 1.25, 30.0, 1.5],
+                    },
+                ),
+                total_rows=1,
+                pages_fetched=1,
+                pagination_complete=True,
+                sampled=False,
+                sample_share=None,
+            )
+
+        def collect_scope(counter_id, day, scope, run_id, release_id, **context):
+            if scope == "other":
+                return collector.collect_other_scope(
+                    counter_id,
+                    day,
+                    run_id,
+                    release_id,
+                    **context,
+                )
+            return scope_result(scope, [])
+
+        with patch.object(
+            collector,
+            "request_all_pages",
+            side_effect=(response(5), response(2), response(1)),
+        ), patch.object(
+            collector, "collect_metrika_scope", side_effect=collect_scope
+        ), patch.object(collector, "publish_metrika_day_bundle") as publish:
+            summary = collector.run_release_backfill(
+                [{"counter_id": collector.ABBOTT_COUNTER_ID}],
+                "2026-01-02",
+                "2026-01-02",
+                77,
+                41,
+                code_revision="test-revision",
+                parser_version="test-parser-v1",
+            )
+
+        publish.assert_not_called()
+        self.assertEqual(summary["published_days"], 0)
+        self.assertEqual(summary["failed_days"], ["2026-01-02"])
+
     def test_current_active_release_appends_a_fully_absent_completed_day_without_delete(self):
         import canonical_writer as writer
 

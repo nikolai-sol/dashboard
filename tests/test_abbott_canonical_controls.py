@@ -134,6 +134,31 @@ class ComparatorConnection(RecordingConnection):
 
 
 class AbbottCanonicalControlsTest(unittest.TestCase):
+    def test_other_scope_user_id_partition_contract_is_exact(self):
+        import fetch_yandex_metrika_canonical as collector
+
+        self.assertEqual(
+            collector.ABBOTT_USER_ID_CONDITION,
+            "ym:s:paramsLevel1=='UserID' AND ym:s:paramsLevel2!=''",
+        )
+        self.assertEqual(
+            collector.ABBOTT_OTHER_SEGMENTS,
+            (
+                ("all", ""),
+                (
+                    "with_user_id",
+                    "EXISTS(ym:s:paramsLevel1=='UserID' AND ym:s:paramsLevel2!='')",
+                ),
+                (
+                    "without_user_id",
+                    "NONE(ym:s:paramsLevel1=='UserID' AND ym:s:paramsLevel2!='')",
+                ),
+            ),
+        )
+        dimensions, _, attribution, _ = collector._scope_request("other")
+        self.assertEqual(dimensions, "ym:s:lastsignTrafficSource")
+        self.assertEqual(attribution, "lastsign")
+
     def test_stable_hash_is_independent_of_mapping_key_order(self):
         from abbott_canonical_controls import stable_json_hash
 
