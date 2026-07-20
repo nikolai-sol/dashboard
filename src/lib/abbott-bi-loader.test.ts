@@ -246,6 +246,98 @@ test("embed uses aggregate store only and derives returning counts with decimal 
   });
 });
 
+test("aggregate traffic keeps exact User ID partitions with weighted metrics", async () => {
+  const siteRows = [
+    { analytics_scope: "other", user_id_presence: "all", traffic_source: "Direct", sessions: "10", users: "8", pageviews: "20", bounce_rate: "10", average_session_seconds: "100" },
+    { analytics_scope: "other", user_id_presence: "all", traffic_source: "Direct", sessions: "30", users: "20", pageviews: "60", bounce_rate: "30", average_session_seconds: "200" },
+    { analytics_scope: "other", user_id_presence: "with_user_id", traffic_source: "Direct", sessions: "4", users: "3", pageviews: "12", bounce_rate: "50", average_session_seconds: "90" },
+    { analytics_scope: "other", user_id_presence: "without_user_id", traffic_source: "Direct", sessions: "6", users: "5", pageviews: "6", bounce_rate: "0", average_session_seconds: "30" },
+  ];
+  const aggregate = executor((sql) => {
+    if (sql.includes("canonical_fact_metrika_site_analytics_daily")) {
+      assert.match(sql, /JSON_EXTRACT\(scope_dimensions, '\$\.user_id_presence'\)\) AS user_id_presence/);
+      return siteRows;
+    }
+    return aggregateRows(sql);
+  });
+
+  const result = await loadAbbottBiDataWithDependencies(
+    7, ["90602537"], "2026-01-01", "2026-01-01", "embed",
+    dependencies(aggregate, executor(() => [])),
+  );
+
+  const bySegment = new Map(result.traffic_summary?.map((row) => [row.traffic_segment, row]));
+  assert.deepEqual(bySegment.get("all"), {
+    user_id: "",
+    has_user_id: false,
+    traffic_segment: "all",
+    traffic_source: "Direct",
+    direction: null,
+    visits: 40,
+    users: 28,
+    new_users: 0,
+    page_depth: 2,
+    avg_duration: 175,
+    bounce_rate: 25,
+  });
+  assert.deepEqual(bySegment.get("with_user_id"), {
+    user_id: "",
+    has_user_id: true,
+    traffic_segment: "with_user_id",
+    traffic_source: "Direct",
+    direction: null,
+    visits: 4,
+    users: 3,
+    new_users: 0,
+    page_depth: 3,
+    avg_duration: 90,
+    bounce_rate: 50,
+  });
+  assert.deepEqual(bySegment.get("without_user_id"), {
+    user_id: "",
+    has_user_id: false,
+    traffic_segment: "without_user_id",
+    traffic_source: "Direct",
+    direction: null,
+    visits: 6,
+    users: 5,
+    new_users: 0,
+    page_depth: 1,
+    avg_duration: 30,
+    bounce_rate: 0,
+  });
+});
+
+test("historic missing traffic marker maps only to all and unknown markers fail closed", async () => {
+  const historic = await loadAbbottBiDataWithDependencies(
+    7, ["90602537"], "2026-01-01", "2026-01-01", "embed",
+    dependencies(executor(aggregateRows), executor(() => [])),
+  );
+  assert.deepEqual(historic.traffic_summary?.map((row) => row.traffic_segment), ["all"]);
+
+  const invalidAggregate = executor((sql) => {
+    if (sql.includes("canonical_fact_metrika_site_analytics_daily")) {
+      return [{
+        analytics_scope: "other",
+        user_id_presence: "combined_guess",
+        traffic_source: "Direct",
+        sessions: "7",
+        users: "5",
+        pageviews: "9",
+        bounce_rate: "10",
+        average_session_seconds: "30",
+      }];
+    }
+    return aggregateRows(sql);
+  });
+  const invalid = await loadAbbottBiDataWithDependencies(
+    7, ["90602537"], "2026-01-01", "2026-01-01", "embed",
+    dependencies(invalidAggregate, executor(() => [])),
+  );
+  assert.equal(invalid.data_quality.status, "incomplete");
+  assert.equal(invalid.traffic_summary?.length, 0);
+});
+
 test("ambiguous path lookup keeps canonical page metrics visible with null enrichment", async () => {
   const aggregate = executor(aggregateRows);
   const deps = dependencies(aggregate, executor(() => []));
@@ -572,13 +664,22 @@ test("loader aggregates multi-day Bitrix rows without last-row overwrite", async
   }]);
 });
 
-test("manager preserves raw user IDs as strings and scopes private facts to the active release", async () => {
+test("manager summarizes exact private visits by raw user and source", async () => {
   const aggregate = executor(aggregateRows);
   const privateDb = executor((sql, params) => {
-    assert.match(sql, /`report_bd_private`\.`canonical_fact_metrika_user_behavior_daily`/);
+    assert.match(sql, /`report_bd_private`\.`canonical_fact_metrika_visits`/);
+    assert.doesNotMatch(sql, /canonical_fact_metrika_user_behavior_daily/);
+    assert.match(sql, /SELECT raw_user_id, client_id_hash, traffic_source, start_url, end_url,/);
+    assert.match(sql, /pageviews, duration_seconds, is_bounce/);
     assert.doesNotMatch(sql, /CAST\s*\(|UNSIGNED|CONVERT\s*\(/i);
     assert.deepEqual(params, [41, "90602537", "2026-01-01", "2026-01-01"]);
-    return [{ raw_user_id: "000123", start_url: "/start?secret=1", end_url: "/end", pageviews: "3" }];
+    return [
+      { raw_user_id: "000123", client_id_hash: "client-a", traffic_source: "Direct", start_url: "/start-1", end_url: "/end-1", pageviews: "3", duration_seconds: "10", is_bounce: "1" },
+      { raw_user_id: "000123", client_id_hash: "client-a", traffic_source: "Direct", start_url: "/start-2", end_url: "/end-2", pageviews: "5", duration_seconds: "30", is_bounce: "0" },
+      { raw_user_id: "000123", client_id_hash: "client-b", traffic_source: "Organic", start_url: "/start-3", end_url: "/end-3", pageviews: "2", duration_seconds: "20", is_bounce: "0" },
+      { raw_user_id: null, client_id_hash: "anon-a", traffic_source: "Direct", start_url: "/anon-1", end_url: "/anon-end-1", pageviews: "1", duration_seconds: "5", is_bounce: "1" },
+      { raw_user_id: null, client_id_hash: "", traffic_source: "Direct", start_url: "/anon-2", end_url: "/anon-end-2", pageviews: "3", duration_seconds: "15", is_bounce: "0" },
+    ];
   });
 
   const result = await loadAbbottBiDataWithDependencies(
@@ -591,9 +692,70 @@ test("manager preserves raw user IDs as strings and scopes private facts to the 
   );
 
   assert.equal(result.access_level, "manager");
-  assert.equal(result.users_summary[0]?.user_id, "000123");
-  assert.equal(result.users_summary[0]?.direction, "Cardiology");
-  assert.equal(result.user_actions[0]?.user_id, "000123");
+  assert.deepEqual(result.users_summary, [
+    {
+      user_id: "",
+      has_user_id: false,
+      traffic_segment: null,
+      traffic_source: "Direct",
+      direction: null,
+      visits: 2,
+      users: 1,
+      new_users: 0,
+      page_depth: 2,
+      avg_duration: 10,
+      bounce_rate: 50,
+    },
+    {
+      user_id: "000123",
+      has_user_id: true,
+      traffic_segment: null,
+      traffic_source: "Direct",
+      direction: "Cardiology",
+      visits: 2,
+      users: 1,
+      new_users: 0,
+      page_depth: 4,
+      avg_duration: 20,
+      bounce_rate: 50,
+    },
+    {
+      user_id: "000123",
+      has_user_id: true,
+      traffic_segment: null,
+      traffic_source: "Organic",
+      direction: "Cardiology",
+      visits: 1,
+      users: 1,
+      new_users: 0,
+      page_depth: 2,
+      avg_duration: 20,
+      bounce_rate: 0,
+    },
+  ]);
+  assert.deepEqual(result.user_actions[0], {
+    user_id: "000123",
+    has_user_id: true,
+    traffic_source: "Direct",
+    direction: "Cardiology",
+    start_url: "/start-1",
+    end_url: "/end-1",
+    visits: 1,
+    page_depth: 3,
+    avg_duration: 10,
+  });
+  assert.deepEqual(result.user_actions[3], {
+    user_id: "",
+    has_user_id: false,
+    traffic_source: "Direct",
+    direction: null,
+    start_url: "/anon-1",
+    end_url: "/anon-end-1",
+    visits: 1,
+    page_depth: 1,
+    avg_duration: 5,
+  });
+  assert.equal(result.user_actions.length, 5);
   assert.equal(privateDb.queries.length, 1);
 });
 

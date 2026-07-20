@@ -99,6 +99,7 @@ type CoverageRow = Record<string, unknown> & {
 
 type SiteFactRow = Record<string, unknown> & {
   analytics_scope?: unknown;
+  user_id_presence?: unknown;
   traffic_source?: unknown;
   utm_source?: unknown;
   page_url?: unknown;
@@ -121,9 +122,13 @@ type ReturningFactRow = Record<string, unknown> & {
 
 type PrivateBehaviorRow = Record<string, unknown> & {
   raw_user_id?: unknown;
+  client_id_hash?: unknown;
+  traffic_source?: unknown;
   start_url?: unknown;
   end_url?: unknown;
   pageviews?: unknown;
+  duration_seconds?: unknown;
+  is_bounce?: unknown;
 };
 
 type AbbottReturningOutput = AbbottBiReturningRow & {
@@ -375,6 +380,7 @@ async function querySiteFacts(
 ): Promise<readonly SiteFactRow[]> {
   return (await executor.query(
     `SELECT analytics_scope,
+            JSON_UNQUOTE(JSON_EXTRACT(scope_dimensions, '$.user_id_presence')) AS user_id_presence,
             JSON_UNQUOTE(JSON_EXTRACT(scope_dimensions, '$.traffic_source')) AS traffic_source,
             JSON_UNQUOTE(JSON_EXTRACT(scope_dimensions, '$.utm_source')) AS utm_source,
             JSON_UNQUOTE(JSON_EXTRACT(scope_dimensions, '$.page_url')) AS page_url,
@@ -443,13 +449,14 @@ async function queryManagerBehavior(
   to: string,
 ): Promise<readonly PrivateBehaviorRow[]> {
   return (await executor.query(
-    `SELECT raw_user_id, start_url, end_url, pageviews
-     FROM \`report_bd_private\`.\`canonical_fact_metrika_user_behavior_daily\`
+    `SELECT raw_user_id, client_id_hash, traffic_source, start_url, end_url,
+            pageviews, duration_seconds, is_bounce
+     FROM \`report_bd_private\`.\`canonical_fact_metrika_visits\`
      WHERE canonical_release_id = ?
        AND counter_id IN (${placeholders(counterIds)})
        AND report_date >= ?
        AND report_date <= ?
-     ORDER BY raw_user_id_hash, report_date, request_fingerprint`,
+     ORDER BY report_date, raw_user_id, traffic_source, client_id_hash`,
     [releaseId, ...counterIds, from, to],
   )) as readonly PrivateBehaviorRow[];
 }
@@ -476,11 +483,19 @@ function metadataForPage(
 function buildTrafficSummary(rows: readonly SiteFactRow[]): AbbottBiUserSummaryRow[] {
   const totals = new Map<string, AbbottBiUserSummaryRow & { durationWeight: number; bounceWeight: number }>();
   rows.filter((row) => row.analytics_scope === "other").forEach((row) => {
+    const segment = row.user_id_presence === null || row.user_id_presence === undefined
+      ? "all"
+      : row.user_id_presence;
+    if (segment !== "all" && segment !== "with_user_id" && segment !== "without_user_id") {
+      throw new Error("Abbott canonical data is unavailable");
+    }
     const source = nullableText(row.traffic_source) ?? "Unknown traffic";
     const sessions = integerMetric(row.sessions);
-    const current = totals.get(source) ?? {
+    const key = `${segment}\n${source}`;
+    const current = totals.get(key) ?? {
       user_id: "",
-      has_user_id: false,
+      has_user_id: segment === "with_user_id",
+      traffic_segment: segment,
       traffic_source: source,
       direction: null,
       visits: 0,
@@ -497,7 +512,7 @@ function buildTrafficSummary(rows: readonly SiteFactRow[]): AbbottBiUserSummaryR
     current.page_depth += integerMetric(row.pageviews);
     current.durationWeight += numberMetric(row.average_session_seconds) * sessions;
     current.bounceWeight += numberMetric(row.bounce_rate) * sessions;
-    totals.set(source, current);
+    totals.set(key, current);
   });
   return [...totals.values()].map(({ durationWeight, bounceWeight, ...row }) => ({
     ...row,
@@ -773,42 +788,72 @@ function buildManagerBehavior(
   rows: readonly PrivateBehaviorRow[],
   workbook: ParsedAbbottWorkbook,
 ): { summaries: AbbottBiUserSummaryRow[]; actions: AbbottBiUserActionRow[] } {
-  const summaries = new Map<string, AbbottBiUserSummaryRow>();
+  type ManagerSummary = AbbottBiUserSummaryRow & {
+    clientHashes: Set<string>;
+    pageviewsTotal: number;
+    durationTotal: number;
+    bouncedVisits: number;
+  };
+  const summaries = new Map<string, ManagerSummary>();
   const actions = rows.map((row) => {
-    const userId = rawIdentifier(row.raw_user_id);
+    const userId = nullableText(row.raw_user_id) ?? "";
+    const hasUserId = userId.length > 0;
+    const trafficSource = text(row.traffic_source);
     const pageviews = integerMetric(row.pageviews);
-    const summary = summaries.get(userId) ?? {
+    const duration = integerMetric(row.duration_seconds);
+    const key = `${userId}\n${trafficSource}`;
+    const summary = summaries.get(key) ?? {
       user_id: userId,
-      has_user_id: true,
-      traffic_source: "Registered portal behavior",
-      direction: workbook.userDirections.get(userId) ?? null,
+      has_user_id: hasUserId,
+      traffic_segment: null,
+      traffic_source: trafficSource,
+      direction: hasUserId ? workbook.userDirections.get(userId) ?? null : null,
       visits: 0,
-      users: 1,
+      users: 0,
       new_users: 0,
       page_depth: 0,
       avg_duration: 0,
       bounce_rate: 0,
+      clientHashes: new Set<string>(),
+      pageviewsTotal: 0,
+      durationTotal: 0,
+      bouncedVisits: 0,
     };
     summary.visits += 1;
-    summary.page_depth += pageviews;
-    summaries.set(userId, summary);
+    summary.pageviewsTotal += pageviews;
+    summary.durationTotal += duration;
+    summary.bouncedVisits += booleanMetric(row.is_bounce) ? 1 : 0;
+    const clientHash = text(row.client_id_hash);
+    if (clientHash.trim().length > 0) summary.clientHashes.add(clientHash);
+    summaries.set(key, summary);
     return {
       user_id: userId,
-      has_user_id: true,
-      traffic_source: "Registered portal behavior",
-      direction: workbook.userDirections.get(userId) ?? null,
+      has_user_id: hasUserId,
+      traffic_source: trafficSource,
+      direction: hasUserId ? workbook.userDirections.get(userId) ?? null : null,
       start_url: text(row.start_url),
       end_url: text(row.end_url),
       visits: 1,
       page_depth: pageviews,
-      avg_duration: 0,
+      avg_duration: duration,
     };
   });
   return {
-    summaries: [...summaries.values()].map((row) => ({
+    summaries: [...summaries.values()].map(({
+      clientHashes,
+      pageviewsTotal,
+      durationTotal,
+      bouncedVisits,
+      ...row
+    }) => ({
       ...row,
-      page_depth: row.visits > 0 ? Number((row.page_depth / row.visits).toFixed(2)) : 0,
-    })).sort((left, right) => left.user_id.localeCompare(right.user_id)),
+      users: clientHashes.size,
+      page_depth: row.visits > 0 ? Number((pageviewsTotal / row.visits).toFixed(2)) : 0,
+      avg_duration: row.visits > 0 ? Number((durationTotal / row.visits).toFixed(2)) : 0,
+      bounce_rate: row.visits > 0 ? Number(((bouncedVisits / row.visits) * 100).toFixed(2)) : 0,
+    })).sort((left, right) =>
+      left.user_id.localeCompare(right.user_id) || left.traffic_source.localeCompare(right.traffic_source)
+    ),
     actions,
   };
 }

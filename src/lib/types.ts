@@ -383,6 +383,7 @@ export interface PostClickAnalyticsCampaignPoint {
 export interface AbbottBiUserSummaryRow {
   user_id: string;
   has_user_id: boolean;
+  traffic_segment?: "all" | "with_user_id" | "without_user_id" | null;
   traffic_source: string;
   direction: string | null;
   visits: number;

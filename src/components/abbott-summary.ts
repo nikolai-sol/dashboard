@@ -10,15 +10,17 @@ export function selectAbbottSummaryRows({
   trafficRows,
   behaviorRows,
   filters,
-  showUserIdAnalytics,
+  showUserIdAnalytics: _showUserIdAnalytics,
 }: {
   trafficRows: AbbottBiUserSummaryRow[];
   behaviorRows: AbbottBiUserSummaryRow[];
   filters: AbbottSummaryFilters;
   showUserIdAnalytics: boolean;
 }) {
-  const needsUserBehavior =
-    showUserIdAnalytics &&
-    Boolean(filters.user_id || filters.user_id_traffic || filters.direction);
-  return !needsUserBehavior && trafficRows.length > 0 ? trafficRows : behaviorRows;
+  if (filters.user_id || filters.direction) return behaviorRows;
+  if (filters.user_id_traffic === "with_user_id" || filters.user_id_traffic === "without_user_id") {
+    return trafficRows.filter((row) => row.traffic_segment === filters.user_id_traffic);
+  }
+  const allTrafficRows = trafficRows.filter((row) => row.traffic_segment === "all");
+  return allTrafficRows.length > 0 ? allTrafficRows : behaviorRows;
 }
