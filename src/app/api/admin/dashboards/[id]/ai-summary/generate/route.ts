@@ -62,6 +62,7 @@ export async function POST(
     } = await loadDashboardData(
       request,
       String(dashboardId),
+      "manager",
     );
 
     if (!ai_summary_enabled) {

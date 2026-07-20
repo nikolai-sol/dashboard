@@ -3,7 +3,9 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import re
+import sys
 from collections import Counter, defaultdict
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
@@ -30,9 +32,9 @@ SESSION_DURATION_CAP_SECONDS = 30 * 60
 
 @dataclass
 class SessionInfo:
-    session_id: int
-    guest_id: int
-    user_id: int
+    session_id: str
+    guest_id: str
+    user_id: str
     user_auth: str
     date_first: str
     date_last: str
@@ -44,17 +46,18 @@ class SessionInfo:
 
 @dataclass
 class UrlAgg:
+    report_date: str
     url: str
     pageviews: int = 0
-    session_ids: set[int] = field(default_factory=set)
-    user_ids: set[int] = field(default_factory=set)
-    guest_ids: set[int] = field(default_factory=set)
+    session_ids: set[str] = field(default_factory=set)
+    user_ids: set[str] = field(default_factory=set)
+    guest_ids: set[str] = field(default_factory=set)
     logged_in_hits: int = 0
     anonymous_hits: int = 0
-    entry_sessions: set[int] = field(default_factory=set)
-    exit_sessions: set[int] = field(default_factory=set)
+    entry_sessions: set[str] = field(default_factory=set)
+    exit_sessions: set[str] = field(default_factory=set)
     session_duration_sum: int = 0
-    session_duration_ids: set[int] = field(default_factory=set)
+    session_duration_ids: set[str] = field(default_factory=set)
     utm_source: Counter[str] = field(default_factory=Counter)
     utm_medium: Counter[str] = field(default_factory=Counter)
     utm_campaign: Counter[str] = field(default_factory=Counter)
@@ -69,6 +72,10 @@ def safe_int(value: Any) -> int:
         return int(value or 0)
     except (TypeError, ValueError):
         return 0
+
+
+def raw_identifier(value: Any) -> str:
+    return str(value if value is not None else "").strip()
 
 
 def parse_dt(value: str) -> datetime | None:
@@ -211,9 +218,9 @@ def build_session_info(row: list[Any]) -> SessionInfo:
     date_first = clean_text(row[15] if len(row) > 15 else "")
     date_last = clean_text(row[16] if len(row) > 16 else "")
     return SessionInfo(
-        session_id=safe_int(row[0]),
-        guest_id=safe_int(row[1]),
-        user_id=safe_int(row[3]),
+        session_id=raw_identifier(row[0]),
+        guest_id=raw_identifier(row[1]),
+        user_id=raw_identifier(row[3]),
         user_auth=clean_text(row[4]),
         hits=safe_int(row[6]),
         url_to=normalize_url(clean_text(row[9] if len(row) > 9 else "")),
@@ -243,9 +250,9 @@ def infer_material_type(url: str) -> str:
     }.get(first, "")
 
 
-def build_bitrix_analytics(dump_path: Path, limit: int) -> dict[str, Any]:
-    sessions: dict[int, SessionInfo] = {}
-    session_hit_bounds: dict[int, tuple[datetime, datetime, str, str]] = {}
+def build_bitrix_analytics(dump_path: Path) -> dict[str, Any]:
+    sessions: dict[str, SessionInfo] = {}
+    session_hit_bounds: dict[tuple[str, str], tuple[datetime, datetime, str, str]] = {}
     hit_rows = 0
     clean_hits = 0
     raw_date_from = ""
@@ -253,8 +260,7 @@ def build_bitrix_analytics(dump_path: Path, limit: int) -> dict[str, Any]:
     clean_date_from = ""
     clean_date_to = ""
     excluded = Counter()
-    url_aggs: dict[str, UrlAgg] = {}
-    pending_entry_exit: dict[int, tuple[str, str]] = {}
+    url_aggs: dict[tuple[str, str], UrlAgg] = {}
 
     for table, statement in stream_insert_statements(dump_path, {HIT_TABLE, SESSION_TABLE}):
         for row in parse_mysql_value_tuple(statement):
@@ -272,9 +278,10 @@ def build_bitrix_analytics(dump_path: Path, limit: int) -> dict[str, Any]:
             if date_hit:
                 raw_date_from = date_hit if not raw_date_from or date_hit < raw_date_from else raw_date_from
                 raw_date_to = date_hit if not raw_date_to or date_hit > raw_date_to else raw_date_to
-            session_id = safe_int(row[1])
-            user_id = safe_int(row[5])
-            guest_id = safe_int(row[3])
+            report_date = date_hit[:10]
+            session_id = raw_identifier(row[1])
+            user_id = raw_identifier(row[5])
+            guest_id = raw_identifier(row[3])
             raw_url = clean_text(row[7])
             url_404 = clean_text(row[8]).upper()
             method = clean_text(row[11]).upper()
@@ -302,9 +309,10 @@ def build_bitrix_analytics(dump_path: Path, limit: int) -> dict[str, Any]:
                 continue
             hit_dt = parse_dt(clean_text(row[2]))
             if session_id and hit_dt:
-                current_bounds = session_hit_bounds.get(session_id)
+                bound_key = (report_date, session_id)
+                current_bounds = session_hit_bounds.get(bound_key)
                 if not current_bounds:
-                    session_hit_bounds[session_id] = (hit_dt, hit_dt, normalized, normalized)
+                    session_hit_bounds[bound_key] = (hit_dt, hit_dt, normalized, normalized)
                 else:
                     first_dt, last_dt, first_url, last_url = current_bounds
                     if hit_dt < first_dt:
@@ -313,24 +321,25 @@ def build_bitrix_analytics(dump_path: Path, limit: int) -> dict[str, Any]:
                     if hit_dt >= last_dt:
                         last_dt = hit_dt
                         last_url = normalized
-                    session_hit_bounds[session_id] = (first_dt, last_dt, first_url, last_url)
+                    session_hit_bounds[bound_key] = (first_dt, last_dt, first_url, last_url)
             clean_hits += 1
             if date_hit:
                 clean_date_from = date_hit if not clean_date_from or date_hit < clean_date_from else clean_date_from
                 clean_date_to = date_hit if not clean_date_to or date_hit > clean_date_to else clean_date_to
-            agg = url_aggs.get(normalized)
+            aggregate_key = (report_date, normalized)
+            agg = url_aggs.get(aggregate_key)
             if not agg:
-                agg = UrlAgg(url=normalized)
-                url_aggs[normalized] = agg
+                agg = UrlAgg(report_date=report_date, url=normalized)
+                url_aggs[aggregate_key] = agg
             agg.pageviews += 1
             if session_id:
                 agg.session_ids.add(session_id)
-            if user_id > 0:
+            if user_id and user_id != "0":
                 agg.user_ids.add(user_id)
                 agg.logged_in_hits += 1
             else:
                 agg.anonymous_hits += 1
-            if guest_id > 0:
+            if guest_id and guest_id != "0":
                 agg.guest_ids.add(guest_id)
             for key, counter in [
                 ("utm_source", agg.utm_source),
@@ -341,23 +350,16 @@ def build_bitrix_analytics(dump_path: Path, limit: int) -> dict[str, Any]:
                 if value:
                     counter[value] += 1
 
-    for session in sessions.values():
-        bounds = session_hit_bounds.get(session.session_id)
-        if bounds:
-            pending_entry_exit[session.session_id] = (bounds[2], bounds[3])
-        elif session.url_to:
-            pending_entry_exit.setdefault(session.session_id, (session.url_to, session.url_last))
-
     for agg in url_aggs.values():
         for session_id in agg.session_ids:
             session = sessions.get(session_id)
             if not session:
                 continue
-            if session.user_id > 0 or session.user_auth.upper() == "Y":
+            if (session.user_id and session.user_id != "0") or session.user_auth.upper() == "Y":
                 # Count unique logged-in sessions below via a synthetic marker.
                 pass
             if session.session_id not in agg.session_duration_ids:
-                bounds = session_hit_bounds.get(session.session_id)
+                bounds = session_hit_bounds.get((agg.report_date, session.session_id))
                 duration_seconds = (
                     int((bounds[1] - bounds[0]).total_seconds())
                     if bounds and bounds[1] >= bounds[0]
@@ -365,23 +367,25 @@ def build_bitrix_analytics(dump_path: Path, limit: int) -> dict[str, Any]:
                 )
                 agg.session_duration_sum += min(max(0, duration_seconds), SESSION_DURATION_CAP_SECONDS)
                 agg.session_duration_ids.add(session.session_id)
-            entry_url, exit_url = pending_entry_exit.get(session_id, ("", ""))
+            bounds = session_hit_bounds.get((agg.report_date, session_id))
+            entry_url, exit_url = (bounds[2], bounds[3]) if bounds else (session.url_to, session.url_last)
             if entry_url == agg.url:
                 agg.entry_sessions.add(session_id)
             if exit_url == agg.url:
                 agg.exit_sessions.add(session_id)
 
     rows: list[dict[str, Any]] = []
-    for agg in sorted(url_aggs.values(), key=lambda item: (-item.pageviews, item.url))[:limit]:
+    for agg in sorted(url_aggs.values(), key=lambda item: (item.report_date, item.url)):
         session_infos = [sessions.get(session_id) for session_id in agg.session_ids]
         logged_in_sessions = {
-            item.session_id for item in session_infos if item and (item.user_id > 0 or item.user_auth.upper() == "Y")
+            item.session_id
+            for item in session_infos
+            if item and ((item.user_id and item.user_id != "0") or item.user_auth.upper() == "Y")
         }
         rows.append(
             {
-                "url": agg.url,
-                "normalized_url": agg.url,
-                "path": path_from_url(agg.url),
+                "report_date": agg.report_date,
+                "normalized_path": path_from_url(agg.url),
                 "material_type_hint": infer_material_type(agg.url),
                 "pageviews": agg.pageviews,
                 "sessions": len(agg.session_ids),
@@ -403,8 +407,15 @@ def build_bitrix_analytics(dump_path: Path, limit: int) -> dict[str, Any]:
     return {
         "generated_at": datetime.now(timezone.utc).isoformat(),
         "source_dump": dump_path.name,
-        "grain": "normalized_url",
-        "join_key": "normalized_url = normalized current ABBOTT page_stats.url",
+        "grain": "normalized_path x report_date",
+        "manifest": {
+            "complete": True,
+            "truncated": False,
+            "source_hit_rows": hit_rows,
+            "accepted_hit_rows": clean_hits,
+            "rejected_hit_rows": hit_rows - clean_hits,
+            "output_rows": len(rows),
+        },
         "filters": {
             "method": "GET or empty",
             "url_404": "exclude Y",
@@ -422,24 +433,47 @@ def build_bitrix_analytics(dump_path: Path, limit: int) -> dict[str, Any]:
             "date_from": clean_date_from,
             "date_to": clean_date_to,
             "sessions_loaded": len(sessions),
-            "unique_clean_urls": len(url_aggs),
+            "unique_clean_urls": len({url for _date, url in url_aggs}),
             "excluded": dict(excluded),
         },
         "rows": rows,
     }
 
 
+def validate_private_output_path(out_path: Path) -> Path:
+    resolved = out_path.expanduser().resolve()
+    if any(part.lower() == "public" for part in resolved.parts):
+        raise ValueError("output must not be under public")
+    return resolved
+
+
+def write_private_json(out_path: Path, payload: dict[str, Any]) -> None:
+    resolved = validate_private_output_path(out_path)
+    resolved.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
+    temporary = resolved.parent / f".{resolved.name}.{os.getpid()}.tmp"
+    try:
+        descriptor = os.open(temporary, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+        with os.fdopen(descriptor, "w", encoding="utf-8") as handle:
+            json.dump(payload, handle, ensure_ascii=False, indent=2)
+            handle.flush()
+            os.fsync(handle.fileno())
+        os.replace(temporary, resolved)
+        os.chmod(resolved, 0o600)
+    finally:
+        if temporary.exists():
+            temporary.unlink()
+
+
 def main() -> None:
     parser = argparse.ArgumentParser()
-    parser.add_argument("--dump", default="abbott_reader_analytics_abbottpro_db_2026-05-29_11-14-33.sql")
-    parser.add_argument("--out", default="dashboard-next/public/abbott/bitrix-analytics.json")
-    parser.add_argument("--limit", type=int, default=5000)
+    parser.add_argument("--dump", required=True)
+    parser.add_argument("--out", required=True)
     args = parser.parse_args()
 
-    payload = build_bitrix_analytics(Path(args.dump), args.limit)
-    out = Path(args.out)
-    out.parent.mkdir(parents=True, exist_ok=True)
-    out.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
+    dump = Path(args.dump).expanduser().resolve()
+    out = validate_private_output_path(Path(args.out))
+    payload = build_bitrix_analytics(dump)
+    write_private_json(out, payload)
     print(
         f"Wrote {out} rows={len(payload['rows'])} "
         f"clean_hits={payload['summary']['clean_hit_rows']} urls={payload['summary']['unique_clean_urls']}"
@@ -447,4 +481,8 @@ def main() -> None:
 
 
 if __name__ == "__main__":
-    main()
+    try:
+        main()
+    except Exception as error:
+        print(f"Bitrix analytics build failed class={type(error).__name__}", file=sys.stderr)
+        raise SystemExit(1)

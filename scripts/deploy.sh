@@ -29,13 +29,14 @@ cd "$APP_SOURCE_DIR"
 
 echo "Building standalone bundle for release $RELEASE_ID..."
 npm ci
+npm run security:public-assets
 npm run build
 
 echo "Rendering production env from VPS secrets..."
 bash scripts/render-production-env.sh "$TMP_ENV"
 
 echo "Packaging build artifacts..."
-rm -rf .next/standalone/.next/static .next/standalone/public .next/standalone/src .next/standalone/ecosystem.config.js .next/standalone/package.json .next/standalone/.env .next/standalone/scripts
+rm -rf .next/standalone/.next/static .next/standalone/public .next/standalone/src .next/standalone/ecosystem.config.js .next/standalone/package.json .next/standalone/.env .next/standalone/scripts .next/standalone/ABBOTT-UNRESOLVED-PAGE-DIRECTIONS.csv .next/standalone/ABBOTT-UNRESOLVED-PAGE-DIRECTIONS-SUMMARY.json
 mkdir -p .next/standalone/.next .next/standalone/src/schemas .next/standalone/src/db .next/standalone/scripts
 cp -R .next/static .next/standalone/.next/static
 if [ -d public ]; then
@@ -73,6 +74,9 @@ fi
 if [ -f "$REPO_ROOT_DIR/yandex_direct_shared.py" ]; then
   cp "$REPO_ROOT_DIR/yandex_direct_shared.py" .next/standalone/
 fi
+
+npm run security:public-assets -- --release .next/standalone
+bash scripts/validate-production-release.sh .next/standalone .next/standalone/.env
 
 echo "Uploading staged release to VPS..."
 ssh "$VPS" "mkdir -p '$RELEASES_DIR' '$BACKUPS_DIR' /var/log"

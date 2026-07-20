@@ -7,6 +7,70 @@ TARGET_FILE="${1:-.env.production}"
 DEFAULT_BASE_URL="${DEFAULT_BASE_URL:-https://dashboards.adreports.ru}"
 
 REMOTE_ENV_CONTENT="$(ssh "$VPS" "cat '$REMOTE_ENV_PATH'")"
+SOURCE_ENV_FILE="$(mktemp)"
+
+cleanup() {
+  rm -f "$SOURCE_ENV_FILE"
+}
+trap cleanup EXIT
+chmod 600 "$SOURCE_ENV_FILE"
+printf '%s\n' "$REMOTE_ENV_CONTENT" > "$SOURCE_ENV_FILE"
+
+find_missing_dotenv_keys() {
+  local env_file="$1"
+  shift
+  local node_bin=""
+
+  if ! node_bin="$(command -v node)"; then
+    printf '%s ' "$@"
+    return 1
+  fi
+
+  "$node_bin" - "$env_file" "$@" <<'JS'
+const fs = require("node:fs");
+const { parseEnv } = require("node:util");
+
+const [envFile, ...requiredKeys] = process.argv.slice(2);
+let parsed;
+try {
+  if (typeof parseEnv !== "function") throw new Error("dotenv parser unavailable");
+  parsed = parseEnv(fs.readFileSync(envFile, "utf8"));
+} catch {
+  process.stdout.write(requiredKeys.join(" "));
+  process.exit(1);
+}
+
+const missingKeys = requiredKeys.filter((key) =>
+  typeof parsed[key] !== "string" || parsed[key].trim().length === 0
+);
+if (missingKeys.length > 0) {
+  process.stdout.write(missingKeys.join(" "));
+  process.exit(1);
+}
+JS
+}
+
+source_required_keys=(
+  MYSQL_USER
+  MYSQL_PASSWORD
+  DASHBOARD_ADMIN_EMAIL
+  DASHBOARD_ADMIN_PASSWORD
+  DASHBOARD_AUTH_SECRET
+  ABBOTT_DASHBOARD_PASSWORD
+  ABBOTT_DASHBOARD_EMBED_KEY
+  METRIKA_TOKEN
+  ABBOTT_PRIVATE_DB_HOST
+  ABBOTT_PRIVATE_DB_PORT
+  ABBOTT_PRIVATE_DB_USER
+  ABBOTT_PRIVATE_DB_PASSWORD
+  ABBOTT_PRIVATE_DB_NAME
+)
+
+missing_source_keys=""
+if ! missing_source_keys="$(find_missing_dotenv_keys "$SOURCE_ENV_FILE" "${source_required_keys[@]}")"; then
+  printf 'Missing required production env keys in %s: %s\n' "$REMOTE_ENV_PATH" "$missing_source_keys" >&2
+  exit 1
+fi
 
 MYSQL_PORT_VALUE="3306"
 MYSQL_USER_VALUE=""
@@ -17,6 +81,13 @@ ADMIN_EMAIL_VALUE=""
 ADMIN_PASSWORD_VALUE=""
 AUTH_SECRET_VALUE=""
 METRIKA_TOKEN_VALUE=""
+ABBOTT_DASHBOARD_PASSWORD_VALUE=""
+ABBOTT_DASHBOARD_EMBED_KEY_VALUE=""
+ABBOTT_PRIVATE_DB_HOST_VALUE=""
+ABBOTT_PRIVATE_DB_PORT_VALUE=""
+ABBOTT_PRIVATE_DB_USER_VALUE=""
+ABBOTT_PRIVATE_DB_PASSWORD_VALUE=""
+ABBOTT_PRIVATE_DB_NAME_VALUE=""
 NEXT_PUBLIC_BASE_URL_VALUE=""
 AI_SUMMARY_API_KEY_VALUE=""
 AI_SUMMARY_MODEL_VALUE="gemini-flash-latest"
@@ -57,12 +128,6 @@ while IFS= read -r raw_line; do
   key="${line%%=*}"
   value="${line#*=}"
 
-  if [[ "$value" == '"'*'"' ]]; then
-    value="${value:1:${#value}-2}"
-  elif [[ "$value" == "'"*"'" ]]; then
-    value="${value:1:${#value}-2}"
-  fi
-
   case "$key" in
     MYSQL_PORT) MYSQL_PORT_VALUE="$value" ;;
     MYSQL_USER) MYSQL_USER_VALUE="$value" ;;
@@ -73,6 +138,13 @@ while IFS= read -r raw_line; do
     DASHBOARD_ADMIN_PASSWORD) ADMIN_PASSWORD_VALUE="$value" ;;
     DASHBOARD_AUTH_SECRET) AUTH_SECRET_VALUE="$value" ;;
     METRIKA_TOKEN) METRIKA_TOKEN_VALUE="$value" ;;
+    ABBOTT_DASHBOARD_PASSWORD) ABBOTT_DASHBOARD_PASSWORD_VALUE="$value" ;;
+    ABBOTT_DASHBOARD_EMBED_KEY) ABBOTT_DASHBOARD_EMBED_KEY_VALUE="$value" ;;
+    ABBOTT_PRIVATE_DB_HOST) ABBOTT_PRIVATE_DB_HOST_VALUE="$value" ;;
+    ABBOTT_PRIVATE_DB_PORT) ABBOTT_PRIVATE_DB_PORT_VALUE="$value" ;;
+    ABBOTT_PRIVATE_DB_USER) ABBOTT_PRIVATE_DB_USER_VALUE="$value" ;;
+    ABBOTT_PRIVATE_DB_PASSWORD) ABBOTT_PRIVATE_DB_PASSWORD_VALUE="$value" ;;
+    ABBOTT_PRIVATE_DB_NAME) ABBOTT_PRIVATE_DB_NAME_VALUE="$value" ;;
     NEXT_PUBLIC_BASE_URL|DASHBOARD_PUBLIC_BASE_URL|DASHBOARD_BASE_URL) NEXT_PUBLIC_BASE_URL_VALUE="$value" ;;
     AI_SUMMARY_API_KEY) AI_SUMMARY_API_KEY_VALUE="$value" ;;
     AI_SUMMARY_MODEL) AI_SUMMARY_MODEL_VALUE="$value" ;;
@@ -119,8 +191,17 @@ missing_keys=()
 require_value() {
   local key_name="$1"
   local key_value="$2"
+  local semantic_value="$key_value"
 
-  if [[ -z "$key_value" ]]; then
+  semantic_value="${semantic_value#"${semantic_value%%[![:space:]]*}"}"
+  semantic_value="${semantic_value%"${semantic_value##*[![:space:]]}"}"
+  if [[ "$semantic_value" == '"'*'"' || "$semantic_value" == "'"*"'" ]]; then
+    semantic_value="${semantic_value:1:${#semantic_value}-2}"
+  else
+    semantic_value="${semantic_value%%#*}"
+  fi
+
+  if [[ ! "$semantic_value" =~ [^[:space:]] ]]; then
     missing_keys+=("$key_name")
   fi
 }
@@ -130,6 +211,14 @@ require_value "MYSQL_PASSWORD" "$MYSQL_PASSWORD_VALUE"
 require_value "DASHBOARD_ADMIN_EMAIL" "$ADMIN_EMAIL_VALUE"
 require_value "DASHBOARD_ADMIN_PASSWORD" "$ADMIN_PASSWORD_VALUE"
 require_value "DASHBOARD_AUTH_SECRET" "$AUTH_SECRET_VALUE"
+require_value "ABBOTT_DASHBOARD_PASSWORD" "$ABBOTT_DASHBOARD_PASSWORD_VALUE"
+require_value "ABBOTT_DASHBOARD_EMBED_KEY" "$ABBOTT_DASHBOARD_EMBED_KEY_VALUE"
+require_value "METRIKA_TOKEN" "$METRIKA_TOKEN_VALUE"
+require_value "ABBOTT_PRIVATE_DB_HOST" "$ABBOTT_PRIVATE_DB_HOST_VALUE"
+require_value "ABBOTT_PRIVATE_DB_PORT" "$ABBOTT_PRIVATE_DB_PORT_VALUE"
+require_value "ABBOTT_PRIVATE_DB_USER" "$ABBOTT_PRIVATE_DB_USER_VALUE"
+require_value "ABBOTT_PRIVATE_DB_PASSWORD" "$ABBOTT_PRIVATE_DB_PASSWORD_VALUE"
+require_value "ABBOTT_PRIVATE_DB_NAME" "$ABBOTT_PRIVATE_DB_NAME_VALUE"
 
 if (( ${#missing_keys[@]} > 0 )); then
   printf 'Missing required production env keys in %s: %s\n' "$REMOTE_ENV_PATH" "${missing_keys[*]}" >&2
@@ -153,7 +242,14 @@ NEXT_PUBLIC_BASE_URL=${NEXT_PUBLIC_BASE_URL_VALUE}
 DASHBOARD_ADMIN_EMAIL=${ADMIN_EMAIL_VALUE}
 DASHBOARD_ADMIN_PASSWORD=${ADMIN_PASSWORD_VALUE}
 DASHBOARD_AUTH_SECRET=${AUTH_SECRET_VALUE}
+ABBOTT_DASHBOARD_PASSWORD=${ABBOTT_DASHBOARD_PASSWORD_VALUE}
+ABBOTT_DASHBOARD_EMBED_KEY=${ABBOTT_DASHBOARD_EMBED_KEY_VALUE}
 METRIKA_TOKEN=${METRIKA_TOKEN_VALUE}
+ABBOTT_PRIVATE_DB_HOST=${ABBOTT_PRIVATE_DB_HOST_VALUE}
+ABBOTT_PRIVATE_DB_PORT=${ABBOTT_PRIVATE_DB_PORT_VALUE}
+ABBOTT_PRIVATE_DB_USER=${ABBOTT_PRIVATE_DB_USER_VALUE}
+ABBOTT_PRIVATE_DB_PASSWORD=${ABBOTT_PRIVATE_DB_PASSWORD_VALUE}
+ABBOTT_PRIVATE_DB_NAME=${ABBOTT_PRIVATE_DB_NAME_VALUE}
 AI_SUMMARY_API_KEY=${AI_SUMMARY_API_KEY_VALUE}
 AI_SUMMARY_MODEL=${AI_SUMMARY_MODEL_VALUE}
 AI_SUMMARY_COMPLEX_MODEL=${AI_SUMMARY_COMPLEX_MODEL_VALUE}

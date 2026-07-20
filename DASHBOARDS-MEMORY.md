@@ -36,6 +36,35 @@ ssh beget 'curl -s http://127.0.0.1:3001/api/health'
 
 ## Current dashboard architecture
 
+### Abbott canonical/private release boundary
+
+- The Abbott canonical/private operator procedure is
+  `../docs/ABBOTT-OPERATIONS-RUNBOOK.md`; packaging the procedure does not mean production cutover
+  has occurred.
+- Production reads after cutover resolve one atomic Abbott active-release pointer. Missing candidate
+  coverage blocks activation; the dashboard never falls back to legacy data within a selected month.
+- Manager-only source/import data and checkpoints remain outside `public`, `.next/static`, standalone
+  public assets, and deployment archives. The release guard must stay enabled.
+- `report_bd_private` is accessed only by the server-side manager read model through required
+  `ABBOTT_PRIVATE_DB_HOST`, `ABBOTT_PRIVATE_DB_PORT`, `ABBOTT_PRIVATE_DB_USER`,
+  `ABBOTT_PRIVATE_DB_PASSWORD`, and `ABBOTT_PRIVATE_DB_NAME=report_bd_private` values.
+- The import CLI uses a separate `ABBOTT_IMPORT_DB_*` account/role and only explicit mode-`0600`
+  source paths. A failed import leaves the previous active pointer unchanged.
+- Embed projection remains aggregate-only and cannot request raw identifiers or private journeys.
+- The synchronized canonical bootstrap manifest records SHA-256 and runtime roles for the Metrika
+  collector, canonical writer, and release store; copied files must remain byte-identical to root.
+
+## Abbott visit-level operational truth
+
+- Abbott source summaries use Reports API attribution `lastsign` and exact traffic segments `all`, `with_user_id`, and `without_user_id`. Per day/source, `all.sessions = with_user_id.sessions + without_user_id.sessions` is a hard publication gate.
+- `user_behavior` uses Logs API `source=visits`. One private database row is one Metrica visit in `report_bd_private.canonical_fact_metrika_visits`. Raw User ID, visit ID, start URL, and end URL are manager-only. Raw client ID is never stored; only its hash is persisted.
+- Logs execute evaluate → create → poll → download all parts → clean in finally. Prepared files count against the 10 GB quota until cleaned.
+- `METRIKA_TOKEN` remains the only OAuth environment key. Never print it. The owner installs or revokes it; this change does not issue or rotate a token.
+- Current cron remains collection `06:12`, health `07:05`, and one summary `07:10`. The summary includes session integrity; a mismatch is `CRITICAL`.
+- Logs cannot return the current day. Active releases remain append-only; late changes require a reviewed successor release/backfill.
+- Bitrix dump remains test-only; the live connector is deferred.
+- No deployment, secret installation, API call, database migration, cron edit, Telegram send, or Hermes schedule occurred.
+
 ### Shared data loader
 
 - Core runtime is built in:
@@ -99,6 +128,17 @@ Main file:
 
 - Per-dashboard viewer users are supported
 - If a dashboard has viewer users, public API / Excel / PDF require viewer auth
+- Abbott never becomes public: active viewer users use `email_password`; otherwise Abbott remains
+  `password_only`, and a missing `ABBOTT_DASHBOARD_PASSWORD` makes credential verification fail closed
+- Signed per-dashboard viewer and export tokens carry a mandatory audience:
+  - password/email login => `manager`
+  - `embed_key` access => `embed`
+  - legacy dashboard tokens without an audience are rejected and require re-login
+- Abbott responses are projected server-side by that audience:
+  - `manager` keeps raw User ID and row-level journey data, with URL query strings and fragments removed
+  - `embed` receives aggregate-only Abbott data without User ID fields, session IDs, user actions, or journey rows
+- Dashboard API, Excel, PDF, and AI-summary responses use `Cache-Control: private, no-store`; client-visible errors do not include exception details
+- Viewer portal sessions keep their existing audience-free payload and behavior
 - Viewer portal root page exists at:
   - `https://dashboards.adreports.ru/`
 - Root page shows:
@@ -122,9 +162,7 @@ Relevant files:
   - `Secure`
 - Abbott also supports a permanent embed query key:
   - `embed_key`
-  - current shared key source:
-    - `process.env.ABBOTT_DASHBOARD_EMBED_KEY`
-    - fallback default: `Terasic1!`
+  - configured only through `process.env.ABBOTT_DASHBOARD_EMBED_KEY`; there is no fallback key
   - this is intended for iframe embedding without expiring `access_token`
 
 ## Embed rules

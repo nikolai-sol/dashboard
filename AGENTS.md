@@ -36,6 +36,10 @@ Current auth note:
 - Abbott dashboard supports:
   - password-only viewer access
   - permanent iframe access through `embed_key`
+- Abbott is always protected: active viewer users select `email_password`; otherwise it stays
+  `password_only`, including when the shared password is missing. Missing credentials fail closed.
+- Signed dashboard viewer and export sessions require an explicit `manager` or `embed` audience;
+  legacy dashboard tokens without an audience are rejected. Viewer portal sessions remain audience-free.
 
 ## Platform access / cron memory
 
@@ -118,6 +122,26 @@ Current truth is `PM2 + 3001`.
 - scheduler: root `crontab`
 - python env: `/root/reportingdash-canonical/venv`
 - collector logs: `/root/reportingdash-canonical/logs`
+
+### Abbott canonical/private rollout package
+
+- Operator authority: `docs/ABBOTT-OPERATIONS-RUNBOOK.md` in the root repository.
+- Abbott Yandex Metrika authority is counter `90602537`; it must be filtered in collection,
+  coverage, comparison, health, and summaries.
+- The closed release scope set is `other`, `traffic`, `page`, `user_behavior`, and `returning`.
+- Canonical release activation and rollback use the single `portal_active_data_releases` pointer;
+  they do not copy facts or restore a silent legacy fallback.
+- Private runtime data lives in `report_bd_private`. Collector, importer, and server-side manager
+  runtime use separate least-privilege roles and environment files; embed remains aggregate-only.
+- `METRIKA_TOKEN` is the only Metrika OAuth env key. The owner must issue/revoke tokens; token
+  values are installed from mode-`0600` files and never printed.
+- Legacy Nest launch routes use `x-internal-token` against `LEGACY_LAUNCH_SECRET`; query-string
+  launch secrets are forbidden.
+- The rollout is not active merely because this package is present. Until the candidate gate and
+  smoke checks pass, the current production cron table remains authoritative.
+- After approved cutover only: remove the duplicate `06:10` legacy `/metrika`, use Abbott canonical
+  collection at `06:12`, deterministic health at `07:05`, and one summary at `07:10`.
+- Hermes creation is a separate deferred task; no Hermes automation is part of this rollout package.
 
 ## Databases
 

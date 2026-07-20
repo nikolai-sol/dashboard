@@ -5,6 +5,15 @@ import { isDashboardAccessAuthorized } from "@/lib/dashboard-access";
 
 export const dynamic = "force-dynamic";
 
+const PRIVATE_RESPONSE_HEADERS = { "Cache-Control": "private, no-store" };
+
+function privateJson(body: unknown, init?: ResponseInit) {
+  return NextResponse.json(body, {
+    ...init,
+    headers: { ...init?.headers, ...PRIVATE_RESPONSE_HEADERS },
+  });
+}
+
 function buildDashboardUrl(request: Request, dashboardId: string, accessToken?: string) {
   const { searchParams } = new URL(request.url);
   const from = searchParams.get("from");
@@ -28,23 +37,26 @@ export async function GET(
   request: Request,
   context: { params: Promise<{ id: string }> | { id: string } },
 ) {
-  const { id } = await Promise.resolve(context.params);
-  const access = await isDashboardAccessAuthorized(request, id);
-  if (!access.context) {
-    return NextResponse.json({ error: "Dashboard not found" }, { status: 404 });
-  }
-  if (!access.authorized) {
-    return NextResponse.json({ error: "Authentication required" }, { status: 401 });
-  }
-  const dashboardUrl = buildDashboardUrl(
-    request,
-    id,
-    access.context.access_users_count > 0 ? createViewerExportToken(access.context.id) : undefined,
-  );
-  const filenameDate = new Date().toISOString().slice(0, 10);
   let browser: Awaited<ReturnType<typeof puppeteer.launch>> | null = null;
 
   try {
+    const { id } = await Promise.resolve(context.params);
+    const access = await isDashboardAccessAuthorized(request, id);
+    if (!access.context) {
+      return privateJson({ error: "Dashboard not found" }, { status: 404 });
+    }
+    if (!access.authorized) {
+      return privateJson({ error: "Authentication required" }, { status: 401 });
+    }
+    const dashboardUrl = buildDashboardUrl(
+      request,
+      id,
+      access.context.auth_mode !== "public"
+        ? createViewerExportToken(access.context.id, access.audience)
+        : undefined,
+    );
+    const filenameDate = new Date().toISOString().slice(0, 10);
+
     browser = await puppeteer.launch({
       headless: true,
       args: [
@@ -97,17 +109,15 @@ export async function GET(
 
     return new NextResponse(Buffer.from(pdfBuffer), {
       headers: {
+        ...PRIVATE_RESPONSE_HEADERS,
         "Content-Type": "application/pdf",
         "Content-Disposition": `attachment; filename="dashboard-${id}-${filenameDate}.pdf"`,
       },
     });
   } catch (error) {
     console.error("PDF generation error:", error);
-    return NextResponse.json(
-      {
-        error: "PDF generation failed",
-        details: error instanceof Error ? error.message : String(error),
-      },
+    return privateJson(
+      { error: "PDF generation failed" },
       { status: 500 },
     );
   } finally {

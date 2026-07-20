@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import ExcelJS from "exceljs";
+import { projectAbbottDashboardData } from "@/lib/abbott-data-projection";
 import { isDashboardAccessAuthorized } from "@/lib/dashboard-access";
 import { loadDashboardData } from "@/lib/dashboard-data-loader";
 import { getDashboardI18n } from "@/lib/dashboard-i18n";
@@ -48,6 +49,14 @@ const GREEN_FILL = "FFDCFCE7";
 const YELLOW_FILL = "FFFEF9C3";
 const RED_FILL = "FFFEE2E2";
 const BORDER_COLOR = "FFE2E8F0";
+const PRIVATE_RESPONSE_HEADERS = { "Cache-Control": "private, no-store" };
+
+function privateJson(body: unknown, init?: ResponseInit) {
+  return NextResponse.json(body, {
+    ...init,
+    headers: { ...init?.headers, ...PRIVATE_RESPONSE_HEADERS },
+  });
+}
 
 function filenameSafe(value: string): string {
   const ascii = value
@@ -339,12 +348,13 @@ export async function GET(
     const { id } = await Promise.resolve(context.params);
     const access = await isDashboardAccessAuthorized(request, id);
     if (!access.context) {
-      return NextResponse.json({ error: "Dashboard not found" }, { status: 404 });
+      return privateJson({ error: "Dashboard not found" }, { status: 404 });
     }
     if (!access.authorized) {
-      return NextResponse.json({ error: "Authentication required" }, { status: 401 });
+      return privateJson({ error: "Authentication required" }, { status: 401 });
     }
-    const { data, leads_rows } = await loadDashboardData(request, id);
+    const { data: loadedData, leads_rows } = await loadDashboardData(request, id, access.audience);
+    const data = projectAbbottDashboardData(loadedData, access.audience);
     const i18n = getDashboardI18n(data.dashboard.language);
     const currency = data.dashboard.currency || "EUR";
     const workbook = new ExcelJS.Workbook();
@@ -893,6 +903,7 @@ export async function GET(
 
     return new NextResponse(payload, {
       headers: {
+        ...PRIVATE_RESPONSE_HEADERS,
         "Content-Type": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
         "Content-Disposition": `attachment; filename="${filename}"`,
       },
@@ -900,15 +911,12 @@ export async function GET(
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
     if (message === "Dashboard not found") {
-      return NextResponse.json({ error: message }, { status: 404 });
+      return privateJson({ error: "Dashboard not found" }, { status: 404 });
     }
 
     console.error("Dashboard Excel export error:", error);
-    return NextResponse.json(
-      {
-        error: "Internal server error",
-        details: message,
-      },
+    return privateJson(
+      { error: "Internal server error" },
       { status: 500 },
     );
   }
