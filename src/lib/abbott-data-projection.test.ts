@@ -41,6 +41,7 @@ function fixture(): DashboardData {
         {
           user_id: "raw-user-42",
           has_user_id: true,
+          traffic_segment: null,
           traffic_source: "Direct",
           direction: "Cardiology",
           visits: 3,
@@ -55,6 +56,7 @@ function fixture(): DashboardData {
         {
           user_id: "",
           has_user_id: false,
+          traffic_segment: null,
           traffic_source: "Organic",
           direction: null,
           visits: 50,
