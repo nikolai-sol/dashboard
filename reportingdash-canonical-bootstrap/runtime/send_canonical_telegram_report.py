@@ -287,8 +287,18 @@ def collect_monitor_notes(payload: Dict) -> Tuple[List[str], List[str], List[str
 
 
 def build_abbott_lines(snapshot: Dict) -> List[str]:
+    session_integrity = snapshot.get('session_integrity') or {}
+    session_status = 'OK' if session_integrity.get('status') == 'ok' else 'CRITICAL'
     lines = [
         '<b>Abbott Metrika</b>',
+        '- session integrity: {} (all={}, with_id={}, without_id={}, mismatched_days={}, mismatched_sources={})'.format(
+            html.escape(session_status),
+            int(session_integrity.get('all_sessions') or 0),
+            int(session_integrity.get('with_user_id_sessions') or 0),
+            int(session_integrity.get('without_user_id_sessions') or 0),
+            int(session_integrity.get('mismatched_days') or 0),
+            int(session_integrity.get('mismatched_sources') or 0),
+        ),
         '- counter: {}'.format(html.escape(str(snapshot.get('counter_id') or 'unknown'))),
         '- overall: {}'.format(html.escape(str(snapshot.get('overall') or 'UNKNOWN'))),
     ]
