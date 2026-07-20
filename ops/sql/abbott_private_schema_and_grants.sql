@@ -34,6 +34,40 @@ CREATE TABLE IF NOT EXISTS report_bd_private.canonical_fact_metrika_user_behavio
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
   COMMENT='Lossless manager-only Metrika user behavior facts';
 
+CREATE TABLE IF NOT EXISTS report_bd_private.canonical_fact_metrika_visits (
+  id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
+  canonical_release_id BIGINT UNSIGNED NOT NULL,
+  counter_id BIGINT UNSIGNED NOT NULL,
+  report_date DATE NOT NULL,
+  visit_id TEXT NOT NULL,
+  visit_id_hash CHAR(64) NOT NULL,
+  client_id_hash CHAR(64) DEFAULT NULL,
+  raw_user_id TEXT DEFAULT NULL,
+  raw_user_id_hash CHAR(64) DEFAULT NULL,
+  traffic_source VARCHAR(500) NOT NULL,
+  start_url TEXT NOT NULL,
+  start_url_hash CHAR(64) NOT NULL,
+  end_url TEXT NOT NULL,
+  end_url_hash CHAR(64) NOT NULL,
+  session_started_at DATETIME NOT NULL,
+  session_ended_at DATETIME NOT NULL,
+  pageviews BIGINT UNSIGNED NOT NULL,
+  duration_seconds BIGINT UNSIGNED NOT NULL,
+  is_bounce TINYINT(1) NOT NULL,
+  request_fingerprint CHAR(64) NOT NULL,
+  ingestion_run_id BIGINT UNSIGNED NOT NULL,
+  created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  PRIMARY KEY (id),
+  UNIQUE KEY uniq_private_visit_release
+    (canonical_release_id, counter_id, report_date, visit_id_hash),
+  KEY idx_private_visit_release_source
+    (canonical_release_id, report_date, traffic_source),
+  KEY idx_private_visit_release_user
+    (canonical_release_id, report_date, raw_user_id_hash),
+  KEY idx_private_visit_run (ingestion_run_id)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
+  COMMENT='Lossless manager-only Metrika visit facts';
+
 CREATE TABLE IF NOT EXISTS report_bd_private.portal_user_directions_private (
   id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
   canonical_release_id BIGINT UNSIGNED NOT NULL,
@@ -388,6 +422,8 @@ GRANT SELECT, INSERT, UPDATE, DELETE ON report_bd.canonical_source_coverage_dail
   TO 'abbott_collector_role';
 GRANT SELECT, INSERT, UPDATE, DELETE ON report_bd_private.canonical_fact_metrika_user_behavior_daily
   TO 'abbott_collector_role';
+GRANT SELECT, INSERT, UPDATE, DELETE ON report_bd_private.canonical_fact_metrika_visits
+  TO 'abbott_collector_role';
 
 -- The CLI importer uses one connection for a single transaction spanning both
 -- schemas. It may attach imported snapshot IDs to a staging release, but it
@@ -472,6 +508,8 @@ GRANT SELECT ON report_bd.canonical_fact_metrika_returning_pages_daily
 GRANT SELECT ON report_bd.canonical_source_coverage_daily
   TO 'abbott_runtime_reader_role';
 GRANT SELECT ON report_bd_private.canonical_fact_metrika_user_behavior_daily
+  TO 'abbott_runtime_reader_role';
+GRANT SELECT ON report_bd_private.canonical_fact_metrika_visits
   TO 'abbott_runtime_reader_role';
 GRANT SELECT ON report_bd_private.portal_user_directions_private
   TO 'abbott_runtime_reader_role';

@@ -151,6 +151,86 @@ class RecordingConnection:
 
 
 class AtomicMetrikaWriterTest(unittest.TestCase):
+    def test_private_visit_primitive_uses_exact_columns_and_preserves_nulls(self):
+        import canonical_writer as writer
+
+        conn = RecordingConnection()
+        row = {
+            "canonical_release_id": 41,
+            "counter_id": "90602537",
+            "report_date": "2026-01-02",
+            "visit_id": "visit-1",
+            "visit_id_hash": "visit-hash",
+            "client_id_hash": None,
+            "raw_user_id": None,
+            "raw_user_id_hash": None,
+            "traffic_source": "direct",
+            "start_url": "/start",
+            "start_url_hash": "start-hash",
+            "end_url": "/end",
+            "end_url_hash": "end-hash",
+            "session_started_at": "2026-01-02 10:00:00",
+            "session_ended_at": "2026-01-02 10:02:03",
+            "pageviews": 2,
+            "duration_seconds": 123,
+            "is_bounce": 0,
+            "request_fingerprint": "request-hash",
+            "ingestion_run_id": 77,
+        }
+
+        written = writer._insert_private_metrika_visit_rows(
+            conn.cursor_instance, [row]
+        )
+
+        self.assertEqual(written, 1)
+        method, sql, values = conn.sql_calls[0]
+        self.assertEqual(method, "executemany")
+        self.assertIn(
+            "INSERT INTO report_bd_private.canonical_fact_metrika_visits "
+            "( canonical_release_id, counter_id, report_date, visit_id, "
+            "visit_id_hash, client_id_hash, raw_user_id, raw_user_id_hash, "
+            "traffic_source, start_url, start_url_hash, end_url, end_url_hash, "
+            "session_started_at, session_ended_at, pageviews, duration_seconds, "
+            "is_bounce, request_fingerprint, ingestion_run_id )",
+            sql,
+        )
+        self.assertEqual(
+            values,
+            [
+                (
+                    41,
+                    "90602537",
+                    "2026-01-02",
+                    "visit-1",
+                    "visit-hash",
+                    None,
+                    None,
+                    None,
+                    "direct",
+                    "/start",
+                    "start-hash",
+                    "/end",
+                    "end-hash",
+                    "2026-01-02 10:00:00",
+                    "2026-01-02 10:02:03",
+                    2,
+                    123,
+                    0,
+                    "request-hash",
+                    77,
+                )
+            ],
+        )
+
+    def test_private_visit_primitive_is_inert_for_empty_input(self):
+        import canonical_writer as writer
+
+        conn = RecordingConnection()
+        self.assertEqual(
+            writer._insert_private_metrika_visit_rows(conn.cursor_instance, []), 0
+        )
+        self.assertEqual(conn.sql_calls, [])
+
     def test_other_partition_mismatch_prevents_fact_and_success_coverage_writes(self):
         import fetch_yandex_metrika_canonical as collector
         from metrika_pagination import PaginationResult

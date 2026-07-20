@@ -173,6 +173,52 @@ def _insert_private_user_behavior_rows(cur, rows: Sequence[dict]) -> int:
     return len(values)
 
 
+def _insert_private_metrika_visit_rows(cur, rows: Sequence[dict]) -> int:
+    if not rows:
+        return 0
+    values = [
+        (
+            row['canonical_release_id'],
+            row['counter_id'],
+            row['report_date'],
+            row['visit_id'],
+            row['visit_id_hash'],
+            row.get('client_id_hash'),
+            row.get('raw_user_id'),
+            row.get('raw_user_id_hash'),
+            row['traffic_source'],
+            row['start_url'],
+            row['start_url_hash'],
+            row['end_url'],
+            row['end_url_hash'],
+            row['session_started_at'],
+            row['session_ended_at'],
+            row['pageviews'],
+            row['duration_seconds'],
+            row['is_bounce'],
+            row['request_fingerprint'],
+            row['ingestion_run_id'],
+        )
+        for row in rows
+    ]
+    cur.executemany(
+        """
+        INSERT INTO report_bd_private.canonical_fact_metrika_visits (
+            canonical_release_id, counter_id, report_date, visit_id,
+            visit_id_hash, client_id_hash, raw_user_id, raw_user_id_hash,
+            traffic_source, start_url, start_url_hash, end_url, end_url_hash,
+            session_started_at, session_ended_at, pageviews, duration_seconds,
+            is_bounce, request_fingerprint, ingestion_run_id
+        ) VALUES (
+            %s, %s, %s, %s, %s, %s, %s, %s, %s, %s,
+            %s, %s, %s, %s, %s, %s, %s, %s, %s, %s
+        )
+        """,
+        values,
+    )
+    return len(values)
+
+
 def _insert_returning_rows(cur, rows: Sequence[dict]) -> int:
     if not rows:
         return 0

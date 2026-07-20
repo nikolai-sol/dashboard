@@ -135,6 +135,65 @@ class AbbottSchemaContractTest(unittest.TestCase):
             sql,
         )
 
+    def test_private_metrika_visits_schema_is_lossless_and_release_scoped(self):
+        visits = self._table_definition(
+            self._private_sql(),
+            "report_bd_private.canonical_fact_metrika_visits",
+        )
+        columns = (
+            "id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT",
+            "canonical_release_id BIGINT UNSIGNED NOT NULL",
+            "counter_id BIGINT UNSIGNED NOT NULL",
+            "report_date DATE NOT NULL",
+            "visit_id TEXT NOT NULL",
+            "visit_id_hash CHAR(64) NOT NULL",
+            "client_id_hash CHAR(64) DEFAULT NULL",
+            "raw_user_id TEXT DEFAULT NULL",
+            "raw_user_id_hash CHAR(64) DEFAULT NULL",
+            "traffic_source VARCHAR(500) NOT NULL",
+            "start_url TEXT NOT NULL",
+            "start_url_hash CHAR(64) NOT NULL",
+            "end_url TEXT NOT NULL",
+            "end_url_hash CHAR(64) NOT NULL",
+            "session_started_at DATETIME NOT NULL",
+            "session_ended_at DATETIME NOT NULL",
+            "pageviews BIGINT UNSIGNED NOT NULL",
+            "duration_seconds BIGINT UNSIGNED NOT NULL",
+            "is_bounce TINYINT(1) NOT NULL",
+            "request_fingerprint CHAR(64) NOT NULL",
+            "ingestion_run_id BIGINT UNSIGNED NOT NULL",
+            "created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP",
+        )
+        for column in columns:
+            self.assertIn(column, visits)
+        for key in (
+            "PRIMARY KEY (id)",
+            "UNIQUE KEY uniq_private_visit_release "
+            "(canonical_release_id, counter_id, report_date, visit_id_hash)",
+            "KEY idx_private_visit_release_source "
+            "(canonical_release_id, report_date, traffic_source)",
+            "KEY idx_private_visit_release_user "
+            "(canonical_release_id, report_date, raw_user_id_hash)",
+            "KEY idx_private_visit_run (ingestion_run_id)",
+        ):
+            self.assertIn(key, visits)
+        self.assertNotRegex(visits, r"(?i)\bclient_id\s+(?:TEXT|VARCHAR|CHAR|BIGINT|INT)")
+
+    def test_private_metrika_visit_grants_preserve_role_boundaries(self):
+        sql = self._normalized(self._private_sql())
+        table = "report_bd_private.canonical_fact_metrika_visits"
+        self.assertIn(
+            f"GRANT SELECT, INSERT, UPDATE, DELETE ON {table} "
+            "TO 'abbott_collector_role';",
+            sql,
+        )
+        self.assertIn(
+            f"GRANT SELECT ON {table} TO 'abbott_runtime_reader_role';",
+            sql,
+        )
+        self.assertNotIn(f"ON {table} TO 'abbott_importer_role';", sql)
+        self.assertNotIn(f"ON {table} TO 'abbott_release_operator_role';", sql)
+
     def test_collector_role_can_record_runs_and_read_configuration(self):
         sql = self._normalized(self._private_sql())
         for contract in (
