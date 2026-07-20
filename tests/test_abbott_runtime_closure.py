@@ -15,6 +15,7 @@ ROOT = Path(__file__).resolve().parents[1]
 REQUIRED_RUNTIME = {
     "fetch_yandex_metrika_canonical.py",
     "canonical_writer.py",
+    "metrika_logs_api.py",
     "canonical_release_store.py",
     "run_abbott_metrika_active_release.py",
     "abbott_release_operator.py",
@@ -27,6 +28,14 @@ REQUIRED_RUNTIME = {
     "abbott_health_probe.py",
     "send_canonical_telegram_report.py",
     "sources_health_dashboard.py",
+}
+SYNCHRONIZED_BOOTSTRAP_COPIES = {
+    "collectors/fetch_yandex_metrika_canonical.py": "fetch_yandex_metrika_canonical.py",
+    "lib/canonical_writer.py": "canonical_writer.py",
+    "lib/metrika_logs_api.py": "metrika_logs_api.py",
+    "runtime/fetch_yandex_metrika_canonical.py": "fetch_yandex_metrika_canonical.py",
+    "runtime/canonical_writer.py": "canonical_writer.py",
+    "runtime/metrika_logs_api.py": "metrika_logs_api.py",
 }
 
 
@@ -51,8 +60,35 @@ class AbbottRuntimeClosureTest(unittest.TestCase):
 
     def test_runtime_manifest_covers_runbook_entrypoints_and_local_import_closure(self):
         manifest = (ROOT / "ops/abbott-runtime-manifest.sha256").read_text()
-        paths = {line.split("  ", 1)[1] for line in manifest.splitlines() if line}
-        self.assertTrue(REQUIRED_RUNTIME <= paths, sorted(REQUIRED_RUNTIME - paths))
+        entries = {
+            path: digest
+            for digest, path in (
+                line.split("  ", 1) for line in manifest.splitlines() if line
+            )
+        }
+        self.assertTrue(REQUIRED_RUNTIME <= set(entries), sorted(REQUIRED_RUNTIME - set(entries)))
+        for path in REQUIRED_RUNTIME:
+            self.assertEqual(
+                hashlib.sha256((ROOT / path).read_bytes()).hexdigest(),
+                entries[path],
+            )
+
+    def test_all_synchronized_bootstrap_copies_match_root_authorities_and_manifest(self):
+        bootstrap = ROOT / "dashboard-next/reportingdash-canonical-bootstrap"
+        manifest = (bootstrap / "MIGRATION-MANIFEST.md").read_text()
+        entries = {
+            path: (authority, digest)
+            for path, authority, digest in re.findall(
+                r"\| `([^`]+)` \| `([^`]+)` \| `([0-9a-f]{64})` \|",
+                manifest,
+            )
+        }
+        for path, authority in SYNCHRONIZED_BOOTSTRAP_COPIES.items():
+            with self.subTest(path=path):
+                root_bytes = (ROOT / authority).read_bytes()
+                digest = hashlib.sha256(root_bytes).hexdigest()
+                self.assertEqual((bootstrap / path).read_bytes(), root_bytes)
+                self.assertEqual(entries.get(path), (authority, digest))
 
     def test_bootstrap_runtime_imports_without_parent_repository(self):
         runtime = ROOT / "dashboard-next/reportingdash-canonical-bootstrap/runtime"
