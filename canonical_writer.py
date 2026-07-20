@@ -77,7 +77,7 @@ def _delete_release_day(cur, release_id: int, counter_id: str, report_date: str)
     params = (release_id, counter_id, report_date)
     for table in (
         'report_bd.canonical_fact_metrika_site_analytics_daily',
-        'report_bd_private.canonical_fact_metrika_user_behavior_daily',
+        'report_bd_private.canonical_fact_metrika_visits',
         'report_bd.canonical_fact_metrika_returning_pages_daily',
         'report_bd.canonical_source_coverage_daily',
     ):
@@ -370,7 +370,12 @@ def _validated_day_bundle(bundle: Any) -> tuple[int, str, str, int, dict, dict]:
             if sampled or not pagination_complete:
                 raise MetrikaPublishError("Metrika scope pagination is not publishable")
             if status == 'success':
-                if not rows or api_total_rows <= 0 or api_total_rows > persisted_rows:
+                if (
+                    not rows
+                    or api_total_rows <= 0
+                    or api_total_rows > persisted_rows
+                    or (scope == 'user_behavior' and api_total_rows != persisted_rows)
+                ):
                     raise MetrikaPublishError("Successful Metrika scope totals are inconsistent")
             elif status == 'success_empty':
                 if rows or persisted_rows != 0 or api_total_rows != 0:
@@ -464,7 +469,7 @@ def _lock_mutable_abbott_release(
     for table in (
         'report_bd.canonical_source_coverage_daily',
         'report_bd.canonical_fact_metrika_site_analytics_daily',
-        'report_bd_private.canonical_fact_metrika_user_behavior_daily',
+        'report_bd_private.canonical_fact_metrika_visits',
         'report_bd.canonical_fact_metrika_returning_pages_daily',
     ):
         cur.execute(
@@ -514,7 +519,7 @@ def publish_metrika_day_bundle(bundle: Any) -> MetrikaPublishResult:
         rows_written = 0
         for scope in ('other', 'traffic', 'page'):
             rows_written += _insert_site_fact_rows(cur, normalized_rows[scope])
-        rows_written += _insert_private_user_behavior_rows(
+        rows_written += _insert_private_metrika_visit_rows(
             cur, normalized_rows['user_behavior']
         )
         rows_written += _insert_returning_rows(cur, normalized_rows['returning'])

@@ -54,16 +54,21 @@ def day_bundle():
                 "user_behavior",
                 [
                     {
+                        "visit_id": "visit-1",
+                        "visit_id_hash": "visit-hash",
+                        "client_id_hash": "client-hash",
                         "raw_user_id": "user-1",
                         "raw_user_id_hash": "user-hash",
+                        "traffic_source": "direct",
                         "start_url": "/start",
                         "start_url_hash": "start-hash",
                         "end_url": "/end",
                         "end_url_hash": "end-hash",
-                        "visit_id": "visit-1",
-                        "session_started_at": None,
-                        "session_ended_at": None,
+                        "session_started_at": "2026-01-02 10:00:00",
+                        "session_ended_at": "2026-01-02 10:02:03",
                         "pageviews": 2,
+                        "duration_seconds": 123,
+                        "is_bounce": 0,
                         "request_fingerprint": "request-hash",
                     }
                 ],
@@ -230,6 +235,69 @@ class AtomicMetrikaWriterTest(unittest.TestCase):
             writer._insert_private_metrika_visit_rows(conn.cursor_instance, []), 0
         )
         self.assertEqual(conn.sql_calls, [])
+
+    def test_release_publish_uses_visit_primitive_and_never_legacy_behavior_primitive(self):
+        import canonical_writer as writer
+
+        conn = RecordingConnection()
+        with patch.object(writer, "get_db_connection", return_value=conn), patch.object(
+            writer, "require_mutable_candidate_release", return_value={"id": 41}
+        ), patch.object(
+            writer,
+            "_insert_private_metrika_visit_rows",
+            wraps=writer._insert_private_metrika_visit_rows,
+        ) as insert_visits, patch.object(
+            writer, "_insert_private_user_behavior_rows"
+        ) as insert_legacy:
+            writer.publish_metrika_day_bundle(day_bundle())
+
+        insert_visits.assert_called_once()
+        insert_legacy.assert_not_called()
+        self.assertTrue(
+            any(
+                "INSERT INTO report_bd_private.canonical_fact_metrika_visits" in sql
+                for method, sql, _ in conn.sql_calls
+                if method == "executemany"
+            )
+        )
+
+    def test_release_day_delete_and_active_lock_use_visit_table_not_legacy_table(self):
+        import canonical_writer as writer
+
+        conn = RecordingConnection()
+        writer._delete_release_day(conn.cursor_instance, 41, "90602537", "2026-01-02")
+        delete_sql = [sql for method, sql, _ in conn.sql_calls if method == "execute"]
+        self.assertTrue(
+            any("canonical_fact_metrika_visits" in sql for sql in delete_sql)
+        )
+        self.assertFalse(
+            any("canonical_fact_metrika_user_behavior_daily" in sql for sql in delete_sql)
+        )
+
+        active_conn = RecordingConnection(
+            fetch_rows=[
+                {"id": 41, "dataset_key": "abbott", "release_status": "active"},
+                {"canonical_release_id": 41},
+                {"row_count": 0},
+                {"row_count": 0},
+                {"row_count": 0},
+                {"row_count": 0},
+            ]
+        )
+        writer._lock_mutable_abbott_release(
+            active_conn.cursor_instance,
+            41,
+            counter_id="90602537",
+            report_date="2026-01-02",
+            allow_active_append=True,
+        )
+        lock_sql = [sql for method, sql, _ in active_conn.sql_calls if method == "execute"]
+        self.assertTrue(
+            any("canonical_fact_metrika_visits" in sql for sql in lock_sql)
+        )
+        self.assertFalse(
+            any("canonical_fact_metrika_user_behavior_daily" in sql for sql in lock_sql)
+        )
 
     def test_other_partition_mismatch_prevents_fact_and_success_coverage_writes(self):
         import fetch_yandex_metrika_canonical as collector
@@ -500,7 +568,7 @@ class AtomicMetrikaWriterTest(unittest.TestCase):
         self.assertNotIn(("rollback", None), conn.events)
         inserts = [sql for method, sql, _ in conn.sql_calls if method == "executemany"]
         site_index = next(i for i, sql in enumerate(inserts) if "site_analytics" in sql)
-        private_index = next(i for i, sql in enumerate(inserts) if "user_behavior" in sql)
+        private_index = next(i for i, sql in enumerate(inserts) if "metrika_visits" in sql)
         returning_index = next(i for i, sql in enumerate(inserts) if "returning_pages" in sql)
         coverage_index = next(i for i, sql in enumerate(inserts) if "source_coverage" in sql)
         self.assertLess(site_index, private_index)
@@ -703,6 +771,20 @@ class AtomicMetrikaWriterTest(unittest.TestCase):
         values = vars(bundle.scopes["other"]).copy()
         values["persisted_rows"] = 9
         bundle.scopes["other"] = SimpleNamespace(**values)
+        with patch.object(writer, "get_db_connection") as connect, patch.object(
+            writer, "require_mutable_candidate_release"
+        ):
+            with self.assertRaises(writer.MetrikaPublishError):
+                writer.publish_metrika_day_bundle(bundle)
+        connect.assert_not_called()
+
+    def test_user_behavior_scope_requires_exact_api_row_reconciliation(self):
+        import canonical_writer as writer
+
+        bundle = day_bundle()
+        values = vars(bundle.scopes["user_behavior"]).copy()
+        values["api_total_rows"] = 0
+        bundle.scopes["user_behavior"] = SimpleNamespace(**values)
         with patch.object(writer, "get_db_connection") as connect, patch.object(
             writer, "require_mutable_candidate_release"
         ):

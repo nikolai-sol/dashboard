@@ -33,6 +33,7 @@ from canonical_writer import (
     upsert_fact_user_behavior_daily,
     upsert_source_accounts,
 )
+from metrika_logs_api import MetrikaLogsClient, MetrikaLogsError, VISIT_FIELDS
 from metrika_pagination import PaginationResult, collect_all_pages, collect_all_rows
 
 load_dotenv(Path(__file__).parent / '.env')
@@ -939,6 +940,177 @@ def _release_user_behavior_rows(
     return rows
 
 
+_METRIKA_VISIT_KEYS = frozenset(
+    (
+        'visit_id',
+        'date_time',
+        'start_url',
+        'end_url',
+        'page_views',
+        'visit_duration',
+        'bounce',
+        'client_id',
+        'traffic_source',
+        'raw_user_id',
+    )
+)
+
+
+def _collect_metrika_visits(
+    counter_id: str,
+    day: str,
+    client_factory: Callable[[str], Any] | None = None,
+) -> tuple[dict, ...]:
+    if counter_id != ABBOTT_COUNTER_ID:
+        raise MetrikaCollectionError('Abbott release collection requires the Abbott counter')
+    try:
+        parsed_day = datetime.strptime(day, '%Y-%m-%d')
+    except (TypeError, ValueError):
+        raise MetrikaCollectionError('Metrika Logs collection day is invalid') from None
+    if parsed_day.strftime('%Y-%m-%d') != day:
+        raise MetrikaCollectionError('Metrika Logs collection day is invalid')
+
+    try:
+        client = (client_factory or MetrikaLogsClient)(METRIKA_TOKEN)
+        visits = client.collect_visits(counter_id, day, 'lastsign')
+    except MetrikaLogsError:
+        raise MetrikaCollectionError(
+            'Metrika Logs user behavior collection failed'
+        ) from None
+    if not isinstance(visits, (list, tuple)):
+        raise MetrikaCollectionError('Metrika Logs visit collection is invalid')
+    return tuple(visits)
+
+
+def _release_metrika_visit_rows(
+    counter_id: str,
+    day: str,
+    visits: Collection[Mapping[str, Any]],
+    run_id: int,
+    release_id: int,
+    request_fingerprint: str,
+) -> list[dict]:
+    rows: list[dict] = []
+    for visit in visits:
+        if not isinstance(visit, Mapping) or not _METRIKA_VISIT_KEYS.issubset(visit):
+            raise MetrikaCollectionError('Metrika Logs visit row is incomplete')
+
+        visit_id = visit['visit_id']
+        date_time = visit['date_time']
+        start_url = visit['start_url']
+        end_url = visit['end_url']
+        page_views = visit['page_views']
+        visit_duration = visit['visit_duration']
+        bounce = visit['bounce']
+        client_id = visit['client_id']
+        traffic_source = visit['traffic_source']
+        raw_user_id = visit['raw_user_id']
+        if (
+            not isinstance(visit_id, str)
+            or not visit_id.strip()
+            or not isinstance(date_time, str)
+            or not isinstance(start_url, str)
+            or not isinstance(end_url, str)
+            or not isinstance(client_id, str)
+            or not isinstance(traffic_source, str)
+            or not traffic_source.strip()
+            or (raw_user_id is not None and not isinstance(raw_user_id, str))
+            or isinstance(page_views, bool)
+            or not isinstance(page_views, int)
+            or page_views < 0
+            or isinstance(visit_duration, bool)
+            or not isinstance(visit_duration, int)
+            or visit_duration < 0
+            or isinstance(bounce, bool)
+            or not isinstance(bounce, int)
+            or bounce not in (0, 1)
+        ):
+            raise MetrikaCollectionError('Metrika Logs visit row is invalid')
+        try:
+            session_started_at = datetime.strptime(date_time, '%Y-%m-%d %H:%M:%S')
+        except ValueError:
+            raise MetrikaCollectionError('Metrika Logs visit row is invalid') from None
+        if session_started_at.strftime('%Y-%m-%d') != day:
+            raise MetrikaCollectionError('Metrika Logs visit row is invalid')
+
+        visit_id_hash = _sha256(visit_id)
+        rows.append(
+            {
+                'canonical_release_id': release_id,
+                'counter_id': counter_id,
+                'report_date': day,
+                'visit_id': visit_id,
+                'visit_id_hash': visit_id_hash,
+                'client_id_hash': _sha256(client_id) if client_id.strip() else None,
+                'raw_user_id': raw_user_id,
+                'raw_user_id_hash': (
+                    _sha256(raw_user_id) if raw_user_id is not None else None
+                ),
+                'traffic_source': traffic_source,
+                'start_url': start_url,
+                'start_url_hash': _sha256(start_url),
+                'end_url': end_url,
+                'end_url_hash': _sha256(end_url),
+                'session_started_at': session_started_at,
+                'session_ended_at': session_started_at + timedelta(seconds=visit_duration),
+                'pageviews': page_views,
+                'duration_seconds': visit_duration,
+                'is_bounce': bounce,
+                'request_fingerprint': build_scope_hash(
+                    'user_behavior', [request_fingerprint, visit_id_hash]
+                ),
+                'ingestion_run_id': run_id,
+            }
+        )
+    return rows
+
+
+def collect_user_behavior_scope(
+    counter_id: str,
+    day: str,
+    run_id: int,
+    release_id: int,
+    *,
+    code_revision: str,
+    parser_version: str,
+    logs_client_factory: Callable[[str], Any] | None = None,
+) -> MetrikaScopeResult:
+    request_fingerprint = build_scope_hash(
+        'user_behavior',
+        [
+            counter_id,
+            day,
+            'source=visits',
+            ','.join(VISIT_FIELDS),
+            'lastsign',
+            METRIKA_TIMEZONE,
+            code_revision,
+            parser_version,
+        ],
+    )
+    visits = _collect_metrika_visits(counter_id, day, logs_client_factory)
+    rows = _release_metrika_visit_rows(
+        counter_id,
+        day,
+        visits,
+        run_id,
+        release_id,
+        request_fingerprint,
+    )
+    row_count = len(rows)
+    return MetrikaScopeResult(
+        scope='user_behavior',
+        rows=tuple(rows),
+        api_total_rows=row_count,
+        persisted_rows=row_count,
+        sampled=False,
+        sample_share=None,
+        pagination_complete=True,
+        status='success' if rows else 'success_empty',
+        request_fingerprint=request_fingerprint,
+    )
+
+
 def build_returning_rows(
     counter_id: str,
     day: str,
@@ -1172,6 +1344,7 @@ def collect_metrika_scope(
     *,
     code_revision: str,
     parser_version: str,
+    logs_client_factory: Callable[[str], Any] | None = None,
 ) -> MetrikaScopeResult:
     if scope == 'other':
         return collect_other_scope(
@@ -1181,6 +1354,16 @@ def collect_metrika_scope(
             release_id,
             code_revision=code_revision,
             parser_version=parser_version,
+        )
+    if scope == 'user_behavior':
+        return collect_user_behavior_scope(
+            counter_id,
+            day,
+            run_id,
+            release_id,
+            code_revision=code_revision,
+            parser_version=parser_version,
+            logs_client_factory=logs_client_factory,
         )
     dimensions, metrics, attribution, extra_params = _scope_request(scope)
     rendered_dimensions = dimensions.replace(
@@ -1211,8 +1394,6 @@ def collect_metrika_scope(
     )
     if scope in ('other', 'traffic', 'page'):
         rows = _release_site_rows(counter_id, day, scope, response, run_id, release_id)
-    elif scope == 'user_behavior':
-        rows = _release_user_behavior_rows(counter_id, day, response, run_id, release_id)
     else:
         rows = build_returning_rows(counter_id, day, response, run_id, release_id)
 
@@ -1279,6 +1460,10 @@ def validate_day_bundle(
                 or result.api_total_rows <= 0
                 or not result.rows
                 or result.api_total_rows > result.persisted_rows
+                or (
+                    scope == 'user_behavior'
+                    and result.api_total_rows != result.persisted_rows
+                )
             ):
                 raise MetrikaCollectionError('Successful Metrika scope is not reconciled')
         else:

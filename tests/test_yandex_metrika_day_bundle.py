@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 from dataclasses import fields
+from datetime import datetime
+import hashlib
 from types import SimpleNamespace
 import unittest
 from unittest.mock import call, patch
@@ -49,6 +51,281 @@ def day_bundle(scopes=None):
 
 
 class MetrikaDayBundleTests(unittest.TestCase):
+    def test_user_behavior_uses_logs_client_and_normalizes_private_visit(self):
+        import fetch_yandex_metrika_canonical as collector
+        from metrika_logs_api import VISIT_FIELDS
+
+        visits = (
+            {
+                "visit_id": "visit-secret-1",
+                "date_time": "2026-01-02 10:15:30",
+                "start_url": "https://example.test/private-start?token=secret",
+                "end_url": "https://example.test/private-end#secret",
+                "page_views": 4,
+                "visit_duration": 125,
+                "bounce": 0,
+                "client_id": "client-secret-1",
+                "traffic_source": "Search engine traffic",
+                "raw_user_id": "user-secret-1",
+            },
+        )
+
+        class FakeLogsClient:
+            def __init__(self, token):
+                self.token = token
+
+            def collect_visits(self, counter_id, day, attribution):
+                self.call = (counter_id, day, attribution)
+                return visits
+
+        fake = FakeLogsClient("unused")
+        with patch.object(collector, "METRIKA_TOKEN", "token-value"), patch.object(
+            collector,
+            "request_all_pages",
+            side_effect=AssertionError("Reports API must not be called"),
+        ):
+            result = collector.collect_metrika_scope(
+                collector.ABBOTT_COUNTER_ID,
+                "2026-01-02",
+                "user_behavior",
+                77,
+                41,
+                logs_client_factory=lambda token: (
+                    self.assertEqual(token, "token-value") or fake
+                ),
+                **FINGERPRINT_CONTEXT,
+            )
+
+        self.assertEqual(
+            fake.call,
+            (collector.ABBOTT_COUNTER_ID, "2026-01-02", "lastsign"),
+        )
+        self.assertEqual(result.api_total_rows, 1)
+        self.assertEqual(result.persisted_rows, 1)
+        self.assertFalse(result.sampled)
+        self.assertTrue(result.pagination_complete)
+        self.assertEqual(result.status, "success")
+        expected_request_fingerprint = collector.build_scope_hash(
+            "user_behavior",
+            [
+                collector.ABBOTT_COUNTER_ID,
+                "2026-01-02",
+                "source=visits",
+                ",".join(VISIT_FIELDS),
+                "lastsign",
+                collector.METRIKA_TIMEZONE,
+                FINGERPRINT_CONTEXT["code_revision"],
+                FINGERPRINT_CONTEXT["parser_version"],
+            ],
+        )
+        self.assertEqual(result.request_fingerprint, expected_request_fingerprint)
+        visit_id_hash = hashlib.sha256(b"visit-secret-1").hexdigest()
+        self.assertEqual(
+            result.rows,
+            (
+                {
+                    "canonical_release_id": 41,
+                    "counter_id": collector.ABBOTT_COUNTER_ID,
+                    "report_date": "2026-01-02",
+                    "visit_id": "visit-secret-1",
+                    "visit_id_hash": visit_id_hash,
+                    "client_id_hash": hashlib.sha256(
+                        b"client-secret-1"
+                    ).hexdigest(),
+                    "raw_user_id": "user-secret-1",
+                    "raw_user_id_hash": hashlib.sha256(
+                        b"user-secret-1"
+                    ).hexdigest(),
+                    "traffic_source": "Search engine traffic",
+                    "start_url": "https://example.test/private-start?token=secret",
+                    "start_url_hash": hashlib.sha256(
+                        b"https://example.test/private-start?token=secret"
+                    ).hexdigest(),
+                    "end_url": "https://example.test/private-end#secret",
+                    "end_url_hash": hashlib.sha256(
+                        b"https://example.test/private-end#secret"
+                    ).hexdigest(),
+                    "session_started_at": datetime(2026, 1, 2, 10, 15, 30),
+                    "session_ended_at": datetime(2026, 1, 2, 10, 17, 35),
+                    "pageviews": 4,
+                    "duration_seconds": 125,
+                    "is_bounce": 0,
+                    "request_fingerprint": collector.build_scope_hash(
+                        "user_behavior",
+                        [expected_request_fingerprint, visit_id_hash],
+                    ),
+                    "ingestion_run_id": 77,
+                },
+            ),
+        )
+
+    def test_user_behavior_preserves_null_user_and_blank_client_as_null_hashes(self):
+        import fetch_yandex_metrika_canonical as collector
+
+        visit = {
+            "visit_id": "visit-2",
+            "date_time": "2026-01-02 00:00:00",
+            "start_url": "",
+            "end_url": "",
+            "page_views": 0,
+            "visit_duration": 0,
+            "bounce": 1,
+            "client_id": "   ",
+            "traffic_source": "direct",
+            "raw_user_id": None,
+        }
+
+        result = collector.collect_metrika_scope(
+            collector.ABBOTT_COUNTER_ID,
+            "2026-01-02",
+            "user_behavior",
+            77,
+            41,
+            logs_client_factory=lambda _token: SimpleNamespace(
+                collect_visits=lambda *_args: (visit,)
+            ),
+            **FINGERPRINT_CONTEXT,
+        )
+
+        row = result.rows[0]
+        self.assertIsNone(row["client_id_hash"])
+        self.assertIsNone(row["raw_user_id"])
+        self.assertIsNone(row["raw_user_id_hash"])
+        self.assertEqual(row["start_url"], "")
+        self.assertEqual(row["end_url"], "")
+
+    def test_user_behavior_rejects_incomplete_or_invalid_visit_without_raw_values(self):
+        import fetch_yandex_metrika_canonical as collector
+
+        valid = {
+            "visit_id": "private-visit-secret",
+            "date_time": "2026-01-02 10:00:00",
+            "start_url": "https://private.test/start",
+            "end_url": "https://private.test/end",
+            "page_views": 1,
+            "visit_duration": 1,
+            "bounce": 0,
+            "client_id": "private-client-secret",
+            "traffic_source": "direct",
+            "raw_user_id": "private-user-secret",
+        }
+        mutations = (
+            {"missing": "traffic_source"},
+            {"date_time": "2026-01-03 10:00:00"},
+            {"page_views": -1},
+            {"visit_duration": True},
+            {"bounce": 2},
+            {"traffic_source": "   "},
+        )
+        for mutation in mutations:
+            with self.subTest(mutation=mutation):
+                visit = dict(valid)
+                missing = mutation.get("missing")
+                if missing:
+                    del visit[missing]
+                else:
+                    visit.update(mutation)
+                with self.assertRaises(collector.MetrikaCollectionError) as raised:
+                    collector.collect_metrika_scope(
+                        collector.ABBOTT_COUNTER_ID,
+                        "2026-01-02",
+                        "user_behavior",
+                        77,
+                        41,
+                        logs_client_factory=lambda _token, visit=visit: SimpleNamespace(
+                            collect_visits=lambda *_args: (visit,)
+                        ),
+                        **FINGERPRINT_CONTEXT,
+                    )
+
+                message = str(raised.exception)
+                self.assertNotIn("private-visit-secret", message)
+                self.assertNotIn("private-client-secret", message)
+                self.assertNotIn("private-user-secret", message)
+                self.assertNotIn("private.test", message)
+
+    def test_user_behavior_sanitizes_metrika_logs_error(self):
+        import fetch_yandex_metrika_canonical as collector
+        from metrika_logs_api import MetrikaLogsError
+
+        remote_detail = "remote-secret-request-id"
+
+        def fail(*_args):
+            raise MetrikaLogsError(remote_detail)
+
+        with self.assertRaises(collector.MetrikaCollectionError) as raised:
+            collector.collect_metrika_scope(
+                collector.ABBOTT_COUNTER_ID,
+                "2026-01-02",
+                "user_behavior",
+                77,
+                41,
+                logs_client_factory=lambda _token: SimpleNamespace(
+                    collect_visits=fail
+                ),
+                **FINGERPRINT_CONTEXT,
+            )
+
+        self.assertEqual(
+            str(raised.exception),
+            "Metrika Logs user behavior collection failed",
+        )
+        self.assertNotIn(remote_detail, str(raised.exception))
+
+    def test_user_behavior_zero_visits_is_complete_success_empty(self):
+        import fetch_yandex_metrika_canonical as collector
+
+        result = collector.collect_metrika_scope(
+            collector.ABBOTT_COUNTER_ID,
+            "2026-01-02",
+            "user_behavior",
+            77,
+            41,
+            logs_client_factory=lambda _token: SimpleNamespace(
+                collect_visits=lambda *_args: ()
+            ),
+            **FINGERPRINT_CONTEXT,
+        )
+
+        self.assertEqual(result.rows, ())
+        self.assertEqual(result.api_total_rows, 0)
+        self.assertEqual(result.persisted_rows, 0)
+        self.assertFalse(result.sampled)
+        self.assertTrue(result.pagination_complete)
+        self.assertEqual(result.status, "success_empty")
+
+    def test_user_behavior_requires_exact_abbott_counter_before_logs_call(self):
+        import fetch_yandex_metrika_canonical as collector
+
+        fake = SimpleNamespace(collect_visits=lambda *_args: self.fail("unexpected call"))
+        with self.assertRaises(collector.MetrikaCollectionError):
+            collector.collect_metrika_scope(
+                "12345678",
+                "2026-01-02",
+                "user_behavior",
+                77,
+                41,
+                logs_client_factory=lambda _token: fake,
+                **FINGERPRINT_CONTEXT,
+            )
+
+    def test_user_behavior_evidence_requires_exact_api_row_reconciliation(self):
+        import fetch_yandex_metrika_canonical as collector
+
+        scopes = {
+            scope: scope_result(scope)
+            for scope in collector.ABBOTT_REQUIRED_SCOPES
+        }
+        scopes["user_behavior"] = scope_result(
+            "user_behavior",
+            ({"request_fingerprint": "row-1"}, {"request_fingerprint": "row-2"}),
+            api_total_rows=1,
+        )
+        with self.assertRaises(collector.MetrikaCollectionError):
+            collector.validate_day_bundle(
+                day_bundle(scopes), collector.ABBOTT_REQUIRED_SCOPES
+            )
+
     def test_frozen_bundle_contract_matches_atomic_writer_field_names(self):
         import fetch_yandex_metrika_canonical as collector
 
