@@ -7,6 +7,7 @@ from unittest import mock
 from abbott_health_probe import (
     ABBOTT_COUNTER_ID,
     REQUIRED_SCOPES,
+    build_session_integrity,
     build_scope_status,
     collect_snapshot,
     evaluate_snapshot,
@@ -34,6 +35,22 @@ class SnapshotCursor:
         return None
 
     def fetchall(self):
+        sql = self.calls[-1][0]
+        if "canonical_fact_metrika_site_analytics_daily" in sql:
+            return [
+                {
+                    "report_date": date(2026, 7, day),
+                    "traffic_source": "Direct traffic",
+                    "user_id_presence": marker,
+                    "sessions": sessions,
+                }
+                for day in range(6, 16)
+                for marker, sessions in (
+                    ("all", "10"),
+                    ("with_user_id", "4"),
+                    ("without_user_id", "6"),
+                )
+            ]
         return [
             {"scope_key": scope, "report_date": date(2026, 7, day),
              "collection_status": "success", "persisted_rows": 1,
@@ -71,6 +88,15 @@ def healthy_snapshot():
             for scope in REQUIRED_SCOPES
         ],
         "backfill": {"lookback_days": 10, "complete_days": 10, "missing_days": []},
+        "session_integrity": {
+            "days_checked": 10,
+            "all_sessions": 100,
+            "with_user_id_sessions": 40,
+            "without_user_id_sessions": 60,
+            "mismatched_days": 0,
+            "mismatched_sources": 0,
+            "status": "ok",
+        },
         "skipped_counter": False,
         "incidents": [],
     }
@@ -82,15 +108,105 @@ class AbbottProbeTests(unittest.TestCase):
         snapshot = collect_snapshot(cur, date(2026, 7, 16), ABBOTT_COUNTER_ID)
 
         coverage_call = next(call for call in cur.calls if "canonical_source_coverage_daily" in call[0])
+        sessions_call = next(call for call in cur.calls if "canonical_fact_metrika_site_analytics_daily" in call[0])
         run_call = next(call for call in cur.calls if "canonical_collector_runs" in call[0])
         event_call = next(call for call in cur.calls if "canonical_collector_run_events" in call[0] and "SELECT event_payload" in call[0])
         self.assertEqual(run_call[1], (41, ABBOTT_COUNTER_ID))
         self.assertEqual(event_call[1], (77, ABBOTT_COUNTER_ID))
         self.assertEqual(coverage_call[1][0:2], (41, ABBOTT_COUNTER_ID))
+        self.assertEqual(
+            sessions_call[1],
+            (41, ABBOTT_COUNTER_ID, ABBOTT_COUNTER_ID, date(2026, 7, 6), date(2026, 7, 15)),
+        )
+        self.assertIn("analytics_scope = 'other'", sessions_call[0])
+        self.assertIn("$.user_id_presence", sessions_call[0])
+        self.assertIn("SUM(sessions)", sessions_call[0])
+        self.assertIn("GROUP BY report_date, traffic_source, user_id_presence", sessions_call[0])
+        self.assertNotIn("report_bd_private", "\n".join(sql for sql, _ in cur.calls))
         self.assertNotIn("canonical_fact_ads_daily", "\n".join(sql for sql, _ in cur.calls))
         self.assertFalse(snapshot["skipped_counter"])
         self.assertEqual(snapshot["overall"], "OK")
         self.assertEqual(snapshot["backfill"]["complete_days"], 10)
+        self.assertEqual(snapshot["session_integrity"], {
+            "days_checked": 10,
+            "all_sessions": 100,
+            "with_user_id_sessions": 40,
+            "without_user_id_sessions": 60,
+            "mismatched_days": 0,
+            "mismatched_sources": 0,
+            "status": "ok",
+        })
+
+    def test_session_integrity_counts_missing_markers_and_unequal_partitions(self):
+        rows = [
+            {"report_date": date(2026, 7, 14), "traffic_source": "Direct", "user_id_presence": "all", "sessions": "10"},
+            {"report_date": date(2026, 7, 14), "traffic_source": "Direct", "user_id_presence": "with_user_id", "sessions": "4"},
+            {"report_date": date(2026, 7, 14), "traffic_source": "Direct", "user_id_presence": "without_user_id", "sessions": "5"},
+            {"report_date": date(2026, 7, 14), "traffic_source": "Organic", "user_id_presence": "all", "sessions": "3"},
+            {"report_date": date(2026, 7, 14), "traffic_source": "Organic", "user_id_presence": "with_user_id", "sessions": "3"},
+            {"report_date": date(2026, 7, 15), "traffic_source": "Direct", "user_id_presence": "all", "sessions": "8"},
+            {"report_date": date(2026, 7, 15), "traffic_source": "Direct", "user_id_presence": "with_user_id", "sessions": "2"},
+            {"report_date": date(2026, 7, 15), "traffic_source": "Direct", "user_id_presence": "without_user_id", "sessions": "6"},
+        ]
+
+        self.assertEqual(build_session_integrity(rows, days_checked=2), {
+            "days_checked": 2,
+            "all_sessions": 21,
+            "with_user_id_sessions": 9,
+            "without_user_id_sessions": 11,
+            "mismatched_days": 1,
+            "mismatched_sources": 2,
+            "status": "mismatch",
+        })
+
+    def test_session_partition_mismatch_creates_one_sanitized_critical_incident(self):
+        snapshot = healthy_snapshot()
+        snapshot["session_integrity"] = {
+            "days_checked": 10,
+            "all_sessions": 101,
+            "with_user_id_sessions": 40,
+            "without_user_id_sessions": 60,
+            "mismatched_days": 1,
+            "mismatched_sources": 2,
+            "status": "mismatch",
+        }
+
+        incidents = evaluate_snapshot(snapshot)
+
+        session_incidents = [item for item in incidents if item["check_id"] == "session_partition_integrity"]
+        self.assertEqual(session_incidents, [{
+            "incident_key": "abbott|90602537|sessions|partition_mismatch",
+            "severity": "CRITICAL",
+            "check_id": "session_partition_integrity",
+            "observed": {
+                "all_sessions": 101,
+                "with_user_id_sessions": 40,
+                "without_user_id_sessions": 60,
+                "mismatched_days": 1,
+                "mismatched_sources": 2,
+            },
+            "expected": {
+                "mismatched_days": 0,
+                "mismatched_sources": 0,
+                "all_sessions_equals_partitions": True,
+            },
+        }])
+        sanitize_snapshot(dict(snapshot, incidents=incidents, overall="CRITICAL"))
+
+    def test_session_integrity_sanitizer_is_exact_and_non_negative(self):
+        sanitize_snapshot(healthy_snapshot())
+
+        for field, value in (("status", "unknown"), ("all_sessions", -1)):
+            with self.subTest(field=field):
+                snapshot = healthy_snapshot()
+                snapshot["session_integrity"][field] = value
+                with self.assertRaises(ValueError):
+                    sanitize_snapshot(snapshot)
+
+        snapshot = healthy_snapshot()
+        snapshot["session_integrity"]["traffic_source"] = "private source"
+        with self.assertRaises(ValueError):
+            sanitize_snapshot(snapshot)
 
     def test_five_scope_ten_day_coverage_detects_one_gap(self):
         rows = [
@@ -206,7 +322,10 @@ class AbbottProbeTests(unittest.TestCase):
 
     def test_sanitized_payload_contains_no_forbidden_markers(self):
         rendered = json.dumps(sanitize_snapshot(healthy_snapshot())).lower()
-        for marker in ("user_id", "start_url", "end_url", "page_url", "token", "password", "dsn", "?"):
+        for marker in (
+            '"user_id":', '"start_url":', '"end_url":', '"page_url":',
+            '"token":', '"password":', '"dsn":', "?",
+        ):
             self.assertNotIn(marker, rendered)
 
     def test_sanitizer_rejects_path_or_token_like_allowed_values(self):

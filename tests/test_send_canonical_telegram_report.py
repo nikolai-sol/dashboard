@@ -19,6 +19,15 @@ ABBOTT_OK = {
         for scope in ("other", "traffic", "page", "user_behavior", "returning")
     ],
     "backfill": {"lookback_days": 10, "complete_days": 10, "missing_days": []},
+    "session_integrity": {
+        "days_checked": 10,
+        "all_sessions": 100,
+        "with_user_id_sessions": 40,
+        "without_user_id_sessions": 60,
+        "mismatched_days": 0,
+        "mismatched_sources": 0,
+        "status": "ok",
+    },
     "incidents": [],
 }
 
@@ -79,6 +88,27 @@ class TelegramReportTests(unittest.TestCase):
         text = "\n".join(report.build_abbott_lines(ABBOTT_OK))
         self.assertIn("run: SUCCESS", text)
         self.assertIn("2026-07-16T06:30:00Z", text)
+
+    def test_abbott_lines_put_sanitized_session_integrity_immediately_after_header(self):
+        lines = report.build_abbott_lines(ABBOTT_OK)
+        self.assertEqual(
+            lines[1],
+            "- session integrity: OK (all=100, with_id=40, without_id=60, mismatched_days=0, mismatched_sources=0)",
+        )
+
+        mismatch = dict(ABBOTT_OK, session_integrity={
+            "days_checked": 10,
+            "all_sessions": 101,
+            "with_user_id_sessions": 40,
+            "without_user_id_sessions": 60,
+            "mismatched_days": 1,
+            "mismatched_sources": 2,
+            "status": "mismatch",
+        })
+        self.assertEqual(
+            report.build_abbott_lines(mismatch)[1],
+            "- session integrity: CRITICAL (all=101, with_id=40, without_id=60, mismatched_days=1, mismatched_sources=2)",
+        )
 
     @mock.patch("send_canonical_telegram_report.urllib.request.urlopen")
     def test_transport_errors_do_not_expose_token_or_remote_text(self, urlopen):

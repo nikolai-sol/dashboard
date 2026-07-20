@@ -8,6 +8,7 @@ import json
 import os
 from collections import Counter
 from datetime import date, datetime, timedelta, timezone
+from decimal import Decimal
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 
@@ -69,6 +70,23 @@ WHERE canonical_release_id = %s
 ORDER BY report_date, scope_key
 """
 
+SESSION_INTEGRITY_SQL = """
+SELECT
+  report_date,
+  JSON_UNQUOTE(JSON_EXTRACT(scope_dimensions, '$.traffic_source')) AS traffic_source,
+  JSON_UNQUOTE(JSON_EXTRACT(scope_dimensions, '$.user_id_presence')) AS user_id_presence,
+  SUM(sessions) AS sessions
+FROM canonical_fact_metrika_site_analytics_daily
+WHERE canonical_release_id = %s
+  AND source_key = 'yandex_metrika'
+  AND analytics_account_id = %s
+  AND counter_id = %s
+  AND analytics_scope = 'other'
+  AND report_date BETWEEN %s AND %s
+GROUP BY report_date, traffic_source, user_id_presence
+ORDER BY report_date, traffic_source, user_id_presence
+"""
+
 RELEASE_STATUSES = {"staging", "validated", "active", "retired", "failed"}
 RUN_STATUSES = {"running", "success", "partial", "failed"}
 RUN_TYPES = {"manual", "cron", "backfill", "reconcile", "preview"}
@@ -80,6 +98,7 @@ CHECK_IDS = {
     "scope_date_coverage",
     "scope_collection_status",
     "scope_rows",
+    "session_partition_integrity",
     "hermes_input_adapter",
 }
 FIXED_INCIDENT_IDENTITIES = {
@@ -87,6 +106,7 @@ FIXED_INCIDENT_IDENTITIES = {
     "latest_release_run": ("collector", "run_not_success"),
     "latest_release_run_freshness": ("collector", "stale"),
     "exact_counter_skipped": ("counter", "skipped"),
+    "session_partition_integrity": ("sessions", "partition_mismatch"),
     "hermes_input_adapter": ("adapter", "failure"),
 }
 SCOPE_INCIDENT_CONDITIONS = {
@@ -214,6 +234,59 @@ def build_scope_status(rows: list[dict], expected_date: date, lookback_days: int
     return result
 
 
+def _session_count(value: object) -> int:
+    if isinstance(value, bool):
+        raise ValueError("Abbott session integrity data is invalid")
+    if isinstance(value, int):
+        if value >= 0:
+            return value
+        raise ValueError("Abbott session integrity data is invalid")
+    if isinstance(value, Decimal):
+        if value >= 0 and value == value.to_integral_value():
+            return int(value)
+        raise ValueError("Abbott session integrity data is invalid")
+    if isinstance(value, str) and value.isascii() and value.isdigit():
+        return int(value)
+    raise ValueError("Abbott session integrity data is invalid")
+
+
+def build_session_integrity(rows: list[dict], *, days_checked: int) -> dict:
+    if isinstance(days_checked, bool) or not isinstance(days_checked, int) or days_checked < 0:
+        raise ValueError("Abbott session integrity data is invalid")
+    required_markers = {"all", "with_user_id", "without_user_id"}
+    grouped: dict[tuple[date, str | None], dict[str, int]] = {}
+    totals = {marker: 0 for marker in required_markers}
+    for row in rows:
+        report_date = _as_date(row.get("report_date"))
+        traffic_source = row.get("traffic_source")
+        marker = row.get("user_id_presence")
+        if report_date is None or not (traffic_source is None or isinstance(traffic_source, str)):
+            raise ValueError("Abbott session integrity data is invalid")
+        sessions = _session_count(row.get("sessions"))
+        group = grouped.setdefault((report_date, traffic_source), {})
+        marker_key = marker if isinstance(marker, str) else ""
+        group[marker_key] = group.get(marker_key, 0) + sessions
+        if marker in totals:
+            totals[marker] += sessions
+
+    mismatched = {
+        key
+        for key, markers in grouped.items()
+        if set(markers) != required_markers
+        or markers["all"] != markers["with_user_id"] + markers["without_user_id"]
+    }
+    mismatched_days = {report_date for report_date, _source in mismatched}
+    return {
+        "days_checked": days_checked,
+        "all_sessions": totals["all"],
+        "with_user_id_sessions": totals["with_user_id"],
+        "without_user_id_sessions": totals["without_user_id"],
+        "mismatched_days": len(mismatched_days),
+        "mismatched_sources": len(mismatched),
+        "status": "mismatch" if mismatched else "ok",
+    }
+
+
 def _incident(scope: str, condition: str, check_id: str, observed: dict, expected: dict) -> dict:
     return {
         "incident_key": f"abbott|{ABBOTT_COUNTER_ID}|{scope}|{condition}",
@@ -254,6 +327,24 @@ def evaluate_snapshot(snapshot: dict) -> list[dict]:
         incidents.append(_incident(
             "counter", "skipped", "exact_counter_skipped",
             {"skipped": True}, {"skipped": False},
+        ))
+
+    session_integrity = snapshot.get("session_integrity") or {}
+    if session_integrity.get("status") == "mismatch":
+        incidents.append(_incident(
+            "sessions", "partition_mismatch", "session_partition_integrity",
+            {
+                "all_sessions": session_integrity.get("all_sessions"),
+                "with_user_id_sessions": session_integrity.get("with_user_id_sessions"),
+                "without_user_id_sessions": session_integrity.get("without_user_id_sessions"),
+                "mismatched_days": session_integrity.get("mismatched_days"),
+                "mismatched_sources": session_integrity.get("mismatched_sources"),
+            },
+            {
+                "mismatched_days": 0,
+                "mismatched_sources": 0,
+                "all_sessions_equals_partitions": True,
+            },
         ))
 
     for scope in snapshot.get("scopes") or []:
@@ -399,6 +490,28 @@ def _validate_incident(incident: object, index: int) -> None:
         _nonnegative_int(observed["rows"], f"{location}.observed.rows")
         if expected["minimum_rows"] != 1:
             raise ValueError(f"{location}.expected is invalid")
+    elif check_id == "session_partition_integrity":
+        observed = _exact_object(
+            observed,
+            {
+                "all_sessions", "with_user_id_sessions", "without_user_id_sessions",
+                "mismatched_days", "mismatched_sources",
+            },
+            f"{location}.observed",
+        )
+        expected = _exact_object(
+            expected,
+            {"mismatched_days", "mismatched_sources", "all_sessions_equals_partitions"},
+            f"{location}.expected",
+        )
+        for field, value in observed.items():
+            _nonnegative_int(value, f"{location}.observed.{field}")
+        if expected != {
+            "mismatched_days": 0,
+            "mismatched_sources": 0,
+            "all_sessions_equals_partitions": True,
+        }:
+            raise ValueError(f"{location}.expected is invalid")
     else:
         observed = _exact_object(observed, {"status"}, f"{location}.observed")
         expected = _exact_object(expected, {"status"}, f"{location}.expected")
@@ -409,7 +522,7 @@ def _validate_incident(incident: object, index: int) -> None:
 def sanitize_snapshot(snapshot: dict) -> dict:
     root = _exact_object(snapshot, {
         "generated_at_utc", "dashboard", "counter_id", "overall", "release",
-        "latest_run", "scopes", "backfill", "skipped_counter", "incidents",
+        "latest_run", "scopes", "backfill", "session_integrity", "skipped_counter", "incidents",
     }, "payload")
     _aware_datetime(root["generated_at_utc"], "payload.generated_at_utc")
     if root["dashboard"] != "abbott" or root["counter_id"] != ABBOTT_COUNTER_ID:
@@ -462,6 +575,24 @@ def sanitize_snapshot(snapshot: dict) -> dict:
     if lookback <= 0 or complete > lookback or complete + len(missing_days) != lookback:
         raise ValueError("payload.backfill counts are inconsistent")
 
+    session_integrity = _exact_object(root["session_integrity"], {
+        "days_checked", "all_sessions", "with_user_id_sessions",
+        "without_user_id_sessions", "mismatched_days", "mismatched_sources", "status",
+    }, "payload.session_integrity")
+    for field in (
+        "days_checked", "all_sessions", "with_user_id_sessions",
+        "without_user_id_sessions", "mismatched_days", "mismatched_sources",
+    ):
+        _nonnegative_int(session_integrity[field], f"payload.session_integrity.{field}")
+    if session_integrity["status"] not in {"ok", "mismatch"}:
+        raise ValueError("payload.session_integrity.status is invalid")
+    has_mismatch = (
+        session_integrity["mismatched_days"] > 0
+        or session_integrity["mismatched_sources"] > 0
+    )
+    if (session_integrity["status"] == "mismatch") != has_mismatch:
+        raise ValueError("payload.session_integrity status is inconsistent")
+
     if not isinstance(root["incidents"], list):
         raise ValueError("payload.incidents must be a list")
     for index, incident in enumerate(root["incidents"]):
@@ -509,6 +640,14 @@ def collect_snapshot(
         _fetch_all(cur, COVERAGE_SQL, (release_id, counter_id, first_date, expected_date))
         if release_id is not None else []
     )
+    session_rows = (
+        _fetch_all(
+            cur,
+            SESSION_INTEGRITY_SQL,
+            (release_id, counter_id, counter_id, first_date, expected_date),
+        )
+        if release_id is not None else []
+    )
     scopes = build_scope_status(coverage_rows, expected_date, lookback_days)
     complete_dates = set.intersection(*(
         {(_as_date(row.get("report_date"))) for row in coverage_rows if row.get("scope_key") == scope and _coverage_status(row) in GOOD_COVERAGE_STATUSES}
@@ -544,6 +683,10 @@ def collect_snapshot(
             "complete_days": len(expected_dates & complete_dates),
             "missing_days": missing_days,
         },
+        "session_integrity": build_session_integrity(
+            session_rows,
+            days_checked=lookback_days,
+        ),
         "skipped_counter": _counter_is_skipped(event_payload, counter_id) or any(
             row.get("collection_status") == "skipped" for row in coverage_rows
         ),
