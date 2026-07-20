@@ -22,6 +22,15 @@ VALID = {
                 "unexpected_empty": False}
                for scope in ("other", "traffic", "page", "user_behavior", "returning")],
     "backfill": {"lookback_days": 10, "complete_days": 10, "missing_days": []},
+    "session_integrity": {
+        "days_checked": 10,
+        "all_sessions": 100,
+        "with_user_id_sessions": 40,
+        "without_user_id_sessions": 60,
+        "mismatched_days": 0,
+        "mismatched_sources": 0,
+        "status": "ok",
+    },
     "skipped_counter": False,
     "incidents": [],
 }

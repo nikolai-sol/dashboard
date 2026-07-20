@@ -99,6 +99,15 @@ def _failure_payload(host: str, return_code: int | None = None) -> dict:
                 "1969-12-28", "1969-12-29", "1969-12-30", "1969-12-31", "1970-01-01",
             ],
         },
+        "session_integrity": {
+            "days_checked": 0,
+            "all_sessions": 0,
+            "with_user_id_sessions": 0,
+            "without_user_id_sessions": 0,
+            "mismatched_days": 0,
+            "mismatched_sources": 0,
+            "status": "ok",
+        },
         "skipped_counter": False,
         "incidents": [{
             "incident_key": f"abbott|{ABBOTT_COUNTER_ID}|adapter|failure",
