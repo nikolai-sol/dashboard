@@ -5,28 +5,36 @@ from __future__ import annotations
 
 import argparse
 import hashlib
+import html
 import logging
 import os
 import sys
 import time
 import uuid
+from collections.abc import Callable, Collection, Mapping
+from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
+from decimal import Decimal, InvalidOperation
 from pathlib import Path
 from typing import Any
+from urllib.parse import urlsplit
 
 import mysql.connector
 import requests
 from dotenv import dotenv_values, load_dotenv
 
+from abbott_canonical_controls import api_fingerprint
 from canonical_writer import (
     finish_collector_run,
     log_run_event,
+    publish_metrika_day_bundle,
     start_collector_run,
     upsert_fact_site_analytics_daily,
     upsert_fact_user_behavior_daily,
     upsert_source_accounts,
 )
-from metrika_pagination import collect_all_rows
+from metrika_logs_api import MetrikaLogsClient, MetrikaLogsError, VISIT_FIELDS
+from metrika_pagination import PaginationResult, collect_all_pages, collect_all_rows
 
 load_dotenv(Path(__file__).parent / '.env')
 
@@ -51,6 +59,15 @@ def env_first(*keys: str, default: str = '') -> str:
 
 
 SOURCE_KEY = 'yandex_metrika'
+ABBOTT_COUNTER_ID = '90602537'
+ABBOTT_REQUIRED_SCOPES = ('other', 'traffic', 'page', 'user_behavior', 'returning')
+ABBOTT_USER_ID_CONDITION = "ym:s:paramsLevel1=='UserID' AND ym:s:paramsLevel2!=''"
+ABBOTT_OTHER_SEGMENTS = (
+    ('all', ''),
+    ('with_user_id', f'EXISTS({ABBOTT_USER_ID_CONDITION})'),
+    ('without_user_id', f'NONE({ABBOTT_USER_ID_CONDITION})'),
+)
+RETURN_BUCKETS = ('next_day', 'days_2_7', 'days_8_31')
 UTM_ADS_SCOPE_LOGICAL = 'utm_ads'
 GOALS_SCOPE_LOGICAL = 'goals'
 UTM_ADS_SCOPE_STORAGE = 'traffic'
@@ -68,6 +85,8 @@ SUPPORTED_COLLECTION_MODES = {
 MAX_RETRIES = 5
 TIMEOUT = 90
 REQUEST_DELAY_SECONDS = float(env_first('METRIKA_REQUEST_DELAY_SECONDS', default='0.35') or 0)
+METRIKA_PAGE_LIMIT = 10_000
+METRIKA_TIMEZONE = 'Europe/Moscow'
 
 MYSQL_HOST = env_first('MYSQL_HOST', default='localhost')
 MYSQL_PORT = int(env_first('MYSQL_PORT', default='3306'))
@@ -101,7 +120,7 @@ METRIKA_GOALS_DIMS = ','.join([
     'ym:s:goal',
 ])
 METRIKA_GOALS_METRICS = 'ym:s:sumGoalReachesAny'
-METRIKA_TRAFFIC_SOURCES_DIMS = 'ym:s:lastTrafficSource'
+METRIKA_TRAFFIC_SOURCES_DIMS = 'ym:s:lastsignTrafficSource'
 METRIKA_TRAFFIC_SOURCES_METRICS = ','.join([
     'ym:s:visits',
     'ym:s:users',
@@ -133,7 +152,44 @@ METRIKA_USER_BEHAVIOR_METRICS = ','.join([
     'ym:s:upToWeekUserRecencyPercentage',
     'ym:s:upToMonthUserRecencyPercentage',
 ])
+METRIKA_RELEASE_USER_BEHAVIOR_METRICS = ','.join([
+    METRIKA_USER_BEHAVIOR_METRICS,
+    'ym:s:pageviews',
+])
 USER_BEHAVIOR_SCOPE_LOGICAL = 'user_behavior'
+METRIKA_RETURNING_DIMENSION = 'ym:s:endURL'
+METRIKA_RETURNING_METRICS = ','.join([
+    'ym:s:visits',
+    'ym:s:upToDayUserRecencyPercentage',
+    'ym:s:upToWeekUserRecencyPercentage',
+    'ym:s:upToMonthUserRecencyPercentage',
+])
+
+
+class MetrikaCollectionError(RuntimeError):
+    """Sanitized failure raised before an Abbott day can be published."""
+
+
+@dataclass(frozen=True)
+class MetrikaScopeResult:
+    scope: str
+    rows: tuple[dict, ...]
+    api_total_rows: int | None
+    persisted_rows: int
+    sampled: bool
+    sample_share: float | None
+    pagination_complete: bool
+    status: str
+    request_fingerprint: str
+
+
+@dataclass(frozen=True)
+class MetrikaDayBundle:
+    canonical_release_id: int
+    counter_id: str
+    report_date: str
+    run_id: int
+    scopes: Mapping[str, MetrikaScopeResult]
 
 LOG_LEVEL = env_first('LOG_LEVEL', default='INFO').upper()
 logging.basicConfig(
@@ -152,6 +208,9 @@ def parse_args():
     parser.add_argument('--run-type', default='manual', choices=['manual', 'cron', 'backfill'])
     parser.add_argument('--counter-id', default='')
     parser.add_argument('--counter-ids', default='')
+    parser.add_argument('--canonical-release-id', type=int)
+    parser.add_argument('--code-revision', default='')
+    parser.add_argument('--parser-version', default='')
     return parser.parse_args()
 
 
@@ -351,7 +410,7 @@ def request_with_retry(
         'dimensions': dimensions.replace('<attribution>', render_attribution(attribution)),
         'metrics': metrics,
         'attribution': attribution,
-        'limit': '10000',
+        'limit': str(METRIKA_PAGE_LIMIT),
         'date1': day,
         'date2': day,
     }
@@ -377,7 +436,7 @@ def request_with_retry(
     raise RuntimeError(f'Metrika retry loop exhausted for counter {counter_id} day {day}')
 
 
-def request_all_rows(
+def _request_page_fetcher(
     counter_id: str,
     day: str,
     *,
@@ -385,10 +444,10 @@ def request_all_rows(
     metrics: str,
     attribution: str,
     extra_params: dict[str, Any] | None = None,
-) -> dict:
+) -> Callable[[int], dict]:
     def fetch_page(offset: int) -> dict:
         page_params = dict(extra_params or {})
-        page_params.update({'limit': '10000', 'offset': str(offset)})
+        page_params.update({'limit': str(METRIKA_PAGE_LIMIT), 'offset': str(offset)})
         return request_with_retry(
             counter_id,
             day,
@@ -398,7 +457,49 @@ def request_all_rows(
             extra_params=page_params,
         )
 
-    rows = collect_all_rows(fetch_page)
+    return fetch_page
+
+
+def request_all_pages(
+    counter_id: str,
+    day: str,
+    *,
+    dimensions: str,
+    metrics: str,
+    attribution: str,
+    extra_params: dict[str, Any] | None = None,
+) -> PaginationResult:
+    return collect_all_pages(
+        _request_page_fetcher(
+            counter_id,
+            day,
+            dimensions=dimensions,
+            metrics=metrics,
+            attribution=attribution,
+            extra_params=extra_params,
+        )
+    )
+
+
+def request_all_rows(
+    counter_id: str,
+    day: str,
+    *,
+    dimensions: str,
+    metrics: str,
+    attribution: str,
+    extra_params: dict[str, Any] | None = None,
+) -> dict:
+    rows = collect_all_rows(
+        _request_page_fetcher(
+            counter_id,
+            day,
+            dimensions=dimensions,
+            metrics=metrics,
+            attribution=attribution,
+            extra_params=extra_params,
+        )
+    )
     return {'data': rows}
 
 
@@ -628,6 +729,841 @@ def build_user_behavior_rows(counter_id: str, day: str, response: dict, run_id: 
             }
         )
     return rows
+
+
+def _sha256(value: str) -> str:
+    return hashlib.sha256(value.encode('utf-8')).hexdigest()
+
+
+def _raw_dimension_value(value: Any) -> str:
+    return '' if value is None else str(value)
+
+
+def normalize_metrika_page(raw_url: str) -> str:
+    value = html.unescape(clean_text(raw_url))
+    if not value:
+        return ''
+    try:
+        parsed = urlsplit(value)
+        if parsed.scheme and parsed.netloc:
+            path = parsed.path.rstrip('/') or '/'
+            return f'{parsed.scheme.lower()}://{parsed.netloc.lower()}{path}'
+    except ValueError:
+        pass
+    without_fragment = value.split('#', 1)[0]
+    without_query = without_fragment.split('?', 1)[0]
+    return without_query.rstrip('/') or value
+
+
+def _required_returning_metrics(metrics: Any) -> tuple[int, Decimal, Decimal, Decimal]:
+    if not isinstance(metrics, (list, tuple)):
+        raise MetrikaCollectionError('Returning metrics are invalid')
+    if len(metrics) < 4:
+        raise MetrikaCollectionError('Returning metrics are incomplete')
+    values: list[Decimal] = []
+    for raw_value in metrics[:4]:
+        if raw_value is None or isinstance(raw_value, bool):
+            raise MetrikaCollectionError('Returning metric is invalid')
+        try:
+            value = Decimal(str(raw_value))
+        except (InvalidOperation, ValueError):
+            raise MetrikaCollectionError('Returning metric is invalid') from None
+        if not value.is_finite() or value < 0:
+            raise MetrikaCollectionError('Returning metric is invalid')
+        values.append(value)
+    visits = values[0]
+    if visits != visits.to_integral_value():
+        raise MetrikaCollectionError('Returning visits metric is invalid')
+    return int(visits), values[1], values[2], values[3]
+
+
+def _release_site_rows(
+    counter_id: str,
+    day: str,
+    scope: str,
+    response: PaginationResult,
+    run_id: int,
+    release_id: int,
+    *,
+    user_id_presence: str | None = None,
+) -> list[dict]:
+    rows: list[dict] = []
+    for item in response.rows:
+        dimensions = item.get('dimensions') or []
+        metrics = item.get('metrics') or []
+        if scope == 'other':
+            if user_id_presence not in dict(ABBOTT_OTHER_SEGMENTS):
+                raise MetrikaCollectionError('Other scope User ID presence is invalid')
+            traffic = dimensions[0] if dimensions and isinstance(dimensions[0], dict) else {}
+            traffic_source = clean_dimension_name(traffic.get('name'))
+            if not traffic_source:
+                continue
+            scope_dimensions = {
+                'traffic_source': traffic_source,
+                'traffic_source_id': clean_dimension_name(traffic.get('id')),
+                'user_id_presence': user_id_presence,
+            }
+            values = {
+                'sessions': safe_int(metric_value(metrics, 0)),
+                'users': safe_int(metric_value(metrics, 1)),
+                'pageviews': safe_int(metric_value(metrics, 3)),
+                'bounce_rate': safe_float(metric_value(metrics, 4)),
+                'average_session_seconds': safe_float(metric_value(metrics, 5)),
+                'goal_conversions': None,
+            }
+        elif scope == 'traffic':
+            dimension_values = [
+                clean_dimension_name(value.get('name')) if isinstance(value, dict) else None
+                for value in dimensions[:3]
+            ]
+            while len(dimension_values) < 3:
+                dimension_values.append(None)
+            if not has_any_utm_value(*dimension_values):
+                continue
+            scope_dimensions = dict(
+                zip(('utm_source', 'utm_medium', 'utm_campaign'), dimension_values)
+            )
+            values = {
+                'sessions': safe_int(metric_value(metrics, 0)),
+                'users': safe_int(metric_value(metrics, 1)),
+                'pageviews': safe_int(metric_value(metrics, 3)),
+                'bounce_rate': safe_float(metric_value(metrics, 4)),
+                'average_session_seconds': safe_float(metric_value(metrics, 5)),
+                'goal_conversions': None,
+            }
+        elif scope == 'page':
+            raw_url = clean_dimension_name(
+                dimensions[0].get('name')
+                if len(dimensions) > 0 and isinstance(dimensions[0], dict)
+                else None
+            )
+            page_title = clean_dimension_name(
+                dimensions[1].get('name')
+                if len(dimensions) > 1 and isinstance(dimensions[1], dict)
+                else None
+            )
+            if not raw_url and not page_title:
+                continue
+            scope_dimensions = {'page_url': raw_url, 'page_title': page_title}
+            values = {
+                'sessions': 0,
+                'users': safe_int(metric_value(metrics, 1)),
+                'pageviews': safe_int(metric_value(metrics, 0)),
+                'bounce_rate': None,
+                'average_session_seconds': None,
+                'goal_conversions': None,
+            }
+        else:
+            raise MetrikaCollectionError('Unsupported Metrika site scope')
+
+        scope_hash = build_scope_hash(
+            scope,
+            [counter_id, day] + [clean_text(value) for value in scope_dimensions.values()],
+        )
+        rows.append(
+            {
+                'canonical_release_id': release_id,
+                'source_key': SOURCE_KEY,
+                'analytics_account_id': counter_id,
+                'counter_id': counter_id,
+                'report_date': day,
+                'analytics_scope': scope,
+                'scope_hash': scope_hash,
+                'scope_dimensions': scope_dimensions,
+                **values,
+                'raw_payload': item,
+                'ingestion_run_id': run_id,
+            }
+        )
+    return rows
+
+
+def _release_user_behavior_rows(
+    counter_id: str,
+    day: str,
+    response: PaginationResult,
+    run_id: int,
+    release_id: int,
+) -> list[dict]:
+    rows: list[dict] = []
+    for item in response.rows:
+        dimensions = item.get('dimensions') or []
+        metrics = item.get('metrics') or []
+        raw_user_id = _raw_dimension_value(
+            dimensions[0].get('name')
+            if len(dimensions) > 0 and isinstance(dimensions[0], dict)
+            else None
+        )
+        if not raw_user_id:
+            continue
+        end_url = _raw_dimension_value(
+            dimensions[1].get('name')
+            if len(dimensions) > 1 and isinstance(dimensions[1], dict)
+            else None
+        )
+        start_url = _raw_dimension_value(
+            dimensions[3].get('name')
+            if len(dimensions) > 3 and isinstance(dimensions[3], dict)
+            else None
+        )
+        traffic = dimensions[2] if len(dimensions) > 2 and isinstance(dimensions[2], dict) else {}
+        request_fingerprint = build_scope_hash(
+            'user_behavior',
+            [
+                counter_id,
+                day,
+                raw_user_id,
+                start_url,
+                end_url,
+                clean_text(traffic.get('id') or traffic.get('icon_id')),
+            ],
+        )
+        rows.append(
+            {
+                'canonical_release_id': release_id,
+                'counter_id': counter_id,
+                'report_date': day,
+                'raw_user_id': raw_user_id,
+                'raw_user_id_hash': _sha256(raw_user_id),
+                'start_url': start_url,
+                'start_url_hash': _sha256(start_url),
+                'end_url': end_url,
+                'end_url_hash': _sha256(end_url),
+                'visit_id': None,
+                'session_started_at': None,
+                'session_ended_at': None,
+                'pageviews': safe_int(metric_value(metrics, 9)),
+                'request_fingerprint': request_fingerprint,
+                'ingestion_run_id': run_id,
+            }
+        )
+    return rows
+
+
+_METRIKA_VISIT_KEYS = frozenset(
+    (
+        'visit_id',
+        'date_time',
+        'start_url',
+        'end_url',
+        'page_views',
+        'visit_duration',
+        'bounce',
+        'client_id',
+        'traffic_source',
+        'raw_user_id',
+    )
+)
+
+
+def _collect_metrika_visits(
+    counter_id: str,
+    day: str,
+    client_factory: Callable[[str], Any] | None = None,
+) -> tuple[dict, ...]:
+    if counter_id != ABBOTT_COUNTER_ID:
+        raise MetrikaCollectionError('Abbott release collection requires the Abbott counter')
+    try:
+        parsed_day = datetime.strptime(day, '%Y-%m-%d')
+    except (TypeError, ValueError):
+        raise MetrikaCollectionError('Metrika Logs collection day is invalid') from None
+    if parsed_day.strftime('%Y-%m-%d') != day:
+        raise MetrikaCollectionError('Metrika Logs collection day is invalid')
+
+    try:
+        client = (client_factory or MetrikaLogsClient)(METRIKA_TOKEN)
+        visits = client.collect_visits(counter_id, day, 'lastsign')
+    except MetrikaLogsError:
+        raise MetrikaCollectionError(
+            'Metrika Logs user behavior collection failed'
+        ) from None
+    if not isinstance(visits, (list, tuple)):
+        raise MetrikaCollectionError('Metrika Logs visit collection is invalid')
+    return tuple(visits)
+
+
+def _release_metrika_visit_rows(
+    counter_id: str,
+    day: str,
+    visits: Collection[Mapping[str, Any]],
+    run_id: int,
+    release_id: int,
+    request_fingerprint: str,
+) -> list[dict]:
+    rows: list[dict] = []
+    for visit in visits:
+        if not isinstance(visit, Mapping) or not _METRIKA_VISIT_KEYS.issubset(visit):
+            raise MetrikaCollectionError('Metrika Logs visit row is incomplete')
+
+        visit_id = visit['visit_id']
+        date_time = visit['date_time']
+        start_url = visit['start_url']
+        end_url = visit['end_url']
+        page_views = visit['page_views']
+        visit_duration = visit['visit_duration']
+        bounce = visit['bounce']
+        client_id = visit['client_id']
+        traffic_source = visit['traffic_source']
+        raw_user_id = visit['raw_user_id']
+        if (
+            not isinstance(visit_id, str)
+            or not visit_id.strip()
+            or not isinstance(date_time, str)
+            or not isinstance(start_url, str)
+            or not isinstance(end_url, str)
+            or not isinstance(client_id, str)
+            or not isinstance(traffic_source, str)
+            or not traffic_source.strip()
+            or (raw_user_id is not None and not isinstance(raw_user_id, str))
+            or isinstance(page_views, bool)
+            or not isinstance(page_views, int)
+            or page_views < 0
+            or isinstance(visit_duration, bool)
+            or not isinstance(visit_duration, int)
+            or visit_duration < 0
+            or isinstance(bounce, bool)
+            or not isinstance(bounce, int)
+            or bounce not in (0, 1)
+        ):
+            raise MetrikaCollectionError('Metrika Logs visit row is invalid')
+        try:
+            session_started_at = datetime.strptime(date_time, '%Y-%m-%d %H:%M:%S')
+        except ValueError:
+            raise MetrikaCollectionError('Metrika Logs visit row is invalid') from None
+        if session_started_at.strftime('%Y-%m-%d') != day:
+            raise MetrikaCollectionError('Metrika Logs visit row is invalid')
+
+        visit_id_hash = _sha256(visit_id)
+        rows.append(
+            {
+                'canonical_release_id': release_id,
+                'counter_id': counter_id,
+                'report_date': day,
+                'visit_id': visit_id,
+                'visit_id_hash': visit_id_hash,
+                'client_id_hash': _sha256(client_id) if client_id.strip() else None,
+                'raw_user_id': raw_user_id,
+                'raw_user_id_hash': (
+                    _sha256(raw_user_id) if raw_user_id is not None else None
+                ),
+                'traffic_source': traffic_source,
+                'start_url': start_url,
+                'start_url_hash': _sha256(start_url),
+                'end_url': end_url,
+                'end_url_hash': _sha256(end_url),
+                'session_started_at': session_started_at,
+                'session_ended_at': session_started_at + timedelta(seconds=visit_duration),
+                'pageviews': page_views,
+                'duration_seconds': visit_duration,
+                'is_bounce': bounce,
+                'request_fingerprint': build_scope_hash(
+                    'user_behavior', [request_fingerprint, visit_id_hash]
+                ),
+                'ingestion_run_id': run_id,
+            }
+        )
+    return rows
+
+
+def collect_user_behavior_scope(
+    counter_id: str,
+    day: str,
+    run_id: int,
+    release_id: int,
+    *,
+    code_revision: str,
+    parser_version: str,
+    logs_client_factory: Callable[[str], Any] | None = None,
+) -> MetrikaScopeResult:
+    request_fingerprint = build_scope_hash(
+        'user_behavior',
+        [
+            counter_id,
+            day,
+            'source=visits',
+            ','.join(VISIT_FIELDS),
+            'lastsign',
+            METRIKA_TIMEZONE,
+            code_revision,
+            parser_version,
+        ],
+    )
+    visits = _collect_metrika_visits(counter_id, day, logs_client_factory)
+    rows = _release_metrika_visit_rows(
+        counter_id,
+        day,
+        visits,
+        run_id,
+        release_id,
+        request_fingerprint,
+    )
+    row_count = len(rows)
+    return MetrikaScopeResult(
+        scope='user_behavior',
+        rows=tuple(rows),
+        api_total_rows=row_count,
+        persisted_rows=row_count,
+        sampled=False,
+        sample_share=None,
+        pagination_complete=True,
+        status='success' if rows else 'success_empty',
+        request_fingerprint=request_fingerprint,
+    )
+
+
+def build_returning_rows(
+    counter_id: str,
+    day: str,
+    response: PaginationResult,
+    run_id: int,
+    release_id: int,
+) -> list[dict]:
+    labels = ('Next day', 'Days 2-7', 'Days 8-31')
+    rows: list[dict] = []
+    for item in response.rows:
+        dimensions = item.get('dimensions') or []
+        metrics = item.get('metrics') or []
+        if not isinstance(dimensions, (list, tuple)) or not dimensions:
+            raise MetrikaCollectionError('Returning page dimension is missing')
+        page_dimension = dimensions[0]
+        if not isinstance(page_dimension, dict):
+            raise MetrikaCollectionError('Returning page dimension is invalid')
+        raw_value = page_dimension.get('name')
+        if not isinstance(raw_value, str) or not raw_value.strip():
+            raise MetrikaCollectionError('Returning page value is invalid')
+        raw_page = raw_value
+        normalized_page = normalize_metrika_page(raw_page)
+        if not normalized_page:
+            raise MetrikaCollectionError('Returning page value is not representable')
+        denominator, *percentages = _required_returning_metrics(metrics)
+        request_fingerprint = build_scope_hash(
+            'returning', [counter_id, day, raw_page]
+        )
+        for bucket, label, percentage in zip(RETURN_BUCKETS, labels, percentages):
+            rows.append(
+                {
+                    'canonical_release_id': release_id,
+                    'counter_id': counter_id,
+                    'report_date': day,
+                    'raw_page_value': raw_page,
+                    'raw_page_hash': _sha256(raw_page),
+                    'normalized_page': normalized_page,
+                    'normalized_page_hash': _sha256(normalized_page),
+                    'return_bucket_code': bucket,
+                    'return_bucket_label': label,
+                    'source_percentage': percentage,
+                    'source_denominator': denominator,
+                    'derived_count': None,
+                    'is_derived': 0,
+                    'request_fingerprint': request_fingerprint,
+                    'ingestion_run_id': run_id,
+                }
+            )
+    return rows
+
+
+def _scope_request(scope: str) -> tuple[str, str, str, dict[str, Any]]:
+    requests_by_scope = {
+        'other': (
+            METRIKA_TRAFFIC_SOURCES_DIMS,
+            METRIKA_TRAFFIC_SOURCES_METRICS,
+            'lastsign',
+            {'accuracy': 'full'},
+        ),
+        'traffic': (
+            METRIKA_UTM_ADS_DIMS,
+            METRIKA_UTM_ADS_METRICS,
+            METRIKA_UTM_ADS_ATTRIBUTION,
+            {'accuracy': 'full'},
+        ),
+        'page': (
+            METRIKA_PAGES_DIMS,
+            METRIKA_PAGES_METRICS,
+            METRIKA_ATTRIBUTION,
+            {'accuracy': 'full'},
+        ),
+        'user_behavior': (
+            METRIKA_USER_BEHAVIOR_DIMS,
+            METRIKA_RELEASE_USER_BEHAVIOR_METRICS,
+            METRIKA_ATTRIBUTION,
+            {'accuracy': 'full'},
+        ),
+        'returning': (
+            METRIKA_RETURNING_DIMENSION,
+            METRIKA_RETURNING_METRICS,
+            METRIKA_ATTRIBUTION,
+            {'accuracy': 'full', 'lang': 'en'},
+        ),
+    }
+    try:
+        return requests_by_scope[scope]
+    except KeyError:
+        raise MetrikaCollectionError('Unsupported Metrika scope') from None
+
+
+def validate_other_user_id_partitions(rows: Collection[Mapping[str, Any]]) -> None:
+    presences = tuple(presence for presence, _ in ABBOTT_OTHER_SEGMENTS)
+    totals = {presence: 0 for presence in presences}
+    totals_by_source: dict[str, dict[str, int]] = {}
+    for row in rows:
+        scope_dimensions = row.get('scope_dimensions')
+        if not isinstance(scope_dimensions, Mapping):
+            raise MetrikaCollectionError('Other scope dimensions are invalid')
+        presence = scope_dimensions.get('user_id_presence')
+        source = scope_dimensions.get('traffic_source')
+        sessions = row.get('sessions')
+        if (
+            presence not in totals
+            or not isinstance(source, str)
+            or not source
+            or isinstance(sessions, bool)
+            or not isinstance(sessions, int)
+            or sessions < 0
+        ):
+            raise MetrikaCollectionError('Other scope partition row is invalid')
+        totals[presence] += sessions
+        source_totals = totals_by_source.setdefault(
+            source, {segment: 0 for segment in presences}
+        )
+        source_totals[presence] += sessions
+
+    if totals['all'] != totals['with_user_id'] + totals['without_user_id']:
+        raise MetrikaCollectionError('Other scope User ID partitions do not reconcile')
+    for source_totals in totals_by_source.values():
+        if (
+            source_totals['all']
+            != source_totals['with_user_id'] + source_totals['without_user_id']
+        ):
+            raise MetrikaCollectionError(
+                'Other scope User ID partitions do not reconcile by traffic source'
+            )
+
+
+def collect_other_scope(
+    counter_id: str,
+    day: str,
+    run_id: int,
+    release_id: int,
+    *,
+    code_revision: str,
+    parser_version: str,
+) -> MetrikaScopeResult:
+    rows: list[dict] = []
+    responses: list[PaginationResult] = []
+    segment_fingerprints: list[str] = []
+    for user_id_presence, filters in ABBOTT_OTHER_SEGMENTS:
+        extra_params = {'accuracy': 'full', 'filters': filters}
+        api_contract_fingerprint = api_fingerprint(
+            dimensions=(METRIKA_TRAFFIC_SOURCES_DIMS,),
+            metrics=parse_csv_values(METRIKA_TRAFFIC_SOURCES_METRICS),
+            filters=filters,
+            attribution='lastsign',
+            accuracy='full',
+            pagination_limit=METRIKA_PAGE_LIMIT,
+            timezone=METRIKA_TIMEZONE,
+            code_revision=code_revision,
+            parser_version=parser_version,
+        )
+        segment_fingerprint = build_scope_hash(
+            'other',
+            [counter_id, day, user_id_presence, api_contract_fingerprint],
+        )
+        response = request_all_pages(
+            counter_id,
+            day,
+            dimensions=METRIKA_TRAFFIC_SOURCES_DIMS,
+            metrics=METRIKA_TRAFFIC_SOURCES_METRICS,
+            attribution='lastsign',
+            extra_params=extra_params,
+        )
+        segment_rows = _release_site_rows(
+            counter_id,
+            day,
+            'other',
+            response,
+            run_id,
+            release_id,
+            user_id_presence=user_id_presence,
+        )
+        for row in segment_rows:
+            row['scope_hash'] = build_scope_hash(
+                'other', [segment_fingerprint, row['scope_hash']]
+            )
+        rows.extend(segment_rows)
+        responses.append(response)
+        segment_fingerprints.append(segment_fingerprint)
+
+    sampled = any(response.sampled for response in responses)
+    sample_shares = [
+        response.sample_share
+        for response in responses
+        if response.sample_share is not None
+    ]
+    pagination_complete = all(
+        response.pagination_complete and response.total_rows is not None
+        for response in responses
+    )
+    api_total_rows = (
+        sum(response.total_rows for response in responses if response.total_rows is not None)
+        if all(response.total_rows is not None for response in responses)
+        else None
+    )
+    if sampled:
+        status = 'sampled'
+    elif not pagination_complete or api_total_rows is None:
+        status = 'partial'
+    elif api_total_rows == 0 and not rows:
+        status = 'success_empty'
+    elif api_total_rows > 0 and rows:
+        status = 'success'
+    else:
+        status = 'partial'
+    if status in ('success', 'success_empty'):
+        validate_other_user_id_partitions(rows)
+    return MetrikaScopeResult(
+        scope='other',
+        rows=tuple(rows),
+        api_total_rows=api_total_rows,
+        persisted_rows=len(rows),
+        sampled=sampled,
+        sample_share=min(sample_shares) if sample_shares else None,
+        pagination_complete=pagination_complete,
+        status=status,
+        request_fingerprint=build_scope_hash(
+            'other', [counter_id, day] + segment_fingerprints
+        ),
+    )
+
+
+def collect_metrika_scope(
+    counter_id: str,
+    day: str,
+    scope: str,
+    run_id: int,
+    release_id: int,
+    *,
+    code_revision: str,
+    parser_version: str,
+    logs_client_factory: Callable[[str], Any] | None = None,
+) -> MetrikaScopeResult:
+    if scope == 'other':
+        return collect_other_scope(
+            counter_id,
+            day,
+            run_id,
+            release_id,
+            code_revision=code_revision,
+            parser_version=parser_version,
+        )
+    if scope == 'user_behavior':
+        return collect_user_behavior_scope(
+            counter_id,
+            day,
+            run_id,
+            release_id,
+            code_revision=code_revision,
+            parser_version=parser_version,
+            logs_client_factory=logs_client_factory,
+        )
+    dimensions, metrics, attribution, extra_params = _scope_request(scope)
+    rendered_dimensions = dimensions.replace(
+        '<attribution>', render_attribution(attribution)
+    )
+    api_contract_fingerprint = api_fingerprint(
+        dimensions=parse_csv_values(rendered_dimensions),
+        metrics=parse_csv_values(metrics),
+        filters=clean_text(extra_params.get('filters')),
+        attribution=attribution,
+        accuracy=clean_text(extra_params.get('accuracy')),
+        pagination_limit=METRIKA_PAGE_LIMIT,
+        timezone=METRIKA_TIMEZONE,
+        code_revision=code_revision,
+        parser_version=parser_version,
+    )
+    request_fingerprint = build_scope_hash(
+        scope,
+        [counter_id, day, api_contract_fingerprint],
+    )
+    response = request_all_pages(
+        counter_id,
+        day,
+        dimensions=dimensions,
+        metrics=metrics,
+        attribution=attribution,
+        extra_params=extra_params,
+    )
+    if scope in ('other', 'traffic', 'page'):
+        rows = _release_site_rows(counter_id, day, scope, response, run_id, release_id)
+    else:
+        rows = build_returning_rows(counter_id, day, response, run_id, release_id)
+
+    for row in rows:
+        if scope in ('other', 'traffic', 'page'):
+            row['scope_hash'] = build_scope_hash(
+                scope, [request_fingerprint, row['scope_hash']]
+            )
+        elif scope in ('user_behavior', 'returning'):
+            row['request_fingerprint'] = build_scope_hash(
+                scope, [request_fingerprint, row['request_fingerprint']]
+            )
+
+    if response.sampled:
+        status = 'sampled'
+    elif not response.pagination_complete:
+        status = 'partial'
+    elif response.total_rows is None:
+        status = 'partial'
+    elif response.total_rows == 0 and not rows:
+        status = 'success_empty'
+    elif response.total_rows > 0 and rows:
+        status = 'success'
+    else:
+        status = 'partial'
+    return MetrikaScopeResult(
+        scope=scope,
+        rows=tuple(rows),
+        api_total_rows=response.total_rows,
+        persisted_rows=len(rows),
+        sampled=response.sampled,
+        sample_share=response.sample_share,
+        pagination_complete=response.pagination_complete,
+        status=status,
+        request_fingerprint=request_fingerprint,
+    )
+
+
+def validate_day_bundle(
+    bundle: MetrikaDayBundle,
+    required_scopes: Collection[str],
+) -> None:
+    required = tuple(required_scopes)
+    if bundle.counter_id != ABBOTT_COUNTER_ID:
+        raise MetrikaCollectionError('Abbott release collection requires the Abbott counter')
+    if (
+        len(required) != len(ABBOTT_REQUIRED_SCOPES)
+        or set(bundle.scopes) != set(required)
+        or set(required) != set(ABBOTT_REQUIRED_SCOPES)
+    ):
+        raise MetrikaCollectionError('Abbott Metrika day requires exactly five scopes')
+    for scope in required:
+        result = bundle.scopes[scope]
+        if result.scope != scope or result.persisted_rows != len(result.rows):
+            raise MetrikaCollectionError('Metrika scope evidence is inconsistent')
+        if result.sampled or not result.pagination_complete:
+            raise MetrikaCollectionError('Metrika scope is not complete and unsampled')
+        if result.status == 'success_empty':
+            if result.api_total_rows != 0 or result.persisted_rows != 0 or result.rows:
+                raise MetrikaCollectionError('Empty Metrika scope is not reconciled')
+        elif result.status == 'success':
+            if (
+                result.api_total_rows is None
+                or result.api_total_rows <= 0
+                or not result.rows
+                or result.api_total_rows > result.persisted_rows
+                or (
+                    scope == 'user_behavior'
+                    and result.api_total_rows != result.persisted_rows
+                )
+            ):
+                raise MetrikaCollectionError('Successful Metrika scope is not reconciled')
+        else:
+            raise MetrikaCollectionError('Metrika scope is not publishable')
+        if not result.request_fingerprint:
+            raise MetrikaCollectionError('Metrika request fingerprint is missing')
+
+
+def collect_metrika_day(
+    counter: dict,
+    day: str,
+    run_id: int,
+    release_id: int,
+    *,
+    code_revision: str,
+    parser_version: str,
+) -> MetrikaDayBundle:
+    counter_id = clean_text(counter.get('counter_id'))
+    if counter_id != ABBOTT_COUNTER_ID:
+        raise MetrikaCollectionError('Abbott release collection requires the Abbott counter')
+    scopes = {
+        scope: collect_metrika_scope(
+            counter_id,
+            day,
+            scope,
+            run_id,
+            release_id,
+            code_revision=code_revision,
+            parser_version=parser_version,
+        )
+        for scope in ABBOTT_REQUIRED_SCOPES
+    }
+    bundle = MetrikaDayBundle(
+        canonical_release_id=release_id,
+        counter_id=counter_id,
+        report_date=day,
+        run_id=run_id,
+        scopes=scopes,
+    )
+    validate_day_bundle(bundle, ABBOTT_REQUIRED_SCOPES)
+    return bundle
+
+
+def run_release_backfill(
+    counters: list[dict],
+    date_from: str,
+    date_to: str,
+    run_id: int,
+    release_id: int,
+    *,
+    code_revision: str,
+    parser_version: str,
+) -> dict[str, Any]:
+    counter_ids = [clean_text(counter.get('counter_id')) for counter in counters]
+    if counter_ids != [ABBOTT_COUNTER_ID] or int(release_id) <= 0:
+        raise MetrikaCollectionError(
+            'Release collection requires one explicit Abbott counter and release ID'
+        )
+    published_days = 0
+    rows_written = 0
+    failed_days: list[str] = []
+    failures: list[dict[str, str]] = []
+    counter = counters[0]
+    for day in daterange(date_from, date_to):
+        try:
+            bundle = collect_metrika_day(
+                counter,
+                day,
+                run_id,
+                release_id,
+                code_revision=code_revision,
+                parser_version=parser_version,
+            )
+            validate_day_bundle(bundle, ABBOTT_REQUIRED_SCOPES)
+            result = publish_metrika_day_bundle(bundle)
+            published_days += 1
+            rows_written += int(getattr(result, 'rows_written', 0))
+        except Exception as exc:
+            failed_days.append(day)
+            status_code = (
+                exc.response.status_code
+                if isinstance(exc, requests.exceptions.HTTPError)
+                and exc.response is not None
+                else None
+            )
+            failures.append(
+                {
+                    'report_date': day,
+                    'error_class': exc.__class__.__name__,
+                    'status': f'http_{status_code}' if status_code else 'failed',
+                }
+            )
+    return {
+        'counter_id': ABBOTT_COUNTER_ID,
+        'canonical_release_id': release_id,
+        'published_days': published_days,
+        'failed_days': failed_days,
+        'failures': failures,
+        'rows_written': rows_written,
+    }
 
 
 def counter_filter_sql(counter_ids: list[str]) -> tuple[str, list[str]]:
@@ -877,10 +1813,21 @@ def main() -> int:
 
     date_from, date_to = date_range(args)
     target_counter_ids = selected_counter_ids(args)
+    release_id = getattr(args, 'canonical_release_id', None)
+    if release_id is not None and target_counter_ids != [ABBOTT_COUNTER_ID]:
+        raise MetrikaCollectionError(
+            '--canonical-release-id requires explicit --counter-id 90602537'
+        )
+    if release_id is not None and (
+        not clean_text(args.code_revision) or not clean_text(args.parser_version)
+    ):
+        raise MetrikaCollectionError(
+            '--canonical-release-id requires code and parser versions'
+        )
     run_id = start_collector_run(
         source_key=SOURCE_KEY,
         run_type=args.run_type,
-        run_mode='canonical_only',
+        run_mode='canonical_release' if release_id is not None else 'canonical_only',
         job_key=f'{SOURCE_KEY}_{args.run_type}',
         correlation_id=str(uuid.uuid4()),
         date_from=date_from,
@@ -889,6 +1836,61 @@ def main() -> int:
 
     rows_read = rows_written = rows_updated = 0
     try:
+        if release_id is not None:
+            counters = fetch_configured_counters(args.run_type, target_counter_ids)
+            if [clean_text(counter.get('counter_id')) for counter in counters] != [ABBOTT_COUNTER_ID]:
+                raise MetrikaCollectionError('The configured Abbott counter is unavailable')
+            summary = run_release_backfill(
+                counters,
+                date_from,
+                date_to,
+                run_id,
+                release_id,
+                code_revision=clean_text(args.code_revision),
+                parser_version=clean_text(args.parser_version),
+            )
+            rows_read = (summary['published_days'] + len(summary['failed_days'])) * len(
+                ABBOTT_REQUIRED_SCOPES
+            )
+            rows_written = summary['rows_written']
+            rows_updated = rows_written
+            if summary['failed_days']:
+                status = 'partial' if summary['published_days'] else 'failed'
+                finish_collector_run(
+                    run_id,
+                    status=status,
+                    rows_read=rows_read,
+                    rows_written=rows_written,
+                    rows_updated=rows_updated,
+                    error_count=len(summary['failed_days']),
+                    error_summary='One or more Abbott Metrika days were not published',
+                )
+                log_run_event(
+                    run_id,
+                    'ERROR',
+                    'release_collection_incomplete',
+                    'Abbott Metrika release collection did not publish every day',
+                    summary,
+                )
+                return 1
+            log_run_event(
+                run_id,
+                'INFO',
+                'summary',
+                'Abbott Metrika release collection completed',
+                summary,
+            )
+            finish_collector_run(
+                run_id,
+                status='success',
+                rows_read=rows_read,
+                rows_written=rows_written,
+                rows_updated=rows_updated,
+                error_count=0,
+                error_summary=None,
+            )
+            return 0
+
         ensure_user_behavior_table()
         counters = fetch_configured_counters(args.run_type, target_counter_ids)
         if target_counter_ids and not counters:

@@ -1,0 +1,88 @@
+# Abbott Rollout Rehearsal Design
+
+**Date:** 2026-07-17
+
+**Status:** approved for execution by the user's instruction to write the plan and proceed
+
+**Parent design:** `docs/superpowers/specs/2026-07-16-abbott-canonical-private-foundation-design.md`
+
+## Goal
+
+Turn the completed Abbott canonical/private foundation into a rehearsed rollout package without touching production. The rehearsal must prove source preservation, live MySQL DDL/grants, private import, release validation and rollback mechanics, while stopping fail-closed at credentials or authority that exist only in production.
+
+## Boundaries
+
+- Work only in `codex/abbott-canonical-private-foundation` and ephemeral local infrastructure.
+- Never commit or serve Abbott XLSX/JSON, Bitrix row data, raw UserID, session identifiers, database dumps, tokens, passwords, or generated private archives.
+- Counter `90602537` and the five scopes `other`, `traffic`, `page`, `user_behavior`, and `returning` remain closed contracts.
+- Do not recover or use credentials from Git history. A missing owner-issued token or production credential is a hard gate, not an invitation to use a compromised value.
+- Do not activate a production release, edit production cron, send Telegram, schedule Hermes, restart services, or revoke OAuth credentials from the development machine.
+
+## Source-fidelity decision
+
+The Abbott workbook is not a globally unique catalog. Its twelve worksheets are overlapping source views. The current file has 1,769 catalog rows and hundreds of repeated title/slug groups; rejecting every repeated key prevents any faithful import.
+
+The canonical catalog therefore preserves every source row with:
+
+- `source_sheet`;
+- a stable one-based `source_row_ordinal` within that worksheet's parsed data rows;
+- a row fingerprint that includes both provenance fields and the normalized persisted values.
+
+The importer must not first-win, last-win, or silently deduplicate. Exact repeated metadata remains multiple source rows and is counted in the audit evidence.
+
+## Lookup-projection decision
+
+Row identity and dashboard lookup are separate concerns. A release-scoped lookup projection groups catalog rows by hashed lookup keys for title, slug, and normalized path. The current canonical page and Bitrix facts never carry both a page title and a material-type hint, so a title-and-type projection would have no real consumer and is intentionally not materialized in this phase.
+
+Resolution is deterministic:
+
+1. one candidate: `unique` and usable;
+2. multiple candidates with the same persisted metadata signature: `identical_collapsed`, usable with the earliest `(sheet order, source_row_ordinal)` representative and an explicit candidate count;
+3. candidates with different metadata signatures: `ambiguous`, not usable for automatic enrichment.
+
+There is no worksheet-authority guess in this phase. Ambiguous keys remain visible as aggregate data-quality counts and hashed conflict fingerprints. Page popularity still comes from canonical Metrika; an ambiguous workbook lookup yields `null` optional metadata instead of hiding the page or failing the entire dashboard.
+
+The comparator persists an aggregate warning when ambiguity exists. Production validation requires a named reviewer and acceptance timestamp for that warning. No raw title, slug, URL, or identifier is written to logs or committed evidence.
+
+## Local MySQL rehearsal
+
+The rehearsal uses an ephemeral official MySQL 8.4 container, pinned by the resolved image digest in the sanitized report. Container-local clients are authoritative; the host MySQL 9 client is not used for DDL compatibility decisions.
+
+The fresh-schema path applies the normal dashboard migrations through `033`, then the private schema/role script. The repeat path reapplies only the explicitly repeat-safe Abbott migration and private script, comparing `information_schema` signatures and grants before and after.
+
+The source MariaDB dump remains isolated. With only 32 GiB free and an 8.1 GiB SQL file, the default rehearsal performs a streaming schema-only compatibility probe. The available Bitrix JSON was subsequently verified to be an older exploratory, non-manifested format rather than a canonical import source. It remains a test fixture only; no source completeness or event-grain conversion may be fabricated. Candidate import and lifecycle rehearsal therefore remain fail-closed until a live Bitrix database connector and its extraction contract are reviewed. A full dump load is a separate capacity-gated operation and is not required to accept the application-schema rehearsal.
+
+## Protected inputs and evidence
+
+Actual sources are copied with `install -m 600` into a newly created mode-`0700` temporary directory outside Git and web roots. The rehearsal removes the directory and container on exit unless an explicit preserve-on-failure flag is set for local debugging.
+
+Committed evidence is sanitized and contains only:
+
+- source SHA-256, byte size, row counts, periods, source kinds, and parser revision;
+- aggregate duplicate/ambiguity counts and hashed conflict-set fingerprints;
+- container image digest, MySQL version, schema/index/grant signatures;
+- release/run/snapshot numeric IDs generated by the ephemeral database;
+- aggregate import, validation, activation and rollback results;
+- pass/fail/blocked gates without credentials or connection details.
+
+## Rehearsal flow
+
+1. Run parser-only source audit without archive or database writes.
+2. Start ephemeral MySQL, apply fresh migrations and roles, then prove repeat safety.
+3. Create a local staging release and baseline evidence.
+4. Import protected workbook and Bitrix sources transactionally only after every source satisfies the reviewed completeness and grain contract; otherwise stop before committing a snapshot.
+5. Verify source counts, fingerprints, lookup projection and private/aggregate read boundaries.
+6. Exercise validation failure, accepted-warning validation, atomic activation and rollback in the ephemeral database.
+7. Exercise collector/backfill orchestration with deterministic fixtures. A live API read runs only when a newly owner-issued `METRIKA_TOKEN` is supplied through the protected contract.
+8. Produce a sanitized rehearsal report and exact production handoff gates.
+
+## Acceptance criteria
+
+- All 1,769 workbook catalog rows import with stable provenance; no duplicate key is silently discarded.
+- Ambiguous metadata never wins automatically and does not suppress canonical page popularity.
+- Fresh and repeated Abbott DDL/grants succeed on live MySQL 8.4 with unchanged second-run signatures.
+- Four private source kinds attach to one staging release with verified fingerprints and per-release import provenance.
+- Validation blocks incomplete coverage, missing imports, incomplete comparison batches and unreviewed warnings.
+- Local activation and rollback change only the expected Abbott pointer.
+- No private input or secret appears in Git, public/standalone output, logs, or sanitized evidence.
+- Missing owner/production credentials produce a precise blocked gate while all safe local work continues.

@@ -18,10 +18,11 @@ from typing import Dict, List, Optional, Tuple
 
 ROOT = Path(__file__).resolve().parent
 DASHBOARD_SCRIPT = ROOT / 'sources_health_dashboard.py'
+ABBOTT_HEALTH_SCRIPT = ROOT / 'abbott_health_probe.py'
 LEGACY_ENV_PATH = Path('/var/www/www-root/data/.production.env')
 MANUAL_EXCEPTIONS_PATH = ROOT / 'MANUAL-LEGACY-EXCEPTIONS.md'
 LOCAL_VENV_PYTHON = ROOT / 'venv' / 'bin' / 'python'
-SUMMARY_SOURCE_ORDER = ['linkedin', 'reddit', 'vk_ads_v2', 'getintent', 'yandex_direct', 'hybrid']
+SUMMARY_SOURCE_ORDER = ['linkedin', 'reddit', 'vk_ads_v2', 'getintent', 'yandex_direct', 'hybrid', 'yandex_metrika']
 
 
 def parse_args() -> argparse.Namespace:
@@ -61,25 +62,32 @@ def resolve_telegram_credentials() -> Tuple[str, str]:
     )
 
 
-def run_dashboard_json() -> Dict:
+def run_json_script(path: Path, accepted_codes: set[int]) -> Dict:
     python_exec = str(LOCAL_VENV_PYTHON) if LOCAL_VENV_PYTHON.exists() else sys.executable
     proc = subprocess.run(
-        [python_exec, str(DASHBOARD_SCRIPT), '--json'],
+        [python_exec, str(path), '--json'],
         cwd=str(ROOT),
         capture_output=True,
         text=True,
     )
-    if proc.returncode not in (0, 1):
+    if proc.returncode not in accepted_codes:
         raise RuntimeError(
-            'sources_health_dashboard.py failed with exit code {}: {}'.format(
-                proc.returncode, proc.stderr.strip()
-            )
+            '{} failed with exit code {}'.format(path.name, proc.returncode)
         )
     if not proc.stdout.strip():
-        raise RuntimeError(
-            'sources_health_dashboard.py returned empty stdout: {}'.format(proc.stderr.strip())
-        )
-    return json.loads(proc.stdout)
+        raise RuntimeError('{} returned empty stdout'.format(path.name))
+    try:
+        return json.loads(proc.stdout)
+    except json.JSONDecodeError:
+        raise RuntimeError('{} returned invalid JSON'.format(path.name)) from None
+
+
+def run_dashboard_json() -> Dict:
+    return run_json_script(DASHBOARD_SCRIPT, {0, 1})
+
+
+def run_abbott_health_json() -> Dict:
+    return run_json_script(ABBOTT_HEALTH_SCRIPT, {0, 1, 2})
 
 
 def get_latest_collector_runs() -> List[Dict]:
@@ -160,11 +168,13 @@ def yandex_shadow_warning(source: Dict) -> bool:
     )
 
 
-def should_send_alert(payload: Dict) -> bool:
-    if int(payload.get('summary', {}).get('exit_code') or 0) == 1:
+def should_send_alert(payload: Dict, abbott: Dict) -> bool:
+    if abbott.get('overall') == 'CRITICAL':
         return True
     for source in payload.get('sources', []):
-        if source.get('status') == 'CRITICAL':
+        if not bool(source.get('governance', {}).get('blocking')):
+            continue
+        if source.get('status') in {'WARNING', 'CRITICAL'}:
             return True
         if fail_run(source):
             return True
@@ -276,7 +286,64 @@ def collect_monitor_notes(payload: Dict) -> Tuple[List[str], List[str], List[str
     return blocking_issues, deduped_notes, monitor_rows
 
 
-def build_alert_message(payload: Dict) -> str:
+def build_abbott_lines(snapshot: Dict) -> List[str]:
+    session_integrity = snapshot.get('session_integrity') or {}
+    session_status = 'OK' if session_integrity.get('status') == 'ok' else 'CRITICAL'
+    lines = [
+        '<b>Abbott Metrika</b>',
+        '- session integrity: {} (all={}, with_id={}, without_id={}, mismatched_days={}, mismatched_sources={})'.format(
+            html.escape(session_status),
+            int(session_integrity.get('all_sessions') or 0),
+            int(session_integrity.get('with_user_id_sessions') or 0),
+            int(session_integrity.get('without_user_id_sessions') or 0),
+            int(session_integrity.get('mismatched_days') or 0),
+            int(session_integrity.get('mismatched_sources') or 0),
+        ),
+        '- counter: {}'.format(html.escape(str(snapshot.get('counter_id') or 'unknown'))),
+        '- overall: {}'.format(html.escape(str(snapshot.get('overall') or 'UNKNOWN'))),
+    ]
+    release = snapshot.get('release') or {}
+    lines.append(
+        '- release: {} ({})'.format(
+            html.escape(str(release.get('id') if release.get('id') is not None else 'none')),
+            html.escape(str(release.get('status') or 'unknown')),
+        )
+    )
+    latest_run = snapshot.get('latest_run') or {}
+    lines.append(
+        '- run: {} counter={} finished_at={}'.format(
+            html.escape(str(latest_run.get('status') or 'unknown').upper()),
+            html.escape(str(latest_run.get('counter_id') or 'unknown')),
+            html.escape(str(latest_run.get('finished_at') or 'none')),
+        )
+    )
+    backfill = snapshot.get('backfill') or {}
+    lines.append(
+        '- coverage: {}/{} complete days'.format(
+            int(backfill.get('complete_days') or 0),
+            int(backfill.get('lookback_days') or 0),
+        )
+    )
+    for scope in snapshot.get('scopes') or []:
+        lines.append(
+            '- {}: max={} rows={} missing={}'.format(
+                html.escape(str(scope.get('scope') or 'unknown')),
+                html.escape(str(scope.get('max_date') or 'none')),
+                int(scope.get('rows') or 0),
+                len(scope.get('missing_dates') or []),
+            )
+        )
+    for incident in (snapshot.get('incidents') or [])[:8]:
+        lines.append(
+            '- incident {}: {}'.format(
+                html.escape(str(incident.get('severity') or 'UNKNOWN')),
+                html.escape(str(incident.get('check_id') or 'unknown')),
+            )
+        )
+    return lines
+
+
+def build_alert_message(payload: Dict, abbott: Dict) -> str:
     lines = ['<b>Canonical Reporting Alert</b>', '']
     for source in payload.get('sources', []):
         lines.append(f"{html.escape(source['source_key'])}: {html.escape(source['status'])}")
@@ -291,11 +358,13 @@ def build_alert_message(payload: Dict) -> str:
         lines.extend(['', '<b>Non-blocking notes:</b>'])
         lines.extend(f'- {html.escape(line)}' for line in non_blocking_notes[:6])
 
+    lines.extend(['', *build_abbott_lines(abbott)])
+
     lines.extend(['', f"Exit code: {int(payload.get('summary', {}).get('exit_code') or 0)}"])
     return '\n'.join(lines)
 
 
-def build_summary_message(payload: Dict, collector_runs: List[Dict]) -> str:
+def build_summary_message(payload: Dict, collector_runs: List[Dict], abbott: Dict) -> str:
     lines = [
         '<b>Canonical Daily Summary</b>',
         datetime.utcnow().strftime('%Y-%m-%d %H:%M UTC'),
@@ -336,6 +405,8 @@ def build_summary_message(payload: Dict, collector_runs: List[Dict]) -> str:
         lines.extend(['', '<b>Notes</b>'])
         lines.extend(f'- {html.escape(line)}' for line in non_blocking_notes[:8])
 
+    lines.extend(['', *build_abbott_lines(abbott)])
+
     lines.extend(['', f"Exit code: {int(payload.get('summary', {}).get('exit_code') or 0)}"])
     return '\n'.join(lines)
 
@@ -353,24 +424,36 @@ def send_telegram_message(token: str, chat_id: str, text: str) -> None:
             if resp.status != 200:
                 raise RuntimeError(f'Telegram send failed with HTTP {resp.status}')
     except urllib.error.HTTPError as exc:
-        details = exc.read().decode('utf-8', errors='ignore')
-        raise RuntimeError(f'Telegram HTTP error {exc.code}: {details}') from exc
+        exc.read()
+        raise RuntimeError(f'Telegram HTTP error {exc.code}') from None
+    except urllib.error.URLError:
+        raise RuntimeError('Telegram transport error') from None
 
 
 def main() -> int:
     args = parse_args()
     payload = run_dashboard_json()
-    if args.mode == 'alert' and not should_send_alert(payload):
+    abbott = run_abbott_health_json()
+    if args.mode == 'alert' and not should_send_alert(payload, abbott):
         return 0
 
     collector_runs = get_latest_collector_runs() if args.mode == 'summary' else []
     token, chat_id = resolve_telegram_credentials()
     message = (
-        build_summary_message(payload, collector_runs)
+        build_summary_message(payload, collector_runs, abbott)
         if args.mode == 'summary'
-        else build_alert_message(payload)
+        else build_alert_message(payload, abbott)
     )
     send_telegram_message(token, chat_id, message)
+    incident_keys = ','.join(
+        str(item.get('incident_key') or 'unknown')
+        for item in abbott.get('incidents') or []
+    ) or 'none'
+    print('{} mode={} incident_keys={}'.format(
+        datetime.utcnow().strftime('%Y-%m-%dT%H:%M:%SZ'),
+        args.mode,
+        incident_keys,
+    ))
     return 0
 
 
