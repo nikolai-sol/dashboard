@@ -2241,7 +2241,7 @@ export default function AbbottBiDashboard({
                 <p className="text-sm text-slate-600">
                   User ID: {selectedSessionJourney.user_id ?? "Без User ID"} · Хиты:{" "}
                   {formatNumber(selectedSessionJourney.hits_clean, locale)} очищенных /{" "}
-                  {formatNumber(selectedSessionJourney.hits_total, locale)} total · Время:{" "}
+                  {formatNumber(selectedSessionJourney.hits_total, locale)} всего · Время:{" "}
                   {formatDurationMinutes(selectedSessionJourney.duration_seconds, locale)} мин
                 </p>
               </div>

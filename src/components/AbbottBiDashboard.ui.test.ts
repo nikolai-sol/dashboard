@@ -36,6 +36,7 @@ test("does not expose ordinary English dashboard copy", () => {
 
   assert.doesNotMatch(source, />\s*Search\s*</);
   assert.doesNotMatch(source, />\s*Grain:\s*</);
+  assert.doesNotMatch(source, /}\s*total\b/);
   assert.equal(source.includes("Bitrix dump"), false);
   assert.equal(source.includes("SQL dump"), false);
 });
