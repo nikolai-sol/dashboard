@@ -21,6 +21,7 @@ import {
   matchesPageStatsSearch,
   matchesSelectedMaterialType,
 } from "./abbott-page-stats";
+import { abbottTrafficSourceLabel, abbottTrafficSourceOption } from "./abbott-localization";
 import { selectAbbottSummaryRows } from "./abbott-summary";
 
 type AbbottBiDashboardProps = {
@@ -83,24 +84,24 @@ function buildTabs(portalName: string, showUserIdAnalytics: boolean): TabConfig[
     id: "users_summary",
     label: showUserIdAnalytics ? "1. Общая таблица по пользователям" : "1. Источники трафика",
     description: showUserIdAnalytics
-      ? "По умолчанию сессии и источники берутся из canonical traffic summary, сопоставимого с Метрикой. При выборе User ID, типа трафика или направления включается User ID-детализация."
-      : "Источник: canonical traffic-source summary из Yandex Metrika.",
+      ? "По умолчанию сессии и источники берутся из Метрики, Источники трафика. При выборе User ID, типа трафика или направления включается User ID-детализация."
+      : "Источник: сводка «Источники трафика» из Яндекс Метрики.",
   },
   {
     id: "user_actions",
     label: `2. Действия пользователя на сайте ${portalName}`,
-    description: "Grain: UserID + Источник + Start URL + End URL. Это aggregated proxy, не session-level.",
+    description: "Гранулярность: User ID + источник + начальный URL + конечный URL. Это агрегированная оценка, а не уровень отдельных сессий.",
   },
   {
     id: "page_stats",
     label: `3. Статистика страниц на сайте ${portalName}`,
     description:
-      "Источник: yandex_metrika_internal/canonical page analytics. При наличии справочника и Bitrix-дампа дополнительно показывается обогащение.",
+      "Источник: каноническая аналитика страниц yandex_metrika_internal. При наличии справочника и дампа Bitrix дополнительно показывается обогащение.",
   },
   {
     id: "bitrix_pages",
     label: "3.1 Bitrix: страницы и сессии",
-    description: "Источник: b_stat_hit + b_stat_session из Bitrix dump. Grain: normalized URL, очищено от ботов и технических URL.",
+    description: "Источник: b_stat_hit + b_stat_session из дампа Bitrix. Гранулярность: нормализованный URL; данные очищены от ботов и технических URL.",
   },
   {
     id: "session_journeys",
@@ -111,12 +112,12 @@ function buildTabs(portalName: string, showUserIdAnalytics: boolean): TabConfig[
   {
     id: "external_events",
     label: "4. Внешние переходы",
-    description: "Источник: нормализованный yandex_metrika_external. events используются только как optional exact-match enrichment.",
+    description: "Источник: нормализованный yandex_metrika_external. События используются только как необязательное обогащение по точному совпадению.",
   },
   {
     id: "returning",
     label: "5. Вернувшиеся",
-    description: "Источник: yandex_metrika_returned и optional workbook/API enrichment.",
+    description: "Источник: yandex_metrika_returned и необязательное обогащение из книги или API.",
   },
   {
     id: "general_materials",
@@ -127,7 +128,7 @@ function buildTabs(portalName: string, showUserIdAnalytics: boolean): TabConfig[
     id: "time_buckets",
     label: "7. Время на сайте",
     description:
-      "Источник: canonical_fact_user_behavior_daily. Бакеты по weighted avg duration на UserID, отдельно overall и по material URLs.",
+      "Источник: canonical_fact_user_behavior_daily. Диапазоны построены по взвешенной средней продолжительности для User ID: отдельно по сайту и по URL материалов.",
   },
   ];
 }
@@ -332,7 +333,7 @@ function SelectField({
         onChange={(event) => onChange(event.target.value)}
         className="w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm text-slate-700 outline-none transition focus:border-slate-400"
       >
-        <option value="">All</option>
+        <option value="">Все</option>
         {options.map((option) => (
           <option key={option.value} value={option.value}>
             {option.label}
@@ -370,7 +371,7 @@ function MultiSelectField({
     return () => document.removeEventListener("mousedown", handleClickOutside);
   }, []);
 
-  const selectedLabel = values.length === 0 ? "All" : `Выбрано: ${values.length}`;
+  const selectedLabel = values.length === 0 ? "Все" : `Выбрано: ${values.length}`;
 
   return (
     <div ref={rootRef} className="relative z-[130] block">
@@ -391,7 +392,7 @@ function MultiSelectField({
             onClick={() => onChange([])}
             className="mb-1 flex w-full items-center justify-between rounded-lg px-3 py-2 text-left text-sm text-slate-600 hover:bg-slate-50"
           >
-            <span>All</span>
+            <span>Все</span>
             {values.length === 0 ? <Check size={16} className="text-emerald-600" aria-hidden="true" /> : null}
           </button>
           {options.map((option) => {
@@ -720,6 +721,7 @@ function SimpleTooltip({
 function AbbottBarChart({
   data,
   dataKey,
+  metricName = "Значение",
   color,
   locale,
   layout = "vertical",
@@ -727,6 +729,7 @@ function AbbottBarChart({
 }: {
   data: Array<Record<string, string | number>>;
   dataKey: string;
+  metricName?: string;
   color: string;
   locale: string;
   layout?: "horizontal" | "vertical";
@@ -757,7 +760,7 @@ function AbbottBarChart({
             </>
           )}
           <Tooltip content={<SimpleTooltip locale={locale} formatter={valueFormatter} />} />
-          <Bar dataKey={dataKey} fill={color} radius={[10, 10, 0, 0]} />
+          <Bar dataKey={dataKey} name={metricName} fill={color} radius={[10, 10, 0, 0]} />
         </BarChart>
       </ResponsiveContainer>
     </div>
@@ -777,7 +780,7 @@ function AbbottPieChart({
     <div className="h-[300px]">
       <ResponsiveContainer width="100%" height="100%">
         <PieChart>
-          <Pie data={data} dataKey="value" nameKey="label" innerRadius={55} outerRadius={92} paddingAngle={2}>
+          <Pie data={data} dataKey="value" name="Значение" nameKey="label" innerRadius={55} outerRadius={92} paddingAngle={2}>
             {data.map((entry, index) => (
               <Cell key={`${entry.label}-${index}`} fill={colors[index % colors.length]} />
             ))}
@@ -911,7 +914,7 @@ export default function AbbottBiDashboard({
         traffic_source: uniqOptions([
           ...data.users_summary.map((row) => row.traffic_source),
           ...trafficRows.map((row) => row.traffic_source),
-        ]),
+        ]).map((option) => abbottTrafficSourceOption(option.value)),
         direction: uniqOptions(data.users_summary.map((row) => row.direction)),
       };
     },
@@ -921,7 +924,7 @@ export default function AbbottBiDashboard({
   const userActionsOptions = useMemo(
     () => ({
       user_id: uniqOptions(data.user_actions.filter((row) => row.has_user_id).map((row) => row.user_id)),
-      traffic_source: uniqOptions(data.user_actions.map((row) => row.traffic_source)),
+      traffic_source: uniqOptions(data.user_actions.map((row) => row.traffic_source)).map((option) => abbottTrafficSourceOption(option.value)),
       direction: uniqOptions(data.user_actions.map((row) => row.direction)),
     }),
     [data.user_actions],
@@ -999,8 +1002,8 @@ export default function AbbottBiDashboard({
     const filters = filtersByTab.users_summary;
     return usersSummarySourceRows.filter((row) => {
       const searchableValues = showUserIdAnalytics
-        ? [userIdLabel(row.user_id, row.has_user_id), row.traffic_source, row.direction, row.visits, row.bounce_rate]
-        : [row.traffic_source, row.visits, row.bounce_rate];
+        ? [userIdLabel(row.user_id, row.has_user_id), abbottTrafficSourceLabel(row.traffic_source), row.direction, row.visits, row.bounce_rate]
+        : [abbottTrafficSourceLabel(row.traffic_source), row.visits, row.bounce_rate];
       if (!matchesQuery(searchableValues, query)) return false;
       if (showUserIdAnalytics) {
         if (filters.user_id && row.user_id !== filters.user_id) return false;
@@ -1017,7 +1020,7 @@ export default function AbbottBiDashboard({
     const query = queryByTab.user_actions;
     const filters = filtersByTab.user_actions;
     return data.user_actions.filter((row) => {
-      if (!matchesQuery([userIdLabel(row.user_id, row.has_user_id), row.traffic_source, row.direction, row.start_url, row.end_url, row.visits], query)) return false;
+      if (!matchesQuery([userIdLabel(row.user_id, row.has_user_id), abbottTrafficSourceLabel(row.traffic_source), row.direction, row.start_url, row.end_url, row.visits], query)) return false;
       if (filters.user_id && row.user_id !== filters.user_id) return false;
       if (filters.user_id_traffic === "with_user_id" && !row.has_user_id) return false;
       if (filters.user_id_traffic === "without_user_id" && row.has_user_id) return false;
@@ -1190,7 +1193,7 @@ export default function AbbottBiDashboard({
     });
     return Array.from(totals.entries())
       .map(([label, value]) => ({
-        label,
+        label: abbottTrafficSourceLabel(label),
         duration_minutes: value.visits > 0 ? Number((value.durationWeighted / value.visits / 60).toFixed(2)) : 0,
       }))
       .sort((a, b) => b.duration_minutes - a.duration_minutes);
@@ -1284,14 +1287,14 @@ export default function AbbottBiDashboard({
       locale,
     );
     const base =
-      "Источник: yandex_metrika_internal + Abbott names workbook enrichment.";
+      "Источник: yandex_metrika_internal с обогащением названиями из справочника Abbott.";
     if (!data.bitrix_summary?.date_from || !data.bitrix_summary?.date_to) {
       return base;
     }
     if (data.bitrix_period_active) {
-      return `${base} Дополнительно показаны Bitrix-метрики из SQL dump за период ${bitrixPeriodLabel}.`;
+      return `${base} Дополнительно показаны Bitrix-метрики из SQL-дампа за период ${bitrixPeriodLabel}.`;
     }
-    return `${base} Колонки Bitrix из SQL dump (${bitrixPeriodLabel}) появятся, если выбранный период полностью попадает в этот диапазон.`;
+    return `${base} Колонки Bitrix из SQL-дампа (${bitrixPeriodLabel}) появятся, если выбранный период полностью попадает в этот диапазон.`;
   }, [data.bitrix_period_active, data.bitrix_summary, locale]);
   const sessionJourneysDescription = useMemo(() => {
     const reportDate = data.session_journeys.report_date;
@@ -1367,7 +1370,7 @@ export default function AbbottBiDashboard({
     tableRows = usersSummaryPage.pageRows.map((row) => ({
       ...(showUserIdAnalytics && userBehaviorSummaryActive ? { user_id: userIdLabel(row.user_id, row.has_user_id) } : {}),
       ...(showUserIdAnalytics && userBehaviorSummaryActive ? { direction: row.direction ?? "—" } : {}),
-      traffic_source: row.traffic_source,
+      traffic_source: abbottTrafficSourceLabel(row.traffic_source),
       visits: formatNumber(row.visits, locale),
       bounce_rate: formatPercent(row.bounce_rate, locale),
       avg_duration: formatDurationMinutes(row.avg_duration, locale),
@@ -1386,7 +1389,7 @@ export default function AbbottBiDashboard({
     ];
     tableRows = userActionsPage.pageRows.map((row) => ({
       user_id: userIdLabel(row.user_id, row.has_user_id),
-      traffic_source: row.traffic_source,
+      traffic_source: abbottTrafficSourceLabel(row.traffic_source),
       direction: row.direction ?? "—",
       end_url: row.end_url || "—",
       avg_duration: formatDurationMinutes(row.avg_duration, locale),
@@ -1441,8 +1444,8 @@ export default function AbbottBiDashboard({
       { key: "logged_in_sessions", label: "Сессии с User ID", className: "text-right" },
       { key: "anonymous_sessions", label: "Сессии без User ID", className: "text-right" },
       { key: "avg_session_duration", label: "Средняя сессия, мин", className: "text-right" },
-      { key: "top_utm_source", label: "UTM source" },
-      { key: "top_utm_campaign", label: "UTM campaign" },
+      { key: "top_utm_source", label: "UTM-источник" },
+      { key: "top_utm_campaign", label: "UTM-кампания" },
     ];
     tableRows = bitrixPagesPage.pageRows.map((row) => ({
       url: row.url,
@@ -1462,7 +1465,7 @@ export default function AbbottBiDashboard({
     currentPage = sessionJourneysPage.currentPage;
     totalPages = sessionJourneysPage.totalPages;
     tableColumns = [
-      { key: "session_id", label: "Session ID", className: "text-right" },
+      { key: "session_id", label: "ID сессии", className: "text-right" },
       { key: "user_id", label: "User ID" },
       { key: "entry_url_day", label: "Вход (день)", className: "min-w-[260px] break-all" },
       { key: "exit_url_day", label: "Выход (день)", className: "min-w-[260px] break-all" },
@@ -1481,15 +1484,15 @@ export default function AbbottBiDashboard({
       duration_seconds: formatDurationMinutes(row.duration_seconds, locale),
       content_path_summary: row.content_path_summary || "—",
     }));
-    emptyText = "Нет сессий за выбранный день в Bitrix dump.";
+    emptyText = "Нет сессий за выбранный день в дампе Bitrix.";
   } else if (activeTab === "external_events") {
     currentPage = externalEventsPage.currentPage;
     totalPages = externalEventsPage.totalPages;
     tableColumns = [
-      { key: "title", label: "Event Title", className: "min-w-[240px]" },
-      { key: "direction", label: "Direction" },
-      { key: "external_url", label: "External URL", className: "min-w-[320px] break-all" },
-      { key: "outbound_clicks", label: "Outbound Clicks", className: "text-right" },
+      { key: "title", label: "Название события", className: "min-w-[240px]" },
+      { key: "direction", label: "Направление" },
+      { key: "external_url", label: "Внешний URL", className: "min-w-[320px] break-all" },
+      { key: "outbound_clicks", label: "Исходящие переходы", className: "text-right" },
     ];
     tableRows = externalEventsPage.pageRows.map((row) => ({
       title: row.title ?? "—",
@@ -1519,10 +1522,10 @@ export default function AbbottBiDashboard({
     currentPage = generalMaterialsPage.currentPage;
     totalPages = generalMaterialsPage.totalPages;
     tableColumns = [
-      { key: "material_name", label: "Material Name", className: "min-w-[220px]" },
+      { key: "material_name", label: "Название материала", className: "min-w-[220px]" },
       { key: "url", label: "URL", className: "min-w-[320px] break-all" },
-      { key: "pageviews", label: "Pageviews", className: "text-right" },
-      { key: "users", label: "Users", className: "text-right" },
+      { key: "pageviews", label: "Просмотры", className: "text-right" },
+      { key: "users", label: "Пользователи", className: "text-right" },
     ];
     tableRows = generalMaterialsPage.pageRows.map((row) => ({
       material_name: row.material_name,
@@ -1720,6 +1723,7 @@ export default function AbbottBiDashboard({
           <AbbottBarChart
             data={usersDurationBySource}
             dataKey="duration_minutes"
+            metricName="Средняя продолжительность, мин"
             color={theme.barColor}
             locale={locale}
             layout="horizontal"
@@ -1743,7 +1747,7 @@ export default function AbbottBiDashboard({
               theme={theme}
             />
             <StatsPill
-              label="Avg duration"
+              label="Средняя продолжительность"
               value={`${formatDecimal(
                 usersSummaryRows.reduce((sum, row) => sum + row.avg_duration * row.visits, 0) /
                   Math.max(1, usersSummaryRows.reduce((sum, row) => sum + row.visits, 0)) /
@@ -1753,7 +1757,7 @@ export default function AbbottBiDashboard({
               theme={theme}
             />
             <StatsPill
-              label="Avg depth"
+              label="Средняя глубина"
               value={formatDecimal(
                 usersSummaryRows.reduce((sum, row) => sum + row.page_depth * row.visits, 0) /
                   Math.max(1, usersSummaryRows.reduce((sum, row) => sum + row.visits, 0)),
@@ -1771,6 +1775,7 @@ export default function AbbottBiDashboard({
         <AbbottBarChart
           data={userActionTopDuration}
           dataKey="duration_minutes"
+          metricName="Средняя продолжительность, мин"
           color={theme.barColor}
           locale={locale}
           layout="horizontal"
@@ -1785,7 +1790,7 @@ export default function AbbottBiDashboard({
           <AbbottPieChart data={pageDirectionData} colors={theme.pieColors} locale={locale} />
         </ChartCard>
         <ChartCard title="Посетители по доступу">
-          <AbbottBarChart data={pageAccessData} dataKey="value" color={theme.barColor} locale={locale} valueFormatter={(value) => formatNumber(value, locale)} />
+          <AbbottBarChart data={pageAccessData} dataKey="value" metricName="Посетители" color={theme.barColor} locale={locale} valueFormatter={(value) => formatNumber(value, locale)} />
         </ChartCard>
         <ChartCard title="Посетители по типу материала">
           <AbbottPieChart data={pageMaterialData} colors={[...theme.pieColors].reverse()} locale={locale} />
@@ -1874,6 +1879,7 @@ export default function AbbottBiDashboard({
           <AbbottBarChart
             data={exclusionRows}
             dataKey="value"
+            metricName="Количество"
             color={theme.barColor}
             locale={locale}
             layout="horizontal"
@@ -1881,7 +1887,7 @@ export default function AbbottBiDashboard({
         </ChartCard>
         <div className="xl:col-span-3">
           <ChartCard title="Топ Bitrix URL по просмотрам">
-            <AbbottBarChart data={bitrixTopPages} dataKey="pageviews" color={theme.barColor} locale={locale} layout="horizontal" />
+            <AbbottBarChart data={bitrixTopPages} dataKey="pageviews" metricName="Просмотры" color={theme.barColor} locale={locale} layout="horizontal" />
           </ChartCard>
         </div>
       </div>
@@ -1922,7 +1928,7 @@ export default function AbbottBiDashboard({
               theme={theme}
             />
             <StatsPill
-              label="Bitrix events"
+              label="События Bitrix"
               value={summary?.events_available ? "Доступны" : "Нет в дампе"}
               theme={theme}
             />
@@ -1931,11 +1937,11 @@ export default function AbbottBiDashboard({
         <ChartCard title="Схема слоя">
           <div className="space-y-2 text-sm text-slate-600">
             <p>
-              <span className="font-semibold text-slate-900">Grain:</span>{" "}
+              <span className="font-semibold text-slate-900">Гранулярность:</span>{" "}
               {data.session_journeys.schema?.grain ?? "session_id x report_date"}
             </p>
             <p>
-              <span className="font-semibold text-slate-900">Вход/выход за день:</span> первый и последний clean hit
+              <span className="font-semibold text-slate-900">Вход/выход за день:</span> первый и последний очищенный хит
               выбранной даты.
             </p>
             <p>
@@ -1953,7 +1959,7 @@ export default function AbbottBiDashboard({
   } else if (activeTab === "external_events") {
     chartContent = (
       <ChartCard title="Топ внешних URL по количеству переходов">
-        <AbbottBarChart data={externalTopRows} dataKey="clicks" color={theme.barColor} locale={locale} layout="horizontal" />
+        <AbbottBarChart data={externalTopRows} dataKey="clicks" metricName="Переходы" color={theme.barColor} locale={locale} layout="horizontal" />
       </ChartCard>
     );
   } else if (activeTab === "returning") {
@@ -1963,6 +1969,7 @@ export default function AbbottBiDashboard({
           <AbbottBarChart
             data={returningDirectionData.map((row) => ({ label: row.label, value: row.returning_1_day_pct }))}
             dataKey="value"
+            metricName="Доля вернувшихся"
             color={theme.barColor}
             locale={locale}
             valueFormatter={(value) => formatPercent(value, locale)}
@@ -1972,6 +1979,7 @@ export default function AbbottBiDashboard({
           <AbbottBarChart
             data={returningDirectionData.map((row) => ({ label: row.label, value: row.returning_2_7_days_pct }))}
             dataKey="value"
+            metricName="Доля вернувшихся"
             color={theme.barColor}
             locale={locale}
             valueFormatter={(value) => formatPercent(value, locale)}
@@ -1981,6 +1989,7 @@ export default function AbbottBiDashboard({
           <AbbottBarChart
             data={returningDirectionData.map((row) => ({ label: row.label, value: row.returning_8_31_days_pct }))}
             dataKey="value"
+            metricName="Доля вернувшихся"
             color={theme.barColor}
             locale={locale}
             valueFormatter={(value) => formatPercent(value, locale)}
@@ -1991,7 +2000,7 @@ export default function AbbottBiDashboard({
   } else if (activeTab === "general_materials") {
     chartContent = (
       <ChartCard title="Топ общих материалов по пользователям">
-        <AbbottBarChart data={generalMaterialsTop} dataKey="users" color={theme.barColor} locale={locale} layout="horizontal" />
+        <AbbottBarChart data={generalMaterialsTop} dataKey="users" metricName="Пользователи" color={theme.barColor} locale={locale} layout="horizontal" />
       </ChartCard>
     );
   } else if (activeTab === "time_buckets") {
@@ -2054,8 +2063,8 @@ export default function AbbottBiDashboard({
                   <XAxis dataKey="label" tick={{ fill: "#64748b", fontSize: 12 }} />
                   <YAxis tick={{ fill: "#64748b", fontSize: 12 }} />
                   <Tooltip content={<SimpleTooltip locale={locale} />} />
-                  <Bar dataKey="overall" fill={theme.barColor} radius={[8, 8, 0, 0]} />
-                  <Bar dataKey="materials" fill="#0f172a" radius={[8, 8, 0, 0]} />
+                  <Bar dataKey="overall" name="Итого на сайте" fill={theme.barColor} radius={[8, 8, 0, 0]} />
+                  <Bar dataKey="materials" name="По материалам" fill="#0f172a" radius={[8, 8, 0, 0]} />
                 </BarChart>
               </ResponsiveContainer>
             </div>
@@ -2129,7 +2138,7 @@ export default function AbbottBiDashboard({
                   </button>
                 ) : null}
                 <label className="block">
-                  <span className={`mb-2 block text-xs font-semibold uppercase tracking-[0.12em] ${theme.textClass}`}>Search</span>
+                  <span className={`mb-2 block text-xs font-semibold uppercase tracking-[0.12em] ${theme.textClass}`}>Поиск</span>
                   <input
                     className="w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm text-slate-700 outline-none transition focus:border-slate-400"
                     value={queryByTab[activeTab]}
@@ -2149,7 +2158,7 @@ export default function AbbottBiDashboard({
               {formatDateTimeRange(data.bitrix_summary?.date_from, data.bitrix_summary?.date_to, locale)}
             </div>
             <p className="mt-1">
-              Колонки Bitrix просмотры / сессии / User ID подставлены из SQL dump Bitrix и соединены с Метрикой по
+              Колонки Bitrix просмотры / сессии / User ID подставлены из SQL-дампа Bitrix и соединены с Метрикой по
               нормализованному URL. Сравнение корректно только пока выбранный период полностью попадает в диапазон
               дампа.
             </p>
@@ -2163,7 +2172,7 @@ export default function AbbottBiDashboard({
               {formatDateTimeRange(data.bitrix_summary?.date_from, data.bitrix_summary?.date_to, locale)}
             </div>
             <p className="mt-1">
-              Этот лист построен из разового парсинга Bitrix SQL dump за указанный период и не меняется при выборе
+              Этот лист построен из разового парсинга SQL-дампа Bitrix за указанный период и не меняется при выборе
               других дат в общем фильтре дашборда. Хиты и сессии очищены от ботов, технических URL, 404 и не-GET
               запросов. Затем страницы соединены по нормализованному URL с доступными данными Яндекс Метрики и
               справочником ABBOTT, чтобы дополнить их названием, направлением, типом материала и доступом.
@@ -2177,8 +2186,8 @@ export default function AbbottBiDashboard({
               Пример за день: {data.session_journeys.report_date}
             </div>
             <p className="mt-1">
-              Показан session replay из Bitrix dump: вход и выход считаются по clean hits выбранного дня, контентный
-              путь строится без api/ajax/auth. Кликните по строке в таблице, чтобы раскрыть полный маршрут. Ивенты
+              Показано воспроизведение сессии из дампа Bitrix: вход и выход считаются по очищенным хитам выбранного дня, контентный
+              путь строится без API/AJAX/авторизации. Кликните по строке в таблице, чтобы раскрыть полный маршрут. События
               Bitrix в этом дампе недоступны.
             </p>
           </div>
@@ -2231,7 +2240,7 @@ export default function AbbottBiDashboard({
                 </h3>
                 <p className="text-sm text-slate-600">
                   User ID: {selectedSessionJourney.user_id ?? "Без User ID"} · Хиты:{" "}
-                  {formatNumber(selectedSessionJourney.hits_clean, locale)} clean /{" "}
+                  {formatNumber(selectedSessionJourney.hits_clean, locale)} очищенных /{" "}
                   {formatNumber(selectedSessionJourney.hits_total, locale)} total · Время:{" "}
                   {formatDurationMinutes(selectedSessionJourney.duration_seconds, locale)} мин
                 </p>
@@ -2275,7 +2284,7 @@ export default function AbbottBiDashboard({
                     <dd className="break-all">{selectedSessionJourney.content_path_summary || "—"}</dd>
                   </div>
                   <div>
-                    <dt className="text-xs uppercase tracking-wide text-slate-500">Полный clean path</dt>
+                    <dt className="text-xs uppercase tracking-wide text-slate-500">Полный очищенный путь</dt>
                     <dd className="break-all">{selectedSessionJourney.all_path_summary || "—"}</dd>
                   </div>
                 </dl>
