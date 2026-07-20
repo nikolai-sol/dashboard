@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import ast
 import csv
 import io
 import re
@@ -36,13 +35,73 @@ class MetrikaLogsError(RuntimeError):
 def parse_clickhouse_string_array(value: str) -> tuple[str, ...]:
     if not isinstance(value, str):
         raise MetrikaLogsError("Metrika Logs row was invalid")
-    try:
-        parsed = ast.literal_eval(value)
-    except (SyntaxError, ValueError, TypeError):
-        raise MetrikaLogsError("Metrika Logs row was invalid") from None
-    if not isinstance(parsed, list) or any(not isinstance(item, str) for item in parsed):
+
+    length = len(value)
+    position = 0
+
+    def skip_whitespace() -> None:
+        nonlocal position
+        while position < length and value[position].isspace():
+            position += 1
+
+    skip_whitespace()
+    if position >= length or value[position] != "[":
         raise MetrikaLogsError("Metrika Logs row was invalid")
-    return tuple(parsed)
+    position += 1
+    skip_whitespace()
+    if position < length and value[position] == "]":
+        position += 1
+        skip_whitespace()
+        if position != length:
+            raise MetrikaLogsError("Metrika Logs row was invalid")
+        return ()
+
+    parsed = []
+    escape_values = {
+        "0": "\0",
+        "b": "\b",
+        "f": "\f",
+        "n": "\n",
+        "r": "\r",
+        "t": "\t",
+        "\\": "\\",
+        "'": "'",
+    }
+    while True:
+        skip_whitespace()
+        if position >= length or value[position] != "'":
+            raise MetrikaLogsError("Metrika Logs row was invalid")
+        position += 1
+        characters = []
+        while position < length:
+            character = value[position]
+            position += 1
+            if character == "'":
+                break
+            if character == "\\":
+                if position >= length:
+                    raise MetrikaLogsError("Metrika Logs row was invalid")
+                escaped = value[position]
+                position += 1
+                characters.append(escape_values.get(escaped, escaped))
+            else:
+                characters.append(character)
+        else:
+            raise MetrikaLogsError("Metrika Logs row was invalid")
+        parsed.append("".join(characters))
+
+        skip_whitespace()
+        if position >= length:
+            raise MetrikaLogsError("Metrika Logs row was invalid")
+        if value[position] == "]":
+            position += 1
+            skip_whitespace()
+            if position != length:
+                raise MetrikaLogsError("Metrika Logs row was invalid")
+            return tuple(parsed)
+        if value[position] != ",":
+            raise MetrikaLogsError("Metrika Logs row was invalid")
+        position += 1
 
 
 def extract_raw_user_id(level1: tuple[str, ...], level2: tuple[str, ...]) -> str | None:
@@ -51,7 +110,7 @@ def extract_raw_user_id(level1: tuple[str, ...], level2: tuple[str, ...]) -> str
     matches = {
         value
         for key, value in zip(level1, level2)
-        if key == "UserID" and isinstance(value, str) and value != ""
+        if key == "UserID" and isinstance(value, str) and value.strip() != ""
     }
     if len(matches) > 1:
         raise MetrikaLogsError("Metrika Logs row was invalid")
@@ -59,9 +118,15 @@ def extract_raw_user_id(level1: tuple[str, ...], level2: tuple[str, ...]) -> str
 
 
 def _parse_non_negative_integer(value: str) -> int:
-    if not re.fullmatch(r"\d+", value):
+    if not re.fullmatch(r"[0-9]+", value) or len(value) > 19:
         raise MetrikaLogsError("Metrika Logs row was invalid")
-    return int(value)
+    try:
+        parsed = int(value)
+    except (ValueError, OverflowError):
+        raise MetrikaLogsError("Metrika Logs row was invalid") from None
+    if parsed > 2**63 - 1:
+        raise MetrikaLogsError("Metrika Logs row was invalid")
+    return parsed
 
 
 def _valid_day(value: str) -> bool:
@@ -101,7 +166,7 @@ def parse_visits_tsv(payload: str, *, expected_day: str) -> tuple[dict, ...]:
             level1_text,
             level2_text,
         ) = row
-        if not visit_id or visit_id in seen_visit_ids:
+        if not visit_id.strip() or visit_id in seen_visit_ids:
             raise MetrikaLogsError("Metrika Logs row was invalid")
         try:
             parsed_date_time = datetime.strptime(date_time, "%Y-%m-%d %H:%M:%S")

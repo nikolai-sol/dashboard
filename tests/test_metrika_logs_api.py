@@ -81,6 +81,10 @@ class ParserTests(unittest.TestCase):
         with self.assertRaises(MetrikaLogsError):
             parse_clickhouse_string_array("[UserID]")
 
+    def test_rejects_adjacent_clickhouse_string_literals(self):
+        with self.assertRaisesRegex(MetrikaLogsError, "^Metrika Logs row was invalid$"):
+            parse_clickhouse_string_array("['User' 'ID']")
+
     def test_extracts_single_non_empty_user_id(self):
         self.assertEqual(
             extract_raw_user_id(("Other", "UserID", "UserID"), ("x", "", "abc")),
@@ -89,6 +93,9 @@ class ParserTests(unittest.TestCase):
 
     def test_returns_none_without_non_empty_user_id(self):
         self.assertIsNone(extract_raw_user_id(("Other", "UserID"), ("x", "")))
+
+    def test_treats_whitespace_only_user_id_as_blank(self):
+        self.assertIsNone(extract_raw_user_id(("UserID",), (" \t ",)))
 
     def test_rejects_two_distinct_user_ids(self):
         with self.assertRaises(MetrikaLogsError):
@@ -134,6 +141,13 @@ class ParserTests(unittest.TestCase):
                 expected_day="2026-07-19",
             )
 
+    def test_rejects_whitespace_only_visit_id(self):
+        with self.assertRaisesRegex(MetrikaLogsError, "^Metrika Logs row was invalid$"):
+            parse_visits_tsv(
+                HEADER + "\n" + visit_row(visit_id="   "),
+                expected_day="2026-07-19",
+            )
+
     def test_rejects_wrong_visit_day(self):
         with self.assertRaises(MetrikaLogsError):
             parse_visits_tsv(HEADER + "\n" + visit_row(day="2026-07-18"), expected_day="2026-07-19")
@@ -146,6 +160,18 @@ class ParserTests(unittest.TestCase):
         ):
             with self.subTest(overrides=overrides), self.assertRaises(MetrikaLogsError):
                 parse_visits_tsv(HEADER + "\n" + visit_row(**overrides), expected_day="2026-07-19")
+
+    def test_rejects_unicode_digit_and_oversized_integer_metrics_safely(self):
+        for page_views in ("١٢", "9" * 5000):
+            with self.subTest(kind="unicode" if len(page_views) == 2 else "oversized"):
+                with self.assertRaisesRegex(
+                    MetrikaLogsError, "^Metrika Logs row was invalid$"
+                ) as raised:
+                    parse_visits_tsv(
+                        HEADER + "\n" + visit_row(page_views=page_views),
+                        expected_day="2026-07-19",
+                    )
+                self.assertNotIn(page_views, str(raised.exception))
 
 
 class ClientTests(unittest.TestCase):
@@ -187,6 +213,8 @@ class ClientTests(unittest.TestCase):
         self.assertEqual(params["date1"], "2026-07-19")
         self.assertEqual(params["date2"], "2026-07-19")
         self.assertEqual(params["fields"], ",".join(FIELDS))
+        self.assertEqual(params["attribution"], "lastsign")
+        self.assertEqual(session.calls[1][2]["params"]["attribution"], "lastsign")
         self.assertEqual(session.calls[0][2]["headers"]["Authorization"], "OAuth top-secret-token")
 
     def test_cleans_after_download_failure_without_replacing_original_error(self):
