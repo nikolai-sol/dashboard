@@ -929,19 +929,26 @@ def _release_site_rows(
                 'goal_conversions': None,
             }
         elif scope == 'page':
-            raw_url = clean_dimension_name(
+            raw_url = _raw_dimension_value(
                 dimensions[0].get('name')
                 if len(dimensions) > 0 and isinstance(dimensions[0], dict)
                 else None
             )
-            page_title = clean_dimension_name(
+            raw_page_title = _raw_dimension_value(
                 dimensions[1].get('name')
                 if len(dimensions) > 1 and isinstance(dimensions[1], dict)
                 else None
             )
-            if not raw_url and not page_title:
+            page_url = clean_dimension_name(raw_url)
+            page_title = clean_dimension_name(raw_page_title)
+            if not page_url and not page_title:
                 continue
-            scope_dimensions = {'page_url': raw_url, 'page_title': page_title}
+            scope_dimensions = {
+                'page_url': page_url,
+                'page_title': page_title,
+                'page_url_raw_hash': _sha256(raw_url),
+                'page_title_raw_hash': _sha256(raw_page_title),
+            }
             values = {
                 'sessions': 0,
                 'users': safe_int(metric_value(metrics, 1)),
