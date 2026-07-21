@@ -75,7 +75,7 @@ Telegram, or Hermes action.
 - Focused dashboard loader/credential/scanner contracts — 43/43 passed before
   the final large-safe-JSON regression was added; that regression passed alone
   and is included in the complete suite.
-- Complete dashboard suite: `npm test` — 232/232 passed.
+- Initial complete dashboard suite: `npm test` — 232/232 passed.
 - `npm run typecheck` — passed.
 - `npm run lint` — exit 0, no errors, three pre-existing warnings.
 - `npm run security:public-assets` — passed.
@@ -90,13 +90,37 @@ Telegram, or Hermes action.
   — passed.
 - `git diff --check` passed in both repositories.
 
+## Reviewer P1 scanner follow-up
+
+- RED: a real importer-valid neutral `users.json` with top-level
+  `id: [{ id, direction }]` was accepted by the release scanner, and the CLI
+  exited 0. The paired ordinary-JSON regression remained green, proving that a
+  global ban on unrelated `id` fields was neither necessary nor acceptable.
+- The JSON scanner now recognizes only a non-empty root `id` collection whose
+  rows consist exactly of `id` and `direction`, matching the Abbott importer
+  contract without adding either generic key to the private-key denylist.
+- The CLI regression uses the same importer-shaped payload and verifies that
+  only `users.json` is emitted, never the raw User ID value.
+- Focused scanner/importer contracts: 34/34 passed.
+- Complete dashboard suite after the regression: 234/234 passed. Typecheck,
+  public-asset security scan, production build (28 static pages), built-release
+  scan, and `git diff --check` all passed.
+- After root commit `3c249fc690774790651eebe27869cf0303df1536`
+  recorded the corrected nested gitlink, the focused runtime closure/MySQL
+  rehearsal passed 29/29 and the complete root suite passed 330/330.
+
 ## Commits
 
 - Nested dashboard: `8cb8ea0c6f25d68595efea03d31a35f1223b5948` —
   `fix: isolate Abbott release data and embed access`.
+- Nested dashboard P1 follow-up:
+  `2f4fcb58a49e9caf2550f624464c792ed99931e5` —
+  `fix: detect Abbott user mapping release assets`.
 - Root implementation/gitlink: `f669a5d879fde9cd5a2d0446c94935ce840a7d9f` —
   `fix: close Abbott release security contracts`.
-- This report is committed as the final root handoff commit.
+- Root P1 follow-up/gitlink: `3c249fc690774790651eebe27869cf0303df1536` —
+  `fix: close Abbott scanner mapping bypass`.
+- This updated report is committed as the final root handoff commit.
 
 ## Concerns
 
