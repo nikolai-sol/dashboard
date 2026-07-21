@@ -18,7 +18,7 @@ If platform access or cron behavior changes, update this file in the same turn.
 
 ## Runtime and paths
 
-- Root collectors workspace: `/Users/nicko/ReportingDash`
+- Root collectors workspace: `/Users/nafanya/ReportingDash`
 - Canonical runtime on VPS: `/root/reportingdash-canonical`
 - Python venv on VPS: `/root/reportingdash-canonical/venv`
 - Logs: `/root/reportingdash-canonical/logs`
@@ -31,19 +31,22 @@ Main production DBs:
 ## Current canonical cron
 
 Daily jobs on VPS:
-- `06:12` Yandex Metrika
+- `06:12` Yandex Metrika canonical daily collector
+- `06:18` Zaruku Yandex Metrika returning-content canonical daily collector
 - `06:20` LinkedIn
 - `06:30` Reddit
 - `06:32` GetIntent
 - `06:34` Yandex Direct
 - `06:35` VK Ads v2
 - `06:37` Hybrid
-- `06:40` canonical monitor
-- `06:50` Yandex Webmaster
-- `06:50` Telegram summary
-- `06:55` Google Search Console
+- `06:50` Yandex Webmaster canonical daily collector
+- `06:55` Google Search Console canonical daily collector
+- `07:05` canonical monitor
+- `07:10` Telegram summary
 
-These times record the audited operations schedule. They do not by themselves assert that the collector changes in the current branch have been deployed, run, or backfilled.
+The legacy `06:10` localhost Metrika bridge was removed under TASK-072. It was shell-broken and produced no July facts. Do not restore it.
+
+These times record the audited operations schedule. Merging collector code in this repository does not by itself deploy, run, backfill, or edit cron.
 
 Important runtime rule:
 - cron does not collect the current day
@@ -79,35 +82,35 @@ ssh beget 'pm2 status'
 
 ### LinkedIn
 
-- collector: `/Users/nicko/ReportingDash/fetch_linkedin_canonical.py`
+- collector: `/Users/nafanya/ReportingDash/fetch_linkedin_canonical.py`
 - cron enabled
 - canonical-only accepted source
 - monitored
 
 ### Reddit
 
-- collector: `/Users/nicko/ReportingDash/fetch_reddit_canonical.py`
+- collector: `/Users/nafanya/ReportingDash/fetch_reddit_canonical.py`
 - cron enabled
 - canonical-only accepted source
 - monitored
 
 ### VK Ads v2
 
-- collector: `/Users/nicko/ReportingDash/fetch_vk_ads_v2_canonical.py`
+- collector: `/Users/nafanya/ReportingDash/fetch_vk_ads_v2_canonical.py`
 - cron enabled
 - bridged source
 - monitored non-blocking
 
 ### GetIntent
 
-- collector: `/Users/nicko/ReportingDash/fetch_getintent_canonical.py`
+- collector: `/Users/nafanya/ReportingDash/fetch_getintent_canonical.py`
 - cron enabled
 - bridged source
 - monitored non-blocking
 
 ### Hybrid
 
-- collector: `/Users/nicko/ReportingDash/fetch_hybrid_canonical.py`
+- collector: `/Users/nafanya/ReportingDash/fetch_hybrid_canonical.py`
 - cron enabled
 - bridged source
 - monitored non-blocking
@@ -119,17 +122,17 @@ Important current state:
 
 ### Yandex Direct
 
-- collector: `/Users/nicko/ReportingDash/fetch_yandex_direct_canonical.py`
+- collector: `/Users/nafanya/ReportingDash/fetch_yandex_direct_canonical.py`
 - cron enabled
 - monitored non-blocking
 - working source, but account bridge is still imperfect
 
 ### Yandex Metrika
 
-- collector: `/Users/nicko/ReportingDash/fetch_yandex_metrika_canonical.py`
+- collector: `/Users/nafanya/ReportingDash/fetch_yandex_metrika_canonical.py`
 - implemented
 - monitored
-- audited operations schedule: `06:12`
+- cron enabled on VPS at `06:12` with `fetch_yandex_metrika_canonical.py --days-back 2 --run-type cron`
 - supports targeted backfills with `--counter-id` / `--counter-ids`
 - writes canonical site analytics scopes:
   - `traffic`: UTM / ads-attribution grain
@@ -141,15 +144,65 @@ Important current state:
 - deletion before rewrites is counter-scoped for targeted runs, so a Zaruku backfill does not wipe Abbott rows in the same date window
 - `METRIKA_REQUEST_DELAY_SECONDS` can throttle API requests for long backfills and 429-sensitive counters
 - Zaruku main counter is `66624469`; it must be active in `canonical_source_account_collection_settings` with `collection_mode = ads_plus_seo_plus_user_behavior`
+- Zaruku inactive / hold counters `29137835`, `105559308`, and `99078698` must stay `is_active = 0` and `cron_enabled = 0`; do not collect them unless the user explicitly reactivates them.
 - If `canonical_fact_user_behavior_daily` stays empty for Zaruku, do not infer a collector failure by itself: the counter may not expose `paramsLevel2` / UserID-style rows.
+
+#### Yandex Metrika returning content
+
+- collector: `/Users/nafanya/ReportingDash/fetch_yandex_metrika_returning_canonical.py`
+- production runtime: `/root/reportingdash-canonical/fetch_yandex_metrika_returning_canonical.py`
+- cron enabled on VPS at `06:18`
+- cron command: `fetch_yandex_metrika_returning_canonical.py --backfill-days 3 --run-type cron --account-id 66624469`
+- log file: `/root/reportingdash-canonical/logs/yandex-metrika-returning-canonical-cron.log`
+- production table: `report_bd.canonical_fact_metrika_returning_pages_daily`
+- collector telemetry source key: `yandex_metrika_returning`
+- row source key: `yandex_metrika`
+- default Zaruku account/counter: `66624469`
+- dimensions: `ym:s:endURL`
+- metrics: `ym:s:visits`, `ym:s:upToDayUserRecencyPercentage`, `ym:s:upToWeekUserRecencyPercentage`, `ym:s:upToMonthUserRecencyPercentage`
+- canonical grain/idempotency: `(analytics_account_id, report_date, page_hash)`, where `page_hash = sha256(page_url)`
+- user buckets are stored as exclusive estimates:
+  - `returning_1_day_users`
+  - `returning_2_7_days_users`
+  - `returning_8_31_days_users`
+- legacy `yandex_metrika_returned` is historical only for Zaruku dashboards and should not be used as the product read model after the canonical panel migration.
 
 ### Yandex Webmaster
 
-- collector: `/Users/nicko/ReportingDash/fetch_yandex_webmaster_canonical.py`
-- implemented; audited operations schedule: `06:50`
+- collector: `/Users/nafanya/ReportingDash/fetch_yandex_webmaster_canonical.py` deployed into `/var/www/dashboard/fetch_yandex_webmaster_canonical.py`
+- implemented for Zaruku host `https:zaruku.ru:443`
+- writes daily canonical facts:
+  - `canonical_fact_webmaster_queries_daily`
+  - `canonical_fact_webmaster_summary_daily`
+  - `canonical_fact_webmaster_pages_daily`
+- URL/page facts come from Yandex Webmaster `query-analytics/list` with `text_indicator = URL`; default `YANDEX_WEBMASTER_SEARCH_LOCATION = ALL_LOCATIONS`, matching the Webmaster UI screenshot.
 - default daily window is four days: yesterday plus the preceding three days (`--lag-days 3`)
 - for every account / host / date / device, query facts use transactional replacement: delete the prior snapshot, insert the complete current query set, and upsert the summary in one commit
 - an empty current query set removes stale query rows; a write failure rolls back the replacement
+- 2026-07-17 production backfill run `1439` collected URL/page facts for `2026-07-13..2026-07-15`; `2026-07-15` has 968 page rows for account `66624469`.
+- `fetch_yandex_webmaster_canonical.py` is the only writer. The JavaScript weekly collector is a fail-closed tombstone; `seo_webmaster_queries_weekly` and `seo_webmaster_pages_weekly` are `DEPRECATED / NO WRITER / DO NOT READ`.
+
+### Google Search Console
+
+- collector: `/Users/nafanya/ReportingDash/fetch_gsc_canonical.py`
+- production runtime: `/root/reportingdash-canonical/fetch_gsc_canonical.py`
+- cron enabled on VPS at `06:55`
+- log file: `/root/reportingdash-canonical/logs/gsc-canonical-cron.log`
+- source key: `google_search_console`
+- Zaruku property: `https://zaruku.ru/`
+- Zaruku analytics account id: `66624469`
+- writes daily canonical facts:
+  - `canonical_fact_gsc_queries_daily` for query/page/country/device facts
+  - `canonical_fact_gsc_search_appearance_daily` for Search appearance / SERP-feature facts
+  - `canonical_fact_gsc_search_type_daily` for Google result/search type facts
+- cron window: yesterday plus 3-day backfill (`--backfill-days 3`) because GSC can lag by 2-3 days
+- idempotency: upsert by canonical business key `(analytics_account_id, report_date, query, page, device, country)`; `query_hash` is computed from the same canonical fields only for compatibility
+- optional-layer idempotency: Search appearance uses `feature_hash = sha256(search_type, search_appearance, page, country, device)`; result type uses `type_hash = sha256(search_type, page, country, device)`
+- default result types requested by the collector are `web,image,video,news,discover,googleNews`; unsupported optional-layer HTTP 400/403 responses are recorded and make the run `partial`, while successful core facts remain committed
+- 2026-07-19 backfill run `1480` for `2026-07-01..2026-07-18` wrote result-type rows for `web`, `image`, and `video`; Search appearance returned 0 rows for Zaruku through `2026-07-17`
+- legacy columns `property_url`, `query_text`, and `device_type` are nullable compatibility columns and must not be populated by the root collector
+- canonical query lineage is `source_key='google_search_console'`. Under TASK-072, 8,804 canonical-refreshed rows from `2026-07-13..15` were backed up and relabelled in place from stale `seo_os`; they were not deleted because they are the only facts for those dates.
+- old temporary collector `fetch_google_search_console_canonical.py` must not be used as a writer for this table
 
 ### External SEO OS
 
@@ -160,22 +213,6 @@ Important current state:
 
 - current collection is manual
 - no automated AI/GEO collector or cron is owned by this repository
-
-### Google Search Console
-
-- source key: `google_search_console`
-- default property: `https://zaruku.ru/`
-- collector: `/Users/nafanya/ReportingDash/fetch_google_search_console_canonical.py`
-- OAuth uses Google refresh-token flow with read-only scope `https://www.googleapis.com/auth/webmasters.readonly`
-- local auth was validated through the existing Telegatask callback and ReportingDash `.env` can use `GSC_CLIENT_ID`, `GSC_CLIENT_SECRET`, `GSC_REFRESH_TOKEN`, and `GSC_SITE_URL`; never write credential values into memory docs
-- canonical daily tables are `canonical_fact_gsc_queries_daily`, `canonical_fact_gsc_pages_daily`, `canonical_fact_gsc_countries_daily`, and `canonical_fact_gsc_summary_daily`
-- daily replacement grain is `source_key + property_url + report_date + device_type`; query/page/country snapshots are replaced transactionally with their summary row
-- the collector refuses rowLimit-sized Search Analytics responses before deleting existing rows, because they may be incomplete until pagination is added
-- current status: production-deployed on `/root/reportingdash-canonical`, cron-scheduled at `06:55`, and backfilled for `2026-07-01 .. 2026-07-14`
-- confirmed production runs:
-  - backfill run `1436`: `2026-07-01 .. 2026-07-14`, `32921` rows read/written
-  - forced cron smoke run `1437`: `2026-07-11 .. 2026-07-14`, `9199` rows read/written
-  - country-split backfill run `1438`: `2026-07-01 .. 2026-07-14`, `35084` rows read/written; production `canonical_fact_gsc_countries_daily` contained `2163` rows through `2026-07-14` immediately after rollout
 
 ## Platform-specific access notes
 
@@ -256,7 +293,7 @@ Upstream bridge uses:
   - `Client-Login: <req_system.name>`
 
 Legacy bridge code:
-- `/Users/nicko/ReportingDash/nest-second/src/services/direct/direct.service.ts`
+- `/Users/nafanya/ReportingDash/nest-second/src/services/direct/direct.service.ts`
 
 Canonical authority tables:
 - `report_bd.yandex_new`
@@ -357,6 +394,9 @@ Already done and should not be rediscovered:
 10. `porg-47e7bbnx` was added into `report_bd_tech.req_system` as an active Direct API login
 11. Direct API access for `porg-47e7bbnx` is now confirmed working at HTTP level; current-day probe returns an empty report header, not an auth error
 12. Yandex Metrika canonical collector now supports targeted counter backfills, counter-scoped deletes, API throttling, and page-level canonical rows; Zaruku `66624469` was enabled for canonical collection.
+13. Zaruku Metrika counters `29137835`, `105559308`, and `99078698` are on hold/inactive in production collection settings; only counter `66624469` should remain active for Zaruku.
+14. Yandex Webmaster URL/page facts are now canonical daily rows in `canonical_fact_webmaster_pages_daily`; dashboard payload `zaruku_seo.webmaster.data_availability.pages` is true after backfill run `1439`.
+15. Google Search Console is now owned by root collector `fetch_gsc_canonical.py`, cron-enabled at `06:55`, and dashboard-connected through `canonical_fact_gsc_queries_daily`, `canonical_fact_gsc_search_appearance_daily`, and `canonical_fact_gsc_search_type_daily`; the old temporary collector is no longer the writer.
 
 ## Working rule for future platform-access tasks
 

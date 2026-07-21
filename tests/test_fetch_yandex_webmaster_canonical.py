@@ -52,6 +52,15 @@ class FakeConnection:
     def close(self):
         self.events.append(("connection_close",))
 
+import requests
+
+
+def http_error(status_code: int):
+    response = requests.Response()
+    response.status_code = status_code
+    response._content = b'{"error":"bad request"}'
+    return requests.HTTPError(f"{status_code} Client Error", response=response)
+
 
 class YandexWebmasterCanonicalTests(unittest.TestCase):
     def setUp(self):
@@ -316,12 +325,81 @@ class YandexWebmasterCanonicalTests(unittest.TestCase):
         self.assertEqual(row["average_position"], 5)
         self.assertIn("search-queries/popular", row["raw_payload"])
 
+    def test_normalize_query_analytics_url_rows_extracts_requested_day(self):
+        from fetch_yandex_webmaster_canonical import normalize_query_analytics_url_rows
+
+        rows = normalize_query_analytics_url_rows(
+            {
+                "text_indicator_to_statistics": [
+                    {
+                        "text_indicator": {
+                            "type": "URL",
+                            "value": "/rak-molochnoj-zhelezy/reabilitaciya/",
+                        },
+                        "popular_complementary_indicator": {
+                            "type": "QUERY",
+                            "value": "реабилитация после рмж",
+                        },
+                        "statistics": [
+                            {"date": "2026-07-14", "field": "IMPRESSIONS", "value": 39},
+                            {"date": "2026-07-14", "field": "CLICKS", "value": 3},
+                            {"date": "2026-07-14", "field": "CTR", "value": 7.7},
+                            {"date": "2026-07-14", "field": "POSITION", "value": 22.1},
+                            {"date": "2026-07-15", "field": "IMPRESSIONS", "value": 54},
+                            {"date": "2026-07-15", "field": "CLICKS", "value": 5},
+                            {"date": "2026-07-15", "field": "POSITION", "value": 18.4},
+                        ],
+                    },
+                    {
+                        "text_indicator": {
+                            "type": "QUERY",
+                            "value": "ignore me",
+                        },
+                        "statistics": [
+                            {"date": "2026-07-15", "field": "IMPRESSIONS", "value": 100},
+                        ],
+                    },
+                ]
+            },
+            source_key="yandex_webmaster",
+            analytics_account_id="66624469",
+            host_id="https:zaruku.ru:443",
+            report_date="2026-07-15",
+            device_type="ALL",
+            run_id=42,
+        )
+
+        self.assertEqual(len(rows), 1)
+        self.assertEqual(rows[0]["page_url"], "/rak-molochnoj-zhelezy/reabilitaciya/")
+        self.assertEqual(rows[0]["popular_query_text"], "реабилитация после рмж")
+        self.assertEqual(rows[0]["impressions"], 54)
+        self.assertEqual(rows[0]["clicks"], 5)
+        self.assertEqual(rows[0]["ctr"], 9.259259)
+        self.assertEqual(rows[0]["average_position"], 18.4)
+        self.assertEqual(rows[0]["page_hash"], "a402d873f74e6301bfcaeaa42bc5b0aa15e756c6767c7b493fdcaf514c6ddfbf")
+
     def test_upsert_queries_is_idempotent_by_host_date_query_hash(self):
         from fetch_yandex_webmaster_canonical import WEBMASTER_QUERY_UPSERT_SQL
 
         self.assertIn("canonical_fact_webmaster_queries_daily", WEBMASTER_QUERY_UPSERT_SQL)
         self.assertIn("ON DUPLICATE KEY UPDATE", WEBMASTER_QUERY_UPSERT_SQL)
         self.assertIn("query_hash", WEBMASTER_QUERY_UPSERT_SQL)
+
+    def test_upsert_pages_is_idempotent_by_host_date_page_hash(self):
+        from fetch_yandex_webmaster_canonical import WEBMASTER_PAGE_UPSERT_SQL
+
+        self.assertIn("canonical_fact_webmaster_pages_daily", WEBMASTER_PAGE_UPSERT_SQL)
+        self.assertIn("ON DUPLICATE KEY UPDATE", WEBMASTER_PAGE_UPSERT_SQL)
+        self.assertIn("page_hash", WEBMASTER_PAGE_UPSERT_SQL)
+
+    def test_latest_page_facts_lag_error_soft_fails_only_for_latest_400(self):
+        from fetch_yandex_webmaster_canonical import is_latest_page_facts_lag_error
+
+        days = ["2026-07-15", "2026-07-16", "2026-07-17", "2026-07-18"]
+
+        self.assertTrue(is_latest_page_facts_lag_error(http_error(400), "2026-07-18", days))
+        self.assertFalse(is_latest_page_facts_lag_error(http_error(400), "2026-07-17", days))
+        self.assertFalse(is_latest_page_facts_lag_error(http_error(403), "2026-07-18", days))
 
 
 if __name__ == "__main__":
