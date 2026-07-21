@@ -546,6 +546,76 @@ class MetrikaDayBundleTests(unittest.TestCase):
             "ym:s:lastsignUTMSource,ym:s:lastsignUTMMedium,ym:s:lastsignUTMCampaign",
         )
 
+    def test_page_scope_keeps_distinct_raw_dimension_members_after_normalization(self):
+        import fetch_yandex_metrika_canonical as collector
+        from metrika_pagination import PaginationResult
+
+        raw_urls = (
+            "https://example.test/article",
+            " https://example.test/article ",
+        )
+        response = PaginationResult(
+            rows=tuple(
+                {
+                    "dimensions": [
+                        {"id": "", "name": raw_url},
+                        {"id": "", "name": "Article"},
+                    ],
+                    "metrics": [pageviews, 1],
+                }
+                for raw_url, pageviews in zip(raw_urls, (2, 3))
+            ),
+            total_rows=2,
+            pages_fetched=1,
+            pagination_complete=True,
+            sampled=False,
+            sample_share=None,
+        )
+        with patch.object(
+            collector, "request_all_pages", side_effect=(response, response)
+        ):
+            first = collector.collect_metrika_scope(
+                collector.ABBOTT_COUNTER_ID,
+                "2026-01-02",
+                "page",
+                77,
+                41,
+                **FINGERPRINT_CONTEXT,
+            )
+            second = collector.collect_metrika_scope(
+                collector.ABBOTT_COUNTER_ID,
+                "2026-01-02",
+                "page",
+                77,
+                41,
+                **FINGERPRINT_CONTEXT,
+            )
+
+        self.assertEqual(first.persisted_rows, 2)
+        self.assertEqual(
+            [row["scope_dimensions"]["page_url"] for row in first.rows],
+            ["https://example.test/article"] * 2,
+        )
+        self.assertEqual(
+            [row["scope_dimensions"]["page_title"] for row in first.rows],
+            ["Article"] * 2,
+        )
+        self.assertEqual(
+            [row["scope_dimensions"]["page_url_raw_hash"] for row in first.rows],
+            [hashlib.sha256(value.encode("utf-8")).hexdigest() for value in raw_urls],
+        )
+        self.assertEqual(
+            [row["scope_dimensions"]["page_title_raw_hash"] for row in first.rows],
+            [hashlib.sha256(b"Article").hexdigest()] * 2,
+        )
+        self.assertEqual(len({row["scope_hash"] for row in first.rows}), 2)
+        self.assertEqual(
+            [row["scope_hash"] for row in first.rows],
+            [row["scope_hash"] for row in second.rows],
+        )
+        for row in first.rows:
+            self.assertNotIn(raw_urls[1], row["scope_dimensions"].values())
+
     def test_other_user_id_partitions_reconcile_globally_and_per_source(self):
         import fetch_yandex_metrika_canonical as collector
 
