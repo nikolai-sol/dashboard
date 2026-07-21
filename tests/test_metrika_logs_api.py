@@ -205,11 +205,11 @@ class ClientTests(unittest.TestCase):
             [
                 ("GET", "https://api.test/management/v1/counter/123/logrequests/evaluate"),
                 ("POST", "https://api.test/management/v1/counter/123/logrequests"),
-                ("GET", "https://api.test/management/v1/counter/123/logrequests/77"),
-                ("GET", "https://api.test/management/v1/counter/123/logrequests/77"),
-                ("GET", "https://api.test/management/v1/counter/123/logrequests/77/part/0/download"),
-                ("GET", "https://api.test/management/v1/counter/123/logrequests/77/part/2/download"),
-                ("POST", "https://api.test/management/v1/counter/123/logrequests/77/clean"),
+                ("GET", "https://api.test/management/v1/counter/123/logrequest/77"),
+                ("GET", "https://api.test/management/v1/counter/123/logrequest/77"),
+                ("GET", "https://api.test/management/v1/counter/123/logrequest/77/part/0/download"),
+                ("GET", "https://api.test/management/v1/counter/123/logrequest/77/part/2/download"),
+                ("POST", "https://api.test/management/v1/counter/123/logrequest/77/clean"),
             ],
         )
         params = session.calls[0][2]["params"]
@@ -241,9 +241,9 @@ class ClientTests(unittest.TestCase):
             [
                 ("GET", "https://api.test/management/v1/counter/123/logrequests/evaluate"),
                 ("POST", "https://api.test/management/v1/counter/123/logrequests"),
-                ("GET", "https://api.test/management/v1/counter/123/logrequests/77"),
-                ("GET", "https://api.test/management/v1/counter/123/logrequests/77/part/0/download"),
-                ("POST", "https://api.test/management/v1/counter/123/logrequests/77/clean"),
+                ("GET", "https://api.test/management/v1/counter/123/logrequest/77"),
+                ("GET", "https://api.test/management/v1/counter/123/logrequest/77/part/0/download"),
+                ("POST", "https://api.test/management/v1/counter/123/logrequest/77/clean"),
             ],
         )
 
@@ -309,9 +309,9 @@ class ClientTests(unittest.TestCase):
             [
                 ("GET", "https://api.test/management/v1/counter/123/logrequests/evaluate"),
                 ("POST", "https://api.test/management/v1/counter/123/logrequests"),
-                ("GET", "https://api.test/management/v1/counter/123/logrequests/1"),
-                ("GET", "https://api.test/management/v1/counter/123/logrequests/1"),
-                ("POST", "https://api.test/management/v1/counter/123/logrequests/1/clean"),
+                ("GET", "https://api.test/management/v1/counter/123/logrequest/1"),
+                ("GET", "https://api.test/management/v1/counter/123/logrequest/1"),
+                ("POST", "https://api.test/management/v1/counter/123/logrequest/1/clean"),
             ],
         )
 

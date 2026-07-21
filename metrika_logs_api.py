@@ -301,7 +301,9 @@ class MetrikaLogsClient:
             if isinstance(request_id_value, bool) or not re.fullmatch(r"\d+", str(request_id_value)):
                 raise MetrikaLogsError("Metrika Logs response was invalid")
             request_id = str(request_id_value)
-            request_url = root + "/" + request_id
+            request_url = (
+                f"{self._base_url}/management/v1/counter/{counter_id}/logrequest/{request_id}"
+            )
 
             processed = None
             if (
@@ -364,7 +366,11 @@ class MetrikaLogsClient:
         finally:
             if request_id is not None:
                 try:
-                    self._request("POST", root + "/" + request_id + "/clean")
+                    self._request(
+                        "POST",
+                        f"{self._base_url}/management/v1/counter/{counter_id}"
+                        f"/logrequest/{request_id}/clean",
+                    )
                 except Exception:
                     if original_error is None:
                         raise MetrikaLogsError("Metrika Logs cleanup failed") from None
