@@ -491,6 +491,10 @@ CREATE DEFINER=`source_user`@`source_host` VIEW `event_ids` AS SELECT `id` FROM 
             "rehearsal:direction-index:correct-named",
         ):
             self.assertIn(marker, harness)
+        self.assertIn(
+            "canonical_release_id, source_snapshot_id, raw_user_id_hash",
+            " ".join(PRIVATE_SQL.read_text(encoding="utf-8").split()),
+        )
 
     def test_import_rehearsal_reuses_immutable_snapshots_in_successor_release(self):
         harness = HARNESS.read_text(encoding="utf-8")
