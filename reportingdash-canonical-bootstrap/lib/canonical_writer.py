@@ -422,7 +422,7 @@ def _lock_mutable_abbott_release(
         SELECT id, dataset_key, release_status
         FROM portal_data_releases
         WHERE dataset_key = %s AND id = %s
-        FOR UPDATE
+        FOR SHARE
         """,
         ('abbott', release_id),
     )
@@ -454,7 +454,7 @@ def _lock_mutable_abbott_release(
         SELECT canonical_release_id
         FROM portal_active_data_releases
         WHERE dataset_key = %s
-        FOR UPDATE
+        FOR SHARE
         """,
         ('abbott',),
     )
