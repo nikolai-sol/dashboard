@@ -72,3 +72,21 @@ Implementation commit: `d56c460` (`feat: allow Metrika-first Abbott releases`).
   `HEAD`.
 - The full run emitted the existing urllib3/LibreSSL compatibility warning; it
   did not cause a test failure.
+
+## Reviewer P2 follow-up
+
+Added focused regression coverage proving that:
+
+- the release import-execution SQL is scoped only by
+  `canonical_release_id = %s`, uses parameters `(41,)`, and contains no
+  `source_snapshot_id IN` filter;
+- a baseline-declared optional Bitrix source with no matching release execution
+  fails validation;
+- swapping execution snapshot IDs across otherwise complete source kinds fails
+  the per-kind snapshot/execution binding gate.
+
+This was a tests-only coverage gap. All 24 canonical release-store tests passed
+immediately against the existing implementation, so no production defect or
+production-code change was exposed. The complete root suite then ran 324 tests:
+320 passed and the same four shared nested-authority rehearsal setup failures
+remained.

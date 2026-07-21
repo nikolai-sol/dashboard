@@ -282,10 +282,17 @@ class CanonicalReleaseStoreTest(unittest.TestCase):
     def test_two_workbook_sources_validate_without_bitrix(self):
         import canonical_release_store as store
 
-        self.validate(
-            store,
-            ExactValidationConnection(source_kinds=REQUIRED_WORKBOOK_KINDS),
+        conn = ExactValidationConnection(source_kinds=REQUIRED_WORKBOOK_KINDS)
+        self.validate(store, conn)
+
+        sql, params = next(
+            (sql, params)
+            for sql, params in conn.cursor_instance.calls
+            if "FROM portal_release_source_imports" in sql
         )
+        self.assertIn("WHERE canonical_release_id = %s", sql)
+        self.assertNotIn("source_snapshot_id IN", sql)
+        self.assertEqual(params, (41,))
 
     def test_each_declared_optional_bitrix_source_and_both_validate(self):
         import canonical_release_store as store
@@ -324,11 +331,30 @@ class CanonicalReleaseStoreTest(unittest.TestCase):
                     kinds, failed_kind="abbott_bitrix_pages"
                 ),
             ),
+            ExactValidationConnection(
+                source_kinds=kinds,
+                execution_rows=import_execution_rows(REQUIRED_WORKBOOK_KINDS),
+            ),
         )
         for conn in cases:
             with self.subTest(case=cases.index(conn)):
                 with self.assertRaises(store.ValidationGateError):
                     self.validate(store, conn)
+
+    def test_validation_rejects_execution_kind_bound_to_another_snapshot_id(self):
+        import canonical_release_store as store
+
+        kinds = REQUIRED_WORKBOOK_KINDS + ("abbott_bitrix_pages",)
+        executions = import_execution_rows(kinds)
+        executions[1] = {**executions[1], "source_snapshot_id": 13}
+        executions[2] = {**executions[2], "source_snapshot_id": 12}
+        conn = ExactValidationConnection(
+            source_kinds=kinds,
+            execution_rows=executions,
+        )
+
+        with self.assertRaises(store.ValidationGateError):
+            self.validate(store, conn)
 
     def test_source_sets_reject_unknown_duplicates_missing_workbook_and_extras(self):
         import canonical_release_store as store
