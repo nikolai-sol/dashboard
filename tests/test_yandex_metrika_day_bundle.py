@@ -67,6 +67,7 @@ class MetrikaDayBundleTests(unittest.TestCase):
                 "client_id": "client-secret-1",
                 "traffic_source": "Search engine traffic",
                 "raw_user_id": "user-secret-1",
+                "raw_user_ids": ("user-secret-1",),
             },
         )
 
@@ -136,6 +137,7 @@ class MetrikaDayBundleTests(unittest.TestCase):
                     "raw_user_id_hash": hashlib.sha256(
                         b"user-secret-1"
                     ).hexdigest(),
+                    "raw_user_ids_json": '["user-secret-1"]',
                     "traffic_source": "Search engine traffic",
                     "start_url": "https://example.test/private-start?token=secret",
                     "start_url_hash": hashlib.sha256(
@@ -173,6 +175,7 @@ class MetrikaDayBundleTests(unittest.TestCase):
             "client_id": "   ",
             "traffic_source": "direct",
             "raw_user_id": None,
+            "raw_user_ids": (),
         }
 
         result = collector.collect_metrika_scope(
@@ -191,8 +194,44 @@ class MetrikaDayBundleTests(unittest.TestCase):
         self.assertIsNone(row["client_id_hash"])
         self.assertIsNone(row["raw_user_id"])
         self.assertIsNone(row["raw_user_id_hash"])
+        self.assertEqual(row["raw_user_ids_json"], "[]")
         self.assertEqual(row["start_url"], "")
         self.assertEqual(row["end_url"], "")
+
+    def test_user_behavior_preserves_ambiguous_ids_without_singular_attribution(self):
+        import fetch_yandex_metrika_canonical as collector
+
+        visit = {
+            "visit_id": "visit-ambiguous",
+            "date_time": "2026-01-02 00:00:00",
+            "start_url": "/start",
+            "end_url": "/end",
+            "page_views": 1,
+            "visit_duration": 1,
+            "bounce": 0,
+            "client_id": "client",
+            "traffic_source": "direct",
+            "raw_user_id": None,
+            "raw_user_ids": ("first", "second"),
+        }
+
+        result = collector.collect_metrika_scope(
+            collector.ABBOTT_COUNTER_ID,
+            "2026-01-02",
+            "user_behavior",
+            77,
+            41,
+            logs_client_factory=lambda _token: SimpleNamespace(
+                collect_visits=lambda *_args: (visit,)
+            ),
+            **FINGERPRINT_CONTEXT,
+        )
+
+        self.assertEqual(result.persisted_rows, 1)
+        row = result.rows[0]
+        self.assertIsNone(row["raw_user_id"])
+        self.assertIsNone(row["raw_user_id_hash"])
+        self.assertEqual(row["raw_user_ids_json"], '["first","second"]')
 
     def test_user_behavior_rejects_incomplete_or_invalid_visit_without_raw_values(self):
         import fetch_yandex_metrika_canonical as collector
@@ -208,6 +247,7 @@ class MetrikaDayBundleTests(unittest.TestCase):
             "client_id": "private-client-secret",
             "traffic_source": "direct",
             "raw_user_id": "private-user-secret",
+            "raw_user_ids": ("private-user-secret",),
         }
         mutations = (
             {"missing": "traffic_source"},
@@ -216,6 +256,9 @@ class MetrikaDayBundleTests(unittest.TestCase):
             {"visit_duration": True},
             {"bounce": 2},
             {"traffic_source": "   "},
+            {"raw_user_ids": ("private-user-secret", "private-user-secret")},
+            {"raw_user_ids": ("private-user-secret", "second-user"), "raw_user_id": "private-user-secret"},
+            {"raw_user_ids": ("   ",), "raw_user_id": "   "},
         )
         for mutation in mutations:
             with self.subTest(mutation=mutation):

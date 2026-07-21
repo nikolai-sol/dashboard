@@ -4,6 +4,7 @@ from metrika_logs_api import (
     MetrikaLogsClient,
     MetrikaLogsError,
     extract_raw_user_id,
+    extract_raw_user_ids,
     parse_clickhouse_string_array,
     parse_visits_tsv,
 )
@@ -101,9 +102,17 @@ class ParserTests(unittest.TestCase):
     def test_treats_whitespace_only_user_id_as_blank(self):
         self.assertIsNone(extract_raw_user_id(("UserID",), (" \t ",)))
 
-    def test_rejects_two_distinct_user_ids(self):
-        with self.assertRaises(MetrikaLogsError):
+    def test_preserves_distinct_user_ids_in_source_order_without_choosing_one(self):
+        self.assertEqual(
+            extract_raw_user_ids(
+                ("UserID", "Other", "UserID", "UserID", "UserID"),
+                (" one ", "ignored", "two", " one ", ""),
+            ),
+            (" one ", "two"),
+        )
+        self.assertIsNone(
             extract_raw_user_id(("UserID", "UserID"), ("one", "two"))
+        )
 
     def test_parses_valid_visits_tsv(self):
         result = parse_visits_tsv(HEADER + "\n" + visit_row() + "\n", expected_day="2026-07-19")
@@ -121,8 +130,22 @@ class ParserTests(unittest.TestCase):
                 "client_id": "client-secret",
                 "traffic_source": "organic",
                 "raw_user_id": "raw-user",
+                "raw_user_ids": ("raw-user",),
             },),
         )
+
+    def test_parses_multi_user_id_visit_without_dropping_the_session(self):
+        result = parse_visits_tsv(
+            HEADER + "\n" + visit_row(
+                keys1="['UserID','UserID','UserID']",
+                keys2="['first','second','first']",
+            ) + "\n",
+            expected_day="2026-07-19",
+        )
+
+        self.assertEqual(len(result), 1)
+        self.assertIsNone(result[0]["raw_user_id"])
+        self.assertEqual(result[0]["raw_user_ids"], ("first", "second"))
 
     def test_accepts_header_only_payload(self):
         self.assertEqual(parse_visits_tsv(HEADER + "\n", expected_day="2026-07-19"), ())

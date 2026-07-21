@@ -6,6 +6,7 @@ from __future__ import annotations
 import argparse
 import hashlib
 import html
+import json
 import logging
 import os
 import sys
@@ -1048,6 +1049,7 @@ _METRIKA_VISIT_KEYS = frozenset(
         'client_id',
         'traffic_source',
         'raw_user_id',
+        'raw_user_ids',
     )
 )
 
@@ -1101,6 +1103,25 @@ def _release_metrika_visit_rows(
         client_id = visit['client_id']
         traffic_source = visit['traffic_source']
         raw_user_id = visit['raw_user_id']
+        raw_user_ids = visit['raw_user_ids']
+        valid_raw_user_ids = (
+            isinstance(raw_user_ids, (list, tuple))
+            and all(
+                isinstance(value, str) and bool(value.strip())
+                for value in raw_user_ids
+            )
+            and len(set(raw_user_ids)) == len(raw_user_ids)
+        )
+        singular_user_matches = (
+            len(raw_user_ids) == 1 and raw_user_id == raw_user_ids[0]
+            if valid_raw_user_ids
+            else False
+        )
+        non_singular_user_matches = (
+            len(raw_user_ids) != 1 and raw_user_id is None
+            if valid_raw_user_ids
+            else False
+        )
         if (
             not isinstance(visit_id, str)
             or not visit_id.strip()
@@ -1111,6 +1132,8 @@ def _release_metrika_visit_rows(
             or not isinstance(traffic_source, str)
             or not traffic_source.strip()
             or (raw_user_id is not None and not isinstance(raw_user_id, str))
+            or not valid_raw_user_ids
+            or not (singular_user_matches or non_singular_user_matches)
             or isinstance(page_views, bool)
             or not isinstance(page_views, int)
             or page_views < 0
@@ -1141,6 +1164,9 @@ def _release_metrika_visit_rows(
                 'raw_user_id': raw_user_id,
                 'raw_user_id_hash': (
                     _sha256(raw_user_id) if raw_user_id is not None else None
+                ),
+                'raw_user_ids_json': json.dumps(
+                    list(raw_user_ids), ensure_ascii=False, separators=(',', ':')
                 ),
                 'traffic_source': traffic_source,
                 'start_url': start_url,

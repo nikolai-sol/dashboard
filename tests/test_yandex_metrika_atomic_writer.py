@@ -59,6 +59,7 @@ def day_bundle():
                         "client_id_hash": "client-hash",
                         "raw_user_id": "user-1",
                         "raw_user_id_hash": "user-hash",
+                        "raw_user_ids_json": '["user-1"]',
                         "traffic_source": "direct",
                         "start_url": "/start",
                         "start_url_hash": "start-hash",
@@ -169,6 +170,7 @@ class AtomicMetrikaWriterTest(unittest.TestCase):
             "client_id_hash": None,
             "raw_user_id": None,
             "raw_user_id_hash": None,
+            "raw_user_ids_json": '["first","second"]',
             "traffic_source": "direct",
             "start_url": "/start",
             "start_url_hash": "start-hash",
@@ -194,6 +196,7 @@ class AtomicMetrikaWriterTest(unittest.TestCase):
             "INSERT INTO report_bd_private.canonical_fact_metrika_visits "
             "( canonical_release_id, counter_id, report_date, visit_id, "
             "visit_id_hash, client_id_hash, raw_user_id, raw_user_id_hash, "
+            "raw_user_ids_json, "
             "traffic_source, start_url, start_url_hash, end_url, end_url_hash, "
             "session_started_at, session_ended_at, pageviews, duration_seconds, "
             "is_bounce, request_fingerprint, ingestion_run_id )",
@@ -211,6 +214,7 @@ class AtomicMetrikaWriterTest(unittest.TestCase):
                     None,
                     None,
                     None,
+                    '["first","second"]',
                     "direct",
                     "/start",
                     "start-hash",

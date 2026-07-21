@@ -171,6 +171,7 @@ class AbbottSchemaContractTest(unittest.TestCase):
             "client_id_hash CHAR(64) DEFAULT NULL",
             "raw_user_id TEXT DEFAULT NULL",
             "raw_user_id_hash CHAR(64) DEFAULT NULL",
+            "raw_user_ids_json JSON DEFAULT NULL",
             "traffic_source VARCHAR(500) NOT NULL",
             "start_url TEXT NOT NULL",
             "start_url_hash CHAR(64) NOT NULL",
@@ -199,6 +200,25 @@ class AbbottSchemaContractTest(unittest.TestCase):
         ):
             self.assertIn(key, visits)
         self.assertNotRegex(visits, r"(?i)\bclient_id\s+(?:TEXT|VARCHAR|CHAR|BIGINT|INT)")
+
+    def test_multi_user_id_visit_upgrade_is_repeat_safe_and_private_only(self):
+        migration = (
+            ROOT
+            / "dashboard-next/src/db/migrations/041_abbott_private_visit_user_ids.sql"
+        ).read_text()
+        normalized = self._normalized(migration)
+        self.assertIn("information_schema.COLUMNS", migration)
+        self.assertIn("information_schema.TABLES", migration)
+        self.assertIn("TABLE_SCHEMA = 'report_bd_private'", migration)
+        self.assertIn("TABLE_NAME = 'canonical_fact_metrika_visits'", migration)
+        self.assertIn(
+            "ALTER TABLE report_bd_private.canonical_fact_metrika_visits "
+            "ADD COLUMN raw_user_ids_json JSON DEFAULT NULL",
+            normalized,
+        )
+        self.assertIn("PREPARE stmt", migration)
+        self.assertNotRegex(migration, r"(?i)UPDATE\s+report_bd_private\.canonical_fact_metrika_visits")
+        self.assertNotIn("raw_user_ids_json", self._primary_sql())
 
     def test_private_metrika_visit_grants_preserve_role_boundaries(self):
         sql = self._normalized(self._private_sql())

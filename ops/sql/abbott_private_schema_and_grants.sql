@@ -44,6 +44,7 @@ CREATE TABLE IF NOT EXISTS report_bd_private.canonical_fact_metrika_visits (
   client_id_hash CHAR(64) DEFAULT NULL,
   raw_user_id TEXT DEFAULT NULL,
   raw_user_id_hash CHAR(64) DEFAULT NULL,
+  raw_user_ids_json JSON DEFAULT NULL,
   traffic_source VARCHAR(500) NOT NULL,
   start_url TEXT NOT NULL,
   start_url_hash CHAR(64) NOT NULL,
@@ -157,6 +158,19 @@ CREATE TABLE IF NOT EXISTS report_bd_private.portal_bitrix_journeys_private (
 -- Task 7 compatibility upgrade for installations where the Task 1 tables
 -- already exist. Guarded INFORMATION_SCHEMA checks make repeat execution a
 -- no-op while preserving any legacy rows for reviewed backfill validation.
+
+SET @abbott_private_visit_user_ids_exists := (
+  SELECT COUNT(*) FROM information_schema.COLUMNS
+  WHERE TABLE_SCHEMA = 'report_bd_private'
+    AND TABLE_NAME = 'canonical_fact_metrika_visits'
+    AND COLUMN_NAME = 'raw_user_ids_json'
+);
+SET @sql := IF(
+  @abbott_private_visit_user_ids_exists = 0,
+  'ALTER TABLE report_bd_private.canonical_fact_metrika_visits ADD COLUMN raw_user_ids_json JSON DEFAULT NULL AFTER raw_user_id_hash',
+  'SELECT ''private Metrika visit User ID JSON already available'' AS info'
+);
+PREPARE stmt FROM @sql; EXECUTE stmt; DEALLOCATE PREPARE stmt;
 
 -- The same immutable workbook snapshot can be attached to more than one
 -- canonical release. Canonicalize both the original snapshot-only index and
