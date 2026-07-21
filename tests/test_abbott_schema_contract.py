@@ -215,6 +215,46 @@ class AbbottSchemaContractTest(unittest.TestCase):
         self.assertNotIn(f"ON {table} TO 'abbott_importer_role';", sql)
         self.assertNotIn(f"ON {table} TO 'abbott_release_operator_role';", sql)
 
+    def test_private_direction_uniqueness_is_release_and_snapshot_scoped(self):
+        private = self._private_sql()
+        directions = self._table_definition(
+            private,
+            "report_bd_private.portal_user_directions_private",
+        )
+        target_columns = (
+            "canonical_release_id, source_snapshot_id, raw_user_id_hash"
+        )
+        self.assertIn(
+            "UNIQUE KEY uniq_private_direction_snapshot_user "
+            f"({target_columns})",
+            directions,
+        )
+        self.assertNotIn(
+            "UNIQUE KEY uniq_private_direction_snapshot_user "
+            "(source_snapshot_id, raw_user_id_hash)",
+            directions,
+        )
+
+        normalized = self._normalized(private)
+        self.assertIn(
+            "@abbott_private_direction_index_signature",
+            private,
+        )
+        self.assertIn(
+            "ALTER TABLE report_bd_private.portal_user_directions_private "
+            "DROP INDEX uniq_private_direction_snapshot_user",
+            normalized,
+        )
+        self.assertIn(
+            "ALTER TABLE report_bd_private.portal_user_directions_private "
+            "ADD UNIQUE INDEX uniq_private_direction_snapshot_user "
+            f"({target_columns})",
+            normalized,
+        )
+        self.assertIn("NON_UNIQUE", private)
+        self.assertIn("@abbott_private_direction_equivalent_index", private)
+        self.assertIn("RENAME INDEX", private)
+
     def test_embed_reader_role_is_aggregate_only(self):
         sql = self._normalized(self._private_sql())
         role = "'abbott_embed_reader_role'"

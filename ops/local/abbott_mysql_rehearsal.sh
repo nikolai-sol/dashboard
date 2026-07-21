@@ -382,12 +382,36 @@ capture_grant_signature "$PRIVATE_ROOT/grants.before.tsv"
 SCHEMA_SIGNATURE="$(signature "$PRIVATE_ROOT/schema.before.tsv")"
 GRANT_SIGNATURE="$(signature "$PRIVATE_ROOT/grants.before.tsv")"
 
+mysql_exec "$PRIMARY_DATABASE" --execute="
+  SELECT 'correct-named' /*rehearsal:direction-index:correct-named*/;" \
+  > "$PRIVATE_ROOT/direction-index-correct.log" 2>&1
 mysql_exec "$PRIMARY_DATABASE" < "$MIGRATION_033" > "$PRIVATE_ROOT/migration-033-repeat.log" 2>&1
 mysql_exec "$PRIMARY_DATABASE" < "$PRIVATE_SQL" > "$PRIVATE_ROOT/private-repeat.log" 2>&1
 capture_schema_signature "$PRIVATE_ROOT/schema.after.tsv"
 capture_grant_signature "$PRIVATE_ROOT/grants.after.tsv"
 [[ "$SCHEMA_SIGNATURE" == "$(signature "$PRIVATE_ROOT/schema.after.tsv")" ]] || { printf '%s\n' "Repeated Abbott DDL changed the schema signature." >&2; exit 1; }
 [[ "$GRANT_SIGNATURE" == "$(signature "$PRIVATE_ROOT/grants.after.tsv")" ]] || { printf '%s\n' "Repeated Abbott DDL changed the grant signature." >&2; exit 1; }
+
+mysql_exec "$PRIMARY_DATABASE" --execute="
+  ALTER TABLE report_bd_private.portal_user_directions_private
+    DROP INDEX uniq_private_direction_snapshot_user,
+    ADD UNIQUE INDEX uniq_private_direction_snapshot_user
+      (source_snapshot_id, raw_user_id_hash)
+  /*rehearsal:direction-index:wrong-named*/;" \
+  > "$PRIVATE_ROOT/direction-index-wrong.log" 2>&1
+mysql_exec "$PRIMARY_DATABASE" < "$PRIVATE_SQL" > "$PRIVATE_ROOT/private-upgrade-wrong-index.log" 2>&1
+capture_schema_signature "$PRIVATE_ROOT/schema.after-wrong-upgrade.tsv"
+[[ "$SCHEMA_SIGNATURE" == "$(signature "$PRIVATE_ROOT/schema.after-wrong-upgrade.tsv")" ]] || { printf '%s\n' "Wrong private direction index was not upgraded." >&2; exit 1; }
+
+mysql_exec "$PRIMARY_DATABASE" --execute="
+  ALTER TABLE report_bd_private.portal_user_directions_private
+    RENAME INDEX uniq_private_direction_snapshot_user
+    TO equivalent_private_direction_release_snapshot_user
+  /*rehearsal:direction-index:equivalent-named*/;" \
+  > "$PRIVATE_ROOT/direction-index-equivalent.log" 2>&1
+mysql_exec "$PRIMARY_DATABASE" < "$PRIVATE_SQL" > "$PRIVATE_ROOT/private-upgrade-equivalent-index.log" 2>&1
+capture_schema_signature "$PRIVATE_ROOT/schema.after-equivalent-upgrade.tsv"
+[[ "$SCHEMA_SIGNATURE" == "$(signature "$PRIVATE_ROOT/schema.after-equivalent-upgrade.tsv")" ]] || { printf '%s\n' "Equivalent private direction index was not canonicalized." >&2; exit 1; }
 
 if [[ "$MODE" == schema ]]; then
   FILTERED_DUMP="$PRIVATE_ROOT/source-schema.sql"
@@ -537,20 +561,26 @@ if [[ "$MODE" == lifecycle ]]; then
   INCOMPLETE_REJECTED=true
 fi
 
-(
+run_private_import() {
+  local release_id=$1
+  local protected_log=$2
+  (
   set -a
   . "$PRIVATE_ROOT/import.env"
   set +a
   cd "$MIGRATIONS_REPOSITORY"
   node --import tsx scripts/import-abbott-private-data.ts \
-    --canonical-release-id "$CANDIDATE_RELEASE_ID" \
+    --canonical-release-id "$release_id" \
     --workbook-json "$INPUTS/abbott-workbook.json" \
     --workbook-xlsx "$INPUTS/Abbott-names.xlsx" \
     --bitrix-pages "$INPUTS/bitrix-analytics.json" \
     --bitrix-journeys "$INPUTS/bitrix-session-journeys.json" \
     --parser-version "$PARSER_VERSION" --code-revision "$CODE_REVISION" \
     --archive-dir "$PRIVATE_ROOT/source-archive"
-) > "$PRIVATE_ROOT/import.log" 2>&1
+  ) > "$protected_log" 2>&1
+}
+
+run_private_import "$CANDIDATE_RELEASE_ID" "$PRIVATE_ROOT/import.log"
 
 IMPORT_AGGREGATES="$(mysql_exec "$PRIMARY_DATABASE" --execute="
   SELECT COUNT(DISTINCT imports.source_kind),
@@ -567,6 +597,34 @@ mysql_exec "$PRIMARY_DATABASE" --execute="
   SELECT source_kind,imported_row_count,rejected_row_count
   FROM portal_release_source_imports WHERE canonical_release_id=$CANDIDATE_RELEASE_ID ORDER BY source_kind
   /*rehearsal:source-counts*/;" > "$PRIVATE_ROOT/source-counts.tsv"
+
+SUCCESSOR_RESULT="$(run_release_python abbott_release_operator.py create \
+  --predecessor-release-id "$PREDECESSOR_RELEASE_ID" \
+  --baseline-snapshot-id "$BASELINE_SNAPSHOT_ID" --code-revision "$CODE_REVISION")"
+SUCCESSOR_RELEASE_ID="${SUCCESSOR_RESULT#release_id=}"
+SUCCESSOR_RELEASE_ID="${SUCCESSOR_RELEASE_ID%% *}"
+[[ "$SUCCESSOR_RELEASE_ID" =~ ^[0-9]+$ ]] || { printf '%s\n' "Local successor creation failed." >&2; exit 1; }
+run_private_import "$SUCCESSOR_RELEASE_ID" "$PRIVATE_ROOT/successor-import.log"
+
+SUCCESSOR_REUSE="$(mysql_exec "$PRIMARY_DATABASE" --execute="
+  SELECT COUNT(*),
+         SUM(candidate.source_snapshot_id = successor.source_snapshot_id),
+         (SELECT COUNT(*) FROM report_bd_private.portal_user_directions_private
+           WHERE canonical_release_id=$CANDIDATE_RELEASE_ID),
+         (SELECT COUNT(*) FROM report_bd_private.portal_user_directions_private
+           WHERE canonical_release_id=$SUCCESSOR_RELEASE_ID)
+  FROM portal_release_source_imports AS candidate
+  JOIN portal_release_source_imports AS successor
+    ON successor.canonical_release_id=$SUCCESSOR_RELEASE_ID
+   AND successor.source_kind=candidate.source_kind
+  WHERE candidate.canonical_release_id=$CANDIDATE_RELEASE_ID
+  /*rehearsal:successor-snapshot-reuse*/;")"
+IFS=$'\t' read -r SUCCESSOR_SOURCE_COUNT SUCCESSOR_REUSED_COUNT CANDIDATE_DIRECTION_COUNT SUCCESSOR_DIRECTION_COUNT <<< "$SUCCESSOR_REUSE"
+[[ "$SUCCESSOR_SOURCE_COUNT" == 4 && "$SUCCESSOR_REUSED_COUNT" == 4 \
+   && "$CANDIDATE_DIRECTION_COUNT" -gt 0 \
+   && "$SUCCESSOR_DIRECTION_COUNT" == "$CANDIDATE_DIRECTION_COUNT" ]] || {
+  printf '%s\n' "Successor immutable snapshot reuse failed." >&2; exit 1;
+}
 
 if [[ "$MODE" == import ]]; then
   MYSQL_VERSION="$(mysql_exec --execute='SELECT VERSION();')"

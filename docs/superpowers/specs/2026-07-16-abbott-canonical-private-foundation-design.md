@@ -96,7 +96,8 @@ Candidate facts are written under a new release/version and do not overwrite the
 - snapshot ID;
 - `raw_user_id` stored losslessly as text;
 - normalized direction/specialization;
-- uniqueness on snapshot and raw user ID.
+- uniqueness on canonical release, snapshot, and raw user ID so one immutable
+  snapshot can be materialized into separately reviewed successor releases.
 
 `portal_content_catalog`
 

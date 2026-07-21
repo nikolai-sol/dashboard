@@ -483,6 +483,25 @@ CREATE DEFINER=`source_user`@`source_host` VIEW `event_ids` AS SELECT `id` FROM 
         self.assertTrue(all(len(indexes) == 1 for indexes in fixture_indexes.values()))
         self.assertTrue(all(indexes[0] < first_migration for indexes in fixture_indexes.values()))
 
+    def test_schema_rehearsal_exercises_direction_index_upgrade_states(self):
+        harness = HARNESS.read_text(encoding="utf-8")
+        for marker in (
+            "rehearsal:direction-index:wrong-named",
+            "rehearsal:direction-index:equivalent-named",
+            "rehearsal:direction-index:correct-named",
+        ):
+            self.assertIn(marker, harness)
+        self.assertIn(
+            "canonical_release_id, source_snapshot_id, raw_user_id_hash",
+            " ".join(harness.split()),
+        )
+
+    def test_import_rehearsal_reuses_immutable_snapshots_in_successor_release(self):
+        harness = HARNESS.read_text(encoding="utf-8")
+        self.assertIn("SUCCESSOR_RELEASE_ID", harness)
+        self.assertIn("rehearsal:successor-snapshot-reuse", harness)
+        self.assertIn("Successor immutable snapshot reuse failed", harness)
+
     def test_runbook_uses_standalone_schema_interface(self):
         runbook = RUNBOOK.read_text(encoding="utf-8")
         local_gate = runbook.split("## Local MySQL rehearsal checkpoint", 1)[1].split(

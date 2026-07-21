@@ -80,7 +80,7 @@ CREATE TABLE IF NOT EXISTS report_bd_private.portal_user_directions_private (
   updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
   PRIMARY KEY (id),
   UNIQUE KEY uniq_private_direction_snapshot_user
-    (source_snapshot_id, raw_user_id_hash),
+    (canonical_release_id, source_snapshot_id, raw_user_id_hash),
   KEY idx_private_direction_release
     (canonical_release_id, normalized_direction)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
@@ -157,6 +157,64 @@ CREATE TABLE IF NOT EXISTS report_bd_private.portal_bitrix_journeys_private (
 -- Task 7 compatibility upgrade for installations where the Task 1 tables
 -- already exist. Guarded INFORMATION_SCHEMA checks make repeat execution a
 -- no-op while preserving any legacy rows for reviewed backfill validation.
+
+-- The same immutable workbook snapshot can be attached to more than one
+-- canonical release. Canonicalize both the original snapshot-only index and
+-- any equivalent differently named index without creating duplicate indexes.
+SET @abbott_private_direction_index_signature := (
+  SELECT CONCAT(
+    MIN(NON_UNIQUE), ':',
+    GROUP_CONCAT(COLUMN_NAME ORDER BY SEQ_IN_INDEX SEPARATOR ',')
+  )
+  FROM information_schema.STATISTICS
+  WHERE TABLE_SCHEMA = 'report_bd_private'
+    AND TABLE_NAME = 'portal_user_directions_private'
+    AND INDEX_NAME = 'uniq_private_direction_snapshot_user'
+);
+SET @sql := IF(
+  @abbott_private_direction_index_signature IS NOT NULL
+    AND @abbott_private_direction_index_signature <>
+      '0:canonical_release_id,source_snapshot_id,raw_user_id_hash',
+  'ALTER TABLE report_bd_private.portal_user_directions_private DROP INDEX uniq_private_direction_snapshot_user',
+  'SELECT ''private direction named uniqueness does not need removal'' AS info'
+);
+PREPARE stmt FROM @sql; EXECUTE stmt; DEALLOCATE PREPARE stmt;
+
+SET @abbott_private_direction_equivalent_index := (
+  SELECT candidate.INDEX_NAME
+  FROM (
+    SELECT
+      INDEX_NAME,
+      MIN(NON_UNIQUE) AS non_unique,
+      GROUP_CONCAT(COLUMN_NAME ORDER BY SEQ_IN_INDEX SEPARATOR ',') AS index_columns
+    FROM information_schema.STATISTICS
+    WHERE TABLE_SCHEMA = 'report_bd_private'
+      AND TABLE_NAME = 'portal_user_directions_private'
+      AND INDEX_NAME <> 'PRIMARY'
+    GROUP BY INDEX_NAME
+  ) AS candidate
+  WHERE candidate.non_unique = 0
+    AND candidate.index_columns =
+      'canonical_release_id,source_snapshot_id,raw_user_id_hash'
+  ORDER BY
+    candidate.INDEX_NAME = 'uniq_private_direction_snapshot_user' DESC,
+    candidate.INDEX_NAME
+  LIMIT 1
+);
+SET @sql := CASE
+  WHEN @abbott_private_direction_equivalent_index =
+       'uniq_private_direction_snapshot_user'
+    THEN 'SELECT ''private direction uniqueness already aligned'' AS info'
+  WHEN @abbott_private_direction_equivalent_index IS NOT NULL
+    THEN CONCAT(
+      'ALTER TABLE report_bd_private.portal_user_directions_private RENAME INDEX `',
+      REPLACE(@abbott_private_direction_equivalent_index, '`', '``'),
+      '` TO uniq_private_direction_snapshot_user'
+    )
+  ELSE
+    'ALTER TABLE report_bd_private.portal_user_directions_private ADD UNIQUE INDEX uniq_private_direction_snapshot_user (canonical_release_id, source_snapshot_id, raw_user_id_hash)'
+END;
+PREPARE stmt FROM @sql; EXECUTE stmt; DEALLOCATE PREPARE stmt;
 
 SET @abbott_private_visit_type := (
   SELECT DATA_TYPE FROM information_schema.COLUMNS
