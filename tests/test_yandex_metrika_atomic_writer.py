@@ -310,6 +310,17 @@ class AtomicMetrikaWriterTest(unittest.TestCase):
         self.assertFalse(
             any("canonical_fact_metrika_returning_pages_daily" in sql for sql in lock_sql)
         )
+        metadata_locks = [
+            sql
+            for sql in lock_sql
+            if "FROM portal_data_releases" in sql
+            or "FROM portal_active_data_releases" in sql
+        ]
+        day_locks = [sql for sql in lock_sql if "SELECT COUNT(*) AS row_count" in sql]
+        self.assertEqual(len(metadata_locks), 2)
+        self.assertTrue(all("FOR SHARE" in sql for sql in metadata_locks))
+        self.assertEqual(len(day_locks), 4)
+        self.assertTrue(all("FOR UPDATE" in sql for sql in day_locks))
 
     def test_release_returning_insert_targets_release_scoped_authority(self):
         import canonical_writer as writer
@@ -618,7 +629,7 @@ class AtomicMetrikaWriterTest(unittest.TestCase):
 
         lock_index = next(
             i for i, (_, sql, _) in enumerate(conn.sql_calls)
-            if "FROM portal_data_releases" in sql and "FOR UPDATE" in sql
+            if "FROM portal_data_releases" in sql and "FOR SHARE" in sql
         )
         delete_index = next(
             i for i, (_, sql, _) in enumerate(conn.sql_calls) if sql.startswith("DELETE")
