@@ -118,6 +118,61 @@ test("release scans detect private signatures under neutral JSON and CSV names",
   }
 });
 
+test("release scans reject native Yandex Logs visit exports while allowing aggregate metrics", async () => {
+  const releaseRoot = await mkdtemp(path.join(tmpdir(), "release-asset-policy-metrika-logs-"));
+  try {
+    const visitFields = [
+      "ym:s:visitID",
+      "ym:s:dateTime",
+      "ym:s:startURL",
+      "ym:s:endURL",
+      "ym:s:pageViews",
+      "ym:s:visitDuration",
+      "ym:s:bounce",
+      "ym:s:clientID",
+      "ym:s:lastsignTrafficSource",
+      "ym:s:parsedParamsKey1",
+      "ym:s:parsedParamsKey2",
+    ];
+    const visitValues = [
+      "visit-secret-native",
+      "2026-07-20 10:00:00",
+      "https://private.example/start?doctor=one",
+      "https://private.example/end?doctor=one",
+      "3",
+      "120",
+      "0",
+      "client-secret-native",
+      "organic",
+      "UserID",
+      "doctor-secret-native",
+    ];
+    await writeFile(path.join(releaseRoot, "native-visits.tsv"), `${visitFields.join("\t")}\n${visitValues.join("\t")}\n`);
+    await writeFile(
+      path.join(releaseRoot, "native-visits.csv"),
+      `${[...visitFields, "ym:s:params"].join(",")}\n${[...visitValues, "[]"].join(",")}\n`,
+    );
+    await writeFile(
+      path.join(releaseRoot, "aggregate-metrics.tsv"),
+      "ym:s:dateTime\tym:s:visits\tym:s:users\tym:s:pageViews\tym:s:bounce\n2026-07-20\t12\t9\t20\t0.25\n",
+    );
+    await writeFile(
+      path.join(releaseRoot, "aggregate-metrics.csv"),
+      "ym:s:dateTime,ym:s:visits,ym:s:users,ym:s:pageViews\n2026-07-20,12,9,20\n",
+    );
+
+    assert.deepEqual(findPrivateReleaseAssets(releaseRoot), ["native-visits.csv", "native-visits.tsv"]);
+
+    const failure = spawnSync(process.execPath, ["--import", "tsx", assetCli, "--release", releaseRoot], { encoding: "utf8" });
+    assert.equal(failure.status, 1);
+    assert.equal(failure.stdout, "");
+    assert.equal(failure.stderr, "native-visits.csv\nnative-visits.tsv\n");
+    assert.doesNotMatch(failure.stderr, /visit-secret-native|client-secret-native|doctor-secret-native|private\.example/);
+  } finally {
+    await rm(releaseRoot, { force: true, recursive: true });
+  }
+});
+
 test("release scans reject an importer-valid Abbott user mapping under a neutral JSON name", async () => {
   const releaseRoot = await mkdtemp(path.join(tmpdir(), "release-asset-policy-user-map-"));
   try {

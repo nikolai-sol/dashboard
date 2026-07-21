@@ -37,6 +37,7 @@ const BITRIX_EXPORT_KEY_SETS = [
   ["session_id", "user_id", "page_url"],
   ["protected_visit_id", "event_sequence", "normalized_path"],
 ] as const;
+const METRIKA_LOGS_VISIT_KEYS = ["visit_id", "client_id", "start_url", "end_url"] as const;
 
 function isProhibitedAbbottAsset(relativePath: string) {
   const normalized = relativePath.split(path.sep).join("/").toLowerCase();
@@ -48,12 +49,18 @@ function normalizedRelativePath(root: string, absolutePath: string) {
 }
 
 function normalizedKey(value: string): string {
-  return value.trim().toLowerCase().replace(/[\s-]+/g, "_");
+  const trimmed = value.trim();
+  const metrikaField = /^ym:s:(.+)$/i.exec(trimmed)?.[1];
+  const unprefixed = metrikaField
+    ? metrikaField.replace(/([a-z0-9])([A-Z])/g, "$1_$2")
+    : trimmed;
+  return unprefixed.toLowerCase().replace(/[\s-]+/g, "_");
 }
 
 function hasPrivateKeys(keys: Iterable<string>): boolean {
   const normalized = new Set(Array.from(keys, normalizedKey));
   if ([...PRIVATE_KEYS].some((key) => normalized.has(key))) return true;
+  if (METRIKA_LOGS_VISIT_KEYS.every((key) => normalized.has(key))) return true;
   return BITRIX_EXPORT_KEY_SETS.some((required) => required.every((key) => normalized.has(key)));
 }
 
