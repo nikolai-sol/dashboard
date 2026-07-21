@@ -129,6 +129,26 @@ Telegram, or Hermes action.
   the focused runtime closure/MySQL rehearsal passed 29/29 and the complete
   root suite passed 330/330.
 
+## Whole-review P1 native Logs follow-up
+
+- RED: neutral CSV and TSV fixtures using the exact native Yandex Logs
+  `VISIT_FIELDS` names (`ym:s:visitID`, `ym:s:clientID`, `ym:s:startURL`, and
+  `ym:s:endURL`) were accepted. The CSV also included optional `ym:s:params`.
+  Ordinary Yandex-like aggregate metrics CSV/TSV controls remained allowed.
+- The scanner now strips the `ym:s:` namespace and converts native camel-case
+  field names to canonical snake case. A visit export is private when the
+  canonical header set contains `visit_id`, `client_id`, `start_url`, and
+  `end_url`; extra fields do not affect detection.
+- The CLI regression verifies that rejected native Logs exports emit only the
+  two relative paths and none of the visit, client, User ID, or URL content.
+- Focused scanner contracts: 16/16 passed.
+- Complete dashboard suite: 237/237 passed. Typecheck, public-asset scan,
+  built-release scan, and `git diff --check` passed.
+- After root commit `4c67d47e1f84a9dfd4245d3fd51ad588cd046f61`
+  recorded nested commit `9a9511f4099931b460dd31ff24644836f83dc69b`,
+  the focused runtime closure/MySQL rehearsal passed 29/29 and the complete
+  root suite passed 330/330.
+
 ## Commits
 
 - Nested dashboard: `8cb8ea0c6f25d68595efea03d31a35f1223b5948` —
@@ -139,6 +159,9 @@ Telegram, or Hermes action.
 - Nested dashboard mixed-row follow-up:
   `3328c1dcea990cd54f6ee909dbc1648348abdfe6` —
   `fix: detect mixed Abbott user mappings`.
+- Nested dashboard native Logs follow-up:
+  `9a9511f4099931b460dd31ff24644836f83dc69b` —
+  `fix: detect native Metrika Logs exports`.
 - Root implementation/gitlink: `f669a5d879fde9cd5a2d0446c94935ce840a7d9f` —
   `fix: close Abbott release security contracts`.
 - Root P1 follow-up/gitlink: `3c249fc690774790651eebe27869cf0303df1536` —
@@ -146,6 +169,9 @@ Telegram, or Hermes action.
 - Root mixed-row follow-up/gitlink:
   `af363f9478335b2d98c9fb9de4def371874c1efb` —
   `fix: close mixed Abbott mapping bypass`.
+- Root native Logs follow-up/gitlink:
+  `4c67d47e1f84a9dfd4245d3fd51ad588cd046f61` —
+  `fix: close native Metrika Logs scanner bypass`.
 - This updated report is committed as the final root handoff commit.
 
 ## Concerns
