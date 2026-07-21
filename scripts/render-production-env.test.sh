@@ -10,11 +10,25 @@ cleanup() {
 trap cleanup EXIT
 
 mkdir -p "$TMP_DIR/bin"
+SYSTEM_PATH="$PATH"
+REAL_NODE="$(command -v node)"
+cat > "$TMP_DIR/no-node-util-parse-env.cjs" <<'JS'
+require("node:util").parseEnv = undefined;
+JS
+cat > "$TMP_DIR/bin/node" <<SH
+#!/bin/bash
+NODE_OPTIONS='--require=$TMP_DIR/no-node-util-parse-env.cjs' exec '$REAL_NODE' "\$@"
+SH
+chmod +x "$TMP_DIR/bin/node"
 cat > "$TMP_DIR/bin/ssh" <<'SH'
 #!/bin/bash
 printf '%s\n' "${FAKE_REMOTE_ENV_CONTENT:?}"
 SH
 chmod +x "$TMP_DIR/bin/ssh"
+
+mkdir -p "$TMP_DIR/system-node-bin"
+ln -s "$REAL_NODE" "$TMP_DIR/system-node-bin/node"
+ln -s "$TMP_DIR/bin/ssh" "$TMP_DIR/system-node-bin/ssh"
 
 read -r -d '' VALID_ENV <<'ENV' || true
 MYSQL_USER=dashboard_user
@@ -39,8 +53,23 @@ ENV
 
 TARGET_FILE="$TMP_DIR/.env.production"
 SUCCESS_LOG="$TMP_DIR/success.log"
-FAKE_REMOTE_ENV_CONTENT="$VALID_ENV" PATH="$TMP_DIR/bin:$PATH" \
-  bash "$SCRIPT_DIR/render-production-env.sh" "$TARGET_FILE" >"$SUCCESS_LOG" 2>&1
+(
+  cd "$TMP_DIR"
+  FAKE_REMOTE_ENV_CONTENT="$VALID_ENV" PATH="$TMP_DIR/bin:$PATH" \
+    bash "$SCRIPT_DIR/render-production-env.sh" "$TARGET_FILE"
+) >"$SUCCESS_LOG" 2>&1
+
+NODE_OPTIONS_MARKER="$TMP_DIR/node-options-executed"
+cat > "$TMP_DIR/node-options-payload.cjs" <<JS
+require("node:fs").writeFileSync("$NODE_OPTIONS_MARKER", "executed");
+JS
+MALICIOUS_ENV="$(printf '%s\nNODE_OPTIONS=--require=%s\n' "$VALID_ENV" "$TMP_DIR/node-options-payload.cjs")"
+FAKE_REMOTE_ENV_CONTENT="$MALICIOUS_ENV" PATH="$TMP_DIR/system-node-bin:$SYSTEM_PATH" \
+  bash "$SCRIPT_DIR/render-production-env.sh" "$TMP_DIR/malicious.env" >"$TMP_DIR/malicious.log" 2>&1
+if [[ -e "$NODE_OPTIONS_MARKER" ]]; then
+  echo "render-production-env.sh executed NODE_OPTIONS from the remote environment file" >&2
+  exit 1
+fi
 
 EXPECTED_ABBOTT_PASSWORD='  abbott # "quoted" \ path  ' \
 EXPECTED_EMBED_KEY='embed key # with spaces' \

@@ -9,12 +9,25 @@ cleanup() {
 }
 trap cleanup EXIT
 
+SYSTEM_PATH="$PATH"
+REAL_NODE="$(command -v node)"
+mkdir -p "$TMP_DIR/bin"
+cat > "$TMP_DIR/no-node-util-parse-env.cjs" <<'JS'
+require("node:util").parseEnv = undefined;
+JS
+cat > "$TMP_DIR/bin/node" <<SH
+#!/bin/bash
+NODE_OPTIONS='--require=$TMP_DIR/no-node-util-parse-env.cjs' exec '$REAL_NODE' "\$@"
+SH
+chmod +x "$TMP_DIR/bin/node"
+export PATH="$TMP_DIR/bin:$PATH"
+
 write_valid_env() {
   local target="$1"
   cat > "$target" <<'ENV'
-ABBOTT_DASHBOARD_PASSWORD=abbott-top-secret
-ABBOTT_DASHBOARD_EMBED_KEY=embed-top-secret
-METRIKA_TOKEN=metrika-top-secret
+ABBOTT_DASHBOARD_PASSWORD='  abbott # "quoted" \ path  '
+ABBOTT_DASHBOARD_EMBED_KEY="embed key # with spaces"
+METRIKA_TOKEN='metrika # token \ value'
 ABBOTT_EMBED_DB_HOST=embed-db.example.test
 ABBOTT_EMBED_DB_PORT=3306
 ABBOTT_EMBED_DB_USER=abbott_embed
@@ -32,13 +45,32 @@ VALID_RELEASE="$TMP_DIR/valid-release"
 mkdir -p "$VALID_RELEASE/public/images"
 printf 'image' > "$VALID_RELEASE/public/images/abbott-logo.png"
 write_valid_env "$VALID_RELEASE/.env"
-bash "$SCRIPT_DIR/validate-production-release.sh" "$VALID_RELEASE" "$VALID_RELEASE/.env" >"$TMP_DIR/valid.log" 2>&1
+(
+  cd "$TMP_DIR"
+  bash "$SCRIPT_DIR/validate-production-release.sh" "$VALID_RELEASE" "$VALID_RELEASE/.env"
+) >"$TMP_DIR/valid.log" 2>&1
+
+NODE_OPTIONS_MARKER="$TMP_DIR/node-options-executed"
+cat > "$TMP_DIR/node-options-payload.cjs" <<JS
+require("node:fs").writeFileSync("$NODE_OPTIONS_MARKER", "executed");
+JS
+MALICIOUS_RELEASE="$TMP_DIR/malicious-release"
+mkdir -p "$MALICIOUS_RELEASE/public"
+write_valid_env "$MALICIOUS_RELEASE/.env"
+printf 'NODE_OPTIONS=--require=%s\n' "$TMP_DIR/node-options-payload.cjs" >> "$MALICIOUS_RELEASE/.env"
+PATH="$SYSTEM_PATH" bash "$SCRIPT_DIR/validate-production-release.sh" \
+  "$MALICIOUS_RELEASE" "$MALICIOUS_RELEASE/.env" >"$TMP_DIR/malicious.log" 2>&1
+if [[ -e "$NODE_OPTIONS_MARKER" ]]; then
+  echo "validate-production-release.sh executed NODE_OPTIONS from the environment file" >&2
+  exit 1
+fi
 
 MISSING_RELEASE="$TMP_DIR/missing-release"
 mkdir -p "$MISSING_RELEASE/public"
 write_valid_env "$MISSING_RELEASE/.env"
 sed -i.bak '/^METRIKA_TOKEN=/d' "$MISSING_RELEASE/.env"
-if bash "$SCRIPT_DIR/validate-production-release.sh" "$MISSING_RELEASE" "$MISSING_RELEASE/.env" >"$TMP_DIR/missing.log" 2>&1; then
+if METRIKA_TOKEN=ambient-value-must-not-mask-the-file \
+  bash "$SCRIPT_DIR/validate-production-release.sh" "$MISSING_RELEASE" "$MISSING_RELEASE/.env" >"$TMP_DIR/missing.log" 2>&1; then
   echo "validate-production-release.sh accepted a missing required key" >&2
   exit 1
 fi

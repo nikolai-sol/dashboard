@@ -1,6 +1,8 @@
 #!/bin/bash
 set -euo pipefail
 
+SCRIPT_DIR="$(cd -P -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
+DOTENV_MODULE_PATH="$SCRIPT_DIR/../node_modules/dotenv"
 VPS="${VPS:-beget}"
 REMOTE_ENV_PATH="${REMOTE_ENV_PATH:-/var/www/www-root/data/.production.env}"
 TARGET_FILE="${1:-.env.production}"
@@ -26,15 +28,14 @@ find_missing_dotenv_keys() {
     return 1
   fi
 
-  "$node_bin" - "$env_file" "$@" <<'JS'
+  "$node_bin" - "$DOTENV_MODULE_PATH" "$env_file" "$@" <<'JS'
 const fs = require("node:fs");
-const { parseEnv } = require("node:util");
 
-const [envFile, ...requiredKeys] = process.argv.slice(2);
+const [dotenvModulePath, envFile, ...requiredKeys] = process.argv.slice(2);
 let parsed;
 try {
-  if (typeof parseEnv !== "function") throw new Error("dotenv parser unavailable");
-  parsed = parseEnv(fs.readFileSync(envFile, "utf8"));
+  const { parse } = require(dotenvModulePath);
+  parsed = parse(fs.readFileSync(envFile, "utf8"));
 } catch {
   process.stdout.write(requiredKeys.join(" "));
   process.exit(1);
