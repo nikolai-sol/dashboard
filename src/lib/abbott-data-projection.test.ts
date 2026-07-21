@@ -261,6 +261,7 @@ test("embed projection exposes aggregates without user, action, session, or jour
     visit_id: "visit-42",
     rawUserId: "raw-user-42",
     sessionIdentifier: "session-42",
+    raw_user_ids_json: ["raw-user-42", "raw-user-43"],
   });
   const projected = projectAbbottDashboardData(source, "embed");
   const abbott = projected.abbott_bi!;
@@ -274,6 +275,7 @@ test("embed projection exposes aggregates without user, action, session, or jour
       "visit_id",
       "rawUserId",
       "sessionIdentifier",
+      "raw_user_ids_json",
       "user_actions",
     ]),
   );

@@ -104,17 +104,25 @@ def parse_clickhouse_string_array(value: str) -> tuple[str, ...]:
         position += 1
 
 
-def extract_raw_user_id(level1: tuple[str, ...], level2: tuple[str, ...]) -> str | None:
+def extract_raw_user_ids(
+    level1: tuple[str, ...], level2: tuple[str, ...]
+) -> tuple[str, ...]:
     if len(level1) != len(level2):
         raise MetrikaLogsError("Metrika Logs row was invalid")
-    matches = {
-        value
-        for key, value in zip(level1, level2)
-        if key == "UserID" and isinstance(value, str) and value.strip() != ""
-    }
-    if len(matches) > 1:
-        raise MetrikaLogsError("Metrika Logs row was invalid")
-    return next(iter(matches), None)
+    matches = []
+    seen = set()
+    for key, value in zip(level1, level2):
+        if key != "UserID" or not isinstance(value, str) or not value.strip():
+            continue
+        if value not in seen:
+            matches.append(value)
+            seen.add(value)
+    return tuple(matches)
+
+
+def extract_raw_user_id(level1: tuple[str, ...], level2: tuple[str, ...]) -> str | None:
+    matches = extract_raw_user_ids(level1, level2)
+    return matches[0] if len(matches) == 1 else None
 
 
 def _parse_non_negative_integer(value: str) -> int:
@@ -180,10 +188,10 @@ def parse_visits_tsv(payload: str, *, expected_day: str) -> tuple[dict, ...]:
         bounce = _parse_non_negative_integer(bounce_text)
         if bounce not in (0, 1):
             raise MetrikaLogsError("Metrika Logs row was invalid")
-        raw_user_id = extract_raw_user_id(
-            parse_clickhouse_string_array(level1_text),
-            parse_clickhouse_string_array(level2_text),
-        )
+        level1 = parse_clickhouse_string_array(level1_text)
+        level2 = parse_clickhouse_string_array(level2_text)
+        raw_user_ids = extract_raw_user_ids(level1, level2)
+        raw_user_id = raw_user_ids[0] if len(raw_user_ids) == 1 else None
         seen_visit_ids.add(visit_id)
         result.append({
             "visit_id": visit_id,
@@ -196,6 +204,7 @@ def parse_visits_tsv(payload: str, *, expected_day: str) -> tuple[dict, ...]:
             "client_id": client_id,
             "traffic_source": traffic_source,
             "raw_user_id": raw_user_id,
+            "raw_user_ids": raw_user_ids,
         })
     return tuple(result)
 

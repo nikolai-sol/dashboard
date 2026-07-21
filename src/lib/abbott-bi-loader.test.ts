@@ -669,7 +669,7 @@ test("manager summarizes exact private visits by raw user and source", async () 
   const privateDb = executor((sql, params) => {
     assert.match(sql, /`report_bd_private`\.`canonical_fact_metrika_visits`/);
     assert.doesNotMatch(sql, /canonical_fact_metrika_user_behavior_daily/);
-    assert.match(sql, /SELECT raw_user_id, client_id_hash, traffic_source, start_url, end_url,/);
+    assert.match(sql, /SELECT raw_user_id, raw_user_ids_json, client_id_hash, traffic_source, start_url, end_url,/);
     assert.match(sql, /pageviews, duration_seconds, is_bounce/);
     assert.doesNotMatch(sql, /CAST\s*\(|UNSIGNED|CONVERT\s*\(/i);
     assert.deepEqual(params, [41, "90602537", "2026-01-01", "2026-01-01"]);
@@ -757,6 +757,88 @@ test("manager summarizes exact private visits by raw user and source", async () 
   });
   assert.equal(result.user_actions.length, 5);
   assert.equal(privateDb.queries.length, 1);
+});
+
+test("manager keeps one ambiguous visit without attributing it to an arbitrary User ID", async () => {
+  const aggregate = executor(aggregateRows);
+  const privateDb = executor((sql) => {
+    if (!sql.includes("canonical_fact_metrika_visits")) return [];
+    return [{
+      raw_user_id: null,
+      raw_user_ids_json: '["doctor-b","doctor-a"]',
+      client_id_hash: "client-ambiguous",
+      traffic_source: "Direct",
+      start_url: "/start",
+      end_url: "/end",
+      pageviews: "2",
+      duration_seconds: "20",
+      is_bounce: "0",
+    }];
+  });
+
+  const result = await loadAbbottBiDataWithDependencies(
+    7,
+    ["90602537"],
+    "2026-01-01",
+    "2026-01-01",
+    "manager",
+    dependencies(aggregate, privateDb),
+  );
+
+  assert.equal(result.users_summary.length, 1);
+  assert.deepEqual(result.users_summary[0], {
+    user_id: "",
+    has_user_id: true,
+    traffic_segment: null,
+    traffic_source: "Direct",
+    direction: null,
+    visits: 1,
+    users: 1,
+    new_users: 0,
+    page_depth: 2,
+    avg_duration: 20,
+    bounce_rate: 0,
+  });
+  assert.equal(result.user_actions.length, 1);
+  assert.equal(result.user_actions[0]?.user_id, "");
+  assert.equal(result.user_actions[0]?.has_user_id, true);
+});
+
+test("manager fails closed without exposing IDs when private visit JSON contradicts the singular ID", async () => {
+  const aggregate = executor(aggregateRows);
+  const privateDb = executor((sql) => {
+    if (!sql.includes("canonical_fact_metrika_visits")) return [];
+    return [{
+      raw_user_id: "doctor-a",
+      raw_user_ids_json: '["doctor-a","doctor-b"]',
+      client_id_hash: "client",
+      traffic_source: "Direct",
+      start_url: "/start",
+      end_url: "/end",
+      pageviews: "1",
+      duration_seconds: "1",
+      is_bounce: "0",
+    }];
+  });
+
+  const result = await loadAbbottBiDataWithDependencies(
+    7,
+    ["90602537"],
+    "2026-01-01",
+    "2026-01-01",
+    "manager",
+    dependencies(aggregate, privateDb),
+  );
+
+  assert.deepEqual(result.users_summary, []);
+  assert.deepEqual(result.user_actions, []);
+  assert.deepEqual(result.data_quality.blocking_gaps, [{
+    counter_id: "90602537",
+    report_date: "2026-01-01",
+    scope: "request",
+    status: "unavailable",
+  }]);
+  assert.doesNotMatch(JSON.stringify(result), /doctor-a|doctor-b/);
 });
 
 test("Abbott calls without a trusted audience fail closed before any query", async () => {

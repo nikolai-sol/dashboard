@@ -121,6 +121,7 @@ type ReturningFactRow = Record<string, unknown> & {
 
 type PrivateBehaviorRow = Record<string, unknown> & {
   raw_user_id?: unknown;
+  raw_user_ids_json?: unknown;
   client_id_hash?: unknown;
   traffic_source?: unknown;
   start_url?: unknown;
@@ -448,7 +449,7 @@ async function queryManagerBehavior(
   to: string,
 ): Promise<readonly PrivateBehaviorRow[]> {
   return (await executor.query(
-    `SELECT raw_user_id, client_id_hash, traffic_source, start_url, end_url,
+    `SELECT raw_user_id, raw_user_ids_json, client_id_hash, traffic_source, start_url, end_url,
             pageviews, duration_seconds, is_bounce
      FROM \`report_bd_private\`.\`canonical_fact_metrika_visits\`
      WHERE canonical_release_id = ?
@@ -795,12 +796,32 @@ function buildManagerBehavior(
   };
   const summaries = new Map<string, ManagerSummary>();
   const actions = rows.map((row) => {
-    const userId = nullableText(row.raw_user_id) ?? "";
-    const hasUserId = userId.length > 0;
+    const singularUserId = nullableText(row.raw_user_id);
+    let parsedUserIds: unknown = row.raw_user_ids_json;
+    if (typeof parsedUserIds === "string") {
+      try {
+        parsedUserIds = JSON.parse(parsedUserIds);
+      } catch {
+        throw new Error("Abbott private visit identity is invalid");
+      }
+    }
+    if (parsedUserIds === null || parsedUserIds === undefined) {
+      parsedUserIds = singularUserId === null ? [] : [singularUserId];
+    }
+    if (
+      !Array.isArray(parsedUserIds)
+      || parsedUserIds.some((value) => typeof value !== "string" || value.trim().length === 0)
+      || new Set(parsedUserIds).size !== parsedUserIds.length
+      || (parsedUserIds.length === 1 ? singularUserId !== parsedUserIds[0] : singularUserId !== null)
+    ) {
+      throw new Error("Abbott private visit identity is invalid");
+    }
+    const hasUserId = parsedUserIds.length > 0;
+    const userId = parsedUserIds.length === 1 ? parsedUserIds[0] : "";
     const trafficSource = text(row.traffic_source);
     const pageviews = integerMetric(row.pageviews);
     const duration = integerMetric(row.duration_seconds);
-    const key = `${userId}\n${trafficSource}`;
+    const key = `${hasUserId ? "1" : "0"}\n${userId}\n${trafficSource}`;
     const summary = summaries.get(key) ?? {
       user_id: userId,
       has_user_id: hasUserId,

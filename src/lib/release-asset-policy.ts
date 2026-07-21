@@ -24,12 +24,14 @@ const SAFE_ABBOTT_MIGRATIONS = new Set([
   "src/db/migrations/019_dashboard_abbott_bi_type.sql",
   "src/db/migrations/033_abbott_canonical_release_control.sql",
   "src/db/migrations/040_abbott_snapshot_parser_version_identity.sql",
+  "src/db/migrations/041_abbott_private_visit_user_ids.sql",
 ]);
 
 const INSPECTED_DATA_SUFFIXES = [".json", ".jsonl", ".csv", ".tsv", ".xlsx", ".xls"] as const;
 const MAX_INSPECTED_DATA_BYTES = 8 * 1024 * 1024;
 const PRIVATE_KEYS = new Set([
   "raw_user_id",
+  "raw_user_ids_json",
   "protected_visit_id",
   "visit_id",
   "source_event_id",

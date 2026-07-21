@@ -11,9 +11,9 @@ private runtime repository.
 
 | Bootstrap path | Root authority | SHA-256 | Runtime role |
 | --- | --- | --- | --- |
-| `collectors/fetch_yandex_metrika_canonical.py` | `fetch_yandex_metrika_canonical.py` | `333265b9c6cbe8f76200a779450a0ac141a67debf8cbfe8b369a44edef5044e7` | Yandex Metrika canonical collector and Abbott counter backfill entrypoint |
-| `lib/canonical_writer.py` | `canonical_writer.py` | `4939a6afefbee2a74ee1aab59cca115dc5524987a8093708006b7fc2047e57c7` | Staging resume writer and current-active append-only Abbott day publisher |
-| `lib/metrika_logs_api.py` | `metrika_logs_api.py` | `fb9d21101a796c766c46c7ec603cd9b55fcf2fe8765fd6bc517808cb3cf2b251` | Exact Metrika Logs request lifecycle and visit parser |
+| `collectors/fetch_yandex_metrika_canonical.py` | `fetch_yandex_metrika_canonical.py` | `f8c80eb2ca46ab7ac82c75f3bb58eba80a70b1be7106a727504cee009d48e4f3` | Yandex Metrika canonical collector and Abbott counter backfill entrypoint |
+| `lib/canonical_writer.py` | `canonical_writer.py` | `f7e0ac999cf9438fdc3161d893a101f778622c69d01a1b6a4076f24c2239e0b8` | Staging resume writer and current-active append-only Abbott day publisher |
+| `lib/metrika_logs_api.py` | `metrika_logs_api.py` | `bfb6e5ec504f0e89f2ab5547102efa1a59fedeaf5e1b88f7e6179f3658a85f5f` | Exact Metrika Logs request lifecycle and visit parser |
 | `lib/canonical_release_store.py` | `canonical_release_store.py` | `89c8ee7b99567e8377998af52002b2501036be1c61b090c112213ea66f9fb416` | Candidate release store, persisted validation gate, atomic activation, and rollback pointer management |
 
 ## Runnable Abbott runtime closure
@@ -23,9 +23,9 @@ every runbook entrypoint and each repository-local Python dependency.
 
 | Bootstrap path | Root authority | SHA-256 | Runtime role |
 | --- | --- | --- | --- |
-| `runtime/fetch_yandex_metrika_canonical.py` | `fetch_yandex_metrika_canonical.py` | `333265b9c6cbe8f76200a779450a0ac141a67debf8cbfe8b369a44edef5044e7` | Exact five-scope Metrika collector |
-| `runtime/canonical_writer.py` | `canonical_writer.py` | `4939a6afefbee2a74ee1aab59cca115dc5524987a8093708006b7fc2047e57c7` | Atomic staging and active append-only writer |
-| `runtime/metrika_logs_api.py` | `metrika_logs_api.py` | `fb9d21101a796c766c46c7ec603cd9b55fcf2fe8765fd6bc517808cb3cf2b251` | Exact Metrika Logs request lifecycle and visit parser |
+| `runtime/fetch_yandex_metrika_canonical.py` | `fetch_yandex_metrika_canonical.py` | `f8c80eb2ca46ab7ac82c75f3bb58eba80a70b1be7106a727504cee009d48e4f3` | Exact five-scope Metrika collector |
+| `runtime/canonical_writer.py` | `canonical_writer.py` | `f7e0ac999cf9438fdc3161d893a101f778622c69d01a1b6a4076f24c2239e0b8` | Atomic staging and active append-only writer |
+| `runtime/metrika_logs_api.py` | `metrika_logs_api.py` | `bfb6e5ec504f0e89f2ab5547102efa1a59fedeaf5e1b88f7e6179f3658a85f5f` | Exact Metrika Logs request lifecycle and visit parser |
 | `runtime/canonical_release_store.py` | `canonical_release_store.py` | `89c8ee7b99567e8377998af52002b2501036be1c61b090c112213ea66f9fb416` | Exact validation and pointer store |
 | `runtime/run_abbott_metrika_active_release.py` | `run_abbott_metrika_active_release.py` | `1b0f78c0d40bcd1fd7d1428f6c348f6c2167a05adf59b6dc72f2ce37875354c7` | Committed-manifest cron launcher |
 | `runtime/abbott_release_operator.py` | `abbott_release_operator.py` | `4fea3b284743e168011bb4518276576890d76c375a557b9732e6491f326ecd9f` | Least-privilege lifecycle CLI |

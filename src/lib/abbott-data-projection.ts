@@ -85,6 +85,7 @@ function normalizeIdentifierKey(key: string): string {
 function isForbiddenEmbedKey(key: string): boolean {
   const normalized = normalizeIdentifierKey(key);
   if (normalized === "user_actions") return true;
+  if (normalized === "raw_user_ids_json" || normalized === "raw_user_ids") return true;
   if (/^(?:has|is)_/.test(normalized)) return false;
   if (/^(?:sessions|users|visits)(?:_|$)/.test(normalized)) return false;
   return /(?:^|_)(?:raw_)?(?:user|session|visit)_(?:id|identifier)s?$/.test(normalized);

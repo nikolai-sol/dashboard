@@ -92,6 +92,7 @@ test("release scans reject private data outside public while allowing Abbott sch
     await writeFile(path.join(releaseRoot, "src", "db", "migrations", "019_dashboard_abbott_bi_type.sql"), "DDL");
     await writeFile(path.join(releaseRoot, "src", "db", "migrations", "033_abbott_canonical_release_control.sql"), "DDL");
     await writeFile(path.join(releaseRoot, "src", "db", "migrations", "040_abbott_snapshot_parser_version_identity.sql"), "DDL");
+    await writeFile(path.join(releaseRoot, "src", "db", "migrations", "041_abbott_private_visit_user_ids.sql"), "DDL");
     await writeFile(path.join(releaseRoot, "src", "db", "migrations", "034_abbott_unreviewed.sql"), "DDL");
     await writeFile(path.join(releaseRoot, "public", "abbott", "source.json"), "fixture");
 
@@ -114,6 +115,19 @@ test("release scans detect private signatures under neutral JSON and CSV names",
     await writeFile(path.join(releaseRoot, "totals.csv"), "date,sessions,users\n2026-07-01,12,9\n");
 
     assert.deepEqual(findPrivateReleaseAssets(releaseRoot), ["events.csv", "users.json"]);
+  } finally {
+    await rm(releaseRoot, { force: true, recursive: true });
+  }
+});
+
+test("release scans reject a neutral JSON file containing plural raw User IDs", async () => {
+  const releaseRoot = await mkdtemp(path.join(tmpdir(), "release-asset-policy-plural-users-"));
+  try {
+    await writeFile(path.join(releaseRoot, "facts.json"), JSON.stringify({
+      raw_user_ids_json: ["doctor-secret-one", "doctor-secret-two"],
+    }));
+
+    assert.deepEqual(findPrivateReleaseAssets(releaseRoot), ["facts.json"]);
   } finally {
     await rm(releaseRoot, { force: true, recursive: true });
   }
