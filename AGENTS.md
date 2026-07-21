@@ -1,6 +1,6 @@
 # AGENTS
 
-Authoritative shared memory for agents working in `/Users/nicko/ReportingDash`.
+Authoritative shared memory for agents working in `/Users/nafanya/ReportingDash`.
 
 Update this file whenever any of the following changes:
 - production runtime
@@ -14,15 +14,15 @@ If another doc conflicts with this file, treat this file as the current source o
 
 ## Workspace layout
 
-- Root folder: `/Users/nicko/ReportingDash`
+- Root folder: `/Users/nafanya/ReportingDash`
   - operational docs
   - Python collectors
   - canonical monitoring scripts
 - Next.js app repo: `dashboard-next`
-- Legacy Nest code copy: `/Users/nicko/ReportingDash/nest-second`
+- Legacy Nest code copy: `/Users/nafanya/ReportingDash/nest-second`
 
 Important:
-- the root folder is not a git repo
+- the root folder is a git repo for collectors and operational documentation
 - `dashboard-next/` is a git repo
 
 ## Dashboard-specific memory
@@ -122,7 +122,9 @@ Current truth is `PM2 + 3001`.
 Current Zaruku source truth:
 - Yandex Metrika: collect only counter `66624469`; counters `29137835`, `105559308`, and `99078698` are on hold/inactive in `canonical_source_account_collection_settings`.
 - Yandex Webmaster: Zaruku host `https:zaruku.ru:443` is connected for canonical daily summary, query, and URL/page facts. URL/page rows live in `canonical_fact_webmaster_pages_daily`; the dashboard read model should expose `zaruku_seo.webmaster.data_availability.pages = true`.
-- Google Search Console: Zaruku property `https://zaruku.ru/` is connected through root collector `fetch_gsc_canonical.py`, not the old temporary / teletask path. Daily query/page/country/device rows live in `canonical_fact_gsc_queries_daily`; optional Search appearance rows live in `canonical_fact_gsc_search_appearance_daily`; result/search type rows live in `canonical_fact_gsc_search_type_daily`. The dashboard read model should expose `zaruku_seo.gsc.status = available` when rows exist.
+- The JavaScript Webmaster weekly collector is a fail-closed tombstone. `fetch_yandex_webmaster_canonical.py` is the only fact writer. Tables `seo_webmaster_queries_weekly` and `seo_webmaster_pages_weekly` are deprecated, have no writer, and must not be read.
+- Google Search Console: Zaruku property `https://zaruku.ru/` is connected through root collector `fetch_gsc_canonical.py`, not the old temporary / teletask path. Daily query/page/country/device rows live in `canonical_fact_gsc_queries_daily`; optional Search appearance rows live in `canonical_fact_gsc_search_appearance_daily`; result/search type rows live in `canonical_fact_gsc_search_type_daily`. Canonical lineage is `source_key=google_search_console`; legacy compatibility columns are not contract fields. Optional-layer HTTP 400/403 makes the collector run `partial` while preserving successful core facts. The dashboard read model should expose `zaruku_seo.gsc.status = available` when rows exist and surface recent partial freshness.
+- `seo_ai_visibility_weekly` is deprecated, has no writer, and must not be read; use `seo_ai_visibility` and canonical AI-visibility facts.
 
 ## Databases
 
@@ -170,6 +172,8 @@ Use `report_bd` and `report_bd_tech` unless there is an explicit migration away 
 ## Current cron schedule
 
 Canonical daily jobs on VPS:
+- `06:12` Yandex Metrika canonical (`fetch_yandex_metrika_canonical.py --days-back 2 --run-type cron`)
+- `06:18` Yandex Metrika returning-content canonical for account `66624469`
 - `06:20` LinkedIn
 - `06:30` Reddit
 - `06:32` GetIntent
@@ -177,9 +181,12 @@ Canonical daily jobs on VPS:
 - `06:36` Yandex Promopages
 - `06:35` VK Ads v2
 - `06:37` Hybrid
-- `06:40` canonical monitor
-- `06:50` Telegram summary
+- `06:50` Yandex Webmaster canonical daily collector
 - `06:55` Google Search Console canonical daily collector (`fetch_gsc_canonical.py --backfill-days 3 --run-type cron`)
+- `07:05` canonical monitor
+- `07:10` Telegram summary
+
+The legacy `06:10` localhost Metrika bridge was removed under TASK-072. Do not restore it; the `06:12` canonical collector and `06:18` returning-content collector are the active owners.
 
 Important collector rule:
 - cron windows do not include the current day
@@ -228,7 +235,7 @@ Bootstrap assumptions:
 ## Yandex Direct specifics
 
 Current canonical collector:
-- file: `/Users/nicko/ReportingDash/fetch_yandex_direct_canonical.py`
+- file: `/Users/nafanya/ReportingDash/fetch_yandex_direct_canonical.py`
 - source key: `yandex_direct`
 - primary authority table: `report_bd.yandex_new`
 - metadata tables:
@@ -236,7 +243,7 @@ Current canonical collector:
   - `report_bd.yandex_group_names`
 
 Legacy API bridge:
-- code: `/Users/nicko/ReportingDash/nest-second/src/services/direct/direct.service.ts`
+- code: `/Users/nafanya/ReportingDash/nest-second/src/services/direct/direct.service.ts`
 - endpoint used upstream: `POST https://api.direct.yandex.com/json/v5/reports`
 - auth headers:
   - `Authorization: Bearer <token>`
@@ -270,7 +277,7 @@ Current note:
   - expect `reportId`
   - then poll report endpoint with backoff
 - current canonical collector file:
-  - `/Users/nicko/ReportingDash/fetch_yandex_promopages_canonical.py`
+  - `/Users/nafanya/ReportingDash/fetch_yandex_promopages_canonical.py`
 - collector runtime on VPS:
   - `/root/reportingdash-canonical/fetch_yandex_promopages_canonical.py`
 - cron slot on VPS:
