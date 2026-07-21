@@ -8,6 +8,7 @@ import test from "node:test";
 import * as XLSX from "xlsx";
 
 import { findForbiddenPublicAssets, findPrivateReleaseAssets } from "./release-asset-policy";
+import { parseWorkbookJson } from "../../scripts/import-abbott-private-data";
 
 const assetCli = fileURLToPath(new URL("../../scripts/assert-no-private-public-assets.ts", import.meta.url));
 
@@ -117,6 +118,41 @@ test("release scans detect private signatures under neutral JSON and CSV names",
   }
 });
 
+test("release scans reject an importer-valid Abbott user mapping under a neutral JSON name", async () => {
+  const releaseRoot = await mkdtemp(path.join(tmpdir(), "release-asset-policy-user-map-"));
+  try {
+    const payload = {
+      id: [
+        { id: "doctor-secret-001", direction: "cardiology" },
+        { id: "doctor-secret-002", direction: "neurology" },
+      ],
+    };
+    assert.equal(parseWorkbookJson(payload).privateUserDirections.length, 2);
+    await writeFile(path.join(releaseRoot, "users.json"), JSON.stringify(payload));
+
+    assert.deepEqual(findPrivateReleaseAssets(releaseRoot), ["users.json"]);
+  } finally {
+    await rm(releaseRoot, { force: true, recursive: true });
+  }
+});
+
+test("release scans allow ordinary JSON objects with unrelated id fields", async () => {
+  const releaseRoot = await mkdtemp(path.join(tmpdir(), "release-asset-policy-ordinary-ids-"));
+  try {
+    await writeFile(path.join(releaseRoot, "catalog.json"), JSON.stringify({
+      id: "catalog-1",
+      rows: [
+        { id: "article-1", title: "Ordinary article" },
+        { id: "article-2", direction: "north" },
+      ],
+    }));
+
+    assert.deepEqual(findPrivateReleaseAssets(releaseRoot), []);
+  } finally {
+    await rm(releaseRoot, { force: true, recursive: true });
+  }
+});
+
 test("release scans detect neutral spreadsheet journey and Bitrix export signatures", async () => {
   const releaseRoot = await mkdtemp(path.join(tmpdir(), "release-asset-policy-sheet-"));
   try {
@@ -162,7 +198,7 @@ test("release CLI reports paths only when neutral private content is rejected", 
   const releaseRoot = await mkdtemp(path.join(tmpdir(), "release-asset-policy-cli-"));
   try {
     const pii = "doctor-secret-value";
-    await writeFile(path.join(releaseRoot, "users.json"), JSON.stringify({ raw_user_id: pii }));
+    await writeFile(path.join(releaseRoot, "users.json"), JSON.stringify({ id: [{ id: pii, direction: "cardiology" }] }));
     const failure = spawnSync(process.execPath, ["--import", "tsx", assetCli, "--release", releaseRoot], { encoding: "utf8" });
 
     assert.equal(failure.status, 1);

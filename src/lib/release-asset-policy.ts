@@ -72,9 +72,23 @@ function jsonHasPrivateStructure(value: unknown): boolean {
   return false;
 }
 
+function isAbbottUserDirectionMapping(value: unknown): boolean {
+  if (!value || Array.isArray(value) || typeof value !== "object") return false;
+  const rows = (value as Record<string, unknown>).id;
+  if (!Array.isArray(rows) || rows.length === 0) return false;
+  return rows.every((row) => {
+    if (!row || Array.isArray(row) || typeof row !== "object") return false;
+    const keys = Object.keys(row as Record<string, unknown>);
+    return keys.length === 2 && keys.includes("id") && keys.includes("direction");
+  });
+}
+
 function inspectTextData(extension: string, bytes: Buffer): boolean {
   const text = bytes.toString("utf8");
-  if (extension === ".json") return jsonHasPrivateStructure(JSON.parse(text));
+  if (extension === ".json") {
+    const parsed = JSON.parse(text);
+    return isAbbottUserDirectionMapping(parsed) || jsonHasPrivateStructure(parsed);
+  }
   if (extension === ".jsonl") {
     return text.split(/\r?\n/).filter((line) => line.trim()).some((line) => jsonHasPrivateStructure(JSON.parse(line)));
   }
