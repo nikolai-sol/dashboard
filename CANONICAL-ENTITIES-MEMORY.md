@@ -215,8 +215,53 @@ Typical fields that matter:
 Operational notes:
 - separate domain from `canonical_fact_ads_daily`
 - use for web/session/goal data, not ad spend facts
+- `analytics_scope = 'page'` remains pageview-scope, with grain `report_date + analytics_account_id/counter_id + page_url + page_title`; its native Metrika dimensions are `ym:pv:URL,ym:pv:title`
+- `analytics_scope = 'entry_page'` is a separate session-scope start-URL dataset, with grain `report_date + analytics_account_id/counter_id + page_url`; it uses `ym:s:startURL` and stores visits, users, pageviews, bounce rate, average visit duration, and page depth
+- do not combine `page` and `entry_page` users as if they were the same grain
+- reruns replace `entry_page` rows only for the selected date range and counters, alongside the other selected Metrika scopes
 
-### 7. `canonical_collector_runs`
+### 7. `canonical_fact_webmaster_queries_daily` and `canonical_fact_webmaster_summary_daily`
+
+Purpose:
+- daily Yandex Webmaster search-query snapshots and their account/host/device summaries
+
+Current query snapshot identity:
+- `source_key + analytics_account_id + host_id + report_date + device_type + query_hash`
+
+Operational notes:
+- each account / host / date / device query set is a transactional replacement snapshot
+- one transaction deletes the previous query rows for `source_key + analytics_account_id + host_id + report_date + device_type`, inserts the complete current query set, and upserts the matching summary row
+- an empty current query set still deletes stale query rows and writes the summary
+- any failure before commit rolls back both the delete and the writes, so a partial snapshot is not retained
+
+### 8. `canonical_fact_gsc_queries_daily`, `canonical_fact_gsc_pages_daily`, and `canonical_fact_gsc_summary_daily`
+
+Purpose:
+- daily Google Search Console Search Analytics snapshots for organic Google SERP facts
+
+Source key:
+- `google_search_console`
+
+Default property:
+- `https://zaruku.ru/`
+
+Current grains:
+- query rows: `source_key + property_url + report_date + device_type + query_hash`
+- page rows: `source_key + property_url + report_date + device_type + page_hash`
+- summary rows: `source_key + property_url + report_date + device_type`
+
+Operational notes:
+- collector file: `fetch_google_search_console_canonical.py`
+- uses Google OAuth refresh-token flow with read-only scope `https://www.googleapis.com/auth/webmasters.readonly`
+- required env keys are `GSC_CLIENT_ID`, `GSC_CLIENT_SECRET`, `GSC_REFRESH_TOKEN`, and optionally `GSC_SITE_URL`; do not store credential values in memory docs
+- daily reruns are transactional per `source_key + property_url + report_date + device_type`
+- each replacement deletes prior query/page rows, inserts the complete current query/page snapshots, and upserts the matching summary row in one commit
+- empty current query/page sets still delete stale query/page rows and write a summary row
+- any failure before commit rolls back deletes and writes, so partial snapshots are not retained
+- rowLimit-sized GSC API responses are refused before replacement because they may be incomplete until explicit pagination is added
+- as of this note, the collector is implemented in the repository but not production-deployed, not cron-scheduled, and not backfilled
+
+### 9. `canonical_collector_runs`
 
 Purpose:
 - canonical ingestion log and run lineage table
@@ -268,7 +313,9 @@ Current practical source grain examples:
 - Hybrid: banner or delivery-entity/day
 - GetIntent: creative or creative-linked/day
 - VK Ads v2: creative/day
-- Yandex Metrika: analytics counter/day or goal/session-style analytics grain in separate analytics family
+- Yandex Metrika `page`: date/counter/page URL/page title at pageview scope
+- Yandex Metrika `entry_page`: date/counter/start URL at session scope
+- Yandex Webmaster queries: date/account/host/device/query replacement snapshot
 
 ## Canonical vs design-doc warning
 

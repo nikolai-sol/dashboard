@@ -68,6 +68,8 @@ DEFAULT_DEVICE = env_first("YANDEX_WEBMASTER_DEVICE_TYPE", default="ALL")
 DEFAULT_LAG_DAYS = int(env_first("YANDEX_WEBMASTER_DAILY_LAG_DAYS", "YANDEX_WEBMASTER_BACKFILL_DAYS", default="3") or 3)
 TOKEN_STATE_PATH = env_first("YANDEX_WEBMASTER_TOKEN_STATE_PATH", default="")
 MAX_RETRIES = 5
+QUERY_PAGE_SIZE = 500
+MAX_QUERY_ROWS = 100000
 TIMEOUT = 90
 REQUEST_DELAY_SECONDS = float(env_first("YANDEX_WEBMASTER_REQUEST_DELAY_SECONDS", default="0.35") or 0)
 
@@ -84,6 +86,15 @@ logging.basicConfig(
     handlers=[logging.StreamHandler(sys.stdout)],
 )
 log = logging.getLogger("yandex_webmaster_canonical")
+
+WEBMASTER_QUERY_SNAPSHOT_DELETE_SQL = """
+DELETE FROM canonical_fact_webmaster_queries_daily
+WHERE source_key = %s
+  AND analytics_account_id = %s
+  AND host_id = %s
+  AND report_date = %s
+  AND device_type = %s
+"""
 
 WEBMASTER_QUERY_UPSERT_SQL = """
 INSERT INTO canonical_fact_webmaster_queries_daily (
@@ -533,14 +544,15 @@ def discover_host_id(access_token: str, user_id: str, domain: str, run_id: int) 
 
 def fetch_query_rows(access_token: str, user_id: str, host_id: str, day: str, device: str, run_id: int) -> list[dict]:
     all_rows: list[dict] = []
-    for offset in range(0, 100000, 500):
+    reported_count: int | None = None
+    for offset in range(0, MAX_QUERY_ROWS, QUERY_PAGE_SIZE):
         params = {
             "order_by": "TOTAL_SHOWS",
             "device_type_indicator": device,
             "date_from": day,
             "date_to": day,
             "offset": str(offset),
-            "limit": "500",
+            "limit": str(QUERY_PAGE_SIZE),
             "query_indicator": ["TOTAL_SHOWS", "TOTAL_CLICKS", "AVG_SHOW_POSITION"],
         }
         query: list[tuple[str, str]] = []
@@ -556,9 +568,16 @@ def fetch_query_rows(access_token: str, user_id: str, host_id: str, day: str, de
         )
         rows = payload.get("queries") or []
         all_rows.extend(rows)
-        count = safe_int(payload.get("count"))
-        if len(rows) < 500 or len(all_rows) >= count:
+        if payload.get("count") is not None:
+            reported_count = max(reported_count or 0, safe_int(payload.get("count")))
+        if len(rows) < QUERY_PAGE_SIZE or (reported_count is not None and len(all_rows) >= reported_count):
             break
+    if reported_count is not None and reported_count > len(all_rows):
+        raise RuntimeError(
+            'incomplete Yandex Webmaster query response: '
+            f'reported count={reported_count}, fetched_rows={len(all_rows)}, '
+            f'max_query_rows={MAX_QUERY_ROWS}'
+        )
     return all_rows
 
 
@@ -588,6 +607,37 @@ def upsert_webmaster_summary_rows(rows: list[dict]) -> int:
     finally:
         cur.close()
         conn.close()
+
+
+def replace_webmaster_day_rows(query_rows: list[dict], summary_row: dict) -> int:
+    conn = get_db_connection()
+    cur = None
+    try:
+        cur = conn.cursor()
+        cur.execute(
+            WEBMASTER_QUERY_SNAPSHOT_DELETE_SQL,
+            (
+                summary_row["source_key"],
+                summary_row["analytics_account_id"],
+                summary_row["host_id"],
+                summary_row["report_date"],
+                summary_row["device_type"],
+            ),
+        )
+        if query_rows:
+            cur.executemany(WEBMASTER_QUERY_UPSERT_SQL, query_rows)
+        cur.execute(WEBMASTER_SUMMARY_UPSERT_SQL, summary_row)
+        conn.commit()
+        return len(query_rows) + 1
+    except Exception:
+        conn.rollback()
+        raise
+    finally:
+        try:
+            if cur is not None:
+                cur.close()
+        finally:
+            conn.close()
 
 
 def cron_run_already_completed(today: date | None = None) -> bool:
@@ -706,8 +756,7 @@ def collect(args) -> dict[str, Any]:
                     run_id=run_id,
                 )
                 rows_read += len(raw_queries)
-                rows_written += upsert_webmaster_query_rows(query_rows)
-                rows_written += upsert_webmaster_summary_rows([summary_row])
+                rows_written += replace_webmaster_day_rows(query_rows, summary_row)
                 log_collector_event(
                     run_id,
                     "info",
