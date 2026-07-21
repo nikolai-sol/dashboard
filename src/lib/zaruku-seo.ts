@@ -4,6 +4,7 @@ import { loadAccountFacts, loadSeoIntelligence, loadSeoProcess } from "@/lib/acc
 import { matchSectionPattern } from "@/lib/zaruku-seo-os";
 import type {
   ZarukuAiVisibilityData,
+  ZarukuGoogleSearchConsoleData,
   ZarukuSeoData,
   ZarukuSeoDataQualityItem,
   ZarukuSeoKpi,
@@ -28,6 +29,9 @@ const SOURCES: ZarukuSeoSource[] = [
     layer: "onsite",
     color: "#0d9488",
     status: "connected",
+    collection_mode: "automated",
+    data_through: null,
+    freshness_note: "Live-разрезы запрашиваются для выбранного периода трафика; дата последнего канонического факта пока не проверяется.",
   },
   {
     id: "gsc",
@@ -35,6 +39,8 @@ const SOURCES: ZarukuSeoSource[] = [
     layer: "serp",
     color: "#2563eb",
     status: "pending",
+    collection_mode: "automated",
+    data_through: null,
     note: "Показы, позиции и CTR в Google Search Console.",
   },
   {
@@ -43,6 +49,8 @@ const SOURCES: ZarukuSeoSource[] = [
     layer: "serp",
     color: "#9333ea",
     status: "pending",
+    collection_mode: "automated",
+    data_through: null,
     note: "Показы, позиции и CTR в Яндекс Поиске.",
   },
   {
@@ -51,6 +59,8 @@ const SOURCES: ZarukuSeoSource[] = [
     layer: "ai",
     color: "#0891b2",
     status: "pending",
+    collection_mode: "manual",
+    data_through: null,
     note: "AI-видимость: Яндекс Вебмастер / внешние снимки.",
   },
 ];
@@ -603,7 +613,7 @@ export function buildContentSections(pageRows: ZarukuSeoMetricRow[], patterns: Z
         depthWeighted: 0,
         depthVisits: 0,
       } satisfies SectionAccumulator);
-    const visits = page.visits > 0 ? page.visits : page.users;
+    const visits = page.visits;
     current.visits += visits;
     current.users += page.users;
     current.pageviews += page.pageviews;
@@ -652,29 +662,30 @@ export function buildPageCollections(
   };
 }
 
-function buildKpis({
+export function buildKpis({
   trafficChannels,
   technicalTail,
   devices,
   geoCountries,
+  periodUsers,
 }: {
   trafficChannels: ZarukuSeoMetricRow[];
   technicalTail: ZarukuSeoMetricRow[];
   devices: ZarukuSeoMetricRow[];
   geoCountries: ZarukuSeoMetricRow[];
+  periodUsers: number | null;
 }): ZarukuSeoKpi[] {
   const trafficRows = [...trafficChannels, ...technicalTail];
   const totals = trafficRows.reduce(
     (acc, row) => {
       acc.visits += row.visits;
-      acc.users += row.users;
       acc.pageviews += row.pageviews;
       acc.bounceWeighted += (row.bounce_rate ?? 0) * row.visits;
       acc.durationWeighted += (row.avg_duration_seconds ?? 0) * row.visits;
       acc.depthWeighted += (row.page_depth ?? 0) * row.visits;
       return acc;
     },
-    { visits: 0, users: 0, pageviews: 0, bounceWeighted: 0, durationWeighted: 0, depthWeighted: 0 },
+    { visits: 0, pageviews: 0, bounceWeighted: 0, durationWeighted: 0, depthWeighted: 0 },
   );
   const organicVisits = trafficRows.find((row) => row.label === "Поиск")?.visits ?? 0;
   const directVisits = trafficRows.find((row) => row.label === "Прямые заходы")?.visits ?? 0;
@@ -683,7 +694,15 @@ function buildKpis({
 
   return [
     { key: "visits", label: "Визиты", value: formatInteger(totals.visits), raw_value: totals.visits, source: "metrika", layer: "onsite" },
-    { key: "users", label: "Пользователи", value: formatInteger(totals.users), raw_value: totals.users, source: "metrika", layer: "onsite" },
+    {
+      key: "users",
+      label: "Пользователи",
+      value: periodUsers == null ? "—" : formatInteger(periodUsers),
+      raw_value: periodUsers,
+      note: "Уникальные пользователи за выбранный период трафика.",
+      source: "metrika",
+      layer: "onsite",
+    },
     { key: "pageviews", label: "Просмотры", value: formatInteger(totals.pageviews), raw_value: totals.pageviews, source: "metrika", layer: "onsite" },
     {
       key: "organic_share",
@@ -759,15 +778,53 @@ function sourceStatusFromData(status: "available" | "partial" | "unavailable"): 
   return status;
 }
 
-function buildSources({
+type SourceDataThrough = Record<ZarukuSeoSource["id"], string | null>;
+
+export function deriveSourceDataThrough({
+  gscSummary,
+  webmasterSummary,
+  seoOsLatestWeek,
+  aiLatestPeriod,
+  aiRows,
+}: {
+  gscSummary: Array<{ week_to: string }>;
+  webmasterSummary: Array<{ week_to: string }>;
+  seoOsLatestWeek: string | null;
+  aiLatestPeriod: string | null;
+  aiRows: Array<{ period: string; captured_at: string | null }>;
+}): SourceDataThrough {
+  const latestGscDate = gscSummary.map((row) => row.week_to).filter(Boolean).sort().at(-1) ?? null;
+  const latestWebmasterDate = webmasterSummary.map((row) => row.week_to).filter(Boolean).sort().at(-1) ?? null;
+  const latestAiCapture = aiRows
+    .filter((row) => row.period === aiLatestPeriod)
+    .map((row) => row.captured_at)
+    .filter((value): value is string => Boolean(value))
+    .sort()
+    .at(-1) ?? null;
+
+  return {
+    metrika: null,
+    gsc: latestGscDate,
+    webmaster: latestWebmasterDate,
+    seo_os: seoOsLatestWeek,
+    yandex_gen_search: latestAiCapture ?? aiLatestPeriod,
+  };
+}
+
+export function buildSources({
   seoOsStatus,
+  gsc,
   webmaster,
   seoIntelligence,
+  dataThrough,
 }: {
   seoOsStatus: "available" | "partial" | "unavailable";
+  gsc: ZarukuGoogleSearchConsoleData;
   webmaster: ZarukuYandexWebmasterData;
   seoIntelligence: ZarukuSeoIntelligenceData;
+  dataThrough: SourceDataThrough;
 }): ZarukuSeoSource[] {
+  const gscStatus = sourceStatusFromData(gsc.status);
   const webmasterStatus = sourceStatusFromData(webmaster.status);
   const aiStatus = seoIntelligence.ai.rows.length > 0 ? sourceStatusFromData(seoIntelligence.status) : "pending";
   return [
@@ -776,6 +833,7 @@ function buildSources({
         return {
           ...source,
           status: webmasterStatus,
+          data_through: dataThrough.webmaster,
           note:
             webmasterStatus === "connected"
               ? "Показы, клики, CTR и средняя позиция Яндекса из Вебмастера."
@@ -784,17 +842,35 @@ function buildSources({
                 : source.note,
         };
       }
+      if (source.id === "gsc") {
+        return {
+          ...source,
+          status: gscStatus,
+          collection_mode: gscStatus === "unavailable" ? "not_connected" as const : "automated" as const,
+          data_through: dataThrough.gsc,
+          note:
+            gscStatus === "connected"
+              ? "Показы, клики, CTR и средняя позиция Google из Search Console."
+              : gscStatus === "partial"
+                ? "Часть GSC-таблиц доступна; панель показывает только подтвержденные факты."
+                : source.note,
+        };
+      }
       if (source.id === "yandex_gen_search") {
         return {
           ...source,
           status: aiStatus,
+          data_through: dataThrough.yandex_gen_search,
           note:
             aiStatus === "connected"
               ? "AI-видимость из seo_ai_visibility: присутствие, упоминания и цитаты."
               : "Ожидаем снимки AI-видимости из SEO OS / внешнего источника.",
         };
       }
-      return source;
+      return {
+        ...source,
+        data_through: dataThrough[source.id],
+      };
     }),
     {
       id: "seo_os",
@@ -802,6 +878,8 @@ function buildSources({
       layer: "serp",
       color: "#16a34a",
       status: seoOsStatus === "available" ? "connected" : seoOsStatus,
+      collection_mode: "external",
+      data_through: dataThrough.seo_os,
       note: seoOsStatus === "available"
         ? "Еженедельные отслеживаемые позиции Яндекса, возможности, задачи и телеметрия."
         : seoOsStatus === "partial"
@@ -811,8 +889,9 @@ function buildSources({
   ];
 }
 
-function buildPendingRequirements(webmaster: ZarukuYandexWebmasterData) {
+function buildPendingRequirements(gsc: ZarukuGoogleSearchConsoleData, webmaster: ZarukuYandexWebmasterData) {
   return PENDING_REQUIREMENTS.filter((item) => {
+    if (item.source === "gsc") return gsc.status === "unavailable";
     if (item.source === "webmaster") return webmaster.status === "unavailable";
     return true;
   });
@@ -921,6 +1000,8 @@ export async function loadZarukuSeoData(counterIds: string[], from: string, to: 
     interestsReport,
     sourceDevicesReport,
   ];
+  const periodUsers =
+    devicesReport.ok && Number.isFinite(devicesReport.totals[1]) ? devicesReport.totals[1] : null;
   const metrikaErrors = reports.flatMap((report) => (report.ok ? [] : [report.error ?? "Metrika API unavailable"]));
   const organicVisits = trafficChannels.find((row) => row.label === "Поиск")?.visits ?? 0;
   const searchPhraseVisits = asNumber(searchPhrasesReport.totals[0]);
@@ -935,6 +1016,7 @@ export async function loadZarukuSeoData(counterIds: string[], from: string, to: 
     loadAccountFacts(accountId, { from, to }, { weeks: seoOs.weeks }),
     loadSeoIntelligence(accountId),
   ]);
+  const gsc = facts.gsc;
   const webmaster = facts.webmaster;
 
   return {
@@ -946,13 +1028,26 @@ export async function loadZarukuSeoData(counterIds: string[], from: string, to: 
       { id: "serp", label: "SERP", hint: "показы, позиции, CTR до клика" },
       { id: "ai", label: "AI-выдача", hint: "цитируемость и доля присутствия" },
     ],
-    sources: buildSources({ seoOsStatus: seoOs.status, webmaster, seoIntelligence }),
-    pending_requirements: buildPendingRequirements(webmaster),
+    sources: buildSources({
+      seoOsStatus: seoOs.status,
+      gsc,
+      webmaster,
+      seoIntelligence,
+      dataThrough: deriveSourceDataThrough({
+        gscSummary: gsc.summary,
+        webmasterSummary: webmaster.summary,
+        seoOsLatestWeek: seoOs.latest_week,
+        aiLatestPeriod: seoIntelligence.ai.latest_period,
+        aiRows: seoIntelligence.ai.rows,
+      }),
+    }),
+    pending_requirements: buildPendingRequirements(gsc, webmaster),
     kpis: buildKpis({
       trafficChannels,
       technicalTail,
       devices: devicesReport.rows,
       geoCountries: countriesReport.rows,
+      periodUsers,
     }),
     traffic_channels: trafficChannels,
     technical_tail: technicalTail,
@@ -976,6 +1071,7 @@ export async function loadZarukuSeoData(counterIds: string[], from: string, to: 
     interests: interestsReport.rows,
     returning_pages: returningPages,
     seo_os: seoOs,
+    gsc,
     webmaster,
     ai_visibility: DEPRECATED_EMPTY_WEEKLY_AI_VISIBILITY,
     seo_intelligence: seoIntelligence,

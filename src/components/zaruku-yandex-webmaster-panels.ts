@@ -1,9 +1,19 @@
 import type {
   ZarukuAiVisibilityRow,
+  ZarukuGoogleSearchConsoleCountryRow,
+  ZarukuGoogleSearchConsolePageRow,
+  ZarukuGoogleSearchConsoleQueryRow,
+  ZarukuGoogleSearchConsoleSummaryRow,
   ZarukuYandexWebmasterPageRow,
   ZarukuYandexWebmasterQueryRow,
   ZarukuYandexWebmasterSummaryRow,
 } from "@/lib/types";
+
+export type SearchConsoleKpiRow =
+  | ZarukuGoogleSearchConsoleQueryRow
+  | ZarukuGoogleSearchConsoleSummaryRow
+  | ZarukuYandexWebmasterQueryRow
+  | ZarukuYandexWebmasterSummaryRow;
 
 export type WebmasterKpiSummary = {
   impressions: number;
@@ -39,7 +49,7 @@ function weightedAverage(rows: Array<{ impressions: number; average_position: nu
   return weighted.weight > 0 ? round(weighted.value / weighted.weight, 2) : null;
 }
 
-export function summarizeWebmasterKpis(rows: Array<ZarukuYandexWebmasterQueryRow | ZarukuYandexWebmasterSummaryRow>): WebmasterKpiSummary {
+export function summarizeWebmasterKpis(rows: SearchConsoleKpiRow[]): WebmasterKpiSummary {
   const totals = rows.reduce(
     (total, row) => ({
       impressions: total.impressions + row.impressions,
@@ -64,6 +74,24 @@ export function topWebmasterQueries(rows: ZarukuYandexWebmasterQueryRow[], limit
 export function topWebmasterPages(rows: ZarukuYandexWebmasterPageRow[], limit = 10) {
   return [...rows]
     .sort((left, right) => right.impressions - left.impressions || right.clicks - left.clicks || left.url.localeCompare(right.url))
+    .slice(0, limit);
+}
+
+export function topGscQueries(rows: ZarukuGoogleSearchConsoleQueryRow[], limit = 12) {
+  return [...rows]
+    .sort((left, right) => right.impressions - left.impressions || right.clicks - left.clicks || left.query.localeCompare(right.query))
+    .slice(0, limit);
+}
+
+export function topGscPages(rows: ZarukuGoogleSearchConsolePageRow[], limit = 10) {
+  return [...rows]
+    .sort((left, right) => right.impressions - left.impressions || right.clicks - left.clicks || left.url.localeCompare(right.url))
+    .slice(0, limit);
+}
+
+export function topGscCountries(rows: ZarukuGoogleSearchConsoleCountryRow[], limit = 10) {
+  return [...rows]
+    .sort((left, right) => right.impressions - left.impressions || right.clicks - left.clicks || left.country_code.localeCompare(right.country_code))
     .slice(0, limit);
 }
 
@@ -125,7 +153,7 @@ export function buildWebmasterSelectionMeta<T extends { week: string; week_from:
 
   return {
     periodLabel,
-    sourceNote: "Источник: Яндекс Вебмастер / canonical_fact_webmaster_*_daily.",
+    sourceNote: "Источник: Яндекс Вебмастер API; ежедневная загрузка ReportingDash.",
     fallbackNote,
   };
 }

@@ -1,4 +1,4 @@
-# Zaruku SEO Dashboard Pending Sources
+# Zaruku SEO Dashboard Source Status
 
 Current production source:
 - Yandex Metrika counter `66624469`
@@ -7,7 +7,7 @@ Current production source:
 
 The UI is intentionally built around measurement layers, not vendor-specific screens:
 - `onsite`: what happens after a click, currently Yandex Metrika.
-- `serp`: what happens before a click in search results. Weekly tracked Yandex positions are connected through SEO OS; Yandex Webmaster supplies Yandex search-console facts; GSC remains pending for Google.
+- `serp`: what happens before a click in search results. Weekly tracked Yandex positions are connected through SEO OS; Yandex Webmaster supplies Yandex search-console facts; GSC supplies Google Search Console facts through canonical daily tables.
 - `ai`: AI answer visibility / citations. For this dashboard it is connected through the Alisa AI visibility snapshot in `seo_ai_visibility`.
 
 ## SEO OS / Weekly Yandex Positions
@@ -22,7 +22,7 @@ SEO OS is not a replacement for GSC or Yandex Webmaster. It provides the current
 
 ## Google Search Console
 
-Status: pending.
+Status: connected through canonical daily facts. Production collector is deployed on `/root/reportingdash-canonical`, backfilled for `2026-07-01 .. 2026-07-14`, and cron-scheduled daily at `06:55` with a 3-day GSC freshness delay.
 
 Needed fields:
 - query
@@ -35,11 +35,12 @@ Needed fields:
 - ctr
 - position
 
-Dashboard panels unlocked:
+Dashboard panels:
 - SERP KPI: impressions, clicks, CTR, average position.
 - Organic landing page table columns: Google position, Google CTR, Google impressions.
 - Query table with full Google search visibility, not only post-click phrases exposed by Metrika.
-- Country/device SERP split.
+- Device SERP split is connected through query/page/summary facts by device.
+- Country SERP split is connected through `canonical_fact_gsc_countries_daily` at `country + device` grain. This is Google Search Console's pre-click country dimension, not the onsite post-click `Geography` tab from Metrika.
 
 Important distinction:
 - Metrika can show visits from Google after click.

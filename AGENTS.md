@@ -1,6 +1,6 @@
 # AGENTS
 
-Authoritative shared memory for agents working in `/Users/nicko/ReportingDash`.
+Authoritative shared memory for agents working in `/Users/nafanya/ReportingDash`.
 
 Update this file whenever any of the following changes:
 - production runtime
@@ -14,16 +14,21 @@ If another doc conflicts with this file, treat this file as the current source o
 
 ## Workspace layout
 
-- Root folder: `/Users/nicko/ReportingDash`
+- Root repository: `/Users/nafanya/ReportingDash`
   - operational docs
   - Python collectors
   - canonical monitoring scripts
-- Next.js app repo: `dashboard-next`
-- Legacy Nest code copy: `/Users/nicko/ReportingDash/nest-second`
+- Next.js app repository: `/Users/nafanya/ReportingDash/dashboard-next`
+  - dashboard application code
+  - application migrations and deploy scripts
+- App worktrees: `/Users/nafanya/ReportingDash/dashboard-next/.worktrees/*`
+- Legacy Nest code copy: `/Users/nafanya/ReportingDash/nest-second`
 
 Important:
-- the root folder is not a git repo
-- `dashboard-next/` is a git repo
+- the root and `dashboard-next/` are separate Git repositories
+- the root repository owns collectors and operational documentation and tracks `dashboard-next/` as a Git link
+- feature branches and worktrees belong to the `dashboard-next/` repository; commit app changes in the relevant app worktree
+- run the production deploy from the primary `/Users/nafanya/ReportingDash/dashboard-next` checkout, where `scripts/deploy.sh` can package sibling collectors from the root repository
 
 ## Dashboard-specific memory
 
@@ -40,6 +45,18 @@ Current auth note:
   `password_only`, including when the shared password is missing. Missing credentials fail closed.
 - Signed dashboard viewer and export sessions require an explicit `manager` or `embed` audience;
   legacy dashboard tokens without an audience are rejected. Viewer portal sessions remain audience-free.
+
+### Zaruku source matrix
+
+| Source | Collection | Current dashboard role |
+| --- | --- | --- |
+| Yandex Metrika | Automated canonical collection at `06:12`, plus remaining live API cuts for the selected traffic period | Canonical traffic/page facts; live search-engine, phrase, organic-landing, device, Geography, browser/OS, demographic, and interest cuts |
+| Yandex Webmaster | Automated daily canonical collection at `06:50` | Yandex query and host-summary facts, aggregated to reporting weeks by the dashboard |
+| SEO OS | External weekly SQL load | Tracked Yandex positions, section and cluster coverage, opportunities, tasks, and pipeline telemetry |
+| AI/GEO visibility | Manual | Manually supplied AI visibility snapshots; automation is not connected |
+| Google Search Console | Automated daily canonical collection at `06:55` with `--data-delay-days 3`; backfilled for `2026-07-01 .. 2026-07-14` | Canonical GSC query/page/summary/country facts for Google impressions, clicks, CTR, position, and pre-click country/device split |
+
+`Geography` means visitor countries/cities from Metrika. It is not `GEO`: in `AI/GEO visibility`, GEO means Generative Engine Optimization.
 
 ## Platform access / cron memory
 
@@ -116,6 +133,11 @@ Dashboard AI summary (`/api/dashboard/[id]/ai-summary/generate`):
 Do not assume `systemd` or port `3002` for `dashboard-next`.
 Current truth is `PM2 + 3001`.
 
+### Agent model guidance
+
+- Agent model versions are selected in Codex configuration.
+- Do not pin a Codex model version in `AGENTS.md`; update the Codex configuration instead.
+
 ### Canonical collectors runtime
 
 - runtime path: `/root/reportingdash-canonical`
@@ -189,6 +211,7 @@ Use `report_bd` and `report_bd_tech` unless there is an explicit migration away 
 ## Current cron schedule
 
 Canonical daily jobs on VPS:
+- `06:12` Yandex Metrika
 - `06:20` LinkedIn
 - `06:30` Reddit
 - `06:32` GetIntent
@@ -197,13 +220,15 @@ Canonical daily jobs on VPS:
 - `06:35` VK Ads v2
 - `06:37` Hybrid
 - `06:40` canonical monitor
-- `06:50` Telegram summary
+- `06:50` Yandex Webmaster
+- `06:55` Google Search Console
 
 Important collector rule:
 - cron windows do not include the current day
 - with `--days-back 2` cron now collects:
   - `yesterday - 1 day`
   - through `yesterday`
+- Google Search Console uses `--data-delay-days 3` and `--lag-days 3`, so daily cron ends at `today - 3 days` and repaints a 4-day stable window.
 
 ## Deploy workflow
 
@@ -246,7 +271,7 @@ Bootstrap assumptions:
 ## Yandex Direct specifics
 
 Current canonical collector:
-- file: `/Users/nicko/ReportingDash/fetch_yandex_direct_canonical.py`
+- file: `/Users/nafanya/ReportingDash/fetch_yandex_direct_canonical.py`
 - source key: `yandex_direct`
 - primary authority table: `report_bd.yandex_new`
 - metadata tables:
@@ -254,7 +279,7 @@ Current canonical collector:
   - `report_bd.yandex_group_names`
 
 Legacy API bridge:
-- code: `/Users/nicko/ReportingDash/nest-second/src/services/direct/direct.service.ts`
+- code: `/Users/nafanya/ReportingDash/nest-second/src/services/direct/direct.service.ts`
 - endpoint used upstream: `POST https://api.direct.yandex.com/json/v5/reports`
 - auth headers:
   - `Authorization: Bearer <token>`
@@ -288,7 +313,7 @@ Current note:
   - expect `reportId`
   - then poll report endpoint with backoff
 - current canonical collector file:
-  - `/Users/nicko/ReportingDash/fetch_yandex_promopages_canonical.py`
+  - `/Users/nafanya/ReportingDash/fetch_yandex_promopages_canonical.py`
 - collector runtime on VPS:
   - `/root/reportingdash-canonical/fetch_yandex_promopages_canonical.py`
 - cron slot on VPS:

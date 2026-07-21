@@ -5,14 +5,23 @@ import {
   buildBestEngagementPages,
   buildContentSections,
   buildHighBouncePages,
+  buildKpis,
   buildMapCityDemand,
   buildPageCollections,
+  buildSources,
+  deriveSourceDataThrough,
   filterSearchEngineRows,
   enrichRowsWithPageTitles,
   mergeTopPagesWithVisitMetrics,
   readableTrafficSource,
 } from "@/lib/zaruku-seo";
-import type { ZarukuSeoMetricRow, ZarukuSeoSectionPattern } from "@/lib/types";
+import type {
+  ZarukuGoogleSearchConsoleData,
+  ZarukuSeoIntelligenceData,
+  ZarukuSeoMetricRow,
+  ZarukuSeoSectionPattern,
+  ZarukuYandexWebmasterData,
+} from "@/lib/types";
 
 function page(url: string, visits: number, users: number, pageviews: number): ZarukuSeoMetricRow {
   return {
@@ -51,6 +60,121 @@ const patterns: ZarukuSeoSectionPattern[] = [
   { section: "Priority A", url_pattern: "/priority/", priority: 10 },
   { section: "Priority B", url_pattern: "/priority/", priority: 1 },
 ];
+
+test("buildSources exposes collection provenance and preserves explicit data-through values", () => {
+  const gsc: ZarukuGoogleSearchConsoleData = {
+    available: true,
+    status: "available",
+    error: null,
+    data_availability: { queries: true, pages: true, countries: true },
+    weeks: ["2026-W28"],
+    latest_week: "2026-W28",
+    summary: [],
+    queries: [],
+    pages: [],
+    countries: [],
+  };
+  const webmaster: ZarukuYandexWebmasterData = {
+    available: true,
+    status: "available",
+    error: null,
+    data_availability: { queries: true, pages: false },
+    weeks: ["2026-W28"],
+    latest_week: "2026-W28",
+    summary: [],
+    queries: [],
+    pages: [],
+  };
+  const seoIntelligence: ZarukuSeoIntelligenceData = {
+    available: true,
+    status: "available",
+    error: null,
+    sov: { available: true, weeks: [], latest_week: null, rows: [] },
+    ai: {
+      available: true,
+      periods: ["2026-07"],
+      latest_period: "2026-07",
+      rows: [
+        {
+          engine: "alisa_ai",
+          period: "2026-07",
+          presence_rate: 44,
+          mentions: 89,
+          citations: 155,
+          provenance: "wm_alisa_manual",
+          captured_at: "2026-07-13 14:30:00",
+          ingestion_run_id: "seo_os_ai_visibility_2026-07_alisa_ai",
+        },
+      ],
+    },
+  };
+  const dataThrough = {
+    metrika: null,
+    gsc: "2026-07-12",
+    webmaster: "2026-07-12",
+    seo_os: "2026-W28",
+    yandex_gen_search: "2026-07-13 14:30:00",
+  } as const;
+
+  const sources = buildSources({
+    seoOsStatus: "available",
+    gsc,
+    webmaster,
+    seoIntelligence,
+    dataThrough,
+  });
+  const source = (id: (typeof sources)[number]["id"]) => sources.find((item) => item.id === id)!;
+
+  assert.equal(source("metrika").collection_mode, "automated");
+  assert.equal(source("gsc").collection_mode, "automated");
+  assert.equal(source("webmaster").collection_mode, "automated");
+  assert.equal(source("seo_os").collection_mode, "external");
+  assert.equal(source("yandex_gen_search").collection_mode, "manual");
+  assert.equal(source("gsc").status, "connected");
+  assert.equal(source("yandex_gen_search").status, "connected");
+  assert.deepEqual(
+    Object.fromEntries(sources.map((item) => [item.id, item.data_through])),
+    dataThrough,
+  );
+});
+
+test("deriveSourceDataThrough uses only loaded Webmaster, SEO OS, and AI freshness facts", () => {
+  assert.deepEqual(
+    deriveSourceDataThrough({
+      gscSummary: [{ week_to: "2026-07-11" }, { week_to: "2026-07-12" }],
+      webmasterSummary: [
+        { week_to: "2026-07-05" },
+        { week_to: "2026-07-12" },
+        { week_to: "2026-07-10" },
+      ],
+      seoOsLatestWeek: "2026-W28",
+      aiLatestPeriod: "2026-07",
+      aiRows: [
+        { period: "2026-06", captured_at: "2026-07-15 10:00:00" },
+        { period: "2026-07", captured_at: "2026-07-13 14:30:00" },
+      ],
+    }),
+    {
+      metrika: null,
+      gsc: "2026-07-12",
+      webmaster: "2026-07-12",
+      seo_os: "2026-W28",
+      yandex_gen_search: "2026-07-13 14:30:00",
+    },
+  );
+});
+
+test("deriveSourceDataThrough falls back to AI period when capture time is absent", () => {
+  const dataThrough = deriveSourceDataThrough({
+    gscSummary: [],
+    webmasterSummary: [],
+    seoOsLatestWeek: null,
+    aiLatestPeriod: "2026-07",
+    aiRows: [{ period: "2026-07", captured_at: null }],
+  });
+
+  assert.equal(dataThrough.yandex_gen_search, "2026-07");
+});
 
 test("buildContentSections uses SEO patterns and aggregates visits, users, and pageviews", () => {
   assert.deepEqual(
@@ -96,18 +220,18 @@ test("buildContentSections aggregates behavior metrics by visit weight", () => {
   ]);
 });
 
-test("buildContentSections uses users as visit proxy for pageview-only canonical rows", () => {
+test("buildContentSections preserves zero visits for pageview-only canonical rows", () => {
   assert.deepEqual(
     buildContentSections(
       [
-        page("https://zaruku.ru/map/", 0, 42, 48),
-        page("https://zaruku.ru/map/clinics/42", 0, 11, 14),
+        pageWithBehavior("https://zaruku.ru/map/", 0, 42, 48, 25, 90, 2),
+        pageWithBehavior("https://zaruku.ru/map/clinics/42", 0, 11, 14, 15, 150, 4),
       ],
       patterns,
     ),
     [
-      { label: "Map", visits: 42, users: 42, pageviews: 48, share: 48 / 62 * 100, source: "metrika", layer: "onsite" },
-      { label: "Clinics", visits: 11, users: 11, pageviews: 14, share: 14 / 62 * 100, source: "metrika", layer: "onsite" },
+      { label: "Map", visits: 0, users: 42, pageviews: 48, share: 48 / 62 * 100, source: "metrika", layer: "onsite" },
+      { label: "Clinics", visits: 0, users: 11, pageviews: 14, share: 14 / 62 * 100, source: "metrika", layer: "onsite" },
     ],
   );
 });
@@ -344,4 +468,33 @@ test("canonical page rows query has no display LIMIT", () => {
 
   assert.doesNotMatch(query.sql, /\bLIMIT\b/i);
   assert.deepEqual(query.params, ["yandex_metrika", "66624469", "2026-07-01", "2026-07-31"]);
+});
+
+test("buildKpis uses the unique users total for the selected period", () => {
+  const usersKpi = buildKpis({
+    trafficChannels: [
+      page("Search engine traffic", 1_100, 1_000, 1_300),
+      page("Direct traffic", 1_000, 900, 1_200),
+    ],
+    technicalTail: [],
+    devices: [],
+    geoCountries: [],
+    periodUsers: 1_250,
+  }).find((kpi) => kpi.key === "users");
+
+  assert.equal(usersKpi?.value, (1_250).toLocaleString("ru-RU"));
+  assert.equal(usersKpi?.raw_value, 1_250);
+});
+
+test("buildKpis marks period users unavailable without an authoritative total", () => {
+  const usersKpi = buildKpis({
+    trafficChannels: [page("Search engine traffic", 1_100, 1_000, 1_300)],
+    technicalTail: [page("Internal traffic", 1_000, 900, 1_200)],
+    devices: [],
+    geoCountries: [],
+    periodUsers: null,
+  }).find((kpi) => kpi.key === "users");
+
+  assert.equal(usersKpi?.value, "—");
+  assert.equal(usersKpi?.raw_value, null);
 });

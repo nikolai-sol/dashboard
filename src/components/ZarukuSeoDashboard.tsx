@@ -29,9 +29,14 @@ import {
 } from "lucide-react";
 import ZarukuSeoWeekToolbar from "@/components/ZarukuSeoWeekToolbar";
 import type {
+  ZarukuGoogleSearchConsoleCountryRow,
+  ZarukuGoogleSearchConsolePageRow,
+  ZarukuGoogleSearchConsoleQueryRow,
+  ZarukuGoogleSearchConsoleSummaryRow,
   ZarukuSeoData,
   ZarukuSeoLayerId,
   ZarukuSeoMetricRow,
+  ZarukuSeoSource,
   ZarukuSeoSourceId,
   ZarukuYandexWebmasterPageRow,
   ZarukuYandexWebmasterQueryRow,
@@ -64,7 +69,11 @@ import {
   buildWebmasterSelectionMeta,
   resolveRowsForWeek,
   resolveRowsForWeekOrLatest,
+  SearchConsoleKpiRow,
   summarizeWebmasterKpis,
+  topGscCountries,
+  topGscPages,
+  topGscQueries,
   topWebmasterPages,
   topWebmasterQueries,
 } from "@/components/zaruku-yandex-webmaster-panels";
@@ -81,7 +90,7 @@ const NAV: Array<{ id: TabId; label: string; icon: typeof LayoutGrid }> = [
   { id: "seo", label: "SEO", icon: Search },
   { id: "seo_ops", label: "SEO-операции", icon: Workflow },
   { id: "content", label: "Контент", icon: FileText },
-  { id: "geo", label: "Гео", icon: MapPin },
+  { id: "geo", label: "География", icon: MapPin },
   { id: "devices", label: "Устройства", icon: MonitorSmartphone },
   { id: "audience", label: "Аудитория", icon: Users },
   { id: "behavior", label: "Поведение", icon: Repeat },
@@ -130,6 +139,48 @@ function formatSignedPercent(value: number | null | undefined, locale = "ru-RU",
   return `Δ ${sign}${formatPercent(value, locale, digits)}`;
 }
 
+function readableAudienceLabel(label: string) {
+  const normalized = label.trim().toLowerCase();
+  const labels: Record<string, string> = {
+    male: "Мужчины",
+    men: "Мужчины",
+    female: "Женщины",
+    women: "Женщины",
+    undefined: "Не определено",
+    unknown: "Не определено",
+    "not defined": "Не определено",
+    "age undefined": "Возраст не определён",
+    "gender undefined": "Пол не определён",
+  };
+  return labels[normalized] ?? label
+    .replace(/^age:\s*/i, "")
+    .replace(/^gender:\s*/i, "")
+    .replace("years", "лет");
+}
+
+const SOURCE_STATUS_LABELS: Record<ZarukuSeoSource["status"], string> = {
+  connected: "подключено",
+  pending: "ожидается",
+  partial: "частично",
+  unavailable: "недоступно",
+};
+
+const SOURCE_COLLECTION_MODE_LABELS: Record<ZarukuSeoSource["collection_mode"], string> = {
+  automated: "автоматически",
+  external: "внешний импорт",
+  manual: "вручную",
+  not_connected: "не подключено",
+};
+
+function SourceHealthMeta({ source }: { source: ZarukuSeoSource }) {
+  return (
+    <span className="text-[11px] font-normal text-slate-400">
+      {SOURCE_STATUS_LABELS[source.status]} · {SOURCE_COLLECTION_MODE_LABELS[source.collection_mode]}
+      {source.data_through ? ` · данные по ${source.data_through}` : ""}
+    </span>
+  );
+}
+
 function SourceBadge({ data, id }: { data: ZarukuSeoData; id: ZarukuSeoSourceId }) {
   const source = data.sources.find((item) => item.id === id);
   if (!source) return null;
@@ -137,6 +188,7 @@ function SourceBadge({ data, id }: { data: ZarukuSeoData; id: ZarukuSeoSourceId 
     <span className="inline-flex items-center gap-1.5 rounded-md border border-slate-200 bg-white px-2 py-1 text-xs font-medium text-slate-600">
       <span className="h-1.5 w-1.5 rounded-full" style={{ background: source.color }} />
       {source.label}
+      <SourceHealthMeta source={source} />
       {source.status !== "connected" ? <Lock className="h-3 w-3 text-slate-300" /> : null}
     </span>
   );
@@ -238,22 +290,25 @@ function BarList({ rows, value = "visits", locale = "ru-RU" }: { rows: ZarukuSeo
   const max = Math.max(1, ...rows.map((row) => row[value]));
   return (
     <div className="space-y-2.5">
-      {rows.map((row, index) => (
-        <div key={`${row.label}-${row.secondary_label ?? ""}-${index}`} className="grid grid-cols-[128px_minmax(0,1fr)_76px] items-center gap-3">
-          <div className="min-w-0 text-sm text-slate-600" title={row.label}>
-            {truncate(row.label, 28)}
-          </div>
-          <div className="h-6 overflow-hidden rounded-md bg-slate-50">
-            <div
-              className="flex h-full items-center rounded-md px-2 text-xs font-medium text-white"
-              style={{ width: `${Math.max(4, (row[value] / max) * 100)}%`, background: COLORS[index % COLORS.length] }}
-            >
-              {row.share != null ? formatPercent(row.share, locale, 1) : ""}
+      {rows.map((row, index) => {
+        const label = readableAudienceLabel(row.label);
+        return (
+          <div key={`${row.label}-${row.secondary_label ?? ""}-${index}`} className="grid grid-cols-[128px_minmax(0,1fr)_76px] items-center gap-3">
+            <div className="min-w-0 text-sm text-slate-600" title={label}>
+              {truncate(label, 28)}
             </div>
+            <div className="h-6 overflow-hidden rounded-md bg-slate-50">
+              <div
+                className="flex h-full items-center rounded-md px-2 text-xs font-medium text-white"
+                style={{ width: `${Math.max(4, (row[value] / max) * 100)}%`, background: COLORS[index % COLORS.length] }}
+              >
+                {row.share != null ? formatPercent(row.share, locale, 1) : ""}
+              </div>
+            </div>
+            <div className="text-right text-sm text-slate-500">{formatNumber(row[value], locale)}</div>
           </div>
-          <div className="text-right text-sm text-slate-500">{formatNumber(row[value], locale)}</div>
-        </div>
-      ))}
+        );
+      })}
     </div>
   );
 }
@@ -385,8 +440,13 @@ function MapCityDemandTable({ rows, locale }: { rows: ZarukuSeoMetricRow[]; loca
           {rows.map((row, index) => (
             <tr key={`${row.label}-${index}`}>
               <td className="max-w-[320px] py-2.5">
-                <div className="font-medium text-slate-700" title={row.label}>
-                  {truncate(row.label, 48)}
+                <div className="flex flex-wrap items-center gap-2">
+                  <span className="font-medium text-slate-700" title={row.label}>
+                    {truncate(row.label, 48)}
+                  </span>
+                  {isMapGeoAnomaly(row) ? (
+                    <span className="rounded-md bg-amber-50 px-1.5 py-0.5 text-[11px] font-medium text-amber-700">проверить</span>
+                  ) : null}
                 </div>
                 {row.secondary_label ? <div className="text-xs text-slate-400">{truncate(shortUrl(row.secondary_label), 72)}</div> : null}
               </td>
@@ -405,7 +465,37 @@ function MapCityDemandTable({ rows, locale }: { rows: ZarukuSeoMetricRow[]; loca
   );
 }
 
+function isMapGeoAnomaly(row: ZarukuSeoMetricRow) {
+  const label = row.label.toLowerCase();
+  const url = row.secondary_label ?? row.url ?? "";
+  const looksLikeKnownOutlier = label.includes("singapore") || label.includes("сингапур");
+  const hasMapPath = url.includes("/map");
+  const highBounceMapDemand = hasMapPath && row.visits >= 20 && (row.bounce_rate ?? 0) >= 80;
+  return looksLikeKnownOutlier || highBounceMapDemand;
+}
+
+function findMapGeoAnomalies(rows: ZarukuSeoMetricRow[]) {
+  return rows.filter(isMapGeoAnomaly).slice(0, 3);
+}
+
 function PendingPanel({ data }: { data: ZarukuSeoData }) {
+  if (data.pending_requirements.length === 0) {
+    return (
+      <Panel data={data} title="Подключения источников" layer="serp" right={<span className="text-xs text-teal-600">Все ключевые источники подключены</span>}>
+        <div className="grid gap-3 md:grid-cols-3">
+          {data.sources.map((source) => (
+            <div key={source.id} className="rounded-lg border border-slate-200 bg-slate-50 p-4">
+              <div className="text-sm font-semibold text-slate-700">{source.label}</div>
+              <div className="mt-1 text-xs leading-relaxed text-slate-500">
+                {SOURCE_STATUS_LABELS[source.status]} · {SOURCE_COLLECTION_MODE_LABELS[source.collection_mode]}
+                {source.data_through ? ` · данные по ${source.data_through}` : ""}
+              </div>
+            </div>
+          ))}
+        </div>
+      </Panel>
+    );
+  }
   return (
     <Panel data={data} title="Что ещё ждём" layer="serp" pending right={<span className="text-xs text-slate-400">{formatPendingRequirementSources(data)}</span>}>
       <div className="grid gap-3 md:grid-cols-3">
@@ -431,8 +521,9 @@ function PendingPanel({ data }: { data: ZarukuSeoData }) {
 }
 
 type WebmasterKpiRow = ZarukuYandexWebmasterQueryRow | ZarukuYandexWebmasterSummaryRow;
+type GscKpiRow = ZarukuGoogleSearchConsoleQueryRow | ZarukuGoogleSearchConsoleSummaryRow;
 
-function WebmasterKpiStrip({ rows, locale }: { rows: WebmasterKpiRow[]; locale: string }) {
+function SearchConsoleKpiStrip({ rows, locale }: { rows: SearchConsoleKpiRow[]; locale: string }) {
   const summary = summarizeWebmasterKpis(rows);
   const cells = [
     ["Показы", formatNumber(summary.impressions, locale)],
@@ -452,7 +543,15 @@ function WebmasterKpiStrip({ rows, locale }: { rows: WebmasterKpiRow[]; locale: 
   );
 }
 
-function WebmasterQueryTable({ rows, locale }: { rows: ZarukuYandexWebmasterQueryRow[]; locale: string }) {
+function SearchConsoleQueryTable({
+  rows,
+  locale,
+  emptyLabel,
+}: {
+  rows: Array<ZarukuYandexWebmasterQueryRow | ZarukuGoogleSearchConsoleQueryRow>;
+  locale: string;
+  emptyLabel: string;
+}) {
   return (
     <div className="max-h-[30rem] overflow-auto rounded-md border border-slate-100">
       <table className="w-full min-w-[860px] table-fixed text-sm">
@@ -486,7 +585,7 @@ function WebmasterQueryTable({ rows, locale }: { rows: ZarukuYandexWebmasterQuer
           ))}
           {rows.length === 0 ? (
             <tr>
-              <td colSpan={5} className="px-3 py-8 text-center text-sm text-slate-500">Нет Webmaster-запросов для выбранной недели.</td>
+              <td colSpan={5} className="px-3 py-8 text-center text-sm text-slate-500">{emptyLabel}</td>
             </tr>
           ) : null}
         </tbody>
@@ -495,7 +594,15 @@ function WebmasterQueryTable({ rows, locale }: { rows: ZarukuYandexWebmasterQuer
   );
 }
 
-function WebmasterPageTable({ rows, locale }: { rows: ZarukuYandexWebmasterPageRow[]; locale: string }) {
+function SearchConsolePageTable({
+  rows,
+  locale,
+  emptyLabel,
+}: {
+  rows: Array<ZarukuYandexWebmasterPageRow | ZarukuGoogleSearchConsolePageRow>;
+  locale: string;
+  emptyLabel: string;
+}) {
   return (
     <div className="space-y-2">
       {rows.map((row) => (
@@ -506,9 +613,59 @@ function WebmasterPageTable({ rows, locale }: { rows: ZarukuYandexWebmasterPageR
           <div className="text-right text-slate-500">{formatDecimal(row.average_position, locale, 1)}</div>
         </div>
       ))}
-      {rows.length === 0 ? <div className="rounded-md bg-slate-50 px-3 py-8 text-center text-sm text-slate-500">URL-факты Вебмастера пока пустые.</div> : null}
+      {rows.length === 0 ? <div className="rounded-md bg-slate-50 px-3 py-8 text-center text-sm text-slate-500">{emptyLabel}</div> : null}
     </div>
   );
+}
+
+function SearchConsoleCountryTable({
+  rows,
+  locale,
+}: {
+  rows: ZarukuGoogleSearchConsoleCountryRow[];
+  locale: string;
+}) {
+  return (
+    <div className="max-h-[24rem] overflow-auto rounded-md border border-slate-100">
+      <table className="w-full min-w-[680px] text-sm">
+        <thead className="sticky top-0 z-10 bg-slate-50 text-left text-xs text-slate-400 shadow-[0_1px_0_0_rgb(241_245_249)]">
+          <tr>
+            <th className="px-3 py-2.5 font-medium">Страна</th>
+            <th className="px-3 py-2.5 font-medium">Устройство</th>
+            <th className="px-3 py-2.5 text-right font-medium">Показы</th>
+            <th className="px-3 py-2.5 text-right font-medium">Клики</th>
+            <th className="px-3 py-2.5 text-right font-medium">CTR</th>
+            <th className="px-3 py-2.5 text-right font-medium">Позиция</th>
+          </tr>
+        </thead>
+        <tbody className="divide-y divide-slate-100">
+          {rows.map((row) => (
+            <tr key={`${row.week}-${row.country_code}-${row.device}`} className="hover:bg-slate-50/70">
+              <td className="px-3 py-2.5 font-medium text-slate-700">{row.country_code}</td>
+              <td className="px-3 py-2.5 text-slate-500">{row.device}</td>
+              <td className="whitespace-nowrap px-3 py-2.5 text-right text-slate-600">{formatNumber(row.impressions, locale)}</td>
+              <td className="whitespace-nowrap px-3 py-2.5 text-right text-slate-600">{formatNumber(row.clicks, locale)}</td>
+              <td className="whitespace-nowrap px-3 py-2.5 text-right text-slate-500">{formatPercent(row.ctr, locale, 2)}</td>
+              <td className="whitespace-nowrap px-3 py-2.5 text-right text-slate-500">{formatDecimal(row.average_position, locale, 1)}</td>
+            </tr>
+          ))}
+          {rows.length === 0 ? (
+            <tr>
+              <td colSpan={6} className="px-3 py-8 text-center text-sm text-slate-500">Country split из GSC пока пустой для выбранной недели.</td>
+            </tr>
+          ) : null}
+        </tbody>
+      </table>
+    </div>
+  );
+}
+
+function WebmasterQueryTable({ rows, locale }: { rows: ZarukuYandexWebmasterQueryRow[]; locale: string }) {
+  return <SearchConsoleQueryTable rows={rows} locale={locale} emptyLabel="Нет Webmaster-запросов для выбранной недели." />;
+}
+
+function WebmasterPageTable({ rows, locale }: { rows: ZarukuYandexWebmasterPageRow[]; locale: string }) {
+  return <SearchConsolePageTable rows={rows} locale={locale} emptyLabel="URL-факты Вебмастера пока пустые." />;
 }
 
 function NorthStarBlock({ data, locale }: Props) {
@@ -631,7 +788,7 @@ function AiAggregateVisibilityPanel({ data, locale }: Props) {
           </div>
           <p className="text-xs leading-relaxed text-slate-500">
             {latest ? `${formatNumber(latest.mentions, locale)} из ${formatNumber(latest.citations, locale)} примеров, источник №1 во всех случаях.` : ""}
-            {latest?.provenance ? ` Источник данных: ${latest.provenance}.` : ""}
+            {latest?.provenance ? " Источник данных: ручной снимок AI-видимости." : ""}
           </p>
         </div>
       ) : (
@@ -743,6 +900,22 @@ function OverviewTab({ data, locale }: Props) {
 function SeoTab({ data, locale, primaryWeek, comparisonWeek }: Props & { primaryWeek: string | null; comparisonWeek: string | null }) {
   const phraseCoverage = data.data_quality.find((item) => item.title === "Покрытие поисковых фраз");
   const currentLocale = locale ?? "ru-RU";
+  const gscWeek = primaryWeek ?? data.gsc.latest_week;
+  const gscSummarySelection = resolveRowsForWeek(data.gsc.summary, gscWeek, data.gsc.latest_week);
+  const gscQuerySelection = resolveRowsForWeekOrLatest(data.gsc.queries, gscWeek, data.gsc.latest_week);
+  const gscPageSelection = resolveRowsForWeekOrLatest(data.gsc.pages, gscWeek, data.gsc.latest_week);
+  const gscCountrySelection = resolveRowsForWeekOrLatest(data.gsc.countries, gscWeek, data.gsc.latest_week);
+  const gscSummaryRows = gscSummarySelection.rows;
+  const gscQueries = gscQuerySelection.rows;
+  const gscPages = gscPageSelection.rows;
+  const gscCountries = gscCountrySelection.rows;
+  const gscFactsSelection: { week: string | null; rows: GscKpiRow[] } = gscSummaryRows.length > 0
+    ? gscSummarySelection
+    : gscQuerySelection;
+  const gscFactsMeta = buildWebmasterSelectionMeta(gscFactsSelection, gscWeek);
+  const gscQueryMeta = buildWebmasterSelectionMeta(gscQuerySelection, gscWeek);
+  const gscPageMeta = buildWebmasterSelectionMeta(gscPageSelection, gscWeek);
+  const gscCountryMeta = buildWebmasterSelectionMeta(gscCountrySelection, gscWeek);
   const webmasterWeek = primaryWeek ?? data.webmaster.latest_week;
   const webmasterSummarySelection = resolveRowsForWeek(data.webmaster.summary, webmasterWeek, data.webmaster.latest_week);
   const webmasterQuerySelection = resolveRowsForWeekOrLatest(data.webmaster.queries, webmasterWeek, data.webmaster.latest_week);
@@ -783,7 +956,7 @@ function SeoTab({ data, locale, primaryWeek, comparisonWeek }: Props & { primary
           pending={data.webmaster.status === "unavailable"}
           right={<span className="text-xs text-slate-400">{webmasterFactsMeta.periodLabel}</span>}
         >
-          <WebmasterKpiStrip rows={webmasterSummaryRows.length > 0 ? webmasterSummaryRows : webmasterQueries} locale={currentLocale} />
+          <SearchConsoleKpiStrip rows={webmasterSummaryRows.length > 0 ? webmasterSummaryRows : webmasterQueries} locale={currentLocale} />
           <div className="mt-3 text-xs leading-relaxed text-slate-500">
             {webmasterFactsMeta.sourceNote} Период: {webmasterFactsMeta.periodLabel}.
           </div>
@@ -796,16 +969,23 @@ function SeoTab({ data, locale, primaryWeek, comparisonWeek }: Props & { primary
       </div>
       <SemanticHealthPanel data={data} locale={locale} primaryWeek={primaryWeek} />
       <div className="grid gap-5 lg:grid-cols-2">
-        <Panel data={data} title="Факты Google Search Console" source="gsc" layer="serp" pending>
-          <div className="grid grid-cols-3 gap-3">
-            {["Показы", "Клики", "CTR"].map((item) => (
-              <div key={item} className="rounded-lg border border-dashed border-slate-200 px-3 py-6 text-center">
-                <div className="text-xs uppercase text-slate-400">{item}</div>
-                <div className="mt-2 text-xl font-semibold text-slate-300">—</div>
-              </div>
-            ))}
+        <Panel
+          data={data}
+          title="Факты Google Search Console"
+          source="gsc"
+          layer="serp"
+          pending={data.gsc.status === "unavailable"}
+          right={<span className="text-xs text-slate-400">{gscFactsMeta.periodLabel}</span>}
+        >
+          <SearchConsoleKpiStrip rows={gscSummaryRows.length > 0 ? gscSummaryRows : gscQueries} locale={currentLocale} />
+          <div className="mt-3 text-xs leading-relaxed text-slate-500">
+            Источник: Google Search Console API; ежедневная загрузка ReportingDash. Период: {gscFactsMeta.periodLabel}.
           </div>
-          <p className="mt-3 text-sm leading-relaxed text-slate-500">Данные по Google-показам, кликам и CTR ожидаются из Search Console.</p>
+          {gscFactsMeta.fallbackNote ? (
+            <div className="mt-2 rounded-md border border-amber-200 bg-amber-50 px-3 py-2 text-xs leading-relaxed text-amber-800">
+              {gscFactsMeta.fallbackNote.replaceAll("Яндекс Вебмастера", "Google Search Console")}
+            </div>
+          ) : null}
         </Panel>
         <AiAggregateVisibilityPanel data={data} locale={currentLocale} />
       </div>
@@ -841,6 +1021,31 @@ function SeoTab({ data, locale, primaryWeek, comparisonWeek }: Props & { primary
           <WebmasterPageTable rows={topWebmasterPages(webmasterPages, 10)} locale={currentLocale} />
         </Panel>
       ) : null}
+      <Panel data={data} title="Запросы Google" source="gsc" layer="serp" right={<span className="text-xs text-slate-400">{gscQueryMeta.periodLabel} · {gscQueries.length} строк</span>}>
+        <SearchConsoleQueryTable rows={topGscQueries(gscQueries, 12)} locale={currentLocale} emptyLabel="Нет GSC-запросов для выбранной недели." />
+        <p className="mt-3 text-xs leading-relaxed text-slate-500">
+          Это запросы из Google Search Console: показы, клики, CTR и средняя позиция до клика. Таблица отсортирована по показам.
+        </p>
+        {gscQueryMeta.fallbackNote ? (
+          <div className="mt-3 rounded-md border border-amber-200 bg-amber-50 px-3 py-2 text-xs leading-relaxed text-amber-800">
+            {gscQueryMeta.fallbackNote.replaceAll("Яндекс Вебмастера", "Google Search Console")}
+          </div>
+        ) : null}
+      </Panel>
+      <Panel data={data} title="Посадочные страницы Google" source="gsc" layer="serp" right={<span className="text-xs text-slate-400">{gscPageMeta.periodLabel} · URL-факты</span>}>
+        <SearchConsolePageTable rows={topGscPages(gscPages, 10)} locale={currentLocale} emptyLabel="URL-факты GSC пока пустые." />
+      </Panel>
+      <Panel data={data} title="Страны в Google Search Console" source="gsc" layer="serp" right={<span className="text-xs text-slate-400">{gscCountryMeta.periodLabel} · country/device</span>}>
+        <SearchConsoleCountryTable rows={topGscCountries(gscCountries, 10)} locale={currentLocale} />
+        <p className="mt-3 text-xs leading-relaxed text-slate-500">
+          Это country-разрез Google Search Console до клика. Он показывает спрос в поиске по странам и устройствам; это не вкладка «География» из Метрики после клика.
+        </p>
+        {gscCountryMeta.fallbackNote ? (
+          <div className="mt-3 rounded-md border border-amber-200 bg-amber-50 px-3 py-2 text-xs leading-relaxed text-amber-800">
+            {gscCountryMeta.fallbackNote.replaceAll("Яндекс Вебмастера", "Google Search Console")}
+          </div>
+        ) : null}
+      </Panel>
       <Panel data={data} title="Поисковые фразы из Метрики" source="metrika" layer="onsite" right={<span className="text-xs text-slate-400">{phraseCoverage?.value ?? "покрытие —"}</span>}>
         <p className="mb-3 text-xs leading-relaxed text-slate-500">
           Фразы, которые Метрика смогла определить после клика. Это не полный список SEO-запросов: часть запросов скрывается поисковиками, а показы и позиции живут в Яндекс Вебмастере.
@@ -880,8 +1085,12 @@ function ContentTab({ data, locale, primaryWeek, comparisonWeek }: Props & { pri
 }
 
 function GeoTab({ data, locale }: Props) {
+  const mapGeoAnomalies = findMapGeoAnomalies(data.map_city_demand);
   return (
     <div className="space-y-5">
+      <div className="rounded-lg border border-slate-200 bg-white px-5 py-4 text-sm leading-relaxed text-slate-600">
+        География после клика из Метрики: страны, города и спрос на карту показывают уже пришедших пользователей. Для pre-click спроса по странам смотри GSC country/device в SEO-вкладке.
+      </div>
       <div className="grid gap-5 lg:grid-cols-2">
         <Panel data={data} title="Страны" source="metrika" layer="onsite">
           <BarList rows={data.geo_countries.slice(0, 10)} locale={locale} />
@@ -891,6 +1100,11 @@ function GeoTab({ data, locale }: Props) {
         </Panel>
       </div>
       <Panel data={data} title="Спрос на карту онкоцентров" source="metrika" layer="onsite" right={<span className="text-xs text-slate-400">regionCity × /map</span>}>
+        {mapGeoAnomalies.length > 0 ? (
+          <div className="mb-3 rounded-md border border-amber-200 bg-amber-50 px-3 py-2 text-xs leading-relaxed text-amber-800">
+            Проверить гео/ботов: необычно высокий спрос на карту из {mapGeoAnomalies.map((row) => row.label).join(", ")}. Это не ошибка отчёта, а сигнал для проверки качества трафика.
+          </div>
+        ) : null}
         <MapCityDemandTable rows={data.map_city_demand} locale={locale ?? "ru-RU"} />
       </Panel>
     </div>
@@ -1075,7 +1289,7 @@ export default function ZarukuSeoDashboard({ data, locale = "ru-RU" }: Props) {
             <div className="flex h-8 w-8 items-center justify-center rounded-lg bg-teal-600 text-sm font-bold text-white">Z</div>
             <div>
               <div className="text-sm font-semibold leading-tight">Zaruku</div>
-              <div className="text-xs text-slate-400">SEO / GEO дашборд</div>
+              <div className="text-xs text-slate-400">SEO / AI-поиск</div>
             </div>
           </div>
           <nav className="mt-6 space-y-1">
@@ -1104,14 +1318,20 @@ export default function ZarukuSeoDashboard({ data, locale = "ru-RU" }: Props) {
             </div>
             <div className="space-y-1.5">
               {data.sources.map((source) => (
-                <div key={source.id} className="flex items-center justify-between gap-2 text-xs">
-                  <span className="flex items-center gap-1.5 text-slate-600">
-                    <span className="h-1.5 w-1.5 rounded-full" style={{ background: source.color }} />
-                    {source.label}
-                  </span>
-                  <span className={source.status === "connected" ? "text-teal-600" : "text-slate-300"}>
-                    {source.status === "connected" ? "подкл." : "—"}
-                  </span>
+                <div key={source.id} className="text-xs">
+                  <div className="flex items-center justify-between gap-2">
+                    <span className="flex items-center gap-1.5 text-slate-600">
+                      <span className="h-1.5 w-1.5 rounded-full" style={{ background: source.color }} />
+                      {source.label}
+                    </span>
+                    <span className={source.status === "connected" ? "text-teal-600" : "text-slate-400"}>
+                      {SOURCE_STATUS_LABELS[source.status]}
+                    </span>
+                  </div>
+                  <div className="ml-3 mt-0.5 text-[11px] leading-tight text-slate-400">
+                    {SOURCE_COLLECTION_MODE_LABELS[source.collection_mode]}
+                    {source.data_through ? ` · данные по ${source.data_through}` : ""}
+                  </div>
                 </div>
               ))}
             </div>
@@ -1130,6 +1350,7 @@ export default function ZarukuSeoDashboard({ data, locale = "ru-RU" }: Props) {
                     <span>·</span>
                     <span>счётчик {data.counters.join(", ")}</span>
                     <span>·</span>
+                    <span>Период трафика:</span>
                     <span>{data.period.from} — {data.period.to}</span>
                   </div>
                 </div>

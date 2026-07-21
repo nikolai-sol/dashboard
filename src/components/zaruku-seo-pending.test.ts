@@ -8,9 +8,9 @@ type PendingInput = Pick<ZarukuSeoData, "pending_requirements" | "sources">;
 test("formats only currently pending SEO sources", () => {
   const data: PendingInput = {
     sources: [
-      { id: "gsc", label: "Search Console", layer: "serp", status: "pending", color: "#000000" },
-      { id: "webmaster", label: "Яндекс Вебмастер", layer: "serp", status: "connected", color: "#000000" },
-      { id: "yandex_gen_search", label: "AI visibility", layer: "ai", status: "connected", color: "#000000" },
+      { id: "gsc", label: "Search Console", layer: "serp", status: "pending", color: "#000000", collection_mode: "not_connected", data_through: null },
+      { id: "webmaster", label: "Яндекс Вебмастер", layer: "serp", status: "connected", color: "#000000", collection_mode: "automated", data_through: "2026-07-12" },
+      { id: "yandex_gen_search", label: "AI visibility", layer: "ai", status: "connected", color: "#000000", collection_mode: "manual", data_through: "2026-07" },
     ],
     pending_requirements: [
       {
@@ -30,7 +30,7 @@ test("formats only currently pending SEO sources", () => {
 test("reports complete pending coverage when nothing is pending", () => {
   const data: PendingInput = {
     sources: [
-      { id: "webmaster", label: "Яндекс Вебмастер", layer: "serp", status: "connected", color: "#000000" },
+      { id: "webmaster", label: "Яндекс Вебмастер", layer: "serp", status: "connected", color: "#000000", collection_mode: "automated", data_through: "2026-07-12" },
     ],
     pending_requirements: [],
   };

@@ -332,14 +332,14 @@ Recent completed changes that should not be rediscovered:
     - source binding: `dashboard_sources.platform = yandex_metrika`, `source_config.account_ids = ["66624469"]`
     - Zaruku no longer uses the Abbott BI UI; it renders `src/components/ZarukuSeoDashboard.tsx`
     - data path: `src/lib/zaruku-seo.ts` returns `zaruku_seo` with measurement layers `onsite / serp / ai`
-    - current connected source is Yandex Metrika: canonical traffic/page facts plus live Metrika API cuts for search engines, phrases, organic landings, devices, geo, browser/OS, inferred age/gender/interests
-    - pending sources are documented in `ZARUKU-SEO-PENDING-SOURCES.md`: Google Search Console; Yandex Webmaster and Alisa AI visibility are connected
+    - current connected onsite source is Yandex Metrika: canonical traffic/page facts plus live Metrika API cuts for search engines, phrases, organic landings, devices, geo, browser/OS, inferred age/gender/interests
+    - Google Search Console, Yandex Webmaster, SEO OS, and Alisa AI visibility have dashboard read paths; GSC is production-deployed, cron-scheduled, and backfilled for `2026-07-01 .. 2026-07-14`, including query/page/summary facts and the country/device split in `canonical_fact_gsc_countries_daily`
     - `Cached page traffic` is treated as technical tail, not as a primary acquisition channel
     - User ID analytics are Abbott/Bitrix-specific and stay hidden for Zaruku
 12. Zaruku SEO OS is connected as the `seo_os` source in the `serp` layer:
     - it provides weekly Yandex tracked positions, section coverage and position trends, opportunities, tasks, and pipeline run telemetry
     - section assignment is read from the authoritative `seo_section_patterns` dictionary
-    - SEO OS does not replace pending Google Search Console or Yandex Webmaster ingestion for impressions, clicks, CTR, and complete query / URL search-console coverage
+    - SEO OS does not replace Google Search Console or Yandex Webmaster ingestion for impressions, clicks, CTR, and complete query / URL search-console coverage
     - SEO task status `needs_target_page` is supported end to end in MySQL types, P4 counters, and task badges; approved opportunities without `target_url` must still create a task with this status
     - AI visibility for Zaruku is now covered by the Alisa AI snapshot in `seo_ai_visibility`
 13. Gidrofuril dashboard investigation on 2026-07-13:
