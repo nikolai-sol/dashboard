@@ -405,6 +405,8 @@ GRANT SELECT ON report_bd.portal_data_releases
   TO 'abbott_collector_role';
 GRANT SELECT ON report_bd.portal_active_data_releases
   TO 'abbott_collector_role';
+GRANT SELECT ON report_bd.portal_dataset_snapshots
+  TO 'abbott_collector_role';
 GRANT SELECT ON report_bd.yandex_metrika_names
   TO 'abbott_collector_role';
 GRANT SELECT ON report_bd.canonical_source_account_collection_settings

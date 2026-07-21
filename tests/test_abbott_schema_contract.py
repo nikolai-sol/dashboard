@@ -752,7 +752,6 @@ class AbbottSchemaContractTest(unittest.TestCase):
             if "TO 'abbott_collector_role'" in grant
         ]
         for table in (
-            "portal_dataset_snapshots",
             "portal_content_catalog",
             "portal_content_lookup_projection",
             "portal_general_materials",
@@ -763,6 +762,26 @@ class AbbottSchemaContractTest(unittest.TestCase):
             "portal_bitrix_journey_transitions",
         ):
             self.assertFalse(any(table in grant for grant in collector_grants))
+
+    def test_collector_can_only_read_frozen_baseline_snapshots(self):
+        sql = self._normalized(self._private_sql())
+        collector_grants = [
+            grant
+            for grant in re.findall(r"GRANT .*?;", sql, flags=re.IGNORECASE)
+            if "TO 'abbott_collector_role'" in grant
+        ]
+        snapshot_grants = [
+            grant
+            for grant in collector_grants
+            if "report_bd.portal_dataset_snapshots" in grant
+        ]
+        self.assertEqual(
+            snapshot_grants,
+            [
+                "GRANT SELECT ON report_bd.portal_dataset_snapshots "
+                "TO 'abbott_collector_role';"
+            ],
+        )
 
     def test_lookup_projection_grants_preserve_least_privilege(self):
         sql = self._normalized(self._private_sql())
