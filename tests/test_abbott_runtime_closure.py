@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import ast
 import os
 from pathlib import Path
 import subprocess
@@ -72,6 +73,67 @@ class AbbottRuntimeClosureTest(unittest.TestCase):
                 hashlib.sha256((ROOT / path).read_bytes()).hexdigest(),
                 entries[path],
             )
+
+    def test_attested_runtime_uses_python38_compatible_syntax(self):
+        manifest = (ROOT / "ops/abbott-runtime-manifest.sha256").read_text()
+        for line in manifest.splitlines():
+            if not line:
+                continue
+            _, path = line.split("  ", 1)
+            with self.subTest(path=path):
+                ast.parse(
+                    (ROOT / path).read_text(encoding="utf-8"),
+                    filename=path,
+                    feature_version=(3, 8),
+                )
+
+    def test_health_probe_imports_zoneinfo_backport_when_stdlib_module_is_unavailable(self):
+        script = r'''import importlib.abc
+import sys
+
+class MissingStdlibZoneInfo(importlib.abc.MetaPathFinder):
+    def find_spec(self, fullname, path=None, target=None):
+        if fullname == "zoneinfo":
+            raise ModuleNotFoundError("No module named 'zoneinfo'")
+        return None
+
+sys.meta_path.insert(0, MissingStdlibZoneInfo())
+import abbott_health_probe
+assert abbott_health_probe.ZoneInfo.__module__ == "backports.zoneinfo"
+'''
+        with tempfile.TemporaryDirectory() as directory:
+            backports = Path(directory) / "backports"
+            backports.mkdir()
+            (backports / "__init__.py").write_text("", encoding="utf-8")
+            (backports / "zoneinfo.py").write_text(
+                "class ZoneInfo:\n    pass\n"
+                "class ZoneInfoNotFoundError(Exception):\n    pass\n",
+                encoding="utf-8",
+            )
+            result = subprocess.run(
+                [sys.executable, "-c", script],
+                cwd=ROOT,
+                env={
+                    **os.environ,
+                    "PYTHONDONTWRITEBYTECODE": "1",
+                    "PYTHONPATH": os.pathsep.join((directory, str(ROOT))),
+                },
+                capture_output=True,
+                text=True,
+            )
+        self.assertEqual(result.returncode, 0, result.stderr)
+
+    def test_python38_zoneinfo_backport_is_environment_marked_in_runtime_requirements(self):
+        requirement_files = (
+            ROOT / "requirements.txt",
+            ROOT / "dashboard-next/reportingdash-canonical-bootstrap/requirements.txt",
+        )
+        for path in requirement_files:
+            with self.subTest(path=str(path.relative_to(ROOT))):
+                self.assertIn(
+                    'backports.zoneinfo==0.2.1; python_version < "3.9"',
+                    path.read_text().splitlines(),
+                )
 
     def test_all_synchronized_bootstrap_copies_match_root_authorities_and_manifest(self):
         bootstrap = ROOT / "dashboard-next/reportingdash-canonical-bootstrap"

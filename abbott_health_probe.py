@@ -9,7 +9,11 @@ import os
 from collections import Counter
 from datetime import date, datetime, timedelta, timezone
 from decimal import Decimal
-from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
+
+try:
+    from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
+except ImportError:  # pragma: no cover - exercised by the production Python 3.8 runtime
+    from backports.zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 
 ABBOTT_COUNTER_ID = "90602537"
