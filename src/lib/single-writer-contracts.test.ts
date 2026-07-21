@@ -34,3 +34,10 @@ test("supported Webmaster command routes only to the canonical collector", () =>
     "bash scripts/collect-yandex-webmaster-canonical.sh --run-type cron",
   );
 });
+
+test("deploy inventory packages only the active canonical GSC writer", () => {
+  const deploy = readFileSync(join(repoRoot, "scripts/deploy.sh"), "utf8");
+
+  assert.match(deploy, /copy_canonical_file fetch_gsc_canonical\.py/);
+  assert.doesNotMatch(deploy, /copy_canonical_file fetch_google_search_console_canonical\.py/);
+});

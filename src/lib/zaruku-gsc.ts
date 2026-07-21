@@ -541,24 +541,33 @@ export async function loadGoogleSearchConsoleFacts(
   const brandSplitRows = brandSplitResult.rows;
   const searchAppearanceRows = searchAppearanceResult.rows;
   const searchTypeSummaryRows = searchTypeSummaryResult.rows;
-  const successfulQueries = [
-    queryResult.available,
-    summaryResult.available,
-    countrySummaryResult.available,
-    landingPageResult.available,
-    brandSplitResult.available,
-    searchAppearanceResult.available,
-    searchTypeSummaryResult.available,
-  ].filter(Boolean).length;
-  const status = successfulQueries === 7 && errors.length === 0 ? "available" : successfulQueries > 0 ? "partial" : "unavailable";
+  const coreResults = [
+    queryResult,
+    summaryResult,
+    countrySummaryResult,
+    landingPageResult,
+    brandSplitResult,
+  ];
+  const optionalResults = [searchAppearanceResult, searchTypeSummaryResult];
+  const coreRowsPresent = [
+    queryRows,
+    summaryRows,
+    countrySummaryRows,
+    landingPageRows,
+    brandSplitRows,
+  ].some((rows) => rows.length > 0);
+  const allQueriesSuccessful = [...coreResults, ...optionalResults].every((result) => result.available);
+  const status = !coreRowsPresent
+    ? "unavailable"
+    : allQueriesSuccessful && errors.length === 0
+      ? "available"
+      : "partial";
   const weeksList = Array.from(new Set([
     ...summaryRows.map((row) => row.week),
     ...countrySummaryRows.map((row) => row.week),
     ...queryRows.map((row) => row.week),
     ...landingPageRows.map((row) => row.week),
     ...brandSplitRows.map((row) => row.week),
-    ...searchAppearanceRows.map((row) => row.week),
-    ...searchTypeSummaryRows.map((row) => row.week),
   ])).sort();
   return {
     available: status !== "unavailable",

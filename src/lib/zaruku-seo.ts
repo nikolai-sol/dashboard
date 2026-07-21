@@ -1129,7 +1129,7 @@ export function buildSources({
   ];
 }
 
-function buildPendingRequirements(webmaster: ZarukuYandexWebmasterData, gsc: ZarukuGscData) {
+export function buildPendingRequirements(webmaster: ZarukuYandexWebmasterData, gsc: ZarukuGscData) {
   return PENDING_REQUIREMENTS.filter((item) => {
     if (item.source === "webmaster") return webmaster.status === "unavailable";
     if (item.source === "gsc") return gsc.status === "unavailable";
