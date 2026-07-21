@@ -147,8 +147,10 @@ export function buildWebmasterAccountQueries(counterIds: string[], weeks?: strin
   const normalizedCounterIds = normalizeAccountIds(counterIds);
   const queryParams = [...normalizedCounterIds];
   const summaryParams = [...normalizedCounterIds];
+  const pageParams = [...normalizedCounterIds];
   const queryWeekClause = weekClause(weeks, queryParams);
   const summaryWeekClause = weekClause(weeks, summaryParams);
+  const pageWeekClause = weekClause(weeks, pageParams);
   const accountScope = buildInClause(normalizedCounterIds);
 
   return {
@@ -198,20 +200,22 @@ export function buildWebmasterAccountQueries(counterIds: string[], weeks?: strin
       sql: `
         SELECT
           ${WEEK_KEY_SQL} AS week_key,
-          '' AS page_url,
+          page_url,
           device_type,
-          0 AS impressions,
-          0 AS clicks,
-          NULL AS ctr,
-          NULL AS average_position,
+          SUM(impressions) AS impressions,
+          SUM(clicks) AS clicks,
+          CASE WHEN SUM(impressions) > 0 THEN SUM(clicks) / SUM(impressions) * 100 ELSE NULL END AS ctr,
+          ${weightedAveragePositionSql()} AS average_position,
           MIN(${WEEK_FROM_SQL}) AS week_from,
           MAX(report_date) AS week_to,
           MAX(report_date) < MAX(${WEEK_END_SQL}) AS is_partial_week
-        FROM canonical_fact_webmaster_queries_daily
-        WHERE 1 = 0
-        GROUP BY week_key, device_type
+        FROM canonical_fact_webmaster_pages_daily
+        WHERE analytics_account_id IN (${accountScope})
+          ${pageWeekClause}
+        GROUP BY week_key, page_hash, page_url, device_type
+        ORDER BY week_key ASC, impressions DESC, clicks DESC, page_url ASC
       `,
-      params: [],
+      params: pageParams,
     },
   };
 }
@@ -249,7 +253,7 @@ export async function loadZarukuYandexWebmasterData(
   executeQuery: WebmasterQueryExecutor = executeWebmasterQuery,
 ): Promise<ZarukuYandexWebmasterData> {
   const queries = buildWebmasterAccountQueries(counterIds, weeks);
-  const results = await Promise.allSettled([executeQuery(queries.queries), executeQuery(queries.summary)]);
+  const results = await Promise.allSettled([executeQuery(queries.queries), executeQuery(queries.summary), executeQuery(queries.pages)]);
   const errors: string[] = [];
   const queryResult = normalizeSettledRows<WebmasterQueryDbRow, ZarukuYandexWebmasterQueryRow>(
     results[0],
@@ -263,12 +267,18 @@ export async function loadZarukuYandexWebmasterData(
     normalizeWebmasterSummaryRow,
     errors,
   );
+  const pageResult = normalizeSettledRows<WebmasterPageDbRow, ZarukuYandexWebmasterPageRow>(
+    results[2],
+    "pages",
+    normalizeWebmasterPageRow,
+    errors,
+  );
   const queryRows = queryResult.rows;
   const summaryRows = summaryResult.rows;
-  const pageRows: ZarukuYandexWebmasterPageRow[] = [];
-  const successfulQueries = [queryResult.available, summaryResult.available].filter(Boolean).length;
-  const status = successfulQueries === 2 && errors.length === 0 ? "available" : successfulQueries > 0 ? "partial" : "unavailable";
-  const availableWeeks = [...new Set([...summaryRows, ...queryRows].map((row) => row.week))].sort();
+  const pageRows = pageResult.rows;
+  const successfulQueries = [queryResult.available, summaryResult.available, pageResult.available].filter(Boolean).length;
+  const status = successfulQueries === 3 && errors.length === 0 ? "available" : successfulQueries > 0 ? "partial" : "unavailable";
+  const availableWeeks = [...new Set([...summaryRows, ...queryRows, ...pageRows].map((row) => row.week))].sort();
 
   return {
     available: status === "available",
@@ -276,7 +286,7 @@ export async function loadZarukuYandexWebmasterData(
     error: errors.length > 0 ? errors.join("; ") : null,
     data_availability: {
       queries: queryResult.available,
-      pages: false,
+      pages: pageResult.available,
     },
     weeks: availableWeeks,
     latest_week: availableWeeks.at(-1) ?? null,

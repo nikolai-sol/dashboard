@@ -10,13 +10,16 @@ import {
   buildPageCollections,
   buildSources,
   deriveSourceDataThrough,
+  buildReturningPagesQuery,
+  buildSourceFreshnessQuery,
   filterSearchEngineRows,
   enrichRowsWithPageTitles,
   mergeTopPagesWithVisitMetrics,
+  normalizeSourceFreshnessRow,
   readableTrafficSource,
 } from "@/lib/zaruku-seo";
 import type {
-  ZarukuGoogleSearchConsoleData,
+  ZarukuGscData,
   ZarukuSeoIntelligenceData,
   ZarukuSeoMetricRow,
   ZarukuSeoSectionPattern,
@@ -62,17 +65,28 @@ const patterns: ZarukuSeoSectionPattern[] = [
 ];
 
 test("buildSources exposes collection provenance and preserves explicit data-through values", () => {
-  const gsc: ZarukuGoogleSearchConsoleData = {
+  const gsc: ZarukuGscData = {
     available: true,
     status: "available",
     error: null,
-    data_availability: { queries: true, pages: true, countries: true },
+    data_availability: {
+      queries: true,
+      summary: true,
+      country_summary: true,
+      landing_pages: true,
+      brand_split: true,
+      search_appearance: true,
+      search_type_summary: true,
+    },
     weeks: ["2026-W28"],
     latest_week: "2026-W28",
     summary: [],
+    country_summary: [],
     queries: [],
-    pages: [],
-    countries: [],
+    landing_pages: [],
+    brand_split: [],
+    search_appearance: [],
+    search_type_summary: [],
   };
   const webmaster: ZarukuYandexWebmasterData = {
     available: true,
@@ -497,4 +511,122 @@ test("buildKpis marks period users unavailable without an authoritative total", 
 
   assert.equal(usersKpi?.value, "—");
   assert.equal(usersKpi?.raw_value, null);
+});
+
+test("returning pages query reads canonical returning-content facts", () => {
+  const query = buildReturningPagesQuery(["66624469"], "2026-07-01", "2026-07-13");
+
+  assert.match(query.sql, /canonical_fact_metrika_returning_pages_daily/);
+  assert.doesNotMatch(query.sql, /yandex_metrika_returned/);
+  assert.match(query.sql, /returning_1_day_users/);
+  assert.match(query.sql, /returning_2_7_days_users/);
+  assert.match(query.sql, /returning_8_31_days_users/);
+  assert.deepEqual(query.params, ["66624469", "2026-07-01", "2026-07-13"]);
+});
+
+test("buildSourceFreshnessQuery scopes canonical collectors by source keys", () => {
+  const query = buildSourceFreshnessQuery(["yandex_metrika", "yandex_webmaster"]);
+
+  assert.match(query.sql, /canonical_collector_runs/);
+  assert.match(query.sql, /run_type = 'cron'/);
+  assert.deepEqual(query.params, ["yandex_metrika", "yandex_webmaster"]);
+});
+
+test("default source freshness query includes the returning-content collector", () => {
+  const query = buildSourceFreshnessQuery();
+
+  assert.equal(query.params.includes("yandex_metrika_returning"), true);
+});
+
+test("normalizeSourceFreshnessRow marks recent successful cron collector healthy", () => {
+  assert.deepEqual(
+    normalizeSourceFreshnessRow(
+      {
+        source_key: "yandex_webmaster",
+        source_label: "Яндекс Вебмастер",
+        collector: "fetch_yandex_webmaster_canonical.py",
+        expected_frequency_hours: 24,
+        last_status: "success",
+        last_finished_at: "2026-07-17 06:50:08",
+        last_success_at: "2026-07-17 06:50:08",
+        success_date_from: "2026-07-13",
+        success_date_to: "2026-07-16",
+        success_rows_read: "2121",
+        success_rows_written: "2125",
+        last_error_at: null,
+        last_error_summary: null,
+      },
+      new Date("2026-07-17T19:00:00Z"),
+    ),
+    {
+      source_key: "yandex_webmaster",
+      label: "Яндекс Вебмастер",
+      collector: "fetch_yandex_webmaster_canonical.py",
+      expected_frequency_hours: 24,
+      freshness_status: "healthy",
+      freshness_label: "healthy",
+      last_status: "success",
+      last_finished_at: "2026-07-17 06:50:08",
+      last_success_at: "2026-07-17 06:50:08",
+      date_from: "2026-07-13",
+      date_to: "2026-07-16",
+      rows_read: 2121,
+      rows_written: 2125,
+      last_error_at: null,
+      last_error_summary: null,
+      note: "Последний successful cron collector записал 2,125 rows.",
+    },
+  );
+});
+
+test("normalizeSourceFreshnessRow hides older collector errors after a newer success", () => {
+  const row = normalizeSourceFreshnessRow(
+    {
+      source_key: "yandex_metrika",
+      source_label: "Яндекс Метрика",
+      collector: "fetch_yandex_metrika_canonical.py",
+      expected_frequency_hours: 24,
+      last_status: "success",
+      last_finished_at: "2026-07-19 06:12:26",
+      last_success_at: "2026-07-19 06:12:26",
+      success_date_from: "2026-07-17",
+      success_date_to: "2026-07-18",
+      success_rows_read: 30,
+      success_rows_written: 3081,
+      last_error_at: "2026-06-24 06:12:01",
+      last_error_summary: "old frozen counter error",
+    },
+    new Date("2026-07-19T13:00:00Z"),
+  );
+
+  assert.equal(row.freshness_status, "healthy");
+  assert.equal(row.last_error_at, null);
+  assert.equal(row.last_error_summary, null);
+  assert.equal(row.note, "Последний successful cron collector записал 3,081 rows.");
+});
+
+test("normalizeSourceFreshnessRow marks newer failed cron after success as failed", () => {
+  const row = normalizeSourceFreshnessRow(
+      {
+        source_key: "google_search_console",
+        source_label: "Google Search Console",
+        collector: "fetch_gsc_canonical.py",
+      expected_frequency_hours: 24,
+      last_status: "failed",
+      last_finished_at: "2026-07-17 17:15:18",
+      last_success_at: "2026-07-16 17:15:18",
+      success_date_from: "2026-07-10",
+      success_date_to: "2026-07-13",
+      success_rows_read: 9000,
+      success_rows_written: 9000,
+      last_error_at: "2026-07-17 17:15:18",
+      last_error_summary: "HTTP 401",
+    },
+    new Date("2026-07-17T19:00:00Z"),
+  );
+
+  assert.equal(row.freshness_status, "failed");
+  assert.equal(row.freshness_label, "failed");
+  assert.match(row.note, /Последний cron collector упал/);
+  assert.equal(row.last_error_summary, "HTTP 401");
 });

@@ -39,6 +39,7 @@ Daily jobs on VPS:
 - `06:37` Hybrid
 - `06:40` canonical monitor
 - `06:50` Telegram summary
+- `06:55` Google Search Console canonical daily collector
 
 Important runtime rule:
 - cron does not collect the current day
@@ -145,7 +146,36 @@ Important current state:
 - legacy launch calls use the `x-internal-token` header backed by `LEGACY_LAUNCH_SECRET`; never put it
   in a query string
 - Zaruku main counter is `66624469`; it must be active in `canonical_source_account_collection_settings` with `collection_mode = ads_plus_seo_plus_user_behavior`
+- Zaruku inactive / hold counters `29137835`, `105559308`, and `99078698` must stay `is_active = 0` and `cron_enabled = 0`; do not collect them unless the user explicitly reactivates them.
 - If `canonical_fact_user_behavior_daily` stays empty for Zaruku, do not infer a collector failure by itself: the counter may not expose `paramsLevel2` / UserID-style rows.
+
+### Yandex Webmaster
+
+- collector: `/Users/nicko/ReportingDash/fetch_yandex_webmaster_canonical.py` deployed into `/var/www/dashboard/fetch_yandex_webmaster_canonical.py`
+- implemented for Zaruku host `https:zaruku.ru:443`
+- writes daily canonical facts:
+  - `canonical_fact_webmaster_queries_daily`
+  - `canonical_fact_webmaster_summary_daily`
+  - `canonical_fact_webmaster_pages_daily`
+- URL/page facts come from Yandex Webmaster `query-analytics/list` with `text_indicator = URL`; default `YANDEX_WEBMASTER_SEARCH_LOCATION = ALL_LOCATIONS`, matching the Webmaster UI screenshot.
+- 2026-07-17 production backfill run `1439` collected URL/page facts for `2026-07-13..2026-07-15`; `2026-07-15` has 968 page rows for account `66624469`.
+
+### Google Search Console
+
+- collector: `/Users/nicko/ReportingDash/fetch_gsc_canonical.py`
+- production runtime: `/root/reportingdash-canonical/fetch_gsc_canonical.py`
+- cron enabled on VPS at `06:55`
+- log file: `/root/reportingdash-canonical/logs/gsc-canonical-cron.log`
+- source key: `google_search_console`
+- Zaruku property: `https://zaruku.ru/`
+- Zaruku analytics account id: `66624469`
+- writes daily canonical facts only to `canonical_fact_gsc_queries_daily`
+- dimensions: `query`, `page`, `country`, `device`
+- metrics: `impressions`, `clicks`, `ctr`, `position`
+- cron window: yesterday plus 3-day backfill (`--backfill-days 3`) because GSC can lag by 2-3 days
+- idempotency: upsert by canonical business key `(analytics_account_id, report_date, query, page, device, country)`; `query_hash` is still computed from the same canonical fields only for compatibility with the existing unique key
+- legacy columns `property_url`, `query_text`, and `device_type` are nullable compatibility columns and must not be populated by the root collector
+- old temporary collector `fetch_google_search_console_canonical.py` must not be used as a writer for this table
 
 ### Yandex Promopages
 
@@ -436,6 +466,8 @@ Already done and should not be rediscovered:
 10. `porg-47e7bbnx` was added into `report_bd_tech.req_system` as an active Direct API login
 11. Direct API access for `porg-47e7bbnx` is now confirmed working at HTTP level; current-day probe returns an empty report header, not an auth error
 12. Yandex Metrika canonical collector now supports targeted counter backfills, counter-scoped deletes, API throttling, and page-level canonical rows; Zaruku `66624469` was enabled for canonical collection.
+13. Zaruku Metrika counters `29137835`, `105559308`, and `99078698` are on hold/inactive in production collection settings; only counter `66624469` should remain active for Zaruku.
+14. Yandex Webmaster URL/page facts are now canonical daily rows in `canonical_fact_webmaster_pages_daily`; dashboard payload `zaruku_seo.webmaster.data_availability.pages` is true after backfill run `1439`.
 
 ## Working rule for future platform-access tasks
 

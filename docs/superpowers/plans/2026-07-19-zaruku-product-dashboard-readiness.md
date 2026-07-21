@@ -44,7 +44,7 @@
 - Consumes: `ZarukuSourceFreshnessRow` from `src/lib/types.ts`
 - Produces: `normalizeSourceFreshnessRow(row, now)` that shows only active latest errors.
 
-- [ ] **Step 1: Write/update tests for product copy**
+- [x] **Step 1: Write/update tests for product copy**
 
 Add assertions:
 
@@ -56,7 +56,7 @@ test("pending and returning-content panels explain current state instead of show
 });
 ```
 
-- [ ] **Step 2: Write/update source freshness stale-error test**
+- [x] **Step 2: Write/update source freshness stale-error test**
 
 Add assertion:
 
@@ -87,7 +87,7 @@ test("normalizeSourceFreshnessRow hides older collector errors after a newer suc
 });
 ```
 
-- [ ] **Step 3: Run focused tests**
+- [x] **Step 3: Run focused tests**
 
 Run:
 
@@ -97,7 +97,7 @@ npm test -- src/components/ZarukuSeoDashboard.ui.test.ts src/lib/zaruku-seo.test
 
 Expected: PASS.
 
-- [ ] **Step 4: Implement/fix UI and freshness logic**
+- [x] **Step 4: Implement/fix UI and freshness logic**
 
 Ensure:
 
@@ -112,7 +112,7 @@ const activeErrorAt = hasNewerProblem ? lastErrorAt : null;
 const activeErrorSummary = hasNewerProblem ? (row.last_error_summary ?? null) : null;
 ```
 
-- [ ] **Step 5: Re-run focused tests**
+- [x] **Step 5: Re-run focused tests**
 
 Run:
 
@@ -136,7 +136,7 @@ Expected: PASS.
 - Produces: `ZarukuGscBrandSplitRow`
 - Produces fields under `ZarukuGscData`: `landing_pages`, `brand_split`
 
-- [ ] **Step 1: Write failing type/read-model tests**
+- [x] **Step 1: Write failing type/read-model tests**
 
 Add tests:
 
@@ -177,7 +177,7 @@ test("loadGoogleSearchConsoleFacts derives landing pages from canonical query ro
 });
 ```
 
-- [ ] **Step 2: Run test to verify RED**
+- [x] **Step 2: Run test to verify RED**
 
 Run:
 
@@ -187,7 +187,7 @@ npm test -- src/lib/zaruku-gsc.test.ts
 
 Expected: FAIL until new fields/functions exist.
 
-- [ ] **Step 3: Add DTOs**
+- [x] **Step 3: Add DTOs**
 
 Add to `src/lib/types.ts`:
 
@@ -217,7 +217,7 @@ export interface ZarukuGscBrandSplitRow {
 }
 ```
 
-- [ ] **Step 4: Add read-model queries**
+- [x] **Step 4: Add read-model queries**
 
 In `buildGscAccountQueries`, add:
 
@@ -248,7 +248,7 @@ CASE
 END AS brand_bucket
 ```
 
-- [ ] **Step 5: Normalize and return fields**
+- [x] **Step 5: Normalize and return fields**
 
 Add normalizers equivalent to query/summary rows:
 
@@ -268,7 +268,7 @@ export function normalizeGscLandingPageRow(row: GscLandingPageDbRow): ZarukuGscL
 }
 ```
 
-- [ ] **Step 6: Re-run focused tests**
+- [x] **Step 6: Re-run focused tests**
 
 Run:
 
@@ -290,7 +290,7 @@ Expected: PASS.
 - Consumes: `data.gsc.landing_pages`
 - Consumes: `data.gsc.brand_split`
 
-- [ ] **Step 1: Write UI tests**
+- [x] **Step 1: Write UI tests**
 
 Add source assertions:
 
@@ -303,7 +303,7 @@ test("SEO tab renders GSC product enrichment panels", () => {
 });
 ```
 
-- [ ] **Step 2: Run test to verify RED**
+- [x] **Step 2: Run test to verify RED**
 
 Run:
 
@@ -313,7 +313,7 @@ npm test -- src/components/ZarukuSeoDashboard.ui.test.ts
 
 Expected: FAIL until panels exist.
 
-- [ ] **Step 3: Add small product panels**
+- [x] **Step 3: Add small product panels**
 
 Add:
 
@@ -331,7 +331,7 @@ and:
 </Panel>
 ```
 
-- [ ] **Step 4: Add explicit empty states**
+- [x] **Step 4: Add explicit empty states**
 
 Tables must render:
 
@@ -345,7 +345,7 @@ and:
 <td colSpan={5}>Нет GSC branded/non-branded facts для выбранной недели.</td>
 ```
 
-- [ ] **Step 5: Re-run UI tests**
+- [x] **Step 5: Re-run UI tests**
 
 Run:
 
@@ -362,7 +362,7 @@ Expected: PASS.
 **Files:**
 - No source changes unless verification exposes a direct defect.
 
-- [ ] **Step 1: Run targeted Zaruku tests**
+- [x] **Step 1: Run targeted Zaruku tests**
 
 Run:
 
@@ -372,7 +372,7 @@ npm test -- src/components/ZarukuSeoDashboard.ui.test.ts src/components/zaruku-t
 
 Expected: all tests PASS.
 
-- [ ] **Step 2: Run production build**
+- [x] **Step 2: Run production build**
 
 Run:
 
@@ -382,7 +382,7 @@ npm run build
 
 Expected: build completes successfully.
 
-- [ ] **Step 3: Check local API shape through production domain**
+- [x] **Step 3: Check local API shape through production domain**
 
 Run:
 
@@ -400,7 +400,7 @@ Expected: GSC status is `available`; pending is `0`; landing/brand arrays exist.
 **Files:**
 - No source changes unless QA exposes a direct defect.
 
-- [ ] **Step 1: Deploy**
+- [x] **Step 1: Deploy**
 
 Run:
 
@@ -410,7 +410,7 @@ npm run deploy
 
 Expected: release activated successfully. A transient `curl: (7)` immediately after PM2 restart can happen; verify health afterwards.
 
-- [ ] **Step 2: Verify health**
+- [x] **Step 2: Verify health**
 
 Run:
 
@@ -421,7 +421,7 @@ curl -fsS https://dashboards.adreports.ru/api/health
 
 Expected: both return `{"status":"ok","database":"connected"}`.
 
-- [ ] **Step 3: Browser QA**
+- [x] **Step 3: Browser QA**
 
 Open:
 
@@ -436,7 +436,15 @@ Verify:
 - SEO tab shows GSC facts, GSC queries, GSC landing pages, and GSC brand split;
 - Content tab uses `A просмотры`, not `A визиты`;
 - Behavior tab explains empty returning content;
-- Quality tab shows Metrika and GSC healthy, Webmaster failed only if the latest cron is still failing.
+- Quality tab shows Metrika, GSC, and Webmaster healthy after the 2026-07-19 collector guard for latest-day Webmaster URL lag.
+
+## Completion Notes
+
+- Dashboard release deployed and health-checked on 2026-07-19.
+- GSC read model now exposes weekly summary, queries, landing pages, and brand/non-brand split from `canonical_fact_gsc_queries_daily`.
+- Production API check for `2026-07-01..2026-07-13` returns `pending=0`, GSC `summary=3`, `queries=9113`, `landing_pages=200`, `brand_split=2`.
+- Yandex Webmaster collector run `1477` completed successfully on 2026-07-19 with `rows_read=9121`, `rows_written=4705`.
+- Yandex Webmaster latest-day URL analytics returns `RESTRICTIONS_VIOLATED` until Yandex opens the date window; collector now logs `webmaster_page_facts_skipped` and keeps query/summary import successful.
 
 ---
 

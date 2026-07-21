@@ -1,9 +1,9 @@
 import { loadSeoIntelligenceData } from "@/lib/zaruku-seo-intelligence";
 import { loadSeoProcessData } from "@/lib/zaruku-seo-os";
+import { loadGoogleSearchConsoleFacts } from "@/lib/zaruku-gsc";
 import { loadYandexWebmasterFacts } from "@/lib/zaruku-yandex-webmaster";
-import { loadGoogleSearchConsoleFacts } from "@/lib/zaruku-google-search-console";
 import type {
-  ZarukuGoogleSearchConsoleData,
+  ZarukuGscData,
   ZarukuSeoIntelligenceData,
   ZarukuSeoOsData,
   ZarukuYandexWebmasterData,
@@ -17,8 +17,8 @@ export type DateRange = {
 export type AccountFactsReadModel = {
   accountId: string;
   dateRange: DateRange;
-  gsc: ZarukuGoogleSearchConsoleData;
   webmaster: ZarukuYandexWebmasterData;
+  gsc: ZarukuGscData;
 };
 
 export type SeoProcessReadModel = ZarukuSeoOsData;
@@ -44,12 +44,15 @@ export async function loadAccountFacts(
   options: { weeks?: string[] } = {},
 ): Promise<AccountFactsReadModel> {
   const normalizedAccountId = requireAccountId(accountId);
-  const weeks = options.weeks;
+  const [webmaster, gsc] = await Promise.all([
+    loadYandexWebmasterFacts(normalizedAccountId, options.weeks),
+    loadGoogleSearchConsoleFacts([normalizedAccountId], options.weeks),
+  ]);
   return {
     accountId: normalizedAccountId,
     dateRange,
-    gsc: await loadGoogleSearchConsoleFacts("https://zaruku.ru/", weeks),
-    webmaster: await loadYandexWebmasterFacts(normalizedAccountId, weeks),
+    webmaster,
+    gsc,
   };
 }
 

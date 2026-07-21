@@ -4,7 +4,7 @@ import test from "node:test";
 
 const source = readFileSync(new URL("./ZarukuSeoDashboard.tsx", import.meta.url), "utf8");
 const toolbarSource = readFileSync(new URL("./ZarukuSeoWeekToolbar.tsx", import.meta.url), "utf8");
-const webmasterPanelsSource = readFileSync(new URL("./zaruku-yandex-webmaster-panels.ts", import.meta.url), "utf8");
+const russiaMapSource = readFileSync(new URL("./ZarukuRussiaDemandMap.tsx", import.meta.url), "utf8");
 
 test("dashboard distinguishes the traffic period from SEO week selection", () => {
   assert.match(source, /Период трафика:\s*<\/span>\s*<span>\{data\.period\.from\} — \{data\.period\.to\}<\/span>/);
@@ -45,6 +45,36 @@ test("SEO tab labels Yandex query table from its own week selection", () => {
   assert.match(source, /webmasterQueryMeta\.fallbackNote/);
 });
 
+test("Quality tab shows technical collector freshness wording", () => {
+  assert.match(source, /Source freshness/);
+  assert.match(source, /last successful cron/);
+  assert.match(source, /rows written/);
+});
+
+test("SEO tab renders Search Console facts from canonical data without pending placeholder", () => {
+  assert.match(source, /GSC search facts/);
+  assert.match(source, /Search Console · canonical_fact_gsc_queries_daily/);
+  assert.doesNotMatch(source, /title="Факты Google Search Console" source="gsc" layer="serp" pending/);
+  assert.doesNotMatch(source, /Данные по Google-показам, кликам и CTR ожидаются из Search Console/);
+});
+
+test("pending and returning-content panels explain current state instead of showing misleading empty UI", () => {
+  assert.match(source, /function PendingPanel[\s\S]*if \(data\.pending_requirements\.length === 0\) return null;/);
+  assert.match(source, /pending=\{data\.pending_requirements\.length > 0\}/);
+  assert.doesNotMatch(source, /title="Что ещё ждём" layer="serp" pending right=/);
+  assert.match(source, /Нет возвратного контента за выбранный период/);
+});
+
+test("Behavior tab exposes canonical returning-content recency buckets", () => {
+  assert.match(source, /возвратные пользователи/);
+  assert.match(source, /1 день/);
+  assert.match(source, /2–7 дней/);
+  assert.match(source, /8–31 день/);
+  assert.match(source, /row\.returning_1_day_users/);
+  assert.match(source, /row\.returning_2_7_days_users/);
+  assert.match(source, /row\.returning_8_31_days_users/);
+});
+
 test("source health renders collection provenance labels", () => {
   assert.match(source, /автоматически/);
   assert.match(source, /внешний импорт/);
@@ -57,30 +87,49 @@ test("sidebar clarifies GEO as AI search rather than visitor geography", () => {
   assert.doesNotMatch(source, /SEO \/ GEO дашборд/);
 });
 
-test("visible provenance copy stays manager friendly", () => {
-  assert.match(source, /Google Search Console API; ежедневная загрузка ReportingDash/);
-  assert.match(webmasterPanelsSource, /Яндекс Вебмастер API; ежедневная загрузка ReportingDash/);
-  assert.match(source, /ручной снимок AI-видимости/);
-  assert.doesNotMatch(source, /Источник: Google Search Console \/ canonical_fact_gsc_\*_daily/);
-  assert.doesNotMatch(webmasterPanelsSource, /Источник: Яндекс Вебмастер \/ canonical_fact_webmaster_\*_daily/);
-  assert.doesNotMatch(source, /Источник данных: \$\{latest\.provenance\}/);
-});
-
-test("pending panel switches to a connected-source summary when nothing is waiting", () => {
-  assert.match(source, /data\.pending_requirements\.length === 0/);
-  assert.match(source, /Подключения источников/);
-  assert.match(source, /Все ключевые источники подключены/);
-});
-
-test("geography tab flags suspicious map demand and labels it as post-click geography", () => {
-  assert.match(source, /findMapGeoAnomalies/);
-  assert.match(source, /Проверить гео\/ботов/);
-  assert.match(source, /География после клика из Метрики/);
-});
-
 test("audience bars localize common Metrika labels", () => {
   assert.match(source, /readableAudienceLabel/);
   assert.match(source, /Мужчины/);
   assert.match(source, /Женщины/);
   assert.match(source, /Возраст не определён/);
+});
+
+test("SEO tab renders GSC product enrichment panels", () => {
+  assert.match(source, /GSC landing pages/);
+  assert.match(source, /GSC brand vs non-brand/);
+  assert.match(source, /GSC countries/);
+  assert.match(source, /GSC devices/);
+  assert.match(source, /GSC search appearances/);
+  assert.match(source, /GSC result types/);
+  assert.match(source, /data\.gsc\.landing_pages/);
+  assert.match(source, /data\.gsc\.brand_split/);
+  assert.match(source, /data\.gsc\.country_summary/);
+  assert.match(source, /data\.gsc\.search_appearance/);
+  assert.match(source, /data\.gsc\.search_type_summary/);
+  assert.match(source, /gscSummaryRows/);
+});
+
+test("Geo tab uses the projected Russia demand map instead of manual coordinates", () => {
+  assert.match(source, /import ZarukuRussiaDemandMap from "@\/components\/ZarukuRussiaDemandMap"/);
+  assert.match(source, /Карта спроса по России/);
+  assert.match(source, /<ZarukuRussiaDemandMap rows=\{data\.map_city_demand\}/);
+  assert.doesNotMatch(source, /function RussiaMapOutline/);
+  assert.doesNotMatch(source, /RUSSIA_CITY_COORDINATES/);
+  assert.doesNotMatch(source, /resolveRussiaCityPoint/);
+  assert.doesNotMatch(source, /title="Страны"/);
+  assert.doesNotMatch(source, /title="Города"/);
+
+  assert.match(russiaMapSource, /from "@visx\/geo"/);
+  assert.match(russiaMapSource, /RUSSIA_FEATURE/);
+  assert.match(russiaMapSource, /rotate=\{\[-100, 0, 0\]\}/);
+  assert.match(russiaMapSource, /separateMapMarkers/);
+  assert.match(russiaMapSource, /marker\.anchorX/);
+  assert.match(russiaMapSource, /city\.showLabel/);
+  assert.match(russiaMapSource, /aria-label=\{`\$\{city\.row\.label\}:/);
+  assert.match(russiaMapSource, /onPointerEnter/);
+  assert.match(russiaMapSource, /onFocus/);
+  assert.match(russiaMapSource, /Это не весь гео-трафик сайта/);
+  assert.match(russiaMapSource, /визиты на раздел `\/map\/`/);
+  assert.match(russiaMapSource, /размер круга = визиты/);
+  assert.match(russiaMapSource, /formatPercent\(city\.row\.share, locale, 1\)/);
 });

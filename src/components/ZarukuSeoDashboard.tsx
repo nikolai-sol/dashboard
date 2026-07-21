@@ -29,15 +29,19 @@ import {
 } from "lucide-react";
 import ZarukuSeoWeekToolbar from "@/components/ZarukuSeoWeekToolbar";
 import type {
-  ZarukuGoogleSearchConsoleCountryRow,
-  ZarukuGoogleSearchConsolePageRow,
-  ZarukuGoogleSearchConsoleQueryRow,
-  ZarukuGoogleSearchConsoleSummaryRow,
+  ZarukuGscBrandSplitRow,
+  ZarukuGscCountrySummaryRow,
+  ZarukuGscLandingPageRow,
+  ZarukuGscQueryRow,
+  ZarukuGscSearchAppearanceRow,
+  ZarukuGscSearchTypeRow,
+  ZarukuGscSummaryRow,
   ZarukuSeoData,
   ZarukuSeoLayerId,
   ZarukuSeoMetricRow,
   ZarukuSeoSource,
   ZarukuSeoSourceId,
+  ZarukuSourceFreshnessRow,
   ZarukuYandexWebmasterPageRow,
   ZarukuYandexWebmasterQueryRow,
   ZarukuYandexWebmasterSummaryRow,
@@ -53,6 +57,7 @@ import {
 } from "@/components/zaruku-seo-week-selection";
 import ZarukuSeoAnalytics from "@/components/ZarukuSeoAnalytics";
 import ZarukuSeoOperations from "@/components/ZarukuSeoOperations";
+import ZarukuRussiaDemandMap from "@/components/ZarukuRussiaDemandMap";
 import ZarukuTrafficVisibility from "@/components/ZarukuTrafficVisibility";
 import {
   buildNorthStarKpis,
@@ -69,11 +74,7 @@ import {
   buildWebmasterSelectionMeta,
   resolveRowsForWeek,
   resolveRowsForWeekOrLatest,
-  SearchConsoleKpiRow,
   summarizeWebmasterKpis,
-  topGscCountries,
-  topGscPages,
-  topGscQueries,
   topWebmasterPages,
   topWebmasterQueries,
 } from "@/components/zaruku-yandex-webmaster-panels";
@@ -389,13 +390,15 @@ function DataTable({
 function ReturningPagesTable({ rows, locale }: { rows: ZarukuSeoMetricRow[]; locale: string }) {
   return (
     <div className="overflow-x-auto">
-      <table className="w-full min-w-[560px] text-sm">
+      <table className="w-full min-w-[760px] text-sm">
         <thead>
           <tr className="text-left text-xs uppercase text-slate-400">
             <th className="pb-2 font-medium">Страница</th>
-            <th className="pb-2 text-right font-medium">Возвраты</th>
-            <th className="pb-2 text-right font-medium">Просмотры</th>
-            <th className="pb-2 text-right font-medium">Доля</th>
+            <th className="pb-2 text-right font-medium">Визиты</th>
+            <th className="pb-2 text-right font-medium">1 день</th>
+            <th className="pb-2 text-right font-medium">2–7 дней</th>
+            <th className="pb-2 text-right font-medium">8–31 день</th>
+            <th className="pb-2 text-right font-medium">Доля возвратов</th>
           </tr>
         </thead>
         <tbody className="divide-y divide-slate-100">
@@ -407,97 +410,30 @@ function ReturningPagesTable({ rows, locale }: { rows: ZarukuSeoMetricRow[]; loc
                 </div>
               </td>
               <td className="py-2.5 text-right text-slate-600">{formatNumber(row.visits, locale)}</td>
-              <td className="py-2.5 text-right text-slate-600">{formatNumber(row.pageviews, locale)}</td>
+              <td className="py-2.5 text-right text-slate-600">{formatNumber(row.returning_1_day_users ?? 0, locale)}</td>
+              <td className="py-2.5 text-right text-slate-600">{formatNumber(row.returning_2_7_days_users ?? 0, locale)}</td>
+              <td className="py-2.5 text-right text-slate-600">{formatNumber(row.returning_8_31_days_users ?? 0, locale)}</td>
               <td className="py-2.5 text-right text-slate-500">{formatPercent(row.share, locale, 1)}</td>
             </tr>
           ))}
-        </tbody>
-      </table>
-    </div>
-  );
-}
-
-function MapCityDemandTable({ rows, locale }: { rows: ZarukuSeoMetricRow[]; locale: string }) {
-  if (rows.length === 0) {
-    return <div className="rounded-md bg-slate-50 px-4 py-5 text-sm text-slate-500">Нет данных по городам для /map за выбранный период.</div>;
-  }
-  return (
-    <div className="overflow-x-auto">
-      <table className="w-full min-w-[760px] text-sm">
-        <thead>
-          <tr className="text-left text-xs uppercase text-slate-400">
-            <th className="pb-2 font-medium">Город</th>
-            <th className="pb-2 text-right font-medium">Визиты</th>
-            <th className="pb-2 text-right font-medium">Пользователи</th>
-            <th className="pb-2 text-right font-medium">Просмотры</th>
-            <th className="pb-2 text-right font-medium">Доля</th>
-            <th className="pb-2 text-right font-medium">Отказы</th>
-            <th className="pb-2 text-right font-medium">Время</th>
-            <th className="pb-2 text-right font-medium">Глубина</th>
-          </tr>
-        </thead>
-        <tbody className="divide-y divide-slate-100">
-          {rows.map((row, index) => (
-            <tr key={`${row.label}-${index}`}>
-              <td className="max-w-[320px] py-2.5">
-                <div className="flex flex-wrap items-center gap-2">
-                  <span className="font-medium text-slate-700" title={row.label}>
-                    {truncate(row.label, 48)}
-                  </span>
-                  {isMapGeoAnomaly(row) ? (
-                    <span className="rounded-md bg-amber-50 px-1.5 py-0.5 text-[11px] font-medium text-amber-700">проверить</span>
-                  ) : null}
-                </div>
-                {row.secondary_label ? <div className="text-xs text-slate-400">{truncate(shortUrl(row.secondary_label), 72)}</div> : null}
+          {rows.length === 0 ? (
+            <tr>
+              <td colSpan={6} className="py-6 text-center text-sm text-slate-500">
+                Нет возвратного контента за выбранный период.
               </td>
-              <td className="py-2.5 text-right text-slate-600">{formatNumber(row.visits, locale)}</td>
-              <td className="py-2.5 text-right text-slate-600">{formatNumber(row.users, locale)}</td>
-              <td className="py-2.5 text-right text-slate-600">{formatNumber(row.pageviews, locale)}</td>
-              <td className="py-2.5 text-right text-slate-500">{formatPercent(row.share, locale, 1)}</td>
-              <td className="py-2.5 text-right text-slate-500">{formatPercent(row.bounce_rate, locale, 1)}</td>
-              <td className="py-2.5 text-right text-slate-500">{formatDuration(row.avg_duration_seconds)}</td>
-              <td className="py-2.5 text-right text-slate-500">{formatDecimal(row.page_depth, locale, 1)}</td>
             </tr>
-          ))}
+          ) : null}
         </tbody>
       </table>
     </div>
   );
-}
-
-function isMapGeoAnomaly(row: ZarukuSeoMetricRow) {
-  const label = row.label.toLowerCase();
-  const url = row.secondary_label ?? row.url ?? "";
-  const looksLikeKnownOutlier = label.includes("singapore") || label.includes("сингапур");
-  const hasMapPath = url.includes("/map");
-  const highBounceMapDemand = hasMapPath && row.visits >= 20 && (row.bounce_rate ?? 0) >= 80;
-  return looksLikeKnownOutlier || highBounceMapDemand;
-}
-
-function findMapGeoAnomalies(rows: ZarukuSeoMetricRow[]) {
-  return rows.filter(isMapGeoAnomaly).slice(0, 3);
 }
 
 function PendingPanel({ data }: { data: ZarukuSeoData }) {
-  if (data.pending_requirements.length === 0) {
-    return (
-      <Panel data={data} title="Подключения источников" layer="serp" right={<span className="text-xs text-teal-600">Все ключевые источники подключены</span>}>
-        <div className="grid gap-3 md:grid-cols-3">
-          {data.sources.map((source) => (
-            <div key={source.id} className="rounded-lg border border-slate-200 bg-slate-50 p-4">
-              <div className="text-sm font-semibold text-slate-700">{source.label}</div>
-              <div className="mt-1 text-xs leading-relaxed text-slate-500">
-                {SOURCE_STATUS_LABELS[source.status]} · {SOURCE_COLLECTION_MODE_LABELS[source.collection_mode]}
-                {source.data_through ? ` · данные по ${source.data_through}` : ""}
-              </div>
-            </div>
-          ))}
-        </div>
-      </Panel>
-    );
-  }
+  if (data.pending_requirements.length === 0) return null;
+
   return (
-    <Panel data={data} title="Что ещё ждём" layer="serp" pending right={<span className="text-xs text-slate-400">{formatPendingRequirementSources(data)}</span>}>
+    <Panel data={data} title="Что ещё ждём" layer="serp" pending={data.pending_requirements.length > 0} right={<span className="text-xs text-slate-400">{formatPendingRequirementSources(data)}</span>}>
       <div className="grid gap-3 md:grid-cols-3">
         {data.pending_requirements.map((item) => (
           <div key={item.title} className="rounded-lg border border-dashed border-slate-200 p-4">
@@ -521,9 +457,8 @@ function PendingPanel({ data }: { data: ZarukuSeoData }) {
 }
 
 type WebmasterKpiRow = ZarukuYandexWebmasterQueryRow | ZarukuYandexWebmasterSummaryRow;
-type GscKpiRow = ZarukuGoogleSearchConsoleQueryRow | ZarukuGoogleSearchConsoleSummaryRow;
 
-function SearchConsoleKpiStrip({ rows, locale }: { rows: SearchConsoleKpiRow[]; locale: string }) {
+function WebmasterKpiStrip({ rows, locale }: { rows: WebmasterKpiRow[]; locale: string }) {
   const summary = summarizeWebmasterKpis(rows);
   const cells = [
     ["Показы", formatNumber(summary.impressions, locale)],
@@ -543,15 +478,7 @@ function SearchConsoleKpiStrip({ rows, locale }: { rows: SearchConsoleKpiRow[]; 
   );
 }
 
-function SearchConsoleQueryTable({
-  rows,
-  locale,
-  emptyLabel,
-}: {
-  rows: Array<ZarukuYandexWebmasterQueryRow | ZarukuGoogleSearchConsoleQueryRow>;
-  locale: string;
-  emptyLabel: string;
-}) {
+function WebmasterQueryTable({ rows, locale }: { rows: ZarukuYandexWebmasterQueryRow[]; locale: string }) {
   return (
     <div className="max-h-[30rem] overflow-auto rounded-md border border-slate-100">
       <table className="w-full min-w-[860px] table-fixed text-sm">
@@ -585,7 +512,7 @@ function SearchConsoleQueryTable({
           ))}
           {rows.length === 0 ? (
             <tr>
-              <td colSpan={5} className="px-3 py-8 text-center text-sm text-slate-500">{emptyLabel}</td>
+              <td colSpan={5} className="px-3 py-8 text-center text-sm text-slate-500">Нет Webmaster-запросов для выбранной недели.</td>
             </tr>
           ) : null}
         </tbody>
@@ -594,15 +521,7 @@ function SearchConsoleQueryTable({
   );
 }
 
-function SearchConsolePageTable({
-  rows,
-  locale,
-  emptyLabel,
-}: {
-  rows: Array<ZarukuYandexWebmasterPageRow | ZarukuGoogleSearchConsolePageRow>;
-  locale: string;
-  emptyLabel: string;
-}) {
+function WebmasterPageTable({ rows, locale }: { rows: ZarukuYandexWebmasterPageRow[]; locale: string }) {
   return (
     <div className="space-y-2">
       {rows.map((row) => (
@@ -613,45 +532,104 @@ function SearchConsolePageTable({
           <div className="text-right text-slate-500">{formatDecimal(row.average_position, locale, 1)}</div>
         </div>
       ))}
-      {rows.length === 0 ? <div className="rounded-md bg-slate-50 px-3 py-8 text-center text-sm text-slate-500">{emptyLabel}</div> : null}
+      {rows.length === 0 ? <div className="rounded-md bg-slate-50 px-3 py-8 text-center text-sm text-slate-500">URL-факты Вебмастера пока пустые.</div> : null}
     </div>
   );
 }
 
-function SearchConsoleCountryTable({
-  rows,
-  locale,
-}: {
-  rows: ZarukuGoogleSearchConsoleCountryRow[];
-  locale: string;
-}) {
+function summarizeSearchConsoleKpis(rows: Array<ZarukuGscQueryRow | ZarukuGscSummaryRow>) {
+  const totals = rows.reduce(
+    (total, row) => ({
+      impressions: total.impressions + row.impressions,
+      clicks: total.clicks + row.clicks,
+      weightedPosition: total.weightedPosition + (row.average_position == null ? 0 : row.average_position * row.impressions),
+      positionWeight: total.positionWeight + (row.average_position == null ? 0 : row.impressions),
+    }),
+    { impressions: 0, clicks: 0, weightedPosition: 0, positionWeight: 0 },
+  );
+  return {
+    impressions: totals.impressions,
+    clicks: totals.clicks,
+    ctr: totals.impressions > 0 ? (totals.clicks / totals.impressions) * 100 : null,
+    average_position: totals.positionWeight > 0 ? totals.weightedPosition / totals.positionWeight : null,
+  };
+}
+
+function topGscQueries(rows: ZarukuGscQueryRow[], limit = 12) {
+  return [...rows]
+    .sort((left, right) => right.impressions - left.impressions || right.clicks - left.clicks || left.query.localeCompare(right.query))
+    .slice(0, limit);
+}
+
+function topGscLandingPages(rows: ZarukuGscLandingPageRow[], limit = 10) {
+  return [...rows]
+    .sort((left, right) => right.impressions - left.impressions || right.clicks - left.clicks || left.page.localeCompare(right.page))
+    .slice(0, limit);
+}
+
+function SearchConsoleKpiStrip({ rows, locale }: { rows: Array<ZarukuGscQueryRow | ZarukuGscSummaryRow>; locale: string }) {
+  const summary = summarizeSearchConsoleKpis(rows);
+  const cells = [
+    ["Показы", formatNumber(summary.impressions, locale)],
+    ["Клики", formatNumber(summary.clicks, locale)],
+    ["CTR", formatPercent(summary.ctr, locale, 2)],
+    ["Позиция", formatDecimal(summary.average_position, locale, 1)],
+  ];
   return (
-    <div className="max-h-[24rem] overflow-auto rounded-md border border-slate-100">
-      <table className="w-full min-w-[680px] text-sm">
+    <div className="grid grid-cols-2 gap-3 md:grid-cols-4">
+      {cells.map(([label, value]) => (
+        <div key={label} className="rounded-lg border border-slate-200 bg-slate-50 px-3 py-3">
+          <div className="text-xs uppercase text-slate-400">{label}</div>
+          <div className="mt-1 text-xl font-semibold text-slate-900">{value}</div>
+        </div>
+      ))}
+    </div>
+  );
+}
+
+function SearchConsoleQueryTable({ rows, locale }: { rows: ZarukuGscQueryRow[]; locale: string }) {
+  return (
+    <div className="max-h-[30rem] overflow-auto rounded-md border border-slate-100">
+      <table className="w-full min-w-[980px] table-fixed text-sm">
+        <colgroup>
+          <col className="w-[32%]" />
+          <col className="w-[28%]" />
+          <col className="w-[8%]" />
+          <col className="w-[9%]" />
+          <col className="w-[8%]" />
+          <col className="w-[7%]" />
+          <col className="w-[8%]" />
+        </colgroup>
         <thead className="sticky top-0 z-10 bg-slate-50 text-left text-xs text-slate-400 shadow-[0_1px_0_0_rgb(241_245_249)]">
           <tr>
-            <th className="px-3 py-2.5 font-medium">Страна</th>
-            <th className="px-3 py-2.5 font-medium">Устройство</th>
+            <th className="px-3 py-2.5 font-medium">Query</th>
+            <th className="px-3 py-2.5 font-medium">Page</th>
+            <th className="px-3 py-2.5 font-medium">Country</th>
+            <th className="px-3 py-2.5 font-medium">Device</th>
             <th className="px-3 py-2.5 text-right font-medium">Показы</th>
-            <th className="px-3 py-2.5 text-right font-medium">Клики</th>
             <th className="px-3 py-2.5 text-right font-medium">CTR</th>
             <th className="px-3 py-2.5 text-right font-medium">Позиция</th>
           </tr>
         </thead>
         <tbody className="divide-y divide-slate-100">
           {rows.map((row) => (
-            <tr key={`${row.week}-${row.country_code}-${row.device}`} className="hover:bg-slate-50/70">
-              <td className="px-3 py-2.5 font-medium text-slate-700">{row.country_code}</td>
-              <td className="px-3 py-2.5 text-slate-500">{row.device}</td>
+            <tr key={`${row.week}-${row.query_id}-${row.country}-${row.device}`} className="align-top hover:bg-slate-50/70">
+              <td className="px-3 py-2.5 font-medium leading-snug text-slate-700" title={row.query}>
+                <div className="line-clamp-2">{row.query || "—"}</div>
+              </td>
+              <td className="px-3 py-2.5 leading-snug text-slate-500" title={row.page}>
+                <div className="line-clamp-2">{shortUrl(row.page)}</div>
+              </td>
+              <td className="whitespace-nowrap px-3 py-2.5 text-slate-500">{row.country || "—"}</td>
+              <td className="whitespace-nowrap px-3 py-2.5 text-slate-500">{row.device || "—"}</td>
               <td className="whitespace-nowrap px-3 py-2.5 text-right text-slate-600">{formatNumber(row.impressions, locale)}</td>
-              <td className="whitespace-nowrap px-3 py-2.5 text-right text-slate-600">{formatNumber(row.clicks, locale)}</td>
               <td className="whitespace-nowrap px-3 py-2.5 text-right text-slate-500">{formatPercent(row.ctr, locale, 2)}</td>
               <td className="whitespace-nowrap px-3 py-2.5 text-right text-slate-500">{formatDecimal(row.average_position, locale, 1)}</td>
             </tr>
           ))}
           {rows.length === 0 ? (
             <tr>
-              <td colSpan={6} className="px-3 py-8 text-center text-sm text-slate-500">Country split из GSC пока пустой для выбранной недели.</td>
+              <td colSpan={7} className="px-3 py-8 text-center text-sm text-slate-500">Нет GSC search facts для выбранной недели.</td>
             </tr>
           ) : null}
         </tbody>
@@ -660,12 +638,342 @@ function SearchConsoleCountryTable({
   );
 }
 
-function WebmasterQueryTable({ rows, locale }: { rows: ZarukuYandexWebmasterQueryRow[]; locale: string }) {
-  return <SearchConsoleQueryTable rows={rows} locale={locale} emptyLabel="Нет Webmaster-запросов для выбранной недели." />;
+function SearchConsoleLandingPagesTable({ rows, locale }: { rows: ZarukuGscLandingPageRow[]; locale: string }) {
+  return (
+    <div className="max-h-[28rem] overflow-auto rounded-md border border-slate-100">
+      <table className="w-full min-w-[760px] table-fixed text-sm">
+        <colgroup>
+          <col className="w-[48%]" />
+          <col className="w-[14%]" />
+          <col className="w-[12%]" />
+          <col className="w-[12%]" />
+          <col className="w-[14%]" />
+        </colgroup>
+        <thead className="sticky top-0 z-10 bg-slate-50 text-left text-xs text-slate-400 shadow-[0_1px_0_0_rgb(241_245_249)]">
+          <tr>
+            <th className="px-3 py-2.5 font-medium">Page</th>
+            <th className="px-3 py-2.5 text-right font-medium">Показы</th>
+            <th className="px-3 py-2.5 text-right font-medium">Клики</th>
+            <th className="px-3 py-2.5 text-right font-medium">CTR</th>
+            <th className="px-3 py-2.5 text-right font-medium">Позиция</th>
+          </tr>
+        </thead>
+        <tbody className="divide-y divide-slate-100">
+          {rows.map((row) => (
+            <tr key={`${row.week}-${row.page}`} className="align-top hover:bg-slate-50/70">
+              <td className="px-3 py-2.5 font-medium leading-snug text-slate-700" title={row.page}>
+                <div className="line-clamp-2">{shortUrl(row.page)}</div>
+              </td>
+              <td className="whitespace-nowrap px-3 py-2.5 text-right text-slate-600">{formatNumber(row.impressions, locale)}</td>
+              <td className="whitespace-nowrap px-3 py-2.5 text-right text-slate-600">{formatNumber(row.clicks, locale)}</td>
+              <td className="whitespace-nowrap px-3 py-2.5 text-right text-slate-500">{formatPercent(row.ctr, locale, 2)}</td>
+              <td className="whitespace-nowrap px-3 py-2.5 text-right text-slate-500">{formatDecimal(row.average_position, locale, 1)}</td>
+            </tr>
+          ))}
+          {rows.length === 0 ? (
+            <tr>
+              <td colSpan={5} className="px-3 py-8 text-center text-sm text-slate-500">Нет GSC landing page facts для выбранной недели.</td>
+            </tr>
+          ) : null}
+        </tbody>
+      </table>
+    </div>
+  );
 }
 
-function WebmasterPageTable({ rows, locale }: { rows: ZarukuYandexWebmasterPageRow[]; locale: string }) {
-  return <SearchConsolePageTable rows={rows} locale={locale} emptyLabel="URL-факты Вебмастера пока пустые." />;
+function brandBucketLabel(bucket: ZarukuGscBrandSplitRow["bucket"]) {
+  return bucket === "brand" ? "Brand" : "Non-brand";
+}
+
+function SearchConsoleBrandSplitTable({ rows, locale }: { rows: ZarukuGscBrandSplitRow[]; locale: string }) {
+  const totalImpressions = rows.reduce((sum, row) => sum + row.impressions, 0);
+  const sortedRows = [...rows].sort((left, right) => (left.bucket === "brand" ? -1 : 1) - (right.bucket === "brand" ? -1 : 1));
+  return (
+    <div className="overflow-x-auto rounded-md border border-slate-100">
+      <table className="w-full min-w-[680px] table-fixed text-sm">
+        <colgroup>
+          <col className="w-[24%]" />
+          <col className="w-[17%]" />
+          <col className="w-[15%]" />
+          <col className="w-[14%]" />
+          <col className="w-[15%]" />
+          <col className="w-[15%]" />
+        </colgroup>
+        <thead className="bg-slate-50 text-left text-xs text-slate-400">
+          <tr>
+            <th className="px-3 py-2.5 font-medium">Bucket</th>
+            <th className="px-3 py-2.5 text-right font-medium">Показы</th>
+            <th className="px-3 py-2.5 text-right font-medium">Клики</th>
+            <th className="px-3 py-2.5 text-right font-medium">CTR</th>
+            <th className="px-3 py-2.5 text-right font-medium">Позиция</th>
+            <th className="px-3 py-2.5 text-right font-medium">Доля</th>
+          </tr>
+        </thead>
+        <tbody className="divide-y divide-slate-100">
+          {sortedRows.map((row) => (
+            <tr key={`${row.week}-${row.bucket}`} className="align-top hover:bg-slate-50/70">
+              <td className="px-3 py-2.5 font-medium text-slate-700">{brandBucketLabel(row.bucket)}</td>
+              <td className="whitespace-nowrap px-3 py-2.5 text-right text-slate-600">{formatNumber(row.impressions, locale)}</td>
+              <td className="whitespace-nowrap px-3 py-2.5 text-right text-slate-600">{formatNumber(row.clicks, locale)}</td>
+              <td className="whitespace-nowrap px-3 py-2.5 text-right text-slate-500">{formatPercent(row.ctr, locale, 2)}</td>
+              <td className="whitespace-nowrap px-3 py-2.5 text-right text-slate-500">{formatDecimal(row.average_position, locale, 1)}</td>
+              <td className="whitespace-nowrap px-3 py-2.5 text-right text-slate-500">
+                {formatPercent(totalImpressions > 0 ? (row.impressions / totalImpressions) * 100 : null, locale, 1)}
+              </td>
+            </tr>
+          ))}
+          {rows.length === 0 ? (
+            <tr>
+              <td colSpan={6} className="px-3 py-8 text-center text-sm text-slate-500">Нет GSC branded/non-branded facts для выбранной недели.</td>
+            </tr>
+          ) : null}
+        </tbody>
+      </table>
+    </div>
+  );
+}
+
+function gscCountryLabel(country: string) {
+  const normalized = country.toLowerCase();
+  const map: Record<string, string> = {
+    rus: "Россия",
+    kaz: "Казахстан",
+    blr: "Беларусь",
+    ukr: "Украина",
+    deu: "Германия",
+    kgz: "Кыргызстан",
+    uzb: "Узбекистан",
+    lva: "Латвия",
+    mda: "Молдова",
+    usa: "США",
+    pol: "Польша",
+    geo: "Грузия",
+    arm: "Армения",
+    tkm: "Туркменистан",
+    isr: "Израиль",
+    aze: "Азербайджан",
+    unknown: "Не указано",
+  };
+  return map[normalized] ?? country.toUpperCase();
+}
+
+function SearchConsoleCountrySummaryTable({ rows, locale }: { rows: ZarukuGscCountrySummaryRow[]; locale: string }) {
+  return (
+    <div className="max-h-[22rem] overflow-auto rounded-md border border-slate-100">
+      <table className="w-full min-w-[620px] table-fixed text-sm">
+        <colgroup>
+          <col className="w-[32%]" />
+          <col className="w-[18%]" />
+          <col className="w-[16%]" />
+          <col className="w-[16%]" />
+          <col className="w-[18%]" />
+        </colgroup>
+        <thead className="sticky top-0 z-10 bg-slate-50 text-left text-xs text-slate-400 shadow-[0_1px_0_0_rgb(241_245_249)]">
+          <tr>
+            <th className="px-3 py-2.5 font-medium">Country</th>
+            <th className="px-3 py-2.5 text-right font-medium">Показы</th>
+            <th className="px-3 py-2.5 text-right font-medium">Клики</th>
+            <th className="px-3 py-2.5 text-right font-medium">CTR</th>
+            <th className="px-3 py-2.5 text-right font-medium">Позиция</th>
+          </tr>
+        </thead>
+        <tbody className="divide-y divide-slate-100">
+          {rows.map((row) => (
+            <tr key={`${row.week}-${row.country}`} className="align-top hover:bg-slate-50/70">
+              <td className="px-3 py-2.5 font-medium text-slate-700">{gscCountryLabel(row.country)}</td>
+              <td className="whitespace-nowrap px-3 py-2.5 text-right text-slate-600">{formatNumber(row.impressions, locale)}</td>
+              <td className="whitespace-nowrap px-3 py-2.5 text-right text-slate-600">{formatNumber(row.clicks, locale)}</td>
+              <td className="whitespace-nowrap px-3 py-2.5 text-right text-slate-500">{formatPercent(row.ctr, locale, 2)}</td>
+              <td className="whitespace-nowrap px-3 py-2.5 text-right text-slate-500">{formatDecimal(row.average_position, locale, 1)}</td>
+            </tr>
+          ))}
+          {rows.length === 0 ? (
+            <tr>
+              <td colSpan={5} className="px-3 py-8 text-center text-sm text-slate-500">Нет GSC country facts для выбранной недели.</td>
+            </tr>
+          ) : null}
+        </tbody>
+      </table>
+    </div>
+  );
+}
+
+function SearchConsoleDeviceSummaryTable({ rows, locale }: { rows: ZarukuGscSummaryRow[]; locale: string }) {
+  return (
+    <div className="overflow-x-auto rounded-md border border-slate-100">
+      <table className="w-full min-w-[620px] table-fixed text-sm">
+        <colgroup>
+          <col className="w-[32%]" />
+          <col className="w-[18%]" />
+          <col className="w-[16%]" />
+          <col className="w-[16%]" />
+          <col className="w-[18%]" />
+        </colgroup>
+        <thead className="bg-slate-50 text-left text-xs text-slate-400">
+          <tr>
+            <th className="px-3 py-2.5 font-medium">Device</th>
+            <th className="px-3 py-2.5 text-right font-medium">Показы</th>
+            <th className="px-3 py-2.5 text-right font-medium">Клики</th>
+            <th className="px-3 py-2.5 text-right font-medium">CTR</th>
+            <th className="px-3 py-2.5 text-right font-medium">Позиция</th>
+          </tr>
+        </thead>
+        <tbody className="divide-y divide-slate-100">
+          {rows.map((row) => (
+            <tr key={`${row.week}-${row.device}`} className="align-top hover:bg-slate-50/70">
+              <td className="px-3 py-2.5 font-medium text-slate-700">{row.device || "—"}</td>
+              <td className="whitespace-nowrap px-3 py-2.5 text-right text-slate-600">{formatNumber(row.impressions, locale)}</td>
+              <td className="whitespace-nowrap px-3 py-2.5 text-right text-slate-600">{formatNumber(row.clicks, locale)}</td>
+              <td className="whitespace-nowrap px-3 py-2.5 text-right text-slate-500">{formatPercent(row.ctr, locale, 2)}</td>
+              <td className="whitespace-nowrap px-3 py-2.5 text-right text-slate-500">{formatDecimal(row.average_position, locale, 1)}</td>
+            </tr>
+          ))}
+          {rows.length === 0 ? (
+            <tr>
+              <td colSpan={5} className="px-3 py-8 text-center text-sm text-slate-500">Нет GSC device facts для выбранной недели.</td>
+            </tr>
+          ) : null}
+        </tbody>
+      </table>
+    </div>
+  );
+}
+
+function gscSearchAppearanceLabel(value: string) {
+  const normalized = value.toLowerCase();
+  const map: Record<string, string> = {
+    rich_results: "Rich results",
+    good_page_experience: "Good page experience",
+    merchant_listings: "Merchant listings",
+    product_results: "Product results",
+    review_snippet: "Review snippet",
+    video: "Video",
+    unknown: "Unknown",
+  };
+  return map[normalized] ?? value.replace(/_/g, " ");
+}
+
+function gscSearchTypeLabel(value: string) {
+  const map: Record<string, string> = {
+    web: "Web / All",
+    image: "Image",
+    video: "Video",
+    news: "News",
+    discover: "Discover",
+    googleNews: "Google News",
+  };
+  return map[value] ?? value;
+}
+
+function SearchConsoleAppearanceTable({ rows, locale }: { rows: ZarukuGscSearchAppearanceRow[]; locale: string }) {
+  return (
+    <div className="max-h-[22rem] overflow-auto rounded-md border border-slate-100">
+      <table className="w-full min-w-[700px] table-fixed text-sm">
+        <colgroup>
+          <col className="w-[34%]" />
+          <col className="w-[16%]" />
+          <col className="w-[16%]" />
+          <col className="w-[14%]" />
+          <col className="w-[10%]" />
+          <col className="w-[10%]" />
+        </colgroup>
+        <thead className="sticky top-0 z-10 bg-slate-50 text-left text-xs text-slate-400 shadow-[0_1px_0_0_rgb(241_245_249)]">
+          <tr>
+            <th className="px-3 py-2.5 font-medium">Search appearance</th>
+            <th className="px-3 py-2.5 font-medium">Type</th>
+            <th className="px-3 py-2.5 text-right font-medium">Показы</th>
+            <th className="px-3 py-2.5 text-right font-medium">Клики</th>
+            <th className="px-3 py-2.5 text-right font-medium">CTR</th>
+            <th className="px-3 py-2.5 text-right font-medium">Позиция</th>
+          </tr>
+        </thead>
+        <tbody className="divide-y divide-slate-100">
+          {rows.map((row) => (
+            <tr key={`${row.week}-${row.search_type}-${row.search_appearance}`} className="align-top hover:bg-slate-50/70">
+              <td className="px-3 py-2.5 font-medium text-slate-700">{gscSearchAppearanceLabel(row.search_appearance)}</td>
+              <td className="px-3 py-2.5 text-slate-500">{gscSearchTypeLabel(row.search_type)}</td>
+              <td className="whitespace-nowrap px-3 py-2.5 text-right text-slate-600">{formatNumber(row.impressions, locale)}</td>
+              <td className="whitespace-nowrap px-3 py-2.5 text-right text-slate-600">{formatNumber(row.clicks, locale)}</td>
+              <td className="whitespace-nowrap px-3 py-2.5 text-right text-slate-500">{formatPercent(row.ctr, locale, 2)}</td>
+              <td className="whitespace-nowrap px-3 py-2.5 text-right text-slate-500">{formatDecimal(row.average_position, locale, 1)}</td>
+            </tr>
+          ))}
+          {rows.length === 0 ? (
+            <tr>
+              <td colSpan={6} className="px-3 py-8 text-center text-sm text-slate-500">Нет GSC search appearance facts для выбранной недели.</td>
+            </tr>
+          ) : null}
+        </tbody>
+      </table>
+    </div>
+  );
+}
+
+function SearchConsoleResultTypeTable({ rows, locale }: { rows: ZarukuGscSearchTypeRow[]; locale: string }) {
+  return (
+    <div className="overflow-x-auto rounded-md border border-slate-100">
+      <table className="w-full min-w-[620px] table-fixed text-sm">
+        <colgroup>
+          <col className="w-[28%]" />
+          <col className="w-[18%]" />
+          <col className="w-[17%]" />
+          <col className="w-[17%]" />
+          <col className="w-[20%]" />
+        </colgroup>
+        <thead className="bg-slate-50 text-left text-xs text-slate-400">
+          <tr>
+            <th className="px-3 py-2.5 font-medium">Result type</th>
+            <th className="px-3 py-2.5 text-right font-medium">Показы</th>
+            <th className="px-3 py-2.5 text-right font-medium">Клики</th>
+            <th className="px-3 py-2.5 text-right font-medium">CTR</th>
+            <th className="px-3 py-2.5 text-right font-medium">Позиция</th>
+          </tr>
+        </thead>
+        <tbody className="divide-y divide-slate-100">
+          {rows.map((row) => (
+            <tr key={`${row.week}-${row.search_type}`} className="align-top hover:bg-slate-50/70">
+              <td className="px-3 py-2.5 font-medium text-slate-700">{gscSearchTypeLabel(row.search_type)}</td>
+              <td className="whitespace-nowrap px-3 py-2.5 text-right text-slate-600">{formatNumber(row.impressions, locale)}</td>
+              <td className="whitespace-nowrap px-3 py-2.5 text-right text-slate-600">{formatNumber(row.clicks, locale)}</td>
+              <td className="whitespace-nowrap px-3 py-2.5 text-right text-slate-500">{formatPercent(row.ctr, locale, 2)}</td>
+              <td className="whitespace-nowrap px-3 py-2.5 text-right text-slate-500">{formatDecimal(row.average_position, locale, 1)}</td>
+            </tr>
+          ))}
+          {rows.length === 0 ? (
+            <tr>
+              <td colSpan={5} className="px-3 py-8 text-center text-sm text-slate-500">Нет GSC result type facts для выбранной недели.</td>
+            </tr>
+          ) : null}
+        </tbody>
+      </table>
+    </div>
+  );
+}
+
+function buildGscSelectionMeta<T extends { week: string; week_from: string; week_to: string; is_partial_week?: boolean }>(
+  selection: { week: string | null; rows: T[] },
+  selectedWeek: string | null,
+) {
+  const firstRow = selection.rows[0];
+  const weekLabel = selection.week ?? firstRow?.week ?? selectedWeek ?? "неделя —";
+  const [, month, day] = (firstRow?.week_to ?? "").slice(0, 10).split("-");
+  const shortTo = day && month ? `${day}.${month}` : firstRow?.week_to;
+  const periodLabel = firstRow?.is_partial_week
+    ? `${weekLabel} · частично, по ${shortTo}`
+    : firstRow
+      ? `${weekLabel} · ${firstRow.week_from} — ${firstRow.week_to}`
+      : weekLabel;
+  const fallbackNote = selectedWeek && selection.week && selection.week !== selectedWeek && selection.rows.length > 0
+    ? `За выбранную неделю ${selectedWeek} детальных данных GSC пока нет; показываем последнюю доступную неделю ${selection.week}.`
+    : selectedWeek && selection.rows.length === 0
+      ? "За выбранную неделю GSC search facts пока нет."
+      : null;
+
+  return {
+    periodLabel,
+    sourceNote: "Search Console · canonical_fact_gsc_queries_daily.",
+    fallbackNote,
+  };
 }
 
 function NorthStarBlock({ data, locale }: Props) {
@@ -788,7 +1096,7 @@ function AiAggregateVisibilityPanel({ data, locale }: Props) {
           </div>
           <p className="text-xs leading-relaxed text-slate-500">
             {latest ? `${formatNumber(latest.mentions, locale)} из ${formatNumber(latest.citations, locale)} примеров, источник №1 во всех случаях.` : ""}
-            {latest?.provenance ? " Источник данных: ручной снимок AI-видимости." : ""}
+            {latest?.provenance ? ` Источник данных: ${latest.provenance}.` : ""}
           </p>
         </div>
       ) : (
@@ -900,22 +1208,6 @@ function OverviewTab({ data, locale }: Props) {
 function SeoTab({ data, locale, primaryWeek, comparisonWeek }: Props & { primaryWeek: string | null; comparisonWeek: string | null }) {
   const phraseCoverage = data.data_quality.find((item) => item.title === "Покрытие поисковых фраз");
   const currentLocale = locale ?? "ru-RU";
-  const gscWeek = primaryWeek ?? data.gsc.latest_week;
-  const gscSummarySelection = resolveRowsForWeek(data.gsc.summary, gscWeek, data.gsc.latest_week);
-  const gscQuerySelection = resolveRowsForWeekOrLatest(data.gsc.queries, gscWeek, data.gsc.latest_week);
-  const gscPageSelection = resolveRowsForWeekOrLatest(data.gsc.pages, gscWeek, data.gsc.latest_week);
-  const gscCountrySelection = resolveRowsForWeekOrLatest(data.gsc.countries, gscWeek, data.gsc.latest_week);
-  const gscSummaryRows = gscSummarySelection.rows;
-  const gscQueries = gscQuerySelection.rows;
-  const gscPages = gscPageSelection.rows;
-  const gscCountries = gscCountrySelection.rows;
-  const gscFactsSelection: { week: string | null; rows: GscKpiRow[] } = gscSummaryRows.length > 0
-    ? gscSummarySelection
-    : gscQuerySelection;
-  const gscFactsMeta = buildWebmasterSelectionMeta(gscFactsSelection, gscWeek);
-  const gscQueryMeta = buildWebmasterSelectionMeta(gscQuerySelection, gscWeek);
-  const gscPageMeta = buildWebmasterSelectionMeta(gscPageSelection, gscWeek);
-  const gscCountryMeta = buildWebmasterSelectionMeta(gscCountrySelection, gscWeek);
   const webmasterWeek = primaryWeek ?? data.webmaster.latest_week;
   const webmasterSummarySelection = resolveRowsForWeek(data.webmaster.summary, webmasterWeek, data.webmaster.latest_week);
   const webmasterQuerySelection = resolveRowsForWeekOrLatest(data.webmaster.queries, webmasterWeek, data.webmaster.latest_week);
@@ -930,6 +1222,28 @@ function SeoTab({ data, locale, primaryWeek, comparisonWeek }: Props & { primary
   const webmasterQueryMeta = buildWebmasterSelectionMeta(webmasterQuerySelection, webmasterWeek);
   const webmasterPageMeta = buildWebmasterSelectionMeta(webmasterPageSelection, webmasterWeek);
   const webmasterFactsChrome = buildWebmasterFactsPanelChrome();
+  const gscWeek = primaryWeek ?? data.gsc.latest_week;
+  const gscSummarySelection = resolveRowsForWeek(data.gsc.summary, gscWeek, data.gsc.latest_week);
+  const gscCountrySummarySelection = resolveRowsForWeek(data.gsc.country_summary, gscWeek, data.gsc.latest_week);
+  const gscQuerySelection = resolveRowsForWeekOrLatest(data.gsc.queries, gscWeek, data.gsc.latest_week);
+  const gscLandingPageSelection = resolveRowsForWeekOrLatest(data.gsc.landing_pages, gscWeek, data.gsc.latest_week);
+  const gscBrandSplitSelection = resolveRowsForWeek(data.gsc.brand_split, gscWeek, data.gsc.latest_week);
+  const gscSearchAppearanceSelection = resolveRowsForWeekOrLatest(data.gsc.search_appearance, gscWeek, data.gsc.latest_week);
+  const gscSearchTypeSelection = resolveRowsForWeek(data.gsc.search_type_summary, gscWeek, data.gsc.latest_week);
+  const gscSummaryRows = gscSummarySelection.rows;
+  const gscCountrySummaryRows = gscCountrySummarySelection.rows;
+  const gscQueries = gscQuerySelection.rows;
+  const gscLandingPages = gscLandingPageSelection.rows;
+  const gscBrandSplit = gscBrandSplitSelection.rows;
+  const gscSearchAppearanceRows = gscSearchAppearanceSelection.rows;
+  const gscSearchTypeRows = gscSearchTypeSelection.rows;
+  const gscFactsMeta = buildGscSelectionMeta(gscSummaryRows.length > 0 ? gscSummarySelection : gscQuerySelection, gscWeek);
+  const gscCountrySummaryMeta = buildGscSelectionMeta(gscCountrySummarySelection, gscWeek);
+  const gscQueryMeta = buildGscSelectionMeta(gscQuerySelection, gscWeek);
+  const gscLandingPageMeta = buildGscSelectionMeta(gscLandingPageSelection, gscWeek);
+  const gscBrandSplitMeta = buildGscSelectionMeta(gscBrandSplitSelection, gscWeek);
+  const gscSearchAppearanceMeta = buildGscSelectionMeta(gscSearchAppearanceSelection, gscWeek);
+  const gscSearchTypeMeta = buildGscSelectionMeta(gscSearchTypeSelection, gscWeek);
   return (
     <div className="space-y-5">
       <div className="grid gap-5 lg:grid-cols-2">
@@ -956,7 +1270,7 @@ function SeoTab({ data, locale, primaryWeek, comparisonWeek }: Props & { primary
           pending={data.webmaster.status === "unavailable"}
           right={<span className="text-xs text-slate-400">{webmasterFactsMeta.periodLabel}</span>}
         >
-          <SearchConsoleKpiStrip rows={webmasterSummaryRows.length > 0 ? webmasterSummaryRows : webmasterQueries} locale={currentLocale} />
+          <WebmasterKpiStrip rows={webmasterSummaryRows.length > 0 ? webmasterSummaryRows : webmasterQueries} locale={currentLocale} />
           <div className="mt-3 text-xs leading-relaxed text-slate-500">
             {webmasterFactsMeta.sourceNote} Период: {webmasterFactsMeta.periodLabel}.
           </div>
@@ -971,7 +1285,7 @@ function SeoTab({ data, locale, primaryWeek, comparisonWeek }: Props & { primary
       <div className="grid gap-5 lg:grid-cols-2">
         <Panel
           data={data}
-          title="Факты Google Search Console"
+          title="GSC search facts"
           source="gsc"
           layer="serp"
           pending={data.gsc.status === "unavailable"}
@@ -979,11 +1293,11 @@ function SeoTab({ data, locale, primaryWeek, comparisonWeek }: Props & { primary
         >
           <SearchConsoleKpiStrip rows={gscSummaryRows.length > 0 ? gscSummaryRows : gscQueries} locale={currentLocale} />
           <div className="mt-3 text-xs leading-relaxed text-slate-500">
-            Источник: Google Search Console API; ежедневная загрузка ReportingDash. Период: {gscFactsMeta.periodLabel}.
+            {gscFactsMeta.sourceNote} Период: {gscFactsMeta.periodLabel}.
           </div>
           {gscFactsMeta.fallbackNote ? (
             <div className="mt-2 rounded-md border border-amber-200 bg-amber-50 px-3 py-2 text-xs leading-relaxed text-amber-800">
-              {gscFactsMeta.fallbackNote.replaceAll("Яндекс Вебмастера", "Google Search Console")}
+              {gscFactsMeta.fallbackNote}
             </div>
           ) : null}
         </Panel>
@@ -1012,40 +1326,98 @@ function SeoTab({ data, locale, primaryWeek, comparisonWeek }: Props & { primary
         ) : null}
         {webmasterPages.length === 0 ? (
           <div className="mt-3 rounded-md border border-dashed border-slate-200 bg-slate-50 px-3 py-2 text-xs leading-relaxed text-slate-500">
-            Посадочные страницы Яндекса пока не показываем: canonical Webmaster collector сейчас собирает запросы и сводку хоста, но не URL-факты.
+            Посадочные страницы Яндекса появятся здесь после ближайшего импорта URL-фактов Вебмастера за выбранную неделю.
           </div>
         ) : null}
       </Panel>
+      <Panel data={data} title="Google Search Console queries" source="gsc" layer="serp" right={<span className="text-xs text-slate-400">{gscQueryMeta.periodLabel} · {gscQueries.length} строк</span>}>
+        <SearchConsoleQueryTable rows={topGscQueries(gscQueries, 12)} locale={currentLocale} />
+        <p className="mt-3 text-xs leading-relaxed text-slate-500">
+          Search Console · canonical_fact_gsc_queries_daily: query, page, country, device, impressions, clicks, CTR and average position before click.
+        </p>
+        {gscQueryMeta.fallbackNote ? (
+          <div className="mt-3 rounded-md border border-amber-200 bg-amber-50 px-3 py-2 text-xs leading-relaxed text-amber-800">
+            {gscQueryMeta.fallbackNote}
+          </div>
+        ) : null}
+      </Panel>
+      <div className="grid gap-5 lg:grid-cols-2">
+        <Panel data={data} title="GSC landing pages" source="gsc" layer="serp" right={<span className="text-xs text-slate-400">{gscLandingPageMeta.periodLabel} · {gscLandingPages.length} URL</span>}>
+          <SearchConsoleLandingPagesTable rows={topGscLandingPages(gscLandingPages, 10)} locale={currentLocale} />
+          <p className="mt-3 text-xs leading-relaxed text-slate-500">
+            Агрегация из уже собранных GSC facts: какие страницы получают Google impressions/clicks до визита на сайт.
+          </p>
+          {gscLandingPageMeta.fallbackNote ? (
+            <div className="mt-3 rounded-md border border-amber-200 bg-amber-50 px-3 py-2 text-xs leading-relaxed text-amber-800">
+              {gscLandingPageMeta.fallbackNote}
+            </div>
+          ) : null}
+        </Panel>
+        <Panel data={data} title="GSC countries" source="gsc" layer="serp" right={<span className="text-xs text-slate-400">{gscCountrySummaryMeta.periodLabel} · {gscCountrySummaryRows.length} стран</span>}>
+          <SearchConsoleCountrySummaryTable rows={gscCountrySummaryRows.slice(0, 12)} locale={currentLocale} />
+          <p className="mt-3 text-xs leading-relaxed text-slate-500">
+            Country split из тех же canonical GSC facts: где Google показывает страницы Zaruku до клика.
+          </p>
+          {gscCountrySummaryMeta.fallbackNote ? (
+            <div className="mt-3 rounded-md border border-amber-200 bg-amber-50 px-3 py-2 text-xs leading-relaxed text-amber-800">
+              {gscCountrySummaryMeta.fallbackNote}
+            </div>
+          ) : null}
+        </Panel>
+      </div>
+      <div className="grid gap-5 lg:grid-cols-2">
+        <Panel data={data} title="GSC devices" source="gsc" layer="serp" right={<span className="text-xs text-slate-400">{gscFactsMeta.periodLabel}</span>}>
+          <SearchConsoleDeviceSummaryTable rows={gscSummaryRows} locale={currentLocale} />
+          <p className="mt-3 text-xs leading-relaxed text-slate-500">
+            Device split из уже собранного Search Console слоя: mobile / desktop / tablet показы, клики, CTR и позиции.
+          </p>
+          {gscFactsMeta.fallbackNote ? (
+            <div className="mt-3 rounded-md border border-amber-200 bg-amber-50 px-3 py-2 text-xs leading-relaxed text-amber-800">
+              {gscFactsMeta.fallbackNote}
+            </div>
+          ) : null}
+        </Panel>
+        <Panel data={data} title="GSC brand vs non-brand" source="gsc" layer="serp" right={<span className="text-xs text-slate-400">{gscBrandSplitMeta.periodLabel}</span>}>
+          <SearchConsoleBrandSplitTable rows={gscBrandSplit} locale={currentLocale} />
+          <p className="mt-3 text-xs leading-relaxed text-slate-500">
+            Brand = запросы с Zaruku / Заруку / За руку. Non-brand = остальной Google search demand.
+          </p>
+          {gscBrandSplitMeta.fallbackNote ? (
+            <div className="mt-3 rounded-md border border-amber-200 bg-amber-50 px-3 py-2 text-xs leading-relaxed text-amber-800">
+            {gscBrandSplitMeta.fallbackNote}
+          </div>
+        ) : null}
+        </Panel>
+      </div>
+      <div className="grid gap-5 lg:grid-cols-2">
+        <Panel data={data} title="GSC search appearances" source="gsc" layer="serp" right={<span className="text-xs text-slate-400">{gscSearchAppearanceMeta.periodLabel} · {gscSearchAppearanceRows.length} features</span>}>
+          <SearchConsoleAppearanceTable rows={gscSearchAppearanceRows.slice(0, 12)} locale={currentLocale} />
+          <p className="mt-3 text-xs leading-relaxed text-slate-500">
+            Search appearance = SERP/rich-result features from canonical_fact_gsc_search_appearance_daily. Это показывает не визиты, а Google-показы/клики до перехода.
+          </p>
+          {gscSearchAppearanceMeta.fallbackNote ? (
+            <div className="mt-3 rounded-md border border-amber-200 bg-amber-50 px-3 py-2 text-xs leading-relaxed text-amber-800">
+              {gscSearchAppearanceMeta.fallbackNote}
+            </div>
+          ) : null}
+        </Panel>
+        <Panel data={data} title="GSC result types" source="gsc" layer="serp" right={<span className="text-xs text-slate-400">{gscSearchTypeMeta.periodLabel}</span>}>
+          <SearchConsoleResultTypeTable rows={gscSearchTypeRows} locale={currentLocale} />
+          <p className="mt-3 text-xs leading-relaxed text-slate-500">
+            Result type layer разделяет Google Search на Web / Image / Video / News / Discover / Google News, когда API отдаёт строки для property.
+          </p>
+          {gscSearchTypeMeta.fallbackNote ? (
+            <div className="mt-3 rounded-md border border-amber-200 bg-amber-50 px-3 py-2 text-xs leading-relaxed text-amber-800">
+              {gscSearchTypeMeta.fallbackNote}
+            </div>
+          ) : null}
+        </Panel>
+      </div>
       {webmasterPages.length > 0 ? (
         <Panel data={data} title="Посадочные страницы Яндекса" source="webmaster" layer="serp" right={<span className="text-xs text-slate-400">{webmasterPageMeta.periodLabel} · URL-факты</span>}>
           <WebmasterPageTable rows={topWebmasterPages(webmasterPages, 10)} locale={currentLocale} />
         </Panel>
       ) : null}
-      <Panel data={data} title="Запросы Google" source="gsc" layer="serp" right={<span className="text-xs text-slate-400">{gscQueryMeta.periodLabel} · {gscQueries.length} строк</span>}>
-        <SearchConsoleQueryTable rows={topGscQueries(gscQueries, 12)} locale={currentLocale} emptyLabel="Нет GSC-запросов для выбранной недели." />
-        <p className="mt-3 text-xs leading-relaxed text-slate-500">
-          Это запросы из Google Search Console: показы, клики, CTR и средняя позиция до клика. Таблица отсортирована по показам.
-        </p>
-        {gscQueryMeta.fallbackNote ? (
-          <div className="mt-3 rounded-md border border-amber-200 bg-amber-50 px-3 py-2 text-xs leading-relaxed text-amber-800">
-            {gscQueryMeta.fallbackNote.replaceAll("Яндекс Вебмастера", "Google Search Console")}
-          </div>
-        ) : null}
-      </Panel>
-      <Panel data={data} title="Посадочные страницы Google" source="gsc" layer="serp" right={<span className="text-xs text-slate-400">{gscPageMeta.periodLabel} · URL-факты</span>}>
-        <SearchConsolePageTable rows={topGscPages(gscPages, 10)} locale={currentLocale} emptyLabel="URL-факты GSC пока пустые." />
-      </Panel>
-      <Panel data={data} title="Страны в Google Search Console" source="gsc" layer="serp" right={<span className="text-xs text-slate-400">{gscCountryMeta.periodLabel} · country/device</span>}>
-        <SearchConsoleCountryTable rows={topGscCountries(gscCountries, 10)} locale={currentLocale} />
-        <p className="mt-3 text-xs leading-relaxed text-slate-500">
-          Это country-разрез Google Search Console до клика. Он показывает спрос в поиске по странам и устройствам; это не вкладка «География» из Метрики после клика.
-        </p>
-        {gscCountryMeta.fallbackNote ? (
-          <div className="mt-3 rounded-md border border-amber-200 bg-amber-50 px-3 py-2 text-xs leading-relaxed text-amber-800">
-            {gscCountryMeta.fallbackNote.replaceAll("Яндекс Вебмастера", "Google Search Console")}
-          </div>
-        ) : null}
-      </Panel>
       <Panel data={data} title="Поисковые фразы из Метрики" source="metrika" layer="onsite" right={<span className="text-xs text-slate-400">{phraseCoverage?.value ?? "покрытие —"}</span>}>
         <p className="mb-3 text-xs leading-relaxed text-slate-500">
           Фразы, которые Метрика смогла определить после клика. Это не полный список SEO-запросов: часть запросов скрывается поисковиками, а показы и позиции живут в Яндекс Вебмастере.
@@ -1085,27 +1457,10 @@ function ContentTab({ data, locale, primaryWeek, comparisonWeek }: Props & { pri
 }
 
 function GeoTab({ data, locale }: Props) {
-  const mapGeoAnomalies = findMapGeoAnomalies(data.map_city_demand);
   return (
     <div className="space-y-5">
-      <div className="rounded-lg border border-slate-200 bg-white px-5 py-4 text-sm leading-relaxed text-slate-600">
-        География после клика из Метрики: страны, города и спрос на карту показывают уже пришедших пользователей. Для pre-click спроса по странам смотри GSC country/device в SEO-вкладке.
-      </div>
-      <div className="grid gap-5 lg:grid-cols-2">
-        <Panel data={data} title="Страны" source="metrika" layer="onsite">
-          <BarList rows={data.geo_countries.slice(0, 10)} locale={locale} />
-        </Panel>
-        <Panel data={data} title="Города" source="metrika" layer="onsite">
-          <BarList rows={data.geo_cities.slice(0, 12)} locale={locale} />
-        </Panel>
-      </div>
-      <Panel data={data} title="Спрос на карту онкоцентров" source="metrika" layer="onsite" right={<span className="text-xs text-slate-400">regionCity × /map</span>}>
-        {mapGeoAnomalies.length > 0 ? (
-          <div className="mb-3 rounded-md border border-amber-200 bg-amber-50 px-3 py-2 text-xs leading-relaxed text-amber-800">
-            Проверить гео/ботов: необычно высокий спрос на карту из {mapGeoAnomalies.map((row) => row.label).join(", ")}. Это не ошибка отчёта, а сигнал для проверки качества трафика.
-          </div>
-        ) : null}
-        <MapCityDemandTable rows={data.map_city_demand} locale={locale ?? "ru-RU"} />
+      <Panel data={data} title="Карта спроса по России" source="metrika" layer="onsite" right={<span className="text-xs text-slate-400">визиты на /map/</span>}>
+        <ZarukuRussiaDemandMap rows={data.map_city_demand} locale={locale ?? "ru-RU"} />
       </Panel>
     </div>
   );
@@ -1163,7 +1518,7 @@ function BehaviorTab({ data, locale }: Props) {
         <DataTable rows={data.high_bounce_pages} mode="pages" locale={currentLocale} wrapText />
       </Panel>
       <div className="grid gap-5 xl:grid-cols-2">
-        <Panel data={data} title="Возвратный контент" source="metrika" layer="onsite" right={<span className="text-xs text-slate-400">возвратные просмотры</span>}>
+        <Panel data={data} title="Возвратный контент" source="metrika" layer="onsite" right={<span className="text-xs text-slate-400">возвратные пользователи</span>}>
           <ReturningPagesTable rows={data.returning_pages.slice(0, 16)} locale={currentLocale} />
         </Panel>
         <Panel data={data} title="Поведение по каналам" source="metrika" layer="onsite" right={<span className="text-xs text-slate-400">источник трафика</span>}>
@@ -1174,9 +1529,92 @@ function BehaviorTab({ data, locale }: Props) {
   );
 }
 
+function freshnessBadgeClass(status: ZarukuSourceFreshnessRow["freshness_status"]) {
+  switch (status) {
+    case "healthy":
+      return "bg-emerald-50 text-emerald-700 ring-emerald-100";
+    case "delayed":
+      return "bg-amber-50 text-amber-700 ring-amber-100";
+    case "failed":
+      return "bg-red-50 text-red-700 ring-red-100";
+    case "disabled":
+      return "bg-slate-100 text-slate-500 ring-slate-200";
+  }
+}
+
+function SourceFreshnessTable({ rows }: { rows: ZarukuSourceFreshnessRow[] }) {
+  if (rows.length === 0) {
+    return (
+      <div className="rounded-md bg-slate-50 px-4 py-6 text-sm text-slate-500">
+        No cron collector telemetry found in canonical_collector_runs yet.
+      </div>
+    );
+  }
+  return (
+    <div className="overflow-x-auto">
+      <table className="w-full min-w-[980px] text-sm">
+        <thead>
+          <tr className="text-left text-xs uppercase text-slate-400">
+            <th className="pb-2 font-medium">Source</th>
+            <th className="pb-2 font-medium">collector</th>
+            <th className="pb-2 font-medium">status</th>
+            <th className="pb-2 font-medium">last successful cron</th>
+            <th className="pb-2 font-medium">window</th>
+            <th className="pb-2 text-right font-medium">rows read</th>
+            <th className="pb-2 text-right font-medium">rows written</th>
+            <th className="pb-2 font-medium">last error</th>
+          </tr>
+        </thead>
+        <tbody className="divide-y divide-slate-100">
+          {rows.map((row) => (
+            <tr key={row.source_key} className="align-top">
+              <td className="py-3 pr-4">
+                <div className="font-semibold text-slate-800">{row.label}</div>
+                <div className="mt-1 text-xs text-slate-400">{row.source_key}</div>
+              </td>
+              <td className="py-3 pr-4">
+                <code className="rounded bg-slate-50 px-1.5 py-0.5 text-xs text-slate-600">{row.collector}</code>
+                <div className="mt-1 text-xs text-slate-400">expected: {row.expected_frequency_hours}h cron</div>
+              </td>
+              <td className="py-3 pr-4">
+                <span className={`inline-flex rounded-full px-2 py-0.5 text-xs font-semibold ring-1 ${freshnessBadgeClass(row.freshness_status)}`}>
+                  {row.freshness_label}
+                </span>
+                <div className="mt-1 text-xs text-slate-400">last status: {row.last_status ?? "—"}</div>
+              </td>
+              <td className="whitespace-nowrap py-3 pr-4 text-slate-600">{row.last_success_at ?? "—"}</td>
+              <td className="whitespace-nowrap py-3 pr-4 text-slate-500">
+                {row.date_from && row.date_to ? `${row.date_from} → ${row.date_to}` : "—"}
+              </td>
+              <td className="whitespace-nowrap py-3 pr-4 text-right text-slate-600">{formatNumber(row.rows_read)}</td>
+              <td className="whitespace-nowrap py-3 pr-4 text-right text-slate-600">{formatNumber(row.rows_written)}</td>
+              <td className="max-w-[240px] py-3 text-slate-500">
+                <div className="text-xs leading-relaxed text-slate-500">{row.note}</div>
+                {row.last_error_at || row.last_error_summary ? (
+                  <div className="mt-1 text-xs leading-relaxed text-slate-400">
+                    {row.last_error_at ?? "error time —"} · {row.last_error_summary ?? "no summary"}
+                  </div>
+                ) : null}
+              </td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </div>
+  );
+}
+
 function QualityTab({ data }: { data: ZarukuSeoData }) {
   return (
     <div className="space-y-5">
+      <Panel
+        data={data}
+        title="Source freshness"
+        layer="serp"
+        right={<span className="text-xs text-slate-400">last successful cron · collector · rows written</span>}
+      >
+        <SourceFreshnessTable rows={data.source_freshness} />
+      </Panel>
       <Panel data={data} title="Качество данных" source="metrika" layer="onsite">
         <div className="grid gap-3 md:grid-cols-2">
           {data.data_quality.map((item) => (

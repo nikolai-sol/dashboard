@@ -6,7 +6,7 @@ export type TrafficVisibilityComparisonRow = {
   section: string;
   primary: TrafficMetrics;
   comparison: TrafficMetrics | null;
-  visits_delta: number | null;
+  pageviews_delta: number | null;
   position_delta: number | null;
 };
 
@@ -38,7 +38,7 @@ export function buildTrafficVisibilityRows(
       section,
       primary: visiblePrimary,
       comparison,
-      visits_delta: comparison ? visiblePrimary.visits - comparison.visits : null,
+      pageviews_delta: comparison ? visiblePrimary.pageviews - comparison.pageviews : null,
       position_delta: comparison && visiblePrimary.average_position != null && comparison.average_position != null
         ? visiblePrimary.average_position - comparison.average_position
         : null,

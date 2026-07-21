@@ -165,6 +165,15 @@ Current truth is `PM2 + 3001`.
   collection at `06:12`, deterministic health at `07:05`, and one summary at `07:10`.
 - Hermes creation is a separate deferred task; no Hermes automation is part of this rollout package.
 
+### Zaruku canonical source truth
+
+Current Zaruku source truth:
+- Yandex Metrika: collect only counter `66624469`; counters `29137835`, `105559308`, and `99078698` are on hold/inactive in `canonical_source_account_collection_settings`.
+- Yandex Webmaster: Zaruku host `https:zaruku.ru:443` is connected for canonical daily summary, query, and URL/page facts. URL/page rows live in `canonical_fact_webmaster_pages_daily`; the dashboard read model should expose `zaruku_seo.webmaster.data_availability.pages = true`.
+- The JavaScript Webmaster weekly collector is a fail-closed tombstone. `fetch_yandex_webmaster_canonical.py` is the only fact writer. Tables `seo_webmaster_queries_weekly` and `seo_webmaster_pages_weekly` are deprecated, have no writer, and must not be read.
+- Google Search Console: Zaruku property `https://zaruku.ru/` is connected through root collector `fetch_gsc_canonical.py`, not the old temporary / teletask path. Daily query/page/country/device rows live in `canonical_fact_gsc_queries_daily`; optional Search appearance rows live in `canonical_fact_gsc_search_appearance_daily`; result/search type rows live in `canonical_fact_gsc_search_type_daily`. Canonical lineage is `source_key=google_search_console`; legacy compatibility columns are not contract fields. Optional-layer HTTP 400/403 makes the collector run `partial` while preserving successful core facts. The dashboard read model should expose `zaruku_seo.gsc.status = available` when rows exist and surface recent partial freshness.
+- `seo_ai_visibility_weekly` is deprecated, has no writer, and must not be read; use `seo_ai_visibility` and canonical AI-visibility facts.
+
 ## Databases
 
 ### Primary reporting DB
@@ -211,7 +220,8 @@ Use `report_bd` and `report_bd_tech` unless there is an explicit migration away 
 ## Current cron schedule
 
 Canonical daily jobs on VPS:
-- `06:12` Yandex Metrika
+- `06:12` Yandex Metrika canonical (`fetch_yandex_metrika_canonical.py --days-back 2 --run-type cron`)
+- `06:18` Yandex Metrika returning-content canonical for account `66624469`
 - `06:20` LinkedIn
 - `06:30` Reddit
 - `06:32` GetIntent
@@ -219,9 +229,12 @@ Canonical daily jobs on VPS:
 - `06:36` Yandex Promopages
 - `06:35` VK Ads v2
 - `06:37` Hybrid
-- `06:40` canonical monitor
-- `06:50` Yandex Webmaster
-- `06:55` Google Search Console
+- `06:50` Yandex Webmaster canonical daily collector
+- `06:55` Google Search Console canonical daily collector (`fetch_gsc_canonical.py --backfill-days 3 --run-type cron`)
+- `07:05` canonical monitor
+- `07:10` Telegram summary
+
+The legacy `06:10` localhost Metrika bridge was removed under TASK-072. Do not restore it; the `06:12` canonical collector and `06:18` returning-content collector are the active owners.
 
 Important collector rule:
 - cron windows do not include the current day
