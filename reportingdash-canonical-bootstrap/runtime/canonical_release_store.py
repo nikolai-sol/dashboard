@@ -23,8 +23,13 @@ ABBOTT_REQUIRED_METRIKA_SCOPES = (
 ABBOTT_REQUIRED_SOURCE_KINDS = (
     "abbott_workbook_json",
     "abbott_workbook_catalog",
+)
+ABBOTT_OPTIONAL_SOURCE_KINDS = (
     "abbott_bitrix_pages",
     "abbott_bitrix_journeys",
+)
+ABBOTT_ALLOWED_SOURCE_KINDS = frozenset(
+    ABBOTT_REQUIRED_SOURCE_KINDS + ABBOTT_OPTIONAL_SOURCE_KINDS
 )
 
 
@@ -107,44 +112,66 @@ def _validate_imported_sources(
     )
     if (
         not isinstance(raw_ids, list)
-        or len(raw_ids) != 4
-        or len(set(raw_ids)) != 4
         or any(not isinstance(item, int) or isinstance(item, bool) or item <= 0 for item in raw_ids)
+        or len(set(raw_ids)) != len(raw_ids)
     ):
-        raise ValidationGateError("Canonical release must reference exactly four source snapshots")
+        raise ValidationGateError("Canonical release source snapshots are invalid")
 
     frozen_files = baseline_manifest.get("file_snapshots")
-    if not isinstance(frozen_files, list) or len(frozen_files) != 4:
+    if not isinstance(frozen_files, list) or any(
+        not isinstance(item, dict) for item in frozen_files
+    ):
         raise ValidationGateError("Frozen baseline source manifest is invalid")
-    frozen_by_kind = {str(item.get("source_kind")): item for item in frozen_files if isinstance(item, dict)}
-    if set(frozen_by_kind) != set(ABBOTT_REQUIRED_SOURCE_KINDS):
-        raise ValidationGateError("Frozen baseline source manifest is invalid")
-
-    snapshots_by_kind = {
-        str(row.get("source_kind")): row for row in snapshot_rows if isinstance(row, dict)
-    }
+    frozen_kinds = [str(item.get("source_kind")) for item in frozen_files]
+    expected_kinds = set(frozen_kinds)
     if (
-        len(snapshot_rows) != 4
-        or set(snapshots_by_kind) != set(ABBOTT_REQUIRED_SOURCE_KINDS)
-        or {int(row.get("id") or 0) for row in snapshot_rows} != set(raw_ids)
+        len(expected_kinds) != len(frozen_kinds)
+        or not set(ABBOTT_REQUIRED_SOURCE_KINDS).issubset(expected_kinds)
+        or not expected_kinds.issubset(ABBOTT_ALLOWED_SOURCE_KINDS)
+    ):
+        raise ValidationGateError("Frozen baseline source manifest is invalid")
+    frozen_by_kind = dict(zip(frozen_kinds, frozen_files))
+
+    if len(raw_ids) != len(expected_kinds):
+        raise ValidationGateError("Canonical release source set does not match baseline")
+
+    if any(not isinstance(row, dict) for row in snapshot_rows):
+        raise ValidationGateError("Required imported source snapshots are incomplete")
+    snapshot_kinds = [str(row.get("source_kind")) for row in snapshot_rows]
+    snapshot_ids = [row.get("id") for row in snapshot_rows]
+    if (
+        len(snapshot_rows) != len(expected_kinds)
+        or len(set(snapshot_kinds)) != len(snapshot_kinds)
+        or set(snapshot_kinds) != expected_kinds
+        or any(
+            not isinstance(item, int) or isinstance(item, bool) or item <= 0
+            for item in snapshot_ids
+        )
+        or len(set(snapshot_ids)) != len(snapshot_ids)
+        or set(snapshot_ids) != set(raw_ids)
     ):
         raise ValidationGateError("Required imported source snapshots are incomplete")
+    snapshots_by_kind = dict(zip(snapshot_kinds, snapshot_rows))
 
-    executions_by_kind = {
-        str(row.get("source_kind")): row
-        for row in execution_rows
-        if isinstance(row, dict)
-    }
+    if any(not isinstance(row, dict) for row in execution_rows):
+        raise ValidationGateError("Required release import executions are incomplete")
+    execution_kinds = [str(row.get("source_kind")) for row in execution_rows]
+    execution_ids = [row.get("source_snapshot_id") for row in execution_rows]
     if (
-        len(execution_rows) != 4
-        or set(executions_by_kind) != set(ABBOTT_REQUIRED_SOURCE_KINDS)
-        or {
-            int(row.get("source_snapshot_id") or 0) for row in execution_rows
-        } != set(raw_ids)
+        len(execution_rows) != len(expected_kinds)
+        or len(set(execution_kinds)) != len(execution_kinds)
+        or set(execution_kinds) != expected_kinds
+        or any(
+            not isinstance(item, int) or isinstance(item, bool) or item <= 0
+            for item in execution_ids
+        )
+        or len(set(execution_ids)) != len(execution_ids)
+        or set(execution_ids) != set(raw_ids)
     ):
         raise ValidationGateError("Required release import executions are incomplete")
+    executions_by_kind = dict(zip(execution_kinds, execution_rows))
 
-    for kind in ABBOTT_REQUIRED_SOURCE_KINDS:
+    for kind in expected_kinds:
         frozen = frozen_by_kind[kind]
         snapshot = snapshots_by_kind[kind]
         execution = executions_by_kind[kind]
@@ -167,6 +194,7 @@ def _validate_imported_sources(
             raise ValidationGateError("Imported source does not match the frozen baseline")
         if (
             execution.get("import_status") != "imported"
+            or execution.get("source_snapshot_id") != snapshot.get("id")
             or execution.get("code_revision") != release.get("code_revision")
             or int(execution.get("imported_row_count") or 0)
             != int(snapshot.get("imported_row_count") or 0)
@@ -378,16 +406,15 @@ def validate_release(
         )
         snapshot_rows = cur.fetchall()
         cur.execute(
-            f"""
+            """
             SELECT source_snapshot_id, source_kind, code_revision,
                    import_status, imported_row_count, rejected_row_count
             FROM portal_release_source_imports
             WHERE canonical_release_id = %s
-              AND source_snapshot_id IN ({placeholders})
             ORDER BY source_snapshot_id
             FOR UPDATE
             """,
-            (release_id, *source_ids),
+            (release_id,),
         )
         _validate_imported_sources(
             release=release,
