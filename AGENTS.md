@@ -154,7 +154,10 @@ Current truth is `PM2 + 3001`.
 - Canonical release activation and rollback use the single `portal_active_data_releases` pointer;
   they do not copy facts or restore a silent legacy fallback.
 - Private runtime data lives in `report_bd_private`. Collector, importer, and server-side manager
-  runtime use separate least-privilege roles and environment files; embed remains aggregate-only.
+  runtime use separate least-privilege roles and environment files; embed uses its own
+  `abbott_embed_reader_role`/`ABBOTT_EMBED_DB_*` credential with zero private-schema grants.
+- Abbott release returning facts use `canonical_fact_metrika_returning_pages_release_daily`;
+  Zaruku retains the separate `canonical_fact_metrika_returning_pages_daily` writer/read model.
 - `METRIKA_TOKEN` is the only Metrika OAuth env key. The owner must issue/revoke tokens; token
   values are installed from mode-`0600` files and never printed.
 - Legacy Nest launch routes use `x-internal-token` against `LEGACY_LAUNCH_SECRET`; query-string

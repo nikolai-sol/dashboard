@@ -31,7 +31,8 @@ test("Abbott loader has no runtime asset, returning API, or legacy fallback path
 
   forbidden.forEach((pattern) => assert.doesNotMatch(loader, pattern));
   assert.match(loader, /canonical_fact_metrika_site_analytics_daily/);
-  assert.match(loader, /canonical_fact_metrika_returning_pages_daily/);
+  assert.match(loader, /canonical_fact_metrika_returning_pages_release_daily/);
+  assert.doesNotMatch(loader, /`canonical_fact_metrika_returning_pages_daily`/);
   assert.match(loader, /canonical_source_coverage_daily/);
   assert.match(loader, /canonical_fact_metrika_visits/);
   assert.doesNotMatch(loader, /canonical_fact_metrika_user_behavior_daily/);

@@ -18,6 +18,11 @@ required_keys=(
   ABBOTT_DASHBOARD_PASSWORD
   ABBOTT_DASHBOARD_EMBED_KEY
   METRIKA_TOKEN
+  ABBOTT_EMBED_DB_HOST
+  ABBOTT_EMBED_DB_PORT
+  ABBOTT_EMBED_DB_USER
+  ABBOTT_EMBED_DB_PASSWORD
+  ABBOTT_EMBED_DB_NAME
   ABBOTT_PRIVATE_DB_HOST
   ABBOTT_PRIVATE_DB_PORT
   ABBOTT_PRIVATE_DB_USER
@@ -50,7 +55,9 @@ try {
 }
 
 const missingKeys = requiredKeys.filter((key) =>
-  typeof parsed[key] !== "string" || parsed[key].trim().length === 0
+  typeof parsed[key] !== "string" || parsed[key].trim().length === 0 ||
+  (key === "ABBOTT_EMBED_DB_NAME" && parsed[key] !== "report_bd") ||
+  (key === "ABBOTT_PRIVATE_DB_NAME" && parsed[key] !== "report_bd_private")
 );
 if (missingKeys.length > 0) {
   process.stdout.write(missingKeys.join(" "));

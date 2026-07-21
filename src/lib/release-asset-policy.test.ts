@@ -5,6 +5,7 @@ import path from "node:path";
 import { spawnSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
 import test from "node:test";
+import * as XLSX from "xlsx";
 
 import { findForbiddenPublicAssets, findPrivateReleaseAssets } from "./release-asset-policy";
 
@@ -97,6 +98,77 @@ test("release scans reject private data outside public while allowing Abbott sch
       "public/abbott/source.json",
       "src/db/migrations/034_abbott_unreviewed.sql",
     ]);
+  } finally {
+    await rm(releaseRoot, { force: true, recursive: true });
+  }
+});
+
+test("release scans detect private signatures under neutral JSON and CSV names", async () => {
+  const releaseRoot = await mkdtemp(path.join(tmpdir(), "release-asset-policy-content-"));
+  try {
+    await writeFile(path.join(releaseRoot, "users.json"), JSON.stringify({ rows: [{ raw_user_id: "doctor-001", direction: "cardio" }] }));
+    await writeFile(path.join(releaseRoot, "events.csv"), "report_date,protected_visit_id,event_sequence\n2026-07-01,visit-secret,0\n");
+    await writeFile(path.join(releaseRoot, "summary.json"), JSON.stringify({ sessions: 12, users: 9 }));
+    await writeFile(path.join(releaseRoot, "totals.csv"), "date,sessions,users\n2026-07-01,12,9\n");
+
+    assert.deepEqual(findPrivateReleaseAssets(releaseRoot), ["events.csv", "users.json"]);
+  } finally {
+    await rm(releaseRoot, { force: true, recursive: true });
+  }
+});
+
+test("release scans detect neutral spreadsheet journey and Bitrix export signatures", async () => {
+  const releaseRoot = await mkdtemp(path.join(tmpdir(), "release-asset-policy-sheet-"));
+  try {
+    const workbook = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(
+      workbook,
+      XLSX.utils.json_to_sheet([{ SESSION_ID: "session-secret", USER_ID: "doctor-001", PAGE_URL: "/private" }]),
+      "Export",
+    );
+    XLSX.writeFile(workbook, path.join(releaseRoot, "activity.xlsx"));
+
+    assert.deepEqual(findPrivateReleaseAssets(releaseRoot), ["activity.xlsx"]);
+  } finally {
+    await rm(releaseRoot, { force: true, recursive: true });
+  }
+});
+
+test("release scans fail closed for malformed candidate data", async () => {
+  const releaseRoot = await mkdtemp(path.join(tmpdir(), "release-asset-policy-malformed-"));
+  try {
+    await writeFile(path.join(releaseRoot, "neutral.json"), "{ not valid json");
+    await writeFile(path.join(releaseRoot, "broken.xlsx"), "not a workbook");
+
+    assert.deepEqual(findPrivateReleaseAssets(releaseRoot), ["broken.xlsx", "neutral.json"]);
+  } finally {
+    await rm(releaseRoot, { force: true, recursive: true });
+  }
+});
+
+test("release scans allow large bounded aggregate JSON without private keys", async () => {
+  const releaseRoot = await mkdtemp(path.join(tmpdir(), "release-asset-policy-large-json-"));
+  try {
+    const metrics = Array.from({ length: 50_001 }, (_, index) => ({ sessions: index, users: index }));
+    await writeFile(path.join(releaseRoot, "metrics.json"), JSON.stringify({ metrics }));
+
+    assert.deepEqual(findPrivateReleaseAssets(releaseRoot), []);
+  } finally {
+    await rm(releaseRoot, { force: true, recursive: true });
+  }
+});
+
+test("release CLI reports paths only when neutral private content is rejected", async () => {
+  const releaseRoot = await mkdtemp(path.join(tmpdir(), "release-asset-policy-cli-"));
+  try {
+    const pii = "doctor-secret-value";
+    await writeFile(path.join(releaseRoot, "users.json"), JSON.stringify({ raw_user_id: pii }));
+    const failure = spawnSync(process.execPath, ["--import", "tsx", assetCli, "--release", releaseRoot], { encoding: "utf8" });
+
+    assert.equal(failure.status, 1);
+    assert.equal(failure.stdout, "");
+    assert.equal(failure.stderr, "users.json\n");
+    assert.doesNotMatch(failure.stderr, new RegExp(pii));
   } finally {
     await rm(releaseRoot, { force: true, recursive: true });
   }

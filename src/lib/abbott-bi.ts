@@ -1,8 +1,8 @@
-import type { Pool, PoolConnection, RowDataPacket } from "mysql2/promise";
 import { createHash } from "node:crypto";
 
 import {
-  loadActiveAbbottReleaseBundle,
+  loadActiveAbbottReleaseBundleWithExecutor,
+  withReadOnlyAbbottExecutor,
 } from "@/lib/abbott-private-store";
 import type {
   AbbottAggregatePrivateData,
@@ -11,7 +11,6 @@ import type {
   ParsedBitrixAnalytics,
   AbbottReleaseBundle,
 } from "@/lib/abbott-private-types";
-import pool from "@/lib/db";
 import type {
   AbbottBiBitrixPageRow,
   AbbottBiBitrixSummary,
@@ -409,7 +408,7 @@ async function queryReturningFacts(
   return (await executor.query(
     `SELECT report_date, raw_page_value, normalized_page, return_bucket_code,
             source_percentage, source_denominator
-     FROM \`report_bd\`.\`canonical_fact_metrika_returning_pages_daily\`
+     FROM \`report_bd\`.\`canonical_fact_metrika_returning_pages_release_daily\`
      WHERE canonical_release_id = ?
        AND counter_id IN (${placeholders(counterIds)})
        AND report_date >= ?
@@ -1029,70 +1028,6 @@ export async function loadAbbottBiDataWithDependencies(
   }
 }
 
-type PrivatePoolGlobal = typeof globalThis & { __abbottBiPrivateMysqlPool?: Pool };
-
-function requiredPrivateEnvironment(name: string): string {
-  const value = process.env[name];
-  if (typeof value !== "string" || value.length === 0) throw new Error("Abbott private database is not configured");
-  return value;
-}
-
-async function privatePool(): Promise<Pool> {
-  const shared = globalThis as PrivatePoolGlobal;
-  if (shared.__abbottBiPrivateMysqlPool) return shared.__abbottBiPrivateMysqlPool;
-  const rawPort = requiredPrivateEnvironment("ABBOTT_PRIVATE_DB_PORT");
-  const database = requiredPrivateEnvironment("ABBOTT_PRIVATE_DB_NAME");
-  if (!/^\d+$/.test(rawPort) || database !== "report_bd_private") throw new Error("Abbott private database is not configured");
-  const mysql = await import("mysql2/promise");
-  shared.__abbottBiPrivateMysqlPool = mysql.createPool({
-    host: requiredPrivateEnvironment("ABBOTT_PRIVATE_DB_HOST"),
-    port: Number(rawPort),
-    user: requiredPrivateEnvironment("ABBOTT_PRIVATE_DB_USER"),
-    password: requiredPrivateEnvironment("ABBOTT_PRIVATE_DB_PASSWORD"),
-    database,
-    dateStrings: ["DATE", "DATETIME"],
-    waitForConnections: true,
-    connectionLimit: 5,
-    queueLimit: 0,
-    multipleStatements: false,
-  });
-  return shared.__abbottBiPrivateMysqlPool;
-}
-
-async function privateQuery(sql: string, params: readonly unknown[]): Promise<readonly Record<string, unknown>[]> {
-  let connection: PoolConnection | undefined;
-  try {
-    connection = await (await privatePool()).getConnection();
-    await connection.query("SET TRANSACTION READ ONLY");
-    await connection.beginTransaction();
-    const [rows] = await connection.execute<RowDataPacket[]>(sql, params as never[]);
-    await connection.commit();
-    return rows as unknown as readonly Record<string, unknown>[];
-  } catch {
-    if (connection) {
-      try {
-        await connection.rollback();
-      } catch {
-        // The caller receives only the typed sanitized incomplete state.
-      }
-    }
-    throw new Error("Abbott private data is unavailable");
-  } finally {
-    connection?.release();
-  }
-}
-
-const productionDependencies: AbbottBiLoaderDependencies = {
-  aggregateExecutor: {
-    async query(sql, params) {
-      const [rows] = await pool.execute<RowDataPacket[]>(sql, params as never[]);
-      return rows as unknown as readonly Record<string, unknown>[];
-    },
-  },
-  privateExecutor: { query: privateQuery },
-  loadReleaseBundle: loadActiveAbbottReleaseBundle,
-};
-
 export function getDefaultAbbottCounterIds(): string[] {
   return [ABBOTT_COUNTER_ID];
 }
@@ -1108,5 +1043,24 @@ export async function loadAbbottBiData(
   to: string,
   audience?: AbbottDashboardAudience,
 ): Promise<AbbottCanonicalBiData> {
-  return loadAbbottBiDataWithDependencies(dashboardId, counterIds, from, to, audience, productionDependencies);
+  if (audience !== "manager" && audience !== "embed") {
+    return loadAbbottBiDataWithDependencies(dashboardId, counterIds, from, to, audience, {
+      aggregateExecutor: { query: async () => [] },
+      privateExecutor: { query: async () => [] },
+      loadReleaseBundle: async () => { throw new Error("Abbott trusted audience is required"); },
+    });
+  }
+  return withReadOnlyAbbottExecutor(audience, (executor) =>
+    loadAbbottBiDataWithDependencies(dashboardId, counterIds, from, to, audience, {
+      aggregateExecutor: executor,
+      privateExecutor: executor,
+      loadReleaseBundle: (releaseDashboardId, releaseAudience, releaseFrom, releaseTo) =>
+        loadActiveAbbottReleaseBundleWithExecutor(
+          executor,
+          releaseDashboardId,
+          releaseAudience,
+          releaseFrom,
+          releaseTo,
+        ),
+    }));
 }

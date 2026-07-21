@@ -1,5 +1,7 @@
 import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
+import fs from "node:fs";
+import path from "node:path";
 import test from "node:test";
 
 import {
@@ -12,6 +14,7 @@ import {
   resolveActiveAbbottRelease,
   type AbbottPrivateQueryExecutor,
 } from "./abbott-private-store";
+import * as privateStore from "./abbott-private-store";
 import { ABBOTT_PRIVATE_SOURCE_KINDS } from "./abbott-private-types";
 
 type RecordedQuery = { sql: string; params: readonly unknown[] };
@@ -249,6 +252,54 @@ test("aggregate/embed loading performs zero private-schema queries", async () =>
   assert.match(allSql, /`report_bd`\.`portal_bitrix_page_facts`/);
   assert.match(allSql, /`report_bd`\.`portal_bitrix_journey_transitions`/);
   assert.doesNotMatch(allSql, /report_bd_private/);
+});
+
+test("Abbott database configuration isolates embed and manager credentials", () => {
+  const config = (privateStore as unknown as {
+    abbottDatabaseConfig?: (
+      audience: "embed" | "manager",
+      environment: Record<string, string | undefined>,
+    ) => { host: string; port: number; user: string; password: string; database: string };
+  }).abbottDatabaseConfig;
+  assert.equal(typeof config, "function", "credential selector must be exported for contract verification");
+
+  const environment = {
+    ABBOTT_EMBED_DB_HOST: "embed-db",
+    ABBOTT_EMBED_DB_PORT: "3307",
+    ABBOTT_EMBED_DB_USER: "embed-user",
+    ABBOTT_EMBED_DB_PASSWORD: "embed-password",
+    ABBOTT_EMBED_DB_NAME: "report_bd",
+    ABBOTT_PRIVATE_DB_HOST: "manager-db",
+    ABBOTT_PRIVATE_DB_PORT: "3308",
+    ABBOTT_PRIVATE_DB_USER: "manager-user",
+    ABBOTT_PRIVATE_DB_PASSWORD: "manager-password",
+    ABBOTT_PRIVATE_DB_NAME: "report_bd_private",
+  };
+
+  assert.deepEqual(config!("embed", environment), {
+    host: "embed-db",
+    port: 3307,
+    user: "embed-user",
+    password: "embed-password",
+    database: "report_bd",
+  });
+  assert.deepEqual(config!("manager", environment), {
+    host: "manager-db",
+    port: 3308,
+    user: "manager-user",
+    password: "manager-password",
+    database: "report_bd_private",
+  });
+  assert.throws(
+    () => config!("embed", { ...environment, ABBOTT_EMBED_DB_PASSWORD: undefined }),
+    /database is not configured/i,
+  );
+});
+
+test("runtime release bundle selects an audience-specific read-only connection", () => {
+  const source = fs.readFileSync(path.join(process.cwd(), "src/lib/abbott-private-store.ts"), "utf8");
+  assert.match(source, /loadActiveAbbottReleaseBundle[\s\S]*withReadOnlyAbbottExecutor\(audience,/);
+  assert.doesNotMatch(source, /loadActiveAbbottReleaseBundle[\s\S]{0,300}withReadOnlyPrivateExecutor/);
 });
 
 test("manager Bitrix loading uses the private snapshot-bound page table", async () => {

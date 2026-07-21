@@ -15,6 +15,11 @@ write_valid_env() {
 ABBOTT_DASHBOARD_PASSWORD=abbott-top-secret
 ABBOTT_DASHBOARD_EMBED_KEY=embed-top-secret
 METRIKA_TOKEN=metrika-top-secret
+ABBOTT_EMBED_DB_HOST=embed-db.example.test
+ABBOTT_EMBED_DB_PORT=3306
+ABBOTT_EMBED_DB_USER=abbott_embed
+ABBOTT_EMBED_DB_PASSWORD=embed-db-top-secret
+ABBOTT_EMBED_DB_NAME=report_bd
 ABBOTT_PRIVATE_DB_HOST=private-db.example.test
 ABBOTT_PRIVATE_DB_PORT=3306
 ABBOTT_PRIVATE_DB_USER=abbott_private

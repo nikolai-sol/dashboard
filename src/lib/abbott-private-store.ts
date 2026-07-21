@@ -651,44 +651,59 @@ export async function loadActiveAbbottReleaseBundleWithExecutor(
   };
 }
 
-type PrivatePoolGlobal = typeof globalThis & { __abbottPrivateMysqlPool?: Pool };
+type AbbottPoolGlobal = typeof globalThis & {
+  __abbottEmbedMysqlPool?: Pool;
+  __abbottPrivateMysqlPool?: Pool;
+};
 
-function requiredEnvironment(name: string): string {
-  const value = process.env[name];
+function requiredEnvironment(environment: Record<string, string | undefined>, name: string): string {
+  const value = environment[name];
   if (typeof value !== "string" || value.length === 0) {
     throw storeError("INVALID_CONFIGURATION", "Abbott private database is not configured");
   }
   return value;
 }
 
-async function getPrivatePool(): Promise<Pool> {
+export function abbottDatabaseConfig(
+  audience: AbbottPrivateAudience,
+  environment: Record<string, string | undefined> = process.env,
+): { host: string; port: number; user: string; password: string; database: string } {
+  const prefix = audience === "embed" ? "ABBOTT_EMBED_DB" : "ABBOTT_PRIVATE_DB";
+  const rawPort = requiredEnvironment(environment, `${prefix}_PORT`);
+  const database = requiredEnvironment(environment, `${prefix}_NAME`);
+  const expectedDatabase = audience === "embed" ? "report_bd" : "report_bd_private";
+  if (!/^\d+$/.test(rawPort) || Number(rawPort) < 1 || Number(rawPort) > 65_535 || database !== expectedDatabase) {
+    throw storeError("INVALID_CONFIGURATION", "Abbott private database is not configured");
+  }
+  return {
+    host: requiredEnvironment(environment, `${prefix}_HOST`),
+    port: Number(rawPort),
+    user: requiredEnvironment(environment, `${prefix}_USER`),
+    password: requiredEnvironment(environment, `${prefix}_PASSWORD`),
+    database,
+  };
+}
+
+async function getAbbottPool(audience: AbbottPrivateAudience): Promise<Pool> {
   if (typeof window !== "undefined") {
     throw storeError("INVALID_CONFIGURATION", "Abbott private store is server-only");
   }
-  const shared = globalThis as PrivatePoolGlobal;
-  if (shared.__abbottPrivateMysqlPool) return shared.__abbottPrivateMysqlPool;
-  const host = requiredEnvironment("ABBOTT_PRIVATE_DB_HOST");
-  const rawPort = requiredEnvironment("ABBOTT_PRIVATE_DB_PORT");
-  const user = requiredEnvironment("ABBOTT_PRIVATE_DB_USER");
-  const password = requiredEnvironment("ABBOTT_PRIVATE_DB_PASSWORD");
-  const database = requiredEnvironment("ABBOTT_PRIVATE_DB_NAME");
-  if (!/^\d+$/.test(rawPort) || Number(rawPort) < 1 || Number(rawPort) > 65_535 || database !== "report_bd_private") {
-    throw storeError("INVALID_CONFIGURATION", "Abbott private database is not configured");
-  }
+  const shared = globalThis as AbbottPoolGlobal;
+  const existing = audience === "embed" ? shared.__abbottEmbedMysqlPool : shared.__abbottPrivateMysqlPool;
+  if (existing) return existing;
+  const config = abbottDatabaseConfig(audience);
   const mysql = await import("mysql2/promise");
-  shared.__abbottPrivateMysqlPool = mysql.createPool({
-    host,
-    port: Number(rawPort),
-    user,
-    password,
-    database,
+  const created = mysql.createPool({
+    ...config,
     dateStrings: ["DATE", "DATETIME"],
     waitForConnections: true,
     connectionLimit: 5,
     queueLimit: 0,
     multipleStatements: false,
   });
-  return shared.__abbottPrivateMysqlPool;
+  if (audience === "embed") shared.__abbottEmbedMysqlPool = created;
+  else shared.__abbottPrivateMysqlPool = created;
+  return created;
 }
 
 function connectionExecutor(connection: PoolConnection): AbbottPrivateQueryExecutor {
@@ -700,12 +715,13 @@ function connectionExecutor(connection: PoolConnection): AbbottPrivateQueryExecu
   };
 }
 
-async function withReadOnlyPrivateExecutor<T>(
+export async function withReadOnlyAbbottExecutor<T>(
+  audience: AbbottPrivateAudience,
   work: (executor: AbbottPrivateQueryExecutor) => Promise<T>,
 ): Promise<T> {
   let connection: PoolConnection | undefined;
   try {
-    connection = await (await getPrivatePool()).getConnection();
+    connection = await (await getAbbottPool(audience)).getConnection();
     await connection.query("SET TRANSACTION READ ONLY");
     await connection.beginTransaction();
     const result = await work(connectionExecutor(connection));
@@ -726,21 +742,21 @@ async function withReadOnlyPrivateExecutor<T>(
 }
 
 export async function loadActiveAbbottWorkbookData(dashboardId: number): Promise<ParsedAbbottWorkbook> {
-  return withReadOnlyPrivateExecutor((executor) => loadActiveAbbottWorkbookDataWithExecutor(executor, dashboardId));
+  return withReadOnlyAbbottExecutor("manager", (executor) => loadActiveAbbottWorkbookDataWithExecutor(executor, dashboardId));
 }
 
 export async function loadActiveAbbottBitrixAnalytics(dashboardId: number): Promise<ParsedBitrixAnalytics> {
-  return withReadOnlyPrivateExecutor((executor) => loadActiveAbbottBitrixAnalyticsWithExecutor(executor, dashboardId));
+  return withReadOnlyAbbottExecutor("manager", (executor) => loadActiveAbbottBitrixAnalyticsWithExecutor(executor, dashboardId));
 }
 
 export async function loadActiveAbbottSessionJourneys(
   dashboardId: number,
 ): Promise<AbbottPrivateSessionJourneysData> {
-  return withReadOnlyPrivateExecutor((executor) => loadActiveAbbottSessionJourneysWithExecutor(executor, dashboardId));
+  return withReadOnlyAbbottExecutor("manager", (executor) => loadActiveAbbottSessionJourneysWithExecutor(executor, dashboardId));
 }
 
 export async function loadActiveAbbottAggregateData(dashboardId: number): Promise<AbbottAggregatePrivateData> {
-  return withReadOnlyPrivateExecutor((executor) => loadActiveAbbottAggregateDataWithExecutor(executor, dashboardId));
+  return withReadOnlyAbbottExecutor("embed", (executor) => loadActiveAbbottAggregateDataWithExecutor(executor, dashboardId));
 }
 
 export async function loadActiveAbbottReleaseBundle(
@@ -749,6 +765,6 @@ export async function loadActiveAbbottReleaseBundle(
   from: string,
   to: string,
 ): Promise<AbbottReleaseBundle> {
-  return withReadOnlyPrivateExecutor((executor) =>
+  return withReadOnlyAbbottExecutor(audience, (executor) =>
     loadActiveAbbottReleaseBundleWithExecutor(executor, dashboardId, audience, from, to));
 }

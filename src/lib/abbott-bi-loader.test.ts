@@ -110,7 +110,7 @@ function aggregateRows(sql: string): readonly Record<string, unknown>[] {
       },
     ];
   }
-  if (sql.includes("canonical_fact_metrika_returning_pages_daily")) {
+  if (sql.includes("canonical_fact_metrika_returning_pages_release_daily")) {
     return [
       { report_date: "2026-01-01", raw_page_value: "raw-a", normalized_page: "https://example.test/page", return_bucket_code: "next_day", source_percentage: "50.0000000000", source_denominator: "1" },
       { report_date: "2026-01-01", raw_page_value: "raw-a", normalized_page: "https://example.test/page", return_bucket_code: "days_2_7", source_percentage: "25.0000000000", source_denominator: "1" },
@@ -439,7 +439,7 @@ test("loader pins every canonical fact query to the store bundle release when th
       assert.equal(params[0], 41);
       return [];
     }
-    if (sql.includes("canonical_fact_metrika_returning_pages_daily")) {
+    if (sql.includes("canonical_fact_metrika_returning_pages_release_daily")) {
       assert.equal(params[0], 41);
       return [];
     }

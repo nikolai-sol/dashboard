@@ -399,7 +399,7 @@ CREATE TABLE IF NOT EXISTS canonical_fact_metrika_site_analytics_daily (
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
   COMMENT='Release-scoped Metrika site analytics facts';
 
-CREATE TABLE IF NOT EXISTS canonical_fact_metrika_returning_pages_daily (
+CREATE TABLE IF NOT EXISTS canonical_fact_metrika_returning_pages_release_daily (
   id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
   canonical_release_id BIGINT UNSIGNED NOT NULL,
   counter_id BIGINT UNSIGNED NOT NULL,
