@@ -96,7 +96,7 @@ Telegram, or Hermes action.
   `id: [{ id, direction }]` was accepted by the release scanner, and the CLI
   exited 0. The paired ordinary-JSON regression remained green, proving that a
   global ban on unrelated `id` fields was neither necessary nor acceptable.
-- The JSON scanner now recognizes only a non-empty root `id` collection whose
+- The initial JSON scanner fix recognized only a non-empty root `id` collection whose
   rows consist exactly of `id` and `direction`, matching the Abbott importer
   contract without adding either generic key to the private-key denylist.
 - The CLI regression uses the same importer-shaped payload and verifies that
@@ -109,6 +109,26 @@ Telegram, or Hermes action.
   recorded the corrected nested gitlink, the focused runtime closure/MySQL
   rehearsal passed 29/29 and the complete root suite passed 330/330.
 
+## Reviewer P1 scanner mixed-row follow-up
+
+- RED: importer-valid mappings were still accepted when the consumed row had
+  an ignored extra key or shared its top-level `id` array with invalid rows.
+  Both new regressions returned no violating path. The ordinary control, now a
+  top-level `id` array with `id` and `direction` split across different rows,
+  remained allowed.
+- The final predicate checks whether any object row in the root `id` array has
+  the same nonblank `id` and `direction` values consumed by the importer. Extra
+  keys and invalid sibling rows do not suppress detection; unrelated rows that
+  do not contain both values remain allowed. Generic `id` and `direction` keys
+  are still not denylisted.
+- Focused scanner/importer contracts: 36/36 passed.
+- Complete dashboard suite: 236/236 passed. Typecheck, public-asset scan,
+  built-release scan, and `git diff --check` passed.
+- After root commit `af363f9478335b2d98c9fb9de4def371874c1efb`
+  recorded nested commit `3328c1dcea990cd54f6ee909dbc1648348abdfe6`,
+  the focused runtime closure/MySQL rehearsal passed 29/29 and the complete
+  root suite passed 330/330.
+
 ## Commits
 
 - Nested dashboard: `8cb8ea0c6f25d68595efea03d31a35f1223b5948` —
@@ -116,10 +136,16 @@ Telegram, or Hermes action.
 - Nested dashboard P1 follow-up:
   `2f4fcb58a49e9caf2550f624464c792ed99931e5` —
   `fix: detect Abbott user mapping release assets`.
+- Nested dashboard mixed-row follow-up:
+  `3328c1dcea990cd54f6ee909dbc1648348abdfe6` —
+  `fix: detect mixed Abbott user mappings`.
 - Root implementation/gitlink: `f669a5d879fde9cd5a2d0446c94935ce840a7d9f` —
   `fix: close Abbott release security contracts`.
 - Root P1 follow-up/gitlink: `3c249fc690774790651eebe27869cf0303df1536` —
   `fix: close Abbott scanner mapping bypass`.
+- Root mixed-row follow-up/gitlink:
+  `af363f9478335b2d98c9fb9de4def371874c1efb` —
+  `fix: close mixed Abbott mapping bypass`.
 - This updated report is committed as the final root handoff commit.
 
 ## Concerns
