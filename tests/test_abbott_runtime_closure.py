@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import ast
+import importlib.metadata
 import os
 from pathlib import Path
 import subprocess
@@ -357,6 +358,37 @@ assert abbott_health_probe.ZoneInfo.__module__ == "backports.zoneinfo"
         )[0]
         self.assertNotIn(" /usr/bin/python", cron)
         self.assertIn("/root/reportingdash-canonical/venv/bin/python", cron)
+
+    def test_documented_pin_verifiers_accept_an_inactive_python38_marker(self):
+        documents = (
+            ROOT / "docs/ABBOTT-OPERATIONS-RUNBOOK.md",
+            ROOT / "dashboard-next/reportingdash-canonical-bootstrap/README.md",
+        )
+        pip_version = importlib.metadata.version("pip")
+        for document in documents:
+            snippets = re.findall(
+                r"<<'PY'\n(.*?)\nPY",
+                document.read_text(encoding="utf-8"),
+                flags=re.DOTALL,
+            )
+            verifier = next(snippet for snippet in snippets if "pins = {}" in snippet)
+            with self.subTest(document=str(document.relative_to(ROOT))):
+                with tempfile.TemporaryDirectory() as directory:
+                    root = Path(directory)
+                    venv = root / "venv"
+                    venv.mkdir()
+                    requirements = root / "requirements.txt"
+                    requirements.write_text(
+                        f"pip=={pip_version}\n"
+                        'backports.zoneinfo==0.2.1; python_version < "3.9"\n',
+                        encoding="utf-8",
+                    )
+                    result = subprocess.run(
+                        [sys.executable, "-c", verifier, str(venv), str(requirements)],
+                        capture_output=True,
+                        text=True,
+                    )
+                self.assertEqual(result.returncode, 0, result.stderr)
 
     def test_attestation_rejects_a_working_manifest_not_committed_at_head(self):
         import run_abbott_metrika_active_release as launcher
