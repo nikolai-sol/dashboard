@@ -69,7 +69,7 @@ CREATE TABLE IF NOT EXISTS portal_dataset_snapshots (
   imported_at DATETIME DEFAULT NULL,
   PRIMARY KEY (id),
   UNIQUE KEY uniq_dataset_snapshot_key (snapshot_key),
-  UNIQUE KEY uniq_dataset_snapshot_content (dataset_key, source_kind, content_sha256),
+  UNIQUE KEY uniq_dataset_snapshot_content (dataset_key, source_kind, content_sha256, parser_version),
   KEY idx_dataset_snapshot_period (dataset_key, period_min_date, period_max_date)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
   COMMENT='Immutable source and pre-backfill snapshot registry';
@@ -563,7 +563,7 @@ SET @abbott_snapshot_index_columns := (
 );
 SET @sql := IF(
   @abbott_snapshot_index_columns IS NOT NULL
-    AND @abbott_snapshot_index_columns <> 'dataset_key,source_kind,content_sha256',
+    AND @abbott_snapshot_index_columns <> 'dataset_key,source_kind,content_sha256,parser_version',
   'ALTER TABLE portal_dataset_snapshots DROP INDEX uniq_dataset_snapshot_content',
   'SELECT ''portal_dataset_snapshots checksum index does not need removal'' AS info'
 );
@@ -577,8 +577,8 @@ SET @abbott_snapshot_index_columns := (
     AND INDEX_NAME = 'uniq_dataset_snapshot_content'
 );
 SET @sql := IF(
-  COALESCE(@abbott_snapshot_index_columns, '') <> 'dataset_key,source_kind,content_sha256',
-  'ALTER TABLE portal_dataset_snapshots ADD UNIQUE INDEX uniq_dataset_snapshot_content (dataset_key, source_kind, content_sha256)',
+  COALESCE(@abbott_snapshot_index_columns, '') <> 'dataset_key,source_kind,content_sha256,parser_version',
+  'ALTER TABLE portal_dataset_snapshots ADD UNIQUE INDEX uniq_dataset_snapshot_content (dataset_key, source_kind, content_sha256, parser_version)',
   'SELECT ''portal_dataset_snapshots checksum index already aligned'' AS info'
 );
 PREPARE stmt FROM @sql; EXECUTE stmt; DEALLOCATE PREPARE stmt;

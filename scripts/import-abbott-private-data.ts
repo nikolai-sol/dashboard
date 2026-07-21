@@ -13,6 +13,7 @@ import {
 const DATASET_KEY = "abbott";
 const PRIMARY_SCHEMA = "report_bd";
 const PRIVATE_SCHEMA = "report_bd_private";
+const UNKNOWN_USER_DIRECTION = "Не указано";
 const ALLOWED_SOURCE_KINDS = [
   "abbott_workbook_json",
   "abbott_workbook_catalog",
@@ -360,11 +361,7 @@ export function parseWorkbookJson(payload: unknown) {
       continue;
     }
     const rawUserId = rawIdentifier(row.id, "raw user ID");
-    const direction = text(row.direction);
-    if (!direction) {
-      rejectedCount += 1;
-      continue;
-    }
+    const direction = text(row.direction) || UNKNOWN_USER_DIRECTION;
     const rawUserIdHash = sha256(rawUserId);
     rejectDuplicate(userKeys, rawUserIdHash, "user direction ID");
     privateUserDirections.push({
@@ -991,8 +988,8 @@ export async function runAbbottImportTransaction(
       const existingResult = await connection.execute(
         `SELECT id, import_status, imported_row_count
            FROM ${PRIMARY_SCHEMA}.portal_dataset_snapshots
-          WHERE dataset_key = ? AND source_kind = ? AND content_sha256 = ?`,
-        [DATASET_KEY, source.sourceKind, source.contentSha256],
+          WHERE dataset_key = ? AND source_kind = ? AND content_sha256 = ? AND parser_version = ?`,
+        [DATASET_KEY, source.sourceKind, source.contentSha256, source.parserVersion],
       );
       const existingRows = rowsFromResult(existingResult);
       if (existingRows.length > 1) throw new Error("Conflicting source checksum rows");

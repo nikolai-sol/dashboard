@@ -55,7 +55,7 @@ test("assertPrivateImportPath rejects a symlink whose real path is under public"
   }
 });
 
-test("parseWorkbookJson preserves lossless raw IDs only in private rows and rejects duplicates", () => {
+test("parseWorkbookJson preserves valid raw IDs with an explicit unknown direction and rejects duplicates", () => {
   const parsed = parseWorkbookJson({
     id: [
       { id: "000123", direction: "cardiology" },
@@ -75,12 +75,17 @@ test("parseWorkbookJson preserves lossless raw IDs only in private rows and reje
   });
 
   assert.deepEqual(
-    parsed.privateUserDirections.map((row) => row.rawUserId),
-    ["000123", "90071992547409931234", "doctor-A7"],
+    parsed.privateUserDirections.map((row) => [row.rawUserId, row.normalizedDirection]),
+    [
+      ["000123", "cardiology"],
+      ["90071992547409931234", "neurology"],
+      ["doctor-A7", "gastro"],
+      ["unmapped", "Не указано"],
+    ],
   );
   assert.equal(parsed.generalMaterials[0]?.normalizedUrl, "https://abbottpro.ru/guide");
   assert.equal(parsed.eventCatalog[0]?.registrationUrl, "https://abbottpro.ru/event");
-  assert.equal(parsed.rejectedCount, 1);
+  assert.equal(parsed.rejectedCount, 0);
   const publicEvidence = JSON.stringify({
     manifest: parsed.manifest,
     generalMaterials: parsed.generalMaterials,
@@ -479,12 +484,14 @@ function source(overrides: Partial<PreparedAbbottSource> = {}): PreparedAbbottSo
 
 test("transaction locks one staging Abbott release, writes and verifies, attaches snapshots, and commits once", async () => {
   const calls: string[] = [];
+  const parameterizedCalls: Array<{ sql: string; params: readonly unknown[] }> = [];
   let snapshotLookupCount = 0;
   const connection: AbbottImportConnection = {
     beginTransaction: async () => calls.push("begin"),
-    execute: async (sql) => {
+    execute: async (sql, params = []) => {
       const compact = sql.replace(/\s+/g, " ").trim();
       calls.push(compact);
+      parameterizedCalls.push({ sql: compact, params });
       if (compact.includes("FROM report_bd.portal_data_releases")) {
         return [[{ id: 77, dataset_key: "abbott", release_status: "staging", source_snapshot_ids: "[]" }], []];
       }
@@ -513,6 +520,11 @@ test("transaction locks one staging Abbott release, writes and verifies, attache
   assert.ok(calls.findIndex((call) => call.includes("FOR UPDATE")) < calls.findIndex((call) => call.startsWith("INSERT INTO report_bd.portal_dataset_snapshots")));
   assert.ok(calls.some((call) => call.startsWith("UPDATE report_bd.portal_data_releases SET source_snapshot_ids")));
   assert.ok(!calls.some((call) => /portal_active_data_releases|SET\s+release_status\s*=/i.test(call)));
+  const snapshotLookup = parameterizedCalls.find((call) =>
+    call.sql.startsWith("SELECT id, import_status, imported_row_count FROM report_bd.portal_dataset_snapshots"),
+  );
+  assert.match(snapshotLookup?.sql ?? "", /content_sha256 = \? AND parser_version = \?$/);
+  assert.deepEqual(snapshotLookup?.params, ["abbott", "abbott_workbook_json", "a".repeat(64), "task7-test"]);
 });
 
 test("transaction is checksum-idempotent only when the current release rows verify", async () => {

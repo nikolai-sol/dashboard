@@ -91,6 +91,7 @@ test("release scans reject private data outside public while allowing Abbott sch
     await writeFile(path.join(releaseRoot, "ABBOTT-UNRESOLVED.csv"), "fixture");
     await writeFile(path.join(releaseRoot, "src", "db", "migrations", "019_dashboard_abbott_bi_type.sql"), "DDL");
     await writeFile(path.join(releaseRoot, "src", "db", "migrations", "033_abbott_canonical_release_control.sql"), "DDL");
+    await writeFile(path.join(releaseRoot, "src", "db", "migrations", "040_abbott_snapshot_parser_version_identity.sql"), "DDL");
     await writeFile(path.join(releaseRoot, "src", "db", "migrations", "034_abbott_unreviewed.sql"), "DDL");
     await writeFile(path.join(releaseRoot, "public", "abbott", "source.json"), "fixture");
 
@@ -191,6 +192,32 @@ test("release scans reject an importer-valid Abbott user mapping under a neutral
   }
 });
 
+test("release scans reject an Abbott user mapping when direction is empty", async () => {
+  const releaseRoot = await mkdtemp(path.join(tmpdir(), "release-asset-policy-empty-direction-"));
+  try {
+    await writeFile(path.join(releaseRoot, "mapping.json"), JSON.stringify({
+      id: [{ id: "doctor-secret-without-direction", direction: "" }],
+    }));
+
+    assert.deepEqual(findPrivateReleaseAssets(releaseRoot), ["mapping.json"]);
+  } finally {
+    await rm(releaseRoot, { force: true, recursive: true });
+  }
+});
+
+test("release scans reject an Abbott user mapping when direction is omitted", async () => {
+  const releaseRoot = await mkdtemp(path.join(tmpdir(), "release-asset-policy-omitted-direction-"));
+  try {
+    await writeFile(path.join(releaseRoot, "mapping.json"), JSON.stringify({
+      id: [{ id: "doctor-secret-without-direction-field" }],
+    }));
+
+    assert.deepEqual(findPrivateReleaseAssets(releaseRoot), ["mapping.json"]);
+  } finally {
+    await rm(releaseRoot, { force: true, recursive: true });
+  }
+});
+
 test("release scans reject an importer-consumed user row with extra ignored keys", async () => {
   const releaseRoot = await mkdtemp(path.join(tmpdir(), "release-asset-policy-user-map-extra-"));
   try {
@@ -217,8 +244,8 @@ test("release scans reject mixed user arrays when any row is importer-consumed",
       ],
     };
     const parsed = parseWorkbookJson(payload);
-    assert.equal(parsed.privateUserDirections.length, 1);
-    assert.equal(parsed.rejectedCount, 2);
+    assert.equal(parsed.privateUserDirections.length, 2);
+    assert.equal(parsed.rejectedCount, 1);
     await writeFile(path.join(releaseRoot, "users-mixed.json"), JSON.stringify(payload));
 
     assert.deepEqual(findPrivateReleaseAssets(releaseRoot), ["users-mixed.json"]);
@@ -227,11 +254,11 @@ test("release scans reject mixed user arrays when any row is importer-consumed",
   }
 });
 
-test("release scans allow ordinary JSON objects with unrelated id fields", async () => {
+test("release scans allow ordinary JSON objects with ID fields outside the Abbott top-level id array", async () => {
   const releaseRoot = await mkdtemp(path.join(tmpdir(), "release-asset-policy-ordinary-ids-"));
   try {
     await writeFile(path.join(releaseRoot, "catalog.json"), JSON.stringify({
-      id: [
+      catalog: [
         { id: "article-1", title: "Ordinary article" },
         { direction: "north", label: "Region" },
       ],

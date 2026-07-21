@@ -23,6 +23,7 @@ const PROHIBITED_SOURCE_SUFFIXES = [
 const SAFE_ABBOTT_MIGRATIONS = new Set([
   "src/db/migrations/019_dashboard_abbott_bi_type.sql",
   "src/db/migrations/033_abbott_canonical_release_control.sql",
+  "src/db/migrations/040_abbott_snapshot_parser_version_identity.sql",
 ]);
 
 const INSPECTED_DATA_SUFFIXES = [".json", ".jsonl", ".csv", ".tsv", ".xlsx", ".xls"] as const;
@@ -89,9 +90,7 @@ function isAbbottUserDirectionMapping(value: unknown): boolean {
     const rawUserId = record.id;
     if (rawUserId === null || rawUserId === undefined || String(rawUserId).trim() === "") return false;
     if (typeof rawUserId === "number" && !Number.isSafeInteger(rawUserId)) return false;
-    return record.direction !== null
-      && record.direction !== undefined
-      && String(record.direction).trim() !== "";
+    return true;
   });
 }
 
