@@ -75,12 +75,16 @@ class GoogleSearchConsoleCanonicalTests(unittest.TestCase):
             ],
         )
 
-    def test_upsert_sql_uses_new_contract_and_only_query_hash_for_compatibility(self):
+    def test_upsert_sql_supplies_the_five_column_query_business_key(self):
         from fetch_gsc_canonical import GSC_QUERY_UPSERT_SQL
 
+        normalized_sql = " ".join(GSC_QUERY_UPSERT_SQL.split())
         self.assertIn("canonical_fact_gsc_queries_daily", GSC_QUERY_UPSERT_SQL)
         self.assertIn("ON DUPLICATE KEY UPDATE", GSC_QUERY_UPSERT_SQL)
-        self.assertIn("query_hash", GSC_QUERY_UPSERT_SQL)
+        self.assertIn(
+            "source_key, analytics_account_id, report_date, query, page, country, device, query_hash",
+            normalized_sql,
+        )
         self.assertNotIn("property_url", GSC_QUERY_UPSERT_SQL)
         self.assertNotIn("query_text", GSC_QUERY_UPSERT_SQL)
         self.assertNotIn("device_type", GSC_QUERY_UPSERT_SQL)
