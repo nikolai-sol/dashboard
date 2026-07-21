@@ -104,9 +104,17 @@ for raw in requirements.read_text(encoding="utf-8").splitlines():
     line = raw.strip()
     if not line or line.startswith("#"):
         continue
-    match = re.fullmatch(r"([A-Za-z0-9_.-]+)==([A-Za-z0-9_.+!-]+)", line)
+    requirement, separator, marker = line.partition(";")
+    match = re.fullmatch(
+        r"([A-Za-z0-9_.-]+)==([A-Za-z0-9_.+!-]+)", requirement.strip()
+    )
     if not match:
         raise SystemExit("runtime requirement is not exactly pinned")
+    if separator:
+        if marker.strip() != 'python_version < "3.9"':
+            raise SystemExit("runtime requirement environment marker is unsupported")
+        if sys.version_info >= (3, 9):
+            continue
     pins[match.group(1)] = match.group(2)
 
 for name, expected in pins.items():
