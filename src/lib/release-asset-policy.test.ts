@@ -136,13 +136,51 @@ test("release scans reject an importer-valid Abbott user mapping under a neutral
   }
 });
 
+test("release scans reject an importer-consumed user row with extra ignored keys", async () => {
+  const releaseRoot = await mkdtemp(path.join(tmpdir(), "release-asset-policy-user-map-extra-"));
+  try {
+    const payload = {
+      id: [{ id: "doctor-secret-extra", direction: "cardiology", note: "ignored by importer" }],
+    };
+    assert.equal(parseWorkbookJson(payload).privateUserDirections.length, 1);
+    await writeFile(path.join(releaseRoot, "users-extra.json"), JSON.stringify(payload));
+
+    assert.deepEqual(findPrivateReleaseAssets(releaseRoot), ["users-extra.json"]);
+  } finally {
+    await rm(releaseRoot, { force: true, recursive: true });
+  }
+});
+
+test("release scans reject mixed user arrays when any row is importer-consumed", async () => {
+  const releaseRoot = await mkdtemp(path.join(tmpdir(), "release-asset-policy-user-map-mixed-"));
+  try {
+    const payload = {
+      id: [
+        { kind: "metadata" },
+        { id: "doctor-secret-mixed", direction: "neurology" },
+        { id: "rejected-user", direction: "" },
+      ],
+    };
+    const parsed = parseWorkbookJson(payload);
+    assert.equal(parsed.privateUserDirections.length, 1);
+    assert.equal(parsed.rejectedCount, 2);
+    await writeFile(path.join(releaseRoot, "users-mixed.json"), JSON.stringify(payload));
+
+    assert.deepEqual(findPrivateReleaseAssets(releaseRoot), ["users-mixed.json"]);
+  } finally {
+    await rm(releaseRoot, { force: true, recursive: true });
+  }
+});
+
 test("release scans allow ordinary JSON objects with unrelated id fields", async () => {
   const releaseRoot = await mkdtemp(path.join(tmpdir(), "release-asset-policy-ordinary-ids-"));
   try {
     await writeFile(path.join(releaseRoot, "catalog.json"), JSON.stringify({
-      id: "catalog-1",
-      rows: [
+      id: [
         { id: "article-1", title: "Ordinary article" },
+        { direction: "north", label: "Region" },
+      ],
+      rows: [
         { id: "article-2", direction: "north" },
       ],
     }));

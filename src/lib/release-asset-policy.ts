@@ -76,10 +76,15 @@ function isAbbottUserDirectionMapping(value: unknown): boolean {
   if (!value || Array.isArray(value) || typeof value !== "object") return false;
   const rows = (value as Record<string, unknown>).id;
   if (!Array.isArray(rows) || rows.length === 0) return false;
-  return rows.every((row) => {
+  return rows.some((row) => {
     if (!row || Array.isArray(row) || typeof row !== "object") return false;
-    const keys = Object.keys(row as Record<string, unknown>);
-    return keys.length === 2 && keys.includes("id") && keys.includes("direction");
+    const record = row as Record<string, unknown>;
+    const rawUserId = record.id;
+    if (rawUserId === null || rawUserId === undefined || String(rawUserId).trim() === "") return false;
+    if (typeof rawUserId === "number" && !Number.isSafeInteger(rawUserId)) return false;
+    return record.direction !== null
+      && record.direction !== undefined
+      && String(record.direction).trim() !== "";
   });
 }
 
