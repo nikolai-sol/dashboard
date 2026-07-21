@@ -450,7 +450,7 @@ class AbbottSchemaContractTest(unittest.TestCase):
         )
         self.assertIn(
             "UNIQUE KEY uniq_dataset_snapshot_content "
-            "(dataset_key, source_kind, content_sha256)",
+            "(dataset_key, source_kind, content_sha256, parser_version)",
             snapshots,
         )
         self.assertNotIn(
@@ -863,7 +863,7 @@ class AbbottSchemaContractTest(unittest.TestCase):
         for contract in (
             "ALTER TABLE portal_dataset_snapshots DROP INDEX uniq_dataset_snapshot_content",
             "ALTER TABLE portal_dataset_snapshots ADD UNIQUE INDEX "
-            "uniq_dataset_snapshot_content (dataset_key, source_kind, content_sha256)",
+            "uniq_dataset_snapshot_content (dataset_key, source_kind, content_sha256, parser_version)",
             "ALTER TABLE portal_content_catalog ADD COLUMN source_slug VARCHAR(1000) DEFAULT NULL",
             "ALTER TABLE portal_content_catalog ADD COLUMN access_label VARCHAR(500) DEFAULT NULL",
             "ALTER TABLE portal_content_catalog ADD COLUMN is_active TINYINT(1) NOT NULL DEFAULT 1",

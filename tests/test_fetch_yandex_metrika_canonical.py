@@ -1,5 +1,6 @@
 from contextlib import ExitStack
 from types import SimpleNamespace
+import sys
 import unittest
 from unittest.mock import patch
 
@@ -7,6 +8,60 @@ import requests
 
 
 class YandexMetrikaCanonicalTests(unittest.TestCase):
+    def test_parse_args_accepts_repeatable_excluded_counter_ids(self):
+        from fetch_yandex_metrika_canonical import parse_args
+
+        with patch.object(
+            sys,
+            "argv",
+            [
+                "fetch_yandex_metrika_canonical.py",
+                "--exclude-counter-id",
+                "90602537",
+                "--exclude-counter-id",
+                "108701572",
+            ],
+        ):
+            args = parse_args()
+
+        self.assertEqual(args.exclude_counter_id, ["90602537", "108701572"])
+
+    def test_excluded_counter_ids_are_strictly_numeric_and_deduplicated(self):
+        from fetch_yandex_metrika_canonical import excluded_counter_ids
+
+        args = SimpleNamespace(exclude_counter_id=["90602537", "90602537"])
+        self.assertEqual(excluded_counter_ids(args), ["90602537"])
+
+        with self.assertRaisesRegex(ValueError, "digits only"):
+            excluded_counter_ids(SimpleNamespace(exclude_counter_id=["counter-90602537"]))
+
+    def test_validate_counter_filters_rejects_include_exclude_overlap(self):
+        from fetch_yandex_metrika_canonical import validate_counter_filters
+
+        with self.assertRaisesRegex(ValueError, "both included and excluded.*90602537"):
+            validate_counter_filters(["90602537", "66624469"], ["90602537"])
+
+    def test_filter_configured_counters_excludes_only_requested_ids(self):
+        from fetch_yandex_metrika_canonical import filter_configured_counters
+
+        counters = [
+            {"counter_id": "66624469", "name": "Other"},
+            {"counter_id": "90602537", "name": "Abbott"},
+            {"counter_id": "108701572", "name": "Zaruku"},
+        ]
+
+        self.assertEqual(
+            [
+                row["counter_id"]
+                for row in filter_configured_counters(
+                    counters,
+                    selected_ids=[],
+                    excluded_ids=["90602537"],
+                )
+            ],
+            ["66624469", "108701572"],
+        )
+
     def test_build_entry_page_rows_maps_session_metrics(self):
         from fetch_yandex_metrika_canonical import build_entry_page_rows
 
