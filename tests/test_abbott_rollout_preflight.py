@@ -69,11 +69,15 @@ class AbbottRolloutPreflightTest(unittest.TestCase):
             )
         self.assertEqual(result.returncode, 0, result.stderr)
         report = json.loads(result.stdout)
-        self.assertEqual(report["local_rehearsal"]["status"], "partial")
+        self.assertEqual(report["local_rehearsal"]["status"], "ready")
+        self.assertEqual(
+            report["local_rehearsal"]["reason_code"],
+            "repeat_safe_schema_rehearsed",
+        )
         for gate in ("owner_token", "release_db", "production_runtime", "cron", "hermes"):
             self.assertEqual(report[gate]["status"], "blocked")
 
-    def test_external_files_cannot_override_deferred_bitrix_lifecycle(self):
+    def test_repeat_safe_schema_is_ready_without_live_bitrix_lifecycle(self):
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)
             evidence = self.local_evidence(root, lifecycle=True)
@@ -94,8 +98,11 @@ class AbbottRolloutPreflightTest(unittest.TestCase):
             )
         self.assertEqual(result.returncode, 0, result.stderr)
         report = json.loads(result.stdout)
-        self.assertEqual(report["local_rehearsal"]["status"], "partial")
-        self.assertEqual(report["local_rehearsal"]["reason_code"], "bitrix_contract_deferred")
+        self.assertEqual(report["local_rehearsal"]["status"], "ready")
+        self.assertEqual(
+            report["local_rehearsal"]["reason_code"],
+            "repeat_safe_schema_rehearsed",
+        )
         self.assertEqual(report["owner_token"]["status"], "ready")
         self.assertEqual(report["release_db"]["status"], "ready")
         self.assertEqual(report["production_runtime"]["status"], "ready")

@@ -134,7 +134,7 @@ def local_gate(directory: Path) -> dict[str, str]:
     )
     if not schema_ready:
         return {"status": "blocked", "reason_code": "schema_evidence_failed"}
-    return {"status": "partial", "reason_code": "bitrix_contract_deferred"}
+    return {"status": "ready", "reason_code": "repeat_safe_schema_rehearsed"}
 
 
 def render(report: dict[str, object]) -> None:

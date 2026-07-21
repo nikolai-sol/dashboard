@@ -183,14 +183,14 @@ client diagnostics are removed on exit. Setting
 `ABBOTT_REHEARSAL_PRESERVE_ON_FAILURE=1` preserves only the private local
 temporary directory for debugging; the container and volume are still removed.
 
-The copied Bitrix exports used during this rehearsal are exploratory test data,
-not an approved production source. They intentionally fail the canonical import
+The copied Bitrix exports used during this rehearsal are exploratory test-only
+data, not an approved production source. They intentionally fail the canonical import
 contract because they have neither completeness manifests nor the required
 page/event grain. Do not manufacture those claims or transform session paths
 into inferred events. Define mapping, completeness, incremental extraction and
 stable identifiers only when read-only access to the live Bitrix database is
-available; until then, four-source import and release-lifecycle acceptance stay
-deferred.
+available. Their deferred live contract does not block the Metrika-first
+release or change the two-workbook production source set.
 
 Run the read-only rollout preflight after the local evidence exists. Supply only
 explicit protected paths; the helper does not search home directories or print
@@ -210,9 +210,10 @@ python3 abbott_rollout_preflight.py \
 Every supplied credential/token file must be a caller-owned regular file with
 mode `0600`; symlinks, malformed dotenv data and multiline values fail closed.
 Missing files produce a sanitized `blocked` status without contacting Yandex,
-MySQL, cron, Telegram or Hermes. `local_rehearsal=partial` is the expected state
-while the live Bitrix connector and lifecycle evidence are deferred. Cron and
-Hermes always remain `blocked` until their explicit operator/approval steps.
+MySQL, cron, Telegram or Hermes. A repeat-safe schema rehearsal reports
+`local_rehearsal=ready`; deferred live Bitrix is not a partial-readiness reason.
+Cron and Hermes always remain `blocked` until their explicit operator/approval
+steps.
 
 ## Database accounts, roles, and environment ownership
 
@@ -314,15 +315,17 @@ Verify table and role names only; do not query private rows:
 ```bash
 mysql --defaults-extra-file="$ABBOTT_OWNER_MYSQL_DEFAULTS_FILE" \
   --batch --skip-column-names report_bd \
-  --execute="SELECT COUNT(*) FROM information_schema.tables WHERE (table_schema='report_bd' AND table_name='portal_data_releases') OR (table_schema='report_bd' AND table_name='portal_active_data_releases') OR (table_schema='report_bd' AND table_name='portal_dataset_snapshots') OR (table_schema='report_bd' AND table_name='portal_release_source_imports') OR (table_schema='report_bd' AND table_name='portal_migration_validation_runs') OR (table_schema='report_bd' AND table_name='portal_bitrix_page_facts') OR (table_schema='report_bd' AND table_name='canonical_fact_metrika_site_analytics_daily') OR (table_schema='report_bd' AND table_name='canonical_fact_metrika_returning_pages_daily') OR (table_schema='report_bd' AND table_name='canonical_source_coverage_daily') OR (table_schema='report_bd_private' AND table_name='canonical_fact_metrika_user_behavior_daily') OR (table_schema='report_bd_private' AND table_name='portal_user_directions_private') OR (table_schema='report_bd_private' AND table_name='portal_bitrix_page_facts') OR (table_schema='report_bd_private' AND table_name='portal_bitrix_journeys_private')" \
+  --execute="SELECT COUNT(*) FROM information_schema.tables WHERE (table_schema='report_bd' AND table_name='portal_data_releases') OR (table_schema='report_bd' AND table_name='portal_active_data_releases') OR (table_schema='report_bd' AND table_name='portal_dataset_snapshots') OR (table_schema='report_bd' AND table_name='portal_release_source_imports') OR (table_schema='report_bd' AND table_name='portal_migration_validation_runs') OR (table_schema='report_bd' AND table_name='portal_bitrix_page_facts') OR (table_schema='report_bd' AND table_name='canonical_fact_metrika_site_analytics_daily') OR (table_schema='report_bd' AND table_name='canonical_fact_metrika_returning_pages_daily') OR (table_schema='report_bd' AND table_name='canonical_source_coverage_daily') OR (table_schema='report_bd_private' AND table_name='canonical_fact_metrika_visits') OR (table_schema='report_bd_private' AND table_name='portal_user_directions_private') OR (table_schema='report_bd_private' AND table_name='portal_bitrix_page_facts') OR (table_schema='report_bd_private' AND table_name='portal_bitrix_journeys_private')" \
   > "$CHECKPOINT_DIR/schema-table-count.txt"
 export ACTUAL_SCHEMA_TABLE_COUNT="$(cat "$CHECKPOINT_DIR/schema-table-count.txt")"
 test "$ACTUAL_SCHEMA_TABLE_COUNT" = 13
 ```
 
-The exact reviewed query names all 13 schema/table pairs, including distinct
-primary and private `portal_bitrix_page_facts` contracts. Any smaller or larger
-result blocks the rollout; a cross-product `IN` query is forbidden.
+The exact reviewed query names all 13 schema/table pairs, including the
+visit-level private Metrika authority and distinct primary/private
+`portal_bitrix_page_facts` contracts. The legacy daily behavior table is not
+accepted as visit-level evidence. Any smaller or larger result blocks the
+rollout; a cross-product `IN` query is forbidden.
 
 ## Checkpoint 2: issue and install owner-controlled secrets
 
@@ -462,7 +465,8 @@ unset MISSING_AUTH_STATUS WRONG_AUTH_STATUS VALID_AUTH_STATUS
 
 The baseline covers `2026-01-01` through the last completed UTC day selected
 for the reviewed backfill. Private source paths are explicit and outside the
-web root. Repeat `--source-file` for every approved input:
+web root. The Metrika-first production baseline declares only the two required
+workbook inputs:
 
 ```bash
 set -a
@@ -479,8 +483,6 @@ cd "$CANONICAL_ROOT"
   --code-revision "$CODE_REVISION" \
   --source-file "abbott_workbook_json:$PARSER_VERSION:$ABBOTT_PRIVATE_INPUT_DIR/abbott-workbook.json" \
   --source-file "abbott_workbook_catalog:$PARSER_VERSION:$ABBOTT_PRIVATE_INPUT_DIR/Abbott-names.xlsx" \
-  --source-file "abbott_bitrix_pages:$PARSER_VERSION:$ABBOTT_PRIVATE_INPUT_DIR/bitrix-analytics.json" \
-  --source-file "abbott_bitrix_journeys:$PARSER_VERSION:$ABBOTT_PRIVATE_INPUT_DIR/bitrix-session-journeys.json" \
   > "$CHECKPOINT_DIR/baseline-capture.log"
 chmod 600 "$CHECKPOINT_DIR/baseline-capture.log"
 ```
@@ -546,8 +548,6 @@ node --import tsx scripts/import-abbott-private-data.ts \
   --canonical-release-id "$CANDIDATE_RELEASE_ID" \
   --workbook-json "$ABBOTT_PRIVATE_INPUT_DIR/abbott-workbook.json" \
   --workbook-xlsx "$ABBOTT_PRIVATE_INPUT_DIR/Abbott-names.xlsx" \
-  --bitrix-pages "$ABBOTT_PRIVATE_INPUT_DIR/bitrix-analytics.json" \
-  --bitrix-journeys "$ABBOTT_PRIVATE_INPUT_DIR/bitrix-session-journeys.json" \
   --parser-version "$PARSER_VERSION" \
   --code-revision "$CODE_REVISION" \
   --archive-dir "$ABBOTT_PRIVATE_ARCHIVE_DIR" \
@@ -688,10 +688,11 @@ locks the staging release, requires persisted comparator evidence bound to the
 baseline snapshot and candidate code revision, selects only the latest
 completed `validation_run_id`, and accepts exactly the frozen baseline control
 names plus five `coverage.*.reconciled_days` controls. A warn
-requires both `reviewed_by` and `accepted_at`. It also requires exactly four
-successfully imported source kinds whose immutable SHA-256/byte/parser
-fingerprints match both the frozen baseline and import manifest, plus four
-matching candidate-revision executions in `portal_release_source_imports`. It
+requires both `reviewed_by` and `accepted_at`. It also requires the exact frozen
+source set: both workbook kinds plus either optional Bitrix kind only when the
+baseline declares it. Every immutable SHA-256/byte/parser fingerprint must
+match the frozen baseline and import manifest, with one matching
+candidate-revision execution in `portal_release_source_imports` per source. It
 uses a recursive calendar CTE to
 detect wholly absent dates, requires the exact five-scope reconciled bundle on
 every date, inserts final gate evidence, and CAS-transitions to `validated` in

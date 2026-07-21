@@ -25,9 +25,38 @@ class AbbottOperationsRunbookTest(unittest.TestCase):
         self.assertIn("table_schema='report_bd' AND table_name='portal_data_releases'", schema_gate)
         self.assertIn("table_schema='report_bd' AND table_name='portal_release_source_imports'", schema_gate)
         self.assertIn("table_schema='report_bd_private' AND table_name='portal_bitrix_page_facts'", schema_gate)
-        self.assertIn("abbott_bitrix_pages:$PARSER_VERSION", self.text)
-        self.assertIn("abbott_bitrix_journeys:$PARSER_VERSION", self.text)
+        self.assertIn("table_schema='report_bd_private' AND table_name='canonical_fact_metrika_visits'", schema_gate)
+        self.assertNotIn("canonical_fact_metrika_user_behavior_daily", schema_gate)
         self.assertIn("abbott_prebackfill_snapshot.sql\"; } |", self.text)
+
+    def test_production_baseline_and_import_use_only_workbook_sources(self):
+        baseline = self.text.split("## Checkpoint 3", 1)[1].split(
+            "## Checkpoint 4", 1
+        )[0]
+        importer = self.text.split("## Checkpoint 5", 1)[1].split(
+            "## Checkpoint 6", 1
+        )[0]
+        for source_kind in ("abbott_workbook_json", "abbott_workbook_catalog"):
+            self.assertIn(source_kind, baseline)
+        for flag in ("--workbook-json", "--workbook-xlsx"):
+            self.assertIn(flag, importer)
+        for forbidden in (
+            "abbott_bitrix_pages",
+            "abbott_bitrix_journeys",
+            "--bitrix-pages",
+            "--bitrix-journeys",
+        ):
+            self.assertNotIn(forbidden, baseline)
+            self.assertNotIn(forbidden, importer)
+
+    def test_local_bitrix_rehearsal_is_clearly_test_only_and_not_a_readiness_blocker(self):
+        local = self.text.split("## Local MySQL rehearsal checkpoint", 1)[1].split(
+            "## Database accounts", 1
+        )[0]
+        normalized = " ".join(local.split())
+        self.assertIn("test-only", normalized)
+        self.assertIn("local_rehearsal=ready", normalized)
+        self.assertNotIn("local_rehearsal=partial", normalized)
 
     def test_validation_and_runtime_attestation_are_executable(self):
         self.assertIn("abbott_release_operator.py validate", self.text)

@@ -53,15 +53,18 @@ class RecordingConnection:
         self.events.append(("close", None))
 
 
-SOURCE_KINDS = (
+REQUIRED_WORKBOOK_KINDS = (
     "abbott_workbook_json",
     "abbott_workbook_catalog",
+)
+OPTIONAL_BITRIX_KINDS = (
     "abbott_bitrix_pages",
     "abbott_bitrix_journeys",
 )
+SOURCE_KINDS = REQUIRED_WORKBOOK_KINDS + OPTIONAL_BITRIX_KINDS
 
 
-def baseline_manifest():
+def baseline_manifest(source_kinds=SOURCE_KINDS):
     return {
         "control_values": {"site.traffic.sessions": 100},
         "file_snapshots": [
@@ -71,7 +74,7 @@ def baseline_manifest():
                 "content_bytes": 100 + index,
                 "parser_version": "parser-v1",
             }
-            for index, kind in enumerate(SOURCE_KINDS)
+            for index, kind in enumerate(source_kinds)
         ],
     }
 
@@ -104,9 +107,11 @@ def validation_batch(run_id, *, completed_at="2026-07-16 10:00:00", rows=None):
     }
 
 
-def imported_snapshot_rows(*, failed_kind=None, manifest_revision="abc123"):
+def imported_snapshot_rows(
+    source_kinds=SOURCE_KINDS, *, failed_kind=None, manifest_revision="abc123"
+):
     rows = []
-    for index, kind in enumerate(SOURCE_KINDS):
+    for index, kind in enumerate(source_kinds):
         manifest = {
             "source_kind": kind,
             "content_sha256": str(index + 1) * 64,
@@ -131,7 +136,11 @@ def imported_snapshot_rows(*, failed_kind=None, manifest_revision="abc123"):
 
 
 def import_execution_rows(
-    *, code_revision="abc123", failed_kind=None, imported_row_count=1
+    source_kinds=SOURCE_KINDS,
+    *,
+    code_revision="abc123",
+    failed_kind=None,
+    imported_row_count=1,
 ):
     return [
         {
@@ -142,21 +151,37 @@ def import_execution_rows(
             "imported_row_count": imported_row_count,
             "rejected_row_count": 0,
         }
-        for index, kind in enumerate(SOURCE_KINDS)
+        for index, kind in enumerate(source_kinds)
     ]
 
 
 class ExactValidationCursor(RecordingCursor):
     def __init__(
         self, connection, *, evidence_rows=None, snapshot_rows=None, execution_rows=None,
-        validation_batches=None,
+        validation_batches=None, source_kinds=SOURCE_KINDS, release_snapshot_ids=None,
+        baseline=None,
     ):
         super().__init__()
         self.validation_batches = validation_batches or [
             validation_batch("00000000-0000-0000-0000-000000000001", rows=evidence_rows)
         ]
-        self.snapshot_rows = snapshot_rows or imported_snapshot_rows()
-        self.execution_rows = execution_rows or import_execution_rows()
+        self.source_kinds = source_kinds
+        self.baseline = baseline or baseline_manifest(source_kinds)
+        self.snapshot_rows = (
+            imported_snapshot_rows(source_kinds)
+            if snapshot_rows is None
+            else snapshot_rows
+        )
+        self.execution_rows = (
+            import_execution_rows(source_kinds)
+            if execution_rows is None
+            else execution_rows
+        )
+        self.release_snapshot_ids = (
+            [index + 11 for index in range(len(source_kinds))]
+            if release_snapshot_ids is None
+            else release_snapshot_ids
+        )
         self.current_one = None
         self.current_many = []
 
@@ -172,10 +197,10 @@ class ExactValidationCursor(RecordingCursor):
                 "release_status": "staging",
                 "baseline_validation_run_id": 33,
                 "code_revision": "abc123",
-                "source_snapshot_ids": json.dumps([11, 12, 13, 14]),
+                "source_snapshot_ids": json.dumps(self.release_snapshot_ids),
             }
         elif normalized.startswith("SELECT manifest_json"):
-            self.current_one = {"manifest_json": json.dumps(baseline_manifest())}
+            self.current_one = {"manifest_json": json.dumps(self.baseline)}
         elif "FROM portal_release_source_imports" in normalized:
             self.current_many = self.execution_rows
         elif "FROM portal_dataset_snapshots" in normalized:
@@ -228,7 +253,8 @@ class ExactValidationCursor(RecordingCursor):
 class ExactValidationConnection(RecordingConnection):
     def __init__(
         self, *, evidence_rows=None, snapshot_rows=None, execution_rows=None,
-        validation_batches=None,
+        validation_batches=None, source_kinds=SOURCE_KINDS, release_snapshot_ids=None,
+        baseline=None,
     ):
         self.events = []
         self.cursor_instance = ExactValidationCursor(
@@ -237,10 +263,119 @@ class ExactValidationConnection(RecordingConnection):
             snapshot_rows=snapshot_rows,
             execution_rows=execution_rows,
             validation_batches=validation_batches,
+            source_kinds=source_kinds,
+            release_snapshot_ids=release_snapshot_ids,
+            baseline=baseline,
         )
 
 
 class CanonicalReleaseStoreTest(unittest.TestCase):
+    def validate(self, store, conn):
+        with patch.object(store, "get_db_connection", return_value=conn):
+            store.validate_release(
+                41,
+                date_from="2026-01-01",
+                date_to="2026-01-02",
+                expected_code_revision="abc123",
+            )
+
+    def test_two_workbook_sources_validate_without_bitrix(self):
+        import canonical_release_store as store
+
+        self.validate(
+            store,
+            ExactValidationConnection(source_kinds=REQUIRED_WORKBOOK_KINDS),
+        )
+
+    def test_each_declared_optional_bitrix_source_and_both_validate(self):
+        import canonical_release_store as store
+
+        for optional_kinds in (
+            ("abbott_bitrix_pages",),
+            ("abbott_bitrix_journeys",),
+            OPTIONAL_BITRIX_KINDS,
+        ):
+            with self.subTest(optional_kinds=optional_kinds):
+                self.validate(
+                    store,
+                    ExactValidationConnection(
+                        source_kinds=REQUIRED_WORKBOOK_KINDS + optional_kinds
+                    ),
+                )
+
+    def test_declared_optional_bitrix_source_must_be_present_and_imported(self):
+        import canonical_release_store as store
+
+        kinds = REQUIRED_WORKBOOK_KINDS + ("abbott_bitrix_pages",)
+        cases = (
+            ExactValidationConnection(
+                source_kinds=kinds,
+                snapshot_rows=imported_snapshot_rows(REQUIRED_WORKBOOK_KINDS),
+            ),
+            ExactValidationConnection(
+                source_kinds=kinds,
+                snapshot_rows=imported_snapshot_rows(
+                    kinds, failed_kind="abbott_bitrix_pages"
+                ),
+            ),
+            ExactValidationConnection(
+                source_kinds=kinds,
+                execution_rows=import_execution_rows(
+                    kinds, failed_kind="abbott_bitrix_pages"
+                ),
+            ),
+        )
+        for conn in cases:
+            with self.subTest(case=cases.index(conn)):
+                with self.assertRaises(store.ValidationGateError):
+                    self.validate(store, conn)
+
+    def test_source_sets_reject_unknown_duplicates_missing_workbook_and_extras(self):
+        import canonical_release_store as store
+
+        workbook_rows = imported_snapshot_rows(REQUIRED_WORKBOOK_KINDS)
+        workbook_executions = import_execution_rows(REQUIRED_WORKBOOK_KINDS)
+        cases = (
+            ExactValidationConnection(
+                source_kinds=REQUIRED_WORKBOOK_KINDS + ("unknown_source",)
+            ),
+            ExactValidationConnection(
+                source_kinds=REQUIRED_WORKBOOK_KINDS,
+                release_snapshot_ids=[11, 11],
+            ),
+            ExactValidationConnection(
+                source_kinds=("abbott_workbook_json",),
+            ),
+            ExactValidationConnection(
+                source_kinds=REQUIRED_WORKBOOK_KINDS,
+                baseline={
+                    **baseline_manifest(REQUIRED_WORKBOOK_KINDS),
+                    "file_snapshots": [
+                        *baseline_manifest(REQUIRED_WORKBOOK_KINDS)["file_snapshots"],
+                        baseline_manifest(("abbott_workbook_json",))["file_snapshots"][0],
+                    ],
+                },
+            ),
+            ExactValidationConnection(
+                source_kinds=REQUIRED_WORKBOOK_KINDS,
+                snapshot_rows=[workbook_rows[0], {**workbook_rows[1], "source_kind": workbook_rows[0]["source_kind"]}],
+            ),
+            ExactValidationConnection(
+                source_kinds=REQUIRED_WORKBOOK_KINDS,
+                execution_rows=[
+                    *workbook_executions,
+                    {
+                        **import_execution_rows(("abbott_bitrix_pages",))[0],
+                        "source_snapshot_id": 13,
+                    },
+                ],
+            ),
+        )
+        for index, conn in enumerate(cases):
+            with self.subTest(case=index):
+                with self.assertRaises(store.ValidationGateError):
+                    self.validate(store, conn)
+
     def test_validation_rejects_arbitrary_pass_evidence_not_in_frozen_control_set(self):
         import canonical_release_store as store
 
