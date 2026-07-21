@@ -96,6 +96,11 @@ logging.basicConfig(
     format="%(asctime)s [%(levelname)s] %(message)s",
     handlers=[logging.StreamHandler(sys.stdout)],
 )
+for third_party_logger_name in ("requests", "urllib3"):
+    third_party_logger = logging.getLogger(third_party_logger_name)
+    third_party_logger.handlers.clear()
+    third_party_logger.addHandler(logging.NullHandler())
+    third_party_logger.propagate = False
 log = logging.getLogger("yandex_metrika_returning_canonical")
 
 
@@ -351,8 +356,9 @@ def request_with_retry(counter_id: str, day: str, *, run_id: int | None = None, 
                 attempt,
                 rate_limited=rate_limited,
             ) from None
-        delay = max(sleep_for, retry_after_delay) + random.uniform(0, MAX_RETRY_JITTER_SECONDS)
-        delay = min(delay, MAX_TOTAL_RETRY_DELAY_SECONDS - total_retry_delay)
+        desired_delay = max(sleep_for, retry_after_delay) + random.uniform(0, MAX_RETRY_JITTER_SECONDS)
+        remaining_delay_budget = max(MAX_TOTAL_RETRY_DELAY_SECONDS - total_retry_delay, 0.0)
+        delay = min(desired_delay, remaining_delay_budget)
         if run_id:
             log_collector_event(
                 run_id,
@@ -368,8 +374,29 @@ def request_with_retry(counter_id: str, day: str, *, run_id: int | None = None, 
                     "rate_limited": rate_limited,
                 },
             )
-        time.sleep(delay)
+        if delay > 0:
+            time.sleep(delay)
         total_retry_delay += delay
+        if desired_delay >= remaining_delay_budget:
+            if run_id:
+                log_collector_event(
+                    run_id,
+                    "error",
+                    "metrika_returning_api_retries_exhausted",
+                    "Metrika returning request retries exhausted",
+                    {
+                        "status_code": response.status_code,
+                        "attempt": attempt,
+                        "max_attempts": MAX_RETRIES,
+                        "retry_after_seconds": retry_after_delay,
+                        "rate_limited": rate_limited,
+                    },
+                )
+            raise MetrikaReturningRequestError(
+                response.status_code,
+                attempt,
+                rate_limited=rate_limited,
+            ) from None
         sleep_for = min(sleep_for * 2, MAX_RETRY_DELAY_SECONDS)
     raise MetrikaReturningRequestError(None, MAX_RETRIES, rate_limited=False)
 

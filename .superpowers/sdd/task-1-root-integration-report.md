@@ -73,3 +73,32 @@ Each test passed immediately after its corresponding minimal implementation step
 - The complete root suite is not fully green because `dashboard-next` was already dirty and contains unresolved work outside this root-only task. Making the six remaining tests green requires the owner of that nested repository to commit/reconcile its migrations and synchronize its Abbott bootstrap copies/manifests with the merged root authorities.
 - The production incident's precise Yandex rate-limit bucket remains unknowable after the fact; the new collector intentionally records only safe diagnostic metadata on future retries.
 - No missed production range was replayed in this task, consistent with the prohibition on API, DB, deployment, and operational actions.
+
+## Review findings follow-up
+
+### Additional RED evidence
+
+1. `python3 -m unittest tests.test_fetch_yandex_metrika_returning_canonical.YandexMetrikaReturningCanonicalTests.test_retry_after_beyond_remaining_budget_exhausts_without_zero_delay_requests`
+   - RED: 1 failure; a valid `Retry-After: 600` consumed the 300-second bounded budget and then made seven additional zero-delay requests (`8 != 1`).
+   - GREEN: one request, one mocked 300-second sleep, then a sanitized `MetrikaReturningRequestError` at attempt 1.
+2. `python3 -m unittest tests.test_fetch_yandex_metrika_returning_canonical.YandexMetrikaReturningCanonicalTests.test_debug_logging_does_not_emit_http_client_urls_or_counter_ids`
+   - RED: 1 failure; a DEBUG record from `urllib3.connectionpool` reached the root handler with the full query URL, counter ID, Authorization label, and token.
+   - GREEN: `requests` and `urllib3` logger namespaces terminate at non-propagating null handlers, so application DEBUG remains available without exposing HTTP-client request records.
+
+### Bootstrap synchronization
+
+- The task owner explicitly authorized the synchronization-only exception to the earlier root-only restriction.
+- Copied every required root authority into `dashboard-next/reportingdash-canonical-bootstrap/runtime/`, plus the declared `collectors/` and `lib/` authority locations.
+- The only byte changes required were:
+  - `reportingdash-canonical-bootstrap/collectors/fetch_yandex_metrika_canonical.py`
+  - `reportingdash-canonical-bootstrap/runtime/fetch_yandex_metrika_canonical.py`
+  - `reportingdash-canonical-bootstrap/MIGRATION-MANIFEST.md`
+- Recomputed the collector authority SHA-256 as `ca57caebee1c3baaf92abb4652695d8e789404052dbefc01891dfdda6af34cf6` and updated both exact manifest entries.
+- The remaining required runtime/lib copies were already byte-identical after copying and therefore produced no diff.
+- No unrelated `dashboard-next` conflict was resolved, no nested file outside the bootstrap synchronization set was edited, and no nested-repository commit was created. These three sync edits remain for the dashboard integration commit.
+
+### Follow-up verification
+
+- Focused returning collector plus Abbott runtime closure: 25 passed, 0 failed.
+- Complete root suite: 316 passed, 4 failed, 1 environment warning.
+- All Abbott runtime closure/bootstrap synchronization tests now pass. The four remaining failures are the same `AbbottMysqlRehearsalContractTest` cases blocked by the unrelated unresolved/staged nested migrations `033_google_search_console_daily_canonical.sql` and `034_google_search_console_country_daily.sql`, which are not present in the nested repository's current `HEAD`.

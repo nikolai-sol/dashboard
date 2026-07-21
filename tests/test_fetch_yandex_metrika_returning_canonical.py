@@ -1,3 +1,5 @@
+import io
+import logging
 import unittest
 from datetime import datetime, timedelta, timezone
 from email.utils import format_datetime
@@ -22,6 +24,31 @@ def response(status_code, *, payload=None, headers=None, url="https://api-metrik
 
 
 class YandexMetrikaReturningCanonicalTests(unittest.TestCase):
+    def test_debug_logging_does_not_emit_http_client_urls_or_counter_ids(self):
+        import fetch_yandex_metrika_returning_canonical  # noqa: F401
+
+        stream = io.StringIO()
+        handler = logging.StreamHandler(stream)
+        root_logger = logging.getLogger()
+        client_logger = logging.getLogger("urllib3.connectionpool")
+        previous_root_level = root_logger.level
+        previous_client_level = client_logger.level
+        root_logger.addHandler(handler)
+        root_logger.setLevel(logging.DEBUG)
+        client_logger.setLevel(logging.DEBUG)
+        try:
+            client_logger.debug(
+                "GET /stat?ids=987654321&oauth_token=top-secret Authorization=OAuth top-secret"
+            )
+        finally:
+            root_logger.removeHandler(handler)
+            root_logger.setLevel(previous_root_level)
+            client_logger.setLevel(previous_client_level)
+
+        diagnostics = stream.getvalue()
+        for forbidden in ("987654321", "top-secret", "Authorization", "/stat?"):
+            self.assertNotIn(forbidden, diagnostics)
+
     def test_request_retries_503_and_honors_retry_after_without_real_sleep(self):
         from fetch_yandex_metrika_returning_canonical import request_with_retry
 
@@ -86,6 +113,29 @@ class YandexMetrikaReturningCanonicalTests(unittest.TestCase):
         self.assertEqual(sleeps, [5.5, 10.5, 20.5, 40.5, 60.5, 60.5, 60.5])
         self.assertGreater(sum(sleeps), 120)
         self.assertLessEqual(sum(sleeps), 300)
+
+    def test_retry_after_beyond_remaining_budget_exhausts_without_zero_delay_requests(self):
+        from fetch_yandex_metrika_returning_canonical import (
+            MetrikaReturningRequestError,
+            request_with_retry,
+        )
+
+        sleeps = []
+        with (
+            patch(
+                "fetch_yandex_metrika_returning_canonical.requests.get",
+                side_effect=[response(429, headers={"Retry-After": "600"}) for _ in range(8)],
+            ) as request,
+            patch("fetch_yandex_metrika_returning_canonical.REQUEST_DELAY_SECONDS", 0),
+            patch("fetch_yandex_metrika_returning_canonical.time.sleep", side_effect=sleeps.append),
+            patch("random.uniform", return_value=0),
+        ):
+            with self.assertRaises(MetrikaReturningRequestError) as caught:
+                request_with_retry("66624469", "2026-07-15")
+
+        self.assertEqual(request.call_count, 1)
+        self.assertEqual(sleeps, [300.0])
+        self.assertEqual(caught.exception.attempts, 1)
 
     def test_exhausted_retry_diagnostics_exclude_request_and_client_secrets(self):
         from fetch_yandex_metrika_returning_canonical import request_with_retry
