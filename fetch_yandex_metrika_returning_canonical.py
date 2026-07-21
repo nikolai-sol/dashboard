@@ -8,10 +8,12 @@ import hashlib
 import json
 import logging
 import os
+import random
 import sys
 import time
 import uuid
 from datetime import date, datetime, timedelta, timezone
+from email.utils import parsedate_to_datetime
 from pathlib import Path
 from typing import Any
 
@@ -75,7 +77,11 @@ RETURNING_METRIKA_METRICS = ",".join(
 METRIKA_STATS_URL = env_first("METRIKA_STATS_URL", default="https://api-metrika.yandex.net/stat/v1/data")
 METRIKA_TOKEN = env_first("METRIKA_TOKEN", "YANDEX_METRIKA_TOKEN", "METRIKA_OAUTH_TOKEN", "YANDEX_METRIKA_OAUTH_TOKEN")
 REQUEST_DELAY_SECONDS = float(env_first("METRIKA_RETURNING_REQUEST_DELAY_SECONDS", "METRIKA_REQUEST_DELAY_SECONDS", default="0.35") or 0)
-MAX_RETRIES = 5
+MAX_RETRIES = 8
+INITIAL_RETRY_DELAY_SECONDS = 5.0
+MAX_RETRY_DELAY_SECONDS = 60.0
+MAX_RETRY_JITTER_SECONDS = 1.0
+MAX_TOTAL_RETRY_DELAY_SECONDS = 300.0
 TIMEOUT = 90
 
 MYSQL_HOST = env_first("MYSQL_HOST", "DB_HOST", default="localhost")
@@ -91,6 +97,20 @@ logging.basicConfig(
     handlers=[logging.StreamHandler(sys.stdout)],
 )
 log = logging.getLogger("yandex_metrika_returning_canonical")
+
+
+class MetrikaReturningRequestError(RuntimeError):
+    """Sanitized API failure safe for collector telemetry."""
+
+    def __init__(self, status_code: int | None, attempts: int, *, rate_limited: bool):
+        self.status_code = status_code
+        self.attempts = attempts
+        self.rate_limited = rate_limited
+        status = status_code if status_code is not None else "unavailable"
+        super().__init__(
+            f"Metrika returning request failed after {attempts} attempt(s) "
+            f"(status={status}, rate_limited={str(rate_limited).lower()})"
+        )
 
 
 RETURNING_PAGE_UPSERT_SQL = """
@@ -262,6 +282,21 @@ def normalize_returning_rows(
     return result
 
 
+def retry_after_seconds(value: str | None) -> float:
+    if not value:
+        return 0.0
+    try:
+        return max(float(value), 0.0)
+    except ValueError:
+        try:
+            retry_at = parsedate_to_datetime(value)
+        except (TypeError, ValueError, OverflowError):
+            return 0.0
+        if retry_at.tzinfo is None:
+            retry_at = retry_at.replace(tzinfo=timezone.utc)
+        return max((retry_at - datetime.now(timezone.utc)).total_seconds(), 0.0)
+
+
 def request_with_retry(counter_id: str, day: str, *, run_id: int | None = None, offset: int = 1) -> dict:
     headers = {"Authorization": f"OAuth {METRIKA_TOKEN}"}
     params = {
@@ -276,32 +311,67 @@ def request_with_retry(counter_id: str, day: str, *, run_id: int | None = None, 
         "accuracy": "full",
         "lang": "en",
     }
-    sleep_for = 2
+    sleep_for = INITIAL_RETRY_DELAY_SECONDS
+    total_retry_delay = 0.0
     for attempt in range(1, MAX_RETRIES + 1):
         if REQUEST_DELAY_SECONDS > 0:
             time.sleep(REQUEST_DELAY_SECONDS)
+        try:
+            response = requests.get(METRIKA_STATS_URL, headers=headers, params=params, timeout=TIMEOUT)
+        except requests.RequestException:
+            raise MetrikaReturningRequestError(None, attempt, rate_limited=False) from None
+        if response.status_code != 429 and not 500 <= response.status_code <= 599:
+            if response.status_code >= 400:
+                raise MetrikaReturningRequestError(
+                    response.status_code,
+                    attempt,
+                    rate_limited=False,
+                ) from None
+            return response.json() if response.text else {}
+        retry_after = response.headers.get("Retry-After")
+        retry_after_delay = retry_after_seconds(retry_after)
+        rate_limited = response.status_code == 429
+        if attempt == MAX_RETRIES:
+            if run_id:
+                log_collector_event(
+                    run_id,
+                    "error",
+                    "metrika_returning_api_retries_exhausted",
+                    "Metrika returning request retries exhausted",
+                    {
+                        "status_code": response.status_code,
+                        "attempt": attempt,
+                        "max_attempts": MAX_RETRIES,
+                        "retry_after_seconds": retry_after_delay,
+                        "rate_limited": rate_limited,
+                    },
+                )
+            raise MetrikaReturningRequestError(
+                response.status_code,
+                attempt,
+                rate_limited=rate_limited,
+            ) from None
+        delay = max(sleep_for, retry_after_delay) + random.uniform(0, MAX_RETRY_JITTER_SECONDS)
+        delay = min(delay, MAX_TOTAL_RETRY_DELAY_SECONDS - total_retry_delay)
         if run_id:
             log_collector_event(
                 run_id,
-                "info",
-                "metrika_returning_api_request",
-                f"GET Metrika returning content {counter_id} {day}",
-                {"attempt": attempt, "offset": offset},
+                "warning",
+                "metrika_returning_api_retry",
+                "Retrying Metrika returning request",
+                {
+                    "status_code": response.status_code,
+                    "attempt": attempt,
+                    "max_attempts": MAX_RETRIES,
+                    "retry_after_seconds": retry_after_delay,
+                    "sleep_seconds": delay,
+                    "rate_limited": rate_limited,
+                },
             )
-        response = requests.get(METRIKA_STATS_URL, headers=headers, params=params, timeout=TIMEOUT)
-        if response.status_code != 429:
-            response.raise_for_status()
-            return response.json() if response.text else {}
-        if attempt == MAX_RETRIES:
-            response.raise_for_status()
-        retry_after = response.headers.get("Retry-After")
-        try:
-            retry_after_seconds = max(float(retry_after or 0), 0)
-        except ValueError:
-            retry_after_seconds = 0
-        time.sleep(max(sleep_for, retry_after_seconds))
-        sleep_for = min(sleep_for * 2, 60)
-    raise RuntimeError(f"Metrika returning retry loop exhausted for counter {counter_id} day {day}")
+        time.sleep(delay)
+        total_retry_delay += delay
+        sleep_for = min(sleep_for * 2, MAX_RETRY_DELAY_SECONDS)
+    raise MetrikaReturningRequestError(None, MAX_RETRIES, rate_limited=False)
 
 
 def request_all_rows(counter_id: str, day: str, *, run_id: int) -> dict:
@@ -389,6 +459,7 @@ def collect(args) -> dict[str, Any]:
     )
     rows_read = 0
     rows_written = 0
+    pending_rows: list[dict] = []
     errors: list[str] = []
     try:
         for account_id in account_ids:
@@ -402,14 +473,15 @@ def collect(args) -> dict[str, Any]:
                     run_id=run_id,
                 )
                 rows_read += len(raw_rows)
-                rows_written += upsert_returning_rows(normalized_rows)
+                pending_rows.extend(normalized_rows)
                 log_collector_event(
                     run_id,
                     "info",
                     "metrika_returning_day_collected",
-                    f"Collected Metrika returning-content facts for {account_id} {day}",
+                    "Collected Metrika returning-content facts",
                     {"raw_rows": len(raw_rows), "canonical_rows": len(normalized_rows)},
                 )
+        rows_written = upsert_returning_rows(pending_rows)
         finish_run(run_id, "success", rows_read, rows_written, rows_written)
         return {
             "status": "success",
@@ -417,7 +489,6 @@ def collect(args) -> dict[str, Any]:
             "rows_read": rows_read,
             "rows_written": rows_written,
             "dates": dates,
-            "account_ids": account_ids,
         }
     except Exception as exc:
         errors.append(str(exc))
