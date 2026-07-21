@@ -284,7 +284,7 @@ class MetrikaLogsClient:
             "source": "visits",
             "attribution": attribution,
         }
-        evaluation = self._request_json("POST", root + "/evaluate", params=params)
+        evaluation = self._request_json("GET", root + "/evaluate", params=params)
         evaluation_body = evaluation.get("log_request_evaluation")
         if not isinstance(evaluation_body, dict) or not isinstance(
             evaluation_body.get("possible"), bool

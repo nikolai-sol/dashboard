@@ -70,6 +70,10 @@ class FakeSession:
         return response
 
 
+def request_routes(session):
+    return [(method, url) for method, url, _ in session.calls]
+
+
 class ParserTests(unittest.TestCase):
     def test_parses_clickhouse_string_array(self):
         self.assertEqual(
@@ -197,9 +201,9 @@ class ClientTests(unittest.TestCase):
 
         self.assertEqual([row["visit_id"] for row in result], ["v0", "v2"])
         self.assertEqual(
-            [(method, url) for method, url, _ in session.calls],
+            request_routes(session),
             [
-                ("POST", "https://api.test/management/v1/counter/123/logrequests/evaluate"),
+                ("GET", "https://api.test/management/v1/counter/123/logrequests/evaluate"),
                 ("POST", "https://api.test/management/v1/counter/123/logrequests"),
                 ("GET", "https://api.test/management/v1/counter/123/logrequests/77"),
                 ("GET", "https://api.test/management/v1/counter/123/logrequests/77"),
@@ -232,7 +236,16 @@ class ClientTests(unittest.TestCase):
             MetrikaLogsClient("token", session=session, base_url="https://api.test").collect_visits(
                 "123", "2026-07-19"
             )
-        self.assertTrue(session.calls[-1][1].endswith("/77/clean"))
+        self.assertEqual(
+            request_routes(session),
+            [
+                ("GET", "https://api.test/management/v1/counter/123/logrequests/evaluate"),
+                ("POST", "https://api.test/management/v1/counter/123/logrequests"),
+                ("GET", "https://api.test/management/v1/counter/123/logrequests/77"),
+                ("GET", "https://api.test/management/v1/counter/123/logrequests/77/part/0/download"),
+                ("POST", "https://api.test/management/v1/counter/123/logrequests/77/clean"),
+            ],
+        )
 
     def test_does_not_clean_when_create_did_not_succeed(self):
         session = FakeSession([
@@ -244,7 +257,13 @@ class ClientTests(unittest.TestCase):
             MetrikaLogsClient("token", session=session, base_url="https://api.test").collect_visits(
                 "123", "2026-07-19"
             )
-        self.assertEqual(len(session.calls), 2)
+        self.assertEqual(
+            request_routes(session),
+            [
+                ("GET", "https://api.test/management/v1/counter/123/logrequests/evaluate"),
+                ("POST", "https://api.test/management/v1/counter/123/logrequests"),
+            ],
+        )
 
     def test_retries_429_and_5xx_with_a_fixed_bound(self):
         session = FakeSession([
@@ -285,7 +304,16 @@ class ClientTests(unittest.TestCase):
             MetrikaLogsClient(
                 "token", session=session, base_url="https://api.test", max_poll_attempts=2
             ).collect_visits("123", "2026-07-19")
-        self.assertTrue(session.calls[-1][1].endswith("/1/clean"))
+        self.assertEqual(
+            request_routes(session),
+            [
+                ("GET", "https://api.test/management/v1/counter/123/logrequests/evaluate"),
+                ("POST", "https://api.test/management/v1/counter/123/logrequests"),
+                ("GET", "https://api.test/management/v1/counter/123/logrequests/1"),
+                ("GET", "https://api.test/management/v1/counter/123/logrequests/1"),
+                ("POST", "https://api.test/management/v1/counter/123/logrequests/1/clean"),
+            ],
+        )
 
     def test_rejects_invalid_inputs_before_requests(self):
         session = FakeSession([])
