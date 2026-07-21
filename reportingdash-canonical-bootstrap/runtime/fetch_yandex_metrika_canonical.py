@@ -220,6 +220,7 @@ def parse_args():
     parser.add_argument('--run-type', default='manual', choices=['manual', 'cron', 'backfill'])
     parser.add_argument('--counter-id', default='')
     parser.add_argument('--counter-ids', default='')
+    parser.add_argument('--exclude-counter-id', action='append', default=[])
     parser.add_argument('--canonical-release-id', type=int)
     parser.add_argument('--code-revision', default='')
     parser.add_argument('--parser-version', default='')
@@ -300,6 +301,40 @@ def selected_counter_ids(args) -> list[str]:
     return result
 
 
+def excluded_counter_ids(args) -> list[str]:
+    result: list[str] = []
+    for raw_value in getattr(args, 'exclude_counter_id', []) or []:
+        counter_id = clean_text(raw_value)
+        if not counter_id.isdigit():
+            raise ValueError('--exclude-counter-id must contain digits only')
+        if counter_id not in result:
+            result.append(counter_id)
+    return result
+
+
+def validate_counter_filters(selected_ids: Collection[str], excluded_ids: Collection[str]) -> None:
+    overlap = sorted(set(selected_ids).intersection(excluded_ids))
+    if overlap:
+        raise ValueError(
+            'Counter IDs cannot be both included and excluded: ' + ','.join(overlap)
+        )
+
+
+def filter_configured_counters(
+    counters: list[dict],
+    selected_ids: Collection[str],
+    excluded_ids: Collection[str],
+) -> list[dict]:
+    selected = set(selected_ids)
+    excluded = set(excluded_ids)
+    return [
+        row
+        for row in counters
+        if (not selected or clean_text(row.get('counter_id')) in selected)
+        and clean_text(row.get('counter_id')) not in excluded
+    ]
+
+
 def metric_value(metrics: list[Any], index: int) -> float:
     if index >= len(metrics):
         return 0.0
@@ -327,8 +362,13 @@ def fetch_active_counters() -> list[dict]:
         conn.close()
 
 
-def fetch_configured_counters(run_type: str, counter_ids: list[str] | None = None) -> list[dict]:
+def fetch_configured_counters(
+    run_type: str,
+    counter_ids: list[str] | None = None,
+    exclude_counter_ids: list[str] | None = None,
+) -> list[dict]:
     selected_ids = set(counter_ids or [])
+    excluded_ids = set(exclude_counter_ids or [])
     conn = get_db_connection(MYSQL_DB)
     cur = conn.cursor(dictionary=True)
     try:
@@ -355,8 +395,7 @@ def fetch_configured_counters(run_type: str, counter_ids: list[str] | None = Non
                 (DEFAULT_COLLECTION_MODE, SOURCE_KEY, run_type),
             )
             rows = cur.fetchall()
-            if selected_ids:
-                rows = [row for row in rows if clean_text(row.get('counter_id')) in selected_ids]
+            rows = filter_configured_counters(rows, selected_ids, excluded_ids)
             for row in rows:
                 collection_mode = clean_text(row.get('collection_mode')) or DEFAULT_COLLECTION_MODE
                 row['collection_mode'] = (
@@ -372,8 +411,7 @@ def fetch_configured_counters(run_type: str, counter_ids: list[str] | None = Non
                 SOURCE_KEY,
             )
             rows = fetch_active_counters()
-            if selected_ids:
-                rows = [row for row in rows if clean_text(row.get('counter_id')) in selected_ids]
+            rows = filter_configured_counters(rows, selected_ids, excluded_ids)
             for row in rows:
                 row['legacy_active'] = row.get('active', 1)
                 row['is_active'] = 1
@@ -1898,6 +1936,8 @@ def main() -> int:
 
     date_from, date_to = date_range(args)
     target_counter_ids = selected_counter_ids(args)
+    target_excluded_counter_ids = excluded_counter_ids(args)
+    validate_counter_filters(target_counter_ids, target_excluded_counter_ids)
     release_id = getattr(args, 'canonical_release_id', None)
     if release_id is not None and target_counter_ids != [ABBOTT_COUNTER_ID]:
         raise MetrikaCollectionError(
@@ -1922,7 +1962,11 @@ def main() -> int:
     rows_read = rows_written = rows_updated = 0
     try:
         if release_id is not None:
-            counters = fetch_configured_counters(args.run_type, target_counter_ids)
+            counters = fetch_configured_counters(
+                args.run_type,
+                target_counter_ids,
+                target_excluded_counter_ids,
+            )
             if [clean_text(counter.get('counter_id')) for counter in counters] != [ABBOTT_COUNTER_ID]:
                 raise MetrikaCollectionError('The configured Abbott counter is unavailable')
             summary = run_release_backfill(
@@ -1977,7 +2021,11 @@ def main() -> int:
             return 0
 
         ensure_user_behavior_table()
-        counters = fetch_configured_counters(args.run_type, target_counter_ids)
+        counters = fetch_configured_counters(
+            args.run_type,
+            target_counter_ids,
+            target_excluded_counter_ids,
+        )
         if target_counter_ids and not counters:
             raise RuntimeError(f'No active configured Metrika counters matched --counter-ids={",".join(target_counter_ids)}')
         payload = build_payload(counters, date_from, date_to, run_id)
@@ -2007,6 +2055,7 @@ def main() -> int:
                 'api_empty_rows': payload['api_empty_rows'],
                 'skipped_counters': payload['skipped_counters'],
                 'target_counter_ids': target_counter_ids,
+                'excluded_counter_ids': target_excluded_counter_ids,
                 'collected_counter_ids': collected_counter_ids,
                 'logical_scopes': [UTM_ADS_SCOPE_LOGICAL, GOALS_SCOPE_LOGICAL, TRAFFIC_SOURCES_SCOPE_LOGICAL, PAGES_SCOPE_LOGICAL, ENTRY_PAGES_SCOPE_LOGICAL],
                 'storage_scopes': [UTM_ADS_SCOPE_STORAGE, GOALS_SCOPE_STORAGE, TRAFFIC_SOURCES_SCOPE_STORAGE, PAGES_SCOPE_STORAGE, ENTRY_PAGES_SCOPE_STORAGE],

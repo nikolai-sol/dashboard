@@ -11,7 +11,7 @@ private runtime repository.
 
 | Bootstrap path | Root authority | SHA-256 | Runtime role |
 | --- | --- | --- | --- |
-| `collectors/fetch_yandex_metrika_canonical.py` | `fetch_yandex_metrika_canonical.py` | `4a311f30f06b320be5851b0df56b7ba7fcb2d8a187732880a203f8657bcacbe1` | Yandex Metrika canonical collector and Abbott counter backfill entrypoint |
+| `collectors/fetch_yandex_metrika_canonical.py` | `fetch_yandex_metrika_canonical.py` | `333265b9c6cbe8f76200a779450a0ac141a67debf8cbfe8b369a44edef5044e7` | Yandex Metrika canonical collector and Abbott counter backfill entrypoint |
 | `lib/canonical_writer.py` | `canonical_writer.py` | `4939a6afefbee2a74ee1aab59cca115dc5524987a8093708006b7fc2047e57c7` | Staging resume writer and current-active append-only Abbott day publisher |
 | `lib/metrika_logs_api.py` | `metrika_logs_api.py` | `fb9d21101a796c766c46c7ec603cd9b55fcf2fe8765fd6bc517808cb3cf2b251` | Exact Metrika Logs request lifecycle and visit parser |
 | `lib/canonical_release_store.py` | `canonical_release_store.py` | `89c8ee7b99567e8377998af52002b2501036be1c61b090c112213ea66f9fb416` | Candidate release store, persisted validation gate, atomic activation, and rollback pointer management |
@@ -23,7 +23,7 @@ every runbook entrypoint and each repository-local Python dependency.
 
 | Bootstrap path | Root authority | SHA-256 | Runtime role |
 | --- | --- | --- | --- |
-| `runtime/fetch_yandex_metrika_canonical.py` | `fetch_yandex_metrika_canonical.py` | `4a311f30f06b320be5851b0df56b7ba7fcb2d8a187732880a203f8657bcacbe1` | Exact five-scope Metrika collector |
+| `runtime/fetch_yandex_metrika_canonical.py` | `fetch_yandex_metrika_canonical.py` | `333265b9c6cbe8f76200a779450a0ac141a67debf8cbfe8b369a44edef5044e7` | Exact five-scope Metrika collector |
 | `runtime/canonical_writer.py` | `canonical_writer.py` | `4939a6afefbee2a74ee1aab59cca115dc5524987a8093708006b7fc2047e57c7` | Atomic staging and active append-only writer |
 | `runtime/metrika_logs_api.py` | `metrika_logs_api.py` | `fb9d21101a796c766c46c7ec603cd9b55fcf2fe8765fd6bc517808cb3cf2b251` | Exact Metrika Logs request lifecycle and visit parser |
 | `runtime/canonical_release_store.py` | `canonical_release_store.py` | `89c8ee7b99567e8377998af52002b2501036be1c61b090c112213ea66f9fb416` | Exact validation and pointer store |
