@@ -18,7 +18,7 @@ If platform access or cron behavior changes, update this file in the same turn.
 
 ## Runtime and paths
 
-- Root collectors workspace: `/Users/nicko/ReportingDash`
+- Root collectors workspace: `/Users/nafanya/ReportingDash`
 - Canonical runtime on VPS: `/root/reportingdash-canonical`
 - Python venv on VPS: `/root/reportingdash-canonical/venv`
 - Logs: `/root/reportingdash-canonical/logs`
@@ -31,16 +31,20 @@ Main production DBs:
 ## Current canonical cron
 
 Daily jobs on VPS:
+- `06:12` Yandex Metrika canonical daily collector
+- `06:18` Zaruku Yandex Metrika returning-content canonical daily collector
 - `06:20` LinkedIn
 - `06:30` Reddit
 - `06:32` GetIntent
 - `06:34` Yandex Direct
 - `06:35` VK Ads v2
 - `06:37` Hybrid
-- `06:40` canonical monitor
-- `06:50` Telegram summary
+- `06:50` Yandex Webmaster canonical daily collector
 - `06:55` Google Search Console canonical daily collector
-- `06:18` Zaruku Yandex Metrika returning-content canonical daily collector
+- `07:05` canonical monitor
+- `07:10` Telegram summary
+
+The legacy `06:10` localhost Metrika bridge was removed under TASK-072. It was shell-broken and produced no July facts. Do not restore it.
 
 Important runtime rule:
 - cron does not collect the current day
@@ -75,35 +79,35 @@ ssh beget 'pm2 status'
 
 ### LinkedIn
 
-- collector: `/Users/nicko/ReportingDash/fetch_linkedin_canonical.py`
+- collector: `/Users/nafanya/ReportingDash/fetch_linkedin_canonical.py`
 - cron enabled
 - canonical-only accepted source
 - monitored
 
 ### Reddit
 
-- collector: `/Users/nicko/ReportingDash/fetch_reddit_canonical.py`
+- collector: `/Users/nafanya/ReportingDash/fetch_reddit_canonical.py`
 - cron enabled
 - canonical-only accepted source
 - monitored
 
 ### VK Ads v2
 
-- collector: `/Users/nicko/ReportingDash/fetch_vk_ads_v2_canonical.py`
+- collector: `/Users/nafanya/ReportingDash/fetch_vk_ads_v2_canonical.py`
 - cron enabled
 - bridged source
 - monitored non-blocking
 
 ### GetIntent
 
-- collector: `/Users/nicko/ReportingDash/fetch_getintent_canonical.py`
+- collector: `/Users/nafanya/ReportingDash/fetch_getintent_canonical.py`
 - cron enabled
 - bridged source
 - monitored non-blocking
 
 ### Hybrid
 
-- collector: `/Users/nicko/ReportingDash/fetch_hybrid_canonical.py`
+- collector: `/Users/nafanya/ReportingDash/fetch_hybrid_canonical.py`
 - cron enabled
 - bridged source
 - monitored non-blocking
@@ -115,17 +119,17 @@ Important current state:
 
 ### Yandex Direct
 
-- collector: `/Users/nicko/ReportingDash/fetch_yandex_direct_canonical.py`
+- collector: `/Users/nafanya/ReportingDash/fetch_yandex_direct_canonical.py`
 - cron enabled
 - monitored non-blocking
 - working source, but account bridge is still imperfect
 
 ### Yandex Metrika
 
-- collector: `/Users/nicko/ReportingDash/fetch_yandex_metrika_canonical.py`
+- collector: `/Users/nafanya/ReportingDash/fetch_yandex_metrika_canonical.py`
 - implemented
 - monitored
-- cron currently not enabled unless explicitly changed later
+- cron enabled on VPS at `06:12` with `fetch_yandex_metrika_canonical.py --days-back 2 --run-type cron`
 - supports targeted backfills with `--counter-id` / `--counter-ids`
 - writes canonical site analytics scopes:
   - `traffic`: UTM / ads-attribution grain
@@ -140,7 +144,7 @@ Important current state:
 
 #### Yandex Metrika returning content
 
-- collector: `/Users/nicko/ReportingDash/fetch_yandex_metrika_returning_canonical.py`
+- collector: `/Users/nafanya/ReportingDash/fetch_yandex_metrika_returning_canonical.py`
 - production runtime: `/root/reportingdash-canonical/fetch_yandex_metrika_returning_canonical.py`
 - cron enabled on VPS at `06:18`
 - cron command: `fetch_yandex_metrika_returning_canonical.py --backfill-days 3 --run-type cron --account-id 66624469`
@@ -160,7 +164,7 @@ Important current state:
 
 ### Yandex Webmaster
 
-- collector: `/Users/nicko/ReportingDash/fetch_yandex_webmaster_canonical.py` deployed into `/var/www/dashboard/fetch_yandex_webmaster_canonical.py`
+- collector: `/Users/nafanya/ReportingDash/fetch_yandex_webmaster_canonical.py` deployed into `/var/www/dashboard/fetch_yandex_webmaster_canonical.py`
 - implemented for Zaruku host `https:zaruku.ru:443`
 - writes daily canonical facts:
   - `canonical_fact_webmaster_queries_daily`
@@ -168,10 +172,11 @@ Important current state:
   - `canonical_fact_webmaster_pages_daily`
 - URL/page facts come from Yandex Webmaster `query-analytics/list` with `text_indicator = URL`; default `YANDEX_WEBMASTER_SEARCH_LOCATION = ALL_LOCATIONS`, matching the Webmaster UI screenshot.
 - 2026-07-17 production backfill run `1439` collected URL/page facts for `2026-07-13..2026-07-15`; `2026-07-15` has 968 page rows for account `66624469`.
+- `fetch_yandex_webmaster_canonical.py` is the only writer. The JavaScript weekly collector is a fail-closed tombstone; `seo_webmaster_queries_weekly` and `seo_webmaster_pages_weekly` are `DEPRECATED / NO WRITER / DO NOT READ`.
 
 ### Google Search Console
 
-- collector: `/Users/nicko/ReportingDash/fetch_gsc_canonical.py`
+- collector: `/Users/nafanya/ReportingDash/fetch_gsc_canonical.py`
 - production runtime: `/root/reportingdash-canonical/fetch_gsc_canonical.py`
 - cron enabled on VPS at `06:55`
 - log file: `/root/reportingdash-canonical/logs/gsc-canonical-cron.log`
@@ -185,9 +190,10 @@ Important current state:
 - cron window: yesterday plus 3-day backfill (`--backfill-days 3`) because GSC can lag by 2-3 days
 - idempotency: upsert by canonical business key `(analytics_account_id, report_date, query, page, device, country)`; `query_hash` is computed from the same canonical fields only for compatibility
 - optional-layer idempotency: Search appearance uses `feature_hash = sha256(search_type, search_appearance, page, country, device)`; result type uses `type_hash = sha256(search_type, page, country, device)`
-- default result types requested by the collector are `web,image,video,news,discover,googleNews`; unsupported or empty optional layers are skipped/empty without failing the whole run
+- default result types requested by the collector are `web,image,video,news,discover,googleNews`; unsupported optional-layer HTTP 400/403 responses are recorded and make the run `partial`, while successful core facts remain committed
 - 2026-07-19 backfill run `1480` for `2026-07-01..2026-07-18` wrote result-type rows for `web`, `image`, and `video`; Search appearance returned 0 rows for Zaruku through `2026-07-17`
 - legacy columns `property_url`, `query_text`, and `device_type` are nullable compatibility columns and must not be populated by the root collector
+- canonical query lineage is `source_key='google_search_console'`. Under TASK-072, 8,804 canonical-refreshed rows from `2026-07-13..15` were backed up and relabelled in place from stale `seo_os`; they were not deleted because they are the only facts for those dates.
 - old temporary collector `fetch_google_search_console_canonical.py` must not be used as a writer for this table
 
 ## Platform-specific access notes
@@ -269,7 +275,7 @@ Upstream bridge uses:
   - `Client-Login: <req_system.name>`
 
 Legacy bridge code:
-- `/Users/nicko/ReportingDash/nest-second/src/services/direct/direct.service.ts`
+- `/Users/nafanya/ReportingDash/nest-second/src/services/direct/direct.service.ts`
 
 Canonical authority tables:
 - `report_bd.yandex_new`
