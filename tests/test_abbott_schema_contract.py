@@ -763,7 +763,7 @@ class AbbottSchemaContractTest(unittest.TestCase):
         ):
             self.assertFalse(any(table in grant for grant in collector_grants))
 
-    def test_collector_can_only_read_frozen_baseline_snapshots(self):
+    def test_collector_reads_only_frozen_baseline_snapshot_identity_columns(self):
         sql = self._normalized(self._private_sql())
         collector_grants = [
             grant
@@ -778,7 +778,8 @@ class AbbottSchemaContractTest(unittest.TestCase):
         self.assertEqual(
             snapshot_grants,
             [
-                "GRANT SELECT ON report_bd.portal_dataset_snapshots "
+                "GRANT SELECT (id, dataset_key, source_kind) "
+                "ON report_bd.portal_dataset_snapshots "
                 "TO 'abbott_collector_role';"
             ],
         )
