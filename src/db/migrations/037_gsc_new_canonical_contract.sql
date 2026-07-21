@@ -136,14 +136,44 @@ SET @gsc_unique_columns := (
     AND INDEX_NAME = 'uniq_gsc_queries_daily'
   GROUP BY INDEX_NAME
 );
-SET @gsc_unique_target := 'analytics_account_id,report_date,query_hash';
+SET @gsc_named_is_unique := (
+  SELECT IF(MIN(NON_UNIQUE) = 0, 1, 0)
+  FROM information_schema.STATISTICS
+  WHERE TABLE_SCHEMA = DATABASE()
+    AND TABLE_NAME = 'canonical_fact_gsc_queries_daily'
+    AND INDEX_NAME = 'uniq_gsc_queries_daily'
+  GROUP BY INDEX_NAME
+);
+SET @gsc_unique_target := 'analytics_account_id,report_date,query_hash,device,country';
+SET @gsc_equivalent_unique_count := (
+  SELECT COUNT(*)
+  FROM (
+    SELECT INDEX_NAME
+    FROM information_schema.STATISTICS
+    WHERE TABLE_SCHEMA = DATABASE()
+      AND TABLE_NAME = 'canonical_fact_gsc_queries_daily'
+      AND NON_UNIQUE = 0
+      AND INDEX_NAME <> 'PRIMARY'
+    GROUP BY INDEX_NAME
+    HAVING GROUP_CONCAT(COLUMN_NAME ORDER BY SEQ_IN_INDEX SEPARATOR ',') = @gsc_unique_target
+  ) AS equivalent_unique_indexes
+);
 SET @sql := IF(
-  COALESCE(@gsc_unique_columns, '') = @gsc_unique_target,
+  COALESCE(@gsc_unique_columns, '') = @gsc_unique_target
+    AND COALESCE(@gsc_named_is_unique, 0) = 1,
   'SELECT ''uniq_gsc_queries_daily already canonical'' AS info',
   IF(
-    @gsc_unique_columns IS NULL,
-    'ALTER TABLE canonical_fact_gsc_queries_daily ADD UNIQUE KEY uniq_gsc_queries_daily (analytics_account_id, report_date, query_hash)',
-    'ALTER TABLE canonical_fact_gsc_queries_daily DROP INDEX uniq_gsc_queries_daily, ADD UNIQUE KEY uniq_gsc_queries_daily (analytics_account_id, report_date, query_hash)'
+    @gsc_equivalent_unique_count > 0,
+    IF(
+      @gsc_unique_columns IS NULL,
+      'SELECT ''equivalent canonical GSC query unique index already present'' AS info',
+      'ALTER TABLE canonical_fact_gsc_queries_daily DROP INDEX uniq_gsc_queries_daily'
+    ),
+    IF(
+      @gsc_unique_columns IS NULL,
+      'ALTER TABLE canonical_fact_gsc_queries_daily ADD UNIQUE KEY uniq_gsc_queries_daily (analytics_account_id, report_date, query_hash, device, country)',
+      'ALTER TABLE canonical_fact_gsc_queries_daily DROP INDEX uniq_gsc_queries_daily, ADD UNIQUE KEY uniq_gsc_queries_daily (analytics_account_id, report_date, query_hash, device, country)'
+    )
   )
 );
 PREPARE stmt FROM @sql; EXECUTE stmt; DEALLOCATE PREPARE stmt;

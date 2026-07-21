@@ -12,6 +12,7 @@ const optionalSql = migration("038_gsc_optional_search_layers.sql");
 
 const activeColumns = ["analytics_account_id", "query", "page", "country", "device", "position"] as const;
 const legacyColumns = ["property_url", "device_type", "query_text"] as const;
+const queryBusinessKey = "analytics_account_id,report_date,query_hash,device,country";
 
 type SchemaModel = {
   columns: Set<string>;
@@ -61,11 +62,20 @@ function apply037(model: SchemaModel) {
     model.nullable.add(column);
   }
 
-  assert.match(
-    contractSql,
-    /SET @gsc_unique_target := 'analytics_account_id,report_date,query_hash'/,
-  );
-  model.indexes.set("uniq_gsc_queries_daily", "analytics_account_id,report_date,query_hash");
+  assert.match(contractSql, new RegExp(`SET @gsc_unique_target := '${queryBusinessKey}'`));
+  assert.match(contractSql, /NON_UNIQUE = 0/);
+  assert.match(contractSql, /@gsc_named_is_unique/);
+  assert.match(contractSql, /@gsc_equivalent_unique_count/);
+
+  const namedKey = model.indexes.get("uniq_gsc_queries_daily");
+  const hasEquivalentKey = [...model.indexes.values()].includes(queryBusinessKey);
+  if (namedKey !== queryBusinessKey) {
+    if (hasEquivalentKey) {
+      model.indexes.delete("uniq_gsc_queries_daily");
+    } else {
+      model.indexes.set("uniq_gsc_queries_daily", queryBusinessKey);
+    }
+  }
 
   assert.match(
     contractSql,
@@ -92,7 +102,7 @@ test("GSC migrations 034 through 038 build the active canonical schema and repea
 
   for (const column of activeColumns) assert.ok(fresh.columns.has(column));
   for (const column of legacyColumns) assert.ok(fresh.nullable.has(column));
-  assert.equal(fresh.indexes.get("uniq_gsc_queries_daily"), "analytics_account_id,report_date,query_hash");
+  assert.equal(fresh.indexes.get("uniq_gsc_queries_daily"), queryBusinessKey);
   assert.equal(fresh.indexes.get("idx_gsc_queries_daily_account_date"), "analytics_account_id,report_date");
 
   const old = schemaFrom034();
@@ -108,6 +118,25 @@ test("GSC migrations 034 through 038 build the active canonical schema and repea
     device_type: "ALL",
     query_text: "заруку",
   });
+
+  const equivalent = schemaFrom034();
+  equivalent.indexes.delete("uniq_gsc_queries_daily");
+  equivalent.indexes.set("uq_gsc_query_daily", queryBusinessKey);
+  apply037(equivalent);
+  const equivalentSignature = signature(equivalent);
+  apply037(equivalent);
+  assert.equal(signature(equivalent), equivalentSignature);
+  assert.equal(equivalent.indexes.has("uniq_gsc_queries_daily"), false);
+
+  const wrongAndEquivalent = schemaFrom034();
+  wrongAndEquivalent.indexes.set("uniq_gsc_queries_daily", "analytics_account_id,report_date,query_hash");
+  wrongAndEquivalent.indexes.set("uq_gsc_query_daily", queryBusinessKey);
+  apply037(wrongAndEquivalent);
+  assert.equal(wrongAndEquivalent.indexes.has("uniq_gsc_queries_daily"), false);
+  assert.equal(wrongAndEquivalent.indexes.get("uq_gsc_query_daily"), queryBusinessKey);
+  const wrongAndEquivalentSignature = signature(wrongAndEquivalent);
+  apply037(wrongAndEquivalent);
+  assert.equal(signature(wrongAndEquivalent), wrongAndEquivalentSignature);
 
   assert.equal((optionalSql.match(/CREATE TABLE IF NOT EXISTS/g) ?? []).length, 2);
 });
