@@ -516,6 +516,7 @@ def fetch_paginated_search_analytics_rows(
     dimensions: list[str],
     search_type: str = "web",
     tolerate_layer_error: bool = False,
+    optional_failures: list[dict[str, Any]] | None = None,
 ) -> list[dict]:
     all_rows: list[dict] = []
     for start_row in range(0, 1000000, GSC_ROW_LIMIT):
@@ -525,12 +526,21 @@ def fetch_paginated_search_analytics_rows(
         except requests.HTTPError as exc:
             status_code = exc.response.status_code if exc.response is not None else None
             if tolerate_layer_error and status_code in {400, 403}:
+                failure = {
+                    "status_code": status_code,
+                    "site_url": account.site_url,
+                    "day": day,
+                    "search_type": search_type,
+                    "dimensions": dimensions,
+                }
+                if optional_failures is not None:
+                    optional_failures.append(failure)
                 log_collector_event(
                     run_id,
                     "warning",
                     "gsc_optional_layer_skipped",
                     f"Skipped optional GSC layer for {account.site_url} {day}",
-                    {"status_code": status_code, "search_type": search_type, "dimensions": dimensions},
+                    failure,
                 )
                 return []
             raise
@@ -552,7 +562,15 @@ def fetch_search_analytics_rows(access_token: str, account: GscAccount, day: str
     )
 
 
-def fetch_search_appearance_rows(access_token: str, account: GscAccount, day: str, run_id: int, *, search_type: str = "web") -> list[dict]:
+def fetch_search_appearance_rows(
+    access_token: str,
+    account: GscAccount,
+    day: str,
+    run_id: int,
+    *,
+    search_type: str = "web",
+    optional_failures: list[dict[str, Any]] | None = None,
+) -> list[dict]:
     return fetch_paginated_search_analytics_rows(
         access_token,
         account,
@@ -561,10 +579,19 @@ def fetch_search_appearance_rows(access_token: str, account: GscAccount, day: st
         dimensions=["searchAppearance", "page", "country", "device"],
         search_type=search_type,
         tolerate_layer_error=True,
+        optional_failures=optional_failures,
     )
 
 
-def fetch_search_type_rows(access_token: str, account: GscAccount, day: str, run_id: int, *, search_type: str) -> list[dict]:
+def fetch_search_type_rows(
+    access_token: str,
+    account: GscAccount,
+    day: str,
+    run_id: int,
+    *,
+    search_type: str,
+    optional_failures: list[dict[str, Any]] | None = None,
+) -> list[dict]:
     return fetch_paginated_search_analytics_rows(
         access_token,
         account,
@@ -573,6 +600,7 @@ def fetch_search_type_rows(access_token: str, account: GscAccount, day: str, run
         dimensions=["page", "country", "device"],
         search_type=search_type,
         tolerate_layer_error=True,
+        optional_failures=optional_failures,
     )
 
 
@@ -626,7 +654,7 @@ def cron_run_already_completed(today: date | None = None) -> bool:
             WHERE source_key = %s
               AND run_type = 'cron'
               AND run_mode = 'daily'
-              AND status = 'success'
+              AND status IN ('success', 'partial')
               AND DATE(started_at) = %s
             """,
             (SOURCE_KEY, day.strftime("%Y-%m-%d")),
@@ -685,7 +713,7 @@ def collect(args) -> dict[str, Any]:
         return {"status": "skipped", "rows_read": 0, "rows_written": 0}
     dates = selected_dates(args)
     if args.run_type == "cron" and not args.force and cron_run_already_completed():
-        log.info("Skipping cron run: successful daily run already exists today")
+        log.info("Skipping cron run: completed daily run already exists today")
         return {"status": "skipped_quota", "rows_read": 0, "rows_written": 0, "dates": dates}
     correlation_id = str(uuid.uuid4())
     run_id = start_run(
@@ -700,6 +728,7 @@ def collect(args) -> dict[str, Any]:
     rows_read = 0
     rows_written = 0
     errors: list[str] = []
+    optional_failures: list[dict[str, Any]] = []
     try:
         access_token = refresh_access_token()
         account_rows = []
@@ -716,7 +745,14 @@ def collect(args) -> dict[str, Any]:
                 )
                 rows_read += len(raw_rows)
                 rows_written += upsert_gsc_query_rows(normalized_rows)
-                raw_search_appearance_rows = fetch_search_appearance_rows(access_token, account, day, run_id, search_type="web")
+                raw_search_appearance_rows = fetch_search_appearance_rows(
+                    access_token,
+                    account,
+                    day,
+                    run_id,
+                    search_type="web",
+                    optional_failures=optional_failures,
+                )
                 normalized_search_appearance_rows = normalize_search_appearance_rows(
                     {"rows": raw_search_appearance_rows},
                     analytics_account_id=account.analytics_account_id,
@@ -728,7 +764,14 @@ def collect(args) -> dict[str, Any]:
                 rows_written += upsert_gsc_search_appearance_rows(normalized_search_appearance_rows)
                 search_type_counts: dict[str, int] = {}
                 for search_type in search_types:
-                    raw_type_rows = fetch_search_type_rows(access_token, account, day, run_id, search_type=search_type)
+                    raw_type_rows = fetch_search_type_rows(
+                        access_token,
+                        account,
+                        day,
+                        run_id,
+                        search_type=search_type,
+                        optional_failures=optional_failures,
+                    )
                     normalized_type_rows = normalize_search_type_rows(
                         {"rows": raw_type_rows},
                         analytics_account_id=account.analytics_account_id,
@@ -751,8 +794,34 @@ def collect(args) -> dict[str, Any]:
                     },
                 )
         upsert_accounts(account_rows)
-        finish_run(run_id, "success", rows_read, rows_written, rows_written)
-        return {"status": "success", "run_id": run_id, "rows_read": rows_read, "rows_written": rows_written, "dates": dates}
+        status = "partial" if optional_failures else "success"
+        failure_summary = json.dumps(optional_failures, ensure_ascii=False)[:1000] if optional_failures else None
+        if optional_failures:
+            log_collector_event(
+                run_id,
+                "warning",
+                "gsc_run_partial",
+                f"GSC core facts committed with {len(optional_failures)} optional layer failure(s)",
+                {"optional_failures": optional_failures},
+            )
+        finish_run(
+            run_id,
+            status,
+            rows_read,
+            rows_written,
+            rows_written,
+            len(optional_failures),
+            failure_summary,
+        )
+        return {
+            "status": status,
+            "run_id": run_id,
+            "rows_read": rows_read,
+            "rows_written": rows_written,
+            "dates": dates,
+            "optional_failure_count": len(optional_failures),
+            "optional_failures": optional_failures,
+        }
     except Exception as exc:
         errors.append(str(exc))
         finish_run(run_id, "failed", rows_read, rows_written, rows_written, len(errors), "; ".join(errors)[:1000])

@@ -80,14 +80,14 @@
 
 **Files:**
 - Create: production backup artifact under `/root/reportingdash-canonical/backups/task-072/`.
-- Modify: production rows in `canonical_fact_gsc_queries_daily` with scoped DELETE only.
+- Modify: production rows in `canonical_fact_gsc_queries_daily` with a guarded, scoped source-key relabel only.
 
 **Interfaces:**
 - Produces: one lineage (`google_search_console`) in the canonical table and a rollback SQL dump.
 
 - [ ] Dump only `analytics_account_id='66624469' AND source_key='seo_os'` rows.
-- [ ] Verify backup row count equals the pre-delete count.
-- [ ] Delete only the backed-up legacy rows in one transaction.
+- [ ] Verify backup row count and metric signature equal the live legacy-labelled rows.
+- [ ] Relabel only the backed-up rows to `source_key='google_search_console'` in one transaction; do not delete the three covered dates.
 - [ ] Verify zero legacy rows, canonical date coverage, business-key uniqueness, and dashboard payload availability.
 
 ### Task 6: Remove legacy Metrika cron
@@ -118,4 +118,3 @@
 - [ ] Run a live bounded GSC collection and verify partial telemetry if Search Appearance still returns 400/403.
 - [ ] Verify dashboard health, GSC availability, cron inventory, table comments, zero legacy GSC lineage, and runtime kill-list.
 - [ ] Update Notion TASK-072 with exact counts, run IDs, backups, and remaining risks.
-

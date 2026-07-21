@@ -1,5 +1,9 @@
 import datetime as dt
 import unittest
+from types import SimpleNamespace
+from unittest.mock import Mock, patch
+
+import requests
 
 
 class GoogleSearchConsoleCanonicalTests(unittest.TestCase):
@@ -172,6 +176,84 @@ class GoogleSearchConsoleCanonicalTests(unittest.TestCase):
             self.assertNotIn("property_url", sql)
             self.assertNotIn("query_text", sql)
             self.assertNotIn("device_type", sql)
+
+    def test_optional_layer_http_error_is_recorded_for_run_status(self):
+        import fetch_gsc_canonical as gsc
+
+        response = requests.Response()
+        response.status_code = 400
+        failure = requests.HTTPError("bad optional dimension", response=response)
+        optional_failures = []
+
+        with patch.object(gsc, "request_with_retry", side_effect=failure), patch.object(
+            gsc, "log_collector_event"
+        ):
+            rows = gsc.fetch_paginated_search_analytics_rows(
+                "token",
+                gsc.GscAccount("66624469", "https://zaruku.ru/"),
+                "2026-07-20",
+                72,
+                dimensions=["searchAppearance", "page", "country", "device"],
+                tolerate_layer_error=True,
+                optional_failures=optional_failures,
+            )
+
+        self.assertEqual(rows, [])
+        self.assertEqual(len(optional_failures), 1)
+        self.assertEqual(optional_failures[0]["status_code"], 400)
+        self.assertEqual(optional_failures[0]["day"], "2026-07-20")
+        self.assertEqual(optional_failures[0]["dimensions"][0], "searchAppearance")
+
+    def test_collect_finishes_partial_when_optional_layer_failed(self):
+        import fetch_gsc_canonical as gsc
+
+        args = SimpleNamespace(
+            run_type="manual",
+            force=True,
+            date_from="2026-07-20",
+            date_to="2026-07-20",
+            backfill_days=3,
+            account_id="66624469",
+            site_url="https://zaruku.ru/",
+        )
+        finish = Mock()
+
+        def appearance_failure(*_args, optional_failures=None, **_kwargs):
+            optional_failures.append(
+                {
+                    "status_code": 400,
+                    "site_url": "https://zaruku.ru/",
+                    "day": "2026-07-20",
+                    "search_type": "web",
+                    "dimensions": ["searchAppearance", "page", "country", "device"],
+                }
+            )
+            return []
+
+        with patch.object(gsc, "start_run", return_value=72), patch.object(
+            gsc, "finish_run", finish
+        ), patch.object(gsc, "refresh_access_token", return_value="token"), patch.object(
+            gsc,
+            "configured_accounts",
+            return_value=[gsc.GscAccount("66624469", "https://zaruku.ru/")],
+        ), patch.object(gsc, "fetch_search_analytics_rows", return_value=[]), patch.object(
+            gsc, "fetch_search_appearance_rows", side_effect=appearance_failure
+        ), patch.object(gsc, "configured_search_types", return_value=[]), patch.object(
+            gsc, "upsert_accounts"
+        ), patch.object(gsc, "log_collector_event"):
+            result = gsc.collect(args)
+
+        self.assertEqual(result["status"], "partial")
+        self.assertEqual(result["optional_failure_count"], 1)
+        self.assertEqual(finish.call_args.args[1], "partial")
+        self.assertEqual(finish.call_args.args[5], 1)
+
+    def test_partial_cron_run_counts_as_completed_daily_quota(self):
+        import inspect
+        import fetch_gsc_canonical as gsc
+
+        source = inspect.getsource(gsc.cron_run_already_completed)
+        self.assertIn("IN ('success', 'partial')", source)
 
 
 if __name__ == "__main__":

@@ -31,7 +31,7 @@
   - `getintent`: `4 / 4`
   - `hybrid`: `4 / 4`
   - `yandex_direct`: `4 / 4`
-- `yandex_metrika` уже реализована как canonical-first analytics source, но cron по ней пока не включён
+- `yandex_metrika` работает как canonical-first analytics source: основной cron включён в `06:12 UTC`, returning-content — в `06:18 UTC`; legacy bridge `06:10` удалён в TASK-072
 - ранее ручные legacy-правки, которые были нужны для reporting, там где это было принято, считаются согласованным baseline и отражены в canonical
 
 ## Структура проекта

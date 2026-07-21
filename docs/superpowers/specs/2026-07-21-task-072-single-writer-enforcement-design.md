@@ -24,7 +24,7 @@ Use the reversible option allowed by TASK-072: keep the three legacy tables but 
 
 ### GSC lineage
 
-The single canonical contract is `source_key='google_search_console'`, `analytics_account_id`, `report_date`, `query`, `page`, `country`, `device`, metrics, and `ingestion_run_id`. Legacy compatibility columns, including `property_url`, are not part of the contract and may remain `NULL`. Back up the `source_key='seo_os'` rows, verify the canonical writer covers every legacy report date and does not duplicate canonical business keys, then delete only those legacy rows from `canonical_fact_gsc_queries_daily`.
+The single canonical contract is `source_key='google_search_console'`, `analytics_account_id`, `report_date`, `query`, `page`, `country`, `device`, metrics, and `ingestion_run_id`. Legacy compatibility columns, including `property_url`, are not part of the contract and may remain populated on migrated rows. Production inspection showed that all 8,804 `source_key='seo_os'` rows were refreshed by canonical run 1480 in place after the canonical business-key unique index collided; they are current canonical facts with a stale lineage label, not duplicate retained rows. Back them up, verify count/metric signatures, then relabel only those rows to `google_search_console` in one guarded transaction. A delete would erase three complete days and is therefore forbidden in this task.
 
 ### GSC optional layers
 
@@ -38,7 +38,7 @@ Update AGENTS and platform/canonical memory to match the live cron, lineage, dep
 
 - No production mutation before read-only counts and coverage checks.
 - Save root crontab before removing the legacy line.
-- Dump legacy GSC rows before deletion and record pre/post counts.
+- Dump legacy-labelled GSC rows before relabelling and record pre/post counts and metric signatures.
 - Use table comments instead of destructive table drops.
 - Keep collector deploy copies checksummed and preserve a server-side previous file.
 - Run targeted tests before every code change and production health/count checks after deployment.
