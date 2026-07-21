@@ -26,6 +26,12 @@ RELEASE_KEYS = {
     "ABBOTT_RELEASE_DB_HOST", "ABBOTT_RELEASE_DB_PORT", "ABBOTT_RELEASE_DB_USER",
     "ABBOTT_RELEASE_DB_PASSWORD", "ABBOTT_RELEASE_DB_NAME",
 }
+DASHBOARD_KEYS = {
+    "ABBOTT_EMBED_DB_HOST", "ABBOTT_EMBED_DB_PORT", "ABBOTT_EMBED_DB_USER",
+    "ABBOTT_EMBED_DB_PASSWORD", "ABBOTT_EMBED_DB_NAME", "ABBOTT_PRIVATE_DB_HOST",
+    "ABBOTT_PRIVATE_DB_PORT", "ABBOTT_PRIVATE_DB_USER", "ABBOTT_PRIVATE_DB_PASSWORD",
+    "ABBOTT_PRIVATE_DB_NAME",
+}
 
 
 def parse_args() -> argparse.Namespace:
@@ -34,6 +40,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--collector-env", required=True)
     parser.add_argument("--import-env", required=True)
     parser.add_argument("--release-env", required=True)
+    parser.add_argument("--dashboard-env", required=True)
     parser.add_argument("--owner-token", required=True)
     return parser.parse_args()
 
@@ -52,14 +59,14 @@ def private_regular_file(path: Path) -> bool:
     return True
 
 
-def parse_dotenv_keys(path: Path) -> set[str] | None:
+def parse_dotenv_values(path: Path) -> dict[str, str] | None:
     if not private_regular_file(path):
         return None
     try:
         lines = path.read_text(encoding="utf-8").splitlines()
     except (OSError, UnicodeError) as error:
         raise UnsafeSuppliedFile from error
-    keys: set[str] = set()
+    values: dict[str, str] = {}
     for raw in lines:
         line = raw.strip()
         if not line or line.startswith("#"):
@@ -69,22 +76,31 @@ def parse_dotenv_keys(path: Path) -> set[str] | None:
         key, value = line.split("=", 1)
         key = key.strip()
         value = value.strip()
-        if not key or not key.replace("_", "A").isalnum() or key[0].isdigit() or key in keys:
+        if not key or not key.replace("_", "A").isalnum() or key[0].isdigit() or key in values:
             raise UnsafeSuppliedFile
         if not value:
             raise UnsafeSuppliedFile
         if value[0] in {'"', "'"} and (len(value) < 2 or value[-1] != value[0]):
             raise UnsafeSuppliedFile
-        keys.add(key)
-    return keys
+        if value[0] in {'"', "'"}:
+            value = value[1:-1]
+        values[key] = value
+    return values
 
 
-def env_gate(path: Path, required: set[str]) -> dict[str, str]:
-    keys = parse_dotenv_keys(path)
-    if keys is None:
+def env_gate(
+    path: Path,
+    required: set[str],
+    *,
+    exact: dict[str, str] | None = None,
+) -> dict[str, str]:
+    values = parse_dotenv_values(path)
+    if values is None:
         return {"status": "blocked", "reason_code": "missing_explicit_file"}
-    if not required.issubset(keys):
+    if not required.issubset(values):
         return {"status": "blocked", "reason_code": "missing_required_keys"}
+    if exact and any(values.get(key) != expected for key, expected in exact.items()):
+        return {"status": "blocked", "reason_code": "invalid_database_boundary"}
     return {"status": "ready", "reason_code": "required_keys_present"}
 
 
@@ -148,16 +164,25 @@ def main() -> int:
         collector = env_gate(Path(args.collector_env), COLLECTOR_KEYS)
         importer = env_gate(Path(args.import_env), IMPORT_KEYS)
         release = env_gate(Path(args.release_env), RELEASE_KEYS)
+        dashboard = env_gate(
+            Path(args.dashboard_env),
+            DASHBOARD_KEYS,
+            exact={
+                "ABBOTT_EMBED_DB_NAME": "report_bd",
+                "ABBOTT_PRIVATE_DB_NAME": "report_bd_private",
+            },
+        )
         owner = token_gate(Path(args.owner_token))
     except UnsafeSuppliedFile:
         render({"error": {"status": "invalid", "reason_code": "unsafe_supplied_file"}})
         return 2
 
-    runtime_ready = all(gate["status"] == "ready" for gate in (collector, importer, release))
+    runtime_ready = all(gate["status"] == "ready" for gate in (collector, importer, release, dashboard))
     report = {
         "local_rehearsal": local,
         "owner_token": owner,
         "release_db": release,
+        "dashboard_db": dashboard,
         "production_runtime": {
             "status": "ready" if runtime_ready else "blocked",
             "reason_code": "explicit_env_files_ready" if runtime_ready else "external_credentials_incomplete",

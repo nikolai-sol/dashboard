@@ -45,7 +45,7 @@ class AbbottSchemaContractTest(unittest.TestCase):
         private = self._private_sql()
         role_block = private.split("CREATE ROLE IF NOT EXISTS", 1)[1].split(";", 1)[0]
         roles = re.findall(r"'([^']+)'", role_block)
-        self.assertEqual(len(roles), 4)
+        self.assertEqual(len(roles), 5)
         self.assertTrue(all(len(role) <= 32 for role in roles), roles)
 
     def test_coverage_statuses_and_scopes_are_exactly_closed(self):
@@ -73,10 +73,12 @@ class AbbottSchemaContractTest(unittest.TestCase):
     def test_returning_and_coverage_persist_request_fingerprints(self):
         sql = self._normalized(self._primary_sql())
         for table in (
-            "canonical_fact_metrika_returning_pages_daily",
+            "canonical_fact_metrika_returning_pages_release_daily",
             "canonical_source_coverage_daily",
         ):
-            definition = sql.split(f"CREATE TABLE IF NOT EXISTS {table} (", 1)[1]
+            marker = f"CREATE TABLE IF NOT EXISTS {table} ("
+            self.assertIn(marker, sql)
+            definition = sql.split(marker, 1)[1]
             definition = definition.split(") ENGINE=InnoDB", 1)[0]
             self.assertIn("request_fingerprint CHAR(64) NOT NULL", definition)
 
@@ -116,7 +118,7 @@ class AbbottSchemaContractTest(unittest.TestCase):
         sql = self._normalized(self._private_sql())
         for table in (
             "canonical_fact_metrika_site_analytics_daily",
-            "canonical_fact_metrika_returning_pages_daily",
+            "canonical_fact_metrika_returning_pages_release_daily",
             "canonical_source_coverage_daily",
         ):
             self.assertIn(
@@ -125,6 +127,25 @@ class AbbottSchemaContractTest(unittest.TestCase):
                 "TO 'abbott_collector_role';",
                 sql,
             )
+
+    def test_abbott_and_zaruku_returning_contracts_are_distinct(self):
+        primary = self._normalized(self._primary_sql())
+        legacy_collector = (ROOT / "fetch_yandex_metrika_returning_canonical.py").read_text()
+        zaruku_reader = (ROOT / "dashboard-next/src/lib/zaruku-seo.ts").read_text()
+        abbott_reader = (ROOT / "dashboard-next/src/lib/abbott-bi.ts").read_text()
+
+        release_definition = self._table_definition(
+            primary,
+            "canonical_fact_metrika_returning_pages_release_daily",
+        )
+        self.assertIn("canonical_release_id BIGINT UNSIGNED NOT NULL", release_definition)
+        self.assertIn("request_fingerprint CHAR(64) NOT NULL", release_definition)
+        self.assertIn("canonical_fact_metrika_returning_pages_daily", legacy_collector)
+        self.assertNotIn("canonical_fact_metrika_returning_pages_release_daily", legacy_collector)
+        self.assertIn("canonical_fact_metrika_returning_pages_daily", zaruku_reader)
+        self.assertNotIn("canonical_fact_metrika_returning_pages_release_daily", zaruku_reader)
+        self.assertIn("canonical_fact_metrika_returning_pages_release_daily", abbott_reader)
+        self.assertNotIn("`canonical_fact_metrika_returning_pages_daily`", abbott_reader)
 
     def test_collector_role_can_atomically_replace_private_behavior(self):
         sql = self._normalized(self._private_sql())
@@ -194,6 +215,32 @@ class AbbottSchemaContractTest(unittest.TestCase):
         self.assertNotIn(f"ON {table} TO 'abbott_importer_role';", sql)
         self.assertNotIn(f"ON {table} TO 'abbott_release_operator_role';", sql)
 
+    def test_embed_reader_role_is_aggregate_only(self):
+        sql = self._normalized(self._private_sql())
+        role = "'abbott_embed_reader_role'"
+        grants = re.findall(rf"GRANT ([^;]+) ON ([^;]+) TO {role};", sql)
+        self.assertGreater(len(grants), 0)
+        self.assertTrue(all(privileges == "SELECT" for privileges, _ in grants), grants)
+        self.assertTrue(all(table.startswith("report_bd.") for _, table in grants), grants)
+        self.assertFalse(any(table.startswith("report_bd_private.") for _, table in grants), grants)
+        for table in (
+            "portal_data_releases",
+            "portal_active_data_releases",
+            "dashboards",
+            "portal_dataset_snapshots",
+            "portal_content_catalog",
+            "portal_content_lookup_projection",
+            "portal_general_materials",
+            "portal_event_catalog",
+            "portal_external_events",
+            "portal_bitrix_page_facts",
+            "portal_bitrix_journey_transitions",
+            "canonical_fact_metrika_site_analytics_daily",
+            "canonical_fact_metrika_returning_pages_release_daily",
+            "canonical_source_coverage_daily",
+        ):
+            self.assertIn(f"GRANT SELECT ON report_bd.{table} TO {role};", sql)
+
     def test_collector_role_can_record_runs_and_read_configuration(self):
         sql = self._normalized(self._private_sql())
         for contract in (
@@ -226,7 +273,7 @@ class AbbottSchemaContractTest(unittest.TestCase):
         sql = self._normalized(self._private_sql())
         role = "TO 'abbott_release_operator_role';"
         for table in (
-            "report_bd.canonical_fact_metrika_returning_pages_daily",
+            "report_bd.canonical_fact_metrika_returning_pages_release_daily",
             "report_bd_private.canonical_fact_metrika_user_behavior_daily",
         ):
             self.assertNotIn(f"ON {table} {role}", sql)
@@ -724,7 +771,7 @@ class AbbottSchemaContractTest(unittest.TestCase):
             for grant in re.findall(r"GRANT .*?;", sql, flags=re.IGNORECASE)
             if "portal_content_lookup_projection" in grant
         ]
-        self.assertEqual(len(projection_grants), 2)
+        self.assertEqual(len(projection_grants), 3)
         self.assertTrue(any(
             grant.startswith("GRANT SELECT, INSERT ON ")
             and "TO 'abbott_importer_role'" in grant
@@ -733,6 +780,11 @@ class AbbottSchemaContractTest(unittest.TestCase):
         self.assertTrue(any(
             grant.startswith("GRANT SELECT ON ")
             and "TO 'abbott_runtime_reader_role'" in grant
+            for grant in projection_grants
+        ))
+        self.assertTrue(any(
+            grant.startswith("GRANT SELECT ON ")
+            and "TO 'abbott_embed_reader_role'" in grant
             for grant in projection_grants
         ))
         self.assertFalse(any(

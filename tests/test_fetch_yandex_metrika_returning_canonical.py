@@ -1,5 +1,7 @@
 import io
+import importlib
 import logging
+import os
 import unittest
 from datetime import datetime, timedelta, timezone
 from email.utils import format_datetime
@@ -24,6 +26,26 @@ def response(status_code, *, payload=None, headers=None, url="https://api-metrik
 
 
 class YandexMetrikaReturningCanonicalTests(unittest.TestCase):
+    def test_only_metrika_token_authorizes_collector_configuration(self):
+        import dotenv
+        import fetch_yandex_metrika_returning_canonical as collector
+
+        legacy = {
+            "YANDEX_METRIKA_TOKEN": "legacy-one",
+            "METRIKA_OAUTH_TOKEN": "legacy-two",
+            "YANDEX_METRIKA_OAUTH_TOKEN": "legacy-three",
+        }
+        with patch.dict(os.environ, legacy, clear=True), patch.object(
+            dotenv, "load_dotenv", return_value=False
+        ), patch.object(dotenv, "dotenv_values", return_value={}):
+            collector = importlib.reload(collector)
+            self.assertEqual(collector.METRIKA_TOKEN, "")
+
+        with patch.dict(os.environ, {"METRIKA_TOKEN": "current-token", **legacy}, clear=True), patch.object(
+            dotenv, "load_dotenv", return_value=False
+        ), patch.object(dotenv, "dotenv_values", return_value={}):
+            collector = importlib.reload(collector)
+            self.assertEqual(collector.METRIKA_TOKEN, "current-token")
     def test_debug_logging_does_not_emit_http_client_urls_or_counter_ids(self):
         import fetch_yandex_metrika_returning_canonical  # noqa: F401
 

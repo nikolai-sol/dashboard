@@ -9,4 +9,8 @@
 - Current cron remains collection `06:12`, health `07:05`, and one summary `07:10`. The summary includes session integrity; a mismatch is `CRITICAL`.
 - Logs cannot return the current day. Active releases remain append-only: late visit changes require a reviewed successor release/backfill and are never silently rewritten.
 - Bitrix dump remains test-only; the live connector is deferred.
+- Abbott embed reads use the separate aggregate-only `abbott_embed_reader_role` and
+  `ABBOTT_EMBED_DB_*=report_bd`; manager reads keep `ABBOTT_PRIVATE_DB_*=report_bd_private`.
+- Abbott release returning facts use `canonical_fact_metrika_returning_pages_release_daily`;
+  Zaruku retains `canonical_fact_metrika_returning_pages_daily` unchanged.
 - No deployment, secret installation, API call, database migration, cron edit, Telegram send, or Hermes schedule occurred.

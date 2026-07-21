@@ -129,7 +129,7 @@ Existing canonical traffic and page facts remain source-of-truth after collector
 
 Raw user-behavior facts live physically in `report_bd_private.canonical_fact_metrika_user_behavior_daily`, also keyed by `canonical_release_id`. The canonical collector has a narrowly scoped writer credential. Only the protected Abbott server-side read model has a separate privileged read-only credential. The general dashboard runtime credential and embed read model cannot select this table. Aggregate, non-identifying behavior projections may be materialized in `report_bd` for ordinary charts.
 
-Add `canonical_fact_metrika_returning_pages_daily` with grain:
+Add `canonical_fact_metrika_returning_pages_release_daily` with grain:
 
 `canonical_release_id + counter_id + date + raw_page + return_bucket_code`
 
@@ -150,7 +150,7 @@ It records collection status, canonical release ID, API total rows, persisted ro
 | Popular pages/materials | Canonical Metrika page daily joined to `portal_content_catalog` | Abbott counter + normalized URL | Rank by pageviews/visits; retain title/material metadata |
 | User paths and reading behavior | Canonical private user-behavior facts | Abbott counter + raw `UserID` | Only authenticated managers receive row-level output |
 | Registered-doctor segment | Canonical behavior joined to `portal_user_directions_private` and later Bitrix | raw `UserID` | Separate segment/view, not substituted for all traffic |
-| Returning users/pages | `canonical_fact_metrika_returning_pages_daily` | Abbott counter | No on-demand mixed-counter query in the dashboard request |
+| Returning users/pages | `canonical_fact_metrika_returning_pages_release_daily` | Abbott counter | No on-demand mixed-counter query in the dashboard request |
 | Bitrix activity | Versioned private Bitrix snapshot tables | snapshot ID | Labeled as test-dump data until a scheduled source is introduced |
 
 The all-portal and registered-doctor views are related but have different denominators. The dashboard must not replace the full traffic total with a user-behavior total when a `UserID` or direction filter is enabled. Filtered cards must be labeled as registered-doctor metrics.

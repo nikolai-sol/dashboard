@@ -78,7 +78,7 @@ def _delete_release_day(cur, release_id: int, counter_id: str, report_date: str)
     for table in (
         'report_bd.canonical_fact_metrika_site_analytics_daily',
         'report_bd_private.canonical_fact_metrika_visits',
-        'report_bd.canonical_fact_metrika_returning_pages_daily',
+        'report_bd.canonical_fact_metrika_returning_pages_release_daily',
         'report_bd.canonical_source_coverage_daily',
     ):
         cur.execute(
@@ -244,7 +244,7 @@ def _insert_returning_rows(cur, rows: Sequence[dict]) -> int:
     ]
     cur.executemany(
         """
-        INSERT INTO report_bd.canonical_fact_metrika_returning_pages_daily (
+        INSERT INTO report_bd.canonical_fact_metrika_returning_pages_release_daily (
             canonical_release_id, counter_id, report_date, raw_page_value,
             raw_page_hash, normalized_page, normalized_page_hash,
             return_bucket_code, return_bucket_label, source_percentage,
@@ -470,7 +470,7 @@ def _lock_mutable_abbott_release(
         'report_bd.canonical_source_coverage_daily',
         'report_bd.canonical_fact_metrika_site_analytics_daily',
         'report_bd_private.canonical_fact_metrika_visits',
-        'report_bd.canonical_fact_metrika_returning_pages_daily',
+        'report_bd.canonical_fact_metrika_returning_pages_release_daily',
     ):
         cur.execute(
             f"""

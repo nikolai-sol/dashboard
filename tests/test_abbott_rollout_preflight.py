@@ -40,7 +40,7 @@ class AbbottRolloutPreflightTest(unittest.TestCase):
             )
         return evidence
 
-    def command(self, evidence: Path, collector: Path, importer: Path, release: Path, token: Path):
+    def command(self, evidence: Path, collector: Path, importer: Path, release: Path, dashboard: Path, token: Path):
         return [
             sys.executable,
             str(PREFLIGHT),
@@ -48,6 +48,7 @@ class AbbottRolloutPreflightTest(unittest.TestCase):
             "--collector-env", str(collector),
             "--import-env", str(importer),
             "--release-env", str(release),
+            "--dashboard-env", str(dashboard),
             "--owner-token", str(token),
         ]
 
@@ -60,6 +61,7 @@ class AbbottRolloutPreflightTest(unittest.TestCase):
                     root / "missing-collector",
                     root / "missing-importer",
                     root / "missing-release",
+                    root / "missing-dashboard",
                     root / "missing-token",
                 ),
                 text=True,
@@ -74,7 +76,7 @@ class AbbottRolloutPreflightTest(unittest.TestCase):
             report["local_rehearsal"]["reason_code"],
             "repeat_safe_schema_rehearsed",
         )
-        for gate in ("owner_token", "release_db", "production_runtime", "cron", "hermes"):
+        for gate in ("owner_token", "release_db", "dashboard_db", "production_runtime", "cron", "hermes"):
             self.assertEqual(report[gate]["status"], "blocked")
 
     def test_repeat_safe_schema_is_ready_without_live_bitrix_lifecycle(self):
@@ -84,13 +86,15 @@ class AbbottRolloutPreflightTest(unittest.TestCase):
             collector = root / "collector.env"
             importer = root / "importer.env"
             release = root / "release.env"
+            dashboard = root / "dashboard.env"
             token = root / "owner.token"
             self.write_private(collector, "MYSQL_HOST=x\nMYSQL_PORT=1\nMYSQL_USER=x\nMYSQL_PASSWORD=x\nMYSQL_DB=report_bd\nMETRIKA_TOKEN=x\n")
             self.write_private(importer, "ABBOTT_IMPORT_DB_HOST=x\nABBOTT_IMPORT_DB_PORT=1\nABBOTT_IMPORT_DB_USER=x\nABBOTT_IMPORT_DB_PASSWORD=x\n")
             self.write_private(release, "ABBOTT_RELEASE_DB_HOST=x\nABBOTT_RELEASE_DB_PORT=1\nABBOTT_RELEASE_DB_USER=x\nABBOTT_RELEASE_DB_PASSWORD=x\nABBOTT_RELEASE_DB_NAME=report_bd\n")
+            self.write_private(dashboard, "ABBOTT_EMBED_DB_HOST=x\nABBOTT_EMBED_DB_PORT=1\nABBOTT_EMBED_DB_USER=x\nABBOTT_EMBED_DB_PASSWORD=x\nABBOTT_EMBED_DB_NAME=report_bd\nABBOTT_PRIVATE_DB_HOST=x\nABBOTT_PRIVATE_DB_PORT=1\nABBOTT_PRIVATE_DB_USER=x\nABBOTT_PRIVATE_DB_PASSWORD=x\nABBOTT_PRIVATE_DB_NAME=report_bd_private\n")
             self.write_private(token, "owner-token-placeholder\n")
             result = subprocess.run(
-                self.command(evidence, collector, importer, release, token),
+                self.command(evidence, collector, importer, release, dashboard, token),
                 text=True,
                 stdout=subprocess.PIPE,
                 stderr=subprocess.PIPE,
@@ -105,9 +109,36 @@ class AbbottRolloutPreflightTest(unittest.TestCase):
         )
         self.assertEqual(report["owner_token"]["status"], "ready")
         self.assertEqual(report["release_db"]["status"], "ready")
+        self.assertEqual(report["dashboard_db"]["status"], "ready")
         self.assertEqual(report["production_runtime"]["status"], "ready")
         self.assertEqual(report["cron"]["status"], "blocked")
         self.assertEqual(report["hermes"]["status"], "blocked")
+
+    def test_dashboard_database_names_must_match_audience_boundary(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            collector = root / "collector.env"
+            importer = root / "importer.env"
+            release = root / "release.env"
+            dashboard = root / "dashboard.env"
+            token = root / "owner.token"
+            self.write_private(collector, "MYSQL_HOST=x\nMYSQL_PORT=1\nMYSQL_USER=x\nMYSQL_PASSWORD=x\nMYSQL_DB=report_bd\nMETRIKA_TOKEN=x\n")
+            self.write_private(importer, "ABBOTT_IMPORT_DB_HOST=x\nABBOTT_IMPORT_DB_PORT=1\nABBOTT_IMPORT_DB_USER=x\nABBOTT_IMPORT_DB_PASSWORD=x\n")
+            self.write_private(release, "ABBOTT_RELEASE_DB_HOST=x\nABBOTT_RELEASE_DB_PORT=1\nABBOTT_RELEASE_DB_USER=x\nABBOTT_RELEASE_DB_PASSWORD=x\nABBOTT_RELEASE_DB_NAME=report_bd\n")
+            self.write_private(dashboard, "ABBOTT_EMBED_DB_HOST=x\nABBOTT_EMBED_DB_PORT=1\nABBOTT_EMBED_DB_USER=x\nABBOTT_EMBED_DB_PASSWORD=x\nABBOTT_EMBED_DB_NAME=report_bd_private\nABBOTT_PRIVATE_DB_HOST=x\nABBOTT_PRIVATE_DB_PORT=1\nABBOTT_PRIVATE_DB_USER=x\nABBOTT_PRIVATE_DB_PASSWORD=x\nABBOTT_PRIVATE_DB_NAME=report_bd\n")
+            self.write_private(token, "owner-token-placeholder\n")
+            result = subprocess.run(
+                self.command(self.local_evidence(root), collector, importer, release, dashboard, token),
+                text=True,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                check=False,
+            )
+        self.assertEqual(result.returncode, 0, result.stderr)
+        report = json.loads(result.stdout)
+        self.assertEqual(report["dashboard_db"]["status"], "blocked")
+        self.assertEqual(report["dashboard_db"]["reason_code"], "invalid_database_boundary")
+        self.assertEqual(report["production_runtime"]["status"], "blocked")
 
     def test_dangling_symlink_is_rejected_as_unsafe(self):
         with tempfile.TemporaryDirectory() as temporary:
@@ -121,6 +152,7 @@ class AbbottRolloutPreflightTest(unittest.TestCase):
                     dangling,
                     root / "missing-importer",
                     root / "missing-release",
+                    root / "missing-dashboard",
                     root / "missing-token",
                 ),
                 text=True,
@@ -148,7 +180,7 @@ class AbbottRolloutPreflightTest(unittest.TestCase):
             token = root / "token"
             self.write_private(token, "x\n")
             result = subprocess.run(
-                self.command(evidence, root / "missing", valid, invalid, alias),
+                self.command(evidence, root / "missing", valid, invalid, root / "missing-dashboard", alias),
                 text=True,
                 stdout=subprocess.PIPE,
                 stderr=subprocess.PIPE,

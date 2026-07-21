@@ -446,6 +446,63 @@ class MetrikaDayBundleTests(unittest.TestCase):
         )
         self.assertEqual(len({row["scope_hash"] for row in result.rows}), 3)
 
+    def test_all_release_reports_scopes_ignore_legacy_attribution_environment(self):
+        import fetch_yandex_metrika_canonical as collector
+        from metrika_pagination import PaginationResult
+
+        empty = PaginationResult(
+            rows=(),
+            total_rows=0,
+            pages_fetched=1,
+            pagination_complete=True,
+            sampled=False,
+            sample_share=None,
+        )
+        with patch.object(collector, "METRIKA_ATTRIBUTION", "first"), patch.object(
+            collector, "METRIKA_UTM_ADS_ATTRIBUTION", "cross_device_first"
+        ), patch.object(
+            collector, "request_all_pages", return_value=empty
+        ) as request_pages:
+            fingerprints = {
+                scope: collector.collect_metrika_scope(
+                    collector.ABBOTT_COUNTER_ID,
+                    "2026-01-02",
+                    scope,
+                    77,
+                    41,
+                    **FINGERPRINT_CONTEXT,
+                ).request_fingerprint
+                for scope in ("traffic", "page", "returning")
+            }
+
+        self.assertEqual(len(request_pages.call_args_list), 3)
+        for scope, request_call in zip(("traffic", "page", "returning"), request_pages.call_args_list):
+            kwargs = request_call.kwargs
+            self.assertEqual(kwargs["attribution"], "lastsign", scope)
+            rendered_dimensions = kwargs["dimensions"].replace("<attribution>", "lastsign")
+            expected_api_fingerprint = collector.api_fingerprint(
+                dimensions=collector.parse_csv_values(rendered_dimensions),
+                metrics=collector.parse_csv_values(kwargs["metrics"]),
+                filters=collector.clean_text(kwargs.get("extra_params", {}).get("filters")),
+                attribution="lastsign",
+                accuracy=collector.clean_text(kwargs.get("extra_params", {}).get("accuracy")),
+                pagination_limit=collector.METRIKA_PAGE_LIMIT,
+                timezone=collector.METRIKA_TIMEZONE,
+                code_revision=FINGERPRINT_CONTEXT["code_revision"],
+                parser_version=FINGERPRINT_CONTEXT["parser_version"],
+            )
+            self.assertEqual(
+                fingerprints[scope],
+                collector.build_scope_hash(
+                    scope,
+                    [collector.ABBOTT_COUNTER_ID, "2026-01-02", expected_api_fingerprint],
+                ),
+            )
+        self.assertEqual(
+            request_pages.call_args_list[0].kwargs["dimensions"],
+            "ym:s:lastsignUTMSource,ym:s:lastsignUTMMedium,ym:s:lastsignUTMCampaign",
+        )
+
     def test_other_user_id_partitions_reconcile_globally_and_per_source(self):
         import fetch_yandex_metrika_canonical as collector
 

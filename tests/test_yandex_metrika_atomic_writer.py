@@ -298,6 +298,39 @@ class AtomicMetrikaWriterTest(unittest.TestCase):
         self.assertFalse(
             any("canonical_fact_metrika_user_behavior_daily" in sql for sql in lock_sql)
         )
+        self.assertTrue(
+            any("canonical_fact_metrika_returning_pages_release_daily" in sql for sql in delete_sql)
+        )
+        self.assertTrue(
+            any("canonical_fact_metrika_returning_pages_release_daily" in sql for sql in lock_sql)
+        )
+        self.assertFalse(
+            any("canonical_fact_metrika_returning_pages_daily" in sql for sql in delete_sql)
+        )
+        self.assertFalse(
+            any("canonical_fact_metrika_returning_pages_daily" in sql for sql in lock_sql)
+        )
+
+    def test_release_returning_insert_targets_release_scoped_authority(self):
+        import canonical_writer as writer
+
+        conn = RecordingConnection()
+        row = {
+            **day_bundle().scopes["returning"].rows[0],
+            "canonical_release_id": 41,
+            "counter_id": "90602537",
+            "report_date": "2026-01-02",
+            "ingestion_run_id": 77,
+        }
+        written = writer._insert_returning_rows(
+            conn.cursor_instance,
+            [row],
+        )
+
+        self.assertEqual(written, 1)
+        sql = conn.sql_calls[0][1]
+        self.assertIn("canonical_fact_metrika_returning_pages_release_daily", sql)
+        self.assertNotIn("canonical_fact_metrika_returning_pages_daily", sql)
 
     def test_other_partition_mismatch_prevents_fact_and_success_coverage_writes(self):
         import fetch_yandex_metrika_canonical as collector

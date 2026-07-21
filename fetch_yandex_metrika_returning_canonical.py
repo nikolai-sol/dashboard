@@ -75,7 +75,7 @@ RETURNING_METRIKA_METRICS = ",".join(
     ]
 )
 METRIKA_STATS_URL = env_first("METRIKA_STATS_URL", default="https://api-metrika.yandex.net/stat/v1/data")
-METRIKA_TOKEN = env_first("METRIKA_TOKEN", "YANDEX_METRIKA_TOKEN", "METRIKA_OAUTH_TOKEN", "YANDEX_METRIKA_OAUTH_TOKEN")
+METRIKA_TOKEN = env_first("METRIKA_TOKEN")
 REQUEST_DELAY_SECONDS = float(env_first("METRIKA_RETURNING_REQUEST_DELAY_SECONDS", "METRIKA_REQUEST_DELAY_SECONDS", default="0.35") or 0)
 MAX_RETRIES = 8
 INITIAL_RETRY_DELAY_SECONDS = 5.0
@@ -468,7 +468,7 @@ def log_collector_event(*args, **kwargs):
 
 def collect(args) -> dict[str, Any]:
     if not METRIKA_TOKEN:
-        raise RuntimeError("METRIKA_TOKEN/YANDEX_METRIKA_TOKEN is missing from env")
+        raise RuntimeError("METRIKA_TOKEN is missing from env")
     dates = selected_dates(args)
     if args.run_type == "cron" and not args.force and cron_run_already_completed():
         log.info("Skipping returning-content cron run: successful daily run already exists today")

@@ -34,7 +34,7 @@
 - Create: `tests/test_abbott_schema_contract.py`
 
 **Interfaces:**
-- Produces primary tables `portal_data_releases`, `portal_active_data_releases`, `portal_dataset_snapshots`, `portal_migration_validation_runs`, `portal_content_catalog`, `portal_general_materials`, `portal_external_events`, `canonical_fact_metrika_site_analytics_daily`, `canonical_fact_metrika_returning_pages_daily`, and `canonical_source_coverage_daily`.
+- Produces primary tables `portal_data_releases`, `portal_active_data_releases`, `portal_dataset_snapshots`, `portal_migration_validation_runs`, `portal_content_catalog`, `portal_general_materials`, `portal_external_events`, `canonical_fact_metrika_site_analytics_daily`, `canonical_fact_metrika_returning_pages_release_daily`, and `canonical_source_coverage_daily`.
 - Produces private tables `report_bd_private.canonical_fact_metrika_user_behavior_daily`, `portal_user_directions_private`, `portal_bitrix_page_facts`, and `portal_bitrix_journeys_private`.
 - All candidate facts use `canonical_release_id + counter/account + report_date` in their unique key.
 
@@ -432,7 +432,7 @@ Expected: FAIL with missing modules.
 
 - [ ] **Step 3: Implement parameterized private store and transactional importer**
 
-Use a server-only private pool configured by `ABBOTT_PRIVATE_DB_HOST`, `ABBOTT_PRIVATE_DB_PORT`, `ABBOTT_PRIVATE_DB_USER`, `ABBOTT_PRIVATE_DB_PASSWORD`, and `ABBOTT_PRIVATE_DB_NAME=report_bd_private`. Import CLI accepts only explicit paths. It creates a staging snapshot, validates counts/fingerprints, then retires/activates snapshots in one transaction; failure leaves the previous active snapshot untouched.
+Use separate server-only pools: embed uses `ABBOTT_EMBED_DB_*` with `ABBOTT_EMBED_DB_NAME=report_bd`, while manager uses `ABBOTT_PRIVATE_DB_*` with `ABBOTT_PRIVATE_DB_NAME=report_bd_private`. Import CLI accepts only explicit paths. It creates a staging snapshot, validates counts/fingerprints, then retires/activates snapshots in one transaction; failure leaves the previous active snapshot untouched.
 
 - [ ] **Step 4: Switch Abbott loader from filesystem to DB**
 
@@ -493,7 +493,7 @@ Expected: FAIL with missing modules.
 
 - [ ] **Step 3: Implement date helper, guard, and UI default**
 
-`defaultAbbottRange` uses the configured business timezone and returns current calendar month through yesterday. Add `security:public-assets` and place it before build in `ci:verify`; deploy runs it before packaging and against standalone output before upload. Production env rendering requires non-empty `ABBOTT_DASHBOARD_PASSWORD`, `ABBOTT_DASHBOARD_EMBED_KEY`, `METRIKA_TOKEN`, and all `ABBOTT_PRIVATE_DB_*` connection keys without printing their values. `validate-production-release.sh` verifies required key names and rejects a staged `public/abbott` directory before any upload.
+`defaultAbbottRange` uses the configured business timezone and returns current calendar month through yesterday. Add `security:public-assets` and place it before build in `ci:verify`; deploy runs it before packaging and against standalone output before upload. Production env rendering requires non-empty `ABBOTT_DASHBOARD_PASSWORD`, `ABBOTT_DASHBOARD_EMBED_KEY`, `METRIKA_TOKEN`, all `ABBOTT_EMBED_DB_*`, and all `ABBOTT_PRIVATE_DB_*` connection keys without printing their values. `validate-production-release.sh` verifies required key names and exact database names and rejects a staged `public/abbott` directory before any upload.
 
 - [ ] **Step 4: Remove tracked assets and verify GREEN**
 

@@ -203,6 +203,7 @@ python3 abbott_rollout_preflight.py \
   --collector-env /protected/abbott/collector.env \
   --import-env /protected/abbott/import.env \
   --release-env /protected/abbott/release.env \
+  --dashboard-env "$DASHBOARD_OWNER_ENV_FILE" \
   --owner-token /protected/abbott/owner-token \
   > /tmp/abbott-rollout-rehearsal/evidence/external-gates.json
 ```
@@ -217,7 +218,7 @@ steps.
 
 ## Database accounts, roles, and environment ownership
 
-Apply least privilege with four separate MySQL accounts. The schema SQL
+Apply least privilege with five separate MySQL accounts. The schema SQL
 creates these roles but intentionally does not create accounts or passwords:
 
 | Process | Role | Runtime environment |
@@ -225,11 +226,12 @@ creates these roles but intentionally does not create accounts or passwords:
 | Canonical Metrika collector | `abbott_collector_role` | `MYSQL_HOST`, `MYSQL_PORT`, `MYSQL_USER`, `MYSQL_PASSWORD`, `MYSQL_DB=report_bd`, `METRIKA_TOKEN` in `$ABBOTT_COLLECTOR_ENV_FILE` |
 | Private snapshot importer | `abbott_importer_role` | `ABBOTT_IMPORT_DB_HOST`, `ABBOTT_IMPORT_DB_PORT`, `ABBOTT_IMPORT_DB_USER`, `ABBOTT_IMPORT_DB_PASSWORD` in `$ABBOTT_IMPORT_ENV_FILE` |
 | Baseline/comparator/release lifecycle operator | `abbott_release_operator_role` | `ABBOTT_RELEASE_DB_HOST`, `ABBOTT_RELEASE_DB_PORT`, `ABBOTT_RELEASE_DB_USER`, `ABBOTT_RELEASE_DB_PASSWORD`, `ABBOTT_RELEASE_DB_NAME=report_bd` in `$ABBOTT_RELEASE_ENV_FILE` |
+| Server-side Abbott embed read model | `abbott_embed_reader_role` | `ABBOTT_EMBED_DB_HOST`, `ABBOTT_EMBED_DB_PORT`, `ABBOTT_EMBED_DB_USER`, `ABBOTT_EMBED_DB_PASSWORD`, `ABBOTT_EMBED_DB_NAME=report_bd` in `$DASHBOARD_OWNER_ENV_FILE` |
 | Server-side Abbott manager read model | `abbott_runtime_reader_role` | `ABBOTT_PRIVATE_DB_HOST`, `ABBOTT_PRIVATE_DB_PORT`, `ABBOTT_PRIVATE_DB_USER`, `ABBOTT_PRIVATE_DB_PASSWORD`, `ABBOTT_PRIVATE_DB_NAME=report_bd_private` in `$DASHBOARD_OWNER_ENV_FILE` |
 
-The general dashboard/embed database account must not receive private-table
-grants. Embed output is aggregate-only even when a manager process has the
-reader role.
+The embed account receives only `abbott_embed_reader_role` and no grant in
+`report_bd_private`. The manager account receives `abbott_runtime_reader_role`;
+the two audiences never share a pool or credential.
 
 The DBA creates accounts and passwords through a mode-`0600` owner-supplied
 SQL file, never as command-line arguments. Its non-secret role assignment
@@ -315,7 +317,7 @@ Verify table and role names only; do not query private rows:
 ```bash
 mysql --defaults-extra-file="$ABBOTT_OWNER_MYSQL_DEFAULTS_FILE" \
   --batch --skip-column-names report_bd \
-  --execute="SELECT COUNT(*) FROM information_schema.tables WHERE (table_schema='report_bd' AND table_name='portal_data_releases') OR (table_schema='report_bd' AND table_name='portal_active_data_releases') OR (table_schema='report_bd' AND table_name='portal_dataset_snapshots') OR (table_schema='report_bd' AND table_name='portal_release_source_imports') OR (table_schema='report_bd' AND table_name='portal_migration_validation_runs') OR (table_schema='report_bd' AND table_name='portal_bitrix_page_facts') OR (table_schema='report_bd' AND table_name='canonical_fact_metrika_site_analytics_daily') OR (table_schema='report_bd' AND table_name='canonical_fact_metrika_returning_pages_daily') OR (table_schema='report_bd' AND table_name='canonical_source_coverage_daily') OR (table_schema='report_bd_private' AND table_name='canonical_fact_metrika_visits') OR (table_schema='report_bd_private' AND table_name='portal_user_directions_private') OR (table_schema='report_bd_private' AND table_name='portal_bitrix_page_facts') OR (table_schema='report_bd_private' AND table_name='portal_bitrix_journeys_private')" \
+  --execute="SELECT COUNT(*) FROM information_schema.tables WHERE (table_schema='report_bd' AND table_name='portal_data_releases') OR (table_schema='report_bd' AND table_name='portal_active_data_releases') OR (table_schema='report_bd' AND table_name='portal_dataset_snapshots') OR (table_schema='report_bd' AND table_name='portal_release_source_imports') OR (table_schema='report_bd' AND table_name='portal_migration_validation_runs') OR (table_schema='report_bd' AND table_name='portal_bitrix_page_facts') OR (table_schema='report_bd' AND table_name='canonical_fact_metrika_site_analytics_daily') OR (table_schema='report_bd' AND table_name='canonical_fact_metrika_returning_pages_release_daily') OR (table_schema='report_bd' AND table_name='canonical_source_coverage_daily') OR (table_schema='report_bd_private' AND table_name='canonical_fact_metrika_visits') OR (table_schema='report_bd_private' AND table_name='portal_user_directions_private') OR (table_schema='report_bd_private' AND table_name='portal_bitrix_page_facts') OR (table_schema='report_bd_private' AND table_name='portal_bitrix_journeys_private')" \
   > "$CHECKPOINT_DIR/schema-table-count.txt"
 export ACTUAL_SCHEMA_TABLE_COUNT="$(cat "$CHECKPOINT_DIR/schema-table-count.txt")"
 test "$ACTUAL_SCHEMA_TABLE_COUNT" = 13
@@ -626,6 +628,12 @@ Also require manager/embed contract tests, release-asset scanning, deterministic
 Abbott health, and a dashboard smoke test. Warnings are accepted only by a
 named human reviewer in the validation table; this runbook does not auto-accept
 them.
+
+The release scan keeps path and symlink rejection and also inspects bounded
+`.json`, `.jsonl`, `.csv`, `.tsv`, `.xlsx`, and `.xls` candidates for raw User
+ID, protected visit/journey, and Bitrix export signatures. Malformed,
+unreadable, or over-limit candidates fail closed. Diagnostics contain paths
+only and must never echo file content or identifiers.
 
 Before validation, re-attest the canonical runtime and install a deterministic
 full dashboard release from the reviewed revision. The installer copies the

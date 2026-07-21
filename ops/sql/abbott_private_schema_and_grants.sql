@@ -398,7 +398,8 @@ CREATE ROLE IF NOT EXISTS
   'abbott_collector_role',
   'abbott_importer_role',
   'abbott_release_operator_role',
-  'abbott_runtime_reader_role';
+  'abbott_runtime_reader_role',
+  'abbott_embed_reader_role';
 
 GRANT SELECT ON report_bd.portal_data_releases
   TO 'abbott_collector_role';
@@ -416,7 +417,7 @@ GRANT INSERT ON report_bd.canonical_collector_run_events
   TO 'abbott_collector_role';
 GRANT SELECT, INSERT, UPDATE, DELETE ON report_bd.canonical_fact_metrika_site_analytics_daily
   TO 'abbott_collector_role';
-GRANT SELECT, INSERT, UPDATE, DELETE ON report_bd.canonical_fact_metrika_returning_pages_daily
+GRANT SELECT, INSERT, UPDATE, DELETE ON report_bd.canonical_fact_metrika_returning_pages_release_daily
   TO 'abbott_collector_role';
 GRANT SELECT, INSERT, UPDATE, DELETE ON report_bd.canonical_source_coverage_daily
   TO 'abbott_collector_role';
@@ -503,7 +504,7 @@ GRANT SELECT ON report_bd.portal_bitrix_journey_transitions
   TO 'abbott_runtime_reader_role';
 GRANT SELECT ON report_bd.canonical_fact_metrika_site_analytics_daily
   TO 'abbott_runtime_reader_role';
-GRANT SELECT ON report_bd.canonical_fact_metrika_returning_pages_daily
+GRANT SELECT ON report_bd.canonical_fact_metrika_returning_pages_release_daily
   TO 'abbott_runtime_reader_role';
 GRANT SELECT ON report_bd.canonical_source_coverage_daily
   TO 'abbott_runtime_reader_role';
@@ -517,5 +518,22 @@ GRANT SELECT ON report_bd_private.portal_bitrix_page_facts
   TO 'abbott_runtime_reader_role';
 GRANT SELECT ON report_bd_private.portal_bitrix_journeys_private
   TO 'abbott_runtime_reader_role';
+
+-- Embed credentials are independently aggregate-only. This role has no grants
+-- in report_bd_private and cannot be elevated by application audience checks.
+GRANT SELECT ON report_bd.portal_data_releases TO 'abbott_embed_reader_role';
+GRANT SELECT ON report_bd.portal_active_data_releases TO 'abbott_embed_reader_role';
+GRANT SELECT ON report_bd.dashboards TO 'abbott_embed_reader_role';
+GRANT SELECT ON report_bd.portal_dataset_snapshots TO 'abbott_embed_reader_role';
+GRANT SELECT ON report_bd.portal_content_catalog TO 'abbott_embed_reader_role';
+GRANT SELECT ON report_bd.portal_content_lookup_projection TO 'abbott_embed_reader_role';
+GRANT SELECT ON report_bd.portal_general_materials TO 'abbott_embed_reader_role';
+GRANT SELECT ON report_bd.portal_event_catalog TO 'abbott_embed_reader_role';
+GRANT SELECT ON report_bd.portal_external_events TO 'abbott_embed_reader_role';
+GRANT SELECT ON report_bd.portal_bitrix_page_facts TO 'abbott_embed_reader_role';
+GRANT SELECT ON report_bd.portal_bitrix_journey_transitions TO 'abbott_embed_reader_role';
+GRANT SELECT ON report_bd.canonical_fact_metrika_site_analytics_daily TO 'abbott_embed_reader_role';
+GRANT SELECT ON report_bd.canonical_fact_metrika_returning_pages_release_daily TO 'abbott_embed_reader_role';
+GRANT SELECT ON report_bd.canonical_source_coverage_daily TO 'abbott_embed_reader_role';
 
 -- Account creation and role assignment are intentionally left to a reviewed DBA rollout.

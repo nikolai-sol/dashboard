@@ -1229,27 +1229,27 @@ def _scope_request(scope: str) -> tuple[str, str, str, dict[str, Any]]:
             {'accuracy': 'full'},
         ),
         'traffic': (
-            METRIKA_UTM_ADS_DIMS,
+            METRIKA_UTM_ADS_DIMS.replace('<attribution>', 'lastsign'),
             METRIKA_UTM_ADS_METRICS,
-            METRIKA_UTM_ADS_ATTRIBUTION,
+            'lastsign',
             {'accuracy': 'full'},
         ),
         'page': (
             METRIKA_PAGES_DIMS,
             METRIKA_PAGES_METRICS,
-            METRIKA_ATTRIBUTION,
+            'lastsign',
             {'accuracy': 'full'},
         ),
         'user_behavior': (
             METRIKA_USER_BEHAVIOR_DIMS,
             METRIKA_RELEASE_USER_BEHAVIOR_METRICS,
-            METRIKA_ATTRIBUTION,
+            'lastsign',
             {'accuracy': 'full'},
         ),
         'returning': (
             METRIKA_RETURNING_DIMENSION,
             METRIKA_RETURNING_METRICS,
-            METRIKA_ATTRIBUTION,
+            'lastsign',
             {'accuracy': 'full', 'lang': 'en'},
         ),
     }
