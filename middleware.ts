@@ -30,26 +30,27 @@ function equalBytes(a: Uint8Array, b: Uint8Array) {
 }
 
 async function verifyAdminSession(token: string | undefined) {
-  const secret = getAuthSecret();
-  if (!secret) return false;
-  if (!token || !token.includes(".")) return false;
-  const [payloadPart, signaturePart] = token.split(".", 2);
-  if (!payloadPart || !signaturePart) return false;
-
-  const secretBytes = new TextEncoder().encode(secret);
-  const key = await crypto.subtle.importKey(
-    "raw",
-    secretBytes,
-    { name: "HMAC", hash: "SHA-256" },
-    false,
-    ["sign"],
-  );
-  const signature = await crypto.subtle.sign("HMAC", key, new TextEncoder().encode(payloadPart));
-  const expected = new Uint8Array(signature);
-  const actual = fromBase64Url(signaturePart);
-  if (!equalBytes(expected, actual)) return false;
-
   try {
+    const secret = getAuthSecret();
+    if (!secret || !token) return false;
+    const parts = token.split(".");
+    if (parts.length !== 2) return false;
+    const [payloadPart, signaturePart] = parts;
+    if (!payloadPart || !signaturePart) return false;
+
+    const secretBytes = new TextEncoder().encode(secret);
+    const key = await crypto.subtle.importKey(
+      "raw",
+      secretBytes,
+      { name: "HMAC", hash: "SHA-256" },
+      false,
+      ["sign"],
+    );
+    const signature = await crypto.subtle.sign("HMAC", key, new TextEncoder().encode(payloadPart));
+    const expected = new Uint8Array(signature);
+    const actual = fromBase64Url(signaturePart);
+    if (!equalBytes(expected, actual)) return false;
+
     const payloadBytes = fromBase64Url(payloadPart);
     const payload = JSON.parse(new TextDecoder().decode(payloadBytes)) as {
       type?: string;
@@ -79,7 +80,10 @@ export async function middleware(request: NextRequest) {
   }
 
   if (isAdminApi) {
-    return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+    return NextResponse.json(
+      { error: "Unauthorized" },
+      { status: 401, headers: { "Cache-Control": "private, no-store" } },
+    );
   }
 
   const loginUrl = new URL("/admin/login", request.url);

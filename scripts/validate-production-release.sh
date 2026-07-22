@@ -16,6 +16,20 @@ if [[ -L "$ENV_FILE" || ! -f "$ENV_FILE" ]]; then
   exit 1
 fi
 
+COMPATIBILITY_MARKER="$RELEASE_DIR/.shared-password-db-auth-v1"
+if [[ -L "$COMPATIBILITY_MARKER" || ! -f "$COMPATIBILITY_MARKER" ]] || \
+  ! grep -Fxq 'shared-password-db-auth-v1' "$COMPATIBILITY_MARKER"; then
+  echo "Production release is missing the shared-password compatibility marker" >&2
+  exit 1
+fi
+
+PM2_CONFIG="$RELEASE_DIR/ecosystem.config.js"
+if [[ -L "$PM2_CONFIG" || ! -f "$PM2_CONFIG" ]] || \
+  ! grep -Eq "^[[:space:]]*HOSTNAME:[[:space:]]*['\"]127\.0\.0\.1['\"][[:space:]]*,?[[:space:]]*$" "$PM2_CONFIG"; then
+  echo "Production release must bind PM2 to the 127.0.0.1 loopback address" >&2
+  exit 1
+fi
+
 required_keys=(
   ABBOTT_DASHBOARD_PASSWORD
   ABBOTT_DASHBOARD_EMBED_KEY

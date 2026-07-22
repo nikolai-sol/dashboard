@@ -59,9 +59,10 @@ Current auth note:
   checkpoints, deployment artifacts, or documentation.
 - A rollback target is eligible only if it has been verified to keep Abbott and Zaruku mandatory
   `password_only` and to validate manager sessions/exports against the retained DB credential versions.
-  Base `0c9e046` is not compatible. If no compatible predecessor exists, do not reactivate one: place
-  the affected dashboards or app behind an explicit fail-closed maintenance/deny control and deploy a
-  corrected compatible release. Zaruku must never become public during rollback.
+  Compatible bundles carry `.shared-password-db-auth-v1`; manual rollback rejects an unmarked target
+  before moving the current app. Base `0c9e046` is not compatible. If automatic activation has no marked
+  predecessor, it stops PM2 and leaves the app fail-closed until a corrected compatible release is
+  deployed. Zaruku must never become public during rollback.
 
 ### Zaruku source matrix
 
@@ -142,6 +143,7 @@ Files on VPS:
 Health checks:
 - local VPS: `curl -s http://127.0.0.1:3001/api/health`
 - public: `curl -s https://dashboards.adreports.ru/api/health`
+- listener isolation: `PUBLIC_APP_HOST=5.35.85.218 APP_PORT=3001 bash scripts/verify-loopback-listener.sh`
 
 Dashboard AI summary (`/api/dashboard/[id]/ai-summary/generate`):
 - Uses `AI_SUMMARY_*` env from `/var/www/dashboard/.env` (rendered from `.production.env` on deploy).
@@ -285,7 +287,9 @@ What deploy does:
 - uploads the build into a staged release dir
 - swaps the staged release into `/var/www/dashboard`
 - restarts PM2 app `dashboard-next`
-- rolls back automatically if PM2 restart or local health check fails
+- verifies PM2 listens only on `127.0.0.1:3001` and that the public host cannot reach port `3001` directly
+- rolls back automatically if PM2 restart, local health, or listener isolation fails; an unmarked
+  predecessor is never restarted and PM2 remains stopped fail-closed
 
 Manual rollback:
 
@@ -299,6 +303,7 @@ After deploy always verify:
 ```bash
 ssh beget 'pm2 status'
 ssh beget 'curl -s http://127.0.0.1:3001/api/health'
+ssh beget 'cd /root/reportingdash-rollout/dashboard-next && PUBLIC_APP_HOST=5.35.85.218 APP_PORT=3001 bash scripts/verify-loopback-listener.sh'
 curl -s https://dashboards.adreports.ru/api/health
 ```
 

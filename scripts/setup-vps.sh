@@ -1,6 +1,7 @@
 #!/bin/bash
 set -euo pipefail
 
+SCRIPT_DIR="$(cd -P -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 APP_DIR="${APP_DIR:-/var/www/dashboard}"
 APP_PORT="${APP_PORT:-3001}"
 DOMAIN="${DOMAIN:-dashboards.adreports.ru}"
@@ -18,7 +19,7 @@ echo "=== Setup dashboard-next on Beget VPS ==="
 
 mkdir -p "$APP_DIR" "$RELEASES_DIR" "$BACKUPS_DIR" /var/log
 
-for required_bin in node pm2 nginx; do
+for required_bin in node pm2 nginx ss curl; do
   command -v "$required_bin" >/dev/null 2>&1 || {
     echo "Missing required binary: $required_bin" >&2
     exit 1
@@ -105,8 +106,16 @@ NGINX
 nginx -t
 systemctl reload nginx
 
+if pm2 describe dashboard-next >/dev/null 2>&1; then
+  PUBLIC_APP_HOST="${SERVER_ALIASES%% *}" APP_PORT="$APP_PORT" \
+    bash "$SCRIPT_DIR/verify-loopback-listener.sh"
+else
+  echo "Runtime listener verification is deferred until the first deploy."
+fi
+
 echo "=== Setup complete ==="
 echo "App dir: $APP_DIR"
 echo "Releases dir: $RELEASES_DIR"
 echo "Backups dir: $BACKUPS_DIR"
 echo "Next step: npm run deploy"
+echo "Post-deploy listener check: PUBLIC_APP_HOST='${SERVER_ALIASES%% *}' APP_PORT='$APP_PORT' bash scripts/verify-loopback-listener.sh"

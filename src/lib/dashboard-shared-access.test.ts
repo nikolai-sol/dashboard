@@ -258,6 +258,24 @@ test("Abbott uses version zero env fallback only when the DB row is absent", asy
   });
 });
 
+test("rowless Abbott fallback authenticates but admin state remains not migrated", async () => {
+  const store = createDashboardSharedAccessStore(
+    fakeDatabase({ client_id: "abbott", setting: null }),
+    { abbottLegacyPassword: "legacy-password" },
+  );
+
+  assert.deepEqual(await store.verifySharedDashboardPassword(18, "abbott", "legacy-password"), {
+    credentialVersion: 0,
+  });
+  assert.deepEqual(await store.getSharedPasswordAdminState(18), {
+    supported: true,
+    configured: false,
+    client_id: "abbott",
+    credential_version: 0,
+    updated_at: null,
+  });
+});
+
 test("a database credential takes authority over the Abbott env fallback", async () => {
   const databasePasswordHash = hashPassword("database-password");
   const store = createDashboardSharedAccessStore(

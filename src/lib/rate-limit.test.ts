@@ -8,6 +8,7 @@ type TestRateLimiter = {
     remaining: number;
     retryAfterSec: number;
   };
+  resetRateLimit(key: string): boolean;
   size(): number;
 };
 
@@ -65,4 +66,17 @@ test("rate limiter fingerprints arbitrarily long caller keys to fixed-length sto
   assert.equal(fingerprint.length, 64);
   assert.doesNotMatch(fingerprint, /attacker-controlled-identifier/);
   assert.equal(fingerprintKey(rawKey), fingerprint);
+});
+
+test("rate limiter safely resets one fingerprinted bucket without growing storage", () => {
+  const limiter = createTestLimiter({ maxBuckets: 2, now: () => 1_000 });
+
+  limiter.checkRateLimit("dashboard-login-ip:192.0.2.10", 100, 60_000);
+  limiter.checkRateLimit("dashboard-login:192.0.2.10:dashboard:28", 10, 60_000);
+  assert.equal(limiter.size(), 2);
+
+  assert.equal(limiter.resetRateLimit("dashboard-login-ip:192.0.2.10"), true);
+  assert.equal(limiter.size(), 1);
+  assert.equal(limiter.resetRateLimit("dashboard-login-ip:192.0.2.10"), false);
+  assert.equal(limiter.size(), 1);
 });

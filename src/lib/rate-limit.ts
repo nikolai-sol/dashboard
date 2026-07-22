@@ -62,8 +62,13 @@ export function createRateLimiter(options: RateLimiterOptions = {}) {
     return { allowed: true, remaining: Math.max(maxAttempts - current.count, 0), retryAfterSec: 0 };
   }
 
+  function resetRateLimit(key: string) {
+    return buckets.delete(fingerprintRateLimitKey(key));
+  }
+
   return {
     checkRateLimit,
+    resetRateLimit,
     size: () => buckets.size,
   };
 }
@@ -71,3 +76,4 @@ export function createRateLimiter(options: RateLimiterOptions = {}) {
 const defaultRateLimiter = createRateLimiter();
 
 export const checkRateLimit = defaultRateLimiter.checkRateLimit;
+export const resetRateLimit = defaultRateLimiter.resetRateLimit;

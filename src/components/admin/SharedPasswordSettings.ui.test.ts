@@ -118,6 +118,19 @@ test("shared-password status is explicitly unknown after a failed GET", () => {
   );
 });
 
+test("rowless Abbott fallback status is rendered as not yet migrated", () => {
+  const loaded = reduceSharedPasswordSettingsState(
+    createSharedPasswordSettingsState(18),
+    { type: "status-loaded", dashboardId: 18, configured: false },
+  );
+
+  assert.equal(loaded.configured, false);
+  assert.equal(
+    sharedPasswordStatusText(loaded),
+    "Пароль ещё не перенесён в защищённое хранилище",
+  );
+});
+
 test("shared-password requests hide network and invalid JSON error details", async () => {
   const fallback = "Не удалось загрузить статус пароля";
   const networkFailure = await requestSharedPassword(

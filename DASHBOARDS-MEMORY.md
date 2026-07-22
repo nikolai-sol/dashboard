@@ -32,6 +32,7 @@ Health:
 ```bash
 curl -s https://dashboards.adreports.ru/api/health
 ssh beget 'curl -s http://127.0.0.1:3001/api/health'
+ssh beget 'cd /root/reportingdash-rollout/dashboard-next && PUBLIC_APP_HOST=5.35.85.218 APP_PORT=3001 bash scripts/verify-loopback-listener.sh'
 ```
 
 ## Current dashboard architecture
@@ -181,9 +182,14 @@ Relevant files:
 - Application rollback retains `dashboard_shared_access_settings`, all hashes, and current credential
   versions; never delete the table, decrement a version, or restore plaintext credential material
 - Roll back only to a release verified to enforce mandatory Abbott and Zaruku shared-password access and
-  read those retained DB versions. Base `0c9e046` is not compatible. Without a compatible predecessor,
-  keep the affected dashboards/app behind an explicit fail-closed maintenance/deny control until a
-  corrected compatible release is deployed; Zaruku must never become public
+  read those retained DB versions. Compatible bundles carry `.shared-password-db-auth-v1`; manual rollback
+  rejects an unmarked target before moving the current app. Base `0c9e046` is not compatible. Without a
+  marked predecessor, automatic rollback stops PM2 and leaves the app fail-closed until a corrected
+  compatible release is deployed; Zaruku must never become public
+- PM2 binds `HOSTNAME=127.0.0.1`. Release validation and the post-deploy listener check reject a public
+  port-`3001` listener or a direct public-port bypass around nginx
+- Login failures use `10` attempts per resolved IP plus dashboard and a higher `100` attempts per IP across
+  dashboards in 15 minutes; a successful authentication resets both buckets
 - This documentation change does not perform a migration, seed, deployment, secret change, or rollback
 
 ### Embed auth

@@ -8,6 +8,7 @@ module.exports = {
       exec_mode: 'fork',
       env: {
         NODE_ENV: 'production',
+        HOSTNAME: '127.0.0.1',
         PORT: Number(process.env.PORT || 3001),
       },
       max_restarts: 10,

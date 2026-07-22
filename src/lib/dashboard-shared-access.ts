@@ -222,8 +222,6 @@ export function createDashboardSharedAccessStore(
     const supported = isSharedPasswordClient(clientId);
     const hasDatabaseSetting = row.password_hash !== null;
     const databaseConfigured = supported && hasDatabaseSetting;
-    const fallbackConfigured =
-      supported && !hasDatabaseSetting && clientId === "abbott" && Boolean(options.abbottLegacyPassword);
     let credentialVersion = 0;
     if (databaseConfigured) {
       try {
@@ -235,7 +233,7 @@ export function createDashboardSharedAccessStore(
 
     return {
       supported,
-      configured: databaseConfigured || (!databaseConfigured && fallbackConfigured),
+      configured: databaseConfigured,
       client_id: clientId,
       credential_version: credentialVersion,
       updated_at: databaseConfigured ? asTimestamp(row.updated_at) : null,

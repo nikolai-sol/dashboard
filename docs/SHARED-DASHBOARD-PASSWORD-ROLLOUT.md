@@ -82,6 +82,21 @@ After deploy, verify health locally and publicly, then smoke the Settings form a
 must accept its current version-`0` fallback until an Abbott DB row is created. Zaruku must accept the
 approved password and reject an incorrect password without disclosing whether a settings row exists.
 
+The application process must listen only on loopback, with nginx as the sole public entry point. Run the
+packaged listener check from the reviewed source checkout after every deploy or compatible rollback; it
+fails if port `3001` is absent, bound to a non-loopback address, or reachable directly through the public
+host:
+
+```bash
+PUBLIC_APP_HOST=5.35.85.218 APP_PORT=3001 bash scripts/verify-loopback-listener.sh
+curl -fsS https://dashboards.adreports.ru/api/health >/dev/null
+```
+
+Nginx must continue to overwrite `X-Real-IP` from `$remote_addr`. The login service ignores
+`X-Forwarded-For`, applies a strict `10`-attempt/15-minute bucket to the resolved IP plus dashboard, and a
+higher `100`-attempt/15-minute IP-wide abuse ceiling. Successful authentication resets both relevant
+buckets; failures do not.
+
 To prove version revocation, authenticate to Zaruku, rotate once more to the same approved password through
 the admin form, confirm the old manager session is rejected, and confirm a fresh login succeeds. Capture
 only status codes and non-secret boolean/version assertions; never capture cookies or credentials.
@@ -93,16 +108,22 @@ keeps both Abbott and Zaruku mandatory `password_only` and authorizes manager vi
 the retained DB hashes and credential versions. Base `0c9e046` is not compatible and is not an eligible
 rollback target. Never allow Zaruku to become public during rollback.
 
+Every compatible bundle contains the regular file `.shared-password-db-auth-v1`. Release validation rejects
+a missing or symlinked marker and rejects any PM2 configuration that does not set `HOSTNAME=127.0.0.1`.
+Manual rollback checks the marker before moving the current application. Automatic activation rollback
+reactivates a predecessor only when that predecessor carries the marker; otherwise it stops PM2, keeps the
+incompatible predecessor in its backup directory, and leaves the application fail-closed until a corrected
+compatible release is deployed.
+
 For an eligible rollback, reactivate the verified compatible release with `npm run deploy:rollback`, while
 retaining migration `042`, the `dashboard_shared_access_settings` table, password hashes, and credential
 versions. Never drop or truncate the table, delete a row, decrement a version, copy a hash into an env file,
 or restore a plaintext password. The compatible predecessor must find the retained rows and must not
 silently reseed or rewrite them.
 
-If no compatible predecessor exists, do not reactivate an incompatible release. Put the affected dashboard
-routes, or the entire application, behind an explicit fail-closed maintenance/deny control that cannot
-render Abbott or Zaruku content, then deploy a corrected compatible release. Preserve the table, hashes,
-and versions throughout this recovery path.
+If no compatible predecessor exists, do not reactivate an incompatible release. The automatic rollback
+stops the application process; preserve that fail-closed state and deploy a corrected compatible release.
+Preserve the table, hashes, and versions throughout this recovery path.
 
 ## Administrative rotations after rollout
 

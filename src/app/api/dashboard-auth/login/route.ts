@@ -12,13 +12,15 @@ import {
   listAccessibleDashboardsByCredentials,
   verifyDashboardAccessContextCredentials,
 } from "@/lib/dashboard-access";
-import { checkRateLimit } from "@/lib/rate-limit";
+import { checkRateLimit, resetRateLimit } from "@/lib/rate-limit";
 
 const LOGIN_WINDOW_MS = 15 * 60 * 1000;
-const LOGIN_MAX_ATTEMPTS = 10;
+const DASHBOARD_LOGIN_MAX_ATTEMPTS = 10;
+const IP_LOGIN_MAX_ATTEMPTS = 100;
 
 const defaultDashboardLoginDependencies = {
   checkRateLimit,
+  resetRateLimit,
   getDashboardAccessContext,
   verifyDashboardAccessContextCredentials,
   listAccessibleDashboardsByCredentials,
@@ -62,7 +64,7 @@ export function createDashboardLoginHandler(
     const clientIp = getTrustedClientIp(request);
     const ipLimit = dependencies.checkRateLimit(
       `dashboard-login-ip:${clientIp}`,
-      LOGIN_MAX_ATTEMPTS,
+      IP_LOGIN_MAX_ATTEMPTS,
       LOGIN_WINDOW_MS,
     );
     if (!ipLimit.allowed) return rateLimitResponse(ipLimit.retryAfterSec);
@@ -74,7 +76,7 @@ export function createDashboardLoginHandler(
 
     const dashboardLimit = dependencies.checkRateLimit(
       `dashboard-login:${clientIp}:dashboard:${accessContext.id}`,
-      LOGIN_MAX_ATTEMPTS,
+      DASHBOARD_LOGIN_MAX_ATTEMPTS,
       LOGIN_WINDOW_MS,
     );
     if (!dashboardLimit.allowed) return rateLimitResponse(dashboardLimit.retryAfterSec);
@@ -87,6 +89,10 @@ export function createDashboardLoginHandler(
     if (!context) {
       return NextResponse.json({ error: "Invalid credentials" }, { status: 401 });
     }
+    dependencies.resetRateLimit(`dashboard-login-ip:${clientIp}`);
+    dependencies.resetRateLimit(
+      `dashboard-login:${clientIp}:dashboard:${accessContext.id}`,
+    );
     const normalizedEmail = email || `shared-access+${context.client_id}@dashboard.local`;
     const accessibleDashboards =
       context.auth_mode === "email_password"

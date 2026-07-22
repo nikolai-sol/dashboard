@@ -27,7 +27,7 @@ function createLoginHandler(dependencies: Record<string, unknown>) {
 
 function loginRequest(
   dashboardId: string,
-  options: { realIp?: string; forwardedFor?: string } = {},
+  options: { realIp?: string; forwardedFor?: string; password?: string } = {},
 ) {
   const headers = new Headers({ "content-type": "application/json" });
   if (options.realIp) headers.set("x-real-ip", options.realIp);
@@ -35,7 +35,10 @@ function loginRequest(
   return new Request("http://dashboard.test/api/dashboard-auth/login", {
     method: "POST",
     headers,
-    body: JSON.stringify({ dashboard_id: dashboardId, password: "wrong-password" }),
+    body: JSON.stringify({
+      dashboard_id: dashboardId,
+      password: options.password ?? "wrong-password",
+    }),
   });
 }
 
@@ -203,4 +206,85 @@ test("successful shared login returns a manager session with the verified creden
   assert.equal(response.status, 200);
   assert.equal(payload?.audience, "manager");
   assert.equal(payload?.credential_version, 7);
+});
+
+test("successful shared logins reset both buckets so NAT users are not capped at ten", async () => {
+  const limiter = createRateLimiter({ maxBuckets: 100, now: () => 1_000 });
+  const handler = createLoginHandler({
+    checkRateLimit: limiter.checkRateLimit,
+    resetRateLimit: limiter.resetRateLimit,
+    async getDashboardAccessContext() {
+      return dashboard;
+    },
+    async verifyDashboardAccessContextCredentials(_context: unknown, _email: string, password: string) {
+      return password === "correct-password"
+        ? { ...dashboard, credentialVersion: 7 }
+        : null;
+    },
+  });
+
+  for (let attempt = 0; attempt < 12; attempt += 1) {
+    const response = await handler(loginRequest("abbott", {
+      realIp: "192.0.2.10",
+      password: "correct-password",
+    }));
+    assert.equal(response.status, 200, `successful login ${attempt + 1} was unexpectedly limited`);
+  }
+  assert.equal(limiter.size(), 0);
+});
+
+test("IP-wide abuse across dashboards is capped at one hundred attempts before lookup", async () => {
+  const limiter = createRateLimiter({ maxBuckets: 500, now: () => 1_000 });
+  let lookups = 0;
+  let verifications = 0;
+  const handler = createLoginHandler({
+    checkRateLimit: limiter.checkRateLimit,
+    resetRateLimit: limiter.resetRateLimit,
+    async getDashboardAccessContext(identifier: string | number) {
+      lookups += 1;
+      return { ...dashboard, id: Number(identifier) };
+    },
+    async verifyDashboardAccessContextCredentials() {
+      verifications += 1;
+      return null;
+    },
+  });
+
+  for (let dashboardId = 1; dashboardId <= 100; dashboardId += 1) {
+    const response = await handler(loginRequest(String(dashboardId), { realIp: "192.0.2.10" }));
+    assert.equal(response.status, 401);
+  }
+  const blocked = await handler(loginRequest("101", { realIp: "192.0.2.10" }));
+
+  assert.equal(blocked.status, 429);
+  assert.ok(Number(blocked.headers.get("Retry-After")) >= 1);
+  assert.equal(lookups, 100);
+  assert.equal(verifications, 100);
+});
+
+test("requests without the trusted nginx IP header share one fail-safe abuse ceiling", async () => {
+  const limiter = createRateLimiter({ maxBuckets: 500, now: () => 1_000 });
+  let lookups = 0;
+  const handler = createLoginHandler({
+    checkRateLimit: limiter.checkRateLimit,
+    resetRateLimit: limiter.resetRateLimit,
+    async getDashboardAccessContext(identifier: string | number) {
+      lookups += 1;
+      return { ...dashboard, id: Number(identifier) };
+    },
+    async verifyDashboardAccessContextCredentials() {
+      return null;
+    },
+  });
+
+  for (let dashboardId = 1; dashboardId <= 100; dashboardId += 1) {
+    const response = await handler(loginRequest(String(dashboardId), {
+      forwardedFor: `203.0.113.${dashboardId % 255}`,
+    }));
+    assert.equal(response.status, 401);
+  }
+  const blocked = await handler(loginRequest("101", { forwardedFor: "198.51.100.200" }));
+
+  assert.equal(blocked.status, 429);
+  assert.equal(lookups, 100);
 });

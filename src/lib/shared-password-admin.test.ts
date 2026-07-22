@@ -34,6 +34,27 @@ test("admin state read returns only fields safe for the settings UI", async () =
   assert.equal(JSON.stringify(result.body).includes("credential_version"), false);
 });
 
+test("admin state reports rowless Abbott fallback as not migrated without authority details", async () => {
+  const result = await readSharedPasswordState(
+    { dashboardId: 18 },
+    {
+      getState: async () => ({
+        supported: true,
+        configured: false,
+        client_id: "abbott",
+        credential_version: 0,
+        updated_at: null,
+      }),
+    },
+  );
+
+  assert.deepEqual(result, {
+    status: 200,
+    body: { supported: true, configured: false, updated_at: null },
+  });
+  assert.doesNotMatch(JSON.stringify(result.body), /abbott|fallback|source|hash|version/i);
+});
+
 test("admin state read maps a missing dashboard without exposing store details", async () => {
   const result = await readSharedPasswordState(
     { dashboardId: 404 },
