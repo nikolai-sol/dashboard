@@ -15,8 +15,12 @@ export function validateSharedPasswordChange(input: {
   new_password: unknown;
   confirm_password: unknown;
 }) {
-  const password = String(input.new_password ?? "");
-  const confirmation = String(input.confirm_password ?? "");
+  if (typeof input.new_password !== "string" || typeof input.confirm_password !== "string") {
+    return { ok: false as const, error: "Пароль должен быть строкой" };
+  }
+
+  const password = input.new_password;
+  const confirmation = input.confirm_password;
 
   if (password !== confirmation) {
     return { ok: false as const, error: "Пароли не совпадают" };

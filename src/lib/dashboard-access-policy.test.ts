@@ -10,6 +10,7 @@ import { isSharedPasswordClient } from "./shared-password-policy";
 test("Abbott and Zaruku always use shared password access", () => {
   for (const clientId of ["abbott", " ABBOTT ", "zaruku", "ZARUKU"]) {
     assert.equal(resolveDashboardAuthMode(clientId, 5, false), "password_only");
+    assert.equal(resolveDashboardAuthMode(clientId, 0, false), "password_only");
     assert.equal(isSharedPasswordClient(clientId), true);
   }
 });
