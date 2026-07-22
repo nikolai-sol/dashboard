@@ -243,8 +243,14 @@ test("malformed ordinary access-user payloads remain failed and non-destructive"
     ok: false,
     error: fallback,
   });
+  for (const email of ["", "   "]) {
+    assert.deepEqual(parseAccessUsersPayload({ users: [{ id: 7, email }] }), {
+      ok: false,
+      error: fallback,
+    });
+  }
   assert.deepEqual(
-    parseAccessUsersPayload({ users: [{ id: 7, email: "viewer@example.test" }] }),
+    parseAccessUsersPayload({ users: [{ id: 7, email: " Viewer@Example.Test " }] }),
     {
       ok: true,
       users: [{ id: 7, email: "viewer@example.test", password: "" }],
@@ -270,6 +276,35 @@ test("malformed ordinary access-user payloads remain failed and non-destructive"
     source,
     /disabled=\{saving \|\| !selectedDashboardId \|\| !accessUsersReady\}/,
   );
+});
+
+test("malformed access-user PUT success fails closed and requires reload", () => {
+  const source = readFileSync(
+    path.resolve("src/components/admin/AdminAccessSettings.tsx"),
+    "utf8",
+  );
+  const parserCalls = source.match(/parseAccessUsersPayload\(json\)/g) ?? [];
+
+  assert.equal(parserCalls.length, 2);
+  assert.match(source, /Перезагрузите страницу перед повторной попыткой/);
+  assert.match(
+    source,
+    /type: "load-failed",[\s\S]*dashboardId: targetDashboardId/,
+  );
+
+  let readiness = reduceAccessUsersEditorReadiness(
+    createAccessUsersEditorReadiness(),
+    { type: "load-started", dashboardId: 42 },
+  );
+  readiness = reduceAccessUsersEditorReadiness(readiness, {
+    type: "load-succeeded",
+    dashboardId: 42,
+  });
+  readiness = reduceAccessUsersEditorReadiness(readiness, {
+    type: "load-failed",
+    dashboardId: 42,
+  });
+  assert.equal(isAccessUsersEditorReady(readiness, 42), false);
 });
 
 test("dashboard selector locks for both write modes and shared notification always resets", async () => {

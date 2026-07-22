@@ -11,12 +11,9 @@ type AccessUserRow = {
   password: string;
 };
 
-type StoredAccessUser = {
-  id: number;
-  email: string;
-};
-
 const ACCESS_USERS_LOAD_ERROR = "Не удалось загрузить пользователей доступа";
+const ACCESS_USERS_RELOAD_ERROR =
+  "Ответ сервера некорректен. Перезагрузите страницу перед повторной попыткой.";
 
 type AccessUsersPayloadResult =
   | { ok: true; users: AccessUserRow[] }
@@ -32,25 +29,30 @@ export function parseAccessUsersPayload(
   if (!Array.isArray(users)) {
     return { ok: false, error: ACCESS_USERS_LOAD_ERROR };
   }
-  const validUsers = users.every(
-    (item) =>
-      item !== null &&
-      typeof item === "object" &&
-      Number.isSafeInteger((item as { id?: unknown }).id) &&
-      Number((item as { id?: unknown }).id) > 0 &&
-      typeof (item as { email?: unknown }).email === "string",
-  );
-  if (!validUsers) {
-    return { ok: false, error: ACCESS_USERS_LOAD_ERROR };
-  }
-  return {
-    ok: true,
-    users: (users as StoredAccessUser[]).map((item) => ({
-      id: item.id,
-      email: item.email,
+  const normalizedUsers: AccessUserRow[] = [];
+  for (const item of users) {
+    if (item === null || typeof item !== "object") {
+      return { ok: false, error: ACCESS_USERS_LOAD_ERROR };
+    }
+    const storedUser = item as { id?: unknown; email?: unknown };
+    if (
+      !Number.isSafeInteger(storedUser.id) ||
+      Number(storedUser.id) <= 0 ||
+      typeof storedUser.email !== "string"
+    ) {
+      return { ok: false, error: ACCESS_USERS_LOAD_ERROR };
+    }
+    const email = storedUser.email.trim().toLowerCase();
+    if (!email) {
+      return { ok: false, error: ACCESS_USERS_LOAD_ERROR };
+    }
+    normalizedUsers.push({
+      id: Number(storedUser.id),
+      email,
       password: "",
-    })),
-  };
+    });
+  }
+  return { ok: true, users: normalizedUsers };
 }
 
 type AccessUsersEditorReadiness = {
@@ -269,6 +271,14 @@ export default function AdminAccessSettings() {
     setSaving(true);
     setError(null);
     setMessage(null);
+    function failClosedAfterMalformedSave() {
+      setError(ACCESS_USERS_RELOAD_ERROR);
+      setMessage(null);
+      dispatchAccessUsersReadiness({
+        type: "load-failed",
+        dashboardId: targetDashboardId,
+      });
+    }
     try {
       const response = await fetch("/api/admin/access-users", {
         method: "PUT",
@@ -278,19 +288,29 @@ export default function AdminAccessSettings() {
           users,
         }),
       });
-      const json = await response.json();
+      let json: unknown;
+      try {
+        json = await response.json();
+      } catch {
+        if (response.ok) {
+          if (accessUsersSelection.current.generation === selectionGeneration) {
+            failClosedAfterMalformedSave();
+          }
+          return;
+        }
+        throw new Error("Failed to save users");
+      }
       if (!response.ok) {
-        throw new Error(String(json?.details ?? json?.error ?? "Failed to save users"));
+        const errorBody = json as { details?: unknown; error?: unknown };
+        throw new Error(String(errorBody?.details ?? errorBody?.error ?? "Failed to save users"));
       }
       if (accessUsersSelection.current.generation !== selectionGeneration) return;
-      const nextUsers = Array.isArray(json?.users)
-        ? (json.users as StoredAccessUser[]).map((item) => ({
-            id: item.id,
-            email: item.email,
-            password: "",
-          }))
-        : [];
-      setUsers(nextUsers);
+      const parsed = parseAccessUsersPayload(json);
+      if (!parsed.ok) {
+        failClosedAfterMalformedSave();
+        return;
+      }
+      setUsers(parsed.users);
       setMessage("Access users saved.");
     } catch (saveError) {
       if (accessUsersSelection.current.generation !== selectionGeneration) return;
