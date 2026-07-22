@@ -35,7 +35,7 @@ every runbook entrypoint and each repository-local Python dependency.
 | `runtime/abbott_canonical_controls.py` | `abbott_canonical_controls.py` | `4c9fb6291a6ae54958cdcd15eb654be0eefc6a7264b70c894bd01a4b8b9def17` | Baseline/control evidence library |
 | `runtime/metrika_pagination.py` | `metrika_pagination.py` | `7dcb1a05ad8babcc7d696934babb1ab50747ca140c910efc88f3685674386a7c` | Metrika pagination dependency |
 | `runtime/backfill_abbott_metrika_2026.py` | `backfill_abbott_metrika_2026.py` | `d9c4a02b2032aa25ed648d17671c749f54352588e95ef8801fe79044b90d9f09` | Gap-first full-year backfill CLI |
-| `runtime/abbott_health_probe.py` | `abbott_health_probe.py` | `d0fbda945ab014eedeb0be5eea34601af3d45750567e3a7450c804e27fa68105` | Deterministic Abbott health CLI |
+| `runtime/abbott_health_probe.py` | `abbott_health_probe.py` | `661eab6b301e734e27a80c19b4d3f10cfc3db4977758fd603592bb0eda8d2f85` | Deterministic Abbott health CLI |
 | `runtime/send_canonical_telegram_report.py` | `send_canonical_telegram_report.py` | `5e5f9f26f6fb66349d4b9af9d002575518c1430f8d57c647d4c0ed1db0ea152c` | Summary entrypoint |
 | `runtime/sources_health_dashboard.py` | `sources_health_dashboard.py` | `2884007260389b013daff0523617d9cdf6e6dde241889ef534599d76bd4ea9d0` | Summary health dependency |
 
