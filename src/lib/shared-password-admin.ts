@@ -1,4 +1,7 @@
-import type { SharedPasswordAdminState } from "./dashboard-shared-access";
+import {
+  SharedPasswordRotationError,
+  type SharedPasswordAdminState,
+} from "./dashboard-shared-access";
 import { validateSharedPasswordChange } from "./shared-password-policy";
 
 export type SharedPasswordAdminResponse = {
@@ -98,11 +101,24 @@ export async function changeSharedPassword(
     if (!currentState.supported) return unsupportedDashboardResponse();
   }
 
-  const state = await dependencies.rotate(
-    input.dashboardId,
-    validation.password,
-    input.adminEmail.trim().toLowerCase(),
-  );
+  let state: SharedPasswordAdminState;
+  try {
+    state = await dependencies.rotate(
+      input.dashboardId,
+      validation.password,
+      input.adminEmail.trim().toLowerCase(),
+    );
+  } catch (error) {
+    if (error instanceof SharedPasswordRotationError) {
+      if (error.code === "DASHBOARD_NOT_FOUND") {
+        return missingDashboardResponse();
+      }
+      if (error.code === "UNSUPPORTED_DASHBOARD") {
+        return unsupportedDashboardResponse();
+      }
+    }
+    throw error;
+  }
   if (state.client_id === null) return missingDashboardResponse();
   if (!state.supported) return unsupportedDashboardResponse();
 

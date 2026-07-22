@@ -2,7 +2,10 @@ import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import test from "node:test";
 import { hashPassword, verifyPassword } from "./access-auth";
-import { createDashboardSharedAccessStore } from "./dashboard-shared-access";
+import {
+  createDashboardSharedAccessStore,
+  SharedPasswordRotationError,
+} from "./dashboard-shared-access";
 
 type FakeSetting = {
   password_hash: string;
@@ -11,7 +14,7 @@ type FakeSetting = {
 };
 
 type FakeDatabaseInput = {
-  client_id: string;
+  client_id: string | null;
   setting: FakeSetting | null;
   failOnUpsert?: boolean;
   failAfterUpsert?: boolean;
@@ -100,6 +103,7 @@ function fakeDatabase(input: FakeDatabaseInput) {
     const visibleSetting = connection?.hasStagedSetting ? connection.stagedSetting : setting;
 
     if (normalizedSql.includes("from dashboards d")) {
+      if (input.client_id === null) return [[], []];
       return [[{
         client_id: input.client_id,
         password_hash: visibleSetting?.password_hash ?? null,
@@ -110,6 +114,7 @@ function fakeDatabase(input: FakeDatabaseInput) {
     if (normalizedSql.includes("from dashboards") && normalizedSql.includes("for update")) {
       if (!connection) throw new Error("Lock query requires a connection");
       await acquireLock(connection);
+      if (input.client_id === null) return [[], []];
       return [[{ client_id: input.client_id }], []];
     }
     if (normalizedSql.includes("from dashboard_shared_access_settings")) {
@@ -384,7 +389,41 @@ test("rotation rejects unsupported clients inside the transaction", async () => 
 
   await assert.rejects(
     store.rotateSharedDashboardPassword(99, "replacement-password", "admin@example.test"),
-    /not supported/i,
+    (error) => {
+      assert.equal(error instanceof SharedPasswordRotationError, true);
+      assert.equal(
+        (error as SharedPasswordRotationError).code,
+        "UNSUPPORTED_DASHBOARD",
+      );
+      return true;
+    },
+  );
+  assert.equal(database.commits, 0);
+  assert.equal(database.rollbacks, 1);
+  assert.equal(database.releases, 1);
+  assert.equal(database.lastPasswordValue, null);
+});
+
+test("rotation reports a transaction-authoritative missing dashboard", async () => {
+  const database = fakeDatabase({ client_id: null, setting: null });
+  const store = createDashboardSharedAccessStore(database, {
+    abbottLegacyPassword: null,
+  });
+
+  await assert.rejects(
+    store.rotateSharedDashboardPassword(
+      404,
+      "replacement-password",
+      "admin@example.test",
+    ),
+    (error) => {
+      assert.equal(error instanceof SharedPasswordRotationError, true);
+      assert.equal(
+        (error as SharedPasswordRotationError).code,
+        "DASHBOARD_NOT_FOUND",
+      );
+      return true;
+    },
   );
   assert.equal(database.commits, 0);
   assert.equal(database.rollbacks, 1);

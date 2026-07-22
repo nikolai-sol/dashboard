@@ -8,6 +8,7 @@ import {
   changeSharedPassword,
   readSharedPasswordState,
 } from "./shared-password-admin";
+import { SharedPasswordRotationError } from "./dashboard-shared-access";
 
 const configuredState = {
   supported: true,
@@ -222,6 +223,54 @@ test("admin password change maps a missing dashboard before rotation", async () 
     body: { error: "Дашборд не найден" },
   });
   assert.equal(rotated, false);
+});
+
+test("admin password change maps deletion after preflight from the transaction error", async () => {
+  const result = await changeSharedPassword(
+    {
+      dashboardId: 28,
+      body: {
+        new_password: "0123456789",
+        confirm_password: "0123456789",
+      },
+      adminEmail: "admin@example.test",
+    },
+    {
+      getState: async () => configuredState,
+      rotate: async () => {
+        throw new SharedPasswordRotationError("DASHBOARD_NOT_FOUND");
+      },
+    },
+  );
+
+  assert.deepEqual(result, {
+    status: 404,
+    body: { error: "Дашборд не найден" },
+  });
+});
+
+test("admin password change maps client change after preflight from the transaction error", async () => {
+  const result = await changeSharedPassword(
+    {
+      dashboardId: 28,
+      body: {
+        new_password: "0123456789",
+        confirm_password: "0123456789",
+      },
+      adminEmail: "admin@example.test",
+    },
+    {
+      getState: async () => configuredState,
+      rotate: async () => {
+        throw new SharedPasswordRotationError("UNSUPPORTED_DASHBOARD");
+      },
+    },
+  );
+
+  assert.deepEqual(result, {
+    status: 400,
+    body: { error: "Смена пароля недоступна для этого дашборда" },
+  });
 });
 
 test("shared password route rejects a missing signed admin session without caching", async () => {

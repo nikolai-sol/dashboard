@@ -18,6 +18,20 @@ export type SharedPasswordAdminState = {
   updated_at: string | null;
 };
 
+export type SharedPasswordRotationErrorCode =
+  | "DASHBOARD_NOT_FOUND"
+  | "UNSUPPORTED_DASHBOARD";
+
+export class SharedPasswordRotationError extends Error {
+  readonly code: SharedPasswordRotationErrorCode;
+
+  constructor(code: SharedPasswordRotationErrorCode) {
+    super("Shared dashboard password rotation rejected");
+    this.name = "SharedPasswordRotationError";
+    this.code = code;
+  }
+}
+
 type QueryExecutor = {
   execute(sql: string, params?: unknown[]): Promise<[unknown, unknown]>;
 };
@@ -45,8 +59,6 @@ type DashboardCredentialRow = {
   credential_version: number | string | null;
   updated_at: string | Date | null;
 };
-
-class SharedPasswordStoreError extends Error {}
 
 function normalizeClientId(value: string) {
   return String(value ?? "").trim().toLowerCase();
@@ -250,13 +262,13 @@ export function createDashboardSharedAccessStore(
         [dashboardId],
       );
       const dashboard = firstRow<{ client_id: string }>(dashboardRows);
-      if (!dashboard) throw new SharedPasswordStoreError("Dashboard not found");
+      if (!dashboard) {
+        throw new SharedPasswordRotationError("DASHBOARD_NOT_FOUND");
+      }
 
       const clientId = normalizeClientId(dashboard.client_id);
       if (!isSharedPasswordClient(clientId)) {
-        throw new SharedPasswordStoreError(
-          "Shared password access is not supported for this dashboard",
-        );
+        throw new SharedPasswordRotationError("UNSUPPORTED_DASHBOARD");
       }
 
       const [settingRows] = await connection.execute(
@@ -315,7 +327,7 @@ export function createDashboardSharedAccessStore(
       } catch {
         // The caller still receives a fixed error with no query or credential material.
       }
-      if (error instanceof SharedPasswordStoreError) {
+      if (error instanceof SharedPasswordRotationError) {
         throw error;
       }
       throw new Error("Unable to rotate shared dashboard password");
