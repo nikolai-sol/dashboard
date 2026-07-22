@@ -1,3 +1,5 @@
+import { isSharedPasswordClient } from "./shared-password-policy";
+
 export type DashboardAuthMode = "public" | "email_password" | "password_only";
 export type DashboardAudience = "manager" | "embed";
 
@@ -10,6 +12,7 @@ export function resolveDashboardAuthMode(
   activeUsers: number,
   hasSharedPassword: boolean,
 ): DashboardAuthMode {
+  if (isSharedPasswordClient(clientId)) return "password_only";
   if (activeUsers > 0) return "email_password";
   if (isProtectedClient(clientId) || hasSharedPassword) return "password_only";
   return "public";
