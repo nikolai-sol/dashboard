@@ -703,7 +703,11 @@ Only after every gate passes, execute the tested validation transition. It
 locks the staging release, requires persisted comparator evidence bound to the
 baseline snapshot and candidate code revision, selects only the latest
 completed `validation_run_id`, and accepts exactly the frozen baseline control
-names plus five `coverage.*.reconciled_days` controls. A warn
+names plus five `coverage.*.reconciled_days` controls. An empty aggregate
+control mapping is permitted only for a predecessor that predates
+release-scoped Metrika facts; the five coverage controls and exact calendar
+gate remain mandatory. A missing or malformed control mapping still fails
+closed. A warn
 requires both `reviewed_by` and `accepted_at`. It also requires the exact frozen
 source set: both workbook kinds plus either optional Bitrix kind only when the
 baseline declares it. Every immutable SHA-256/byte/parser fingerprint must

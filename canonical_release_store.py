@@ -87,7 +87,7 @@ def _json_value(value, *, error_message: str):
 
 def _required_control_names(manifest: dict) -> set[str]:
     control_values = manifest.get("control_values")
-    if not isinstance(control_values, dict) or not control_values:
+    if not isinstance(control_values, dict):
         raise ValidationGateError("Frozen baseline controls are invalid")
     names = {str(name) for name in control_values}
     if any(not name.strip() for name in names) or len(names) != len(control_values):

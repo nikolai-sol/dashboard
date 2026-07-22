@@ -99,6 +99,19 @@ def exact_evidence_rows(*, warning_without_reviewer=False):
     return rows
 
 
+def coverage_only_evidence_rows():
+    return [
+        {
+            "control_name": f"coverage.{scope}.reconciled_days",
+            "result_status": "pass",
+            "reviewed_by": None,
+            "accepted_at": None,
+            "code_revision": "abc123",
+        }
+        for scope in ("other", "traffic", "page", "user_behavior", "returning")
+    ]
+
+
 def validation_batch(run_id, *, completed_at="2026-07-16 10:00:00", rows=None):
     return {
         "validation_run_id": run_id,
@@ -293,6 +306,19 @@ class CanonicalReleaseStoreTest(unittest.TestCase):
         self.assertIn("WHERE canonical_release_id = %s", sql)
         self.assertNotIn("source_snapshot_id IN", sql)
         self.assertEqual(params, (41,))
+
+    def test_metrika_first_candidate_accepts_coverage_only_baseline(self):
+        import canonical_release_store as store
+
+        baseline = baseline_manifest(REQUIRED_WORKBOOK_KINDS)
+        baseline["control_values"] = {}
+        conn = ExactValidationConnection(
+            source_kinds=REQUIRED_WORKBOOK_KINDS,
+            baseline=baseline,
+            evidence_rows=coverage_only_evidence_rows(),
+        )
+
+        self.validate(store, conn)
 
     def test_each_declared_optional_bitrix_source_and_both_validate(self):
         import canonical_release_store as store
