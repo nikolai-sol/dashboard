@@ -1,0 +1,104 @@
+# Shared Dashboard Password Rollout
+
+This is the production operator contract for the Abbott and Zaruku shared viewer passwords. It records
+the required order and safe boundaries; it does not mean that a migration, seed, deployment, secret
+change, or rollback has occurred.
+
+## Authority and access invariants
+
+- Abbott and Zaruku always resolve to mandatory `password_only` access. Rows in
+  `dashboard_access_users` cannot make either dashboard public or switch it to `email_password`.
+- A row in `dashboard_shared_access_settings` is authoritative. The table stores only a salted
+  `scrypt` hash, monotonically increasing `credential_version`, audit actor, and timestamps.
+- Abbott alone may use `ABBOTT_DASHBOARD_PASSWORD` as the version-`0` fallback, and only while no Abbott
+  row exists. The current production env renderer and release validator still require the variable for
+  this transition. The first Abbott seed or admin rotation creates the DB row; all later rotations use
+  the DB and do not update or consult the env password.
+- Zaruku has no environment-password fallback. A missing Zaruku settings row fails closed, which is why
+  its hash must be seeded after migration and before application cutover.
+- The admin form and seed command use the same transactional rotation path. A rotation locks the active
+  dashboard and credential row, stores a new hash, and increments the version atomically.
+- Password-authenticated manager viewer sessions and derived export tokens carry the credential version.
+  Protected dashboard, Excel, and PDF requests compare it with current authority. Any rotation therefore
+  revokes older manager sessions and exports, even when the replacement password text is unchanged.
+- Abbott's `ABBOTT_DASHBOARD_EMBED_KEY` is an independent environment-managed credential. Embed access is
+  audience-scoped and unversioned; a shared-password rotation neither changes nor revokes it.
+
+## Preflight
+
+Use the reviewed commit in `/root/reportingdash-rollout/dashboard-next` and a private interactive TTY.
+Complete the full local verification suite before production work. Confirm that exactly one active
+dashboard resolves for `client_id=zaruku` without displaying row contents.
+
+Do not place a plaintext password or password hash in Git, a command-line argument, shell history, logs,
+terminal capture, checkpoints, tickets, documentation, API responses, or deployment artifacts. Do not
+print environment files, cookies, session/export tokens, hashes, or database connection strings.
+
+## Mandatory production order
+
+The order is migration -> silent stdin seed -> deploy. Run the following from the reviewed production
+source checkout, not from an older deployed application bundle. The live application's environment is
+exported only to give the reviewed migration and seed commands their existing database configuration.
+Treat every command as a gate: except for immediately unsetting the temporary shell variable, do not
+continue after a non-zero exit.
+
+```bash
+cd /root/reportingdash-rollout/dashboard-next
+set -a
+. /var/www/dashboard/.env
+set +a
+npm run db:migrate
+read -rsp "Zaruku password: " SHARED_PASSWORD
+printf '%s' "$SHARED_PASSWORD" | npm --silent run access:set-shared-password -- --client-id zaruku
+unset SHARED_PASSWORD
+```
+
+The seed command accepts only `--client-id abbott|zaruku` and reads the password from standard input.
+For the initial rollout, use the corrected Zaruku form exactly as shown:
+
+```bash
+npm --silent run access:set-shared-password -- --client-id zaruku
+```
+
+Never replace stdin with a `--password` argument, command substitution, here-document, or literal value.
+Immediately run `unset SHARED_PASSWORD` after either success or failure before doing anything else in the
+TTY. If migration or seed fails, do not deploy; correct the reviewed source or environment and repeat the
+safe step without exposing inputs.
+
+Only after migration `042` and a successful Zaruku seed may the reviewed application release be deployed
+with the existing atomic `npm run deploy` workflow. The deploy command does not own this schema migration
+or seed and must not be used to infer that either has happened.
+
+## Safe verification
+
+Before cutover, query only schema metadata and boolean/count assertions:
+
+- migration `042` completed and `dashboard_shared_access_settings` has the reviewed columns, primary key,
+  and foreign key;
+- Zaruku is configured and its credential version is at least `1`;
+- no password, hash, session/export token, cookie, environment value, or DSN appears in captured output.
+
+After deploy, verify health locally and publicly, then smoke the Settings form and both login gates. Abbott
+must accept its current version-`0` fallback until an Abbott DB row is created. Zaruku must accept the
+approved password and reject an incorrect password without disclosing whether a settings row exists.
+
+To prove version revocation, authenticate to Zaruku, rotate once more to the same approved password through
+the admin form, confirm the old manager session is rejected, and confirm a fresh login succeeds. Capture
+only status codes and non-secret boolean/version assertions; never capture cookies or credentials.
+
+## Rollback
+
+Rollback is application-only. Reactivate the prior application release with `npm run deploy:rollback`, but
+retain migration `042`, the `dashboard_shared_access_settings` table, password hashes, and credential
+versions. Never drop or truncate the table, delete a row, decrement a version, copy a hash into an env file,
+or restore a plaintext password.
+
+The predecessor application continues to use the Abbott environment password and treats Zaruku according
+to that predecessor release's policy. Assess that policy before rollback. A later deployment of the new
+application must find the retained Zaruku DB row and must not silently reseed or rewrite it.
+
+## Administrative rotations after rollout
+
+Use the admin Settings card for normal Abbott and Zaruku rotations. The current password is never displayed,
+and successful changes clear the form. A rotation writes the DB and revokes prior manager viewer/export
+sessions by incrementing the credential version. It does not rotate Abbott's embed key.

@@ -38,13 +38,25 @@ For dashboard work, use this file first:
 It contains the current dashboard runtime rules, auth model, export rules, comparison behavior, and latest completed dashboard changes.
 
 Current auth note:
-- Abbott dashboard supports:
-  - password-only viewer access
-  - permanent iframe access through `embed_key`
-- Abbott is always protected: active viewer users select `email_password`; otherwise it stays
-  `password_only`, including when the shared password is missing. Missing credentials fail closed.
+- Abbott and Zaruku always use mandatory `password_only` viewer access, regardless of rows in
+  `dashboard_access_users`; neither dashboard may resolve to public or `email_password` mode.
+- `dashboard_shared_access_settings` is authoritative once a dashboard has a row. It stores only a
+  salted `scrypt` hash and monotonically increasing `credential_version`; admin rotations write this
+  table transactionally and never return password or hash material.
+- Abbott alone may use `ABBOTT_DASHBOARD_PASSWORD` as credential version `0`, and only while its DB
+  row is absent. Production env validation still requires this transitional fallback. The first DB
+  seed/admin rotation makes the row authoritative, and later rotations never update the env value.
+- Zaruku has no plaintext environment fallback. Until its DB row is seeded, authentication fails closed.
+- Password-authenticated manager viewer and export sessions carry `credential_version`. Every
+  protected request compares it with current authority, so any rotation revokes older manager sessions
+  and derived export tokens, including a rotation to the same password.
+- Abbott's `ABBOTT_DASHBOARD_EMBED_KEY` is separate, remains environment-managed, and is not rotated or
+  revoked by a shared-password change. Embed sessions remain audience-scoped and unversioned.
 - Signed dashboard viewer and export sessions require an explicit `manager` or `embed` audience;
   legacy dashboard tokens without an audience are rejected. Viewer portal sessions remain audience-free.
+- Production migration, stdin seed, deploy, and application-only rollback are documented in
+  `docs/SHARED-DASHBOARD-PASSWORD-ROLLOUT.md`. Never put a literal password in a command, Git, logs,
+  checkpoints, deployment artifacts, or documentation.
 
 ### Zaruku source matrix
 
@@ -247,6 +259,11 @@ Important collector rule:
 - Google Search Console uses `--data-delay-days 3` and `--lag-days 3`, so daily cron ends at `today - 3 days` and repaints a 4-day stable window.
 
 ## Deploy workflow
+
+The first shared-password release has a mandatory pre-cutover order: apply migration `042`, seed the
+Zaruku hash through silent standard input, and only then deploy the application. Follow
+`docs/SHARED-DASHBOARD-PASSWORD-ROLLOUT.md`; ordinary application rollback must retain
+`dashboard_shared_access_settings` and its hashes.
 
 Deploy `dashboard-next` from local machine:
 

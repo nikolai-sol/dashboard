@@ -132,12 +132,22 @@ Main file:
 
 - Per-dashboard viewer users are supported
 - If a dashboard has viewer users, public API / Excel / PDF require viewer auth
-- Abbott never becomes public: active viewer users use `email_password`; otherwise Abbott remains
-  `password_only`, and a missing `ABBOTT_DASHBOARD_PASSWORD` makes credential verification fail closed
+- Abbott and Zaruku are exceptions to the access-user rule: both always use mandatory `password_only`
+  mode regardless of `dashboard_access_users`; neither can become public or use `email_password`
+- `dashboard_shared_access_settings` is the credential authority whenever a dashboard has a row. It
+  stores a salted `scrypt` hash, a monotonically increasing `credential_version`, audit attribution,
+  and timestamps; it never stores plaintext
+- Abbott alone retains the transitional `ABBOTT_DASHBOARD_PASSWORD` fallback at credential version `0`,
+  and only until its first DB row exists. The env value remains required by current production release
+  validation for this transition, but every new seed/admin rotation writes the DB and never updates env
+- Zaruku has no environment fallback and fails closed until its DB row is seeded before application cutover
 - Signed per-dashboard viewer and export tokens carry a mandatory audience:
   - password/email login => `manager`
   - `embed_key` access => `embed`
   - legacy dashboard tokens without an audience are rejected and require re-login
+- Shared-password manager viewer sessions and derived export tokens also carry `credential_version`.
+  Every protected request compares it with current DB authority (or Abbott fallback version `0`), so a
+  rotation immediately rejects all older manager sessions and exports, even if the password text is unchanged
 - Abbott responses are projected server-side by that audience:
   - `manager` keeps raw User ID and row-level journey data, with URL query strings and fragments removed
   - `embed` receives aggregate-only Abbott data without User ID fields, session IDs, user actions, or journey rows
@@ -157,6 +167,19 @@ Relevant files:
 - `src/app/api/viewer-portal/logout/route.ts`
 - `src/app/api/dashboard-auth/login/route.ts`
 
+### Shared-password operations
+
+- The authoritative operator sequence and verification boundaries are in
+  `docs/SHARED-DASHBOARD-PASSWORD-ROLLOUT.md`
+- First rollout order is migration `042` -> Zaruku seed through silent stdin -> application deploy;
+  deploying before the seed would expose only Zaruku's intentional fail-closed state
+- Use only `npm --silent run access:set-shared-password -- --client-id zaruku`; never pass the password
+  as a CLI argument or put it in shell history, logs, documentation, checkpoints, or deployment artifacts
+- Admin password changes for both Abbott and Zaruku use the same transactional DB rotation path
+- Application rollback retains `dashboard_shared_access_settings`, all hashes, and current credential
+  versions; never delete the table, decrement a version, or restore plaintext credential material
+- This documentation change does not perform a migration, seed, deployment, secret change, or rollback
+
 ### Embed auth
 
 - Embedded dashboard auth must not rely only on first-party cookies
@@ -168,6 +191,8 @@ Relevant files:
   - `embed_key`
   - configured only through `process.env.ABBOTT_DASHBOARD_EMBED_KEY`; there is no fallback key
   - this is intended for iframe embedding without expiring `access_token`
+  - it is independent from `dashboard_shared_access_settings`; shared-password rotation does not change
+    or revoke the embed key or embed access
 
 ## Embed rules
 
