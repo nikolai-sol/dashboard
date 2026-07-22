@@ -5,6 +5,8 @@ import test from "node:test";
 const source = readFileSync(new URL("./ZarukuSeoDashboard.tsx", import.meta.url), "utf8");
 const toolbarSource = readFileSync(new URL("./ZarukuSeoWeekToolbar.tsx", import.meta.url), "utf8");
 const russiaMapSource = readFileSync(new URL("./ZarukuRussiaDemandMap.tsx", import.meta.url), "utf8");
+const contentSource = readFileSync(new URL("./ZarukuContentTab.tsx", import.meta.url), "utf8");
+const audienceSource = readFileSync(new URL("./ZarukuAudienceTab.tsx", import.meta.url), "utf8");
 
 test("dashboard distinguishes the traffic period from SEO week selection", () => {
   assert.match(source, /Период трафика:\s*<\/span>\s*<span>\{data\.period\.from\} — \{data\.period\.to\}<\/span>/);
@@ -14,65 +16,75 @@ test("SEO week toolbar names its reporting period", () => {
   assert.match(toolbarSource, /Отчётная SEO-неделя/);
 });
 
-test("navigation uses the full geography label", () => {
-  assert.match(source, /\{ id: "geo", label: "География", icon: MapPin \}/);
+test("client navigation contains exactly six tabs in executive order", () => {
+  const labels = ["Обзор", "SEO", "Контент", "Аудитория", "Работы и задачи", "Качество"];
+  let lastIndex = -1;
+  for (const label of labels) {
+    const index = source.indexOf(`label: "${label}"`);
+    assert.ok(index > lastIndex, `${label} must follow the previous tab`);
+    lastIndex = index;
+  }
+  assert.doesNotMatch(source, /label: "SEO-операции"|label: "Гео"|label: "Устройства"|label: "Поведение"/);
 });
 
-test("DataTable keeps behavior metric headers readable with spacing and wrapping", () => {
-  assert.match(source, /min-w-\[1080px\]/);
-  assert.match(source, /table-fixed/);
-  assert.match(source, /px-3 pb-2 text-right font-medium leading-tight/);
-  assert.match(source, /whitespace-normal/);
+test("Overview starts with explicit period context and data confidence", () => {
+  const overviewSource = readFileSync(new URL("./ZarukuOverviewTab.tsx", import.meta.url), "utf8");
+  assert.match(source, /import ZarukuOverviewTab/);
+  assert.match(source, /<ZarukuOverviewTab data=\{data\}/);
+  assert.match(overviewSource, /<ZarukuPeriodContext/);
+  assert.match(overviewSource, /Что происходит с поисковой видимостью и целевым трафиком сейчас/);
+  assert.match(overviewSource, /buildZarukuTrustState/);
+  assert.match(overviewSource, /trust\.label/);
 });
 
-test("SEO tab renders one AI visibility panel and keeps long tables bounded", () => {
+test("SEO tab follows the executive-to-detail hierarchy without duplicate source tables", () => {
   const aiPanelMatches = source.match(/<AiAggregateVisibilityPanel/g) ?? [];
 
   assert.equal(aiPanelMatches.length, 1);
-  assert.match(source, /data\.organic_landing_pages\.slice\(0, 10\)/);
-  assert.match(source, /max-h-\[29rem\]/);
-  assert.match(source, /max-h-\[30rem\]/);
+  assert.match(source, /<ZarukuSeoExecutiveSummary/);
+  assert.match(source, /<ZarukuSeoQueryComparison/);
+  assert.match(source, /<ZarukuSeoPageComparison/);
+  assert.match(source, /<ZarukuSeoDiagnostics/);
+  assert.doesNotMatch(source, /title="GSC countries"/);
+  assert.doesNotMatch(source, /title="Запросы Яндекса"/);
+  assert.doesNotMatch(source, /title="Google Search Console queries"/);
 });
 
-test("SEO tab explains Metrika search phrases and hides empty Yandex landing page facts", () => {
+test("SEO tab explains Metrika search phrases and uses the unified landing-page workspace", () => {
   assert.match(source, /Поисковые фразы из Метрики/);
   assert.match(source, /Фразы, которые Метрика смогла определить после клика/);
-  assert.match(source, /webmasterPages\.length > 0/);
+  assert.match(source, /buildUnifiedSeoPageRows/);
+  assert.match(source, /webmasterRows: webmasterPages/);
+  assert.doesNotMatch(source, /title="Посадочные страницы Яндекса"/);
 });
 
-test("SEO tab labels Yandex query table from its own week selection", () => {
-  assert.match(source, /const webmasterQueryMeta = buildWebmasterSelectionMeta\(webmasterQuerySelection, webmasterWeek\)/);
-  assert.match(source, /webmasterQueryMeta\.fallbackNote/);
+test("SEO tab passes actual source weeks into unified comparisons", () => {
+  assert.match(source, /webmaster: webmasterQuerySelection\.week/);
+  assert.match(source, /google: gscQuerySelection\.week/);
+  assert.match(source, /webmaster: webmasterPages\.length > 0 \? webmasterPageSelection\.week : null/);
+  assert.match(source, /google: gscLandingPages\.length > 0 \? gscLandingPageSelection\.week : null/);
 });
 
-test("Quality tab shows technical collector freshness wording", () => {
-  assert.match(source, /Source freshness/);
-  assert.match(source, /last successful cron/);
-  assert.match(source, /rows written/);
+test("Quality route uses the client-facing trust surface", () => {
+  assert.match(source, /import ZarukuQualityTab/);
+  assert.match(source, /<ZarukuQualityTab data=\{data\}/);
+  assert.doesNotMatch(source, /function QualityTab|function SourceFreshnessTable/);
 });
 
-test("SEO tab renders Search Console facts from canonical data without pending placeholder", () => {
-  assert.match(source, /GSC search facts/);
-  assert.match(source, /Search Console · canonical_fact_gsc_queries_daily/);
+test("SEO tab renders Search Console facts through the unified read model without a pending placeholder", () => {
+  assert.match(source, /data\.gsc\.queries/);
+  assert.match(source, /data\.gsc\.landing_pages/);
+  assert.match(source, /buildUnifiedSeoQueryRows/);
   assert.doesNotMatch(source, /title="Факты Google Search Console" source="gsc" layer="serp" pending/);
   assert.doesNotMatch(source, /Данные по Google-показам, кликам и CTR ожидаются из Search Console/);
 });
 
-test("pending and returning-content panels explain current state instead of showing misleading empty UI", () => {
+test("pending and returning-content panels use explicit source states instead of misleading empty UI", () => {
   assert.match(source, /function PendingPanel[\s\S]*if \(data\.pending_requirements\.length === 0\) return null;/);
   assert.match(source, /pending=\{data\.pending_requirements\.length > 0\}/);
   assert.doesNotMatch(source, /title="Что ещё ждём" layer="serp" pending right=/);
-  assert.match(source, /Нет возвратного контента за выбранный период/);
-});
-
-test("Behavior tab exposes canonical returning-content recency buckets", () => {
-  assert.match(source, /возвратные пользователи/);
-  assert.match(source, /1 день/);
-  assert.match(source, /2–7 дней/);
-  assert.match(source, /8–31 день/);
-  assert.match(source, /row\.returning_1_day_users/);
-  assert.match(source, /row\.returning_2_7_days_users/);
-  assert.match(source, /row\.returning_8_31_days_users/);
+  assert.match(contentSource, /meta=\{data\.dataset_meta\.returning_pages\}/);
+  assert.match(contentSource, /hasRows=\{data\.returning_pages\.length > 0\}/);
 });
 
 test("source health renders collection provenance labels", () => {
@@ -94,30 +106,42 @@ test("audience bars localize common Metrika labels", () => {
   assert.match(source, /Возраст не определён/);
 });
 
-test("SEO tab renders GSC product enrichment panels", () => {
-  assert.match(source, /GSC landing pages/);
-  assert.match(source, /GSC brand vs non-brand/);
-  assert.match(source, /GSC countries/);
-  assert.match(source, /GSC devices/);
-  assert.match(source, /GSC search appearances/);
-  assert.match(source, /GSC result types/);
+test("Content route uses one focused workspace without a legacy Behavior tab", () => {
+  assert.match(source, /import ZarukuContentTab/);
+  assert.match(source, /<ZarukuContentTab/);
+  assert.doesNotMatch(source, /function ContentTab|function BehaviorTab/);
+  assert.doesNotMatch(source, /Поведение по каналам/);
+});
+
+test("Work route uses the client-facing workspace wrapper", () => {
+  assert.match(source, /import ZarukuWorkTab/);
+  assert.match(source, /<ZarukuWorkTab/);
+  assert.match(source, /<WeeklyFocusPanel/);
+  assert.match(source, /<ZarukuSeoOperations/);
+});
+
+test("SEO tab keeps useful GSC diagnostics and removes country breakdown", () => {
+  assert.match(source, /<ZarukuSeoDiagnostics/);
   assert.match(source, /data\.gsc\.landing_pages/);
   assert.match(source, /data\.gsc\.brand_split/);
-  assert.match(source, /data\.gsc\.country_summary/);
   assert.match(source, /data\.gsc\.search_appearance/);
   assert.match(source, /data\.gsc\.search_type_summary/);
   assert.match(source, /gscSummaryRows/);
+  assert.doesNotMatch(source, /data\.gsc\.country_summary/);
+  assert.doesNotMatch(source, /Countries|GSC countries/);
 });
 
-test("Geo tab uses the projected Russia demand map instead of manual coordinates", () => {
-  assert.match(source, /import ZarukuRussiaDemandMap from "@\/components\/ZarukuRussiaDemandMap"/);
-  assert.match(source, /Карта спроса по России/);
-  assert.match(source, /<ZarukuRussiaDemandMap rows=\{data\.map_city_demand\}/);
+test("Audience route owns the projected city by map product signal", () => {
+  assert.match(source, /import ZarukuAudienceTab/);
+  assert.match(source, /<ZarukuAudienceTab/);
+  assert.doesNotMatch(source, /function GeoTab|function DevicesTab|function AudienceTab/);
+  assert.match(audienceSource, /import ZarukuRussiaDemandMap from "@\/components\/ZarukuRussiaDemandMap"/);
+  assert.match(audienceSource, /Города и каталог онкоцентров/);
+  assert.match(audienceSource, /<ZarukuRussiaDemandMap rows=\{data\.map_city_demand\}/);
   assert.doesNotMatch(source, /function RussiaMapOutline/);
   assert.doesNotMatch(source, /RUSSIA_CITY_COORDINATES/);
   assert.doesNotMatch(source, /resolveRussiaCityPoint/);
-  assert.doesNotMatch(source, /title="Страны"/);
-  assert.doesNotMatch(source, /title="Города"/);
+  assert.doesNotMatch(audienceSource, /Страны|geo_countries|geo_cities/);
 
   assert.match(russiaMapSource, /from "@visx\/geo"/);
   assert.match(russiaMapSource, /RUSSIA_FEATURE/);

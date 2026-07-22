@@ -25,6 +25,7 @@ type Props = {
   primaryWeek: string | null;
   comparisonWeek: string | null;
   source?: ZarukuSeoSource;
+  showClusterTable?: boolean;
 };
 
 type StatusFilter = "all" | ZarukuSeoClusterStatus;
@@ -83,7 +84,7 @@ function MatchedUrl({ value }: { value: string | null }) {
   );
 }
 
-export default function ZarukuSeoAnalytics({ seoOs, primaryWeek, comparisonWeek, source }: Props) {
+export default function ZarukuSeoAnalytics({ seoOs, primaryWeek, comparisonWeek, source, showClusterTable = true }: Props) {
   const [section, setSection] = useState("all");
   const [status, setStatus] = useState<StatusFilter>("all");
   const chartRows = useMemo(
@@ -158,7 +159,7 @@ export default function ZarukuSeoAnalytics({ seoOs, primaryWeek, comparisonWeek,
         )}
       </div>
 
-      <div className="px-5 py-4">
+      {showClusterTable ? <div className="px-5 py-4">
         <div className="flex flex-wrap items-end justify-between gap-3">
           <div>
             <h4 className="text-sm font-semibold text-slate-900">Кластеры запросов</h4>
@@ -233,7 +234,7 @@ export default function ZarukuSeoAnalytics({ seoOs, primaryWeek, comparisonWeek,
             </tbody>
           </table>
         </div>
-      </div>
+      </div> : null}
     </section>
   );
 }

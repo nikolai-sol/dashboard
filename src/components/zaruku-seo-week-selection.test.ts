@@ -54,10 +54,12 @@ test("reconcileWeekSelection clears comparison and repairs primary when data shr
   assert.equal(canCompareWeeks(["2026-W31", "2026-W32"]), true);
 });
 
-test("SEO week toolbar is scoped to SEO, SEO Ops, and Content tabs", () => {
+test("SEO week toolbar is scoped to SEO, Work, and Content tabs", () => {
   assert.equal(shouldShowSeoWeekToolbar("seo"), true);
-  assert.equal(shouldShowSeoWeekToolbar("seo_ops"), true);
+  assert.equal(shouldShowSeoWeekToolbar("work"), true);
   assert.equal(shouldShowSeoWeekToolbar("content"), true);
+  assert.equal(shouldShowSeoWeekToolbar("seo_ops"), false);
   assert.equal(shouldShowSeoWeekToolbar("overview"), false);
+  assert.equal(shouldShowSeoWeekToolbar("audience"), false);
   assert.equal(shouldShowSeoWeekToolbar("quality"), false);
 });

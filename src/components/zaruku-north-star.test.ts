@@ -109,7 +109,7 @@ test("buildWeeklyFocus combines SEO, AI, run, and task facts", () => {
   const focus = buildWeeklyFocus({ opportunities, aiRows, tasks, runs, week: "2026-W29" });
 
   assert.equal(focus.seo, "Фокус SEO: /rak-molochnoj-zhelezy/ — разрыв позиций раздела");
-  assert.match(focus.ai, /67% цитирований Алисы/);
-  assert.match(focus.ai, /\/rak-molochnoj-zhelezy\/, \/melanoma\/, \/rak-lyogkogo\//);
+  assert.doesNotMatch(focus.ai, /67%|источник №1|во всех случаях/i);
+  assert.equal(focus.ai, "ИИ: 89 упоминаний и 155 цитирований за 2026-07 · ручной baseline wm_alisa_manual");
   assert.equal(focus.pipeline, "Конвейер: 2026-W29 завершён, дайджест 6, Медицинская проверка: 3");
 });
