@@ -296,6 +296,26 @@ Requires explicit approval before implementation:
 - external API contract changes;
 - writes from ReportingDash into SEO OS or other source-owned tables.
 
+## Approved source-of-truth contract after the SEO OS audit
+
+The owner approved the read-only implementation path on 2026-07-22. The audit did not authorize any schema, collector, backfill, cron, deployment, or write-path change.
+
+The dashboard uses these stable contracts:
+
+- GSC query and page facts come from `canonical_fact_gsc_queries_daily` with `country = 'rus'`; the verified available search weeks are `2026-W27..2026-W29`.
+- Yandex impressions, clicks, CTR, and average position come from the canonical Webmaster facts and remain explicitly unsegmented because the tables have no country dimension.
+- Tracked Yandex positions, opportunities, tasks, and run rhythm come from SEO OS. Historical `seo_weekly_runs` counters before TASK-071 are valid stored zeros but do not prove complete historical telemetry.
+- AI headline facts come from the single current `seo_ai_visibility` manual baseline row for `alisa_ai`, period `2026-07`, provenance `wm_alisa_manual`: 89 mentions, 155 citations, and stored presence rate `0.44`. The UI identifies this as a manual baseline and does not infer source rank or page concentration.
+- `seo_sov_weekly` row `2026-W29` represents a 28-day snapshot for `2026-06-13..2026-07-10`; the UI labels the actual window and never calls it a one-week measurement.
+- Onsite traffic channels and organic traffic come from canonical Metrika and are unsegmented. For the selected onsite window `2026-06-24..2026-07-21`, the verified source coverage ends on `2026-07-19`.
+- Canonical page facts provide users and pageviews but not visits. Page users are not site-unique users, and the 40,757 channel-scope versus 40,796 page-scope pageview totals are different grains rather than a reconciliation error.
+- Returning content comes from `canonical_fact_metrika_returning_pages_daily`, remains unsegmented, and has verified coverage through `2026-07-20`.
+- Section traffic may use pageviews plus `seo_section_patterns`; it does not show visits or claim RF scope while page visits are absent.
+- Search Appearance has no rows and is shown as empty or omitted, never as a connected populated panel.
+- `city × /map/`, devices, source × device, browsers, operating systems, age, gender, and interests have no stable stored contract. Production cannot rely on the live Reports API path because the production process has no Metrika token and the read-only smoke returned HTTP 400. These panels remain explicitly unavailable; there is no live fallback.
+
+The approved implementation does not copy or synchronize numbers between owners. It synchronizes definitions: source, period, grain, geography, formula, and availability. A future generic country-aware canonical Metrika dimension fact remains a separate approval gate. Entry-page visits must not be written into the existing pageview-grain rows merely to populate a `visits` column.
+
 ## Implementation sequence
 
 1. Data-truth pass: period policy, metric grain, unsupported conclusions, relative URLs, and current empty/error semantics.

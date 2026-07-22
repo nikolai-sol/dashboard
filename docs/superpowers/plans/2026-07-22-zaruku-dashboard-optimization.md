@@ -38,6 +38,22 @@
 - Links: Zaruku content URLs normalize to `https://zaruku.ru`; external task links continue through the existing safe-link guard.
 - Quality: trust state is derived from source freshness plus dataset state and names affected tabs rather than exposing unbounded raw errors.
 
+## Locked Audit Contract (Approved 2026-07-22)
+
+- Implement the honest read-only dashboard now; do not wait for a new Metrika canonical dimension table.
+- GSC RF is ready for actual weeks `2026-W27..2026-W29`.
+- Webmaster is ready without RF wording; its zero-row `2026-W30` summary does not prove a complete week.
+- SEO OS positions/opportunities/tasks are ready; run counters before TASK-071 are labelled as incomplete historical telemetry.
+- AI uses the `alisa_ai / 2026-07 / wm_alisa_manual` row and exposes its manual provenance.
+- SOV row `2026-W29` is labelled as the actual 28-day window `2026-06-13..2026-07-10`, not as a one-week metric.
+- Canonical onsite is unsegmented. For selection `2026-06-24..2026-07-21`, traffic coverage ends `2026-07-19` and returning-content coverage ends `2026-07-20`; panels show both requested and actual coverage.
+- Page scope exposes users and pageviews only. It never synthesizes visits, site-unique users, bounce, duration, or depth.
+- Section traffic uses pageviews plus section patterns and remains unsegmented.
+- Search Appearance is empty.
+- `city × /map/`, device, browser, OS, age, gender, and interest panels are unavailable until a stable stored contract exists. The production live Metrika API is not a fallback.
+- The 40,757 channel-scope and 40,796 page-scope pageview totals remain separate and labelled by grain.
+- No number is copied from SEO OS into an onsite dataset. Synchronization means shared definitions and reconciliation, not duplicated storage.
+
 ## File Map
 
 **Create:**
