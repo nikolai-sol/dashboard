@@ -86,6 +86,9 @@ assert.equal(process.env.ABBOTT_EMBED_DB_NAME, "report_bd");
 assert.equal(process.env.ABBOTT_PRIVATE_DB_PASSWORD, process.env.EXPECTED_PRIVATE_PASSWORD);
 JS
 
+grep -q '^ABBOTT_DASHBOARD_PASSWORD=' "$TARGET_FILE"
+! grep -q 'ZARUKU_DASHBOARD_PASSWORD' "$TARGET_FILE"
+
 if grep -Fq 'top-secret' "$SUCCESS_LOG"; then
   echo "render-production-env.sh printed a secret value" >&2
   exit 1

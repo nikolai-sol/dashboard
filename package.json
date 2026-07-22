@@ -10,6 +10,7 @@
     "lint": "eslint .",
     "typecheck": "tsc --noEmit",
     "security:public-assets": "tsx scripts/assert-no-private-public-assets.ts",
+    "access:set-shared-password": "tsx scripts/set-dashboard-shared-password.ts",
     "ci:verify": "npm run security:public-assets && npm run lint && npm run typecheck && npm run build",
     "collect:yandex-webmaster": "bash scripts/collect-yandex-webmaster-canonical.sh --run-type cron",
     "db:migrate": "tsx src/db/run-migration.ts",

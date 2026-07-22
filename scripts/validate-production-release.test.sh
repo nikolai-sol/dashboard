@@ -50,6 +50,9 @@ write_valid_env "$VALID_RELEASE/.env"
   bash "$SCRIPT_DIR/validate-production-release.sh" "$VALID_RELEASE" "$VALID_RELEASE/.env"
 ) >"$TMP_DIR/valid.log" 2>&1
 
+grep -q 'ABBOTT_DASHBOARD_PASSWORD' "$SCRIPT_DIR/validate-production-release.sh"
+! grep -q 'ZARUKU_DASHBOARD_PASSWORD' "$SCRIPT_DIR/validate-production-release.sh"
+
 NODE_OPTIONS_MARKER="$TMP_DIR/node-options-executed"
 cat > "$TMP_DIR/node-options-payload.cjs" <<JS
 require("node:fs").writeFileSync("$NODE_OPTIONS_MARKER", "executed");
