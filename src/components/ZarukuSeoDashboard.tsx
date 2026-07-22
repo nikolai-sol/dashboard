@@ -543,8 +543,8 @@ function AiAggregateVisibilityPanel({ data, locale }: Props) {
             <div className="rounded-lg border border-slate-200 bg-slate-50 px-3 py-3"><div className="text-xs uppercase text-slate-400">Цитаты</div><div className="mt-1 text-xl font-semibold text-slate-900">{formatNumber(latest?.citations ?? 0, locale)}</div></div>
           </div>
           <p className="text-xs leading-relaxed text-slate-500">
-            {latest ? `${formatNumber(latest.mentions, locale)} из ${formatNumber(latest.citations, locale)} примеров, источник №1 во всех случаях.` : ""}
-            {latest?.provenance ? ` Источник данных: ${latest.provenance}.` : ""}
+            {latest ? `${formatNumber(latest.mentions, locale)} упоминаний и ${formatNumber(latest.citations, locale)} цитирований за ${latest.period}.` : ""}
+            {latest?.provenance ? ` Ручной baseline: ${latest.provenance}.` : ""}
           </p>
         </div>
       ) : (

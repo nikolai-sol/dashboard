@@ -252,7 +252,6 @@ export function buildWeeklyFocus({
   const effectiveWeek = week ?? [...new Set([...opportunities, ...tasks, ...runs].map((row) => row.week))].sort(sortText).at(-1) ?? null;
   const opportunity = topOpportunity(opportunities, effectiveWeek);
   const weekTasks = tasks.filter((task) => task.week === effectiveWeek);
-  const sections = [...new Set(weekTasks.map((task) => task.section).filter((section): section is string => Boolean(section)))].join(", ");
   const run = runs.find((item) => item.week === effectiveWeek) ?? null;
   const ai = latestAiRow(aiRows);
 
@@ -261,8 +260,8 @@ export function buildWeeklyFocus({
       ? `Фокус SEO: ${opportunity.section ?? opportunity.target_url ?? "раздел не задан"} — ${readableOpportunityType(opportunity.opportunity_type)}`
       : "Фокус SEO: нет ожидающих или принятых возможностей на выбранной неделе",
     ai: ai
-      ? `ИИ: 67% цитирований Алисы приходится на 1 страницу — диверсификация через задачи ${sections || "выбранной недели"}`
-      : `ИИ: ждём снимок видимости — диверсификация через задачи ${sections || "выбранной недели"}`,
+      ? `ИИ: ${ai.mentions.toLocaleString("ru-RU")} упоминаний и ${ai.citations.toLocaleString("ru-RU")} цитирований за ${ai.period}${ai.provenance ? ` · ручной baseline ${ai.provenance}` : ""}`
+      : "ИИ: для выбранной недели нет связанного месячного среза",
     pipeline: run
       ? `Конвейер: ${run.week} ${readableRunStatus(run.status)}, дайджест ${run.digest_count ?? "—"}, ${taskStatusSummary(weekTasks) || "задач нет"}`
       : `Конвейер: ${effectiveWeek ?? "неделя не выбрана"} без телеметрии запуска, ${taskStatusSummary(weekTasks) || "задач нет"}`,

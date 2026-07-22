@@ -9,8 +9,11 @@ import {
   buildRunComparison,
   buildRhythmRows,
   buildTaskStatusSummary,
+  formatOpportunityTitle,
   formatRunMetric,
   normalizeConfidencePercent,
+  sortSeoOpportunities,
+  sortSeoTasks,
 } from "@/components/zaruku-seo-operations";
 
 type Props = {
@@ -111,13 +114,11 @@ export default function ZarukuSeoOperations({ seoOs, primaryWeek, comparisonWeek
     [comparisonWeek, primaryWeek, seoOs.tasks],
   );
   const opportunities = useMemo(
-    () => seoOs.opportunities
-      .filter((row) => row.week === primaryWeek)
-      .sort((left, right) => left.priority.localeCompare(right.priority) || right.confidence - left.confidence || left.title.localeCompare(right.title)),
+    () => sortSeoOpportunities(seoOs.opportunities.filter((row) => row.week === primaryWeek)),
     [primaryWeek, seoOs.opportunities],
   );
   const tasks = useMemo(
-    () => seoOs.tasks.filter((row) => row.week === primaryWeek).sort((left, right) => left.title.localeCompare(right.title)),
+    () => sortSeoTasks(seoOs.tasks.filter((row) => row.week === primaryWeek)),
     [primaryWeek, seoOs.tasks],
   );
   const rhythm = useMemo(() => buildRhythmRows(seoOs.runs, seoOs.weeks), [seoOs.runs, seoOs.weeks]);
@@ -151,7 +152,7 @@ export default function ZarukuSeoOperations({ seoOs, primaryWeek, comparisonWeek
           <table className="w-full min-w-[920px] text-sm">
             <thead><tr className="text-left text-xs uppercase text-slate-400"><th className="pb-2 font-medium">Возможность</th><th className="pb-2 font-medium">Раздел</th><th className="pb-2 font-medium">Решение</th><th className="pb-2 font-medium">Приоритет</th><th className="pb-2 text-right font-medium">Уверенность</th><th className="pb-2 font-medium">Целевая URL</th><th className="pb-2 font-medium">Причина отказа</th></tr></thead>
             <tbody className="divide-y divide-slate-100">
-              {opportunities.map((row) => <tr key={row.opportunity_id}><td className="max-w-64 py-2.5 font-medium text-slate-700">{row.title}</td><td className="py-2.5 text-slate-500">{row.section ?? "—"}</td><td className="py-2.5 text-slate-600">{DECISION_LABELS[row.decision]}</td><td className="py-2.5"><span className={row.priority === "high" ? "font-medium text-red-700" : row.priority === "medium" ? "font-medium text-amber-700" : "text-slate-600"}>{PRIORITY_LABELS[row.priority]}</span></td><td className="py-2.5 text-right text-slate-600">{formatRate(normalizeConfidencePercent(row.confidence))}</td><td className="max-w-48 py-2.5"><ExternalUrl value={row.target_url} /></td><td className="max-w-56 py-2.5 text-slate-500">{row.reject_reason ?? "—"}</td></tr>)}
+              {opportunities.map((row) => <tr key={row.opportunity_id}><td className="max-w-64 py-2.5 font-medium text-slate-700"><div>{formatOpportunityTitle(row)}</div><details className="mt-1 text-xs font-normal text-slate-400"><summary className="cursor-pointer">ID и тип</summary><div className="mt-1 break-all">{row.opportunity_id} · {row.opportunity_type}</div></details></td><td className="py-2.5 text-slate-500">{row.section ?? "—"}</td><td className="py-2.5 text-slate-600">{DECISION_LABELS[row.decision]}</td><td className="py-2.5"><span className={row.priority === "high" ? "font-medium text-red-700" : row.priority === "medium" ? "font-medium text-amber-700" : "text-slate-600"}>{PRIORITY_LABELS[row.priority]}</span></td><td className="py-2.5 text-right text-slate-600">{formatRate(normalizeConfidencePercent(row.confidence))}</td><td className="max-w-48 py-2.5"><ExternalUrl value={row.target_url} /></td><td className="max-w-56 py-2.5 text-slate-500">{row.reject_reason ?? "—"}</td></tr>)}
               {opportunities.length === 0 ? <tr><td colSpan={7} className="py-6 text-center text-sm text-slate-500">Нет возможностей для выбранной недели.</td></tr> : null}
             </tbody>
           </table>

@@ -8,6 +8,23 @@ import type {
 
 const OPPORTUNITY_DECISIONS: ZarukuSeoOpportunityDecision[] = ["pending", "approved", "rejected", "carried_over"];
 const TASK_STATUSES: ZarukuSeoTaskStatus[] = ["draft", "awaiting_medical_review", "needs_target_page", "in_progress", "done", "cancelled"];
+const DECISION_RANK = { pending: 0, approved: 1, carried_over: 2, rejected: 3 } as const;
+const PRIORITY_RANK = { high: 0, medium: 1, low: 2 } as const;
+const TASK_STATUS_RANK = {
+  awaiting_medical_review: 0,
+  needs_target_page: 1,
+  in_progress: 2,
+  draft: 3,
+  done: 4,
+  cancelled: 5,
+} as const;
+const OPPORTUNITY_TYPE_LABELS: Record<string, string> = {
+  content_refresh: "Обновить контент",
+  internal_linking: "Усилить внутреннюю перелинковку",
+  new_content: "Подготовить новый контент",
+  title_meta: "Улучшить title и description",
+  section_ranking_gap: "Закрыть разрыв позиций раздела",
+};
 
 export type OpportunityDecisionCounts = Record<ZarukuSeoOpportunityDecision, number>;
 export type TaskStatusCounts = Record<ZarukuSeoTaskStatus, number>;
@@ -29,6 +46,26 @@ export function formatRunMetric(value: number | null, budget?: number) {
 
 export function normalizeConfidencePercent(value: number) {
   return value;
+}
+
+export function sortSeoOpportunities<T extends Pick<ZarukuSeoOpportunityRow, "decision" | "priority" | "confidence" | "title">>(rows: T[]): T[] {
+  return [...rows].sort((left, right) =>
+    DECISION_RANK[left.decision] - DECISION_RANK[right.decision]
+      || PRIORITY_RANK[left.priority] - PRIORITY_RANK[right.priority]
+      || right.confidence - left.confidence
+      || left.title.localeCompare(right.title, "ru-RU"));
+}
+
+export function sortSeoTasks<T extends Pick<ZarukuSeoTaskRow, "status" | "title">>(rows: T[]): T[] {
+  return [...rows].sort((left, right) =>
+    TASK_STATUS_RANK[left.status] - TASK_STATUS_RANK[right.status]
+      || left.title.localeCompare(right.title, "ru-RU"));
+}
+
+export function formatOpportunityTitle(row: Pick<ZarukuSeoOpportunityRow, "title" | "opportunity_type">): string {
+  const title = row.title.trim();
+  const looksInternal = !title || title === row.opportunity_type || title.startsWith(`${row.opportunity_type}:`);
+  return looksInternal ? (OPPORTUNITY_TYPE_LABELS[row.opportunity_type] ?? "SEO-возможность для раздела") : title;
 }
 
 function emptyDecisionCounts(): OpportunityDecisionCounts {

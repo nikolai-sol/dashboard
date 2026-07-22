@@ -8,6 +8,9 @@ import {
   buildTaskStatusSummary,
   formatRunMetric,
   normalizeConfidencePercent,
+  formatOpportunityTitle,
+  sortSeoOpportunities,
+  sortSeoTasks,
 } from "@/components/zaruku-seo-operations";
 
 const opportunities: ZarukuSeoOpportunityRow[] = [
@@ -92,4 +95,32 @@ test("run metric formatting distinguishes unknown telemetry from valid zero valu
 test("normalizeConfidencePercent preserves canonical 0-100 confidence values", () => {
   assert.equal(normalizeConfidencePercent(1), 1);
   assert.equal(normalizeConfidencePercent(60), 60);
+});
+
+test("opportunities are ordered by decision and business priority", () => {
+  const rows: ZarukuSeoOpportunityRow[] = [
+    { week: "2026-W29", opportunity_id: "rejected", section: null, opportunity_type: "new_content", title: "Rejected", target_url: null, decision: "rejected", reject_reason: null, confidence: 90, priority: "high" },
+    { week: "2026-W29", opportunity_id: "pending-low", section: null, opportunity_type: "new_content", title: "Pending low", target_url: null, decision: "pending", reject_reason: null, confidence: 90, priority: "low" },
+    { week: "2026-W29", opportunity_id: "approved", section: null, opportunity_type: "new_content", title: "Approved", target_url: null, decision: "approved", reject_reason: null, confidence: 90, priority: "high" },
+    { week: "2026-W29", opportunity_id: "pending-high", section: null, opportunity_type: "new_content", title: "Pending high", target_url: null, decision: "pending", reject_reason: null, confidence: 90, priority: "high" },
+  ];
+  assert.deepEqual(sortSeoOpportunities(rows).map((row) => row.opportunity_id), [
+    "pending-high", "pending-low", "approved", "rejected",
+  ]);
+});
+
+test("active tasks are shown before completed history", () => {
+  const rows: ZarukuSeoTaskRow[] = [
+    { week: "2026-W29", task_id: "done", section: null, title: "Done", status: "done", notion_url: null },
+    { week: "2026-W29", task_id: "draft", section: null, title: "Draft", status: "draft", notion_url: null },
+    { week: "2026-W29", task_id: "review", section: null, title: "Review", status: "awaiting_medical_review", notion_url: null },
+  ];
+  assert.deepEqual(sortSeoTasks(rows).map((row) => row.task_id), ["review", "draft", "done"]);
+});
+
+test("internal opportunity titles become manager-readable", () => {
+  assert.equal(formatOpportunityTitle({
+    title: "section_ranking_gap: cluster_42",
+    opportunity_type: "section_ranking_gap",
+  }), "Закрыть разрыв позиций раздела");
 });
