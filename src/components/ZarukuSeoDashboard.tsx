@@ -28,6 +28,7 @@ import {
   Workflow,
 } from "lucide-react";
 import ZarukuSeoWeekToolbar from "@/components/ZarukuSeoWeekToolbar";
+import ZarukuSeoExecutiveSummary from "@/components/ZarukuSeoExecutiveSummary";
 import type {
   ZarukuGscBrandSplitRow,
   ZarukuGscCountrySummaryRow,
@@ -63,6 +64,7 @@ import {
   buildSemanticHealthRows,
   buildWeeklyFocus,
 } from "@/components/zaruku-north-star";
+import { buildSeoExecutiveSnapshot } from "@/components/zaruku-seo-workspace";
 import {
   buildNorthStarStripItems,
   buildTrafficHealthRows,
@@ -1197,8 +1199,37 @@ function SeoTab({ data, locale, primaryWeek, comparisonWeek }: Props & { primary
   const gscBrandSplitMeta = buildGscSelectionMeta(gscBrandSplitSelection, gscWeek);
   const gscSearchAppearanceMeta = buildGscSelectionMeta(gscSearchAppearanceSelection, gscWeek);
   const gscSearchTypeMeta = buildGscSelectionMeta(gscSearchTypeSelection, gscWeek);
+  const seoOsWeek = primaryWeek ?? data.seo_os.latest_week;
+  const selectedPositionTrend = seoOsWeek
+    ? data.seo_os.position_trend.filter((row) => row.week === seoOsWeek)
+    : [];
+  const aiPeriod = data.seo_intelligence.ai.latest_period;
+  const selectedAiRows = aiPeriod
+    ? data.seo_intelligence.ai.rows.filter((row) => row.period === aiPeriod)
+    : [];
+  const executiveSnapshot = buildSeoExecutiveSnapshot({
+    gscRows: gscQueries,
+    webmasterRows: webmasterQueries,
+    positionTrend: selectedPositionTrend,
+    aiRows: selectedAiRows,
+    postClickRows: data.organic_landing_pages,
+  });
   return (
     <div className="space-y-5">
+      {/* Reserved AI summary mount point: after period context, before executive detail cards. */}
+      <ZarukuSeoExecutiveSummary
+        snapshot={executiveSnapshot}
+        trafficPeriod={data.period}
+        primaryWeek={primaryWeek}
+        comparisonWeek={comparisonWeek}
+        sourcePeriods={{
+          google: gscQuerySelection.week,
+          webmaster: webmasterQuerySelection.week,
+          seoOs: selectedPositionTrend.length > 0 ? seoOsWeek : null,
+          ai: aiPeriod,
+        }}
+        locale={currentLocale}
+      />
       <div className="grid gap-5 lg:grid-cols-2">
         <Panel data={data} title="Поисковые системы" source="metrika" layer="onsite">
           <ResponsiveContainer width="100%" height={240}>
