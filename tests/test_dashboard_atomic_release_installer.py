@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import os
 from pathlib import Path
+import stat
 import subprocess
 import tempfile
 import unittest
@@ -21,6 +22,37 @@ def create_release_tree(root: Path) -> None:
 
 
 class DashboardAtomicReleaseInstallerTest(unittest.TestCase):
+    def test_installed_release_exposes_only_static_and_public_assets_to_nginx(self):
+        with tempfile.TemporaryDirectory() as directory:
+            base = Path(directory)
+            source = base / "source"
+            source.mkdir()
+            create_release_tree(source)
+            (source / ".env").write_text("PRIVATE=value\n", encoding="utf-8")
+            for path in (source, source / ".next", source / ".next/static", source / "public"):
+                path.chmod(0o700)
+            for path in source.rglob("*"):
+                if path.is_file():
+                    path.chmod(0o600)
+
+            releases = base / "releases"
+            active = base / "dashboard"
+            result = subprocess.run(
+                ["bash", str(INSTALLER), str(source), str(releases), str(active), "abcdef123456"],
+                cwd=DASHBOARD,
+                capture_output=True,
+                text=True,
+            )
+            self.assertEqual(result.returncode, 0, result.stderr)
+            final = releases / "abcdef123456"
+            self.assertEqual(stat.S_IMODE(final.stat().st_mode), 0o711)
+            self.assertEqual(stat.S_IMODE((final / ".next").stat().st_mode), 0o711)
+            for path in (final / ".next/static", final / "public"):
+                for entry in (path, *path.rglob("*")):
+                    expected = 0o755 if entry.is_dir() else 0o644
+                    self.assertEqual(stat.S_IMODE(entry.stat().st_mode), expected, entry)
+            self.assertEqual(stat.S_IMODE((final / ".env").stat().st_mode), 0o600)
+
     def test_explicit_checkpoint_converts_current_directory_to_verified_rollback_release(self):
         self.assertTrue(INSTALLER.is_file(), "reviewed release installer is missing")
         with tempfile.TemporaryDirectory() as directory:
