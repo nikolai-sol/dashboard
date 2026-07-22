@@ -20,11 +20,19 @@ export PM2_LOG="$TMP_DIR/pm2.log"
 
 cat > "$TMP_DIR/bin/pm2" <<'SH'
 #!/bin/bash
-printf '%s\n' "$*" >> "$PM2_LOG"
+release_label="missing-release-label"
+if [[ -f release-label ]]; then
+  release_label="$(cat release-label)"
+fi
+printf '%s|%s|%s\n' "$(pwd -P)" "$release_label" "$*" >> "$PM2_LOG"
 case "${1:-}" in
   describe) exit "${PM2_DESCRIBE_EXIT:-0}" ;;
-  restart) exit "${PM2_RESTART_EXIT:-0}" ;;
-  start) exit "${PM2_START_EXIT:-0}" ;;
+  restart|start|startOrReload)
+    if [[ "$release_label" == "${PM2_FAIL_LABEL:-never-match}" ]]; then
+      exit 1
+    fi
+    exit 0
+    ;;
   save) exit "${PM2_SAVE_EXIT:-0}" ;;
   stop) exit "${PM2_STOP_EXIT:-0}" ;;
 esac
@@ -68,11 +76,40 @@ write_release() {
   local compatibility="${3:-compatible}"
   mkdir -p "$target"
   printf '%s\n' "$label" > "$target/release-label"
-  printf '%s\n' 'module.exports = { apps: [] };' > "$target/ecosystem.config.js"
+  cat > "$target/ecosystem.config.js" <<'JS'
+module.exports = {
+  apps: [{
+    name: 'dashboard-next',
+    script: 'server.js',
+  }],
+};
+JS
+  printf '%s\n' 'server fixture' > "$target/server.js"
   mkdir -p "$target/scripts"
   cp "$SCRIPT_DIR/verify-loopback-listener.sh" "$target/scripts/"
   if [[ "$compatibility" == "compatible" ]]; then
     printf '%s\n' 'shared-password-db-auth-v1' > "$target/.shared-password-db-auth-v1"
+  fi
+}
+
+assert_release_start() {
+  local release_dir="$1"
+  local release_label="$2"
+  local physical_release_dir
+  if [[ -d "$release_dir" ]]; then
+    physical_release_dir="$(cd -P -- "$release_dir" && pwd -P)"
+  else
+    physical_release_dir="$(cd -P -- "$(dirname -- "$release_dir")" && pwd -P)/$(basename -- "$release_dir")"
+  fi
+  if ! grep -Fqx "$physical_release_dir|$release_label|startOrReload ecosystem.config.js --only dashboard-next --update-env" "$PM2_LOG"; then
+    cat "$PM2_LOG" >&2
+    fail "PM2 did not startOrReload $release_label from $release_dir using its ecosystem config"
+  fi
+}
+
+assert_no_legacy_pm2_start() {
+  if grep -Eq '\|(restart|start) ' "$PM2_LOG"; then
+    fail "release flow used a PM2 app-name restart or legacy start"
   fi
 }
 
@@ -87,19 +124,31 @@ run_activation() {
   bash "$SCRIPT_DIR/activate-release.sh"
 }
 
+NORMAL_ROOT="$TMP_DIR/normal-activation"
+write_release "$NORMAL_ROOT/app" "normal-previous" compatible
+write_release "$NORMAL_ROOT/stage" "normal-active" compatible
+export CURL_HEALTH_RESULT=success
+export PUBLIC_CURL_RESULT=failure
+run_activation "$NORMAL_ROOT/app" "$NORMAL_ROOT/backups" "$NORMAL_ROOT/stage" "normal" >"$NORMAL_ROOT.log" 2>&1
+grep -Fqx 'normal-active' "$NORMAL_ROOT/app/release-label"
+assert_release_start "$NORMAL_ROOT/app" "normal-active"
+assert_no_legacy_pm2_start
+
 AUTO_ROOT="$TMP_DIR/auto-incompatible"
+: > "$PM2_LOG"
 write_release "$AUTO_ROOT/app" "base-0c9e046" incompatible
 write_release "$AUTO_ROOT/stage" "new-release" compatible
 export CURL_HEALTH_RESULT=failure
-export PUBLIC_CURL_RESULT=failure
 if run_activation "$AUTO_ROOT/app" "$AUTO_ROOT/backups" "$AUTO_ROOT/stage" "auto-unmarked" >"$AUTO_ROOT.log" 2>&1; then
   fail "automatic activation unexpectedly succeeded after failed health check"
 fi
 [[ ! -e "$AUTO_ROOT/app" ]] || fail "automatic rollback restored an incompatible release"
 grep -Fqx 'base-0c9e046' "$AUTO_ROOT/backups/auto-unmarked-previous/release-label"
 grep -Fqx 'new-release' "$AUTO_ROOT/backups/auto-unmarked-failed/release-label"
-[[ "$(grep -c '^restart dashboard-next' "$PM2_LOG")" -eq 1 ]] || fail "automatic rollback restarted the incompatible predecessor"
-grep -Fqx 'stop dashboard-next' "$PM2_LOG" || fail "automatic rollback did not stop PM2 fail-closed"
+assert_release_start "$AUTO_ROOT/app" "new-release"
+[[ "$(grep -c '|base-0c9e046|startOrReload ' "$PM2_LOG" || true)" -eq 0 ]] || fail "automatic rollback restarted the incompatible predecessor"
+grep -Fq '|new-release|stop dashboard-next' "$PM2_LOG" || fail "automatic rollback did not stop PM2 fail-closed"
+assert_no_legacy_pm2_start
 
 AUTO_COMPAT_ROOT="$TMP_DIR/auto-compatible"
 : > "$PM2_LOG"
@@ -110,10 +159,13 @@ if run_activation "$AUTO_COMPAT_ROOT/app" "$AUTO_COMPAT_ROOT/backups" "$AUTO_COM
 fi
 grep -Fqx 'compatible-previous' "$AUTO_COMPAT_ROOT/app/release-label"
 [[ -f "$AUTO_COMPAT_ROOT/app/.shared-password-db-auth-v1" ]] || fail "compatible predecessor marker was lost"
-[[ "$(grep -c '^restart dashboard-next' "$PM2_LOG")" -eq 2 ]] || fail "compatible predecessor was not restarted"
-if grep -Fqx 'stop dashboard-next' "$PM2_LOG"; then
+assert_release_start "$AUTO_COMPAT_ROOT/app" "new-release"
+assert_release_start "$AUTO_COMPAT_ROOT/app" "compatible-previous"
+[[ "$(grep -c '|startOrReload ecosystem.config.js --only dashboard-next --update-env$' "$PM2_LOG")" -eq 2 ]] || fail "compatible automatic rollback did not reload both releases"
+if grep -Fq '|stop dashboard-next' "$PM2_LOG"; then
   fail "compatible automatic rollback stopped the restored service"
 fi
+assert_no_legacy_pm2_start
 
 MANUAL_ROOT="$TMP_DIR/manual-incompatible"
 : > "$PM2_LOG"
@@ -139,7 +191,24 @@ if ! VPS=fake APP_DIR="$MANUAL_COMPAT_ROOT/app" BACKUPS_DIR="$MANUAL_COMPAT_ROOT
 fi
 grep -Fqx 'compatible-target' "$MANUAL_COMPAT_ROOT/app/release-label"
 find "$MANUAL_COMPAT_ROOT/backups" -mindepth 1 -maxdepth 1 -type d -name '*-manual-rollback' -exec grep -Fqx 'current-compatible' '{}/release-label' \; -print | grep -q .
-grep -Fqx 'restart dashboard-next' "$PM2_LOG" || fail "manual compatible rollback did not restart PM2"
+assert_release_start "$MANUAL_COMPAT_ROOT/app" "compatible-target"
+assert_no_legacy_pm2_start
+
+MANUAL_RESTORE_ROOT="$TMP_DIR/manual-restore"
+: > "$PM2_LOG"
+write_release "$MANUAL_RESTORE_ROOT/app" "current-after-failure" compatible
+write_release "$MANUAL_RESTORE_ROOT/backups/failing-target" "failing-target" compatible
+export PM2_FAIL_LABEL=failing-target
+if VPS=fake APP_DIR="$MANUAL_RESTORE_ROOT/app" BACKUPS_DIR="$MANUAL_RESTORE_ROOT/backups" \
+  bash "$SCRIPT_DIR/rollback-release.sh" "$MANUAL_RESTORE_ROOT/backups/failing-target" >"$MANUAL_RESTORE_ROOT.log" 2>&1; then
+  fail "manual rollback unexpectedly succeeded after target PM2 failure"
+fi
+unset PM2_FAIL_LABEL
+grep -Fqx 'current-after-failure' "$MANUAL_RESTORE_ROOT/app/release-label"
+find "$MANUAL_RESTORE_ROOT/backups" -mindepth 1 -maxdepth 1 -type d -name '*-rollback-failed' -exec grep -Fqx 'failing-target' '{}/release-label' \; -print | grep -q .
+assert_release_start "$MANUAL_RESTORE_ROOT/app" "failing-target"
+assert_release_start "$MANUAL_RESTORE_ROOT/app" "current-after-failure"
+assert_no_legacy_pm2_start
 
 grep -Fq 'activate-release.sh' "$SCRIPT_DIR/deploy.sh" || fail "deploy.sh does not use the tested activation path"
 

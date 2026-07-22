@@ -18,6 +18,12 @@ is_compatible_release() {
   [[ -f "$release_dir/$COMPATIBILITY_MARKER" && ! -L "$release_dir/$COMPATIBILITY_MARKER" ]]
 }
 
+start_release() {
+  local release_dir="$1"
+  cd -P -- "$release_dir" &&
+    pm2 startOrReload ecosystem.config.js --only "$APP_NAME" --update-env
+}
+
 rollback() {
   local reason="$1"
 
@@ -31,13 +37,13 @@ rollback() {
 
   if [[ -d "$PREVIOUS_DIR" ]] && is_compatible_release "$PREVIOUS_DIR"; then
     mv "$PREVIOUS_DIR" "$APP_DIR"
-    if pm2 describe "$APP_NAME" >/dev/null 2>&1; then
-      pm2 restart "$APP_NAME"
+    if start_release "$APP_DIR"; then
+      pm2 save || true
     else
-      cd "$APP_DIR" || exit 1
-      pm2 start ecosystem.config.js --only "$APP_NAME"
+      pm2 stop "$APP_NAME" >/dev/null 2>&1 || true
+      pm2 save || true
+      echo "Compatible predecessor reload failed; service left stopped fail-closed." >&2
     fi
-    pm2 save || true
   else
     pm2 stop "$APP_NAME" >/dev/null 2>&1 || true
     pm2 save || true
@@ -78,11 +84,7 @@ if [[ -f "$APP_DIR/fetch_google_ads_canonical.py" ]]; then
   "$APP_DIR/.gads-venv/bin/python" -m pip install python-dotenv google-ads mysql-connector-python requests >/dev/null || rollback "unable to install collector Python dependencies"
 fi
 
-if pm2 describe "$APP_NAME" >/dev/null 2>&1; then
-  pm2 restart "$APP_NAME" --update-env || rollback "pm2 restart failed"
-else
-  pm2 start ecosystem.config.js --only "$APP_NAME" || rollback "pm2 start failed"
-fi
+start_release "$APP_DIR" || rollback "pm2 startOrReload failed"
 
 pm2 save || rollback "pm2 save failed"
 

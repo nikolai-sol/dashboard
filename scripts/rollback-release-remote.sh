@@ -17,6 +17,12 @@ is_compatible_release() {
   [[ -f "$release_dir/$COMPATIBILITY_MARKER" && ! -L "$release_dir/$COMPATIBILITY_MARKER" ]]
 }
 
+start_release() {
+  local release_dir="$1"
+  cd -P -- "$release_dir" &&
+    pm2 startOrReload ecosystem.config.js --only "$APP_NAME" --update-env
+}
+
 if [[ ! -d "$BACKUPS_DIR" ]]; then
   echo "Backup directory does not exist: $BACKUPS_DIR" >&2
   exit 1
@@ -60,13 +66,13 @@ restore_current() {
 
   if [[ -d "$CURRENT_SNAPSHOT" ]] && is_compatible_release "$CURRENT_SNAPSHOT"; then
     mv "$CURRENT_SNAPSHOT" "$APP_DIR"
-    if pm2 describe "$APP_NAME" >/dev/null 2>&1; then
-      pm2 restart "$APP_NAME"
+    if start_release "$APP_DIR"; then
+      pm2 save || true
     else
-      cd "$APP_DIR" || exit 1
-      pm2 start ecosystem.config.js --only "$APP_NAME"
+      pm2 stop "$APP_NAME" >/dev/null 2>&1 || true
+      pm2 save || true
+      echo "Compatible current release reload failed; service left stopped fail-closed." >&2
     fi
-    pm2 save || true
   else
     pm2 stop "$APP_NAME" >/dev/null 2>&1 || true
     pm2 save || true
@@ -76,12 +82,7 @@ restore_current() {
   exit 1
 }
 
-cd "$APP_DIR"
-if pm2 describe "$APP_NAME" >/dev/null 2>&1; then
-  pm2 restart "$APP_NAME" || restore_current "pm2 restart failed"
-else
-  pm2 start ecosystem.config.js --only "$APP_NAME" || restore_current "pm2 start failed"
-fi
+start_release "$APP_DIR" || restore_current "pm2 startOrReload failed"
 pm2 save || restore_current "pm2 save failed"
 
 health_ok=0
