@@ -173,11 +173,17 @@ Relevant files:
   `docs/SHARED-DASHBOARD-PASSWORD-ROLLOUT.md`
 - First rollout order is migration `042` -> Zaruku seed through silent stdin -> application deploy;
   deploying before the seed would expose only Zaruku's intentional fail-closed state
-- Use only `npm --silent run access:set-shared-password -- --client-id zaruku`; never pass the password
-  as a CLI argument or put it in shell history, logs, documentation, checkpoints, or deployment artifacts
+- Capture the password with hidden `read -rsp` inside the runbook's cleanup-trapped subshell and pipe it
+  to `npm --silent run access:set-shared-password -- --client-id zaruku`; never run that CLI bare from a
+  TTY, pass the password as an argument, or put it in shell history, logs, documentation, checkpoints,
+  or deployment artifacts
 - Admin password changes for both Abbott and Zaruku use the same transactional DB rotation path
 - Application rollback retains `dashboard_shared_access_settings`, all hashes, and current credential
   versions; never delete the table, decrement a version, or restore plaintext credential material
+- Roll back only to a release verified to enforce mandatory Abbott and Zaruku shared-password access and
+  read those retained DB versions. Base `0c9e046` is not compatible. Without a compatible predecessor,
+  keep the affected dashboards/app behind an explicit fail-closed maintenance/deny control until a
+  corrected compatible release is deployed; Zaruku must never become public
 - This documentation change does not perform a migration, seed, deployment, secret change, or rollback
 
 ### Embed auth

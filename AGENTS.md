@@ -57,6 +57,11 @@ Current auth note:
 - Production migration, stdin seed, deploy, and application-only rollback are documented in
   `docs/SHARED-DASHBOARD-PASSWORD-ROLLOUT.md`. Never put a literal password in a command, Git, logs,
   checkpoints, deployment artifacts, or documentation.
+- A rollback target is eligible only if it has been verified to keep Abbott and Zaruku mandatory
+  `password_only` and to validate manager sessions/exports against the retained DB credential versions.
+  Base `0c9e046` is not compatible. If no compatible predecessor exists, do not reactivate one: place
+  the affected dashboards or app behind an explicit fail-closed maintenance/deny control and deploy a
+  corrected compatible release. Zaruku must never become public during rollback.
 
 ### Zaruku source matrix
 
@@ -262,8 +267,8 @@ Important collector rule:
 
 The first shared-password release has a mandatory pre-cutover order: apply migration `042`, seed the
 Zaruku hash through silent standard input, and only then deploy the application. Follow
-`docs/SHARED-DASHBOARD-PASSWORD-ROLLOUT.md`; ordinary application rollback must retain
-`dashboard_shared_access_settings` and its hashes.
+`docs/SHARED-DASHBOARD-PASSWORD-ROLLOUT.md`; rollback must retain
+`dashboard_shared_access_settings` and its hashes and may activate only a verified compatible release.
 
 Deploy `dashboard-next` from local machine:
 

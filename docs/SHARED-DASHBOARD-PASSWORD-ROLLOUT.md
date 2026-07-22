@@ -39,31 +39,31 @@ print environment files, cookies, session/export tokens, hashes, or database con
 The order is migration -> silent stdin seed -> deploy. Run the following from the reviewed production
 source checkout, not from an older deployed application bundle. The live application's environment is
 exported only to give the reviewed migration and seed commands their existing database configuration.
-Treat every command as a gate: except for immediately unsetting the temporary shell variable, do not
-continue after a non-zero exit.
+The subshell scopes all exported environment values and guarantees temporary-password cleanup on both
+success and failure. `set -euo pipefail` makes migration and seed separate gates.
 
 ```bash
 cd /root/reportingdash-rollout/dashboard-next
-set -a
-. /var/www/dashboard/.env
-set +a
-npm run db:migrate
-read -rsp "Zaruku password: " SHARED_PASSWORD
-printf '%s' "$SHARED_PASSWORD" | npm --silent run access:set-shared-password -- --client-id zaruku
-unset SHARED_PASSWORD
+(
+  set -euo pipefail
+  trap 'unset SHARED_PASSWORD' EXIT
+
+  set -a
+  . /var/www/dashboard/.env
+  set +a
+  npm run db:migrate
+  read -rsp "Zaruku password: " SHARED_PASSWORD
+  printf '%s' "$SHARED_PASSWORD" | npm --silent run access:set-shared-password -- --client-id zaruku
+)
 ```
 
 The seed command accepts only `--client-id abbott|zaruku` and reads the password from standard input.
-For the initial rollout, use the corrected Zaruku form exactly as shown:
-
-```bash
-npm --silent run access:set-shared-password -- --client-id zaruku
-```
-
-Never replace stdin with a `--password` argument, command substitution, here-document, or literal value.
-Immediately run `unset SHARED_PASSWORD` after either success or failure before doing anything else in the
-TTY. If migration or seed fails, do not deploy; correct the reviewed source or environment and repeat the
-safe step without exposing inputs.
+It must never be invoked bare from a TTY: its direct fd-`0` read would echo typed input and wait for EOF.
+Use it only as the right-hand side of the hidden `read -rsp` plus `printf` pipeline above. Never replace
+stdin with a `--password` argument, command substitution, here-document, or literal value. The `EXIT` trap
+unsets `SHARED_PASSWORD` whether the seed succeeds or fails, and leaving the subshell discards the sourced
+environment. If migration or seed fails, do not deploy; correct the reviewed source or environment and
+repeat the safe sequence without exposing inputs.
 
 Only after migration `042` and a successful Zaruku seed may the reviewed application release be deployed
 with the existing atomic `npm run deploy` workflow. The deploy command does not own this schema migration
@@ -88,14 +88,21 @@ only status codes and non-secret boolean/version assertions; never capture cooki
 
 ## Rollback
 
-Rollback is application-only. Reactivate the prior application release with `npm run deploy:rollback`, but
-retain migration `042`, the `dashboard_shared_access_settings` table, password hashes, and credential
-versions. Never drop or truncate the table, delete a row, decrement a version, copy a hash into an env file,
-or restore a plaintext password.
+Rollback is application-only and may activate a predecessor only after verifying that the target release
+keeps both Abbott and Zaruku mandatory `password_only` and authorizes manager viewer/export requests against
+the retained DB hashes and credential versions. Base `0c9e046` is not compatible and is not an eligible
+rollback target. Never allow Zaruku to become public during rollback.
 
-The predecessor application continues to use the Abbott environment password and treats Zaruku according
-to that predecessor release's policy. Assess that policy before rollback. A later deployment of the new
-application must find the retained Zaruku DB row and must not silently reseed or rewrite it.
+For an eligible rollback, reactivate the verified compatible release with `npm run deploy:rollback`, while
+retaining migration `042`, the `dashboard_shared_access_settings` table, password hashes, and credential
+versions. Never drop or truncate the table, delete a row, decrement a version, copy a hash into an env file,
+or restore a plaintext password. The compatible predecessor must find the retained rows and must not
+silently reseed or rewrite them.
+
+If no compatible predecessor exists, do not reactivate an incompatible release. Put the affected dashboard
+routes, or the entire application, behind an explicit fail-closed maintenance/deny control that cannot
+render Abbott or Zaruku content, then deploy a corrected compatible release. Preserve the table, hashes,
+and versions throughout this recovery path.
 
 ## Administrative rotations after rollout
 
