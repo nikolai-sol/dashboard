@@ -59,7 +59,6 @@ async function main() {
 
   const dashboardId = await resolveActiveDashboardIdByClientId(clientId);
   await rotateSharedDashboardPassword(dashboardId, validation.password, "production-seed", clientId);
-  process.stdout.write("Shared dashboard password configured.\n");
 }
 
 function canonicalPath(value: string) {
@@ -71,21 +70,25 @@ function canonicalPath(value: string) {
 }
 
 async function runEntrypoint() {
+  let failed = false;
   try {
     await main();
   } catch {
-    process.stderr.write("Unable to configure shared dashboard password.\n");
-    process.exitCode = 1;
+    failed = true;
   } finally {
     try {
       await pool.end();
     } catch {
-      if (process.exitCode !== 1) {
-        process.stderr.write("Unable to configure shared dashboard password.\n");
-      }
-      process.exitCode = 1;
+      failed = true;
     }
   }
+
+  if (failed) {
+    process.stderr.write("Unable to configure shared dashboard password.\n");
+    process.exitCode = 1;
+    return;
+  }
+  process.stdout.write("Shared dashboard password configured.\n");
 }
 
 const modulePath = canonicalPath(fileURLToPath(import.meta.url));

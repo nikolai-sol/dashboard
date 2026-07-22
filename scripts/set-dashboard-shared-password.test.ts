@@ -125,7 +125,7 @@ test("importing the seed module does not run the CLI", () => {
   }
 });
 
-function createFakePoolPreload(tempDirectory: string) {
+function createFakePoolPreload(tempDirectory: string, endError: string | null = null) {
   const closeMarkerPath = path.join(tempDirectory, "pool-close.log");
   const preloadPath = path.join(tempDirectory, "fake-pool.mjs");
   writeFileSync(
@@ -155,7 +155,10 @@ globalThis.__dashboardMysqlPool = {
       release() {},
     };
   },
-  async end() { appendFileSync(${JSON.stringify(closeMarkerPath)}, "closed\\n"); },
+  async end() {
+    appendFileSync(${JSON.stringify(closeMarkerPath)}, "closed\\n");
+    ${endError === null ? "" : `throw new Error(${JSON.stringify(endError)});`}
+  },
 };
 `,
     { mode: 0o600 },
@@ -220,6 +223,46 @@ test("failed entrypoint closes its module-level pool exactly once", () => {
     assert.equal(result.stdout, "");
     assert.equal(result.stderr, "Unable to configure shared dashboard password.\n");
     assert.equal(readFileSync(closeMarkerPath, "utf8"), "closed\n");
+  } finally {
+    rmSync(tempDirectory, { recursive: true, force: true });
+  }
+});
+
+test("a pool close failure suppresses success and emits one sanitized failure", () => {
+  const tempDirectory = mkdtempSync(path.join(os.tmpdir(), "shared-password-seed-close-failure-"));
+  const closeErrorMarker = "pool-close-error-details";
+  const stdinMarker = "stdin-secret-close-marker";
+  try {
+    const { closeMarkerPath, preloadPath } = createFakePoolPreload(
+      tempDirectory,
+      closeErrorMarker,
+    );
+    const result = spawnSync(
+      process.execPath,
+      [
+        "--import",
+        "tsx",
+        "--import",
+        preloadPath,
+        "scripts/set-dashboard-shared-password.ts",
+        "--client-id",
+        "zaruku",
+      ],
+      {
+        cwd: path.resolve("."),
+        encoding: "utf8",
+        input: stdinMarker,
+      },
+    );
+    const output = `${result.stdout}${result.stderr}`;
+
+    assert.equal(result.status, 1);
+    assert.equal(result.stdout, "");
+    assert.equal(result.stderr, "Unable to configure shared dashboard password.\n");
+    assert.equal(readFileSync(closeMarkerPath, "utf8"), "closed\n");
+    assert.doesNotMatch(output, new RegExp(stdinMarker));
+    assert.doesNotMatch(output, new RegExp(closeErrorMarker));
+    assert.doesNotMatch(output, /zaruku|SELECT|INSERT|UPDATE|password_hash/i);
   } finally {
     rmSync(tempDirectory, { recursive: true, force: true });
   }
