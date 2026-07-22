@@ -201,7 +201,8 @@ def active_day_is_reconciled(release_id: int, day: str) -> bool:
         cur.execute(
             """
             SELECT scope_key, collection_status, pagination_complete,
-                   is_sampled, empty_reconciled
+                   is_sampled, persisted_rows, api_total_rows,
+                   empty_reconciled
             FROM canonical_source_coverage_daily
             WHERE canonical_release_id = %s
               AND source_key = %s
@@ -220,11 +221,24 @@ def active_day_is_reconciled(release_id: int, day: str) -> bool:
         for scope in ABBOTT_REQUIRED_SCOPES:
             row = by_scope[scope]
             status = row.get("collection_status")
+            persisted_rows = row.get("persisted_rows")
+            api_total_rows = row.get("api_total_rows")
             if (
                 status not in GOOD_COVERAGE_STATUSES
-                or not bool(row.get("pagination_complete"))
-                or bool(row.get("is_sampled"))
-                or (status == "success_empty" and not bool(row.get("empty_reconciled")))
+                or row.get("pagination_complete") != 1
+                or row.get("is_sampled") != 0
+                or (
+                    status == "success"
+                    and (persisted_rows is None or persisted_rows <= 0)
+                )
+                or (
+                    status == "success_empty"
+                    and (
+                        persisted_rows != 0
+                        or api_total_rows != 0
+                        or row.get("empty_reconciled") != 1
+                    )
+                )
             ):
                 return False
         return True
@@ -238,40 +252,59 @@ def active_day_is_reconciled(release_id: int, day: str) -> bool:
 
 
 def record_reconciled_noop(release_id: int, day: str) -> None:
-    run_id = start_collector_run(
-        source_key="yandex_metrika",
-        run_type="cron",
-        run_mode="canonical_release",
-        job_key="yandex_metrika_cron",
-        correlation_id=str(uuid.uuid4()),
-        date_from=day,
-        date_to=day,
-    )
-    summary = {
-        "counter_id": ABBOTT_COUNTER_ID,
-        "canonical_release_id": release_id,
-        "published_days": 0,
-        "already_reconciled_days": [day],
-        "failed_days": [],
-        "failures": [],
-        "rows_written": 0,
-    }
-    log_run_event(
-        run_id,
-        "INFO",
-        "summary",
-        "Abbott Metrika completed day was already reconciled",
-        summary,
-    )
-    finish_collector_run(
-        run_id,
-        status="success",
-        rows_read=0,
-        rows_written=0,
-        rows_updated=0,
-        error_count=0,
-        error_summary=None,
-    )
+    run_id = None
+    try:
+        run_id = start_collector_run(
+            source_key="yandex_metrika",
+            run_type="cron",
+            run_mode="canonical_release",
+            job_key="yandex_metrika_cron",
+            correlation_id=str(uuid.uuid4()),
+            date_from=day,
+            date_to=day,
+        )
+        summary = {
+            "counter_id": ABBOTT_COUNTER_ID,
+            "canonical_release_id": release_id,
+            "published_days": 0,
+            "already_reconciled_days": [day],
+            "failed_days": [],
+            "failures": [],
+            "rows_written": 0,
+        }
+        log_run_event(
+            run_id,
+            "INFO",
+            "summary",
+            "Abbott Metrika completed day was already reconciled",
+            summary,
+        )
+        finish_collector_run(
+            run_id,
+            status="success",
+            rows_read=0,
+            rows_written=0,
+            rows_updated=0,
+            error_count=0,
+            error_summary=None,
+        )
+    except Exception:
+        if run_id is not None:
+            try:
+                finish_collector_run(
+                    run_id,
+                    status="failed",
+                    rows_read=0,
+                    rows_written=0,
+                    rows_updated=0,
+                    error_count=1,
+                    error_summary="Abbott reconciled no-op audit failed",
+                )
+            except Exception:
+                pass
+        raise ActiveReleaseLaunchError(
+            "Unable to record Abbott reconciled no-op"
+        ) from None
 
 
 def build_collector_command(
