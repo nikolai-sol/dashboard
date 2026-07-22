@@ -150,12 +150,12 @@ def resolve_active_release(expected_revision: str) -> int:
         cur = conn.cursor(dictionary=True)
         cur.execute(
             """
-            SELECT active.canonical_release_id, release.release_status,
-                   release.code_revision
+            SELECT active.canonical_release_id, data_release.release_status,
+                   data_release.code_revision
             FROM portal_active_data_releases AS active
-            JOIN portal_data_releases AS release
-              ON release.dataset_key = active.dataset_key
-             AND release.id = active.canonical_release_id
+            JOIN portal_data_releases AS data_release
+              ON data_release.dataset_key = active.dataset_key
+             AND data_release.id = active.canonical_release_id
             WHERE active.dataset_key = %s
             """,
             ("abbott",),
@@ -199,6 +199,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--canonical-root", type=Path, required=True)
     parser.add_argument("--manifest", type=Path, required=True)
     parser.add_argument("--collector", type=Path, required=True)
+    parser.add_argument("--runtime-revision")
     parser.add_argument("--code-revision", required=True)
     parser.add_argument("--parser-version", required=True)
     return parser
@@ -209,7 +210,8 @@ def run(args: argparse.Namespace) -> None:
     collector = args.collector.resolve(strict=True)
     if root not in collector.parents:
         raise ActiveReleaseLaunchError("Collector is outside the canonical runtime root")
-    attest_runtime(root, args.code_revision, args.manifest)
+    runtime_revision = getattr(args, "runtime_revision", None) or args.code_revision
+    attest_runtime(root, runtime_revision, args.manifest)
     release_id = resolve_active_release(args.code_revision)
     try:
         subprocess.run(
