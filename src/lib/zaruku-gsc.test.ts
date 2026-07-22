@@ -18,13 +18,10 @@ test("buildGscAccountQueries scopes canonical GSC rows by account and optional w
   assert.match(queries.queries.sql, /canonical_fact_gsc_queries_daily/);
   assert.match(queries.queries.sql, /analytics_account_id IN \(\?\)/);
   assert.match(queries.queries.sql, /YEARWEEK\(report_date, 3\)[\s\S]*IN \(\?\)/);
-  assert.deepEqual(queries.queries.params, ["66624469", "2026-W29"]);
-  assert.deepEqual(queries.summary.params, ["66624469", "2026-W29"]);
-  assert.deepEqual(queries.country_summary.params, ["66624469", "2026-W29"]);
-  assert.deepEqual(queries.landing_pages.params, ["66624469", "2026-W29"]);
-  assert.deepEqual(queries.brand_split.params, ["66624469", "2026-W29"]);
-  assert.deepEqual(queries.search_appearance.params, ["66624469", "2026-W29"]);
-  assert.deepEqual(queries.search_type_summary.params, ["66624469", "2026-W29"]);
+  for (const query of Object.values(queries)) {
+    assert.match(query.sql, /LOWER\(COALESCE\(country, ''\)\) = \?/);
+    assert.deepEqual(query.params, ["66624469", "rus", "2026-W29"]);
+  }
   assert.match(queries.search_appearance.sql, /canonical_fact_gsc_search_appearance_daily/);
   assert.match(queries.search_type_summary.sql, /canonical_fact_gsc_search_type_daily/);
 });

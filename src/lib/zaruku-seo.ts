@@ -22,6 +22,31 @@ const SOURCE_KEY = "yandex_metrika";
 const METRIKA_API_URL = "https://api-metrika.yandex.net/stat/v1/data";
 const METRIKA_METRICS =
   "ym:s:visits,ym:s:users,ym:s:pageviews,ym:s:bounceRate,ym:s:avgVisitDurationSeconds,ym:s:pageDepth";
+export const ZARUKU_RUSSIA_FILTER = "ym:s:regionCountry=='Russia'";
+
+export type MetrikaReportRequest = {
+  counterId: string;
+  from: string;
+  to: string;
+  dimensions: string;
+  limit: number;
+  filters?: string;
+};
+
+export function buildMetrikaReportParams(request: MetrikaReportRequest) {
+  const params = new URLSearchParams({
+    ids: request.counterId,
+    date1: request.from,
+    date2: request.to,
+    dimensions: request.dimensions,
+    metrics: METRIKA_METRICS,
+    sort: "-ym:s:visits",
+    limit: String(request.limit),
+    accuracy: "full",
+  });
+  if (request.filters) params.set("filters", request.filters);
+  return params;
+}
 
 const SOURCES: ZarukuSeoSource[] = [
   {
@@ -754,21 +779,26 @@ async function queryReturningPages(counterIds: string[], from: string, to: strin
   }
 }
 
-async function fetchMetrikaReport(counterIds: string[], from: string, to: string, dimensions: string, limit = 20): Promise<MetrikaReport> {
+async function fetchMetrikaReport(
+  counterIds: string[],
+  from: string,
+  to: string,
+  dimensions: string,
+  limit = 20,
+  filters?: string,
+): Promise<MetrikaReport> {
   const token = process.env.METRIKA_TOKEN ?? process.env.YANDEX_METRIKA_TOKEN;
   if (!token) {
     return { ok: false, rows: [], totals: [], error: "METRIKA_TOKEN is not configured" };
   }
   try {
-    const params = new URLSearchParams({
-      ids: counterIds[0] ?? "66624469",
-      date1: from,
-      date2: to,
+    const params = buildMetrikaReportParams({
+      counterId: counterIds[0] ?? "66624469",
+      from,
+      to,
       dimensions,
-      metrics: METRIKA_METRICS,
-      sort: "-ym:s:visits",
-      limit: String(limit),
-      accuracy: "full",
+      limit,
+      filters,
     });
     const response = await fetch(`${METRIKA_API_URL}?${params.toString()}`, {
       headers: { Authorization: `OAuth ${token}` },
@@ -798,11 +828,21 @@ async function fetchMetrikaReportsSequential(
   counterIds: string[],
   from: string,
   to: string,
-  reports: Array<{ key: string; dimensions: string; limit?: number }>,
+  reports: Array<{ key: string; dimensions: string; limit?: number; filters?: string }>,
 ) {
   const result = new Map<string, MetrikaReport>();
   for (const report of reports) {
-    result.set(report.key, await fetchMetrikaReport(counterIds, from, to, report.dimensions, report.limit ?? 20));
+    result.set(
+      report.key,
+      await fetchMetrikaReport(
+        counterIds,
+        from,
+        to,
+        report.dimensions,
+        report.limit ?? 20,
+        report.filters ?? ZARUKU_RUSSIA_FILTER,
+      ),
+    );
     await sleep(180);
   }
   return result;

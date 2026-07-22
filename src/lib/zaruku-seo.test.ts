@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
+import * as zarukuSeoModule from "@/lib/zaruku-seo";
 import {
   buildCanonicalPageRowsQuery,
   buildBestEngagementPages,
@@ -54,6 +55,36 @@ const patterns: ZarukuSeoSectionPattern[] = [
   { section: "Priority A", url_pattern: "/priority/", priority: 10 },
   { section: "Priority B", url_pattern: "/priority/", priority: 1 },
 ];
+
+test("Metrika report parameters support the Zaruku Russia filter", () => {
+  const module = zarukuSeoModule as typeof zarukuSeoModule & {
+    ZARUKU_RUSSIA_FILTER?: string;
+    buildMetrikaReportParams?: (request: {
+      counterId: string;
+      from: string;
+      to: string;
+      dimensions: string;
+      limit: number;
+      filters?: string;
+    }) => URLSearchParams;
+  };
+
+  assert.equal(typeof module.buildMetrikaReportParams, "function");
+  assert.equal(module.ZARUKU_RUSSIA_FILTER, "ym:s:regionCountry=='Russia'");
+
+  const params = module.buildMetrikaReportParams!({
+    counterId: "66624469",
+    from: "2026-07-13",
+    to: "2026-07-19",
+    dimensions: "ym:s:searchPhrase",
+    limit: 30,
+    filters: module.ZARUKU_RUSSIA_FILTER,
+  });
+
+  assert.equal(params.get("filters"), "ym:s:regionCountry=='Russia'");
+  assert.equal(params.get("ids"), "66624469");
+  assert.equal(params.get("dimensions"), "ym:s:searchPhrase");
+});
 
 test("buildContentSections uses SEO patterns and aggregates visits, users, and pageviews", () => {
   assert.deepEqual(
