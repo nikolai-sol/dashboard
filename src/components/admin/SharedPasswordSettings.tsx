@@ -5,6 +5,7 @@ import { useEffect, useReducer, useRef, type FormEvent } from "react";
 type SharedPasswordSettingsProps = {
   dashboardId: number;
   dashboardName: string;
+  onSavingChange: (saving: boolean) => void;
 };
 
 type SharedPasswordSettingsState = {
@@ -46,6 +47,18 @@ type SharedPasswordFetcher = (
   input: string,
   init?: RequestInit,
 ) => Promise<Response>;
+
+const ALLOWED_SHARED_PASSWORD_API_ERRORS = new Set([
+  "Требуется авторизация",
+  "Некорректный идентификатор дашборда",
+  "Не удалось сохранить пароль",
+  "Дашборд не найден",
+  "Смена пароля недоступна для этого дашборда",
+  "Пароль должен быть строкой",
+  "Пароли не совпадают",
+  "Пароль должен содержать не менее 10 символов",
+  "Пароль слишком длинный",
+]);
 
 export function createSharedPasswordSettingsState(
   dashboardId: number,
@@ -134,16 +147,22 @@ export function sharedPasswordStatusText(input: {
 }
 
 function safeRussianApiError(value: unknown, fallback: string) {
-  if (
-    typeof value === "string" &&
-    value.length > 0 &&
-    value.length <= 200 &&
-    !/[\r\n]/.test(value) &&
-    /^[А-Яа-яЁё0-9\s.,:;!?()«»—–-]+$/.test(value)
-  ) {
+  if (typeof value === "string" && ALLOWED_SHARED_PASSWORD_API_ERRORS.has(value)) {
     return value;
   }
   return fallback;
+}
+
+export async function runWithSavingNotification<T>(
+  onSavingChange: (saving: boolean) => void,
+  operation: () => Promise<T>,
+) {
+  onSavingChange(true);
+  try {
+    return await operation();
+  } finally {
+    onSavingChange(false);
+  }
 }
 
 export async function requestSharedPassword(
@@ -179,6 +198,7 @@ export async function requestSharedPassword(
 export default function SharedPasswordSettings({
   dashboardId,
   dashboardName,
+  onSavingChange,
 }: SharedPasswordSettingsProps) {
   const [state, dispatch] = useReducer(
     reduceSharedPasswordSettingsState,
@@ -187,6 +207,17 @@ export default function SharedPasswordSettings({
   );
   const currentDashboardId = useRef(dashboardId);
   currentDashboardId.current = dashboardId;
+  const mounted = useRef(false);
+  const onSavingChangeRef = useRef(onSavingChange);
+  onSavingChangeRef.current = onSavingChange;
+
+  useEffect(() => {
+    mounted.current = true;
+    return () => {
+      mounted.current = false;
+      onSavingChangeRef.current(false);
+    };
+  }, []);
 
   useEffect(() => {
     const controller = new AbortController();
@@ -251,20 +282,28 @@ export default function SharedPasswordSettings({
     dispatch({ type: "save-started", dashboardId });
     let succeeded = false;
     try {
-      const result = await requestSharedPassword(
-        fetch,
-        `/api/admin/dashboards/${dashboardId}/shared-password`,
-        {
-          method: "PUT",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            new_password: newPassword,
-            confirm_password: confirmation,
-          }),
+      const result = await runWithSavingNotification(
+        (nextSaving) => {
+          if (mounted.current) {
+            onSavingChangeRef.current(nextSaving);
+          }
         },
-        "Не удалось сохранить пароль",
+        () =>
+          requestSharedPassword(
+            fetch,
+            `/api/admin/dashboards/${dashboardId}/shared-password`,
+            {
+              method: "PUT",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({
+                new_password: newPassword,
+                confirm_password: confirmation,
+              }),
+            },
+            "Не удалось сохранить пароль",
+          ),
       );
-      if (currentDashboardId.current !== dashboardId) return;
+      if (!mounted.current || currentDashboardId.current !== dashboardId) return;
       if (!result.ok) {
         dispatch({
           type: "save-failed",
@@ -275,7 +314,11 @@ export default function SharedPasswordSettings({
       }
       succeeded = true;
     } finally {
-      if (succeeded && currentDashboardId.current === dashboardId) {
+      if (
+        succeeded &&
+        mounted.current &&
+        currentDashboardId.current === dashboardId
+      ) {
         dispatch({ type: "save-succeeded", dashboardId });
       }
     }

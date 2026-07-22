@@ -6,12 +6,14 @@ import {
   createSharedPasswordSettingsState,
   requestSharedPassword,
   reduceSharedPasswordSettingsState,
+  runWithSavingNotification,
   sharedPasswordStatusText,
   validateSharedPasswordFields,
 } from "./SharedPasswordSettings";
 import {
   createAccessUsersEditorReadiness,
   isAccessUsersEditorReady,
+  parseAccessUsersPayload,
   reduceAccessUsersEditorReadiness,
 } from "./AdminAccessSettings";
 
@@ -158,10 +160,25 @@ test("shared-password requests preserve a safe Russian API error", async () => {
 
   assert.deepEqual(result, { ok: false, error: "Дашборд не найден" });
 
+  const validationError = await requestSharedPassword(
+    async () =>
+      Response.json(
+        { error: "Пароль слишком длинный" },
+        { status: 400 },
+      ),
+    "/shared-password",
+    { method: "PUT" },
+    "Не удалось сохранить пароль",
+  );
+  assert.deepEqual(validationError, {
+    ok: false,
+    error: "Пароль слишком длинный",
+  });
+
   const unsafeMixedError = await requestSharedPassword(
     async () =>
       Response.json(
-        { error: "Пароль: password=secret host=internal-db" },
+        { error: "Дашборд не найден. Секретный пароль внутри" },
         { status: 500 },
       ),
     "/shared-password",
@@ -213,5 +230,81 @@ test("ordinary access editor stays disabled until its selected dashboard loads",
   assert.match(
     source,
     /disabled=\{saving \|\| !selectedDashboardId \|\| !accessUsersReady\}/,
+  );
+});
+
+test("malformed ordinary access-user payloads remain failed and non-destructive", () => {
+  const fallback = "Не удалось загрузить пользователей доступа";
+  assert.deepEqual(parseAccessUsersPayload({}), {
+    ok: false,
+    error: fallback,
+  });
+  assert.deepEqual(parseAccessUsersPayload({ users: null }), {
+    ok: false,
+    error: fallback,
+  });
+  assert.deepEqual(
+    parseAccessUsersPayload({ users: [{ id: 7, email: "viewer@example.test" }] }),
+    {
+      ok: true,
+      users: [{ id: 7, email: "viewer@example.test", password: "" }],
+    },
+  );
+
+  let readiness = reduceAccessUsersEditorReadiness(
+    createAccessUsersEditorReadiness(),
+    { type: "load-started", dashboardId: 42 },
+  );
+  readiness = reduceAccessUsersEditorReadiness(readiness, {
+    type: "load-failed",
+    dashboardId: 42,
+  });
+  assert.equal(isAccessUsersEditorReady(readiness, 42), false);
+
+  const source = readFileSync(
+    path.resolve("src/components/admin/AdminAccessSettings.tsx"),
+    "utf8",
+  );
+  assert.match(source, /accessUsersReady \? users\.map/);
+  assert.match(
+    source,
+    /disabled=\{saving \|\| !selectedDashboardId \|\| !accessUsersReady\}/,
+  );
+});
+
+test("dashboard selector locks for both write modes and shared notification always resets", async () => {
+  const adminSource = readFileSync(
+    path.resolve("src/components/admin/AdminAccessSettings.tsx"),
+    "utf8",
+  );
+  const sharedSource = readFileSync(
+    path.resolve("src/components/admin/SharedPasswordSettings.tsx"),
+    "utf8",
+  );
+  const resolvedEvents: boolean[] = [];
+  const value = await runWithSavingNotification(
+    (saving) => resolvedEvents.push(saving),
+    async () => "saved",
+  );
+  assert.equal(value, "saved");
+  assert.deepEqual(resolvedEvents, [true, false]);
+
+  const rejectedEvents: boolean[] = [];
+  await assert.rejects(
+    runWithSavingNotification(
+      (saving) => rejectedEvents.push(saving),
+      async () => {
+        throw new Error("request failed");
+      },
+    ),
+    /request failed/,
+  );
+  assert.deepEqual(rejectedEvents, [true, false]);
+
+  assert.match(adminSource, /disabled=\{saving \|\| sharedPasswordSaving\}/);
+  assert.match(adminSource, /onSavingChange=\{setSharedPasswordSaving\}/);
+  assert.match(
+    sharedSource,
+    /return \(\) => \{[\s\S]*onSavingChangeRef\.current\(false\)/,
   );
 });

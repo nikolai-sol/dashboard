@@ -16,6 +16,43 @@ type StoredAccessUser = {
   email: string;
 };
 
+const ACCESS_USERS_LOAD_ERROR = "Не удалось загрузить пользователей доступа";
+
+type AccessUsersPayloadResult =
+  | { ok: true; users: AccessUserRow[] }
+  | { ok: false; error: string };
+
+export function parseAccessUsersPayload(
+  payload: unknown,
+): AccessUsersPayloadResult {
+  if (payload === null || typeof payload !== "object") {
+    return { ok: false, error: ACCESS_USERS_LOAD_ERROR };
+  }
+  const users = (payload as { users?: unknown }).users;
+  if (!Array.isArray(users)) {
+    return { ok: false, error: ACCESS_USERS_LOAD_ERROR };
+  }
+  const validUsers = users.every(
+    (item) =>
+      item !== null &&
+      typeof item === "object" &&
+      Number.isSafeInteger((item as { id?: unknown }).id) &&
+      Number((item as { id?: unknown }).id) > 0 &&
+      typeof (item as { email?: unknown }).email === "string",
+  );
+  if (!validUsers) {
+    return { ok: false, error: ACCESS_USERS_LOAD_ERROR };
+  }
+  return {
+    ok: true,
+    users: (users as StoredAccessUser[]).map((item) => ({
+      id: item.id,
+      email: item.email,
+      password: "",
+    })),
+  };
+}
+
 type AccessUsersEditorReadiness = {
   dashboardId: number | null;
   status: "idle" | "loading" | "ready" | "failed";
@@ -67,6 +104,7 @@ export default function AdminAccessSettings() {
   const [users, setUsers] = useState<AccessUserRow[]>([]);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
+  const [sharedPasswordSaving, setSharedPasswordSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [message, setMessage] = useState<string | null>(null);
   const [accessUsersReadiness, dispatchAccessUsersReadiness] = useReducer(
@@ -152,9 +190,15 @@ export default function AdminAccessSettings() {
         const response = await fetch(`/api/admin/access-users?dashboard_id=${selectedDashboardId}`, {
           cache: "no-store",
         });
-        const json = await response.json();
+        let json: unknown;
+        try {
+          json = await response.json();
+        } catch {
+          throw new Error(ACCESS_USERS_LOAD_ERROR);
+        }
         if (!response.ok) {
-          throw new Error(String(json?.error ?? "Failed to load users"));
+          const errorBody = json as { error?: unknown };
+          throw new Error(String(errorBody?.error ?? "Failed to load users"));
         }
         if (
           cancelled ||
@@ -162,14 +206,11 @@ export default function AdminAccessSettings() {
         ) {
           return;
         }
-        const nextUsers = Array.isArray(json?.users)
-          ? (json.users as StoredAccessUser[]).map((item) => ({
-              id: item.id,
-              email: item.email,
-              password: "",
-            }))
-          : [];
-        setUsers(nextUsers);
+        const parsed = parseAccessUsersPayload(json);
+        if (!parsed.ok) {
+          throw new Error(parsed.error);
+        }
+        setUsers(parsed.users);
         dispatchAccessUsersReadiness({
           type: "load-succeeded",
           dashboardId: selectedDashboardId,
@@ -283,6 +324,7 @@ export default function AdminAccessSettings() {
           <select
             className="mt-1 w-full rounded-lg border border-slate-300 px-3 py-2"
             value={selectedDashboardId ?? ""}
+            disabled={saving || sharedPasswordSaving}
             onChange={(event) => setSelectedDashboardId(Number(event.target.value) || null)}
           >
             {dashboards.map((dashboard) => (
@@ -301,6 +343,7 @@ export default function AdminAccessSettings() {
               key={selectedDashboard.id}
               dashboardId={selectedDashboard.id}
               dashboardName={selectedDashboard.dashboard_name}
+              onSavingChange={setSharedPasswordSaving}
             />
           </div>
         ) : (
