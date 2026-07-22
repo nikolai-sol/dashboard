@@ -723,6 +723,11 @@ function SeoTab({ data, locale, primaryWeek, comparisonWeek }: Props & { primary
       />
       <ZarukuSeoQueryComparison
         rows={unifiedQueryRows}
+        sourceAvailability={{
+          google: data.gsc.status !== "unavailable",
+          webmaster: data.webmaster.status !== "unavailable",
+          seoOs: data.seo_os.status !== "unavailable",
+        }}
         sourceWeeks={{
           google: gscQuerySelection.week,
           webmaster: webmasterQuerySelection.week,
@@ -733,6 +738,11 @@ function SeoTab({ data, locale, primaryWeek, comparisonWeek }: Props & { primary
       />
       <ZarukuSeoPageComparison
         rows={unifiedPageRows}
+        sourceAvailability={{
+          google: data.gsc.status !== "unavailable",
+          webmaster: data.webmaster.status !== "unavailable",
+          seoOs: data.seo_os.status !== "unavailable",
+        }}
         seoWeek={seoOsWeek}
         sourceWeeks={{
           google: gscLandingPages.length > 0 ? gscLandingPageSelection.week : null,

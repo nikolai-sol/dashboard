@@ -53,3 +53,16 @@ test("keeps page-table width inside its own responsive scroll panel", () => {
   assert.match(source, /flex flex-wrap items-center justify-center/);
   assert.match(source, /thead className="sticky top-0/);
 });
+
+test("page workspace exposes search sorting pagination and safe absolute links", () => {
+  assert.match(source, /type="search"/);
+  assert.match(source, /PAGE_SIZE = 50/);
+  assert.match(source, /Google: показы/);
+  assert.match(source, /Яндекс: показы/);
+  assert.match(source, /Визиты/);
+  assert.match(source, /Название/);
+  assert.match(source, /resolveZarukuContentUrl/);
+  assert.match(source, /target="_blank"/);
+  assert.match(source, /rel="noreferrer"/);
+  assert.doesNotMatch(source, /href=\{row\.url\}/);
+});

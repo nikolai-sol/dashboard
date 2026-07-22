@@ -56,3 +56,32 @@ test("keeps query-table width inside its own responsive scroll panel", () => {
   assert.match(source, /flex flex-wrap items-center justify-center/);
   assert.match(source, /thead className="sticky top-0/);
 });
+
+test("query workspace exposes search and mounts at most 50 rows", () => {
+  const manyRows = Array.from({ length: 75 }, (_, index) => ({
+    ...rows[0],
+    key: `query-${index}`,
+    query: `Запрос ${index}`,
+    google: { ...rows[0].google!, average_position: index + 1 },
+  }));
+  const markup = renderToStaticMarkup(createElement(ZarukuSeoQueryComparison, {
+    rows: manyRows,
+    sourceWeeks: { google: "2026-W29", webmaster: "2026-W29", seoOs: "2026-W29" },
+  }));
+  assert.match(markup, /type="search"/);
+  assert.match(markup, /Страница 1 из 2/);
+  assert.match(markup, /Запрос 49/);
+  assert.doesNotMatch(markup, /Запрос 50/);
+  assert.match(markup, /Предыдущая/);
+  assert.match(markup, /Следующая/);
+});
+
+test("query workspace distinguishes unavailable sources from an empty result", () => {
+  const markup = renderToStaticMarkup(createElement(ZarukuSeoQueryComparison, {
+    rows: [],
+    sourceWeeks: { google: null, webmaster: null, seoOs: null },
+    sourceAvailability: { google: false, webmaster: false, seoOs: false },
+  }));
+  assert.match(markup, /Источник недоступен/);
+  assert.doesNotMatch(markup, /По выбранному фильтру запросов нет/);
+});

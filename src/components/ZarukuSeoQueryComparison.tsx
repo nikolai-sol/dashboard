@@ -1,6 +1,8 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
+import { filterAndPaginate } from "@/components/zaruku-table-pagination";
+import { resolveZarukuContentUrl } from "@/lib/zaruku-url";
 import {
   filterUnifiedSeoQueryRows,
   sortUnifiedSeoQueryRows,
@@ -19,6 +21,7 @@ type SourceWeeks = {
 type Props = {
   rows: UnifiedSeoQueryRow[];
   sourceWeeks: SourceWeeks;
+  sourceAvailability?: { google: boolean; webmaster: boolean; seoOs: boolean };
   defaultSort?: SeoQuerySort;
   locale?: string;
 };
@@ -32,6 +35,7 @@ const FILTERS: Array<{ id: SeoQueryFilter; label: string }> = [
   { id: "declined", label: "Снизились" },
   { id: "not_found", label: "Нет позиции" },
 ];
+const PAGE_SIZE = 50;
 
 export function toggleSeoSort(current: SeoQuerySort, key: SeoQuerySortKey): SeoQuerySort {
   if (current.key === key) {
@@ -116,22 +120,46 @@ function PositionDelta({ value }: { value: number | null }) {
   );
 }
 
+function SafePageLink({ value, prefix = "" }: { value: string; prefix?: string }) {
+  const href = resolveZarukuContentUrl(value);
+  if (!href) return <span className="max-w-full truncate text-slate-400">{prefix}{shortUrl(value)}</span>;
+  return (
+    <a href={href} target="_blank" rel="noreferrer" className="max-w-full truncate hover:text-blue-600" title={href}>
+      {prefix}{shortUrl(href)}
+    </a>
+  );
+}
+
 export default function ZarukuSeoQueryComparison({
   rows,
   sourceWeeks,
+  sourceAvailability = { google: true, webmaster: true, seoOs: true },
   defaultSort = { key: "google_position", direction: "asc" },
   locale = "ru-RU",
 }: Props) {
   const [sort, setSort] = useState<SeoQuerySort>(defaultSort);
   const [filter, setFilter] = useState<SeoQueryFilter>("all");
+  const [query, setQuery] = useState("");
+  const [page, setPage] = useState(1);
   const visibleRows = useMemo(
     () => sortUnifiedSeoQueryRows(filterUnifiedSeoQueryRows(rows, filter), sort),
     [filter, rows, sort],
   );
+  const paginated = useMemo(
+    () => filterAndPaginate(visibleRows, query, page, PAGE_SIZE, (row) => `${row.query} ${row.section ?? ""}`),
+    [page, query, visibleRows],
+  );
+  useEffect(() => setPage(1), [filter, query, sort]);
   const actualWeeks = [sourceWeeks.google, sourceWeeks.webmaster, sourceWeeks.seoOs].filter(
     (week): week is string => Boolean(week),
   );
   const hasPeriodMismatch = new Set(actualWeeks).size > 1;
+  const unavailableSources = [
+    !sourceAvailability.google ? "Google" : null,
+    !sourceAvailability.webmaster ? "Яндекс Вебмастер" : null,
+    !sourceAvailability.seoOs ? "SEO OS" : null,
+  ].filter((value): value is string => Boolean(value));
+  const allSourcesUnavailable = unavailableSources.length === 3;
 
   return (
     <section className="min-w-0 rounded-xl border border-slate-200 bg-white shadow-sm shadow-slate-100/60" aria-labelledby="seo-query-comparison-title">
@@ -144,7 +172,7 @@ export default function ZarukuSeoQueryComparison({
             </p>
           </div>
           <span className="shrink-0 rounded-md bg-slate-50 px-2.5 py-1.5 text-xs font-medium tabular-nums text-slate-500">
-            {visibleRows.length.toLocaleString(locale)} из {rows.length.toLocaleString(locale)} фраз
+            {paginated.totalRows.toLocaleString(locale)} найдено · Страница {paginated.page} из {paginated.totalPages}
           </span>
         </div>
 
@@ -165,10 +193,25 @@ export default function ZarukuSeoQueryComparison({
             </button>
           ))}
         </div>
+        <label className="mt-3 block max-w-xl text-xs font-medium text-slate-600">
+          Поиск по фразе или разделу
+          <input
+            type="search"
+            value={query}
+            onChange={(event) => setQuery(event.target.value)}
+            placeholder="Например, онкоцентр"
+            className="mt-1.5 w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm font-normal text-slate-800 outline-none focus:border-slate-400"
+          />
+        </label>
 
         {hasPeriodMismatch ? (
           <div className="mt-3 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-xs leading-relaxed text-amber-800">
             Периоды источников различаются: сравнивайте показатели внутри каждого источника, а не как одну синхронную выборку.
+          </div>
+        ) : null}
+        {unavailableSources.length > 0 && !allSourcesUnavailable ? (
+          <div className="mt-3 rounded-lg border border-blue-200 bg-blue-50 px-3 py-2 text-xs text-blue-900">
+            Частичные данные: недоступны {unavailableSources.join(", ")}.
           </div>
         ) : null}
       </header>
@@ -210,19 +253,17 @@ export default function ZarukuSeoQueryComparison({
             </tr>
           </thead>
           <tbody className="divide-y divide-slate-100">
-            {visibleRows.map((row) => (
+            {paginated.rows.map((row) => (
               <tr key={row.key} className="align-top transition hover:bg-slate-50/70">
                 <td className="border-r border-slate-100 px-4 py-3">
                   <div className="font-medium leading-snug text-slate-800">{row.query}</div>
                   {row.google_pages.length > 0 || row.seo_os?.matched_url ? (
                     <div className="mt-1.5 flex max-w-[280px] flex-wrap gap-x-2 gap-y-1 text-[11px] text-slate-400">
                       {row.google_pages.map((page) => (
-                        <a key={`g-${page}`} href={page} className="max-w-full truncate hover:text-blue-600" title={page}>{shortUrl(page)}</a>
+                        <SafePageLink key={`g-${page}`} value={page} />
                       ))}
                       {row.seo_os?.matched_url ? (
-                        <a href={row.seo_os.matched_url} className="max-w-full truncate hover:text-teal-700" title={row.seo_os.matched_url}>
-                          SEO OS: {shortUrl(row.seo_os.matched_url)}
-                        </a>
+                        <SafePageLink value={row.seo_os.matched_url} prefix="SEO OS: " />
                       ) : null}
                     </div>
                   ) : null}
@@ -243,12 +284,17 @@ export default function ZarukuSeoQueryComparison({
                 </td>
               </tr>
             ))}
-            {visibleRows.length === 0 ? (
-              <tr><td colSpan={13} className="px-4 py-12 text-center text-sm text-slate-500">По выбранному фильтру запросов нет.</td></tr>
+            {paginated.totalRows === 0 ? (
+              <tr><td colSpan={13} className="px-4 py-12 text-center text-sm text-slate-500">{allSourcesUnavailable ? "Источник недоступен: Google, Яндекс Вебмастер и SEO OS." : "По выбранному фильтру запросов нет."}</td></tr>
             ) : null}
           </tbody>
         </table>
       </div>
+      <footer className="flex items-center justify-between gap-3 border-t border-slate-100 px-4 py-3 text-xs text-slate-500">
+        <button type="button" disabled={paginated.page <= 1} onClick={() => setPage((value) => Math.max(1, value - 1))} className="rounded-md border border-slate-200 px-3 py-1.5 disabled:opacity-40">Предыдущая</button>
+        <span>Страница {paginated.page} из {paginated.totalPages}</span>
+        <button type="button" disabled={paginated.page >= paginated.totalPages} onClick={() => setPage((value) => Math.min(paginated.totalPages, value + 1))} className="rounded-md border border-slate-200 px-3 py-1.5 disabled:opacity-40">Следующая</button>
+      </footer>
     </section>
   );
 }
