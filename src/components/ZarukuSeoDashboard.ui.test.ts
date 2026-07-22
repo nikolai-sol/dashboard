@@ -12,24 +12,32 @@ test("DataTable keeps behavior metric headers readable with spacing and wrapping
   assert.match(source, /whitespace-normal/);
 });
 
-test("SEO tab renders one AI visibility panel and keeps long tables bounded", () => {
+test("SEO tab follows the executive-to-detail hierarchy without duplicate source tables", () => {
   const aiPanelMatches = source.match(/<AiAggregateVisibilityPanel/g) ?? [];
 
   assert.equal(aiPanelMatches.length, 1);
-  assert.match(source, /data\.organic_landing_pages\.slice\(0, 10\)/);
-  assert.match(source, /max-h-\[29rem\]/);
-  assert.match(source, /max-h-\[30rem\]/);
+  assert.match(source, /<ZarukuSeoExecutiveSummary/);
+  assert.match(source, /<ZarukuSeoQueryComparison/);
+  assert.match(source, /<ZarukuSeoPageComparison/);
+  assert.match(source, /<ZarukuSeoDiagnostics/);
+  assert.doesNotMatch(source, /title="GSC countries"/);
+  assert.doesNotMatch(source, /title="Запросы Яндекса"/);
+  assert.doesNotMatch(source, /title="Google Search Console queries"/);
 });
 
-test("SEO tab explains Metrika search phrases and hides empty Yandex landing page facts", () => {
+test("SEO tab explains Metrika search phrases and uses the unified landing-page workspace", () => {
   assert.match(source, /Поисковые фразы из Метрики/);
   assert.match(source, /Фразы, которые Метрика смогла определить после клика/);
-  assert.match(source, /webmasterPages\.length > 0/);
+  assert.match(source, /buildUnifiedSeoPageRows/);
+  assert.match(source, /webmasterRows: webmasterPages/);
+  assert.doesNotMatch(source, /title="Посадочные страницы Яндекса"/);
 });
 
-test("SEO tab labels Yandex query table from its own week selection", () => {
-  assert.match(source, /const webmasterQueryMeta = buildWebmasterSelectionMeta\(webmasterQuerySelection, webmasterWeek\)/);
-  assert.match(source, /webmasterQueryMeta\.fallbackNote/);
+test("SEO tab passes actual source weeks into unified comparisons", () => {
+  assert.match(source, /webmaster: webmasterQuerySelection\.week/);
+  assert.match(source, /google: gscQuerySelection\.week/);
+  assert.match(source, /webmaster: webmasterPageSelection\.week/);
+  assert.match(source, /google: gscLandingPageSelection\.week/);
 });
 
 test("Quality tab shows technical collector freshness wording", () => {
@@ -38,9 +46,10 @@ test("Quality tab shows technical collector freshness wording", () => {
   assert.match(source, /rows written/);
 });
 
-test("SEO tab renders Search Console facts from canonical data without pending placeholder", () => {
-  assert.match(source, /GSC search facts/);
-  assert.match(source, /Search Console · canonical_fact_gsc_queries_daily/);
+test("SEO tab renders Search Console facts through the unified read model without a pending placeholder", () => {
+  assert.match(source, /data\.gsc\.queries/);
+  assert.match(source, /data\.gsc\.landing_pages/);
+  assert.match(source, /buildUnifiedSeoQueryRows/);
   assert.doesNotMatch(source, /title="Факты Google Search Console" source="gsc" layer="serp" pending/);
   assert.doesNotMatch(source, /Данные по Google-показам, кликам и CTR ожидаются из Search Console/);
 });
@@ -63,19 +72,15 @@ test("Behavior tab exposes canonical returning-content recency buckets", () => {
 }
 );
 
-test("SEO tab renders GSC product enrichment panels", () => {
-  assert.match(source, /GSC landing pages/);
-  assert.match(source, /GSC brand vs non-brand/);
-  assert.match(source, /GSC countries/);
-  assert.match(source, /GSC devices/);
-  assert.match(source, /GSC search appearances/);
-  assert.match(source, /GSC result types/);
+test("SEO tab keeps useful GSC diagnostics and removes country breakdown", () => {
+  assert.match(source, /<ZarukuSeoDiagnostics/);
   assert.match(source, /data\.gsc\.landing_pages/);
   assert.match(source, /data\.gsc\.brand_split/);
-  assert.match(source, /data\.gsc\.country_summary/);
   assert.match(source, /data\.gsc\.search_appearance/);
   assert.match(source, /data\.gsc\.search_type_summary/);
   assert.match(source, /gscSummaryRows/);
+  assert.doesNotMatch(source, /data\.gsc\.country_summary/);
+  assert.doesNotMatch(source, /Countries|GSC countries/);
 });
 
 test("Geo tab uses the projected Russia demand map instead of manual coordinates", () => {

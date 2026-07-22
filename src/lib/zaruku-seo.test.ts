@@ -57,7 +57,7 @@ const patterns: ZarukuSeoSectionPattern[] = [
 ];
 
 test("Metrika report parameters support the Zaruku Russia filter", () => {
-  const module = zarukuSeoModule as typeof zarukuSeoModule & {
+  const seoModule = zarukuSeoModule as typeof zarukuSeoModule & {
     ZARUKU_RUSSIA_FILTER?: string;
     buildMetrikaReportParams?: (request: {
       counterId: string;
@@ -69,16 +69,16 @@ test("Metrika report parameters support the Zaruku Russia filter", () => {
     }) => URLSearchParams;
   };
 
-  assert.equal(typeof module.buildMetrikaReportParams, "function");
-  assert.equal(module.ZARUKU_RUSSIA_FILTER, "ym:s:regionCountry=='Russia'");
+  assert.equal(typeof seoModule.buildMetrikaReportParams, "function");
+  assert.equal(seoModule.ZARUKU_RUSSIA_FILTER, "ym:s:regionCountry=='Russia'");
 
-  const params = module.buildMetrikaReportParams!({
+  const params = seoModule.buildMetrikaReportParams!({
     counterId: "66624469",
     from: "2026-07-13",
     to: "2026-07-19",
     dimensions: "ym:s:searchPhrase",
     limit: 30,
-    filters: module.ZARUKU_RUSSIA_FILTER,
+    filters: seoModule.ZARUKU_RUSSIA_FILTER,
   });
 
   assert.equal(params.get("filters"), "ym:s:regionCountry=='Russia'");

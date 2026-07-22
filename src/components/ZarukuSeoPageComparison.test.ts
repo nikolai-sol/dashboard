@@ -1,9 +1,12 @@
 import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
 import test from "node:test";
 import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import ZarukuSeoPageComparison from "@/components/ZarukuSeoPageComparison";
 import { buildUnifiedSeoPageRows } from "@/components/zaruku-seo-workspace";
+
+const source = readFileSync(new URL("./ZarukuSeoPageComparison.tsx", import.meta.url), "utf8");
 
 test("renders exact joined page rows with separate SEO and behavior periods", () => {
   const rows = buildUnifiedSeoPageRows({
@@ -42,4 +45,11 @@ test("renders exact joined page rows with separate SEO and behavior periods", ()
   assert.match(markup, /Запросы SEO OS/);
   assert.match(markup, /Карта онкоцентров/);
   assert.doesNotMatch(markup, /конверси/i);
+});
+
+test("keeps page-table width inside its own responsive scroll panel", () => {
+  assert.match(source, /<section className="min-w-0/);
+  assert.match(source, /max-h-\[42rem\] overflow-auto[\s\S]*min-w-\[1320px\]/);
+  assert.match(source, /flex flex-wrap items-center justify-center/);
+  assert.match(source, /thead className="sticky top-0/);
 });

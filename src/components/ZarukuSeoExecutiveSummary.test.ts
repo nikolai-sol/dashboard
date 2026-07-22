@@ -1,9 +1,12 @@
 import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
 import test from "node:test";
 import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import ZarukuSeoExecutiveSummary from "@/components/ZarukuSeoExecutiveSummary";
 import type { SeoExecutiveSnapshot } from "@/components/zaruku-seo-workspace";
+
+const source = readFileSync(new URL("./ZarukuSeoExecutiveSummary.tsx", import.meta.url), "utf8");
 
 const snapshot: SeoExecutiveSnapshot = {
   google: { impressions: 1_200, clicks: 120, ctr: 10, average_position: 4.5 },
@@ -37,4 +40,10 @@ test("renders an executive-to-detail source hierarchy without a country panel", 
   assert.match(markup, /AI-видимость/);
   assert.doesNotMatch(markup, /Countries|Страны/);
   assert.doesNotMatch(markup, /Яндекс Вебмастер[^<]{0,80}(?:RF|Россия|только РФ)/);
+});
+
+test("keeps the executive grid shrinkable at page level", () => {
+  assert.match(source, /<section className="min-w-0/);
+  assert.match(source, /grid min-w-0 gap-4/);
+  assert.match(source, /flex flex-col gap-4 lg:flex-row/);
 });

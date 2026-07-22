@@ -98,7 +98,7 @@ function SortButton({
 
 function SourceHeading({ label, week, className }: { label: string; week: string | null; className: string }) {
   return (
-    <div className="flex items-center justify-center gap-2">
+    <div className="flex flex-wrap items-center justify-center gap-2">
       <span className={`h-2 w-2 rounded-full ${className}`} />
       <span>{label}</span>
       <span className="font-normal normal-case text-slate-400">{week ?? "нет данных"}</span>

@@ -45,7 +45,7 @@ function shortUrl(value: string): string {
 
 function SourceHeading({ label, period, dot }: { label: string; period: string | null; dot: string }) {
   return (
-    <div className="flex items-center justify-center gap-2">
+    <div className="flex flex-wrap items-center justify-center gap-2">
       <span className={`h-2 w-2 rounded-full ${dot}`} />
       <span>{label}</span>
       <span className="font-normal normal-case text-slate-400">{period ?? "нет данных"}</span>
