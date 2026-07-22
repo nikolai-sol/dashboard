@@ -172,7 +172,7 @@ class ExactValidationCursor(RecordingCursor):
     def __init__(
         self, connection, *, evidence_rows=None, snapshot_rows=None, execution_rows=None,
         validation_batches=None, source_kinds=SOURCE_KINDS, release_snapshot_ids=None,
-        baseline=None,
+        baseline=None, baseline_snapshot_id=13, predecessor_release_id=1,
     ):
         super().__init__()
         self.validation_batches = validation_batches or [
@@ -180,6 +180,8 @@ class ExactValidationCursor(RecordingCursor):
         ]
         self.source_kinds = source_kinds
         self.baseline = baseline or baseline_manifest(source_kinds)
+        self.baseline_snapshot_id = baseline_snapshot_id
+        self.predecessor_release_id = predecessor_release_id
         self.snapshot_rows = (
             imported_snapshot_rows(source_kinds)
             if snapshot_rows is None
@@ -208,7 +210,8 @@ class ExactValidationCursor(RecordingCursor):
                 "id": 41,
                 "dataset_key": "abbott",
                 "release_status": "staging",
-                "baseline_validation_run_id": 33,
+                "baseline_validation_run_id": self.baseline_snapshot_id,
+                "rollback_from_release_id": self.predecessor_release_id,
                 "code_revision": "abc123",
                 "source_snapshot_ids": json.dumps(self.release_snapshot_ids),
             }
@@ -267,7 +270,7 @@ class ExactValidationConnection(RecordingConnection):
     def __init__(
         self, *, evidence_rows=None, snapshot_rows=None, execution_rows=None,
         validation_batches=None, source_kinds=SOURCE_KINDS, release_snapshot_ids=None,
-        baseline=None,
+        baseline=None, baseline_snapshot_id=13, predecessor_release_id=1,
     ):
         self.events = []
         self.cursor_instance = ExactValidationCursor(
@@ -279,6 +282,8 @@ class ExactValidationConnection(RecordingConnection):
             source_kinds=source_kinds,
             release_snapshot_ids=release_snapshot_ids,
             baseline=baseline,
+            baseline_snapshot_id=baseline_snapshot_id,
+            predecessor_release_id=predecessor_release_id,
         )
 
 
@@ -319,6 +324,26 @@ class CanonicalReleaseStoreTest(unittest.TestCase):
         )
 
         self.validate(store, conn)
+
+    def test_coverage_only_baseline_is_rejected_outside_bootstrap_pair(self):
+        import canonical_release_store as store
+
+        baseline = baseline_manifest(REQUIRED_WORKBOOK_KINDS)
+        baseline["control_values"] = {}
+        for baseline_snapshot_id, predecessor_release_id in ((14, 1), (13, 2)):
+            with self.subTest(
+                baseline_snapshot_id=baseline_snapshot_id,
+                predecessor_release_id=predecessor_release_id,
+            ):
+                conn = ExactValidationConnection(
+                    source_kinds=REQUIRED_WORKBOOK_KINDS,
+                    baseline=baseline,
+                    evidence_rows=coverage_only_evidence_rows(),
+                    baseline_snapshot_id=baseline_snapshot_id,
+                    predecessor_release_id=predecessor_release_id,
+                )
+                with self.assertRaises(store.ValidationGateError):
+                    self.validate(store, conn)
 
     def test_each_declared_optional_bitrix_source_and_both_validate(self):
         import canonical_release_store as store

@@ -20,12 +20,14 @@ The release gate requires all of the following:
 - every day in the requested interval to contain the exact reconciled,
   unsampled five-scope bundle.
 
-A predecessor that predates release-scoped Metrika facts may legitimately
-produce an empty aggregate `control_values` mapping. In that migration-only
-case, the comparator and validation gate still require the five coverage
-controls and the exact calendar gate. A missing or non-object
-`control_values` field remains invalid. June production smoke controls provide
-the external Metrika comparison before the rollout is declared complete.
+The reviewed predecessor that predates release-scoped Metrika facts produced
+an empty aggregate `control_values` mapping. This one-time exception is bound
+to immutable baseline snapshot 13 and predecessor release 1; it is not a
+general fallback for future releases. The comparator and validation gate still
+require the five coverage controls and the exact calendar gate. Any other empty,
+missing or non-object `control_values` field is invalid. June production smoke
+controls provide the external Metrika comparison before the rollout is declared
+complete.
 
 ## Failure and rollback
 
@@ -34,4 +36,3 @@ source snapshots; incomplete evidence; partial dates; sampling; or revision
 mismatch. A smoke failure rolls the active data pointer and application release
 back to their recorded predecessors. Quarantined public Abbott assets are never
 restored.
-

@@ -31,6 +31,8 @@ ABBOTT_OPTIONAL_SOURCE_KINDS = (
 ABBOTT_ALLOWED_SOURCE_KINDS = frozenset(
     ABBOTT_REQUIRED_SOURCE_KINDS + ABBOTT_OPTIONAL_SOURCE_KINDS
 )
+ABBOTT_COVERAGE_ONLY_BOOTSTRAP_BASELINE_ID = 13
+ABBOTT_COVERAGE_ONLY_BOOTSTRAP_PREDECESSOR_ID = 1
 
 
 class ReleaseStoreError(RuntimeError):
@@ -85,10 +87,17 @@ def _json_value(value, *, error_message: str):
     return value
 
 
-def _required_control_names(manifest: dict) -> set[str]:
+def _required_control_names(
+    manifest: dict, *, baseline_snapshot_id: int, predecessor_release_id: int
+) -> set[str]:
     control_values = manifest.get("control_values")
     if not isinstance(control_values, dict):
         raise ValidationGateError("Frozen baseline controls are invalid")
+    if not control_values and (
+        baseline_snapshot_id != ABBOTT_COVERAGE_ONLY_BOOTSTRAP_BASELINE_ID
+        or predecessor_release_id != ABBOTT_COVERAGE_ONLY_BOOTSTRAP_PREDECESSOR_ID
+    ):
+        raise ValidationGateError("Coverage-only baseline is not the approved bootstrap")
     names = {str(name) for name in control_values}
     if any(not name.strip() for name in names) or len(names) != len(control_values):
         raise ValidationGateError("Frozen baseline controls are invalid")
@@ -348,7 +357,8 @@ def validate_release(
         cur.execute(
             """
             SELECT id, dataset_key, release_status,
-                   baseline_validation_run_id, code_revision,
+                   baseline_validation_run_id, rollback_from_release_id,
+                   code_revision,
                    source_snapshot_ids
             FROM portal_data_releases
             WHERE dataset_key = %s AND id = %s
@@ -383,7 +393,11 @@ def validate_release(
         )
         if not isinstance(baseline_manifest, dict):
             raise ValidationGateError("Frozen baseline manifest is invalid")
-        expected_control_names = _required_control_names(baseline_manifest)
+        expected_control_names = _required_control_names(
+            baseline_manifest,
+            baseline_snapshot_id=int(release["baseline_validation_run_id"]),
+            predecessor_release_id=int(release.get("rollback_from_release_id") or 0),
+        )
 
         source_ids = _json_value(
             release.get("source_snapshot_ids"),
