@@ -17,6 +17,16 @@ os.replace(sys.argv[1], sys.argv[2])
 PY
 }
 
+publish_static_permissions() {
+  local release_path="$1"
+  chmod 711 "$release_path" "$release_path/.next"
+  find "$release_path/.next/static" "$release_path/public" -type d -exec chmod 755 {} +
+  find "$release_path/.next/static" "$release_path/public" -type f -exec chmod 644 {} +
+  if [[ -f "$release_path/.env" ]]; then
+    chmod 600 "$release_path/.env"
+  fi
+}
+
 if [[ "${1:-}" == "--checkpoint-current" ]]; then
   CURRENT_DIR="${2:?current dashboard directory is required}"
   RELEASES_DIR="${3:?release directory is required}"
@@ -71,6 +81,7 @@ PY
   (cd "$CURRENT_DIR" && sha256sum -c "$CHECKPOINT_MANIFEST" >/dev/null)
   mv "$CURRENT_DIR" "$FINAL_RELEASE"
   MOVED=1
+  publish_static_permissions "$FINAL_RELEASE"
   node --import tsx scripts/assert-no-private-public-assets.ts --release "$FINAL_RELEASE"
   (cd "$FINAL_RELEASE" && sha256sum -c "$CHECKPOINT_MANIFEST" >/dev/null)
   mv "$CHECKPOINT_MANIFEST" "$FINAL_MANIFEST"
@@ -98,6 +109,7 @@ if [[ "${1:-}" == "--activate-existing" ]]; then
     exit 1
   fi
   cd "$APP_SOURCE_DIR"
+  publish_static_permissions "$FINAL_RELEASE"
   node --import tsx scripts/assert-no-private-public-assets.ts --release "$FINAL_RELEASE"
   (cd "$FINAL_RELEASE" && sha256sum -c "$FINAL_MANIFEST" >/dev/null)
   atomic_activate "$FINAL_RELEASE" "$ACTIVE_LINK"
@@ -142,6 +154,7 @@ cleanup() {
 trap cleanup EXIT
 
 cp -aL "$SOURCE_TREE/." "$STAGING/"
+publish_static_permissions "$STAGING"
 node --import tsx scripts/assert-no-private-public-assets.ts --release "$STAGING"
 
 python3 - "$STAGING" "$STAGING_MANIFEST" <<'PY'
