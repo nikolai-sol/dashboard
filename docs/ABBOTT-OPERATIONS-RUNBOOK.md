@@ -700,7 +700,8 @@ Do not validate or activate if any revision, full-tree manifest, deployed-tree
 asset scan, restart, or health check fails.
 
 Only after every gate passes, execute the tested validation transition. It
-locks the staging release, requires persisted comparator evidence bound to the
+locks only the mutable staging release row, reads immutable source and evidence
+rows without locking clauses under the same transaction, and requires persisted comparator evidence bound to the
 baseline snapshot and candidate code revision, selects only the latest
 completed `validation_run_id`, and accepts exactly the frozen baseline control
 names plus five `coverage.*.reconciled_days` controls. An empty aggregate

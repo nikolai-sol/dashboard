@@ -652,6 +652,27 @@ class CanonicalReleaseStoreTest(unittest.TestCase):
         self.assertEqual(params, ("abbott", 41))
         self.assertIn(("commit", None), conn.events)
 
+    def test_validation_locks_only_the_mutable_release_row(self):
+        import canonical_release_store as store
+
+        conn = ExactValidationConnection()
+        self.validate(store, conn)
+
+        immutable_evidence_tables = (
+            "portal_dataset_snapshots",
+            "portal_release_source_imports",
+            "portal_migration_validation_runs",
+        )
+        release_select = next(
+            sql
+            for sql, _ in conn.cursor_instance.calls
+            if sql.startswith("SELECT id, dataset_key, release_status")
+        )
+        self.assertIn("FOR UPDATE", release_select)
+        for sql, _ in conn.cursor_instance.calls:
+            if any(table in sql for table in immutable_evidence_tables):
+                self.assertNotIn("FOR UPDATE", sql)
+
     def test_validation_rejects_unaccepted_warning_without_transition(self):
         import canonical_release_store as store
 

@@ -33,6 +33,8 @@ complete.
 
 Validation remains fail-closed for unknown, duplicate, missing or mismatched
 source snapshots; incomplete evidence; partial dates; sampling; or revision
-mismatch. A smoke failure rolls the active data pointer and application release
-back to their recorded predecessors. Quarantined public Abbott assets are never
-restored.
+mismatch. The transaction locks only the mutable staging-release row; immutable
+snapshot and evidence tables are read without locking clauses so the
+least-privilege operator does not need UPDATE grants on evidence. A smoke
+failure rolls the active data pointer and application release back to their
+recorded predecessors. Quarantined public Abbott assets are never restored.

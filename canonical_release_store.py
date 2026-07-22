@@ -382,7 +382,6 @@ def validate_release(
             FROM portal_dataset_snapshots
             WHERE id = %s AND dataset_key = %s
               AND source_kind = 'abbott_canonical_control_pack'
-            FOR UPDATE
             """,
             (release["baseline_validation_run_id"], ABBOTT_DATASET_KEY),
         )
@@ -414,7 +413,6 @@ def validate_release(
             FROM portal_dataset_snapshots
             WHERE dataset_key = %s AND id IN ({placeholders})
             ORDER BY id
-            FOR UPDATE
             """,
             (ABBOTT_DATASET_KEY, *source_ids),
         )
@@ -426,7 +424,6 @@ def validate_release(
             FROM portal_release_source_imports
             WHERE canonical_release_id = %s
             ORDER BY source_snapshot_id
-            FOR UPDATE
             """,
             (release_id,),
         )
@@ -445,7 +442,6 @@ def validate_release(
               AND baseline_snapshot_id = %s
             ORDER BY id DESC
             LIMIT 1
-            FOR UPDATE
             """,
             (release_id, release["baseline_validation_run_id"]),
         )
@@ -468,7 +464,6 @@ def validate_release(
               AND baseline_snapshot_id = %s
               AND validation_run_id = %s
             ORDER BY control_name
-            FOR UPDATE
             """,
             (
                 release_id,
