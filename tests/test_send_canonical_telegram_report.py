@@ -34,7 +34,28 @@ ABBOTT_OK = {
 
 class TelegramReportTests(unittest.TestCase):
     def test_stable_order_appends_metrika(self):
+        self.assertEqual(report.SUMMARY_SOURCE_ORDER[-2], "between")
         self.assertEqual(report.SUMMARY_SOURCE_ORDER[-1], "yandex_metrika")
+
+    def test_summary_includes_between_email_collector(self):
+        payload = {"summary": {"exit_code": 0}, "sources": []}
+        runs = [{
+            "source_key": "between",
+            "status": "success",
+            "run_type": "backfill",
+            "run_mode": "email_xlsx",
+            "rows_read": 16,
+            "rows_written": 16,
+            "rows_updated": 0,
+            "error_count": 0,
+            "started_at": "2026-07-20 05:40:00",
+        }]
+
+        text = report.build_summary_message(payload, runs, ABBOTT_OK)
+
+        self.assertIn("between email: SUCCESS", text)
+        self.assertIn("type=BACKFILL", text)
+        self.assertIn("mode=email_xlsx", text)
 
     def test_abbott_critical_triggers_alert(self):
         abbott = dict(ABBOTT_OK, overall="CRITICAL", incidents=[{

@@ -22,7 +22,17 @@ ABBOTT_HEALTH_SCRIPT = ROOT / 'abbott_health_probe.py'
 LEGACY_ENV_PATH = Path('/var/www/www-root/data/.production.env')
 MANUAL_EXCEPTIONS_PATH = ROOT / 'MANUAL-LEGACY-EXCEPTIONS.md'
 LOCAL_VENV_PYTHON = ROOT / 'venv' / 'bin' / 'python'
-SUMMARY_SOURCE_ORDER = ['linkedin', 'reddit', 'vk_ads_v2', 'getintent', 'yandex_direct', 'hybrid', 'yandex_metrika']
+SUMMARY_SOURCE_ORDER = [
+    'linkedin',
+    'reddit',
+    'vk_ads_v2',
+    'getintent',
+    'yandex_direct',
+    'hybrid',
+    'between',
+    'yandex_metrika',
+]
+SUMMARY_SOURCE_LABELS = {'between': 'between email'}
 
 
 def parse_args() -> argparse.Namespace:
@@ -104,6 +114,7 @@ def get_latest_collector_runs() -> List[Dict]:
           t.id,
           t.status,
           t.run_type,
+          t.run_mode,
           t.rows_read,
           t.rows_written,
           t.rows_updated,
@@ -204,13 +215,17 @@ def build_collector_line(run: Dict) -> str:
         started_text = started_at.strftime('%H:%M')
     else:
         started_text = str(started_at or '')[:16]
+    source_key = str(run.get('source_key') or 'unknown')
+    source_label = SUMMARY_SOURCE_LABELS.get(source_key, source_key)
     status = str(run.get('status') or 'unknown').upper()
     return (
-        f"- {html.escape(str(run.get('source_key') or 'unknown'))}: {html.escape(status)} "
+        f"- {html.escape(source_label)}: {html.escape(status)} "
         f"(read={int(run.get('rows_read') or 0)}, "
         f"write={int(run.get('rows_written') or 0)}, "
         f"update={int(run.get('rows_updated') or 0)}, "
         f"errors={int(run.get('error_count') or 0)}, "
+        f"type={html.escape(str(run.get('run_type') or 'unknown').upper())}, "
+        f"mode={html.escape(str(run.get('run_mode') or 'unknown'))}, "
         f"start={html.escape(started_text)})"
     )
 
@@ -378,7 +393,8 @@ def build_summary_message(payload: Dict, collector_runs: List[Dict], abbott: Dic
         if row:
             lines.append(build_collector_line(row))
         else:
-            lines.append(f'- {html.escape(source_key)}: no collector run found')
+            source_label = SUMMARY_SOURCE_LABELS.get(source_key, source_key)
+            lines.append(f'- {html.escape(source_label)}: no collector run found')
         if source_key == 'yandex_direct':
             yandex_source = next((item for item in payload.get('sources', []) if item.get('source_key') == 'yandex_direct'), None)
             shadow_run = ((yandex_source or {}).get('shadow_cutover') or {}).get('shadow_collector') or {}
