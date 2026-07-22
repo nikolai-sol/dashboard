@@ -5,6 +5,26 @@ import test from "node:test";
 const source = readFileSync(new URL("./ZarukuSeoDashboard.tsx", import.meta.url), "utf8");
 const russiaMapSource = readFileSync(new URL("./ZarukuRussiaDemandMap.tsx", import.meta.url), "utf8");
 
+test("client navigation contains exactly six tabs in executive order", () => {
+  const labels = ["Обзор", "SEO", "Контент", "Аудитория", "Работы и задачи", "Качество"];
+  let lastIndex = -1;
+  for (const label of labels) {
+    const index = source.indexOf(`label: "${label}"`);
+    assert.ok(index > lastIndex, `${label} must follow the previous tab`);
+    lastIndex = index;
+  }
+  assert.doesNotMatch(source, /label: "SEO-операции"|label: "Гео"|label: "Устройства"|label: "Поведение"/);
+});
+
+test("Overview starts with explicit period context and data confidence", () => {
+  const overviewSource = readFileSync(new URL("./ZarukuOverviewTab.tsx", import.meta.url), "utf8");
+  assert.match(source, /import ZarukuOverviewTab/);
+  assert.match(source, /<ZarukuOverviewTab data=\{data\}/);
+  assert.match(overviewSource, /<ZarukuPeriodContext/);
+  assert.match(overviewSource, /Что происходит с поисковой видимостью и целевым трафиком сейчас/);
+  assert.match(overviewSource, /Частичные данные|Можно доверять|Критическая проблема/);
+});
+
 test("DataTable keeps behavior metric headers readable with spacing and wrapping", () => {
   assert.match(source, /min-w-\[1080px\]/);
   assert.match(source, /table-fixed/);

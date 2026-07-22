@@ -18,7 +18,7 @@ export function canCompareWeeks(weeks: string[]) {
 }
 
 export function shouldShowSeoWeekToolbar(activeTab: string) {
-  return activeTab === "seo" || activeTab === "seo_ops" || activeTab === "content";
+  return activeTab === "seo" || activeTab === "work" || activeTab === "content";
 }
 
 export function reconcileWeekSelection(selection: WeekSelection, weeks: string[]): WeekSelection {

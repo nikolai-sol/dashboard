@@ -52,6 +52,7 @@ import ZarukuSeoAnalytics from "@/components/ZarukuSeoAnalytics";
 import ZarukuSeoOperations from "@/components/ZarukuSeoOperations";
 import ZarukuRussiaDemandMap from "@/components/ZarukuRussiaDemandMap";
 import ZarukuTrafficVisibility from "@/components/ZarukuTrafficVisibility";
+import ZarukuOverviewTab from "@/components/ZarukuOverviewTab";
 import {
   buildNorthStarKpis,
   buildSemanticHealthRows,
@@ -77,17 +78,14 @@ type Props = {
   locale?: string;
 };
 
-type TabId = "overview" | "seo" | "seo_ops" | "content" | "geo" | "devices" | "audience" | "behavior" | "quality";
+type TabId = "overview" | "seo" | "content" | "audience" | "work" | "quality";
 
 const NAV: Array<{ id: TabId; label: string; icon: typeof LayoutGrid }> = [
   { id: "overview", label: "Обзор", icon: LayoutGrid },
   { id: "seo", label: "SEO", icon: Search },
-  { id: "seo_ops", label: "SEO-операции", icon: Workflow },
   { id: "content", label: "Контент", icon: FileText },
-  { id: "geo", label: "Гео", icon: MapPin },
-  { id: "devices", label: "Устройства", icon: MonitorSmartphone },
   { id: "audience", label: "Аудитория", icon: Users },
-  { id: "behavior", label: "Поведение", icon: Repeat },
+  { id: "work", label: "Работы и задачи", icon: Workflow },
   { id: "quality", label: "Качество", icon: ShieldAlert },
 ];
 
@@ -621,7 +619,7 @@ function WeeklyFocusPanel({ data, primaryWeek }: Props & { primaryWeek: string |
 
 function OverviewTab({ data, locale }: Props) {
   return (
-    <div className="space-y-5">
+    <ZarukuOverviewTab data={data}>
       <NorthStarBlock data={data} locale={locale} />
       <TrafficHealthStrip data={data} />
       <div className="grid gap-5 lg:grid-cols-3">
@@ -649,7 +647,7 @@ function OverviewTab({ data, locale }: Props) {
         </Panel>
       </div>
       <PendingPanel data={data} />
-    </div>
+    </ZarukuOverviewTab>
   );
 }
 
@@ -1049,11 +1047,17 @@ export default function ZarukuSeoDashboard({ data, locale = "ru-RU" }: Props) {
       },
     }));
   };
+  const selectTab = (tab: TabId) => {
+    setActiveTab(tab);
+    window.requestAnimationFrame(() => {
+      document.getElementById("zaruku-tab-content")?.scrollIntoView({ block: "start" });
+    });
+  };
   const content = useMemo(() => {
     switch (activeTab) {
       case "seo":
         return <SeoTab data={data} locale={locale} primaryWeek={selectedWeeks.primaryWeek} comparisonWeek={selectedWeeks.comparisonWeek} />;
-      case "seo_ops":
+      case "work":
         return (
           <div className="space-y-5">
             <WeeklyFocusPanel data={data} locale={locale} primaryWeek={selectedWeeks.primaryWeek} />
@@ -1066,15 +1070,9 @@ export default function ZarukuSeoDashboard({ data, locale = "ru-RU" }: Props) {
           </div>
         );
       case "content":
-        return <ContentTab data={data} locale={locale} primaryWeek={selectedWeeks.primaryWeek} comparisonWeek={selectedWeeks.comparisonWeek} />;
-      case "geo":
-        return <GeoTab data={data} locale={locale} />;
-      case "devices":
-        return <DevicesTab data={data} locale={locale} />;
+        return <div className="space-y-5"><ContentTab data={data} locale={locale} primaryWeek={selectedWeeks.primaryWeek} comparisonWeek={selectedWeeks.comparisonWeek} /><BehaviorTab data={data} locale={locale} /></div>;
       case "audience":
-        return <AudienceTab data={data} locale={locale} />;
-      case "behavior":
-        return <BehaviorTab data={data} locale={locale} />;
+        return <div className="space-y-5"><GeoTab data={data} locale={locale} /><DevicesTab data={data} locale={locale} /><AudienceTab data={data} locale={locale} /></div>;
       case "quality":
         return <QualityTab data={data} />;
       default:
@@ -1101,7 +1099,7 @@ export default function ZarukuSeoDashboard({ data, locale = "ru-RU" }: Props) {
                 <button
                   key={item.id}
                   type="button"
-                  onClick={() => setActiveTab(item.id)}
+                  onClick={() => selectTab(item.id)}
                   className={active
                     ? "flex w-full items-center gap-2 rounded-lg bg-slate-100 px-3 py-2 text-left text-sm font-medium text-slate-950"
                     : "flex w-full items-center gap-2 rounded-lg px-3 py-2 text-left text-sm text-slate-500 hover:bg-slate-50 hover:text-slate-800"}
@@ -1174,7 +1172,7 @@ export default function ZarukuSeoDashboard({ data, locale = "ru-RU" }: Props) {
                 <button
                   key={item.id}
                   type="button"
-                  onClick={() => setActiveTab(item.id)}
+                  onClick={() => selectTab(item.id)}
                   className={item.id === activeTab ? "shrink-0 rounded-md bg-slate-900 px-3 py-1.5 text-xs text-white" : "shrink-0 rounded-md px-3 py-1.5 text-xs text-slate-500"}
                 >
                   {item.label}
@@ -1182,7 +1180,7 @@ export default function ZarukuSeoDashboard({ data, locale = "ru-RU" }: Props) {
               ))}
             </div>
           </header>
-          <div className="p-4 md:p-5">{content}</div>
+          <div id="zaruku-tab-content" className="scroll-mt-4 p-4 md:p-5">{content}</div>
         </main>
       </div>
     </div>
