@@ -790,10 +790,11 @@ for line in source.read_text(encoding="utf-8").splitlines():
     kept.append(line)
 if removed_legacy != 1:
     raise SystemExit("expected exactly one 06:10 legacy /metrika cron")
+runtime_revision = os.environ["RUNTIME_REVISION"]
 code_revision = os.environ["CODE_REVISION"]
 parser_version = os.environ["PARSER_VERSION"]
 kept.extend([
-    f"12 6 * * * cd /root/reportingdash-canonical && /root/reportingdash-canonical/venv/bin/python run_abbott_metrika_active_release.py --canonical-root /root/reportingdash-canonical --manifest /root/reportingdash-canonical/ops/abbott-runtime-manifest.sha256 --collector /root/reportingdash-canonical/fetch_yandex_metrika_canonical.py --code-revision {code_revision} --parser-version {parser_version} >> /root/reportingdash-canonical/logs/yandex-metrika-abbott-cron.log 2>&1",
+    f"12 6 * * * cd /root/reportingdash-canonical && /root/reportingdash-canonical/venv/bin/python run_abbott_metrika_active_release.py --canonical-root /root/reportingdash-canonical --manifest /root/reportingdash-canonical/ops/abbott-runtime-manifest.sha256 --collector /root/reportingdash-canonical/fetch_yandex_metrika_canonical.py --runtime-revision {runtime_revision} --code-revision {code_revision} --parser-version {parser_version} >> /root/reportingdash-canonical/logs/yandex-metrika-abbott-cron.log 2>&1",
     "5 7 * * * cd /root/reportingdash-canonical && /root/reportingdash-canonical/venv/bin/python abbott_health_probe.py --json --counter-id 90602537 >> /root/reportingdash-canonical/logs/abbott-health-cron.log 2>&1",
     "10 7 * * * cd /root/reportingdash-canonical && /root/reportingdash-canonical/venv/bin/python send_canonical_telegram_report.py --mode summary >> /root/reportingdash-canonical/logs/canonical-telegram-summary.log 2>&1",
 ])
@@ -812,8 +813,9 @@ The final Abbott order is canonical collection `06:12`, deterministic health
 additional duplicate of the old `06:50` line; the helper replaces any existing
 summary entry.
 
-The wrapper resolves and verifies the current Abbott active pointer on every
-run, then invokes the collector with `--days-back 1`: active publication may
+The wrapper attests `--runtime-revision` independently, resolves and verifies
+the current Abbott active pointer against the immutable `--code-revision` on
+every run, then invokes the collector with `--days-back 1`: active publication may
 append only the newly completed yesterday UTC bundle. A retry, late correction,
 or gap repair for an existing day requires a successor staging release and
 activation; it may never overwrite the active release. The removed legacy

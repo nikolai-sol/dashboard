@@ -38,3 +38,8 @@ snapshot and evidence tables are read without locking clauses so the
 least-privilege operator does not need UPDATE grants on evidence. A smoke
 failure rolls the active data pointer and application release back to their
 recorded predecessors. Quarantined public Abbott assets are never restored.
+
+The active-release launcher separately attests its committed runtime revision
+and the active release data revision. This permits a reviewed operational
+launcher fix without rewriting immutable candidate provenance; the collector
+continues to receive the release data revision.

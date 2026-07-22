@@ -8,6 +8,40 @@ from unittest.mock import patch
 
 
 class AbbottActiveReleaseCronTest(unittest.TestCase):
+    def test_active_release_query_avoids_reserved_release_alias(self):
+        import run_abbott_metrika_active_release as launcher
+
+        class Cursor:
+            def execute(self, sql, params):
+                self.sql = " ".join(sql.split())
+
+            def fetchone(self):
+                return {
+                    "canonical_release_id": 41,
+                    "release_status": "active",
+                    "code_revision": "abcdef123456",
+                }
+
+            def close(self):
+                pass
+
+        class Connection:
+            def __init__(self):
+                self.cursor_instance = Cursor()
+
+            def cursor(self, **unused):
+                return self.cursor_instance
+
+            def close(self):
+                pass
+
+        connection = Connection()
+        with patch.object(launcher, "get_db_connection", return_value=connection):
+            self.assertEqual(launcher.resolve_active_release("abcdef123456"), 41)
+
+        self.assertNotIn(" AS release ", connection.cursor_instance.sql)
+        self.assertIn(" AS data_release ", connection.cursor_instance.sql)
+
     def test_command_is_exact_counter_release_and_five_scope_collector_path(self):
         import run_abbott_metrika_active_release as launcher
 
@@ -36,20 +70,28 @@ class AbbottActiveReleaseCronTest(unittest.TestCase):
                 canonical_root=root,
                 manifest=manifest,
                 collector=collector,
+                runtime_revision="runtime987654",
                 code_revision="abcdef123456",
                 parser_version="abbott-v1",
             )
             order = []
             with patch.object(
-                launcher, "attest_runtime", side_effect=lambda *unused: order.append("attest")
+                launcher,
+                "attest_runtime",
+                side_effect=lambda unused_root, revision, unused_manifest: order.append(
+                    ("attest", revision)
+                ),
             ), patch.object(
                 launcher,
                 "resolve_active_release",
-                side_effect=lambda revision: order.append("resolve") or 41,
+                side_effect=lambda revision: order.append(("resolve", revision)) or 41,
             ), patch.object(launcher.subprocess, "run") as execute:
                 launcher.run(args)
 
-        self.assertEqual(order, ["attest", "resolve"])
+        self.assertEqual(
+            order,
+            [("attest", "runtime987654"), ("resolve", "abcdef123456")],
+        )
         command = execute.call_args.args[0]
         self.assertEqual(command[command.index("--canonical-release-id") + 1], "41")
         self.assertNotIn("shell", execute.call_args.kwargs)

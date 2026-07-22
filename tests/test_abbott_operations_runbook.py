@@ -13,7 +13,13 @@ class AbbottOperationsRunbookTest(unittest.TestCase):
     def test_cron_uses_attested_active_release_launcher(self):
         cron = self.text.split("## Checkpoint 9", 1)[1].split("## Checkpoint 10", 1)[0]
         self.assertIn("run_abbott_metrika_active_release.py", cron)
-        for flag in ("--manifest", "--collector", "--code-revision", "--parser-version"):
+        for flag in (
+            "--manifest",
+            "--collector",
+            "--runtime-revision",
+            "--code-revision",
+            "--parser-version",
+        ):
             self.assertIn(flag, cron)
         self.assertIn("--days-back 1", cron)
         self.assertNotIn("--days-back 2", cron)
