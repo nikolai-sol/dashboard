@@ -941,12 +941,10 @@ function buildKpis({
   trafficChannels,
   technicalTail,
   devices,
-  geoCountries,
 }: {
   trafficChannels: ZarukuSeoMetricRow[];
   technicalTail: ZarukuSeoMetricRow[];
   devices: ZarukuSeoMetricRow[];
-  geoCountries: ZarukuSeoMetricRow[];
 }): ZarukuSeoKpi[] {
   const trafficRows = [...trafficChannels, ...technicalTail];
   const totals = trafficRows.reduce(
@@ -964,7 +962,6 @@ function buildKpis({
   const organicVisits = trafficRows.find((row) => row.label === "Поиск")?.visits ?? 0;
   const directVisits = trafficRows.find((row) => row.label === "Прямые заходы")?.visits ?? 0;
   const mobileVisits = devices.find((row) => row.id === "mobile" || row.label === "Смартфоны" || row.label === "Smartphones")?.visits ?? 0;
-  const russiaVisits = geoCountries.find((row) => row.label === "Россия" || row.label === "Russia")?.visits ?? 0;
 
   return [
     { key: "visits", label: "Визиты", value: formatInteger(totals.visits), raw_value: totals.visits, source: "metrika", layer: "onsite" },
@@ -985,15 +982,6 @@ function buildKpis({
       raw_value: directVisits,
       source: "metrika",
       layer: "onsite",
-    },
-    {
-      key: "russia_share",
-      label: "Россия",
-      value: russiaVisits > 0 ? formatPercent((russiaVisits / Math.max(1, totals.visits)) * 100) : "—",
-      raw_value: russiaVisits || null,
-      source: "metrika",
-      layer: "onsite",
-      coverage: geoCountries.length > 0 ? 100 : 0,
     },
     {
       key: "mobile_share",
@@ -1184,8 +1172,6 @@ export async function loadZarukuSeoData(counterIds: string[], from: string, to: 
     { key: "devices", dimensions: "ym:s:deviceCategory", limit: 8 },
     { key: "browsers", dimensions: "ym:s:browser", limit: 10 },
     { key: "os", dimensions: "ym:s:operatingSystem", limit: 10 },
-    { key: "countries", dimensions: "ym:s:regionCountry", limit: 12 },
-    { key: "cities", dimensions: "ym:s:regionCity", limit: 20 },
     { key: "age", dimensions: "ym:s:ageInterval", limit: 8 },
     { key: "gender", dimensions: "ym:s:gender", limit: 4 },
     { key: "interests", dimensions: "ym:s:interest", limit: 12 },
@@ -1200,8 +1186,6 @@ export async function loadZarukuSeoData(counterIds: string[], from: string, to: 
   const devicesReport = metrikaReports.get("devices") ?? EMPTY_REPORT;
   const browsersReport = metrikaReports.get("browsers") ?? EMPTY_REPORT;
   const osReport = metrikaReports.get("os") ?? EMPTY_REPORT;
-  const countriesReport = metrikaReports.get("countries") ?? EMPTY_REPORT;
-  const citiesReport = metrikaReports.get("cities") ?? EMPTY_REPORT;
   const ageReport = metrikaReports.get("age") ?? EMPTY_REPORT;
   const genderReport = metrikaReports.get("gender") ?? EMPTY_REPORT;
   const interestsReport = metrikaReports.get("interests") ?? EMPTY_REPORT;
@@ -1216,8 +1200,6 @@ export async function loadZarukuSeoData(counterIds: string[], from: string, to: 
     devicesReport,
     browsersReport,
     osReport,
-    countriesReport,
-    citiesReport,
     ageReport,
     genderReport,
     interestsReport,
@@ -1354,7 +1336,6 @@ export async function loadZarukuSeoData(counterIds: string[], from: string, to: 
       trafficChannels,
       technicalTail,
       devices: devicesReport.rows,
-      geoCountries: countriesReport.rows,
     }),
     traffic_channels: trafficChannels,
     technical_tail: technicalTail,
@@ -1367,8 +1348,8 @@ export async function loadZarukuSeoData(counterIds: string[], from: string, to: 
     high_bounce_pages: buildHighBouncePages(entryPageRows),
     best_engagement_pages: buildBestEngagementPages(entryPageRows),
     map_city_demand: mapCityDemandReport.ok ? buildMapCityDemand(mapCityDemandReport.rows) : [],
-    geo_countries: countriesReport.rows,
-    geo_cities: citiesReport.rows,
+    geo_countries: [],
+    geo_cities: [],
     devices: devicesReport.rows,
     source_devices: sourceDevicesReport.rows,
     browsers: browsersReport.rows,

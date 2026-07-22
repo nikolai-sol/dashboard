@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
 import test from "node:test";
 import * as zarukuSeoModule from "@/lib/zaruku-seo";
 import {
@@ -55,6 +56,13 @@ const patterns: ZarukuSeoSectionPattern[] = [
   { section: "Priority A", url_pattern: "/priority/", priority: 10 },
   { section: "Priority B", url_pattern: "/priority/", priority: 1 },
 ];
+
+const loaderSource = readFileSync(new URL("./zaruku-seo.ts", import.meta.url), "utf8");
+
+test("Zaruku read model does not request redundant general country or city reports", () => {
+  assert.doesNotMatch(loaderSource, /key: "countries"|key: "cities"/);
+  assert.doesNotMatch(loaderSource, /dimensions: "ym:s:regionCountry"/);
+});
 
 test("Metrika report parameters support the Zaruku Russia filter", () => {
   const seoModule = zarukuSeoModule as typeof zarukuSeoModule & {

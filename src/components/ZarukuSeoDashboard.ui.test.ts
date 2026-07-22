@@ -5,6 +5,7 @@ import test from "node:test";
 const source = readFileSync(new URL("./ZarukuSeoDashboard.tsx", import.meta.url), "utf8");
 const russiaMapSource = readFileSync(new URL("./ZarukuRussiaDemandMap.tsx", import.meta.url), "utf8");
 const contentSource = readFileSync(new URL("./ZarukuContentTab.tsx", import.meta.url), "utf8");
+const audienceSource = readFileSync(new URL("./ZarukuAudienceTab.tsx", import.meta.url), "utf8");
 
 test("client navigation contains exactly six tabs in executive order", () => {
   const labels = ["Обзор", "SEO", "Контент", "Аудитория", "Работы и задачи", "Качество"];
@@ -24,13 +25,6 @@ test("Overview starts with explicit period context and data confidence", () => {
   assert.match(overviewSource, /<ZarukuPeriodContext/);
   assert.match(overviewSource, /Что происходит с поисковой видимостью и целевым трафиком сейчас/);
   assert.match(overviewSource, /Частичные данные|Можно доверять|Критическая проблема/);
-});
-
-test("DataTable keeps behavior metric headers readable with spacing and wrapping", () => {
-  assert.match(source, /min-w-\[1080px\]/);
-  assert.match(source, /table-fixed/);
-  assert.match(source, /px-3 pb-2 text-right font-medium leading-tight/);
-  assert.match(source, /whitespace-normal/);
 });
 
 test("SEO tab follows the executive-to-detail hierarchy without duplicate source tables", () => {
@@ -101,15 +95,17 @@ test("SEO tab keeps useful GSC diagnostics and removes country breakdown", () =>
   assert.doesNotMatch(source, /Countries|GSC countries/);
 });
 
-test("Geo tab uses the projected Russia demand map instead of manual coordinates", () => {
-  assert.match(source, /import ZarukuRussiaDemandMap from "@\/components\/ZarukuRussiaDemandMap"/);
-  assert.match(source, /Карта спроса по России/);
-  assert.match(source, /<ZarukuRussiaDemandMap rows=\{data\.map_city_demand\}/);
+test("Audience route owns the projected city by map product signal", () => {
+  assert.match(source, /import ZarukuAudienceTab/);
+  assert.match(source, /<ZarukuAudienceTab/);
+  assert.doesNotMatch(source, /function GeoTab|function DevicesTab|function AudienceTab/);
+  assert.match(audienceSource, /import ZarukuRussiaDemandMap from "@\/components\/ZarukuRussiaDemandMap"/);
+  assert.match(audienceSource, /Города и каталог онкоцентров/);
+  assert.match(audienceSource, /<ZarukuRussiaDemandMap rows=\{data\.map_city_demand\}/);
   assert.doesNotMatch(source, /function RussiaMapOutline/);
   assert.doesNotMatch(source, /RUSSIA_CITY_COORDINATES/);
   assert.doesNotMatch(source, /resolveRussiaCityPoint/);
-  assert.doesNotMatch(source, /title="Страны"/);
-  assert.doesNotMatch(source, /title="Города"/);
+  assert.doesNotMatch(audienceSource, /Страны|geo_countries|geo_cities/);
 
   assert.match(russiaMapSource, /from "@visx\/geo"/);
   assert.match(russiaMapSource, /RUSSIA_FEATURE/);

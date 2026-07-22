@@ -50,9 +50,9 @@ import {
 } from "@/components/zaruku-seo-week-selection";
 import ZarukuSeoAnalytics from "@/components/ZarukuSeoAnalytics";
 import ZarukuSeoOperations from "@/components/ZarukuSeoOperations";
-import ZarukuRussiaDemandMap from "@/components/ZarukuRussiaDemandMap";
 import ZarukuOverviewTab from "@/components/ZarukuOverviewTab";
 import ZarukuContentTab from "@/components/ZarukuContentTab";
+import ZarukuAudienceTab from "@/components/ZarukuAudienceTab";
 import {
   buildNorthStarKpis,
   buildSemanticHealthRows,
@@ -98,22 +98,6 @@ function formatNumber(value: number, locale = "ru-RU") {
 function formatPercent(value: number | null | undefined, locale = "ru-RU", digits = 1) {
   if (value == null || !Number.isFinite(value)) return "—";
   return `${value.toLocaleString(locale, { maximumFractionDigits: digits })}%`;
-}
-
-function formatDuration(seconds: number | null | undefined) {
-  if (seconds == null || !Number.isFinite(seconds)) return "—";
-  const total = Math.max(0, Math.round(seconds));
-  return `${Math.floor(total / 60)}:${String(total % 60).padStart(2, "0")}`;
-}
-
-function shortUrl(url: string | null | undefined) {
-  if (!url) return "—";
-  try {
-    const parsed = new URL(url);
-    return parsed.pathname || "/";
-  } catch {
-    return url;
-  }
 }
 
 function truncate(value: string, max = 84) {
@@ -250,79 +234,6 @@ function BarList({ rows, value = "visits", locale = "ru-RU" }: { rows: ZarukuSeo
           <div className="text-right text-sm text-slate-500">{formatNumber(row[value], locale)}</div>
         </div>
       ))}
-    </div>
-  );
-}
-
-function DataTable({
-  rows,
-  mode,
-  locale,
-  wrapText = false,
-}: {
-  rows: ZarukuSeoMetricRow[];
-  mode: "pages" | "metrics" | "cross";
-  locale: string;
-  wrapText?: boolean;
-}) {
-  const tableMinWidth = mode === "pages" ? "min-w-[1080px]" : mode === "cross" ? "min-w-[980px]" : "min-w-[900px]";
-  const labelColumnWidth = mode === "pages" ? "w-[42%]" : mode === "cross" ? "w-[24%]" : "w-[34%]";
-  const secondaryColumnWidth = "w-[18%]";
-  const metricColumnWidth = mode === "pages" ? "w-[9.6%]" : mode === "cross" ? "w-[9.6%]" : "w-[11%]";
-  const headerClass = "px-3 pb-2 text-right font-medium leading-tight whitespace-normal";
-  const labelHeaderClass = "px-3 pb-2 text-left font-medium leading-tight whitespace-normal";
-  const metricCellClass = "whitespace-nowrap px-3 py-2.5 text-right text-slate-600";
-  const secondaryMetricCellClass = "whitespace-nowrap px-3 py-2.5 text-right text-slate-500";
-
-  return (
-    <div className="overflow-x-auto">
-      <table className={`w-full table-fixed ${tableMinWidth} text-sm`}>
-        <colgroup>
-          <col className={labelColumnWidth} />
-          {mode === "cross" ? <col className={secondaryColumnWidth} /> : null}
-          <col className={metricColumnWidth} />
-          <col className={metricColumnWidth} />
-          <col className={metricColumnWidth} />
-          <col className={metricColumnWidth} />
-          <col className={metricColumnWidth} />
-          <col className={metricColumnWidth} />
-        </colgroup>
-        <thead>
-          <tr className="text-xs text-slate-400">
-            <th className={labelHeaderClass}>{mode === "pages" ? "Страница" : "Сегмент"}</th>
-            {mode === "cross" ? <th className={labelHeaderClass}>Разрез</th> : null}
-            <th className={headerClass}>Визиты</th>
-            <th className={headerClass}>Пользователи</th>
-            <th className={headerClass}>Просмотры</th>
-            <th className={headerClass}>Отказы</th>
-            <th className={headerClass}>Время</th>
-            <th className={headerClass}>Глубина</th>
-          </tr>
-        </thead>
-        <tbody className="divide-y divide-slate-100">
-          {rows.map((row, index) => (
-            <tr key={`${row.label}-${row.secondary_label ?? ""}-${row.url ?? ""}-${index}`}>
-              <td className="py-2.5 pl-3 pr-5 align-top">
-                <div className={wrapText ? "font-medium leading-snug text-slate-700" : "font-medium text-slate-700"} title={row.label}>
-                  {wrapText ? row.label : truncate(row.label, mode === "pages" ? 72 : 48)}
-                </div>
-                {row.url ? (
-                  <div className={wrapText ? "mt-1 break-all text-xs leading-snug text-slate-400" : "text-xs text-slate-400"}>
-                    {wrapText ? shortUrl(row.url) : truncate(shortUrl(row.url), 86)}
-                  </div>
-                ) : null}
-              </td>
-              {mode === "cross" ? <td className="px-3 py-2.5 text-slate-500">{row.secondary_label ?? "—"}</td> : null}
-              <td className={metricCellClass}>{row.visits ? formatNumber(row.visits, locale) : "—"}</td>
-              <td className={metricCellClass}>{formatNumber(row.users, locale)}</td>
-              <td className={metricCellClass}>{formatNumber(row.pageviews, locale)}</td>
-              <td className={secondaryMetricCellClass}>{formatPercent(row.bounce_rate, locale, 1)}</td>
-              <td className={secondaryMetricCellClass}>{formatDuration(row.avg_duration_seconds)}</td>
-              <td className={secondaryMetricCellClass}>{row.page_depth?.toFixed(1) ?? "—"}</td>
-            </tr>
-          ))}
-        </tbody>
-      </table>
     </div>
   );
 }
@@ -766,57 +677,6 @@ function SeoTab({ data, locale, primaryWeek, comparisonWeek }: Props & { primary
   );
 }
 
-function GeoTab({ data, locale }: Props) {
-  return (
-    <div className="space-y-5">
-      <Panel data={data} title="Карта спроса по России" source="metrika" layer="onsite" right={<span className="text-xs text-slate-400">визиты на /map/</span>}>
-        <ZarukuRussiaDemandMap rows={data.map_city_demand} locale={locale ?? "ru-RU"} />
-      </Panel>
-    </div>
-  );
-}
-
-function DevicesTab({ data, locale }: Props) {
-  return (
-    <div className="space-y-5">
-      <div className="grid gap-5 lg:grid-cols-2">
-        <Panel data={data} title="Типы устройств" source="metrika" layer="onsite">
-          <BarList rows={data.devices} locale={locale} />
-        </Panel>
-        <Panel data={data} title="Источник × устройство" source="metrika" layer="onsite">
-          <DataTable rows={data.source_devices.slice(0, 12)} mode="cross" locale={locale ?? "ru-RU"} />
-        </Panel>
-      </div>
-      <div className="grid gap-5 lg:grid-cols-2">
-        <Panel data={data} title="Браузеры" source="metrika" layer="onsite">
-          <BarList rows={data.browsers.slice(0, 10)} locale={locale} />
-        </Panel>
-        <Panel data={data} title="ОС" source="metrika" layer="onsite">
-          <BarList rows={data.operating_systems.slice(0, 10)} locale={locale} />
-        </Panel>
-      </div>
-    </div>
-  );
-}
-
-function AudienceTab({ data, locale }: Props) {
-  return (
-    <div className="space-y-5">
-      <div className="grid gap-5 lg:grid-cols-2">
-        <Panel data={data} title="Возраст" source="metrika" layer="onsite" right={<span className="text-xs text-slate-400">оценка</span>}>
-          <BarList rows={data.age} locale={locale} />
-        </Panel>
-        <Panel data={data} title="Пол" source="metrika" layer="onsite" right={<span className="text-xs text-slate-400">оценка</span>}>
-          <BarList rows={data.gender} locale={locale} />
-        </Panel>
-      </div>
-      <Panel data={data} title="Интересы" source="metrika" layer="onsite" right={<span className="text-xs text-slate-400">покрытие зависит от Яндекса</span>}>
-        <BarList rows={data.interests.slice(0, 12)} locale={locale} />
-      </Panel>
-    </div>
-  );
-}
-
 function freshnessBadgeClass(status: ZarukuSourceFreshnessRow["freshness_status"]) {
   switch (status) {
     case "healthy":
@@ -999,7 +859,7 @@ export default function ZarukuSeoDashboard({ data, locale = "ru-RU" }: Props) {
       case "content":
         return <ZarukuContentTab data={data} locale={locale} primaryWeek={selectedWeeks.primaryWeek} comparisonWeek={selectedWeeks.comparisonWeek} />;
       case "audience":
-        return <div className="space-y-5"><GeoTab data={data} locale={locale} /><DevicesTab data={data} locale={locale} /><AudienceTab data={data} locale={locale} /></div>;
+        return <ZarukuAudienceTab data={data} locale={locale} />;
       case "quality":
         return <QualityTab data={data} />;
       default:
