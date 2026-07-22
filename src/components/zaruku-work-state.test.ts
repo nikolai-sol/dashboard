@@ -13,6 +13,13 @@ test("historical completed runs with all-zero counters are flagged as incomplete
   assert.equal(hasHistoricalZeroTelemetry(runs), true);
 });
 
+test("historical zero SERP and LLM counters stay incomplete when a digest was recorded", () => {
+  assert.equal(hasHistoricalZeroTelemetry([
+    { ...runs[0], digest_count: 3 },
+    runs[2],
+  ]), true);
+});
+
 test("a zero-only latest run is not enough to relabel history", () => {
   assert.equal(hasHistoricalZeroTelemetry([runs[2], { ...runs[2], week: "2026-W31", serp_requests: 0, llm_tokens: 0, digest_count: 0 }]), false);
 });
