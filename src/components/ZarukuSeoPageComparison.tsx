@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useMemo, useState } from "react";
 import type { UnifiedSeoPageRow } from "@/components/zaruku-seo-workspace";
 import { filterAndPaginate } from "@/components/zaruku-table-pagination";
 import { resolveZarukuContentUrl } from "@/lib/zaruku-url";
@@ -90,10 +90,13 @@ export default function ZarukuSeoPageComparison({ rows, seoWeek, sourceWeeks, so
     () => filterAndPaginate(sortedRows, query, page, PAGE_SIZE, (row) => `${row.label} ${row.url}`),
     [page, query, sortedRows],
   );
-  useEffect(() => setPage(1), [query, sort]);
-  const changeSort = (key: SeoPageSortKey) => setSort((current) => current.key === key
-    ? { key, direction: current.direction === "asc" ? "desc" : "asc" }
-    : { key, direction: key === "label" ? "asc" : "desc" });
+  const changeQuery = (value: string) => { setQuery(value); setPage(1); };
+  const changeSort = (key: SeoPageSortKey) => {
+    setSort((current) => current.key === key
+      ? { key, direction: current.direction === "asc" ? "desc" : "asc" }
+      : { key, direction: key === "label" ? "asc" : "desc" });
+    setPage(1);
+  };
   const unavailableSources = [
     !sourceAvailability.google ? "Google" : null,
     !sourceAvailability.webmaster ? "Яндекс Вебмастер" : null,
@@ -119,7 +122,7 @@ export default function ZarukuSeoPageComparison({ rows, seoWeek, sourceWeeks, so
         <div className="mt-4 flex flex-col gap-3 lg:flex-row lg:items-end lg:justify-between">
           <label className="block w-full max-w-xl text-xs font-medium text-slate-600">
             Поиск по странице или URL
-            <input type="search" value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Название или /path/" className="mt-1.5 w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm font-normal text-slate-800 outline-none focus:border-slate-400" />
+            <input type="search" value={query} onChange={(event) => changeQuery(event.target.value)} placeholder="Название или /path/" className="mt-1.5 w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm font-normal text-slate-800 outline-none focus:border-slate-400" />
           </label>
           <div className="flex flex-wrap gap-2" aria-label="Сортировка страниц">
             <PageSortButton label="Google: показы" sortKey="google_impressions" sort={sort} onChange={changeSort} />

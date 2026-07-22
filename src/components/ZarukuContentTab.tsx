@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useState, type ReactNode } from "react";
+import { useMemo, useState, type ReactNode } from "react";
 import ZarukuPanelState from "@/components/ZarukuPanelState";
 import ZarukuPeriodContext from "@/components/ZarukuPeriodContext";
 import ZarukuTrafficVisibility from "@/components/ZarukuTrafficVisibility";
@@ -105,8 +105,8 @@ export default function ZarukuContentTab({ data, locale = "ru-RU", primaryWeek, 
   const supportedSort = sort.key === "label" || pageColumns.some((column) => column.key === sort.key) ? sort : { key: "label", direction: "asc" } satisfies ContentSort;
   const sortedPages = useMemo(() => sortContentRows(data.top_pages, supportedSort, locale), [data.top_pages, locale, supportedSort]);
   const paginated = useMemo(() => filterAndPaginate(sortedPages, query, page, PAGE_SIZE, (row) => `${row.label} ${row.url ?? ""}`), [page, query, sortedPages]);
-  useEffect(() => setPage(1), [query, sort]);
-  const changeSort = (key: ContentSortKey) => setSort((current) => current.key === key ? { key, direction: current.direction === "asc" ? "desc" : "asc" } : { key, direction: key === "label" ? "asc" : "desc" });
+  const changeQuery = (value: string) => { setQuery(value); setPage(1); };
+  const changeSort = (key: ContentSortKey) => { setSort((current) => current.key === key ? { key, direction: current.direction === "asc" ? "desc" : "asc" } : { key, direction: key === "label" ? "asc" : "desc" }); setPage(1); };
   const searchPeriods = [
     ...(primaryWeek ? [{ label: "SEO OS A", period: primaryWeek }] : []),
     ...(comparisonWeek ? [{ label: "SEO OS B", period: comparisonWeek }] : []),
@@ -137,7 +137,7 @@ export default function ZarukuContentTab({ data, locale = "ru-RU", primaryWeek, 
 
       <ContentPanel title="Все страницы" note="Доступный read-model с поиском, сортировкой и постраничным просмотром.">
         <ZarukuPanelState meta={pageMeta} hasRows={data.top_pages.length > 0}>
-          <div className="mb-4 flex flex-col gap-3 lg:flex-row lg:items-end lg:justify-between"><label className="block w-full max-w-xl text-xs font-medium text-slate-600">Поиск по странице или URL<input type="search" value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Название или /path/" className="mt-1.5 w-full rounded-lg border border-slate-200 px-3 py-2 text-sm font-normal text-slate-800 outline-none focus:border-slate-400" /></label><div className="flex flex-wrap gap-2" aria-label="Сортировка страниц"><SortButton label="Название" sortKey="label" sort={supportedSort} onChange={changeSort} />{pageColumns.map((column) => <SortButton key={column.key} label={column.label} sortKey={column.key} sort={supportedSort} onChange={changeSort} />)}</div></div>
+          <div className="mb-4 flex flex-col gap-3 lg:flex-row lg:items-end lg:justify-between"><label className="block w-full max-w-xl text-xs font-medium text-slate-600">Поиск по странице или URL<input type="search" value={query} onChange={(event) => changeQuery(event.target.value)} placeholder="Название или /path/" className="mt-1.5 w-full rounded-lg border border-slate-200 px-3 py-2 text-sm font-normal text-slate-800 outline-none focus:border-slate-400" /></label><div className="flex flex-wrap gap-2" aria-label="Сортировка страниц"><SortButton label="Название" sortKey="label" sort={supportedSort} onChange={changeSort} />{pageColumns.map((column) => <SortButton key={column.key} label={column.label} sortKey={column.key} sort={supportedSort} onChange={changeSort} />)}</div></div>
           <MetricTable rows={paginated.rows} meta={pageMeta} locale={locale} />
           <footer className="mt-4 flex items-center justify-between gap-3 border-t border-slate-100 pt-3 text-xs text-slate-500"><button type="button" disabled={paginated.page <= 1} onClick={() => setPage((value) => Math.max(1, value - 1))} className="rounded-md border border-slate-200 px-3 py-1.5 disabled:opacity-40">Предыдущая</button><span>{paginated.totalRows.toLocaleString(locale)} найдено · Страница {paginated.page} из {paginated.totalPages}</span><button type="button" disabled={paginated.page >= paginated.totalPages} onClick={() => setPage((value) => Math.min(paginated.totalPages, value + 1))} className="rounded-md border border-slate-200 px-3 py-1.5 disabled:opacity-40">Следующая</button></footer>
         </ZarukuPanelState>

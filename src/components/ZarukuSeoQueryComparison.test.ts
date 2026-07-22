@@ -74,6 +74,7 @@ test("query workspace exposes search and mounts at most 50 rows", () => {
   assert.doesNotMatch(markup, /Запрос 50/);
   assert.match(markup, /Предыдущая/);
   assert.match(markup, /Следующая/);
+  assert.doesNotMatch(source, /useEffect\(\(\) => setPage/);
 });
 
 test("query workspace distinguishes unavailable sources from an empty result", () => {

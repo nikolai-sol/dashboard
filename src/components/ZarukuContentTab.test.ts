@@ -30,6 +30,7 @@ test("content tab uses explicit dataset states, native columns, search, and pagi
   assert.match(source, /type="search"/);
   assert.match(source, /PAGE_SIZE = 50/);
   assert.doesNotMatch(source, /Поведение по каналам/);
+  assert.doesNotMatch(source, /useEffect\(\(\) => setPage/);
 });
 
 test("returning content keeps canonical recency buckets", () => {

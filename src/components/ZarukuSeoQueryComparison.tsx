@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useMemo, useState } from "react";
 import { filterAndPaginate } from "@/components/zaruku-table-pagination";
 import { resolveZarukuContentUrl } from "@/lib/zaruku-url";
 import {
@@ -149,7 +149,9 @@ export default function ZarukuSeoQueryComparison({
     () => filterAndPaginate(visibleRows, query, page, PAGE_SIZE, (row) => `${row.query} ${row.section ?? ""}`),
     [page, query, visibleRows],
   );
-  useEffect(() => setPage(1), [filter, query, sort]);
+  const changeFilter = (value: SeoQueryFilter) => { setFilter(value); setPage(1); };
+  const changeQuery = (value: string) => { setQuery(value); setPage(1); };
+  const changeSort = (key: SeoQuerySortKey) => { setSort((current) => toggleSeoSort(current, key)); setPage(1); };
   const actualWeeks = [sourceWeeks.google, sourceWeeks.webmaster, sourceWeeks.seoOs].filter(
     (week): week is string => Boolean(week),
   );
@@ -182,7 +184,7 @@ export default function ZarukuSeoQueryComparison({
               key={item.id}
               type="button"
               aria-pressed={filter === item.id}
-              onClick={() => setFilter(item.id)}
+              onClick={() => changeFilter(item.id)}
               className={`rounded-full border px-3 py-1.5 text-xs font-medium transition ${
                 filter === item.id
                   ? "border-slate-800 bg-slate-800 text-white"
@@ -198,7 +200,7 @@ export default function ZarukuSeoQueryComparison({
           <input
             type="search"
             value={query}
-            onChange={(event) => setQuery(event.target.value)}
+            onChange={(event) => changeQuery(event.target.value)}
             placeholder="Например, онкоцентр"
             className="mt-1.5 w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm font-normal text-slate-800 outline-none focus:border-slate-400"
           />
@@ -237,16 +239,16 @@ export default function ZarukuSeoQueryComparison({
               <th className="bg-blue-50/70 px-2 py-2 text-right">Клики</th>
               <th className="bg-blue-50/70 px-2 py-2 text-right">CTR</th>
               <th className="border-r border-slate-100 bg-blue-50/70 px-2 py-2 text-right">
-                <SortButton label="Позиция" sortKey="google_position" sort={sort} onChange={(key) => setSort(toggleSeoSort(sort, key))} />
+                <SortButton label="Позиция" sortKey="google_position" sort={sort} onChange={changeSort} />
               </th>
               <th className="bg-amber-50/70 px-2 py-2 text-right">Показы</th>
               <th className="bg-amber-50/70 px-2 py-2 text-right">Клики</th>
               <th className="bg-amber-50/70 px-2 py-2 text-right">CTR</th>
               <th className="border-r border-slate-100 bg-amber-50/70 px-2 py-2 text-right">
-                <SortButton label="Позиция" sortKey="webmaster_position" sort={sort} onChange={(key) => setSort(toggleSeoSort(sort, key))} />
+                <SortButton label="Позиция" sortKey="webmaster_position" sort={sort} onChange={changeSort} />
               </th>
               <th className="bg-teal-50/70 px-2 py-2 text-right">
-                <SortButton label="Позиция" sortKey="seo_os_position" sort={sort} onChange={(key) => setSort(toggleSeoSort(sort, key))} />
+                <SortButton label="Позиция" sortKey="seo_os_position" sort={sort} onChange={changeSort} />
               </th>
               <th className="bg-teal-50/70 px-2 py-2 text-right">Δ</th>
               <th className="bg-teal-50/70 px-2 py-2 text-left">Статус</th>

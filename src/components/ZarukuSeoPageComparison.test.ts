@@ -65,4 +65,5 @@ test("page workspace exposes search sorting pagination and safe absolute links",
   assert.match(source, /target="_blank"/);
   assert.match(source, /rel="noreferrer"/);
   assert.doesNotMatch(source, /href=\{row\.url\}/);
+  assert.doesNotMatch(source, /useEffect\(\(\) => setPage/);
 });
