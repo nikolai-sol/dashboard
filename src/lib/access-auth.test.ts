@@ -25,6 +25,23 @@ test("viewer export tokens preserve their explicit audience", () => {
   assert.equal(verifyViewerSession(embedToken, 18)?.audience, "embed");
 });
 
+test("shared password viewer sessions preserve credential version", () => {
+  const token = createViewerSession(
+    28,
+    "shared-access+zaruku@dashboard.local",
+    "manager",
+    3,
+  );
+
+  assert.equal(verifyViewerSession(token, 28)?.credential_version, 3);
+});
+
+test("shared password export tokens preserve credential version", () => {
+  const token = createViewerExportToken(28, "manager", 4);
+
+  assert.equal(verifyViewerSession(token, 28)?.credential_version, 4);
+});
+
 test("legacy and invalid audiences cannot authorize dashboard sessions", () => {
   const exp = Math.floor(Date.now() / 1000) + 60;
   const legacyToken = createSignedSession({

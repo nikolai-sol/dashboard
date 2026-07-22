@@ -12,7 +12,12 @@ import {
   resolveDashboardAudience,
   resolveDashboardAuthMode,
 } from "@/lib/dashboard-access-policy";
-import type { DashboardAuthMode } from "@/lib/dashboard-access-policy";
+import type { DashboardAudience, DashboardAuthMode } from "@/lib/dashboard-access-policy";
+import {
+  loadSharedPasswordCredential,
+  verifySharedDashboardPassword,
+} from "@/lib/dashboard-shared-access";
+import { isSharedPasswordClient } from "@/lib/shared-password-policy";
 
 export type { DashboardAuthMode } from "@/lib/dashboard-access-policy";
 
@@ -43,6 +48,10 @@ export type DashboardAccessContext = {
   is_active: boolean;
   access_users_count: number;
   auth_mode: DashboardAuthMode;
+};
+
+type VerifiedDashboardAccessContext = DashboardAccessContext & {
+  credentialVersion?: number;
 };
 
 export type DashboardAccessUser = {
@@ -235,11 +244,21 @@ export async function verifyDashboardAccessCredentials(
   identifier: string | number,
   email: string,
   password: string,
-) {
+): Promise<VerifiedDashboardAccessContext | null> {
   const context = await getDashboardAccessContext(identifier);
   if (!context) return null;
   if (context.auth_mode === "public") return context;
   if (context.auth_mode === "password_only") {
+    if (isSharedPasswordClient(context.client_id)) {
+      const verified = await verifySharedDashboardPassword(
+        context.id,
+        context.client_id,
+        password,
+      );
+      return verified
+        ? { ...context, credentialVersion: verified.credentialVersion }
+        : null;
+    }
     const expectedPassword = getSharedDashboardPassword(context.client_id);
     return expectedPassword && safeEqualText(password, expectedPassword) ? context : null;
   }
@@ -255,6 +274,13 @@ export async function verifyDashboardAccessCredentials(
   const user = rows[0];
   if (!user) return null;
   return verifyPassword(password, user.password_hash) ? context : null;
+}
+
+export function sharedCredentialVersionMatches(
+  payload: { audience: DashboardAudience; credential_version?: number },
+  currentVersion: number,
+) {
+  return payload.audience === "manager" && payload.credential_version === currentVersion;
 }
 
 export async function listAccessibleDashboardsByCredentials(email: string, password: string) {
@@ -322,6 +348,7 @@ export async function isDashboardAccessAuthorized(request: Request, identifier: 
       authorized: true as const,
       reason: "public" as const,
       audience: "manager" as const,
+      credentialVersion: undefined,
     };
   }
 
@@ -334,6 +361,7 @@ export async function isDashboardAccessAuthorized(request: Request, identifier: 
       authorized: true as const,
       reason: "embed_key" as const,
       audience: resolveDashboardAudience("embed_key"),
+      credentialVersion: undefined,
     };
   }
   const queryToken = url.searchParams.get("access_token");
@@ -343,11 +371,23 @@ export async function isDashboardAccessAuthorized(request: Request, identifier: 
   if (!payload) {
     return { context, authorized: false as const, reason: "auth_required" as const };
   }
+  let credentialVersion: number | undefined;
+  if (isSharedPasswordClient(context.client_id) && payload.audience === "manager") {
+    const credential = await loadSharedPasswordCredential(context.id, context.client_id);
+    if (
+      credential.source === "missing" ||
+      !sharedCredentialVersionMatches(payload, credential.credential_version)
+    ) {
+      return { context, authorized: false as const, reason: "auth_required" as const };
+    }
+    credentialVersion = credential.credential_version;
+  }
   return {
     context,
     authorized: true as const,
     reason: "authorized" as const,
     audience: resolveDashboardAudience("authorized", payload),
     payload,
+    credentialVersion,
   };
 }

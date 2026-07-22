@@ -15,6 +15,7 @@ type SessionPayload = {
   dashboard_id?: number;
   dashboard_ids?: number[];
   audience?: DashboardAudience;
+  credential_version?: number;
   exp: number;
 };
 
@@ -123,21 +124,28 @@ export function createViewerSession(
   dashboardId: number,
   email: string,
   audience: DashboardAudience,
+  credentialVersion?: number,
 ) {
   return createSignedSession({
     type: "viewer",
     dashboard_id: dashboardId,
     email: normalizeEmail(email),
     audience,
+    credential_version: credentialVersion,
     exp: Math.floor(Date.now() / 1000) + 60 * 60 * 24 * 30,
   });
 }
 
-export function createViewerExportToken(dashboardId: number, audience: DashboardAudience) {
+export function createViewerExportToken(
+  dashboardId: number,
+  audience: DashboardAudience,
+  credentialVersion?: number,
+) {
   return createSignedSession({
     type: "viewer_export",
     dashboard_id: dashboardId,
     audience,
+    credential_version: credentialVersion,
     exp: Math.floor(Date.now() / 1000) + 60 * 10,
   });
 }

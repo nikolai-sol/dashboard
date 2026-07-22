@@ -10,6 +10,16 @@ import {
   listAccessibleDashboardsByCredentials,
   verifyDashboardAccessCredentials,
 } from "@/lib/dashboard-access";
+import { checkRateLimit } from "@/lib/rate-limit";
+
+const LOGIN_WINDOW_MS = 15 * 60 * 1000;
+const LOGIN_MAX_ATTEMPTS = 10;
+
+function getClientIp(request: Request): string {
+  const forwarded = request.headers.get("x-forwarded-for") || "";
+  const first = forwarded.split(",")[0]?.trim();
+  return first || request.headers.get("x-real-ip") || "unknown";
+}
 
 export async function POST(request: Request) {
   const body = await request.json().catch(() => null);
@@ -21,6 +31,15 @@ export async function POST(request: Request) {
     return NextResponse.json({ error: "Dashboard and password are required" }, { status: 400 });
   }
 
+  const rateKey = `dashboard-login:${getClientIp(request)}:${identifier.toLowerCase()}`;
+  const limit = checkRateLimit(rateKey, LOGIN_MAX_ATTEMPTS, LOGIN_WINDOW_MS);
+  if (!limit.allowed) {
+    return NextResponse.json(
+      { error: "Too many login attempts. Try again later." },
+      { status: 429, headers: { "Retry-After": String(limit.retryAfterSec) } },
+    );
+  }
+
   const context = await verifyDashboardAccessCredentials(identifier, email, password);
   if (!context) {
     return NextResponse.json({ error: "Invalid credentials" }, { status: 401 });
@@ -30,7 +49,12 @@ export async function POST(request: Request) {
     context.auth_mode === "email_password"
       ? await listAccessibleDashboardsByCredentials(email, password)
       : [{ id: context.id, client_id: context.client_id, client_name: context.client_name, dashboard_name: context.dashboard_name, url: `/dashboard/${context.client_id}` }];
-  const viewerSessionToken = createViewerSession(context.id, normalizedEmail, "manager");
+  const viewerSessionToken = createViewerSession(
+    context.id,
+    normalizedEmail,
+    "manager",
+    context.credentialVersion,
+  );
 
   const response = NextResponse.json({
     ok: true,

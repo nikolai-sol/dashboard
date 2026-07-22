@@ -52,7 +52,13 @@ export async function GET(
       request,
       id,
       access.context.auth_mode !== "public"
-        ? createViewerExportToken(access.context.id, access.audience)
+        ? access.credentialVersion === undefined
+          ? createViewerExportToken(access.context.id, access.audience)
+          : createViewerExportToken(
+              access.context.id,
+              access.audience,
+              access.credentialVersion,
+            )
         : undefined,
     );
     const filenameDate = new Date().toISOString().slice(0, 10);
