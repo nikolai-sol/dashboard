@@ -29,6 +29,7 @@ import {
 } from "lucide-react";
 import ZarukuSeoWeekToolbar from "@/components/ZarukuSeoWeekToolbar";
 import ZarukuSeoExecutiveSummary from "@/components/ZarukuSeoExecutiveSummary";
+import ZarukuSeoQueryComparison from "@/components/ZarukuSeoQueryComparison";
 import type {
   ZarukuGscBrandSplitRow,
   ZarukuGscCountrySummaryRow,
@@ -64,7 +65,10 @@ import {
   buildSemanticHealthRows,
   buildWeeklyFocus,
 } from "@/components/zaruku-north-star";
-import { buildSeoExecutiveSnapshot } from "@/components/zaruku-seo-workspace";
+import {
+  buildSeoExecutiveSnapshot,
+  buildUnifiedSeoQueryRows,
+} from "@/components/zaruku-seo-workspace";
 import {
   buildNorthStarStripItems,
   buildTrafficHealthRows,
@@ -77,7 +81,6 @@ import {
   resolveRowsForWeekOrLatest,
   summarizeWebmasterKpis,
   topWebmasterPages,
-  topWebmasterQueries,
 } from "@/components/zaruku-yandex-webmaster-panels";
 
 type Props = {
@@ -433,49 +436,6 @@ function WebmasterKpiStrip({ rows, locale }: { rows: WebmasterKpiRow[]; locale: 
   );
 }
 
-function WebmasterQueryTable({ rows, locale }: { rows: ZarukuYandexWebmasterQueryRow[]; locale: string }) {
-  return (
-    <div className="max-h-[30rem] overflow-auto rounded-md border border-slate-100">
-      <table className="w-full min-w-[860px] table-fixed text-sm">
-        <colgroup>
-          <col className="w-[56%]" />
-          <col className="w-[12%]" />
-          <col className="w-[10%]" />
-          <col className="w-[10%]" />
-          <col className="w-[12%]" />
-        </colgroup>
-        <thead className="sticky top-0 z-10 bg-slate-50 text-left text-xs text-slate-400 shadow-[0_1px_0_0_rgb(241_245_249)]">
-          <tr>
-            <th className="px-3 py-2.5 font-medium">Запрос</th>
-            <th className="px-3 py-2.5 text-right font-medium">Показы</th>
-            <th className="px-3 py-2.5 text-right font-medium">Клики</th>
-            <th className="px-3 py-2.5 text-right font-medium">CTR</th>
-            <th className="px-3 py-2.5 text-right font-medium">Позиция</th>
-          </tr>
-        </thead>
-        <tbody className="divide-y divide-slate-100">
-          {rows.map((row) => (
-            <tr key={`${row.week}-${row.query_id}`} className="align-top hover:bg-slate-50/70">
-              <td className="px-3 py-2.5 font-medium leading-snug text-slate-700" title={row.query}>
-                <div className="line-clamp-2">{row.query}</div>
-              </td>
-              <td className="whitespace-nowrap px-3 py-2.5 text-right text-slate-600">{formatNumber(row.impressions, locale)}</td>
-              <td className="whitespace-nowrap px-3 py-2.5 text-right text-slate-600">{formatNumber(row.clicks, locale)}</td>
-              <td className="whitespace-nowrap px-3 py-2.5 text-right text-slate-500">{formatPercent(row.ctr, locale, 2)}</td>
-              <td className="whitespace-nowrap px-3 py-2.5 text-right text-slate-500">{formatDecimal(row.average_position, locale, 1)}</td>
-            </tr>
-          ))}
-          {rows.length === 0 ? (
-            <tr>
-              <td colSpan={5} className="px-3 py-8 text-center text-sm text-slate-500">Нет Webmaster-запросов для выбранной недели.</td>
-            </tr>
-          ) : null}
-        </tbody>
-      </table>
-    </div>
-  );
-}
-
 function WebmasterPageTable({ rows, locale }: { rows: ZarukuYandexWebmasterPageRow[]; locale: string }) {
   return (
     <div className="space-y-2">
@@ -510,12 +470,6 @@ function summarizeSearchConsoleKpis(rows: Array<ZarukuGscQueryRow | ZarukuGscSum
   };
 }
 
-function topGscQueries(rows: ZarukuGscQueryRow[], limit = 12) {
-  return [...rows]
-    .sort((left, right) => right.impressions - left.impressions || right.clicks - left.clicks || left.query.localeCompare(right.query))
-    .slice(0, limit);
-}
-
 function topGscLandingPages(rows: ZarukuGscLandingPageRow[], limit = 10) {
   return [...rows]
     .sort((left, right) => right.impressions - left.impressions || right.clicks - left.clicks || left.page.localeCompare(right.page))
@@ -538,57 +492,6 @@ function SearchConsoleKpiStrip({ rows, locale }: { rows: Array<ZarukuGscQueryRow
           <div className="mt-1 text-xl font-semibold text-slate-900">{value}</div>
         </div>
       ))}
-    </div>
-  );
-}
-
-function SearchConsoleQueryTable({ rows, locale }: { rows: ZarukuGscQueryRow[]; locale: string }) {
-  return (
-    <div className="max-h-[30rem] overflow-auto rounded-md border border-slate-100">
-      <table className="w-full min-w-[980px] table-fixed text-sm">
-        <colgroup>
-          <col className="w-[32%]" />
-          <col className="w-[28%]" />
-          <col className="w-[8%]" />
-          <col className="w-[9%]" />
-          <col className="w-[8%]" />
-          <col className="w-[7%]" />
-          <col className="w-[8%]" />
-        </colgroup>
-        <thead className="sticky top-0 z-10 bg-slate-50 text-left text-xs text-slate-400 shadow-[0_1px_0_0_rgb(241_245_249)]">
-          <tr>
-            <th className="px-3 py-2.5 font-medium">Query</th>
-            <th className="px-3 py-2.5 font-medium">Page</th>
-            <th className="px-3 py-2.5 font-medium">Country</th>
-            <th className="px-3 py-2.5 font-medium">Device</th>
-            <th className="px-3 py-2.5 text-right font-medium">Показы</th>
-            <th className="px-3 py-2.5 text-right font-medium">CTR</th>
-            <th className="px-3 py-2.5 text-right font-medium">Позиция</th>
-          </tr>
-        </thead>
-        <tbody className="divide-y divide-slate-100">
-          {rows.map((row) => (
-            <tr key={`${row.week}-${row.query_id}-${row.country}-${row.device}`} className="align-top hover:bg-slate-50/70">
-              <td className="px-3 py-2.5 font-medium leading-snug text-slate-700" title={row.query}>
-                <div className="line-clamp-2">{row.query || "—"}</div>
-              </td>
-              <td className="px-3 py-2.5 leading-snug text-slate-500" title={row.page}>
-                <div className="line-clamp-2">{shortUrl(row.page)}</div>
-              </td>
-              <td className="whitespace-nowrap px-3 py-2.5 text-slate-500">{row.country || "—"}</td>
-              <td className="whitespace-nowrap px-3 py-2.5 text-slate-500">{row.device || "—"}</td>
-              <td className="whitespace-nowrap px-3 py-2.5 text-right text-slate-600">{formatNumber(row.impressions, locale)}</td>
-              <td className="whitespace-nowrap px-3 py-2.5 text-right text-slate-500">{formatPercent(row.ctr, locale, 2)}</td>
-              <td className="whitespace-nowrap px-3 py-2.5 text-right text-slate-500">{formatDecimal(row.average_position, locale, 1)}</td>
-            </tr>
-          ))}
-          {rows.length === 0 ? (
-            <tr>
-              <td colSpan={7} className="px-3 py-8 text-center text-sm text-slate-500">Нет GSC search facts для выбранной недели.</td>
-            </tr>
-          ) : null}
-        </tbody>
-      </table>
     </div>
   );
 }
@@ -1174,7 +1077,6 @@ function SeoTab({ data, locale, primaryWeek, comparisonWeek }: Props & { primary
     ? webmasterSummarySelection
     : webmasterQuerySelection;
   const webmasterFactsMeta = buildWebmasterSelectionMeta(webmasterFactsSelection, webmasterWeek);
-  const webmasterQueryMeta = buildWebmasterSelectionMeta(webmasterQuerySelection, webmasterWeek);
   const webmasterPageMeta = buildWebmasterSelectionMeta(webmasterPageSelection, webmasterWeek);
   const webmasterFactsChrome = buildWebmasterFactsPanelChrome();
   const gscWeek = primaryWeek ?? data.gsc.latest_week;
@@ -1194,7 +1096,6 @@ function SeoTab({ data, locale, primaryWeek, comparisonWeek }: Props & { primary
   const gscSearchTypeRows = gscSearchTypeSelection.rows;
   const gscFactsMeta = buildGscSelectionMeta(gscSummaryRows.length > 0 ? gscSummarySelection : gscQuerySelection, gscWeek);
   const gscCountrySummaryMeta = buildGscSelectionMeta(gscCountrySummarySelection, gscWeek);
-  const gscQueryMeta = buildGscSelectionMeta(gscQuerySelection, gscWeek);
   const gscLandingPageMeta = buildGscSelectionMeta(gscLandingPageSelection, gscWeek);
   const gscBrandSplitMeta = buildGscSelectionMeta(gscBrandSplitSelection, gscWeek);
   const gscSearchAppearanceMeta = buildGscSelectionMeta(gscSearchAppearanceSelection, gscWeek);
@@ -1213,6 +1114,14 @@ function SeoTab({ data, locale, primaryWeek, comparisonWeek }: Props & { primary
     positionTrend: selectedPositionTrend,
     aiRows: selectedAiRows,
     postClickRows: data.organic_landing_pages,
+  });
+  const selectedSeoOsClusters = seoOsWeek
+    ? data.seo_os.clusters.filter((row) => row.week === seoOsWeek)
+    : [];
+  const unifiedQueryRows = buildUnifiedSeoQueryRows({
+    gscRows: gscQueries,
+    webmasterRows: webmasterQueries,
+    seoOsRows: selectedSeoOsClusters,
   });
   return (
     <div className="space-y-5">
@@ -1293,37 +1202,20 @@ function SeoTab({ data, locale, primaryWeek, comparisonWeek }: Props & { primary
         comparisonWeek={comparisonWeek}
         source={data.sources.find((source) => source.id === "seo_os")}
       />
+      <ZarukuSeoQueryComparison
+        rows={unifiedQueryRows}
+        sourceWeeks={{
+          google: gscQuerySelection.week,
+          webmaster: webmasterQuerySelection.week,
+          seoOs: selectedSeoOsClusters.length > 0 ? seoOsWeek : null,
+        }}
+        defaultSort={{ key: "google_position", direction: "asc" }}
+        locale={currentLocale}
+      />
       <Panel data={data} title="Топ органических посадочных страниц" source="metrika" layer="onsite" right={<span className="text-xs text-slate-400">Метрика · топ 10</span>}>
         <div className="max-h-[29rem] overflow-auto rounded-md border border-slate-100">
           <DataTable rows={data.organic_landing_pages.slice(0, 10)} mode="cross" locale={currentLocale} />
         </div>
-      </Panel>
-      <Panel data={data} title="Запросы Яндекса" source="webmaster" layer="serp" right={<span className="text-xs text-slate-400">{webmasterQueryMeta.periodLabel} · {webmasterQueries.length} строк</span>}>
-        <WebmasterQueryTable rows={topWebmasterQueries(webmasterQueries, 12)} locale={currentLocale} />
-        <p className="mt-3 text-xs leading-relaxed text-slate-500">
-          Это запросы из Яндекс Вебмастера: показы, клики, CTR и средняя позиция до клика. Таблица отсортирована по показам.
-        </p>
-        {webmasterQueryMeta.fallbackNote ? (
-          <div className="mt-3 rounded-md border border-amber-200 bg-amber-50 px-3 py-2 text-xs leading-relaxed text-amber-800">
-            {webmasterQueryMeta.fallbackNote}
-          </div>
-        ) : null}
-        {webmasterPages.length === 0 ? (
-          <div className="mt-3 rounded-md border border-dashed border-slate-200 bg-slate-50 px-3 py-2 text-xs leading-relaxed text-slate-500">
-            Посадочные страницы Яндекса появятся здесь после ближайшего импорта URL-фактов Вебмастера за выбранную неделю.
-          </div>
-        ) : null}
-      </Panel>
-      <Panel data={data} title="Google Search Console queries" source="gsc" layer="serp" right={<span className="text-xs text-slate-400">{gscQueryMeta.periodLabel} · {gscQueries.length} строк</span>}>
-        <SearchConsoleQueryTable rows={topGscQueries(gscQueries, 12)} locale={currentLocale} />
-        <p className="mt-3 text-xs leading-relaxed text-slate-500">
-          Search Console · canonical_fact_gsc_queries_daily: query, page, country, device, impressions, clicks, CTR and average position before click.
-        </p>
-        {gscQueryMeta.fallbackNote ? (
-          <div className="mt-3 rounded-md border border-amber-200 bg-amber-50 px-3 py-2 text-xs leading-relaxed text-amber-800">
-            {gscQueryMeta.fallbackNote}
-          </div>
-        ) : null}
       </Panel>
       <div className="grid gap-5 lg:grid-cols-2">
         <Panel data={data} title="GSC landing pages" source="gsc" layer="serp" right={<span className="text-xs text-slate-400">{gscLandingPageMeta.periodLabel} · {gscLandingPages.length} URL</span>}>
