@@ -118,8 +118,9 @@ contain the plaintext value.
 4. Deploy the application atomically and restart PM2.
 5. Verify Abbott's existing password fallback, rotate Abbott through the admin
    form only when requested, and verify Zaruku password login.
-6. Verify an old session is rejected after a test rotation, then restore the
-   intended credential through the same form.
+6. Verify an old session is rejected after rotating once more to the same
+   intended password. The unchanged password proves that versioning, rather
+   than a value mismatch, revoked the prior session.
 
 Application rollback keeps the new table and hashes. A predecessor application
 continues using the Abbott environment password and treats Zaruku according to
