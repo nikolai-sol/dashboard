@@ -37,7 +37,6 @@ import type {
   ZarukuSeoLayerId,
   ZarukuSeoMetricRow,
   ZarukuSeoSourceId,
-  ZarukuSourceFreshnessRow,
 } from "@/lib/types";
 import {
   canCompareWeeks,
@@ -54,6 +53,7 @@ import ZarukuOverviewTab from "@/components/ZarukuOverviewTab";
 import ZarukuContentTab from "@/components/ZarukuContentTab";
 import ZarukuAudienceTab from "@/components/ZarukuAudienceTab";
 import ZarukuWorkTab from "@/components/ZarukuWorkTab";
+import ZarukuQualityTab from "@/components/ZarukuQualityTab";
 import {
   buildNorthStarKpis,
   buildSemanticHealthRows,
@@ -678,114 +678,6 @@ function SeoTab({ data, locale, primaryWeek, comparisonWeek }: Props & { primary
   );
 }
 
-function freshnessBadgeClass(status: ZarukuSourceFreshnessRow["freshness_status"]) {
-  switch (status) {
-    case "healthy":
-      return "bg-emerald-50 text-emerald-700 ring-emerald-100";
-    case "delayed":
-      return "bg-amber-50 text-amber-700 ring-amber-100";
-    case "failed":
-      return "bg-red-50 text-red-700 ring-red-100";
-    case "disabled":
-      return "bg-slate-100 text-slate-500 ring-slate-200";
-  }
-}
-
-function SourceFreshnessTable({ rows }: { rows: ZarukuSourceFreshnessRow[] }) {
-  if (rows.length === 0) {
-    return (
-      <div className="rounded-md bg-slate-50 px-4 py-6 text-sm text-slate-500">
-        No cron collector telemetry found in canonical_collector_runs yet.
-      </div>
-    );
-  }
-  return (
-    <div className="overflow-x-auto">
-      <table className="w-full min-w-[980px] text-sm">
-        <thead>
-          <tr className="text-left text-xs uppercase text-slate-400">
-            <th className="pb-2 font-medium">Source</th>
-            <th className="pb-2 font-medium">collector</th>
-            <th className="pb-2 font-medium">status</th>
-            <th className="pb-2 font-medium">last successful cron</th>
-            <th className="pb-2 font-medium">window</th>
-            <th className="pb-2 text-right font-medium">rows read</th>
-            <th className="pb-2 text-right font-medium">rows written</th>
-            <th className="pb-2 font-medium">last error</th>
-          </tr>
-        </thead>
-        <tbody className="divide-y divide-slate-100">
-          {rows.map((row) => (
-            <tr key={row.source_key} className="align-top">
-              <td className="py-3 pr-4">
-                <div className="font-semibold text-slate-800">{row.label}</div>
-                <div className="mt-1 text-xs text-slate-400">{row.source_key}</div>
-              </td>
-              <td className="py-3 pr-4">
-                <code className="rounded bg-slate-50 px-1.5 py-0.5 text-xs text-slate-600">{row.collector}</code>
-                <div className="mt-1 text-xs text-slate-400">expected: {row.expected_frequency_hours}h cron</div>
-              </td>
-              <td className="py-3 pr-4">
-                <span className={`inline-flex rounded-full px-2 py-0.5 text-xs font-semibold ring-1 ${freshnessBadgeClass(row.freshness_status)}`}>
-                  {row.freshness_label}
-                </span>
-                <div className="mt-1 text-xs text-slate-400">last status: {row.last_status ?? "—"}</div>
-              </td>
-              <td className="whitespace-nowrap py-3 pr-4 text-slate-600">{row.last_success_at ?? "—"}</td>
-              <td className="whitespace-nowrap py-3 pr-4 text-slate-500">
-                {row.date_from && row.date_to ? `${row.date_from} → ${row.date_to}` : "—"}
-              </td>
-              <td className="whitespace-nowrap py-3 pr-4 text-right text-slate-600">{formatNumber(row.rows_read)}</td>
-              <td className="whitespace-nowrap py-3 pr-4 text-right text-slate-600">{formatNumber(row.rows_written)}</td>
-              <td className="max-w-[240px] py-3 text-slate-500">
-                <div className="text-xs leading-relaxed text-slate-500">{row.note}</div>
-                {row.last_error_at || row.last_error_summary ? (
-                  <div className="mt-1 text-xs leading-relaxed text-slate-400">
-                    {row.last_error_at ?? "error time —"} · {row.last_error_summary ?? "no summary"}
-                  </div>
-                ) : null}
-              </td>
-            </tr>
-          ))}
-        </tbody>
-      </table>
-    </div>
-  );
-}
-
-function QualityTab({ data }: { data: ZarukuSeoData }) {
-  return (
-    <div className="space-y-5">
-      <Panel
-        data={data}
-        title="Source freshness"
-        layer="serp"
-        right={<span className="text-xs text-slate-400">last successful cron · collector · rows written</span>}
-      >
-        <SourceFreshnessTable rows={data.source_freshness} />
-      </Panel>
-      <Panel data={data} title="Качество данных" source="metrika" layer="onsite">
-        <div className="grid gap-3 md:grid-cols-2">
-          {data.data_quality.map((item) => (
-            <div key={item.title} className="rounded-lg bg-slate-50 px-4 py-3">
-              <div className="flex items-start justify-between gap-3">
-                <div>
-                  <div className="text-sm font-semibold text-slate-700">{item.title}</div>
-                  <div className="mt-1 text-xs leading-relaxed text-slate-500">{item.note}</div>
-                </div>
-                <div className={item.severity === "warning" ? "text-sm font-medium text-amber-600" : "text-sm font-medium text-slate-600"}>
-                  {item.value}
-                </div>
-              </div>
-            </div>
-          ))}
-        </div>
-      </Panel>
-      <PendingPanel data={data} />
-    </div>
-  );
-}
-
 export default function ZarukuSeoDashboard({ data, locale = "ru-RU" }: Props) {
   const [activeTab, setActiveTab] = useState<TabId>("overview");
   const weeksKey = data.seo_os.weeks.join("\u0000");
@@ -862,7 +754,7 @@ export default function ZarukuSeoDashboard({ data, locale = "ru-RU" }: Props) {
       case "audience":
         return <ZarukuAudienceTab data={data} locale={locale} />;
       case "quality":
-        return <QualityTab data={data} />;
+        return <ZarukuQualityTab data={data} />;
       default:
         return <OverviewTab data={data} locale={locale} />;
     }

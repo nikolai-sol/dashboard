@@ -24,7 +24,8 @@ test("Overview starts with explicit period context and data confidence", () => {
   assert.match(source, /<ZarukuOverviewTab data=\{data\}/);
   assert.match(overviewSource, /<ZarukuPeriodContext/);
   assert.match(overviewSource, /Что происходит с поисковой видимостью и целевым трафиком сейчас/);
-  assert.match(overviewSource, /Частичные данные|Можно доверять|Критическая проблема/);
+  assert.match(overviewSource, /buildZarukuTrustState/);
+  assert.match(overviewSource, /trust\.label/);
 });
 
 test("SEO tab follows the executive-to-detail hierarchy without duplicate source tables", () => {
@@ -55,10 +56,10 @@ test("SEO tab passes actual source weeks into unified comparisons", () => {
   assert.match(source, /google: gscLandingPages\.length > 0 \? gscLandingPageSelection\.week : null/);
 });
 
-test("Quality tab shows technical collector freshness wording", () => {
-  assert.match(source, /Source freshness/);
-  assert.match(source, /last successful cron/);
-  assert.match(source, /rows written/);
+test("Quality route uses the client-facing trust surface", () => {
+  assert.match(source, /import ZarukuQualityTab/);
+  assert.match(source, /<ZarukuQualityTab data=\{data\}/);
+  assert.doesNotMatch(source, /function QualityTab|function SourceFreshnessTable/);
 });
 
 test("SEO tab renders Search Console facts through the unified read model without a pending placeholder", () => {

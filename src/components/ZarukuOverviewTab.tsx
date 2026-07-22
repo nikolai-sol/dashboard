@@ -1,5 +1,6 @@
 import type { ReactNode } from "react";
 import ZarukuPeriodContext from "@/components/ZarukuPeriodContext";
+import { buildZarukuTrustState } from "@/components/zaruku-quality-state";
 import type { ZarukuSeoData } from "@/lib/types";
 
 type Props = {
@@ -8,14 +9,8 @@ type Props = {
 };
 
 export default function ZarukuOverviewTab({ data, children }: Props) {
-  const metas = Object.values(data.dataset_meta);
-  const trafficUnavailable = data.dataset_meta.traffic_channels.state === "unavailable";
-  const partial = metas.some((meta) => meta.state === "partial" || meta.state === "unavailable");
-  const trust = trafficUnavailable
-    ? { label: "Критическая проблема", className: "border-red-200 bg-red-50 text-red-800" }
-    : partial
-      ? { label: "Частичные данные", className: "border-amber-200 bg-amber-50 text-amber-800" }
-      : { label: "Можно доверять", className: "border-emerald-200 bg-emerald-50 text-emerald-800" };
+  const trustState = buildZarukuTrustState({ traffic: data.dataset_meta.traffic_channels, datasets: Object.values(data.dataset_meta), freshness: data.source_freshness });
+  const trust = { label: trustState.label, className: trustState.level === "critical" ? "border-red-200 bg-red-50 text-red-800" : trustState.level === "partial" ? "border-amber-200 bg-amber-50 text-amber-800" : "border-emerald-200 bg-emerald-50 text-emerald-800" };
   const search = [
     ...(data.gsc.latest_week && data.gsc.summary.length + data.gsc.queries.length > 0
       ? [{ label: "Google RF", period: data.gsc.latest_week }]
