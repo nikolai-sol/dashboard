@@ -737,8 +737,8 @@ function SeoTab({ data, locale, primaryWeek, comparisonWeek }: Props & { primary
         rows={unifiedPageRows}
         seoWeek={seoOsWeek}
         sourceWeeks={{
-          google: gscLandingPageSelection.week,
-          webmaster: webmasterPageSelection.week,
+          google: gscLandingPages.length > 0 ? gscLandingPageSelection.week : null,
+          webmaster: webmasterPages.length > 0 ? webmasterPageSelection.week : null,
           seoOs: selectedSeoOsClusters.length > 0 ? seoOsWeek : null,
         }}
         trafficPeriod={data.period}

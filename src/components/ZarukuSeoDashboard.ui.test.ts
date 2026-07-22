@@ -36,8 +36,8 @@ test("SEO tab explains Metrika search phrases and uses the unified landing-page 
 test("SEO tab passes actual source weeks into unified comparisons", () => {
   assert.match(source, /webmaster: webmasterQuerySelection\.week/);
   assert.match(source, /google: gscQuerySelection\.week/);
-  assert.match(source, /webmaster: webmasterPageSelection\.week/);
-  assert.match(source, /google: gscLandingPageSelection\.week/);
+  assert.match(source, /webmaster: webmasterPages\.length > 0 \? webmasterPageSelection\.week : null/);
+  assert.match(source, /google: gscLandingPages\.length > 0 \? gscLandingPageSelection\.week : null/);
 });
 
 test("Quality tab shows technical collector freshness wording", () => {
