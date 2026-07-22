@@ -39,7 +39,7 @@ type SharedAccessSettingsRow = {
   updated_at?: string | Date | null;
 };
 
-type DashboardAdminRow = {
+type DashboardCredentialRow = {
   client_id: string;
   password_hash: string | null;
   credential_version: number | string | null;
@@ -58,9 +58,17 @@ function assertDashboardId(dashboardId: number) {
   }
 }
 
-function asCredentialVersion(value: unknown) {
-  const parsed = Number(value);
-  return Number.isSafeInteger(parsed) && parsed >= 0 ? parsed : 0;
+function parseDatabaseCredentialVersion(value: unknown) {
+  const parsed =
+    typeof value === "number"
+      ? value
+      : typeof value === "string" && /^[1-9]\d*$/.test(value)
+        ? Number(value)
+        : Number.NaN;
+  if (!Number.isSafeInteger(parsed) || parsed < 1) {
+    throw new Error("Invalid shared credential version");
+  }
+  return parsed;
 }
 
 function asTimestamp(value: unknown) {
@@ -69,10 +77,9 @@ function asTimestamp(value: unknown) {
 }
 
 function safeEqualText(left: string, right: string) {
-  const leftBuffer = Buffer.from(left);
-  const rightBuffer = Buffer.from(right);
-  if (leftBuffer.length !== rightBuffer.length) return false;
-  return crypto.timingSafeEqual(leftBuffer, rightBuffer);
+  const leftDigest = crypto.createHash("sha256").update(left, "utf8").digest();
+  const rightDigest = crypto.createHash("sha256").update(right, "utf8").digest();
+  return crypto.timingSafeEqual(leftDigest, rightDigest);
 }
 
 function firstRow<T>(result: unknown): T | null {
@@ -91,30 +98,64 @@ export function createDashboardSharedAccessStore(
   ): Promise<SharedPasswordCredential> {
     assertDashboardId(dashboardId);
 
-    let row: SharedAccessSettingsRow | null;
+    let row: DashboardCredentialRow | null;
     try {
       const [rows] = await database.execute(
-        `SELECT password_hash, credential_version, updated_at
-         FROM dashboard_shared_access_settings
-         WHERE dashboard_id = ?
+        `SELECT
+           d.client_id,
+           s.password_hash,
+           s.credential_version,
+           s.updated_at
+         FROM dashboards d
+         LEFT JOIN dashboard_shared_access_settings s ON s.dashboard_id = d.id
+         WHERE d.id = ?
          LIMIT 1`,
         [dashboardId],
       );
-      row = firstRow<SharedAccessSettingsRow>(rows);
+      row = firstRow<DashboardCredentialRow>(rows);
     } catch {
       throw new Error("Unable to load shared dashboard credential");
     }
 
-    if (row) {
+    if (!row) {
+      return {
+        source: "missing",
+        password_hash: null,
+        legacy_password: null,
+        credential_version: 0,
+      };
+    }
+
+    const requestedClientId = normalizeClientId(clientId);
+    const authoritativeClientId = normalizeClientId(row.client_id);
+    if (
+      !isSharedPasswordClient(authoritativeClientId) ||
+      authoritativeClientId !== requestedClientId
+    ) {
+      return {
+        source: "missing",
+        password_hash: null,
+        legacy_password: null,
+        credential_version: 0,
+      };
+    }
+
+    if (row.password_hash !== null) {
+      let credentialVersion: number;
+      try {
+        credentialVersion = parseDatabaseCredentialVersion(row.credential_version);
+      } catch {
+        throw new Error("Unable to load shared dashboard credential");
+      }
       return {
         source: "database",
         password_hash: row.password_hash,
         legacy_password: null,
-        credential_version: asCredentialVersion(row.credential_version),
+        credential_version: credentialVersion,
       };
     }
 
-    if (normalizeClientId(clientId) === "abbott" && options.abbottLegacyPassword) {
+    if (authoritativeClientId === "abbott" && options.abbottLegacyPassword) {
       return {
         source: "abbott_env_fallback",
         password_hash: null,
@@ -136,7 +177,7 @@ export function createDashboardSharedAccessStore(
   ): Promise<SharedPasswordAdminState> {
     assertDashboardId(dashboardId);
 
-    let row: DashboardAdminRow | null;
+    let row: DashboardCredentialRow | null;
     try {
       const [rows] = await database.execute(
         `SELECT
@@ -150,7 +191,7 @@ export function createDashboardSharedAccessStore(
          LIMIT 1`,
         [dashboardId],
       );
-      row = firstRow<DashboardAdminRow>(rows);
+      row = firstRow<DashboardCredentialRow>(rows);
     } catch {
       throw new Error("Unable to load shared dashboard password state");
     }
@@ -171,12 +212,20 @@ export function createDashboardSharedAccessStore(
     const databaseConfigured = supported && hasDatabaseSetting;
     const fallbackConfigured =
       supported && !hasDatabaseSetting && clientId === "abbott" && Boolean(options.abbottLegacyPassword);
+    let credentialVersion = 0;
+    if (databaseConfigured) {
+      try {
+        credentialVersion = parseDatabaseCredentialVersion(row.credential_version);
+      } catch {
+        throw new Error("Unable to load shared dashboard password state");
+      }
+    }
 
     return {
       supported,
       configured: databaseConfigured || (!databaseConfigured && fallbackConfigured),
       client_id: clientId,
-      credential_version: databaseConfigured ? asCredentialVersion(row.credential_version) : 0,
+      credential_version: credentialVersion,
       updated_at: databaseConfigured ? asTimestamp(row.updated_at) : null,
     };
   }
@@ -219,9 +268,13 @@ export function createDashboardSharedAccessStore(
         [dashboardId],
       );
       const existingSetting = firstRow<SharedAccessSettingsRow>(settingRows);
-      const credentialVersion = existingSetting
-        ? asCredentialVersion(existingSetting.credential_version) + 1
-        : 1;
+      const existingCredentialVersion = existingSetting
+        ? parseDatabaseCredentialVersion(existingSetting.credential_version)
+        : 0;
+      if (existingCredentialVersion === Number.MAX_SAFE_INTEGER) {
+        throw new Error("Shared credential version overflow");
+      }
+      const credentialVersion = existingCredentialVersion + 1;
       const passwordHash = hashPassword(password);
 
       await connection.execute(
