@@ -38,6 +38,15 @@ type SharedPasswordResponse = {
   error?: string;
 };
 
+type SharedPasswordRequestResult =
+  | { ok: true; body: SharedPasswordResponse }
+  | { ok: false; error: string };
+
+type SharedPasswordFetcher = (
+  input: string,
+  init?: RequestInit,
+) => Promise<Response>;
+
 export function createSharedPasswordSettingsState(
   dashboardId: number,
 ): SharedPasswordSettingsState {
@@ -112,8 +121,59 @@ export function validateSharedPasswordFields(
   return null;
 }
 
-function responseError(json: SharedPasswordResponse, fallback: string) {
-  return typeof json.error === "string" && json.error ? json.error : fallback;
+export function sharedPasswordStatusText(input: {
+  loading: boolean;
+  configured: boolean | null;
+}) {
+  if (input.loading) return "Загрузка статуса...";
+  if (input.configured === true) return "Пароль установлен";
+  if (input.configured === false) {
+    return "Пароль ещё не перенесён в защищённое хранилище";
+  }
+  return "Статус пароля неизвестен";
+}
+
+function safeRussianApiError(value: unknown, fallback: string) {
+  if (
+    typeof value === "string" &&
+    value.length > 0 &&
+    value.length <= 200 &&
+    !/[\r\n]/.test(value) &&
+    /^[А-Яа-яЁё0-9\s.,:;!?()«»—–-]+$/.test(value)
+  ) {
+    return value;
+  }
+  return fallback;
+}
+
+export async function requestSharedPassword(
+  fetcher: SharedPasswordFetcher,
+  input: string,
+  init: RequestInit,
+  fallback: string,
+): Promise<SharedPasswordRequestResult> {
+  try {
+    const response = await fetcher(input, init);
+    let parsed: unknown;
+    try {
+      parsed = await response.json();
+    } catch {
+      return { ok: false, error: fallback };
+    }
+    if (parsed === null || typeof parsed !== "object" || Array.isArray(parsed)) {
+      return { ok: false, error: fallback };
+    }
+    const body = parsed as SharedPasswordResponse;
+    if (!response.ok) {
+      return { ok: false, error: safeRussianApiError(body.error, fallback) };
+    }
+    if (typeof body.configured !== "boolean") {
+      return { ok: false, error: fallback };
+    }
+    return { ok: true, body };
+  } catch {
+    return { ok: false, error: fallback };
+  }
 }
 
 export default function SharedPasswordSettings({
@@ -133,35 +193,29 @@ export default function SharedPasswordSettings({
     dispatch({ type: "dashboard-changed", dashboardId });
 
     async function loadStatus() {
-      try {
-        const response = await fetch(
-          `/api/admin/dashboards/${dashboardId}/shared-password`,
-          { cache: "no-store", signal: controller.signal },
-        );
-        const json = (await response.json()) as SharedPasswordResponse;
-        if (!response.ok) {
-          throw new Error(responseError(json, "Не удалось загрузить статус пароля"));
-        }
-        if (currentDashboardId.current !== dashboardId) return;
+      const result = await requestSharedPassword(
+        fetch,
+        `/api/admin/dashboards/${dashboardId}/shared-password`,
+        { cache: "no-store", signal: controller.signal },
+        "Не удалось загрузить статус пароля",
+      );
+      if (
+        controller.signal.aborted ||
+        currentDashboardId.current !== dashboardId
+      ) {
+        return;
+      }
+      if (result.ok) {
         dispatch({
           type: "status-loaded",
           dashboardId,
-          configured: json.configured === true,
+          configured: result.body.configured === true,
         });
-      } catch (loadError) {
-        if (
-          controller.signal.aborted ||
-          currentDashboardId.current !== dashboardId
-        ) {
-          return;
-        }
+      } else {
         dispatch({
           type: "load-failed",
           dashboardId,
-          error:
-            loadError instanceof Error
-              ? loadError.message
-              : "Не удалось загрузить статус пароля",
+          error: result.error,
         });
       }
     }
@@ -197,7 +251,8 @@ export default function SharedPasswordSettings({
     dispatch({ type: "save-started", dashboardId });
     let succeeded = false;
     try {
-      const response = await fetch(
+      const result = await requestSharedPassword(
+        fetch,
         `/api/admin/dashboards/${dashboardId}/shared-password`,
         {
           method: "PUT",
@@ -207,22 +262,18 @@ export default function SharedPasswordSettings({
             confirm_password: confirmation,
           }),
         },
+        "Не удалось сохранить пароль",
       );
-      const json = (await response.json()) as SharedPasswordResponse;
-      if (!response.ok) {
-        throw new Error(responseError(json, "Не удалось сохранить пароль"));
+      if (currentDashboardId.current !== dashboardId) return;
+      if (!result.ok) {
+        dispatch({
+          type: "save-failed",
+          dashboardId,
+          error: result.error,
+        });
+        return;
       }
       succeeded = true;
-    } catch (saveError) {
-      if (currentDashboardId.current !== dashboardId) return;
-      dispatch({
-        type: "save-failed",
-        dashboardId,
-        error:
-          saveError instanceof Error
-            ? saveError.message
-            : "Не удалось сохранить пароль",
-      });
     } finally {
       if (succeeded && currentDashboardId.current === dashboardId) {
         dispatch({ type: "save-succeeded", dashboardId });
@@ -240,11 +291,7 @@ export default function SharedPasswordSettings({
         Дашборд: {dashboardName}
       </p>
       <p className="mt-1 text-sm text-slate-600" aria-live="polite">
-        {loading
-          ? "Загрузка статуса..."
-          : configured
-            ? "Пароль установлен"
-            : "Пароль ещё не перенесён в защищённое хранилище"}
+        {sharedPasswordStatusText({ loading, configured })}
       </p>
       <p className="mt-1 text-sm text-amber-700">
         После смены пароля ранее открытые пользовательские сессии будут закрыты.

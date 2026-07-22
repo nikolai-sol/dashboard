@@ -4,9 +4,16 @@ import path from "node:path";
 import test from "node:test";
 import {
   createSharedPasswordSettingsState,
+  requestSharedPassword,
   reduceSharedPasswordSettingsState,
+  sharedPasswordStatusText,
   validateSharedPasswordFields,
 } from "./SharedPasswordSettings";
+import {
+  createAccessUsersEditorReadiness,
+  isAccessUsersEditorReady,
+  reduceAccessUsersEditorReadiness,
+} from "./AdminAccessSettings";
 
 test("shared password form is secret-safe and Russian", () => {
   const source = readFileSync(
@@ -96,4 +103,115 @@ test("successful rotation clears both inputs while a failed rotation preserves t
   assert.equal(saved.confirmation, "");
   assert.equal(saved.configured, true);
   assert.equal(saved.message, "Пароль изменён. Предыдущие пользовательские сессии закрыты.");
+});
+
+test("shared-password status is explicitly unknown after a failed GET", () => {
+  assert.equal(
+    sharedPasswordStatusText({ loading: false, configured: null }),
+    "Статус пароля неизвестен",
+  );
+  assert.equal(
+    sharedPasswordStatusText({ loading: false, configured: false }),
+    "Пароль ещё не перенесён в защищённое хранилище",
+  );
+});
+
+test("shared-password requests hide network and invalid JSON error details", async () => {
+  const fallback = "Не удалось загрузить статус пароля";
+  const networkFailure = await requestSharedPassword(
+    async () => {
+      throw new Error("socket failed: password=secret host=internal-db");
+    },
+    "/shared-password",
+    { method: "GET" },
+    fallback,
+  );
+  const invalidJson = await requestSharedPassword(
+    async () => new Response("upstream leaked an internal stack", { status: 500 }),
+    "/shared-password",
+    { method: "GET" },
+    fallback,
+  );
+  const emptyJson = await requestSharedPassword(
+    async () => Response.json({}, { status: 200 }),
+    "/shared-password",
+    { method: "GET" },
+    fallback,
+  );
+
+  assert.deepEqual(networkFailure, { ok: false, error: fallback });
+  assert.deepEqual(invalidJson, { ok: false, error: fallback });
+  assert.deepEqual(emptyJson, { ok: false, error: fallback });
+});
+
+test("shared-password requests preserve a safe Russian API error", async () => {
+  const result = await requestSharedPassword(
+    async () =>
+      Response.json(
+        { error: "Дашборд не найден" },
+        { status: 404 },
+      ),
+    "/shared-password",
+    { method: "GET" },
+    "Не удалось загрузить статус пароля",
+  );
+
+  assert.deepEqual(result, { ok: false, error: "Дашборд не найден" });
+
+  const unsafeMixedError = await requestSharedPassword(
+    async () =>
+      Response.json(
+        { error: "Пароль: password=secret host=internal-db" },
+        { status: 500 },
+      ),
+    "/shared-password",
+    { method: "GET" },
+    "Не удалось загрузить статус пароля",
+  );
+  assert.deepEqual(unsafeMixedError, {
+    ok: false,
+    error: "Не удалось загрузить статус пароля",
+  });
+});
+
+test("ordinary access editor stays disabled until its selected dashboard loads", () => {
+  const source = readFileSync(
+    path.resolve("src/components/admin/AdminAccessSettings.tsx"),
+    "utf8",
+  );
+  let readiness = createAccessUsersEditorReadiness();
+  readiness = reduceAccessUsersEditorReadiness(readiness, {
+    type: "load-started",
+    dashboardId: 41,
+  });
+  assert.equal(isAccessUsersEditorReady(readiness, 41), false);
+
+  readiness = reduceAccessUsersEditorReadiness(readiness, {
+    type: "load-failed",
+    dashboardId: 41,
+  });
+  assert.equal(isAccessUsersEditorReady(readiness, 41), false);
+
+  readiness = reduceAccessUsersEditorReadiness(readiness, {
+    type: "load-started",
+    dashboardId: 42,
+  });
+  assert.equal(isAccessUsersEditorReady(readiness, 42), false);
+  assert.equal(
+    reduceAccessUsersEditorReadiness(readiness, {
+      type: "load-succeeded",
+      dashboardId: 41,
+    }),
+    readiness,
+  );
+
+  readiness = reduceAccessUsersEditorReadiness(readiness, {
+    type: "load-succeeded",
+    dashboardId: 42,
+  });
+  assert.equal(isAccessUsersEditorReady(readiness, 42), true);
+  assert.match(
+    source,
+    /disabled=\{saving \|\| !selectedDashboardId \|\| !accessUsersReady\}/,
+  );
 });

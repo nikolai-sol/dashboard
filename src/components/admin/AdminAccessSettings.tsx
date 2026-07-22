@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useReducer, useRef, useState } from "react";
 import type { DashboardListItem } from "@/lib/admin-ui-types";
 import { isSharedPasswordClient } from "@/lib/shared-password-policy";
 import SharedPasswordSettings from "./SharedPasswordSettings";
@@ -16,6 +16,51 @@ type StoredAccessUser = {
   email: string;
 };
 
+type AccessUsersEditorReadiness = {
+  dashboardId: number | null;
+  status: "idle" | "loading" | "ready" | "failed";
+};
+
+type AccessUsersEditorReadinessAction =
+  | { type: "reset" }
+  | { type: "load-started"; dashboardId: number }
+  | { type: "load-succeeded"; dashboardId: number }
+  | { type: "load-failed"; dashboardId: number };
+
+export function createAccessUsersEditorReadiness(): AccessUsersEditorReadiness {
+  return { dashboardId: null, status: "idle" };
+}
+
+export function reduceAccessUsersEditorReadiness(
+  state: AccessUsersEditorReadiness,
+  action: AccessUsersEditorReadinessAction,
+): AccessUsersEditorReadiness {
+  if (action.type === "reset") {
+    return createAccessUsersEditorReadiness();
+  }
+  if (action.type === "load-started") {
+    return { dashboardId: action.dashboardId, status: "loading" };
+  }
+  if (action.dashboardId !== state.dashboardId) {
+    return state;
+  }
+  return {
+    dashboardId: action.dashboardId,
+    status: action.type === "load-succeeded" ? "ready" : "failed",
+  };
+}
+
+export function isAccessUsersEditorReady(
+  state: AccessUsersEditorReadiness,
+  selectedDashboardId: number | null,
+) {
+  return (
+    selectedDashboardId !== null &&
+    state.dashboardId === selectedDashboardId &&
+    state.status === "ready"
+  );
+}
+
 export default function AdminAccessSettings() {
   const [dashboards, setDashboards] = useState<DashboardListItem[]>([]);
   const [selectedDashboardId, setSelectedDashboardId] = useState<number | null>(null);
@@ -24,6 +69,20 @@ export default function AdminAccessSettings() {
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [message, setMessage] = useState<string | null>(null);
+  const [accessUsersReadiness, dispatchAccessUsersReadiness] = useReducer(
+    reduceAccessUsersEditorReadiness,
+    createAccessUsersEditorReadiness(),
+  );
+  const accessUsersSelection = useRef({
+    dashboardId: selectedDashboardId,
+    generation: 0,
+  });
+  if (accessUsersSelection.current.dashboardId !== selectedDashboardId) {
+    accessUsersSelection.current = {
+      dashboardId: selectedDashboardId,
+      generation: accessUsersSelection.current.generation + 1,
+    };
+  }
 
   useEffect(() => {
     let cancelled = false;
@@ -63,9 +122,11 @@ export default function AdminAccessSettings() {
 
   useEffect(() => {
     let cancelled = false;
+    const selectionGeneration = accessUsersSelection.current.generation;
     async function loadUsers() {
       if (!selectedDashboardId) {
         setUsers([]);
+        dispatchAccessUsersReadiness({ type: "reset" });
         return;
       }
       if (
@@ -73,12 +134,20 @@ export default function AdminAccessSettings() {
         isSharedPasswordClient(selectedDashboard.client_id)
       ) {
         setUsers([]);
+        setSaving(false);
         setError(null);
         setMessage(null);
+        dispatchAccessUsersReadiness({ type: "reset" });
         return;
       }
+      setUsers([]);
+      setSaving(false);
       setError(null);
       setMessage(null);
+      dispatchAccessUsersReadiness({
+        type: "load-started",
+        dashboardId: selectedDashboardId,
+      });
       try {
         const response = await fetch(`/api/admin/access-users?dashboard_id=${selectedDashboardId}`, {
           cache: "no-store",
@@ -87,7 +156,12 @@ export default function AdminAccessSettings() {
         if (!response.ok) {
           throw new Error(String(json?.error ?? "Failed to load users"));
         }
-        if (cancelled) return;
+        if (
+          cancelled ||
+          accessUsersSelection.current.generation !== selectionGeneration
+        ) {
+          return;
+        }
         const nextUsers = Array.isArray(json?.users)
           ? (json.users as StoredAccessUser[]).map((item) => ({
               id: item.id,
@@ -96,10 +170,23 @@ export default function AdminAccessSettings() {
             }))
           : [];
         setUsers(nextUsers);
+        dispatchAccessUsersReadiness({
+          type: "load-succeeded",
+          dashboardId: selectedDashboardId,
+        });
       } catch (loadError) {
-        if (!cancelled) {
-          setError(loadError instanceof Error ? loadError.message : "Failed to load users");
+        if (
+          cancelled ||
+          accessUsersSelection.current.generation !== selectionGeneration
+        ) {
+          return;
         }
+        setUsers([]);
+        setError(loadError instanceof Error ? loadError.message : "Failed to load users");
+        dispatchAccessUsersReadiness({
+          type: "load-failed",
+          dashboardId: selectedDashboardId,
+        });
       }
     }
     loadUsers();
@@ -108,20 +195,36 @@ export default function AdminAccessSettings() {
     };
   }, [selectedDashboard, selectedDashboardId]);
 
+  const accessUsersReady = isAccessUsersEditorReady(
+    accessUsersReadiness,
+    selectedDashboardId,
+  );
+  const accessUsersLoading =
+    accessUsersReadiness.dashboardId === selectedDashboardId &&
+    accessUsersReadiness.status === "loading";
+  const accessUsersFailed =
+    accessUsersReadiness.dashboardId === selectedDashboardId &&
+    accessUsersReadiness.status === "failed";
+
   function updateUser(index: number, patch: Partial<AccessUserRow>) {
+    if (!accessUsersReady) return;
     setUsers((current) => current.map((item, itemIndex) => (itemIndex === index ? { ...item, ...patch } : item)));
   }
 
   function addUser() {
+    if (!accessUsersReady) return;
     setUsers((current) => [...current, { email: "", password: "" }]);
   }
 
   function removeUser(index: number) {
+    if (!accessUsersReady) return;
     setUsers((current) => current.filter((_, itemIndex) => itemIndex !== index));
   }
 
   async function saveUsers() {
-    if (!selectedDashboardId) return;
+    if (!selectedDashboardId || !accessUsersReady) return;
+    const targetDashboardId = selectedDashboardId;
+    const selectionGeneration = accessUsersSelection.current.generation;
     setSaving(true);
     setError(null);
     setMessage(null);
@@ -130,7 +233,7 @@ export default function AdminAccessSettings() {
         method: "PUT",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          dashboard_id: selectedDashboardId,
+          dashboard_id: targetDashboardId,
           users,
         }),
       });
@@ -138,6 +241,7 @@ export default function AdminAccessSettings() {
       if (!response.ok) {
         throw new Error(String(json?.details ?? json?.error ?? "Failed to save users"));
       }
+      if (accessUsersSelection.current.generation !== selectionGeneration) return;
       const nextUsers = Array.isArray(json?.users)
         ? (json.users as StoredAccessUser[]).map((item) => ({
             id: item.id,
@@ -148,9 +252,12 @@ export default function AdminAccessSettings() {
       setUsers(nextUsers);
       setMessage("Access users saved.");
     } catch (saveError) {
+      if (accessUsersSelection.current.generation !== selectionGeneration) return;
       setError(saveError instanceof Error ? saveError.message : "Failed to save users");
     } finally {
-      setSaving(false);
+      if (accessUsersSelection.current.generation === selectionGeneration) {
+        setSaving(false);
+      }
     }
   }
 
@@ -200,6 +307,7 @@ export default function AdminAccessSettings() {
           <div
             className="mt-6 rounded-xl border border-slate-200 bg-slate-50 p-4"
             aria-label="Access users"
+            aria-busy={accessUsersLoading || saving}
           >
             <div className="flex items-center justify-between gap-4">
               <div>
@@ -209,17 +317,24 @@ export default function AdminAccessSettings() {
               <button
                 type="button"
                 onClick={addUser}
-                className="rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm text-slate-700"
+                disabled={!accessUsersReady}
+                className="rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm text-slate-700 disabled:cursor-not-allowed disabled:opacity-60"
               >
                 Add user
               </button>
             </div>
 
             <div className="mt-4 space-y-3">
-              {users.length === 0 ? (
+              {accessUsersLoading ? (
+                <p className="text-sm text-slate-500">Loading access users...</p>
+              ) : null}
+              {accessUsersFailed ? (
+                <p className="text-sm text-slate-500">Access users are unavailable.</p>
+              ) : null}
+              {accessUsersReady && users.length === 0 ? (
                 <p className="text-sm text-slate-500">No viewer users. Dashboard is public.</p>
               ) : null}
-              {users.map((user, index) => (
+              {accessUsersReady ? users.map((user, index) => (
                 <div key={`${user.id ?? "new"}-${index}`} className="grid gap-3 rounded-lg border border-slate-200 bg-white p-3 md:grid-cols-[1fr_1fr_auto]">
                   <label className="block text-sm text-slate-700">
                     Email
@@ -227,6 +342,7 @@ export default function AdminAccessSettings() {
                       className="mt-1 w-full rounded-lg border border-slate-300 px-3 py-2"
                       type="email"
                       value={user.email}
+                      disabled={!accessUsersReady}
                       onChange={(event) => updateUser(index, { email: event.target.value })}
                       placeholder="client@example.com"
                     />
@@ -237,6 +353,7 @@ export default function AdminAccessSettings() {
                       className="mt-1 w-full rounded-lg border border-slate-300 px-3 py-2"
                       type="password"
                       value={user.password}
+                      disabled={!accessUsersReady}
                       onChange={(event) => updateUser(index, { password: event.target.value })}
                       placeholder={user.id ? "Leave blank to keep current password" : "Set password"}
                     />
@@ -245,13 +362,14 @@ export default function AdminAccessSettings() {
                     <button
                       type="button"
                       onClick={() => removeUser(index)}
+                      disabled={!accessUsersReady}
                       className="rounded-lg border border-rose-300 px-3 py-2 text-sm text-rose-700"
                     >
                       Remove
                     </button>
                   </div>
                 </div>
-              ))}
+              )) : null}
             </div>
 
             {error ? <p className="mt-4 text-sm text-rose-600">{error}</p> : null}
@@ -261,7 +379,7 @@ export default function AdminAccessSettings() {
               <button
                 type="button"
                 onClick={saveUsers}
-                disabled={saving || !selectedDashboardId}
+                disabled={saving || !selectedDashboardId || !accessUsersReady}
                 className="rounded-lg bg-slate-900 px-4 py-2 text-sm font-medium text-white disabled:cursor-not-allowed disabled:opacity-60"
               >
                 {saving ? "Saving..." : "Save access users"}
