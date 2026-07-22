@@ -247,6 +247,14 @@ export async function verifyDashboardAccessCredentials(
 ): Promise<VerifiedDashboardAccessContext | null> {
   const context = await getDashboardAccessContext(identifier);
   if (!context) return null;
+  return verifyDashboardAccessContextCredentials(context, email, password);
+}
+
+export async function verifyDashboardAccessContextCredentials(
+  context: DashboardAccessContext,
+  email: string,
+  password: string,
+): Promise<VerifiedDashboardAccessContext | null> {
   if (context.auth_mode === "public") return context;
   if (context.auth_mode === "password_only") {
     if (isSharedPasswordClient(context.client_id)) {
@@ -337,57 +345,82 @@ export async function listViewerPortalDashboards(dashboardIds: number[]) {
   })) as ViewerPortalDashboard[];
 }
 
-export async function isDashboardAccessAuthorized(request: Request, identifier: string | number) {
-  const context = await getDashboardAccessContext(identifier);
-  if (!context) {
-    return { context: null, authorized: false as const, reason: "not_found" as const };
-  }
-  if (context.auth_mode === "public") {
-    return {
-      context,
-      authorized: true as const,
-      reason: "public" as const,
-      audience: "manager" as const,
-      credentialVersion: undefined,
-    };
-  }
+const defaultDashboardAccessAuthorizationDependencies = {
+  getDashboardAccessContext,
+  loadSharedPasswordCredential,
+};
 
-  const url = new URL(request.url);
-  const embedKey = url.searchParams.get("embed_key");
-  const expectedEmbedKey = getSharedDashboardEmbedKey(context.client_id);
-  if (expectedEmbedKey && embedKey && safeEqualText(embedKey, expectedEmbedKey)) {
-    return {
-      context,
-      authorized: true as const,
-      reason: "embed_key" as const,
-      audience: resolveDashboardAudience("embed_key"),
-      credentialVersion: undefined,
-    };
-  }
-  const queryToken = url.searchParams.get("access_token");
-  const cookieToken = parseCookieValue(request.headers.get("cookie"), viewerCookieName(context.id));
-  const token = queryToken || cookieToken;
-  const payload = verifyViewerSession(token, context.id);
-  if (!payload) {
-    return { context, authorized: false as const, reason: "auth_required" as const };
-  }
-  let credentialVersion: number | undefined;
-  if (isSharedPasswordClient(context.client_id) && payload.audience === "manager") {
-    const credential = await loadSharedPasswordCredential(context.id, context.client_id);
-    if (
-      credential.source === "missing" ||
-      !sharedCredentialVersionMatches(payload, credential.credential_version)
-    ) {
+type DashboardAccessAuthorizationDependencies =
+  typeof defaultDashboardAccessAuthorizationDependencies;
+
+export function createDashboardAccessAuthorizer(
+  overrides: Partial<DashboardAccessAuthorizationDependencies> = {},
+) {
+  const dependencies = {
+    ...defaultDashboardAccessAuthorizationDependencies,
+    ...overrides,
+  };
+
+  return async function authorizeDashboardAccess(
+    request: Request,
+    identifier: string | number,
+  ) {
+    const context = await dependencies.getDashboardAccessContext(identifier);
+    if (!context) {
+      return { context: null, authorized: false as const, reason: "not_found" as const };
+    }
+    if (context.auth_mode === "public") {
+      return {
+        context,
+        authorized: true as const,
+        reason: "public" as const,
+        audience: "manager" as const,
+        credentialVersion: undefined,
+      };
+    }
+
+    const url = new URL(request.url);
+    const embedKey = url.searchParams.get("embed_key");
+    const expectedEmbedKey = getSharedDashboardEmbedKey(context.client_id);
+    if (expectedEmbedKey && embedKey && safeEqualText(embedKey, expectedEmbedKey)) {
+      return {
+        context,
+        authorized: true as const,
+        reason: "embed_key" as const,
+        audience: resolveDashboardAudience("embed_key"),
+        credentialVersion: undefined,
+      };
+    }
+    const queryToken = url.searchParams.get("access_token");
+    const cookieToken = parseCookieValue(request.headers.get("cookie"), viewerCookieName(context.id));
+    const token = queryToken || cookieToken;
+    const payload = verifyViewerSession(token, context.id);
+    if (!payload) {
       return { context, authorized: false as const, reason: "auth_required" as const };
     }
-    credentialVersion = credential.credential_version;
-  }
-  return {
-    context,
-    authorized: true as const,
-    reason: "authorized" as const,
-    audience: resolveDashboardAudience("authorized", payload),
-    payload,
-    credentialVersion,
+    let credentialVersion: number | undefined;
+    if (isSharedPasswordClient(context.client_id) && payload.audience === "manager") {
+      const credential = await dependencies.loadSharedPasswordCredential(
+        context.id,
+        context.client_id,
+      );
+      if (
+        credential.source === "missing" ||
+        !sharedCredentialVersionMatches(payload, credential.credential_version)
+      ) {
+        return { context, authorized: false as const, reason: "auth_required" as const };
+      }
+      credentialVersion = credential.credential_version;
+    }
+    return {
+      context,
+      authorized: true as const,
+      reason: "authorized" as const,
+      audience: resolveDashboardAudience("authorized", payload),
+      payload,
+      credentialVersion,
+    };
   };
 }
+
+export const isDashboardAccessAuthorized = createDashboardAccessAuthorizer();

@@ -33,6 +33,24 @@ function buildDashboardUrl(request: Request, dashboardId: string, accessToken?: 
   return url.toString();
 }
 
+export function createAuthorizedViewerExportToken(access: {
+  context: {
+    id: number;
+    auth_mode: "public" | "email_password" | "password_only";
+  };
+  audience: "manager" | "embed";
+  credentialVersion?: number;
+}) {
+  if (access.context.auth_mode === "public") return undefined;
+  return access.credentialVersion === undefined
+    ? createViewerExportToken(access.context.id, access.audience)
+    : createViewerExportToken(
+        access.context.id,
+        access.audience,
+        access.credentialVersion,
+      );
+}
+
 export async function GET(
   request: Request,
   context: { params: Promise<{ id: string }> | { id: string } },
@@ -51,15 +69,7 @@ export async function GET(
     const dashboardUrl = buildDashboardUrl(
       request,
       id,
-      access.context.auth_mode !== "public"
-        ? access.credentialVersion === undefined
-          ? createViewerExportToken(access.context.id, access.audience)
-          : createViewerExportToken(
-              access.context.id,
-              access.audience,
-              access.credentialVersion,
-            )
-        : undefined,
+      createAuthorizedViewerExportToken(access),
     );
     const filenameDate = new Date().toISOString().slice(0, 10);
 

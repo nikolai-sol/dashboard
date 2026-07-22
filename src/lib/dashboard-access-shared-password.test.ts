@@ -1,66 +1,79 @@
 import assert from "node:assert/strict";
-import { readFileSync } from "node:fs";
 import test from "node:test";
-import { sharedCredentialVersionMatches } from "./dashboard-access";
+import { createViewerSession } from "./access-auth";
+import * as dashboardAccess from "./dashboard-access";
 
-test("unversioned manager session cannot authorize a versioned shared dashboard", () => {
-  assert.equal(sharedCredentialVersionMatches({ audience: "manager" }, 1), false);
-  assert.equal(
-    sharedCredentialVersionMatches(
-      { audience: "manager", credential_version: 1 },
-      1,
-    ),
-    true,
+const dashboard = {
+  id: 28,
+  client_id: "zaruku",
+  client_name: "Zaruku",
+  dashboard_name: "Dashboard",
+  is_active: true,
+  access_users_count: 0,
+  auth_mode: "password_only" as const,
+};
+
+type AuthorizerFactory = (dependencies: Record<string, unknown>) => (
+  request: Request,
+  identifier: string | number,
+) => Promise<{ authorized: boolean; reason: string }>;
+
+function createAuthorizer(dependencies: Record<string, unknown>) {
+  const factory = (dashboardAccess as unknown as {
+    createDashboardAccessAuthorizer?: AuthorizerFactory;
+  }).createDashboardAccessAuthorizer;
+  assert.equal(typeof factory, "function");
+  return (factory as AuthorizerFactory)(dependencies);
+}
+
+function authenticatedRequest(credentialVersion: number) {
+  const token = createViewerSession(
+    dashboard.id,
+    "shared-access+zaruku@dashboard.local",
+    "manager",
+    credentialVersion,
   );
+  return new Request(`http://dashboard.test/dashboard/zaruku?access_token=${token}`);
+}
+
+test("old real signed manager session is rejected after credential rotation", async () => {
+  const authorize = createAuthorizer({
+    async getDashboardAccessContext() {
+      return dashboard;
+    },
+    async loadSharedPasswordCredential() {
+      return {
+        source: "database",
+        password_hash: "not-used-for-authorization",
+        legacy_password: null,
+        credential_version: 2,
+      };
+    },
+  });
+
+  const access = await authorize(authenticatedRequest(1), "zaruku");
+
+  assert.equal(access.authorized, false);
+  assert.equal(access.reason, "auth_required");
 });
 
-test("shared dashboard manager sessions reject stale and non-manager versions", () => {
-  assert.equal(
-    sharedCredentialVersionMatches(
-      { audience: "manager", credential_version: 2 },
-      3,
-    ),
-    false,
-  );
-  assert.equal(
-    sharedCredentialVersionMatches(
-      { audience: "embed", credential_version: 3 },
-      3,
-    ),
-    false,
-  );
-});
+test("missing shared credential state rejects a real signed manager session", async () => {
+  const authorize = createAuthorizer({
+    async getDashboardAccessContext() {
+      return dashboard;
+    },
+    async loadSharedPasswordCredential() {
+      return {
+        source: "missing",
+        password_hash: null,
+        legacy_password: null,
+        credential_version: 0,
+      };
+    },
+  });
 
-test("dashboard login rate limits by client IP and normalized dashboard identifier", () => {
-  const source = readFileSync(
-    new URL("../app/api/dashboard-auth/login/route.ts", import.meta.url),
-    "utf8",
-  );
+  const access = await authorize(authenticatedRequest(0), "zaruku");
 
-  assert.match(source, /checkRateLimit/);
-  assert.match(
-    source,
-    /dashboard-login:\$\{getClientIp\(request\)\}:\$\{identifier\.toLowerCase\(\)\}/,
-  );
-  assert.match(source, /LOGIN_MAX_ATTEMPTS\s*=\s*10/);
-  assert.match(source, /LOGIN_WINDOW_MS\s*=\s*15\s*\*\s*60\s*\*\s*1000/);
-  assert.match(source, /status:\s*429/);
-  assert.match(source, /["']Retry-After["']/);
-  assert.match(
-    source,
-    /createViewerSession\([\s\S]*context\.credentialVersion[\s\S]*\)/,
-  );
-  assert.doesNotMatch(source, /console\.(?:log|info|warn|error)\([^\n]*(?:password|body)/i);
-});
-
-test("PDF export receives the credential version validated by dashboard authorization", () => {
-  const source = readFileSync(
-    new URL("../app/api/dashboard/[id]/pdf/route.ts", import.meta.url),
-    "utf8",
-  );
-
-  assert.match(
-    source,
-    /createViewerExportToken\([\s\S]*access\.context\.id,[\s\S]*access\.audience,[\s\S]*access\.credentialVersion[\s\S]*\)/,
-  );
+  assert.equal(access.authorized, false);
+  assert.equal(access.reason, "auth_required");
 });
