@@ -2,6 +2,7 @@ import type { RowDataPacket } from "mysql2";
 import pool from "@/lib/db";
 import { loadAccountFacts, loadSeoIntelligence, loadSeoProcess } from "@/lib/account-read-models";
 import { matchSectionPattern } from "@/lib/zaruku-seo-os";
+import { makeZarukuDatasetMeta } from "@/lib/zaruku-dataset-meta";
 import type {
   ZarukuAiVisibilityData,
   ZarukuSeoData,
@@ -16,6 +17,9 @@ import type {
   ZarukuSourceFreshnessRow,
   ZarukuGscData,
   ZarukuYandexWebmasterData,
+  ZarukuDatasetKey,
+  ZarukuDatasetMeta,
+  ZarukuMetricAvailability,
 } from "@/lib/types";
 
 const SOURCE_KEY = "yandex_metrika";
@@ -884,7 +888,7 @@ export function buildContentSections(pageRows: ZarukuSeoMetricRow[], patterns: Z
         depthWeighted: 0,
         depthVisits: 0,
       } satisfies SectionAccumulator);
-    const visits = page.visits > 0 ? page.visits : page.users;
+    const visits = page.visits;
     current.visits += visits;
     current.users += page.users;
     current.pageviews += page.pageviews;
@@ -1235,11 +1239,110 @@ export async function loadZarukuSeoData(counterIds: string[], from: string, to: 
   ]);
   const webmaster = facts.webmaster;
   const gsc = facts.gsc;
+  const requestedPeriod = { from, to };
+  const trafficActualTo = sourceFreshness.find((row) => row.source_key === "yandex_metrika")?.date_to ?? null;
+  const returningActualTo = sourceFreshness.find((row) => row.source_key === "yandex_metrika_returning")?.date_to ?? null;
+  const completeMetrics: ZarukuMetricAvailability = {
+    visits: true,
+    users: true,
+    pageviews: true,
+    bounce_rate: true,
+    avg_duration_seconds: true,
+    page_depth: true,
+  };
+  const pageMetrics: ZarukuMetricAvailability = {
+    visits: false,
+    users: true,
+    pageviews: true,
+    bounce_rate: false,
+    avg_duration_seconds: false,
+    page_depth: false,
+  };
+  const volumeMetrics: ZarukuMetricAvailability = {
+    visits: true,
+    users: true,
+    pageviews: true,
+    bounce_rate: false,
+    avg_duration_seconds: false,
+    page_depth: false,
+  };
+  const returningMetrics: ZarukuMetricAvailability = {
+    visits: true,
+    users: true,
+    pageviews: false,
+    bounce_rate: false,
+    avg_duration_seconds: false,
+    page_depth: false,
+  };
+  const coverageIsPartial = (actualTo: string | null) => Boolean(actualTo && actualTo < to);
+  const coverageMessage = (actualTo: string | null) => actualTo ? `Данные доступны по ${actualTo}.` : undefined;
+  const canonicalMeta = (
+    rowCount: number,
+    actualTo: string | null,
+    metrics: ZarukuMetricAvailability,
+  ) => makeZarukuDatasetMeta({
+    rowCount,
+    sourceAvailable: true,
+    fallbackVisible: coverageIsPartial(actualTo),
+    sources: ["metrika"],
+    requestedPeriod,
+    actualTo,
+    geography: "unsegmented",
+    metrics,
+    fallbackMessage: coverageMessage(actualTo),
+  });
+  const liveMeta = (report: MetrikaReport, rowCount: number) => makeZarukuDatasetMeta({
+    rowCount,
+    sourceAvailable: report.ok,
+    fallbackVisible: false,
+    sources: ["metrika"],
+    requestedPeriod,
+    actualTo: report.ok ? to : null,
+    geography: "russia",
+    metrics: completeMetrics,
+    unavailableMessage: "Стабильный срез Яндекс Метрики недоступен.",
+  });
+  const contentUsesLiveVisits = entryPageRows.length > 0;
+  const contentFallbackMessage = contentUsesLiveVisits
+    ? "Страница объединяет unsegmented canonical page facts и RF entry-page metrics."
+    : "Показаны canonical page facts; визиты и поведенческие метрики входов недоступны.";
+  const contentMeta = (rowCount: number) => makeZarukuDatasetMeta({
+    rowCount,
+    sourceAvailable: sectionEntrancesReport.ok,
+    fallbackVisible: true,
+    sources: ["metrika"],
+    requestedPeriod,
+    actualTo: contentUsesLiveVisits ? to : trafficActualTo,
+    geography: contentUsesLiveVisits ? "mixed" : "unsegmented",
+    metrics: contentUsesLiveVisits ? completeMetrics : pageMetrics,
+    fallbackMessage: contentFallbackMessage,
+  });
+  const datasetMeta = {
+    traffic_channels: canonicalMeta(trafficChannels.length + technicalTail.length, trafficActualTo, completeMetrics),
+    organic_trend: canonicalMeta(organicTrend.length, trafficActualTo, volumeMetrics),
+    content_sections: contentMeta(pageCollections.contentSections.length),
+    top_pages: contentMeta(pageCollections.topPages.length),
+    high_bounce_pages: liveMeta(sectionEntrancesReport, buildHighBouncePages(entryPageRows).length),
+    best_engagement_pages: liveMeta(sectionEntrancesReport, buildBestEngagementPages(entryPageRows).length),
+    returning_pages: canonicalMeta(returningPages.length, returningActualTo, returningMetrics),
+    search_engines: liveMeta(searchEnginesReport, searchEnginesReport.rows.length),
+    search_phrases: liveMeta(searchPhrasesReport, searchPhrasesReport.rows.length),
+    organic_landing_pages: liveMeta(organicLandingReport, organicLandingReport.rows.length),
+    map_city_demand: liveMeta(mapCityDemandReport, mapCityDemandReport.rows.length),
+    devices: liveMeta(devicesReport, devicesReport.rows.length),
+    source_devices: liveMeta(sourceDevicesReport, sourceDevicesReport.rows.length),
+    browsers: liveMeta(browsersReport, browsersReport.rows.length),
+    operating_systems: liveMeta(osReport, osReport.rows.length),
+    age: liveMeta(ageReport, ageReport.rows.length),
+    gender: liveMeta(genderReport, genderReport.rows.length),
+    interests: liveMeta(interestsReport, interestsReport.rows.length),
+  } satisfies Record<ZarukuDatasetKey, ZarukuDatasetMeta>;
 
   return {
     counters: normalizedCounterIds,
     domain: "zaruku.ru",
     period: { from, to },
+    dataset_meta: datasetMeta,
     layers: [
       { id: "onsite", label: "На сайте", hint: "что происходит после клика" },
       { id: "serp", label: "SERP", hint: "показы, позиции, CTR до клика" },

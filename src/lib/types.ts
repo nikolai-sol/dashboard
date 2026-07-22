@@ -570,6 +570,40 @@ export interface AbbottBiData {
 export type ZarukuSeoLayerId = "onsite" | "serp" | "ai";
 export type ZarukuSeoSourceId = "metrika" | "gsc" | "webmaster" | "seo_os" | "yandex_gen_search";
 export type ZarukuSeoSourceStatus = "connected" | "pending" | "partial" | "unavailable";
+export type ZarukuDatasetState = "ready" | "empty" | "unavailable" | "partial";
+export type ZarukuGeographyScope = "russia" | "host" | "unsegmented" | "mixed";
+export type ZarukuMetricColumn = "visits" | "users" | "pageviews" | "bounce_rate" | "avg_duration_seconds" | "page_depth";
+export type ZarukuDatasetKey =
+  | "traffic_channels"
+  | "organic_trend"
+  | "content_sections"
+  | "top_pages"
+  | "high_bounce_pages"
+  | "best_engagement_pages"
+  | "returning_pages"
+  | "search_engines"
+  | "search_phrases"
+  | "organic_landing_pages"
+  | "map_city_demand"
+  | "devices"
+  | "source_devices"
+  | "browsers"
+  | "operating_systems"
+  | "age"
+  | "gender"
+  | "interests";
+
+export type ZarukuMetricAvailability = Record<ZarukuMetricColumn, boolean>;
+
+export interface ZarukuDatasetMeta {
+  state: ZarukuDatasetState;
+  sources: ZarukuSeoSourceId[];
+  period: { from: string; to: string };
+  requested_period: { from: string; to: string };
+  geography: ZarukuGeographyScope;
+  metrics: ZarukuMetricAvailability;
+  message: string | null;
+}
 
 export interface ZarukuSeoLayer {
   id: ZarukuSeoLayerId;
@@ -1008,6 +1042,7 @@ export interface ZarukuSeoData {
   counters: string[];
   domain: string;
   period: { from: string; to: string };
+  dataset_meta: Record<ZarukuDatasetKey, ZarukuDatasetMeta>;
   layers: ZarukuSeoLayer[];
   sources: ZarukuSeoSource[];
   pending_requirements: ZarukuSeoPendingRequirement[];

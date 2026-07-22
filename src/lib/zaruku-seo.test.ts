@@ -130,7 +130,7 @@ test("buildContentSections aggregates behavior metrics by visit weight", () => {
   ]);
 });
 
-test("buildContentSections uses users as visit proxy for pageview-only canonical rows", () => {
+test("buildContentSections never converts users into visits", () => {
   assert.deepEqual(
     buildContentSections(
       [
@@ -140,8 +140,8 @@ test("buildContentSections uses users as visit proxy for pageview-only canonical
       patterns,
     ),
     [
-      { label: "Map", visits: 42, users: 42, pageviews: 48, share: 48 / 62 * 100, source: "metrika", layer: "onsite" },
-      { label: "Clinics", visits: 11, users: 11, pageviews: 14, share: 14 / 62 * 100, source: "metrika", layer: "onsite" },
+      { label: "Map", visits: 0, users: 42, pageviews: 48, share: 48 / 62 * 100, source: "metrika", layer: "onsite" },
+      { label: "Clinics", visits: 0, users: 11, pageviews: 14, share: 14 / 62 * 100, source: "metrika", layer: "onsite" },
     ],
   );
 });
