@@ -71,7 +71,8 @@ export METRIKA_TOKEN_FILE=/root/.config/reportingdash/metrika-token
 export LEGACY_LAUNCH_SECRET_FILE=/root/.config/reportingdash/legacy-launch-secret
 export ABBOTT_PRIVATE_ARCHIVE_DIR=/root/reportingdash-private/abbott/archive
 export ABBOTT_PRIVATE_INPUT_DIR=/root/reportingdash-private/abbott/import
-export CODE_REVISION=<reviewed-git-revision>
+export RUNTIME_REVISION=<reviewed-runtime-git-revision>
+export CODE_REVISION=<reviewed-release-data-git-revision>
 export DASHBOARD_CODE_REVISION=<reviewed-dashboard-git-revision>
 export DASHBOARD_PREDECESSOR_REVISION=<checkpoint-dashboard-git-revision>
 export PARSER_VERSION=<reviewed-parser-version>
@@ -81,7 +82,7 @@ export CANONICAL_RUNTIME_MANIFEST="$CANONICAL_ROOT/ops/abbott-runtime-manifest.s
 install -d -m 700 /root/.config/reportingdash
 install -d -m 700 "$ABBOTT_PRIVATE_ARCHIVE_DIR" "$ABBOTT_PRIVATE_INPUT_DIR"
 test "$(git -C "$DASHBOARD_SOURCE_ROOT" rev-parse HEAD)" = "$DASHBOARD_CODE_REVISION"
-test "$(git -C "$CANONICAL_ROOT" rev-parse HEAD)" = "$CODE_REVISION"
+test "$(git -C "$CANONICAL_ROOT" rev-parse HEAD)" = "$RUNTIME_REVISION"
 git -C "$CANONICAL_ROOT" diff --quiet
 git -C "$CANONICAL_ROOT" diff --cached --quiet
 git -C "$CANONICAL_ROOT" show HEAD:ops/abbott-runtime-manifest.sha256 | \
@@ -650,7 +651,7 @@ directory, scans both staging and final trees, writes a sorted SHA-256 manifest,
 atomically renames the release, and atomically flips the active symlink:
 
 ```bash
-test "$(git -C "$CANONICAL_ROOT" rev-parse HEAD)" = "$CODE_REVISION"
+test "$(git -C "$CANONICAL_ROOT" rev-parse HEAD)" = "$RUNTIME_REVISION"
 git -C "$CANONICAL_ROOT" diff --quiet
 git -C "$CANONICAL_ROOT" diff --cached --quiet
 git -C "$CANONICAL_ROOT" show HEAD:ops/abbott-runtime-manifest.sha256 | \
@@ -764,10 +765,13 @@ export ACTIVATION_CONFIRMED=yes
 test "$ACTIVATION_CONFIRMED" = yes
 ```
 
-Create the new crontab from the protected checkpoint. The helper removes
-exactly one line whose schedule is `06:10` and whose command contains
-`/metrika`; it never prints that line. It also removes prior copies of the three
-new jobs before appending the reviewed schedule:
+Create the new crontab from the protected checkpoint. The helper accepts and
+removes zero or one line whose schedule is `06:10` and whose command contains
+`/metrika`; it never prints that line. More than one matching legacy line is a
+hard failure. It removes prior copies of the managed collection, health, and
+summary jobs before appending the reviewed schedule. Every Metrika collector
+uses the same blocking lock, so a collision waits rather than silently skipping
+a day. The existing shadow monitor is not a managed marker and remains intact:
 
 ```bash
 python3 - "$CHECKPOINT_DIR/root.crontab.before" "$CHECKPOINT_DIR/root.crontab.after" <<'PY'
@@ -776,6 +780,8 @@ source, target = map(pathlib.Path, sys.argv[1:])
 kept = []
 removed_legacy = 0
 managed = (
+    "fetch_yandex_metrika_canonical.py",
+    "fetch_yandex_metrika_returning_canonical.py",
     "run_abbott_metrika_active_release.py",
     "abbott_health_probe.py",
     "send_canonical_telegram_report.py --mode summary",
@@ -788,15 +794,20 @@ for line in source.read_text(encoding="utf-8").splitlines():
     if any(marker in line for marker in managed):
         continue
     kept.append(line)
-if removed_legacy != 1:
-    raise SystemExit("expected exactly one 06:10 legacy /metrika cron")
+if removed_legacy > 1:
+    raise SystemExit("expected zero or one 06:10 legacy /metrika cron")
 runtime_revision = os.environ["RUNTIME_REVISION"]
 code_revision = os.environ["CODE_REVISION"]
 parser_version = os.environ["PARSER_VERSION"]
+root = "/root/reportingdash-abbott-canonical"
+python = f"{root}/venv/bin/python"
+lock = "/usr/bin/flock -w 7200 /run/lock/reportingdash-metrika.lock"
 kept.extend([
-    f"12 6 * * * cd /root/reportingdash-canonical && /root/reportingdash-canonical/venv/bin/python run_abbott_metrika_active_release.py --canonical-root /root/reportingdash-canonical --manifest /root/reportingdash-canonical/ops/abbott-runtime-manifest.sha256 --collector /root/reportingdash-canonical/fetch_yandex_metrika_canonical.py --runtime-revision {runtime_revision} --code-revision {code_revision} --parser-version {parser_version} >> /root/reportingdash-canonical/logs/yandex-metrika-abbott-cron.log 2>&1",
-    "5 7 * * * cd /root/reportingdash-canonical && /root/reportingdash-canonical/venv/bin/python abbott_health_probe.py --json --counter-id 90602537 >> /root/reportingdash-canonical/logs/abbott-health-cron.log 2>&1",
-    "10 7 * * * cd /root/reportingdash-canonical && /root/reportingdash-canonical/venv/bin/python send_canonical_telegram_report.py --mode summary >> /root/reportingdash-canonical/logs/canonical-telegram-summary.log 2>&1",
+    f"12 6 * * * {lock} /bin/bash -lc 'set -a; . /root/reportingdash-canonical/.env; set +a; cd {root}; PYTHONDONTWRITEBYTECODE=1 {python} fetch_yandex_metrika_canonical.py --days-back 2 --run-type cron --exclude-counter-id 90602537 >> {root}/logs/yandex-metrika-generic-cron.log 2>&1'",
+    f"12 6 * * * {lock} /bin/bash -lc 'set -a; . /root/reportingdash-private/abbott/runtime/collector.env; set +a; cd {root}; PYTHONDONTWRITEBYTECODE=1 {python} run_abbott_metrika_active_release.py --canonical-root {root} --manifest {root}/ops/abbott-runtime-manifest.sha256 --collector {root}/fetch_yandex_metrika_canonical.py --runtime-revision {runtime_revision} --code-revision {code_revision} --parser-version {parser_version} >> {root}/logs/yandex-metrika-abbott-cron.log 2>&1'",
+    f"18 6 * * * {lock} /bin/bash -lc 'set -a; . /root/reportingdash-canonical/.env; set +a; cd {root}; PYTHONDONTWRITEBYTECODE=1 {python} fetch_yandex_metrika_returning_canonical.py --counter-id 66624469 >> {root}/logs/yandex-metrika-returning-cron.log 2>&1'",
+    f"5 7 * * * /bin/bash -lc 'set -a; . /var/www/dashboard/.env; set +a; cd {root}; PYTHONDONTWRITEBYTECODE=1 {python} abbott_health_probe.py --json --counter-id 90602537 >> {root}/logs/abbott-health-cron.log 2>&1'",
+    f"10 7 * * * /bin/bash -lc 'set -a; . /var/www/dashboard/.env; set +a; cd {root}; PYTHONDONTWRITEBYTECODE=1 {python} send_canonical_telegram_report.py --mode summary >> {root}/logs/canonical-telegram-summary.log 2>&1'",
 ])
 target.write_text("\n".join(kept) + "\n", encoding="utf-8")
 target.chmod(0o600)
@@ -808,10 +819,12 @@ chmod 600 "$CHECKPOINT_DIR/root.crontab.installed"
 cmp "$CHECKPOINT_DIR/root.crontab.after" "$CHECKPOINT_DIR/root.crontab.installed"
 ```
 
-The final Abbott order is canonical collection `06:12`, deterministic health
-`07:05`, and Telegram daily summary `07:10`. The `07:10` summary is not an
-additional duplicate of the old `06:50` line; the helper replaces any existing
-summary entry.
+The final order is generic canonical collection excluding Abbott and the
+attested Abbott collector at `06:12`, the Zaruku returning collector at `06:18`,
+the preserved existing shadow monitor plus deterministic Abbott health at
+`07:05`, and exactly one Telegram daily summary at `07:10`. The `07:10` summary
+is not an additional duplicate of an older entry; the helper replaces any
+existing summary implementation.
 
 The wrapper attests `--runtime-revision` independently, resolves and verifies
 the current Abbott active pointer against the immutable `--code-revision` on

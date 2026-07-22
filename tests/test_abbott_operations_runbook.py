@@ -22,7 +22,35 @@ class AbbottOperationsRunbookTest(unittest.TestCase):
         ):
             self.assertIn(flag, cron)
         self.assertIn("--days-back 1", cron)
-        self.assertNotIn("--days-back 2", cron)
+        launcher_line = next(
+            line for line in cron.splitlines()
+            if "run_abbott_metrika_active_release.py --canonical-root" in line
+        )
+        self.assertNotIn("--days-back 2", launcher_line)
+
+    def test_cron_is_metrika_first_and_serializes_all_collectors(self):
+        cron = self.text.split("## Checkpoint 9", 1)[1].split("## Checkpoint 10", 1)[0]
+        lock = "/usr/bin/flock -w 7200 /run/lock/reportingdash-metrika.lock"
+        self.assertIn(f'lock = "{lock}"', cron)
+        self.assertGreaterEqual(cron.count("{lock} /bin/bash"), 3)
+        self.assertIn("--exclude-counter-id 90602537", cron)
+        self.assertIn("fetch_yandex_metrika_returning_canonical.py", cron)
+        self.assertIn("zero or one", cron)
+        self.assertIn("/root/reportingdash-abbott-canonical", cron)
+        self.assertIn("/var/www/dashboard/.env", cron)
+        self.assertIn("existing shadow monitor", cron)
+        self.assertNotIn("expected exactly one 06:10 legacy /metrika cron", cron)
+
+    def test_runtime_revision_is_distinct_from_release_data_revision(self):
+        self.assertIn("export RUNTIME_REVISION=<reviewed-runtime-git-revision>", self.text)
+        self.assertIn(
+            'test "$(git -C "$CANONICAL_ROOT" rev-parse HEAD)" = "$RUNTIME_REVISION"',
+            self.text,
+        )
+        self.assertNotIn(
+            'test "$(git -C "$CANONICAL_ROOT" rev-parse HEAD)" = "$CODE_REVISION"',
+            self.text,
+        )
 
     def test_schema_and_baseline_gates_are_exact(self):
         self.assertIn('test "$ACTUAL_SCHEMA_TABLE_COUNT" = 13', self.text)
