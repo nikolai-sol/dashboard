@@ -113,7 +113,7 @@ type MetrikaReport = {
   error?: string;
 };
 
-export type SourceFreshnessDbRow = RowDataPacket & {
+export type SourceFreshnessDbRow = {
   source_key: string;
   source_label: string;
   collector: string;
@@ -577,7 +577,7 @@ export function normalizeSourceFreshnessRow(row: SourceFreshnessDbRow, now = new
 
 async function querySourceFreshnessRows() {
   const query = buildSourceFreshnessQuery();
-  const [rows] = await pool.execute<SourceFreshnessDbRow[]>(query.sql, query.params);
+  const [rows] = await pool.execute<Array<RowDataPacket & SourceFreshnessDbRow>>(query.sql, query.params);
   return rows.map((row) => normalizeSourceFreshnessRow(row));
 }
 
