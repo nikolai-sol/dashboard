@@ -67,3 +67,8 @@ test("traffic visibility UI labels page-scope bars as pageviews instead of visit
   assert.equal(componentSource.includes('A ${primaryWeek ?? ""} визиты'), false);
   assert.doesNotMatch(componentSource, /A визиты/);
 });
+
+test("section positions are independent markers rather than a categorical trend line", () => {
+  assert.match(componentSource, /<Scatter/);
+  assert.doesNotMatch(componentSource, /<Line/);
+});

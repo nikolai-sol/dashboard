@@ -4,6 +4,7 @@ import test from "node:test";
 
 const source = readFileSync(new URL("./ZarukuSeoDashboard.tsx", import.meta.url), "utf8");
 const russiaMapSource = readFileSync(new URL("./ZarukuRussiaDemandMap.tsx", import.meta.url), "utf8");
+const contentSource = readFileSync(new URL("./ZarukuContentTab.tsx", import.meta.url), "utf8");
 
 test("client navigation contains exactly six tabs in executive order", () => {
   const labels = ["Обзор", "SEO", "Контент", "Аудитория", "Работы и задачи", "Качество"];
@@ -74,23 +75,20 @@ test("SEO tab renders Search Console facts through the unified read model withou
   assert.doesNotMatch(source, /Данные по Google-показам, кликам и CTR ожидаются из Search Console/);
 });
 
-test("pending and returning-content panels explain current state instead of showing misleading empty UI", () => {
+test("pending and returning-content panels use explicit source states instead of misleading empty UI", () => {
   assert.match(source, /function PendingPanel[\s\S]*if \(data\.pending_requirements\.length === 0\) return null;/);
   assert.match(source, /pending=\{data\.pending_requirements\.length > 0\}/);
   assert.doesNotMatch(source, /title="Что ещё ждём" layer="serp" pending right=/);
-  assert.match(source, /Нет возвратного контента за выбранный период/);
+  assert.match(contentSource, /meta=\{data\.dataset_meta\.returning_pages\}/);
+  assert.match(contentSource, /hasRows=\{data\.returning_pages\.length > 0\}/);
 });
 
-test("Behavior tab exposes canonical returning-content recency buckets", () => {
-  assert.match(source, /возвратные пользователи/);
-  assert.match(source, /1 день/);
-  assert.match(source, /2–7 дней/);
-  assert.match(source, /8–31 день/);
-  assert.match(source, /row\.returning_1_day_users/);
-  assert.match(source, /row\.returning_2_7_days_users/);
-  assert.match(source, /row\.returning_8_31_days_users/);
-}
-);
+test("Content route uses one focused workspace without a legacy Behavior tab", () => {
+  assert.match(source, /import ZarukuContentTab/);
+  assert.match(source, /<ZarukuContentTab/);
+  assert.doesNotMatch(source, /function ContentTab|function BehaviorTab/);
+  assert.doesNotMatch(source, /Поведение по каналам/);
+});
 
 test("SEO tab keeps useful GSC diagnostics and removes country breakdown", () => {
   assert.match(source, /<ZarukuSeoDiagnostics/);

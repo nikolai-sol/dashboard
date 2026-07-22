@@ -51,8 +51,8 @@ import {
 import ZarukuSeoAnalytics from "@/components/ZarukuSeoAnalytics";
 import ZarukuSeoOperations from "@/components/ZarukuSeoOperations";
 import ZarukuRussiaDemandMap from "@/components/ZarukuRussiaDemandMap";
-import ZarukuTrafficVisibility from "@/components/ZarukuTrafficVisibility";
 import ZarukuOverviewTab from "@/components/ZarukuOverviewTab";
+import ZarukuContentTab from "@/components/ZarukuContentTab";
 import {
   buildNorthStarKpis,
   buildSemanticHealthRows,
@@ -321,48 +321,6 @@ function DataTable({
               <td className={secondaryMetricCellClass}>{row.page_depth?.toFixed(1) ?? "—"}</td>
             </tr>
           ))}
-        </tbody>
-      </table>
-    </div>
-  );
-}
-
-function ReturningPagesTable({ rows, locale }: { rows: ZarukuSeoMetricRow[]; locale: string }) {
-  return (
-    <div className="overflow-x-auto">
-      <table className="w-full min-w-[760px] text-sm">
-        <thead>
-          <tr className="text-left text-xs uppercase text-slate-400">
-            <th className="pb-2 font-medium">Страница</th>
-            <th className="pb-2 text-right font-medium">Визиты</th>
-            <th className="pb-2 text-right font-medium">1 день</th>
-            <th className="pb-2 text-right font-medium">2–7 дней</th>
-            <th className="pb-2 text-right font-medium">8–31 день</th>
-            <th className="pb-2 text-right font-medium">Доля возвратов</th>
-          </tr>
-        </thead>
-        <tbody className="divide-y divide-slate-100">
-          {rows.map((row, index) => (
-            <tr key={`${row.url ?? row.label}-${index}`}>
-              <td className="max-w-[460px] py-2.5">
-                <div className="font-medium text-slate-700" title={row.url ?? row.label}>
-                  {truncate(shortUrl(row.url ?? row.label), 86)}
-                </div>
-              </td>
-              <td className="py-2.5 text-right text-slate-600">{formatNumber(row.visits, locale)}</td>
-              <td className="py-2.5 text-right text-slate-600">{formatNumber(row.returning_1_day_users ?? 0, locale)}</td>
-              <td className="py-2.5 text-right text-slate-600">{formatNumber(row.returning_2_7_days_users ?? 0, locale)}</td>
-              <td className="py-2.5 text-right text-slate-600">{formatNumber(row.returning_8_31_days_users ?? 0, locale)}</td>
-              <td className="py-2.5 text-right text-slate-500">{formatPercent(row.share, locale, 1)}</td>
-            </tr>
-          ))}
-          {rows.length === 0 ? (
-            <tr>
-              <td colSpan={6} className="py-6 text-center text-sm text-slate-500">
-                Нет возвратного контента за выбранный период.
-              </td>
-            </tr>
-          ) : null}
         </tbody>
       </table>
     </div>
@@ -808,25 +766,6 @@ function SeoTab({ data, locale, primaryWeek, comparisonWeek }: Props & { primary
   );
 }
 
-function ContentTab({ data, locale, primaryWeek, comparisonWeek }: Props & { primaryWeek: string | null; comparisonWeek: string | null }) {
-  return (
-    <div className="space-y-5">
-      <ZarukuTrafficVisibility
-        seoOs={data.seo_os}
-        primaryWeek={primaryWeek}
-        comparisonWeek={comparisonWeek}
-        source={data.sources.find((source) => source.id === "seo_os")}
-      />
-      <Panel data={data} title="Разделы портала" source="metrika" layer="onsite">
-        <DataTable rows={data.content_sections} mode="metrics" locale={locale ?? "ru-RU"} />
-      </Panel>
-      <Panel data={data} title="Топ страниц" source="metrika" layer="onsite">
-        <DataTable rows={data.top_pages.slice(0, 20)} mode="pages" locale={locale ?? "ru-RU"} />
-      </Panel>
-    </div>
-  );
-}
-
 function GeoTab({ data, locale }: Props) {
   return (
     <div className="space-y-5">
@@ -874,28 +813,6 @@ function AudienceTab({ data, locale }: Props) {
       <Panel data={data} title="Интересы" source="metrika" layer="onsite" right={<span className="text-xs text-slate-400">покрытие зависит от Яндекса</span>}>
         <BarList rows={data.interests.slice(0, 12)} locale={locale} />
       </Panel>
-    </div>
-  );
-}
-
-function BehaviorTab({ data, locale }: Props) {
-  const currentLocale = locale ?? "ru-RU";
-  return (
-    <div className="space-y-5">
-      <Panel data={data} title="Лучшее удержание" source="metrika" layer="onsite" right={<span className="text-xs text-slate-400">startURL · удержание</span>}>
-        <DataTable rows={data.best_engagement_pages} mode="pages" locale={currentLocale} wrapText />
-      </Panel>
-      <Panel data={data} title="Проблемные входные страницы" source="metrika" layer="onsite" right={<span className="text-xs text-slate-400">startURL · высокие отказы</span>}>
-        <DataTable rows={data.high_bounce_pages} mode="pages" locale={currentLocale} wrapText />
-      </Panel>
-      <div className="grid gap-5 xl:grid-cols-2">
-        <Panel data={data} title="Возвратный контент" source="metrika" layer="onsite" right={<span className="text-xs text-slate-400">возвратные пользователи</span>}>
-          <ReturningPagesTable rows={data.returning_pages.slice(0, 16)} locale={currentLocale} />
-        </Panel>
-        <Panel data={data} title="Поведение по каналам" source="metrika" layer="onsite" right={<span className="text-xs text-slate-400">источник трафика</span>}>
-          <DataTable rows={data.traffic_channels} mode="metrics" locale={currentLocale} />
-        </Panel>
-      </div>
     </div>
   );
 }
@@ -1080,7 +997,7 @@ export default function ZarukuSeoDashboard({ data, locale = "ru-RU" }: Props) {
           </div>
         );
       case "content":
-        return <div className="space-y-5"><ContentTab data={data} locale={locale} primaryWeek={selectedWeeks.primaryWeek} comparisonWeek={selectedWeeks.comparisonWeek} /><BehaviorTab data={data} locale={locale} /></div>;
+        return <ZarukuContentTab data={data} locale={locale} primaryWeek={selectedWeeks.primaryWeek} comparisonWeek={selectedWeeks.comparisonWeek} />;
       case "audience":
         return <div className="space-y-5"><GeoTab data={data} locale={locale} /><DevicesTab data={data} locale={locale} /><AudienceTab data={data} locale={locale} /></div>;
       case "quality":
