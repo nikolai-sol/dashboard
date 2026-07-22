@@ -822,6 +822,10 @@ activation; it may never overwrite the active release. The removed legacy
 `06:10 /metrika` job previously collected a duplicate multi-day window and is
 not retained as a `today-2` fallback.
 
+Session-integrity health treats a Reports API segment row omitted at zero
+sessions as zero, matching the publication gate. Unknown markers and arithmetic
+source mismatches remain `CRITICAL`.
+
 ## Checkpoint 10: revoke old Yandex credentials
 
 After the new token has completed an accepted collection, health probe, and

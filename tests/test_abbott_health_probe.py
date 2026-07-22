@@ -137,7 +137,7 @@ class AbbottProbeTests(unittest.TestCase):
             "status": "ok",
         })
 
-    def test_session_integrity_counts_missing_markers_and_unequal_partitions(self):
+    def test_session_integrity_treats_omitted_zero_markers_as_zero(self):
         rows = [
             {"report_date": date(2026, 7, 14), "traffic_source": "Direct", "user_id_presence": "all", "sessions": "10"},
             {"report_date": date(2026, 7, 14), "traffic_source": "Direct", "user_id_presence": "with_user_id", "sessions": "4"},
@@ -155,7 +155,7 @@ class AbbottProbeTests(unittest.TestCase):
             "with_user_id_sessions": 9,
             "without_user_id_sessions": 11,
             "mismatched_days": 1,
-            "mismatched_sources": 2,
+            "mismatched_sources": 1,
             "status": "mismatch",
         })
 

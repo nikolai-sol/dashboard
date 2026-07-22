@@ -276,8 +276,9 @@ def build_session_integrity(rows: list[dict], *, days_checked: int) -> dict:
     mismatched = {
         key
         for key, markers in grouped.items()
-        if set(markers) != required_markers
-        or markers["all"] != markers["with_user_id"] + markers["without_user_id"]
+        if set(markers) - required_markers
+        or markers.get("all", 0)
+        != markers.get("with_user_id", 0) + markers.get("without_user_id", 0)
     }
     mismatched_days = {report_date for report_date, _source in mismatched}
     return {

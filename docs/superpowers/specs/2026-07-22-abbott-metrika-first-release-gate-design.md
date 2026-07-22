@@ -43,3 +43,7 @@ The active-release launcher separately attests its committed runtime revision
 and the active release data revision. This permits a reviewed operational
 launcher fix without rewriting immutable candidate provenance; the collector
 continues to receive the release data revision.
+
+Session-integrity health uses the same arithmetic contract as publication.
+Reports API rows omitted because a segment has zero sessions are treated as
+zero; unknown markers or any non-zero arithmetic mismatch remain critical.
