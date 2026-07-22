@@ -83,6 +83,26 @@ if grep -Fq 'top-secret' "$TMP_DIR/missing.log"; then
   exit 1
 fi
 
+ABSENT_ABBOTT_RELEASE="$TMP_DIR/absent-abbott-release"
+mkdir -p "$ABSENT_ABBOTT_RELEASE/public"
+write_valid_env "$ABSENT_ABBOTT_RELEASE/.env"
+sed -i.bak '/^ABBOTT_DASHBOARD_PASSWORD=/d' "$ABSENT_ABBOTT_RELEASE/.env"
+if bash "$SCRIPT_DIR/validate-production-release.sh" "$ABSENT_ABBOTT_RELEASE" "$ABSENT_ABBOTT_RELEASE/.env" >"$TMP_DIR/absent-abbott.log" 2>&1; then
+  echo "validate-production-release.sh accepted a missing Abbott fallback password" >&2
+  exit 1
+fi
+grep -Fq 'ABBOTT_DASHBOARD_PASSWORD' "$TMP_DIR/absent-abbott.log"
+
+BLANK_ABBOTT_RELEASE="$TMP_DIR/blank-abbott-release"
+mkdir -p "$BLANK_ABBOTT_RELEASE/public"
+write_valid_env "$BLANK_ABBOTT_RELEASE/.env"
+sed -i.bak "s/^ABBOTT_DASHBOARD_PASSWORD=.*/ABBOTT_DASHBOARD_PASSWORD='   '/" "$BLANK_ABBOTT_RELEASE/.env"
+if bash "$SCRIPT_DIR/validate-production-release.sh" "$BLANK_ABBOTT_RELEASE" "$BLANK_ABBOTT_RELEASE/.env" >"$TMP_DIR/blank-abbott.log" 2>&1; then
+  echo "validate-production-release.sh accepted a blank Abbott fallback password" >&2
+  exit 1
+fi
+grep -Fq 'ABBOTT_DASHBOARD_PASSWORD' "$TMP_DIR/blank-abbott.log"
+
 PRIVATE_RELEASE="$TMP_DIR/private-release"
 mkdir -p "$PRIVATE_RELEASE/public/AbBoTt"
 printf 'image' > "$PRIVATE_RELEASE/public/AbBoTt/logo.png"

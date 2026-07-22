@@ -6,7 +6,7 @@
     "dev": "next dev",
     "build": "next build",
     "start": "next start -p 3001",
-    "test": "node --import tsx --test src/**/*.test.ts",
+    "test": "node --import tsx --test src/**/*.test.ts scripts/set-dashboard-shared-password.test.ts",
     "lint": "eslint .",
     "typecheck": "tsc --noEmit",
     "security:public-assets": "tsx scripts/assert-no-private-public-assets.ts",

@@ -108,4 +108,20 @@ if grep -Fq 'private # ' "$MISSING_LOG"; then
   exit 1
 fi
 
+ABSENT_ABBOTT_ENV="$(printf '%s\n' "$VALID_ENV" | sed '/^ABBOTT_DASHBOARD_PASSWORD=/d')"
+if FAKE_REMOTE_ENV_CONTENT="$ABSENT_ABBOTT_ENV" PATH="$TMP_DIR/bin:$PATH" \
+  bash "$SCRIPT_DIR/render-production-env.sh" "$TMP_DIR/absent-abbott.env" >"$TMP_DIR/absent-abbott.log" 2>&1; then
+  echo "render-production-env.sh accepted a missing Abbott fallback password" >&2
+  exit 1
+fi
+grep -Fq 'ABBOTT_DASHBOARD_PASSWORD' "$TMP_DIR/absent-abbott.log"
+
+BLANK_ABBOTT_ENV="$(printf '%s\n' "$VALID_ENV" | sed "s/^ABBOTT_DASHBOARD_PASSWORD=.*/ABBOTT_DASHBOARD_PASSWORD='   '/")"
+if FAKE_REMOTE_ENV_CONTENT="$BLANK_ABBOTT_ENV" PATH="$TMP_DIR/bin:$PATH" \
+  bash "$SCRIPT_DIR/render-production-env.sh" "$TMP_DIR/blank-abbott.env" >"$TMP_DIR/blank-abbott.log" 2>&1; then
+  echo "render-production-env.sh accepted a blank Abbott fallback password" >&2
+  exit 1
+fi
+grep -Fq 'ABBOTT_DASHBOARD_PASSWORD' "$TMP_DIR/blank-abbott.log"
+
 echo "render-production-env tests passed"

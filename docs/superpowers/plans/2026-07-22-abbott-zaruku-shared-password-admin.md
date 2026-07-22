@@ -139,7 +139,7 @@ git commit -m "feat: define shared dashboard password policy"
 - Consumes: `isSharedPasswordClient`, `hashPassword`, and `verifyPassword`.
 - Produces: `loadSharedPasswordCredential(dashboardId: number, clientId: string): Promise<SharedPasswordCredential>`.
 - Produces: `getSharedPasswordAdminState(dashboardId: number): Promise<SharedPasswordAdminState>`.
-- Produces: `rotateSharedDashboardPassword(dashboardId: number, password: string, updatedBy: string): Promise<SharedPasswordAdminState>`.
+- Produces: `rotateSharedDashboardPassword(dashboardId: number, password: string, updatedBy: string, expectedClientId?: string): Promise<SharedPasswordAdminState>`.
 - Produces: `verifySharedDashboardPassword(dashboardId: number, clientId: string, password: string): Promise<{ credentialVersion: number } | null>`.
 
 - [ ] **Step 1: Write failing fake-database store tests**
@@ -476,7 +476,7 @@ git commit -m "feat: add shared password settings form"
 
 **Interfaces:**
 - Consumes: `rotateSharedDashboardPassword`.
-- Produces: `npm run access:set-shared-password -- --client-id zaruku`, with password read only from stdin.
+- Produces: `npm --silent run access:set-shared-password -- --client-id zaruku`, with password read only from stdin.
 
 - [ ] **Step 1: Write failing CLI and env-contract tests**
 
@@ -519,12 +519,13 @@ async function main() {
   const validation = validateSharedPasswordChange({ new_password: password, confirm_password: password });
   if (!validation.ok) throw new Error(validation.error);
   const dashboardId = await resolveActiveDashboardIdByClientId(clientId);
-  await rotateSharedDashboardPassword(dashboardId, validation.password, "production-seed");
+  await rotateSharedDashboardPassword(dashboardId, validation.password, "production-seed", clientId);
   process.stdout.write("Shared dashboard password configured.\n");
 }
 ```
 
 Add `"access:set-shared-password": "tsx scripts/set-dashboard-shared-password.ts"` to `package.json`. The success line contains no client ID, password, hash, or version.
+The executable entrypoint compares canonical real paths, closes the module-level MySQL pool in `finally`, and leaves imports side-effect free.
 
 - [ ] **Step 4: Run CLI/Bash tests and verify GREEN**
 
@@ -561,7 +562,7 @@ set -a
 set +a
 npm run db:migrate
 read -rsp "Zaruku password: " SHARED_PASSWORD
-printf '%s' "$SHARED_PASSWORD" | npm run access:set-shared-password -- --client-id zaruku
+printf '%s' "$SHARED_PASSWORD" | npm --silent run access:set-shared-password -- --client-id zaruku
 unset SHARED_PASSWORD
 ```
 
@@ -617,7 +618,7 @@ Run `npm run db:migrate` from the reviewed production source with `/var/www/dash
 
 - [ ] **Step 3: Seed Zaruku through protected stdin**
 
-Use a TTY with `read -rsp`, pipe the approved initial value to `npm run access:set-shared-password -- --client-id zaruku`, immediately unset the variable, and verify only `configured=true` and `credential_version>=1`. Do not print or checkpoint the credential.
+Use a TTY with `read -rsp`, pipe the approved initial value to `npm --silent run access:set-shared-password -- --client-id zaruku`, immediately unset the variable, and verify only `configured=true` and `credential_version>=1`. Do not print or checkpoint the credential.
 
 - [ ] **Step 4: Deploy atomically and smoke both dashboards**
 

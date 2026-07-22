@@ -246,6 +246,7 @@ export function createDashboardSharedAccessStore(
     dashboardId: number,
     password: string,
     updatedBy: string,
+    expectedClientId?: string,
   ): Promise<SharedPasswordAdminState> {
     assertDashboardId(dashboardId);
     const connection = await database.getConnection();
@@ -257,6 +258,7 @@ export function createDashboardSharedAccessStore(
         `SELECT client_id
          FROM dashboards
          WHERE id = ?
+           AND is_active = TRUE
          LIMIT 1
          FOR UPDATE`,
         [dashboardId],
@@ -267,7 +269,10 @@ export function createDashboardSharedAccessStore(
       }
 
       const clientId = normalizeClientId(dashboard.client_id);
-      if (!isSharedPasswordClient(clientId)) {
+      if (
+        !isSharedPasswordClient(clientId) ||
+        (expectedClientId !== undefined && expectedClientId !== clientId)
+      ) {
         throw new SharedPasswordRotationError("UNSUPPORTED_DASHBOARD");
       }
 

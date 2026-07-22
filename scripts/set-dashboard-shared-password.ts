@@ -1,12 +1,9 @@
-import { readFileSync } from "node:fs";
-import path from "node:path";
-import { pathToFileURL } from "node:url";
+import { readFileSync, realpathSync } from "node:fs";
+import { fileURLToPath } from "node:url";
 
 import pool from "../src/lib/db";
 import { rotateSharedDashboardPassword } from "../src/lib/dashboard-shared-access";
 import {
-  isSharedPasswordClient,
-  normalizeSharedPasswordClientId,
   validateSharedPasswordChange,
 } from "../src/lib/shared-password-policy";
 
@@ -15,10 +12,14 @@ type DashboardLookupDatabase = {
 };
 
 export function parseSeedClientId(args: string[]) {
-  if (args.length !== 2 || args[0] !== "--client-id" || !isSharedPasswordClient(args[1])) {
+  if (
+    args.length !== 2 ||
+    args[0] !== "--client-id" ||
+    (args[1] !== "abbott" && args[1] !== "zaruku")
+  ) {
     throw new Error("Usage: --client-id abbott|zaruku");
   }
-  return normalizeSharedPasswordClientId(args[1]);
+  return args[1];
 }
 
 export async function resolveActiveDashboardIdByClientId(
@@ -57,14 +58,38 @@ async function main() {
   if (!validation.ok) throw new Error(validation.error);
 
   const dashboardId = await resolveActiveDashboardIdByClientId(clientId);
-  await rotateSharedDashboardPassword(dashboardId, validation.password, "production-seed");
+  await rotateSharedDashboardPassword(dashboardId, validation.password, "production-seed", clientId);
   process.stdout.write("Shared dashboard password configured.\n");
 }
 
-const entrypoint = process.argv[1] ? pathToFileURL(path.resolve(process.argv[1])).href : "";
-if (import.meta.url === entrypoint) {
-  void main().catch(() => {
+function canonicalPath(value: string) {
+  try {
+    return realpathSync(value);
+  } catch {
+    return null;
+  }
+}
+
+async function runEntrypoint() {
+  try {
+    await main();
+  } catch {
     process.stderr.write("Unable to configure shared dashboard password.\n");
     process.exitCode = 1;
-  });
+  } finally {
+    try {
+      await pool.end();
+    } catch {
+      if (process.exitCode !== 1) {
+        process.stderr.write("Unable to configure shared dashboard password.\n");
+      }
+      process.exitCode = 1;
+    }
+  }
+}
+
+const modulePath = canonicalPath(fileURLToPath(import.meta.url));
+const entrypointPath = process.argv[1] ? canonicalPath(process.argv[1]) : null;
+if (modulePath !== null && modulePath === entrypointPath) {
+  void runEntrypoint();
 }
