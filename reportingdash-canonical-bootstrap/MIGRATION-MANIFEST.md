@@ -27,7 +27,7 @@ every runbook entrypoint and each repository-local Python dependency.
 | `runtime/canonical_writer.py` | `canonical_writer.py` | `f7e0ac999cf9438fdc3161d893a101f778622c69d01a1b6a4076f24c2239e0b8` | Atomic staging and active append-only writer |
 | `runtime/metrika_logs_api.py` | `metrika_logs_api.py` | `bfb6e5ec504f0e89f2ab5547102efa1a59fedeaf5e1b88f7e6179f3658a85f5f` | Exact Metrika Logs request lifecycle and visit parser |
 | `runtime/canonical_release_store.py` | `canonical_release_store.py` | `7c31094a188ed32a9944b32456d302c2e3256abdd554da012b15fcf38db0a301` | Exact validation and pointer store |
-| `runtime/run_abbott_metrika_active_release.py` | `run_abbott_metrika_active_release.py` | `5178832338509fb18a4a7ce25ef8e8fb0a9efddd2900e95a25e3f0886ea7cabf` | Committed-manifest cron launcher |
+| `runtime/run_abbott_metrika_active_release.py` | `run_abbott_metrika_active_release.py` | `d38c30ad6ca2877c0cf05a9170161a67465188a2d5132b6fda58017ecf5cb911` | Committed-manifest cron launcher |
 | `runtime/abbott_release_operator.py` | `abbott_release_operator.py` | `4fea3b284743e168011bb4518276576890d76c375a557b9732e6491f326ecd9f` | Least-privilege lifecycle CLI |
 | `runtime/probe_yandex_metrika_access.py` | `probe_yandex_metrika_access.py` | `430603922de9cd3cdbc6d0a7dc103f841924087c39462fc137ec8a26684674bc` | Read-only counter access proof |
 | `runtime/capture_abbott_canonical_baseline.py` | `capture_abbott_canonical_baseline.py` | `24692288fd1e8c6bf61b0b59b52963c60068df13e068bf4336e6d9fd9ce998e2` | Frozen baseline CLI |
