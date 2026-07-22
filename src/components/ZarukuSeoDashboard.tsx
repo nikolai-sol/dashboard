@@ -53,6 +53,7 @@ import ZarukuSeoOperations from "@/components/ZarukuSeoOperations";
 import ZarukuOverviewTab from "@/components/ZarukuOverviewTab";
 import ZarukuContentTab from "@/components/ZarukuContentTab";
 import ZarukuAudienceTab from "@/components/ZarukuAudienceTab";
+import ZarukuWorkTab from "@/components/ZarukuWorkTab";
 import {
   buildNorthStarKpis,
   buildSemanticHealthRows,
@@ -846,7 +847,7 @@ export default function ZarukuSeoDashboard({ data, locale = "ru-RU" }: Props) {
         return <SeoTab data={data} locale={locale} primaryWeek={selectedWeeks.primaryWeek} comparisonWeek={selectedWeeks.comparisonWeek} />;
       case "work":
         return (
-          <div className="space-y-5">
+          <ZarukuWorkTab data={data} primaryWeek={selectedWeeks.primaryWeek} comparisonWeek={selectedWeeks.comparisonWeek}>
             <WeeklyFocusPanel data={data} locale={locale} primaryWeek={selectedWeeks.primaryWeek} />
             <ZarukuSeoOperations
               seoOs={data.seo_os}
@@ -854,7 +855,7 @@ export default function ZarukuSeoDashboard({ data, locale = "ru-RU" }: Props) {
               comparisonWeek={selectedWeeks.comparisonWeek}
               source={data.sources.find((source) => source.id === "seo_os")}
             />
-          </div>
+          </ZarukuWorkTab>
         );
       case "content":
         return <ZarukuContentTab data={data} locale={locale} primaryWeek={selectedWeeks.primaryWeek} comparisonWeek={selectedWeeks.comparisonWeek} />;

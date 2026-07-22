@@ -84,6 +84,13 @@ test("Content route uses one focused workspace without a legacy Behavior tab", (
   assert.doesNotMatch(source, /Поведение по каналам/);
 });
 
+test("Work route uses the client-facing workspace wrapper", () => {
+  assert.match(source, /import ZarukuWorkTab/);
+  assert.match(source, /<ZarukuWorkTab/);
+  assert.match(source, /<WeeklyFocusPanel/);
+  assert.match(source, /<ZarukuSeoOperations/);
+});
+
 test("SEO tab keeps useful GSC diagnostics and removes country breakdown", () => {
   assert.match(source, /<ZarukuSeoDiagnostics/);
   assert.match(source, /data\.gsc\.landing_pages/);

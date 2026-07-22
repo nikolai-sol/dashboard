@@ -128,7 +128,7 @@ export default function ZarukuSeoOperations({ seoOs, primaryWeek, comparisonWeek
   );
 
   if (!seoOs.available) {
-    return <section className="rounded-lg border border-slate-200 bg-white px-5 py-8 text-sm text-slate-500">SEO Ops временно недоступен. Повторите попытку позже.</section>;
+    return <section className="rounded-lg border border-slate-200 bg-white px-5 py-8 text-sm text-slate-500">Данные по работам и задачам временно недоступны. Повторите попытку позже.</section>;
   }
 
   return (
