@@ -55,14 +55,14 @@ or placeholders, not credentials.
 set -euo pipefail
 umask 077
 
-export CANONICAL_ROOT=/root/reportingdash-canonical
+export CANONICAL_ROOT=/root/reportingdash-abbott-canonical
 export DASHBOARD_SOURCE_ROOT=/root/reportingdash-rollout/dashboard-next
 export DASHBOARD_RUNTIME_ROOT=/var/www/dashboard
 export ABBOTT_COUNTER_ID=90602537
 export ABBOTT_OWNER_MYSQL_DEFAULTS_FILE=/root/.config/reportingdash/abbott-owner.cnf
-export ABBOTT_COLLECTOR_ENV_FILE=/root/reportingdash-canonical/.env
-export ABBOTT_IMPORT_ENV_FILE=/root/reportingdash-canonical/.abbott-import.env
-export ABBOTT_RELEASE_ENV_FILE=/root/reportingdash-canonical/.abbott-release-operator.env
+export ABBOTT_COLLECTOR_ENV_FILE=/root/reportingdash-private/abbott/runtime/collector.env
+export ABBOTT_IMPORT_ENV_FILE=/root/reportingdash-private/abbott/runtime/import.env
+export ABBOTT_RELEASE_ENV_FILE=/root/reportingdash-private/abbott/runtime/release-operator.env
 export DASHBOARD_OWNER_ENV_FILE=/var/www/www-root/data/.production.env
 export LEGACY_RUNTIME_ENV_FILE=/var/www/legacy-reporting/.env
 export LEGACY_SERVICE_NAME=<reviewed-systemd-unit>
@@ -81,6 +81,7 @@ export CANONICAL_RUNTIME_MANIFEST="$CANONICAL_ROOT/ops/abbott-runtime-manifest.s
 
 install -d -m 700 /root/.config/reportingdash
 install -d -m 700 "$ABBOTT_PRIVATE_ARCHIVE_DIR" "$ABBOTT_PRIVATE_INPUT_DIR"
+install -d -m 700 "$CANONICAL_ROOT/logs"
 test "$(git -C "$DASHBOARD_SOURCE_ROOT" rev-parse HEAD)" = "$DASHBOARD_CODE_REVISION"
 test "$(git -C "$CANONICAL_ROOT" rev-parse HEAD)" = "$RUNTIME_REVISION"
 git -C "$CANONICAL_ROOT" diff --quiet
@@ -676,6 +677,15 @@ bash scripts/validate-production-release.sh \
   "$DASHBOARD_SOURCE_ROOT/.next/standalone/.env"
 export DASHBOARD_RELEASES_DIR=/var/www/dashboard-releases
 if [[ -d "$DASHBOARD_RUNTIME_ROOT" && ! -L "$DASHBOARD_RUNTIME_ROOT" ]]; then
+  install -d -m 700 "$CHECKPOINT_DIR/public-quarantine"
+  if [[ -e "$DASHBOARD_RUNTIME_ROOT/public/abbott" ]]; then
+    test ! -e "$CHECKPOINT_DIR/public-quarantine/abbott"
+    mv "$DASHBOARD_RUNTIME_ROOT/public/abbott" \
+      "$CHECKPOINT_DIR/public-quarantine/abbott"
+    find "$CHECKPOINT_DIR/public-quarantine/abbott" -type d -exec chmod 700 {} +
+    find "$CHECKPOINT_DIR/public-quarantine/abbott" -type f -exec chmod 600 {} +
+  fi
+  test ! -e "$DASHBOARD_RUNTIME_ROOT/public/abbott"
   bash scripts/install-reviewed-release.sh --checkpoint-current \
     "$DASHBOARD_RUNTIME_ROOT" \
     "$DASHBOARD_RELEASES_DIR" \
@@ -695,7 +705,20 @@ npm run security:public-assets -- --release "$DEPLOYED_DASHBOARD_RELEASE"
   sha256sum -c "$DASHBOARD_RELEASES_DIR/$DASHBOARD_CODE_REVISION.sha256")
 pm2 restart dashboard-next --update-env
 curl -fsS http://127.0.0.1:3001/api/health >/dev/null
+for public_asset in \
+  abbott-workbook.json \
+  bitrix-analytics.json \
+  bitrix-session-journeys.json
+do
+  public_asset_status="$(curl -sS -o /dev/null -w '%{http_code}' \
+    "http://127.0.0.1:3001/abbott/$public_asset")"
+  test "$public_asset_status" = 404
+done
 ```
+
+Never restore the quarantine, including during rollback. A sanitized
+predecessor may be reactivated only after the same release scan; the quarantined
+PII remains outside every application and public release tree.
 
 Do not validate or activate if any revision, full-tree manifest, deployed-tree
 asset scan, restart, or health check fails.
@@ -763,6 +786,10 @@ Set the explicit human gate only after Checkpoint 8 smoke tests pass:
 ```bash
 export ACTIVATION_CONFIRMED=yes
 test "$ACTIVATION_CONFIRMED" = yes
+test "$(git -C "$CANONICAL_ROOT" rev-parse HEAD)" = "$RUNTIME_REVISION"
+(cd "$CANONICAL_ROOT" && sha256sum -c "$CANONICAL_RUNTIME_MANIFEST")
+test -x /root/reportingdash-canonical/venv/bin/python
+test -f /root/reportingdash-canonical/fetch_yandex_metrika_returning_canonical.py
 ```
 
 Create the new crontab from the protected checkpoint. The helper accepts and
@@ -801,11 +828,13 @@ code_revision = os.environ["CODE_REVISION"]
 parser_version = os.environ["PARSER_VERSION"]
 root = "/root/reportingdash-abbott-canonical"
 python = f"{root}/venv/bin/python"
-lock = "/usr/bin/flock -w 7200 /run/lock/reportingdash-metrika.lock"
+legacy_root = "/root/reportingdash-canonical"
+legacy_python = f"{legacy_root}/venv/bin/python"
+lock = "/usr/bin/flock /run/lock/reportingdash-metrika.lock"
 kept.extend([
     f"12 6 * * * {lock} /bin/bash -lc 'set -a; . /root/reportingdash-canonical/.env; set +a; cd {root}; PYTHONDONTWRITEBYTECODE=1 {python} fetch_yandex_metrika_canonical.py --days-back 2 --run-type cron --exclude-counter-id 90602537 >> {root}/logs/yandex-metrika-generic-cron.log 2>&1'",
     f"12 6 * * * {lock} /bin/bash -lc 'set -a; . /root/reportingdash-private/abbott/runtime/collector.env; set +a; cd {root}; PYTHONDONTWRITEBYTECODE=1 {python} run_abbott_metrika_active_release.py --canonical-root {root} --manifest {root}/ops/abbott-runtime-manifest.sha256 --collector {root}/fetch_yandex_metrika_canonical.py --runtime-revision {runtime_revision} --code-revision {code_revision} --parser-version {parser_version} >> {root}/logs/yandex-metrika-abbott-cron.log 2>&1'",
-    f"18 6 * * * {lock} /bin/bash -lc 'set -a; . /root/reportingdash-canonical/.env; set +a; cd {root}; PYTHONDONTWRITEBYTECODE=1 {python} fetch_yandex_metrika_returning_canonical.py --counter-id 66624469 >> {root}/logs/yandex-metrika-returning-cron.log 2>&1'",
+    f"18 6 * * * {lock} /bin/bash -lc 'set -a; . {legacy_root}/.env; set +a; cd {legacy_root}; PYTHONDONTWRITEBYTECODE=1 {legacy_python} fetch_yandex_metrika_returning_canonical.py --counter-id 66624469 >> {legacy_root}/logs/yandex-metrika-returning-cron.log 2>&1'",
     f"5 7 * * * /bin/bash -lc 'set -a; . /var/www/dashboard/.env; set +a; cd {root}; PYTHONDONTWRITEBYTECODE=1 {python} abbott_health_probe.py --json --counter-id 90602537 >> {root}/logs/abbott-health-cron.log 2>&1'",
     f"10 7 * * * /bin/bash -lc 'set -a; . /var/www/dashboard/.env; set +a; cd {root}; PYTHONDONTWRITEBYTECODE=1 {python} send_canonical_telegram_report.py --mode summary >> {root}/logs/canonical-telegram-summary.log 2>&1'",
 ])
@@ -825,6 +854,13 @@ the preserved existing shadow monitor plus deterministic Abbott health at
 `07:05`, and exactly one Telegram daily summary at `07:10`. The `07:10` summary
 is not an additional duplicate of an older entry; the helper replaces any
 existing summary implementation.
+
+The generic collector and Abbott launcher execute from the dedicated, attested
+Abbott runtime. The returning job preserves the independently deployed existing
+Zaruku collector and venv under `/root/reportingdash-canonical`; Checkpoint 9
+verifies both executable paths before changing cron. The shared `flock` has no
+timeout, so queued collectors cannot be silently skipped after an arbitrary
+wait interval.
 
 The wrapper attests `--runtime-revision` independently, resolves and verifies
 the current Abbott active pointer against the immutable `--code-revision` on

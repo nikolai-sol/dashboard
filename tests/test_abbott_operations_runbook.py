@@ -30,16 +30,43 @@ class AbbottOperationsRunbookTest(unittest.TestCase):
 
     def test_cron_is_metrika_first_and_serializes_all_collectors(self):
         cron = self.text.split("## Checkpoint 9", 1)[1].split("## Checkpoint 10", 1)[0]
-        lock = "/usr/bin/flock -w 7200 /run/lock/reportingdash-metrika.lock"
+        lock = "/usr/bin/flock /run/lock/reportingdash-metrika.lock"
         self.assertIn(f'lock = "{lock}"', cron)
         self.assertGreaterEqual(cron.count("{lock} /bin/bash"), 3)
+        self.assertNotIn("flock -w", cron)
+        self.assertNotIn("flock -n", cron)
         self.assertIn("--exclude-counter-id 90602537", cron)
         self.assertIn("fetch_yandex_metrika_returning_canonical.py", cron)
         self.assertIn("zero or one", cron)
         self.assertIn("/root/reportingdash-abbott-canonical", cron)
+        self.assertIn('legacy_root = "/root/reportingdash-canonical"', cron)
+        self.assertIn('legacy_python = f"{legacy_root}/venv/bin/python"', cron)
         self.assertIn("/var/www/dashboard/.env", cron)
         self.assertIn("existing shadow monitor", cron)
         self.assertNotIn("expected exactly one 06:10 legacy /metrika cron", cron)
+
+    def test_runbook_provisions_the_exact_dedicated_runtime_used_by_cron(self):
+        operator = self.text.split("## Operator variables", 1)[1].split(
+            "## Local MySQL rehearsal", 1
+        )[0]
+        self.assertIn("export CANONICAL_ROOT=/root/reportingdash-abbott-canonical", operator)
+        self.assertIn("/root/reportingdash-private/abbott/runtime/collector.env", operator)
+        self.assertIn("/root/reportingdash-private/abbott/runtime/import.env", operator)
+        self.assertIn("/root/reportingdash-private/abbott/runtime/release-operator.env", operator)
+        self.assertIn('install -d -m 700 "$CANONICAL_ROOT/logs"', operator)
+
+    def test_public_abbott_data_is_quarantined_before_predecessor_checkpoint(self):
+        deploy = self.text.split("Before validation", 1)[1].split(
+            "Only after every gate", 1
+        )[0]
+        quarantine = deploy.index("public-quarantine/abbott")
+        checkpoint = deploy.index("--checkpoint-current")
+        public_404 = deploy.index("public_asset_status", checkpoint)
+        self.assertLess(quarantine, checkpoint)
+        self.assertLess(checkpoint, public_404)
+        self.assertIn('test ! -e "$DASHBOARD_RUNTIME_ROOT/public/abbott"', deploy)
+        self.assertIn('test "$public_asset_status" = 404', deploy)
+        self.assertIn("Never restore the quarantine", deploy)
 
     def test_runtime_revision_is_distinct_from_release_data_revision(self):
         self.assertIn("export RUNTIME_REVISION=<reviewed-runtime-git-revision>", self.text)
