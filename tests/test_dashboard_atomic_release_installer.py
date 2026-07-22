@@ -60,6 +60,12 @@ class DashboardAtomicReleaseInstallerTest(unittest.TestCase):
             current = base / "dashboard"
             current.mkdir()
             create_release_tree(current)
+            (current / ".env").write_text("PRIVATE=value\n", encoding="utf-8")
+            for path in (current, current / ".next", current / ".next/static", current / "public"):
+                path.chmod(0o700)
+            for path in current.rglob("*"):
+                if path.is_file():
+                    path.chmod(0o600)
             releases = base / "releases"
             predecessor = "abcdef000001"
 
@@ -82,6 +88,12 @@ class DashboardAtomicReleaseInstallerTest(unittest.TestCase):
             self.assertTrue(current.is_symlink())
             self.assertEqual(current.resolve(), predecessor_release.resolve())
             self.assertTrue(predecessor_manifest.is_file())
+            self.assertEqual(stat.S_IMODE(predecessor_release.stat().st_mode), 0o711)
+            self.assertEqual(stat.S_IMODE((predecessor_release / ".next").stat().st_mode), 0o711)
+            self.assertEqual(stat.S_IMODE((predecessor_release / ".next/static/app.js").stat().st_mode), 0o644)
+            self.assertEqual(stat.S_IMODE((predecessor_release / "public/site.txt").stat().st_mode), 0o644)
+            self.assertEqual(stat.S_IMODE((predecessor_release / ".env").stat().st_mode), 0o600)
+            self.assertEqual(stat.S_IMODE((predecessor_release / "server.js").stat().st_mode), 0o600)
             verify = subprocess.run(
                 ["sha256sum", "-c", str(predecessor_manifest)],
                 cwd=predecessor_release,
@@ -122,6 +134,10 @@ class DashboardAtomicReleaseInstallerTest(unittest.TestCase):
             )
             self.assertEqual(rollback.returncode, 0, rollback.stderr)
             self.assertEqual(current.resolve(), predecessor_release.resolve())
+            self.assertEqual(stat.S_IMODE(predecessor_release.stat().st_mode), 0o711)
+            self.assertEqual(stat.S_IMODE((predecessor_release / ".next/static/app.js").stat().st_mode), 0o644)
+            self.assertEqual(stat.S_IMODE((predecessor_release / ".env").stat().st_mode), 0o600)
+            self.assertEqual(stat.S_IMODE((predecessor_release / "server.js").stat().st_mode), 0o600)
 
     def test_checkpoint_rejects_incomplete_or_private_current_tree_without_moving_it(self):
         for private in (False, True):

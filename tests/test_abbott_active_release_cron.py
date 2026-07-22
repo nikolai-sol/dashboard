@@ -85,6 +85,8 @@ class AbbottActiveReleaseCronTest(unittest.TestCase):
                 launcher,
                 "resolve_active_release",
                 side_effect=lambda revision: order.append(("resolve", revision)) or 41,
+            ), patch.object(
+                launcher, "active_day_is_reconciled", return_value=False
             ), patch.object(launcher.subprocess, "run") as execute:
                 launcher.run(args)
 
@@ -96,6 +98,37 @@ class AbbottActiveReleaseCronTest(unittest.TestCase):
         self.assertEqual(command[command.index("--canonical-release-id") + 1], "41")
         self.assertNotIn("shell", execute.call_args.kwargs)
         self.assertTrue(execute.call_args.kwargs["check"])
+
+    def test_run_records_successful_noop_when_completed_day_is_already_reconciled(self):
+        import run_abbott_metrika_active_release as launcher
+
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            collector = root / "fetch_yandex_metrika_canonical.py"
+            manifest = root / "runtime.sha256"
+            collector.write_text("# collector\n", encoding="utf-8")
+            manifest.write_text("placeholder\n", encoding="utf-8")
+            args = SimpleNamespace(
+                canonical_root=root,
+                manifest=manifest,
+                collector=collector,
+                runtime_revision="runtime987654",
+                code_revision="abcdef123456",
+                parser_version="abbott-v1",
+            )
+            with patch.object(launcher, "attest_runtime"), patch.object(
+                launcher, "resolve_active_release", return_value=41
+            ), patch.object(
+                launcher, "completed_utc_day", create=True, return_value="2026-07-21"
+            ), patch.object(
+                launcher, "active_day_is_reconciled", create=True, return_value=True
+            ), patch.object(
+                launcher, "record_reconciled_noop", create=True
+            ) as record_noop, patch.object(launcher.subprocess, "run") as execute:
+                launcher.run(args)
+
+        record_noop.assert_called_once_with(41, "2026-07-21")
+        execute.assert_not_called()
 
 
 if __name__ == "__main__":

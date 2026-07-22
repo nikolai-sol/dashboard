@@ -8,12 +8,21 @@ import hashlib
 import re
 import subprocess
 import sys
+import uuid
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
-from canonical_writer import get_db_connection
+from canonical_writer import (
+    finish_collector_run,
+    get_db_connection,
+    log_run_event,
+    start_collector_run,
+)
 
 
 ABBOTT_COUNTER_ID = "90602537"
+ABBOTT_REQUIRED_SCOPES = ("other", "traffic", "page", "user_behavior", "returning")
+GOOD_COVERAGE_STATUSES = {"success", "success_empty"}
 
 
 class ActiveReleaseLaunchError(RuntimeError):
@@ -179,6 +188,92 @@ def resolve_active_release(expected_revision: str) -> int:
             conn.close()
 
 
+def completed_utc_day() -> str:
+    return (datetime.now(timezone.utc).date() - timedelta(days=1)).isoformat()
+
+
+def active_day_is_reconciled(release_id: int, day: str) -> bool:
+    conn = None
+    cur = None
+    try:
+        conn = get_db_connection()
+        cur = conn.cursor(dictionary=True)
+        cur.execute(
+            """
+            SELECT scope_key, collection_status, pagination_complete,
+                   is_sampled, empty_reconciled
+            FROM canonical_source_coverage_daily
+            WHERE canonical_release_id = %s
+              AND source_key = %s
+              AND counter_id = %s
+              AND report_date = %s
+            ORDER BY scope_key
+            """,
+            (release_id, "yandex_metrika", ABBOTT_COUNTER_ID, day),
+        )
+        rows = cur.fetchall()
+        if len(rows) != len(ABBOTT_REQUIRED_SCOPES):
+            return False
+        by_scope = {str(row.get("scope_key")): row for row in rows}
+        if set(by_scope) != set(ABBOTT_REQUIRED_SCOPES):
+            return False
+        for scope in ABBOTT_REQUIRED_SCOPES:
+            row = by_scope[scope]
+            status = row.get("collection_status")
+            if (
+                status not in GOOD_COVERAGE_STATUSES
+                or not bool(row.get("pagination_complete"))
+                or bool(row.get("is_sampled"))
+                or (status == "success_empty" and not bool(row.get("empty_reconciled")))
+            ):
+                return False
+        return True
+    except Exception:
+        raise ActiveReleaseLaunchError("Unable to verify Abbott completed-day coverage") from None
+    finally:
+        if cur is not None:
+            cur.close()
+        if conn is not None:
+            conn.close()
+
+
+def record_reconciled_noop(release_id: int, day: str) -> None:
+    run_id = start_collector_run(
+        source_key="yandex_metrika",
+        run_type="cron",
+        run_mode="canonical_release",
+        job_key="yandex_metrika_cron",
+        correlation_id=str(uuid.uuid4()),
+        date_from=day,
+        date_to=day,
+    )
+    summary = {
+        "counter_id": ABBOTT_COUNTER_ID,
+        "canonical_release_id": release_id,
+        "published_days": 0,
+        "already_reconciled_days": [day],
+        "failed_days": [],
+        "failures": [],
+        "rows_written": 0,
+    }
+    log_run_event(
+        run_id,
+        "INFO",
+        "summary",
+        "Abbott Metrika completed day was already reconciled",
+        summary,
+    )
+    finish_collector_run(
+        run_id,
+        status="success",
+        rows_read=0,
+        rows_written=0,
+        rows_updated=0,
+        error_count=0,
+        error_summary=None,
+    )
+
+
 def build_collector_command(
     *, collector: Path, release_id: int, code_revision: str, parser_version: str
 ) -> list[str]:
@@ -213,6 +308,10 @@ def run(args: argparse.Namespace) -> None:
     runtime_revision = getattr(args, "runtime_revision", None) or args.code_revision
     attest_runtime(root, runtime_revision, args.manifest)
     release_id = resolve_active_release(args.code_revision)
+    day = completed_utc_day()
+    if active_day_is_reconciled(release_id, day):
+        record_reconciled_noop(release_id, day)
+        return
     try:
         subprocess.run(
             build_collector_command(
