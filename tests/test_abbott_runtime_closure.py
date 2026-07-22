@@ -357,7 +357,8 @@ assert abbott_health_probe.ZoneInfo.__module__ == "backports.zoneinfo"
             "## Checkpoint 10", 1
         )[0]
         self.assertNotIn(" /usr/bin/python", cron)
-        self.assertIn("/root/reportingdash-canonical/venv/bin/python", cron)
+        self.assertIn('root = "/root/reportingdash-abbott-canonical"', cron)
+        self.assertIn('python = f"{root}/venv/bin/python"', cron)
 
     def test_documented_pin_verifiers_accept_an_inactive_python38_marker(self):
         documents = (
