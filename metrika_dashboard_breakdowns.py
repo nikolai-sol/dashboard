@@ -3,6 +3,7 @@
 from dataclasses import dataclass
 from datetime import date
 import hashlib
+import json
 from typing import Any, Mapping, Optional, Sequence, Union
 
 
@@ -88,7 +89,11 @@ def _float_metric(metrics: Sequence[Any], index: int) -> Optional[float]:
 
 
 def _dimension_hash(parts: Sequence[Optional[str]]) -> str:
-    payload = "|".join("" if value is None else str(value) for value in parts)
+    payload = json.dumps(
+        list(parts),
+        ensure_ascii=True,
+        separators=(",", ":"),
+    )
     return hashlib.sha256(payload.encode("utf-8")).hexdigest()
 
 
@@ -226,10 +231,18 @@ def build_coverage_row(
 ) -> dict:
     detail_rows = sum(1 for row in rows if row.get("row_kind") == "detail")
     api_total_rows = response.get("total_rows")
-    try:
-        normalized_total_rows = max(int(api_total_rows), 0)
-    except (TypeError, ValueError):
-        normalized_total_rows = detail_rows
+    if (
+        isinstance(api_total_rows, bool)
+        or not isinstance(api_total_rows, int)
+        or api_total_rows < 0
+    ):
+        raise ValueError("total_rows must be an explicit nonnegative integer")
+    if response.get("pagination_complete") is not True:
+        raise ValueError("pagination_complete must be explicitly true")
+    if api_total_rows != detail_rows:
+        raise ValueError(
+            "Metrika total_rows does not match normalized detail-row count"
+        )
     return {
         "source_key": SOURCE_KEY,
         "analytics_account_id": str(account_id),
@@ -237,8 +250,8 @@ def build_coverage_row(
         "report_key": report.report_key,
         "segment_key": report.segment_key,
         "status": "success" if detail_rows else "empty",
-        "api_total_rows": normalized_total_rows,
+        "api_total_rows": api_total_rows,
         "persisted_rows": len(rows),
-        "pagination_complete": int(bool(response.get("pagination_complete", True))),
+        "pagination_complete": 1,
         "ingestion_run_id": run_id,
     }

@@ -1,5 +1,6 @@
 import dataclasses
 import hashlib
+import json
 import unittest
 
 from metrika_dashboard_breakdowns import (
@@ -59,7 +60,11 @@ class MetrikaDashboardBreakdownNormalizationTests(unittest.TestCase):
 
     @staticmethod
     def expected_hash(*parts):
-        payload = "|".join("" if value is None else str(value) for value in parts)
+        payload = json.dumps(
+            list(parts),
+            ensure_ascii=True,
+            separators=(",", ":"),
+        )
         return hashlib.sha256(payload.encode("utf-8")).hexdigest()
 
     def test_builds_one_dimension_detail_and_api_total_rows(self):
@@ -175,6 +180,50 @@ class MetrikaDashboardBreakdownNormalizationTests(unittest.TestCase):
         self.assertEqual(detail["avg_visit_duration_seconds"], 112.0)
         self.assertEqual(detail["page_depth"], 3.25)
 
+    def test_dimension_hash_does_not_collide_when_identities_contain_delimiter(self):
+        report = self.report("search_engines")
+        left_response = {
+            "data": [
+                {
+                    "dimensions": [{"id": "a|b", "name": "c"}],
+                    "metrics": [1, 1, 1, 1, 1, 1],
+                }
+            ],
+        }
+        right_response = {
+            "data": [
+                {
+                    "dimensions": [{"id": "a", "name": "b|c"}],
+                    "metrics": [1, 1, 1, 1, 1, 1],
+                }
+            ],
+        }
+
+        left = build_breakdown_rows(
+            "66624469", "2026-07-22", report, left_response, 72
+        )[0]
+        right = build_breakdown_rows(
+            "66624469", "2026-07-22", report, right_response, 72
+        )[0]
+
+        self.assertNotEqual(left["dimension_hash"], right["dimension_hash"])
+        self.assertEqual(
+            left["dimension_hash"],
+            self.expected_hash(
+                "66624469",
+                "2026-07-22",
+                "search_engines",
+                "russia",
+                "detail",
+                "ym:s:searchEngine",
+                "a|b",
+                "c",
+                None,
+                None,
+                None,
+            ),
+        )
+
     def test_coverage_marks_http_success_with_no_details_as_empty(self):
         report = self.report("section_entrances")
         response = {
@@ -206,6 +255,94 @@ class MetrikaDashboardBreakdownNormalizationTests(unittest.TestCase):
                 "ingestion_run_id": 73,
             },
         )
+
+    def test_coverage_rejects_missing_api_total_rows(self):
+        report = self.report("search_engines")
+        response = {
+            "data": [
+                {
+                    "dimensions": [{"id": "google", "name": "Google"}],
+                    "metrics": [1, 1, 1, 1, 1, 1],
+                }
+            ],
+            "pagination_complete": True,
+        }
+        rows = build_breakdown_rows(
+            "66624469", "2026-07-22", report, response, 74
+        )
+
+        with self.assertRaisesRegex(ValueError, "total_rows"):
+            build_coverage_row(
+                "66624469", "2026-07-22", report, response, rows, 74
+            )
+
+    def test_coverage_rejects_invalid_api_total_rows(self):
+        report = self.report("search_engines")
+        for invalid_total in (-1, "1", 1.5, True, "invalid"):
+            with self.subTest(total_rows=invalid_total):
+                response = {
+                    "data": [
+                        {
+                            "dimensions": [{"id": "google", "name": "Google"}],
+                            "metrics": [1, 1, 1, 1, 1, 1],
+                        }
+                    ],
+                    "total_rows": invalid_total,
+                    "pagination_complete": True,
+                }
+                rows = build_breakdown_rows(
+                    "66624469", "2026-07-22", report, response, 75
+                )
+
+                with self.assertRaisesRegex(ValueError, "total_rows"):
+                    build_coverage_row(
+                        "66624469", "2026-07-22", report, response, rows, 75
+                    )
+
+    def test_coverage_rejects_missing_or_false_pagination_completeness(self):
+        report = self.report("search_engines")
+        for completeness in (None, False):
+            with self.subTest(pagination_complete=completeness):
+                response = {
+                    "data": [
+                        {
+                            "dimensions": [{"id": "google", "name": "Google"}],
+                            "metrics": [1, 1, 1, 1, 1, 1],
+                        }
+                    ],
+                    "total_rows": 1,
+                }
+                if completeness is not None:
+                    response["pagination_complete"] = completeness
+                rows = build_breakdown_rows(
+                    "66624469", "2026-07-22", report, response, 76
+                )
+
+                with self.assertRaisesRegex(ValueError, "pagination_complete"):
+                    build_coverage_row(
+                        "66624469", "2026-07-22", report, response, rows, 76
+                    )
+
+    def test_coverage_rejects_detail_count_mismatch(self):
+        report = self.report("search_engines")
+        response = {
+            "data": [
+                {
+                    "dimensions": [{"id": "google", "name": "Google"}],
+                    "metrics": [1, 1, 1, 1, 1, 1],
+                }
+            ],
+            "total_rows": 2,
+            "pagination_complete": True,
+        }
+        rows = build_breakdown_rows(
+            "66624469", "2026-07-22", report, response, 77
+        )
+
+        with self.assertRaisesRegex(ValueError, "detail-row count"):
+            build_coverage_row(
+                "66624469", "2026-07-22", report, response, rows, 77
+            )
 
 
 if __name__ == "__main__":
