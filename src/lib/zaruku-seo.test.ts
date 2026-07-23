@@ -1,5 +1,7 @@
 import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
 import test from "node:test";
+import * as zarukuSeoModule from "@/lib/zaruku-seo";
 import {
   buildCanonicalPageRowsQuery,
   buildBestEngagementPages,
@@ -190,6 +192,43 @@ test("deriveSourceDataThrough falls back to AI period when capture time is absen
   assert.equal(dataThrough.yandex_gen_search, "2026-07");
 });
 
+const loaderSource = readFileSync(new URL("./zaruku-seo.ts", import.meta.url), "utf8");
+
+test("Zaruku read model does not request redundant general country or city reports", () => {
+  assert.doesNotMatch(loaderSource, /key: "countries"|key: "cities"/);
+  assert.doesNotMatch(loaderSource, /dimensions: "ym:s:regionCountry"/);
+});
+
+test("Metrika report parameters support the Zaruku Russia filter", () => {
+  const seoModule = zarukuSeoModule as typeof zarukuSeoModule & {
+    ZARUKU_RUSSIA_FILTER?: string;
+    buildMetrikaReportParams?: (request: {
+      counterId: string;
+      from: string;
+      to: string;
+      dimensions: string;
+      limit: number;
+      filters?: string;
+    }) => URLSearchParams;
+  };
+
+  assert.equal(typeof seoModule.buildMetrikaReportParams, "function");
+  assert.equal(seoModule.ZARUKU_RUSSIA_FILTER, "ym:s:regionCountry=='Russia'");
+
+  const params = seoModule.buildMetrikaReportParams!({
+    counterId: "66624469",
+    from: "2026-07-13",
+    to: "2026-07-19",
+    dimensions: "ym:s:searchPhrase",
+    limit: 30,
+    filters: seoModule.ZARUKU_RUSSIA_FILTER,
+  });
+
+  assert.equal(params.get("filters"), "ym:s:regionCountry=='Russia'");
+  assert.equal(params.get("ids"), "66624469");
+  assert.equal(params.get("dimensions"), "ym:s:searchPhrase");
+});
+
 test("buildContentSections uses SEO patterns and aggregates visits, users, and pageviews", () => {
   assert.deepEqual(
     buildContentSections(
@@ -234,7 +273,7 @@ test("buildContentSections aggregates behavior metrics by visit weight", () => {
   ]);
 });
 
-test("buildContentSections preserves zero visits for pageview-only canonical rows", () => {
+test("buildContentSections never converts users into visits", () => {
   assert.deepEqual(
     buildContentSections(
       [
@@ -492,7 +531,6 @@ test("buildKpis uses the unique users total for the selected period", () => {
     ],
     technicalTail: [],
     devices: [],
-    geoCountries: [],
     periodUsers: 1_250,
   }).find((kpi) => kpi.key === "users");
 
@@ -505,7 +543,6 @@ test("buildKpis marks period users unavailable without an authoritative total", 
     trafficChannels: [page("Search engine traffic", 1_100, 1_000, 1_300)],
     technicalTail: [page("Internal traffic", 1_000, 900, 1_200)],
     devices: [],
-    geoCountries: [],
     periodUsers: null,
   }).find((kpi) => kpi.key === "users");
 

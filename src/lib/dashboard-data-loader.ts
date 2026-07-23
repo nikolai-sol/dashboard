@@ -58,6 +58,7 @@ import {
   normalizeDashboardAiSummaryAuthoring,
 } from "@/lib/dashboard-ai-summary";
 import { normalizeDashboardMetrikaSettings } from "@/lib/dashboard-metrika-settings";
+import { resolveDashboardDateRange } from "@/lib/dashboard-date-range";
 import { normalizeDashboardSectionFieldOverrides } from "@/lib/dashboard-section-fields";
 import {
   findMultibrandBrand,
@@ -349,49 +350,17 @@ function shiftDate(dateIso: string, days: number): string {
   return date.toISOString().slice(0, 10);
 }
 
-function currentMonthRange(): { from: string; to: string } {
-  const now = new Date();
-  const year = now.getUTCFullYear();
-  const month = now.getUTCMonth();
-  const from = new Date(Date.UTC(year, month, 1)).toISOString().slice(0, 10);
-  const to = new Date(Date.UTC(year, month + 1, 0)).toISOString().slice(0, 10);
-  return { from, to };
-}
-
 function resolveDateRange(
   request: Request,
   config: JsonRecord,
   dashboardType?: string,
 ): { from: string; to: string } {
-  const params = new URL(request.url).searchParams;
-  const fromQuery = params.get("from");
-  const toQuery = params.get("to");
-  const daysQuery = params.get("days");
-
-  const fallbackRange = currentMonthRange();
-  if (dashboardType === "multibrand" && !isValidIsoDate(fromQuery) && !isValidIsoDate(toQuery) && !daysQuery) {
-    return fallbackRange;
-  }
-  const configFromRaw = String(config.period_from ?? fallbackRange.from);
-  const configToRaw = String(config.period_to ?? fallbackRange.to);
-  const configFrom = isValidIsoDate(configFromRaw) ? configFromRaw : fallbackRange.from;
-  const configTo = isValidIsoDate(configToRaw) ? configToRaw : fallbackRange.to;
-
-  if (isValidIsoDate(fromQuery) && isValidIsoDate(toQuery)) {
-    return { from: fromQuery, to: toQuery };
-  }
-
-  if (daysQuery) {
-    const days = Number(daysQuery);
-    if (Number.isFinite(days) && days > 0) {
-      const today = new Date();
-      const to = today.toISOString().slice(0, 10);
-      const from = shiftDate(to, -(days - 1));
-      return { from, to };
-    }
-  }
-
-  return { from: configFrom, to: configTo };
+  return resolveDashboardDateRange({
+    requestUrl: request.url,
+    configFrom: config.period_from == null ? null : String(config.period_from),
+    configTo: config.period_to == null ? null : String(config.period_to),
+    dashboardType,
+  });
 }
 
 function buildPreviousPeriod(dateFrom: string, dateTo: string): { from: string; to: string } {
