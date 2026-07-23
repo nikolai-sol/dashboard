@@ -43,7 +43,7 @@ class MetrikaDashboardBreakdownRegistryTests(unittest.TestCase):
         for report in ZARUKU_BREAKDOWN_REPORTS:
             with self.subTest(report=report.report_key):
                 self.assertEqual(report.segment_key, "russia")
-                self.assertEqual(report.filters, "ym:s:regionCountry=='Russia'")
+                self.assertEqual(report.filters, "ym:s:regionCountry=='225'")
                 self.assertEqual(report.metrics, EXPECTED_METRICS)
                 with self.assertRaises(dataclasses.FrozenInstanceError):
                     report.report_key = "changed"
