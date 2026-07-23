@@ -41,3 +41,9 @@ test("returning content keeps canonical recency buckets", () => {
   assert.match(source, /returning_2_7_days_users/);
   assert.match(source, /returning_8_31_days_users/);
 });
+
+test("multi-day returning counts are labeled as user-days rather than unique users", () => {
+  assert.match(source, /Пользователь-дни/);
+  assert.match(source, /dataset_meta\.returning_pages\.metrics\.users/);
+  assert.match(source, /это не уникальные пользователи за период/);
+});

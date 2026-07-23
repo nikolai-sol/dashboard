@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import test from "node:test";
 import { getDefaultZarukuCounterIds } from "@/lib/abbott-bi";
+import { buildZarukuTrustState } from "@/components/zaruku-quality-state";
 import pool from "@/lib/db";
 import {
   buildCanonicalPageRowsQuery,
@@ -343,6 +344,95 @@ test("Zaruku daily cutoff accepts injected business today and production wires t
     dashboardLoaderSource,
     /loadZarukuSeoData\([\s\S]{0,500}today:\s*businessToday/,
   );
+});
+
+test("missing confirmed Zaruku traffic coverage fails closed even after a successful source run", async (t) => {
+  t.mock.method(
+    pool as unknown as {
+      execute: (sql: string, params?: unknown[]) => Promise<[unknown[], unknown[]]>;
+    },
+    "execute",
+    async (sql: string) => {
+      if (sql.includes("canonical_collector_runs")) {
+        return [[{
+          source_key: "yandex_metrika",
+          source_label: "Яндекс Метрика",
+          collector: "fetch_yandex_metrika_canonical.py",
+          expected_frequency_hours: 24,
+          last_status: "success",
+          last_finished_at: "2026-07-23 06:12:00",
+          last_success_at: "2026-07-23 06:12:00",
+          success_date_from: "2026-07-01",
+          success_date_to: "2026-07-21",
+          confirmed_date_from: null,
+          confirmed_date_to: null,
+          success_rows_read: 0,
+          success_rows_written: 0,
+          last_error_at: null,
+          last_error_summary: null,
+        }], []];
+      }
+      return [[], []];
+    },
+  );
+
+  const data = await loadZarukuSeoData(
+    ["66624469"],
+    "2026-07-01",
+    "2026-07-21",
+    { today: "2026-07-23" },
+  );
+  const trust = buildZarukuTrustState({
+    traffic: data.dataset_meta.traffic_channels,
+    datasets: Object.values(data.dataset_meta),
+    freshness: data.source_freshness,
+  });
+
+  assert.equal(data.dataset_meta.traffic_channels.state, "unavailable");
+  assert.notEqual(trust.label, "Можно доверять");
+});
+
+test("confirmed traffic coverage before the requested period has no overlap and never inverts metadata", async (t) => {
+  t.mock.method(
+    pool as unknown as {
+      execute: (sql: string, params?: unknown[]) => Promise<[unknown[], unknown[]]>;
+    },
+    "execute",
+    async (sql: string) => {
+      if (sql.includes("canonical_collector_runs")) {
+        return [[{
+          source_key: "yandex_metrika",
+          source_label: "Яндекс Метрика",
+          collector: "fetch_yandex_metrika_canonical.py",
+          expected_frequency_hours: 24,
+          last_status: "success",
+          last_finished_at: "2026-07-23 06:12:00",
+          last_success_at: "2026-07-23 06:12:00",
+          success_date_from: "2026-06-01",
+          success_date_to: "2026-07-21",
+          confirmed_date_from: "2026-06-01",
+          confirmed_date_to: "2026-07-09",
+          success_rows_read: 100,
+          success_rows_written: 100,
+          last_error_at: null,
+          last_error_summary: null,
+        }], []];
+      }
+      return [[], []];
+    },
+  );
+
+  const data = await loadZarukuSeoData(
+    ["66624469"],
+    "2026-07-10",
+    "2026-07-21",
+    { today: "2026-07-23" },
+  );
+  const trafficMeta = data.dataset_meta.traffic_channels;
+
+  assert.equal(trafficMeta.state, "unavailable");
+  assert.ok(trafficMeta.period.from <= trafficMeta.period.to);
+  assert.match(trafficMeta.message ?? "", /не пересекается/i);
 });
 
 test("account facts pass the same daily date range directly to GSC and Webmaster", () => {
@@ -742,6 +832,32 @@ test("buildKpis calculates mobile share within the Russia device report", () => 
 
   assert.equal(mobileKpi?.value, "60%");
   assert.equal(mobileKpi?.raw_value, 60);
+});
+
+test("returning-user metrics are non-additive outside a single-day period", async (t) => {
+  t.mock.method(
+    pool as unknown as {
+      execute: (sql: string, params?: unknown[]) => Promise<[unknown[], unknown[]]>;
+    },
+    "execute",
+    async () => [[], []],
+  );
+
+  const multiDay = await loadZarukuSeoData(
+    ["66624469"],
+    "2026-07-01",
+    "2026-07-21",
+    { today: "2026-07-23" },
+  );
+  const singleDay = await loadZarukuSeoData(
+    ["66624469"],
+    "2026-07-21",
+    "2026-07-21",
+    { today: "2026-07-23" },
+  );
+
+  assert.equal(multiDay.dataset_meta.returning_pages.metrics.users, false);
+  assert.equal(singleDay.dataset_meta.returning_pages.metrics.users, true);
 });
 
 test("returning pages query reads canonical returning-content facts", () => {

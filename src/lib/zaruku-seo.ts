@@ -1273,29 +1273,37 @@ export async function loadZarukuSeoData(
   };
   const returningMetrics: ZarukuMetricAvailability = {
     visits: true,
-    users: true,
+    users: effectiveFrom === effectiveTo,
     pageviews: false,
     bounce_rate: false,
     avg_duration_seconds: false,
     page_depth: false,
   };
+  const coverageOverlapsRequestedPeriod = (actualTo: string | null) =>
+    Boolean(actualTo && actualTo >= requestedPeriod.from);
   const effectiveActualTo = (actualTo: string | null) =>
-    actualTo && actualTo < effectiveTo ? actualTo : effectiveTo;
-  const coverageIsPartial = (actualTo: string | null) => Boolean(actualTo && actualTo < effectiveTo);
+    actualTo ? (actualTo < effectiveTo ? actualTo : effectiveTo) : null;
+  const coverageIsPartial = (actualTo: string | null) =>
+    coverageOverlapsRequestedPeriod(actualTo) && Boolean(actualTo && actualTo < effectiveTo);
   const coverageMessage = (actualTo: string | null) => actualTo ? `Данные доступны по ${actualTo}.` : undefined;
+  const unavailableCoverageMessage = (actualTo: string | null) =>
+    actualTo
+      ? `Подтверждённое покрытие по ${actualTo} не пересекается с выбранным периодом.`
+      : "Нет подтверждённого покрытия для выбранного периода.";
   const canonicalMeta = (
     rowCount: number,
     actualTo: string | null,
     metrics: ZarukuMetricAvailability,
   ) => makeZarukuDatasetMeta({
     rowCount,
-    sourceAvailable: true,
+    sourceAvailable: coverageOverlapsRequestedPeriod(actualTo),
     fallbackVisible: coverageIsPartial(actualTo),
     sources: ["metrika"],
     requestedPeriod,
-    actualTo: effectiveActualTo(actualTo),
+    actualTo: coverageOverlapsRequestedPeriod(actualTo) ? effectiveActualTo(actualTo) : null,
     geography: "unsegmented",
     metrics,
+    unavailableMessage: unavailableCoverageMessage(actualTo),
     fallbackMessage: coverageMessage(actualTo),
   });
   const breakdownMeta = (

@@ -76,11 +76,12 @@ function MetricTable({ rows, meta, locale }: { rows: ZarukuSeoMetricRow[]; meta:
   );
 }
 
-function ReturningTable({ rows, locale }: { rows: ZarukuSeoMetricRow[]; locale: string }) {
+function ReturningTable({ rows, meta, locale }: { rows: ZarukuSeoMetricRow[]; meta: ZarukuDatasetMeta; locale: string }) {
+  const userMetricLabel = meta.metrics.users ? "Пользователи" : "Пользователь-дни";
   return (
     <div className="overflow-x-auto">
       <table className="w-full min-w-[760px] text-sm">
-        <thead><tr className="text-left text-xs uppercase text-slate-400"><th className="pb-2 font-medium">Страница</th><th className="pb-2 text-right font-medium">Визиты</th><th className="pb-2 text-right font-medium">1 день</th><th className="pb-2 text-right font-medium">2–7 дней</th><th className="pb-2 text-right font-medium">8–31 день</th><th className="pb-2 text-right font-medium">Доля возвратов</th></tr></thead>
+        <thead><tr className="text-left text-xs uppercase text-slate-400"><th className="pb-2 font-medium">Страница</th><th className="pb-2 text-right font-medium">Визиты</th><th className="pb-2 text-right font-medium">1 день · {userMetricLabel}</th><th className="pb-2 text-right font-medium">2–7 дней · {userMetricLabel}</th><th className="pb-2 text-right font-medium">8–31 день · {userMetricLabel}</th><th className="pb-2 text-right font-medium">Доля возвратов</th></tr></thead>
         <tbody className="divide-y divide-slate-100">{rows.map((row, index) => {
           const rawUrl = row.url ?? row.label;
           const href = resolveZarukuContentUrl(rawUrl);
@@ -133,7 +134,12 @@ export default function ZarukuContentTab({ data, locale = "ru-RU", primaryWeek, 
 
       <ContentPanel title="Риск отказов" note="Входные страницы с высоким риском отказа; нулевые значения не подменяют отсутствующий источник."><ZarukuPanelState meta={data.dataset_meta.high_bounce_pages} hasRows={data.high_bounce_pages.length > 0}><MetricTable rows={data.high_bounce_pages} meta={data.dataset_meta.high_bounce_pages} locale={locale} /></ZarukuPanelState></ContentPanel>
 
-      <ContentPanel title="Возврат к контенту" note="Канонические интервалы повторного визита: 1 день, 2–7 дней и 8–31 день."><ZarukuPanelState meta={data.dataset_meta.returning_pages} hasRows={data.returning_pages.length > 0}><ReturningTable rows={data.returning_pages.slice(0, 20)} locale={locale} /></ZarukuPanelState></ContentPanel>
+      <ContentPanel
+        title="Возврат к контенту"
+        note={data.dataset_meta.returning_pages.metrics.users
+          ? "Канонические интервалы повторного визита за один день."
+          : "Сумма дневных значений показана как пользователь-дни; это не уникальные пользователи за период."}
+      ><ZarukuPanelState meta={data.dataset_meta.returning_pages} hasRows={data.returning_pages.length > 0}><ReturningTable rows={data.returning_pages.slice(0, 20)} meta={data.dataset_meta.returning_pages} locale={locale} /></ZarukuPanelState></ContentPanel>
 
       <ContentPanel title="Все страницы" note="Доступный read-model с поиском, сортировкой и постраничным просмотром.">
         <ZarukuPanelState meta={pageMeta} hasRows={data.top_pages.length > 0}>
