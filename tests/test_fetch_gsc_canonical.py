@@ -1,4 +1,5 @@
 import datetime as dt
+import json
 import unittest
 from types import SimpleNamespace
 from unittest.mock import Mock, patch
@@ -266,12 +267,26 @@ class GoogleSearchConsoleCanonicalTests(unittest.TestCase):
 
         response = requests.Response()
         response.status_code = 400
+        response._content = json.dumps(
+            {
+                "error": {
+                    "message": (
+                        "Invalid dimension combination for searchAppearance. "
+                        "Authorization: Bearer header-secret-token. "
+                        "See https://google.example.test/debug?access_token=url-secret. "
+                        + ("Additional safe diagnostic context. " * 20)
+                    ),
+                    "access_token": "nested-body-secret",
+                },
+                "raw_body_marker": "must-never-be-recorded",
+            }
+        ).encode()
         failure = requests.HTTPError("bad optional dimension", response=response)
         optional_failures = []
 
         with patch.object(gsc, "request_with_retry", side_effect=failure), patch.object(
             gsc, "log_collector_event"
-        ):
+        ) as log_event:
             rows = gsc.fetch_paginated_search_analytics_rows(
                 "token",
                 gsc.GscAccount("66624469", "https://zaruku.ru/"),
@@ -287,6 +302,44 @@ class GoogleSearchConsoleCanonicalTests(unittest.TestCase):
         self.assertEqual(optional_failures[0]["status_code"], 400)
         self.assertEqual(optional_failures[0]["day"], "2026-07-20")
         self.assertEqual(optional_failures[0]["dimensions"][0], "searchAppearance")
+        self.assertTrue(
+            optional_failures[0]["error_message"].startswith(
+                "Invalid dimension combination for searchAppearance."
+            )
+        )
+        self.assertLessEqual(
+            len(optional_failures[0]["error_message"]),
+            gsc.GSC_ERROR_MESSAGE_MAX_LENGTH,
+        )
+        recorded = json.dumps(
+            {
+                "failure": optional_failures[0],
+                "event_metadata": log_event.call_args.args[4],
+            }
+        )
+        for forbidden in (
+            "header-secret-token",
+            "url-secret",
+            "nested-body-secret",
+            "Authorization",
+            "https://google.example.test",
+            "must-never-be-recorded",
+        ):
+            self.assertNotIn(forbidden, recorded)
+
+    def test_non_string_google_error_message_does_not_serialize_raw_body(self):
+        import fetch_gsc_canonical as gsc
+
+        response = requests.Response()
+        response.status_code = 400
+        response._content = json.dumps(
+            {"error": {"message": {"detail": "raw-message-marker"}}}
+        ).encode()
+
+        diagnostic = gsc.sanitized_google_error_message(response)
+
+        self.assertEqual(diagnostic, "Google Search Console request rejected")
+        self.assertNotIn("raw-message-marker", diagnostic)
 
     def test_collect_finishes_partial_when_optional_layer_failed(self):
         import fetch_gsc_canonical as gsc

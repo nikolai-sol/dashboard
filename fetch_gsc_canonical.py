@@ -8,6 +8,7 @@ import hashlib
 import json
 import logging
 import os
+import re
 import sys
 import time
 import uuid
@@ -69,6 +70,7 @@ GSC_TOKEN_URL = env_first("GSC_TOKEN_URL", default="https://oauth2.googleapis.co
 GSC_API_BASE = env_first("GSC_API_BASE", default="https://www.googleapis.com/webmasters/v3")
 GSC_ROW_LIMIT = int(env_first("GSC_ROW_LIMIT", default="25000") or 25000)
 GSC_SEARCH_TYPES_DEFAULT = env_first("GSC_SEARCH_TYPES", default="web,image,video,news,discover,googleNews")
+GSC_ERROR_MESSAGE_MAX_LENGTH = 240
 MAX_RETRIES = 5
 TIMEOUT = 90
 REQUEST_DELAY_SECONDS = float(env_first("GSC_REQUEST_DELAY_SECONDS", default="0.25") or 0)
@@ -181,6 +183,60 @@ def parse_args():
 
 def clean_text(value: Any) -> str:
     return "" if value is None else str(value).strip()
+
+
+_UNSAFE_GSC_ERROR_SEGMENT = re.compile(
+    r"""
+    (?:
+        [a-z][a-z0-9+.-]*://
+        | \bwww\.
+        | \bauthori[sz]ation\b
+        | \b(?:bearer|basic|oauth)\b
+        | \b(?:(?:access|refresh|id|auth)[ _-]?)?token\b
+        | \b(?:client[ _-]?secret|api[ _-]?key|secret|password|passwd|cookie|credentials?)\b
+    )
+    """,
+    re.IGNORECASE | re.VERBOSE,
+)
+_OPAQUE_GSC_ERROR_VALUE = re.compile(
+    r"""
+    (?:
+        \beyJ[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}(?:\.[A-Za-z0-9_-]{8,})?\b
+        | \bya29\.[A-Za-z0-9._~-]{8,}\b
+        | \bAIza[A-Za-z0-9_-]{16,}\b
+        | \b(?=[A-Za-z0-9._~+/=-]{24,}\b)(?=[A-Za-z0-9._~+/=-]*[A-Za-z])(?=[A-Za-z0-9._~+/=-]*\d)[A-Za-z0-9._~+/=-]+\b
+    )
+    """,
+    re.VERBOSE,
+)
+
+
+def sanitized_google_error_message(response: requests.Response | None) -> str:
+    fallback = "Google Search Console request rejected"
+    if response is None:
+        return fallback
+    try:
+        payload = response.json()
+    except (TypeError, ValueError):
+        return fallback
+    error = payload.get("error") if isinstance(payload, dict) else None
+    message_value = error.get("message") if isinstance(error, dict) else None
+    message = message_value.strip() if isinstance(message_value, str) else ""
+    if not message:
+        return fallback
+
+    safe_segments: list[str] = []
+    for raw_segment in re.split(r"(?<=[.!?])(?:\s+|$)|[\r\n]+", message):
+        segment = re.sub(r"\s+", " ", raw_segment).strip()
+        if (
+            not segment
+            or _UNSAFE_GSC_ERROR_SEGMENT.search(segment)
+            or _OPAQUE_GSC_ERROR_VALUE.search(segment)
+        ):
+            continue
+        safe_segments.append(segment)
+    sanitized = " ".join(safe_segments).strip()
+    return (sanitized or fallback)[:GSC_ERROR_MESSAGE_MAX_LENGTH]
 
 
 def safe_int(value: Any) -> int:
@@ -533,6 +589,7 @@ def fetch_paginated_search_analytics_rows(
                     "day": day,
                     "search_type": search_type,
                     "dimensions": dimensions,
+                    "error_message": sanitized_google_error_message(exc.response),
                 }
                 if optional_failures is not None:
                     optional_failures.append(failure)
