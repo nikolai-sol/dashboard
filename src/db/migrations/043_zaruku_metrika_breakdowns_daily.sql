@@ -97,30 +97,60 @@ SET @sql := IF(
 );
 PREPARE stmt FROM @sql; EXECUTE stmt; DEALLOCATE PREPARE stmt;
 
-SET @site_scope_read_index_exists := (
-  SELECT COUNT(*)
+SET @site_scope_read_index_columns := (
+  SELECT GROUP_CONCAT(COLUMN_NAME ORDER BY SEQ_IN_INDEX SEPARATOR ',')
   FROM information_schema.STATISTICS
   WHERE TABLE_SCHEMA = DATABASE()
     AND TABLE_NAME = 'canonical_fact_site_analytics_daily'
     AND INDEX_NAME = 'idx_site_analytics_scope_read'
+  GROUP BY INDEX_NAME
 );
+SET @site_scope_read_index_non_unique := (
+  SELECT MIN(NON_UNIQUE)
+  FROM information_schema.STATISTICS
+  WHERE TABLE_SCHEMA = DATABASE()
+    AND TABLE_NAME = 'canonical_fact_site_analytics_daily'
+    AND INDEX_NAME = 'idx_site_analytics_scope_read'
+  GROUP BY INDEX_NAME
+);
+SET @site_scope_read_index_target := 'source_key,analytics_account_id,analytics_scope,report_date';
 SET @sql := IF(
-  @site_scope_read_index_exists = 0,
-  'ALTER TABLE canonical_fact_site_analytics_daily ADD KEY idx_site_analytics_scope_read (source_key, analytics_account_id, analytics_scope, report_date)',
-  'SELECT ''idx_site_analytics_scope_read already present'' AS info'
+  COALESCE(@site_scope_read_index_columns, '') = @site_scope_read_index_target
+    AND COALESCE(@site_scope_read_index_non_unique, 0) = 1,
+  'SELECT ''idx_site_analytics_scope_read already canonical'' AS info',
+  IF(
+    @site_scope_read_index_columns IS NULL,
+    'ALTER TABLE canonical_fact_site_analytics_daily ADD KEY idx_site_analytics_scope_read (source_key, analytics_account_id, analytics_scope, report_date)',
+    'ALTER TABLE canonical_fact_site_analytics_daily DROP INDEX idx_site_analytics_scope_read, ADD KEY idx_site_analytics_scope_read (source_key, analytics_account_id, analytics_scope, report_date)'
+  )
 );
 PREPARE stmt FROM @sql; EXECUTE stmt; DEALLOCATE PREPARE stmt;
 
-SET @gsc_country_date_index_exists := (
-  SELECT COUNT(*)
+SET @gsc_country_date_index_columns := (
+  SELECT GROUP_CONCAT(COLUMN_NAME ORDER BY SEQ_IN_INDEX SEPARATOR ',')
   FROM information_schema.STATISTICS
   WHERE TABLE_SCHEMA = DATABASE()
     AND TABLE_NAME = 'canonical_fact_gsc_queries_daily'
     AND INDEX_NAME = 'idx_gsc_country_date'
+  GROUP BY INDEX_NAME
 );
+SET @gsc_country_date_index_non_unique := (
+  SELECT MIN(NON_UNIQUE)
+  FROM information_schema.STATISTICS
+  WHERE TABLE_SCHEMA = DATABASE()
+    AND TABLE_NAME = 'canonical_fact_gsc_queries_daily'
+    AND INDEX_NAME = 'idx_gsc_country_date'
+  GROUP BY INDEX_NAME
+);
+SET @gsc_country_date_index_target := 'analytics_account_id,country,report_date';
 SET @sql := IF(
-  @gsc_country_date_index_exists = 0,
-  'ALTER TABLE canonical_fact_gsc_queries_daily ADD KEY idx_gsc_country_date (analytics_account_id, country, report_date)',
-  'SELECT ''idx_gsc_country_date already present'' AS info'
+  COALESCE(@gsc_country_date_index_columns, '') = @gsc_country_date_index_target
+    AND COALESCE(@gsc_country_date_index_non_unique, 0) = 1,
+  'SELECT ''idx_gsc_country_date already canonical'' AS info',
+  IF(
+    @gsc_country_date_index_columns IS NULL,
+    'ALTER TABLE canonical_fact_gsc_queries_daily ADD KEY idx_gsc_country_date (analytics_account_id, country, report_date)',
+    'ALTER TABLE canonical_fact_gsc_queries_daily DROP INDEX idx_gsc_country_date, ADD KEY idx_gsc_country_date (analytics_account_id, country, report_date)'
+  )
 );
 PREPARE stmt FROM @sql; EXECUTE stmt; DEALLOCATE PREPARE stmt;
