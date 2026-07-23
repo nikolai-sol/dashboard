@@ -67,10 +67,7 @@ import {
   buildTrafficHealthRows,
 } from "@/components/zaruku-overview-layout";
 import { formatPendingRequirementSources } from "@/components/zaruku-seo-pending";
-import {
-  resolveRowsForWeek,
-  resolveRowsForWeekOrLatest,
-} from "@/components/zaruku-yandex-webmaster-panels";
+import { resolveRowsForWeek } from "@/components/zaruku-yandex-webmaster-panels";
 
 type Props = {
   data: ZarukuSeoData;
@@ -323,11 +320,9 @@ function buildGscSelectionMeta<T extends { week: string; week_from: string; week
     : firstRow
       ? `${weekLabel} · ${firstRow.week_from} — ${firstRow.week_to}`
       : weekLabel;
-  const fallbackNote = selectedWeek && selection.week && selection.week !== selectedWeek && selection.rows.length > 0
-    ? `За выбранную неделю ${selectedWeek} детальных данных GSC пока нет; показываем последнюю доступную неделю ${selection.week}.`
-    : selectedWeek && selection.rows.length === 0
-      ? "За выбранную неделю GSC search facts пока нет."
-      : null;
+  const fallbackNote = selectedWeek && selection.rows.length === 0
+    ? "За текущий ежедневный период GSC search facts пока нет."
+    : null;
 
   return {
     periodLabel,
@@ -568,18 +563,18 @@ function OverviewTab({ data, locale }: Props) {
 function SeoTab({ data, locale, primaryWeek, comparisonWeek }: Props & { primaryWeek: string | null; comparisonWeek: string | null }) {
   const phraseCoverage = data.data_quality.find((item) => item.title === "Покрытие поисковых фраз");
   const currentLocale = locale ?? "ru-RU";
-  const webmasterWeek = primaryWeek ?? data.webmaster.latest_week;
-  const webmasterQuerySelection = resolveRowsForWeekOrLatest(data.webmaster.queries, webmasterWeek, data.webmaster.latest_week);
+  const webmasterWeek = data.webmaster.latest_week;
+  const webmasterQuerySelection = resolveRowsForWeek(data.webmaster.queries, webmasterWeek, null);
   const webmasterPageSelection = resolveRowsForWeek(data.webmaster.pages, webmasterWeek, data.webmaster.latest_week);
   const webmasterQueries = webmasterQuerySelection.rows;
   const webmasterPages = webmasterPageSelection.rows;
-  const gscWeek = primaryWeek ?? data.gsc.latest_week;
-  const gscSummarySelection = resolveRowsForWeek(data.gsc.summary, gscWeek, data.gsc.latest_week);
-  const gscQuerySelection = resolveRowsForWeekOrLatest(data.gsc.queries, gscWeek, data.gsc.latest_week);
-  const gscLandingPageSelection = resolveRowsForWeekOrLatest(data.gsc.landing_pages, gscWeek, data.gsc.latest_week);
-  const gscBrandSplitSelection = resolveRowsForWeek(data.gsc.brand_split, gscWeek, data.gsc.latest_week);
-  const gscSearchAppearanceSelection = resolveRowsForWeekOrLatest(data.gsc.search_appearance, gscWeek, data.gsc.latest_week);
-  const gscSearchTypeSelection = resolveRowsForWeek(data.gsc.search_type_summary, gscWeek, data.gsc.latest_week);
+  const gscWeek = data.gsc.latest_week;
+  const gscSummarySelection = resolveRowsForWeek(data.gsc.summary, gscWeek, null);
+  const gscQuerySelection = resolveRowsForWeek(data.gsc.queries, gscWeek, null);
+  const gscLandingPageSelection = resolveRowsForWeek(data.gsc.landing_pages, gscWeek, null);
+  const gscBrandSplitSelection = resolveRowsForWeek(data.gsc.brand_split, gscWeek, null);
+  const gscSearchAppearanceSelection = resolveRowsForWeek(data.gsc.search_appearance, gscWeek, null);
+  const gscSearchTypeSelection = resolveRowsForWeek(data.gsc.search_type_summary, gscWeek, null);
   const gscSummaryRows = gscSummarySelection.rows;
   const gscQueries = gscQuerySelection.rows;
   const gscLandingPages = gscLandingPageSelection.rows;

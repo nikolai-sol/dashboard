@@ -65,6 +65,15 @@ test("SEO tab passes actual source weeks into unified comparisons", () => {
   assert.match(source, /google: gscLandingPages\.length > 0 \? gscLandingPageSelection\.week : null/);
 });
 
+test("daily GSC and Webmaster presentation is independent from the SEO OS week selector", () => {
+  assert.match(source, /const webmasterWeek = data\.webmaster\.latest_week;/);
+  assert.match(source, /const gscWeek = data\.gsc\.latest_week;/);
+  assert.doesNotMatch(source, /const webmasterWeek = primaryWeek/);
+  assert.doesNotMatch(source, /const gscWeek = primaryWeek/);
+  assert.doesNotMatch(source, /resolveRowsForWeekOrLatest/);
+  assert.doesNotMatch(source, /показываем последнюю доступную неделю/);
+});
+
 test("Quality route uses the client-facing trust surface", () => {
   assert.match(source, /import ZarukuQualityTab/);
   assert.match(source, /<ZarukuQualityTab data=\{data\}/);

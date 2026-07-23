@@ -109,19 +109,6 @@ export function resolveRowsForWeek<T extends { week: string }>(rows: T[], select
   return latestWeek ? { week: latestWeek, rows: rows.filter((row) => row.week === latestWeek) } : { week: null, rows };
 }
 
-export function resolveRowsForWeekOrLatest<T extends { week: string }>(rows: T[], selectedWeek: string | null, fallbackWeek: string | null) {
-  const selected = resolveRowsForWeek(rows, selectedWeek, fallbackWeek);
-  if (!selectedWeek || selected.rows.length > 0) return selected;
-
-  if (fallbackWeek) {
-    const fallbackRows = rows.filter((row) => row.week === fallbackWeek);
-    if (fallbackRows.length > 0) return { week: fallbackWeek, rows: fallbackRows };
-  }
-
-  const latestWeek = [...new Set(rows.map((row) => row.week))].sort().at(-1) ?? null;
-  return latestWeek ? { week: latestWeek, rows: rows.filter((row) => row.week === latestWeek) } : selected;
-}
-
 export function buildWebmasterFactsPanelChrome() {
   return {
     source: "webmaster" as const,
@@ -145,11 +132,9 @@ export function buildWebmasterSelectionMeta<T extends { week: string; week_from:
     : firstRow
       ? `${weekLabel} · ${firstRow.week_from} — ${firstRow.week_to}`
       : weekLabel;
-  const fallbackNote = selectedWeek && selection.week && selection.week !== selectedWeek && selection.rows.length > 0
-    ? `За выбранную неделю ${selectedWeek} детальных данных Яндекс Вебмастера пока нет; показываем последнюю доступную неделю ${selection.week}.`
-    : selectedWeek && selection.rows.length === 0
-      ? "За выбранную неделю данных Яндекс Вебмастера пока нет."
-      : null;
+  const fallbackNote = selectedWeek && selection.rows.length === 0
+    ? "За текущий ежедневный период данных Яндекс Вебмастера пока нет."
+    : null;
 
   return {
     periodLabel,
