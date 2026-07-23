@@ -14,6 +14,10 @@ function formatPercent(value: number | null | undefined, locale: string) {
   return value == null || !Number.isFinite(value) ? "" : `${value.toLocaleString(locale, { maximumFractionDigits: 1 })}%`;
 }
 
+export function formatAudienceUsers(row: ZarukuSeoMetricRow, meta: ZarukuDatasetMeta, locale: string) {
+  return meta.metrics.users && row.users_available !== false ? formatNumber(row.users, locale) : "—";
+}
+
 function AudiencePanel({ title, note, children }: { title: string; note?: string; children: ReactNode }) {
   return (
     <section className="min-w-0 rounded-xl border border-slate-200 bg-white shadow-sm shadow-slate-100/60">
@@ -35,7 +39,7 @@ function AudienceBars({ rows, meta, locale }: { rows: ZarukuSeoMetricRow[]; meta
 function SourceDeviceTable({ rows, meta, locale }: { rows: ZarukuSeoMetricRow[]; meta: ZarukuDatasetMeta; locale: string }) {
   return (
     <ZarukuPanelState meta={meta} hasRows={rows.length > 0}>
-      <div className="overflow-x-auto"><table className="w-full min-w-[560px] text-sm"><thead><tr className="text-left text-xs uppercase text-slate-400"><th className="pb-2 font-medium">Источник</th><th className="pb-2 font-medium">Устройство</th><th className="pb-2 text-right font-medium">Визиты</th><th className="pb-2 text-right font-medium">Пользователи</th></tr></thead><tbody className="divide-y divide-slate-100">{rows.slice(0, 20).map((row, index) => <tr key={`${row.label}-${row.secondary_label}-${index}`}><td className="py-2.5 font-medium text-slate-700">{row.label}</td><td className="py-2.5 text-slate-500">{row.secondary_label ?? "—"}</td><td className="py-2.5 text-right tabular-nums text-slate-600">{formatNumber(row.visits, locale)}</td><td className="py-2.5 text-right tabular-nums text-slate-600">{row.users_available === false ? "—" : formatNumber(row.users, locale)}</td></tr>)}</tbody></table></div>
+      <div className="overflow-x-auto"><table className="w-full min-w-[560px] text-sm"><thead><tr className="text-left text-xs uppercase text-slate-400"><th className="pb-2 font-medium">Источник</th><th className="pb-2 font-medium">Устройство</th><th className="pb-2 text-right font-medium">Визиты</th><th className="pb-2 text-right font-medium">Пользователи</th></tr></thead><tbody className="divide-y divide-slate-100">{rows.slice(0, 20).map((row, index) => <tr key={`${row.label}-${row.secondary_label}-${index}`}><td className="py-2.5 font-medium text-slate-700">{row.label}</td><td className="py-2.5 text-slate-500">{row.secondary_label ?? "—"}</td><td className="py-2.5 text-right tabular-nums text-slate-600">{formatNumber(row.visits, locale)}</td><td className="py-2.5 text-right tabular-nums text-slate-600">{formatAudienceUsers(row, meta, locale)}</td></tr>)}</tbody></table></div>
     </ZarukuPanelState>
   );
 }

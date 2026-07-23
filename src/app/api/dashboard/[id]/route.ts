@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
 import { projectAbbottDashboardData } from "@/lib/abbott-data-projection";
 import { isDashboardAccessAuthorized } from "@/lib/dashboard-access";
-import { loadDashboardData } from "@/lib/dashboard-data-loader";
+import { formatPrivateServerTiming, loadDashboardData } from "@/lib/dashboard-data-loader";
 
 export const dynamic = "force-dynamic";
 
@@ -40,7 +40,7 @@ export async function GET(
         { status: 401 },
       );
     }
-    const { data, ai_summary_enabled, ai_summary_override, ai_summary_snapshot } = await loadDashboardData(
+    const { data, ai_summary_enabled, ai_summary_override, ai_summary_snapshot, server_timing } = await loadDashboardData(
       request,
       id,
       access.audience,
@@ -48,7 +48,11 @@ export async function GET(
     if (ai_summary_enabled) {
       data.ai_summary = ai_summary_override ?? ai_summary_snapshot ?? undefined;
     }
-    return privateJson(projectAbbottDashboardData(data, access.audience));
+    const serverTimingHeader = server_timing ? formatPrivateServerTiming(server_timing) : "";
+    return privateJson(
+      projectAbbottDashboardData(data, access.audience),
+      serverTimingHeader ? { headers: { "Server-Timing": serverTimingHeader } } : undefined,
+    );
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
     if (message === "Dashboard not found") {

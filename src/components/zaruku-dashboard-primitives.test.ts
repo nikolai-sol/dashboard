@@ -50,8 +50,9 @@ test("period context keeps onsite, search, and AI periods separate", () => {
     ai: { period: "2026-07", provenance: "wm_alisa_manual" },
   }));
 
-  assert.match(html, /24\.06\.2026–21\.07\.2026/);
-  assert.match(html, /по 19\.07\.2026/);
+  assert.match(html, /Ежедневные данные/);
+  assert.match(html, /24\.06\.2026–19\.07\.2026/);
+  assert.match(html, /стандартный лаг 48 часов/);
   assert.match(html, /2026-W29/);
   assert.match(html, /2026-W28/);
   assert.match(html, /wm_alisa_manual/);

@@ -5,7 +5,7 @@ import type { ZarukuSeoData } from "@/lib/types";
 
 type Props = {
   data: ZarukuSeoData;
-  children: ReactNode;
+  children?: ReactNode;
 };
 
 export default function ZarukuOverviewTab({ data, children }: Props) {

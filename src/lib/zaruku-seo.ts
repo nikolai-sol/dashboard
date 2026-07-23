@@ -921,6 +921,25 @@ function sourceStatusFromData(status: "available" | "partial" | "unavailable"): 
 
 type SourceDataThrough = Record<ZarukuSeoSource["id"], string | null>;
 
+export type ZarukuLoadTimingName = "metrika-db" | "gsc-db" | "webmaster-db" | "seo-db" | "total";
+
+export type ZarukuLoadOptions = {
+  recordTiming?: (name: ZarukuLoadTimingName, durationMs: number) => void;
+};
+
+async function measureLoadPhase<T>(
+  name: ZarukuLoadTimingName,
+  recordTiming: ZarukuLoadOptions["recordTiming"],
+  load: () => Promise<T>,
+): Promise<T> {
+  const startedAt = performance.now();
+  try {
+    return await load();
+  } finally {
+    recordTiming?.(name, Math.max(0, performance.now() - startedAt));
+  }
+}
+
 export function deriveSourceDataThrough({
   gscSummary,
   webmasterSummary,
@@ -1081,7 +1100,13 @@ function buildDataQuality({
   ];
 }
 
-export async function loadZarukuSeoData(counterIds: string[], from: string, to: string): Promise<ZarukuSeoData> {
+export async function loadZarukuSeoData(
+  counterIds: string[],
+  from: string,
+  to: string,
+  options: ZarukuLoadOptions = {},
+): Promise<ZarukuSeoData> {
+  const totalStartedAt = performance.now();
   const normalizedCounterIds = normalizeCounterIds(counterIds);
   const accountId = normalizedCounterIds[0];
   const dailyPeriod = resolveZarukuDailyPeriod({
@@ -1090,27 +1115,30 @@ export async function loadZarukuSeoData(counterIds: string[], from: string, to: 
     today: new Date().toISOString().slice(0, 10),
   });
   const { from: effectiveFrom, to: effectiveTo } = dailyPeriod.effective;
+  const [metrika, facts, seo] = await Promise.all([
+    measureLoadPhase("metrika-db", options.recordTiming, () => Promise.all([
+      queryTrafficRows(normalizedCounterIds, effectiveFrom, effectiveTo),
+      queryCanonicalPageRows(normalizedCounterIds, effectiveFrom, effectiveTo),
+      queryOrganicTrend(normalizedCounterIds, effectiveFrom, effectiveTo),
+      queryReturningPages(normalizedCounterIds, effectiveFrom, effectiveTo),
+      loadZarukuMetrikaBreakdowns(normalizedCounterIds, dailyPeriod.effective),
+      querySourceFreshnessRows(),
+    ])),
+    loadAccountFacts(accountId, dailyPeriod.effective, { recordTiming: options.recordTiming }),
+    measureLoadPhase("seo-db", options.recordTiming, () => Promise.all([
+      loadSeoProcess(accountId),
+      loadSeoIntelligence(accountId),
+    ])),
+  ]);
   const [
     trafficRowsRaw,
     pageRows,
     organicTrend,
     returningPages,
     metrikaBreakdowns,
-    facts,
-    seoOs,
-    seoIntelligence,
     sourceFreshness,
-  ] = await Promise.all([
-    queryTrafficRows(normalizedCounterIds, effectiveFrom, effectiveTo),
-    queryCanonicalPageRows(normalizedCounterIds, effectiveFrom, effectiveTo),
-    queryOrganicTrend(normalizedCounterIds, effectiveFrom, effectiveTo),
-    queryReturningPages(normalizedCounterIds, effectiveFrom, effectiveTo),
-    loadZarukuMetrikaBreakdowns(normalizedCounterIds, dailyPeriod.effective),
-    loadAccountFacts(accountId, dailyPeriod.effective),
-    loadSeoProcess(accountId),
-    loadSeoIntelligence(accountId),
-    querySourceFreshnessRows(),
-  ]);
+  ] = metrika;
+  const [seoOs, seoIntelligence] = seo;
   const { trafficChannels, technicalTail } = splitTrafficRows(trafficRowsRaw);
 
   const searchEnginesReport = metrikaBreakdowns.reports.search_engines;
@@ -1265,7 +1293,7 @@ export async function loadZarukuSeoData(counterIds: string[], from: string, to: 
     interests: breakdownMeta(interestsReport, interestsReport.rows.length),
   } satisfies Record<ZarukuDatasetKey, ZarukuDatasetMeta>;
 
-  return {
+  const result: ZarukuSeoData = {
     counters: normalizedCounterIds,
     domain: "zaruku.ru",
     period: dailyPeriod.effective,
@@ -1330,4 +1358,6 @@ export async function loadZarukuSeoData(counterIds: string[], from: string, to: 
       metrikaErrors,
     }),
   };
+  options.recordTiming?.("total", Math.max(0, performance.now() - totalStartedAt));
+  return result;
 }

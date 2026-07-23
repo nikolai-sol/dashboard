@@ -30,6 +30,24 @@ export type SeoIntelligenceReadModel = ZarukuSeoIntelligenceData & {
   };
 };
 
+type AccountFactsTimingName = "gsc-db" | "webmaster-db";
+type AccountFactsLoadOptions = {
+  recordTiming?: (name: AccountFactsTimingName, durationMs: number) => void;
+};
+
+async function measureAccountFactsPhase<T>(
+  name: AccountFactsTimingName,
+  recordTiming: AccountFactsLoadOptions["recordTiming"],
+  load: () => Promise<T>,
+): Promise<T> {
+  const startedAt = performance.now();
+  try {
+    return await load();
+  } finally {
+    recordTiming?.(name, Math.max(0, performance.now() - startedAt));
+  }
+}
+
 function requireAccountId(accountId: string) {
   const normalized = accountId.trim();
   if (!normalized) {
@@ -41,11 +59,20 @@ function requireAccountId(accountId: string) {
 export async function loadAccountFacts(
   accountId: string,
   dateRange: DateRange,
+  options: AccountFactsLoadOptions = {},
 ): Promise<AccountFactsReadModel> {
   const normalizedAccountId = requireAccountId(accountId);
   const [webmaster, gsc] = await Promise.all([
-    loadYandexWebmasterFacts(normalizedAccountId, dateRange),
-    loadGoogleSearchConsoleFacts([normalizedAccountId], dateRange),
+    measureAccountFactsPhase(
+      "webmaster-db",
+      options.recordTiming,
+      () => loadYandexWebmasterFacts(normalizedAccountId, dateRange),
+    ),
+    measureAccountFactsPhase(
+      "gsc-db",
+      options.recordTiming,
+      () => loadGoogleSearchConsoleFacts([normalizedAccountId], dateRange),
+    ),
   ]);
   return {
     accountId: normalizedAccountId,

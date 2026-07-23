@@ -227,7 +227,7 @@ test("Zaruku applies one effective daily period to every daily loader while SEO 
     loaderSource,
     /loadZarukuMetrikaBreakdowns\(normalizedCounterIds, dailyPeriod\.effective\)/,
   );
-  assert.match(loaderSource, /loadAccountFacts\(accountId, dailyPeriod\.effective\)/);
+  assert.match(loaderSource, /loadAccountFacts\(accountId, dailyPeriod\.effective,\s*\{\s*recordTiming:/);
   assert.doesNotMatch(loaderSource, /loadAccountFacts\([^)]*seoOs\.weeks/);
   assert.match(loaderSource, /loadSeoProcess\(accountId\)/);
   assert.match(loaderSource, /loadSeoIntelligence\(accountId\)/);

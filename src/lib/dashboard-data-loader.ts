@@ -115,7 +115,28 @@ export type LoadedDashboardData = {
   ai_summary_override_text?: string | null;
   ai_summary_override?: DashboardAiSummary | null;
   ai_summary_snapshot?: DashboardAiSummary | null;
+  server_timing?: DashboardServerTiming;
 };
+
+const SAFE_SERVER_TIMING_NAMES = [
+  "metrika-db",
+  "gsc-db",
+  "webmaster-db",
+  "seo-db",
+  "total",
+] as const;
+
+export type DashboardServerTimingName = typeof SAFE_SERVER_TIMING_NAMES[number];
+export type DashboardServerTiming = Partial<Record<DashboardServerTimingName, number>>;
+
+export function formatPrivateServerTiming(timings: DashboardServerTiming): string {
+  return SAFE_SERVER_TIMING_NAMES.flatMap((name) => {
+    const duration = timings[name];
+    return typeof duration === "number" && Number.isFinite(duration) && duration >= 0
+      ? [`${name};dur=${duration.toFixed(1)}`]
+      : [];
+  }).join(", ");
+}
 
 type DashboardRow = RowDataPacket & {
   id: number;
@@ -2768,9 +2789,17 @@ export async function loadDashboardData(
     const counterIds = resolveAbbottCounterIds(sourceRows);
     const defaultCounterIds = dashboardType === "zaruku_bi" ? getDefaultZarukuCounterIds() : getDefaultAbbottCounterIds();
     const effectiveCounterIds = counterIds.length > 0 ? counterIds : defaultCounterIds;
+    const serverTiming: DashboardServerTiming = {};
     const portalPayload =
       dashboardType === "zaruku_bi"
-        ? { zaruku_seo: await loadZarukuSeoData(effectiveCounterIds, range.from, range.to) }
+        ? {
+            zaruku_seo: await loadZarukuSeoData(
+              effectiveCounterIds,
+              range.from,
+              range.to,
+              { recordTiming: (name, durationMs) => { serverTiming[name] = durationMs; } },
+            ),
+          }
         : { abbott_bi: await loadAbbottBiData(dashboard.id, effectiveCounterIds, range.from, range.to, audience) };
 
     const response: DashboardData = {
@@ -2823,6 +2852,7 @@ export async function loadDashboardData(
       ai_summary_override_text: aiSummaryAuthoring?.override_text ?? null,
       ai_summary_override: aiSummaryOverride,
       ai_summary_snapshot: aiSummarySnapshot?.summary ?? null,
+      server_timing: dashboardType === "zaruku_bi" ? serverTiming : undefined,
     };
   }
 
