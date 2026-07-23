@@ -6,6 +6,10 @@ import {
   loadAbbottBiData,
   type AbbottDashboardAudience,
 } from "@/lib/abbott-bi";
+import {
+  ABBOTT_BUSINESS_TIME_ZONE,
+  businessCalendarIsoDate,
+} from "@/lib/abbott-date-range";
 import { loadZarukuSeoData } from "@/lib/zaruku-seo";
 import { loadSchema } from "@/lib/schema-parser";
 import {
@@ -2790,6 +2794,11 @@ export async function loadDashboardData(
     const defaultCounterIds = dashboardType === "zaruku_bi" ? getDefaultZarukuCounterIds() : getDefaultAbbottCounterIds();
     const effectiveCounterIds = counterIds.length > 0 ? counterIds : defaultCounterIds;
     const serverTiming: DashboardServerTiming = {};
+    const businessTimeZone =
+      typeof config.business_timezone === "string" && config.business_timezone.trim()
+        ? config.business_timezone.trim()
+        : ABBOTT_BUSINESS_TIME_ZONE;
+    const businessToday = businessCalendarIsoDate(new Date(), businessTimeZone);
     const portalPayload =
       dashboardType === "zaruku_bi"
         ? {
@@ -2797,7 +2806,10 @@ export async function loadDashboardData(
               effectiveCounterIds,
               range.from,
               range.to,
-              { recordTiming: (name, durationMs) => { serverTiming[name] = durationMs; } },
+              {
+                today: businessToday,
+                recordTiming: (name, durationMs) => { serverTiming[name] = durationMs; },
+              },
             ),
           }
         : { abbott_bi: await loadAbbottBiData(dashboard.id, effectiveCounterIds, range.from, range.to, audience) };

@@ -1,5 +1,6 @@
 import type { RowDataPacket } from "mysql2";
 import pool from "@/lib/db";
+import { businessCalendarIsoDate } from "@/lib/abbott-date-range";
 import { loadAccountFacts, loadSeoIntelligence, loadSeoProcess } from "@/lib/account-read-models";
 import { loadZarukuMetrikaBreakdowns } from "@/lib/zaruku-metrika";
 import { matchSectionPattern } from "@/lib/zaruku-seo-os";
@@ -124,6 +125,8 @@ export type SourceFreshnessDbRow = {
   last_success_at: string | Date | null;
   success_date_from: string | Date | null;
   success_date_to: string | Date | null;
+  confirmed_date_from?: string | Date | null;
+  confirmed_date_to?: string | Date | null;
   success_rows_read: number | string | null;
   success_rows_written: number | string | null;
   last_error_at: string | Date | null;
@@ -135,24 +138,28 @@ const SOURCE_FRESHNESS_CATALOG = [
     source_key: "yandex_metrika",
     source_label: "Яндекс Метрика",
     collector: "fetch_yandex_metrika_canonical.py",
+    run_mode: "canonical_only",
     expected_frequency_hours: 24,
   },
   {
     source_key: "yandex_metrika_returning",
     source_label: "Яндекс Метрика · возвратный контент",
     collector: "fetch_yandex_metrika_returning_canonical.py",
+    run_mode: "daily",
     expected_frequency_hours: 24,
   },
   {
     source_key: "yandex_webmaster",
     source_label: "Яндекс Вебмастер",
     collector: "fetch_yandex_webmaster_canonical.py",
+    run_mode: "daily",
     expected_frequency_hours: 24,
   },
   {
     source_key: "google_search_console",
     source_label: "Google Search Console",
     collector: "fetch_gsc_canonical.py",
+    run_mode: "daily",
     expected_frequency_hours: 24,
   },
 ] as const;
@@ -410,12 +417,19 @@ export function buildMapCityDemand(rows: ZarukuSeoMetricRow[]) {
 function sourceFreshnessCatalogSql() {
   return SOURCE_FRESHNESS_CATALOG.map((source, index) => {
     const selectKeyword = index === 0 ? "SELECT" : "UNION ALL SELECT";
-    return `${selectKeyword} '${source.source_key}' AS source_key, '${source.source_label}' AS source_label, '${source.collector}' AS collector, ${source.expected_frequency_hours} AS expected_frequency_hours`;
+    return `${selectKeyword} '${source.source_key}' AS source_key, '${source.source_label}' AS source_label, '${source.collector}' AS collector, '${source.run_mode}' AS run_mode, ${source.expected_frequency_hours} AS expected_frequency_hours`;
   }).join("\n      ");
 }
 
 export function buildSourceFreshnessQuery(sourceKeys = SOURCE_FRESHNESS_CATALOG.map((source) => source.source_key)) {
   const scopedSourceKeys = sourceKeys.length > 0 ? sourceKeys : SOURCE_FRESHNESS_CATALOG.map((source) => source.source_key);
+  // Collector runs have no account column, so the writer's run_mode is the
+  // reliable source contract that separates Zaruku collection from Abbott releases.
+  const scopedSourceParams = scopedSourceKeys.flatMap((sourceKey) => [
+    sourceKey,
+    SOURCE_FRESHNESS_CATALOG.find((source) => source.source_key === sourceKey)?.run_mode ?? "",
+  ]);
+  const coverageParams = ["66624469", "66624469"];
   return {
     sql: `
     WITH source_catalog AS (
@@ -424,7 +438,25 @@ export function buildSourceFreshnessQuery(sourceKeys = SOURCE_FRESHNESS_CATALOG.
     scoped_sources AS (
       SELECT *
       FROM source_catalog
-      WHERE source_key IN (${buildInClause(scopedSourceKeys)})
+      WHERE ${scopedSourceKeys.map(() => "(source_key = ? AND run_mode = ?)").join(" OR ")}
+    ),
+    confirmed_metrika_coverage AS (
+      SELECT
+        'yandex_metrika' AS source_key,
+        MIN(report_date) AS confirmed_date_from,
+        MAX(report_date) AS confirmed_date_to
+      FROM canonical_fact_site_analytics_daily
+      WHERE source_key = 'yandex_metrika'
+        AND analytics_account_id = ?
+        AND analytics_scope = 'traffic'
+      UNION ALL
+      SELECT
+        'yandex_metrika_returning' AS source_key,
+        MIN(report_date) AS confirmed_date_from,
+        MAX(report_date) AS confirmed_date_to
+      FROM canonical_fact_metrika_returning_pages_daily
+      WHERE source_key = 'yandex_metrika'
+        AND analytics_account_id = ?
     ),
     latest_run AS (
       SELECT r.*
@@ -434,6 +466,7 @@ export function buildSourceFreshnessQuery(sourceKeys = SOURCE_FRESHNESS_CATALOG.
         FROM canonical_collector_runs r2
         INNER JOIN scoped_sources ss ON ss.source_key = r2.source_key
         WHERE r2.run_type = 'cron'
+          AND r2.run_mode = ss.run_mode
         GROUP BY r2.source_key
       ) latest ON latest.latest_id = r.id
     ),
@@ -445,6 +478,7 @@ export function buildSourceFreshnessQuery(sourceKeys = SOURCE_FRESHNESS_CATALOG.
         FROM canonical_collector_runs r2
         INNER JOIN scoped_sources ss ON ss.source_key = r2.source_key
         WHERE r2.run_type = 'cron'
+          AND r2.run_mode = ss.run_mode
           AND r2.status = 'success'
         GROUP BY r2.source_key
       ) latest ON latest.latest_success_id = r.id
@@ -457,6 +491,7 @@ export function buildSourceFreshnessQuery(sourceKeys = SOURCE_FRESHNESS_CATALOG.
         FROM canonical_collector_runs r2
         INNER JOIN scoped_sources ss ON ss.source_key = r2.source_key
         WHERE r2.run_type = 'cron'
+          AND r2.run_mode = ss.run_mode
           AND r2.status IN ('failed', 'partial')
         GROUP BY r2.source_key
       ) latest ON latest.latest_error_id = r.id
@@ -471,6 +506,16 @@ export function buildSourceFreshnessQuery(sourceKeys = SOURCE_FRESHNESS_CATALOG.
       latest_success.finished_at AS last_success_at,
       latest_success.date_from AS success_date_from,
       latest_success.date_to AS success_date_to,
+      CASE
+        WHEN confirmed_metrika_coverage.source_key IS NOT NULL
+          THEN confirmed_metrika_coverage.confirmed_date_from
+        ELSE latest_success.date_from
+      END AS confirmed_date_from,
+      CASE
+        WHEN confirmed_metrika_coverage.source_key IS NOT NULL
+          THEN confirmed_metrika_coverage.confirmed_date_to
+        ELSE latest_success.date_to
+      END AS confirmed_date_to,
       latest_success.rows_read AS success_rows_read,
       latest_success.rows_written AS success_rows_written,
       COALESCE(latest_error.finished_at, latest_error.started_at) AS last_error_at,
@@ -479,9 +524,10 @@ export function buildSourceFreshnessQuery(sourceKeys = SOURCE_FRESHNESS_CATALOG.
     LEFT JOIN latest_run ON latest_run.source_key = ss.source_key
     LEFT JOIN latest_success ON latest_success.source_key = ss.source_key
     LEFT JOIN latest_error ON latest_error.source_key = ss.source_key
+    LEFT JOIN confirmed_metrika_coverage ON confirmed_metrika_coverage.source_key = ss.source_key
     ORDER BY FIELD(ss.source_key, 'yandex_metrika', 'yandex_webmaster', 'google_search_console')
   `,
-    params: scopedSourceKeys,
+    params: [...scopedSourceParams, ...coverageParams],
   };
 }
 
@@ -533,8 +579,12 @@ export function normalizeSourceFreshnessRow(row: SourceFreshnessDbRow, now = new
     last_status: status,
     last_finished_at: lastFinishedAt,
     last_success_at: lastSuccessAt,
-    date_from: formatDateOnlyValue(row.success_date_from),
-    date_to: formatDateOnlyValue(row.success_date_to),
+    date_from: formatDateOnlyValue(
+      "confirmed_date_from" in row ? row.confirmed_date_from : row.success_date_from,
+    ),
+    date_to: formatDateOnlyValue(
+      "confirmed_date_to" in row ? row.confirmed_date_to : row.success_date_to,
+    ),
     rows_read: rowsRead,
     rows_written: rowsWritten,
     last_error_at: activeErrorAt,
@@ -819,11 +869,13 @@ export function buildKpis({
   trafficChannels,
   technicalTail,
   devices,
+  deviceVisitsTotal,
   periodUsers,
 }: {
   trafficChannels: ZarukuSeoMetricRow[];
   technicalTail: ZarukuSeoMetricRow[];
   devices: ZarukuSeoMetricRow[];
+  deviceVisitsTotal: number;
   periodUsers: number | null;
 }): ZarukuSeoKpi[] {
   const trafficRows = [...trafficChannels, ...technicalTail];
@@ -873,7 +925,9 @@ export function buildKpis({
     {
       key: "mobile_share",
       label: "Мобильные",
-      value: mobileVisits > 0 ? formatPercent((mobileVisits / Math.max(1, totals.visits)) * 100) : "—",
+      value: mobileVisits > 0 && deviceVisitsTotal > 0
+        ? formatPercent((mobileVisits / deviceVisitsTotal) * 100)
+        : "—",
       raw_value: mobileVisits || null,
       source: "metrika",
       layer: "onsite",
@@ -924,6 +978,7 @@ type SourceDataThrough = Record<ZarukuSeoSource["id"], string | null>;
 export type ZarukuLoadTimingName = "metrika-db" | "gsc-db" | "webmaster-db" | "seo-db" | "total";
 
 export type ZarukuLoadOptions = {
+  today?: string;
   recordTiming?: (name: ZarukuLoadTimingName, durationMs: number) => void;
 };
 
@@ -1112,7 +1167,7 @@ export async function loadZarukuSeoData(
   const dailyPeriod = resolveZarukuDailyPeriod({
     requestedFrom: from,
     requestedTo: to,
-    today: new Date().toISOString().slice(0, 10),
+    today: options.today ?? businessCalendarIsoDate(),
   });
   const { from: effectiveFrom, to: effectiveTo } = dailyPeriod.effective;
   const [metrika, facts, seo] = await Promise.all([
@@ -1321,6 +1376,7 @@ export async function loadZarukuSeoData(
       trafficChannels,
       technicalTail,
       devices: devicesReport.rows,
+      deviceVisitsTotal: devicesReport.total_visits,
       periodUsers,
     }),
     traffic_channels: trafficChannels,

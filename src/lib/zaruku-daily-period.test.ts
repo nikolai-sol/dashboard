@@ -1,6 +1,18 @@
 import assert from "node:assert/strict";
 import test from "node:test";
+import { businessCalendarIsoDate } from "@/lib/abbott-date-range";
 import { resolveZarukuDailyPeriod } from "@/lib/zaruku-daily-period";
+
+test("uses the Moscow calendar date across its midnight boundary", () => {
+  assert.equal(
+    businessCalendarIsoDate(new Date("2026-07-22T21:30:00Z"), "Europe/Moscow"),
+    "2026-07-23",
+  );
+  assert.equal(
+    businessCalendarIsoDate(new Date("2026-07-22T20:59:59Z"), "Europe/Moscow"),
+    "2026-07-22",
+  );
+});
 
 test("cuts a requested daily period off two UTC calendar days before today", () => {
   assert.deepEqual(

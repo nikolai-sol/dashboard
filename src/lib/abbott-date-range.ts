@@ -16,6 +16,14 @@ function isoDate(year: number, month: number, day: number) {
   return new Date(Date.UTC(year, month - 1, day)).toISOString().slice(0, 10);
 }
 
+export function businessCalendarIsoDate(
+  now = new Date(),
+  timeZone = ABBOTT_BUSINESS_TIME_ZONE,
+): string {
+  const today = zonedCalendarDate(now, timeZone);
+  return isoDate(today.year, today.month, today.day);
+}
+
 export function defaultAbbottRange(
   now = new Date(),
   timeZone = ABBOTT_BUSINESS_TIME_ZONE,

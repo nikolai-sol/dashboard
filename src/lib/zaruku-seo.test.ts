@@ -248,6 +248,7 @@ test("deriveSourceDataThrough falls back to AI period when capture time is absen
 
 const loaderSource = readFileSync(new URL("./zaruku-seo.ts", import.meta.url), "utf8");
 const accountReadModelsSource = readFileSync(new URL("./account-read-models.ts", import.meta.url), "utf8");
+const dashboardLoaderSource = readFileSync(new URL("./dashboard-data-loader.ts", import.meta.url), "utf8");
 
 test("Zaruku runtime contains no live Metrika API or token path", () => {
   for (const prohibitedSource of [
@@ -298,6 +299,50 @@ test("Zaruku applies one effective daily period to every daily loader while SEO 
   ]) {
     assert.ok(parallelPhase.includes(loader), `${loader} must start in the common parallel phase`);
   }
+});
+
+test("Zaruku daily cutoff accepts injected business today and production wires the configured timezone", async (t) => {
+  const calls: Array<{ sql: string; params: unknown[] }> = [];
+  t.mock.method(
+    pool as unknown as {
+      execute: (sql: string, params?: unknown[]) => Promise<[unknown[], unknown[]]>;
+    },
+    "execute",
+    async (sql: string, params: unknown[] = []) => {
+      calls.push({ sql, params });
+      return [[], []];
+    },
+  );
+
+  await loadZarukuSeoData(
+    ["66624469"],
+    "2026-07-01",
+    "2026-07-23",
+    { today: "2026-07-20" },
+  );
+
+  const boundedCalls = calls.filter(({ sql, params }) =>
+    params.includes("2026-07-01")
+    && (
+      sql.includes("canonical_fact_site_analytics_daily")
+      || sql.includes("canonical_fact_metrika_returning_pages_daily")
+      || sql.includes("canonical_fact_gsc_queries_daily")
+      || sql.includes("canonical_fact_webmaster_queries_daily")
+    )
+  );
+  assert.ok(boundedCalls.length > 0);
+  assert.equal(
+    boundedCalls.every(({ params }) => params.includes("2026-07-18")),
+    true,
+  );
+  assert.match(
+    dashboardLoaderSource,
+    /businessCalendarIsoDate\(new Date\(\),\s*businessTimeZone\)/,
+  );
+  assert.match(
+    dashboardLoaderSource,
+    /loadZarukuSeoData\([\s\S]{0,500}today:\s*businessToday/,
+  );
 });
 
 test("account facts pass the same daily date range directly to GSC and Webmaster", () => {
@@ -659,6 +704,7 @@ test("buildKpis uses the unique users total for the selected period", () => {
     ],
     technicalTail: [],
     devices: [],
+    deviceVisitsTotal: 0,
     periodUsers: 1_250,
   }).find((kpi) => kpi.key === "users");
 
@@ -671,11 +717,31 @@ test("buildKpis marks period users unavailable without an authoritative total", 
     trafficChannels: [page("Search engine traffic", 1_100, 1_000, 1_300)],
     technicalTail: [page("Internal traffic", 1_000, 900, 1_200)],
     devices: [],
+    deviceVisitsTotal: 0,
     periodUsers: null,
   }).find((kpi) => kpi.key === "users");
 
   assert.equal(usersKpi?.value, "—");
   assert.equal(usersKpi?.raw_value, null);
+});
+
+test("buildKpis calculates mobile share within the Russia device report", () => {
+  const mobileKpi = buildKpis({
+    trafficChannels: [
+      page("Search engine traffic", 600, 500, 700),
+      page("Direct traffic", 400, 350, 500),
+    ],
+    technicalTail: [],
+    devices: [
+      { ...page("Смартфоны", 60, 50, 70), id: "mobile" },
+      { ...page("ПК", 40, 35, 50), id: "desktop" },
+    ],
+    deviceVisitsTotal: 100,
+    periodUsers: 850,
+  }).find((kpi) => kpi.key === "mobile_share");
+
+  assert.equal(mobileKpi?.value, "60%");
+  assert.equal(mobileKpi?.raw_value, 60);
 });
 
 test("returning pages query reads canonical returning-content facts", () => {
@@ -694,7 +760,63 @@ test("buildSourceFreshnessQuery scopes canonical collectors by source keys", () 
 
   assert.match(query.sql, /canonical_collector_runs/);
   assert.match(query.sql, /run_type = 'cron'/);
-  assert.deepEqual(query.params, ["yandex_metrika", "yandex_webmaster"]);
+  assert.deepEqual(query.params, [
+    "yandex_metrika",
+    "canonical_only",
+    "yandex_webmaster",
+    "daily",
+    "66624469",
+    "66624469",
+  ]);
+});
+
+test("buildSourceFreshnessQuery excludes Abbott canonical-release runs from Zaruku Metrika freshness", () => {
+  const query = buildSourceFreshnessQuery(["yandex_metrika"]);
+
+  assert.deepEqual(query.params, [
+    "yandex_metrika",
+    "canonical_only",
+    "66624469",
+    "66624469",
+  ]);
+  assert.equal(
+    query.sql.match(/r2\.run_mode = ss\.run_mode/g)?.length,
+    3,
+    "latest run, success, and error must all use the Zaruku Metrika run contract",
+  );
+  assert.equal(query.params.includes("canonical_release"), false);
+});
+
+test("successful Metrika run bounds cannot claim Zaruku coverage without account facts", () => {
+  const query = buildSourceFreshnessQuery(["yandex_metrika"]);
+
+  assert.match(query.sql, /canonical_fact_site_analytics_daily/);
+  assert.match(query.sql, /canonical_fact_metrika_returning_pages_daily/);
+  assert.equal(
+    query.sql.match(/analytics_account_id = \?/g)?.length,
+    2,
+  );
+
+  const freshness = normalizeSourceFreshnessRow({
+    source_key: "yandex_metrika",
+    source_label: "Яндекс Метрика",
+    collector: "fetch_yandex_metrika_canonical.py",
+    expected_frequency_hours: 24,
+    last_status: "success",
+    last_finished_at: "2026-07-20 06:12:08",
+    last_success_at: "2026-07-20 06:12:08",
+    success_date_from: "2026-07-01",
+    success_date_to: "2026-07-19",
+    confirmed_date_from: null,
+    confirmed_date_to: null,
+    success_rows_read: 0,
+    success_rows_written: 0,
+    last_error_at: null,
+    last_error_summary: null,
+  });
+
+  assert.equal(freshness.date_from, null);
+  assert.equal(freshness.date_to, null);
 });
 
 test("default source freshness query includes the returning-content collector", () => {
