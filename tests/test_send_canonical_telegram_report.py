@@ -34,8 +34,29 @@ ABBOTT_OK = {
 
 class TelegramReportTests(unittest.TestCase):
     def test_stable_order_appends_metrika(self):
-        self.assertEqual(report.SUMMARY_SOURCE_ORDER[-2], "between")
+        self.assertEqual(report.SUMMARY_SOURCE_ORDER[-3], "between")
+        self.assertEqual(report.SUMMARY_SOURCE_ORDER[-2], "google_search_console")
         self.assertEqual(report.SUMMARY_SOURCE_ORDER[-1], "yandex_metrika")
+
+    def test_summary_includes_google_search_console_collector(self):
+        payload = {"summary": {"exit_code": 0}, "sources": []}
+        runs = [{
+            "source_key": "google_search_console",
+            "status": "success",
+            "run_type": "backfill",
+            "run_mode": "daily",
+            "rows_read": 40,
+            "rows_written": 35,
+            "rows_updated": 5,
+            "error_count": 0,
+            "started_at": "2026-07-20 05:40:00",
+        }]
+
+        text = report.build_summary_message(payload, runs, ABBOTT_OK)
+
+        self.assertIn("google search console: SUCCESS", text)
+        self.assertIn("type=BACKFILL", text)
+        self.assertIn("mode=daily", text)
 
     def test_summary_includes_between_email_collector(self):
         payload = {"summary": {"exit_code": 0}, "sources": []}

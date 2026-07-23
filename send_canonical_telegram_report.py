@@ -30,9 +30,13 @@ SUMMARY_SOURCE_ORDER = [
     'yandex_direct',
     'hybrid',
     'between',
+    'google_search_console',
     'yandex_metrika',
 ]
-SUMMARY_SOURCE_LABELS = {'between': 'between email'}
+SUMMARY_SOURCE_LABELS = {
+    'between': 'between email',
+    'google_search_console': 'google search console',
+}
 
 
 def parse_args() -> argparse.Namespace:
