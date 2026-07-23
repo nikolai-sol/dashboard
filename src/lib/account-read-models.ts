@@ -41,11 +41,10 @@ function requireAccountId(accountId: string) {
 export async function loadAccountFacts(
   accountId: string,
   dateRange: DateRange,
-  options: { weeks?: string[] } = {},
 ): Promise<AccountFactsReadModel> {
   const normalizedAccountId = requireAccountId(accountId);
   const [webmaster, gsc] = await Promise.all([
-    loadYandexWebmasterFacts(normalizedAccountId, options.weeks),
+    loadYandexWebmasterFacts(normalizedAccountId, dateRange),
     loadGoogleSearchConsoleFacts([normalizedAccountId], dateRange),
   ]);
   return {

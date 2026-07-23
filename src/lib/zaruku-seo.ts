@@ -3,6 +3,7 @@ import pool from "@/lib/db";
 import { loadAccountFacts, loadSeoIntelligence, loadSeoProcess } from "@/lib/account-read-models";
 import { matchSectionPattern } from "@/lib/zaruku-seo-os";
 import { makeZarukuDatasetMeta } from "@/lib/zaruku-dataset-meta";
+import { resolveZarukuDailyPeriod } from "@/lib/zaruku-daily-period";
 import type {
   ZarukuAiVisibilityData,
   ZarukuSeoData,
@@ -1215,17 +1216,23 @@ function buildDataQuality({
 export async function loadZarukuSeoData(counterIds: string[], from: string, to: string): Promise<ZarukuSeoData> {
   const normalizedCounterIds = normalizeCounterIds(counterIds);
   const accountId = normalizedCounterIds[0];
+  const dailyPeriod = resolveZarukuDailyPeriod({
+    requestedFrom: from,
+    requestedTo: to,
+    today: new Date().toISOString().slice(0, 10),
+  });
+  const { from: effectiveFrom, to: effectiveTo } = dailyPeriod.effective;
   const [trafficRowsRaw, pageRows, organicTrend, returningPages, seoOs, sourceFreshness] = await Promise.all([
-    queryTrafficRows(normalizedCounterIds, from, to),
-    queryCanonicalPageRows(normalizedCounterIds, from, to),
-    queryOrganicTrend(normalizedCounterIds, from, to),
-    queryReturningPages(normalizedCounterIds, from, to),
+    queryTrafficRows(normalizedCounterIds, effectiveFrom, effectiveTo),
+    queryCanonicalPageRows(normalizedCounterIds, effectiveFrom, effectiveTo),
+    queryOrganicTrend(normalizedCounterIds, effectiveFrom, effectiveTo),
+    queryReturningPages(normalizedCounterIds, effectiveFrom, effectiveTo),
     loadSeoProcess(accountId),
     querySourceFreshnessRows(),
   ]);
   const { trafficChannels, technicalTail } = splitTrafficRows(trafficRowsRaw);
 
-  const metrikaReports = await fetchMetrikaReportsSequential(normalizedCounterIds, from, to, [
+  const metrikaReports = await fetchMetrikaReportsSequential(normalizedCounterIds, effectiveFrom, effectiveTo, [
     { key: "searchEngines", dimensions: "ym:s:searchEngine", limit: 12 },
     { key: "searchPhrases", dimensions: "ym:s:searchPhrase", limit: 30 },
     { key: "organicLanding", dimensions: "ym:s:searchEngine,ym:s:startURL", limit: 30 },
@@ -1280,12 +1287,12 @@ export async function loadZarukuSeoData(counterIds: string[], from: string, to: 
     entryPageRows,
   );
   const [facts, seoIntelligence] = await Promise.all([
-    loadAccountFacts(accountId, { from, to }, { weeks: seoOs.weeks }),
+    loadAccountFacts(accountId, dailyPeriod.effective),
     loadSeoIntelligence(accountId),
   ]);
   const webmaster = facts.webmaster;
   const gsc = facts.gsc;
-  const requestedPeriod = { from, to };
+  const requestedPeriod = dailyPeriod.requested;
   const trafficActualTo = sourceFreshness.find((row) => row.source_key === "yandex_metrika")?.date_to ?? null;
   const returningActualTo = sourceFreshness.find((row) => row.source_key === "yandex_metrika_returning")?.date_to ?? null;
   const completeMetrics: ZarukuMetricAvailability = {
@@ -1320,7 +1327,9 @@ export async function loadZarukuSeoData(counterIds: string[], from: string, to: 
     avg_duration_seconds: false,
     page_depth: false,
   };
-  const coverageIsPartial = (actualTo: string | null) => Boolean(actualTo && actualTo < to);
+  const effectiveActualTo = (actualTo: string | null) =>
+    actualTo && actualTo < effectiveTo ? actualTo : effectiveTo;
+  const coverageIsPartial = (actualTo: string | null) => Boolean(actualTo && actualTo < effectiveTo);
   const coverageMessage = (actualTo: string | null) => actualTo ? `Данные доступны по ${actualTo}.` : undefined;
   const canonicalMeta = (
     rowCount: number,
@@ -1332,7 +1341,7 @@ export async function loadZarukuSeoData(counterIds: string[], from: string, to: 
     fallbackVisible: coverageIsPartial(actualTo),
     sources: ["metrika"],
     requestedPeriod,
-    actualTo,
+    actualTo: effectiveActualTo(actualTo),
     geography: "unsegmented",
     metrics,
     fallbackMessage: coverageMessage(actualTo),
@@ -1343,7 +1352,7 @@ export async function loadZarukuSeoData(counterIds: string[], from: string, to: 
     fallbackVisible: false,
     sources: ["metrika"],
     requestedPeriod,
-    actualTo: report.ok ? to : null,
+    actualTo: report.ok ? effectiveTo : null,
     geography: "russia",
     metrics: completeMetrics,
     unavailableMessage: "Стабильный срез Яндекс Метрики недоступен.",
@@ -1358,7 +1367,7 @@ export async function loadZarukuSeoData(counterIds: string[], from: string, to: 
     fallbackVisible: true,
     sources: ["metrika"],
     requestedPeriod,
-    actualTo: contentUsesLiveVisits ? to : trafficActualTo,
+    actualTo: contentUsesLiveVisits ? effectiveTo : effectiveActualTo(trafficActualTo),
     geography: contentUsesLiveVisits ? "mixed" : "unsegmented",
     metrics: contentUsesLiveVisits ? completeMetrics : pageMetrics,
     fallbackMessage: contentFallbackMessage,
@@ -1387,7 +1396,7 @@ export async function loadZarukuSeoData(counterIds: string[], from: string, to: 
   return {
     counters: normalizedCounterIds,
     domain: "zaruku.ru",
-    period: { from, to },
+    period: dailyPeriod.effective,
     dataset_meta: datasetMeta,
     layers: [
       { id: "onsite", label: "На сайте", hint: "что происходит после клика" },

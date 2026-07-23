@@ -9,6 +9,7 @@ import type {
 
 export type SqlQuery = { sql: string; params: string[] };
 export type WebmasterQueryExecutor = (query: SqlQuery) => Promise<unknown[]>;
+export type WebmasterDateRange = { from: string; to: string };
 
 type WebmasterQueryDbRow = {
   week_key: string;
@@ -77,11 +78,9 @@ function formatDate(value: string | Date) {
   return value instanceof Date ? value.toISOString().slice(0, 10) : String(value).slice(0, 10);
 }
 
-function weekClause(weeks: string[] | undefined, params: string[]) {
-  const normalizedWeeks = (weeks ?? []).map((week) => week.trim()).filter(Boolean);
-  if (normalizedWeeks.length === 0) return "";
-  params.push(...normalizedWeeks);
-  return `AND CONCAT(LEFT(YEARWEEK(report_date, 3), 4), '-W', RIGHT(YEARWEEK(report_date, 3), 2)) IN (${buildInClause(normalizedWeeks)})`;
+function dateRangeClause(dateRange: WebmasterDateRange, params: string[]) {
+  params.push(dateRange.from, dateRange.to);
+  return "AND report_date >= ? AND report_date <= ?";
 }
 
 function weightedAveragePositionSql() {
@@ -143,14 +142,17 @@ const WEEK_KEY_SQL = "CONCAT(LEFT(YEARWEEK(report_date, 3), 4), '-W', RIGHT(YEAR
 const WEEK_FROM_SQL = "DATE_SUB(report_date, INTERVAL WEEKDAY(report_date) DAY)";
 const WEEK_END_SQL = `DATE_ADD(${WEEK_FROM_SQL}, INTERVAL 6 DAY)`;
 
-export function buildWebmasterAccountQueries(counterIds: string[], weeks?: string[]): Record<"queries" | "pages" | "summary", SqlQuery> {
+export function buildWebmasterAccountQueries(
+  counterIds: string[],
+  dateRange: WebmasterDateRange,
+): Record<"queries" | "pages" | "summary", SqlQuery> {
   const normalizedCounterIds = normalizeAccountIds(counterIds);
   const queryParams = [...normalizedCounterIds];
   const summaryParams = [...normalizedCounterIds];
   const pageParams = [...normalizedCounterIds];
-  const queryWeekClause = weekClause(weeks, queryParams);
-  const summaryWeekClause = weekClause(weeks, summaryParams);
-  const pageWeekClause = weekClause(weeks, pageParams);
+  const queryDateRangeClause = dateRangeClause(dateRange, queryParams);
+  const summaryDateRangeClause = dateRangeClause(dateRange, summaryParams);
+  const pageDateRangeClause = dateRangeClause(dateRange, pageParams);
   const accountScope = buildInClause(normalizedCounterIds);
 
   return {
@@ -170,7 +172,7 @@ export function buildWebmasterAccountQueries(counterIds: string[], weeks?: strin
           MAX(report_date) < MAX(${WEEK_END_SQL}) AS is_partial_week
         FROM canonical_fact_webmaster_queries_daily
         WHERE analytics_account_id IN (${accountScope})
-          ${queryWeekClause}
+          ${queryDateRangeClause}
         GROUP BY week_key, query_hash, query_text, device_type
         ORDER BY week_key ASC, impressions DESC, clicks DESC, query_text ASC
       `,
@@ -190,7 +192,7 @@ export function buildWebmasterAccountQueries(counterIds: string[], weeks?: strin
           MAX(report_date) < MAX(${WEEK_END_SQL}) AS is_partial_week
         FROM canonical_fact_webmaster_summary_daily
         WHERE analytics_account_id IN (${accountScope})
-          ${summaryWeekClause}
+          ${summaryDateRangeClause}
         GROUP BY week_key, device_type
         ORDER BY week_key ASC, impressions DESC
       `,
@@ -211,7 +213,7 @@ export function buildWebmasterAccountQueries(counterIds: string[], weeks?: strin
           MAX(report_date) < MAX(${WEEK_END_SQL}) AS is_partial_week
         FROM canonical_fact_webmaster_pages_daily
         WHERE analytics_account_id IN (${accountScope})
-          ${pageWeekClause}
+          ${pageDateRangeClause}
         GROUP BY week_key, page_hash, page_url, device_type
         ORDER BY week_key ASC, impressions DESC, clicks DESC, page_url ASC
       `,
@@ -249,10 +251,10 @@ async function executeWebmasterQuery(query: SqlQuery) {
 
 export async function loadZarukuYandexWebmasterData(
   counterIds: string[],
-  weeks?: string[],
+  dateRange: WebmasterDateRange,
   executeQuery: WebmasterQueryExecutor = executeWebmasterQuery,
 ): Promise<ZarukuYandexWebmasterData> {
-  const queries = buildWebmasterAccountQueries(counterIds, weeks);
+  const queries = buildWebmasterAccountQueries(counterIds, dateRange);
   const results = await Promise.allSettled([executeQuery(queries.queries), executeQuery(queries.summary), executeQuery(queries.pages)]);
   const errors: string[] = [];
   const queryResult = normalizeSettledRows<WebmasterQueryDbRow, ZarukuYandexWebmasterQueryRow>(
@@ -298,8 +300,8 @@ export async function loadZarukuYandexWebmasterData(
 
 export async function loadYandexWebmasterFacts(
   accountId: string,
-  weeks?: string[],
+  dateRange: WebmasterDateRange,
   executeQuery: WebmasterQueryExecutor = executeWebmasterQuery,
 ): Promise<ZarukuYandexWebmasterData> {
-  return loadZarukuYandexWebmasterData([accountId], weeks, executeQuery);
+  return loadZarukuYandexWebmasterData([accountId], dateRange, executeQuery);
 }

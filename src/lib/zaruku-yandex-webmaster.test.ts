@@ -8,16 +8,24 @@ import {
   normalizeWebmasterSummaryRow,
 } from "@/lib/zaruku-yandex-webmaster";
 
-test("buildWebmasterAccountQueries scopes daily canonical rows by account and optional weeks", () => {
-  const queries = buildWebmasterAccountQueries(["66624469"], ["2026-W28"]);
+test("buildWebmasterAccountQueries filters daily canonical rows by direct date bounds before ISO-week aggregation", () => {
+  const queries = buildWebmasterAccountQueries(
+    ["66624469"],
+    { from: "2026-07-01", to: "2026-07-21" },
+  );
 
   assert.match(queries.queries.sql, /canonical_fact_webmaster_queries_daily/);
-  assert.match(queries.queries.sql, /YEARWEEK\(report_date, 3\)[\s\S]*IN \(\?\)/);
-  assert.deepEqual(queries.queries.params, ["66624469", "2026-W28"]);
+  assert.match(
+    queries.queries.sql,
+    /WHERE[\s\S]*report_date >= \?[\s\S]*report_date <= \?[\s\S]*GROUP BY week_key/,
+  );
+  assert.match(queries.queries.sql, /YEARWEEK\(report_date, 3\)/);
+  assert.deepEqual(queries.queries.params, ["66624469", "2026-07-01", "2026-07-21"]);
   assert.match(queries.summary.sql, /canonical_fact_webmaster_summary_daily/);
-  assert.deepEqual(queries.summary.params, ["66624469", "2026-W28"]);
+  assert.deepEqual(queries.summary.params, ["66624469", "2026-07-01", "2026-07-21"]);
   assert.match(queries.pages.sql, /canonical_fact_webmaster_pages_daily/);
-  assert.deepEqual(queries.pages.params, ["66624469", "2026-W28"]);
+  assert.deepEqual(queries.pages.params, ["66624469", "2026-07-01", "2026-07-21"]);
+  assert.doesNotMatch(queries.queries.sql, /AND CONCAT\(LEFT\(YEARWEEK/);
   assert.doesNotMatch(queries.queries.sql, /seo_webmaster_queries_weekly/);
 });
 
@@ -108,7 +116,7 @@ test("normalizeWebmasterPageRow keeps URL page metrics", () => {
 });
 
 test("loadZarukuYandexWebmasterData is partial when one table is unavailable", async () => {
-  const data = await loadZarukuYandexWebmasterData(["66624469"], ["2026-W28"], async (query) => {
+  const data = await loadZarukuYandexWebmasterData(["66624469"], { from: "2026-07-06", to: "2026-07-12" }, async (query) => {
     if (query.sql.includes("canonical_fact_webmaster_summary_daily")) throw new Error("missing table");
     if (query.sql.includes("canonical_fact_webmaster_pages_daily")) return [];
     return [
@@ -135,7 +143,7 @@ test("loadZarukuYandexWebmasterData is partial when one table is unavailable", a
 });
 
 test("loadZarukuYandexWebmasterData includes page facts when canonical table is present", async () => {
-  const data = await loadZarukuYandexWebmasterData(["66624469"], ["2026-W29"], async (query) => {
+  const data = await loadZarukuYandexWebmasterData(["66624469"], { from: "2026-07-13", to: "2026-07-19" }, async (query) => {
     if (query.sql.includes("canonical_fact_webmaster_queries_daily")) return [];
     if (query.sql.includes("canonical_fact_webmaster_summary_daily")) return [];
     if (query.sql.includes("canonical_fact_webmaster_pages_daily")) {
@@ -163,8 +171,8 @@ test("loadZarukuYandexWebmasterData includes page facts when canonical table is 
   assert.deepEqual(data.pages.map((row) => row.url), ["/rak-molochnoj-zhelezy/reabilitaciya/"]);
 });
 
-test("loadZarukuYandexWebmasterData does not fallback to latest week when selected week is empty", async () => {
-  const data = await loadZarukuYandexWebmasterData(["66624469"], ["2026-W28"], async (query) => {
+test("loadZarukuYandexWebmasterData does not fallback to a latest week when the daily range is empty", async () => {
+  const data = await loadZarukuYandexWebmasterData(["66624469"], { from: "2026-07-06", to: "2026-07-12" }, async (query) => {
     assert.doesNotMatch(query.sql, /MAX\(week_key\)|seo_webmaster_/);
     return [];
   });

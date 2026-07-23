@@ -193,6 +193,33 @@ test("deriveSourceDataThrough falls back to AI period when capture time is absen
 });
 
 const loaderSource = readFileSync(new URL("./zaruku-seo.ts", import.meta.url), "utf8");
+const accountReadModelsSource = readFileSync(new URL("./account-read-models.ts", import.meta.url), "utf8");
+
+test("Zaruku applies one effective daily period to every daily loader while SEO OS and AI remain independent", () => {
+  assert.match(
+    loaderSource,
+    /const dailyPeriod = resolveZarukuDailyPeriod\([\s\S]*?const \{ from: effectiveFrom, to: effectiveTo \} = dailyPeriod\.effective;/,
+  );
+  for (const loader of [
+    "queryTrafficRows",
+    "queryCanonicalPageRows",
+    "queryOrganicTrend",
+    "queryReturningPages",
+    "fetchMetrikaReportsSequential",
+  ]) {
+    assert.ok(loaderSource.includes(`${loader}(normalizedCounterIds, effectiveFrom, effectiveTo`));
+  }
+  assert.match(loaderSource, /loadAccountFacts\(accountId, dailyPeriod\.effective\)/);
+  assert.doesNotMatch(loaderSource, /loadAccountFacts\([^)]*seoOs\.weeks/);
+  assert.match(loaderSource, /loadSeoProcess\(accountId\)/);
+  assert.match(loaderSource, /loadSeoIntelligence\(accountId\)/);
+});
+
+test("account facts pass the same daily date range directly to GSC and Webmaster", () => {
+  assert.match(accountReadModelsSource, /loadYandexWebmasterFacts\(normalizedAccountId, dateRange\)/);
+  assert.match(accountReadModelsSource, /loadGoogleSearchConsoleFacts\(\[normalizedAccountId\], dateRange\)/);
+  assert.doesNotMatch(accountReadModelsSource, /weeks/);
+});
 
 test("Zaruku read model does not request redundant general country or city reports", () => {
   assert.doesNotMatch(loaderSource, /key: "countries"|key: "cities"/);
