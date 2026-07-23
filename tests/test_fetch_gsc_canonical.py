@@ -96,20 +96,63 @@ class GoogleSearchConsoleCanonicalTests(unittest.TestCase):
         self.assertEqual(
             build_search_analytics_body(
                 "2026-07-15",
-                ["searchAppearance", "page", "country", "device"],
+                ["searchAppearance"],
                 search_type="web",
                 start_row=25000,
             ),
             {
                 "startDate": "2026-07-15",
                 "endDate": "2026-07-15",
-                "dimensions": ["searchAppearance", "page", "country", "device"],
+                "dimensions": ["searchAppearance"],
                 "rowLimit": 25000,
                 "startRow": 25000,
                 "dataState": "final",
                 "type": "web",
             },
         )
+
+    def test_optional_requests_use_supported_dimension_combinations(self):
+        import fetch_gsc_canonical as gsc
+
+        account = gsc.GscAccount("66624469", "https://zaruku.ru/")
+        optional_failures = []
+        with patch.object(
+            gsc,
+            "fetch_paginated_search_analytics_rows",
+            return_value=[],
+        ) as fetch_rows:
+            gsc.fetch_search_appearance_rows(
+                "token",
+                account,
+                "2026-07-15",
+                43,
+                optional_failures=optional_failures,
+            )
+            self.assertEqual(fetch_rows.call_args.kwargs["dimensions"], ["searchAppearance"])
+
+            gsc.fetch_search_type_rows(
+                "token",
+                account,
+                "2026-07-15",
+                43,
+                search_type="discover",
+                optional_failures=optional_failures,
+            )
+            self.assertEqual(fetch_rows.call_args.kwargs["dimensions"], ["page", "country"])
+
+            for search_type in ("web", "image", "video", "news", "googleNews"):
+                gsc.fetch_search_type_rows(
+                    "token",
+                    account,
+                    "2026-07-15",
+                    43,
+                    search_type=search_type,
+                    optional_failures=optional_failures,
+                )
+                self.assertEqual(
+                    fetch_rows.call_args.kwargs["dimensions"],
+                    ["page", "country", "device"],
+                )
 
     def test_search_appearance_rows_use_canonical_feature_contract(self):
         from fetch_gsc_canonical import normalize_search_appearance_rows, search_appearance_hash
@@ -118,7 +161,7 @@ class GoogleSearchConsoleCanonicalTests(unittest.TestCase):
             {
                 "rows": [
                     {
-                        "keys": ["RICH_RESULTS", "https://zaruku.ru/", "rus", "MOBILE"],
+                        "keys": ["RICH_RESULTS"],
                         "impressions": 50,
                         "clicks": 5,
                         "ctr": 0.1,
@@ -132,14 +175,15 @@ class GoogleSearchConsoleCanonicalTests(unittest.TestCase):
             run_id=43,
         )
 
+        self.assertEqual(len(rows), 1)
         self.assertEqual(rows[0]["search_appearance"], "RICH_RESULTS")
         self.assertEqual(rows[0]["search_type"], "web")
-        self.assertEqual(rows[0]["page"], "https://zaruku.ru/")
-        self.assertEqual(rows[0]["country"], "rus")
-        self.assertEqual(rows[0]["device"], "MOBILE")
+        self.assertEqual(rows[0]["page"], "")
+        self.assertEqual(rows[0]["country"], "")
+        self.assertEqual(rows[0]["device"], "")
         self.assertEqual(
             rows[0]["feature_hash"],
-            search_appearance_hash("web", "RICH_RESULTS", "https://zaruku.ru/", "rus", "MOBILE"),
+            search_appearance_hash("web", "RICH_RESULTS", "", "", ""),
         )
 
     def test_search_type_rows_use_canonical_type_contract(self):
@@ -170,6 +214,42 @@ class GoogleSearchConsoleCanonicalTests(unittest.TestCase):
         self.assertEqual(
             rows[0]["type_hash"],
             search_type_hash("image", "https://zaruku.ru/rak-molochnoj-zhelezy/", "rus", "DESKTOP"),
+        )
+
+    def test_discover_rows_persist_empty_device_in_existing_hash_contract(self):
+        from fetch_gsc_canonical import normalize_search_type_rows, search_type_hash
+
+        rows = normalize_search_type_rows(
+            {
+                "rows": [
+                    {
+                        "keys": ["https://zaruku.ru/rak-molochnoj-zhelezy/", "rus"],
+                        "impressions": 80,
+                        "clicks": 4,
+                        "ctr": 0.05,
+                        "position": 6.1,
+                    }
+                ]
+            },
+            analytics_account_id="66624469",
+            report_date="2026-07-15",
+            search_type="discover",
+            run_id=44,
+        )
+
+        self.assertEqual(len(rows), 1)
+        self.assertEqual(rows[0]["search_type"], "discover")
+        self.assertEqual(rows[0]["page"], "https://zaruku.ru/rak-molochnoj-zhelezy/")
+        self.assertEqual(rows[0]["country"], "rus")
+        self.assertEqual(rows[0]["device"], "")
+        self.assertEqual(
+            rows[0]["type_hash"],
+            search_type_hash(
+                "discover",
+                "https://zaruku.ru/rak-molochnoj-zhelezy/",
+                "rus",
+                "",
+            ),
         )
 
     def test_optional_gsc_upserts_do_not_write_legacy_columns(self):
@@ -251,6 +331,38 @@ class GoogleSearchConsoleCanonicalTests(unittest.TestCase):
         self.assertEqual(result["optional_failure_count"], 1)
         self.assertEqual(finish.call_args.args[1], "partial")
         self.assertEqual(finish.call_args.args[5], 1)
+
+    def test_http_200_zero_optional_rows_finishes_successful_empty(self):
+        import fetch_gsc_canonical as gsc
+
+        args = SimpleNamespace(
+            run_type="manual",
+            force=True,
+            date_from="2026-07-20",
+            date_to="2026-07-20",
+            backfill_days=3,
+            account_id="66624469",
+            site_url="https://zaruku.ru/",
+        )
+        finish = Mock()
+
+        with patch.object(gsc, "start_run", return_value=73), patch.object(
+            gsc, "finish_run", finish
+        ), patch.object(gsc, "refresh_access_token", return_value="token"), patch.object(
+            gsc,
+            "configured_accounts",
+            return_value=[gsc.GscAccount("66624469", "https://zaruku.ru/")],
+        ), patch.object(gsc, "configured_search_types", return_value=["discover"]), patch.object(
+            gsc, "request_with_retry", return_value={"rows": []}
+        ), patch.object(gsc, "upsert_accounts"), patch.object(gsc, "log_collector_event"):
+            result = gsc.collect(args)
+
+        self.assertEqual(result["status"], "success")
+        self.assertEqual(result["optional_failure_count"], 0)
+        self.assertEqual(result["rows_read"], 0)
+        self.assertEqual(result["rows_written"], 0)
+        self.assertEqual(finish.call_args.args[1], "success")
+        self.assertEqual(finish.call_args.args[5], 0)
 
     def test_partial_cron_run_counts_as_completed_daily_quota(self):
         import inspect

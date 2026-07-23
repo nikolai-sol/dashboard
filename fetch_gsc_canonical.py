@@ -303,13 +303,13 @@ def normalize_search_appearance_rows(
     normalized_search_type = clean_text(search_type) or "web"
     for row in payload.get("rows") or []:
         keys = list(row.get("keys") or [])
-        if len(keys) < 4:
+        if len(keys) < 1:
             continue
         search_appearance = clean_text(keys[0])
-        page = clean_text(keys[1])
-        country = clean_text(keys[2])
-        device = clean_text(keys[3])
-        if not search_appearance or not page:
+        page = ""
+        country = ""
+        device = ""
+        if not search_appearance:
             continue
         result.append(
             {
@@ -345,11 +345,12 @@ def normalize_search_type_rows(
     normalized_search_type = clean_text(search_type) or "web"
     for row in payload.get("rows") or []:
         keys = list(row.get("keys") or [])
-        if len(keys) < 3:
+        required_key_count = 2 if normalized_search_type == "discover" else 3
+        if len(keys) < required_key_count:
             continue
         page = clean_text(keys[0])
         country = clean_text(keys[1])
-        device = clean_text(keys[2])
+        device = "" if normalized_search_type == "discover" else clean_text(keys[2])
         if not page:
             continue
         result.append(
@@ -576,7 +577,7 @@ def fetch_search_appearance_rows(
         account,
         day,
         run_id,
-        dimensions=["searchAppearance", "page", "country", "device"],
+        dimensions=["searchAppearance"],
         search_type=search_type,
         tolerate_layer_error=True,
         optional_failures=optional_failures,
@@ -592,12 +593,17 @@ def fetch_search_type_rows(
     search_type: str,
     optional_failures: list[dict[str, Any]] | None = None,
 ) -> list[dict]:
+    dimensions = (
+        ["page", "country"]
+        if clean_text(search_type) == "discover"
+        else ["page", "country", "device"]
+    )
     return fetch_paginated_search_analytics_rows(
         access_token,
         account,
         day,
         run_id,
-        dimensions=["page", "country", "device"],
+        dimensions=dimensions,
         search_type=search_type,
         tolerate_layer_error=True,
         optional_failures=optional_failures,
