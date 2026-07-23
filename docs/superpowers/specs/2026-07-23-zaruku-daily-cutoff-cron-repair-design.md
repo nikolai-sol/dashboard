@@ -1,7 +1,7 @@
 # Zaruku Daily Cutoff and Canonical Collector Repair Design
 
-**Status:** approved in conversation on 2026-07-23  
-**Repositories:** `ReportingDash` root collector repository and nested `dashboard-next` repository  
+**Status:** approved in conversation on 2026-07-23
+**Repositories:** `ReportingDash` root collector repository and nested `dashboard-next` repository
 **Working branches:** `codex/zaruku-daily-cutoff-cron-repair` in both repositories
 
 ## Goal
