@@ -2,6 +2,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import {
   buildAbbottPageStatsExportRows,
+  buildAbbottPageviewsByDirection,
   matchesPageStatsSearch,
   matchesSelectedMaterialType,
   summarizeAbbottPageStats,
@@ -62,6 +63,21 @@ test("page stats summary returns zero totals for an empty filtered result", () =
     pageviews: 0,
     users: 0,
   });
+});
+
+test("pageviews by direction sums filtered rows, removes unnamed groups, sorts, and limits results", () => {
+  const rows = [
+    { ...sampleRow, direction: "Кардиология", pageviews: 10 },
+    { ...sampleRow, direction: "Неврология", pageviews: 25 },
+    { ...sampleRow, direction: "Кардиология", pageviews: 7 },
+    { ...sampleRow, direction: null, pageviews: 999 },
+    { ...sampleRow, direction: "Без направления", pageviews: 998 },
+  ];
+
+  assert.deepEqual(buildAbbottPageviewsByDirection(rows, 2), [
+    { label: "Неврология", value: 25 },
+    { label: "Кардиология", value: 17 },
+  ]);
 });
 
 test("export rows keep page identity and raw numeric metrics", () => {
