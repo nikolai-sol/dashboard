@@ -86,26 +86,15 @@ function reportDetailSql(
   accountIds: string[],
   exactUsersAvailable: boolean,
 ) {
-  const includesTotal = report.key === "devices";
-  const rowKindFilter = includesTotal
-    ? "row_kind IN ('detail', 'total')"
-    : "row_kind = 'detail'";
   const groupBy = [
     "report_key",
-    ...(includesTotal ? ["row_kind"] : []),
+    "row_kind",
     "dimension_1_id",
     "dimension_1_value",
     "dimension_2_id",
     "dimension_2_value",
     "page_url",
   ].join(", ");
-  const share = includesTotal
-    ? "visits / NULLIF(SUM(visits) OVER (PARTITION BY row_kind), 0) * 100 AS share"
-    : "visits / NULLIF(SUM(visits) OVER (), 0) * 100 AS share";
-  const rowKind = includesTotal ? "row_kind" : "'detail' AS row_kind";
-  const ordering = includesTotal
-    ? "row_kind = 'total' DESC, visits DESC, pageviews DESC"
-    : "visits DESC, pageviews DESC";
   const users = exactUsersAvailable
     ? "MAX(COALESCE(users, 0)) AS users"
     : "0 AS users";
@@ -114,7 +103,7 @@ function reportDetailSql(
     /* report_key: ${report.key} */
     SELECT
       report_key,
-      ${rowKind},
+      row_kind,
       dimension_1_id,
       dimension_1_value,
       dimension_2_id,
@@ -126,11 +115,11 @@ function reportDetailSql(
       bounce_rate,
       avg_visit_duration_seconds,
       page_depth,
-      ${share}
+      visits / NULLIF(SUM(visits) OVER (PARTITION BY row_kind), 0) * 100 AS share
     FROM (
       SELECT
         report_key,
-        ${rowKind},
+        row_kind,
         dimension_1_id,
         dimension_1_value,
         dimension_2_id,
@@ -148,10 +137,10 @@ function reportDetailSql(
         AND report_key = ?
         AND segment_key = 'russia'
         AND report_date BETWEEN ? AND ?
-        AND ${rowKindFilter}
+        AND row_kind IN ('detail', 'total')
       GROUP BY ${groupBy}
     ) AS aggregated_${report.key}
-    ORDER BY ${ordering}
+    ORDER BY row_kind = 'total' DESC, visits DESC, pageviews DESC
     LIMIT ?
   `;
 }
@@ -171,7 +160,7 @@ export function buildZarukuMetrikaBreakdownQueries(
     report.key,
     range.from,
     range.to,
-    report.limit + (report.key === "devices" ? 1 : 0),
+    report.limit + 1,
   ]);
   const reportKeys = ZARUKU_METRIKA_BREAKDOWN_REPORTS.map(
     (report) => report.key,
@@ -260,6 +249,7 @@ function toMetricRow(
     url: row.page_url || null,
     visits: Math.round(asNumber(row.visits)),
     users: exactUsersAvailable ? Math.round(asNumber(row.users)) : 0,
+    users_available: exactUsersAvailable,
     pageviews: Math.round(asNumber(row.pageviews)),
     bounce_rate: asNullableNumber(row.bounce_rate),
     avg_duration_seconds: asNullableNumber(row.avg_visit_duration_seconds),
@@ -345,7 +335,6 @@ export async function loadZarukuMetrikaBreakdowns(
       continue;
     }
     reports[key].rows.push(toMetricRow(row, exactUsersAvailable));
-    reports[key].total_visits += Math.round(asNumber(row.visits));
   }
 
   for (const report of ZARUKU_METRIKA_BREAKDOWN_REPORTS) {

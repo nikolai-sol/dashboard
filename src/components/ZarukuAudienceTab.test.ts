@@ -23,3 +23,7 @@ test("every optional audience slice uses its explicit dataset state", () => {
   assert.match(source, /<ZarukuPanelState/);
   assert.doesNotMatch(source, /geo_countries|geo_cities|Страны/);
 });
+
+test("source-device users use the row-level availability contract", () => {
+  assert.match(source, /row\.users_available\s*===\s*false\s*\?\s*"—"/);
+});

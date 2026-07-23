@@ -25,6 +25,7 @@ test("detail SQL scopes and bounds all twelve Russia breakdown reports after agg
     assert.match(sql, /report_key\s*=\s*\?/i);
     assert.match(sql, /segment_key\s*=\s*'russia'/i);
     assert.match(sql, /report_date\s+BETWEEN\s+\?\s+AND\s+\?/i);
+    assert.match(sql, /row_kind\s+IN\s*\(\s*'detail'\s*,\s*'total'\s*\)/i);
     assert.match(sql, /GROUP\s+BY[\s\S]*LIMIT\s+\?/i);
     assert.ok(
       sql.search(/GROUP\s+BY/i) < sql.search(/LIMIT\s+\?/i),
@@ -39,6 +40,12 @@ test("detail SQL scopes and bounds all twelve Russia breakdown reports after agg
   assert.equal(
     queries.detail.params.filter((value) => value === "2026-07-21").length,
     12,
+  );
+  assert.deepEqual(
+    queries.detail.params.filter((value): value is number =>
+      typeof value === "number"
+    ),
+    ZARUKU_METRIKA_BREAKDOWN_REPORTS.map((report) => report.limit + 1),
   );
 });
 
@@ -62,7 +69,7 @@ test("detail SQL aggregates additive metrics and visit-weights rates before calc
   }
   assert.match(
     sql,
-    /visits\s*\/\s*NULLIF\(SUM\(visits\)\s+OVER\s*\(\),\s*0\)\s*\*\s*100\s+AS\s+share/i,
+    /visits\s*\/\s*NULLIF\(SUM\(visits\)\s+OVER\s*\(\s*PARTITION\s+BY\s+row_kind\s*\),\s*0\)\s*\*\s*100\s+AS\s+share/i,
   );
 });
 
@@ -159,6 +166,7 @@ test("loader executes one detail and one coverage query and fails closed per rep
       url: null,
       visits: 60,
       users: 50,
+      users_available: true,
       pageviews: 90,
       bounce_rate: 20,
       avg_duration_seconds: 120,
@@ -192,24 +200,97 @@ test("multi-day breakdowns never expose summed daily users as exact period users
           complete_rows: 2,
         }));
       }
-      return [{
-        report_key: "devices",
-        row_kind: "total",
-        dimension_1_id: null,
-        dimension_1_value: null,
-        dimension_2_id: null,
-        dimension_2_value: null,
-        page_url: null,
-        visits: 80,
-        users: 140,
-        pageviews: 110,
-        bounce_rate: 25,
-        avg_visit_duration_seconds: 100,
-        page_depth: 2,
-        share: 100,
-      }];
+      return [
+        {
+          report_key: "devices",
+          row_kind: "detail",
+          dimension_1_id: "mobile",
+          dimension_1_value: "Smartphones",
+          dimension_2_id: null,
+          dimension_2_value: null,
+          page_url: null,
+          visits: 60,
+          users: 100,
+          pageviews: 90,
+          bounce_rate: 20,
+          avg_visit_duration_seconds: 120,
+          page_depth: 2.5,
+          share: 75,
+        },
+        {
+          report_key: "devices",
+          row_kind: "total",
+          dimension_1_id: null,
+          dimension_1_value: null,
+          dimension_2_id: null,
+          dimension_2_value: null,
+          page_url: null,
+          visits: 80,
+          users: 140,
+          pageviews: 110,
+          bounce_rate: 25,
+          avg_visit_duration_seconds: 100,
+          page_depth: 2,
+          share: 100,
+        },
+      ];
     },
   );
 
   assert.equal(readModel.period_users, null);
+  assert.equal(readModel.reports.devices.rows[0].users_available, false);
+});
+
+test("presentation limits do not truncate canonical report totals", async () => {
+  const detailRows = Array.from({ length: 30 }, (_, index) => ({
+    report_key: "search_phrases",
+    row_kind: "detail",
+    dimension_1_id: `phrase-${index}`,
+    dimension_1_value: `Phrase ${index}`,
+    dimension_2_id: null,
+    dimension_2_value: null,
+    page_url: null,
+    visits: 10,
+    users: 0,
+    pageviews: 10,
+    bounce_rate: 20,
+    avg_visit_duration_seconds: 30,
+    page_depth: 1,
+    share: 1,
+  }));
+  const readModel = await loadZarukuMetrikaBreakdowns(
+    ["66624469"],
+    range,
+    async (query) => {
+      if (query.sql.includes("canonical_metrika_breakdown_coverage_daily")) {
+        return ZARUKU_METRIKA_BREAKDOWN_REPORTS.map((report) => ({
+          report_key: report.key,
+          coverage_rows: 2,
+          complete_rows: 2,
+        }));
+      }
+      return [
+        {
+          report_key: "search_phrases",
+          row_kind: "total",
+          dimension_1_id: null,
+          dimension_1_value: null,
+          dimension_2_id: null,
+          dimension_2_value: null,
+          page_url: null,
+          visits: 1_000,
+          users: 0,
+          pageviews: 1_000,
+          bounce_rate: 20,
+          avg_visit_duration_seconds: 30,
+          page_depth: 1,
+          share: 100,
+        },
+        ...detailRows,
+      ];
+    },
+  );
+
+  assert.equal(readModel.reports.search_phrases.rows.length, 30);
+  assert.equal(readModel.reports.search_phrases.total_visits, 1_000);
 });

@@ -316,6 +316,25 @@ test("buildContentSections never converts users into visits", () => {
   );
 });
 
+test("buildContentSections preserves unavailable users across grouped breakdown rows", () => {
+  const sections = buildContentSections(
+    [
+      {
+        ...page("https://zaruku.ru/map/one", 3, 0, 5),
+        users_available: false,
+      },
+      {
+        ...page("https://zaruku.ru/map/two", 4, 0, 6),
+        users_available: false,
+      },
+    ],
+    patterns,
+  );
+
+  assert.equal(sections[0].users, 0);
+  assert.equal(sections[0].users_available, false);
+});
+
 test("buildContentSections does not invent URL-derived sections without configured patterns", () => {
   assert.deepEqual(buildContentSections([page("https://zaruku.ru/map/clinics/42", 3, 2, 5)], []), []);
 });
@@ -405,6 +424,19 @@ test("top pages keep pageview ranking while visit metrics are merged by URL", ()
       page_depth: 1.5,
     },
   ]);
+});
+
+test("top-page merges preserve unavailable breakdown users", () => {
+  const pageRow = page("https://zaruku.ru/map/", 0, 10, 20);
+  const visitRow = {
+    ...pageWithBehavior("https://zaruku.ru/map/", 12, 0, 18, 40, 75, 1.5),
+    users_available: false,
+  };
+
+  const [merged] = mergeTopPagesWithVisitMetrics([pageRow], [visitRow]);
+
+  assert.equal(merged.users, 0);
+  assert.equal(merged.users_available, false);
 });
 
 test("enrichRowsWithPageTitles keeps entry URL and replaces URL-like labels with page titles", () => {
@@ -512,6 +544,20 @@ test("buildMapCityDemand aggregates only map entry pages by city", () => {
       layer: "onsite",
     },
   ]);
+});
+
+test("buildMapCityDemand preserves unavailable users across city aggregation", () => {
+  const rows: ZarukuSeoMetricRow[] = [{
+    ...pageWithBehavior("https://zaruku.ru/map/", 10, 0, 14, 20, 90, 1.4),
+    label: "Москва",
+    secondary_label: "https://zaruku.ru/map/",
+    users_available: false,
+  }];
+
+  const [city] = buildMapCityDemand(rows);
+
+  assert.equal(city.users, 0);
+  assert.equal(city.users_available, false);
 });
 
 test("buildHighBouncePages ranks entry pages by estimated bounced visits", () => {

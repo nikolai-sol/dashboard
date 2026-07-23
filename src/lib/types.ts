@@ -655,6 +655,7 @@ export interface ZarukuSeoMetricRow {
   url?: string | null;
   visits: number;
   users: number;
+  users_available?: boolean;
   pageviews: number;
   returning_users?: number | null;
   returning_1_day_users?: number | null;

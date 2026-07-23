@@ -186,7 +186,7 @@ export default function ZarukuSeoPageComparison({ rows, seoWeek, sourceWeeks, so
                 <td className="px-2 py-3 text-right tabular-nums text-slate-500">{formatPercent(row.webmaster?.ctr, locale)}</td>
                 <td className="border-r border-slate-100 px-2 py-3 text-right font-medium tabular-nums text-slate-700">{formatDecimal(row.webmaster?.average_position, locale)}</td>
                 <td className="px-2 py-3 text-right tabular-nums text-slate-600">{formatNumber(row.post_click?.visits, locale)}</td>
-                <td className="px-2 py-3 text-right tabular-nums text-slate-600">{formatNumber(row.post_click?.users, locale)}</td>
+                <td className="px-2 py-3 text-right tabular-nums text-slate-600">{row.post_click?.users_available === false ? "—" : formatNumber(row.post_click?.users, locale)}</td>
                 <td className="px-2 py-3 text-right tabular-nums text-slate-500">{formatPercent(row.post_click?.bounce_rate, locale)}</td>
                 <td className="border-r border-slate-100 px-2 py-3 text-right tabular-nums text-slate-500">{formatDuration(row.post_click?.avg_duration_seconds)}</td>
                 <td className="px-3 py-3 text-right font-semibold tabular-nums text-teal-800">{formatNumber(row.seo_os_tracked_queries, locale)}</td>

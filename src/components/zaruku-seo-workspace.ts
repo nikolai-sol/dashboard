@@ -54,6 +54,7 @@ export type UnifiedSeoPageRow = {
   post_click: {
     visits: number;
     users: number;
+    users_available: boolean;
     pageviews: number;
     bounce_rate: number | null;
     avg_duration_seconds: number | null;
@@ -67,7 +68,7 @@ export type SeoExecutiveSnapshot = {
   webmaster: SeoSourceMetrics | null;
   seo_os: { average_position: number | null; coverage: number | null } | null;
   ai: { presence_rate: number | null; mentions: number; citations: number } | null;
-  post_click: { visits: number; users: number } | null;
+  post_click: { visits: number; users: number; users_available: boolean } | null;
 };
 
 type MetricsAccumulator = {
@@ -92,6 +93,7 @@ type MutableQueryRow = {
 type PostClickAccumulator = {
   visits: number;
   users: number;
+  usersAvailable: boolean;
   pageviews: number;
   bounceRateTotal: number;
   bounceRateWeight: number;
@@ -350,6 +352,7 @@ function createPostClickAccumulator(): PostClickAccumulator {
   return {
     visits: 0,
     users: 0,
+    usersAvailable: true,
     pageviews: 0,
     bounceRateTotal: 0,
     bounceRateWeight: 0,
@@ -378,6 +381,7 @@ function finishPostClick(accumulator: PostClickAccumulator | null): UnifiedSeoPa
   return {
     visits: accumulator.visits,
     users: accumulator.users,
+    users_available: accumulator.usersAvailable,
     pageviews: accumulator.pageviews,
     bounce_rate: accumulator.bounceRateWeight > 0 ? accumulator.bounceRateTotal / accumulator.bounceRateWeight : null,
     avg_duration_seconds: accumulator.durationWeight > 0 ? accumulator.durationTotal / accumulator.durationWeight : null,
@@ -418,7 +422,12 @@ export function buildUnifiedSeoPageRows({
     if (!row) continue;
     row.post_click ??= createPostClickAccumulator();
     row.post_click.visits += sourceRow.visits;
-    row.post_click.users += sourceRow.users;
+    if (row.post_click.usersAvailable && sourceRow.users_available !== false) {
+      row.post_click.users += sourceRow.users;
+    } else {
+      row.post_click.users = 0;
+      row.post_click.usersAvailable = false;
+    }
     row.post_click.pageviews += sourceRow.pageviews;
     addWeightedPostClickMetric(row.post_click, sourceRow.bounce_rate, "bounceRateTotal", "bounceRateWeight", sourceRow.visits);
     addWeightedPostClickMetric(row.post_click, sourceRow.avg_duration_seconds, "durationTotal", "durationWeight", sourceRow.visits);
@@ -490,9 +499,16 @@ export function buildSeoExecutiveSnapshot({
       mentions: aiRows.reduce((sum, row) => sum + row.mentions, 0),
       citations: aiRows.reduce((sum, row) => sum + row.citations, 0),
     } : null,
-    post_click: postClickRows.length > 0 ? {
-      visits: postClickRows.reduce((sum, row) => sum + row.visits, 0),
-      users: postClickRows.reduce((sum, row) => sum + row.users, 0),
-    } : null,
+    post_click: postClickRows.length > 0
+      ? {
+        visits: postClickRows.reduce((sum, row) => sum + row.visits, 0),
+        users: postClickRows.every((row) => row.users_available !== false)
+          ? postClickRows.reduce((sum, row) => sum + row.users, 0)
+          : 0,
+        users_available: postClickRows.every(
+          (row) => row.users_available !== false,
+        ),
+      }
+      : null,
   };
 }

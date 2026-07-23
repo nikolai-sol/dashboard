@@ -13,7 +13,7 @@ const snapshot: SeoExecutiveSnapshot = {
   webmaster: { impressions: 2_000, clicks: 180, ctr: 9, average_position: 7.2 },
   seo_os: { average_position: 5.1, coverage: 0.75 },
   ai: { presence_rate: 44, mentions: 89, citations: 155 },
-  post_click: { visits: 320, users: 270 },
+  post_click: { visits: 320, users: 270, users_available: true },
 };
 
 test("renders an executive-to-detail source hierarchy without a country panel", () => {
@@ -46,4 +46,27 @@ test("keeps the executive grid shrinkable at page level", () => {
   assert.match(source, /<section className="min-w-0/);
   assert.match(source, /grid min-w-0 gap-4/);
   assert.match(source, /flex flex-col gap-4 lg:flex-row/);
+});
+
+test("does not render unavailable multi-day users as zero", () => {
+  const markup = renderToStaticMarkup(
+    createElement(ZarukuSeoExecutiveSummary, {
+      snapshot: {
+        ...snapshot,
+        post_click: { visits: 320, users: 0, users_available: false },
+      },
+      trafficPeriod: { from: "2026-07-01", to: "2026-07-21" },
+      primaryWeek: "2026-W29",
+      comparisonWeek: "2026-W28",
+      sourcePeriods: {
+        google: "2026-W29",
+        webmaster: "2026-W29",
+        seoOs: "2026-W29",
+        ai: "2026-07",
+      },
+    }),
+  );
+
+  assert.match(markup, /320 визитов · — пользователей/);
+  assert.doesNotMatch(markup, /0 пользователей/);
 });

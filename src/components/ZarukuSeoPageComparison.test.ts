@@ -67,3 +67,38 @@ test("page workspace exposes search sorting pagination and safe absolute links",
   assert.doesNotMatch(source, /href=\{row\.url\}/);
   assert.doesNotMatch(source, /useEffect\(\(\) => setPage/);
 });
+
+test("renders an em dash when row-level users are unavailable", () => {
+  const rows = buildUnifiedSeoPageRows({
+    gscRows: [],
+    webmasterRows: [],
+    metrikaRows: [{
+      label: "Карта онкоцентров",
+      url: "https://zaruku.ru/map/",
+      visits: 50,
+      users: 0,
+      users_available: false,
+      pageviews: 60,
+      bounce_rate: 20,
+      avg_duration_seconds: 90,
+      page_depth: 1.5,
+    }],
+    seoOsRows: [],
+  });
+  const markup = renderToStaticMarkup(createElement(ZarukuSeoPageComparison, {
+    rows,
+    seoWeek: null,
+    sourceWeeks: { google: null, webmaster: null, seoOs: null },
+    trafficPeriod: { from: "2026-07-01", to: "2026-07-21" },
+    locale: "ru-RU",
+  }));
+
+  assert.match(
+    markup,
+    /text-slate-600">50<\/td><td class="px-2 py-3 text-right tabular-nums text-slate-600">—<\/td>/,
+  );
+  assert.doesNotMatch(
+    markup,
+    /text-slate-600">50<\/td><td class="px-2 py-3 text-right tabular-nums text-slate-600">0<\/td>/,
+  );
+});

@@ -281,7 +281,10 @@ export function mergeTopPagesWithVisitMetrics(pageRows: ZarukuSeoMetricRow[], vi
     return {
       ...row,
       visits: visitRow.visits,
-      users: visitRow.users,
+      users: visitRow.users_available === false ? 0 : visitRow.users,
+      ...(visitRow.users_available === undefined
+        ? {}
+        : { users_available: visitRow.users_available }),
       bounce_rate: visitRow.bounce_rate ?? row.bounce_rate,
       avg_duration_seconds: visitRow.avg_duration_seconds ?? row.avg_duration_seconds,
       page_depth: visitRow.page_depth ?? row.page_depth,
@@ -343,6 +346,7 @@ export function buildMapCityDemand(rows: ZarukuSeoMetricRow[]) {
         secondary_label: url ?? null,
         visits: 0,
         users: 0,
+        users_available: row.users_available,
         pageviews: 0,
         share: 0,
         source: "metrika",
@@ -355,7 +359,13 @@ export function buildMapCityDemand(rows: ZarukuSeoMetricRow[]) {
         depthVisits: 0,
       } satisfies CityAccumulator);
     current.visits += row.visits;
-    current.users += row.users;
+    if (current.users_available !== false && row.users_available !== false) {
+      current.users += row.users;
+      if (row.users_available === true) current.users_available = true;
+    } else {
+      current.users = 0;
+      current.users_available = false;
+    }
     current.pageviews += row.pageviews;
     if ((row.secondary_label?.length ?? 0) < (current.secondary_label?.length ?? Infinity)) {
       current.secondary_label = row.secondary_label;
@@ -382,6 +392,9 @@ export function buildMapCityDemand(rows: ZarukuSeoMetricRow[]) {
       secondary_label: row.secondary_label,
       visits: row.visits,
       users: row.users,
+      ...(row.users_available === undefined
+        ? {}
+        : { users_available: row.users_available }),
       pageviews: row.pageviews,
       ...(row.bounceVisits > 0 ? { bounce_rate: row.bounceWeighted / row.bounceVisits } : {}),
       ...(row.durationVisits > 0 ? { avg_duration_seconds: row.durationWeighted / row.durationVisits } : {}),
@@ -732,6 +745,7 @@ export function buildContentSections(pageRows: ZarukuSeoMetricRow[], patterns: Z
         label: section,
         visits: 0,
         users: 0,
+        users_available: page.users_available,
         pageviews: 0,
         share: 0,
         source: "metrika",
@@ -745,7 +759,13 @@ export function buildContentSections(pageRows: ZarukuSeoMetricRow[], patterns: Z
       } satisfies SectionAccumulator);
     const visits = page.visits;
     current.visits += visits;
-    current.users += page.users;
+    if (current.users_available !== false && page.users_available !== false) {
+      current.users += page.users;
+      if (page.users_available === true) current.users_available = true;
+    } else {
+      current.users = 0;
+      current.users_available = false;
+    }
     current.pageviews += page.pageviews;
     if (page.bounce_rate != null) {
       current.bounceWeighted += page.bounce_rate * visits;
@@ -767,6 +787,9 @@ export function buildContentSections(pageRows: ZarukuSeoMetricRow[], patterns: Z
       label: row.label,
       visits: row.visits,
       users: row.users,
+      ...(row.users_available === undefined
+        ? {}
+        : { users_available: row.users_available }),
       pageviews: row.pageviews,
       ...(row.bounceVisits > 0 ? { bounce_rate: row.bounceWeighted / row.bounceVisits } : {}),
       ...(row.durationVisits > 0 ? { avg_duration_seconds: row.durationWeighted / row.durationVisits } : {}),

@@ -222,7 +222,19 @@ test("builds page rows from exact URLs and preserves source metric groups", () =
   assert.equal(rows[0].google?.average_position, 3);
   assert.equal(rows[0].webmaster?.average_position, 7);
   assert.equal(rows[0].post_click?.visits, 50);
+  assert.equal(rows[0].post_click?.users_available, true);
   assert.equal(rows[0].seo_os_tracked_queries, 1);
+});
+
+test("preserves unavailable post-click users instead of presenting a factual zero", () => {
+  const rows = buildUnifiedSeoPageRows({
+    gscRows: [],
+    webmasterRows: [],
+    metrikaRows: [metrikaPage({ users: 0, users_available: false })],
+    seoOsRows: [],
+  });
+
+  assert.equal(rows[0].post_click?.users_available, false);
 });
 
 test("builds an executive snapshot without mixing tracked and average positions", () => {
@@ -250,5 +262,17 @@ test("builds an executive snapshot without mixing tracked and average positions"
   assert.equal(snapshot.webmaster?.average_position, 8);
   assert.deepEqual(snapshot.seo_os, { average_position: 4, coverage: 0.5 });
   assert.deepEqual(snapshot.ai, { presence_rate: 44, mentions: 89, citations: 155 });
-  assert.deepEqual(snapshot.post_click, { visits: 50, users: 40 });
+  assert.deepEqual(snapshot.post_click, { visits: 50, users: 40, users_available: true });
+});
+
+test("executive snapshot marks multi-day post-click users unavailable", () => {
+  const snapshot = buildSeoExecutiveSnapshot({
+    gscRows: [],
+    webmasterRows: [],
+    positionTrend: [],
+    aiRows: [],
+    postClickRows: [metrikaPage({ users: 0, users_available: false })],
+  });
+
+  assert.deepEqual(snapshot.post_click, { visits: 50, users: 0, users_available: false });
 });

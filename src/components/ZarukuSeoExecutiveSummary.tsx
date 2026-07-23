@@ -95,7 +95,7 @@ export default function ZarukuSeoExecutiveSummary({
               <div className="mt-1 font-medium tabular-nums text-slate-100">{trafficPeriod.from} — {trafficPeriod.to}</div>
               <div className="mt-1 text-xs text-slate-400">
                 {snapshot.post_click
-                  ? `${formatNumber(snapshot.post_click.visits, locale)} визитов · ${formatNumber(snapshot.post_click.users, locale)} пользователей`
+                  ? `${formatNumber(snapshot.post_click.visits, locale)} визитов · ${snapshot.post_click.users_available ? formatNumber(snapshot.post_click.users, locale) : "—"} пользователей`
                   : "данные недоступны"}
               </div>
             </div>
