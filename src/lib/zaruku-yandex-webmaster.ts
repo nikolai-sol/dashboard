@@ -141,6 +141,10 @@ export function normalizeWebmasterSummaryRow(row: WebmasterSummaryDbRow): Zaruku
 const WEEK_KEY_SQL = "CONCAT(LEFT(YEARWEEK(report_date, 3), 4), '-W', RIGHT(YEARWEEK(report_date, 3), 2))";
 const WEEK_FROM_SQL = "DATE_SUB(report_date, INTERVAL WEEKDAY(report_date) DAY)";
 const WEEK_END_SQL = `DATE_ADD(${WEEK_FROM_SQL}, INTERVAL 6 DAY)`;
+const PARTIAL_WEEK_SQL = `(
+            MIN(report_date) > MIN(${WEEK_FROM_SQL})
+            OR MAX(report_date) < MAX(${WEEK_END_SQL})
+          )`;
 
 export function buildWebmasterAccountQueries(
   counterIds: string[],
@@ -169,7 +173,7 @@ export function buildWebmasterAccountQueries(
           ${weightedAveragePositionSql()} AS average_position,
           MIN(${WEEK_FROM_SQL}) AS week_from,
           MAX(report_date) AS week_to,
-          MAX(report_date) < MAX(${WEEK_END_SQL}) AS is_partial_week
+          ${PARTIAL_WEEK_SQL} AS is_partial_week
         FROM canonical_fact_webmaster_queries_daily
         WHERE analytics_account_id IN (${accountScope})
           ${queryDateRangeClause}
@@ -189,7 +193,7 @@ export function buildWebmasterAccountQueries(
           ${weightedAveragePositionSql()} AS average_position,
           MIN(${WEEK_FROM_SQL}) AS week_from,
           MAX(report_date) AS week_to,
-          MAX(report_date) < MAX(${WEEK_END_SQL}) AS is_partial_week
+          ${PARTIAL_WEEK_SQL} AS is_partial_week
         FROM canonical_fact_webmaster_summary_daily
         WHERE analytics_account_id IN (${accountScope})
           ${summaryDateRangeClause}
@@ -210,7 +214,7 @@ export function buildWebmasterAccountQueries(
           ${weightedAveragePositionSql()} AS average_position,
           MIN(${WEEK_FROM_SQL}) AS week_from,
           MAX(report_date) AS week_to,
-          MAX(report_date) < MAX(${WEEK_END_SQL}) AS is_partial_week
+          ${PARTIAL_WEEK_SQL} AS is_partial_week
         FROM canonical_fact_webmaster_pages_daily
         WHERE analytics_account_id IN (${accountScope})
           ${pageDateRangeClause}

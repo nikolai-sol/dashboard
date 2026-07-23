@@ -29,6 +29,19 @@ test("buildWebmasterAccountQueries filters daily canonical rows by direct date b
   assert.doesNotMatch(queries.queries.sql, /seo_webmaster_queries_weekly/);
 });
 
+test("Wednesday through Sunday bounds mark the first ISO week partial in every Webmaster query", () => {
+  const queries = buildWebmasterAccountQueries(
+    ["66624469"],
+    { from: "2026-07-15", to: "2026-07-19" },
+  );
+
+  for (const query of Object.values(queries)) {
+    assert.match(query.sql, /MIN\(report_date\) > MIN\(/);
+    assert.match(query.sql, /OR MAX\(report_date\) < MAX\(/);
+    assert.deepEqual(query.params, ["66624469", "2026-07-15", "2026-07-19"]);
+  }
+});
+
 test("normalizeWebmasterQueryRow keeps CTR and position as percentages and decimals", () => {
   assert.deepEqual(
     normalizeWebmasterQueryRow({
