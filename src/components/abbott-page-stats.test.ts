@@ -1,6 +1,11 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { buildAbbottPageStatsExportRows, matchesPageStatsSearch, matchesSelectedMaterialType } from "./abbott-page-stats";
+import {
+  buildAbbottPageStatsExportRows,
+  matchesPageStatsSearch,
+  matchesSelectedMaterialType,
+  summarizeAbbottPageStats,
+} from "./abbott-page-stats";
 import type { AbbottBiPageStatRow } from "@/lib/types";
 
 const sampleRow: AbbottBiPageStatRow = {
@@ -33,6 +38,30 @@ test("page stats search matches title or URL case-insensitively", () => {
   assert.equal(matchesPageStatsSearch(sampleRow.page_title, sampleRow.url, "головокружении"), true);
   assert.equal(matchesPageStatsSearch(sampleRow.page_title, sampleRow.url, "262339"), true);
   assert.equal(matchesPageStatsSearch(sampleRow.page_title, sampleRow.url, "неизвестная страница"), false);
+});
+
+test("page stats summary sums views and page-level visitors across every filtered row", () => {
+  assert.deepEqual(
+    summarizeAbbottPageStats([
+      sampleRow,
+      {
+        ...sampleRow,
+        pageviews: 43,
+        users: 18,
+      },
+    ]),
+    {
+      pageviews: 200,
+      users: 140,
+    },
+  );
+});
+
+test("page stats summary returns zero totals for an empty filtered result", () => {
+  assert.deepEqual(summarizeAbbottPageStats([]), {
+    pageviews: 0,
+    users: 0,
+  });
 });
 
 test("export rows keep page identity and raw numeric metrics", () => {

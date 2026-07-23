@@ -20,6 +20,7 @@ import {
   buildAbbottPageStatsExportRows,
   matchesPageStatsSearch,
   matchesSelectedMaterialType,
+  summarizeAbbottPageStats,
 } from "./abbott-page-stats";
 import { abbottTrafficSourceLabel, abbottTrafficSourceOption } from "./abbott-localization";
 import { selectAbbottSummaryRows } from "./abbott-summary";
@@ -594,6 +595,7 @@ function StatsPill({
 function DataTable({
   columns,
   rows,
+  summaryRow,
   emptyText,
   headerClass,
   rowKey,
@@ -602,6 +604,7 @@ function DataTable({
 }: {
   columns: TableColumn[];
   rows: Array<Record<string, string>>;
+  summaryRow?: Record<string, string>;
   emptyText: string;
   headerClass: string;
   rowKey?: string;
@@ -625,6 +628,15 @@ function DataTable({
             </tr>
           </thead>
           <tbody className="divide-y divide-slate-100 bg-white">
+            {summaryRow ? (
+              <tr className="bg-lime-50 align-top font-semibold">
+                {columns.map((column) => (
+                  <td key={column.key} className={`px-4 py-3 text-slate-900 ${column.className ?? ""}`}>
+                    {summaryRow[column.key] ?? ""}
+                  </td>
+                ))}
+              </tr>
+            ) : null}
             {rows.length === 0 ? (
               <tr>
                 <td colSpan={columns.length} className="px-4 py-8 text-center text-sm text-slate-500">
@@ -1345,6 +1357,15 @@ export default function AbbottBiDashboard({
   const externalEventsPage = sliceRows(externalEventRows, pageByTab.external_events);
   const returningPage = sliceRows(returningRows, pageByTab.returning);
   const generalMaterialsPage = sliceRows(generalMaterialRows, pageByTab.general_materials);
+  const pageStatsTotals = summarizeAbbottPageStats(pageStatRows);
+  const pageStatsSummaryRow =
+    pageStatRows.length > 0
+      ? {
+          page_title: "Итого",
+          pageviews: formatNumber(pageStatsTotals.pageviews, locale),
+          users: formatNumber(pageStatsTotals.users, locale),
+        }
+      : undefined;
   const bitrixMatchedPageStats = data.page_stats.filter((row) => row.bitrix_sessions > 0).length;
   const bitrixMatchCoveragePct =
     data.page_stats.length > 0 ? (bitrixMatchedPageStats / data.page_stats.length) * 100 : 0;
@@ -2214,6 +2235,7 @@ export default function AbbottBiDashboard({
             <DataTable
               columns={tableColumns}
               rows={tableRows}
+              summaryRow={activeTab === "page_stats" ? pageStatsSummaryRow : undefined}
               emptyText={emptyText}
               headerClass={theme.headerClass}
               rowKey={activeTab === "session_journeys" ? "session_id" : undefined}

@@ -15,6 +15,16 @@ export function matchesPageStatsSearch(pageTitle: string, url: string, query: st
   return [pageTitle, url].some((value) => normalizeSearchValue(value).includes(normalizedQuery));
 }
 
+export function summarizeAbbottPageStats(rows: AbbottBiPageStatRow[]) {
+  return rows.reduce(
+    (totals, row) => ({
+      pageviews: totals.pageviews + row.pageviews,
+      users: totals.users + row.users,
+    }),
+    { pageviews: 0, users: 0 },
+  );
+}
+
 export function buildAbbottPageStatsExportRows(rows: AbbottBiPageStatRow[]): Array<Record<string, string | number>> {
   return rows.map((row) => ({
     "Заголовок страницы": row.page_title || "—",
