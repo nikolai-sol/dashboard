@@ -1,5 +1,13 @@
 # Repository agent guidance
 
+## Analytics dashboard data-plane rule
+
+External source APIs are collector-only. Dashboard request, render, filter,
+export, and read-model code must read canonical MySQL and must not use source
+OAuth tokens or call source APIs. Successful-empty collection is represented
+by canonical coverage; failed collection is represented by collector/request
+logs and never by silently reusing another period.
+
 ## Abbott visit-level operational truth
 
 - Abbott source summaries use Reports API attribution `lastsign` and exact traffic segments `all`, `with_user_id`, and `without_user_id`. Per day/source, `all.sessions = with_user_id.sessions + without_user_id.sessions` is a hard publication gate.

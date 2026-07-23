@@ -8,6 +8,8 @@
 
 Repair the Zaruku daily collection path and give every daily dashboard panel one predictable period contract:
 
+- every external analytics API is called only by a scheduled collector;
+- every dashboard panel reads organized canonical MySQL facts, never a platform API;
 - daily data uses a product-wide 48-hour lag;
 - SEO OS remains an independent weekly position snapshot;
 - AI visibility remains an independent snapshot/monthly measurement;
@@ -46,6 +48,23 @@ Google Search Console diagnostics for the closed date 2026-07-20 established:
 
 These GSC errors are request-contract errors, not data-latency errors.
 
+## Canonical dashboard data-plane rule
+
+The project-wide runtime path is:
+
+```text
+external API -> scheduled collector -> canonical MySQL -> read model -> dashboard
+```
+
+Opening, refreshing, filtering, or exporting a dashboard must not call Google
+Search Console, Yandex Metrika, Yandex Webmaster, or another source platform.
+Source OAuth credentials belong to collectors only and must not be required by
+the Next.js dashboard runtime.
+
+The authenticated HTTP response remains private and non-cacheable. Performance
+comes first from bounded, indexed MySQL reads and parallel read models, not from
+serving shared cached dashboard payloads.
+
 ## Product period contract
 
 ### Daily sources
@@ -76,7 +95,7 @@ effective_daily_to = min(requested_to, expected_daily_to)
 All daily read models use this same clipped range:
 
 - canonical Yandex Metrika facts;
-- live read-only Metrika report slices that remain in the Zaruku loader;
+- canonical Yandex Metrika Russia breakdown facts;
 - Google Search Console daily facts;
 - Yandex Webmaster daily facts;
 - returning-content daily facts.
@@ -156,6 +175,56 @@ Abbott release publication remains append-only and unchanged. The generic
 Zaruku repair must not weaken Abbott's five-scope publication gate or write
 into Abbott private visit storage.
 
+### Zaruku dashboard breakdowns
+
+The twelve Russia-filtered Metrika reports currently requested by the
+dashboard are moved into scheduled collection:
+
+- search engine;
+- search phrase;
+- search engine x entry URL;
+- entry URL;
+- city x entry URL;
+- device category;
+- browser;
+- operating system;
+- age interval;
+- gender;
+- interest;
+- traffic source x device category.
+
+Do not add twelve more values and many unrelated columns to the Abbott-sensitive
+`canonical_fact_site_analytics_daily` contract. Add
+`canonical_fact_metrika_breakdowns_daily` with explicit report/dimension
+identity, metrics, geography scope, hash idempotency, and ingestion lineage.
+Collect full paginated daily results; top-N limits belong to the dashboard read
+model.
+
+Add `canonical_metrika_breakdown_coverage_daily` so a successful empty report
+is distinguishable from a missing or failed collection. API failures and
+incomplete pagination are recorded in the existing collector/request logs and
+must not publish partial facts.
+
+Publication order is:
+
+```text
+collect every required Zaruku slice
+-> validate pagination and response contracts
+-> transactionally upsert facts and successful/empty coverage
+-> prune stale rows for the same account/date/report/run
+-> commit
+```
+
+Collection of the new breakdown contract is limited to counter `66624469` and
+uses the existing Zaruku attribution configuration. Abbott release/private
+tables and gates are not changed.
+
+Daily `users` is not additive across dates. The dashboard must not label a sum
+of daily users as exact unique users for a multi-day period. Until a
+privacy-reviewed visitor fact provides an exact distinct count, the
+multi-day unique-user KPI is unavailable (`—`) and any explicitly displayed
+daily-user sum is labelled as user-days.
+
 ### Account scope
 
 Production repair/backfill targets only Zaruku counter `66624469`.
@@ -231,7 +300,7 @@ Introduce a focused daily-period helper that:
 - handles an invalid range explicitly rather than silently swapping dates.
 
 `loadZarukuSeoData` calculates the period once and passes it to all daily
-queries and live report requests.
+queries.
 
 `loadAccountFacts` passes the clipped date range to GSC and Webmaster.
 Their SQL filters `report_date BETWEEN ? AND ?`, then aggregates the matching
@@ -239,6 +308,15 @@ daily facts into ISO weeks. Partial first/last ISO weeks remain labelled as
 partial.
 
 SEO OS and AI loaders receive no daily date constraint.
+
+The Zaruku Metrika read model reads
+`canonical_fact_metrika_breakdowns_daily`, aggregates additive metrics, weights
+rates by visits, and applies presentation limits after aggregation. Metrika,
+GSC, Webmaster, freshness, SEO OS, and AI SQL reads start in the same parallel
+loading phase.
+
+The Zaruku dashboard runtime contains no Metrika API URL, OAuth token lookup,
+or external Metrika `fetch`. This is enforced by a static regression test.
 
 ## UI changes
 
@@ -271,6 +349,11 @@ Add red/green tests for:
 - upsert failure does not invoke prune;
 - stale pruning is scoped by account, date range, scopes, and ingestion run;
 - inactive Zaruku counters remain excluded;
+- the complete twelve-report Zaruku registry and Russia filter;
+- complete pagination before breakdown publication;
+- successful-empty breakdown coverage;
+- breakdown replay idempotency;
+- a failed or incomplete breakdown request publishes no partial facts;
 - GSC searchAppearance requests only one dimension;
 - GSC Discover requests omit device;
 - HTTP 200 with zero optional rows is not a partial run;
@@ -289,6 +372,16 @@ Add red/green tests for:
 - SEO OS shows the circular information tooltip and explanatory copy;
 - Metrika actual availability uses account facts, not Abbott release runs;
 - generic Metrika health ignores `canonical_release`.
+- Zaruku runtime contains no Metrika API URL, token lookup, or external fetch;
+- Metrika breakdown SQL uses account, report key, geography, and date bounds;
+- presentation limits are applied after period aggregation;
+- GSC/Webmaster use direct `report_date` bounds, not SEO OS week filters;
+- multi-day unique users are not represented as a sum of daily users.
+
+Add the composite read indexes used by these queries and benchmark seeded
+31-day and 90-day reads. Add internal `Server-Timing` measurements for the
+Zaruku MySQL read-model phases while preserving private `no-store` HTTP
+responses.
 
 Run the focused test suites, then the full Python collector suite, dashboard
 tests, lint, typecheck, and production build.
@@ -334,4 +427,3 @@ No force push is permitted.
 - Google documents that Search Console performance data is normally available
   in 2–3 days:
   https://support.google.com/webmasters/answer/96568
-
