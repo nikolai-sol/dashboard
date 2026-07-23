@@ -84,3 +84,21 @@ test("quality distinguishes delayed, successful-empty, and unavailable coverage 
   assert.match(text, /Покрытие: 2026-07-19 — 2026-07-21/);
   assert.match(text, /Collector: fetch_yandex_metrika_canonical\.py/);
 });
+
+test("unavailable report row never presents its requested dates as confirmed coverage", () => {
+  const data = {
+    dataset_meta: {
+      traffic_channels: meta("ready", { from: "2026-07-19", to: "2026-07-21" }),
+      interests: meta("unavailable", { from: "2026-07-19", to: "2026-07-21" }),
+    },
+    source_freshness: [],
+    data_quality: [],
+    pending_requirements: [],
+  } as unknown as ZarukuSeoData;
+
+  const markup = renderToStaticMarkup(createElement(ZarukuQualityTab, { data }));
+  const interestsRow = markup.match(/Интересы[\s\S]*?Отчёт недоступен/)?.[0] ?? "";
+
+  assert.match(interestsRow, /Период: период не подтверждён/);
+  assert.doesNotMatch(interestsRow, /Покрытие: 2026-07-19 — 2026-07-21/);
+});
