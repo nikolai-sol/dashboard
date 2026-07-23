@@ -21,7 +21,7 @@ class BreakdownReport:
     report_key: str
     dimensions: tuple[str, ...]
     segment_key: str = "russia"
-    filters: str = "ym:s:regionCountry=='Russia'"
+    filters: str = "ym:s:regionCountry=='225'"
 
     @property
     def metrics(self) -> str:
