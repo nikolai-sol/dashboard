@@ -668,6 +668,34 @@ export interface ZarukuSeoMetricRow {
   layer?: ZarukuSeoLayerId;
 }
 
+export type ZarukuMetrikaBreakdownReportKey =
+  | "search_engines"
+  | "search_phrases"
+  | "organic_landing"
+  | "section_entrances"
+  | "map_city_demand"
+  | "devices"
+  | "browsers"
+  | "operating_systems"
+  | "age_intervals"
+  | "genders"
+  | "interests"
+  | "source_devices";
+
+export interface ZarukuMetrikaBreakdownReportReadModel {
+  available: boolean;
+  rows: ZarukuSeoMetricRow[];
+  total_visits: number;
+}
+
+export interface ZarukuMetrikaBreakdownReadModel {
+  reports: Record<
+    ZarukuMetrikaBreakdownReportKey,
+    ZarukuMetrikaBreakdownReportReadModel
+  >;
+  period_users: number | null;
+}
+
 export interface ZarukuSeoPendingRequirement {
   source: ZarukuSeoSourceId;
   layer: ZarukuSeoLayerId;

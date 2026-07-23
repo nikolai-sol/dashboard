@@ -1,7 +1,6 @@
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import test from "node:test";
-import * as zarukuSeoModule from "@/lib/zaruku-seo";
 import {
   buildCanonicalPageRowsQuery,
   buildBestEngagementPages,
@@ -195,6 +194,22 @@ test("deriveSourceDataThrough falls back to AI period when capture time is absen
 const loaderSource = readFileSync(new URL("./zaruku-seo.ts", import.meta.url), "utf8");
 const accountReadModelsSource = readFileSync(new URL("./account-read-models.ts", import.meta.url), "utf8");
 
+test("Zaruku runtime contains no live Metrika API or token path", () => {
+  for (const prohibitedSource of [
+    "api-metrika.yandex.net",
+    "METRIKA_TOKEN",
+    "YANDEX_METRIKA_TOKEN",
+    "fetchMetrikaReport",
+    "fetchMetrikaReportsSequential",
+  ]) {
+    assert.equal(
+      loaderSource.includes(prohibitedSource),
+      false,
+      `zaruku-seo.ts must not contain ${prohibitedSource}`,
+    );
+  }
+});
+
 test("Zaruku applies one effective daily period to every daily loader while SEO OS and AI remain independent", () => {
   assert.match(
     loaderSource,
@@ -205,14 +220,29 @@ test("Zaruku applies one effective daily period to every daily loader while SEO 
     "queryCanonicalPageRows",
     "queryOrganicTrend",
     "queryReturningPages",
-    "fetchMetrikaReportsSequential",
   ]) {
     assert.ok(loaderSource.includes(`${loader}(normalizedCounterIds, effectiveFrom, effectiveTo`));
   }
+  assert.match(
+    loaderSource,
+    /loadZarukuMetrikaBreakdowns\(normalizedCounterIds, dailyPeriod\.effective\)/,
+  );
   assert.match(loaderSource, /loadAccountFacts\(accountId, dailyPeriod\.effective\)/);
   assert.doesNotMatch(loaderSource, /loadAccountFacts\([^)]*seoOs\.weeks/);
   assert.match(loaderSource, /loadSeoProcess\(accountId\)/);
   assert.match(loaderSource, /loadSeoIntelligence\(accountId\)/);
+  const parallelPhase = loaderSource.match(
+    /const \[[\s\S]*?\]\s*=\s*await Promise\.all\(\[([\s\S]*?)\]\);/,
+  )?.[1] ?? "";
+  for (const loader of [
+    "loadZarukuMetrikaBreakdowns",
+    "loadAccountFacts",
+    "loadSeoProcess",
+    "loadSeoIntelligence",
+    "querySourceFreshnessRows",
+  ]) {
+    assert.ok(parallelPhase.includes(loader), `${loader} must start in the common parallel phase`);
+  }
 });
 
 test("account facts pass the same daily date range directly to GSC and Webmaster", () => {
@@ -224,36 +254,6 @@ test("account facts pass the same daily date range directly to GSC and Webmaster
 test("Zaruku read model does not request redundant general country or city reports", () => {
   assert.doesNotMatch(loaderSource, /key: "countries"|key: "cities"/);
   assert.doesNotMatch(loaderSource, /dimensions: "ym:s:regionCountry"/);
-});
-
-test("Metrika report parameters support the Zaruku Russia filter", () => {
-  const seoModule = zarukuSeoModule as typeof zarukuSeoModule & {
-    ZARUKU_RUSSIA_FILTER?: string;
-    buildMetrikaReportParams?: (request: {
-      counterId: string;
-      from: string;
-      to: string;
-      dimensions: string;
-      limit: number;
-      filters?: string;
-    }) => URLSearchParams;
-  };
-
-  assert.equal(typeof seoModule.buildMetrikaReportParams, "function");
-  assert.equal(seoModule.ZARUKU_RUSSIA_FILTER, "ym:s:regionCountry=='Russia'");
-
-  const params = seoModule.buildMetrikaReportParams!({
-    counterId: "66624469",
-    from: "2026-07-13",
-    to: "2026-07-19",
-    dimensions: "ym:s:searchPhrase",
-    limit: 30,
-    filters: seoModule.ZARUKU_RUSSIA_FILTER,
-  });
-
-  assert.equal(params.get("filters"), "ym:s:regionCountry=='Russia'");
-  assert.equal(params.get("ids"), "66624469");
-  assert.equal(params.get("dimensions"), "ym:s:searchPhrase");
 });
 
 test("buildContentSections uses SEO patterns and aggregates visits, users, and pageviews", () => {
