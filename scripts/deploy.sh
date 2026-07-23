@@ -41,7 +41,8 @@ copy_canonical_file() {
       return 0
     fi
   done
-  return 0
+  echo "Required canonical runtime file is missing: $file_name" >&2
+  return 1
 }
 
 cd "$APP_SOURCE_DIR"
@@ -97,6 +98,7 @@ done
 copy_canonical_file fetch_google_ads_canonical.py
 copy_canonical_file google_ads_api_client.py
 copy_canonical_file canonical_writer.py
+copy_canonical_file fetch_yandex_metrika_canonical.py
 copy_canonical_file metrika_dashboard_breakdowns.py
 copy_canonical_file fetch_yandex_webmaster_canonical.py
 copy_canonical_file fetch_gsc_canonical.py
