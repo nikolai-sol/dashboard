@@ -82,6 +82,17 @@ _GENERIC_METRIKA_SCOPES = ('traffic', 'goal', 'other', 'page', 'entry_page')
 _ZARUKU_BREAKDOWN_REPORT_KEYS = frozenset(
     report.report_key for report in ZARUKU_BREAKDOWN_REPORTS
 )
+_SITE_SCOPE_ALIAS = {'returning': 'returned'}
+_SITE_SCOPE_ALLOWED = frozenset((
+    'traffic',
+    'goal',
+    'other',
+    'page',
+    'entry_page',
+    'returned',
+))
+
+
 
 
 def _field(value: Any, name: str) -> Any:
@@ -1394,6 +1405,46 @@ def upsert_fact_site_analytics_daily(rows: list[dict]) -> int:
         return 0
     conn = get_db_connection()
     cur = conn.cursor()
+
+    normalized_rows: list[tuple[Any, ...]] = []
+    for row in rows:
+        scope = row.get('analytics_scope', 'traffic')
+        if not isinstance(scope, str):
+            raise MetrikaPublishError("Invalid site analytics scope")
+        scope = _SITE_SCOPE_ALIAS.get(scope, scope)
+        if scope not in _SITE_SCOPE_ALLOWED:
+            raise MetrikaPublishError("Invalid site analytics scope")
+
+        normalized_rows.append(
+            (
+                row['source_key'],
+                row['analytics_account_id'],
+                row['report_date'],
+                scope,
+                row['scope_hash'],
+                row.get('utm_source'),
+                row.get('utm_medium'),
+                row.get('utm_campaign'),
+                row.get('utm_content'),
+                row.get('utm_term'),
+                row.get('goal_id'),
+                row.get('goal_name'),
+                row.get('page_url'),
+                row.get('page_title'),
+                row.get('region_city'),
+                row.get('traffic_source'),
+                row.get('visits'),
+                row.get('users'),
+                row.get('new_users'),
+                row.get('pageviews'),
+                row.get('goal_reaches'),
+                row.get('page_depth'),
+                row.get('bounce_rate'),
+                row.get('avg_visit_duration_seconds'),
+                row.get('ingestion_run_id'),
+            )
+        )
+
     cur.executemany(
         """
         INSERT INTO canonical_fact_site_analytics_daily (
@@ -1436,36 +1487,7 @@ def upsert_fact_site_analytics_daily(rows: list[dict]) -> int:
             ingestion_run_id = VALUES(ingestion_run_id),
             updated_at = CURRENT_TIMESTAMP
         """,
-        [
-            (
-                row['source_key'],
-                row['analytics_account_id'],
-                row['report_date'],
-                row.get('analytics_scope', 'traffic'),
-                row['scope_hash'],
-                row.get('utm_source'),
-                row.get('utm_medium'),
-                row.get('utm_campaign'),
-                row.get('utm_content'),
-                row.get('utm_term'),
-                row.get('goal_id'),
-                row.get('goal_name'),
-                row.get('page_url'),
-                row.get('page_title'),
-                row.get('region_city'),
-                row.get('traffic_source'),
-                row.get('visits'),
-                row.get('users'),
-                row.get('new_users'),
-                row.get('pageviews'),
-                row.get('goal_reaches'),
-                row.get('page_depth'),
-                row.get('bounce_rate'),
-                row.get('avg_visit_duration_seconds'),
-                row.get('ingestion_run_id'),
-            )
-            for row in rows
-        ],
+        normalized_rows,
     )
     conn.commit()
     cur.close()
