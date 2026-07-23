@@ -1919,6 +1919,10 @@ def publish_generic_canonical_payload(
     try:
         conn = get_db_connection()
         preflight_generic_metrika_schema(conn)
+        # mysql-connector starts an implicit transaction for the read-only
+        # preflight when autocommit is disabled. Close it before opening the
+        # atomic publication transaction.
+        conn.commit()
         conn.start_transaction()
         transaction_started = True
 
