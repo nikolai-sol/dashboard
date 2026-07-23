@@ -214,8 +214,8 @@ function formatDuration(seconds: number | null | undefined) {
 }
 
 function normalizeCounterIds(counterIds: string[]) {
-  const ids = counterIds.map((id) => id.trim()).filter(Boolean);
-  return ids.length > 0 ? ids : ["66624469"];
+  void counterIds;
+  return ["66624469"];
 }
 
 export function readableTrafficSource(label: string) {

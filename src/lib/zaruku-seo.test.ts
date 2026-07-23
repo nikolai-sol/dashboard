@@ -1,6 +1,8 @@
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import test from "node:test";
+import { getDefaultZarukuCounterIds } from "@/lib/abbott-bi";
+import pool from "@/lib/db";
 import {
   buildCanonicalPageRowsQuery,
   buildBestEngagementPages,
@@ -18,6 +20,7 @@ import {
   mergeTopPagesWithVisitMetrics,
   normalizeSourceFreshnessRow,
   readableTrafficSource,
+  loadZarukuSeoData,
 } from "@/lib/zaruku-seo";
 import type {
   ZarukuGscData,
@@ -64,6 +67,58 @@ const patterns: ZarukuSeoSectionPattern[] = [
   { section: "Priority A", url_pattern: "/priority/", priority: 10 },
   { section: "Priority B", url_pattern: "/priority/", priority: 1 },
 ];
+
+test("Zaruku defaults only to the active Metrika counter", () => {
+  assert.deepEqual(getDefaultZarukuCounterIds(), ["66624469"]);
+});
+
+test("Zaruku runtime hard-scopes every account read model to the active Metrika counter", async (t) => {
+  const calls: Array<{ sql: string; params: unknown[] }> = [];
+  t.mock.method(
+    pool as unknown as {
+      execute: (sql: string, params?: unknown[]) => Promise<[unknown[], unknown[]]>;
+    },
+    "execute",
+    async (sql: string, params: unknown[] = []) => {
+      calls.push({ sql, params });
+      return [[], []];
+    },
+  );
+
+  await loadZarukuSeoData(
+    ["99078698", "configured-counter-id"],
+    "2026-07-01",
+    "2026-07-14",
+  );
+
+  assert.ok(calls.length > 0);
+  assert.equal(
+    calls.some(({ params }) =>
+      params.includes("99078698") || params.includes("configured-counter-id")
+    ),
+    false,
+  );
+
+  const expectedReadModels = [
+    "canonical_fact_site_analytics_daily",
+    "canonical_fact_metrika_returning_pages_daily",
+    "canonical_fact_metrika_breakdowns_daily",
+    "canonical_metrika_breakdown_coverage_daily",
+    "canonical_fact_gsc_queries_daily",
+    "canonical_fact_webmaster_queries_daily",
+    "seo_positions_weekly",
+    "seo_sov_weekly",
+  ];
+  for (const table of expectedReadModels) {
+    const tableCalls = calls.filter(({ sql }) => sql.includes(table));
+    assert.ok(tableCalls.length > 0, `expected ${table} read`);
+    assert.equal(
+      tableCalls.every(({ params }) => params.includes("66624469")),
+      true,
+      `expected ${table} to read only counter 66624469`,
+    );
+  }
+});
 
 test("buildSources exposes collection provenance and preserves explicit data-through values", () => {
   const gsc: ZarukuGscData = {

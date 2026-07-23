@@ -1054,7 +1054,7 @@ export function getDefaultAbbottCounterIds(): string[] {
 }
 
 export function getDefaultZarukuCounterIds(): string[] {
-  return ["66624469", "99078698"];
+  return ["66624469"];
 }
 
 export async function loadAbbottBiData(
