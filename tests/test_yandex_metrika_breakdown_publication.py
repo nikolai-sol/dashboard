@@ -307,14 +307,19 @@ class GenericPublicationTests(unittest.TestCase):
             if event[0] == "execute"
             and event[1].startswith("DELETE FROM canonical_fact_metrika_breakdowns_daily")
         )
-        commit_index = next(i for i, event in enumerate(statements) if event[0] == "commit")
+        commit_indexes = [
+            i for i, event in enumerate(statements) if event[0] == "commit"
+        ]
 
         self.assertTrue(preflight_indexes)
-        self.assertLess(max(preflight_indexes), begin_index)
+        self.assertEqual(len(commit_indexes), 2)
+        preflight_commit_index, publication_commit_index = commit_indexes
+        self.assertLess(max(preflight_indexes), preflight_commit_index)
+        self.assertLess(preflight_commit_index, begin_index)
         self.assertLess(begin_index, fact_index)
         self.assertLess(fact_index, coverage_index)
         self.assertLess(coverage_index, prune_index)
-        self.assertLess(prune_index, commit_index)
+        self.assertLess(prune_index, publication_commit_index)
         prune_sql = statements[prune_index][1]
         for predicate in (
             "source_key = %s",
