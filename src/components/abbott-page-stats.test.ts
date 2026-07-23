@@ -80,6 +80,32 @@ test("pageviews by direction sums filtered rows, removes unnamed groups, sorts, 
   ]);
 });
 
+test("pageviews by direction defaults to the top eight sorted results", () => {
+  const rows = [
+    { ...sampleRow, direction: "Кардиология", pageviews: 40 },
+    { ...sampleRow, direction: "Неврология", pageviews: 100 },
+    { ...sampleRow, direction: "Гастроэнтерология", pageviews: 60 },
+    { ...sampleRow, direction: "Эндокринология", pageviews: 90 },
+    { ...sampleRow, direction: "Терапия", pageviews: 20 },
+    { ...sampleRow, direction: "Педиатрия", pageviews: 80 },
+    { ...sampleRow, direction: "Дерматология", pageviews: 50 },
+    { ...sampleRow, direction: "Онкология", pageviews: 70 },
+    { ...sampleRow, direction: "Ревматология", pageviews: 10 },
+    { ...sampleRow, direction: "Пульмонология", pageviews: 30 },
+  ];
+
+  assert.deepEqual(buildAbbottPageviewsByDirection(rows), [
+    { label: "Неврология", value: 100 },
+    { label: "Эндокринология", value: 90 },
+    { label: "Педиатрия", value: 80 },
+    { label: "Онкология", value: 70 },
+    { label: "Гастроэнтерология", value: 60 },
+    { label: "Дерматология", value: 50 },
+    { label: "Кардиология", value: 40 },
+    { label: "Пульмонология", value: 30 },
+  ]);
+});
+
 test("export rows keep page identity and raw numeric metrics", () => {
   assert.deepEqual(buildAbbottPageStatsExportRows([sampleRow]), [
     {
