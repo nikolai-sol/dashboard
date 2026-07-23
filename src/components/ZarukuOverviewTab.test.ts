@@ -60,3 +60,26 @@ test("overview labels SEO OS as an independent weekly position snapshot", () => 
   assert.match(text, /не относится к выбранному ежедневному периоду/i);
   assert.match(text, /не ограничивает данные Метрики, GSC или Вебмастера/i);
 });
+
+test("overview keeps GSC and Webmaster inside the unified daily period", () => {
+  const populatedSearchData = {
+    ...data,
+    gsc: {
+      latest_week: "2026-W30",
+      summary: [{ week: "2026-W30" }],
+      queries: [],
+    },
+    webmaster: {
+      latest_week: "2026-W30",
+      summary: [{ week: "2026-W30" }],
+      queries: [],
+    },
+  } as unknown as ZarukuSeoData;
+  const text = visibleText(renderToStaticMarkup(
+    createElement(ZarukuOverviewTab, { data: populatedSearchData }),
+  ));
+
+  assert.doesNotMatch(text, /Google RF:|Яндекс: 2026-W30/);
+  assert.doesNotMatch(text, /собственных фактических периодах/i);
+  assert.match(text, /Метрика, Google Search Console и Яндекс Вебмастер показаны за единый ежедневный период/i);
+});
