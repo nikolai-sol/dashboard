@@ -25,6 +25,21 @@ export function summarizeAbbottPageStats(rows: AbbottBiPageStatRow[]) {
   );
 }
 
+const unnamedDirections = new Set(["", "—", "Без значения", "Без названия", "Без направления"]);
+
+export function buildAbbottPageviewsByDirection(rows: AbbottBiPageStatRow[], limit = 8) {
+  const totals = new Map<string, number>();
+  rows.forEach((row) => {
+    const direction = String(row.direction ?? "").trim();
+    if (unnamedDirections.has(direction)) return;
+    totals.set(direction, (totals.get(direction) ?? 0) + row.pageviews);
+  });
+
+  return Array.from(totals, ([label, value]) => ({ label, value }))
+    .sort((left, right) => right.value - left.value || left.label.localeCompare(right.label, "ru"))
+    .slice(0, Math.max(0, limit));
+}
+
 export function buildAbbottPageStatsExportRows(rows: AbbottBiPageStatRow[]): Array<Record<string, string | number>> {
   return rows.map((row) => ({
     "Заголовок страницы": row.page_title || "—",

@@ -18,6 +18,7 @@ import {
 import type { AbbottBiData } from "@/lib/types";
 import {
   buildAbbottPageStatsExportRows,
+  buildAbbottPageviewsByDirection,
   matchesPageStatsSearch,
   matchesSelectedMaterialType,
   summarizeAbbottPageStats,
@@ -1227,6 +1228,10 @@ export default function AbbottBiDashboard({
     () => excludeUnnamedChartGroups(groupNumberRows(pageStatRows, (row) => row.direction, (row) => row.users)).slice(0, 8),
     [pageStatRows],
   );
+  const pageViewsDirectionData = useMemo(
+    () => buildAbbottPageviewsByDirection(pageStatRows),
+    [pageStatRows],
+  );
   const pageMaterialData = useMemo(
     () => excludeUnnamedChartGroups(groupNumberRows(pageStatRows, (row) => row.material_type, (row) => row.users)).slice(0, 8),
     [pageStatRows],
@@ -1806,9 +1811,12 @@ export default function AbbottBiDashboard({
     );
   } else if (activeTab === "page_stats") {
     chartContent = (
-      <div className="grid gap-4 xl:grid-cols-3">
+      <div className="grid gap-4 xl:grid-cols-2">
         <ChartCard title="Посетители по направлению">
           <AbbottPieChart data={pageDirectionData} colors={theme.pieColors} locale={locale} />
+        </ChartCard>
+        <ChartCard title="Просмотры по направлению">
+          <AbbottPieChart data={pageViewsDirectionData} colors={theme.pieColors} locale={locale} />
         </ChartCard>
         <ChartCard title="Посетители по доступу">
           <AbbottBarChart data={pageAccessData} dataKey="value" metricName="Посетители" color={theme.barColor} locale={locale} valueFormatter={(value) => formatNumber(value, locale)} />
