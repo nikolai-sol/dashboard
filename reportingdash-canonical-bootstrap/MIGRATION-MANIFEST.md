@@ -13,7 +13,7 @@ private runtime repository.
 | --- | --- | --- | --- |
 | `collectors/fetch_yandex_metrika_canonical.py` | `fetch_yandex_metrika_canonical.py` | `8805525835d4abc12c0f325197345bbd91f891554680e7596a371d542c2208d4` | Yandex Metrika canonical collector and Abbott counter backfill entrypoint |
 | `lib/canonical_writer.py` | `canonical_writer.py` | `28d2142b5c439225b7b53aa85ce4cbb18b1b37e4b8eb752828325bab1a89ce93` | Staging resume writer and current-active append-only Abbott day publisher |
-| `lib/metrika_dashboard_breakdowns.py` | `metrika_dashboard_breakdowns.py` | `f28d4fb29187e243c77672b3e76dac7af10ebf18e96502e48f04739836744925` | Shared Metrika dashboard breakdown definitions |
+| `lib/metrika_dashboard_breakdowns.py` | `metrika_dashboard_breakdowns.py` | `69804305d0c8bc7026bae9f76be3a3d2484ee854e8056a5e685279004c73278c` | Shared Metrika dashboard breakdown definitions |
 | `lib/metrika_logs_api.py` | `metrika_logs_api.py` | `bfb6e5ec504f0e89f2ab5547102efa1a59fedeaf5e1b88f7e6179f3658a85f5f` | Exact Metrika Logs request lifecycle and visit parser |
 | `lib/canonical_release_store.py` | `canonical_release_store.py` | `7c31094a188ed32a9944b32456d302c2e3256abdd554da012b15fcf38db0a301` | Candidate release store, persisted validation gate, atomic activation, and rollback pointer management |
 
@@ -26,7 +26,7 @@ every runbook entrypoint and each repository-local Python dependency.
 | --- | --- | --- | --- |
 | `runtime/fetch_yandex_metrika_canonical.py` | `fetch_yandex_metrika_canonical.py` | `8805525835d4abc12c0f325197345bbd91f891554680e7596a371d542c2208d4` | Exact five-scope Metrika collector |
 | `runtime/canonical_writer.py` | `canonical_writer.py` | `28d2142b5c439225b7b53aa85ce4cbb18b1b37e4b8eb752828325bab1a89ce93` | Atomic staging and active append-only writer |
-| `runtime/metrika_dashboard_breakdowns.py` | `metrika_dashboard_breakdowns.py` | `f28d4fb29187e243c77672b3e76dac7af10ebf18e96502e48f04739836744925` | Shared dashboard breakdown definitions |
+| `runtime/metrika_dashboard_breakdowns.py` | `metrika_dashboard_breakdowns.py` | `69804305d0c8bc7026bae9f76be3a3d2484ee854e8056a5e685279004c73278c` | Shared dashboard breakdown definitions |
 | `runtime/metrika_logs_api.py` | `metrika_logs_api.py` | `bfb6e5ec504f0e89f2ab5547102efa1a59fedeaf5e1b88f7e6179f3658a85f5f` | Exact Metrika Logs request lifecycle and visit parser |
 | `runtime/canonical_release_store.py` | `canonical_release_store.py` | `7c31094a188ed32a9944b32456d302c2e3256abdd554da012b15fcf38db0a301` | Exact validation and pointer store |
 | `runtime/run_abbott_metrika_active_release.py` | `run_abbott_metrika_active_release.py` | `10cd78c56bada52ed806b47a8dfa5bd232b6669183eafbd015603fcb5ed8ba91` | Committed-manifest cron launcher |

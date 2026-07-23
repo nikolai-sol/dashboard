@@ -1,5 +1,7 @@
 """Canonical row normalization for Zaruku's Metrika dashboard breakdowns."""
 
+from __future__ import annotations
+
 from dataclasses import dataclass
 from datetime import date
 import hashlib
