@@ -64,15 +64,18 @@ Current auth note:
   predecessor, it stops PM2 and leaves the app fail-closed until a corrected compatible release is
   deployed. Zaruku must never become public during rollback.
 
-### Zaruku source matrix
+### Zaruku source matrix (branch target)
 
-| Source | Collection | Current dashboard role |
+| Source | Collection | Branch-target dashboard role |
 | --- | --- | --- |
-| Yandex Metrika | Automated canonical collection at `06:12`, plus remaining live API cuts for the selected traffic period | Canonical traffic/page facts; live search-engine, phrase, organic-landing, device, Geography, browser/OS, demographic, and interest cuts |
+| Yandex Metrika | Automated canonical collection at `06:12`; traffic/page facts plus Russia-filtered breakdown facts in `canonical_fact_metrika_breakdowns_daily`, with successful/empty coverage in `canonical_metrika_breakdown_coverage_daily` | Canonical MySQL-only traffic/page, search-engine, phrase, organic-landing, device, Geography, browser/OS, demographic, and interest reads |
 | Yandex Webmaster | Automated daily canonical collection at `06:50` | Yandex query and host-summary facts, aggregated to reporting weeks by the dashboard |
 | SEO OS | External weekly SQL load | Tracked Yandex positions, section and cluster coverage, opportunities, tasks, and pipeline telemetry |
 | AI/GEO visibility | Manual | Manually supplied AI visibility snapshots; automation is not connected |
 | Google Search Console | Automated daily canonical collection at `06:55` with `--data-delay-days 3`; backfilled for `2026-07-01 .. 2026-07-14` | Canonical GSC query/page/summary/country facts for Google impressions, clicks, CTR, position, and pre-click country/device split |
+
+This MySQL-only Metrika breakdown path is a branch target. It is not production
+state until the migration, deploy, and backfill are accepted.
 
 `Geography` means visitor countries/cities from Metrika. It is not `GEO`: in `AI/GEO visibility`, GEO means Generative Engine Optimization.
 
