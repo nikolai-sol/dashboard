@@ -25,12 +25,40 @@ test("buildGscAccountQueries bounds every canonical GSC query by account and dai
       query.sql,
       /analytics_account_id IN \(\?\)\s+AND report_date BETWEEN \? AND \?/,
     );
-    assert.match(query.sql, /AND country = 'rus'/);
     assert.doesNotMatch(query.sql.slice(query.sql.indexOf("WHERE")), /YEARWEEK\(report_date/);
     assert.deepEqual(query.params, ["66624469", "2026-07-13", "2026-07-19"]);
   }
   assert.match(queries.search_appearance.sql, /canonical_fact_gsc_search_appearance_daily/);
   assert.match(queries.search_type_summary.sql, /canonical_fact_gsc_search_type_daily/);
+});
+
+test("Search appearance stays property-level while country-grained GSC reads stay Russia-filtered", () => {
+  const queries = buildGscAccountQueries(["66624469"], dateRange);
+  const countryGrainedQueries = Object.entries(queries)
+    .filter(([key]) => key !== "search_appearance")
+    .map(([, query]) => query);
+
+  for (const query of countryGrainedQueries) {
+    assert.match(query.sql, /AND country = 'rus'/);
+  }
+  assert.match(queries.search_appearance.sql, /property-level/i);
+  assert.doesNotMatch(
+    queries.search_appearance.sql.slice(queries.search_appearance.sql.indexOf("WHERE")),
+    /country = 'rus'/,
+  );
+});
+
+test("Wednesday through Sunday bounds mark the first ISO week partial in every weekly query", () => {
+  const queries = buildGscAccountQueries(
+    ["66624469"],
+    { from: "2026-07-15", to: "2026-07-19" },
+  );
+
+  for (const query of Object.values(queries)) {
+    assert.match(query.sql, /MIN\(report_date\) > MIN\(/);
+    assert.match(query.sql, /OR MAX\(report_date\) < MAX\(/);
+    assert.deepEqual(query.params, ["66624469", "2026-07-15", "2026-07-19"]);
+  }
 });
 
 test("normalizeGscSummaryRow preserves partial week coverage", () => {

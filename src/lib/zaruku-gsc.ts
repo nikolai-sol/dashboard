@@ -155,6 +155,14 @@ function weightedAveragePositionSql(positionColumn = "position") {
 const WEEK_KEY_SQL = "CONCAT(LEFT(YEARWEEK(report_date, 3), 4), '-W', RIGHT(YEARWEEK(report_date, 3), 2))";
 const WEEK_FROM_SQL = "DATE_SUB(report_date, INTERVAL WEEKDAY(report_date) DAY)";
 const WEEK_END_SQL = `DATE_ADD(${WEEK_FROM_SQL}, INTERVAL 6 DAY)`;
+const PARTIAL_WEEK_SQL = `(
+            MIN(report_date) > MIN(${WEEK_FROM_SQL})
+            OR MAX(report_date) < MAX(${WEEK_END_SQL})
+          )`;
+const BRANDED_PARTIAL_WEEK_SQL = `(
+          MIN(report_date) > MIN(week_from_source)
+          OR MAX(report_date) < MAX(week_end_source)
+        )`;
 
 export function buildGscAccountQueries(counterIds: string[], dateRange: GscDateRange): Record<
   "queries" | "summary" | "country_summary" | "landing_pages" | "brand_split" | "search_appearance" | "search_type_summary",
@@ -194,7 +202,7 @@ export function buildGscAccountQueries(counterIds: string[], dateRange: GscDateR
           ${weightedAveragePositionSql()} AS average_position,
           MIN(${WEEK_FROM_SQL}) AS week_from,
           MAX(report_date) AS week_to,
-          MAX(report_date) < MAX(${WEEK_END_SQL}) AS is_partial_week
+          ${PARTIAL_WEEK_SQL} AS is_partial_week
         FROM canonical_fact_gsc_queries_daily
         WHERE analytics_account_id IN (${accountScope})
           ${queryDateRangeClause}
@@ -215,7 +223,7 @@ export function buildGscAccountQueries(counterIds: string[], dateRange: GscDateR
           ${weightedAveragePositionSql()} AS average_position,
           MIN(${WEEK_FROM_SQL}) AS week_from,
           MAX(report_date) AS week_to,
-          MAX(report_date) < MAX(${WEEK_END_SQL}) AS is_partial_week
+          ${PARTIAL_WEEK_SQL} AS is_partial_week
         FROM canonical_fact_gsc_queries_daily
         WHERE analytics_account_id IN (${accountScope})
           ${summaryDateRangeClause}
@@ -236,7 +244,7 @@ export function buildGscAccountQueries(counterIds: string[], dateRange: GscDateR
           ${weightedAveragePositionSql()} AS average_position,
           MIN(${WEEK_FROM_SQL}) AS week_from,
           MAX(report_date) AS week_to,
-          MAX(report_date) < MAX(${WEEK_END_SQL}) AS is_partial_week
+          ${PARTIAL_WEEK_SQL} AS is_partial_week
         FROM canonical_fact_gsc_queries_daily
         WHERE analytics_account_id IN (${accountScope})
           ${countrySummaryDateRangeClause}
@@ -258,7 +266,7 @@ export function buildGscAccountQueries(counterIds: string[], dateRange: GscDateR
           ${weightedAveragePositionSql()} AS average_position,
           MIN(${WEEK_FROM_SQL}) AS week_from,
           MAX(report_date) AS week_to,
-          MAX(report_date) < MAX(${WEEK_END_SQL}) AS is_partial_week
+          ${PARTIAL_WEEK_SQL} AS is_partial_week
         FROM canonical_fact_gsc_queries_daily
         WHERE analytics_account_id IN (${accountScope})
           ${landingPageDateRangeClause}
@@ -286,7 +294,7 @@ export function buildGscAccountQueries(counterIds: string[], dateRange: GscDateR
           END AS average_position,
           MIN(week_from_source) AS week_from,
           MAX(report_date) AS week_to,
-          MAX(report_date) < MAX(week_end_source) AS is_partial_week
+          ${BRANDED_PARTIAL_WEEK_SQL} AS is_partial_week
         FROM (
           SELECT
             ${WEEK_KEY_SQL} AS week_key,
@@ -322,11 +330,11 @@ export function buildGscAccountQueries(counterIds: string[], dateRange: GscDateR
           ${weightedAveragePositionSql()} AS average_position,
           MIN(${WEEK_FROM_SQL}) AS week_from,
           MAX(report_date) AS week_to,
-          MAX(report_date) < MAX(${WEEK_END_SQL}) AS is_partial_week
+          ${PARTIAL_WEEK_SQL} AS is_partial_week
         FROM canonical_fact_gsc_search_appearance_daily
+        /* property-level: canonical Search appearance rows intentionally have country = '' */
         WHERE analytics_account_id IN (${accountScope})
           ${searchAppearanceDateRangeClause}
-          ${normalizedCountryClause}
         GROUP BY week_key, search_type, search_appearance
         ORDER BY week_key ASC, impressions DESC, clicks DESC, search_appearance ASC
         LIMIT 160
@@ -344,7 +352,7 @@ export function buildGscAccountQueries(counterIds: string[], dateRange: GscDateR
           ${weightedAveragePositionSql()} AS average_position,
           MIN(${WEEK_FROM_SQL}) AS week_from,
           MAX(report_date) AS week_to,
-          MAX(report_date) < MAX(${WEEK_END_SQL}) AS is_partial_week
+          ${PARTIAL_WEEK_SQL} AS is_partial_week
         FROM canonical_fact_gsc_search_type_daily
         WHERE analytics_account_id IN (${accountScope})
           ${searchTypeSummaryDateRangeClause}
