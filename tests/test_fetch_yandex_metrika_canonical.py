@@ -8,6 +8,38 @@ import requests
 
 
 class YandexMetrikaCanonicalTests(unittest.TestCase):
+    def test_generic_schema_preflight_precedes_collector_run_mutation(self):
+        import fetch_yandex_metrika_canonical as collector
+
+        args = SimpleNamespace(
+            date_from="2026-07-22",
+            date_to="2026-07-22",
+            days_back=1,
+            run_type="manual",
+            counter_id="",
+            counter_ids="",
+            exclude_counter_id=[],
+            canonical_release_id=None,
+            code_revision="",
+            parser_version="",
+        )
+        with patch.object(collector, "METRIKA_TOKEN", "token"), patch.object(
+            collector,
+            "parse_args",
+            return_value=args,
+        ), patch.object(
+            collector,
+            "preflight_generic_metrika_schema",
+            side_effect=collector.MetrikaCollectionError("schema preflight failed"),
+        ), patch.object(collector, "start_collector_run") as start:
+            with self.assertRaisesRegex(
+                collector.MetrikaCollectionError,
+                "schema preflight",
+            ):
+                collector.main()
+
+        start.assert_not_called()
+
     def test_parse_args_accepts_repeatable_excluded_counter_ids(self):
         from fetch_yandex_metrika_canonical import parse_args
 
@@ -194,6 +226,59 @@ class YandexMetrikaCanonicalTests(unittest.TestCase):
                     42,
                 )
 
+    def test_build_payload_collects_breakdowns_only_for_zaruku(self):
+        import fetch_yandex_metrika_canonical as collector
+
+        bundle = SimpleNamespace(
+            status="success",
+            fact_rows=({"report_key": "devices"},),
+            coverage_rows=({"report_key": "devices", "status": "success"},),
+        )
+        counters = [
+            {"counter_id": "66624469", "name": "Zaruku"},
+            {"counter_id": "29137835", "name": "Inactive 1"},
+            {"counter_id": "105559308", "name": "Inactive 2"},
+            {"counter_id": "99078698", "name": "Inactive 3"},
+            {"counter_id": "90602537", "name": "Abbott"},
+        ]
+        empty_response = {"data": [], "total_rows": 0}
+
+        with ExitStack() as stack:
+            stack.enter_context(
+                patch.object(
+                    collector,
+                    "request_with_retry",
+                    return_value=empty_response,
+                )
+            )
+            stack.enter_context(
+                patch.object(
+                    collector,
+                    "request_all_rows",
+                    return_value={"data": []},
+                )
+            )
+            breakdowns = stack.enter_context(
+                patch.object(
+                    collector,
+                    "collect_zaruku_breakdowns",
+                    return_value=bundle,
+                )
+            )
+            payload = collector.build_payload(
+                counters,
+                "2026-07-22",
+                "2026-07-22",
+                71,
+            )
+
+        breakdowns.assert_called_once_with("66624469", "2026-07-22", 71)
+        self.assertEqual(payload["breakdown_rows"], [{"report_key": "devices"}])
+        self.assertEqual(
+            payload["breakdown_coverage_rows"],
+            [{"report_key": "devices", "status": "success"}],
+        )
+
     def test_main_discards_counter_when_later_entry_page_day_is_inaccessible(self):
         import fetch_yandex_metrika_canonical as collector
 
@@ -227,39 +312,40 @@ class YandexMetrikaCanonicalTests(unittest.TestCase):
                 return {"data": [entry_page_row], "total_rows": 1}
             return {"data": [], "total_rows": 0}
 
-        deleted_counter_ids = []
+        published_counter_ids = []
         published_facts = []
         with ExitStack() as stack:
             stack.enter_context(patch.object(collector, "METRIKA_TOKEN", "token"))
             stack.enter_context(patch.object(collector, "parse_args", return_value=args))
             stack.enter_context(patch.object(collector, "start_collector_run", return_value=42))
+            stack.enter_context(patch.object(collector, "preflight_generic_metrika_schema"))
             stack.enter_context(patch.object(collector, "ensure_user_behavior_table"))
             stack.enter_context(patch.object(collector, "fetch_configured_counters", return_value=counters))
             stack.enter_context(patch.object(collector, "request_with_retry", side_effect=fake_request))
             stack.enter_context(
                 patch.object(
                     collector,
-                    "delete_existing_scope_rows",
-                    side_effect=lambda _date_from, _date_to, ids: deleted_counter_ids.append(ids),
+                    "publish_generic_canonical_payload",
+                    side_effect=lambda payload, _run_id: (
+                        published_counter_ids.extend(payload["successful_counter_ids"])
+                        or published_facts.extend(payload["facts"])
+                        or SimpleNamespace(
+                            rows_written=len(payload["facts"]),
+                            site_rows_written=len(payload["facts"]),
+                            user_behavior_rows_written=0,
+                            breakdown_rows_written=len(payload["breakdown_rows"]),
+                            coverage_rows_written=len(payload["breakdown_coverage_rows"]),
+                        )
+                    ),
                 )
             )
-            stack.enter_context(patch.object(collector, "delete_existing_user_behavior_rows"))
-            stack.enter_context(patch.object(collector, "upsert_source_accounts"))
-            stack.enter_context(
-                patch.object(
-                    collector,
-                    "upsert_fact_site_analytics_daily",
-                    side_effect=lambda rows: published_facts.extend(rows) or len(rows),
-                )
-            )
-            stack.enter_context(patch.object(collector, "upsert_fact_user_behavior_daily", return_value=0))
             stack.enter_context(patch.object(collector, "log_run_event"))
             stack.enter_context(patch.object(collector, "finish_collector_run"))
             result = collector.main()
 
         self.assertEqual(result, 0)
-        self.assertEqual(deleted_counter_ids, [["good"]])
-        self.assertNotIn("bad", deleted_counter_ids[0])
+        self.assertEqual(published_counter_ids, ["good"])
+        self.assertNotIn("bad", published_counter_ids)
         self.assertTrue(published_facts)
         self.assertEqual(
             {row["analytics_account_id"] for row in published_facts},
@@ -332,6 +418,11 @@ class YandexMetrikaCanonicalTests(unittest.TestCase):
             "skipped_counters": [],
             "collection_modes": {"ads_only": 1},
             "successful_counter_ids": ["12345"],
+            "breakdown_rows": [],
+            "breakdown_coverage_rows": [],
+            "breakdown_failed_days": [],
+            "date_from": "2026-07-14",
+            "date_to": "2026-07-14",
         }
         summary_events = []
         args = SimpleNamespace(
@@ -347,6 +438,7 @@ class YandexMetrikaCanonicalTests(unittest.TestCase):
             stack.enter_context(patch.object(collector, "METRIKA_TOKEN", "token"))
             stack.enter_context(patch.object(collector, "parse_args", return_value=args))
             stack.enter_context(patch.object(collector, "start_collector_run", return_value=42))
+            stack.enter_context(patch.object(collector, "preflight_generic_metrika_schema"))
             stack.enter_context(patch.object(collector, "ensure_user_behavior_table"))
             stack.enter_context(
                 patch.object(
@@ -356,14 +448,18 @@ class YandexMetrikaCanonicalTests(unittest.TestCase):
                 )
             )
             stack.enter_context(patch.object(collector, "build_payload", return_value=payload))
-            stack.enter_context(patch.object(collector, "delete_existing_scope_rows"))
-            stack.enter_context(patch.object(collector, "delete_existing_user_behavior_rows"))
-            stack.enter_context(patch.object(collector, "upsert_source_accounts"))
             stack.enter_context(
-                patch.object(collector, "upsert_fact_site_analytics_daily", return_value=1)
-            )
-            stack.enter_context(
-                patch.object(collector, "upsert_fact_user_behavior_daily", return_value=0)
+                patch.object(
+                    collector,
+                    "publish_generic_canonical_payload",
+                    return_value=SimpleNamespace(
+                        rows_written=1,
+                        site_rows_written=1,
+                        user_behavior_rows_written=0,
+                        breakdown_rows_written=0,
+                        coverage_rows_written=0,
+                    ),
+                )
             )
             stack.enter_context(
                 patch.object(
@@ -381,6 +477,91 @@ class YandexMetrikaCanonicalTests(unittest.TestCase):
         self.assertIn("entry_page", summary["storage_scopes"])
         self.assertEqual(summary["entry_pages_grain"], "date+counter_id+page_url")
         self.assertEqual(summary["entry_page_rows"], 1)
+
+    def test_main_marks_failed_breakdown_day_partial(self):
+        import fetch_yandex_metrika_canonical as collector
+
+        payload = {
+            "accounts": [],
+            "utm_ads_rows": [],
+            "goals_rows": [],
+            "traffic_sources_rows": [],
+            "page_rows": [],
+            "entry_page_rows": [],
+            "user_behavior_rows": [],
+            "facts": [],
+            "rows_read": 17,
+            "api_empty_rows": 0,
+            "counters": 1,
+            "skipped_counters": [],
+            "collection_modes": {"ads_only": 1},
+            "successful_counter_ids": ["66624469"],
+            "breakdown_rows": [],
+            "breakdown_coverage_rows": [],
+            "breakdown_failed_days": [
+                {
+                    "counter_id": "66624469",
+                    "report_date": "2026-07-22",
+                    "report_key": "devices",
+                    "error_class": "MetrikaCollectionError",
+                }
+            ],
+            "date_from": "2026-07-22",
+            "date_to": "2026-07-22",
+        }
+        args = SimpleNamespace(
+            date_from="2026-07-22",
+            date_to="2026-07-22",
+            days_back=1,
+            run_type="manual",
+            counter_id="",
+            counter_ids="",
+            exclude_counter_id=[],
+            canonical_release_id=None,
+            code_revision="",
+            parser_version="",
+        )
+        finish_calls = []
+        with ExitStack() as stack:
+            stack.enter_context(patch.object(collector, "METRIKA_TOKEN", "token"))
+            stack.enter_context(patch.object(collector, "parse_args", return_value=args))
+            stack.enter_context(patch.object(collector, "preflight_generic_metrika_schema"))
+            stack.enter_context(patch.object(collector, "start_collector_run", return_value=71))
+            stack.enter_context(patch.object(collector, "ensure_user_behavior_table"))
+            stack.enter_context(
+                patch.object(
+                    collector,
+                    "fetch_configured_counters",
+                    return_value=[{"counter_id": "66624469"}],
+                )
+            )
+            stack.enter_context(patch.object(collector, "build_payload", return_value=payload))
+            stack.enter_context(
+                patch.object(
+                    collector,
+                    "publish_generic_canonical_payload",
+                    return_value=SimpleNamespace(
+                        rows_written=0,
+                        site_rows_written=0,
+                        user_behavior_rows_written=0,
+                        breakdown_rows_written=0,
+                        coverage_rows_written=0,
+                    ),
+                )
+            )
+            stack.enter_context(patch.object(collector, "log_run_event"))
+            stack.enter_context(
+                patch.object(
+                    collector,
+                    "finish_collector_run",
+                    side_effect=lambda *args, **kwargs: finish_calls.append(kwargs),
+                )
+            )
+            result = collector.main()
+
+        self.assertEqual(result, 1)
+        self.assertEqual(finish_calls[-1]["status"], "partial")
+        self.assertEqual(finish_calls[-1]["error_count"], 1)
 
 
 if __name__ == "__main__":

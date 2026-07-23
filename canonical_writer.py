@@ -13,6 +13,7 @@ from typing import Any, Mapping, Sequence
 
 import mysql.connector
 from dotenv import load_dotenv
+from metrika_dashboard_breakdowns import ZARUKU_BREAKDOWN_REPORTS
 
 load_dotenv(Path(__file__).parent / '.env')
 
@@ -62,15 +63,106 @@ class MetrikaPublishResult:
     coverage_rows_written: int
 
 
+@dataclass(frozen=True)
+class GenericCanonicalPublicationResult:
+    rows_written: int
+    site_rows_written: int
+    user_behavior_rows_written: int
+    breakdown_rows_written: int
+    coverage_rows_written: int
+
+
+PublicationResult = GenericCanonicalPublicationResult
+
+
 _METRIKA_SCOPE_ORDER = ('other', 'traffic', 'page', 'user_behavior', 'returning')
 _METRIKA_FAILURE_STATUSES = frozenset(('partial', 'skipped', 'sampled', 'failed'))
 ABBOTT_COUNTER_ID = '90602537'
+_GENERIC_METRIKA_SCOPES = ('traffic', 'goal', 'other', 'page', 'entry_page')
+_ZARUKU_BREAKDOWN_REPORT_KEYS = frozenset(
+    report.report_key for report in ZARUKU_BREAKDOWN_REPORTS
+)
 
 
 def _field(value: Any, name: str) -> Any:
     if isinstance(value, Mapping):
         return value[name]
     return getattr(value, name)
+
+
+def _count_value(row: Any) -> int:
+    if isinstance(row, Mapping):
+        return int(next(iter(row.values()), 0))
+    if isinstance(row, (tuple, list)):
+        return int(row[0]) if row else 0
+    return int(row or 0)
+
+
+def _preflight_generic_metrika_schema_cursor(cur) -> None:
+    checks = (
+        (
+            """
+            SELECT COUNT(*)
+            FROM information_schema.COLUMNS
+            WHERE TABLE_SCHEMA = DATABASE()
+              AND TABLE_NAME = 'canonical_fact_site_analytics_daily'
+              AND COLUMN_NAME = 'analytics_scope'
+              AND COLUMN_TYPE LIKE %s
+            """,
+            ("%'entry_page'%",),
+            "canonical_fact_site_analytics_daily.analytics_scope entry_page",
+        ),
+        (
+            """
+            SELECT COUNT(*)
+            FROM information_schema.TABLES
+            WHERE TABLE_SCHEMA = DATABASE()
+              AND TABLE_NAME = 'canonical_fact_metrika_breakdowns_daily'
+            """,
+            None,
+            "canonical_fact_metrika_breakdowns_daily",
+        ),
+        (
+            """
+            SELECT COUNT(*)
+            FROM information_schema.TABLES
+            WHERE TABLE_SCHEMA = DATABASE()
+              AND TABLE_NAME = 'canonical_metrika_breakdown_coverage_daily'
+            """,
+            None,
+            "canonical_metrika_breakdown_coverage_daily",
+        ),
+    )
+    for sql, params, label in checks:
+        if params is None:
+            cur.execute(sql)
+        else:
+            cur.execute(sql, params)
+        if _count_value(cur.fetchone()) != 1:
+            raise MetrikaPublishError(
+                f"Generic Metrika schema preflight failed: missing {label}"
+            )
+
+
+def preflight_generic_metrika_schema(connection=None) -> None:
+    """Require the generic Metrika schema without mutating it."""
+    own_connection = connection is None
+    conn = connection or get_db_connection()
+    cur = None
+    try:
+        cur = conn.cursor()
+        _preflight_generic_metrika_schema_cursor(cur)
+    finally:
+        if cur is not None:
+            try:
+                cur.close()
+            except Exception:
+                pass
+        if own_connection:
+            try:
+                conn.close()
+            except Exception:
+                pass
 
 
 def _delete_release_day(cur, release_id: int, counter_id: str, report_date: str) -> None:
@@ -1165,6 +1257,138 @@ def upsert_fact_promopages_daily(rows: list[dict]) -> int:
     return len(rows)
 
 
+def upsert_source_accounts_with_connection(conn, rows: Sequence[dict]) -> int:
+    if not rows:
+        return 0
+    cur = conn.cursor()
+    try:
+        cur.executemany(
+            """
+            INSERT INTO canonical_source_accounts (
+                source_key, platform_account_id, external_account_ref,
+                account_name, advertiser_name, account_status,
+                currency_code, timezone_name, first_seen_at, last_seen_at, raw_payload
+            ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+            ON DUPLICATE KEY UPDATE
+                external_account_ref = VALUES(external_account_ref),
+                account_name = VALUES(account_name),
+                advertiser_name = VALUES(advertiser_name),
+                account_status = VALUES(account_status),
+                currency_code = VALUES(currency_code),
+                timezone_name = VALUES(timezone_name),
+                first_seen_at = COALESCE(LEAST(first_seen_at, VALUES(first_seen_at)), VALUES(first_seen_at), first_seen_at),
+                last_seen_at = COALESCE(GREATEST(last_seen_at, VALUES(last_seen_at)), VALUES(last_seen_at), last_seen_at),
+                raw_payload = VALUES(raw_payload),
+                updated_at = CURRENT_TIMESTAMP
+            """,
+            [
+                (
+                    row['source_key'],
+                    row['platform_account_id'],
+                    row.get('external_account_ref'),
+                    row.get('account_name'),
+                    row.get('advertiser_name'),
+                    row.get('account_status'),
+                    row.get('currency_code'),
+                    row.get('timezone_name'),
+                    _normalize_datetime(row.get('first_seen_at')),
+                    _normalize_datetime(row.get('last_seen_at')),
+                    _json_or_none(row.get('raw_payload')),
+                )
+                for row in rows
+            ],
+        )
+    finally:
+        cur.close()
+    return len(rows)
+
+
+def upsert_fact_site_analytics_daily_with_connection(
+    conn,
+    rows: Sequence[dict],
+) -> int:
+    if not rows:
+        return 0
+    cur = conn.cursor()
+    try:
+        cur.executemany(
+            """
+            INSERT INTO canonical_fact_site_analytics_daily (
+                source_key, analytics_account_id, report_date,
+                analytics_scope, scope_hash,
+                utm_source, utm_medium, utm_campaign, utm_content, utm_term,
+                goal_id, goal_name, page_url, page_title, region_city, traffic_source,
+                visits, users, new_users, pageviews, goal_reaches,
+                page_depth, bounce_rate, avg_visit_duration_seconds,
+                ingestion_run_id
+            ) VALUES (
+                %s, %s, %s,
+                %s, %s,
+                %s, %s, %s, %s, %s,
+                %s, %s, %s, %s, %s, %s,
+                %s, %s, %s, %s, %s,
+                %s, %s, %s,
+                %s
+            )
+            ON DUPLICATE KEY UPDATE
+                utm_source = VALUES(utm_source),
+                utm_medium = VALUES(utm_medium),
+                utm_campaign = VALUES(utm_campaign),
+                utm_content = VALUES(utm_content),
+                utm_term = VALUES(utm_term),
+                goal_id = VALUES(goal_id),
+                goal_name = VALUES(goal_name),
+                page_url = VALUES(page_url),
+                page_title = VALUES(page_title),
+                region_city = VALUES(region_city),
+                traffic_source = VALUES(traffic_source),
+                visits = VALUES(visits),
+                users = VALUES(users),
+                new_users = VALUES(new_users),
+                pageviews = VALUES(pageviews),
+                goal_reaches = VALUES(goal_reaches),
+                page_depth = VALUES(page_depth),
+                bounce_rate = VALUES(bounce_rate),
+                avg_visit_duration_seconds = VALUES(avg_visit_duration_seconds),
+                ingestion_run_id = VALUES(ingestion_run_id),
+                updated_at = CURRENT_TIMESTAMP
+            """,
+            [
+                (
+                    row['source_key'],
+                    row['analytics_account_id'],
+                    row['report_date'],
+                    row.get('analytics_scope', 'traffic'),
+                    row['scope_hash'],
+                    row.get('utm_source'),
+                    row.get('utm_medium'),
+                    row.get('utm_campaign'),
+                    row.get('utm_content'),
+                    row.get('utm_term'),
+                    row.get('goal_id'),
+                    row.get('goal_name'),
+                    row.get('page_url'),
+                    row.get('page_title'),
+                    row.get('region_city'),
+                    row.get('traffic_source'),
+                    row.get('visits'),
+                    row.get('users'),
+                    row.get('new_users'),
+                    row.get('pageviews'),
+                    row.get('goal_reaches'),
+                    row.get('page_depth'),
+                    row.get('bounce_rate'),
+                    row.get('avg_visit_duration_seconds'),
+                    row.get('ingestion_run_id'),
+                )
+                for row in rows
+            ],
+        )
+    finally:
+        cur.close()
+    return len(rows)
+
+
 def upsert_fact_site_analytics_daily(rows: list[dict]) -> int:
     if not rows:
         return 0
@@ -1249,6 +1473,81 @@ def upsert_fact_site_analytics_daily(rows: list[dict]) -> int:
     return len(rows)
 
 
+def upsert_fact_user_behavior_daily_with_connection(
+    conn,
+    rows: Sequence[dict],
+) -> int:
+    if not rows:
+        return 0
+    cur = conn.cursor()
+    try:
+        cur.executemany(
+            """
+            INSERT INTO canonical_fact_user_behavior_daily (
+                source_key, analytics_account_id, report_date, scope_hash,
+                user_id, traffic_source_id, traffic_source, start_url, end_url,
+                visits, users, new_users,
+                page_depth, bounce_rate, avg_visit_duration_seconds,
+                up_to_day_user_recency_percentage,
+                up_to_week_user_recency_percentage,
+                up_to_month_user_recency_percentage,
+                ingestion_run_id
+            ) VALUES (
+                %s, %s, %s, %s,
+                %s, %s, %s, %s, %s,
+                %s, %s, %s,
+                %s, %s, %s,
+                %s, %s, %s,
+                %s
+            )
+            ON DUPLICATE KEY UPDATE
+                user_id = VALUES(user_id),
+                traffic_source_id = VALUES(traffic_source_id),
+                traffic_source = VALUES(traffic_source),
+                start_url = VALUES(start_url),
+                end_url = VALUES(end_url),
+                visits = VALUES(visits),
+                users = VALUES(users),
+                new_users = VALUES(new_users),
+                page_depth = VALUES(page_depth),
+                bounce_rate = VALUES(bounce_rate),
+                avg_visit_duration_seconds = VALUES(avg_visit_duration_seconds),
+                up_to_day_user_recency_percentage = VALUES(up_to_day_user_recency_percentage),
+                up_to_week_user_recency_percentage = VALUES(up_to_week_user_recency_percentage),
+                up_to_month_user_recency_percentage = VALUES(up_to_month_user_recency_percentage),
+                ingestion_run_id = VALUES(ingestion_run_id),
+                updated_at = CURRENT_TIMESTAMP
+            """,
+            [
+                (
+                    row['source_key'],
+                    row['analytics_account_id'],
+                    row['report_date'],
+                    row['scope_hash'],
+                    row['user_id'],
+                    row.get('traffic_source_id'),
+                    row.get('traffic_source'),
+                    row.get('start_url'),
+                    row.get('end_url'),
+                    row.get('visits'),
+                    row.get('users'),
+                    row.get('new_users'),
+                    row.get('page_depth'),
+                    row.get('bounce_rate'),
+                    row.get('avg_visit_duration_seconds'),
+                    row.get('up_to_day_user_recency_percentage'),
+                    row.get('up_to_week_user_recency_percentage'),
+                    row.get('up_to_month_user_recency_percentage'),
+                    row.get('ingestion_run_id'),
+                )
+                for row in rows
+            ],
+        )
+    finally:
+        cur.close()
+    return len(rows)
+
+
 def upsert_fact_user_behavior_daily(rows: list[dict]) -> int:
     if not rows:
         return 0
@@ -1320,3 +1619,360 @@ def upsert_fact_user_behavior_daily(rows: list[dict]) -> int:
     cur.close()
     conn.close()
     return len(rows)
+
+
+def upsert_metrika_breakdown_rows_with_connection(
+    conn,
+    rows: Sequence[dict],
+) -> int:
+    if not rows:
+        return 0
+    cur = conn.cursor()
+    try:
+        cur.executemany(
+            """
+            INSERT INTO canonical_fact_metrika_breakdowns_daily (
+                source_key, analytics_account_id, report_date, report_key,
+                segment_key, row_kind, dimension_1_key, dimension_1_id,
+                dimension_1_value, dimension_2_key, dimension_2_id,
+                dimension_2_value, page_url, dimension_hash, visits, users,
+                new_users, pageviews, bounce_rate, avg_visit_duration_seconds,
+                page_depth, ingestion_run_id
+            ) VALUES (
+                %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s,
+                %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s
+            )
+            ON DUPLICATE KEY UPDATE
+                dimension_1_key = VALUES(dimension_1_key),
+                dimension_1_id = VALUES(dimension_1_id),
+                dimension_1_value = VALUES(dimension_1_value),
+                dimension_2_key = VALUES(dimension_2_key),
+                dimension_2_id = VALUES(dimension_2_id),
+                dimension_2_value = VALUES(dimension_2_value),
+                page_url = VALUES(page_url),
+                visits = VALUES(visits),
+                users = VALUES(users),
+                new_users = VALUES(new_users),
+                pageviews = VALUES(pageviews),
+                bounce_rate = VALUES(bounce_rate),
+                avg_visit_duration_seconds = VALUES(avg_visit_duration_seconds),
+                page_depth = VALUES(page_depth),
+                ingestion_run_id = VALUES(ingestion_run_id),
+                updated_at = CURRENT_TIMESTAMP
+            """,
+            [
+                (
+                    row['source_key'],
+                    row['analytics_account_id'],
+                    row['report_date'],
+                    row['report_key'],
+                    row['segment_key'],
+                    row['row_kind'],
+                    row.get('dimension_1_key'),
+                    row.get('dimension_1_id'),
+                    row.get('dimension_1_value'),
+                    row.get('dimension_2_key'),
+                    row.get('dimension_2_id'),
+                    row.get('dimension_2_value'),
+                    row.get('page_url'),
+                    row['dimension_hash'],
+                    row.get('visits'),
+                    row.get('users'),
+                    row.get('new_users'),
+                    row.get('pageviews'),
+                    row.get('bounce_rate'),
+                    row.get('avg_visit_duration_seconds'),
+                    row.get('page_depth'),
+                    row['ingestion_run_id'],
+                )
+                for row in rows
+            ],
+        )
+    finally:
+        cur.close()
+    return len(rows)
+
+
+def upsert_metrika_breakdown_coverage_with_connection(
+    conn,
+    rows: Sequence[dict],
+) -> int:
+    if not rows:
+        return 0
+    cur = conn.cursor()
+    try:
+        cur.executemany(
+            """
+            INSERT INTO canonical_metrika_breakdown_coverage_daily (
+                source_key, analytics_account_id, report_date, report_key,
+                segment_key, status, api_total_rows, persisted_rows,
+                pagination_complete, ingestion_run_id
+            ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+            ON DUPLICATE KEY UPDATE
+                status = VALUES(status),
+                api_total_rows = VALUES(api_total_rows),
+                persisted_rows = VALUES(persisted_rows),
+                pagination_complete = VALUES(pagination_complete),
+                ingestion_run_id = VALUES(ingestion_run_id),
+                updated_at = CURRENT_TIMESTAMP
+            """,
+            [
+                (
+                    row['source_key'],
+                    row['analytics_account_id'],
+                    row['report_date'],
+                    row['report_key'],
+                    row['segment_key'],
+                    row['status'],
+                    row['api_total_rows'],
+                    row['persisted_rows'],
+                    int(bool(row['pagination_complete'])),
+                    row['ingestion_run_id'],
+                )
+                for row in rows
+            ],
+        )
+    finally:
+        cur.close()
+    return len(rows)
+
+
+def _prune_generic_site_rows(
+    conn,
+    *,
+    counter_ids: Sequence[str],
+    date_from: str,
+    date_to: str,
+    run_id: int,
+) -> None:
+    if not counter_ids:
+        return
+    cur = conn.cursor()
+    try:
+        for counter_id in counter_ids:
+            cur.execute(
+                """
+                DELETE FROM canonical_fact_site_analytics_daily
+                WHERE source_key = %s
+                  AND analytics_account_id = %s
+                  AND report_date BETWEEN %s AND %s
+                  AND analytics_scope IN (%s, %s, %s, %s, %s)
+                  AND (ingestion_run_id <> %s OR ingestion_run_id IS NULL)
+                """,
+                (
+                    'yandex_metrika',
+                    str(counter_id),
+                    date_from,
+                    date_to,
+                    *_GENERIC_METRIKA_SCOPES,
+                    run_id,
+                ),
+            )
+            cur.execute(
+                """
+                DELETE FROM canonical_fact_user_behavior_daily
+                WHERE source_key = %s
+                  AND analytics_account_id = %s
+                  AND report_date BETWEEN %s AND %s
+                  AND (ingestion_run_id <> %s OR ingestion_run_id IS NULL)
+                """,
+                (
+                    'yandex_metrika',
+                    str(counter_id),
+                    date_from,
+                    date_to,
+                    run_id,
+                ),
+            )
+    finally:
+        cur.close()
+
+
+def _prune_metrika_breakdown_rows(
+    conn,
+    coverage_rows: Sequence[dict],
+    run_id: int,
+) -> None:
+    if not coverage_rows:
+        return
+    cur = conn.cursor()
+    try:
+        for row in coverage_rows:
+            cur.execute(
+                """
+                DELETE FROM canonical_fact_metrika_breakdowns_daily
+                WHERE source_key = %s
+                  AND analytics_account_id = %s
+                  AND report_date = %s
+                  AND report_key = %s
+                  AND segment_key = %s
+                  AND (ingestion_run_id <> %s OR ingestion_run_id IS NULL)
+                """,
+                (
+                    row['source_key'],
+                    row['analytics_account_id'],
+                    row['report_date'],
+                    row['report_key'],
+                    row['segment_key'],
+                    run_id,
+                ),
+            )
+    finally:
+        cur.close()
+
+
+def _validate_generic_metrika_payload(
+    payload: Mapping[str, Any],
+    run_id: int,
+) -> None:
+    if isinstance(run_id, bool) or not isinstance(run_id, int) or run_id <= 0:
+        raise MetrikaPublishError("Generic Metrika breakdown payload has invalid run ID")
+
+    successful_counter_ids = {
+        str(value) for value in (payload.get('successful_counter_ids') or ())
+    }
+    for row in (
+        *(payload.get('facts') or ()),
+        *(payload.get('user_behavior_rows') or ()),
+    ):
+        if (
+            row.get('source_key') != 'yandex_metrika'
+            or str(row.get('analytics_account_id')) not in successful_counter_ids
+            or row.get('ingestion_run_id') != run_id
+        ):
+            raise MetrikaPublishError(
+                "Generic Metrika breakdown payload has inconsistent generic facts"
+            )
+
+    coverage_by_identity: dict[tuple[str, str, str, str, str], Mapping[str, Any]] = {}
+    for row in payload.get('breakdown_coverage_rows') or ():
+        identity = (
+            str(row.get('source_key') or ''),
+            str(row.get('analytics_account_id') or ''),
+            str(row.get('report_date') or ''),
+            str(row.get('report_key') or ''),
+            str(row.get('segment_key') or ''),
+        )
+        if (
+            identity[0] != 'yandex_metrika'
+            or identity[1] != '66624469'
+            or not identity[2]
+            or identity[3] not in _ZARUKU_BREAKDOWN_REPORT_KEYS
+            or identity[4] != 'russia'
+            or row.get('ingestion_run_id') != run_id
+            or row.get('status') not in {'success', 'empty'}
+            or row.get('pagination_complete') not in {1, True}
+            or identity in coverage_by_identity
+        ):
+            raise MetrikaPublishError(
+                "Generic Metrika breakdown payload has invalid coverage identity"
+            )
+        coverage_by_identity[identity] = row
+
+    fact_counts: dict[tuple[str, str, str, str, str], int] = {}
+    for row in payload.get('breakdown_rows') or ():
+        identity = (
+            str(row.get('source_key') or ''),
+            str(row.get('analytics_account_id') or ''),
+            str(row.get('report_date') or ''),
+            str(row.get('report_key') or ''),
+            str(row.get('segment_key') or ''),
+        )
+        if (
+            identity[0] != 'yandex_metrika'
+            or identity[1] != '66624469'
+            or not identity[2]
+            or identity[3] not in _ZARUKU_BREAKDOWN_REPORT_KEYS
+            or identity[4] != 'russia'
+            or row.get('ingestion_run_id') != run_id
+            or identity not in coverage_by_identity
+        ):
+            raise MetrikaPublishError(
+                "Generic Metrika breakdown payload has invalid fact identity"
+            )
+        fact_counts[identity] = fact_counts.get(identity, 0) + 1
+
+    for identity, coverage in coverage_by_identity.items():
+        api_total_rows = coverage.get('api_total_rows')
+        persisted_rows = coverage.get('persisted_rows')
+        if (
+            isinstance(api_total_rows, bool)
+            or not isinstance(api_total_rows, int)
+            or api_total_rows < 0
+            or isinstance(persisted_rows, bool)
+            or not isinstance(persisted_rows, int)
+            or persisted_rows != fact_counts.get(identity, 0)
+        ):
+            raise MetrikaPublishError(
+                "Generic Metrika breakdown payload has invalid coverage counts"
+            )
+
+
+def publish_generic_canonical_payload(
+    payload: Mapping[str, Any],
+    run_id: int,
+) -> PublicationResult:
+    """Atomically publish generic Metrika facts using upsert-before-prune."""
+    _validate_generic_metrika_payload(payload, run_id)
+    conn = None
+    transaction_started = False
+    try:
+        conn = get_db_connection()
+        preflight_generic_metrika_schema(conn)
+        conn.start_transaction()
+        transaction_started = True
+
+        upsert_source_accounts_with_connection(conn, payload.get('accounts') or ())
+        site_rows = upsert_fact_site_analytics_daily_with_connection(
+            conn,
+            payload.get('facts') or (),
+        )
+        user_behavior_rows = upsert_fact_user_behavior_daily_with_connection(
+            conn,
+            payload.get('user_behavior_rows') or (),
+        )
+        breakdown_rows = upsert_metrika_breakdown_rows_with_connection(
+            conn,
+            payload.get('breakdown_rows') or (),
+        )
+        coverage_rows = payload.get('breakdown_coverage_rows') or ()
+        coverage_written = upsert_metrika_breakdown_coverage_with_connection(
+            conn,
+            coverage_rows,
+        )
+
+        _prune_generic_site_rows(
+            conn,
+            counter_ids=payload.get('successful_counter_ids') or (),
+            date_from=str(payload['date_from']),
+            date_to=str(payload['date_to']),
+            run_id=run_id,
+        )
+        _prune_metrika_breakdown_rows(conn, coverage_rows, run_id)
+        conn.commit()
+        return GenericCanonicalPublicationResult(
+            rows_written=(
+                site_rows
+                + user_behavior_rows
+                + breakdown_rows
+                + coverage_written
+            ),
+            site_rows_written=site_rows,
+            user_behavior_rows_written=user_behavior_rows,
+            breakdown_rows_written=breakdown_rows,
+            coverage_rows_written=coverage_written,
+        )
+    except MetrikaPublishError:
+        if conn is not None and transaction_started:
+            conn.rollback()
+        raise
+    except Exception:
+        if conn is not None and transaction_started:
+            conn.rollback()
+        raise MetrikaPublishError("Generic Metrika publication failed") from None
+    finally:
+        if conn is not None:
+            try:
+                conn.close()
+            except Exception:
+                pass
