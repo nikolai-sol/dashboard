@@ -46,7 +46,7 @@ export async function loadAccountFacts(
   const normalizedAccountId = requireAccountId(accountId);
   const [webmaster, gsc] = await Promise.all([
     loadYandexWebmasterFacts(normalizedAccountId, options.weeks),
-    loadGoogleSearchConsoleFacts([normalizedAccountId], options.weeks),
+    loadGoogleSearchConsoleFacts([normalizedAccountId], dateRange),
   ]);
   return {
     accountId: normalizedAccountId,

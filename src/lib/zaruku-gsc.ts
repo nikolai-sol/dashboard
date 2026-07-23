@@ -13,6 +13,7 @@ import type {
 
 export type SqlQuery = { sql: string; params: string[] };
 export type GscQueryExecutor = (query: SqlQuery) => Promise<unknown[]>;
+export type GscDateRange = { from: string; to: string };
 export const ZARUKU_GSC_COUNTRY = "rus";
 
 type GscQueryDbRow = {
@@ -132,16 +133,13 @@ function formatDate(value: string | Date) {
   return value instanceof Date ? value.toISOString().slice(0, 10) : String(value).slice(0, 10);
 }
 
-function weekClause(weeks: string[] | undefined, params: string[]) {
-  const normalizedWeeks = (weeks ?? []).map((week) => week.trim()).filter(Boolean);
-  if (normalizedWeeks.length === 0) return "";
-  params.push(...normalizedWeeks);
-  return `AND CONCAT(LEFT(YEARWEEK(report_date, 3), 4), '-W', RIGHT(YEARWEEK(report_date, 3), 2)) IN (${buildInClause(normalizedWeeks)})`;
+function dateRangeClause(dateRange: GscDateRange, params: string[]) {
+  params.push(dateRange.from, dateRange.to);
+  return "AND report_date BETWEEN ? AND ?";
 }
 
-function countryClause(params: string[], country = ZARUKU_GSC_COUNTRY) {
-  params.push(country);
-  return "AND LOWER(COALESCE(country, '')) = ?";
+function countryClause() {
+  return "AND country = 'rus'";
 }
 
 function weightedAveragePositionSql(positionColumn = "position") {
@@ -158,7 +156,7 @@ const WEEK_KEY_SQL = "CONCAT(LEFT(YEARWEEK(report_date, 3), 4), '-W', RIGHT(YEAR
 const WEEK_FROM_SQL = "DATE_SUB(report_date, INTERVAL WEEKDAY(report_date) DAY)";
 const WEEK_END_SQL = `DATE_ADD(${WEEK_FROM_SQL}, INTERVAL 6 DAY)`;
 
-export function buildGscAccountQueries(counterIds: string[], weeks?: string[]): Record<
+export function buildGscAccountQueries(counterIds: string[], dateRange: GscDateRange): Record<
   "queries" | "summary" | "country_summary" | "landing_pages" | "brand_split" | "search_appearance" | "search_type_summary",
   SqlQuery
 > {
@@ -170,20 +168,14 @@ export function buildGscAccountQueries(counterIds: string[], weeks?: string[]): 
   const brandSplitParams = [...normalizedCounterIds];
   const searchAppearanceParams = [...normalizedCounterIds];
   const searchTypeSummaryParams = [...normalizedCounterIds];
-  const queryCountryClause = countryClause(queryParams);
-  const summaryCountryClause = countryClause(summaryParams);
-  const countrySummaryCountryClause = countryClause(countrySummaryParams);
-  const landingPageCountryClause = countryClause(landingPageParams);
-  const brandSplitCountryClause = countryClause(brandSplitParams);
-  const searchAppearanceCountryClause = countryClause(searchAppearanceParams);
-  const searchTypeSummaryCountryClause = countryClause(searchTypeSummaryParams);
-  const queryWeekClause = weekClause(weeks, queryParams);
-  const summaryWeekClause = weekClause(weeks, summaryParams);
-  const countrySummaryWeekClause = weekClause(weeks, countrySummaryParams);
-  const landingPageWeekClause = weekClause(weeks, landingPageParams);
-  const brandSplitWeekClause = weekClause(weeks, brandSplitParams);
-  const searchAppearanceWeekClause = weekClause(weeks, searchAppearanceParams);
-  const searchTypeSummaryWeekClause = weekClause(weeks, searchTypeSummaryParams);
+  const queryDateRangeClause = dateRangeClause(dateRange, queryParams);
+  const summaryDateRangeClause = dateRangeClause(dateRange, summaryParams);
+  const countrySummaryDateRangeClause = dateRangeClause(dateRange, countrySummaryParams);
+  const landingPageDateRangeClause = dateRangeClause(dateRange, landingPageParams);
+  const brandSplitDateRangeClause = dateRangeClause(dateRange, brandSplitParams);
+  const searchAppearanceDateRangeClause = dateRangeClause(dateRange, searchAppearanceParams);
+  const searchTypeSummaryDateRangeClause = dateRangeClause(dateRange, searchTypeSummaryParams);
+  const normalizedCountryClause = countryClause();
   const accountScope = buildInClause(normalizedCounterIds);
 
   return {
@@ -205,8 +197,8 @@ export function buildGscAccountQueries(counterIds: string[], weeks?: string[]): 
           MAX(report_date) < MAX(${WEEK_END_SQL}) AS is_partial_week
         FROM canonical_fact_gsc_queries_daily
         WHERE analytics_account_id IN (${accountScope})
-          ${queryCountryClause}
-          ${queryWeekClause}
+          ${queryDateRangeClause}
+          ${normalizedCountryClause}
         GROUP BY week_key, query_hash, query, page, country, device
         ORDER BY week_key ASC, impressions DESC, clicks DESC, query ASC
       `,
@@ -226,8 +218,8 @@ export function buildGscAccountQueries(counterIds: string[], weeks?: string[]): 
           MAX(report_date) < MAX(${WEEK_END_SQL}) AS is_partial_week
         FROM canonical_fact_gsc_queries_daily
         WHERE analytics_account_id IN (${accountScope})
-          ${summaryCountryClause}
-          ${summaryWeekClause}
+          ${summaryDateRangeClause}
+          ${normalizedCountryClause}
         GROUP BY week_key, device
         ORDER BY week_key ASC, impressions DESC
       `,
@@ -247,8 +239,8 @@ export function buildGscAccountQueries(counterIds: string[], weeks?: string[]): 
           MAX(report_date) < MAX(${WEEK_END_SQL}) AS is_partial_week
         FROM canonical_fact_gsc_queries_daily
         WHERE analytics_account_id IN (${accountScope})
-          ${countrySummaryCountryClause}
-          ${countrySummaryWeekClause}
+          ${countrySummaryDateRangeClause}
+          ${normalizedCountryClause}
         GROUP BY week_key, country
         ORDER BY week_key ASC, impressions DESC, clicks DESC, country ASC
         LIMIT 120
@@ -269,9 +261,9 @@ export function buildGscAccountQueries(counterIds: string[], weeks?: string[]): 
           MAX(report_date) < MAX(${WEEK_END_SQL}) AS is_partial_week
         FROM canonical_fact_gsc_queries_daily
         WHERE analytics_account_id IN (${accountScope})
+          ${landingPageDateRangeClause}
+          ${normalizedCountryClause}
           AND COALESCE(page, '') <> ''
-          ${landingPageCountryClause}
-          ${landingPageWeekClause}
         GROUP BY week_key, page
         ORDER BY week_key ASC, impressions DESC, clicks DESC, page ASC
         LIMIT 200
@@ -310,8 +302,8 @@ export function buildGscAccountQueries(counterIds: string[], weeks?: string[]): 
             ${WEEK_END_SQL} AS week_end_source
           FROM canonical_fact_gsc_queries_daily
           WHERE analytics_account_id IN (${accountScope})
-            ${brandSplitCountryClause}
-            ${brandSplitWeekClause}
+            ${brandSplitDateRangeClause}
+            ${normalizedCountryClause}
         ) branded
         GROUP BY week_key, brand_bucket
         ORDER BY week_key ASC, impressions DESC, clicks DESC
@@ -333,8 +325,8 @@ export function buildGscAccountQueries(counterIds: string[], weeks?: string[]): 
           MAX(report_date) < MAX(${WEEK_END_SQL}) AS is_partial_week
         FROM canonical_fact_gsc_search_appearance_daily
         WHERE analytics_account_id IN (${accountScope})
-          ${searchAppearanceCountryClause}
-          ${searchAppearanceWeekClause}
+          ${searchAppearanceDateRangeClause}
+          ${normalizedCountryClause}
         GROUP BY week_key, search_type, search_appearance
         ORDER BY week_key ASC, impressions DESC, clicks DESC, search_appearance ASC
         LIMIT 160
@@ -355,8 +347,8 @@ export function buildGscAccountQueries(counterIds: string[], weeks?: string[]): 
           MAX(report_date) < MAX(${WEEK_END_SQL}) AS is_partial_week
         FROM canonical_fact_gsc_search_type_daily
         WHERE analytics_account_id IN (${accountScope})
-          ${searchTypeSummaryCountryClause}
-          ${searchTypeSummaryWeekClause}
+          ${searchTypeSummaryDateRangeClause}
+          ${normalizedCountryClause}
         GROUP BY week_key, search_type
         ORDER BY week_key ASC, FIELD(search_type, 'web', 'image', 'video', 'news', 'discover', 'googleNews'), impressions DESC
       `,
@@ -498,10 +490,10 @@ async function executeGscQuery(query: SqlQuery) {
 
 export async function loadGoogleSearchConsoleFacts(
   counterIds: string[],
-  weeks?: string[],
+  dateRange: GscDateRange,
   executeQuery: GscQueryExecutor = executeGscQuery,
 ): Promise<ZarukuGscData> {
-  const queries = buildGscAccountQueries(counterIds, weeks);
+  const queries = buildGscAccountQueries(counterIds, dateRange);
   const results = await Promise.allSettled([
     executeQuery(queries.queries),
     executeQuery(queries.summary),

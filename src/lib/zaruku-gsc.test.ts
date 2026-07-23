@@ -14,15 +14,20 @@ import {
 import { buildPendingRequirements } from "@/lib/zaruku-seo";
 import type { ZarukuYandexWebmasterData } from "@/lib/types";
 
-test("buildGscAccountQueries scopes canonical GSC rows by account and optional weeks", () => {
-  const queries = buildGscAccountQueries(["66624469"], ["2026-W29"]);
+const dateRange = { from: "2026-07-13", to: "2026-07-19" };
+
+test("buildGscAccountQueries bounds every canonical GSC query by account and daily dates", () => {
+  const queries = buildGscAccountQueries(["66624469"], dateRange);
 
   assert.match(queries.queries.sql, /canonical_fact_gsc_queries_daily/);
-  assert.match(queries.queries.sql, /analytics_account_id IN \(\?\)/);
-  assert.match(queries.queries.sql, /YEARWEEK\(report_date, 3\)[\s\S]*IN \(\?\)/);
   for (const query of Object.values(queries)) {
-    assert.match(query.sql, /LOWER\(COALESCE\(country, ''\)\) = \?/);
-    assert.deepEqual(query.params, ["66624469", "rus", "2026-W29"]);
+    assert.match(
+      query.sql,
+      /analytics_account_id IN \(\?\)\s+AND report_date BETWEEN \? AND \?/,
+    );
+    assert.match(query.sql, /AND country = 'rus'/);
+    assert.doesNotMatch(query.sql.slice(query.sql.indexOf("WHERE")), /YEARWEEK\(report_date/);
+    assert.deepEqual(query.params, ["66624469", "2026-07-13", "2026-07-19"]);
   }
   assert.match(queries.search_appearance.sql, /canonical_fact_gsc_search_appearance_daily/);
   assert.match(queries.search_type_summary.sql, /canonical_fact_gsc_search_type_daily/);
@@ -228,7 +233,7 @@ test("normalizeGscSearchTypeRow keeps Google result type facts", () => {
 });
 
 test("loadGoogleSearchConsoleFacts marks Search Console available when canonical rows exist", async () => {
-  const data = await loadGoogleSearchConsoleFacts(["66624469"], ["2026-W29"], async (query) => {
+  const data = await loadGoogleSearchConsoleFacts(["66624469"], dateRange, async (query) => {
     if (query.sql.includes("GROUP BY week_key, device")) {
       return [
         {
@@ -362,10 +367,10 @@ test("loadGoogleSearchConsoleFacts marks Search Console available when canonical
   assert.equal(data.search_type_summary[0].search_type, "image");
 });
 
-test("loadGoogleSearchConsoleFacts is unavailable when requested weeks have zero core rows", async () => {
+test("loadGoogleSearchConsoleFacts is unavailable when the requested date range has zero core rows", async () => {
   const data = await loadGoogleSearchConsoleFacts(
     ["66624469"],
-    ["2026-W29"],
+    dateRange,
     async () => [],
   );
 
@@ -385,7 +390,7 @@ test("loadGoogleSearchConsoleFacts is unavailable when requested weeks have zero
 });
 
 test("optional GSC rows cannot supply a latest-week fallback when core rows are empty", async () => {
-  const data = await loadGoogleSearchConsoleFacts(["66624469"], ["2026-W29"], async (query) => {
+  const data = await loadGoogleSearchConsoleFacts(["66624469"], dateRange, async (query) => {
     if (query.sql.includes("canonical_fact_gsc_search_type_daily")) {
       return [
         {
@@ -412,7 +417,7 @@ test("optional GSC rows cannot supply a latest-week fallback when core rows are 
 });
 
 test("empty optional enrichment does not block available core GSC facts", async () => {
-  const data = await loadGoogleSearchConsoleFacts(["66624469"], ["2026-W29"], async (query) => {
+  const data = await loadGoogleSearchConsoleFacts(["66624469"], dateRange, async (query) => {
     if (query.sql.includes("GROUP BY week_key, device")) {
       return [
         {
@@ -439,7 +444,7 @@ test("empty optional enrichment does not block available core GSC facts", async 
 });
 
 test("zero-row GSC facts flow through to the dashboard pending requirement", async () => {
-  const gsc = await loadGoogleSearchConsoleFacts(["66624469"], ["2026-W29"], async () => []);
+  const gsc = await loadGoogleSearchConsoleFacts(["66624469"], dateRange, async () => []);
   const webmaster: ZarukuYandexWebmasterData = {
     available: true,
     status: "available",
