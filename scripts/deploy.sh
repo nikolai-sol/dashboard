@@ -97,6 +97,7 @@ done
 copy_canonical_file fetch_google_ads_canonical.py
 copy_canonical_file google_ads_api_client.py
 copy_canonical_file canonical_writer.py
+copy_canonical_file metrika_dashboard_breakdowns.py
 copy_canonical_file fetch_yandex_webmaster_canonical.py
 copy_canonical_file fetch_gsc_canonical.py
 copy_canonical_file fetch_yandex_direct_canonical_api.py

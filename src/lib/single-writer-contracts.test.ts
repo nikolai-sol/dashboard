@@ -41,3 +41,10 @@ test("deploy inventory packages only the active canonical GSC writer", () => {
   assert.match(deploy, /copy_canonical_file fetch_gsc_canonical\.py/);
   assert.doesNotMatch(deploy, /copy_canonical_file fetch_google_search_console_canonical\.py/);
 });
+
+test("deploy inventory packages the canonical writer breakdown dependency", () => {
+  const deploy = readFileSync(join(repoRoot, "scripts/deploy.sh"), "utf8");
+
+  assert.match(deploy, /copy_canonical_file canonical_writer\.py/);
+  assert.match(deploy, /copy_canonical_file metrika_dashboard_breakdowns\.py/);
+});

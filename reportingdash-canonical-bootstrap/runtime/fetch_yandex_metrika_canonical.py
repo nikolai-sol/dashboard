@@ -28,11 +28,15 @@ from abbott_canonical_controls import api_fingerprint
 from canonical_writer import (
     finish_collector_run,
     log_run_event,
+    preflight_generic_metrika_schema,
+    publish_generic_canonical_payload,
     publish_metrika_day_bundle,
     start_collector_run,
-    upsert_fact_site_analytics_daily,
-    upsert_fact_user_behavior_daily,
-    upsert_source_accounts,
+)
+from metrika_dashboard_breakdowns import (
+    ZARUKU_BREAKDOWN_REPORTS,
+    build_breakdown_rows,
+    build_coverage_row,
 )
 from metrika_logs_api import MetrikaLogsClient, MetrikaLogsError, VISIT_FIELDS
 from metrika_pagination import PaginationResult, collect_all_pages, collect_all_rows
@@ -61,6 +65,7 @@ def env_first(*keys: str, default: str = '') -> str:
 
 SOURCE_KEY = 'yandex_metrika'
 ABBOTT_COUNTER_ID = '90602537'
+ZARUKU_COUNTER_ID = '66624469'
 ABBOTT_REQUIRED_SCOPES = ('other', 'traffic', 'page', 'user_behavior', 'returning')
 ABBOTT_USER_ID_CONDITION = "ym:s:paramsLevel1=='UserID' AND ym:s:paramsLevel2!=''"
 ABBOTT_OTHER_SEGMENTS = (
@@ -203,6 +208,19 @@ class MetrikaDayBundle:
     report_date: str
     run_id: int
     scopes: Mapping[str, MetrikaScopeResult]
+
+
+@dataclass(frozen=True)
+class BreakdownDayBundle:
+    counter_id: str
+    report_date: str
+    run_id: int
+    status: str
+    fact_rows: tuple[dict, ...]
+    coverage_rows: tuple[dict, ...]
+    failed_report_key: str | None = None
+    error_class: str | None = None
+
 
 LOG_LEVEL = env_first('LOG_LEVEL', default='INFO').upper()
 logging.basicConfig(
@@ -552,6 +570,109 @@ def request_all_rows(
         )
     )
     return {'data': rows}
+
+
+def collect_zaruku_breakdowns(
+    counter_id: str,
+    day: str,
+    run_id: int,
+) -> BreakdownDayBundle:
+    counter_text = clean_text(counter_id)
+    if counter_text != ZARUKU_COUNTER_ID:
+        raise MetrikaCollectionError(
+            'Zaruku breakdown collection requires counter 66624469'
+        )
+
+    fact_rows: list[dict] = []
+    coverage_rows: list[dict] = []
+    for report in ZARUKU_BREAKDOWN_REPORTS:
+        try:
+            first_page_totals: list[Any] = []
+            fetch_page = _request_page_fetcher(
+                counter_text,
+                day,
+                dimensions=','.join(report.dimensions),
+                metrics=report.metrics,
+                attribution=METRIKA_ATTRIBUTION,
+                extra_params={
+                    'accuracy': 'full',
+                    'filters': report.filters,
+                },
+            )
+
+            def fetch_page_with_totals(offset: int) -> dict:
+                response = fetch_page(offset)
+                if offset == 1 and isinstance(response.get('totals'), (list, tuple)):
+                    first_page_totals.extend(response['totals'])
+                return response
+
+            result = collect_all_pages(
+                fetch_page_with_totals,
+                limit=METRIKA_PAGE_LIMIT,
+            )
+            if (
+                not result.pagination_complete
+                or result.total_rows is None
+                or result.sampled
+                or (
+                    result.sample_share is not None
+                    and result.sample_share < 1.0
+                )
+                or len(result.rows) != result.total_rows
+            ):
+                raise MetrikaCollectionError(
+                    'Zaruku breakdown pagination is incomplete'
+                )
+            response = {
+                'data': list(result.rows),
+                'total_rows': result.total_rows,
+                'pagination_complete': result.pagination_complete,
+                'sampled': result.sampled,
+                'sample_share': result.sample_share,
+            }
+            if first_page_totals:
+                response['totals'] = first_page_totals
+            report_rows = build_breakdown_rows(
+                counter_text,
+                day,
+                report,
+                response,
+                run_id,
+            )
+            coverage = build_coverage_row(
+                counter_text,
+                day,
+                report,
+                response,
+                report_rows,
+                run_id,
+            )
+            if coverage.get('status') not in {'success', 'empty'}:
+                raise MetrikaCollectionError(
+                    'Zaruku breakdown coverage is not publishable'
+                )
+            fact_rows.extend(report_rows)
+            coverage_rows.append(coverage)
+        except Exception as exc:
+            return BreakdownDayBundle(
+                counter_id=counter_text,
+                report_date=day,
+                run_id=run_id,
+                status='failed',
+                fact_rows=(),
+                coverage_rows=(),
+                failed_report_key=report.report_key,
+                error_class=exc.__class__.__name__,
+            )
+
+    return BreakdownDayBundle(
+        counter_id=counter_text,
+        report_date=day,
+        run_id=run_id,
+        status='success',
+        fact_rows=tuple(fact_rows),
+        coverage_rows=tuple(coverage_rows),
+    )
 
 
 def extract_rows(data: dict) -> list[dict]:
@@ -1809,6 +1930,9 @@ def build_payload(counters: list[dict], date_from: str, date_to: str, run_id: in
     page_rows: list[dict] = []
     entry_page_rows: list[dict] = []
     user_behavior_rows: list[dict] = []
+    breakdown_rows: list[dict] = []
+    breakdown_coverage_rows: list[dict] = []
+    breakdown_failed_days: list[dict[str, str]] = []
     rows_read = 0
     api_empty_rows = 0
     skipped_counters: list[dict[str, str]] = []
@@ -1850,6 +1974,8 @@ def build_payload(counters: list[dict], date_from: str, date_to: str, run_id: in
         counter_page_rows: list[dict] = []
         counter_entry_page_rows: list[dict] = []
         counter_user_behavior_rows: list[dict] = []
+        counter_breakdown_rows: list[dict] = []
+        counter_breakdown_coverage_rows: list[dict] = []
         skip_counter = False
         for day in daterange(date_from, date_to):
             try:
@@ -1899,6 +2025,11 @@ def build_payload(counters: list[dict], date_from: str, date_to: str, run_id: in
                         metrics=METRIKA_USER_BEHAVIOR_METRICS,
                         attribution=METRIKA_ATTRIBUTION,
                     )
+                breakdown_bundle = (
+                    collect_zaruku_breakdowns(counter_id, day, run_id)
+                    if counter_id == ZARUKU_COUNTER_ID
+                    else None
+                )
             except requests.exceptions.HTTPError as exc:
                 status_code = exc.response.status_code if exc.response is not None else None
                 if status_code in {403, 404}:
@@ -1916,6 +2047,8 @@ def build_payload(counters: list[dict], date_from: str, date_to: str, run_id: in
                     break
                 raise
             rows_read += 6 if collect_user_behavior else 5
+            if breakdown_bundle is not None:
+                rows_read += len(ZARUKU_BREAKDOWN_REPORTS)
             utm_rows_for_day = build_utm_ads_rows(counter_id, day, utm_ads_response, run_id)
             goals_rows_for_day = build_goals_rows(counter_id, day, goals_response, run_id)
             traffic_sources_rows_for_day = build_traffic_sources_rows(counter_id, day, traffic_sources_response, run_id)
@@ -1934,6 +2067,21 @@ def build_payload(counters: list[dict], date_from: str, date_to: str, run_id: in
             counter_page_rows.extend(page_rows_for_day)
             counter_entry_page_rows.extend(entry_page_rows_for_day)
             counter_user_behavior_rows.extend(user_behavior_rows_for_day)
+            if breakdown_bundle is not None:
+                if breakdown_bundle.status == 'success':
+                    counter_breakdown_rows.extend(breakdown_bundle.fact_rows)
+                    counter_breakdown_coverage_rows.extend(
+                        breakdown_bundle.coverage_rows
+                    )
+                else:
+                    breakdown_failed_days.append(
+                        {
+                            'counter_id': counter_id,
+                            'report_date': day,
+                            'report_key': breakdown_bundle.failed_report_key or '',
+                            'error_class': breakdown_bundle.error_class or '',
+                        }
+                    )
         if not skip_counter:
             account_rows[counter_id] = account_row
             successful_counter_ids.append(counter_id)
@@ -1943,6 +2091,8 @@ def build_payload(counters: list[dict], date_from: str, date_to: str, run_id: in
             page_rows.extend(counter_page_rows)
             entry_page_rows.extend(counter_entry_page_rows)
             user_behavior_rows.extend(counter_user_behavior_rows)
+            breakdown_rows.extend(counter_breakdown_rows)
+            breakdown_coverage_rows.extend(counter_breakdown_coverage_rows)
 
     return {
         'accounts': list(account_rows.values()),
@@ -1952,6 +2102,9 @@ def build_payload(counters: list[dict], date_from: str, date_to: str, run_id: in
         'page_rows': page_rows,
         'entry_page_rows': entry_page_rows,
         'user_behavior_rows': user_behavior_rows,
+        'breakdown_rows': breakdown_rows,
+        'breakdown_coverage_rows': breakdown_coverage_rows,
+        'breakdown_failed_days': breakdown_failed_days,
         'facts': utm_ads_rows + goals_rows + traffic_sources_rows + page_rows + entry_page_rows,
         'rows_read': rows_read,
         'api_empty_rows': api_empty_rows,
@@ -1959,6 +2112,8 @@ def build_payload(counters: list[dict], date_from: str, date_to: str, run_id: in
         'skipped_counters': skipped_counters,
         'successful_counter_ids': successful_counter_ids,
         'collection_modes': collection_modes,
+        'date_from': date_from,
+        'date_to': date_to,
     }
 
 
@@ -1982,6 +2137,8 @@ def main() -> int:
         raise MetrikaCollectionError(
             '--canonical-release-id requires code and parser versions'
         )
+    if release_id is None:
+        preflight_generic_metrika_schema()
     run_id = start_collector_run(
         source_key=SOURCE_KEY,
         run_type=args.run_type,
@@ -2063,20 +2220,22 @@ def main() -> int:
             raise RuntimeError(f'No active configured Metrika counters matched --counter-ids={",".join(target_counter_ids)}')
         payload = build_payload(counters, date_from, date_to, run_id)
         collected_counter_ids = payload['successful_counter_ids']
-        if collected_counter_ids:
-            delete_existing_scope_rows(date_from, date_to, collected_counter_ids)
-            delete_existing_user_behavior_rows(date_from, date_to, collected_counter_ids)
-        upsert_source_accounts(payload['accounts'])
-        site_rows_written = upsert_fact_site_analytics_daily(payload['facts'])
-        user_behavior_rows_written = upsert_fact_user_behavior_daily(payload['user_behavior_rows'])
-        rows_written = site_rows_written + user_behavior_rows_written
+        publication = publish_generic_canonical_payload(payload, run_id)
+        site_rows_written = publication.site_rows_written
+        user_behavior_rows_written = publication.user_behavior_rows_written
+        rows_written = publication.rows_written
         rows_updated = rows_written
         rows_read = payload['rows_read']
+        breakdown_failures = payload['breakdown_failed_days']
         log_run_event(
             run_id,
-            'INFO',
+            'ERROR' if breakdown_failures else 'INFO',
             'summary',
-            'Yandex Metrika canonical analytics sync completed',
+            (
+                'Yandex Metrika canonical analytics sync has failed breakdown days'
+                if breakdown_failures
+                else 'Yandex Metrika canonical analytics sync completed'
+            ),
             {
                 'source_key': SOURCE_KEY,
                 'date_from': date_from,
@@ -2105,11 +2264,27 @@ def main() -> int:
                 'page_rows': len(payload['page_rows']),
                 'entry_page_rows': len(payload['entry_page_rows']),
                 'user_behavior_rows': len(payload['user_behavior_rows']),
+                'breakdown_rows': len(payload['breakdown_rows']),
+                'breakdown_coverage_rows': len(payload['breakdown_coverage_rows']),
+                'breakdown_failed_days': payload['breakdown_failed_days'],
                 'site_rows_written': site_rows_written,
                 'user_behavior_rows_written': user_behavior_rows_written,
+                'breakdown_rows_written': publication.breakdown_rows_written,
+                'breakdown_coverage_rows_written': publication.coverage_rows_written,
                 'collection_modes': payload['collection_modes'],
             },
         )
+        if breakdown_failures:
+            finish_collector_run(
+                run_id,
+                status='partial',
+                rows_read=rows_read,
+                rows_written=rows_written,
+                rows_updated=rows_updated,
+                error_count=len(breakdown_failures),
+                error_summary='One or more Zaruku Metrika breakdown days failed',
+            )
+            return 1
         finish_collector_run(
             run_id,
             status='success',
