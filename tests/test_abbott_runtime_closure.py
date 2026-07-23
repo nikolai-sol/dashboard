@@ -17,6 +17,7 @@ ROOT = Path(__file__).resolve().parents[1]
 REQUIRED_RUNTIME = {
     "fetch_yandex_metrika_canonical.py",
     "canonical_writer.py",
+    "metrika_dashboard_breakdowns.py",
     "metrika_logs_api.py",
     "canonical_release_store.py",
     "run_abbott_metrika_active_release.py",
@@ -34,9 +35,11 @@ REQUIRED_RUNTIME = {
 SYNCHRONIZED_BOOTSTRAP_COPIES = {
     "collectors/fetch_yandex_metrika_canonical.py": "fetch_yandex_metrika_canonical.py",
     "lib/canonical_writer.py": "canonical_writer.py",
+    "lib/metrika_dashboard_breakdowns.py": "metrika_dashboard_breakdowns.py",
     "lib/metrika_logs_api.py": "metrika_logs_api.py",
     "runtime/fetch_yandex_metrika_canonical.py": "fetch_yandex_metrika_canonical.py",
     "runtime/canonical_writer.py": "canonical_writer.py",
+    "runtime/metrika_dashboard_breakdowns.py": "metrika_dashboard_breakdowns.py",
     "runtime/metrika_logs_api.py": "metrika_logs_api.py",
 }
 
