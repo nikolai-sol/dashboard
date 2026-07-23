@@ -19,13 +19,34 @@ function tableBody(tableName: string) {
   return match[1];
 }
 
-function keyColumns(tableSql: string, keyName: string) {
+function keyColumns(
+  tableSql: string,
+  keyName: string,
+  keyKind: "unique" | "non-unique",
+) {
+  const declaration = keyKind === "unique" ? "UNIQUE\\s+KEY" : "KEY";
   const match = tableSql.match(
-    new RegExp(`(?:UNIQUE\\s+)?KEY\\s+${keyName}\\s*\\(([^)]+)\\)`, "i"),
+    new RegExp(
+      `(?:^|\\n)\\s*${declaration}\\s+${keyName}\\s*\\(([^)]+)\\)`,
+      "i",
+    ),
   );
-  assert.ok(match, `${keyName} must be declared`);
+  assert.ok(match, `${keyName} must be declared as ${keyKind}`);
   return match[1].split(",").map((column) => column.trim());
 }
+
+test("key contract distinguishes unique business keys from ordinary read indexes", () => {
+  assert.throws(() =>
+    keyColumns("KEY uniq_example (source_key)", "uniq_example", "unique"),
+  );
+  assert.throws(() =>
+    keyColumns(
+      "UNIQUE KEY idx_example (source_key)",
+      "idx_example",
+      "non-unique",
+    ),
+  );
+});
 
 test("migration 043 defines the complete Metrika breakdown and coverage schema", () => {
   const breakdownSql = tableBody("canonical_fact_metrika_breakdowns_daily");
@@ -71,7 +92,7 @@ test("migration 043 defines the complete Metrika breakdown and coverage schema",
   );
 
   assert.deepEqual(
-    keyColumns(breakdownSql, "uniq_metrika_breakdown_daily"),
+    keyColumns(breakdownSql, "uniq_metrika_breakdown_daily", "unique"),
     [
       "source_key",
       "analytics_account_id",
@@ -83,7 +104,7 @@ test("migration 043 defines the complete Metrika breakdown and coverage schema",
     ],
   );
   assert.deepEqual(
-    keyColumns(breakdownSql, "idx_metrika_breakdown_read"),
+    keyColumns(breakdownSql, "idx_metrika_breakdown_read", "non-unique"),
     [
       "analytics_account_id",
       "report_key",
@@ -123,7 +144,11 @@ test("migration 043 defines the complete Metrika breakdown and coverage schema",
     /updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP/,
   );
   assert.deepEqual(
-    keyColumns(coverageSql, "uniq_metrika_breakdown_coverage_daily"),
+    keyColumns(
+      coverageSql,
+      "uniq_metrika_breakdown_coverage_daily",
+      "unique",
+    ),
     [
       "source_key",
       "analytics_account_id",
@@ -133,7 +158,11 @@ test("migration 043 defines the complete Metrika breakdown and coverage schema",
     ],
   );
   assert.deepEqual(
-    keyColumns(coverageSql, "idx_metrika_breakdown_coverage_read"),
+    keyColumns(
+      coverageSql,
+      "idx_metrika_breakdown_coverage_read",
+      "non-unique",
+    ),
     [
       "analytics_account_id",
       "report_key",
