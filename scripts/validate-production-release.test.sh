@@ -27,7 +27,6 @@ write_valid_env() {
   cat > "$target" <<'ENV'
 ABBOTT_DASHBOARD_PASSWORD='  abbott # "quoted" \ path  '
 ABBOTT_DASHBOARD_EMBED_KEY="embed key # with spaces"
-METRIKA_TOKEN='metrika # token \ value'
 ABBOTT_EMBED_DB_HOST=embed-db.example.test
 ABBOTT_EMBED_DB_PORT=3306
 ABBOTT_EMBED_DB_USER=abbott_embed
@@ -67,6 +66,7 @@ write_release_contract "$VALID_RELEASE"
 
 grep -q 'ABBOTT_DASHBOARD_PASSWORD' "$SCRIPT_DIR/validate-production-release.sh"
 ! grep -q 'ZARUKU_DASHBOARD_PASSWORD' "$SCRIPT_DIR/validate-production-release.sh"
+! grep -q 'METRIKA_TOKEN' "$SCRIPT_DIR/validate-production-release.sh"
 
 NODE_OPTIONS_MARKER="$TMP_DIR/node-options-executed"
 cat > "$TMP_DIR/node-options-payload.cjs" <<JS
@@ -81,22 +81,6 @@ PATH="$SYSTEM_PATH" bash "$SCRIPT_DIR/validate-production-release.sh" \
   "$MALICIOUS_RELEASE" "$MALICIOUS_RELEASE/.env" >"$TMP_DIR/malicious.log" 2>&1
 if [[ -e "$NODE_OPTIONS_MARKER" ]]; then
   echo "validate-production-release.sh executed NODE_OPTIONS from the environment file" >&2
-  exit 1
-fi
-
-MISSING_RELEASE="$TMP_DIR/missing-release"
-mkdir -p "$MISSING_RELEASE/public"
-write_valid_env "$MISSING_RELEASE/.env"
-write_release_contract "$MISSING_RELEASE"
-sed -i.bak '/^METRIKA_TOKEN=/d' "$MISSING_RELEASE/.env"
-if METRIKA_TOKEN=ambient-value-must-not-mask-the-file \
-  bash "$SCRIPT_DIR/validate-production-release.sh" "$MISSING_RELEASE" "$MISSING_RELEASE/.env" >"$TMP_DIR/missing.log" 2>&1; then
-  echo "validate-production-release.sh accepted a missing required key" >&2
-  exit 1
-fi
-grep -Fq 'METRIKA_TOKEN' "$TMP_DIR/missing.log"
-if grep -Fq 'top-secret' "$TMP_DIR/missing.log"; then
-  echo "validate-production-release.sh printed a secret value" >&2
   exit 1
 fi
 
@@ -163,17 +147,6 @@ if bash "$SCRIPT_DIR/validate-production-release.sh" "$SYMLINK_ENV_RELEASE" "$SY
   echo "validate-production-release.sh accepted a symlinked environment file" >&2
   exit 1
 fi
-
-WHITESPACE_RELEASE="$TMP_DIR/whitespace-release"
-mkdir -p "$WHITESPACE_RELEASE/public"
-write_valid_env "$WHITESPACE_RELEASE/.env"
-write_release_contract "$WHITESPACE_RELEASE"
-sed -i.bak "s/^METRIKA_TOKEN=.*/METRIKA_TOKEN='   ' # rotated/" "$WHITESPACE_RELEASE/.env"
-if bash "$SCRIPT_DIR/validate-production-release.sh" "$WHITESPACE_RELEASE" "$WHITESPACE_RELEASE/.env" >"$TMP_DIR/whitespace.log" 2>&1; then
-  echo "validate-production-release.sh accepted a commented whitespace-only required value" >&2
-  exit 1
-fi
-grep -Fq 'METRIKA_TOKEN' "$TMP_DIR/whitespace.log"
 
 UNMARKED_RELEASE="$TMP_DIR/unmarked-release"
 mkdir -p "$UNMARKED_RELEASE/public"

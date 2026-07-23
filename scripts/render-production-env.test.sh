@@ -38,7 +38,6 @@ DASHBOARD_ADMIN_PASSWORD=admin-top-secret
 DASHBOARD_AUTH_SECRET=auth-top-secret
 ABBOTT_DASHBOARD_PASSWORD='  abbott # "quoted" \ path  '
 ABBOTT_DASHBOARD_EMBED_KEY="embed key # with spaces"
-METRIKA_TOKEN='metrika # token \ value'
 ABBOTT_EMBED_DB_HOST=embed-db.example.test
 ABBOTT_EMBED_DB_PORT=3307
 ABBOTT_EMBED_DB_USER=abbott_embed
@@ -73,14 +72,13 @@ fi
 
 EXPECTED_ABBOTT_PASSWORD='  abbott # "quoted" \ path  ' \
 EXPECTED_EMBED_KEY='embed key # with spaces' \
-EXPECTED_METRIKA_TOKEN='metrika # token \ value' \
 EXPECTED_EMBED_PASSWORD='  embed # "quoted" \ password  ' \
 EXPECTED_PRIVATE_PASSWORD='  private # "quoted" \ password  ' \
 node --env-file="$TARGET_FILE" <<'JS'
 const assert = require("node:assert/strict");
 assert.equal(process.env.ABBOTT_DASHBOARD_PASSWORD, process.env.EXPECTED_ABBOTT_PASSWORD);
 assert.equal(process.env.ABBOTT_DASHBOARD_EMBED_KEY, process.env.EXPECTED_EMBED_KEY);
-assert.equal(process.env.METRIKA_TOKEN, process.env.EXPECTED_METRIKA_TOKEN);
+assert.equal(process.env.METRIKA_TOKEN, undefined);
 assert.equal(process.env.ABBOTT_EMBED_DB_PASSWORD, process.env.EXPECTED_EMBED_PASSWORD);
 assert.equal(process.env.ABBOTT_EMBED_DB_NAME, "report_bd");
 assert.equal(process.env.ABBOTT_PRIVATE_DB_PASSWORD, process.env.EXPECTED_PRIVATE_PASSWORD);
@@ -88,6 +86,7 @@ JS
 
 grep -q '^ABBOTT_DASHBOARD_PASSWORD=' "$TARGET_FILE"
 ! grep -q 'ZARUKU_DASHBOARD_PASSWORD' "$TARGET_FILE"
+! grep -q 'METRIKA_TOKEN' "$TARGET_FILE"
 
 if grep -Fq 'top-secret' "$SUCCESS_LOG"; then
   echo "render-production-env.sh printed a secret value" >&2
