@@ -376,7 +376,7 @@ function NorthStarBlock({ data, locale }: Props) {
             </div>
           ))}
         </div>
-        <div className="shrink-0 rounded-md border border-slate-200 bg-white px-2.5 py-1 text-xs font-medium text-slate-500">бейзлайн 13.07.2026</div>
+        <div className="shrink-0 rounded-md border border-slate-200 bg-white px-2.5 py-1 text-xs font-medium text-slate-500">с 07.2026</div>
       </div>
     </section>
   );
