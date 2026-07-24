@@ -124,7 +124,7 @@ function SafePageLink({ value, prefix = "" }: { value: string; prefix?: string }
   const href = resolveZarukuContentUrl(value);
   if (!href) return <span className="max-w-full truncate text-slate-400">{prefix}{shortUrl(value)}</span>;
   return (
-    <a href={href} target="_blank" rel="noreferrer" className="max-w-full truncate hover:text-blue-600" title={href}>
+    <a href={href} target="_blank" rel="noreferrer" className="max-w-full truncate whitespace-nowrap hover:text-blue-600" title={href}>
       {prefix}{shortUrl(href)}
     </a>
   );
@@ -218,61 +218,61 @@ export default function ZarukuSeoQueryComparison({
         ) : null}
       </header>
 
-      <div className="max-h-[42rem] overflow-auto">
-        <table className="min-w-[1180px] w-full border-separate border-spacing-0 text-sm">
+      <div className="max-h-[42rem] overflow-x-auto overflow-y-auto">
+        <table className="w-full table-fixed border-separate border-spacing-0 text-sm">
           <thead className="sticky top-0 z-10 bg-white shadow-[0_1px_0_0_#e2e8f0]">
             <tr className="text-xs font-semibold text-slate-600">
-              <th rowSpan={2} className="w-[300px] border-r border-slate-100 bg-white px-4 py-3 text-left align-bottom">Фраза</th>
-              <th rowSpan={2} className="w-[140px] border-r border-slate-100 bg-white px-3 py-3 text-left align-bottom">Раздел</th>
-              <th colSpan={4} className="border-r border-slate-100 bg-blue-50/70 px-3 py-2 text-center">
+              <th rowSpan={2} className="w-[360px] min-w-[220px] border-r border-slate-100 bg-white px-4 py-3 text-left align-bottom">Фраза</th>
+              <th rowSpan={2} className="w-[130px] min-w-[120px] border-r border-slate-100 bg-white px-3 py-3 text-left align-bottom">Раздел</th>
+              <th colSpan={4} className="w-[320px] border-r border-slate-100 bg-blue-50/70 px-3 py-2 text-center">
                 <SourceHeading label="Google RF" week={sourceWeeks.google} className="bg-blue-500" />
               </th>
-              <th colSpan={4} className="border-r border-slate-100 bg-amber-50/70 px-3 py-2 text-center">
+              <th colSpan={4} className="w-[320px] border-r border-slate-100 bg-amber-50/70 px-3 py-2 text-center">
                 <SourceHeading label="Яндекс Вебмастер" week={sourceWeeks.webmaster} className="bg-amber-400" />
               </th>
-              <th colSpan={3} className="bg-teal-50/70 px-3 py-2 text-center">
+              <th colSpan={3} className="w-[240px] bg-teal-50/70 px-3 py-2 text-center">
                 <SourceHeading label="SEO OS" week={sourceWeeks.seoOs} className="bg-teal-500" />
               </th>
             </tr>
             <tr className="border-t border-slate-100 text-[11px] text-slate-500">
-              <th className="bg-blue-50/70 px-2 py-2 text-right">
+              <th className="w-[80px] bg-blue-50/70 px-2 py-2 text-right">
                 <SortButton label="Показы" sortKey="google_impressions" sort={sort} onChange={changeSort} />
               </th>
-              <th className="bg-blue-50/70 px-2 py-2 text-right">
+              <th className="w-[80px] bg-blue-50/70 px-2 py-2 text-right">
                 <SortButton label="Клики" sortKey="google_clicks" sort={sort} onChange={changeSort} />
               </th>
-              <th className="bg-blue-50/70 px-2 py-2 text-right">
+              <th className="w-[80px] bg-blue-50/70 px-2 py-2 text-right">
                 <SortButton label="CTR" sortKey="google_ctr" sort={sort} onChange={changeSort} />
               </th>
-              <th className="border-r border-slate-100 bg-blue-50/70 px-2 py-2 text-right">
+              <th className="w-[80px] border-r border-slate-100 bg-blue-50/70 px-2 py-2 text-right">
                 <SortButton label="Позиция" sortKey="google_position" sort={sort} onChange={changeSort} />
               </th>
-              <th className="bg-amber-50/70 px-2 py-2 text-right">
+              <th className="w-[80px] bg-amber-50/70 px-2 py-2 text-right">
                 <SortButton label="Показы" sortKey="webmaster_impressions" sort={sort} onChange={changeSort} />
               </th>
-              <th className="bg-amber-50/70 px-2 py-2 text-right">
+              <th className="w-[80px] bg-amber-50/70 px-2 py-2 text-right">
                 <SortButton label="Клики" sortKey="webmaster_clicks" sort={sort} onChange={changeSort} />
               </th>
-              <th className="bg-amber-50/70 px-2 py-2 text-right">
+              <th className="w-[80px] bg-amber-50/70 px-2 py-2 text-right">
                 <SortButton label="CTR" sortKey="webmaster_ctr" sort={sort} onChange={changeSort} />
               </th>
-              <th className="border-r border-slate-100 bg-amber-50/70 px-2 py-2 text-right">
+              <th className="w-[80px] border-r border-slate-100 bg-amber-50/70 px-2 py-2 text-right">
                 <SortButton label="Позиция" sortKey="webmaster_position" sort={sort} onChange={changeSort} />
               </th>
-              <th className="bg-teal-50/70 px-2 py-2 text-right">
+              <th className="w-[80px] bg-teal-50/70 px-2 py-2 text-right">
                 <SortButton label="Позиция" sortKey="seo_os_position" sort={sort} onChange={changeSort} />
               </th>
-              <th className="bg-teal-50/70 px-2 py-2 text-right">Δ</th>
-              <th className="bg-teal-50/70 px-2 py-2 text-left">Статус</th>
+              <th className="w-[80px] bg-teal-50/70 px-2 py-2 text-right">Δ</th>
+              <th className="w-[80px] bg-teal-50/70 px-2 py-2 text-left">Статус</th>
             </tr>
           </thead>
           <tbody className="divide-y divide-slate-100">
             {paginated.rows.map((row) => (
               <tr key={row.key} className="align-top transition hover:bg-slate-50/70">
-                <td className="border-r border-slate-100 px-4 py-3">
-                  <div className="font-medium leading-snug text-slate-800">{row.query}</div>
+                <td className="min-w-[220px] max-w-[360px] border-r border-slate-100 px-4 py-3">
+                  <div className="min-w-0 truncate font-medium leading-snug text-slate-800" title={row.query}>{row.query}</div>
                   {row.google_pages.length > 0 || row.seo_os?.matched_url ? (
-                    <div className="mt-1.5 flex max-w-[280px] flex-wrap gap-x-2 gap-y-1 text-[11px] text-slate-400">
+                    <div className="mt-1.5 flex max-w-full flex-wrap gap-x-2 gap-y-1 text-[11px] text-slate-400">
                       {row.google_pages.map((page) => (
                         <SafePageLink key={`g-${page}`} value={page} />
                       ))}
@@ -282,7 +282,9 @@ export default function ZarukuSeoQueryComparison({
                     </div>
                   ) : null}
                 </td>
-                <td className="border-r border-slate-100 px-3 py-3 text-xs text-slate-500">{row.section ?? "—"}</td>
+                <td className="min-w-[120px] max-w-[130px] border-r border-slate-100 px-3 py-3 text-xs text-slate-500">
+                  <span className="block min-w-0 truncate" title={row.section ?? undefined}>{row.section ?? "—"}</span>
+                </td>
                 <td className="px-2 py-3 text-right tabular-nums text-slate-600">{formatNumber(row.google?.impressions, locale)}</td>
                 <td className="px-2 py-3 text-right tabular-nums text-slate-600">{formatNumber(row.google?.clicks, locale)}</td>
                 <td className="px-2 py-3 text-right tabular-nums text-slate-500">{formatPercent(row.google?.ctr, locale)}</td>
