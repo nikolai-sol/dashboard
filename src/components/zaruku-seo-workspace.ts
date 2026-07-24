@@ -35,8 +35,12 @@ export type SeoQuerySortKey =
   | "google_position"
   | "webmaster_position"
   | "seo_os_position"
-  | "impressions"
-  | "clicks";
+  | "google_impressions"
+  | "google_clicks"
+  | "google_ctr"
+  | "webmaster_impressions"
+  | "webmaster_clicks"
+  | "webmaster_ctr";
 
 export type SeoQuerySort = {
   key: SeoQuerySortKey;
@@ -288,10 +292,18 @@ function querySortValue(row: UnifiedSeoQueryRow, key: SeoQuerySortKey): number |
       return normalizePosition(row.webmaster?.average_position);
     case "seo_os_position":
       return normalizePosition(row.seo_os?.tracked_position);
-    case "impressions":
-      return (row.google?.impressions ?? 0) + (row.webmaster?.impressions ?? 0);
-    case "clicks":
-      return (row.google?.clicks ?? 0) + (row.webmaster?.clicks ?? 0);
+    case "google_impressions":
+      return row.google?.impressions ?? null;
+    case "google_clicks":
+      return row.google?.clicks ?? null;
+    case "google_ctr":
+      return row.google?.ctr ?? null;
+    case "webmaster_impressions":
+      return row.webmaster?.impressions ?? null;
+    case "webmaster_clicks":
+      return row.webmaster?.clicks ?? null;
+    case "webmaster_ctr":
+      return row.webmaster?.ctr ?? null;
   }
 }
 

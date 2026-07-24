@@ -83,12 +83,12 @@ function SortButton({
   onChange: (key: SeoQuerySortKey) => void;
 }) {
   const active = sort.key === sortKey;
-  const directionLabel = active && sort.direction === "desc" ? "100 → 1" : "1 → 100";
+  const directionLabel = active ? (sort.direction === "desc" ? "↓" : "↑") : "";
   return (
     <button
       type="button"
       aria-pressed={active}
-      aria-label={`Сортировать: ${label}. ${active ? `Сейчас ${directionLabel}` : "Сначала 1 → 100"}`}
+      aria-label={`Сортировать: ${label}. ${active ? `Сейчас ${directionLabel}` : "Изменить сортировку"}`}
       onClick={() => onChange(sortKey)}
       className={`inline-flex items-center gap-1 rounded px-1.5 py-1 text-left text-[11px] font-semibold transition ${
         active ? "bg-slate-800 text-white" : "text-slate-600 hover:bg-slate-100"
@@ -235,15 +235,27 @@ export default function ZarukuSeoQueryComparison({
               </th>
             </tr>
             <tr className="border-t border-slate-100 text-[11px] text-slate-500">
-              <th className="bg-blue-50/70 px-2 py-2 text-right">Показы</th>
-              <th className="bg-blue-50/70 px-2 py-2 text-right">Клики</th>
-              <th className="bg-blue-50/70 px-2 py-2 text-right">CTR</th>
+              <th className="bg-blue-50/70 px-2 py-2 text-right">
+                <SortButton label="Показы" sortKey="google_impressions" sort={sort} onChange={changeSort} />
+              </th>
+              <th className="bg-blue-50/70 px-2 py-2 text-right">
+                <SortButton label="Клики" sortKey="google_clicks" sort={sort} onChange={changeSort} />
+              </th>
+              <th className="bg-blue-50/70 px-2 py-2 text-right">
+                <SortButton label="CTR" sortKey="google_ctr" sort={sort} onChange={changeSort} />
+              </th>
               <th className="border-r border-slate-100 bg-blue-50/70 px-2 py-2 text-right">
                 <SortButton label="Позиция" sortKey="google_position" sort={sort} onChange={changeSort} />
               </th>
-              <th className="bg-amber-50/70 px-2 py-2 text-right">Показы</th>
-              <th className="bg-amber-50/70 px-2 py-2 text-right">Клики</th>
-              <th className="bg-amber-50/70 px-2 py-2 text-right">CTR</th>
+              <th className="bg-amber-50/70 px-2 py-2 text-right">
+                <SortButton label="Показы" sortKey="webmaster_impressions" sort={sort} onChange={changeSort} />
+              </th>
+              <th className="bg-amber-50/70 px-2 py-2 text-right">
+                <SortButton label="Клики" sortKey="webmaster_clicks" sort={sort} onChange={changeSort} />
+              </th>
+              <th className="bg-amber-50/70 px-2 py-2 text-right">
+                <SortButton label="CTR" sortKey="webmaster_ctr" sort={sort} onChange={changeSort} />
+              </th>
               <th className="border-r border-slate-100 bg-amber-50/70 px-2 py-2 text-right">
                 <SortButton label="Позиция" sortKey="webmaster_position" sort={sort} onChange={changeSort} />
               </th>
