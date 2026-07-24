@@ -2,7 +2,6 @@
 
 import { useMemo, useState, type ReactNode } from "react";
 import ZarukuPanelState from "@/components/ZarukuPanelState";
-import ZarukuPeriodContext from "@/components/ZarukuPeriodContext";
 import ZarukuTrafficVisibility from "@/components/ZarukuTrafficVisibility";
 import { availableMetricColumns, sortContentRows, type ContentSort, type ContentSortKey } from "@/components/zaruku-content-table";
 import { filterAndPaginate } from "@/components/zaruku-table-pagination";
@@ -107,15 +106,8 @@ export default function ZarukuContentTab({ data, locale = "ru-RU", primaryWeek, 
   const paginated = useMemo(() => filterAndPaginate(sortedPages, query, page, PAGE_SIZE, (row) => `${row.label} ${row.url ?? ""}`), [page, query, sortedPages]);
   const changeQuery = (value: string) => { setQuery(value); setPage(1); };
   const changeSort = (key: ContentSortKey) => { setSort((current) => current.key === key ? { key, direction: current.direction === "asc" ? "desc" : "asc" } : { key, direction: key === "label" ? "asc" : "desc" }); setPage(1); };
-  const searchPeriods = [
-    ...(primaryWeek ? [{ label: "SEO OS A", period: primaryWeek }] : []),
-    ...(comparisonWeek ? [{ label: "SEO OS B", period: comparisonWeek }] : []),
-  ];
-
   return (
     <div className="space-y-5">
-      <ZarukuPeriodContext onsite={{ requested: pageMeta.requested_period, actual: pageMeta.period }} search={searchPeriods} ai={null} />
-
       <ContentPanel title="Состояние контента" note="Сначала — покрытие и пригодность данных, затем разделы и отдельные страницы.">
         <div className="grid gap-3 sm:grid-cols-3">
           <div className="rounded-lg bg-slate-50 px-4 py-3"><div className="text-xs text-slate-500">Страниц в доступном срезе</div><div className="mt-1 text-xl font-semibold text-slate-900">{data.top_pages.length.toLocaleString(locale)}</div></div>

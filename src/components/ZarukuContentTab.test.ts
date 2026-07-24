@@ -23,7 +23,6 @@ test("content tab follows the executive-to-detail reading order", () => {
 });
 
 test("content tab uses explicit dataset states, native columns, search, and pagination", () => {
-  assert.match(source, /<ZarukuPeriodContext/);
   assert.match(source, /<ZarukuPanelState/);
   assert.match(source, /availableMetricColumns/);
   assert.match(source, /filterAndPaginate/);

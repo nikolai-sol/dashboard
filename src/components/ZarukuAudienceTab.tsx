@@ -1,6 +1,5 @@
 import type { ReactNode } from "react";
 import ZarukuPanelState from "@/components/ZarukuPanelState";
-import ZarukuPeriodContext from "@/components/ZarukuPeriodContext";
 import ZarukuRussiaDemandMap from "@/components/ZarukuRussiaDemandMap";
 import type { ZarukuDatasetMeta, ZarukuSeoData, ZarukuSeoMetricRow } from "@/lib/types";
 
@@ -41,11 +40,8 @@ function SourceDeviceTable({ rows, meta, locale }: { rows: ZarukuSeoMetricRow[];
 }
 
 export default function ZarukuAudienceTab({ data, locale = "ru-RU" }: Props) {
-  const periodMeta = data.dataset_meta.map_city_demand;
   return (
     <div className="space-y-5">
-      <ZarukuPeriodContext onsite={{ requested: periodMeta.requested_period, actual: periodMeta.period }} search={[]} ai={null} />
-
       <AudiencePanel title="Города и каталог онкоцентров" note="Продуктовый срез город × /map/: показывает, где пользователи входят в каталог онкоцентров, а не общую демографию сайта.">
         <ZarukuPanelState meta={data.dataset_meta.map_city_demand} hasRows={data.map_city_demand.length > 0}>
           <ZarukuRussiaDemandMap rows={data.map_city_demand} locale={locale} />

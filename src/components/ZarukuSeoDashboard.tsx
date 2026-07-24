@@ -106,6 +106,22 @@ function formatSignedPercent(value: number | null | undefined, locale = "ru-RU",
   return `Δ ${sign}${formatPercent(value, locale, digits)}`;
 }
 
+function formatSidebarDate(dateText: string): string {
+  const normalized = String(dateText).slice(0, 10);
+  if (/^\d{4}-\d{2}-\d{2}$/.test(normalized)) {
+    return `${normalized.slice(8, 10)}.${normalized.slice(5, 7)}.${normalized.slice(0, 4)}`;
+  }
+  return normalized;
+}
+
+function formatSidebarMonthDate(dateText: string): string {
+  const normalized = String(dateText).slice(0, 7);
+  if (/^\d{4}-\d{2}$/.test(normalized)) {
+    return `01.${normalized.slice(5, 7)}.${normalized.slice(0, 4)}`;
+  }
+  return normalized;
+}
+
 const SOURCE_FRESHNESS_SOURCE_KEYS: Partial<Record<ZarukuSeoSourceId, string>> = {
   metrika: "yandex_metrika",
   gsc: "google_search_console",
@@ -115,23 +131,29 @@ const SOURCE_FRESHNESS_SOURCE_KEYS: Partial<Record<ZarukuSeoSourceId, string>> =
 function getSourceRowsLabel(data: ZarukuSeoData, sourceId: ZarukuSeoSourceId) {
   const sourceFreshnessKey = SOURCE_FRESHNESS_SOURCE_KEYS[sourceId];
   if (sourceFreshnessKey) {
-  const row = data.source_freshness.find((item) => item.source_key === sourceFreshnessKey);
-    return row?.rows_written && row.rows_written > 0 ? `${row.rows_written.toLocaleString("ru-RU")} строк` : null;
+    const row = data.source_freshness.find((item) => item.source_key === sourceFreshnessKey);
+    if (row?.date_to) return `посл. дата: ${formatSidebarDate(row.date_to)}`;
+    return row?.last_success_at ? `посл. дата: ${formatSidebarDate(row.last_success_at)}` : null;
   }
   if (sourceId === "yandex_gen_search") {
-    return seoIntelligenceRowsCountLabel(data);
+    return seoIntelligenceRowsLabel(data);
   }
   if (sourceId === "seo_os") {
-    return data.seo_os.position_trend.length > 0
-      ? `${data.seo_os.position_trend.length.toLocaleString("ru-RU")} строк`
-      : null;
+    return data.seo_os.latest_week ? `посл. неделя: ${data.seo_os.latest_week}` : null;
   }
   return null;
 }
 
-function seoIntelligenceRowsCountLabel(data: ZarukuSeoData) {
-  const rows = data.seo_intelligence.ai.rows.length;
-  return rows > 0 ? `${rows.toLocaleString("ru-RU")} строк` : null;
+function seoIntelligenceRowsLabel(data: ZarukuSeoData) {
+  const latestCapturedAt = data.seo_intelligence.ai.rows
+    .map((row) => row.captured_at)
+    .filter((value): value is string => Boolean(value))
+    .map((value) => value.slice(0, 10))
+    .sort()
+    .at(-1);
+  if (latestCapturedAt) return `посл. дата: ${formatSidebarDate(latestCapturedAt)}`;
+  if (!data.seo_intelligence.ai.latest_period) return null;
+  return `посл. дата: ${formatSidebarMonthDate(data.seo_intelligence.ai.latest_period)}`;
 }
 
 function SourceBadge({ data, id }: { data: ZarukuSeoData; id: ZarukuSeoSourceId }) {
@@ -823,15 +845,22 @@ export default function ZarukuSeoDashboard({ data, locale = "ru-RU" }: Props) {
                 const rowsLabel = getSourceRowsLabel(data, source.id);
                 return (
                   <div key={source.id} className="flex items-center justify-between gap-2 text-xs">
-                    <span className="flex items-center gap-1.5 text-slate-600">
-                      <span className="h-1.5 w-1.5 rounded-full" style={{ background: source.color }} />
-                      {source.label}
-                    </span>
-                    <span className={source.status === "connected" ? "text-teal-600" : "text-slate-300"}>
-                      {source.status === "connected" ? `подкл.${rowsLabel ? ` · ${rowsLabel}` : ""}` : "—"}
-                    </span>
-                  </div>
-                );
+                <span className="flex items-center gap-1.5 text-slate-600">
+                  <span className="h-1.5 w-1.5 rounded-full" style={{ background: source.color }} />
+                  {source.label}
+                </span>
+                <span className={source.status === "connected" ? "flex flex-col items-end gap-0.5 text-teal-600" : "text-slate-300"}>
+                  {source.status === "connected" ? (
+                    <>
+                      <span>подкл.</span>
+                      {rowsLabel ? <span className="text-xs font-normal leading-tight text-teal-600">{rowsLabel}</span> : null}
+                    </>
+                  ) : (
+                    "—"
+                  )}
+                </span>
+              </div>
+            );
               })}
             </div>
           </div>
@@ -852,13 +881,6 @@ export default function ZarukuSeoDashboard({ data, locale = "ru-RU" }: Props) {
                     <span>{data.period.from} — {data.period.to}</span>
                   </div>
                 </div>
-              </div>
-              <div className="flex flex-wrap items-center gap-1.5">
-                {data.layers.map((layer) => (
-                  <span key={layer.id} className="rounded-md border border-slate-200 bg-white px-2 py-1 text-xs font-medium text-slate-500">
-                    {layer.label}
-                  </span>
-                ))}
               </div>
             </div>
             {shouldShowSeoWeekToolbar(activeTab) ? <div className="mt-3">
