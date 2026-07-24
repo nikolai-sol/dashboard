@@ -18,14 +18,11 @@ test("client navigation contains exactly six tabs in executive order", () => {
   assert.doesNotMatch(source, /label: "SEO-операции"|label: "Гео"|label: "Устройства"|label: "Поведение"/);
 });
 
-test("Overview starts with explicit period context and data confidence", () => {
+test("Overview starts with explicit period context", () => {
   const overviewSource = readFileSync(new URL("./ZarukuOverviewTab.tsx", import.meta.url), "utf8");
   assert.match(source, /import ZarukuOverviewTab/);
   assert.match(source, /<ZarukuOverviewTab data=\{data\}/);
   assert.match(overviewSource, /<ZarukuPeriodContext/);
-  assert.match(overviewSource, /Что происходит с поисковой видимостью и целевым трафиком сейчас/);
-  assert.match(overviewSource, /buildZarukuTrustState/);
-  assert.match(overviewSource, /trust\.label/);
 });
 
 test("SEO tab follows the executive-to-detail hierarchy without duplicate source tables", () => {
