@@ -66,7 +66,7 @@ SOURCE_KEY = "google_search_console"
 DEFAULT_ACCOUNT_ID = env_first("GSC_ACCOUNT_ID", "GSC_ANALYTICS_ACCOUNT_ID", default="66624469")
 DEFAULT_SITE_URL = env_first("GSC_SITE_URL", default="https://zaruku.ru/")
 DEFAULT_BACKFILL_DAYS = int(env_first("GSC_BACKFILL_DAYS", default="3") or 3)
-DEFAULT_GSC_LAG_DAYS = int(env_first("GSC_LAG_DAYS", default="2") or 2)
+DEFAULT_GSC_LAG_DAYS = int(env_first("GSC_LAG_DAYS", default="3") or 3)
 GSC_TOKEN_URL = env_first("GSC_TOKEN_URL", default="https://oauth2.googleapis.com/token")
 GSC_API_BASE = env_first("GSC_API_BASE", default="https://www.googleapis.com/webmasters/v3")
 GSC_ROW_LIMIT = int(env_first("GSC_ROW_LIMIT", default="25000") or 25000)
@@ -264,7 +264,7 @@ def collection_dates(
     lag_days: int = DEFAULT_GSC_LAG_DAYS,
 ) -> list[str]:
     effective_anchor = anchor or datetime.now(timezone.utc).date()
-    end = effective_anchor - timedelta(days=max(lag_days, 0) + 1)
+    end = effective_anchor - timedelta(days=max(lag_days, 0))
     start = end - timedelta(days=max(backfill_days, 0))
     days: list[str] = []
     current = start
@@ -276,7 +276,7 @@ def collection_dates(
 
 def _effective_lag_cutoff(lag_days: int) -> str:
     effective_anchor = datetime.now(timezone.utc).date()
-    cutoff = effective_anchor - timedelta(days=max(lag_days, 0) + 1)
+    cutoff = effective_anchor - timedelta(days=max(lag_days, 0))
     return cutoff.strftime("%Y-%m-%d")
 
 
@@ -895,7 +895,7 @@ def collect(args) -> dict[str, Any]:
                     },
                 )
         upsert_accounts(account_rows)
-        status = "success"
+        status = "partial" if optional_failures else "success"
         failure_summary = json.dumps(optional_failures, ensure_ascii=False)[:1000] if optional_failures else None
         if optional_failures:
             log_collector_event(
