@@ -41,7 +41,16 @@ export function toggleSeoSort(current: SeoQuerySort, key: SeoQuerySortKey): SeoQ
   if (current.key === key) {
     return { key, direction: current.direction === "asc" ? "desc" : "asc" };
   }
-  return { key, direction: "asc" };
+  const shouldDefaultDesc = [
+    "google_impressions",
+    "google_clicks",
+    "google_ctr",
+    "webmaster_impressions",
+    "webmaster_clicks",
+    "webmaster_ctr",
+  ].includes(key);
+
+  return { key, direction: shouldDefaultDesc ? "desc" : "asc" };
 }
 
 function formatNumber(value: number | null | undefined, locale: string): string {
