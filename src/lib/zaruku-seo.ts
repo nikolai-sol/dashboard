@@ -1398,7 +1398,7 @@ export async function loadZarukuSeoData(counterIds: string[], from: string, to: 
   const contentUsesLiveVisits = entryPageRows.length > 0;
   const contentFallbackMessage = contentUsesLiveVisits
     ? "Страница объединяет unsegmented canonical page facts и canonical segment rows для entry-page."
-    : "Показаны canonical page facts; визиты и поведенческие метрики входов недоступны.";
+    : undefined;
   const contentMeta = (rowCount: number) => makeZarukuDatasetMeta({
     rowCount,
     sourceAvailable: sectionEntrancesReport.ok,
