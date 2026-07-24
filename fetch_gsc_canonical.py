@@ -66,6 +66,7 @@ SOURCE_KEY = "google_search_console"
 DEFAULT_ACCOUNT_ID = env_first("GSC_ACCOUNT_ID", "GSC_ANALYTICS_ACCOUNT_ID", default="66624469")
 DEFAULT_SITE_URL = env_first("GSC_SITE_URL", default="https://zaruku.ru/")
 DEFAULT_BACKFILL_DAYS = int(env_first("GSC_BACKFILL_DAYS", default="3") or 3)
+DEFAULT_GSC_LAG_DAYS = int(env_first("GSC_LAG_DAYS", default="2") or 2)
 GSC_TOKEN_URL = env_first("GSC_TOKEN_URL", default="https://oauth2.googleapis.com/token")
 GSC_API_BASE = env_first("GSC_API_BASE", default="https://www.googleapis.com/webmasters/v3")
 GSC_ROW_LIMIT = int(env_first("GSC_ROW_LIMIT", default="25000") or 25000)
@@ -174,6 +175,7 @@ def parse_args():
     parser.add_argument("--date-from", default="")
     parser.add_argument("--date-to", default="")
     parser.add_argument("--backfill-days", type=int, default=DEFAULT_BACKFILL_DAYS)
+    parser.add_argument("--lag-days", type=int, default=DEFAULT_GSC_LAG_DAYS)
     parser.add_argument("--run-type", default="manual", choices=["manual", "cron", "backfill"])
     parser.add_argument("--account-id", default="")
     parser.add_argument("--site-url", default="")
@@ -256,9 +258,13 @@ def safe_float(value: Any) -> float | None:
         return None
 
 
-def collection_dates(anchor: date | None = None, backfill_days: int = DEFAULT_BACKFILL_DAYS) -> list[str]:
+def collection_dates(
+    anchor: date | None = None,
+    backfill_days: int = DEFAULT_BACKFILL_DAYS,
+    lag_days: int = DEFAULT_GSC_LAG_DAYS,
+) -> list[str]:
     effective_anchor = anchor or datetime.now(timezone.utc).date()
-    end = effective_anchor - timedelta(days=1)
+    end = effective_anchor - timedelta(days=max(lag_days, 0) + 1)
     start = end - timedelta(days=max(backfill_days, 0))
     days: list[str] = []
     current = start
@@ -285,7 +291,7 @@ def selected_dates(args) -> list[str]:
         date_to = args.date_to or (today - timedelta(days=1)).strftime("%Y-%m-%d")
         date_from = args.date_from or date_to
         return daterange(date_from, date_to)
-    return collection_dates(backfill_days=args.backfill_days)
+    return collection_dates(backfill_days=args.backfill_days, lag_days=args.lag_days)
 
 
 def query_hash(query: str, page: str, country: str, device: str) -> str:

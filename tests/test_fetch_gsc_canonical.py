@@ -8,11 +8,19 @@ import requests
 
 
 class GoogleSearchConsoleCanonicalTests(unittest.TestCase):
-    def test_collection_dates_default_to_yesterday_plus_three_day_backfill(self):
+    def test_collection_dates_default_to_two_days_lag_plus_three_day_backfill(self):
         from fetch_gsc_canonical import collection_dates
 
         self.assertEqual(
             collection_dates(dt.date(2026, 7, 17), backfill_days=3),
+            ["2026-07-11", "2026-07-12", "2026-07-13", "2026-07-14"],
+        )
+
+    def test_collection_dates_with_lag_days(self):
+        from fetch_gsc_canonical import collection_dates
+
+        self.assertEqual(
+            collection_dates(dt.date(2026, 7, 17), backfill_days=3, lag_days=0),
             ["2026-07-13", "2026-07-14", "2026-07-15", "2026-07-16"],
         )
 

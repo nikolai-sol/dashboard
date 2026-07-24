@@ -41,3 +41,6 @@ dashboard-next/.env.production
 nest-second/.env
 nest-second/.development.env
 nest-second/.production.env
+
+# Local secrets (Google OAuth / SA keys)
+.secrets/

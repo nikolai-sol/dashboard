@@ -81,6 +81,10 @@ CHANNEL_ALIASES = {
     "олв кино и сериалы": "Serials",
 }
 
+# Only ingest reports that look like this advertiser (filename/subject/from)
+DEFAULT_CLIENT_HINTS = ("gidrofuril", "гидрофурил", "гидр")
+REJECT_CLIENT_HINTS = ("solgoood", "solgood", "sol goo")
+
 HERMES_TOKEN = Path.home() / ".hermes" / "google_token.json"
 STATE_PATH = ROOT / "agents" / "between_email_collector" / "out" / "collector_state.json"
 SAMPLES_DIR = ROOT / "agents" / "between_email_collector" / "samples"
@@ -281,6 +285,15 @@ def parse_csv_bytes(data: bytes, source_name: str = "") -> list[dict[str, Any]]:
     return rows_out
 
 
+def client_allowed(text: str, allow: tuple[str, ...], reject: tuple[str, ...]) -> bool:
+    blob = (text or "").lower()
+    if any(r in blob for r in reject):
+        return False
+    if not allow:
+        return True
+    return any(a in blob for a in allow)
+
+
 def load_state() -> dict[str, Any]:
     if STATE_PATH.exists():
         return json.loads(STATE_PATH.read_text(encoding="utf-8"))
@@ -315,16 +328,21 @@ def gmail_service():
     return build("gmail", "v1", credentials=creds, cache_discovery=False)
 
 
-def fetch_gmail_attachments(days_back: int = 60, query_extra: str = "") -> list[tuple[str, str, bytes]]:
+def fetch_gmail_attachments(
+    days_back: int = 60,
+    query_extra: str = "",
+    client_hints: tuple[str, ...] = DEFAULT_CLIENT_HINTS,
+    reject_hints: tuple[str, ...] = REJECT_CLIENT_HINTS,
+) -> list[tuple[str, str, bytes]]:
     """Return list of (message_id, filename, bytes) for Between report attachments."""
     svc = gmail_service()
-    # Broad query — Between senders vary
+    # Prefer client name in subject/filename; Between daily reports are CSV
+    hint_q = " OR ".join(client_hints) if client_hints else "between"
     q = (
-        f"newer_than:{max(1, days_back)}d "
-        f"(from:between OR subject:between OR filename:between OR "
-        f"subject:гидрофурил OR subject:gidrofuril OR "
-        f"filename:xlsx OR filename:csv) "
-        f"has:attachment {query_extra}"
+        f"newer_than:{max(1, days_back)}d has:attachment "
+        f"(filename:csv OR filename:xlsx OR filename:xls) "
+        f"({hint_q} OR subject:between OR from:between OR filename:between) "
+        f"{query_extra}"
     ).strip()
     log.info("Gmail query: %s", q)
     out: list[tuple[str, str, bytes]] = []
@@ -347,30 +365,15 @@ def fetch_gmail_attachments(days_back: int = 60, query_extra: str = "") -> list[
             headers = {h["name"].lower(): h["value"] for h in full.get("payload", {}).get("headers", [])}
             subject = headers.get("subject", "")
             sender = headers.get("from", "")
-            # Soft filter: prefer between/gidrofuril signals
-            blob = f"{subject} {sender}".lower()
-            interesting = any(
-                k in blob
-                for k in (
-                    "between",
-                    "gidrofuril",
-                    "гидрофурил",
-                    "гидр",
-                    "hybrid",
-                    "olv",
-                    "smart tv",
-                    "репорт",
-                    "report",
-                    "статистик",
-                )
-            )
             parts = []
+
             def walk(p):
                 if not p:
                     return
                 parts.append(p)
                 for c in p.get("parts") or []:
                     walk(c)
+
             walk(full.get("payload"))
             for p in parts:
                 filename = p.get("filename") or ""
@@ -381,10 +384,9 @@ def fetch_gmail_attachments(days_back: int = 60, query_extra: str = "") -> list[
                 low = filename.lower()
                 if not (low.endswith(".xlsx") or low.endswith(".xls") or low.endswith(".csv")):
                     continue
-                # If subject not interesting, still take files with between in name
-                if not interesting and not any(
-                    marker in low for marker in ("between", "gidro", "solgoood")
-                ):
+                meta_blob = f"{subject} {sender} {filename}"
+                if not client_allowed(meta_blob, client_hints, reject_hints):
+                    log.info("skip non-target client attachment %s (%s)", filename, subject[:60])
                     continue
                 att = (
                     svc.users()

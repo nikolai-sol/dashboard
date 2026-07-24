@@ -48,6 +48,19 @@ Important runtime rule:
 
 This was changed intentionally to avoid partial current-day data in morning runs.
 
+## Telegatask SEO OS on Beget
+
+- production SEO runtime: `/opt/telegatask`
+- scheduler: root `crontab`, Mondays at `09:10` with `CRON_TZ=Europe/Vienna`
+- wrapper: `/opt/telegatask/scripts/runWeeklySeoRhythmCron.sh`
+- MySQL account: `telegatask_seo@localhost`; its password lives only in `/opt/telegatask/.env`
+- MySQL target: `localhost:3306/report_bd`
+- `report_bd` credentials remain unchanged and are not used by the SEO exporter
+- exporter DML is limited to the configured `seo_*` read-model tables; schema-level `CREATE` is retained because the exporter executes `010_seo_os_v1.sql`, and `ALTER/INDEX` is limited to `seo_tasks`
+- root has `/root/.my.cnf`; every Telegatask MySQL CLI invocation must put `--no-defaults` first so root client defaults cannot override `MYSQL_PWD`
+- as of 2026-07-20 there is no live or saved `telegatask` process in either root or `www-root` PM2 on Beget; do not start another bot instance without checking the Mac long-poll runtime
+- W30 run / W29 data dashboard export was verified live on 2026-07-20: the export payload contained 26 positions, 3 opportunities, 4 tasks, 1 weekly run, and 15 section patterns; after idempotent upsert the W29 tables contain 26 position rows and 9 opportunity rows
+
 ## Daily operations
 
 Check latest collector runs:
@@ -315,6 +328,10 @@ Already done and should not be rediscovered:
 10. `porg-47e7bbnx` was added into `report_bd_tech.req_system` as an active Direct API login
 11. Direct API access for `porg-47e7bbnx` is now confirmed working at HTTP level; current-day probe returns an empty report header, not an auth error
 12. Yandex Metrika canonical collector now supports targeted counter backfills, counter-scoped deletes, API throttling, and page-level canonical rows; Zaruku `66624469` was enabled for canonical collection.
+13. Zaruku Metrika counters `29137835`, `105559308`, and `99078698` are on hold/inactive in production collection settings; only counter `66624469` should remain active for Zaruku.
+14. Yandex Webmaster URL/page facts are now canonical daily rows in `canonical_fact_webmaster_pages_daily`; dashboard payload `zaruku_seo.webmaster.data_availability.pages` is true after backfill run `1439`.
+15. Google Search Console is now owned by root collector `fetch_gsc_canonical.py`, cron-enabled at `06:55`, and dashboard-connected through `canonical_fact_gsc_queries_daily`, `canonical_fact_gsc_search_appearance_daily`, and `canonical_fact_gsc_search_type_daily`; the old temporary collector is no longer the writer.
+16. Telegatask SEO OS weekly runtime and cron now live on Beget under `/opt/telegatask`; dashboard export uses isolated MySQL account `telegatask_seo@localhost`, and exporter CLIs ignore `/root/.my.cnf` via `--no-defaults`.
 
 ## Working rule for future platform-access tasks
 
