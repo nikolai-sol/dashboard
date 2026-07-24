@@ -189,6 +189,7 @@ METRIKA_SEGMENT_DEFINITIONS = (
     ('interests', 'ym:s:interest', 12, False),
     ('source_devices', 'ym:s:lastTrafficSource,ym:s:deviceCategory', 20, False),
 )
+METRIKA_SEGMENT_DIMENSION_MAX_LENGTH = 255
 
 
 class MetrikaCollectionError(RuntimeError):
@@ -276,6 +277,12 @@ def clean_text(value: Any) -> str:
     if value is None:
         return ''
     return str(value).strip()
+
+
+def truncate_text(value: str | None, max_length: int) -> str | None:
+    if value is None:
+        return None
+    return value[:max_length]
 
 
 def safe_int(value: Any) -> int:
@@ -545,7 +552,6 @@ def request_metrika_segment_rows(
             metrics=METRIKA_SEGMENT_METRICS,
             attribution=attribution,
             extra_params={
-                'filters': YANDEX_METRIKA_RUSSIA_FILTER,
                 'accuracy': 'full',
             },
         )
@@ -556,7 +562,6 @@ def request_metrika_segment_rows(
         metrics=METRIKA_SEGMENT_METRICS,
         attribution=attribution,
         extra_params={
-            'filters': YANDEX_METRIKA_RUSSIA_FILTER,
             'limit': str(limit),
             'accuracy': 'full',
         },
@@ -569,7 +574,7 @@ def build_segment_rows(counter_id: str, day: str, segment_type: str, response: d
         dimensions = item.get('dimensions') or []
         metrics = item.get('metrics') or []
         metric_values = [
-            clean_dimension_name(dim.get('name')) if idx < len(dimensions) and isinstance(dimensions[idx], dict) else None
+            clean_dimension_name(dimensions[idx].get('name')) if idx < len(dimensions) and isinstance(dimensions[idx], dict) else None
             for idx in range(5)
         ]
         if not metric_values[0]:
@@ -593,11 +598,11 @@ def build_segment_rows(counter_id: str, day: str, segment_type: str, response: d
                 'report_date': day,
                 'segment_type': segment_type,
                 'segment_hash': segment_hash,
-                'segment_dimension_1': metric_values[0],
-                'segment_dimension_2': metric_values[1],
-                'segment_dimension_3': metric_values[2],
-                'segment_dimension_4': metric_values[3],
-                'segment_dimension_5': metric_values[4],
+                'segment_dimension_1': truncate_text(metric_values[0], METRIKA_SEGMENT_DIMENSION_MAX_LENGTH),
+                'segment_dimension_2': truncate_text(metric_values[1], METRIKA_SEGMENT_DIMENSION_MAX_LENGTH),
+                'segment_dimension_3': truncate_text(metric_values[2], METRIKA_SEGMENT_DIMENSION_MAX_LENGTH),
+                'segment_dimension_4': truncate_text(metric_values[3], METRIKA_SEGMENT_DIMENSION_MAX_LENGTH),
+                'segment_dimension_5': truncate_text(metric_values[4], METRIKA_SEGMENT_DIMENSION_MAX_LENGTH),
                 'visits': safe_int(metric_value(metrics, 0)),
                 'users': safe_int(metric_value(metrics, 1)),
                 'pageviews': safe_int(metric_value(metrics, 2)),
@@ -2179,6 +2184,22 @@ def build_payload(counters: list[dict], date_from: str, date_to: str, run_id: in
                     if user_behavior_response is not None
                     else []
                 )
+                if collect_user_behavior and counter_id != ABBOTT_COUNTER_ID and not user_behavior_rows_for_day:
+                    try:
+                        user_behavior_rows_for_day = build_user_behavior_rows_from_logs(
+                            counter_id,
+                            day,
+                            _collect_metrika_visits(counter_id, day),
+                            run_id,
+                        )
+                        if user_behavior_rows_for_day:
+                            log.info(
+                                'Fell back to Metrika Logs for user behavior (empty normalized rows) for counter %s on %s',
+                                counter_id,
+                                day,
+                            )
+                    except MetrikaCollectionError:
+                        user_behavior_rows_for_day = []
             segment_rows_for_day: list[dict] = []
             for segment_type, segment_response in segment_responses:
                 segment_rows_for_day.extend(
@@ -2307,7 +2328,8 @@ def main() -> int:
         collected_counter_ids = [clean_text(counter.get('counter_id')) for counter in counters if clean_text(counter.get('counter_id'))]
         delete_existing_scope_rows(date_from, date_to, collected_counter_ids)
         delete_existing_user_behavior_rows(date_from, date_to, collected_counter_ids)
-        delete_existing_metrika_segment_rows(date_from, date_to, collected_counter_ids)
+        if not payload['segment_failures']:
+            delete_existing_metrika_segment_rows(date_from, date_to, collected_counter_ids)
         upsert_source_accounts(payload['accounts'])
         site_rows_written = upsert_fact_site_analytics_daily(payload['facts'])
         user_behavior_rows_written = upsert_fact_user_behavior_daily(payload['user_behavior_rows'])

@@ -284,7 +284,7 @@ class MetrikaLogsClient:
             "source": "visits",
             "attribution": attribution,
         }
-        evaluation = self._request_json("POST", root + "/evaluate", params=params)
+        evaluation = self._request_json("GET", root + "/evaluate", params=params)
         evaluation_body = evaluation.get("log_request_evaluation")
         if not isinstance(evaluation_body, dict) or not isinstance(
             evaluation_body.get("possible"), bool
@@ -294,6 +294,7 @@ class MetrikaLogsClient:
             raise MetrikaLogsError("Metrika Logs request unavailable")
 
         request_id = None
+        request_url = None
         original_error = None
         try:
             created = self._log_request(self._request_json("POST", root, params=params))
@@ -301,7 +302,7 @@ class MetrikaLogsClient:
             if isinstance(request_id_value, bool) or not re.fullmatch(r"\d+", str(request_id_value)):
                 raise MetrikaLogsError("Metrika Logs response was invalid")
             request_id = str(request_id_value)
-            request_url = root + "/" + request_id
+            request_url = f"{self._base_url}/management/v1/counter/{counter_id}/logrequest/{request_id}"
 
             processed = None
             if (
@@ -362,9 +363,9 @@ class MetrikaLogsClient:
                 original_error = MetrikaLogsError("Metrika Logs request failed")
             raise original_error from None
         finally:
-            if request_id is not None:
+            if request_url is not None:
                 try:
-                    self._request("POST", root + "/" + request_id + "/clean")
+                    self._request("POST", request_url + "/clean")
                 except Exception:
                     if original_error is None:
                         raise MetrikaLogsError("Metrika Logs cleanup failed") from None
