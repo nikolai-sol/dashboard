@@ -218,7 +218,7 @@ export default function ZarukuSeoQueryComparison({
         ) : null}
       </header>
 
-      <div className="max-h-[42rem] overflow-x-auto overflow-y-auto">
+      <div className="max-h-[42rem] overflow-auto min-w-[1180px]">
         <table className="w-full table-fixed border-separate border-spacing-0 text-sm">
           <thead className="sticky top-0 z-10 bg-white shadow-[0_1px_0_0_#e2e8f0]">
             <tr className="text-xs font-semibold text-slate-600">

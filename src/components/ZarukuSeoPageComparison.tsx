@@ -134,7 +134,7 @@ export default function ZarukuSeoPageComparison({ rows, seoWeek, sourceWeeks, so
         {unavailableSources.length > 0 && !allSourcesUnavailable ? <div className="mt-3 rounded-lg border border-blue-200 bg-blue-50 px-3 py-2 text-xs text-blue-900">Частичные данные: недоступны {unavailableSources.join(", ")}.</div> : null}
       </header>
 
-      <div className="max-h-[42rem] overflow-x-auto overflow-y-auto">
+      <div className="max-h-[42rem] overflow-auto min-w-[1320px]">
         <table className="w-[1320px] table-fixed border-separate border-spacing-0 text-sm">
           <thead className="sticky top-0 z-10 bg-white shadow-[0_1px_0_0_#e2e8f0]">
             <tr className="text-xs font-semibold text-slate-600">
