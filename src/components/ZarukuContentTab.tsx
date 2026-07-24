@@ -108,11 +108,10 @@ export default function ZarukuContentTab({ data, locale = "ru-RU", primaryWeek, 
   const changeSort = (key: ContentSortKey) => { setSort((current) => current.key === key ? { key, direction: current.direction === "asc" ? "desc" : "asc" } : { key, direction: key === "label" ? "asc" : "desc" }); setPage(1); };
   return (
     <div className="space-y-5">
-      <ContentPanel title="Состояние контента" note="Сначала — покрытие и пригодность данных, затем разделы и отдельные страницы.">
-        <div className="grid gap-3 sm:grid-cols-3">
+      <ContentPanel title="Состояние контента">
+        <div className="grid gap-3 sm:grid-cols-2">
           <div className="rounded-lg bg-slate-50 px-4 py-3"><div className="text-xs text-slate-500">Страниц в доступном срезе</div><div className="mt-1 text-xl font-semibold text-slate-900">{data.top_pages.length.toLocaleString(locale)}</div></div>
           <div className="rounded-lg bg-slate-50 px-4 py-3"><div className="text-xs text-slate-500">Нативные метрики страниц</div><div className="mt-1 text-sm font-semibold text-slate-800">{pageColumns.map((column) => column.label).join(" · ") || "Нет"}</div></div>
-          <div className="rounded-lg bg-slate-50 px-4 py-3"><div className="text-xs text-slate-500">География onsite</div><div className="mt-1 text-sm font-semibold text-slate-800">{pageMeta.geography === "russia" ? "Россия" : pageMeta.geography === "mixed" ? "Смешанный срез" : "Без сегмента по стране"}</div></div>
         </div>
         {pageMeta.message ? <p className="mt-3 text-xs leading-relaxed text-slate-500">{pageMeta.message}</p> : null}
       </ContentPanel>
