@@ -109,6 +109,10 @@ export function buildNorthStarStripItems(kpis: NorthStarKpis): NorthStarStripIte
 function findKpi(kpis: ZarukuSeoKpi[], key: string): TrafficHealthItem | null {
   const kpi = kpis.find((item) => item.key === key);
   if (!kpi) return null;
+  const valueText = String(kpi.value).trim();
+  if (valueText === "—" || valueText.length === 0) {
+    return null;
+  }
   return {
     key,
     label: TRAFFIC_LABELS[key] ?? kpi.label,
