@@ -1047,6 +1047,25 @@ export function buildContentSections(pageRows: ZarukuSeoMetricRow[], patterns: Z
     .slice(0, 12);
 }
 
+function buildContentSectionsSummary(
+  pageRows: ZarukuSeoMetricRow[],
+  sectionPatterns: ZarukuSeoSectionPattern[],
+  sectionPatternSummary: { section_pattern_count: number; section_patterns_updated_at: string | null } | null,
+) {
+  const totalPageviews = pageRows.reduce((sum, page) => sum + asNumber(page.pageviews), 0);
+  const unmatchedPageviews = pageRows.reduce((sum, page) => {
+    if (matchSectionPattern(page.url ?? "", sectionPatterns)) return sum;
+    return sum + asNumber(page.pageviews);
+  }, 0);
+
+  return {
+    section_pattern_count: sectionPatternSummary?.section_pattern_count ?? sectionPatterns.length,
+    unmatched_pageviews: unmatchedPageviews,
+    unmatched_share: totalPageviews > 0 ? (unmatchedPageviews / totalPageviews) * 100 : 0,
+    section_patterns_updated_at: sectionPatternSummary?.section_patterns_updated_at ?? null,
+  };
+}
+
 export function buildPageCollections(
   pageRows: ZarukuSeoMetricRow[],
   patterns: ZarukuSeoSectionPattern[],
@@ -1326,6 +1345,7 @@ export async function loadZarukuSeoData(counterIds: string[], from: string, to: 
     80,
     entryPageRows,
   );
+  const contentSectionsSummary = buildContentSectionsSummary(pageRows, seoOs.section_patterns, seoOs.section_pattern_summary);
   const [facts, seoIntelligence] = await Promise.all([
     loadAccountFacts(accountId, { from, to }, { weeks: seoOs.weeks }),
     loadSeoIntelligence(accountId),
@@ -1451,6 +1471,7 @@ export async function loadZarukuSeoData(counterIds: string[], from: string, to: 
     traffic_channels: trafficChannels,
     technical_tail: technicalTail,
     organic_trend: organicTrend,
+    content_sections_summary: contentSectionsSummary,
     search_engines: filterSearchEngineRows(searchEnginesReport.rows),
     search_phrases: searchPhrasesReport.rows,
     organic_landing_pages: organicLandingReport.rows,

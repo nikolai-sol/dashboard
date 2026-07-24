@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo, useState, type ReactNode } from "react";
+import { useId, useMemo, useState, type ReactNode } from "react";
 import ZarukuPanelState from "@/components/ZarukuPanelState";
 import ZarukuTrafficVisibility from "@/components/ZarukuTrafficVisibility";
 import { availableMetricColumns, sortContentRows, type ContentSort, type ContentSortKey } from "@/components/zaruku-content-table";
@@ -39,6 +39,12 @@ function shortUrl(value: string) {
   }
 }
 
+function formatSummaryDate(value: string | null | undefined) {
+  if (!value) return "—";
+  const normalized = String(value).trim();
+  return normalized ? normalized.slice(0, 10) : "—";
+}
+
 function formatMetric(row: ZarukuSeoMetricRow, key: ZarukuMetricColumn, locale: string) {
   if (key === "bounce_rate") return formatPercent(row.bounce_rate, locale);
   if (key === "avg_duration_seconds") return formatDuration(row.avg_duration_seconds);
@@ -55,6 +61,50 @@ function ContentPanel({ title, note, children }: { title: string; note?: string;
       </header>
       <div className="px-4 py-4 sm:px-5">{children}</div>
     </section>
+  );
+}
+
+function SectionPatternInfo({
+  label,
+  contentSummary,
+  locale,
+}: {
+  label: string;
+  contentSummary: {
+    section_pattern_count: number;
+    unmatched_pageviews: number;
+    unmatched_share: number;
+    section_patterns_updated_at: string | null;
+  };
+  locale: string;
+}) {
+  const id = useId();
+  const warning = contentSummary.unmatched_share > 10;
+  const matchedPercent = formatPercent(contentSummary.unmatched_share, locale);
+  return (
+    <span className="group relative inline-flex items-center gap-1.5">
+      <button
+        type="button"
+        aria-label={label}
+        aria-describedby={id}
+        className="inline-flex h-5 w-5 items-center justify-center rounded-full text-[11px] font-semibold text-slate-500 transition hover:text-slate-700 focus-visible:ring-2 focus-visible:ring-slate-300 focus-visible:ring-offset-2"
+      >
+        ⓘ
+      </button>
+      <span
+        id={id}
+        role="tooltip"
+        className="pointer-events-none absolute left-1/2 top-6 z-50 hidden w-72 max-w-[calc(100vw-2rem)] -translate-x-1/2 rounded-lg border border-slate-200 bg-white p-3 text-left shadow-lg group-hover:block group-focus-within:block"
+      >
+        <span className="block text-sm font-semibold text-slate-900">Карта разделов сайта</span>
+        <span className="mt-1.5 block text-xs leading-relaxed text-slate-600">
+          N: {contentSummary.section_pattern_count} · M: {formatNumber(contentSummary.unmatched_pageviews, locale)}
+          <br />
+          K: {matchedPercent} · дата: {formatSummaryDate(contentSummary.section_patterns_updated_at)}
+        </span>
+      </span>
+      {warning ? <span className="rounded-md bg-amber-100 px-2 py-0.5 text-xs font-medium text-amber-700">вне карты {matchedPercent}</span> : null}
+    </span>
   );
 }
 
@@ -104,6 +154,12 @@ export default function ZarukuContentTab({ data, locale = "ru-RU", primaryWeek, 
   const supportedSort = sort.key === "label" || pageColumns.some((column) => column.key === sort.key) ? sort : { key: "label", direction: "asc" } satisfies ContentSort;
   const sortedPages = useMemo(() => sortContentRows(data.top_pages, supportedSort, locale), [data.top_pages, locale, supportedSort]);
   const paginated = useMemo(() => filterAndPaginate(sortedPages, query, page, PAGE_SIZE, (row) => `${row.label} ${row.url ?? ""}`), [page, query, sortedPages]);
+  const sectionSummary = data.content_sections_summary ?? {
+    section_pattern_count: data.seo_os.section_patterns.length,
+    unmatched_pageviews: 0,
+    unmatched_share: 0,
+    section_patterns_updated_at: null,
+  };
   const changeQuery = (value: string) => { setQuery(value); setPage(1); };
   const changeSort = (key: ContentSortKey) => { setSort((current) => current.key === key ? { key, direction: current.direction === "asc" ? "desc" : "asc" } : { key, direction: key === "label" ? "asc" : "desc" }); setPage(1); };
   return (
@@ -116,7 +172,16 @@ export default function ZarukuContentTab({ data, locale = "ru-RU", primaryWeek, 
         {pageMeta.message ? <p className="mt-3 text-xs leading-relaxed text-slate-500">{pageMeta.message}</p> : null}
       </ContentPanel>
 
-      <section aria-labelledby="content-sections-title" className="space-y-3"><div><h3 id="content-sections-title" className="text-base font-semibold text-slate-900">Разделы сайта</h3><p className="mt-1 text-xs text-slate-500">Просмотры страниц и позиции SEO OS сопоставлены только через закреплённый словарь разделов.</p></div><ZarukuTrafficVisibility seoOs={data.seo_os} primaryWeek={primaryWeek} comparisonWeek={comparisonWeek} source={data.sources.find((source) => source.id === "seo_os")} /></section>
+      <section aria-labelledby="content-sections-title" className="space-y-3">
+        <div>
+          <div className="flex flex-wrap items-center gap-1.5">
+            <h3 id="content-sections-title" className="text-base font-semibold text-slate-900">Разделы сайта</h3>
+            <SectionPatternInfo label="Информация по карте разделов" contentSummary={sectionSummary} locale={locale} />
+          </div>
+          <p className="mt-1 text-xs text-slate-500">Просмотры и позиции сопоставлены по единой карте разделов сайта.</p>
+        </div>
+        <ZarukuTrafficVisibility seoOs={data.seo_os} primaryWeek={primaryWeek} comparisonWeek={comparisonWeek} source={data.sources.find((source) => source.id === "seo_os")} />
+      </section>
 
       <ContentPanel title="Популярные страницы" note="Первые 10 страниц по просмотрам в canonical page scope."><ZarukuPanelState meta={pageMeta} hasRows={data.top_pages.length > 0}><MetricTable rows={sortContentRows(data.top_pages, { key: "pageviews", direction: "desc" }, locale).slice(0, 10)} meta={pageMeta} locale={locale} /></ZarukuPanelState></ContentPanel>
 
