@@ -18,7 +18,7 @@ const rows: UnifiedSeoQueryRow[] = [{
   google_pages: ["https://zaruku.ru/article/"],
 }];
 
-test("toggles an active sort and defaults a new position sort to ascending", () => {
+test("toggles an active sort and defaults each metric family correctly", () => {
   assert.deepEqual(
     toggleSeoSort({ key: "google_position", direction: "asc" }, "google_position"),
     { key: "google_position", direction: "desc" },
@@ -26,6 +26,10 @@ test("toggles an active sort and defaults a new position sort to ascending", () 
   assert.deepEqual(
     toggleSeoSort({ key: "google_position", direction: "desc" }, "webmaster_position"),
     { key: "webmaster_position", direction: "asc" },
+  );
+  assert.deepEqual(
+    toggleSeoSort({ key: "google_position", direction: "asc" }, "google_impressions"),
+    { key: "google_impressions", direction: "desc" },
   );
 });
 
