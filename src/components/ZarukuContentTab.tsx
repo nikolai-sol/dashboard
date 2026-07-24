@@ -183,7 +183,7 @@ export default function ZarukuContentTab({ data, locale = "ru-RU", primaryWeek, 
         <ZarukuTrafficVisibility seoOs={data.seo_os} primaryWeek={primaryWeek} comparisonWeek={comparisonWeek} source={data.sources.find((source) => source.id === "seo_os")} />
       </section>
 
-      <ContentPanel title="Популярные страницы" note="Первые 10 страниц по просмотрам в canonical page scope."><ZarukuPanelState meta={pageMeta} hasRows={data.top_pages.length > 0}><MetricTable rows={sortContentRows(data.top_pages, { key: "pageviews", direction: "desc" }, locale).slice(0, 10)} meta={pageMeta} locale={locale} /></ZarukuPanelState></ContentPanel>
+      <ContentPanel title="Популярные страницы" note="Топ-10 страниц по просмотрам за период"><ZarukuPanelState meta={pageMeta} hasRows={data.top_pages.length > 0}><MetricTable rows={sortContentRows(data.top_pages, { key: "pageviews", direction: "desc" }, locale).slice(0, 10)} meta={pageMeta} locale={locale} /></ZarukuPanelState></ContentPanel>
 
       <ContentPanel title="Лучшее удержание" note="Входные страницы с сильным удержанием; показываются только при наличии стабильного entry-page среза."><ZarukuPanelState meta={data.dataset_meta.best_engagement_pages} hasRows={data.best_engagement_pages.length > 0}><MetricTable rows={data.best_engagement_pages} meta={data.dataset_meta.best_engagement_pages} locale={locale} /></ZarukuPanelState></ContentPanel>
 
