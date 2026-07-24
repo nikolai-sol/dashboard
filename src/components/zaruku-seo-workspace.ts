@@ -79,6 +79,12 @@ type MetricsAccumulator = {
   positionCount: number;
 };
 
+function normalizePosition(value: number | null | undefined): number | null {
+  if (value === null || value === undefined) return null;
+  if (!Number.isFinite(value)) return null;
+  return value > 0 ? value : null;
+}
+
 type MutableQueryRow = {
   key: string;
   query: string;
@@ -165,10 +171,15 @@ function addMetrics(
     return;
   }
 
-  accumulator.unweightedPosition += row.average_position;
+  const position = normalizePosition(row.average_position);
+  if (position === null) {
+    return;
+  }
+
+  accumulator.unweightedPosition += position;
   accumulator.positionCount += 1;
   if (row.impressions > 0) {
-    accumulator.weightedPosition += row.average_position * row.impressions;
+    accumulator.weightedPosition += position * row.impressions;
     accumulator.positionWeight += row.impressions;
   }
 }
@@ -272,11 +283,11 @@ export function buildUnifiedSeoQueryRows({
 function querySortValue(row: UnifiedSeoQueryRow, key: SeoQuerySortKey): number | null {
   switch (key) {
     case "google_position":
-      return row.google?.average_position ?? null;
+      return normalizePosition(row.google?.average_position);
     case "webmaster_position":
-      return row.webmaster?.average_position ?? null;
+      return normalizePosition(row.webmaster?.average_position);
     case "seo_os_position":
-      return row.seo_os?.tracked_position ?? null;
+      return normalizePosition(row.seo_os?.tracked_position);
     case "impressions":
       return (row.google?.impressions ?? 0) + (row.webmaster?.impressions ?? 0);
     case "clicks":
@@ -304,18 +315,18 @@ export function filterUnifiedSeoQueryRows(rows: UnifiedSeoQueryRow[], filter: Se
   if (filter === "declined") return rows.filter((row) => (row.seo_os?.delta_prev ?? 0) > 0);
   if (filter === "not_found") {
     return rows.filter((row) => row.seo_os?.status === "no_data" || [
-      row.google?.average_position,
-      row.webmaster?.average_position,
-      row.seo_os?.tracked_position,
-    ].every((position) => position === null || position === undefined));
+      normalizePosition(row.google?.average_position),
+      normalizePosition(row.webmaster?.average_position),
+      normalizePosition(row.seo_os?.tracked_position),
+    ].every((position) => position === null));
   }
 
   const limit = filter === "top3" ? 3 : filter === "top10" ? 10 : 20;
   return rows.filter((row) => [
-    row.google?.average_position,
-    row.webmaster?.average_position,
-    row.seo_os?.tracked_position,
-  ].some((position) => position !== null && position !== undefined && position <= limit));
+    normalizePosition(row.google?.average_position),
+    normalizePosition(row.webmaster?.average_position),
+    normalizePosition(row.seo_os?.tracked_position),
+  ].some((position) => position !== null && position <= limit));
 }
 
 function displayUrl(rawUrl: string, key: string): string {

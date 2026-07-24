@@ -204,6 +204,59 @@ test("filters SEO OS movement and not-found rows without inventing zero position
   assert.equal(filterUnifiedSeoQueryRows(rows, "not_found")[0].seo_os?.tracked_position, null);
 });
 
+test("top filters honor valid positive positions and ignore zero/null/invalid values", () => {
+  const rows = buildUnifiedSeoQueryRows({
+    gscRows: [
+      gscQuery({ query_id: "top-1", query: "query-one", average_position: 2 }),
+      gscQuery({ query_id: "zero", query: "query-zero", average_position: 0 }),
+      gscQuery({ query_id: "bad", query: "query-bad", average_position: -1 }),
+      gscQuery({ query_id: "ten", query: "query-ten", average_position: 10 }),
+      gscQuery({ query_id: "too-deep", query: "query-too-deep", average_position: 21 }),
+    ],
+    webmasterRows: [],
+    seoOsRows: [],
+  });
+
+  assert.deepEqual(
+    filterUnifiedSeoQueryRows(rows, "top3").map((row) => row.query),
+    ["query-one"],
+  );
+  assert.deepEqual(
+    filterUnifiedSeoQueryRows(rows, "top10").map((row) => row.query),
+    ["query-one", "query-ten"],
+  );
+  assert.deepEqual(
+    filterUnifiedSeoQueryRows(rows, "top20").map((row) => row.query),
+    ["query-one", "query-ten"],
+  );
+});
+
+test("not-found filter treats non-positive positions as missing", () => {
+  const positionRows = buildUnifiedSeoQueryRows({
+    gscRows: [
+      gscQuery({ query_id: "with-zero", query: "zero-position", average_position: 0 }),
+      gscQuery({ query_id: "positive", query: "real-position", average_position: 5 }),
+    ],
+    webmasterRows: [],
+    seoOsRows: [],
+  });
+  const [missingSeoOsRow] = buildUnifiedSeoQueryRows({
+    gscRows: [],
+    webmasterRows: [],
+    seoOsRows: [seoOsQuery({ query: "os-missing", serp_position: null, status: "no_data", delta_prev: null })],
+  });
+
+  assert.deepEqual(
+    filterUnifiedSeoQueryRows(positionRows, "not_found").map((row) => row.query),
+    ["zero-position"],
+  );
+  assert.deepEqual(
+    filterUnifiedSeoQueryRows([missingSeoOsRow], "not_found").map((row) => row.query),
+    ["os-missing"],
+  );
+  assert.equal(filterUnifiedSeoQueryRows([...positionRows, missingSeoOsRow], "not_found").length, 2);
+});
+
 test("normalizes exact URLs while preserving different paths", () => {
   assert.equal(normalizeSeoUrlKey("https://www.zaruku.ru/map/?utm_source=test#top"), "zaruku.ru/map/");
   assert.equal(normalizeSeoUrlKey("/map/"), "zaruku.ru/map/");

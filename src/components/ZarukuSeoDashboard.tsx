@@ -899,11 +899,11 @@ export default function ZarukuSeoDashboard({ data, locale = "ru-RU" }: Props) {
                   <span className="h-1.5 w-1.5 rounded-full" style={{ background: source.color }} />
                   {source.label}
                 </span>
-                <span className={source.status === "connected" ? "flex flex-col items-end gap-0.5 text-teal-600" : "text-slate-300"}>
+                <span className={source.status === "connected" ? "flex flex-col items-end gap-0.5 text-right text-teal-600" : "text-slate-300"}>
                   {source.status === "connected" ? (
                     <>
                       <span>подкл.</span>
-                      {rowsLabel ? <span className="text-xs font-normal leading-tight text-teal-600">{rowsLabel}</span> : null}
+                      {rowsLabel ? <span className="whitespace-nowrap text-xs font-normal leading-tight text-teal-600">{rowsLabel}</span> : null}
                     </>
                   ) : (
                     "—"
