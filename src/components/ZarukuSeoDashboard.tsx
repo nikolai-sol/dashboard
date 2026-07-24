@@ -1,6 +1,6 @@
 "use client";
 
-import { useId, useMemo, useState } from "react";
+import { useId, useLayoutEffect, useMemo, useRef, useState } from "react";
 import {
   Bar,
   BarChart,
@@ -267,40 +267,90 @@ function BarList({ rows, value = "visits", locale = "ru-RU" }: { rows: ZarukuSeo
   return (
     <div className="space-y-2.5">
       {rows.map((row, index) => (
-        <div key={`${row.label}-${row.secondary_label ?? ""}-${index}`} className="grid grid-cols-[128px_minmax(0,1fr)_64px] items-center gap-3">
-          <div className="min-w-0 text-sm text-slate-600" title={row.label}>
-            {truncate(row.label, 28)}
-          </div>
-          <div className="relative h-6 rounded-md bg-slate-50">
-            {(() => {
-              const share = row.share != null && Number.isFinite(row.share) ? row.share : (Math.max(0, row[value]) / max) * 100;
-              const sharePercent = Math.max(0, Math.min(100, share));
-              const percentText = formatPercent(sharePercent, locale, 1);
-              const isPercentShownInside = sharePercent >= 10;
-              const barStyle = { width: `${sharePercent}%`, background: COLORS[index % COLORS.length] };
-              return (
-                <>
-                  <div
-                    className="absolute inset-y-0 left-0 flex items-center rounded-md px-2 text-xs font-medium text-white"
-                    style={barStyle}
-                  >
-                    {isPercentShownInside ? percentText : ""}
-                  </div>
-                  {!isPercentShownInside ? (
-                    <span
-                      className="absolute top-1/2 -translate-y-1/2 whitespace-nowrap text-xs font-medium text-slate-600"
-                      style={{ left: `calc(${sharePercent}% + 8px)` }}
-                    >
-                      {percentText}
-                    </span>
-                  ) : null}
-                </>
-              );
-            })()}
-          </div>
-          <div className="text-right text-sm text-slate-500">{formatNumber(row[value], locale)}</div>
-        </div>
+        <BarListRow
+          key={`${row.label}-${row.secondary_label ?? ""}-${index}`}
+          row={row}
+          index={index}
+          value={value}
+          locale={locale}
+          max={max}
+        />
       ))}
+    </div>
+  );
+}
+
+function BarListRow({
+  row,
+  index,
+  value,
+  locale,
+  max,
+}: {
+  row: ZarukuSeoMetricRow;
+  index: number;
+  value: "visits" | "users" | "pageviews";
+  locale: string;
+  max: number;
+}) {
+  const trackRef = useRef<HTMLDivElement>(null);
+  const labelRef = useRef<HTMLSpanElement>(null);
+  const [showPercentInside, setShowPercentInside] = useState(true);
+
+  const share = row.share != null && Number.isFinite(row.share) ? row.share : (Math.max(0, row[value]) / max) * 100;
+  const sharePercent = Math.max(0, Math.min(100, share));
+  const percentText = formatPercent(sharePercent, locale, 1);
+  const barStyle = { width: `${sharePercent}%`, background: COLORS[index % COLORS.length] };
+
+  useLayoutEffect(() => {
+    const track = trackRef.current;
+    const label = labelRef.current;
+    if (!track || !label) return;
+
+    const evaluate = () => {
+      const trackWidth = Math.max(1, track.clientWidth);
+      const fillWidth = (sharePercent / 100) * trackWidth;
+      const labelWidth = Math.ceil(label.getBoundingClientRect().width);
+      const requiredGap = 8;
+      setShowPercentInside(fillWidth >= labelWidth + requiredGap);
+    };
+
+    evaluate();
+    const observer = new ResizeObserver(evaluate);
+    observer.observe(track);
+    return () => observer.disconnect();
+  }, [sharePercent, percentText]);
+
+  return (
+    <div className="grid grid-cols-[128px_minmax(0,1fr)_64px] items-center gap-3">
+      <div className="min-w-0 text-sm text-slate-600" title={row.label}>
+        {truncate(row.label, 28)}
+      </div>
+      <div ref={trackRef} className="relative h-6 overflow-visible rounded-md bg-slate-50">
+        <div className="absolute inset-y-0 left-0 overflow-hidden rounded-md" style={barStyle}>
+          <span
+            ref={labelRef}
+            className="pointer-events-none absolute inset-y-0 left-1/2 -translate-x-1/2 flex items-center whitespace-nowrap px-2 text-xs font-medium opacity-0"
+            aria-hidden="true"
+          >
+            {percentText}
+          </span>
+          {showPercentInside ? (
+            <span className="pointer-events-none absolute inset-y-0 left-1/2 -translate-x-1/2 flex items-center justify-center whitespace-nowrap px-2 text-xs font-medium text-white">
+              {percentText}
+            </span>
+          ) : null}
+        </div>
+        {!showPercentInside ? (
+          <span
+            className="pointer-events-none absolute top-1/2 -translate-y-1/2 whitespace-nowrap text-xs font-medium text-slate-600"
+            style={{ left: `calc(${sharePercent}% + 6px)` }}
+          >
+            {percentText}
+          </span>
+        ) : null}
+      </div>
+      <div className="text-right text-sm text-slate-500">{formatNumber(row[value], locale)}</div>
     </div>
   );
 }
