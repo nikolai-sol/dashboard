@@ -378,6 +378,10 @@ test("buildSourceFreshnessQuery scopes canonical collectors by source keys", () 
 
   assert.match(query.sql, /canonical_collector_runs/);
   assert.match(query.sql, /run_type = 'cron'/);
+  assert.match(query.sql, /canonical_fact_site_analytics_daily/);
+  assert.match(query.sql, /canonical_fact_webmaster_summary_daily/);
+  assert.match(query.sql, /canonical_fact_gsc_queries_daily/);
+  assert.match(query.sql, /canonical_fact_metrika_returning_pages_daily/);
   assert.deepEqual(query.params, ["yandex_metrika", "yandex_webmaster"]);
 });
 
@@ -405,7 +409,7 @@ test("normalizeSourceFreshnessRow marks recent successful cron collector healthy
         last_error_at: null,
         last_error_summary: null,
       },
-      new Date("2026-07-17T19:00:00Z"),
+      new Date("2026-07-17T10:00:00Z"),
     ),
     {
       source_key: "yandex_webmaster",
@@ -423,7 +427,7 @@ test("normalizeSourceFreshnessRow marks recent successful cron collector healthy
       rows_written: 2125,
       last_error_at: null,
       last_error_summary: null,
-      note: "Последний successful cron collector записал 2,125 rows.",
+      note: "Последние факты в БД подтверждены; записано 2,125 rows.",
     },
   );
 });
@@ -445,13 +449,13 @@ test("normalizeSourceFreshnessRow hides older collector errors after a newer suc
       last_error_at: "2026-06-24 06:12:01",
       last_error_summary: "old frozen counter error",
     },
-    new Date("2026-07-19T13:00:00Z"),
+    new Date("2026-07-19T08:00:00Z"),
   );
 
   assert.equal(row.freshness_status, "healthy");
   assert.equal(row.last_error_at, null);
   assert.equal(row.last_error_summary, null);
-  assert.equal(row.note, "Последний successful cron collector записал 3,081 rows.");
+  assert.equal(row.note, "Последние факты в БД подтверждены; записано 3,081 rows.");
 });
 
 test("normalizeSourceFreshnessRow marks newer failed cron after success as failed", () => {

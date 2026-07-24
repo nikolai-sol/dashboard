@@ -518,6 +518,41 @@ function sourceFreshnessCatalogSql() {
   }).join("\n      ");
 }
 
+function sourceDataFreshnessCte() {
+  return `
+    source_data_freshness AS (
+      SELECT
+        'yandex_metrika' AS source_key,
+        MIN(report_date) AS success_date_from,
+        MAX(report_date) AS success_date_to,
+        COUNT(*) AS data_rows_written
+      FROM canonical_fact_site_analytics_daily
+      WHERE source_key = 'yandex_metrika'
+      UNION ALL
+      SELECT
+        'yandex_metrika_returning' AS source_key,
+        MIN(report_date) AS success_date_from,
+        MAX(report_date) AS success_date_to,
+        COUNT(*) AS data_rows_written
+      FROM canonical_fact_metrika_returning_pages_daily
+      UNION ALL
+      SELECT
+        'yandex_webmaster' AS source_key,
+        MIN(report_date) AS success_date_from,
+        MAX(report_date) AS success_date_to,
+        COUNT(*) AS data_rows_written
+      FROM canonical_fact_webmaster_summary_daily
+      UNION ALL
+      SELECT
+        'google_search_console' AS source_key,
+        MIN(report_date) AS success_date_from,
+        MAX(report_date) AS success_date_to,
+        COUNT(*) AS data_rows_written
+      FROM canonical_fact_gsc_queries_daily
+    )
+  `;
+}
+
 export function buildSourceFreshnessQuery(sourceKeys = SOURCE_FRESHNESS_CATALOG.map((source) => source.source_key)) {
   const scopedSourceKeys = sourceKeys.length > 0 ? sourceKeys : SOURCE_FRESHNESS_CATALOG.map((source) => source.source_key);
   return {
@@ -525,6 +560,7 @@ export function buildSourceFreshnessQuery(sourceKeys = SOURCE_FRESHNESS_CATALOG.
     WITH source_catalog AS (
       ${sourceFreshnessCatalogSql()}
     ),
+    ${sourceDataFreshnessCte()},
     scoped_sources AS (
       SELECT *
       FROM source_catalog
@@ -573,8 +609,8 @@ export function buildSourceFreshnessQuery(sourceKeys = SOURCE_FRESHNESS_CATALOG.
       latest_run.status AS last_status,
       COALESCE(latest_run.finished_at, latest_run.started_at) AS last_finished_at,
       latest_success.finished_at AS last_success_at,
-      latest_success.date_from AS success_date_from,
-      latest_success.date_to AS success_date_to,
+      COALESCE(data.success_date_from, latest_success.date_from) AS success_date_from,
+      COALESCE(data.success_date_to, latest_success.date_to) AS success_date_to,
       latest_success.rows_read AS success_rows_read,
       latest_success.rows_written AS success_rows_written,
       COALESCE(latest_error.finished_at, latest_error.started_at) AS last_error_at,
@@ -583,6 +619,7 @@ export function buildSourceFreshnessQuery(sourceKeys = SOURCE_FRESHNESS_CATALOG.
     LEFT JOIN latest_run ON latest_run.source_key = ss.source_key
     LEFT JOIN latest_success ON latest_success.source_key = ss.source_key
     LEFT JOIN latest_error ON latest_error.source_key = ss.source_key
+    LEFT JOIN source_data_freshness data ON data.source_key = ss.source_key
     ORDER BY FIELD(ss.source_key, 'yandex_metrika', 'yandex_webmaster', 'google_search_console')
   `,
     params: scopedSourceKeys,
@@ -596,6 +633,7 @@ export function normalizeSourceFreshnessRow(row: SourceFreshnessDbRow, now = new
   const lastErrorAt = formatDateTimeValue(row.last_error_at);
   const lastFinishedDate = parseDateValue(row.last_finished_at);
   const lastSuccessDate = parseDateValue(row.last_success_at);
+  const lastSuccessDateTo = parseDateValue(formatDateOnlyValue(row.success_date_to));
   const rowsRead = Math.round(asNumber(row.success_rows_read));
   const rowsWritten = Math.round(asNumber(row.success_rows_written));
   const importedRowsText = formatEnglishInteger(rowsWritten);
@@ -604,13 +642,17 @@ export function normalizeSourceFreshnessRow(row: SourceFreshnessDbRow, now = new
     status === "failed" &&
     lastFinishedDate != null &&
     (lastSuccessDate == null || lastFinishedDate.getTime() >= lastSuccessDate.getTime());
-  const successAgeHours = lastSuccessDate ? (now.getTime() - lastSuccessDate.getTime()) / (60 * 60 * 1000) : Infinity;
+  const freshnessReferenceDate = lastSuccessDateTo ?? lastSuccessDate;
+  const successAgeHours = freshnessReferenceDate ? (now.getTime() - freshnessReferenceDate.getTime()) / (60 * 60 * 1000) : Infinity;
 
   let freshnessStatus: ZarukuSourceFreshnessRow["freshness_status"];
   let note: string;
   if (!lastFinishedAt && !lastSuccessAt) {
     freshnessStatus = "disabled";
     note = "Cron collector ещё не запускался.";
+  } else if (freshnessReferenceDate == null) {
+    freshnessStatus = "disabled";
+    note = "Последний сбор подтвердил успешный запуск, но факты в БД по этому источнику пока не появились.";
   } else if (hasNewerProblem) {
     freshnessStatus = "failed";
     note = lastSuccessAt
@@ -618,10 +660,10 @@ export function normalizeSourceFreshnessRow(row: SourceFreshnessDbRow, now = new
       : "Последний cron collector упал; successful import ещё не найден.";
   } else if (successAgeHours > expectedFrequencyHours * 1.5) {
     freshnessStatus = "delayed";
-    note = `Последний successful cron collector старше ожидаемого окна; записал ${importedRowsText} rows.`;
+    note = `Последние факты в БД старше ожидаемого окна; записано ${importedRowsText} rows.`;
   } else {
     freshnessStatus = "healthy";
-    note = `Последний successful cron collector записал ${importedRowsText} rows.`;
+    note = `Последние факты в БД подтверждены; записано ${importedRowsText} rows.`;
   }
 
   const activeErrorAt = hasNewerProblem ? lastErrorAt : null;

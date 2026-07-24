@@ -32,7 +32,6 @@ test("SEO tab follows the executive-to-detail hierarchy without duplicate source
   const aiPanelMatches = source.match(/<AiAggregateVisibilityPanel/g) ?? [];
 
   assert.equal(aiPanelMatches.length, 1);
-  assert.match(source, /<ZarukuSeoExecutiveSummary/);
   assert.match(source, /<ZarukuSeoQueryComparison/);
   assert.match(source, /<ZarukuSeoPageComparison/);
   assert.match(source, /<ZarukuSeoDiagnostics/);

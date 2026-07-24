@@ -25,7 +25,6 @@ import {
   Workflow,
 } from "lucide-react";
 import ZarukuSeoWeekToolbar from "@/components/ZarukuSeoWeekToolbar";
-import ZarukuSeoExecutiveSummary from "@/components/ZarukuSeoExecutiveSummary";
 import ZarukuSeoDiagnostics from "@/components/ZarukuSeoDiagnostics";
 import ZarukuSeoPageComparison from "@/components/ZarukuSeoPageComparison";
 import ZarukuSeoQueryComparison from "@/components/ZarukuSeoQueryComparison";
@@ -57,7 +56,6 @@ import {
   buildWeeklyFocus,
 } from "@/components/zaruku-north-star";
 import {
-  buildSeoExecutiveSnapshot,
   buildUnifiedSeoPageRows,
   buildUnifiedSeoQueryRows,
 } from "@/components/zaruku-seo-workspace";
@@ -108,14 +106,34 @@ function formatSignedPercent(value: number | null | undefined, locale = "ru-RU",
   return `Δ ${sign}${formatPercent(value, locale, digits)}`;
 }
 
+const SOURCE_FRESHNESS_SOURCE_KEYS: Partial<Record<ZarukuSeoSourceId, string>> = {
+  metrika: "yandex_metrika",
+  gsc: "google_search_console",
+  webmaster: "yandex_webmaster",
+};
+
+function getSourceFreshnessLine(data: ZarukuSeoData, sourceId: ZarukuSeoSourceId) {
+  const sourceFreshnessKey = SOURCE_FRESHNESS_SOURCE_KEYS[sourceId];
+  if (!sourceFreshnessKey) return null;
+  const row = data.source_freshness.find((item) => item.source_key === sourceFreshnessKey);
+  if (!row?.date_to) return null;
+  const rowsWritten = row.rows_written > 0 ? `${row.rows_written.toLocaleString("ru-RU")} строк` : null;
+  const coverage = `по ${row.date_to}`;
+  return rowsWritten ? `${coverage}, ${rowsWritten}` : coverage;
+}
+
 function SourceBadge({ data, id }: { data: ZarukuSeoData; id: ZarukuSeoSourceId }) {
   const source = data.sources.find((item) => item.id === id);
   if (!source) return null;
+  const freshnessLine = source.status === "connected" ? getSourceFreshnessLine(data, id) : null;
   return (
-    <span className="inline-flex items-center gap-1.5 rounded-md border border-slate-200 bg-white px-2 py-1 text-xs font-medium text-slate-600">
-      <span className="h-1.5 w-1.5 rounded-full" style={{ background: source.color }} />
-      {source.label}
-      {source.status !== "connected" ? <Lock className="h-3 w-3 text-slate-300" /> : null}
+    <span className="inline-flex flex-col items-start gap-0.5 rounded-md border border-slate-200 bg-white px-2 py-1 text-xs text-slate-600">
+      <span className="inline-flex items-center gap-1.5 font-medium">
+        <span className="h-1.5 w-1.5 rounded-full" style={{ background: source.color }} />
+        {source.label}
+        {source.status !== "connected" ? <Lock className="h-3 w-3 text-slate-300" /> : null}
+      </span>
+      {freshnessLine ? <span className="text-[11px] font-normal text-slate-400">подключено · {freshnessLine}</span> : null}
     </span>
   );
 }
@@ -217,17 +235,36 @@ function BarList({ rows, value = "visits", locale = "ru-RU" }: { rows: ZarukuSeo
   return (
     <div className="space-y-2.5">
       {rows.map((row, index) => (
-        <div key={`${row.label}-${row.secondary_label ?? ""}-${index}`} className="grid grid-cols-[128px_minmax(0,1fr)_76px] items-center gap-3">
+        <div key={`${row.label}-${row.secondary_label ?? ""}-${index}`} className="grid grid-cols-[128px_minmax(0,1fr)_64px] items-center gap-3">
           <div className="min-w-0 text-sm text-slate-600" title={row.label}>
             {truncate(row.label, 28)}
           </div>
-          <div className="h-6 overflow-hidden rounded-md bg-slate-50">
-            <div
-              className="flex h-full items-center rounded-md px-2 text-xs font-medium text-white"
-              style={{ width: `${Math.max(4, (row[value] / max) * 100)}%`, background: COLORS[index % COLORS.length] }}
-            >
-              {row.share != null ? formatPercent(row.share, locale, 1) : ""}
-            </div>
+          <div className="relative h-6 rounded-md bg-slate-50">
+            {(() => {
+              const share = row.share != null && Number.isFinite(row.share) ? row.share : (Math.max(0, row[value]) / max) * 100;
+              const sharePercent = Math.max(0, Math.min(100, share));
+              const percentText = formatPercent(sharePercent, locale, 1);
+              const isPercentShownInside = sharePercent >= 10;
+              const barStyle = { width: `${sharePercent}%`, background: COLORS[index % COLORS.length] };
+              return (
+                <>
+                  <div
+                    className="absolute inset-y-0 left-0 flex items-center rounded-md px-2 text-xs font-medium text-white"
+                    style={barStyle}
+                  >
+                    {isPercentShownInside ? percentText : ""}
+                  </div>
+                  {!isPercentShownInside ? (
+                    <span
+                      className="absolute top-1/2 -translate-y-1/2 whitespace-nowrap text-xs font-medium text-slate-600"
+                      style={{ left: `calc(${sharePercent}% + 8px)` }}
+                    >
+                      {percentText}
+                    </span>
+                  ) : null}
+                </>
+              );
+            })()}
           </div>
           <div className="text-right text-sm text-slate-500">{formatNumber(row[value], locale)}</div>
         </div>
@@ -501,7 +538,7 @@ function OverviewTab({ data, locale }: Props) {
             ) : null}
           </Panel>
         </div>
-        <Panel data={data} title="Органика по месяцам" source="metrika">
+        <Panel data={data} title="Органический поиск" source="metrika">
           <ResponsiveContainer width="100%" height={220}>
             <LineChart data={data.organic_trend} margin={{ top: 8, right: 8, left: -20, bottom: 0 }}>
               <CartesianGrid stroke="#eef2f7" strokeDasharray="3 3" />
@@ -551,13 +588,6 @@ function SeoTab({ data, locale, primaryWeek, comparisonWeek }: Props & { primary
   const selectedAiRows = aiPeriod
     ? data.seo_intelligence.ai.rows.filter((row) => row.period === aiPeriod)
     : [];
-  const executiveSnapshot = buildSeoExecutiveSnapshot({
-    gscRows: gscQueries,
-    webmasterRows: webmasterQueries,
-    positionTrend: selectedPositionTrend,
-    aiRows: selectedAiRows,
-    postClickRows: data.organic_landing_pages,
-  });
   const selectedSeoOsClusters = seoOsWeek
     ? data.seo_os.clusters.filter((row) => row.week === seoOsWeek)
     : [];
@@ -574,20 +604,6 @@ function SeoTab({ data, locale, primaryWeek, comparisonWeek }: Props & { primary
   });
   return (
     <div className="space-y-5">
-      {/* Reserved AI summary mount point: after period context, before executive detail cards. */}
-      <ZarukuSeoExecutiveSummary
-        snapshot={executiveSnapshot}
-        trafficPeriod={data.period}
-        primaryWeek={primaryWeek}
-        comparisonWeek={comparisonWeek}
-        sourcePeriods={{
-          google: gscQuerySelection.week,
-          webmaster: webmasterQuerySelection.week,
-          seoOs: selectedPositionTrend.length > 0 ? seoOsWeek : null,
-          ai: aiPeriod,
-        }}
-        locale={currentLocale}
-      />
       <ZarukuSeoQueryComparison
         rows={unifiedQueryRows}
         sourceAvailability={{
