@@ -182,7 +182,7 @@ Canonical daily jobs on VPS:
 - `06:35` VK Ads v2
 - `06:37` Hybrid
 - `06:50` Yandex Webmaster canonical daily collector
-- `06:55` Google Search Console canonical daily collector (`fetch_gsc_canonical.py --backfill-days 3 --run-type cron`)
+- `06:55` Google Search Console canonical daily collector (`fetch_gsc_canonical.py --backfill-days 3 --lag-days 2 --run-type cron`)
 - `07:05` canonical monitor
 - `07:10` Telegram summary
 

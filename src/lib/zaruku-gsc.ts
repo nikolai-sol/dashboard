@@ -139,7 +139,16 @@ function weekClause(weeks: string[] | undefined, params: string[]) {
   return `AND CONCAT(LEFT(YEARWEEK(report_date, 3), 4), '-W', RIGHT(YEARWEEK(report_date, 3), 2)) IN (${buildInClause(normalizedWeeks)})`;
 }
 
-function countryClause(params: string[], country = ZARUKU_GSC_COUNTRY) {
+function countryClause(
+  params: string[],
+  country = ZARUKU_GSC_COUNTRY,
+  emptyAsDefault: boolean = false,
+) {
+  if (emptyAsDefault) {
+    params.push(country);
+    params.push(country);
+    return "AND LOWER(COALESCE(NULLIF(country, ''), ?)) = ?";
+  }
   params.push(country);
   return "AND LOWER(COALESCE(country, '')) = ?";
 }
@@ -175,7 +184,7 @@ export function buildGscAccountQueries(counterIds: string[], weeks?: string[]): 
   const countrySummaryCountryClause = countryClause(countrySummaryParams);
   const landingPageCountryClause = countryClause(landingPageParams);
   const brandSplitCountryClause = countryClause(brandSplitParams);
-  const searchAppearanceCountryClause = countryClause(searchAppearanceParams);
+  const searchAppearanceCountryClause = countryClause(searchAppearanceParams, ZARUKU_GSC_COUNTRY, true);
   const searchTypeSummaryCountryClause = countryClause(searchTypeSummaryParams);
   const queryWeekClause = weekClause(weeks, queryParams);
   const summaryWeekClause = weekClause(weeks, summaryParams);
@@ -473,21 +482,35 @@ function errorMessage(error: unknown) {
   return error instanceof Error ? error.message : String(error);
 }
 
-function normalizeSettledRows<DbRow, ResultRow>(
+type SettledRowsResult<DbRow, ResultRow> = {
+  rows: ResultRow[];
+  available: boolean;
+  error: string | null;
+  required: boolean;
+};
+
+function asNormalizedResult<DbRow, ResultRow>(
   result: PromiseSettledResult<unknown[]>,
   label: string,
   normalize: (row: DbRow) => ResultRow,
   errors: string[],
-) {
+  required: boolean,
+): SettledRowsResult<DbRow, ResultRow> {
   if (result.status === "rejected") {
-    errors.push(`${label}: ${errorMessage(result.reason)}`);
-    return { rows: [] as ResultRow[], available: false };
+    const errorText = `${label}: ${errorMessage(result.reason)}`;
+    if (required) {
+      errors.push(errorText);
+    }
+    return { rows: [] as ResultRow[], available: false, error: errorText, required };
   }
   try {
-    return { rows: result.value.map((row) => normalize(row as DbRow)), available: true };
+    return { rows: result.value.map((row) => normalize(row as DbRow)), available: true, error: null, required };
   } catch (error) {
-    errors.push(`${label}: ${errorMessage(error)}`);
-    return { rows: [] as ResultRow[], available: false };
+    const errorText = `${label}: ${errorMessage(error)}`;
+    if (required) {
+      errors.push(errorText);
+    }
+    return { rows: [] as ResultRow[], available: false, error: errorText, required };
   }
 }
 
@@ -512,47 +535,54 @@ export async function loadGoogleSearchConsoleFacts(
     executeQuery(queries.search_type_summary),
   ]);
   const errors: string[] = [];
-  const queryResult = normalizeSettledRows<GscQueryDbRow, ZarukuGscQueryRow>(
+  const queryResult = asNormalizedResult<GscQueryDbRow, ZarukuGscQueryRow>(
     results[0],
     "queries",
     normalizeGscQueryRow,
     errors,
+    true,
   );
-  const summaryResult = normalizeSettledRows<GscSummaryDbRow, ZarukuGscSummaryRow>(
+  const summaryResult = asNormalizedResult<GscSummaryDbRow, ZarukuGscSummaryRow>(
     results[1],
     "summary",
     normalizeGscSummaryRow,
     errors,
+    true,
   );
-  const countrySummaryResult = normalizeSettledRows<GscCountrySummaryDbRow, ZarukuGscCountrySummaryRow>(
+  const countrySummaryResult = asNormalizedResult<GscCountrySummaryDbRow, ZarukuGscCountrySummaryRow>(
     results[2],
     "country_summary",
     normalizeGscCountrySummaryRow,
     errors,
+    true,
   );
-  const landingPageResult = normalizeSettledRows<GscLandingPageDbRow, ZarukuGscLandingPageRow>(
+  const landingPageResult = asNormalizedResult<GscLandingPageDbRow, ZarukuGscLandingPageRow>(
     results[3],
     "landing_pages",
     normalizeGscLandingPageRow,
     errors,
+    true,
   );
-  const brandSplitResult = normalizeSettledRows<GscBrandSplitDbRow, ZarukuGscBrandSplitRow>(
+  const brandSplitResult = asNormalizedResult<GscBrandSplitDbRow, ZarukuGscBrandSplitRow>(
     results[4],
     "brand_split",
     normalizeGscBrandSplitRow,
     errors,
+    true,
   );
-  const searchAppearanceResult = normalizeSettledRows<GscSearchAppearanceDbRow, ZarukuGscSearchAppearanceRow>(
+  const searchAppearanceResult = asNormalizedResult<GscSearchAppearanceDbRow, ZarukuGscSearchAppearanceRow>(
     results[5],
     "search_appearance",
     normalizeGscSearchAppearanceRow,
     errors,
+    false,
   );
-  const searchTypeSummaryResult = normalizeSettledRows<GscSearchTypeDbRow, ZarukuGscSearchTypeRow>(
+  const searchTypeSummaryResult = asNormalizedResult<GscSearchTypeDbRow, ZarukuGscSearchTypeRow>(
     results[6],
     "search_type_summary",
     normalizeGscSearchTypeRow,
     errors,
+    false,
   );
   const queryRows = queryResult.rows;
   const summaryRows = summaryResult.rows;
@@ -561,16 +591,20 @@ export async function loadGoogleSearchConsoleFacts(
   const brandSplitRows = brandSplitResult.rows;
   const searchAppearanceRows = searchAppearanceResult.rows;
   const searchTypeSummaryRows = searchTypeSummaryResult.rows;
-  const successfulQueries = [
+  const requiredResults = [
     queryResult.available,
     summaryResult.available,
     countrySummaryResult.available,
     landingPageResult.available,
     brandSplitResult.available,
-    searchAppearanceResult.available,
-    searchTypeSummaryResult.available,
-  ].filter(Boolean).length;
-  const status = successfulQueries === 7 && errors.length === 0 ? "available" : successfulQueries > 0 ? "partial" : "unavailable";
+  ];
+  const successfulRequiredQueries = requiredResults.filter(Boolean).length;
+  const status =
+    successfulRequiredQueries === requiredResults.length && errors.length === 0
+      ? "available"
+      : successfulRequiredQueries > 0
+        ? "partial"
+        : "unavailable";
   const weeksList = Array.from(new Set([
     ...summaryRows.map((row) => row.week),
     ...countrySummaryRows.map((row) => row.week),

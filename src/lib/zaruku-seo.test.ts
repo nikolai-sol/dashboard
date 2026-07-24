@@ -1,7 +1,6 @@
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import test from "node:test";
-import * as zarukuSeoModule from "@/lib/zaruku-seo";
 import {
   buildCanonicalPageRowsQuery,
   buildBestEngagementPages,
@@ -64,34 +63,9 @@ test("Zaruku read model does not request redundant general country or city repor
   assert.doesNotMatch(loaderSource, /dimensions: "ym:s:regionCountry"/);
 });
 
-test("Metrika report parameters support the Zaruku Russia filter", () => {
-  const seoModule = zarukuSeoModule as typeof zarukuSeoModule & {
-    ZARUKU_RUSSIA_FILTER?: string;
-    buildMetrikaReportParams?: (request: {
-      counterId: string;
-      from: string;
-      to: string;
-      dimensions: string;
-      limit: number;
-      filters?: string;
-    }) => URLSearchParams;
-  };
-
-  assert.equal(typeof seoModule.buildMetrikaReportParams, "function");
-  assert.equal(seoModule.ZARUKU_RUSSIA_FILTER, "ym:s:regionCountry=='Russia'");
-
-  const params = seoModule.buildMetrikaReportParams!({
-    counterId: "66624469",
-    from: "2026-07-13",
-    to: "2026-07-19",
-    dimensions: "ym:s:searchPhrase",
-    limit: 30,
-    filters: seoModule.ZARUKU_RUSSIA_FILTER,
-  });
-
-  assert.equal(params.get("filters"), "ym:s:regionCountry=='Russia'");
-  assert.equal(params.get("ids"), "66624469");
-  assert.equal(params.get("dimensions"), "ym:s:searchPhrase");
+test("Metrika segment query uses canonical segments table and segment_type filter", () => {
+  assert.match(loaderSource, /canonical_fact_metrika_segments_daily/);
+  assert.match(loaderSource, /segment_type =/);
 });
 
 test("buildContentSections uses SEO patterns and aggregates visits, users, and pageviews", () => {
@@ -486,7 +460,7 @@ test("normalizeSourceFreshnessRow marks newer failed cron after success as faile
         source_key: "google_search_console",
         source_label: "Google Search Console",
         collector: "fetch_gsc_canonical.py",
-      expected_frequency_hours: 24,
+      expected_frequency_hours: 48,
       last_status: "failed",
       last_finished_at: "2026-07-17 17:15:18",
       last_success_at: "2026-07-16 17:15:18",

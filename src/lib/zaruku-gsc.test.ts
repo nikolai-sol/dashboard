@@ -18,7 +18,12 @@ test("buildGscAccountQueries scopes canonical GSC rows by account and optional w
   assert.match(queries.queries.sql, /canonical_fact_gsc_queries_daily/);
   assert.match(queries.queries.sql, /analytics_account_id IN \(\?\)/);
   assert.match(queries.queries.sql, /YEARWEEK\(report_date, 3\)[\s\S]*IN \(\?\)/);
-  for (const query of Object.values(queries)) {
+  for (const [key, query] of Object.entries(queries) as [string, (typeof queries)[keyof typeof queries]][]) {
+    if (key === "search_appearance") {
+      assert.match(query.sql, /LOWER\(COALESCE\(NULLIF\(country, ''\), \?\)\) = \?/);
+      assert.deepEqual(query.params, ["66624469", "rus", "rus", "2026-W29"]);
+      continue;
+    }
     assert.match(query.sql, /LOWER\(COALESCE\(country, ''\)\) = \?/);
     assert.deepEqual(query.params, ["66624469", "rus", "2026-W29"]);
   }

@@ -14,6 +14,51 @@ Key production behaviors currently covered there:
 
 The rest of this README is still the default Next.js scaffold and should be treated as secondary.
 
+## Zaruku SEO Tab: AI Visibility Source
+
+The panel titled `AI-видимость (Яндекс Вебмастер / внешний источник)` does not read uploaded Excel files directly.
+
+Runtime data path:
+
+```text
+ZarukuSeoDashboard.tsx
+  -> data.seo_intelligence.ai.rows
+  -> loadZarukuSeoIntelligenceData()
+  -> SELECT engine, period, mentions, citations, presence_rate, provenance, captured_at, ingestion_run_id
+     FROM seo_ai_visibility
+```
+
+The current production row is an aggregated manual/external Alisa snapshot:
+
+```text
+engine=alisa_ai
+period=2026-07
+mentions=89
+citations=155
+presence_rate=0.4400
+provenance=wm_alisa_manual
+ingestion_run_id=seo_os_ai_visibility_2026-07_alisa_ai
+```
+
+Manual workbook exports such as `neurostatistics-zaruku.ru-*.xlsx` are source evidence for this aggregate, not the dashboard source itself. The workbook should be reviewed weekly, then imported into `seo_ai_visibility` through the SEO OS import command:
+
+```bash
+SEO_MYSQL_DASHBOARD_EXPORT=1 npx ts-node --transpile-only scripts/runSeoAiVisibilityImport.ts \
+  --engine alisa_ai \
+  --period YYYY-MM \
+  --presence-rate 0.574 \
+  --mentions 89 \
+  --citations 155 \
+  --provenance wm_alisa_manual \
+  --captured-at 2026-07-20T16:30:00.000Z \
+  --note "Manual Alisa AI visibility workbook review" \
+  --out reports/task-ai-visibility-import-YYYY-MM.json \
+  --sql-out reports/task-ai-visibility-import-YYYY-MM.sql \
+  --execute
+```
+
+Use `mentions = rows where Zaruku is present`, `citations = checked queries`, and `presence_rate = mentions / citations` as a 0..1 value. The dashboard converts this to a percentage for display. Re-imports are idempotent by `(analytics_account_id, engine, period, provenance)`.
+
 ---
 
 This is a [Next.js](https://nextjs.org) project bootstrapped with [`create-next-app`](https://nextjs.org/docs/app/api-reference/cli/create-next-app).

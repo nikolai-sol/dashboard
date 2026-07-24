@@ -158,9 +158,10 @@ Important current state:
 - Zaruku property: `https://zaruku.ru/`
 - Zaruku analytics account id: `66624469`
 - writes daily canonical facts only to `canonical_fact_gsc_queries_daily`
+- writes canonical query rows to `canonical_fact_gsc_queries_daily` in the same run as optional `canonical_fact_gsc_search_appearance_daily` and `canonical_fact_gsc_search_type_daily`
 - dimensions: `query`, `page`, `country`, `device`
 - metrics: `impressions`, `clicks`, `ctr`, `position`
-- cron window: yesterday plus 3-day backfill (`--backfill-days 3`) because GSC can lag by 2-3 days
+- cron window: yesterday minus 2 days plus 3-day backfill (`--backfill-days 3 --lag-days 2`) because GSC can lag by 2-3 days
 - idempotency: upsert by canonical business key `(analytics_account_id, report_date, query, page, device, country)`; `query_hash` is still computed from the same canonical fields only for compatibility with the existing unique key
 - legacy columns `property_url`, `query_text`, and `device_type` are nullable compatibility columns and must not be populated by the root collector
 - old temporary collector `fetch_google_search_console_canonical.py` must not be used as a writer for this table

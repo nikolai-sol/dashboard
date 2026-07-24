@@ -23,34 +23,34 @@ import type {
 } from "@/lib/types";
 
 const SOURCE_KEY = "yandex_metrika";
-const METRIKA_API_URL = "https://api-metrika.yandex.net/stat/v1/data";
-const METRIKA_METRICS =
-  "ym:s:visits,ym:s:users,ym:s:pageviews,ym:s:bounceRate,ym:s:avgVisitDurationSeconds,ym:s:pageDepth";
-export const ZARUKU_RUSSIA_FILTER = "ym:s:regionCountry=='Russia'";
-
-export type MetrikaReportRequest = {
-  counterId: string;
-  from: string;
-  to: string;
-  dimensions: string;
-  limit: number;
-  filters?: string;
+type CanonicalMetrikaSegmentRow = RowDataPacket & {
+  segment_type: string | null;
+  segment_dimension_1: string | null;
+  segment_dimension_2: string | null;
+  segment_dimension_3: string | null;
+  segment_dimension_4: string | null;
+  segment_dimension_5: string | null;
+  visits: number | string | null;
+  users: number | string | null;
+  pageviews: number | string | null;
+  bounce_rate: number | string | null;
+  avg_visit_duration_seconds: number | string | null;
+  page_depth: number | string | null;
 };
 
-export function buildMetrikaReportParams(request: MetrikaReportRequest) {
-  const params = new URLSearchParams({
-    ids: request.counterId,
-    date1: request.from,
-    date2: request.to,
-    dimensions: request.dimensions,
-    metrics: METRIKA_METRICS,
-    sort: "-ym:s:visits",
-    limit: String(request.limit),
-    accuracy: "full",
-  });
-  if (request.filters) params.set("filters", request.filters);
-  return params;
-}
+type CanonicalMetrikaBreakdownSegmentRow = RowDataPacket & {
+  segment_dimension_1: string | null;
+  segment_dimension_2: string | null;
+  segment_dimension_3: string | null;
+  segment_dimension_4: string | null;
+  segment_dimension_5: string | null;
+  visits: number | string | null;
+  users: number | string | null;
+  pageviews: number | string | null;
+  bounce_rate: number | string | null;
+  avg_visit_duration_seconds: number | string | null;
+  page_depth: number | string | null;
+};
 
 const SOURCES: ZarukuSeoSource[] = [
   {
@@ -130,17 +130,6 @@ type CanonicalSiteRow = RowDataPacket & {
   page_depth?: number | string | null;
 };
 
-type MetrikaReportRow = {
-  dimensions?: Array<{ name?: string | null; id?: string | null }>;
-  metrics?: Array<number | string | null>;
-};
-
-type MetrikaReport = {
-  ok: boolean;
-  rows: ZarukuSeoMetricRow[];
-  totals: number[];
-  error?: string;
-};
 
 export type SourceFreshnessDbRow = {
   source_key: string;
@@ -181,7 +170,7 @@ const SOURCE_FRESHNESS_CATALOG = [
     source_key: "google_search_console",
     source_label: "Google Search Console",
     collector: "fetch_gsc_canonical.py",
-    expected_frequency_hours: 24,
+    expected_frequency_hours: 48,
   },
 ] as const;
 
@@ -307,24 +296,78 @@ function rowFromCanonical(row: CanonicalSiteRow, totalVisits: number): ZarukuSeo
   };
 }
 
-function rowFromMetrika(item: MetrikaReportRow, totalVisits: number): ZarukuSeoMetricRow {
-  const dimensions = item.dimensions ?? [];
-  const metrics = item.metrics ?? [];
-  const visits = Math.round(asNumber(metrics[0]));
-  return {
-    id: dimensions.map((dim) => dim.id).filter(Boolean).join("|") || null,
-    label: readableMetrikaDimension(asString(dimensions[0]?.name)),
-    secondary_label: dimensions.slice(1).map((dim) => readableMetrikaDimension(asString(dim.name))).join(" · ") || null,
-    url: dimensions.find((dim) => asString(dim.name).startsWith("http"))?.name ?? null,
+function mapCanonicalSegmentRow(
+  row: CanonicalMetrikaSegmentRow,
+  segmentType: string,
+  totalVisits: number,
+): ZarukuSeoMetricRow {
+  const dimension1 = asString(row.segment_dimension_1).trim();
+  const dimension2 = asString(row.segment_dimension_2).trim();
+  const dimension3 = asString(row.segment_dimension_3).trim();
+  const dimension4 = asString(row.segment_dimension_4).trim();
+  const dimension5 = asString(row.segment_dimension_5).trim();
+  const visits = Math.round(asNumber(row.visits));
+  const common = {
     visits,
-    users: Math.round(asNumber(metrics[1])),
-    pageviews: Math.round(asNumber(metrics[2])),
-    bounce_rate: asNumber(metrics[3]),
-    avg_duration_seconds: asNumber(metrics[4]),
-    page_depth: asNumber(metrics[5]),
+    id: [segmentType, dimension1, dimension2, dimension3, dimension4, dimension5].filter(Boolean).join("|") || null,
+    users: Math.round(asNumber(row.users)),
+    pageviews: Math.round(asNumber(row.pageviews)),
+    bounce_rate: row.bounce_rate == null ? null : asNumber(row.bounce_rate),
+    avg_duration_seconds: row.avg_visit_duration_seconds == null ? null : asNumber(row.avg_visit_duration_seconds),
+    page_depth: row.page_depth == null ? null : asNumber(row.page_depth),
     share: totalVisits > 0 ? (visits / totalVisits) * 100 : 0,
-    source: "metrika",
-    layer: "onsite",
+    source: "metrika" as const,
+    layer: "onsite" as const,
+  };
+
+  const isHttpUrl = (value: string) => value.startsWith("http://") || value.startsWith("https://");
+  if (segmentType === "search_engines") {
+    return {
+      ...common,
+      label: readableMetrikaDimension(dimension1 || "Не указано"),
+    };
+  }
+  if (segmentType === "search_phrases") {
+    return {
+      ...common,
+      label: dimension1 || "Не указано",
+    };
+  }
+  if (segmentType === "organic_landing_pages") {
+    return {
+      ...common,
+      label: readableMetrikaDimension(dimension1 || "Не указано"),
+      secondary_label: dimension2 || null,
+      url: isHttpUrl(dimension2) ? dimension2 : null,
+    };
+  }
+  if (segmentType === "section_entrances") {
+    return {
+      ...common,
+      label: dimension1 || "Не указано",
+      url: isHttpUrl(dimension1) ? dimension1 : null,
+    };
+  }
+  if (segmentType === "map_city_demand") {
+    const url = isHttpUrl(dimension2) ? dimension2 : "";
+    return {
+      ...common,
+      label: dimension1 || "Не указано",
+      secondary_label: url || null,
+      url: url || null,
+    };
+  }
+  if (segmentType === "source_devices") {
+    return {
+      ...common,
+      label: readableMetrikaDimension(dimension1 || "Не указано"),
+      secondary_label: readableMetrikaDimension(dimension2 || "Не указано"),
+    };
+  }
+  return {
+    ...common,
+    label: readableMetrikaDimension(dimension1 || "Не указано"),
+    secondary_label: [dimension2, dimension3, dimension4, dimension5].filter(Boolean).map(readableMetrikaDimension).join(" · ") || null,
   };
 }
 
@@ -518,7 +561,7 @@ export function buildSourceFreshnessQuery(sourceKeys = SOURCE_FRESHNESS_CATALOG.
         FROM canonical_collector_runs r2
         INNER JOIN scoped_sources ss ON ss.source_key = r2.source_key
         WHERE r2.run_type = 'cron'
-          AND r2.status IN ('failed', 'partial')
+          AND r2.status = 'failed'
         GROUP BY r2.source_key
       ) latest ON latest.latest_error_id = r.id
     )
@@ -558,7 +601,7 @@ export function normalizeSourceFreshnessRow(row: SourceFreshnessDbRow, now = new
   const importedRowsText = formatEnglishInteger(rowsWritten);
   const status = asString(row.last_status) || null;
   const hasNewerProblem =
-    (status === "failed" || status === "partial") &&
+    status === "failed" &&
     lastFinishedDate != null &&
     (lastSuccessDate == null || lastFinishedDate.getTime() >= lastSuccessDate.getTime());
   const successAgeHours = lastSuccessDate ? (now.getTime() - lastSuccessDate.getTime()) / (60 * 60 * 1000) : Infinity;
@@ -783,76 +826,114 @@ async function queryReturningPages(counterIds: string[], from: string, to: strin
   }
 }
 
-async function fetchMetrikaReport(
+type SegmentQueryReport = {
+  ok: boolean;
+  rows: ZarukuSeoMetricRow[];
+  error?: string;
+};
+
+async function queryMetrikaSegments(
   counterIds: string[],
   from: string,
   to: string,
-  dimensions: string,
+  segmentType: string,
   limit = 20,
-  filters?: string,
-): Promise<MetrikaReport> {
-  const token = process.env.METRIKA_TOKEN ?? process.env.YANDEX_METRIKA_TOKEN;
-  if (!token) {
-    return { ok: false, rows: [], totals: [], error: "METRIKA_TOKEN is not configured" };
-  }
+): Promise<SegmentQueryReport> {
+  const queryPrimaryMetrikaSegments = async (): Promise<CanonicalMetrikaSegmentRow[]> => {
+    const sql = `
+      SELECT
+        COALESCE(segment_dimension_1, '') AS segment_dimension_1,
+        COALESCE(segment_dimension_2, '') AS segment_dimension_2,
+        COALESCE(segment_dimension_3, '') AS segment_dimension_3,
+        COALESCE(segment_dimension_4, '') AS segment_dimension_4,
+        COALESCE(segment_dimension_5, '') AS segment_dimension_5,
+        COALESCE(SUM(visits), 0) AS visits,
+        COALESCE(SUM(users), 0) AS users,
+        COALESCE(SUM(pageviews), 0) AS pageviews,
+        CASE WHEN COALESCE(SUM(visits), 0) > 0 THEN SUM(COALESCE(bounce_rate, 0) * visits) / SUM(visits) ELSE NULL END AS bounce_rate,
+        CASE WHEN COALESCE(SUM(visits), 0) > 0 THEN SUM(COALESCE(avg_visit_duration_seconds, 0) * visits) / SUM(visits) ELSE NULL END AS avg_visit_duration_seconds,
+        CASE WHEN COALESCE(SUM(visits), 0) > 0 THEN SUM(COALESCE(page_depth, 0) * visits) / SUM(visits) ELSE NULL END AS page_depth
+      FROM canonical_fact_metrika_segments_daily
+      WHERE source_key = ?
+        AND analytics_account_id IN (${buildInClause(counterIds)})
+        AND segment_type = ?
+        AND report_date >= ?
+        AND report_date <= ?
+      GROUP BY
+        segment_dimension_1,
+        segment_dimension_2,
+        segment_dimension_3,
+        segment_dimension_4,
+        segment_dimension_5
+      HAVING visits > 0 OR users > 0 OR pageviews > 0
+      ORDER BY visits DESC
+      LIMIT ?
+    `;
+    const [rows] = await pool.execute<CanonicalMetrikaSegmentRow[]>(
+      sql,
+      [SOURCE_KEY, ...counterIds, segmentType, from, to, limit],
+    );
+    return rows;
+  };
+
+  const queryLegacyBreakdownSegments = async (): Promise<CanonicalMetrikaSegmentRow[]> => {
+    const sql = `
+      SELECT
+        report_key AS segment_type,
+        COALESCE(dimension_1_value, '') AS segment_dimension_1,
+        COALESCE(NULLIF(dimension_2_value, ''), COALESCE(page_url, '')) AS segment_dimension_2,
+        '' AS segment_dimension_3,
+        '' AS segment_dimension_4,
+        '' AS segment_dimension_5,
+        COALESCE(SUM(visits), 0) AS visits,
+        COALESCE(SUM(users), 0) AS users,
+        COALESCE(SUM(pageviews), 0) AS pageviews,
+        CASE WHEN COALESCE(SUM(visits), 0) > 0 THEN SUM(COALESCE(bounce_rate, 0) * visits) / SUM(visits) ELSE NULL END AS bounce_rate,
+        CASE WHEN COALESCE(SUM(visits), 0) > 0 THEN SUM(COALESCE(avg_visit_duration_seconds, 0) * visits) / SUM(visits) ELSE NULL END AS avg_visit_duration_seconds,
+        CASE WHEN COALESCE(SUM(visits), 0) > 0 THEN SUM(COALESCE(page_depth, 0) * visits) / SUM(visits) ELSE NULL END AS page_depth
+      FROM canonical_fact_metrika_breakdowns_daily
+      WHERE source_key = ?
+        AND analytics_account_id IN (${buildInClause(counterIds)})
+        AND segment_key = 'russia'
+        AND row_kind = 'detail'
+        AND report_key = ?
+        AND report_date >= ?
+        AND report_date <= ?
+      GROUP BY
+        segment_dimension_1,
+        segment_dimension_2
+      HAVING visits > 0 OR users > 0 OR pageviews > 0
+      ORDER BY visits DESC
+      LIMIT ?
+    `;
+    const [rows] = await pool.execute<CanonicalMetrikaSegmentRow[]>(
+      sql,
+      [SOURCE_KEY, ...counterIds, segmentType, from, to, limit],
+    );
+    return rows;
+  };
+
   try {
-    const params = buildMetrikaReportParams({
-      counterId: counterIds[0] ?? "66624469",
-      from,
-      to,
-      dimensions,
-      limit,
-      filters,
-    });
-    const response = await fetch(`${METRIKA_API_URL}?${params.toString()}`, {
-      headers: { Authorization: `OAuth ${token}` },
-      cache: "no-store",
-    });
-    if (!response.ok) {
-      return { ok: false, rows: [], totals: [], error: `${response.status} ${await response.text()}`.slice(0, 300) };
+    const rows = await queryPrimaryMetrikaSegments();
+    if (rows.length > 0) {
+      const totalVisits = rows.reduce<number>((acc, row) => acc + asNumber(row.visits), 0);
+      return {
+        ok: true,
+        rows: rows.map((row) => mapCanonicalSegmentRow(row, segmentType, totalVisits)),
+      };
     }
-    const payload = (await response.json()) as { data?: MetrikaReportRow[]; totals?: number[] };
-    const totals = (payload.totals ?? []).map(asNumber);
-    const totalVisits = asNumber(totals[0]);
+
+    const fallbackRows = await queryLegacyBreakdownSegments();
+    const fallbackTotalVisits = fallbackRows.reduce<number>((acc, row) => acc + asNumber(row.visits), 0);
     return {
       ok: true,
-      totals,
-      rows: (payload.data ?? []).map((item) => rowFromMetrika(item, totalVisits)),
+      rows: fallbackRows.map((row) => mapCanonicalSegmentRow(row, segmentType, fallbackTotalVisits)),
     };
   } catch (error) {
-    return { ok: false, rows: [], totals: [], error: error instanceof Error ? error.message : String(error) };
+    return { ok: false, rows: [], error: error instanceof Error ? error.message : String(error) };
   }
 }
 
-function sleep(ms: number) {
-  return new Promise((resolve) => setTimeout(resolve, ms));
-}
-
-async function fetchMetrikaReportsSequential(
-  counterIds: string[],
-  from: string,
-  to: string,
-  reports: Array<{ key: string; dimensions: string; limit?: number; filters?: string }>,
-) {
-  const result = new Map<string, MetrikaReport>();
-  for (const report of reports) {
-    result.set(
-      report.key,
-      await fetchMetrikaReport(
-        counterIds,
-        from,
-        to,
-        report.dimensions,
-        report.limit ?? 20,
-        report.filters ?? ZARUKU_RUSSIA_FILTER,
-      ),
-    );
-    await sleep(180);
-  }
-  return result;
-}
-
-const EMPTY_REPORT: MetrikaReport = { ok: false, rows: [], totals: [], error: "Report was not requested" };
 
 export function buildContentSections(pageRows: ZarukuSeoMetricRow[], patterns: ZarukuSeoSectionPattern[]) {
   type SectionAccumulator = ZarukuSeoMetricRow & {
@@ -1163,33 +1244,21 @@ export async function loadZarukuSeoData(counterIds: string[], from: string, to: 
   ]);
   const { trafficChannels, technicalTail } = splitTrafficRows(trafficRowsRaw);
 
-  const metrikaReports = await fetchMetrikaReportsSequential(normalizedCounterIds, from, to, [
-    { key: "searchEngines", dimensions: "ym:s:searchEngine", limit: 12 },
-    { key: "searchPhrases", dimensions: "ym:s:searchPhrase", limit: 30 },
-    { key: "organicLanding", dimensions: "ym:s:searchEngine,ym:s:startURL", limit: 30 },
-    { key: "sectionEntrances", dimensions: "ym:s:startURL", limit: 10000 },
-    { key: "mapCityDemand", dimensions: "ym:s:regionCity,ym:s:startURL", limit: 10000 },
-    { key: "devices", dimensions: "ym:s:deviceCategory", limit: 8 },
-    { key: "browsers", dimensions: "ym:s:browser", limit: 10 },
-    { key: "os", dimensions: "ym:s:operatingSystem", limit: 10 },
-    { key: "age", dimensions: "ym:s:ageInterval", limit: 8 },
-    { key: "gender", dimensions: "ym:s:gender", limit: 4 },
-    { key: "interests", dimensions: "ym:s:interest", limit: 12 },
-    { key: "sourceDevices", dimensions: "ym:s:lastTrafficSource,ym:s:deviceCategory", limit: 20 },
-  ]);
-
-  const searchEnginesReport = metrikaReports.get("searchEngines") ?? EMPTY_REPORT;
-  const searchPhrasesReport = metrikaReports.get("searchPhrases") ?? EMPTY_REPORT;
-  const organicLandingReport = metrikaReports.get("organicLanding") ?? EMPTY_REPORT;
-  const sectionEntrancesReport = metrikaReports.get("sectionEntrances") ?? EMPTY_REPORT;
-  const mapCityDemandReport = metrikaReports.get("mapCityDemand") ?? EMPTY_REPORT;
-  const devicesReport = metrikaReports.get("devices") ?? EMPTY_REPORT;
-  const browsersReport = metrikaReports.get("browsers") ?? EMPTY_REPORT;
-  const osReport = metrikaReports.get("os") ?? EMPTY_REPORT;
-  const ageReport = metrikaReports.get("age") ?? EMPTY_REPORT;
-  const genderReport = metrikaReports.get("gender") ?? EMPTY_REPORT;
-  const interestsReport = metrikaReports.get("interests") ?? EMPTY_REPORT;
-  const sourceDevicesReport = metrikaReports.get("sourceDevices") ?? EMPTY_REPORT;
+  const [searchEnginesReport, searchPhrasesReport, organicLandingReport, sectionEntrancesReport, mapCityDemandReport, devicesReport, browsersReport, osReport, ageReport, genderReport, interestsReport, sourceDevicesReport] =
+    await Promise.all([
+      queryMetrikaSegments(normalizedCounterIds, from, to, "search_engines", 12),
+      queryMetrikaSegments(normalizedCounterIds, from, to, "search_phrases", 30),
+      queryMetrikaSegments(normalizedCounterIds, from, to, "organic_landing_pages", 30),
+      queryMetrikaSegments(normalizedCounterIds, from, to, "section_entrances", 10000),
+      queryMetrikaSegments(normalizedCounterIds, from, to, "map_city_demand", 10000),
+      queryMetrikaSegments(normalizedCounterIds, from, to, "devices", 8),
+      queryMetrikaSegments(normalizedCounterIds, from, to, "browsers", 10),
+      queryMetrikaSegments(normalizedCounterIds, from, to, "operating_systems", 10),
+      queryMetrikaSegments(normalizedCounterIds, from, to, "age", 8),
+      queryMetrikaSegments(normalizedCounterIds, from, to, "gender", 4),
+      queryMetrikaSegments(normalizedCounterIds, from, to, "interests", 12),
+      queryMetrikaSegments(normalizedCounterIds, from, to, "source_devices", 20),
+    ]);
 
   const reports = [
     searchEnginesReport,
@@ -1207,7 +1276,7 @@ export async function loadZarukuSeoData(counterIds: string[], from: string, to: 
   ];
   const metrikaErrors = reports.flatMap((report) => (report.ok ? [] : [report.error ?? "Metrika API unavailable"]));
   const organicVisits = trafficChannels.find((row) => row.label === "Поиск")?.visits ?? 0;
-  const searchPhraseVisits = asNumber(searchPhrasesReport.totals[0]);
+  const searchPhraseVisits = searchPhrasesReport.rows.reduce((sum, row) => sum + row.visits, 0);
   const entryPageRows = sectionEntrancesReport.ok ? enrichRowsWithPageTitles(sectionEntrancesReport.rows, pageRows) : [];
   const pageCollections = buildPageCollections(
     pageRows,
@@ -1273,7 +1342,7 @@ export async function loadZarukuSeoData(counterIds: string[], from: string, to: 
     metrics,
     fallbackMessage: coverageMessage(actualTo),
   });
-  const liveMeta = (report: MetrikaReport, rowCount: number) => makeZarukuDatasetMeta({
+  const segmentMeta = (report: SegmentQueryReport, rowCount: number) => makeZarukuDatasetMeta({
     rowCount,
     sourceAvailable: report.ok,
     fallbackVisible: false,
@@ -1286,7 +1355,7 @@ export async function loadZarukuSeoData(counterIds: string[], from: string, to: 
   });
   const contentUsesLiveVisits = entryPageRows.length > 0;
   const contentFallbackMessage = contentUsesLiveVisits
-    ? "Страница объединяет unsegmented canonical page facts и RF entry-page metrics."
+    ? "Страница объединяет unsegmented canonical page facts и canonical segment rows для entry-page."
     : "Показаны canonical page facts; визиты и поведенческие метрики входов недоступны.";
   const contentMeta = (rowCount: number) => makeZarukuDatasetMeta({
     rowCount,
@@ -1304,20 +1373,20 @@ export async function loadZarukuSeoData(counterIds: string[], from: string, to: 
     organic_trend: canonicalMeta(organicTrend.length, trafficActualTo, volumeMetrics),
     content_sections: contentMeta(pageCollections.contentSections.length),
     top_pages: contentMeta(pageCollections.topPages.length),
-    high_bounce_pages: liveMeta(sectionEntrancesReport, buildHighBouncePages(entryPageRows).length),
-    best_engagement_pages: liveMeta(sectionEntrancesReport, buildBestEngagementPages(entryPageRows).length),
+    high_bounce_pages: segmentMeta(sectionEntrancesReport, buildHighBouncePages(entryPageRows).length),
+    best_engagement_pages: segmentMeta(sectionEntrancesReport, buildBestEngagementPages(entryPageRows).length),
     returning_pages: canonicalMeta(returningPages.length, returningActualTo, returningMetrics),
-    search_engines: liveMeta(searchEnginesReport, searchEnginesReport.rows.length),
-    search_phrases: liveMeta(searchPhrasesReport, searchPhrasesReport.rows.length),
-    organic_landing_pages: liveMeta(organicLandingReport, organicLandingReport.rows.length),
-    map_city_demand: liveMeta(mapCityDemandReport, mapCityDemandReport.rows.length),
-    devices: liveMeta(devicesReport, devicesReport.rows.length),
-    source_devices: liveMeta(sourceDevicesReport, sourceDevicesReport.rows.length),
-    browsers: liveMeta(browsersReport, browsersReport.rows.length),
-    operating_systems: liveMeta(osReport, osReport.rows.length),
-    age: liveMeta(ageReport, ageReport.rows.length),
-    gender: liveMeta(genderReport, genderReport.rows.length),
-    interests: liveMeta(interestsReport, interestsReport.rows.length),
+    search_engines: segmentMeta(searchEnginesReport, searchEnginesReport.rows.length),
+    search_phrases: segmentMeta(searchPhrasesReport, searchPhrasesReport.rows.length),
+    organic_landing_pages: segmentMeta(organicLandingReport, organicLandingReport.rows.length),
+    map_city_demand: segmentMeta(mapCityDemandReport, mapCityDemandReport.rows.length),
+    devices: segmentMeta(devicesReport, devicesReport.rows.length),
+    source_devices: segmentMeta(sourceDevicesReport, sourceDevicesReport.rows.length),
+    browsers: segmentMeta(browsersReport, browsersReport.rows.length),
+    operating_systems: segmentMeta(osReport, osReport.rows.length),
+    age: segmentMeta(ageReport, ageReport.rows.length),
+    gender: segmentMeta(genderReport, genderReport.rows.length),
+    interests: segmentMeta(interestsReport, interestsReport.rows.length),
   } satisfies Record<ZarukuDatasetKey, ZarukuDatasetMeta>;
 
   return {

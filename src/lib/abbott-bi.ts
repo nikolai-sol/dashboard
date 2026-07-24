@@ -1886,7 +1886,7 @@ export function getDefaultAbbottCounterIds() {
 }
 
 export function getDefaultZarukuCounterIds() {
-  return ["66624469", "99078698"];
+  return ["66624469"];
 }
 
 async function loadPortalBiData(
