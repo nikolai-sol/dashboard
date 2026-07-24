@@ -1266,6 +1266,73 @@ def upsert_fact_site_analytics_daily(rows: list[dict]) -> int:
     return len(rows)
 
 
+def upsert_metrika_segment_rows(rows: list[dict]) -> int:
+    if not rows:
+        return 0
+    conn = get_db_connection()
+    cur = conn.cursor()
+    cur.executemany(
+        """
+        INSERT INTO canonical_fact_metrika_segments_daily (
+            source_key, analytics_account_id, report_date,
+            segment_type, segment_hash,
+            segment_dimension_1, segment_dimension_2, segment_dimension_3,
+            segment_dimension_4, segment_dimension_5,
+            visits, users, pageviews, bounce_rate, avg_visit_duration_seconds,
+            page_depth, raw_payload, ingestion_run_id
+        ) VALUES (
+            %s, %s, %s,
+            %s, %s,
+            %s, %s, %s, %s, %s,
+            %s, %s, %s, %s, %s, %s,
+            %s, %s
+        )
+        ON DUPLICATE KEY UPDATE
+            segment_dimension_1 = VALUES(segment_dimension_1),
+            segment_dimension_2 = VALUES(segment_dimension_2),
+            segment_dimension_3 = VALUES(segment_dimension_3),
+            segment_dimension_4 = VALUES(segment_dimension_4),
+            segment_dimension_5 = VALUES(segment_dimension_5),
+            visits = VALUES(visits),
+            users = VALUES(users),
+            pageviews = VALUES(pageviews),
+            bounce_rate = VALUES(bounce_rate),
+            avg_visit_duration_seconds = VALUES(avg_visit_duration_seconds),
+            page_depth = VALUES(page_depth),
+            raw_payload = VALUES(raw_payload),
+            ingestion_run_id = VALUES(ingestion_run_id),
+            updated_at = CURRENT_TIMESTAMP
+        """,
+        [
+            (
+                row['source_key'],
+                row['analytics_account_id'],
+                row['report_date'],
+                row['segment_type'],
+                row['segment_hash'],
+                row.get('segment_dimension_1'),
+                row.get('segment_dimension_2'),
+                row.get('segment_dimension_3'),
+                row.get('segment_dimension_4'),
+                row.get('segment_dimension_5'),
+                row.get('visits'),
+                row.get('users'),
+                row.get('pageviews'),
+                row.get('bounce_rate'),
+                row.get('avg_visit_duration_seconds'),
+                row.get('page_depth'),
+                _json_or_none(row.get('raw_payload')),
+                row.get('ingestion_run_id'),
+            )
+            for row in rows
+        ],
+    )
+    conn.commit()
+    cur.close()
+    conn.close()
+    return len(rows)
+
+
 def upsert_fact_user_behavior_daily(rows: list[dict]) -> int:
     if not rows:
         return 0

@@ -29,6 +29,7 @@ from canonical_writer import (
     log_run_event,
     publish_metrika_day_bundle,
     start_collector_run,
+    upsert_metrika_segment_rows,
     upsert_fact_site_analytics_daily,
     upsert_fact_user_behavior_daily,
     upsert_source_accounts,
@@ -164,6 +165,29 @@ METRIKA_RETURNING_METRICS = ','.join([
     'ym:s:upToWeekUserRecencyPercentage',
     'ym:s:upToMonthUserRecencyPercentage',
 ])
+METRIKA_SEGMENT_METRICS = ','.join([
+    'ym:s:visits',
+    'ym:s:users',
+    'ym:s:pageviews',
+    'ym:s:bounceRate',
+    'ym:s:avgVisitDurationSeconds',
+    'ym:s:pageDepth',
+])
+YANDEX_METRIKA_RUSSIA_FILTER = "ym:s:regionCountry=='Russia'"
+METRIKA_SEGMENT_DEFINITIONS = (
+    ('search_engines', 'ym:s:searchEngine', 12, False),
+    ('search_phrases', 'ym:s:searchPhrase', 30, False),
+    ('organic_landing_pages', 'ym:s:searchEngine,ym:s:startURL', 30, False),
+    ('section_entrances', 'ym:s:startURL', 10000, True),
+    ('map_city_demand', 'ym:s:regionCity,ym:s:startURL', 10000, True),
+    ('devices', 'ym:s:deviceCategory', 8, False),
+    ('browsers', 'ym:s:browser', 10, False),
+    ('operating_systems', 'ym:s:operatingSystem', 10, False),
+    ('age', 'ym:s:ageInterval', 8, False),
+    ('gender', 'ym:s:gender', 4, False),
+    ('interests', 'ym:s:interest', 12, False),
+    ('source_devices', 'ym:s:lastTrafficSource,ym:s:deviceCategory', 20, False),
+)
 
 
 class MetrikaCollectionError(RuntimeError):
@@ -501,6 +525,89 @@ def request_all_rows(
         )
     )
     return {'data': rows}
+
+
+def request_metrika_segment_rows(
+    counter_id: str,
+    day: str,
+    *,
+    dimensions: str,
+    limit: int,
+    use_full_scan: bool,
+    attribution: str,
+) -> dict:
+    if use_full_scan:
+        return request_all_rows(
+            counter_id,
+            day,
+            dimensions=dimensions,
+            metrics=METRIKA_SEGMENT_METRICS,
+            attribution=attribution,
+            extra_params={
+                'filters': YANDEX_METRIKA_RUSSIA_FILTER,
+                'accuracy': 'full',
+            },
+        )
+    return request_with_retry(
+        counter_id,
+        day,
+        dimensions=dimensions,
+        metrics=METRIKA_SEGMENT_METRICS,
+        attribution=attribution,
+        extra_params={
+            'filters': YANDEX_METRIKA_RUSSIA_FILTER,
+            'limit': str(limit),
+            'accuracy': 'full',
+        },
+    )
+
+
+def build_segment_rows(counter_id: str, day: str, segment_type: str, response: dict, run_id: int) -> list[dict]:
+    rows: list[dict] = []
+    for item in extract_rows(response):
+        dimensions = item.get('dimensions') or []
+        metrics = item.get('metrics') or []
+        metric_values = [
+            clean_dimension_name(dim.get('name')) if idx < len(dimensions) and isinstance(dimensions[idx], dict) else None
+            for idx in range(5)
+        ]
+        if not metric_values[0]:
+            continue
+        segment_hash = build_scope_hash(
+            segment_type,
+            [
+                counter_id,
+                day,
+                metric_values[0] or '',
+                metric_values[1] or '',
+                metric_values[2] or '',
+                metric_values[3] or '',
+                metric_values[4] or '',
+            ],
+        )
+        rows.append(
+            {
+                'source_key': SOURCE_KEY,
+                'analytics_account_id': counter_id,
+                'report_date': day,
+                'segment_type': segment_type,
+                'segment_hash': segment_hash,
+                'segment_dimension_1': metric_values[0],
+                'segment_dimension_2': metric_values[1],
+                'segment_dimension_3': metric_values[2],
+                'segment_dimension_4': metric_values[3],
+                'segment_dimension_5': metric_values[4],
+                'visits': safe_int(metric_value(metrics, 0)),
+                'users': safe_int(metric_value(metrics, 1)),
+                'pageviews': safe_int(metric_value(metrics, 2)),
+                'bounce_rate': safe_float(metric_value(metrics, 3)),
+                'avg_visit_duration_seconds': safe_float(metric_value(metrics, 4)),
+                'page_depth': safe_float(metric_value(metrics, 5)),
+                'raw_payload': item,
+                'ingestion_run_id': run_id,
+            }
+        )
+    return rows
 
 
 def extract_rows(data: dict) -> list[dict]:
@@ -1602,6 +1709,70 @@ def delete_existing_scope_rows(date_from: str, date_to: str, counter_ids: list[s
         conn.close()
 
 
+def ensure_metrika_segments_table():
+    conn = get_db_connection(MYSQL_DB)
+    cur = conn.cursor()
+    try:
+        cur.execute(
+            """
+            CREATE TABLE IF NOT EXISTS canonical_fact_metrika_segments_daily (
+                id BIGINT AUTO_INCREMENT PRIMARY KEY,
+                source_key VARCHAR(64) NOT NULL,
+                analytics_account_id VARCHAR(128) NOT NULL DEFAULT '',
+                report_date DATE NOT NULL,
+                segment_type VARCHAR(64) NOT NULL DEFAULT '',
+                segment_hash CHAR(64) NOT NULL,
+                segment_dimension_1 VARCHAR(255) DEFAULT NULL,
+                segment_dimension_2 VARCHAR(255) DEFAULT NULL,
+                segment_dimension_3 VARCHAR(255) DEFAULT NULL,
+                segment_dimension_4 VARCHAR(255) DEFAULT NULL,
+                segment_dimension_5 VARCHAR(255) DEFAULT NULL,
+                visits BIGINT DEFAULT NULL,
+                users BIGINT DEFAULT NULL,
+                pageviews BIGINT DEFAULT NULL,
+                bounce_rate DECIMAL(18,6) DEFAULT NULL,
+                avg_visit_duration_seconds DECIMAL(18,6) DEFAULT NULL,
+                page_depth DECIMAL(18,6) DEFAULT NULL,
+                raw_payload JSON DEFAULT NULL,
+                ingestion_run_id BIGINT DEFAULT NULL,
+                created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+                UNIQUE KEY uniq_canonical_fact_metrika_segments_daily (
+                    source_key, analytics_account_id, report_date, segment_type, segment_hash
+                ),
+                KEY idx_canonical_fact_metrika_segments_daily_source_date (source_key, report_date),
+                KEY idx_canonical_fact_metrika_segments_daily_account_date (analytics_account_id, report_date),
+                KEY idx_canonical_fact_metrika_segments_daily_type_date (segment_type, report_date),
+                KEY idx_canonical_fact_metrika_segments_daily_run (ingestion_run_id)
+            ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT='Canonical Metrika onsite segment facts; grain: 1 day x 1 segment combination'
+            """
+        )
+        conn.commit()
+    finally:
+        cur.close()
+        conn.close()
+
+
+def delete_existing_metrika_segment_rows(date_from: str, date_to: str, counter_ids: list[str]):
+    conn = get_db_connection(MYSQL_DB)
+    cur = conn.cursor()
+    try:
+        counter_clause, counter_params = counter_filter_sql(counter_ids)
+        cur.execute(
+            f"""
+            DELETE FROM canonical_fact_metrika_segments_daily
+            WHERE source_key = %s
+              AND report_date BETWEEN %s AND %s
+              {counter_clause}
+            """,
+            (SOURCE_KEY, date_from, date_to, *counter_params),
+        )
+        conn.commit()
+    finally:
+        cur.close()
+        conn.close()
+
+
 def ensure_user_behavior_table():
     conn = get_db_connection(MYSQL_DB)
     cur = conn.cursor()
@@ -1678,6 +1849,7 @@ def build_payload(counters: list[dict], date_from: str, date_to: str, run_id: in
     traffic_sources_rows: list[dict] = []
     page_rows: list[dict] = []
     user_behavior_rows: list[dict] = []
+    segment_rows: list[dict] = []
     rows_read = 0
     api_empty_rows = 0
     skipped_counters: list[dict[str, str]] = []
@@ -1754,6 +1926,20 @@ def build_payload(counters: list[dict], date_from: str, date_to: str, run_id: in
                         metrics=METRIKA_USER_BEHAVIOR_METRICS,
                         attribution=METRIKA_ATTRIBUTION,
                     )
+                segment_responses = [
+                    (
+                        segment_type,
+                        request_metrika_segment_rows(
+                            counter_id,
+                            day,
+                            dimensions=dimensions,
+                            limit=limit,
+                            use_full_scan=use_full_scan,
+                            attribution=METRIKA_ATTRIBUTION,
+                        ),
+                    )
+                    for segment_type, dimensions, limit, use_full_scan in METRIKA_SEGMENT_DEFINITIONS
+                ]
             except requests.exceptions.HTTPError as exc:
                 status_code = exc.response.status_code if exc.response is not None else None
                 if status_code in {403, 404}:
@@ -1771,6 +1957,7 @@ def build_payload(counters: list[dict], date_from: str, date_to: str, run_id: in
                     break
                 raise
             rows_read += 5 if collect_user_behavior else 4
+            rows_read += len(METRIKA_SEGMENT_DEFINITIONS)
             utm_rows_for_day = build_utm_ads_rows(counter_id, day, utm_ads_response, run_id)
             goals_rows_for_day = build_goals_rows(counter_id, day, goals_response, run_id)
             traffic_sources_rows_for_day = build_traffic_sources_rows(counter_id, day, traffic_sources_response, run_id)
@@ -1780,13 +1967,19 @@ def build_payload(counters: list[dict], date_from: str, date_to: str, run_id: in
                 if user_behavior_response is not None
                 else []
             )
-            if not utm_rows_for_day and not goals_rows_for_day and not traffic_sources_rows_for_day and not page_rows_for_day and not user_behavior_rows_for_day:
+            segment_rows_for_day: list[dict] = []
+            for segment_type, segment_response in segment_responses:
+                segment_rows_for_day.extend(
+                    build_segment_rows(counter_id, day, segment_type, segment_response, run_id)
+                )
+            if not utm_rows_for_day and not goals_rows_for_day and not traffic_sources_rows_for_day and not page_rows_for_day and not user_behavior_rows_for_day and not segment_rows_for_day:
                 api_empty_rows += 1
             utm_ads_rows.extend(utm_rows_for_day)
             goals_rows.extend(goals_rows_for_day)
             traffic_sources_rows.extend(traffic_sources_rows_for_day)
             page_rows.extend(page_rows_for_day)
             user_behavior_rows.extend(user_behavior_rows_for_day)
+            segment_rows.extend(segment_rows_for_day)
         if skip_counter:
             account_rows.pop(counter_id, None)
 
@@ -1796,6 +1989,7 @@ def build_payload(counters: list[dict], date_from: str, date_to: str, run_id: in
         'goals_rows': goals_rows,
         'traffic_sources_rows': traffic_sources_rows,
         'page_rows': page_rows,
+        'segment_rows': segment_rows,
         'user_behavior_rows': user_behavior_rows,
         'facts': utm_ads_rows + goals_rows + traffic_sources_rows + page_rows,
         'rows_read': rows_read,
@@ -1892,6 +2086,7 @@ def main() -> int:
             return 0
 
         ensure_user_behavior_table()
+        ensure_metrika_segments_table()
         counters = fetch_configured_counters(args.run_type, target_counter_ids)
         if target_counter_ids and not counters:
             raise RuntimeError(f'No active configured Metrika counters matched --counter-ids={",".join(target_counter_ids)}')
@@ -1899,10 +2094,12 @@ def main() -> int:
         collected_counter_ids = [clean_text(counter.get('counter_id')) for counter in counters if clean_text(counter.get('counter_id'))]
         delete_existing_scope_rows(date_from, date_to, collected_counter_ids)
         delete_existing_user_behavior_rows(date_from, date_to, collected_counter_ids)
+        delete_existing_metrika_segment_rows(date_from, date_to, collected_counter_ids)
         upsert_source_accounts(payload['accounts'])
         site_rows_written = upsert_fact_site_analytics_daily(payload['facts'])
         user_behavior_rows_written = upsert_fact_user_behavior_daily(payload['user_behavior_rows'])
-        rows_written = site_rows_written + user_behavior_rows_written
+        metrika_segment_rows_written = upsert_metrika_segment_rows(payload['segment_rows'])
+        rows_written = site_rows_written + user_behavior_rows_written + metrika_segment_rows_written
         rows_updated = rows_written
         rows_read = payload['rows_read']
         log_run_event(
@@ -1924,19 +2121,24 @@ def main() -> int:
                 'collected_counter_ids': collected_counter_ids,
                 'logical_scopes': [UTM_ADS_SCOPE_LOGICAL, GOALS_SCOPE_LOGICAL, TRAFFIC_SOURCES_SCOPE_LOGICAL, PAGES_SCOPE_LOGICAL],
                 'storage_scopes': [UTM_ADS_SCOPE_STORAGE, GOALS_SCOPE_STORAGE, TRAFFIC_SOURCES_SCOPE_STORAGE, PAGES_SCOPE_STORAGE],
+                'segment_scopes': tuple(segment[0] for segment in METRIKA_SEGMENT_DEFINITIONS),
                 'utm_ads_grain': 'date+counter_id+utm_source+utm_medium+utm_campaign',
                 'goals_grain': 'date+counter_id+utm_source+utm_medium+utm_campaign+goal_id',
                 'traffic_sources_grain': 'date+counter_id+traffic_source',
                 'pages_grain': 'date+counter_id+page_url+page_title',
                 'user_behavior_grain': 'date+counter_id+user_id+traffic_source+start_url+end_url',
+                'segment_grain': 'date+counter_id+segment_type+segment_hash',
                 'user_behavior_storage': 'canonical_fact_user_behavior_daily',
                 'utm_ads_rows': len(payload['utm_ads_rows']),
                 'goals_rows': len(payload['goals_rows']),
                 'traffic_sources_rows': len(payload['traffic_sources_rows']),
                 'page_rows': len(payload['page_rows']),
                 'user_behavior_rows': len(payload['user_behavior_rows']),
+                'segment_rows': len(payload['segment_rows']),
+                'segment_rows_written': metrika_segment_rows_written,
                 'site_rows_written': site_rows_written,
                 'user_behavior_rows_written': user_behavior_rows_written,
+                'metrika_segment_rows_written': metrika_segment_rows_written,
                 'collection_modes': payload['collection_modes'],
             },
         )
