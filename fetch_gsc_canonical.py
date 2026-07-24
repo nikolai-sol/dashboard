@@ -274,6 +274,12 @@ def collection_dates(
     return days
 
 
+def _effective_lag_cutoff(lag_days: int) -> str:
+    effective_anchor = datetime.now(timezone.utc).date()
+    cutoff = effective_anchor - timedelta(days=max(lag_days, 0) + 1)
+    return cutoff.strftime("%Y-%m-%d")
+
+
 def daterange(date_from: str, date_to: str) -> list[str]:
     start = datetime.strptime(date_from, "%Y-%m-%d").date()
     end = datetime.strptime(date_to, "%Y-%m-%d").date()
@@ -286,11 +292,28 @@ def daterange(date_from: str, date_to: str) -> list[str]:
 
 
 def selected_dates(args) -> list[str]:
+    effective_lag_cutoff = _effective_lag_cutoff(getattr(args, "lag_days", DEFAULT_GSC_LAG_DAYS))
     if args.date_from or args.date_to:
-        today = datetime.now(timezone.utc).date()
-        date_to = args.date_to or (today - timedelta(days=1)).strftime("%Y-%m-%d")
+        date_to = args.date_to or effective_lag_cutoff
         date_from = args.date_from or date_to
-        return daterange(date_from, date_to)
+
+        if datetime.strptime(date_from, "%Y-%m-%d").date() > datetime.strptime(effective_lag_cutoff, "%Y-%m-%d").date():
+            return []
+
+        clamped_date_to = (
+            effective_lag_cutoff
+            if datetime.strptime(date_to, "%Y-%m-%d").date() > datetime.strptime(effective_lag_cutoff, "%Y-%m-%d").date()
+            else date_to
+        )
+        if date_to != clamped_date_to:
+            log.warning(
+                "Truncating GSC date range by lag: requested date_to=%s, using cutoff=%s",
+                date_to,
+                clamped_date_to,
+            )
+        if datetime.strptime(date_from, "%Y-%m-%d").date() > datetime.strptime(clamped_date_to, "%Y-%m-%d").date():
+            return []
+        return daterange(date_from, clamped_date_to)
     return collection_dates(backfill_days=args.backfill_days, lag_days=args.lag_days)
 
 
@@ -781,6 +804,15 @@ def collect(args) -> dict[str, Any]:
     if env_first("GSC_ENABLED", default="true").lower() == "false":
         return {"status": "skipped", "rows_read": 0, "rows_written": 0}
     dates = selected_dates(args)
+    if not dates:
+        return {
+            "status": "skipped",
+            "rows_read": 0,
+            "rows_written": 0,
+            "dates": dates,
+            "optional_failure_count": 0,
+            "optional_failures": [],
+        }
     if args.run_type == "cron" and not args.force and cron_run_already_completed():
         log.info("Skipping cron run: completed daily run already exists today")
         return {"status": "skipped_quota", "rows_read": 0, "rows_written": 0, "dates": dates}
@@ -863,7 +895,7 @@ def collect(args) -> dict[str, Any]:
                     },
                 )
         upsert_accounts(account_rows)
-        status = "partial" if optional_failures else "success"
+        status = "success"
         failure_summary = json.dumps(optional_failures, ensure_ascii=False)[:1000] if optional_failures else None
         if optional_failures:
             log_collector_event(
@@ -879,7 +911,7 @@ def collect(args) -> dict[str, Any]:
             rows_read,
             rows_written,
             rows_written,
-            len(optional_failures),
+            len(optional_failures) if optional_failures else 0,
             failure_summary,
         )
         return {

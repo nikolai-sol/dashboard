@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import argparse
 import hashlib
+import json
 import html
 import logging
 import os
@@ -838,6 +839,140 @@ def build_user_behavior_rows(counter_id: str, day: str, response: dict, run_id: 
     return rows
 
 
+def _canonical_user_id(raw_user_id: str | None, client_id: str | None) -> str:
+    normalized_user_id = clean_text(raw_user_id)
+    if normalized_user_id:
+        return normalized_user_id
+    normalized_client_id = clean_text(client_id)
+    if normalized_client_id:
+        return _sha256(normalized_client_id)
+    return 'anonymous'
+
+
+def build_user_behavior_rows_from_logs(
+    counter_id: str,
+    day: str,
+    visits: Collection[dict[str, Any]],
+    run_id: int,
+) -> list[dict]:
+    grouped: dict[tuple[str, str, str, str], dict[str, Any]] = {}
+    for visit in visits:
+        if not isinstance(visit, Mapping):
+            raise MetrikaCollectionError('Metrika Logs visit row is invalid')
+        visit_id = visit.get('visit_id')
+        date_time = visit.get('date_time')
+        start_url = clean_text(visit.get('start_url'))
+        end_url = clean_text(visit.get('end_url'))
+        traffic_source = clean_text(visit.get('traffic_source'))
+        raw_user_id = clean_text(visit.get('raw_user_id'))
+        client_id = clean_text(visit.get('client_id'))
+        page_views = visit.get('page_views')
+        visit_duration = visit.get('visit_duration')
+        bounce = visit.get('bounce')
+
+        if (
+            not isinstance(visit_id, str)
+            or not visit_id.strip()
+            or not isinstance(date_time, str)
+            or not isinstance(start_url, str)
+            or not isinstance(end_url, str)
+            or not isinstance(traffic_source, str)
+            or not traffic_source.strip()
+            or not isinstance(page_views, int)
+            or isinstance(page_views, bool)
+            or page_views < 0
+            or not isinstance(visit_duration, int)
+            or isinstance(visit_duration, bool)
+            or visit_duration < 0
+            or not isinstance(bounce, int)
+            or isinstance(bounce, bool)
+            or bounce not in (0, 1)
+        ):
+            raise MetrikaCollectionError('Metrika Logs visit row is invalid')
+
+        try:
+            session_started_at = datetime.strptime(date_time, '%Y-%m-%d %H:%M:%S')
+        except ValueError:
+            raise MetrikaCollectionError('Metrika Logs visit row is invalid') from None
+        if session_started_at.strftime('%Y-%m-%d') != day:
+            raise MetrikaCollectionError('Metrika Logs visit row is invalid')
+
+        user_id = _canonical_user_id(raw_user_id, client_id)
+        bucket_key = (user_id, traffic_source, start_url, end_url)
+        bucket = grouped.get(bucket_key)
+        if bucket is None:
+            bucket = {
+                'counter_id': counter_id,
+                'report_date': day,
+                'user_id': user_id,
+                'traffic_source_id': None,
+                'traffic_source': traffic_source,
+                'start_url': start_url,
+                'end_url': end_url,
+                'visits': 0,
+                'users': 0,
+                'new_users': None,
+                'page_depth_sum': 0,
+                'page_views_count': 0,
+                'avg_visit_duration_sum': 0,
+                'bounce_count': 0,
+                'ingestion_run_id': run_id,
+            }
+            grouped[bucket_key] = bucket
+
+        bucket['visits'] += 1
+        bucket['users'] += 1
+        bucket['page_depth_sum'] += page_views
+        bucket['page_views_count'] += 1
+        bucket['avg_visit_duration_sum'] += visit_duration
+        bucket['bounce_count'] += bounce
+
+    rows: list[dict] = []
+    for bucket in grouped.values():
+        visits_count = bucket['visits']
+        if not isinstance(visits_count, int) or visits_count <= 0:
+            continue
+        rows.append(
+            {
+                'source_key': SOURCE_KEY,
+                'analytics_account_id': bucket['counter_id'],
+                'report_date': day,
+                'scope_hash': build_scope_hash(
+                    USER_BEHAVIOR_SCOPE_LOGICAL,
+                    [
+                        counter_id,
+                        day,
+                        bucket['user_id'] or '',
+                        bucket['traffic_source_id'] or '',
+                        bucket['traffic_source'] or '',
+                        bucket['start_url'] or '',
+                        bucket['end_url'] or '',
+                    ],
+                ),
+                'user_id': bucket['user_id'],
+                'traffic_source_id': bucket['traffic_source_id'],
+                'traffic_source': bucket['traffic_source'],
+                'start_url': bucket['start_url'],
+                'end_url': bucket['end_url'],
+                'visits': visits_count,
+                'users': bucket['users'],
+                'new_users': bucket['new_users'],
+                'page_depth': safe_float(bucket['page_depth_sum']) / safe_float(bucket['page_views_count'])
+                if bucket['page_views_count']
+                else 0.0,
+                'bounce_rate': safe_float(bucket['bounce_count']) / safe_float(visits_count) * 100 if visits_count else 0.0,
+                'avg_visit_duration_seconds': safe_float(bucket['avg_visit_duration_sum']) / safe_float(visits_count)
+                if visits_count
+                else 0.0,
+                'up_to_day_user_recency_percentage': None,
+                'up_to_week_user_recency_percentage': None,
+                'up_to_month_user_recency_percentage': None,
+                'ingestion_run_id': bucket['ingestion_run_id'],
+            }
+        )
+    return rows
+
+
 def _sha256(value: str) -> str:
     return hashlib.sha256(value.encode('utf-8')).hexdigest()
 
@@ -1067,8 +1202,10 @@ def _collect_metrika_visits(
     counter_id: str,
     day: str,
     client_factory: Callable[[str], Any] | None = None,
+    *,
+    require_abbott: bool = False,
 ) -> tuple[dict, ...]:
-    if counter_id != ABBOTT_COUNTER_ID:
+    if require_abbott and counter_id != ABBOTT_COUNTER_ID:
         raise MetrikaCollectionError('Abbott release collection requires the Abbott counter')
     try:
         parsed_day = datetime.strptime(day, '%Y-%m-%d')
@@ -1195,7 +1332,12 @@ def collect_user_behavior_scope(
             parser_version,
         ],
     )
-    visits = _collect_metrika_visits(counter_id, day, logs_client_factory)
+    visits = _collect_metrika_visits(
+        counter_id,
+        day,
+        logs_client_factory,
+        require_abbott=True,
+    )
     rows = _release_metrika_visit_rows(
         counter_id,
         day,
@@ -1853,6 +1995,7 @@ def build_payload(counters: list[dict], date_from: str, date_to: str, run_id: in
     rows_read = 0
     api_empty_rows = 0
     skipped_counters: list[dict[str, str]] = []
+    segment_failures: list[dict[str, Any]] = []
     collection_modes: dict[str, int] = {}
 
     for counter in counters:
@@ -1918,28 +2061,96 @@ def build_payload(counters: list[dict], date_from: str, date_to: str, run_id: in
                     extra_params={'accuracy': 'full'},
                 )
                 user_behavior_response = None
+                user_behavior_rows_for_day: list[dict] = []
                 if collect_user_behavior:
-                    user_behavior_response = request_with_retry(
-                        counter_id,
-                        day,
-                        dimensions=METRIKA_USER_BEHAVIOR_DIMS,
-                        metrics=METRIKA_USER_BEHAVIOR_METRICS,
-                        attribution=METRIKA_ATTRIBUTION,
-                    )
-                segment_responses = [
-                    (
-                        segment_type,
-                        request_metrika_segment_rows(
+                    try:
+                        raw_user_behavior_rows: list[dict] = []
+                        user_behavior_response = request_with_retry(
                             counter_id,
                             day,
-                            dimensions=dimensions,
-                            limit=limit,
-                            use_full_scan=use_full_scan,
+                            dimensions=METRIKA_USER_BEHAVIOR_DIMS,
+                            metrics=METRIKA_USER_BEHAVIOR_METRICS,
                             attribution=METRIKA_ATTRIBUTION,
-                        ),
-                    )
-                    for segment_type, dimensions, limit, use_full_scan in METRIKA_SEGMENT_DEFINITIONS
-                ]
+                        )
+                        raw_user_behavior_rows = extract_rows(user_behavior_response)
+                        if counter_id != ABBOTT_COUNTER_ID and not raw_user_behavior_rows:
+                            try:
+                                user_behavior_rows_for_day = build_user_behavior_rows_from_logs(
+                                    counter_id,
+                                    day,
+                                    _collect_metrika_visits(counter_id, day),
+                                    run_id,
+                                )
+                                if user_behavior_rows_for_day:
+                                    log.info(
+                                        'Fell back to Metrika Logs for user behavior (no API rows) for counter %s on %s',
+                                        counter_id,
+                                        day,
+                                    )
+                                    user_behavior_response = None
+                            except MetrikaCollectionError:
+                                user_behavior_rows_for_day = []
+                    except requests.exceptions.HTTPError as user_behavior_exc:
+                        status_code = (
+                            user_behavior_exc.response.status_code
+                            if user_behavior_exc.response is not None
+                            else None
+                        )
+                        if status_code == 400:
+                            user_behavior_rows_for_day = build_user_behavior_rows_from_logs(
+                                counter_id,
+                                day,
+                                _collect_metrika_visits(counter_id, day),
+                                run_id,
+                            )
+                            log.info(
+                                'Fell back to Metrika Logs for user behavior for counter %s on %s (http_%s)',
+                                counter_id,
+                                day,
+                                status_code,
+                            )
+                            user_behavior_response = None
+                        else:
+                            raise
+                segment_responses: list[tuple[str, dict[str, Any]]] = []
+                for segment_type, dimensions, limit, use_full_scan in METRIKA_SEGMENT_DEFINITIONS:
+                    try:
+                        segment_responses.append(
+                            (
+                                segment_type,
+                                request_metrika_segment_rows(
+                                    counter_id,
+                                    day,
+                                    dimensions=dimensions,
+                                    limit=limit,
+                                    use_full_scan=use_full_scan,
+                                    attribution=METRIKA_ATTRIBUTION,
+                                ),
+                            )
+                        )
+                    except requests.exceptions.HTTPError as segment_exc:
+                        status_code = segment_exc.response.status_code if segment_exc.response is not None else None
+                        if status_code in {400, 403, 404, 429}:
+                            segment_failures.append(
+                                {
+                                    'counter_id': counter_id,
+                                    'counter_name': counter_name,
+                                    'segment_type': segment_type,
+                                    'day': day,
+                                    'status_code': status_code,
+                                    'collection_mode': collection_mode,
+                                }
+                            )
+                            log.warning(
+                                'Skip segment %s for Metrika counter %s (%s): status_%s on %s',
+                                segment_type,
+                                counter_id,
+                                counter_name,
+                                status_code,
+                                day,
+                            )
+                            continue
+                        raise
             except requests.exceptions.HTTPError as exc:
                 status_code = exc.response.status_code if exc.response is not None else None
                 if status_code in {403, 404}:
@@ -1962,11 +2173,12 @@ def build_payload(counters: list[dict], date_from: str, date_to: str, run_id: in
             goals_rows_for_day = build_goals_rows(counter_id, day, goals_response, run_id)
             traffic_sources_rows_for_day = build_traffic_sources_rows(counter_id, day, traffic_sources_response, run_id)
             page_rows_for_day = build_page_rows(counter_id, day, pages_response, run_id)
-            user_behavior_rows_for_day = (
-                build_user_behavior_rows(counter_id, day, user_behavior_response, run_id)
-                if user_behavior_response is not None
-                else []
-            )
+            if user_behavior_rows_for_day == []:
+                user_behavior_rows_for_day = (
+                    build_user_behavior_rows(counter_id, day, user_behavior_response, run_id)
+                    if user_behavior_response is not None
+                    else []
+                )
             segment_rows_for_day: list[dict] = []
             for segment_type, segment_response in segment_responses:
                 segment_rows_for_day.extend(
@@ -1996,6 +2208,7 @@ def build_payload(counters: list[dict], date_from: str, date_to: str, run_id: in
         'api_empty_rows': api_empty_rows,
         'counters': len(account_rows),
         'skipped_counters': skipped_counters,
+        'segment_failures': segment_failures,
         'collection_modes': collection_modes,
     }
 
@@ -2117,6 +2330,8 @@ def main() -> int:
                 'rows_updated': rows_updated,
                 'api_empty_rows': payload['api_empty_rows'],
                 'skipped_counters': payload['skipped_counters'],
+                'segment_failures': payload['segment_failures'],
+                'segment_failure_count': len(payload['segment_failures']),
                 'target_counter_ids': target_counter_ids,
                 'collected_counter_ids': collected_counter_ids,
                 'logical_scopes': [UTM_ADS_SCOPE_LOGICAL, GOALS_SCOPE_LOGICAL, TRAFFIC_SOURCES_SCOPE_LOGICAL, PAGES_SCOPE_LOGICAL],
@@ -2142,14 +2357,30 @@ def main() -> int:
                 'collection_modes': payload['collection_modes'],
             },
         )
+        failed_counter_rows = len(payload['skipped_counters']) + len(payload['segment_failures'])
+        run_status = 'success'
+        if payload['counters'] == 0:
+            run_status = 'failed'
+        elif failed_counter_rows:
+            run_status = 'partial'
+
+        if payload['segment_failures']:
+            log_run_event(
+                run_id,
+                'WARNING',
+                'segment_failures',
+                'One or more Metrika segment requests were skipped',
+                {'segment_failures': payload['segment_failures']},
+            )
+
         finish_collector_run(
             run_id,
-            status='success',
+            status=run_status,
             rows_read=rows_read,
             rows_written=rows_written,
             rows_updated=rows_updated,
-            error_count=0,
-            error_summary=None,
+            error_count=failed_counter_rows,
+            error_summary=(json.dumps(payload['skipped_counters'] + payload['segment_failures'], ensure_ascii=False)[:1000] if failed_counter_rows else None),
         )
         log.info(
             'Yandex Metrika canonical sync complete: counters=%s rows_read=%s rows_written=%s window=%s..%s',
