@@ -923,13 +923,6 @@ export default function ZarukuSeoDashboard({ data, locale = "ru-RU" }: Props) {
                 <CurrentIcon className="mt-1 h-5 w-5 text-teal-600" />
                 <div>
                   <h2 className="text-lg font-semibold text-slate-950">{activeNav.label}</h2>
-                  <div className="mt-0.5 flex flex-wrap items-center gap-2 text-xs text-slate-500">
-                    <span>{data.domain}</span>
-                    <span>·</span>
-                    <span>счётчик {data.counters.join(", ")}</span>
-                    <span>·</span>
-                    <span>{data.period.from} — {data.period.to}</span>
-                  </div>
                 </div>
               </div>
             </div>
