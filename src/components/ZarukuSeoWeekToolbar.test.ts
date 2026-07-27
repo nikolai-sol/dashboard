@@ -36,3 +36,19 @@ test("disables comparison mode when fewer than two weeks are available", () => {
 
   assert.match(html, /<button(?=[^>]*disabled="")(?=[^>]*aria-pressed="false")[^>]*>Сравнить<\/button>/);
 });
+
+test("keeps the week controls stacked until the content column is wide enough", () => {
+  const html = renderToStaticMarkup(createElement(ZarukuSeoWeekToolbar, {
+    weeks: ["2026-W01", "2026-W02"],
+    primaryWeek: "2026-W02",
+    comparisonWeek: "2026-W01",
+    comparisonEnabled: true,
+    onComparisonEnabledChange() {},
+    onPrimaryWeekChange() {},
+    onComparisonWeekChange() {},
+    onComparePrevious() {},
+  }));
+
+  assert.match(html, /lg:grid-cols-\[auto_minmax\(10rem,1fr\)_minmax\(10rem,1fr\)_2rem\]/);
+  assert.doesNotMatch(html, /sm:grid-cols-\[auto_minmax\(10rem,1fr\)_minmax\(10rem,1fr\)_2rem\]/);
+});

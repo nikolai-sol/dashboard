@@ -137,7 +137,7 @@ export default function ZarukuSeoPageComparison({ rows, seoWeek, sourceWeeks, so
 
       <ZarukuTableFrame mode="comparison" label="Сравнение посадочных страниц" className="rounded-none border-x-0 border-y-0">
         <table className="w-[1320px] table-fixed border-separate border-spacing-0 text-sm">
-          <thead className="sticky top-0 z-10 bg-white shadow-[0_1px_0_0_#e2e8f0]">
+          <thead className="sticky top-0 z-10 bg-white shadow-[0_1px_0_0_var(--border)]">
             <tr className="text-xs font-semibold text-slate-600">
               <th rowSpan={2} className="w-[360px] border-r border-slate-100 bg-white px-4 py-3 text-left align-bottom">Страница</th>
               <th colSpan={4} className="w-[225px] border-r border-slate-100 bg-blue-50/70 px-3 py-2 text-center">

@@ -5,7 +5,7 @@ export type ZarukuTableFrameMode = "compact" | "standard" | "operational" | "com
 type Props = {
   mode: ZarukuTableFrameMode;
   label: string;
-  children: ReactNode;
+  children?: ReactNode;
   className?: string;
 };
 

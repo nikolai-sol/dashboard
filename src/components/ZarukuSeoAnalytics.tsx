@@ -196,7 +196,7 @@ export default function ZarukuSeoAnalytics({ seoOs, primaryWeek, comparisonWeek,
               <col className="w-[23%]" />
               <col className="w-[12%]" />
             </colgroup>
-            <thead className="sticky top-0 z-10 bg-slate-50 text-left text-xs uppercase text-slate-400 shadow-[0_1px_0_0_rgb(241_245_249)]">
+            <thead className="sticky top-0 z-10 bg-slate-50 text-left text-xs uppercase text-slate-400 shadow-[0_1px_0_0_var(--border)]">
               <tr>
                 <th className="px-3 py-2.5 font-medium">Раздел</th>
                 <th className="px-3 py-2.5 font-medium">Запрос</th>

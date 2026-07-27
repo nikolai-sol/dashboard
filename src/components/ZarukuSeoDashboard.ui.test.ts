@@ -47,7 +47,11 @@ test("Overview uses a stable bounded desktop composition", () => {
     assert.match(panelLayoutSource, new RegExp(`panel\\("overview", "${panelName}"`));
   }
   assert.match(overviewSource, /className="zaruku-overview-grid"/);
+  assert.doesNotMatch(overviewSource, /registryColumns=\{false\}|registrySpan=\{false\}/);
+  assert.match(panelLayoutSource, /panel\("overview", "channels", 30, "half"/);
+  assert.match(panelLayoutSource, /panel\("overview", "organic_search", 40, "half"/);
   assert.match(globalsSource, /grid-template-rows:\s*96px 104px minmax\(280px, 1fr\)/);
+  assert.match(source, /min-h-\[calc\(100vh-194px\)\]/);
   assert.match(source, /initialLimit=\{6\}/);
   assert.match(source, /titleInfo=\{/);
   assert.match(source, /Технический хвост/);
@@ -106,6 +110,7 @@ test("pending and returning-content panels use explicit source states instead of
 test("Content route uses one focused workspace without a legacy Behavior tab", () => {
   assert.match(source, /import ZarukuContentTab/);
   assert.match(source, /<ZarukuContentTab/);
+  assert.match(contentSource, /aria-labelledby="content-sections-title" className="min-w-0 space-y-3"/);
   assert.doesNotMatch(source, /function ContentTab|function BehaviorTab/);
   assert.doesNotMatch(source, /Поведение по каналам/);
 });

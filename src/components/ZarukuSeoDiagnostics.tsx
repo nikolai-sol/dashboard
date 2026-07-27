@@ -53,7 +53,7 @@ function DiagnosticTable({ rows, locale }: { rows: DiagnosticRow[]; locale: stri
   return (
     <ZarukuTableFrame mode="standard" label="Диагностика Google Search Console" className="max-h-[24rem] overflow-auto">
       <table className="zaruku-table min-w-[640px]">
-        <thead className="sticky top-0 z-10 bg-slate-50 text-xs text-slate-400 shadow-[0_1px_0_0_#f1f5f9]">
+        <thead className="sticky top-0 z-10 bg-slate-50 text-xs text-slate-400 shadow-[0_1px_0_0_var(--border)]">
           <tr>
             <th className="px-3 py-2.5 text-left font-medium">Разрез</th>
             <th className="px-3 py-2.5 text-right font-medium">Показы</th>

@@ -185,7 +185,7 @@ export default function ZarukuContentTab({ data, locale = "ru-RU", primaryWeek, 
         {pageMeta.message ? <p className="mt-3 text-xs leading-relaxed text-slate-500">{pageMeta.message}</p> : null}
       </ContentPanel>
 
-      <section aria-labelledby="content-sections-title" className="space-y-3">
+      <section aria-labelledby="content-sections-title" className="min-w-0 space-y-3">
         <div>
           <div className="flex flex-wrap items-center gap-1.5">
             <h3 id="content-sections-title" className="text-base font-semibold text-slate-900">Разделы сайта</h3>

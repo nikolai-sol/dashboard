@@ -16,7 +16,8 @@ test("comparison frame owns both axes without a minimum width", () => {
   const html = renderToStaticMarkup(
     createElement(
       ZarukuTableFrame,
-      { mode: "comparison", label: "Запросы", children: sampleTable() },
+      { mode: "comparison", label: "Запросы" },
+      sampleTable(),
     ),
   );
 
@@ -41,8 +42,8 @@ test("table frame modes expose the intended scroll contract", () => {
         {
           mode: mode as keyof typeof expectations,
           label: `${mode} table`,
-          children: sampleTable(),
         },
+        sampleTable(),
       ),
     );
     assert.match(html, new RegExp(expectedClass.replaceAll("[", "\\[").replaceAll("]", "\\]")));

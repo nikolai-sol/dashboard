@@ -230,7 +230,7 @@ export default function ZarukuSeoQueryComparison({
 
       <ZarukuTableFrame mode="comparison" label="Сравнение поисковых запросов" className="rounded-none border-x-0 border-y-0">
         <table className="w-[1180px] table-fixed border-separate border-spacing-0 text-sm">
-          <thead className="sticky top-0 z-10 bg-white shadow-[0_1px_0_0_#e2e8f0]">
+          <thead className="sticky top-0 z-10 bg-white shadow-[0_1px_0_0_var(--border)]">
             <tr className="text-xs font-semibold text-slate-600">
               <th rowSpan={2} className="w-[360px] min-w-[220px] border-r border-slate-100 bg-white px-4 py-3 text-left align-bottom">Фраза</th>
               <th rowSpan={2} className="w-[130px] min-w-[120px] border-r border-slate-100 bg-white px-3 py-3 text-left align-bottom">Раздел</th>

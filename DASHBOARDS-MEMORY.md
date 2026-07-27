@@ -332,6 +332,14 @@ Recent completed changes that should not be rediscovered:
 15. Zaruku returning content is canonical as of 2026-07-19. Legacy `yandex_metrika_returned` is no longer the product read model for Zaruku. Root collector `fetch_yandex_metrika_returning_canonical.py` writes `canonical_fact_metrika_returning_pages_daily` in `/root/reportingdash-canonical`; cron runs daily at `06:18` for counter `66624469` with `--backfill-days 3`. The Behavior tab panel `Возвратный контент` reads the canonical table and shows visits plus 1-day / 2–7-day / 8–31-day returning-user buckets. Quality/source freshness includes `yandex_metrika_returning`.
 16. Zaruku GSC optional layers were connected on 2026-07-19. Migration `src/db/migrations/037_gsc_optional_search_layers.sql` creates `canonical_fact_gsc_search_appearance_daily` and `canonical_fact_gsc_search_type_daily`; root collector `fetch_gsc_canonical.py` fills them in the same daily run as the query table. Backfill run `1480` wrote result-type rows for `web`, `image`, and `video`; Search appearance returned 0 rows for Zaruku for `2026-07-01..2026-07-17`, so the dashboard intentionally shows the Search appearance empty-state.
 17. Zaruku `Что ещё ждём` is a conditional panel: it must not render on Overview or Quality when `pending_requirements` is empty. The SERP label belongs only to real pending source requirements and must not appear as an empty connected-state card.
+18. Zaruku uses one dashboard UI contract as of 2026-07-27:
+    - shared visual tokens remain in `src/app/globals.css`; `.card-surface` stays the shared card primitive and Zaruku charts read `src/lib/chart-palette.ts`
+    - every movable Zaruku information panel has a stable semantic ID in `src/components/zaruku-panel-layout.ts`, a 12-column size preset, deterministic order, allowed sizes, and a height preset; there is intentionally no drag UI or persisted user layout yet
+    - Overview is fixed at desktop widths from `1280px`: the north-star and traffic panels use 12/12 columns, channels and organic search use 6/12 each, and the composition fits `1440 × 900`
+    - Zaruku tables use `ZarukuTableFrame` modes `compact`, `standard`, `operational`, or `comparison`; table minimum widths belong to the table and horizontal overflow belongs to the frame
+    - only Overview owns the URL date calendar while it is visible; SEO, Content, and Work use the ISO-week toolbar and show a disabled calendar context; Quality has no time controls
+    - `ready` renders normally, `partial` adds a quiet footer, `empty` shows a quiet empty state, and `unavailable` / `hidden` do not render; Audience navigation is hidden when all Audience datasets are unavailable
+    - Zaruku was browser-checked without document-width overflow at `430`, `768`, `1024`, `1279`, `1280`, and `1440px`; Gidrofuril remained contained at narrow and desktop widths
 
 ## Working rule for future dashboard tasks
 

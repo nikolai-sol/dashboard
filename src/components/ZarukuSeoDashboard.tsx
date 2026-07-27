@@ -190,6 +190,7 @@ function Panel({
   pending,
   right,
   titleInfo,
+  bodyClassName = "",
   children,
 }: {
   data: ZarukuSeoData;
@@ -199,6 +200,7 @@ function Panel({
   pending?: boolean;
   right?: React.ReactNode;
   titleInfo?: React.ReactNode;
+  bodyClassName?: string;
   children: React.ReactNode;
 }) {
   return (
@@ -223,7 +225,7 @@ function Panel({
           {source ? <SourceBadge data={data} id={source} /> : null}
         </div>
       </header>
-      <div className={pending ? "min-h-0 flex-1 px-5 py-4 opacity-60" : "min-h-0 flex-1 px-5 py-4"}>{children}</div>
+      <div className={`${pending ? "opacity-60" : ""} min-h-0 flex-1 px-5 py-4 ${bodyClassName}`}>{children}</div>
     </section>
   );
 }
@@ -643,6 +645,7 @@ function OverviewTab({ data, locale }: Props) {
           data={data}
           title="Каналы привлечения"
           source="metrika"
+          bodyClassName="overflow-auto"
           titleInfo={data.technical_tail.length ? (
             <InfoTooltip
               label="Что входит в технический хвост"
@@ -656,15 +659,17 @@ function OverviewTab({ data, locale }: Props) {
           <BarList rows={data.traffic_channels} locale={locale} initialLimit={6} />
         </Panel>
         <Panel data={data} title="Органический поиск" source="metrika">
-          <ResponsiveContainer width="100%" height={220}>
-            <LineChart data={data.organic_trend} margin={{ top: 8, right: 8, left: -20, bottom: 0 }}>
-              <CartesianGrid stroke={ZARUKU_CHART_PALETTE.grid} strokeDasharray="3 3" />
-              <XAxis dataKey="label" tick={{ fontSize: 12, fill: ZARUKU_CHART_PALETTE.axis }} axisLine={false} tickLine={false} />
-              <YAxis tick={{ fontSize: 12, fill: ZARUKU_CHART_PALETTE.axis }} axisLine={false} tickLine={false} />
-              <Tooltip />
-              <Line type="monotone" dataKey="visits" stroke={ZARUKU_CHART_PALETTE.seo} strokeWidth={2.5} dot={{ r: 3 }} />
-            </LineChart>
-          </ResponsiveContainer>
+          <div className="h-[220px] xl:h-full">
+            <ResponsiveContainer width="100%" height="100%">
+              <LineChart data={data.organic_trend} margin={{ top: 8, right: 8, left: -20, bottom: 0 }}>
+                <CartesianGrid stroke={ZARUKU_CHART_PALETTE.grid} strokeDasharray="3 3" />
+                <XAxis dataKey="label" tick={{ fontSize: 12, fill: ZARUKU_CHART_PALETTE.axis }} axisLine={false} tickLine={false} />
+                <YAxis tick={{ fontSize: 12, fill: ZARUKU_CHART_PALETTE.axis }} axisLine={false} tickLine={false} />
+                <Tooltip />
+                <Line type="monotone" dataKey="visits" stroke={ZARUKU_CHART_PALETTE.seo} strokeWidth={2.5} dot={{ r: 3 }} />
+              </LineChart>
+            </ResponsiveContainer>
+          </div>
         </Panel>
       </ZarukuOverviewTab>
       <PendingPanel data={data} />
@@ -698,13 +703,6 @@ function SeoTab({ data, locale, primaryWeek, comparisonWeek }: Props & { primary
   const gscSearchAppearanceMeta = buildGscSelectionMeta(gscSearchAppearanceSelection, gscWeek);
   const gscSearchTypeMeta = buildGscSelectionMeta(gscSearchTypeSelection, gscWeek);
   const seoOsWeek = primaryWeek ?? data.seo_os.latest_week;
-  const selectedPositionTrend = seoOsWeek
-    ? data.seo_os.position_trend.filter((row) => row.week === seoOsWeek)
-    : [];
-  const aiPeriod = data.seo_intelligence.ai.latest_period;
-  const selectedAiRows = aiPeriod
-    ? data.seo_intelligence.ai.rows.filter((row) => row.period === aiPeriod)
-    : [];
   const selectedSeoOsClusters = seoOsWeek
     ? data.seo_os.clusters.filter((row) => row.week === seoOsWeek)
     : [];
@@ -839,10 +837,12 @@ export default function ZarukuSeoDashboard({ data, locale = "ru-RU", onActiveTab
   const CurrentIcon = activeNav.icon;
 
   useEffect(() => {
-    if (!visibleNav.some((item) => item.id === activeTab)) {
+    if (visibleNav.some((item) => item.id === activeTab)) return;
+    const frame = window.requestAnimationFrame(() => {
       setActiveTab("overview");
       onActiveTabChange?.("overview");
-    }
+    });
+    return () => window.cancelAnimationFrame(frame);
   }, [activeTab, onActiveTabChange, visibleNav]);
 
   const changeWeekSelection = (field: WeekSelectionField, week: string | null) => {
@@ -904,7 +904,7 @@ export default function ZarukuSeoDashboard({ data, locale = "ru-RU", onActiveTab
   }, [activeTab, data, locale, selectedWeeks.comparisonWeek, selectedWeeks.primaryWeek]);
 
   return (
-    <div className="min-h-[calc(100vh-160px)] rounded-lg border border-slate-200 bg-slate-50 text-slate-900">
+    <div className="min-h-[calc(100vh-194px)] rounded-lg border border-slate-200 bg-slate-50 text-slate-900">
       <div className="flex">
         <aside className="hidden w-60 shrink-0 border-r border-slate-200 bg-white p-4 md:block">
           <div className="flex items-center gap-2 px-1">
