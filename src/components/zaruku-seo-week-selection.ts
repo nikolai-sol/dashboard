@@ -5,7 +5,22 @@ export type WeekSelection = {
   comparisonWeek: string | null;
 };
 
-export type WeekSelectionField = keyof WeekSelection;
+export type WeekSelectionSlot = "A" | "B";
+export type WeekSelectionField = "primaryWeek" | "comparisonWeek";
+export type WeekComparisonMode = "single" | "comparison";
+export type WeekSelectionSlots = Record<WeekSelectionSlot, string | null>;
+
+export const WEEK_SELECTION_FIELD_BY_SLOT: Record<WeekSelectionSlot, WeekSelectionField> = {
+  A: "primaryWeek",
+  B: "comparisonWeek",
+};
+
+export function toWeekSelectionSlots(selection: WeekSelection): WeekSelectionSlots {
+  return {
+    A: selection.primaryWeek,
+    B: selection.comparisonWeek,
+  };
+}
 
 export function createWeekSelection(latestWeek: string | null): WeekSelection {
   return { primaryWeek: latestWeek, comparisonWeek: null };

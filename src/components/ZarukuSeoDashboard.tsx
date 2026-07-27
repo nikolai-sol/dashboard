@@ -41,7 +41,10 @@ import {
   reconcileWeekSelection,
   shouldShowSeoWeekToolbar,
   updateWeekSelection,
+  WEEK_SELECTION_FIELD_BY_SLOT,
   type ZarukuTabId,
+  type WeekComparisonMode,
+  type WeekSelection,
   type WeekSelectionField,
 } from "@/components/zaruku-seo-week-selection";
 import ZarukuSeoAnalytics from "@/components/ZarukuSeoAnalytics";
@@ -76,6 +79,12 @@ type Props = {
   data: ZarukuSeoData;
   locale?: string;
   onActiveTabChange?: (tab: ZarukuTabId) => void;
+};
+
+type ZarukuWeekState = {
+  weeksKey: string;
+  selection: WeekSelection;
+  comparisonMode: WeekComparisonMode;
 };
 
 export type { ZarukuTabId } from "@/components/zaruku-seo-week-selection";
@@ -815,21 +824,21 @@ export default function ZarukuSeoDashboard({ data, locale = "ru-RU", onActiveTab
     [audienceVisible],
   );
   const weeksKey = data.seo_os.weeks.join("\u0000");
-  const [weekState, setWeekState] = useState(() => ({
+  const [weekState, setWeekState] = useState<ZarukuWeekState>(() => ({
     weeksKey,
     selection: createWeekSelection(data.seo_os.latest_week),
-    comparisonEnabled: false,
+    comparisonMode: "single",
   }));
   const comparisonAvailable = canCompareWeeks(data.seo_os.weeks);
   if (weekState.weeksKey !== weeksKey) {
     setWeekState({
       weeksKey,
       selection: reconcileWeekSelection(weekState.selection, data.seo_os.weeks),
-      comparisonEnabled: weekState.comparisonEnabled && comparisonAvailable,
+      comparisonMode: weekState.comparisonMode === "comparison" && comparisonAvailable ? "comparison" : "single",
     });
   }
   const reconciledWeekSelection = reconcileWeekSelection(weekState.selection, data.seo_os.weeks);
-  const effectiveComparisonEnabled = weekState.comparisonEnabled && comparisonAvailable;
+  const effectiveComparisonEnabled = weekState.comparisonMode === "comparison" && comparisonAvailable;
   const selectedWeeks = {
     primaryWeek: reconciledWeekSelection.primaryWeek,
     comparisonWeek: effectiveComparisonEnabled ? reconciledWeekSelection.comparisonWeek : null,
@@ -855,7 +864,7 @@ export default function ZarukuSeoDashboard({ data, locale = "ru-RU", onActiveTab
   const changeComparisonMode = (enabled: boolean) => {
     setWeekState((current) => ({
       ...current,
-      comparisonEnabled: enabled && comparisonAvailable,
+      comparisonMode: enabled && comparisonAvailable ? "comparison" : "single",
       selection: enabled ? current.selection : { ...current.selection, comparisonWeek: null },
     }));
   };
@@ -863,7 +872,7 @@ export default function ZarukuSeoDashboard({ data, locale = "ru-RU", onActiveTab
     if (!comparisonAvailable) return;
     setWeekState((current) => ({
       ...current,
-      comparisonEnabled: true,
+      comparisonMode: "comparison",
       selection: {
         ...current.selection,
         comparisonWeek: current.selection.primaryWeek ? previousAvailableWeek(data.seo_os.weeks, current.selection.primaryWeek) : null,
@@ -982,8 +991,8 @@ export default function ZarukuSeoDashboard({ data, locale = "ru-RU", onActiveTab
                 comparisonWeek={selectedWeeks.comparisonWeek}
                 comparisonEnabled={effectiveComparisonEnabled}
                 onComparisonEnabledChange={changeComparisonMode}
-                onPrimaryWeekChange={(week) => changeWeekSelection("primaryWeek", week)}
-                onComparisonWeekChange={(week) => changeWeekSelection("comparisonWeek", week)}
+                onPrimaryWeekChange={(week) => changeWeekSelection(WEEK_SELECTION_FIELD_BY_SLOT.A, week)}
+                onComparisonWeekChange={(week) => changeWeekSelection(WEEK_SELECTION_FIELD_BY_SLOT.B, week)}
                 onComparePrevious={comparePreviousWeek}
               />
             </div> : null}

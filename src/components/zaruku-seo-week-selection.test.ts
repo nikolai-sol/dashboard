@@ -6,7 +6,9 @@ import {
   previousAvailableWeek,
   reconcileWeekSelection,
   shouldShowSeoWeekToolbar,
+  toWeekSelectionSlots,
   updateWeekSelection,
+  WEEK_SELECTION_FIELD_BY_SLOT,
   zarukuTimeOwner,
 } from "@/components/zaruku-seo-week-selection";
 
@@ -16,6 +18,17 @@ test("createWeekSelection starts at the latest week without comparison", () => {
   assert.deepEqual(createWeekSelection("2026-W31"), {
     primaryWeek: "2026-W31",
     comparisonWeek: null,
+  });
+});
+
+test("A and B slots have explicit fields and values", () => {
+  assert.deepEqual(WEEK_SELECTION_FIELD_BY_SLOT, {
+    A: "primaryWeek",
+    B: "comparisonWeek",
+  });
+  assert.deepEqual(toWeekSelectionSlots({ primaryWeek: "2026-W31", comparisonWeek: "2026-W30" }), {
+    A: "2026-W31",
+    B: "2026-W30",
   });
 });
 
