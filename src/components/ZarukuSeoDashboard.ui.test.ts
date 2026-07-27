@@ -6,6 +6,8 @@ const source = readFileSync(new URL("./ZarukuSeoDashboard.tsx", import.meta.url)
 const russiaMapSource = readFileSync(new URL("./ZarukuRussiaDemandMap.tsx", import.meta.url), "utf8");
 const contentSource = readFileSync(new URL("./ZarukuContentTab.tsx", import.meta.url), "utf8");
 const audienceSource = readFileSync(new URL("./ZarukuAudienceTab.tsx", import.meta.url), "utf8");
+const overviewSource = readFileSync(new URL("./ZarukuOverviewTab.tsx", import.meta.url), "utf8");
+const panelLayoutSource = readFileSync(new URL("./zaruku-panel-layout.ts", import.meta.url), "utf8");
 const globalsSource = readFileSync(new URL("../app/globals.css", import.meta.url), "utf8");
 const paletteSource = readFileSync(new URL("../lib/chart-palette.ts", import.meta.url), "utf8");
 
@@ -29,11 +31,27 @@ test("client navigation contains exactly six tabs in executive order", () => {
 });
 
 test("Overview does not show the duplicated period context strip", () => {
-  const overviewSource = readFileSync(new URL("./ZarukuOverviewTab.tsx", import.meta.url), "utf8");
   assert.match(source, /import ZarukuOverviewTab/);
   assert.match(source, /<ZarukuOverviewTab data=\{data\}/);
   assert.doesNotMatch(overviewSource, /<ZarukuPeriodContext/);
   assert.match(overviewSource, /void data;/);
+});
+
+test("Overview uses a stable bounded desktop composition", () => {
+  for (const panelName of [
+    "north_star",
+    "traffic_health",
+    "channels",
+    "organic_search",
+  ]) {
+    assert.match(panelLayoutSource, new RegExp(`panel\\("overview", "${panelName}"`));
+  }
+  assert.match(overviewSource, /className="zaruku-overview-grid"/);
+  assert.match(globalsSource, /grid-template-rows:\s*96px 104px minmax\(280px, 1fr\)/);
+  assert.match(source, /initialLimit=\{6\}/);
+  assert.match(source, /titleInfo=\{/);
+  assert.match(source, /Технический хвост/);
+  assert.doesNotMatch(source, /Технический хвост:\{" "\}/);
 });
 
 test("SEO tab follows the executive-to-detail hierarchy without duplicate source tables", () => {

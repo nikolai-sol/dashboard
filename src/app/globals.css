@@ -220,6 +220,46 @@
     font-variant-numeric: tabular-nums;
   }
 
+  @media (min-width: 1280px) {
+    .zaruku-overview-grid {
+      height: clamp(512px, calc(100vh - 330px), 600px);
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      grid-template-rows: 96px 104px minmax(280px, 1fr);
+      gap: var(--gap-card);
+      overflow: hidden;
+    }
+
+    .zaruku-overview-grid > [data-panel-id] {
+      min-width: 0;
+      height: 100%;
+      overflow: hidden;
+    }
+
+    .zaruku-overview-grid > [data-panel-id] > * {
+      height: 100%;
+    }
+
+    .zaruku-overview-grid > [data-panel-id="overview.north_star"] {
+      grid-column: 1 / -1;
+      grid-row: 1;
+    }
+
+    .zaruku-overview-grid > [data-panel-id="overview.traffic_health"] {
+      grid-column: 1 / -1;
+      grid-row: 2;
+    }
+
+    .zaruku-overview-grid > [data-panel-id="overview.channels"] {
+      grid-column: 1;
+      grid-row: 3;
+    }
+
+    .zaruku-overview-grid > [data-panel-id="overview.organic_search"] {
+      grid-column: 2;
+      grid-row: 3;
+    }
+  }
+
   .kpi-grid {
     display: grid;
     gap: 1rem;

@@ -14,7 +14,7 @@ export default function ZarukuOverviewTab({ data, children }: Props) {
   const panelChildren = Children.toArray(children);
 
   return (
-    <ZarukuPanelGrid>
+    <ZarukuPanelGrid className="zaruku-overview-grid">
       {panels.map((panel, index) => (
         <ZarukuPanelSlot key={panel.panelId} panel={panel}>
           {panelChildren[index] ?? null}

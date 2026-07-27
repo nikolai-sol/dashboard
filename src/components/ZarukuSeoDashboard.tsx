@@ -189,6 +189,7 @@ function Panel({
   layer,
   pending,
   right,
+  titleInfo,
   children,
 }: {
   data: ZarukuSeoData;
@@ -197,14 +198,16 @@ function Panel({
   layer?: ZarukuSeoLayerId;
   pending?: boolean;
   right?: React.ReactNode;
+  titleInfo?: React.ReactNode;
   children: React.ReactNode;
 }) {
   return (
-    <section className="rounded-lg border border-slate-200 bg-white">
+    <section className="card-surface zaruku-panel flex h-full min-h-0 flex-col overflow-hidden">
       <header className="flex flex-col items-start gap-3 border-b border-slate-100 px-5 py-4 md:flex-row md:justify-between">
         <div className="min-w-0">
           <div className="flex flex-wrap items-center gap-2">
             <h3 className="text-base font-semibold text-slate-900">{title}</h3>
+            {titleInfo}
             {pending ? (
               <span className="rounded-md bg-slate-100 px-1.5 py-0.5 text-xs font-medium text-slate-400">не подключено</span>
             ) : null}
@@ -220,7 +223,7 @@ function Panel({
           {source ? <SourceBadge data={data} id={source} /> : null}
         </div>
       </header>
-      <div className={pending ? "px-5 py-4 opacity-60" : "px-5 py-4"}>{children}</div>
+      <div className={pending ? "min-h-0 flex-1 px-5 py-4 opacity-60" : "min-h-0 flex-1 px-5 py-4"}>{children}</div>
     </section>
   );
 }
@@ -263,11 +266,24 @@ function InfoTooltip({
   );
 }
 
-function BarList({ rows, value = "visits", locale = "ru-RU" }: { rows: ZarukuSeoMetricRow[]; value?: "visits" | "users" | "pageviews"; locale?: string }) {
+function BarList({
+  rows,
+  value = "visits",
+  locale = "ru-RU",
+  initialLimit,
+}: {
+  rows: ZarukuSeoMetricRow[];
+  value?: "visits" | "users" | "pageviews";
+  locale?: string;
+  initialLimit?: number;
+}) {
+  const [expanded, setExpanded] = useState(false);
   const max = Math.max(1, ...rows.map((row) => row[value]));
+  const visibleRows = initialLimit && !expanded ? rows.slice(0, initialLimit) : rows;
+  const hiddenCount = Math.max(0, rows.length - visibleRows.length);
   return (
     <div className="space-y-2.5">
-      {rows.map((row, index) => (
+      {visibleRows.map((row, index) => (
         <BarListRow
           key={`${row.label}-${row.secondary_label ?? ""}-${index}`}
           row={row}
@@ -277,6 +293,16 @@ function BarList({ rows, value = "visits", locale = "ru-RU" }: { rows: ZarukuSeo
           max={max}
         />
       ))}
+      {initialLimit && rows.length > initialLimit ? (
+        <button
+          type="button"
+          aria-expanded={expanded}
+          onClick={() => setExpanded((current) => !current)}
+          className="text-xs font-medium text-slate-500 hover:text-slate-700"
+        >
+          {expanded ? "свернуть" : `ещё ${hiddenCount}`}
+        </button>
+      ) : null}
     </div>
   );
 }
@@ -419,7 +445,7 @@ function NorthStarBlock({ data, locale }: Props) {
     opportunities: data.seo_os.opportunities,
   }));
   return (
-    <section className="rounded-lg border border-slate-200 border-t-slate-300 bg-surface-alt px-5 py-4">
+    <section className="card-surface zaruku-panel h-full overflow-hidden border-t-slate-300 bg-surface-alt px-5 py-4">
       <div className="flex flex-col gap-4 lg:flex-row lg:items-center">
         <div className="flex min-w-0 items-center gap-2 lg:w-[380px]">
           <h3 className="text-base font-medium text-slate-900 lg:whitespace-nowrap">Цель: целевой органический трафик + ИИ-выдача</h3>
@@ -462,7 +488,7 @@ function TrafficHealthStrip({ data }: { data: ZarukuSeoData }) {
   const [expanded, setExpanded] = useState(false);
   const rows = buildTrafficHealthRows(data.kpis);
   return (
-    <section className="rounded-lg border border-slate-200 bg-white">
+    <section className="card-surface zaruku-panel h-full overflow-hidden">
       <header className="flex flex-wrap items-center justify-between gap-3 border-b border-slate-100 px-5 py-3">
         <h3 className="text-base font-medium text-slate-900">Здоровье трафика</h3>
         <div className="flex items-center gap-2">
@@ -613,14 +639,21 @@ function OverviewTab({ data, locale }: Props) {
       <ZarukuOverviewTab data={data}>
         <NorthStarBlock data={data} locale={locale} />
         <TrafficHealthStrip data={data} />
-        <Panel data={data} title="Каналы привлечения" source="metrika">
-          <BarList rows={data.traffic_channels} locale={locale} />
-          {data.technical_tail.length ? (
-            <div className="mt-4 rounded-md border border-dashed border-slate-200 bg-slate-50 px-3 py-2 text-xs text-slate-500">
-              Технический хвост:{" "}
-              {data.technical_tail.map((row) => `${row.label}: ${formatNumber(row.visits, locale)}`).join(", ")}. Он не считается отдельным каналом привлечения.
-            </div>
+        <Panel
+          data={data}
+          title="Каналы привлечения"
+          source="metrika"
+          titleInfo={data.technical_tail.length ? (
+            <InfoTooltip
+              label="Что входит в технический хвост"
+              title="Технический хвост"
+              description="Служебные и нераспознанные источники не считаются отдельным каналом привлечения."
+              importance="Они доступны здесь для контроля полноты данных."
+              details={data.technical_tail.map((row) => `${row.label}: ${formatNumber(row.visits, locale)}`).join(", ")}
+            />
           ) : null}
+        >
+          <BarList rows={data.traffic_channels} locale={locale} initialLimit={6} />
         </Panel>
         <Panel data={data} title="Органический поиск" source="metrika">
           <ResponsiveContainer width="100%" height={220}>
