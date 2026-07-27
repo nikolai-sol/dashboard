@@ -177,6 +177,16 @@ test("Audience navigation is derived from visible datasets", () => {
   assert.match(source, /setActiveTab\("overview"\)/);
 });
 
+test("source freshness is rendered on its own sidebar line", () => {
+  const sourcesStart = source.indexOf("{data.sources.map");
+  const sourcesEnd = source.indexOf("</aside>", sourcesStart);
+  const sourcesBlock = source.slice(sourcesStart, sourcesEnd);
+
+  assert.match(sourcesBlock, /data-source-main-row/);
+  assert.match(sourcesBlock, /data-source-freshness/);
+  assert.doesNotMatch(sourcesBlock, /whitespace-nowrap/);
+});
+
 test("dashboard reports active tab changes to the page time owner", () => {
   assert.match(source, /onActiveTabChange\?: \(tab: ZarukuTabId\) => void/);
   assert.match(source, /onActiveTabChange\?\.\(tab\)/);

@@ -952,23 +952,23 @@ export default function ZarukuSeoDashboard({ data, locale = "ru-RU", onActiveTab
               {data.sources.map((source) => {
                 const rowsLabel = getSourceRowsLabel(data, source.id);
                 return (
-                  <div key={source.id} className="flex items-center justify-between gap-2 text-xs">
-                <span className="flex items-center gap-1.5 text-slate-600">
-                  <span className="h-1.5 w-1.5 rounded-full" style={{ background: source.color }} />
-                  {source.label}
-                </span>
-                <span className={source.status === "connected" ? "flex flex-col items-end gap-0.5 text-right text-teal-600" : "text-slate-300"}>
-                  {source.status === "connected" ? (
-                    <>
-                      <span>подкл.</span>
-                      {rowsLabel ? <span className="whitespace-nowrap text-xs font-normal leading-tight text-teal-600">{rowsLabel}</span> : null}
-                    </>
-                  ) : (
-                    "—"
-                  )}
-                </span>
-              </div>
-            );
+                  <div key={source.id} className="min-w-0 text-xs">
+                    <div data-source-main-row className="flex min-w-0 items-start justify-between gap-2">
+                      <span className="flex min-w-0 items-start gap-1.5 text-slate-600">
+                        <span className="mt-1 h-1.5 w-1.5 shrink-0 rounded-full" style={{ background: source.color }} />
+                        <span>{source.label}</span>
+                      </span>
+                      <span className={source.status === "connected" ? "shrink-0 text-teal-600" : "shrink-0 text-slate-300"}>
+                        {source.status === "connected" ? "подкл." : "—"}
+                      </span>
+                    </div>
+                    {source.status === "connected" && rowsLabel ? (
+                      <div data-source-freshness className="mt-0.5 pl-3 text-[11px] font-normal leading-tight text-slate-400">
+                        {rowsLabel}
+                      </div>
+                    ) : null}
+                  </div>
+                );
               })}
             </div>
           </div>
