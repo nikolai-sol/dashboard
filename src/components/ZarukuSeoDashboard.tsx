@@ -41,6 +41,7 @@ import {
   reconcileWeekSelection,
   shouldShowSeoWeekToolbar,
   updateWeekSelection,
+  type ZarukuTabId,
   type WeekSelectionField,
 } from "@/components/zaruku-seo-week-selection";
 import ZarukuSeoAnalytics from "@/components/ZarukuSeoAnalytics";
@@ -73,11 +74,12 @@ import { ZARUKU_CHART_PALETTE } from "@/lib/chart-palette";
 type Props = {
   data: ZarukuSeoData;
   locale?: string;
+  onActiveTabChange?: (tab: ZarukuTabId) => void;
 };
 
-type TabId = "overview" | "seo" | "content" | "audience" | "work" | "quality";
+export type { ZarukuTabId } from "@/components/zaruku-seo-week-selection";
 
-const NAV: Array<{ id: TabId; label: string; icon: typeof LayoutGrid }> = [
+const NAV: Array<{ id: ZarukuTabId; label: string; icon: typeof LayoutGrid }> = [
   { id: "overview", label: "Обзор", icon: LayoutGrid },
   { id: "seo", label: "SEO", icon: Search },
   { id: "content", label: "Контент", icon: FileText },
@@ -773,8 +775,8 @@ function SeoTab({ data, locale, primaryWeek, comparisonWeek }: Props & { primary
   );
 }
 
-export default function ZarukuSeoDashboard({ data, locale = "ru-RU" }: Props) {
-  const [activeTab, setActiveTab] = useState<TabId>("overview");
+export default function ZarukuSeoDashboard({ data, locale = "ru-RU", onActiveTabChange }: Props) {
+  const [activeTab, setActiveTab] = useState<ZarukuTabId>("overview");
   const audienceVisible = isZarukuAudienceVisible(data);
   const visibleNav = useMemo(
     () => audienceVisible ? NAV : NAV.filter((item) => item.id !== "audience"),
@@ -806,8 +808,9 @@ export default function ZarukuSeoDashboard({ data, locale = "ru-RU" }: Props) {
   useEffect(() => {
     if (!visibleNav.some((item) => item.id === activeTab)) {
       setActiveTab("overview");
+      onActiveTabChange?.("overview");
     }
-  }, [activeTab, visibleNav]);
+  }, [activeTab, onActiveTabChange, visibleNav]);
 
   const changeWeekSelection = (field: WeekSelectionField, week: string | null) => {
     setWeekState((current) => ({
@@ -833,8 +836,9 @@ export default function ZarukuSeoDashboard({ data, locale = "ru-RU" }: Props) {
       },
     }));
   };
-  const selectTab = (tab: TabId) => {
+  const selectTab = (tab: ZarukuTabId) => {
     setActiveTab(tab);
+    onActiveTabChange?.(tab);
     window.requestAnimationFrame(() => {
       document.getElementById("zaruku-tab-content")?.scrollIntoView({ block: "start" });
     });

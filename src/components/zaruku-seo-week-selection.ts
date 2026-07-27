@@ -1,3 +1,5 @@
+export type ZarukuTabId = "overview" | "seo" | "content" | "audience" | "work" | "quality";
+
 export type WeekSelection = {
   primaryWeek: string | null;
   comparisonWeek: string | null;
@@ -19,6 +21,12 @@ export function canCompareWeeks(weeks: string[]) {
 
 export function shouldShowSeoWeekToolbar(activeTab: string) {
   return activeTab === "seo" || activeTab === "work" || activeTab === "content";
+}
+
+export function zarukuTimeOwner(tab: ZarukuTabId): "url" | "week" | "none" {
+  if (tab === "overview" || tab === "audience") return "url";
+  if (tab === "quality") return "none";
+  return "week";
 }
 
 export function reconcileWeekSelection(selection: WeekSelection, weeks: string[]): WeekSelection {

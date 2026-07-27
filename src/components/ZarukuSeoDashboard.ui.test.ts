@@ -143,3 +143,8 @@ test("Audience navigation is derived from visible datasets", () => {
   assert.match(source, /visibleNav\.map/);
   assert.match(source, /setActiveTab\("overview"\)/);
 });
+
+test("dashboard reports active tab changes to the page time owner", () => {
+  assert.match(source, /onActiveTabChange\?: \(tab: ZarukuTabId\) => void/);
+  assert.match(source, /onActiveTabChange\?\.\(tab\)/);
+});

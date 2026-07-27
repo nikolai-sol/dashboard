@@ -12,7 +12,10 @@ import ComparisonSection from "@/components/ComparisonSection";
 import ConversionFunnel from "@/components/ConversionFunnel";
 import CustomTable from "@/components/CustomTable";
 import DashboardAiSummaryCard from "@/components/DashboardAiSummaryCard";
-import DashboardHeader, { type DashboardQuickRangePreset } from "@/components/DashboardHeader";
+import DashboardHeader, {
+  type DashboardDateControlsMode,
+  type DashboardQuickRangePreset,
+} from "@/components/DashboardHeader";
 import KPICard from "@/components/KPICard";
 import PlatformFilter from "@/components/PlatformFilter";
 import PlatformPlanVsFact from "@/components/PlatformPlanVsFact";
@@ -28,7 +31,8 @@ import TrendChart from "@/components/TrendChart";
 import MultibrandPanel from "@/components/MultibrandPanel";
 import MultibrandExecutivePage from "@/components/MultibrandExecutivePage";
 import AbbottBiDashboard from "@/components/AbbottBiDashboard";
-import ZarukuSeoDashboard from "@/components/ZarukuSeoDashboard";
+import ZarukuSeoDashboard, { type ZarukuTabId } from "@/components/ZarukuSeoDashboard";
+import { zarukuTimeOwner } from "@/components/zaruku-seo-week-selection";
 import type { MultibrandBrandSummary } from "@/components/MultibrandExecutivePage";
 import { getDashboardI18n } from "@/lib/dashboard-i18n";
 import type { DashboardData } from "@/lib/types";
@@ -334,6 +338,7 @@ export default function DashboardByIdPage() {
   const [brandSummaries, setBrandSummaries] = useState<MultibrandSummary[]>([]);
   const [reloadKey, setReloadKey] = useState(0);
   const [isGeneratingAiSummary, setIsGeneratingAiSummary] = useState(false);
+  const [zarukuActiveTab, setZarukuActiveTab] = useState<ZarukuTabId>("overview");
   const [aiSummaryError, setAiSummaryError] = useState<string | null>(null);
   const [dateRange, setDateRange] = useState<{ from: string; to: string }>({ from: initialFrom, to: initialTo });
   const [draftDateRange, setDraftDateRange] = useState<{ from: string; to: string }>({
@@ -1718,6 +1723,12 @@ export default function DashboardByIdPage() {
 
   const abbottBiData = dashboardType === "abbott_bi" ? dashboard.abbott_bi : null;
   const zarukuSeoData = dashboardType === "zaruku_bi" ? dashboard.zaruku_seo : null;
+  const zarukuTimeOwnerMode = zarukuTimeOwner(zarukuActiveTab);
+  const zarukuDateControlsMode: DashboardDateControlsMode = zarukuTimeOwnerMode === "url"
+    ? "active"
+    : zarukuTimeOwnerMode === "week"
+      ? "disabled"
+      : "hidden";
 
   if (dashboardType === "abbott_bi" && abbottBiData) {
     return (
@@ -1775,6 +1786,7 @@ export default function DashboardByIdPage() {
           periodLabel={periodLabel}
           logoUrl={dashboard.dashboard.logo_url}
           pdfMode={isPdfMode}
+          dateControlsMode={zarukuDateControlsMode}
           language={dashboardLanguage}
           labels={i18n.header}
           dateFrom={draftDateRange.from}
@@ -1794,7 +1806,7 @@ export default function DashboardByIdPage() {
           </div>
         ) : null}
 
-        <ZarukuSeoDashboard data={zarukuSeoData} locale={locale} />
+        <ZarukuSeoDashboard data={zarukuSeoData} locale={locale} onActiveTabChange={setZarukuActiveTab} />
       </main>
     );
   }
