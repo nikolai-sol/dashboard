@@ -20,6 +20,7 @@ import {
   type PositionComparisonRow,
 } from "@/components/zaruku-seo-analytics";
 import { ZARUKU_CHART_PALETTE } from "@/lib/chart-palette";
+import ZarukuTableFrame from "@/components/ZarukuTableFrame";
 
 type Props = {
   seoOs: ZarukuSeoOsData;
@@ -109,7 +110,7 @@ export default function ZarukuSeoAnalytics({ seoOs, primaryWeek, comparisonWeek,
 
   if (!seoOs.data_availability.positions) {
     return (
-      <section className="rounded-lg border border-slate-200 bg-white px-5 py-8">
+      <section className="card-surface zaruku-panel px-5 py-8">
         <h3 className="text-base font-semibold text-slate-900">Позиции SEO временно недоступны</h3>
         <p className="mt-2 text-sm text-slate-500">Не удалось загрузить данные позиций. Повторите попытку позже.</p>
       </section>
@@ -117,8 +118,8 @@ export default function ZarukuSeoAnalytics({ seoOs, primaryWeek, comparisonWeek,
   }
 
   return (
-    <section className="rounded-lg border border-slate-200 bg-white">
-      <header className="flex flex-wrap items-start justify-between gap-3 border-b border-slate-100 px-5 py-4">
+    <section className="card-surface zaruku-panel">
+      <header className="zaruku-panel-header">
         <div>
           <h3 className="text-base font-semibold text-slate-900">Позиции по разделам</h3>
           <p className="mt-1 text-xs text-slate-500">SEO OS: отслеживаемые позиции в выдаче Яндекса</p>
@@ -185,8 +186,8 @@ export default function ZarukuSeoAnalytics({ seoOs, primaryWeek, comparisonWeek,
           </div>
         </div>
 
-        <div className="mt-3 max-h-[29rem] overflow-auto rounded-md border border-slate-100">
-          <table className="w-full min-w-[960px] table-fixed text-sm">
+        <ZarukuTableFrame mode="operational" label="Кластеры поисковых запросов" className="mt-3">
+          <table className="zaruku-table min-w-[960px] table-fixed">
             <colgroup>
               <col className="w-[15%]" />
               <col className="w-[30%]" />
@@ -234,7 +235,7 @@ export default function ZarukuSeoAnalytics({ seoOs, primaryWeek, comparisonWeek,
               ) : null}
             </tbody>
           </table>
-        </div>
+        </ZarukuTableFrame>
       </div> : null}
     </section>
   );

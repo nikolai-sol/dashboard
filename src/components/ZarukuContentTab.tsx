@@ -3,6 +3,7 @@
 import { useId, useMemo, useState, type ReactNode } from "react";
 import ZarukuPanelState from "@/components/ZarukuPanelState";
 import ZarukuTrafficVisibility from "@/components/ZarukuTrafficVisibility";
+import ZarukuTableFrame, { type ZarukuTableFrameMode } from "@/components/ZarukuTableFrame";
 import { availableMetricColumns, sortContentRows, type ContentSort, type ContentSortKey } from "@/components/zaruku-content-table";
 import { filterAndPaginate } from "@/components/zaruku-table-pagination";
 import { resolveZarukuContentUrl } from "@/lib/zaruku-url";
@@ -54,12 +55,14 @@ function formatMetric(row: ZarukuSeoMetricRow, key: ZarukuMetricColumn, locale: 
 
 function ContentPanel({ title, note, children }: { title: string; note?: string; children: ReactNode }) {
   return (
-    <section className="min-w-0 rounded-xl border border-slate-200 bg-white shadow-sm shadow-slate-100/60">
-      <header className="border-b border-slate-100 px-4 py-4 sm:px-5">
-        <h3 className="text-base font-semibold text-slate-900">{title}</h3>
-        {note ? <p className="mt-1 max-w-3xl text-xs leading-relaxed text-slate-500">{note}</p> : null}
+    <section className="card-surface zaruku-panel">
+      <header className="zaruku-panel-header">
+        <div>
+          <h3 className="text-base font-semibold text-slate-900">{title}</h3>
+          {note ? <p className="mt-1 max-w-3xl text-xs leading-relaxed text-slate-500">{note}</p> : null}
+        </div>
       </header>
-      <div className="px-4 py-4 sm:px-5">{children}</div>
+      <div className="zaruku-panel-body">{children}</div>
     </section>
   );
 }
@@ -108,11 +111,21 @@ function SectionPatternInfo({
   );
 }
 
-function MetricTable({ rows, meta, locale }: { rows: ZarukuSeoMetricRow[]; meta: ZarukuDatasetMeta; locale: string }) {
+function MetricTable({
+  rows,
+  meta,
+  locale,
+  mode = "standard",
+}: {
+  rows: ZarukuSeoMetricRow[];
+  meta: ZarukuDatasetMeta;
+  locale: string;
+  mode?: ZarukuTableFrameMode;
+}) {
   const columns = availableMetricColumns(meta.metrics);
   return (
-    <div className="overflow-x-auto">
-      <table className="w-full min-w-[680px] text-sm">
+    <ZarukuTableFrame mode={mode} label="Метрики страниц">
+      <table className="zaruku-table min-w-[680px]">
         <thead><tr className="text-left text-xs uppercase text-slate-400"><th className="pb-2 font-medium">Страница или раздел</th>{columns.map((column) => <th key={column.key} className="pb-2 text-right font-medium">{column.label}</th>)}</tr></thead>
         <tbody className="divide-y divide-slate-100">
           {rows.map((row, index) => {
@@ -121,14 +134,14 @@ function MetricTable({ rows, meta, locale }: { rows: ZarukuSeoMetricRow[]; meta:
           })}
         </tbody>
       </table>
-    </div>
+    </ZarukuTableFrame>
   );
 }
 
 function ReturningTable({ rows, locale }: { rows: ZarukuSeoMetricRow[]; locale: string }) {
   return (
-    <div className="overflow-x-auto">
-      <table className="w-full min-w-[760px] text-sm">
+    <ZarukuTableFrame mode="standard" label="Таблица возвратов">
+      <table className="zaruku-table min-w-[760px]">
         <thead><tr className="text-left text-xs uppercase text-slate-400"><th className="pb-2 font-medium">Страница</th><th className="pb-2 text-right font-medium">Визиты</th><th className="pb-2 text-right font-medium">1 день</th><th className="pb-2 text-right font-medium">2–7 дней</th><th className="pb-2 text-right font-medium">8–31 день</th><th className="pb-2 text-right font-medium">Доля возвратов</th></tr></thead>
         <tbody className="divide-y divide-slate-100">{rows.map((row, index) => {
           const rawUrl = row.url ?? row.label;
@@ -136,7 +149,7 @@ function ReturningTable({ rows, locale }: { rows: ZarukuSeoMetricRow[]; locale: 
           return <tr key={`${rawUrl}-${index}`}><td className="max-w-[460px] py-2.5 pr-5">{href ? <a href={href} target="_blank" rel="noreferrer" className="font-medium text-slate-700 hover:text-teal-700">{shortUrl(href)}</a> : <span className="font-medium text-slate-700">{shortUrl(rawUrl)}</span>}</td><td className="py-2.5 text-right tabular-nums text-slate-600">{formatNumber(row.visits, locale)}</td><td className="py-2.5 text-right tabular-nums text-slate-600">{formatNumber(row.returning_1_day_users, locale)}</td><td className="py-2.5 text-right tabular-nums text-slate-600">{formatNumber(row.returning_2_7_days_users, locale)}</td><td className="py-2.5 text-right tabular-nums text-slate-600">{formatNumber(row.returning_8_31_days_users, locale)}</td><td className="py-2.5 text-right tabular-nums text-slate-500">{formatPercent(row.share, locale)}</td></tr>;
         })}</tbody>
       </table>
-    </div>
+    </ZarukuTableFrame>
   );
 }
 
@@ -163,7 +176,7 @@ export default function ZarukuContentTab({ data, locale = "ru-RU", primaryWeek, 
   const changeQuery = (value: string) => { setQuery(value); setPage(1); };
   const changeSort = (key: ContentSortKey) => { setSort((current) => current.key === key ? { key, direction: current.direction === "asc" ? "desc" : "asc" } : { key, direction: key === "label" ? "asc" : "desc" }); setPage(1); };
   return (
-    <div className="space-y-5">
+    <div className="zaruku-section-stack">
       <ContentPanel title="Состояние контента">
         <div className="grid gap-3 sm:grid-cols-2">
           <div className="rounded-lg bg-slate-50 px-4 py-3"><div className="text-xs text-slate-500">Страниц в доступном срезе</div><div className="mt-1 text-xl font-semibold text-slate-900">{data.top_pages.length.toLocaleString(locale)}</div></div>
@@ -194,7 +207,7 @@ export default function ZarukuContentTab({ data, locale = "ru-RU", primaryWeek, 
       <ContentPanel title="Все страницы" note="Доступный read-model с поиском, сортировкой и постраничным просмотром.">
         <ZarukuPanelState meta={pageMeta} hasRows={data.top_pages.length > 0}>
           <div className="mb-4 flex flex-col gap-3 lg:flex-row lg:items-end lg:justify-between"><label className="block w-full max-w-xl text-xs font-medium text-slate-600">Поиск по странице или URL<input type="search" value={query} onChange={(event) => changeQuery(event.target.value)} placeholder="Название или /path/" className="mt-1.5 w-full rounded-lg border border-slate-200 px-3 py-2 text-sm font-normal text-slate-800 outline-none focus:border-slate-400" /></label><div className="flex flex-wrap gap-2" aria-label="Сортировка страниц"><SortButton label="Название" sortKey="label" sort={supportedSort} onChange={changeSort} />{pageColumns.map((column) => <SortButton key={column.key} label={column.label} sortKey={column.key} sort={supportedSort} onChange={changeSort} />)}</div></div>
-          <MetricTable rows={paginated.rows} meta={pageMeta} locale={locale} />
+          <MetricTable rows={paginated.rows} meta={pageMeta} locale={locale} mode="operational" />
           <footer className="mt-4 flex items-center justify-between gap-3 border-t border-slate-100 pt-3 text-xs text-slate-500"><button type="button" disabled={paginated.page <= 1} onClick={() => setPage((value) => Math.max(1, value - 1))} className="rounded-md border border-slate-200 px-3 py-1.5 disabled:opacity-40">Предыдущая</button><span>{paginated.totalRows.toLocaleString(locale)} найдено · Страница {paginated.page} из {paginated.totalPages}</span><button type="button" disabled={paginated.page >= paginated.totalPages} onClick={() => setPage((value) => Math.min(paginated.totalPages, value + 1))} className="rounded-md border border-slate-200 px-3 py-1.5 disabled:opacity-40">Следующая</button></footer>
         </ZarukuPanelState>
       </ContentPanel>

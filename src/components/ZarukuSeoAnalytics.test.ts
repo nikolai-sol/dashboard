@@ -1,9 +1,18 @@
 import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
 import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { test } from "node:test";
 import ZarukuSeoAnalytics from "./ZarukuSeoAnalytics";
 import type { ZarukuSeoOsData } from "@/lib/types";
+
+const source = readFileSync(new URL("./ZarukuSeoAnalytics.tsx", import.meta.url), "utf8");
+
+test("cluster rows use the shared bounded table frame", () => {
+  assert.match(source, /<ZarukuTableFrame mode="operational"/);
+  assert.doesNotMatch(source, /max-h-\[29rem\] overflow-auto/);
+  assert.match(source, /card-surface zaruku-panel/);
+});
 
 test("renders retry-later unavailable state when positions query failed", () => {
   const seoOs: ZarukuSeoOsData = {

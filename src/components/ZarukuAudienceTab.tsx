@@ -1,6 +1,7 @@
 import type { ReactNode } from "react";
 import ZarukuPanelState from "@/components/ZarukuPanelState";
 import ZarukuRussiaDemandMap from "@/components/ZarukuRussiaDemandMap";
+import ZarukuTableFrame from "@/components/ZarukuTableFrame";
 import type { ZarukuDatasetMeta, ZarukuSeoData, ZarukuSeoMetricRow } from "@/lib/types";
 
 type Props = { data: ZarukuSeoData; locale?: string };
@@ -15,9 +16,9 @@ function formatPercent(value: number | null | undefined, locale: string) {
 
 function AudiencePanel({ title, note, children }: { title: string; note?: string; children: ReactNode }) {
   return (
-    <section className="min-w-0 rounded-xl border border-slate-200 bg-white shadow-sm shadow-slate-100/60">
-      <header className="border-b border-slate-100 px-4 py-4 sm:px-5"><h3 className="text-base font-semibold text-slate-900">{title}</h3>{note ? <p className="mt-1 max-w-3xl text-xs leading-relaxed text-slate-500">{note}</p> : null}</header>
-      <div className="px-4 py-4 sm:px-5">{children}</div>
+    <section className="card-surface zaruku-panel">
+      <header className="zaruku-panel-header"><div><h3 className="text-base font-semibold text-slate-900">{title}</h3>{note ? <p className="mt-1 max-w-3xl text-xs leading-relaxed text-slate-500">{note}</p> : null}</div></header>
+      <div className="zaruku-panel-body">{children}</div>
     </section>
   );
 }
@@ -34,14 +35,14 @@ function AudienceBars({ rows, meta, locale }: { rows: ZarukuSeoMetricRow[]; meta
 function SourceDeviceTable({ rows, meta, locale }: { rows: ZarukuSeoMetricRow[]; meta: ZarukuDatasetMeta; locale: string }) {
   return (
     <ZarukuPanelState meta={meta} hasRows={rows.length > 0}>
-      <div className="overflow-x-auto"><table className="w-full min-w-[560px] text-sm"><thead><tr className="text-left text-xs uppercase text-slate-400"><th className="pb-2 font-medium">Источник</th><th className="pb-2 font-medium">Устройство</th><th className="pb-2 text-right font-medium">Визиты</th><th className="pb-2 text-right font-medium">Пользователи</th></tr></thead><tbody className="divide-y divide-slate-100">{rows.slice(0, 20).map((row, index) => <tr key={`${row.label}-${row.secondary_label}-${index}`}><td className="py-2.5 font-medium text-slate-700">{row.label}</td><td className="py-2.5 text-slate-500">{row.secondary_label ?? "—"}</td><td className="py-2.5 text-right tabular-nums text-slate-600">{formatNumber(row.visits, locale)}</td><td className="py-2.5 text-right tabular-nums text-slate-600">{formatNumber(row.users, locale)}</td></tr>)}</tbody></table></div>
+      <ZarukuTableFrame mode="standard" label="Источники трафика по устройствам"><table className="zaruku-table min-w-[560px]"><thead><tr className="text-left text-xs uppercase text-slate-400"><th className="pb-2 font-medium">Источник</th><th className="pb-2 font-medium">Устройство</th><th className="pb-2 text-right font-medium">Визиты</th><th className="pb-2 text-right font-medium">Пользователи</th></tr></thead><tbody className="divide-y divide-slate-100">{rows.slice(0, 20).map((row, index) => <tr key={`${row.label}-${row.secondary_label}-${index}`}><td className="py-2.5 font-medium text-slate-700">{row.label}</td><td className="py-2.5 text-slate-500">{row.secondary_label ?? "—"}</td><td className="py-2.5 text-right tabular-nums text-slate-600">{formatNumber(row.visits, locale)}</td><td className="py-2.5 text-right tabular-nums text-slate-600">{formatNumber(row.users, locale)}</td></tr>)}</tbody></table></ZarukuTableFrame>
     </ZarukuPanelState>
   );
 }
 
 export default function ZarukuAudienceTab({ data, locale = "ru-RU" }: Props) {
   return (
-    <div className="space-y-5">
+    <div className="zaruku-section-stack">
       <AudiencePanel title="Города и каталог онкоцентров" note="Продуктовый срез город × /map/: показывает, где пользователи входят в каталог онкоцентров, а не общую демографию сайта.">
         <ZarukuPanelState meta={data.dataset_meta.map_city_demand} hasRows={data.map_city_demand.length > 0}>
           <ZarukuRussiaDemandMap rows={data.map_city_demand} locale={locale} />

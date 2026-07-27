@@ -30,6 +30,10 @@ test("content tab uses explicit dataset states, native columns, search, and pagi
   assert.match(source, /PAGE_SIZE = 50/);
   assert.doesNotMatch(source, /Поведение по каналам/);
   assert.doesNotMatch(source, /useEffect\(\(\) => setPage/);
+  assert.match(source, /<ZarukuTableFrame mode="standard"/);
+  assert.match(source, /<MetricTable[\s\S]*mode="operational"/);
+  assert.doesNotMatch(source, /<div className="overflow-x-auto">\s*<table/);
+  assert.match(source, /card-surface zaruku-panel/);
 });
 
 test("returning content keeps canonical recency buckets", () => {
