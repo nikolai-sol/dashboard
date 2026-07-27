@@ -89,6 +89,57 @@ The contract defines:
 
 Existing domain components may keep their names and logic. The implementation should consolidate their repeated class strings around this contract without performing unrelated refactors.
 
+### Future layout-editor readiness
+
+The current implementation will prepare panels for a future admin-only visual layout editor without adding drag-and-drop controls or layout persistence in this phase.
+
+Every movable dashboard panel receives a permanent semantic identifier, for example:
+
+```text
+overview.traffic_health
+overview.channels
+overview.organic_search
+seo.query_comparison
+seo.page_comparison
+content.all_pages
+```
+
+Panel metadata is defined separately from its rendered data:
+
+```text
+panel_id
+tab_id
+default_order
+default_size
+allowed_sizes
+movable
+visible
+```
+
+The initial metadata remains code-owned and deterministic. No database column, API mutation, or per-user preference is introduced now.
+
+Desktop layouts use a 12-column grid and named panel sizes:
+
+| Panel size | Grid span | Intended use |
+|---|---:|---|
+| `compact` | 3 | KPI or short status |
+| `half` | 6 | Standard chart or table |
+| `wide` | 8 | Primary analytical panel |
+| `full` | 12 | Comparison table or operational workspace |
+
+Panel height uses content modes rather than free pixel sizing:
+
+| Height mode | Intended use |
+|---|---|
+| `compact` | KPI and short summary |
+| `standard` | Normal chart or table |
+| `tall` | Long operational table |
+| `auto` | Small dynamic content |
+
+The grid wrapper resolves `default_order` and size metadata into layout classes. Panels must not rely on arbitrary absolute positioning or pixel coordinates. At narrow breakpoints, panels stack according to `default_order`; desktop spans do not create horizontal overflow.
+
+This boundary allows a later editor to add drag handles, snapping, save/cancel/reset, and dashboard-level layout persistence without moving table logic or rewriting panel components.
+
 ### Table-frame contract
 
 Introduce one lightweight `ZarukuTableFrame` shell. It does not render columns, rows, sorting, filtering, or pagination. It only owns containment and sizing.
@@ -205,8 +256,10 @@ This work changes presentation boundaries, not the underlying data model:
 1. The dashboard loader continues to return Zaruku data and `dataset_meta`.
 2. `ZarukuSeoDashboard` continues to own active-tab and week-selection state.
 3. Domain table components continue to own sort, filter, search, and pagination state.
-4. `ZarukuTableFrame` receives only display mode and accessibility metadata.
-5. CSS tokens and the chart palette provide presentation values.
+4. The code-owned panel registry provides stable identity, order, allowed sizes, and visibility metadata.
+5. The grid wrapper resolves panel metadata into responsive placement without owning panel data.
+6. `ZarukuTableFrame` receives only display mode and accessibility metadata.
+7. CSS tokens and the chart palette provide presentation values.
 
 Changing tabs, dates, weeks, or table state must not cause the page width to jump. Table frames must keep a stable width even when row counts or empty states change.
 
@@ -216,11 +269,12 @@ Changing tabs, dates, weeks, or table state must not cause the page width to jum
 2. Add the table-frame shell and tests for its four modes.
 3. Fix page containment and migrate the two SEO comparison tables first, because they currently cause document-level overflow.
 4. Migrate remaining Zaruku tables by mode without changing their data logic.
-5. Consolidate Zaruku panel header/body styling around `.card-surface`.
-6. Apply RD-01 panel-state presentation and section collapsing.
-7. Apply tab-specific time-control ownership.
-8. Apply the desktop-only Overview grid.
-9. Run responsive, interaction, visual, and regression verification.
+5. Add stable panel IDs, the code-owned panel registry, named size presets, and grid-ready panel wrappers.
+6. Consolidate Zaruku panel header/body styling around `.card-surface`.
+7. Apply RD-01 panel-state presentation and section collapsing.
+8. Apply tab-specific time-control ownership.
+9. Apply the desktop-only Overview grid through the shared grid metadata.
+10. Run responsive, interaction, visual, and regression verification.
 
 ## Verification strategy
 
@@ -231,6 +285,8 @@ Changing tabs, dates, weeks, or table state must not cause the page width to jum
 - Source tests ensure no `min-w-*` class is placed on a table frame.
 - Source tests ensure wide tables are wrapped by the shared frame.
 - Source tests ensure Zaruku chart components consume the shared palette.
+- Unit tests ensure every registered panel ID is unique and every default size is allowed.
+- Unit tests ensure panel order is deterministic and narrow layouts ignore desktop spans.
 - TypeScript, ESLint, and production build pass.
 
 ### Browser checks
@@ -265,13 +321,18 @@ Because `.card-surface` and theme tokens are shared, visually verify Gidrofuril 
 9. One time owner is active per tab.
 10. Empty and unavailable datasets do not create repeated warning boxes.
 11. Gidrofuril and Abbott retain usable layouts after token changes.
-12. No deployment, database change, collector change, cron change, or external send occurs as part of this work.
+12. Every movable Zaruku panel has a unique stable ID, deterministic order, allowed size set, and grid-compatible wrapper.
+13. Reordering metadata in a test changes panel order without modifying the panel's data component.
+14. Narrow layouts stack panels by deterministic order and ignore desktop column spans.
+15. No drag-and-drop control, layout API, database change, deployment, collector change, cron change, or external send occurs as part of this work.
 
 ## Out of scope
 
 - Replacing Recharts, Nivo, and Visx with one chart library.
 - Replacing Zaruku domain tables with `CustomTable`, `PlatformTable`, or another universal table.
 - A full mobile-specific table/card redesign.
+- Drag-and-drop controls, freeform resizing, save/cancel/reset UI, and layout persistence.
+- Per-user layouts; a future editor should begin with admin-owned dashboard-level layouts.
 - Lazy-loading tabs.
 - Changes to data collection, canonical facts, database schema, cron, authentication, exports, or API contracts unless a separate reviewed requirement is created.
 
