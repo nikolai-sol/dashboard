@@ -6,6 +6,16 @@ const source = readFileSync(new URL("./ZarukuSeoDashboard.tsx", import.meta.url)
 const russiaMapSource = readFileSync(new URL("./ZarukuRussiaDemandMap.tsx", import.meta.url), "utf8");
 const contentSource = readFileSync(new URL("./ZarukuContentTab.tsx", import.meta.url), "utf8");
 const audienceSource = readFileSync(new URL("./ZarukuAudienceTab.tsx", import.meta.url), "utf8");
+const globalsSource = readFileSync(new URL("../app/globals.css", import.meta.url), "utf8");
+const paletteSource = readFileSync(new URL("../lib/chart-palette.ts", import.meta.url), "utf8");
+
+test("Zaruku uses shared visual tokens and chart palette", () => {
+  for (const token of ["--accent-seo", "--accent-pos", "--ink", "--surface-alt", "--card-pad", "--gap-card", "--gap-section"]) {
+    assert.match(globalsSource, new RegExp(token));
+  }
+  assert.match(paletteSource, /export const ZARUKU_CHART_PALETTE/);
+  assert.match(source, /ZARUKU_CHART_PALETTE/);
+});
 
 test("client navigation contains exactly six tabs in executive order", () => {
   const labels = ["Обзор", "SEO", "Контент", "Аудитория", "Работы и задачи", "Качество"];

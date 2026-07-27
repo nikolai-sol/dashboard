@@ -68,6 +68,7 @@ import {
   resolveRowsForWeek,
   resolveRowsForWeekOrLatest,
 } from "@/components/zaruku-yandex-webmaster-panels";
+import { ZARUKU_CHART_PALETTE } from "@/lib/chart-palette";
 
 type Props = {
   data: ZarukuSeoData;
@@ -84,8 +85,6 @@ const NAV: Array<{ id: TabId; label: string; icon: typeof LayoutGrid }> = [
   { id: "work", label: "Работы и задачи", icon: Workflow },
   { id: "quality", label: "Качество", icon: ShieldAlert },
 ];
-
-const COLORS = ["#0d9488", "#334155", "#64748b", "#94a3b8", "#0891b2", "#9333ea", "#2563eb", "#f59e0b"];
 
 function formatNumber(value: number, locale = "ru-RU") {
   return Math.round(value).toLocaleString(locale);
@@ -300,7 +299,10 @@ function BarListRow({
   const share = row.share != null && Number.isFinite(row.share) ? row.share : (Math.max(0, row[value]) / max) * 100;
   const sharePercent = Math.max(0, Math.min(100, share));
   const percentText = formatPercent(sharePercent, locale, 1);
-  const barStyle = { width: `${sharePercent}%`, background: COLORS[index % COLORS.length] };
+  const barStyle = {
+    width: `${sharePercent}%`,
+    background: ZARUKU_CHART_PALETTE.series[index % ZARUKU_CHART_PALETTE.series.length],
+  };
 
   useLayoutEffect(() => {
     const track = trackRef.current;
@@ -415,7 +417,7 @@ function NorthStarBlock({ data, locale }: Props) {
     opportunities: data.seo_os.opportunities,
   }));
   return (
-    <section className="rounded-lg border border-slate-200 border-t-slate-300 bg-[#f5f7fa] px-5 py-4">
+    <section className="rounded-lg border border-slate-200 border-t-slate-300 bg-surface-alt px-5 py-4">
       <div className="flex flex-col gap-4 lg:flex-row lg:items-center">
         <div className="flex min-w-0 items-center gap-2 lg:w-[380px]">
           <h3 className="text-base font-medium text-slate-900 lg:whitespace-nowrap">Цель: целевой органический трафик + ИИ-выдача</h3>
@@ -514,11 +516,11 @@ function AiAggregateVisibilityPanel({ data, locale }: Props) {
         <div className="space-y-3">
           <ResponsiveContainer width="100%" height={220}>
             <BarChart data={chartRows} margin={{ top: 8, right: 8, left: -20, bottom: 0 }}>
-              <CartesianGrid stroke="#eef2f7" strokeDasharray="3 3" vertical={false} />
-              <XAxis dataKey="label" tick={{ fontSize: 12, fill: "#64748b" }} axisLine={false} tickLine={false} />
-              <YAxis tick={{ fontSize: 12, fill: "#64748b" }} axisLine={false} tickLine={false} />
+              <CartesianGrid stroke={ZARUKU_CHART_PALETTE.grid} strokeDasharray="3 3" vertical={false} />
+              <XAxis dataKey="label" tick={{ fontSize: 12, fill: ZARUKU_CHART_PALETTE.axis }} axisLine={false} tickLine={false} />
+              <YAxis tick={{ fontSize: 12, fill: ZARUKU_CHART_PALETTE.axis }} axisLine={false} tickLine={false} />
               <Tooltip />
-              <Bar dataKey="presence_rate" name="Доля присутствия" fill="#0891b2" radius={[6, 6, 0, 0]} />
+              <Bar dataKey="presence_rate" name="Доля присутствия" fill={ZARUKU_CHART_PALETTE.position} radius={[6, 6, 0, 0]} />
             </BarChart>
           </ResponsiveContainer>
           <div className="grid gap-3 md:grid-cols-3">
@@ -557,14 +559,14 @@ function SemanticHealthPanel({ data, locale, primaryWeek }: Props & { primaryWee
       <div className="space-y-4">
         <ResponsiveContainer width="100%" height={240}>
           <LineChart data={chartRows} margin={{ top: 8, right: 8, left: -20, bottom: 0 }}>
-            <CartesianGrid stroke="#eef2f7" strokeDasharray="3 3" />
-            <XAxis dataKey="week" tick={{ fontSize: 12, fill: "#64748b" }} axisLine={false} tickLine={false} />
-            <YAxis tick={{ fontSize: 12, fill: "#64748b" }} axisLine={false} tickLine={false} />
+            <CartesianGrid stroke={ZARUKU_CHART_PALETTE.grid} strokeDasharray="3 3" />
+            <XAxis dataKey="week" tick={{ fontSize: 12, fill: ZARUKU_CHART_PALETTE.axis }} axisLine={false} tickLine={false} />
+            <YAxis tick={{ fontSize: 12, fill: ZARUKU_CHART_PALETTE.axis }} axisLine={false} tickLine={false} />
             <Tooltip />
-            <Line type="monotone" dataKey="noise" name="Шум в показах" stroke="#ef4444" strokeWidth={2.5} dot={{ r: 3 }} />
-            <Line type="monotone" dataKey="medical" name="Медицинский интент" stroke="#0d9488" strokeWidth={2.5} dot={{ r: 3 }} />
-            <Line type="monotone" dataKey="noise_baseline" name="Бейзлайн шума" stroke="#ef4444" strokeDasharray="5 5" dot={false} />
-            <Line type="monotone" dataKey="medical_baseline" name="Бейзлайн мед. интента" stroke="#0d9488" strokeDasharray="5 5" dot={false} />
+            <Line type="monotone" dataKey="noise" name="Шум в показах" stroke={ZARUKU_CHART_PALETTE.danger} strokeWidth={2.5} dot={{ r: 3 }} />
+            <Line type="monotone" dataKey="medical" name="Медицинский интент" stroke={ZARUKU_CHART_PALETTE.seo} strokeWidth={2.5} dot={{ r: 3 }} />
+            <Line type="monotone" dataKey="noise_baseline" name="Бейзлайн шума" stroke={ZARUKU_CHART_PALETTE.danger} strokeDasharray="5 5" dot={false} />
+            <Line type="monotone" dataKey="medical_baseline" name="Бейзлайн мед. интента" stroke={ZARUKU_CHART_PALETTE.seo} strokeDasharray="5 5" dot={false} />
           </LineChart>
         </ResponsiveContainer>
         <div className="overflow-x-auto">
@@ -623,11 +625,11 @@ function OverviewTab({ data, locale }: Props) {
         <Panel data={data} title="Органический поиск" source="metrika">
           <ResponsiveContainer width="100%" height={220}>
             <LineChart data={data.organic_trend} margin={{ top: 8, right: 8, left: -20, bottom: 0 }}>
-              <CartesianGrid stroke="#eef2f7" strokeDasharray="3 3" />
-              <XAxis dataKey="label" tick={{ fontSize: 12, fill: "#64748b" }} axisLine={false} tickLine={false} />
-              <YAxis tick={{ fontSize: 12, fill: "#64748b" }} axisLine={false} tickLine={false} />
+              <CartesianGrid stroke={ZARUKU_CHART_PALETTE.grid} strokeDasharray="3 3" />
+              <XAxis dataKey="label" tick={{ fontSize: 12, fill: ZARUKU_CHART_PALETTE.axis }} axisLine={false} tickLine={false} />
+              <YAxis tick={{ fontSize: 12, fill: ZARUKU_CHART_PALETTE.axis }} axisLine={false} tickLine={false} />
               <Tooltip />
-              <Line type="monotone" dataKey="visits" stroke="#0d9488" strokeWidth={2.5} dot={{ r: 3 }} />
+              <Line type="monotone" dataKey="visits" stroke={ZARUKU_CHART_PALETTE.seo} strokeWidth={2.5} dot={{ r: 3 }} />
             </LineChart>
           </ResponsiveContainer>
         </Panel>
@@ -743,12 +745,12 @@ function SeoTab({ data, locale, primaryWeek, comparisonWeek }: Props & { primary
         <Panel data={data} title="Поисковые системы после клика" source="metrika" layer="onsite">
           <ResponsiveContainer width="100%" height={240}>
             <BarChart data={data.search_engines} margin={{ top: 8, right: 8, left: -20, bottom: 0 }}>
-              <CartesianGrid stroke="#eef2f7" strokeDasharray="3 3" vertical={false} />
-              <XAxis dataKey="label" tick={{ fontSize: 12, fill: "#64748b" }} axisLine={false} tickLine={false} />
-              <YAxis tick={{ fontSize: 12, fill: "#64748b" }} axisLine={false} tickLine={false} />
+              <CartesianGrid stroke={ZARUKU_CHART_PALETTE.grid} strokeDasharray="3 3" vertical={false} />
+              <XAxis dataKey="label" tick={{ fontSize: 12, fill: ZARUKU_CHART_PALETTE.axis }} axisLine={false} tickLine={false} />
+              <YAxis tick={{ fontSize: 12, fill: ZARUKU_CHART_PALETTE.axis }} axisLine={false} tickLine={false} />
               <Tooltip />
               <Bar dataKey="visits" radius={[6, 6, 0, 0]}>
-                {data.search_engines.map((_, index) => <Cell key={index} fill={COLORS[index % COLORS.length]} />)}
+                {data.search_engines.map((_, index) => <Cell key={index} fill={ZARUKU_CHART_PALETTE.series[index % ZARUKU_CHART_PALETTE.series.length]} />)}
               </Bar>
             </BarChart>
           </ResponsiveContainer>

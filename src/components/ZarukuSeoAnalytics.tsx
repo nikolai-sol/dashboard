@@ -19,6 +19,7 @@ import {
   resolveSafeExternalUrl,
   type PositionComparisonRow,
 } from "@/components/zaruku-seo-analytics";
+import { ZARUKU_CHART_PALETTE } from "@/lib/chart-palette";
 
 type Props = {
   seoOs: ZarukuSeoOsData;
@@ -138,20 +139,20 @@ export default function ZarukuSeoAnalytics({ seoOs, primaryWeek, comparisonWeek,
         {plottedRows.length ? (
           <ResponsiveContainer width="100%" height={280}>
             <LineChart data={plottedRows} margin={{ top: 8, right: 12, left: -12, bottom: 0 }}>
-              <CartesianGrid stroke="#eef2f7" strokeDasharray="3 3" vertical={false} />
-              <XAxis dataKey="section" tick={{ fontSize: 12, fill: "#64748b" }} axisLine={false} tickLine={false} />
+              <CartesianGrid stroke={ZARUKU_CHART_PALETTE.grid} strokeDasharray="3 3" vertical={false} />
+              <XAxis dataKey="section" tick={{ fontSize: 12, fill: ZARUKU_CHART_PALETTE.axis }} axisLine={false} tickLine={false} />
               <YAxis
                 domain={[1, "dataMax + 1"]}
                 reversed
                 allowDecimals={false}
-                tick={{ fontSize: 12, fill: "#64748b" }}
+                tick={{ fontSize: 12, fill: ZARUKU_CHART_PALETTE.axis }}
                 axisLine={false}
                 tickLine={false}
-                label={{ value: "Позиция", angle: -90, position: "insideLeft", fill: "#64748b", fontSize: 12 }}
+                label={{ value: "Позиция", angle: -90, position: "insideLeft", fill: ZARUKU_CHART_PALETTE.axis, fontSize: 12 }}
               />
               <Tooltip content={<PositionTooltip comparisonWeek={comparisonWeek} />} />
-              <Line type="linear" dataKey="primary_position" name={`A ${primaryWeek ?? ""}`} stroke="#0d9488" strokeWidth={3} dot={{ r: 3 }} connectNulls={false} />
-              {comparisonWeek ? <Line type="linear" dataKey="comparison_position" name={`B ${comparisonWeek}`} stroke="#64748b" strokeWidth={2} strokeDasharray="6 4" dot={{ r: 2 }} connectNulls={false} /> : null}
+              <Line type="linear" dataKey="primary_position" name={`A ${primaryWeek ?? ""}`} stroke={ZARUKU_CHART_PALETTE.seo} strokeWidth={3} dot={{ r: 3 }} connectNulls={false} />
+              {comparisonWeek ? <Line type="linear" dataKey="comparison_position" name={`B ${comparisonWeek}`} stroke={ZARUKU_CHART_PALETTE.comparison} strokeWidth={2} strokeDasharray="6 4" dot={{ r: 2 }} connectNulls={false} /> : null}
             </LineChart>
           </ResponsiveContainer>
         ) : (
