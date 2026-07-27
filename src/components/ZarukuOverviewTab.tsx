@@ -1,4 +1,6 @@
-import type { ReactNode } from "react";
+import { Children, type ReactNode } from "react";
+import ZarukuPanelGrid, { ZarukuPanelSlot } from "@/components/ZarukuPanelGrid";
+import { resolveZarukuPanels } from "@/components/zaruku-panel-layout";
 import type { ZarukuSeoData } from "@/lib/types";
 
 type Props = {
@@ -8,10 +10,16 @@ type Props = {
 
 export default function ZarukuOverviewTab({ data, children }: Props) {
   void data;
+  const panels = resolveZarukuPanels("overview");
+  const panelChildren = Children.toArray(children);
 
   return (
-    <div className="space-y-5">
-      {children}
-    </div>
+    <ZarukuPanelGrid>
+      {panels.map((panel, index) => (
+        <ZarukuPanelSlot key={panel.panelId} panel={panel}>
+          {panelChildren[index] ?? null}
+        </ZarukuPanelSlot>
+      ))}
+    </ZarukuPanelGrid>
   );
 }

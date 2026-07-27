@@ -607,21 +607,19 @@ function WeeklyFocusPanel({ data, primaryWeek }: Props & { primaryWeek: string |
 
 function OverviewTab({ data, locale }: Props) {
   return (
-    <ZarukuOverviewTab data={data}>
-      <NorthStarBlock data={data} locale={locale} />
-      <TrafficHealthStrip data={data} />
-      <div className="grid gap-5 lg:grid-cols-3">
-        <div className="lg:col-span-2">
-          <Panel data={data} title="Каналы привлечения" source="metrika">
-            <BarList rows={data.traffic_channels} locale={locale} />
-            {data.technical_tail.length ? (
-              <div className="mt-4 rounded-md border border-dashed border-slate-200 bg-slate-50 px-3 py-2 text-xs text-slate-500">
-                Технический хвост:{" "}
-                {data.technical_tail.map((row) => `${row.label}: ${formatNumber(row.visits, locale)}`).join(", ")}. Он не считается отдельным каналом привлечения.
-              </div>
-            ) : null}
-          </Panel>
-        </div>
+    <>
+      <ZarukuOverviewTab data={data}>
+        <NorthStarBlock data={data} locale={locale} />
+        <TrafficHealthStrip data={data} />
+        <Panel data={data} title="Каналы привлечения" source="metrika">
+          <BarList rows={data.traffic_channels} locale={locale} />
+          {data.technical_tail.length ? (
+            <div className="mt-4 rounded-md border border-dashed border-slate-200 bg-slate-50 px-3 py-2 text-xs text-slate-500">
+              Технический хвост:{" "}
+              {data.technical_tail.map((row) => `${row.label}: ${formatNumber(row.visits, locale)}`).join(", ")}. Он не считается отдельным каналом привлечения.
+            </div>
+          ) : null}
+        </Panel>
         <Panel data={data} title="Органический поиск" source="metrika">
           <ResponsiveContainer width="100%" height={220}>
             <LineChart data={data.organic_trend} margin={{ top: 8, right: 8, left: -20, bottom: 0 }}>
@@ -633,9 +631,9 @@ function OverviewTab({ data, locale }: Props) {
             </LineChart>
           </ResponsiveContainer>
         </Panel>
-      </div>
+      </ZarukuOverviewTab>
       <PendingPanel data={data} />
-    </ZarukuOverviewTab>
+    </>
   );
 }
 
