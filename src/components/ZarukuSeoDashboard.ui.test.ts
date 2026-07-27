@@ -20,6 +20,14 @@ test("Zaruku uses shared visual tokens and chart palette", () => {
   assert.match(source, /ZARUKU_CHART_PALETTE/);
 });
 
+test("Zaruku typography follows the RD-01 heading, KPI, and table-header contract", () => {
+  assert.match(source, /className="zaruku-dashboard /);
+  assert.match(source, /zaruku-kpi-value/);
+  assert.match(globalsSource, /\.zaruku-dashboard :is\(h1, h2, h3, h4\)[\s\S]*font-family: var\(--zaruku-font-display\)/);
+  assert.match(globalsSource, /\.zaruku-dashboard \.zaruku-kpi-value[\s\S]*font-family: var\(--zaruku-font-display\)[\s\S]*font-variant-numeric: tabular-nums/);
+  assert.match(globalsSource, /\.zaruku-dashboard \.zaruku-table thead[\s\S]*font-family: var\(--zaruku-font-sans\)[\s\S]*font-size: 13px[\s\S]*line-height: 1\.4[\s\S]*text-transform: uppercase[\s\S]*color: var\(--muted\)/);
+});
+
 test("client navigation contains exactly six tabs in executive order", () => {
   const labels = ["Обзор", "SEO", "Контент", "Аудитория", "Работы и задачи", "Качество"];
   let lastIndex = -1;

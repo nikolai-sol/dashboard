@@ -470,7 +470,7 @@ function NorthStarBlock({ data, locale }: Props) {
                 />
               </div>
               <div className="mt-1 flex items-baseline gap-1.5">
-                <span className="text-3xl font-semibold leading-none text-slate-950">{formatPercent(item.value, locale, 1)}</span>
+                <span className="zaruku-kpi-value text-3xl font-semibold leading-none text-slate-950">{formatPercent(item.value, locale, 1)}</span>
                 <span className="text-sm font-medium text-slate-400">{item.arrow}</span>
                 {item.showDelta ? (
                   <span className={item.deltaTone === "good" ? "text-xs font-medium text-teal-700" : "text-xs font-medium text-red-700"}>
@@ -511,7 +511,7 @@ function TrafficHealthStrip({ data }: { data: ZarukuSeoData }) {
           {rows.primary.map((item, index) => (
             <div key={item.key} className={index === 0 ? "min-w-0" : "min-w-0 border-slate-200 sm:border-l sm:pl-5"}>
               <div className="text-xs text-slate-500">{item.label}</div>
-              <div className="mt-1 text-2xl font-semibold leading-none text-slate-950">{item.value}</div>
+              <div className="zaruku-kpi-value mt-1 text-2xl font-semibold leading-none text-slate-950">{item.value}</div>
             </div>
           ))}
         </div>
@@ -555,9 +555,9 @@ function AiAggregateVisibilityPanel({ data, locale }: Props) {
             </BarChart>
           </ResponsiveContainer>
           <div className="grid gap-3 md:grid-cols-3">
-            <div className="rounded-lg border border-slate-200 bg-slate-50 px-3 py-3"><div className="text-xs uppercase text-slate-400">Присутствие</div><div className="mt-1 text-xl font-semibold text-slate-900">{formatPercent(latest?.presence_rate, locale, 1)}</div></div>
-            <div className="rounded-lg border border-slate-200 bg-slate-50 px-3 py-3"><div className="text-xs uppercase text-slate-400">Упоминания</div><div className="mt-1 text-xl font-semibold text-slate-900">{formatNumber(latest?.mentions ?? 0, locale)}</div></div>
-            <div className="rounded-lg border border-slate-200 bg-slate-50 px-3 py-3"><div className="text-xs uppercase text-slate-400">Цитаты</div><div className="mt-1 text-xl font-semibold text-slate-900">{formatNumber(latest?.citations ?? 0, locale)}</div></div>
+            <div className="rounded-lg border border-slate-200 bg-slate-50 px-3 py-3"><div className="text-xs uppercase text-slate-400">Присутствие</div><div className="zaruku-kpi-value mt-1 text-xl font-semibold text-slate-900">{formatPercent(latest?.presence_rate, locale, 1)}</div></div>
+            <div className="rounded-lg border border-slate-200 bg-slate-50 px-3 py-3"><div className="text-xs uppercase text-slate-400">Упоминания</div><div className="zaruku-kpi-value mt-1 text-xl font-semibold text-slate-900">{formatNumber(latest?.mentions ?? 0, locale)}</div></div>
+            <div className="rounded-lg border border-slate-200 bg-slate-50 px-3 py-3"><div className="text-xs uppercase text-slate-400">Цитаты</div><div className="zaruku-kpi-value mt-1 text-xl font-semibold text-slate-900">{formatNumber(latest?.citations ?? 0, locale)}</div></div>
           </div>
           <p className="text-xs leading-relaxed text-slate-500">
             {latest ? `${formatNumber(latest.mentions, locale)} упоминаний и ${formatNumber(latest.citations, locale)} цитирований за ${latest.period}.` : ""}
@@ -905,7 +905,7 @@ export default function ZarukuSeoDashboard({ data, locale = "ru-RU", onActiveTab
   }, [activeTab, data, locale, selectedWeeks.comparisonWeek, selectedWeeks.primaryWeek]);
 
   return (
-    <div className="min-h-[calc(100vh-194px)] rounded-lg border border-slate-200 bg-slate-50 text-slate-900">
+    <div className="zaruku-dashboard min-h-[calc(100vh-194px)] rounded-lg border border-slate-200 bg-slate-50 text-slate-900">
       <div className="flex">
         <aside className="hidden w-60 shrink-0 border-r border-slate-200 bg-white p-4 md:block">
           <div className="flex items-center gap-2 px-1">

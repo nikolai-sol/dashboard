@@ -160,6 +160,29 @@
     min-width: 0;
   }
 
+  .zaruku-dashboard {
+    --zaruku-font-display: Georgia, Cambria, "Times New Roman", serif;
+    --zaruku-font-sans: var(--font-inter), Inter, Arial, sans-serif;
+    font-family: var(--zaruku-font-sans);
+  }
+
+  .zaruku-dashboard :is(h1, h2, h3, h4) {
+    font-family: var(--zaruku-font-display);
+  }
+
+  .zaruku-dashboard .zaruku-kpi-value {
+    font-family: var(--zaruku-font-display);
+    font-variant-numeric: tabular-nums;
+  }
+
+  .zaruku-dashboard .zaruku-table thead {
+    font-family: var(--zaruku-font-sans);
+    font-size: 13px !important;
+    line-height: 1.4 !important;
+    text-transform: uppercase;
+    color: var(--muted) !important;
+  }
+
   .zaruku-panel-header {
     display: flex;
     min-width: 0;
@@ -193,7 +216,9 @@
     background: var(--surface-alt);
     color: var(--muted);
     text-align: left;
-    font-size: 0.75rem;
+    font-size: 13px;
+    line-height: 1.4;
+    text-transform: uppercase;
   }
 
   .zaruku-table-frame-bounded .zaruku-table-head {

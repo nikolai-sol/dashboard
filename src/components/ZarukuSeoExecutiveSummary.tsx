@@ -38,7 +38,7 @@ function Metric({ label, value }: { label: string; value: string }) {
   return (
     <div className="min-w-0">
       <div className="text-[11px] font-medium uppercase tracking-wide text-slate-400">{label}</div>
-      <div className="mt-1 truncate text-lg font-semibold tabular-nums text-slate-900">{value}</div>
+      <div className="zaruku-kpi-value mt-1 truncate text-lg font-semibold tabular-nums text-slate-900">{value}</div>
     </div>
   );
 }

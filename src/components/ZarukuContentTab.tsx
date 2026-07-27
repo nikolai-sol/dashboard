@@ -183,7 +183,7 @@ export default function ZarukuContentTab({ data, locale = "ru-RU", primaryWeek, 
     <div className="zaruku-section-stack">
       <ContentPanel title="Состояние контента">
         <div className="grid gap-3 sm:grid-cols-2">
-          <div className="rounded-lg bg-slate-50 px-4 py-3"><div className="text-xs text-slate-500">Страниц в доступном срезе</div><div className="mt-1 text-xl font-semibold text-slate-900">{data.top_pages.length.toLocaleString(locale)}</div></div>
+          <div className="rounded-lg bg-slate-50 px-4 py-3"><div className="text-xs text-slate-500">Страниц в доступном срезе</div><div className="zaruku-kpi-value mt-1 text-xl font-semibold text-slate-900">{data.top_pages.length.toLocaleString(locale)}</div></div>
           <div className="rounded-lg bg-slate-50 px-4 py-3"><div className="text-xs text-slate-500">Нативные метрики страниц</div><div className="mt-1 text-sm font-semibold text-slate-800">{pageColumns.map((column) => column.label).join(" · ") || "Нет"}</div></div>
         </div>
         {pageMeta.message ? <p className="mt-3 text-xs leading-relaxed text-slate-500">{pageMeta.message}</p> : null}
