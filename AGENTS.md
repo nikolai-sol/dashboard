@@ -122,6 +122,7 @@ Current truth is `PM2 + 3001`.
 Current Zaruku source truth:
 - Yandex Metrika: collect only counter `66624469`; counters `29137835`, `105559308`, and `99078698` are on hold/inactive in `canonical_source_account_collection_settings`.
 - Yandex Webmaster: Zaruku host `https:zaruku.ru:443` is connected for canonical daily summary, query, and URL/page facts. URL/page rows live in `canonical_fact_webmaster_pages_daily`; the dashboard read model should expose `zaruku_seo.webmaster.data_availability.pages = true`.
+- Zaruku source freshness uses one product rule for Metrika, returning content, Webmaster, and GSC: compare the latest fact date with the UTC calendar date at the start of the current day; age `0..3` days is current and age `>3` days is delayed. `expected_frequency_hours` remains collector schedule metadata and must not drive this product status. Yandex documents Webmaster query statistics as updated daily, but does not publish a fixed 72-hour SLA; the 3-day allowance is ReportingDash policy.
 - The JavaScript Webmaster weekly collector is a fail-closed tombstone. `fetch_yandex_webmaster_canonical.py` is the only fact writer. Tables `seo_webmaster_queries_weekly` and `seo_webmaster_pages_weekly` are deprecated, have no writer, and must not be read.
 - Google Search Console: Zaruku property `https://zaruku.ru/` is connected through root collector `fetch_gsc_canonical.py`, not the old temporary / teletask path. Daily query/page/country/device rows live in `canonical_fact_gsc_queries_daily`; optional Search appearance rows live in `canonical_fact_gsc_search_appearance_daily`; result/search type rows live in `canonical_fact_gsc_search_type_daily`. Canonical lineage is `source_key=google_search_console`; legacy compatibility columns are not contract fields. Optional-layer HTTP 400/403 makes the collector run `partial` while preserving successful core facts. The dashboard read model should expose `zaruku_seo.gsc.status = available` when rows exist and surface recent partial freshness.
 - `seo_ai_visibility_weekly` is deprecated, has no writer, and must not be read; use `seo_ai_visibility` and canonical AI-visibility facts.
@@ -173,7 +174,7 @@ Use `report_bd` and `report_bd_tech` unless there is an explicit migration away 
 
 Canonical daily jobs on VPS:
 - `06:12` Yandex Metrika canonical (`fetch_yandex_metrika_canonical.py --days-back 2 --run-type cron`)
-- `06:18` Yandex Metrika returning-content canonical for account `66624469`
+- `06:18` Yandex Metrika returning-content canonical for account `66624469` (as of 2026-07-27 the installed cron still passes removed `--counter-id 66624469` and exits before collection; repair requires an explicit cron change)
 - `06:20` LinkedIn
 - `06:30` Reddit
 - `06:32` GetIntent

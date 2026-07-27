@@ -9,6 +9,7 @@ import {
   buildMapCityDemand,
   buildPageCollections,
   buildReturningPagesQuery,
+  buildMetrikaSegmentQueries,
   buildSourceFreshnessQuery,
   filterSearchEngineRows,
   enrichRowsWithPageTitles,
@@ -66,6 +67,11 @@ test("Zaruku read model does not request redundant general country or city repor
 test("Metrika segment query uses canonical segments table and segment_type filter", () => {
   assert.match(loaderSource, /canonical_fact_metrika_segments_daily/);
   assert.match(loaderSource, /segment_type =/);
+});
+
+test("data quality describes canonical Metrika cuts without obsolete API wording", () => {
+  assert.doesNotMatch(loaderSource, /title: "API Метрики"/);
+  assert.doesNotMatch(loaderSource, /Расширенные onsite-разрезы/);
 });
 
 test("buildContentSections uses SEO patterns and aggregates visits, users, and pageviews", () => {
@@ -391,6 +397,36 @@ test("default source freshness query includes the returning-content collector", 
   assert.equal(query.params.includes("yandex_metrika_returning"), true);
 });
 
+test("source freshness uses any successful collection for the last update timestamp", () => {
+  const query = buildSourceFreshnessQuery(["yandex_metrika_returning"]);
+  const latestSuccess = query.sql.match(/latest_success AS \([\s\S]*?\n    \),\n    latest_error AS/)?.[0] ?? "";
+
+  assert.match(latestSuccess, /status = 'success'/);
+  assert.doesNotMatch(latestSuccess, /run_type = 'cron'/);
+});
+
+test("Metrika segment queries interpolate a bounded LIMIT instead of binding it", () => {
+  const queries = buildMetrikaSegmentQueries(
+    ["66624469"],
+    "2026-07-01",
+    "2026-07-26",
+    "devices",
+    8,
+  );
+
+  for (const query of [queries.primary, queries.fallback]) {
+    assert.match(query.sql, /LIMIT 8/);
+    assert.doesNotMatch(query.sql, /LIMIT \?/);
+    assert.deepEqual(query.params, ["yandex_metrika", "66624469", "devices", "2026-07-01", "2026-07-26"]);
+  }
+
+  assert.match(
+    buildMetrikaSegmentQueries(["66624469"], "2026-07-01", "2026-07-26", "section_entrances", 50_000)
+      .primary.sql,
+    /LIMIT 10000/,
+  );
+});
+
 test("normalizeSourceFreshnessRow marks recent successful cron collector healthy", () => {
   assert.deepEqual(
     normalizeSourceFreshnessRow(
@@ -430,6 +466,52 @@ test("normalizeSourceFreshnessRow marks recent successful cron collector healthy
       note: "Последние факты в БД подтверждены; записано 2,125 rows.",
     },
   );
+});
+
+test("normalizeSourceFreshnessRow treats exactly three calendar days of lag as current", () => {
+  const row = normalizeSourceFreshnessRow(
+    {
+      source_key: "yandex_webmaster",
+      source_label: "Яндекс Вебмастер",
+      collector: "fetch_yandex_webmaster_canonical.py",
+      expected_frequency_hours: 24,
+      last_status: "success",
+      last_finished_at: "2026-07-27 06:50:08",
+      last_success_at: "2026-07-27 06:50:08",
+      success_date_from: "2026-07-21",
+      success_date_to: "2026-07-24",
+      success_rows_read: 100,
+      success_rows_written: 100,
+      last_error_at: null,
+      last_error_summary: null,
+    },
+    new Date("2026-07-27T23:59:59Z"),
+  );
+
+  assert.equal(row.freshness_status, "healthy");
+});
+
+test("normalizeSourceFreshnessRow marks more than three calendar days of lag delayed", () => {
+  const row = normalizeSourceFreshnessRow(
+    {
+      source_key: "yandex_metrika_returning",
+      source_label: "Яндекс Метрика · возвратный контент",
+      collector: "fetch_yandex_metrika_returning_canonical.py",
+      expected_frequency_hours: 24,
+      last_status: "success",
+      last_finished_at: "2026-07-24 06:18:08",
+      last_success_at: "2026-07-24 06:18:08",
+      success_date_from: "2026-07-21",
+      success_date_to: "2026-07-23",
+      success_rows_read: 100,
+      success_rows_written: 100,
+      last_error_at: null,
+      last_error_summary: null,
+    },
+    new Date("2026-07-27T00:01:00Z"),
+  );
+
+  assert.equal(row.freshness_status, "delayed");
 });
 
 test("normalizeSourceFreshnessRow hides older collector errors after a newer success", () => {

@@ -174,6 +174,8 @@ const SOURCE_FRESHNESS_CATALOG = [
   },
 ] as const;
 
+export const ZARUKU_DATA_LAG_DAYS = 3;
+
 function asNumber(value: unknown): number {
   const parsed = Number(value);
   return Number.isFinite(parsed) ? parsed : 0;
@@ -212,6 +214,17 @@ function parseDateValue(value: string | Date | null | undefined): Date | null {
   if (!value) return null;
   const date = value instanceof Date ? value : new Date(String(value).replace(" ", "T"));
   return Number.isNaN(date.getTime()) ? null : date;
+}
+
+function calendarDayAge(referenceDate: Date, now: Date) {
+  const dayMs = 24 * 60 * 60 * 1000;
+  const referenceDay = Date.UTC(
+    referenceDate.getUTCFullYear(),
+    referenceDate.getUTCMonth(),
+    referenceDate.getUTCDate(),
+  );
+  const currentDay = Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate());
+  return Math.floor((currentDay - referenceDay) / dayMs);
 }
 
 function formatPercent(value: number | null | undefined, digits = 0) {
@@ -584,8 +597,7 @@ export function buildSourceFreshnessQuery(sourceKeys = SOURCE_FRESHNESS_CATALOG.
         SELECT r2.source_key, MAX(r2.id) AS latest_success_id
         FROM canonical_collector_runs r2
         INNER JOIN scoped_sources ss ON ss.source_key = r2.source_key
-        WHERE r2.run_type = 'cron'
-          AND r2.status = 'success'
+        WHERE r2.status = 'success'
         GROUP BY r2.source_key
       ) latest ON latest.latest_success_id = r.id
     ),
@@ -643,7 +655,7 @@ export function normalizeSourceFreshnessRow(row: SourceFreshnessDbRow, now = new
     lastFinishedDate != null &&
     (lastSuccessDate == null || lastFinishedDate.getTime() >= lastSuccessDate.getTime());
   const freshnessReferenceDate = lastSuccessDateTo ?? lastSuccessDate;
-  const successAgeHours = freshnessReferenceDate ? (now.getTime() - freshnessReferenceDate.getTime()) / (60 * 60 * 1000) : Infinity;
+  const successAgeDays = freshnessReferenceDate ? calendarDayAge(freshnessReferenceDate, now) : Infinity;
 
   let freshnessStatus: ZarukuSourceFreshnessRow["freshness_status"];
   let note: string;
@@ -658,7 +670,7 @@ export function normalizeSourceFreshnessRow(row: SourceFreshnessDbRow, now = new
     note = lastSuccessAt
       ? `Последний cron collector упал после последнего successful import. Последний successful cron записал ${importedRowsText} rows.`
       : "Последний cron collector упал; successful import ещё не найден.";
-  } else if (successAgeHours > expectedFrequencyHours * 1.5) {
+  } else if (successAgeDays > ZARUKU_DATA_LAG_DAYS) {
     freshnessStatus = "delayed";
     note = `Последние факты в БД старше ожидаемого окна; записано ${importedRowsText} rows.`;
   } else {
@@ -874,6 +886,83 @@ type SegmentQueryReport = {
   error?: string;
 };
 
+export function buildMetrikaSegmentQueries(
+  counterIds: string[],
+  from: string,
+  to: string,
+  segmentType: string,
+  limit = 20,
+) {
+  const safeLimit = Math.max(1, Math.min(10_000, Math.trunc(Number.isFinite(limit) ? limit : 20)));
+  const params = [SOURCE_KEY, ...counterIds, segmentType, from, to];
+  return {
+    primary: {
+      sql: `
+        SELECT
+          COALESCE(segment_dimension_1, '') AS segment_dimension_1,
+          COALESCE(segment_dimension_2, '') AS segment_dimension_2,
+          COALESCE(segment_dimension_3, '') AS segment_dimension_3,
+          COALESCE(segment_dimension_4, '') AS segment_dimension_4,
+          COALESCE(segment_dimension_5, '') AS segment_dimension_5,
+          COALESCE(SUM(visits), 0) AS visits,
+          COALESCE(SUM(users), 0) AS users,
+          COALESCE(SUM(pageviews), 0) AS pageviews,
+          CASE WHEN COALESCE(SUM(visits), 0) > 0 THEN SUM(COALESCE(bounce_rate, 0) * visits) / SUM(visits) ELSE NULL END AS bounce_rate,
+          CASE WHEN COALESCE(SUM(visits), 0) > 0 THEN SUM(COALESCE(avg_visit_duration_seconds, 0) * visits) / SUM(visits) ELSE NULL END AS avg_visit_duration_seconds,
+          CASE WHEN COALESCE(SUM(visits), 0) > 0 THEN SUM(COALESCE(page_depth, 0) * visits) / SUM(visits) ELSE NULL END AS page_depth
+        FROM canonical_fact_metrika_segments_daily
+        WHERE source_key = ?
+          AND analytics_account_id IN (${buildInClause(counterIds)})
+          AND segment_type = ?
+          AND report_date >= ?
+          AND report_date <= ?
+        GROUP BY
+          segment_dimension_1,
+          segment_dimension_2,
+          segment_dimension_3,
+          segment_dimension_4,
+          segment_dimension_5
+        HAVING visits > 0 OR users > 0 OR pageviews > 0
+        ORDER BY visits DESC
+        LIMIT ${safeLimit}
+      `,
+      params,
+    },
+    fallback: {
+      sql: `
+        SELECT
+          report_key AS segment_type,
+          COALESCE(dimension_1_value, '') AS segment_dimension_1,
+          COALESCE(NULLIF(dimension_2_value, ''), COALESCE(page_url, '')) AS segment_dimension_2,
+          '' AS segment_dimension_3,
+          '' AS segment_dimension_4,
+          '' AS segment_dimension_5,
+          COALESCE(SUM(visits), 0) AS visits,
+          COALESCE(SUM(users), 0) AS users,
+          COALESCE(SUM(pageviews), 0) AS pageviews,
+          CASE WHEN COALESCE(SUM(visits), 0) > 0 THEN SUM(COALESCE(bounce_rate, 0) * visits) / SUM(visits) ELSE NULL END AS bounce_rate,
+          CASE WHEN COALESCE(SUM(visits), 0) > 0 THEN SUM(COALESCE(avg_visit_duration_seconds, 0) * visits) / SUM(visits) ELSE NULL END AS avg_visit_duration_seconds,
+          CASE WHEN COALESCE(SUM(visits), 0) > 0 THEN SUM(COALESCE(page_depth, 0) * visits) / SUM(visits) ELSE NULL END AS page_depth
+        FROM canonical_fact_metrika_breakdowns_daily
+        WHERE source_key = ?
+          AND analytics_account_id IN (${buildInClause(counterIds)})
+          AND segment_key = 'russia'
+          AND row_kind = 'detail'
+          AND report_key = ?
+          AND report_date >= ?
+          AND report_date <= ?
+        GROUP BY
+          segment_dimension_1,
+          segment_dimension_2
+        HAVING visits > 0 OR users > 0 OR pageviews > 0
+        ORDER BY visits DESC
+        LIMIT ${safeLimit}
+      `,
+      params,
+    },
+  };
+}
+
 async function queryMetrikaSegments(
   counterIds: string[],
   from: string,
@@ -881,76 +970,19 @@ async function queryMetrikaSegments(
   segmentType: string,
   limit = 20,
 ): Promise<SegmentQueryReport> {
+  const queries = buildMetrikaSegmentQueries(counterIds, from, to, segmentType, limit);
   const queryPrimaryMetrikaSegments = async (): Promise<CanonicalMetrikaSegmentRow[]> => {
-    const sql = `
-      SELECT
-        COALESCE(segment_dimension_1, '') AS segment_dimension_1,
-        COALESCE(segment_dimension_2, '') AS segment_dimension_2,
-        COALESCE(segment_dimension_3, '') AS segment_dimension_3,
-        COALESCE(segment_dimension_4, '') AS segment_dimension_4,
-        COALESCE(segment_dimension_5, '') AS segment_dimension_5,
-        COALESCE(SUM(visits), 0) AS visits,
-        COALESCE(SUM(users), 0) AS users,
-        COALESCE(SUM(pageviews), 0) AS pageviews,
-        CASE WHEN COALESCE(SUM(visits), 0) > 0 THEN SUM(COALESCE(bounce_rate, 0) * visits) / SUM(visits) ELSE NULL END AS bounce_rate,
-        CASE WHEN COALESCE(SUM(visits), 0) > 0 THEN SUM(COALESCE(avg_visit_duration_seconds, 0) * visits) / SUM(visits) ELSE NULL END AS avg_visit_duration_seconds,
-        CASE WHEN COALESCE(SUM(visits), 0) > 0 THEN SUM(COALESCE(page_depth, 0) * visits) / SUM(visits) ELSE NULL END AS page_depth
-      FROM canonical_fact_metrika_segments_daily
-      WHERE source_key = ?
-        AND analytics_account_id IN (${buildInClause(counterIds)})
-        AND segment_type = ?
-        AND report_date >= ?
-        AND report_date <= ?
-      GROUP BY
-        segment_dimension_1,
-        segment_dimension_2,
-        segment_dimension_3,
-        segment_dimension_4,
-        segment_dimension_5
-      HAVING visits > 0 OR users > 0 OR pageviews > 0
-      ORDER BY visits DESC
-      LIMIT ?
-    `;
     const [rows] = await pool.execute<CanonicalMetrikaSegmentRow[]>(
-      sql,
-      [SOURCE_KEY, ...counterIds, segmentType, from, to, limit],
+      queries.primary.sql,
+      queries.primary.params,
     );
     return rows;
   };
 
   const queryLegacyBreakdownSegments = async (): Promise<CanonicalMetrikaSegmentRow[]> => {
-    const sql = `
-      SELECT
-        report_key AS segment_type,
-        COALESCE(dimension_1_value, '') AS segment_dimension_1,
-        COALESCE(NULLIF(dimension_2_value, ''), COALESCE(page_url, '')) AS segment_dimension_2,
-        '' AS segment_dimension_3,
-        '' AS segment_dimension_4,
-        '' AS segment_dimension_5,
-        COALESCE(SUM(visits), 0) AS visits,
-        COALESCE(SUM(users), 0) AS users,
-        COALESCE(SUM(pageviews), 0) AS pageviews,
-        CASE WHEN COALESCE(SUM(visits), 0) > 0 THEN SUM(COALESCE(bounce_rate, 0) * visits) / SUM(visits) ELSE NULL END AS bounce_rate,
-        CASE WHEN COALESCE(SUM(visits), 0) > 0 THEN SUM(COALESCE(avg_visit_duration_seconds, 0) * visits) / SUM(visits) ELSE NULL END AS avg_visit_duration_seconds,
-        CASE WHEN COALESCE(SUM(visits), 0) > 0 THEN SUM(COALESCE(page_depth, 0) * visits) / SUM(visits) ELSE NULL END AS page_depth
-      FROM canonical_fact_metrika_breakdowns_daily
-      WHERE source_key = ?
-        AND analytics_account_id IN (${buildInClause(counterIds)})
-        AND segment_key = 'russia'
-        AND row_kind = 'detail'
-        AND report_key = ?
-        AND report_date >= ?
-        AND report_date <= ?
-      GROUP BY
-        segment_dimension_1,
-        segment_dimension_2
-      HAVING visits > 0 OR users > 0 OR pageviews > 0
-      ORDER BY visits DESC
-      LIMIT ?
-    `;
     const [rows] = await pool.execute<CanonicalMetrikaSegmentRow[]>(
-      sql,
-      [SOURCE_KEY, ...counterIds, segmentType, from, to, limit],
+      queries.fallback.sql,
+      queries.fallback.params,
     );
     return rows;
   };
@@ -1284,9 +1316,9 @@ function buildDataQuality({
       severity: "warning",
     },
     {
-      title: "API Метрики",
-      value: metrikaErrors.length > 0 ? `${metrikaErrors.length} ожидает` : "ок",
-      note: metrikaErrors.length > 0 ? "Часть расширенных разрезов недоступна в текущем окружении." : "Расширенные onsite-разрезы доступны.",
+      title: "Расширенные срезы Метрики",
+      value: metrikaErrors.length > 0 ? "частично" : "ок",
+      note: metrikaErrors.length > 0 ? "Часть расширенных срезов сейчас недоступна." : "Расширенные срезы доступны.",
       severity: metrikaErrors.length > 0 ? "warning" : "ok",
     },
   ];

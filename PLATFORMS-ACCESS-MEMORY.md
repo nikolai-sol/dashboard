@@ -146,6 +146,8 @@ Important current state:
   - `canonical_fact_webmaster_summary_daily`
   - `canonical_fact_webmaster_pages_daily`
 - URL/page facts come from Yandex Webmaster `query-analytics/list` with `text_indicator = URL`; default `YANDEX_WEBMASTER_SEARCH_LOCATION = ALL_LOCATIONS`, matching the Webmaster UI screenshot.
+- Official Webmaster documentation says query-statistics data is updated daily, but does not promise a fixed publication delay in hours: `https://yandex.ru/support/webmaster/ru/service/statistics`. The API reference exposes the latest two weeks without defining a 72-hour SLA: `https://yandex.ru/dev/webmaster/doc/ru/reference/host-query-analytics`. ReportingDash therefore uses its own conservative product threshold: a latest fact date up to 3 calendar days old is current; more than 3 days is delayed. Do not present that threshold as a Yandex SLA.
+- Collector `DEFAULT_LAG_DAYS = 3` controls the rolling date window/backfill and is separate from the dashboard freshness verdict.
 - 2026-07-17 production backfill run `1439` collected URL/page facts for `2026-07-13..2026-07-15`; `2026-07-15` has 968 page rows for account `66624469`.
 
 ### Google Search Console
@@ -457,6 +459,7 @@ Already done and should not be rediscovered:
 12. Yandex Metrika canonical collector now supports targeted counter backfills, counter-scoped deletes, API throttling, and page-level canonical rows; Zaruku `66624469` was enabled for canonical collection.
 13. Zaruku Metrika counters `29137835`, `105559308`, and `99078698` are on hold/inactive in production collection settings; only counter `66624469` should remain active for Zaruku.
 14. Yandex Webmaster URL/page facts are now canonical daily rows in `canonical_fact_webmaster_pages_daily`; dashboard payload `zaruku_seo.webmaster.data_availability.pages` is true after backfill run `1439`.
+15. Zaruku freshness policy is calendar-based across sources: age `0..3` days from the current UTC calendar day is current, and age `>3` is delayed. Yandex Webmaster documents daily updates but no fixed normal lag in hours; the three-day tolerance is an internal product rule.
 
 ## Working rule for future platform-access tasks
 
