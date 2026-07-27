@@ -348,7 +348,7 @@ export async function GET(
     const i18n = getDashboardI18n(data.dashboard.language);
     const currency = data.dashboard.currency || "EUR";
     const workbook = new ExcelJS.Workbook();
-    workbook.creator = "SolGoood Dashboard";
+    workbook.creator = "ReportingDash";
     workbook.created = new Date();
     workbook.properties.date1904 = true;
 

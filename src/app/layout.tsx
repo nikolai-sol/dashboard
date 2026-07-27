@@ -13,8 +13,8 @@ const jetbrainsMono = JetBrains_Mono({
 });
 
 export const metadata: Metadata = {
-  title: "SolGoood Dashboard",
-  description: "Awareness dashboard for client campaigns",
+  title: "ReportingDash",
+  description: "Client reporting dashboards",
 };
 
 export default function RootLayout({

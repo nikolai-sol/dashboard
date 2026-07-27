@@ -84,7 +84,7 @@ export async function GET(
       displayHeaderFooter: true,
       headerTemplate: `
         <div style="font-size:9px; width:100%; text-align:right; padding:0 12mm; color:#94a3b8;">
-          SolGoood Dashboard
+          ReportingDash
         </div>
       `,
       footerTemplate: `
