@@ -136,3 +136,10 @@ test("Audience route owns the projected city by map product signal", () => {
   assert.match(russiaMapSource, /размер круга = визиты/);
   assert.match(russiaMapSource, /formatPercent\(city\.row\.share, locale, 1\)/);
 });
+
+test("Audience navigation is derived from visible datasets", () => {
+  assert.match(source, /const visibleNav =/);
+  assert.match(source, /isZarukuAudienceVisible\(data\)/);
+  assert.match(source, /visibleNav\.map/);
+  assert.match(source, /setActiveTab\("overview"\)/);
+});

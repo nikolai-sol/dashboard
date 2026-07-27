@@ -570,7 +570,7 @@ export interface AbbottBiData {
 export type ZarukuSeoLayerId = "onsite" | "serp" | "ai";
 export type ZarukuSeoSourceId = "metrika" | "gsc" | "webmaster" | "seo_os" | "yandex_gen_search";
 export type ZarukuSeoSourceStatus = "connected" | "pending" | "partial" | "unavailable";
-export type ZarukuDatasetState = "ready" | "empty" | "unavailable" | "partial";
+export type ZarukuDatasetState = "ready" | "empty" | "unavailable" | "partial" | "hidden";
 export type ZarukuGeographyScope = "russia" | "host" | "unsegmented" | "mixed";
 export type ZarukuMetricColumn = "visits" | "users" | "pageviews" | "bounce_rate" | "avg_duration_seconds" | "page_depth";
 export type ZarukuDatasetKey =

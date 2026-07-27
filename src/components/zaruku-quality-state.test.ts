@@ -42,5 +42,5 @@ test("trust state is partial when optional datasets or freshness are incomplete"
   const state = buildZarukuTrustState({ traffic: meta("ready"), datasets: [meta("ready"), meta("unavailable")], freshness: [freshness("delayed")] });
   assert.equal(state.level, "partial");
   assert.equal(state.label, "Частичные данные");
-  assert.deepEqual(state.counts, { ready: 1, partial: 0, empty: 0, unavailable: 1 });
+  assert.deepEqual(state.counts, { ready: 1, partial: 0, empty: 0, unavailable: 1, hidden: 0 });
 });

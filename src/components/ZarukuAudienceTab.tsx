@@ -1,10 +1,25 @@
 import type { ReactNode } from "react";
-import ZarukuPanelState from "@/components/ZarukuPanelState";
+import ZarukuPanelState, { isZarukuDatasetVisible } from "@/components/ZarukuPanelState";
 import ZarukuRussiaDemandMap from "@/components/ZarukuRussiaDemandMap";
 import ZarukuTableFrame from "@/components/ZarukuTableFrame";
-import type { ZarukuDatasetMeta, ZarukuSeoData, ZarukuSeoMetricRow } from "@/lib/types";
+import type { ZarukuDatasetKey, ZarukuDatasetMeta, ZarukuSeoData, ZarukuSeoMetricRow } from "@/lib/types";
 
 type Props = { data: ZarukuSeoData; locale?: string };
+
+const AUDIENCE_DATASET_KEYS = [
+  "map_city_demand",
+  "devices",
+  "source_devices",
+  "browsers",
+  "operating_systems",
+  "age",
+  "gender",
+  "interests",
+] as const satisfies readonly ZarukuDatasetKey[];
+
+export function isZarukuAudienceVisible(data: Pick<ZarukuSeoData, "dataset_meta">): boolean {
+  return AUDIENCE_DATASET_KEYS.some((key) => isZarukuDatasetVisible(data.dataset_meta[key].state));
+}
 
 function formatNumber(value: number, locale: string) {
   return Math.round(value).toLocaleString(locale);

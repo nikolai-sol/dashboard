@@ -1,6 +1,6 @@
 "use client";
 
-import { useId, useLayoutEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useId, useLayoutEffect, useMemo, useRef, useState } from "react";
 import {
   Bar,
   BarChart,
@@ -47,7 +47,7 @@ import ZarukuSeoAnalytics from "@/components/ZarukuSeoAnalytics";
 import ZarukuSeoOperations from "@/components/ZarukuSeoOperations";
 import ZarukuOverviewTab from "@/components/ZarukuOverviewTab";
 import ZarukuContentTab from "@/components/ZarukuContentTab";
-import ZarukuAudienceTab from "@/components/ZarukuAudienceTab";
+import ZarukuAudienceTab, { isZarukuAudienceVisible } from "@/components/ZarukuAudienceTab";
 import ZarukuWorkTab from "@/components/ZarukuWorkTab";
 import ZarukuQualityTab from "@/components/ZarukuQualityTab";
 import {
@@ -775,6 +775,11 @@ function SeoTab({ data, locale, primaryWeek, comparisonWeek }: Props & { primary
 
 export default function ZarukuSeoDashboard({ data, locale = "ru-RU" }: Props) {
   const [activeTab, setActiveTab] = useState<TabId>("overview");
+  const audienceVisible = isZarukuAudienceVisible(data);
+  const visibleNav = useMemo(
+    () => audienceVisible ? NAV : NAV.filter((item) => item.id !== "audience"),
+    [audienceVisible],
+  );
   const weeksKey = data.seo_os.weeks.join("\u0000");
   const [weekState, setWeekState] = useState(() => ({
     weeksKey,
@@ -795,8 +800,14 @@ export default function ZarukuSeoDashboard({ data, locale = "ru-RU" }: Props) {
     primaryWeek: reconciledWeekSelection.primaryWeek,
     comparisonWeek: effectiveComparisonEnabled ? reconciledWeekSelection.comparisonWeek : null,
   };
-  const activeNav = NAV.find((item) => item.id === activeTab) ?? NAV[0];
+  const activeNav = visibleNav.find((item) => item.id === activeTab) ?? visibleNav[0];
   const CurrentIcon = activeNav.icon;
+
+  useEffect(() => {
+    if (!visibleNav.some((item) => item.id === activeTab)) {
+      setActiveTab("overview");
+    }
+  }, [activeTab, visibleNav]);
 
   const changeWeekSelection = (field: WeekSelectionField, week: string | null) => {
     setWeekState((current) => ({
@@ -867,7 +878,7 @@ export default function ZarukuSeoDashboard({ data, locale = "ru-RU" }: Props) {
             </div>
           </div>
           <nav className="mt-6 space-y-1">
-            {NAV.map((item) => {
+            {visibleNav.map((item) => {
               const Icon = item.icon;
               const active = item.id === activeTab;
               return (
@@ -939,7 +950,7 @@ export default function ZarukuSeoDashboard({ data, locale = "ru-RU" }: Props) {
               />
             </div> : null}
             <div className="mt-3 flex gap-1 overflow-x-auto md:hidden">
-              {NAV.map((item) => (
+              {visibleNav.map((item) => (
                 <button
                   key={item.id}
                   type="button"

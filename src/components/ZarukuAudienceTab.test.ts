@@ -25,4 +25,6 @@ test("every optional audience slice uses its explicit dataset state", () => {
   assert.doesNotMatch(source, /<div className="overflow-x-auto">\s*<table/);
   assert.match(source, /card-surface zaruku-panel/);
   assert.doesNotMatch(source, /geo_countries|geo_cities|Страны/);
+  assert.match(source, /export function isZarukuAudienceVisible/);
+  assert.match(source, /isZarukuDatasetVisible/);
 });

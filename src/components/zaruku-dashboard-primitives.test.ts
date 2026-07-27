@@ -23,9 +23,13 @@ const baseMeta: ZarukuDatasetMeta = {
   message: null,
 };
 
-test("panel state distinguishes unavailable, empty, and partial", () => {
+test("panel state keeps unavailable and hidden data out of the client surface", () => {
   const unavailable = renderToStaticMarkup(React.createElement(ZarukuPanelState, {
     meta: { ...baseMeta, state: "unavailable", message: "Стабильный срез недоступен." },
+    hasRows: false,
+  }, React.createElement("span", null, "rows")));
+  const hidden = renderToStaticMarkup(React.createElement(ZarukuPanelState, {
+    meta: { ...baseMeta, state: "hidden" },
     hasRows: false,
   }, React.createElement("span", null, "rows")));
   const empty = renderToStaticMarkup(React.createElement(ZarukuPanelState, {
@@ -33,14 +37,17 @@ test("panel state distinguishes unavailable, empty, and partial", () => {
     hasRows: false,
   }, React.createElement("span", null, "rows")));
   const partial = renderToStaticMarkup(React.createElement(ZarukuPanelState, {
-    meta: { ...baseMeta, state: "partial", message: "Данные доступны по 2026-07-19." },
+    meta: { ...baseMeta, state: "partial", message: null },
     hasRows: true,
   }, React.createElement("span", null, "rows")));
 
-  assert.match(unavailable, /Источник недоступен/);
-  assert.match(empty, /Нет данных за выбранный период/);
-  assert.match(partial, /Частичные данные/);
+  assert.equal(unavailable, "");
+  assert.equal(hidden, "");
+  assert.match(empty, /Нет данных за период/);
+  assert.doesNotMatch(empty, /amber/);
+  assert.match(partial, /Данные полные по 2026-07-19/);
   assert.match(partial, /rows/);
+  assert.ok(partial.indexOf("rows") < partial.indexOf("Данные полные"));
 });
 
 test("period context keeps onsite, search, and AI periods separate", () => {
