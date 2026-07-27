@@ -461,8 +461,8 @@ function NorthStarBlock({ data, locale }: Props) {
       <div className="flex flex-col gap-4 lg:flex-row lg:items-center">
         <div className="flex min-w-0 items-center gap-2 lg:w-[380px]">
           <h3 className="text-base font-medium text-slate-900 lg:whitespace-nowrap">Цель: целевой органический трафик + ИИ-выдача</h3>
-          <span title="Метрики — корреляционные показатели работы SEO OS." className="inline-flex shrink-0 text-slate-400">
-            <Info className="h-3.5 w-3.5" aria-label="Описание north-star" />
+          <span title={ZARUKU_CLIENT_COPY.northStarCorrelation} className="inline-flex shrink-0 text-slate-400">
+            <Info className="h-3.5 w-3.5" aria-label="Описание основных показателей" />
           </span>
         </div>
         <div className="grid flex-1 grid-cols-2 gap-x-6 gap-y-3 md:grid-cols-3">

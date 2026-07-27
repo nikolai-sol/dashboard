@@ -64,7 +64,7 @@ export default function ZarukuAudienceTab({ data, locale = "ru-RU" }: Props) {
         </ZarukuPanelState>
       </AudiencePanel>
 
-      <AudiencePanel title="Устройства" note="Сначала общий device mix, затем связь источника трафика с устройством.">
+      <AudiencePanel title="Устройства" note="Сначала общее распределение по устройствам, затем связь источника трафика с устройством.">
         <div className="grid gap-5 xl:grid-cols-2"><div><h4 className="mb-3 text-sm font-semibold text-slate-800">Типы устройств</h4><AudienceBars rows={data.devices} meta={data.dataset_meta.devices} locale={locale} /></div><div><h4 className="mb-3 text-sm font-semibold text-slate-800">Источник × устройство</h4><SourceDeviceTable rows={data.source_devices} meta={data.dataset_meta.source_devices} locale={locale} /></div></div>
       </AudiencePanel>
 

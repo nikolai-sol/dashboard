@@ -2,7 +2,7 @@
 
 **Date:** 2026-07-27
 
-**Status:** Approved direction; implementation not started
+**Status:** Implemented with documented open dependencies (RD-02, RD-03, RD-04, RD-05)
 
 **Scope:** `dashboard-next`, Zaruku dashboard only except for shared visual tokens
 
@@ -64,6 +64,19 @@ The existing `.card-surface` class will be aligned to these tokens:
 The chosen 20 px card padding and 16 px card gap match the measured Gidrofuril foundation. Zaruku-specific layouts may use 24 px only for page-level gutters, not as an alternative card padding.
 
 A single `src/lib/chart-palette.ts` module will expose the semantic palette used by Recharts, Nivo, and Visx. It will centralize chart color values without unifying the chart libraries.
+
+The literal-color acceptance boundary is the Zaruku runtime UI: `src/components/Zaruku*.tsx` and `src/components/zaruku-*.ts`, excluding tests. These files must contain no raw hex or `rgb/rgba` values. The broader `src/components` tree also contains Abbott, generic reporting, demo, multibrand, and admin-preview palettes; changing those products is outside RD-01 and is tracked as an explicit exclusion in the implementation report rather than silently treated as complete.
+
+### Typography contract
+
+The Zaruku root owns a scoped typography system:
+
+- headings `h1`–`h4`: Georgia/Cambria serif stack;
+- primary numeric KPI values: the same serif stack with `tabular-nums`;
+- table column labels: Inter/sans, 13 px, line-height 1.4, uppercase, `--muted`;
+- body copy and controls: Inter/sans.
+
+The typography selectors are scoped under `.zaruku-dashboard` and do not change Abbott, Gidrofuril, admin, demo, or generic reporting surfaces.
 
 ### Panel contract
 
@@ -240,12 +253,12 @@ The existing dataset metadata contract remains authoritative. Visual treatment c
 
 - `ready`: render content normally;
 - `partial`: quiet 13 px footer note, not a banner;
-- `empty`: unframed gray text, “Нет данных за период”;
+- `empty`: unframed gray text, “Нет данных за выбранный период.”;
 - `unavailable`: hidden from client presentation when there is no user action;
 - `hidden`: new state; render nothing;
 - amber: reserved for warnings with a concrete user action.
 
-If every panel in a section is `hidden` or `empty`, the section renders one quiet section-level message. If all Audience datasets are unavailable, the Audience tab is removed until data becomes available.
+If every panel in a section is `hidden`, `unavailable`, or `empty` (including a ready dataset with no rows), the section renders one quiet section-level message. If all Audience datasets are unavailable, the Audience tab is removed until data becomes available.
 
 Technical failures remain visible in Quality and existing operational alerts; they are not silently discarded from monitoring.
 
@@ -325,6 +338,9 @@ Because `.card-surface` and theme tokens are shared, visually verify Gidrofuril 
 13. Reordering metadata in a test changes panel order without modifying the panel's data component.
 14. Narrow layouts stack panels by deterministic order and ignore desktop column spans.
 15. No drag-and-drop control, layout API, database change, deployment, collector change, cron change, or external send occurs as part of this work.
+16. Zaruku runtime components contain no raw hex or `rgb/rgba` color literals; non-Zaruku component exclusions are listed in the implementation report.
+17. Zaruku headings, primary numeric KPI values, and table column labels match the scoped typography contract above.
+18. Audited client-facing tooltips and empty states contain no implementation vocabulary (`grain`, `canonical`, `collector`, `dataset_meta`, `fallback`, `partial`).
 
 ## Out of scope
 
