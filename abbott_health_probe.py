@@ -9,11 +9,47 @@ import os
 from collections import Counter
 from datetime import date, datetime, timedelta, timezone
 from decimal import Decimal
-
 try:
     from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
-except ImportError:  # pragma: no cover - exercised by the production Python 3.8 runtime
-    from backports.zoneinfo import ZoneInfo, ZoneInfoNotFoundError
+except Exception:  # pragma: no cover - compatibility with python<3.9 environments
+    try:
+        from backports.zoneinfo import ZoneInfo, ZoneInfoNotFoundError
+    except Exception:
+        from datetime import timedelta, tzinfo
+
+        class ZoneInfoNotFoundError(ValueError):
+            pass
+
+        class _FallbackZoneInfo(tzinfo):
+            def __init__(self, key: str, offset_hours: int) -> None:
+                self._key = key
+                self._offset = timedelta(hours=offset_hours)
+
+            def utcoffset(self, dt):  # pragma: no cover - minimal compatibility shim
+                return self._offset
+
+            def dst(self, dt):  # pragma: no cover - minimal compatibility shim
+                return timedelta(0)
+
+            def tzname(self, dt):  # pragma: no cover - minimal compatibility shim
+                return self._key
+
+            def fromutc(self, dt):  # pragma: no cover - minimal compatibility shim
+                if dt is None:
+                    raise TypeError("fromutc() argument must be a datetime")
+                return dt + self._offset
+
+        _OFFSETS = {
+            "Europe/Moscow": 3,
+            "Europe/Vienna": 2,
+            "UTC": 0,
+        }
+
+        def ZoneInfo(key: str) -> _FallbackZoneInfo:
+            try:
+                return _FallbackZoneInfo(key, _OFFSETS[key])
+            except KeyError as exc:
+                raise ZoneInfoNotFoundError(f"Unsupported timezone: {key}") from exc
 
 
 ABBOTT_COUNTER_ID = "90602537"
