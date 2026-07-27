@@ -6,6 +6,7 @@ import type { ZarukuSeoOsData, ZarukuSeoSource } from "@/lib/types";
 import { buildTrafficVisibilityRows } from "@/components/zaruku-traffic-visibility";
 import { ZARUKU_CHART_PALETTE } from "@/lib/chart-palette";
 import ZarukuTableFrame from "@/components/ZarukuTableFrame";
+import { ZARUKU_CLIENT_COPY } from "@/components/zaruku-client-copy";
 
 type Props = {
   seoOs: ZarukuSeoOsData;
@@ -57,7 +58,7 @@ export default function ZarukuTrafficVisibility({ seoOs, primaryWeek, comparison
   const comparisonPeriodLabel = isoWeekRange(comparisonWeek);
 
   if (!seoOs.data_availability.section_patterns || !seoOs.data_availability.traffic_visibility) {
-    return <section className="card-surface zaruku-panel px-5 py-8 text-sm text-slate-500">SEO-видимость временно недоступна. Повторите попытку позже.</section>;
+    return <section className="card-surface zaruku-panel px-5 py-8 text-sm text-slate-500">{ZARUKU_CLIENT_COPY.visibilityUnavailable}</section>;
   }
 
   return (

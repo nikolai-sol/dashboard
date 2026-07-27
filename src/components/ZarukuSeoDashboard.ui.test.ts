@@ -10,6 +10,7 @@ const overviewSource = readFileSync(new URL("./ZarukuOverviewTab.tsx", import.me
 const panelLayoutSource = readFileSync(new URL("./zaruku-panel-layout.ts", import.meta.url), "utf8");
 const globalsSource = readFileSync(new URL("../app/globals.css", import.meta.url), "utf8");
 const paletteSource = readFileSync(new URL("../lib/chart-palette.ts", import.meta.url), "utf8");
+const clientCopySource = readFileSync(new URL("./zaruku-client-copy.ts", import.meta.url), "utf8");
 
 test("Zaruku uses shared visual tokens and chart palette", () => {
   for (const token of ["--accent-seo", "--accent-pos", "--ink", "--surface-alt", "--card-pad", "--gap-card", "--gap-section"]) {
@@ -54,7 +55,8 @@ test("Overview uses a stable bounded desktop composition", () => {
   assert.match(source, /min-h-\[calc\(100vh-194px\)\]/);
   assert.match(source, /initialLimit=\{6\}/);
   assert.match(source, /titleInfo=\{/);
-  assert.match(source, /Технический хвост/);
+  assert.match(source, /ZARUKU_CLIENT_COPY\.technicalTail/);
+  assert.match(clientCopySource, /Технический хвост/);
   assert.doesNotMatch(source, /Технический хвост:\{" "\}/);
 });
 

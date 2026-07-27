@@ -70,6 +70,7 @@ import {
   resolveRowsForWeekOrLatest,
 } from "@/components/zaruku-yandex-webmaster-panels";
 import { ZARUKU_CHART_PALETTE } from "@/lib/chart-palette";
+import { ZARUKU_CLIENT_COPY } from "@/components/zaruku-client-copy";
 
 type Props = {
   data: ZarukuSeoData;
@@ -430,12 +431,12 @@ function buildGscSelectionMeta<T extends { week: string; week_from: string; week
   const fallbackNote = selectedWeek && selection.week && selection.week !== selectedWeek && selection.rows.length > 0
     ? `За выбранную неделю ${selectedWeek} детальных данных GSC пока нет; показываем последнюю доступную неделю ${selection.week}.`
     : selectedWeek && selection.rows.length === 0
-      ? "За выбранную неделю GSC search facts пока нет."
+      ? "За выбранную неделю подробных данных Google Search Console пока нет."
       : null;
 
   return {
     periodLabel,
-    sourceNote: "Search Console · canonical_fact_gsc_queries_daily.",
+    sourceNote: "Источник: Google Search Console · данные поисковых запросов.",
     fallbackNote,
   };
 }
@@ -560,11 +561,11 @@ function AiAggregateVisibilityPanel({ data, locale }: Props) {
           </div>
           <p className="text-xs leading-relaxed text-slate-500">
             {latest ? `${formatNumber(latest.mentions, locale)} упоминаний и ${formatNumber(latest.citations, locale)} цитирований за ${latest.period}.` : ""}
-            {latest?.provenance ? ` Ручной baseline: ${latest.provenance}.` : ""}
+            {latest?.provenance ? ` Контрольная точка загружена вручную; источник: ${latest.provenance}.` : ""}
           </p>
         </div>
       ) : (
-        <div className="rounded-md bg-slate-50 px-3 py-8 text-center text-sm text-slate-500">Снимок AI-видимости ещё не записан в seo_ai_visibility.</div>
+        <div className="rounded-md bg-slate-50 px-3 py-8 text-center text-sm text-slate-500">{ZARUKU_CLIENT_COPY.emptyAiVisibility}</div>
       )}
     </Panel>
   );
@@ -595,16 +596,16 @@ function SemanticHealthPanel({ data, locale, primaryWeek }: Props & { primaryWee
             <Tooltip />
             <Line type="monotone" dataKey="noise" name="Шум в показах" stroke={ZARUKU_CHART_PALETTE.danger} strokeWidth={2.5} dot={{ r: 3 }} />
             <Line type="monotone" dataKey="medical" name="Медицинский интент" stroke={ZARUKU_CHART_PALETTE.seo} strokeWidth={2.5} dot={{ r: 3 }} />
-            <Line type="monotone" dataKey="noise_baseline" name="Бейзлайн шума" stroke={ZARUKU_CHART_PALETTE.danger} strokeDasharray="5 5" dot={false} />
-            <Line type="monotone" dataKey="medical_baseline" name="Бейзлайн мед. интента" stroke={ZARUKU_CHART_PALETTE.seo} strokeDasharray="5 5" dot={false} />
+            <Line type="monotone" dataKey="noise_baseline" name="Ориентир шума" stroke={ZARUKU_CHART_PALETTE.danger} strokeDasharray="5 5" dot={false} />
+            <Line type="monotone" dataKey="medical_baseline" name="Ориентир мед. интента" stroke={ZARUKU_CHART_PALETTE.seo} strokeDasharray="5 5" dot={false} />
           </LineChart>
         </ResponsiveContainer>
         <div className="overflow-x-auto">
           <table className="w-full min-w-[760px] text-sm">
             <thead><tr className="text-left text-xs uppercase text-slate-400"><th className="pb-2 font-medium">Кластер</th><th className="pb-2 text-right font-medium">Запросы</th><th className="pb-2 text-right font-medium">Показы</th><th className="pb-2 text-right font-medium">Клики</th><th className="pb-2 text-right font-medium">Доля показов</th><th className="pb-2 text-right font-medium">Доля кликов</th><th className="pb-2 text-right font-medium">CTR</th></tr></thead>
             <tbody className="divide-y divide-slate-100">
-              {selectedRows.map((row) => <tr key={`${row.week}-${row.cluster}`}><td className="py-2.5 font-medium text-slate-700">{row.cluster}{row.isBaselineCluster ? <span className="ml-2 rounded-md bg-slate-100 px-1.5 py-0.5 text-[11px] font-medium text-slate-500">бейзлайн</span> : null}</td><td className="py-2.5 text-right text-slate-600">{formatNumber(row.query_count, locale)}</td><td className="py-2.5 text-right text-slate-600">{formatNumber(row.impressions, locale)}</td><td className="py-2.5 text-right text-slate-600">{formatNumber(row.clicks, locale)}</td><td className="py-2.5 text-right text-slate-600">{formatPercent(row.impressions_share, locale, 2)}</td><td className="py-2.5 text-right text-slate-600">{formatPercent(row.clicks_share, locale, 2)}</td><td className="py-2.5 text-right text-slate-500">{formatPercent(row.ctr, locale, 2)}</td></tr>)}
-              {selectedRows.length === 0 ? <tr><td colSpan={7} className="py-8 text-center text-sm text-slate-500">SOV-кластеры ещё не записаны.</td></tr> : null}
+              {selectedRows.map((row) => <tr key={`${row.week}-${row.cluster}`}><td className="py-2.5 font-medium text-slate-700">{row.cluster}{row.isBaselineCluster ? <span className="ml-2 rounded-md bg-slate-100 px-1.5 py-0.5 text-[11px] font-medium text-slate-500">ориентир</span> : null}</td><td className="py-2.5 text-right text-slate-600">{formatNumber(row.query_count, locale)}</td><td className="py-2.5 text-right text-slate-600">{formatNumber(row.impressions, locale)}</td><td className="py-2.5 text-right text-slate-600">{formatNumber(row.clicks, locale)}</td><td className="py-2.5 text-right text-slate-600">{formatPercent(row.impressions_share, locale, 2)}</td><td className="py-2.5 text-right text-slate-600">{formatPercent(row.clicks_share, locale, 2)}</td><td className="py-2.5 text-right text-slate-500">{formatPercent(row.ctr, locale, 2)}</td></tr>)}
+              {selectedRows.length === 0 ? <tr><td colSpan={7} className="py-8 text-center text-sm text-slate-500">{ZARUKU_CLIENT_COPY.emptySemanticGroups}</td></tr> : null}
             </tbody>
           </table>
         </div>
@@ -648,10 +649,10 @@ function OverviewTab({ data, locale }: Props) {
           bodyClassName="overflow-auto"
           titleInfo={data.technical_tail.length ? (
             <InfoTooltip
-              label="Что входит в технический хвост"
-              title="Технический хвост"
-              description="Служебные и нераспознанные источники не считаются отдельным каналом привлечения."
-              importance="Они доступны здесь для контроля полноты данных."
+              label={ZARUKU_CLIENT_COPY.technicalTail.label}
+              title={ZARUKU_CLIENT_COPY.technicalTail.title}
+              description={ZARUKU_CLIENT_COPY.technicalTail.description}
+              importance={ZARUKU_CLIENT_COPY.technicalTail.importance}
               details={data.technical_tail.map((row) => `${row.label}: ${formatNumber(row.visits, locale)}`).join(", ")}
             />
           ) : null}

@@ -1,4 +1,5 @@
 import type { ReactNode } from "react";
+import { ZARUKU_CLIENT_COPY, formatZarukuCompleteness } from "@/components/zaruku-client-copy";
 import type { ZarukuDatasetMeta, ZarukuDatasetState } from "@/lib/types";
 
 type Props = {
@@ -12,7 +13,7 @@ export default function ZarukuPanelState({ meta, hasRows, children }: Props) {
 
   if (meta.state === "empty" || !hasRows) {
     return (
-      <p role="status" className="py-2 text-sm text-slate-500">Нет данных за период.</p>
+      <p role="status" className="py-2 text-sm text-slate-500">{ZARUKU_CLIENT_COPY.emptyPeriod}</p>
     );
   }
 
@@ -21,7 +22,7 @@ export default function ZarukuPanelState({ meta, hasRows, children }: Props) {
       {children}
       {meta.state === "partial" ? (
         <p role="status" className="mt-3 border-t border-slate-100 pt-3 text-xs leading-relaxed text-slate-500">
-          {meta.message ?? `Данные полные по ${meta.period.to}.`}
+          {formatZarukuCompleteness(meta.period.to)}
         </p>
       ) : null}
     </>

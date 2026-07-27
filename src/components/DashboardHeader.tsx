@@ -2,6 +2,7 @@
 
 import { CalendarRange, Download } from "lucide-react";
 import ComparisonToggle, { type ComparisonPreset } from "@/components/ComparisonToggle";
+import { ZARUKU_CLIENT_COPY } from "@/components/zaruku-client-copy";
 import type { DashboardLanguage } from "@/lib/dashboard-i18n";
 
 export type DashboardQuickRangePreset = "this_month" | "this_week" | "yesterday" | "custom";
@@ -162,7 +163,7 @@ export default function DashboardHeader({
       {!pdfMode && dateControlsMode !== "hidden" ? (
         <div className="no-print flex flex-col gap-2 sm:items-end">
           {dateControlsDisabled ? (
-            <p className="text-xs font-medium text-slate-500">Эта вкладка работает по неделям</p>
+            <p className="text-xs font-medium text-slate-500">{ZARUKU_CLIENT_COPY.disabledCalendar}</p>
           ) : null}
           <div className="flex flex-wrap gap-2 sm:justify-end">
             {[

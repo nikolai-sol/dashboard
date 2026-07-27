@@ -1,4 +1,5 @@
 import type { ReactNode } from "react";
+import { ZARUKU_CLIENT_COPY } from "@/components/zaruku-client-copy";
 import type { ZarukuDatasetMeta } from "@/lib/types";
 
 type SectionPanel = {
@@ -23,7 +24,7 @@ export default function ZarukuSectionState({ panels, children }: Props) {
     return (
       <section className="card-surface zaruku-panel" aria-label="Состояние раздела">
         <p role="status" className="zaruku-panel-body text-sm text-slate-500">
-          Нет данных за выбранный период.
+          {ZARUKU_CLIENT_COPY.emptyPeriod}
         </p>
       </section>
     );

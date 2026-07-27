@@ -10,6 +10,7 @@ import {
 } from "@/components/zaruku-russia-map-data";
 import { separateMapMarkers } from "@/components/zaruku-russia-map-layout";
 import { ZARUKU_CHART_PALETTE } from "@/lib/chart-palette";
+import { ZARUKU_CLIENT_COPY } from "@/components/zaruku-client-copy";
 
 type Props = {
   rows: ZarukuSeoMetricRow[];
@@ -57,7 +58,7 @@ export default function ZarukuRussiaDemandMap({ rows, locale }: Props) {
   const activeCity = cities.find((city) => city.row.label === activeCityLabel) ?? null;
 
   if (rows.length === 0) {
-    return <div className="rounded-md bg-slate-50 px-4 py-5 text-sm text-slate-500">Нет данных по городам для /map за выбранный период.</div>;
+    return <div className="rounded-md bg-slate-50 px-4 py-5 text-sm text-slate-500">{ZARUKU_CLIENT_COPY.emptyMapCities}</div>;
   }
 
   if (cities.length === 0) {

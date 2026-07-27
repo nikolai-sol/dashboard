@@ -4,6 +4,7 @@ import { useMemo, useState } from "react";
 import { filterAndPaginate } from "@/components/zaruku-table-pagination";
 import { resolveZarukuContentUrl } from "@/lib/zaruku-url";
 import ZarukuTableFrame from "@/components/ZarukuTableFrame";
+import { ZARUKU_CLIENT_COPY } from "@/components/zaruku-client-copy";
 import {
   filterUnifiedSeoQueryRows,
   sortUnifiedSeoQueryRows,
@@ -311,7 +312,7 @@ export default function ZarukuSeoQueryComparison({
               </tr>
             ))}
             {paginated.totalRows === 0 ? (
-              <tr><td colSpan={13} className="px-4 py-12 text-center text-sm text-slate-500">{allSourcesUnavailable ? "Источник недоступен: Google, Яндекс Вебмастер и SEO OS." : "По выбранному фильтру запросов нет."}</td></tr>
+              <tr><td colSpan={13} className="px-4 py-12 text-center text-sm text-slate-500">{allSourcesUnavailable ? "Источник недоступен: Google, Яндекс Вебмастер и SEO OS." : ZARUKU_CLIENT_COPY.emptyQueries}</td></tr>
             ) : null}
           </tbody>
         </table>

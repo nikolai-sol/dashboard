@@ -16,6 +16,7 @@ import {
   sortSeoTasks,
 } from "@/components/zaruku-seo-operations";
 import ZarukuTableFrame from "@/components/ZarukuTableFrame";
+import { ZARUKU_CLIENT_COPY } from "@/components/zaruku-client-copy";
 
 type Props = {
   seoOs: ZarukuSeoOsData;
@@ -129,7 +130,7 @@ export default function ZarukuSeoOperations({ seoOs, primaryWeek, comparisonWeek
   );
 
   if (!seoOs.available) {
-    return <section className="card-surface zaruku-panel px-5 py-8 text-sm text-slate-500">Данные по работам и задачам временно недоступны. Повторите попытку позже.</section>;
+    return <section className="card-surface zaruku-panel px-5 py-8 text-sm text-slate-500">{ZARUKU_CLIENT_COPY.workUnavailable}</section>;
   }
 
   return (

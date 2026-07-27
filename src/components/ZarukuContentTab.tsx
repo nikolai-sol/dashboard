@@ -1,6 +1,7 @@
 "use client";
 
 import { useId, useMemo, useState, type ReactNode } from "react";
+import { ZARUKU_CLIENT_COPY } from "@/components/zaruku-client-copy";
 import ZarukuPanelState from "@/components/ZarukuPanelState";
 import ZarukuSectionState from "@/components/ZarukuSectionState";
 import ZarukuTrafficVisibility from "@/components/ZarukuTrafficVisibility";
@@ -100,11 +101,13 @@ function SectionPatternInfo({
         role="tooltip"
         className="pointer-events-none absolute left-1/2 top-6 z-50 hidden w-72 max-w-[calc(100vw-2rem)] -translate-x-1/2 rounded-lg border border-slate-200 bg-white p-3 text-left shadow-lg group-hover:block group-focus-within:block"
       >
-        <span className="block text-sm font-semibold text-slate-900">Карта разделов сайта</span>
+        <span className="block text-sm font-semibold text-slate-900">{ZARUKU_CLIENT_COPY.contentMap.title}</span>
         <span className="mt-1.5 block text-xs leading-relaxed text-slate-600">
-          N: {contentSummary.section_pattern_count} · M: {formatNumber(contentSummary.unmatched_pageviews, locale)}
+          Шаблонов разделов: {contentSummary.section_pattern_count}
           <br />
-          K: {matchedPercent} · дата: {formatSummaryDate(contentSummary.section_patterns_updated_at)}
+          Просмотров вне карты: {formatNumber(contentSummary.unmatched_pageviews, locale)} · доля: {matchedPercent}
+          <br />
+          Обновлено: {formatSummaryDate(contentSummary.section_patterns_updated_at)}
         </span>
       </span>
       {warning ? <span className="rounded-md bg-amber-100 px-2 py-0.5 text-xs font-medium text-amber-700">вне карты {matchedPercent}</span> : null}
@@ -190,7 +193,7 @@ export default function ZarukuContentTab({ data, locale = "ru-RU", primaryWeek, 
         <div>
           <div className="flex flex-wrap items-center gap-1.5">
             <h3 id="content-sections-title" className="text-base font-semibold text-slate-900">Разделы сайта</h3>
-            <SectionPatternInfo label="Информация по карте разделов" contentSummary={sectionSummary} locale={locale} />
+            <SectionPatternInfo label={ZARUKU_CLIENT_COPY.contentMap.label} contentSummary={sectionSummary} locale={locale} />
           </div>
           <p className="mt-1 text-xs text-slate-500">Просмотры и позиции сопоставлены по единой карте разделов сайта.</p>
         </div>
@@ -205,13 +208,13 @@ export default function ZarukuContentTab({ data, locale = "ru-RU", primaryWeek, 
       ]}>
         <ContentPanel title="Популярные страницы" note="Топ-10 страниц по просмотрам за период"><ZarukuPanelState meta={pageMeta} hasRows={data.top_pages.length > 0}><MetricTable rows={sortContentRows(data.top_pages, { key: "pageviews", direction: "desc" }, locale).slice(0, 10)} meta={pageMeta} locale={locale} /></ZarukuPanelState></ContentPanel>
 
-        <ContentPanel title="Лучшее удержание" note="Входные страницы с сильным удержанием; показываются только при наличии стабильного entry-page среза."><ZarukuPanelState meta={data.dataset_meta.best_engagement_pages} hasRows={data.best_engagement_pages.length > 0}><MetricTable rows={data.best_engagement_pages} meta={data.dataset_meta.best_engagement_pages} locale={locale} /></ZarukuPanelState></ContentPanel>
+        <ContentPanel title="Лучшее удержание" note="Входные страницы с сильным удержанием; показываются только при достаточном числе входов на страницу."><ZarukuPanelState meta={data.dataset_meta.best_engagement_pages} hasRows={data.best_engagement_pages.length > 0}><MetricTable rows={data.best_engagement_pages} meta={data.dataset_meta.best_engagement_pages} locale={locale} /></ZarukuPanelState></ContentPanel>
 
         <ContentPanel title="Риск отказов" note="Входные страницы с высоким риском отказа; нулевые значения не подменяют отсутствующий источник."><ZarukuPanelState meta={data.dataset_meta.high_bounce_pages} hasRows={data.high_bounce_pages.length > 0}><MetricTable rows={data.high_bounce_pages} meta={data.dataset_meta.high_bounce_pages} locale={locale} /></ZarukuPanelState></ContentPanel>
 
-        <ContentPanel title="Возврат к контенту" note="Канонические интервалы повторного визита: 1 день, 2–7 дней и 8–31 день."><ZarukuPanelState meta={data.dataset_meta.returning_pages} hasRows={data.returning_pages.length > 0}><ReturningTable rows={data.returning_pages.slice(0, 20)} locale={locale} /></ZarukuPanelState></ContentPanel>
+        <ContentPanel title="Возврат к контенту" note="Интервалы повторного визита: 1 день, 2–7 дней и 8–31 день."><ZarukuPanelState meta={data.dataset_meta.returning_pages} hasRows={data.returning_pages.length > 0}><ReturningTable rows={data.returning_pages.slice(0, 20)} locale={locale} /></ZarukuPanelState></ContentPanel>
 
-        <ContentPanel title="Все страницы" note="Доступный read-model с поиском, сортировкой и постраничным просмотром.">
+        <ContentPanel title="Все страницы" note="Доступные страницы с поиском, сортировкой и постраничным просмотром.">
           <ZarukuPanelState meta={pageMeta} hasRows={data.top_pages.length > 0}>
             <div className="mb-4 flex flex-col gap-3 lg:flex-row lg:items-end lg:justify-between"><label className="block w-full max-w-xl text-xs font-medium text-slate-600">Поиск по странице или URL<input type="search" value={query} onChange={(event) => changeQuery(event.target.value)} placeholder="Название или /path/" className="mt-1.5 w-full rounded-lg border border-slate-200 px-3 py-2 text-sm font-normal text-slate-800 outline-none focus:border-slate-400" /></label><div className="flex flex-wrap gap-2" aria-label="Сортировка страниц"><SortButton label="Название" sortKey="label" sort={supportedSort} onChange={changeSort} />{pageColumns.map((column) => <SortButton key={column.key} label={column.label} sortKey={column.key} sort={supportedSort} onChange={changeSort} />)}</div></div>
             <MetricTable rows={paginated.rows} meta={pageMeta} locale={locale} mode="operational" />

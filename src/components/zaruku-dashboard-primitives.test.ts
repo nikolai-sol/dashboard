@@ -37,15 +37,16 @@ test("panel state keeps unavailable and hidden data out of the client surface", 
     hasRows: false,
   }, React.createElement("span", null, "rows")));
   const partial = renderToStaticMarkup(React.createElement(ZarukuPanelState, {
-    meta: { ...baseMeta, state: "partial", message: null },
+    meta: { ...baseMeta, state: "partial", message: "canonical collector fallback" },
     hasRows: true,
   }, React.createElement("span", null, "rows")));
 
   assert.equal(unavailable, "");
   assert.equal(hidden, "");
-  assert.match(empty, /Нет данных за период/);
+  assert.match(empty, /Нет данных за выбранный период/);
   assert.doesNotMatch(empty, /amber/);
-  assert.match(partial, /Данные полные по 2026-07-19/);
+  assert.match(partial, /Данные полные по 19\.07\.2026/);
+  assert.doesNotMatch(partial, /canonical collector fallback/);
   assert.match(partial, /rows/);
   assert.ok(partial.indexOf("rows") < partial.indexOf("Данные полные"));
 });

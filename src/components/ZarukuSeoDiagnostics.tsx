@@ -5,6 +5,7 @@ import type {
   ZarukuGscSummaryRow,
 } from "@/lib/types";
 import ZarukuTableFrame from "@/components/ZarukuTableFrame";
+import { ZARUKU_CLIENT_COPY } from "@/components/zaruku-client-copy";
 
 type PeriodMeta = {
   label: string;
@@ -76,7 +77,7 @@ function DiagnosticTable({ rows, locale }: { rows: DiagnosticRow[]; locale: stri
             </tr>
           ))}
           {rows.length === 0 ? (
-            <tr><td colSpan={5} className="px-3 py-8 text-center text-sm text-slate-500">Нет данных для выбранной недели.</td></tr>
+            <tr><td colSpan={5} className="px-3 py-8 text-center text-sm text-slate-500">{ZARUKU_CLIENT_COPY.emptySearchWeek}</td></tr>
           ) : null}
         </tbody>
       </table>

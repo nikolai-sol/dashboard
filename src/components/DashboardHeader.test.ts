@@ -18,12 +18,12 @@ function renderMode(dateControlsMode: DashboardDateControlsMode) {
 test("active date controls preserve the existing calendar UI", () => {
   const html = renderMode("active");
   assert.match(html, /type="date"/);
-  assert.doesNotMatch(html, /Эта вкладка работает по неделям/);
+  assert.doesNotMatch(html, /На этой вкладке период выбирается по неделям/);
 });
 
 test("weekly tabs keep calendar controls visible but disabled", () => {
   const html = renderMode("disabled");
-  assert.match(html, /Эта вкладка работает по неделям/);
+  assert.match(html, /На этой вкладке период выбирается по неделям/);
   assert.match(html, /type="date"[^>]*disabled=""/);
   assert.match(html, /type="button"[^>]*disabled=""/);
 });
