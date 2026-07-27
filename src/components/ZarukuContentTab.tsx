@@ -2,6 +2,7 @@
 
 import { useId, useMemo, useState, type ReactNode } from "react";
 import ZarukuPanelState from "@/components/ZarukuPanelState";
+import ZarukuSectionState from "@/components/ZarukuSectionState";
 import ZarukuTrafficVisibility from "@/components/ZarukuTrafficVisibility";
 import ZarukuTableFrame, { type ZarukuTableFrameMode } from "@/components/ZarukuTableFrame";
 import { availableMetricColumns, sortContentRows, type ContentSort, type ContentSortKey } from "@/components/zaruku-content-table";
@@ -196,21 +197,28 @@ export default function ZarukuContentTab({ data, locale = "ru-RU", primaryWeek, 
         <ZarukuTrafficVisibility seoOs={data.seo_os} primaryWeek={primaryWeek} comparisonWeek={comparisonWeek} source={data.sources.find((source) => source.id === "seo_os")} />
       </section>
 
-      <ContentPanel title="Популярные страницы" note="Топ-10 страниц по просмотрам за период"><ZarukuPanelState meta={pageMeta} hasRows={data.top_pages.length > 0}><MetricTable rows={sortContentRows(data.top_pages, { key: "pageviews", direction: "desc" }, locale).slice(0, 10)} meta={pageMeta} locale={locale} /></ZarukuPanelState></ContentPanel>
+      <ZarukuSectionState panels={[
+        { meta: pageMeta, hasRows: data.top_pages.length > 0 },
+        { meta: data.dataset_meta.best_engagement_pages, hasRows: data.best_engagement_pages.length > 0 },
+        { meta: data.dataset_meta.high_bounce_pages, hasRows: data.high_bounce_pages.length > 0 },
+        { meta: data.dataset_meta.returning_pages, hasRows: data.returning_pages.length > 0 },
+      ]}>
+        <ContentPanel title="Популярные страницы" note="Топ-10 страниц по просмотрам за период"><ZarukuPanelState meta={pageMeta} hasRows={data.top_pages.length > 0}><MetricTable rows={sortContentRows(data.top_pages, { key: "pageviews", direction: "desc" }, locale).slice(0, 10)} meta={pageMeta} locale={locale} /></ZarukuPanelState></ContentPanel>
 
-      <ContentPanel title="Лучшее удержание" note="Входные страницы с сильным удержанием; показываются только при наличии стабильного entry-page среза."><ZarukuPanelState meta={data.dataset_meta.best_engagement_pages} hasRows={data.best_engagement_pages.length > 0}><MetricTable rows={data.best_engagement_pages} meta={data.dataset_meta.best_engagement_pages} locale={locale} /></ZarukuPanelState></ContentPanel>
+        <ContentPanel title="Лучшее удержание" note="Входные страницы с сильным удержанием; показываются только при наличии стабильного entry-page среза."><ZarukuPanelState meta={data.dataset_meta.best_engagement_pages} hasRows={data.best_engagement_pages.length > 0}><MetricTable rows={data.best_engagement_pages} meta={data.dataset_meta.best_engagement_pages} locale={locale} /></ZarukuPanelState></ContentPanel>
 
-      <ContentPanel title="Риск отказов" note="Входные страницы с высоким риском отказа; нулевые значения не подменяют отсутствующий источник."><ZarukuPanelState meta={data.dataset_meta.high_bounce_pages} hasRows={data.high_bounce_pages.length > 0}><MetricTable rows={data.high_bounce_pages} meta={data.dataset_meta.high_bounce_pages} locale={locale} /></ZarukuPanelState></ContentPanel>
+        <ContentPanel title="Риск отказов" note="Входные страницы с высоким риском отказа; нулевые значения не подменяют отсутствующий источник."><ZarukuPanelState meta={data.dataset_meta.high_bounce_pages} hasRows={data.high_bounce_pages.length > 0}><MetricTable rows={data.high_bounce_pages} meta={data.dataset_meta.high_bounce_pages} locale={locale} /></ZarukuPanelState></ContentPanel>
 
-      <ContentPanel title="Возврат к контенту" note="Канонические интервалы повторного визита: 1 день, 2–7 дней и 8–31 день."><ZarukuPanelState meta={data.dataset_meta.returning_pages} hasRows={data.returning_pages.length > 0}><ReturningTable rows={data.returning_pages.slice(0, 20)} locale={locale} /></ZarukuPanelState></ContentPanel>
+        <ContentPanel title="Возврат к контенту" note="Канонические интервалы повторного визита: 1 день, 2–7 дней и 8–31 день."><ZarukuPanelState meta={data.dataset_meta.returning_pages} hasRows={data.returning_pages.length > 0}><ReturningTable rows={data.returning_pages.slice(0, 20)} locale={locale} /></ZarukuPanelState></ContentPanel>
 
-      <ContentPanel title="Все страницы" note="Доступный read-model с поиском, сортировкой и постраничным просмотром.">
-        <ZarukuPanelState meta={pageMeta} hasRows={data.top_pages.length > 0}>
-          <div className="mb-4 flex flex-col gap-3 lg:flex-row lg:items-end lg:justify-between"><label className="block w-full max-w-xl text-xs font-medium text-slate-600">Поиск по странице или URL<input type="search" value={query} onChange={(event) => changeQuery(event.target.value)} placeholder="Название или /path/" className="mt-1.5 w-full rounded-lg border border-slate-200 px-3 py-2 text-sm font-normal text-slate-800 outline-none focus:border-slate-400" /></label><div className="flex flex-wrap gap-2" aria-label="Сортировка страниц"><SortButton label="Название" sortKey="label" sort={supportedSort} onChange={changeSort} />{pageColumns.map((column) => <SortButton key={column.key} label={column.label} sortKey={column.key} sort={supportedSort} onChange={changeSort} />)}</div></div>
-          <MetricTable rows={paginated.rows} meta={pageMeta} locale={locale} mode="operational" />
-          <footer className="mt-4 flex items-center justify-between gap-3 border-t border-slate-100 pt-3 text-xs text-slate-500"><button type="button" disabled={paginated.page <= 1} onClick={() => setPage((value) => Math.max(1, value - 1))} className="rounded-md border border-slate-200 px-3 py-1.5 disabled:opacity-40">Предыдущая</button><span>{paginated.totalRows.toLocaleString(locale)} найдено · Страница {paginated.page} из {paginated.totalPages}</span><button type="button" disabled={paginated.page >= paginated.totalPages} onClick={() => setPage((value) => Math.min(paginated.totalPages, value + 1))} className="rounded-md border border-slate-200 px-3 py-1.5 disabled:opacity-40">Следующая</button></footer>
-        </ZarukuPanelState>
-      </ContentPanel>
+        <ContentPanel title="Все страницы" note="Доступный read-model с поиском, сортировкой и постраничным просмотром.">
+          <ZarukuPanelState meta={pageMeta} hasRows={data.top_pages.length > 0}>
+            <div className="mb-4 flex flex-col gap-3 lg:flex-row lg:items-end lg:justify-between"><label className="block w-full max-w-xl text-xs font-medium text-slate-600">Поиск по странице или URL<input type="search" value={query} onChange={(event) => changeQuery(event.target.value)} placeholder="Название или /path/" className="mt-1.5 w-full rounded-lg border border-slate-200 px-3 py-2 text-sm font-normal text-slate-800 outline-none focus:border-slate-400" /></label><div className="flex flex-wrap gap-2" aria-label="Сортировка страниц"><SortButton label="Название" sortKey="label" sort={supportedSort} onChange={changeSort} />{pageColumns.map((column) => <SortButton key={column.key} label={column.label} sortKey={column.key} sort={supportedSort} onChange={changeSort} />)}</div></div>
+            <MetricTable rows={paginated.rows} meta={pageMeta} locale={locale} mode="operational" />
+            <footer className="mt-4 flex items-center justify-between gap-3 border-t border-slate-100 pt-3 text-xs text-slate-500"><button type="button" disabled={paginated.page <= 1} onClick={() => setPage((value) => Math.max(1, value - 1))} className="rounded-md border border-slate-200 px-3 py-1.5 disabled:opacity-40">Предыдущая</button><span>{paginated.totalRows.toLocaleString(locale)} найдено · Страница {paginated.page} из {paginated.totalPages}</span><button type="button" disabled={paginated.page >= paginated.totalPages} onClick={() => setPage((value) => Math.min(paginated.totalPages, value + 1))} className="rounded-md border border-slate-200 px-3 py-1.5 disabled:opacity-40">Следующая</button></footer>
+          </ZarukuPanelState>
+        </ContentPanel>
+      </ZarukuSectionState>
     </div>
   );
 }
