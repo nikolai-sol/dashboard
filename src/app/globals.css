@@ -182,6 +182,44 @@
     gap: var(--gap-section);
   }
 
+  .zaruku-table {
+    width: 100%;
+    border-collapse: separate;
+    border-spacing: 0;
+    font-size: 0.875rem;
+  }
+
+  .zaruku-table-head {
+    background: var(--surface-alt);
+    color: var(--muted);
+    text-align: left;
+    font-size: 0.75rem;
+  }
+
+  .zaruku-table-frame-bounded .zaruku-table-head {
+    position: sticky;
+    top: 0;
+    z-index: 10;
+  }
+
+  .zaruku-table-row {
+    background: var(--surface);
+  }
+
+  .zaruku-table-row + .zaruku-table-row {
+    border-top: 1px solid var(--border);
+  }
+
+  .zaruku-table-cell {
+    padding: 0.625rem 0.75rem;
+    vertical-align: top;
+  }
+
+  .zaruku-table-number {
+    text-align: right;
+    font-variant-numeric: tabular-nums;
+  }
+
   .kpi-grid {
     display: grid;
     gap: 1rem;
