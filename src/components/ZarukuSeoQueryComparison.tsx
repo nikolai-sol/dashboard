@@ -3,6 +3,7 @@
 import { useMemo, useState } from "react";
 import { filterAndPaginate } from "@/components/zaruku-table-pagination";
 import { resolveZarukuContentUrl } from "@/lib/zaruku-url";
+import ZarukuTableFrame from "@/components/ZarukuTableFrame";
 import {
   filterUnifiedSeoQueryRows,
   sortUnifiedSeoQueryRows,
@@ -227,8 +228,8 @@ export default function ZarukuSeoQueryComparison({
         ) : null}
       </header>
 
-      <div className="max-h-[42rem] overflow-auto min-w-[1180px]">
-        <table className="w-full table-fixed border-separate border-spacing-0 text-sm">
+      <ZarukuTableFrame mode="comparison" label="Сравнение поисковых запросов" className="rounded-none border-x-0 border-y-0">
+        <table className="w-[1180px] table-fixed border-separate border-spacing-0 text-sm">
           <thead className="sticky top-0 z-10 bg-white shadow-[0_1px_0_0_#e2e8f0]">
             <tr className="text-xs font-semibold text-slate-600">
               <th rowSpan={2} className="w-[360px] min-w-[220px] border-r border-slate-100 bg-white px-4 py-3 text-left align-bottom">Фраза</th>
@@ -314,7 +315,7 @@ export default function ZarukuSeoQueryComparison({
             ) : null}
           </tbody>
         </table>
-      </div>
+      </ZarukuTableFrame>
       <footer className="flex items-center justify-between gap-3 border-t border-slate-100 px-4 py-3 text-xs text-slate-500">
         <button type="button" disabled={paginated.page <= 1} onClick={() => setPage((value) => Math.max(1, value - 1))} className="rounded-md border border-slate-200 px-3 py-1.5 disabled:opacity-40">Предыдущая</button>
         <span>Страница {paginated.page} из {paginated.totalPages}</span>

@@ -60,7 +60,9 @@ test("renders grouped source columns, accessible sorting, and missing positions"
 
 test("keeps query-table width inside its own responsive scroll panel", () => {
   assert.match(source, /<section className="min-w-0/);
-  assert.match(source, /max-h-\[42rem\] overflow-auto[\s\S]*min-w-\[1180px\]/);
+  assert.match(source, /<ZarukuTableFrame mode="comparison"/);
+  assert.match(source, /<table className="w-\[1180px\]/);
+  assert.doesNotMatch(source, /overflow-auto min-w-\[1180px\]/);
   assert.match(source, /flex flex-wrap items-center justify-center/);
   assert.match(source, /thead className="sticky top-0/);
 });

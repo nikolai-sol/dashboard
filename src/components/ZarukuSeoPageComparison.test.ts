@@ -49,7 +49,9 @@ test("renders exact joined page rows with separate SEO and behavior periods", ()
 
 test("keeps page-table width inside its own responsive scroll panel", () => {
   assert.match(source, /<section className="min-w-0/);
-  assert.match(source, /max-h-\[42rem\] overflow-auto[\s\S]*min-w-\[1320px\]/);
+  assert.match(source, /<ZarukuTableFrame mode="comparison"/);
+  assert.match(source, /<table className="w-\[1320px\]/);
+  assert.doesNotMatch(source, /overflow-auto min-w-\[1320px\]/);
   assert.match(source, /flex flex-wrap items-center justify-center/);
   assert.match(source, /thead className="sticky top-0/);
 });

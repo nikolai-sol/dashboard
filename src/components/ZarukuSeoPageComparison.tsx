@@ -4,6 +4,7 @@ import { useMemo, useState } from "react";
 import type { UnifiedSeoPageRow } from "@/components/zaruku-seo-workspace";
 import { filterAndPaginate } from "@/components/zaruku-table-pagination";
 import { resolveZarukuContentUrl } from "@/lib/zaruku-url";
+import ZarukuTableFrame from "@/components/ZarukuTableFrame";
 
 const PAGE_SIZE = 50;
 type SeoPageSortKey = "google_impressions" | "webmaster_impressions" | "visits" | "label";
@@ -134,7 +135,7 @@ export default function ZarukuSeoPageComparison({ rows, seoWeek, sourceWeeks, so
         {unavailableSources.length > 0 && !allSourcesUnavailable ? <div className="mt-3 rounded-lg border border-blue-200 bg-blue-50 px-3 py-2 text-xs text-blue-900">Частичные данные: недоступны {unavailableSources.join(", ")}.</div> : null}
       </header>
 
-      <div className="max-h-[42rem] overflow-auto min-w-[1320px]">
+      <ZarukuTableFrame mode="comparison" label="Сравнение посадочных страниц" className="rounded-none border-x-0 border-y-0">
         <table className="w-[1320px] table-fixed border-separate border-spacing-0 text-sm">
           <thead className="sticky top-0 z-10 bg-white shadow-[0_1px_0_0_#e2e8f0]">
             <tr className="text-xs font-semibold text-slate-600">
@@ -198,7 +199,7 @@ export default function ZarukuSeoPageComparison({ rows, seoWeek, sourceWeeks, so
             ) : null}
           </tbody>
         </table>
-      </div>
+      </ZarukuTableFrame>
       <footer className="flex items-center justify-between gap-3 border-t border-slate-100 px-4 py-3 text-xs text-slate-500">
         <button type="button" disabled={paginated.page <= 1} onClick={() => setPage((value) => Math.max(1, value - 1))} className="rounded-md border border-slate-200 px-3 py-1.5 disabled:opacity-40">Предыдущая</button>
         <span>{paginated.totalRows.toLocaleString(locale)} найдено · Страница {paginated.page} из {paginated.totalPages}</span>
