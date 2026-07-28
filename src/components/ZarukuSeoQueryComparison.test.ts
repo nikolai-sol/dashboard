@@ -104,6 +104,8 @@ test("confirmed-landing filter runs across the full row set before pagination", 
   assert.match(markup, /15 найдено · Страница 1 из 1/);
   assert.match(markup, /Запрос 60/);
   assert.match(markup, /Google:/);
+  assert.match(markup, /подтверждает посадочные только по данным Google/);
+  assert.match(markup, /в Яндексе по той же фразе может вести другая страница/);
   assert.doesNotMatch(markup, /Запрос 59/);
 });
 

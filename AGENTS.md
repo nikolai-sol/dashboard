@@ -174,7 +174,7 @@ Use `report_bd` and `report_bd_tech` unless there is an explicit migration away 
 
 Canonical daily jobs on VPS:
 - `06:12` Yandex Metrika canonical (`fetch_yandex_metrika_canonical.py --days-back 2 --run-type cron`)
-- `06:18` Yandex Metrika returning-content canonical for account `66624469` (as of 2026-07-27 the installed cron still passes removed `--counter-id 66624469` and exits before collection; repair requires an explicit cron change)
+- `06:18` Yandex Metrika returning-content canonical for account `66624469` (`fetch_yandex_metrika_returning_canonical.py --account-id 66624469 --run-type cron`). The installed command was repaired on 2026-07-28; verification run `1694` succeeded and wrote 484 rows for `2026-07-24..2026-07-27`.
 - `06:20` LinkedIn
 - `06:30` Reddit
 - `06:32` GetIntent

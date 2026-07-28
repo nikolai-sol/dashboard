@@ -1,7 +1,7 @@
 # Zaruku Confirmed Query-to-Landing Design
 
 Date: 2026-07-28  
-Status: approved design, amended after read-only Metrika validation; implementation pending
+Status: implemented locally; amended after read-only W30 coverage validation and RD-07 Enhanced Export proof
 Owner: ReportingDash / Zaruku
 
 ## Problem
@@ -61,6 +61,7 @@ The Webmaster `popular_complementary_indicator` may later be shown as `Осно�
 - Webmaster-only and SEO-OS-only rows disappear only while the filter is enabled.
 - Search, sort, week selection, and pagination continue to work. Filtering occurs before pagination so page counts remain correct.
 - If no rows match, the table shows one quiet message: `Нет запросов с подтверждённой посадочной за выбранный период.`
+- The table states explicitly that the current filter confirms landings only from Google and that Yandex may use a different page for the same phrase.
 
 ### URL presentation
 
@@ -90,6 +91,32 @@ For the same counter and date, existing separately collected segments contained:
 Measured survival was therefore 0% of the stored top search phrases and 0% of visits in both comparison cuts. Compatibility alone is not sufficient: the combined privacy suppression makes the dataset unusable for this dashboard.
 
 Decision: do not add `search_phrase_landing_pages`, do not modify the Metrika collector, and do not expose Metrika as a confirmed query-to-landing source. Confirmed landing pages remain GSC-only. Reconsider Metrika only if a future API/data-contract change produces a materially non-empty result in a separately authorized validation.
+
+## W30 Coverage and Wording Decision
+
+The read-only production calculation was repeated immediately before the RD-07 gate for `2026-W30` (`2026-07-20..2026-07-26`; GSC facts through 25.07, Webmaster facts through 22.07):
+
+- 4,528 unified query keys;
+- 3,259 keys with a same-row GSC page;
+- 1,269 Webmaster-only keys;
+- the confirmed cohort carries 695 of 3,958 Webmaster impressions, or 17.5594%.
+
+The 17.5594% is a partial-week diagnostic, not stable UI data. It is not rendered as a percentage. It does require unambiguous copy: the current confirmed filter is Google-only, and a Google page must not be read as the Yandex landing for the same phrase.
+
+An authoritative URL count for all Webmaster-only queries does not exist in the current canonical contract because query and page facts are separate. The bounded `popular_complementary_indicator` proxy covers 491 normalized URLs and 487 of 1,269 Webmaster-only query keys, but remains representative-only and never passes the RD-06 filter.
+
+## RD-07 Enhanced Export Proof
+
+After the URL/date prerequisite was fixed, one explicitly authorized base-quota request was created for the highest-impression representative candidate:
+
+- URL: `/rak-molochnoj-zhelezy/nuzhno-li-sohranyat-molochnuyu-zhelezu-pri-rake/`;
+- date: `2026-07-22`;
+- task: `26224340-8a5c-11f1-b8b7-21c9fbaae2a2`;
+- quota: 1 free unit used, 99 remaining; no paid quota used.
+
+The task completed successfully. Its gzip CSV contains 152 rows with `date`, `host`, `path`, `query`, `clicks`, `impressions`, and `position` in the same row; 13 rows have positive clicks, totaling 13 clicks and 191 impressions. All 152 query strings normalize with the same trim / whitespace-collapse / lowercase rule used by the dashboard. The selected representative query matches the current canonical normalized key exactly.
+
+This proves that Enhanced Export can supply exact Yandex query-page relationships. It does not change the current dashboard contract by itself: no collector, canonical table, migration, or scheduled ingestion was added in this task.
 
 ## Data Contract
 

@@ -137,6 +137,15 @@ Important current state:
 - Zaruku inactive / hold counters `29137835`, `105559308`, and `99078698` must stay `is_active = 0` and `cron_enabled = 0`; do not collect them unless the user explicitly reactivates them.
 - If `canonical_fact_user_behavior_daily` stays empty for Zaruku, do not infer a collector failure by itself: the counter may not expose `paramsLevel2` / UserID-style rows.
 
+### Yandex Metrika returning content
+
+- collector/runtime: `/root/reportingdash-canonical/fetch_yandex_metrika_returning_canonical.py`
+- canonical table: `canonical_fact_metrika_returning_pages_daily`
+- daily cron: `06:18`, account `66624469`, command flags `--account-id 66624469 --run-type cron`
+- on 2026-07-28 the installed cron was repaired after seven parser failures caused by the removed `--counter-id` flag; the repair also restored the missing `--run-type cron`
+- verification run `1694` completed as `cron/success`, wrote 484 rows for `2026-07-24..2026-07-27`, and changed the live dashboard freshness result to `healthy`
+- rollback copy of the prior root crontab: `/root/crontab.backup-rd08-20260728T080419Z`
+
 ### Yandex Webmaster
 
 - collector: `/Users/nicko/ReportingDash/fetch_yandex_webmaster_canonical.py` deployed into `/var/www/dashboard/fetch_yandex_webmaster_canonical.py`
@@ -146,9 +155,11 @@ Important current state:
   - `canonical_fact_webmaster_summary_daily`
   - `canonical_fact_webmaster_pages_daily`
 - URL/page facts come from Yandex Webmaster `query-analytics/list` with `text_indicator = URL`; default `YANDEX_WEBMASTER_SEARCH_LOCATION = ALL_LOCATIONS`, matching the Webmaster UI screenshot.
-- Official Webmaster documentation says query-statistics data is updated daily, but does not promise a fixed publication delay in hours: `https://yandex.ru/support/webmaster/ru/service/statistics`. The API reference exposes the latest two weeks without defining a 72-hour SLA: `https://yandex.ru/dev/webmaster/doc/ru/reference/host-query-analytics`. ReportingDash therefore uses its own conservative product threshold: a latest fact date up to 3 calendar days old is current; more than 3 days is delayed. Do not present that threshold as a Yandex SLA.
+- Official Webmaster documentation says query-statistics data is updated daily, but does not promise a fixed publication delay in hours: `https://yandex.ru/support/webmaster/ru/service/statistics`. The API reference exposes the latest two weeks without defining a 72-hour SLA: `https://yandex.ru/dev/webmaster/doc/ru/reference/host-query-analytics`. ReportingDash therefore uses its own conservative product threshold: a latest fact date up to 4 calendar days old is current; more than 4 days is delayed. Do not present that threshold as a Yandex SLA.
 - Collector `DEFAULT_LAG_DAYS = 3` controls the rolling date window/backfill and is separate from the dashboard freshness verdict.
 - 2026-07-17 production backfill run `1439` collected URL/page facts for `2026-07-13..2026-07-15`; `2026-07-15` has 968 page rows for account `66624469`.
+- Enhanced Export (`PRO_SERP`) was proven with one authorized `1 URL × 1 date` base-quota request on 2026-07-28. Task `26224340-8a5c-11f1-b8b7-21c9fbaae2a2` used 1 free unit (99 remained), completed successfully, and returned a gzip CSV with 152 same-row `query + path + clicks` records for 2026-07-22, totaling 13 clicks and 191 impressions. This validates the source contract only; no collector, canonical storage, rotation, or cron was added.
+- The current Webmaster-only cohort has no authoritative all-query URL count because canonical query and page facts are separate. `popular_complementary_indicator` is only a representative selection signal; never treat it as an observed click landing or an RD-06-confirmed pair.
 
 ### Google Search Console
 

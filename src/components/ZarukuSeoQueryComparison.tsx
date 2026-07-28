@@ -209,6 +209,9 @@ export default function ZarukuSeoQueryComparison({
             </button>
           ))}
         </div>
+        <p className="mt-2 max-w-3xl text-xs leading-relaxed text-slate-500">
+          Сейчас фильтр подтверждает посадочные только по данным Google. Страница относится к Google; в Яндексе по той же фразе может вести другая страница.
+        </p>
         <label className="mt-3 block max-w-xl text-xs font-medium text-slate-600">
           Поиск по фразе или разделу
           <input
