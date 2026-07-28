@@ -42,19 +42,22 @@ const FILTERS: Array<{ id: SeoQueryFilter; label: string }> = [
 const PAGE_SIZE = 50;
 
 export function toggleSeoSort(current: SeoQuerySort, key: SeoQuerySortKey): SeoQuerySort {
+  const defaultDirection: Record<SeoQuerySortKey, "asc" | "desc"> = {
+    google_position: "asc",
+    webmaster_position: "asc",
+    seo_os_position: "asc",
+    google_impressions: "desc",
+    google_clicks: "desc",
+    google_ctr: "desc",
+    webmaster_impressions: "desc",
+    webmaster_clicks: "desc",
+    webmaster_ctr: "desc",
+  };
+
   if (current.key === key) {
     return { key, direction: current.direction === "asc" ? "desc" : "asc" };
   }
-  const shouldDefaultDesc = [
-    "google_impressions",
-    "google_clicks",
-    "google_ctr",
-    "webmaster_impressions",
-    "webmaster_clicks",
-    "webmaster_ctr",
-  ].includes(key);
-
-  return { key, direction: shouldDefaultDesc ? "desc" : "asc" };
+  return { key, direction: defaultDirection[key] ?? "asc" };
 }
 
 function formatNumber(value: number | null | undefined, locale: string): string {

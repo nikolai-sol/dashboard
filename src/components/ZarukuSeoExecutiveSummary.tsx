@@ -82,14 +82,10 @@ export default function ZarukuSeoExecutiveSummary({
   locale = "ru-RU",
 }: Props) {
   return (
-    <section className="min-w-0 space-y-4" aria-labelledby="zaruku-seo-executive-title">
+    <section className="min-w-0 space-y-4">
       <div className="rounded-xl border border-slate-200 bg-slate-900 px-4 py-4 text-white shadow-sm sm:px-5">
         <div className="flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
-          <div className="min-w-0">
-            <p className="text-xs font-medium uppercase tracking-[0.16em] text-teal-300">SEO · executive overview</p>
-            <h2 id="zaruku-seo-executive-title" className="mt-1 text-lg font-semibold">Состояние органического поиска</h2>
-          </div>
-          <div className="grid min-w-0 gap-3 text-sm sm:grid-cols-2 lg:min-w-[620px]">
+          <div className="min-w-0 grid min-w-0 gap-3 text-sm sm:grid-cols-2 lg:min-w-[620px]">
             <div className="rounded-lg bg-white/5 px-3 py-2.5 ring-1 ring-white/10">
               <div className="text-xs text-slate-400">Период поведения на сайте</div>
               <div className="mt-1 font-medium tabular-nums text-slate-100">{trafficPeriod.from} — {trafficPeriod.to}</div>
