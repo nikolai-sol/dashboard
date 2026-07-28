@@ -11,8 +11,8 @@ private runtime repository.
 
 | Bootstrap path | Root authority | SHA-256 | Runtime role |
 | --- | --- | --- | --- |
-| `collectors/fetch_yandex_metrika_canonical.py` | `fetch_yandex_metrika_canonical.py` | `8805525835d4abc12c0f325197345bbd91f891554680e7596a371d542c2208d4` | Yandex Metrika canonical collector and Abbott counter backfill entrypoint |
-| `lib/canonical_writer.py` | `canonical_writer.py` | `f861a5ea473bc8a2880839837fd94451a819d7f5dc93e4f15f77d3d062b21268` | Staging resume writer and current-active append-only Abbott day publisher |
+| `collectors/fetch_yandex_metrika_canonical.py` | `fetch_yandex_metrika_canonical.py` | `9c035f65a3e54d66ca7ee6a2799f33bb731e758bfc6a4f6ad8a010b7bfb127d7` | Yandex Metrika canonical collector and Abbott counter backfill entrypoint |
+| `lib/canonical_writer.py` | `canonical_writer.py` | `d694d741eb671849baa88d6cd360f44ccf77409749f18d50e89460576c7b56db` | Staging resume writer and current-active append-only Abbott day publisher |
 | `lib/metrika_dashboard_breakdowns.py` | `metrika_dashboard_breakdowns.py` | `879822ee16108abccbb0b0c726d88f6d3835e36f2566d2531bdb4cd1a461f6c8` | Shared Metrika dashboard breakdown definitions |
 | `lib/metrika_logs_api.py` | `metrika_logs_api.py` | `bfb6e5ec504f0e89f2ab5547102efa1a59fedeaf5e1b88f7e6179f3658a85f5f` | Exact Metrika Logs request lifecycle and visit parser |
 | `lib/canonical_release_store.py` | `canonical_release_store.py` | `7c31094a188ed32a9944b32456d302c2e3256abdd554da012b15fcf38db0a301` | Candidate release store, persisted validation gate, atomic activation, and rollback pointer management |
@@ -24,8 +24,8 @@ every runbook entrypoint and each repository-local Python dependency.
 
 | Bootstrap path | Root authority | SHA-256 | Runtime role |
 | --- | --- | --- | --- |
-| `runtime/fetch_yandex_metrika_canonical.py` | `fetch_yandex_metrika_canonical.py` | `8805525835d4abc12c0f325197345bbd91f891554680e7596a371d542c2208d4` | Exact five-scope Metrika collector |
-| `runtime/canonical_writer.py` | `canonical_writer.py` | `f861a5ea473bc8a2880839837fd94451a819d7f5dc93e4f15f77d3d062b21268` | Atomic staging and active append-only writer |
+| `runtime/fetch_yandex_metrika_canonical.py` | `fetch_yandex_metrika_canonical.py` | `9c035f65a3e54d66ca7ee6a2799f33bb731e758bfc6a4f6ad8a010b7bfb127d7` | Exact five-scope Metrika collector |
+| `runtime/canonical_writer.py` | `canonical_writer.py` | `d694d741eb671849baa88d6cd360f44ccf77409749f18d50e89460576c7b56db` | Atomic staging and active append-only writer |
 | `runtime/metrika_dashboard_breakdowns.py` | `metrika_dashboard_breakdowns.py` | `879822ee16108abccbb0b0c726d88f6d3835e36f2566d2531bdb4cd1a461f6c8` | Shared dashboard breakdown definitions |
 | `runtime/metrika_logs_api.py` | `metrika_logs_api.py` | `bfb6e5ec504f0e89f2ab5547102efa1a59fedeaf5e1b88f7e6179f3658a85f5f` | Exact Metrika Logs request lifecycle and visit parser |
 | `runtime/canonical_release_store.py` | `canonical_release_store.py` | `7c31094a188ed32a9944b32456d302c2e3256abdd554da012b15fcf38db0a301` | Exact validation and pointer store |
@@ -37,9 +37,9 @@ every runbook entrypoint and each repository-local Python dependency.
 | `runtime/abbott_canonical_controls.py` | `abbott_canonical_controls.py` | `4c9fb6291a6ae54958cdcd15eb654be0eefc6a7264b70c894bd01a4b8b9def17` | Baseline/control evidence library |
 | `runtime/metrika_pagination.py` | `metrika_pagination.py` | `7dcb1a05ad8babcc7d696934babb1ab50747ca140c910efc88f3685674386a7c` | Metrika pagination dependency |
 | `runtime/backfill_abbott_metrika_2026.py` | `backfill_abbott_metrika_2026.py` | `d9c4a02b2032aa25ed648d17671c749f54352588e95ef8801fe79044b90d9f09` | Gap-first full-year backfill CLI |
-| `runtime/abbott_health_probe.py` | `abbott_health_probe.py` | `661eab6b301e734e27a80c19b4d3f10cfc3db4977758fd603592bb0eda8d2f85` | Deterministic Abbott health CLI |
-| `runtime/send_canonical_telegram_report.py` | `send_canonical_telegram_report.py` | `5e5f9f26f6fb66349d4b9af9d002575518c1430f8d57c647d4c0ed1db0ea152c` | Summary entrypoint |
-| `runtime/sources_health_dashboard.py` | `sources_health_dashboard.py` | `2884007260389b013daff0523617d9cdf6e6dde241889ef534599d76bd4ea9d0` | Summary health dependency |
+| `runtime/abbott_health_probe.py` | `abbott_health_probe.py` | `4abaaf5d51b8ac45b346f7fa01079b0e94a62057464ebae8300ebfac22be4060` | Deterministic Abbott health CLI |
+| `runtime/send_canonical_telegram_report.py` | `send_canonical_telegram_report.py` | `84cc95f8e92a21fe11f2f8f9ec86db2f048873a3230b99bbe0105fc8961e08ef` | Summary entrypoint |
+| `runtime/sources_health_dashboard.py` | `sources_health_dashboard.py` | `072a3270fa0cac9c7b7384f19aba636485dc89b8c03da2eb80bbde1c50c71116` | Summary health dependency |
 
 ## collectors/
 

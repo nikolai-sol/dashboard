@@ -29,6 +29,9 @@ SOURCES = {
     'yandex_direct': {
         'gate_note': 'prod health uses canonical API-first freshness/run status',
     },
+    'between': {
+        'gate_note': 'email daily reports to canonical + dashboard binding',
+    },
     'yandex_metrika': {
         'gate_note': 'canonical analytics freshness on traffic scope',
         'source_kind': 'analytics',
@@ -148,6 +151,7 @@ FROM (
   UNION ALL SELECT %s
   UNION ALL SELECT %s
   UNION ALL SELECT %s
+  UNION ALL SELECT %s
 ) s
 LEFT JOIN (
   SELECT source_key, COUNT(*) AS accounts
@@ -173,6 +177,7 @@ SELECT
   f.max_report_date AS latest_report_date
 FROM (
   SELECT %s AS source_key
+  UNION ALL SELECT %s
   UNION ALL SELECT %s
   UNION ALL SELECT %s
   UNION ALL SELECT %s
@@ -204,7 +209,7 @@ FROM canonical_collector_runs t
 JOIN (
   SELECT source_key, MAX(id) AS max_id
   FROM canonical_collector_runs
-  WHERE source_key IN (%s, %s, %s, %s, %s, %s)
+  WHERE source_key IN (%s, %s, %s, %s, %s, %s, %s)
   GROUP BY source_key
 ) last_run
   ON last_run.source_key = t.source_key
@@ -219,6 +224,7 @@ SELECT
   f.max_report_date AS to_date
 FROM (
   SELECT %s AS source_key
+  UNION ALL SELECT %s
   UNION ALL SELECT %s
   UNION ALL SELECT %s
   UNION ALL SELECT %s

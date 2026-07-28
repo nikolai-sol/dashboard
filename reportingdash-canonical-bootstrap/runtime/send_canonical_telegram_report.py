@@ -9,12 +9,13 @@ import json
 import os
 import subprocess
 import sys
+import tempfile
 import urllib.error
 import urllib.parse
 import urllib.request
-from datetime import datetime
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
-from typing import Dict, List, Optional, Tuple
+from typing import Any, Callable, Dict, List, Optional, Tuple
 
 ROOT = Path(__file__).resolve().parent
 DASHBOARD_SCRIPT = ROOT / 'sources_health_dashboard.py'
@@ -22,7 +23,23 @@ ABBOTT_HEALTH_SCRIPT = ROOT / 'abbott_health_probe.py'
 LEGACY_ENV_PATH = Path('/var/www/www-root/data/.production.env')
 MANUAL_EXCEPTIONS_PATH = ROOT / 'MANUAL-LEGACY-EXCEPTIONS.md'
 LOCAL_VENV_PYTHON = ROOT / 'venv' / 'bin' / 'python'
-SUMMARY_SOURCE_ORDER = ['linkedin', 'reddit', 'vk_ads_v2', 'getintent', 'yandex_direct', 'hybrid', 'yandex_metrika']
+DEFAULT_ZARUKU_INCIDENT_STATE_PATH = ROOT / 'logs' / 'zaruku-telegram-incident-state.json'
+ZARUKU_INCIDENT_RETENTION_DAYS = 45
+SUMMARY_SOURCE_ORDER = [
+    'linkedin',
+    'reddit',
+    'vk_ads_v2',
+    'getintent',
+    'yandex_direct',
+    'hybrid',
+    'between',
+    'google_search_console',
+    'yandex_metrika',
+]
+SUMMARY_SOURCE_LABELS = {
+    'between': 'between email',
+    'google_search_console': 'google search console',
+}
 
 
 def parse_args() -> argparse.Namespace:
@@ -90,6 +107,35 @@ def run_abbott_health_json() -> Dict:
     return run_json_script(ABBOTT_HEALTH_SCRIPT, {0, 1, 2})
 
 
+def load_zaruku_snapshot(now_utc: Optional[datetime] = None) -> Dict[str, Any]:
+    from canonical_writer import get_db_connection
+    from zaruku_collector_health import (
+        build_lineage_defect_scope,
+        build_partial_date_scope,
+        build_zaruku_incidents,
+        load_lineage_defects,
+        load_partial_fact_dates,
+        load_zaruku_health,
+    )
+
+    now = now_utc or datetime.now(timezone.utc)
+    conn = get_db_connection()
+    cur = conn.cursor(dictionary=True)
+    try:
+        health = load_zaruku_health(cur, now)
+        partial_scope = build_partial_date_scope(load_partial_fact_dates(cur))
+        lineage_scope = build_lineage_defect_scope(load_lineage_defects(cur))
+    finally:
+        cur.close()
+        conn.close()
+    return {
+        'health': health,
+        'partial_scope': partial_scope,
+        'lineage_scope': lineage_scope,
+        'incidents': build_zaruku_incidents(health, partial_scope, now),
+    }
+
+
 def get_latest_collector_runs() -> List[Dict]:
     from canonical_writer import get_db_connection
 
@@ -104,6 +150,7 @@ def get_latest_collector_runs() -> List[Dict]:
           t.id,
           t.status,
           t.run_type,
+          t.run_mode,
           t.rows_read,
           t.rows_written,
           t.rows_updated,
@@ -204,13 +251,17 @@ def build_collector_line(run: Dict) -> str:
         started_text = started_at.strftime('%H:%M')
     else:
         started_text = str(started_at or '')[:16]
+    source_key = str(run.get('source_key') or 'unknown')
+    source_label = SUMMARY_SOURCE_LABELS.get(source_key, source_key)
     status = str(run.get('status') or 'unknown').upper()
     return (
-        f"- {html.escape(str(run.get('source_key') or 'unknown'))}: {html.escape(status)} "
+        f"- {html.escape(source_label)}: {html.escape(status)} "
         f"(read={int(run.get('rows_read') or 0)}, "
         f"write={int(run.get('rows_written') or 0)}, "
         f"update={int(run.get('rows_updated') or 0)}, "
         f"errors={int(run.get('error_count') or 0)}, "
+        f"type={html.escape(str(run.get('run_type') or 'unknown').upper())}, "
+        f"mode={html.escape(str(run.get('run_mode') or 'unknown'))}, "
         f"start={html.escape(started_text)})"
     )
 
@@ -343,6 +394,209 @@ def build_abbott_lines(snapshot: Dict) -> List[str]:
     return lines
 
 
+def _date_text(value: Any) -> str:
+    if value is None or value == '':
+        return 'none'
+    if hasattr(value, 'isoformat'):
+        return str(value.isoformat())[:10]
+    return str(value)[:10]
+
+
+def build_zaruku_summary_lines(
+    health: List[Dict[str, Any]],
+    partial_scope: Dict[str, Any],
+    lineage_scope: Optional[Dict[str, Any]] = None,
+) -> List[str]:
+    lines = ['<b>Сбор Zaruku</b>']
+    source_labels: Dict[str, str] = {}
+    source_order: Dict[str, int] = {}
+    for row in health:
+        source_key = str(row.get('source_key') or 'unknown')
+        label = str(row.get('label') or source_key)
+        source_labels[source_key] = label
+        source_order[source_key] = len(source_order)
+        status = str(row.get('run_status') or 'missing').upper()
+        lag = row.get('data_lag_days')
+        lag_text = '?' if lag is None else str(int(lag))
+        if source_key == 'google_search_console' and row.get('optional_status') != 'not_applicable':
+            core_status = str(row.get('core_status') or status).upper()
+            optional_status = str(row.get('optional_status') or 'unknown')
+            failure_count = int(row.get('optional_failure_count') or 0)
+            http_statuses = [int(value) for value in row.get('optional_http_statuses') or []]
+            if optional_status == 'http_error' and http_statuses:
+                optional_text = 'HTTP {} ({})'.format('/'.join(str(value) for value in http_statuses), failure_count)
+            elif optional_status == 'success':
+                optional_text = 'SUCCESS'
+            else:
+                optional_text = 'UNKNOWN{}'.format(' ({})'.format(failure_count) if failure_count else '')
+            prefix = '- {}: core={}; optional={}'.format(
+                html.escape(label),
+                html.escape(core_status),
+                html.escape(optional_text),
+            )
+        else:
+            prefix = '- {}: status={}'.format(html.escape(label), html.escape(status))
+        lines.append(
+            '{}; rows={}; max={}; lag={} дн.'.format(
+                prefix,
+                int(row.get('rows_written') or 0),
+                html.escape(_date_text(row.get('max_data_date'))),
+                html.escape(lag_text),
+            )
+        )
+    partial_sources = partial_scope.get('sources') or {}
+    for source_key, value in sorted(
+        partial_sources.items(),
+        key=lambda item: (source_order.get(str(item[0]), len(source_order)), str(item[0])),
+    ):
+        dates = ', '.join(str(item) for item in value.get('dates') or [])
+        lines.append(
+            '- {}: частичные даты={} (строк={}; слоёв={}; {})'.format(
+                html.escape(source_labels.get(str(source_key), str(source_key))),
+                int(value.get('distinct_date_count') or 0),
+                int(value.get('row_count') or 0),
+                len(value.get('layers') or []),
+                html.escape(dates),
+            )
+        )
+    lineage_count = int((lineage_scope or {}).get('row_count') or 0)
+    if lineage_count > 0:
+        lines.append('- дефекты провенанса: {} строк'.format(lineage_count))
+    return lines
+
+
+def build_zaruku_incident_message(incident: Dict[str, Any]) -> str:
+    incident_type = str(incident.get('incident_type') or 'unknown')
+    label = html.escape(str(incident.get('label') or incident.get('source_key') or 'unknown'))
+    details = incident.get('details') or {}
+    if incident_type == 'data_lag':
+        title = 'задержка данных'
+        body = 'max={}, lag={} дн., порог={} дн.'.format(
+            html.escape(str(details.get('max_data_date') or 'none')),
+            int(details.get('lag_days') or 0),
+            int(details.get('threshold_days') or 0),
+        )
+    elif incident_type == 'heartbeat':
+        title = 'нет ожидаемого запуска'
+        body = 'последний запуск={}, ожидание={} ч.'.format(
+            html.escape(str(details.get('last_run_at') or 'не найден')),
+            int(details.get('expected_frequency_hours') or 0),
+        )
+    elif incident_type == 'partial_dates':
+        title = 'частично записанные даты'
+        dates = ', '.join(str(value) for value in details.get('dates') or [])
+        body = '{}; строк={}; слои={}. Нужен контролируемый догон.'.format(
+            html.escape(dates or 'даты не указаны'),
+            int(details.get('row_count') or 0),
+            html.escape(', '.join(str(value) for value in details.get('layers') or [])),
+        )
+    elif incident_type == 'layer_divergence':
+        title = 'расхождение слоёв'
+        body = 'queries={}, pages={}, разница={} дн.'.format(
+            html.escape(str(details.get('query_max_date') or 'none')),
+            html.escape(str(details.get('page_max_date') or 'none')),
+            int(details.get('difference_days') or 0),
+        )
+    elif incident_type == 'run_failed':
+        title = 'сбой коллектора'
+        body = 'run_id={}, type={}, status=FAILED'.format(
+            html.escape(str(details.get('run_id') or 'none')),
+            html.escape(str(details.get('run_type') or 'unknown')),
+        )
+    elif incident_type == 'data_missing':
+        title = 'нет даты фактов'
+        body = 'max_data_date не определена.'
+    else:
+        title = 'операционный сигнал'
+        body = 'type={}'.format(html.escape(incident_type))
+    return '<b>Zaruku · {}</b>\n{}: {}'.format(title, label, body)
+
+
+def _load_incident_state(path: Path) -> Dict[str, Any]:
+    if not path.exists():
+        return {'sent': {}}
+    try:
+        state = json.loads(path.read_text(encoding='utf-8'))
+    except (OSError, json.JSONDecodeError) as exc:
+        raise RuntimeError('Cannot read Zaruku incident state') from exc
+    sent = state.get('sent')
+    if not isinstance(sent, dict):
+        raise RuntimeError('Invalid Zaruku incident state')
+    return {'sent': dict(sent)}
+
+
+def _write_incident_state(path: Path, state: Dict[str, Any]) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    temporary_name: Optional[str] = None
+    try:
+        with tempfile.NamedTemporaryFile(
+            mode='w',
+            encoding='utf-8',
+            dir=str(path.parent),
+            prefix=path.name + '.',
+            suffix='.tmp',
+            delete=False,
+        ) as handle:
+            temporary_name = handle.name
+            json.dump(state, handle, ensure_ascii=False, sort_keys=True)
+            handle.write('\n')
+            handle.flush()
+            os.fsync(handle.fileno())
+        os.replace(temporary_name, path)
+        temporary_name = None
+    finally:
+        if temporary_name:
+            try:
+                Path(temporary_name).unlink()
+            except FileNotFoundError:
+                pass
+
+
+def _prune_incident_state(state: Dict[str, Any], now_utc: datetime) -> Dict[str, Any]:
+    cutoff = now_utc - timedelta(days=ZARUKU_INCIDENT_RETENTION_DAYS)
+    retained: Dict[str, str] = {}
+    for key, value in (state.get('sent') or {}).items():
+        try:
+            parsed = datetime.fromisoformat(str(value).replace('Z', '+00:00'))
+            if parsed.tzinfo is None:
+                parsed = parsed.replace(tzinfo=timezone.utc)
+        except ValueError:
+            continue
+        if parsed.astimezone(timezone.utc) >= cutoff:
+            retained[str(key)] = parsed.astimezone(timezone.utc).isoformat()
+    return {'sent': retained}
+
+
+def send_new_zaruku_incidents(
+    token: str,
+    chat_id: str,
+    incidents: List[Dict[str, Any]],
+    state_path: Path,
+    *,
+    now_utc: Optional[datetime] = None,
+    send_fn: Callable[[str, str, str], None],
+) -> List[str]:
+    now = now_utc or datetime.now(timezone.utc)
+    if now.tzinfo is None:
+        now = now.replace(tzinfo=timezone.utc)
+    previous = _load_incident_state(state_path)
+    state = _prune_incident_state(previous, now)
+    changed = state != previous
+    sent_keys: List[str] = []
+    for incident in incidents:
+        key = str(incident.get('incident_key') or '')
+        if not key or key in state['sent']:
+            continue
+        send_fn(token, chat_id, build_zaruku_incident_message(incident))
+        state['sent'][key] = now.astimezone(timezone.utc).isoformat()
+        sent_keys.append(key)
+        _write_incident_state(state_path, state)
+        changed = False
+    if changed:
+        _write_incident_state(state_path, state)
+    return sent_keys
+
+
 def build_alert_message(payload: Dict, abbott: Dict) -> str:
     lines = ['<b>Canonical Reporting Alert</b>', '']
     for source in payload.get('sources', []):
@@ -364,10 +618,15 @@ def build_alert_message(payload: Dict, abbott: Dict) -> str:
     return '\n'.join(lines)
 
 
-def build_summary_message(payload: Dict, collector_runs: List[Dict], abbott: Dict) -> str:
+def build_summary_message(
+    payload: Dict,
+    collector_runs: List[Dict],
+    abbott: Dict,
+    zaruku_snapshot: Optional[Dict[str, Any]] = None,
+) -> str:
     lines = [
         '<b>Canonical Daily Summary</b>',
-        datetime.utcnow().strftime('%Y-%m-%d %H:%M UTC'),
+        datetime.now(timezone.utc).strftime('%Y-%m-%d %H:%M UTC'),
         '',
         '<b>Collectors</b>',
     ]
@@ -378,7 +637,8 @@ def build_summary_message(payload: Dict, collector_runs: List[Dict], abbott: Dic
         if row:
             lines.append(build_collector_line(row))
         else:
-            lines.append(f'- {html.escape(source_key)}: no collector run found')
+            source_label = SUMMARY_SOURCE_LABELS.get(source_key, source_key)
+            lines.append(f'- {html.escape(source_label)}: no collector run found')
         if source_key == 'yandex_direct':
             yandex_source = next((item for item in payload.get('sources', []) if item.get('source_key') == 'yandex_direct'), None)
             shadow_run = ((yandex_source or {}).get('shadow_cutover') or {}).get('shadow_collector') or {}
@@ -404,6 +664,16 @@ def build_summary_message(payload: Dict, collector_runs: List[Dict], abbott: Dic
     if non_blocking_notes:
         lines.extend(['', '<b>Notes</b>'])
         lines.extend(f'- {html.escape(line)}' for line in non_blocking_notes[:8])
+
+    if zaruku_snapshot is not None:
+        lines.extend([
+            '',
+            *build_zaruku_summary_lines(
+                zaruku_snapshot.get('health') or [],
+                zaruku_snapshot.get('partial_scope') or {},
+                zaruku_snapshot.get('lineage_scope') or {},
+            ),
+        ])
 
     lines.extend(['', *build_abbott_lines(abbott)])
 
@@ -438,21 +708,33 @@ def main() -> int:
         return 0
 
     collector_runs = get_latest_collector_runs() if args.mode == 'summary' else []
+    zaruku_snapshot = load_zaruku_snapshot() if args.mode == 'summary' else None
     token, chat_id = resolve_telegram_credentials()
     message = (
-        build_summary_message(payload, collector_runs, abbott)
+        build_summary_message(payload, collector_runs, abbott, zaruku_snapshot=zaruku_snapshot)
         if args.mode == 'summary'
         else build_alert_message(payload, abbott)
     )
     send_telegram_message(token, chat_id, message)
+    zaruku_incident_keys: List[str] = []
+    if zaruku_snapshot is not None:
+        state_path = Path(os.environ.get('ZARUKU_INCIDENT_STATE_PATH') or DEFAULT_ZARUKU_INCIDENT_STATE_PATH)
+        zaruku_incident_keys = send_new_zaruku_incidents(
+            token,
+            chat_id,
+            zaruku_snapshot.get('incidents') or [],
+            state_path,
+            send_fn=send_telegram_message,
+        )
     incident_keys = ','.join(
         str(item.get('incident_key') or 'unknown')
         for item in abbott.get('incidents') or []
     ) or 'none'
-    print('{} mode={} incident_keys={}'.format(
-        datetime.utcnow().strftime('%Y-%m-%dT%H:%M:%SZ'),
+    print('{} mode={} incident_keys={} zaruku_incident_keys={}'.format(
+        datetime.now(timezone.utc).strftime('%Y-%m-%dT%H:%M:%SZ'),
         args.mode,
         incident_keys,
+        ','.join(zaruku_incident_keys) or 'none',
     ))
     return 0
 
