@@ -65,6 +65,7 @@ OAUTH_TOKEN_URL = env_first("YANDEX_OAUTH_TOKEN_URL", default="https://oauth.yan
 DEFAULT_ACCOUNT_ID = env_first("YANDEX_WEBMASTER_ACCOUNT_ID", default="66624469")
 DEFAULT_DOMAIN = env_first("YANDEX_WEBMASTER_DOMAIN", default="zaruku.ru")
 DEFAULT_DEVICE = env_first("YANDEX_WEBMASTER_DEVICE_TYPE", default="ALL")
+DEFAULT_SEARCH_LOCATION = env_first("YANDEX_WEBMASTER_SEARCH_LOCATION", default="ALL_LOCATIONS")
 DEFAULT_LAG_DAYS = int(env_first("YANDEX_WEBMASTER_DAILY_LAG_DAYS", "YANDEX_WEBMASTER_BACKFILL_DAYS", default="3") or 3)
 TOKEN_STATE_PATH = env_first("YANDEX_WEBMASTER_TOKEN_STATE_PATH", default="")
 MAX_RETRIES = 5
@@ -116,6 +117,28 @@ INSERT INTO canonical_fact_webmaster_summary_daily (
     %(impressions)s, %(clicks)s, %(ctr)s, %(average_position)s, %(raw_payload)s, %(ingestion_run_id)s
 )
 ON DUPLICATE KEY UPDATE
+    impressions = VALUES(impressions),
+    clicks = VALUES(clicks),
+    ctr = VALUES(ctr),
+    average_position = VALUES(average_position),
+    raw_payload = VALUES(raw_payload),
+    ingestion_run_id = VALUES(ingestion_run_id),
+    updated_at = CURRENT_TIMESTAMP
+"""
+
+WEBMASTER_PAGE_UPSERT_SQL = """
+INSERT INTO canonical_fact_webmaster_pages_daily (
+    source_key, analytics_account_id, host_id, report_date, device_type,
+    page_hash, page_url, popular_query_text, impressions, clicks, ctr,
+    average_position, raw_payload, ingestion_run_id
+) VALUES (
+    %(source_key)s, %(analytics_account_id)s, %(host_id)s, %(report_date)s, %(device_type)s,
+    %(page_hash)s, %(page_url)s, %(popular_query_text)s, %(impressions)s, %(clicks)s, %(ctr)s,
+    %(average_position)s, %(raw_payload)s, %(ingestion_run_id)s
+)
+ON DUPLICATE KEY UPDATE
+    page_url = VALUES(page_url),
+    popular_query_text = VALUES(popular_query_text),
     impressions = VALUES(impressions),
     clicks = VALUES(clicks),
     ctr = VALUES(ctr),
@@ -221,6 +244,10 @@ def query_hash(query: str) -> str:
     return hashlib.sha256(clean_text(query).lower().encode("utf-8")).hexdigest()
 
 
+def page_hash(page_url: str) -> str:
+    return hashlib.sha256(clean_text(page_url).lower().encode("utf-8")).hexdigest()
+
+
 def normalize_popular_query_rows(
     payload: dict,
     *,
@@ -253,6 +280,78 @@ def normalize_popular_query_rows(
                 "clicks": clicks,
                 "ctr": calculate_ctr(impressions, clicks),
                 "position": safe_float(indicators.get("AVG_SHOW_POSITION")),
+                "raw_payload": json.dumps(row, ensure_ascii=False),
+                "ingestion_run_id": run_id,
+            }
+        )
+    return result
+
+
+def _statistics_for_report_date(row: dict, report_date: str) -> dict[str, Any]:
+    metrics: dict[str, Any] = {
+        "impressions": 0,
+        "clicks": 0,
+        "ctr": None,
+        "average_position": None,
+        "seen": False,
+    }
+    for item in row.get("statistics") or []:
+        if clean_text(item.get("date")) != report_date:
+            continue
+        metrics["seen"] = True
+        field = item.get("field")
+        value = item.get("value")
+        if field == "IMPRESSIONS":
+            metrics["impressions"] = safe_int(value)
+        elif field == "CLICKS":
+            metrics["clicks"] = safe_int(value)
+        elif field == "CTR":
+            metrics["ctr"] = safe_float(value)
+        elif field == "POSITION":
+            metrics["average_position"] = safe_float(value)
+    if metrics["ctr"] is None:
+        metrics["ctr"] = calculate_ctr(int(metrics["impressions"]), int(metrics["clicks"]))
+    return metrics
+
+
+def normalize_query_analytics_url_rows(
+    payload: dict,
+    *,
+    source_key: str,
+    analytics_account_id: str,
+    host_id: str,
+    report_date: str,
+    device_type: str,
+    run_id: int,
+) -> list[dict]:
+    result: list[dict] = []
+    for row in payload.get("text_indicator_to_statistics") or []:
+        text_indicator = row.get("text_indicator") or {}
+        if text_indicator.get("type") != "URL":
+            continue
+        page_url = clean_text(text_indicator.get("value"))
+        if not page_url:
+            continue
+        metrics = _statistics_for_report_date(row, report_date)
+        if not metrics["seen"]:
+            continue
+        if safe_int(metrics["impressions"]) <= 0 and safe_int(metrics["clicks"]) <= 0 and metrics["average_position"] is None:
+            continue
+        complementary = row.get("popular_complementary_indicator") or {}
+        result.append(
+            {
+                "source_key": source_key,
+                "analytics_account_id": analytics_account_id,
+                "host_id": host_id,
+                "report_date": report_date,
+                "device_type": device_type,
+                "page_hash": page_hash(page_url),
+                "page_url": page_url,
+                "popular_query_text": clean_text(complementary.get("value")) if complementary.get("type") == "QUERY" else None,
+                "impressions": safe_int(metrics["impressions"]),
+                "clicks": safe_int(metrics["clicks"]),
+                "ctr": metrics["ctr"],
+                "average_position": metrics["average_position"],
                 "raw_payload": json.dumps(row, ensure_ascii=False),
                 "ingestion_run_id": run_id,
             }
@@ -562,6 +661,45 @@ def fetch_query_rows(access_token: str, user_id: str, host_id: str, day: str, de
     return all_rows
 
 
+def fetch_page_rows(access_token: str, user_id: str, host_id: str, day: str, device: str, run_id: int) -> list[dict]:
+    all_rows: list[dict] = []
+    for offset in range(0, 100000, 500):
+        body = {
+            "offset": offset,
+            "limit": 500,
+            "device_type_indicator": device,
+            "search_location": DEFAULT_SEARCH_LOCATION,
+            "text_indicator": "URL",
+            "sort_by_date": {
+                "date": day,
+                "statistic_field": "IMPRESSIONS",
+                "by": "DESC",
+            },
+        }
+        payload = request_with_retry(
+            access_token,
+            f"/user/{user_id}/hosts/{quote(host_id, safe='')}/query-analytics/list",
+            run_id=run_id,
+            method="POST",
+            body=body,
+        )
+        rows = payload.get("text_indicator_to_statistics") or []
+        all_rows.extend(rows)
+        count = safe_int(payload.get("count"))
+        if len(rows) < 500 or len(all_rows) >= count:
+            break
+    return all_rows
+
+
+def is_latest_page_facts_lag_error(exc: Exception, day: str, selected_days: list[str]) -> bool:
+    if not selected_days or day != selected_days[-1]:
+        return False
+    if not isinstance(exc, requests.HTTPError):
+        return False
+    response = getattr(exc, "response", None)
+    return getattr(response, "status_code", None) == 400
+
+
 def upsert_webmaster_query_rows(rows: list[dict]) -> int:
     if not rows:
         return 0
@@ -583,6 +721,20 @@ def upsert_webmaster_summary_rows(rows: list[dict]) -> int:
     cur = conn.cursor()
     try:
         cur.executemany(WEBMASTER_SUMMARY_UPSERT_SQL, rows)
+        conn.commit()
+        return len(rows)
+    finally:
+        cur.close()
+        conn.close()
+
+
+def upsert_webmaster_page_rows(rows: list[dict]) -> int:
+    if not rows:
+        return 0
+    conn = get_db_connection()
+    cur = conn.cursor()
+    try:
+        cur.executemany(WEBMASTER_PAGE_UPSERT_SQL, rows)
         conn.commit()
         return len(rows)
     finally:
@@ -686,9 +838,36 @@ def collect(args) -> dict[str, Any]:
             account_rows.append(build_account_registry_row(account, host_id))
             for day in dates:
                 raw_queries = fetch_query_rows(access_token, user_id, host_id, day, DEFAULT_DEVICE, run_id)
+                try:
+                    raw_pages = fetch_page_rows(access_token, user_id, host_id, day, DEFAULT_DEVICE, run_id)
+                    page_facts_status = "collected"
+                except Exception as exc:
+                    if not is_latest_page_facts_lag_error(exc, day, dates):
+                        raise
+                    raw_pages = []
+                    page_facts_status = "skipped_latest_day_lag"
+                    response = getattr(exc, "response", None)
+                    error_text = clean_text(getattr(response, "text", ""))[:500]
+                    log_collector_event(
+                        run_id,
+                        "warning",
+                        "webmaster_page_facts_skipped",
+                        f"Skipped Webmaster page facts for {account.domain} {day}: latest-day URL analytics is not ready",
+                        {"status_code": getattr(response, "status_code", None), "error": error_text},
+                    )
                 query_payload = {"queries": raw_queries}
+                page_payload = {"text_indicator_to_statistics": raw_pages}
                 query_rows = normalize_popular_query_rows(
                     query_payload,
+                    source_key=SOURCE_KEY,
+                    analytics_account_id=account.analytics_account_id,
+                    host_id=host_id,
+                    report_date=day,
+                    device_type=DEFAULT_DEVICE,
+                    run_id=run_id,
+                )
+                page_rows = normalize_query_analytics_url_rows(
+                    page_payload,
                     source_key=SOURCE_KEY,
                     analytics_account_id=account.analytics_account_id,
                     host_id=host_id,
@@ -705,15 +884,21 @@ def collect(args) -> dict[str, Any]:
                     device_type=DEFAULT_DEVICE,
                     run_id=run_id,
                 )
-                rows_read += len(raw_queries)
+                rows_read += len(raw_queries) + len(raw_pages)
                 rows_written += upsert_webmaster_query_rows(query_rows)
+                rows_written += upsert_webmaster_page_rows(page_rows)
                 rows_written += upsert_webmaster_summary_rows([summary_row])
                 log_collector_event(
                     run_id,
                     "info",
                     "webmaster_day_collected",
                     f"Collected Webmaster daily facts for {account.domain} {day}",
-                    {"query_rows": len(query_rows), "summary_rows": 1},
+                    {
+                        "query_rows": len(query_rows),
+                        "page_rows": len(page_rows),
+                        "page_facts_status": page_facts_status,
+                        "summary_rows": 1,
+                    },
                 )
         upsert_accounts(account_rows)
         finish_run(run_id, "success", rows_read, rows_written, rows_written)

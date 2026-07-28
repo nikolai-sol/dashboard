@@ -1,5 +1,10 @@
 import datetime as dt
+import hashlib
+import inspect
 import unittest
+from unittest import mock
+
+import requests
 
 
 class YandexWebmasterCanonicalTests(unittest.TestCase):
@@ -100,6 +105,106 @@ class YandexWebmasterCanonicalTests(unittest.TestCase):
         self.assertIn("canonical_fact_webmaster_queries_daily", WEBMASTER_QUERY_UPSERT_SQL)
         self.assertIn("ON DUPLICATE KEY UPDATE", WEBMASTER_QUERY_UPSERT_SQL)
         self.assertIn("query_hash", WEBMASTER_QUERY_UPSERT_SQL)
+
+    def test_page_upsert_targets_canonical_daily_page_facts(self):
+        from fetch_yandex_webmaster_canonical import WEBMASTER_PAGE_UPSERT_SQL
+
+        self.assertIn("canonical_fact_webmaster_pages_daily", WEBMASTER_PAGE_UPSERT_SQL)
+        self.assertIn("ON DUPLICATE KEY UPDATE", WEBMASTER_PAGE_UPSERT_SQL)
+        self.assertIn("page_hash", WEBMASTER_PAGE_UPSERT_SQL)
+        self.assertIn("ingestion_run_id = VALUES(ingestion_run_id)", WEBMASTER_PAGE_UPSERT_SQL)
+
+    def test_normalize_query_analytics_url_rows_builds_page_facts(self):
+        from fetch_yandex_webmaster_canonical import normalize_query_analytics_url_rows
+
+        rows = normalize_query_analytics_url_rows(
+            {
+                "text_indicator_to_statistics": [{
+                    "text_indicator": {"type": "URL", "value": "https://zaruku.ru/help/"},
+                    "popular_complementary_indicator": {"type": "QUERY", "value": "за руку помощь"},
+                    "statistics": [
+                        {"date": "2026-07-13", "field": "IMPRESSIONS", "value": 20},
+                        {"date": "2026-07-13", "field": "CLICKS", "value": 2},
+                        {"date": "2026-07-13", "field": "POSITION", "value": 4.5},
+                    ],
+                }]
+            },
+            source_key="yandex_webmaster",
+            analytics_account_id="66624469",
+            host_id="https:zaruku.ru:443",
+            report_date="2026-07-13",
+            device_type="ALL",
+            run_id=42,
+        )
+
+        self.assertEqual(len(rows), 1)
+        self.assertEqual(rows[0]["page_url"], "https://zaruku.ru/help/")
+        self.assertEqual(
+            rows[0]["page_hash"],
+            hashlib.sha256(b"https://zaruku.ru/help/").hexdigest(),
+        )
+        self.assertEqual(rows[0]["popular_query_text"], "за руку помощь")
+        self.assertEqual(rows[0]["ctr"], 10.0)
+        self.assertEqual(rows[0]["ingestion_run_id"], 42)
+
+    @mock.patch("fetch_yandex_webmaster_canonical.request_with_retry")
+    def test_fetch_page_rows_uses_url_query_analytics_with_pagination(self, request_with_retry):
+        from fetch_yandex_webmaster_canonical import fetch_page_rows
+
+        request_with_retry.return_value = {
+            "count": 1,
+            "text_indicator_to_statistics": [{"text_indicator": {"type": "URL", "value": "/help/"}}],
+        }
+
+        rows = fetch_page_rows("token", "user", "https:zaruku.ru:443", "2026-07-13", "ALL", 42)
+
+        self.assertEqual(len(rows), 1)
+        _, path = request_with_retry.call_args.args[:2]
+        self.assertTrue(path.endswith("/query-analytics/list"))
+        self.assertEqual(request_with_retry.call_args.kwargs["method"], "POST")
+        body = request_with_retry.call_args.kwargs["body"]
+        self.assertEqual(body["text_indicator"], "URL")
+        self.assertEqual(body["sort_by_date"]["date"], "2026-07-13")
+        self.assertEqual(body["offset"], 0)
+        self.assertEqual(body["limit"], 500)
+
+    def test_latest_page_http_400_is_skipped_only_for_latest_selected_day(self):
+        from fetch_yandex_webmaster_canonical import is_latest_page_facts_lag_error
+
+        response = requests.Response()
+        response.status_code = 400
+        latest_error = requests.HTTPError(response=response)
+
+        self.assertTrue(
+            is_latest_page_facts_lag_error(
+                latest_error,
+                "2026-07-13",
+                ["2026-07-12", "2026-07-13"],
+            )
+        )
+        self.assertFalse(
+            is_latest_page_facts_lag_error(
+                latest_error,
+                "2026-07-12",
+                ["2026-07-12", "2026-07-13"],
+            )
+        )
+        self.assertFalse(
+            is_latest_page_facts_lag_error(
+                RuntimeError("not an HTTP error"),
+                "2026-07-13",
+                ["2026-07-12", "2026-07-13"],
+            )
+        )
+
+    def test_collect_writes_page_facts_and_accounts_for_page_rows(self):
+        import fetch_yandex_webmaster_canonical as collector
+
+        source = inspect.getsource(collector.collect)
+        self.assertIn("fetch_page_rows", source)
+        self.assertIn("normalize_query_analytics_url_rows", source)
+        self.assertIn("upsert_webmaster_page_rows", source)
+        self.assertIn("len(raw_queries) + len(raw_pages)", source)
 
 
 if __name__ == "__main__":
