@@ -670,10 +670,10 @@ function OverviewTab({ data, locale }: Props) {
         </Panel>
         <Panel data={data} title="Органический поиск" source="metrika">
           <div className="h-[220px] xl:h-full">
-            <ResponsiveContainer width="100%" height="100%">
-              <LineChart data={data.organic_trend} margin={{ top: 8, right: 8, left: -20, bottom: 0 }}>
+            <ResponsiveContainer width="100%" height="100%" initialDimension={{ width: 1, height: 1 }}>
+              <LineChart data={data.organic_trend} margin={{ top: 8, right: 16, left: -20, bottom: 0 }}>
                 <CartesianGrid stroke={ZARUKU_CHART_PALETTE.grid} strokeDasharray="3 3" />
-                <XAxis dataKey="label" tick={{ fontSize: 12, fill: ZARUKU_CHART_PALETTE.axis }} axisLine={false} tickLine={false} />
+                <XAxis dataKey="label" padding={{ right: 12 }} tick={{ fontSize: 12, fill: ZARUKU_CHART_PALETTE.axis }} axisLine={false} tickLine={false} />
                 <YAxis tick={{ fontSize: 12, fill: ZARUKU_CHART_PALETTE.axis }} axisLine={false} tickLine={false} />
                 <Tooltip />
                 <Line type="monotone" dataKey="visits" stroke={ZARUKU_CHART_PALETTE.seo} strokeWidth={2.5} dot={{ r: 3 }} />

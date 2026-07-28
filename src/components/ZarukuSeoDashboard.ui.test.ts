@@ -59,13 +59,25 @@ test("Overview uses a stable bounded desktop composition", () => {
   assert.doesNotMatch(overviewSource, /registryColumns=\{false\}|registrySpan=\{false\}/);
   assert.match(panelLayoutSource, /panel\("overview", "channels", 30, "half"/);
   assert.match(panelLayoutSource, /panel\("overview", "organic_search", 40, "half"/);
-  assert.match(globalsSource, /grid-template-rows:\s*96px 104px minmax\(280px, 1fr\)/);
+  assert.match(globalsSource, /grid-template-rows:\s*96px minmax\(129px, auto\) minmax\(280px, 1fr\)/);
   assert.match(source, /min-h-\[calc\(100vh-194px\)\]/);
   assert.match(source, /initialLimit=\{6\}/);
   assert.match(source, /titleInfo=\{/);
   assert.match(source, /ZARUKU_CLIENT_COPY\.technicalTail/);
   assert.match(clientCopySource, /Технический хвост/);
   assert.doesNotMatch(source, /Технический хвост:\{" "\}/);
+});
+
+test("Overview keeps KPI and chart content inside its desktop bounds", () => {
+  assert.match(source, /<ResponsiveContainer width="100%" height="100%" initialDimension=\{\{ width: 1, height: 1 \}\}>/);
+  assert.match(source, /<LineChart data=\{data\.organic_trend\} margin=\{\{ top: 8, right: 16, left: -20, bottom: 0 \}\}>/);
+  assert.match(source, /<XAxis dataKey="label" padding=\{\{ right: 12 \}\}/);
+});
+
+test("Audience device panels shrink before their tables start scrolling", () => {
+  assert.match(audienceSource, /grid-cols-\[minmax\(0,1fr\)\]/);
+  assert.match(audienceSource, /<div className="min-w-0"><h4[^>]*>Типы устройств/);
+  assert.match(audienceSource, /<div className="min-w-0"><h4[^>]*>Источник × устройство/);
 });
 
 test("SEO tab follows the executive-to-detail hierarchy without duplicate source tables", () => {

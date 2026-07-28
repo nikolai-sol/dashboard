@@ -248,7 +248,7 @@
   @media (min-width: 1280px) {
     .zaruku-overview-grid {
       height: clamp(512px, calc(100vh - 364px), 600px);
-      grid-template-rows: 96px 104px minmax(280px, 1fr);
+      grid-template-rows: 96px minmax(129px, auto) minmax(280px, 1fr);
       gap: var(--gap-card) !important;
       overflow: hidden;
     }
