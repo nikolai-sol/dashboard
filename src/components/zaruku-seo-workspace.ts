@@ -47,7 +47,15 @@ export type SeoQuerySort = {
   direction: "asc" | "desc";
 };
 
-export type SeoQueryFilter = "all" | "top3" | "top10" | "top20" | "improved" | "declined" | "not_found";
+export type SeoQueryFilter =
+  | "all"
+  | "confirmed_landing"
+  | "top3"
+  | "top10"
+  | "top20"
+  | "improved"
+  | "declined"
+  | "not_found";
 
 export type UnifiedSeoPageRow = {
   key: string;
@@ -323,6 +331,7 @@ export function sortUnifiedSeoQueryRows(rows: UnifiedSeoQueryRow[], sort: SeoQue
 
 export function filterUnifiedSeoQueryRows(rows: UnifiedSeoQueryRow[], filter: SeoQueryFilter): UnifiedSeoQueryRow[] {
   if (filter === "all") return rows;
+  if (filter === "confirmed_landing") return rows.filter((row) => row.google_pages.length > 0);
   if (filter === "improved") return rows.filter((row) => (row.seo_os?.delta_prev ?? 0) < 0);
   if (filter === "declined") return rows.filter((row) => (row.seo_os?.delta_prev ?? 0) > 0);
   if (filter === "not_found") {

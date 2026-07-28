@@ -86,6 +86,7 @@ test("SEO tab explains Metrika search phrases and uses the unified landing-page 
   assert.match(source, /buildUnifiedSeoPageRows/);
   assert.match(source, /webmasterRows: webmasterPages/);
   assert.doesNotMatch(source, /title="Посадочные страницы Яндекса"/);
+  assert.doesNotMatch(source, /title: "Запрос → посадочная"/);
 });
 
 test("SEO tab passes actual source weeks into unified comparisons", () => {

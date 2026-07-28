@@ -204,6 +204,19 @@ test("filters SEO OS movement and not-found rows without inventing zero position
   assert.equal(filterUnifiedSeoQueryRows(rows, "not_found")[0].seo_os?.tracked_position, null);
 });
 
+test("confirmed-landing filter keeps only rows with a GSC query-page relationship", () => {
+  const rows = buildUnifiedSeoQueryRows({
+    gscRows: [gscQuery({ query_id: "confirmed", query: "подтверждённая посадочная", page: "/confirmed/" })],
+    webmasterRows: [webmasterQuery({ query_id: "wm-only", query: "только вебмастер" })],
+    seoOsRows: [seoOsQuery({ cluster_id: "seo-only", query: "только seo os", matched_url: "/target/" })],
+  });
+
+  assert.deepEqual(
+    filterUnifiedSeoQueryRows(rows, "confirmed_landing").map((row) => row.query),
+    ["подтверждённая посадочная"],
+  );
+});
+
 test("top filters honor valid positive positions and ignore zero/null/invalid values", () => {
   const rows = buildUnifiedSeoQueryRows({
     gscRows: [

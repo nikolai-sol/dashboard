@@ -174,7 +174,7 @@ const SOURCE_FRESHNESS_CATALOG = [
   },
 ] as const;
 
-export const ZARUKU_DATA_LAG_DAYS = 3;
+export const ZARUKU_DATA_LAG_DAYS = 4;
 
 function asNumber(value: unknown): number {
   const parsed = Number(value);
@@ -1308,12 +1308,6 @@ function buildDataQuality({
       value: searchPhrases.length > 0 ? formatPercent(queryCoverage) : "—",
       note: "Google часто скрывает запросы; поисковые фразы нельзя считать полной SEO-семантикой.",
       severity: queryCoverage > 0 ? "info" : "warning",
-    },
-    {
-      title: "Запрос → посадочная",
-      value: "неполный",
-      note: "Метрика стабильно даёт связку поисковая система → посадочная страница, но связка поисковая фраза → посадочная страница может быть пустой.",
-      severity: "warning",
     },
     {
       title: "Расширенные срезы Метрики",

@@ -87,6 +87,36 @@ test("query workspace exposes search and mounts at most 50 rows", () => {
   assert.doesNotMatch(source, /useEffect\(\(\) => setPage/);
 });
 
+test("confirmed-landing filter runs across the full row set before pagination", () => {
+  const manyRows = Array.from({ length: 75 }, (_, index) => ({
+    ...rows[0],
+    key: `query-${index}`,
+    query: `Запрос ${index}`,
+    google_pages: index >= 60 ? [`https://zaruku.ru/page-${index}/`] : [],
+  }));
+  const markup = renderToStaticMarkup(createElement(ZarukuSeoQueryComparison, {
+    rows: manyRows,
+    sourceWeeks: { google: "2026-W29", webmaster: "2026-W29", seoOs: "2026-W29" },
+    defaultFilter: "confirmed_landing",
+  }));
+
+  assert.match(markup, /Только с подтверждённой посадочной/);
+  assert.match(markup, /15 найдено · Страница 1 из 1/);
+  assert.match(markup, /Запрос 60/);
+  assert.match(markup, /Google:/);
+  assert.doesNotMatch(markup, /Запрос 59/);
+});
+
+test("confirmed-landing filter shows its quiet empty state", () => {
+  const markup = renderToStaticMarkup(createElement(ZarukuSeoQueryComparison, {
+    rows: [{ ...rows[0], google_pages: [] }],
+    sourceWeeks: { google: "2026-W29", webmaster: "2026-W29", seoOs: "2026-W29" },
+    defaultFilter: "confirmed_landing",
+  }));
+
+  assert.match(markup, /Нет запросов с подтверждённой посадочной за выбранный период/);
+});
+
 test("query workspace distinguishes unavailable sources from an empty result", () => {
   const markup = renderToStaticMarkup(createElement(ZarukuSeoQueryComparison, {
     rows: [],

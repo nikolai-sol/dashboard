@@ -25,11 +25,13 @@ type Props = {
   sourceWeeks: SourceWeeks;
   sourceAvailability?: { google: boolean; webmaster: boolean; seoOs: boolean };
   defaultSort?: SeoQuerySort;
+  defaultFilter?: SeoQueryFilter;
   locale?: string;
 };
 
 const FILTERS: Array<{ id: SeoQueryFilter; label: string }> = [
   { id: "all", label: "Все" },
+  { id: "confirmed_landing", label: "Только с подтверждённой посадочной" },
   { id: "top3", label: "Топ-3" },
   { id: "top10", label: "Топ-10" },
   { id: "top20", label: "Топ-20" },
@@ -146,10 +148,11 @@ export default function ZarukuSeoQueryComparison({
   sourceWeeks,
   sourceAvailability = { google: true, webmaster: true, seoOs: true },
   defaultSort = { key: "google_position", direction: "asc" },
+  defaultFilter = "all",
   locale = "ru-RU",
 }: Props) {
   const [sort, setSort] = useState<SeoQuerySort>(defaultSort);
-  const [filter, setFilter] = useState<SeoQueryFilter>("all");
+  const [filter, setFilter] = useState<SeoQueryFilter>(defaultFilter);
   const [query, setQuery] = useState("");
   const [page, setPage] = useState(1);
   const visibleRows = useMemo(
@@ -285,7 +288,7 @@ export default function ZarukuSeoQueryComparison({
                   {row.google_pages.length > 0 || row.seo_os?.matched_url ? (
                     <div className="mt-1.5 flex max-w-full flex-wrap gap-x-2 gap-y-1 text-[11px] text-slate-400">
                       {row.google_pages.map((page) => (
-                        <SafePageLink key={`g-${page}`} value={page} />
+                        <SafePageLink key={`g-${page}`} value={page} prefix="Google: " />
                       ))}
                       {row.seo_os?.matched_url ? (
                         <SafePageLink value={row.seo_os.matched_url} prefix="SEO OS: " />
@@ -312,7 +315,13 @@ export default function ZarukuSeoQueryComparison({
               </tr>
             ))}
             {paginated.totalRows === 0 ? (
-              <tr><td colSpan={13} className="px-4 py-12 text-center text-sm text-slate-500">{allSourcesUnavailable ? "Источник недоступен: Google, Яндекс Вебмастер и SEO OS." : ZARUKU_CLIENT_COPY.emptyQueries}</td></tr>
+              <tr><td colSpan={13} className="px-4 py-12 text-center text-sm text-slate-500">{
+                allSourcesUnavailable
+                  ? "Источник недоступен: Google, Яндекс Вебмастер и SEO OS."
+                  : filter === "confirmed_landing"
+                    ? "Нет запросов с подтверждённой посадочной за выбранный период."
+                    : ZARUKU_CLIENT_COPY.emptyQueries
+              }</td></tr>
             ) : null}
           </tbody>
         </table>
