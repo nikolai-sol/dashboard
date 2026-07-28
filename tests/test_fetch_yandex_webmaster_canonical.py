@@ -1,6 +1,7 @@
 import datetime as dt
 import inspect
 import unittest
+from types import SimpleNamespace
 from unittest.mock import patch
 
 
@@ -212,13 +213,62 @@ class YandexWebmasterCanonicalTests(unittest.TestCase):
         self.assertEqual(connection.commit_calls, 1)
         self.assertEqual(connection.events[-2:], [("cursor_close",), ("connection_close",)])
 
-    def test_collection_dates_default_to_yesterday_plus_three_day_lag(self):
+    def test_collection_dates_use_two_day_floor_and_three_day_recollect_span(self):
         from fetch_yandex_webmaster_canonical import collection_dates
 
         self.assertEqual(
             collection_dates(dt.date(2026, 7, 14), lag_days=3),
-            ["2026-07-10", "2026-07-11", "2026-07-12", "2026-07-13"],
+            ["2026-07-10", "2026-07-11", "2026-07-12"],
         )
+
+    def test_selected_dates_clip_explicit_webmaster_window_to_collection_floor(self):
+        from fetch_yandex_webmaster_canonical import selected_dates
+
+        args = SimpleNamespace(
+            date_from="2026-07-11",
+            date_to="2026-07-13",
+            lag_days=3,
+        )
+
+        self.assertEqual(
+            selected_dates(args, anchor=dt.date(2026, 7, 14)),
+            ["2026-07-11", "2026-07-12"],
+        )
+
+    def test_collect_does_not_create_run_for_empty_webmaster_window(self):
+        import fetch_yandex_webmaster_canonical as collector
+
+        args = SimpleNamespace(run_type="manual", force=False)
+        with patch.object(collector, "selected_dates", return_value=[]), patch.object(
+            collector, "start_run"
+        ) as start:
+            result = collector.collect(args)
+
+        self.assertEqual(result["status"], "skipped_unavailable")
+        start.assert_not_called()
+
+    def test_collect_keeps_unknown_in_range_http_400_fatal(self):
+        import fetch_yandex_webmaster_canonical as collector
+
+        args = SimpleNamespace(run_type="manual", force=False)
+        account = collector.WebmasterAccount("66624469", "zaruku.ru", "host")
+        with patch.object(collector, "selected_dates", return_value=["2026-07-12"]), patch.object(
+            collector, "start_run", return_value=42
+        ), patch.object(collector, "refresh_access_token", return_value="token"), patch.object(
+            collector, "get_user_id", return_value="user"
+        ), patch.object(collector, "configured_accounts", return_value=[account]), patch.object(
+            collector, "fetch_query_rows", return_value=[]
+        ), patch.object(collector, "fetch_page_rows", side_effect=http_error(400)), patch.object(
+            collector, "replace_webmaster_day_rows", return_value=1
+        ), patch.object(collector, "upsert_webmaster_page_rows", return_value=0), patch.object(
+            collector, "upsert_accounts"
+        ), patch.object(collector, "log_collector_event"), patch.object(
+            collector, "finish_run"
+        ) as finish:
+            with self.assertRaises(requests.HTTPError):
+                collector.collect(args)
+
+        self.assertEqual(finish.call_args.args[1], "failed")
 
     def test_fetch_query_rows_raises_when_reported_count_exceeds_maximum(self):
         from fetch_yandex_webmaster_canonical import MAX_QUERY_ROWS, fetch_query_rows
@@ -393,15 +443,6 @@ class YandexWebmasterCanonicalTests(unittest.TestCase):
         self.assertIn("ON DUPLICATE KEY UPDATE", WEBMASTER_PAGE_UPSERT_SQL)
         self.assertIn("page_hash", WEBMASTER_PAGE_UPSERT_SQL)
         self.assertIn("ingestion_run_id = VALUES(ingestion_run_id)", WEBMASTER_PAGE_UPSERT_SQL)
-
-    def test_latest_page_facts_lag_error_soft_fails_only_for_latest_400(self):
-        from fetch_yandex_webmaster_canonical import is_latest_page_facts_lag_error
-
-        days = ["2026-07-15", "2026-07-16", "2026-07-17", "2026-07-18"]
-
-        self.assertTrue(is_latest_page_facts_lag_error(http_error(400), "2026-07-18", days))
-        self.assertFalse(is_latest_page_facts_lag_error(http_error(400), "2026-07-17", days))
-        self.assertFalse(is_latest_page_facts_lag_error(http_error(403), "2026-07-18", days))
 
     def test_fetch_page_rows_uses_url_query_analytics_with_pagination(self):
         from fetch_yandex_webmaster_canonical import fetch_page_rows

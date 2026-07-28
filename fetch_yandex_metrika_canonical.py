@@ -14,7 +14,7 @@ import time
 import uuid
 from collections.abc import Callable, Collection, Mapping
 from dataclasses import dataclass
-from datetime import datetime, timedelta, timezone
+from datetime import date, datetime, timedelta, timezone
 from decimal import Decimal, InvalidOperation
 from pathlib import Path
 from typing import Any
@@ -96,6 +96,8 @@ TIMEOUT = 90
 REQUEST_DELAY_SECONDS = float(env_first('METRIKA_REQUEST_DELAY_SECONDS', default='0.35') or 0)
 METRIKA_PAGE_LIMIT = 10_000
 METRIKA_TIMEZONE = 'Europe/Moscow'
+COLLECTION_FLOOR_DAYS = int(env_first('METRIKA_COLLECTION_FLOOR_DAYS', default='1') or 1)
+RECOLLECT_SPAN_DAYS = int(env_first('METRIKA_RECOLLECT_SPAN_DAYS', default='2') or 2)
 
 MYSQL_HOST = env_first('MYSQL_HOST', default='localhost')
 MYSQL_PORT = int(env_first('MYSQL_PORT', default='3306'))
@@ -235,7 +237,7 @@ def parse_args():
     parser = argparse.ArgumentParser()
     parser.add_argument('--date-from', default='')
     parser.add_argument('--date-to', default='')
-    parser.add_argument('--days-back', type=int, default=14)
+    parser.add_argument('--days-back', type=int, default=RECOLLECT_SPAN_DAYS)
     parser.add_argument('--run-type', default='manual', choices=['manual', 'cron', 'backfill'])
     parser.add_argument('--counter-id', default='')
     parser.add_argument('--counter-ids', default='')
@@ -246,16 +248,23 @@ def parse_args():
     return parser.parse_args()
 
 
-def date_range(args) -> tuple[str, str]:
-    today = datetime.now(timezone.utc).date()
-    cron_anchor = today - timedelta(days=1)
-    date_to = args.date_to or (cron_anchor if args.run_type == 'cron' else today).strftime('%Y-%m-%d')
-    if args.date_from:
-        date_from = args.date_from
-    else:
-        start_anchor = cron_anchor if args.run_type == 'cron' else today
-        date_from = (start_anchor - timedelta(days=max(args.days_back - 1, 0))).strftime('%Y-%m-%d')
-    return date_from, date_to
+def date_range(args, anchor: date | None = None) -> tuple[str, str]:
+    effective_anchor = anchor or datetime.now(timezone.utc).date()
+    max_collectable_date = effective_anchor - timedelta(days=COLLECTION_FLOOR_DAYS)
+    requested_end = (
+        datetime.strptime(args.date_to, '%Y-%m-%d').date()
+        if args.date_to
+        else max_collectable_date
+    )
+    effective_end = min(requested_end, max_collectable_date)
+    requested_start = (
+        datetime.strptime(args.date_from, '%Y-%m-%d').date()
+        if args.date_from
+        else effective_end - timedelta(days=max(args.days_back - 1, 0))
+    )
+    if requested_start > effective_end:
+        return '', ''
+    return requested_start.isoformat(), effective_end.isoformat()
 
 
 def daterange(date_from: str, date_to: str):
@@ -2123,6 +2132,9 @@ def main() -> int:
         raise RuntimeError('METRIKA_TOKEN is missing from env')
 
     date_from, date_to = date_range(args)
+    if not date_from or not date_to:
+        log.info('Skipping Metrika run: requested window is newer than the collection floor')
+        return 0
     target_counter_ids = selected_counter_ids(args)
     target_excluded_counter_ids = excluded_counter_ids(args)
     validate_counter_filters(target_counter_ids, target_excluded_counter_ids)

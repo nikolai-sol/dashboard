@@ -1,4 +1,5 @@
 from contextlib import ExitStack
+from datetime import date
 from types import SimpleNamespace
 import sys
 import unittest
@@ -8,6 +9,61 @@ import requests
 
 
 class YandexMetrikaCanonicalTests(unittest.TestCase):
+    def test_cron_date_range_uses_one_day_floor_and_two_day_recollect_span(self):
+        from fetch_yandex_metrika_canonical import date_range
+
+        args = SimpleNamespace(date_from="", date_to="", days_back=2, run_type="cron")
+
+        self.assertEqual(
+            date_range(args, anchor=date(2026, 7, 17)),
+            ("2026-07-15", "2026-07-16"),
+        )
+
+    def test_explicit_metrika_range_is_clipped_to_collection_floor(self):
+        from fetch_yandex_metrika_canonical import date_range
+
+        args = SimpleNamespace(
+            date_from="2026-07-15",
+            date_to="2026-07-17",
+            days_back=2,
+            run_type="manual",
+        )
+
+        self.assertEqual(
+            date_range(args, anchor=date(2026, 7, 17)),
+            ("2026-07-15", "2026-07-16"),
+        )
+
+    def test_metrika_range_returns_empty_when_every_requested_day_is_too_new(self):
+        from fetch_yandex_metrika_canonical import date_range
+
+        args = SimpleNamespace(
+            date_from="2026-07-17",
+            date_to="2026-07-17",
+            days_back=2,
+            run_type="manual",
+        )
+
+        self.assertEqual(date_range(args, anchor=date(2026, 7, 17)), ("", ""))
+
+    def test_main_does_not_create_run_for_empty_metrika_window(self):
+        import fetch_yandex_metrika_canonical as collector
+
+        args = SimpleNamespace(
+            date_from="2026-07-17",
+            date_to="2026-07-17",
+            days_back=2,
+            run_type="manual",
+        )
+        with patch.object(collector, "METRIKA_TOKEN", "configured"), patch.object(
+            collector, "parse_args", return_value=args
+        ), patch.object(collector, "date_range", return_value=("", "")), patch.object(
+            collector, "start_collector_run"
+        ) as start:
+            self.assertEqual(collector.main(), 0)
+
+        start.assert_not_called()
+
     def test_generic_schema_preflight_precedes_collector_run_mutation(self):
         import fetch_yandex_metrika_canonical as collector
 

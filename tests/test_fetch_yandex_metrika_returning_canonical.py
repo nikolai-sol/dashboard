@@ -3,6 +3,7 @@ import importlib
 import logging
 import os
 import unittest
+from datetime import date
 from datetime import datetime, timedelta, timezone
 from email.utils import format_datetime
 from types import SimpleNamespace
@@ -26,6 +27,40 @@ def response(status_code, *, payload=None, headers=None, url="https://api-metrik
 
 
 class YandexMetrikaReturningCanonicalTests(unittest.TestCase):
+    def test_collection_dates_use_one_day_floor_and_three_day_recollect_span(self):
+        from fetch_yandex_metrika_returning_canonical import collection_dates
+
+        self.assertEqual(
+            collection_dates(date(2026, 7, 17), backfill_days=3),
+            ["2026-07-14", "2026-07-15", "2026-07-16"],
+        )
+
+    def test_selected_dates_clip_explicit_returning_window_to_collection_floor(self):
+        from fetch_yandex_metrika_returning_canonical import selected_dates
+
+        args = SimpleNamespace(
+            date_from="2026-07-15",
+            date_to="2026-07-17",
+            backfill_days=3,
+        )
+
+        self.assertEqual(
+            selected_dates(args, anchor=date(2026, 7, 17)),
+            ["2026-07-15", "2026-07-16"],
+        )
+
+    def test_collect_does_not_create_run_for_empty_returning_window(self):
+        import fetch_yandex_metrika_returning_canonical as collector
+
+        args = SimpleNamespace(run_type="manual", force=False)
+        with patch.object(collector, "METRIKA_TOKEN", "configured"), patch.object(
+            collector, "selected_dates", return_value=[]
+        ), patch.object(collector, "start_run") as start:
+            result = collector.collect(args)
+
+        self.assertEqual(result["status"], "skipped_unavailable")
+        start.assert_not_called()
+
     def test_only_metrika_token_authorizes_collector_configuration(self):
         import dotenv
         import fetch_yandex_metrika_returning_canonical as collector

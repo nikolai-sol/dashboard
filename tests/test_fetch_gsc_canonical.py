@@ -8,13 +8,39 @@ import requests
 
 
 class GoogleSearchConsoleCanonicalTests(unittest.TestCase):
-    def test_collection_dates_default_to_yesterday_plus_three_day_backfill(self):
+    def test_collection_dates_use_three_day_floor_and_three_day_recollect_span(self):
         from fetch_gsc_canonical import collection_dates
 
         self.assertEqual(
             collection_dates(dt.date(2026, 7, 17), backfill_days=3),
-            ["2026-07-13", "2026-07-14", "2026-07-15", "2026-07-16"],
+            ["2026-07-12", "2026-07-13", "2026-07-14"],
         )
+
+    def test_selected_dates_clip_explicit_gsc_window_to_collection_floor(self):
+        from fetch_gsc_canonical import selected_dates
+
+        args = SimpleNamespace(
+            date_from="2026-07-13",
+            date_to="2026-07-16",
+            backfill_days=3,
+        )
+
+        self.assertEqual(
+            selected_dates(args, anchor=dt.date(2026, 7, 17)),
+            ["2026-07-13", "2026-07-14"],
+        )
+
+    def test_collect_does_not_create_run_for_empty_gsc_window(self):
+        import fetch_gsc_canonical as collector
+
+        args = SimpleNamespace(run_type="manual", force=False)
+        with patch.object(collector, "selected_dates", return_value=[]), patch.object(
+            collector, "start_run"
+        ) as start:
+            result = collector.collect(args)
+
+        self.assertEqual(result["status"], "skipped_unavailable")
+        start.assert_not_called()
 
     def test_query_hash_matches_existing_canonical_gsc_rows(self):
         from fetch_gsc_canonical import query_hash

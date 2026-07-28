@@ -66,7 +66,19 @@ DEFAULT_ACCOUNT_ID = env_first("YANDEX_WEBMASTER_ACCOUNT_ID", default="66624469"
 DEFAULT_DOMAIN = env_first("YANDEX_WEBMASTER_DOMAIN", default="zaruku.ru")
 DEFAULT_DEVICE = env_first("YANDEX_WEBMASTER_DEVICE_TYPE", default="ALL")
 DEFAULT_SEARCH_LOCATION = env_first("YANDEX_WEBMASTER_SEARCH_LOCATION", default="ALL_LOCATIONS")
-DEFAULT_LAG_DAYS = int(env_first("YANDEX_WEBMASTER_DAILY_LAG_DAYS", "YANDEX_WEBMASTER_BACKFILL_DAYS", default="3") or 3)
+COLLECTION_FLOOR_DAYS = int(
+    env_first("YANDEX_WEBMASTER_COLLECTION_FLOOR_DAYS", default="2") or 2
+)
+RECOLLECT_SPAN_DAYS = int(
+    env_first(
+        "YANDEX_WEBMASTER_RECOLLECT_SPAN_DAYS",
+        "YANDEX_WEBMASTER_DAILY_LAG_DAYS",
+        "YANDEX_WEBMASTER_BACKFILL_DAYS",
+        default="3",
+    )
+    or 3
+)
+DEFAULT_LAG_DAYS = RECOLLECT_SPAN_DAYS
 TOKEN_STATE_PATH = env_first("YANDEX_WEBMASTER_TOKEN_STATE_PATH", default="")
 MAX_RETRIES = 5
 QUERY_PAGE_SIZE = 500
@@ -221,8 +233,11 @@ def calculate_ctr(impressions: int, clicks: int) -> float | None:
 
 def collection_dates(anchor: date | None = None, lag_days: int = DEFAULT_LAG_DAYS) -> list[str]:
     effective_anchor = anchor or datetime.now(timezone.utc).date()
-    end = effective_anchor - timedelta(days=1)
-    start = end - timedelta(days=max(lag_days, 0))
+    span_days = max(lag_days, 0)
+    if span_days == 0:
+        return []
+    end = effective_anchor - timedelta(days=COLLECTION_FLOOR_DAYS)
+    start = end - timedelta(days=span_days - 1)
     days: list[str] = []
     current = start
     while current <= end:
@@ -242,13 +257,14 @@ def daterange(date_from: str, date_to: str) -> list[str]:
     return days
 
 
-def selected_dates(args) -> list[str]:
+def selected_dates(args, anchor: date | None = None) -> list[str]:
+    effective_anchor = anchor or datetime.now(timezone.utc).date()
+    max_collectable_date = effective_anchor - timedelta(days=COLLECTION_FLOOR_DAYS)
     if args.date_from or args.date_to:
-        today = datetime.now(timezone.utc).date()
-        date_to = args.date_to or (today - timedelta(days=1)).strftime("%Y-%m-%d")
+        date_to = args.date_to or max_collectable_date.strftime("%Y-%m-%d")
         date_from = args.date_from or date_to
-        return daterange(date_from, date_to)
-    return collection_dates(lag_days=args.lag_days)
+        return [day for day in daterange(date_from, date_to) if day <= max_collectable_date.isoformat()]
+    return collection_dates(anchor=effective_anchor, lag_days=args.lag_days)
 
 
 def query_hash(query: str) -> str:
@@ -710,15 +726,6 @@ def fetch_page_rows(access_token: str, user_id: str, host_id: str, day: str, dev
     return all_rows
 
 
-def is_latest_page_facts_lag_error(exc: Exception, day: str, selected_days: list[str]) -> bool:
-    if not selected_days or day != selected_days[-1]:
-        return False
-    if not isinstance(exc, requests.HTTPError):
-        return False
-    response = getattr(exc, "response", None)
-    return getattr(response, "status_code", None) == 400
-
-
 def upsert_webmaster_query_rows(rows: list[dict]) -> int:
     if not rows:
         return 0
@@ -861,6 +868,9 @@ def collect(args) -> dict[str, Any]:
     if env_first("YANDEX_WEBMASTER_ENABLED", default="true").lower() == "false":
         return {"status": "skipped", "rows_read": 0, "rows_written": 0}
     dates = selected_dates(args)
+    if not dates:
+        log.info("Skipping Webmaster run: requested window is newer than the collection floor")
+        return {"status": "skipped_unavailable", "rows_read": 0, "rows_written": 0, "dates": []}
     if args.run_type == "cron" and not args.force and cron_run_already_completed():
         log.info("Skipping cron run: successful daily run already exists today")
         return {"status": "skipped_quota", "rows_read": 0, "rows_written": 0, "dates": dates}
@@ -886,23 +896,7 @@ def collect(args) -> dict[str, Any]:
             account_rows.append(build_account_registry_row(account, host_id))
             for day in dates:
                 raw_queries = fetch_query_rows(access_token, user_id, host_id, day, DEFAULT_DEVICE, run_id)
-                try:
-                    raw_pages = fetch_page_rows(access_token, user_id, host_id, day, DEFAULT_DEVICE, run_id)
-                    page_facts_status = "collected"
-                except Exception as exc:
-                    if not is_latest_page_facts_lag_error(exc, day, dates):
-                        raise
-                    raw_pages = []
-                    page_facts_status = "skipped_latest_day_lag"
-                    response = getattr(exc, "response", None)
-                    error_text = clean_text(getattr(response, "text", ""))[:500]
-                    log_collector_event(
-                        run_id,
-                        "warning",
-                        "webmaster_page_facts_skipped",
-                        f"Skipped Webmaster page facts for {account.domain} {day}: latest-day URL analytics is not ready",
-                        {"status_code": getattr(response, "status_code", None), "error": error_text},
-                    )
+                raw_pages = fetch_page_rows(access_token, user_id, host_id, day, DEFAULT_DEVICE, run_id)
                 query_payload = {"queries": raw_queries}
                 page_payload = {"text_indicator_to_statistics": raw_pages}
                 query_rows = normalize_popular_query_rows(
@@ -943,7 +937,7 @@ def collect(args) -> dict[str, Any]:
                     {
                         "query_rows": len(query_rows),
                         "page_rows": len(page_rows),
-                        "page_facts_status": page_facts_status,
+                        "page_facts_status": "collected",
                         "summary_rows": 1,
                     },
                 )

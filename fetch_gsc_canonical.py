@@ -65,7 +65,11 @@ def env_first(*keys: str, default: str = "") -> str:
 SOURCE_KEY = "google_search_console"
 DEFAULT_ACCOUNT_ID = env_first("GSC_ACCOUNT_ID", "GSC_ANALYTICS_ACCOUNT_ID", default="66624469")
 DEFAULT_SITE_URL = env_first("GSC_SITE_URL", default="https://zaruku.ru/")
-DEFAULT_BACKFILL_DAYS = int(env_first("GSC_BACKFILL_DAYS", default="3") or 3)
+COLLECTION_FLOOR_DAYS = int(env_first("GSC_COLLECTION_FLOOR_DAYS", default="3") or 3)
+RECOLLECT_SPAN_DAYS = int(
+    env_first("GSC_RECOLLECT_SPAN_DAYS", "GSC_BACKFILL_DAYS", default="3") or 3
+)
+DEFAULT_BACKFILL_DAYS = RECOLLECT_SPAN_DAYS
 GSC_TOKEN_URL = env_first("GSC_TOKEN_URL", default="https://oauth2.googleapis.com/token")
 GSC_API_BASE = env_first("GSC_API_BASE", default="https://www.googleapis.com/webmasters/v3")
 GSC_ROW_LIMIT = int(env_first("GSC_ROW_LIMIT", default="25000") or 25000)
@@ -258,8 +262,11 @@ def safe_float(value: Any) -> float | None:
 
 def collection_dates(anchor: date | None = None, backfill_days: int = DEFAULT_BACKFILL_DAYS) -> list[str]:
     effective_anchor = anchor or datetime.now(timezone.utc).date()
-    end = effective_anchor - timedelta(days=1)
-    start = end - timedelta(days=max(backfill_days, 0))
+    span_days = max(backfill_days, 0)
+    if span_days == 0:
+        return []
+    end = effective_anchor - timedelta(days=COLLECTION_FLOOR_DAYS)
+    start = end - timedelta(days=span_days - 1)
     days: list[str] = []
     current = start
     while current <= end:
@@ -279,13 +286,14 @@ def daterange(date_from: str, date_to: str) -> list[str]:
     return days
 
 
-def selected_dates(args) -> list[str]:
+def selected_dates(args, anchor: date | None = None) -> list[str]:
+    effective_anchor = anchor or datetime.now(timezone.utc).date()
+    max_collectable_date = effective_anchor - timedelta(days=COLLECTION_FLOOR_DAYS)
     if args.date_from or args.date_to:
-        today = datetime.now(timezone.utc).date()
-        date_to = args.date_to or (today - timedelta(days=1)).strftime("%Y-%m-%d")
+        date_to = args.date_to or max_collectable_date.strftime("%Y-%m-%d")
         date_from = args.date_from or date_to
-        return daterange(date_from, date_to)
-    return collection_dates(backfill_days=args.backfill_days)
+        return [day for day in daterange(date_from, date_to) if day <= max_collectable_date.isoformat()]
+    return collection_dates(anchor=effective_anchor, backfill_days=args.backfill_days)
 
 
 def query_hash(query: str, page: str, country: str, device: str) -> str:
@@ -775,6 +783,9 @@ def collect(args) -> dict[str, Any]:
     if env_first("GSC_ENABLED", default="true").lower() == "false":
         return {"status": "skipped", "rows_read": 0, "rows_written": 0}
     dates = selected_dates(args)
+    if not dates:
+        log.info("Skipping GSC run: requested window is newer than the collection floor")
+        return {"status": "skipped_unavailable", "rows_read": 0, "rows_written": 0, "dates": []}
     if args.run_type == "cron" and not args.force and cron_run_already_completed():
         log.info("Skipping cron run: completed daily run already exists today")
         return {"status": "skipped_quota", "rows_read": 0, "rows_written": 0, "dates": dates}

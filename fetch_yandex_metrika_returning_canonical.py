@@ -64,7 +64,18 @@ def env_first(*keys: str, default: str = "") -> str:
 COLLECTOR_SOURCE_KEY = "yandex_metrika_returning"
 ROW_SOURCE_KEY = "yandex_metrika"
 DEFAULT_ACCOUNT_IDS = env_first("YANDEX_METRIKA_RETURNING_ACCOUNT_IDS", default="66624469")
-DEFAULT_BACKFILL_DAYS = int(env_first("METRIKA_RETURNING_BACKFILL_DAYS", default="3") or 3)
+COLLECTION_FLOOR_DAYS = int(
+    env_first("METRIKA_RETURNING_COLLECTION_FLOOR_DAYS", default="1") or 1
+)
+RECOLLECT_SPAN_DAYS = int(
+    env_first(
+        "METRIKA_RETURNING_RECOLLECT_SPAN_DAYS",
+        "METRIKA_RETURNING_BACKFILL_DAYS",
+        default="3",
+    )
+    or 3
+)
+DEFAULT_BACKFILL_DAYS = RECOLLECT_SPAN_DAYS
 RETURNING_METRIKA_DIMENSION = "ym:s:endURL"
 RETURNING_METRIKA_METRICS = ",".join(
     [
@@ -191,8 +202,11 @@ def selected_account_ids(args) -> list[str]:
 
 def collection_dates(anchor: date | None = None, backfill_days: int = DEFAULT_BACKFILL_DAYS) -> list[str]:
     effective_anchor = anchor or datetime.now(timezone.utc).date()
-    end = effective_anchor - timedelta(days=1)
-    start = end - timedelta(days=max(backfill_days, 0))
+    span_days = max(backfill_days, 0)
+    if span_days == 0:
+        return []
+    end = effective_anchor - timedelta(days=COLLECTION_FLOOR_DAYS)
+    start = end - timedelta(days=span_days - 1)
     days: list[str] = []
     current = start
     while current <= end:
@@ -212,13 +226,14 @@ def daterange(date_from: str, date_to: str) -> list[str]:
     return days
 
 
-def selected_dates(args) -> list[str]:
+def selected_dates(args, anchor: date | None = None) -> list[str]:
+    effective_anchor = anchor or datetime.now(timezone.utc).date()
+    max_collectable_date = effective_anchor - timedelta(days=COLLECTION_FLOOR_DAYS)
     if args.date_from or args.date_to:
-        today = datetime.now(timezone.utc).date()
-        date_to = args.date_to or (today - timedelta(days=1)).strftime("%Y-%m-%d")
+        date_to = args.date_to or max_collectable_date.strftime("%Y-%m-%d")
         date_from = args.date_from or date_to
-        return daterange(date_from, date_to)
-    return collection_dates(backfill_days=args.backfill_days)
+        return [day for day in daterange(date_from, date_to) if day <= max_collectable_date.isoformat()]
+    return collection_dates(anchor=effective_anchor, backfill_days=args.backfill_days)
 
 
 def get_db_connection(database: str = MYSQL_DB):
@@ -470,6 +485,9 @@ def collect(args) -> dict[str, Any]:
     if not METRIKA_TOKEN:
         raise RuntimeError("METRIKA_TOKEN is missing from env")
     dates = selected_dates(args)
+    if not dates:
+        log.info("Skipping returning-content run: requested window is newer than the collection floor")
+        return {"status": "skipped_unavailable", "rows_read": 0, "rows_written": 0, "dates": []}
     if args.run_type == "cron" and not args.force and cron_run_already_completed():
         log.info("Skipping returning-content cron run: successful daily run already exists today")
         return {"status": "skipped_quota", "rows_read": 0, "rows_written": 0, "dates": dates}
