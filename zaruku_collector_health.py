@@ -250,6 +250,59 @@ def _calendar_age(value: Any, now_utc: datetime) -> Optional[int]:
     return (now_utc.astimezone(timezone.utc).date() - parsed).days
 
 
+def normalize_collection_status(
+    source_key: str,
+    run_status: Any,
+    error_count: Any,
+    error_summary: Any,
+) -> Dict[str, Any]:
+    """Expose core and optional status without returning remote diagnostics."""
+    normalized_status = str(run_status or "missing").lower()
+    if source_key != "google_search_console":
+        return {
+            "core_status": normalized_status,
+            "optional_status": "not_applicable",
+            "optional_failure_count": 0,
+            "optional_http_statuses": [],
+        }
+    if normalized_status == "success":
+        return {
+            "core_status": "success",
+            "optional_status": "success",
+            "optional_failure_count": 0,
+            "optional_http_statuses": [],
+        }
+    if normalized_status != "partial":
+        return {
+            "core_status": normalized_status,
+            "optional_status": "unknown",
+            "optional_failure_count": 0,
+            "optional_http_statuses": [],
+        }
+
+    status_codes = set()
+    try:
+        parsed_summary = json.loads(str(error_summary or ""))
+    except (TypeError, ValueError, json.JSONDecodeError):
+        parsed_summary = None
+    if isinstance(parsed_summary, list):
+        for item in parsed_summary:
+            if not isinstance(item, Mapping):
+                continue
+            try:
+                status_code = int(item.get("status_code"))
+            except (TypeError, ValueError):
+                continue
+            if 100 <= status_code <= 599:
+                status_codes.add(status_code)
+    return {
+        "core_status": "success",
+        "optional_status": "http_error" if status_codes else "unknown_error",
+        "optional_failure_count": max(int(error_count or 0), 0),
+        "optional_http_statuses": sorted(status_codes),
+    }
+
+
 def load_zaruku_health(cursor: Any, now_utc: datetime) -> List[Dict[str, Any]]:
     """Load latest run and fact-date health without creating a DB connection."""
     source_keys = list(ZARUKU_SOURCES)
@@ -268,6 +321,12 @@ def load_zaruku_health(cursor: Any, now_utc: datetime) -> List[Dict[str, Any]]:
         else:
             max_data_date = _as_date(fact_row.get("max_data_date"))
         run = runs.get(source_key, {})
+        collection_status = normalize_collection_status(
+            source_key,
+            run.get("run_status"),
+            run.get("error_count"),
+            run.get("error_summary"),
+        )
         health.append(
             {
                 "source_key": source_key,
@@ -286,6 +345,7 @@ def load_zaruku_health(cursor: Any, now_utc: datetime) -> List[Dict[str, Any]]:
                 "data_lag_days": _calendar_age(max_data_date, now_utc),
                 "query_max_date": query_max_date,
                 "page_max_date": page_max_date,
+                **collection_status,
             }
         )
     return health
@@ -508,4 +568,5 @@ __all__ = [
     "load_lineage_defects",
     "load_partial_fact_dates",
     "load_zaruku_health",
+    "normalize_collection_status",
 ]

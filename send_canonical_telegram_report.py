@@ -408,26 +408,54 @@ def build_zaruku_summary_lines(
     lineage_scope: Optional[Dict[str, Any]] = None,
 ) -> List[str]:
     lines = ['<b>Сбор Zaruku</b>']
+    source_labels: Dict[str, str] = {}
+    source_order: Dict[str, int] = {}
     for row in health:
+        source_key = str(row.get('source_key') or 'unknown')
+        label = str(row.get('label') or source_key)
+        source_labels[source_key] = label
+        source_order[source_key] = len(source_order)
         status = str(row.get('run_status') or 'missing').upper()
         lag = row.get('data_lag_days')
         lag_text = '?' if lag is None else str(int(lag))
+        if source_key == 'google_search_console' and row.get('optional_status') != 'not_applicable':
+            core_status = str(row.get('core_status') or status).upper()
+            optional_status = str(row.get('optional_status') or 'unknown')
+            failure_count = int(row.get('optional_failure_count') or 0)
+            http_statuses = [int(value) for value in row.get('optional_http_statuses') or []]
+            if optional_status == 'http_error' and http_statuses:
+                optional_text = 'HTTP {} ({})'.format('/'.join(str(value) for value in http_statuses), failure_count)
+            elif optional_status == 'success':
+                optional_text = 'SUCCESS'
+            else:
+                optional_text = 'UNKNOWN{}'.format(' ({})'.format(failure_count) if failure_count else '')
+            prefix = '- {}: core={}; optional={}'.format(
+                html.escape(label),
+                html.escape(core_status),
+                html.escape(optional_text),
+            )
+        else:
+            prefix = '- {}: status={}'.format(html.escape(label), html.escape(status))
         lines.append(
-            '- {}: status={}; rows={}; max={}; lag={} дн.'.format(
-                html.escape(str(row.get('label') or row.get('source_key') or 'unknown')),
-                html.escape(status),
+            '{}; rows={}; max={}; lag={} дн.'.format(
+                prefix,
                 int(row.get('rows_written') or 0),
                 html.escape(_date_text(row.get('max_data_date'))),
                 html.escape(lag_text),
             )
         )
-    if int(partial_scope.get('distinct_date_count') or 0) > 0:
-        dates = ', '.join(str(value) for value in partial_scope.get('dates') or [])
+    partial_sources = partial_scope.get('sources') or {}
+    for source_key, value in sorted(
+        partial_sources.items(),
+        key=lambda item: (source_order.get(str(item[0]), len(source_order)), str(item[0])),
+    ):
+        dates = ', '.join(str(item) for item in value.get('dates') or [])
         lines.append(
-            '- частичные даты: {} (строк={}; слоёв={}; {})'.format(
-                int(partial_scope.get('distinct_date_count') or 0),
-                int(partial_scope.get('row_count') or 0),
-                int(partial_scope.get('layer_count') or 0),
+            '- {}: частичные даты={} (строк={}; слоёв={}; {})'.format(
+                html.escape(source_labels.get(str(source_key), str(source_key))),
+                int(value.get('distinct_date_count') or 0),
+                int(value.get('row_count') or 0),
+                len(value.get('layers') or []),
                 html.escape(dates),
             )
         )

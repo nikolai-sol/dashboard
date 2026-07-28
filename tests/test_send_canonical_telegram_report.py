@@ -64,7 +64,11 @@ ZARUKU_HEALTH = [
     {
         "source_key": "google_search_console",
         "label": "Google Search Console",
-        "run_status": "success",
+        "run_status": "partial",
+        "core_status": "success",
+        "optional_status": "http_error",
+        "optional_failure_count": 8,
+        "optional_http_statuses": [400],
         "rows_written": 500,
         "max_data_date": date(2026, 7, 25),
         "data_lag_days": 3,
@@ -177,16 +181,34 @@ class TelegramReportTests(unittest.TestCase):
         ]
         positions = [text.index(label) for label in labels]
         self.assertEqual(positions, sorted(positions))
-        for expected in ("status=SUCCESS", "rows=", "max=", "lag="):
+        self.assertEqual(sum("status=SUCCESS" in line for line in lines), 3)
+        for expected in ("rows=", "max=", "lag="):
             self.assertEqual(sum(expected in line for line in lines), 4)
+        self.assertIn("Google Search Console: core=SUCCESS; optional=HTTP 400 (8)", text)
+        self.assertNotIn("Google Search Console: status=PARTIAL", text)
         self.assertNotIn("частичные даты", text)
 
     def test_zaruku_summary_shows_partial_dates_only_when_present(self):
-        scope = dict(EMPTY_PARTIAL_SCOPE, dates=["2026-07-14", "2026-07-16"], distinct_date_count=2, row_count=1697, layer_count=2)
+        scope = dict(
+            EMPTY_PARTIAL_SCOPE,
+            dates=["2026-07-14", "2026-07-16"],
+            distinct_date_count=2,
+            row_count=1697,
+            layer_count=2,
+            sources={
+                "yandex_webmaster": {
+                    "dates": ["2026-07-14", "2026-07-16"],
+                    "distinct_date_count": 2,
+                    "row_count": 1697,
+                    "layers": ["webmaster_pages", "webmaster_queries"],
+                }
+            },
+        )
         text = "\n".join(report.build_zaruku_summary_lines(ZARUKU_HEALTH, scope))
-        self.assertIn("частичные даты: 2", text)
+        self.assertIn("Яндекс Вебмастер: частичные даты=2", text)
         self.assertIn("строк=1697", text)
         self.assertIn("2026-07-14, 2026-07-16", text)
+        self.assertNotIn("Google Search Console: частичные даты", text)
 
     def test_summary_accepts_zaruku_snapshot_and_places_it_before_abbott(self):
         snapshot = {"health": ZARUKU_HEALTH, "partial_scope": EMPTY_PARTIAL_SCOPE, "lineage_scope": {"row_count": 0}}

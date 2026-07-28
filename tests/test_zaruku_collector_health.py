@@ -1,8 +1,10 @@
 import re
+import json
 import unittest
 from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
 
+import zaruku_collector_health as health_module
 from zaruku_collector_health import (
     LINEAGE_DEFECTS_SQL,
     PARTIAL_FACT_DATES_SQL,
@@ -103,6 +105,45 @@ class ZarukuCollectorHealthBehaviorTests(unittest.TestCase):
 
     def incident_types(self, rows):
         return [row["incident_type"] for row in rows]
+
+    def test_gsc_partial_normalizes_core_success_and_optional_http_failures(self):
+        self.assertTrue(
+            hasattr(health_module, "normalize_collection_status"),
+            "normalize_collection_status must expose core/optional state",
+        )
+        status = health_module.normalize_collection_status(
+            "google_search_console",
+            "partial",
+            8,
+            json.dumps(
+                [
+                    {"status_code": 400, "day": "2026-07-24"},
+                    {"status_code": 400, "day": "2026-07-25"},
+                ]
+            ),
+        )
+
+        self.assertEqual(status["core_status"], "success")
+        self.assertEqual(status["optional_status"], "http_error")
+        self.assertEqual(status["optional_failure_count"], 8)
+        self.assertEqual(status["optional_http_statuses"], [400])
+
+    def test_gsc_partial_with_malformed_summary_stays_sanitized_unknown(self):
+        self.assertTrue(
+            hasattr(health_module, "normalize_collection_status"),
+            "normalize_collection_status must expose core/optional state",
+        )
+        status = health_module.normalize_collection_status(
+            "google_search_console",
+            "partial",
+            1,
+            "raw production diagnostic must not escape",
+        )
+
+        self.assertEqual(status["core_status"], "success")
+        self.assertEqual(status["optional_status"], "unknown_error")
+        self.assertEqual(status["optional_http_statuses"], [])
+        self.assertNotIn("raw", repr(status))
 
     def test_age_three_is_current_and_age_four_is_delayed(self):
         healthy = build_zaruku_incidents([health_row()], build_partial_date_scope([]), self.now)
