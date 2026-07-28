@@ -150,8 +150,19 @@ Confirmed result:
 - Consumes: committed root revision, active crontab paths, current remote files, and each runtime interpreter.
 - Produces: byte-identical deployed files with dated backups and no collector/API execution.
 
-- [ ] **Step 1: Run the focused root tests and `py_compile`; stop on any failure.**
-- [ ] **Step 2: Resolve every target from active crontab and compare local/remote SHA-256 and content without reading secret values. Stop on any unexplained runtime-only lines.**
-- [ ] **Step 3: Compile staged files with the interpreter used by each active cron.**
-- [ ] **Step 4: Create dated recoverable backups and atomically replace only the reviewed runtime files.**
-- [ ] **Step 5: Verify remote SHA-256, mode, imports, and read-only health loading. Do not send Telegram and do not run collectors.**
+- [x] **Step 1: Run the focused root tests and `py_compile`; stop on any failure.**
+- [x] **Step 2: Resolve every target from active crontab and compare local/remote SHA-256 and content without reading secret values. Stop on any unexplained runtime-only lines.**
+- [x] **Step 3: Compile the five independent staged files with the interpreter used by each active cron.**
+- [x] **Step 4: Create dated recoverable backups and atomically replace Webmaster, returning content, GSC, Zaruku health, and Telegram renderer.**
+- [x] **Step 5: Verify remote SHA-256, mode, imports, and read-only health loading. Do not send Telegram and do not run collectors.**
+- [ ] **Step 6: Deploy generic Metrika floor/span only through a committed `/root/reportingdash-abbott-canonical` revision with a matching committed manifest and runtime revision. Do not manually replace its shared attested collector.**
+
+Deployment result on 2026-07-28:
+- Root `main` fast-forwarded through `0d76d3f`; nested `dashboard-next/main` fast-forwarded through `c1f5ec7`.
+- Fresh merged-main verification: `py_compile` succeeded and 101 focused tests passed.
+- Atomic runtime deployment tag: `20260728T171112Z`.
+- Canonical backup: `/root/reportingdash-canonical/backups/rd-runtime-20260728T171112Z/`.
+- Webmaster backup: `/var/www/dashboard-backups/rd-runtime-20260728T171112Z/`.
+- Deployed floor/span: Webmaster `2/3`, returning content `1/3`, GSC `3/3`; RD-11 source-specific health/Telegram rendering is active.
+- Post-deploy SELECT-only health: four sources, four partial dates, zero lineage defects.
+- Generic Metrika remains on its previous attested runtime version. Its committed `1/2` floor/span change is not deployed because an isolated file replacement would invalidate the private runtime manifest and revision gate.
