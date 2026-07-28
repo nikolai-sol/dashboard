@@ -32,8 +32,11 @@ test("renders secondary GSC diagnostics in progressive disclosure without countr
 });
 
 test("keeps diagnostic tables bounded inside shrinking panels", () => {
+  assert.match(source, /<ZarukuTableFrame mode="standard"/);
+  assert.doesNotMatch(source, /<div className="max-h-\[24rem\] overflow-auto/);
+  assert.match(source, /card-surface zaruku-panel/);
   assert.match(source, /<details className="min-w-0/);
   assert.match(source, /max-h-\[24rem\] overflow-auto[\s\S]*min-w-\[640px\]/);
-  assert.match(source, /section className="min-w-0/);
+  assert.match(source, /section className="card-surface zaruku-panel/);
   assert.match(source, /flex flex-wrap items-start justify-between/);
 });

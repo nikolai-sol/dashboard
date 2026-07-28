@@ -111,3 +111,12 @@ test("traffic health promotes five Metrika facts and keeps the rest secondary", 
   ]);
   assert.deepEqual(rows.secondary.map((item) => item.key), ["pageviews", "direct_share", "russia_share", "mobile_share", "depth"]);
 });
+
+test("traffic health omits rows without numeric values (e.g., no mobile data)", () => {
+  const rows = buildTrafficHealthRows([
+    ...metrikaKpis.filter((kpi) => kpi.key !== "mobile_share"),
+    { key: "mobile_share", label: "Мобильные", value: "—", source: "metrika", layer: "onsite" },
+  ]);
+
+  assert.equal(rows.secondary.every((item) => item.key !== "mobile_share"), true);
+});

@@ -7,6 +7,27 @@ const toolbarSource = readFileSync(new URL("./ZarukuSeoWeekToolbar.tsx", import.
 const russiaMapSource = readFileSync(new URL("./ZarukuRussiaDemandMap.tsx", import.meta.url), "utf8");
 const contentSource = readFileSync(new URL("./ZarukuContentTab.tsx", import.meta.url), "utf8");
 const audienceSource = readFileSync(new URL("./ZarukuAudienceTab.tsx", import.meta.url), "utf8");
+const overviewSource = readFileSync(new URL("./ZarukuOverviewTab.tsx", import.meta.url), "utf8");
+const panelLayoutSource = readFileSync(new URL("./zaruku-panel-layout.ts", import.meta.url), "utf8");
+const globalsSource = readFileSync(new URL("../app/globals.css", import.meta.url), "utf8");
+const paletteSource = readFileSync(new URL("../lib/chart-palette.ts", import.meta.url), "utf8");
+const clientCopySource = readFileSync(new URL("./zaruku-client-copy.ts", import.meta.url), "utf8");
+
+test("Zaruku uses shared visual tokens and chart palette", () => {
+  for (const token of ["--accent-seo", "--accent-pos", "--ink", "--surface-alt", "--card-pad", "--gap-card", "--gap-section"]) {
+    assert.match(globalsSource, new RegExp(token));
+  }
+  assert.match(paletteSource, /export const ZARUKU_CHART_PALETTE/);
+  assert.match(source, /ZARUKU_CHART_PALETTE/);
+});
+
+test("Zaruku typography follows the RD-01 heading, KPI, and table-header contract", () => {
+  assert.match(source, /className="zaruku-dashboard /);
+  assert.match(source, /zaruku-kpi-value/);
+  assert.match(globalsSource, /\.zaruku-dashboard :is\(h1, h2, h3, h4\)[\s\S]*font-family: var\(--zaruku-font-display\)/);
+  assert.match(globalsSource, /\.zaruku-dashboard \.zaruku-kpi-value[\s\S]*font-family: var\(--zaruku-font-display\)[\s\S]*font-variant-numeric: tabular-nums/);
+  assert.match(globalsSource, /\.zaruku-dashboard \.zaruku-table thead[\s\S]*font-family: var\(--zaruku-font-sans\)[\s\S]*font-size: 13px[\s\S]*line-height: 1\.4[\s\S]*text-transform: uppercase[\s\S]*color: var\(--muted\)/);
+});
 
 test("dashboard distinguishes the traffic period from SEO week selection", () => {
   assert.match(source, /Период трафика:\s*<\/span>\s*<span>\{data\.period\.from\} — \{data\.period\.to\}<\/span>/);
@@ -27,21 +48,51 @@ test("client navigation contains exactly six tabs in executive order", () => {
   assert.doesNotMatch(source, /label: "SEO-операции"|label: "Гео"|label: "Устройства"|label: "Поведение"/);
 });
 
-test("Overview starts with explicit period context and data confidence", () => {
-  const overviewSource = readFileSync(new URL("./ZarukuOverviewTab.tsx", import.meta.url), "utf8");
+test("Overview does not show the duplicated period context strip", () => {
   assert.match(source, /import ZarukuOverviewTab/);
   assert.match(source, /<ZarukuOverviewTab data=\{data\}/);
-  assert.match(overviewSource, /<ZarukuPeriodContext/);
-  assert.match(overviewSource, /Что происходит с поисковой видимостью и целевым трафиком сейчас/);
-  assert.match(overviewSource, /buildZarukuTrustState/);
-  assert.match(overviewSource, /trust\.label/);
+  assert.doesNotMatch(overviewSource, /<ZarukuPeriodContext/);
+  assert.match(overviewSource, /void data;/);
+});
+
+test("Overview uses a stable bounded desktop composition", () => {
+  for (const panelName of [
+    "north_star",
+    "traffic_health",
+    "channels",
+    "organic_search",
+  ]) {
+    assert.match(panelLayoutSource, new RegExp(`panel\\("overview", "${panelName}"`));
+  }
+  assert.match(overviewSource, /className="zaruku-overview-grid"/);
+  assert.doesNotMatch(overviewSource, /registryColumns=\{false\}|registrySpan=\{false\}/);
+  assert.match(panelLayoutSource, /panel\("overview", "channels", 30, "half"/);
+  assert.match(panelLayoutSource, /panel\("overview", "organic_search", 40, "half"/);
+  assert.match(globalsSource, /grid-template-rows:\s*96px minmax\(129px, auto\) minmax\(280px, 1fr\)/);
+  assert.match(source, /min-h-\[calc\(100vh-194px\)\]/);
+  assert.match(source, /initialLimit=\{6\}/);
+  assert.match(source, /titleInfo=\{/);
+  assert.match(source, /ZARUKU_CLIENT_COPY\.technicalTail/);
+  assert.match(clientCopySource, /Технический хвост/);
+  assert.doesNotMatch(source, /Технический хвост:\{" "\}/);
+});
+
+test("Overview keeps KPI and chart content inside its desktop bounds", () => {
+  assert.match(source, /<ResponsiveContainer width="100%" height="100%" initialDimension=\{\{ width: 1, height: 1 \}\}>/);
+  assert.match(source, /<LineChart data=\{data\.organic_trend\} margin=\{\{ top: 8, right: 16, left: -20, bottom: 0 \}\}>/);
+  assert.match(source, /<XAxis dataKey="label" padding=\{\{ right: 12 \}\}/);
+});
+
+test("Audience device panels shrink before their tables start scrolling", () => {
+  assert.match(audienceSource, /grid-cols-\[minmax\(0,1fr\)\]/);
+  assert.match(audienceSource, /<div className="min-w-0"><h4[^>]*>Типы устройств/);
+  assert.match(audienceSource, /<div className="min-w-0"><h4[^>]*>Источник × устройство/);
 });
 
 test("SEO tab follows the executive-to-detail hierarchy without duplicate source tables", () => {
   const aiPanelMatches = source.match(/<AiAggregateVisibilityPanel/g) ?? [];
 
   assert.equal(aiPanelMatches.length, 1);
-  assert.match(source, /<ZarukuSeoExecutiveSummary/);
   assert.match(source, /<ZarukuSeoQueryComparison/);
   assert.match(source, /<ZarukuSeoPageComparison/);
   assert.match(source, /<ZarukuSeoDiagnostics/);
@@ -56,6 +107,7 @@ test("SEO tab explains Metrika search phrases and uses the unified landing-page 
   assert.match(source, /buildUnifiedSeoPageRows/);
   assert.match(source, /webmasterRows: webmasterPages/);
   assert.doesNotMatch(source, /title="Посадочные страницы Яндекса"/);
+  assert.doesNotMatch(source, /title: "Запрос → посадочная"/);
 });
 
 test("SEO tab passes actual source weeks into unified comparisons", () => {
@@ -118,6 +170,7 @@ test("audience bars localize common Metrika labels", () => {
 test("Content route uses one focused workspace without a legacy Behavior tab", () => {
   assert.match(source, /import ZarukuContentTab/);
   assert.match(source, /<ZarukuContentTab/);
+  assert.match(contentSource, /aria-labelledby="content-sections-title" className="min-w-0 space-y-3"/);
   assert.doesNotMatch(source, /function ContentTab|function BehaviorTab/);
   assert.doesNotMatch(source, /Поведение по каналам/);
 });
@@ -165,4 +218,26 @@ test("Audience route owns the projected city by map product signal", () => {
   assert.match(russiaMapSource, /визиты на раздел `\/map\/`/);
   assert.match(russiaMapSource, /размер круга = визиты/);
   assert.match(russiaMapSource, /formatPercent\(city\.row\.share, locale, 1\)/);
+});
+
+test("Audience navigation is derived from visible datasets", () => {
+  assert.match(source, /const visibleNav =/);
+  assert.match(source, /isZarukuAudienceVisible\(data\)/);
+  assert.match(source, /visibleNav\.map/);
+  assert.match(source, /setActiveTab\("overview"\)/);
+});
+
+test("source freshness is rendered on its own sidebar line", () => {
+  const sourcesStart = source.indexOf("{data.sources.map");
+  const sourcesEnd = source.indexOf("</aside>", sourcesStart);
+  const sourcesBlock = source.slice(sourcesStart, sourcesEnd);
+
+  assert.match(sourcesBlock, /data-source-main-row/);
+  assert.match(sourcesBlock, /data-source-freshness/);
+  assert.doesNotMatch(sourcesBlock, /whitespace-nowrap/);
+});
+
+test("dashboard reports active tab changes to the page time owner", () => {
+  assert.match(source, /onActiveTabChange\?: \(tab: ZarukuTabId\) => void/);
+  assert.match(source, /onActiveTabChange\?\.\(tab\)/);
 });

@@ -9,6 +9,8 @@ import {
   type RussiaDemandCity,
 } from "@/components/zaruku-russia-map-data";
 import { separateMapMarkers } from "@/components/zaruku-russia-map-layout";
+import { ZARUKU_CHART_PALETTE } from "@/lib/chart-palette";
+import { ZARUKU_CLIENT_COPY } from "@/components/zaruku-client-copy";
 
 type Props = {
   rows: ZarukuSeoMetricRow[];
@@ -56,7 +58,7 @@ export default function ZarukuRussiaDemandMap({ rows, locale }: Props) {
   const activeCity = cities.find((city) => city.row.label === activeCityLabel) ?? null;
 
   if (rows.length === 0) {
-    return <div className="rounded-md bg-slate-50 px-4 py-5 text-sm text-slate-500">Нет данных по городам для /map за выбранный период.</div>;
+    return <div className="rounded-md bg-slate-50 px-4 py-5 text-sm text-slate-500">{ZARUKU_CLIENT_COPY.emptyMapCities}</div>;
   }
 
   if (cities.length === 0) {
@@ -113,8 +115,8 @@ export default function ZarukuRussiaDemandMap({ rows, locale }: Props) {
                 <>
                 <path
                   d={features[0]?.path ?? ""}
-                  fill="#f8fafc"
-                  stroke="#94a3b8"
+                  fill={ZARUKU_CHART_PALETTE.surfaceAlt}
+                  stroke={ZARUKU_CHART_PALETTE.comparison}
                   strokeWidth={1.4}
                   vectorEffect="non-scaling-stroke"
                 />
@@ -152,31 +154,31 @@ export default function ZarukuRussiaDemandMap({ rows, locale }: Props) {
                             y1={marker.anchorY}
                             x2={cx}
                             y2={cy}
-                            stroke="#64748b"
+                            stroke={ZARUKU_CHART_PALETTE.axis}
                             strokeWidth={1}
                             strokeDasharray="3 3"
                             opacity={0.5}
                           />
-                          <circle cx={marker.anchorX} cy={marker.anchorY} r={2.5} fill="#64748b" opacity={0.65} />
+                          <circle cx={marker.anchorX} cy={marker.anchorY} r={2.5} fill={ZARUKU_CHART_PALETTE.axis} opacity={0.65} />
                         </>
                       ) : null}
-                      <circle cx={cx} cy={cy} r={radius + 5} fill="#14b8a6" opacity={isActive ? 0.24 : 0.12} />
+                      <circle cx={cx} cy={cy} r={radius + 5} fill={ZARUKU_CHART_PALETTE.seo} opacity={isActive ? 0.24 : 0.12} />
                       <circle
                         cx={cx}
                         cy={cy}
                         r={radius}
-                        fill="#0d9488"
+                        fill={ZARUKU_CHART_PALETTE.seo}
                         opacity={isActive ? 0.95 : 0.76}
-                        stroke="#ffffff"
+                        stroke={ZARUKU_CHART_PALETTE.surface}
                         strokeWidth={2.5}
                       />
                       {city.showLabel ? (
                         <g className="pointer-events-none">
-                          <line x1={cx} y1={cy} x2={labelX} y2={labelY + 3} stroke="#64748b" strokeWidth={1} opacity={0.55} />
-                          <text x={labelX} y={labelY} className="fill-slate-700 text-[14px] font-semibold" paintOrder="stroke" stroke="#ffffff" strokeWidth={4}>
+                          <line x1={cx} y1={cy} x2={labelX} y2={labelY + 3} stroke={ZARUKU_CHART_PALETTE.axis} strokeWidth={1} opacity={0.55} />
+                          <text x={labelX} y={labelY} className="fill-slate-700 text-[14px] font-semibold" paintOrder="stroke" stroke={ZARUKU_CHART_PALETTE.surface} strokeWidth={4}>
                             {city.row.label}
                           </text>
-                          <text x={labelX} y={labelY + 17} className="fill-slate-500 text-[12px]" paintOrder="stroke" stroke="#ffffff" strokeWidth={3}>
+                          <text x={labelX} y={labelY + 17} className="fill-slate-500 text-[12px]" paintOrder="stroke" stroke={ZARUKU_CHART_PALETTE.surface} strokeWidth={3}>
                             {formatNumber(city.row.visits, locale)} · {formatPercent(city.row.share, locale, 1)}
                           </text>
                         </g>

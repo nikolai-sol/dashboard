@@ -149,6 +149,15 @@ Important current state:
 - Zaruku inactive / hold counters `29137835`, `105559308`, and `99078698` must stay `is_active = 0` and `cron_enabled = 0`; do not collect them unless the user explicitly reactivates them.
 - If `canonical_fact_user_behavior_daily` stays empty for Zaruku, do not infer a collector failure by itself: the counter may not expose `paramsLevel2` / UserID-style rows.
 
+### Yandex Metrika returning content
+
+- collector/runtime: `/root/reportingdash-canonical/fetch_yandex_metrika_returning_canonical.py`
+- canonical table: `canonical_fact_metrika_returning_pages_daily`
+- daily cron: `06:18`, account `66624469`, command flags `--account-id 66624469 --run-type cron`
+- on 2026-07-28 the installed cron was repaired after seven parser failures caused by the removed `--counter-id` flag; the repair also restored the missing `--run-type cron`
+- verification run `1694` completed as `cron/success`, wrote 484 rows for `2026-07-24..2026-07-27`, and changed the live dashboard freshness result to `healthy`
+- rollback copy of the prior root crontab: `/root/crontab.backup-rd08-20260728T080419Z`
+
 ### Yandex Webmaster
 
 - collector: `/Users/nicko/ReportingDash/fetch_yandex_webmaster_canonical.py` deployed into `/var/www/dashboard/fetch_yandex_webmaster_canonical.py`
@@ -157,8 +166,15 @@ Important current state:
   - `canonical_fact_webmaster_queries_daily`
   - `canonical_fact_webmaster_summary_daily`
   - `canonical_fact_webmaster_pages_daily`
-- URL/page facts come from Yandex Webmaster `query-analytics/list` with `text_indicator = URL`; default `YANDEX_WEBMASTER_SEARCH_LOCATION = ALL_LOCATIONS`, matching the Webmaster UI screenshot.
+- URL/page facts come from Yandex Webmaster `query-analytics/list` with `text_indicator = URL`; default `YANDEX_WEBMASTER_SEARCH_LOCATION = ALL_LOCATIONS`, matching the Webmaster UI screenshot. Branch `codex/zaruku-product-readiness` restores this page writer after it disappeared from the checked-in collector, but no deploy or end-to-end run has occurred; historical page rows do not prove the restored writer is operational.
+- Official Webmaster documentation says query-statistics data is updated daily, but does not promise a fixed publication delay in hours: `https://yandex.ru/support/webmaster/ru/service/statistics`. The API reference exposes the latest two weeks without defining a 72-hour SLA: `https://yandex.ru/dev/webmaster/doc/ru/reference/host-query-analytics`. ReportingDash product policy is `ZARUKU_DATA_LAG_DAYS = 3`: a latest fact date up to 3 UTC calendar days old is current; more than 3 days is delayed. RD-09 measured the normal Webmaster lag at 2 days in eight of nine clean observations, then added one day of slack. Do not present this threshold as a Yandex SLA or change it without a new measurement.
+- Heartbeat is separate from fact freshness. All four Zaruku collectors have `expected_frequency_hours = 24`, including GSC; this expresses the daily cron expectation, not an acceptable publication lag.
+- RD-11 and RD-12 share `zaruku_collector_health.py`. Partial dates mean current fact rows whose resolved ingestion run is `failed`; `rows_read > rows_written` is explicitly rejected. GSC's string `ingestion_run_id` is regex-validated before casting, and non-castable/missing/orphan references are reported outside partial scope.
+- SELECT-only snapshot on 2026-07-28 for `2026-07-01..27`: failed-lineage union `2026-07-14..17`; queries 755 rows/4 dates, pages 942/2, summary 1/1; failed cron runs `1453`, `1471`; lineage defects 0. Detailed evidence: root `docs/operations/zaruku-webmaster-provenance-2026-07-28.md`. Backfill remains forbidden until RD-10 is deployed, RD-11 is active, and one scheduled Webmaster cron completes stably.
+- Collector `DEFAULT_LAG_DAYS = 3` controls the rolling date window/backfill and is separate from the dashboard freshness verdict.
 - 2026-07-17 production backfill run `1439` collected URL/page facts for `2026-07-13..2026-07-15`; `2026-07-15` has 968 page rows for account `66624469`.
+- Enhanced Export (`PRO_SERP`) was proven with one authorized `1 URL × 1 date` base-quota request on 2026-07-28. Task `26224340-8a5c-11f1-b8b7-21c9fbaae2a2` used 1 free unit (99 remained), completed successfully, and returned a gzip CSV with 152 same-row `query + path + clicks` records for 2026-07-22, totaling 13 clicks and 191 impressions. This validates the source contract only; no collector, canonical storage, rotation, or cron was added.
+- The current Webmaster-only cohort has no authoritative all-query URL count because canonical query and page facts are separate. `popular_complementary_indicator` is only a representative selection signal; never treat it as an observed click landing or an RD-06-confirmed pair.
 
 ### Google Search Console
 
@@ -170,9 +186,10 @@ Important current state:
 - Zaruku property: `https://zaruku.ru/`
 - Zaruku analytics account id: `66624469`
 - writes daily canonical facts only to `canonical_fact_gsc_queries_daily`
+- writes canonical query rows to `canonical_fact_gsc_queries_daily` in the same run as optional `canonical_fact_gsc_search_appearance_daily` and `canonical_fact_gsc_search_type_daily`
 - dimensions: `query`, `page`, `country`, `device`
 - metrics: `impressions`, `clicks`, `ctr`, `position`
-- cron window: yesterday plus 3-day backfill (`--backfill-days 3`) because GSC can lag by 2-3 days
+- cron window: yesterday minus 3 days plus 3-day backfill (`--backfill-days 3 --lag-days 3`) because GSC can lag by 2-3 days; we enforce unified `lag_days=3` so daily imports target the same anchor date
 - idempotency: upsert by canonical business key `(analytics_account_id, report_date, query, page, device, country)`; `query_hash` is still computed from the same canonical fields only for compatibility with the existing unique key
 - legacy columns `property_url`, `query_text`, and `device_type` are nullable compatibility columns and must not be populated by the root collector
 - old temporary collector `fetch_google_search_console_canonical.py` must not be used as a writer for this table
@@ -468,6 +485,8 @@ Already done and should not be rediscovered:
 12. Yandex Metrika canonical collector now supports targeted counter backfills, counter-scoped deletes, API throttling, and page-level canonical rows; Zaruku `66624469` was enabled for canonical collection.
 13. Zaruku Metrika counters `29137835`, `105559308`, and `99078698` are on hold/inactive in production collection settings; only counter `66624469` should remain active for Zaruku.
 14. Yandex Webmaster URL/page facts are now canonical daily rows in `canonical_fact_webmaster_pages_daily`; dashboard payload `zaruku_seo.webmaster.data_availability.pages` is true after backfill run `1439`.
+15. Zaruku freshness policy is calendar-based across sources: age `0..3` days from the current UTC calendar day is current, and age `>3` is delayed. The three-day threshold is RD-09's measured two-day normal Webmaster lag plus one day of slack, not a Yandex SLA. A newer failed cron/API run remains failed even when the fact date is still current. Heartbeat remains a separate 24-hour run-schedule check for all four sources.
+16. Branch `codex/zaruku-product-readiness` restores the Webmaster page writer, adds the shared RD-11 health/Telegram model, and adds the SELECT-only RD-12 planner. Local verification: dashboard `ci:verify` exit 0 with four existing warnings, 46/46 focused root tests; the full root discover still has unrelated Abbott baseline failures/hang. No deploy, collector/backfill run, cron/schema change, or Telegram send occurred.
 
 ## Working rule for future platform-access tasks
 

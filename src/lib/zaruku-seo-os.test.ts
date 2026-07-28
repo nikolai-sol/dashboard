@@ -211,7 +211,7 @@ test("loadZarukuSeoOsData normalizes an empty account scope to the Zaruku fallba
 
   assert.equal(data.available, true);
   assert.equal(data.status, "available");
-  assert.equal(queries.length, 5);
+  assert.equal(queries.length, 6);
   for (const query of queries) {
     assert.doesNotMatch(query.sql, /IN\s*\(\s*\)/i);
     assert.deepEqual(query.params, ["66624469"]);
@@ -220,6 +220,9 @@ test("loadZarukuSeoOsData normalizes an empty account scope to the Zaruku fallba
 
 test("loadZarukuSeoOsData preserves successful patterns while marking SEO OS unavailable when positions fail", async () => {
   const data = await loadZarukuSeoOsData(["66624469"], async (query) => {
+    if (/COUNT\(\*\) AS section_pattern_count/i.test(query.sql)) {
+      return [{ section_pattern_count: 1, section_patterns_updated_at: "2026-07-21 00:00:00" }];
+    }
     if (/FROM seo_section_patterns/i.test(query.sql)) {
       return [{ section: "/map/", url_pattern: "/map/", priority: 1 }];
     }
@@ -231,13 +234,20 @@ test("loadZarukuSeoOsData preserves successful patterns while marking SEO OS una
   assert.equal(data.status, "unavailable");
   assert.equal(data.data_availability.section_patterns, true);
   assert.equal(data.data_availability.positions, false);
+  assert.equal(data.section_pattern_summary?.section_pattern_count, 1);
+  assert.equal(data.section_pattern_summary?.section_patterns_updated_at, "2026-07-21 00:00:00");
   assert.deepEqual(data.section_patterns, [{ section: "/map/", url_pattern: "/map/", priority: 1 }]);
   assert.match(data.error ?? "", /positions: positions unavailable/);
 });
 
 test("loadZarukuSeoOsData preserves other successful tables while marking SEO OS unavailable after a table failure", async () => {
   const data = await loadZarukuSeoOsData(["66624469"], async (query) => {
-    if (/FROM seo_section_patterns/i.test(query.sql)) return [{ section: "/map/", url_pattern: "/map/", priority: 1 }];
+    if (/COUNT\(\*\) AS section_pattern_count/i.test(query.sql)) {
+      return [{ section_pattern_count: 1, section_patterns_updated_at: "2026-07-21 00:00:00" }];
+    }
+    if (/FROM seo_section_patterns/i.test(query.sql)) {
+      return [{ section: "/map/", url_pattern: "/map/", priority: 1 }];
+    }
     if (/FROM seo_positions_weekly/i.test(query.sql)) {
       return [{ week: "2026-W28", section: "/map/", cluster_id: "map", query: "clinic", serp_position: 4, delta_prev: null, matched_url: null, status: "found" }];
     }
@@ -250,6 +260,8 @@ test("loadZarukuSeoOsData preserves other successful tables while marking SEO OS
   assert.equal(data.data_availability.positions, true);
   assert.equal(data.data_availability.opportunities, false);
   assert.equal(data.data_availability.traffic_visibility, true);
+  assert.equal(data.section_pattern_summary?.section_pattern_count, 1);
+  assert.equal(data.section_pattern_summary?.section_patterns_updated_at, "2026-07-21 00:00:00");
   assert.equal(data.clusters.length, 1);
   assert.deepEqual(data.position_trend, [
     { week: "2026-W28", section: "/map/", average_position: 4, coverage: 1, found_rows: 1, tracked_rows: 1 },
@@ -273,5 +285,6 @@ test("loadZarukuSeoOsData marks total SEO database failure unavailable", async (
   });
   assert.deepEqual(data.section_patterns, []);
   assert.deepEqual(data.clusters, []);
+  assert.equal(data.section_pattern_summary, null);
   assert.match(data.error ?? "", /positions: seo database unavailable/);
 });

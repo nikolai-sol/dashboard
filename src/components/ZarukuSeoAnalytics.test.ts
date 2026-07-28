@@ -1,9 +1,18 @@
 import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
 import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { test } from "node:test";
 import ZarukuSeoAnalytics from "./ZarukuSeoAnalytics";
 import type { ZarukuSeoOsData } from "@/lib/types";
+
+const source = readFileSync(new URL("./ZarukuSeoAnalytics.tsx", import.meta.url), "utf8");
+
+test("cluster rows use the shared bounded table frame", () => {
+  assert.match(source, /<ZarukuTableFrame mode="operational"/);
+  assert.doesNotMatch(source, /max-h-\[29rem\] overflow-auto/);
+  assert.match(source, /card-surface zaruku-panel/);
+});
 
 test("renders retry-later unavailable state when positions query failed", () => {
   const seoOs: ZarukuSeoOsData = {
@@ -17,11 +26,12 @@ test("renders retry-later unavailable state when positions query failed", () => 
       tasks: true,
       runs: true,
       traffic_visibility: true,
-    },
-    weeks: [],
-    latest_week: null,
-    section_patterns: [{ section: "/map/", url_pattern: "/map/", priority: 1 }],
-    position_trend: [],
+  },
+  weeks: [],
+  latest_week: null,
+  section_pattern_summary: null,
+  section_patterns: [{ section: "/map/", url_pattern: "/map/", priority: 1 }],
+  position_trend: [],
     clusters: [],
     opportunities: [],
     tasks: [],
@@ -52,10 +62,11 @@ test("chart-only mode omits the duplicate cluster table", () => {
       tasks: true,
       runs: true,
       traffic_visibility: true,
-    },
-    weeks: ["2026-W29"],
-    latest_week: "2026-W29",
-    section_patterns: [{ section: "/map/", url_pattern: "/map/", priority: 1 }],
+  },
+  weeks: ["2026-W29"],
+  latest_week: "2026-W29",
+  section_pattern_summary: null,
+  section_patterns: [{ section: "/map/", url_pattern: "/map/", priority: 1 }],
     position_trend: [{
       week: "2026-W29", section: "/map/", average_position: 4, coverage: 1, found_rows: 1, tracked_rows: 1,
     }],

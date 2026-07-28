@@ -2,9 +2,11 @@
 
 import { CalendarRange, Download } from "lucide-react";
 import ComparisonToggle, { type ComparisonPreset } from "@/components/ComparisonToggle";
+import { ZARUKU_CLIENT_COPY } from "@/components/zaruku-client-copy";
 import type { DashboardLanguage } from "@/lib/dashboard-i18n";
 
 export type DashboardQuickRangePreset = "this_month" | "this_week" | "yesterday" | "custom";
+export type DashboardDateControlsMode = "active" | "disabled" | "hidden";
 
 type DashboardHeaderProps = {
   clientName: string;
@@ -12,6 +14,7 @@ type DashboardHeaderProps = {
   periodLabel: string;
   logoUrl?: string | null;
   pdfMode?: boolean;
+  dateControlsMode?: DashboardDateControlsMode;
   labels?: {
     to: string;
     apply: string;
@@ -75,6 +78,7 @@ export default function DashboardHeader({
   periodLabel,
   logoUrl,
   pdfMode = false,
+  dateControlsMode = "active",
   labels,
   language = "en",
   dateFrom,
@@ -131,6 +135,7 @@ export default function DashboardHeader({
       onClearCompare,
   );
   const showExport = Boolean(onExportExcel || onExportPdf);
+  const dateControlsDisabled = dateControlsMode === "disabled";
 
   return (
     <header className="card-surface relative z-[60] mb-6 overflow-visible flex flex-col gap-4 p-5 sm:flex-row sm:items-center sm:justify-between">
@@ -155,8 +160,11 @@ export default function DashboardHeader({
         </div>
       </div>
 
-      {!pdfMode ? (
+      {!pdfMode && dateControlsMode !== "hidden" ? (
         <div className="no-print flex flex-col gap-2 sm:items-end">
+          {dateControlsDisabled ? (
+            <p className="text-xs font-medium text-slate-500">{ZARUKU_CLIENT_COPY.disabledCalendar}</p>
+          ) : null}
           <div className="flex flex-wrap gap-2 sm:justify-end">
             {[
               { key: "this_month", label: copy.quickThisMonth },
@@ -169,8 +177,9 @@ export default function DashboardHeader({
                 <button
                   key={item.key}
                   type="button"
+                  disabled={dateControlsDisabled}
                   onClick={() => onQuickRangePresetChange?.(item.key as DashboardQuickRangePreset)}
-                  className={`rounded-full px-3 py-1.5 text-sm font-medium transition ${
+                  className={`rounded-full px-3 py-1.5 text-sm font-medium transition disabled:cursor-not-allowed disabled:opacity-50 ${
                     active
                       ? "bg-slate-900 text-white shadow-sm"
                       : "border border-slate-200 bg-white text-slate-600 hover:border-slate-300 hover:bg-slate-50"
@@ -187,6 +196,7 @@ export default function DashboardHeader({
               <input
                 type="date"
                 value={dateFrom ?? ""}
+                disabled={dateControlsDisabled}
                 onChange={(e) => onDateFromChange?.(e.target.value)}
                 className="bg-transparent outline-none"
               />
@@ -196,6 +206,7 @@ export default function DashboardHeader({
               <input
                 type="date"
                 value={dateTo ?? ""}
+                disabled={dateControlsDisabled}
                 onChange={(e) => onDateToChange?.(e.target.value)}
                 className="bg-transparent outline-none"
               />
@@ -203,12 +214,12 @@ export default function DashboardHeader({
             <button
               type="button"
               onClick={onApplyDateRange}
-              disabled={!dateFrom || !dateTo || isUpdatingRange}
+              disabled={dateControlsDisabled || !dateFrom || !dateTo || isUpdatingRange}
               className="rounded-lg border border-slate-200 bg-white px-4 py-2 text-sm font-medium text-slate-700 transition hover:border-slate-300 hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-50"
             >
               {isUpdatingRange ? copy.updating : copy.apply}
             </button>
-            {showCompare ? (
+            {showCompare && !dateControlsDisabled ? (
               <ComparisonToggle
                 open={compareOpen}
                 currentFrom={dateFrom ?? ""}

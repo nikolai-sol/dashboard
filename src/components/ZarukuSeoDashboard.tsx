@@ -1,6 +1,6 @@
 "use client";
 
-import { useId, useMemo, useState } from "react";
+import { useEffect, useId, useLayoutEffect, useMemo, useRef, useState } from "react";
 import {
   Bar,
   BarChart,
@@ -25,7 +25,6 @@ import {
   Workflow,
 } from "lucide-react";
 import ZarukuSeoWeekToolbar from "@/components/ZarukuSeoWeekToolbar";
-import ZarukuSeoExecutiveSummary from "@/components/ZarukuSeoExecutiveSummary";
 import ZarukuSeoDiagnostics from "@/components/ZarukuSeoDiagnostics";
 import ZarukuSeoPageComparison from "@/components/ZarukuSeoPageComparison";
 import ZarukuSeoQueryComparison from "@/components/ZarukuSeoQueryComparison";
@@ -43,13 +42,17 @@ import {
   reconcileWeekSelection,
   shouldShowSeoWeekToolbar,
   updateWeekSelection,
+  WEEK_SELECTION_FIELD_BY_SLOT,
+  type ZarukuTabId,
+  type WeekComparisonMode,
+  type WeekSelection,
   type WeekSelectionField,
 } from "@/components/zaruku-seo-week-selection";
 import ZarukuSeoAnalytics from "@/components/ZarukuSeoAnalytics";
 import ZarukuSeoOperations from "@/components/ZarukuSeoOperations";
 import ZarukuOverviewTab from "@/components/ZarukuOverviewTab";
 import ZarukuContentTab from "@/components/ZarukuContentTab";
-import ZarukuAudienceTab from "@/components/ZarukuAudienceTab";
+import ZarukuAudienceTab, { isZarukuAudienceVisible } from "@/components/ZarukuAudienceTab";
 import ZarukuWorkTab from "@/components/ZarukuWorkTab";
 import ZarukuQualityTab from "@/components/ZarukuQualityTab";
 import {
@@ -58,7 +61,6 @@ import {
   buildWeeklyFocus,
 } from "@/components/zaruku-north-star";
 import {
-  buildSeoExecutiveSnapshot,
   buildUnifiedSeoPageRows,
   buildUnifiedSeoQueryRows,
 } from "@/components/zaruku-seo-workspace";
@@ -68,15 +70,24 @@ import {
 } from "@/components/zaruku-overview-layout";
 import { formatPendingRequirementSources } from "@/components/zaruku-seo-pending";
 import { resolveRowsForWeek } from "@/components/zaruku-yandex-webmaster-panels";
+import { ZARUKU_CHART_PALETTE } from "@/lib/chart-palette";
+import { ZARUKU_CLIENT_COPY } from "@/components/zaruku-client-copy";
 
 type Props = {
   data: ZarukuSeoData;
   locale?: string;
+  onActiveTabChange?: (tab: ZarukuTabId) => void;
 };
 
-type TabId = "overview" | "seo" | "content" | "audience" | "work" | "quality";
+type ZarukuWeekState = {
+  weeksKey: string;
+  selection: WeekSelection;
+  comparisonMode: WeekComparisonMode;
+};
 
-const NAV: Array<{ id: TabId; label: string; icon: typeof LayoutGrid }> = [
+export type { ZarukuTabId } from "@/components/zaruku-seo-week-selection";
+
+const NAV: Array<{ id: ZarukuTabId; label: string; icon: typeof LayoutGrid }> = [
   { id: "overview", label: "Обзор", icon: LayoutGrid },
   { id: "seo", label: "SEO", icon: Search },
   { id: "content", label: "Контент", icon: FileText },
@@ -84,8 +95,6 @@ const NAV: Array<{ id: TabId; label: string; icon: typeof LayoutGrid }> = [
   { id: "work", label: "Работы и задачи", icon: Workflow },
   { id: "quality", label: "Качество", icon: ShieldAlert },
 ];
-
-const COLORS = ["#0d9488", "#334155", "#64748b", "#94a3b8", "#0891b2", "#9333ea", "#2563eb", "#f59e0b"];
 
 function formatNumber(value: number, locale = "ru-RU") {
   return Math.round(value).toLocaleString(locale);
@@ -139,24 +148,66 @@ const SOURCE_COLLECTION_MODE_LABELS: Record<ZarukuSeoSource["collection_mode"], 
   not_connected: "не подключено",
 };
 
-function SourceHealthMeta({ source }: { source: ZarukuSeoSource }) {
-  return (
-    <span className="text-[11px] font-normal text-slate-400">
-      {SOURCE_STATUS_LABELS[source.status]} · {SOURCE_COLLECTION_MODE_LABELS[source.collection_mode]}
-      {source.data_through ? ` · данные по ${source.data_through}` : ""}
-    </span>
-  );
+function formatSidebarDate(dateText: string): string {
+  const normalized = String(dateText).slice(0, 10);
+  if (/^\d{4}-\d{2}-\d{2}$/.test(normalized)) {
+    return `${normalized.slice(8, 10)}.${normalized.slice(5, 7)}.${normalized.slice(0, 4)}`;
+  }
+  return normalized;
+}
+
+function formatSidebarMonthDate(dateText: string): string {
+  const normalized = String(dateText).slice(0, 7);
+  if (/^\d{4}-\d{2}$/.test(normalized)) {
+    return `01.${normalized.slice(5, 7)}.${normalized.slice(0, 4)}`;
+  }
+  return normalized;
+}
+
+const SOURCE_FRESHNESS_SOURCE_KEYS: Partial<Record<ZarukuSeoSourceId, string>> = {
+  metrika: "yandex_metrika",
+  gsc: "google_search_console",
+  webmaster: "yandex_webmaster",
+};
+
+function getSourceRowsLabel(data: ZarukuSeoData, sourceId: ZarukuSeoSourceId) {
+  const sourceFreshnessKey = SOURCE_FRESHNESS_SOURCE_KEYS[sourceId];
+  if (sourceFreshnessKey) {
+    const row = data.source_freshness.find((item) => item.source_key === sourceFreshnessKey);
+    if (row?.date_to) return `посл. дата: ${formatSidebarDate(row.date_to)}`;
+    return row?.last_success_at ? `посл. дата: ${formatSidebarDate(row.last_success_at)}` : null;
+  }
+  if (sourceId === "yandex_gen_search") {
+    return seoIntelligenceRowsLabel(data);
+  }
+  if (sourceId === "seo_os") {
+    return data.seo_os.latest_week ? `посл. неделя: ${data.seo_os.latest_week}` : null;
+  }
+  return null;
+}
+
+function seoIntelligenceRowsLabel(data: ZarukuSeoData) {
+  const latestCapturedAt = data.seo_intelligence.ai.rows
+    .map((row) => row.captured_at)
+    .filter((value): value is string => Boolean(value))
+    .map((value) => value.slice(0, 10))
+    .sort()
+    .at(-1);
+  if (latestCapturedAt) return `посл. дата: ${formatSidebarDate(latestCapturedAt)}`;
+  if (!data.seo_intelligence.ai.latest_period) return null;
+  return `посл. дата: ${formatSidebarMonthDate(data.seo_intelligence.ai.latest_period)}`;
 }
 
 function SourceBadge({ data, id }: { data: ZarukuSeoData; id: ZarukuSeoSourceId }) {
   const source = data.sources.find((item) => item.id === id);
   if (!source) return null;
   return (
-    <span className="inline-flex items-center gap-1.5 rounded-md border border-slate-200 bg-white px-2 py-1 text-xs font-medium text-slate-600">
-      <span className="h-1.5 w-1.5 rounded-full" style={{ background: source.color }} />
-      {source.label}
-      <SourceHealthMeta source={source} />
-      {source.status !== "connected" ? <Lock className="h-3 w-3 text-slate-300" /> : null}
+    <span className="inline-flex flex-col items-start gap-0.5 rounded-md border border-slate-200 bg-white px-2 py-1 text-xs text-slate-600">
+      <span className="inline-flex items-center gap-1.5 font-medium">
+        <span className="h-1.5 w-1.5 rounded-full" style={{ background: source.color }} />
+        {source.label}
+        {source.status !== "connected" ? <Lock className="h-3 w-3 text-slate-300" /> : null}
+      </span>
     </span>
   );
 }
@@ -179,6 +230,8 @@ function Panel({
   layer,
   pending,
   right,
+  titleInfo,
+  bodyClassName = "",
   children,
 }: {
   data: ZarukuSeoData;
@@ -187,14 +240,17 @@ function Panel({
   layer?: ZarukuSeoLayerId;
   pending?: boolean;
   right?: React.ReactNode;
+  titleInfo?: React.ReactNode;
+  bodyClassName?: string;
   children: React.ReactNode;
 }) {
   return (
-    <section className="rounded-lg border border-slate-200 bg-white">
+    <section className="card-surface zaruku-panel flex h-full min-h-0 flex-col overflow-hidden">
       <header className="flex flex-col items-start gap-3 border-b border-slate-100 px-5 py-4 md:flex-row md:justify-between">
         <div className="min-w-0">
           <div className="flex flex-wrap items-center gap-2">
             <h3 className="text-base font-semibold text-slate-900">{title}</h3>
+            {titleInfo}
             {pending ? (
               <span className="rounded-md bg-slate-100 px-1.5 py-0.5 text-xs font-medium text-slate-400">не подключено</span>
             ) : null}
@@ -210,7 +266,7 @@ function Panel({
           {source ? <SourceBadge data={data} id={source} /> : null}
         </div>
       </header>
-      <div className={pending ? "px-5 py-4 opacity-60" : "px-5 py-4"}>{children}</div>
+      <div className={`${pending ? "opacity-60" : ""} min-h-0 flex-1 px-5 py-4 ${bodyClassName}`}>{children}</div>
     </section>
   );
 }
@@ -253,29 +309,122 @@ function InfoTooltip({
   );
 }
 
-function BarList({ rows, value = "visits", locale = "ru-RU" }: { rows: ZarukuSeoMetricRow[]; value?: "visits" | "users" | "pageviews"; locale?: string }) {
+function BarList({
+  rows,
+  value = "visits",
+  locale = "ru-RU",
+  initialLimit,
+}: {
+  rows: ZarukuSeoMetricRow[];
+  value?: "visits" | "users" | "pageviews";
+  locale?: string;
+  initialLimit?: number;
+}) {
+  const [expanded, setExpanded] = useState(false);
   const max = Math.max(1, ...rows.map((row) => row[value]));
+  const visibleRows = initialLimit && !expanded ? rows.slice(0, initialLimit) : rows;
+  const hiddenCount = Math.max(0, rows.length - visibleRows.length);
   return (
     <div className="space-y-2.5">
-      {rows.map((row, index) => {
-        const label = readableAudienceLabel(row.label);
-        return (
-          <div key={`${row.label}-${row.secondary_label ?? ""}-${index}`} className="grid grid-cols-[128px_minmax(0,1fr)_76px] items-center gap-3">
-            <div className="min-w-0 text-sm text-slate-600" title={label}>
-              {truncate(label, 28)}
-            </div>
-            <div className="h-6 overflow-hidden rounded-md bg-slate-50">
-              <div
-                className="flex h-full items-center rounded-md px-2 text-xs font-medium text-white"
-                style={{ width: `${Math.max(4, (row[value] / max) * 100)}%`, background: COLORS[index % COLORS.length] }}
-              >
-                {row.share != null ? formatPercent(row.share, locale, 1) : ""}
-              </div>
-            </div>
-            <div className="text-right text-sm text-slate-500">{formatNumber(row[value], locale)}</div>
-          </div>
-        );
-      })}
+      {visibleRows.map((row, index) => (
+        <BarListRow
+          key={`${row.label}-${row.secondary_label ?? ""}-${index}`}
+          row={row}
+          index={index}
+          value={value}
+          locale={locale}
+          max={max}
+        />
+      ))}
+      {initialLimit && rows.length > initialLimit ? (
+        <button
+          type="button"
+          aria-expanded={expanded}
+          onClick={() => setExpanded((current) => !current)}
+          className="text-xs font-medium text-slate-500 hover:text-slate-700"
+        >
+          {expanded ? "свернуть" : `ещё ${hiddenCount}`}
+        </button>
+      ) : null}
+    </div>
+  );
+}
+
+function BarListRow({
+  row,
+  index,
+  value,
+  locale,
+  max,
+}: {
+  row: ZarukuSeoMetricRow;
+  index: number;
+  value: "visits" | "users" | "pageviews";
+  locale: string;
+  max: number;
+}) {
+  const trackRef = useRef<HTMLDivElement>(null);
+  const labelRef = useRef<HTMLSpanElement>(null);
+  const [showPercentInside, setShowPercentInside] = useState(true);
+  const label = readableAudienceLabel(row.label);
+
+  const share = row.share != null && Number.isFinite(row.share) ? row.share : (Math.max(0, row[value]) / max) * 100;
+  const sharePercent = Math.max(0, Math.min(100, share));
+  const percentText = formatPercent(sharePercent, locale, 1);
+  const barStyle = {
+    width: `${sharePercent}%`,
+    background: ZARUKU_CHART_PALETTE.series[index % ZARUKU_CHART_PALETTE.series.length],
+  };
+
+  useLayoutEffect(() => {
+    const track = trackRef.current;
+    const label = labelRef.current;
+    if (!track || !label) return;
+
+    const evaluate = () => {
+      const trackWidth = Math.max(1, track.clientWidth);
+      const fillWidth = (sharePercent / 100) * trackWidth;
+      const labelWidth = Math.ceil(label.getBoundingClientRect().width);
+      const requiredGap = 8;
+      setShowPercentInside(fillWidth >= labelWidth + requiredGap);
+    };
+
+    evaluate();
+    const observer = new ResizeObserver(evaluate);
+    observer.observe(track);
+    return () => observer.disconnect();
+  }, [sharePercent, percentText]);
+
+  return (
+    <div className="grid grid-cols-[128px_minmax(0,1fr)_64px] items-center gap-3">
+      <div className="min-w-0 text-sm text-slate-600" title={label}>
+        {truncate(label, 28)}
+      </div>
+      <div ref={trackRef} className="relative h-6 overflow-visible rounded-md bg-slate-50">
+        <div className="absolute inset-y-0 left-0 overflow-hidden rounded-md" style={barStyle}>
+          <span
+            ref={labelRef}
+            className="pointer-events-none absolute inset-y-0 left-1/2 -translate-x-1/2 flex items-center whitespace-nowrap px-2 text-xs font-medium opacity-0"
+            aria-hidden="true"
+          >
+            {percentText}
+          </span>
+          {showPercentInside ? (
+            <span className="pointer-events-none absolute inset-y-0 left-1/2 -translate-x-1/2 flex items-center justify-center whitespace-nowrap px-2 text-xs font-medium text-white">
+              {percentText}
+            </span>
+          ) : null}
+        </div>
+        {!showPercentInside ? (
+          <span
+            className="pointer-events-none absolute top-1/2 -translate-y-1/2 whitespace-nowrap text-xs font-medium text-slate-600"
+            style={{ left: `calc(${sharePercent}% + 6px)` }}
+          >
+            {percentText}
+          </span>
+        ) : null}
+      </div>
+      <div className="text-right text-sm text-slate-500">{formatNumber(row[value], locale)}</div>
     </div>
   );
 }
@@ -326,7 +475,7 @@ function buildGscSelectionMeta<T extends { week: string; week_from: string; week
 
   return {
     periodLabel,
-    sourceNote: "Search Console · canonical_fact_gsc_queries_daily.",
+    sourceNote: "Источник: Google Search Console · данные поисковых запросов.",
     fallbackNote,
   };
 }
@@ -338,12 +487,12 @@ function NorthStarBlock({ data, locale }: Props) {
     opportunities: data.seo_os.opportunities,
   }));
   return (
-    <section className="rounded-lg border border-slate-200 border-t-slate-300 bg-[#f5f7fa] px-5 py-4">
+    <section className="card-surface zaruku-panel h-full overflow-hidden border-t-slate-300 bg-surface-alt px-5 py-4">
       <div className="flex flex-col gap-4 lg:flex-row lg:items-center">
         <div className="flex min-w-0 items-center gap-2 lg:w-[380px]">
           <h3 className="text-base font-medium text-slate-900 lg:whitespace-nowrap">Цель: целевой органический трафик + ИИ-выдача</h3>
-          <span title="Метрики — корреляционные показатели работы SEO OS." className="inline-flex shrink-0 text-slate-400">
-            <Info className="h-3.5 w-3.5" aria-label="Описание north-star" />
+          <span title={ZARUKU_CLIENT_COPY.northStarCorrelation} className="inline-flex shrink-0 text-slate-400">
+            <Info className="h-3.5 w-3.5" aria-label="Описание основных показателей" />
           </span>
         </div>
         <div className="grid flex-1 grid-cols-2 gap-x-6 gap-y-3 md:grid-cols-3">
@@ -360,7 +509,7 @@ function NorthStarBlock({ data, locale }: Props) {
                 />
               </div>
               <div className="mt-1 flex items-baseline gap-1.5">
-                <span className="text-3xl font-semibold leading-none text-slate-950">{formatPercent(item.value, locale, 1)}</span>
+                <span className="zaruku-kpi-value text-3xl font-semibold leading-none text-slate-950">{formatPercent(item.value, locale, 1)}</span>
                 <span className="text-sm font-medium text-slate-400">{item.arrow}</span>
                 {item.showDelta ? (
                   <span className={item.deltaTone === "good" ? "text-xs font-medium text-teal-700" : "text-xs font-medium text-red-700"}>
@@ -371,7 +520,7 @@ function NorthStarBlock({ data, locale }: Props) {
             </div>
           ))}
         </div>
-        <div className="shrink-0 rounded-md border border-slate-200 bg-white px-2.5 py-1 text-xs font-medium text-slate-500">бейзлайн 13.07.2026</div>
+        <div className="shrink-0 rounded-md border border-slate-200 bg-white px-2.5 py-1 text-xs font-medium text-slate-500">с 07.2026</div>
       </div>
     </section>
   );
@@ -381,7 +530,7 @@ function TrafficHealthStrip({ data }: { data: ZarukuSeoData }) {
   const [expanded, setExpanded] = useState(false);
   const rows = buildTrafficHealthRows(data.kpis);
   return (
-    <section className="rounded-lg border border-slate-200 bg-white">
+    <section className="card-surface zaruku-panel h-full overflow-hidden">
       <header className="flex flex-wrap items-center justify-between gap-3 border-b border-slate-100 px-5 py-3">
         <h3 className="text-base font-medium text-slate-900">Здоровье трафика</h3>
         <div className="flex items-center gap-2">
@@ -401,7 +550,7 @@ function TrafficHealthStrip({ data }: { data: ZarukuSeoData }) {
           {rows.primary.map((item, index) => (
             <div key={item.key} className={index === 0 ? "min-w-0" : "min-w-0 border-slate-200 sm:border-l sm:pl-5"}>
               <div className="text-xs text-slate-500">{item.label}</div>
-              <div className="mt-1 text-2xl font-semibold leading-none text-slate-950">{item.value}</div>
+              <div className="zaruku-kpi-value mt-1 text-2xl font-semibold leading-none text-slate-950">{item.value}</div>
             </div>
           ))}
         </div>
@@ -437,25 +586,25 @@ function AiAggregateVisibilityPanel({ data, locale }: Props) {
         <div className="space-y-3">
           <ResponsiveContainer width="100%" height={220}>
             <BarChart data={chartRows} margin={{ top: 8, right: 8, left: -20, bottom: 0 }}>
-              <CartesianGrid stroke="#eef2f7" strokeDasharray="3 3" vertical={false} />
-              <XAxis dataKey="label" tick={{ fontSize: 12, fill: "#64748b" }} axisLine={false} tickLine={false} />
-              <YAxis tick={{ fontSize: 12, fill: "#64748b" }} axisLine={false} tickLine={false} />
+              <CartesianGrid stroke={ZARUKU_CHART_PALETTE.grid} strokeDasharray="3 3" vertical={false} />
+              <XAxis dataKey="label" tick={{ fontSize: 12, fill: ZARUKU_CHART_PALETTE.axis }} axisLine={false} tickLine={false} />
+              <YAxis tick={{ fontSize: 12, fill: ZARUKU_CHART_PALETTE.axis }} axisLine={false} tickLine={false} />
               <Tooltip />
-              <Bar dataKey="presence_rate" name="Доля присутствия" fill="#0891b2" radius={[6, 6, 0, 0]} />
+              <Bar dataKey="presence_rate" name="Доля присутствия" fill={ZARUKU_CHART_PALETTE.position} radius={[6, 6, 0, 0]} />
             </BarChart>
           </ResponsiveContainer>
           <div className="grid gap-3 md:grid-cols-3">
-            <div className="rounded-lg border border-slate-200 bg-slate-50 px-3 py-3"><div className="text-xs uppercase text-slate-400">Присутствие</div><div className="mt-1 text-xl font-semibold text-slate-900">{formatPercent(latest?.presence_rate, locale, 1)}</div></div>
-            <div className="rounded-lg border border-slate-200 bg-slate-50 px-3 py-3"><div className="text-xs uppercase text-slate-400">Упоминания</div><div className="mt-1 text-xl font-semibold text-slate-900">{formatNumber(latest?.mentions ?? 0, locale)}</div></div>
-            <div className="rounded-lg border border-slate-200 bg-slate-50 px-3 py-3"><div className="text-xs uppercase text-slate-400">Цитаты</div><div className="mt-1 text-xl font-semibold text-slate-900">{formatNumber(latest?.citations ?? 0, locale)}</div></div>
+            <div className="rounded-lg border border-slate-200 bg-slate-50 px-3 py-3"><div className="text-xs uppercase text-slate-400">Присутствие</div><div className="zaruku-kpi-value mt-1 text-xl font-semibold text-slate-900">{formatPercent(latest?.presence_rate, locale, 1)}</div></div>
+            <div className="rounded-lg border border-slate-200 bg-slate-50 px-3 py-3"><div className="text-xs uppercase text-slate-400">Упоминания</div><div className="zaruku-kpi-value mt-1 text-xl font-semibold text-slate-900">{formatNumber(latest?.mentions ?? 0, locale)}</div></div>
+            <div className="rounded-lg border border-slate-200 bg-slate-50 px-3 py-3"><div className="text-xs uppercase text-slate-400">Цитаты</div><div className="zaruku-kpi-value mt-1 text-xl font-semibold text-slate-900">{formatNumber(latest?.citations ?? 0, locale)}</div></div>
           </div>
           <p className="text-xs leading-relaxed text-slate-500">
             {latest ? `${formatNumber(latest.mentions, locale)} упоминаний и ${formatNumber(latest.citations, locale)} цитирований за ${latest.period}.` : ""}
-            {latest?.provenance ? ` Ручной baseline: ${latest.provenance}.` : ""}
+            {latest?.provenance ? ` Контрольная точка загружена вручную; источник: ${latest.provenance}.` : ""}
           </p>
         </div>
       ) : (
-        <div className="rounded-md bg-slate-50 px-3 py-8 text-center text-sm text-slate-500">Снимок AI-видимости ещё не записан в seo_ai_visibility.</div>
+        <div className="rounded-md bg-slate-50 px-3 py-8 text-center text-sm text-slate-500">{ZARUKU_CLIENT_COPY.emptyAiVisibility}</div>
       )}
     </Panel>
   );
@@ -480,22 +629,22 @@ function SemanticHealthPanel({ data, locale, primaryWeek }: Props & { primaryWee
       <div className="space-y-4">
         <ResponsiveContainer width="100%" height={240}>
           <LineChart data={chartRows} margin={{ top: 8, right: 8, left: -20, bottom: 0 }}>
-            <CartesianGrid stroke="#eef2f7" strokeDasharray="3 3" />
-            <XAxis dataKey="week" tick={{ fontSize: 12, fill: "#64748b" }} axisLine={false} tickLine={false} />
-            <YAxis tick={{ fontSize: 12, fill: "#64748b" }} axisLine={false} tickLine={false} />
+            <CartesianGrid stroke={ZARUKU_CHART_PALETTE.grid} strokeDasharray="3 3" />
+            <XAxis dataKey="week" tick={{ fontSize: 12, fill: ZARUKU_CHART_PALETTE.axis }} axisLine={false} tickLine={false} />
+            <YAxis tick={{ fontSize: 12, fill: ZARUKU_CHART_PALETTE.axis }} axisLine={false} tickLine={false} />
             <Tooltip />
-            <Line type="monotone" dataKey="noise" name="Шум в показах" stroke="#ef4444" strokeWidth={2.5} dot={{ r: 3 }} />
-            <Line type="monotone" dataKey="medical" name="Медицинский интент" stroke="#0d9488" strokeWidth={2.5} dot={{ r: 3 }} />
-            <Line type="monotone" dataKey="noise_baseline" name="Бейзлайн шума" stroke="#ef4444" strokeDasharray="5 5" dot={false} />
-            <Line type="monotone" dataKey="medical_baseline" name="Бейзлайн мед. интента" stroke="#0d9488" strokeDasharray="5 5" dot={false} />
+            <Line type="monotone" dataKey="noise" name="Шум в показах" stroke={ZARUKU_CHART_PALETTE.danger} strokeWidth={2.5} dot={{ r: 3 }} />
+            <Line type="monotone" dataKey="medical" name="Медицинский интент" stroke={ZARUKU_CHART_PALETTE.seo} strokeWidth={2.5} dot={{ r: 3 }} />
+            <Line type="monotone" dataKey="noise_baseline" name="Ориентир шума" stroke={ZARUKU_CHART_PALETTE.danger} strokeDasharray="5 5" dot={false} />
+            <Line type="monotone" dataKey="medical_baseline" name="Ориентир мед. интента" stroke={ZARUKU_CHART_PALETTE.seo} strokeDasharray="5 5" dot={false} />
           </LineChart>
         </ResponsiveContainer>
         <div className="overflow-x-auto">
           <table className="w-full min-w-[760px] text-sm">
             <thead><tr className="text-left text-xs uppercase text-slate-400"><th className="pb-2 font-medium">Кластер</th><th className="pb-2 text-right font-medium">Запросы</th><th className="pb-2 text-right font-medium">Показы</th><th className="pb-2 text-right font-medium">Клики</th><th className="pb-2 text-right font-medium">Доля показов</th><th className="pb-2 text-right font-medium">Доля кликов</th><th className="pb-2 text-right font-medium">CTR</th></tr></thead>
             <tbody className="divide-y divide-slate-100">
-              {selectedRows.map((row) => <tr key={`${row.week}-${row.cluster}`}><td className="py-2.5 font-medium text-slate-700">{row.cluster}{row.isBaselineCluster ? <span className="ml-2 rounded-md bg-slate-100 px-1.5 py-0.5 text-[11px] font-medium text-slate-500">бейзлайн</span> : null}</td><td className="py-2.5 text-right text-slate-600">{formatNumber(row.query_count, locale)}</td><td className="py-2.5 text-right text-slate-600">{formatNumber(row.impressions, locale)}</td><td className="py-2.5 text-right text-slate-600">{formatNumber(row.clicks, locale)}</td><td className="py-2.5 text-right text-slate-600">{formatPercent(row.impressions_share, locale, 2)}</td><td className="py-2.5 text-right text-slate-600">{formatPercent(row.clicks_share, locale, 2)}</td><td className="py-2.5 text-right text-slate-500">{formatPercent(row.ctr, locale, 2)}</td></tr>)}
-              {selectedRows.length === 0 ? <tr><td colSpan={7} className="py-8 text-center text-sm text-slate-500">SOV-кластеры ещё не записаны.</td></tr> : null}
+              {selectedRows.map((row) => <tr key={`${row.week}-${row.cluster}`}><td className="py-2.5 font-medium text-slate-700">{row.cluster}{row.isBaselineCluster ? <span className="ml-2 rounded-md bg-slate-100 px-1.5 py-0.5 text-[11px] font-medium text-slate-500">ориентир</span> : null}</td><td className="py-2.5 text-right text-slate-600">{formatNumber(row.query_count, locale)}</td><td className="py-2.5 text-right text-slate-600">{formatNumber(row.impressions, locale)}</td><td className="py-2.5 text-right text-slate-600">{formatNumber(row.clicks, locale)}</td><td className="py-2.5 text-right text-slate-600">{formatPercent(row.impressions_share, locale, 2)}</td><td className="py-2.5 text-right text-slate-600">{formatPercent(row.clicks_share, locale, 2)}</td><td className="py-2.5 text-right text-slate-500">{formatPercent(row.ctr, locale, 2)}</td></tr>)}
+              {selectedRows.length === 0 ? <tr><td colSpan={7} className="py-8 text-center text-sm text-slate-500">{ZARUKU_CLIENT_COPY.emptySemanticGroups}</td></tr> : null}
             </tbody>
           </table>
         </div>
@@ -528,35 +677,43 @@ function WeeklyFocusPanel({ data, primaryWeek }: Props & { primaryWeek: string |
 
 function OverviewTab({ data, locale }: Props) {
   return (
-    <ZarukuOverviewTab data={data}>
-      <NorthStarBlock data={data} locale={locale} />
-      <TrafficHealthStrip data={data} />
-      <div className="grid gap-5 lg:grid-cols-3">
-        <div className="lg:col-span-2">
-          <Panel data={data} title="Каналы привлечения" source="metrika">
-            <BarList rows={data.traffic_channels} locale={locale} />
-            {data.technical_tail.length ? (
-              <div className="mt-4 rounded-md border border-dashed border-slate-200 bg-slate-50 px-3 py-2 text-xs text-slate-500">
-                Технический хвост:{" "}
-                {data.technical_tail.map((row) => `${row.label}: ${formatNumber(row.visits, locale)}`).join(", ")}. Он не считается отдельным каналом привлечения.
-              </div>
-            ) : null}
-          </Panel>
-        </div>
-        <Panel data={data} title="Органика по месяцам" source="metrika">
-          <ResponsiveContainer width="100%" height={220}>
-            <LineChart data={data.organic_trend} margin={{ top: 8, right: 8, left: -20, bottom: 0 }}>
-              <CartesianGrid stroke="#eef2f7" strokeDasharray="3 3" />
-              <XAxis dataKey="label" tick={{ fontSize: 12, fill: "#64748b" }} axisLine={false} tickLine={false} />
-              <YAxis tick={{ fontSize: 12, fill: "#64748b" }} axisLine={false} tickLine={false} />
-              <Tooltip />
-              <Line type="monotone" dataKey="visits" stroke="#0d9488" strokeWidth={2.5} dot={{ r: 3 }} />
-            </LineChart>
-          </ResponsiveContainer>
+    <>
+      <ZarukuOverviewTab data={data}>
+        <NorthStarBlock data={data} locale={locale} />
+        <TrafficHealthStrip data={data} />
+        <Panel
+          data={data}
+          title="Каналы привлечения"
+          source="metrika"
+          bodyClassName="overflow-auto"
+          titleInfo={data.technical_tail.length ? (
+            <InfoTooltip
+              label={ZARUKU_CLIENT_COPY.technicalTail.label}
+              title={ZARUKU_CLIENT_COPY.technicalTail.title}
+              description={ZARUKU_CLIENT_COPY.technicalTail.description}
+              importance={ZARUKU_CLIENT_COPY.technicalTail.importance}
+              details={data.technical_tail.map((row) => `${row.label}: ${formatNumber(row.visits, locale)}`).join(", ")}
+            />
+          ) : null}
+        >
+          <BarList rows={data.traffic_channels} locale={locale} initialLimit={6} />
         </Panel>
-      </div>
+        <Panel data={data} title="Органический поиск" source="metrika">
+          <div className="h-[220px] xl:h-full">
+            <ResponsiveContainer width="100%" height="100%" initialDimension={{ width: 1, height: 1 }}>
+              <LineChart data={data.organic_trend} margin={{ top: 8, right: 16, left: -20, bottom: 0 }}>
+                <CartesianGrid stroke={ZARUKU_CHART_PALETTE.grid} strokeDasharray="3 3" />
+                <XAxis dataKey="label" padding={{ right: 12 }} tick={{ fontSize: 12, fill: ZARUKU_CHART_PALETTE.axis }} axisLine={false} tickLine={false} />
+                <YAxis tick={{ fontSize: 12, fill: ZARUKU_CHART_PALETTE.axis }} axisLine={false} tickLine={false} />
+                <Tooltip />
+                <Line type="monotone" dataKey="visits" stroke={ZARUKU_CHART_PALETTE.seo} strokeWidth={2.5} dot={{ r: 3 }} />
+              </LineChart>
+            </ResponsiveContainer>
+          </div>
+        </Panel>
+      </ZarukuOverviewTab>
       <PendingPanel data={data} />
-    </ZarukuOverviewTab>
+    </>
   );
 }
 
@@ -586,20 +743,6 @@ function SeoTab({ data, locale, primaryWeek, comparisonWeek }: Props & { primary
   const gscSearchAppearanceMeta = buildGscSelectionMeta(gscSearchAppearanceSelection, gscWeek);
   const gscSearchTypeMeta = buildGscSelectionMeta(gscSearchTypeSelection, gscWeek);
   const seoOsWeek = primaryWeek ?? data.seo_os.latest_week;
-  const selectedPositionTrend = seoOsWeek
-    ? data.seo_os.position_trend.filter((row) => row.week === seoOsWeek)
-    : [];
-  const aiPeriod = data.seo_intelligence.ai.latest_period;
-  const selectedAiRows = aiPeriod
-    ? data.seo_intelligence.ai.rows.filter((row) => row.period === aiPeriod)
-    : [];
-  const executiveSnapshot = buildSeoExecutiveSnapshot({
-    gscRows: gscQueries,
-    webmasterRows: webmasterQueries,
-    positionTrend: selectedPositionTrend,
-    aiRows: selectedAiRows,
-    postClickRows: data.organic_landing_pages,
-  });
   const selectedSeoOsClusters = seoOsWeek
     ? data.seo_os.clusters.filter((row) => row.week === seoOsWeek)
     : [];
@@ -616,20 +759,6 @@ function SeoTab({ data, locale, primaryWeek, comparisonWeek }: Props & { primary
   });
   return (
     <div className="space-y-5">
-      {/* Reserved AI summary mount point: after period context, before executive detail cards. */}
-      <ZarukuSeoExecutiveSummary
-        snapshot={executiveSnapshot}
-        trafficPeriod={data.period}
-        primaryWeek={primaryWeek}
-        comparisonWeek={comparisonWeek}
-        sourcePeriods={{
-          google: gscQuerySelection.week,
-          webmaster: webmasterQuerySelection.week,
-          seoOs: selectedPositionTrend.length > 0 ? seoOsWeek : null,
-          ai: aiPeriod,
-        }}
-        locale={currentLocale}
-      />
       <ZarukuSeoQueryComparison
         rows={unifiedQueryRows}
         sourceAvailability={{
@@ -687,12 +816,12 @@ function SeoTab({ data, locale, primaryWeek, comparisonWeek }: Props & { primary
         <Panel data={data} title="Поисковые системы после клика" source="metrika" layer="onsite">
           <ResponsiveContainer width="100%" height={240}>
             <BarChart data={data.search_engines} margin={{ top: 8, right: 8, left: -20, bottom: 0 }}>
-              <CartesianGrid stroke="#eef2f7" strokeDasharray="3 3" vertical={false} />
-              <XAxis dataKey="label" tick={{ fontSize: 12, fill: "#64748b" }} axisLine={false} tickLine={false} />
-              <YAxis tick={{ fontSize: 12, fill: "#64748b" }} axisLine={false} tickLine={false} />
+              <CartesianGrid stroke={ZARUKU_CHART_PALETTE.grid} strokeDasharray="3 3" vertical={false} />
+              <XAxis dataKey="label" tick={{ fontSize: 12, fill: ZARUKU_CHART_PALETTE.axis }} axisLine={false} tickLine={false} />
+              <YAxis tick={{ fontSize: 12, fill: ZARUKU_CHART_PALETTE.axis }} axisLine={false} tickLine={false} />
               <Tooltip />
               <Bar dataKey="visits" radius={[6, 6, 0, 0]}>
-                {data.search_engines.map((_, index) => <Cell key={index} fill={COLORS[index % COLORS.length]} />)}
+                {data.search_engines.map((_, index) => <Cell key={index} fill={ZARUKU_CHART_PALETTE.series[index % ZARUKU_CHART_PALETTE.series.length]} />)}
               </Bar>
             </BarChart>
           </ResponsiveContainer>
@@ -717,30 +846,44 @@ function SeoTab({ data, locale, primaryWeek, comparisonWeek }: Props & { primary
   );
 }
 
-export default function ZarukuSeoDashboard({ data, locale = "ru-RU" }: Props) {
-  const [activeTab, setActiveTab] = useState<TabId>("overview");
+export default function ZarukuSeoDashboard({ data, locale = "ru-RU", onActiveTabChange }: Props) {
+  const [activeTab, setActiveTab] = useState<ZarukuTabId>("overview");
+  const audienceVisible = isZarukuAudienceVisible(data);
+  const visibleNav = useMemo(
+    () => audienceVisible ? NAV : NAV.filter((item) => item.id !== "audience"),
+    [audienceVisible],
+  );
   const weeksKey = data.seo_os.weeks.join("\u0000");
-  const [weekState, setWeekState] = useState(() => ({
+  const [weekState, setWeekState] = useState<ZarukuWeekState>(() => ({
     weeksKey,
     selection: createWeekSelection(data.seo_os.latest_week),
-    comparisonEnabled: false,
+    comparisonMode: "single",
   }));
   const comparisonAvailable = canCompareWeeks(data.seo_os.weeks);
   if (weekState.weeksKey !== weeksKey) {
     setWeekState({
       weeksKey,
       selection: reconcileWeekSelection(weekState.selection, data.seo_os.weeks),
-      comparisonEnabled: weekState.comparisonEnabled && comparisonAvailable,
+      comparisonMode: weekState.comparisonMode === "comparison" && comparisonAvailable ? "comparison" : "single",
     });
   }
   const reconciledWeekSelection = reconcileWeekSelection(weekState.selection, data.seo_os.weeks);
-  const effectiveComparisonEnabled = weekState.comparisonEnabled && comparisonAvailable;
+  const effectiveComparisonEnabled = weekState.comparisonMode === "comparison" && comparisonAvailable;
   const selectedWeeks = {
     primaryWeek: reconciledWeekSelection.primaryWeek,
     comparisonWeek: effectiveComparisonEnabled ? reconciledWeekSelection.comparisonWeek : null,
   };
-  const activeNav = NAV.find((item) => item.id === activeTab) ?? NAV[0];
+  const activeNav = visibleNav.find((item) => item.id === activeTab) ?? visibleNav[0];
   const CurrentIcon = activeNav.icon;
+
+  useEffect(() => {
+    if (visibleNav.some((item) => item.id === activeTab)) return;
+    const frame = window.requestAnimationFrame(() => {
+      setActiveTab("overview");
+      onActiveTabChange?.("overview");
+    });
+    return () => window.cancelAnimationFrame(frame);
+  }, [activeTab, onActiveTabChange, visibleNav]);
 
   const changeWeekSelection = (field: WeekSelectionField, week: string | null) => {
     setWeekState((current) => ({
@@ -751,7 +894,7 @@ export default function ZarukuSeoDashboard({ data, locale = "ru-RU" }: Props) {
   const changeComparisonMode = (enabled: boolean) => {
     setWeekState((current) => ({
       ...current,
-      comparisonEnabled: enabled && comparisonAvailable,
+      comparisonMode: enabled && comparisonAvailable ? "comparison" : "single",
       selection: enabled ? current.selection : { ...current.selection, comparisonWeek: null },
     }));
   };
@@ -759,15 +902,16 @@ export default function ZarukuSeoDashboard({ data, locale = "ru-RU" }: Props) {
     if (!comparisonAvailable) return;
     setWeekState((current) => ({
       ...current,
-      comparisonEnabled: true,
+      comparisonMode: "comparison",
       selection: {
         ...current.selection,
         comparisonWeek: current.selection.primaryWeek ? previousAvailableWeek(data.seo_os.weeks, current.selection.primaryWeek) : null,
       },
     }));
   };
-  const selectTab = (tab: TabId) => {
+  const selectTab = (tab: ZarukuTabId) => {
     setActiveTab(tab);
+    onActiveTabChange?.(tab);
     window.requestAnimationFrame(() => {
       document.getElementById("zaruku-tab-content")?.scrollIntoView({ block: "start" });
     });
@@ -800,7 +944,7 @@ export default function ZarukuSeoDashboard({ data, locale = "ru-RU" }: Props) {
   }, [activeTab, data, locale, selectedWeeks.comparisonWeek, selectedWeeks.primaryWeek]);
 
   return (
-    <div className="min-h-[calc(100vh-160px)] rounded-lg border border-slate-200 bg-slate-50 text-slate-900">
+    <div className="zaruku-dashboard min-h-[calc(100vh-194px)] rounded-lg border border-slate-200 bg-slate-50 text-slate-900">
       <div className="flex">
         <aside className="hidden w-60 shrink-0 border-r border-slate-200 bg-white p-4 md:block">
           <div className="flex items-center gap-2 px-1">
@@ -811,7 +955,7 @@ export default function ZarukuSeoDashboard({ data, locale = "ru-RU" }: Props) {
             </div>
           </div>
           <nav className="mt-6 space-y-1">
-            {NAV.map((item) => {
+            {visibleNav.map((item) => {
               const Icon = item.icon;
               const active = item.id === activeTab;
               return (
@@ -835,23 +979,30 @@ export default function ZarukuSeoDashboard({ data, locale = "ru-RU" }: Props) {
               Источники
             </div>
             <div className="space-y-1.5">
-              {data.sources.map((source) => (
-                <div key={source.id} className="text-xs">
-                  <div className="flex items-center justify-between gap-2">
-                    <span className="flex items-center gap-1.5 text-slate-600">
-                      <span className="h-1.5 w-1.5 rounded-full" style={{ background: source.color }} />
-                      {source.label}
-                    </span>
-                    <span className={source.status === "connected" ? "text-teal-600" : "text-slate-400"}>
-                      {SOURCE_STATUS_LABELS[source.status]}
-                    </span>
+              {data.sources.map((source) => {
+                const rowsLabel = getSourceRowsLabel(data, source.id);
+                return (
+                  <div key={source.id} className="min-w-0 text-xs">
+                    <div data-source-main-row className="flex min-w-0 items-start justify-between gap-2">
+                      <span className="flex min-w-0 items-start gap-1.5 text-slate-600">
+                        <span className="mt-1 h-1.5 w-1.5 shrink-0 rounded-full" style={{ background: source.color }} />
+                        <span>{source.label}</span>
+                      </span>
+                      <span className={source.status === "connected" ? "shrink-0 text-teal-600" : "shrink-0 text-slate-400"}>
+                        {SOURCE_STATUS_LABELS[source.status]}
+                      </span>
+                    </div>
+                    <div className="mt-0.5 pl-3 text-[11px] font-normal leading-tight text-slate-400">
+                      {SOURCE_COLLECTION_MODE_LABELS[source.collection_mode]}
+                    </div>
+                    {source.status === "connected" && rowsLabel ? (
+                      <div data-source-freshness className="mt-0.5 pl-3 text-[11px] font-normal leading-tight text-slate-400">
+                        {rowsLabel}
+                      </div>
+                    ) : null}
                   </div>
-                  <div className="ml-3 mt-0.5 text-[11px] leading-tight text-slate-400">
-                    {SOURCE_COLLECTION_MODE_LABELS[source.collection_mode]}
-                    {source.data_through ? ` · данные по ${source.data_through}` : ""}
-                  </div>
-                </div>
-              ))}
+                );
+              })}
             </div>
           </div>
         </aside>
@@ -873,13 +1024,6 @@ export default function ZarukuSeoDashboard({ data, locale = "ru-RU" }: Props) {
                   </div>
                 </div>
               </div>
-              <div className="flex flex-wrap items-center gap-1.5">
-                {data.layers.map((layer) => (
-                  <span key={layer.id} className="rounded-md border border-slate-200 bg-white px-2 py-1 text-xs font-medium text-slate-500">
-                    {layer.label}
-                  </span>
-                ))}
-              </div>
             </div>
             {shouldShowSeoWeekToolbar(activeTab) ? <div className="mt-3">
               <ZarukuSeoWeekToolbar
@@ -888,13 +1032,13 @@ export default function ZarukuSeoDashboard({ data, locale = "ru-RU" }: Props) {
                 comparisonWeek={selectedWeeks.comparisonWeek}
                 comparisonEnabled={effectiveComparisonEnabled}
                 onComparisonEnabledChange={changeComparisonMode}
-                onPrimaryWeekChange={(week) => changeWeekSelection("primaryWeek", week)}
-                onComparisonWeekChange={(week) => changeWeekSelection("comparisonWeek", week)}
+                onPrimaryWeekChange={(week) => changeWeekSelection(WEEK_SELECTION_FIELD_BY_SLOT.A, week)}
+                onComparisonWeekChange={(week) => changeWeekSelection(WEEK_SELECTION_FIELD_BY_SLOT.B, week)}
                 onComparePrevious={comparePreviousWeek}
               />
             </div> : null}
             <div className="mt-3 flex gap-1 overflow-x-auto md:hidden">
-              {NAV.map((item) => (
+              {visibleNav.map((item) => (
                 <button
                   key={item.id}
                   type="button"

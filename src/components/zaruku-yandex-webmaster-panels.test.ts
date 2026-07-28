@@ -117,7 +117,7 @@ test("buildWebmasterSelectionMeta labels partial current week without fallback w
 
   assert.deepEqual(buildWebmasterSelectionMeta(selection, "2026-W29"), {
     periodLabel: "2026-W29 · частично, по 14.07",
-    sourceNote: "Источник: Яндекс Вебмастер API; ежедневная загрузка ReportingDash.",
+    sourceNote: "Источник: Яндекс Вебмастер · данные поисковых запросов и страниц.",
     fallbackNote: null,
   });
 });
@@ -129,7 +129,7 @@ test("buildWebmasterSelectionMeta does not relabel sparse rows as the selected d
 
   assert.deepEqual(buildWebmasterSelectionMeta(selection, "2026-W29"), {
     periodLabel: "2026-W29",
-    sourceNote: "Источник: Яндекс Вебмастер API; ежедневная загрузка ReportingDash.",
+    sourceNote: "Источник: Яндекс Вебмастер · данные поисковых запросов и страниц.",
     fallbackNote: "За текущий ежедневный период данных Яндекс Вебмастера пока нет.",
   });
 });
@@ -137,7 +137,7 @@ test("buildWebmasterSelectionMeta does not relabel sparse rows as the selected d
 test("buildWebmasterSelectionMeta warns only when there is no Webmaster data at all", () => {
   assert.deepEqual(buildWebmasterSelectionMeta({ week: "2026-W29", rows: [] }, "2026-W29"), {
     periodLabel: "2026-W29",
-    sourceNote: "Источник: Яндекс Вебмастер API; ежедневная загрузка ReportingDash.",
+    sourceNote: "Источник: Яндекс Вебмастер · данные поисковых запросов и страниц.",
     fallbackNote: "За текущий ежедневный период данных Яндекс Вебмастера пока нет.",
   });
 });

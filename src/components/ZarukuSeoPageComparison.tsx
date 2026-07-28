@@ -4,6 +4,8 @@ import { useMemo, useState } from "react";
 import type { UnifiedSeoPageRow } from "@/components/zaruku-seo-workspace";
 import { filterAndPaginate } from "@/components/zaruku-table-pagination";
 import { resolveZarukuContentUrl } from "@/lib/zaruku-url";
+import ZarukuTableFrame from "@/components/ZarukuTableFrame";
+import { ZARUKU_CLIENT_COPY } from "@/components/zaruku-client-copy";
 
 const PAGE_SIZE = 50;
 type SeoPageSortKey = "google_impressions" | "webmaster_impressions" | "visits" | "label";
@@ -134,21 +136,21 @@ export default function ZarukuSeoPageComparison({ rows, seoWeek, sourceWeeks, so
         {unavailableSources.length > 0 && !allSourcesUnavailable ? <div className="mt-3 rounded-lg border border-blue-200 bg-blue-50 px-3 py-2 text-xs text-blue-900">Частичные данные: недоступны {unavailableSources.join(", ")}.</div> : null}
       </header>
 
-      <div className="max-h-[42rem] overflow-auto">
-        <table className="w-full min-w-[1320px] border-separate border-spacing-0 text-sm">
-          <thead className="sticky top-0 z-10 bg-white shadow-[0_1px_0_0_#e2e8f0]">
+      <ZarukuTableFrame mode="comparison" label="Сравнение посадочных страниц" className="rounded-none border-x-0 border-y-0">
+        <table className="w-[1320px] table-fixed border-separate border-spacing-0 text-sm">
+          <thead className="sticky top-0 z-10 bg-white shadow-[0_1px_0_0_var(--border)]">
             <tr className="text-xs font-semibold text-slate-600">
-              <th rowSpan={2} className="w-[300px] border-r border-slate-100 bg-white px-4 py-3 text-left align-bottom">Страница</th>
-              <th colSpan={4} className="border-r border-slate-100 bg-blue-50/70 px-3 py-2 text-center">
+              <th rowSpan={2} className="w-[360px] border-r border-slate-100 bg-white px-4 py-3 text-left align-bottom">Страница</th>
+              <th colSpan={4} className="w-[225px] border-r border-slate-100 bg-blue-50/70 px-3 py-2 text-center">
                 <SourceHeading label="Google RF" period={sourceWeeks.google} dot="bg-blue-500" />
               </th>
-              <th colSpan={4} className="border-r border-slate-100 bg-amber-50/70 px-3 py-2 text-center">
+              <th colSpan={4} className="w-[225px] border-r border-slate-100 bg-amber-50/70 px-3 py-2 text-center">
                 <SourceHeading label="Яндекс Вебмастер" period={sourceWeeks.webmaster} dot="bg-amber-400" />
               </th>
-              <th colSpan={4} className="border-r border-slate-100 bg-violet-50/70 px-3 py-2 text-center">
+              <th colSpan={4} className="w-[225px] border-r border-slate-100 bg-violet-50/70 px-3 py-2 text-center">
                 <SourceHeading label="Метрика" period={`${trafficPeriod.from} — ${trafficPeriod.to}`} dot="bg-violet-500" />
               </th>
-              <th rowSpan={2} className="w-[110px] bg-teal-50/70 px-3 py-3 text-right align-bottom">
+              <th rowSpan={2} className="w-[110px] min-w-[110px] bg-teal-50/70 px-3 py-3 text-right align-bottom">
                 <div>Запросы SEO OS</div>
                 <div className="mt-1 font-normal text-slate-400">{sourceWeeks.seoOs ?? "нет данных"}</div>
               </th>
@@ -173,9 +175,9 @@ export default function ZarukuSeoPageComparison({ rows, seoWeek, sourceWeeks, so
               const href = resolveZarukuContentUrl(row.url);
               return (
               <tr key={row.key} className="align-top transition hover:bg-slate-50/70">
-                <td className="border-r border-slate-100 px-4 py-3">
-                  <div className="font-medium leading-snug text-slate-800">{row.label}</div>
-                  {href ? <a href={href} target="_blank" rel="noreferrer" className="mt-1 block max-w-[270px] truncate text-xs text-slate-400 hover:text-teal-700" title={href}>{shortUrl(href)}</a> : <span className="mt-1 block max-w-[270px] truncate text-xs text-slate-400">{shortUrl(row.url)}</span>}
+                <td className="min-w-[320px] max-w-[420px] border-r border-slate-100 px-4 py-3">
+                  <div className="min-w-0 font-medium leading-snug text-slate-800">{row.label}</div>
+                  {href ? <a href={href} target="_blank" rel="noreferrer" className="mt-1 block min-w-0 max-w-full truncate text-xs text-slate-400 hover:text-teal-700" title={href}>{shortUrl(href)}</a> : <span className="mt-1 block min-w-0 max-w-full truncate text-xs text-slate-400" title={row.url}>{shortUrl(row.url)}</span>}
                 </td>
                 <td className="px-2 py-3 text-right tabular-nums text-slate-600">{formatNumber(row.google?.impressions, locale)}</td>
                 <td className="px-2 py-3 text-right tabular-nums text-slate-600">{formatNumber(row.google?.clicks, locale)}</td>
@@ -194,11 +196,11 @@ export default function ZarukuSeoPageComparison({ rows, seoWeek, sourceWeeks, so
               );
             })}
             {paginated.totalRows === 0 ? (
-              <tr><td colSpan={14} className="px-4 py-12 text-center text-sm text-slate-500">{allSourcesUnavailable ? "Источник недоступен: Google, Яндекс Вебмастер и SEO OS." : "Нет страниц для выбранных периодов."}</td></tr>
+              <tr><td colSpan={14} className="px-4 py-12 text-center text-sm text-slate-500">{allSourcesUnavailable ? "Источник недоступен: Google, Яндекс Вебмастер и SEO OS." : ZARUKU_CLIENT_COPY.emptyPages}</td></tr>
             ) : null}
           </tbody>
         </table>
-      </div>
+      </ZarukuTableFrame>
       <footer className="flex items-center justify-between gap-3 border-t border-slate-100 px-4 py-3 text-xs text-slate-500">
         <button type="button" disabled={paginated.page <= 1} onClick={() => setPage((value) => Math.max(1, value - 1))} className="rounded-md border border-slate-200 px-3 py-1.5 disabled:opacity-40">Предыдущая</button>
         <span>{paginated.totalRows.toLocaleString(locale)} найдено · Страница {paginated.page} из {paginated.totalPages}</span>

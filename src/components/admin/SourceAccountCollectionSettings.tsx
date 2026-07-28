@@ -8,10 +8,42 @@ import type {
 } from "@/lib/admin-ui-types";
 
 const METRIKA_MODE_OPTIONS: Array<{ value: SourceCollectionMode; label: string }> = [
-  { value: "ads_only", label: "Ads only" },
-  { value: "ads_plus_seo", label: "Ads + SEO" },
-  { value: "ads_plus_seo_plus_user_behavior", label: "Ads + SEO + User behavior" },
+  {
+    value: "ads_only",
+    label: "1) РК (базовый)",
+  },
+  {
+    value: "ads_plus_seo",
+    label: "2) Abbott (расширенный)",
+  },
+  {
+    value: "ads_plus_seo_plus_user_behavior",
+    label: "3) SEO full (полный, только по выделенным)",
+  },
 ];
+
+const METRIKA_MODE_HELP: Record<SourceCollectionMode, string> = {
+  ads_only:
+    "Рекламный уровень: стандартный сбор по кампаниям/источникам без расширенного пользовательского поведения.",
+  ads_plus_seo:
+    "Abbott-уровень: расширенный SEO-акцент для базового дашборда, без включения полного поведения.",
+  ads_plus_seo_plus_user_behavior:
+    "Полный SEO-сбор: расширенные сегменты + пользовательское поведение. Доступно только для выделенных счётчиков.",
+};
+
+const ZARUKU_SEO_COUNTER_ID = "66624469";
+
+function isZarukuMainCounter(row: SourceAccountCollectionRow): boolean {
+  return row.source_key === "yandex_metrika" && row.platform_account_id === ZARUKU_SEO_COUNTER_ID;
+}
+
+function isSeoFullMode(mode: SourceCollectionMode | null, row: SourceAccountCollectionRow): boolean {
+  return row.source_key === "yandex_metrika" && mode === "ads_plus_seo_plus_user_behavior";
+}
+
+function modeHelp(mode: SourceCollectionMode | null): string {
+  return mode ? METRIKA_MODE_HELP[mode] : "Режим не выбран. По умолчанию используется РК (базовый).";
+}
 
 function formatDateTime(value: string | null): string {
   if (!value) return "—";
@@ -147,6 +179,10 @@ export default function SourceAccountCollectionSettings() {
             automatically. Yandex Metrika currently uses collection mode, while other sources only use active and cron
             toggles.
           </p>
+          <p className="mt-2 max-w-3xl text-sm text-slate-600">
+            For Yandex Metrika we mark three levels: 1) Ads only, 2) Abbott-level SEO, 3) Full SEO (large
+            data). Full SEO is only for selected counters, for Zaruku this is counter <span className="font-semibold">66624469</span>.
+          </p>
         </div>
         <button
           type="button"
@@ -193,7 +229,7 @@ export default function SourceAccountCollectionSettings() {
           <thead>
             <tr className="border-b border-slate-200 text-left text-slate-600">
               <th className="px-3 py-3 font-medium">Source</th>
-              <th className="px-3 py-3 font-medium">Account / Counter</th>
+                <th className="px-3 py-3 font-medium">Account / Counter</th>
               <th className="px-3 py-3 font-medium">Active</th>
               <th className="px-3 py-3 font-medium">Cron enabled</th>
               <th className="px-3 py-3 font-medium">Collection mode</th>
@@ -209,7 +245,19 @@ export default function SourceAccountCollectionSettings() {
                   <div className="text-xs text-slate-500">{row.source_key}</div>
                 </td>
                 <td className="px-3 py-3">
-                  <div className="font-medium text-slate-900">{row.account_name}</div>
+                  <div className="flex items-center gap-2">
+                    <span className="font-medium text-slate-900">{row.account_name}</span>
+                    {isZarukuMainCounter(row) ? (
+                      <span className="rounded-full bg-emerald-100 px-2 py-0.5 text-xs font-medium text-emerald-800">
+                        Zaruku SEO
+                      </span>
+                    ) : null}
+                    {isSeoFullMode(row.collection_mode, row) && !isZarukuMainCounter(row) ? (
+                      <span className="rounded-full bg-indigo-100 px-2 py-0.5 text-xs font-medium text-indigo-800">
+                        SEO full
+                      </span>
+                    ) : null}
+                  </div>
                   <div className="text-xs text-slate-500">{row.platform_account_id}</div>
                 </td>
                 <td className="px-3 py-3">
@@ -238,21 +286,30 @@ export default function SourceAccountCollectionSettings() {
                 </td>
                 <td className="px-3 py-3">
                   {row.collection_mode_supported ? (
-                    <select
-                      className="w-full min-w-[220px] rounded-lg border border-slate-300 px-3 py-2"
-                      value={row.collection_mode ?? "ads_only"}
-                      onChange={(event) =>
-                        updateRow(row.source_key, row.platform_account_id, {
-                          collection_mode: event.target.value as SourceCollectionMode,
-                        })
-                      }
-                    >
-                      {METRIKA_MODE_OPTIONS.map((option) => (
-                        <option key={option.value} value={option.value}>
-                          {option.label}
-                        </option>
-                      ))}
-                    </select>
+                    <div className="space-y-2">
+                      <select
+                        className="w-full min-w-[220px] rounded-lg border border-slate-300 px-3 py-2"
+                        value={row.collection_mode ?? "ads_only"}
+                        onChange={(event) =>
+                          updateRow(row.source_key, row.platform_account_id, {
+                            collection_mode: event.target.value as SourceCollectionMode,
+                          })
+                        }
+                      >
+                        {METRIKA_MODE_OPTIONS.map((option) => (
+                          <option key={option.value} value={option.value}>
+                            {option.label}
+                          </option>
+                        ))}
+                      </select>
+                      <p className="text-xs leading-4 text-slate-500">{modeHelp(row.collection_mode)}</p>
+                      {isSeoFullMode(row.collection_mode, row) && !isZarukuMainCounter(row) ? (
+                        <p className="text-xs leading-4 text-amber-700">
+                          Полный SEO-профиль включён для этого счётчика. Проверьте, что он действительно должен быть
+                          выделенным.
+                        </p>
+                      ) : null}
+                    </div>
                   ) : (
                     <span className="text-slate-400">—</span>
                   )}

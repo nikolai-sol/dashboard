@@ -584,7 +584,7 @@ export interface AbbottBiData {
 export type ZarukuSeoLayerId = "onsite" | "serp" | "ai";
 export type ZarukuSeoSourceId = "metrika" | "gsc" | "webmaster" | "seo_os" | "yandex_gen_search";
 export type ZarukuSeoSourceStatus = "connected" | "pending" | "partial" | "unavailable";
-export type ZarukuDatasetState = "ready" | "empty" | "unavailable" | "partial";
+export type ZarukuDatasetState = "ready" | "empty" | "unavailable" | "partial" | "hidden";
 export type ZarukuGeographyScope = "russia" | "host" | "unsegmented" | "mixed";
 export type ZarukuMetricColumn = "visits" | "users" | "pageviews" | "bounce_rate" | "avg_duration_seconds" | "page_depth";
 export type ZarukuDatasetKey =
@@ -738,6 +738,11 @@ export interface ZarukuSeoSectionPattern {
   section: string;
   url_pattern: string;
   priority: number;
+}
+
+export interface ZarukuSeoSectionPatternSummary {
+  section_pattern_count: number;
+  section_patterns_updated_at: string | null;
 }
 
 export interface ZarukuSeoPositionTrendPoint {
@@ -1148,6 +1153,7 @@ export interface ZarukuSeoOsData {
   };
   weeks: string[];
   latest_week: string | null;
+  section_pattern_summary: ZarukuSeoSectionPatternSummary | null;
   section_patterns: ZarukuSeoSectionPattern[];
   position_trend: ZarukuSeoPositionTrendPoint[];
   clusters: ZarukuSeoClusterRow[];
@@ -1169,6 +1175,12 @@ export interface ZarukuSeoData {
   traffic_channels: ZarukuSeoMetricRow[];
   technical_tail: ZarukuSeoMetricRow[];
   organic_trend: Array<{ label: string; visits: number; users: number; pageviews: number }>;
+  content_sections_summary?: {
+    section_pattern_count: number;
+    unmatched_pageviews: number;
+    unmatched_share: number;
+    section_patterns_updated_at: string | null;
+  };
   search_engines: ZarukuSeoMetricRow[];
   search_phrases: ZarukuSeoMetricRow[];
   organic_landing_pages: ZarukuSeoMetricRow[];

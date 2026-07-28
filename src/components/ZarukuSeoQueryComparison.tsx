@@ -3,6 +3,8 @@
 import { useMemo, useState } from "react";
 import { filterAndPaginate } from "@/components/zaruku-table-pagination";
 import { resolveZarukuContentUrl } from "@/lib/zaruku-url";
+import ZarukuTableFrame from "@/components/ZarukuTableFrame";
+import { ZARUKU_CLIENT_COPY } from "@/components/zaruku-client-copy";
 import {
   filterUnifiedSeoQueryRows,
   sortUnifiedSeoQueryRows,
@@ -23,11 +25,13 @@ type Props = {
   sourceWeeks: SourceWeeks;
   sourceAvailability?: { google: boolean; webmaster: boolean; seoOs: boolean };
   defaultSort?: SeoQuerySort;
+  defaultFilter?: SeoQueryFilter;
   locale?: string;
 };
 
 const FILTERS: Array<{ id: SeoQueryFilter; label: string }> = [
   { id: "all", label: "Все" },
+  { id: "confirmed_landing", label: "Только с подтверждённой посадочной" },
   { id: "top3", label: "Топ-3" },
   { id: "top10", label: "Топ-10" },
   { id: "top20", label: "Топ-20" },
@@ -41,7 +45,16 @@ export function toggleSeoSort(current: SeoQuerySort, key: SeoQuerySortKey): SeoQ
   if (current.key === key) {
     return { key, direction: current.direction === "asc" ? "desc" : "asc" };
   }
-  return { key, direction: "asc" };
+  const shouldDefaultDesc = [
+    "google_impressions",
+    "google_clicks",
+    "google_ctr",
+    "webmaster_impressions",
+    "webmaster_clicks",
+    "webmaster_ctr",
+  ].includes(key);
+
+  return { key, direction: shouldDefaultDesc ? "desc" : "asc" };
 }
 
 function formatNumber(value: number | null | undefined, locale: string): string {
@@ -83,12 +96,12 @@ function SortButton({
   onChange: (key: SeoQuerySortKey) => void;
 }) {
   const active = sort.key === sortKey;
-  const directionLabel = active && sort.direction === "desc" ? "100 → 1" : "1 → 100";
+  const directionLabel = active ? (sort.direction === "desc" ? "↓" : "↑") : "";
   return (
     <button
       type="button"
       aria-pressed={active}
-      aria-label={`Сортировать: ${label}. ${active ? `Сейчас ${directionLabel}` : "Сначала 1 → 100"}`}
+      aria-label={`Сортировать: ${label}. ${active ? `Сейчас ${directionLabel}` : "Изменить сортировку"}`}
       onClick={() => onChange(sortKey)}
       className={`inline-flex items-center gap-1 rounded px-1.5 py-1 text-left text-[11px] font-semibold transition ${
         active ? "bg-slate-800 text-white" : "text-slate-600 hover:bg-slate-100"
@@ -124,7 +137,7 @@ function SafePageLink({ value, prefix = "" }: { value: string; prefix?: string }
   const href = resolveZarukuContentUrl(value);
   if (!href) return <span className="max-w-full truncate text-slate-400">{prefix}{shortUrl(value)}</span>;
   return (
-    <a href={href} target="_blank" rel="noreferrer" className="max-w-full truncate hover:text-blue-600" title={href}>
+    <a href={href} target="_blank" rel="noreferrer" className="max-w-full truncate whitespace-nowrap hover:text-blue-600" title={href}>
       {prefix}{shortUrl(href)}
     </a>
   );
@@ -135,10 +148,11 @@ export default function ZarukuSeoQueryComparison({
   sourceWeeks,
   sourceAvailability = { google: true, webmaster: true, seoOs: true },
   defaultSort = { key: "google_position", direction: "asc" },
+  defaultFilter = "all",
   locale = "ru-RU",
 }: Props) {
   const [sort, setSort] = useState<SeoQuerySort>(defaultSort);
-  const [filter, setFilter] = useState<SeoQueryFilter>("all");
+  const [filter, setFilter] = useState<SeoQueryFilter>(defaultFilter);
   const [query, setQuery] = useState("");
   const [page, setPage] = useState(1);
   const visibleRows = useMemo(
@@ -195,6 +209,9 @@ export default function ZarukuSeoQueryComparison({
             </button>
           ))}
         </div>
+        <p className="mt-2 max-w-3xl text-xs leading-relaxed text-slate-500">
+          Сейчас фильтр подтверждает посадочные только по данным Google. Страница относится к Google; в Яндексе по той же фразе может вести другая страница.
+        </p>
         <label className="mt-3 block max-w-xl text-xs font-medium text-slate-600">
           Поиск по фразе или разделу
           <input
@@ -218,51 +235,63 @@ export default function ZarukuSeoQueryComparison({
         ) : null}
       </header>
 
-      <div className="max-h-[42rem] overflow-auto">
-        <table className="min-w-[1180px] w-full border-separate border-spacing-0 text-sm">
-          <thead className="sticky top-0 z-10 bg-white shadow-[0_1px_0_0_#e2e8f0]">
+      <ZarukuTableFrame mode="comparison" label="Сравнение поисковых запросов" className="rounded-none border-x-0 border-y-0">
+        <table className="w-[1180px] table-fixed border-separate border-spacing-0 text-sm">
+          <thead className="sticky top-0 z-10 bg-white shadow-[0_1px_0_0_var(--border)]">
             <tr className="text-xs font-semibold text-slate-600">
-              <th rowSpan={2} className="w-[300px] border-r border-slate-100 bg-white px-4 py-3 text-left align-bottom">Фраза</th>
-              <th rowSpan={2} className="w-[140px] border-r border-slate-100 bg-white px-3 py-3 text-left align-bottom">Раздел</th>
-              <th colSpan={4} className="border-r border-slate-100 bg-blue-50/70 px-3 py-2 text-center">
+              <th rowSpan={2} className="w-[360px] min-w-[220px] border-r border-slate-100 bg-white px-4 py-3 text-left align-bottom">Фраза</th>
+              <th rowSpan={2} className="w-[130px] min-w-[120px] border-r border-slate-100 bg-white px-3 py-3 text-left align-bottom">Раздел</th>
+              <th colSpan={4} className="w-[320px] border-r border-slate-100 bg-blue-50/70 px-3 py-2 text-center">
                 <SourceHeading label="Google RF" week={sourceWeeks.google} className="bg-blue-500" />
               </th>
-              <th colSpan={4} className="border-r border-slate-100 bg-amber-50/70 px-3 py-2 text-center">
+              <th colSpan={4} className="w-[320px] border-r border-slate-100 bg-amber-50/70 px-3 py-2 text-center">
                 <SourceHeading label="Яндекс Вебмастер" week={sourceWeeks.webmaster} className="bg-amber-400" />
               </th>
-              <th colSpan={3} className="bg-teal-50/70 px-3 py-2 text-center">
+              <th colSpan={3} className="w-[240px] bg-teal-50/70 px-3 py-2 text-center">
                 <SourceHeading label="SEO OS" week={sourceWeeks.seoOs} className="bg-teal-500" />
               </th>
             </tr>
             <tr className="border-t border-slate-100 text-[11px] text-slate-500">
-              <th className="bg-blue-50/70 px-2 py-2 text-right">Показы</th>
-              <th className="bg-blue-50/70 px-2 py-2 text-right">Клики</th>
-              <th className="bg-blue-50/70 px-2 py-2 text-right">CTR</th>
-              <th className="border-r border-slate-100 bg-blue-50/70 px-2 py-2 text-right">
+              <th className="w-[80px] bg-blue-50/70 px-2 py-2 text-right">
+                <SortButton label="Показы" sortKey="google_impressions" sort={sort} onChange={changeSort} />
+              </th>
+              <th className="w-[80px] bg-blue-50/70 px-2 py-2 text-right">
+                <SortButton label="Клики" sortKey="google_clicks" sort={sort} onChange={changeSort} />
+              </th>
+              <th className="w-[80px] bg-blue-50/70 px-2 py-2 text-right">
+                <SortButton label="CTR" sortKey="google_ctr" sort={sort} onChange={changeSort} />
+              </th>
+              <th className="w-[80px] border-r border-slate-100 bg-blue-50/70 px-2 py-2 text-right">
                 <SortButton label="Позиция" sortKey="google_position" sort={sort} onChange={changeSort} />
               </th>
-              <th className="bg-amber-50/70 px-2 py-2 text-right">Показы</th>
-              <th className="bg-amber-50/70 px-2 py-2 text-right">Клики</th>
-              <th className="bg-amber-50/70 px-2 py-2 text-right">CTR</th>
-              <th className="border-r border-slate-100 bg-amber-50/70 px-2 py-2 text-right">
+              <th className="w-[80px] bg-amber-50/70 px-2 py-2 text-right">
+                <SortButton label="Показы" sortKey="webmaster_impressions" sort={sort} onChange={changeSort} />
+              </th>
+              <th className="w-[80px] bg-amber-50/70 px-2 py-2 text-right">
+                <SortButton label="Клики" sortKey="webmaster_clicks" sort={sort} onChange={changeSort} />
+              </th>
+              <th className="w-[80px] bg-amber-50/70 px-2 py-2 text-right">
+                <SortButton label="CTR" sortKey="webmaster_ctr" sort={sort} onChange={changeSort} />
+              </th>
+              <th className="w-[80px] border-r border-slate-100 bg-amber-50/70 px-2 py-2 text-right">
                 <SortButton label="Позиция" sortKey="webmaster_position" sort={sort} onChange={changeSort} />
               </th>
-              <th className="bg-teal-50/70 px-2 py-2 text-right">
+              <th className="w-[80px] bg-teal-50/70 px-2 py-2 text-right">
                 <SortButton label="Позиция" sortKey="seo_os_position" sort={sort} onChange={changeSort} />
               </th>
-              <th className="bg-teal-50/70 px-2 py-2 text-right">Δ</th>
-              <th className="bg-teal-50/70 px-2 py-2 text-left">Статус</th>
+              <th className="w-[80px] bg-teal-50/70 px-2 py-2 text-right">Δ</th>
+              <th className="w-[80px] bg-teal-50/70 px-2 py-2 text-left">Статус</th>
             </tr>
           </thead>
           <tbody className="divide-y divide-slate-100">
             {paginated.rows.map((row) => (
               <tr key={row.key} className="align-top transition hover:bg-slate-50/70">
-                <td className="border-r border-slate-100 px-4 py-3">
-                  <div className="font-medium leading-snug text-slate-800">{row.query}</div>
+                <td className="min-w-[220px] max-w-[360px] border-r border-slate-100 px-4 py-3">
+                  <div className="min-w-0 truncate font-medium leading-snug text-slate-800" title={row.query}>{row.query}</div>
                   {row.google_pages.length > 0 || row.seo_os?.matched_url ? (
-                    <div className="mt-1.5 flex max-w-[280px] flex-wrap gap-x-2 gap-y-1 text-[11px] text-slate-400">
+                    <div className="mt-1.5 flex max-w-full flex-wrap gap-x-2 gap-y-1 text-[11px] text-slate-400">
                       {row.google_pages.map((page) => (
-                        <SafePageLink key={`g-${page}`} value={page} />
+                        <SafePageLink key={`g-${page}`} value={page} prefix="Google: " />
                       ))}
                       {row.seo_os?.matched_url ? (
                         <SafePageLink value={row.seo_os.matched_url} prefix="SEO OS: " />
@@ -270,7 +299,9 @@ export default function ZarukuSeoQueryComparison({
                     </div>
                   ) : null}
                 </td>
-                <td className="border-r border-slate-100 px-3 py-3 text-xs text-slate-500">{row.section ?? "—"}</td>
+                <td className="min-w-[120px] max-w-[130px] border-r border-slate-100 px-3 py-3 text-xs text-slate-500">
+                  <span className="block min-w-0 truncate" title={row.section ?? undefined}>{row.section ?? "—"}</span>
+                </td>
                 <td className="px-2 py-3 text-right tabular-nums text-slate-600">{formatNumber(row.google?.impressions, locale)}</td>
                 <td className="px-2 py-3 text-right tabular-nums text-slate-600">{formatNumber(row.google?.clicks, locale)}</td>
                 <td className="px-2 py-3 text-right tabular-nums text-slate-500">{formatPercent(row.google?.ctr, locale)}</td>
@@ -287,11 +318,17 @@ export default function ZarukuSeoQueryComparison({
               </tr>
             ))}
             {paginated.totalRows === 0 ? (
-              <tr><td colSpan={13} className="px-4 py-12 text-center text-sm text-slate-500">{allSourcesUnavailable ? "Источник недоступен: Google, Яндекс Вебмастер и SEO OS." : "По выбранному фильтру запросов нет."}</td></tr>
+              <tr><td colSpan={13} className="px-4 py-12 text-center text-sm text-slate-500">{
+                allSourcesUnavailable
+                  ? "Источник недоступен: Google, Яндекс Вебмастер и SEO OS."
+                  : filter === "confirmed_landing"
+                    ? "Нет запросов с подтверждённой посадочной за выбранный период."
+                    : ZARUKU_CLIENT_COPY.emptyQueries
+              }</td></tr>
             ) : null}
           </tbody>
         </table>
-      </div>
+      </ZarukuTableFrame>
       <footer className="flex items-center justify-between gap-3 border-t border-slate-100 px-4 py-3 text-xs text-slate-500">
         <button type="button" disabled={paginated.page <= 1} onClick={() => setPage((value) => Math.max(1, value - 1))} className="rounded-md border border-slate-200 px-3 py-1.5 disabled:opacity-40">Предыдущая</button>
         <span>Страница {paginated.page} из {paginated.totalPages}</span>

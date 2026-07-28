@@ -29,9 +29,8 @@ export default function ZarukuSeoWeekToolbar({
   const comparisonAvailable = canCompareWeeks(weeks);
 
   return (
-    <div className="grid gap-2 sm:grid-cols-[auto_minmax(10rem,1fr)_minmax(10rem,1fr)_2rem] sm:items-end">
-      <div className="text-xs font-medium text-slate-500 sm:col-span-4">Отчётная SEO-неделя</div>
-
+    <div className="grid gap-2 lg:grid-cols-[auto_minmax(10rem,1fr)_minmax(10rem,1fr)_2rem] lg:items-end">
+      <div className="text-xs font-medium text-slate-500 lg:col-span-4">Отчётная SEO-неделя</div>
       <div role="group" aria-label="Режим сравнения" className="inline-flex h-9 w-fit rounded-md border border-slate-200 bg-white p-0.5">
         <button
           type="button"

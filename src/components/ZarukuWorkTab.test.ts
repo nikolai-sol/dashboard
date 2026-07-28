@@ -4,6 +4,7 @@ import test from "node:test";
 
 const source = readFileSync(new URL("./ZarukuWorkTab.tsx", import.meta.url), "utf8");
 const operationsSource = readFileSync(new URL("./ZarukuSeoOperations.tsx", import.meta.url), "utf8");
+const copySource = readFileSync(new URL("./zaruku-client-copy.ts", import.meta.url), "utf8");
 
 test("work tab names the selected SEO OS periods and warns about incomplete historical counters", () => {
   assert.match(source, /Работы и задачи/);
@@ -15,5 +16,6 @@ test("work tab names the selected SEO OS periods and warns about incomplete hist
 
 test("client-facing unavailable copy avoids internal SEO Ops jargon", () => {
   assert.doesNotMatch(operationsSource, /SEO Ops временно недоступен/);
-  assert.match(operationsSource, /Данные по работам и задачам временно недоступны/);
+  assert.match(operationsSource, /ZARUKU_CLIENT_COPY\.workUnavailable/);
+  assert.match(copySource, /Данные по работам и задачам временно недоступны/);
 });

@@ -1,9 +1,26 @@
+export type ZarukuTabId = "overview" | "seo" | "content" | "audience" | "work" | "quality";
+
 export type WeekSelection = {
   primaryWeek: string | null;
   comparisonWeek: string | null;
 };
 
-export type WeekSelectionField = keyof WeekSelection;
+export type WeekSelectionSlot = "A" | "B";
+export type WeekSelectionField = "primaryWeek" | "comparisonWeek";
+export type WeekComparisonMode = "single" | "comparison";
+export type WeekSelectionSlots = Record<WeekSelectionSlot, string | null>;
+
+export const WEEK_SELECTION_FIELD_BY_SLOT: Record<WeekSelectionSlot, WeekSelectionField> = {
+  A: "primaryWeek",
+  B: "comparisonWeek",
+};
+
+export function toWeekSelectionSlots(selection: WeekSelection): WeekSelectionSlots {
+  return {
+    A: selection.primaryWeek,
+    B: selection.comparisonWeek,
+  };
+}
 
 export function createWeekSelection(latestWeek: string | null): WeekSelection {
   return { primaryWeek: latestWeek, comparisonWeek: null };
@@ -19,6 +36,12 @@ export function canCompareWeeks(weeks: string[]) {
 
 export function shouldShowSeoWeekToolbar(activeTab: string) {
   return activeTab === "seo" || activeTab === "work" || activeTab === "content";
+}
+
+export function zarukuTimeOwner(tab: ZarukuTabId): "url" | "week" | "none" {
+  if (tab === "overview" || tab === "audience") return "url";
+  if (tab === "quality") return "none";
+  return "week";
 }
 
 export function reconcileWeekSelection(selection: WeekSelection, weeks: string[]): WeekSelection {

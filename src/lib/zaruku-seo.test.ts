@@ -941,6 +941,23 @@ test("default source freshness query includes the returning-content collector", 
   assert.equal(query.params.includes("yandex_metrika_returning"), true);
 });
 
+test("GSC expected frequency describes its daily cron instead of product data lag", () => {
+  const query = buildSourceFreshnessQuery(["google_search_console"]);
+
+  assert.match(
+    query.sql,
+    /'google_search_console' AS source_key,[\s\S]*?24 AS expected_frequency_hours/,
+  );
+});
+
+test("source freshness uses any successful collection for the last update timestamp", () => {
+  const query = buildSourceFreshnessQuery(["yandex_metrika_returning"]);
+  const latestSuccess = query.sql.match(/latest_success AS \([\s\S]*?\n    \),\n    latest_error AS/)?.[0] ?? "";
+
+  assert.match(latestSuccess, /status = 'success'/);
+  assert.doesNotMatch(latestSuccess, /run_type = 'cron'/);
+});
+
 test("normalizeSourceFreshnessRow marks recent successful cron collector healthy", () => {
   assert.deepEqual(
     normalizeSourceFreshnessRow(
@@ -959,7 +976,7 @@ test("normalizeSourceFreshnessRow marks recent successful cron collector healthy
         last_error_at: null,
         last_error_summary: null,
       },
-      new Date("2026-07-17T19:00:00Z"),
+      new Date("2026-07-17T10:00:00Z"),
     ),
     {
       source_key: "yandex_webmaster",
@@ -977,9 +994,78 @@ test("normalizeSourceFreshnessRow marks recent successful cron collector healthy
       rows_written: 2125,
       last_error_at: null,
       last_error_summary: null,
-      note: "Последний successful cron collector записал 2,125 rows.",
+      note: "Последние факты в БД подтверждены; записано 2,125 rows.",
     },
   );
+});
+
+test("normalizeSourceFreshnessRow treats exactly three calendar days of lag as current", () => {
+  const row = normalizeSourceFreshnessRow(
+    {
+      source_key: "yandex_webmaster",
+      source_label: "Яндекс Вебмастер",
+      collector: "fetch_yandex_webmaster_canonical.py",
+      expected_frequency_hours: 24,
+      last_status: "success",
+      last_finished_at: "2026-07-27 06:50:08",
+      last_success_at: "2026-07-27 06:50:08",
+      success_date_from: "2026-07-20",
+      success_date_to: "2026-07-24",
+      success_rows_read: 100,
+      success_rows_written: 100,
+      last_error_at: null,
+      last_error_summary: null,
+    },
+    new Date("2026-07-27T23:59:59Z"),
+  );
+
+  assert.equal(row.freshness_status, "healthy");
+});
+
+test("normalizeSourceFreshnessRow keeps 24.07 facts healthy on 27.07", () => {
+  const row = normalizeSourceFreshnessRow(
+    {
+      source_key: "yandex_metrika_returning",
+      source_label: "Яндекс Метрика · возвратный контент",
+      collector: "fetch_yandex_metrika_returning_canonical.py",
+      expected_frequency_hours: 24,
+      last_status: "success",
+      last_finished_at: "2026-07-24 06:18:08",
+      last_success_at: "2026-07-24 06:18:08",
+      success_date_from: "2026-07-21",
+      success_date_to: "2026-07-24",
+      success_rows_read: 100,
+      success_rows_written: 100,
+      last_error_at: null,
+      last_error_summary: null,
+    },
+    new Date("2026-07-27T00:01:00Z"),
+  );
+
+  assert.equal(row.freshness_status, "healthy");
+});
+
+test("normalizeSourceFreshnessRow marks four calendar days of lag delayed", () => {
+  const row = normalizeSourceFreshnessRow(
+    {
+      source_key: "yandex_webmaster",
+      source_label: "Яндекс Вебмастер",
+      collector: "fetch_yandex_webmaster_canonical.py",
+      expected_frequency_hours: 24,
+      last_status: "success",
+      last_finished_at: "2026-07-24 06:50:08",
+      last_success_at: "2026-07-24 06:50:08",
+      success_date_from: "2026-07-20",
+      success_date_to: "2026-07-23",
+      success_rows_read: 100,
+      success_rows_written: 100,
+      last_error_at: null,
+      last_error_summary: null,
+    },
+    new Date("2026-07-27T00:01:00Z"),
+  );
+
+  assert.equal(row.freshness_status, "delayed");
 });
 
 test("normalizeSourceFreshnessRow hides older collector errors after a newer success", () => {
@@ -999,13 +1085,13 @@ test("normalizeSourceFreshnessRow hides older collector errors after a newer suc
       last_error_at: "2026-06-24 06:12:01",
       last_error_summary: "old frozen counter error",
     },
-    new Date("2026-07-19T13:00:00Z"),
+    new Date("2026-07-19T08:00:00Z"),
   );
 
   assert.equal(row.freshness_status, "healthy");
   assert.equal(row.last_error_at, null);
   assert.equal(row.last_error_summary, null);
-  assert.equal(row.note, "Последний successful cron collector записал 3,081 rows.");
+  assert.equal(row.note, "Последние факты в БД подтверждены; записано 3,081 rows.");
 });
 
 test("normalizeSourceFreshnessRow marks newer failed cron after success as failed", () => {
@@ -1014,13 +1100,13 @@ test("normalizeSourceFreshnessRow marks newer failed cron after success as faile
         source_key: "google_search_console",
         source_label: "Google Search Console",
         collector: "fetch_gsc_canonical.py",
-      expected_frequency_hours: 24,
-      last_status: "failed",
-      last_finished_at: "2026-07-17 17:15:18",
-      last_success_at: "2026-07-16 17:15:18",
-      success_date_from: "2026-07-10",
-      success_date_to: "2026-07-13",
-      success_rows_read: 9000,
+        expected_frequency_hours: 72,
+        last_status: "failed",
+        last_finished_at: "2026-07-17 17:15:18",
+        last_success_at: "2026-07-16 17:15:18",
+        success_date_from: "2026-07-10",
+        success_date_to: "2026-07-13",
+        success_rows_read: 9000,
       success_rows_written: 9000,
       last_error_at: "2026-07-17 17:15:18",
       last_error_summary: "HTTP 401",
@@ -1032,4 +1118,28 @@ test("normalizeSourceFreshnessRow marks newer failed cron after success as faile
   assert.equal(row.freshness_label, "failed");
   assert.match(row.note, /Последний cron collector упал/);
   assert.equal(row.last_error_summary, "HTTP 401");
+});
+
+test("normalizeSourceFreshnessRow marks a failed cron failed even when fact age is within three days", () => {
+  const row = normalizeSourceFreshnessRow(
+    {
+      source_key: "yandex_metrika_returning",
+      source_label: "Яндекс Метрика · возвратный контент",
+      collector: "fetch_yandex_metrika_returning_canonical.py",
+      expected_frequency_hours: 24,
+      last_status: "failed",
+      last_finished_at: "2026-07-27 06:18:08",
+      last_success_at: "2026-07-24 06:18:08",
+      success_date_from: "2026-07-21",
+      success_date_to: "2026-07-24",
+      success_rows_read: 100,
+      success_rows_written: 100,
+      last_error_at: "2026-07-27 06:18:08",
+      last_error_summary: "unknown option --counter-id",
+    },
+    new Date("2026-07-27T08:00:00Z"),
+  );
+
+  assert.equal(row.freshness_status, "failed");
+  assert.match(row.note, /Последний cron collector упал/);
 });

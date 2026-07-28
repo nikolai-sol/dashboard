@@ -473,21 +473,35 @@ function errorMessage(error: unknown) {
   return error instanceof Error ? error.message : String(error);
 }
 
-function normalizeSettledRows<DbRow, ResultRow>(
+type SettledRowsResult<DbRow, ResultRow> = {
+  rows: ResultRow[];
+  available: boolean;
+  error: string | null;
+  required: boolean;
+};
+
+function asNormalizedResult<DbRow, ResultRow>(
   result: PromiseSettledResult<unknown[]>,
   label: string,
   normalize: (row: DbRow) => ResultRow,
   errors: string[],
-) {
+  required: boolean,
+): SettledRowsResult<DbRow, ResultRow> {
   if (result.status === "rejected") {
-    errors.push(`${label}: ${errorMessage(result.reason)}`);
-    return { rows: [] as ResultRow[], available: false };
+    const errorText = `${label}: ${errorMessage(result.reason)}`;
+    if (required) {
+      errors.push(errorText);
+    }
+    return { rows: [] as ResultRow[], available: false, error: errorText, required };
   }
   try {
-    return { rows: result.value.map((row) => normalize(row as DbRow)), available: true };
+    return { rows: result.value.map((row) => normalize(row as DbRow)), available: true, error: null, required };
   } catch (error) {
-    errors.push(`${label}: ${errorMessage(error)}`);
-    return { rows: [] as ResultRow[], available: false };
+    const errorText = `${label}: ${errorMessage(error)}`;
+    if (required) {
+      errors.push(errorText);
+    }
+    return { rows: [] as ResultRow[], available: false, error: errorText, required };
   }
 }
 
@@ -512,47 +526,54 @@ export async function loadGoogleSearchConsoleFacts(
     executeQuery(queries.search_type_summary),
   ]);
   const errors: string[] = [];
-  const queryResult = normalizeSettledRows<GscQueryDbRow, ZarukuGscQueryRow>(
+  const queryResult = asNormalizedResult<GscQueryDbRow, ZarukuGscQueryRow>(
     results[0],
     "queries",
     normalizeGscQueryRow,
     errors,
+    true,
   );
-  const summaryResult = normalizeSettledRows<GscSummaryDbRow, ZarukuGscSummaryRow>(
+  const summaryResult = asNormalizedResult<GscSummaryDbRow, ZarukuGscSummaryRow>(
     results[1],
     "summary",
     normalizeGscSummaryRow,
     errors,
+    true,
   );
-  const countrySummaryResult = normalizeSettledRows<GscCountrySummaryDbRow, ZarukuGscCountrySummaryRow>(
+  const countrySummaryResult = asNormalizedResult<GscCountrySummaryDbRow, ZarukuGscCountrySummaryRow>(
     results[2],
     "country_summary",
     normalizeGscCountrySummaryRow,
     errors,
+    true,
   );
-  const landingPageResult = normalizeSettledRows<GscLandingPageDbRow, ZarukuGscLandingPageRow>(
+  const landingPageResult = asNormalizedResult<GscLandingPageDbRow, ZarukuGscLandingPageRow>(
     results[3],
     "landing_pages",
     normalizeGscLandingPageRow,
     errors,
+    true,
   );
-  const brandSplitResult = normalizeSettledRows<GscBrandSplitDbRow, ZarukuGscBrandSplitRow>(
+  const brandSplitResult = asNormalizedResult<GscBrandSplitDbRow, ZarukuGscBrandSplitRow>(
     results[4],
     "brand_split",
     normalizeGscBrandSplitRow,
     errors,
+    true,
   );
-  const searchAppearanceResult = normalizeSettledRows<GscSearchAppearanceDbRow, ZarukuGscSearchAppearanceRow>(
+  const searchAppearanceResult = asNormalizedResult<GscSearchAppearanceDbRow, ZarukuGscSearchAppearanceRow>(
     results[5],
     "search_appearance",
     normalizeGscSearchAppearanceRow,
     errors,
+    false,
   );
-  const searchTypeSummaryResult = normalizeSettledRows<GscSearchTypeDbRow, ZarukuGscSearchTypeRow>(
+  const searchTypeSummaryResult = asNormalizedResult<GscSearchTypeDbRow, ZarukuGscSearchTypeRow>(
     results[6],
     "search_type_summary",
     normalizeGscSearchTypeRow,
     errors,
+    false,
   );
   const queryRows = queryResult.rows;
   const summaryRows = summaryResult.rows;

@@ -4,6 +4,7 @@ import type {
   ZarukuSeoClusterRow,
   ZarukuSeoOpportunityRow,
   ZarukuSeoOsData,
+  ZarukuSeoSectionPatternSummary,
   ZarukuSeoPositionTrendPoint,
   ZarukuSeoRunRow,
   ZarukuSeoSectionPattern,
@@ -63,6 +64,11 @@ type SeoSectionPatternDbRow = {
   section: string;
   url_pattern: string;
   priority: number | string;
+};
+
+type SeoSectionPatternSummaryDbRow = {
+  section_pattern_count: number | string;
+  section_patterns_updated_at: string | Date | null;
 };
 
 type SeoClusterDbRow = {
@@ -157,6 +163,13 @@ export function normalizeSeoSectionPatternRow(row: SeoSectionPatternDbRow): Zaru
   };
 }
 
+function normalizeSectionPatternSummaryRow(row: SeoSectionPatternSummaryDbRow): ZarukuSeoSectionPatternSummary {
+  return {
+    section_pattern_count: asNumber(row.section_pattern_count),
+    section_patterns_updated_at: asNullableString(row.section_patterns_updated_at),
+  };
+}
+
 export function normalizeSeoClusterRow(row: SeoClusterDbRow): ZarukuSeoClusterRow {
   return {
     week: String(row.week),
@@ -207,7 +220,9 @@ export function normalizeSeoRunRow(row: SeoRunDbRow): ZarukuSeoRunRow {
   };
 }
 
-export function buildSeoOsAccountQueries(counterIds: string[]): Record<"sectionPatterns" | "positions" | "opportunities" | "tasks" | "runs", SqlQuery> {
+export function buildSeoOsAccountQueries(
+  counterIds: string[],
+): Record<"sectionPatterns" | "sectionPatternSummary" | "positions" | "opportunities" | "tasks" | "runs", SqlQuery> {
   const accountScope = buildInClause(counterIds);
   return {
     sectionPatterns: {
@@ -216,6 +231,16 @@ export function buildSeoOsAccountQueries(counterIds: string[]): Record<"sectionP
         FROM seo_section_patterns
         WHERE analytics_account_id IN (${accountScope})
         ORDER BY priority ASC, section ASC, url_pattern ASC
+      `,
+      params: counterIds,
+    },
+    sectionPatternSummary: {
+      sql: `
+        SELECT
+          COUNT(*) AS section_pattern_count,
+          MAX(updated_at) AS section_patterns_updated_at
+        FROM seo_section_patterns
+        WHERE analytics_account_id IN (${accountScope})
       `,
       params: counterIds,
     },
@@ -454,6 +479,7 @@ export function emptyZarukuSeoOsData(error: string | null = null): ZarukuSeoOsDa
     },
     weeks: [],
     latest_week: null,
+    section_pattern_summary: null,
     section_patterns: [],
     position_trend: [],
     clusters: [],
@@ -501,6 +527,7 @@ export async function loadZarukuSeoOsData(
   const queries = buildSeoOsAccountQueries(normalizedCounterIds);
   const results = await Promise.allSettled([
     executeQuery(queries.sectionPatterns),
+    executeQuery(queries.sectionPatternSummary),
     executeQuery(queries.positions),
     executeQuery(queries.opportunities),
     executeQuery(queries.tasks),
@@ -513,31 +540,43 @@ export async function loadZarukuSeoOsData(
     normalizeSeoSectionPatternRow,
     errors,
   );
-  const clusterResult = normalizeSettledRows<SeoClusterDbRow, ZarukuSeoClusterRow>(
+  const sectionPatternSummaryResult = normalizeSettledRows<SeoSectionPatternSummaryDbRow, ZarukuSeoSectionPatternSummary>(
     results[1],
+    "section_pattern_summary",
+    normalizeSectionPatternSummaryRow,
+    errors,
+  );
+  const clusterResult = normalizeSettledRows<SeoClusterDbRow, ZarukuSeoClusterRow>(
+    results[2],
     "positions",
     normalizeSeoClusterRow,
     errors,
   );
   const opportunityResult = normalizeSettledRows<SeoOpportunityDbRow, ZarukuSeoOpportunityRow>(
-    results[2],
+    results[3],
     "opportunities",
     normalizeSeoOpportunityRow,
     errors,
   );
   const taskResult = normalizeSettledRows<SeoTaskDbRow, ZarukuSeoTaskRow>(
-    results[3],
+    results[4],
     "tasks",
     normalizeSeoTaskRow,
     errors,
   );
   const runResult = normalizeSettledRows<SeoRunDbRow, ZarukuSeoRunRow>(
-    results[4],
+    results[5],
     "runs",
     normalizeSeoRunRow,
     errors,
   );
   const sectionPatterns = sectionPatternResult.rows;
+  const sectionPatternSummary = sectionPatternSummaryResult.available
+    ? sectionPatternSummaryResult.rows[0] ?? {
+      section_pattern_count: sectionPatterns.length,
+      section_patterns_updated_at: null,
+    }
+    : null;
   const clusters = clusterResult.rows;
   const opportunities = opportunityResult.rows;
   const tasks = taskResult.rows;
@@ -586,6 +625,7 @@ export async function loadZarukuSeoOsData(
     },
     weeks,
     latest_week: weeks.at(-1) ?? null,
+    section_pattern_summary: sectionPatternSummary,
     section_patterns: sectionPatterns,
     position_trend: positionTrend,
     clusters,

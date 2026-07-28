@@ -194,7 +194,11 @@ Current truth is `PM2 + 3001`.
 
 Current Zaruku source truth:
 - Yandex Metrika: collect only counter `66624469`; counters `29137835`, `105559308`, and `99078698` are on hold/inactive in `canonical_source_account_collection_settings`.
-- Yandex Webmaster: Zaruku host `https:zaruku.ru:443` is connected for canonical daily summary, query, and URL/page facts. URL/page rows live in `canonical_fact_webmaster_pages_daily`; the dashboard read model should expose `zaruku_seo.webmaster.data_availability.pages = true`.
+- Yandex Webmaster: Zaruku host `https:zaruku.ru:443` is connected for canonical daily summary, query, and URL/page facts. URL/page rows live in `canonical_fact_webmaster_pages_daily`; the dashboard read model should expose `zaruku_seo.webmaster.data_availability.pages = true`. Branch `codex/zaruku-product-readiness` restores the missing page writer in `fetch_yandex_webmaster_canonical.py`, but it has not been deployed or exercised end-to-end; do not call RD-10 operationally complete until an authorized run advances query and page maxima together.
+- Zaruku source freshness uses one product rule for Metrika, returning content, Webmaster, and GSC: compare the latest fact date with the UTC calendar date at the start of the current day; age `0..3` days is current and age `>3` days is delayed. The threshold is based on RD-09: normal Webmaster lag was 2 days in eight of nine clean observations, plus one day of slack. Do not change it without a new measurement. A newer failed cron/API run remains `failed` even when fact age is within the three-day boundary.
+- `expected_frequency_hours = 24` for all four Zaruku collectors and is heartbeat schedule metadata only. It must never be substituted for acceptable fact age; GSC's publication lag does not turn its daily cron into a 72-hour schedule.
+- Root module `zaruku_collector_health.py` is the source-neutral RD-11/RD-12 completeness model. Python intentionally duplicates `ZARUKU_DATA_LAG_DAYS = 3`, guarded by a cross-language parity test against `src/lib/zaruku-seo.ts`. Partial dates are defined only through fact `ingestion_run_id -> canonical_collector_runs.status = 'failed'`; non-castable GSC IDs and orphaned references are separate lineage defects.
+- The 2026-07-28 SELECT-only RD-12 snapshot found four failed-lineage Webmaster dates (`2026-07-14..17`): queries 755 rows/4 dates, pages 942/2, summary 1/1; failed cron runs `1453` and `1471`; lineage defects 0. No backfill, collector run, cron edit, schema change, Telegram send, or deploy followed.
 - The JavaScript Webmaster weekly collector is a fail-closed tombstone. `fetch_yandex_webmaster_canonical.py` is the only fact writer. Tables `seo_webmaster_queries_weekly` and `seo_webmaster_pages_weekly` are deprecated, have no writer, and must not be read.
 - Google Search Console: Zaruku property `https://zaruku.ru/` is connected through root collector `fetch_gsc_canonical.py`, not the old temporary / teletask path. Daily query/page/country/device rows live in `canonical_fact_gsc_queries_daily`; optional Search appearance rows live in `canonical_fact_gsc_search_appearance_daily`; result/search type rows live in `canonical_fact_gsc_search_type_daily`. Canonical lineage is `source_key=google_search_console`; legacy compatibility columns are not contract fields. Optional-layer HTTP 400/403 makes the collector run `partial` while preserving successful core facts. The dashboard read model should expose `zaruku_seo.gsc.status = available` when rows exist and surface recent partial freshness.
 - `seo_ai_visibility_weekly` is deprecated, has no writer, and must not be read; use `seo_ai_visibility` and canonical AI-visibility facts.
@@ -246,7 +250,7 @@ Use `report_bd` and `report_bd_tech` unless there is an explicit migration away 
 
 Canonical daily jobs on VPS:
 - `06:12` Yandex Metrika canonical (`fetch_yandex_metrika_canonical.py --days-back 2 --run-type cron`)
-- `06:18` Yandex Metrika returning-content canonical for account `66624469`
+- `06:18` Yandex Metrika returning-content canonical for account `66624469` (`fetch_yandex_metrika_returning_canonical.py --account-id 66624469 --run-type cron`). The installed command was repaired on 2026-07-28; verification run `1694` succeeded and wrote 484 rows for `2026-07-24..2026-07-27`.
 - `06:20` LinkedIn
 - `06:30` Reddit
 - `06:32` GetIntent
@@ -255,7 +259,7 @@ Canonical daily jobs on VPS:
 - `06:35` VK Ads v2
 - `06:37` Hybrid
 - `06:50` Yandex Webmaster canonical daily collector
-- `06:55` Google Search Console canonical daily collector (`fetch_gsc_canonical.py --backfill-days 3 --run-type cron`)
+- `06:55` Google Search Console canonical daily collector (`fetch_gsc_canonical.py --backfill-days 3 --lag-days 3 --run-type cron`)
 - `07:05` canonical monitor
 - `07:10` Telegram summary
 

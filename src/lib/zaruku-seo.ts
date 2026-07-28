@@ -164,6 +164,8 @@ const SOURCE_FRESHNESS_CATALOG = [
   },
 ] as const;
 
+export const ZARUKU_DATA_LAG_DAYS = 3;
+
 function asNumber(value: unknown): number {
   const parsed = Number(value);
   return Number.isFinite(parsed) ? parsed : 0;
@@ -202,6 +204,17 @@ function parseDateValue(value: string | Date | null | undefined): Date | null {
   if (!value) return null;
   const date = value instanceof Date ? value : new Date(String(value).replace(" ", "T"));
   return Number.isNaN(date.getTime()) ? null : date;
+}
+
+function calendarDayAge(referenceDate: Date, now: Date) {
+  const dayMs = 24 * 60 * 60 * 1000;
+  const referenceDay = Date.UTC(
+    referenceDate.getUTCFullYear(),
+    referenceDate.getUTCMonth(),
+    referenceDate.getUTCDate(),
+  );
+  const currentDay = Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate());
+  return Math.floor((currentDay - referenceDay) / dayMs);
 }
 
 function formatPercent(value: number | null | undefined, digits = 0) {
@@ -421,6 +434,41 @@ function sourceFreshnessCatalogSql() {
   }).join("\n      ");
 }
 
+function sourceDataFreshnessCte() {
+  return `
+    source_data_freshness AS (
+      SELECT
+        'yandex_metrika' AS source_key,
+        MIN(report_date) AS success_date_from,
+        MAX(report_date) AS success_date_to,
+        COUNT(*) AS data_rows_written
+      FROM canonical_fact_site_analytics_daily
+      WHERE source_key = 'yandex_metrika'
+      UNION ALL
+      SELECT
+        'yandex_metrika_returning' AS source_key,
+        MIN(report_date) AS success_date_from,
+        MAX(report_date) AS success_date_to,
+        COUNT(*) AS data_rows_written
+      FROM canonical_fact_metrika_returning_pages_daily
+      UNION ALL
+      SELECT
+        'yandex_webmaster' AS source_key,
+        MIN(report_date) AS success_date_from,
+        MAX(report_date) AS success_date_to,
+        COUNT(*) AS data_rows_written
+      FROM canonical_fact_webmaster_summary_daily
+      UNION ALL
+      SELECT
+        'google_search_console' AS source_key,
+        MIN(report_date) AS success_date_from,
+        MAX(report_date) AS success_date_to,
+        COUNT(*) AS data_rows_written
+      FROM canonical_fact_gsc_queries_daily
+    )
+  `;
+}
+
 export function buildSourceFreshnessQuery(sourceKeys = SOURCE_FRESHNESS_CATALOG.map((source) => source.source_key)) {
   const scopedSourceKeys = sourceKeys.length > 0 ? sourceKeys : SOURCE_FRESHNESS_CATALOG.map((source) => source.source_key);
   // Collector runs have no account column, so the writer's run_mode is the
@@ -435,6 +483,7 @@ export function buildSourceFreshnessQuery(sourceKeys = SOURCE_FRESHNESS_CATALOG.
     WITH source_catalog AS (
       ${sourceFreshnessCatalogSql()}
     ),
+    ${sourceDataFreshnessCte()},
     scoped_sources AS (
       SELECT *
       FROM source_catalog
@@ -477,8 +526,7 @@ export function buildSourceFreshnessQuery(sourceKeys = SOURCE_FRESHNESS_CATALOG.
         SELECT r2.source_key, MAX(r2.id) AS latest_success_id
         FROM canonical_collector_runs r2
         INNER JOIN scoped_sources ss ON ss.source_key = r2.source_key
-        WHERE r2.run_type = 'cron'
-          AND r2.run_mode = ss.run_mode
+        WHERE r2.run_mode = ss.run_mode
           AND r2.status = 'success'
         GROUP BY r2.source_key
       ) latest ON latest.latest_success_id = r.id
@@ -504,18 +552,8 @@ export function buildSourceFreshnessQuery(sourceKeys = SOURCE_FRESHNESS_CATALOG.
       latest_run.status AS last_status,
       COALESCE(latest_run.finished_at, latest_run.started_at) AS last_finished_at,
       latest_success.finished_at AS last_success_at,
-      latest_success.date_from AS success_date_from,
-      latest_success.date_to AS success_date_to,
-      CASE
-        WHEN confirmed_metrika_coverage.source_key IS NOT NULL
-          THEN confirmed_metrika_coverage.confirmed_date_from
-        ELSE latest_success.date_from
-      END AS confirmed_date_from,
-      CASE
-        WHEN confirmed_metrika_coverage.source_key IS NOT NULL
-          THEN confirmed_metrika_coverage.confirmed_date_to
-        ELSE latest_success.date_to
-      END AS confirmed_date_to,
+      COALESCE(data.success_date_from, latest_success.date_from) AS success_date_from,
+      COALESCE(data.success_date_to, latest_success.date_to) AS success_date_to,
       latest_success.rows_read AS success_rows_read,
       latest_success.rows_written AS success_rows_written,
       COALESCE(latest_error.finished_at, latest_error.started_at) AS last_error_at,
@@ -524,7 +562,7 @@ export function buildSourceFreshnessQuery(sourceKeys = SOURCE_FRESHNESS_CATALOG.
     LEFT JOIN latest_run ON latest_run.source_key = ss.source_key
     LEFT JOIN latest_success ON latest_success.source_key = ss.source_key
     LEFT JOIN latest_error ON latest_error.source_key = ss.source_key
-    LEFT JOIN confirmed_metrika_coverage ON confirmed_metrika_coverage.source_key = ss.source_key
+    LEFT JOIN source_data_freshness data ON data.source_key = ss.source_key
     ORDER BY FIELD(ss.source_key, 'yandex_metrika', 'yandex_webmaster', 'google_search_console')
   `,
     params: [...scopedSourceParams, ...coverageParams],
@@ -538,32 +576,37 @@ export function normalizeSourceFreshnessRow(row: SourceFreshnessDbRow, now = new
   const lastErrorAt = formatDateTimeValue(row.last_error_at);
   const lastFinishedDate = parseDateValue(row.last_finished_at);
   const lastSuccessDate = parseDateValue(row.last_success_at);
+  const lastSuccessDateTo = parseDateValue(formatDateOnlyValue(row.success_date_to));
   const rowsRead = Math.round(asNumber(row.success_rows_read));
   const rowsWritten = Math.round(asNumber(row.success_rows_written));
   const importedRowsText = formatEnglishInteger(rowsWritten);
   const status = asString(row.last_status) || null;
   const hasNewerProblem =
-    (status === "failed" || status === "partial") &&
+    status === "failed" &&
     lastFinishedDate != null &&
     (lastSuccessDate == null || lastFinishedDate.getTime() >= lastSuccessDate.getTime());
-  const successAgeHours = lastSuccessDate ? (now.getTime() - lastSuccessDate.getTime()) / (60 * 60 * 1000) : Infinity;
+  const freshnessReferenceDate = lastSuccessDateTo ?? lastSuccessDate;
+  const successAgeDays = freshnessReferenceDate ? calendarDayAge(freshnessReferenceDate, now) : Infinity;
 
   let freshnessStatus: ZarukuSourceFreshnessRow["freshness_status"];
   let note: string;
   if (!lastFinishedAt && !lastSuccessAt) {
     freshnessStatus = "disabled";
     note = "Cron collector ещё не запускался.";
+  } else if (freshnessReferenceDate == null) {
+    freshnessStatus = "disabled";
+    note = "Последний сбор подтвердил успешный запуск, но факты в БД по этому источнику пока не появились.";
   } else if (hasNewerProblem) {
     freshnessStatus = "failed";
     note = lastSuccessAt
       ? `Последний cron collector упал после последнего successful import. Последний successful cron записал ${importedRowsText} rows.`
       : "Последний cron collector упал; successful import ещё не найден.";
-  } else if (successAgeHours > expectedFrequencyHours * 1.5) {
+  } else if (successAgeDays > ZARUKU_DATA_LAG_DAYS) {
     freshnessStatus = "delayed";
-    note = `Последний successful cron collector старше ожидаемого окна; записал ${importedRowsText} rows.`;
+    note = `Последние факты в БД старше ожидаемого окна; записано ${importedRowsText} rows.`;
   } else {
     freshnessStatus = "healthy";
-    note = `Последний successful cron collector записал ${importedRowsText} rows.`;
+    note = `Последние факты в БД подтверждены; записано ${importedRowsText} rows.`;
   }
 
   const activeErrorAt = hasNewerProblem ? lastErrorAt : null;
@@ -850,6 +893,25 @@ export function buildContentSections(pageRows: ZarukuSeoMetricRow[], patterns: Z
     }))
     .sort((a, b) => b.pageviews - a.pageviews)
     .slice(0, 12);
+}
+
+function buildContentSectionsSummary(
+  pageRows: ZarukuSeoMetricRow[],
+  sectionPatterns: ZarukuSeoSectionPattern[],
+  sectionPatternSummary: { section_pattern_count: number; section_patterns_updated_at: string | null } | null,
+) {
+  const totalPageviews = pageRows.reduce((sum, page) => sum + asNumber(page.pageviews), 0);
+  const unmatchedPageviews = pageRows.reduce((sum, page) => {
+    if (matchSectionPattern(page.url ?? "", sectionPatterns)) return sum;
+    return sum + asNumber(page.pageviews);
+  }, 0);
+
+  return {
+    section_pattern_count: sectionPatternSummary?.section_pattern_count ?? sectionPatterns.length,
+    unmatched_pageviews: unmatchedPageviews,
+    unmatched_share: totalPageviews > 0 ? (unmatchedPageviews / totalPageviews) * 100 : 0,
+    section_patterns_updated_at: sectionPatternSummary?.section_patterns_updated_at ?? null,
+  };
 }
 
 export function buildPageCollections(
@@ -1141,15 +1203,9 @@ function buildDataQuality({
       severity: queryCoverage > 0 ? "info" : "warning",
     },
     {
-      title: "Запрос → посадочная",
-      value: "неполный",
-      note: "Метрика стабильно даёт связку поисковая система → посадочная страница, но связка поисковая фраза → посадочная страница может быть пустой.",
-      severity: "warning",
-    },
-    {
-      title: "API Метрики",
-      value: metrikaErrors.length > 0 ? `${metrikaErrors.length} ожидает` : "ок",
-      note: metrikaErrors.length > 0 ? "Часть расширенных разрезов недоступна в текущем окружении." : "Расширенные onsite-разрезы доступны.",
+      title: "Расширенные срезы Метрики",
+      value: metrikaErrors.length > 0 ? "частично" : "ок",
+      note: metrikaErrors.length > 0 ? "Часть расширенных срезов сейчас недоступна." : "Расширенные срезы доступны.",
       severity: metrikaErrors.length > 0 ? "warning" : "ok",
     },
   ];
@@ -1238,6 +1294,7 @@ export async function loadZarukuSeoData(
     80,
     entryPageRows,
   );
+  const contentSectionsSummary = buildContentSectionsSummary(pageRows, seoOs.section_patterns, seoOs.section_pattern_summary);
   const webmaster = facts.webmaster;
   const gsc = facts.gsc;
   const requestedPeriod = dailyPeriod.requested;
@@ -1322,8 +1379,8 @@ export async function loadZarukuSeoData(
   });
   const contentUsesBreakdownVisits = entryPageRows.length > 0;
   const contentFallbackMessage = contentUsesBreakdownVisits
-    ? "Страница объединяет unsegmented canonical page facts и RF entry-page metrics."
-    : "Показаны canonical page facts; визиты и поведенческие метрики входов недоступны.";
+    ? "Данные страницы дополнены метриками входных визитов по России."
+    : "Для страниц доступны пользователи и просмотры; метрики входных визитов пока недоступны.";
   const contentMeta = (rowCount: number) => makeZarukuDatasetMeta({
     rowCount,
     sourceAvailable: sectionEntrancesReport.available,
@@ -1390,6 +1447,7 @@ export async function loadZarukuSeoData(
     traffic_channels: trafficChannels,
     technical_tail: technicalTail,
     organic_trend: organicTrend,
+    content_sections_summary: contentSectionsSummary,
     search_engines: filterSearchEngineRows(searchEnginesReport.rows),
     search_phrases: searchPhrasesReport.rows,
     organic_landing_pages: organicLandingReport.rows,

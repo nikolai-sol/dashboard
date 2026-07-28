@@ -6,7 +6,10 @@ import {
   previousAvailableWeek,
   reconcileWeekSelection,
   shouldShowSeoWeekToolbar,
+  toWeekSelectionSlots,
   updateWeekSelection,
+  WEEK_SELECTION_FIELD_BY_SLOT,
+  zarukuTimeOwner,
 } from "@/components/zaruku-seo-week-selection";
 
 const weeks = ["2026-W28", "2026-W30", "2026-W31"];
@@ -15,6 +18,17 @@ test("createWeekSelection starts at the latest week without comparison", () => {
   assert.deepEqual(createWeekSelection("2026-W31"), {
     primaryWeek: "2026-W31",
     comparisonWeek: null,
+  });
+});
+
+test("A and B slots have explicit fields and values", () => {
+  assert.deepEqual(WEEK_SELECTION_FIELD_BY_SLOT, {
+    A: "primaryWeek",
+    B: "comparisonWeek",
+  });
+  assert.deepEqual(toWeekSelectionSlots({ primaryWeek: "2026-W31", comparisonWeek: "2026-W30" }), {
+    A: "2026-W31",
+    B: "2026-W30",
   });
 });
 
@@ -62,4 +76,13 @@ test("SEO week toolbar is scoped to SEO, Work, and Content tabs", () => {
   assert.equal(shouldShowSeoWeekToolbar("overview"), false);
   assert.equal(shouldShowSeoWeekToolbar("audience"), false);
   assert.equal(shouldShowSeoWeekToolbar("quality"), false);
+});
+
+test("each Zaruku tab has one explicit time owner", () => {
+  assert.equal(zarukuTimeOwner("overview"), "url");
+  assert.equal(zarukuTimeOwner("audience"), "url");
+  assert.equal(zarukuTimeOwner("seo"), "week");
+  assert.equal(zarukuTimeOwner("content"), "week");
+  assert.equal(zarukuTimeOwner("work"), "week");
+  assert.equal(zarukuTimeOwner("quality"), "none");
 });

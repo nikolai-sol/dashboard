@@ -19,6 +19,8 @@ import {
   resolveSafeExternalUrl,
   type PositionComparisonRow,
 } from "@/components/zaruku-seo-analytics";
+import { ZARUKU_CHART_PALETTE } from "@/lib/chart-palette";
+import ZarukuTableFrame from "@/components/ZarukuTableFrame";
 
 type Props = {
   seoOs: ZarukuSeoOsData;
@@ -108,7 +110,7 @@ export default function ZarukuSeoAnalytics({ seoOs, primaryWeek, comparisonWeek,
 
   if (!seoOs.data_availability.positions) {
     return (
-      <section className="rounded-lg border border-slate-200 bg-white px-5 py-8">
+      <section className="card-surface zaruku-panel px-5 py-8">
         <h3 className="text-base font-semibold text-slate-900">Позиции SEO временно недоступны</h3>
         <p className="mt-2 text-sm text-slate-500">Не удалось загрузить данные позиций. Повторите попытку позже.</p>
       </section>
@@ -116,8 +118,8 @@ export default function ZarukuSeoAnalytics({ seoOs, primaryWeek, comparisonWeek,
   }
 
   return (
-    <section className="rounded-lg border border-slate-200 bg-white">
-      <header className="flex flex-wrap items-start justify-between gap-3 border-b border-slate-100 px-5 py-4">
+    <section className="card-surface zaruku-panel">
+      <header className="zaruku-panel-header">
         <div>
           <h3 className="text-base font-semibold text-slate-900">Позиции по разделам</h3>
           <p className="mt-1 text-xs text-slate-500">SEO OS: отслеживаемые позиции в выдаче Яндекса</p>
@@ -138,20 +140,20 @@ export default function ZarukuSeoAnalytics({ seoOs, primaryWeek, comparisonWeek,
         {plottedRows.length ? (
           <ResponsiveContainer width="100%" height={280}>
             <LineChart data={plottedRows} margin={{ top: 8, right: 12, left: -12, bottom: 0 }}>
-              <CartesianGrid stroke="#eef2f7" strokeDasharray="3 3" vertical={false} />
-              <XAxis dataKey="section" tick={{ fontSize: 12, fill: "#64748b" }} axisLine={false} tickLine={false} />
+              <CartesianGrid stroke={ZARUKU_CHART_PALETTE.grid} strokeDasharray="3 3" vertical={false} />
+              <XAxis dataKey="section" tick={{ fontSize: 12, fill: ZARUKU_CHART_PALETTE.axis }} axisLine={false} tickLine={false} />
               <YAxis
                 domain={[1, "dataMax + 1"]}
                 reversed
                 allowDecimals={false}
-                tick={{ fontSize: 12, fill: "#64748b" }}
+                tick={{ fontSize: 12, fill: ZARUKU_CHART_PALETTE.axis }}
                 axisLine={false}
                 tickLine={false}
-                label={{ value: "Позиция", angle: -90, position: "insideLeft", fill: "#64748b", fontSize: 12 }}
+                label={{ value: "Позиция", angle: -90, position: "insideLeft", fill: ZARUKU_CHART_PALETTE.axis, fontSize: 12 }}
               />
               <Tooltip content={<PositionTooltip comparisonWeek={comparisonWeek} />} />
-              <Line type="linear" dataKey="primary_position" name={`A ${primaryWeek ?? ""}`} stroke="#0d9488" strokeWidth={3} dot={{ r: 3 }} connectNulls={false} />
-              {comparisonWeek ? <Line type="linear" dataKey="comparison_position" name={`B ${comparisonWeek}`} stroke="#64748b" strokeWidth={2} strokeDasharray="6 4" dot={{ r: 2 }} connectNulls={false} /> : null}
+              <Line type="linear" dataKey="primary_position" name={`A ${primaryWeek ?? ""}`} stroke={ZARUKU_CHART_PALETTE.seo} strokeWidth={3} dot={{ r: 3 }} connectNulls={false} />
+              {comparisonWeek ? <Line type="linear" dataKey="comparison_position" name={`B ${comparisonWeek}`} stroke={ZARUKU_CHART_PALETTE.comparison} strokeWidth={2} strokeDasharray="6 4" dot={{ r: 2 }} connectNulls={false} /> : null}
             </LineChart>
           </ResponsiveContainer>
         ) : (
@@ -184,8 +186,8 @@ export default function ZarukuSeoAnalytics({ seoOs, primaryWeek, comparisonWeek,
           </div>
         </div>
 
-        <div className="mt-3 max-h-[29rem] overflow-auto rounded-md border border-slate-100">
-          <table className="w-full min-w-[960px] table-fixed text-sm">
+        <ZarukuTableFrame mode="operational" label="Кластеры поисковых запросов" className="mt-3">
+          <table className="zaruku-table min-w-[960px] table-fixed">
             <colgroup>
               <col className="w-[15%]" />
               <col className="w-[30%]" />
@@ -194,7 +196,7 @@ export default function ZarukuSeoAnalytics({ seoOs, primaryWeek, comparisonWeek,
               <col className="w-[23%]" />
               <col className="w-[12%]" />
             </colgroup>
-            <thead className="sticky top-0 z-10 bg-slate-50 text-left text-xs uppercase text-slate-400 shadow-[0_1px_0_0_rgb(241_245_249)]">
+            <thead className="sticky top-0 z-10 bg-slate-50 text-left text-xs uppercase text-slate-400 shadow-[0_1px_0_0_var(--border)]">
               <tr>
                 <th className="px-3 py-2.5 font-medium">Раздел</th>
                 <th className="px-3 py-2.5 font-medium">Запрос</th>
@@ -233,7 +235,7 @@ export default function ZarukuSeoAnalytics({ seoOs, primaryWeek, comparisonWeek,
               ) : null}
             </tbody>
           </table>
-        </div>
+        </ZarukuTableFrame>
       </div> : null}
     </section>
   );

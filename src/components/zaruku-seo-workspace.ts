@@ -35,15 +35,27 @@ export type SeoQuerySortKey =
   | "google_position"
   | "webmaster_position"
   | "seo_os_position"
-  | "impressions"
-  | "clicks";
+  | "google_impressions"
+  | "google_clicks"
+  | "google_ctr"
+  | "webmaster_impressions"
+  | "webmaster_clicks"
+  | "webmaster_ctr";
 
 export type SeoQuerySort = {
   key: SeoQuerySortKey;
   direction: "asc" | "desc";
 };
 
-export type SeoQueryFilter = "all" | "top3" | "top10" | "top20" | "improved" | "declined" | "not_found";
+export type SeoQueryFilter =
+  | "all"
+  | "confirmed_landing"
+  | "top3"
+  | "top10"
+  | "top20"
+  | "improved"
+  | "declined"
+  | "not_found";
 
 export type UnifiedSeoPageRow = {
   key: string;
@@ -79,6 +91,12 @@ type MetricsAccumulator = {
   unweightedPosition: number;
   positionCount: number;
 };
+
+function normalizePosition(value: number | null | undefined): number | null {
+  if (value === null || value === undefined) return null;
+  if (!Number.isFinite(value)) return null;
+  return value > 0 ? value : null;
+}
 
 type MutableQueryRow = {
   key: string;
@@ -167,10 +185,15 @@ function addMetrics(
     return;
   }
 
-  accumulator.unweightedPosition += row.average_position;
+  const position = normalizePosition(row.average_position);
+  if (position === null) {
+    return;
+  }
+
+  accumulator.unweightedPosition += position;
   accumulator.positionCount += 1;
   if (row.impressions > 0) {
-    accumulator.weightedPosition += row.average_position * row.impressions;
+    accumulator.weightedPosition += position * row.impressions;
     accumulator.positionWeight += row.impressions;
   }
 }
@@ -274,15 +297,23 @@ export function buildUnifiedSeoQueryRows({
 function querySortValue(row: UnifiedSeoQueryRow, key: SeoQuerySortKey): number | null {
   switch (key) {
     case "google_position":
-      return row.google?.average_position ?? null;
+      return normalizePosition(row.google?.average_position);
     case "webmaster_position":
-      return row.webmaster?.average_position ?? null;
+      return normalizePosition(row.webmaster?.average_position);
     case "seo_os_position":
-      return row.seo_os?.tracked_position ?? null;
-    case "impressions":
-      return (row.google?.impressions ?? 0) + (row.webmaster?.impressions ?? 0);
-    case "clicks":
-      return (row.google?.clicks ?? 0) + (row.webmaster?.clicks ?? 0);
+      return normalizePosition(row.seo_os?.tracked_position);
+    case "google_impressions":
+      return row.google?.impressions ?? null;
+    case "google_clicks":
+      return row.google?.clicks ?? null;
+    case "google_ctr":
+      return row.google?.ctr ?? null;
+    case "webmaster_impressions":
+      return row.webmaster?.impressions ?? null;
+    case "webmaster_clicks":
+      return row.webmaster?.clicks ?? null;
+    case "webmaster_ctr":
+      return row.webmaster?.ctr ?? null;
   }
 }
 
@@ -302,22 +333,23 @@ export function sortUnifiedSeoQueryRows(rows: UnifiedSeoQueryRow[], sort: SeoQue
 
 export function filterUnifiedSeoQueryRows(rows: UnifiedSeoQueryRow[], filter: SeoQueryFilter): UnifiedSeoQueryRow[] {
   if (filter === "all") return rows;
+  if (filter === "confirmed_landing") return rows.filter((row) => row.google_pages.length > 0);
   if (filter === "improved") return rows.filter((row) => (row.seo_os?.delta_prev ?? 0) < 0);
   if (filter === "declined") return rows.filter((row) => (row.seo_os?.delta_prev ?? 0) > 0);
   if (filter === "not_found") {
     return rows.filter((row) => row.seo_os?.status === "no_data" || [
-      row.google?.average_position,
-      row.webmaster?.average_position,
-      row.seo_os?.tracked_position,
-    ].every((position) => position === null || position === undefined));
+      normalizePosition(row.google?.average_position),
+      normalizePosition(row.webmaster?.average_position),
+      normalizePosition(row.seo_os?.tracked_position),
+    ].every((position) => position === null));
   }
 
   const limit = filter === "top3" ? 3 : filter === "top10" ? 10 : 20;
   return rows.filter((row) => [
-    row.google?.average_position,
-    row.webmaster?.average_position,
-    row.seo_os?.tracked_position,
-  ].some((position) => position !== null && position !== undefined && position <= limit));
+    normalizePosition(row.google?.average_position),
+    normalizePosition(row.webmaster?.average_position),
+    normalizePosition(row.seo_os?.tracked_position),
+  ].some((position) => position !== null && position <= limit));
 }
 
 function displayUrl(rawUrl: string, key: string): string {

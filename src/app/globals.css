@@ -38,6 +38,11 @@
   --color-popover: var(--popover);
   --color-card-foreground: var(--card-foreground);
   --color-card: var(--card);
+  --color-accent-seo: var(--accent-seo);
+  --color-accent-pos: var(--accent-pos);
+  --color-ink: var(--ink);
+  --color-surface: var(--surface);
+  --color-surface-alt: var(--surface-alt);
   --radius-sm: calc(var(--radius) * 0.6);
   --radius-md: calc(var(--radius) * 0.8);
   --radius-lg: var(--radius);
@@ -48,6 +53,14 @@
 }
 
 :root {
+  --accent-seo: #2f7f6f;
+  --accent-pos: #7c5cff;
+  --ink: #1b2637;
+  --surface: #ffffff;
+  --surface-alt: #f7f9fa;
+  --card-pad: 20px;
+  --gap-card: 16px;
+  --gap-section: 24px;
   --background: #fafbfc;
   --foreground: #0f172a;
   --card: oklch(1 0 0);
@@ -58,7 +71,7 @@
   --primary-foreground: oklch(0.985 0 0);
   --secondary: oklch(0.97 0 0);
   --secondary-foreground: oklch(0.205 0 0);
-  --muted: oklch(0.97 0 0);
+  --muted: #6b7a8c;
   --muted-foreground: oklch(0.556 0 0);
   --accent: oklch(0.97 0 0);
   --accent-foreground: oklch(0.205 0 0);
@@ -71,7 +84,7 @@
   --chart-3: oklch(0.546 0.245 262.881);
   --chart-4: oklch(0.488 0.243 264.376);
   --chart-5: oklch(0.424 0.199 265.638);
-  --radius: 0.625rem;
+  --radius: 12px;
   --sidebar: oklch(0.985 0 0);
   --sidebar-foreground: oklch(0.145 0 0);
   --sidebar-primary: oklch(0.205 0 0);
@@ -135,8 +148,136 @@
 
 @layer components {
   .card-surface {
-    @apply rounded-xl border border-slate-200 bg-white shadow-sm;
+    min-width: 0;
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    background: var(--surface);
+    box-shadow: 0 1px 2px rgb(15 23 42 / 0.06);
     animation: rise-in 500ms ease-out both;
+  }
+
+  .zaruku-panel {
+    min-width: 0;
+  }
+
+  .zaruku-dashboard {
+    --zaruku-font-display: Georgia, Cambria, "Times New Roman", serif;
+    --zaruku-font-sans: var(--font-inter), Inter, Arial, sans-serif;
+    font-family: var(--zaruku-font-sans);
+  }
+
+  .zaruku-dashboard :is(h1, h2, h3, h4) {
+    font-family: var(--zaruku-font-display);
+  }
+
+  .zaruku-dashboard .zaruku-kpi-value {
+    font-family: var(--zaruku-font-display);
+    font-variant-numeric: tabular-nums;
+  }
+
+  .zaruku-dashboard .zaruku-table thead {
+    font-family: var(--zaruku-font-sans);
+    font-size: 13px !important;
+    line-height: 1.4 !important;
+    text-transform: uppercase;
+    color: var(--muted) !important;
+  }
+
+  .zaruku-panel-header {
+    display: flex;
+    min-width: 0;
+    flex-wrap: wrap;
+    align-items: flex-start;
+    justify-content: space-between;
+    gap: 0.75rem;
+    border-bottom: 1px solid var(--border);
+    padding: var(--card-pad);
+  }
+
+  .zaruku-panel-body {
+    min-width: 0;
+    padding: var(--card-pad);
+  }
+
+  .zaruku-section-stack {
+    display: grid;
+    min-width: 0;
+    gap: var(--gap-section);
+  }
+
+  .zaruku-table {
+    width: 100%;
+    border-collapse: separate;
+    border-spacing: 0;
+    font-size: 0.875rem;
+  }
+
+  .zaruku-table-head {
+    background: var(--surface-alt);
+    color: var(--muted);
+    text-align: left;
+    font-size: 13px;
+    line-height: 1.4;
+    text-transform: uppercase;
+  }
+
+  .zaruku-table-frame-bounded .zaruku-table-head {
+    position: sticky;
+    top: 0;
+    z-index: 10;
+  }
+
+  .zaruku-table-row {
+    background: var(--surface);
+  }
+
+  .zaruku-table-row + .zaruku-table-row {
+    border-top: 1px solid var(--border);
+  }
+
+  .zaruku-table-cell {
+    padding: 0.625rem 0.75rem;
+    vertical-align: top;
+  }
+
+  .zaruku-table-number {
+    text-align: right;
+    font-variant-numeric: tabular-nums;
+  }
+
+  @media (min-width: 1280px) {
+    .zaruku-overview-grid {
+      height: clamp(512px, calc(100vh - 364px), 600px);
+      grid-template-rows: 96px minmax(129px, auto) minmax(280px, 1fr);
+      gap: var(--gap-card) !important;
+      overflow: hidden;
+    }
+
+    .zaruku-overview-grid > [data-panel-id] {
+      min-width: 0;
+      height: 100%;
+      overflow: hidden;
+    }
+
+    .zaruku-overview-grid > [data-panel-id] > * {
+      height: 100%;
+    }
+
+    .zaruku-overview-grid > [data-panel-id="overview.north_star"] {
+      grid-row: 1;
+    }
+
+    .zaruku-overview-grid > [data-panel-id="overview.traffic_health"] {
+      grid-row: 2;
+    }
+
+    .zaruku-overview-grid > [data-panel-id="overview.channels"] {
+      grid-row: 3;
+    }
+
+    .zaruku-overview-grid > [data-panel-id="overview.organic_search"] {
+      grid-row: 3;
+    }
   }
 
   .kpi-grid {

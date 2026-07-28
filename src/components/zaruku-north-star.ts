@@ -260,7 +260,7 @@ export function buildWeeklyFocus({
       ? `Фокус SEO: ${opportunity.section ?? opportunity.target_url ?? "раздел не задан"} — ${readableOpportunityType(opportunity.opportunity_type)}`
       : "Фокус SEO: нет ожидающих или принятых возможностей на выбранной неделе",
     ai: ai
-      ? `ИИ: ${ai.mentions.toLocaleString("ru-RU")} упоминаний и ${ai.citations.toLocaleString("ru-RU")} цитирований за ${ai.period}${ai.provenance ? ` · ручной baseline ${ai.provenance}` : ""}`
+      ? `ИИ: ${ai.mentions.toLocaleString("ru-RU")} упоминаний и ${ai.citations.toLocaleString("ru-RU")} цитирований за ${ai.period}${ai.provenance ? ` · контрольная точка загружена вручную, источник ${ai.provenance}` : ""}`
       : "ИИ: для выбранной недели нет связанного месячного среза",
     pipeline: run
       ? `Конвейер: ${run.week} ${readableRunStatus(run.status)}, дайджест ${run.digest_count ?? "—"}, ${taskStatusSummary(weekTasks) || "задач нет"}`
