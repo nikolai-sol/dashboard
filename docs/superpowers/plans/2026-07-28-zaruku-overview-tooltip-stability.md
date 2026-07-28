@@ -15,6 +15,7 @@
 - Popovers remain inside a 16 px viewport margin and cannot be clipped by panel overflow.
 - Keep one information trigger beside each north-star metric and remove the heading-level duplicate.
 - Keep period text permanently stable; only its dedicated button opens extra information.
+- Every `.zaruku-table` header and body cell has a 12 px horizontal and 10 px vertical baseline inset; table-specific utilities may override it.
 - Preserve metric values, periods, provenance, source data, and fixed Overview sizing.
 - Add no dependency.
 - Deploy only after tests, type checking, lint, build, and local UI checks pass.
@@ -371,7 +372,80 @@ Expected: tests, type checking, and lint PASS.
 
 ---
 
-### Task 4: Full verification and memory update
+### Task 4: Restore SEO table cell insets
+
+**Files:**
+- Modify: `src/app/globals.css`
+- Modify: `src/components/ZarukuSeoDashboard.tsx`
+- Modify: `src/components/ZarukuSeoDashboard.ui.test.ts`
+- Modify: `src/components/zaruku-dashboard-primitives.test.ts`
+
+**Interfaces:**
+- Consumes: existing `.zaruku-table`, `.zaruku-table-cell`, and `ZarukuTableFrame`
+- Produces: a shared 12 px horizontal / 10 px vertical cell inset and a semantic-health table inside the shared standard frame
+
+- [ ] **Step 1: Add failing contract tests**
+
+```ts
+assert.match(globalsSource, /\.zaruku-table :is\(th, td\)\s*\{[^}]*padding:\s*0\.625rem 0\.75rem/s);
+assert.match(source, /<ZarukuTableFrame mode="standard" label="Семантические кластеры">/);
+assert.match(source, /<table className="zaruku-table min-w-\[760px\]">/);
+```
+
+- [ ] **Step 2: Run the focused tests and verify failure**
+
+Run:
+
+```bash
+node --import tsx --test src/components/ZarukuSeoDashboard.ui.test.ts src/components/zaruku-dashboard-primitives.test.ts
+```
+
+Expected: FAIL because `.zaruku-table` has no default cell padding and semantic health uses a local overflow wrapper without the shared table class.
+
+- [ ] **Step 3: Add the shared inset and migrate semantic health**
+
+In `src/app/globals.css`, extend the existing cell rule without affecting comparison tables that do not use `.zaruku-table`:
+
+```css
+.zaruku-table-cell,
+.zaruku-table :is(th, td) {
+  padding: 0.625rem 0.75rem;
+  vertical-align: top;
+}
+```
+
+In `SemanticHealthPanel`, replace the local `overflow-x-auto` wrapper with:
+
+```tsx
+<ZarukuTableFrame mode="standard" label="Семантические кластеры">
+  <table className="zaruku-table min-w-[760px]">
+    {/* existing header, rows, values, and empty state unchanged */}
+  </table>
+</ZarukuTableFrame>
+```
+
+- [ ] **Step 4: Verify every Zaruku table uses either the shared inset or explicit horizontal padding**
+
+Run:
+
+```bash
+node --import tsx --test src/components/ZarukuSeoDashboard.ui.test.ts src/components/zaruku-dashboard-primitives.test.ts src/components/ZarukuSeoOperations.test.ts src/components/ZarukuSeoAnalytics.test.ts
+npm run typecheck
+npx eslint src/components/ZarukuSeoDashboard.tsx src/components/ZarukuSeoDashboard.ui.test.ts src/components/zaruku-dashboard-primitives.test.ts
+```
+
+Expected: PASS. Source audit shows no `.zaruku-table` cell relies on zero horizontal padding.
+
+- [ ] **Step 5: Commit the table contract**
+
+```bash
+git add src/app/globals.css src/components/ZarukuSeoDashboard.tsx src/components/ZarukuSeoDashboard.ui.test.ts src/components/zaruku-dashboard-primitives.test.ts
+git commit -m "fix(zaruku): restore table cell spacing"
+```
+
+---
+
+### Task 5: Full verification and memory update
 
 **Files:**
 - Modify: `DASHBOARDS-MEMORY.md`
@@ -420,7 +494,7 @@ git commit -m "docs: record Zaruku popover contract"
 
 ---
 
-### Task 5: Deploy and production verification
+### Task 6: Deploy and production verification
 
 **Files:**
 - No source changes expected
@@ -459,4 +533,3 @@ Expected: `dashboard-next` is `online`; both health requests exit 0 with healthy
 Repeat the 430 and 1440 px checks for unclipped KPI popovers, stable period popover, no duplicate icon, and no value/icon overlap.
 
 Expected: production matches local verification. If the release-specific smoke check fails, run `npm run deploy:rollback`, verify both health endpoints again, and report the failed interaction and rollback result.
-
