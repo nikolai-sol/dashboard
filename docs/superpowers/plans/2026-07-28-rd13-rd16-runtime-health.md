@@ -12,8 +12,9 @@
 
 - Do not run collectors or backfills.
 - Do not change cron, environment files, schema, or secrets.
-- RD-16 §1 may replace only `/root/reportingdash-canonical/fetch_gsc_canonical.py` after a clean diff and dated backup.
+- The initial RD-16 rollout replaced only `/root/reportingdash-canonical/fetch_gsc_canonical.py`. The follow-up rollout authorized on 2026-07-28 may replace the active RD-10/RD-11/RD-15 runtime files only after a clean diff, runtime-venv compile, and dated recoverable backup.
 - `--layers optional` remains gated on the successful scheduled GSC cron on 2026-07-29 at 06:55.
+- Webmaster backfill remains gated on the successful scheduled Webmaster cron on 2026-07-29 at 06:50, followed by a fresh SELECT-only gap/lineage snapshot and review of the exact date list.
 - Unknown HTTP 400 responses remain fatal; only dates excluded by the configured collection floor are skipped.
 
 ---
@@ -103,3 +104,54 @@
 - [ ] **Step 1: On 2026-07-29 after 06:55, verify the scheduled GSC run has `status=success` and `error_count=0`.**
 - [ ] **Step 2: Only after that gate, design `--layers optional` so query/core upserts are unreachable in optional mode.**
 - [ ] **Step 3: Do not implement or execute this task in the current session.**
+
+### Task 6: Hold the July Webmaster recovery gate
+
+**Files:**
+- Read-only production input: `canonical_fact_site_analytics_daily`
+- Read-only production input: `canonical_fact_gsc_queries_daily`
+- Read-only production input: `canonical_fact_webmaster_queries_daily`
+- Read-only production input: `canonical_fact_webmaster_summary_daily`
+- Read-only production input: `canonical_fact_webmaster_pages_daily`
+- Read-only production input: `canonical_collector_runs`
+- Future execution target: `fetch_yandex_webmaster_canonical.py`
+
+**Interfaces:**
+- Consumes: account `66624469`, date window `2026-07-01..2026-07-21`, and canonical run lineage.
+- Produces: reviewed recovery scopes that distinguish absent layers from rows still owned by failed runs.
+
+- [x] **Step 1: Run a SELECT-only source/date matrix for 2026-07-01 through 2026-07-21.**
+
+Confirmed result:
+- Metrika has source rows on all 21 dates; no whole-day gap.
+- GSC core has rows on all 21 dates; optional `searchAppearance` zero-row dates are not treated as missing core data.
+- Webmaster query, summary, and page layers are all absent for `2026-07-01..09`.
+- Webmaster query and summary exist but page facts are absent for `2026-07-10..12`.
+- Webmaster has 1,698 failed-lineage rows across `2026-07-14..17`; this is a partial-data repair scope, not an absent-date scope.
+
+- [ ] **Step 2: After the scheduled Webmaster cron on 2026-07-29 at 06:50, require `status=success`, `error_count=0`, and advancing query/page maxima from the active cron path.**
+- [ ] **Step 3: After the scheduled GSC cron on 2026-07-29 at 06:55, require `status=success` and `error_count=0`; keep `--layers optional` blocked otherwise.**
+- [ ] **Step 4: Refresh the SELECT-only matrix and failed-lineage counts after both cron gates.**
+- [ ] **Step 5: Review recovery as three distinct scopes: full Webmaster `2026-07-01..09`, page-only `2026-07-10..12`, and failed-lineage repair `2026-07-14..17`. Do not silently include healthy `2026-07-13` or `2026-07-18..21`.**
+- [ ] **Step 6: Do not run a collector or backfill in the current session.**
+
+### Task 7: Deploy the committed runtime changes without exercising collectors
+
+**Files:**
+- Source: `fetch_yandex_webmaster_canonical.py`
+- Source: `fetch_yandex_metrika_canonical.py`
+- Source: `fetch_yandex_metrika_returning_canonical.py`
+- Source: `fetch_gsc_canonical.py`
+- Source: `zaruku_collector_health.py`
+- Source: `send_canonical_telegram_report.py`
+- Remote targets: paths resolved from the active root crontab.
+
+**Interfaces:**
+- Consumes: committed root revision, active crontab paths, current remote files, and each runtime interpreter.
+- Produces: byte-identical deployed files with dated backups and no collector/API execution.
+
+- [ ] **Step 1: Run the focused root tests and `py_compile`; stop on any failure.**
+- [ ] **Step 2: Resolve every target from active crontab and compare local/remote SHA-256 and content without reading secret values. Stop on any unexplained runtime-only lines.**
+- [ ] **Step 3: Compile staged files with the interpreter used by each active cron.**
+- [ ] **Step 4: Create dated recoverable backups and atomically replace only the reviewed runtime files.**
+- [ ] **Step 5: Verify remote SHA-256, mode, imports, and read-only health loading. Do not send Telegram and do not run collectors.**
