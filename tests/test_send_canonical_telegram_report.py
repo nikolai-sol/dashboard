@@ -1,5 +1,10 @@
+import json
+import tempfile
 import unittest
 import urllib.error
+from argparse import Namespace
+from datetime import date, datetime, timedelta, timezone
+from pathlib import Path
 from unittest import mock
 
 import send_canonical_telegram_report as report
@@ -31,10 +36,97 @@ ABBOTT_OK = {
     "incidents": [],
 }
 
+ZARUKU_HEALTH = [
+    {
+        "source_key": "yandex_webmaster",
+        "label": "Яндекс Вебмастер",
+        "run_status": "success",
+        "rows_written": 942,
+        "max_data_date": date(2026, 7, 25),
+        "data_lag_days": 3,
+    },
+    {
+        "source_key": "yandex_metrika",
+        "label": "Яндекс Метрика",
+        "run_status": "success",
+        "rows_written": 120,
+        "max_data_date": date(2026, 7, 27),
+        "data_lag_days": 1,
+    },
+    {
+        "source_key": "yandex_metrika_returning",
+        "label": "Яндекс Метрика · возвратный контент",
+        "run_status": "success",
+        "rows_written": 90,
+        "max_data_date": date(2026, 7, 26),
+        "data_lag_days": 2,
+    },
+    {
+        "source_key": "google_search_console",
+        "label": "Google Search Console",
+        "run_status": "success",
+        "rows_written": 500,
+        "max_data_date": date(2026, 7, 25),
+        "data_lag_days": 3,
+    },
+]
+
+EMPTY_PARTIAL_SCOPE = {
+    "dates": [],
+    "distinct_date_count": 0,
+    "row_count": 0,
+    "layer_count": 0,
+    "layers": {},
+    "sources": {},
+    "rows": [],
+}
+
 
 class TelegramReportTests(unittest.TestCase):
     def test_stable_order_appends_metrika(self):
+        self.assertEqual(report.SUMMARY_SOURCE_ORDER[-3], "between")
+        self.assertEqual(report.SUMMARY_SOURCE_ORDER[-2], "google_search_console")
         self.assertEqual(report.SUMMARY_SOURCE_ORDER[-1], "yandex_metrika")
+
+    def test_summary_includes_google_search_console_collector(self):
+        payload = {"summary": {"exit_code": 0}, "sources": []}
+        runs = [{
+            "source_key": "google_search_console",
+            "status": "success",
+            "run_type": "backfill",
+            "run_mode": "daily",
+            "rows_read": 40,
+            "rows_written": 35,
+            "rows_updated": 5,
+            "error_count": 0,
+            "started_at": "2026-07-20 05:40:00",
+        }]
+
+        text = report.build_summary_message(payload, runs, ABBOTT_OK)
+
+        self.assertIn("google search console: SUCCESS", text)
+        self.assertIn("type=BACKFILL", text)
+        self.assertIn("mode=daily", text)
+
+    def test_summary_includes_between_email_collector(self):
+        payload = {"summary": {"exit_code": 0}, "sources": []}
+        runs = [{
+            "source_key": "between",
+            "status": "success",
+            "run_type": "backfill",
+            "run_mode": "email_xlsx",
+            "rows_read": 16,
+            "rows_written": 16,
+            "rows_updated": 0,
+            "error_count": 0,
+            "started_at": "2026-07-20 05:40:00",
+        }]
+
+        text = report.build_summary_message(payload, runs, ABBOTT_OK)
+
+        self.assertIn("between email: SUCCESS", text)
+        self.assertIn("type=BACKFILL", text)
+        self.assertIn("mode=email_xlsx", text)
 
     def test_abbott_critical_triggers_alert(self):
         abbott = dict(ABBOTT_OK, overall="CRITICAL", incidents=[{
@@ -73,6 +165,151 @@ class TelegramReportTests(unittest.TestCase):
         self.assertLess(text.index("yandex_metrika"), text.index("Abbott"))
         self.assertIn("90602537", text)
         self.assertIn("returning", text)
+
+    def test_zaruku_summary_has_four_sources_in_stable_order(self):
+        lines = report.build_zaruku_summary_lines(ZARUKU_HEALTH, EMPTY_PARTIAL_SCOPE)
+        text = "\n".join(lines)
+        labels = [
+            "Яндекс Вебмастер",
+            "Яндекс Метрика",
+            "Яндекс Метрика · возвратный контент",
+            "Google Search Console",
+        ]
+        positions = [text.index(label) for label in labels]
+        self.assertEqual(positions, sorted(positions))
+        for expected in ("status=SUCCESS", "rows=", "max=", "lag="):
+            self.assertEqual(sum(expected in line for line in lines), 4)
+        self.assertNotIn("частичные даты", text)
+
+    def test_zaruku_summary_shows_partial_dates_only_when_present(self):
+        scope = dict(EMPTY_PARTIAL_SCOPE, dates=["2026-07-14", "2026-07-16"], distinct_date_count=2, row_count=1697, layer_count=2)
+        text = "\n".join(report.build_zaruku_summary_lines(ZARUKU_HEALTH, scope))
+        self.assertIn("частичные даты: 2", text)
+        self.assertIn("строк=1697", text)
+        self.assertIn("2026-07-14, 2026-07-16", text)
+
+    def test_summary_accepts_zaruku_snapshot_and_places_it_before_abbott(self):
+        snapshot = {"health": ZARUKU_HEALTH, "partial_scope": EMPTY_PARTIAL_SCOPE, "lineage_scope": {"row_count": 0}}
+        text = report.build_summary_message(
+            {"summary": {"exit_code": 0}, "sources": []},
+            [],
+            ABBOTT_OK,
+            zaruku_snapshot=snapshot,
+        )
+        self.assertLess(text.index("Сбор Zaruku"), text.index("Abbott Metrika"))
+
+    def test_zaruku_incident_messages_cover_four_operational_types(self):
+        cases = {
+            "data_lag": ({"max_data_date": "2026-07-24", "lag_days": 4, "threshold_days": 3}, "задержка данных"),
+            "heartbeat": ({"last_run_at": "2026-07-27T06:00:00+00:00", "age_hours": 30, "expected_frequency_hours": 24}, "нет ожидаемого запуска"),
+            "partial_dates": ({"dates": ["2026-07-14"], "distinct_date_count": 1, "row_count": 755, "layers": ["webmaster_queries"]}, "частично записанные даты"),
+            "layer_divergence": ({"query_max_date": "2026-07-26", "page_max_date": "2026-07-24", "difference_days": 2}, "расхождение слоёв"),
+        }
+        for incident_type, (details, phrase) in cases.items():
+            message = report.build_zaruku_incident_message(
+                {
+                    "incident_key": "zaruku|2026-07-28|yandex_webmaster|{}|x".format(incident_type),
+                    "source_key": "yandex_webmaster",
+                    "label": "Яндекс <Вебмастер>",
+                    "incident_type": incident_type,
+                    "details": details,
+                }
+            )
+            self.assertIn(phrase, message)
+            self.assertIn("Яндекс &lt;Вебмастер&gt;", message)
+            self.assertNotIn("Яндекс <Вебмастер>", message)
+
+    def test_new_incident_is_sent_once_and_recorded(self):
+        now = datetime(2026, 7, 28, 12, tzinfo=timezone.utc)
+        incident = {
+            "incident_key": "zaruku|2026-07-28|yandex_webmaster|data_lag|abc",
+            "source_key": "yandex_webmaster",
+            "label": "Яндекс Вебмастер",
+            "incident_type": "data_lag",
+            "details": {"max_data_date": "2026-07-24", "lag_days": 4, "threshold_days": 3},
+        }
+        sent = []
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "state.json"
+            first = report.send_new_zaruku_incidents(
+                "TOKEN", "CHAT", [incident], path, now_utc=now,
+                send_fn=lambda token, chat_id, text: sent.append((token, chat_id, text)),
+            )
+            second = report.send_new_zaruku_incidents(
+                "TOKEN", "CHAT", [incident], path, now_utc=now,
+                send_fn=lambda token, chat_id, text: sent.append((token, chat_id, text)),
+            )
+            state = json.loads(path.read_text(encoding="utf-8"))
+        self.assertEqual(first, [incident["incident_key"]])
+        self.assertEqual(second, [])
+        self.assertEqual(len(sent), 1)
+        self.assertIn(incident["incident_key"], state["sent"])
+
+    def test_failed_incident_transport_does_not_update_state(self):
+        now = datetime(2026, 7, 28, 12, tzinfo=timezone.utc)
+        incident = {
+            "incident_key": "zaruku|2026-07-28|yandex_webmaster|heartbeat|abc",
+            "source_key": "yandex_webmaster",
+            "label": "Яндекс Вебмастер",
+            "incident_type": "heartbeat",
+            "details": {"last_run_at": None, "age_hours": None, "expected_frequency_hours": 24},
+        }
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "state.json"
+            with self.assertRaisesRegex(RuntimeError, "transport failed"):
+                report.send_new_zaruku_incidents(
+                    "TOKEN", "CHAT", [incident], path, now_utc=now,
+                    send_fn=lambda *_: (_ for _ in ()).throw(RuntimeError("transport failed")),
+                )
+            self.assertFalse(path.exists())
+
+    def test_old_incident_keys_are_pruned(self):
+        now = datetime(2026, 7, 28, 12, tzinfo=timezone.utc)
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "state.json"
+            path.write_text(
+                json.dumps({"sent": {"old": (now - timedelta(days=60)).isoformat(), "current": now.isoformat()}}),
+                encoding="utf-8",
+            )
+            report.send_new_zaruku_incidents("T", "C", [], path, now_utc=now, send_fn=lambda *_: None)
+            state = json.loads(path.read_text(encoding="utf-8"))
+        self.assertNotIn("old", state["sent"])
+        self.assertIn("current", state["sent"])
+
+    @mock.patch("send_canonical_telegram_report.send_new_zaruku_incidents")
+    @mock.patch("send_canonical_telegram_report.send_telegram_message")
+    @mock.patch("send_canonical_telegram_report.resolve_telegram_credentials", return_value=("TOKEN", "CHAT"))
+    @mock.patch("send_canonical_telegram_report.load_zaruku_snapshot")
+    @mock.patch("send_canonical_telegram_report.get_latest_collector_runs", return_value=[])
+    @mock.patch("send_canonical_telegram_report.run_abbott_health_json", return_value=ABBOTT_OK)
+    @mock.patch("send_canonical_telegram_report.run_dashboard_json", return_value={"summary": {"exit_code": 0}, "sources": []})
+    @mock.patch("send_canonical_telegram_report.parse_args", return_value=Namespace(mode="summary"))
+    def test_main_sends_daily_summary_before_incident_messages(
+        self,
+        _parse_args,
+        _dashboard,
+        _abbott,
+        _runs,
+        load_snapshot,
+        _credentials,
+        send_message,
+        send_incidents,
+    ):
+        load_snapshot.return_value = {
+            "health": ZARUKU_HEALTH,
+            "partial_scope": EMPTY_PARTIAL_SCOPE,
+            "lineage_scope": {"row_count": 0},
+            "incidents": [],
+        }
+
+        def assert_summary_was_sent(*_args, **_kwargs):
+            self.assertEqual(send_message.call_count, 1)
+            return []
+
+        send_incidents.side_effect = assert_summary_was_sent
+        self.assertEqual(report.main(), 0)
+        self.assertEqual(send_message.call_count, 1)
+        send_incidents.assert_called_once()
 
     def test_incident_text_is_html_escaped(self):
         abbott = dict(ABBOTT_OK, overall="CRITICAL", incidents=[{

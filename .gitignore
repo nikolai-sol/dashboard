@@ -5,12 +5,14 @@
 .env.*
 .access_token
 .refresh_token
+.gsc_refresh_token
 client_secret*.json
 
 # Local tool state
 .claude/
 .cursor/
 .pydeps/
+.playwright-cli/
 
 # Python bytecode and virtualenvs
 __pycache__/
@@ -41,3 +43,6 @@ dashboard-next/.env.production
 nest-second/.env
 nest-second/.development.env
 nest-second/.production.env
+
+# Local secrets (Google OAuth / SA keys)
+.secrets/

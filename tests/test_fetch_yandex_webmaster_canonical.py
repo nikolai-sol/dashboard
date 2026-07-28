@@ -1,4 +1,5 @@
 import datetime as dt
+import inspect
 import unittest
 from unittest.mock import patch
 
@@ -391,6 +392,7 @@ class YandexWebmasterCanonicalTests(unittest.TestCase):
         self.assertIn("canonical_fact_webmaster_pages_daily", WEBMASTER_PAGE_UPSERT_SQL)
         self.assertIn("ON DUPLICATE KEY UPDATE", WEBMASTER_PAGE_UPSERT_SQL)
         self.assertIn("page_hash", WEBMASTER_PAGE_UPSERT_SQL)
+        self.assertIn("ingestion_run_id = VALUES(ingestion_run_id)", WEBMASTER_PAGE_UPSERT_SQL)
 
     def test_latest_page_facts_lag_error_soft_fails_only_for_latest_400(self):
         from fetch_yandex_webmaster_canonical import is_latest_page_facts_lag_error
@@ -400,6 +402,36 @@ class YandexWebmasterCanonicalTests(unittest.TestCase):
         self.assertTrue(is_latest_page_facts_lag_error(http_error(400), "2026-07-18", days))
         self.assertFalse(is_latest_page_facts_lag_error(http_error(400), "2026-07-17", days))
         self.assertFalse(is_latest_page_facts_lag_error(http_error(403), "2026-07-18", days))
+
+    def test_fetch_page_rows_uses_url_query_analytics_with_pagination(self):
+        from fetch_yandex_webmaster_canonical import fetch_page_rows
+
+        payload = {
+            "count": 1,
+            "text_indicator_to_statistics": [{"text_indicator": {"type": "URL", "value": "/help/"}}],
+        }
+        with patch("fetch_yandex_webmaster_canonical.request_with_retry", return_value=payload) as request_with_retry:
+            rows = fetch_page_rows("token", "user", "https:zaruku.ru:443", "2026-07-13", "ALL", 42)
+
+        self.assertEqual(len(rows), 1)
+        _, path = request_with_retry.call_args.args[:2]
+        self.assertTrue(path.endswith("/query-analytics/list"))
+        self.assertEqual(request_with_retry.call_args.kwargs["method"], "POST")
+        body = request_with_retry.call_args.kwargs["body"]
+        self.assertEqual(body["text_indicator"], "URL")
+        self.assertEqual(body["sort_by_date"]["date"], "2026-07-13")
+        self.assertEqual(body["offset"], 0)
+        self.assertEqual(body["limit"], 500)
+
+    def test_collect_writes_page_facts_alongside_query_snapshot(self):
+        import fetch_yandex_webmaster_canonical as collector
+
+        source = inspect.getsource(collector.collect)
+        self.assertIn("fetch_page_rows", source)
+        self.assertIn("normalize_query_analytics_url_rows", source)
+        self.assertIn("replace_webmaster_day_rows", source)
+        self.assertIn("upsert_webmaster_page_rows", source)
+        self.assertIn("len(raw_queries) + len(raw_pages)", source)
 
 
 if __name__ == "__main__":

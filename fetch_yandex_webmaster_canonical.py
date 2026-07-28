@@ -776,8 +776,6 @@ def replace_webmaster_day_rows(query_rows: list[dict], summary_row: dict) -> int
                 cur.close()
         finally:
             conn.close()
-
-
 def upsert_webmaster_page_rows(rows: list[dict]) -> int:
     if not rows:
         return 0

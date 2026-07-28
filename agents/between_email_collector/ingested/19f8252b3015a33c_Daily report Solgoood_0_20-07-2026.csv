@@ -1,0 +1,5 @@
+event_date,campaign_name,campaign_id,imps,clicks,ctr_pct,revenue,video_start,video_firstquartile,video_midpoint,video_thirdquartile,video_complete
+2026-07-20,"OLV rewarded",24837,18728,817,4.3624519436138,2434.64,18875,17401,15365,13331,11617
+2026-07-20,"OLV Smart TV",24834,32100,0,0,6002.7,31994,55734,58026,60780,63093
+2026-07-20,"OLV WL",24835,0,0,,0,0,0,0,0,0
+2026-07-20,"OLV Serials",24836,17892,268,1.4978761457635,3023.748,18291,17645,16884,15323,14551

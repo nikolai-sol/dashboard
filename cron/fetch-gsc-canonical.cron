@@ -1,0 +1,1 @@
+55 6 * * * cd /Users/nafanya/ReportingDash && PYTHONPATH=.pydeps /opt/homebrew/bin/python3 fetch_gsc_canonical.py --run-type cron --backfill-days 3 --lag-days 3 >> /Users/nafanya/ReportingDash/logs/gsc-canonical-cron.log 2>&1
