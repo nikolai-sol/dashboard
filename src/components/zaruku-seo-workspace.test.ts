@@ -289,6 +289,9 @@ test("builds page rows from exact URLs and preserves source metric groups", () =
   assert.equal(rows[0].webmaster?.average_position, 7);
   assert.equal(rows[0].post_click?.visits, 50);
   assert.equal(rows[0].seo_os_tracked_queries, 1);
+  assert.equal(rows[0].seo_os_best_position, 4);
+  assert.equal(rows[0].seo_os_has_improved, true);
+  assert.equal(rows[0].seo_os_has_declined, false);
 });
 
 test("builds an executive snapshot without mixing tracked and average positions", () => {

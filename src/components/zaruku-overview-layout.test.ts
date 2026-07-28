@@ -78,8 +78,7 @@ test("north-star strip hides zero deltas and keeps details in tooltips", () => {
   ]);
   assert.equal(items.some((item) => item.key === "approveRate"), false);
   assert.match(items[1].tooltip, /контроль кликов 72,8%/);
-  assert.match(items[2].tooltip, /wm_alisa_manual/);
-  assert.match(items[2].tooltip, /SoV/);
+  assert.doesNotMatch(items.map((item) => item.tooltip).join(" "), /Окно:|wm_alisa_manual|источник данных|SoV|Яндекс Вебмастер/);
 });
 
 test("north-star tooltip copy explains what each KPI means and why it matters", () => {

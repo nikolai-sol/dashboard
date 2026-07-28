@@ -15,6 +15,7 @@ type DashboardHeaderProps = {
   logoUrl?: string | null;
   pdfMode?: boolean;
   dateControlsMode?: DashboardDateControlsMode;
+  showIdentity?: boolean;
   labels?: {
     to: string;
     apply: string;
@@ -79,6 +80,7 @@ export default function DashboardHeader({
   logoUrl,
   pdfMode = false,
   dateControlsMode = "active",
+  showIdentity = true,
   labels,
   language = "en",
   dateFrom,
@@ -136,32 +138,45 @@ export default function DashboardHeader({
   );
   const showExport = Boolean(onExportExcel || onExportPdf);
   const dateControlsDisabled = dateControlsMode === "disabled";
+  const showDateControls = !pdfMode && dateControlsMode !== "hidden";
+
+  if (!showIdentity && !showDateControls) {
+    return null;
+  }
 
   return (
-    <header className="card-surface relative z-[60] mb-6 overflow-visible flex flex-col gap-4 p-5 sm:flex-row sm:items-center sm:justify-between">
-      <div className="flex items-center gap-4">
-        <div className="flex h-12 w-12 items-center justify-center overflow-hidden rounded-xl border border-slate-200 bg-white text-sm font-bold text-slate-900 shadow-sm">
-          {logoUrl ? (
-            // eslint-disable-next-line @next/next/no-img-element
-            <img
-              src={logoUrl}
-              alt={`${clientName} logo`}
-              className="h-full w-full object-contain object-center p-1.5"
-            />
-          ) : (
-            initials
-          )}
+    <header
+      className={
+        showIdentity
+          ? "card-surface relative z-[60] mb-6 flex flex-col gap-4 overflow-visible p-5 sm:flex-row sm:items-center sm:justify-between"
+          : "relative z-[60] mb-3 flex justify-end overflow-visible"
+      }
+    >
+      {showIdentity ? (
+        <div className="flex items-center gap-4">
+          <div className="flex h-12 w-12 items-center justify-center overflow-hidden rounded-xl border border-slate-200 bg-white text-sm font-bold text-slate-900 shadow-sm">
+            {logoUrl ? (
+              // eslint-disable-next-line @next/next/no-img-element
+              <img
+                src={logoUrl}
+                alt={`${clientName} logo`}
+                className="h-full w-full object-contain object-center p-1.5"
+              />
+            ) : (
+              initials
+            )}
+          </div>
+          <div>
+            <h1 className="text-xl font-semibold text-slate-900 sm:text-2xl">
+              {clientName} - {title}
+            </h1>
+            <p className="text-sm text-slate-500">{periodLabel}</p>
+          </div>
         </div>
-        <div>
-          <h1 className="text-xl font-semibold text-slate-900 sm:text-2xl">
-            {clientName} - {title}
-          </h1>
-          <p className="text-sm text-slate-500">{periodLabel}</p>
-        </div>
-      </div>
+      ) : null}
 
-      {!pdfMode && dateControlsMode !== "hidden" ? (
-        <div className="no-print flex flex-col gap-2 sm:items-end">
+      {showDateControls ? (
+        <div className={`no-print flex flex-col gap-2 ${showIdentity ? "sm:items-end" : "w-full sm:w-auto sm:items-end"}`}>
           {dateControlsDisabled ? (
             <p className="text-xs font-medium text-slate-500">{ZARUKU_CLIENT_COPY.disabledCalendar}</p>
           ) : null}

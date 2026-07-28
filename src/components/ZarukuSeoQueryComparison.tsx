@@ -118,7 +118,7 @@ function SourceHeading({ label, week, className }: { label: string; week: string
     <div className="flex flex-wrap items-center justify-center gap-2">
       <span className={`h-2 w-2 rounded-full ${className}`} />
       <span>{label}</span>
-      <span className="font-normal normal-case text-slate-400">{week ?? "нет данных"}</span>
+      <span className="hidden font-normal normal-case text-slate-400 2xl:inline">{week ?? "нет данных"}</span>
     </div>
   );
 }
@@ -236,57 +236,57 @@ export default function ZarukuSeoQueryComparison({
       </header>
 
       <ZarukuTableFrame mode="comparison" label="Сравнение поисковых запросов" className="rounded-none border-x-0 border-y-0">
-        <table className="w-[1180px] table-fixed border-separate border-spacing-0 text-sm">
+        <table className="w-full min-w-[900px] table-fixed border-separate border-spacing-0 text-xs xl:text-sm">
           <thead className="sticky top-0 z-10 bg-white shadow-[0_1px_0_0_var(--border)]">
             <tr className="text-xs font-semibold text-slate-600">
-              <th rowSpan={2} className="w-[360px] min-w-[220px] border-r border-slate-100 bg-white px-4 py-3 text-left align-bottom">Фраза</th>
-              <th rowSpan={2} className="w-[130px] min-w-[120px] border-r border-slate-100 bg-white px-3 py-3 text-left align-bottom">Раздел</th>
-              <th colSpan={4} className="w-[320px] border-r border-slate-100 bg-blue-50/70 px-3 py-2 text-center">
+              <th rowSpan={2} className="w-[24%] border-r border-slate-100 bg-white px-3 py-3 text-left align-bottom">Фраза</th>
+              <th rowSpan={2} className="w-[9%] border-r border-slate-100 bg-white px-2 py-3 text-left align-bottom">Раздел</th>
+              <th colSpan={4} className="w-[24%] border-r border-slate-100 bg-blue-50/70 px-2 py-2 text-center">
                 <SourceHeading label="Google RF" week={sourceWeeks.google} className="bg-blue-500" />
               </th>
-              <th colSpan={4} className="w-[320px] border-r border-slate-100 bg-amber-50/70 px-3 py-2 text-center">
+              <th colSpan={4} className="w-[24%] border-r border-slate-100 bg-amber-50/70 px-2 py-2 text-center">
                 <SourceHeading label="Яндекс Вебмастер" week={sourceWeeks.webmaster} className="bg-amber-400" />
               </th>
-              <th colSpan={3} className="w-[240px] bg-teal-50/70 px-3 py-2 text-center">
+              <th colSpan={3} className="w-[19%] bg-teal-50/70 px-2 py-2 text-center">
                 <SourceHeading label="SEO OS" week={sourceWeeks.seoOs} className="bg-teal-500" />
               </th>
             </tr>
             <tr className="border-t border-slate-100 text-[11px] text-slate-500">
-              <th className="w-[80px] bg-blue-50/70 px-2 py-2 text-right">
+              <th className="bg-blue-50/70 px-1.5 py-2 text-right">
                 <SortButton label="Показы" sortKey="google_impressions" sort={sort} onChange={changeSort} />
               </th>
-              <th className="w-[80px] bg-blue-50/70 px-2 py-2 text-right">
+              <th className="bg-blue-50/70 px-1.5 py-2 text-right">
                 <SortButton label="Клики" sortKey="google_clicks" sort={sort} onChange={changeSort} />
               </th>
-              <th className="w-[80px] bg-blue-50/70 px-2 py-2 text-right">
+              <th className="bg-blue-50/70 px-1.5 py-2 text-right">
                 <SortButton label="CTR" sortKey="google_ctr" sort={sort} onChange={changeSort} />
               </th>
-              <th className="w-[80px] border-r border-slate-100 bg-blue-50/70 px-2 py-2 text-right">
+              <th className="border-r border-slate-100 bg-blue-50/70 px-1.5 py-2 text-right">
                 <SortButton label="Позиция" sortKey="google_position" sort={sort} onChange={changeSort} />
               </th>
-              <th className="w-[80px] bg-amber-50/70 px-2 py-2 text-right">
+              <th className="bg-amber-50/70 px-1.5 py-2 text-right">
                 <SortButton label="Показы" sortKey="webmaster_impressions" sort={sort} onChange={changeSort} />
               </th>
-              <th className="w-[80px] bg-amber-50/70 px-2 py-2 text-right">
+              <th className="bg-amber-50/70 px-1.5 py-2 text-right">
                 <SortButton label="Клики" sortKey="webmaster_clicks" sort={sort} onChange={changeSort} />
               </th>
-              <th className="w-[80px] bg-amber-50/70 px-2 py-2 text-right">
+              <th className="bg-amber-50/70 px-1.5 py-2 text-right">
                 <SortButton label="CTR" sortKey="webmaster_ctr" sort={sort} onChange={changeSort} />
               </th>
-              <th className="w-[80px] border-r border-slate-100 bg-amber-50/70 px-2 py-2 text-right">
+              <th className="border-r border-slate-100 bg-amber-50/70 px-1.5 py-2 text-right">
                 <SortButton label="Позиция" sortKey="webmaster_position" sort={sort} onChange={changeSort} />
               </th>
-              <th className="w-[80px] bg-teal-50/70 px-2 py-2 text-right">
+              <th className="bg-teal-50/70 px-1.5 py-2 text-right">
                 <SortButton label="Позиция" sortKey="seo_os_position" sort={sort} onChange={changeSort} />
               </th>
-              <th className="w-[80px] bg-teal-50/70 px-2 py-2 text-right">Δ</th>
-              <th className="w-[80px] bg-teal-50/70 px-2 py-2 text-left">Статус</th>
+              <th className="bg-teal-50/70 px-1.5 py-2 text-right">Δ</th>
+              <th className="bg-teal-50/70 px-1.5 py-2 text-left">Статус</th>
             </tr>
           </thead>
           <tbody className="divide-y divide-slate-100">
             {paginated.rows.map((row) => (
               <tr key={row.key} className="align-top transition hover:bg-slate-50/70">
-                <td className="min-w-[220px] max-w-[360px] border-r border-slate-100 px-4 py-3">
+                <td className="border-r border-slate-100 px-3 py-3">
                   <div className="min-w-0 truncate font-medium leading-snug text-slate-800" title={row.query}>{row.query}</div>
                   {row.google_pages.length > 0 || row.seo_os?.matched_url ? (
                     <div className="mt-1.5 flex max-w-full flex-wrap gap-x-2 gap-y-1 text-[11px] text-slate-400">
@@ -299,20 +299,20 @@ export default function ZarukuSeoQueryComparison({
                     </div>
                   ) : null}
                 </td>
-                <td className="min-w-[120px] max-w-[130px] border-r border-slate-100 px-3 py-3 text-xs text-slate-500">
+                <td className="border-r border-slate-100 px-2 py-3 text-xs text-slate-500">
                   <span className="block min-w-0 truncate" title={row.section ?? undefined}>{row.section ?? "—"}</span>
                 </td>
-                <td className="px-2 py-3 text-right tabular-nums text-slate-600">{formatNumber(row.google?.impressions, locale)}</td>
-                <td className="px-2 py-3 text-right tabular-nums text-slate-600">{formatNumber(row.google?.clicks, locale)}</td>
-                <td className="px-2 py-3 text-right tabular-nums text-slate-500">{formatPercent(row.google?.ctr, locale)}</td>
-                <td className="border-r border-slate-100 px-2 py-3 text-right font-medium tabular-nums text-slate-700">{formatDecimal(row.google?.average_position, locale)}</td>
-                <td className="px-2 py-3 text-right tabular-nums text-slate-600">{formatNumber(row.webmaster?.impressions, locale)}</td>
-                <td className="px-2 py-3 text-right tabular-nums text-slate-600">{formatNumber(row.webmaster?.clicks, locale)}</td>
-                <td className="px-2 py-3 text-right tabular-nums text-slate-500">{formatPercent(row.webmaster?.ctr, locale)}</td>
-                <td className="border-r border-slate-100 px-2 py-3 text-right font-medium tabular-nums text-slate-700">{formatDecimal(row.webmaster?.average_position, locale)}</td>
-                <td className="px-2 py-3 text-right font-semibold tabular-nums text-teal-800">{formatDecimal(row.seo_os?.tracked_position, locale)}</td>
-                <td className="px-2 py-3 text-right tabular-nums"><PositionDelta value={row.seo_os?.delta_prev ?? null} /></td>
-                <td className="px-2 py-3 text-xs text-slate-500">
+                <td className="px-1.5 py-3 text-right tabular-nums text-slate-600">{formatNumber(row.google?.impressions, locale)}</td>
+                <td className="px-1.5 py-3 text-right tabular-nums text-slate-600">{formatNumber(row.google?.clicks, locale)}</td>
+                <td className="px-1.5 py-3 text-right tabular-nums text-slate-500">{formatPercent(row.google?.ctr, locale)}</td>
+                <td className="border-r border-slate-100 px-1.5 py-3 text-right font-medium tabular-nums text-slate-700">{formatDecimal(row.google?.average_position, locale)}</td>
+                <td className="px-1.5 py-3 text-right tabular-nums text-slate-600">{formatNumber(row.webmaster?.impressions, locale)}</td>
+                <td className="px-1.5 py-3 text-right tabular-nums text-slate-600">{formatNumber(row.webmaster?.clicks, locale)}</td>
+                <td className="px-1.5 py-3 text-right tabular-nums text-slate-500">{formatPercent(row.webmaster?.ctr, locale)}</td>
+                <td className="border-r border-slate-100 px-1.5 py-3 text-right font-medium tabular-nums text-slate-700">{formatDecimal(row.webmaster?.average_position, locale)}</td>
+                <td className="px-1.5 py-3 text-right font-semibold tabular-nums text-teal-800">{formatDecimal(row.seo_os?.tracked_position, locale)}</td>
+                <td className="px-1.5 py-3 text-right tabular-nums"><PositionDelta value={row.seo_os?.delta_prev ?? null} /></td>
+                <td className="px-1.5 py-3 text-xs text-slate-500">
                   {row.seo_os ? (row.seo_os.status === "found" ? "Найдена" : "Нет данных") : "—"}
                 </td>
               </tr>

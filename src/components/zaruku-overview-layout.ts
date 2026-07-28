@@ -59,10 +59,7 @@ function deltaTone(kpi: NorthStarKpi) {
 function tooltipForKpi(kpi: NorthStarKpi) {
   const parts = [
     kpi.tooltip,
-    kpi.period ? `Окно: ${kpi.period}` : null,
     kpi.guardValue != null ? `контроль кликов ${formatTooltipPercent(kpi.guardValue)}` : null,
-    kpi.provenance ? `источник данных ${kpi.provenance}` : null,
-    kpi.note,
     "Корреляционные показатели.",
   ];
   return parts.filter(Boolean).join(" · ");
