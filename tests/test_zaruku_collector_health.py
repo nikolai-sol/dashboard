@@ -89,6 +89,13 @@ class ZarukuCollectorHealthPolicyTests(unittest.TestCase):
         self.assertIn("REGEXP '^[0-9]+$'", LINEAGE_DEFECTS_SQL)
         self.assertIn("CAST(f.ingestion_run_id AS UNSIGNED)", LINEAGE_DEFECTS_SQL)
 
+    def test_returning_facts_use_the_deployed_analytics_account_column(self):
+        self.assertNotIn("f.counter_id", PARTIAL_FACT_DATES_SQL)
+        self.assertRegex(
+            PARTIAL_FACT_DATES_SQL,
+            r"FROM canonical_fact_metrika_returning_pages_daily AS f[\s\S]+?WHERE f\.analytics_account_id = '66624469'",
+        )
+
 
 class ZarukuCollectorHealthBehaviorTests(unittest.TestCase):
     def setUp(self):

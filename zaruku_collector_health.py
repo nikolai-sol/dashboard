@@ -47,7 +47,7 @@ _FACT_LAYERS: List[Dict[str, Any]] = [
         "source_key": "yandex_metrika_returning",
         "layer": "metrika_returning_pages",
         "table": "canonical_fact_metrika_returning_pages_daily",
-        "account_column": "counter_id",
+        "account_column": "analytics_account_id",
         "string_run_id": False,
     },
     {
@@ -196,7 +196,7 @@ _MAX_DATE_SQL = {
     "yandex_metrika_returning": """
         SELECT MAX(report_date) AS max_data_date
         FROM canonical_fact_metrika_returning_pages_daily
-        WHERE counter_id = %s
+        WHERE analytics_account_id = %s
     """,
     "google_search_console": """
         SELECT MAX(report_date) AS max_data_date
