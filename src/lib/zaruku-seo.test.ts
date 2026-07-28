@@ -397,6 +397,15 @@ test("default source freshness query includes the returning-content collector", 
   assert.equal(query.params.includes("yandex_metrika_returning"), true);
 });
 
+test("GSC expected frequency describes its daily cron instead of product data lag", () => {
+  const query = buildSourceFreshnessQuery(["google_search_console"]);
+
+  assert.match(
+    query.sql,
+    /'google_search_console' AS source_key,[\s\S]*?24 AS expected_frequency_hours/,
+  );
+});
+
 test("source freshness uses any successful collection for the last update timestamp", () => {
   const query = buildSourceFreshnessQuery(["yandex_metrika_returning"]);
   const latestSuccess = query.sql.match(/latest_success AS \([\s\S]*?\n    \),\n    latest_error AS/)?.[0] ?? "";
@@ -468,7 +477,7 @@ test("normalizeSourceFreshnessRow marks recent successful cron collector healthy
   );
 });
 
-test("normalizeSourceFreshnessRow treats exactly four calendar days of lag as current", () => {
+test("normalizeSourceFreshnessRow treats exactly three calendar days of lag as current", () => {
   const row = normalizeSourceFreshnessRow(
     {
       source_key: "yandex_webmaster",
@@ -479,7 +488,7 @@ test("normalizeSourceFreshnessRow treats exactly four calendar days of lag as cu
       last_finished_at: "2026-07-27 06:50:08",
       last_success_at: "2026-07-27 06:50:08",
       success_date_from: "2026-07-20",
-      success_date_to: "2026-07-23",
+      success_date_to: "2026-07-24",
       success_rows_read: 100,
       success_rows_written: 100,
       last_error_at: null,
@@ -491,7 +500,7 @@ test("normalizeSourceFreshnessRow treats exactly four calendar days of lag as cu
   assert.equal(row.freshness_status, "healthy");
 });
 
-test("normalizeSourceFreshnessRow keeps 23.07 facts healthy on 27.07", () => {
+test("normalizeSourceFreshnessRow keeps 24.07 facts healthy on 27.07", () => {
   const row = normalizeSourceFreshnessRow(
     {
       source_key: "yandex_metrika_returning",
@@ -502,7 +511,7 @@ test("normalizeSourceFreshnessRow keeps 23.07 facts healthy on 27.07", () => {
       last_finished_at: "2026-07-24 06:18:08",
       last_success_at: "2026-07-24 06:18:08",
       success_date_from: "2026-07-21",
-      success_date_to: "2026-07-23",
+      success_date_to: "2026-07-24",
       success_rows_read: 100,
       success_rows_written: 100,
       last_error_at: null,
@@ -514,7 +523,7 @@ test("normalizeSourceFreshnessRow keeps 23.07 facts healthy on 27.07", () => {
   assert.equal(row.freshness_status, "healthy");
 });
 
-test("normalizeSourceFreshnessRow marks five calendar days of lag delayed", () => {
+test("normalizeSourceFreshnessRow marks four calendar days of lag delayed", () => {
   const row = normalizeSourceFreshnessRow(
     {
       source_key: "yandex_webmaster",
@@ -525,7 +534,7 @@ test("normalizeSourceFreshnessRow marks five calendar days of lag delayed", () =
       last_finished_at: "2026-07-24 06:50:08",
       last_success_at: "2026-07-24 06:50:08",
       success_date_from: "2026-07-20",
-      success_date_to: "2026-07-22",
+      success_date_to: "2026-07-23",
       success_rows_read: 100,
       success_rows_written: 100,
       last_error_at: null,
@@ -589,7 +598,7 @@ test("normalizeSourceFreshnessRow marks newer failed cron after success as faile
   assert.equal(row.last_error_summary, "HTTP 401");
 });
 
-test("normalizeSourceFreshnessRow marks a failed cron failed even when 23.07 facts are current on 27.07", () => {
+test("normalizeSourceFreshnessRow marks a failed cron failed even when fact age is within three days", () => {
   const row = normalizeSourceFreshnessRow(
     {
       source_key: "yandex_metrika_returning",
@@ -600,7 +609,7 @@ test("normalizeSourceFreshnessRow marks a failed cron failed even when 23.07 fac
       last_finished_at: "2026-07-27 06:18:08",
       last_success_at: "2026-07-24 06:18:08",
       success_date_from: "2026-07-21",
-      success_date_to: "2026-07-23",
+      success_date_to: "2026-07-24",
       success_rows_read: 100,
       success_rows_written: 100,
       last_error_at: "2026-07-27 06:18:08",

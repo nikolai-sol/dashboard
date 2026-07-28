@@ -170,11 +170,11 @@ const SOURCE_FRESHNESS_CATALOG = [
     source_key: "google_search_console",
     source_label: "Google Search Console",
     collector: "fetch_gsc_canonical.py",
-    expected_frequency_hours: 72,
+    expected_frequency_hours: 24,
   },
 ] as const;
 
-export const ZARUKU_DATA_LAG_DAYS = 4;
+export const ZARUKU_DATA_LAG_DAYS = 3;
 
 function asNumber(value: unknown): number {
   const parsed = Number(value);
