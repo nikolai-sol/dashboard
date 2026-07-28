@@ -78,6 +78,11 @@ test("Overview uses a stable bounded desktop composition", () => {
 });
 
 test("Overview keeps KPI and chart content inside its desktop bounds", () => {
+  assert.match(source, /import ZarukuInfoPopover/);
+  assert.doesNotMatch(source, /function InfoTooltip/);
+  assert.doesNotMatch(source, /aria-label="Описание основных показателей"/);
+  assert.match(source, /data-zaruku-kpi-value-row/);
+  assert.match(source, /flex min-w-0 flex-wrap items-baseline gap-x-1\.5 gap-y-1/);
   assert.match(source, /<ResponsiveContainer width="100%" height="100%" initialDimension=\{\{ width: 1, height: 1 \}\}>/);
   assert.match(source, /<LineChart data=\{data\.organic_trend\} margin=\{\{ top: 8, right: 16, left: -20, bottom: 0 \}\}>/);
   assert.match(source, /<XAxis dataKey="label" padding=\{\{ right: 12 \}\}/);

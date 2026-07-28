@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useId, useLayoutEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import {
   Bar,
   BarChart,
@@ -16,7 +16,6 @@ import {
 import {
   Database,
   FileText,
-  Info,
   LayoutGrid,
   Lock,
   Search,
@@ -28,6 +27,7 @@ import ZarukuSeoWeekToolbar from "@/components/ZarukuSeoWeekToolbar";
 import ZarukuSeoDiagnostics from "@/components/ZarukuSeoDiagnostics";
 import ZarukuSeoPageComparison from "@/components/ZarukuSeoPageComparison";
 import ZarukuSeoQueryComparison from "@/components/ZarukuSeoQueryComparison";
+import ZarukuInfoPopover from "@/components/ZarukuInfoPopover";
 import type {
   ZarukuSeoData,
   ZarukuSeoLayerId,
@@ -271,44 +271,6 @@ function Panel({
   );
 }
 
-function InfoTooltip({
-  label,
-  title,
-  description,
-  importance,
-  details,
-}: {
-  label: string;
-  title: string;
-  description: string;
-  importance: string;
-  details?: string;
-}) {
-  const id = useId();
-  return (
-    <span className="group relative inline-flex">
-      <button
-        type="button"
-        aria-label={label}
-        aria-describedby={id}
-        className="inline-flex rounded-full text-slate-400 outline-none transition hover:text-slate-600 focus-visible:ring-2 focus-visible:ring-slate-300 focus-visible:ring-offset-2"
-      >
-        <Info className="h-3 w-3" aria-hidden="true" />
-      </button>
-      <span
-        id={id}
-        role="tooltip"
-        className="pointer-events-none absolute left-1/2 top-5 z-50 hidden w-72 max-w-[calc(100vw-2rem)] -translate-x-1/2 rounded-lg border border-slate-200 bg-white p-3 text-left shadow-lg group-hover:block group-focus-within:block"
-      >
-        <span className="block text-sm font-semibold text-slate-900">{title}</span>
-        <span className="mt-1.5 block text-xs leading-relaxed text-slate-600">{description}</span>
-        <span className="mt-2 block text-xs leading-relaxed text-slate-700">{importance}</span>
-        {details ? <span className="mt-2 block border-t border-slate-100 pt-2 text-[11px] leading-relaxed text-slate-400">{details}</span> : null}
-      </span>
-    </span>
-  );
-}
-
 function BarList({
   rows,
   value = "visits",
@@ -489,30 +451,26 @@ function NorthStarBlock({ data, locale }: Props) {
   return (
     <section className="card-surface zaruku-panel h-full overflow-hidden border-t-slate-300 bg-surface-alt px-5 py-4">
       <div className="flex flex-col gap-4 lg:flex-row lg:items-center">
-        <div className="flex min-w-0 items-center gap-2 lg:w-[380px]">
+        <div className="min-w-0 lg:w-[380px]">
           <h3 className="text-base font-medium text-slate-900 lg:whitespace-nowrap">Цель: целевой органический трафик + ИИ-выдача</h3>
-          <span title={ZARUKU_CLIENT_COPY.northStarCorrelation} className="inline-flex shrink-0 text-slate-400">
-            <Info className="h-3.5 w-3.5" aria-label="Описание основных показателей" />
-          </span>
         </div>
         <div className="grid flex-1 grid-cols-2 gap-x-6 gap-y-3 md:grid-cols-3">
           {items.map((item) => (
             <div key={item.key} className="min-w-0">
               <div className="flex items-center gap-1.5 text-xs text-slate-500">
                 <span>{item.label}</span>
-                <InfoTooltip
-                  label={`${item.label}: что это и почему важно`}
-                  title={item.tooltipTitle}
-                  description={item.tooltipDescription}
-                  importance={item.tooltipImportance}
-                  details={item.tooltip}
-                />
+                <ZarukuInfoPopover label={`${item.label}: что это и почему важно`}>
+                  <div className="text-sm font-semibold text-slate-900">{item.tooltipTitle}</div>
+                  <p className="mt-1.5 text-xs leading-relaxed text-slate-600">{item.tooltipDescription}</p>
+                  <p className="mt-2 text-xs leading-relaxed text-slate-700">{item.tooltipImportance}</p>
+                  <p className="mt-2 border-t border-slate-100 pt-2 text-[11px] leading-relaxed text-slate-400">{item.tooltip}</p>
+                </ZarukuInfoPopover>
               </div>
-              <div className="mt-1 flex items-baseline gap-1.5">
-                <span className="zaruku-kpi-value text-3xl font-semibold leading-none text-slate-950">{formatPercent(item.value, locale, 1)}</span>
-                <span className="text-sm font-medium text-slate-400">{item.arrow}</span>
+              <div data-zaruku-kpi-value-row className="mt-1 flex min-w-0 flex-wrap items-baseline gap-x-1.5 gap-y-1">
+                <span className="zaruku-kpi-value min-w-0 text-3xl font-semibold leading-none text-slate-950">{formatPercent(item.value, locale, 1)}</span>
+                <span className="shrink-0 text-sm font-medium text-slate-400">{item.arrow}</span>
                 {item.showDelta ? (
-                  <span className={item.deltaTone === "good" ? "text-xs font-medium text-teal-700" : "text-xs font-medium text-red-700"}>
+                  <span className={item.deltaTone === "good" ? "shrink-0 text-xs font-medium text-teal-700" : "shrink-0 text-xs font-medium text-red-700"}>
                     {formatSignedPercent(item.delta, locale, 1)}
                   </span>
                 ) : null}
@@ -687,13 +645,14 @@ function OverviewTab({ data, locale }: Props) {
           source="metrika"
           bodyClassName="overflow-auto"
           titleInfo={data.technical_tail.length ? (
-            <InfoTooltip
-              label={ZARUKU_CLIENT_COPY.technicalTail.label}
-              title={ZARUKU_CLIENT_COPY.technicalTail.title}
-              description={ZARUKU_CLIENT_COPY.technicalTail.description}
-              importance={ZARUKU_CLIENT_COPY.technicalTail.importance}
-              details={data.technical_tail.map((row) => `${row.label}: ${formatNumber(row.visits, locale)}`).join(", ")}
-            />
+            <ZarukuInfoPopover label={ZARUKU_CLIENT_COPY.technicalTail.label}>
+              <div className="text-sm font-semibold text-slate-900">{ZARUKU_CLIENT_COPY.technicalTail.title}</div>
+              <p className="mt-1.5 text-xs leading-relaxed text-slate-600">{ZARUKU_CLIENT_COPY.technicalTail.description}</p>
+              <p className="mt-2 text-xs leading-relaxed text-slate-700">{ZARUKU_CLIENT_COPY.technicalTail.importance}</p>
+              <p className="mt-2 border-t border-slate-100 pt-2 text-[11px] leading-relaxed text-slate-400">
+                {data.technical_tail.map((row) => `${row.label}: ${formatNumber(row.visits, locale)}`).join(", ")}
+              </p>
+            </ZarukuInfoPopover>
           ) : null}
         >
           <BarList rows={data.traffic_channels} locale={locale} initialLimit={6} />
