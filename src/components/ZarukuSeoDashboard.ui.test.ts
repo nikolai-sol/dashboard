@@ -104,6 +104,8 @@ test("SEO tab follows the executive-to-detail hierarchy without duplicate source
   assert.doesNotMatch(source, /title="GSC countries"/);
   assert.doesNotMatch(source, /title="Запросы Яндекса"/);
   assert.doesNotMatch(source, /title="Google Search Console queries"/);
+  assert.match(source, /<ZarukuTableFrame mode="standard" label="Семантические кластеры">/);
+  assert.match(source, /<table className="zaruku-table min-w-\[760px\]">/);
 });
 
 test("SEO tab explains Metrika search phrases and uses the unified landing-page workspace", () => {

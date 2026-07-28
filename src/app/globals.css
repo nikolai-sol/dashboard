@@ -235,7 +235,8 @@
     border-top: 1px solid var(--border);
   }
 
-  .zaruku-table-cell {
+  .zaruku-table-cell,
+  .zaruku-table :is(th, td) {
     padding: 0.625rem 0.75rem;
     vertical-align: top;
   }

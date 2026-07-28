@@ -28,6 +28,7 @@ import ZarukuSeoDiagnostics from "@/components/ZarukuSeoDiagnostics";
 import ZarukuSeoPageComparison from "@/components/ZarukuSeoPageComparison";
 import ZarukuSeoQueryComparison from "@/components/ZarukuSeoQueryComparison";
 import ZarukuInfoPopover from "@/components/ZarukuInfoPopover";
+import ZarukuTableFrame from "@/components/ZarukuTableFrame";
 import type {
   ZarukuSeoData,
   ZarukuSeoLayerId,
@@ -597,15 +598,15 @@ function SemanticHealthPanel({ data, locale, primaryWeek }: Props & { primaryWee
             <Line type="monotone" dataKey="medical_baseline" name="Ориентир мед. интента" stroke={ZARUKU_CHART_PALETTE.seo} strokeDasharray="5 5" dot={false} />
           </LineChart>
         </ResponsiveContainer>
-        <div className="overflow-x-auto">
-          <table className="w-full min-w-[760px] text-sm">
+        <ZarukuTableFrame mode="standard" label="Семантические кластеры">
+          <table className="zaruku-table min-w-[760px]">
             <thead><tr className="text-left text-xs uppercase text-slate-400"><th className="pb-2 font-medium">Кластер</th><th className="pb-2 text-right font-medium">Запросы</th><th className="pb-2 text-right font-medium">Показы</th><th className="pb-2 text-right font-medium">Клики</th><th className="pb-2 text-right font-medium">Доля показов</th><th className="pb-2 text-right font-medium">Доля кликов</th><th className="pb-2 text-right font-medium">CTR</th></tr></thead>
             <tbody className="divide-y divide-slate-100">
               {selectedRows.map((row) => <tr key={`${row.week}-${row.cluster}`}><td className="py-2.5 font-medium text-slate-700">{row.cluster}{row.isBaselineCluster ? <span className="ml-2 rounded-md bg-slate-100 px-1.5 py-0.5 text-[11px] font-medium text-slate-500">ориентир</span> : null}</td><td className="py-2.5 text-right text-slate-600">{formatNumber(row.query_count, locale)}</td><td className="py-2.5 text-right text-slate-600">{formatNumber(row.impressions, locale)}</td><td className="py-2.5 text-right text-slate-600">{formatNumber(row.clicks, locale)}</td><td className="py-2.5 text-right text-slate-600">{formatPercent(row.impressions_share, locale, 2)}</td><td className="py-2.5 text-right text-slate-600">{formatPercent(row.clicks_share, locale, 2)}</td><td className="py-2.5 text-right text-slate-500">{formatPercent(row.ctr, locale, 2)}</td></tr>)}
               {selectedRows.length === 0 ? <tr><td colSpan={7} className="py-8 text-center text-sm text-slate-500">{ZARUKU_CLIENT_COPY.emptySemanticGroups}</td></tr> : null}
             </tbody>
           </table>
-        </div>
+        </ZarukuTableFrame>
       </div>
     </Panel>
   );

@@ -8,6 +8,7 @@ import ZarukuPeriodContext from "./ZarukuPeriodContext";
 import type { ZarukuDatasetMeta } from "@/lib/types";
 
 const periodContextSource = readFileSync(new URL("./ZarukuPeriodContext.tsx", import.meta.url), "utf8");
+const globalsSource = readFileSync(new URL("../app/globals.css", import.meta.url), "utf8");
 
 const baseMeta: ZarukuDatasetMeta = {
   state: "ready",
@@ -70,4 +71,11 @@ test("period context keeps onsite, search, and AI periods separate", () => {
   assert.match(periodContextSource, /<ZarukuInfoPopover/);
   assert.doesNotMatch(periodContextSource, /group-hover:block|group-focus-within:block/);
   assert.doesNotMatch(periodContextSource, /aria-describedby="zaruku-seo-os-period-note"/);
+});
+
+test("shared Zaruku tables keep text inset from frame and row dividers", () => {
+  assert.match(
+    globalsSource,
+    /\.zaruku-table :is\(th, td\)\s*\{[^}]*padding:\s*0\.625rem 0\.75rem/,
+  );
 });
