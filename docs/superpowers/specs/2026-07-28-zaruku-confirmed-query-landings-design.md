@@ -1,7 +1,7 @@
 # Zaruku Confirmed Query-to-Landing Design
 
 Date: 2026-07-28  
-Status: approved design; implementation pending  
+Status: approved design, amended after read-only Metrika validation; implementation pending
 Owner: ReportingDash / Zaruku
 
 ## Problem
@@ -37,7 +37,7 @@ A landing is confirmed only when the source returns the query and page in the sa
 | Source | Current status | Counts as confirmed |
 | --- | --- | --- |
 | Google Search Console | `query + page` already collected | Yes |
-| Yandex Metrika | separate phrase and landing segment types | No, until the combined segment is collected |
+| Yandex Metrika | separate phrase and landing segment types; the validated combined report returned no rows | No |
 | Yandex Webmaster | query and URL datasets are separate | No |
 | SEO OS | `matched_url` is target/tracking context | No |
 
@@ -49,7 +49,7 @@ The Webmaster `popular_complementary_indicator` may later be shown as `Осно�
 
 - The filter is off.
 - The unified table continues to show Google, Webmaster, and SEO OS query rows.
-- Confirmed Google and Metrika links appear below the query with a source prefix.
+- Confirmed Google links appear below the query with a source prefix.
 - Rows without a confirmed page remain visible and show no invented URL.
 - The existing SEO OS target URL remains visible with its existing `SEO OS:` prefix, but does not affect the filter.
 
@@ -57,7 +57,7 @@ The Webmaster `popular_complementary_indicator` may later be shown as `Осно�
 
 - The control label is `Только с подтверждённой посадочной`.
 - Enabling it filters the already loaded unified rows client-side.
-- A row passes when `google_pages.length > 0` or `metrika_pages.length > 0`.
+- A row passes when `google_pages.length > 0`.
 - Webmaster-only and SEO-OS-only rows disappear only while the filter is enabled.
 - Search, sort, week selection, and pagination continue to work. Filtering occurs before pagination so page counts remain correct.
 - If no rows match, the table shows one quiet message: `Нет запросов с подтверждённой посадочной за выбранный период.`
@@ -65,82 +65,61 @@ The Webmaster `popular_complementary_indicator` may later be shown as `Осно�
 ### URL presentation
 
 - Google links use the prefix `Google:`.
-- Metrika links use the prefix `Метрика:`.
-- Duplicate URLs are normalized and shown once per source.
+- Duplicate Google URLs are normalized and shown once.
 - The current per-query URL cap remains bounded to protect row height.
 
-## Metrika Collection Extension
+## Metrika Validation Decision
 
-Add a canonical segment type `search_phrase_landing_pages` to the existing generic segment table. It uses:
+Before implementation, one explicitly authorized read-only Reporting API request tested the proposed combination:
 
 ```text
+counter = 66624469
+date = 2026-07-23
 dimensions = ym:s:searchPhrase,ym:s:startURL
 metrics = existing METRIKA_SEGMENT_METRICS
+accuracy = full
 ```
 
-Implementation constraints:
+The request succeeded with HTTP 200 and no sampling (`sample_share = 1.0`, `sample_size = sample_space = 353`), so the dimensions are technically compatible. The response contained zero rows, zero query-page pairs, and zero visits.
 
-- Reuse `canonical_fact_metrika_segments_daily`; no schema migration is needed.
-- Use the existing account, date, attribution, retry, and publication boundaries.
-- Use paginated/full-scan collection so the feature is not silently limited to a top-N sample.
-- Treat an empty successful result as a valid empty dataset. Yandex may suppress search phrases or landing addresses under privacy thresholds.
-- A failed optional segment must not block publication of the core Metrika facts, matching current segment behavior.
-- Do not run a production backfill, edit cron, deploy, or issue a live API request as part of the code implementation without separate explicit authorization.
+For the same counter and date, existing separately collected segments contained:
 
-The dashboard read model maps:
+- `search_phrases`: 30 rows and 32 visits;
+- `organic_landing_pages`: 30 rows and 144 visits.
 
-- `segment_dimension_1` → query;
-- `segment_dimension_2` → landing URL;
-- metrics → visits, users, pageviews, and behavior fields.
+Measured survival was therefore 0% of the stored top search phrases and 0% of visits in both comparison cuts. Compatibility alone is not sufficient: the combined privacy suppression makes the dataset unusable for this dashboard.
 
-The rows are merged into the unified query workspace by normalized exact query text, following the existing GSC/Webmaster/SEO OS merge rule. No fuzzy matching is introduced.
+Decision: do not add `search_phrase_landing_pages`, do not modify the Metrika collector, and do not expose Metrika as a confirmed query-to-landing source. Confirmed landing pages remain GSC-only. Reconsider Metrika only if a future API/data-contract change produces a materially non-empty result in a separately authorized validation.
 
 ## Data Contract
-
-Extend the unified query row with:
-
-```text
-metrika_pages: string[]
-```
-
-Extend Zaruku SEO data with a dedicated collection for the combined Metrika segment. Its dataset metadata follows the existing `ready | empty | partial | unavailable` contract, but it does not create a standalone panel.
 
 The filter eligibility helper is a pure function so it can be tested independently:
 
 ```text
-hasConfirmedLanding(row) = google_pages.length > 0 || metrika_pages.length > 0
+hasConfirmedLanding(row) = google_pages.length > 0
 ```
 
 ## Error and Partial-Data Handling
 
-- Missing combined Metrika rows do not produce a warning card.
-- GSC-confirmed rows remain filterable when the Metrika segment is empty or unavailable.
+- Metrika does not create a query-to-landing dataset, warning card, or filter dependency.
 - A source failure remains visible only through existing source freshness/technical diagnostics.
 - Client copy never claims that every click is mapped to a page.
 - Separate Webmaster query/page totals are never joined heuristically.
 
 ## Tests
 
-### Collector
-
-- The new segment definition uses `ym:s:searchPhrase,ym:s:startURL`.
-- The segment is full-scan/paginated.
-- Normalization preserves query as dimension 1 and URL as dimension 2.
-- Empty and HTTP-error behavior matches the existing optional segment contract.
-
 ### Read model
 
-- Combined Metrika rows map to query plus URL.
-- Multiple pages for one query are deduplicated and bounded.
-- Google and Metrika pages remain source-distinct.
+- Multiple GSC pages for one query are deduplicated and bounded.
 - Webmaster rows never acquire a page through an inferred join.
+- Metrika rows never pass the confirmed-landing filter.
 
 ### UI
 
 - The Quality item `Запрос → посадочная` is absent.
 - The filter is off by default.
 - With the filter off, all query rows remain visible.
-- With the filter on, only rows with Google or Metrika confirmed pages remain.
+- With the filter on, only rows with GSC-confirmed pages remain.
 - SEO OS `matched_url` alone does not pass the filter.
 - Filtering happens before pagination and preserves search/sort behavior.
 - The empty filtered state uses the agreed quiet message.
@@ -152,7 +131,7 @@ hasConfirmedLanding(row) = google_pages.length > 0 || metrika_pages.length > 0
 3. The default query workspace loses no Webmaster, GSC, or SEO OS rows.
 4. The new filter returns only source-confirmed query-page relationships.
 5. GSC works immediately from existing canonical data.
-6. Metrika support is implemented through the combined canonical segment without a database migration.
+6. No Metrika combined segment, collector change, or synthetic Metrika join is introduced.
 7. Webmaster and SEO OS URLs are not misrepresented as observed landing pages.
 8. Existing query search, sort, pagination, week selection, and responsive table containment remain intact.
 9. Unit tests, TypeScript, production build, and browser verification pass before handoff.
@@ -163,4 +142,5 @@ hasConfirmedLanding(row) = google_pages.length > 0 || metrika_pages.length > 0
 - Treating Webmaster `popular_complementary_indicator` as an exact click landing.
 - A separate landing-mapping dashboard tab.
 - Database migration.
+- Metrika `searchPhrase + startURL` collection unless a future separately authorized probe demonstrates useful non-empty coverage.
 - Production collector execution, backfill, cron change, deployment, or secret change.
