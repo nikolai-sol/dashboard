@@ -1,6 +1,8 @@
 import { Children, type ReactNode } from "react";
 import ZarukuPanelGrid, { ZarukuPanelSlot } from "@/components/ZarukuPanelGrid";
+import ZarukuInfoPopover from "@/components/ZarukuInfoPopover";
 import { resolveZarukuPanels } from "@/components/zaruku-panel-layout";
+import { ZARUKU_CLIENT_COPY } from "@/components/zaruku-client-copy";
 import type { ZarukuSeoData } from "@/lib/types";
 
 type Props = {
@@ -27,11 +29,13 @@ export default function ZarukuOverviewTab({ data, children }: Props) {
         <div className="flex flex-wrap items-center gap-x-4 gap-y-1">
           <span>Ежедневные данные: {formatDailyDate(dailyPeriod.from)}–{formatDailyDate(dailyPeriod.to)} · стандартный лаг 48 часов</span>
           {seoWeek ? (
-            <span className="group relative inline-flex items-center gap-1 font-medium text-slate-700">
-              {seoWeek} · недельный срез позиций
-              <span role="tooltip" className="hidden group-hover:block">
-                Этот срез не относится к выбранному ежедневному периоду и не ограничивает данные Метрики, GSC или Вебмастера.
-              </span>
+            <span className="inline-flex items-center gap-1 font-medium text-slate-700">
+              <span>{seoWeek} · недельный срез позиций</span>
+              <ZarukuInfoPopover label={ZARUKU_CLIENT_COPY.weeklyPeriod.label}>
+                <p className="text-xs leading-relaxed text-slate-600">
+                  {ZARUKU_CLIENT_COPY.weeklyPeriod.note}
+                </p>
+              </ZarukuInfoPopover>
             </span>
           ) : null}
         </div>

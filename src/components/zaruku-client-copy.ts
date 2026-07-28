@@ -10,6 +10,10 @@ export type ZarukuCopyAuditItem = {
 export const ZARUKU_CLIENT_COPY = {
   emptyPeriod: "Нет данных за выбранный период.",
   disabledCalendar: "На этой вкладке период выбирается по неделям.",
+  weeklyPeriod: {
+    label: "О недельном срезе позиций",
+    note: "Этот срез не относится к выбранному ежедневному периоду и не ограничивает данные Метрики, GSC или Вебмастера.",
+  },
   technicalTail: {
     label: "Что входит в технический хвост",
     title: "Технический хвост",
@@ -66,6 +70,8 @@ const technical = (id: string, surface: string, text: string): ZarukuCopyAuditIt
 export const ZARUKU_COPY_AUDIT: ZarukuCopyAuditItem[] = [
   client("empty-period", "Панели и секции", ZARUKU_CLIENT_COPY.emptyPeriod),
   client("calendar-week-mode", "Отключённый календарь", ZARUKU_CLIENT_COPY.disabledCalendar),
+  client("weekly-period-label", "Период данных", ZARUKU_CLIENT_COPY.weeklyPeriod.label),
+  client("weekly-period-note", "Период данных", ZARUKU_CLIENT_COPY.weeklyPeriod.note),
   client("technical-tail-label", "ⓘ Технический хвост", ZARUKU_CLIENT_COPY.technicalTail.label),
   client("technical-tail-title", "ⓘ Технический хвост", ZARUKU_CLIENT_COPY.technicalTail.title),
   client("technical-tail-description", "ⓘ Технический хвост", ZARUKU_CLIENT_COPY.technicalTail.description),

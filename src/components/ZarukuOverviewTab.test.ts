@@ -1,9 +1,12 @@
 import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
 import test from "node:test";
 import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import ZarukuOverviewTab from "@/components/ZarukuOverviewTab";
 import type { ZarukuDatasetMeta, ZarukuSeoData } from "@/lib/types";
+
+const overviewSource = readFileSync(new URL("./ZarukuOverviewTab.tsx", import.meta.url), "utf8");
 
 const dailyMeta: ZarukuDatasetMeta = {
   state: "ready",
@@ -56,9 +59,11 @@ test("overview labels SEO OS as an independent weekly position snapshot", () => 
   const text = visibleText(markup);
 
   assert.match(text, /2026-W29 · недельный срез позиций/);
-  assert.match(markup, /role="tooltip"/);
-  assert.match(text, /не относится к выбранному ежедневному периоду/i);
-  assert.match(text, /не ограничивает данные Метрики, GSC или Вебмастера/i);
+  assert.match(overviewSource, /<ZarukuInfoPopover/);
+  assert.match(overviewSource, /label=\{ZARUKU_CLIENT_COPY\.weeklyPeriod\.label\}/);
+  assert.doesNotMatch(overviewSource, /group-hover:block|<span role="tooltip"/);
+  assert.doesNotMatch(text, /не относится к выбранному ежедневному периоду/i);
+  assert.doesNotMatch(text, /не ограничивает данные Метрики, GSC или Вебмастера/i);
 });
 
 test("overview keeps GSC and Webmaster inside the unified daily period", () => {

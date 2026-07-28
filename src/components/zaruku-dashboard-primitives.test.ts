@@ -1,10 +1,13 @@
 import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
 import test from "node:test";
 import React from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import ZarukuPanelState from "./ZarukuPanelState";
 import ZarukuPeriodContext from "./ZarukuPeriodContext";
 import type { ZarukuDatasetMeta } from "@/lib/types";
+
+const periodContextSource = readFileSync(new URL("./ZarukuPeriodContext.tsx", import.meta.url), "utf8");
 
 const baseMeta: ZarukuDatasetMeta = {
   state: "ready",
@@ -64,4 +67,7 @@ test("period context keeps onsite, search, and AI periods separate", () => {
   assert.match(html, /2026-W29/);
   assert.match(html, /2026-W28/);
   assert.match(html, /wm_alisa_manual/);
+  assert.match(periodContextSource, /<ZarukuInfoPopover/);
+  assert.doesNotMatch(periodContextSource, /group-hover:block|group-focus-within:block/);
+  assert.doesNotMatch(periodContextSource, /aria-describedby="zaruku-seo-os-period-note"/);
 });
