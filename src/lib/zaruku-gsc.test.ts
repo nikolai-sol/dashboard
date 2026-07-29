@@ -32,6 +32,18 @@ test("buildGscAccountQueries bounds every canonical GSC query by account and dai
   assert.match(queries.search_type_summary.sql, /canonical_fact_gsc_search_type_daily/);
 });
 
+test("landing page limit keeps the newest GSC weeks", () => {
+  const { landing_pages: landingPages } = buildGscAccountQueries(
+    ["66624469"],
+    { from: "2026-06-29", to: "2026-07-26" },
+  );
+
+  assert.match(
+    landingPages.sql,
+    /ORDER BY week_key DESC, impressions DESC, clicks DESC, page ASC\s+LIMIT 200/,
+  );
+});
+
 test("Search appearance stays property-level while country-grained GSC reads stay Russia-filtered", () => {
   const queries = buildGscAccountQueries(["66624469"], dateRange);
   const countryGrainedQueries = Object.entries(queries)

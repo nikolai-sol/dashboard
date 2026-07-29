@@ -273,7 +273,7 @@ export function buildGscAccountQueries(counterIds: string[], dateRange: GscDateR
           ${normalizedCountryClause}
           AND COALESCE(page, '') <> ''
         GROUP BY week_key, page
-        ORDER BY week_key ASC, impressions DESC, clicks DESC, page ASC
+        ORDER BY week_key DESC, impressions DESC, clicks DESC, page ASC
         LIMIT 200
       `,
       params: landingPageParams,
