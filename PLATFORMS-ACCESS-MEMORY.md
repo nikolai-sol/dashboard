@@ -188,6 +188,10 @@ Important current state:
   - `canonical_fact_webmaster_queries_daily`
   - `canonical_fact_webmaster_summary_daily`
   - `canonical_fact_webmaster_pages_daily`
+- The separately runnable `--layers query_pages` mode writes exact standard-API URL-filter pairs to `canonical_fact_webmaster_query_pages_daily` and successful page-day coverage, including empty results, to `canonical_webmaster_query_page_coverage_daily`. It never joins the separate daily query and page tables.
+- Manual weekly run `1715` succeeded for 15 priority pages and `2026-07-21..2026-07-27`: 105 coverage rows, 67 pair facts, 88 successful-empty page-days, and zero bad rows. Query-page health is `healthy` with expected frequency 168 hours.
+- The proposed `20 3 * * 1` UTC cron is not installed. It remains gated by the Abbott successor release, dashboard deployment, and production SEO smoke; active query-page priority therefore remains manual limit 15.
+- Enhanced Export is reserved for historical backfill and exact fallback. No paid quota is allowed without separate authorization.
 - URL/page facts come from Yandex Webmaster `query-analytics/list` with `text_indicator = URL`; default `YANDEX_WEBMASTER_SEARCH_LOCATION = ALL_LOCATIONS`, matching the Webmaster UI screenshot.
 - default daily window is four days: yesterday plus the preceding three days (`--lag-days 3`)
 - for every account / host / date / device, query facts use transactional replacement: delete the prior snapshot, insert the complete current query set, and upsert the summary in one commit
