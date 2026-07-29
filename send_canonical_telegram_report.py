@@ -370,8 +370,15 @@ def build_abbott_lines(snapshot: Dict) -> List[str]:
     session_status = 'OK' if session_integrity.get('status') == 'ok' else 'CRITICAL'
     backfill = snapshot.get('backfill') or {}
     complete_days = int(backfill.get('complete_days') or 0)
+    release = snapshot.get('release') or {}
     lines = [
         '<b>Abbott Metrika</b>',
+        '- общий статус: {}'.format(html.escape(str(snapshot.get('overall') or 'UNKNOWN'))),
+        '- активный релиз: {} ({})'.format(
+            html.escape(str(release.get('id') if release.get('id') is not None else 'none')),
+            html.escape(str(release.get('status') or 'unknown')),
+        ),
+        '- счётчик: {}'.format(html.escape(str(snapshot.get('counter_id') or 'unknown'))),
         '- целостность сессий на доступных датах ({} {}): {} (all={}, with_id={}, without_id={}, mismatched_days={}, mismatched_sources={})'.format(
             complete_days,
             _russian_days(complete_days),
@@ -382,16 +389,7 @@ def build_abbott_lines(snapshot: Dict) -> List[str]:
             int(session_integrity.get('mismatched_days') or 0),
             int(session_integrity.get('mismatched_sources') or 0),
         ),
-        '- counter: {}'.format(html.escape(str(snapshot.get('counter_id') or 'unknown'))),
-        '- overall: {}'.format(html.escape(str(snapshot.get('overall') or 'UNKNOWN'))),
     ]
-    release = snapshot.get('release') or {}
-    lines.append(
-        '- release: {} ({})'.format(
-            html.escape(str(release.get('id') if release.get('id') is not None else 'none')),
-            html.escape(str(release.get('status') or 'unknown')),
-        )
-    )
     latest_run = snapshot.get('latest_run') or {}
     incidents = snapshot.get('incidents') or []
     stale_run = any(
@@ -401,8 +399,14 @@ def build_abbott_lines(snapshot: Dict) -> List[str]:
     run_status = str(latest_run.get('status') or 'unknown').upper()
     if stale_run:
         run_status = '{}, НО УСТАРЕЛ'.format(run_status)
+    run_label = (
+        'последний успешный запуск релиза'
+        if latest_run.get('status') == 'success'
+        else 'последний запуск релиза'
+    )
     lines.append(
-        '- последний запуск релиза: {}; counter={}; finished_at={}; покрывает по {}'.format(
+        '- {}: {}; счётчик={}; завершён={}; покрывает по {}'.format(
+            run_label,
             html.escape(run_status),
             html.escape(str(latest_run.get('counter_id') or 'unknown')),
             html.escape(str(latest_run.get('finished_at') or 'none')),
@@ -445,7 +449,7 @@ def build_abbott_lines(snapshot: Dict) -> List[str]:
         )
     for incident in non_coverage_incidents:
         lines.append(
-            '- incident {} {} ({})'.format(
+            '- инцидент {} {} ({})'.format(
                 html.escape(str(incident.get('severity') or 'UNKNOWN')),
                 html.escape(str(incident.get('check_id') or 'unknown')),
                 html.escape(_abbott_incident_scope(incident)),

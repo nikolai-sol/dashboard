@@ -399,16 +399,25 @@ class TelegramReportTests(unittest.TestCase):
         text = "\n".join(report.build_abbott_lines(abbott))
         self.assertNotIn("<b>gap</b>", text)
         self.assertIn("&lt;b&gt;gap&lt;/b&gt;", text)
+        self.assertIn("инцидент CRITICAL", text)
 
     def test_abbott_lines_include_counter_scoped_run_timing(self):
         text = "\n".join(report.build_abbott_lines(ABBOTT_OK))
-        self.assertIn("последний запуск релиза: SUCCESS", text)
+        self.assertIn("последний успешный запуск релиза: SUCCESS", text)
+        self.assertIn("счётчик=90602537", text)
+        self.assertIn("завершён=2026-07-16T06:30:00Z", text)
         self.assertIn("2026-07-16T06:30:00Z", text)
 
-    def test_abbott_lines_put_sanitized_session_integrity_immediately_after_header(self):
+    def test_abbott_lines_lead_with_operational_identity_before_session_integrity(self):
         lines = report.build_abbott_lines(ABBOTT_OK)
         self.assertEqual(
             lines[1],
+            "- общий статус: OK",
+        )
+        self.assertEqual(lines[2], "- активный релиз: 41 (active)")
+        self.assertEqual(lines[3], "- счётчик: 90602537")
+        self.assertEqual(
+            lines[4],
             "- целостность сессий на доступных датах (10 дней): OK "
             "(all=100, with_id=40, without_id=60, mismatched_days=0, mismatched_sources=0)",
         )
@@ -423,7 +432,7 @@ class TelegramReportTests(unittest.TestCase):
             "status": "mismatch",
         })
         self.assertEqual(
-            report.build_abbott_lines(mismatch)[1],
+            report.build_abbott_lines(mismatch)[4],
             "- целостность сессий на доступных датах (10 дней): CRITICAL "
             "(all=101, with_id=40, without_id=60, mismatched_days=1, mismatched_sources=2)",
         )
@@ -431,7 +440,7 @@ class TelegramReportTests(unittest.TestCase):
     def test_abbott_stale_incomplete_summary_is_explicit(self):
         text = "\n".join(report.build_abbott_lines(ABBOTT_STALE_INCOMPLETE))
 
-        self.assertIn("последний запуск релиза: SUCCESS, НО УСТАРЕЛ", text)
+        self.assertIn("последний успешный запуск релиза: SUCCESS, НО УСТАРЕЛ", text)
         self.assertIn("покрывает по 2026-07-22", text)
         self.assertIn("покрытие последних 10 завершённых дней: 4/10", text)
         self.assertIn("нет дат: 2026-07-23…2026-07-28", text)
@@ -447,6 +456,17 @@ class TelegramReportTests(unittest.TestCase):
             text,
         )
         self.assertEqual(text.count("нет coverage"), 1)
+
+    def test_abbott_failed_latest_run_is_not_called_successful(self):
+        failed = dict(
+            ABBOTT_OK,
+            latest_run=dict(ABBOTT_OK["latest_run"], status="failed"),
+        )
+
+        text = "\n".join(report.build_abbott_lines(failed))
+
+        self.assertIn("последний запуск релиза: FAILED", text)
+        self.assertNotIn("последний успешный запуск релиза", text)
 
     def test_compact_abbott_dates_formats_ranges_and_gaps(self):
         self.assertEqual(
