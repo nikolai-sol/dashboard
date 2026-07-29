@@ -74,6 +74,26 @@ checkout:
 Then verify every `runtime/` digest against `MIGRATION-MANIFEST.md` before
 packaging it into the private canonical repository.
 
+## Abbott UTM/frequency successor release
+
+The packaged Logs visit contract includes `ym:s:lastsignUTMSource`, normalized
+to nullable `utm_source`. Application migration
+`044_abbott_private_visit_utm_source.sql` adds the private visit column and
+release/date/UTM index repeat-safely; historic active-release rows are never
+updated in place.
+
+Production rollout is deferred to a reviewed successor release. After backup
+and migration verification, the operator backfills every requested date,
+requires successful complete coverage with zero bad rows, compares visit,
+identity, direction, and UTM aggregates against the predecessor, and rechecks
+`all.sessions = with_user_id.sessions + without_user_id.sessions` for every
+date/source. Manager reads may expose exact visit UTM values and aggregate
+period-local frequency; embed continues to perform zero private queries.
+
+The authoritative ordered procedure and rollback rule remain in
+`docs/ABBOTT-OPERATIONS-RUNBOOK.md` in the operational repository. This branch
+does not apply the migration, collect data, cut over, deploy, or change cron.
+
 ## Copied, pinned runtime environment
 
 From the installed canonical repository root, create the runtime venv with

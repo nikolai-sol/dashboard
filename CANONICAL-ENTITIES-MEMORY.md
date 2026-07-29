@@ -227,6 +227,9 @@ Operational notes:
 - Logs cannot return the current day. Active releases remain append-only; late changes require a reviewed successor release/backfill.
 - Bitrix dump remains test-only; the live connector is deferred.
 - No deployment, secret installation, API call, database migration, cron edit, Telegram send, or Hermes schedule occurred.
+- Private Abbott visits include nullable `utm_source` from `ym:s:lastsignUTMSource` after migration `044_abbott_private_visit_utm_source.sql`; the indexed read path is `(canonical_release_id, report_date, utm_source)` and remains manager-only.
+- Period-local returning-visitor frequency is a read-model aggregate over `client_id_hash`, not a new public fact and not a Bitrix join. The mutually exclusive groups are `1`, `2–3`, and `4+` visits; null client hashes are excluded from the visitor denominator and counted separately.
+- A UTM-capable release must be a new append-only successor with complete Logs backfill. Publication compares visit hashes and UTM populated/null counts and retains the per-date/source session partition gate. Embed executes zero private-schema queries.
 
 ### 6a. `canonical_fact_promopages_daily`
 

@@ -69,6 +69,10 @@ ssh beget 'cd /root/reportingdash-rollout/dashboard-next && PUBLIC_APP_HOST=5.35
 - Logs cannot return the current day. Active releases remain append-only; late changes require a reviewed successor release/backfill.
 - Bitrix dump remains test-only; the live connector is deferred.
 - No deployment, secret installation, API call, database migration, cron edit, Telegram send, or Hermes schedule occurred.
+- Visit rows now carry nullable exact `utm_source` from Logs field `ym:s:lastsignUTMSource`; migration `044_abbott_private_visit_utm_source.sql` and a fully backfilled successor release are required before production cutover.
+- Abbott manager frequency is calculated inside the selected period from distinct `client_id_hash` values in groups `1`, `2–3`, and `4+` visits. Visitors without a client hash are reported separately and excluded from the percentage denominator. Direction and repeat landing-page tables are aggregates; the embed projection receives none of the private visit detail.
+- The actions tab filters exact UTM values before pagination and labels null/blank values `Без UTM`. The external-transitions tab descriptor is hidden reversibly; its data contract and implementation remain intact.
+- Rollout gates compare total visits, distinct visit hashes, User ID/client-hash/direction coverage, and populated/null UTM counts; manager and embed smoke failures require rollback without restoring public PII assets.
 
 ### Shared data loader
 
