@@ -25,6 +25,11 @@ import {
 } from "./abbott-page-stats";
 import { abbottTrafficSourceLabel, abbottTrafficSourceOption } from "./abbott-localization";
 import { selectAbbottSummaryRows } from "./abbott-summary";
+import {
+  buildAbbottUtmSourceOptions,
+  selectAbbottUserActions,
+} from "./abbott/abbott-user-action-filters";
+import { buildAbbottReturnFrequencyUi } from "./abbott/abbott-return-frequency-ui";
 
 type AbbottBiDashboardProps = {
   data: AbbottBiData;
@@ -92,7 +97,7 @@ function buildTabs(portalName: string, showUserIdAnalytics: boolean): TabConfig[
   {
     id: "user_actions",
     label: `2. Действия пользователя на сайте ${portalName}`,
-    description: "Гранулярность: User ID + источник + начальный URL + конечный URL. Это агрегированная оценка, а не уровень отдельных сессий.",
+    description: "Одна строка — один визит Метрики. User ID, источник, UTM Source, начальный и конечный URL относятся к одному и тому же визиту.",
   },
   {
     id: "page_stats",
@@ -110,11 +115,6 @@ function buildTabs(portalName: string, showUserIdAnalytics: boolean): TabConfig[
     label: "3.2 Bitrix: путь пользователя",
     description:
       "Источник: b_stat_hit + b_stat_session. Пример за один день из дампа: точка входа, контентный путь, выход, хиты и длительность сессии.",
-  },
-  {
-    id: "external_events",
-    label: "4. Внешние переходы",
-    description: "Источник: нормализованный yandex_metrika_external. События используются только как необязательное обогащение по точному совпадению.",
   },
   {
     id: "returning",
@@ -868,13 +868,20 @@ export default function AbbottBiDashboard({
   });
   const [filtersByTab, setFiltersByTab] = useState<Record<TabId, Record<string, string>>>({
     users_summary: { user_id: "", user_id_traffic: "", traffic_source: "", direction: "" },
-    user_actions: { user_id: "", user_id_traffic: "", traffic_source: "", direction: "" },
+    user_actions: { user_id: "", user_id_traffic: "", traffic_source: "", utm_source: "", direction: "" },
     page_stats: { page_title_query: "", direction: "", access: "" },
     bitrix_pages: { direction: "", material_type: "", access: "" },
     session_journeys: { user_id_traffic: "" },
     external_events: { direction: "" },
     time_buckets: { page_url: "" },
-    returning: { url: "", direction: "" },
+    returning: {
+      url: "",
+      direction: "",
+      frequency_group: "",
+      user_direction: "",
+      page_direction: "",
+      page_url: "",
+    },
     general_materials: { material_name: "" },
   });
   const [selectedPageMaterialTypes, setSelectedPageMaterialTypes] = useState<string[]>([]);
@@ -938,6 +945,7 @@ export default function AbbottBiDashboard({
     () => ({
       user_id: uniqOptions(data.user_actions.filter((row) => row.has_user_id).map((row) => row.user_id)),
       traffic_source: uniqOptions(data.user_actions.map((row) => row.traffic_source)).map((option) => abbottTrafficSourceOption(option.value)),
+      utm_source: buildAbbottUtmSourceOptions(data.user_actions),
       direction: uniqOptions(data.user_actions.map((row) => row.direction)),
     }),
     [data.user_actions],
@@ -1029,19 +1037,32 @@ export default function AbbottBiDashboard({
     });
   }, [filtersByTab.users_summary, queryByTab.users_summary, showUserIdAnalytics, usersSummarySourceRows]);
 
-  const userActionRows = useMemo(() => {
-    const query = queryByTab.user_actions;
-    const filters = filtersByTab.user_actions;
-    return data.user_actions.filter((row) => {
-      if (!matchesQuery([userIdLabel(row.user_id, row.has_user_id), abbottTrafficSourceLabel(row.traffic_source), row.direction, row.start_url, row.end_url, row.visits], query)) return false;
-      if (filters.user_id && row.user_id !== filters.user_id) return false;
-      if (filters.user_id_traffic === "with_user_id" && !row.has_user_id) return false;
-      if (filters.user_id_traffic === "without_user_id" && row.has_user_id) return false;
-      if (filters.traffic_source && row.traffic_source !== filters.traffic_source) return false;
-      if (filters.direction && (row.direction ?? "") !== filters.direction) return false;
-      return true;
-    });
-  }, [data.user_actions, filtersByTab.user_actions, queryByTab.user_actions]);
+  const userActionsSelection = useMemo(
+    () =>
+      selectAbbottUserActions(
+        data.user_actions,
+        {
+          query: queryByTab.user_actions,
+          ...filtersByTab.user_actions,
+          traffic_source_label: abbottTrafficSourceLabel,
+        },
+        pageByTab.user_actions,
+        PAGE_SIZE,
+      ),
+    [data.user_actions, filtersByTab.user_actions, pageByTab.user_actions, queryByTab.user_actions],
+  );
+  const userActionRows = userActionsSelection.filteredRows;
+
+  const returnFrequencyUi = useMemo(
+    () =>
+      buildAbbottReturnFrequencyUi(data.return_frequency, {
+        frequency_group: filtersByTab.returning.frequency_group,
+        user_direction: filtersByTab.returning.user_direction,
+        page_direction: filtersByTab.returning.page_direction,
+        page_url: filtersByTab.returning.page_url,
+      }),
+    [data.return_frequency, filtersByTab.returning],
+  );
 
   const pageStatRows = useMemo(() => {
     const query = queryByTab.page_stats;
@@ -1355,7 +1376,7 @@ export default function AbbottBiDashboard({
   };
 
   const usersSummaryPage = sliceRows(usersSummaryRows, pageByTab.users_summary);
-  const userActionsPage = sliceRows(userActionRows, pageByTab.user_actions);
+  const userActionsPage = userActionsSelection;
   const pageStatsPage = sliceRows(pageStatRows, pageByTab.page_stats);
   const bitrixPagesPage = sliceRows(bitrixPageRows, pageByTab.bitrix_pages);
   const sessionJourneysPage = sliceRows(sessionJourneyRows, pageByTab.session_journeys);
@@ -1408,6 +1429,7 @@ export default function AbbottBiDashboard({
     tableColumns = [
       { key: "user_id", label: "User ID" },
       { key: "traffic_source", label: "Источник" },
+      { key: "utm_source", label: "UTM Source" },
       { key: "direction", label: "Направление" },
       { key: "end_url", label: "Последняя страница", className: "min-w-[320px] break-all" },
       { key: "avg_duration", label: "Продолжительность визита, мин", className: "text-right" },
@@ -1416,6 +1438,7 @@ export default function AbbottBiDashboard({
     tableRows = userActionsPage.pageRows.map((row) => ({
       user_id: userIdLabel(row.user_id, row.has_user_id),
       traffic_source: abbottTrafficSourceLabel(row.traffic_source),
+      utm_source: row.utm_source?.trim() || "Без UTM",
       direction: row.direction ?? "—",
       end_url: row.end_url || "—",
       avg_duration: formatDurationMinutes(row.avg_duration, locale),
@@ -1621,6 +1644,13 @@ export default function AbbottBiDashboard({
           value={filtersByTab.user_actions.traffic_source}
           options={userActionsOptions.traffic_source}
           onChange={(value) => setSelectFilter("user_actions", "traffic_source", value)}
+          theme={theme}
+        />
+        <SelectField
+          label="UTM Source"
+          value={filtersByTab.user_actions.utm_source}
+          options={userActionsOptions.utm_source}
+          onChange={(value) => setSelectFilter("user_actions", "utm_source", value)}
           theme={theme}
         />
         <SelectField
@@ -1993,37 +2023,165 @@ export default function AbbottBiDashboard({
     );
   } else if (activeTab === "returning") {
     chartContent = (
-      <div className="grid gap-4 xl:grid-cols-3">
-        <ChartCard title="Вернувшиеся в 1 день">
-          <AbbottBarChart
-            data={returningDirectionData.map((row) => ({ label: row.label, value: row.returning_1_day_pct }))}
-            dataKey="value"
-            metricName="Доля вернувшихся"
-            color={theme.barColor}
-            locale={locale}
-            valueFormatter={(value) => formatPercent(value, locale)}
-          />
-        </ChartCard>
-        <ChartCard title="Вернувшиеся в 2-7 дни">
-          <AbbottBarChart
-            data={returningDirectionData.map((row) => ({ label: row.label, value: row.returning_2_7_days_pct }))}
-            dataKey="value"
-            metricName="Доля вернувшихся"
-            color={theme.barColor}
-            locale={locale}
-            valueFormatter={(value) => formatPercent(value, locale)}
-          />
-        </ChartCard>
-        <ChartCard title="Вернувшиеся в 8-31 дни">
-          <AbbottBarChart
-            data={returningDirectionData.map((row) => ({ label: row.label, value: row.returning_8_31_days_pct }))}
-            dataKey="value"
-            metricName="Доля вернувшихся"
-            color={theme.barColor}
-            locale={locale}
-            valueFormatter={(value) => formatPercent(value, locale)}
-          />
-        </ChartCard>
+      <div className="space-y-6">
+        {returnFrequencyUi.available ? (
+          <>
+            <div className="grid gap-4 xl:grid-cols-[minmax(0,1.2fr)_minmax(0,0.8fr)]">
+              <ChartCard title="Количество заходов за выбранный период">
+                <AbbottBarChart
+                  data={returnFrequencyUi.chart}
+                  dataKey="visitors"
+                  metricName="Посетители"
+                  color={theme.barColor}
+                  locale={locale}
+                  valueFormatter={(value) => formatNumber(value, locale)}
+                />
+              </ChartCard>
+              <ChartCard title="Посетители по частоте визитов">
+                <div className="grid gap-3">
+                  {returnFrequencyUi.cards.map((card) => (
+                    <StatsPill
+                      key={card.group_id}
+                      label={card.label}
+                      value={`${formatNumber(card.visitors, locale)} · ${formatPercent(card.share, locale)}`}
+                      theme={theme}
+                    />
+                  ))}
+                </div>
+              </ChartCard>
+            </div>
+
+            <div className="card-surface space-y-4 p-5">
+              <div className="grid gap-4 xl:grid-cols-4">
+                <SelectField
+                  label="Частота визитов"
+                  value={filtersByTab.returning.frequency_group}
+                  options={returnFrequencyUi.options.frequency_group}
+                  onChange={(value) => setSelectFilter("returning", "frequency_group", value)}
+                  theme={theme}
+                />
+                <SelectField
+                  label="Направление пользователя"
+                  value={filtersByTab.returning.user_direction}
+                  options={returnFrequencyUi.options.user_direction}
+                  onChange={(value) => setSelectFilter("returning", "user_direction", value)}
+                  theme={theme}
+                />
+                <SelectField
+                  label="Направление страницы"
+                  value={filtersByTab.returning.page_direction}
+                  options={returnFrequencyUi.options.page_direction}
+                  onChange={(value) => setSelectFilter("returning", "page_direction", value)}
+                  theme={theme}
+                />
+                <SelectField
+                  label="Страница возврата"
+                  value={filtersByTab.returning.page_url}
+                  options={returnFrequencyUi.options.page_url}
+                  onChange={(value) => setSelectFilter("returning", "page_url", value)}
+                  theme={theme}
+                />
+              </div>
+              <p className="text-sm text-slate-600">
+                Доля рассчитана от {formatNumber(returnFrequencyUi.identifiedVisitors, locale)} идентифицированных
+                посетителей внутри выбранного периода. Визиты без идентификатора клиента: {formatNumber(
+                  returnFrequencyUi.unidentifiedVisits,
+                  locale,
+                )} — они не входят в распределение.
+              </p>
+            </div>
+
+            <div className="grid gap-4 xl:grid-cols-2">
+              <ChartCard title="Направления вернувшихся пользователей">
+                <DataTable
+                  columns={[
+                    { key: "direction", label: "Направление" },
+                    { key: "frequency_group", label: "Частота" },
+                    { key: "visitors", label: "Посетители", className: "text-right" },
+                    { key: "repeat_visits", label: "Повторные визиты", className: "text-right" },
+                  ]}
+                  rows={returnFrequencyUi.userDirections.map((row) => ({
+                    direction: row.direction,
+                    frequency_group:
+                      returnFrequencyUi.options.frequency_group.find((option) => option.value === row.frequency_group)?.label
+                      ?? row.frequency_group,
+                    visitors: formatNumber(row.visitors, locale),
+                    repeat_visits: formatNumber(row.repeat_visits, locale),
+                  }))}
+                  emptyText="Нет вернувшихся пользователей с выбранными параметрами."
+                  headerClass={theme.headerClass}
+                />
+              </ChartCard>
+              <ChartCard title="Страницы возврата">
+                <DataTable
+                  columns={[
+                    { key: "url", label: "URL", className: "min-w-[260px] break-all" },
+                    { key: "direction", label: "Направление" },
+                    { key: "returning_visitors", label: "Посетители", className: "text-right" },
+                    { key: "repeat_visits", label: "Повторные визиты", className: "text-right" },
+                  ]}
+                  rows={returnFrequencyUi.returnPages.map((row) => ({
+                    url: row.url,
+                    direction: row.direction,
+                    returning_visitors: formatNumber(row.returning_visitors, locale),
+                    repeat_visits: formatNumber(row.repeat_visits, locale),
+                  }))}
+                  emptyText="Нет страниц возврата с выбранными параметрами."
+                  headerClass={theme.headerClass}
+                />
+              </ChartCard>
+            </div>
+            <p className="text-sm text-slate-600">
+              Один посетитель может вернуться на несколько страниц, поэтому строки таблицы страниц не складываются в
+              уникальное общее число посетителей.
+            </p>
+          </>
+        ) : (
+          <div className="card-surface p-5 text-sm text-slate-600">
+            Частота визитов недоступна: приватная детализация Метрики для выбранного периода ещё не опубликована.
+          </div>
+        )}
+
+        <section className="space-y-4">
+          <div>
+            <h3 className="text-lg font-semibold text-slate-900">Интервалы возврата по Метрике</h3>
+            <p className="text-sm text-slate-600">
+              Контрольный слой Метрики показывает долю возвратов по временным интервалам отдельно от частоты визитов.
+            </p>
+          </div>
+          <div className="grid gap-4 xl:grid-cols-3">
+            <ChartCard title="Вернувшиеся в 1 день">
+              <AbbottBarChart
+                data={returningDirectionData.map((row) => ({ label: row.label, value: row.returning_1_day_pct }))}
+                dataKey="value"
+                metricName="Доля вернувшихся"
+                color={theme.barColor}
+                locale={locale}
+                valueFormatter={(value) => formatPercent(value, locale)}
+              />
+            </ChartCard>
+            <ChartCard title="Вернувшиеся в 2-7 дней">
+              <AbbottBarChart
+                data={returningDirectionData.map((row) => ({ label: row.label, value: row.returning_2_7_days_pct }))}
+                dataKey="value"
+                metricName="Доля вернувшихся"
+                color={theme.barColor}
+                locale={locale}
+                valueFormatter={(value) => formatPercent(value, locale)}
+              />
+            </ChartCard>
+            <ChartCard title="Вернувшиеся в 8-31 дни">
+              <AbbottBarChart
+                data={returningDirectionData.map((row) => ({ label: row.label, value: row.returning_8_31_days_pct }))}
+                dataKey="value"
+                metricName="Доля вернувшихся"
+                color={theme.barColor}
+                locale={locale}
+                valueFormatter={(value) => formatPercent(value, locale)}
+              />
+            </ChartCard>
+          </div>
+        </section>
       </div>
     );
   } else if (activeTab === "general_materials") {
