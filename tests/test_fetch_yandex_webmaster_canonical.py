@@ -2,7 +2,7 @@ import datetime as dt
 import inspect
 import unittest
 from types import SimpleNamespace
-from unittest.mock import patch
+from unittest.mock import MagicMock, patch
 
 
 class FakeCursor:
@@ -240,6 +240,135 @@ class YandexWebmasterCanonicalTests(unittest.TestCase):
             collection_dates(dt.date(2026, 7, 14), lag_days=3),
             ["2026-07-10", "2026-07-11", "2026-07-12"],
         )
+
+    def test_default_layer_remains_core(self):
+        from fetch_yandex_webmaster_canonical import parse_args
+
+        with patch("sys.argv", ["collector"]):
+            args = parse_args()
+
+        self.assertEqual(args.layers, "core")
+        self.assertEqual(args.priority_limit, 30)
+
+    def test_query_page_default_window_uses_seven_collectable_dates(self):
+        from fetch_yandex_webmaster_canonical import selected_query_page_dates
+
+        args = SimpleNamespace(date_from="", date_to="")
+
+        self.assertEqual(
+            selected_query_page_dates(args, anchor=dt.date(2026, 7, 14)),
+            [
+                "2026-07-06",
+                "2026-07-07",
+                "2026-07-08",
+                "2026-07-09",
+                "2026-07-10",
+                "2026-07-11",
+                "2026-07-12",
+            ],
+        )
+
+    def test_priority_pages_keep_sections_first_deduplicate_and_cap_at_30(self):
+        from fetch_yandex_webmaster_canonical import load_priority_query_pages
+
+        pattern_rows = [
+            {"section": f"/section-{index}/", "priority": 1}
+            for index in range(15)
+        ] + [{"section": "/section-0/", "priority": 2}]
+        fill_rows = [
+            {
+                "page_url": "/section-0/" if index == 0 else f"/page-{index}/",
+                "impressions": 100 - index,
+                "clicks": 10 - min(index, 10),
+            }
+            for index in range(17)
+        ]
+        cursor = MagicMock()
+        cursor.fetchall.side_effect = [
+            pattern_rows,
+            [{"week_from": dt.date(2026, 7, 20), "week_to": dt.date(2026, 7, 26)}],
+            fill_rows,
+        ]
+        connection = MagicMock()
+        connection.cursor.return_value = cursor
+        with patch(
+            "fetch_yandex_webmaster_canonical.get_db_connection",
+            return_value=connection,
+        ):
+            pages = load_priority_query_pages("66624469", limit=30)
+
+        self.assertEqual(
+            pages[:15],
+            [f"/section-{index}/" for index in range(15)],
+        )
+        self.assertEqual(len(pages), 30)
+        self.assertEqual(len(set(pages)), 30)
+        self.assertNotIn("/page-0/", pages)
+        connection.close.assert_called_once()
+
+    def test_query_pages_layer_does_not_call_core_fetchers(self):
+        import fetch_yandex_webmaster_canonical as collector
+
+        args = SimpleNamespace(
+            layers="query_pages",
+            run_type="manual",
+            force=False,
+            priority_limit=15,
+            account_id="66624469",
+            domain="zaruku.ru",
+            host_id="host",
+            date_from="",
+            date_to="",
+        )
+        account = collector.WebmasterAccount("66624469", "zaruku.ru", "host")
+        pair_row = {
+            **self.pair_rows[0],
+            "report_date": "2026-07-22",
+            "page_url": "/article/",
+        }
+        with patch.object(
+            collector,
+            "selected_query_page_dates",
+            return_value=["2026-07-22"],
+        ), patch.object(collector, "start_run", return_value=84), patch.object(
+            collector,
+            "refresh_access_token",
+            return_value="token",
+        ), patch.object(collector, "get_user_id", return_value="user"), patch.object(
+            collector,
+            "configured_accounts",
+            return_value=[account],
+        ), patch.object(
+            collector,
+            "load_priority_query_pages",
+            return_value=["/article/"],
+        ), patch.object(
+            collector,
+            "fetch_query_page_rows",
+            return_value=[{"text_indicator": {"type": "QUERY", "value": "query"}}],
+        ), patch.object(
+            collector,
+            "normalize_query_page_rows",
+            return_value=[pair_row],
+        ), patch.object(
+            collector,
+            "replace_webmaster_query_page_snapshot",
+            return_value=2,
+        ) as replace, patch.object(collector, "fetch_query_rows") as fetch_queries, patch.object(
+            collector,
+            "fetch_page_rows",
+        ) as fetch_pages, patch.object(collector, "upsert_accounts"), patch.object(
+            collector,
+            "log_collector_event",
+        ), patch.object(collector, "finish_run"):
+            result = collector.collect(args)
+
+        self.assertEqual(result["status"], "success")
+        fetch_queries.assert_not_called()
+        fetch_pages.assert_not_called()
+        coverage = replace.call_args.args[1]
+        self.assertEqual(coverage["row_count"], 1)
+        self.assertEqual(coverage["page_url"], "/article/")
 
     def test_selected_dates_clip_explicit_webmaster_window_to_collection_floor(self):
         from fetch_yandex_webmaster_canonical import selected_dates
