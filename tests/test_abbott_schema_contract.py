@@ -173,6 +173,7 @@ class AbbottSchemaContractTest(unittest.TestCase):
             "raw_user_id_hash CHAR(64) DEFAULT NULL",
             "raw_user_ids_json JSON DEFAULT NULL",
             "traffic_source VARCHAR(500) NOT NULL",
+            "utm_source VARCHAR(500) DEFAULT NULL",
             "start_url TEXT NOT NULL",
             "start_url_hash CHAR(64) NOT NULL",
             "end_url TEXT NOT NULL",
@@ -194,12 +195,18 @@ class AbbottSchemaContractTest(unittest.TestCase):
             "(canonical_release_id, counter_id, report_date, visit_id_hash)",
             "KEY idx_private_visit_release_source "
             "(canonical_release_id, report_date, traffic_source)",
+            "KEY idx_private_visit_release_utm "
+            "(canonical_release_id, report_date, utm_source(191))",
             "KEY idx_private_visit_release_user "
             "(canonical_release_id, report_date, raw_user_id_hash)",
             "KEY idx_private_visit_run (ingestion_run_id)",
         ):
             self.assertIn(key, visits)
         self.assertNotRegex(visits, r"(?i)\bclient_id\s+(?:TEXT|VARCHAR|CHAR|BIGINT|INT)")
+        self.assertNotRegex(
+            self._private_sql(),
+            r"(?i)UPDATE\s+report_bd_private\.canonical_fact_metrika_visits",
+        )
 
     def test_multi_user_id_visit_upgrade_is_repeat_safe_and_private_only(self):
         migration = (

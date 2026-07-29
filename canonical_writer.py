@@ -291,6 +291,7 @@ def _insert_private_metrika_visit_rows(cur, rows: Sequence[dict]) -> int:
             row.get('raw_user_id_hash'),
             row['raw_user_ids_json'],
             row['traffic_source'],
+            row.get('utm_source'),
             row['start_url'],
             row['start_url_hash'],
             row['end_url'],
@@ -311,13 +312,13 @@ def _insert_private_metrika_visit_rows(cur, rows: Sequence[dict]) -> int:
             canonical_release_id, counter_id, report_date, visit_id,
             visit_id_hash, client_id_hash, raw_user_id, raw_user_id_hash,
             raw_user_ids_json,
-            traffic_source, start_url, start_url_hash, end_url, end_url_hash,
+            traffic_source, utm_source, start_url, start_url_hash, end_url, end_url_hash,
             session_started_at, session_ended_at, pageviews, duration_seconds,
             is_bounce, request_fingerprint, ingestion_run_id
         ) VALUES (
             %s, %s, %s, %s, %s, %s, %s, %s, %s, %s,
             %s, %s, %s, %s, %s, %s, %s, %s, %s, %s,
-            %s
+            %s, %s
         )
         """,
         values,

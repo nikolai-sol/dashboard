@@ -66,6 +66,7 @@ class MetrikaDayBundleTests(unittest.TestCase):
                 "bounce": 0,
                 "client_id": "client-secret-1",
                 "traffic_source": "Search engine traffic",
+                "utm_source": "email",
                 "raw_user_id": "user-secret-1",
                 "raw_user_ids": ("user-secret-1",),
             },
@@ -139,6 +140,7 @@ class MetrikaDayBundleTests(unittest.TestCase):
                     ).hexdigest(),
                     "raw_user_ids_json": '["user-secret-1"]',
                     "traffic_source": "Search engine traffic",
+                    "utm_source": "email",
                     "start_url": "https://example.test/private-start?token=secret",
                     "start_url_hash": hashlib.sha256(
                         b"https://example.test/private-start?token=secret"
@@ -174,6 +176,7 @@ class MetrikaDayBundleTests(unittest.TestCase):
             "bounce": 1,
             "client_id": "   ",
             "traffic_source": "direct",
+            "utm_source": None,
             "raw_user_id": None,
             "raw_user_ids": (),
         }
@@ -195,6 +198,7 @@ class MetrikaDayBundleTests(unittest.TestCase):
         self.assertIsNone(row["raw_user_id"])
         self.assertIsNone(row["raw_user_id_hash"])
         self.assertEqual(row["raw_user_ids_json"], "[]")
+        self.assertIsNone(row["utm_source"])
         self.assertEqual(row["start_url"], "")
         self.assertEqual(row["end_url"], "")
 
@@ -211,6 +215,7 @@ class MetrikaDayBundleTests(unittest.TestCase):
             "bounce": 0,
             "client_id": "client",
             "traffic_source": "direct",
+            "utm_source": None,
             "raw_user_id": None,
             "raw_user_ids": ("first", "second"),
         }
@@ -246,16 +251,20 @@ class MetrikaDayBundleTests(unittest.TestCase):
             "bounce": 0,
             "client_id": "private-client-secret",
             "traffic_source": "direct",
+            "utm_source": "email",
             "raw_user_id": "private-user-secret",
             "raw_user_ids": ("private-user-secret",),
         }
         mutations = (
             {"missing": "traffic_source"},
+            {"missing": "utm_source"},
             {"date_time": "2026-01-03 10:00:00"},
             {"page_views": -1},
             {"visit_duration": True},
             {"bounce": 2},
             {"traffic_source": "   "},
+            {"utm_source": 123},
+            {"utm_source": "x" * 501},
             {"raw_user_ids": ("private-user-secret", "private-user-secret")},
             {"raw_user_ids": ("private-user-secret", "second-user"), "raw_user_id": "private-user-secret"},
             {"raw_user_ids": ("   ",), "raw_user_id": "   "},

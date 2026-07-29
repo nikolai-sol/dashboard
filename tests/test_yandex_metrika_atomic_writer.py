@@ -61,6 +61,7 @@ def day_bundle():
                         "raw_user_id_hash": "user-hash",
                         "raw_user_ids_json": '["user-1"]',
                         "traffic_source": "direct",
+                        "utm_source": "email",
                         "start_url": "/start",
                         "start_url_hash": "start-hash",
                         "end_url": "/end",
@@ -172,6 +173,7 @@ class AtomicMetrikaWriterTest(unittest.TestCase):
             "raw_user_id_hash": None,
             "raw_user_ids_json": '["first","second"]',
             "traffic_source": "direct",
+            "utm_source": "email",
             "start_url": "/start",
             "start_url_hash": "start-hash",
             "end_url": "/end",
@@ -197,7 +199,7 @@ class AtomicMetrikaWriterTest(unittest.TestCase):
             "( canonical_release_id, counter_id, report_date, visit_id, "
             "visit_id_hash, client_id_hash, raw_user_id, raw_user_id_hash, "
             "raw_user_ids_json, "
-            "traffic_source, start_url, start_url_hash, end_url, end_url_hash, "
+            "traffic_source, utm_source, start_url, start_url_hash, end_url, end_url_hash, "
             "session_started_at, session_ended_at, pageviews, duration_seconds, "
             "is_bounce, request_fingerprint, ingestion_run_id )",
             sql,
@@ -216,6 +218,7 @@ class AtomicMetrikaWriterTest(unittest.TestCase):
                     None,
                     '["first","second"]',
                     "direct",
+                    "email",
                     "/start",
                     "start-hash",
                     "/end",
