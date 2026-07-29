@@ -128,20 +128,20 @@ npm run build
 
 Expected: every command exits `0` with no failing tests or build errors.
 
-- [ ] **Step 3: Commit the focused fix**
+- [x] **Step 3: Commit the focused fix**
 
 ```bash
 git add src/lib/zaruku-metrika.ts src/lib/zaruku-metrika.test.ts DASHBOARDS-MEMORY.md docs/superpowers/plans/2026-07-29-zaruku-metrika-breakdown-read-recovery.md
 git commit -m "fix(zaruku): restore metrika breakdown reads"
 ```
 
-- [ ] **Step 4: Deploy through the existing release workflow**
+- [x] **Step 4: Deploy through the existing release workflow**
 
 Run: `npm run deploy`
 
 Expected: build, staged upload, atomic release swap, PM2 restart, and health check all succeed.
 
-- [ ] **Step 5: Verify production state**
+- [x] **Step 5: Verify production state**
 
 Check PM2 and both health endpoints, then open a fresh Zaruku dashboard response for `2026-07-01..2026-07-27`.
 
