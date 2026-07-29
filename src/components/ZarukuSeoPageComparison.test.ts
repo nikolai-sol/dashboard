@@ -78,6 +78,26 @@ test("page workspace exposes search sorting pagination and safe absolute links",
   assert.doesNotMatch(source, /useEffect\(\(\) => setPage/);
 });
 
+test("every page comparison metric header exposes sorting", () => {
+  for (const sortKey of [
+    "google_impressions",
+    "google_clicks",
+    "google_ctr",
+    "google_position",
+    "webmaster_impressions",
+    "webmaster_clicks",
+    "webmaster_ctr",
+    "webmaster_position",
+    "visits",
+    "users",
+    "bounce_rate",
+    "avg_duration_seconds",
+    "seo_os_tracked_queries",
+  ]) {
+    assert.match(source, new RegExp(`sortKey="${sortKey}"`), sortKey);
+  }
+});
+
 test("renders an em dash when row-level users are unavailable", () => {
   const rows = buildUnifiedSeoPageRows({
     gscRows: [],

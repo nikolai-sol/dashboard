@@ -8,7 +8,21 @@ import ZarukuTableFrame from "@/components/ZarukuTableFrame";
 import { ZARUKU_CLIENT_COPY } from "@/components/zaruku-client-copy";
 
 const PAGE_SIZE = 50;
-type SeoPageSortKey = "google_impressions" | "webmaster_impressions" | "visits" | "label";
+type SeoPageSortKey =
+  | "google_impressions"
+  | "google_clicks"
+  | "google_ctr"
+  | "google_position"
+  | "webmaster_impressions"
+  | "webmaster_clicks"
+  | "webmaster_ctr"
+  | "webmaster_position"
+  | "visits"
+  | "users"
+  | "bounce_rate"
+  | "avg_duration_seconds"
+  | "seo_os_tracked_queries"
+  | "label";
 type SeoPageSort = { key: SeoPageSortKey; direction: "asc" | "desc" };
 type SeoPageFilter = SeoComparisonFilter;
 
@@ -102,7 +116,7 @@ function PageSortButton({ label, sortKey, sort, onChange }: { label: string; sor
       aria-pressed={active}
       aria-label={`Сортировать: ${label}. ${active ? `Сейчас ${directionLabel}` : "Изменить сортировку"}`}
       onClick={() => onChange(sortKey)}
-      className={`inline-flex items-center gap-1 rounded px-1.5 py-1 text-left text-[11px] font-semibold transition ${
+      className={`inline-flex max-w-full items-center justify-center gap-0.5 rounded px-1.5 py-1 text-center text-[11px] font-semibold transition ${
         active ? "bg-slate-800 text-white" : "text-slate-600 hover:bg-slate-100"
       }`}
     >
@@ -120,13 +134,28 @@ export default function ZarukuSeoPageComparison({ rows, sourceWeeks, sourceAvail
   const filteredRows = useMemo(() => filterPageRows(rows, filter), [filter, rows]);
   const sortedRows = useMemo(() => [...filteredRows].sort((left, right) => {
     const factor = sort.direction === "asc" ? 1 : -1;
-    const values: Record<Exclude<SeoPageSortKey, "label">, (row: UnifiedSeoPageRow) => number> = {
-      google_impressions: (row) => row.google?.impressions ?? -1,
-      webmaster_impressions: (row) => row.webmaster?.impressions ?? -1,
-      visits: (row) => row.post_click?.visits ?? -1,
+    const values: Record<Exclude<SeoPageSortKey, "label">, (row: UnifiedSeoPageRow) => number | null> = {
+      google_impressions: (row) => row.google?.impressions ?? null,
+      google_clicks: (row) => row.google?.clicks ?? null,
+      google_ctr: (row) => row.google?.ctr ?? null,
+      google_position: (row) => normalizePosition(row.google?.average_position),
+      webmaster_impressions: (row) => row.webmaster?.impressions ?? null,
+      webmaster_clicks: (row) => row.webmaster?.clicks ?? null,
+      webmaster_ctr: (row) => row.webmaster?.ctr ?? null,
+      webmaster_position: (row) => normalizePosition(row.webmaster?.average_position),
+      visits: (row) => row.post_click?.visits ?? null,
+      users: (row) => row.post_click?.users_available === false ? null : row.post_click?.users ?? null,
+      bounce_rate: (row) => row.post_click?.bounce_rate ?? null,
+      avg_duration_seconds: (row) => row.post_click?.avg_duration_seconds ?? null,
+      seo_os_tracked_queries: (row) => row.seo_os_tracked_queries,
     };
     if (sort.key === "label") return factor * left.label.localeCompare(right.label, locale);
-    return factor * (values[sort.key](left) - values[sort.key](right)) || left.label.localeCompare(right.label, locale);
+    const leftValue = values[sort.key](left);
+    const rightValue = values[sort.key](right);
+    if (leftValue === null && rightValue === null) return left.label.localeCompare(right.label, locale);
+    if (leftValue === null) return 1;
+    if (rightValue === null) return -1;
+    return factor * (leftValue - rightValue) || left.label.localeCompare(right.label, locale);
   }), [filteredRows, locale, sort]);
   const paginated = useMemo(
     () => filterAndPaginate(sortedRows, query, page, PAGE_SIZE, (row) => `${row.label} ${row.url}`),
@@ -205,30 +234,48 @@ export default function ZarukuSeoPageComparison({ rows, sourceWeeks, sourceAvail
               <th colSpan={4} className="w-[25%] border-r border-slate-100 bg-violet-50/70 px-2 py-2 text-center">
                 <SourceHeading label="Метрика" period={`${trafficPeriod.from} — ${trafficPeriod.to}`} dot="bg-violet-500" />
               </th>
-              <th rowSpan={2} className="w-[10%] bg-teal-50/70 px-2 py-3 text-right align-bottom">
-                <div>Запросы SEO OS</div>
+              <th rowSpan={2} className="w-[10%] bg-teal-50/70 px-2 py-3 text-center align-bottom">
+                <PageSortButton label="Запросы SEO OS" sortKey="seo_os_tracked_queries" sort={sort} onChange={changeSort} />
                 <div className="mt-1 hidden font-normal text-slate-400 2xl:block">{sourceWeeks.seoOs ?? "нет данных"}</div>
               </th>
             </tr>
             <tr className="text-[11px] text-slate-500">
-              <th className="bg-blue-50/70 px-1.5 py-2 text-right">
+              <th className="bg-blue-50/70 px-1.5 py-2 text-center">
                 <PageSortButton label="Показы" sortKey="google_impressions" sort={sort} onChange={changeSort} />
               </th>
-              <th className="bg-blue-50/70 px-1.5 py-2 text-right">Клики</th>
-              <th className="bg-blue-50/70 px-1.5 py-2 text-right">CTR</th>
-              <th className="border-r border-slate-100 bg-blue-50/70 px-1.5 py-2 text-right">Позиция</th>
-              <th className="bg-amber-50/70 px-1.5 py-2 text-right">
+              <th className="bg-blue-50/70 px-1.5 py-2 text-center">
+                <PageSortButton label="Клики" sortKey="google_clicks" sort={sort} onChange={changeSort} />
+              </th>
+              <th className="bg-blue-50/70 px-1.5 py-2 text-center">
+                <PageSortButton label="CTR" sortKey="google_ctr" sort={sort} onChange={changeSort} />
+              </th>
+              <th className="border-r border-slate-100 bg-blue-50/70 px-1.5 py-2 text-center">
+                <PageSortButton label="Позиция" sortKey="google_position" sort={sort} onChange={changeSort} />
+              </th>
+              <th className="bg-amber-50/70 px-1.5 py-2 text-center">
                 <PageSortButton label="Показы" sortKey="webmaster_impressions" sort={sort} onChange={changeSort} />
               </th>
-              <th className="bg-amber-50/70 px-1.5 py-2 text-right">Клики</th>
-              <th className="bg-amber-50/70 px-1.5 py-2 text-right">CTR</th>
-              <th className="border-r border-slate-100 bg-amber-50/70 px-1.5 py-2 text-right">Позиция</th>
-              <th className="bg-violet-50/70 px-1.5 py-2 text-right">
+              <th className="bg-amber-50/70 px-1.5 py-2 text-center">
+                <PageSortButton label="Клики" sortKey="webmaster_clicks" sort={sort} onChange={changeSort} />
+              </th>
+              <th className="bg-amber-50/70 px-1.5 py-2 text-center">
+                <PageSortButton label="CTR" sortKey="webmaster_ctr" sort={sort} onChange={changeSort} />
+              </th>
+              <th className="border-r border-slate-100 bg-amber-50/70 px-1.5 py-2 text-center">
+                <PageSortButton label="Позиция" sortKey="webmaster_position" sort={sort} onChange={changeSort} />
+              </th>
+              <th className="bg-violet-50/70 px-1.5 py-2 text-center">
                 <PageSortButton label="Визиты" sortKey="visits" sort={sort} onChange={changeSort} />
               </th>
-              <th className="bg-violet-50/70 px-1.5 py-2 text-right">Польз.</th>
-              <th className="bg-violet-50/70 px-1.5 py-2 text-right">Отказы</th>
-              <th className="border-r border-slate-100 bg-violet-50/70 px-1.5 py-2 text-right">Время</th>
+              <th className="bg-violet-50/70 px-1.5 py-2 text-center">
+                <PageSortButton label="Польз." sortKey="users" sort={sort} onChange={changeSort} />
+              </th>
+              <th className="bg-violet-50/70 px-1.5 py-2 text-center">
+                <PageSortButton label="Отказы" sortKey="bounce_rate" sort={sort} onChange={changeSort} />
+              </th>
+              <th className="border-r border-slate-100 bg-violet-50/70 px-1.5 py-2 text-center">
+                <PageSortButton label="Время" sortKey="avg_duration_seconds" sort={sort} onChange={changeSort} />
+              </th>
             </tr>
           </thead>
           <tbody className="divide-y divide-slate-100">

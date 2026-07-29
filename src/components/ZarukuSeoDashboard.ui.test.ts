@@ -151,11 +151,16 @@ test("SEO tab follows the executive-to-detail hierarchy without duplicate source
   assert.match(source, /<table className="zaruku-table min-w-\[760px\]">/);
 });
 
-test("SEO tab explains Metrika search phrases and uses the unified landing-page workspace", () => {
-  assert.match(source, /Поисковые фразы из Метрики/);
-  assert.match(source, /Фразы, которые Метрика смогла определить после клика/);
+test("SEO tab hides Metrika search phrases but keeps the unified landing-page workspace", () => {
+  const seoStart = source.indexOf("function SeoTab");
+  const seoEnd = source.indexOf("export default function ZarukuSeoDashboard");
+  const seoSource = source.slice(seoStart, seoEnd);
+
+  assert.doesNotMatch(seoSource, /Поисковые фразы из Метрики/);
+  assert.doesNotMatch(seoSource, /data\.search_phrases/);
   assert.match(source, /buildUnifiedSeoPageRows/);
   assert.match(source, /webmasterRows: webmasterPages/);
+  assert.match(source, /metrikaRows: data\.organic_landing_pages/);
   assert.doesNotMatch(source, /title="Посадочные страницы Яндекса"/);
   assert.doesNotMatch(source, /title: "Запрос → посадочная"/);
 });

@@ -638,7 +638,6 @@ function OverviewTab({ data, locale }: Props) {
 }
 
 function SeoTab({ data, locale, primaryWeek, comparisonWeek }: Props & { primaryWeek: string | null; comparisonWeek: string | null }) {
-  const phraseCoverage = data.data_quality.find((item) => item.title === "Покрытие поисковых фраз");
   const currentLocale = locale ?? "ru-RU";
   const webmasterWeek = data.webmaster.latest_week;
   const webmasterQuerySelection = resolveRowsForWeek(data.webmaster.queries, webmasterWeek, null);
@@ -734,36 +733,19 @@ function SeoTab({ data, locale, primaryWeek, comparisonWeek }: Props & { primary
         }}
         locale={currentLocale}
       />
-      <div className="grid gap-5 lg:grid-cols-2">
-        <Panel data={data} title="Поисковые системы после клика" source="metrika" layer="onsite">
-          <ResponsiveContainer width="100%" height={240}>
-            <BarChart data={data.search_engines} margin={{ top: 8, right: 8, left: -20, bottom: 0 }}>
-              <CartesianGrid stroke={ZARUKU_CHART_PALETTE.grid} strokeDasharray="3 3" vertical={false} />
-              <XAxis dataKey="label" tick={{ fontSize: 12, fill: ZARUKU_CHART_PALETTE.axis }} axisLine={false} tickLine={false} />
-              <YAxis tick={{ fontSize: 12, fill: ZARUKU_CHART_PALETTE.axis }} axisLine={false} tickLine={false} />
-              <Tooltip />
-              <Bar dataKey="visits" radius={[6, 6, 0, 0]}>
-                {data.search_engines.map((_, index) => <Cell key={index} fill={ZARUKU_CHART_PALETTE.series[index % ZARUKU_CHART_PALETTE.series.length]} />)}
-              </Bar>
-            </BarChart>
-          </ResponsiveContainer>
-        </Panel>
-        <Panel data={data} title="Поисковые фразы из Метрики" source="metrika" layer="onsite" right={<span className="text-xs text-slate-400">{phraseCoverage?.value ?? "покрытие —"}</span>}>
-          <p className="mb-3 text-xs leading-relaxed text-slate-500">
-            Фразы, которые Метрика смогла определить после клика. Это не полный список SEO-запросов: часть запросов скрывается поисковиками.
-          </p>
-          <div className="max-h-[15rem] overflow-auto">
-            <div className="space-y-2">
-              {data.search_phrases.slice(0, 12).map((row) => (
-                <div key={row.label} className="flex items-center justify-between gap-3 rounded-md bg-slate-50 px-3 py-2">
-                  <span className="min-w-0 text-sm text-slate-700" title={row.label}>{truncate(row.label, 72)}</span>
-                  <span className="shrink-0 text-sm text-slate-500">{formatNumber(row.visits, currentLocale)}</span>
-                </div>
-              ))}
-            </div>
-          </div>
-        </Panel>
-      </div>
+      <Panel data={data} title="Поисковые системы после клика" source="metrika" layer="onsite">
+        <ResponsiveContainer width="100%" height={240}>
+          <BarChart data={data.search_engines} margin={{ top: 8, right: 8, left: -20, bottom: 0 }}>
+            <CartesianGrid stroke={ZARUKU_CHART_PALETTE.grid} strokeDasharray="3 3" vertical={false} />
+            <XAxis dataKey="label" tick={{ fontSize: 12, fill: ZARUKU_CHART_PALETTE.axis }} axisLine={false} tickLine={false} />
+            <YAxis tick={{ fontSize: 12, fill: ZARUKU_CHART_PALETTE.axis }} axisLine={false} tickLine={false} />
+            <Tooltip />
+            <Bar dataKey="visits" radius={[6, 6, 0, 0]}>
+              {data.search_engines.map((_, index) => <Cell key={index} fill={ZARUKU_CHART_PALETTE.series[index % ZARUKU_CHART_PALETTE.series.length]} />)}
+            </Bar>
+          </BarChart>
+        </ResponsiveContainer>
+      </Panel>
     </div>
   );
 }
