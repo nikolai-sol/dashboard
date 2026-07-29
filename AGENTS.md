@@ -22,3 +22,10 @@ logs and never by silently reusing another period.
 - Abbott release returning facts use `canonical_fact_metrika_returning_pages_release_daily`;
   Zaruku retains `canonical_fact_metrika_returning_pages_daily` unchanged.
 - No deployment, secret installation, API call, database migration, cron edit, Telegram send, or Hermes schedule occurred.
+
+## Abbott UTM rollout status 2026-07-29
+
+- App release `20260729130916-d86cf45` and private migration `044` are deployed; health, listener isolation, manager/embed boundary, and public-asset checks passed.
+- Canonical runtime server commit is `b2f172190e22aaa0454a858e10689d146607df44` with a clean attested manifest.
+- Canonical release `8` remains active. Successor release `10` is staging and resume-safe backfill is running for `2026-01-01..2026-07-28`; cutover requires exactly `210` dates, `1050` coverage rows, `0` bad rows, comparison, validation, activation, and smoke.
+- No cron edit, Telegram send, token change, or Hermes schedule was performed in this rollout so far.
