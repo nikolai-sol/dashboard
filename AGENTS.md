@@ -77,6 +77,13 @@ Current auth note:
 This MySQL-only Metrika breakdown path is a branch target. It is not production
 state until the migration, deploy, and backfill are accepted.
 
+### Webmaster query→page rollout status 2026-07-29
+
+- Dashboard `main` commit `833db89` reads exact pairs only from `canonical_fact_webmaster_query_pages_daily`; the confirmed filter accepts a GSC pair or an exact Webmaster pair and rejects SEO OS and `popular_complementary_indicator` URLs.
+- Migration `045` is applied and manual collector run `1715` succeeded for 15 priority pages over `2026-07-21..2026-07-27`, producing 105 coverage rows and 67 pair facts with zero bad rows.
+- Application commit `833db89` is not deployed while Abbott successor release `10` remains staging and release `8` remains active. The production UI therefore does not yet show the new `Яндекс:` links.
+- The proposed weekly `20 3 * * 1` UTC cron with priority limit 15 is not installed. Deployment, SEO smoke, and first scheduled-run verification remain required before cron activation or expansion toward 30 pages.
+
 `Geography` means visitor countries/cities from Metrika. It is not `GEO`: in `AI/GEO visibility`, GEO means Generative Engine Optimization.
 
 ## Platform access / cron memory
