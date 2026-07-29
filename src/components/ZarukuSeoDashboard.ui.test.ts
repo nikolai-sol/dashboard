@@ -70,21 +70,22 @@ test("SEO comparison tables share one filter contract", () => {
   assert.doesNotMatch(pageSource, /const FILTERS/);
 });
 
-test("SEO tab puts AI visibility and section popularity before detail tables", () => {
+test("SEO tab puts AI visibility and section positions before detail tables", () => {
   const seoStart = source.indexOf("function SeoTab");
   const seoEnd = source.indexOf("export default function ZarukuSeoDashboard");
   const seoSource = source.slice(seoStart, seoEnd);
   const aiIndex = seoSource.indexOf("<AiAggregateVisibilityPanel");
-  const sectionIndex = seoSource.indexOf("<ZarukuTrafficVisibility");
+  const sectionIndex = seoSource.indexOf("<ZarukuSeoAnalytics");
   const queryTableIndex = seoSource.indexOf("<ZarukuSeoQueryComparison");
   const pageTableIndex = seoSource.indexOf("<ZarukuSeoPageComparison");
 
   assert.ok(aiIndex >= 0, "AI visibility panel must render on SEO");
-  assert.ok(sectionIndex >= 0, "section popularity chart must render on SEO");
+  assert.ok(sectionIndex >= 0, "section positions chart must render on SEO");
   assert.ok(aiIndex < queryTableIndex, "AI visibility should come before query table");
-  assert.ok(sectionIndex < queryTableIndex, "section popularity should come before query table");
+  assert.ok(sectionIndex < queryTableIndex, "section positions should come before query table");
   assert.ok(queryTableIndex < pageTableIndex, "query table should still precede landing page table");
-  assert.match(seoSource, /showTable=\{false\}/);
+  assert.doesNotMatch(seoSource, /<ZarukuTrafficVisibility/);
+  assert.match(seoSource, /showClusterTable=\{false\}/);
 });
 
 test("Overview uses a stable bounded desktop composition", () => {

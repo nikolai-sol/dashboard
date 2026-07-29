@@ -53,7 +53,6 @@ import ZarukuSeoAnalytics from "@/components/ZarukuSeoAnalytics";
 import ZarukuSeoOperations from "@/components/ZarukuSeoOperations";
 import ZarukuOverviewTab from "@/components/ZarukuOverviewTab";
 import ZarukuContentTab from "@/components/ZarukuContentTab";
-import ZarukuTrafficVisibility from "@/components/ZarukuTrafficVisibility";
 import ZarukuAudienceTab, { isZarukuAudienceVisible } from "@/components/ZarukuAudienceTab";
 import ZarukuWorkTab from "@/components/ZarukuWorkTab";
 import ZarukuQualityTab from "@/components/ZarukuQualityTab";
@@ -682,15 +681,12 @@ function SeoTab({ data, locale, primaryWeek, comparisonWeek }: Props & { primary
     <div className="space-y-5">
       <div className="grid gap-5 xl:grid-cols-2">
         <AiAggregateVisibilityPanel data={data} locale={currentLocale} />
-        <ZarukuTrafficVisibility
+        <ZarukuSeoAnalytics
           seoOs={data.seo_os}
           primaryWeek={primaryWeek}
           comparisonWeek={comparisonWeek}
           source={data.sources.find((source) => source.id === "seo_os")}
-          title="Популярность контента по разделам"
-          note="Просмотры разделов и позиция SEO OS рядом: быстро видно, где спрос уже есть, а где видимость отстаёт."
-          chartHeight={260}
-          showTable={false}
+          showClusterTable={false}
         />
       </div>
       <ZarukuSeoQueryComparison
@@ -725,13 +721,6 @@ function SeoTab({ data, locale, primaryWeek, comparisonWeek }: Props & { primary
         locale={currentLocale}
       />
       <SemanticHealthPanel data={data} locale={locale} primaryWeek={primaryWeek} />
-      <ZarukuSeoAnalytics
-        seoOs={data.seo_os}
-        primaryWeek={primaryWeek}
-        comparisonWeek={comparisonWeek}
-        source={data.sources.find((source) => source.id === "seo_os")}
-        showClusterTable={false}
-      />
       <ZarukuSeoDiagnostics
         summaryRows={gscSummaryRows}
         brandRows={gscBrandSplit}
