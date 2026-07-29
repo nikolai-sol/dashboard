@@ -248,10 +248,8 @@
 
   @media (min-width: 1280px) {
     .zaruku-overview-grid {
-      height: clamp(512px, calc(100vh - 364px), 600px);
-      grid-template-rows: 96px minmax(129px, auto) minmax(280px, 1fr);
+      grid-template-rows: 96px minmax(129px, auto) minmax(260px, auto) minmax(280px, auto);
       gap: var(--gap-card) !important;
-      overflow: hidden;
     }
 
     .zaruku-overview-grid > [data-panel-id] {
@@ -276,8 +274,12 @@
       grid-row: 3;
     }
 
-    .zaruku-overview-grid > [data-panel-id="overview.organic_search"] {
+    .zaruku-overview-grid > [data-panel-id="overview.search_engines"] {
       grid-row: 3;
+    }
+
+    .zaruku-overview-grid > [data-panel-id="overview.organic_search"] {
+      grid-row: 4;
     }
   }
 

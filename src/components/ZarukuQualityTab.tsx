@@ -9,7 +9,7 @@ const DATASET_LABELS: Record<ZarukuDatasetKey, string> = {
   high_bounce_pages: "Риск отказов по входным страницам",
   best_engagement_pages: "Удержание по входным страницам",
   returning_pages: "Возврат к контенту",
-  search_engines: "Поисковые системы после клика",
+  search_engines: "Поисковые системы",
   search_phrases: "Поисковые фразы Метрики",
   organic_landing_pages: "Органические входные страницы",
   map_city_demand: "Города × каталог /map/",

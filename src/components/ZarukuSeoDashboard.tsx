@@ -619,6 +619,19 @@ function OverviewTab({ data, locale }: Props) {
         >
           <BarList rows={data.traffic_channels} locale={locale} initialLimit={6} />
         </Panel>
+        <Panel data={data} title="Поисковые системы" source="metrika" layer="onsite">
+          <ResponsiveContainer width="100%" height={220}>
+            <BarChart data={data.search_engines} margin={{ top: 8, right: 8, left: -20, bottom: 0 }}>
+              <CartesianGrid stroke={ZARUKU_CHART_PALETTE.grid} strokeDasharray="3 3" vertical={false} />
+              <XAxis dataKey="label" tick={{ fontSize: 12, fill: ZARUKU_CHART_PALETTE.axis }} axisLine={false} tickLine={false} />
+              <YAxis tick={{ fontSize: 12, fill: ZARUKU_CHART_PALETTE.axis }} axisLine={false} tickLine={false} />
+              <Tooltip />
+              <Bar dataKey="visits" radius={[6, 6, 0, 0]}>
+                {data.search_engines.map((_, index) => <Cell key={index} fill={ZARUKU_CHART_PALETTE.series[index % ZARUKU_CHART_PALETTE.series.length]} />)}
+              </Bar>
+            </BarChart>
+          </ResponsiveContainer>
+        </Panel>
         <Panel data={data} title="Органический поиск" source="metrika">
           <div className="h-[220px] xl:h-full">
             <ResponsiveContainer width="100%" height="100%" initialDimension={{ width: 1, height: 1 }}>
@@ -733,19 +746,6 @@ function SeoTab({ data, locale, primaryWeek, comparisonWeek }: Props & { primary
         }}
         locale={currentLocale}
       />
-      <Panel data={data} title="Поисковые системы после клика" source="metrika" layer="onsite">
-        <ResponsiveContainer width="100%" height={240}>
-          <BarChart data={data.search_engines} margin={{ top: 8, right: 8, left: -20, bottom: 0 }}>
-            <CartesianGrid stroke={ZARUKU_CHART_PALETTE.grid} strokeDasharray="3 3" vertical={false} />
-            <XAxis dataKey="label" tick={{ fontSize: 12, fill: ZARUKU_CHART_PALETTE.axis }} axisLine={false} tickLine={false} />
-            <YAxis tick={{ fontSize: 12, fill: ZARUKU_CHART_PALETTE.axis }} axisLine={false} tickLine={false} />
-            <Tooltip />
-            <Bar dataKey="visits" radius={[6, 6, 0, 0]}>
-              {data.search_engines.map((_, index) => <Cell key={index} fill={ZARUKU_CHART_PALETTE.series[index % ZARUKU_CHART_PALETTE.series.length]} />)}
-            </Bar>
-          </BarChart>
-        </ResponsiveContainer>
-      </Panel>
     </div>
   );
 }

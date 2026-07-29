@@ -21,6 +21,7 @@ test("panel order is deterministic", () => {
     "overview.north_star",
     "overview.traffic_health",
     "overview.channels",
+    "overview.search_engines",
     "overview.organic_search",
   ]);
 });

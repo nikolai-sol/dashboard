@@ -41,7 +41,8 @@ export const ZARUKU_PANEL_REGISTRY: readonly ZarukuPanelDefinition[] = [
   panel("overview", "north_star", 10, "full", "compact", ["full"]),
   panel("overview", "traffic_health", 20, "full", "compact", WIDE_SIZES),
   panel("overview", "channels", 30, "half", "standard", CONTENT_SIZES),
-  panel("overview", "organic_search", 40, "half", "standard", CONTENT_SIZES),
+  panel("overview", "search_engines", 35, "half", "standard", CONTENT_SIZES),
+  panel("overview", "organic_search", 40, "full", "standard", WIDE_SIZES),
 
   panel("seo", "executive_snapshot", 10, "full", "compact", WIDE_SIZES),
   panel("seo", "traffic_visibility", 20, "full", "standard", WIDE_SIZES),

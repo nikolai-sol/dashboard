@@ -93,6 +93,7 @@ test("Overview uses a stable bounded desktop composition", () => {
     "north_star",
     "traffic_health",
     "channels",
+    "search_engines",
     "organic_search",
   ]) {
     assert.match(panelLayoutSource, new RegExp(`panel\\("overview", "${panelName}"`));
@@ -100,14 +101,27 @@ test("Overview uses a stable bounded desktop composition", () => {
   assert.match(overviewSource, /className="zaruku-overview-grid"/);
   assert.doesNotMatch(overviewSource, /registryColumns=\{false\}|registrySpan=\{false\}/);
   assert.match(panelLayoutSource, /panel\("overview", "channels", 30, "half"/);
-  assert.match(panelLayoutSource, /panel\("overview", "organic_search", 40, "half"/);
-  assert.match(globalsSource, /grid-template-rows:\s*96px minmax\(129px, auto\) minmax\(280px, 1fr\)/);
+  assert.match(panelLayoutSource, /panel\("overview", "search_engines", 35, "half"/);
+  assert.match(panelLayoutSource, /panel\("overview", "organic_search", 40, "full"/);
+  assert.ok(source.indexOf('title="Каналы привлечения"') < source.indexOf('title="Поисковые системы"'));
+  assert.ok(source.indexOf('title="Поисковые системы"') < source.indexOf('title="Органический поиск"'));
+  assert.match(globalsSource, /grid-template-rows:\s*96px minmax\(129px, auto\) minmax\(260px, auto\) minmax\(280px, auto\)/);
+  assert.match(globalsSource, /data-panel-id="overview\.search_engines"/);
   assert.match(source, /min-h-\[calc\(100vh-194px\)\]/);
   assert.match(source, /initialLimit=\{6\}/);
   assert.match(source, /titleInfo=\{/);
   assert.match(source, /ZARUKU_CLIENT_COPY\.technicalTail/);
   assert.match(clientCopySource, /Технический хвост/);
   assert.doesNotMatch(source, /Технический хвост:\{" "\}/);
+});
+
+test("SEO tab no longer renders the Metrika search-engines panel", () => {
+  const seoStart = source.indexOf("function SeoTab");
+  const seoEnd = source.indexOf("export default function ZarukuSeoDashboard");
+  const seoSource = source.slice(seoStart, seoEnd);
+
+  assert.doesNotMatch(seoSource, /title="Поисковые системы/);
+  assert.doesNotMatch(seoSource, /data\.search_engines/);
 });
 
 test("Overview keeps KPI and chart content inside its desktop bounds", () => {
