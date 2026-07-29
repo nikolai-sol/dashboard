@@ -334,6 +334,86 @@ export function enrichRowsWithPageTitles(rows: ZarukuSeoMetricRow[], pageRows: Z
   });
 }
 
+function aggregatePageRowsByNormalizedUrl(rows: ZarukuSeoMetricRow[]) {
+  type PageAccumulator = ZarukuSeoMetricRow & {
+    bounceWeighted: number;
+    bounceVisits: number;
+    durationWeighted: number;
+    durationVisits: number;
+    depthWeighted: number;
+    depthVisits: number;
+  };
+  const byUrl = new Map<string, PageAccumulator>();
+
+  rows.forEach((row) => {
+    const url = row.url ?? "";
+    const key = normalizedUrlKey(url);
+    if (!key) return;
+    const current = byUrl.get(key) ?? {
+      id: key,
+      label: url,
+      secondary_label: null,
+      url,
+      visits: 0,
+      users: 0,
+      users_available: row.users_available,
+      pageviews: 0,
+      share: 0,
+      source: row.source,
+      layer: row.layer,
+      bounceWeighted: 0,
+      bounceVisits: 0,
+      durationWeighted: 0,
+      durationVisits: 0,
+      depthWeighted: 0,
+      depthVisits: 0,
+    } satisfies PageAccumulator;
+    const visits = row.visits;
+    current.visits += visits;
+    if (current.users_available !== false && row.users_available !== false) {
+      current.users += row.users;
+      if (row.users_available === true) current.users_available = true;
+    } else {
+      current.users = 0;
+      current.users_available = false;
+    }
+    current.pageviews += row.pageviews;
+    if (row.bounce_rate != null) {
+      current.bounceWeighted += row.bounce_rate * visits;
+      current.bounceVisits += visits;
+    }
+    if (row.avg_duration_seconds != null) {
+      current.durationWeighted += row.avg_duration_seconds * visits;
+      current.durationVisits += visits;
+    }
+    if (row.page_depth != null) {
+      current.depthWeighted += row.page_depth * visits;
+      current.depthVisits += visits;
+    }
+    byUrl.set(key, current);
+  });
+
+  const totalVisits = Array.from(byUrl.values()).reduce((sum, row) => sum + row.visits, 0);
+  return Array.from(byUrl.values())
+    .map((row): ZarukuSeoMetricRow => ({
+      id: row.id,
+      label: row.label,
+      secondary_label: null,
+      url: row.url,
+      visits: row.visits,
+      users: row.users,
+      ...(row.users_available === undefined ? {} : { users_available: row.users_available }),
+      pageviews: row.pageviews,
+      ...(row.bounceVisits > 0 ? { bounce_rate: row.bounceWeighted / row.bounceVisits } : {}),
+      ...(row.durationVisits > 0 ? { avg_duration_seconds: row.durationWeighted / row.durationVisits } : {}),
+      ...(row.depthVisits > 0 ? { page_depth: row.depthWeighted / row.depthVisits } : {}),
+      share: totalVisits > 0 ? (row.visits / totalVisits) * 100 : 0,
+      source: row.source,
+      layer: row.layer,
+    }))
+    .sort((left, right) => right.visits - left.visits || left.label.localeCompare(right.label, "ru-RU"));
+}
+
 export function filterSearchEngineRows(rows: ZarukuSeoMetricRow[]) {
   return rows.filter((row) => {
     const label = row.label.trim().toLowerCase();
@@ -1288,6 +1368,12 @@ export async function loadZarukuSeoData(
   const entryPageRows = sectionEntrancesReport.available
     ? enrichRowsWithPageTitles(sectionEntrancesReport.rows, pageRows)
     : [];
+  const organicLandingPages = organicLandingReport.available
+    ? enrichRowsWithPageTitles(
+        aggregatePageRowsByNormalizedUrl(organicLandingReport.rows),
+        pageRows,
+      )
+    : [];
   const pageCollections = buildPageCollections(
     pageRows,
     seoOs.section_patterns,
@@ -1402,7 +1488,7 @@ export async function loadZarukuSeoData(
     returning_pages: canonicalMeta(returningPages.length, returningActualTo, returningMetrics),
     search_engines: breakdownMeta(searchEnginesReport, searchEnginesReport.rows.length),
     search_phrases: breakdownMeta(searchPhrasesReport, searchPhrasesReport.rows.length),
-    organic_landing_pages: breakdownMeta(organicLandingReport, organicLandingReport.rows.length),
+    organic_landing_pages: breakdownMeta(organicLandingReport, organicLandingPages.length),
     map_city_demand: breakdownMeta(mapCityDemandReport, mapCityDemandReport.rows.length),
     devices: breakdownMeta(devicesReport, devicesReport.rows.length),
     source_devices: breakdownMeta(sourceDevicesReport, sourceDevicesReport.rows.length),
@@ -1450,7 +1536,7 @@ export async function loadZarukuSeoData(
     content_sections_summary: contentSectionsSummary,
     search_engines: filterSearchEngineRows(searchEnginesReport.rows),
     search_phrases: searchPhrasesReport.rows,
-    organic_landing_pages: organicLandingReport.rows,
+    organic_landing_pages: organicLandingPages,
     top_pages: pageCollections.topPages,
     content_sections: pageCollections.contentSections,
     high_bounce_pages: buildHighBouncePages(entryPageRows),

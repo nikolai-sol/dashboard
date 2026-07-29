@@ -121,6 +121,109 @@ test("Zaruku runtime hard-scopes every account read model to the active Metrika 
   }
 });
 
+test("organic landing read model joins canonical titles and collapses search engines by normalized URL", async (t) => {
+  const canonicalUrl = "https://zaruku.ru/rak-molochnoj-zhelezy/invalidnost-pri-rake-molochnoj-zhelezy-kak-poluchit-i-kakie-preimushestva-ona-daet/";
+  const pageTitle = "Инвалидность при раке молочной железы. Как получить и какие преимущества она дает";
+  let pageQuerySql = "";
+
+  t.mock.method(
+    pool as unknown as {
+      execute: (sql: string, params?: unknown[]) => Promise<[unknown[], unknown[]]>;
+    },
+    "execute",
+    async (sql: string) => {
+      if (sql.includes("canonical_metrika_breakdown_coverage_daily")) {
+        return [[{
+          report_key: "organic_landing",
+          coverage_rows: 1,
+          complete_rows: 1,
+        }], []];
+      }
+      if (sql.includes("bounded_metrika_breakdowns")) {
+        return [[
+          {
+            report_key: "organic_landing",
+            row_kind: "detail",
+            dimension_1_id: "google",
+            dimension_1_value: "Google, search results",
+            dimension_2_id: canonicalUrl,
+            dimension_2_value: canonicalUrl,
+            page_url: `${canonicalUrl}?utm_source=google`,
+            visits: 15,
+            users: 0,
+            pageviews: 17,
+            bounce_rate: 10,
+            avg_visit_duration_seconds: 100,
+            page_depth: 1.2,
+            share: 31.25,
+          },
+          {
+            report_key: "organic_landing",
+            row_kind: "detail",
+            dimension_1_id: "yandex-mobile",
+            dimension_1_value: "Yandex Mobile",
+            dimension_2_id: canonicalUrl,
+            dimension_2_value: canonicalUrl,
+            page_url: canonicalUrl.replace("zaruku.ru", "www.zaruku.ru"),
+            visits: 21,
+            users: 0,
+            pageviews: 36,
+            bounce_rate: 20,
+            avg_visit_duration_seconds: 120,
+            page_depth: 1.4,
+            share: 43.75,
+          },
+          {
+            report_key: "organic_landing",
+            row_kind: "detail",
+            dimension_1_id: "yandex",
+            dimension_1_value: "Yandex, search results",
+            dimension_2_id: canonicalUrl,
+            dimension_2_value: canonicalUrl,
+            page_url: canonicalUrl.slice(0, -1),
+            visits: 12,
+            users: 0,
+            pageviews: 13,
+            bounce_rate: 30,
+            avg_visit_duration_seconds: 140,
+            page_depth: 1.6,
+            share: 25,
+          },
+        ], []];
+      }
+      if (sql.includes("analytics_scope = 'page'")) {
+        pageQuerySql = sql;
+        return [[{
+          label: pageTitle,
+          url: canonicalUrl,
+          visits: 0,
+          users: 40,
+          pageviews: 45,
+          bounce_rate: null,
+          avg_duration: null,
+          page_depth: null,
+        }], []];
+      }
+      return [[], []];
+    },
+  );
+
+  const data = await loadZarukuSeoData(
+    ["66624469"],
+    "2026-07-20",
+    "2026-07-20",
+    { today: "2026-07-23" },
+  );
+
+  assert.equal(data.organic_landing_pages.length, 1);
+  assert.equal(data.organic_landing_pages[0].label, pageTitle);
+  assert.equal(data.organic_landing_pages[0].url, `${canonicalUrl}?utm_source=google`);
+  assert.equal(data.organic_landing_pages[0].visits, 48);
+  assert.equal(data.organic_landing_pages[0].pageviews, 66);
+  assert.match(pageQuerySql, /COALESCE\(page_title, ''\) AS label/i);
+  assert.doesNotMatch(pageQuerySql, /traffic_source[^\n]*AS label/i);
+});
+
 test("buildSources exposes collection provenance and preserves explicit data-through values", () => {
   const gsc: ZarukuGscData = {
     available: true,
