@@ -36,6 +36,63 @@ ABBOTT_OK = {
     "incidents": [],
 }
 
+ABBOTT_STALE_INCOMPLETE = {
+    "counter_id": "90602537",
+    "overall": "CRITICAL",
+    "release": {"id": 8, "status": "active", "pointer_matches": True},
+    "latest_run": {
+        "id": 81, "status": "success", "run_type": "cron",
+        "date_from": "2026-07-19", "date_to": "2026-07-22",
+        "finished_at": "2026-07-23T06:13:08Z", "counter_id": "90602537",
+    },
+    "scopes": [
+        {
+            "scope": scope, "max_date": "2026-07-22", "rows": persisted_rows,
+            "missing_dates": [
+                "2026-07-23", "2026-07-24", "2026-07-25",
+                "2026-07-26", "2026-07-27", "2026-07-28",
+            ],
+            "status_counts": {"success": 4}, "unexpected_empty": False,
+        }
+        for scope, persisted_rows in (
+            ("other", 40), ("traffic", 80), ("page", 120),
+            ("user_behavior", 160), ("returning", 200),
+        )
+    ],
+    "backfill": {
+        "lookback_days": 10, "complete_days": 4,
+        "missing_days": [
+            "2026-07-23", "2026-07-24", "2026-07-25",
+            "2026-07-26", "2026-07-27", "2026-07-28",
+        ],
+    },
+    "session_integrity": {
+        "days_checked": 4, "all_sessions": 100,
+        "with_user_id_sessions": 40, "without_user_id_sessions": 60,
+        "mismatched_days": 0, "mismatched_sources": 0, "status": "ok",
+    },
+    "incidents": [
+        {
+            "incident_key": "abbott|90602537|collector|stale",
+            "severity": "CRITICAL", "check_id": "latest_release_run_freshness",
+            "observed": {"finished_at": "2026-07-23T06:13:08Z"},
+            "expected": {"expected_completion_at": "2026-07-29T06:00:00Z"},
+        },
+        *[
+            {
+                "incident_key": "abbott|90602537|{}|missing_dates".format(scope),
+                "severity": "CRITICAL", "check_id": "scope_date_coverage",
+                "observed": {"missing_dates": [
+                    "2026-07-23", "2026-07-24", "2026-07-25",
+                    "2026-07-26", "2026-07-27", "2026-07-28",
+                ]},
+                "expected": {"missing_dates": []},
+            }
+            for scope in ("other", "traffic", "page", "user_behavior", "returning")
+        ],
+    ],
+}
+
 ZARUKU_HEALTH = [
     {
         "source_key": "yandex_webmaster",
@@ -345,14 +402,15 @@ class TelegramReportTests(unittest.TestCase):
 
     def test_abbott_lines_include_counter_scoped_run_timing(self):
         text = "\n".join(report.build_abbott_lines(ABBOTT_OK))
-        self.assertIn("run: SUCCESS", text)
+        self.assertIn("последний запуск релиза: SUCCESS", text)
         self.assertIn("2026-07-16T06:30:00Z", text)
 
     def test_abbott_lines_put_sanitized_session_integrity_immediately_after_header(self):
         lines = report.build_abbott_lines(ABBOTT_OK)
         self.assertEqual(
             lines[1],
-            "- session integrity: OK (all=100, with_id=40, without_id=60, mismatched_days=0, mismatched_sources=0)",
+            "- целостность сессий на доступных датах (10 дней): OK "
+            "(all=100, with_id=40, without_id=60, mismatched_days=0, mismatched_sources=0)",
         )
 
         mismatch = dict(ABBOTT_OK, session_integrity={
@@ -366,7 +424,29 @@ class TelegramReportTests(unittest.TestCase):
         })
         self.assertEqual(
             report.build_abbott_lines(mismatch)[1],
-            "- session integrity: CRITICAL (all=101, with_id=40, without_id=60, mismatched_days=1, mismatched_sources=2)",
+            "- целостность сессий на доступных датах (10 дней): CRITICAL "
+            "(all=101, with_id=40, without_id=60, mismatched_days=1, mismatched_sources=2)",
+        )
+
+    def test_abbott_stale_incomplete_summary_is_explicit(self):
+        text = "\n".join(report.build_abbott_lines(ABBOTT_STALE_INCOMPLETE))
+
+        self.assertIn("последний запуск релиза: SUCCESS, НО УСТАРЕЛ", text)
+        self.assertIn("покрытие последних 10 завершённых дней: 4/10", text)
+        self.assertIn("нет дат: 2026-07-23…2026-07-28", text)
+        self.assertIn("целостность сессий на доступных датах (4 дня): OK", text)
+        self.assertIn("технические строки canonical", text)
+        self.assertEqual(text.count("нет coverage"), 1)
+
+    def test_compact_abbott_dates_formats_ranges_and_gaps(self):
+        self.assertEqual(
+            report.compact_abbott_dates(["2026-07-23", "2026-07-24", "2026-07-25"]),
+            "2026-07-23…2026-07-25",
+        )
+        self.assertEqual(report.compact_abbott_dates(["2026-07-23"]), "2026-07-23")
+        self.assertEqual(
+            report.compact_abbott_dates(["2026-07-23", "2026-07-25"]),
+            "2026-07-23, 2026-07-25",
         )
 
     @mock.patch("send_canonical_telegram_report.urllib.request.urlopen")
