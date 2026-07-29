@@ -360,7 +360,7 @@ class YandexWebmasterCanonicalTests(unittest.TestCase):
         ) as fetch_pages, patch.object(collector, "upsert_accounts"), patch.object(
             collector,
             "log_collector_event",
-        ), patch.object(collector, "finish_run"):
+        ) as log_event, patch.object(collector, "finish_run"):
             result = collector.collect(args)
 
         self.assertEqual(result["status"], "success")
@@ -369,6 +369,14 @@ class YandexWebmasterCanonicalTests(unittest.TestCase):
         coverage = replace.call_args.args[1]
         self.assertEqual(coverage["row_count"], 1)
         self.assertEqual(coverage["page_url"], "/article/")
+        scope_calls = [
+            call
+            for call in log_event.call_args_list
+            if call.args[2] == "webmaster_query_page_scope"
+        ]
+        self.assertEqual(len(scope_calls), 1)
+        self.assertEqual(scope_calls[0].args[4]["selected_pages"], 1)
+        self.assertEqual(scope_calls[0].args[4]["date_count"], 1)
 
     def test_selected_dates_clip_explicit_webmaster_window_to_collection_floor(self):
         from fetch_yandex_webmaster_canonical import selected_dates

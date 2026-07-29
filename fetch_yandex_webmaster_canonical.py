@@ -1205,6 +1205,21 @@ def collect(args) -> dict[str, Any]:
                     raise RuntimeError(
                         f"No Webmaster query-page priority URLs configured for account {account.analytics_account_id}"
                     )
+                log_collector_event(
+                    run_id,
+                    "info",
+                    "webmaster_query_page_scope",
+                    f"Selected Webmaster query-page scope for {account.domain}",
+                    {
+                        "selected_pages": len(priority_pages),
+                        "date_count": len(dates),
+                        "priority_limit": min(
+                            max(int(getattr(args, "priority_limit", 30)), 15),
+                            30,
+                        ),
+                        "page_hashes": [page_hash(value) for value in priority_pages],
+                    },
+                )
                 for page_url in priority_pages:
                     for day in dates:
                         raw_query_pages = fetch_query_page_rows(

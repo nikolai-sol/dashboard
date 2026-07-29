@@ -14,6 +14,7 @@ from zaruku_collector_health import (
     build_partial_date_scope,
     build_zaruku_incidents,
     load_zaruku_health,
+    normalize_query_page_pair_health,
 )
 
 
@@ -65,6 +66,10 @@ class ZarukuCollectorHealthPolicyTests(unittest.TestCase):
             ],
         )
         self.assertTrue(all(item["expected_frequency_hours"] == 24 for item in ZARUKU_SOURCES.values()))
+
+    def test_daily_source_health_excludes_weekly_query_page_runs(self):
+        self.assertIn("run_mode = 'daily'", health_module._LATEST_RUNS_SQL)
+        self.assertIn("job_key = 'yandex_webmaster:query_pages'", health_module.QUERY_PAGE_PAIR_HEALTH_SQL)
 
     def test_partial_sql_has_all_fact_layers_and_failed_run_definition(self):
         expected_tables = {
@@ -144,6 +149,60 @@ class ZarukuCollectorHealthBehaviorTests(unittest.TestCase):
         self.assertEqual(status["optional_status"], "unknown_error")
         self.assertEqual(status["optional_http_statuses"], [])
         self.assertNotIn("raw", repr(status))
+
+    def test_recent_complete_query_page_pair_layer_is_healthy(self):
+        layer = normalize_query_page_pair_health(
+            {
+                "run_id": 200,
+                "run_status": "success",
+                "selected_pages": 15,
+                "covered_pages": 15,
+                "zero_row_pages": 2,
+                "pair_rows": 152,
+                "max_report_date": date(2026, 7, 27),
+                "last_success_at": self.now - timedelta(hours=12),
+            },
+            self.now,
+        )
+
+        self.assertEqual(layer["expected_frequency_hours"], 168)
+        self.assertEqual(layer["covered_pages"], 15)
+        self.assertEqual(layer["zero_row_pages"], 2)
+        self.assertEqual(layer["status"], "healthy")
+
+    def test_incomplete_query_page_pair_coverage_is_warning(self):
+        layer = normalize_query_page_pair_health(
+            {
+                "run_id": 201,
+                "run_status": "success",
+                "selected_pages": 15,
+                "covered_pages": 14,
+                "zero_row_pages": 1,
+                "pair_rows": 120,
+                "last_success_at": self.now - timedelta(hours=12),
+            },
+            self.now,
+        )
+
+        self.assertEqual(layer["status"], "warning")
+        self.assertEqual(layer["covered_pages"], 14)
+
+    def test_failed_query_page_pair_run_is_failed_not_empty(self):
+        layer = normalize_query_page_pair_health(
+            {
+                "run_id": 202,
+                "run_status": "failed",
+                "selected_pages": 15,
+                "covered_pages": 0,
+                "zero_row_pages": 0,
+                "pair_rows": 0,
+                "last_success_at": None,
+            },
+            self.now,
+        )
+
+        self.assertEqual(layer["status"], "failed")
+        self.assertEqual(layer["covered_pages"], 0)
 
     def test_age_three_is_current_and_age_four_is_delayed(self):
         healthy = build_zaruku_incidents([health_row()], build_partial_date_scope([]), self.now)
@@ -281,6 +340,17 @@ class ZarukuCollectorHealthBehaviorTests(unittest.TestCase):
                     ]
                 elif "canonical_fact_webmaster_queries_daily" in sql:
                     self.result = {"query_max_date": date(2026, 7, 26), "page_max_date": date(2026, 7, 24)}
+                elif "canonical_webmaster_query_page_coverage_daily" in sql:
+                    self.result = {
+                        "run_id": 20,
+                        "run_status": "success",
+                        "selected_pages": 15,
+                        "covered_pages": 15,
+                        "zero_row_pages": 2,
+                        "pair_rows": 152,
+                        "max_report_date": date(2026, 7, 26),
+                        "last_success_at": datetime(2026, 7, 28, 7, tzinfo=timezone.utc),
+                    }
                 elif "canonical_fact_site_analytics_daily" in sql:
                     self.result = {"max_data_date": date(2026, 7, 27)}
                 elif "canonical_fact_metrika_returning_pages_daily" in sql:
@@ -304,6 +374,8 @@ class ZarukuCollectorHealthBehaviorTests(unittest.TestCase):
         self.assertEqual(health[0]["page_max_date"], date(2026, 7, 24))
         self.assertEqual(health[0]["max_data_date"], date(2026, 7, 24))
         self.assertEqual(health[0]["data_lag_days"], 4)
+        self.assertEqual(health[0]["layers"]["query_page_pairs"]["status"], "healthy")
+        self.assertEqual(health[0]["layers"]["query_page_pairs"]["covered_pages"], 15)
         self.assertTrue(all(call[0].lstrip().upper().startswith("SELECT") for call in cursor.calls))
 
 

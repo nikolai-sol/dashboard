@@ -179,6 +179,7 @@ JOIN (
   SELECT source_key, MAX(id) AS max_id
   FROM canonical_collector_runs
   WHERE source_key IN ({})
+    AND run_mode = 'daily'
   GROUP BY source_key
 ) AS latest ON latest.max_id = r.id
 ORDER BY FIELD(r.source_key, {})
@@ -211,6 +212,55 @@ _MAX_DATE_SQL = {
            WHERE analytics_account_id = %s) AS page_max_date
     """,
 }
+
+QUERY_PAGE_PAIR_HEALTH_SQL = """
+SELECT
+  latest.id AS run_id,
+  latest.status AS run_status,
+  latest.started_at AS run_started_at,
+  latest.finished_at AS run_finished_at,
+  latest.error_count,
+  COALESCE(scope.selected_pages, 0) AS selected_pages,
+  COUNT(DISTINCT coverage.page_hash) AS covered_pages,
+  COALESCE(SUM(coverage.row_count = 0), 0) AS zero_row_pages,
+  COALESCE(SUM(coverage.row_count), 0) AS pair_rows,
+  MAX(coverage.report_date) AS max_report_date,
+  (
+    SELECT MAX(success.finished_at)
+    FROM canonical_collector_runs AS success
+    WHERE success.source_key = 'yandex_webmaster'
+      AND success.run_mode = 'weekly'
+      AND success.job_key = 'yandex_webmaster:query_pages'
+      AND success.status = 'success'
+  ) AS last_success_at
+FROM (
+  SELECT id, status, started_at, finished_at, error_count
+  FROM canonical_collector_runs
+  WHERE source_key = 'yandex_webmaster'
+    AND run_mode = 'weekly'
+    AND job_key = 'yandex_webmaster:query_pages'
+  ORDER BY id DESC
+  LIMIT 1
+) AS latest
+LEFT JOIN (
+  SELECT
+    run_id,
+    MAX(CAST(JSON_UNQUOTE(JSON_EXTRACT(event_payload, '$.selected_pages')) AS UNSIGNED)) AS selected_pages
+  FROM canonical_collector_run_events
+  WHERE event_type = 'webmaster_query_page_scope'
+  GROUP BY run_id
+) AS scope ON scope.run_id = latest.id
+LEFT JOIN canonical_webmaster_query_page_coverage_daily AS coverage
+  ON coverage.ingestion_run_id = latest.id
+ AND coverage.analytics_account_id = %s
+GROUP BY
+  latest.id,
+  latest.status,
+  latest.started_at,
+  latest.finished_at,
+  latest.error_count,
+  scope.selected_pages
+"""
 
 
 def _as_dict(row: Any, columns: Optional[List[str]] = None) -> Dict[str, Any]:
@@ -303,6 +353,62 @@ def normalize_collection_status(
     }
 
 
+def normalize_query_page_pair_health(
+    row: Mapping[str, Any],
+    now_utc: datetime,
+) -> Dict[str, Any]:
+    run_id = row.get("run_id")
+    run_status = str(row.get("run_status") or "missing").lower()
+    selected_pages = max(int(row.get("selected_pages") or 0), 0)
+    covered_pages = max(int(row.get("covered_pages") or 0), 0)
+    zero_row_pages = max(int(row.get("zero_row_pages") or 0), 0)
+    pair_rows = max(int(row.get("pair_rows") or 0), 0)
+    last_success_at = _as_utc_datetime(row.get("last_success_at"))
+    now = _as_utc_datetime(now_utc) or now_utc.replace(tzinfo=timezone.utc)
+    age_hours = (
+        None
+        if last_success_at is None
+        else max((now - last_success_at).total_seconds() / 3600, 0)
+    )
+    if run_id is None:
+        status = "unavailable"
+    elif run_status == "failed":
+        status = "failed"
+    elif run_status != "success":
+        status = "warning"
+    elif selected_pages <= 0 or covered_pages < selected_pages:
+        status = "warning"
+    elif age_hours is None or age_hours > 192:
+        status = "warning"
+    else:
+        status = "healthy"
+    return {
+        "status": status,
+        "run_id": run_id,
+        "run_status": run_status,
+        "selected_pages": selected_pages,
+        "covered_pages": covered_pages,
+        "zero_row_pages": zero_row_pages,
+        "pair_rows": pair_rows,
+        "max_report_date": _as_date(row.get("max_report_date")),
+        "last_success_at": last_success_at,
+        "age_hours": None if age_hours is None else round(age_hours, 2),
+        "expected_frequency_hours": 168,
+    }
+
+
+def load_query_page_pair_health(
+    cursor: Any,
+    now_utc: datetime,
+) -> Dict[str, Any]:
+    try:
+        cursor.execute(QUERY_PAGE_PAIR_HEALTH_SQL, (ZARUKU_ACCOUNT_ID,))
+        row = _as_dict(cursor.fetchone() or {})
+    except Exception:
+        row = {}
+    return normalize_query_page_pair_health(row, now_utc)
+
+
 def load_zaruku_health(cursor: Any, now_utc: datetime) -> List[Dict[str, Any]]:
     """Load latest run and fact-date health without creating a DB connection."""
     source_keys = list(ZARUKU_SOURCES)
@@ -327,6 +433,9 @@ def load_zaruku_health(cursor: Any, now_utc: datetime) -> List[Dict[str, Any]]:
             run.get("error_count"),
             run.get("error_summary"),
         )
+        layers = {}
+        if source_key == "yandex_webmaster":
+            layers["query_page_pairs"] = load_query_page_pair_health(cursor, now_utc)
         health.append(
             {
                 "source_key": source_key,
@@ -345,6 +454,7 @@ def load_zaruku_health(cursor: Any, now_utc: datetime) -> List[Dict[str, Any]]:
                 "data_lag_days": _calendar_age(max_data_date, now_utc),
                 "query_max_date": query_max_date,
                 "page_max_date": page_max_date,
+                "layers": layers,
                 **collection_status,
             }
         )
@@ -560,6 +670,7 @@ def build_zaruku_incidents(
 __all__ = [
     "LINEAGE_DEFECTS_SQL",
     "PARTIAL_FACT_DATES_SQL",
+    "QUERY_PAGE_PAIR_HEALTH_SQL",
     "ZARUKU_DATA_LAG_DAYS",
     "ZARUKU_SOURCES",
     "build_lineage_defect_scope",
@@ -567,6 +678,8 @@ __all__ = [
     "build_zaruku_incidents",
     "load_lineage_defects",
     "load_partial_fact_dates",
+    "load_query_page_pair_health",
     "load_zaruku_health",
     "normalize_collection_status",
+    "normalize_query_page_pair_health",
 ]
