@@ -432,10 +432,20 @@ class TelegramReportTests(unittest.TestCase):
         text = "\n".join(report.build_abbott_lines(ABBOTT_STALE_INCOMPLETE))
 
         self.assertIn("последний запуск релиза: SUCCESS, НО УСТАРЕЛ", text)
+        self.assertIn("покрывает по 2026-07-22", text)
         self.assertIn("покрытие последних 10 завершённых дней: 4/10", text)
         self.assertIn("нет дат: 2026-07-23…2026-07-28", text)
         self.assertIn("целостность сессий на доступных датах (4 дня): OK", text)
-        self.assertIn("технические строки canonical", text)
+        self.assertIn(
+            "технические строки canonical: other=40, traffic=80, page=120, "
+            "user_behavior=160, returning=200",
+            text,
+        )
+        self.assertIn(
+            "нет coverage для other, page, returning, traffic, user_behavior: "
+            "2026-07-23…2026-07-28",
+            text,
+        )
         self.assertEqual(text.count("нет coverage"), 1)
 
     def test_compact_abbott_dates_formats_ranges_and_gaps(self):
