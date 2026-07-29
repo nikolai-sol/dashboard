@@ -20,6 +20,7 @@ FIELDS = (
     "ym:s:bounce",
     "ym:s:clientID",
     "ym:s:lastsignTrafficSource",
+    "ym:s:lastsignUTMSource",
     "ym:s:parsedParamsKey1",
     "ym:s:parsedParamsKey2",
 )
@@ -37,6 +38,7 @@ def visit_row(visit_id="v1", day="2026-07-19", **overrides):
         "bounce": "0",
         "client_id": "client-secret",
         "source": "organic",
+        "utm_source": "newsletter",
         "keys1": "['UserID']",
         "keys2": "['raw-user']",
     }
@@ -129,10 +131,19 @@ class ParserTests(unittest.TestCase):
                 "bounce": 0,
                 "client_id": "client-secret",
                 "traffic_source": "organic",
+                "utm_source": "newsletter",
                 "raw_user_id": "raw-user",
                 "raw_user_ids": ("raw-user",),
             },),
         )
+
+    def test_normalizes_blank_utm_source_to_none(self):
+        result = parse_visits_tsv(
+            HEADER + "\n" + visit_row(utm_source="") + "\n",
+            expected_day="2026-07-19",
+        )
+
+        self.assertIsNone(result[0]["utm_source"])
 
     def test_parses_multi_user_id_visit_without_dropping_the_session(self):
         result = parse_visits_tsv(
