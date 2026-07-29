@@ -764,18 +764,42 @@ test("enrichRowsWithPageTitles keeps entry URL and replaces URL-like labels with
   ]);
 });
 
-test("filterSearchEngineRows keeps only Yandex and Google organic engines", () => {
+test("filterSearchEngineRows collapses Yandex and Google subtypes into engine families", () => {
   const rows = [
-    page("Yandex: search results", 100, 90, 120),
-    page("Google: search results", 80, 70, 100),
+    { ...page("Yandex Mobile", 100, 90, 120), id: "yandex_mobile" },
+    { ...page("Yandex, search results", 70, 60, 85), id: "yandex_search" },
+    { ...page("Yandex: mobile app", 5, 4, 6), id: "yandex_mobile_app" },
+    { ...page("Yandex.Images", 2, 2, 3), id: "yandex_images" },
+    { ...page("Google, search results", 180, 160, 220), id: "google_search" },
+    { ...page("Google: mobile app", 10, 9, 12), id: "google_mobile_app" },
     page("Bing, search results", 6, 5, 8),
     page("Yahoo, search results", 3, 2, 4),
   ];
 
-  assert.deepEqual(filterSearchEngineRows(rows).map((row) => row.label), [
-    "Yandex: search results",
-    "Google: search results",
+  assert.deepEqual(filterSearchEngineRows(rows).map((row) => ({
+    id: row.id,
+    label: row.label,
+    visits: row.visits,
+    pageviews: row.pageviews,
+  })), [
+    { id: "google", label: "Google", visits: 190, pageviews: 232 },
+    { id: "yandex", label: "Яндекс", visits: 177, pageviews: 214 },
   ]);
+});
+
+test("filterSearchEngineRows weights only available behavior metrics", () => {
+  const rows = [
+    {
+      ...pageWithBehavior("Yandex, search results", 100, 80, 120, 20, 100, 2),
+      id: "yandex_search",
+    },
+    { ...page("Yandex.Images", 50, 40, 55), id: "yandex_images" },
+  ];
+
+  const [yandex] = filterSearchEngineRows(rows);
+  assert.equal(yandex.bounce_rate, 20);
+  assert.equal(yandex.avg_duration_seconds, 100);
+  assert.equal(yandex.page_depth, 2);
 });
 
 test("readableTrafficSource localizes Metrika traffic source labels for Zaruku UI", () => {

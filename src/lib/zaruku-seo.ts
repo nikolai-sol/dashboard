@@ -415,10 +415,100 @@ function aggregatePageRowsByNormalizedUrl(rows: ZarukuSeoMetricRow[]) {
 }
 
 export function filterSearchEngineRows(rows: ZarukuSeoMetricRow[]) {
-  return rows.filter((row) => {
+  type SearchEngineFamily = "google" | "yandex";
+  type SearchEngineAccumulator = ZarukuSeoMetricRow & {
+    bounceWeighted: number;
+    bounceVisits: number;
+    durationWeighted: number;
+    durationVisits: number;
+    depthWeighted: number;
+    depthVisits: number;
+  };
+  const familyFor = (row: ZarukuSeoMetricRow): SearchEngineFamily | null => {
+    const id = row.id?.trim().toLowerCase() ?? "";
     const label = row.label.trim().toLowerCase();
-    return label.includes("yandex") || label.includes("яндекс") || label.includes("google");
+    if (id.startsWith("google") || label.startsWith("google")) return "google";
+    if (
+      id.startsWith("yandex") ||
+      label.startsWith("yandex") ||
+      label.startsWith("яндекс")
+    ) {
+      return "yandex";
+    }
+    return null;
+  };
+  const byFamily = new Map<SearchEngineFamily, SearchEngineAccumulator>();
+
+  rows.forEach((row) => {
+    const family = familyFor(row);
+    if (!family) return;
+    const current = byFamily.get(family) ?? {
+      id: family,
+      label: family === "yandex" ? "Яндекс" : "Google",
+      secondary_label: null,
+      url: null,
+      visits: 0,
+      users: 0,
+      users_available: row.users_available,
+      pageviews: 0,
+      bounce_rate: null,
+      avg_duration_seconds: null,
+      page_depth: null,
+      share: 0,
+      source: row.source,
+      layer: row.layer,
+      bounceWeighted: 0,
+      bounceVisits: 0,
+      durationWeighted: 0,
+      durationVisits: 0,
+      depthWeighted: 0,
+      depthVisits: 0,
+    } satisfies SearchEngineAccumulator;
+    current.visits += row.visits;
+    current.pageviews += row.pageviews;
+    current.share = (current.share ?? 0) + (row.share ?? 0);
+    if (current.users_available !== false && row.users_available !== false) {
+      current.users += row.users;
+      if (row.users_available === true) current.users_available = true;
+    } else {
+      current.users = 0;
+      current.users_available = false;
+    }
+    if (row.bounce_rate != null) {
+      current.bounceWeighted += row.bounce_rate * row.visits;
+      current.bounceVisits += row.visits;
+    }
+    if (row.avg_duration_seconds != null) {
+      current.durationWeighted += row.avg_duration_seconds * row.visits;
+      current.durationVisits += row.visits;
+    }
+    if (row.page_depth != null) {
+      current.depthWeighted += row.page_depth * row.visits;
+      current.depthVisits += row.visits;
+    }
+    byFamily.set(family, current);
   });
+
+  return Array.from(byFamily.values())
+    .map((row): ZarukuSeoMetricRow => ({
+      id: row.id,
+      label: row.label,
+      secondary_label: null,
+      url: null,
+      visits: row.visits,
+      users: row.users,
+      ...(row.users_available === undefined ? {} : { users_available: row.users_available }),
+      pageviews: row.pageviews,
+      bounce_rate: row.bounceVisits > 0 ? row.bounceWeighted / row.bounceVisits : null,
+      avg_duration_seconds: row.durationVisits > 0
+        ? row.durationWeighted / row.durationVisits
+        : null,
+      page_depth: row.depthVisits > 0 ? row.depthWeighted / row.depthVisits : null,
+      share: row.share,
+      source: row.source,
+      layer: row.layer,
+    }))
+    .sort((left, right) => right.visits - left.visits || left.label.localeCompare(right.label, "ru-RU"));
 }
 
 function isMapUrl(value: string | null | undefined) {
@@ -1365,6 +1455,7 @@ export async function loadZarukuSeoData(
   );
   const organicVisits = trafficChannels.find((row) => row.label === "Поиск")?.visits ?? 0;
   const searchPhraseVisits = searchPhrasesReport.total_visits;
+  const searchEngineRows = filterSearchEngineRows(searchEnginesReport.rows);
   const entryPageRows = sectionEntrancesReport.available
     ? enrichRowsWithPageTitles(sectionEntrancesReport.rows, pageRows)
     : [];
@@ -1486,7 +1577,7 @@ export async function loadZarukuSeoData(
     high_bounce_pages: breakdownMeta(sectionEntrancesReport, buildHighBouncePages(entryPageRows).length),
     best_engagement_pages: breakdownMeta(sectionEntrancesReport, buildBestEngagementPages(entryPageRows).length),
     returning_pages: canonicalMeta(returningPages.length, returningActualTo, returningMetrics),
-    search_engines: breakdownMeta(searchEnginesReport, searchEnginesReport.rows.length),
+    search_engines: breakdownMeta(searchEnginesReport, searchEngineRows.length),
     search_phrases: breakdownMeta(searchPhrasesReport, searchPhrasesReport.rows.length),
     organic_landing_pages: breakdownMeta(organicLandingReport, organicLandingPages.length),
     map_city_demand: breakdownMeta(mapCityDemandReport, mapCityDemandReport.rows.length),
@@ -1534,7 +1625,7 @@ export async function loadZarukuSeoData(
     technical_tail: technicalTail,
     organic_trend: organicTrend,
     content_sections_summary: contentSectionsSummary,
-    search_engines: filterSearchEngineRows(searchEnginesReport.rows),
+    search_engines: searchEngineRows,
     search_phrases: searchPhrasesReport.rows,
     organic_landing_pages: organicLandingPages,
     top_pages: pageCollections.topPages,
