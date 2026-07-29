@@ -252,12 +252,13 @@ test("buildSources exposes collection provenance and preserves explicit data-thr
     available: true,
     status: "available",
     error: null,
-    data_availability: { queries: true, pages: false },
+    data_availability: { queries: true, pages: false, query_pages: false },
     weeks: ["2026-W28"],
     latest_week: "2026-W28",
     summary: [],
     queries: [],
     pages: [],
+    query_pages: [],
   };
   const seoIntelligence: ZarukuSeoIntelligenceData = {
     available: true,

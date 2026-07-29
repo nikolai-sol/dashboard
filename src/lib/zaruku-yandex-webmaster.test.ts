@@ -4,6 +4,7 @@ import {
   buildWebmasterAccountQueries,
   loadZarukuYandexWebmasterData,
   normalizeWebmasterPageRow,
+  normalizeWebmasterQueryPageRow,
   normalizeWebmasterQueryRow,
   normalizeWebmasterSummaryRow,
 } from "@/lib/zaruku-yandex-webmaster";
@@ -25,6 +26,13 @@ test("buildWebmasterAccountQueries filters daily canonical rows by direct date b
   assert.deepEqual(queries.summary.params, ["66624469", "2026-07-01", "2026-07-21"]);
   assert.match(queries.pages.sql, /canonical_fact_webmaster_pages_daily/);
   assert.deepEqual(queries.pages.params, ["66624469", "2026-07-01", "2026-07-21"]);
+  assert.match(queries.query_pages.sql, /canonical_fact_webmaster_query_pages_daily/);
+  assert.match(
+    queries.query_pages.sql,
+    /GROUP BY week_key, query_hash, query_text, page_hash, page_url, device_type/,
+  );
+  assert.doesNotMatch(queries.query_pages.sql, /popular_query_text/);
+  assert.deepEqual(queries.query_pages.params, ["66624469", "2026-07-01", "2026-07-21"]);
   assert.doesNotMatch(queries.queries.sql, /AND CONCAT\(LEFT\(YEARWEEK/);
   assert.doesNotMatch(queries.queries.sql, /seo_webmaster_queries_weekly/);
 });
@@ -126,6 +134,59 @@ test("normalizeWebmasterPageRow keeps URL page metrics", () => {
       is_partial_week: true,
     },
   );
+});
+
+test("normalizeWebmasterQueryPageRow preserves exact canonical pair identity", () => {
+  assert.deepEqual(
+    normalizeWebmasterQueryPageRow({
+      week_key: "2026-W30",
+      query_id: "query-hash",
+      query_text: "рак груди",
+      page_id: "page-hash",
+      page_url: "/article/",
+      device_type: "ALL",
+      impressions: "9",
+      clicks: "2",
+      ctr: "22.222222",
+      average_position: "3.5",
+      week_from: "2026-07-20",
+      week_to: "2026-07-22",
+      is_partial_week: 1,
+    }),
+    {
+      week: "2026-W30",
+      query_id: "query-hash",
+      query: "рак груди",
+      page_id: "page-hash",
+      url: "/article/",
+      device: "ALL",
+      impressions: 9,
+      clicks: 2,
+      ctr: 22.222222,
+      average_position: 3.5,
+      week_from: "2026-07-20",
+      week_to: "2026-07-22",
+      is_partial_week: true,
+    },
+  );
+});
+
+test("pair failure is partial and never falls back to separate page rows", async () => {
+  const data = await loadZarukuYandexWebmasterData(
+    ["66624469"],
+    { from: "2026-07-20", to: "2026-07-26" },
+    async (query) => {
+      if (query.sql.includes("canonical_fact_webmaster_query_pages_daily")) {
+        throw new Error("missing pair table");
+      }
+      return [];
+    },
+  );
+
+  assert.equal(data.status, "partial");
+  assert.equal(data.data_availability.query_pages, false);
+  assert.deepEqual(data.query_pages, []);
+  assert.match(data.error ?? "", /query_pages/);
 });
 
 test("loadZarukuYandexWebmasterData is partial when one table is unavailable", async () => {

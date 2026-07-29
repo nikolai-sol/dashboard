@@ -489,12 +489,13 @@ test("zero-row GSC facts flow through to the dashboard pending requirement", asy
     available: true,
     status: "available",
     error: null,
-    data_availability: { queries: true, pages: true },
+    data_availability: { queries: true, pages: true, query_pages: false },
     weeks: ["2026-W29"],
     latest_week: "2026-W29",
     summary: [],
     queries: [],
     pages: [],
+    query_pages: [],
   };
 
   assert.deepEqual(

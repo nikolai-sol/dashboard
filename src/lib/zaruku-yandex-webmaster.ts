@@ -3,6 +3,7 @@ import pool from "@/lib/db";
 import type {
   ZarukuYandexWebmasterData,
   ZarukuYandexWebmasterPageRow,
+  ZarukuYandexWebmasterQueryPageRow,
   ZarukuYandexWebmasterQueryRow,
   ZarukuYandexWebmasterSummaryRow,
 } from "@/lib/types";
@@ -27,6 +28,22 @@ type WebmasterQueryDbRow = {
 
 type WebmasterPageDbRow = {
   week_key: string;
+  page_url: string;
+  device_type: string;
+  impressions: number | string | null;
+  clicks: number | string | null;
+  ctr: number | string | null;
+  average_position: number | string | null;
+  week_from: string | Date;
+  week_to: string | Date;
+  is_partial_week?: number | string | boolean | null;
+};
+
+type WebmasterQueryPageDbRow = {
+  week_key: string;
+  query_id: string;
+  query_text: string;
+  page_id: string;
   page_url: string;
   device_type: string;
   impressions: number | string | null;
@@ -124,6 +141,26 @@ export function normalizeWebmasterPageRow(row: WebmasterPageDbRow): ZarukuYandex
   };
 }
 
+export function normalizeWebmasterQueryPageRow(
+  row: WebmasterQueryPageDbRow,
+): ZarukuYandexWebmasterQueryPageRow {
+  return {
+    week: String(row.week_key),
+    query_id: String(row.query_id),
+    query: String(row.query_text),
+    page_id: String(row.page_id),
+    url: String(row.page_url),
+    device: String(row.device_type),
+    impressions: Math.round(asNumber(row.impressions)),
+    clicks: Math.round(asNumber(row.clicks)),
+    ctr: asNullableNumber(row.ctr),
+    average_position: asNullableNumber(row.average_position),
+    week_from: formatDate(row.week_from),
+    week_to: formatDate(row.week_to),
+    is_partial_week: asBoolean(row.is_partial_week),
+  };
+}
+
 export function normalizeWebmasterSummaryRow(row: WebmasterSummaryDbRow): ZarukuYandexWebmasterSummaryRow {
   return {
     week: String(row.week_key),
@@ -149,14 +186,16 @@ const PARTIAL_WEEK_SQL = `(
 export function buildWebmasterAccountQueries(
   counterIds: string[],
   dateRange: WebmasterDateRange,
-): Record<"queries" | "pages" | "summary", SqlQuery> {
+): Record<"queries" | "pages" | "summary" | "query_pages", SqlQuery> {
   const normalizedCounterIds = normalizeAccountIds(counterIds);
   const queryParams = [...normalizedCounterIds];
   const summaryParams = [...normalizedCounterIds];
   const pageParams = [...normalizedCounterIds];
+  const queryPageParams = [...normalizedCounterIds];
   const queryDateRangeClause = dateRangeClause(dateRange, queryParams);
   const summaryDateRangeClause = dateRangeClause(dateRange, summaryParams);
   const pageDateRangeClause = dateRangeClause(dateRange, pageParams);
+  const queryPageDateRangeClause = dateRangeClause(dateRange, queryPageParams);
   const accountScope = buildInClause(normalizedCounterIds);
 
   return {
@@ -223,6 +262,30 @@ export function buildWebmasterAccountQueries(
       `,
       params: pageParams,
     },
+    query_pages: {
+      sql: `
+        SELECT
+          ${WEEK_KEY_SQL} AS week_key,
+          query_hash AS query_id,
+          query_text,
+          page_hash AS page_id,
+          page_url,
+          device_type,
+          SUM(impressions) AS impressions,
+          SUM(clicks) AS clicks,
+          CASE WHEN SUM(impressions) > 0 THEN SUM(clicks) / SUM(impressions) * 100 ELSE NULL END AS ctr,
+          ${weightedAveragePositionSql()} AS average_position,
+          MIN(${WEEK_FROM_SQL}) AS week_from,
+          MAX(report_date) AS week_to,
+          ${PARTIAL_WEEK_SQL} AS is_partial_week
+        FROM canonical_fact_webmaster_query_pages_daily
+        WHERE analytics_account_id IN (${accountScope})
+          ${queryPageDateRangeClause}
+        GROUP BY week_key, query_hash, query_text, page_hash, page_url, device_type
+        ORDER BY week_key ASC, impressions DESC, clicks DESC, query_text ASC, page_url ASC
+      `,
+      params: queryPageParams,
+    },
   };
 }
 
@@ -259,7 +322,12 @@ export async function loadZarukuYandexWebmasterData(
   executeQuery: WebmasterQueryExecutor = executeWebmasterQuery,
 ): Promise<ZarukuYandexWebmasterData> {
   const queries = buildWebmasterAccountQueries(counterIds, dateRange);
-  const results = await Promise.allSettled([executeQuery(queries.queries), executeQuery(queries.summary), executeQuery(queries.pages)]);
+  const results = await Promise.allSettled([
+    executeQuery(queries.queries),
+    executeQuery(queries.summary),
+    executeQuery(queries.pages),
+    executeQuery(queries.query_pages),
+  ]);
   const errors: string[] = [];
   const queryResult = normalizeSettledRows<WebmasterQueryDbRow, ZarukuYandexWebmasterQueryRow>(
     results[0],
@@ -279,12 +347,26 @@ export async function loadZarukuYandexWebmasterData(
     normalizeWebmasterPageRow,
     errors,
   );
+  const queryPageResult = normalizeSettledRows<WebmasterQueryPageDbRow, ZarukuYandexWebmasterQueryPageRow>(
+    results[3],
+    "query_pages",
+    normalizeWebmasterQueryPageRow,
+    errors,
+  );
   const queryRows = queryResult.rows;
   const summaryRows = summaryResult.rows;
   const pageRows = pageResult.rows;
-  const successfulQueries = [queryResult.available, summaryResult.available, pageResult.available].filter(Boolean).length;
-  const status = successfulQueries === 3 && errors.length === 0 ? "available" : successfulQueries > 0 ? "partial" : "unavailable";
-  const availableWeeks = [...new Set([...summaryRows, ...queryRows, ...pageRows].map((row) => row.week))].sort();
+  const queryPageRows = queryPageResult.rows;
+  const successfulQueries = [
+    queryResult.available,
+    summaryResult.available,
+    pageResult.available,
+    queryPageResult.available,
+  ].filter(Boolean).length;
+  const status = successfulQueries === 4 && errors.length === 0 ? "available" : successfulQueries > 0 ? "partial" : "unavailable";
+  const availableWeeks = [
+    ...new Set([...summaryRows, ...queryRows, ...pageRows, ...queryPageRows].map((row) => row.week)),
+  ].sort();
 
   return {
     available: status === "available",
@@ -293,12 +375,14 @@ export async function loadZarukuYandexWebmasterData(
     data_availability: {
       queries: queryResult.available,
       pages: pageResult.available,
+      query_pages: queryPageResult.available,
     },
     weeks: availableWeeks,
     latest_week: availableWeeks.at(-1) ?? null,
     summary: summaryRows,
     queries: queryRows,
     pages: pageRows,
+    query_pages: queryPageRows,
   };
 }
 
