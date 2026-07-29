@@ -1185,6 +1185,7 @@ _METRIKA_VISIT_KEYS = frozenset(
         'bounce',
         'client_id',
         'traffic_source',
+        'utm_source',
         'raw_user_id',
         'raw_user_ids',
     )
@@ -1239,6 +1240,7 @@ def _release_metrika_visit_rows(
         bounce = visit['bounce']
         client_id = visit['client_id']
         traffic_source = visit['traffic_source']
+        utm_source = visit['utm_source']
         raw_user_id = visit['raw_user_id']
         raw_user_ids = visit['raw_user_ids']
         valid_raw_user_ids = (
@@ -1268,6 +1270,13 @@ def _release_metrika_visit_rows(
             or not isinstance(client_id, str)
             or not isinstance(traffic_source, str)
             or not traffic_source.strip()
+            or (
+                utm_source is not None
+                and (
+                    not isinstance(utm_source, str)
+                    or len(utm_source) > 500
+                )
+            )
             or (raw_user_id is not None and not isinstance(raw_user_id, str))
             or not valid_raw_user_ids
             or not (singular_user_matches or non_singular_user_matches)
@@ -1306,6 +1315,9 @@ def _release_metrika_visit_rows(
                     list(raw_user_ids), ensure_ascii=False, separators=(',', ':')
                 ),
                 'traffic_source': traffic_source,
+                'utm_source': (
+                    utm_source if utm_source and utm_source.strip() else None
+                ),
                 'start_url': start_url,
                 'start_url_hash': _sha256(start_url),
                 'end_url': end_url,

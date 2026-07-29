@@ -49,3 +49,9 @@ test("deploy inventory packages the canonical writer breakdown dependency", () =
   assert.match(deploy, /copy_canonical_file fetch_yandex_metrika_canonical\.py/);
   assert.match(deploy, /copy_canonical_file metrika_dashboard_breakdowns\.py/);
 });
+
+test("deploy inventory packages the Metrika Logs visit parser", () => {
+  const deploy = readFileSync(join(repoRoot, "scripts/deploy.sh"), "utf8");
+
+  assert.match(deploy, /copy_canonical_file metrika_logs_api\.py/);
+});

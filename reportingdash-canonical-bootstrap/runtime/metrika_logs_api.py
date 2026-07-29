@@ -23,6 +23,7 @@ VISIT_FIELDS = (
     "ym:s:bounce",
     "ym:s:clientID",
     "ym:s:lastsignTrafficSource",
+    "ym:s:lastsignUTMSource",
     "ym:s:parsedParamsKey1",
     "ym:s:parsedParamsKey2",
 )
@@ -171,6 +172,7 @@ def parse_visits_tsv(payload: str, *, expected_day: str) -> tuple[dict, ...]:
             bounce_text,
             client_id,
             traffic_source,
+            utm_source_text,
             level1_text,
             level2_text,
         ) = row
@@ -192,6 +194,7 @@ def parse_visits_tsv(payload: str, *, expected_day: str) -> tuple[dict, ...]:
         level2 = parse_clickhouse_string_array(level2_text)
         raw_user_ids = extract_raw_user_ids(level1, level2)
         raw_user_id = raw_user_ids[0] if len(raw_user_ids) == 1 else None
+        utm_source = utm_source_text if utm_source_text.strip() else None
         seen_visit_ids.add(visit_id)
         result.append({
             "visit_id": visit_id,
@@ -203,6 +206,7 @@ def parse_visits_tsv(payload: str, *, expected_day: str) -> tuple[dict, ...]:
             "bounce": bounce,
             "client_id": client_id,
             "traffic_source": traffic_source,
+            "utm_source": utm_source,
             "raw_user_id": raw_user_id,
             "raw_user_ids": raw_user_ids,
         })
