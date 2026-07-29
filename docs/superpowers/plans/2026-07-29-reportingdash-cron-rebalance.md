@@ -31,7 +31,7 @@
 - Consumes: exact pre-change crontab SHA-256 and uniquely matched active cron lines.
 - Produces: installed root crontab with only the approved schedule changes and a recoverable protected backup.
 
-- [ ] **Step 1: Recheck the pre-change SHA and ensure no target process is currently running.**
+- [x] **Step 1: Recheck the pre-change SHA and ensure no target process is currently running.**
 
 Run:
 
@@ -41,13 +41,13 @@ ssh beget 'crontab -l | sha256sum; pgrep -af "fetch_(linkedin|reddit|between|vk_
 
 Expected: SHA-256 `c5cd49710223f6de63343b114590a2374fb67e34f099b21fbd4a142d498ff6e6`; no collector/health/report process except the diagnostic command itself.
 
-- [ ] **Step 2: Create the protected rollback backup.**
+- [x] **Step 2: Create the protected rollback backup.**
 
 Run remotely with `umask 077`, create `/root/reportingdash-canonical/backups/cron-rebalance-20260729T072308Z/` with mode `0700`, and redirect `crontab -l` into `root.crontab` with mode `0600`. Print only the backup path, mode, size, and SHA-256.
 
 Expected: backup SHA-256 equals the Step 1 pre-change SHA.
 
-- [ ] **Step 3: Transform and install only the approved lines.**
+- [x] **Step 3: Transform and install only the approved lines.**
 
 Use a Python 3 stdin program on `beget` with this exact target table:
 
@@ -78,7 +78,7 @@ For each tuple, match an active line containing `needle`, containing none of `ex
 
 Expected: `crontab -` exits `0`; the program prints only target labels, old/new schedules, and the new whole-crontab SHA-256.
 
-- [ ] **Step 4: Verify the installed crontab against the backup without printing commands.**
+- [x] **Step 4: Verify the installed crontab against the backup without printing commands.**
 
 Re-run the deterministic transform against the protected backup and compare its full bytes with `crontab -l`. Then parse the active crontab and require:
 
@@ -105,9 +105,20 @@ reddit_active=0
 
 Also require that the full installed bytes equal the deterministic expected transform of the backup. This proves all unrelated lines and all command remainders are unchanged.
 
-- [ ] **Step 5: Confirm no collector or report was exercised.**
+- [x] **Step 5: Confirm no collector or report was exercised.**
 
 Query `canonical_collector_runs` for rows with `started_at` later than the crontab installation timestamp and check the Telegram log timestamp without invoking any command. Expected: no run caused by the rollout and no Telegram send caused by the rollout.
+
+Verified rollout result:
+
+- Focused baseline: `py_compile` succeeded and 101 tests passed.
+- Pre-change crontab SHA-256: `c5cd49710223f6de63343b114590a2374fb67e34f099b21fbd4a142d498ff6e6`.
+- Backup: `/root/reportingdash-canonical/backups/cron-rebalance-20260729T072308Z/root.crontab`, mode `0600`, SHA-256 equal to the pre-change crontab.
+- Installed at `2026-07-29 07:25:16 UTC` with SHA-256 `0fe44d71f39a9dfca342a10f56b5da7d4f0086ac5811726c9cfa0261ab84da64`.
+- Independent full-byte verification against the deterministic backup transform returned `OK`.
+- LinkedIn and Reddit each have zero active cron entries and one recoverable dated disabled entry.
+- All 16 active target schedules match the approved UTC table; unrelated lines and command remainders are byte-identical to the expected transform.
+- No `canonical_collector_runs` row started after installation; the Telegram summary log remained at `2026-07-29 07:10:05 UTC`, before installation.
 
 ### Task 2: Record the verified rollout
 
@@ -119,6 +130,6 @@ Query `canonical_collector_runs` for rows with `started_at` later than the cront
 - Consumes: backup path, installed SHA-256, sanitized schedule verification, and post-install no-execution check.
 - Produces: repository evidence of the exact operational change and the successful 2026-07-29 Webmaster/GSC gate.
 
-- [ ] **Step 1: Mark the completed steps and add the actual backup path and installed SHA-256.**
-- [ ] **Step 2: Update the RD-13/RD-16 plan with the successful Webmaster/GSC scheduled gate, unchanged July recovery scopes, and the fact that optional-only GSC work was not executed.**
-- [ ] **Step 3: Run `git diff --check`, inspect the complete documentation diff, and commit with `docs: record UTC collector schedule rollout`.**
+- [x] **Step 1: Mark the completed steps and add the actual backup path and installed SHA-256.**
+- [x] **Step 2: Update the RD-13/RD-16 plan with the successful Webmaster/GSC scheduled gate, unchanged July recovery scopes, and the fact that optional-only GSC work was not executed.**
+- [x] **Step 3: Run `git diff --check`, inspect the complete documentation diff, and commit with `docs: record UTC collector schedule rollout`.**

@@ -101,9 +101,14 @@
 - Future modify: `fetch_gsc_canonical.py`
 - Future test: `tests/test_fetch_gsc_canonical.py`
 
-- [ ] **Step 1: On 2026-07-29 after 06:55, verify the scheduled GSC run has `status=success` and `error_count=0`.**
+- [x] **Step 1: On 2026-07-29 after 06:55, verify the scheduled GSC run has `status=success` and `error_count=0`.**
 - [ ] **Step 2: Only after that gate, design `--layers optional` so query/core upserts are unreachable in optional mode.**
-- [ ] **Step 3: Do not implement or execute this task in the current session.**
+- [x] **Step 3: Do not implement or execute this task in the current session.**
+
+Gate result on 2026-07-29:
+- Scheduled GSC run `1712` started at `06:55:02 UTC`, finished at `06:55:15 UTC`, and recorded `status=success`, `error_count=0`.
+- Core facts owned by run `1712` cover `2026-07-24..26`; the GSC core maximum advanced to `2026-07-26`.
+- The cron prerequisite for future optional-only design is satisfied. `--layers optional` was not designed, implemented, or executed in this session.
 
 ### Task 6: Hold the July Webmaster recovery gate
 
@@ -129,11 +134,19 @@ Confirmed result:
 - Webmaster query and summary exist but page facts are absent for `2026-07-10..12`.
 - Webmaster has 1,698 failed-lineage rows across `2026-07-14..17`; this is a partial-data repair scope, not an absent-date scope.
 
-- [ ] **Step 2: After the scheduled Webmaster cron on 2026-07-29 at 06:50, require `status=success`, `error_count=0`, and advancing query/page maxima from the active cron path.**
-- [ ] **Step 3: After the scheduled GSC cron on 2026-07-29 at 06:55, require `status=success` and `error_count=0`; keep `--layers optional` blocked otherwise.**
-- [ ] **Step 4: Refresh the SELECT-only matrix and failed-lineage counts after both cron gates.**
-- [ ] **Step 5: Review recovery as three distinct scopes: full Webmaster `2026-07-01..09`, page-only `2026-07-10..12`, and failed-lineage repair `2026-07-14..17`. Do not silently include healthy `2026-07-13` or `2026-07-18..21`.**
-- [ ] **Step 6: Do not run a collector or backfill in the current session.**
+- [x] **Step 2: After the scheduled Webmaster cron on 2026-07-29 at 06:50, require `status=success`, `error_count=0`, and advancing query/page maxima from the active cron path.**
+- [x] **Step 3: After the scheduled GSC cron on 2026-07-29 at 06:55, require `status=success` and `error_count=0`; keep `--layers optional` blocked otherwise.**
+- [x] **Step 4: Refresh the SELECT-only matrix and failed-lineage counts after both cron gates.**
+- [x] **Step 5: Review recovery as three distinct scopes: full Webmaster `2026-07-01..09`, page-only `2026-07-10..12`, and failed-lineage repair `2026-07-14..17`. Do not silently include healthy `2026-07-13` or `2026-07-18..21`.**
+- [x] **Step 6: Do not run a collector or backfill in the current session.**
+
+Gate refresh on 2026-07-29:
+- Scheduled Webmaster run `1711` started at `06:50:01 UTC`, finished at `06:50:19 UTC`, and recorded `status=success`, `error_count=0`.
+- Run `1711` owns query/page facts for `2026-07-25..27`; query and page maxima advanced to `2026-07-27`.
+- Scheduled GSC run `1712` recorded `status=success`, `error_count=0`; its core maximum advanced to `2026-07-26`.
+- The refreshed `2026-07-01..21` matrix is unchanged: Metrika and GSC core have all 21 dates; Webmaster all-layer absence remains `2026-07-01..09`; page-only absence remains `2026-07-10..12`.
+- Failed Webmaster lineage remains exactly 1,698 rows across `2026-07-14..17`.
+- No backfill, manual collector, optional-only GSC run, Telegram send, schema change, or secret change was executed for this gate.
 
 ### Task 7: Deploy the committed runtime changes without exercising collectors
 
