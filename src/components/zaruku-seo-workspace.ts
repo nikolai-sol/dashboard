@@ -47,7 +47,7 @@ export type SeoQuerySort = {
   direction: "asc" | "desc";
 };
 
-export type SeoQueryFilter =
+export type SeoComparisonFilter =
   | "all"
   | "confirmed_landing"
   | "top3"
@@ -56,6 +56,19 @@ export type SeoQueryFilter =
   | "improved"
   | "declined"
   | "not_found";
+
+export type SeoQueryFilter = SeoComparisonFilter;
+
+export const ZARUKU_SEO_COMPARISON_FILTERS: Array<{ id: SeoComparisonFilter; label: string }> = [
+  { id: "all", label: "Все" },
+  { id: "confirmed_landing", label: "Только с подтверждённой посадочной" },
+  { id: "top3", label: "Топ-3" },
+  { id: "top10", label: "Топ-10" },
+  { id: "top20", label: "Топ-20" },
+  { id: "improved", label: "Выросли" },
+  { id: "declined", label: "Снизились" },
+  { id: "not_found", label: "Нет позиции" },
+];
 
 export type UnifiedSeoPageRow = {
   key: string;

@@ -30,7 +30,9 @@ test("Zaruku typography follows the RD-01 heading, KPI, and table-header contrac
 });
 
 test("dashboard distinguishes the traffic period from SEO week selection", () => {
-  assert.match(source, /Период трафика:\s*<\/span>\s*<span>\{data\.period\.from\} — \{data\.period\.to\}<\/span>/);
+  assert.doesNotMatch(source, /Период трафика:/);
+  assert.doesNotMatch(source, /счётчик \{data\.counters\.join/);
+  assert.doesNotMatch(source, /\{data\.domain\}/);
 });
 
 test("SEO week toolbar names its reporting period", () => {
@@ -52,7 +54,37 @@ test("Overview does not show the duplicated period context strip", () => {
   assert.match(source, /import ZarukuOverviewTab/);
   assert.match(source, /<ZarukuOverviewTab data=\{data\}/);
   assert.doesNotMatch(overviewSource, /<ZarukuPeriodContext/);
+  assert.doesNotMatch(overviewSource, /Ежедневные данные|стандартный лаг|недельный срез позиций|единый ежедневный период/);
   assert.match(overviewSource, /void data;/);
+});
+
+test("SEO comparison tables share one filter contract", () => {
+  const querySource = readFileSync(new URL("./ZarukuSeoQueryComparison.tsx", import.meta.url), "utf8");
+  const pageSource = readFileSync(new URL("./ZarukuSeoPageComparison.tsx", import.meta.url), "utf8");
+  const workspaceSource = readFileSync(new URL("./zaruku-seo-workspace.ts", import.meta.url), "utf8");
+
+  assert.match(workspaceSource, /export const ZARUKU_SEO_COMPARISON_FILTERS/);
+  assert.match(querySource, /ZARUKU_SEO_COMPARISON_FILTERS/);
+  assert.match(pageSource, /ZARUKU_SEO_COMPARISON_FILTERS/);
+  assert.doesNotMatch(querySource, /const FILTERS/);
+  assert.doesNotMatch(pageSource, /const FILTERS/);
+});
+
+test("SEO tab puts AI visibility and section popularity before detail tables", () => {
+  const seoStart = source.indexOf("function SeoTab");
+  const seoEnd = source.indexOf("export default function ZarukuSeoDashboard");
+  const seoSource = source.slice(seoStart, seoEnd);
+  const aiIndex = seoSource.indexOf("<AiAggregateVisibilityPanel");
+  const sectionIndex = seoSource.indexOf("<ZarukuTrafficVisibility");
+  const queryTableIndex = seoSource.indexOf("<ZarukuSeoQueryComparison");
+  const pageTableIndex = seoSource.indexOf("<ZarukuSeoPageComparison");
+
+  assert.ok(aiIndex >= 0, "AI visibility panel must render on SEO");
+  assert.ok(sectionIndex >= 0, "section popularity chart must render on SEO");
+  assert.ok(aiIndex < queryTableIndex, "AI visibility should come before query table");
+  assert.ok(sectionIndex < queryTableIndex, "section popularity should come before query table");
+  assert.ok(queryTableIndex < pageTableIndex, "query table should still precede landing page table");
+  assert.match(seoSource, /showTable=\{false\}/);
 });
 
 test("Overview uses a stable bounded desktop composition", () => {

@@ -13,6 +13,10 @@ type Props = {
   primaryWeek: string | null;
   comparisonWeek: string | null;
   source?: ZarukuSeoSource;
+  title?: string;
+  note?: string;
+  chartHeight?: number;
+  showTable?: boolean;
 };
 
 function formatNumber(value: number | null) {
@@ -42,7 +46,16 @@ function isoWeekRange(week: string | null) {
   return from === to ? `${week} · факт ${from}` : `${week} · ${from} — ${to}`;
 }
 
-export default function ZarukuTrafficVisibility({ seoOs, primaryWeek, comparisonWeek, source }: Props) {
+export default function ZarukuTrafficVisibility({
+  seoOs,
+  primaryWeek,
+  comparisonWeek,
+  source,
+  title = "Трафик и видимость по разделам",
+  note,
+  chartHeight = 300,
+  showTable = true,
+}: Props) {
   const rows = useMemo(
     () => buildTrafficVisibilityRows(seoOs.traffic_visibility, seoOs.section_patterns, primaryWeek, comparisonWeek),
     [comparisonWeek, primaryWeek, seoOs.section_patterns, seoOs.traffic_visibility],
@@ -64,13 +77,13 @@ export default function ZarukuTrafficVisibility({ seoOs, primaryWeek, comparison
   return (
     <section className="card-surface zaruku-panel">
       <header className="zaruku-panel-header">
-        <div><h3 className="text-base font-semibold text-slate-900">Трафик и видимость по разделам</h3><p className="mt-1 text-xs text-slate-500">A {primaryPeriodLabel ?? "не выбрана"}{comparisonWeek ? ` · B ${comparisonPeriodLabel ?? comparisonWeek}` : ""}. Разделы только из словаря SEO-паттернов. Позиция 1 находится сверху.</p></div>
+        <div><h3 className="text-base font-semibold text-slate-900">{title}</h3><p className="mt-1 text-xs text-slate-500">{note ?? `A ${primaryPeriodLabel ?? "не выбрана"}${comparisonWeek ? ` · B ${comparisonPeriodLabel ?? comparisonWeek}` : ""}. Разделы только из словаря SEO-паттернов. Позиция 1 находится сверху.`}</p></div>
         {source ? <span className="inline-flex items-center gap-1.5 rounded-md border border-slate-200 bg-white px-2 py-1 text-xs font-medium text-slate-600"><span className="h-1.5 w-1.5 rounded-full" style={{ background: source.color }} />{source.label}</span> : null}
       </header>
-      <div className="border-b border-slate-100 px-5 py-4">
-        {chartRows.length ? <ResponsiveContainer width="100%" height={300}><ComposedChart data={chartRows} margin={{ top: 10, right: 12, left: -12, bottom: 0 }}><CartesianGrid stroke={ZARUKU_CHART_PALETTE.grid} strokeDasharray="3 3" vertical={false} /><XAxis dataKey="section" tick={{ fontSize: 12, fill: ZARUKU_CHART_PALETTE.axis }} axisLine={false} tickLine={false} /><YAxis yAxisId="traffic" tick={{ fontSize: 12, fill: ZARUKU_CHART_PALETTE.axis }} axisLine={false} tickLine={false} /><YAxis yAxisId="position" orientation="right" domain={[1, "dataMax + 1"]} reversed allowDecimals={false} tick={{ fontSize: 12, fill: ZARUKU_CHART_PALETTE.axis }} axisLine={false} tickLine={false} label={{ value: "Позиция", angle: 90, position: "insideRight", fill: ZARUKU_CHART_PALETTE.axis, fontSize: 12 }} /><Tooltip /><Legend wrapperStyle={{ fontSize: 12 }} /><Bar yAxisId="traffic" dataKey="primary_pageviews" name={`A ${primaryWeek ?? ""} просмотры`} fill={ZARUKU_CHART_PALETTE.seo} radius={[4, 4, 0, 0]} />{comparisonWeek ? <Bar yAxisId="traffic" dataKey="comparison_pageviews" name={`B ${comparisonWeek} просмотры`} fill={ZARUKU_CHART_PALETTE.comparison} radius={[4, 4, 0, 0]} /> : null}<Scatter yAxisId="position" dataKey="primary_position" name={`A ${primaryWeek ?? ""} позиция`} fill={ZARUKU_CHART_PALETTE.position} shape="circle" />{comparisonWeek ? <Scatter yAxisId="position" dataKey="comparison_position" name={`B ${comparisonWeek} позиция`} fill={ZARUKU_CHART_PALETTE.comparison} shape="diamond" /> : null}</ComposedChart></ResponsiveContainer> : <div className="flex h-[300px] items-center justify-center text-sm text-slate-500">Нет трафика или видимости для выбранной недели.</div>}
+      <div className={`${showTable ? "border-b border-slate-100" : ""} px-5 py-4`}>
+        {chartRows.length ? <ResponsiveContainer width="100%" height={chartHeight}><ComposedChart data={chartRows} margin={{ top: 10, right: 12, left: -12, bottom: 0 }}><CartesianGrid stroke={ZARUKU_CHART_PALETTE.grid} strokeDasharray="3 3" vertical={false} /><XAxis dataKey="section" tick={{ fontSize: 12, fill: ZARUKU_CHART_PALETTE.axis }} axisLine={false} tickLine={false} /><YAxis yAxisId="traffic" tick={{ fontSize: 12, fill: ZARUKU_CHART_PALETTE.axis }} axisLine={false} tickLine={false} /><YAxis yAxisId="position" orientation="right" domain={[1, "dataMax + 1"]} reversed allowDecimals={false} tick={{ fontSize: 12, fill: ZARUKU_CHART_PALETTE.axis }} axisLine={false} tickLine={false} label={{ value: "Позиция", angle: 90, position: "insideRight", fill: ZARUKU_CHART_PALETTE.axis, fontSize: 12 }} /><Tooltip contentStyle={{ maxWidth: 260, overflowWrap: "anywhere", whiteSpace: "normal" }} wrapperStyle={{ maxWidth: 280, zIndex: 20 }} /><Legend wrapperStyle={{ fontSize: 12 }} /><Bar yAxisId="traffic" dataKey="primary_pageviews" name={`A ${primaryWeek ?? ""} просмотры`} fill={ZARUKU_CHART_PALETTE.seo} radius={[4, 4, 0, 0]} />{comparisonWeek ? <Bar yAxisId="traffic" dataKey="comparison_pageviews" name={`B ${comparisonWeek} просмотры`} fill={ZARUKU_CHART_PALETTE.comparison} radius={[4, 4, 0, 0]} /> : null}<Scatter yAxisId="position" dataKey="primary_position" name={`A ${primaryWeek ?? ""} позиция`} fill={ZARUKU_CHART_PALETTE.position} shape="circle" />{comparisonWeek ? <Scatter yAxisId="position" dataKey="comparison_position" name={`B ${comparisonWeek} позиция`} fill={ZARUKU_CHART_PALETTE.comparison} shape="diamond" /> : null}</ComposedChart></ResponsiveContainer> : <div className="flex items-center justify-center text-sm text-slate-500" style={{ height: chartHeight }}>Нет трафика или видимости для выбранной недели.</div>}
       </div>
-      <div className="px-5 py-4">
+      {showTable ? <div className="px-5 py-4">
         <ZarukuTableFrame mode="standard" label="Трафик и позиции по разделам">
           <table className="zaruku-table min-w-[920px]">
             <thead>
@@ -130,7 +143,7 @@ export default function ZarukuTrafficVisibility({ seoOs, primaryWeek, comparison
             </tbody>
           </table>
         </ZarukuTableFrame>
-      </div>
+      </div> : null}
     </section>
   );
 }

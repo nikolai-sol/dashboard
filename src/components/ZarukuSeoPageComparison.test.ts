@@ -7,6 +7,7 @@ import ZarukuSeoPageComparison from "@/components/ZarukuSeoPageComparison";
 import { buildUnifiedSeoPageRows } from "@/components/zaruku-seo-workspace";
 
 const source = readFileSync(new URL("./ZarukuSeoPageComparison.tsx", import.meta.url), "utf8");
+const workspaceSource = readFileSync(new URL("./zaruku-seo-workspace.ts", import.meta.url), "utf8");
 
 test("renders exact joined page rows without noisy period pills", () => {
   const rows = buildUnifiedSeoPageRows({
@@ -60,13 +61,14 @@ test("page workspace exposes search sorting pagination and safe absolute links",
   assert.match(source, /type="search"/);
   assert.match(source, /PAGE_SIZE = 50/);
   assert.match(source, /Фильтр посадочных страниц/);
-  assert.match(source, /Только с подтверждённой посадочной/);
-  assert.match(source, /Топ-3/);
-  assert.match(source, /Топ-10/);
-  assert.match(source, /Топ-20/);
-  assert.match(source, /Выросли/);
-  assert.match(source, /Снизились/);
-  assert.match(source, /Нет позиции/);
+  assert.match(source, /ZARUKU_SEO_COMPARISON_FILTERS/);
+  assert.match(workspaceSource, /Только с подтверждённой посадочной/);
+  assert.match(workspaceSource, /Топ-3/);
+  assert.match(workspaceSource, /Топ-10/);
+  assert.match(workspaceSource, /Топ-20/);
+  assert.match(workspaceSource, /Выросли/);
+  assert.match(workspaceSource, /Снизились/);
+  assert.match(workspaceSource, /Нет позиции/);
   assert.match(source, /Визиты/);
   assert.match(source, /Страница/);
   assert.match(source, /resolveZarukuContentUrl/);

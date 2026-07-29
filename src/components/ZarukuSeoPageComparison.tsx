@@ -1,7 +1,7 @@
 "use client";
 
 import { useMemo, useState } from "react";
-import type { UnifiedSeoPageRow } from "@/components/zaruku-seo-workspace";
+import { ZARUKU_SEO_COMPARISON_FILTERS, type SeoComparisonFilter, type UnifiedSeoPageRow } from "@/components/zaruku-seo-workspace";
 import { filterAndPaginate } from "@/components/zaruku-table-pagination";
 import { resolveZarukuContentUrl } from "@/lib/zaruku-url";
 import ZarukuTableFrame from "@/components/ZarukuTableFrame";
@@ -10,15 +10,7 @@ import { ZARUKU_CLIENT_COPY } from "@/components/zaruku-client-copy";
 const PAGE_SIZE = 50;
 type SeoPageSortKey = "google_impressions" | "webmaster_impressions" | "visits" | "label";
 type SeoPageSort = { key: SeoPageSortKey; direction: "asc" | "desc" };
-type SeoPageFilter =
-  | "all"
-  | "confirmed_landing"
-  | "top3"
-  | "top10"
-  | "top20"
-  | "improved"
-  | "declined"
-  | "not_found";
+type SeoPageFilter = SeoComparisonFilter;
 
 type Props = {
   rows: UnifiedSeoPageRow[];
@@ -33,17 +25,6 @@ type Props = {
   defaultFilter?: SeoPageFilter;
   locale?: string;
 };
-
-const FILTERS: Array<{ id: SeoPageFilter; label: string }> = [
-  { id: "all", label: "Все" },
-  { id: "confirmed_landing", label: "Только с подтверждённой посадочной" },
-  { id: "top3", label: "Топ-3" },
-  { id: "top10", label: "Топ-10" },
-  { id: "top20", label: "Топ-20" },
-  { id: "improved", label: "Выросли" },
-  { id: "declined", label: "Снизились" },
-  { id: "not_found", label: "Нет позиции" },
-];
 
 function formatNumber(value: number | null | undefined, locale: string): string {
   return value === null || value === undefined || !Number.isFinite(value)
@@ -182,7 +163,7 @@ export default function ZarukuSeoPageComparison({ rows, sourceWeeks, sourceAvail
         </div>
 
         <div className="mt-4 flex flex-wrap gap-2" role="group" aria-label="Фильтр посадочных страниц">
-          {FILTERS.map((item) => (
+          {ZARUKU_SEO_COMPARISON_FILTERS.map((item) => (
             <button
               key={item.id}
               type="button"

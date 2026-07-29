@@ -53,6 +53,7 @@ import ZarukuSeoAnalytics from "@/components/ZarukuSeoAnalytics";
 import ZarukuSeoOperations from "@/components/ZarukuSeoOperations";
 import ZarukuOverviewTab from "@/components/ZarukuOverviewTab";
 import ZarukuContentTab from "@/components/ZarukuContentTab";
+import ZarukuTrafficVisibility from "@/components/ZarukuTrafficVisibility";
 import ZarukuAudienceTab, { isZarukuAudienceVisible } from "@/components/ZarukuAudienceTab";
 import ZarukuWorkTab from "@/components/ZarukuWorkTab";
 import ZarukuQualityTab from "@/components/ZarukuQualityTab";
@@ -679,6 +680,19 @@ function SeoTab({ data, locale, primaryWeek, comparisonWeek }: Props & { primary
   });
   return (
     <div className="space-y-5">
+      <div className="grid gap-5 xl:grid-cols-2">
+        <AiAggregateVisibilityPanel data={data} locale={currentLocale} />
+        <ZarukuTrafficVisibility
+          seoOs={data.seo_os}
+          primaryWeek={primaryWeek}
+          comparisonWeek={comparisonWeek}
+          source={data.sources.find((source) => source.id === "seo_os")}
+          title="Популярность контента по разделам"
+          note="Просмотры разделов и позиция SEO OS рядом: быстро видно, где спрос уже есть, а где видимость отстаёт."
+          chartHeight={260}
+          showTable={false}
+        />
+      </div>
       <ZarukuSeoQueryComparison
         rows={unifiedQueryRows}
         sourceAvailability={{
@@ -718,7 +732,6 @@ function SeoTab({ data, locale, primaryWeek, comparisonWeek }: Props & { primary
         source={data.sources.find((source) => source.id === "seo_os")}
         showClusterTable={false}
       />
-      <AiAggregateVisibilityPanel data={data} locale={currentLocale} />
       <ZarukuSeoDiagnostics
         summaryRows={gscSummaryRows}
         brandRows={gscBrandSplit}
@@ -934,14 +947,6 @@ export default function ZarukuSeoDashboard({ data, locale = "ru-RU", onActiveTab
                 <CurrentIcon className="mt-1 h-5 w-5 text-teal-600" />
                 <div>
                   <h2 className="text-lg font-semibold text-slate-950">{activeNav.label}</h2>
-                  <div className="mt-0.5 flex flex-wrap items-center gap-2 text-xs text-slate-500">
-                    <span>{data.domain}</span>
-                    <span>·</span>
-                    <span>счётчик {data.counters.join(", ")}</span>
-                    <span>·</span>
-                    <span>Период трафика:</span>
-                    <span>{data.period.from} — {data.period.to}</span>
-                  </div>
                 </div>
               </div>
             </div>

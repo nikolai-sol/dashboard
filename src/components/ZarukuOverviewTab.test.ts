@@ -43,30 +43,31 @@ function visibleText(markup: string) {
   return markup.replace(/<[^>]+>/g, "").replace(/\s+/g, " ").trim();
 }
 
-test("overview states the effective daily period and the standard 48-hour lag", () => {
+test("overview starts from dashboard content without the duplicated period strip", () => {
   const text = visibleText(renderToStaticMarkup(
     createElement(ZarukuOverviewTab, { data }, createElement("div", null, "content")),
   ));
 
-  assert.match(text, /Ежедневные данные: 19\.07\.2026–21\.07\.2026 · стандартный лаг 48 часов/);
+  assert.match(text, /content/);
+  assert.doesNotMatch(text, /Ежедневные данные|стандартный лаг|Период трафика/);
   assert.doesNotMatch(text, /фактически по|лимитирующий источник|ограничивает период/i);
 });
 
-test("overview labels SEO OS as an independent weekly position snapshot", () => {
+test("overview no longer renders a weekly SEO OS period note", () => {
   const markup = renderToStaticMarkup(
     createElement(ZarukuOverviewTab, { data }, createElement("div", null, "content")),
   );
   const text = visibleText(markup);
 
-  assert.match(text, /2026-W29 · недельный срез позиций/);
-  assert.match(overviewSource, /<ZarukuInfoPopover/);
-  assert.match(overviewSource, /label=\{ZARUKU_CLIENT_COPY\.weeklyPeriod\.label\}/);
+  assert.doesNotMatch(text, /2026-W29 · недельный срез позиций/);
+  assert.doesNotMatch(overviewSource, /<ZarukuInfoPopover/);
+  assert.doesNotMatch(overviewSource, /label=\{ZARUKU_CLIENT_COPY\.weeklyPeriod\.label\}/);
   assert.doesNotMatch(overviewSource, /group-hover:block|<span role="tooltip"/);
   assert.doesNotMatch(text, /не относится к выбранному ежедневному периоду/i);
   assert.doesNotMatch(text, /не ограничивает данные Метрики, GSC или Вебмастера/i);
 });
 
-test("overview keeps GSC and Webmaster inside the unified daily period", () => {
+test("overview does not restate GSC and Webmaster period context", () => {
   const populatedSearchData = {
     ...data,
     gsc: {
@@ -86,5 +87,5 @@ test("overview keeps GSC and Webmaster inside the unified daily period", () => {
 
   assert.doesNotMatch(text, /Google RF:|Яндекс: 2026-W30/);
   assert.doesNotMatch(text, /собственных фактических периодах/i);
-  assert.match(text, /Метрика, Google Search Console и Яндекс Вебмастер показаны за единый ежедневный период/i);
+  assert.doesNotMatch(text, /Метрика, Google Search Console и Яндекс Вебмастер показаны за единый ежедневный период/i);
 });

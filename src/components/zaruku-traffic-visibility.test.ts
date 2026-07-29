@@ -79,3 +79,9 @@ test("traffic visibility table keeps horizontal cell padding on mobile", () => {
   assert.doesNotMatch(componentSource, /<th className="pb-2 font-medium">Раздел<\/th>/);
   assert.doesNotMatch(componentSource, /<td className="py-2\.5 font-medium text-slate-700">\{row\.section\}<\/td>/);
 });
+
+test("traffic visibility tooltip is bounded for long section labels", () => {
+  assert.match(componentSource, /contentStyle=\{\{ maxWidth: 260/);
+  assert.match(componentSource, /wrapperStyle=\{\{ maxWidth: 280/);
+  assert.match(componentSource, /overflowWrap: "anywhere"/);
+});

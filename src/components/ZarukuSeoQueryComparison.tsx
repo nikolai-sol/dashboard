@@ -8,6 +8,7 @@ import { ZARUKU_CLIENT_COPY } from "@/components/zaruku-client-copy";
 import {
   filterUnifiedSeoQueryRows,
   sortUnifiedSeoQueryRows,
+  ZARUKU_SEO_COMPARISON_FILTERS,
   type SeoQueryFilter,
   type SeoQuerySort,
   type SeoQuerySortKey,
@@ -29,16 +30,6 @@ type Props = {
   locale?: string;
 };
 
-const FILTERS: Array<{ id: SeoQueryFilter; label: string }> = [
-  { id: "all", label: "Все" },
-  { id: "confirmed_landing", label: "Только с подтверждённой посадочной" },
-  { id: "top3", label: "Топ-3" },
-  { id: "top10", label: "Топ-10" },
-  { id: "top20", label: "Топ-20" },
-  { id: "improved", label: "Выросли" },
-  { id: "declined", label: "Снизились" },
-  { id: "not_found", label: "Нет позиции" },
-];
 const PAGE_SIZE = 50;
 
 export function toggleSeoSort(current: SeoQuerySort, key: SeoQuerySortKey): SeoQuerySort {
@@ -196,7 +187,7 @@ export default function ZarukuSeoQueryComparison({
         </div>
 
         <div className="mt-4 flex flex-wrap gap-2" role="group" aria-label="Фильтр запросов">
-          {FILTERS.map((item) => (
+          {ZARUKU_SEO_COMPARISON_FILTERS.map((item) => (
             <button
               key={item.id}
               type="button"
