@@ -64,3 +64,12 @@ test("audience bar rows leave enough mobile track width for large percentages", 
   assert.match(source, /grid-cols-\[minmax\(92px,128px\)_minmax\(84px,1fr\)_64px\]/);
   assert.match(source, /sm:grid-cols-\[minmax\(110px,160px\)_minmax\(0,1fr\)_72px\]/);
 });
+
+test("audience detail panels are expanded by default", () => {
+  const detailsTags = source.match(/<details\b[^>]*>/g) ?? [];
+
+  assert.ok(detailsTags.length > 0, "expected audience to render detail panels");
+  for (const detailsTag of detailsTags) {
+    assert.match(detailsTag, /\bopen\b/, `${detailsTag} should be open by default`);
+  }
+});
