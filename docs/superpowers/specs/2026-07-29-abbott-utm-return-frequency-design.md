@@ -119,6 +119,39 @@ Direction is enriched using the active canonical Abbott content lookup. A URL
 without a unique mapping is labeled `Направление не определено`; the loader
 does not guess from arbitrary URL substrings.
 
+#### Follow-up: canonical URL/path direction projection
+
+The production audit on 2026-07-29 found that the active release catalog has
+1,769 content rows and 1,639 non-empty directions, but zero normalized URLs,
+zero normalized paths, and therefore zero `path` lookup projections. The
+unknown page directions are caused by the missing URL-to-catalog join key, not
+by missing direction metadata.
+
+The follow-up release step uses normalized URL/path as the canonical join key.
+After candidate page facts are complete, it reads candidate-scoped Metrika
+`page` facts as URL/title evidence, normalizes every URL with the same shared
+normalizer used by the return-frequency read model, and resolves the page title
+only through an existing `unique` or `identical_collapsed` title projection.
+The complete candidate `path` projection is then rebuilt from both authoritative
+workbook URL/path candidates and these resolved Metrika page-evidence
+candidates. Their catalog fingerprints are grouped by normalized-path hash and
+materialized as release-scoped `path` rows in
+`portal_content_lookup_projection`.
+
+One path mapping is published only when all workbook and page evidence for that
+path resolves to the same catalog fingerprint and direction metadata.
+Conflicting fingerprints remain `ambiguous` with no selected row. Missing title
+matches remain unmatched. A slug-only or URL-substring fallback is not allowed:
+the audited catalog contains hundreds of ambiguous slug groups, so such a
+fallback could silently assign the wrong medical direction.
+
+The projection is deterministic, repeat-safe, counter-scoped to Abbott
+`90602537`, and allowed only for a staging successor release. It transactionally
+replaces the complete candidate-release `path` set while preserving `title` and
+`slug` projections; it never rewrites active release 8. Validation records
+matched, unmatched, ambiguous, and direction-bearing path counts plus
+returning-page direction coverage before activation.
+
 The return-page output contains aggregate rows only:
 
 - normalized return landing URL;
@@ -220,6 +253,8 @@ without UTM, and the three frequency-group counts.
   the existing Abbott loader contract.
 - A valid blank UTM Source is stored as `NULL` and rendered as `Без UTM`.
 - Missing user or page direction is labeled explicitly; it is not discarded.
+- Missing or ambiguous path evidence remains unmatched; it never falls back to
+  a guessed slug, URL substring, or a different period.
 - No error response or log contains raw User ID, visit ID, Client ID, URL query
   parameters, cookies, OAuth tokens, or SQL parameters.
 
@@ -237,6 +272,10 @@ Implementation follows red-green-refactor cycles and adds tests for:
 - period-local grouping and unidentified-visit reporting;
 - deterministic visitor direction resolution;
 - second-and-later visit ordering and return landing-page aggregation;
+- shared URL/path normalization and deterministic candidate page-to-catalog
+  projection, including unmatched and ambiguous collision cases;
+- a staging-only guard and release validation evidence for path-direction
+  coverage before activation;
 - UTM filtering before pagination and chart aggregation;
 - external tab hidden while its implementation remains present;
 - count-first returning UI and retained recency control block;
