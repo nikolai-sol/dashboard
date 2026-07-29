@@ -77,6 +77,24 @@ function executor(
   };
 }
 
+function privateVisit(overrides: Record<string, unknown> = {}): Record<string, unknown> {
+  return {
+    visit_id_hash: "visit-hash",
+    session_started_at: "2026-01-01 10:00:00",
+    utm_source: null,
+    raw_user_id: "000123",
+    raw_user_ids_json: '["000123"]',
+    client_id_hash: "client-a",
+    traffic_source: "Direct",
+    start_url: "/start",
+    end_url: "/end",
+    pageviews: "1",
+    duration_seconds: "10",
+    is_bounce: "0",
+    ...overrides,
+  };
+}
+
 function aggregateRows(sql: string): readonly Record<string, unknown>[] {
   if (sql.includes("portal_active_data_releases")) {
     return [{ canonical_release_id: "41", release_status: "active" }];
@@ -230,6 +248,15 @@ test("embed uses aggregate store only and derives returning counts with decimal 
   assert.equal(result.users_summary.length, 0);
   assert.equal(result.user_actions.length, 0);
   assert.equal(result.session_journeys.rows.length, 0);
+  assert.deepEqual(result.return_frequency, {
+    available: false,
+    period_local: true,
+    identified_visitors: 0,
+    unidentified_visits: 0,
+    groups: [],
+    user_directions: [],
+    return_pages: [],
+  });
   assert.deepEqual(result.bitrix_sources, {
     pages: missingBitrix.source,
     journeys: missingBitrix.source,
@@ -669,16 +696,17 @@ test("manager summarizes exact private visits by raw user and source", async () 
   const privateDb = executor((sql, params) => {
     assert.match(sql, /`report_bd_private`\.`canonical_fact_metrika_visits`/);
     assert.doesNotMatch(sql, /canonical_fact_metrika_user_behavior_daily/);
-    assert.match(sql, /SELECT raw_user_id, raw_user_ids_json, client_id_hash, traffic_source, start_url, end_url,/);
+    assert.match(sql, /SELECT visit_id_hash, session_started_at, utm_source,/);
+    assert.match(sql, /raw_user_id, raw_user_ids_json, client_id_hash, traffic_source, start_url, end_url,/);
     assert.match(sql, /pageviews, duration_seconds, is_bounce/);
     assert.doesNotMatch(sql, /CAST\s*\(|UNSIGNED|CONVERT\s*\(/i);
     assert.deepEqual(params, [41, "90602537", "2026-01-01", "2026-01-01"]);
     return [
-      { raw_user_id: "000123", client_id_hash: "client-a", traffic_source: "Direct", start_url: "/start-1", end_url: "/end-1", pageviews: "3", duration_seconds: "10", is_bounce: "1" },
-      { raw_user_id: "000123", client_id_hash: "client-a", traffic_source: "Direct", start_url: "/start-2", end_url: "/end-2", pageviews: "5", duration_seconds: "30", is_bounce: "0" },
-      { raw_user_id: "000123", client_id_hash: "client-b", traffic_source: "Organic", start_url: "/start-3", end_url: "/end-3", pageviews: "2", duration_seconds: "20", is_bounce: "0" },
-      { raw_user_id: null, client_id_hash: "anon-a", traffic_source: "Direct", start_url: "/anon-1", end_url: "/anon-end-1", pageviews: "1", duration_seconds: "5", is_bounce: "1" },
-      { raw_user_id: null, client_id_hash: "", traffic_source: "Direct", start_url: "/anon-2", end_url: "/anon-end-2", pageviews: "3", duration_seconds: "15", is_bounce: "0" },
+      privateVisit({ visit_id_hash: "visit-1", utm_source: "newsletter", start_url: "/start-1", end_url: "/end-1", pageviews: "3", duration_seconds: "10", is_bounce: "1" }),
+      privateVisit({ visit_id_hash: "visit-2", session_started_at: "2026-01-01 11:00:00", utm_source: "   ", start_url: "https://example.test/page?utm=secret", end_url: "/end-2", pageviews: "5", duration_seconds: "30" }),
+      privateVisit({ visit_id_hash: "visit-3", session_started_at: "2026-01-01 12:00:00", client_id_hash: "client-b", traffic_source: "Organic", start_url: "/start-3", end_url: "/end-3", pageviews: "2", duration_seconds: "20" }),
+      privateVisit({ visit_id_hash: "visit-4", session_started_at: "2026-01-01 13:00:00", raw_user_id: null, raw_user_ids_json: "[]", client_id_hash: "anon-a", start_url: "/anon-1", end_url: "/anon-end-1", pageviews: "1", duration_seconds: "5", is_bounce: "1" }),
+      privateVisit({ visit_id_hash: "visit-5", session_started_at: "2026-01-01 14:00:00", raw_user_id: null, raw_user_ids_json: "[]", client_id_hash: null, start_url: "/anon-2", end_url: "/anon-end-2", pageviews: "3", duration_seconds: "15" }),
     ];
   });
 
@@ -737,6 +765,7 @@ test("manager summarizes exact private visits by raw user and source", async () 
     user_id: "000123",
     has_user_id: true,
     traffic_source: "Direct",
+    utm_source: "newsletter",
     direction: "Cardiology",
     start_url: "/start-1",
     end_url: "/end-1",
@@ -748,6 +777,7 @@ test("manager summarizes exact private visits by raw user and source", async () 
     user_id: "",
     has_user_id: false,
     traffic_source: "Direct",
+    utm_source: null,
     direction: null,
     start_url: "/anon-1",
     end_url: "/anon-end-1",
@@ -756,6 +786,30 @@ test("manager summarizes exact private visits by raw user and source", async () 
     avg_duration: 5,
   });
   assert.equal(result.user_actions.length, 5);
+  assert.deepEqual(result.return_frequency, {
+    available: true,
+    period_local: true,
+    identified_visitors: 3,
+    unidentified_visits: 1,
+    groups: [
+      { group_id: "one", label: "1 раз", visitors: 2, share: 66.67, visits: 2 },
+      { group_id: "two_to_three", label: "2–3 раза", visitors: 1, share: 33.33, visits: 2 },
+      { group_id: "four_plus", label: "4+ раза", visitors: 0, share: 0, visits: 0 },
+    ],
+    user_directions: [{
+      direction: "Cardiology",
+      frequency_group: "two_to_three",
+      visitors: 1,
+      repeat_visits: 1,
+    }],
+    return_pages: [{
+      url: "https://example.test/page",
+      direction: "Cardiology",
+      frequency_group: "two_to_three",
+      returning_visitors: 1,
+      repeat_visits: 1,
+    }],
+  });
   assert.equal(privateDb.queries.length, 1);
 });
 
@@ -763,17 +817,14 @@ test("manager keeps one ambiguous visit without attributing it to an arbitrary U
   const aggregate = executor(aggregateRows);
   const privateDb = executor((sql) => {
     if (!sql.includes("canonical_fact_metrika_visits")) return [];
-    return [{
+    return [privateVisit({
+      visit_id_hash: "visit-ambiguous",
       raw_user_id: null,
       raw_user_ids_json: '["doctor-b","doctor-a"]',
       client_id_hash: "client-ambiguous",
-      traffic_source: "Direct",
-      start_url: "/start",
-      end_url: "/end",
       pageviews: "2",
       duration_seconds: "20",
-      is_bounce: "0",
-    }];
+    })];
   });
 
   const result = await loadAbbottBiDataWithDependencies(
@@ -808,17 +859,11 @@ test("manager fails closed without exposing IDs when private visit JSON contradi
   const aggregate = executor(aggregateRows);
   const privateDb = executor((sql) => {
     if (!sql.includes("canonical_fact_metrika_visits")) return [];
-    return [{
+    return [privateVisit({
       raw_user_id: "doctor-a",
       raw_user_ids_json: '["doctor-a","doctor-b"]',
       client_id_hash: "client",
-      traffic_source: "Direct",
-      start_url: "/start",
-      end_url: "/end",
-      pageviews: "1",
-      duration_seconds: "1",
-      is_bounce: "0",
-    }];
+    })];
   });
 
   const result = await loadAbbottBiDataWithDependencies(
@@ -839,6 +884,32 @@ test("manager fails closed without exposing IDs when private visit JSON contradi
     status: "unavailable",
   }]);
   assert.doesNotMatch(JSON.stringify(result), /doctor-a|doctor-b/);
+});
+
+test("manager fails closed on malformed private visit identity and ordering fields", async () => {
+  for (const malformed of [
+    { visit_id_hash: "" },
+    { session_started_at: "not-a-timestamp" },
+    { client_id_hash: 123 },
+  ]) {
+    const privateDb = executor((sql) =>
+      sql.includes("canonical_fact_metrika_visits")
+        ? [privateVisit({ ...malformed, raw_user_id: "private-doctor" })]
+        : [],
+    );
+    const result = await loadAbbottBiDataWithDependencies(
+      7,
+      ["90602537"],
+      "2026-01-01",
+      "2026-01-01",
+      "manager",
+      dependencies(executor(aggregateRows), privateDb),
+    );
+
+    assert.deepEqual(result.return_frequency.groups, []);
+    assert.equal(result.data_quality.status, "incomplete");
+    assert.doesNotMatch(JSON.stringify(result), /private-doctor/);
+  }
 });
 
 test("Abbott calls without a trusted audience fail closed before any query", async () => {

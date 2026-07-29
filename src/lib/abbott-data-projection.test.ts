@@ -72,6 +72,7 @@ function fixture(): DashboardData {
           user_id: "raw-user-42",
           has_user_id: true,
           traffic_source: "Direct",
+          utm_source: "newsletter",
           direction: "Cardiology",
           start_url: "https://example.test/start?token=private#section",
           end_url: "https://example.test/end?doctor=private#footer",
@@ -197,13 +198,30 @@ function fixture(): DashboardData {
         },
       ],
       return_frequency: {
-        available: false,
+        available: true,
         period_local: true,
-        identified_visitors: 0,
-        unidentified_visits: 0,
-        groups: [],
-        user_directions: [],
-        return_pages: [],
+        identified_visitors: 2,
+        unidentified_visits: 1,
+        groups: [{
+          group_id: "two_to_three",
+          label: "2–3 раза",
+          visitors: 2,
+          share: 100,
+          visits: 5,
+        }],
+        user_directions: [{
+          direction: "Cardiology",
+          frequency_group: "two_to_three",
+          visitors: 2,
+          repeat_visits: 3,
+        }],
+        return_pages: [{
+          url: "https://example.test/return?doctor=private#landing",
+          direction: "Cardiology",
+          frequency_group: "two_to_three",
+          returning_visitors: 2,
+          repeat_visits: 3,
+        }],
       },
       general_materials: [
         {
@@ -257,6 +275,7 @@ test("manager projection retains raw user IDs and journey rows while stripping U
   assert.equal(abbott.page_stats[0]?.url, "HTTPS://Example.TEST:443/Case");
   assert.equal(abbott.bitrix_pages[0]?.path, "/bitrix");
   assert.equal(abbott.returning[0]?.url, "https://example.test/material");
+  assert.equal(abbott.return_frequency.return_pages[0]?.url, "https://example.test/return");
   assert.equal(abbott.general_materials[0]?.material_name, "FAQ/help?answer");
 
   assert.equal(source.abbott_bi?.user_actions[0]?.start_url, "https://example.test/start?token=private#section");
@@ -296,6 +315,15 @@ test("embed projection exposes aggregates without user, action, session, or jour
   assert.deepEqual(abbott.bitrix_pages.map((row) => row.sessions), [4]);
   assert.deepEqual(abbott.general_materials.map((row) => row.pageviews), [10]);
   assert.deepEqual(abbott.returning.map((row) => row.returning_2_7_days), [3]);
+  assert.deepEqual(abbott.return_frequency, {
+    available: false,
+    period_local: true,
+    identified_visitors: 0,
+    unidentified_visits: 0,
+    groups: [],
+    user_directions: [],
+    return_pages: [],
+  });
   assert.equal(abbott.page_stats[0]?.url, "https://example.test/material");
 
   assert.equal(source.abbott_bi?.session_journeys.rows.length, 1);

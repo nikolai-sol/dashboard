@@ -69,6 +69,9 @@ function sanitizeKnownAbbottUrlFields(data: NonNullable<DashboardData["abbott_bi
   data.returning.forEach((row) => {
     row.url = stripUrlQueryAndFragment(row.url);
   });
+  data.return_frequency.return_pages.forEach((row) => {
+    row.url = stripUrlQueryAndFragment(row.url);
+  });
   data.general_materials.forEach((row) => {
     row.url = stripUrlQueryAndFragment(row.url);
   });
@@ -128,6 +131,15 @@ export function projectAbbottDashboardData(
   aggregateAbbott.session_journeys = {
     ...aggregateAbbott.session_journeys,
     rows: [],
+  };
+  aggregateAbbott.return_frequency = {
+    available: false,
+    period_local: true,
+    identified_visitors: 0,
+    unidentified_visits: 0,
+    groups: [],
+    user_directions: [],
+    return_pages: [],
   };
 
   return removeForbiddenEmbedKeys({

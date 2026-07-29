@@ -398,6 +398,7 @@ export interface AbbottBiUserActionRow {
   user_id: string;
   has_user_id: boolean;
   traffic_source: string;
+  utm_source: string | null;
   direction: string | null;
   start_url: string;
   end_url: string;

@@ -1,6 +1,7 @@
 import { createHash } from "node:crypto";
 
 import { normalizeAbbottPageUrl as normalizePage } from "@/lib/abbott-page-url";
+import { buildAbbottReturnFrequency, type AbbottFrequencyVisit } from "@/lib/abbott-return-frequency";
 import {
   loadActiveAbbottReleaseBundleWithExecutor,
   withReadOnlyAbbottExecutor,
@@ -121,6 +122,9 @@ type ReturningFactRow = Record<string, unknown> & {
 };
 
 type PrivateBehaviorRow = Record<string, unknown> & {
+  visit_id_hash?: unknown;
+  session_started_at?: unknown;
+  utm_source?: unknown;
   raw_user_id?: unknown;
   raw_user_ids_json?: unknown;
   client_id_hash?: unknown;
@@ -443,14 +447,15 @@ async function queryManagerBehavior(
   to: string,
 ): Promise<readonly PrivateBehaviorRow[]> {
   return (await executor.query(
-    `SELECT raw_user_id, raw_user_ids_json, client_id_hash, traffic_source, start_url, end_url,
+    `SELECT visit_id_hash, session_started_at, utm_source,
+            raw_user_id, raw_user_ids_json, client_id_hash, traffic_source, start_url, end_url,
             pageviews, duration_seconds, is_bounce
      FROM \`report_bd_private\`.\`canonical_fact_metrika_visits\`
      WHERE canonical_release_id = ?
        AND counter_id IN (${placeholders(counterIds)})
        AND report_date >= ?
        AND report_date <= ?
-     ORDER BY report_date, raw_user_id, traffic_source, client_id_hash`,
+     ORDER BY report_date, session_started_at, visit_id_hash`,
     [releaseId, ...counterIds, from, to],
   )) as readonly PrivateBehaviorRow[];
 }
@@ -781,7 +786,11 @@ function buildReturning(
 function buildManagerBehavior(
   rows: readonly PrivateBehaviorRow[],
   workbook: ParsedAbbottWorkbook,
-): { summaries: AbbottBiUserSummaryRow[]; actions: AbbottBiUserActionRow[] } {
+): {
+  summaries: AbbottBiUserSummaryRow[];
+  actions: AbbottBiUserActionRow[];
+  frequencyVisits: AbbottFrequencyVisit[];
+} {
   type ManagerSummary = AbbottBiUserSummaryRow & {
     clientHashes: Set<string>;
     pageviewsTotal: number;
@@ -789,6 +798,7 @@ function buildManagerBehavior(
     bouncedVisits: number;
   };
   const summaries = new Map<string, ManagerSummary>();
+  const frequencyVisits: AbbottFrequencyVisit[] = [];
   const actions = rows.map((row) => {
     const singularUserId = nullableText(row.raw_user_id);
     let parsedUserIds: unknown = row.raw_user_ids_json;
@@ -807,6 +817,29 @@ function buildManagerBehavior(
       || parsedUserIds.some((value) => typeof value !== "string" || value.trim().length === 0)
       || new Set(parsedUserIds).size !== parsedUserIds.length
       || (parsedUserIds.length === 1 ? singularUserId !== parsedUserIds[0] : singularUserId !== null)
+    ) {
+      throw new Error("Abbott private visit identity is invalid");
+    }
+    const visitIdHash = row.visit_id_hash;
+    const sessionStartedAt = row.session_started_at;
+    const clientHash = row.client_id_hash === null
+      ? null
+      : typeof row.client_id_hash === "string" && row.client_id_hash.trim().length > 0
+        ? row.client_id_hash
+        : undefined;
+    const utmSource = row.utm_source === null || row.utm_source === undefined
+      ? null
+      : typeof row.utm_source === "string"
+        ? row.utm_source.trim() || null
+        : undefined;
+    if (
+      typeof visitIdHash !== "string"
+      || visitIdHash.trim().length === 0
+      || typeof sessionStartedAt !== "string"
+      || !/^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}$/.test(sessionStartedAt)
+      || !Number.isFinite(new Date(`${sessionStartedAt.replace(" ", "T")}Z`).getTime())
+      || clientHash === undefined
+      || utmSource === undefined
     ) {
       throw new Error("Abbott private visit identity is invalid");
     }
@@ -837,13 +870,20 @@ function buildManagerBehavior(
     summary.pageviewsTotal += pageviews;
     summary.durationTotal += duration;
     summary.bouncedVisits += booleanMetric(row.is_bounce) ? 1 : 0;
-    const clientHash = text(row.client_id_hash);
-    if (clientHash.trim().length > 0) summary.clientHashes.add(clientHash);
+    if (clientHash !== null) summary.clientHashes.add(clientHash);
     summaries.set(key, summary);
+    frequencyVisits.push({
+      client_id_hash: clientHash,
+      raw_user_ids: parsedUserIds as string[],
+      visit_id_hash: visitIdHash,
+      session_started_at: sessionStartedAt,
+      start_url: text(row.start_url),
+    });
     return {
       user_id: userId,
       has_user_id: hasUserId,
       traffic_source: trafficSource,
+      utm_source: utmSource,
       direction: hasUserId ? workbook.userDirections.get(userId) ?? null : null,
       start_url: text(row.start_url),
       end_url: text(row.end_url),
@@ -869,6 +909,7 @@ function buildManagerBehavior(
       left.user_id.localeCompare(right.user_id) || left.traffic_source.localeCompare(right.traffic_source)
     ),
     actions,
+    frequencyVisits,
   };
 }
 
@@ -1008,7 +1049,7 @@ export async function loadAbbottBiDataWithDependencies(
     const enrichedPageStats = periodActive ? enrichWithBitrix(pageStats, bitrixPages) : pageStats;
     const managerBehavior = audience === "manager"
       ? buildManagerBehavior(behaviorFacts, releaseBundle.workbook as ParsedAbbottWorkbook)
-      : { summaries: [], actions: [] };
+      : { summaries: [], actions: [], frequencyVisits: [] };
 
     return {
       ...emptyAbbottData(counters, audience, from, to, releaseId, [], releaseBundle.workbook.lookupQuality),
@@ -1031,6 +1072,23 @@ export async function loadAbbottBiDataWithDependencies(
       external_events: releaseBundle.workbook.externalEvents,
       external_clicks: buildExternalClickRows(externalFacts, releaseBundle.workbook),
       returning: buildReturning(returningFacts, releaseBundle.workbook),
+      return_frequency: releaseBundle.audience === "manager"
+        ? buildAbbottReturnFrequency(
+            managerBehavior.frequencyVisits,
+            releaseBundle.workbook.userDirections,
+            (url) => releaseBundle.workbook.urlReturnDirections.get(
+              lookupHash(normalizedPagePath(url)),
+            )?.direction ?? null,
+          )
+        : {
+            available: false,
+            period_local: true,
+            identified_visitors: 0,
+            unidentified_visits: 0,
+            groups: [],
+            user_directions: [],
+            return_pages: [],
+          },
       general_materials: buildGeneralMaterials(enrichedPageStats, releaseBundle.workbook),
     };
   } catch {
