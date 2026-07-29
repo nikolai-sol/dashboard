@@ -4,7 +4,7 @@
 
 **Goal:** Replace the ambiguous Abbott Telegram health block with a concise Russian operational summary that distinguishes integrity, freshness, coverage, and technical row counts.
 
-**Architecture:** Keep `abbott_health_probe.py` as the aggregate-only source of truth and change only the pure formatter in `send_canonical_telegram_report.py`. Add small pure helpers for compact date ranges, incident lookup, and grouped coverage incidents; do not add API or database access.
+**Architecture:** Keep `abbott_health_probe.py` as the aggregate-only source of truth and change only the pure formatter in `send_canonical_telegram_report.py`. Add small pure helpers for compact date ranges, incident lookup, and grouped coverage incidents; do not add API or database access. Because this entrypoint is attested Abbott runtime, every formatter revision also updates its root SHA-256 manifest entry and the byte-identical dashboard bootstrap runtime copy plus migration-manifest digest.
 
 **Tech Stack:** Python 3, `unittest`, HTML Telegram formatting.
 
@@ -83,6 +83,18 @@ Expected: all tests pass with zero failures.
 git add send_canonical_telegram_report.py tests/test_send_canonical_telegram_report.py
 git commit -m "fix: clarify Abbott Telegram health summary"
 ```
+
+### Runtime closure follow-up
+
+For any committed formatter revision, synchronize `send_canonical_telegram_report.py` byte-for-byte to `dashboard-next/reportingdash-canonical-bootstrap/runtime/`, update both SHA-256 manifests, and verify:
+
+```bash
+python3 -m unittest \
+  tests.test_abbott_runtime_closure.AbbottRuntimeClosureTest.test_runtime_manifest_covers_runbook_entrypoints_and_local_import_closure \
+  tests.test_abbott_runtime_closure.AbbottRuntimeClosureTest.test_bootstrap_manifest_hashes_every_runtime_file_against_root_authority
+```
+
+Commit the nested bootstrap authority before committing the root manifest and gitlink update. This is release-closure work only and does not authorize deployment, cron changes, or Telegram sending.
 
 ---
 

@@ -267,6 +267,8 @@ Alert conditions include:
 
 `sources_health_dashboard.py` and `send_canonical_telegram_report.py --mode summary` include a dedicated Abbott/Metrika section with counter-scoped freshness, coverage, last run, and anomaly status.
 
+`send_canonical_telegram_report.py` is an attested runtime entrypoint. A formatter revision closes only when the root `ops/abbott-runtime-manifest.sha256`, the synchronized `dashboard-next/reportingdash-canonical-bootstrap/runtime/` copy, and that bootstrap's `MIGRATION-MANIFEST.md` all record the same SHA-256. The focused runtime-closure tests verify both root authority and bootstrap manifest hashes before release review.
+
 Hermes can run on its available system cron to summarize the sanitized probe JSON, classify likely causes, and send a manager-friendly Telegram explanation. Hermes never receives raw IDs, tokens, private paths, or Bitrix rows. Deterministic high-severity alerts are sent even if Hermes is unavailable.
 
 ## 11. Cutover gate and rollback
