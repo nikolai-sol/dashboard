@@ -654,8 +654,10 @@ function SeoTab({ data, locale, primaryWeek, comparisonWeek }: Props & { primary
   const currentLocale = locale ?? "ru-RU";
   const webmasterWeek = data.webmaster.latest_week;
   const webmasterQuerySelection = resolveRowsForWeek(data.webmaster.queries, webmasterWeek, null);
+  const webmasterQueryPageSelection = resolveRowsForWeek(data.webmaster.query_pages, webmasterWeek, null);
   const webmasterPageSelection = resolveRowsForWeek(data.webmaster.pages, webmasterWeek, data.webmaster.latest_week);
   const webmasterQueries = webmasterQuerySelection.rows;
+  const webmasterQueryPages = webmasterQueryPageSelection.rows;
   const webmasterPages = webmasterPageSelection.rows;
   const gscWeek = data.gsc.latest_week;
   const gscSummarySelection = resolveRowsForWeek(data.gsc.summary, gscWeek, null);
@@ -681,6 +683,7 @@ function SeoTab({ data, locale, primaryWeek, comparisonWeek }: Props & { primary
   const unifiedQueryRows = buildUnifiedSeoQueryRows({
     gscRows: gscQueries,
     webmasterRows: webmasterQueries,
+    webmasterQueryPageRows: webmasterQueryPages,
     seoOsRows: selectedSeoOsClusters,
   });
   const unifiedPageRows = buildUnifiedSeoPageRows({

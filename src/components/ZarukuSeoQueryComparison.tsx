@@ -154,7 +154,13 @@ export default function ZarukuSeoQueryComparison({
     [filter, rows, sort],
   );
   const paginated = useMemo(
-    () => filterAndPaginate(visibleRows, query, page, PAGE_SIZE, (row) => `${row.query} ${row.section ?? ""}`),
+    () => filterAndPaginate(
+      visibleRows,
+      query,
+      page,
+      PAGE_SIZE,
+      (row) => `${row.query} ${row.section ?? ""} ${row.google_pages.join(" ")} ${row.webmaster_pages.join(" ")}`,
+    ),
     [page, query, visibleRows],
   );
   const changeFilter = (value: SeoQueryFilter) => { setFilter(value); setPage(1); };
@@ -204,7 +210,7 @@ export default function ZarukuSeoQueryComparison({
           ))}
         </div>
         <p className="mt-2 max-w-3xl text-xs leading-relaxed text-slate-500">
-          Сейчас фильтр подтверждает посадочные только по данным Google. Страница относится к Google; в Яндексе по той же фразе может вести другая страница.
+          Подтверждённая посадочная берётся из строки query + page самого источника: Google Search Console или Яндекс Вебмастер. SEO OS и представительская страница Яндекса фильтр не подтверждают.
         </p>
         <label className="mt-3 block max-w-xl text-xs font-medium text-slate-600">
           Поиск по фразе или разделу
@@ -282,10 +288,13 @@ export default function ZarukuSeoQueryComparison({
               <tr key={row.key} className="align-top transition hover:bg-slate-50/70">
                 <td className="border-r border-slate-100 px-3 py-3">
                   <div className="min-w-0 truncate font-medium leading-snug text-slate-800" title={row.query}>{row.query}</div>
-                  {row.google_pages.length > 0 || row.seo_os?.matched_url ? (
+                  {row.google_pages.length > 0 || row.webmaster_pages.length > 0 || row.seo_os?.matched_url ? (
                     <div className="mt-1.5 flex max-w-full flex-wrap gap-x-2 gap-y-1 text-[11px] text-slate-400">
                       {row.google_pages.map((page) => (
                         <SafePageLink key={`g-${page}`} value={page} prefix="Google: " />
+                      ))}
+                      {row.webmaster_pages.map((page) => (
+                        <SafePageLink key={`y-${page}`} value={page} prefix="Яндекс: " />
                       ))}
                       {row.seo_os?.matched_url ? (
                         <SafePageLink value={row.seo_os.matched_url} prefix="SEO OS: " />

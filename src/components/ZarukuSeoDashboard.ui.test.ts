@@ -209,6 +209,11 @@ test("SEO tab renders Search Console facts through the unified read model withou
   assert.doesNotMatch(source, /Данные по Google-показам, кликам и CTR ожидаются из Search Console/);
 });
 
+test("SEO query workspace uses exact Webmaster query-page facts", () => {
+  assert.match(source, /data\.webmaster\.query_pages/);
+  assert.match(source, /webmasterQueryPageRows:/);
+});
+
 test("Overview does not render pending source context", () => {
   assert.doesNotMatch(source, /function PendingPanel/);
   assert.doesNotMatch(source, /<PendingPanel/);
