@@ -9,7 +9,7 @@ import {
 const accountIds = ["66624469", "secondary"];
 const range = { from: "2026-07-20", to: "2026-07-21" };
 
-test("detail SQL scopes and bounds all twelve Russia breakdown reports after aggregation", () => {
+test("detail SQL keeps trusted presentation limits out of mysql2 execute bindings", () => {
   const queries = buildZarukuMetrikaBreakdownQueries(accountIds, range);
 
   assert.equal(ZARUKU_METRIKA_BREAKDOWN_REPORTS.length, 12);
@@ -26,9 +26,13 @@ test("detail SQL scopes and bounds all twelve Russia breakdown reports after agg
     assert.match(sql, /segment_key\s*=\s*'russia'/i);
     assert.match(sql, /report_date\s+BETWEEN\s+\?\s+AND\s+\?/i);
     assert.match(sql, /row_kind\s+IN\s*\(\s*'detail'\s*,\s*'total'\s*\)/i);
-    assert.match(sql, /GROUP\s+BY[\s\S]*LIMIT\s+\?/i);
+    assert.match(
+      sql,
+      new RegExp(`GROUP\\s+BY[\\s\\S]*LIMIT\\s+${report.limit + 1}\\b`, "i"),
+    );
+    assert.doesNotMatch(sql, /LIMIT\s+\?/i);
     assert.ok(
-      sql.search(/GROUP\s+BY/i) < sql.search(/LIMIT\s+\?/i),
+      sql.search(/GROUP\s+BY/i) < sql.search(/LIMIT\s+\d+/i),
       `${report.key} must apply its presentation limit after GROUP BY`,
     );
   }
@@ -41,11 +45,9 @@ test("detail SQL scopes and bounds all twelve Russia breakdown reports after agg
     queries.detail.params.filter((value) => value === "2026-07-21").length,
     12,
   );
-  assert.deepEqual(
-    queries.detail.params.filter((value): value is number =>
-      typeof value === "number"
-    ),
-    ZARUKU_METRIKA_BREAKDOWN_REPORTS.map((report) => report.limit + 1),
+  assert.equal(
+    queries.detail.params.filter((value) => typeof value === "number").length,
+    0,
   );
 });
 

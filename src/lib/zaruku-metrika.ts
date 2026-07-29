@@ -86,6 +86,7 @@ function reportDetailSql(
   accountIds: string[],
   exactUsersAvailable: boolean,
 ) {
+  const presentationLimit = report.limit + 1;
   const groupBy = [
     "report_key",
     "row_kind",
@@ -141,7 +142,10 @@ function reportDetailSql(
       GROUP BY ${groupBy}
     ) AS aggregated_${report.key}
     ORDER BY row_kind = 'total' DESC, visits DESC, pageviews DESC
-    LIMIT ?
+    -- mysql2 execute() binds JS numbers as DOUBLE, which MySQL rejects in
+    -- LIMIT with ER_WRONG_ARGUMENTS. This value is a trusted code constant;
+    -- account IDs, report keys, and dates remain parameterized.
+    LIMIT ${presentationLimit}
   `;
 }
 
@@ -160,7 +164,6 @@ export function buildZarukuMetrikaBreakdownQueries(
     report.key,
     range.from,
     range.to,
-    report.limit + 1,
   ]);
   const reportKeys = ZARUKU_METRIKA_BREAKDOWN_REPORTS.map(
     (report) => report.key,
