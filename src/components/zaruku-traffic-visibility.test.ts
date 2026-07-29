@@ -72,3 +72,10 @@ test("section positions are independent markers rather than a categorical trend 
   assert.match(componentSource, /<Scatter/);
   assert.doesNotMatch(componentSource, /<Line/);
 });
+
+test("traffic visibility table keeps horizontal cell padding on mobile", () => {
+  assert.match(componentSource, /<th className="px-4 py-2\.5 font-medium">Раздел<\/th>/);
+  assert.match(componentSource, /<td className="px-4 py-2\.5 font-medium text-slate-700">\{row\.section\}<\/td>/);
+  assert.doesNotMatch(componentSource, /<th className="pb-2 font-medium">Раздел<\/th>/);
+  assert.doesNotMatch(componentSource, /<td className="py-2\.5 font-medium text-slate-700">\{row\.section\}<\/td>/);
+});

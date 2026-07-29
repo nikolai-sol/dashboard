@@ -72,7 +72,63 @@ export default function ZarukuTrafficVisibility({ seoOs, primaryWeek, comparison
       </div>
       <div className="px-5 py-4">
         <ZarukuTableFrame mode="standard" label="Трафик и позиции по разделам">
-        <table className="zaruku-table min-w-[920px]"><thead><tr className="text-left text-xs uppercase text-slate-400"><th className="pb-2 font-medium">Раздел</th><th className="pb-2 text-right font-medium">A просмотры</th>{comparisonWeek ? <><th className="pb-2 text-right font-medium">B просмотры</th><th className="pb-2 text-right font-medium">Изменение</th></> : null}<th className="pb-2 text-right font-medium">A позиция</th>{comparisonWeek ? <><th className="pb-2 text-right font-medium">B позиция</th><th className="pb-2 text-right font-medium">Изменение</th></> : null}<th className="pb-2 text-right font-medium">Покрытие A</th></tr></thead><tbody className="divide-y divide-slate-100">{rows.map((row) => <tr key={row.section}><td className="py-2.5 font-medium text-slate-700">{row.section}</td><td className="py-2.5 text-right text-slate-600">{formatNumber(row.primary.pageviews)}</td>{comparisonWeek ? <><td className="py-2.5 text-right text-slate-600">{formatNumber(row.comparison?.pageviews ?? null)}</td><td className={row.pageviews_delta != null && row.pageviews_delta < 0 ? "py-2.5 text-right text-red-700" : "py-2.5 text-right text-teal-700"}>{row.pageviews_delta == null ? "—" : `${row.pageviews_delta > 0 ? "+" : ""}${formatNumber(row.pageviews_delta)}`}</td></> : null}<td className="py-2.5 text-right text-slate-600">{formatNumber(row.primary.average_position)}</td>{comparisonWeek ? <><td className="py-2.5 text-right text-slate-600">{formatNumber(row.comparison?.average_position ?? null)}</td><td className={row.position_delta != null && row.position_delta > 0 ? "py-2.5 text-right text-red-700" : "py-2.5 text-right text-teal-700"}>{positionDelta(row.position_delta)}</td></> : null}<td className="py-2.5 text-right text-slate-600">{row.primary.coverage == null ? "—" : `${formatNumber(row.primary.coverage * 100)}%`}</td></tr>)}{rows.length === 0 ? <tr><td colSpan={comparisonWeek ? 8 : 4} className="py-6 text-center text-sm text-slate-500">Нет строк из словаря разделов.</td></tr> : null}</tbody></table>
+          <table className="zaruku-table min-w-[920px]">
+            <thead>
+              <tr className="text-left text-xs uppercase text-slate-400">
+                <th className="px-4 py-2.5 font-medium">Раздел</th>
+                <th className="px-4 py-2.5 text-right font-medium">A просмотры</th>
+                {comparisonWeek ? (
+                  <>
+                    <th className="px-4 py-2.5 text-right font-medium">B просмотры</th>
+                    <th className="px-4 py-2.5 text-right font-medium">Изменение</th>
+                  </>
+                ) : null}
+                <th className="px-4 py-2.5 text-right font-medium">A позиция</th>
+                {comparisonWeek ? (
+                  <>
+                    <th className="px-4 py-2.5 text-right font-medium">B позиция</th>
+                    <th className="px-4 py-2.5 text-right font-medium">Изменение</th>
+                  </>
+                ) : null}
+                <th className="px-4 py-2.5 text-right font-medium">Покрытие A</th>
+              </tr>
+            </thead>
+            <tbody className="divide-y divide-slate-100">
+              {rows.map((row) => (
+                <tr key={row.section}>
+                  <td className="px-4 py-2.5 font-medium text-slate-700">{row.section}</td>
+                  <td className="px-4 py-2.5 text-right text-slate-600">{formatNumber(row.primary.pageviews)}</td>
+                  {comparisonWeek ? (
+                    <>
+                      <td className="px-4 py-2.5 text-right text-slate-600">{formatNumber(row.comparison?.pageviews ?? null)}</td>
+                      <td className={row.pageviews_delta != null && row.pageviews_delta < 0 ? "px-4 py-2.5 text-right text-red-700" : "px-4 py-2.5 text-right text-teal-700"}>
+                        {row.pageviews_delta == null ? "—" : `${row.pageviews_delta > 0 ? "+" : ""}${formatNumber(row.pageviews_delta)}`}
+                      </td>
+                    </>
+                  ) : null}
+                  <td className="px-4 py-2.5 text-right text-slate-600">{formatNumber(row.primary.average_position)}</td>
+                  {comparisonWeek ? (
+                    <>
+                      <td className="px-4 py-2.5 text-right text-slate-600">{formatNumber(row.comparison?.average_position ?? null)}</td>
+                      <td className={row.position_delta != null && row.position_delta > 0 ? "px-4 py-2.5 text-right text-red-700" : "px-4 py-2.5 text-right text-teal-700"}>
+                        {positionDelta(row.position_delta)}
+                      </td>
+                    </>
+                  ) : null}
+                  <td className="px-4 py-2.5 text-right text-slate-600">
+                    {row.primary.coverage == null ? "—" : `${formatNumber(row.primary.coverage * 100)}%`}
+                  </td>
+                </tr>
+              ))}
+              {rows.length === 0 ? (
+                <tr>
+                  <td colSpan={comparisonWeek ? 8 : 4} className="px-4 py-6 text-center text-sm text-slate-500">
+                    Нет строк из словаря разделов.
+                  </td>
+                </tr>
+              ) : null}
+            </tbody>
+          </table>
         </ZarukuTableFrame>
       </div>
     </section>

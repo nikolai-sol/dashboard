@@ -1,4 +1,6 @@
-import type { ReactNode } from "react";
+"use client";
+
+import { useLayoutEffect, useRef, useState, type ReactNode } from "react";
 import ZarukuPanelState, { isZarukuDatasetVisible } from "@/components/ZarukuPanelState";
 import ZarukuRussiaDemandMap from "@/components/ZarukuRussiaDemandMap";
 import ZarukuTableFrame from "@/components/ZarukuTableFrame";
@@ -46,15 +48,105 @@ function AudienceBars({ rows, meta, locale }: { rows: ZarukuSeoMetricRow[]; meta
   const max = Math.max(1, ...rows.map((row) => row.visits));
   return (
     <ZarukuPanelState meta={meta} hasRows={rows.length > 0}>
-      <div className="space-y-2.5">{rows.map((row, index) => <div key={`${row.label}-${row.secondary_label ?? ""}-${index}`} className="grid grid-cols-[minmax(110px,160px)_minmax(0,1fr)_72px] items-center gap-3"><div className="truncate text-sm text-slate-600" title={row.label}>{row.label}</div><div className="h-6 overflow-hidden rounded-md bg-slate-50"><div className="flex h-full items-center rounded-md bg-teal-600 px-2 text-xs font-medium text-white" style={{ width: `${Math.max(4, (row.visits / max) * 100)}%` }}>{formatPercent(row.share, locale)}</div></div><div className="text-right text-sm tabular-nums text-slate-500">{formatNumber(row.visits, locale)}</div></div>)}</div>
+      <div className="space-y-2.5">
+        {rows.map((row, index) => (
+          <AudienceBarRow
+            key={`${row.label}-${row.secondary_label ?? ""}-${index}`}
+            row={row}
+            locale={locale}
+            max={max}
+          />
+        ))}
+      </div>
     </ZarukuPanelState>
+  );
+}
+
+function AudienceBarRow({ row, locale, max }: { row: ZarukuSeoMetricRow; locale: string; max: number }) {
+  const trackRef = useRef<HTMLDivElement>(null);
+  const labelRef = useRef<HTMLSpanElement>(null);
+  const [showPercentInside, setShowPercentInside] = useState(true);
+  const share = row.share != null && Number.isFinite(row.share) ? row.share : (Math.max(0, row.visits) / max) * 100;
+  const sharePercent = Math.max(0, Math.min(100, share));
+  const percentText = formatPercent(sharePercent, locale);
+  const fillPercent = Math.max(4, sharePercent);
+
+  useLayoutEffect(() => {
+    const track = trackRef.current;
+    const label = labelRef.current;
+    if (!track || !label) return;
+
+    const evaluate = () => {
+      const trackWidth = Math.max(1, track.clientWidth);
+      const fillWidth = (fillPercent / 100) * trackWidth;
+      const labelWidth = Math.ceil(label.getBoundingClientRect().width);
+      const requiredGap = 8;
+      setShowPercentInside(fillWidth >= labelWidth + requiredGap);
+    };
+
+    evaluate();
+    const observer = new ResizeObserver(evaluate);
+    observer.observe(track);
+    return () => observer.disconnect();
+  }, [fillPercent, percentText]);
+
+  return (
+    <div className="grid grid-cols-[minmax(92px,128px)_minmax(84px,1fr)_64px] items-center gap-2.5 sm:grid-cols-[minmax(110px,160px)_minmax(0,1fr)_72px] sm:gap-3">
+      <div className="truncate text-sm text-slate-600" title={row.label}>{row.label}</div>
+      <div ref={trackRef} className="relative h-6 overflow-visible rounded-md bg-slate-50">
+        <div className="absolute inset-y-0 left-0 overflow-hidden rounded-md bg-teal-600" style={{ width: `${fillPercent}%` }}>
+          <span
+            ref={labelRef}
+            className="pointer-events-none absolute inset-y-0 left-1/2 flex -translate-x-1/2 items-center whitespace-nowrap px-2 text-xs font-medium opacity-0"
+            aria-hidden="true"
+          >
+            {percentText}
+          </span>
+          {showPercentInside ? (
+            <span className="pointer-events-none absolute inset-y-0 left-1/2 flex -translate-x-1/2 items-center justify-center whitespace-nowrap px-2 text-xs font-medium text-white">
+              {percentText}
+            </span>
+          ) : null}
+        </div>
+        {!showPercentInside ? (
+          <span
+            className="pointer-events-none absolute top-1/2 -translate-y-1/2 whitespace-nowrap text-xs font-medium text-slate-600"
+            style={{ left: `calc(${fillPercent}% + 6px)` }}
+          >
+            {percentText}
+          </span>
+        ) : null}
+      </div>
+      <div className="text-right text-sm tabular-nums text-slate-500">{formatNumber(row.visits, locale)}</div>
+    </div>
   );
 }
 
 function SourceDeviceTable({ rows, meta, locale }: { rows: ZarukuSeoMetricRow[]; meta: ZarukuDatasetMeta; locale: string }) {
   return (
     <ZarukuPanelState meta={meta} hasRows={rows.length > 0}>
-      <ZarukuTableFrame mode="standard" label="Источники трафика по устройствам"><table className="zaruku-table min-w-[560px]"><thead><tr className="text-left text-xs uppercase text-slate-400"><th className="pb-2 font-medium">Источник</th><th className="pb-2 font-medium">Устройство</th><th className="pb-2 text-right font-medium">Визиты</th><th className="pb-2 text-right font-medium">Пользователи</th></tr></thead><tbody className="divide-y divide-slate-100">{rows.slice(0, 20).map((row, index) => <tr key={`${row.label}-${row.secondary_label}-${index}`}><td className="py-2.5 font-medium text-slate-700">{row.label}</td><td className="py-2.5 text-slate-500">{row.secondary_label ?? "—"}</td><td className="py-2.5 text-right tabular-nums text-slate-600">{formatNumber(row.visits, locale)}</td><td className="py-2.5 text-right tabular-nums text-slate-600">{formatAudienceUsers(row, meta, locale)}</td></tr>)}</tbody></table></ZarukuTableFrame>
+      <ZarukuTableFrame mode="standard" label="Источники трафика по устройствам">
+        <table className="zaruku-table min-w-[560px]">
+          <thead>
+            <tr className="text-left text-xs uppercase text-slate-400">
+              <th className="px-4 py-2.5 font-medium">Источник</th>
+              <th className="px-4 py-2.5 font-medium">Устройство</th>
+              <th className="px-4 py-2.5 text-right font-medium">Визиты</th>
+              <th className="px-4 py-2.5 text-right font-medium">Пользователи</th>
+            </tr>
+          </thead>
+          <tbody className="divide-y divide-slate-100">
+            {rows.slice(0, 20).map((row, index) => (
+              <tr key={`${row.label}-${row.secondary_label}-${index}`}>
+                <td className="px-4 py-2.5 font-medium text-slate-700">{row.label}</td>
+                <td className="px-4 py-2.5 text-slate-500">{row.secondary_label ?? "—"}</td>
+                <td className="px-4 py-2.5 text-right tabular-nums text-slate-600">{formatNumber(row.visits, locale)}</td>
+                <td className="px-4 py-2.5 text-right tabular-nums text-slate-600">{formatAudienceUsers(row, meta, locale)}</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </ZarukuTableFrame>
     </ZarukuPanelState>
   );
 }

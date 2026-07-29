@@ -44,3 +44,23 @@ test("multi-day audience users render an em dash instead of a summed value", () 
 
   assert.equal(formatAudienceUsers(row, meta, "ru-RU"), "—");
 });
+
+test("source-device table keeps horizontal cell padding on mobile", () => {
+  assert.match(source, /<th className="px-4 py-2\.5 font-medium">Источник<\/th>/);
+  assert.match(source, /<td className="px-4 py-2\.5 font-medium text-slate-700">\{row\.label\}<\/td>/);
+  assert.doesNotMatch(source, /<th className="pb-2 font-medium">Источник<\/th>/);
+  assert.doesNotMatch(source, /<td className="py-2\.5 font-medium text-slate-700">\{row\.label\}<\/td>/);
+});
+
+test("audience percentage labels move outside bars when the fill is too narrow", () => {
+  assert.match(source, /const \[showPercentInside, setShowPercentInside\] = useState\(true\)/);
+  assert.match(source, /new ResizeObserver\(evaluate\)/);
+  assert.match(source, /fillWidth >= labelWidth \+ requiredGap/);
+  assert.match(source, /style=\{\{ left: `calc\(\$\{fillPercent\}% \+ 6px\)` \}\}/);
+  assert.match(source, /className="relative h-6 overflow-visible rounded-md bg-slate-50"/);
+});
+
+test("audience bar rows leave enough mobile track width for large percentages", () => {
+  assert.match(source, /grid-cols-\[minmax\(92px,128px\)_minmax\(84px,1fr\)_64px\]/);
+  assert.match(source, /sm:grid-cols-\[minmax\(110px,160px\)_minmax\(0,1fr\)_72px\]/);
+});
