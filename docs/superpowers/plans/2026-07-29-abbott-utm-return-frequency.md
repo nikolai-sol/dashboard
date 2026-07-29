@@ -870,3 +870,156 @@ git -C "$OPS_WT" log -1 --oneline
 ```
 
 Expected: both status outputs are empty. Report the two branch names and commit SHAs, test/build results, the explicit Zaruku no-change check, and the deferred migration/backfill/cutover/deploy steps. Do not merge, deploy, call Yandex APIs, alter cron, send Telegram, or schedule Hermes until the user separately authorizes production rollout.
+
+---
+
+### Task 8: Materialize normalized return-page direction paths before successor activation
+
+**Status:** follow-up plan added after the 2026-07-29 production diagnosis; not implemented or authorized for production by the preceding tasks.
+
+**Files:**
+
+- Modify: `src/lib/abbott-page-url.ts`
+- Modify: `src/lib/abbott-page-url.test.ts`
+- Create: `scripts/build-abbott-return-page-direction-projection.ts`
+- Create: `scripts/build-abbott-return-page-direction-projection.test.ts`
+- Modify: `src/lib/abbott-private-store.test.ts`
+- Modify in operational repo: `docs/ABBOTT-OPERATIONS-RUNBOOK.md`
+- Modify in operational repo: `tests/test_abbott_utm_rollout_runbook.py`
+
+**Interfaces:**
+
+- Consumes candidate-release rows from `canonical_fact_metrika_site_analytics_daily` with `analytics_scope='page'`, counter `90602537`, and the candidate workbook catalog/title projections.
+- Produces deterministic candidate-release `lookup_kind='path'` rows in `portal_content_lookup_projection` plus aggregate validation counts; it does not change the manager read-model interface.
+- Preserves active-release append-only behavior and leaves Zaruku unchanged.
+
+- [ ] **Step 1: Freeze the diagnosed baseline in tests and rollout evidence**
+
+Record the read-only release-8 baseline without copying raw URLs into logs or Git:
+
+```text
+catalog_rows=1769
+catalog_rows_with_direction=1639
+catalog_rows_with_normalized_url=0
+catalog_rows_with_normalized_path=0
+path_lookup_rows=0
+```
+
+Add a rollout-runbook assertion that the projection step runs only after the
+candidate backfill is complete and before comparison, validation, activation,
+or dashboard deployment.
+
+- [ ] **Step 2: Write failing shared-normalization and projection tests**
+
+In `abbott-page-url.test.ts`, require one exported
+`normalizeAbbottPagePath(value: string): string` contract for absolute and
+relative URLs, duplicate slashes, query/fragment removal, host case, trailing
+slashes, and root paths.
+
+In `build-abbott-return-page-direction-projection.test.ts`, use aggregate-safe
+fixtures proving:
+
+1. repeated URL/title evidence normalizes to one path and one catalog fingerprint;
+2. a `unique` or `identical_collapsed` title resolution produces one selected path row;
+3. two different selected fingerprints for one normalized path produce `ambiguous` with no selected fingerprint;
+4. a missing title resolution remains unmatched and produces no guessed mapping;
+5. a slug-only match is not used;
+6. non-Abbott counters and active/validated releases are rejected;
+7. authoritative workbook path candidates are preserved, and a conflict between
+   workbook and Metrika-derived evidence becomes `ambiguous`;
+8. a repeated execution produces the same rows and counts.
+
+Run:
+
+```bash
+cd "$APP_WT"
+node --import tsx --test \
+  src/lib/abbott-page-url.test.ts \
+  scripts/build-abbott-return-page-direction-projection.test.ts
+```
+
+Expected: FAIL because the shared path function and projection builder do not yet exist.
+
+- [ ] **Step 3: Implement one shared canonical path normalizer**
+
+Export `normalizeAbbottPagePath` from `src/lib/abbott-page-url.ts` and use it in
+both the return-frequency resolver and the projection script. The function
+must remove query/fragment data, collapse duplicate slashes, remove a trailing
+slash except for `/`, and return only the path component. Do not create a
+second normalization implementation in the script.
+
+- [ ] **Step 4: Build deterministic staging-only path projection rows**
+
+Implement the script as a transaction with these exact rules:
+
+1. Require `dataset_key='abbott'`, counter `90602537`, and `release_status='staging'`.
+2. Read only candidate-release `page` facts, the candidate workbook snapshot,
+   and its authoritative workbook URL/path candidates.
+3. Resolve page titles only through existing `unique` or `identical_collapsed` title projections.
+4. Group resolved candidates by `SHA-256(normalizeAbbottPagePath(page_url))`.
+5. Publish `unique` when one evidence row selects one fingerprint; publish `identical_collapsed` when repeated evidence selects the same fingerprint; publish `ambiguous` with `selected_source_row_fingerprint=NULL` when fingerprints conflict.
+6. Leave unmatched evidence out of the lookup table but include it in aggregate validation counts.
+7. Rebuild the complete candidate `path` projection from authoritative workbook
+   path candidates plus resolved Metrika evidence, then replace only that
+   candidate release's `path` rows inside the same transaction. Never modify
+   title/slug rows or another release.
+8. Before replacement, prove that the staged output includes every valid
+   workbook-origin path key or an explicit `ambiguous` row for its conflict.
+9. Roll back the transaction on any invalid hash, lost workbook path key,
+   cross-release fingerprint, or row-count mismatch.
+
+- [ ] **Step 5: Verify the existing loader consumes the new paths without fallback**
+
+Extend `abbott-private-store.test.ts` to prove that only `unique` and
+`identical_collapsed` path rows enter `urlReturnDirections`; `ambiguous` rows do
+not. Prove the returning-page resolver still renders `Направление не
+определено` for unmatched paths and never consults slug/substring heuristics.
+
+Run:
+
+```bash
+cd "$APP_WT"
+node --import tsx --test \
+  src/lib/abbott-page-url.test.ts \
+  scripts/build-abbott-return-page-direction-projection.test.ts \
+  src/lib/abbott-private-store.test.ts \
+  src/lib/abbott-return-frequency.test.ts
+npm run typecheck
+```
+
+Expected: all focused tests and typecheck pass.
+
+- [ ] **Step 6: Add the successor-release validation gate**
+
+After backfill completion and before activation, record aggregate counts for:
+
+- distinct normalized paths seen in candidate page facts;
+- matched path projections with non-empty direction;
+- unmatched paths;
+- ambiguous paths;
+- returning-page rows and returning visitors with/without page direction.
+
+Require zero path rows falsely marked resolved when their evidence conflicts.
+Require direction coverage to improve from the frozen zero-path baseline, and
+make every remaining unknown/ambiguous count visible in the comparison report.
+Do not invent a percentage threshold until the first candidate evidence is
+measured and reviewed.
+
+- [ ] **Step 7: Commit the plan implementation without deployment**
+
+```bash
+cd "$APP_WT"
+git add src/lib/abbott-page-url.ts src/lib/abbott-page-url.test.ts \
+  scripts/build-abbott-return-page-direction-projection.ts \
+  scripts/build-abbott-return-page-direction-projection.test.ts \
+  src/lib/abbott-private-store.test.ts
+git commit -m "feat: project Abbott return-page directions by path"
+
+cd "$OPS_WT"
+git add docs/ABBOTT-OPERATIONS-RUNBOOK.md tests/test_abbott_utm_rollout_runbook.py
+git commit -m "docs: gate Abbott return-page direction projection"
+```
+
+Stop after tests and commits. A separate operator approval is required to run
+the projection against release 10, compare it, validate it, activate it, or
+redeploy the dashboard.
