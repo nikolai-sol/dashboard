@@ -171,6 +171,54 @@ ON DUPLICATE KEY UPDATE
     updated_at = CURRENT_TIMESTAMP
 """
 
+WEBMASTER_QUERY_PAGE_SNAPSHOT_DELETE_SQL = """
+DELETE FROM canonical_fact_webmaster_query_pages_daily
+WHERE source_key = %s
+  AND analytics_account_id = %s
+  AND host_id = %s
+  AND report_date = %s
+  AND device_type = %s
+  AND page_hash = %s
+"""
+
+WEBMASTER_QUERY_PAGE_UPSERT_SQL = """
+INSERT INTO canonical_fact_webmaster_query_pages_daily (
+    source_key, analytics_account_id, host_id, report_date, device_type,
+    query_hash, page_hash, query_text, page_url, impressions, clicks, ctr,
+    average_position, raw_payload, ingestion_run_id
+) VALUES (
+    %(source_key)s, %(analytics_account_id)s, %(host_id)s, %(report_date)s, %(device_type)s,
+    %(query_hash)s, %(page_hash)s, %(query_text)s, %(page_url)s, %(impressions)s, %(clicks)s, %(ctr)s,
+    %(average_position)s, %(raw_payload)s, %(ingestion_run_id)s
+)
+ON DUPLICATE KEY UPDATE
+    query_text = VALUES(query_text),
+    page_url = VALUES(page_url),
+    impressions = VALUES(impressions),
+    clicks = VALUES(clicks),
+    ctr = VALUES(ctr),
+    average_position = VALUES(average_position),
+    raw_payload = VALUES(raw_payload),
+    ingestion_run_id = VALUES(ingestion_run_id),
+    updated_at = CURRENT_TIMESTAMP
+"""
+
+WEBMASTER_QUERY_PAGE_COVERAGE_UPSERT_SQL = """
+INSERT INTO canonical_webmaster_query_page_coverage_daily (
+    source_key, analytics_account_id, host_id, report_date, device_type,
+    page_hash, page_url, row_count, ingestion_run_id, collected_at
+) VALUES (
+    %(source_key)s, %(analytics_account_id)s, %(host_id)s, %(report_date)s, %(device_type)s,
+    %(page_hash)s, %(page_url)s, %(row_count)s, %(ingestion_run_id)s, CURRENT_TIMESTAMP
+)
+ON DUPLICATE KEY UPDATE
+    page_url = VALUES(page_url),
+    row_count = VALUES(row_count),
+    ingestion_run_id = VALUES(ingestion_run_id),
+    collected_at = CURRENT_TIMESTAMP,
+    updated_at = CURRENT_TIMESTAMP
+"""
+
 
 @dataclass(frozen=True)
 class WebmasterAccount:
@@ -375,6 +423,55 @@ def normalize_query_analytics_url_rows(
                 "page_hash": page_hash(page_url),
                 "page_url": page_url,
                 "popular_query_text": clean_text(complementary.get("value")) if complementary.get("type") == "QUERY" else None,
+                "impressions": safe_int(metrics["impressions"]),
+                "clicks": safe_int(metrics["clicks"]),
+                "ctr": metrics["ctr"],
+                "average_position": metrics["average_position"],
+                "raw_payload": json.dumps(row, ensure_ascii=False),
+                "ingestion_run_id": run_id,
+            }
+        )
+    return result
+
+
+def normalize_query_page_rows(
+    payload: dict,
+    *,
+    page_url: str,
+    source_key: str,
+    analytics_account_id: str,
+    host_id: str,
+    report_date: str,
+    device_type: str,
+    run_id: int,
+) -> list[dict]:
+    result: list[dict] = []
+    for row in payload.get("text_indicator_to_statistics") or []:
+        indicator = row.get("text_indicator") or {}
+        query = (
+            " ".join(clean_text(indicator.get("value")).split())
+            if indicator.get("type") == "QUERY"
+            else ""
+        )
+        metrics = _statistics_for_report_date(row, report_date)
+        has_selected_day_fact = (
+            safe_int(metrics["impressions"]) > 0
+            or safe_int(metrics["clicks"]) > 0
+            or metrics["average_position"] is not None
+        )
+        if not query or not metrics["seen"] or not has_selected_day_fact:
+            continue
+        result.append(
+            {
+                "source_key": source_key,
+                "analytics_account_id": analytics_account_id,
+                "host_id": host_id,
+                "report_date": report_date,
+                "device_type": device_type,
+                "query_hash": query_hash(query),
+                "page_hash": page_hash(page_url),
+                "query_text": query,
+                "page_url": page_url,
                 "impressions": safe_int(metrics["impressions"]),
                 "clicks": safe_int(metrics["clicks"]),
                 "ctr": metrics["ctr"],
@@ -696,6 +793,65 @@ def fetch_query_rows(access_token: str, user_id: str, host_id: str, day: str, de
     return all_rows
 
 
+def build_query_page_request_body(page_url: str, day: str, offset: int) -> dict:
+    return {
+        "offset": offset,
+        "limit": QUERY_PAGE_SIZE,
+        "device_type_indicator": DEFAULT_DEVICE,
+        "search_location": DEFAULT_SEARCH_LOCATION,
+        "text_indicator": "QUERY",
+        "filters": {
+            "text_filters": [
+                {
+                    "text_indicator": "URL",
+                    "operation": "TEXT_MATCH",
+                    "value": page_url,
+                }
+            ]
+        },
+        "sort_by_date": {
+            "date": day,
+            "statistic_field": "IMPRESSIONS",
+            "by": "DESC",
+        },
+    }
+
+
+def fetch_query_page_rows(
+    access_token: str,
+    user_id: str,
+    host_id: str,
+    page_url: str,
+    day: str,
+    run_id: int,
+) -> list[dict]:
+    all_rows: list[dict] = []
+    reported_count: int | None = None
+    for offset in range(0, MAX_QUERY_ROWS, QUERY_PAGE_SIZE):
+        payload = request_with_retry(
+            access_token,
+            f"/user/{user_id}/hosts/{quote(host_id, safe='')}/query-analytics/list",
+            run_id=run_id,
+            method="POST",
+            body=build_query_page_request_body(page_url, day, offset),
+        )
+        rows = payload.get("text_indicator_to_statistics") or []
+        all_rows.extend(rows)
+        if payload.get("count") is not None:
+            reported_count = max(reported_count or 0, safe_int(payload.get("count")))
+        if reported_count is not None and len(all_rows) >= reported_count:
+            break
+        if len(rows) < QUERY_PAGE_SIZE:
+            break
+    if reported_count is not None and reported_count > len(all_rows):
+        raise RuntimeError(
+            "incomplete Yandex Webmaster query-page response: "
+            f"reported count={reported_count}, fetched_rows={len(all_rows)}, "
+            f"max_query_rows={MAX_QUERY_ROWS}"
+        )
+    return all_rows
+
+
 def fetch_page_rows(access_token: str, user_id: str, host_id: str, day: str, device: str, run_id: int) -> list[dict]:
     all_rows: list[dict] = []
     for offset in range(0, 100000, 500):
@@ -783,6 +939,43 @@ def replace_webmaster_day_rows(query_rows: list[dict], summary_row: dict) -> int
                 cur.close()
         finally:
             conn.close()
+
+
+def replace_webmaster_query_page_snapshot(
+    rows: list[dict],
+    coverage: dict,
+) -> int:
+    conn = get_db_connection()
+    cur = None
+    try:
+        cur = conn.cursor()
+        cur.execute(
+            WEBMASTER_QUERY_PAGE_SNAPSHOT_DELETE_SQL,
+            (
+                coverage["source_key"],
+                coverage["analytics_account_id"],
+                coverage["host_id"],
+                coverage["report_date"],
+                coverage["device_type"],
+                coverage["page_hash"],
+            ),
+        )
+        if rows:
+            cur.executemany(WEBMASTER_QUERY_PAGE_UPSERT_SQL, rows)
+        cur.execute(WEBMASTER_QUERY_PAGE_COVERAGE_UPSERT_SQL, coverage)
+        conn.commit()
+        return len(rows) + 1
+    except Exception:
+        conn.rollback()
+        raise
+    finally:
+        try:
+            if cur is not None:
+                cur.close()
+        finally:
+            conn.close()
+
+
 def upsert_webmaster_page_rows(rows: list[dict]) -> int:
     if not rows:
         return 0
