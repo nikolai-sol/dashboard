@@ -886,6 +886,42 @@ OAuth application identifier, and verification status—never a token value.
 Do not delete `$METRIKA_TOKEN_FILE`; it is the active owner-provisioned token.
 Do not restore a revoked token during rollback.
 
+## Abbott UTM/frequency successor-release rollout
+
+Status: deferred operator work for a separately reviewed maintenance window.
+The implementation of UTM Source and period-local visit frequency did not run
+these production steps.
+
+1. Take and verify a database backup. Apply migration
+   `044_abbott_private_visit_utm_source.sql`, then verify the nullable column
+   through `information_schema.COLUMNS` and its release/date/UTM index through
+   `information_schema.STATISTICS`.
+2. Start a new append-only Abbott successor release. Never update the active
+   release in place, including to repair a late or missing visit.
+3. Backfill every requested date with the updated Logs visit collector using
+   its normal evaluate → create → poll → download all parts → clean in finally
+   lifecycle.
+4. Before comparison, require successful run status, complete expected-date
+   coverage, and zero bad coverage rows for the candidate.
+5. Compare the active and candidate releases for total visit rows, distinct
+   visit hashes, User ID coverage, null client-hash count, direction mapping
+   coverage, and UTM populated/null counts. Record only aggregate evidence;
+   never print identifiers, URLs, or credentials.
+6. Re-run the hard publication gate
+   `all.sessions = with_user_id.sessions + without_user_id.sessions` for every
+   date/source. Do not publish a candidate with any mismatch.
+7. Confirm manager-only UTM/frequency reads and zero embed private queries.
+8. After review, perform the pointer cutover and application deployment. Run
+   an authenticated manager smoke test and an embed smoke test; rollback if
+   either smoke test fails.
+9. Do not restore public PII assets during rollback. Database and application
+   rollback may restore the reviewed predecessor pointers, but public Abbott
+   source artifacts remain quarantined.
+
+The operating schedule does not change: collection `06:12`, health `07:05`,
+summary `07:10`. The summary continues to include session integrity and an
+integrity mismatch remains `CRITICAL`.
+
 ## Rollback
 
 Rollback is a pointer operation, not a data rewrite. Use the candidate as the
