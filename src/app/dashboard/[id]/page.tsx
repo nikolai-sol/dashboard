@@ -1730,9 +1730,7 @@ export default function DashboardByIdPage() {
   const zarukuTimeOwnerMode = zarukuTimeOwner(zarukuActiveTab);
   const zarukuDateControlsMode: DashboardDateControlsMode = zarukuTimeOwnerMode === "url"
     ? "active"
-    : zarukuTimeOwnerMode === "week"
-      ? "disabled"
-      : "hidden";
+    : "hidden";
 
   if (dashboardType === "abbott_bi" && abbottBiData) {
     return (
@@ -1791,6 +1789,7 @@ export default function DashboardByIdPage() {
           logoUrl={dashboard.dashboard.logo_url}
           pdfMode={isPdfMode}
           dateControlsMode={zarukuDateControlsMode}
+          showIdentity={false}
           language={dashboardLanguage}
           labels={i18n.header}
           dateFrom={draftDateRange.from}

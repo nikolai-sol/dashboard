@@ -8,7 +8,7 @@ import { buildUnifiedSeoPageRows } from "@/components/zaruku-seo-workspace";
 
 const source = readFileSync(new URL("./ZarukuSeoPageComparison.tsx", import.meta.url), "utf8");
 
-test("renders exact joined page rows with separate SEO and behavior periods", () => {
+test("renders exact joined page rows without noisy period pills", () => {
   const rows = buildUnifiedSeoPageRows({
     gscRows: [{
       week: "2026-W29", page: "https://zaruku.ru/map/?utm_source=test", impressions: 100, clicks: 10,
@@ -37,8 +37,8 @@ test("renders exact joined page rows with separate SEO and behavior periods", ()
     locale: "ru-RU",
   }));
 
-  assert.match(markup, /SEO-неделя 2026-W29/);
-  assert.match(markup, /Поведение на сайте 2026-03-03 — 2026-03-26/);
+  assert.doesNotMatch(markup, /SEO-неделя 2026-W29/);
+  assert.doesNotMatch(markup, /Поведение на сайте/);
   assert.match(markup, /Google RF/);
   assert.match(markup, /Яндекс Вебмастер/);
   assert.match(markup, /Метрика/);
@@ -50,7 +50,7 @@ test("renders exact joined page rows with separate SEO and behavior periods", ()
 test("keeps page-table width inside its own responsive scroll panel", () => {
   assert.match(source, /<section className="min-w-0/);
   assert.match(source, /<ZarukuTableFrame mode="comparison"/);
-  assert.match(source, /<table className="w-\[1320px\]/);
+  assert.match(source, /<table className="w-full min-w-\[900px\]/);
   assert.doesNotMatch(source, /overflow-auto min-w-\[1320px\]/);
   assert.match(source, /flex flex-wrap items-center justify-center/);
   assert.match(source, /thead className="sticky top-0/);
@@ -59,10 +59,16 @@ test("keeps page-table width inside its own responsive scroll panel", () => {
 test("page workspace exposes search sorting pagination and safe absolute links", () => {
   assert.match(source, /type="search"/);
   assert.match(source, /PAGE_SIZE = 50/);
-  assert.match(source, /Google: показы/);
-  assert.match(source, /Яндекс: показы/);
+  assert.match(source, /Фильтр посадочных страниц/);
+  assert.match(source, /Только с подтверждённой посадочной/);
+  assert.match(source, /Топ-3/);
+  assert.match(source, /Топ-10/);
+  assert.match(source, /Топ-20/);
+  assert.match(source, /Выросли/);
+  assert.match(source, /Снизились/);
+  assert.match(source, /Нет позиции/);
   assert.match(source, /Визиты/);
-  assert.match(source, /Название/);
+  assert.match(source, /Страница/);
   assert.match(source, /resolveZarukuContentUrl/);
   assert.match(source, /target="_blank"/);
   assert.match(source, /rel="noreferrer"/);
@@ -97,10 +103,41 @@ test("renders an em dash when row-level users are unavailable", () => {
 
   assert.match(
     markup,
-    /text-slate-600">50<\/td><td class="px-2 py-3 text-right tabular-nums text-slate-600">—<\/td>/,
+    /text-slate-600">50<\/td><td class="px-1\.5 py-3 text-right tabular-nums text-slate-600">—<\/td>/,
   );
   assert.doesNotMatch(
     markup,
-    /text-slate-600">50<\/td><td class="px-2 py-3 text-right tabular-nums text-slate-600">0<\/td>/,
+    /text-slate-600">50<\/td><td class="px-1\.5 py-3 text-right tabular-nums text-slate-600">0<\/td>/,
   );
+});
+
+test("page filters run before pagination and use landing-source evidence", () => {
+  const rows = buildUnifiedSeoPageRows({
+    gscRows: Array.from({ length: 75 }, (_, index) => ({
+      week: "2026-W29",
+      page: `https://zaruku.ru/page-${index}/`,
+      impressions: 10 + index,
+      clicks: 1,
+      ctr: 10,
+      average_position: index >= 60 ? 2 : 30,
+      week_from: "2026-07-13",
+      week_to: "2026-07-19",
+      is_partial_week: false,
+    })),
+    webmasterRows: [],
+    metrikaRows: [],
+    seoOsRows: [],
+  });
+
+  const markup = renderToStaticMarkup(createElement(ZarukuSeoPageComparison, {
+    rows,
+    seoWeek: "2026-W29",
+    sourceWeeks: { google: "2026-W29", webmaster: "2026-W29", seoOs: "2026-W29" },
+    trafficPeriod: { from: "2026-03-03", to: "2026-03-26" },
+    defaultFilter: "top3",
+  }));
+
+  assert.match(markup, /15 найдено · Страница 1 из 1/);
+  assert.match(markup, /page-60/);
+  assert.doesNotMatch(markup, /page-59/);
 });

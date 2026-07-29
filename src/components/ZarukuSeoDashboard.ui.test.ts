@@ -88,6 +88,16 @@ test("Overview keeps KPI and chart content inside its desktop bounds", () => {
   assert.match(source, /<XAxis dataKey="label" padding=\{\{ right: 12 \}\}/);
 });
 
+test("Traffic health shows secondary facts without a reveal button", () => {
+  const start = source.indexOf("function TrafficHealthStrip");
+  const end = source.indexOf("function AiAggregateVisibilityPanel");
+  const trafficHealthSource = source.slice(start, end);
+
+  assert.match(trafficHealthSource, /rows\.secondary\.length/);
+  assert.match(trafficHealthSource, /rows\.secondary\.map/);
+  assert.doesNotMatch(trafficHealthSource, /aria-expanded|setExpanded|ещё/);
+});
+
 test("Audience device panels shrink before their tables start scrolling", () => {
   assert.match(audienceSource, /grid-cols-\[minmax\(0,1fr\)\]/);
   assert.match(audienceSource, /<div className="min-w-0"><h4[^>]*>Типы устройств/);
@@ -147,10 +157,14 @@ test("SEO tab renders Search Console facts through the unified read model withou
   assert.doesNotMatch(source, /Данные по Google-показам, кликам и CTR ожидаются из Search Console/);
 });
 
-test("pending and returning-content panels use explicit source states instead of misleading empty UI", () => {
-  assert.match(source, /function PendingPanel[\s\S]*if \(data\.pending_requirements\.length === 0\) return null;/);
-  assert.match(source, /pending=\{data\.pending_requirements\.length > 0\}/);
-  assert.doesNotMatch(source, /title="Что ещё ждём" layer="serp" pending right=/);
+test("Overview does not render pending source context", () => {
+  assert.doesNotMatch(source, /function PendingPanel/);
+  assert.doesNotMatch(source, /<PendingPanel/);
+  assert.doesNotMatch(source, /title="Что ещё ждём"/);
+  assert.doesNotMatch(source, /formatPendingRequirementSources/);
+});
+
+test("returning-content panels use explicit source states instead of misleading empty UI", () => {
   assert.match(contentSource, /meta=\{data\.dataset_meta\.returning_pages\}/);
   assert.match(contentSource, /hasRows=\{data\.returning_pages\.length > 0\}/);
 });

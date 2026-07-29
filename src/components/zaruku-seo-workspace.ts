@@ -73,6 +73,9 @@ export type UnifiedSeoPageRow = {
     page_depth: number | null;
   } | null;
   seo_os_tracked_queries: number;
+  seo_os_best_position: number | null;
+  seo_os_has_improved: boolean;
+  seo_os_has_declined: boolean;
 };
 
 export type SeoExecutiveSnapshot = {
@@ -129,6 +132,9 @@ type MutablePageRow = {
   webmaster: MetricsAccumulator | null;
   post_click: PostClickAccumulator | null;
   seo_os_tracked_queries: number;
+  seo_os_best_position: number | null;
+  seo_os_has_improved: boolean;
+  seo_os_has_declined: boolean;
 };
 
 const MAX_GOOGLE_PAGES = 5;
@@ -375,6 +381,9 @@ function getOrCreatePageRow(rows: Map<string, MutablePageRow>, rawUrl: string, l
     webmaster: null,
     post_click: null,
     seo_os_tracked_queries: 0,
+    seo_os_best_position: null,
+    seo_os_has_improved: false,
+    seo_os_has_declined: false,
   };
   rows.set(key, row);
   return row;
@@ -469,7 +478,14 @@ export function buildUnifiedSeoPageRows({
   for (const sourceRow of seoOsRows) {
     if (!sourceRow.matched_url) continue;
     const row = getOrCreatePageRow(rows, sourceRow.matched_url);
-    if (row) row.seo_os_tracked_queries += 1;
+    if (!row) continue;
+    row.seo_os_tracked_queries += 1;
+    const position = normalizePosition(sourceRow.serp_position);
+    if (position !== null && (row.seo_os_best_position === null || position < row.seo_os_best_position)) {
+      row.seo_os_best_position = position;
+    }
+    if ((sourceRow.delta_prev ?? 0) < 0) row.seo_os_has_improved = true;
+    if ((sourceRow.delta_prev ?? 0) > 0) row.seo_os_has_declined = true;
   }
 
   return Array.from(rows.values(), (row) => ({
@@ -480,6 +496,9 @@ export function buildUnifiedSeoPageRows({
     webmaster: finishMetrics(row.webmaster),
     post_click: finishPostClick(row.post_click),
     seo_os_tracked_queries: row.seo_os_tracked_queries,
+    seo_os_best_position: row.seo_os_best_position,
+    seo_os_has_improved: row.seo_os_has_improved,
+    seo_os_has_declined: row.seo_os_has_declined,
   }));
 }
 

@@ -69,7 +69,6 @@ import {
   buildNorthStarStripItems,
   buildTrafficHealthRows,
 } from "@/components/zaruku-overview-layout";
-import { formatPendingRequirementSources } from "@/components/zaruku-seo-pending";
 import { resolveRowsForWeek } from "@/components/zaruku-yandex-webmaster-panels";
 import { ZARUKU_CHART_PALETTE } from "@/lib/chart-palette";
 import { ZARUKU_CLIENT_COPY } from "@/components/zaruku-client-copy";
@@ -392,33 +391,6 @@ function BarListRow({
   );
 }
 
-function PendingPanel({ data }: { data: ZarukuSeoData }) {
-  if (data.pending_requirements.length === 0) return null;
-
-  return (
-    <Panel data={data} title="Что ещё ждём" layer="serp" pending={data.pending_requirements.length > 0} right={<span className="text-xs text-slate-400">{formatPendingRequirementSources(data)}</span>}>
-      <div className="grid gap-3 md:grid-cols-3">
-        {data.pending_requirements.map((item) => (
-          <div key={item.title} className="rounded-lg border border-dashed border-slate-200 p-4">
-            <div className="flex items-center justify-between gap-2">
-              <div className="text-sm font-semibold text-slate-700">{item.title}</div>
-              <SourceBadge data={data} id={item.source} />
-            </div>
-            <p className="mt-2 text-xs leading-relaxed text-slate-500">{item.reason}</p>
-            <div className="mt-3 flex flex-wrap gap-1">
-              {item.expected_fields.slice(0, 6).map((field) => (
-                <span key={field} className="rounded-md bg-slate-100 px-1.5 py-0.5 text-xs text-slate-500">
-                  {field}
-                </span>
-              ))}
-            </div>
-          </div>
-        ))}
-      </div>
-    </Panel>
-  );
-}
-
 function buildGscSelectionMeta<T extends { week: string; week_from: string; week_to: string; is_partial_week?: boolean }>(
   selection: { week: string | null; rows: T[] },
   selectedWeek: string | null,
@@ -486,23 +458,12 @@ function NorthStarBlock({ data, locale }: Props) {
 }
 
 function TrafficHealthStrip({ data }: { data: ZarukuSeoData }) {
-  const [expanded, setExpanded] = useState(false);
   const rows = buildTrafficHealthRows(data.kpis);
   return (
     <section className="card-surface zaruku-panel h-full overflow-hidden">
       <header className="flex flex-wrap items-center justify-between gap-3 border-b border-slate-100 px-5 py-3">
         <h3 className="text-base font-medium text-slate-900">Здоровье трафика</h3>
-        <div className="flex items-center gap-2">
-          <button
-            type="button"
-            onClick={() => setExpanded((current) => !current)}
-            className="rounded-md px-2 py-1 text-xs font-medium text-slate-500 hover:bg-slate-50 hover:text-slate-700"
-            aria-expanded={expanded}
-          >
-            ещё {expanded ? "⌃" : "⌄"}
-          </button>
-          <SourceBadge data={data} id="metrika" />
-        </div>
+        <SourceBadge data={data} id="metrika" />
       </header>
       <div className="px-5 py-4">
         <div className="grid gap-y-4 sm:grid-cols-2 lg:grid-cols-5">
@@ -513,7 +474,7 @@ function TrafficHealthStrip({ data }: { data: ZarukuSeoData }) {
             </div>
           ))}
         </div>
-        {expanded ? (
+        {rows.secondary.length ? (
           <div className="mt-4 grid gap-y-3 border-t border-slate-100 pt-3 sm:grid-cols-2 lg:grid-cols-5">
             {rows.secondary.map((item, index) => (
               <div key={item.key} className={index === 0 ? "min-w-0" : "min-w-0 border-slate-100 sm:border-l sm:pl-5"}>
@@ -672,7 +633,6 @@ function OverviewTab({ data, locale }: Props) {
           </div>
         </Panel>
       </ZarukuOverviewTab>
-      <PendingPanel data={data} />
     </>
   );
 }

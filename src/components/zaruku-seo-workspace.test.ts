@@ -290,6 +290,9 @@ test("builds page rows from exact URLs and preserves source metric groups", () =
   assert.equal(rows[0].post_click?.visits, 50);
   assert.equal(rows[0].post_click?.users_available, true);
   assert.equal(rows[0].seo_os_tracked_queries, 1);
+  assert.equal(rows[0].seo_os_best_position, 4);
+  assert.equal(rows[0].seo_os_has_improved, true);
+  assert.equal(rows[0].seo_os_has_declined, false);
 });
 
 test("preserves unavailable post-click users instead of presenting a factual zero", () => {
