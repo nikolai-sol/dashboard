@@ -57,13 +57,12 @@ Recent API-first runs remain `partial`, so removing the legacy rollback path is 
 
 ## Safety and rollback
 
-- Capture the current root crontab in a timestamped mode-`0600` backup before installation.
+- Capture the current root crontab in `/root/reportingdash-canonical/backups/cron-rebalance-20260729T072308Z/root.crontab` with mode `0600` before installation.
 - Transform only uniquely matched ReportingDash lines; abort if any expected line is missing, duplicated, or has an unexpected original schedule.
 - Preserve complete commands and arguments byte-for-byte; change only the five schedule fields or prefix LinkedIn/Reddit with a dated disabled comment.
 - Never print the legacy Direct URL query or any environment/secret value.
 - Install with `crontab -` only after all preconditions pass.
 - Verify the installed schedule through a sanitized parser that prints only times and script labels.
 - Verify LinkedIn and Reddit have no active entries and all unrelated active lines are unchanged.
-- Roll back with the timestamped backup using `crontab <backup-path>` if verification fails.
+- Roll back with `crontab /root/reportingdash-canonical/backups/cron-rebalance-20260729T072308Z/root.crontab` if verification fails.
 - Do not execute collectors, backfills, health probes, or Telegram during the rollout.
-
