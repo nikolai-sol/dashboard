@@ -196,6 +196,15 @@ function fixture(): DashboardData {
           returning_8_31_days: 1,
         },
       ],
+      return_frequency: {
+        available: false,
+        period_local: true,
+        identified_visitors: 0,
+        unidentified_visits: 0,
+        groups: [],
+        user_directions: [],
+        return_pages: [],
+      },
       general_materials: [
         {
           material_name: "Material",

@@ -505,6 +505,41 @@ export interface AbbottBiReturningRow {
   returning_8_31_days: number;
 }
 
+export type AbbottVisitFrequencyGroupId = "one" | "two_to_three" | "four_plus";
+
+export interface AbbottBiVisitFrequencyGroup {
+  group_id: AbbottVisitFrequencyGroupId;
+  label: "1 раз" | "2–3 раза" | "4+ раза";
+  visitors: number;
+  share: number;
+  visits: number;
+}
+
+export interface AbbottBiReturningUserDirectionRow {
+  direction: string;
+  frequency_group: Exclude<AbbottVisitFrequencyGroupId, "one">;
+  visitors: number;
+  repeat_visits: number;
+}
+
+export interface AbbottBiReturningPageRow {
+  url: string;
+  direction: string;
+  frequency_group: Exclude<AbbottVisitFrequencyGroupId, "one">;
+  returning_visitors: number;
+  repeat_visits: number;
+}
+
+export interface AbbottBiReturnFrequency {
+  available: boolean;
+  period_local: true;
+  identified_visitors: number;
+  unidentified_visits: number;
+  groups: AbbottBiVisitFrequencyGroup[];
+  user_directions: AbbottBiReturningUserDirectionRow[];
+  return_pages: AbbottBiReturningPageRow[];
+}
+
 export interface AbbottBiMaterialRow {
   material_name: string;
   url: string;
@@ -578,6 +613,7 @@ export interface AbbottBiData {
   external_clicks: AbbottBiExternalClickRow[];
   time_buckets: AbbottBiTimeBuckets;
   returning: AbbottBiReturningRow[];
+  return_frequency: AbbottBiReturnFrequency;
   general_materials: AbbottBiMaterialRow[];
 }
 

@@ -1,5 +1,6 @@
 import { createHash } from "node:crypto";
 
+import { normalizeAbbottPageUrl as normalizePage } from "@/lib/abbott-page-url";
 import {
   loadActiveAbbottReleaseBundleWithExecutor,
   withReadOnlyAbbottExecutor,
@@ -201,22 +202,6 @@ function listDates(from: string, to: string): string[] {
   return result;
 }
 
-function normalizePage(rawValue: unknown): string {
-  const value = text(rawValue).trim().replaceAll("&amp;", "&");
-  if (!value) return "";
-  try {
-    const url = new URL(value);
-    url.search = "";
-    url.hash = "";
-    url.protocol = url.protocol.toLowerCase();
-    url.hostname = url.hostname.toLowerCase();
-    url.pathname = url.pathname.replace(/\/{2,}/g, "/").replace(/\/+$/, "") || "/";
-    return url.toString().replace(/\/$/, url.pathname === "/" ? "/" : "");
-  } catch {
-    return value.split(/[?#]/, 1)[0]?.replace(/\/{2,}/g, "/").replace(/\/+$/, "") ?? "";
-  }
-}
-
 function lookupHash(value: string): string {
   return createHash("sha256").update(value).digest("hex");
 }
@@ -318,6 +303,15 @@ function emptyAbbottData(
     external_clicks: [],
     time_buckets: emptyTimeBuckets(),
     returning: [],
+    return_frequency: {
+      available: false,
+      period_local: true,
+      identified_visitors: 0,
+      unidentified_visits: 0,
+      groups: [],
+      user_directions: [],
+      return_pages: [],
+    },
     general_materials: [],
   };
 }
