@@ -189,6 +189,8 @@ Current truth is `PM2 + 3001`.
 - After approved cutover only: remove the duplicate `06:10` legacy `/metrika`, use Abbott canonical
   collection at `06:12`, deterministic health at `07:05`, and one summary at `07:10`.
 - Hermes creation is a separate deferred task; no Hermes automation is part of this rollout package.
+- Abbott UTM application release `20260729130916-d86cf45` was deployed on 2026-07-29 after migration `044`; local/public health, loopback isolation, manager June read, embed isolation, and public-asset 404 checks passed. Canonical release `8` remains active while successor release `10` backfills `2026-01-01..2026-07-28`; do not call the data cutover complete until `210` dates / `1050` coverage rows / `0` bad rows, comparison, validation, activation, and post-cutover smoke all pass.
+- The attested Abbott canonical runtime is server commit `b2f172190e22aaa0454a858e10689d146607df44`. Three unsafe external health-script symlinks were replaced by their byte-identical tracked regular files before the UTM runtime was committed; the runtime worktree and manifest then verified clean.
 
 ### Zaruku canonical source truth
 
@@ -252,8 +254,8 @@ Use `report_bd` and `report_bd_tech` unless there is an explicit migration away 
 ## Current cron schedule
 
 Canonical daily jobs on VPS:
-- `06:12` Yandex Metrika canonical (`fetch_yandex_metrika_canonical.py --days-back 2 --run-type cron`)
-- `06:18` Yandex Metrika returning-content canonical for account `66624469` (`fetch_yandex_metrika_returning_canonical.py --account-id 66624469 --run-type cron`). The installed command was repaired on 2026-07-28; verification run `1694` succeeded and wrote 484 rows for `2026-07-24..2026-07-27`.
+- `02:12` Yandex Metrika canonical: generic collection excluding Abbott and the attested Abbott active-release launcher are serialized by the shared Metrika lock.
+- `02:18` Yandex Metrika returning-content canonical for account `66624469` (`fetch_yandex_metrika_returning_canonical.py --account-id 66624469 --run-type cron`). The installed selector was repaired on 2026-07-28.
 - `06:20` LinkedIn
 - `06:30` Reddit
 - `06:32` GetIntent
@@ -263,8 +265,8 @@ Canonical daily jobs on VPS:
 - `06:37` Hybrid
 - `06:50` Yandex Webmaster canonical daily collector
 - `06:55` Google Search Console canonical daily collector (`fetch_gsc_canonical.py --backfill-days 3 --lag-days 3 --run-type cron`)
-- `07:05` canonical monitor
-- `07:10` Telegram summary
+- `04:50` Abbott health probe
+- `05:00` Telegram summary
 
 The legacy `06:10` localhost Metrika bridge was removed under TASK-072. Do not restore it; the `06:12` canonical collector and `06:18` returning-content collector are the active owners.
 

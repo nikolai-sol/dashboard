@@ -73,6 +73,7 @@ ssh beget 'cd /root/reportingdash-rollout/dashboard-next && PUBLIC_APP_HOST=5.35
 - Abbott manager frequency is calculated inside the selected period from distinct `client_id_hash` values in groups `1`, `2–3`, and `4+` visits. Visitors without a client hash are reported separately and excluded from the percentage denominator. Direction and repeat landing-page tables are aggregates; the embed projection receives none of the private visit detail.
 - The actions tab filters exact UTM values before pagination and labels null/blank values `Без UTM`. The external-transitions tab descriptor is hidden reversibly; its data contract and implementation remain intact.
 - Rollout gates compare total visits, distinct visit hashes, User ID/client-hash/direction coverage, and populated/null UTM counts; manager and embed smoke failures require rollback without restoring public PII assets.
+- Production status 2026-07-29: application release `20260729130916-d86cf45` and migration `044` are deployed and healthy. Active canonical release remains `8`; successor `10` is staging and collecting exact UTM visits through `2026-07-28`. Until release `10` passes `210` dates / `1050` coverage rows / `0` bad rows and is validated/activated, UTM values from the successor must not be presented as active production data.
 
 ### Shared data loader
 
