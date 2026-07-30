@@ -1,6 +1,6 @@
 # Zaruku Unified SEO Week Selection Implementation Plan
 
-> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
+> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [x]`) syntax for tracking.
 
 **Goal:** Make the primary SEO ISO-week selector drive GSC, Yandex Webmaster, Yandex Metrika, and SEO OS in both unified comparison tables, with an explicit latest-populated fallback and no false period-mismatch banner.
 
@@ -33,7 +33,7 @@
 - Consumes: rows with a `week: string` property, a requested week, and optional explicitly available weeks.
 - Produces: `selectSourceWeekRows<T>(rows, requestedWeek, availableWeeks): SourceWeekSelection<T>`, `formatSourceWeekFallback(selection)`, and `hasSourceWeekFallback(selections)`.
 
-- [ ] **Step 1: Write the failing source-week tests**
+- [x] **Step 1: Write the failing source-week tests**
 
 Create tests covering exact selection, latest-populated fallback, coverage-backed empty selection, no-source state, and banner state:
 
@@ -65,7 +65,7 @@ assert.deepEqual(
 assert.equal(hasSourceWeekFallback([fallback]), true);
 ```
 
-- [ ] **Step 2: Run the focused tests and verify RED**
+- [x] **Step 2: Run the focused tests and verify RED**
 
 Run:
 
@@ -75,7 +75,7 @@ node --import tsx --test src/components/zaruku-seo-source-week.test.ts src/compo
 
 Expected: FAIL because the new module is absent and the old helper preserves an empty selected week without fallback.
 
-- [ ] **Step 3: Implement the shared contract**
+- [x] **Step 3: Implement the shared contract**
 
 Create the focused helper:
 
@@ -114,13 +114,13 @@ export function selectSourceWeekRows<T extends { week: string }>(
 
 Format only the short `WNN` labels by removing the `YYYY-` prefix. Update the legacy Webmaster selection metadata to consume `actualWeek` and `fallback`; do not retain two competing row-selection implementations.
 
-- [ ] **Step 4: Run the focused tests and verify GREEN**
+- [x] **Step 4: Run the focused tests and verify GREEN**
 
 Run the Step 2 command.
 
 Expected: all source-week and Webmaster panel tests pass.
 
-- [ ] **Step 5: Commit the week contract**
+- [x] **Step 5: Commit the week contract**
 
 ```bash
 git add src/components/zaruku-seo-source-week.ts src/components/zaruku-seo-source-week.test.ts src/components/zaruku-yandex-webmaster-panels.ts src/components/zaruku-yandex-webmaster-panels.test.ts
@@ -140,7 +140,7 @@ git commit -m "feat(zaruku): add source week selection contract"
 - Consumes: canonical `organic_landing` facts and daily coverage for full ISO-week boundaries.
 - Produces: `loadZarukuMetrikaOrganicLandingWeeks(accountIds, weeks, executor): Promise<ZarukuMetrikaWeeklyOrganicLandingData>`.
 
-- [ ] **Step 1: Write failing weekly Metrika query and loader tests**
+- [x] **Step 1: Write failing weekly Metrika query and loader tests**
 
 Add the expected payload types and tests requiring a Monday-Sunday bound, ISO-week grouping, weighted metrics, and fail-closed complete coverage:
 
@@ -179,7 +179,7 @@ assert.equal(model.rows[0].users_available, false);
 
 Assert query parameters span `2026-07-20..2026-08-02`, use only `report_key = 'organic_landing'`, and never call a source API.
 
-- [ ] **Step 2: Run the Metrika test and verify RED**
+- [x] **Step 2: Run the Metrika test and verify RED**
 
 Run:
 
@@ -189,7 +189,7 @@ node --import tsx --test src/lib/zaruku-metrika.test.ts
 
 Expected: FAIL because the weekly loader and types do not exist.
 
-- [ ] **Step 3: Add the weekly types**
+- [x] **Step 3: Add the weekly types**
 
 Add:
 
@@ -206,7 +206,7 @@ export interface ZarukuMetrikaWeeklyOrganicLandingData {
 
 Add `organic_landing_pages_weekly: ZarukuMetrikaWeeklyOrganicLandingData` to `ZarukuSeoData` without changing `organic_landing_pages`.
 
-- [ ] **Step 4: Implement the bounded canonical weekly loader**
+- [x] **Step 4: Implement the bounded canonical weekly loader**
 
 Use `isoWeekDateRange()` for the first and last requested week. Build one detail query grouped by ISO week and exact canonical dimensions and one coverage query grouped by ISO week. Preserve the existing visit-weighted formulas:
 
@@ -219,13 +219,13 @@ Publish a week only when both `coverage_rows` and `complete_rows` equal
 `7 * normalizedAccountIds.length`. Return weekly detail rows only for published
 weeks and set multi-day `users_available` to `false`.
 
-- [ ] **Step 5: Run the Metrika test and verify GREEN**
+- [x] **Step 5: Run the Metrika test and verify GREEN**
 
 Run the Step 2 command.
 
 Expected: all Metrika tests pass, including the existing mysql2 literal-LIMIT regression.
 
-- [ ] **Step 6: Commit the weekly Metrika model**
+- [x] **Step 6: Commit the weekly Metrika model**
 
 ```bash
 git add src/lib/types.ts src/lib/zaruku-metrika.ts src/lib/zaruku-metrika.test.ts
@@ -246,7 +246,7 @@ git commit -m "feat(zaruku): add weekly Metrika landing read model"
 - Consumes: `seoOs.weeks`, `isoWeekDateRange()`, existing GSC/Webmaster canonical loaders, and `loadZarukuMetrikaOrganicLandingWeeks()`.
 - Produces: GSC/Webmaster weekly arrays covering selectable SEO weeks and enriched `organic_landing_pages_weekly` in `ZarukuSeoData`.
 
-- [ ] **Step 1: Write failing bounded-range and per-week-limit tests**
+- [x] **Step 1: Write failing bounded-range and per-week-limit tests**
 
 Update source-contract tests to require:
 
@@ -265,7 +265,7 @@ assert.match(sql, /WHERE week_rank <= 200/);
 assert.match(sql, /ORDER BY week_key DESC/);
 ```
 
-- [ ] **Step 2: Run GSC and SEO tests and verify RED**
+- [x] **Step 2: Run GSC and SEO tests and verify RED**
 
 Run:
 
@@ -275,12 +275,12 @@ node --import tsx --test src/lib/zaruku-gsc.test.ts src/lib/zaruku-seo.test.ts
 
 Expected: FAIL because source facts still use the dashboard daily period, no weekly Metrika payload exists, and the page cap is global.
 
-- [ ] **Step 3: Preserve the GSC fix while making the cap per week**
+- [x] **Step 3: Preserve the GSC fix while making the cap per week**
 
 Wrap the existing landing-page aggregation in a ranked subquery. Rank with
 `ROW_NUMBER() OVER (PARTITION BY week_key ORDER BY impressions DESC, clicks DESC, page ASC)`, filter to 200, and retain final `ORDER BY week_key DESC, impressions DESC, clicks DESC, page ASC`.
 
-- [ ] **Step 4: Resolve and load the bounded SEO week range**
+- [x] **Step 4: Resolve and load the bounded SEO week range**
 
 Add:
 
@@ -313,13 +313,13 @@ const weeklyRows = metrikaWeekly.weeks.flatMap((week) =>
 );
 ```
 
-- [ ] **Step 5: Run GSC and SEO tests and verify GREEN**
+- [x] **Step 5: Run GSC and SEO tests and verify GREEN**
 
 Run the Step 2 command.
 
 Expected: all tests pass and the GSC newest-first assertion remains green.
 
-- [ ] **Step 6: Commit the bounded weekly payload**
+- [x] **Step 6: Commit the bounded weekly payload**
 
 ```bash
 git add src/lib/zaruku-gsc.ts src/lib/zaruku-gsc.test.ts src/lib/zaruku-seo.ts src/lib/zaruku-seo.test.ts
@@ -342,7 +342,7 @@ git commit -m "feat(zaruku): load selectable SEO source weeks"
 - Consumes: `selectSourceWeekRows()`, `SourceWeekSelection`, and `data.organic_landing_pages_weekly`.
 - Produces: both comparison tables rendered from the same requested week with source-local fallback metadata.
 
-- [ ] **Step 1: Write failing dashboard and component tests**
+- [x] **Step 1: Write failing dashboard and component tests**
 
 Replace the obsolete test that declares GSC/Webmaster independent from the SEO
 OS selector. Require every comparison selection to receive `primaryWeek`, and
@@ -362,7 +362,7 @@ Add rendering assertions for:
 - a mismatch notice when any `fallback` value is true;
 - the Metrika heading displaying `2026-W30`, not a 28-day date range.
 
-- [ ] **Step 2: Run component tests and verify RED**
+- [x] **Step 2: Run component tests and verify RED**
 
 Run:
 
@@ -372,7 +372,7 @@ node --import tsx --test src/components/ZarukuSeoDashboard.ui.test.ts src/compon
 
 Expected: FAIL because the dashboard still selects source `latest_week`, the components accept only actual week strings, and Metrika still displays `trafficPeriod`.
 
-- [ ] **Step 3: Select all four sources from primaryWeek**
+- [x] **Step 3: Select all four sources from primaryWeek**
 
 In `SeoTab`, build comparison-only selections:
 
@@ -391,7 +391,7 @@ const seoOsSelection = selectSourceWeekRows(data.seo_os.clusters, primaryWeek);
 
 Use these rows only in the two unified comparison builders. Leave GSC diagnostics on their existing latest-week selections.
 
-- [ ] **Step 4: Render source-local fallback and correct banner state**
+- [x] **Step 4: Render source-local fallback and correct banner state**
 
 Replace `sourceWeeks` with `sourceWeekSelections` in both component contracts.
 Headings show `actualWeek` and, when `fallback` is true, the formatted fallback
@@ -405,13 +405,13 @@ Add Metrika to the landing-page selections and availability map. Remove
 `trafficPeriod` from `ZarukuSeoPageComparison`; the heading displays the actual
 Metrika ISO week.
 
-- [ ] **Step 5: Run component tests and verify GREEN**
+- [x] **Step 5: Run component tests and verify GREEN**
 
 Run the Step 2 command.
 
 Expected: all comparison component and UI contract tests pass.
 
-- [ ] **Step 6: Commit unified comparison presentation**
+- [x] **Step 6: Commit unified comparison presentation**
 
 ```bash
 git add src/components/ZarukuSeoDashboard.tsx src/components/ZarukuSeoDashboard.ui.test.ts src/components/ZarukuSeoQueryComparison.tsx src/components/ZarukuSeoQueryComparison.test.ts src/components/ZarukuSeoPageComparison.tsx src/components/ZarukuSeoPageComparison.test.ts
@@ -430,7 +430,7 @@ git commit -m "fix(zaruku): unify SEO comparison weeks"
 - Consumes: completed unified-week implementation.
 - Produces: a verified branch and a read-only production snapshot proving actual source weeks and collector state.
 
-- [ ] **Step 1: Run focused regression tests**
+- [x] **Step 1: Run focused regression tests**
 
 ```bash
 node --import tsx --test \
@@ -446,7 +446,7 @@ node --import tsx --test \
 
 Expected: all focused tests pass.
 
-- [ ] **Step 2: Run repository verification**
+- [x] **Step 2: Run repository verification**
 
 ```bash
 npm test
@@ -457,7 +457,7 @@ npm run build
 
 Expected: every command exits 0; only already documented lint warnings may remain.
 
-- [ ] **Step 3: Inspect the diff and protected invariants**
+- [x] **Step 3: Inspect the diff and protected invariants**
 
 ```bash
 git diff origin/main...HEAD --check
@@ -467,7 +467,7 @@ git diff origin/main...HEAD -- src/lib/zaruku-gsc.ts src/lib/zaruku-seo-os.ts
 Expected: no whitespace errors, GSC still orders landing-page output by
 `week_key DESC`, and `src/lib/zaruku-seo-os.ts` is unchanged.
 
-- [ ] **Step 4: Commit plan completion evidence**
+- [x] **Step 4: Commit plan completion evidence**
 
 Mark completed checkboxes and record exact test/build results without production secrets:
 
@@ -476,8 +476,19 @@ git add docs/superpowers/plans/2026-07-30-zaruku-unified-seo-week.md
 git commit -m "docs: record unified SEO week verification"
 ```
 
-- [ ] **Step 5: Read-only production verification**
+- [x] **Step 5: Read-only production verification**
 
 After the implementation is reviewed for deployment, obtain canonical counts by ISO week for GSC, Webmaster, and Metrika coverage, plus today's collector run/log state. Do not call collectors, edit cron, write canonical tables, or send Telegram messages during this verification.
 
 Expected for W30: each source either reports W30 or exposes its explicit latest-populated fallback. The collector report from 07:00 is explained from run status, request logs, and coverage rather than from Telegram wording alone.
+
+## Completion evidence (2026-07-30)
+
+- Focused regression suite: 136 tests passed.
+- Repository suite: 543 tests passed.
+- `npm run lint`: 0 errors; 4 pre-existing warnings.
+- `npm run typecheck`: passed.
+- `npm run build`: passed.
+- `git diff origin/main...HEAD --check`: passed.
+- Protected invariants: GSC final ordering remains `week_key DESC`; `src/lib/zaruku-seo-os.ts` is unchanged.
+- Production evidence was read-only: no collector call, cron edit, canonical write, Telegram send, or deployment occurred.
