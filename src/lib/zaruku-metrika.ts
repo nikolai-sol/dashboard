@@ -1,9 +1,11 @@
 import type { RowDataPacket } from "mysql2";
 import pool from "@/lib/db";
+import { isoWeekDateRange } from "@/lib/zaruku-seo-os";
 import type {
   ZarukuMetrikaBreakdownReadModel,
   ZarukuMetrikaBreakdownReportKey,
   ZarukuMetrikaBreakdownReportReadModel,
+  ZarukuMetrikaWeeklyOrganicLandingData,
   ZarukuSeoMetricRow,
 } from "@/lib/types";
 
@@ -37,6 +39,7 @@ export const ZARUKU_METRIKA_BREAKDOWN_REPORTS: ReadonlyArray<{
 ];
 
 type BreakdownDbRow = RowDataPacket & {
+  week_key?: string;
   report_key: string;
   row_kind: "detail" | "total";
   dimension_1_id: string | null;
@@ -51,6 +54,12 @@ type BreakdownDbRow = RowDataPacket & {
   avg_visit_duration_seconds: number | string | null;
   page_depth: number | string | null;
   share: number | string | null;
+};
+
+type WeeklyCoverageDbRow = RowDataPacket & {
+  week_key: string;
+  coverage_rows: number | string | null;
+  complete_rows: number | string | null;
 };
 
 type CoverageDbRow = RowDataPacket & {
@@ -212,6 +221,94 @@ export function buildZarukuMetrikaBreakdownQueries(
   };
 }
 
+const METRIKA_WEEK_KEY_SQL = "CONCAT(LEFT(YEARWEEK(report_date, 3), 4), '-W', RIGHT(YEARWEEK(report_date, 3), 2))";
+
+export function buildZarukuMetrikaOrganicLandingWeekQueries(
+  accountIds: string[],
+  weeks: string[],
+): { detail: SqlQuery; coverage: SqlQuery } | null {
+  const normalizedWeeks = [...new Set(weeks)].sort();
+  if (normalizedWeeks.length === 0) return null;
+  const normalizedAccountIds = normalizeAccountIds(accountIds);
+  const from = isoWeekDateRange(normalizedWeeks[0]).from;
+  const to = isoWeekDateRange(normalizedWeeks.at(-1)!).to;
+  const accountScope = buildInClause(normalizedAccountIds);
+
+  return {
+    detail: {
+      sql: `
+        SELECT
+          week_key,
+          report_key,
+          row_kind,
+          dimension_1_id,
+          dimension_1_value,
+          dimension_2_id,
+          dimension_2_value,
+          page_url,
+          visits,
+          0 AS users,
+          pageviews,
+          bounce_rate,
+          avg_visit_duration_seconds,
+          page_depth,
+          visits / NULLIF(SUM(visits) OVER (PARTITION BY week_key), 0) * 100 AS share
+        FROM (
+          SELECT
+            ${METRIKA_WEEK_KEY_SQL} AS week_key,
+            report_key,
+            row_kind,
+            dimension_1_id,
+            dimension_1_value,
+            dimension_2_id,
+            dimension_2_value,
+            page_url,
+            SUM(COALESCE(visits, 0)) AS visits,
+            SUM(COALESCE(pageviews, 0)) AS pageviews,
+            SUM(COALESCE(bounce_rate, 0) * COALESCE(visits, 0)) / NULLIF(SUM(COALESCE(visits, 0)), 0) AS bounce_rate,
+            SUM(COALESCE(avg_visit_duration_seconds, 0) * COALESCE(visits, 0)) / NULLIF(SUM(COALESCE(visits, 0)), 0) AS avg_visit_duration_seconds,
+            SUM(COALESCE(page_depth, 0) * COALESCE(visits, 0)) / NULLIF(SUM(COALESCE(visits, 0)), 0) AS page_depth
+          FROM canonical_fact_metrika_breakdowns_daily
+          WHERE source_key = 'yandex_metrika'
+            AND analytics_account_id IN (${accountScope})
+            AND report_key = 'organic_landing'
+            AND segment_key = 'russia'
+            AND row_kind = 'detail'
+            AND report_date BETWEEN ? AND ?
+          GROUP BY week_key, report_key, row_kind, dimension_1_id, dimension_1_value,
+            dimension_2_id, dimension_2_value, page_url
+        ) AS weekly_organic_landing
+        ORDER BY week_key ASC, visits DESC, pageviews DESC
+      `,
+      params: [...normalizedAccountIds, from, to],
+    },
+    coverage: {
+      sql: `
+        SELECT
+          ${METRIKA_WEEK_KEY_SQL} AS week_key,
+          COUNT(*) AS coverage_rows,
+          SUM(
+            CASE
+              WHEN pagination_complete = 1
+                AND status IN ('success', 'empty')
+              THEN 1
+              ELSE 0
+            END
+          ) AS complete_rows
+        FROM canonical_metrika_breakdown_coverage_daily
+        WHERE source_key = 'yandex_metrika'
+          AND analytics_account_id IN (${accountScope})
+          AND report_key = 'organic_landing'
+          AND segment_key = 'russia'
+          AND report_date BETWEEN ? AND ?
+        GROUP BY week_key
+        ORDER BY week_key ASC
+      `,
+      params: [...normalizedAccountIds, from, to],
+    },
+  };
+}
+
 function readableDimension(value: unknown) {
   const normalized =
     typeof value === "string" ? value.trim() : value == null ? "" : String(value);
@@ -347,4 +444,43 @@ export async function loadZarukuMetrikaBreakdowns(
   }
 
   return { reports, period_users: periodUsers };
+}
+
+export async function loadZarukuMetrikaOrganicLandingWeeks(
+  accountIds: string[],
+  weeks: string[],
+  queryExecutor: ZarukuMetrikaQueryExecutor = executeQuery,
+): Promise<ZarukuMetrikaWeeklyOrganicLandingData> {
+  const normalizedAccountIds = normalizeAccountIds(accountIds);
+  const queries = buildZarukuMetrikaOrganicLandingWeekQueries(
+    normalizedAccountIds,
+    weeks,
+  );
+  if (!queries) return { weeks: [], rows: [] };
+
+  const [detailResult, coverageResult] = await Promise.allSettled([
+    queryExecutor(queries.detail),
+    queryExecutor(queries.coverage),
+  ]);
+  if (detailResult.status === "rejected" || coverageResult.status === "rejected") {
+    return { weeks: [], rows: [] };
+  }
+
+  const expectedCoverageRows = 7 * normalizedAccountIds.length;
+  const completeWeeks = (coverageResult.value as WeeklyCoverageDbRow[])
+    .filter((row) =>
+      asNumber(row.coverage_rows) === expectedCoverageRows
+      && asNumber(row.complete_rows) === expectedCoverageRows
+    )
+    .map((row) => row.week_key)
+    .sort();
+  const completeWeekSet = new Set(completeWeeks);
+  const rows = (detailResult.value as BreakdownDbRow[])
+    .filter((row) => Boolean(row.week_key && completeWeekSet.has(row.week_key)))
+    .map((row) => ({
+      ...toMetricRow(row, false),
+      week: row.week_key!,
+    }));
+
+  return { weeks: completeWeeks, rows };
 }
