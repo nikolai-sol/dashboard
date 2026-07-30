@@ -38,9 +38,11 @@ test("landing page limit keeps the newest GSC weeks", () => {
     { from: "2026-06-29", to: "2026-07-26" },
   );
 
+  assert.match(landingPages.sql, /ROW_NUMBER\(\) OVER \(\s*PARTITION BY week_key/i);
+  assert.match(landingPages.sql, /WHERE week_rank <= 200/i);
   assert.match(
     landingPages.sql,
-    /ORDER BY week_key DESC, impressions DESC, clicks DESC, page ASC\s+LIMIT 200/,
+    /ORDER BY week_key DESC, impressions DESC, clicks DESC, page ASC/,
   );
 });
 

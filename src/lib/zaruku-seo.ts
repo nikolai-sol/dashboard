@@ -2,8 +2,11 @@ import type { RowDataPacket } from "mysql2";
 import pool from "@/lib/db";
 import { businessCalendarIsoDate } from "@/lib/abbott-date-range";
 import { loadAccountFacts, loadSeoIntelligence, loadSeoProcess } from "@/lib/account-read-models";
-import { loadZarukuMetrikaBreakdowns } from "@/lib/zaruku-metrika";
-import { matchSectionPattern } from "@/lib/zaruku-seo-os";
+import {
+  loadZarukuMetrikaBreakdowns,
+  loadZarukuMetrikaOrganicLandingWeeks,
+} from "@/lib/zaruku-metrika";
+import { isoWeekDateRange, matchSectionPattern } from "@/lib/zaruku-seo-os";
 import { makeZarukuDatasetMeta } from "@/lib/zaruku-dataset-meta";
 import { resolveZarukuDailyPeriod } from "@/lib/zaruku-daily-period";
 import type {
@@ -1381,6 +1384,18 @@ function buildDataQuality({
   ];
 }
 
+export function resolveSeoWeekRange(
+  weeks: string[],
+  fallback: { from: string; to: string },
+) {
+  const sortedWeeks = [...new Set(weeks)].sort();
+  if (sortedWeeks.length === 0) return fallback;
+  return {
+    from: isoWeekDateRange(sortedWeeks[0]).from,
+    to: isoWeekDateRange(sortedWeeks.at(-1)!).to,
+  };
+}
+
 export async function loadZarukuSeoData(
   counterIds: string[],
   from: string,
@@ -1396,7 +1411,7 @@ export async function loadZarukuSeoData(
     today: options.today ?? businessCalendarIsoDate(),
   });
   const { from: effectiveFrom, to: effectiveTo } = dailyPeriod.effective;
-  const [metrika, facts, seo] = await Promise.all([
+  const [metrika, seo] = await Promise.all([
     measureLoadPhase("metrika-db", options.recordTiming, () => Promise.all([
       queryTrafficRows(normalizedCounterIds, effectiveFrom, effectiveTo),
       queryCanonicalPageRows(normalizedCounterIds, effectiveFrom, effectiveTo),
@@ -1405,7 +1420,6 @@ export async function loadZarukuSeoData(
       loadZarukuMetrikaBreakdowns(normalizedCounterIds, dailyPeriod.effective),
       querySourceFreshnessRows(),
     ])),
-    loadAccountFacts(accountId, dailyPeriod.effective, { recordTiming: options.recordTiming }),
     measureLoadPhase("seo-db", options.recordTiming, () => Promise.all([
       loadSeoProcess(accountId),
       loadSeoIntelligence(accountId),
@@ -1420,6 +1434,11 @@ export async function loadZarukuSeoData(
     sourceFreshness,
   ] = metrika;
   const [seoOs, seoIntelligence] = seo;
+  const seoWeekRange = resolveSeoWeekRange(seoOs.weeks, dailyPeriod.effective);
+  const [facts, metrikaWeekly] = await Promise.all([
+    loadAccountFacts(accountId, seoWeekRange, { recordTiming: options.recordTiming }),
+    loadZarukuMetrikaOrganicLandingWeeks(normalizedCounterIds, seoOs.weeks),
+  ]);
   const { trafficChannels, technicalTail } = splitTrafficRows(trafficRowsRaw);
 
   const searchEnginesReport = metrikaBreakdowns.reports.search_engines;
@@ -1465,6 +1484,17 @@ export async function loadZarukuSeoData(
         pageRows,
       )
     : [];
+  const organicLandingPagesWeekly = {
+    weeks: metrikaWeekly.weeks,
+    rows: metrikaWeekly.weeks.flatMap((week) =>
+      enrichRowsWithPageTitles(
+        aggregatePageRowsByNormalizedUrl(
+          metrikaWeekly.rows.filter((row) => row.week === week),
+        ),
+        pageRows,
+      ).map((row) => ({ ...row, week }))
+    ),
+  };
   const pageCollections = buildPageCollections(
     pageRows,
     seoOs.section_patterns,
@@ -1628,6 +1658,7 @@ export async function loadZarukuSeoData(
     search_engines: searchEngineRows,
     search_phrases: searchPhrasesReport.rows,
     organic_landing_pages: organicLandingPages,
+    organic_landing_pages_weekly: organicLandingPagesWeekly,
     top_pages: pageCollections.topPages,
     content_sections: pageCollections.contentSections,
     high_bounce_pages: buildHighBouncePages(entryPageRows),

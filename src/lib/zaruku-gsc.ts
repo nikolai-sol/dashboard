@@ -258,23 +258,43 @@ export function buildGscAccountQueries(counterIds: string[], dateRange: GscDateR
     landing_pages: {
       sql: `
         SELECT
-          ${WEEK_KEY_SQL} AS week_key,
+          week_key,
           page,
-          SUM(impressions) AS impressions,
-          SUM(clicks) AS clicks,
-          CASE WHEN SUM(impressions) > 0 THEN SUM(clicks) / SUM(impressions) * 100 ELSE NULL END AS ctr,
-          ${weightedAveragePositionSql()} AS average_position,
-          MIN(${WEEK_FROM_SQL}) AS week_from,
-          MAX(report_date) AS week_to,
-          ${PARTIAL_WEEK_SQL} AS is_partial_week
-        FROM canonical_fact_gsc_queries_daily
-        WHERE analytics_account_id IN (${accountScope})
-          ${landingPageDateRangeClause}
-          ${normalizedCountryClause}
-          AND COALESCE(page, '') <> ''
-        GROUP BY week_key, page
+          impressions,
+          clicks,
+          ctr,
+          average_position,
+          week_from,
+          week_to,
+          is_partial_week
+        FROM (
+          SELECT
+            aggregated_pages.*,
+            ROW_NUMBER() OVER (
+              PARTITION BY week_key
+              ORDER BY impressions DESC, clicks DESC, page ASC
+            ) AS week_rank
+          FROM (
+            SELECT
+              ${WEEK_KEY_SQL} AS week_key,
+              page,
+              SUM(impressions) AS impressions,
+              SUM(clicks) AS clicks,
+              CASE WHEN SUM(impressions) > 0 THEN SUM(clicks) / SUM(impressions) * 100 ELSE NULL END AS ctr,
+              ${weightedAveragePositionSql()} AS average_position,
+              MIN(${WEEK_FROM_SQL}) AS week_from,
+              MAX(report_date) AS week_to,
+              ${PARTIAL_WEEK_SQL} AS is_partial_week
+            FROM canonical_fact_gsc_queries_daily
+            WHERE analytics_account_id IN (${accountScope})
+              ${landingPageDateRangeClause}
+              ${normalizedCountryClause}
+              AND COALESCE(page, '') <> ''
+            GROUP BY week_key, page
+          ) AS aggregated_pages
+        ) AS ranked_pages
+        WHERE week_rank <= 200
         ORDER BY week_key DESC, impressions DESC, clicks DESC, page ASC
-        LIMIT 200
       `,
       params: landingPageParams,
     },
