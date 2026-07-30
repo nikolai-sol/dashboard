@@ -75,24 +75,27 @@ test("summarizeAiVisibility counts presence and citations", () => {
   );
 });
 
-test("selectRowsForWeek does not fallback when selected week has no rows", () => {
+test("selectRowsForWeek falls back to the latest populated week", () => {
   assert.deepEqual(
     selectRowsForWeek([
       query({ week: "2026-W27", query_id: "old" }),
       query({ week: "2026-W28", query_id: "latest" }),
     ], "2026-W29", "2026-W28").map((row) => row.query_id),
-    [],
+    ["latest"],
   );
 });
 
-test("resolveRowsForWeek keeps selected empty week without fallback", () => {
+test("resolveRowsForWeek exposes the actual fallback week", () => {
   const selection = resolveRowsForWeek([
     query({ week: "2026-W27", query_id: "old" }),
     query({ week: "2026-W28", query_id: "latest" }),
   ], "2026-W29", "2026-W28");
 
-  assert.equal(selection.week, "2026-W29");
-  assert.deepEqual(selection.rows.map((row) => row.query_id), []);
+  assert.equal(selection.week, "2026-W28");
+  assert.equal(selection.requestedWeek, "2026-W29");
+  assert.equal(selection.actualWeek, "2026-W28");
+  assert.equal(selection.fallback, true);
+  assert.deepEqual(selection.rows.map((row) => row.query_id), ["latest"]);
 });
 
 test("resolveRowsForWeek uses the latest row week when no week is selected", () => {
@@ -128,17 +131,23 @@ test("buildWebmasterSelectionMeta does not relabel sparse rows as the selected d
   ], "2026-W29", null);
 
   assert.deepEqual(buildWebmasterSelectionMeta(selection, "2026-W29"), {
-    periodLabel: "2026-W29",
+    periodLabel: "2026-W28 · 2026-07-06 — 2026-07-12",
     sourceNote: "Источник: Яндекс Вебмастер · данные поисковых запросов и страниц.",
-    fallbackNote: "За текущий ежедневный период данных Яндекс Вебмастера пока нет.",
+    fallbackNote: "W29 недоступна, показано W28",
   });
 });
 
 test("buildWebmasterSelectionMeta warns only when there is no Webmaster data at all", () => {
-  assert.deepEqual(buildWebmasterSelectionMeta({ week: "2026-W29", rows: [] }, "2026-W29"), {
+  assert.deepEqual(buildWebmasterSelectionMeta({
+    requestedWeek: "2026-W29",
+    actualWeek: null,
+    fallback: false,
+    week: null,
+    rows: [],
+  }, "2026-W29"), {
     periodLabel: "2026-W29",
     sourceNote: "Источник: Яндекс Вебмастер · данные поисковых запросов и страниц.",
-    fallbackNote: "За текущий ежедневный период данных Яндекс Вебмастера пока нет.",
+    fallbackNote: null,
   });
 });
 
