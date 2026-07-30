@@ -70,6 +70,7 @@ import {
   buildTrafficHealthRows,
 } from "@/components/zaruku-overview-layout";
 import { resolveRowsForWeek } from "@/components/zaruku-yandex-webmaster-panels";
+import { selectSourceWeekRows } from "@/components/zaruku-seo-source-week";
 import { ZARUKU_CHART_PALETTE } from "@/lib/chart-palette";
 import { ZARUKU_CLIENT_COPY } from "@/components/zaruku-client-copy";
 
@@ -652,34 +653,43 @@ function OverviewTab({ data, locale }: Props) {
 
 function SeoTab({ data, locale, primaryWeek, comparisonWeek }: Props & { primaryWeek: string | null; comparisonWeek: string | null }) {
   const currentLocale = locale ?? "ru-RU";
-  const webmasterWeek = data.webmaster.latest_week;
-  const webmasterQuerySelection = resolveRowsForWeek(data.webmaster.queries, webmasterWeek, null);
-  const webmasterQueryPageSelection = resolveRowsForWeek(data.webmaster.query_pages, webmasterWeek, null);
-  const webmasterPageSelection = resolveRowsForWeek(data.webmaster.pages, webmasterWeek, data.webmaster.latest_week);
+  const requestedWeek = primaryWeek ?? data.seo_os.latest_week;
+  const webmasterQuerySelection = selectSourceWeekRows(data.webmaster.queries, primaryWeek, data.webmaster.weeks);
+  const webmasterQueryPageSelection = selectSourceWeekRows(
+    data.webmaster.query_pages,
+    webmasterQuerySelection.actualWeek,
+    webmasterQuerySelection.actualWeek ? [webmasterQuerySelection.actualWeek] : [],
+  );
+  const webmasterPageSelection = selectSourceWeekRows(data.webmaster.pages, primaryWeek, data.webmaster.weeks);
   const webmasterQueries = webmasterQuerySelection.rows;
   const webmasterQueryPages = webmasterQueryPageSelection.rows;
   const webmasterPages = webmasterPageSelection.rows;
-  const gscWeek = data.gsc.latest_week;
-  const gscSummarySelection = resolveRowsForWeek(data.gsc.summary, gscWeek, null);
-  const gscQuerySelection = resolveRowsForWeek(data.gsc.queries, gscWeek, null);
-  const gscLandingPageSelection = resolveRowsForWeek(data.gsc.landing_pages, gscWeek, null);
-  const gscBrandSplitSelection = resolveRowsForWeek(data.gsc.brand_split, gscWeek, null);
-  const gscSearchAppearanceSelection = resolveRowsForWeek(data.gsc.search_appearance, gscWeek, null);
-  const gscSearchTypeSelection = resolveRowsForWeek(data.gsc.search_type_summary, gscWeek, null);
-  const gscSummaryRows = gscSummarySelection.rows;
+  const gscQuerySelection = selectSourceWeekRows(data.gsc.queries, primaryWeek, data.gsc.weeks);
+  const gscLandingPageSelection = selectSourceWeekRows(data.gsc.landing_pages, primaryWeek, data.gsc.weeks);
   const gscQueries = gscQuerySelection.rows;
   const gscLandingPages = gscLandingPageSelection.rows;
-  const gscBrandSplit = gscBrandSplitSelection.rows;
-  const gscSearchAppearanceRows = gscSearchAppearanceSelection.rows;
-  const gscSearchTypeRows = gscSearchTypeSelection.rows;
-  const gscFactsMeta = buildGscSelectionMeta(gscSummaryRows.length > 0 ? gscSummarySelection : gscQuerySelection, gscWeek);
-  const gscBrandSplitMeta = buildGscSelectionMeta(gscBrandSplitSelection, gscWeek);
-  const gscSearchAppearanceMeta = buildGscSelectionMeta(gscSearchAppearanceSelection, gscWeek);
-  const gscSearchTypeMeta = buildGscSelectionMeta(gscSearchTypeSelection, gscWeek);
-  const seoOsWeek = primaryWeek ?? data.seo_os.latest_week;
-  const selectedSeoOsClusters = seoOsWeek
-    ? data.seo_os.clusters.filter((row) => row.week === seoOsWeek)
-    : [];
+  const metrikaPageSelection = selectSourceWeekRows(
+    data.organic_landing_pages_weekly.rows,
+    primaryWeek,
+    data.organic_landing_pages_weekly.weeks,
+  );
+  const seoOsSelection = selectSourceWeekRows(data.seo_os.clusters, requestedWeek);
+  const selectedSeoOsClusters = seoOsSelection.rows;
+
+  const diagnosticGscWeek = data.gsc.latest_week;
+  const diagnosticGscSummarySelection = resolveRowsForWeek(data.gsc.summary, diagnosticGscWeek, null);
+  const diagnosticGscQuerySelection = resolveRowsForWeek(data.gsc.queries, diagnosticGscWeek, null);
+  const diagnosticGscBrandSplitSelection = resolveRowsForWeek(data.gsc.brand_split, diagnosticGscWeek, null);
+  const diagnosticGscSearchAppearanceSelection = resolveRowsForWeek(data.gsc.search_appearance, diagnosticGscWeek, null);
+  const diagnosticGscSearchTypeSelection = resolveRowsForWeek(data.gsc.search_type_summary, diagnosticGscWeek, null);
+  const gscSummaryRows = diagnosticGscSummarySelection.rows;
+  const gscBrandSplit = diagnosticGscBrandSplitSelection.rows;
+  const gscSearchAppearanceRows = diagnosticGscSearchAppearanceSelection.rows;
+  const gscSearchTypeRows = diagnosticGscSearchTypeSelection.rows;
+  const gscFactsMeta = buildGscSelectionMeta(gscSummaryRows.length > 0 ? diagnosticGscSummarySelection : diagnosticGscQuerySelection, diagnosticGscWeek);
+  const gscBrandSplitMeta = buildGscSelectionMeta(diagnosticGscBrandSplitSelection, diagnosticGscWeek);
+  const gscSearchAppearanceMeta = buildGscSelectionMeta(diagnosticGscSearchAppearanceSelection, diagnosticGscWeek);
+  const gscSearchTypeMeta = buildGscSelectionMeta(diagnosticGscSearchTypeSelection, diagnosticGscWeek);
   const unifiedQueryRows = buildUnifiedSeoQueryRows({
     gscRows: gscQueries,
     webmasterRows: webmasterQueries,
@@ -689,7 +699,7 @@ function SeoTab({ data, locale, primaryWeek, comparisonWeek }: Props & { primary
   const unifiedPageRows = buildUnifiedSeoPageRows({
     gscRows: gscLandingPages,
     webmasterRows: webmasterPages,
-    metrikaRows: data.organic_landing_pages,
+    metrikaRows: metrikaPageSelection.rows,
     seoOsRows: selectedSeoOsClusters,
   });
   return (
@@ -711,10 +721,10 @@ function SeoTab({ data, locale, primaryWeek, comparisonWeek }: Props & { primary
           webmaster: data.webmaster.status !== "unavailable",
           seoOs: data.seo_os.status !== "unavailable",
         }}
-        sourceWeeks={{
-          google: gscQuerySelection.week,
-          webmaster: webmasterQuerySelection.week,
-          seoOs: selectedSeoOsClusters.length > 0 ? seoOsWeek : null,
+        sourceWeekSelections={{
+          google: gscQuerySelection,
+          webmaster: webmasterQuerySelection,
+          seoOs: seoOsSelection,
         }}
         defaultSort={{ key: "google_position", direction: "asc" }}
         locale={currentLocale}
@@ -724,15 +734,15 @@ function SeoTab({ data, locale, primaryWeek, comparisonWeek }: Props & { primary
         sourceAvailability={{
           google: data.gsc.status !== "unavailable",
           webmaster: data.webmaster.status !== "unavailable",
+          metrika: data.organic_landing_pages_weekly.weeks.length > 0,
           seoOs: data.seo_os.status !== "unavailable",
         }}
-        seoWeek={seoOsWeek}
-        sourceWeeks={{
-          google: gscLandingPages.length > 0 ? gscLandingPageSelection.week : null,
-          webmaster: webmasterPages.length > 0 ? webmasterPageSelection.week : null,
-          seoOs: selectedSeoOsClusters.length > 0 ? seoOsWeek : null,
+        sourceWeekSelections={{
+          google: gscLandingPageSelection,
+          webmaster: webmasterPageSelection,
+          metrika: metrikaPageSelection,
+          seoOs: seoOsSelection,
         }}
-        trafficPeriod={data.period}
         locale={currentLocale}
       />
       <SemanticHealthPanel data={data} locale={locale} primaryWeek={primaryWeek} />

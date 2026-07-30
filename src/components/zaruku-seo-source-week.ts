@@ -5,6 +5,11 @@ export type SourceWeekSelection<T> = {
   fallback: boolean;
 };
 
+export type SourceWeekDisplay = Pick<
+  SourceWeekSelection<unknown>,
+  "requestedWeek" | "actualWeek" | "fallback"
+>;
+
 function uniqueSortedWeeks(weeks: string[]) {
   return [...new Set(weeks.filter(Boolean))].sort();
 }
@@ -40,14 +45,14 @@ function shortWeek(week: string) {
 }
 
 export function formatSourceWeekFallback(
-  selection: Pick<SourceWeekSelection<unknown>, "requestedWeek" | "actualWeek" | "fallback">,
+  selection: SourceWeekDisplay,
 ) {
   if (!selection.fallback || !selection.requestedWeek || !selection.actualWeek) return null;
   return `${shortWeek(selection.requestedWeek)} недоступна, показано ${shortWeek(selection.actualWeek)}`;
 }
 
 export function hasSourceWeekFallback(
-  selections: Array<Pick<SourceWeekSelection<unknown>, "fallback">>,
+  selections: Array<Pick<SourceWeekDisplay, "fallback">>,
 ) {
   return selections.some((selection) => selection.fallback);
 }

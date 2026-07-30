@@ -19,6 +19,14 @@ const rows: UnifiedSeoQueryRow[] = [{
   webmaster_pages: ["https://zaruku.ru/yandex-landing/"],
 }];
 
+function sourceWeek(
+  requestedWeek: string | null,
+  actualWeek: string | null = requestedWeek,
+  fallback = false,
+) {
+  return { requestedWeek, actualWeek, fallback };
+}
+
 test("toggles an active sort and defaults each metric family correctly", () => {
   assert.deepEqual(
     toggleSeoSort({ key: "google_position", direction: "asc" }, "google_position"),
@@ -41,7 +49,11 @@ test("toggles an active sort and defaults each metric family correctly", () => {
 test("renders grouped source columns, accessible sorting, and missing positions", () => {
   const markup = renderToStaticMarkup(createElement(ZarukuSeoQueryComparison, {
     rows,
-    sourceWeeks: { google: "2026-W29", webmaster: "2026-W28", seoOs: "2026-W29" },
+    sourceWeekSelections: {
+      google: sourceWeek("2026-W30"),
+      webmaster: sourceWeek("2026-W30", "2026-W31", true),
+      seoOs: sourceWeek("2026-W30"),
+    },
     defaultSort: { key: "google_position", direction: "asc" },
     locale: "ru-RU",
   }));
@@ -57,6 +69,7 @@ test("renders grouped source columns, accessible sorting, and missing positions"
   assert.match(markup, /aria-pressed="true"/);
   assert.match(markup, />—</);
   assert.match(markup, /Периоды источников различаются/);
+  assert.match(markup, /W30 недоступна, показано W31/);
   assert.doesNotMatch(markup, /Яндекс RF/);
 });
 
@@ -78,7 +91,7 @@ test("query workspace exposes search and mounts at most 50 rows", () => {
   }));
   const markup = renderToStaticMarkup(createElement(ZarukuSeoQueryComparison, {
     rows: manyRows,
-    sourceWeeks: { google: "2026-W29", webmaster: "2026-W29", seoOs: "2026-W29" },
+    sourceWeekSelections: { google: sourceWeek("2026-W29"), webmaster: sourceWeek("2026-W29"), seoOs: sourceWeek("2026-W29") },
   }));
   assert.match(markup, /type="search"/);
   assert.match(markup, /Страница 1 из 2/);
@@ -99,7 +112,7 @@ test("confirmed-landing filter runs across the full row set before pagination", 
   }));
   const markup = renderToStaticMarkup(createElement(ZarukuSeoQueryComparison, {
     rows: manyRows,
-    sourceWeeks: { google: "2026-W29", webmaster: "2026-W29", seoOs: "2026-W29" },
+    sourceWeekSelections: { google: sourceWeek("2026-W29"), webmaster: sourceWeek("2026-W29"), seoOs: sourceWeek("2026-W29") },
     defaultFilter: "confirmed_landing",
   }));
 
@@ -115,7 +128,7 @@ test("confirmed-landing filter runs across the full row set before pagination", 
 test("confirmed-landing filter shows its quiet empty state", () => {
   const markup = renderToStaticMarkup(createElement(ZarukuSeoQueryComparison, {
     rows: [{ ...rows[0], google_pages: [], webmaster_pages: [] }],
-    sourceWeeks: { google: "2026-W29", webmaster: "2026-W29", seoOs: "2026-W29" },
+    sourceWeekSelections: { google: sourceWeek("2026-W29"), webmaster: sourceWeek("2026-W29"), seoOs: sourceWeek("2026-W29") },
     defaultFilter: "confirmed_landing",
   }));
 
@@ -125,9 +138,23 @@ test("confirmed-landing filter shows its quiet empty state", () => {
 test("query workspace distinguishes unavailable sources from an empty result", () => {
   const markup = renderToStaticMarkup(createElement(ZarukuSeoQueryComparison, {
     rows: [],
-    sourceWeeks: { google: null, webmaster: null, seoOs: null },
+    sourceWeekSelections: { google: sourceWeek(null), webmaster: sourceWeek(null), seoOs: sourceWeek(null) },
     sourceAvailability: { google: false, webmaster: false, seoOs: false },
   }));
   assert.match(markup, /Источник недоступен/);
   assert.doesNotMatch(markup, /По выбранному фильтру запросов нет/);
+});
+
+test("does not show a mismatch notice when every source renders the requested week", () => {
+  const markup = renderToStaticMarkup(createElement(ZarukuSeoQueryComparison, {
+    rows,
+    sourceWeekSelections: {
+      google: sourceWeek("2026-W30"),
+      webmaster: sourceWeek("2026-W30"),
+      seoOs: sourceWeek("2026-W30"),
+    },
+  }));
+
+  assert.doesNotMatch(markup, /Периоды источников различаются/);
+  assert.doesNotMatch(markup, /недоступна, показано/);
 });

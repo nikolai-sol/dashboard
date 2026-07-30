@@ -174,25 +174,23 @@ test("SEO tab hides Metrika search phrases but keeps the unified landing-page wo
   assert.doesNotMatch(seoSource, /data\.search_phrases/);
   assert.match(source, /buildUnifiedSeoPageRows/);
   assert.match(source, /webmasterRows: webmasterPages/);
-  assert.match(source, /metrikaRows: data\.organic_landing_pages/);
+  assert.match(source, /metrikaRows: metrikaPageSelection\.rows/);
   assert.doesNotMatch(source, /title="Посадочные страницы Яндекса"/);
   assert.doesNotMatch(source, /title: "Запрос → посадочная"/);
 });
 
-test("SEO tab passes actual source weeks into unified comparisons", () => {
-  assert.match(source, /webmaster: webmasterQuerySelection\.week/);
-  assert.match(source, /google: gscQuerySelection\.week/);
-  assert.match(source, /webmaster: webmasterPages\.length > 0 \? webmasterPageSelection\.week : null/);
-  assert.match(source, /google: gscLandingPages\.length > 0 \? gscLandingPageSelection\.week : null/);
+test("SEO tab passes requested and actual source weeks into unified comparisons", () => {
+  assert.match(source, /selectSourceWeekRows\(data\.webmaster\.queries, primaryWeek, data\.webmaster\.weeks\)/);
+  assert.match(source, /selectSourceWeekRows\(data\.gsc\.queries, primaryWeek, data\.gsc\.weeks\)/);
+  assert.match(source, /selectSourceWeekRows\(\s*data\.organic_landing_pages_weekly\.rows,\s*primaryWeek/);
+  assert.match(source, /sourceWeekSelections=/);
 });
 
-test("daily GSC and Webmaster presentation is independent from the SEO OS week selector", () => {
-  assert.match(source, /const webmasterWeek = data\.webmaster\.latest_week;/);
-  assert.match(source, /const gscWeek = data\.gsc\.latest_week;/);
-  assert.doesNotMatch(source, /const webmasterWeek = primaryWeek/);
-  assert.doesNotMatch(source, /const gscWeek = primaryWeek/);
-  assert.doesNotMatch(source, /resolveRowsForWeekOrLatest/);
-  assert.doesNotMatch(source, /показываем последнюю доступную неделю/);
+test("unified SEO comparisons use the selected week while diagnostics keep their latest-week selection", () => {
+  assert.match(source, /const diagnosticGscWeek = data\.gsc\.latest_week;/);
+  assert.match(source, /selectSourceWeekRows\(data\.gsc\.landing_pages, primaryWeek, data\.gsc\.weeks\)/);
+  assert.match(source, /selectSourceWeekRows\(data\.webmaster\.pages, primaryWeek, data\.webmaster\.weeks\)/);
+  assert.doesNotMatch(source, /metrikaRows: data\.organic_landing_pages,/);
 });
 
 test("Quality route uses the client-facing trust surface", () => {

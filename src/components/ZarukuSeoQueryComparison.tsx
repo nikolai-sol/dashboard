@@ -14,16 +14,21 @@ import {
   type SeoQuerySortKey,
   type UnifiedSeoQueryRow,
 } from "@/components/zaruku-seo-workspace";
+import {
+  formatSourceWeekFallback,
+  hasSourceWeekFallback,
+  type SourceWeekDisplay,
+} from "@/components/zaruku-seo-source-week";
 
-type SourceWeeks = {
-  google: string | null;
-  webmaster: string | null;
-  seoOs: string | null;
+type SourceWeekSelections = {
+  google: SourceWeekDisplay;
+  webmaster: SourceWeekDisplay;
+  seoOs: SourceWeekDisplay;
 };
 
 type Props = {
   rows: UnifiedSeoQueryRow[];
-  sourceWeeks: SourceWeeks;
+  sourceWeekSelections: SourceWeekSelections;
   sourceAvailability?: { google: boolean; webmaster: boolean; seoOs: boolean };
   defaultSort?: SeoQuerySort;
   defaultFilter?: SeoQueryFilter;
@@ -107,12 +112,14 @@ function SortButton({
   );
 }
 
-function SourceHeading({ label, week, className }: { label: string; week: string | null; className: string }) {
+function SourceHeading({ label, selection, className }: { label: string; selection: SourceWeekDisplay; className: string }) {
+  const fallbackNote = formatSourceWeekFallback(selection);
   return (
     <div className="flex flex-wrap items-center justify-center gap-2">
       <span className={`h-2 w-2 rounded-full ${className}`} />
       <span>{label}</span>
-      <span className="hidden font-normal normal-case text-slate-400 2xl:inline">{week ?? "нет данных"}</span>
+      <span className="hidden font-normal normal-case text-slate-400 2xl:inline">{selection.actualWeek ?? "нет данных"}</span>
+      {fallbackNote ? <span className="w-full font-normal normal-case text-amber-700">{fallbackNote}</span> : null}
     </div>
   );
 }
@@ -139,7 +146,7 @@ function SafePageLink({ value, prefix = "" }: { value: string; prefix?: string }
 
 export default function ZarukuSeoQueryComparison({
   rows,
-  sourceWeeks,
+  sourceWeekSelections,
   sourceAvailability = { google: true, webmaster: true, seoOs: true },
   defaultSort = { key: "google_position", direction: "asc" },
   defaultFilter = "all",
@@ -166,10 +173,7 @@ export default function ZarukuSeoQueryComparison({
   const changeFilter = (value: SeoQueryFilter) => { setFilter(value); setPage(1); };
   const changeQuery = (value: string) => { setQuery(value); setPage(1); };
   const changeSort = (key: SeoQuerySortKey) => { setSort((current) => toggleSeoSort(current, key)); setPage(1); };
-  const actualWeeks = [sourceWeeks.google, sourceWeeks.webmaster, sourceWeeks.seoOs].filter(
-    (week): week is string => Boolean(week),
-  );
-  const hasPeriodMismatch = new Set(actualWeeks).size > 1;
+  const hasPeriodMismatch = hasSourceWeekFallback(Object.values(sourceWeekSelections));
   const unavailableSources = [
     !sourceAvailability.google ? "Google" : null,
     !sourceAvailability.webmaster ? "Яндекс Вебмастер" : null,
@@ -242,13 +246,13 @@ export default function ZarukuSeoQueryComparison({
               <th rowSpan={2} className="w-[24%] border-r border-slate-100 bg-white px-3 py-3 text-left align-bottom">Фраза</th>
               <th rowSpan={2} className="w-[9%] border-r border-slate-100 bg-white px-2 py-3 text-left align-bottom">Раздел</th>
               <th colSpan={4} className="w-[24%] border-r border-slate-100 bg-blue-50/70 px-2 py-2 text-center">
-                <SourceHeading label="Google RF" week={sourceWeeks.google} className="bg-blue-500" />
+                <SourceHeading label="Google RF" selection={sourceWeekSelections.google} className="bg-blue-500" />
               </th>
               <th colSpan={4} className="w-[24%] border-r border-slate-100 bg-amber-50/70 px-2 py-2 text-center">
-                <SourceHeading label="Яндекс Вебмастер" week={sourceWeeks.webmaster} className="bg-amber-400" />
+                <SourceHeading label="Яндекс Вебмастер" selection={sourceWeekSelections.webmaster} className="bg-amber-400" />
               </th>
               <th colSpan={3} className="w-[19%] bg-teal-50/70 px-2 py-2 text-center">
-                <SourceHeading label="SEO OS" week={sourceWeeks.seoOs} className="bg-teal-500" />
+                <SourceHeading label="SEO OS" selection={sourceWeekSelections.seoOs} className="bg-teal-500" />
               </th>
             </tr>
             <tr className="border-t border-slate-100 text-[11px] text-slate-500">

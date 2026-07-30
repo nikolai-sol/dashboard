@@ -9,6 +9,14 @@ import { buildUnifiedSeoPageRows } from "@/components/zaruku-seo-workspace";
 const source = readFileSync(new URL("./ZarukuSeoPageComparison.tsx", import.meta.url), "utf8");
 const workspaceSource = readFileSync(new URL("./zaruku-seo-workspace.ts", import.meta.url), "utf8");
 
+function sourceWeek(
+  requestedWeek: string | null,
+  actualWeek: string | null = requestedWeek,
+  fallback = false,
+) {
+  return { requestedWeek, actualWeek, fallback };
+}
+
 test("renders exact joined page rows without noisy period pills", () => {
   const rows = buildUnifiedSeoPageRows({
     gscRows: [{
@@ -32,9 +40,12 @@ test("renders exact joined page rows without noisy period pills", () => {
   assert.equal(rows.length, 1);
   const markup = renderToStaticMarkup(createElement(ZarukuSeoPageComparison, {
     rows,
-    seoWeek: "2026-W29",
-    sourceWeeks: { google: "2026-W29", webmaster: "2026-W29", seoOs: "2026-W29" },
-    trafficPeriod: { from: "2026-03-03", to: "2026-03-26" },
+    sourceWeekSelections: {
+      google: sourceWeek("2026-W29"),
+      webmaster: sourceWeek("2026-W29"),
+      metrika: sourceWeek("2026-W29"),
+      seoOs: sourceWeek("2026-W29"),
+    },
     locale: "ru-RU",
   }));
 
@@ -43,6 +54,7 @@ test("renders exact joined page rows without noisy period pills", () => {
   assert.match(markup, /Google RF/);
   assert.match(markup, /Яндекс Вебмастер/);
   assert.match(markup, /Метрика/);
+  assert.match(markup, /2026-W29/);
   assert.match(markup, /Запросы SEO OS/);
   assert.match(markup, /Карта онкоцентров/);
   assert.doesNotMatch(markup, /конверси/i);
@@ -117,9 +129,12 @@ test("renders an em dash when row-level users are unavailable", () => {
   });
   const markup = renderToStaticMarkup(createElement(ZarukuSeoPageComparison, {
     rows,
-    seoWeek: null,
-    sourceWeeks: { google: null, webmaster: null, seoOs: null },
-    trafficPeriod: { from: "2026-07-01", to: "2026-07-21" },
+    sourceWeekSelections: {
+      google: sourceWeek(null),
+      webmaster: sourceWeek(null),
+      metrika: sourceWeek(null),
+      seoOs: sourceWeek(null),
+    },
     locale: "ru-RU",
   }));
 
@@ -153,13 +168,31 @@ test("page filters run before pagination and use landing-source evidence", () =>
 
   const markup = renderToStaticMarkup(createElement(ZarukuSeoPageComparison, {
     rows,
-    seoWeek: "2026-W29",
-    sourceWeeks: { google: "2026-W29", webmaster: "2026-W29", seoOs: "2026-W29" },
-    trafficPeriod: { from: "2026-03-03", to: "2026-03-26" },
+    sourceWeekSelections: {
+      google: sourceWeek("2026-W29"),
+      webmaster: sourceWeek("2026-W29"),
+      metrika: sourceWeek("2026-W29"),
+      seoOs: sourceWeek("2026-W29"),
+    },
     defaultFilter: "top3",
   }));
 
   assert.match(markup, /15 найдено · Страница 1 из 1/);
   assert.match(markup, /page-60/);
   assert.doesNotMatch(markup, /page-59/);
+});
+
+test("shows a source-local Metrika fallback and the mismatch notice", () => {
+  const markup = renderToStaticMarkup(createElement(ZarukuSeoPageComparison, {
+    rows: [],
+    sourceWeekSelections: {
+      google: sourceWeek("2026-W30"),
+      webmaster: sourceWeek("2026-W30"),
+      metrika: sourceWeek("2026-W30", "2026-W29", true),
+      seoOs: sourceWeek("2026-W30"),
+    },
+  }));
+
+  assert.match(markup, /W30 недоступна, показано W29/);
+  assert.match(markup, /Периоды источников различаются/);
 });
