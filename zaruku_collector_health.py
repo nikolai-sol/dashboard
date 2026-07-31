@@ -179,7 +179,17 @@ JOIN (
   SELECT source_key, MAX(id) AS max_id
   FROM canonical_collector_runs
   WHERE source_key IN ({})
-    AND run_mode = 'daily'
+    AND (
+      (
+        source_key = 'yandex_metrika'
+        AND run_mode = 'canonical_only'
+        AND job_key = 'yandex_metrika_cron'
+      )
+      OR (
+        source_key <> 'yandex_metrika'
+        AND run_mode = 'daily'
+      )
+    )
   GROUP BY source_key
 ) AS latest ON latest.max_id = r.id
 ORDER BY FIELD(r.source_key, {})

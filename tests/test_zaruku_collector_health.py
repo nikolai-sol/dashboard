@@ -67,8 +67,13 @@ class ZarukuCollectorHealthPolicyTests(unittest.TestCase):
         )
         self.assertTrue(all(item["expected_frequency_hours"] == 24 for item in ZARUKU_SOURCES.values()))
 
-    def test_daily_source_health_excludes_weekly_query_page_runs(self):
+    def test_daily_source_health_selects_metrika_cron_without_abbott_backfill(self):
+        self.assertIn("source_key = 'yandex_metrika'", health_module._LATEST_RUNS_SQL)
+        self.assertIn("run_mode = 'canonical_only'", health_module._LATEST_RUNS_SQL)
+        self.assertIn("job_key = 'yandex_metrika_cron'", health_module._LATEST_RUNS_SQL)
+        self.assertIn("source_key <> 'yandex_metrika'", health_module._LATEST_RUNS_SQL)
         self.assertIn("run_mode = 'daily'", health_module._LATEST_RUNS_SQL)
+        self.assertNotIn("canonical_release", health_module._LATEST_RUNS_SQL)
         self.assertIn("job_key = 'yandex_webmaster:query_pages'", health_module.QUERY_PAGE_PAIR_HEALTH_SQL)
 
     def test_partial_sql_has_all_fact_layers_and_failed_run_definition(self):
