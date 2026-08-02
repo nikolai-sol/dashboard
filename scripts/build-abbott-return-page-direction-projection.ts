@@ -64,10 +64,13 @@ export function buildAbbottReturnPageDirectionProjection(input: AbbottPathProjec
   }
   const titleSelection = new Map<string, string>();
   for (const row of input.titleProjections) {
-    if (row.lookupKeyHash !== undefined && (!SHA256.test(row.lookupKeyHash) || row.lookupKeyHash !== abbottTitleLookupHash(row.pageTitle))) throw new Error("Invalid title lookup hash");
+    if (row.lookupKeyHash !== undefined && !SHA256.test(row.lookupKeyHash)) throw new Error("Invalid title lookup hash");
     if (row.selectedSourceRowFingerprint !== null && !SHA256.test(row.selectedSourceRowFingerprint)) throw new Error("Invalid selected catalog fingerprint");
     if (!["unique", "identical_collapsed"].includes(row.resolutionStatus)) continue;
-    if (!row.pageTitle || !row.selectedSourceRowFingerprint || !catalogByFingerprint.has(row.selectedSourceRowFingerprint)) {
+    if (typeof row.pageTitle !== "string" || !row.pageTitle || (row.lookupKeyHash !== undefined && row.lookupKeyHash !== abbottTitleLookupHash(row.pageTitle))) {
+      throw new Error("Invalid title lookup hash");
+    }
+    if (!row.selectedSourceRowFingerprint || !catalogByFingerprint.has(row.selectedSourceRowFingerprint)) {
       throw new Error("Selected catalog fingerprint is absent from workbook catalog");
     }
     titleSelection.set(row.pageTitle, row.selectedSourceRowFingerprint);

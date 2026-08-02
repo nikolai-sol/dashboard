@@ -152,6 +152,23 @@ test("rejects a valid but wrong title lookup hash and rolls back", async () => {
   assert.equal(connection.rolledBack, 1);
 });
 
+test("materializer safely ignores ambiguous title rows with no selected catalog row", async () => {
+  const connection = materializerConnection("[12]");
+  const originalExecute = connection.execute;
+  connection.execute = async (sql, params = []) => {
+    const result = await originalExecute(sql, params);
+    if (sql.includes("lookup_kind = 'title'")) return [[{
+      pageTitle: null, lookupKeyHash: fingerprint("ambiguous-title"), resolutionStatus: "ambiguous", selectedSourceRowFingerprint: null,
+    }, {
+      pageTitle: "Guide", lookupKeyHash: fingerprint("Guide"), resolutionStatus: "unique", selectedSourceRowFingerprint: fingerprint("a"),
+    }], []] as never;
+    return result;
+  };
+  await materializeAbbottReturnPageDirectionProjection(connection as never, 10);
+  assert.equal(connection.committed, 1);
+  assert.equal(connection.rolledBack, 0);
+});
+
 test("formats only aggregate-safe projection counts for CLI evidence", () => {
   assert.equal(formatAbbottReturnPageProjectionCounts({ distinctMetrikaPaths: 4, matchedPaths: 2, unmatchedPaths: 1, ambiguousPaths: 1 }),
     '{"distinctMetrikaPaths":4,"matchedPaths":2,"unmatchedPaths":1,"ambiguousPaths":1}');
