@@ -386,6 +386,7 @@ test("workbook loading uses only resolved hashed projections and reports aggrega
     { lookup_kind: "slug", lookup_key_hash: hash("shared"), resolution_status: "unique", direction_key: "Cardiology", material_type: "article", access_label: "Врачи", is_active: 1 },
     { lookup_kind: "path", lookup_key_hash: hash("/shared"), resolution_status: "unique", direction_key: "Cardiology", material_type: "article", access_label: "Врачи", is_active: 1 },
   ];
+  const ambiguousPathRow = { lookup_kind: "path", lookup_key_hash: hash("/conflicted"), resolution_status: "ambiguous", direction_key: "Neurology", material_type: "article", access_label: "Врачи", is_active: 1 };
   const executor = fakeExecutor(({ sql }) => {
     if (sql.includes("FROM `report_bd`.`dashboards`")) return [{ id: 7 }];
     if (sql.includes("portal_active_data_releases")) return [releaseRow];
@@ -393,7 +394,9 @@ test("workbook loading uses only resolved hashed projections and reports aggrega
     if (sql.includes("portal_content_lookup_projection") && sql.includes("SUM(")) {
       return [{ ambiguous_groups: "2", collapsed_groups: "1" }];
     }
-    if (sql.includes("portal_content_lookup_projection")) return resolvedRows;
+    if (sql.includes("portal_content_lookup_projection")) {
+      return sql.includes("resolution_status IN ('unique', 'identical_collapsed')") ? resolvedRows : [...resolvedRows, ambiguousPathRow];
+    }
     return [];
   });
 
@@ -413,6 +416,7 @@ test("workbook loading uses only resolved hashed projections and reports aggrega
     access: "Врачи",
     is_active: true,
   });
+  assert.equal(result.urlReturnDirections.has(hash("/conflicted")), false);
   assert.deepEqual(result.lookupQuality, { ambiguousGroups: 2, collapsedGroups: 1 });
   const projectionSql = executor.queries
     .filter(({ sql }) => sql.includes("portal_content_lookup_projection"))
