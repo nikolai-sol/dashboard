@@ -12,9 +12,11 @@ export interface AbbottCatalogPathCandidate {
   sourceRowFingerprint: string;
   normalizedPath: string | null;
   pageTitle: string | null;
+  direction?: string | null;
 }
 export interface AbbottTitleProjection {
   pageTitle: string;
+  lookupKeyHash?: string;
   resolutionStatus: "unique" | "identical_collapsed" | "ambiguous";
   selectedSourceRowFingerprint: string | null;
 }
@@ -46,7 +48,7 @@ function groupFingerprint(path: string, candidates: readonly string[], status: s
 /** Pure, aggregate-safe construction used by the staging transaction and its tests. */
 export function buildAbbottReturnPageDirectionProjection(input: AbbottPathProjectionInput): {
   rows: AbbottPathProjectionRow[];
-  counts: { distinctPaths: number; matchedPaths: number; unmatchedEvidence: number; ambiguousPaths: number };
+  counts: { distinctMetrikaPaths: number; matchedPaths: number; unmatchedPaths: number; ambiguousPaths: number };
 } {
   if (input.datasetKey !== DATASET_KEY || input.counterId !== COUNTER_ID || input.releaseStatus !== "staging") {
     throw new Error("Abbott return-page projection requires the fixed staging release and counter");
@@ -61,28 +63,37 @@ export function buildAbbottReturnPageDirectionProjection(input: AbbottPathProjec
   }
   const titleSelection = new Map<string, string>();
   for (const row of input.titleProjections) {
-    if (!row.pageTitle || !["unique", "identical_collapsed"].includes(row.resolutionStatus)) continue;
-    if (!row.selectedSourceRowFingerprint || !SHA256.test(row.selectedSourceRowFingerprint) || !catalogByFingerprint.has(row.selectedSourceRowFingerprint)) continue;
+    if (row.lookupKeyHash !== undefined && !SHA256.test(row.lookupKeyHash)) throw new Error("Invalid title lookup hash");
+    if (row.selectedSourceRowFingerprint !== null && !SHA256.test(row.selectedSourceRowFingerprint)) throw new Error("Invalid selected catalog fingerprint");
+    if (!["unique", "identical_collapsed"].includes(row.resolutionStatus)) continue;
+    if (!row.pageTitle || !row.selectedSourceRowFingerprint || !catalogByFingerprint.has(row.selectedSourceRowFingerprint)) {
+      throw new Error("Selected catalog fingerprint is absent from workbook catalog");
+    }
     titleSelection.set(row.pageTitle, row.selectedSourceRowFingerprint);
   }
-  let unmatchedEvidence = 0;
+  const metrikaPaths = new Set<string>();
+  const evidenceByPath = new Map<string, string[]>();
   for (const fact of input.pageFacts) {
     const path = normalizeAbbottPagePath(fact.pageUrl);
-    if (!path) { unmatchedEvidence += 1; continue; }
+    if (!path) continue;
+    metrikaPaths.add(path);
     const selected = titleSelection.get(text(fact.pageTitle));
-    if (!selected) { unmatchedEvidence += 1; continue; }
+    if (!selected) continue;
     (candidates.get(path) ?? candidates.set(path, new Set()).get(path)!).add(selected);
+    const evidence = evidenceByPath.get(path) ?? [];
+    evidence.push(selected);
+    evidenceByPath.set(path, evidence);
   }
   const rows = [...candidates.entries()].map(([path, fingerprints]) => {
     const selected = [...fingerprints].sort();
     const resolutionStatus: AbbottPathProjectionRow["resolutionStatus"] = selected.length === 1
-      ? (input.pageFacts.filter((fact) => normalizeAbbottPagePath(fact.pageUrl) === path).length > 1 ? "identical_collapsed" : "unique")
+      ? ((evidenceByPath.get(path)?.filter((fingerprint) => fingerprint === selected[0]).length ?? 0) > 1 ? "identical_collapsed" : "unique")
       : "ambiguous";
     return {
       lookupKind: "path" as const,
       lookupKeyHash: hash(path),
       candidateCount: selected.length === 1
-        ? Math.max(1, input.pageFacts.filter((fact) => normalizeAbbottPagePath(fact.pageUrl) === path && titleSelection.has(text(fact.pageTitle))).length)
+        ? Math.max(1, evidenceByPath.get(path)?.length ?? 0)
         : selected.length,
       metadataSignatureCount: selected.length,
       resolutionStatus,
@@ -90,19 +101,30 @@ export function buildAbbottReturnPageDirectionProjection(input: AbbottPathProjec
       groupFingerprint: groupFingerprint(path, selected, resolutionStatus),
     };
   }).sort((left, right) => left.lookupKeyHash.localeCompare(right.lookupKeyHash));
+  const byPath = new Map(rows.map((row) => [row.lookupKeyHash, row]));
+  const directionFor = (row: AbbottPathProjectionRow | undefined) => row?.selectedSourceRowFingerprint
+    ? text(catalogByFingerprint.get(row.selectedSourceRowFingerprint)?.direction)
+    : "";
+  const metrikaRows = [...metrikaPaths].map((path) => byPath.get(hash(path)));
   return {
     rows,
     counts: {
-      distinctPaths: rows.length,
-      matchedPaths: rows.filter((row) => row.selectedSourceRowFingerprint !== null).length,
-      unmatchedEvidence,
-      ambiguousPaths: rows.filter((row) => row.resolutionStatus === "ambiguous").length,
+      distinctMetrikaPaths: metrikaPaths.size,
+      matchedPaths: metrikaRows.filter((row) => row?.resolutionStatus !== "ambiguous" && directionFor(row)).length,
+      unmatchedPaths: metrikaRows.filter((row) => row?.resolutionStatus === "ambiguous" || !directionFor(row)).length,
+      ambiguousPaths: metrikaRows.filter((row) => row?.resolutionStatus === "ambiguous").length,
     },
   };
 }
 
 type SqlConnection = Pick<mysql.PoolConnection, "beginTransaction" | "commit" | "rollback" | "execute">;
 function rows(result: unknown): Record<string, unknown>[] { return Array.isArray(result) && Array.isArray(result[0]) ? result[0] as Record<string, unknown>[] : []; }
+function snapshotIds(value: unknown): number[] {
+  let parsed = value;
+  if (typeof parsed === "string") parsed = JSON.parse(parsed);
+  if (!Array.isArray(parsed) || parsed.length === 0 || parsed.some((id) => !Number.isSafeInteger(id) || id <= 0)) throw new Error("Candidate release snapshots are invalid");
+  return parsed as number[];
+}
 
 /** Replaces only candidate-release path rows; callers must explicitly invoke this staging-only action. */
 export async function materializeAbbottReturnPageDirectionProjection(connection: SqlConnection, releaseId: number) {
@@ -112,20 +134,20 @@ export async function materializeAbbottReturnPageDirectionProjection(connection:
       "SELECT dataset_key, release_status, source_snapshot_ids FROM report_bd.portal_data_releases WHERE id = ? FOR UPDATE", [releaseId],
     ));
     if (release.length !== 1 || release[0]?.dataset_key !== DATASET_KEY || release[0]?.release_status !== "staging") throw new Error("Candidate release is not Abbott staging");
-    const snapshotIds = JSON.parse(String(release[0]?.source_snapshot_ids ?? "[]"));
-    if (!Array.isArray(snapshotIds) || snapshotIds.length === 0 || snapshotIds.some((id) => !Number.isSafeInteger(id))) throw new Error("Candidate release snapshots are invalid");
-    const sourceRows = rows(await connection.execute(
-      `SELECT c.source_row_fingerprint AS sourceRowFingerprint, c.normalized_path AS normalizedPath, c.page_title AS pageTitle
-       FROM report_bd.portal_content_catalog c
-       WHERE c.canonical_release_id = ? AND c.source_snapshot_id IN (${snapshotIds.map(() => "?").join(",")})`, [releaseId, ...snapshotIds],
-    ));
+    const candidateSnapshotIds = snapshotIds(release[0]?.source_snapshot_ids);
     const workbookSnapshot = rows(await connection.execute(
-      "SELECT id FROM report_bd.portal_dataset_snapshots WHERE id IN (" + snapshotIds.map(() => "?").join(",") + ") AND source_kind = 'abbott_workbook_catalog'", snapshotIds,
+      "SELECT id FROM report_bd.portal_dataset_snapshots WHERE id IN (" + candidateSnapshotIds.map(() => "?").join(",") + ") AND source_kind = 'abbott_workbook_catalog'", candidateSnapshotIds,
     ));
     if (workbookSnapshot.length !== 1) throw new Error("Candidate workbook snapshot is invalid");
     const workbookSnapshotId = Number(workbookSnapshot[0]?.id);
+    if (!Number.isSafeInteger(workbookSnapshotId) || workbookSnapshotId <= 0) throw new Error("Candidate workbook snapshot is invalid");
+    const sourceRows = rows(await connection.execute(
+      `SELECT c.source_row_fingerprint AS sourceRowFingerprint, c.normalized_path AS normalizedPath, c.page_title AS pageTitle, c.direction_key AS direction
+       FROM report_bd.portal_content_catalog c
+       WHERE c.canonical_release_id = ? AND c.source_snapshot_id = ?`, [releaseId, workbookSnapshotId],
+    ));
     const titleRows = rows(await connection.execute(
-      `SELECT c.page_title AS pageTitle, p.resolution_status AS resolutionStatus, p.selected_source_row_fingerprint AS selectedSourceRowFingerprint
+      `SELECT c.page_title AS pageTitle, p.lookup_key_hash AS lookupKeyHash, p.resolution_status AS resolutionStatus, p.selected_source_row_fingerprint AS selectedSourceRowFingerprint
        FROM report_bd.portal_content_lookup_projection p
        LEFT JOIN report_bd.portal_content_catalog c ON c.canonical_release_id = p.canonical_release_id AND c.source_snapshot_id = p.source_snapshot_id AND c.source_row_fingerprint = p.selected_source_row_fingerprint
        WHERE p.canonical_release_id = ? AND p.source_snapshot_id = ? AND p.lookup_kind = 'title'`, [releaseId, workbookSnapshotId],
