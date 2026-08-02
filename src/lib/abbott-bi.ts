@@ -1,6 +1,7 @@
 import { createHash } from "node:crypto";
 
 import { normalizeAbbottPageUrl as normalizePage } from "@/lib/abbott-page-url";
+import { abbottTitleLookupHash } from "@/lib/abbott-content-lookup";
 import { buildAbbottReturnFrequency, type AbbottFrequencyVisit } from "@/lib/abbott-return-frequency";
 import {
   loadActiveAbbottReleaseBundleWithExecutor,
@@ -468,7 +469,7 @@ function metadataForPage(
   const normalized = normalizePage(rawUrl);
   const path = normalizedPagePath(normalized);
   const slug = path.split("/").filter(Boolean).at(-1) ?? "";
-  const metadata = workbook.contentByTitle.get(lookupHash(pageTitle))
+  const metadata = workbook.contentByTitle.get(abbottTitleLookupHash(pageTitle))
     ?? workbook.contentBySlug.get(lookupHash(slug))
     ?? workbook.urlReturnDirections.get(lookupHash(path));
   return {

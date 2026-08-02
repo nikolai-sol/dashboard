@@ -10,7 +10,8 @@ export function normalizeAbbottPageUrl(rawValue: unknown): string {
     url.pathname = url.pathname.replace(/\/{2,}/g, "/").replace(/\/+$/, "") || "/";
     return url.toString().replace(/\/$/, url.pathname === "/" ? "/" : "");
   } catch {
-    return value.split(/[?#]/, 1)[0]?.replace(/\/{2,}/g, "/").replace(/\/+$/, "") ?? "";
+    const pathname = value.split(/[?#]/, 1)[0]?.replace(/\/{2,}/g, "/") ?? "";
+    return pathname ? pathname.replace(/\/+$/, "") || "/" : "";
   }
 }
 

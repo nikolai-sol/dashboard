@@ -14,6 +14,7 @@ test("normalizes absolute Abbott page URLs without tracking identity", () => {
 test("normalizes relative page paths consistently", () => {
   assert.equal(normalizeAbbottPageUrl("//gastro///article/?secret=yes#part"), "/gastro/article");
   assert.equal(normalizeAbbottPageUrl(""), "");
+  assert.equal(normalizeAbbottPageUrl("/"), "/");
 });
 
 test("normalizes Abbott return-page paths independently of origin", () => {

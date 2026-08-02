@@ -3,6 +3,7 @@ import { createHash } from "node:crypto";
 import mysql from "mysql2/promise";
 
 import { normalizeAbbottPagePath } from "../src/lib/abbott-page-url";
+import { abbottTitleLookupHash } from "../src/lib/abbott-content-lookup";
 
 const DATASET_KEY = "abbott";
 const COUNTER_ID = "90602537";
@@ -63,7 +64,7 @@ export function buildAbbottReturnPageDirectionProjection(input: AbbottPathProjec
   }
   const titleSelection = new Map<string, string>();
   for (const row of input.titleProjections) {
-    if (row.lookupKeyHash !== undefined && !SHA256.test(row.lookupKeyHash)) throw new Error("Invalid title lookup hash");
+    if (row.lookupKeyHash !== undefined && (!SHA256.test(row.lookupKeyHash) || row.lookupKeyHash !== abbottTitleLookupHash(row.pageTitle))) throw new Error("Invalid title lookup hash");
     if (row.selectedSourceRowFingerprint !== null && !SHA256.test(row.selectedSourceRowFingerprint)) throw new Error("Invalid selected catalog fingerprint");
     if (!["unique", "identical_collapsed"].includes(row.resolutionStatus)) continue;
     if (!row.pageTitle || !row.selectedSourceRowFingerprint || !catalogByFingerprint.has(row.selectedSourceRowFingerprint)) {
@@ -126,6 +127,12 @@ function snapshotIds(value: unknown): number[] {
   return parsed as number[];
 }
 
+export function formatAbbottReturnPageProjectionCounts(counts: {
+  distinctMetrikaPaths: number; matchedPaths: number; unmatchedPaths: number; ambiguousPaths: number;
+}): string {
+  return JSON.stringify(counts);
+}
+
 /** Replaces only candidate-release path rows; callers must explicitly invoke this staging-only action. */
 export async function materializeAbbottReturnPageDirectionProjection(connection: SqlConnection, releaseId: number) {
   await connection.beginTransaction();
@@ -184,6 +191,9 @@ async function main() {
   if (!Number.isSafeInteger(releaseId) || releaseId <= 0) throw new Error("Usage: build-abbott-return-page-direction-projection <staging-release-id>");
   const pool = mysql.createPool({ host: process.env.DB_HOST, port: Number(process.env.DB_PORT ?? 3306), user: process.env.DB_USER, password: process.env.DB_PASSWORD, database: process.env.DB_NAME ?? "report_bd" });
   const connection = await pool.getConnection();
-  try { await materializeAbbottReturnPageDirectionProjection(connection, releaseId); } finally { connection.release(); await pool.end(); }
+  try {
+    const result = await materializeAbbottReturnPageDirectionProjection(connection, releaseId);
+    console.log(formatAbbottReturnPageProjectionCounts(result.counts));
+  } finally { connection.release(); await pool.end(); }
 }
 if (require.main === module) main().catch((error: unknown) => { console.error(error instanceof Error ? error.message : "Projection failed"); process.exitCode = 1; });

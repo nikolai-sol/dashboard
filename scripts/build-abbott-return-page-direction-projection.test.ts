@@ -4,6 +4,7 @@ import test from "node:test";
 
 import {
   buildAbbottReturnPageDirectionProjection,
+  formatAbbottReturnPageProjectionCounts,
   materializeAbbottReturnPageDirectionProjection,
   type AbbottPathProjectionInput,
 } from "./build-abbott-return-page-direction-projection";
@@ -137,4 +138,21 @@ test("materializer rolls back malformed title hashes before path replacement", a
   assert.equal(connection.committed, 0);
   assert.equal(connection.rolledBack, 1);
   assert.equal(connection.calls.some((call) => call.sql.startsWith("DELETE")), false);
+});
+
+test("rejects a valid but wrong title lookup hash and rolls back", async () => {
+  const connection = materializerConnection("[12]", { malformedHash: false });
+  const originalExecute = connection.execute;
+  connection.execute = async (sql, params = []) => {
+    const result = await originalExecute(sql, params);
+    if (sql.includes("lookup_kind = 'title'")) return [[{ pageTitle: "Guide", lookupKeyHash: fingerprint("Other"), resolutionStatus: "unique", selectedSourceRowFingerprint: fingerprint("a") }], []] as never;
+    return result;
+  };
+  await assert.rejects(() => materializeAbbottReturnPageDirectionProjection(connection as never, 10), /lookup hash/i);
+  assert.equal(connection.rolledBack, 1);
+});
+
+test("formats only aggregate-safe projection counts for CLI evidence", () => {
+  assert.equal(formatAbbottReturnPageProjectionCounts({ distinctMetrikaPaths: 4, matchedPaths: 2, unmatchedPaths: 1, ambiguousPaths: 1 }),
+    '{"distinctMetrikaPaths":4,"matchedPaths":2,"unmatchedPaths":1,"ambiguousPaths":1}');
 });
