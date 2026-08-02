@@ -901,20 +901,50 @@ these production steps.
 3. Backfill every requested date with the updated Logs visit collector using
    its normal evaluate → create → poll → download all parts → clean in finally
    lifecycle.
-4. Before comparison, require successful run status, complete expected-date
-   coverage, and zero bad coverage rows for the candidate.
-5. Compare the active and candidate releases for total visit rows, distinct
+4. Before any projection or comparison, require successful run status,
+   complete expected-date coverage, and zero bad coverage rows for the
+   candidate.
+5. Run the return-page direction projection after the candidate backfill is
+   complete and before comparison, validation, activation, or dashboard
+   deployment. This is a staging-only Abbott counter `90602537` operation on
+   the candidate release; it does not run against an active release.
+
+   Freeze this read-only release-8 baseline in the comparison evidence without
+   copying raw URLs into logs or Git:
+
+   ```text
+   catalog_rows=1769
+   catalog_rows_with_direction=1639
+   catalog_rows_with_normalized_url=0
+   catalog_rows_with_normalized_path=0
+   path_lookup_rows=0
+   ```
+
+   Record aggregate-only projection evidence for distinct normalized paths seen
+   in candidate page facts; matched path projections with non-empty direction;
+   unmatched paths; ambiguous paths; and returning-page rows and returning
+   visitors with/without page direction. Require zero path rows falsely marked
+   resolved when their evidence conflicts. Direction coverage must improve from
+   the frozen zero-path baseline; make every remaining unmatched or ambiguous
+   count visible for human review, without inventing a percentage threshold
+   before the candidate evidence is measured.
+
+   Path resolution is exact-path evidence only: no slug or substring fallback.
+   Never rewrite an active release, title projection, or slug projection; the
+   candidate path projection is the only permitted write. Stop for review if
+   any aggregate gate fails.
+6. Compare the active and candidate releases for total visit rows, distinct
    visit hashes, User ID coverage, null client-hash count, direction mapping
    coverage, and UTM populated/null counts. Record only aggregate evidence;
    never print identifiers, URLs, or credentials.
-6. Re-run the hard publication gate
+7. Re-run the hard publication gate
    `all.sessions = with_user_id.sessions + without_user_id.sessions` for every
    date/source. Do not publish a candidate with any mismatch.
-7. Confirm manager-only UTM/frequency reads and zero embed private queries.
-8. After review, perform the pointer cutover and application deployment. Run
+8. Confirm manager-only UTM/frequency reads and zero embed private queries.
+9. After review, perform the pointer cutover and application deployment. Run
    an authenticated manager smoke test and an embed smoke test; rollback if
    either smoke test fails.
-9. Do not restore public PII assets during rollback. Database and application
+10. Do not restore public PII assets during rollback. Database and application
    rollback may restore the reviewed predecessor pointers, but public Abbott
    source artifacts remain quarantined.
 
