@@ -300,7 +300,7 @@ export default function ZarukuSeoPageComparison({ rows, sourceWeekSelections, so
               return (
               <tr key={row.key} className="align-top transition hover:bg-slate-50/70">
                 <td className="border-r border-slate-100 px-3 py-3">
-                  <div className="min-w-0 font-medium leading-snug text-slate-800">{row.label}</div>
+                  <div className="min-w-0 max-w-full overflow-hidden [overflow-wrap:anywhere] font-medium leading-snug text-slate-800">{row.label}</div>
                   {href ? <a href={href} target="_blank" rel="noreferrer" className="mt-1 block min-w-0 max-w-full truncate text-xs text-slate-400 hover:text-teal-700" title={href}>{shortUrl(href)}</a> : <span className="mt-1 block min-w-0 max-w-full truncate text-xs text-slate-400" title={row.url}>{shortUrl(row.url)}</span>}
                 </td>
                 <td className="px-1.5 py-3 text-right tabular-nums text-slate-600">{formatNumber(row.google?.impressions, locale)}</td>

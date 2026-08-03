@@ -69,6 +69,41 @@ test("keeps page-table width inside its own responsive scroll panel", () => {
   assert.match(source, /thead className="sticky top-0/);
 });
 
+test("keeps long page labels inside the page column", () => {
+  const rows = buildUnifiedSeoPageRows({
+    gscRows: [],
+    webmasterRows: [{
+      week: "2026-W31",
+      url: "/kompleksnoe_genomnoe_profilirovanie/",
+      device: "ALL",
+      impressions: 8,
+      clicks: 0,
+      ctr: 0,
+      average_position: 7.6,
+      week_from: "2026-07-27",
+      week_to: "2026-08-02",
+      is_partial_week: false,
+    }],
+    metrikaRows: [],
+    seoOsRows: [],
+  });
+
+  const markup = renderToStaticMarkup(createElement(ZarukuSeoPageComparison, {
+    rows,
+    sourceWeekSelections: {
+      google: sourceWeek("2026-W31"),
+      webmaster: sourceWeek("2026-W31"),
+      metrika: sourceWeek("2026-W31"),
+      seoOs: sourceWeek("2026-W31"),
+    },
+  }));
+
+  assert.match(
+    markup,
+    /max-w-full overflow-hidden \[overflow-wrap:anywhere\] font-medium[^>]*>\/kompleksnoe_genomnoe_profilirovanie\//,
+  );
+});
+
 test("page workspace exposes search sorting pagination and safe absolute links", () => {
   assert.match(source, /type="search"/);
   assert.match(source, /PAGE_SIZE = 50/);
