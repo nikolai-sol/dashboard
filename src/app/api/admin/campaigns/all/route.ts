@@ -13,6 +13,7 @@ type SourceSpec = {
   upload_file?: unknown;
   default_platform?: string;
   default_channel?: string;
+  manual_transform?: string;
 };
 
 async function loadCampaigns(
@@ -28,6 +29,7 @@ async function loadCampaigns(
     upload_file?: unknown;
     default_platform?: string;
     default_channel?: string;
+    manual_transform?: string;
   }> = [];
 
   if (Number.isFinite(dashboardId) && dashboardId > 0) {
@@ -50,6 +52,7 @@ async function loadCampaigns(
               upload_file: source.source_config?.upload_file,
               default_platform: String(source.source_config?.platform ?? "").trim(),
               default_channel: String(source.source_config?.channel ?? "").trim(),
+              manual_transform: String(source.source_config?.manual_transform ?? "").trim(),
             });
           } else {
             const accountIds = Array.isArray(source.source_config?.account_ids)
@@ -79,6 +82,7 @@ async function loadCampaigns(
           upload_file: source.upload_file,
           default_platform: String(source.default_platform ?? "").trim(),
           default_channel: String(source.default_channel ?? "").trim(),
+          manual_transform: String(source.manual_transform ?? "").trim(),
         });
       } else {
         const accountIds = Array.isArray(source.account_ids)
@@ -134,6 +138,7 @@ async function loadCampaigns(
         upload_file: source.upload_file,
         platform: source.default_platform,
         channel: source.default_channel,
+        manual_transform: source.manual_transform,
       });
       const byChannel = aggregateByChannel(rows);
       for (const ch of byChannel) {
