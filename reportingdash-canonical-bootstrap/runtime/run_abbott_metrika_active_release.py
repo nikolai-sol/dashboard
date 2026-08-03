@@ -312,6 +312,7 @@ def build_collector_command(
 ) -> list[str]:
     return [
         sys.executable,
+        "-B",
         str(collector),
         "--run-type", "cron",
         "--days-back", "1",

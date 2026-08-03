@@ -29,14 +29,14 @@ every runbook entrypoint and each repository-local Python dependency.
 | `runtime/metrika_dashboard_breakdowns.py` | `metrika_dashboard_breakdowns.py` | `879822ee16108abccbb0b0c726d88f6d3835e36f2566d2531bdb4cd1a461f6c8` | Shared dashboard breakdown definitions |
 | `runtime/metrika_logs_api.py` | `metrika_logs_api.py` | `b9fdd87b9fa9112a2e716e0fd1ebd78859fe87884397a36d16b7e9ce6cac798b` | Exact Metrika Logs request lifecycle and visit parser |
 | `runtime/canonical_release_store.py` | `canonical_release_store.py` | `7c31094a188ed32a9944b32456d302c2e3256abdd554da012b15fcf38db0a301` | Exact validation and pointer store |
-| `runtime/run_abbott_metrika_active_release.py` | `run_abbott_metrika_active_release.py` | `10cd78c56bada52ed806b47a8dfa5bd232b6669183eafbd015603fcb5ed8ba91` | Committed-manifest cron launcher |
+| `runtime/run_abbott_metrika_active_release.py` | `run_abbott_metrika_active_release.py` | `0f7c132b2cbd4f37ce51ceefa8479d36cf30088e2587dcda4cfc36cb29face0d` | Committed-manifest cron launcher |
 | `runtime/abbott_release_operator.py` | `abbott_release_operator.py` | `4fea3b284743e168011bb4518276576890d76c375a557b9732e6491f326ecd9f` | Least-privilege lifecycle CLI |
 | `runtime/probe_yandex_metrika_access.py` | `probe_yandex_metrika_access.py` | `430603922de9cd3cdbc6d0a7dc103f841924087c39462fc137ec8a26684674bc` | Read-only counter access proof |
 | `runtime/capture_abbott_canonical_baseline.py` | `capture_abbott_canonical_baseline.py` | `24692288fd1e8c6bf61b0b59b52963c60068df13e068bf4336e6d9fd9ce998e2` | Frozen baseline CLI |
 | `runtime/compare_abbott_canonical_release.py` | `compare_abbott_canonical_release.py` | `3cbe72196853ec89d435b214cb7ac106732d94e5b2a05ac95e035e7942d5c015` | Candidate comparator CLI |
 | `runtime/abbott_canonical_controls.py` | `abbott_canonical_controls.py` | `4c9fb6291a6ae54958cdcd15eb654be0eefc6a7264b70c894bd01a4b8b9def17` | Baseline/control evidence library |
 | `runtime/metrika_pagination.py` | `metrika_pagination.py` | `7dcb1a05ad8babcc7d696934babb1ab50747ca140c910efc88f3685674386a7c` | Metrika pagination dependency |
-| `runtime/backfill_abbott_metrika_2026.py` | `backfill_abbott_metrika_2026.py` | `b817ae573191128f243bc07bb6309af91d4d729cc2a183c0d370e8b139039e2b` | Gap-first full-year backfill CLI |
+| `runtime/backfill_abbott_metrika_2026.py` | `backfill_abbott_metrika_2026.py` | `1dce2c65082a18848d21cf0659d5a52a4258334fc38be25079308afef977bf9c` | Gap-first full-year backfill CLI |
 | `runtime/abbott_health_probe.py` | `abbott_health_probe.py` | `4abaaf5d51b8ac45b346f7fa01079b0e94a62057464ebae8300ebfac22be4060` | Deterministic Abbott health CLI |
 | `runtime/send_canonical_telegram_report.py` | `send_canonical_telegram_report.py` | `8ae155f4f1a81a50fa29730bfe1f7e19e1c01d0ab56719a60327c59b37e22da3` | Summary entrypoint |
 | `runtime/sources_health_dashboard.py` | `sources_health_dashboard.py` | `072a3270fa0cac9c7b7384f19aba636485dc89b8c03da2eb80bbde1c50c71116` | Summary health dependency |
