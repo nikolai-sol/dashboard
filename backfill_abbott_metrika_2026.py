@@ -6,8 +6,11 @@ from __future__ import annotations
 import argparse
 import calendar
 from datetime import date, datetime, timedelta, timezone
+import sys
 import uuid
 from typing import Any, Callable, Iterable, Mapping, Sequence
+
+sys.dont_write_bytecode = True
 
 from canonical_writer import (
     finish_collector_run,
@@ -207,7 +210,7 @@ def run_backfill(
     if failed_days:
         log_event(
             run_id,
-            "ERROR",
+            "error",
             "abbott_backfill_days_failed",
             "Abbott backfill days failed",
             {

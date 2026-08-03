@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import sys
 import tempfile
 import unittest
 from pathlib import Path
@@ -96,6 +97,10 @@ class AbbottActiveReleaseCronTest(unittest.TestCase):
             release_id=41,
             code_revision="abcdef123456",
             parser_version="abbott-v1",
+        )
+        self.assertEqual(
+            command[:3],
+            [sys.executable, "-B", "/canonical/fetch_yandex_metrika_canonical.py"],
         )
         self.assertEqual(command[command.index("--days-back") + 1], "1")
         self.assertEqual(command[command.index("--counter-id") + 1], "90602537")

@@ -1,8 +1,10 @@
 from __future__ import annotations
 
+import ast
 from contextlib import redirect_stderr
 from datetime import date
 import io
+from pathlib import Path
 from types import SimpleNamespace
 import unittest
 from unittest.mock import Mock, patch
@@ -47,6 +49,37 @@ def coverage_row(scope, status="success", **overrides):
 
 
 class AbbottMetrikaBackfill2026Test(unittest.TestCase):
+    def test_disables_bytecode_before_importing_local_modules(self):
+        source = Path(__file__).resolve().parents[1] / "backfill_abbott_metrika_2026.py"
+        tree = ast.parse(source.read_text(encoding="utf-8"))
+        assignment_indexes = [
+            index
+            for index, node in enumerate(tree.body)
+            if isinstance(node, ast.Assign)
+            and any(
+                isinstance(target, ast.Attribute)
+                and isinstance(target.value, ast.Name)
+                and target.value.id == "sys"
+                and target.attr == "dont_write_bytecode"
+                for target in node.targets
+            )
+            and isinstance(node.value, ast.Constant)
+            and node.value.value is True
+        ]
+        local_import_indexes = [
+            index
+            for index, node in enumerate(tree.body)
+            if isinstance(node, ast.ImportFrom)
+            and node.module in {
+                "canonical_writer",
+                "fetch_yandex_metrika_canonical",
+            }
+        ]
+
+        self.assertEqual(len(assignment_indexes), 1)
+        self.assertEqual(len(local_import_indexes), 2)
+        self.assertLess(assignment_indexes[0], min(local_import_indexes))
+
     def test_windows_cover_2026_from_january_first_through_yesterday(self):
         from backfill_abbott_metrika_2026 import build_backfill_windows
 
@@ -217,7 +250,7 @@ class AbbottMetrikaBackfill2026Test(unittest.TestCase):
         ])
         log_event.assert_called_once_with(
             77,
-            "ERROR",
+            "error",
             "abbott_backfill_days_failed",
             "Abbott backfill days failed",
             {
