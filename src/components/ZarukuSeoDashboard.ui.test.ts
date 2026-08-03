@@ -193,6 +193,21 @@ test("unified SEO comparisons use the selected week while diagnostics keep their
   assert.doesNotMatch(source, /metrikaRows: data\.organic_landing_pages,/);
 });
 
+test("semantic health labels and charts the actual source week when the selected week is unavailable", () => {
+  const panelStart = source.indexOf("function SemanticHealthPanel");
+  const panelEnd = source.indexOf("function WeeklyFocusPanel");
+  const panelSource = source.slice(panelStart, panelEnd);
+
+  assert.match(
+    panelSource,
+    /selectSourceWeekRows\(data\.seo_intelligence\.sov\.rows, primaryWeek, data\.seo_intelligence\.sov\.weeks\)/,
+  );
+  assert.match(panelSource, /formatSourceWeekFallback\(selection\)/);
+  assert.match(panelSource, /selection\.actualWeek/);
+  assert.match(panelSource, /selection\.rows\.filter/);
+  assert.doesNotMatch(panelSource, /selectedRows\[0\]\?\.period_label \?\? primaryWeek/);
+});
+
 test("Quality route uses the client-facing trust surface", () => {
   assert.match(source, /import ZarukuQualityTab/);
   assert.match(source, /<ZarukuQualityTab data=\{data\}/);

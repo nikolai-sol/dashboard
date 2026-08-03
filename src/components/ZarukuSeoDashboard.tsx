@@ -70,7 +70,10 @@ import {
   buildTrafficHealthRows,
 } from "@/components/zaruku-overview-layout";
 import { resolveRowsForWeek } from "@/components/zaruku-yandex-webmaster-panels";
-import { selectSourceWeekRows } from "@/components/zaruku-seo-source-week";
+import {
+  formatSourceWeekFallback,
+  selectSourceWeekRows,
+} from "@/components/zaruku-seo-source-week";
 import { ZARUKU_CHART_PALETTE } from "@/lib/chart-palette";
 import { ZARUKU_CLIENT_COPY } from "@/components/zaruku-client-copy";
 
@@ -532,10 +535,11 @@ function AiAggregateVisibilityPanel({ data, locale }: Props) {
 }
 
 function SemanticHealthPanel({ data, locale, primaryWeek }: Props & { primaryWeek: string | null }) {
-  const selectedRows = buildSemanticHealthRows(data.seo_intelligence.sov.rows, primaryWeek ?? data.seo_intelligence.sov.latest_week);
-  const weeks = data.seo_intelligence.sov.weeks;
+  const selection = selectSourceWeekRows(data.seo_intelligence.sov.rows, primaryWeek, data.seo_intelligence.sov.weeks);
+  const selectedRows = buildSemanticHealthRows(selection.rows, selection.actualWeek);
+  const weeks = selection.actualWeek ? [selection.actualWeek] : [];
   const chartRows = weeks.map((week) => {
-    const rows = data.seo_intelligence.sov.rows.filter((row) => row.week === week);
+    const rows = selection.rows.filter((row) => row.week === week);
     return {
       week,
       noise: rows.find((row) => row.cluster === "medical_org_labs_noise")?.impressions_share ?? null,
@@ -544,9 +548,22 @@ function SemanticHealthPanel({ data, locale, primaryWeek }: Props & { primaryWee
       medical_baseline: 24.81,
     };
   });
-  const periodLabel = selectedRows[0]?.period_label ?? primaryWeek ?? data.seo_intelligence.sov.latest_week;
+  const periodLabel = selectedRows[0]?.period_label ?? selection.actualWeek;
+  const fallbackNote = formatSourceWeekFallback(selection);
   return (
-    <Panel data={data} title="Семантическое здоровье" source="seo_os" layer="serp" pending={selectedRows.length === 0} right={<span className="text-xs text-slate-400">{periodLabel ?? "неделя —"}</span>}>
+    <Panel
+      data={data}
+      title="Семантическое здоровье"
+      source="seo_os"
+      layer="serp"
+      pending={selectedRows.length === 0}
+      right={(
+        <div className="flex flex-col items-end gap-1 text-xs">
+          <span className="text-slate-400">{periodLabel ?? "неделя —"}</span>
+          {fallbackNote ? <span className="text-amber-700">{fallbackNote}</span> : null}
+        </div>
+      )}
+    >
       <div className="space-y-4">
         <ResponsiveContainer width="100%" height={240}>
           <LineChart data={chartRows} margin={{ top: 8, right: 8, left: -20, bottom: 0 }}>
