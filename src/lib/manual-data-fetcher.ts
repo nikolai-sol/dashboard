@@ -23,6 +23,7 @@ export interface ManualDataFetchOptions {
   defaultPlatform?: string;
   defaultChannel?: string;
   forceDefaultChannel?: boolean;
+  manualTransform?: string;
 }
 
 export type ManualDataUploadPayload = {
@@ -37,6 +38,7 @@ export type ManualDataSourceConfig = {
   platform?: string;
   channel?: string;
   force_fallback_channel?: unknown;
+  manual_transform?: unknown;
 };
 
 const cache = new Map<string, { data: ManualDataRow[]; ts: number }>();
@@ -218,18 +220,19 @@ function normalizeManualDataRow(
   r: Record<string, unknown>,
   options: ManualDataFetchOptions = {},
 ): ManualDataRow | null {
-  const date = normalizeDate(r.date ?? r.report_date ?? r.day);
-  const platform = normalizeManualPlatformId(r.platform ?? r.source_platform ?? options.defaultPlatform);
+  const row = applyManualTransform(r, options.manualTransform);
+  const date = normalizeDate(row.date ?? row.report_date ?? row.day);
+  const platform = normalizeManualPlatformId(row.platform ?? row.source_platform ?? options.defaultPlatform);
   const channel = options.forceDefaultChannel && options.defaultChannel
     ? String(options.defaultChannel).trim()
     : String(
-        r.channel ??
-          r.campaign ??
-          r.campaign_name ??
-          r.campaign_title ??
-          r.source ??
+        row.channel ??
+          row.campaign ??
+          row.campaign_name ??
+          row.campaign_title ??
+          row.source ??
           options.defaultChannel ??
-          r.platform ??
+          row.platform ??
           "",
       ).trim();
 
@@ -239,18 +242,37 @@ function normalizeManualDataRow(
     date,
     platform,
     channel,
-    impressions: toNum(r.impressions),
-    clicks: toNum(r.clicks),
-    spend: toNum(r.spend),
-    views: toNum(r.views),
-    conversions: toNum(r.conversions),
-    reach: toNum(r.reach),
-    sessions: toNum(r.sessions),
-    cr: parsePercent(r.cr),
-    ctr: parsePercent(r.ctr),
-    cpc: toNum(r.cpc),
-    cpm: toNum(r.cpm),
-    cpv: toNum(r.cpv),
+    impressions: toNum(row.impressions),
+    clicks: toNum(row.clicks),
+    spend: toNum(row.spend),
+    views: toNum(row.views),
+    conversions: toNum(row.conversions),
+    reach: toNum(row.reach),
+    sessions: toNum(row.sessions),
+    cr: parsePercent(row.cr),
+    ctr: parsePercent(row.ctr),
+    cpc: toNum(row.cpc),
+    cpm: toNum(row.cpm),
+    cpv: toNum(row.cpv),
+  };
+}
+
+function hasValue(value: unknown): boolean {
+  return String(value ?? "").trim() !== "";
+}
+
+function applyManualTransform(row: Record<string, unknown>, transform: string | undefined): Record<string, unknown> {
+  if (transform !== "yandex_direct_search_campaigns") return row;
+
+  const campaignName = String(row.campaign_name ?? row.campaign ?? "").toLowerCase();
+  const impressions = toNum(row.impressions);
+  const reach = toNum(row.reach);
+  return {
+    ...row,
+    platform: hasValue(row.platform) ? row.platform : "yandex",
+    channel: campaignName.includes("transactional") ? "search transactional" : "search",
+    spend: hasValue(row.spend) ? row.spend : row.cost,
+    reach: reach ?? (impressions !== null ? impressions / 2 : row.reach),
   };
 }
 
@@ -306,7 +328,7 @@ export async function fetchManualData(
   const fetchUrl = normalizeSheetUrl(sheetUrl);
   if (!fetchUrl) return [];
 
-  const cacheKey = `${fetchUrl}::${options.defaultPlatform ?? ""}::${options.defaultChannel ?? ""}::${options.forceDefaultChannel ? "force" : "auto"}`;
+  const cacheKey = `${fetchUrl}::${options.defaultPlatform ?? ""}::${options.defaultChannel ?? ""}::${options.forceDefaultChannel ? "force" : "auto"}::${options.manualTransform ?? ""}`;
   const cached = cache.get(cacheKey);
   if (cached && Date.now() - cached.ts < TTL) return cached.data;
 
@@ -337,6 +359,7 @@ export async function fetchManualDataFromSourceConfig(
     defaultPlatform: String(config.platform ?? "").trim(),
     defaultChannel: String(config.channel ?? "").trim(),
     forceDefaultChannel: Boolean(config.force_fallback_channel),
+    manualTransform: String(config.manual_transform ?? "").trim(),
   };
   const upload = parseUploadPayload(config.upload_file);
   if (upload) {
