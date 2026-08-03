@@ -9,7 +9,12 @@ from datetime import date, datetime, timedelta, timezone
 import uuid
 from typing import Any, Callable, Iterable, Mapping, Sequence
 
-from canonical_writer import finish_collector_run, get_db_connection, start_collector_run
+from canonical_writer import (
+    finish_collector_run,
+    get_db_connection,
+    log_run_event,
+    start_collector_run,
+)
 from fetch_yandex_metrika_canonical import (
     ABBOTT_COUNTER_ID,
     ABBOTT_REQUIRED_SCOPES,
@@ -162,6 +167,7 @@ def run_backfill(
     validate_day: Callable[..., Any] = validate_day_bundle,
     publish_day: Callable[..., Any] = publish_metrika_day_bundle,
     baseline_guard: Callable[[Any, int], int] = require_frozen_baseline,
+    log_event: Callable[..., None] = log_run_event,
 ) -> dict[str, Any]:
     """Collect and atomically publish missing days without activating a release."""
 
@@ -198,6 +204,17 @@ def run_backfill(
             failed_days.append(
                 {"report_date": day, "error_class": exc.__class__.__name__}
             )
+    if failed_days:
+        log_event(
+            run_id,
+            "ERROR",
+            "abbott_backfill_days_failed",
+            "Abbott backfill days failed",
+            {
+                "failed_day_count": len(failed_days),
+                "failed_days": failed_days,
+            },
+        )
     return {
         "counter_id": ABBOTT_COUNTER_ID,
         "canonical_release_id": canonical_release_id,

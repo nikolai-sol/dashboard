@@ -678,7 +678,7 @@ def build_alert_message(payload: Dict, abbott: Dict) -> str:
 
     lines.extend(['', *build_abbott_lines(abbott)])
 
-    lines.extend(['', f"Exit code: {int(payload.get('summary', {}).get('exit_code') or 0)}"])
+    lines.extend(['', 'Отчёт сформирован успешно'])
     return '\n'.join(lines)
 
 
@@ -741,7 +741,7 @@ def build_summary_message(
 
     lines.extend(['', *build_abbott_lines(abbott)])
 
-    lines.extend(['', f"Exit code: {int(payload.get('summary', {}).get('exit_code') or 0)}"])
+    lines.extend(['', 'Отчёт сформирован успешно'])
     return '\n'.join(lines)
 
 

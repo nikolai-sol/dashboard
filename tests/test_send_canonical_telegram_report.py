@@ -200,6 +200,24 @@ class TelegramReportTests(unittest.TestCase):
         self.assertTrue(report.should_send_alert({"summary": {"exit_code": 0}, "sources": []}, abbott))
         self.assertFalse(report.should_send_alert({"summary": {"exit_code": 0}, "sources": []}, ABBOTT_OK))
 
+    def test_message_footers_confirm_success_without_hiding_abbott_critical(self):
+        abbott = dict(ABBOTT_OK, overall="CRITICAL", incidents=[{
+            "incident_key": "abbott|90602537|scope|gap",
+            "severity": "CRITICAL",
+            "check_id": "gap",
+            "observed": {"status": "failed"},
+            "expected": {"status": "success"},
+        }])
+        payload = {"summary": {"exit_code": 1}, "sources": []}
+
+        for text in (
+            report.build_alert_message(payload, abbott),
+            report.build_summary_message(payload, [], abbott),
+        ):
+            self.assertTrue(text.endswith("Отчёт сформирован успешно"))
+            self.assertNotIn("Exit code:", text)
+            self.assertIn("общий статус: CRITICAL", text)
+
     def test_generic_non_blocking_critical_does_not_trigger_alert(self):
         payload = {"summary": {"exit_code": 1}, "sources": [{
             "source_key": "yandex_metrika",

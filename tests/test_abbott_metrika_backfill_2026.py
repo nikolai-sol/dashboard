@@ -190,6 +190,46 @@ class AbbottMetrikaBackfill2026Test(unittest.TestCase):
                     )
                 baseline_guard.assert_not_called()
 
+    def test_runner_logs_sanitized_aggregate_for_failed_days(self):
+        from backfill_abbott_metrika_2026 import run_backfill
+
+        collect_day = Mock(side_effect=RuntimeError(
+            "https://private.example/visit/123?token=SECRET"
+        ))
+        log_event = Mock()
+
+        summary = run_backfill(
+            Mock(),
+            canonical_release_id=41,
+            run_id=77,
+            code_revision="revision-a",
+            parser_version="metrika-parser-v1",
+            days=("2026-03-29", "2026-03-30"),
+            is_reconciled=lambda *_args: False,
+            collect_day=collect_day,
+            baseline_guard=Mock(),
+            log_event=log_event,
+        )
+
+        self.assertEqual(summary["failed_days"], [
+            {"report_date": "2026-03-29", "error_class": "RuntimeError"},
+            {"report_date": "2026-03-30", "error_class": "RuntimeError"},
+        ])
+        log_event.assert_called_once_with(
+            77,
+            "ERROR",
+            "abbott_backfill_days_failed",
+            "Abbott backfill days failed",
+            {
+                "failed_day_count": 2,
+                "failed_days": summary["failed_days"],
+            },
+        )
+        logged = str(log_event.call_args)
+        self.assertNotIn("private.example", logged)
+        self.assertNotIn("SECRET", logged)
+        self.assertNotIn("123", logged)
+
     def test_cli_requires_canonical_release_id_and_has_no_counter_override(self):
         from backfill_abbott_metrika_2026 import build_parser
 
