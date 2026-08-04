@@ -9,7 +9,7 @@ from datetime import datetime
 
 DEFAULT_BASE_URL = "https://api-metrika.yandex.net"
 DEFAULT_TIMEOUT = 30
-DEFAULT_MAX_POLL_ATTEMPTS = 60
+DEFAULT_MAX_POLL_ATTEMPTS = 600
 DEFAULT_POLL_DELAY_SECONDS = 1
 _HTTP_ATTEMPTS = 3
 

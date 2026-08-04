@@ -349,6 +349,37 @@ class ClientTests(unittest.TestCase):
             ],
         )
 
+    def test_default_poll_budget_allows_processing_beyond_one_minute(self):
+        session = FakeSession([
+            FakeResponse(json_data={"log_request_evaluation": {"possible": True}}),
+            FakeResponse(json_data={"log_request": {"request_id": 1}}),
+            *[
+                FakeResponse(json_data={"log_request": {"status": "created"}})
+                for _ in range(61)
+            ],
+            FakeResponse(json_data={
+                "log_request": {"status": "processed", "parts": []}
+            }),
+            FakeResponse(json_data={}),
+        ])
+
+        result = MetrikaLogsClient(
+            "token",
+            session=session,
+            base_url="https://api.test",
+            poll_delay_seconds=0,
+        ).collect_visits("123", "2026-07-19")
+
+        self.assertEqual(result, ())
+        self.assertEqual(
+            sum(url.endswith("/logrequest/1") for _, url, _ in session.calls),
+            62,
+        )
+        self.assertEqual(request_routes(session)[-1], (
+            "POST",
+            "https://api.test/management/v1/counter/123/logrequest/1/clean",
+        ))
+
     def test_rejects_invalid_inputs_before_requests(self):
         session = FakeSession([])
         client = MetrikaLogsClient("token", session=session)
