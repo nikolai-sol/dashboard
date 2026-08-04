@@ -1,6 +1,8 @@
 import unittest
 
 from metrika_logs_api import (
+    DEFAULT_MAX_POLL_ATTEMPTS,
+    DEFAULT_POLL_DELAY_SECONDS,
     MetrikaLogsClient,
     MetrikaLogsError,
     extract_raw_user_id,
@@ -213,6 +215,13 @@ class ParserTests(unittest.TestCase):
 
 
 class ClientTests(unittest.TestCase):
+    def test_default_poll_budget_limits_status_polls_while_waiting_twenty_minutes(self):
+        self.assertLessEqual(DEFAULT_MAX_POLL_ATTEMPTS, 41)
+        self.assertGreaterEqual(
+            (DEFAULT_MAX_POLL_ATTEMPTS - 1) * DEFAULT_POLL_DELAY_SECONDS,
+            20 * 60,
+        )
+
     def test_collects_all_parts_in_part_number_order_and_cleans(self):
         part_zero = HEADER + "\n" + visit_row("v0") + "\n"
         part_two = HEADER + "\n" + visit_row("v2", keys1="[]", keys2="[]") + "\n"
@@ -336,7 +345,11 @@ class ClientTests(unittest.TestCase):
 
         with self.assertRaisesRegex(MetrikaLogsError, "^Metrika Logs polling timed out$"):
             MetrikaLogsClient(
-                "token", session=session, base_url="https://api.test", max_poll_attempts=2
+                "token",
+                session=session,
+                base_url="https://api.test",
+                max_poll_attempts=2,
+                poll_delay_seconds=0,
             ).collect_visits("123", "2026-07-19")
         self.assertEqual(
             request_routes(session),
@@ -349,13 +362,13 @@ class ClientTests(unittest.TestCase):
             ],
         )
 
-    def test_default_poll_budget_allows_processing_beyond_one_minute(self):
+    def test_default_poll_schedule_allows_processing_beyond_one_minute(self):
         session = FakeSession([
             FakeResponse(json_data={"log_request_evaluation": {"possible": True}}),
             FakeResponse(json_data={"log_request": {"request_id": 1}}),
             *[
                 FakeResponse(json_data={"log_request": {"status": "created"}})
-                for _ in range(61)
+                for _ in range(3)
             ],
             FakeResponse(json_data={
                 "log_request": {"status": "processed", "parts": []}
@@ -371,9 +384,10 @@ class ClientTests(unittest.TestCase):
         ).collect_visits("123", "2026-07-19")
 
         self.assertEqual(result, ())
+        self.assertGreater(3 * DEFAULT_POLL_DELAY_SECONDS, 60)
         self.assertEqual(
             sum(url.endswith("/logrequest/1") for _, url, _ in session.calls),
-            62,
+            4,
         )
         self.assertEqual(request_routes(session)[-1], (
             "POST",
