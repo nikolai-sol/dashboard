@@ -54,4 +54,4 @@ The wider classifier suite ran **245 tests successfully**; its only failure was 
 
 No live DB, Sheets, OpenAI, source API, secret, migration, deploy, cron, Telegram, Hermes schedule, or release activation was called or changed. The production adapter keeps immutable batch/snapshot loaders and Task-5 classification persistence as explicit injected seams: existing Tasks 1–8 intentionally do not expose a broad mutable-batch loader, so this task does not add a parallel DB read/write path. Supplying those reviewed loaders is required for a separately authorized real operator execution.
 
-Commit: pending.
+Commit: `6c0595cf32e02989390935af6a008965df80bf05`.
