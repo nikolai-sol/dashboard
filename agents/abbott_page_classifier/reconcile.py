@@ -502,6 +502,8 @@ def reconcile_entity(value: ReconciliationInput) -> ApprovalItem:
 
     if value.identity_conflict:
         _append_conflict(conflicts, ConflictCode.IDENTITY_COLLISION)
+    if value.rejection_code == ConflictCode.REGISTRY1_IDENTITY_REQUIRED.value:
+        _append_conflict(conflicts, ConflictCode.REGISTRY1_IDENTITY_REQUIRED)
     if registry2_evidence_missing:
         _append_conflict(conflicts, ConflictCode.CONTENT_UNAVAILABLE)
 

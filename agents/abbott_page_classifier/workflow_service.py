@@ -14,7 +14,7 @@ from pathlib import Path
 from typing import Callable, Mapping, Protocol, Sequence
 
 from .batch_service import PersistedApprovalBatch, build_batch
-from .domain import CanonicalClassification, Proposal, TaxonomyVersion
+from .domain import CanonicalClassification, ConflictCode, Proposal, TaxonomyVersion
 from .identity import IdentityAlias, IdentityResolver
 from .llm_classifier import (
     LLM_PRIMARY_MODEL,
@@ -552,6 +552,19 @@ class CanonicalWeeklyProposalService:
             )
             content_entity_id = next(iter(targets)) if len(targets) == 1 and not collision else None
             identity_status = "collision" if collision else ("matched" if content_entity_id else "new")
+            registry1_candidate = (
+                by_source["registry1"][0] if by_source["registry1"] else None
+            )
+            registry2_candidate = (
+                by_source["registry2"][0] if by_source["registry2"] else None
+            )
+            registry1_identity_required = (
+                identity_status == "new"
+                and registry1_candidate is None
+                and registry2_candidate is not None
+            )
+            if registry1_identity_required:
+                identity_status = "rejected"
             component_keys = tuple(
                 sorted(
                     _source_candidate_key(source, candidate)
@@ -566,9 +579,14 @@ class CanonicalWeeklyProposalService:
             reconciliation_input = ReconciliationInput(
                 content_entity_id=content_entity_id,
                 active_canonical=entity_by_id.get(content_entity_id),
-                registry1=(by_source["registry1"][0] if by_source["registry1"] else None),
-                registry2=(by_source["registry2"][0] if by_source["registry2"] else None),
+                registry1=registry1_candidate,
+                registry2=registry2_candidate,
                 identity_conflict=collision,
+                rejection_code=(
+                    ConflictCode.REGISTRY1_IDENTITY_REQUIRED.value
+                    if registry1_identity_required
+                    else None
+                ),
             )
             reconciled = reconcile_entity(reconciliation_input)
             item_key = sha256_text(

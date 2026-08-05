@@ -40,6 +40,15 @@ from agents.abbott_page_classifier.repository import RepositoryError
 
 def item(entity_id: int, state: str, *, title: str | None = None) -> ApprovalItem:
     complete = state != "unresolved"
+    conflicts = (
+        ("DIRECTION_CONFLICT",)
+        if state == "conflict"
+        else (
+            ("REGISTRY1_IDENTITY_REQUIRED",)
+            if state == "rejected"
+            else ()
+        )
+    )
     return ApprovalItem(
         content_entity_id=entity_id,
         input_hash=f"{entity_id:064x}",
@@ -50,8 +59,11 @@ def item(entity_id: int, state: str, *, title: str | None = None) -> ApprovalIte
         final_access_code="doctors",
         final_lifecycle_code="active",
         readiness_state=state,
-        conflict_codes=("DIRECTION_CONFLICT",) if state == "conflict" else (),
+        conflict_codes=conflicts,
         row_hash="ignored-by-build",
+        decision_reason=(
+            "REGISTRY1_IDENTITY_REQUIRED" if state == "rejected" else None
+        ),
     )
 
 
@@ -556,6 +568,15 @@ class SheetsProjectionTests(unittest.TestCase):
         self.assertEqual(
             [row[state_index] for row in gateway.values["Не определено"][1:]],
             ["unresolved", "rejected", "no_change"],
+        )
+        rejected = gateway.values["Не определено"][2]
+        self.assertEqual(
+            rejected[unresolved_headers.index("decision_reason")],
+            "REGISTRY1_IDENTITY_REQUIRED",
+        )
+        self.assertIn(
+            "REGISTRY1_IDENTITY_REQUIRED",
+            rejected[unresolved_headers.index("conflict_codes")],
         )
 
     def test_publish_neutralizes_formula_injection_in_display_values(self):

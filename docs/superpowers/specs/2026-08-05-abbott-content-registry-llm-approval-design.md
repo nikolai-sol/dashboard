@@ -50,6 +50,15 @@ The current sheet also contains 146 rows whose final material type is `Архи�
 
 The existing sheet shows substantial differences between proposal columns and final columns without consistently recording an explicit override. The new workflow therefore records source provenance and decision reason for every final value.
 
+Registry 2 is accepted classification evidence, not authority to originate a
+canonical material identity. A Registry 2 row may enrich an already matched
+entity or join an unambiguous new Registry 1 identity. An otherwise complete,
+unmatched Registry 2-only row remains in the review projection as `rejected`
+with stable reason/conflict code `REGISTRY1_IDENTITY_REQUIRED`; its Registry 2
+values remain visible on the `Не определено` tab, and no registry entity is
+created from it. A later Registry 1 capture can supply the missing identity
+authority in a new content-addressed reconciliation run.
+
 ### Existing Automation
 
 `agents/abbott_page_classifier/` already provides deterministic classification, a Google Sheets approval UI, and a local append-only JSONL lock registry. The local registry currently contains only workbook-seed events and no accepted batch events. It is not read by the dashboard and is not canonical production storage.
@@ -180,6 +189,12 @@ Every material receives an internal `content_entity_id`. Identity evidence is re
 4. a unique slug alias combined with compatible host/path context;
 5. a unique normalized title plus compatible material-type evidence;
 6. otherwise create an identity conflict or a new entity candidate.
+
+The final step creates a new entity only when Registry 1 supplies the source
+identity. Every collapsed Registry 1 occurrence keeps its source row locator,
+fingerprint, normalized URL/title, and identity variant in immutable entity
+provenance; materialization emits all such occurrences instead of replacing
+them with a representative row.
 
 Canonical URL normalization lowercases scheme and host, removes fragments and tracking parameters, normalizes percent encoding and trailing slashes, and preserves query parameters that change the semantic page identity. Direction-filter landing-page parameters are normalized deterministically rather than discarded blindly.
 

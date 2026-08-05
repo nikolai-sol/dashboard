@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from dataclasses import asdict
 from datetime import datetime, timezone
 import json
 import unittest
@@ -11,6 +12,7 @@ from agents.abbott_page_classifier.approval_hashes import (
     compute_taxonomy_digest,
 )
 from agents.abbott_page_classifier.domain import TAXONOMY_LABELS, TaxonomyVersion
+from agents.abbott_page_classifier.domain import MaterialCandidate
 from agents.abbott_page_classifier.llm_classifier import (
     LlmAttempt,
     LlmClassification,
@@ -26,6 +28,12 @@ from agents.abbott_page_classifier.workflow_repository import (
     _input_payload,
     _run_key,
 )
+from agents.abbott_page_classifier.sources import (
+    SourceCandidate,
+    SourceIdentityVariant,
+    SourceProvenance,
+)
+from agents.abbott_page_classifier.candidate_release import _catalog_rows
 from agents.abbott_page_classifier.workflow_service import (
     PersistedSourceBinding,
     ReconciliationContext,
@@ -155,6 +163,86 @@ class RehydrationConnection(FakeConnection):
         self.cursor_instance = RehydrationCursor(
             self, version=version, stored_digest=stored_digest
         )
+
+
+class EntityCreationCursor(FakeCursor):
+    def __init__(self, connection, candidate):
+        super().__init__(connection)
+        self.candidate = candidate
+        self.entities = {}
+        self.aliases = []
+
+    def execute(self, sql, params=()):
+        normalized = " ".join(sql.split())
+        self.connection.calls.append((normalized, params))
+        self.rows = []
+        self.rowcount = 0
+        if (
+            "FROM portal_active_data_releases" in normalized
+            and "canonical_release_id" in normalized
+        ):
+            self.rows = [(8,)]
+        elif "FROM portal_content_reconciliation_runs" in normalized:
+            self.rows = [("reconciled",)]
+        elif (
+            "FROM portal_content_reconciliation_items" in normalized
+            and "identity_status, registry1_json" in normalized
+        ):
+            self.rows = [("new", _canonical_json(asdict(self.candidate)))]
+        elif normalized.startswith("SELECT id FROM portal_content_registry_entities"):
+            self.rows = [(entity_id,) for entity_id in sorted(self.entities)]
+        elif normalized.startswith("SELECT id FROM portal_content_registry_aliases"):
+            self.rows = []
+        elif "FROM portal_content_registry_entities AS entity" in normalized:
+            self.rows = [
+                (
+                    entity_id,
+                    entity["title"],
+                    entity["canonical_url"],
+                    None,
+                    None,
+                    None,
+                    None,
+                    None,
+                )
+                for entity_id, entity in sorted(self.entities.items())
+            ]
+        elif "FROM portal_content_registry_aliases" in normalized:
+            self.rows = [
+                (
+                    alias["content_entity_id"],
+                    alias["alias_type"],
+                    alias["alias_value"],
+                    alias["uniqueness_scope"],
+                )
+                for alias in self.aliases
+            ]
+        elif normalized.startswith("INSERT INTO portal_content_registry_entities"):
+            self.lastrowid = 101
+            self.entities[self.lastrowid] = {
+                "material_id": params[1],
+                "title": params[2],
+                "canonical_url": params[3],
+                "source_evidence": json.loads(params[4]),
+            }
+            self.rowcount = 1
+        elif normalized.startswith("INSERT INTO portal_content_registry_aliases"):
+            self.aliases.append(
+                {
+                    "content_entity_id": int(params[1]),
+                    "alias_type": params[2],
+                    "alias_value": params[3],
+                    "uniqueness_scope": params[5],
+                    "source_evidence": json.loads(params[6]),
+                }
+            )
+            self.rowcount = 1
+
+
+class EntityCreationConnection(FakeConnection):
+    def __init__(self, candidate):
+        super().__init__()
+        self.cursor_instance = EntityCreationCursor(self, candidate)
 
 
 def _baseline_evidence(fingerprint):
@@ -323,6 +411,148 @@ class BootstrapConnection(FakeConnection):
 
 
 class MySqlWorkflowStoreTests(unittest.TestCase):
+    def test_distinct_rejected_source_inputs_round_trip_durable_payload(self):
+        rejected_rows = tuple(
+            RejectedSourceRow(
+                source_name="registry1",
+                source_row_id=f"registry1:кардио:{ordinal}",
+                reason_code="MISSING_IDENTITY",
+                source_fingerprint=str(ordinal) * 64,
+            )
+            for ordinal in (2, 3)
+        )
+        inputs = tuple(
+            ReconciliationInput(
+                content_available=False,
+                rejection_code=rejected.reason_code,
+                rejected_source_row=rejected,
+            )
+            for rejected in rejected_rows
+        )
+
+        replayed = tuple(_input_from_payload(_input_payload(value)) for value in inputs)
+
+        self.assertNotIn("rejected_source_row", _input_payload(ReconciliationInput()))
+        self.assertEqual(replayed, inputs)
+        self.assertEqual(
+            len({reconcile_entity(value).input_hash for value in replayed}), 2
+        )
+
+    def test_new_registry1_entity_persists_and_emits_every_source_occurrence(self):
+        candidate = SourceCandidate(
+            key="material:900",
+            candidate=MaterialCandidate(
+                source_name="registry1",
+                source_row_id="registry1:Кардиология:2",
+                title="Alpha",
+                url="https://abbottpro.ru/cardio/alpha",
+                material_id="900",
+                direction_code="cardiology",
+                material_type_code="articles",
+                access_code="doctors",
+                lifecycle_code="active",
+                source_fingerprint="a" * 64,
+            ),
+            provenance=(
+                SourceProvenance(
+                    "registry1", "registry1:Кардиология:2", "a" * 64
+                ),
+                SourceProvenance(
+                    "registry1", "registry1:Кардиология:3", "b" * 64
+                ),
+            ),
+            identity_variants=(
+                SourceIdentityVariant(
+                    "registry1:Кардиология:2",
+                    "900",
+                    "https://abbottpro.ru/cardio/alpha",
+                    "Alpha",
+                    "articles",
+                    direction_code="cardiology",
+                    access_code="doctors",
+                    lifecycle_code="active",
+                ),
+                SourceIdentityVariant(
+                    "registry1:Кардиология:3",
+                    "900",
+                    "https://abbottpro.ru/cardio/alpha-print",
+                    "Alpha print",
+                    "articles",
+                    direction_code="cardiology",
+                    access_code="doctors",
+                    lifecycle_code="active",
+                ),
+            ),
+        )
+        connection = EntityCreationConnection(candidate)
+        resolved = MySqlWorkflowStore(
+            lambda: connection
+        ).resolve_or_create_registry1_entities(19, ("registry1:material:900",))
+
+        self.assertEqual(resolved, {"registry1:material:900": 101})
+        evidence = connection.cursor_instance.entities[101]["source_evidence"]
+        self.assertEqual(
+            [row["source_row_id"] for row in evidence["provenance"]],
+            ["registry1:Кардиология:2", "registry1:Кардиология:3"],
+        )
+        self.assertEqual(
+            [row["source_row_fingerprint"] for row in evidence["provenance"]],
+            ["a" * 64, "b" * 64],
+        )
+        self.assertEqual(
+            {alias["alias_value"] for alias in connection.cursor_instance.aliases},
+            {
+                "900",
+                "https://abbottpro.ru/cardio/alpha",
+                "https://abbottpro.ru/cardio/alpha-print",
+                "alpha",
+                "alpha-print",
+                "Alpha",
+                "Alpha print",
+            },
+        )
+        rows = _catalog_rows(
+            (
+                {
+                    "content_entity_id": 101,
+                    "classification_event_id": 501,
+                    "event_fingerprint": "c" * 64,
+                    "effective_at": datetime(2026, 8, 6, tzinfo=timezone.utc),
+                    "source_evidence": evidence,
+                    "direction_code": "cardiology",
+                    "direction_label": "Кардиология [262338]",
+                    "material_type_code": "articles",
+                    "material_type_label": "Статьи",
+                    "access_code": "doctors",
+                    "access_label": "Врачи",
+                    "lifecycle_code": "active",
+                    "lifecycle_label": "active",
+                },
+            )
+        )
+        self.assertEqual(len(rows), 2)
+        self.assertEqual(
+            {
+                (row.normalized_url, row.source_sheet, row.source_row_ordinal,
+                 row.source_row_fingerprint)
+                for row in rows
+            },
+            {
+                (
+                    "https://abbottpro.ru/cardio/alpha",
+                    "Кардиология",
+                    2,
+                    "a" * 64,
+                ),
+                (
+                    "https://abbottpro.ru/cardio/alpha-print",
+                    "Кардиология",
+                    3,
+                    "b" * 64,
+                ),
+            },
+        )
+
     def test_context_locks_active_predecessor_and_keeps_eventless_entities(self):
         connection = BootstrapConnection()
         connection.cursor_instance.entities[9] = {

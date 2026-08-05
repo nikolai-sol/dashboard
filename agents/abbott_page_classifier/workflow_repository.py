@@ -92,6 +92,90 @@ def _candidate_from_payload(value: object | None) -> SourceCandidate | None:
         raise RepositoryError("RECONCILIATION_ITEM_INVALID") from None
 
 
+def _registry1_occurrence_evidence(
+    candidate: SourceCandidate,
+) -> tuple[dict[str, object], ...]:
+    """Bind every Registry 1 row locator to its immutable identity evidence."""
+
+    variants_by_row: dict[str, SourceIdentityVariant] = {}
+    for variant in candidate.identity_variants:
+        if variant.source_row_id in variants_by_row:
+            raise RepositoryError("REGISTRY_ENTITY_RESOLUTION_INVALID")
+        variants_by_row[variant.source_row_id] = variant
+    provenance_ids = tuple(item.source_row_id for item in candidate.provenance)
+    if (
+        not provenance_ids
+        or len(set(provenance_ids)) != len(provenance_ids)
+        or set(provenance_ids) != set(variants_by_row)
+    ):
+        raise RepositoryError("REGISTRY_ENTITY_RESOLUTION_INVALID")
+
+    result: list[dict[str, object]] = []
+    for provenance in candidate.provenance:
+        if provenance.source_name != "registry1":
+            raise RepositoryError("REGISTRY_ENTITY_RESOLUTION_INVALID")
+        prefix = "registry1:"
+        locator = provenance.source_row_id
+        if not locator.startswith(prefix):
+            raise RepositoryError("REGISTRY_ENTITY_RESOLUTION_INVALID")
+        sheet, separator, raw_ordinal = locator[len(prefix):].rpartition(":")
+        try:
+            ordinal = int(raw_ordinal)
+        except ValueError:
+            raise RepositoryError("REGISTRY_ENTITY_RESOLUTION_INVALID") from None
+        fingerprint = provenance.source_fingerprint.casefold()
+        if (
+            not separator
+            or not sheet.strip()
+            or ordinal <= 0
+            or len(fingerprint) != 64
+            or any(character not in "0123456789abcdef" for character in fingerprint)
+        ):
+            raise RepositoryError("REGISTRY_ENTITY_RESOLUTION_INVALID")
+        variant = variants_by_row[locator]
+        result.append(
+            {
+                "source_name": provenance.source_name,
+                "source_row_id": locator,
+                "source_sheet": sheet.strip(),
+                "source_row_ordinal": ordinal,
+                "source_row_fingerprint": fingerprint,
+                "material_id": variant.material_id,
+                "normalized_url": variant.normalized_url,
+                "page_title": variant.normalized_title,
+                "material_type_code": variant.material_type_code,
+                "raw_material_type": variant.raw_material_type,
+                "raw_status": variant.raw_status,
+                "direction_code": variant.direction_code,
+                "access_code": variant.access_code,
+                "lifecycle_code": variant.lifecycle_code,
+            }
+        )
+    return tuple(result)
+
+
+def _registry1_alias_values(
+    candidate: SourceCandidate,
+) -> tuple[tuple[str, str, str], ...]:
+    aliases: list[tuple[str, str, str]] = []
+    for variant in candidate.identity_variants:
+        if variant.material_id:
+            aliases.append(("material_id", variant.material_id, "strong"))
+        if variant.normalized_url:
+            aliases.extend(
+                (
+                    ("canonical_url", variant.normalized_url, "strong"),
+                    ("url", variant.normalized_url, "strong"),
+                )
+            )
+            slug = PurePosixPath(urlsplit(variant.normalized_url).path).name
+            if slug:
+                aliases.append(("slug", slug, "weak"))
+        if variant.normalized_title:
+            aliases.append(("title", variant.normalized_title, "weak"))
+    return tuple(dict.fromkeys(aliases))
+
+
 def _canonical_payload(value: CanonicalClassification | None) -> object | None:
     return asdict(value) if value is not None else None
 
@@ -1272,7 +1356,14 @@ class MySqlWorkflowStore:
                     resolved[item_key] = resolution.content_entity_id
                     continue
                 value = candidate.candidate
-                evidence = {"authority": "registry1_reconciliation", "run_id": int(run_id), "item_key": item_key}
+                occurrence_evidence = _registry1_occurrence_evidence(candidate)
+                evidence = {
+                    "authority": "registry1_reconciliation",
+                    "candidate_key": candidate.key,
+                    "run_id": int(run_id),
+                    "item_key": item_key,
+                    "provenance": occurrence_evidence,
+                }
                 try:
                     cursor.execute(
                         """
@@ -1297,17 +1388,7 @@ class MySqlWorkflowStore:
                         raise RepositoryError("IDENTITY_COLLISION") from None
                     resolved[item_key] = int(recovered.content_entity_id)
                     continue
-                alias_values = []
-                if value.material_id:
-                    alias_values.append(("material_id", value.material_id, "strong"))
-                if value.url:
-                    alias_values.extend((("canonical_url", value.url, "strong"), ("url", value.url, "strong")))
-                    slug = PurePosixPath(urlsplit(value.url).path).name
-                    if slug:
-                        alias_values.append(("slug", slug, "weak"))
-                if value.title:
-                    alias_values.append(("title", value.title, "weak"))
-                for alias_type, alias_value, strength in alias_values:
+                for alias_type, alias_value, strength in _registry1_alias_values(candidate):
                     try:
                         cursor.execute(
                             """

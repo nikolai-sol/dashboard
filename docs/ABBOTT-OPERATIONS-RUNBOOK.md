@@ -969,6 +969,13 @@ agents/abbott_page_classifier/run_weekly_proposal.sh \
   --execute --execute-llm
 ```
 
+Before manual approval, confirm that unmatched Registry 2-only materials are
+listed on `Не определено` with readiness `rejected` and reason/conflict code
+`REGISTRY1_IDENTITY_REQUIRED`. Their `registry2_values` are retained as
+evidence, but the workflow must report no created canonical entity for those
+rows. Resolve them by adding/reviewing the identity in a subsequent Registry 1
+capture; do not convert Registry 2 acceptance into identity authority.
+
 The separately authorized post-approval stages use two additional, isolated
 roles. Candidate materialization and its gate reads require
 `ABBOTT_CONTENT_MATERIALIZER_DB_HOST`, `_PORT`, `_NAME=report_bd`, `_USER`, and

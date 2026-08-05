@@ -212,6 +212,57 @@ class WeeklyProposalServiceTests(unittest.TestCase):
         self.assertIsNotNone(item.registry2)
         self.assertFalse(item.identity_conflict)
 
+    def test_registry2_only_identity_is_rejected_without_entity_creation(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            directory = Path(temporary)
+            registry1 = directory / "registry1.xlsx"
+            workbook = Workbook()
+            sheet = workbook.active
+            sheet.title = "кардио"
+            sheet.append(
+                ("ID", "Название", "ссылка", "Направление", "Тип контента")
+            )
+            workbook.save(registry1)
+            registry2 = directory / "registry2.csv"
+            registry2.write_text(
+                "ID,Название,URL,Направление,Тип материала\n"
+                "900,Новый материал,https://abbottpro.ru/cardio/new,"
+                "Кардиология,Статьи\n",
+                encoding="utf-8",
+            )
+            store = StatefulWorkflowStore(context())
+            service = CanonicalWeeklyProposalService(store, CONFIG)
+            run = service.reconcile(registry1, registry2)
+            replay = CanonicalWeeklyProposalService(store, CONFIG).reconcile(
+                registry1, registry2
+            )
+            receipt = service.classify(run.run_id, execute_llm=True)
+
+        persisted = store.load_reconciliation_run(run.run_id)
+        self.assertEqual(run.run_id, replay.run_id)
+        self.assertEqual(len(persisted.items), 1)
+        source_item = persisted.items[0]
+        self.assertEqual(source_item.identity_status, "rejected")
+        self.assertIsNone(source_item.reconciliation_input.registry1)
+        self.assertIsNotNone(source_item.reconciliation_input.registry2)
+        self.assertEqual(
+            source_item.reconciliation_input.rejection_code,
+            "REGISTRY1_IDENTITY_REQUIRED",
+        )
+        self.assertEqual(receipt.ready_count, 0)
+        self.assertEqual(receipt.rejected_count, 1)
+        self.assertEqual(store.entity_creations, [])
+        batch_item = store.batches_by_run[run.run_id].batch.items[0]
+        self.assertEqual(batch_item.readiness_state, "rejected")
+        self.assertEqual(
+            batch_item.decision_reason, "REGISTRY1_IDENTITY_REQUIRED"
+        )
+        self.assertIn(
+            "REGISTRY1_IDENTITY_REQUIRED",
+            tuple(code.value for code in batch_item.conflict_codes),
+        )
+        self.assertIsNotNone(batch_item.registry2_values)
+
     def test_differing_new_strong_evidence_is_identity_collision(self):
         with tempfile.TemporaryDirectory() as temporary:
             registry1, registry2 = write_sources(
