@@ -30,7 +30,13 @@ from .llm_classifier import LlmAttempt, LlmClassification, LlmUsage
 from .normalization import normalize_taxonomy_label, normalize_title, normalize_url, sha256_text
 from .reconcile import ReconciliationInput, reconcile_entity
 from .repository import ContentRegistryRepository, DATASET_KEY, RepositoryError
-from .sources import SourceCandidate, SourceIdentityVariant, SourceProvenance, SourceSnapshot
+from .sources import (
+    RejectedSourceRow,
+    SourceCandidate,
+    SourceIdentityVariant,
+    SourceProvenance,
+    SourceSnapshot,
+)
 from .workflow_service import (
     REGISTRY1_PARSER_VERSION,
     REGISTRY2_PARSER_VERSION,
@@ -118,8 +124,25 @@ def _proposal_from_payload(value: object | None) -> Proposal | None:
         raise RepositoryError("RECONCILIATION_ITEM_INVALID") from None
 
 
+def _rejected_source_from_payload(value: object | None) -> RejectedSourceRow | None:
+    value = _json_value(value)
+    if value is None:
+        return None
+    if not isinstance(value, Mapping):
+        raise RepositoryError("RECONCILIATION_ITEM_INVALID")
+    try:
+        return RejectedSourceRow(
+            source_name=str(value["source_name"]),
+            source_row_id=str(value["source_row_id"]),
+            reason_code=str(value["reason_code"]),
+            source_fingerprint=str(value["source_fingerprint"]),
+        )
+    except (KeyError, TypeError, ValueError):
+        raise RepositoryError("RECONCILIATION_ITEM_INVALID") from None
+
+
 def _input_payload(value: ReconciliationInput) -> dict[str, object]:
-    return {
+    payload = {
         "content_entity_id": value.content_entity_id,
         "active_canonical": _canonical_payload(value.active_canonical),
         "reviewed_correction": _proposal_payload(value.reviewed_correction),
@@ -134,6 +157,9 @@ def _input_payload(value: ReconciliationInput) -> dict[str, object]:
         "explicit_archive_override": value.explicit_archive_override,
         "http_status": value.http_status,
     }
+    if value.rejected_source_row is not None:
+        payload["rejected_source_row"] = asdict(value.rejected_source_row)
+    return payload
 
 
 def _input_from_payload(value: object) -> ReconciliationInput:
@@ -153,6 +179,9 @@ def _input_from_payload(value: object) -> ReconciliationInput:
             identity_conflict=bool(value.get("identity_conflict")),
             content_available=bool(value.get("content_available", True)),
             rejection_code=(str(value["rejection_code"]) if value.get("rejection_code") else None),
+            rejected_source_row=_rejected_source_from_payload(
+                value.get("rejected_source_row")
+            ),
             explicit_archive_override=bool(value.get("explicit_archive_override")),
             http_status=(int(value["http_status"]) if value.get("http_status") is not None else None),
         )

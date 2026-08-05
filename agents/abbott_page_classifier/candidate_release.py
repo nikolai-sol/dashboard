@@ -7,7 +7,7 @@ release-operator role; activation and active-pointer changes remain out of scope
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import date, datetime, time, timezone
 from decimal import Decimal, InvalidOperation
 import hashlib
@@ -1279,8 +1279,66 @@ def _overlay_current_batch_events(
         event_kind = str(event.get("event_kind") or "")
         if event_kind not in {"approve", "correct", "revoke"}:
             raise CandidateMaterializationError("CURRENT_BATCH_EVENT_INVALID")
+        matched = [row for row in result if _event_matches_predecessor(event, row)]
         result = [row for row in result if not _event_matches_predecessor(event, row)]
-        if event_kind != "revoke":
+        if event_kind != "revoke" and matched:
+            try:
+                event_id = int(event["classification_event_id"])
+                event_fingerprint = str(event["event_fingerprint"])
+                effective_at = event["effective_at"]
+                direction_code = str(event["direction_code"])
+                material_type_code = str(event["material_type_code"])
+                access_code = str(event["access_code"])
+                lifecycle_code = str(event["lifecycle_code"])
+                direction_label = str(event["direction_label"])
+                material_type_label = str(event["material_type_label"])
+                access_label = str(event["access_label"])
+                lifecycle_label = str(event["lifecycle_label"])
+            except (KeyError, TypeError, ValueError):
+                raise CandidateMaterializationError(
+                    "EFFECTIVE_CLASSIFICATION_INVALID"
+                ) from None
+            if (
+                event_id <= 0
+                or len(event_fingerprint) != 64
+                or effective_at is None
+                or not all(
+                    (
+                        direction_code,
+                        material_type_code,
+                        access_code,
+                        lifecycle_code,
+                        direction_label,
+                        material_type_label,
+                        access_label,
+                        lifecycle_label,
+                    )
+                )
+            ):
+                raise CandidateMaterializationError(
+                    "EFFECTIVE_CLASSIFICATION_INVALID"
+                )
+            result.extend(
+                replace(
+                    row,
+                    material_type=material_type_label,
+                    access_label=access_label,
+                    is_active=lifecycle_code != "archived",
+                    direction_key=direction_label,
+                    valid_from=effective_at,
+                    valid_to=None,
+                    classification_event_id=event_id,
+                    classification_event_fingerprint=event_fingerprint,
+                    direction_code=direction_code,
+                    material_type_code=material_type_code,
+                    access_code=access_code,
+                    lifecycle_code=lifecycle_code,
+                    lifecycle_label=lifecycle_label,
+                    provenance_mode="current_batch_event",
+                )
+                for row in matched
+            )
+        elif event_kind != "revoke":
             result.extend(_catalog_rows((event,)))
     strong_keys: dict[tuple[str, str], int] = {}
     for row in result:

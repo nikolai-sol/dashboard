@@ -997,13 +997,16 @@ class CandidateReleaseTest(unittest.TestCase):
         first_catalog_row = next(
             row for row in connection.catalog_rows if row[12] == "Кардиология [262338]"
         )
-        self.assertEqual(first_catalog_row[2], "https://abbottpro.ru/cardio/source-alpha")
-        self.assertEqual(first_catalog_row[5], "Source Alpha")
-        self.assertEqual(first_catalog_row[6], "source-100")
-        self.assertEqual(first_catalog_row[8], "source-alpha")
+        self.assertEqual(first_catalog_row[2], "https://abbottpro.ru/cardio/alpha")
+        self.assertEqual(first_catalog_row[5], "Alpha")
+        self.assertEqual(first_catalog_row[6], "100")
+        self.assertEqual(first_catalog_row[8], "alpha")
         self.assertEqual(first_catalog_row[14], "1" * 64)
         self.assertEqual(first_catalog_row[15], "cardio")
-        self.assertEqual(first_catalog_row[17], datetime(2026, 7, 31, 9, 0, 0))
+        self.assertEqual(first_catalog_row[17], datetime(2026, 7, 1))
+        provenance = json.loads(first_catalog_row[23])
+        self.assertEqual(provenance["predecessor_catalog_row_id"], 1001)
+        self.assertEqual(provenance["source_row_fingerprint"], "1" * 64)
 
     def test_materialization_derives_only_from_predecessor_and_current_batch(self):
         connection = CandidateConnection()
@@ -1032,6 +1035,73 @@ class CandidateReleaseTest(unittest.TestCase):
         self.assertIn("batch.source_snapshot_digests", sql)
         self.assertIn("'$.registry1.material_id'", sql)
         self.assertIn("'$.registry2.material_id'", sql)
+
+    def test_accepted_overlay_preserves_every_predecessor_occurrence(self):
+        connection = CandidateConnection()
+        first = connection.predecessor_catalog[0]
+        connection.predecessor_catalog.insert(
+            1,
+            {
+                **first,
+                "id": 1003,
+                "normalized_url": "https://abbottpro.ru/cardio/alpha-print",
+                "normalized_url_hash": sha256_text(
+                    "https://abbottpro.ru/cardio/alpha-print"
+                ),
+                "normalized_path": "/cardio/alpha-print",
+                "page_title": "Alpha print",
+                "source_slug": "alpha-print",
+                "source_slug_hash": sha256_text("alpha-print"),
+                "source_row_ordinal": 8,
+                "source_row_fingerprint": "6" * 64,
+            },
+        )
+        with (
+            patch(
+                "agents.abbott_page_classifier.candidate_release.get_db_connection",
+                return_value=connection,
+            ),
+            patch(
+                "agents.abbott_page_classifier.candidate_release.release_store.create_candidate_release",
+                return_value=41,
+            ),
+            patch(
+                "agents.abbott_page_classifier.candidate_release.release_store.require_mutable_candidate_release",
+                return_value={"id": 41, "release_status": "staging"},
+            ),
+        ):
+            result = materialize_content_candidate(71, 12, "abc1234")
+
+        entity_rows = [
+            row for row in connection.catalog_rows if row[20] == 1
+        ]
+        self.assertEqual(result.catalog_row_count, 3)
+        self.assertEqual(len(entity_rows), 2)
+        self.assertEqual(
+            {(row[2], row[13], row[14]) for row in entity_rows},
+            {
+                (
+                    "https://abbottpro.ru/cardio/alpha",
+                    7,
+                    "1" * 64,
+                ),
+                (
+                    "https://abbottpro.ru/cardio/alpha-print",
+                    8,
+                    "6" * 64,
+                ),
+            },
+        )
+        self.assertEqual({row[21] for row in entity_rows}, {501})
+        fingerprints = {row[22] for row in entity_rows}
+        self.assertEqual(len(fingerprints), 1)
+        self.assertEqual(len(next(iter(fingerprints))), 64)
+        self.assertNotEqual(fingerprints, {"3" * 64})
+        provenances = [json.loads(row[23]) for row in entity_rows]
+        self.assertEqual(
+            {item["predecessor_catalog_row_id"] for item in provenances},
+            {1001, 1003},
+        )
 
     def test_catalog_insert_has_exact_mysql_schema_and_parameter_arity(self):
         connection = CandidateConnection()
