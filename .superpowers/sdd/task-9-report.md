@@ -163,6 +163,7 @@ dashboard-next npm test: 532 tests, all passed
 dashboard-next lint: 0 errors (4 unchanged warnings)
 dashboard-next typecheck: passed
 dashboard-next public-asset scan: passed
+dashboard-next production build: passed
 Python py_compile: passed
 git diff --check: passed
 ```
@@ -170,7 +171,10 @@ git diff --check: passed
 The first full root discovery ran 781 tests with five rehearsal-contract
 failures because the committed nested migration revision had not yet been
 recorded in the root gitlink. This is an expected attestation gate, not a schema
-or runtime failure; it is rerun after the root report-bearing commit.
+or runtime failure. After root implementation commit
+`43c940a165aebe594e7aac51d6e4aebca91c8e98` recorded nested commit `13b1554`,
+the focused rehearsal contract passed 17/17 and full root discovery passed
+783/783.
 
 ### Deferred live work and concerns
 
