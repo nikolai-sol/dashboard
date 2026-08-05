@@ -353,6 +353,11 @@ class AdapterTests(unittest.TestCase):
             "+43\u200b1\u2060234\u200e567",
             "+43\u202a1\u202c234567",
             "+43\u20111\u2011234567",
+            "+43%0A1%09234567",
+            "+43&#9;1 234567",
+            "+43\ufe0f1\ufe0f234567",
+            "+43\u034f1\u034f234567",
+            "+43：1・234567",
             "+43 1 234567",
             "+43 12345",
             "raw%2525252555ser%2525252549d=42",
@@ -379,6 +384,31 @@ class AdapterTests(unittest.TestCase):
         )
         self.assertEqual(allowed.status, "success")
         self.assertEqual(len(allowed_client.responses.calls), 1)
+
+    def test_labeled_short_phone_numbers_never_construct_client(self):
+        cases = (
+            "tel:555-1212",
+            "Телефон: 123-45-67",
+            "phone&#58; 555.1212",
+            "telephone\\u003a 555/1212",
+            "тел: 123 4567",
+            "мобильный: 123-45-67",
+            "мобильн: 123-45-67",
+        )
+        for value in cases:
+            with self.subTest(value=value):
+                factory_calls = []
+
+                def factory(**kwargs):
+                    factory_calls.append(kwargs)
+                    return _FakeClient([_completed()])
+
+                result = OpenAIContentClassifier(client_factory=factory).classify(
+                    _request(content_excerpt=value), LLM_PRIMARY_MODEL
+                )
+                self.assertEqual(result.unresolved_code, "LLM_INPUT_REJECTED")
+                self.assertEqual(result.attempt_count, 0)
+                self.assertEqual(factory_calls, [])
 
     def test_sensitive_nested_example_key_is_rejected(self):
         client = _FakeClient([_completed()])

@@ -325,6 +325,11 @@ _SENSITIVE_LABEL = re.compile(
 _LABELED_VALUE = re.compile(r"(?:^|[?&#;\s])([^?&#;:=]{1,64})\s*[:=]")
 _BEARER_VALUE = re.compile(r"\bbearer\s+[A-Za-z0-9._~-]{8,}", re.IGNORECASE)
 _API_SECRET = re.compile(r"\bsk-[A-Za-z0-9_-]{8,}", re.IGNORECASE)
+_PHONE_LABEL = re.compile(
+    r"(?<!\w)(?:tel|telephone|phone|телефон|тел|мобильн\w*)\s*"
+    r"(?::|(?=\s))",
+    re.IGNORECASE,
+)
 
 
 def _decode_for_detection(value: str) -> str:
@@ -350,8 +355,17 @@ def _decode_for_detection(value: str) -> str:
     raise ValueError("privacy decoding did not converge")
 
 
+def _is_phone_continuity(character: str) -> bool:
+    category = unicodedata.category(character)
+    return (
+        character.isspace()
+        or character in "+−"
+        or category[0] in {"C", "M", "P", "Z"}
+    )
+
+
 def _has_phone_digit_run(value: str) -> bool:
-    """Detect international phone-like runs across ASCII and Unicode separators."""
+    """Detect phone-like runs across visible and invisible Unicode separators."""
 
     digits = 0
     in_run = False
@@ -363,18 +377,30 @@ def _has_phone_digit_run(value: str) -> bool:
             if digits >= (7 if plus_prefixed else 10):
                 return True
             continue
-        category = unicodedata.category(character)
-        is_separator = (
-            character in "+-()./"
-            or character in "‐‑‒–—−"
-            or category in {"Cf", "Pd"}
-            or category.startswith("Z")
-        )
-        if in_run and is_separator:
+        if in_run and _is_phone_continuity(character):
             continue
         digits = 0
         plus_prefixed = character == "+"
         in_run = plus_prefixed
+    return False
+
+
+def _has_labeled_phone(value: str) -> bool:
+    label_view = "".join(
+        character
+        for character in value.casefold()
+        if unicodedata.category(character)[0] not in {"C", "M"}
+    )
+    for match in _PHONE_LABEL.finditer(label_view):
+        fragment = label_view[match.end() : match.end() + 64]
+        digits = 0
+        for character in fragment:
+            if character.isdigit():
+                digits += 1
+                if digits >= 7:
+                    return True
+            elif not _is_phone_continuity(character):
+                break
     return False
 
 
@@ -412,6 +438,7 @@ def _text_has_denied_data(value: str) -> bool:
         any(marker in compact for marker in _PRIVATE_VALUE_MARKERS)
         or "@" in decoded
         or _has_phone_digit_run(decoded)
+        or _has_labeled_phone(decoded)
         or _SENSITIVE_LABEL.search(folded) is not None
         or has_denied_label
         or _BEARER_VALUE.search(decoded) is not None
