@@ -171,32 +171,27 @@ SET @sql := IF(
 );
 PREPARE stmt FROM @sql; EXECUTE stmt; DEALLOCATE PREPARE stmt;
 
--- Taxonomy v1 is content-addressed. Duplicate execution is a no-op only when
--- the reviewed digest, active status, codes, labels, and term statuses agree.
-INSERT INTO portal_content_taxonomy_versions (
-  dataset_key, version, taxonomy_digest, taxonomy_status, source_evidence, activated_at
-) VALUES (
-  'abbott',
-  'abbott.v1',
-  'd6a2bfc39d970a873e309223604f9ae7c37cd83d6c046c107eed08e73ec435d4',
-  'active',
-  JSON_OBJECT('authority', 'migration-047-reviewed-taxonomy-v1'),
-  CURRENT_TIMESTAMP(6)
-)
-ON DUPLICATE KEY UPDATE
-  taxonomy_digest = IF(taxonomy_digest = VALUES(taxonomy_digest), taxonomy_digest, NULL),
-  taxonomy_status = IF(taxonomy_status = VALUES(taxonomy_status), taxonomy_status, NULL);
-
+-- Taxonomy v1 is content-addressed. Existing state is attested completely
+-- before any canonical insert; migration replay never repairs or replaces it.
 SET @abbott_taxonomy_v1_id := (
   SELECT id
   FROM portal_content_taxonomy_versions
   WHERE dataset_key = 'abbott'
     AND version = 'abbott.v1'
-    AND taxonomy_digest = 'd6a2bfc39d970a873e309223604f9ae7c37cd83d6c046c107eed08e73ec435d4'
-    AND taxonomy_status = 'active'
 );
+SET @abbott_taxonomy_v1_preexisting := IF(@abbott_taxonomy_v1_id IS NULL, 0, 1);
 
-INSERT INTO portal_content_taxonomy_terms (
+DROP TEMPORARY TABLE IF EXISTS abbott_expected_taxonomy_v1_terms;
+CREATE TEMPORARY TABLE abbott_expected_taxonomy_v1_terms (
+  taxonomy_version_id BIGINT UNSIGNED DEFAULT NULL,
+  taxonomy_kind VARCHAR(64) NOT NULL,
+  term_code VARCHAR(128) NOT NULL,
+  term_label VARCHAR(255) NOT NULL,
+  term_status VARCHAR(32) NOT NULL,
+  source_evidence JSON NOT NULL
+) ENGINE=InnoDB;
+
+INSERT INTO abbott_expected_taxonomy_v1_terms (
   taxonomy_version_id, taxonomy_kind, term_code, term_label, term_status, source_evidence
 ) VALUES
   (@abbott_taxonomy_v1_id, 'direction', 'cardiology', 'Кардиология [262338]', 'active', JSON_OBJECT('authority', 'migration-047-reviewed-taxonomy-v1')),
@@ -238,8 +233,110 @@ INSERT INTO portal_content_taxonomy_terms (
   (@abbott_taxonomy_v1_id, 'lifecycle', 'active', 'active', 'active', JSON_OBJECT('authority', 'migration-047-reviewed-taxonomy-v1')),
   (@abbott_taxonomy_v1_id, 'lifecycle', 'archive_candidate', 'archive_candidate', 'active', JSON_OBJECT('authority', 'migration-047-reviewed-taxonomy-v1')),
   (@abbott_taxonomy_v1_id, 'lifecycle', 'archived', 'archived', 'active', JSON_OBJECT('authority', 'migration-047-reviewed-taxonomy-v1')),
-  (@abbott_taxonomy_v1_id, 'lifecycle', 'unknown', 'unknown', 'active', JSON_OBJECT('authority', 'migration-047-reviewed-taxonomy-v1'))
-ON DUPLICATE KEY UPDATE
-  taxonomy_kind = IF(taxonomy_kind = VALUES(taxonomy_kind), taxonomy_kind, NULL),
-  term_label = IF(term_label = VALUES(term_label), term_label, NULL),
-  term_status = IF(term_status = VALUES(term_status), term_status, NULL);
+  (@abbott_taxonomy_v1_id, 'lifecycle', 'unknown', 'unknown', 'active', JSON_OBJECT('authority', 'migration-047-reviewed-taxonomy-v1'));
+
+SET @abbott_taxonomy_v1_version_exact := IF(
+  @abbott_taxonomy_v1_preexisting = 0,
+  1,
+  (
+    SELECT COUNT(*) = 1
+    FROM portal_content_taxonomy_versions
+    WHERE id = @abbott_taxonomy_v1_id
+      AND dataset_key = 'abbott'
+      AND version = 'abbott.v1'
+      AND taxonomy_digest = 'd6a2bfc39d970a873e309223604f9ae7c37cd83d6c046c107eed08e73ec435d4'
+      AND taxonomy_status = 'active'
+      AND JSON_LENGTH(source_evidence) = 1
+      AND JSON_UNQUOTE(JSON_EXTRACT(source_evidence, '$.authority')) = 'migration-047-reviewed-taxonomy-v1'
+  )
+);
+SET @abbott_taxonomy_v1_actual_count := (
+  SELECT COUNT(*)
+  FROM portal_content_taxonomy_terms
+  WHERE taxonomy_version_id = @abbott_taxonomy_v1_id
+);
+SET @abbott_taxonomy_v1_expected_count := (
+  SELECT COUNT(*) FROM abbott_expected_taxonomy_v1_terms
+);
+SET @abbott_taxonomy_v1_mismatched_count := (
+  SELECT COUNT(*)
+  FROM portal_content_taxonomy_terms AS actual
+  LEFT JOIN abbott_expected_taxonomy_v1_terms AS expected
+    ON expected.taxonomy_kind = actual.taxonomy_kind
+   AND expected.term_code = actual.term_code
+  WHERE actual.taxonomy_version_id = @abbott_taxonomy_v1_id
+    AND (
+      expected.term_code IS NULL
+      OR actual.term_label <> expected.term_label
+      OR actual.term_status <> expected.term_status
+      OR NOT (
+        JSON_LENGTH(actual.source_evidence) = 1
+        AND JSON_UNQUOTE(JSON_EXTRACT(actual.source_evidence, '$.authority'))
+            <=> JSON_UNQUOTE(JSON_EXTRACT(expected.source_evidence, '$.authority'))
+      )
+    )
+);
+SET @abbott_taxonomy_v1_missing_count := (
+  SELECT COUNT(*)
+  FROM abbott_expected_taxonomy_v1_terms AS expected
+  LEFT JOIN portal_content_taxonomy_terms AS actual
+    ON actual.taxonomy_version_id = @abbott_taxonomy_v1_id
+   AND actual.taxonomy_kind = expected.taxonomy_kind
+   AND actual.term_code = expected.term_code
+  WHERE actual.id IS NULL
+);
+SET @abbott_taxonomy_v1_existing_exact := (
+  @abbott_taxonomy_v1_version_exact = 1
+  AND @abbott_taxonomy_v1_actual_count = @abbott_taxonomy_v1_expected_count
+  AND @abbott_taxonomy_v1_mismatched_count = 0
+  AND @abbott_taxonomy_v1_missing_count = 0
+);
+
+-- SIGNAL SQLSTATE '45000' on every non-exact pre-existing taxonomy shape.
+SET @sql := IF(
+  @abbott_taxonomy_v1_preexisting = 0 OR @abbott_taxonomy_v1_existing_exact = 1,
+  'SELECT ''taxonomy v1 pre-insert attestation passed'' AS info',
+  'SIGNAL SQLSTATE ''45000'' SET MESSAGE_TEXT = ''ABBOTT_TAXONOMY_V1_ATTESTATION_FAILED'''
+);
+PREPARE stmt FROM @sql; EXECUTE stmt; DEALLOCATE PREPARE stmt;
+
+INSERT INTO portal_content_taxonomy_versions (
+  dataset_key, version, taxonomy_digest, taxonomy_status, source_evidence, activated_at
+)
+SELECT
+  'abbott', 'abbott.v1',
+  'd6a2bfc39d970a873e309223604f9ae7c37cd83d6c046c107eed08e73ec435d4',
+  'active', JSON_OBJECT('authority', 'migration-047-reviewed-taxonomy-v1'),
+  CURRENT_TIMESTAMP(6)
+WHERE @abbott_taxonomy_v1_preexisting = 0;
+
+SET @abbott_taxonomy_v1_id := (
+  SELECT id
+  FROM portal_content_taxonomy_versions
+  WHERE dataset_key = 'abbott' AND version = 'abbott.v1'
+);
+
+INSERT INTO portal_content_taxonomy_terms (
+  taxonomy_version_id, taxonomy_kind, term_code, term_label, term_status, source_evidence
+)
+SELECT
+  @abbott_taxonomy_v1_id, taxonomy_kind, term_code, term_label, term_status,
+  source_evidence
+FROM abbott_expected_taxonomy_v1_terms
+WHERE @abbott_taxonomy_v1_preexisting = 0
+ORDER BY taxonomy_kind, term_code;
+
+SET @abbott_taxonomy_v1_final_count := (
+  SELECT COUNT(*)
+  FROM portal_content_taxonomy_terms
+  WHERE taxonomy_version_id = @abbott_taxonomy_v1_id
+);
+SET @sql := IF(
+  @abbott_taxonomy_v1_id IS NOT NULL
+    AND @abbott_taxonomy_v1_final_count = @abbott_taxonomy_v1_expected_count,
+  'SELECT ''taxonomy v1 final attestation passed'' AS info',
+  'SIGNAL SQLSTATE ''45000'' SET MESSAGE_TEXT = ''ABBOTT_TAXONOMY_V1_SEED_FAILED'''
+);
+PREPARE stmt FROM @sql; EXECUTE stmt; DEALLOCATE PREPARE stmt;
+
+DROP TEMPORARY TABLE abbott_expected_taxonomy_v1_terms;
