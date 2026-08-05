@@ -21,7 +21,7 @@ CREATE TABLE IF NOT EXISTS portal_content_registry_aliases (
   id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
   dataset_key VARCHAR(64) NOT NULL DEFAULT 'abbott',
   content_entity_id BIGINT UNSIGNED NOT NULL,
-  alias_type ENUM('material_id', 'url', 'path', 'source_row') NOT NULL,
+  alias_type ENUM('material_id', 'canonical_url', 'url', 'slug', 'title') NOT NULL,
   alias_value VARCHAR(2048) NOT NULL,
   alias_hash CHAR(64) NOT NULL,
   uniqueness_scope VARCHAR(191) NOT NULL,
@@ -35,7 +35,12 @@ CREATE TABLE IF NOT EXISTS portal_content_registry_aliases (
     FOREIGN KEY (dataset_key, content_entity_id)
     REFERENCES portal_content_registry_entities (dataset_key, id)
     ON DELETE RESTRICT,
-  CONSTRAINT chk_registry_alias_dataset CHECK (dataset_key = 'abbott')
+  CONSTRAINT chk_registry_alias_dataset CHECK (dataset_key = 'abbott'),
+  CONSTRAINT chk_registry_alias_scope CHECK (
+    (alias_type IN ('material_id', 'canonical_url', 'url') AND uniqueness_scope = 'strong')
+    OR
+    (alias_type IN ('slug', 'title') AND uniqueness_scope = 'weak')
+  )
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 CREATE TABLE IF NOT EXISTS portal_content_taxonomy_versions (
