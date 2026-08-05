@@ -49,6 +49,7 @@ MAX_SERIALIZED_INPUT_BYTES = 200_000
 MAX_PRIVACY_SCAN_CHARS = 200_000
 MAX_PRIVACY_DECODE_PASSES = 16
 MAX_PRIVACY_DECODE_WORK_CHARS = 1_000_000
+PHONE_LABEL_WINDOW_CHARS = 96
 
 SYSTEM_PROMPT_V1 = """Classify one Abbott professional-medical portal material.
 Use only the supplied material JSON and its requested_fields. Every field not named
@@ -326,8 +327,7 @@ _LABELED_VALUE = re.compile(r"(?:^|[?&#;\s])([^?&#;:=]{1,64})\s*[:=]")
 _BEARER_VALUE = re.compile(r"\bbearer\s+[A-Za-z0-9._~-]{8,}", re.IGNORECASE)
 _API_SECRET = re.compile(r"\bsk-[A-Za-z0-9_-]{8,}", re.IGNORECASE)
 _PHONE_LABEL = re.compile(
-    r"(?<!\w)(?:tel|telephone|phone|телефон|тел|мобильн\w*)\s*"
-    r"(?::|(?=\s))",
+    r"(?<!\w)(?:telephone|phone|tel|телефон|тел|мобильн\w*|моб)(?!\w)",
     re.IGNORECASE,
 )
 
@@ -364,7 +364,7 @@ def _is_phone_continuity(character: str) -> bool:
     )
 
 
-def _has_phone_digit_run(value: str) -> bool:
+def _has_phone_digit_run(value: str, *, minimum_digits: int = 10) -> bool:
     """Detect phone-like runs across visible and invisible Unicode separators."""
 
     digits = 0
@@ -374,7 +374,7 @@ def _has_phone_digit_run(value: str) -> bool:
         if character.isdigit():
             digits += 1
             in_run = True
-            if digits >= (7 if plus_prefixed else 10):
+            if digits >= (7 if plus_prefixed else minimum_digits):
                 return True
             continue
         if in_run and _is_phone_continuity(character):
@@ -392,15 +392,11 @@ def _has_labeled_phone(value: str) -> bool:
         if unicodedata.category(character)[0] not in {"C", "M"}
     )
     for match in _PHONE_LABEL.finditer(label_view):
-        fragment = label_view[match.end() : match.end() + 64]
-        digits = 0
-        for character in fragment:
-            if character.isdigit():
-                digits += 1
-                if digits >= 7:
-                    return True
-            elif not _is_phone_continuity(character):
-                break
+        fragment = label_view[
+            match.end() : match.end() + PHONE_LABEL_WINDOW_CHARS
+        ]
+        if _has_phone_digit_run(fragment, minimum_digits=7):
+            return True
     return False
 
 

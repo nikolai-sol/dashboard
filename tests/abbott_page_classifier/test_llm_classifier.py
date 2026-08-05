@@ -378,6 +378,19 @@ class AdapterTests(unittest.TestCase):
                 self.assertEqual(result.attempt_count, 0)
                 self.assertEqual(factory_calls, [])
 
+        for value in (
+            "hotel. 555-1212",
+            "smartphone no. 555-1212",
+            "tel " + "." * 96 + "555-1212",
+        ):
+            with self.subTest(allowed=value):
+                client = _FakeClient([_completed()])
+                result = OpenAIContentClassifier(client=client).classify(
+                    _request(content_excerpt=value), LLM_PRIMARY_MODEL
+                )
+                self.assertEqual(result.status, "success")
+                self.assertEqual(len(client.responses.calls), 1)
+
         allowed_client = _FakeClient([_completed()])
         allowed = OpenAIContentClassifier(client=allowed_client).classify(
             _request(content_excerpt="Reference number 1234567"), LLM_PRIMARY_MODEL
@@ -388,9 +401,19 @@ class AdapterTests(unittest.TestCase):
     def test_labeled_short_phone_numbers_never_construct_client(self):
         cases = (
             "tel:555-1212",
+            "tel. 555-1212",
             "Телефон: 123-45-67",
+            "тел. 123-45-67",
+            "моб. 123-45-67",
+            "Phone No. 555-1212",
+            "telephone number 555-1212",
             "phone&#58; 555.1212",
             "telephone\\u003a 555/1212",
+            "PH%4FNE%20N%6F%2E%20555%2D1212",
+            "ТЕЛ&#46;&#9;123—45—67",
+            "моб\u034f.\ufe0f 123-45-67",
+            "(TeLePhOnE) n: 555·1212",
+            "tel " + "." * 80 + "555-1212",
             "тел: 123 4567",
             "мобильный: 123-45-67",
             "мобильн: 123-45-67",
