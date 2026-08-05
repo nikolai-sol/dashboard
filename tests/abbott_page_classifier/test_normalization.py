@@ -47,6 +47,10 @@ class NormalizationTests(unittest.TestCase):
         self.assertEqual(result.path, "/%D0%BA%D0%B0%D1%80%D0%B4%D0%B8%D0%BE")
         self.assertEqual(result.path_sha256, sha256_text(result.path))
 
+    def test_url_normalization_escapes_a_literal_percent_sign(self):
+        result = normalize_url("https://abbottpro.ru/cardio/100%")
+        self.assertEqual(result.value, "https://abbottpro.ru/cardio/100%25")
+
     def test_title_and_hash_normalization_are_stable(self):
         self.assertEqual(normalize_title("  Тема\u00a0\u00a0материала  "), "Тема материала")
         self.assertEqual(

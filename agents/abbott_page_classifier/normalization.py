@@ -117,7 +117,7 @@ def _is_tracking_query_key(key: str) -> bool:
 
 def _normalize_path(path: str) -> str:
     decoded = unquote(path or "/")
-    normalized = quote(decoded, safe="/%:@!$&'()*+,;=-._~")
+    normalized = quote(decoded, safe="/:@!$&'()*+,;=-._~")
     return normalized.rstrip("/") or "/"
 
 
