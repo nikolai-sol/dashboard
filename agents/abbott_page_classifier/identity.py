@@ -4,10 +4,15 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from typing import Iterable, Literal
-from urllib.parse import unquote, urlsplit
+from urllib.parse import urlsplit
 
 from .domain import CanonicalClassification, MaterialCandidate
-from .normalization import normalize_title, normalize_url, sha256_text
+from .normalization import (
+    _RESERVED_PATH_CHARACTERS,
+    normalize_title,
+    normalize_url,
+    sha256_text,
+)
 from .sources import SourceCandidate
 
 
@@ -34,7 +39,47 @@ class IdentityResolution:
 
 
 def _normalize_slug(value: str) -> str:
-    return normalize_title(unquote(value or "")).strip("/").casefold()
+    normalized = normalize_title(value or "").strip("/")
+    if not normalized:
+        return ""
+    canonical_path = normalize_url(f"/{normalized}").path.strip("/")
+    decoded: list[str] = []
+    index = 0
+    while index < len(canonical_path):
+        if (
+            canonical_path[index] != "%"
+            or index + 2 >= len(canonical_path)
+            or any(character not in "0123456789abcdefABCDEF" for character in canonical_path[index + 1 : index + 3])
+        ):
+            decoded.append(canonical_path[index])
+            index += 1
+            continue
+
+        byte_value = int(canonical_path[index + 1 : index + 3], 16)
+        if chr(byte_value) in _RESERVED_PATH_CHARACTERS:
+            decoded.append(canonical_path[index : index + 3])
+            index += 3
+            continue
+
+        encoded_bytes = bytearray()
+        encoded_text: list[str] = []
+        while (
+            index + 2 < len(canonical_path)
+            and canonical_path[index] == "%"
+            and all(character in "0123456789abcdefABCDEF" for character in canonical_path[index + 1 : index + 3])
+        ):
+            byte_value = int(canonical_path[index + 1 : index + 3], 16)
+            if chr(byte_value) in _RESERVED_PATH_CHARACTERS:
+                break
+            encoded_bytes.append(byte_value)
+            encoded_text.append(canonical_path[index : index + 3])
+            index += 3
+        try:
+            decoded.append(bytes(encoded_bytes).decode("utf-8"))
+        except UnicodeDecodeError:
+            decoded.extend(encoded_text)
+
+    return normalize_title("".join(decoded)).casefold()
 
 
 def _normalized_alias_value(alias_kind: str, value: str) -> str:

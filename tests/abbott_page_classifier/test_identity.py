@@ -131,6 +131,41 @@ class IdentityResolverTests(unittest.TestCase):
 
         self.assertEqual((result.status, result.content_entity_id, result.matched_by), ("matched", 41, "slug"))
 
+    def test_slug_keeps_encoded_reserved_delimiter_distinct_from_path_separator(self):
+        entities = (
+            entity(41, url="https://abbottpro.ru/cardio/existing-encoded/"),
+            entity(42, url="https://abbottpro.ru/cardio/existing-structural/"),
+        )
+        encoded_alias = IdentityAlias(41, "slug", "a%2Fb", "weak")
+        structural_alias = IdentityAlias(42, "slug", "a/b", "weak")
+
+        for aliases in (
+            (encoded_alias, structural_alias),
+            (structural_alias, encoded_alias),
+        ):
+            result = self.resolver.resolve(
+                candidate(url="https://abbottpro.ru/cardio/a%2Fb"),
+                entities,
+                aliases,
+            )
+
+            self.assertEqual((result.status, result.content_entity_id, result.matched_by), ("matched", 41, "slug"))
+
+    def test_parent_context_keeps_encoded_reserved_delimiter_non_structural(self):
+        incompatible = self.resolver.resolve(
+            candidate(url="https://abbottpro.ru/a%2Fb/shared"),
+            (entity(41, url="https://abbottpro.ru/a/b/existing"),),
+            (IdentityAlias(41, "slug", "shared", "weak"),),
+        )
+        compatible = self.resolver.resolve(
+            candidate(url="https://abbottpro.ru/a%2Fb/shared"),
+            (entity(41, url="https://abbottpro.ru/a%2Fb/existing"),),
+            (IdentityAlias(41, "slug", "shared", "weak"),),
+        )
+
+        self.assertEqual((incompatible.status, incompatible.content_entity_id), ("new_candidate", None))
+        self.assertEqual((compatible.status, compatible.content_entity_id, compatible.matched_by), ("matched", 41, "slug"))
+
     def test_unique_normalized_title_and_type_matches(self):
         result = self.resolver.resolve(
             candidate(title="  ТЕМА\u00a0материала  "),
