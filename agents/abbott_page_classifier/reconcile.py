@@ -376,7 +376,6 @@ def _registry2_archive_evidence(
 ) -> tuple[bool, bool]:
     if value is None:
         return False, False
-    item = _candidate(value)
 
     raw_material_types = {
         _raw_key(variant.raw_material_type)
@@ -390,18 +389,16 @@ def _registry2_archive_evidence(
     }
     material_archive = "архив" in raw_material_types
     status_archive = "архив" in raw_statuses
-    archive_requested = material_archive or status_archive
+    lifecycle_archive = any(
+        variant.lifecycle_code in {"archive_candidate", "archived"}
+        for variant in value.identity_variants
+    )
+    archive_requested = material_archive or status_archive or lifecycle_archive
     ambiguous = (
         (material_archive and len(raw_material_types) > 1)
         or (status_archive and len(raw_statuses) > 1)
+        or (lifecycle_archive and not status_archive)
     )
-    if (
-        item is not None
-        and item.lifecycle_code in {"archive_candidate", "archived"}
-        and not status_archive
-    ):
-        archive_requested = True
-        ambiguous = True
     return archive_requested, ambiguous
 
 

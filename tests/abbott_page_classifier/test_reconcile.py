@@ -634,6 +634,39 @@ class ReconciliationTests(unittest.TestCase):
         self.assertEqual(item.readiness_state, "conflict")
         self.assertIn(ConflictCode.ARCHIVE_TYPE_INVALID, item.conflict_codes)
 
+    def test_registry2_lifecycle_alias_conflict_is_row_order_independent(self) -> None:
+        for raw_archive, normalized_archive in (
+            ("Кандидат в архив", "archive_candidate"),
+            ("Архивирован", "archived"),
+            ("inactive", "archive_candidate"),
+        ):
+            for statuses in ((raw_archive, "active"), ("active", raw_archive)):
+                with self.subTest(raw_archive=raw_archive, statuses=statuses):
+                    with tempfile.TemporaryDirectory() as temporary_directory:
+                        fixture = Path(temporary_directory) / "registry2.csv"
+                        fixture.write_text(
+                            "ID,Название,URL,Направление,Доступ,"
+                            "Тип материала,page_status\n"
+                            "303,Первый,https://abbottpro.ru/a,"
+                            f"Кардиология,Все,Статьи,{statuses[0]}\n"
+                            "303,Второй,https://abbottpro.ru/b,"
+                            f"Кардиология,Все,Статьи,{statuses[1]}\n",
+                            encoding="utf-8",
+                        )
+                        registry2 = read_registry2_csv(fixture).candidates[0]
+
+                    self.assertEqual(
+                        {variant.lifecycle_code for variant in registry2.identity_variants},
+                        {"active", normalized_archive},
+                    )
+                    item = reconcile_entity(ReconciliationInput(registry2=registry2))
+
+                    self.assertEqual(item.readiness_state, "conflict")
+                    self.assertEqual(
+                        item.conflict_codes,
+                        (ConflictCode.ARCHIVE_TYPE_INVALID,),
+                    )
+
     def test_page_status_archive_requires_attestation_before_lifecycle_change(self) -> None:
         with tempfile.TemporaryDirectory() as temporary_directory:
             fixture = Path(temporary_directory) / "registry2.csv"
