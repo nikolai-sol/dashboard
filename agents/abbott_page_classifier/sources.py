@@ -44,7 +44,7 @@ _FIELD_ALIASES: Mapping[str, tuple[str, ...]] = MappingProxyType(
         "direction": ("direction", "направление", "направления"),
         "access": ("access", "доступ"),
         "material_type": ("materialtype", "типконтента", "типматериала"),
-        "lifecycle": ("lifecycle", "статус", "активность"),
+        "lifecycle": ("lifecycle", "pagestatus", "статус", "активность"),
     }
 )
 
@@ -84,6 +84,15 @@ class SourceIdentityVariant:
     normalized_url: str
     normalized_title: str
     material_type_code: str | None
+    raw_material_type: str = ""
+    raw_status: str = ""
+
+
+@dataclass(frozen=True)
+class _CandidateOccurrence:
+    candidate: MaterialCandidate
+    raw_material_type: str
+    raw_status: str
 
 
 @dataclass(frozen=True)
@@ -200,8 +209,12 @@ def _field_values(headers: Sequence[object], values: Sequence[object]) -> dict[s
 
 
 def _build_candidate(
-    *, source_name: str, source_row_id: str, values: Mapping[str, str], fallback_direction: str | None = None
-) -> MaterialCandidate:
+    *,
+    source_name: str,
+    source_row_id: str,
+    values: Mapping[str, str],
+    fallback_direction: str | None = None,
+) -> _CandidateOccurrence:
     title = values["title"]
     normalized_url = normalize_url(values["url"])
     material_id = values["material_id"] or None
@@ -211,23 +224,39 @@ def _build_candidate(
         "title": title,
         "url": normalized_url.value,
         "material_id": material_id,
-        "direction_code": normalize_taxonomy_label("direction", values["direction"]) or fallback_direction,
-        "material_type_code": normalize_taxonomy_label("material_type", values["material_type"]),
+        "direction_code": normalize_taxonomy_label("direction", values["direction"])
+        or fallback_direction,
+        "material_type_code": normalize_taxonomy_label(
+            "material_type", values["material_type"]
+        ),
         "access_code": normalize_taxonomy_label("access", values["access"]),
         "lifecycle_code": _lifecycle(values["lifecycle"]),
     }
-    return MaterialCandidate(**payload, source_fingerprint=sha256_text(_canonical_json(payload)))
+    fingerprint_payload = {
+        **payload,
+        "raw_material_type": values["material_type"],
+        "raw_status": values["lifecycle"],
+    }
+    return _CandidateOccurrence(
+        candidate=MaterialCandidate(
+            **payload,
+            source_fingerprint=sha256_text(_canonical_json(fingerprint_payload)),
+        ),
+        raw_material_type=values["material_type"],
+        raw_status=values["lifecycle"],
+    )
 
 
 def _snapshot_from_candidates(
     source_name: str,
     raw_row_count: int,
-    candidates: Iterable[MaterialCandidate],
+    candidates: Iterable[_CandidateOccurrence],
     rejected_rows: Iterable[RejectedSourceRow],
 ) -> SourceSnapshot:
     grouped: dict[str, SourceCandidate] = {}
     duplicate_collapsed_count = 0
-    for candidate in candidates:
+    for occurrence in candidates:
+        candidate = occurrence.candidate
         key = _source_key(candidate)
         if key is None:
             raise ValueError("CANDIDATE_WITHOUT_IDENTITY")
@@ -242,6 +271,8 @@ def _snapshot_from_candidates(
             normalized_url=normalize_url(candidate.url).value,
             normalized_title=normalize_title(candidate.title),
             material_type_code=candidate.material_type_code,
+            raw_material_type=occurrence.raw_material_type,
+            raw_status=occurrence.raw_status,
         )
         existing = grouped.get(key)
         if existing is None:
@@ -299,7 +330,7 @@ def read_registry1(path: Path) -> SourceSnapshot:
     """Read the supplied Registry 1 workbook without contacting any source API."""
 
     workbook = load_workbook(path, read_only=True, data_only=True)
-    candidates: list[MaterialCandidate] = []
+    candidates: list[_CandidateOccurrence] = []
     rejected: list[RejectedSourceRow] = []
     raw_row_count = 0
     try:
@@ -315,12 +346,13 @@ def read_registry1(path: Path) -> SourceSnapshot:
                 raw_row_count += 1
                 source_row_id = f"registry1:{sheet.title}:{ordinal}"
                 values = _field_values(headers, row)
-                candidate = _build_candidate(
+                occurrence = _build_candidate(
                     source_name="registry1",
                     source_row_id=source_row_id,
                     values=values,
                     fallback_direction=fallback_direction,
                 )
+                candidate = occurrence.candidate
                 if _source_key(candidate) is None:
                     rejected.append(
                         RejectedSourceRow(
@@ -331,7 +363,7 @@ def read_registry1(path: Path) -> SourceSnapshot:
                         )
                     )
                 else:
-                    candidates.append(candidate)
+                    candidates.append(occurrence)
     finally:
         workbook.close()
     return _snapshot_from_candidates("registry1", raw_row_count, candidates, rejected)
@@ -357,14 +389,15 @@ def _read_registry2_rows(path: Path) -> list[tuple[str, dict[str, str]]]:
 def read_registry2_csv(path: Path) -> SourceSnapshot:
     """Read a captured Registry 2 CSV or JSON snapshot, never a live Sheet."""
 
-    candidates: list[MaterialCandidate] = []
+    candidates: list[_CandidateOccurrence] = []
     rejected: list[RejectedSourceRow] = []
     rows = _read_registry2_rows(path)
     for source_row_id, raw_row in rows:
         values = _field_values(tuple(raw_row), tuple(raw_row.values()))
-        candidate = _build_candidate(
+        occurrence = _build_candidate(
             source_name="registry2", source_row_id=source_row_id, values=values
         )
+        candidate = occurrence.candidate
         if _source_key(candidate) is None:
             rejected.append(
                 RejectedSourceRow(
@@ -375,7 +408,7 @@ def read_registry2_csv(path: Path) -> SourceSnapshot:
                 )
             )
         else:
-            candidates.append(candidate)
+            candidates.append(occurrence)
     return _snapshot_from_candidates("registry2", len(rows), candidates, rejected)
 
 

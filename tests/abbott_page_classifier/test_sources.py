@@ -137,6 +137,63 @@ class RegistrySourceReaderTests(unittest.TestCase):
         self.assertEqual(snapshot.outcome_count, snapshot.source_row_count)
         self.assertEqual(len(snapshot.source_hash), 64)
 
+    def test_registry2_retains_raw_material_type_and_page_status_per_occurrence(self):
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            fixture = Path(temporary_directory) / "registry2.csv"
+            fixture.write_text(
+                "ID,Название,URL,Направление,Тип материала,page_status\n"
+                "200,Первый,https://abbottpro.ru/a,Кардиология,Архив,active\n"
+                "200,Второй,https://abbottpro.ru/b,Кардиология,Статьи,Архив\n",
+                encoding="utf-8",
+            )
+
+            collapsed = read_registry2_csv(fixture).candidates_by_key["material:200"]
+
+        self.assertEqual(
+            tuple(
+                (variant.raw_material_type, variant.raw_status)
+                for variant in collapsed.identity_variants
+            ),
+            (("Архив", "active"), ("Статьи", "Архив")),
+        )
+
+    def test_registry2_page_status_alias_maps_archive_lifecycle(self):
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            fixture = Path(temporary_directory) / "registry2.csv"
+            fixture.write_text(
+                "ID,Название,URL,Направление,Тип контента,page_status\n"
+                "201,Архивная статья,https://abbottpro.ru/archive,"
+                "Кардиология,Статьи,Архив\n",
+                encoding="utf-8",
+            )
+
+            item = read_registry2_csv(fixture).candidates_by_key["material:201"]
+
+        self.assertEqual(item.lifecycle_code, "archive_candidate")
+        self.assertEqual(item.identity_variants[0].raw_status, "Архив")
+
+    def test_registry2_source_hash_binds_raw_archive_evidence(self):
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            blank_fixture = Path(temporary_directory) / "blank.csv"
+            archive_fixture = Path(temporary_directory) / "archive.csv"
+            header = "ID,Название,URL,Направление,Тип материала,page_status\n"
+            blank_fixture.write_text(
+                header
+                + "202,Материал,https://abbottpro.ru/material,Кардиология,,active\n",
+                encoding="utf-8",
+            )
+            archive_fixture.write_text(
+                header
+                + "202,Материал,https://abbottpro.ru/material,"
+                "Кардиология,Архив,active\n",
+                encoding="utf-8",
+            )
+
+            blank = read_registry2_csv(blank_fixture)
+            archive = read_registry2_csv(archive_fixture)
+
+        self.assertNotEqual(blank.source_hash, archive.source_hash)
+
     def test_canonical_catalog_rows_have_deterministic_source_identity(self):
         rows = (
             CanonicalClassification(

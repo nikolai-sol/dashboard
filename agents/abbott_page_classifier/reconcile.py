@@ -35,7 +35,6 @@ class ReconciliationInput:
     identity_conflict: bool = False
     content_available: bool = True
     rejection_code: str | None = None
-    registry2_material_type_raw: str | None = None
     explicit_archive_override: bool = False
     http_status: int | None = None
 
@@ -95,6 +94,8 @@ def _candidate_payload(value: CandidateInput | None) -> dict[str, object] | None
                 "material_type_code": variant.material_type_code,
                 "normalized_title": variant.normalized_title,
                 "normalized_url": variant.normalized_url,
+                "raw_material_type": variant.raw_material_type,
+                "raw_status": variant.raw_status,
                 "source_row_id": variant.source_row_id,
             }
             for variant in value.identity_variants
@@ -128,9 +129,6 @@ def _input_hash(value: ReconciliationInput) -> str:
         "llm_proposal": _proposal_payload(value.llm_proposal),
         "registry1": _candidate_payload(value.registry1),
         "registry2": _candidate_payload(value.registry2),
-        "registry2_material_type_raw": normalize_title(
-            value.registry2_material_type_raw or ""
-        ),
         "rejection_code": value.rejection_code,
         "reviewed_correction": _proposal_payload(value.reviewed_correction),
         "verifier_proposal": _proposal_payload(value.verifier_proposal),
@@ -152,6 +150,7 @@ def _source_classification(
     final_access: str | None,
     final_lifecycle: str | None,
     conflicts: list[ConflictCode],
+    allow_archive_lifecycle: bool = True,
 ) -> tuple[str | None, str | None, str | None, str | None, bool]:
     changed = False
     values: list[str | None] = [
@@ -178,12 +177,15 @@ def _source_classification(
             values[index] = incoming_value
             changed = True
 
-    if fill_missing and source.lifecycle_code and (
+    source_lifecycle = source.lifecycle_code
+    if source_lifecycle in {"archive_candidate", "archived"} and not allow_archive_lifecycle:
+        source_lifecycle = ""
+    if fill_missing and source_lifecycle and (
         not final_lifecycle or final_lifecycle == "unknown"
     ):
-        if final_lifecycle != source.lifecycle_code:
+        if final_lifecycle != source_lifecycle:
             changed = True
-        final_lifecycle = source.lifecycle_code
+        final_lifecycle = source_lifecycle
 
     return values[0], values[1], values[2], final_lifecycle, changed
 
@@ -199,12 +201,13 @@ def _apply_proposal(
     locked_material_type: str | None,
     locked_access: str | None,
     conflicts: list[ConflictCode],
+    allow_direction_fill: bool = True,
 ) -> tuple[str | None, str | None, str | None, str | None, bool]:
     changed = False
     if value.direction_code:
         if locked_direction and value.direction_code != locked_direction:
             _append_conflict(conflicts, ConflictCode.ANTI_FLIP_CONFLICT)
-        elif not final_direction:
+        elif not final_direction and allow_direction_fill:
             final_direction = value.direction_code
             changed = True
 
@@ -252,6 +255,86 @@ def _proposals_disagree(primary: Proposal, verifier: Proposal) -> bool:
     )
 
 
+def _raw_key(value: str) -> str:
+    return normalize_title(value or "").casefold().replace("ё", "е")
+
+
+def _registry2_archive_evidence(
+    value: CandidateInput | None,
+) -> tuple[bool, bool]:
+    if value is None:
+        return False, False
+    item = _candidate(value)
+    if not isinstance(value, SourceCandidate):
+        missing_raw = bool(
+            item and item.lifecycle_code in {"archive_candidate", "archived"}
+        )
+        return missing_raw, missing_raw
+
+    raw_material_types = {
+        _raw_key(variant.raw_material_type)
+        for variant in value.identity_variants
+        if _raw_key(variant.raw_material_type)
+    }
+    raw_statuses = {
+        _raw_key(variant.raw_status)
+        for variant in value.identity_variants
+        if _raw_key(variant.raw_status)
+    }
+    material_archive = "архив" in raw_material_types
+    status_archive = "архив" in raw_statuses
+    archive_requested = material_archive or status_archive
+    ambiguous = (
+        (material_archive and len(raw_material_types) > 1)
+        or (status_archive and len(raw_statuses) > 1)
+    )
+    if (
+        item is not None
+        and item.lifecycle_code in {"archive_candidate", "archived"}
+        and not status_archive
+    ):
+        archive_requested = True
+        ambiguous = True
+    return archive_requested, ambiguous
+
+
+def _compare_registry_classification_evidence(
+    active: CanonicalClassification | None,
+    registry1: MaterialCandidate | None,
+    registry2: MaterialCandidate | None,
+    conflicts: list[ConflictCode],
+) -> None:
+    if active is None or registry1 is None or registry2 is None:
+        return
+    for active_value, registry1_value, registry2_value, code in (
+        (
+            active.direction_code,
+            registry1.direction_code,
+            registry2.direction_code,
+            ConflictCode.DIRECTION_CONFLICT,
+        ),
+        (
+            active.material_type_code,
+            registry1.material_type_code,
+            registry2.material_type_code,
+            ConflictCode.MATERIAL_TYPE_CONFLICT,
+        ),
+        (
+            active.access_code,
+            registry1.access_code,
+            registry2.access_code,
+            ConflictCode.ACCESS_CONFLICT,
+        ),
+    ):
+        if (
+            not active_value
+            and registry1_value
+            and registry2_value
+            and registry1_value != registry2_value
+        ):
+            _append_conflict(conflicts, code)
+
+
 def reconcile_entity(value: ReconciliationInput) -> ApprovalItem:
     """Apply immutable-source precedence and return one deterministic review item."""
 
@@ -269,6 +352,19 @@ def reconcile_entity(value: ReconciliationInput) -> ApprovalItem:
     final_lifecycle = active.lifecycle_code if active is not None else None
     conflicts: list[ConflictCode] = []
     changed = False
+    registry2_direction_missing = registry2 is not None and not registry2.direction_code
+    archive_requested, archive_evidence_ambiguous = _registry2_archive_evidence(
+        value.registry2
+    )
+    has_archive_attestation = value.explicit_archive_override or value.http_status in {
+        404,
+        410,
+    }
+    archive_evidence_valid = (
+        archive_requested
+        and has_archive_attestation
+        and not archive_evidence_ambiguous
+    )
 
     if value.identity_conflict:
         _append_conflict(conflicts, ConflictCode.IDENTITY_COLLISION)
@@ -316,13 +412,14 @@ def reconcile_entity(value: ReconciliationInput) -> ApprovalItem:
         )
         changed = changed or source_changed
 
+    _compare_registry_classification_evidence(
+        active,
+        registry1,
+        registry2,
+        conflicts,
+    )
+
     if registry2 is not None:
-        if not title and registry2.title:
-            title = normalize_title(registry2.title)
-            changed = True
-        if not url and registry2.url:
-            url = normalize_url(registry2.url).value
-            changed = True
         (
             final_direction,
             final_material_type,
@@ -337,6 +434,7 @@ def reconcile_entity(value: ReconciliationInput) -> ApprovalItem:
             final_access=final_access,
             final_lifecycle=final_lifecycle,
             conflicts=conflicts,
+            allow_archive_lifecycle=archive_evidence_valid,
         )
         changed = changed or source_changed
 
@@ -362,6 +460,7 @@ def reconcile_entity(value: ReconciliationInput) -> ApprovalItem:
             locked_material_type=locked_material_type,
             locked_access=locked_access,
             conflicts=conflicts,
+            allow_direction_fill=not registry2_direction_missing,
         )
         changed = changed or proposal_changed
 
@@ -369,27 +468,19 @@ def reconcile_entity(value: ReconciliationInput) -> ApprovalItem:
         if _proposals_disagree(value.llm_proposal, value.verifier_proposal):
             _append_conflict(conflicts, ConflictCode.LLM_DISAGREEMENT)
 
-    archive_requested = (
-        normalize_title(value.registry2_material_type_raw or "")
-        .casefold()
-        .replace("ё", "е")
-        == "архив"
-    )
-    has_archive_evidence = value.explicit_archive_override or value.http_status in {
+    direct_archive_evidence = value.explicit_archive_override or value.http_status in {
         404,
         410,
     }
-    if value.explicit_archive_override or value.http_status in {404, 410}:
+    if direct_archive_evidence and not archive_evidence_ambiguous:
         if final_lifecycle != "archive_candidate":
             changed = True
         final_lifecycle = "archive_candidate"
     if archive_requested:
-        if has_archive_evidence:
-            if final_lifecycle != "archive_candidate":
-                changed = True
-            final_lifecycle = "archive_candidate"
-        else:
+        if not archive_evidence_valid:
             _append_conflict(conflicts, ConflictCode.ARCHIVE_TYPE_INVALID)
+            if final_lifecycle in {None, "unknown", "archive_candidate", "archived"}:
+                final_lifecycle = "active"
 
     if final_access is None:
         final_access = "unspecified"
@@ -411,6 +502,8 @@ def reconcile_entity(value: ReconciliationInput) -> ApprovalItem:
     )
     if value.rejection_code:
         readiness_state = "rejected"
+    elif registry2_direction_missing:
+        readiness_state = "unresolved"
     elif hard_conflicts:
         readiness_state = "conflict"
     elif not value.content_available or classification_incomplete:
