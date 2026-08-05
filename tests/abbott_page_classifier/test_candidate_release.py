@@ -89,6 +89,11 @@ class CandidateConnection:
         ambiguous_legacy_predecessor: bool = False,
         partial_smoke: bool = False,
         realistic_smoke: bool = False,
+        dangling_selected_fingerprint: bool = False,
+        expected_slug_group_loss: bool = False,
+        joined_filter_gap: bool = False,
+        unauthorized_event: bool = False,
+        missing_authorized_event: bool = False,
     ):
         self.events: list[str] = []
         self.calls: list[tuple[str, tuple[object, ...]]] = []
@@ -110,6 +115,11 @@ class CandidateConnection:
         self.ambiguous_legacy_predecessor = ambiguous_legacy_predecessor
         self.partial_smoke = partial_smoke
         self.realistic_smoke = realistic_smoke
+        self.dangling_selected_fingerprint = dangling_selected_fingerprint
+        self.expected_slug_group_loss = expected_slug_group_loss
+        self.joined_filter_gap = joined_filter_gap
+        self.unauthorized_event = unauthorized_event
+        self.missing_authorized_event = missing_authorized_event
         self.snapshots = {
             11: {
                 "id": 11,
@@ -366,10 +376,16 @@ class CandidateConnection:
                 )
         elif "FROM portal_content_catalog AS predecessor_catalog" in normalized:
             self._many = list(self.predecessor_catalog)
+        elif "AS event_coverage_violations" in normalized:
+            self._one = {
+                "event_coverage_violations": 1 if self.missing_authorized_event else 0
+            }
         elif "AS anti_flip_violations" in normalized:
-            self._one = {"anti_flip_violations": 0}
+            self._one = {
+                "anti_flip_violations": 1 if self.unauthorized_event else 0
+            }
         elif "FROM portal_content_classification_events AS event" in normalized and "event.approval_batch_id = %s" in normalized:
-            self._many = [
+            self._many = [] if self.missing_authorized_event else [
                 {
                     "content_entity_id": 1,
                     "material_id": "100",
@@ -404,6 +420,7 @@ class CandidateConnection:
                     "material_type_label": "Статьи",
                     "access_label": "Все",
                     "lifecycle_label": "active",
+                    "authorization_violation": 1 if self.unauthorized_event else 0,
                 },
             ]
         elif "source_kind = 'abbott_canonical_control_pack'" in normalized:
@@ -477,10 +494,30 @@ class CandidateConnection:
         elif "AS lookup_consistency_failures" in normalized:
             self._one = {
                 "lookup_group_count": 4 if self.realistic_smoke else 6,
-                "lookup_consistency_failures": 1 if self.partial_smoke else 0,
+                "lookup_consistency_failures": 1 if (
+                    self.partial_smoke or self.dangling_selected_fingerprint
+                ) else 0,
+                "dangling_selected_count": 1 if self.dangling_selected_fingerprint else 0,
                 "title_group_count": 2,
                 "slug_group_count": 0 if self.realistic_smoke else 2,
                 "path_group_count": 2,
+            }
+        elif "AS expected_slug_group_count" in normalized:
+            expected = 0 if self.realistic_smoke else 2
+            self._one = {
+                "expected_slug_group_count": expected,
+                "projected_slug_group_count": (
+                    max(expected - 1, 0) if self.expected_slug_group_loss else expected
+                ),
+            }
+        elif "AS joined_projection_rows" in normalized:
+            joined = 3 if self.realistic_smoke else 2
+            complete = joined - 1 if self.joined_filter_gap else joined
+            self._one = {
+                "joined_projection_rows": joined,
+                "joined_direction_rows": complete,
+                "joined_material_rows": complete,
+                "joined_access_rows": complete,
             }
         elif "AS candidate_catalog_rows" in normalized:
             self._one = {
@@ -866,6 +903,57 @@ class CandidateReleaseTest(unittest.TestCase):
             ):
                 materialize_content_candidate(71, 12, "abc1234")
 
+    def test_materialization_rejects_unauthorized_current_batch_event(self):
+        connection = CandidateConnection(unauthorized_event=True)
+        with (
+            patch("agents.abbott_page_classifier.candidate_release.get_db_connection", return_value=connection),
+            patch("agents.abbott_page_classifier.candidate_release.release_store.create_candidate_release", return_value=41),
+            patch("agents.abbott_page_classifier.candidate_release.release_store.require_mutable_candidate_release", return_value={"id": 41, "release_status": "staging"}),
+        ):
+            with self.assertRaisesRegex(
+                CandidateMaterializationError, "CURRENT_BATCH_EVENT_UNAUTHORIZED"
+            ):
+                materialize_content_candidate(71, 12, "abc1234")
+
+    def test_materialization_rejects_missing_authorized_current_batch_event(self):
+        connection = CandidateConnection(missing_authorized_event=True)
+        with (
+            patch("agents.abbott_page_classifier.candidate_release.get_db_connection", return_value=connection),
+            patch("agents.abbott_page_classifier.candidate_release.release_store.create_candidate_release", return_value=41),
+            patch("agents.abbott_page_classifier.candidate_release.release_store.require_mutable_candidate_release", return_value={"id": 41, "release_status": "staging"}),
+        ):
+            with self.assertRaisesRegex(
+                CandidateMaterializationError,
+                "CURRENT_BATCH_EVENT_AUTHORIZATION_INCOMPLETE",
+            ):
+                materialize_content_candidate(71, 12, "abc1234")
+
+    def test_current_batch_event_query_binds_exact_published_approval_item(self):
+        connection = CandidateConnection()
+        with (
+            patch("agents.abbott_page_classifier.candidate_release.get_db_connection", return_value=connection),
+            patch("agents.abbott_page_classifier.candidate_release.release_store.create_candidate_release", return_value=41),
+            patch("agents.abbott_page_classifier.candidate_release.release_store.require_mutable_candidate_release", return_value={"id": 41, "release_status": "staging"}),
+        ):
+            materialize_content_candidate(71, 12, "abc1234")
+        event_sql = next(
+            sql for sql, _ in connection.calls
+            if "AS authorization_violation" in sql
+        )
+        for token in (
+            "item.id = event.approval_item_id",
+            "item.readiness_state = 'ready'",
+            "item.content_entity_id <=> event.content_entity_id",
+            "item.final_direction_code <=> event.direction_code",
+            "item.final_material_type_code <=> event.material_type_code",
+            "item.final_access_code <=> event.access_code",
+            "item.final_lifecycle_code <=> event.lifecycle_code",
+            "batch.accepted_decision_hash",
+            "$.approval_item_evidence.published_decision",
+            "same_item_event.approval_item_id = event.approval_item_id",
+        ):
+            self.assertIn(token, event_sql)
+
     def test_catalog_readback_hash_mismatch_rolls_back_everything(self):
         connection = CandidateConnection(mismatch_catalog_hash=True)
         with (
@@ -1000,6 +1088,42 @@ class CandidateReleaseTest(unittest.TestCase):
             "TRIM(event.actor) = ''", "TRIM(event.reason) = ''",
         ):
             self.assertIn(token, anti_flip_sql)
+
+    def test_validation_rejects_spoofed_current_batch_event(self):
+        connection = self._prepare_gate(GateConnection())
+        connection.unauthorized_event = True
+        with patch(
+            "agents.abbott_page_classifier.candidate_release.get_db_connection",
+            return_value=connection,
+        ):
+            report = validate_content_candidate(
+                41,
+                expected_counts={
+                    "source": 2, "ready": 1, "conflict": 0, "unresolved": 0,
+                    "rejected": 0, "accepted": 1,
+                },
+                accepted_hash=connection.accepted_hash,
+            )
+        self.assertEqual(report.anti_flip_violations, 1)
+        self.assertFalse(report.passed)
+
+    def test_validation_rejects_missing_published_item_event(self):
+        connection = self._prepare_gate(GateConnection())
+        connection.missing_authorized_event = True
+        with patch(
+            "agents.abbott_page_classifier.candidate_release.get_db_connection",
+            return_value=connection,
+        ):
+            report = validate_content_candidate(
+                41,
+                expected_counts={
+                    "source": 2, "ready": 1, "conflict": 0, "unresolved": 0,
+                    "rejected": 0, "accepted": 1,
+                },
+                accepted_hash=connection.accepted_hash,
+            )
+        self.assertEqual(report.anti_flip_violations, 1)
+        self.assertFalse(report.passed)
 
     def test_validation_locks_release_pointer_and_attests_real_bundle(self):
         connection = self._prepare_gate(GateConnection())
@@ -1171,12 +1295,59 @@ class CandidateReleaseTest(unittest.TestCase):
                 accepted_hash=connection.accepted_hash,
             )
         self.assertEqual(report.dashboard_smoke_failures, 0)
-        smoke_sql = "\n".join(
-            sql for sql, _ in connection.calls if "lookup_consistency" in sql
-        )
+        smoke_sql = "\n".join(sql for sql, _ in connection.calls)
         self.assertIn("resolution_status = 'ambiguous'", smoke_sql)
         self.assertIn("selected_source_row_fingerprint IS NULL", smoke_sql)
         self.assertIn("lookup_kind IN ('title', 'slug', 'path')", smoke_sql)
+        self.assertIn("INNER JOIN portal_content_catalog AS selected_catalog", smoke_sql)
+
+    def test_dashboard_smoke_rejects_dangling_selected_fingerprint(self):
+        connection = self._prepare_gate(GateConnection(dangling_selected_fingerprint=True))
+        with patch(
+            "agents.abbott_page_classifier.candidate_release.get_db_connection",
+            return_value=connection,
+        ):
+            report = validate_content_candidate(
+                41,
+                expected_counts={
+                    "source": 2, "ready": 1, "conflict": 0, "unresolved": 0,
+                    "rejected": 0, "accepted": 1,
+                },
+                accepted_hash=connection.accepted_hash,
+            )
+        self.assertEqual(report.dashboard_smoke_failures, 1)
+
+    def test_dashboard_smoke_rejects_expected_slug_group_loss(self):
+        connection = self._prepare_gate(GateConnection(expected_slug_group_loss=True))
+        with patch(
+            "agents.abbott_page_classifier.candidate_release.get_db_connection",
+            return_value=connection,
+        ):
+            report = validate_content_candidate(
+                41,
+                expected_counts={
+                    "source": 2, "ready": 1, "conflict": 0, "unresolved": 0,
+                    "rejected": 0, "accepted": 1,
+                },
+                accepted_hash=connection.accepted_hash,
+            )
+        self.assertEqual(report.dashboard_smoke_failures, 1)
+
+    def test_dashboard_smoke_rejects_filter_gap_on_joined_projection(self):
+        connection = self._prepare_gate(GateConnection(joined_filter_gap=True))
+        with patch(
+            "agents.abbott_page_classifier.candidate_release.get_db_connection",
+            return_value=connection,
+        ):
+            report = validate_content_candidate(
+                41,
+                expected_counts={
+                    "source": 2, "ready": 1, "conflict": 0, "unresolved": 0,
+                    "rejected": 0, "accepted": 1,
+                },
+                accepted_hash=connection.accepted_hash,
+            )
+        self.assertEqual(report.dashboard_smoke_failures, 1)
 
 
 if __name__ == "__main__":

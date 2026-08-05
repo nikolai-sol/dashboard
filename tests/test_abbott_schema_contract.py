@@ -109,7 +109,7 @@ class AbbottSchemaContractTest(unittest.TestCase):
             sql,
         )
 
-    def test_release_operator_content_attestor_grants_are_read_only_and_complete(self):
+    def test_release_operator_supports_lifecycle_and_keeps_data_plane_read_only(self):
         sql = self._normalized(self._private_sql())
         role = "'abbott_release_operator_role'"
         public_reads = {
@@ -130,7 +130,11 @@ class AbbottSchemaContractTest(unittest.TestCase):
             "canonical_fact_metrika_visits", "portal_user_directions_private",
             "portal_bitrix_page_facts", "portal_bitrix_journeys_private",
         }
-        for table in public_reads:
+        lifecycle_tables = {
+            "portal_data_releases", "portal_active_data_releases",
+            "portal_dataset_snapshots",
+        }
+        for table in public_reads - lifecycle_tables:
             self.assertIn(f"GRANT SELECT ON report_bd.{table} TO {role};", sql)
         for table in private_reads:
             self.assertIn(f"GRANT SELECT ON report_bd_private.{table} TO {role};", sql)
@@ -138,14 +142,15 @@ class AbbottSchemaContractTest(unittest.TestCase):
             grant for grant in re.findall(r"GRANT .*?;", sql, re.IGNORECASE)
             if f"TO {role}" in grant
         ]
-        writable = [grant for grant in grants if re.search(r"\b(INSERT|UPDATE|DELETE)\b", grant)]
-        self.assertEqual(
-            writable,
-            [
-                "GRANT SELECT, INSERT, UPDATE ON report_bd.portal_migration_validation_runs "
-                f"TO {role};"
-            ],
-        )
+        writable = {
+            grant for grant in grants if re.search(r"\b(INSERT|UPDATE|DELETE)\b", grant)
+        }
+        self.assertEqual(writable, {
+            f"GRANT SELECT, INSERT, UPDATE ON report_bd.portal_data_releases TO {role};",
+            f"GRANT SELECT, UPDATE ON report_bd.portal_active_data_releases TO {role};",
+            f"GRANT SELECT, INSERT ON report_bd.portal_dataset_snapshots TO {role};",
+            f"GRANT SELECT, INSERT, UPDATE ON report_bd.portal_migration_validation_runs TO {role};",
+        })
     def test_coverage_statuses_and_scopes_are_exactly_closed(self):
         sql = self._primary_sql()
         status_match = re.search(r"collection_status\s+ENUM\(([^)]*)\)", sql)
@@ -419,15 +424,21 @@ class AbbottSchemaContractTest(unittest.TestCase):
         ):
             self.assertIn(contract, sql)
 
-    def test_release_operator_can_write_only_validation_evidence(self):
+    def test_release_operator_has_no_data_plane_write_grants(self):
         sql = self._normalized(self._private_sql())
         role = "'abbott_release_operator_role'"
         operator_grants = re.findall(
             rf"GRANT ([^;]+) ON ([^;]+) TO {role};", sql
         )
+        lifecycle_tables = {
+            "report_bd.portal_data_releases",
+            "report_bd.portal_active_data_releases",
+            "report_bd.portal_dataset_snapshots",
+            "report_bd.portal_migration_validation_runs",
+        }
         for privileges, table in operator_grants:
-            if table != "report_bd.portal_migration_validation_runs":
-                self.assertEqual(privileges, "SELECT")
+            if privileges != "SELECT":
+                self.assertIn(table, lifecycle_tables)
 
     def test_release_operator_private_fact_access_is_select_only(self):
         sql = self._normalized(self._private_sql())

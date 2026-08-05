@@ -624,15 +624,15 @@ GRANT SELECT, INSERT ON report_bd_private.portal_bitrix_page_facts
 GRANT SELECT, INSERT ON report_bd_private.portal_bitrix_journeys_private
   TO 'abbott_content_materializer_role';
 
--- Release validation uses a separate operator account. Content attestation is
--- read-only across the complete candidate/predecessor bundle. Its sole writes
--- are append/completion of validation evidence; it cannot materialize, activate,
--- change release/batch status, or write public/private facts.
-GRANT SELECT ON report_bd.portal_data_releases
+-- Baseline capture, comparison, candidate creation, validation, activation,
+-- rollback, and content attestation use a separate operator account. It can
+-- mutate only lifecycle/control-plane rows and cannot write public/private
+-- facts, content projections, registry, taxonomy, or approval workflow rows.
+GRANT SELECT, INSERT, UPDATE ON report_bd.portal_data_releases
   TO 'abbott_release_operator_role';
-GRANT SELECT ON report_bd.portal_active_data_releases
+GRANT SELECT, UPDATE ON report_bd.portal_active_data_releases
   TO 'abbott_release_operator_role';
-GRANT SELECT ON report_bd.portal_dataset_snapshots
+GRANT SELECT, INSERT ON report_bd.portal_dataset_snapshots
   TO 'abbott_release_operator_role';
 GRANT SELECT ON report_bd.portal_release_source_imports
   TO 'abbott_release_operator_role';
