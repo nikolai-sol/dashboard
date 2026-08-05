@@ -8,6 +8,7 @@ from agents.abbott_page_classifier.normalization import (
     normalize_url,
     sha256_text,
 )
+from agents.abbott_page_classifier import classify
 
 
 class NormalizationTests(unittest.TestCase):
@@ -50,6 +51,11 @@ class NormalizationTests(unittest.TestCase):
     def test_url_normalization_escapes_a_literal_percent_sign(self):
         result = normalize_url("https://abbottpro.ru/cardio/100%")
         self.assertEqual(result.value, "https://abbottpro.ru/cardio/100%25")
+
+    def test_url_normalization_preserves_encoded_reserved_path_delimiters(self):
+        result = normalize_url("https://abbottpro.ru/articles/foo%2fbar/")
+        self.assertEqual(result.path, "/articles/foo%2Fbar")
+        self.assertEqual(classify.extract_slug(result.value), "foo/bar")
 
     def test_title_and_hash_normalization_are_stable(self):
         self.assertEqual(normalize_title("  Тема\u00a0\u00a0материала  "), "Тема материала")

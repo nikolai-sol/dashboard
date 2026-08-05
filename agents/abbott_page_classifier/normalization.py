@@ -5,7 +5,7 @@ from __future__ import annotations
 import hashlib
 import re
 import unicodedata
-from urllib.parse import parse_qsl, quote, unquote, urlsplit, urlunsplit
+from urllib.parse import parse_qsl, quote, urlsplit, urlunsplit
 
 from .domain import (
     ACCESS_LABELS,
@@ -18,6 +18,9 @@ from .domain import (
 
 
 _WHITESPACE = re.compile(r"\s+")
+_HEX_DIGITS = frozenset("0123456789abcdefABCDEF")
+_PATH_SAFE = "/:@!$&'()*+,;=-._~"
+_RESERVED_PATH_CHARACTERS = frozenset(":/?#[]@!$&'()*+,;=%")
 _TRACKING_QUERY_KEYS = frozenset(
     {
         "dclid",
@@ -116,9 +119,45 @@ def _is_tracking_query_key(key: str) -> bool:
 
 
 def _normalize_path(path: str) -> str:
-    decoded = unquote(path or "/")
-    normalized = quote(decoded, safe="/:@!$&'()*+,;=-._~")
-    return normalized.rstrip("/") or "/"
+    """Canonicalize escapes without turning encoded delimiters into structure."""
+
+    value = path or "/"
+    normalized: list[str] = []
+    index = 0
+    while index < len(value):
+        if value[index] != "%":
+            normalized.append(quote(value[index], safe=_PATH_SAFE))
+            index += 1
+            continue
+
+        encoded = bytearray()
+        while (
+            index + 2 < len(value)
+            and value[index] == "%"
+            and value[index + 1] in _HEX_DIGITS
+            and value[index + 2] in _HEX_DIGITS
+        ):
+            encoded.append(int(value[index + 1 : index + 3], 16))
+            index += 3
+
+        if not encoded:
+            normalized.append("%25")
+            index += 1
+            continue
+
+        try:
+            decoded = bytes(encoded).decode("utf-8")
+        except UnicodeDecodeError:
+            normalized.extend(f"%{byte:02X}" for byte in encoded)
+            continue
+
+        for character in decoded:
+            if character in _RESERVED_PATH_CHARACTERS:
+                normalized.extend(f"%{byte:02X}" for byte in character.encode("utf-8"))
+            else:
+                normalized.append(quote(character, safe=_PATH_SAFE))
+
+    return "".join(normalized).rstrip("/") or "/"
 
 
 def normalize_url(raw: str) -> NormalizedUrl:
