@@ -272,6 +272,8 @@ class AcceptedBatchSnapshot:
     items: tuple[ApprovalItem, ...]
     accepted_by: str
     accepted_at: str
+    accepted_count: int | None = None
+    skipped_count: int | None = None
 
 
 @dataclass(frozen=True)

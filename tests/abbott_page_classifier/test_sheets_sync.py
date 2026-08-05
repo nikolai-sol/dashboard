@@ -511,6 +511,8 @@ class SheetsProjectionTests(unittest.TestCase):
         self.assertEqual(by_id[4].readiness_state, "rejected")
         self.assertEqual(by_id[5].readiness_state, "no_change")
         self.assertEqual(len(snapshot.items), 5)
+        self.assertEqual(snapshot.accepted_count, 1)
+        self.assertEqual(snapshot.skipped_count, 4)
         self.assertEqual(
             snapshot.accepted_decision_hash,
             compute_accepted_decision_hash(snapshot.items),

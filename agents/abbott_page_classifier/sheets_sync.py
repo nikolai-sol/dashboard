@@ -1839,6 +1839,8 @@ def read_accepted_projection(
         items=tuple(accepted_items),
         accepted_by=_required_metadata(batch_meta, "Принял"),
         accepted_at=_required_metadata(batch_meta, "Принято UTC"),
+        accepted_count=counts["ready"],
+        skipped_count=len(approval_batch.items) - counts["ready"],
     )
 
 

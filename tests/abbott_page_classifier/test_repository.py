@@ -22,6 +22,7 @@ from agents.abbott_page_classifier.repository import (
 )
 from agents.abbott_page_classifier.batch_service import (
     build_batch,
+    compute_accepted_decision_hash,
     compute_batch_hash,
     compute_taxonomy_digest,
 )
@@ -63,6 +64,28 @@ def workflow_batch():
                 ),
             ),
         ),
+        canonical_taxonomy(),
+        "prompt.v1",
+        source_snapshot_ids=(101, 202),
+        source_snapshot_digests=("a" * 64, "b" * 64),
+        model_routing_version="routing.v1",
+    )
+
+
+def acceptance_workflow_batch():
+    items = (
+        approval_item(41),
+        approval_item(42, readiness="conflict"),
+        replace(
+            approval_item(43, readiness="unresolved"),
+            final_direction_code=None,
+            final_material_type_code=None,
+        ),
+        approval_item(44, readiness="rejected"),
+        approval_item(45, readiness="no_change"),
+    )
+    return build_batch(
+        items,
         canonical_taxonomy(),
         "prompt.v1",
         source_snapshot_ids=(101, 202),
@@ -233,7 +256,10 @@ class WorkflowCursor:
         self.rows = []
         self.rowcount = 0
         if "FROM portal_content_taxonomy_versions" in normalized:
-            self.rows = [(3, self.connection.batch.taxonomy_digest)]
+            if normalized.startswith("SELECT version"):
+                self.rows = [(self.connection.batch.taxonomy_version, self.connection.batch.taxonomy_digest)]
+            else:
+                self.rows = [(3, self.connection.batch.taxonomy_digest)]
         elif "FROM portal_content_taxonomy_terms" in normalized:
             self.rows = [
                 (kind, code)
@@ -263,15 +289,18 @@ class WorkflowCursor:
             if self.connection.existing_batch_row is not None:
                 self.rows = [self.connection.existing_batch_row]
         elif "FROM portal_content_approval_items" in normalized and "ORDER BY" in normalized:
-            self.rows = [
-                (
-                    item.content_entity_id,
-                    item.input_hash,
-                    item.row_hash,
-                    item.readiness_state,
-                )
-                for item in self.connection.batch.items
-            ]
+            if "decision_reason" in normalized:
+                self.rows = list(self.connection.acceptance_items)
+            else:
+                self.rows = [
+                    (
+                        item.content_entity_id,
+                        item.input_hash,
+                        item.row_hash,
+                        item.readiness_state,
+                    )
+                    for item in self.connection.batch.items
+                ]
         elif "FROM portal_content_approval_items" in normalized:
             matched = next(
                 (
@@ -290,7 +319,9 @@ class WorkflowCursor:
             if self.connection.fail_item_insert:
                 raise RuntimeError("private database error secret")
             self.lastrowid = 100 + self.connection.item_insert_count
-        elif normalized.startswith("UPDATE portal_content_approval_batches"):
+        elif normalized.startswith(
+            ("UPDATE portal_content_approval_batches", "UPDATE portal_content_approval_items")
+        ):
             self.rowcount = 1
 
     def fetchone(self):
@@ -313,6 +344,7 @@ class WorkflowConnection:
         history_row=None,
         items_exist=False,
         fail_item_insert=False,
+        acceptance_items=None,
     ):
         self.batch = batch
         self.existing_batch_row = existing_batch_row
@@ -320,6 +352,27 @@ class WorkflowConnection:
         self.history_row = history_row
         self.items_exist = items_exist
         self.fail_item_insert = fail_item_insert
+        self.acceptance_items = (
+            list(acceptance_items)
+            if acceptance_items is not None
+            else [
+                (
+                    100 + index,
+                    item.content_entity_id,
+                    item.input_hash,
+                    item.title,
+                    item.url,
+                    item.final_direction_code,
+                    item.final_material_type_code,
+                    item.final_access_code,
+                    item.final_lifecycle_code,
+                    item.readiness_state,
+                    item.row_hash,
+                    item.decision_reason,
+                )
+                for index, item in enumerate(batch.items)
+            ]
+        )
         self.calls: list[tuple[str, tuple[object, ...]]] = []
         self.item_insert_count = 0
         self.commit_count = 0
@@ -376,6 +429,40 @@ def draft_workflow_row(batch, *, status="draft"):
         0,
         0,
         0,
+    )
+
+
+def acceptance_workflow_row(
+    batch,
+    *,
+    status="published",
+    accepted_hash=None,
+    accepted_by=None,
+    accepted_at=None,
+):
+    counts = {
+        state: sum(1 for item in batch.items if item.readiness_state == state)
+        for state in ("ready", "conflict", "unresolved", "rejected", "no_change")
+    }
+    return (
+        batch.batch_key,
+        3,
+        batch.taxonomy_digest,
+        batch.taxonomy_version,
+        batch.taxonomy_digest,
+        batch.published_input_hash,
+        status,
+        "sheet-123",
+        accepted_hash,
+        accepted_by,
+        accepted_at,
+        counts["ready"],
+        counts["conflict"],
+        counts["unresolved"],
+        counts["rejected"],
+        counts["no_change"],
+        counts["ready"] if status == "accepted" else 0,
+        len(batch.items) - counts["ready"] if status == "accepted" else 0,
     )
 
 
@@ -516,27 +603,19 @@ class ContentRegistryRepositoryTests(unittest.TestCase):
         self.assertEqual(connection.commit_count, 2)
 
     def test_record_acceptance_persists_hash_actor_timestamp_and_counts(self):
-        batch = workflow_batch()
+        batch = acceptance_workflow_batch()
+        accepted_hash = compute_accepted_decision_hash(batch.items)
         snapshot = AcceptedBatchSnapshot(
             batch_key=batch.batch_key,
             published_input_hash=batch.published_input_hash,
-            accepted_decision_hash="d" * 64,
+            accepted_decision_hash=accepted_hash,
             items=batch.items,
             accepted_by="manager",
             accepted_at="2026-08-05T12:00:00Z",
         )
         connection = WorkflowConnection(
             batch,
-            acceptance_row=(
-                batch.batch_key,
-                batch.published_input_hash,
-                "published",
-                "sheet-123",
-                None,
-                None,
-                None,
-            ),
-            items_exist=True,
+            acceptance_row=acceptance_workflow_row(batch),
         )
         repository = ContentRegistryRepository(lambda: connection)
 
@@ -548,14 +627,283 @@ class ContentRegistryRepositoryTests(unittest.TestCase):
             if call[0].startswith("UPDATE portal_content_approval_batches")
         )
         self.assertIn("accepted_decision_hash", update_sql)
-        self.assertEqual(update_params[:4], ("accepted", "d" * 64, "manager", "2026-08-05T12:00:00Z"))
-        self.assertEqual(update_params[4:6], (1, 0))
+        self.assertEqual(
+            update_params[:4],
+            ("accepted", accepted_hash, "manager", "2026-08-05T12:00:00Z"),
+        )
+        self.assertEqual(update_params[4:6], (1, 4))
         item_updates = [
             call
             for call in connection.calls
             if call[0].startswith("UPDATE portal_content_approval_items")
         ]
         self.assertEqual(len(item_updates), len(snapshot.items))
+
+    def test_record_acceptance_rejects_partial_snapshot_before_any_write(self):
+        batch = acceptance_workflow_batch()
+        items = (batch.items[0],)
+        snapshot = AcceptedBatchSnapshot(
+            batch_key=batch.batch_key,
+            published_input_hash=batch.published_input_hash,
+            accepted_decision_hash=compute_accepted_decision_hash(items),
+            items=items,
+            accepted_by="manager",
+            accepted_at="2026-08-05T12:00:00Z",
+        )
+        connection = WorkflowConnection(
+            batch,
+            acceptance_row=acceptance_workflow_row(batch),
+        )
+        repository = ContentRegistryRepository(lambda: connection)
+
+        with self.assertRaises(RepositoryError) as raised:
+            repository.record_batch_acceptance(17, snapshot, "sheet-123")
+
+        self.assertEqual(raised.exception.code, "BATCH_ITEMS_MISMATCH")
+        self.assertEqual(
+            [call for call in connection.calls if call[0].startswith(("INSERT", "UPDATE"))],
+            [],
+        )
+        self.assertEqual(connection.commit_count, 0)
+        self.assertEqual(connection.rollback_count, 1)
+
+    def test_record_acceptance_rejects_duplicate_snapshot_identity_before_any_write(self):
+        batch = acceptance_workflow_batch()
+        items = (*batch.items, batch.items[0])
+        snapshot = AcceptedBatchSnapshot(
+            batch_key=batch.batch_key,
+            published_input_hash=batch.published_input_hash,
+            accepted_decision_hash=compute_accepted_decision_hash(items),
+            items=items,
+            accepted_by="manager",
+            accepted_at="2026-08-05T12:00:00Z",
+        )
+        connection = WorkflowConnection(
+            batch,
+            acceptance_row=acceptance_workflow_row(batch),
+        )
+        repository = ContentRegistryRepository(lambda: connection)
+
+        with self.assertRaises(RepositoryError) as raised:
+            repository.record_batch_acceptance(17, snapshot, "sheet-123")
+
+        self.assertEqual(raised.exception.code, "BATCH_ITEMS_MISMATCH")
+        self.assertEqual(
+            [call for call in connection.calls if call[0].startswith(("INSERT", "UPDATE"))],
+            [],
+        )
+        self.assertEqual(connection.rollback_count, 1)
+
+    def test_record_acceptance_rejects_invented_taxonomy_before_any_write(self):
+        batch = acceptance_workflow_batch()
+        items = (
+            replace(batch.items[0], final_direction_code="invented_direction"),
+            *batch.items[1:],
+        )
+        snapshot = AcceptedBatchSnapshot(
+            batch_key=batch.batch_key,
+            published_input_hash=batch.published_input_hash,
+            accepted_decision_hash=compute_accepted_decision_hash(items),
+            items=items,
+            accepted_by="manager",
+            accepted_at="2026-08-05T12:00:00Z",
+        )
+        connection = WorkflowConnection(
+            batch,
+            acceptance_row=acceptance_workflow_row(batch),
+        )
+        repository = ContentRegistryRepository(lambda: connection)
+
+        with self.assertRaises(RepositoryError) as raised:
+            repository.record_batch_acceptance(17, snapshot, "sheet-123")
+
+        self.assertEqual(raised.exception.code, "TAXONOMY_CONTRACT_MISMATCH")
+        self.assertEqual(
+            [call for call in connection.calls if call[0].startswith(("INSERT", "UPDATE"))],
+            [],
+        )
+        self.assertEqual(connection.rollback_count, 1)
+
+    def test_record_acceptance_rejects_incomplete_ready_row_before_any_write(self):
+        batch = acceptance_workflow_batch()
+        items = (
+            replace(batch.items[0], final_direction_code=None),
+            *batch.items[1:],
+        )
+        snapshot = AcceptedBatchSnapshot(
+            batch_key=batch.batch_key,
+            published_input_hash=batch.published_input_hash,
+            accepted_decision_hash=compute_accepted_decision_hash(items),
+            items=items,
+            accepted_by="manager",
+            accepted_at="2026-08-05T12:00:00Z",
+        )
+        connection = WorkflowConnection(
+            batch,
+            acceptance_row=acceptance_workflow_row(batch),
+        )
+        repository = ContentRegistryRepository(lambda: connection)
+
+        with self.assertRaises(RepositoryError) as raised:
+            repository.record_batch_acceptance(17, snapshot, "sheet-123")
+
+        self.assertEqual(raised.exception.code, "BATCH_ITEM_INCOMPLETE")
+        self.assertEqual(
+            [call for call in connection.calls if call[0].startswith(("INSERT", "UPDATE"))],
+            [],
+        )
+        self.assertEqual(connection.rollback_count, 1)
+
+    def test_record_acceptance_requires_reason_for_changed_conflict_before_any_write(self):
+        batch = acceptance_workflow_batch()
+        items = (
+            batch.items[0],
+            replace(
+                batch.items[1],
+                final_direction_code="gastroenterology",
+                decision_reason=None,
+            ),
+            *batch.items[2:],
+        )
+        snapshot = AcceptedBatchSnapshot(
+            batch_key=batch.batch_key,
+            published_input_hash=batch.published_input_hash,
+            accepted_decision_hash=compute_accepted_decision_hash(items),
+            items=items,
+            accepted_by="manager",
+            accepted_at="2026-08-05T12:00:00Z",
+        )
+        connection = WorkflowConnection(
+            batch,
+            acceptance_row=acceptance_workflow_row(batch),
+        )
+        repository = ContentRegistryRepository(lambda: connection)
+
+        with self.assertRaises(RepositoryError) as raised:
+            repository.record_batch_acceptance(17, snapshot, "sheet-123")
+
+        self.assertEqual(raised.exception.code, "CONFLICT_REASON_REQUIRED")
+        self.assertEqual(
+            [call for call in connection.calls if call[0].startswith(("INSERT", "UPDATE"))],
+            [],
+        )
+        self.assertEqual(connection.rollback_count, 1)
+
+    def test_record_acceptance_recomputes_and_rejects_arbitrary_hash_before_any_write(self):
+        batch = acceptance_workflow_batch()
+        snapshot = AcceptedBatchSnapshot(
+            batch_key=batch.batch_key,
+            published_input_hash=batch.published_input_hash,
+            accepted_decision_hash="f" * 64,
+            items=batch.items,
+            accepted_by="manager",
+            accepted_at="2026-08-05T12:00:00Z",
+        )
+        connection = WorkflowConnection(
+            batch,
+            acceptance_row=acceptance_workflow_row(batch),
+        )
+        repository = ContentRegistryRepository(lambda: connection)
+
+        with self.assertRaises(RepositoryError) as raised:
+            repository.record_batch_acceptance(17, snapshot, "sheet-123")
+
+        self.assertEqual(raised.exception.code, "ACCEPTED_HASH_MISMATCH")
+        self.assertEqual(
+            [call for call in connection.calls if call[0].startswith(("INSERT", "UPDATE"))],
+            [],
+        )
+        self.assertEqual(connection.rollback_count, 1)
+
+    def test_record_acceptance_rejects_supplied_count_mismatch_before_any_write(self):
+        batch = acceptance_workflow_batch()
+        snapshot = AcceptedBatchSnapshot(
+            batch_key=batch.batch_key,
+            published_input_hash=batch.published_input_hash,
+            accepted_decision_hash=compute_accepted_decision_hash(batch.items),
+            items=batch.items,
+            accepted_by="manager",
+            accepted_at="2026-08-05T12:00:00Z",
+            accepted_count=2,
+            skipped_count=3,
+        )
+        connection = WorkflowConnection(
+            batch,
+            acceptance_row=acceptance_workflow_row(batch),
+        )
+        repository = ContentRegistryRepository(lambda: connection)
+
+        with self.assertRaises(RepositoryError) as raised:
+            repository.record_batch_acceptance(17, snapshot, "sheet-123")
+
+        self.assertEqual(raised.exception.code, "BATCH_COUNT_MISMATCH")
+        self.assertEqual(
+            [call for call in connection.calls if call[0].startswith(("INSERT", "UPDATE"))],
+            [],
+        )
+        self.assertEqual(connection.rollback_count, 1)
+
+    def test_record_acceptance_rejects_empty_approver_on_idempotent_path(self):
+        batch = acceptance_workflow_batch()
+        accepted_hash = compute_accepted_decision_hash(batch.items)
+        snapshot = AcceptedBatchSnapshot(
+            batch_key=batch.batch_key,
+            published_input_hash=batch.published_input_hash,
+            accepted_decision_hash=accepted_hash,
+            items=batch.items,
+            accepted_by="",
+            accepted_at="2026-08-05T12:00:00Z",
+            accepted_count=1,
+            skipped_count=4,
+        )
+        connection = WorkflowConnection(
+            batch,
+            acceptance_row=acceptance_workflow_row(
+                batch,
+                status="accepted",
+                accepted_hash=accepted_hash,
+                accepted_by="",
+                accepted_at="2026-08-05T12:00:00Z",
+            ),
+        )
+        repository = ContentRegistryRepository(lambda: connection)
+
+        with self.assertRaises(RepositoryError) as raised:
+            repository.record_batch_acceptance(17, snapshot, "sheet-123")
+
+        self.assertEqual(raised.exception.code, "BATCH_ACCEPTANCE_METADATA_MISMATCH")
+        self.assertEqual(connection.commit_count, 0)
+        self.assertEqual(connection.rollback_count, 1)
+
+    def test_record_acceptance_rejects_tampered_persisted_row_before_any_write(self):
+        batch = acceptance_workflow_batch()
+        accepted_hash = compute_accepted_decision_hash(batch.items)
+        snapshot = AcceptedBatchSnapshot(
+            batch_key=batch.batch_key,
+            published_input_hash=batch.published_input_hash,
+            accepted_decision_hash=accepted_hash,
+            items=batch.items,
+            accepted_by="manager",
+            accepted_at="2026-08-05T12:00:00Z",
+        )
+        persisted = list(WorkflowConnection(batch).acceptance_items)
+        persisted[0] = (*persisted[0][:10], "e" * 64, persisted[0][11])
+        connection = WorkflowConnection(
+            batch,
+            acceptance_row=acceptance_workflow_row(batch),
+            acceptance_items=persisted,
+        )
+        repository = ContentRegistryRepository(lambda: connection)
+
+        with self.assertRaises(RepositoryError) as raised:
+            repository.record_batch_acceptance(17, snapshot, "sheet-123")
+
+        self.assertEqual(raised.exception.code, "BATCH_ITEMS_MISMATCH")
+        self.assertEqual(
+            [call for call in connection.calls if call[0].startswith(("INSERT", "UPDATE"))],
+            [],
+        )
+        self.assertEqual(connection.rollback_count, 1)
 
     def test_load_batch_history_returns_all_persisted_audit_fields(self):
         batch = workflow_batch()
