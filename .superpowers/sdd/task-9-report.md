@@ -77,3 +77,107 @@ persistence and existing immutable batch/snapshot loader seams are tested with
 actual `ProductionWorkflowGateway` construction fakes and make no live call.
 
 Follow-up commit: `384eab1947ddbac2bccb63fe67ca6f1186e4db98`.
+
+## Task 9A/9B correction — canonical weekly proposal pipeline
+
+The rejected pre-existing-batch model has been replaced. Registry 1 and the
+accepted Registry 2 capture now create a content-addressed reconciliation run;
+classification resumes by numeric `run_id`, creates exactly one immutable
+approval batch, and returns its numeric `batch_id`. Publication is the only
+Sheet-writing stage. Pull is read-only, ingest resumes from either the published
+Sheet or an accepted canonical DB snapshot, and materialization cannot activate.
+
+### Schema and least privilege
+
+- Nested dashboard commit `13b155493be88fed94942893cff1d9775c45789e`
+  adds repeat-safe migration 047 with reconciliation runs/items, append-only
+  LLM attempts, a nullable unique approval-batch run link, and fail-closed
+  `abbott.v1` taxonomy seed/attestation.
+- Approval-batch `source_snapshot_ids` continue to bind the predecessor release;
+  Registry 1 and Registry 2 have separate capture snapshot IDs, hashes, parser
+  versions, and exact source/accepted/rejected/duplicate-collapse accounting.
+- `abbott_content_workflow_role` is separate from the materializer and has no
+  `DELETE`, release activation, active-pointer, catalog-fact, private-fact, or
+  OAuth authority. LLM attempts have no update/delete workflow grant.
+- Migrations 033 and 046 stayed byte-for-byte unchanged. Their SHA-256 values
+  remain `c3d23b0ccbee8ddf2fd77906f7fe3045dcf7e59b8ed8c4d978dd7d774a56c2aa`
+  and `460406eb14d98e32ec8b71576a5fd06812384434ba12c74545e118cc0ac3c456`.
+
+### Repository, service, and operator behavior
+
+The canonical repository now reconstructs persisted approval batches and
+accepted snapshots while recomputing item, batch, taxonomy, and acceptance
+hashes. `MySqlWorkflowStore` locks the active predecessor and ordered snapshot
+digests, preserves eventless entities, repeat-safely bootstraps the baseline,
+registers Registry captures, persists and reloads immutable reconciliation
+state, appends minimized LLM attempts, creates Registry 1 entities before a
+ready batch is finalized, and keeps identity collisions non-ready.
+
+The production gateway has no missing-authority placeholder and remains lazy.
+Correct commands are:
+
+```text
+reconcile --registry1 PATH --registry2 PATH --execute
+classify --run-id N --execute [--execute-llm]
+publish-projection --batch-id N --execute
+pull-accepted --batch-id N
+ingest --batch-id N --execute
+materialize --batch-id N --execute
+validate --batch-id N
+status --batch-id N
+```
+
+Write-capable stages default to a zero-authority dry run. Explicit `--dry-run`
+for read-only stages also performs zero DB, Sheets, OpenAI, source API, or
+materializer calls. `--execute-llm` without `--execute` is zero-call. All errors
+and stdout are allow-listed status/ID/count/hash receipts without traceback or
+content.
+
+`weekly_proposal.py` requires explicit Registry paths, taxonomy version, prompt
+version, model-routing version, and a reviewed 40-hex code revision. Execution
+composes only `reconcile -> classify -> publish-projection` and stops for manual
+approval. Its dry run does not even construct the gateway. The runbook contains
+a reviewed command and candidate weekly cron shape; no schedule was installed.
+
+### RED -> GREEN evidence
+
+RED was captured before each production surface existed:
+
+- migration/schema/grant tests: missing migration caused one nested file failure
+  and Python collection failed before running a test;
+- workflow service: missing-module import error, followed by an idempotency fake
+  failure while the repeat-safe contract was completed;
+- persisted batch/snapshot loaders: three missing-method errors;
+- concrete MySQL workflow store: missing-module import error;
+- corrected CLI: nine failures and one error against the superseded batch-ID
+  reconciliation adapter;
+- weekly orchestration: missing-module collection error;
+- read-only default policy: one dispatch assertion failed before correction.
+
+GREEN verification:
+
+```text
+focused schema/grant/repository/service/CLI/weekly: 132 tests, all passed
+Abbott page-classifier suite: 319 tests, all passed
+dashboard-next npm test: 532 tests, all passed
+dashboard-next lint: 0 errors (4 unchanged warnings)
+dashboard-next typecheck: passed
+dashboard-next public-asset scan: passed
+Python py_compile: passed
+git diff --check: passed
+```
+
+The first full root discovery ran 781 tests with five rehearsal-contract
+failures because the committed nested migration revision had not yet been
+recorded in the root gitlink. This is an expected attestation gate, not a schema
+or runtime failure; it is rerun after the root report-bearing commit.
+
+### Deferred live work and concerns
+
+No live DB/Sheet/OpenAI/source API call, migration/grant execution, deployment,
+secret change, cron/Hermes/Telegram action, candidate activation, or active
+pointer mutation occurred. Installing the workflow-role credentials, applying
+migration/grants, selecting live Registry snapshots, and authorizing a first
+proposal remain separate reviewed operator work. Task 10 owns bootstrap/runtime
+manifest synchronization; Task 9 deliberately did not vendor the new workflow
+closure or change Task 8 runtime hashes.

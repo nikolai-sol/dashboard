@@ -922,6 +922,59 @@ The operating schedule does not change: collection `06:12`, health `07:05`,
 summary `07:10`. The summary continues to include session integrity and an
 integrity mismatch remains `CRITICAL`.
 
+## Abbott content-registry weekly proposal
+
+This is a proposal-only workflow. It captures the two reviewed registry
+snapshots, reconciles them against the locked canonical predecessor, classifies
+eligible fields, creates one immutable approval batch, and publishes its Google
+Sheet projection. It stops at manual approval: it does not ingest, materialize,
+validate, activate a release, or mutate the active pointer.
+
+Review the exact local snapshot paths and all four version bindings before an
+operator authorizes execution. A dry run validates only the command
+configuration and intentionally performs zero DB, Sheets, OpenAI, source API,
+or materializer calls:
+
+```bash
+"$CANONICAL_PYTHON" agents/abbott_page_classifier/weekly_proposal.py \
+  --registry1 "$ABBOTT_REGISTRY1_SNAPSHOT" \
+  --registry2 "$ABBOTT_REGISTRY2_ACCEPTED_SNAPSHOT" \
+  --taxonomy-version abbott.v1 \
+  --prompt-version "$ABBOTT_CONTENT_PROMPT_VERSION" \
+  --model-routing-version "$ABBOTT_CONTENT_MODEL_ROUTING_VERSION" \
+  --code-revision "$REVIEWED_CODE_REVISION"
+```
+
+After reviewing the dry-run status, install the dedicated workflow-role DB
+values as `ABBOTT_CONTENT_WORKFLOW_DB_HOST`, `_PORT`, `_NAME=report_bd`, `_USER`,
+and `_PASSWORD`, plus the separately managed Sheets and optional OpenAI
+credentials. Do not fall back to collector or materializer credentials. The
+proposal-only execution is:
+
+```bash
+"$CANONICAL_PYTHON" agents/abbott_page_classifier/weekly_proposal.py \
+  --registry1 "$ABBOTT_REGISTRY1_SNAPSHOT" \
+  --registry2 "$ABBOTT_REGISTRY2_ACCEPTED_SNAPSHOT" \
+  --taxonomy-version abbott.v1 \
+  --prompt-version "$ABBOTT_CONTENT_PROMPT_VERSION" \
+  --model-routing-version "$ABBOTT_CONTENT_MODEL_ROUTING_VERSION" \
+  --code-revision "$REVIEWED_CODE_REVISION" \
+  --execute --execute-llm
+```
+
+For a separately reviewed Monday `08:30` Europe/Vienna schedule, place that
+same execution in a protected wrapper and use the following candidate cron
+shape. Do not inline credentials or mutable snapshot discovery in crontab:
+
+```text
+30 8 * * 1 /usr/bin/flock -n /run/lock/abbott-content-proposal.lock /opt/reportingdash/bin/run-abbott-content-proposal
+```
+
+No live cron or Hermes schedule was installed or changed by this implementation.
+Replaying the same source digests and reviewed bindings resumes the same
+content-addressed run and batch; a changed predecessor or binding produces a
+different run.
+
 ## Rollback
 
 Rollback is a pointer operation, not a data rewrite. Use the candidate as the

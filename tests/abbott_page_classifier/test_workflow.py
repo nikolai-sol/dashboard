@@ -27,8 +27,8 @@ class RecordingGateway:
         self.openai_calls = 0
         self.activation_calls = 0
 
-    def reconcile(self, registry1, registry2, *, batch_id, dry_run):
-        self.calls.append(("reconcile", (batch_id, dry_run)))
+    def reconcile(self, registry1, registry2, *, dry_run):
+        self.calls.append(("reconcile", dry_run))
         return {"status": "dry_run", "source_count": 2, "ready_count": 1,
                 "conflict_count": 0, "unresolved_count": 0, "rejected_count": 0,
                 "registry1_hash": "a" * 64, "registry2_hash": "b" * 64}
@@ -65,16 +65,16 @@ class RecordingGateway:
         self.calls.append(("validate", (batch_id, dry_run)))
         return {"status": "dry_run" if dry_run else "validated", "candidate_release_id": 42}
 
-    def status(self, batch_id):
-        self.calls.append(("status", batch_id))
+    def status(self, batch_id, *, dry_run):
+        self.calls.append(("status", (batch_id, dry_run)))
         return {"status": "draft", "candidate_release_id": 42}
 
 
 class WorkflowTests(unittest.TestCase):
     def test_production_builder_is_lazy_and_offline_reconcile_never_builds_a_repository(self):
-        repository_calls: list[str] = []
+        store_calls: list[str] = []
         dependencies = build_production_dependencies(
-            repository_factory=lambda: repository_calls.append("repository") or object(),
+            store_factory=lambda: store_calls.append("store") or object(),
         )
         output = io.StringIO()
         with redirect_stdout(output):
@@ -82,7 +82,7 @@ class WorkflowTests(unittest.TestCase):
                 "reconcile", "--registry1", "tests/fixtures/abbott_registry1_minimal.xlsx",
                 "--registry2", "tests/fixtures/abbott_registry2_accepted_minimal.csv", "--dry-run",
             ], dependencies=dependencies), 0)
-        self.assertEqual(repository_calls, [])
+        self.assertEqual(store_calls, [])
         self.assertEqual(json.loads(output.getvalue())["status"], "dry_run")
 
     def test_real_fixture_reconcile_is_offline_and_reports_exact_accounting(self):
@@ -136,25 +136,36 @@ class WorkflowTests(unittest.TestCase):
     def test_production_validate_dry_run_never_constructs_repository(self):
         calls: list[str] = []
         dependencies = build_production_dependencies(
-            repository_factory=lambda: calls.append("repository") or object(),
+            store_factory=lambda: calls.append("store") or object(),
         )
 
         self.assertEqual(main(["validate", "--batch-id", "1", "--dry-run"], dependencies=dependencies), 0)
         self.assertEqual(calls, [])
 
-    def test_production_reconcile_execute_uses_explicit_batch_persistence_authority(self):
+    def test_production_reconcile_execute_uses_canonical_workflow_service(self):
         calls: list[tuple[str, str]] = []
+
+        class Receipt:
+            run_id = 7
+            run_key = "a" * 64
+            source_count = 2
+            rejected_count = 0
+
+        class Service:
+            def reconcile(self, registry1, registry2):
+                calls.append((registry1.name, registry2.name))
+                return Receipt()
+
         dependencies = build_production_dependencies(
-            reconcile_persist=lambda registry1, registry2, batch_id: (
-                calls.append((registry1.name, batch_id)) or {"status": "draft", "ready_count": 2, "batch_hash": "a" * 64}
-            ),
+            store_factory=lambda: object(),
+            service_factory=lambda _store: Service(),
         )
         self.assertEqual(main([
             "reconcile", "--registry1", "tests/fixtures/abbott_registry1_minimal.xlsx",
             "--registry2", "tests/fixtures/abbott_registry2_accepted_minimal.csv",
-            "--batch-id", "batch-1", "--execute",
+            "--execute",
         ], dependencies=dependencies), 0)
-        self.assertEqual(calls, [("abbott_registry1_minimal.xlsx", "batch-1")])
+        self.assertEqual(calls, [("abbott_registry1_minimal.xlsx", "abbott_registry2_accepted_minimal.csv")])
 
     def test_command_surface_is_fixed(self):
         self.assertEqual(
@@ -170,50 +181,49 @@ class WorkflowTests(unittest.TestCase):
         )
 
         self.assertEqual(result, 0)
-        self.assertEqual(gateway.calls, [("reconcile", (None, True))])
+        self.assertEqual(gateway.calls, [("reconcile", True)])
 
-    def test_execute_stages_require_batch_id_while_default_dry_run_is_batchless(self):
+    def test_write_stages_default_dry_while_read_stages_require_a_numeric_batch(self):
         gateway = RecordingGateway()
-        for command in ("classify", "publish-projection", "pull-accepted", "ingest", "materialize", "validate"):
+        for command in ("publish-projection", "ingest", "materialize"):
             with self.subTest(command=command):
                 self.assertEqual(main([command], dependencies=WorkflowDependencies(gateway)), 0)
                 self.assertEqual(main([command, "--execute"], dependencies=WorkflowDependencies(gateway)), 2)
-                self.assertEqual(main([command, "--batch-id", "batch-1", "--execute"], dependencies=WorkflowDependencies(gateway)), 0)
-        self.assertIn(("classify", ("batch-1", False, False)), gateway.calls)
+                self.assertEqual(main([command, "--batch-id", "1", "--execute"], dependencies=WorkflowDependencies(gateway)), 0)
+        for command in ("pull-accepted", "validate", "status"):
+            with self.subTest(command=command):
+                self.assertEqual(main([command], dependencies=WorkflowDependencies(gateway)), 2)
+                self.assertEqual(main([command, "--dry-run"], dependencies=WorkflowDependencies(gateway)), 0)
+                self.assertEqual(main([command, "--batch-id", "1"], dependencies=WorkflowDependencies(gateway)), 0)
+        self.assertEqual(main(["classify", "--execute"], dependencies=WorkflowDependencies(gateway)), 2)
+        self.assertEqual(main(["classify", "--run-id", "1", "--execute"], dependencies=WorkflowDependencies(gateway)), 0)
+        self.assertIn(("classify", (1, False, False)), gateway.calls)
         self.assertTrue(
             all(
                 call[1][1] is False
                 for call in gateway.calls
                 if call[0] in {"publish-projection", "pull-accepted", "ingest", "materialize", "validate"}
-                and call[1][0] == "batch-1"
+                and call[1][0] == 1
             )
         )
         self.assertEqual(gateway.sheet_calls, 1)
         self.assertEqual(gateway.activation_calls, 0)
 
-    def test_llm_requires_key_only_for_eligible_execute_rows_and_never_for_locked_rows(self):
-        locked = RecordingGateway(eligible=0)
-        with patch.dict(os.environ, {}, clear=True):
-            self.assertEqual(main(["classify", "--batch-id", "locked", "--execute-llm"], dependencies=WorkflowDependencies(locked)), 0)
-        self.assertEqual(locked.openai_calls, 0)
-
-        eligible = RecordingGateway(eligible=1)
-        self.assertEqual(main(["classify", "--batch-id", "open"], dependencies=WorkflowDependencies(eligible)), 0)
-        self.assertEqual(eligible.openai_calls, 0)
-        with patch.dict(os.environ, {}, clear=True):
-            self.assertEqual(main(["classify", "--batch-id", "open", "--execute-llm"], dependencies=WorkflowDependencies(eligible)), 2)
-        with patch.dict(os.environ, {"OPENAI_API_KEY": "test-only"}, clear=True):
-            self.assertEqual(main(["classify", "--batch-id", "open", "--execute-llm"], dependencies=WorkflowDependencies(eligible)), 0)
-        self.assertEqual(eligible.openai_calls, 1)
+    def test_llm_execution_requires_explicit_execute_and_run_id(self):
+        gateway = RecordingGateway(eligible=1)
+        self.assertEqual(main(["classify", "--run-id", "7", "--execute-llm"], dependencies=WorkflowDependencies(gateway)), 0)
+        self.assertEqual(gateway.openai_calls, 0)
+        self.assertEqual(main(["classify", "--run-id", "7", "--execute-llm", "--execute"], dependencies=WorkflowDependencies(gateway)), 0)
+        self.assertEqual(gateway.openai_calls, 1)
 
     def test_sheet_write_is_limited_to_non_dry_publish_and_materialize_never_activates(self):
         gateway = RecordingGateway()
         dependencies = WorkflowDependencies(gateway)
-        self.assertEqual(main(["materialize", "--batch-id", "batch-1", "--execute"], dependencies=dependencies), 0)
-        self.assertEqual(main(["publish-projection", "--batch-id", "batch-1", "--execute"], dependencies=dependencies), 0)
+        self.assertEqual(main(["materialize", "--batch-id", "1", "--execute"], dependencies=dependencies), 0)
+        self.assertEqual(main(["publish-projection", "--batch-id", "1", "--execute"], dependencies=dependencies), 0)
 
-        self.assertIn(("materialize", ("batch-1", False)), gateway.calls)
-        self.assertIn(("publish-projection", ("batch-1", False)), gateway.calls)
+        self.assertIn(("materialize", (1, False)), gateway.calls)
+        self.assertIn(("publish-projection", (1, False)), gateway.calls)
         self.assertEqual(gateway.sheet_calls, 1)
         self.assertEqual(gateway.activation_calls, 0)
 
@@ -248,7 +258,7 @@ class WorkflowTests(unittest.TestCase):
         output = io.StringIO()
         with redirect_stdout(output):
             for command in ("publish-projection", "pull-accepted", "ingest", "materialize", "validate"):
-                self.assertEqual(main([command, "--batch-id", "batch-9", "--execute"], dependencies=WorkflowDependencies(gateway)), 0)
+                self.assertEqual(main([command, "--batch-id", "9", "--execute"], dependencies=WorkflowDependencies(gateway)), 0)
         rendered = output.getvalue()
         self.assertEqual(gateway.stage, 5)
         self.assertNotIn("must not print", rendered)
@@ -258,7 +268,7 @@ class WorkflowTests(unittest.TestCase):
         replay = RecordingGateway()
         first, second = io.StringIO(), io.StringIO()
         with redirect_stdout(first):
-            self.assertEqual(main(["materialize", "--batch-id", "batch-9"], dependencies=WorkflowDependencies(replay)), 0)
+            self.assertEqual(main(["materialize", "--batch-id", "9"], dependencies=WorkflowDependencies(replay)), 0)
         with redirect_stdout(second):
-            self.assertEqual(main(["materialize", "--batch-id", "batch-9"], dependencies=WorkflowDependencies(replay)), 0)
+            self.assertEqual(main(["materialize", "--batch-id", "9"], dependencies=WorkflowDependencies(replay)), 0)
         self.assertEqual(first.getvalue(), second.getvalue())

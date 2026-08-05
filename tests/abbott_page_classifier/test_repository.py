@@ -582,6 +582,93 @@ def acceptance_workflow_row(
 
 
 class ContentRegistryRepositoryTests(unittest.TestCase):
+    @staticmethod
+    def _published_item_rows(batch):
+        return [
+            (
+                100 + index,
+                item.content_entity_id,
+                item.input_hash,
+                item.title,
+                item.url,
+                item.final_direction_code,
+                item.final_material_type_code,
+                item.final_access_code,
+                item.final_lifecycle_code,
+                item.readiness_state,
+                item.row_hash,
+                item.decision_reason,
+                ContentRegistryRepository._json(item.proposal_evidence),
+                ContentRegistryRepository._json(
+                    [code.value if hasattr(code, "value") else str(code) for code in item.conflict_codes]
+                ),
+                (
+                    item.conflict_codes[0].value
+                    if item.conflict_codes and hasattr(item.conflict_codes[0], "value")
+                    else (str(item.conflict_codes[0]) if item.conflict_codes else None)
+                ),
+            )
+            for index, item in enumerate(batch.items)
+        ]
+
+    def test_load_persisted_batch_reconstructs_and_reattests_all_hash_authorities(self):
+        batch = workflow_batch()
+        connection = WorkflowConnection(
+            batch,
+            existing_batch_row=draft_workflow_row(batch),
+            acceptance_items=self._published_item_rows(batch),
+        )
+        loaded = ContentRegistryRepository(lambda: connection).load_persisted_batch(17)
+
+        self.assertEqual(loaded.database_batch_id, 17)
+        self.assertEqual(loaded.batch, batch)
+        self.assertTrue(any("portal_content_approval_items" in sql for sql, _ in connection.calls))
+
+    def test_load_persisted_batch_fails_closed_on_tampered_item_hash(self):
+        batch = workflow_batch()
+        rows = self._published_item_rows(batch)
+        rows[0] = (*rows[0][:10], "f" * 64, *rows[0][11:])
+        connection = WorkflowConnection(
+            batch,
+            existing_batch_row=draft_workflow_row(batch),
+            acceptance_items=rows,
+        )
+        with self.assertRaises(RepositoryError) as raised:
+            ContentRegistryRepository(lambda: connection).load_persisted_batch(17)
+        self.assertEqual(raised.exception.code, "BATCH_HASH_MISMATCH")
+
+    def test_load_accepted_snapshot_recomputes_hash_and_rejects_nonaccepted_status(self):
+        batch = workflow_batch()
+        accepted_hash = compute_accepted_decision_hash(batch.items)
+        history = (
+            batch.batch_key,
+            batch.published_input_hash,
+            accepted_hash,
+            "content-manager",
+            "2026-08-05T12:30:00+00:00",
+            1, 0, 0, 0, 0, 1, 0,
+            "accepted",
+            "sheet-123",
+            "e" * 64,
+            None,
+            "not_started",
+        )
+        connection = WorkflowConnection(
+            batch,
+            existing_batch_row=draft_workflow_row(batch, status="accepted"),
+            history_row=history,
+            acceptance_items=self._published_item_rows(batch),
+        )
+        repository = ContentRegistryRepository(lambda: connection)
+        snapshot = repository.load_accepted_snapshot(17)
+        self.assertEqual(snapshot.accepted_decision_hash, accepted_hash)
+        self.assertEqual(snapshot.accepted_count, 1)
+
+        connection.history_row = (*history[:12], "published", *history[13:])
+        with self.assertRaises(RepositoryError) as raised:
+            repository.load_accepted_snapshot(17)
+        self.assertEqual(raised.exception.code, "BATCH_NOT_ACCEPTED")
+
     def test_load_active_taxonomy_returns_exact_terms_and_verified_digest(self):
         batch = workflow_batch()
         connection = WorkflowConnection(batch)

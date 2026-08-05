@@ -498,6 +498,7 @@ PREPARE stmt FROM @sql; EXECUTE stmt; DEALLOCATE PREPARE stmt;
 CREATE ROLE IF NOT EXISTS
   'abbott_collector_role',
   'abbott_importer_role',
+  'abbott_content_workflow_role',
   'abbott_content_materializer_role',
   'abbott_release_operator_role',
   'abbott_runtime_reader_role',
@@ -529,6 +530,56 @@ GRANT SELECT, INSERT, UPDATE, DELETE ON report_bd_private.canonical_fact_metrika
   TO 'abbott_collector_role';
 GRANT SELECT, INSERT, UPDATE, DELETE ON report_bd_private.canonical_fact_metrika_visits
   TO 'abbott_collector_role';
+
+-- Weekly content reconciliation is a separate workflow role. It can register
+-- immutable captures, stage and finalize proposals, and ingest reviewed events.
+-- Candidate materialization and active-release changes remain separate roles.
+GRANT SELECT ON report_bd.portal_data_releases
+  TO 'abbott_content_workflow_role';
+GRANT SELECT ON report_bd.portal_active_data_releases
+  TO 'abbott_content_workflow_role';
+GRANT SELECT, INSERT ON report_bd.portal_dataset_snapshots
+  TO 'abbott_content_workflow_role';
+GRANT SELECT ON report_bd.portal_release_source_imports
+  TO 'abbott_content_workflow_role';
+GRANT SELECT ON report_bd.portal_content_catalog
+  TO 'abbott_content_workflow_role';
+GRANT SELECT ON report_bd.portal_content_lookup_projection
+  TO 'abbott_content_workflow_role';
+GRANT SELECT ON report_bd.portal_content_taxonomy_versions
+  TO 'abbott_content_workflow_role';
+GRANT SELECT ON report_bd.portal_content_taxonomy_terms
+  TO 'abbott_content_workflow_role';
+GRANT SELECT, INSERT, UPDATE (material_id, title, canonical_url, registry_status,
+                              source_evidence, updated_at)
+  ON report_bd.portal_content_registry_entities
+  TO 'abbott_content_workflow_role';
+GRANT SELECT, INSERT, UPDATE (alias_status)
+  ON report_bd.portal_content_registry_aliases
+  TO 'abbott_content_workflow_role';
+GRANT SELECT, INSERT, UPDATE (run_status, failure_code, classified_at,
+                              finalized_at, failed_at)
+  ON report_bd.portal_content_reconciliation_runs
+  TO 'abbott_content_workflow_role';
+GRANT SELECT, INSERT ON report_bd.portal_content_reconciliation_items
+  TO 'abbott_content_workflow_role';
+GRANT SELECT, INSERT ON report_bd.portal_content_llm_attempts
+  TO 'abbott_content_workflow_role';
+GRANT SELECT, INSERT, UPDATE (batch_status, accepted_decision_hash, ready_count,
+                              conflict_count, unresolved_count, rejected_count,
+                              no_change_count, accepted_count, skipped_count,
+                              spreadsheet_file_id, spreadsheet_projection_hash,
+                              published_at, failed_at, failure_code, accepted_by,
+                              accepted_at, ingested_at)
+  ON report_bd.portal_content_approval_batches
+  TO 'abbott_content_workflow_role';
+GRANT SELECT, INSERT, UPDATE (final_direction_code, final_material_type_code,
+                              final_access_code, final_lifecycle_code,
+                              decision_reason)
+  ON report_bd.portal_content_approval_items
+  TO 'abbott_content_workflow_role';
+GRANT SELECT, INSERT ON report_bd.portal_content_classification_events
+  TO 'abbott_content_workflow_role';
 
 -- The CLI importer uses one connection for a single transaction spanning both
 -- schemas. It may attach imported snapshot IDs to a staging release, but it

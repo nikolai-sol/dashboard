@@ -1,0 +1,193 @@
+"""Task 9A corrected run-id/batch-id CLI and concrete factory contracts."""
+
+from __future__ import annotations
+
+from contextlib import redirect_stdout
+import io
+import json
+import os
+from types import SimpleNamespace
+import unittest
+from unittest.mock import patch
+
+from agents.abbott_page_classifier.workflow import (
+    WorkflowConfigurationError,
+    WorkflowDependencies,
+    ProductionWorkflowGateway,
+    _workflow_db_connection,
+    build_production_dependencies,
+    main,
+)
+
+
+class CorrectedRecordingGateway:
+    def __init__(self):
+        self.calls = []
+
+    def reconcile(self, registry1, registry2, *, dry_run):
+        self.calls.append(("reconcile", dry_run))
+        return {"status": "dry_run" if dry_run else "reconciled", "run_id": 12, "run_key": "a" * 64}
+
+    def classify(self, run_id, *, execute_llm, dry_run):
+        self.calls.append(("classify", (run_id, execute_llm, dry_run)))
+        return {"status": "dry_run" if dry_run else "finalized", "batch_id": 73, "batch_key": "abbott-batch"}
+
+    def publish_projection(self, batch_id, *, dry_run):
+        self.calls.append(("publish-projection", (batch_id, dry_run)))
+        return {"status": "dry_run" if dry_run else "published", "batch_id": int(batch_id)}
+
+    def pull_accepted(self, batch_id, *, dry_run):
+        self.calls.append(("pull-accepted", (batch_id, dry_run)))
+        return {"status": "dry_run" if dry_run else "accepted_snapshot_ready", "batch_id": int(batch_id)}
+
+    def ingest(self, batch_id, *, dry_run):
+        self.calls.append(("ingest", (batch_id, dry_run)))
+        return {"status": "dry_run" if dry_run else "ingested", "batch_id": int(batch_id)}
+
+    def materialize(self, batch_id, *, dry_run):
+        self.calls.append(("materialize", (batch_id, dry_run)))
+        return {"status": "dry_run" if dry_run else "candidate_materialized", "batch_id": int(batch_id)}
+
+    def validate(self, batch_id, *, dry_run):
+        self.calls.append(("validate", (batch_id, dry_run)))
+        return {"status": "dry_run" if dry_run else "validated", "batch_id": int(batch_id)}
+
+    def status(self, batch_id, *, dry_run):
+        self.calls.append(("status", (batch_id, dry_run)))
+        return {"status": "dry_run" if dry_run else "published", "batch_id": int(batch_id)}
+
+
+class CorrectedWorkflowCliTests(unittest.TestCase):
+    def run_cli(self, arguments, gateway):
+        output = io.StringIO()
+        with redirect_stdout(output):
+            code = main(arguments, dependencies=WorkflowDependencies(gateway))
+        return code, json.loads(output.getvalue())
+
+    def test_reconcile_execute_creates_run_without_batch_id(self):
+        gateway = CorrectedRecordingGateway()
+        code, result = self.run_cli(
+            [
+                "reconcile", "--registry1", "one.xlsx", "--registry2", "two.csv",
+                "--execute",
+            ],
+            gateway,
+        )
+        self.assertEqual(code, 0)
+        self.assertEqual(result["run_id"], 12)
+        self.assertEqual(gateway.calls, [("reconcile", False)])
+
+        code, result = self.run_cli(
+            [
+                "reconcile", "--registry1", "one.xlsx", "--registry2", "two.csv",
+                "--batch-id", "9", "--execute",
+            ],
+            gateway,
+        )
+        self.assertEqual(code, 2)
+        self.assertEqual(result["status"], "IDENTIFIER_INVALID")
+
+    def test_classify_execute_requires_numeric_run_id_and_forbids_batch_id(self):
+        gateway = CorrectedRecordingGateway()
+        code, result = self.run_cli(["classify", "--execute"], gateway)
+        self.assertEqual((code, result["status"]), (2, "RUN_ID_REQUIRED"))
+        code, result = self.run_cli(["classify", "--run-id", "abc", "--execute"], gateway)
+        self.assertEqual((code, result["status"]), (2, "RUN_ID_INVALID"))
+        code, result = self.run_cli(["classify", "--batch-id", "9", "--execute"], gateway)
+        self.assertEqual((code, result["status"]), (2, "IDENTIFIER_INVALID"))
+        code, result = self.run_cli(["classify", "--run-id", "12", "--execute"], gateway)
+        self.assertEqual(code, 0)
+        self.assertEqual(result["batch_id"], 73)
+
+    def test_batch_stages_require_numeric_batch_id_and_reject_run_id(self):
+        gateway = CorrectedRecordingGateway()
+        for command in ("publish-projection", "pull-accepted", "ingest", "materialize", "validate", "status"):
+            with self.subTest(command=command):
+                code, result = self.run_cli([command, "--execute"], gateway)
+                self.assertEqual((code, result["status"]), (2, "BATCH_ID_REQUIRED"))
+                code, result = self.run_cli([command, "--batch-id", "batch-9", "--execute"], gateway)
+                self.assertEqual((code, result["status"]), (2, "BATCH_ID_INVALID"))
+                code, result = self.run_cli([command, "--run-id", "12", "--execute"], gateway)
+                self.assertEqual((code, result["status"]), (2, "IDENTIFIER_INVALID"))
+
+    def test_execute_llm_without_execute_is_zero_dispatch(self):
+        gateway = CorrectedRecordingGateway()
+        code, result = self.run_cli(
+            ["classify", "--run-id", "12", "--execute-llm"], gateway
+        )
+        self.assertEqual(code, 0)
+        self.assertEqual(result["status"], "dry_run")
+        self.assertEqual(gateway.calls, [])
+
+    def test_read_only_stages_run_without_execute_but_explicit_dry_run_is_zero_dispatch(self):
+        gateway = CorrectedRecordingGateway()
+        dependencies = WorkflowDependencies(gateway)
+
+        for command in ("pull-accepted", "validate", "status"):
+            with self.subTest(command=command):
+                self.assertEqual(main([command, "--batch-id", "7"], dependencies=dependencies), 0)
+        self.assertEqual(
+            [call[0] for call in gateway.calls],
+            ["pull-accepted", "validate", "status"],
+        )
+        gateway.calls.clear()
+        for command in ("pull-accepted", "validate", "status"):
+            with self.subTest(command=command):
+                self.assertEqual(main([command, "--dry-run"], dependencies=dependencies), 0)
+        self.assertEqual(gateway.calls, [])
+
+    def test_default_production_dependencies_are_lazy_and_have_no_missing_authority(self):
+        calls = []
+        dependencies = build_production_dependencies(
+            store_factory=lambda: calls.append("store") or object(),
+            sheets_gateway_factory=lambda *_args: calls.append("sheets") or object(),
+        )
+        self.assertNotIn("_missing_authority", dependencies.gateway.__dict__)
+        code, result = self.run_cli(
+            ["classify", "--run-id", "12", "--dry-run"], dependencies.gateway
+        )
+        self.assertEqual((code, result["status"]), (0, "dry_run"))
+        self.assertEqual(calls, [])
+
+    def test_workflow_database_authority_requires_its_dedicated_role_environment(self):
+        with patch.dict(os.environ, {}, clear=True):
+            with self.assertRaisesRegex(
+                WorkflowConfigurationError, "WORKFLOW_DB_CONFIGURATION_INVALID"
+            ):
+                _workflow_db_connection()
+
+    def test_production_ingest_resumes_an_accepted_batch_from_canonical_db(self):
+        snapshot = SimpleNamespace(accepted_decision_hash="c" * 64)
+
+        class Store:
+            def load_batch_history(self, batch_id):
+                self.batch_id = batch_id
+                return SimpleNamespace(batch_status="accepted")
+
+            def load_accepted_snapshot(self, batch_id):
+                self.snapshot_batch_id = batch_id
+                return snapshot
+
+        store = Store()
+        gateway = ProductionWorkflowGateway(
+            store_factory=lambda: store,
+            service_factory=lambda _store: None,
+            sheets_gateway_factory=lambda _spreadsheet_id: self.fail("Sheets reached"),
+        )
+        result = SimpleNamespace(
+            status="ingested", accepted_count=2, conflict_count=1,
+            unresolved_count=0, rejected_count=0,
+        )
+        with patch(
+            "agents.abbott_page_classifier.batch_service.ingest_accepted_batch",
+            return_value=result,
+        ) as ingest:
+            receipt = gateway.ingest(73, dry_run=False)
+
+        ingest.assert_called_once_with(snapshot, store)
+        self.assertEqual((store.batch_id, store.snapshot_batch_id), (73, 73))
+        self.assertEqual(receipt["status"], "ingested")
+
+
+if __name__ == "__main__":
+    unittest.main()

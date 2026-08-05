@@ -45,7 +45,7 @@ class AbbottSchemaContractTest(unittest.TestCase):
         private = self._private_sql()
         role_block = private.split("CREATE ROLE IF NOT EXISTS", 1)[1].split(";", 1)[0]
         roles = re.findall(r"'([^']+)'", role_block)
-        self.assertEqual(len(roles), 6)
+        self.assertEqual(len(roles), 7)
         self.assertTrue(all(len(role) <= 32 for role in roles), roles)
 
     def test_content_catalog_persists_immutable_projection_provenance(self):
@@ -962,7 +962,7 @@ class AbbottSchemaContractTest(unittest.TestCase):
             for grant in re.findall(r"GRANT .*?;", sql, flags=re.IGNORECASE)
             if "portal_content_lookup_projection" in grant
         ]
-        self.assertEqual(len(projection_grants), 5)
+        self.assertEqual(len(projection_grants), 6)
         self.assertTrue(any(
             grant.startswith("GRANT SELECT, INSERT ON ")
             and "TO 'abbott_importer_role'" in grant
