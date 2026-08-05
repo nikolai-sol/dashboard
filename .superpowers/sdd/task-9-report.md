@@ -75,3 +75,5 @@ persistence authority, and an executable no-argument compatibility failure.
 The production gateway remains lazy; its separately authorized reconciliation
 persistence and existing immutable batch/snapshot loader seams are tested with
 actual `ProductionWorkflowGateway` construction fakes and make no live call.
+
+Follow-up commit: `384eab1947ddbac2bccb63fe67ca6f1186e4db98`.
