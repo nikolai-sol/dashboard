@@ -15,7 +15,7 @@ private runtime repository.
 | `lib/canonical_writer.py` | `canonical_writer.py` | `3f287a42d1f79360d49a1f484dee823b70683ec5bd0448a205b0f352219a4e19` | Staging resume writer and current-active append-only Abbott day publisher |
 | `lib/metrika_dashboard_breakdowns.py` | `metrika_dashboard_breakdowns.py` | `879822ee16108abccbb0b0c726d88f6d3835e36f2566d2531bdb4cd1a461f6c8` | Shared Metrika dashboard breakdown definitions |
 | `lib/metrika_logs_api.py` | `metrika_logs_api.py` | `b9fdd87b9fa9112a2e716e0fd1ebd78859fe87884397a36d16b7e9ce6cac798b` | Exact Metrika Logs request lifecycle and visit parser |
-| `lib/canonical_release_store.py` | `canonical_release_store.py` | `7c31094a188ed32a9944b32456d302c2e3256abdd554da012b15fcf38db0a301` | Candidate release store, persisted validation gate, atomic activation, and rollback pointer management |
+| `lib/canonical_release_store.py` | `canonical_release_store.py` | `d4d36d531a012c84bb0ec3dc282da1dc2dc6e469e6e1a5ce91c398d29b42ccec` | Candidate release store, persisted validation gate, atomic activation, and rollback pointer management |
 
 ## Runnable Abbott runtime closure
 
@@ -28,7 +28,7 @@ every runbook entrypoint and each repository-local Python dependency.
 | `runtime/canonical_writer.py` | `canonical_writer.py` | `3f287a42d1f79360d49a1f484dee823b70683ec5bd0448a205b0f352219a4e19` | Atomic staging and active append-only writer |
 | `runtime/metrika_dashboard_breakdowns.py` | `metrika_dashboard_breakdowns.py` | `879822ee16108abccbb0b0c726d88f6d3835e36f2566d2531bdb4cd1a461f6c8` | Shared dashboard breakdown definitions |
 | `runtime/metrika_logs_api.py` | `metrika_logs_api.py` | `b9fdd87b9fa9112a2e716e0fd1ebd78859fe87884397a36d16b7e9ce6cac798b` | Exact Metrika Logs request lifecycle and visit parser |
-| `runtime/canonical_release_store.py` | `canonical_release_store.py` | `7c31094a188ed32a9944b32456d302c2e3256abdd554da012b15fcf38db0a301` | Exact validation and pointer store |
+| `runtime/canonical_release_store.py` | `canonical_release_store.py` | `d4d36d531a012c84bb0ec3dc282da1dc2dc6e469e6e1a5ce91c398d29b42ccec` | Exact validation and pointer store |
 | `runtime/run_abbott_metrika_active_release.py` | `run_abbott_metrika_active_release.py` | `10cd78c56bada52ed806b47a8dfa5bd232b6669183eafbd015603fcb5ed8ba91` | Committed-manifest cron launcher |
 | `runtime/abbott_release_operator.py` | `abbott_release_operator.py` | `4fea3b284743e168011bb4518276576890d76c375a557b9732e6491f326ecd9f` | Least-privilege lifecycle CLI |
 | `runtime/probe_yandex_metrika_access.py` | `probe_yandex_metrika_access.py` | `430603922de9cd3cdbc6d0a7dc103f841924087c39462fc137ec8a26684674bc` | Read-only counter access proof |
@@ -40,6 +40,11 @@ every runbook entrypoint and each repository-local Python dependency.
 | `runtime/abbott_health_probe.py` | `abbott_health_probe.py` | `4abaaf5d51b8ac45b346f7fa01079b0e94a62057464ebae8300ebfac22be4060` | Deterministic Abbott health CLI |
 | `runtime/send_canonical_telegram_report.py` | `send_canonical_telegram_report.py` | `bf0a3774761fcbae008e00261177d3fc113f55620fa6c07322eb4c38153a901e` | Summary entrypoint |
 | `runtime/sources_health_dashboard.py` | `sources_health_dashboard.py` | `072a3270fa0cac9c7b7384f19aba636485dc89b8c03da2eb80bbde1c50c71116` | Summary health dependency |
+| `runtime/agents/__init__.py` | `agents/__init__.py` | `cf17c37c950a6d792c42de4580180ddefa478dbebc01109674658756473d9cc8` | Vendored content-attestor package root |
+| `runtime/agents/abbott_page_classifier/__init__.py` | `agents/abbott_page_classifier/__init__.py` | `ea902dc7a2b24b5bdc073342296a16a013af63a3b7afc26789f82e2511f576b0` | Vendored content-attestor package |
+| `runtime/agents/abbott_page_classifier/candidate_release.py` | `agents/abbott_page_classifier/candidate_release.py` | `1b2ee757fdc28f058374c95dbe50aad54db00e70ed62d71163fb070c14e5a4dc` | Shared content materializer and read-only attestor authority |
+| `runtime/agents/abbott_page_classifier/domain.py` | `agents/abbott_page_classifier/domain.py` | `be030852ef0c84a4e53dd7b94538970b846b2cc5f2c0b05298c1440ddcf29f5a` | Content taxonomy domain dependency |
+| `runtime/agents/abbott_page_classifier/normalization.py` | `agents/abbott_page_classifier/normalization.py` | `7f6a72207e0bece361089174d7bcf8ca228b9233f41918941b88a66e82816867` | Content normalization dependency |
 
 ## collectors/
 

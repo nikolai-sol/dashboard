@@ -254,11 +254,18 @@ def _close(cur, conn) -> None:
             pass
 
 
-def get_release(release_id: int, *, portal_key: str = ABBOTT_DATASET_KEY) -> dict:
-    conn = None
+def get_release(
+    release_id: int,
+    *,
+    portal_key: str = ABBOTT_DATASET_KEY,
+    connection=None,
+) -> dict:
+    conn = connection
     cur = None
+    owns_connection = connection is None
     try:
-        conn = get_db_connection()
+        if conn is None:
+            conn = get_db_connection()
         cur = conn.cursor(dictionary=True)
         cur.execute(
             """
@@ -272,7 +279,7 @@ def get_release(release_id: int, *, portal_key: str = ABBOTT_DATASET_KEY) -> dic
     except Exception:
         raise ReleaseStoreError("Unable to read canonical release") from None
     finally:
-        _close(cur, conn)
+        _close(cur, conn if owns_connection else None)
 
     if release is None:
         raise ReleaseNotFoundError("Canonical release was not found for dataset")
@@ -280,9 +287,16 @@ def get_release(release_id: int, *, portal_key: str = ABBOTT_DATASET_KEY) -> dic
 
 
 def require_mutable_candidate_release(
-    release_id: int, *, portal_key: str = ABBOTT_DATASET_KEY
+    release_id: int,
+    *,
+    portal_key: str = ABBOTT_DATASET_KEY,
+    connection=None,
 ) -> dict:
-    release = get_release(release_id, portal_key=portal_key)
+    release = get_release(
+        release_id,
+        portal_key=portal_key,
+        connection=connection,
+    )
     if release.get("release_status") != MUTABLE_RELEASE_STATUS:
         raise ImmutableReleaseError("Canonical release is immutable")
     return release
@@ -294,14 +308,18 @@ def create_candidate_release(
     predecessor_release_id: int,
     baseline_validation_run_id: int,
     code_revision: str,
+    connection=None,
 ) -> int:
-    conn = None
+    conn = connection
     cur = None
+    owns_connection = connection is None
     release_key = f"{portal_key}-{uuid.uuid4().hex}"
     try:
-        conn = get_db_connection()
+        if conn is None:
+            conn = get_db_connection()
         cur = conn.cursor(dictionary=True)
-        conn.start_transaction()
+        if owns_connection:
+            conn.start_transaction()
         current_release_id = _lock_active_pointer(cur, portal_key)
         if current_release_id != predecessor_release_id:
             raise ReleasePointerConflictError("Active canonical release pointer changed")
@@ -324,18 +342,19 @@ def create_candidate_release(
             ),
         )
         release_id = int(cur.lastrowid)
-        conn.commit()
+        if owns_connection:
+            conn.commit()
         return release_id
     except ReleaseStoreError:
-        if conn is not None:
+        if owns_connection and conn is not None:
             conn.rollback()
         raise
     except Exception:
-        if conn is not None:
+        if owns_connection and conn is not None:
             conn.rollback()
         raise ReleaseStoreError("Unable to create canonical release") from None
     finally:
-        _close(cur, conn)
+        _close(cur, conn if owns_connection else None)
 
 
 def validate_release(
