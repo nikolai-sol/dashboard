@@ -61,6 +61,9 @@ SYNCHRONIZED_BOOTSTRAP_COPIES = {
     "runtime/agents/abbott_page_classifier/sources.py": "agents/abbott_page_classifier/sources.py",
     "runtime/agents/abbott_page_classifier/llm_classifier.py": "agents/abbott_page_classifier/llm_classifier.py",
     "runtime/agents/abbott_page_classifier/sheets_sync.py": "agents/abbott_page_classifier/sheets_sync.py",
+    "runtime/agents/abbott_page_classifier/python311_runtime.sh": "agents/abbott_page_classifier/python311_runtime.sh",
+    "runtime/agents/abbott_page_classifier/run_classifier.sh": "agents/abbott_page_classifier/run_classifier.sh",
+    "runtime/agents/abbott_page_classifier/run_weekly_proposal.sh": "agents/abbott_page_classifier/run_weekly_proposal.sh",
     "src/db/migrations/047_abbott_content_reconciliation_staging.sql": "dashboard-next/src/db/migrations/047_abbott_content_reconciliation_staging.sql",
 }
 VENDORED_CONTENT_RUNTIME = {
@@ -81,6 +84,9 @@ VENDORED_CONTENT_RUNTIME = {
     "runtime/agents/abbott_page_classifier/sources.py",
     "runtime/agents/abbott_page_classifier/llm_classifier.py",
     "runtime/agents/abbott_page_classifier/sheets_sync.py",
+    "runtime/agents/abbott_page_classifier/python311_runtime.sh",
+    "runtime/agents/abbott_page_classifier/run_classifier.sh",
+    "runtime/agents/abbott_page_classifier/run_weekly_proposal.sh",
 }
 DEFAULT_SHEETS_GATEWAY_IMPORTS = {
     "google.auth.transport.requests": "google-auth",

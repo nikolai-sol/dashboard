@@ -238,13 +238,13 @@ class BootstrapCursor(FakeCursor):
             self.catalog_locked = "FOR UPDATE" in normalized
             self.rows = list(self.catalog)
         elif "SELECT id, material_id, title, canonical_url" in normalized:
-            material_id, url = params[1], params[2]
+            material_id, urls = params[1], tuple(params[2:])
             self.rows = [
                 (entity_id, entity["material_id"], entity["title"],
                  entity["canonical_url"], entity["registry_status"],
                  _canonical_json(entity["source_evidence"]))
                 for entity_id, entity in self.entities.items()
-                if entity["material_id"] == material_id or entity["canonical_url"] == url
+                if entity["material_id"] == material_id or entity["canonical_url"] in urls
             ]
         elif "FROM portal_content_registry_aliases" in normalized and "alias_type = %s" in normalized:
             alias_type, alias_hash, scope = params[1], params[2], params[3]
@@ -542,6 +542,26 @@ class MySqlWorkflowStoreTests(unittest.TestCase):
                     MySqlWorkflowStore(
                         lambda: connection
                     ).load_reconciliation_context(CONFIG)
+
+    def test_baseline_material_id_without_url_is_replay_safe(self):
+        connection = BootstrapConnection()
+        cursor = connection.cursor_instance
+        cursor.catalog = [(
+            "Material without URL", None, "300", "articles", "all",
+            "cardiology", 1, 11, "pages", 3, "f3",
+        )]
+        cursor.entities = {}
+        cursor.aliases = []
+        cursor.events = {}
+        store = MySqlWorkflowStore(lambda: connection)
+
+        first = store.load_reconciliation_context(CONFIG)
+        second = store.load_reconciliation_context(CONFIG)
+
+        self.assertEqual(len(first.entities), 1)
+        self.assertEqual(first.entities, second.entities)
+        self.assertEqual(cursor.inserted_entity_ids, [1])
+        self.assertEqual(cursor.entities[1]["canonical_url"], "")
 
     def test_baseline_weak_alias_can_have_multiple_entity_owners(self):
         connection = BootstrapConnection()

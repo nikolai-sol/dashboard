@@ -24,10 +24,10 @@ the repository/materializer boundary.
 The root runtime manifest adds these authorities:
 
 ```text
-weekly_proposal.py      16b67d580b6300de3f6c78871c1639959ae669cd3f6d999c6dc18534e2074420
-workflow.py             0a5b279e1b813756844a713711ef56ac60d5a4adf01a4c8ec8d7b6136a958485
+weekly_proposal.py      b209e49ac51f5bba26f4e46ce6d6797d716968be5efc0030e30c29671267d706
+workflow.py             bae6b518bff93199fe5cd7c6f9b066b9d3a5d5e9a25b4d17119ffb2f32246207
 workflow_service.py     1f838621b600ac31ef158533d747aa934039f2e847dfb7edd129b62e76a992be
-workflow_repository.py  fd4357bbfe1f802acb8045892807cf3885e50a08c2c610a893f8ec620e504a23
+workflow_repository.py  d18c5f1e8ef4ea582508e33f252468836c245e2ba89bab30a69492bcbaa2065a
 repository.py           36f0612679b65ee9342f8582696dc837bdfede8952434c6b11edf2113ef7566e
 batch_service.py        619d3b2ce8018be34c150b4b66c74086d04bf1ee6190eb778e9067d7fca589b7
 reconcile.py            45ad50b7459d7808f62e451d2bf75278253e8c53bf21e9bb8e2af736b6f4f7f0

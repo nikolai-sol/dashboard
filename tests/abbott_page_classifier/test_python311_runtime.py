@@ -15,6 +15,8 @@ ROOT = Path(__file__).resolve().parents[2]
 LAUNCHER = ROOT / "agents/abbott_page_classifier/python311_runtime.sh"
 WORKFLOW_WRAPPER = ROOT / "agents/abbott_page_classifier/run_classifier.sh"
 WEEKLY_WRAPPER = ROOT / "agents/abbott_page_classifier/run_weekly_proposal.sh"
+WORKFLOW_SCRIPT = ROOT / "agents/abbott_page_classifier/workflow.py"
+WEEKLY_SCRIPT = ROOT / "agents/abbott_page_classifier/weekly_proposal.py"
 
 
 class Python311RuntimeTests(unittest.TestCase):
@@ -136,6 +138,42 @@ class Python311RuntimeTests(unittest.TestCase):
                 self.assertNotIn("exec python3", text)
         self.assertIn("python311_runtime.sh", WORKFLOW_WRAPPER.read_text(encoding="utf-8"))
         self.assertIn("python311_runtime.sh", WEEKLY_WRAPPER.read_text(encoding="utf-8"))
+
+    def test_python_entrypoints_fail_closed_even_when_wrapper_is_bypassed(self):
+        wrong_python = None
+        for candidate in (Path("/usr/bin/python3"), Path("/opt/homebrew/bin/python3")):
+            if not candidate.exists():
+                continue
+            version = subprocess.run(
+                [str(candidate), "-c", "import sys; print('.'.join(map(str, sys.version_info[:2])))"],
+                check=False,
+                capture_output=True,
+                text=True,
+            )
+            if version.returncode == 0 and version.stdout.strip() != "3.11":
+                wrong_python = candidate
+                break
+        if wrong_python is None:
+            self.skipTest("no non-3.11 Python executable is available")
+
+        for entrypoint, arguments in (
+            (WORKFLOW_SCRIPT, ("status", "--dry-run")),
+            (WEEKLY_SCRIPT, ()),
+        ):
+            with self.subTest(entrypoint=entrypoint.name):
+                result = subprocess.run(
+                    [str(wrong_python), str(entrypoint), *arguments],
+                    cwd=ROOT,
+                    check=False,
+                    capture_output=True,
+                    text=True,
+                )
+                self.assertEqual(result.returncode, 78)
+                self.assertEqual(
+                    json.loads(result.stdout),
+                    {"status": "ABBOTT_CONTENT_PYTHON311_VERSION_REQUIRED"},
+                )
+                self.assertEqual(result.stderr, "")
 
     def test_content_runbooks_require_the_absolute_exact_311_preflight(self):
         documents = (
