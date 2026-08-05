@@ -133,6 +133,37 @@ class IdentityResolverTests(unittest.TestCase):
         self.assertEqual(result.conflict_code, "IDENTITY_COLLISION")
         self.assertTrue(all(len(value) == 64 for value in result.evidence_hashes))
 
+    def test_conflicting_material_and_approved_url_aliases_fail_closed(self):
+        result = self.resolver.resolve(
+            candidate(material_id="100", url="https://abbottpro.ru/legacy-cardio/b/"),
+            (
+                entity(41, url="https://abbottpro.ru/cardio/a/"),
+                entity(42, url="https://abbottpro.ru/cardio/b/"),
+            ),
+            (
+                IdentityAlias(41, "material_id", "100", "strong"),
+                IdentityAlias(42, "url", "https://abbottpro.ru/legacy-cardio/b/", "strong"),
+            ),
+        )
+
+        self.assertEqual((result.status, result.content_entity_id, result.matched_by), ("collision", None, "none"))
+        self.assertEqual(result.conflict_code, "IDENTITY_COLLISION")
+
+    def test_ambiguous_weak_slug_aliases_never_auto_select(self):
+        result = self.resolver.resolve(
+            candidate(url="https://abbottpro.ru/cardio/shared-slug/"),
+            (
+                entity(41, url="https://abbottpro.ru/cardio/a/"),
+                entity(42, url="https://abbottpro.ru/cardio/b/"),
+            ),
+            (
+                IdentityAlias(41, "slug", "shared-slug", "weak"),
+                IdentityAlias(42, "slug", "shared-slug", "weak"),
+            ),
+        )
+
+        self.assertEqual((result.status, result.content_entity_id, result.matched_by), ("new_candidate", None, "none"))
+
 
 if __name__ == "__main__":
     unittest.main()
