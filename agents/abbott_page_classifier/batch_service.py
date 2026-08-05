@@ -14,7 +14,13 @@ import json
 from types import MappingProxyType
 from typing import Any, Iterable, Mapping, Protocol, Sequence
 
-from .domain import ApprovalBatch, ApprovalItem, TaxonomyVersion
+from .domain import (
+    AcceptedBatchSnapshot,
+    ApprovalBatch,
+    ApprovalItem,
+    IngestResult,
+    TaxonomyVersion,
+)
 from .reconcile import ReconciliationInput, reconcile_entity
 
 
@@ -22,6 +28,23 @@ class BatchRepository(Protocol):
     """Small persistence surface needed before a Sheet projection may be written."""
 
     def persist_draft_batch(self, batch: ApprovalBatch) -> int: ...
+
+
+class AcceptedBatchRepository(Protocol):
+    """Canonical persistence boundary for an already accepted batch."""
+
+    def ingest_accepted_snapshot(
+        self, snapshot: AcceptedBatchSnapshot
+    ) -> IngestResult: ...
+
+
+CLASSIFICATION_EVENT_KINDS = (
+    "baseline",
+    "approve",
+    "correct",
+    "reject",
+    "revoke",
+)
 
 
 def _normalize_newlines(value: str) -> str:
@@ -63,6 +86,16 @@ def _sha256_json(value: Any) -> str:
     return hashlib.sha256(_canonical_json(value).encode("utf-8")).hexdigest()
 
 
+def compute_classification_event_fingerprint(
+    payload: Mapping[str, object],
+) -> str:
+    """Hash one complete normalized append-only event payload."""
+
+    if payload.get("event_kind") not in CLASSIFICATION_EVENT_KINDS:
+        raise ValueError("EVENT_KIND_INVALID")
+    return _sha256_json(payload)
+
+
 def compute_taxonomy_digest(
     version: str, terms: Mapping[str, Sequence[str]]
 ) -> str:
@@ -92,6 +125,7 @@ class ApprovalBatchItem(ApprovalItem):
     deterministic_result: Mapping[str, object] | None = None
     terra_result: Mapping[str, object] | None = None
     sol_result: Mapping[str, object] | None = None
+    archive_attestation: Mapping[str, object] | None = None
     concise_evidence: tuple[str, ...] = ()
     taxonomy_digest: str = ""
     taxonomy_terms: Mapping[str, tuple[str, ...]] = field(
@@ -110,6 +144,7 @@ class ApprovalBatchItem(ApprovalItem):
             "deterministic_result",
             "terra_result",
             "sol_result",
+            "archive_attestation",
         ):
             value = getattr(self, field_name)
             object.__setattr__(self, field_name, None if value is None else _freeze(value))
@@ -145,6 +180,7 @@ class ApprovalBatchItem(ApprovalItem):
                 "deterministic": self.deterministic_result,
                 "terra": self.terra_result,
                 "sol": self.sol_result,
+                "archive_attestation": self.archive_attestation,
                 "concise_evidence": self.concise_evidence,
             }
         )
@@ -221,6 +257,7 @@ def _item_payload(item: ApprovalItem, *, include_row_hash: bool) -> dict[str, ob
                 "registry2_values": item.registry2_values,
                 "sol_result": item.sol_result,
                 "terra_result": item.terra_result,
+                "archive_attestation": item.archive_attestation,
                 "taxonomy_digest": item.taxonomy_digest,
                 "taxonomy_terms": item.taxonomy_terms,
                 "source_snapshot_ids": item.source_snapshot_ids,
@@ -331,6 +368,12 @@ def _enrich(
         deterministic = _proposal_payload(value.deterministic_proposal)
         terra = _proposal_payload(value.llm_proposal)
         sol = _proposal_payload(value.verifier_proposal)
+        archive_attestation = {
+            "evidence_code": (
+                f"HTTP_{value.http_status}" if value.http_status is not None else None
+            ),
+            "explicit_archive_override": value.explicit_archive_override,
+        }
         evidence = _concise_evidence(value)
     elif isinstance(value, ApprovalBatchItem):
         item = value
@@ -340,10 +383,12 @@ def _enrich(
         deterministic = item.deterministic_result
         terra = item.terra_result
         sol = item.sol_result
+        archive_attestation = item.archive_attestation
         evidence = item.concise_evidence
     elif isinstance(value, ApprovalItem):
         item = value
         current = registry1 = registry2 = deterministic = terra = sol = None
+        archive_attestation = None
         evidence = tuple(
             code.value if isinstance(code, Enum) else str(code)
             for code in item.conflict_codes
@@ -363,6 +408,7 @@ def _enrich(
         deterministic_result=deterministic,
         terra_result=terra,
         sol_result=sol,
+        archive_attestation=archive_attestation,
         concise_evidence=evidence,
         taxonomy_digest=taxonomy_digest,
         taxonomy_terms=taxonomy_terms,
@@ -486,3 +532,12 @@ def persist_batch(
         raise ValueError("BATCH_HASH_MISMATCH")
     batch_id = repository.persist_draft_batch(batch)
     return PersistedApprovalBatch(batch=batch, database_batch_id=int(batch_id))
+
+
+def ingest_accepted_batch(
+    snapshot: AcceptedBatchSnapshot,
+    repository: AcceptedBatchRepository,
+) -> IngestResult:
+    """Ingest only through the repository's locked canonical acceptance state."""
+
+    return repository.ingest_accepted_snapshot(snapshot)

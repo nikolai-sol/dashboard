@@ -4,7 +4,6 @@ from __future__ import annotations
 
 from datetime import datetime, timezone
 from dataclasses import dataclass, replace
-from hashlib import sha256
 import json
 from enum import Enum
 from typing import Any, Callable, Mapping, Protocol, Sequence
@@ -21,6 +20,7 @@ from .domain import (
 from .batch_service import (
     ApprovalBatchItem,
     BuiltApprovalBatch,
+    compute_classification_event_fingerprint,
     compute_accepted_decision_hash,
     compute_batch_hash,
     compute_item_hash,
@@ -680,7 +680,10 @@ class ContentRegistryRepository:
                 INNER JOIN portal_content_taxonomy_versions AS taxonomy
                   ON taxonomy.id = batch.taxonomy_version_id
                  AND taxonomy.dataset_key = batch.dataset_key
-                 AND taxonomy.taxonomy_status = %s
+                 AND (
+                   taxonomy.taxonomy_status = %s
+                   OR batch.batch_status = 'ingested'
+                 )
                 WHERE batch.dataset_key = %s
                   AND batch.batch_key = %s
                 FOR UPDATE
@@ -697,23 +700,25 @@ class ContentRegistryRepository:
             taxonomy_version_id = int(batch_row[2])
             if str(batch_row[3]) != str(batch_row[5]):
                 raise RepositoryError("TAXONOMY_CONTRACT_MISMATCH")
+            published_input_hash = str(batch_row[6])
+            stored_accepted_hash = str(batch_row[7] or "")
+            batch_status = str(batch_row[8])
+            stored_accepted_by = str(batch_row[9] or "")
+            stored_accepted_at = batch_row[10]
             taxonomy = self._load_taxonomy_terms(
                 cursor,
                 taxonomy_version_id,
                 str(batch_row[4]),
                 str(batch_row[5]),
                 lock=True,
+                include_retired=batch_status == "ingested",
             )
-            published_input_hash = str(batch_row[6])
-            stored_accepted_hash = str(batch_row[7] or "")
-            batch_status = str(batch_row[8])
-            stored_accepted_by = str(batch_row[9] or "")
-            stored_accepted_at = batch_row[10]
 
             if (
                 not snapshot.accepted_decision_hash
-                or not snapshot.accepted_by
+                or not snapshot.accepted_by.strip()
                 or not snapshot.accepted_at
+                or not stored_accepted_by.strip()
             ):
                 raise RepositoryError("BATCH_NOT_ACCEPTED")
             if published_input_hash != snapshot.published_input_hash:
@@ -740,7 +745,8 @@ class ContentRegistryRepository:
                   final_lifecycle_code,
                   readiness_state,
                   row_hash,
-                  decision_reason
+                  decision_reason,
+                  proposal_evidence
                 FROM portal_content_approval_items
                 WHERE approval_batch_id = %s
                 ORDER BY content_entity_id, input_hash
@@ -792,17 +798,15 @@ class ContentRegistryRepository:
                     raise RepositoryError("BATCH_COUNT_MISMATCH")
             if batch_status == "ingested":
                 connection.commit()
-                return IngestResult(status="noop")
+                return IngestResult(
+                    status="noop",
+                    accepted_count=accepted_count,
+                    conflict_count=counts["conflict"],
+                    unresolved_count=counts["unresolved"],
+                    rejected_count=counts["rejected"],
+                )
 
-            canonical_snapshot = replace(
-                snapshot,
-                accepted_decision_hash=stored_accepted_hash,
-                items=canonical_items,
-                accepted_by=stored_accepted_by,
-                accepted_at=accepted_at.isoformat(timespec="microseconds"),
-                accepted_count=accepted_count,
-                skipped_count=skipped_count,
-            )
+            evidence_by_item_id = self._approval_item_evidence_by_id(stored_rows)
             for approval_item_id, item in stored_items:
                 if item.readiness_state != "ready":
                     continue
@@ -812,14 +816,38 @@ class ContentRegistryRepository:
                 ):
                     raise RepositoryError("BATCH_NOT_ACCEPTED")
 
+                # Serialize successor derivation across different approval batches.
+                # The approval-item foreign key already guarantees this row exists.
                 cursor.execute(
                     """
                     SELECT id
+                    FROM portal_content_registry_entities
+                    WHERE id = %s
+                      AND dataset_key = %s
+                    FOR UPDATE
+                    """,
+                    (item.content_entity_id, DATASET_KEY),
+                )
+                entity_row = cursor.fetchone()
+                if (
+                    entity_row is None
+                    or int(entity_row[0]) != item.content_entity_id
+                ):
+                    raise RepositoryError("CONTENT_ENTITY_NOT_ABBOTT")
+                cursor.execute(
+                    """
+                    SELECT
+                      id,
+                      direction_code,
+                      material_type_code,
+                      access_code,
+                      lifecycle_code
                     FROM portal_content_classification_events
                     WHERE content_entity_id = %s
                       AND effective_at <= %s
                     ORDER BY effective_at DESC, id DESC
                     LIMIT 1
+                    FOR UPDATE
                     """,
                     (item.content_entity_id, accepted_at),
                 )
@@ -827,10 +855,68 @@ class ContentRegistryRepository:
                 predecessor_event_id = (
                     int(predecessor_row[0]) if predecessor_row is not None else None
                 )
-                event_fingerprint = self._event_fingerprint(
-                    canonical_snapshot,
-                    item,
-                    batch_id,
+                predecessor_values = (
+                    tuple(predecessor_row[1:5])
+                    if predecessor_row is not None and len(predecessor_row) >= 5
+                    else None
+                )
+                event_values = (
+                    item.final_direction_code,
+                    item.final_material_type_code,
+                    item.final_access_code,
+                    item.final_lifecycle_code,
+                )
+                if predecessor_values == event_values:
+                    continue
+
+                event_kind = "approve"
+                reason = item.decision_reason.strip() if item.decision_reason else None
+                actor = stored_accepted_by.strip()
+                proposal_evidence = evidence_by_item_id[approval_item_id]
+                if (
+                    predecessor_values is not None
+                    and predecessor_values[0]
+                    and predecessor_values[0] != item.final_direction_code
+                ):
+                    if not reason:
+                        raise RepositoryError("CORRECTION_REASON_REQUIRED")
+                    if not actor or predecessor_event_id is None:
+                        raise RepositoryError("CORRECTION_AUDIT_REQUIRED")
+                    self._attest_correction_predecessor(
+                        proposal_evidence,
+                        item.content_entity_id,
+                        predecessor_event_id,
+                    )
+                    event_kind = "correct"
+
+                if (
+                    item.final_lifecycle_code == "archive_candidate"
+                    and not self._archive_evidence_authorized(proposal_evidence)
+                ):
+                    raise RepositoryError("ARCHIVE_EVIDENCE_REQUIRED")
+
+                event_evidence = {
+                    "accepted_decision_hash": stored_accepted_hash,
+                    "approval_item_evidence": proposal_evidence,
+                    "row_hash": item.row_hash,
+                }
+                event_fingerprint = compute_classification_event_fingerprint(
+                    {
+                        "access_code": item.final_access_code,
+                        "actor": actor,
+                        "approval_batch_id": batch_id,
+                        "approval_item_id": approval_item_id,
+                        "content_entity_id": item.content_entity_id,
+                        "direction_code": item.final_direction_code,
+                        "effective_at": accepted_at.isoformat(timespec="microseconds"),
+                        "event_kind": event_kind,
+                        "lifecycle_code": item.final_lifecycle_code,
+                        "material_type_code": item.final_material_type_code,
+                        "predecessor_event_id": predecessor_event_id,
+                        "proposal_evidence": event_evidence,
+                        "reason": reason,
+                        "taxonomy_version_id": taxonomy_version_id,
+                    }
                 )
                 cursor.execute(
                     """
@@ -866,16 +952,11 @@ class ContentRegistryRepository:
                         item.final_material_type_code,
                         item.final_access_code,
                         item.final_lifecycle_code,
-                        "approve",
+                        event_kind,
                         event_fingerprint,
-                        self._json(
-                            {
-                                "accepted_decision_hash": stored_accepted_hash,
-                                "row_hash": item.row_hash,
-                            }
-                        ),
-                        stored_accepted_by,
-                        item.decision_reason,
+                        self._json(event_evidence),
+                        actor,
+                        reason,
                         accepted_at,
                     ),
                 )
@@ -892,6 +973,8 @@ class ContentRegistryRepository:
                     batch_id,
                 ),
             )
+            if getattr(cursor, "rowcount", 1) != 1:
+                raise RepositoryError("BATCH_STATUS_TRANSITION_INVALID")
             connection.commit()
             return IngestResult(
                 status="ingested",
@@ -1053,17 +1136,18 @@ class ContentRegistryRepository:
         stored_digest: str,
         *,
         lock: bool = False,
+        include_retired: bool = False,
     ) -> TaxonomyVersion:
         cursor.execute(
             f"""
             SELECT taxonomy_kind, term_code
             FROM portal_content_taxonomy_terms
             WHERE taxonomy_version_id = %s
-              AND term_status = %s
+              {"" if include_retired else "AND term_status = %s"}
             ORDER BY taxonomy_kind, term_code
             {"FOR UPDATE" if lock else ""}
             """,
-            (taxonomy_id, "active"),
+            (taxonomy_id,) if include_retired else (taxonomy_id, "active"),
         )
         terms: dict[str, list[str]] = {
             "direction": [],
@@ -1134,6 +1218,12 @@ class ContentRegistryRepository:
         )
         stored_items = tuple(stored_by_key.values())
         for _approval_item_id, item in stored_items:
+            if (
+                item.final_material_type_code is not None
+                and item.final_material_type_code.strip().casefold()
+                in {"архив", "archive"}
+            ):
+                raise RepositoryError("ARCHIVE_TYPE_INVALID")
             for kind, field_name in taxonomy_fields:
                 value = getattr(item, field_name)
                 if value is not None and value not in taxonomy.terms[kind]:
@@ -1389,24 +1479,63 @@ class ContentRegistryRepository:
         return int(cursor.lastrowid)
 
     @staticmethod
-    def _event_fingerprint(
-        snapshot: AcceptedBatchSnapshot,
-        item: ApprovalItem,
-        approval_batch_id: int,
-    ) -> str:
-        payload = {
-            "accepted_decision_hash": snapshot.accepted_decision_hash,
-            "access_code": item.final_access_code,
-            "approval_batch_id": approval_batch_id,
-            "content_entity_id": item.content_entity_id,
-            "direction_code": item.final_direction_code,
-            "event_kind": "approve",
-            "input_hash": item.input_hash,
-            "lifecycle_code": item.final_lifecycle_code,
-            "material_type_code": item.final_material_type_code,
-            "row_hash": item.row_hash,
-        }
-        return sha256(ContentRegistryRepository._json(payload).encode("utf-8")).hexdigest()
+    def _approval_item_evidence_by_id(
+        stored_rows: Sequence[Sequence[object]],
+    ) -> dict[int, object]:
+        result: dict[int, object] = {}
+        for row in stored_rows:
+            approval_item_id = int(row[0])
+            if approval_item_id in result:
+                raise RepositoryError("BATCH_ITEMS_MISMATCH")
+            if len(row) < 13:
+                result[approval_item_id] = {}
+                continue
+            try:
+                evidence = json.loads(row[12]) if isinstance(row[12], str) else row[12]
+            except (TypeError, ValueError):
+                raise RepositoryError("BATCH_ITEMS_MISMATCH") from None
+            if not isinstance(evidence, (dict, list, tuple)):
+                raise RepositoryError("BATCH_ITEMS_MISMATCH")
+            result[approval_item_id] = evidence
+        return result
+
+    @staticmethod
+    def _archive_evidence_authorized(evidence: object) -> bool:
+        if not isinstance(evidence, Mapping):
+            return False
+        attestation = evidence.get("archive_attestation")
+        if not isinstance(attestation, Mapping):
+            return False
+        return attestation.get("explicit_archive_override") is True or (
+            attestation.get("evidence_code") in {"HTTP_404", "HTTP_410"}
+        )
+
+    @staticmethod
+    def _attest_correction_predecessor(
+        evidence: object,
+        content_entity_id: int,
+        predecessor_event_id: int,
+    ) -> None:
+        if not isinstance(evidence, Mapping):
+            raise RepositoryError("CORRECTION_AUDIT_REQUIRED")
+        current = evidence.get("current_canonical")
+        if not isinstance(current, Mapping):
+            raise RepositoryError("CORRECTION_AUDIT_REQUIRED")
+        try:
+            expected_event_id = int(current["event_id"])
+            expected_entity_id = current.get("content_entity_id")
+            if expected_entity_id is not None:
+                expected_entity_id = int(expected_entity_id)
+        except (KeyError, TypeError, ValueError):
+            raise RepositoryError("CORRECTION_AUDIT_REQUIRED") from None
+        if (
+            expected_event_id != predecessor_event_id
+            or (
+                expected_entity_id is not None
+                and expected_entity_id != content_entity_id
+            )
+        ):
+            raise RepositoryError("CORRECTION_PREDECESSOR_MISMATCH")
 
     @staticmethod
     def _canonical_acceptance_timestamp(value: object) -> datetime:

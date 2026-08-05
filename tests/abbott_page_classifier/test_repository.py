@@ -179,6 +179,12 @@ class RecordingCursor:
         if "FROM portal_content_registry_entities AS entity" in normalized:
             self.rows = list(self.connection.catalog_rows)
             return
+        if (
+            "FROM portal_content_registry_entities" in normalized
+            and "FOR UPDATE" in normalized
+        ):
+            self.rows = [(int(params[0]),)]
+            return
         if "latest_events" in normalized:
             self.rows = list(self.connection.event_rows)
             return
