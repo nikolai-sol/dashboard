@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from datetime import datetime, timezone
 from hashlib import sha256
 import json
 from typing import Any, Callable, Protocol, Sequence
@@ -221,10 +222,11 @@ class ContentRegistryRepository:
                 raise RepositoryError("BATCH_NOT_ACCEPTED")
             if stored_accepted_hash != snapshot.accepted_decision_hash:
                 raise RepositoryError("BATCH_HASH_MISMATCH")
-            if (
-                stored_accepted_by != snapshot.accepted_by
-                or stored_accepted_at != snapshot.accepted_at
-            ):
+            if stored_accepted_by != snapshot.accepted_by:
+                raise RepositoryError("BATCH_ACCEPTANCE_METADATA_MISMATCH")
+            if self._canonical_acceptance_timestamp(
+                stored_accepted_at
+            ) != self._canonical_acceptance_timestamp(snapshot.accepted_at):
                 raise RepositoryError("BATCH_ACCEPTANCE_METADATA_MISMATCH")
             if batch_status == "ingested":
                 connection.commit()
@@ -487,6 +489,25 @@ class ContentRegistryRepository:
             "row_hash": item.row_hash,
         }
         return sha256(ContentRegistryRepository._json(payload).encode("utf-8")).hexdigest()
+
+    @staticmethod
+    def _canonical_acceptance_timestamp(value: object) -> datetime:
+        try:
+            if isinstance(value, datetime):
+                parsed = value
+            elif isinstance(value, str) and ":" in value:
+                iso_value = f"{value[:-1]}+00:00" if value.endswith("Z") else value
+                parsed = datetime.fromisoformat(iso_value)
+            else:
+                raise ValueError
+
+            if parsed.tzinfo is None or parsed.utcoffset() is None:
+                parsed = parsed.replace(tzinfo=timezone.utc)
+            else:
+                parsed = parsed.astimezone(timezone.utc)
+            return parsed.replace(tzinfo=None)
+        except (OverflowError, TypeError, ValueError):
+            raise RepositoryError("BATCH_ACCEPTANCE_METADATA_MISMATCH") from None
 
     @staticmethod
     def _json(value: object) -> str:

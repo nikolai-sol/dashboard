@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import datetime as dt
 import unittest
 
 from agents.abbott_page_classifier.domain import (
@@ -42,14 +43,17 @@ def approval_item(
     )
 
 
-def accepted_snapshot(*items: ApprovalItem) -> AcceptedBatchSnapshot:
+def accepted_snapshot(
+    *items: ApprovalItem,
+    accepted_at: str = "2026-08-05T14:30:00+02:00",
+) -> AcceptedBatchSnapshot:
     return AcceptedBatchSnapshot(
         batch_key="abbott-2026-08-05",
         published_input_hash=PUBLISHED_HASH,
         accepted_decision_hash=ACCEPTED_HASH,
         items=tuple(items),
         accepted_by="content-manager",
-        accepted_at="2026-08-05T14:30:00+02:00",
+        accepted_at=accepted_at,
     )
 
 
@@ -171,7 +175,7 @@ def accepted_batch_row(
     accepted_hash: str | None = ACCEPTED_HASH,
     status: str = "accepted",
     accepted_by: str | None = "content-manager",
-    accepted_at: str | None = "2026-08-05T14:30:00+02:00",
+    accepted_at: str | dt.datetime | None = "2026-08-05T14:30:00+02:00",
 ) -> tuple[object, ...]:
     return (
         17,
@@ -454,6 +458,80 @@ class ContentRegistryRepositoryTests(unittest.TestCase):
                 self.assertEqual(connection.rollback_count, 1)
                 self.assertEqual(connection.item_insert_count, 0)
                 self.assertEqual(connection.event_insert_count, 0)
+
+    def test_ingest_compares_locked_datetime_and_iso_timestamp_as_utc_instants(self):
+        locked_accepted_at = dt.datetime(2026, 8, 5, 12, 30, 0, 123456)
+        equivalent_snapshot_times = (
+            "2026-08-05T12:30:00.123456Z",
+            "2026-08-05T14:30:00.123456+02:00",
+        )
+        for snapshot_accepted_at in equivalent_snapshot_times:
+            with self.subTest(snapshot_accepted_at=snapshot_accepted_at):
+                connection = RecordingConnection(
+                    batch_row=accepted_batch_row(accepted_at=locked_accepted_at)
+                )
+                repository = ContentRegistryRepository(lambda: connection)
+
+                result = repository.ingest_accepted_snapshot(
+                    accepted_snapshot(
+                        approval_item(41),
+                        accepted_at=snapshot_accepted_at,
+                    )
+                )
+
+                self.assertEqual(result.status, "ingested")
+                self.assertEqual(connection.commit_count, 1)
+                self.assertEqual(connection.rollback_count, 0)
+
+    def test_ingest_rejects_a_different_acceptance_instant_at_microseconds(self):
+        connection = RecordingConnection(
+            batch_row=accepted_batch_row(
+                accepted_at=dt.datetime(2026, 8, 5, 12, 30, 0, 123456)
+            )
+        )
+        repository = ContentRegistryRepository(lambda: connection)
+
+        with self.assertRaises(RepositoryError) as raised:
+            repository.ingest_accepted_snapshot(
+                accepted_snapshot(
+                    approval_item(41),
+                    accepted_at="2026-08-05T12:30:00.123457Z",
+                )
+            )
+
+        self.assertEqual(
+            raised.exception.code,
+            "BATCH_ACCEPTANCE_METADATA_MISMATCH",
+        )
+        self.assertEqual(connection.commit_count, 0)
+        self.assertEqual(connection.rollback_count, 1)
+
+    def test_ingest_rejects_equal_malformed_acceptance_timestamps_safely(self):
+        malformed_timestamp = "mysql://operator:secret@private-db/not-a-time"
+        connection = RecordingConnection(
+            batch_row=accepted_batch_row(accepted_at=malformed_timestamp)
+        )
+        repository = ContentRegistryRepository(lambda: connection)
+
+        with self.assertRaises(RepositoryError) as raised:
+            repository.ingest_accepted_snapshot(
+                accepted_snapshot(
+                    approval_item(41),
+                    accepted_at=malformed_timestamp,
+                )
+            )
+
+        self.assertEqual(
+            raised.exception.code,
+            "BATCH_ACCEPTANCE_METADATA_MISMATCH",
+        )
+        self.assertEqual(
+            str(raised.exception),
+            "BATCH_ACCEPTANCE_METADATA_MISMATCH",
+        )
+        self.assertNotIn("secret", str(raised.exception))
+        self.assertEqual(connection.commit_count, 0)
+        self.assertEqual(connection.rollback_count, 1)
 
     def test_ingest_is_noop_for_same_accepted_hash(self):
         connection = RecordingConnection(
