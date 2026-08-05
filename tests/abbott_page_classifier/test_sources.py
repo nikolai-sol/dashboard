@@ -141,20 +141,38 @@ class RegistrySourceReaderTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as temporary_directory:
             fixture = Path(temporary_directory) / "registry2.csv"
             fixture.write_text(
-                "ID,Название,URL,Направление,Тип материала,page_status\n"
-                "200,Первый,https://abbottpro.ru/a,Кардиология,Архив,active\n"
-                "200,Второй,https://abbottpro.ru/b,Кардиология,Статьи,Архив\n",
+                "ID,Название,URL,Направление,Доступ,Тип материала,page_status\n"
+                "200,Первый,https://abbottpro.ru/a,Кардиология,Все,Архив,active\n"
+                "200,Второй,https://abbottpro.ru/b,Гастроэнтерология,Врачи,Статьи,Архив\n",
                 encoding="utf-8",
             )
 
             collapsed = read_registry2_csv(fixture).candidates_by_key["material:200"]
 
+        for variant in collapsed.identity_variants:
+            for field in ("direction_code", "access_code", "lifecycle_code"):
+                self.assertTrue(hasattr(variant, field), field)
         self.assertEqual(
             tuple(
-                (variant.raw_material_type, variant.raw_status)
+                (
+                    variant.direction_code,
+                    variant.access_code,
+                    variant.lifecycle_code,
+                    variant.raw_material_type,
+                    variant.raw_status,
+                )
                 for variant in collapsed.identity_variants
             ),
-            (("Архив", "active"), ("Статьи", "Архив")),
+            (
+                ("cardiology", "all", "active", "Архив", "active"),
+                (
+                    "gastroenterology",
+                    "doctors",
+                    "archive_candidate",
+                    "Статьи",
+                    "Архив",
+                ),
+            ),
         )
 
     def test_registry2_page_status_alias_maps_archive_lifecycle(self):

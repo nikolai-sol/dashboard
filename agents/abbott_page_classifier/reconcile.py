@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 import json
 from typing import Union
 
@@ -28,7 +28,7 @@ class ReconciliationInput:
     active_canonical: CanonicalClassification | None = None
     reviewed_correction: Proposal | None = None
     registry1: CandidateInput | None = None
-    registry2: CandidateInput | None = None
+    registry2: SourceCandidate | None = None
     deterministic_proposal: Proposal | None = None
     llm_proposal: Proposal | None = None
     verifier_proposal: Proposal | None = None
@@ -91,6 +91,9 @@ def _candidate_payload(value: CandidateInput | None) -> dict[str, object] | None
         payload["identity_variants"] = [
             {
                 "material_id": variant.material_id,
+                "access_code": variant.access_code,
+                "direction_code": variant.direction_code,
+                "lifecycle_code": variant.lifecycle_code,
                 "material_type_code": variant.material_type_code,
                 "normalized_title": variant.normalized_title,
                 "normalized_url": variant.normalized_url,
@@ -259,17 +262,121 @@ def _raw_key(value: str) -> str:
     return normalize_title(value or "").casefold().replace("ё", "е")
 
 
+@dataclass(frozen=True)
+class _ClassificationEvidence:
+    directions: frozenset[str]
+    material_types: frozenset[str]
+    access_codes: frozenset[str]
+    lifecycle_codes: frozenset[str]
+    direction_missing: bool
+
+
+def _classification_evidence(value: CandidateInput | None) -> _ClassificationEvidence:
+    item = _candidate(value)
+    if item is None:
+        return _ClassificationEvidence(
+            frozenset(), frozenset(), frozenset(), frozenset(), False
+        )
+    if isinstance(value, SourceCandidate):
+        variants = value.identity_variants
+        return _ClassificationEvidence(
+            directions=frozenset(
+                variant.direction_code
+                for variant in variants
+                if variant.direction_code not in {None, "", "undetermined"}
+            ),
+            material_types=frozenset(
+                variant.material_type_code
+                for variant in variants
+                if variant.material_type_code
+            ),
+            access_codes=frozenset(
+                variant.access_code for variant in variants if variant.access_code
+            ),
+            lifecycle_codes=frozenset(
+                variant.lifecycle_code
+                for variant in variants
+                if variant.lifecycle_code not in {None, "", "unknown"}
+            ),
+            direction_missing=not variants
+            or any(
+                variant.direction_code in {None, "", "undetermined"}
+                for variant in variants
+            ),
+        )
+    return _ClassificationEvidence(
+        directions=frozenset(
+            ()
+            if item.direction_code in {None, "", "undetermined"}
+            else (item.direction_code,)
+        ),
+        material_types=frozenset(
+            () if not item.material_type_code else (item.material_type_code,)
+        ),
+        access_codes=frozenset(() if not item.access_code else (item.access_code,)),
+        lifecycle_codes=frozenset(
+            () if item.lifecycle_code in {None, "", "unknown"} else (item.lifecycle_code,)
+        ),
+        direction_missing=item.direction_code in {None, "", "undetermined"},
+    )
+
+
+def _sole_value(values: frozenset[str]) -> str | None:
+    return next(iter(values)) if len(values) == 1 else None
+
+
+def _candidate_from_evidence(
+    source: MaterialCandidate,
+    evidence: _ClassificationEvidence,
+    *,
+    require_direction_on_every_occurrence: bool,
+) -> MaterialCandidate:
+    direction = _sole_value(evidence.directions)
+    if require_direction_on_every_occurrence and evidence.direction_missing:
+        direction = None
+    return replace(
+        source,
+        direction_code=direction,
+        material_type_code=_sole_value(evidence.material_types),
+        access_code=_sole_value(evidence.access_codes),
+        lifecycle_code=_sole_value(evidence.lifecycle_codes) or "unknown",
+    )
+
+
+def _record_occurrence_conflicts(
+    evidence: _ClassificationEvidence,
+    active: CanonicalClassification | None,
+    conflicts: list[ConflictCode],
+) -> None:
+    for values, active_value, code in (
+        (
+            evidence.directions,
+            active.direction_code if active else None,
+            ConflictCode.DIRECTION_CONFLICT,
+        ),
+        (
+            evidence.material_types,
+            active.material_type_code if active else None,
+            ConflictCode.MATERIAL_TYPE_CONFLICT,
+        ),
+        (
+            evidence.access_codes,
+            active.access_code if active else None,
+            ConflictCode.ACCESS_CONFLICT,
+        ),
+    ):
+        if len(values) > 1 or (
+            active_value is not None and any(item != active_value for item in values)
+        ):
+            _append_conflict(conflicts, code)
+
+
 def _registry2_archive_evidence(
-    value: CandidateInput | None,
+    value: SourceCandidate | None,
 ) -> tuple[bool, bool]:
     if value is None:
         return False, False
     item = _candidate(value)
-    if not isinstance(value, SourceCandidate):
-        missing_raw = bool(
-            item and item.lifecycle_code in {"archive_candidate", "archived"}
-        )
-        return missing_raw, missing_raw
 
     raw_material_types = {
         _raw_key(variant.raw_material_type)
@@ -300,37 +407,37 @@ def _registry2_archive_evidence(
 
 def _compare_registry_classification_evidence(
     active: CanonicalClassification | None,
-    registry1: MaterialCandidate | None,
-    registry2: MaterialCandidate | None,
+    registry1: _ClassificationEvidence,
+    registry2: _ClassificationEvidence,
     conflicts: list[ConflictCode],
 ) -> None:
-    if active is None or registry1 is None or registry2 is None:
+    if active is None:
         return
-    for active_value, registry1_value, registry2_value, code in (
+    for active_value, registry1_values, registry2_values, code in (
         (
             active.direction_code,
-            registry1.direction_code,
-            registry2.direction_code,
+            registry1.directions,
+            registry2.directions,
             ConflictCode.DIRECTION_CONFLICT,
         ),
         (
             active.material_type_code,
-            registry1.material_type_code,
-            registry2.material_type_code,
+            registry1.material_types,
+            registry2.material_types,
             ConflictCode.MATERIAL_TYPE_CONFLICT,
         ),
         (
             active.access_code,
-            registry1.access_code,
-            registry2.access_code,
+            registry1.access_codes,
+            registry2.access_codes,
             ConflictCode.ACCESS_CONFLICT,
         ),
     ):
         if (
             not active_value
-            and registry1_value
-            and registry2_value
-            and registry1_value != registry2_value
+            and registry1_values
+            and registry2_values
+            and registry1_values != registry2_values
         ):
             _append_conflict(conflicts, code)
 
@@ -339,8 +446,28 @@ def reconcile_entity(value: ReconciliationInput) -> ApprovalItem:
     """Apply immutable-source precedence and return one deterministic review item."""
 
     active = value.active_canonical
+    registry2_evidence_missing = value.registry2 is not None and not isinstance(
+        value.registry2, SourceCandidate
+    )
     registry1 = _candidate(value.registry1)
-    registry2 = _candidate(value.registry2)
+    registry2_source = (
+        value.registry2 if isinstance(value.registry2, SourceCandidate) else None
+    )
+    registry2 = _candidate(registry2_source)
+    registry1_evidence = _classification_evidence(value.registry1)
+    registry2_evidence = _classification_evidence(registry2_source)
+    if registry1 is not None:
+        registry1 = _candidate_from_evidence(
+            registry1,
+            registry1_evidence,
+            require_direction_on_every_occurrence=False,
+        )
+    if registry2 is not None:
+        registry2 = _candidate_from_evidence(
+            registry2,
+            registry2_evidence,
+            require_direction_on_every_occurrence=True,
+        )
     content_entity_id = (
         active.content_entity_id if active is not None else value.content_entity_id
     )
@@ -352,9 +479,11 @@ def reconcile_entity(value: ReconciliationInput) -> ApprovalItem:
     final_lifecycle = active.lifecycle_code if active is not None else None
     conflicts: list[ConflictCode] = []
     changed = False
-    registry2_direction_missing = registry2 is not None and not registry2.direction_code
+    registry2_direction_missing = (
+        registry2 is not None and registry2_evidence.direction_missing
+    )
     archive_requested, archive_evidence_ambiguous = _registry2_archive_evidence(
-        value.registry2
+        registry2_source
     )
     has_archive_attestation = value.explicit_archive_override or value.http_status in {
         404,
@@ -368,6 +497,8 @@ def reconcile_entity(value: ReconciliationInput) -> ApprovalItem:
 
     if value.identity_conflict:
         _append_conflict(conflicts, ConflictCode.IDENTITY_COLLISION)
+    if registry2_evidence_missing:
+        _append_conflict(conflicts, ConflictCode.CONTENT_UNAVAILABLE)
 
     correction = value.reviewed_correction
     if correction is not None:
@@ -387,6 +518,9 @@ def reconcile_entity(value: ReconciliationInput) -> ApprovalItem:
     locked_direction = final_direction
     locked_material_type = final_material_type
     locked_access = final_access
+
+    _record_occurrence_conflicts(registry1_evidence, active, conflicts)
+    _record_occurrence_conflicts(registry2_evidence, active, conflicts)
 
     if registry1 is not None:
         if not title and registry1.title:
@@ -414,11 +548,12 @@ def reconcile_entity(value: ReconciliationInput) -> ApprovalItem:
 
     _compare_registry_classification_evidence(
         active,
-        registry1,
-        registry2,
+        registry1_evidence,
+        registry2_evidence,
         conflicts,
     )
 
+    lifecycle_before_registry2 = final_lifecycle
     if registry2 is not None:
         (
             final_direction,
@@ -479,8 +614,7 @@ def reconcile_entity(value: ReconciliationInput) -> ApprovalItem:
     if archive_requested:
         if not archive_evidence_valid:
             _append_conflict(conflicts, ConflictCode.ARCHIVE_TYPE_INVALID)
-            if final_lifecycle in {None, "unknown", "archive_candidate", "archived"}:
-                final_lifecycle = "active"
+            final_lifecycle = lifecycle_before_registry2 or "active"
 
     if final_access is None:
         final_access = "unspecified"
@@ -502,7 +636,7 @@ def reconcile_entity(value: ReconciliationInput) -> ApprovalItem:
     )
     if value.rejection_code:
         readiness_state = "rejected"
-    elif registry2_direction_missing:
+    elif registry2_evidence_missing or registry2_direction_missing:
         readiness_state = "unresolved"
     elif hard_conflicts:
         readiness_state = "conflict"

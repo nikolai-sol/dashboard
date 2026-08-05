@@ -6,6 +6,8 @@ from pathlib import Path
 import tempfile
 import unittest
 
+from openpyxl import Workbook
+
 from agents.abbott_page_classifier.domain import (
     CanonicalClassification,
     ConflictCode,
@@ -18,6 +20,7 @@ from agents.abbott_page_classifier.sources import (
     SourceCandidate,
     SourceIdentityVariant,
     SourceProvenance,
+    read_registry1,
     read_registry2_csv,
 )
 
@@ -89,6 +92,9 @@ def source_candidate(
                 representative.material_type_code,
                 raw_material_type,
                 raw_status,
+                representative.direction_code,
+                representative.access_code,
+                representative.lifecycle_code,
             ),
         ),
     )
@@ -134,6 +140,34 @@ def proposal(
 
 
 class ReconciliationTests(unittest.TestCase):
+    def test_registry2_public_contract_requires_source_candidate_evidence(self) -> None:
+        self.assertEqual(
+            ReconciliationInput.__annotations__["registry2"],
+            "SourceCandidate | None",
+        )
+
+    def test_bare_registry2_candidate_from_snapshot_fails_closed(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            fixture = Path(temporary_directory) / "registry2.csv"
+            fixture.write_text(
+                "ID,Название,URL,Направление,Доступ,Тип материала\n"
+                "400,Статья,https://abbottpro.ru/article,Кардиология,Все,Статьи\n",
+                encoding="utf-8",
+            )
+            bare_registry2 = read_registry2_csv(fixture).candidates[0].candidate
+
+        for active in (None, canonical()):
+            with self.subTest(active=active is not None):
+                item = reconcile_entity(
+                    ReconciliationInput(
+                        active_canonical=active,
+                        registry2=bare_registry2,
+                        deterministic_proposal=proposal(direction="cardiology"),
+                    )
+                )
+                self.assertEqual(item.readiness_state, "unresolved")
+                self.assertIn(ConflictCode.CONTENT_UNAVAILABLE, item.conflict_codes)
+
     def test_registry1_fills_metadata_without_overwriting_active_classification(
         self,
     ) -> None:
@@ -173,7 +207,7 @@ class ReconciliationTests(unittest.TestCase):
             ReconciliationInput(
                 active_canonical=canonical(),
                 registry1=candidate("registry1", title="", url=""),
-                registry2=candidate("registry2", title="", url=""),
+                registry2=source_candidate("registry2", title="", url=""),
             )
         )
 
@@ -209,6 +243,68 @@ class ReconciliationTests(unittest.TestCase):
             ),
         )
 
+    def test_registry1_all_occurrences_conflict_independent_of_row_order(self) -> None:
+        def read(order: tuple[str, str]) -> SourceCandidate:
+            with tempfile.TemporaryDirectory() as temporary_directory:
+                fixture = Path(temporary_directory) / "registry1.xlsx"
+                workbook = Workbook()
+                sheet = workbook.active
+                sheet.title = "кардио"
+                sheet.append(
+                    (
+                        "ID",
+                        "Название",
+                        "ссылка",
+                        "Направление",
+                        "доступ",
+                        "Тип материала",
+                    )
+                )
+                rows = {
+                    "canonical": (
+                        500,
+                        "Первый",
+                        "https://abbottpro.ru/a",
+                        "Кардиология",
+                        "Врачи",
+                        "Статьи",
+                    ),
+                    "different": (
+                        500,
+                        "Второй",
+                        "https://abbottpro.ru/b",
+                        "Гастроэнтерология",
+                        "Все",
+                        "Видео",
+                    ),
+                }
+                for key in order:
+                    sheet.append(rows[key])
+                workbook.save(fixture)
+                return read_registry1(fixture).candidates[0]
+
+        expected = (
+            ConflictCode.DIRECTION_CONFLICT,
+            ConflictCode.MATERIAL_TYPE_CONFLICT,
+            ConflictCode.ACCESS_CONFLICT,
+        )
+        for order in (("canonical", "different"), ("different", "canonical")):
+            with self.subTest(order=order):
+                registry1 = read(order)
+                active_item = reconcile_entity(
+                    ReconciliationInput(
+                        active_canonical=canonical(),
+                        registry1=registry1,
+                    )
+                )
+                new_item = reconcile_entity(ReconciliationInput(registry1=registry1))
+
+                self.assertEqual(active_item.conflict_codes, expected)
+                self.assertEqual(new_item.conflict_codes, expected)
+                self.assertIsNone(new_item.final_direction_code)
+                self.assertIsNone(new_item.final_material_type_code)
+                self.assertEqual(new_item.final_access_code, "unspecified")
+
     def test_registry1_adds_a_new_entity(self) -> None:
         item = reconcile_entity(
             ReconciliationInput(
@@ -240,7 +336,7 @@ class ReconciliationTests(unittest.TestCase):
                     access=None,
                     lifecycle="unknown",
                 ),
-                registry2=candidate(
+                registry2=source_candidate(
                     "registry2",
                     direction="womens_health",
                     material_type="clinical_cases",
@@ -274,7 +370,7 @@ class ReconciliationTests(unittest.TestCase):
                     material_type="video",
                     access="all",
                 ),
-                registry2=candidate(
+                registry2=source_candidate(
                     "registry2",
                     title="Заголовок Registry 2",
                     direction="gastroenterology",
@@ -301,7 +397,7 @@ class ReconciliationTests(unittest.TestCase):
         item = reconcile_entity(
             ReconciliationInput(
                 active_canonical=canonical(),
-                registry2=candidate(
+                registry2=source_candidate(
                     "registry2",
                     direction="gastroenterology",
                     material_type="video",
@@ -381,7 +477,7 @@ class ReconciliationTests(unittest.TestCase):
         )
         override_without_legacy_type = reconcile_entity(
             ReconciliationInput(
-                registry2=candidate(
+                registry2=source_candidate(
                     "registry2",
                     direction="cardiology",
                     material_type="articles",
@@ -500,6 +596,67 @@ class ReconciliationTests(unittest.TestCase):
         self.assertIsNone(item.final_direction_code)
         self.assertEqual(item.readiness_state, "unresolved")
 
+    def test_registry2_any_directionless_occurrence_blocks_both_row_orders(self) -> None:
+        for rows in (
+            (
+                "600,Первый,https://abbottpro.ru/a,Кардиология,Все,Статьи\n"
+                "600,Второй,https://abbottpro.ru/b,,Все,Статьи\n"
+            ),
+            (
+                "600,Второй,https://abbottpro.ru/b,,Все,Статьи\n"
+                "600,Первый,https://abbottpro.ru/a,Кардиология,Все,Статьи\n"
+            ),
+        ):
+            with self.subTest(rows=rows):
+                with tempfile.TemporaryDirectory() as temporary_directory:
+                    fixture = Path(temporary_directory) / "registry2.csv"
+                    fixture.write_text(
+                        "ID,Название,URL,Направление,Доступ,Тип материала\n"
+                        + rows,
+                        encoding="utf-8",
+                    )
+                    registry2 = read_registry2_csv(fixture).candidates[0]
+
+                item = reconcile_entity(ReconciliationInput(registry2=registry2))
+
+                self.assertIsNone(item.final_direction_code)
+                self.assertEqual(item.readiness_state, "unresolved")
+
+    def test_registry2_classification_union_ambiguity_is_order_independent(self) -> None:
+        for rows in (
+            (
+                "601,Первый,https://abbottpro.ru/a,Кардиология,Все,Статьи\n"
+                "601,Второй,https://abbottpro.ru/b,Гастроэнтерология,Врачи,Видео\n"
+            ),
+            (
+                "601,Второй,https://abbottpro.ru/b,Гастроэнтерология,Врачи,Видео\n"
+                "601,Первый,https://abbottpro.ru/a,Кардиология,Все,Статьи\n"
+            ),
+        ):
+            with self.subTest(rows=rows):
+                with tempfile.TemporaryDirectory() as temporary_directory:
+                    fixture = Path(temporary_directory) / "registry2.csv"
+                    fixture.write_text(
+                        "ID,Название,URL,Направление,Доступ,Тип материала\n"
+                        + rows,
+                        encoding="utf-8",
+                    )
+                    registry2 = read_registry2_csv(fixture).candidates[0]
+
+                item = reconcile_entity(ReconciliationInput(registry2=registry2))
+
+                self.assertEqual(
+                    item.conflict_codes,
+                    (
+                        ConflictCode.DIRECTION_CONFLICT,
+                        ConflictCode.MATERIAL_TYPE_CONFLICT,
+                        ConflictCode.ACCESS_CONFLICT,
+                    ),
+                )
+                self.assertIsNone(item.final_direction_code)
+                self.assertIsNone(item.final_material_type_code)
+                self.assertEqual(item.final_access_code, "unspecified")
+
     def test_registry2_never_fills_title_or_url_metadata(self) -> None:
         item = reconcile_entity(
             ReconciliationInput(
@@ -527,6 +684,44 @@ class ReconciliationTests(unittest.TestCase):
         self.assertEqual(item.final_material_type_code, "articles")
         self.assertEqual(item.final_lifecycle_code, "archive_candidate")
         self.assertEqual(item.readiness_state, "ready")
+
+    def test_invalid_registry2_archive_preserves_canonical_archived_lifecycle(self) -> None:
+        item = reconcile_entity(
+            ReconciliationInput(
+                active_canonical=canonical(lifecycle="archived"),
+                registry2=source_candidate(
+                    "registry2",
+                    direction="cardiology",
+                    material_type="articles",
+                    access="doctors",
+                    raw_material_type="Архив",
+                ),
+            )
+        )
+
+        self.assertEqual(item.readiness_state, "conflict")
+        self.assertEqual(item.final_lifecycle_code, "archived")
+        self.assertIn(ConflictCode.ARCHIVE_TYPE_INVALID, item.conflict_codes)
+
+    def test_invalid_registry2_archive_preserves_reviewed_lifecycle(self) -> None:
+        item = reconcile_entity(
+            ReconciliationInput(
+                active_canonical=canonical(lifecycle="active"),
+                reviewed_correction=proposal(lifecycle="archive_candidate"),
+                registry2=source_candidate(
+                    "registry2",
+                    direction="cardiology",
+                    material_type="articles",
+                    access="doctors",
+                    raw_status="Архив",
+                    lifecycle="archive_candidate",
+                ),
+            )
+        )
+
+        self.assertEqual(item.readiness_state, "conflict")
+        self.assertEqual(item.final_lifecycle_code, "archive_candidate")
+        self.assertIn(ConflictCode.ARCHIVE_TYPE_INVALID, item.conflict_codes)
 
     def test_llm_verifier_disagreement_is_a_conflict(self) -> None:
         item = reconcile_entity(

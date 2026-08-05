@@ -86,6 +86,9 @@ class SourceIdentityVariant:
     material_type_code: str | None
     raw_material_type: str = ""
     raw_status: str = ""
+    direction_code: str | None = None
+    access_code: str | None = None
+    lifecycle_code: str = "unknown"
 
 
 @dataclass(frozen=True)
@@ -273,6 +276,9 @@ def _snapshot_from_candidates(
             material_type_code=candidate.material_type_code,
             raw_material_type=occurrence.raw_material_type,
             raw_status=occurrence.raw_status,
+            direction_code=candidate.direction_code,
+            access_code=candidate.access_code,
+            lifecycle_code=candidate.lifecycle_code,
         )
         existing = grouped.get(key)
         if existing is None:
@@ -448,6 +454,9 @@ def read_canonical_catalog(rows: Iterable[CanonicalClassification]) -> SourceSna
                         normalized_url=candidate.url,
                         normalized_title=candidate.title,
                         material_type_code=candidate.material_type_code,
+                        direction_code=candidate.direction_code,
+                        access_code=candidate.access_code,
+                        lifecycle_code=candidate.lifecycle_code,
                     ),
                 ),
             )
