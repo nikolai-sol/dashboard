@@ -43,8 +43,12 @@ from agents.abbott_page_classifier.domain import (
     LEGACY_DIRECTION_LABELS,
     MATERIAL_TYPE_CODE_BY_PREFIX,
     MATERIAL_TYPE_LABELS,
+    Proposal,
 )
-from agents.abbott_page_classifier.normalization import normalize_url as normalize_canonical_url
+from agents.abbott_page_classifier.normalization import (
+    normalize_taxonomy_label,
+    normalize_url as normalize_canonical_url,
+)
 
 try:
     import openpyxl
@@ -144,6 +148,27 @@ class WorkbookIndex:
     general_materials: list[dict[str, str]] = field(default_factory=list)
     known_slugs: set[str] = field(default_factory=set)
     known_titles: set[str] = field(default_factory=set)
+
+
+def classification_to_proposal(result: Classification) -> Proposal:
+    """Expose legacy deterministic output through the canonical code contract."""
+
+    evidence = tuple(
+        item for item in (result.material_type_rule, result.lifecycle_rule) if item
+    )
+    return Proposal(
+        direction_code=normalize_taxonomy_label("direction", result.direction or ""),
+        material_type_code=normalize_taxonomy_label(
+            "material_type", result.material_type or ""
+        ),
+        access_code=normalize_taxonomy_label("access", result.access or ""),
+        lifecycle_code=normalize_taxonomy_label(
+            "lifecycle", result.lifecycle_code or ""
+        ),
+        rule_code=result.rule,
+        confidence=result.confidence,
+        evidence=evidence,
+    )
 
 
 def normalize_url(raw: str | None) -> str:
