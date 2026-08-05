@@ -26,7 +26,7 @@ from .approval_hashes import (
     compute_item_hash,
     compute_taxonomy_digest,
 )
-from .domain import ApprovalItem
+from .domain import ApprovalItem, ConflictCode
 from .normalization import normalize_title, normalize_url, sha256_text
 
 
@@ -483,17 +483,20 @@ def _load_approval_bundle(
         )
         if not isinstance(conflict_codes, (list, tuple)):
             raise CandidateMaterializationError("APPROVAL_BUNDLE_INVALID")
-        conflict_values = tuple(str(code) for code in conflict_codes)
+        try:
+            conflict_values = tuple(ConflictCode(str(code)) for code in conflict_codes)
+        except (TypeError, ValueError):
+            raise CandidateMaterializationError("APPROVAL_BUNDLE_INVALID") from None
         scalar_conflict = (
             str(row.get("conflict_code"))
             if row.get("conflict_code") is not None
             else None
         )
-        first_conflict = conflict_values[0] if conflict_values else None
+        first_conflict = conflict_values[0].value if conflict_values else None
         if scalar_conflict != first_conflict:
             raise CandidateMaterializationError("APPROVAL_BUNDLE_INVALID")
         identity_collisions += sum(
-            code == "IDENTITY_COLLISION" for code in conflict_values
+            code is ConflictCode.IDENTITY_COLLISION for code in conflict_values
         )
         if state == "ready" and (
             conflict_values or row.get("content_entity_id") is None

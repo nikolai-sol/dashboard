@@ -68,11 +68,13 @@ checkout:
 
 ```bash
 (cd runtime && PYTHONDONTWRITEBYTECODE=1 python3 -c \
-  'import fetch_yandex_metrika_canonical, canonical_writer, metrika_logs_api, canonical_release_store, run_abbott_metrika_active_release, abbott_release_operator, probe_yandex_metrika_access, capture_abbott_canonical_baseline, compare_abbott_canonical_release, abbott_canonical_controls, metrika_pagination, backfill_abbott_metrika_2026, abbott_health_probe, send_canonical_telegram_report, sources_health_dashboard')
+  'import fetch_yandex_metrika_canonical, canonical_writer, metrika_logs_api, canonical_release_store, run_abbott_metrika_active_release, abbott_release_operator, probe_yandex_metrika_access, capture_abbott_canonical_baseline, compare_abbott_canonical_release, abbott_canonical_controls, metrika_pagination, backfill_abbott_metrika_2026, abbott_health_probe, send_canonical_telegram_report, sources_health_dashboard; import agents.abbott_page_classifier.weekly_proposal, agents.abbott_page_classifier.workflow')
 ```
 
 Then verify every `runtime/` digest against `MIGRATION-MANIFEST.md` before
 packaging it into the private canonical repository.
+
+The bootstrap also packages the additive `src/db/migrations/047_abbott_content_reconciliation_staging.sql` beside its exact root authority. It is not copied into `runtime/` and this package does not apply it. The weekly Abbott entrypoint composes only reconcile, classify, and Sheet projection, then stops for manual batch approval; ingest, candidate materialization, validation, and activation are separately controlled stages.
 
 ## Abbott UTM/frequency successor release
 

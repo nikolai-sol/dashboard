@@ -43,9 +43,21 @@ every runbook entrypoint and each repository-local Python dependency.
 | `runtime/agents/__init__.py` | `agents/__init__.py` | `cf17c37c950a6d792c42de4580180ddefa478dbebc01109674658756473d9cc8` | Vendored content-attestor package root |
 | `runtime/agents/abbott_page_classifier/__init__.py` | `agents/abbott_page_classifier/__init__.py` | `ea902dc7a2b24b5bdc073342296a16a013af63a3b7afc26789f82e2511f576b0` | Vendored content-attestor package |
 | `runtime/agents/abbott_page_classifier/approval_hashes.py` | `agents/abbott_page_classifier/approval_hashes.py` | `2e651e0cc8627ea91fef10846929bf7d63870e1d341b459f1aab49c7e84fa042` | Lightweight canonical approval hash authority |
-| `runtime/agents/abbott_page_classifier/candidate_release.py` | `agents/abbott_page_classifier/candidate_release.py` | `c59a6ccca8d2bb2e1f0158f2abd7252c52cba3e2546c985353d007889d5d8eb9` | Shared content materializer and read-only attestor authority |
-| `runtime/agents/abbott_page_classifier/domain.py` | `agents/abbott_page_classifier/domain.py` | `be030852ef0c84a4e53dd7b94538970b846b2cc5f2c0b05298c1440ddcf29f5a` | Content taxonomy domain dependency |
+| `runtime/agents/abbott_page_classifier/candidate_release.py` | `agents/abbott_page_classifier/candidate_release.py` | `26adb637ffbb46ede3bcde50d656bf2c1780abf3eab8e0b1110b25ee2055008f` | Shared content materializer and read-only attestor authority |
+| `runtime/agents/abbott_page_classifier/domain.py` | `agents/abbott_page_classifier/domain.py` | `5af4a4507bd91d6ad7a3062fc94e0b3e7d791d544d4562bb1d253748432c5288` | Content taxonomy domain dependency |
 | `runtime/agents/abbott_page_classifier/normalization.py` | `agents/abbott_page_classifier/normalization.py` | `7f6a72207e0bece361089174d7bcf8ca228b9233f41918941b88a66e82816867` | Content normalization dependency |
+| `runtime/agents/abbott_page_classifier/weekly_proposal.py` | `agents/abbott_page_classifier/weekly_proposal.py` | `16b67d580b6300de3f6c78871c1639959ae669cd3f6d999c6dc18534e2074420` | Weekly reconcile/classify/publish entrypoint; stops for manual approval |
+| `runtime/agents/abbott_page_classifier/workflow.py` | `agents/abbott_page_classifier/workflow.py` | `00d0e17e0bb56bbc9b1e5720847edcb9fbcf8eb4a3efb063f101a94e31c9073d` | Sanitized operator workflow CLI |
+| `runtime/agents/abbott_page_classifier/workflow_service.py` | `agents/abbott_page_classifier/workflow_service.py` | `f7e14e0008ec1c79868032c8dc542095ed33209dc08c79cfe10806fdf71a335b` | Canonical weekly proposal service |
+| `runtime/agents/abbott_page_classifier/workflow_repository.py` | `agents/abbott_page_classifier/workflow_repository.py` | `3465652267f7f483dc907d7c05f6fd53e3e153842d6bf7c456ddb123a81ab0d0` | MySQL reconciliation staging repository |
+| `runtime/agents/abbott_page_classifier/repository.py` | `agents/abbott_page_classifier/repository.py` | `cdea0cfc942e40aa416d292cd3672ddb07c307796017c0eba86994832526c24e` | Canonical content registry repository |
+| `runtime/agents/abbott_page_classifier/batch_service.py` | `agents/abbott_page_classifier/batch_service.py` | `619d3b2ce8018be34c150b4b66c74086d04bf1ee6190eb778e9067d7fca589b7` | Immutable batch construction and acceptance ingestion |
+| `runtime/agents/abbott_page_classifier/reconcile.py` | `agents/abbott_page_classifier/reconcile.py` | `45ad50b7459d7808f62e451d2bf75278253e8c53bf21e9bb8e2af736b6f4f7f0` | Deterministic reconciliation and anti-flip gate |
+| `runtime/agents/abbott_page_classifier/identity.py` | `agents/abbott_page_classifier/identity.py` | `39e0e961dbb5c91a65a737f953f1534141f84719d9690ddc648c4f313d6da6d7` | Canonical identity resolution |
+| `runtime/agents/abbott_page_classifier/sources.py` | `agents/abbott_page_classifier/sources.py` | `7f0c7fca84b021eac669726165336a978d2eeff0c92a1626f44af60d363dce9d` | Offline Registry 1/Registry 2 snapshot parsers |
+| `runtime/agents/abbott_page_classifier/llm_classifier.py` | `agents/abbott_page_classifier/llm_classifier.py` | `43cfd180f64da3afe74aa8252e644fa4ddecc1d294783f9660274b0b17eb3ce7` | Privacy-minimized classifier adapter, invoked only with execute authorization |
+| `runtime/agents/abbott_page_classifier/sheets_sync.py` | `agents/abbott_page_classifier/sheets_sync.py` | `6c3a09329cc89bea3fd759fdc860c8eee99ff63a2be438455a5b2c1533173123` | Approval projection publisher and accepted snapshot reader |
+| `src/db/migrations/047_abbott_content_reconciliation_staging.sql` | `dashboard-next/src/db/migrations/047_abbott_content_reconciliation_staging.sql` | `9ba5254bc4adcdd94c17a0dfde09f256d6540f9ae505f8e1c38d90c43a78e032` | Additive reconciliation staging schema; package only, never applied by runtime |
 
 ## collectors/
 

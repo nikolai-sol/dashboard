@@ -503,3 +503,26 @@ test("database errors are sanitized and never expose SQL parameters", async () =
       !String(error).includes("000123"),
   );
 });
+
+test("every dashboard content read is active-release MySQL only", () => {
+  const contentReadPaths = ["src/lib/abbott-private-store.ts"];
+  const source = contentReadPaths.map((relativePath) =>
+    fs.readFileSync(path.join(process.cwd(), relativePath), "utf8"),
+  ).join("\n");
+
+  assert.match(source, /portal_active_data_releases/);
+  assert.match(source, /portal_content_catalog/);
+  assert.match(source, /portal_content_lookup_projection/);
+  assert.doesNotMatch(
+    source,
+    /portal_content_approval_|portal_content_reconciliation_|portal_content_classification_events/i,
+  );
+  assert.doesNotMatch(
+    source,
+    /googleapis\.com|generativelanguage\.googleapis\.com|api\.openai\.com/i,
+  );
+  assert.doesNotMatch(
+    source,
+    /METRIKA_TOKEN|OAUTH|GOOGLE.*TOKEN|OPENAI_API_KEY/i,
+  );
+});
