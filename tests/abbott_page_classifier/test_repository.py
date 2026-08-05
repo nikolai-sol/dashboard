@@ -9,11 +9,15 @@ from agents.abbott_page_classifier.domain import (
     AcceptedBatchSnapshot,
     ApprovalBatch,
     ApprovalItem,
+    Proposal,
 )
 from agents.abbott_page_classifier.repository import (
     ContentRegistryRepository,
     RepositoryError,
 )
+from agents.abbott_page_classifier.batch_service import build_batch
+from agents.abbott_page_classifier.domain import TaxonomyVersion
+from agents.abbott_page_classifier.reconcile import ReconciliationInput
 
 
 PUBLISHED_HASH = "1" * 64
@@ -189,6 +193,38 @@ def accepted_batch_row(
 
 
 class ContentRegistryRepositoryTests(unittest.TestCase):
+    def test_insert_items_persists_enriched_task6_proposal_evidence(self):
+        connection = RecordingConnection()
+        repository = ContentRegistryRepository(lambda: connection)
+        batch = build_batch(
+            (
+                ReconciliationInput(
+                    content_entity_id=41,
+                    deterministic_proposal=Proposal(
+                        direction_code="cardiology",
+                        material_type_code="articles",
+                        access_code="doctors",
+                        lifecycle_code="active",
+                        rule_code="path_rule",
+                        confidence=0.9,
+                        evidence=("path evidence",),
+                    ),
+                ),
+            ),
+            TaxonomyVersion(version="abbott.v1"),
+            "prompt.v1",
+        )
+
+        repository.insert_items(17, batch.items)
+
+        insert_params = next(
+            params
+            for sql, params in connection.calls
+            if sql.startswith("INSERT INTO portal_content_approval_items")
+        )
+        self.assertIn('"deterministic"', insert_params[14])
+        self.assertIn('"path_rule"', insert_params[14])
+
     def test_create_batch_uses_active_taxonomy_and_parameterized_write(self):
         connection = RecordingConnection()
         repository = ContentRegistryRepository(lambda: connection)

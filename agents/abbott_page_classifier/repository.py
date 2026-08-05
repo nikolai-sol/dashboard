@@ -5,7 +5,8 @@ from __future__ import annotations
 from datetime import datetime, timezone
 from hashlib import sha256
 import json
-from typing import Any, Callable, Protocol, Sequence
+from enum import Enum
+from typing import Any, Callable, Mapping, Protocol, Sequence
 
 from .domain import (
     AcceptedBatchSnapshot,
@@ -465,7 +466,9 @@ class ContentRegistryRepository:
                 ContentRegistryRepository._json(conflict_codes),
                 item.row_hash,
                 item.decision_reason,
-                ContentRegistryRepository._json([]),
+                ContentRegistryRepository._json(
+                    getattr(item, "proposal_evidence", ())
+                ),
             ),
         )
         return int(cursor.lastrowid)
@@ -512,11 +515,26 @@ class ContentRegistryRepository:
     @staticmethod
     def _json(value: object) -> str:
         return json.dumps(
-            value,
+            ContentRegistryRepository._json_value(value),
             ensure_ascii=False,
             sort_keys=True,
             separators=(",", ":"),
         )
+
+    @staticmethod
+    def _json_value(value: object) -> object:
+        if isinstance(value, Enum):
+            return value.value
+        if isinstance(value, Mapping):
+            return {
+                str(key): ContentRegistryRepository._json_value(item)
+                for key, item in value.items()
+            }
+        if isinstance(value, (tuple, list)):
+            return [ContentRegistryRepository._json_value(item) for item in value]
+        if value is None or isinstance(value, (str, int, float, bool)):
+            return value
+        raise TypeError("unsupported JSON value")
 
     def _fetchall(
         self,

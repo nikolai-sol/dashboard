@@ -1,36 +1,49 @@
 #!/usr/bin/env python3
-"""Google Sheets approval board for Abbott page direction classifier.
+"""Database-backed Google Sheets review projection for Abbott content.
 
-Workflow (batch-first):
-  1) classify.py produces candidates
-  2) sheets_sync.py publish → Google Sheet with:
-       - tab «Апрув batch»  — one decision for the whole publish batch
-       - tab «Предложения» — full table (colors, optional row overrides)
-  3) Human sets «Принять batch …» on the batch tab (not every row)
-  4) sheets_sync.py pull-approved → all proposed rows (minus Отклонить)
+``persist_and_publish_batch`` persists the canonical batch and every item before
+the first gateway write. ``read_accepted_projection`` validates and hashes the
+complete mutable decision snapshot; only ``ready`` rows are approval-eligible.
+The old local-file ``publish``/``pull-approved`` CLI is intentionally fail-closed
+until Task 9 composes the full canonical operator workflow.
 
-Optional row overrides on «Предложения»:
-  - Статус = Отклонить / Пропустить → exclude from pull
-  - Статус = Исправить + Направление → use that direction
-  - empty status → included when batch is accepted
-
-Auth: ~/.hermes/google_token.json
+Google authentication remains operator-only at ``~/.hermes/google_token.json``.
 """
 
 from __future__ import annotations
 
 import argparse
 import csv
+from dataclasses import dataclass, replace
 import json
 import sys
 from collections import Counter
 from datetime import datetime, timezone
+from enum import Enum
 from pathlib import Path
-from typing import Any
+from typing import Any, Mapping, Protocol, Sequence
 
-from google.auth.transport.requests import Request
-from google.oauth2.credentials import Credentials
-from googleapiclient.discovery import build
+# Preserve the documented direct-script operator entrypoint.  Authentication and
+# all Google service creation remain below in the existing operator-only path.
+if __package__ in (None, ""):
+    sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
+
+from agents.abbott_page_classifier.batch_service import (
+    BuiltApprovalBatch,
+    PersistedApprovalBatch,
+    compute_accepted_decision_hash,
+    compute_batch_hash,
+    persist_batch,
+)
+from agents.abbott_page_classifier.domain import (
+    ACCESS_CODES,
+    DIRECTION_CODES,
+    LIFECYCLE_CODES,
+    MATERIAL_TYPE_CODES,
+    AcceptedBatchSnapshot,
+    ApprovalBatch,
+    ApprovalItem,
+)
 
 HERMES_HOME = Path.home() / ".hermes"
 TOKEN_PATH = HERMES_HOME / "google_token.json"
@@ -122,15 +135,34 @@ HEADERS = [
 
 TAB_BATCH = "Апрув batch"
 TAB_PROPOSALS = "Предложения"
-TAB_REF = "Справочник"
+TAB_CONFLICTS = "Конфликты"
+TAB_UNRESOLVED = "Не определено"
+TAB_HISTORY = "История"
+TAB_REF = "Справочники"
 TAB_SUMMARY = "Сводка"
 TAB_HELP = "Как это работает"
+
+APPROVAL_TAB_TITLES = (
+    TAB_BATCH,
+    TAB_PROPOSALS,
+    TAB_CONFLICTS,
+    TAB_UNRESOLVED,
+    TAB_HISTORY,
+    TAB_REF,
+    TAB_SUMMARY,
+    TAB_HELP,
+)
 
 # Keep old tab name as alias when reading
 LEGACY_PROPOSALS = "На апрув"
 
 
-def load_creds() -> Credentials:
+def load_creds() -> Any:
+    # Google dependencies and credentials are operator-only.  Keeping these imports
+    # inside the live adapter lets fake-gateway tests run without an SDK or network.
+    from google.auth.transport.requests import Request
+    from google.oauth2.credentials import Credentials
+
     if not TOKEN_PATH.exists():
         raise SystemExit(
             f"NOT_AUTHENTICATED: {TOKEN_PATH} missing. Run Google Workspace setup first."
@@ -145,6 +177,8 @@ def load_creds() -> Credentials:
 
 
 def services():
+    from googleapiclient.discovery import build
+
     creds = load_creds()
     return build("sheets", "v4", credentials=creds, cache_discovery=False), build(
         "drive", "v3", credentials=creds, cache_discovery=False
@@ -201,11 +235,15 @@ def create_spreadsheet(sheets, title: str) -> str:
     body = {
         "properties": {"title": title},
         "sheets": [
-            {"properties": {"title": TAB_BATCH, "gridProperties": {"frozenRowCount": 0}}},
-            {"properties": {"title": TAB_PROPOSALS, "gridProperties": {"frozenRowCount": 1}}},
-            {"properties": {"title": TAB_SUMMARY}},
-            {"properties": {"title": TAB_REF}},
-            {"properties": {"title": TAB_HELP}},
+            {
+                "properties": {
+                    "title": tab_title,
+                    "gridProperties": {
+                        "frozenRowCount": 1 if tab_title == TAB_PROPOSALS else 0
+                    },
+                }
+            }
+            for tab_title in APPROVAL_TAB_TITLES
         ],
     }
     created = (
@@ -244,7 +282,7 @@ def ensure_tabs(sheets, spreadsheet_id: str) -> dict[str, int]:
         ids = get_sheet_ids(sheets, spreadsheet_id)
         requests = []
 
-    needed = [TAB_BATCH, TAB_PROPOSALS, TAB_SUMMARY, TAB_REF, TAB_HELP]
+    needed = list(APPROVAL_TAB_TITLES)
     for title in needed:
         if title not in ids:
             requests.append({"addSheet": {"properties": {"title": title}}})
@@ -936,11 +974,785 @@ def format_proposals_sheet(
     ).execute()
 
 
+# ---------------------------------------------------------------------------
+# Canonical database-backed projection API (Task 6)
+# ---------------------------------------------------------------------------
+
+
+class SheetsGateway(Protocol):
+    """Injected Google Sheets boundary; unit tests use an in-memory fake."""
+
+    spreadsheet_id: str
+
+    def ensure_tabs(
+        self, spreadsheet_id: str, titles: Sequence[str]
+    ) -> Mapping[str, int]: ...
+
+    def replace_values(
+        self,
+        spreadsheet_id: str,
+        range_name: str,
+        values: Sequence[Sequence[object]],
+    ) -> None: ...
+
+    def read_values(self, spreadsheet_id: str, range_name: str) -> list[list[str]]: ...
+
+    def batch_update(
+        self, spreadsheet_id: str, requests: Sequence[dict[str, object]]
+    ) -> None: ...
+
+
+class GoogleApiSheetsGateway:
+    """Operator-only adapter around the existing authenticated Sheets service."""
+
+    def __init__(self, sheets_service: Any, spreadsheet_id: str):
+        self._sheets = sheets_service
+        self.spreadsheet_id = spreadsheet_id
+
+    def ensure_tabs(
+        self, spreadsheet_id: str, titles: Sequence[str]
+    ) -> Mapping[str, int]:
+        metadata = self._sheets.spreadsheets().get(
+            spreadsheetId=spreadsheet_id,
+            fields="sheets.properties(sheetId,title,index)",
+        ).execute()
+        existing = {
+            str(sheet["properties"]["title"]): int(sheet["properties"]["sheetId"])
+            for sheet in metadata.get("sheets", ())
+        }
+        requests: list[dict[str, object]] = []
+        for title in titles:
+            if title not in existing:
+                requests.append({"addSheet": {"properties": {"title": title}}})
+        if requests:
+            self.batch_update(spreadsheet_id, requests)
+            metadata = self._sheets.spreadsheets().get(
+                spreadsheetId=spreadsheet_id,
+                fields="sheets.properties(sheetId,title,index)",
+            ).execute()
+            existing = {
+                str(sheet["properties"]["title"]): int(sheet["properties"]["sheetId"])
+                for sheet in metadata.get("sheets", ())
+            }
+        reorder = [
+            {
+                "updateSheetProperties": {
+                    "properties": {"sheetId": existing[title], "index": index},
+                    "fields": "index",
+                }
+            }
+            for index, title in enumerate(titles)
+        ]
+        if reorder:
+            self.batch_update(spreadsheet_id, reorder)
+        return {title: existing[title] for title in titles}
+
+    def replace_values(
+        self,
+        spreadsheet_id: str,
+        range_name: str,
+        values: Sequence[Sequence[object]],
+    ) -> None:
+        title = range_name.split("!", 1)[0]
+        self._sheets.spreadsheets().values().clear(
+            spreadsheetId=spreadsheet_id,
+            range=title,
+        ).execute()
+        self._sheets.spreadsheets().values().update(
+            spreadsheetId=spreadsheet_id,
+            range=range_name,
+            valueInputOption="RAW",
+            body={"values": [list(row) for row in values]},
+        ).execute()
+
+    def read_values(self, spreadsheet_id: str, range_name: str) -> list[list[str]]:
+        result = self._sheets.spreadsheets().values().get(
+            spreadsheetId=spreadsheet_id,
+            range=range_name,
+            valueRenderOption="FORMULA",
+        ).execute()
+        return [list(row) for row in result.get("values", ())]
+
+    def batch_update(
+        self, spreadsheet_id: str, requests: Sequence[dict[str, object]]
+    ) -> None:
+        if requests:
+            self._sheets.spreadsheets().batchUpdate(
+                spreadsheetId=spreadsheet_id,
+                body={"requests": list(requests)},
+            ).execute()
+
+
+@dataclass(frozen=True)
+class PublishedProjection:
+    spreadsheet_id: str
+    batch_key: str
+    published_input_hash: str
+    total_count: int
+    ready_count: int
+    conflict_count: int
+    unresolved_count: int
+    rejected_count: int
+    no_change_count: int
+    database_batch_id: int | None = None
+
+
+class ProjectionValidationError(RuntimeError):
+    """Sanitized projection failure with a stable machine-readable code."""
+
+    def __init__(self, code: str):
+        self.code = code
+        super().__init__(code)
+
+
+ITEM_HEADERS = (
+    "content_entity_id",
+    "title",
+    "url",
+    "current_direction_code",
+    "current_material_type_code",
+    "current_access_code",
+    "current_lifecycle_code",
+    "registry1_values",
+    "registry2_values",
+    "deterministic_result",
+    "terra_result",
+    "sol_result",
+    "readiness_state",
+    "conflict_codes",
+    "concise_evidence",
+    "final_direction_code",
+    "final_material_type_code",
+    "final_access_code",
+    "final_lifecycle_code",
+    "decision_reason",
+    "input_hash",
+    "row_hash",
+)
+HISTORY_HEADERS = (
+    "batch_key",
+    "published_input_hash",
+    "accepted_decision_hash",
+    "approver",
+    "accepted_at",
+    "ready_count",
+    "conflict_count",
+    "unresolved_count",
+    "rejected_count",
+    "no_change_count",
+    "import_outcome",
+    "candidate_release_id",
+    "activation_status",
+)
+
+_FINAL_COLUMNS = {
+    "direction": ITEM_HEADERS.index("final_direction_code"),
+    "material_type": ITEM_HEADERS.index("final_material_type_code"),
+    "access": ITEM_HEADERS.index("final_access_code"),
+    "lifecycle": ITEM_HEADERS.index("final_lifecycle_code"),
+}
+_REASON_COLUMN = ITEM_HEADERS.index("decision_reason")
+_HASH_COLUMN = ITEM_HEADERS.index("input_hash")
+_STATE_TABS = {
+    "ready": TAB_PROPOSALS,
+    "conflict": TAB_CONFLICTS,
+    "unresolved": TAB_UNRESOLVED,
+    "rejected": TAB_UNRESOLVED,
+    "no_change": TAB_UNRESOLVED,
+}
+
+
+def _projection_plain(value: object) -> object:
+    if isinstance(value, Enum):
+        return value.value
+    if isinstance(value, Mapping):
+        return {str(key): _projection_plain(item) for key, item in value.items()}
+    if isinstance(value, (tuple, list)):
+        return [_projection_plain(item) for item in value]
+    if isinstance(value, str):
+        return value.replace("\r\n", "\n").replace("\r", "\n")
+    if value is None or isinstance(value, (bool, int, float)):
+        return value
+    raise TypeError("PROJECTION_VALUE_NOT_SERIALIZABLE")
+
+
+def _json_cell(value: object | None) -> str:
+    if value is None:
+        return ""
+    return json.dumps(
+        _projection_plain(value),
+        ensure_ascii=False,
+        sort_keys=True,
+        separators=(",", ":"),
+    )
+
+
+def _safe_display(value: object | None) -> object:
+    if value is None:
+        return ""
+    if not isinstance(value, str):
+        return value
+    normalized = value.replace("\r\n", "\n").replace("\r", "\n")
+    stripped = normalized.lstrip()
+    if stripped.startswith(("=", "+", "-", "@")):
+        return "'" + normalized
+    return normalized
+
+
+def _batch_and_database_id(
+    value: ApprovalBatch | PersistedApprovalBatch,
+) -> tuple[ApprovalBatch, int | None]:
+    if isinstance(value, PersistedApprovalBatch):
+        return value.batch, value.database_batch_id
+    return value, None
+
+
+def _gateway_spreadsheet_id(gateway: SheetsGateway) -> str:
+    spreadsheet_id = getattr(gateway, "spreadsheet_id", "")
+    if not isinstance(spreadsheet_id, str) or not spreadsheet_id.strip():
+        raise ProjectionValidationError("SPREADSHEET_ID_REQUIRED")
+    return spreadsheet_id
+
+
+def _counts(batch: ApprovalBatch) -> dict[str, int]:
+    result = {state: 0 for state in _STATE_TABS}
+    for item in batch.items:
+        if item.readiness_state not in result:
+            raise ProjectionValidationError("READINESS_STATE_INVALID")
+        result[item.readiness_state] += 1
+    return result
+
+
+def _validate_published_batch_hash(batch: ApprovalBatch) -> None:
+    if compute_batch_hash(batch.items) != batch.published_input_hash:
+        raise ProjectionValidationError("BATCH_HASH_MISMATCH")
+
+
+def _item_extra(item: ApprovalItem, name: str) -> object | None:
+    return getattr(item, name, None)
+
+
+def _current_code(item: ApprovalItem, name: str) -> object | None:
+    current = _item_extra(item, "current_canonical")
+    if isinstance(current, Mapping):
+        return current.get(name)
+    return None
+
+
+def _item_row(item: ApprovalItem) -> list[object]:
+    return [
+        "" if item.content_entity_id is None else item.content_entity_id,
+        _safe_display(item.title),
+        _safe_display(item.url),
+        _current_code(item, "direction_code") or "",
+        _current_code(item, "material_type_code") or "",
+        _current_code(item, "access_code") or "",
+        _current_code(item, "lifecycle_code") or "",
+        _json_cell(_item_extra(item, "registry1_values")),
+        _json_cell(_item_extra(item, "registry2_values")),
+        _json_cell(_item_extra(item, "deterministic_result")),
+        _json_cell(_item_extra(item, "terra_result")),
+        _json_cell(_item_extra(item, "sol_result")),
+        item.readiness_state,
+        _json_cell(
+            tuple(code.value if isinstance(code, Enum) else str(code) for code in item.conflict_codes)
+        ),
+        _json_cell(_item_extra(item, "concise_evidence") or ()),
+        item.final_direction_code or "",
+        item.final_material_type_code or "",
+        item.final_access_code or "",
+        item.final_lifecycle_code or "",
+        _safe_display(item.decision_reason),
+        item.input_hash,
+        item.row_hash,
+    ]
+
+
+def _taxonomy_terms(batch: ApprovalBatch) -> Mapping[str, tuple[str, ...]]:
+    supplied = batch.taxonomy_terms if isinstance(batch, BuiltApprovalBatch) else {}
+    defaults = {
+        "direction": tuple(sorted(DIRECTION_CODES)),
+        "material_type": tuple(sorted(MATERIAL_TYPE_CODES)),
+        "access": tuple(sorted(ACCESS_CODES)),
+        "lifecycle": tuple(sorted(LIFECYCLE_CODES)),
+    }
+    return {
+        kind: tuple(supplied.get(kind, ())) or default
+        for (kind, default) in defaults.items()
+    }
+
+
+def _reference_rows(batch: ApprovalBatch) -> list[list[object]]:
+    terms = _taxonomy_terms(batch)
+    kinds = ("direction", "material_type", "access", "lifecycle")
+    height = max(len(terms[kind]) for kind in kinds)
+    rows: list[list[object]] = [list(kinds)]
+    for index in range(height):
+        rows.append(
+            [terms[kind][index] if index < len(terms[kind]) else "" for kind in kinds]
+        )
+    return rows
+
+
+def _metadata_rows(batch: ApprovalBatch, counts: Mapping[str, int]) -> list[list[object]]:
+    return [
+        ["Batch ID", batch.batch_key],
+        ["Published hash", batch.published_input_hash],
+        ["Taxonomy version", batch.taxonomy_version],
+        ["Prompt version", batch.prompt_version],
+        ["ready", counts["ready"]],
+        ["conflict", counts["conflict"]],
+        ["unresolved", counts["unresolved"]],
+        ["rejected", counts["rejected"]],
+        ["no_change", counts["no_change"]],
+        ["Всего", len(batch.items)],
+        ["Решение", "Ожидает"],
+        ["Принял", ""],
+        ["Принято UTC", ""],
+        ["Accepted decision hash", ""],
+    ]
+
+
+def _summary_rows(batch: ApprovalBatch, counts: Mapping[str, int]) -> list[list[object]]:
+    return [
+        ["Published hash", batch.published_input_hash],
+        ["ready", counts["ready"]],
+        ["conflict", counts["conflict"]],
+        ["unresolved", counts["unresolved"]],
+        ["rejected", counts["rejected"]],
+        ["no_change", counts["no_change"]],
+        ["Всего", len(batch.items)],
+    ]
+
+
+def _history_rows(batch: ApprovalBatch, counts: Mapping[str, int]) -> list[list[object]]:
+    return [
+        list(HISTORY_HEADERS),
+        [
+            batch.batch_key,
+            batch.published_input_hash,
+            "",
+            "",
+            "",
+            counts["ready"],
+            counts["conflict"],
+            counts["unresolved"],
+            counts["rejected"],
+            counts["no_change"],
+            "published",
+            "",
+            "not_activated",
+        ],
+    ]
+
+
+def _projection_requests(
+    sheet_ids: Mapping[str, int], batch: ApprovalBatch
+) -> list[dict[str, object]]:
+    terms = _taxonomy_terms(batch)
+    requests: list[dict[str, object]] = []
+    decision_row_index = next(
+        index
+        for index, row in enumerate(_metadata_rows(batch, _counts(batch)))
+        if row[0] == "Решение"
+    )
+    requests.append(
+        {
+            "setDataValidation": {
+                "range": {
+                    "sheetId": sheet_ids[TAB_BATCH],
+                    "startRowIndex": decision_row_index,
+                    "endRowIndex": decision_row_index + 1,
+                    "startColumnIndex": 1,
+                    "endColumnIndex": 2,
+                },
+                "rule": {
+                    "condition": {
+                        "type": "ONE_OF_LIST",
+                        "values": [
+                            {"userEnteredValue": "Ожидает"},
+                            {"userEnteredValue": "Принять"},
+                            {"userEnteredValue": "Отклонить"},
+                        ],
+                    },
+                    "showCustomUi": True,
+                    "strict": True,
+                },
+            }
+        }
+    )
+    editable_tabs = (TAB_PROPOSALS, TAB_CONFLICTS, TAB_UNRESOLVED)
+    for title in editable_tabs:
+        sheet_id = sheet_ids[title]
+        row_count = 1 + sum(
+            1 for item in batch.items if _STATE_TABS[item.readiness_state] == title
+        )
+        requests.extend(
+            [
+                {
+                    "addProtectedRange": {
+                        "protectedRange": {
+                            "range": {
+                                "sheetId": sheet_id,
+                                "startRowIndex": 0,
+                                "endRowIndex": row_count,
+                                "startColumnIndex": 0,
+                                "endColumnIndex": min(_FINAL_COLUMNS.values()),
+                            },
+                            "description": "identity-and-proposals-read-only",
+                            "warningOnly": False,
+                        }
+                    }
+                },
+                {
+                    "addProtectedRange": {
+                        "protectedRange": {
+                            "range": {
+                                "sheetId": sheet_id,
+                                "startRowIndex": 0,
+                                "endRowIndex": row_count,
+                                "startColumnIndex": _HASH_COLUMN,
+                                "endColumnIndex": len(ITEM_HEADERS),
+                            },
+                            "description": "input-and-row-hashes-read-only",
+                            "warningOnly": False,
+                        }
+                    }
+                },
+            ]
+        )
+        for reference_index, (kind, column_index) in enumerate(_FINAL_COLUMNS.items()):
+            end_row = len(terms[kind]) + 1
+            reference_column = chr(ord("A") + reference_index)
+            requests.append(
+                {
+                    "setDataValidation": {
+                        "range": {
+                            "sheetId": sheet_id,
+                            "startRowIndex": 1,
+                            "endRowIndex": max(row_count, 2),
+                            "startColumnIndex": column_index,
+                            "endColumnIndex": column_index + 1,
+                        },
+                        "rule": {
+                            "condition": {
+                                "type": "ONE_OF_RANGE",
+                                "values": [
+                                    {
+                                        "userEnteredValue": (
+                                            f"={TAB_REF}!${reference_column}$2:"
+                                            f"${reference_column}${end_row}"
+                                        )
+                                    }
+                                ],
+                            },
+                            "showCustomUi": True,
+                            "strict": True,
+                        },
+                    }
+                }
+            )
+    conflict_rows = 1 + sum(
+        1 for item in batch.items if item.readiness_state == "conflict"
+    )
+    requests.append(
+        {
+            "setDataValidation": {
+                "range": {
+                    "sheetId": sheet_ids[TAB_CONFLICTS],
+                    "startRowIndex": 1,
+                    "endRowIndex": max(conflict_rows, 2),
+                    "startColumnIndex": _REASON_COLUMN,
+                    "endColumnIndex": _REASON_COLUMN + 1,
+                },
+                "rule": {
+                    "condition": {
+                        "type": "CUSTOM_FORMULA",
+                        "values": [{"userEnteredValue": "=LEN(TRIM($T2))>0"}],
+                    },
+                    "inputMessage": "decision_reason is mandatory for an edited conflict",
+                    "strict": True,
+                },
+            }
+        }
+    )
+    requests.append(
+        {
+            "addProtectedRange": {
+                "protectedRange": {
+                    "range": {"sheetId": sheet_ids[TAB_HISTORY]},
+                    "description": "history-read-only",
+                    "warningOnly": False,
+                }
+            }
+        }
+    )
+    return requests
+
+
+def publish_batch_projection(
+    batch: PersistedApprovalBatch,
+    sheets_gateway: SheetsGateway,
+) -> PublishedProjection:
+    """Publish a review-only projection of an already canonical batch."""
+
+    if not isinstance(batch, PersistedApprovalBatch):
+        raise ProjectionValidationError("BATCH_NOT_PERSISTED")
+    approval_batch = batch.batch
+    database_batch_id = batch.database_batch_id
+    _validate_published_batch_hash(approval_batch)
+    spreadsheet_id = _gateway_spreadsheet_id(sheets_gateway)
+    counts = _counts(approval_batch)
+    sheet_ids = sheets_gateway.ensure_tabs(spreadsheet_id, APPROVAL_TAB_TITLES)
+    if any(title not in sheet_ids for title in APPROVAL_TAB_TITLES):
+        raise ProjectionValidationError("SHEET_TAB_MISSING")
+
+    rows_by_tab: dict[str, list[list[object]]] = {
+        title: [list(ITEM_HEADERS)]
+        for title in (TAB_PROPOSALS, TAB_CONFLICTS, TAB_UNRESOLVED)
+    }
+    for item in approval_batch.items:
+        rows_by_tab[_STATE_TABS[item.readiness_state]].append(_item_row(item))
+
+    values_by_tab: Mapping[str, Sequence[Sequence[object]]] = {
+        TAB_BATCH: _metadata_rows(approval_batch, counts),
+        **rows_by_tab,
+        TAB_HISTORY: _history_rows(approval_batch, counts),
+        TAB_REF: _reference_rows(approval_batch),
+        TAB_SUMMARY: _summary_rows(approval_batch, counts),
+        TAB_HELP: [
+            ["Google Sheets — только проекция для ревью."],
+            ["Канонический batch и все строки сначала сохраняются в MySQL."],
+            ["Принятие batch применяет только строки ready; остальные остаются открытыми."],
+        ],
+    }
+    for title in APPROVAL_TAB_TITLES:
+        sheets_gateway.replace_values(
+            spreadsheet_id,
+            f"{title}!A1",
+            values_by_tab[title],
+        )
+    sheets_gateway.batch_update(
+        spreadsheet_id,
+        _projection_requests(sheet_ids, approval_batch),
+    )
+    return PublishedProjection(
+        spreadsheet_id=spreadsheet_id,
+        batch_key=approval_batch.batch_key,
+        published_input_hash=approval_batch.published_input_hash,
+        total_count=len(approval_batch.items),
+        ready_count=counts["ready"],
+        conflict_count=counts["conflict"],
+        unresolved_count=counts["unresolved"],
+        rejected_count=counts["rejected"],
+        no_change_count=counts["no_change"],
+        database_batch_id=database_batch_id,
+    )
+
+
+def persist_and_publish_batch(
+    batch: ApprovalBatch,
+    repository: Any,
+    sheets_gateway: SheetsGateway,
+) -> PublishedProjection:
+    """Enforce canonical persistence before the first projection gateway call."""
+
+    persisted = persist_batch(batch, repository)
+    return publish_batch_projection(persisted, sheets_gateway)
+
+
+def _metadata(values: Sequence[Sequence[object]]) -> dict[str, object]:
+    return {
+        str(row[0]): row[1]
+        for row in values
+        if len(row) >= 2 and str(row[0]).strip()
+    }
+
+
+def _required_metadata(meta: Mapping[str, object], name: str) -> str:
+    value = str(meta.get(name, "")).strip()
+    if not value:
+        raise ProjectionValidationError("SHEET_ACCEPTANCE_METADATA_MISSING")
+    return value
+
+
+def _as_count(meta: Mapping[str, object], name: str) -> int:
+    try:
+        value = meta[name]
+        if isinstance(value, bool):
+            raise ValueError
+        number = int(value)
+        if str(value).strip() not in {str(number), f"{number}.0"} or number < 0:
+            raise ValueError
+        return number
+    except (KeyError, TypeError, ValueError):
+        raise ProjectionValidationError("SHEET_COUNT_MISMATCH") from None
+
+
+def _accepted_decision(value: object) -> bool:
+    return value == "Принять"
+
+
+def _table_rows(
+    gateway: SheetsGateway, spreadsheet_id: str, title: str
+) -> list[list[object]]:
+    values = gateway.read_values(spreadsheet_id, f"{title}!A:V")
+    if not values or tuple(str(value) for value in values[0]) != ITEM_HEADERS:
+        raise ProjectionValidationError("SHEET_HEADER_MISMATCH")
+    rows: list[list[object]] = []
+    for source in values[1:]:
+        row = list(source)
+        row.extend([""] * (len(ITEM_HEADERS) - len(row)))
+        if any(str(value).strip() for value in row):
+            rows.append(row[: len(ITEM_HEADERS)])
+    return rows
+
+
+def _optional_cell(value: object) -> str | None:
+    normalized = str(value or "").replace("\r\n", "\n").replace("\r", "\n").strip()
+    if normalized.startswith(("=", "+", "-", "@")):
+        raise ProjectionValidationError("SHEET_FORMULA_NOT_ALLOWED")
+    return normalized or None
+
+
+def _validate_taxonomy(
+    item: ApprovalItem,
+    terms: Mapping[str, tuple[str, ...]],
+) -> None:
+    values = {
+        "direction": item.final_direction_code,
+        "material_type": item.final_material_type_code,
+        "access": item.final_access_code,
+        "lifecycle": item.final_lifecycle_code,
+    }
+    if any(value is not None and value not in terms[kind] for kind, value in values.items()):
+        raise ProjectionValidationError("TAXONOMY_CODE_INVALID")
+    if item.readiness_state == "ready" and (
+        not item.final_direction_code or not item.final_material_type_code
+    ):
+        raise ProjectionValidationError("READY_CLASSIFICATION_INCOMPLETE")
+
+
+def read_accepted_projection(
+    batch: ApprovalBatch | PersistedApprovalBatch,
+    sheets_gateway: SheetsGateway,
+) -> AcceptedBatchSnapshot:
+    """Read and strictly validate the complete decision projection."""
+
+    approval_batch, _database_batch_id = _batch_and_database_id(batch)
+    _validate_published_batch_hash(approval_batch)
+    spreadsheet_id = _gateway_spreadsheet_id(sheets_gateway)
+    batch_meta = _metadata(
+        sheets_gateway.read_values(spreadsheet_id, f"{TAB_BATCH}!A:B")
+    )
+    summary_meta = _metadata(
+        sheets_gateway.read_values(spreadsheet_id, f"{TAB_SUMMARY}!A:B")
+    )
+    if not _accepted_decision(batch_meta.get("Решение")):
+        raise ProjectionValidationError("BATCH_NOT_ACCEPTED")
+    if (
+        str(batch_meta.get("Batch ID", "")) != approval_batch.batch_key
+        or str(batch_meta.get("Published hash", ""))
+        != approval_batch.published_input_hash
+        or str(summary_meta.get("Published hash", ""))
+        != approval_batch.published_input_hash
+        or str(batch_meta.get("Taxonomy version", ""))
+        != approval_batch.taxonomy_version
+        or str(batch_meta.get("Prompt version", "")) != approval_batch.prompt_version
+    ):
+        raise ProjectionValidationError("SHEET_BATCH_MISMATCH")
+
+    counts = _counts(approval_batch)
+    for name, expected in (*counts.items(), ("Всего", len(approval_batch.items))):
+        if _as_count(batch_meta, name) != expected or _as_count(summary_meta, name) != expected:
+            raise ProjectionValidationError("SHEET_COUNT_MISMATCH")
+
+    rows: list[list[object]] = []
+    for title in (TAB_PROPOSALS, TAB_CONFLICTS, TAB_UNRESOLVED):
+        rows.extend(_table_rows(sheets_gateway, spreadsheet_id, title))
+    row_hash_index = ITEM_HEADERS.index("row_hash")
+    row_hashes = [str(row[row_hash_index]).strip() for row in rows]
+    if len(row_hashes) != len(set(row_hashes)):
+        raise ProjectionValidationError("DUPLICATE_ROW_HASH")
+    if len(rows) != len(approval_batch.items):
+        raise ProjectionValidationError("SHEET_ROW_COUNT_MISMATCH")
+
+    expected_by_hash = {item.row_hash: item for item in approval_batch.items}
+    if set(row_hashes) != set(expected_by_hash):
+        raise ProjectionValidationError("SHEET_IDENTITY_MISMATCH")
+    immutable_indexes = tuple(range(0, min(_FINAL_COLUMNS.values()))) + tuple(
+        range(_HASH_COLUMN, len(ITEM_HEADERS))
+    )
+    terms = _taxonomy_terms(approval_batch)
+    accepted_items: list[ApprovalItem] = []
+    seen_identities: set[tuple[int | None, str]] = set()
+    for row in rows:
+        expected = expected_by_hash[str(row[row_hash_index]).strip()]
+        expected_row = _item_row(expected)
+        if any(str(row[index]) != str(expected_row[index]) for index in immutable_indexes):
+            raise ProjectionValidationError("SHEET_IDENTITY_MISMATCH")
+        identity = (expected.content_entity_id, expected.input_hash)
+        if identity in seen_identities:
+            raise ProjectionValidationError("DUPLICATE_ROW_IDENTITY")
+        seen_identities.add(identity)
+
+        accepted = replace(
+            expected,
+            final_direction_code=_optional_cell(row[_FINAL_COLUMNS["direction"]]),
+            final_material_type_code=_optional_cell(row[_FINAL_COLUMNS["material_type"]]),
+            final_access_code=_optional_cell(row[_FINAL_COLUMNS["access"]]),
+            final_lifecycle_code=_optional_cell(row[_FINAL_COLUMNS["lifecycle"]]),
+            decision_reason=_optional_cell(row[_REASON_COLUMN]),
+        )
+        _validate_taxonomy(accepted, terms)
+        if accepted.readiness_state == "conflict":
+            old_values = (
+                expected.final_direction_code,
+                expected.final_material_type_code,
+                expected.final_access_code,
+                expected.final_lifecycle_code,
+            )
+            new_values = (
+                accepted.final_direction_code,
+                accepted.final_material_type_code,
+                accepted.final_access_code,
+                accepted.final_lifecycle_code,
+            )
+            if old_values != new_values and not accepted.decision_reason:
+                raise ProjectionValidationError("CONFLICT_REASON_REQUIRED")
+        accepted_items.append(accepted)
+
+    accepted_items.sort(
+        key=lambda item: (
+            0 if item.content_entity_id is None else 1,
+            item.content_entity_id or 0,
+            item.input_hash,
+        )
+    )
+    accepted_hash = compute_accepted_decision_hash(accepted_items)
+    displayed_hash = str(batch_meta.get("Accepted decision hash", "")).strip()
+    if displayed_hash and displayed_hash != accepted_hash:
+        raise ProjectionValidationError("ACCEPTED_HASH_MISMATCH")
+    return AcceptedBatchSnapshot(
+        batch_key=approval_batch.batch_key,
+        published_input_hash=approval_batch.published_input_hash,
+        accepted_decision_hash=accepted_hash,
+        items=tuple(accepted_items),
+        accepted_by=_required_metadata(batch_meta, "Принял"),
+        accepted_at=_required_metadata(batch_meta, "Принято UTC"),
+    )
+
+
 def publish(
     classifications_path: Path,
     title: str | None = None,
     spreadsheet_id: str | None = None,
 ) -> dict[str, Any]:
+    # Retained only so older invocations fail with a stable migration boundary.
+    # Task 9's workflow CLI will compose persist_and_publish_batch with real DB
+    # configuration; this legacy file-to-Sheet path must never write canonical data.
+    raise SystemExit("CANONICAL_DB_BATCH_REQUIRED")
+
     sheets, _drive = services()
     state = load_state()
     sid = spreadsheet_id or state.get("spreadsheet_id")
@@ -1066,6 +1878,11 @@ def _cell(row: list[str], idx: dict[str, int], name: str) -> str:
 
 
 def pull_approved(out_csv: Path, spreadsheet_id: str | None = None) -> dict[str, Any]:
+    # Directionless/conflict rows cannot be represented by the legacy CSV/local
+    # lock path.  Fail closed until the Task 9 DB-backed workflow composes the
+    # accepted snapshot and repository ingestion stages.
+    raise SystemExit("CANONICAL_DB_BATCH_REQUIRED")
+
     sheets, _ = services()
     state = load_state()
     sid = spreadsheet_id or state.get("spreadsheet_id")
@@ -1294,7 +2111,9 @@ def main(argv: list[str] | None = None) -> int:
     p = argparse.ArgumentParser(description="Abbott approval Google Sheet sync (batch mode)")
     sub = p.add_subparsers(dest="cmd", required=True)
 
-    p_pub = sub.add_parser("publish", help="Create/update Google Sheet with candidates")
+    p_pub = sub.add_parser(
+        "publish", help="Disabled legacy command; use the canonical workflow CLI"
+    )
     p_pub.add_argument(
         "--classifications",
         type=Path,
@@ -1309,7 +2128,7 @@ def main(argv: list[str] | None = None) -> int:
 
     p_pull = sub.add_parser(
         "pull-approved",
-        help="Pull all proposals if batch accepted on «Апрув batch»",
+        help="Disabled legacy command; use the canonical workflow CLI",
     )
     p_pull.add_argument(
         "--out",
