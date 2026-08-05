@@ -753,6 +753,38 @@ class CanonicalReleaseStoreTest(unittest.TestCase):
         )
         self.assertIn(("rollback", None), conn.events)
 
+    def test_candidate_creation_can_join_an_existing_transaction(self):
+        import canonical_release_store as store
+
+        conn = RecordingConnection(
+            [{"canonical_release_id": 12}], lastrowid=41
+        )
+        release_id = store.create_candidate_release(
+            portal_key="abbott",
+            predecessor_release_id=12,
+            baseline_validation_run_id=33,
+            code_revision="abc123",
+            connection=conn,
+        )
+
+        self.assertEqual(release_id, 41)
+        self.assertNotIn(("start_transaction", None), conn.events)
+        self.assertNotIn(("commit", None), conn.events)
+        self.assertNotIn(("close", None), conn.events)
+
+    def test_mutable_candidate_can_be_attested_inside_an_existing_transaction(self):
+        import canonical_release_store as store
+
+        release = {"id": 41, "dataset_key": "abbott", "release_status": "staging"}
+        conn = RecordingConnection([release])
+        actual = store.require_mutable_candidate_release(
+            41, portal_key="abbott", connection=conn
+        )
+
+        self.assertEqual(actual, release)
+        self.assertNotIn(("commit", None), conn.events)
+        self.assertNotIn(("close", None), conn.events)
+
     def test_mutable_candidate_requires_matching_dataset_and_staging_status(self):
         import canonical_release_store as store
 
