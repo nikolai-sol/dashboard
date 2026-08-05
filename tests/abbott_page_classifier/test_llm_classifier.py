@@ -350,6 +350,11 @@ class AdapterTests(unittest.TestCase):
             "+43/664/1234567",
             "имя@пример.рф",
             "+43\u00a0664\u202f123\u20094567",
+            "+43\u200b1\u2060234\u200e567",
+            "+43\u202a1\u202c234567",
+            "+43\u20111\u2011234567",
+            "+43 1 234567",
+            "+43 12345",
             "raw%2525252555ser%2525252549d=42",
             too_deep,
         )
@@ -367,6 +372,13 @@ class AdapterTests(unittest.TestCase):
                 self.assertEqual(result.unresolved_code, "LLM_INPUT_REJECTED")
                 self.assertEqual(result.attempt_count, 0)
                 self.assertEqual(factory_calls, [])
+
+        allowed_client = _FakeClient([_completed()])
+        allowed = OpenAIContentClassifier(client=allowed_client).classify(
+            _request(content_excerpt="Reference number 1234567"), LLM_PRIMARY_MODEL
+        )
+        self.assertEqual(allowed.status, "success")
+        self.assertEqual(len(allowed_client.responses.calls), 1)
 
     def test_sensitive_nested_example_key_is_rejected(self):
         client = _FakeClient([_completed()])
@@ -662,6 +674,40 @@ class AdapterTests(unittest.TestCase):
         )
         self.assertEqual(result.unresolved_code, "LLM_INPUT_REJECTED")
         self.assertEqual(result.attempt_count, 0)
+
+    def test_factory_real_sdk_client_is_normalized_to_zero_internal_retries(self):
+        sdk_client = OpenAI(api_key="unit-test-placeholder", max_retries=4)
+        factory_calls = []
+
+        def factory(**kwargs):
+            factory_calls.append(kwargs)
+            return sdk_client
+
+        classifier = OpenAIContentClassifier(client_factory=factory)
+        normalized = classifier._client_for_call()
+        self.assertEqual(factory_calls, [{"max_retries": 0}])
+        self.assertEqual(normalized.max_retries, 0)
+
+    def test_factory_fake_must_explicitly_disable_hidden_retries(self):
+        for advertised_retries in (4, None):
+            with self.subTest(advertised_retries=advertised_retries):
+                calls = []
+                responses = _FakeResponses([_completed()])
+                unsafe = SimpleNamespace(responses=responses)
+                if advertised_retries is not None:
+                    unsafe.max_retries = advertised_retries
+
+                def factory(**kwargs):
+                    calls.append(kwargs)
+                    return unsafe
+
+                result = OpenAIContentClassifier(client_factory=factory).classify(
+                    _request(), LLM_PRIMARY_MODEL
+                )
+                self.assertEqual(result.status, "unresolved")
+                self.assertEqual(result.unresolved_code, "LLM_PROVIDER_ERROR")
+                self.assertEqual(calls, [{"max_retries": 0}])
+                self.assertEqual(responses.calls, [])
 
     def test_uncontracted_injected_fake_is_rejected(self):
         unsafe = SimpleNamespace(

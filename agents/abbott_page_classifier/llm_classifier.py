@@ -355,22 +355,26 @@ def _has_phone_digit_run(value: str) -> bool:
 
     digits = 0
     in_run = False
+    plus_prefixed = False
     for character in value:
         if character.isdigit():
             digits += 1
             in_run = True
-            if digits >= 10:
+            if digits >= (7 if plus_prefixed else 10):
                 return True
             continue
+        category = unicodedata.category(character)
         is_separator = (
             character in "+-()./"
             or character in "‐‑‒–—−"
-            or unicodedata.category(character).startswith("Z")
+            or category in {"Cf", "Pd"}
+            or category.startswith("Z")
         )
         if in_run and is_separator:
             continue
         digits = 0
-        in_run = character == "+"
+        plus_prefixed = character == "+"
+        in_run = plus_prefixed
     return False
 
 
@@ -806,9 +810,9 @@ def _classification_respects_fields(
 class OpenAIContentClassifier:
     """Responses adapter with one local retry and no hidden SDK retries.
 
-    Injected clients are a test/composition seam and must themselves be configured
-    with ``max_retries=0``. Internally constructed SDK clients always receive that
-    setting explicitly, keeping the adapter-wide maximum at two provider calls.
+    Injected clients and client-factory results must themselves be configured with
+    ``max_retries=0``. Real SDK clients are safely cloned with that setting,
+    keeping the adapter-wide maximum at two provider calls.
     """
 
     def __init__(
@@ -818,17 +822,22 @@ class OpenAIContentClassifier:
         client_factory: Callable[..., Any] = OpenAI,
         monotonic: Callable[[], float] = time.monotonic,
     ) -> None:
-        if client is not None and isinstance(client, OpenAI):
-            client = client.with_options(max_retries=0)
-        elif client is not None and getattr(client, "max_retries", None) != 0:
-            raise ValueError("injected clients must declare max_retries=0")
-        self._client = client
+        self._client = None if client is None else self._without_hidden_retries(client)
         self._client_factory = client_factory
         self._monotonic = monotonic
 
+    @staticmethod
+    def _without_hidden_retries(client: Any) -> Any:
+        if isinstance(client, OpenAI):
+            return client.with_options(max_retries=0)
+        if getattr(client, "max_retries", None) != 0:
+            raise ValueError("clients must declare max_retries=0")
+        return client
+
     def _client_for_call(self) -> Any:
         if self._client is None:
-            self._client = self._client_factory(max_retries=0)
+            candidate = self._client_factory(max_retries=0)
+            self._client = self._without_hidden_retries(candidate)
         return self._client
 
     def classify(self, request: LlmRequest, model: str) -> LlmAttempt:
