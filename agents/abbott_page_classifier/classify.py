@@ -29,6 +29,23 @@ from pathlib import Path
 from typing import Any, Iterable
 from urllib.parse import parse_qs, unquote, urlparse
 
+# The classifier remains executable as the documented standalone script as well
+# as importable as a package module.  Direct script execution puts this file's
+# directory, rather than the repository root, on ``sys.path``.
+if __package__ in (None, ""):
+    sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
+
+from agents.abbott_page_classifier.domain import (
+    ACCESS_LABELS,
+    DIRECTION_CODE_BY_PREFIX,
+    DIRECTION_CODE_BY_SECTION_ID,
+    LEGACY_CLASSIFIER_MATERIAL_TYPE_CODES,
+    LEGACY_DIRECTION_LABELS,
+    MATERIAL_TYPE_CODE_BY_PREFIX,
+    MATERIAL_TYPE_LABELS,
+)
+from agents.abbott_page_classifier.normalization import normalize_url as normalize_canonical_url
+
 try:
     import openpyxl
 except ImportError as exc:  # pragma: no cover
@@ -36,66 +53,24 @@ except ImportError as exc:  # pragma: no cover
 
 
 DIRECTION_BY_PREFIX: dict[str, str] = {
-    "cardio": "Кардиология [262338]",
-    "gastro": "Гастроэнтерология [262340]",
-    "nevro": "Неврология и психиатрия [262339]",
-    "wh": "Женское здоровье [262337]",
-    "pulmo": "Здоровье дыхательной системы [263746]",
-    "respiratory-assistant": "Здоровье дыхательной системы [263746]",
-    "farmatsevtam": "Фармацевты",
-    "dermatology": "Дерматология",
-    "diabet": "Управление сахарным диабетом [620888]",
+    prefix: LEGACY_DIRECTION_LABELS[code]
+    for prefix, code in DIRECTION_CODE_BY_PREFIX.items()
 }
 
 DIRECTION_BY_QUERY_ID: dict[str, str] = {
-    "262337": "Женское здоровье [262337]",
-    "262338": "Кардиология [262338]",
-    "262339": "Неврология и психиатрия [262339]",
-    "262340": "Гастроэнтерология [262340]",
-    "263746": "Здоровье дыхательной системы [263746]",
-    "620888": "Управление сахарным диабетом [620888]",
+    section_id: LEGACY_DIRECTION_LABELS[code]
+    for section_id, code in DIRECTION_CODE_BY_SECTION_ID.items()
 }
 
 MATERIAL_TYPE_BY_PREFIX: dict[str, str] = {
-    "articles": "Статьи",
-    "video": "Видео",
-    "klinicheskie-sluchai": "Клинические случаи",
-    "nauchno-obrazovatelnye-broshyury": "Научно-образовательные брошюры",
-    "podcasts": "Подкасты",
-    "tables": "Таблицы",
-    "calculators": "Калькуляторы",
-    "check-knowledge": "Проверить знания",
-    "preparation": "Препараты и продукты",
-    "pribory": "Приборы и устройства",
-    "cdss": "Цифровой консультант врача",
-    "klinicheskie-rekomendatsii": "Клинические рекомендации",
-    "algoritmy-farmatsevticheskogo-konsultirovaniya": "Алгоритмы фармацевтического консультирования",
-    "events": "Мероприятия",
-    "academy": "Статьи",  # often mixed; path alone weak
+    prefix: MATERIAL_TYPE_LABELS[code]
+    for prefix, code in MATERIAL_TYPE_CODE_BY_PREFIX.items()
 }
 
-# Canonical material-type dictionary (workbook + UI filters)
+# Compatibility rendering for the existing CLI.  "Архив" is a lifecycle
+# state and intentionally absent from this material-type list.
 MATERIAL_TYPES: list[str] = [
-    "Статьи",
-    "Видео",
-    "Таблицы",
-    "Клинические рекомендации",
-    "Калькуляторы",
-    "Клинические случаи",
-    "Научно-образовательные брошюры",
-    "Препараты и продукты",
-    "Помощник фармацевта",
-    "Подкасты",
-    "Личная эффективность",
-    "Проверить знания",
-    "Алгоритмы фармацевтического консультирования",
-    "Детское питание",
-    "Приборы и устройства",
-    "Респираторный помощник",
-    "Цифровой консультант врача",
-    "Мероприятия",
-    "Общие материалы",
-    "Архив",
+    MATERIAL_TYPE_LABELS[code] for code in LEGACY_CLASSIFIER_MATERIAL_TYPE_CODES
 ]
 
 # Title keywords → material type (only when path unknown)
@@ -131,7 +106,7 @@ KEYWORD_DIRECTION: list[tuple[re.Pattern[str], str]] = [
 ]
 
 ACCESS_DEFAULT_BY_DIR = {
-    "Фармацевты": "Фармацевты",
+    LEGACY_DIRECTION_LABELS["pharmacists"]: ACCESS_LABELS["pharmacists"],
 }
 
 UTILITY_PATHS = {"/auth", "/auth_without_phone"}
@@ -153,6 +128,7 @@ class Classification:
     notes: str = ""
     bitrix_id: str | None = None
     page_status: str = PAGE_STATUS_ACTIVE  # active | Архив
+    lifecycle_code: str = PAGE_STATUS_ACTIVE
     http_status: int | None = None
 
 
@@ -170,19 +146,9 @@ class WorkbookIndex:
 
 
 def normalize_url(raw: str | None) -> str:
-    value = (raw or "").replace("&amp;", "&").strip()
-    if not value:
-        return ""
-    try:
-        if "://" not in value:
-            value = f"https://abbottpro.ru{value if value.startswith('/') else '/' + value}"
-        url = urlparse(value)
-        protocol = (url.scheme or "https").lower()
-        host = (url.netloc or "abbottpro.ru").lower()
-        pathname = (url.path or "/").rstrip("/") or "/"
-        return f"{protocol}://{host}{pathname}"
-    except Exception:
-        return value.split("#")[0].split("?")[0].rstrip("/")
+    """Compatibility wrapper returning the normalized URL string."""
+
+    return normalize_canonical_url(raw or "").value
 
 
 def extract_slug(raw_url: str | None) -> str:
@@ -359,8 +325,8 @@ def find_section_id(url: str) -> str | None:
         if seg in DIRECTION_BY_QUERY_ID:
             return seg
     try:
-        qs = parse_qs(urlparse(url).query)
-        for key in ("IBLOCK_SECTION_ID", "section", "SECTION_ID", "direction"):
+        qs = {key.casefold(): values for key, values in parse_qs(urlparse(url).query).items()}
+        for key in ("iblock_section_id", "section", "direction"):
             if key in qs and qs[key]:
                 val = qs[key][0]
                 if val in DIRECTION_BY_QUERY_ID:
@@ -465,8 +431,7 @@ def apply_http_status(result: Classification, status: int | None) -> Classificat
     result.http_status = status
     if status in HTTP_ARCHIVE_CODES:
         result.page_status = PAGE_STATUS_ARCHIVE
-        # Archive overrides live taxonomy for workbook merge
-        result.material_type = PAGE_STATUS_ARCHIVE
+        result.lifecycle_code = "archive_candidate"
         result.material_type_rule = f"http_{status}"
         note = f"http={status} → Архив"
         result.notes = f"{result.notes}; {note}".strip("; ") if result.notes else note
