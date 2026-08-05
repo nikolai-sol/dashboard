@@ -19,8 +19,7 @@ import type { AbbottBiData } from "@/lib/types";
 import {
   buildAbbottPageStatsExportRows,
   buildAbbottPageviewsByDirection,
-  matchesPageStatsSearch,
-  matchesSelectedMaterialType,
+  filterAbbottPageStatsRows,
   summarizeAbbottPageStats,
 } from "./abbott-page-stats";
 import { abbottTrafficSourceLabel, abbottTrafficSourceOption } from "./abbott-localization";
@@ -1065,32 +1064,13 @@ export default function AbbottBiDashboard({
   );
 
   const pageStatRows = useMemo(() => {
-    const query = queryByTab.page_stats;
     const filters = filtersByTab.page_stats;
-    return data.page_stats.filter((row) => {
-      if (
-        !matchesQuery(
-          [
-            row.page_title,
-            row.url,
-            row.direction,
-            row.material_type,
-            row.access,
-            row.pageviews,
-            row.users,
-            row.bitrix_pageviews,
-            row.bitrix_sessions,
-            row.bitrix_users,
-          ],
-          query,
-        )
-      )
-        return false;
-      if (!matchesPageStatsSearch(row.page_title, row.url, filters.page_title_query)) return false;
-      if (filters.direction && (row.direction ?? "") !== filters.direction) return false;
-      if (!matchesSelectedMaterialType(row.material_type, selectedPageMaterialTypes)) return false;
-      if (filters.access && (row.access ?? "") !== filters.access) return false;
-      return true;
+    return filterAbbottPageStatsRows(data.page_stats, {
+      query: queryByTab.page_stats,
+      pageTitleQuery: filters.page_title_query,
+      direction: filters.direction,
+      materialTypes: selectedPageMaterialTypes,
+      access: filters.access,
     });
   }, [data.page_stats, filtersByTab.page_stats, queryByTab.page_stats, selectedPageMaterialTypes]);
 

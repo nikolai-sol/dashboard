@@ -4,6 +4,14 @@ function normalizeSearchValue(value: string | null | undefined) {
   return String(value ?? "").trim().toLocaleLowerCase("ru");
 }
 
+type AbbottPageStatsFilters = {
+  query: string;
+  pageTitleQuery: string;
+  direction: string;
+  materialTypes: string[];
+  access: string;
+};
+
 export function matchesSelectedMaterialType(materialType: string | null, selectedTypes: string[]) {
   if (selectedTypes.length === 0) return true;
   return selectedTypes.includes(String(materialType ?? ""));
@@ -13,6 +21,34 @@ export function matchesPageStatsSearch(pageTitle: string, url: string, query: st
   const normalizedQuery = normalizeSearchValue(query);
   if (!normalizedQuery) return true;
   return [pageTitle, url].some((value) => normalizeSearchValue(value).includes(normalizedQuery));
+}
+
+export function filterAbbottPageStatsRows(rows: AbbottBiPageStatRow[], filters: AbbottPageStatsFilters) {
+  const normalizedQuery = normalizeSearchValue(filters.query);
+  return rows.filter((row) => {
+    if (
+      normalizedQuery &&
+      ![
+        row.page_title,
+        row.url,
+        row.direction,
+        row.material_type,
+        row.access,
+        row.pageviews,
+        row.users,
+        row.bitrix_pageviews,
+        row.bitrix_sessions,
+        row.bitrix_users,
+      ].some((value) => normalizeSearchValue(String(value ?? "")).includes(normalizedQuery))
+    ) {
+      return false;
+    }
+    if (!matchesPageStatsSearch(row.page_title, row.url, filters.pageTitleQuery)) return false;
+    if (filters.direction && (row.direction ?? "") !== filters.direction) return false;
+    if (!matchesSelectedMaterialType(row.material_type, filters.materialTypes)) return false;
+    if (filters.access && (row.access ?? "") !== filters.access) return false;
+    return true;
+  });
 }
 
 export function summarizeAbbottPageStats(rows: AbbottBiPageStatRow[]) {

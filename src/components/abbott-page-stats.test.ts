@@ -3,6 +3,7 @@ import assert from "node:assert/strict";
 import {
   buildAbbottPageStatsExportRows,
   buildAbbottPageviewsByDirection,
+  filterAbbottPageStatsRows,
   matchesPageStatsSearch,
   matchesSelectedMaterialType,
   summarizeAbbottPageStats,
@@ -39,6 +40,29 @@ test("page stats search matches title or URL case-insensitively", () => {
   assert.equal(matchesPageStatsSearch(sampleRow.page_title, sampleRow.url, "головокружении"), true);
   assert.equal(matchesPageStatsSearch(sampleRow.page_title, sampleRow.url, "262339"), true);
   assert.equal(matchesPageStatsSearch(sampleRow.page_title, sampleRow.url, "неизвестная страница"), false);
+});
+
+test("page stats selector applies direction, material type, access, and both searches as one predicate", () => {
+  const matchingRow = { ...sampleRow };
+  const rows = [
+    matchingRow,
+    { ...sampleRow, url: "https://abbottpro.ru/video/other-direction", direction: "Кардиология" },
+    { ...sampleRow, url: "https://abbottpro.ru/article/262339", material_type: "Статья" },
+    { ...sampleRow, url: "https://abbottpro.ru/public/262339", access: "Все" },
+    { ...sampleRow, page_title: "Видеолекция о мигрени" },
+    { ...sampleRow, url: "https://abbottpro.ru/video/no-material-id" },
+  ];
+
+  assert.deepEqual(
+    filterAbbottPageStatsRows(rows, {
+      query: "головокружении",
+      pageTitleQuery: "262339",
+      direction: "Неврология и психиатрия",
+      materialTypes: ["Видео"],
+      access: "Врачи",
+    }),
+    [matchingRow],
+  );
 });
 
 test("page stats summary sums views and page-level visitors across every filtered row", () => {
