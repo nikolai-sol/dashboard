@@ -536,6 +536,42 @@ def compare_release_control_pack(
         )
         coverage_rows = cursor.fetchall()
         candidate_values = _control_values(site_rows, coverage_rows)
+        baseline_control_names = set(manifest["control_values"])
+        if any(name.startswith("content.") for name in baseline_control_names):
+            content_bundle = manifest.get("content_candidate_bundle")
+            if not isinstance(content_bundle, Mapping):
+                raise AbbottControlError("Frozen content candidate evidence is invalid")
+            expected_counts = content_bundle.get("expected_counts")
+            accepted_hash = content_bundle.get("accepted_decision_hash")
+            if not isinstance(expected_counts, Mapping) or not isinstance(accepted_hash, str):
+                raise AbbottControlError("Frozen content candidate evidence is invalid")
+            from agents.abbott_page_classifier.candidate_release import (
+                validate_content_candidate,
+            )
+
+            content_report = validate_content_candidate(
+                candidate_release_id,
+                expected_counts={
+                    str(name): int(value) for name, value in expected_counts.items()
+                },
+                accepted_hash=accepted_hash,
+                connection=conn,
+            )
+            candidate_values.update(
+                {
+                    "content.source_reconciliation_pct": content_report.source_reconciliation_pct,
+                    "content.count_reconciliation_pct": content_report.count_reconciliation_pct,
+                    "content.hash_reconciliation_pct": content_report.hash_reconciliation_pct,
+                    "content.schema_compliance_pct": content_report.schema_compliance_pct,
+                    "content.anti_flip_violations": content_report.anti_flip_violations,
+                    "content.strong_identity_collisions": content_report.strong_identity_collisions,
+                    "content.out_of_taxonomy_values": content_report.out_of_taxonomy_values,
+                    "content.archive_material_types": content_report.archive_material_types,
+                    "content.unresolved_accepted_conflicts": content_report.unresolved_accepted_conflicts,
+                    "content.active_release_mutations": content_report.active_release_mutations,
+                    "content.dashboard_smoke_failures": content_report.dashboard_smoke_failures,
+                }
+            )
         results = []
         for control_name, expected in sorted(manifest["control_values"].items()):
             if control_name not in candidate_values:
@@ -554,7 +590,11 @@ def compare_release_control_pack(
                     control_name,
                     expected=expected,
                     actual=candidate_values[control_name],
-                    threshold=API_RELATIVE_DELTA_THRESHOLD,
+                    threshold=(
+                        0
+                        if control_name.startswith("content.")
+                        else API_RELATIVE_DELTA_THRESHOLD
+                    ),
                 )
             results.append(result)
         expected_coverage_days = (

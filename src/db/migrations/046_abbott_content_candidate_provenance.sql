@@ -1,5 +1,9 @@
 -- Immutable provenance for successor content projections. Existing release rows
--- remain legacy-null; every Task 8 successor writes all five fields atomically.
+-- remain legacy-null: the first post-046 successor derives their baseline identity
+-- only from active strong aliases plus the active catalog labels/taxonomy, fails on
+-- unmapped or ambiguous identity, and writes all five fields into the new successor.
+-- This migration is deliberately additive and repeat-safe; it never rewrites an
+-- active legacy catalog row and never consults unactivated classification events.
 
 SET @abbott_column_exists := (
   SELECT COUNT(*) FROM information_schema.COLUMNS

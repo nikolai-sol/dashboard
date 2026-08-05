@@ -34,7 +34,7 @@ every runbook entrypoint and each repository-local Python dependency.
 | `runtime/probe_yandex_metrika_access.py` | `probe_yandex_metrika_access.py` | `430603922de9cd3cdbc6d0a7dc103f841924087c39462fc137ec8a26684674bc` | Read-only counter access proof |
 | `runtime/capture_abbott_canonical_baseline.py` | `capture_abbott_canonical_baseline.py` | `24692288fd1e8c6bf61b0b59b52963c60068df13e068bf4336e6d9fd9ce998e2` | Frozen baseline CLI |
 | `runtime/compare_abbott_canonical_release.py` | `compare_abbott_canonical_release.py` | `3cbe72196853ec89d435b214cb7ac106732d94e5b2a05ac95e035e7942d5c015` | Candidate comparator CLI |
-| `runtime/abbott_canonical_controls.py` | `abbott_canonical_controls.py` | `4c9fb6291a6ae54958cdcd15eb654be0eefc6a7264b70c894bd01a4b8b9def17` | Baseline/control evidence library |
+| `runtime/abbott_canonical_controls.py` | `abbott_canonical_controls.py` | `744d8d7ec21089c25b3253ae194d4e390f9bc472ca18657806d4ab7a0b33bbe3` | Baseline/control evidence library |
 | `runtime/metrika_pagination.py` | `metrika_pagination.py` | `7dcb1a05ad8babcc7d696934babb1ab50747ca140c910efc88f3685674386a7c` | Metrika pagination dependency |
 | `runtime/backfill_abbott_metrika_2026.py` | `backfill_abbott_metrika_2026.py` | `d9c4a02b2032aa25ed648d17671c749f54352588e95ef8801fe79044b90d9f09` | Gap-first full-year backfill CLI |
 | `runtime/abbott_health_probe.py` | `abbott_health_probe.py` | `4abaaf5d51b8ac45b346f7fa01079b0e94a62057464ebae8300ebfac22be4060` | Deterministic Abbott health CLI |
