@@ -96,10 +96,18 @@ class RegistrySourceReaderTests(unittest.TestCase):
         self.assertEqual(collapsed.url, "https://abbottpro.ru/cardio/a")
         self.assertEqual(len(collapsed.provenance), 2)
         self.assertEqual(
-            tuple((variant.material_id, variant.normalized_url) for variant in collapsed.identity_variants),
+            tuple(
+                (
+                    variant.material_id,
+                    variant.normalized_url,
+                    variant.normalized_title,
+                    variant.material_type_code,
+                )
+                for variant in collapsed.identity_variants
+            ),
             (
-                ("100", "https://abbottpro.ru/cardio/a"),
-                ("100", "https://abbottpro.ru/cardio/b"),
+                ("100", "https://abbottpro.ru/cardio/a", "Первый", "articles"),
+                ("100", "https://abbottpro.ru/cardio/b", "Второй", "articles"),
             ),
         )
 

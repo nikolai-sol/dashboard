@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from typing import Iterable, Literal
-from urllib.parse import urlsplit
+from urllib.parse import unquote, urlsplit
 
 from .domain import CanonicalClassification, MaterialCandidate
 from .normalization import normalize_title, normalize_url, sha256_text
@@ -33,12 +33,23 @@ class IdentityResolution:
     evidence_hashes: tuple[str, ...]
 
 
+def _normalize_slug(value: str) -> str:
+    return normalize_title(unquote(value or "")).strip("/").casefold()
+
+
 def _normalized_alias_value(alias_kind: str, value: str) -> str:
     if alias_kind in {"canonical_url", "url"}:
         return normalize_url(value).value
     if alias_kind == "title":
         return normalize_title(value).casefold()
+    if alias_kind == "slug":
+        return _normalize_slug(value)
     return (value or "").strip().casefold()
+
+
+def _slug_from_url(url: str) -> str:
+    path = normalize_url(url).path.strip("/")
+    return _normalize_slug(path.rsplit("/", 1)[-1]) if path else ""
 
 
 def _url_context(url: str) -> tuple[str, str]:
@@ -46,8 +57,8 @@ def _url_context(url: str) -> tuple[str, str]:
     if not normalized.value:
         return "", ""
     host = urlsplit(normalized.value).netloc.casefold()
-    path_parts = normalized.path.strip("/").casefold().split("/")
-    parent_path = "/".join(path_parts[:-1])
+    path_parts = normalized.path.strip("/").split("/")
+    parent_path = "/".join(_normalize_slug(part) for part in path_parts[:-1])
     return host, parent_path
 
 
@@ -84,6 +95,14 @@ class IdentityResolver:
                 for variant in candidate.identity_variants
                 if variant.normalized_url
             }
+            weak_variants = tuple(
+                (
+                    variant.normalized_url,
+                    variant.normalized_title,
+                    variant.material_type_code,
+                )
+                for variant in candidate.identity_variants
+            )
         else:
             material_ids = (
                 {(candidate.material_id or "").strip()}
@@ -91,6 +110,7 @@ class IdentityResolver:
                 else set()
             )
             candidate_urls = {candidate_url} if candidate_url else set()
+            weak_variants = ((candidate_url, normalize_title(candidate.title), candidate.material_type_code),)
 
         strong_evidence: list[tuple[str, int, str]] = []
         for material_id in material_ids:
@@ -139,52 +159,58 @@ class IdentityResolver:
                 _evidence_hashes((kind, value) for kind, _, value in strong_evidence),
             )
 
-        slug = candidate_url.rstrip("/").rsplit("/", 1)[-1].casefold() if candidate_url else ""
-        candidate_context = _url_context(representative.url)
-        slug_matches = {
-            alias.content_entity_id
-            for alias in usable_aliases
-            if (
-                alias.strength == "weak"
-                and alias.alias_kind == "slug"
-                and bool(slug)
-                and _normalized_alias_value("slug", alias.alias_value) == slug
-                and _url_context(entity_by_id[alias.content_entity_id].url) == candidate_context
-            )
-        }
-        if len(slug_matches) == 1:
-            entity_id = next(iter(slug_matches))
-            return IdentityResolution(
-                "matched",
-                entity_id,
-                "slug",
-                None,
-                _evidence_hashes((("slug", slug),)),
-            )
+        weak_targets: set[int] = set()
+        weak_evidence: list[tuple[str, str]] = []
+        matched_by_slug = False
+        for variant_url, variant_title, material_type in weak_variants:
+            slug = _slug_from_url(variant_url)
+            candidate_context = _url_context(variant_url)
+            slug_matches = {
+                alias.content_entity_id
+                for alias in usable_aliases
+                if (
+                    alias.strength == "weak"
+                    and alias.alias_kind == "slug"
+                    and bool(slug)
+                    and _normalized_alias_value("slug", alias.alias_value) == slug
+                    and _url_context(entity_by_id[alias.content_entity_id].url) == candidate_context
+                )
+            }
+            if len(slug_matches) > 1:
+                return IdentityResolution("new_candidate", None, "none", None, ())
+            if slug_matches:
+                weak_targets.update(slug_matches)
+                weak_evidence.append(("slug", slug))
+                matched_by_slug = True
 
-        title = normalize_title(representative.title).casefold()
-        material_type = representative.material_type_code
-        title_matches = {
-            alias.content_entity_id
-            for alias in usable_aliases
-            if (
-                alias.strength == "weak"
-                and alias.alias_kind == "title"
-                and bool(title)
-                and material_type is not None
-                and _normalized_alias_value("title", alias.alias_value) == title
-                and entity_by_id[alias.content_entity_id].material_type_code is not None
-                and entity_by_id[alias.content_entity_id].material_type_code == material_type
-            )
-        }
-        if len(title_matches) == 1:
-            entity_id = next(iter(title_matches))
+            title = normalize_title(variant_title).casefold()
+            title_matches = {
+                alias.content_entity_id
+                for alias in usable_aliases
+                if (
+                    alias.strength == "weak"
+                    and alias.alias_kind == "title"
+                    and bool(title)
+                    and material_type is not None
+                    and _normalized_alias_value("title", alias.alias_value) == title
+                    and entity_by_id[alias.content_entity_id].material_type_code is not None
+                    and entity_by_id[alias.content_entity_id].material_type_code == material_type
+                )
+            }
+            if len(title_matches) > 1:
+                return IdentityResolution("new_candidate", None, "none", None, ())
+            if title_matches:
+                weak_targets.update(title_matches)
+                weak_evidence.extend((("title", title), ("material_type", material_type)))
+
+        if len(weak_targets) == 1:
+            entity_id = next(iter(weak_targets))
             return IdentityResolution(
                 "matched",
                 entity_id,
-                "title_type",
+                "slug" if matched_by_slug else "title_type",
                 None,
-                _evidence_hashes((("title", title), ("material_type", material_type))),
+                _evidence_hashes(weak_evidence),
             )
 
         return IdentityResolution("new_candidate", None, "none", None, ())

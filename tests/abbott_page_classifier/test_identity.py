@@ -52,6 +52,19 @@ def entity(
     )
 
 
+def aggregated_candidate(occurrences: tuple[tuple[str, str], ...]):
+    with tempfile.TemporaryDirectory() as temporary_directory:
+        fixture = Path(temporary_directory) / "registry1.xlsx"
+        workbook = Workbook()
+        sheet = workbook.active
+        sheet.title = "кардио"
+        sheet.append(("ID", "Название", "ссылка", "Тип контента"))
+        for title, url in occurrences:
+            sheet.append((100, title, url, "Статьи"))
+        workbook.save(fixture)
+        return read_registry1(fixture).candidates_by_key["material:100"]
+
+
 class IdentityResolverTests(unittest.TestCase):
     def setUp(self):
         self.resolver = IdentityResolver()
@@ -99,6 +112,24 @@ class IdentityResolverTests(unittest.TestCase):
 
         self.assertEqual((result.status, result.content_entity_id, result.matched_by), ("matched", 41, "slug"))
         self.assertEqual((incompatible.status, incompatible.matched_by), ("new_candidate", "none"))
+
+    def test_slug_uses_normalized_path_when_url_has_semantic_query(self):
+        result = self.resolver.resolve(
+            candidate(url="https://abbottpro.ru/cardio/shared-slug?view=full"),
+            (entity(41, url="https://abbottpro.ru/cardio/existing/"),),
+            (IdentityAlias(41, "slug", "SHARED-SLUG", "weak"),),
+        )
+
+        self.assertEqual((result.status, result.content_entity_id, result.matched_by), ("matched", 41, "slug"))
+
+    def test_slug_decodes_normalized_path_like_approved_alias(self):
+        result = self.resolver.resolve(
+            candidate(url="https://abbottpro.ru/cardio/%D0%A2%D0%B5%D0%BC%D0%B0"),
+            (entity(41, url="https://abbottpro.ru/cardio/existing/"),),
+            (IdentityAlias(41, "slug", "тема", "weak"),),
+        )
+
+        self.assertEqual((result.status, result.content_entity_id, result.matched_by), ("matched", 41, "slug"))
 
     def test_unique_normalized_title_and_type_matches(self):
         result = self.resolver.resolve(
@@ -182,6 +213,44 @@ class IdentityResolverTests(unittest.TestCase):
             self.assertEqual((result.status, result.content_entity_id, result.matched_by), ("collision", None, "none"))
             self.assertEqual(result.conflict_code, "IDENTITY_COLLISION")
         self.assertEqual(resolutions[0].evidence_hashes, resolutions[1].evidence_hashes)
+
+    def test_conflicting_weak_slugs_across_occurrences_never_depend_on_row_order(self):
+        entities = (
+            entity(41, url="https://abbottpro.ru/cardio/existing-a/"),
+            entity(42, url="https://abbottpro.ru/cardio/existing-b/"),
+        )
+        aliases = (
+            IdentityAlias(41, "slug", "first-slug", "weak"),
+            IdentityAlias(42, "slug", "second-slug", "weak"),
+        )
+
+        for occurrences in (
+            (("Same title", "https://abbottpro.ru/cardio/first-slug"),
+             ("Same title", "https://abbottpro.ru/cardio/second-slug")),
+            (("Same title", "https://abbottpro.ru/cardio/second-slug"),
+             ("Same title", "https://abbottpro.ru/cardio/first-slug")),
+        ):
+            result = self.resolver.resolve(aggregated_candidate(occurrences), entities, aliases)
+
+            self.assertEqual((result.status, result.content_entity_id, result.matched_by), ("new_candidate", None, "none"))
+
+    def test_conflicting_weak_titles_across_occurrences_never_depend_on_row_order(self):
+        entities = (
+            entity(41, url="https://abbottpro.ru/cardio/existing-a/"),
+            entity(42, url="https://abbottpro.ru/cardio/existing-b/"),
+        )
+        aliases = (
+            IdentityAlias(41, "title", "First title", "weak"),
+            IdentityAlias(42, "title", "Second title", "weak"),
+        )
+
+        for occurrences in (
+            (("First title", ""), ("Second title", "")),
+            (("Second title", ""), ("First title", "")),
+        ):
+            result = self.resolver.resolve(aggregated_candidate(occurrences), entities, aliases)
+
+            self.assertEqual((result.status, result.content_entity_id, result.matched_by), ("new_candidate", None, "none"))
 
     def test_conflicting_canonical_url_alias_and_material_alias_fail_closed(self):
         result = self.resolver.resolve(

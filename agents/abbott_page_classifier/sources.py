@@ -82,6 +82,8 @@ class SourceIdentityVariant:
     source_row_id: str
     material_id: str | None
     normalized_url: str
+    normalized_title: str
+    material_type_code: str | None
 
 
 @dataclass(frozen=True)
@@ -238,6 +240,8 @@ def _snapshot_from_candidates(
             source_row_id=candidate.source_row_id,
             material_id=candidate.material_id,
             normalized_url=normalize_url(candidate.url).value,
+            normalized_title=normalize_title(candidate.title),
+            material_type_code=candidate.material_type_code,
         )
         existing = grouped.get(key)
         if existing is None:
@@ -409,6 +413,8 @@ def read_canonical_catalog(rows: Iterable[CanonicalClassification]) -> SourceSna
                         source_row_id=source_row_id,
                         material_id=None,
                         normalized_url=candidate.url,
+                        normalized_title=candidate.title,
+                        material_type_code=candidate.material_type_code,
                     ),
                 ),
             )
