@@ -930,6 +930,13 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--self-test", action="store_true")
     args = parser.parse_args(argv)
 
+    # The importable deterministic helpers remain for compatibility, but this
+    # historical CLI can discover data, probe URLs, and write a local review
+    # registry outside the canonical approval workflow.  Keep help available
+    # while failing every operational invocation before file/network I/O.
+    print("LEGACY_CLASSIFIER_CLI_DISABLED", file=sys.stderr)
+    return 2
+
     if not args.workbook.exists():
         print(f"Workbook not found: {args.workbook}", file=sys.stderr)
         return 2

@@ -21,6 +21,7 @@ Keys (normalized):
 from __future__ import annotations
 
 import json
+import sys
 from dataclasses import asdict, dataclass
 from datetime import datetime, timezone
 from pathlib import Path
@@ -326,6 +327,12 @@ def main(argv: list[str] | None = None) -> int:
     p_lookup.add_argument("--registry", type=Path, default=DEFAULT_REGISTRY)
 
     args = p.parse_args(argv)
+    # MySQL is the sole content-registry authority.  The legacy JSONL command
+    # line must not create or mutate a second local authority; library lookups
+    # remain import-compatible for callers being retired separately.
+    print("LEGACY_DIRECTION_REGISTRY_CLI_DISABLED", file=sys.stderr)
+    return 2
+
     if args.cmd == "seed-workbook":
         reg = DirectionRegistry(args.registry)
         # fresh seed only if empty; else merge

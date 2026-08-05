@@ -26,15 +26,24 @@ or source APIs.
 
 ## Preconditions and local checks
 
-Use the root virtual environment and protected, explicit snapshot paths. Never
-put a credential in a shell command, log, ticket, or repository. The workflow
-role is separate from collector, materializer, and dashboard-reader roles.
+Use protected, explicit snapshot paths. Never put a credential in a shell
+command, log, ticket, or repository. The workflow role is separate from
+collector, materializer, release-operator, and dashboard-reader roles. Select
+an owner-reviewed absolute Python 3.11 executable; there is no `PATH` fallback:
 
 ```bash
-.venv/bin/python -m unittest discover -s tests/abbott_page_classifier -t . -v
-.venv/bin/python agents/abbott_page_classifier/evaluation.py \
+export ABBOTT_CONTENT_PYTHON311_BIN=/absolute/reviewed/path/to/python3.11
+case "$ABBOTT_CONTENT_PYTHON311_BIN" in /*) ;; *) exit 78 ;; esac
+test -x "$ABBOTT_CONTENT_PYTHON311_BIN"
+"$ABBOTT_CONTENT_PYTHON311_BIN" -c \
+  'import sys; raise SystemExit(78 if sys.version_info[:2] != (3, 11) else 0)'
+
+agents/abbott_page_classifier/python311_runtime.sh \
+  -m unittest discover -s tests/abbott_page_classifier -t . -v
+agents/abbott_page_classifier/python311_runtime.sh \
+  agents/abbott_page_classifier/evaluation.py \
   --fixture agents/abbott_page_classifier/evals/golden.v1.jsonl --classifier fixture
-.venv/bin/python agents/abbott_page_classifier/workflow.py reconcile \
+agents/abbott_page_classifier/run_classifier.sh reconcile \
   --registry1 tests/fixtures/abbott_registry1_minimal.xlsx \
   --registry2 tests/fixtures/abbott_registry2_accepted_minimal.csv --dry-run
 ```
@@ -49,7 +58,7 @@ and acceptance/rejection/duplicate-collapse accounting in canonical metadata.
 First run this exact dry-run shape with reviewed values:
 
 ```bash
-.venv/bin/python agents/abbott_page_classifier/weekly_proposal.py \
+agents/abbott_page_classifier/run_weekly_proposal.sh \
   --registry1 /protected/abbott/registry1.xlsx \
   --registry2 /protected/abbott/registry2-accepted.csv \
   --taxonomy-version abbott.v1 \
@@ -105,13 +114,15 @@ After a manual approval, the explicit operator stages are:
 pull-accepted --batch-id N
 ingest --batch-id N --execute
 materialize --batch-id N --execute
-validate --batch-id N
+validate --batch-id N --execute
 status --batch-id N
 ```
 
 `pull-accepted` is read-only. Ingest can re-read a published Sheet or resume
 an accepted canonical snapshot; materialization is idempotent and has no
-activation path. Retry a stable failure with the same `run_id` or `batch_id`.
+activation path. Executed validation records the reviewed gate evidence and
+may transition only the bound release from `staging` to `validated`; it cannot
+activate it. Retry a stable failure with the same `run_id` or `batch_id`.
 If a candidate fails, do not activate it and do not silently rewrite the active
 release; retain the receipt for review.
 
@@ -134,6 +145,24 @@ reviewed `ABBOTT_CONTENT_APPROVAL_SPREADSHEET_ID`. Bind every run with
 `OPENAI_API_KEY` is used only for eligible `--execute --execute-llm`; it is not
 needed for dry runs or deterministic classifications. Google token setup and
 ownership remains operator-only at `~/.hermes/google_token.json`.
+
+Candidate materialization and gate reads require the separate
+`ABBOTT_CONTENT_MATERIALIZER_DB_HOST`,
+`ABBOTT_CONTENT_MATERIALIZER_DB_PORT`,
+`ABBOTT_CONTENT_MATERIALIZER_DB_NAME=report_bd`,
+`ABBOTT_CONTENT_MATERIALIZER_DB_USER`, and
+`ABBOTT_CONTENT_MATERIALIZER_DB_PASSWORD`. The reviewed validation evidence
+write and `staging` to `validated` transition require the existing release
+operator settings `ABBOTT_RELEASE_DB_HOST`, `ABBOTT_RELEASE_DB_PORT`,
+`ABBOTT_RELEASE_DB_NAME=report_bd`, `ABBOTT_RELEASE_DB_USER`, and
+`ABBOTT_RELEASE_DB_PASSWORD`, plus the non-secret reviewed operator identifier
+`ABBOTT_CONTENT_VALIDATION_REVIEWED_BY`. Every family is mandatory for its own
+stage; none may fall back to generic report, collector, workflow, or another
+role's settings.
+
+The complete blank configuration surface is maintained in
+`agents/abbott_page_classifier/content.env.example`. Copy names only into the
+protected owner-managed environment and install real values out of band.
 
 The direct legacy `sheets_sync.py publish`, `pull-approved`, and `share`
 commands always return `LEGACY_SHEETS_CLI_DISABLED`. The library projection and

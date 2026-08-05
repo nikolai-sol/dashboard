@@ -933,10 +933,17 @@ validate, activate a release, or mutate the active pointer.
 Review the exact local snapshot paths and all four version bindings before an
 operator authorizes execution. A dry run validates only the command
 configuration and intentionally performs zero DB, Sheets, OpenAI, source API,
-or materializer calls:
+or materializer calls. Select an owner-reviewed absolute Python 3.11 binary;
+the content launcher has no `python3`, `CANONICAL_PYTHON`, or `PATH` fallback:
 
 ```bash
-"$CANONICAL_PYTHON" agents/abbott_page_classifier/weekly_proposal.py \
+export ABBOTT_CONTENT_PYTHON311_BIN=/absolute/reviewed/path/to/python3.11
+case "$ABBOTT_CONTENT_PYTHON311_BIN" in /*) ;; *) exit 78 ;; esac
+test -x "$ABBOTT_CONTENT_PYTHON311_BIN"
+"$ABBOTT_CONTENT_PYTHON311_BIN" -c \
+  'import sys; raise SystemExit(78 if sys.version_info[:2] != (3, 11) else 0)'
+
+agents/abbott_page_classifier/run_weekly_proposal.sh \
   --registry1 "$ABBOTT_REGISTRY1_SNAPSHOT" \
   --registry2 "$ABBOTT_REGISTRY2_ACCEPTED_SNAPSHOT" \
   --taxonomy-version abbott.v1 \
@@ -952,7 +959,7 @@ credentials. Do not fall back to collector or materializer credentials. The
 proposal-only execution is:
 
 ```bash
-"$CANONICAL_PYTHON" agents/abbott_page_classifier/weekly_proposal.py \
+agents/abbott_page_classifier/run_weekly_proposal.sh \
   --registry1 "$ABBOTT_REGISTRY1_SNAPSHOT" \
   --registry2 "$ABBOTT_REGISTRY2_ACCEPTED_SNAPSHOT" \
   --taxonomy-version abbott.v1 \
@@ -961,6 +968,17 @@ proposal-only execution is:
   --code-revision "$REVIEWED_CODE_REVISION" \
   --execute --execute-llm
 ```
+
+The separately authorized post-approval stages use two additional, isolated
+roles. Candidate materialization and its gate reads require
+`ABBOTT_CONTENT_MATERIALIZER_DB_HOST`, `_PORT`, `_NAME=report_bd`, `_USER`, and
+`_PASSWORD`. The reviewed validation evidence write and the only permitted
+`staging` to `validated` transition use the existing `ABBOTT_RELEASE_DB_HOST`,
+`_PORT`, `_NAME=report_bd`, `_USER`, and `_PASSWORD`, plus the non-secret
+reviewer identifier `ABBOTT_CONTENT_VALIDATION_REVIEWED_BY`. Invoke validation
+as `validate --batch-id N --execute`; it persists the evidence and transition
+but never activates a release. These families never fall back to generic,
+collector, workflow, or each other's credentials.
 
 For a separately reviewed Monday `08:30` Europe/Vienna schedule, place that
 same execution in a protected wrapper and use the following candidate cron

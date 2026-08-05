@@ -18,12 +18,24 @@ reconcile --execute -> run_id -> classify --run-id N --execute -> batch_id
 -> publish-projection --batch-id N --execute -> stop for manual approval
 ```
 
-The runnable wrapper is `weekly_proposal.py`; it composes exactly those three
-stages. It never calls ingest, materialize, validate, activation, or an
-active-release pointer operation.
+The reviewed runnable wrapper is `run_weekly_proposal.sh`; it performs the
+exact Python 3.11 preflight and then delegates to `weekly_proposal.py`, which
+composes exactly those three stages. It never calls ingest, materialize,
+validate, activation, or an active-release pointer operation.
+
+Select an owner-reviewed absolute executable. The launcher has no `python3`
+or `PATH` fallback and refuses every version other than Python 3.11:
 
 ```bash
-python3 agents/abbott_page_classifier/weekly_proposal.py \
+export ABBOTT_CONTENT_PYTHON311_BIN=/absolute/reviewed/path/to/python3.11
+case "$ABBOTT_CONTENT_PYTHON311_BIN" in /*) ;; *) exit 78 ;; esac
+test -x "$ABBOTT_CONTENT_PYTHON311_BIN"
+"$ABBOTT_CONTENT_PYTHON311_BIN" -c \
+  'import sys; raise SystemExit(78 if sys.version_info[:2] != (3, 11) else 0)'
+```
+
+```bash
+agents/abbott_page_classifier/run_weekly_proposal.sh \
   --registry1 /protected/registry1.xlsx \
   --registry2 /protected/registry2-accepted.csv \
   --taxonomy-version abbott.v1 \
@@ -45,13 +57,15 @@ publish-projection --batch-id N --execute
 pull-accepted --batch-id N
 ingest --batch-id N --execute
 materialize --batch-id N --execute
-validate --batch-id N
+validate --batch-id N --execute
 status --batch-id N
 ```
 
 `pull-accepted` is read-only. `ingest` records the reviewed Sheet acceptance,
-then candidate materialization and validation are separate. Activation is not
-reachable through `weekly_proposal.py` or `workflow.py`.
+then candidate materialization and validation are separate. Executed
+validation persists the reviewed gate evidence and may move only the bound
+candidate from `staging` to `validated`; it never activates the candidate.
+Activation is not reachable through `weekly_proposal.py` or `workflow.py`.
 
 ## Projection and review
 
@@ -97,6 +111,22 @@ the run. `OPENAI_API_KEY` is required only for eligible
 operator-only at `~/.hermes/google_token.json`; this package never installs,
 prints, or rotates it. Direct `sheets_sync.py publish`, `pull-approved`, and
 `share` are disabled; `workflow.py publish-projection` is the sole Sheet writer.
+
+Candidate materialization and its read-only validation gate use only the
+dedicated `ABBOTT_CONTENT_MATERIALIZER_DB_HOST`,
+`ABBOTT_CONTENT_MATERIALIZER_DB_PORT`,
+`ABBOTT_CONTENT_MATERIALIZER_DB_NAME=report_bd`,
+`ABBOTT_CONTENT_MATERIALIZER_DB_USER`, and
+`ABBOTT_CONTENT_MATERIALIZER_DB_PASSWORD`. Persisting reviewed validation
+evidence and the `staging` to `validated` transition uses the existing release
+operator role only: `ABBOTT_RELEASE_DB_HOST`, `ABBOTT_RELEASE_DB_PORT`,
+`ABBOTT_RELEASE_DB_NAME=report_bd`, `ABBOTT_RELEASE_DB_USER`, and
+`ABBOTT_RELEASE_DB_PASSWORD`. `ABBOTT_CONTENT_VALIDATION_REVIEWED_BY` is the
+reviewed non-secret operator identifier written with that validation evidence.
+None of these roles may fall back to a generic report, collector, or workflow
+credential. Copy the names—not values—from
+[`content.env.example`](content.env.example) into the protected owner-managed
+environment file.
 
 ## Gates and recovery
 
