@@ -107,6 +107,38 @@ class AbbottContentRegistrySchemaTests(unittest.TestCase):
             self.sql,
         )
 
+    def test_taxonomy_and_batch_audit_contract_is_fully_persisted(self):
+        required_fragments = (
+            "taxonomy_digest CHAR(64) NOT NULL",
+            "source_snapshot_ids JSON NOT NULL",
+            "source_snapshot_digests JSON NOT NULL",
+            "model_routing_version VARCHAR(191) NOT NULL",
+            "ready_count BIGINT UNSIGNED NOT NULL DEFAULT 0",
+            "conflict_count BIGINT UNSIGNED NOT NULL DEFAULT 0",
+            "unresolved_count BIGINT UNSIGNED NOT NULL DEFAULT 0",
+            "rejected_count BIGINT UNSIGNED NOT NULL DEFAULT 0",
+            "no_change_count BIGINT UNSIGNED NOT NULL DEFAULT 0",
+            "accepted_count BIGINT UNSIGNED NOT NULL DEFAULT 0",
+            "skipped_count BIGINT UNSIGNED NOT NULL DEFAULT 0",
+            "spreadsheet_file_id VARCHAR(255) DEFAULT NULL",
+            "spreadsheet_projection_hash CHAR(64) DEFAULT NULL",
+            "published_at DATETIME(6) DEFAULT NULL",
+            "failed_at DATETIME(6) DEFAULT NULL",
+            "failure_code VARCHAR(64) DEFAULT NULL",
+            "candidate_release_id BIGINT UNSIGNED DEFAULT NULL",
+            "activation_status ENUM('not_started', 'candidate', 'active', 'rejected')",
+        )
+        for fragment in required_fragments:
+            with self.subTest(fragment=fragment):
+                self.assertIn(fragment, self.sql)
+
+    def test_batch_lifecycle_starts_draft_and_includes_all_required_states(self):
+        self.assertIn(
+            "batch_status ENUM('draft', 'published', 'accepted', 'ingested', "
+            "'candidate_materialized', 'rejected', 'failed') NOT NULL DEFAULT 'draft'",
+            self.sql,
+        )
+
 
 if __name__ == "__main__":
     unittest.main()

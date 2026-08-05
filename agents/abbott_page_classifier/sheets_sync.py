@@ -20,6 +20,7 @@ import sys
 from collections import Counter
 from datetime import datetime, timezone
 from enum import Enum
+from hashlib import sha256
 from pathlib import Path
 from typing import Any, Mapping, Protocol, Sequence
 
@@ -36,10 +37,6 @@ from agents.abbott_page_classifier.batch_service import (
     persist_batch,
 )
 from agents.abbott_page_classifier.domain import (
-    ACCESS_CODES,
-    DIRECTION_CODES,
-    LIFECYCLE_CODES,
-    MATERIAL_TYPE_CODES,
     AcceptedBatchSnapshot,
     ApprovalBatch,
     ApprovalItem,
@@ -329,7 +326,7 @@ def write_reference_and_help(sheets, spreadsheet_id: str, batch: str, n_total: i
         )
     sheets.spreadsheets().values().update(
         spreadsheetId=spreadsheet_id,
-        range=f"{TAB_REF}!A1",
+        range=a1_range(TAB_REF, "A1"),
         valueInputOption="RAW",
         body={"values": values},
     ).execute()
@@ -361,10 +358,12 @@ def write_reference_and_help(sheets, spreadsheet_id: str, batch: str, n_total: i
         [f"Всего строк: {n_total}, с предложением направления: {n_prop}"],
         [f"Обновлено: {datetime.now(timezone.utc).isoformat()}"],
     ]
-    sheets.spreadsheets().values().clear(spreadsheetId=spreadsheet_id, range=TAB_HELP).execute()
+    sheets.spreadsheets().values().clear(
+        spreadsheetId=spreadsheet_id, range=a1_range(TAB_HELP, "A:ZZZ")
+    ).execute()
     sheets.spreadsheets().values().update(
         spreadsheetId=spreadsheet_id,
-        range=f"{TAB_HELP}!A1",
+        range=a1_range(TAB_HELP, "A1"),
         valueInputOption="RAW",
         body={"values": help_rows},
     ).execute()
@@ -386,7 +385,7 @@ def write_batch_tab(
     existing = (
         sheets.spreadsheets()
         .values()
-        .get(spreadsheetId=spreadsheet_id, range=f"{TAB_BATCH}!B10")
+        .get(spreadsheetId=spreadsheet_id, range=a1_range(TAB_BATCH, "B10"))
         .execute()
         .get("values")
         or []
@@ -420,11 +419,13 @@ def write_batch_tab(
         ["Разбивка по направлениям", "Кол-во"],
     ] + [[k, v] for k, v in by_direction]
 
-    sheets.spreadsheets().values().clear(spreadsheetId=spreadsheet_id, range=TAB_BATCH).execute()
+    sheets.spreadsheets().values().clear(
+        spreadsheetId=spreadsheet_id, range=a1_range(TAB_BATCH, "A:ZZZ")
+    ).execute()
     clear_conditional_formats(sheets, spreadsheet_id, sheet_id)
     sheets.spreadsheets().values().update(
         spreadsheetId=spreadsheet_id,
-        range=f"{TAB_BATCH}!A1",
+        range=a1_range(TAB_BATCH, "A1"),
         valueInputOption="USER_ENTERED",
         body={"values": rows},
     ).execute()
@@ -1140,6 +1141,10 @@ HISTORY_HEADERS = (
     "unresolved_count",
     "rejected_count",
     "no_change_count",
+    "accepted_count",
+    "skipped_count",
+    "spreadsheet_file_id",
+    "spreadsheet_projection_hash",
     "import_outcome",
     "candidate_release_id",
     "activation_status",
@@ -1214,6 +1219,15 @@ def _gateway_spreadsheet_id(gateway: SheetsGateway) -> str:
     return spreadsheet_id
 
 
+def a1_range(tab_title: str, cells: str) -> str:
+    """Return an A1 range with a safely quoted Sheet title."""
+
+    if not isinstance(tab_title, str) or not tab_title:
+        raise ProjectionValidationError("SHEET_TAB_NAME_REQUIRED")
+    escaped = tab_title.replace("'", "''")
+    return f"'{escaped}'!{cells}"
+
+
 def _counts(batch: ApprovalBatch) -> dict[str, int]:
     result = {state: 0 for state in _STATE_TABS}
     for item in batch.items:
@@ -1269,17 +1283,14 @@ def _item_row(item: ApprovalItem) -> list[object]:
 
 
 def _taxonomy_terms(batch: ApprovalBatch) -> Mapping[str, tuple[str, ...]]:
-    supplied = batch.taxonomy_terms if isinstance(batch, BuiltApprovalBatch) else {}
-    defaults = {
-        "direction": tuple(sorted(DIRECTION_CODES)),
-        "material_type": tuple(sorted(MATERIAL_TYPE_CODES)),
-        "access": tuple(sorted(ACCESS_CODES)),
-        "lifecycle": tuple(sorted(LIFECYCLE_CODES)),
-    }
-    return {
-        kind: tuple(supplied.get(kind, ())) or default
-        for (kind, default) in defaults.items()
-    }
+    if not isinstance(batch, BuiltApprovalBatch):
+        raise ProjectionValidationError("TAXONOMY_CONTRACT_MISSING")
+    required = ("direction", "material_type", "access", "lifecycle")
+    if set(batch.taxonomy_terms) != set(required) or any(
+        not batch.taxonomy_terms[kind] for kind in required
+    ):
+        raise ProjectionValidationError("TAXONOMY_CONTRACT_MISSING")
+    return batch.taxonomy_terms
 
 
 def _reference_rows(batch: ApprovalBatch) -> list[list[object]]:
@@ -1299,7 +1310,11 @@ def _metadata_rows(batch: ApprovalBatch, counts: Mapping[str, int]) -> list[list
         ["Batch ID", batch.batch_key],
         ["Published hash", batch.published_input_hash],
         ["Taxonomy version", batch.taxonomy_version],
+        ["Taxonomy digest", getattr(batch, "taxonomy_digest", "")],
         ["Prompt version", batch.prompt_version],
+        ["Model routing version", getattr(batch, "model_routing_version", "")],
+        ["Source snapshot IDs", _json_cell(getattr(batch, "source_snapshot_ids", ()))],
+        ["Source snapshot digests", _json_cell(getattr(batch, "source_snapshot_digests", ()))],
         ["ready", counts["ready"]],
         ["conflict", counts["conflict"]],
         ["unresolved", counts["unresolved"]],
@@ -1311,6 +1326,22 @@ def _metadata_rows(batch: ApprovalBatch, counts: Mapping[str, int]) -> list[list
         ["Принято UTC", ""],
         ["Accepted decision hash", ""],
     ]
+
+
+def _accepted_metadata_rows(
+    batch: ApprovalBatch, snapshot: AcceptedBatchSnapshot
+) -> list[list[object]]:
+    rows = _metadata_rows(batch, _counts(batch))
+    updates = {
+        "Решение": "Принять",
+        "Принял": snapshot.accepted_by,
+        "Принято UTC": snapshot.accepted_at,
+        "Accepted decision hash": snapshot.accepted_decision_hash,
+    }
+    for row in rows:
+        if row[0] in updates:
+            row[1] = updates[row[0]]
+    return rows
 
 
 def _summary_rows(batch: ApprovalBatch, counts: Mapping[str, int]) -> list[list[object]]:
@@ -1325,23 +1356,38 @@ def _summary_rows(batch: ApprovalBatch, counts: Mapping[str, int]) -> list[list[
     ]
 
 
-def _history_rows(batch: ApprovalBatch, counts: Mapping[str, int]) -> list[list[object]]:
+def _history_value(record: object, name: str) -> object | None:
+    if isinstance(record, Mapping):
+        value = record.get(name)
+    else:
+        value = getattr(record, name, None)
+    if isinstance(value, datetime):
+        normalized = value.replace(tzinfo=timezone.utc) if value.tzinfo is None else value.astimezone(timezone.utc)
+        return normalized.isoformat().replace("+00:00", "Z")
+    return value
+
+
+def _history_rows(record: object) -> list[list[object]]:
     return [
         list(HISTORY_HEADERS),
         [
-            batch.batch_key,
-            batch.published_input_hash,
-            "",
-            "",
-            "",
-            counts["ready"],
-            counts["conflict"],
-            counts["unresolved"],
-            counts["rejected"],
-            counts["no_change"],
-            "published",
-            "",
-            "not_activated",
+            _history_value(record, "batch_key") or "",
+            _history_value(record, "published_input_hash") or "",
+            _history_value(record, "accepted_decision_hash") or "",
+            _history_value(record, "approver") or "",
+            _history_value(record, "accepted_at") or "",
+            _history_value(record, "ready_count") or 0,
+            _history_value(record, "conflict_count") or 0,
+            _history_value(record, "unresolved_count") or 0,
+            _history_value(record, "rejected_count") or 0,
+            _history_value(record, "no_change_count") or 0,
+            _history_value(record, "accepted_count") or 0,
+            _history_value(record, "skipped_count") or 0,
+            _history_value(record, "spreadsheet_file_id") or "",
+            _history_value(record, "spreadsheet_projection_hash") or "",
+            _history_value(record, "batch_status") or "",
+            _history_value(record, "candidate_release_id") or "",
+            _history_value(record, "activation_status") or "not_started",
         ],
     ]
 
@@ -1440,7 +1486,7 @@ def _projection_requests(
                                 "values": [
                                     {
                                         "userEnteredValue": (
-                                            f"={TAB_REF}!${reference_column}$2:"
+                                            f"={a1_range(TAB_REF, f'${reference_column}$2:')}"
                                             f"${reference_column}${end_row}"
                                         )
                                     }
@@ -1493,6 +1539,7 @@ def _projection_requests(
 def publish_batch_projection(
     batch: PersistedApprovalBatch,
     sheets_gateway: SheetsGateway,
+    repository: Any,
 ) -> PublishedProjection:
     """Publish a review-only projection of an already canonical batch."""
 
@@ -1501,11 +1548,10 @@ def publish_batch_projection(
     approval_batch = batch.batch
     database_batch_id = batch.database_batch_id
     _validate_published_batch_hash(approval_batch)
+    repository.attest_batch_for_publication(database_batch_id, approval_batch)
     spreadsheet_id = _gateway_spreadsheet_id(sheets_gateway)
     counts = _counts(approval_batch)
-    sheet_ids = sheets_gateway.ensure_tabs(spreadsheet_id, APPROVAL_TAB_TITLES)
-    if any(title not in sheet_ids for title in APPROVAL_TAB_TITLES):
-        raise ProjectionValidationError("SHEET_TAB_MISSING")
+    history = repository.load_batch_history(database_batch_id)
 
     rows_by_tab: dict[str, list[list[object]]] = {
         title: [list(ITEM_HEADERS)]
@@ -1517,7 +1563,7 @@ def publish_batch_projection(
     values_by_tab: Mapping[str, Sequence[Sequence[object]]] = {
         TAB_BATCH: _metadata_rows(approval_batch, counts),
         **rows_by_tab,
-        TAB_HISTORY: _history_rows(approval_batch, counts),
+        TAB_HISTORY: _history_rows(history),
         TAB_REF: _reference_rows(approval_batch),
         TAB_SUMMARY: _summary_rows(approval_batch, counts),
         TAB_HELP: [
@@ -1526,16 +1572,54 @@ def publish_batch_projection(
             ["Принятие batch применяет только строки ready; остальные остаются открытыми."],
         ],
     }
-    for title in APPROVAL_TAB_TITLES:
+    projection_hash = sha256(
+        json.dumps(
+            _projection_plain(
+                {
+                    title: values_by_tab[title]
+                    for title in APPROVAL_TAB_TITLES
+                    if title != TAB_HISTORY
+                }
+            ),
+            ensure_ascii=False,
+            sort_keys=True,
+            separators=(",", ":"),
+        ).encode("utf-8")
+    ).hexdigest()
+    try:
+        sheet_ids = sheets_gateway.ensure_tabs(spreadsheet_id, APPROVAL_TAB_TITLES)
+        if any(title not in sheet_ids for title in APPROVAL_TAB_TITLES):
+            raise ProjectionValidationError("SHEET_TAB_MISSING")
+        for title in APPROVAL_TAB_TITLES:
+            sheets_gateway.replace_values(
+                spreadsheet_id,
+                a1_range(title, "A1"),
+                values_by_tab[title],
+            )
+        sheets_gateway.batch_update(
+            spreadsheet_id,
+            _projection_requests(sheet_ids, approval_batch),
+        )
+        repository.mark_batch_published(
+            database_batch_id,
+            spreadsheet_id,
+            projection_hash,
+        )
+        current_history = repository.load_batch_history(database_batch_id)
         sheets_gateway.replace_values(
             spreadsheet_id,
-            f"{title}!A1",
-            values_by_tab[title],
+            a1_range(TAB_HISTORY, "A1"),
+            _history_rows(current_history),
         )
-    sheets_gateway.batch_update(
-        spreadsheet_id,
-        _projection_requests(sheet_ids, approval_batch),
-    )
+    except Exception:
+        try:
+            repository.mark_batch_projection_failed(
+                database_batch_id,
+                "SHEET_PROJECTION_FAILED",
+            )
+        except Exception:
+            pass
+        raise
     return PublishedProjection(
         spreadsheet_id=spreadsheet_id,
         batch_key=approval_batch.batch_key,
@@ -1558,7 +1642,7 @@ def persist_and_publish_batch(
     """Enforce canonical persistence before the first projection gateway call."""
 
     persisted = persist_batch(batch, repository)
-    return publish_batch_projection(persisted, sheets_gateway)
+    return publish_batch_projection(persisted, sheets_gateway, repository)
 
 
 def _metadata(values: Sequence[Sequence[object]]) -> dict[str, object]:
@@ -1596,7 +1680,7 @@ def _accepted_decision(value: object) -> bool:
 def _table_rows(
     gateway: SheetsGateway, spreadsheet_id: str, title: str
 ) -> list[list[object]]:
-    values = gateway.read_values(spreadsheet_id, f"{title}!A:V")
+    values = gateway.read_values(spreadsheet_id, a1_range(title, "A:V"))
     if not values or tuple(str(value) for value in values[0]) != ITEM_HEADERS:
         raise ProjectionValidationError("SHEET_HEADER_MISMATCH")
     rows: list[list[object]] = []
@@ -1643,10 +1727,10 @@ def read_accepted_projection(
     _validate_published_batch_hash(approval_batch)
     spreadsheet_id = _gateway_spreadsheet_id(sheets_gateway)
     batch_meta = _metadata(
-        sheets_gateway.read_values(spreadsheet_id, f"{TAB_BATCH}!A:B")
+        sheets_gateway.read_values(spreadsheet_id, a1_range(TAB_BATCH, "A:B"))
     )
     summary_meta = _metadata(
-        sheets_gateway.read_values(spreadsheet_id, f"{TAB_SUMMARY}!A:B")
+        sheets_gateway.read_values(spreadsheet_id, a1_range(TAB_SUMMARY, "A:B"))
     )
     if not _accepted_decision(batch_meta.get("Решение")):
         raise ProjectionValidationError("BATCH_NOT_ACCEPTED")
@@ -1667,17 +1751,32 @@ def read_accepted_projection(
         if _as_count(batch_meta, name) != expected or _as_count(summary_meta, name) != expected:
             raise ProjectionValidationError("SHEET_COUNT_MISMATCH")
 
-    rows: list[list[object]] = []
-    for title in (TAB_PROPOSALS, TAB_CONFLICTS, TAB_UNRESOLVED):
-        rows.extend(_table_rows(sheets_gateway, spreadsheet_id, title))
+    expected_by_hash = {item.row_hash: item for item in approval_batch.items}
+    rows_by_tab = {
+        title: _table_rows(sheets_gateway, spreadsheet_id, title)
+        for title in (TAB_PROPOSALS, TAB_CONFLICTS, TAB_UNRESOLVED)
+    }
+    rows = [row for tab_rows in rows_by_tab.values() for row in tab_rows]
     row_hash_index = ITEM_HEADERS.index("row_hash")
     row_hashes = [str(row[row_hash_index]).strip() for row in rows]
     if len(row_hashes) != len(set(row_hashes)):
         raise ProjectionValidationError("DUPLICATE_ROW_HASH")
     if len(rows) != len(approval_batch.items):
         raise ProjectionValidationError("SHEET_ROW_COUNT_MISMATCH")
+    for title, tab_rows in rows_by_tab.items():
+        for row in tab_rows:
+            expected_item = expected_by_hash.get(str(row[row_hash_index]).strip())
+            if expected_item is not None and _STATE_TABS[expected_item.readiness_state] != title:
+                raise ProjectionValidationError("SHEET_TAB_STATE_MISMATCH")
+    for title, tab_rows in rows_by_tab.items():
+        expected_count = sum(
+            1
+            for item in approval_batch.items
+            if _STATE_TABS[item.readiness_state] == title
+        )
+        if len(tab_rows) != expected_count:
+            raise ProjectionValidationError("SHEET_TAB_COUNT_MISMATCH")
 
-    expected_by_hash = {item.row_hash: item for item in approval_batch.items}
     if set(row_hashes) != set(expected_by_hash):
         raise ProjectionValidationError("SHEET_IDENTITY_MISMATCH")
     immutable_indexes = tuple(range(0, min(_FINAL_COLUMNS.values()))) + tuple(
@@ -1743,6 +1842,37 @@ def read_accepted_projection(
     )
 
 
+def persist_accepted_projection(
+    batch: PersistedApprovalBatch,
+    sheets_gateway: SheetsGateway,
+    repository: Any,
+) -> AcceptedBatchSnapshot:
+    """Explicitly persist acceptance, then refresh read-only DB-backed history."""
+
+    if not isinstance(batch, PersistedApprovalBatch):
+        raise ProjectionValidationError("BATCH_NOT_PERSISTED")
+    repository.attest_batch_for_acceptance(batch.database_batch_id, batch.batch)
+    snapshot = read_accepted_projection(batch, sheets_gateway)
+    spreadsheet_id = _gateway_spreadsheet_id(sheets_gateway)
+    repository.record_batch_acceptance(
+        batch.database_batch_id,
+        snapshot,
+        spreadsheet_id,
+    )
+    history = repository.load_batch_history(batch.database_batch_id)
+    sheets_gateway.replace_values(
+        spreadsheet_id,
+        a1_range(TAB_BATCH, "A1"),
+        _accepted_metadata_rows(batch.batch, snapshot),
+    )
+    sheets_gateway.replace_values(
+        spreadsheet_id,
+        a1_range(TAB_HISTORY, "A1"),
+        _history_rows(history),
+    )
+    return snapshot
+
+
 def publish(
     classifications_path: Path,
     title: str | None = None,
@@ -1803,11 +1933,11 @@ def publish(
 
     # Write proposals
     sheets.spreadsheets().values().clear(
-        spreadsheetId=sid, range=TAB_PROPOSALS
+        spreadsheetId=sid, range=a1_range(TAB_PROPOSALS, "A:ZZZ")
     ).execute()
     sheets.spreadsheets().values().update(
         spreadsheetId=sid,
-        range=f"{TAB_PROPOSALS}!A1",
+        range=a1_range(TAB_PROPOSALS, "A1"),
         valueInputOption="USER_ENTERED",
         body={"values": values},
     ).execute()
@@ -1825,10 +1955,12 @@ def publish(
         [""],
         ["Направление", "Кол-во"],
     ] + [[k, v] for k, v in by_dir]
-    sheets.spreadsheets().values().clear(spreadsheetId=sid, range=TAB_SUMMARY).execute()
+    sheets.spreadsheets().values().clear(
+        spreadsheetId=sid, range=a1_range(TAB_SUMMARY, "A:ZZZ")
+    ).execute()
     sheets.spreadsheets().values().update(
         spreadsheetId=sid,
-        range=f"{TAB_SUMMARY}!A1",
+        range=a1_range(TAB_SUMMARY, "A1"),
         valueInputOption="RAW",
         body={"values": summary},
     ).execute()
@@ -1854,7 +1986,7 @@ def publish(
             "last_publish_count": len(rows),
             "last_publish_with_proposal": n_prop,
             "approval_mode": "batch",
-            "batch_decision_cell": f"{TAB_BATCH}!B10",
+            "batch_decision_cell": a1_range(TAB_BATCH, "B10"),
             "updated_at": datetime.now(timezone.utc).isoformat(),
         }
     )
@@ -1893,7 +2025,7 @@ def pull_approved(out_csv: Path, spreadsheet_id: str | None = None) -> dict[str,
     batch_meta = (
         sheets.spreadsheets()
         .values()
-        .get(spreadsheetId=sid, range=f"{TAB_BATCH}!A1:B20")
+        .get(spreadsheetId=sid, range=a1_range(TAB_BATCH, "A1:B20"))
         .execute()
         .get("values")
         or []
@@ -1923,7 +2055,7 @@ def pull_approved(out_csv: Path, spreadsheet_id: str | None = None) -> dict[str,
     result = (
         sheets.spreadsheets()
         .values()
-        .get(spreadsheetId=sid, range=f"{proposals_title}!A1:R")
+        .get(spreadsheetId=sid, range=a1_range(proposals_title, "A1:R"))
         .execute()
     )
     values = result.get("values") or []
@@ -2026,7 +2158,7 @@ def pull_approved(out_csv: Path, spreadsheet_id: str | None = None) -> dict[str,
     stamp = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M UTC")
     sheets.spreadsheets().values().update(
         spreadsheetId=sid,
-        range=f"{TAB_BATCH}!A22",
+        range=a1_range(TAB_BATCH, "A22"),
         valueInputOption="RAW",
         body={
             "values": [

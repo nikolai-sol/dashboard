@@ -192,6 +192,7 @@ class TaxonomyVersion:
     terms: Mapping[TaxonomyKind, tuple[str, ...]] = field(
         default_factory=lambda: MappingProxyType({})
     )
+    digest: str = ""
 
     def __post_init__(self) -> None:
         object.__setattr__(

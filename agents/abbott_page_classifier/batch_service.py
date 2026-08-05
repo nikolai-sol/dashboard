@@ -21,9 +21,7 @@ from .reconcile import ReconciliationInput, reconcile_entity
 class BatchRepository(Protocol):
     """Small persistence surface needed before a Sheet projection may be written."""
 
-    def create_batch(self, batch: ApprovalBatch) -> int: ...
-
-    def insert_items(self, batch_id: int, items: Sequence[ApprovalItem]) -> None: ...
+    def persist_draft_batch(self, batch: ApprovalBatch) -> int: ...
 
 
 def _normalize_newlines(value: str) -> str:
@@ -65,6 +63,16 @@ def _sha256_json(value: Any) -> str:
     return hashlib.sha256(_canonical_json(value).encode("utf-8")).hexdigest()
 
 
+def compute_taxonomy_digest(
+    version: str, terms: Mapping[str, Sequence[str]]
+) -> str:
+    normalized = {
+        str(kind): tuple(sorted(set(str(code) for code in codes)))
+        for kind, codes in terms.items()
+    }
+    return _sha256_json({"version": version, "terms": normalized})
+
+
 def _freeze(value: Any) -> Any:
     value = _plain(value)
     if isinstance(value, dict):
@@ -85,6 +93,14 @@ class ApprovalBatchItem(ApprovalItem):
     terra_result: Mapping[str, object] | None = None
     sol_result: Mapping[str, object] | None = None
     concise_evidence: tuple[str, ...] = ()
+    taxonomy_digest: str = ""
+    taxonomy_terms: Mapping[str, tuple[str, ...]] = field(
+        default_factory=lambda: MappingProxyType({})
+    )
+    source_snapshot_ids: tuple[int, ...] = ()
+    source_snapshot_digests: tuple[str, ...] = ()
+    model_routing_version: str = ""
+    prompt_version: str = ""
 
     def __post_init__(self) -> None:
         for field_name in (
@@ -101,6 +117,20 @@ class ApprovalBatchItem(ApprovalItem):
             self,
             "concise_evidence",
             tuple(_normalize_newlines(str(item)) for item in self.concise_evidence),
+        )
+        object.__setattr__(
+            self,
+            "taxonomy_terms",
+            MappingProxyType(
+                {
+                    str(kind): tuple(str(code) for code in codes)
+                    for kind, codes in self.taxonomy_terms.items()
+                }
+            ),
+        )
+        object.__setattr__(self, "source_snapshot_ids", tuple(self.source_snapshot_ids))
+        object.__setattr__(
+            self, "source_snapshot_digests", tuple(self.source_snapshot_digests)
         )
 
     @property
@@ -127,6 +157,10 @@ class BuiltApprovalBatch(ApprovalBatch):
     taxonomy_terms: Mapping[str, tuple[str, ...]] = field(
         default_factory=lambda: MappingProxyType({})
     )
+    taxonomy_digest: str = ""
+    source_snapshot_ids: tuple[int, ...] = ()
+    source_snapshot_digests: tuple[str, ...] = ()
+    model_routing_version: str = ""
 
     def __post_init__(self) -> None:
         object.__setattr__(
@@ -138,6 +172,10 @@ class BuiltApprovalBatch(ApprovalBatch):
                     for kind, codes in self.taxonomy_terms.items()
                 }
             ),
+        )
+        object.__setattr__(self, "source_snapshot_ids", tuple(self.source_snapshot_ids))
+        object.__setattr__(
+            self, "source_snapshot_digests", tuple(self.source_snapshot_digests)
         )
 
 
@@ -183,6 +221,12 @@ def _item_payload(item: ApprovalItem, *, include_row_hash: bool) -> dict[str, ob
                 "registry2_values": item.registry2_values,
                 "sol_result": item.sol_result,
                 "terra_result": item.terra_result,
+                "taxonomy_digest": item.taxonomy_digest,
+                "taxonomy_terms": item.taxonomy_terms,
+                "source_snapshot_ids": item.source_snapshot_ids,
+                "source_snapshot_digests": item.source_snapshot_digests,
+                "model_routing_version": item.model_routing_version,
+                "prompt_version": item.prompt_version,
             }
         )
     if include_row_hash:
@@ -195,6 +239,12 @@ def compute_batch_hash(items: Iterable[ApprovalItem]) -> str:
 
     ordered = sorted(tuple(items), key=_item_sort_key)
     return _sha256_json([_item_payload(item, include_row_hash=True) for item in ordered])
+
+
+def compute_item_hash(item: ApprovalItem) -> str:
+    """Hash one item's complete immutable/publication payload except its own hash."""
+
+    return _sha256_json(_item_payload(item, include_row_hash=False))
 
 
 def compute_accepted_decision_hash(items: Iterable[ApprovalItem]) -> str:
@@ -263,7 +313,16 @@ def _concise_evidence(value: ReconciliationInput) -> tuple[str, ...]:
     return tuple(result[:20])
 
 
-def _enrich(value: ReconciliationInput | ApprovalItem) -> ApprovalBatchItem:
+def _enrich(
+    value: ReconciliationInput | ApprovalItem,
+    *,
+    taxonomy_digest: str,
+    taxonomy_terms: Mapping[str, tuple[str, ...]],
+    source_snapshot_ids: tuple[int, ...],
+    source_snapshot_digests: tuple[str, ...],
+    model_routing_version: str,
+    prompt_version: str,
+) -> ApprovalBatchItem:
     if isinstance(value, ReconciliationInput):
         item = reconcile_entity(value)
         current = _source_payload(value.active_canonical)
@@ -305,10 +364,16 @@ def _enrich(value: ReconciliationInput | ApprovalItem) -> ApprovalBatchItem:
         terra_result=terra,
         sol_result=sol,
         concise_evidence=evidence,
+        taxonomy_digest=taxonomy_digest,
+        taxonomy_terms=taxonomy_terms,
+        source_snapshot_ids=source_snapshot_ids,
+        source_snapshot_digests=source_snapshot_digests,
+        model_routing_version=model_routing_version,
+        prompt_version=prompt_version,
     )
     return replace(
         enriched,
-        row_hash=_sha256_json(_item_payload(enriched, include_row_hash=False)),
+        row_hash=compute_item_hash(enriched),
     )
 
 
@@ -326,13 +391,61 @@ def build_batch(
     inputs: Iterable[ReconciliationInput | ApprovalItem],
     taxonomy_version: TaxonomyVersion | str,
     prompt_version: str,
-) -> ApprovalBatch:
+    *,
+    source_snapshot_ids: Sequence[int],
+    source_snapshot_digests: Sequence[str],
+    model_routing_version: str,
+) -> BuiltApprovalBatch:
     """Build one immutable, deterministic batch from canonical reconciliation data."""
 
     version, terms = _taxonomy_contract(taxonomy_version)
     if not isinstance(prompt_version, str) or not prompt_version.strip():
         raise ValueError("PROMPT_VERSION_REQUIRED")
-    items = tuple(sorted((_enrich(value) for value in inputs), key=_item_sort_key))
+    required_kinds = ("direction", "material_type", "access", "lifecycle")
+    if set(terms) != set(required_kinds) or any(not terms[kind] for kind in required_kinds):
+        raise ValueError("TAXONOMY_TERMS_INCOMPLETE")
+    normalized_terms = MappingProxyType(
+        {kind: tuple(sorted(set(terms[kind]))) for kind in required_kinds}
+    )
+    taxonomy_digest = compute_taxonomy_digest(version, normalized_terms)
+    supplied_digest = taxonomy_version.digest if isinstance(taxonomy_version, TaxonomyVersion) else ""
+    if not supplied_digest:
+        raise ValueError("TAXONOMY_DIGEST_REQUIRED")
+    if supplied_digest and supplied_digest != taxonomy_digest:
+        raise ValueError("TAXONOMY_DIGEST_MISMATCH")
+    snapshot_ids = tuple(int(value) for value in source_snapshot_ids)
+    snapshot_digests = tuple(str(value).lower() for value in source_snapshot_digests)
+    if (
+        not snapshot_ids
+        or len(snapshot_ids) != len(snapshot_digests)
+        or len(set(snapshot_ids)) != len(snapshot_ids)
+        or any(value <= 0 for value in snapshot_ids)
+        or any(
+            len(value) != 64
+            or any(character not in "0123456789abcdef" for character in value.lower())
+            for value in snapshot_digests
+        )
+    ):
+        raise ValueError("SOURCE_SNAPSHOTS_REQUIRED")
+    if not isinstance(model_routing_version, str) or not model_routing_version.strip():
+        raise ValueError("MODEL_ROUTING_VERSION_REQUIRED")
+    items = tuple(
+        sorted(
+            (
+                _enrich(
+                    value,
+                    taxonomy_digest=taxonomy_digest,
+                    taxonomy_terms=normalized_terms,
+                    source_snapshot_ids=snapshot_ids,
+                    source_snapshot_digests=snapshot_digests,
+                    model_routing_version=model_routing_version,
+                    prompt_version=prompt_version,
+                )
+                for value in inputs
+            ),
+            key=_item_sort_key,
+        )
+    )
     identities = [(item.content_entity_id, item.input_hash) for item in items]
     row_hashes = [item.row_hash for item in items]
     if len(set(identities)) != len(identities) or len(set(row_hashes)) != len(row_hashes):
@@ -344,6 +457,10 @@ def build_batch(
             "prompt_version": prompt_version,
             "published_input_hash": published_hash,
             "taxonomy_version": version,
+            "taxonomy_digest": taxonomy_digest,
+            "source_snapshot_ids": snapshot_ids,
+            "source_snapshot_digests": snapshot_digests,
+            "model_routing_version": model_routing_version,
         }
     )
     return BuiltApprovalBatch(
@@ -352,7 +469,11 @@ def build_batch(
         published_input_hash=published_hash,
         items=items,
         prompt_version=prompt_version,
-        taxonomy_terms=terms,
+        taxonomy_terms=normalized_terms,
+        taxonomy_digest=taxonomy_digest,
+        source_snapshot_ids=snapshot_ids,
+        source_snapshot_digests=snapshot_digests,
+        model_routing_version=model_routing_version,
     )
 
 
@@ -363,6 +484,5 @@ def persist_batch(
 
     if compute_batch_hash(batch.items) != batch.published_input_hash:
         raise ValueError("BATCH_HASH_MISMATCH")
-    batch_id = repository.create_batch(batch)
-    repository.insert_items(batch_id, batch.items)
+    batch_id = repository.persist_draft_batch(batch)
     return PersistedApprovalBatch(batch=batch, database_batch_id=int(batch_id))

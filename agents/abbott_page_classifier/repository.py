@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from datetime import datetime, timezone
+from dataclasses import dataclass
 from hashlib import sha256
 import json
 from enum import Enum
@@ -15,6 +16,14 @@ from .domain import (
     CanonicalClassification,
     ClassificationEvent,
     IngestResult,
+    TaxonomyVersion,
+)
+from .batch_service import (
+    ApprovalBatchItem,
+    BuiltApprovalBatch,
+    compute_batch_hash,
+    compute_item_hash,
+    compute_taxonomy_digest,
 )
 
 
@@ -23,6 +32,7 @@ DATASET_KEY = "abbott"
 
 class Cursor(Protocol):
     lastrowid: int
+    rowcount: int
 
     def execute(self, sql: str, params: tuple[object, ...] = ()) -> None: ...
 
@@ -49,6 +59,27 @@ class RepositoryError(RuntimeError):
     def __init__(self, code: str):
         self.code = code
         super().__init__(code)
+
+
+@dataclass(frozen=True)
+class BatchHistoryRecord:
+    batch_key: str
+    published_input_hash: str
+    accepted_decision_hash: str | None
+    approver: str | None
+    accepted_at: object | None
+    ready_count: int
+    conflict_count: int
+    unresolved_count: int
+    rejected_count: int
+    no_change_count: int
+    accepted_count: int
+    skipped_count: int
+    batch_status: str
+    spreadsheet_file_id: str | None
+    spreadsheet_projection_hash: str | None
+    candidate_release_id: int | None
+    activation_status: str
 
 
 class ContentRegistryRepository:
@@ -99,25 +130,70 @@ class ContentRegistryRepository:
             for row in rows
         )
 
-    def create_batch(self, batch: ApprovalBatch) -> int:
+    def load_active_taxonomy(self, version: str) -> TaxonomyVersion:
         connection: Connection | None = None
         cursor: Cursor | None = None
         try:
             connection = self._connection_factory()
             cursor = connection.cursor()
+            _taxonomy_id, taxonomy = self._load_taxonomy(cursor, version)
+            return taxonomy
+        except RepositoryError:
+            raise
+        except Exception:
+            raise RepositoryError("DB_READ_FAILED") from None
+        finally:
+            self._close(cursor, connection)
+
+    def persist_draft_batch(self, batch: ApprovalBatch) -> int:
+        """Atomically persist or attest a retryable draft and all of its items."""
+
+        connection: Connection | None = None
+        cursor: Cursor | None = None
+        try:
+            audited = self._require_audited_batch(batch)
+            connection = self._connection_factory()
+            cursor = connection.cursor()
+            taxonomy_id, taxonomy = self._load_taxonomy(cursor, batch.taxonomy_version)
+            self._attest_taxonomy(audited, taxonomy)
+            counts = self._batch_counts(batch.items)
             cursor.execute(
                 """
-                SELECT id
-                FROM portal_content_taxonomy_versions
+                SELECT
+                  id,
+                  taxonomy_version_id,
+                  batch_key,
+                  taxonomy_digest,
+                  source_snapshot_ids,
+                  source_snapshot_digests,
+                  published_input_hash,
+                  batch_status,
+                  prompt_version,
+                  model_routing_version,
+                  ready_count,
+                  conflict_count,
+                  unresolved_count,
+                  rejected_count,
+                  no_change_count
+                FROM portal_content_approval_batches
                 WHERE dataset_key = %s
-                  AND version = %s
-                  AND taxonomy_status = %s
+                  AND batch_key = %s
+                FOR UPDATE
                 """,
-                (DATASET_KEY, batch.taxonomy_version, "active"),
+                (DATASET_KEY, batch.batch_key),
             )
-            taxonomy_row = cursor.fetchone()
-            if taxonomy_row is None:
-                raise RepositoryError("TAXONOMY_VERSION_NOT_ACTIVE")
+            existing = cursor.fetchone()
+            if existing is not None:
+                batch_id = self._attest_batch_row(
+                    existing,
+                    audited,
+                    taxonomy_id,
+                    counts,
+                    allowed_statuses=("draft", "failed", "published"),
+                )
+                self._attest_item_rows(cursor, batch_id, audited)
+                connection.commit()
+                return batch_id
 
             cursor.execute(
                 """
@@ -125,21 +201,45 @@ class ContentRegistryRepository:
                   dataset_key,
                   batch_key,
                   taxonomy_version_id,
+                  taxonomy_digest,
+                  source_snapshot_ids,
+                  source_snapshot_digests,
                   published_input_hash,
                   batch_status,
-                  prompt_version
-                ) VALUES (%s, %s, %s, %s, %s, %s)
+                  prompt_version,
+                  model_routing_version,
+                  ready_count,
+                  conflict_count,
+                  unresolved_count,
+                  rejected_count,
+                  no_change_count
+                ) VALUES (
+                  %s, %s, %s, %s, %s,
+                  %s, %s, %s, %s, %s,
+                  %s, %s, %s, %s, %s
+                )
                 """,
                 (
                     DATASET_KEY,
                     batch.batch_key,
-                    int(taxonomy_row[0]),
+                    taxonomy_id,
+                    audited.taxonomy_digest,
+                    self._json(audited.source_snapshot_ids),
+                    self._json(audited.source_snapshot_digests),
                     batch.published_input_hash,
-                    "published",
+                    "draft",
                     batch.prompt_version,
+                    audited.model_routing_version,
+                    counts["ready"],
+                    counts["conflict"],
+                    counts["unresolved"],
+                    counts["rejected"],
+                    counts["no_change"],
                 ),
             )
             batch_id = int(cursor.lastrowid)
+            for item in batch.items:
+                self._ensure_item(cursor, batch_id, item)
             connection.commit()
             return batch_id
         except RepositoryError:
@@ -150,6 +250,292 @@ class ContentRegistryRepository:
             raise RepositoryError("DB_TRANSACTION_FAILED") from None
         finally:
             self._close(cursor, connection)
+
+    def attest_batch_for_publication(
+        self,
+        batch_id: int,
+        batch: ApprovalBatch,
+        *,
+        _allowed_statuses: Sequence[str] = ("draft", "failed", "published"),
+    ) -> None:
+        """Re-read and attest the exact retryable canonical draft."""
+
+        connection: Connection | None = None
+        cursor: Cursor | None = None
+        try:
+            audited = self._require_audited_batch(batch)
+            connection = self._connection_factory()
+            cursor = connection.cursor()
+            taxonomy_id, taxonomy = self._load_taxonomy(cursor, batch.taxonomy_version)
+            self._attest_taxonomy(audited, taxonomy)
+            cursor.execute(
+                """
+                SELECT
+                  id,
+                  taxonomy_version_id,
+                  batch_key,
+                  taxonomy_digest,
+                  source_snapshot_ids,
+                  source_snapshot_digests,
+                  published_input_hash,
+                  batch_status,
+                  prompt_version,
+                  model_routing_version,
+                  ready_count,
+                  conflict_count,
+                  unresolved_count,
+                  rejected_count,
+                  no_change_count
+                FROM portal_content_approval_batches
+                WHERE id = %s
+                  AND dataset_key = %s
+                FOR UPDATE
+                """,
+                (int(batch_id), DATASET_KEY),
+            )
+            row = cursor.fetchone()
+            if row is None:
+                raise RepositoryError("BATCH_NOT_PERSISTED")
+            stored_id = self._attest_batch_row(
+                row,
+                audited,
+                taxonomy_id,
+                self._batch_counts(batch.items),
+                allowed_statuses=_allowed_statuses,
+            )
+            if stored_id != int(batch_id):
+                raise RepositoryError("BATCH_NOT_PERSISTED")
+            self._attest_item_rows(cursor, stored_id, audited)
+            connection.commit()
+        except RepositoryError:
+            self._rollback(connection)
+            raise
+        except Exception:
+            self._rollback(connection)
+            raise RepositoryError("DB_TRANSACTION_FAILED") from None
+        finally:
+            self._close(cursor, connection)
+
+    def attest_batch_for_acceptance(
+        self, batch_id: int, batch: ApprovalBatch
+    ) -> None:
+        self.attest_batch_for_publication(
+            batch_id,
+            batch,
+            _allowed_statuses=("published", "accepted"),
+        )
+
+    def mark_batch_published(
+        self,
+        batch_id: int,
+        spreadsheet_id: str,
+        projection_hash: str,
+    ) -> None:
+        self._update_projection_status(
+            """
+            UPDATE portal_content_approval_batches
+            SET batch_status = %s,
+                spreadsheet_file_id = %s,
+                spreadsheet_projection_hash = %s,
+                published_at = CURRENT_TIMESTAMP(6),
+                failed_at = NULL,
+                failure_code = NULL
+            WHERE id = %s
+              AND dataset_key = %s
+              AND batch_status IN ('draft', 'failed', 'published')
+            """,
+            ("published", spreadsheet_id, projection_hash, int(batch_id), DATASET_KEY),
+        )
+
+    def mark_batch_projection_failed(self, batch_id: int, failure_code: str) -> None:
+        self._update_projection_status(
+            """
+            UPDATE portal_content_approval_batches
+            SET batch_status = %s,
+                failed_at = CURRENT_TIMESTAMP(6),
+                failure_code = %s
+            WHERE id = %s
+              AND dataset_key = %s
+              AND batch_status IN ('draft', 'failed', 'published')
+            """,
+            ("failed", failure_code[:64], int(batch_id), DATASET_KEY),
+        )
+
+    def record_batch_acceptance(
+        self,
+        batch_id: int,
+        snapshot: AcceptedBatchSnapshot,
+        spreadsheet_id: str,
+    ) -> None:
+        connection: Connection | None = None
+        cursor: Cursor | None = None
+        try:
+            connection = self._connection_factory()
+            cursor = connection.cursor()
+            cursor.execute(
+                """
+                SELECT
+                  batch_key,
+                  published_input_hash,
+                  batch_status,
+                  spreadsheet_file_id,
+                  accepted_decision_hash,
+                  accepted_by,
+                  accepted_at
+                FROM portal_content_approval_batches
+                WHERE id = %s
+                  AND dataset_key = %s
+                FOR UPDATE
+                """,
+                (int(batch_id), DATASET_KEY),
+            )
+            row = cursor.fetchone()
+            if row is None or str(row[0]) != snapshot.batch_key:
+                raise RepositoryError("BATCH_NOT_PERSISTED")
+            if str(row[1]) != snapshot.published_input_hash:
+                raise RepositoryError("BATCH_HASH_MISMATCH")
+            status = str(row[2])
+            if str(row[3]) != spreadsheet_id or status not in ("published", "accepted"):
+                raise RepositoryError("BATCH_NOT_PUBLISHED")
+            if status == "accepted":
+                if (
+                    str(row[4]) != snapshot.accepted_decision_hash
+                    or str(row[5]) != snapshot.accepted_by
+                    or self._canonical_acceptance_timestamp(row[6])
+                    != self._canonical_acceptance_timestamp(snapshot.accepted_at)
+                ):
+                    raise RepositoryError("BATCH_ACCEPTANCE_METADATA_MISMATCH")
+                connection.commit()
+                return
+            counts = self._batch_counts(snapshot.items)
+            for item in snapshot.items:
+                approval_item_id = self._ensure_item(cursor, int(batch_id), item)
+                cursor.execute(
+                    """
+                    UPDATE portal_content_approval_items
+                    SET final_direction_code = %s,
+                        final_material_type_code = %s,
+                        final_access_code = %s,
+                        final_lifecycle_code = %s,
+                        decision_reason = %s
+                    WHERE id = %s
+                      AND approval_batch_id = %s
+                    """,
+                    (
+                        item.final_direction_code,
+                        item.final_material_type_code,
+                        item.final_access_code,
+                        item.final_lifecycle_code,
+                        item.decision_reason,
+                        approval_item_id,
+                        int(batch_id),
+                    ),
+                )
+            cursor.execute(
+                """
+                UPDATE portal_content_approval_batches
+                SET batch_status = %s,
+                    accepted_decision_hash = %s,
+                    accepted_by = %s,
+                    accepted_at = %s,
+                    accepted_count = %s,
+                    skipped_count = %s
+                WHERE id = %s
+                  AND batch_status = %s
+                """,
+                (
+                    "accepted",
+                    snapshot.accepted_decision_hash,
+                    snapshot.accepted_by,
+                    snapshot.accepted_at,
+                    counts["ready"],
+                    len(snapshot.items) - counts["ready"],
+                    int(batch_id),
+                    "published",
+                ),
+            )
+            connection.commit()
+        except RepositoryError:
+            self._rollback(connection)
+            raise
+        except Exception:
+            self._rollback(connection)
+            raise RepositoryError("DB_TRANSACTION_FAILED") from None
+        finally:
+            self._close(cursor, connection)
+
+    def load_batch_history(self, batch_id: int) -> BatchHistoryRecord:
+        sql = """
+            SELECT
+              batch_key,
+              published_input_hash,
+              accepted_decision_hash,
+              accepted_by,
+              accepted_at,
+              ready_count,
+              conflict_count,
+              unresolved_count,
+              rejected_count,
+              no_change_count,
+              accepted_count,
+              skipped_count,
+              batch_status,
+              spreadsheet_file_id,
+              spreadsheet_projection_hash,
+              candidate_release_id,
+              activation_status
+            FROM portal_content_approval_batches
+            WHERE id = %s
+              AND dataset_key = %s
+        """
+        rows = self._fetchall(sql, (int(batch_id), DATASET_KEY))
+        if len(rows) != 1:
+            raise RepositoryError("BATCH_NOT_PERSISTED")
+        row = rows[0]
+        return BatchHistoryRecord(
+            batch_key=str(row[0]),
+            published_input_hash=str(row[1]),
+            accepted_decision_hash=(str(row[2]) if row[2] is not None else None),
+            approver=(str(row[3]) if row[3] is not None else None),
+            accepted_at=row[4],
+            ready_count=int(row[5]),
+            conflict_count=int(row[6]),
+            unresolved_count=int(row[7]),
+            rejected_count=int(row[8]),
+            no_change_count=int(row[9]),
+            accepted_count=int(row[10]),
+            skipped_count=int(row[11]),
+            batch_status=str(row[12]),
+            spreadsheet_file_id=(str(row[13]) if row[13] is not None else None),
+            spreadsheet_projection_hash=(str(row[14]) if row[14] is not None else None),
+            candidate_release_id=(int(row[15]) if row[15] is not None else None),
+            activation_status=str(row[16]),
+        )
+
+    def _update_projection_status(self, sql: str, params: tuple[object, ...]) -> None:
+        connection: Connection | None = None
+        cursor: Cursor | None = None
+        try:
+            connection = self._connection_factory()
+            cursor = connection.cursor()
+            cursor.execute(sql, params)
+            rowcount = getattr(cursor, "rowcount", 1)
+            if rowcount != 1:
+                raise RepositoryError("BATCH_STATUS_TRANSITION_INVALID")
+            connection.commit()
+        except RepositoryError:
+            self._rollback(connection)
+            raise
+        except Exception:
+            self._rollback(connection)
+            raise RepositoryError("DB_TRANSACTION_FAILED") from None
+        finally:
+            self._close(cursor, connection)
+
+    def create_batch(self, batch: ApprovalBatch) -> int:
+        """Compatibility alias for the atomic draft persistence boundary."""
+
+        return self.persist_draft_batch(batch)
 
     def insert_items(
         self,
@@ -398,6 +784,203 @@ class ContentRegistryRepository:
             for row in rows
         )
         return {event.content_entity_id: event for event in events}
+
+    @staticmethod
+    def _require_audited_batch(batch: ApprovalBatch) -> BuiltApprovalBatch:
+        if not isinstance(batch, BuiltApprovalBatch):
+            raise RepositoryError("BATCH_AUDIT_INCOMPLETE")
+        if compute_batch_hash(batch.items) != batch.published_input_hash:
+            raise RepositoryError("BATCH_HASH_MISMATCH")
+        if (
+            compute_taxonomy_digest(batch.taxonomy_version, batch.taxonomy_terms)
+            != batch.taxonomy_digest
+        ):
+            raise RepositoryError("TAXONOMY_CONTRACT_MISMATCH")
+        taxonomy_fields = {
+            "direction": "final_direction_code",
+            "material_type": "final_material_type_code",
+            "access": "final_access_code",
+            "lifecycle": "final_lifecycle_code",
+        }
+        for item in batch.items:
+            if not isinstance(item, ApprovalBatchItem):
+                raise RepositoryError("BATCH_AUDIT_INCOMPLETE")
+            if item.row_hash != compute_item_hash(item):
+                raise RepositoryError("BATCH_HASH_MISMATCH")
+            if (
+                item.taxonomy_digest != batch.taxonomy_digest
+                or dict(item.taxonomy_terms) != dict(batch.taxonomy_terms)
+                or item.source_snapshot_ids != batch.source_snapshot_ids
+                or item.source_snapshot_digests != batch.source_snapshot_digests
+                or item.model_routing_version != batch.model_routing_version
+                or item.prompt_version != batch.prompt_version
+            ):
+                raise RepositoryError("BATCH_AUDIT_INCOMPLETE")
+            for kind, field_name in taxonomy_fields.items():
+                value = getattr(item, field_name)
+                if value is not None and value not in batch.taxonomy_terms[kind]:
+                    raise RepositoryError("TAXONOMY_CONTRACT_MISMATCH")
+        return batch
+
+    @staticmethod
+    def _batch_counts(items: Sequence[ApprovalItem]) -> dict[str, int]:
+        counts = {
+            "ready": 0,
+            "conflict": 0,
+            "unresolved": 0,
+            "rejected": 0,
+            "no_change": 0,
+        }
+        for item in items:
+            if item.readiness_state not in counts:
+                raise RepositoryError("BATCH_HASH_MISMATCH")
+            if item.readiness_state == "ready" and (
+                item.content_entity_id is None
+                or not item.final_direction_code
+                or not item.final_material_type_code
+                or not item.final_lifecycle_code
+            ):
+                raise RepositoryError("BATCH_ITEM_INCOMPLETE")
+            if len(item.input_hash) != 64 or len(item.row_hash) != 64:
+                raise RepositoryError("BATCH_ITEM_INCOMPLETE")
+            counts[item.readiness_state] += 1
+        return counts
+
+    @staticmethod
+    def _load_taxonomy(cursor: Cursor, version: str) -> tuple[int, TaxonomyVersion]:
+        cursor.execute(
+            """
+            SELECT id, taxonomy_digest
+            FROM portal_content_taxonomy_versions
+            WHERE dataset_key = %s
+              AND version = %s
+              AND taxonomy_status = %s
+            """,
+            (DATASET_KEY, version, "active"),
+        )
+        row = cursor.fetchone()
+        if row is None:
+            raise RepositoryError("TAXONOMY_VERSION_NOT_ACTIVE")
+        taxonomy_id = int(row[0])
+        stored_digest = str(row[1])
+        cursor.execute(
+            """
+            SELECT taxonomy_kind, term_code
+            FROM portal_content_taxonomy_terms
+            WHERE taxonomy_version_id = %s
+              AND term_status = %s
+            ORDER BY taxonomy_kind, term_code
+            """,
+            (taxonomy_id, "active"),
+        )
+        terms: dict[str, list[str]] = {
+            "direction": [],
+            "material_type": [],
+            "access": [],
+            "lifecycle": [],
+        }
+        for kind, code in cursor.fetchall():
+            if str(kind) not in terms:
+                raise RepositoryError("TAXONOMY_CONTRACT_MISMATCH")
+            terms[str(kind)].append(str(code))
+        if any(not values for values in terms.values()):
+            raise RepositoryError("TAXONOMY_CONTRACT_MISMATCH")
+        frozen_terms = {kind: tuple(values) for kind, values in terms.items()}
+        computed_digest = compute_taxonomy_digest(version, frozen_terms)
+        if stored_digest != computed_digest:
+            raise RepositoryError("TAXONOMY_CONTRACT_MISMATCH")
+        return taxonomy_id, TaxonomyVersion(
+            version=version,
+            terms=frozen_terms,
+            digest=computed_digest,
+        )
+
+    @staticmethod
+    def _attest_taxonomy(
+        batch: BuiltApprovalBatch, taxonomy: TaxonomyVersion
+    ) -> None:
+        if (
+            batch.taxonomy_digest != taxonomy.digest
+            or dict(batch.taxonomy_terms) != dict(taxonomy.terms)
+        ):
+            raise RepositoryError("TAXONOMY_CONTRACT_MISMATCH")
+
+    @staticmethod
+    def _decoded_json_tuple(value: object) -> tuple[object, ...]:
+        decoded = json.loads(value) if isinstance(value, str) else value
+        if not isinstance(decoded, (tuple, list)):
+            raise RepositoryError("BATCH_HASH_MISMATCH")
+        return tuple(decoded)
+
+    @staticmethod
+    def _attest_batch_row(
+        row: Sequence[object],
+        batch: BuiltApprovalBatch,
+        taxonomy_id: int,
+        counts: Mapping[str, int],
+        *,
+        allowed_statuses: Sequence[str],
+    ) -> int:
+        try:
+            matches = (
+                int(row[1]) == taxonomy_id
+                and str(row[2]) == batch.batch_key
+                and str(row[3]) == batch.taxonomy_digest
+                and ContentRegistryRepository._decoded_json_tuple(row[4])
+                == batch.source_snapshot_ids
+                and ContentRegistryRepository._decoded_json_tuple(row[5])
+                == batch.source_snapshot_digests
+                and str(row[6]) == batch.published_input_hash
+                and str(row[7]) in allowed_statuses
+                and str(row[8]) == batch.prompt_version
+                and str(row[9]) == batch.model_routing_version
+                and tuple(int(value) for value in row[10:15])
+                == tuple(counts[state] for state in ("ready", "conflict", "unresolved", "rejected", "no_change"))
+            )
+        except (IndexError, TypeError, ValueError):
+            matches = False
+        if not matches:
+            raise RepositoryError("BATCH_HASH_MISMATCH")
+        return int(row[0])
+
+    @staticmethod
+    def _attest_item_rows(
+        cursor: Cursor, batch_id: int, batch: BuiltApprovalBatch
+    ) -> None:
+        cursor.execute(
+            """
+            SELECT
+              content_entity_id,
+              input_hash,
+              row_hash,
+              readiness_state
+            FROM portal_content_approval_items
+            WHERE approval_batch_id = %s
+            ORDER BY content_entity_id, input_hash
+            FOR UPDATE
+            """,
+            (batch_id,),
+        )
+        stored = tuple(
+            (
+                int(row[0]) if row[0] is not None else None,
+                str(row[1]),
+                str(row[2]),
+                str(row[3]),
+            )
+            for row in cursor.fetchall()
+        )
+        expected = tuple(
+            (
+                item.content_entity_id,
+                item.input_hash,
+                item.row_hash,
+                item.readiness_state,
+            )
+            for item in batch.items
+        )
+        if stored != expected:
+            raise RepositoryError("BATCH_ITEMS_MISMATCH")
 
     @staticmethod
     def _ensure_item(

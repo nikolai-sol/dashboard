@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from dataclasses import replace
 from pathlib import Path
+import re
 import subprocess
 import sys
 import unittest
@@ -14,17 +15,27 @@ from agents.abbott_page_classifier.batch_service import (
     PersistedApprovalBatch,
     build_batch,
     compute_accepted_decision_hash,
+    compute_taxonomy_digest,
 )
-from agents.abbott_page_classifier.domain import ApprovalItem, TaxonomyVersion
+from agents.abbott_page_classifier.domain import (
+    ACCESS_CODES,
+    ApprovalItem,
+    DIRECTION_CODES,
+    LIFECYCLE_CODES,
+    MATERIAL_TYPE_CODES,
+    TaxonomyVersion,
+)
 from agents.abbott_page_classifier.sheets_sync import (
     APPROVAL_TAB_TITLES,
     HISTORY_HEADERS,
     ITEM_HEADERS,
     ProjectionValidationError,
     persist_and_publish_batch,
+    persist_accepted_projection,
     publish_batch_projection,
     read_accepted_projection,
 )
+from agents.abbott_page_classifier.repository import RepositoryError
 
 
 def item(entity_id: int, state: str, *, title: str | None = None) -> ApprovalItem:
@@ -45,14 +56,16 @@ def item(entity_id: int, state: str, *, title: str | None = None) -> ApprovalIte
 
 
 def batch():
+    terms = {
+        "direction": tuple(sorted(DIRECTION_CODES)),
+        "material_type": tuple(sorted(MATERIAL_TYPE_CODES)),
+        "access": tuple(sorted(ACCESS_CODES)),
+        "lifecycle": tuple(sorted(LIFECYCLE_CODES)),
+    }
     taxonomy = TaxonomyVersion(
         version="abbott.v1",
-        terms={
-            "direction": ("cardiology", "gastroenterology", "undetermined"),
-            "material_type": ("articles", "video"),
-            "access": ("doctors", "all", "unspecified"),
-            "lifecycle": ("active", "archive_candidate", "archived", "unknown"),
-        },
+        terms=terms,
+        digest=compute_taxonomy_digest("abbott.v1", terms),
     )
     return build_batch(
         (
@@ -64,11 +77,83 @@ def batch():
         ),
         taxonomy,
         "prompt.v1",
+        source_snapshot_ids=(101, 202),
+        source_snapshot_digests=("a" * 64, "b" * 64),
+        model_routing_version="routing.v1",
     )
 
 
 def persisted(approval_batch):
     return PersistedApprovalBatch(batch=approval_batch, database_batch_id=73)
+
+
+class FakeRepository:
+    def __init__(self, canonical_batch=None, *, reject_attestation: str | None = None):
+        self.canonical_batch = canonical_batch
+        self.reject_attestation = reject_attestation
+        self.calls: list[tuple[str, object]] = []
+        self.status = "draft"
+        self.accepted_snapshot = None
+
+    def persist_draft_batch(self, approval_batch):
+        self.calls.append(("persist_draft_batch", approval_batch.batch_key))
+        if self.canonical_batch is None:
+            self.canonical_batch = approval_batch
+        return 73
+
+    def attest_batch_for_publication(self, batch_id, approval_batch):
+        self.calls.append(("attest_batch_for_publication", batch_id))
+        if self.reject_attestation:
+            raise RepositoryError(self.reject_attestation)
+        if self.canonical_batch != approval_batch or batch_id != 73:
+            raise RuntimeError("BATCH_NOT_PERSISTED")
+
+    def attest_batch_for_acceptance(self, batch_id, approval_batch):
+        self.calls.append(("attest_batch_for_acceptance", batch_id))
+        if self.canonical_batch != approval_batch or batch_id != 73:
+            raise RuntimeError("BATCH_NOT_PERSISTED")
+
+    def mark_batch_published(self, batch_id, spreadsheet_id, projection_hash):
+        self.calls.append(("mark_batch_published", (batch_id, spreadsheet_id, projection_hash)))
+        self.status = "published"
+
+    def mark_batch_projection_failed(self, batch_id, failure_code):
+        self.calls.append(("mark_batch_projection_failed", (batch_id, failure_code)))
+        self.status = "failed"
+
+    def load_batch_history(self, batch_id):
+        self.calls.append(("load_batch_history", batch_id))
+        approval_batch = self.canonical_batch
+        counts = {state: 0 for state in ("ready", "conflict", "unresolved", "rejected", "no_change")}
+        for approval in approval_batch.items:
+            counts[approval.readiness_state] += 1
+        return {
+            "batch_key": approval_batch.batch_key,
+            "published_input_hash": approval_batch.published_input_hash,
+            "accepted_decision_hash": (
+                self.accepted_snapshot.accepted_decision_hash if self.accepted_snapshot else None
+            ),
+            "approver": self.accepted_snapshot.accepted_by if self.accepted_snapshot else None,
+            "accepted_at": self.accepted_snapshot.accepted_at if self.accepted_snapshot else None,
+            **{f"{state}_count": value for state, value in counts.items()},
+            "accepted_count": counts["ready"] if self.accepted_snapshot else 0,
+            "skipped_count": (len(approval_batch.items) - counts["ready"]) if self.accepted_snapshot else 0,
+            "batch_status": self.status,
+            "spreadsheet_file_id": "fake-sheet-id" if self.status != "draft" else None,
+            "spreadsheet_projection_hash": approval_batch.published_input_hash if self.status != "draft" else None,
+            "candidate_release_id": None,
+            "activation_status": "not_started",
+        }
+
+    def record_batch_acceptance(self, batch_id, snapshot, spreadsheet_id):
+        self.calls.append(("record_batch_acceptance", (batch_id, spreadsheet_id)))
+        self.accepted_snapshot = snapshot
+        self.status = "accepted"
+
+
+def publish_projection(approval_batch, gateway, repository=None):
+    repository = repository or FakeRepository(approval_batch)
+    return publish_batch_projection(persisted(approval_batch), gateway, repository)
 
 
 class FakeSheetsGateway:
@@ -87,17 +172,24 @@ class FakeSheetsGateway:
 
     def replace_values(self, spreadsheet_id, range_name, values):
         self.calls.append(("replace_values", (spreadsheet_id, range_name)))
-        title = range_name.split("!", 1)[0]
+        title = self._tab(range_name)
         self.values[title] = [list(row) for row in values]
 
     def read_values(self, spreadsheet_id, range_name):
         self.calls.append(("read_values", (spreadsheet_id, range_name)))
-        title = range_name.split("!", 1)[0]
+        title = self._tab(range_name)
         return [list(row) for row in self.values.get(title, [])]
 
     def batch_update(self, spreadsheet_id, requests):
         self.calls.append(("batch_update", spreadsheet_id))
         self.requests.extend(requests)
+
+    @staticmethod
+    def _tab(range_name: str) -> str:
+        matched = re.match(r"^'((?:''|[^'])+)'!", range_name)
+        if matched is None:
+            raise AssertionError(f"unquoted A1 tab name: {range_name}")
+        return matched.group(1).replace("''", "'")
 
     def accept(self, *, accepted_by="manager", accepted_at="2026-08-05T12:00:00Z"):
         rows = self.values["Апрув batch"]
@@ -123,11 +215,55 @@ def metadata(gateway: FakeSheetsGateway, tab: str) -> dict[str, object]:
 
 
 class SheetsProjectionTests(unittest.TestCase):
+    def test_forged_persistence_receipt_is_re_attested_before_any_gateway_call(self):
+        approval_batch = batch()
+        gateway = FakeSheetsGateway()
+        repository = FakeRepository(
+            approval_batch,
+            reject_attestation="BATCH_NOT_PERSISTED",
+        )
+
+        with self.assertRaises(RepositoryError) as raised:
+            publish_batch_projection(persisted(approval_batch), gateway, repository)
+
+        self.assertEqual(raised.exception.code, "BATCH_NOT_PERSISTED")
+        self.assertEqual(gateway.calls, [])
+
+    def test_invented_taxonomy_attestation_failure_makes_zero_gateway_calls(self):
+        canonical = batch()
+        invented_terms = {
+            **canonical.taxonomy_terms,
+            "direction": (*canonical.taxonomy_terms["direction"], "invented"),
+        }
+        invented = build_batch(
+            canonical.items,
+            TaxonomyVersion(
+                version=canonical.taxonomy_version,
+                terms=invented_terms,
+                digest=compute_taxonomy_digest(canonical.taxonomy_version, invented_terms),
+            ),
+            canonical.prompt_version,
+            source_snapshot_ids=canonical.source_snapshot_ids,
+            source_snapshot_digests=canonical.source_snapshot_digests,
+            model_routing_version=canonical.model_routing_version,
+        )
+        gateway = FakeSheetsGateway()
+        repository = FakeRepository(
+            canonical,
+            reject_attestation="TAXONOMY_CONTRACT_MISMATCH",
+        )
+
+        with self.assertRaises(RepositoryError) as raised:
+            publish_batch_projection(persisted(invented), gateway, repository)
+
+        self.assertEqual(raised.exception.code, "TAXONOMY_CONTRACT_MISMATCH")
+        self.assertEqual(gateway.calls, [])
+
     def test_publish_rejects_an_unpersisted_batch_before_any_gateway_call(self):
         gateway = FakeSheetsGateway()
 
         with self.assertRaises(ProjectionValidationError) as raised:
-            publish_batch_projection(batch(), gateway)
+            publish_batch_projection(batch(), gateway, FakeRepository(batch()))
 
         self.assertEqual(raised.exception.code, "BATCH_NOT_PERSISTED")
         self.assertEqual(gateway.calls, [])
@@ -167,13 +303,14 @@ class SheetsProjectionTests(unittest.TestCase):
     def test_persist_and_publish_finishes_all_database_writes_before_sheet_write(self):
         events: list[str] = []
 
-        class Repository:
-            def create_batch(self, approval_batch):
-                events.append("db:create")
-                return 73
+        class Repository(FakeRepository):
+            def persist_draft_batch(self, approval_batch):
+                events.append("db:persist-draft")
+                return super().persist_draft_batch(approval_batch)
 
-            def insert_items(self, batch_id, items):
-                events.append("db:items")
+            def attest_batch_for_publication(self, batch_id, approval_batch):
+                events.append("db:attest")
+                return super().attest_batch_for_publication(batch_id, approval_batch)
 
         class Gateway(FakeSheetsGateway):
             def ensure_tabs(self, spreadsheet_id, titles):
@@ -181,17 +318,60 @@ class SheetsProjectionTests(unittest.TestCase):
                 return super().ensure_tabs(spreadsheet_id, titles)
 
         gateway = Gateway()
+        repository = Repository(batch())
 
-        result = persist_and_publish_batch(batch(), Repository(), gateway)
+        result = persist_and_publish_batch(repository.canonical_batch, repository, gateway)
 
-        self.assertEqual(events[:3], ["db:create", "db:items", "sheet:ensure"])
+        self.assertEqual(events[:3], ["db:persist-draft", "db:attest", "sheet:ensure"])
         self.assertEqual(result.database_batch_id, 73)
+
+    def test_gateway_failure_marks_retryable_failure_and_retry_reuses_same_batch(self):
+        approval_batch = batch()
+        repository = FakeRepository(approval_batch)
+
+        class FailingOnceGateway(FakeSheetsGateway):
+            def __init__(self):
+                super().__init__()
+                self.failed = False
+
+            def replace_values(self, spreadsheet_id, range_name, values):
+                if not self.failed:
+                    self.failed = True
+                    raise RuntimeError("transient sheets failure")
+                return super().replace_values(spreadsheet_id, range_name, values)
+
+        gateway = FailingOnceGateway()
+        with self.assertRaises(RuntimeError):
+            persist_and_publish_batch(approval_batch, repository, gateway)
+
+        self.assertEqual(repository.status, "failed")
+        result = persist_and_publish_batch(approval_batch, repository, gateway)
+
+        self.assertEqual(result.database_batch_id, 73)
+        self.assertEqual(repository.status, "published")
+        self.assertEqual(
+            [call[0] for call in repository.calls].count("persist_draft_batch"),
+            2,
+        )
+
+    def test_every_value_range_quotes_and_escapes_its_a1_tab_name(self):
+        gateway = FakeSheetsGateway()
+        publish_projection(batch(), gateway)
+
+        ranges = [
+            details[1]
+            for name, details in gateway.calls
+            if name == "replace_values"
+        ]
+        self.assertGreaterEqual(len(ranges), 8)
+        self.assertTrue(all(re.match(r"^'(?:''|[^'])+'!", value) for value in ranges))
+        self.assertEqual(sheets_sync.a1_range("Manager's tab", "A1"), "'Manager''s tab'!A1")
 
     def test_publish_uses_exact_eight_tabs_and_exact_batch_totals_and_hash(self):
         gateway = FakeSheetsGateway()
         approval_batch = batch()
 
-        result = publish_batch_projection(persisted(approval_batch), gateway)
+        result = publish_projection(approval_batch, gateway)
 
         self.assertEqual(tuple(gateway.titles), APPROVAL_TAB_TITLES)
         self.assertEqual(len(gateway.titles), 8)
@@ -222,7 +402,7 @@ class SheetsProjectionTests(unittest.TestCase):
         )
 
         with self.assertRaises(ProjectionValidationError) as raised:
-            publish_batch_projection(persisted(tampered), gateway)
+            publish_projection(tampered, gateway)
 
         self.assertEqual(raised.exception.code, "BATCH_HASH_MISMATCH")
         self.assertEqual(gateway.calls, [])
@@ -230,7 +410,7 @@ class SheetsProjectionTests(unittest.TestCase):
     def test_publish_protects_identity_proposals_and_hashes(self):
         gateway = FakeSheetsGateway()
 
-        publish_batch_projection(persisted(batch()), gateway)
+        publish_projection(batch(), gateway)
 
         protected = [request for request in gateway.requests if "addProtectedRange" in request]
         self.assertTrue(protected)
@@ -244,14 +424,14 @@ class SheetsProjectionTests(unittest.TestCase):
     def test_publish_adds_taxonomy_backed_final_validations_and_conflict_reason_rule(self):
         gateway = FakeSheetsGateway()
 
-        publish_batch_projection(persisted(batch()), gateway)
+        publish_projection(batch(), gateway)
 
         validations = [request["setDataValidation"] for request in gateway.requests if "setDataValidation" in request]
         range_formulas = [
             value["userEnteredValue"]
             for validation in validations
             for value in validation["rule"]["condition"].get("values", [])
-            if value.get("userEnteredValue", "").startswith("=Справочники!")
+            if value.get("userEnteredValue", "").startswith("='Справочники'!")
         ]
         self.assertEqual(len(range_formulas), 12)
         self.assertTrue(all(validation["rule"]["strict"] for validation in validations))
@@ -266,7 +446,7 @@ class SheetsProjectionTests(unittest.TestCase):
     def test_publish_adds_strict_batch_decision_dropdown(self):
         gateway = FakeSheetsGateway()
 
-        publish_batch_projection(persisted(batch()), gateway)
+        publish_projection(batch(), gateway)
 
         batch_sheet_id = gateway.titles.index("Апрув batch") + 10
         decisions = [
@@ -293,7 +473,7 @@ class SheetsProjectionTests(unittest.TestCase):
         gateway = FakeSheetsGateway()
         approval_batch = batch()
 
-        publish_batch_projection(persisted(approval_batch), gateway)
+        publish_projection(approval_batch, gateway)
 
         history = gateway.values["История"]
         self.assertEqual(tuple(history[0]), HISTORY_HEADERS)
@@ -309,7 +489,7 @@ class SheetsProjectionTests(unittest.TestCase):
     def test_publish_neutralizes_formula_injection_in_display_values(self):
         gateway = FakeSheetsGateway()
 
-        publish_batch_projection(persisted(batch()), gateway)
+        publish_projection(batch(), gateway)
 
         title_index = list(ITEM_HEADERS).index("title")
         self.assertEqual(gateway.values["Предложения"][1][title_index], "'=unsafe title")
@@ -317,7 +497,7 @@ class SheetsProjectionTests(unittest.TestCase):
     def test_read_accepts_only_ready_rows_and_keeps_every_other_state_open(self):
         gateway = FakeSheetsGateway()
         approval_batch = batch()
-        publish_batch_projection(persisted(approval_batch), gateway)
+        publish_projection(approval_batch, gateway)
         gateway.accept()
         gateway.edit_item("Предложения", 1, "final_direction_code", "gastroenterology")
 
@@ -341,7 +521,7 @@ class SheetsProjectionTests(unittest.TestCase):
             with self.subTest(forged=forged):
                 gateway = FakeSheetsGateway()
                 approval_batch = batch()
-                publish_batch_projection(persisted(approval_batch), gateway)
+                publish_projection(approval_batch, gateway)
                 gateway.accept()
                 for row in gateway.values["Апрув batch"]:
                     if row[0] == "Решение":
@@ -355,7 +535,7 @@ class SheetsProjectionTests(unittest.TestCase):
     def test_formatting_formulas_and_tab_order_do_not_change_accepted_hash(self):
         gateway = FakeSheetsGateway()
         approval_batch = batch()
-        publish_batch_projection(persisted(approval_batch), gateway)
+        publish_projection(approval_batch, gateway)
         gateway.accept()
         original = read_accepted_projection(approval_batch, gateway)
 
@@ -369,7 +549,7 @@ class SheetsProjectionTests(unittest.TestCase):
     def test_editable_reason_changes_accepted_hash(self):
         gateway = FakeSheetsGateway()
         approval_batch = batch()
-        publish_batch_projection(persisted(approval_batch), gateway)
+        publish_projection(approval_batch, gateway)
         gateway.accept()
         first = read_accepted_projection(approval_batch, gateway)
         gateway.edit_item("Предложения", 1, "decision_reason", "manager reviewed")
@@ -381,7 +561,7 @@ class SheetsProjectionTests(unittest.TestCase):
     def test_read_rejects_formula_in_an_editable_decision_cell(self):
         gateway = FakeSheetsGateway()
         approval_batch = batch()
-        publish_batch_projection(persisted(approval_batch), gateway)
+        publish_projection(approval_batch, gateway)
         gateway.accept()
         gateway.edit_item("Предложения", 1, "decision_reason", "=HYPERLINK(\"x\")")
 
@@ -403,12 +583,25 @@ class SheetsProjectionTests(unittest.TestCase):
             with self.subTest(expected_code=expected_code):
                 gateway = FakeSheetsGateway()
                 approval_batch = batch()
-                publish_batch_projection(persisted(approval_batch), gateway)
+                publish_projection(approval_batch, gateway)
                 gateway.accept()
                 mutation(gateway)
                 with self.assertRaises(ProjectionValidationError) as raised:
                     read_accepted_projection(approval_batch, gateway)
                 self.assertEqual(raised.exception.code, expected_code)
+
+    def test_read_rejects_a_row_moved_to_the_wrong_state_tab(self):
+        gateway = FakeSheetsGateway()
+        approval_batch = batch()
+        publish_projection(approval_batch, gateway)
+        gateway.accept()
+        moved = gateway.values["Предложения"].pop(1)
+        gateway.values["Конфликты"].append(moved)
+
+        with self.assertRaises(ProjectionValidationError) as raised:
+            read_accepted_projection(approval_batch, gateway)
+
+        self.assertEqual(raised.exception.code, "SHEET_TAB_STATE_MISMATCH")
 
     def test_read_rejects_unknown_taxonomy_and_edited_identity_hash_cells(self):
         cases = (
@@ -421,7 +614,7 @@ class SheetsProjectionTests(unittest.TestCase):
             with self.subTest(column=column):
                 gateway = FakeSheetsGateway()
                 approval_batch = batch()
-                publish_batch_projection(persisted(approval_batch), gateway)
+                publish_projection(approval_batch, gateway)
                 gateway.accept()
                 gateway.edit_item("Предложения", 1, column, value)
                 with self.assertRaises(ProjectionValidationError) as raised:
@@ -431,7 +624,7 @@ class SheetsProjectionTests(unittest.TestCase):
     def test_read_requires_reason_for_an_edited_conflict(self):
         gateway = FakeSheetsGateway()
         approval_batch = batch()
-        publish_batch_projection(persisted(approval_batch), gateway)
+        publish_projection(approval_batch, gateway)
         gateway.accept()
         gateway.edit_item("Конфликты", 2, "final_direction_code", "gastroenterology")
 
@@ -443,7 +636,7 @@ class SheetsProjectionTests(unittest.TestCase):
     def test_read_rejects_summary_count_mismatch(self):
         gateway = FakeSheetsGateway()
         approval_batch = batch()
-        publish_batch_projection(persisted(approval_batch), gateway)
+        publish_projection(approval_batch, gateway)
         gateway.accept()
         for row in gateway.values["Сводка"]:
             if row[0] == "ready":
@@ -457,7 +650,7 @@ class SheetsProjectionTests(unittest.TestCase):
     def test_directionless_row_is_retained_as_unresolved(self):
         gateway = FakeSheetsGateway()
         approval_batch = batch()
-        publish_batch_projection(persisted(approval_batch), gateway)
+        publish_projection(approval_batch, gateway)
         gateway.accept()
 
         snapshot = read_accepted_projection(approval_batch, gateway)
@@ -465,6 +658,58 @@ class SheetsProjectionTests(unittest.TestCase):
         unresolved = next(item for item in snapshot.items if item.content_entity_id == 3)
         self.assertIsNone(unresolved.final_direction_code)
         self.assertEqual(unresolved.readiness_state, "unresolved")
+
+    def test_reading_acceptance_never_writes_external_or_database_state(self):
+        gateway = FakeSheetsGateway()
+        approval_batch = batch()
+        repository = FakeRepository(approval_batch)
+        publish_projection(approval_batch, gateway, repository)
+        gateway.accept()
+        before_repository = list(repository.calls)
+        before_sheet_writes = len(
+            [name for name, _ in gateway.calls if name in ("replace_values", "batch_update")]
+        )
+
+        read_accepted_projection(approval_batch, gateway)
+
+        self.assertEqual(repository.calls, before_repository)
+        self.assertEqual(
+            len([name for name, _ in gateway.calls if name in ("replace_values", "batch_update")]),
+            before_sheet_writes,
+        )
+
+    def test_explicit_post_accept_api_persists_then_projects_repository_history(self):
+        gateway = FakeSheetsGateway()
+        approval_batch = batch()
+        repository = FakeRepository(approval_batch)
+        publish_projection(approval_batch, gateway, repository)
+        gateway.accept()
+
+        snapshot = persist_accepted_projection(
+            persisted(approval_batch),
+            gateway,
+            repository,
+        )
+
+        self.assertEqual(repository.status, "accepted")
+        record_index = next(
+            index for index, call in enumerate(repository.calls) if call[0] == "record_batch_acceptance"
+        )
+        history_index = max(
+            index for index, call in enumerate(gateway.calls) if call[0] == "replace_values"
+        )
+        self.assertGreaterEqual(history_index, 0)
+        self.assertLess(record_index, len(repository.calls))
+        history = gateway.values["История"]
+        self.assertEqual(history[1][2], snapshot.accepted_decision_hash)
+        self.assertEqual(history[1][3], "manager")
+        self.assertEqual(history[1][-3], "accepted")
+        batch_meta = metadata(gateway, "Апрув batch")
+        self.assertEqual(
+            batch_meta["Accepted decision hash"],
+            snapshot.accepted_decision_hash,
+        )
+        self.assertEqual(batch_meta["Решение"], "Принять")
 
 
 if __name__ == "__main__":
