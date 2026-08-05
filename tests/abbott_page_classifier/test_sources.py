@@ -1,0 +1,115 @@
+"""Captured Abbott registry source-reader contracts."""
+
+from __future__ import annotations
+
+from pathlib import Path
+import tempfile
+import unittest
+
+from openpyxl import Workbook
+
+from agents.abbott_page_classifier.domain import CanonicalClassification
+from agents.abbott_page_classifier.sources import (
+    read_canonical_catalog,
+    read_registry1,
+    read_registry2_csv,
+)
+
+
+FIXTURE_CSV = (
+    Path(__file__).resolve().parents[1]
+    / "fixtures"
+    / "abbott_registry2_accepted_minimal.csv"
+)
+
+
+class RegistrySourceReaderTests(unittest.TestCase):
+    def test_registry1_collapses_duplicate_material_and_preserves_provenance(self):
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            fixture = Path(temporary_directory) / "registry1.xlsx"
+            workbook = Workbook()
+            cardiology = workbook.active
+            cardiology.title = "кардио"
+            dermatology = workbook.create_sheet("дерматология")
+            headers = (
+                "ID",
+                "Название",
+                "ссылка",
+                "Направление",
+                "доступ",
+                "Тип контента",
+            )
+            for sheet in (cardiology, dermatology):
+                sheet.append(headers)
+            cardiology.append(
+                (100, "Повторяемая КР", "https://abbottpro.ru/cardio/kr-100/", "Кардиология [262338]", "Врачи", "КР")
+            )
+            cardiology.append(
+                (101, "Научная брошюра", "https://abbottpro.ru/cardio/brochure-101/", "Кардиология [262338]", "фарм", "Научно-брошюры")
+            )
+            cardiology.append(
+                (102, "Материал без URL", "", "Кардиология [262338]", "Врачи", "Статьи")
+            )
+            dermatology.append(
+                (100, "Повторяемая КР", "https://abbottpro.ru/cardio/kr-100/?utm_source=sheet", "Кардиология [262338]", "Врачи", "КР")
+            )
+            dermatology.append(
+                (103, "Новая дерматология", "https://abbottpro.ru/dermatology/new-103/", "Дерматология [624635]", "Врачи", "Статьи")
+            )
+            dermatology.append(
+                (104, "Новая таблица", "https://abbottpro.ru/dermatology/table-104/", "Дерматология [624635]", "Врачи", "Таблицы")
+            )
+            workbook.save(fixture)
+
+            snapshot = read_registry1(fixture)
+            rerun = read_registry1(fixture)
+
+        self.assertEqual(snapshot.source_name, "registry1")
+        self.assertEqual(snapshot.source_row_count, 6)
+        self.assertEqual(len(snapshot.candidates), 5)
+        self.assertEqual(snapshot.candidates_by_key["material:100"].material_type_code, "clinical_guidelines")
+        self.assertEqual(len(snapshot.candidates_by_key["material:100"].provenance), 2)
+        self.assertEqual(
+            tuple(item.source_row_id for item in snapshot.candidates_by_key["material:100"].provenance),
+            ("registry1:кардио:2", "registry1:дерматология:2"),
+        )
+        self.assertEqual(snapshot.candidates_by_key["material:101"].access_code, "pharmacists")
+        self.assertEqual(snapshot.candidates_by_key["material:102"].url, "")
+        self.assertEqual(snapshot.source_hash, rerun.source_hash)
+        self.assertEqual(snapshot.rejected_rows, ())
+        self.assertEqual(snapshot.outcome_count, snapshot.source_row_count)
+
+    def test_registry2_reads_only_captured_csv_and_rejects_rows_without_identity(self):
+        snapshot = read_registry2_csv(FIXTURE_CSV)
+
+        self.assertEqual(snapshot.source_name, "registry2")
+        self.assertEqual(snapshot.source_row_count, 3)
+        self.assertEqual(len(snapshot.candidates), 2)
+        self.assertEqual(snapshot.candidates_by_key["material:200"].material_type_code, "educational_brochures")
+        self.assertEqual(snapshot.rejected_rows[0].reason_code, "MISSING_IDENTITY")
+        self.assertEqual(snapshot.outcome_count, snapshot.source_row_count)
+        self.assertEqual(len(snapshot.source_hash), 64)
+
+    def test_canonical_catalog_rows_have_deterministic_source_identity(self):
+        rows = (
+            CanonicalClassification(
+                content_entity_id=41,
+                title="Canonical material",
+                url="https://abbottpro.ru/cardio/canonical/",
+                direction_code="cardiology",
+                material_type_code="articles",
+                access_code="doctors",
+                lifecycle_code="active",
+            ),
+        )
+
+        snapshot = read_canonical_catalog(rows)
+
+        self.assertEqual(snapshot.source_name, "canonical_catalog")
+        self.assertEqual(snapshot.source_row_count, 1)
+        self.assertEqual(snapshot.candidates_by_key["canonical:41"].source_row_id, "canonical_catalog:41")
+        self.assertEqual(snapshot.outcome_count, 1)
+
+
+if __name__ == "__main__":
+    unittest.main()
