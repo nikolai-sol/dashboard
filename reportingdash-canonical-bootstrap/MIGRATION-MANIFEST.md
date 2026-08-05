@@ -56,7 +56,7 @@ every runbook entrypoint and each repository-local Python dependency.
 | `runtime/agents/abbott_page_classifier/identity.py` | `agents/abbott_page_classifier/identity.py` | `39e0e961dbb5c91a65a737f953f1534141f84719d9690ddc648c4f313d6da6d7` | Canonical identity resolution |
 | `runtime/agents/abbott_page_classifier/sources.py` | `agents/abbott_page_classifier/sources.py` | `7f0c7fca84b021eac669726165336a978d2eeff0c92a1626f44af60d363dce9d` | Offline Registry 1/Registry 2 snapshot parsers |
 | `runtime/agents/abbott_page_classifier/llm_classifier.py` | `agents/abbott_page_classifier/llm_classifier.py` | `43cfd180f64da3afe74aa8252e644fa4ddecc1d294783f9660274b0b17eb3ce7` | Privacy-minimized classifier adapter, invoked only with execute authorization |
-| `runtime/agents/abbott_page_classifier/sheets_sync.py` | `agents/abbott_page_classifier/sheets_sync.py` | `6c3a09329cc89bea3fd759fdc860c8eee99ff63a2be438455a5b2c1533173123` | Approval projection publisher and accepted snapshot reader |
+| `runtime/agents/abbott_page_classifier/sheets_sync.py` | `agents/abbott_page_classifier/sheets_sync.py` | `a437ffbaaa1fe84bc413bbef72508ad9977aed48cf75ae9c1cbe3497abe04b07` | Approval projection publisher and accepted snapshot reader |
 | `src/db/migrations/047_abbott_content_reconciliation_staging.sql` | `dashboard-next/src/db/migrations/047_abbott_content_reconciliation_staging.sql` | `9ba5254bc4adcdd94c17a0dfde09f256d6540f9ae505f8e1c38d90c43a78e032` | Additive reconciliation staging schema; package only, never applied by runtime |
 
 ## collectors/

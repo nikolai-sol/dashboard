@@ -4,8 +4,8 @@
 ``persist_and_publish_batch`` persists the canonical batch and every item before
 the first gateway write. ``read_accepted_projection`` validates and hashes the
 complete mutable decision snapshot; only ``ready`` rows are approval-eligible.
-The old local-file ``publish``/``pull-approved`` CLI is intentionally fail-closed
-until Task 9 composes the full canonical operator workflow.
+The direct legacy CLI is permanently fail-closed: ``workflow.py
+publish-projection`` is the only operator Sheet-writing command.
 
 Google authentication remains operator-only at ``~/.hermes/google_token.json``.
 """
@@ -2272,12 +2272,15 @@ def main(argv: list[str] | None = None) -> int:
     p_pull.add_argument("--spreadsheet-id", default=None)
 
     p_share = sub.add_parser("share", help="Share existing sheet with email")
-    p_share.add_argument("--email", required=True)
+    p_share.add_argument("--email", default=None)
     p_share.add_argument("--spreadsheet-id", default=None)
 
     p_state = sub.add_parser("state", help="Show current sheet state")
 
     args = p.parse_args(argv)
+
+    if args.cmd in {"publish", "pull-approved", "share"}:
+        raise SystemExit("LEGACY_SHEETS_CLI_DISABLED")
 
     if args.cmd == "publish":
         info = publish(

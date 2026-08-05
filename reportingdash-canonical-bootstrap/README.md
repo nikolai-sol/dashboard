@@ -76,6 +76,23 @@ packaging it into the private canonical repository.
 
 The bootstrap also packages the additive `src/db/migrations/047_abbott_content_reconciliation_staging.sql` beside its exact root authority. It is not copied into `runtime/` and this package does not apply it. The weekly Abbott entrypoint composes only reconcile, classify, and Sheet projection, then stops for manual batch approval; ingest, candidate materialization, validation, and activation are separately controlled stages.
 
+## Abbott weekly proposal configuration
+
+The separately authorized first proposal uses the dedicated workflow role only:
+`ABBOTT_CONTENT_WORKFLOW_DB_HOST`, `ABBOTT_CONTENT_WORKFLOW_DB_PORT`,
+`ABBOTT_CONTENT_WORKFLOW_DB_NAME=report_bd`, `ABBOTT_CONTENT_WORKFLOW_DB_USER`,
+and `ABBOTT_CONTENT_WORKFLOW_DB_PASSWORD`. Set the reviewed destination as
+`ABBOTT_CONTENT_APPROVAL_SPREADSHEET_ID`. Bind every operation with
+`CODE_REVISION` and the explicit taxonomy, prompt, and model-routing versions
+passed to `weekly_proposal.py`. `OPENAI_API_KEY` is needed only for eligible
+`--execute --execute-llm`, never for a dry run.
+
+Google OAuth setup/token ownership remains with the operator at
+`~/.hermes/google_token.json`; this bootstrap neither installs nor prints a
+token. Direct `sheets_sync.py publish`, `pull-approved`, and `share` commands
+are disabled. `workflow.py publish-projection` is the sole Sheet writer after
+separate authorization.
+
 ## Abbott UTM/frequency successor release
 
 The packaged Logs visit contract includes `ym:s:lastsignUTMSource`, normalized
