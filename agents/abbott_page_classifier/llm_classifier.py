@@ -327,8 +327,12 @@ _LABELED_VALUE = re.compile(r"(?:^|[?&#;\s])([^?&#;:=]{1,64})\s*[:=]")
 _BEARER_VALUE = re.compile(r"\bbearer\s+[A-Za-z0-9._~-]{8,}", re.IGNORECASE)
 _API_SECRET = re.compile(r"\bsk-[A-Za-z0-9_-]{8,}", re.IGNORECASE)
 _PHONE_LABEL = re.compile(
-    r"(?<!\w)(?:telephone|phone|tel|телефон|тел|мобильн\w*|моб)(?!\w)",
+    r"(?<!\w)(?:(?:telephone|phone)(?:\s+(?:number|no|n|номер))?"
+    r"|tel|телефон|тел|мобильн\w*|моб)(?!\w)",
     re.IGNORECASE,
+)
+_PHONE_COMPOUND_BOUNDARY = re.compile(
+    r"(telephone|phone)(?=(?:number|no|n|номер)\b)", re.IGNORECASE
 )
 
 
@@ -386,11 +390,17 @@ def _has_phone_digit_run(value: str, *, minimum_digits: int = 10) -> bool:
 
 
 def _has_labeled_phone(value: str) -> bool:
-    label_view = "".join(
-        character
-        for character in value.casefold()
-        if unicodedata.category(character)[0] not in {"C", "M"}
-    )
+    split_compound_label = _PHONE_COMPOUND_BOUNDARY.sub(r"\1 ", value)
+    normalized: list[str] = []
+    for character in split_compound_label:
+        category_family = unicodedata.category(character)[0]
+        if category_family in {"C", "M"}:
+            continue
+        if character == "_" or character.isspace() or category_family in {"P", "Z"}:
+            normalized.append(" ")
+        else:
+            normalized.append(character)
+    label_view = "".join(normalized).casefold()
     for match in _PHONE_LABEL.finditer(label_view):
         fragment = label_view[
             match.end() : match.end() + PHONE_LABEL_WINDOW_CHARS
