@@ -129,6 +129,7 @@ class Classification:
     bitrix_id: str | None = None
     page_status: str = PAGE_STATUS_ACTIVE  # active | Архив
     lifecycle_code: str = PAGE_STATUS_ACTIVE
+    lifecycle_rule: str = ""
     http_status: int | None = None
 
 
@@ -326,7 +327,7 @@ def find_section_id(url: str) -> str | None:
             return seg
     try:
         qs = {key.casefold(): values for key, values in parse_qs(urlparse(url).query).items()}
-        for key in ("iblock_section_id", "section", "direction"):
+        for key in ("iblock_section_id", "section", "section_id", "direction"):
             if key in qs and qs[key]:
                 val = qs[key][0]
                 if val in DIRECTION_BY_QUERY_ID:
@@ -432,11 +433,9 @@ def apply_http_status(result: Classification, status: int | None) -> Classificat
     if status in HTTP_ARCHIVE_CODES:
         result.page_status = PAGE_STATUS_ARCHIVE
         result.lifecycle_code = "archive_candidate"
-        result.material_type_rule = f"http_{status}"
+        result.lifecycle_rule = f"http_{status}"
         note = f"http={status} → Архив"
         result.notes = f"{result.notes}; {note}".strip("; ") if result.notes else note
-        # still keep proposed direction for history, but flag archive
-        result.rule = f"{result.rule}+archive_http_{status}" if result.rule else f"archive_http_{status}"
     return result
 
 
