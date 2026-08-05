@@ -89,3 +89,37 @@ No DB migration/grant, secret installation, API request, Sheet publication,
 deployment, cron/Hermes/Telegram action, candidate activation, or active
 pointer mutation occurred. Migration 047/grants/secrets/first real proposal and
 any live schedule remain separately authorized work.
+
+## Review correction: Sheets closure, tabs, and legacy CLI
+
+RED review tests showed that the bootstrap did not declare the Google API/auth
+distributions imported by `load_creds`/`services`, the three operator documents
+described stale tab names, and direct `sheets_sync.py` commands could still
+enter legacy publish/pull/share code. GREEN adds compatible root ranges and
+bootstrap pins for `google-api-python-client`, `google-auth`, and
+`google-auth-oauthlib`; an AST-backed test maps each direct default-gateway
+module import to its declared distribution.
+
+The exact Sheet contract is now derived in tests from `APPROVAL_TAB_TITLES` and
+documented verbatim in README, PROCESS, and the runbook:
+
+```text
+Апрув batch, Предложения, Конфликты, Не определено,
+История, Справочники, Сводка, Как это работает
+```
+
+Bootstrap README and `.env.example` name the dedicated workflow DB variables,
+reviewed spreadsheet ID, code/taxonomy/prompt/routing bindings, eligible-only
+OpenAI use, and operator-owned `~/.hermes/google_token.json` path without any
+values. Direct `sheets_sync.py publish`, `pull-approved`, and `share` (including
+bare `share`) now terminate before any authority with exactly
+`LEGACY_SHEETS_CLI_DISABLED`; library projection/read authorities and
+`workflow.py publish-projection` remain the canonical route.
+
+Review verification: 6 focused Python contracts pass; root discovery, compile,
+manifest/copy, offline reconcile, and weekly dry run pass; dashboard full suite
+passes 535 tests with lint at 0 errors/4 unchanged warnings plus typecheck,
+build, and public-asset scan. No live action occurred.
+
+Review correction nested commit: `9baf9dd88cc538a1e10a9f68cc1fc730d8ad4073`.
+The root commit carrying this amended report is recorded in the handoff.

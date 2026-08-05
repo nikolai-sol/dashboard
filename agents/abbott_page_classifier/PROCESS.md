@@ -21,8 +21,17 @@ before manual approval. The weekly workflow stops after the projection.
 
 ## Manual review and subsequent controlled stages
 
-The reviewer checks the eight Sheet tabs: `Апрув batch`, `Готово`, `Конфликты`,
-`Не определено`, `Отклонено`, `Без изменений`, `Справочники`, and `Инструкция`.
+The reviewer checks these eight Sheet tabs in order:
+
+1. `Апрув batch`
+2. `Предложения`
+3. `Конфликты`
+4. `Не определено`
+5. `История`
+6. `Справочники`
+7. `Сводка`
+8. `Как это работает`
+
 Accepted Registry 2 is Batch 2 source evidence, not an approval decision for
 the proposal batch.
 
@@ -50,3 +59,16 @@ and reviewed direction/material-type evaluation before a separately authorized
 LLM evaluation. Review conflict/unresolved tabs and hashes before Sheet
 approval. A failed candidate is recovered by not activating it; active facts
 are append-only and never silently rewritten.
+
+## Authorized runtime configuration
+
+The dedicated workflow DB role is configured only through
+`ABBOTT_CONTENT_WORKFLOW_DB_HOST`, `ABBOTT_CONTENT_WORKFLOW_DB_PORT`,
+`ABBOTT_CONTENT_WORKFLOW_DB_NAME=report_bd`, `ABBOTT_CONTENT_WORKFLOW_DB_USER`,
+and `ABBOTT_CONTENT_WORKFLOW_DB_PASSWORD`. The reviewed Sheet ID is
+`ABBOTT_CONTENT_APPROVAL_SPREADSHEET_ID`; `CODE_REVISION` and the explicit
+taxonomy/prompt/routing versions bind each proposal. `OPENAI_API_KEY` is only
+used for eligible `--execute --execute-llm`. The operator owns Google token
+setup at `~/.hermes/google_token.json`. Direct legacy `sheets_sync.py`
+`publish`, `pull-approved`, and `share` commands are disabled; only workflow
+`publish-projection` can write the Sheet.

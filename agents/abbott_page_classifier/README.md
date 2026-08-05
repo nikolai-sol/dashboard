@@ -58,13 +58,13 @@ reachable through `weekly_proposal.py` or `workflow.py`.
 The published Sheet has these eight tabs:
 
 1. `Апрув batch`
-2. `Готово`
+2. `Предложения`
 3. `Конфликты`
 4. `Не определено`
-5. `Отклонено`
-6. `Без изменений`
-7. `Справочники`
-8. `Инструкция`
+5. `История`
+6. `Справочники`
+7. `Сводка`
+8. `Как это работает`
 
 Batch 2 means the supplied Registry 2 snapshot is accepted source evidence. It
 does not approve the newly produced batch. Every source row must end in ready,
@@ -83,6 +83,20 @@ sanitized aggregate receipts are persisted or printed. Do not store or emit
 OAuth values, raw provider responses, chain-of-thought, visitor/client IDs,
 emails, phone numbers, or source URLs beyond the approved content contract.
 Operators receive stable status codes, not tracebacks or raw content.
+
+## Separately authorized publish configuration
+
+The first real proposal uses the dedicated workflow role with
+`ABBOTT_CONTENT_WORKFLOW_DB_HOST`, `ABBOTT_CONTENT_WORKFLOW_DB_PORT`,
+`ABBOTT_CONTENT_WORKFLOW_DB_NAME=report_bd`,
+`ABBOTT_CONTENT_WORKFLOW_DB_USER`, and `ABBOTT_CONTENT_WORKFLOW_DB_PASSWORD`.
+`ABBOTT_CONTENT_APPROVAL_SPREADSHEET_ID` selects the reviewed destination.
+`CODE_REVISION` and the explicit weekly taxonomy/prompt/routing arguments bind
+the run. `OPENAI_API_KEY` is required only for eligible
+`--execute --execute-llm` classification. Google token ownership/setup remains
+operator-only at `~/.hermes/google_token.json`; this package never installs,
+prints, or rotates it. Direct `sheets_sync.py publish`, `pull-approved`, and
+`share` are disabled; `workflow.py publish-projection` is the sole Sheet writer.
 
 ## Gates and recovery
 

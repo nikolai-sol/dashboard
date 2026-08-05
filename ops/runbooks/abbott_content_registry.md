@@ -79,13 +79,13 @@ one.
 The projection always contains exactly these tabs:
 
 1. `Апрув batch`
-2. `Готово`
+2. `Предложения`
 3. `Конфликты`
 4. `Не определено`
-5. `Отклонено`
-6. `Без изменений`
-7. `Справочники`
-8. `Инструкция`
+5. `История`
+6. `Справочники`
+7. `Сводка`
+8. `Как это работает`
 
 Batch 2 means accepted Registry 2 source evidence. It is not approval of the
 new proposal batch. Require every captured row to be accounted for as ready,
@@ -122,6 +122,23 @@ hashes, aggregate counts, and sanitized status. Never persist or print OAuth
 values, raw provider responses, chain-of-thought, visitor/client IDs, email,
 phone, or unapproved URL/behavior data. Failures are stable status codes, not
 tracebacks.
+
+## Separately authorized first publish configuration
+
+The owner installs the dedicated role values outside this repository:
+`ABBOTT_CONTENT_WORKFLOW_DB_HOST`, `ABBOTT_CONTENT_WORKFLOW_DB_PORT`,
+`ABBOTT_CONTENT_WORKFLOW_DB_NAME=report_bd`, `ABBOTT_CONTENT_WORKFLOW_DB_USER`,
+and `ABBOTT_CONTENT_WORKFLOW_DB_PASSWORD`. The first projection also needs the
+reviewed `ABBOTT_CONTENT_APPROVAL_SPREADSHEET_ID`. Bind every run with
+`CODE_REVISION` plus the explicit taxonomy, prompt, and model-routing versions.
+`OPENAI_API_KEY` is used only for eligible `--execute --execute-llm`; it is not
+needed for dry runs or deterministic classifications. Google token setup and
+ownership remains operator-only at `~/.hermes/google_token.json`.
+
+The direct legacy `sheets_sync.py publish`, `pull-approved`, and `share`
+commands always return `LEGACY_SHEETS_CLI_DISABLED`. The library projection and
+read authorities remain internal to the canonical workflow; only
+`workflow.py publish-projection` writes a Sheet.
 
 Golden gates are source accounting, taxonomy and schema validity, anti-flip
 correctness, and reviewed direction/material-type accuracy. Real LLM evaluation

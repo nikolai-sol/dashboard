@@ -82,6 +82,11 @@ VENDORED_CONTENT_RUNTIME = {
     "runtime/agents/abbott_page_classifier/llm_classifier.py",
     "runtime/agents/abbott_page_classifier/sheets_sync.py",
 }
+DEFAULT_SHEETS_GATEWAY_IMPORTS = {
+    "google.auth.transport.requests": "google-auth",
+    "google.oauth2.credentials": "google-auth",
+    "googleapiclient.discovery": "google-api-python-client",
+}
 
 
 class AbbottRuntimeClosureTest(unittest.TestCase):
@@ -343,6 +348,35 @@ assert json.loads(stream.getvalue())["status"] == "proposal_published"
                 "openai", "openpyxl", "pydantic",
             } <= packages
         )
+
+    def test_default_sheets_gateway_imports_have_declared_runtime_distributions(self):
+        source = (ROOT / "agents/abbott_page_classifier/sheets_sync.py").read_text(
+            encoding="utf-8"
+        )
+        tree = ast.parse(source)
+        functions = {
+            node.name: node for node in tree.body if isinstance(node, ast.FunctionDef)
+        }
+        imported_modules = set()
+        for function_name in ("load_creds", "services"):
+            for node in ast.walk(functions[function_name]):
+                if isinstance(node, ast.ImportFrom) and node.module:
+                    imported_modules.add(node.module)
+        self.assertEqual(set(DEFAULT_SHEETS_GATEWAY_IMPORTS), imported_modules)
+
+        bootstrap_requirements = (
+            ROOT / "dashboard-next/reportingdash-canonical-bootstrap/requirements.txt"
+        ).read_text(encoding="utf-8").splitlines()
+        bootstrap_packages = {
+            line.split("==", 1)[0].lower()
+            for line in bootstrap_requirements
+            if line and not line.startswith("#")
+        }
+        self.assertTrue(set(DEFAULT_SHEETS_GATEWAY_IMPORTS.values()) <= bootstrap_packages)
+
+        root_requirements = (ROOT / "requirements.txt").read_text(encoding="utf-8")
+        self.assertRegex(root_requirements, r"(?m)^google-api-python-client>=2\.0,<3$")
+        self.assertRegex(root_requirements, r"(?m)^google-auth>=2\.0,<3$")
 
     def test_attestation_rejects_a_dirty_tracked_worktree(self):
         import run_abbott_metrika_active_release as launcher

@@ -285,20 +285,70 @@ class SheetsProjectionTests(unittest.TestCase):
 
         self.assertEqual(result.returncode, 0, result.stderr)
 
-    def test_legacy_publish_and_pull_cli_fail_closed_before_google_access(self):
-        for argv in (("publish",), ("pull-approved",)):
+    def test_legacy_sheet_cli_commands_fail_closed_before_any_legacy_authority(self):
+        for argv in (
+            ("publish", "--share", "operator@example.invalid"),
+            ("pull-approved",),
+            ("share",),
+            ("share", "--email", "operator@example.invalid"),
+        ):
             with self.subTest(argv=argv), patch.object(
-                sheets_sync,
-                "services",
-                side_effect=AssertionError("Google service must not be constructed"),
-            ) as service:
+                sheets_sync, "publish", side_effect=AssertionError("publish must not run")
+            ) as publish, patch.object(
+                sheets_sync, "pull_approved", side_effect=AssertionError("pull must not run")
+            ) as pull, patch.object(
+                sheets_sync, "share_with_user", side_effect=AssertionError("share must not run")
+            ) as share:
                 with self.assertRaises(SystemExit) as raised:
                     sheets_sync.main(list(argv))
                 self.assertEqual(
                     str(raised.exception),
-                    "CANONICAL_DB_BATCH_REQUIRED",
+                    "LEGACY_SHEETS_CLI_DISABLED",
                 )
-                service.assert_not_called()
+                publish.assert_not_called()
+                pull.assert_not_called()
+                share.assert_not_called()
+
+    def test_direct_legacy_sheet_cli_is_sanitized_and_disabled(self):
+        script = (
+            Path(__file__).resolve().parents[2]
+            / "agents"
+            / "abbott_page_classifier"
+            / "sheets_sync.py"
+        )
+        for argv in (
+            ("publish",),
+            ("pull-approved",),
+            ("share",),
+            ("share", "--email", "operator@example.invalid"),
+        ):
+            with self.subTest(argv=argv):
+                result = subprocess.run(
+                    [sys.executable, str(script), *argv],
+                    capture_output=True,
+                    text=True,
+                    check=False,
+                )
+                self.assertNotEqual(result.returncode, 0)
+                self.assertEqual(result.stdout, "")
+                self.assertEqual(result.stderr.strip(), "LEGACY_SHEETS_CLI_DISABLED")
+
+    def test_operator_docs_use_the_exact_runtime_approval_tab_contract(self):
+        root = Path(__file__).resolve().parents[2]
+        expected = "\n".join(
+            f"{index}. `{title}`"
+            for index, title in enumerate(APPROVAL_TAB_TITLES, start=1)
+        )
+        retired = ("Готово", "Отклонено", "Без изменений", "Инструкция")
+        for relative in (
+            "agents/abbott_page_classifier/README.md",
+            "agents/abbott_page_classifier/PROCESS.md",
+            "ops/runbooks/abbott_content_registry.md",
+        ):
+            with self.subTest(relative=relative):
+                text = (root / relative).read_text(encoding="utf-8")
+                self.assertIn(expected, text)
+                self.assertTrue(all(title not in text for title in retired))
 
     def test_persist_and_publish_finishes_all_database_writes_before_sheet_write(self):
         events: list[str] = []
