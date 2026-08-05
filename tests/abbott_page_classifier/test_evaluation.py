@@ -6,7 +6,11 @@ import unittest
 from pathlib import Path
 import json
 
-from agents.abbott_page_classifier.evaluation import evaluate_golden_set, load_fixture
+from agents.abbott_page_classifier.evaluation import (
+    attest_workbook_rows,
+    evaluate_golden_set,
+    load_fixture,
+)
 
 
 class FixtureClassifier:
@@ -15,6 +19,24 @@ class FixtureClassifier:
 
 
 class EvaluationTests(unittest.TestCase):
+    def test_attests_exact_nonprivate_source_rows_from_a_workbook(self):
+        from openpyxl import Workbook
+        from tempfile import TemporaryDirectory
+
+        with TemporaryDirectory() as temporary_directory:
+            path = Path(temporary_directory) / "source.xlsx"
+            workbook = Workbook()
+            sheet = workbook.active
+            sheet.title = "pages"
+            sheet.append(("Название", "Символьный код", "Направление", "Доступ", "Тип материала"))
+            sheet.append(("Exact title", "exact-slug", "Кардиология [262338]", "Врачи", "Статьи"))
+            workbook.save(path)
+            attestation = attest_workbook_rows(path, (("pages", 2),))
+
+        self.assertEqual(attestation["row_count"], 1)
+        self.assertEqual(len(attestation["workbook_sha256"]), 64)
+        self.assertEqual(attestation["rows"][0]["payload"]["slug"], "exact-slug")
+        self.assertEqual(len(attestation["rows"][0]["source_fingerprint"]), 64)
     def test_versioned_fixture_is_large_nonprivate_and_covers_review_edges(self):
         fixture = Path("agents/abbott_page_classifier/evals/golden.v1.jsonl")
         records = load_fixture(fixture)
@@ -25,7 +47,21 @@ class EvaluationTests(unittest.TestCase):
         self.assertEqual(set(metadata["source_coverage"]["absent_direction_codes"]), {"dermatology", "not_applicable"})
         self.assertTrue(set(metadata["source_coverage"]["canonical_material_type_codes"]).issubset({row["expected_material_type_code"] for row in records}))
         self.assertEqual(len(metadata["source_coverage"]["canonical_material_type_codes"]), 17)
-        self.assertTrue(any(row.get("generic_academy_path") for row in records))
+        self.assertEqual(len(metadata["source_attestation"]["workbook_sha256"]), 64)
+        attested = {
+            (item["payload"]["sheet"], item["payload"]["row_ordinal"]): item
+            for item in metadata["source_attestation"]["rows"]
+        }
+        self.assertTrue(all(
+            row["source_provenance"]["source_fingerprint"] == attested[
+                (row["source_provenance"]["sheet"], row["source_provenance"]["row_ordinal"])
+            ]["source_fingerprint"]
+            for row in records
+        ))
+        generic = next(row for row in records if row.get("generic_academy_path"))
+        self.assertEqual(generic["url_derivation"], "academy_from_source_slug")
+        self.assertEqual(generic["url"], f"https://abbottpro.ru/academy/{generic['slug']}")
+        self.assertEqual(sum(row.get("insufficient_evidence") is True for row in records), 2)
         self.assertTrue(any(row.get("duplicate_group") for row in records))
         self.assertTrue(any(row.get("restricted") for row in records))
         self.assertTrue(any(row.get("archive_candidate") for row in records))
@@ -38,9 +74,13 @@ class EvaluationTests(unittest.TestCase):
                 "url": "https://abbottpro.ru/cardio/article",
                 "expected_direction_code": "cardiology",
                 "expected_material_type_code": "articles",
+                "expected_access_code": "doctors",
+                "expected_lifecycle_code": "active",
                 "fixture_prediction": {
                     "direction_code": "cardiology",
                     "material_type_code": "articles",
+                    "access_code": "doctors",
+                    "lifecycle_code": "active",
                 },
             },
             {
@@ -48,10 +88,14 @@ class EvaluationTests(unittest.TestCase):
                 "url": "https://abbottpro.ru/gastro/locked",
                 "expected_direction_code": "gastroenterology",
                 "expected_material_type_code": "video",
+                "expected_access_code": "doctors",
+                "expected_lifecycle_code": "active",
                 "locked_direction_code": "gastroenterology",
                 "fixture_prediction": {
                     "direction_code": "gastroenterology",
                     "material_type_code": "video",
+                    "access_code": "doctors",
+                    "lifecycle_code": "active",
                 },
             },
         )
@@ -77,9 +121,13 @@ class EvaluationTests(unittest.TestCase):
                 "url": "https://abbottpro.ru/cardio/a",
                 "expected_direction_code": "cardiology",
                 "expected_material_type_code": "articles",
+                "expected_access_code": "doctors",
+                "expected_lifecycle_code": "active",
                 "fixture_prediction": {
                     "direction_code": "gastroenterology",
                     "material_type_code": "video",
+                    "access_code": "doctors",
+                    "lifecycle_code": "active",
                 },
             },
             {
@@ -87,10 +135,14 @@ class EvaluationTests(unittest.TestCase):
                 "url": "https://abbottpro.ru/cardio/b",
                 "expected_direction_code": "cardiology",
                 "expected_material_type_code": "articles",
+                "expected_access_code": "doctors",
+                "expected_lifecycle_code": "active",
                 "locked_direction_code": "cardiology",
                 "fixture_prediction": {
                     "direction_code": "gastroenterology",
                     "material_type_code": "articles",
+                    "access_code": "doctors",
+                    "lifecycle_code": "active",
                 },
             },
         )
@@ -101,6 +153,25 @@ class EvaluationTests(unittest.TestCase):
         self.assertEqual(report.material_type_correct, 1)
         self.assertEqual(report.anti_flip_detected, 0)
         self.assertEqual(report.disagreement_count, 3)
+        self.assertFalse(report.gate_passed)
+
+    def test_invalid_classifier_output_schema_or_taxonomy_fails_hard_gate(self):
+        record = {
+            "title": "A", "url": "https://abbottpro.ru/cardio/a",
+            "expected_direction_code": "cardiology", "expected_material_type_code": "articles",
+            "expected_access_code": "doctors", "expected_lifecycle_code": "active",
+            "expected_access_code": "doctors", "expected_lifecycle_code": "active",
+        }
+        class InvalidOutput:
+            def classify(self, _record):
+                return {"direction_code": "cardiology", "material_type_code": "articles",
+                        "access_code": "not-a-code", "lifecycle_code": "active", "extra": "no"}
+
+        report = evaluate_golden_set((record,) * 80, InvalidOutput())
+
+        self.assertGreaterEqual(report.direction_accuracy, 0.95)
+        self.assertLess(report.taxonomy_validity, 1.0)
+        self.assertLess(report.schema_compliance, 1.0)
         self.assertFalse(report.gate_passed)
 
     def test_invalid_fixture_schema_is_a_hard_failure_without_classifier_call(self):
@@ -125,6 +196,8 @@ class EvaluationTests(unittest.TestCase):
             "url": "https://abbottpro.ru/cardio/safe",
             "expected_direction_code": "cardiology",
             "expected_material_type_code": "articles",
+            "expected_access_code": "doctors",
+            "expected_lifecycle_code": "active",
             "source_provenance": {"Client-ID": "forbidden"},
         },), NeverCalled())
 

@@ -10,10 +10,12 @@ from __future__ import annotations
 
 import argparse
 from dataclasses import asdict, dataclass
+import hashlib
 import json
 from pathlib import Path
 import sys
 from typing import Any, Iterable, Mapping, Protocol, Sequence
+from openpyxl import load_workbook
 
 if __package__ in (None, ""):
     sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
@@ -24,6 +26,12 @@ from agents.abbott_page_classifier.domain import (
     LIFECYCLE_CODES,
     MATERIAL_TYPE_CODES,
     Proposal,
+)
+from agents.abbott_page_classifier.normalization import (
+    normalize_taxonomy_label,
+    normalize_title,
+    normalize_url,
+    sha256_text,
 )
 
 
@@ -39,11 +47,140 @@ _ALLOWED_RECORD_KEYS = frozenset(
         "record_type", "fixture_version", "selection", "source_provenance",
         "title", "url", "slug", "access_code", "lifecycle_code", "restricted",
         "archive_candidate", "insufficient_evidence", "duplicate_group",
-        "generic_academy_path", "locked_direction_code", "expected_direction_code",
+        "generic_academy_path", "url_derivation", "locked_direction_code", "expected_direction_code",
         "expected_material_type_code", "expected_access_code", "expected_lifecycle_code",
         "fixture_prediction",
     }
 )
+_OUTPUT_KEYS = frozenset(
+    {"direction_code", "material_type_code", "access_code", "lifecycle_code"}
+)
+
+
+def _canonical_json(value: object) -> str:
+    return json.dumps(value, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
+
+
+def _header_index(headers: Sequence[object], labels: Sequence[str]) -> int | None:
+    normalized = {normalize_title(str(value or "")).casefold(): index for index, value in enumerate(headers)}
+    return next((normalized[label] for label in labels if label in normalized), None)
+
+
+def attest_workbook_rows(
+    workbook_path: Path, rows: Iterable[tuple[str, int]]
+) -> dict[str, object]:
+    """Return a deterministic, nonprivate attestation for exact workbook rows.
+
+    The payload deliberately preserves empty source fields as ``None`` rather
+    than manufacturing a URL, slug, or display title for review convenience.
+    """
+
+    selections = tuple(sorted((str(sheet), int(ordinal)) for sheet, ordinal in rows))
+    workbook = load_workbook(workbook_path, read_only=True, data_only=True)
+    entries: list[dict[str, object]] = []
+    try:
+        for sheet_name, ordinal in selections:
+            if sheet_name not in workbook.sheetnames or ordinal < 2:
+                raise ValueError("SOURCE_ROW_NOT_FOUND")
+            sheet = workbook[sheet_name]
+            iterator = sheet.iter_rows(values_only=True)
+            headers = next(iterator, None)
+            if not headers:
+                raise ValueError("SOURCE_ROW_NOT_FOUND")
+            row = next((value for index, value in enumerate(iterator, start=2) if index == ordinal), None)
+            if row is None:
+                raise ValueError("SOURCE_ROW_NOT_FOUND")
+            def cell(*labels: str) -> str:
+                position = _header_index(headers, labels)
+                return normalize_title(str(row[position] or "")) if position is not None and position < len(row) else ""
+            title = cell("название", "наименование материала")
+            slug = cell("символьный код")
+            raw_url = cell("ссылка", "url", "ссылка на регистрацию", "файл pdf")
+            payload = {
+                "sheet": sheet_name,
+                "row_ordinal": ordinal,
+                "title": title or None,
+                "slug": slug or None,
+                "url": normalize_url(raw_url).value or None,
+                "direction_code": normalize_taxonomy_label("direction", cell("направление", "направления")),
+                "material_type_code": normalize_taxonomy_label("material_type", cell("тип материала", "тип контента")),
+                "access_code": normalize_taxonomy_label("access", cell("доступ")),
+                "activity": cell("активность") or None,
+            }
+            entries.append({
+                "payload": payload,
+                "source_fingerprint": sha256_text(_canonical_json(payload)),
+            })
+    finally:
+        workbook.close()
+    return {
+        "workbook_sha256": hashlib.sha256(workbook_path.read_bytes()).hexdigest(),
+        "row_count": len(entries),
+        "rows": entries,
+    }
+
+
+def source_attest_records(
+    workbook_path: Path, records: Iterable[Mapping[str, object]]
+) -> tuple[dict[str, object], tuple[dict[str, object], ...]]:
+    """Build fixture records from exact source values and attach their evidence.
+
+    This is the deterministic generator path used for the committed golden
+    fixture. It copies only title/slug/url values observed in the workbook; an
+    absent locator remains absent and is explicitly tagged insufficient.
+    """
+
+    copied = [dict(record) for record in records]
+    selections: list[tuple[str, int]] = []
+    for record in copied:
+        provenance = record.get("source_provenance")
+        if not isinstance(provenance, Mapping):
+            raise ValueError("SOURCE_PROVENANCE_REQUIRED")
+        selections.append((str(provenance.get("sheet", "")), int(provenance.get("row_ordinal", 0))))
+    attestation = attest_workbook_rows(workbook_path, selections)
+    evidence = {
+        (entry["payload"]["sheet"], entry["payload"]["row_ordinal"]): entry
+        for entry in attestation["rows"]
+    }
+    for record in copied:
+        provenance = record["source_provenance"]
+        entry = evidence[(str(provenance["sheet"]), int(provenance["row_ordinal"]))]
+        payload = entry["payload"]
+        for name in ("title", "slug"):
+            if payload[name] is None:
+                record.pop(name, None)
+            else:
+                record[name] = payload[name]
+        derived_rule = record.get("url_derivation")
+        if payload["url"] is not None:
+            record["url"] = payload["url"]
+            record.pop("url_derivation", None)
+            record.pop("generic_academy_path", None)
+        elif payload["slug"] is not None:
+            if derived_rule not in {None, "portal_from_source_slug", "academy_from_source_slug"}:
+                raise ValueError("SOURCE_URL_DERIVATION_INVALID")
+            rule = derived_rule or "portal_from_source_slug"
+            prefix = "/academy/" if rule == "academy_from_source_slug" else "/"
+            record["url"] = f"https://abbottpro.ru{prefix}{payload['slug']}"
+            record["url_derivation"] = rule
+            if rule == "academy_from_source_slug":
+                record["generic_academy_path"] = True
+            else:
+                record.pop("generic_academy_path", None)
+        else:
+            record.pop("url", None)
+            record.pop("url_derivation", None)
+            record.pop("generic_academy_path", None)
+        if payload["title"] is None or (payload["url"] is None and payload["slug"] is None):
+            record["insufficient_evidence"] = True
+        else:
+            record.pop("insufficient_evidence", None)
+        record["source_provenance"] = {
+            "sheet": payload["sheet"],
+            "row_ordinal": payload["row_ordinal"],
+            "source_fingerprint": entry["source_fingerprint"],
+        }
+    return attestation, tuple(copied)
 
 
 class GoldenClassifier(Protocol):
@@ -125,15 +262,22 @@ def _is_record_schema_valid(record: object) -> bool:
         return False
     if set(record) - _ALLOWED_RECORD_KEYS or _contains_private_key(record):
         return False
-    required = ("title", "url", "expected_direction_code", "expected_material_type_code")
+    required = ("expected_direction_code", "expected_material_type_code", "expected_access_code", "expected_lifecycle_code")
     if any(not isinstance(record.get(name), str) or not str(record[name]).strip() for name in required):
         return False
-    if not str(record["url"]).startswith(("https://", "http://")):
+    insufficient = record.get("insufficient_evidence") is True
+    title, url = record.get("title"), record.get("url")
+    if not insufficient and (not isinstance(title, str) or not title.strip() or not isinstance(url, str) or not url.startswith(("https://", "http://"))):
         return False
+    if insufficient:
+        if title is not None and (not isinstance(title, str) or not title.strip()):
+            return False
+        if url is not None and (not isinstance(url, str) or not url.startswith(("https://", "http://"))):
+            return False
     return True
 
 
-def _codes_are_valid(record: Mapping[str, object]) -> bool:
+def _expected_codes_are_valid(record: Mapping[str, object]) -> bool:
     checks = (
         ("expected_direction_code", DIRECTION_CODES),
         ("expected_material_type_code", MATERIAL_TYPE_CODES),
@@ -155,6 +299,22 @@ def _prediction(value: object) -> Mapping[str, object]:
     return value if isinstance(value, Mapping) else {}
 
 
+def _output_schema_valid(predicted: Mapping[str, object]) -> bool:
+    return set(predicted) == _OUTPUT_KEYS and not _contains_private_key(predicted) and all(
+        isinstance(predicted.get(name), str) and bool(str(predicted[name]).strip())
+        for name in _OUTPUT_KEYS
+    )
+
+
+def _output_taxonomy_valid(predicted: Mapping[str, object]) -> bool:
+    return (
+        predicted.get("direction_code") in DIRECTION_CODES
+        and predicted.get("material_type_code") in MATERIAL_TYPE_CODES
+        and predicted.get("access_code") in ACCESS_CODES
+        and predicted.get("lifecycle_code") in LIFECYCLE_CODES
+    )
+
+
 def evaluate_golden_set(
     records: Iterable[Mapping[str, object]], classifier: GoldenClassifier
 ) -> EvaluationReport:
@@ -169,14 +329,17 @@ def evaluate_golden_set(
             unresolved_count += 1
             continue
         schema_compliant += 1
-        if not _codes_are_valid(record):
+        if not _expected_codes_are_valid(record):
             unresolved_count += 1
             continue
-        taxonomy_valid += 1
         predicted = _prediction(classifier.classify(record))
+        output_schema_valid = _output_schema_valid(predicted)
+        output_taxonomy_valid = _output_taxonomy_valid(predicted)
+        schema_compliant += int(output_schema_valid) - 1
+        taxonomy_valid += int(output_taxonomy_valid)
         direction = predicted.get("direction_code")
         material_type = predicted.get("material_type_code")
-        if direction is None or material_type is None:
+        if not output_schema_valid or not output_taxonomy_valid or direction is None or material_type is None:
             unresolved_count += 1
         expected_direction = record["expected_direction_code"]
         expected_material_type = record["expected_material_type_code"]
@@ -211,6 +374,8 @@ class _FixtureClassifier:
         return record.get("fixture_prediction", {
             "direction_code": record.get("expected_direction_code"),
             "material_type_code": record.get("expected_material_type_code"),
+            "access_code": record.get("expected_access_code"),
+            "lifecycle_code": record.get("expected_lifecycle_code"),
         })
 
 

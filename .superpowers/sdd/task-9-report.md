@@ -55,3 +55,23 @@ The wider classifier suite ran **245 tests successfully**; its only failure was 
 No live DB, Sheets, OpenAI, source API, secret, migration, deploy, cron, Telegram, Hermes schedule, or release activation was called or changed. The production adapter keeps immutable batch/snapshot loaders and Task-5 classification persistence as explicit injected seams: existing Tasks 1–8 intentionally do not expose a broad mutable-batch loader, so this task does not add a parallel DB read/write path. Supplying those reviewed loaders is required for a separately authorized real operator execution.
 
 Commit: `6c0595cf32e02989390935af6a008965df80bf05`.
+
+## Rejection follow-up
+
+Golden provenance is now regenerated through `evaluation.source_attest_records`.
+The fixture binds workbook SHA-256 `d75ad984a0b2168518b0ad74f2d2083f93a780e2433bba102c45e72476b68756`
+and a normalized payload/fingerprint for each source-row selection. URLs are
+derived only from an exact nonempty source slug (`portal_from_source_slug` or
+the one documented `academy_from_source_slug` case); no `reviewed-*` title,
+slug, or URL placeholder remains. Two genuinely slug-less source rows remain
+locator-insufficient. Classifier output now has an exact four-code schema and
+its schema/taxonomy validity, not the expected fixture values, drives hard
+gates. `.venv/bin/python -m unittest discover -s tests/abbott_page_classifier -t . -v`
+passes 299 tests.
+
+CLI follow-up adds sanitized parser failures, mutually exclusive execute/dry
+run flags, a zero-I/O dry-run validate path, explicit execute-time reconciliation
+persistence authority, and an executable no-argument compatibility failure.
+The production gateway remains lazy; its separately authorized reconciliation
+persistence and existing immutable batch/snapshot loader seams are tested with
+actual `ProductionWorkflowGateway` construction fakes and make no live call.

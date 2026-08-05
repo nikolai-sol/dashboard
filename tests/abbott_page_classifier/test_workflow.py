@@ -6,6 +6,7 @@ import os
 from pathlib import Path
 import io
 import json
+import subprocess
 import unittest
 from contextlib import redirect_stdout
 from unittest.mock import patch
@@ -26,8 +27,8 @@ class RecordingGateway:
         self.openai_calls = 0
         self.activation_calls = 0
 
-    def reconcile(self, registry1, registry2, *, dry_run):
-        self.calls.append(("reconcile", dry_run))
+    def reconcile(self, registry1, registry2, *, batch_id, dry_run):
+        self.calls.append(("reconcile", (batch_id, dry_run)))
         return {"status": "dry_run", "source_count": 2, "ready_count": 1,
                 "conflict_count": 0, "unresolved_count": 0, "rejected_count": 0,
                 "registry1_hash": "a" * 64, "registry2_hash": "b" * 64}
@@ -118,6 +119,43 @@ class WorkflowTests(unittest.TestCase):
         self.assertNotIn('sheets_sync.py publish', wrapper)
         self.assertNotIn('AUTO_PUBLISH_SHEETS', wrapper)
 
+    def test_wrapper_is_executable_and_no_args_fails_with_sanitized_compatibility_status(self):
+        path = Path("agents/abbott_page_classifier/run_classifier.sh")
+        result = subprocess.run([str(path)], text=True, capture_output=True, check=False)
+
+        self.assertTrue(os.access(path, os.X_OK))
+        self.assertEqual(result.returncode, 2)
+        self.assertEqual(json.loads(result.stdout)["status"], "COMPATIBILITY_WORKFLOW_ARGUMENTS_REQUIRED")
+        self.assertEqual(result.stderr, "")
+
+    def test_cli_rejects_execute_and_dry_run_together_without_dispatch(self):
+        gateway = RecordingGateway()
+        self.assertEqual(main(["materialize", "--batch-id", "1", "--execute", "--dry-run"], dependencies=WorkflowDependencies(gateway)), 2)
+        self.assertEqual(gateway.calls, [])
+
+    def test_production_validate_dry_run_never_constructs_repository(self):
+        calls: list[str] = []
+        dependencies = build_production_dependencies(
+            repository_factory=lambda: calls.append("repository") or object(),
+        )
+
+        self.assertEqual(main(["validate", "--batch-id", "1", "--dry-run"], dependencies=dependencies), 0)
+        self.assertEqual(calls, [])
+
+    def test_production_reconcile_execute_uses_explicit_batch_persistence_authority(self):
+        calls: list[tuple[str, str]] = []
+        dependencies = build_production_dependencies(
+            reconcile_persist=lambda registry1, registry2, batch_id: (
+                calls.append((registry1.name, batch_id)) or {"status": "draft", "ready_count": 2, "batch_hash": "a" * 64}
+            ),
+        )
+        self.assertEqual(main([
+            "reconcile", "--registry1", "tests/fixtures/abbott_registry1_minimal.xlsx",
+            "--registry2", "tests/fixtures/abbott_registry2_accepted_minimal.csv",
+            "--batch-id", "batch-1", "--execute",
+        ], dependencies=dependencies), 0)
+        self.assertEqual(calls, [("abbott_registry1_minimal.xlsx", "batch-1")])
+
     def test_command_surface_is_fixed(self):
         self.assertEqual(
             COMMANDS,
@@ -132,7 +170,7 @@ class WorkflowTests(unittest.TestCase):
         )
 
         self.assertEqual(result, 0)
-        self.assertEqual(gateway.calls, [("reconcile", True)])
+        self.assertEqual(gateway.calls, [("reconcile", (None, True))])
 
     def test_execute_stages_require_batch_id_while_default_dry_run_is_batchless(self):
         gateway = RecordingGateway()

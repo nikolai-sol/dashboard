@@ -40,7 +40,7 @@ _SAFE_OUTPUT_KEYS = frozenset(
 
 
 class WorkflowGateway(Protocol):
-    def reconcile(self, registry1: Path, registry2: Path, *, dry_run: bool) -> Mapping[str, object]: ...
+    def reconcile(self, registry1: Path, registry2: Path, *, batch_id: str | None, dry_run: bool) -> Mapping[str, object]: ...
     def eligible_classification_count(self, batch_id: str) -> int: ...
     def classify(self, batch_id: str, *, execute_llm: bool, dry_run: bool) -> Mapping[str, object]: ...
     def publish_projection(self, batch_id: str, *, dry_run: bool) -> Mapping[str, object]: ...
@@ -58,6 +58,11 @@ class WorkflowDependencies:
 
 class WorkflowConfigurationError(RuntimeError):
     """Sanitized error for a missing separately-authorized operator authority."""
+
+
+class _SanitizedArgumentParser(argparse.ArgumentParser):
+    def error(self, message: str) -> None:
+        raise WorkflowConfigurationError("ARGUMENTS_INVALID")
 
 
 class ProductionWorkflowGateway:
@@ -78,6 +83,7 @@ class ProductionWorkflowGateway:
         accepted_snapshot_loader: Callable[[str], object],
         sheets_gateway_factory: Callable[[], object],
         classification_runner: Callable[[str, bool, bool], Mapping[str, object]],
+        reconcile_persist: Callable[[Path, Path, str], Mapping[str, object]],
         predecessor_release_id: Callable[[str], int],
         code_revision: Callable[[], str],
     ) -> None:
@@ -86,11 +92,16 @@ class ProductionWorkflowGateway:
         self._accepted_snapshot_loader = accepted_snapshot_loader
         self._sheets_gateway_factory = sheets_gateway_factory
         self._classification_runner = classification_runner
+        self._reconcile_persist = reconcile_persist
         self._predecessor_release_id = predecessor_release_id
         self._code_revision = code_revision
 
-    def reconcile(self, registry1: Path, registry2: Path, *, dry_run: bool) -> Mapping[str, object]:
-        return _reconcile_captured_snapshots(registry1, registry2, dry_run=dry_run)
+    def reconcile(self, registry1: Path, registry2: Path, *, batch_id: str | None, dry_run: bool) -> Mapping[str, object]:
+        if dry_run:
+            return _reconcile_captured_snapshots(registry1, registry2, dry_run=True)
+        if not batch_id:
+            raise WorkflowConfigurationError("BATCH_ID_REQUIRED")
+        return self._reconcile_persist(registry1, registry2, batch_id)
 
     def eligible_classification_count(self, batch_id: str) -> int:
         # The injected Task 5 runner owns eligibility from immutable batch rows.
@@ -154,9 +165,9 @@ class ProductionWorkflowGateway:
         return {"status": candidate.status, "candidate_release_id": candidate.candidate_release_id}
 
     def validate(self, batch_id: str, *, dry_run: bool) -> Mapping[str, object]:
-        history = self._repository_factory().load_batch_history(int(batch_id))
         if dry_run:
-            return {"status": "dry_run", "candidate_release_id": history.candidate_release_id or 0}
+            return {"status": "dry_run"}
+        history = self._repository_factory().load_batch_history(int(batch_id))
         if not history.candidate_release_id or not history.accepted_decision_hash:
             raise WorkflowConfigurationError("CANDIDATE_GATE_EVIDENCE_MISSING")
         from agents.abbott_page_classifier.candidate_release import validate_content_candidate
@@ -194,6 +205,7 @@ def build_production_dependencies(
     accepted_snapshot_loader: Callable[[str], object] | None = None,
     sheets_gateway_factory: Callable[[], object] | None = None,
     classification_runner: Callable[[str, bool, bool], Mapping[str, object]] | None = None,
+    reconcile_persist: Callable[[Path, Path, str], Mapping[str, object]] | None = None,
     predecessor_release_id: Callable[[str], int] | None = None,
     code_revision: Callable[[], str] | None = None,
 ) -> WorkflowDependencies:
@@ -210,6 +222,7 @@ def build_production_dependencies(
         accepted_snapshot_loader=accepted_snapshot_loader or _missing_authority,
         sheets_gateway_factory=sheets_gateway_factory or _missing_authority,
         classification_runner=classification_runner or _missing_authority,
+        reconcile_persist=reconcile_persist or _missing_authority,
         predecessor_release_id=predecessor_release_id or _missing_authority,
         code_revision=code_revision or _missing_authority,
     ))
@@ -243,7 +256,7 @@ def _reconcile_captured_snapshots(registry1: Path, registry2: Path, *, dry_run: 
 class OfflineWorkflowGateway:
     """Read-only default adapter.  It intentionally cannot reach MySQL or Sheets."""
 
-    def reconcile(self, registry1: Path, registry2: Path, *, dry_run: bool) -> Mapping[str, object]:
+    def reconcile(self, registry1: Path, registry2: Path, *, batch_id: str | None, dry_run: bool) -> Mapping[str, object]:
         return _reconcile_captured_snapshots(registry1, registry2, dry_run=dry_run)
 
     def eligible_classification_count(self, batch_id: str) -> int:
@@ -275,13 +288,14 @@ class OfflineWorkflowGateway:
 
 
 def _parser() -> argparse.ArgumentParser:
-    parser = argparse.ArgumentParser(description="Abbott approval workflow operator CLI")
+    parser = _SanitizedArgumentParser(add_help=False)
     parser.add_argument("command", choices=COMMANDS)
     parser.add_argument("--batch-id")
     parser.add_argument("--registry1")
     parser.add_argument("--registry2")
-    parser.add_argument("--dry-run", action="store_true", default=True)
-    parser.add_argument("--execute", action="store_true")
+    execution = parser.add_mutually_exclusive_group()
+    execution.add_argument("--dry-run", action="store_true")
+    execution.add_argument("--execute", action="store_true")
     parser.add_argument("--execute-llm", action="store_true")
     return parser
 
@@ -298,8 +312,11 @@ def _error(code: str) -> int:
 def main(argv: Sequence[str] | None = None, *, dependencies: WorkflowDependencies | None = None) -> int:
     """Compose operator-only stages; default every write-capable stage to --dry-run."""
 
-    args = _parser().parse_args(argv)
-    dry_run = not args.execute
+    try:
+        args = _parser().parse_args(argv)
+    except (SystemExit, WorkflowConfigurationError):
+        return _error("ARGUMENTS_INVALID")
+    dry_run = not bool(args.execute)
     if not dry_run and args.command in _BATCH_COMMANDS and not args.batch_id:
         return _error("BATCH_ID_REQUIRED")
     if args.command == "reconcile" and (not args.registry1 or not args.registry2):
@@ -307,7 +324,7 @@ def main(argv: Sequence[str] | None = None, *, dependencies: WorkflowDependencie
     gateway = (dependencies or build_production_dependencies()).gateway
     try:
         if args.command == "reconcile":
-            result = gateway.reconcile(Path(args.registry1), Path(args.registry2), dry_run=dry_run)
+            result = gateway.reconcile(Path(args.registry1), Path(args.registry2), batch_id=args.batch_id, dry_run=dry_run)
         elif args.command == "classify":
             eligible = gateway.eligible_classification_count(args.batch_id)
             if args.execute_llm and eligible > 0 and not os.environ.get("OPENAI_API_KEY"):
@@ -326,8 +343,12 @@ def main(argv: Sequence[str] | None = None, *, dependencies: WorkflowDependencie
             result = gateway.validate(args.batch_id, dry_run=dry_run)
         else:
             result = gateway.status(args.batch_id)
-    except (OSError, ValueError, WorkflowConfigurationError):
-        return _error("OFFLINE_INPUT_INVALID")
+    except Exception as error:
+        # Stages are deliberately fail-closed and never expose database, Sheets,
+        # provider, path, or content details through this operator boundary.
+        if isinstance(error, WorkflowConfigurationError):
+            return _error("OPERATOR_CONFIGURATION_INVALID")
+        return _error("WORKFLOW_STAGE_FAILED")
     _emit(result)
     return 0 if result.get("status") not in {"OPERATOR_ADAPTER_REQUIRED"} else 2
 

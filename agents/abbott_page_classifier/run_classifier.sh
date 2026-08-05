@@ -9,4 +9,9 @@ set -euo pipefail
 ROOT="$(cd "$(dirname "$0")/../.." && pwd)"
 PYTHON="${PYTHON:-python3}"
 
+if [[ "$#" -eq 0 ]]; then
+  echo '{"status":"COMPATIBILITY_WORKFLOW_ARGUMENTS_REQUIRED"}'
+  exit 2
+fi
+
 exec "$PYTHON" "$ROOT/agents/abbott_page_classifier/workflow.py" "$@"
