@@ -276,6 +276,24 @@ class ProductionWorkflowGateway:
         if dry_run:
             return {"status": "dry_run"}
         store = self._store_factory()
+        history = store.load_batch_history(int(batch_id))
+        candidate_release_id = history.candidate_release_id
+        candidate_receipt_valid = (
+            isinstance(candidate_release_id, int)
+            and not isinstance(candidate_release_id, bool)
+            and candidate_release_id > 0
+        )
+        if history.batch_status == "candidate_materialized":
+            if not candidate_receipt_valid:
+                raise WorkflowConfigurationError("CANDIDATE_RECEIPT_INCONSISTENT")
+            return {
+                "status": "noop", "batch_id": int(batch_id),
+                "candidate_release_id": candidate_release_id,
+            }
+        if candidate_release_id is not None or history.batch_status != "ingested":
+            if candidate_release_id is not None:
+                raise WorkflowConfigurationError("CANDIDATE_RECEIPT_INCONSISTENT")
+            raise WorkflowConfigurationError("BATCH_NOT_INGESTED")
         predecessor_id = store.load_predecessor_release_id_for_batch(int(batch_id))
         materializer = self._materializer
         if materializer is None:

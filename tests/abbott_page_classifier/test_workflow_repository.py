@@ -2,13 +2,27 @@
 
 from __future__ import annotations
 
+from datetime import datetime, timezone
+import json
 import unittest
 
-from agents.abbott_page_classifier.approval_hashes import compute_taxonomy_digest
-from agents.abbott_page_classifier.domain import TAXONOMY_LABELS
+from agents.abbott_page_classifier.approval_hashes import (
+    compute_classification_event_fingerprint,
+    compute_taxonomy_digest,
+)
+from agents.abbott_page_classifier.domain import TAXONOMY_LABELS, TaxonomyVersion
 from agents.abbott_page_classifier.llm_classifier import LlmAttempt, LlmUsage
-from agents.abbott_page_classifier.workflow_repository import MySqlWorkflowStore
-from agents.abbott_page_classifier.workflow_service import WorkflowConfiguration
+from agents.abbott_page_classifier.repository import RepositoryError
+from agents.abbott_page_classifier.workflow_repository import (
+    MySqlWorkflowStore,
+    _canonical_json,
+    _run_key,
+)
+from agents.abbott_page_classifier.workflow_service import (
+    PersistedSourceBinding,
+    ReconciliationContext,
+    WorkflowConfiguration,
+)
 
 
 TERMS = {kind: tuple(sorted(labels)) for kind, labels in TAXONOMY_LABELS.items()}
@@ -79,17 +93,240 @@ class FakeConnection:
         pass
 
 
+class RehydrationCursor(FakeCursor):
+    def __init__(self, connection, *, version="abbott.v2", stored_digest=None):
+        super().__init__(connection)
+        self.version = version
+        self.taxonomy = TaxonomyVersion(
+            version=version,
+            terms=TERMS,
+            digest=compute_taxonomy_digest(version, TERMS),
+        )
+        self.stored_digest = stored_digest or self.taxonomy.digest
+        configuration = WorkflowConfiguration(
+            version, "prompt.v2", "routing.v2", "b" * 40
+        )
+        context = ReconciliationContext(
+            predecessor_release_id=8,
+            predecessor_snapshot_ids=(11, 12),
+            predecessor_snapshot_digests=("1" * 64, "2" * 64),
+            taxonomy=self.taxonomy,
+            entities=(),
+            aliases=(),
+        )
+        self.run_key = _run_key(configuration, context, "3" * 64, "4" * 64)
+
+    def execute(self, sql, params=()):
+        normalized = " ".join(sql.split())
+        self.connection.calls.append((normalized, params))
+        self.rows = []
+        if "FROM portal_content_reconciliation_runs" in normalized:
+            self.rows = [(
+                self.run_key, "reconciled",
+                31, "3" * 64, 1, 1, 0, 0,
+                32, "4" * 64, 1, 1, 0, 0,
+                8, "[11,12]", f'["{"1" * 64}","{"2" * 64}"]',
+                5, self.version, self.stored_digest,
+                "prompt.v2", "routing.v2", "b" * 40,
+            )]
+        elif "FROM portal_content_taxonomy_terms" in normalized:
+            self.rows = [
+                (kind, code) for kind, codes in TERMS.items() for code in codes
+            ]
+        elif "FROM portal_content_reconciliation_items" in normalized:
+            self.rows = []
+
+
+class RehydrationConnection(FakeConnection):
+    def __init__(self, *, version="abbott.v2", stored_digest=None):
+        super().__init__()
+        self.cursor_instance = RehydrationCursor(
+            self, version=version, stored_digest=stored_digest
+        )
+
+
+def _baseline_evidence(fingerprint):
+    return {
+        "authority": "active_release_baseline",
+        "predecessor_release_id": 8,
+        "source_row_fingerprints": [fingerprint],
+    }
+
+
+def _baseline_event(entity_id, fingerprint, *, taxonomy_id=3):
+    evidence = _baseline_evidence(fingerprint)
+    values = {
+        "content_entity_id": entity_id,
+        "taxonomy_version_id": taxonomy_id,
+        "direction_code": "cardiology",
+        "material_type_code": "articles",
+        "access_code": "all",
+        "lifecycle_code": "active",
+        "event_kind": "baseline",
+        "proposal_evidence": evidence,
+        "effective_at": "1970-01-01T00:00:00.000000+00:00",
+    }
+    return {
+        **values,
+        "event_fingerprint": compute_classification_event_fingerprint(values),
+        "effective_at": datetime(1970, 1, 1, tzinfo=timezone.utc),
+        "id": 50 + entity_id,
+    }
+
+
+class BootstrapCursor(FakeCursor):
+    def __init__(self, connection, *, conflict=None):
+        super().__init__(connection)
+        self.catalog_locked = False
+        self.catalog = [
+            ("Existing", "https://abbottpro.ru/existing", "100", "articles", "all", "cardiology", 1, 11, "pages", 1, "f1"),
+            ("Missing", "https://abbottpro.ru/missing", "200", "articles", "all", "cardiology", 1, 11, "pages", 2, "f2"),
+        ]
+        evidence = _baseline_evidence("f1")
+        self.entities = {
+            7: {
+                "material_id": "100", "title": "Existing",
+                "canonical_url": "https://abbottpro.ru/existing",
+                "registry_status": "active", "source_evidence": evidence,
+            }
+        }
+        self.aliases = []
+        for alias_type, value, scope in (
+            ("material_id", "100", "strong"),
+            ("canonical_url", "https://abbottpro.ru/existing", "strong"),
+            ("url", "https://abbottpro.ru/existing", "strong"),
+            ("slug", "existing", "weak"),
+            ("title", "Existing", "weak"),
+        ):
+            self.aliases.append({
+                "content_entity_id": 7, "alias_type": alias_type,
+                "alias_value": value, "alias_hash": __import__("hashlib").sha256(value.casefold().encode()).hexdigest(),
+                "uniqueness_scope": scope, "alias_status": "active",
+                "source_evidence": evidence,
+            })
+        self.events = {7: _baseline_event(7, "f1")}
+        if conflict == "strong_alias":
+            self.aliases[0]["content_entity_id"] = 99
+        elif conflict == "taxonomy_event":
+            self.events[7] = _baseline_event(7, "f1", taxonomy_id=99)
+        elif conflict == "event_payload":
+            self.events[7]["material_type_code"] = "video"
+        self.inserted_entity_ids = []
+
+    def execute(self, sql, params=()):
+        normalized = " ".join(sql.split())
+        self.connection.calls.append((normalized, params))
+        self.rows = []
+        self.rowcount = 0
+        if "FROM portal_active_data_releases AS active" in normalized:
+            self.rows = [(8, "[11,12]")]
+        elif "FROM portal_dataset_snapshots" in normalized and "id IN" in normalized:
+            self.rows = [(11, "1" * 64), (12, "2" * 64)]
+        elif "FROM portal_content_taxonomy_versions" in normalized:
+            self.rows = [(3, DIGEST)]
+        elif "FROM portal_content_taxonomy_terms" in normalized:
+            self.rows = [(kind, code) for kind, codes in TERMS.items() for code in codes]
+        elif "FROM portal_content_catalog" in normalized:
+            self.catalog_locked = "FOR UPDATE" in normalized
+            self.rows = list(self.catalog)
+        elif "SELECT id, material_id, title, canonical_url" in normalized:
+            material_id, url = params[1], params[2]
+            self.rows = [
+                (entity_id, entity["material_id"], entity["title"],
+                 entity["canonical_url"], entity["registry_status"],
+                 _canonical_json(entity["source_evidence"]))
+                for entity_id, entity in self.entities.items()
+                if entity["material_id"] == material_id or entity["canonical_url"] == url
+            ]
+        elif "FROM portal_content_registry_aliases" in normalized and "alias_type = %s" in normalized:
+            alias_type, alias_hash, scope = params[1], params[2], params[3]
+            self.rows = [
+                (alias["content_entity_id"], alias["alias_type"], alias["alias_value"],
+                 alias["alias_hash"], alias["uniqueness_scope"], alias["alias_status"],
+                 _canonical_json(alias["source_evidence"]))
+                for alias in self.aliases
+                if alias["alias_type"] == alias_type
+                and alias["alias_hash"] == alias_hash
+                and alias["uniqueness_scope"] == scope
+            ]
+        elif "FROM portal_content_classification_events" in normalized and "event_kind = 'baseline'" in normalized:
+            event = self.events.get(int(params[0]))
+            if event:
+                self.rows = [(
+                    event["taxonomy_version_id"], event["direction_code"],
+                    event["material_type_code"], event["access_code"],
+                    event["lifecycle_code"], event["event_fingerprint"],
+                    _canonical_json(event["proposal_evidence"]), event["effective_at"],
+                )]
+        elif "FROM portal_content_registry_entities AS entity" in normalized:
+            self.rows = []
+            for entity_id, entity in sorted(self.entities.items()):
+                event = self.events.get(entity_id)
+                self.rows.append((
+                    entity_id, entity["title"], entity["canonical_url"],
+                    event["direction_code"] if event else None,
+                    event["material_type_code"] if event else None,
+                    event["access_code"] if event else None,
+                    event["lifecycle_code"] if event else None,
+                    event["id"] if event else None,
+                ))
+        elif "FROM portal_content_registry_aliases" in normalized:
+            self.rows = [
+                (alias["content_entity_id"], alias["alias_type"],
+                 alias["alias_value"], alias["uniqueness_scope"])
+                for alias in self.aliases if alias["alias_status"] == "active"
+            ]
+        elif normalized.startswith("INSERT INTO portal_content_registry_entities"):
+            self.lastrowid = max(self.entities, default=0) + 1
+            self.entities[self.lastrowid] = {
+                "material_id": params[1], "title": params[2],
+                "canonical_url": params[3], "registry_status": params[4],
+                "source_evidence": json.loads(params[5]),
+            }
+            self.inserted_entity_ids.append(self.lastrowid)
+            self.rowcount = 1
+        elif normalized.startswith("INSERT INTO portal_content_registry_aliases"):
+            self.aliases.append({
+                "content_entity_id": int(params[1]), "alias_type": params[2],
+                "alias_value": params[3], "alias_hash": params[4],
+                "uniqueness_scope": params[5], "alias_status": "active",
+                "source_evidence": json.loads(params[6]),
+            })
+            self.rowcount = 1
+        elif normalized.startswith("INSERT INTO portal_content_classification_events"):
+            self.events[int(params[0])] = {
+                "taxonomy_version_id": int(params[1]), "direction_code": params[2],
+                "material_type_code": params[3], "access_code": params[4],
+                "lifecycle_code": params[5], "event_fingerprint": params[6],
+                "proposal_evidence": json.loads(params[7]), "effective_at": params[8],
+                "id": 100 + int(params[0]),
+            }
+            self.rowcount = 1
+
+
+class BootstrapConnection(FakeConnection):
+    def __init__(self, *, conflict=None):
+        super().__init__()
+        self.cursor_instance = BootstrapCursor(self, conflict=conflict)
+
+
 class MySqlWorkflowStoreTests(unittest.TestCase):
     def test_context_locks_active_predecessor_and_keeps_eventless_entities(self):
-        connection = FakeConnection()
+        connection = BootstrapConnection()
+        connection.cursor_instance.entities[9] = {
+            "material_id": "unrelated", "title": "Eventless",
+            "canonical_url": "https://abbottpro.ru/eventless",
+            "registry_status": "active",
+            "source_evidence": {"authority": "unrelated-reviewed-entity"},
+        }
         context = MySqlWorkflowStore(lambda: connection).load_reconciliation_context(CONFIG)
 
         self.assertEqual(context.predecessor_release_id, 8)
         self.assertEqual(context.predecessor_snapshot_ids, (11, 12))
         self.assertEqual(context.predecessor_snapshot_digests, ("1" * 64, "2" * 64))
-        self.assertEqual(context.entities[0].content_entity_id, 7)
-        self.assertEqual(context.entities[0].lifecycle_code, "unknown")
-        self.assertEqual(context.entities[0].event_id, None)
+        eventless = next(entity for entity in context.entities if entity.content_entity_id == 9)
+        self.assertEqual(eventless.lifecycle_code, "unknown")
+        self.assertEqual(eventless.event_id, None)
         sql = "\n".join(statement for statement, _ in connection.calls)
         self.assertIn("FOR UPDATE", sql)
         self.assertIn("LEFT JOIN latest_events AS event", sql)
@@ -120,6 +357,58 @@ class MySqlWorkflowStoreTests(unittest.TestCase):
         self.assertIn(7, insert_params)
         self.assertFalse(any("bounded source" in str(value) for value in insert_params))
         self.assertEqual(connection.commit_count, 1)
+
+    def test_run_rehydration_uses_the_taxonomy_version_joined_by_stored_fk(self):
+        connection = RehydrationConnection(version="abbott.v2")
+
+        run = MySqlWorkflowStore(lambda: connection).load_reconciliation_run(19)
+
+        self.assertEqual(run.configuration.taxonomy_version, "abbott.v2")
+        self.assertEqual(run.context.taxonomy.version, "abbott.v2")
+        sql = "\n".join(statement for statement, _params in connection.calls)
+        self.assertIn("INNER JOIN portal_content_taxonomy_versions AS taxonomy", sql)
+        self.assertNotIn("abbott.v1", sql)
+
+    def test_run_rehydration_rejects_stored_version_digest_mismatch(self):
+        connection = RehydrationConnection(
+            version="abbott.v2",
+            stored_digest=compute_taxonomy_digest("abbott.v1", TERMS),
+        )
+
+        with self.assertRaisesRegex(
+            RepositoryError, "TAXONOMY_CONTRACT_MISMATCH"
+        ):
+            MySqlWorkflowStore(lambda: connection).load_reconciliation_run(19)
+
+    def test_partial_baseline_bootstrap_attests_existing_and_inserts_only_missing(self):
+        connection = BootstrapConnection()
+
+        context_value = MySqlWorkflowStore(
+            lambda: connection
+        ).load_reconciliation_context(CONFIG)
+
+        cursor = connection.cursor_instance
+        self.assertTrue(cursor.catalog_locked)
+        self.assertEqual(cursor.inserted_entity_ids, [8])
+        self.assertEqual(sorted(entity.content_entity_id for entity in context_value.entities), [7, 8])
+        self.assertEqual(connection.commit_count, 1)
+        self.assertEqual(connection.rollback_count, 0)
+
+    def test_partial_baseline_bootstrap_rolls_back_identity_taxonomy_and_event_conflicts(self):
+        for conflict, code in (
+            ("strong_alias", "IDENTITY_COLLISION"),
+            ("taxonomy_event", "BASELINE_EVENT_MISMATCH"),
+            ("event_payload", "BASELINE_EVENT_MISMATCH"),
+        ):
+            with self.subTest(conflict=conflict):
+                connection = BootstrapConnection(conflict=conflict)
+                with self.assertRaisesRegex(RepositoryError, code):
+                    MySqlWorkflowStore(
+                        lambda: connection
+                    ).load_reconciliation_context(CONFIG)
+                self.assertTrue(connection.cursor_instance.catalog_locked)
+                self.assertEqual(connection.commit_count, 0)
+                self.assertEqual(connection.rollback_count, 1)
 
 
 if __name__ == "__main__":

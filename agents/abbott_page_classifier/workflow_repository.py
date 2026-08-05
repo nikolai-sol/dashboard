@@ -249,10 +249,8 @@ class MySqlWorkflowStore:
             )
             if taxonomy_id <= 0:
                 raise RepositoryError("TAXONOMY_VERSION_NOT_ACTIVE")
+            self._bootstrap_registry_cursor(cursor, predecessor_id, taxonomy_id)
             entities = self._load_entities(cursor)
-            if not entities:
-                self._bootstrap_registry_cursor(cursor, predecessor_id, taxonomy_id)
-                entities = self._load_entities(cursor)
             aliases = self._load_aliases(cursor)
             connection.commit()
             return ReconciliationContext(
@@ -423,14 +421,31 @@ class MySqlWorkflowStore:
             }
             cursor.execute(
                 """
-                INSERT INTO portal_content_registry_entities (
-                  dataset_key, material_id, title, canonical_url,
-                  registry_status, source_evidence
-                ) VALUES (%s, %s, %s, %s, %s, %s)
+                SELECT id, material_id, title, canonical_url,
+                       registry_status, source_evidence
+                FROM portal_content_registry_entities
+                WHERE dataset_key = %s
+                  AND (material_id = %s OR canonical_url = %s)
+                ORDER BY id
+                FOR UPDATE
                 """,
-                (DATASET_KEY, material_id, title, url, "active", _canonical_json(evidence)),
+                (DATASET_KEY, material_id, url),
             )
-            entity_id = int(cursor.lastrowid)
+            entity_rows = tuple(cursor.fetchall())
+            if len(entity_rows) > 1:
+                raise RepositoryError("IDENTITY_COLLISION")
+            entity_id = int(entity_rows[0][0]) if entity_rows else None
+            if entity_rows:
+                existing = entity_rows[0]
+                if (
+                    (str(existing[1]) if existing[1] is not None else None) != material_id
+                    or str(existing[2]) != title
+                    or str(existing[3]) != url
+                    or str(existing[4]) != "active"
+                    or _json_value(existing[5]) != evidence
+                ):
+                    raise RepositoryError("BASELINE_ENTITY_MISMATCH")
+
             aliases = []
             if material_id:
                 aliases.append(("material_id", material_id, "strong"))
@@ -441,7 +456,55 @@ class MySqlWorkflowStore:
                     aliases.append(("slug", slug, "weak"))
             if title:
                 aliases.append(("title", title, "weak"))
+            missing_aliases = []
             for alias_type, alias_value, strength in aliases:
+                alias_hash = sha256_text(alias_value.casefold())
+                cursor.execute(
+                    """
+                    SELECT content_entity_id, alias_type, alias_value, alias_hash,
+                           uniqueness_scope, alias_status, source_evidence
+                    FROM portal_content_registry_aliases
+                    WHERE dataset_key = %s
+                      AND alias_type = %s
+                      AND alias_hash = %s
+                      AND uniqueness_scope = %s
+                    FOR UPDATE
+                    """,
+                    (DATASET_KEY, alias_type, alias_hash, strength),
+                )
+                alias_rows = tuple(cursor.fetchall())
+                if len(alias_rows) > 1:
+                    raise RepositoryError("IDENTITY_COLLISION")
+                if not alias_rows:
+                    missing_aliases.append((alias_type, alias_value, alias_hash, strength))
+                    continue
+                alias_row = alias_rows[0]
+                if entity_id is None or int(alias_row[0]) != entity_id:
+                    if strength == "strong":
+                        raise RepositoryError("IDENTITY_COLLISION")
+                    continue
+                if (
+                    str(alias_row[1]) != alias_type
+                    or str(alias_row[2]) != alias_value
+                    or str(alias_row[3]) != alias_hash
+                    or str(alias_row[4]) != strength
+                    or str(alias_row[5]) != "active"
+                    or _json_value(alias_row[6]) != evidence
+                ):
+                    raise RepositoryError("BASELINE_ALIAS_MISMATCH")
+
+            if entity_id is None:
+                cursor.execute(
+                    """
+                    INSERT INTO portal_content_registry_entities (
+                      dataset_key, material_id, title, canonical_url,
+                      registry_status, source_evidence
+                    ) VALUES (%s, %s, %s, %s, %s, %s)
+                    """,
+                    (DATASET_KEY, material_id, title, url, "active", _canonical_json(evidence)),
+                )
+                entity_id = int(cursor.lastrowid)
+            for alias_type, alias_value, alias_hash, strength in missing_aliases:
                 cursor.execute(
                     """
                     INSERT INTO portal_content_registry_aliases (
@@ -451,8 +514,7 @@ class MySqlWorkflowStore:
                     """,
                     (
                         DATASET_KEY, entity_id, alias_type, alias_value,
-                        sha256_text(alias_value.casefold()), strength,
-                        _canonical_json(evidence),
+                        alias_hash, strength, _canonical_json(evidence),
                     ),
                 )
             direction = self._taxonomy_code("direction", representative[5])
@@ -474,18 +536,49 @@ class MySqlWorkflowStore:
             )
             cursor.execute(
                 """
-                INSERT INTO portal_content_classification_events (
-                  content_entity_id, taxonomy_version_id, direction_code,
-                  material_type_code, access_code, lifecycle_code, event_kind,
-                  event_fingerprint, proposal_evidence, effective_at
-                ) VALUES (%s, %s, %s, %s, %s, %s, 'baseline', %s, %s, %s)
+                SELECT taxonomy_version_id, direction_code, material_type_code,
+                       access_code, lifecycle_code, event_fingerprint,
+                       proposal_evidence, effective_at
+                FROM portal_content_classification_events
+                WHERE content_entity_id = %s
+                  AND event_kind = 'baseline'
+                ORDER BY id
+                FOR UPDATE
                 """,
-                (
-                    entity_id, taxonomy_id, direction, material_type, access,
-                    lifecycle, fingerprint, _canonical_json(evidence),
-                    datetime(1970, 1, 1, tzinfo=timezone.utc),
-                ),
+                (entity_id,),
             )
+            event_rows = tuple(cursor.fetchall())
+            if len(event_rows) > 1:
+                raise RepositoryError("BASELINE_EVENT_MISMATCH")
+            if event_rows:
+                event = event_rows[0]
+                if (
+                    int(event[0]) != taxonomy_id
+                    or (str(event[1]) if event[1] is not None else None) != direction
+                    or (str(event[2]) if event[2] is not None else None) != material_type
+                    or (str(event[3]) if event[3] is not None else None) != access
+                    or str(event[4]) != lifecycle
+                    or str(event[5]) != fingerprint
+                    or _json_value(event[6]) != evidence
+                    or ContentRegistryRepository._canonical_event_timestamp(event[7])
+                       != datetime(1970, 1, 1)
+                ):
+                    raise RepositoryError("BASELINE_EVENT_MISMATCH")
+            else:
+                cursor.execute(
+                    """
+                    INSERT INTO portal_content_classification_events (
+                      content_entity_id, taxonomy_version_id, direction_code,
+                      material_type_code, access_code, lifecycle_code, event_kind,
+                      event_fingerprint, proposal_evidence, effective_at
+                    ) VALUES (%s, %s, %s, %s, %s, %s, 'baseline', %s, %s, %s)
+                    """,
+                    (
+                        entity_id, taxonomy_id, direction, material_type, access,
+                        lifecycle, fingerprint, _canonical_json(evidence),
+                        datetime(1970, 1, 1, tzinfo=timezone.utc),
+                    ),
+                )
 
     @staticmethod
     def _taxonomy_code(kind: str, raw: object) -> str | None:
@@ -789,11 +882,14 @@ class MySqlWorkflowStore:
                        registry2_source_row_count, registry2_accepted_count,
                        registry2_rejected_count, registry2_duplicate_collapsed_count,
                        predecessor_release_id, predecessor_snapshot_ids,
-                       predecessor_snapshot_digests, taxonomy_version_id,
-                       taxonomy_digest, prompt_version, model_routing_version,
-                       code_revision
-                FROM portal_content_reconciliation_runs
-                WHERE id = %s AND dataset_key = %s
+                       predecessor_snapshot_digests, run.taxonomy_version_id,
+                       taxonomy.version, run.taxonomy_digest, prompt_version,
+                       model_routing_version, code_revision
+                FROM portal_content_reconciliation_runs AS run
+                INNER JOIN portal_content_taxonomy_versions AS taxonomy
+                  ON taxonomy.id = run.taxonomy_version_id
+                 AND taxonomy.dataset_key = run.dataset_key
+                WHERE run.id = %s AND run.dataset_key = %s
                 """,
                 (int(run_id), DATASET_KEY),
             )
@@ -801,7 +897,7 @@ class MySqlWorkflowStore:
             if row is None:
                 raise RepositoryError("RECONCILIATION_RUN_NOT_FOUND")
             taxonomy = ContentRegistryRepository._load_taxonomy_terms(
-                cursor, int(row[17]), "abbott.v1", str(row[18]), include_retired=True
+                cursor, int(row[17]), str(row[18]), str(row[19]), include_retired=True
             )
             cursor.execute(
                 """
@@ -845,8 +941,8 @@ class MySqlWorkflowStore:
                 )
             configuration = WorkflowConfiguration(
                 taxonomy_version=taxonomy.version,
-                prompt_version=str(row[19]), model_routing_version=str(row[20]),
-                code_revision=str(row[21]),
+                prompt_version=str(row[20]), model_routing_version=str(row[21]),
+                code_revision=str(row[22]),
             )
             context = ReconciliationContext(
                 predecessor_release_id=int(row[14]),

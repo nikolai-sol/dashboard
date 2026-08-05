@@ -139,12 +139,12 @@ class RecordingClassifier:
         )
 
 
-def context(*, entities=(), aliases=()):
+def context(*, entities=(), aliases=(), taxonomy=TAXONOMY):
     return ReconciliationContext(
         predecessor_release_id=8,
         predecessor_snapshot_ids=(11, 12),
         predecessor_snapshot_digests=("1" * 64, "2" * 64),
-        taxonomy=TAXONOMY,
+        taxonomy=taxonomy,
         entities=tuple(entities),
         aliases=tuple(aliases),
     )
@@ -242,6 +242,31 @@ class WeeklyProposalServiceTests(unittest.TestCase):
         self.assertEqual(first.batch_id, second.batch_id)
         self.assertEqual(first.batch_key, second.batch_key)
         self.assertEqual(len(store.batches_by_run), 1)
+
+    def test_non_v1_reconciliation_classifies_in_a_fresh_service_process(self):
+        taxonomy = TaxonomyVersion(
+            version="abbott.v2",
+            terms=TERMS,
+            digest=compute_taxonomy_digest("abbott.v2", TERMS),
+        )
+        configuration = WorkflowConfiguration(
+            "abbott.v2", "prompt.v2", "routing.v2", "b" * 40
+        )
+        with tempfile.TemporaryDirectory() as temporary:
+            registry1, registry2 = write_sources(Path(temporary))
+            store = StatefulWorkflowStore(context(taxonomy=taxonomy))
+            run = CanonicalWeeklyProposalService(
+                store, configuration
+            ).reconcile(registry1, registry2)
+            receipt = CanonicalWeeklyProposalService(
+                store, configuration
+            ).classify(run.run_id, execute_llm=False)
+
+        self.assertEqual(receipt.batch_id, 71)
+        self.assertEqual(
+            store.load_reconciliation_run(run.run_id).configuration.taxonomy_version,
+            "abbott.v2",
+        )
 
 
 if __name__ == "__main__":

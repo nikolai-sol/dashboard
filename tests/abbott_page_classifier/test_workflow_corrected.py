@@ -188,6 +188,78 @@ class CorrectedWorkflowCliTests(unittest.TestCase):
         self.assertEqual((store.batch_id, store.snapshot_batch_id), (73, 73))
         self.assertEqual(receipt["status"], "ingested")
 
+    def test_materialize_retry_uses_stored_candidate_receipt_across_processes(self):
+        shared = {
+            "history": SimpleNamespace(
+                batch_status="ingested", candidate_release_id=None
+            ),
+            "materializer_calls": 0,
+        }
+
+        class Store:
+            def load_batch_history(self, batch_id):
+                self.batch_id = batch_id
+                return shared["history"]
+
+            def load_predecessor_release_id_for_batch(self, batch_id):
+                self.predecessor_batch_id = batch_id
+                return 8
+
+        def materializer(batch_id, predecessor_id, code_revision):
+            shared["materializer_calls"] += 1
+            shared["history"] = SimpleNamespace(
+                batch_status="candidate_materialized", candidate_release_id=44
+            )
+            return SimpleNamespace(
+                status="candidate_materialized", candidate_release_id=44
+            )
+
+        with patch.dict(os.environ, {
+            "CODE_REVISION": "a" * 40,
+            "ABBOTT_CONTENT_PROMPT_VERSION": "prompt.v1",
+            "ABBOTT_CONTENT_MODEL_ROUTING_VERSION": "routing.v1",
+        }, clear=True):
+            first = ProductionWorkflowGateway(
+                store_factory=Store, materializer=materializer
+            ).materialize(73, dry_run=False)
+            retry = ProductionWorkflowGateway(
+                store_factory=Store, materializer=materializer
+            ).materialize(73, dry_run=False)
+
+        self.assertEqual(first["candidate_release_id"], 44)
+        self.assertEqual(retry, {
+            "status": "noop", "batch_id": 73, "candidate_release_id": 44,
+        })
+        self.assertEqual(shared["materializer_calls"], 1)
+
+    def test_materialize_fails_closed_on_inconsistent_candidate_receipt(self):
+        class Store:
+            def __init__(self, history):
+                self.history = history
+
+            def load_batch_history(self, _batch_id):
+                return self.history
+
+            def load_predecessor_release_id_for_batch(self, _batch_id):
+                self.fail = True
+                return 8
+
+        materializer_calls = []
+        for history in (
+            SimpleNamespace(batch_status="candidate_materialized", candidate_release_id=None),
+            SimpleNamespace(batch_status="ingested", candidate_release_id=44),
+        ):
+            with self.subTest(history=history):
+                gateway = ProductionWorkflowGateway(
+                    store_factory=lambda history=history: Store(history),
+                    materializer=lambda *_args: materializer_calls.append(1),
+                )
+                with self.assertRaisesRegex(
+                    WorkflowConfigurationError, "CANDIDATE_RECEIPT_INCONSISTENT"
+                ):
+                    gateway.materialize(73, dry_run=False)
+        self.assertEqual(materializer_calls, [])
+
 
 if __name__ == "__main__":
     unittest.main()
