@@ -1,26 +1,35 @@
-"""Minimized OpenAI Structured Outputs adapter for Abbott material proposals.
+"""Privacy-minimized OpenAI Structured Outputs adapter for Abbott content.
 
-The module deliberately accepts an injected client so unit tests and workflow dry
-runs never need credentials or network access.  It stores only validated structured
-results and stable status codes; raw provider responses and exception text are not
-part of any returned contract.
+Only immutable content metadata is serialized. Returned contracts contain validated
+classification fields, stable status codes, aggregate token counts, and elapsed
+milliseconds; provider response bodies and exception text are never retained.
 """
 
 from __future__ import annotations
 
 from dataclasses import dataclass
 import hashlib
+import html
 import json
-import os
 import re
+import time
 from types import MappingProxyType
 from typing import Annotated, Any, Callable, Literal, Mapping, Sequence
+import unicodedata
+from urllib.parse import parse_qsl, unquote, urlsplit
+
+from openai import OpenAI
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from .domain import (
     ACCESS_CODES,
+    ACCESS_LABELS,
     DIRECTION_CODES,
+    DIRECTION_LABELS,
     LIFECYCLE_CODES,
+    LIFECYCLE_LABELS,
     MATERIAL_TYPE_CODES,
+    MATERIAL_TYPE_LABELS,
     ConflictCode,
     Proposal,
 )
@@ -32,13 +41,25 @@ LLM_CONFIDENCE_THRESHOLD = 0.85
 MAX_CONTENT_EXCERPT_CHARS = 12_000
 MAX_EVIDENCE_ITEMS = 5
 MAX_EVIDENCE_CHARS = 240
+MAX_APPROVED_EXAMPLES = 8
 
 SYSTEM_PROMPT_V1 = """Classify one Abbott professional-medical portal material.
-Use only the supplied material JSON and the allowed taxonomy codes represented by
-the response schema. Return concise source-grounded evidence, not hidden reasoning.
-When the supplied evidence cannot support both classifications, abstain using the
-schema's insufficient-evidence contract. Do not call tools or infer audience data.
+Use only the supplied material JSON and its requested_fields. Every field not named
+in requested_fields must be null (and direction alternatives must be empty when
+direction is not requested). Use only taxonomy codes supplied in the versioned
+taxonomy object. Return concise source-grounded evidence, not hidden reasoning. If
+the evidence cannot support every requested field, use the schema's complete
+insufficient-evidence abstention. Do not call tools or infer audience data.
 """
+
+TAXONOMY_DEFINITIONS_V1: Mapping[str, str] = MappingProxyType(
+    {
+        "direction": "Primary Abbott medical specialty or approved audience bucket.",
+        "material_type": "Canonical content format or approved portal material class.",
+        "access": "Audience allowed to access the material; context only, not predicted.",
+        "lifecycle": "Canonical publication lifecycle; context only, not predicted.",
+    }
+)
 
 
 DirectionCode = Literal[
@@ -79,110 +100,69 @@ MaterialTypeCode = Literal[
     "special_project",
 ]
 
+EvidenceSignal = Annotated[
+    str, Field(min_length=1, max_length=MAX_EVIDENCE_CHARS)
+]
 
-def _validate_classification_values(value: Any) -> None:
-    """Apply semantic rules that JSON-schema field constraints cannot express."""
 
-    if value.direction_code not in DIRECTION_CODES:
-        raise ValueError("invalid direction code")
-    if value.material_type_code is not None and value.material_type_code not in MATERIAL_TYPE_CODES:
-        raise ValueError("invalid material type code")
-    for confidence in (value.direction_confidence, value.material_type_confidence):
-        if isinstance(confidence, bool) or not isinstance(confidence, (int, float)):
-            raise ValueError("confidence must be numeric")
-        if not 0 <= confidence <= 1:
-            raise ValueError("confidence must be between zero and one")
-    alternatives = tuple(value.alternative_direction_codes)
-    if isinstance(value.alternative_direction_codes, (str, bytes)):
-        raise ValueError("alternative directions must be an array")
-    if len(alternatives) > 4 or len(set(alternatives)) != len(alternatives):
-        raise ValueError("alternative direction codes must be short and unique")
-    if any(code not in DIRECTION_CODES for code in alternatives):
-        raise ValueError("invalid alternative direction code")
-    if value.direction_code in alternatives:
-        raise ValueError("the selected direction cannot also be an alternative")
-    evidence = tuple(value.evidence)
-    if isinstance(value.evidence, (str, bytes)):
-        raise ValueError("evidence must be an array")
-    if len(evidence) > MAX_EVIDENCE_ITEMS:
-        raise ValueError("too many evidence signals")
-    if any(not signal.strip() or len(signal) > MAX_EVIDENCE_CHARS for signal in evidence):
-        raise ValueError("evidence signals must be nonempty and short")
-    if value.insufficient_evidence:
-        if (
-            value.direction_code != "undetermined"
-            or value.material_type_code is not None
-            or value.direction_confidence != 0
-            or value.material_type_confidence != 0
-            or alternatives
-            or evidence
+class LlmClassification(BaseModel):
+    """Closed Pydantic schema passed directly to ``responses.parse``.
+
+    Nullable classification fields remain required in the generated JSON Schema.
+    Null is mandatory for a field excluded by the request's lock mask.
+    """
+
+    model_config = ConfigDict(extra="forbid", frozen=True, strict=True)
+
+    direction_code: DirectionCode | None
+    material_type_code: MaterialTypeCode | None
+    direction_confidence: float | None = Field(ge=0, le=1)
+    material_type_confidence: float | None = Field(ge=0, le=1)
+    alternative_direction_codes: tuple[DirectionCode, ...] = Field(max_length=4)
+    evidence: tuple[EvidenceSignal, ...] = Field(max_length=MAX_EVIDENCE_ITEMS)
+    requires_medical_review: bool
+    insufficient_evidence: bool
+
+    @model_validator(mode="after")
+    def _validate_semantics(self) -> "LlmClassification":
+        if any(not item.strip() for item in self.evidence):
+            raise ValueError("evidence signals must not be blank")
+        if len(set(self.alternative_direction_codes)) != len(
+            self.alternative_direction_codes
         ):
-            raise ValueError("insufficient evidence must be a complete abstention")
-    elif value.direction_code == "undetermined" or value.material_type_code is None:
-        raise ValueError("an unresolved classification must explicitly abstain")
-    if not isinstance(value.requires_medical_review, bool) or not isinstance(
-        value.insufficient_evidence, bool
-    ):
-        raise ValueError("review and abstention flags must be boolean")
-
-
-try:  # The deployment dependency is bounded in requirements.txt.
-    from pydantic import BaseModel, ConfigDict, Field, model_validator
-except ModuleNotFoundError:  # pragma: no cover - exercised only by the offline dev image.
-    BaseModel = None  # type: ignore[assignment,misc]
-
-
-if BaseModel is not None:
-
-    EvidenceSignal = Annotated[
-        str, Field(min_length=1, max_length=MAX_EVIDENCE_CHARS)
-    ]
-
-    class LlmClassification(BaseModel):
-        """Closed Pydantic schema passed directly to ``responses.parse``."""
-
-        model_config = ConfigDict(extra="forbid", frozen=True, strict=True)
-
-        direction_code: DirectionCode
-        material_type_code: MaterialTypeCode | None
-        direction_confidence: float = Field(ge=0, le=1)
-        material_type_confidence: float = Field(ge=0, le=1)
-        alternative_direction_codes: tuple[DirectionCode, ...] = Field(max_length=4)
-        evidence: tuple[EvidenceSignal, ...] = Field(max_length=MAX_EVIDENCE_ITEMS)
-        requires_medical_review: bool
-        insufficient_evidence: bool
-
-        @model_validator(mode="after")
-        def _validate_abstention(self) -> "LlmClassification":
-            _validate_classification_values(self)
+            raise ValueError("alternative direction codes must be unique")
+        if self.direction_code in self.alternative_direction_codes:
+            raise ValueError("selected direction cannot also be an alternative")
+        if self.insufficient_evidence:
+            if (
+                self.direction_code not in {None, "undetermined"}
+                or self.material_type_code is not None
+                or self.direction_confidence not in {None, 0}
+                or self.material_type_confidence not in {None, 0}
+                or self.alternative_direction_codes
+                or self.evidence
+                or self.requires_medical_review
+            ):
+                raise ValueError("insufficient evidence must be a complete abstention")
             return self
+        if self.direction_code is None and self.direction_confidence is not None:
+            raise ValueError("direction confidence requires a direction")
+        if self.direction_code is not None and self.direction_confidence is None:
+            raise ValueError("direction requires confidence")
+        if self.material_type_code is None and self.material_type_confidence is not None:
+            raise ValueError("material-type confidence requires a material type")
+        if self.material_type_code is not None and self.material_type_confidence is None:
+            raise ValueError("material type requires confidence")
+        if self.direction_code is None and self.alternative_direction_codes:
+            raise ValueError("direction alternatives require a proposed direction")
 
-else:
-
-    @dataclass(frozen=True)
-    class LlmClassification:  # type: ignore[no-redef]
-        """Offline-only equivalent used when dependencies have not been installed.
-
-        A deployed workflow always uses the Pydantic definition above. Keeping the
-        same closed constructor here permits fake-client unit tests in a networkless
-        checkout before dependency installation.
-        """
-
-        direction_code: DirectionCode
-        material_type_code: MaterialTypeCode | None
-        direction_confidence: float
-        material_type_confidence: float
-        alternative_direction_codes: tuple[DirectionCode, ...]
-        evidence: tuple[str, ...]
-        requires_medical_review: bool
-        insufficient_evidence: bool
-
-        def __post_init__(self) -> None:
-            object.__setattr__(
-                self, "alternative_direction_codes", tuple(self.alternative_direction_codes)
-            )
-            object.__setattr__(self, "evidence", tuple(self.evidence))
-            _validate_classification_values(self)
+        if self.direction_code == "undetermined":
+            raise ValueError("undetermined direction requires explicit abstention")
+        if self.direction_code is None and self.material_type_code is None:
+            raise ValueError("a non-abstaining response must classify a field")
+        if not self.evidence:
+            raise ValueError("a non-abstaining response requires evidence")
+        return self
 
 
 _APPROVED_EXAMPLE_FIELDS = frozenset(
@@ -205,7 +185,9 @@ _APPROVED_EXAMPLE_FIELDS = frozenset(
 
 def _freeze_json(value: Any) -> Any:
     if isinstance(value, Mapping):
-        return MappingProxyType({str(key): _freeze_json(item) for key, item in value.items()})
+        return MappingProxyType(
+            {str(key): _freeze_json(item) for key, item in value.items()}
+        )
     if isinstance(value, (list, tuple)):
         return tuple(_freeze_json(item) for item in value)
     if value is None or isinstance(value, (str, int, float, bool)):
@@ -229,17 +211,42 @@ class LlmRequest:
     material_type_hint: str | None = None
     deterministic_proposal: Proposal | None = None
     deterministic_evidence: tuple[str, ...] = ()
+    deterministic_direction_evidence: tuple[str, ...] = ()
+    deterministic_material_type_evidence: tuple[str, ...] = ()
     approved_examples: tuple[Mapping[str, Any], ...] = ()
-    classification_locked: bool = False
+    direction_locked: bool = False
+    material_type_locked: bool = False
 
     def __post_init__(self) -> None:
         object.__setattr__(self, "breadcrumbs", tuple(self.breadcrumbs))
-        object.__setattr__(self, "deterministic_evidence", tuple(self.deterministic_evidence))
+        for field_name in (
+            "deterministic_evidence",
+            "deterministic_direction_evidence",
+            "deterministic_material_type_evidence",
+        ):
+            object.__setattr__(self, field_name, tuple(getattr(self, field_name)))
         object.__setattr__(
             self,
             "approved_examples",
             tuple(_freeze_json(example) for example in self.approved_examples),
         )
+
+    @property
+    def requested_fields(self) -> tuple[str, ...]:
+        values: list[str] = []
+        if not self.direction_locked:
+            values.append("direction_code")
+        if not self.material_type_locked:
+            values.append("material_type_code")
+        return tuple(values)
+
+
+@dataclass(frozen=True)
+class LlmUsage:
+    input_tokens: int = 0
+    output_tokens: int = 0
+    total_tokens: int = 0
+    cached_input_tokens: int = 0
 
 
 @dataclass(frozen=True)
@@ -250,6 +257,9 @@ class LlmAttempt:
     unresolved_code: str | None = None
     attempt_count: int = 0
     input_hash: str | None = None
+    requested_fields: tuple[str, ...] = ("direction_code", "material_type_code")
+    usage: LlmUsage | None = None
+    elapsed_ms: int | None = None
 
 
 @dataclass(frozen=True)
@@ -270,18 +280,24 @@ class _AttemptFailure(Exception):
         self.retryable = retryable
 
 
-# Explicit deny-list. These names are never fields in request construction.
-_DENIED_FIELD_NAMES = frozenset(
+# Explicit deny-list. These values are detection rules only and never request fields.
+_PRIVATE_IDENTIFIER_FIELD_NAMES = frozenset(
     {
         "raw_user_id",
         "user_id",
         "visit_id",
         "client_id",
         "user_behavior",
+    }
+)
+_DENIED_FIELD_NAMES = _PRIVATE_IDENTIFIER_FIELD_NAMES | frozenset(
+    {
         "email",
         "email_address",
         "phone",
         "phone_number",
+        "auth",
+        "authorization",
         "oauth",
         "oauth_token",
         "access_token",
@@ -289,16 +305,92 @@ _DENIED_FIELD_NAMES = frozenset(
         "METRIKA_TOKEN",
         "token",
         "api_key",
-        "authorization",
     }
 )
-_DENIED_NORMALIZED_FIELD_NAMES = frozenset(
-    item.casefold() for item in _DENIED_FIELD_NAMES
+
+_UNICODE_ESCAPE = re.compile(r"\\u([0-9a-fA-F]{4})|\\x([0-9a-fA-F]{2})")
+_CAMEL_BOUNDARY = re.compile(r"(?<=[a-z0-9])(?=[A-Z])")
+_EMAIL_PATTERN = re.compile(
+    r"(?<![\w.+-])[\w.+-]+@[\w.-]+\.[A-Za-z]{2,}(?![\w.-])"
 )
-_DENIED_TEXT_MARKERS = tuple(_DENIED_NORMALIZED_FIELD_NAMES)
-_EMAIL_PATTERN = re.compile(r"(?<![\w.+-])[\w.+-]+@[\w.-]+\.[A-Za-z]{2,}(?![\w.-])")
-_PHONE_PATTERN = re.compile(r"(?<!\w)\+\d(?:[\s().-]*\d){9,14}(?!\w)")
-_BEARER_PATTERN = re.compile(r"\bauthorization\s*:\s*bearer\b", re.IGNORECASE)
+_PHONE_PATTERN = re.compile(r"(?<!\d)(?:\+?\d[\s().-]*){10,15}(?!\d)")
+_SENSITIVE_LABEL = re.compile(
+    r"(?:^|[?&#;\s])(?:auth(?:orization)?|oauth(?:[_-]?token)?|"
+    r"(?:access|refresh)?[_-]?token|api[_-]?key)\s*[:=]",
+    re.IGNORECASE,
+)
+_LABELED_VALUE = re.compile(r"(?:^|[?&#;\s])([^?&#;:=]{1,64})\s*[:=]")
+_BEARER_VALUE = re.compile(r"\bbearer\s+[A-Za-z0-9._~-]{8,}", re.IGNORECASE)
+_API_SECRET = re.compile(r"\bsk-[A-Za-z0-9_-]{8,}", re.IGNORECASE)
+
+
+def _decode_for_detection(value: str) -> str:
+    decoded = value
+    for _ in range(3):
+        previous = decoded
+        decoded = html.unescape(unquote(decoded))
+        decoded = _UNICODE_ESCAPE.sub(
+            lambda match: chr(int(match.group(1) or match.group(2), 16)), decoded
+        )
+        if decoded == previous:
+            break
+    return unicodedata.normalize("NFKC", decoded)
+
+
+def _canonical_key(value: str) -> str:
+    decoded = _CAMEL_BOUNDARY.sub("_", _decode_for_detection(value))
+    return "".join(character for character in decoded.casefold() if character.isalnum())
+
+
+_DENIED_CANONICAL_KEYS = frozenset(
+    _canonical_key(value) for value in _DENIED_FIELD_NAMES
+)
+_PRIVATE_VALUE_MARKERS = frozenset(
+    _canonical_key(value) for value in _PRIVATE_IDENTIFIER_FIELD_NAMES
+)
+
+
+def _url_has_denied_query(value: str) -> bool:
+    decoded = _decode_for_detection(value)
+    try:
+        query = urlsplit(decoded).query
+    except ValueError:
+        return True
+    return any(_canonical_key(key) in _DENIED_CANONICAL_KEYS for key, _ in parse_qsl(query))
+
+
+def _text_has_denied_data(value: str) -> bool:
+    decoded = _decode_for_detection(value)
+    folded = decoded.casefold()
+    compact = _canonical_key(decoded)
+    has_denied_label = any(
+        _canonical_key(match.group(1)) in _DENIED_CANONICAL_KEYS
+        for match in _LABELED_VALUE.finditer(decoded)
+    )
+    return (
+        any(marker in compact for marker in _PRIVATE_VALUE_MARKERS)
+        or _EMAIL_PATTERN.search(decoded) is not None
+        or _PHONE_PATTERN.search(decoded) is not None
+        or _SENSITIVE_LABEL.search(folded) is not None
+        or has_denied_label
+        or _BEARER_VALUE.search(decoded) is not None
+        or _API_SECRET.search(decoded) is not None
+        or "oauth" in compact
+        or _url_has_denied_query(decoded)
+    )
+
+
+def _contains_denied_data(value: Any, *, key: str | None = None) -> bool:
+    if key is not None and _canonical_key(key) in _DENIED_CANONICAL_KEYS:
+        return True
+    if isinstance(value, Mapping):
+        return any(
+            _contains_denied_data(item, key=str(item_key))
+            for item_key, item in value.items()
+        )
+    if isinstance(value, (list, tuple)):
+        return any(_contains_denied_data(item) for item in value)
+    return isinstance(value, str) and _text_has_denied_data(value)
 
 
 def _plain_json(value: Any) -> Any:
@@ -309,45 +401,92 @@ def _plain_json(value: Any) -> Any:
     return value
 
 
-def _contains_denied_data(value: Any, *, key: str | None = None) -> bool:
-    if key is not None:
-        normalized_key = re.sub(r"[^a-z0-9]+", "_", key.casefold()).strip("_")
-        if normalized_key in _DENIED_NORMALIZED_FIELD_NAMES or normalized_key.endswith("_token"):
-            return True
-    if isinstance(value, Mapping):
-        return any(_contains_denied_data(item, key=str(item_key)) for item_key, item in value.items())
-    if isinstance(value, (list, tuple)):
-        return any(_contains_denied_data(item) for item in value)
-    if not isinstance(value, str):
-        return False
-    folded = value.casefold()
-    return (
-        any(marker in folded for marker in _DENIED_TEXT_MARKERS)
-        or _EMAIL_PATTERN.search(value) is not None
-        or _PHONE_PATTERN.search(value) is not None
-        or _BEARER_PATTERN.search(value) is not None
-    )
-
-
-def _proposal_json(value: Proposal | None) -> Mapping[str, Any] | None:
-    if value is None:
-        return None
-    return {
-        "access_code": value.access_code,
-        "confidence": value.confidence,
-        "direction_code": value.direction_code,
-        "lifecycle_code": value.lifecycle_code,
-        "material_type_code": value.material_type_code,
-        "rule_code": value.rule_code,
-    }
-
-
 def _valid_optional(value: str | None, allowed: Sequence[str]) -> bool:
     return value is None or value in allowed
 
 
-def _validate_request_taxonomy(request: LlmRequest, examples: Sequence[Mapping[str, Any]]) -> None:
-    if not request.taxonomy_version.strip():
+def _validate_example_shape(example: Mapping[str, Any]) -> None:
+    scalar_limits = {
+        "title": 500,
+        "normalized_url": 2_048,
+        "normalized_path": 2_048,
+        "h1": 500,
+        "meta_description": 1_000,
+        "content_excerpt": 2_000,
+    }
+    for field_name, limit in scalar_limits.items():
+        if field_name in example and (
+            not isinstance(example[field_name], str)
+            or len(example[field_name]) > limit
+        ):
+            raise ValueError("invalid approved example text field")
+    for field_name, item_limit, count_limit in (
+        ("breadcrumbs", 240, 12),
+        ("evidence", MAX_EVIDENCE_CHARS, MAX_EVIDENCE_ITEMS),
+    ):
+        if field_name not in example:
+            continue
+        items = example[field_name]
+        if (
+            not isinstance(items, list)
+            or len(items) > count_limit
+            or any(
+                not isinstance(item, str)
+                or not item.strip()
+                or len(item) > item_limit
+                for item in items
+            )
+        ):
+            raise ValueError("invalid approved example list field")
+
+
+def _validate_request_shape(request: LlmRequest) -> None:
+    for field_name, limit in (
+        ("title", 1_000),
+        ("normalized_url", 4_096),
+        ("normalized_path", 4_096),
+        ("h1", 1_000),
+        ("meta_description", 2_000),
+        ("content_excerpt", MAX_CONTENT_EXCERPT_CHARS + 100_000),
+    ):
+        value = getattr(request, field_name)
+        if not isinstance(value, str) or len(value) > limit:
+            raise ValueError("invalid request text field")
+    if (
+        len(request.breadcrumbs) > 20
+        or any(
+            not isinstance(item, str) or len(item) > 500
+            for item in request.breadcrumbs
+        )
+    ):
+        raise ValueError("invalid breadcrumbs")
+    for values in (
+        request.deterministic_evidence,
+        request.deterministic_direction_evidence,
+        request.deterministic_material_type_evidence,
+    ):
+        if len(values) > 20 or any(
+            not isinstance(item, str) or len(item) > 500 for item in values
+        ):
+            raise ValueError("invalid deterministic evidence")
+    if not isinstance(request.direction_locked, bool) or not isinstance(
+        request.material_type_locked, bool
+    ):
+        raise ValueError("invalid lock mask")
+    if request.deterministic_proposal is not None and not isinstance(
+        request.deterministic_proposal, Proposal
+    ):
+        raise ValueError("invalid deterministic proposal")
+
+
+def _validate_request_taxonomy(
+    request: LlmRequest, examples: Sequence[Mapping[str, Any]]
+) -> None:
+    if (
+        not isinstance(request.taxonomy_version, str)
+        or not request.taxonomy_version.strip()
+        or len(request.taxonomy_version) > 128
+    ):
         raise ValueError("taxonomy version is required")
     if not _valid_optional(request.access_code, ACCESS_CODES):
         raise ValueError("invalid access code")
@@ -370,36 +509,97 @@ def _validate_request_taxonomy(request: LlmRequest, examples: Sequence[Mapping[s
             raise ValueError("invalid example access code")
 
 
+def _term_rows(labels: Mapping[str, str]) -> list[dict[str, str]]:
+    return [{"code": code, "label": label} for code, label in labels.items()]
+
+
+def _taxonomy_payload(version: str) -> dict[str, Any]:
+    return {
+        "version": version,
+        "definitions": dict(TAXONOMY_DEFINITIONS_V1),
+        "direction_terms": _term_rows(DIRECTION_LABELS),
+        "material_type_terms": _term_rows(MATERIAL_TYPE_LABELS),
+        "access_terms": _term_rows(ACCESS_LABELS),
+        "lifecycle_terms": _term_rows(LIFECYCLE_LABELS),
+    }
+
+
+def _deterministic_payload(
+    value: Proposal | None, requested_fields: Sequence[str]
+) -> Mapping[str, Any] | None:
+    if value is None:
+        return None
+    payload: dict[str, Any] = {
+        "confidence": value.confidence,
+        "rule_code": value.rule_code,
+    }
+    if "direction_code" in requested_fields:
+        payload["direction_code"] = value.direction_code
+    if "material_type_code" in requested_fields:
+        payload["material_type_code"] = value.material_type_code
+    return payload
+
+
+def _requested_evidence(request: LlmRequest) -> tuple[str, ...]:
+    explicit: list[str] = []
+    if "direction_code" in request.requested_fields:
+        explicit.extend(request.deterministic_direction_evidence)
+    if "material_type_code" in request.requested_fields:
+        explicit.extend(request.deterministic_material_type_evidence)
+    if explicit:
+        return tuple(explicit)
+    if request.direction_locked or request.material_type_locked:
+        return ()
+    if request.deterministic_evidence:
+        return request.deterministic_evidence
+    if request.deterministic_proposal is not None:
+        return request.deterministic_proposal.evidence
+    return ()
+
+
 def _serialize_request(request: LlmRequest) -> tuple[str, str]:
+    _validate_request_shape(request)
+    if len(request.approved_examples) > MAX_APPROVED_EXAMPLES:
+        raise ValueError("too many approved examples")
     examples: list[dict[str, Any]] = []
     for immutable_example in request.approved_examples:
         example = _plain_json(immutable_example)
+        if not isinstance(example, dict):
+            raise ValueError("approved example must be an object")
+        if _contains_denied_data(example):
+            raise ValueError("example contains denied data")
         if set(example) - _APPROVED_EXAMPLE_FIELDS:
             raise ValueError("unapproved example field")
+        _validate_example_shape(example)
         examples.append(example)
     _validate_request_taxonomy(request, examples)
 
-    deterministic_evidence = request.deterministic_evidence
-    if not deterministic_evidence and request.deterministic_proposal is not None:
-        deterministic_evidence = request.deterministic_proposal.evidence
     payload = {
         "access_code": request.access_code,
         "approved_examples": examples,
         "breadcrumbs": list(request.breadcrumbs),
         "content_excerpt": request.content_excerpt[:MAX_CONTENT_EXCERPT_CHARS],
-        "deterministic_evidence": list(deterministic_evidence),
-        "deterministic_proposal": _proposal_json(request.deterministic_proposal),
+        "deterministic_evidence": list(_requested_evidence(request)),
+        "deterministic_proposal": _deterministic_payload(
+            request.deterministic_proposal, request.requested_fields
+        ),
         "h1": request.h1,
-        "material_type_hint": request.material_type_hint,
+        "material_type_hint": (
+            None if request.material_type_locked else request.material_type_hint
+        ),
         "meta_description": request.meta_description,
         "normalized_path": request.normalized_path,
         "normalized_url": request.normalized_url,
+        "requested_fields": list(request.requested_fields),
+        "taxonomy": _taxonomy_payload(request.taxonomy_version),
         "taxonomy_version": request.taxonomy_version,
         "title": request.title,
     }
     if _contains_denied_data(payload):
         raise ValueError("input contains denied data")
-    serialized = json.dumps(payload, ensure_ascii=False, separators=(",", ":"), sort_keys=True)
+    serialized = json.dumps(
+        payload, ensure_ascii=False, separators=(",", ":"), sort_keys=True
+    )
     return serialized, hashlib.sha256(serialized.encode("utf-8")).hexdigest()
 
 
@@ -419,38 +619,50 @@ def _parse_response(response: Any) -> LlmClassification:
     status = getattr(response, "status", None)
     if status == "incomplete":
         raise _AttemptFailure("LLM_INCOMPLETE", True)
+    if status == "failed":
+        raise _AttemptFailure("LLM_RESPONSE_FAILED", False)
+    if status == "cancelled":
+        raise _AttemptFailure("LLM_RESPONSE_CANCELLED", False)
+    if status in {"queued", "in_progress"}:
+        raise _AttemptFailure("LLM_RESPONSE_NOT_COMPLETED", False)
+    if status != "completed":
+        raise _AttemptFailure("LLM_RESPONSE_STATUS_INVALID", False)
     if _response_has_refusal(response):
         raise _AttemptFailure("LLM_REFUSAL", True)
     parsed = getattr(response, "output_parsed", None)
     if not isinstance(parsed, LlmClassification):
         raise _AttemptFailure("LLM_SCHEMA_FAILURE", True)
-    try:
-        _validate_classification_values(parsed)
-    except (TypeError, ValueError):
-        raise _AttemptFailure("LLM_SCHEMA_FAILURE", True) from None
     return parsed
 
 
-def _exception_failure(error: BaseException) -> _AttemptFailure:
-    """Classify errors by type/status only; never inspect or retain their text."""
+_NONRETRYABLE_RATE_CODES = frozenset(
+    {
+        "credit_balance_exhausted",
+        "organization_spend_limit_exceeded",
+        "project_spend_limit_exceeded",
+        "organization_usage_limit_exceeded",
+        "insufficient_quota",
+    }
+)
+
+
+def _exception_failure(error: Exception) -> _AttemptFailure:
+    """Classify errors by type/status/code only; never retain their text or body."""
 
     name = type(error).__name__
     status_code = getattr(error, "status_code", None)
+    error_code = getattr(error, "code", None)
     if isinstance(error, TimeoutError) or name in {"APITimeoutError", "TimeoutException"}:
         return _AttemptFailure("LLM_TIMEOUT", True)
     if status_code == 429 or name == "RateLimitError":
+        if error_code in _NONRETRYABLE_RATE_CODES:
+            return _AttemptFailure("LLM_QUOTA_ERROR", False)
         return _AttemptFailure("LLM_RATE_LIMIT", True)
     if isinstance(status_code, int) and 500 <= status_code <= 599:
         return _AttemptFailure("LLM_SERVER_ERROR", True)
     if name in {"InternalServerError", "ServiceUnavailableError"}:
         return _AttemptFailure("LLM_SERVER_ERROR", True)
-    if isinstance(error, ConnectionError) or name in {
-        "APIConnectionError",
-        "ConnectError",
-        "RemoteProtocolError",
-    }:
-        return _AttemptFailure("LLM_TRANSIENT_ERROR", True)
-    if name in {"LengthFinishReasonError"}:
+    if name == "LengthFinishReasonError":
         return _AttemptFailure("LLM_INCOMPLETE", True)
     if name in {"ContentFilterFinishReasonError", "RefusalError"}:
         return _AttemptFailure("LLM_REFUSAL", True)
@@ -459,31 +671,100 @@ def _exception_failure(error: BaseException) -> _AttemptFailure:
     return _AttemptFailure("LLM_PROVIDER_ERROR", False)
 
 
-class OpenAIContentClassifier:
-    """Responses API adapter with a single sanitized retry."""
+def _safe_count(value: Any) -> int:
+    return value if isinstance(value, int) and not isinstance(value, bool) and value >= 0 else 0
 
-    def __init__(self, client: Any | None = None) -> None:
+
+def _usage_from_response(response: Any) -> LlmUsage | None:
+    usage = getattr(response, "usage", None)
+    if usage is None:
+        return None
+    details = getattr(usage, "input_tokens_details", None)
+    result = LlmUsage(
+        input_tokens=_safe_count(getattr(usage, "input_tokens", None)),
+        output_tokens=_safe_count(getattr(usage, "output_tokens", None)),
+        total_tokens=_safe_count(getattr(usage, "total_tokens", None)),
+        cached_input_tokens=_safe_count(getattr(details, "cached_tokens", None)),
+    )
+    return result
+
+
+def _add_usage(left: LlmUsage | None, right: LlmUsage | None) -> LlmUsage | None:
+    if left is None:
+        return right
+    if right is None:
+        return left
+    return LlmUsage(
+        input_tokens=left.input_tokens + right.input_tokens,
+        output_tokens=left.output_tokens + right.output_tokens,
+        total_tokens=left.total_tokens + right.total_tokens,
+        cached_input_tokens=left.cached_input_tokens + right.cached_input_tokens,
+    )
+
+
+def _classification_respects_fields(
+    value: LlmClassification, requested_fields: Sequence[str]
+) -> bool:
+    requested = frozenset(requested_fields)
+    if "direction_code" not in requested and (
+        value.direction_code is not None
+        or value.direction_confidence is not None
+        or value.alternative_direction_codes
+    ):
+        return False
+    if "material_type_code" not in requested and (
+        value.material_type_code is not None
+        or value.material_type_confidence is not None
+    ):
+        return False
+    if value.insufficient_evidence:
+        return True
+    if "direction_code" in requested and value.direction_code is None:
+        return False
+    if "material_type_code" in requested and value.material_type_code is None:
+        return False
+    return True
+
+
+class OpenAIContentClassifier:
+    """Responses adapter with one local retry and no hidden SDK retries.
+
+    Injected clients are a test/composition seam and must themselves be configured
+    with ``max_retries=0``. Internally constructed SDK clients always receive that
+    setting explicitly, keeping the adapter-wide maximum at two provider calls.
+    """
+
+    def __init__(
+        self,
+        client: Any | None = None,
+        *,
+        client_factory: Callable[..., Any] = OpenAI,
+        monotonic: Callable[[], float] = time.monotonic,
+    ) -> None:
         self._client = client
+        self._client_factory = client_factory
+        self._monotonic = monotonic
 
     def _client_for_call(self) -> Any:
         if self._client is None:
-            from openai import OpenAI
-
-            self._client = OpenAI(api_key=os.environ.get("OPENAI_API_KEY"))
+            self._client = self._client_factory(max_retries=0)
         return self._client
 
     def classify(self, request: LlmRequest, model: str) -> LlmAttempt:
-        if request.classification_locked:
+        requested_fields = request.requested_fields
+        if not requested_fields:
             return LlmAttempt(
                 status="locked",
                 model=model,
                 unresolved_code="LLM_LOCKED",
+                requested_fields=(),
             )
         if model not in {LLM_PRIMARY_MODEL, LLM_VERIFIER_MODEL}:
             return LlmAttempt(
                 status="unresolved",
                 model=model,
                 unresolved_code="LLM_MODEL_NOT_ALLOWED",
+                requested_fields=requested_fields,
             )
         try:
             immutable_json, input_hash = _serialize_request(request)
@@ -492,6 +773,7 @@ class OpenAIContentClassifier:
                 status="unresolved",
                 model=model,
                 unresolved_code="LLM_INPUT_REJECTED",
+                requested_fields=requested_fields,
             )
 
         request_arguments = {
@@ -507,86 +789,137 @@ class OpenAIContentClassifier:
                 "effort": "low" if model == LLM_PRIMARY_MODEL else "medium"
             },
         }
+        started = self._monotonic()
+        aggregate_usage: LlmUsage | None = None
+
+        def finish(
+            *,
+            status: Literal["success", "unresolved"],
+            attempt_count: int,
+            classification: LlmClassification | None = None,
+            unresolved_code: str | None = None,
+        ) -> LlmAttempt:
+            elapsed_ms = max(0, round((self._monotonic() - started) * 1000))
+            return LlmAttempt(
+                status=status,
+                model=model,
+                classification=classification,
+                unresolved_code=unresolved_code,
+                attempt_count=attempt_count,
+                input_hash=input_hash,
+                requested_fields=requested_fields,
+                usage=aggregate_usage,
+                elapsed_ms=elapsed_ms,
+            )
+
         for attempt_number in (1, 2):
             try:
                 response = self._client_for_call().responses.parse(**request_arguments)
+                aggregate_usage = _add_usage(
+                    aggregate_usage, _usage_from_response(response)
+                )
                 classification = _parse_response(response)
+                if not _classification_respects_fields(
+                    classification, requested_fields
+                ):
+                    raise _AttemptFailure("LLM_SCHEMA_FAILURE", True)
             except _AttemptFailure as failure:
                 if failure.retryable and attempt_number == 1:
                     continue
-                return LlmAttempt(
+                return finish(
                     status="unresolved",
-                    model=model,
                     unresolved_code=failure.code,
                     attempt_count=attempt_number,
-                    input_hash=input_hash,
                 )
             except Exception as error:
                 failure = _exception_failure(error)
                 if failure.retryable and attempt_number == 1:
                     continue
-                return LlmAttempt(
+                return finish(
                     status="unresolved",
-                    model=model,
                     unresolved_code=failure.code,
                     attempt_count=attempt_number,
-                    input_hash=input_hash,
                 )
             if classification.insufficient_evidence:
-                return LlmAttempt(
+                return finish(
                     status="unresolved",
-                    model=model,
                     unresolved_code="LLM_INSUFFICIENT_EVIDENCE",
                     attempt_count=attempt_number,
-                    input_hash=input_hash,
                 )
-            return LlmAttempt(
+            return finish(
                 status="success",
-                model=model,
                 classification=classification,
                 attempt_count=attempt_number,
-                input_hash=input_hash,
             )
         raise AssertionError("unreachable retry state")
 
 
 def _as_proposal(value: LlmClassification, rule_code: str) -> Proposal:
+    confidences = tuple(
+        confidence
+        for confidence in (
+            value.direction_confidence,
+            value.material_type_confidence,
+        )
+        if confidence is not None
+    )
     return Proposal(
         direction_code=value.direction_code,
         material_type_code=value.material_type_code,
         access_code=None,
         lifecycle_code=None,
         rule_code=rule_code,
-        confidence=min(value.direction_confidence, value.material_type_confidence),
+        confidence=min(confidences) if confidences else None,
         evidence=tuple(value.evidence),
     )
 
 
 def _deterministic_disagreement(
-    deterministic: Proposal, classification: LlmClassification
+    deterministic: Proposal,
+    classification: LlmClassification,
+    requested_fields: Sequence[str],
 ) -> bool:
+    comparisons: list[tuple[str | None, str | None]] = []
+    if "direction_code" in requested_fields:
+        comparisons.append((deterministic.direction_code, classification.direction_code))
+    if "material_type_code" in requested_fields:
+        comparisons.append(
+            (deterministic.material_type_code, classification.material_type_code)
+        )
     return any(
         expected is not None and expected != observed
-        for expected, observed in (
-            (deterministic.direction_code, classification.direction_code),
-            (deterministic.material_type_code, classification.material_type_code),
-        )
+        for expected, observed in comparisons
     )
 
 
 def _classifications_agree(
-    primary: LlmClassification, verifier: LlmClassification
+    primary: LlmClassification,
+    verifier: LlmClassification,
+    requested_fields: Sequence[str],
 ) -> bool:
-    return (
-        primary.direction_code == verifier.direction_code
-        and primary.material_type_code == verifier.material_type_code
+    return all(
+        getattr(primary, field_name) == getattr(verifier, field_name)
+        for field_name in requested_fields
     )
 
 
-def _confidence_at_least(value: LlmClassification, threshold: float) -> bool:
-    return (
-        value.direction_confidence >= threshold
-        and value.material_type_confidence >= threshold
+def _confidence_at_least(
+    value: LlmClassification, requested_fields: Sequence[str], threshold: float
+) -> bool:
+    confidence_by_field = {
+        "direction_code": value.direction_confidence,
+        "material_type_code": value.material_type_confidence,
+    }
+    return all(
+        confidence_by_field[field_name] is not None
+        and confidence_by_field[field_name] >= threshold
+        for field_name in requested_fields
+    )
+
+
+def _locked_field_returned(attempt: LlmAttempt) -> bool:
+    return attempt.classification is not None and not _classification_respects_fields(
+        attempt.classification, attempt.requested_fields
     )
 
 
@@ -595,7 +928,7 @@ def route_llm(
     primary: LlmAttempt,
     verifier_factory: Callable[[], LlmAttempt],
 ) -> LlmRouteResult:
-    """Apply deterministic Terra-to-Sol routing without invoking locked work."""
+    """Apply deterministic Terra-to-Sol routing while preserving field locks."""
 
     if primary.status == "locked":
         return LlmRouteResult(
@@ -609,6 +942,12 @@ def route_llm(
             primary=primary,
             unresolved_code="LLM_PRIMARY_MODEL_INVALID",
         )
+    if _locked_field_returned(primary):
+        return LlmRouteResult(
+            status="unresolved",
+            primary=primary,
+            unresolved_code="LLM_LOCKED_FIELD_RETURNED",
+        )
     if primary.status != "success" or primary.classification is None:
         return LlmRouteResult(
             status="unresolved",
@@ -617,10 +956,20 @@ def route_llm(
         )
 
     primary_value = primary.classification
+    if primary_value.insufficient_evidence:
+        return LlmRouteResult(
+            status="unresolved",
+            primary=primary,
+            unresolved_code="LLM_INSUFFICIENT_EVIDENCE",
+        )
     needs_verifier = (
-        not _confidence_at_least(primary_value, LLM_CONFIDENCE_THRESHOLD)
+        not _confidence_at_least(
+            primary_value, primary.requested_fields, LLM_CONFIDENCE_THRESHOLD
+        )
         or bool(primary_value.alternative_direction_codes)
-        or _deterministic_disagreement(deterministic, primary_value)
+        or _deterministic_disagreement(
+            deterministic, primary_value, primary.requested_fields
+        )
         or primary_value.requires_medical_review
     )
     if not needs_verifier:
@@ -639,6 +988,20 @@ def route_llm(
             verifier=verifier,
             unresolved_code="LLM_VERIFIER_MODEL_INVALID",
         )
+    if verifier.requested_fields != primary.requested_fields:
+        return LlmRouteResult(
+            status="unresolved",
+            primary=primary,
+            verifier=verifier,
+            unresolved_code="LLM_VERIFIER_FIELD_MASK_MISMATCH",
+        )
+    if _locked_field_returned(verifier):
+        return LlmRouteResult(
+            status="unresolved",
+            primary=primary,
+            verifier=verifier,
+            unresolved_code="LLM_LOCKED_FIELD_RETURNED",
+        )
     if verifier.status != "success" or verifier.classification is None:
         return LlmRouteResult(
             status="unresolved",
@@ -647,14 +1010,39 @@ def route_llm(
             unresolved_code=verifier.unresolved_code or "LLM_VERIFIER_UNRESOLVED",
         )
     verifier_value = verifier.classification
-    if not _classifications_agree(primary_value, verifier_value):
+    if verifier_value.insufficient_evidence:
+        return LlmRouteResult(
+            status="unresolved",
+            primary=primary,
+            verifier=verifier,
+            unresolved_code="LLM_INSUFFICIENT_EVIDENCE",
+        )
+    if verifier_value.alternative_direction_codes:
+        return LlmRouteResult(
+            status="unresolved",
+            primary=primary,
+            verifier=verifier,
+            unresolved_code="LLM_VERIFIER_AMBIGUOUS",
+        )
+    if verifier_value.requires_medical_review:
+        return LlmRouteResult(
+            status="unresolved",
+            primary=primary,
+            verifier=verifier,
+            unresolved_code="LLM_VERIFIER_MEDICAL_REVIEW",
+        )
+    if not _classifications_agree(
+        primary_value, verifier_value, primary.requested_fields
+    ):
         return LlmRouteResult(
             status="conflict",
             primary=primary,
             verifier=verifier,
             conflict_code=ConflictCode.LLM_DISAGREEMENT.value,
         )
-    if not _confidence_at_least(verifier_value, LLM_CONFIDENCE_THRESHOLD):
+    if not _confidence_at_least(
+        verifier_value, verifier.requested_fields, LLM_CONFIDENCE_THRESHOLD
+    ):
         return LlmRouteResult(
             status="unresolved",
             primary=primary,
@@ -678,8 +1066,10 @@ __all__ = [
     "LlmClassification",
     "LlmRequest",
     "LlmRouteResult",
+    "LlmUsage",
     "MAX_CONTENT_EXCERPT_CHARS",
     "OpenAIContentClassifier",
     "SYSTEM_PROMPT_V1",
+    "TAXONOMY_DEFINITIONS_V1",
     "route_llm",
 ]

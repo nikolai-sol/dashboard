@@ -3,16 +3,26 @@
 from __future__ import annotations
 
 import json
+from pathlib import Path
 from types import SimpleNamespace
 import unittest
 
-from agents.abbott_page_classifier.domain import Proposal
+from pydantic import BaseModel
+
+from agents.abbott_page_classifier.domain import (
+    ACCESS_LABELS,
+    DIRECTION_LABELS,
+    LIFECYCLE_LABELS,
+    MATERIAL_TYPE_LABELS,
+    Proposal,
+)
 from agents.abbott_page_classifier.llm_classifier import (
     LLM_PRIMARY_MODEL,
     LLM_VERIFIER_MODEL,
     LlmAttempt,
     LlmClassification,
     LlmRequest,
+    TAXONOMY_DEFINITIONS_V1,
     OpenAIContentClassifier,
     SYSTEM_PROMPT_V1,
     route_llm,
@@ -43,6 +53,11 @@ class APITimeoutError(Exception):
 
 class RateLimitError(Exception):
     status_code = 429
+
+
+class QuotaRateLimitError(Exception):
+    status_code = 429
+    code = "insufficient_quota"
 
 
 class APIStatusError(Exception):
@@ -98,22 +113,40 @@ def _request(**overrides):
                 "material_type_code": "articles",
             },
         ),
+        "deterministic_direction_evidence": ("path:cardio",),
+        "deterministic_material_type_evidence": ("path:articles",),
     }
     values.update(overrides)
     return LlmRequest(**values)
 
 
-def _attempt(value=None, *, status="success", code=None, model=LLM_PRIMARY_MODEL):
+def _attempt(
+    value=None,
+    *,
+    status="success",
+    code=None,
+    model=LLM_PRIMARY_MODEL,
+    requested_fields=("direction_code", "material_type_code"),
+):
     return LlmAttempt(
         status=status,
         model=model,
         classification=value,
         unresolved_code=code,
         attempt_count=1,
+        requested_fields=requested_fields,
     )
 
 
 class StructuredOutputTests(unittest.TestCase):
+    def test_classifier_is_always_a_real_pydantic_model(self):
+        self.assertTrue(issubclass(LlmClassification, BaseModel))
+        source = Path(
+            "agents/abbott_page_classifier/llm_classifier.py"
+        ).read_text(encoding="utf-8")
+        self.assertNotIn("except ModuleNotFoundError", source)
+        self.assertNotIn("OPENAI_API_KEY", source)
+
     def test_schema_rejects_unknown_fields(self):
         with self.assertRaises((TypeError, ValueError)):
             _classification(unapproved_field="no")
@@ -133,6 +166,8 @@ class StructuredOutputTests(unittest.TestCase):
             _classification(evidence=tuple("signal" for _ in range(6)))
         with self.assertRaises(ValueError):
             _classification(evidence=("   ",))
+        with self.assertRaises(ValueError):
+            _classification(evidence=())
 
     def test_insufficient_evidence_is_a_strict_abstention(self):
         abstention = _classification(
@@ -188,13 +223,45 @@ class AdapterTests(unittest.TestCase):
                 "normalized_path",
                 "normalized_url",
                 "taxonomy_version",
+                "taxonomy",
                 "title",
+                "requested_fields",
             },
         )
         self.assertEqual(len(material["content_excerpt"]), 12_000)
-        self.assertEqual(material["deterministic_evidence"], ["path:cardio"])
+        self.assertEqual(
+            material["deterministic_evidence"], ["path:cardio", "path:articles"]
+        )
         self.assertEqual(material["taxonomy_version"], "abbott-v1")
         self.assertEqual(material["approved_examples"][0]["title"], "Пример")
+        self.assertEqual(
+            material["requested_fields"], ["direction_code", "material_type_code"]
+        )
+        taxonomy = material["taxonomy"]
+        self.assertEqual(taxonomy["version"], "abbott-v1")
+        self.assertEqual(taxonomy["definitions"], TAXONOMY_DEFINITIONS_V1)
+        self.assertEqual(
+            taxonomy["direction_terms"],
+            [{"code": code, "label": label} for code, label in DIRECTION_LABELS.items()],
+        )
+        self.assertEqual(
+            taxonomy["material_type_terms"],
+            [
+                {"code": code, "label": label}
+                for code, label in MATERIAL_TYPE_LABELS.items()
+            ],
+        )
+        self.assertEqual(
+            taxonomy["access_terms"],
+            [{"code": code, "label": label} for code, label in ACCESS_LABELS.items()],
+        )
+        self.assertEqual(
+            taxonomy["lifecycle_terms"],
+            [
+                {"code": code, "label": label}
+                for code, label in LIFECYCLE_LABELS.items()
+            ],
+        )
 
     def test_sol_uses_explicit_medium_reasoning(self):
         client = _FakeClient([_completed()])
@@ -212,7 +279,8 @@ class AdapterTests(unittest.TestCase):
     def test_locked_classification_never_calls_a_model(self):
         client = _FakeClient([_completed()])
         result = OpenAIContentClassifier(client=client).classify(
-            _request(classification_locked=True), LLM_PRIMARY_MODEL
+            _request(direction_locked=True, material_type_locked=True),
+            LLM_PRIMARY_MODEL,
         )
         self.assertEqual(result.status, "locked")
         self.assertEqual(result.unresolved_code, "LLM_LOCKED")
@@ -229,7 +297,17 @@ class AdapterTests(unittest.TestCase):
             "+43 664 123 45 67",
             "METRIKA_TOKEN=secret",
             "Authorization: Bearer secret-value",
+            "Bearer secret-value-123456",
+            "sk-secretvalue123456",
             "oauth access_token",
+            "person%40example.com",
+            "person&#64;example.com",
+            "8 (999) 123-45-67",
+            "RaW-UsEr-Id=42",
+            "raw%55ser%49d=42",
+            "raw&#95;user&#95;id=42",
+            r"\u0072awUserId=42",
+            "ＲＡＷ＿ＵＳＥＲ＿ＩＤ=42",
         )
         for sensitive in cases:
             with self.subTest(sensitive=sensitive):
@@ -242,6 +320,23 @@ class AdapterTests(unittest.TestCase):
                 self.assertEqual(result.attempt_count, 0)
                 self.assertEqual(client.responses.calls, [])
 
+    def test_sensitive_url_query_is_rejected_before_client_construction(self):
+        factory_calls = []
+
+        def factory(**kwargs):
+            factory_calls.append(kwargs)
+            return _FakeClient([_completed()])
+
+        result = OpenAIContentClassifier(client_factory=factory).classify(
+            _request(
+                normalized_url="https://abbottpro.ru/cardio?auth=secret",
+                normalized_path="/cardio",
+            ),
+            LLM_PRIMARY_MODEL,
+        )
+        self.assertEqual(result.unresolved_code, "LLM_INPUT_REJECTED")
+        self.assertEqual(factory_calls, [])
+
     def test_sensitive_nested_example_key_is_rejected(self):
         client = _FakeClient([_completed()])
         request = _request(approved_examples=({"email": "hidden"},))
@@ -251,9 +346,97 @@ class AdapterTests(unittest.TestCase):
         self.assertEqual(result.unresolved_code, "LLM_INPUT_REJECTED")
         self.assertEqual(client.responses.calls, [])
 
+    def test_sensitive_nested_example_values_are_canonically_decoded(self):
+        cases = (
+            {"title": "person%40example.com"},
+            {"title": "8 (999) 123-45-67"},
+            {"title": "OAUTH&#95;TOKEN=secret"},
+            {"rawUserId": "42"},
+            {"RAW%5FUSER%5FID": "42"},
+        )
+        for example in cases:
+            with self.subTest(example=example):
+                client = _FakeClient([_completed()])
+                result = OpenAIContentClassifier(client=client).classify(
+                    _request(approved_examples=(example,)), LLM_PRIMARY_MODEL
+                )
+                self.assertEqual(result.unresolved_code, "LLM_INPUT_REJECTED")
+                self.assertEqual(client.responses.calls, [])
+
+    def test_approved_examples_are_bounded(self):
+        examples = tuple({"title": str(index)} for index in range(9))
+        client = _FakeClient([_completed()])
+        result = OpenAIContentClassifier(client=client).classify(
+            _request(approved_examples=examples), LLM_PRIMARY_MODEL
+        )
+        self.assertEqual(result.unresolved_code, "LLM_INPUT_REJECTED")
+        self.assertEqual(client.responses.calls, [])
+
+    def test_approved_example_field_shapes_are_closed(self):
+        cases = (
+            {"title": {"safe": "value"}},
+            {"breadcrumbs": "not-an-array"},
+            {"evidence": ["x"] * 6},
+            {"content_excerpt": "x" * 2_001},
+        )
+        for example in cases:
+            with self.subTest(example=example):
+                client = _FakeClient([_completed()])
+                result = OpenAIContentClassifier(client=client).classify(
+                    _request(approved_examples=(example,)), LLM_PRIMARY_MODEL
+                )
+                self.assertEqual(result.unresolved_code, "LLM_INPUT_REJECTED")
+                self.assertEqual(client.responses.calls, [])
+
+    def test_partial_lock_requests_only_the_missing_field(self):
+        value = _classification(direction_code=None, direction_confidence=None)
+        client = _FakeClient([_completed(value)])
+        result = OpenAIContentClassifier(client=client).classify(
+            _request(direction_locked=True), LLM_PRIMARY_MODEL
+        )
+        self.assertEqual(result.status, "success")
+        self.assertEqual(result.requested_fields, ("material_type_code",))
+        material = json.loads(client.responses.calls[0]["input"][1]["content"])
+        self.assertEqual(material["requested_fields"], ["material_type_code"])
+        self.assertNotIn("direction_code", material["deterministic_proposal"])
+        self.assertEqual(
+            material["deterministic_evidence"], ["path:articles"]
+        )
+        self.assertIsNone(result.classification.direction_code)
+
+    def test_material_lock_removes_the_locked_hint_and_only_requests_direction(self):
+        value = _classification(
+            material_type_code=None, material_type_confidence=None
+        )
+        client = _FakeClient([_completed(value)])
+        result = OpenAIContentClassifier(client=client).classify(
+            _request(material_type_locked=True), LLM_PRIMARY_MODEL
+        )
+        self.assertEqual(result.status, "success")
+        self.assertEqual(result.requested_fields, ("direction_code",))
+        material = json.loads(client.responses.calls[0]["input"][1]["content"])
+        self.assertEqual(material["requested_fields"], ["direction_code"])
+        self.assertNotIn("material_type_code", material["deterministic_proposal"])
+        self.assertEqual(material["deterministic_evidence"], ["path:cardio"])
+        self.assertIsNone(material["material_type_hint"])
+        self.assertIsNone(result.classification.material_type_code)
+
+    def test_returning_a_locked_field_is_schema_failure_and_never_used(self):
+        client = _FakeClient([_completed(), _completed()])
+        result = OpenAIContentClassifier(client=client).classify(
+            _request(direction_locked=True), LLM_PRIMARY_MODEL
+        )
+        self.assertEqual(result.status, "unresolved")
+        self.assertEqual(result.unresolved_code, "LLM_SCHEMA_FAILURE")
+        self.assertIsNone(result.classification)
+        self.assertEqual(result.attempt_count, 2)
+
     def test_free_form_input_taxonomy_is_rejected_before_call(self):
         cases = (
             {"taxonomy_version": ""},
+            {"taxonomy_version": None},
+            {"taxonomy_version": "v" * 129},
+            {"title": "x" * 1_001},
             {"access_code": "manager"},
             {"material_type_hint": "archive"},
             {
@@ -290,6 +473,15 @@ class AdapterTests(unittest.TestCase):
             client.responses.calls[1]["input"][1]["content"],
         )
 
+    def test_generic_connection_failure_is_not_retried(self):
+        client = _FakeClient([ConnectionError("private"), _completed()])
+        result = OpenAIContentClassifier(client=client).classify(
+            _request(), LLM_PRIMARY_MODEL
+        )
+        self.assertEqual(result.unresolved_code, "LLM_PROVIDER_ERROR")
+        self.assertEqual(result.attempt_count, 1)
+        self.assertEqual(len(client.responses.calls), 1)
+
     def test_rate_limit_and_5xx_retry_once_then_return_stable_codes(self):
         cases = (
             (RateLimitError("private"), "LLM_RATE_LIMIT"),
@@ -307,6 +499,15 @@ class AdapterTests(unittest.TestCase):
                 self.assertEqual(len(client.responses.calls), 2)
                 self.assertFalse(hasattr(result, "response_body"))
                 self.assertFalse(hasattr(result, "error_message"))
+
+    def test_quota_429_is_not_treated_as_a_retryable_rate_limit(self):
+        client = _FakeClient([QuotaRateLimitError("private"), _completed()])
+        result = OpenAIContentClassifier(client=client).classify(
+            _request(), LLM_PRIMARY_MODEL
+        )
+        self.assertEqual(result.unresolved_code, "LLM_QUOTA_ERROR")
+        self.assertEqual(result.attempt_count, 1)
+        self.assertEqual(len(client.responses.calls), 1)
 
     def test_nonretryable_4xx_is_not_retried(self):
         client = _FakeClient([APIStatusError(400), _completed()])
@@ -343,6 +544,69 @@ class AdapterTests(unittest.TestCase):
                 self.assertEqual(result.unresolved_code, code)
                 self.assertEqual(result.attempt_count, 2)
                 self.assertEqual(len(client.responses.calls), 2)
+
+    def test_other_noncompleted_statuses_are_distinct_and_not_retried(self):
+        cases = (
+            ("failed", "LLM_RESPONSE_FAILED"),
+            ("cancelled", "LLM_RESPONSE_CANCELLED"),
+            ("queued", "LLM_RESPONSE_NOT_COMPLETED"),
+            (None, "LLM_RESPONSE_STATUS_INVALID"),
+        )
+        for status, code in cases:
+            with self.subTest(status=status):
+                client = _FakeClient(
+                    [SimpleNamespace(status=status, output_parsed=None), _completed()]
+                )
+                result = OpenAIContentClassifier(client=client).classify(
+                    _request(), LLM_PRIMARY_MODEL
+                )
+                self.assertEqual(result.unresolved_code, code)
+                self.assertEqual(result.attempt_count, 1)
+                self.assertEqual(len(client.responses.calls), 1)
+
+    def test_internal_sdk_client_has_retries_disabled(self):
+        client = _FakeClient([_completed()])
+        calls = []
+
+        def factory(**kwargs):
+            calls.append(kwargs)
+            return client
+
+        result = OpenAIContentClassifier(client_factory=factory).classify(
+            _request(), LLM_PRIMARY_MODEL
+        )
+        self.assertEqual(result.status, "success")
+        self.assertEqual(calls, [{"max_retries": 0}])
+
+    def test_sanitized_usage_and_elapsed_time_are_recorded(self):
+        first = SimpleNamespace(
+            status="incomplete",
+            output_parsed=None,
+            usage=SimpleNamespace(
+                input_tokens=11,
+                output_tokens=2,
+                total_tokens=13,
+                input_tokens_details=SimpleNamespace(cached_tokens=3),
+            ),
+        )
+        second = _completed()
+        second.usage = SimpleNamespace(
+            input_tokens=7,
+            output_tokens=5,
+            total_tokens=12,
+            input_tokens_details=SimpleNamespace(cached_tokens=1),
+        )
+        ticks = iter((100.0, 100.125))
+        client = _FakeClient([first, second])
+        result = OpenAIContentClassifier(
+            client=client, monotonic=lambda: next(ticks)
+        ).classify(_request(), LLM_PRIMARY_MODEL)
+        self.assertEqual(result.elapsed_ms, 125)
+        self.assertEqual(result.usage.input_tokens, 18)
+        self.assertEqual(result.usage.output_tokens, 7)
+        self.assertEqual(result.usage.total_tokens, 25)
+        self.assertEqual(result.usage.cached_input_tokens, 4)
+        self.assertFalse(hasattr(result.usage, "raw_response"))
 
     def test_insufficient_evidence_response_fails_closed_without_retry(self):
         abstention = _classification(
@@ -427,6 +691,112 @@ class RoutingTests(unittest.TestCase):
         self.assertEqual(result.status, "conflict")
         self.assertEqual(result.conflict_code, "LLM_DISAGREEMENT")
         self.assertIsNone(result.classification)
+
+    def test_sol_ambiguity_medical_review_or_abstention_never_verifies(self):
+        cases = (
+            (
+                _attempt(
+                    _classification(
+                        alternative_direction_codes=("gastroenterology",)
+                    ),
+                    model=LLM_VERIFIER_MODEL,
+                ),
+                "LLM_VERIFIER_AMBIGUOUS",
+            ),
+            (
+                _attempt(
+                    _classification(requires_medical_review=True),
+                    model=LLM_VERIFIER_MODEL,
+                ),
+                "LLM_VERIFIER_MEDICAL_REVIEW",
+            ),
+            (
+                _attempt(
+                    _classification(
+                        direction_code="undetermined",
+                        material_type_code=None,
+                        direction_confidence=0.0,
+                        material_type_confidence=0.0,
+                        evidence=(),
+                        insufficient_evidence=True,
+                    ),
+                    model=LLM_VERIFIER_MODEL,
+                ),
+                "LLM_INSUFFICIENT_EVIDENCE",
+            ),
+        )
+        for verifier, code in cases:
+            with self.subTest(code=code):
+                result = route_llm(
+                    self.deterministic,
+                    _attempt(_classification(direction_confidence=0.8)),
+                    lambda: verifier,
+                )
+                self.assertEqual(result.status, "unresolved")
+                self.assertEqual(result.unresolved_code, code)
+                self.assertIsNone(result.classification)
+
+    def test_locked_direction_is_ignored_by_primary_and_verifier_routing(self):
+        primary_value = _classification(
+            direction_code=None,
+            direction_confidence=None,
+            material_type_confidence=0.80,
+        )
+        verifier_value = _classification(
+            direction_code=None,
+            direction_confidence=None,
+        )
+        primary = _attempt(
+            primary_value, requested_fields=("material_type_code",)
+        )
+        verifier = _attempt(
+            verifier_value,
+            model=LLM_VERIFIER_MODEL,
+            requested_fields=("material_type_code",),
+        )
+        deterministic = Proposal(
+            direction_code="gastroenterology",
+            material_type_code="articles",
+            access_code=None,
+            lifecycle_code=None,
+            rule_code="locked_direction",
+            confidence=0.9,
+        )
+        result = route_llm(deterministic, primary, lambda: verifier)
+        self.assertEqual(result.status, "llm_verified")
+        self.assertIsNone(result.classification.direction_code)
+        self.assertIsNone(result.proposal.direction_code)
+
+    def test_route_rejects_a_locked_field_return_from_either_model(self):
+        primary = _attempt(
+            _classification(), requested_fields=("material_type_code",)
+        )
+        calls = []
+        result = route_llm(
+            self.deterministic, primary, lambda: calls.append(True)
+        )
+        self.assertEqual(result.status, "unresolved")
+        self.assertEqual(result.unresolved_code, "LLM_LOCKED_FIELD_RETURNED")
+        self.assertEqual(calls, [])
+
+        partial_primary = _attempt(
+            _classification(
+                direction_code=None,
+                direction_confidence=None,
+                material_type_confidence=0.8,
+            ),
+            requested_fields=("material_type_code",),
+        )
+        bad_verifier = _attempt(
+            _classification(),
+            model=LLM_VERIFIER_MODEL,
+            requested_fields=("material_type_code",),
+        )
+        result = route_llm(
+            self.deterministic, partial_primary, lambda: bad_verifier
+        )
+        self.assertEqual(result.status, "unresolved")
+        self.assertEqual(result.unresolved_code, "LLM_LOCKED_FIELD_RETURNED")
 
     def test_low_confidence_or_unresolved_sol_fails_closed(self):
         cases = (
