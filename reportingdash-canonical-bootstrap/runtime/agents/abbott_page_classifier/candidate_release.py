@@ -966,6 +966,8 @@ def _overlay_current_batch_events(
 ) -> tuple[CandidateCatalogRow, ...]:
     result = [_predecessor_catalog_row(row) for row in predecessor_rows]
     for event in event_rows:
+        if int(event.get("authorization_violation") or 0) != 0:
+            raise CandidateMaterializationError("CURRENT_BATCH_EVENT_UNAUTHORIZED")
         event_kind = str(event.get("event_kind") or "")
         if event_kind not in {"approve", "correct", "revoke"}:
             raise CandidateMaterializationError("CURRENT_BATCH_EVENT_INVALID")
@@ -1602,9 +1604,69 @@ def materialize_content_candidate(
                    event.effective_at, direction.term_label AS direction_label,
                    material.term_label AS material_type_label,
                    access_term.term_label AS access_label,
-                   lifecycle.term_label AS lifecycle_label
+                   lifecycle.term_label AS lifecycle_label,
+                   CASE WHEN
+                     item.id IS NOT NULL
+                     AND entity.id IS NOT NULL
+                     AND item.approval_batch_id = event.approval_batch_id
+                     AND item.readiness_state = 'ready'
+                     AND item.content_entity_id <=> event.content_entity_id
+                     AND item.final_direction_code <=> event.direction_code
+                     AND item.final_material_type_code <=> event.material_type_code
+                     AND item.final_access_code <=> event.access_code
+                     AND item.final_lifecycle_code <=> event.lifecycle_code
+                     AND event.taxonomy_version_id = batch.taxonomy_version_id
+                     AND batch.batch_status = 'ingested'
+                     AND batch.accepted_at IS NOT NULL
+                     AND event.event_kind IN ('approve', 'correct', 'revoke')
+                     AND direction.term_label IS NOT NULL
+                     AND material.term_label IS NOT NULL
+                     AND access_term.term_label IS NOT NULL
+                     AND lifecycle.term_label IS NOT NULL
+                     AND event.actor IS NOT NULL AND TRIM(event.actor) <> ''
+                     AND (
+                       SELECT COUNT(*)
+                       FROM portal_content_classification_events AS same_item_event
+                       WHERE same_item_event.approval_batch_id = event.approval_batch_id
+                         AND same_item_event.approval_item_id = event.approval_item_id
+                     ) = 1
+                     AND JSON_CONTAINS_PATH(event.proposal_evidence, 'all',
+                       '$.accepted_decision_hash', '$.row_hash',
+                       '$.approval_item_evidence.published_decision.final_direction_code',
+                       '$.approval_item_evidence.published_decision.final_material_type_code',
+                       '$.approval_item_evidence.published_decision.final_access_code',
+                       '$.approval_item_evidence.published_decision.final_lifecycle_code')
+                     AND JSON_UNQUOTE(JSON_EXTRACT(event.proposal_evidence,
+                       '$.accepted_decision_hash')) = batch.accepted_decision_hash
+                     AND JSON_UNQUOTE(JSON_EXTRACT(event.proposal_evidence,
+                       '$.row_hash')) = item.row_hash
+                     AND JSON_EXTRACT(event.proposal_evidence,
+                       '$.approval_item_evidence') = item.proposal_evidence
+                     AND JSON_UNQUOTE(JSON_EXTRACT(event.proposal_evidence,
+                       '$.approval_item_evidence.published_decision.final_direction_code'))
+                         <=> event.direction_code
+                     AND JSON_UNQUOTE(JSON_EXTRACT(event.proposal_evidence,
+                       '$.approval_item_evidence.published_decision.final_material_type_code'))
+                         <=> event.material_type_code
+                     AND JSON_UNQUOTE(JSON_EXTRACT(event.proposal_evidence,
+                       '$.approval_item_evidence.published_decision.final_access_code'))
+                         <=> event.access_code
+                     AND JSON_UNQUOTE(JSON_EXTRACT(event.proposal_evidence,
+                       '$.approval_item_evidence.published_decision.final_lifecycle_code'))
+                         <=> event.lifecycle_code
+                     AND (event.event_kind <> 'correct' OR (
+                       event.predecessor_event_id IS NOT NULL
+                       AND event.reason IS NOT NULL AND TRIM(event.reason) <> ''
+                     ))
+                   THEN 0 ELSE 1 END AS authorization_violation
             FROM portal_content_classification_events AS event
-            INNER JOIN portal_content_registry_entities AS entity
+            LEFT JOIN portal_content_approval_items AS item
+              ON item.id = event.approval_item_id
+             AND item.approval_batch_id = event.approval_batch_id
+            INNER JOIN portal_content_approval_batches AS batch
+              ON batch.id = event.approval_batch_id
+             AND batch.dataset_key = %s
+            LEFT JOIN portal_content_registry_entities AS entity
               ON entity.id = event.content_entity_id
              AND entity.dataset_key = %s
             LEFT JOIN portal_content_taxonomy_terms AS direction
@@ -1628,10 +1690,10 @@ def materialize_content_candidate(
              AND lifecycle.term_code = event.lifecycle_code
              AND lifecycle.term_status = 'active'
             WHERE event.approval_batch_id = %s
-              AND event.event_kind IN ('approve', 'correct', 'revoke')
             ORDER BY event.id
             """,
             (
+                DATASET_KEY,
                 DATASET_KEY,
                 batch["taxonomy_version_id"],
                 batch["taxonomy_version_id"],
@@ -1641,6 +1703,10 @@ def materialize_content_candidate(
             ),
         )
         event_rows = tuple(cursor.fetchall())
+        if len(event_rows) != int(batch.get("accepted_count") or 0):
+            raise CandidateMaterializationError(
+                "CURRENT_BATCH_EVENT_AUTHORIZATION_INCOMPLETE"
+            )
         catalog_rows = _overlay_current_batch_events(
             predecessor_catalog_rows, event_rows
         )
@@ -2452,22 +2518,47 @@ def validate_content_candidate(
             """
             SELECT COUNT(*) AS anti_flip_violations
             FROM portal_content_classification_events AS event
-            INNER JOIN portal_content_approval_items AS item
+            LEFT JOIN portal_content_approval_items AS item
               ON item.id = event.approval_item_id
              AND item.approval_batch_id = event.approval_batch_id
-            INNER JOIN portal_content_approval_batches AS batch
+            LEFT JOIN portal_content_approval_batches AS batch
               ON batch.id = event.approval_batch_id
+            LEFT JOIN portal_content_registry_entities AS entity
+              ON entity.id = event.content_entity_id
+             AND entity.dataset_key = %s
             WHERE event.approval_batch_id = %s
               AND (
-                JSON_UNQUOTE(JSON_EXTRACT(
+                item.id IS NULL OR batch.id IS NULL OR entity.id IS NULL
+                OR item.readiness_state <> 'ready'
+                OR NOT (item.content_entity_id <=> event.content_entity_id)
+                OR NOT (item.final_direction_code <=> event.direction_code)
+                OR NOT (item.final_material_type_code <=> event.material_type_code)
+                OR NOT (item.final_access_code <=> event.access_code)
+                OR NOT (item.final_lifecycle_code <=> event.lifecycle_code)
+                OR NOT (event.taxonomy_version_id <=> batch.taxonomy_version_id)
+                OR event.event_kind NOT IN ('approve', 'correct', 'revoke')
+                OR event.actor IS NULL OR TRIM(event.actor) = ''
+                OR (
+                  SELECT COUNT(*)
+                  FROM portal_content_classification_events AS same_item_event
+                  WHERE same_item_event.approval_batch_id = event.approval_batch_id
+                    AND same_item_event.approval_item_id = event.approval_item_id
+                ) <> 1
+                OR NOT JSON_CONTAINS_PATH(event.proposal_evidence, 'all',
+                  '$.accepted_decision_hash', '$.row_hash',
+                  '$.approval_item_evidence.published_decision.final_direction_code',
+                  '$.approval_item_evidence.published_decision.final_material_type_code',
+                  '$.approval_item_evidence.published_decision.final_access_code',
+                  '$.approval_item_evidence.published_decision.final_lifecycle_code')
+                OR COALESCE(JSON_UNQUOTE(JSON_EXTRACT(
                   event.proposal_evidence, '$.accepted_decision_hash'
-                )) <> batch.accepted_decision_hash
-                OR JSON_UNQUOTE(JSON_EXTRACT(
+                )) <> batch.accepted_decision_hash, 1)
+                OR COALESCE(JSON_UNQUOTE(JSON_EXTRACT(
                   event.proposal_evidence, '$.row_hash'
-                )) <> item.row_hash
-                OR JSON_EXTRACT(
+                )) <> item.row_hash, 1)
+                OR COALESCE(JSON_EXTRACT(
                   event.proposal_evidence, '$.approval_item_evidence'
-                ) <> item.proposal_evidence
+                ) <> item.proposal_evidence, 1)
                 OR (
                   JSON_UNQUOTE(JSON_EXTRACT(
                     item.proposal_evidence, '$.current_canonical.direction_code'
@@ -2498,9 +2589,27 @@ def validate_content_candidate(
                 )
               )
             """,
-            (batch_id,),
+            (DATASET_KEY, batch_id),
         )
         anti_flip = int(_row_value(cursor.fetchone(), "anti_flip_violations", 0) or 0)
+        cursor.execute(
+            """
+            SELECT ABS(
+              (SELECT COUNT(*)
+               FROM portal_content_approval_items AS accepted_item
+               WHERE accepted_item.approval_batch_id = %s
+                 AND accepted_item.readiness_state = 'ready')
+              -
+              (SELECT COUNT(*)
+               FROM portal_content_classification_events AS current_event
+               WHERE current_event.approval_batch_id = %s)
+            ) AS event_coverage_violations
+            """,
+            (batch_id, batch_id),
+        )
+        anti_flip += int(
+            _row_value(cursor.fetchone(), "event_coverage_violations", 0) or 0
+        )
         cursor.execute(
             """
             SELECT COUNT(*) AS strong_collision_count
@@ -2530,48 +2639,103 @@ def validate_content_candidate(
             """
             SELECT COUNT(*) AS lookup_group_count,
                    COALESCE(SUM(CASE WHEN
-                     (resolution_status IN ('unique', 'identical_collapsed')
-                      AND selected_source_row_fingerprint IS NOT NULL
-                      AND candidate_count >= 1)
-                     OR (resolution_status = 'ambiguous'
-                      AND selected_source_row_fingerprint IS NULL
-                      AND candidate_count >= 2)
+                     (lookup_row.resolution_status IN ('unique', 'identical_collapsed')
+                      AND lookup_row.selected_source_row_fingerprint IS NOT NULL
+                      AND selected_catalog.source_row_fingerprint IS NOT NULL
+                      AND lookup_row.candidate_count >= 1)
+                     OR (lookup_row.resolution_status = 'ambiguous'
+                      AND lookup_row.selected_source_row_fingerprint IS NULL
+                      AND lookup_row.candidate_count >= 2)
                      THEN 0 ELSE 1 END), 0) AS lookup_consistency_failures,
-                   COALESCE(SUM(lookup_kind = 'title'), 0) AS title_group_count,
-                   COALESCE(SUM(lookup_kind = 'slug'), 0) AS slug_group_count,
-                   COALESCE(SUM(lookup_kind = 'path'), 0) AS path_group_count
-            FROM portal_content_lookup_projection
-            WHERE canonical_release_id = %s AND source_snapshot_id = %s
-              AND lookup_kind IN ('title', 'slug', 'path')
+                   COALESCE(SUM(
+                     lookup_row.selected_source_row_fingerprint IS NOT NULL
+                     AND selected_catalog.source_row_fingerprint IS NULL
+                   ), 0) AS dangling_selected_count,
+                   COALESCE(SUM(lookup_row.lookup_kind = 'title'), 0) AS title_group_count,
+                   COALESCE(SUM(lookup_row.lookup_kind = 'slug'), 0) AS slug_group_count,
+                   COALESCE(SUM(lookup_row.lookup_kind = 'path'), 0) AS path_group_count
+            FROM portal_content_lookup_projection AS lookup_row
+            LEFT JOIN portal_content_catalog AS selected_catalog
+              ON selected_catalog.canonical_release_id = lookup_row.canonical_release_id
+             AND selected_catalog.source_snapshot_id = lookup_row.source_snapshot_id
+             AND selected_catalog.source_row_fingerprint = lookup_row.selected_source_row_fingerprint
+            WHERE lookup_row.canonical_release_id = %s
+              AND lookup_row.source_snapshot_id = %s
+              AND lookup_row.lookup_kind IN ('title', 'slug', 'path')
             """,
             (candidate_release_id, catalog_snapshot_id),
         )
         lookup_smoke = cursor.fetchone()
         cursor.execute(
             """
-            SELECT COUNT(*) AS candidate_catalog_rows,
-                   COALESCE(SUM(direction_key IS NOT NULL AND TRIM(direction_key) <> ''), 0) AS direction_rows,
-                   COALESCE(SUM(material_type IS NOT NULL AND TRIM(material_type) <> ''), 0) AS material_rows,
-                   COALESCE(SUM(access_label IS NOT NULL AND TRIM(access_label) <> ''), 0) AS access_rows
-            FROM portal_content_catalog
-            WHERE canonical_release_id = %s AND source_snapshot_id = %s
-              AND is_active = 1
+            SELECT COUNT(DISTINCT CASE
+                     WHEN catalog.source_slug IS NOT NULL
+                      AND TRIM(catalog.source_slug) <> ''
+                      AND catalog.source_slug_hash IS NOT NULL
+                     THEN catalog.source_slug_hash END
+                   ) AS expected_slug_group_count,
+                   COUNT(DISTINCT CASE
+                     WHEN slug_projection.lookup_key_hash IS NOT NULL
+                     THEN catalog.source_slug_hash END
+                   ) AS projected_slug_group_count
+            FROM portal_content_catalog AS catalog
+            LEFT JOIN portal_content_lookup_projection AS slug_projection
+              ON slug_projection.canonical_release_id = catalog.canonical_release_id
+             AND slug_projection.source_snapshot_id = catalog.source_snapshot_id
+             AND slug_projection.lookup_kind = 'slug'
+             AND slug_projection.lookup_key_hash = catalog.source_slug_hash
+            WHERE catalog.canonical_release_id = %s
+              AND catalog.source_snapshot_id = %s
+              AND catalog.is_active = 1
             """,
             (candidate_release_id, catalog_snapshot_id),
         )
-        filter_smoke = cursor.fetchone()
-        catalog_total = int(_row_value(filter_smoke, "candidate_catalog_rows", 0) or 0)
+        slug_smoke = cursor.fetchone()
+        cursor.execute(
+            """
+            SELECT COUNT(*) AS joined_projection_rows,
+                   COALESCE(SUM(
+                     selected_catalog.direction_key IS NOT NULL
+                     AND TRIM(selected_catalog.direction_key) <> ''
+                   ), 0) AS joined_direction_rows,
+                   COALESCE(SUM(
+                     selected_catalog.material_type IS NOT NULL
+                     AND TRIM(selected_catalog.material_type) <> ''
+                   ), 0) AS joined_material_rows,
+                   COALESCE(SUM(
+                     selected_catalog.access_label IS NOT NULL
+                     AND TRIM(selected_catalog.access_label) <> ''
+                   ), 0) AS joined_access_rows
+            FROM portal_content_lookup_projection AS lookup_row
+            INNER JOIN portal_content_catalog AS selected_catalog
+              ON selected_catalog.canonical_release_id = lookup_row.canonical_release_id
+             AND selected_catalog.source_snapshot_id = lookup_row.source_snapshot_id
+             AND selected_catalog.source_row_fingerprint = lookup_row.selected_source_row_fingerprint
+            WHERE lookup_row.canonical_release_id = %s
+              AND lookup_row.source_snapshot_id = %s
+              AND lookup_row.lookup_kind IN ('title', 'slug', 'path')
+              AND lookup_row.resolution_status IN ('unique', 'identical_collapsed')
+              AND selected_catalog.is_active = 1
+            """,
+            (candidate_release_id, catalog_snapshot_id),
+        )
+        joined_smoke = cursor.fetchone()
+        joined_total = int(_row_value(joined_smoke, "joined_projection_rows", 0) or 0)
         lookup_total = int(_row_value(lookup_smoke, "lookup_group_count", 0) or 0)
         smoke_failures = 0 if (
-            catalog_total > 0
-            and lookup_total > 0
+            lookup_total > 0
+            and joined_total > 0
             and int(_row_value(lookup_smoke, "lookup_consistency_failures", 1) or 0) == 0
-            and int(_row_value(lookup_smoke, "title_group_count", 2) or 0) > 0
-            and int(_row_value(lookup_smoke, "path_group_count", 4) or 0) > 0
+            and int(_row_value(lookup_smoke, "dangling_selected_count", 2) or 0) == 0
+            and int(_row_value(lookup_smoke, "title_group_count", 3) or 0) > 0
+            and int(_row_value(lookup_smoke, "path_group_count", 5) or 0) > 0
+            and int(_row_value(slug_smoke, "expected_slug_group_count", 0) or 0)
+            == int(_row_value(slug_smoke, "projected_slug_group_count", 1) or 0)
             and all(
-                int(_row_value(filter_smoke, name, index) or 0) == catalog_total
+                int(_row_value(joined_smoke, name, index) or 0) == joined_total
                 for index, name in enumerate(
-                    ("direction_rows", "material_rows", "access_rows"), start=1
+                    ("joined_direction_rows", "joined_material_rows", "joined_access_rows"),
+                    start=1,
                 )
             )
         ) else 1
