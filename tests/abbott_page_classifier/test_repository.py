@@ -170,8 +170,18 @@ def accepted_batch_row(
     published_hash: str = PUBLISHED_HASH,
     accepted_hash: str | None = ACCEPTED_HASH,
     status: str = "accepted",
+    accepted_by: str | None = "content-manager",
+    accepted_at: str | None = "2026-08-05T14:30:00+02:00",
 ) -> tuple[object, ...]:
-    return (17, 3, published_hash, accepted_hash, status)
+    return (
+        17,
+        3,
+        published_hash,
+        accepted_hash,
+        status,
+        accepted_by,
+        accepted_at,
+    )
 
 
 class ContentRegistryRepositoryTests(unittest.TestCase):
@@ -267,6 +277,14 @@ class ContentRegistryRepositoryTests(unittest.TestCase):
                 "UPDATE portal_content_approval_batches"
             )
         )
+        update_sql, update_params = update_calls[0]
+        set_clause = update_sql.split(" SET ", 1)[1].split(" WHERE ", 1)[0]
+        self.assertIn("batch_status = %s", set_clause)
+        self.assertIn("ingested_at = CURRENT_TIMESTAMP(6)", set_clause)
+        self.assertNotIn("accepted_decision_hash", set_clause)
+        self.assertNotIn("accepted_by", set_clause)
+        self.assertNotIn("accepted_at", set_clause)
+        self.assertEqual(update_params, ("ingested", 17))
         self.assertEqual(connection.commit_count, 1)
         self.assertEqual(connection.rollback_count, 0)
         self.assertEqual(result.status, "ingested")
@@ -304,6 +322,33 @@ class ContentRegistryRepositoryTests(unittest.TestCase):
         )
         self.assertEqual(event_call[1][3], 101)
         self.assertEqual(event_call[1][5], "gastroenterology")
+
+    def test_event_fingerprint_is_batch_specific_and_same_batch_repeatable(self):
+        item = approval_item(41)
+        snapshot = accepted_snapshot(item)
+
+        def ingest_fingerprint(batch_id: int) -> str:
+            row = accepted_batch_row()
+            connection = RecordingConnection(batch_row=(batch_id, *row[1:]))
+            repository = ContentRegistryRepository(lambda: connection)
+
+            repository.ingest_accepted_snapshot(snapshot)
+
+            event_call = next(
+                call
+                for call in connection.calls
+                if call[0].startswith(
+                    "INSERT INTO portal_content_classification_events"
+                )
+            )
+            return str(event_call[1][10])
+
+        first_batch_fingerprint = ingest_fingerprint(17)
+        same_batch_retry_fingerprint = ingest_fingerprint(17)
+        second_batch_fingerprint = ingest_fingerprint(18)
+
+        self.assertEqual(first_batch_fingerprint, same_batch_retry_fingerprint)
+        self.assertNotEqual(first_batch_fingerprint, second_batch_fingerprint)
 
     def test_ingest_rejects_changed_published_item_identity_hash(self):
         connection = RecordingConnection(batch_row=accepted_batch_row())
@@ -385,6 +430,30 @@ class ContentRegistryRepositoryTests(unittest.TestCase):
         self.assertEqual(raised.exception.code, "BATCH_HASH_MISMATCH")
         self.assertEqual(connection.commit_count, 0)
         self.assertEqual(connection.rollback_count, 1)
+
+    def test_ingest_rejects_locked_acceptance_audit_metadata_mismatch(self):
+        mismatch_rows = (
+            accepted_batch_row(accepted_by="different-manager"),
+            accepted_batch_row(accepted_at="2026-08-05T14:31:00+02:00"),
+        )
+        for batch_row in mismatch_rows:
+            with self.subTest(batch_row=batch_row):
+                connection = RecordingConnection(batch_row=batch_row)
+                repository = ContentRegistryRepository(lambda: connection)
+
+                with self.assertRaises(RepositoryError) as raised:
+                    repository.ingest_accepted_snapshot(
+                        accepted_snapshot(approval_item(41))
+                    )
+
+                self.assertEqual(
+                    raised.exception.code,
+                    "BATCH_ACCEPTANCE_METADATA_MISMATCH",
+                )
+                self.assertEqual(connection.commit_count, 0)
+                self.assertEqual(connection.rollback_count, 1)
+                self.assertEqual(connection.item_insert_count, 0)
+                self.assertEqual(connection.event_insert_count, 0)
 
     def test_ingest_is_noop_for_same_accepted_hash(self):
         connection = RecordingConnection(

@@ -81,6 +81,20 @@ class AbbottContentRegistrySchemaTests(unittest.TestCase):
             self.sql,
         )
 
+    def test_alias_types_have_fixed_strong_and_weak_scopes(self):
+        self.assertIn(
+            "alias_type ENUM('material_id', 'canonical_url', 'url', 'slug', 'title') NOT NULL",
+            self.sql,
+        )
+        self.assertRegex(
+            self.sql,
+            r"CONSTRAINT chk_registry_alias_scope CHECK \(\s*"
+            r"\(alias_type IN \('material_id', 'canonical_url', 'url'\) "
+            r"AND uniqueness_scope = 'strong'\)\s*OR\s*"
+            r"\(alias_type IN \('slug', 'title'\) "
+            r"AND uniqueness_scope = 'weak'\)\s*\)",
+        )
+
     def test_unresolved_items_have_a_null_safe_identity_key(self):
         self.assertRegex(
             self.sql,

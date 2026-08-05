@@ -187,7 +187,9 @@ class ContentRegistryRepository:
                   taxonomy_version_id,
                   published_input_hash,
                   accepted_decision_hash,
-                  batch_status
+                  batch_status,
+                  accepted_by,
+                  accepted_at
                 FROM portal_content_approval_batches
                 WHERE dataset_key = %s
                   AND batch_key = %s
@@ -204,6 +206,8 @@ class ContentRegistryRepository:
             published_input_hash = batch_row[2]
             stored_accepted_hash = batch_row[3]
             batch_status = str(batch_row[4])
+            stored_accepted_by = batch_row[5]
+            stored_accepted_at = batch_row[6]
 
             if (
                 not snapshot.accepted_decision_hash
@@ -213,15 +217,18 @@ class ContentRegistryRepository:
                 raise RepositoryError("BATCH_NOT_ACCEPTED")
             if published_input_hash != snapshot.published_input_hash:
                 raise RepositoryError("BATCH_HASH_MISMATCH")
-            if batch_status == "ingested":
-                if stored_accepted_hash != snapshot.accepted_decision_hash:
-                    raise RepositoryError("BATCH_HASH_MISMATCH")
-                connection.commit()
-                return IngestResult(status="noop")
-            if batch_status != "accepted":
+            if batch_status not in ("accepted", "ingested"):
                 raise RepositoryError("BATCH_NOT_ACCEPTED")
             if stored_accepted_hash != snapshot.accepted_decision_hash:
                 raise RepositoryError("BATCH_HASH_MISMATCH")
+            if (
+                stored_accepted_by != snapshot.accepted_by
+                or stored_accepted_at != snapshot.accepted_at
+            ):
+                raise RepositoryError("BATCH_ACCEPTANCE_METADATA_MISMATCH")
+            if batch_status == "ingested":
+                connection.commit()
+                return IngestResult(status="noop")
 
             counts = {
                 "ready": 0,
@@ -256,7 +263,11 @@ class ContentRegistryRepository:
                 predecessor_event_id = (
                     int(predecessor_row[0]) if predecessor_row is not None else None
                 )
-                event_fingerprint = self._event_fingerprint(snapshot, item)
+                event_fingerprint = self._event_fingerprint(
+                    snapshot,
+                    item,
+                    batch_id,
+                )
                 cursor.execute(
                     """
                     INSERT INTO portal_content_classification_events (
@@ -308,18 +319,12 @@ class ContentRegistryRepository:
             cursor.execute(
                 """
                 UPDATE portal_content_approval_batches
-                SET accepted_decision_hash = %s,
-                    batch_status = %s,
-                    accepted_by = %s,
-                    accepted_at = %s,
+                SET batch_status = %s,
                     ingested_at = CURRENT_TIMESTAMP(6)
                 WHERE id = %s
                 """,
                 (
-                    snapshot.accepted_decision_hash,
                     "ingested",
-                    snapshot.accepted_by,
-                    snapshot.accepted_at,
                     batch_id,
                 ),
             )
@@ -467,10 +472,12 @@ class ContentRegistryRepository:
     def _event_fingerprint(
         snapshot: AcceptedBatchSnapshot,
         item: ApprovalItem,
+        approval_batch_id: int,
     ) -> str:
         payload = {
             "accepted_decision_hash": snapshot.accepted_decision_hash,
             "access_code": item.final_access_code,
+            "approval_batch_id": approval_batch_id,
             "content_entity_id": item.content_entity_id,
             "direction_code": item.final_direction_code,
             "event_kind": "approve",
