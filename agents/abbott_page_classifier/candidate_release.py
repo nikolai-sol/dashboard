@@ -231,6 +231,28 @@ def _database_datetime(value: object | None) -> datetime | None:
     return parsed
 
 
+def _canonical_ingestion_timestamp(value: object) -> datetime:
+    """Mirror repository ingestion's UTC-naive acceptance timestamp."""
+
+    try:
+        if isinstance(value, datetime):
+            parsed = value
+        elif isinstance(value, str) and ":" in value:
+            iso_value = f"{value[:-1]}+00:00" if value.endswith("Z") else value
+            parsed = datetime.fromisoformat(iso_value)
+        else:
+            raise ValueError
+        if parsed.tzinfo is None or parsed.utcoffset() is None:
+            parsed = parsed.replace(tzinfo=timezone.utc)
+        else:
+            parsed = parsed.astimezone(timezone.utc)
+        return parsed.replace(tzinfo=None)
+    except (OverflowError, TypeError, ValueError):
+        raise CandidateMaterializationError(
+            "CURRENT_BATCH_EVENT_UNAUTHORIZED"
+        ) from None
+
+
 def _strict_proposal_object_sql(field_name: str) -> str:
     root = f"JSON_EXTRACT(item.proposal_evidence, '$.{field_name}')"
     required_paths = ", ".join(f"'$.{field_name}.{name}'" for name in _PROPOSAL_FIELDS)
@@ -1090,6 +1112,7 @@ def _authorize_current_batch_events(
     taxonomy_version_id = int(batch.get("taxonomy_version_id") or 0)
     accepted_hash = str(batch.get("accepted_decision_hash") or "")
     accepted_by = _normalized_audit_text(batch.get("accepted_by"))
+    accepted_at = _canonical_ingestion_timestamp(batch.get("accepted_at"))
     predecessor_by_entity = {
         row.content_entity_id: row
         for row in (_predecessor_catalog_row(value) for value in predecessor_rows)
@@ -1180,7 +1203,7 @@ def _authorize_current_batch_events(
         event_actor = _normalized_audit_text(event.get("actor"))
         event_reason = _normalized_audit_text(event.get("reason"))
         try:
-            effective_at = _database_datetime(event.get("effective_at"))
+            effective_at = _canonical_ingestion_timestamp(event.get("effective_at"))
         except CandidateMaterializationError:
             effective_at = None
         expected_fingerprint = (
@@ -1220,6 +1243,7 @@ def _authorize_current_batch_events(
             or event_actor != accepted_by
             or event_reason
             != _normalized_audit_text(item.get("decision_reason"))
+            or effective_at != accepted_at
             or event.get("event_fingerprint") != expected_fingerprint
             or not all(event.get(name) is not None for name in (
                 "direction_label", "material_type_label", "access_label",
@@ -2607,6 +2631,7 @@ def validate_content_candidate(
                    batch.taxonomy_digest, batch.published_input_hash,
                    batch.prompt_version, batch.model_routing_version,
                    batch.accepted_by, taxonomy.version AS taxonomy_version,
+                   batch.accepted_at,
                    batch.source_snapshot_ids, batch.source_snapshot_digests
             FROM portal_content_approval_batches AS batch
             INNER JOIN portal_content_taxonomy_versions AS taxonomy

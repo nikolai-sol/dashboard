@@ -140,6 +140,8 @@ class CandidateConnection:
         corrupt_immutable_evidence: bool = False,
         corrupt_approval_row_hash: bool = False,
         corrupt_event_fingerprint: bool = False,
+        spoof_effective_at: bool = False,
+        batch_accepted_at: object = "2026-08-05T10:00:00.000000+00:00",
         orphan_event: bool = False,
         duplicate_event: bool = False,
     ):
@@ -174,6 +176,8 @@ class CandidateConnection:
         self.corrupt_immutable_evidence = corrupt_immutable_evidence
         self.corrupt_approval_row_hash = corrupt_approval_row_hash
         self.corrupt_event_fingerprint = corrupt_event_fingerprint
+        self.spoof_effective_at = spoof_effective_at
+        self.batch_accepted_at = batch_accepted_at
         self.orphan_event = orphan_event
         self.duplicate_event = duplicate_event
         self.snapshots = {
@@ -433,7 +437,7 @@ class CandidateConnection:
                 "prompt_version": "prompt.v1",
                 "model_routing_version": "routing.v1",
                 "accepted_by": "content-manager",
-                "accepted_at": "2026-08-05T10:00:00.000000+00:00",
+                "accepted_at": self.batch_accepted_at,
                 "source_snapshot_ids": "[11, 12]",
                 "source_snapshot_digests": json.dumps(["a" * 64, "b" * 64]),
             }
@@ -526,7 +530,9 @@ class CandidateConnection:
                     "actor": "content-manager",
                     "reason": accepted_item["decision_reason"],
                     "proposal_evidence": event_evidence,
-                    "effective_at": datetime(2026, 8, 5, 10, 0, 0),
+                    "effective_at": datetime(
+                        2026, 8, 5, 11 if self.spoof_effective_at else 10, 0, 0
+                    ),
                     "direction_label": (
                         "Гастроэнтерология [262340]"
                         if event_direction == "gastroenterology"
@@ -1149,6 +1155,30 @@ class CandidateReleaseTest(unittest.TestCase):
             ):
                 materialize_content_candidate(71, 12, "abc1234")
 
+    def test_materialization_rejects_self_consistent_effective_at_spoof(self):
+        connection = CandidateConnection(spoof_effective_at=True)
+        with (
+            patch("agents.abbott_page_classifier.candidate_release.get_db_connection", return_value=connection),
+            patch("agents.abbott_page_classifier.candidate_release.release_store.create_candidate_release", return_value=41),
+            patch("agents.abbott_page_classifier.candidate_release.release_store.require_mutable_candidate_release", return_value={"id": 41, "release_status": "staging"}),
+        ):
+            with self.assertRaisesRegex(
+                CandidateMaterializationError, "CURRENT_BATCH_EVENT_UNAUTHORIZED"
+            ):
+                materialize_content_candidate(71, 12, "abc1234")
+
+    def test_materialization_accepts_timezone_batch_and_naive_db_event_timestamp(self):
+        connection = CandidateConnection(
+            batch_accepted_at="2026-08-05T13:00:00.000000+03:00"
+        )
+        with (
+            patch("agents.abbott_page_classifier.candidate_release.get_db_connection", return_value=connection),
+            patch("agents.abbott_page_classifier.candidate_release.release_store.create_candidate_release", return_value=41),
+            patch("agents.abbott_page_classifier.candidate_release.release_store.require_mutable_candidate_release", return_value={"id": 41, "release_status": "staging"}),
+        ):
+            result = materialize_content_candidate(71, 12, "abc1234")
+        self.assertEqual(result.catalog_row_count, 2)
+
     def test_materialization_rejects_missing_authorized_current_batch_event(self):
         connection = CandidateConnection(missing_authorized_event=True)
         with (
@@ -1205,6 +1235,11 @@ class CandidateReleaseTest(unittest.TestCase):
         ):
             self.assertIn(token, event_sql)
         self.assertNotIn("published_decision.final_direction_code", event_sql)
+        batch_sql = next(
+            sql for sql, _ in connection.calls
+            if "FROM portal_content_approval_batches AS batch" in sql
+        )
+        self.assertIn("batch.accepted_at", batch_sql)
 
     def test_catalog_readback_hash_mismatch_rolls_back_everything(self):
         connection = CandidateConnection(mismatch_catalog_hash=True)
@@ -1265,6 +1300,12 @@ class CandidateReleaseTest(unittest.TestCase):
         self.assertIn("item.final_material_type_code", sql)
         self.assertIn("item.proposal_evidence", sql)
         self.assertIn("resolution_status IN ('unique', 'identical_collapsed')", sql)
+        validation_batch_sql = next(
+            query for query, _ in connection.calls
+            if "FROM portal_content_approval_batches AS batch" in query
+            and "batch.candidate_release_id = %s" in query
+        )
+        self.assertIn("batch.accepted_at", validation_batch_sql)
 
     def test_non_content_copy_and_attestation_use_natural_grain_streaming(self):
         connection = self._prepare_gate(GateConnection())
@@ -1396,6 +1437,24 @@ class CandidateReleaseTest(unittest.TestCase):
     def test_validation_rejects_event_decision_different_from_accepted_final(self):
         connection = self._prepare_gate(GateConnection())
         connection.mismatched_event_final = True
+        with patch(
+            "agents.abbott_page_classifier.candidate_release.get_db_connection",
+            return_value=connection,
+        ):
+            report = validate_content_candidate(
+                41,
+                expected_counts={
+                    "source": 2, "ready": 1, "conflict": 0, "unresolved": 0,
+                    "rejected": 0, "accepted": 1,
+                },
+                accepted_hash=connection.accepted_hash,
+            )
+        self.assertEqual(report.anti_flip_violations, 1)
+        self.assertFalse(report.passed)
+
+    def test_validation_rejects_self_consistent_effective_at_spoof(self):
+        connection = self._prepare_gate(GateConnection())
+        connection.spoof_effective_at = True
         with patch(
             "agents.abbott_page_classifier.candidate_release.get_db_connection",
             return_value=connection,
