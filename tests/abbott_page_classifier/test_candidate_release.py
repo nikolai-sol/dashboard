@@ -88,6 +88,7 @@ class CandidateConnection:
         legacy_predecessor: bool = False,
         ambiguous_legacy_predecessor: bool = False,
         partial_smoke: bool = False,
+        realistic_smoke: bool = False,
     ):
         self.events: list[str] = []
         self.calls: list[tuple[str, tuple[object, ...]]] = []
@@ -108,6 +109,7 @@ class CandidateConnection:
         self.legacy_predecessor = legacy_predecessor
         self.ambiguous_legacy_predecessor = ambiguous_legacy_predecessor
         self.partial_smoke = partial_smoke
+        self.realistic_smoke = realistic_smoke
         self.snapshots = {
             11: {
                 "id": 11,
@@ -202,11 +204,11 @@ class CandidateConnection:
                 "source_slug_hash": sha256_text("alpha"),
                 "access_label": "Все",
                 "is_active": 1,
-                "source_sheet": "Кардиология",
+                "source_sheet": "Кардиология [262338]",
                 "source_row_ordinal": 7,
                 "source_row_fingerprint": "1" * 64,
                 "section_key": "cardio",
-                "direction_key": "Кардиология",
+                "direction_key": "Кардиология [262338]",
                 "published_at": datetime(2026, 7, 1),
                 "valid_from": datetime(2026, 7, 1),
                 "valid_to": None,
@@ -237,11 +239,11 @@ class CandidateConnection:
                 "source_slug_hash": sha256_text("beta"),
                 "access_label": "Врачи",
                 "is_active": 1,
-                "source_sheet": "Гастроэнтерология",
+                "source_sheet": "Гастроэнтерология [262340]",
                 "source_row_ordinal": 2,
                 "source_row_fingerprint": "5" * 64,
                 "section_key": "gastro",
-                "direction_key": "Гастроэнтерология",
+                "direction_key": "Гастроэнтерология [262340]",
                 "published_at": None,
                 "valid_from": datetime(2026, 7, 1),
                 "valid_to": None,
@@ -341,6 +343,7 @@ class CandidateConnection:
                     "material_type_code": "articles",
                     "access_code": "all",
                     "lifecycle_code": "active",
+                    "lifecycle_label": "active",
                 },
                 {
                     "predecessor_catalog_row_id": 1002,
@@ -350,6 +353,7 @@ class CandidateConnection:
                     "material_type_code": "video",
                     "access_code": "doctors",
                     "lifecycle_code": "active",
+                    "lifecycle_label": "active",
                 },
             ]
             if self.ambiguous_legacy_predecessor:
@@ -375,7 +379,7 @@ class CandidateConnection:
                         "provenance": [
                             {
                                 "source_name": "registry1",
-                                "source_sheet": "Кардиология",
+                                "source_sheet": "Кардиология [262338]",
                                 "source_row_ordinal": 7,
                                 "source_fingerprint": "1" * 64,
                                 "title": "Source Alpha",
@@ -396,7 +400,7 @@ class CandidateConnection:
                     "event_fingerprint": "2" * 64,
                     "approval_batch_id": 71,
                     "effective_at": datetime(2026, 8, 5, 10, 0, 0),
-                    "direction_label": "Кардиология",
+                    "direction_label": "Кардиология [262338]",
                     "material_type_label": "Статьи",
                     "access_label": "Все",
                     "lifecycle_label": "active",
@@ -462,24 +466,28 @@ class CandidateConnection:
             if "is_active" in normalized:
                 raise AssertionError("UNKNOWN_COLUMN: portal_content_taxonomy_terms.is_active")
             self._many = [
-                {"taxonomy_kind": "direction", "term_code": "cardiology", "term_label": "Кардиология"},
-                {"taxonomy_kind": "direction", "term_code": "gastroenterology", "term_label": "Гастроэнтерология"},
+                {"taxonomy_kind": "direction", "term_code": "cardiology", "term_label": "Кардиология [262338]"},
+                {"taxonomy_kind": "direction", "term_code": "gastroenterology", "term_label": "Гастроэнтерология [262340]"},
                 {"taxonomy_kind": "material_type", "term_code": "articles", "term_label": "Статьи"},
                 {"taxonomy_kind": "material_type", "term_code": "video", "term_label": "Видео"},
                 {"taxonomy_kind": "access", "term_code": "all", "term_label": "Все"},
                 {"taxonomy_kind": "access", "term_code": "doctors", "term_label": "Врачи"},
-                {"taxonomy_kind": "lifecycle", "term_code": "active", "term_label": "Активный"},
+                {"taxonomy_kind": "lifecycle", "term_code": "active", "term_label": "active"},
             ]
+        elif "AS lookup_consistency_failures" in normalized:
+            self._one = {
+                "lookup_group_count": 4 if self.realistic_smoke else 6,
+                "lookup_consistency_failures": 1 if self.partial_smoke else 0,
+                "title_group_count": 2,
+                "slug_group_count": 0 if self.realistic_smoke else 2,
+                "path_group_count": 2,
+            }
         elif "AS candidate_catalog_rows" in normalized:
             self._one = {
-                "candidate_catalog_rows": 2,
-                "resolved_candidate_rows": 1 if self.partial_smoke else 2,
-                "title_lookup_rows": 2,
-                "slug_lookup_rows": 2,
-                "path_lookup_rows": 2,
-                "direction_rows": 2,
-                "material_rows": 2,
-                "access_rows": 2,
+                "candidate_catalog_rows": 3 if self.realistic_smoke else 2,
+                "direction_rows": 3 if self.realistic_smoke else 2,
+                "material_rows": 3 if self.realistic_smoke else 2,
+                "access_rows": 3 if self.realistic_smoke else 2,
             }
         elif normalized.startswith("SELECT ") and " WHERE canonical_release_id = %s ORDER BY " in normalized:
             column_sql, table = normalized.split(" FROM ", 1)
@@ -681,7 +689,7 @@ class CandidateReleaseTest(unittest.TestCase):
         self.assertNotIn("UPDATE portal_content_classification_events", sql)
         self.assertNotIn("UPDATE portal_content_catalog", sql)
         first_catalog_row = next(
-            row for row in connection.catalog_rows if row[12] == "Кардиология"
+            row for row in connection.catalog_rows if row[12] == "Кардиология [262338]"
         )
         self.assertEqual(first_catalog_row[2], "https://abbottpro.ru/cardio/source-alpha")
         self.assertEqual(first_catalog_row[5], "Source Alpha")
@@ -759,6 +767,16 @@ class CandidateReleaseTest(unittest.TestCase):
             "projection_row_hash",
         ):
             self.assertIn(column, catalog_insert)
+        baseline = json.loads(connection.baseline_manifest)
+        terms = baseline["content_candidate_bundle"]["referenced_taxonomy_terms"]
+        self.assertIn(
+            {"taxonomy_kind": "direction", "term_code": "cardiology", "term_label": "Кардиология [262338]"},
+            terms,
+        )
+        self.assertIn(
+            {"taxonomy_kind": "lifecycle", "term_code": "active", "term_label": "active"},
+            terms,
+        )
         self.assertEqual(result.status, "staging")
 
     def test_first_post_046_successor_derives_legacy_predecessor_provenance(self):
@@ -779,7 +797,7 @@ class CandidateReleaseTest(unittest.TestCase):
         ):
             materialize_content_candidate(71, 12, "abc1234")
 
-        inherited = next(row for row in connection.catalog_rows if row[12] == "Гастроэнтерология")
+        inherited = next(row for row in connection.catalog_rows if row[12] == "Гастроэнтерология [262340]")
         provenance = json.loads(inherited[-2])
         self.assertEqual(inherited[20], 2)
         self.assertEqual(provenance["mode"], "legacy_active_catalog_baseline")
@@ -906,7 +924,7 @@ class CandidateReleaseTest(unittest.TestCase):
         self.assertIn("FROM portal_content_taxonomy_terms", sql)
         self.assertIn("item.final_material_type_code", sql)
         self.assertIn("item.proposal_evidence", sql)
-        self.assertIn("projection.resolution_status IN ('unique', 'identical_collapsed')", sql)
+        self.assertIn("resolution_status IN ('unique', 'identical_collapsed')", sql)
 
     def test_non_content_copy_and_attestation_use_natural_grain_streaming(self):
         connection = self._prepare_gate(GateConnection())
@@ -957,6 +975,32 @@ class CandidateReleaseTest(unittest.TestCase):
         self.assertIn("term_status = 'active'", taxonomy_sql)
         self.assertNotIn("is_active", taxonomy_sql)
 
+    def test_anti_flip_gate_revalidates_hash_bound_correction_contract(self):
+        connection = self._prepare_gate(GateConnection())
+        with patch(
+            "agents.abbott_page_classifier.candidate_release.get_db_connection",
+            return_value=connection,
+        ):
+            validate_content_candidate(
+                41,
+                expected_counts={
+                    "source": 2, "ready": 1, "conflict": 0, "unresolved": 0,
+                    "rejected": 0, "accepted": 1,
+                },
+                accepted_hash=connection.accepted_hash,
+            )
+        anti_flip_sql = next(
+            sql for sql, _ in connection.calls if "AS anti_flip_violations" in sql
+        )
+        for token in (
+            "item.proposal_evidence", "$.current_canonical.direction_code",
+            "$.current_canonical.event_id", "batch.accepted_decision_hash",
+            "$.accepted_decision_hash", "$.approval_item_evidence", "item.row_hash",
+            "event.event_kind <> 'correct'", "event.predecessor_event_id IS NULL",
+            "TRIM(event.actor) = ''", "TRIM(event.reason) = ''",
+        ):
+            self.assertIn(token, anti_flip_sql)
+
     def test_validation_locks_release_pointer_and_attests_real_bundle(self):
         connection = self._prepare_gate(GateConnection())
         with (
@@ -991,8 +1035,10 @@ class CandidateReleaseTest(unittest.TestCase):
         self.assertIn("report_bd_private.canonical_fact_metrika_visits", sql)
         self.assertIn("FROM portal_content_approval_items AS item", sql)
         self.assertIn("item.row_hash", sql)
-        self.assertIn("projection.resolution_status IN ('unique', 'identical_collapsed')", sql)
-        self.assertIn("catalog.page_title IS NOT NULL", sql)
+        self.assertIn("resolution_status IN ('unique', 'identical_collapsed')", sql)
+        self.assertIn("direction_key IS NOT NULL", sql)
+        self.assertIn("material_type IS NOT NULL", sql)
+        self.assertIn("access_label IS NOT NULL", sql)
 
     def test_validation_fails_exact_count_gate_on_one_row_difference(self):
         connection = self._prepare_gate(GateConnection())
@@ -1109,6 +1155,28 @@ class CandidateReleaseTest(unittest.TestCase):
             )
         self.assertEqual(report.dashboard_smoke_failures, 1)
         self.assertFalse(report.passed)
+
+    def test_dashboard_smoke_accepts_valid_ambiguity_and_missing_slug(self):
+        connection = self._prepare_gate(GateConnection(realistic_smoke=True))
+        with patch(
+            "agents.abbott_page_classifier.candidate_release.get_db_connection",
+            return_value=connection,
+        ):
+            report = validate_content_candidate(
+                41,
+                expected_counts={
+                    "source": 2, "ready": 1, "conflict": 0, "unresolved": 0,
+                    "rejected": 0, "accepted": 1,
+                },
+                accepted_hash=connection.accepted_hash,
+            )
+        self.assertEqual(report.dashboard_smoke_failures, 0)
+        smoke_sql = "\n".join(
+            sql for sql, _ in connection.calls if "lookup_consistency" in sql
+        )
+        self.assertIn("resolution_status = 'ambiguous'", smoke_sql)
+        self.assertIn("selected_source_row_fingerprint IS NULL", smoke_sql)
+        self.assertIn("lookup_kind IN ('title', 'slug', 'path')", smoke_sql)
 
 
 if __name__ == "__main__":

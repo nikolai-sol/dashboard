@@ -108,21 +108,44 @@ class AbbottSchemaContractTest(unittest.TestCase):
             "TO 'abbott_content_materializer_role';",
             sql,
         )
-        self.assertFalse(
-            any(
-                "UPDATE" in grant and "portal_active_data_releases" in grant
-                for grant in materializer_grants
-            )
-        )
-        self.assertFalse(
-            any(
-                "UPDATE (release_status" in grant
-                or re.search(r"GRANT [^;]*UPDATE[^;]* ON report_bd\.portal_data_releases", grant)
-                and "UPDATE (source_snapshot_ids" not in grant
-                for grant in materializer_grants
-            )
-        )
 
+    def test_release_operator_content_attestor_grants_are_read_only_and_complete(self):
+        sql = self._normalized(self._private_sql())
+        role = "'abbott_release_operator_role'"
+        public_reads = {
+            "portal_data_releases", "portal_active_data_releases",
+            "portal_dataset_snapshots", "portal_release_source_imports",
+            "portal_content_catalog", "portal_content_lookup_projection",
+            "portal_content_approval_batches", "portal_content_approval_items",
+            "portal_content_classification_events", "portal_content_registry_entities",
+            "portal_content_registry_aliases", "portal_content_taxonomy_terms",
+            "portal_general_materials", "portal_event_catalog", "portal_external_events",
+            "portal_bitrix_page_facts", "portal_bitrix_journey_transitions",
+            "canonical_fact_metrika_site_analytics_daily",
+            "canonical_fact_metrika_returning_pages_release_daily",
+            "canonical_source_coverage_daily",
+        }
+        private_reads = {
+            "canonical_fact_metrika_user_behavior_daily",
+            "canonical_fact_metrika_visits", "portal_user_directions_private",
+            "portal_bitrix_page_facts", "portal_bitrix_journeys_private",
+        }
+        for table in public_reads:
+            self.assertIn(f"GRANT SELECT ON report_bd.{table} TO {role};", sql)
+        for table in private_reads:
+            self.assertIn(f"GRANT SELECT ON report_bd_private.{table} TO {role};", sql)
+        grants = [
+            grant for grant in re.findall(r"GRANT .*?;", sql, re.IGNORECASE)
+            if f"TO {role}" in grant
+        ]
+        writable = [grant for grant in grants if re.search(r"\b(INSERT|UPDATE|DELETE)\b", grant)]
+        self.assertEqual(
+            writable,
+            [
+                "GRANT SELECT, INSERT, UPDATE ON report_bd.portal_migration_validation_runs "
+                f"TO {role};"
+            ],
+        )
     def test_coverage_statuses_and_scopes_are_exactly_closed(self):
         sql = self._primary_sql()
         status_match = re.search(r"collection_status\s+ENUM\(([^)]*)\)", sql)
@@ -315,7 +338,9 @@ class AbbottSchemaContractTest(unittest.TestCase):
             sql,
         )
         self.assertNotIn(f"ON {table} TO 'abbott_importer_role';", sql)
-        self.assertNotIn(f"ON {table} TO 'abbott_release_operator_role';", sql)
+        self.assertIn(
+            f"GRANT SELECT ON {table} TO 'abbott_release_operator_role';", sql
+        )
 
     def test_private_direction_uniqueness_is_release_and_snapshot_scoped(self):
         private = self._private_sql()
@@ -394,31 +419,24 @@ class AbbottSchemaContractTest(unittest.TestCase):
         ):
             self.assertIn(contract, sql)
 
-    def test_release_operator_can_transition_metadata_but_not_write_facts(self):
+    def test_release_operator_can_write_only_validation_evidence(self):
         sql = self._normalized(self._private_sql())
         role = "'abbott_release_operator_role'"
-        for table in (
-            "portal_data_releases",
-            "portal_active_data_releases",
-            "portal_dataset_snapshots",
-            "portal_migration_validation_runs",
-        ):
-            self.assertRegex(sql, rf"GRANT [^;]+ ON report_bd\.{table} TO {role};")
         operator_grants = re.findall(
             rf"GRANT ([^;]+) ON ([^;]+) TO {role};", sql
         )
         for privileges, table in operator_grants:
-            if "fact" in table or "coverage" in table:
+            if table != "report_bd.portal_migration_validation_runs":
                 self.assertEqual(privileges, "SELECT")
 
-    def test_release_operator_has_no_returning_or_raw_user_fact_access(self):
+    def test_release_operator_private_fact_access_is_select_only(self):
         sql = self._normalized(self._private_sql())
         role = "TO 'abbott_release_operator_role';"
         for table in (
             "report_bd.canonical_fact_metrika_returning_pages_release_daily",
             "report_bd_private.canonical_fact_metrika_user_behavior_daily",
         ):
-            self.assertNotIn(f"ON {table} {role}", sql)
+            self.assertIn(f"GRANT SELECT ON {table} {role}", sql)
 
     def test_release_source_import_execution_is_release_scoped_and_auditable(self):
         sql = self._normalized(self._primary_sql())
@@ -933,7 +951,7 @@ class AbbottSchemaContractTest(unittest.TestCase):
             for grant in re.findall(r"GRANT .*?;", sql, flags=re.IGNORECASE)
             if "portal_content_lookup_projection" in grant
         ]
-        self.assertEqual(len(projection_grants), 4)
+        self.assertEqual(len(projection_grants), 5)
         self.assertTrue(any(
             grant.startswith("GRANT SELECT, INSERT ON ")
             and "TO 'abbott_importer_role'" in grant
@@ -950,14 +968,16 @@ class AbbottSchemaContractTest(unittest.TestCase):
             for grant in projection_grants
         ))
         self.assertTrue(any(
+            grant.startswith("GRANT SELECT ON ")
+            and "TO 'abbott_release_operator_role'" in grant
+            for grant in projection_grants
+        ))
+        self.assertTrue(any(
             grant.startswith("GRANT SELECT, INSERT ON ")
             and "TO 'abbott_content_materializer_role'" in grant
             for grant in projection_grants
         ))
-        self.assertFalse(any(
-            "collector_role" in grant or "release_operator_role" in grant
-            for grant in projection_grants
-        ))
+        self.assertFalse(any("collector_role" in grant for grant in projection_grants))
 
     def test_task7_has_idempotent_alters_for_preexisting_task1_tables(self):
         primary = self._normalized(self._primary_sql())

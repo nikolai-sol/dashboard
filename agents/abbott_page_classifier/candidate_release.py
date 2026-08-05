@@ -18,8 +18,6 @@ from typing import Iterable, Mapping, Sequence
 import canonical_release_store as release_store
 from canonical_writer import get_db_connection
 
-from .batch_service import compute_accepted_decision_hash
-from .domain import ApprovalItem
 from .normalization import normalize_title, normalize_url, sha256_text
 
 
@@ -113,6 +111,7 @@ class CandidateCatalogRow:
     material_type_code: str | None = None
     access_code: str | None = None
     lifecycle_code: str | None = None
+    lifecycle_label: str | None = None
     provenance_mode: str = "current_batch_event"
     predecessor_catalog_row_id: int | None = None
     baseline_provenance_fingerprint: str | None = None
@@ -395,7 +394,7 @@ def _load_approval_bundle(cursor, batch_id: int) -> dict[str, object]:
         "rejected": 0,
         "no_change": 0,
     }
-    items: list[ApprovalItem] = []
+    decisions: list[dict[str, object]] = []
     schema_failures = 0
     identity_collisions = 0
     unresolved_accepted = 0
@@ -429,30 +428,33 @@ def _load_approval_bundle(cursor, batch_id: int) -> dict[str, object]:
             unresolved_accepted += 1
         if not _proposal_evidence_is_strict(row.get("proposal_evidence")):
             schema_failures += 1
-        items.append(
-            ApprovalItem(
-                content_entity_id=(
+        decisions.append(
+            {
+                "content_entity_id": (
                     int(row["content_entity_id"])
-                    if row.get("content_entity_id") is not None
-                    else None
+                    if row.get("content_entity_id") is not None else None
                 ),
-                input_hash=str(row.get("input_hash") or ""),
-                title=str(row.get("title") or ""),
-                url=str(row.get("url") or ""),
-                final_direction_code=row.get("final_direction_code"),
-                final_material_type_code=row.get("final_material_type_code"),
-                final_access_code=row.get("final_access_code"),
-                final_lifecycle_code=row.get("final_lifecycle_code"),
-                readiness_state=state,  # type: ignore[arg-type]
-                conflict_codes=conflict_values,
-                row_hash=str(row.get("row_hash") or ""),
-                decision_reason=row.get("decision_reason"),
-            )
+                "decision_reason": row.get("decision_reason"),
+                "final_access_code": row.get("final_access_code"),
+                "final_direction_code": row.get("final_direction_code"),
+                "final_lifecycle_code": row.get("final_lifecycle_code"),
+                "final_material_type_code": row.get("final_material_type_code"),
+                "input_hash": str(row.get("input_hash") or ""),
+                "readiness_state": state,
+                "row_hash": str(row.get("row_hash") or ""),
+            }
         )
-    counts["source"] = len(items)
+    decisions.sort(
+        key=lambda item: (
+            0 if item["content_entity_id"] is None else 1,
+            int(item["content_entity_id"] or 0),
+            str(item["input_hash"]),
+        )
+    )
+    counts["source"] = len(decisions)
     counts["accepted"] = counts["ready"]
     return {
-        "accepted_hash": compute_accepted_decision_hash(items),
+        "accepted_hash": sha256_text(_canonical_json(decisions)),
         "counts": counts,
         "identity_collisions": identity_collisions,
         "schema_failures": schema_failures,
@@ -700,6 +702,11 @@ def _catalog_rows(entity_rows: Iterable[Mapping[str, object]]) -> tuple[Candidat
                         if entity.get("lifecycle_code") is not None
                         else None
                     ),
+                    lifecycle_label=(
+                        str(entity["lifecycle_label"])
+                        if entity.get("lifecycle_label") is not None
+                        else None
+                    ),
                 )
             )
     return tuple(
@@ -718,6 +725,7 @@ def _predecessor_catalog_row(row: Mapping[str, object]) -> CandidateCatalogRow:
     if not isinstance(provenance, Mapping):
         raise CandidateMaterializationError("PREDECESSOR_PROVENANCE_INVALID")
     codes = provenance.get("canonical_codes") or {}
+    labels = provenance.get("canonical_labels") or {}
     required_codes = ("direction", "material_type", "access", "lifecycle")
     if (
         not isinstance(codes, Mapping)
@@ -767,6 +775,9 @@ def _predecessor_catalog_row(row: Mapping[str, object]) -> CandidateCatalogRow:
         lifecycle_code=(
             str(codes["lifecycle"]) if codes.get("lifecycle") is not None else None
         ),
+        lifecycle_label=str(
+            labels.get("lifecycle") or codes.get("lifecycle") or ""
+        ),
         provenance_mode=str(provenance.get("mode") or "predecessor_catalog"),
         predecessor_catalog_row_id=int(row.get("id") or 0),
         baseline_provenance_fingerprint=(
@@ -812,7 +823,8 @@ def _resolve_legacy_predecessor_rows(
                direction.term_code AS direction_code,
                material.term_code AS material_type_code,
                access_term.term_code AS access_code,
-               lifecycle.term_code AS lifecycle_code
+               lifecycle.term_code AS lifecycle_code,
+               lifecycle.term_label AS lifecycle_label
         FROM portal_content_catalog AS legacy_catalog
         INNER JOIN portal_content_registry_aliases AS alias_row
           ON alias_row.dataset_key = %s
@@ -923,6 +935,7 @@ def _resolve_legacy_predecessor_rows(
                             "access": codes[2],
                             "lifecycle": codes[3],
                         },
+                        "canonical_labels": {"lifecycle": str(candidates[0].get("lifecycle_label") or "")},
                         "content_entity_id": entity_id,
                         "mode": "legacy_active_catalog_baseline",
                         "predecessor_catalog_row_id": row_id,
@@ -986,7 +999,7 @@ def _referenced_taxonomy_terms(
             ("direction", row.direction_code, row.direction_key),
             ("material_type", row.material_type_code, row.material_type),
             ("access", row.access_code, row.access_label),
-            ("lifecycle", row.lifecycle_code, ""),
+            ("lifecycle", row.lifecycle_code, row.lifecycle_label),
         ):
             if not code:
                 raise CandidateMaterializationError("CANDIDATE_TAXONOMY_INVALID")
@@ -1005,6 +1018,7 @@ def _catalog_payload(row: CandidateCatalogRow) -> tuple[object, ...]:
             "lifecycle": row.lifecycle_code,
             "material_type": row.material_type_code,
         },
+        "canonical_labels": {"lifecycle": row.lifecycle_label},
         "classification_event_fingerprint": row.classification_event_fingerprint,
         "classification_event_id": row.classification_event_id,
         "content_entity_id": row.content_entity_id,
@@ -2084,6 +2098,7 @@ def _catalog_schema_gates(
             if not isinstance(provenance, Mapping):
                 raise CandidateMaterializationError("CATALOG_PROVENANCE_INVALID")
             codes = provenance.get("canonical_codes")
+            labels = provenance.get("canonical_labels") or {}
             if not isinstance(codes, Mapping):
                 raise CandidateMaterializationError("CATALOG_PROVENANCE_INVALID")
             expected_row_hash = _hash_rows((tuple(row[:22]),))
@@ -2104,7 +2119,7 @@ def _catalog_schema_gates(
                 ("direction", codes.get("direction"), row[14]),
                 ("material_type", codes.get("material_type"), row[5]),
                 ("access", codes.get("access"), row[8]),
-                ("lifecycle", codes.get("lifecycle"), None),
+                ("lifecycle", codes.get("lifecycle"), labels.get("lifecycle")),
             )
             for kind, code, visible in mappings:
                 label = taxonomy.get((kind, str(code or "")))
@@ -2137,13 +2152,17 @@ def _catalog_taxonomy_references(
     for row in rows:
         provenance = _decode_json(row[21], code="CATALOG_PROVENANCE_INVALID")
         codes = provenance.get("canonical_codes") if isinstance(provenance, Mapping) else None
+        labels = provenance.get("canonical_labels") if isinstance(provenance, Mapping) else None
         if not isinstance(codes, Mapping):
             raise CandidateMaterializationError("CATALOG_PROVENANCE_INVALID")
         for kind, code, label in (
             ("direction", codes.get("direction"), row[14]),
             ("material_type", codes.get("material_type"), row[5]),
             ("access", codes.get("access"), row[8]),
-            ("lifecycle", codes.get("lifecycle"), ""),
+            (
+                "lifecycle", codes.get("lifecycle"),
+                labels.get("lifecycle") if isinstance(labels, Mapping) else None,
+            ),
         ):
             if not str(code or "").strip():
                 raise CandidateMaterializationError("CATALOG_PROVENANCE_INVALID")
@@ -2433,12 +2452,51 @@ def validate_content_candidate(
             """
             SELECT COUNT(*) AS anti_flip_violations
             FROM portal_content_classification_events AS event
-            INNER JOIN portal_content_classification_events AS predecessor_event
-              ON predecessor_event.id = event.predecessor_event_id
+            INNER JOIN portal_content_approval_items AS item
+              ON item.id = event.approval_item_id
+             AND item.approval_batch_id = event.approval_batch_id
+            INNER JOIN portal_content_approval_batches AS batch
+              ON batch.id = event.approval_batch_id
             WHERE event.approval_batch_id = %s
-              AND event.event_kind <> 'correct'
-              AND predecessor_event.direction_code IS NOT NULL
-              AND predecessor_event.direction_code <> event.direction_code
+              AND (
+                JSON_UNQUOTE(JSON_EXTRACT(
+                  event.proposal_evidence, '$.accepted_decision_hash'
+                )) <> batch.accepted_decision_hash
+                OR JSON_UNQUOTE(JSON_EXTRACT(
+                  event.proposal_evidence, '$.row_hash'
+                )) <> item.row_hash
+                OR JSON_EXTRACT(
+                  event.proposal_evidence, '$.approval_item_evidence'
+                ) <> item.proposal_evidence
+                OR (
+                  JSON_UNQUOTE(JSON_EXTRACT(
+                    item.proposal_evidence, '$.current_canonical.direction_code'
+                  )) IS NOT NULL
+                  AND JSON_UNQUOTE(JSON_EXTRACT(
+                    item.proposal_evidence, '$.current_canonical.direction_code'
+                  )) <> item.final_direction_code
+                  AND (
+                    event.event_kind <> 'correct'
+                    OR event.predecessor_event_id IS NULL
+                    OR event.predecessor_event_id <> CAST(JSON_UNQUOTE(JSON_EXTRACT(
+                      item.proposal_evidence, '$.current_canonical.event_id'
+                    )) AS UNSIGNED)
+                    OR event.actor IS NULL OR TRIM(event.actor) = ''
+                    OR event.reason IS NULL OR TRIM(event.reason) = ''
+                  )
+                )
+                OR (
+                  event.event_kind = 'correct'
+                  AND (
+                    JSON_UNQUOTE(JSON_EXTRACT(
+                      item.proposal_evidence, '$.current_canonical.direction_code'
+                    )) IS NULL
+                    OR event.predecessor_event_id IS NULL
+                    OR event.actor IS NULL OR TRIM(event.actor) = ''
+                    OR event.reason IS NULL OR TRIM(event.reason) = ''
+                  )
+                )
+              )
             """,
             (batch_id,),
         )
@@ -2470,44 +2528,51 @@ def validate_content_candidate(
         )
         cursor.execute(
             """
-            SELECT COUNT(DISTINCT catalog.source_row_fingerprint) AS candidate_catalog_rows,
-                   COUNT(DISTINCT CASE WHEN projection.resolution_status IN
-                     ('unique', 'identical_collapsed')
-                     THEN projection.selected_source_row_fingerprint END) AS resolved_candidate_rows,
-                   COUNT(DISTINCT CASE WHEN projection.lookup_kind = 'title'
-                     THEN projection.selected_source_row_fingerprint END) AS title_lookup_rows,
-                   COUNT(DISTINCT CASE WHEN projection.lookup_kind = 'slug'
-                     THEN projection.selected_source_row_fingerprint END) AS slug_lookup_rows,
-                   COUNT(DISTINCT CASE WHEN projection.lookup_kind = 'path'
-                     THEN projection.selected_source_row_fingerprint END) AS path_lookup_rows,
-                   COUNT(DISTINCT CASE WHEN TRIM(catalog.direction_key) <> ''
-                     THEN catalog.source_row_fingerprint END) AS direction_rows,
-                   COUNT(DISTINCT CASE WHEN TRIM(catalog.material_type) <> ''
-                     THEN catalog.source_row_fingerprint END) AS material_rows,
-                   COUNT(DISTINCT CASE WHEN TRIM(catalog.access_label) <> ''
-                     THEN catalog.source_row_fingerprint END) AS access_rows
-            FROM portal_content_catalog AS catalog
-            LEFT JOIN portal_content_lookup_projection AS projection
-              ON catalog.canonical_release_id = projection.canonical_release_id
-             AND catalog.source_snapshot_id = projection.source_snapshot_id
-             AND catalog.source_row_fingerprint = projection.selected_source_row_fingerprint
-            WHERE catalog.canonical_release_id = %s
-              AND catalog.source_snapshot_id = %s
-              AND catalog.is_active = 1
-              AND catalog.page_title IS NOT NULL AND TRIM(catalog.page_title) <> ''
+            SELECT COUNT(*) AS lookup_group_count,
+                   COALESCE(SUM(CASE WHEN
+                     (resolution_status IN ('unique', 'identical_collapsed')
+                      AND selected_source_row_fingerprint IS NOT NULL
+                      AND candidate_count >= 1)
+                     OR (resolution_status = 'ambiguous'
+                      AND selected_source_row_fingerprint IS NULL
+                      AND candidate_count >= 2)
+                     THEN 0 ELSE 1 END), 0) AS lookup_consistency_failures,
+                   COALESCE(SUM(lookup_kind = 'title'), 0) AS title_group_count,
+                   COALESCE(SUM(lookup_kind = 'slug'), 0) AS slug_group_count,
+                   COALESCE(SUM(lookup_kind = 'path'), 0) AS path_group_count
+            FROM portal_content_lookup_projection
+            WHERE canonical_release_id = %s AND source_snapshot_id = %s
+              AND lookup_kind IN ('title', 'slug', 'path')
             """,
             (candidate_release_id, catalog_snapshot_id),
         )
-        smoke = cursor.fetchone()
-        smoke_total = int(_row_value(smoke, "candidate_catalog_rows", 0) or 0)
-        smoke_failures = 0 if smoke_total > 0 and all(
-            int(_row_value(smoke, name, index) or 0) == smoke_total
-            for index, name in enumerate(
-                (
-                    "resolved_candidate_rows", "title_lookup_rows", "slug_lookup_rows",
-                    "path_lookup_rows", "direction_rows", "material_rows", "access_rows",
-                ),
-                start=1,
+        lookup_smoke = cursor.fetchone()
+        cursor.execute(
+            """
+            SELECT COUNT(*) AS candidate_catalog_rows,
+                   COALESCE(SUM(direction_key IS NOT NULL AND TRIM(direction_key) <> ''), 0) AS direction_rows,
+                   COALESCE(SUM(material_type IS NOT NULL AND TRIM(material_type) <> ''), 0) AS material_rows,
+                   COALESCE(SUM(access_label IS NOT NULL AND TRIM(access_label) <> ''), 0) AS access_rows
+            FROM portal_content_catalog
+            WHERE canonical_release_id = %s AND source_snapshot_id = %s
+              AND is_active = 1
+            """,
+            (candidate_release_id, catalog_snapshot_id),
+        )
+        filter_smoke = cursor.fetchone()
+        catalog_total = int(_row_value(filter_smoke, "candidate_catalog_rows", 0) or 0)
+        lookup_total = int(_row_value(lookup_smoke, "lookup_group_count", 0) or 0)
+        smoke_failures = 0 if (
+            catalog_total > 0
+            and lookup_total > 0
+            and int(_row_value(lookup_smoke, "lookup_consistency_failures", 1) or 0) == 0
+            and int(_row_value(lookup_smoke, "title_group_count", 2) or 0) > 0
+            and int(_row_value(lookup_smoke, "path_group_count", 4) or 0) > 0
+            and all(
+                int(_row_value(filter_smoke, name, index) or 0) == catalog_total
+                for index, name in enumerate(
+                    ("direction_rows", "material_rows", "access_rows"), start=1
+                )
             )
         ) else 1
         active_mutations = 0 if (

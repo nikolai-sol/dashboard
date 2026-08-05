@@ -37,10 +37,25 @@ SYNCHRONIZED_BOOTSTRAP_COPIES = {
     "lib/canonical_writer.py": "canonical_writer.py",
     "lib/metrika_dashboard_breakdowns.py": "metrika_dashboard_breakdowns.py",
     "lib/metrika_logs_api.py": "metrika_logs_api.py",
+    "lib/canonical_release_store.py": "canonical_release_store.py",
     "runtime/fetch_yandex_metrika_canonical.py": "fetch_yandex_metrika_canonical.py",
     "runtime/canonical_writer.py": "canonical_writer.py",
     "runtime/metrika_dashboard_breakdowns.py": "metrika_dashboard_breakdowns.py",
     "runtime/metrika_logs_api.py": "metrika_logs_api.py",
+    "runtime/canonical_release_store.py": "canonical_release_store.py",
+    "runtime/abbott_canonical_controls.py": "abbott_canonical_controls.py",
+    "runtime/agents/abbott_page_classifier/candidate_release.py": "agents/abbott_page_classifier/candidate_release.py",
+    "runtime/agents/__init__.py": "agents/__init__.py",
+    "runtime/agents/abbott_page_classifier/domain.py": "agents/abbott_page_classifier/domain.py",
+    "runtime/agents/abbott_page_classifier/normalization.py": "agents/abbott_page_classifier/normalization.py",
+    "runtime/agents/abbott_page_classifier/__init__.py": "agents/abbott_page_classifier/__init__.py",
+}
+VENDORED_CONTENT_RUNTIME = {
+    "runtime/agents/__init__.py",
+    "runtime/agents/abbott_page_classifier/__init__.py",
+    "runtime/agents/abbott_page_classifier/candidate_release.py",
+    "runtime/agents/abbott_page_classifier/domain.py",
+    "runtime/agents/abbott_page_classifier/normalization.py",
 }
 
 
@@ -176,20 +191,68 @@ assert abbott_health_probe.ZoneInfo.__module__ == "backports.zoneinfo"
         )
         self.assertEqual(result.returncode, 0, result.stderr)
 
+    def test_isolated_bootstrap_executes_content_control_path(self):
+        runtime = ROOT / "dashboard-next/reportingdash-canonical-bootstrap/runtime"
+        script = r'''
+import json
+from abbott_canonical_controls import compare_release_control_pack
+
+class Cursor:
+    def __init__(self): self.one = None; self.rows = []; self.calls = []
+    def execute(self, sql, params=None):
+        sql = " ".join(sql.split()); self.calls.append(sql); self.one = None; self.rows = []
+        if sql.startswith("SELECT manifest_json"):
+            self.one = {"manifest_json": json.dumps({
+                "date_from":"2026-01-01", "date_to":"2026-01-01",
+                "control_values":{"content.dashboard_smoke_failures":0},
+                "content_candidate_bundle":{"expected_counts":{"source":1,"ready":1,"conflict":0,"unresolved":0,"rejected":0,"accepted":1},"accepted_decision_hash":"a"*64}
+            })}
+        elif sql.startswith("SELECT code_revision"):
+            self.one = {"code_revision":"abc1234","baseline_validation_run_id":33}
+        elif "canonical_fact_metrika_site_analytics_daily" in sql: self.rows = []
+        elif "canonical_source_coverage_daily" in sql:
+            self.rows = [{"scope_key":s,"coverage_days":1,"reconciled_days":1,"api_total_rows":0,"persisted_rows":0} for s in ("other","traffic","page","user_behavior","returning")]
+    def fetchone(self): return self.one
+    def fetchall(self): return list(self.rows)
+    def fetchmany(self, size=1): return []
+    def close(self): pass
+class Conn:
+    def __init__(self): self.cur=Cursor()
+    def cursor(self, **kwargs): return self.cur
+    def start_transaction(self, **kwargs): pass
+    def commit(self): pass
+    def rollback(self): pass
+
+import agents.abbott_page_classifier.candidate_release as candidate
+candidate.validate_content_candidate = lambda *args, **kwargs: candidate.GateReport(candidate_release_id=41)
+results = compare_release_control_pack(Conn(), baseline_run_id=33, candidate_release_id=41)
+assert any(r.control_name == "content.dashboard_smoke_failures" and r.result_status == "pass" for r in results)
+'''
+        result = subprocess.run(
+            [sys.executable, "-c", script], cwd=runtime,
+            env={**os.environ, "PYTHONDONTWRITEBYTECODE": "1"},
+            capture_output=True, text=True,
+        )
+        self.assertEqual(result.returncode, 0, result.stderr)
+
     def test_bootstrap_manifest_hashes_every_runtime_file_against_root_authority(self):
         bootstrap = ROOT / "dashboard-next/reportingdash-canonical-bootstrap"
         manifest = (bootstrap / "MIGRATION-MANIFEST.md").read_text()
         entries = {
-            Path(path).name: (path, authority, digest)
+            path: (authority, digest)
             for path, authority, digest in re.findall(
                 r"\| `([^`]+)` \| `([^`]+)` \| `([0-9a-f]{64})` \|",
                 manifest,
             )
             if path.startswith("runtime/")
         }
-        self.assertEqual(set(entries), REQUIRED_RUNTIME)
-        for name, (path, authority, digest) in entries.items():
-            self.assertEqual(authority, name)
+        expected_paths = {f"runtime/{name}" for name in REQUIRED_RUNTIME} | VENDORED_CONTENT_RUNTIME
+        self.assertEqual(set(entries), expected_paths)
+        for path, (authority, digest) in entries.items():
+            expected_authority = SYNCHRONIZED_BOOTSTRAP_COPIES.get(
+                path, Path(path).name
+            )
+            self.assertEqual(authority, expected_authority)
             self.assertEqual(
                 hashlib.sha256((bootstrap / path).read_bytes()).hexdigest(), digest
             )

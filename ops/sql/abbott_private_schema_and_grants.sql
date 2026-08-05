@@ -624,22 +624,48 @@ GRANT SELECT, INSERT ON report_bd_private.portal_bitrix_page_facts
 GRANT SELECT, INSERT ON report_bd_private.portal_bitrix_journeys_private
   TO 'abbott_content_materializer_role';
 
--- Baseline capture, comparison, candidate creation, validation, activation,
--- and rollback use a separate operator account. It cannot write canonical or
--- private facts; only the collector/importer roles can do that.
-GRANT SELECT, INSERT, UPDATE ON report_bd.portal_data_releases
+-- Release validation uses a separate operator account. Content attestation is
+-- read-only across the complete candidate/predecessor bundle. Its sole writes
+-- are append/completion of validation evidence; it cannot materialize, activate,
+-- change release/batch status, or write public/private facts.
+GRANT SELECT ON report_bd.portal_data_releases
   TO 'abbott_release_operator_role';
-GRANT SELECT, UPDATE ON report_bd.portal_active_data_releases
+GRANT SELECT ON report_bd.portal_active_data_releases
   TO 'abbott_release_operator_role';
-GRANT SELECT, INSERT ON report_bd.portal_dataset_snapshots
+GRANT SELECT ON report_bd.portal_dataset_snapshots
   TO 'abbott_release_operator_role';
 GRANT SELECT ON report_bd.portal_release_source_imports
   TO 'abbott_release_operator_role';
 GRANT SELECT, INSERT, UPDATE ON report_bd.portal_migration_validation_runs
   TO 'abbott_release_operator_role';
+GRANT SELECT ON report_bd.portal_content_catalog TO 'abbott_release_operator_role';
+GRANT SELECT ON report_bd.portal_content_lookup_projection TO 'abbott_release_operator_role';
+GRANT SELECT ON report_bd.portal_content_approval_batches TO 'abbott_release_operator_role';
+GRANT SELECT ON report_bd.portal_content_approval_items TO 'abbott_release_operator_role';
+GRANT SELECT ON report_bd.portal_content_classification_events TO 'abbott_release_operator_role';
+GRANT SELECT ON report_bd.portal_content_registry_entities TO 'abbott_release_operator_role';
+GRANT SELECT ON report_bd.portal_content_registry_aliases TO 'abbott_release_operator_role';
+GRANT SELECT ON report_bd.portal_content_taxonomy_terms TO 'abbott_release_operator_role';
+GRANT SELECT ON report_bd.portal_general_materials TO 'abbott_release_operator_role';
+GRANT SELECT ON report_bd.portal_event_catalog TO 'abbott_release_operator_role';
+GRANT SELECT ON report_bd.portal_external_events TO 'abbott_release_operator_role';
+GRANT SELECT ON report_bd.portal_bitrix_page_facts TO 'abbott_release_operator_role';
+GRANT SELECT ON report_bd.portal_bitrix_journey_transitions TO 'abbott_release_operator_role';
 GRANT SELECT ON report_bd.canonical_fact_metrika_site_analytics_daily
   TO 'abbott_release_operator_role';
+GRANT SELECT ON report_bd.canonical_fact_metrika_returning_pages_release_daily
+  TO 'abbott_release_operator_role';
 GRANT SELECT ON report_bd.canonical_source_coverage_daily
+  TO 'abbott_release_operator_role';
+GRANT SELECT ON report_bd_private.canonical_fact_metrika_user_behavior_daily
+  TO 'abbott_release_operator_role';
+GRANT SELECT ON report_bd_private.canonical_fact_metrika_visits
+  TO 'abbott_release_operator_role';
+GRANT SELECT ON report_bd_private.portal_user_directions_private
+  TO 'abbott_release_operator_role';
+GRANT SELECT ON report_bd_private.portal_bitrix_page_facts
+  TO 'abbott_release_operator_role';
+GRANT SELECT ON report_bd_private.portal_bitrix_journeys_private
   TO 'abbott_release_operator_role';
 
 -- The server-side manager runtime is read-only across the release metadata,
