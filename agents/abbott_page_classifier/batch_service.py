@@ -182,6 +182,13 @@ class ApprovalBatchItem(ApprovalItem):
                 "sol": self.sol_result,
                 "archive_attestation": self.archive_attestation,
                 "concise_evidence": self.concise_evidence,
+                "published_decision": {
+                    "decision_reason": self.decision_reason,
+                    "final_access_code": self.final_access_code,
+                    "final_direction_code": self.final_direction_code,
+                    "final_lifecycle_code": self.final_lifecycle_code,
+                    "final_material_type_code": self.final_material_type_code,
+                },
             }
         )
 

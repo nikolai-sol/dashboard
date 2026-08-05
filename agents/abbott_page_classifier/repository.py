@@ -675,7 +675,11 @@ class ContentRegistryRepository:
                   batch.rejected_count,
                   batch.no_change_count,
                   batch.accepted_count,
-                  batch.skipped_count
+                  batch.skipped_count,
+                  batch.source_snapshot_ids,
+                  batch.source_snapshot_digests,
+                  batch.prompt_version,
+                  batch.model_routing_version
                 FROM portal_content_approval_batches AS batch
                 INNER JOIN portal_content_taxonomy_versions AS taxonomy
                   ON taxonomy.id = batch.taxonomy_version_id
@@ -746,7 +750,9 @@ class ContentRegistryRepository:
                   readiness_state,
                   row_hash,
                   decision_reason,
-                  proposal_evidence
+                  proposal_evidence,
+                  conflict_codes,
+                  conflict_code
                 FROM portal_content_approval_items
                 WHERE approval_batch_id = %s
                 ORDER BY content_entity_id, input_hash
@@ -755,6 +761,17 @@ class ContentRegistryRepository:
                 (batch_id,),
             )
             stored_rows = tuple(cursor.fetchall())
+            evidence_by_item_id, published_items = self._attest_published_items(
+                stored_rows,
+                taxonomy=taxonomy,
+                taxonomy_digest=str(batch_row[5]),
+                source_snapshot_ids=self._decoded_json_tuple(batch_row[18]),
+                source_snapshot_digests=self._decoded_json_tuple(batch_row[19]),
+                prompt_version=str(batch_row[20]),
+                model_routing_version=str(batch_row[21]),
+            )
+            if compute_batch_hash(published_items) != published_input_hash:
+                raise RepositoryError("BATCH_HASH_MISMATCH")
             stored_items, counts = self._stored_acceptance_items(
                 stored_rows,
                 taxonomy,
@@ -806,7 +823,6 @@ class ContentRegistryRepository:
                     rejected_count=counts["rejected"],
                 )
 
-            evidence_by_item_id = self._approval_item_evidence_by_id(stored_rows)
             for approval_item_id, item in stored_items:
                 if item.readiness_state != "ready":
                     continue
@@ -841,15 +857,15 @@ class ContentRegistryRepository:
                       direction_code,
                       material_type_code,
                       access_code,
-                      lifecycle_code
+                      lifecycle_code,
+                      effective_at
                     FROM portal_content_classification_events
                     WHERE content_entity_id = %s
-                      AND effective_at <= %s
                     ORDER BY effective_at DESC, id DESC
                     LIMIT 1
                     FOR UPDATE
                     """,
-                    (item.content_entity_id, accepted_at),
+                    (item.content_entity_id,),
                 )
                 predecessor_row = cursor.fetchone()
                 predecessor_event_id = (
@@ -868,11 +884,25 @@ class ContentRegistryRepository:
                 )
                 if predecessor_values == event_values:
                     continue
+                if predecessor_row is not None:
+                    if len(predecessor_row) < 6:
+                        raise RepositoryError("SUCCESSOR_EFFECTIVE_AT_INVALID")
+                    predecessor_effective_at = self._canonical_event_timestamp(
+                        predecessor_row[5]
+                    )
+                    if accepted_at < predecessor_effective_at:
+                        raise RepositoryError("SUCCESSOR_EFFECTIVE_AT_INVALID")
 
                 event_kind = "approve"
                 reason = item.decision_reason.strip() if item.decision_reason else None
                 actor = stored_accepted_by.strip()
                 proposal_evidence = evidence_by_item_id[approval_item_id]
+                self._attest_reviewed_predecessor(
+                    proposal_evidence,
+                    item.content_entity_id,
+                    predecessor_event_id,
+                    predecessor_values,
+                )
                 if (
                     predecessor_values is not None
                     and predecessor_values[0]
@@ -882,11 +912,6 @@ class ContentRegistryRepository:
                         raise RepositoryError("CORRECTION_REASON_REQUIRED")
                     if not actor or predecessor_event_id is None:
                         raise RepositoryError("CORRECTION_AUDIT_REQUIRED")
-                    self._attest_correction_predecessor(
-                        proposal_evidence,
-                        item.content_entity_id,
-                        predecessor_event_id,
-                    )
                     event_kind = "correct"
 
                 if (
@@ -1479,25 +1504,129 @@ class ContentRegistryRepository:
         return int(cursor.lastrowid)
 
     @staticmethod
-    def _approval_item_evidence_by_id(
+    def _attest_published_items(
         stored_rows: Sequence[Sequence[object]],
-    ) -> dict[int, object]:
-        result: dict[int, object] = {}
+        *,
+        taxonomy: TaxonomyVersion,
+        taxonomy_digest: str,
+        source_snapshot_ids: tuple[object, ...],
+        source_snapshot_digests: tuple[object, ...],
+        prompt_version: str,
+        model_routing_version: str,
+    ) -> tuple[dict[int, Mapping[str, object]], tuple[ApprovalBatchItem, ...]]:
+        evidence_by_id: dict[int, Mapping[str, object]] = {}
+        published_items: list[ApprovalBatchItem] = []
+        expected_evidence_keys = {
+            "archive_attestation",
+            "concise_evidence",
+            "current_canonical",
+            "deterministic",
+            "published_decision",
+            "registry1",
+            "registry2",
+            "sol",
+            "terra",
+        }
         for row in stored_rows:
-            approval_item_id = int(row[0])
-            if approval_item_id in result:
-                raise RepositoryError("BATCH_ITEMS_MISMATCH")
-            if len(row) < 13:
-                result[approval_item_id] = {}
-                continue
             try:
+                approval_item_id = int(row[0])
+                if approval_item_id in evidence_by_id or len(row) < 15:
+                    raise RepositoryError("BATCH_ITEMS_MISMATCH")
                 evidence = json.loads(row[12]) if isinstance(row[12], str) else row[12]
-            except (TypeError, ValueError):
+                conflict_codes = (
+                    json.loads(row[13]) if isinstance(row[13], str) else row[13]
+                )
+                if (
+                    not isinstance(evidence, Mapping)
+                    or set(evidence) != expected_evidence_keys
+                    or not isinstance(conflict_codes, (tuple, list))
+                    or any(not isinstance(code, str) for code in conflict_codes)
+                ):
+                    raise RepositoryError("BATCH_ITEMS_MISMATCH")
+                expected_conflict_code = conflict_codes[0] if conflict_codes else None
+                stored_conflict_code = (
+                    str(row[14]) if row[14] is not None else None
+                )
+                if stored_conflict_code != expected_conflict_code:
+                    raise RepositoryError("BATCH_ITEMS_MISMATCH")
+                for evidence_key in (
+                    "archive_attestation",
+                    "current_canonical",
+                    "deterministic",
+                    "registry1",
+                    "registry2",
+                    "sol",
+                    "terra",
+                ):
+                    value = evidence[evidence_key]
+                    if value is not None and not isinstance(value, Mapping):
+                        raise RepositoryError("BATCH_ITEMS_MISMATCH")
+                concise_evidence = evidence["concise_evidence"]
+                if not isinstance(concise_evidence, (tuple, list)) or any(
+                    not isinstance(value, str) for value in concise_evidence
+                ):
+                    raise RepositoryError("BATCH_ITEMS_MISMATCH")
+                published_decision = evidence["published_decision"]
+                if not isinstance(published_decision, Mapping) or set(
+                    published_decision
+                ) != {
+                    "decision_reason",
+                    "final_access_code",
+                    "final_direction_code",
+                    "final_lifecycle_code",
+                    "final_material_type_code",
+                }:
+                    raise RepositoryError("BATCH_ITEMS_MISMATCH")
+                if any(
+                    value is not None and not isinstance(value, str)
+                    for value in published_decision.values()
+                ):
+                    raise RepositoryError("BATCH_ITEMS_MISMATCH")
+                item = ApprovalBatchItem(
+                    content_entity_id=(
+                        int(row[1]) if row[1] is not None else None
+                    ),
+                    input_hash=str(row[2]),
+                    title=str(row[3]),
+                    url=str(row[4]),
+                    final_direction_code=published_decision["final_direction_code"],
+                    final_material_type_code=published_decision[
+                        "final_material_type_code"
+                    ],
+                    final_access_code=published_decision["final_access_code"],
+                    final_lifecycle_code=published_decision[
+                        "final_lifecycle_code"
+                    ],
+                    readiness_state=str(row[9]),
+                    conflict_codes=tuple(str(code) for code in conflict_codes),
+                    row_hash=str(row[10]),
+                    decision_reason=published_decision["decision_reason"],
+                    current_canonical=evidence["current_canonical"],
+                    registry1_values=evidence["registry1"],
+                    registry2_values=evidence["registry2"],
+                    deterministic_result=evidence["deterministic"],
+                    terra_result=evidence["terra"],
+                    sol_result=evidence["sol"],
+                    archive_attestation=evidence["archive_attestation"],
+                    concise_evidence=tuple(concise_evidence),
+                    taxonomy_digest=taxonomy_digest,
+                    taxonomy_terms=taxonomy.terms,
+                    source_snapshot_ids=tuple(int(value) for value in source_snapshot_ids),
+                    source_snapshot_digests=tuple(
+                        str(value) for value in source_snapshot_digests
+                    ),
+                    model_routing_version=model_routing_version,
+                    prompt_version=prompt_version,
+                )
+            except RepositoryError:
+                raise
+            except (IndexError, KeyError, TypeError, ValueError):
                 raise RepositoryError("BATCH_ITEMS_MISMATCH") from None
-            if not isinstance(evidence, (dict, list, tuple)):
-                raise RepositoryError("BATCH_ITEMS_MISMATCH")
-            result[approval_item_id] = evidence
-        return result
+            if compute_item_hash(item) != item.row_hash:
+                raise RepositoryError("BATCH_HASH_MISMATCH")
+            evidence_by_id[approval_item_id] = evidence
+            published_items.append(item)
+        return evidence_by_id, tuple(published_items)
 
     @staticmethod
     def _archive_evidence_authorized(evidence: object) -> bool:
@@ -1511,29 +1640,39 @@ class ContentRegistryRepository:
         )
 
     @staticmethod
-    def _attest_correction_predecessor(
+    def _attest_reviewed_predecessor(
         evidence: object,
         content_entity_id: int,
-        predecessor_event_id: int,
+        predecessor_event_id: int | None,
+        predecessor_values: tuple[object, ...] | None,
     ) -> None:
         if not isinstance(evidence, Mapping):
             raise RepositoryError("CORRECTION_AUDIT_REQUIRED")
         current = evidence.get("current_canonical")
-        if not isinstance(current, Mapping):
+        if predecessor_event_id is None:
+            if current is not None:
+                raise RepositoryError("CORRECTION_PREDECESSOR_MISMATCH")
+            return
+        if not isinstance(current, Mapping) or predecessor_values is None:
             raise RepositoryError("CORRECTION_AUDIT_REQUIRED")
         try:
             expected_event_id = int(current["event_id"])
-            expected_entity_id = current.get("content_entity_id")
-            if expected_entity_id is not None:
-                expected_entity_id = int(expected_entity_id)
+            expected_entity_id = int(current["content_entity_id"])
+            expected_values = tuple(
+                current[key]
+                for key in (
+                    "direction_code",
+                    "material_type_code",
+                    "access_code",
+                    "lifecycle_code",
+                )
+            )
         except (KeyError, TypeError, ValueError):
             raise RepositoryError("CORRECTION_AUDIT_REQUIRED") from None
         if (
             expected_event_id != predecessor_event_id
-            or (
-                expected_entity_id is not None
-                and expected_entity_id != content_entity_id
-            )
+            or expected_entity_id != content_entity_id
+            or expected_values != predecessor_values
         ):
             raise RepositoryError("CORRECTION_PREDECESSOR_MISMATCH")
 
@@ -1555,6 +1694,13 @@ class ContentRegistryRepository:
             return parsed.replace(tzinfo=None)
         except (OverflowError, TypeError, ValueError):
             raise RepositoryError("BATCH_ACCEPTANCE_METADATA_MISMATCH") from None
+
+    @staticmethod
+    def _canonical_event_timestamp(value: object) -> datetime:
+        try:
+            return ContentRegistryRepository._canonical_acceptance_timestamp(value)
+        except RepositoryError:
+            raise RepositoryError("SUCCESSOR_EFFECTIVE_AT_INVALID") from None
 
     @staticmethod
     def _json(value: object) -> str:
