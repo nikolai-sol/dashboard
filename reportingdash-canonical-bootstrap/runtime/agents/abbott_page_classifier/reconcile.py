@@ -14,7 +14,7 @@ from .domain import (
     Proposal,
 )
 from .normalization import normalize_title, normalize_url, sha256_text
-from .sources import SourceCandidate
+from .sources import RejectedSourceRow, SourceCandidate
 
 
 CandidateInput = Union[MaterialCandidate, SourceCandidate]
@@ -35,6 +35,7 @@ class ReconciliationInput:
     identity_conflict: bool = False
     content_available: bool = True
     rejection_code: str | None = None
+    rejected_source_row: RejectedSourceRow | None = None
     explicit_archive_override: bool = False
     http_status: int | None = None
 
@@ -108,7 +109,7 @@ def _candidate_payload(value: CandidateInput | None) -> dict[str, object] | None
 
 def _input_hash(value: ReconciliationInput) -> str:
     active = value.active_canonical
-    payload = {
+    payload: dict[str, object] = {
         "active_canonical": (
             {
                 "access_code": active.access_code,
@@ -136,6 +137,13 @@ def _input_hash(value: ReconciliationInput) -> str:
         "reviewed_correction": _proposal_payload(value.reviewed_correction),
         "verifier_proposal": _proposal_payload(value.verifier_proposal),
     }
+    if value.rejected_source_row is not None:
+        payload["rejected_source_row"] = {
+            "reason_code": value.rejected_source_row.reason_code,
+            "source_fingerprint": value.rejected_source_row.source_fingerprint,
+            "source_name": value.rejected_source_row.source_name,
+            "source_row_id": value.rejected_source_row.source_row_id,
+        }
     return sha256_text(_canonical_json(payload))
 
 
@@ -494,6 +502,8 @@ def reconcile_entity(value: ReconciliationInput) -> ApprovalItem:
 
     if value.identity_conflict:
         _append_conflict(conflicts, ConflictCode.IDENTITY_COLLISION)
+    if value.rejection_code == ConflictCode.REGISTRY1_IDENTITY_REQUIRED.value:
+        _append_conflict(conflicts, ConflictCode.REGISTRY1_IDENTITY_REQUIRED)
     if registry2_evidence_missing:
         _append_conflict(conflicts, ConflictCode.CONTENT_UNAVAILABLE)
 
