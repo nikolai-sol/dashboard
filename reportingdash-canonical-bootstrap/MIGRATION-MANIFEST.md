@@ -43,7 +43,7 @@ every runbook entrypoint and each repository-local Python dependency.
 | `runtime/agents/__init__.py` | `agents/__init__.py` | `cf17c37c950a6d792c42de4580180ddefa478dbebc01109674658756473d9cc8` | Vendored content-attestor package root |
 | `runtime/agents/abbott_page_classifier/__init__.py` | `agents/abbott_page_classifier/__init__.py` | `ea902dc7a2b24b5bdc073342296a16a013af63a3b7afc26789f82e2511f576b0` | Vendored content-attestor package |
 | `runtime/agents/abbott_page_classifier/approval_hashes.py` | `agents/abbott_page_classifier/approval_hashes.py` | `2e651e0cc8627ea91fef10846929bf7d63870e1d341b459f1aab49c7e84fa042` | Lightweight canonical approval hash authority |
-| `runtime/agents/abbott_page_classifier/candidate_release.py` | `agents/abbott_page_classifier/candidate_release.py` | `52e2c329da1e0692115740726549bdd40dfc79ad090906390d5ef7c02236c725` | Shared content materializer and read-only attestor authority |
+| `runtime/agents/abbott_page_classifier/candidate_release.py` | `agents/abbott_page_classifier/candidate_release.py` | `c59a6ccca8d2bb2e1f0158f2abd7252c52cba3e2546c985353d007889d5d8eb9` | Shared content materializer and read-only attestor authority |
 | `runtime/agents/abbott_page_classifier/domain.py` | `agents/abbott_page_classifier/domain.py` | `be030852ef0c84a4e53dd7b94538970b846b2cc5f2c0b05298c1440ddcf29f5a` | Content taxonomy domain dependency |
 | `runtime/agents/abbott_page_classifier/normalization.py` | `agents/abbott_page_classifier/normalization.py` | `7f6a72207e0bece361089174d7bcf8ca228b9233f41918941b88a66e82816867` | Content normalization dependency |
 
