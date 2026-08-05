@@ -390,12 +390,15 @@ def _has_phone_digit_run(value: str, *, minimum_digits: int = 10) -> bool:
 
 
 def _has_labeled_phone(value: str) -> bool:
-    split_compound_label = _PHONE_COMPOUND_BOUNDARY.sub(r"\1 ", value)
+    visible_case = "".join(
+        character
+        for character in value
+        if unicodedata.category(character)[0] not in {"C", "M"}
+    )
+    split_compound_label = _PHONE_COMPOUND_BOUNDARY.sub(r"\1 ", visible_case)
     normalized: list[str] = []
     for character in split_compound_label:
         category_family = unicodedata.category(character)[0]
-        if category_family in {"C", "M"}:
-            continue
         if character == "_" or character.isspace() or category_family in {"P", "Z"}:
             normalized.append(" ")
         else:
