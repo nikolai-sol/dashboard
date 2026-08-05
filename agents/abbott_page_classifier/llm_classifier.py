@@ -42,6 +42,13 @@ MAX_CONTENT_EXCERPT_CHARS = 12_000
 MAX_EVIDENCE_ITEMS = 5
 MAX_EVIDENCE_CHARS = 240
 MAX_APPROVED_EXAMPLES = 8
+MAX_DETERMINISTIC_EVIDENCE_ITEMS = 20
+MAX_DETERMINISTIC_EVIDENCE_CHARS = 500
+MAX_RULE_CODE_CHARS = 128
+MAX_SERIALIZED_INPUT_BYTES = 200_000
+MAX_PRIVACY_SCAN_CHARS = 200_000
+MAX_PRIVACY_DECODE_PASSES = 16
+MAX_PRIVACY_DECODE_WORK_CHARS = 1_000_000
 
 SYSTEM_PROMPT_V1 = """Classify one Abbott professional-medical portal material.
 Use only the supplied material JSON and its requested_fields. Every field not named
@@ -310,10 +317,6 @@ _DENIED_FIELD_NAMES = _PRIVATE_IDENTIFIER_FIELD_NAMES | frozenset(
 
 _UNICODE_ESCAPE = re.compile(r"\\u([0-9a-fA-F]{4})|\\x([0-9a-fA-F]{2})")
 _CAMEL_BOUNDARY = re.compile(r"(?<=[a-z0-9])(?=[A-Z])")
-_EMAIL_PATTERN = re.compile(
-    r"(?<![\w.+-])[\w.+-]+@[\w.-]+\.[A-Za-z]{2,}(?![\w.-])"
-)
-_PHONE_PATTERN = re.compile(r"(?<!\d)(?:\+?\d[\s().-]*){10,15}(?!\d)")
 _SENSITIVE_LABEL = re.compile(
     r"(?:^|[?&#;\s])(?:auth(?:orization)?|oauth(?:[_-]?token)?|"
     r"(?:access|refresh)?[_-]?token|api[_-]?key)\s*[:=]",
@@ -325,16 +328,50 @@ _API_SECRET = re.compile(r"\bsk-[A-Za-z0-9_-]{8,}", re.IGNORECASE)
 
 
 def _decode_for_detection(value: str) -> str:
-    decoded = value
-    for _ in range(3):
-        previous = decoded
-        decoded = html.unescape(unquote(decoded))
-        decoded = _UNICODE_ESCAPE.sub(
-            lambda match: chr(int(match.group(1) or match.group(2), 16)), decoded
+    if not isinstance(value, str) or len(value) > MAX_PRIVACY_SCAN_CHARS:
+        raise ValueError("privacy scan input is invalid")
+    decoded = unicodedata.normalize("NFKC", value)
+    work_chars = len(decoded)
+    for _ in range(MAX_PRIVACY_DECODE_PASSES):
+        candidate = html.unescape(unquote(decoded))
+        candidate = _UNICODE_ESCAPE.sub(
+            lambda match: chr(int(match.group(1) or match.group(2), 16)), candidate
         )
-        if decoded == previous:
-            break
-    return unicodedata.normalize("NFKC", decoded)
+        candidate = unicodedata.normalize("NFKC", candidate)
+        work_chars += len(candidate)
+        if (
+            len(candidate) > MAX_PRIVACY_SCAN_CHARS
+            or work_chars > MAX_PRIVACY_DECODE_WORK_CHARS
+        ):
+            raise ValueError("privacy decoding exceeded its safety bound")
+        if candidate == decoded:
+            return candidate
+        decoded = candidate
+    raise ValueError("privacy decoding did not converge")
+
+
+def _has_phone_digit_run(value: str) -> bool:
+    """Detect international phone-like runs across ASCII and Unicode separators."""
+
+    digits = 0
+    in_run = False
+    for character in value:
+        if character.isdigit():
+            digits += 1
+            in_run = True
+            if digits >= 10:
+                return True
+            continue
+        is_separator = (
+            character in "+-()./"
+            or character in "‐‑‒–—−"
+            or unicodedata.category(character).startswith("Z")
+        )
+        if in_run and is_separator:
+            continue
+        digits = 0
+        in_run = character == "+"
+    return False
 
 
 def _canonical_key(value: str) -> str:
@@ -369,8 +406,8 @@ def _text_has_denied_data(value: str) -> bool:
     )
     return (
         any(marker in compact for marker in _PRIVATE_VALUE_MARKERS)
-        or _EMAIL_PATTERN.search(decoded) is not None
-        or _PHONE_PATTERN.search(decoded) is not None
+        or "@" in decoded
+        or _has_phone_digit_run(decoded)
         or _SENSITIVE_LABEL.search(folded) is not None
         or has_denied_label
         or _BEARER_VALUE.search(decoded) is not None
@@ -420,6 +457,11 @@ def _validate_example_shape(example: Mapping[str, Any]) -> None:
             or len(example[field_name]) > limit
         ):
             raise ValueError("invalid approved example text field")
+    material_type_hint = example.get("material_type_hint")
+    if material_type_hint is not None and (
+        not isinstance(material_type_hint, str) or len(material_type_hint) > 128
+    ):
+        raise ValueError("invalid approved example material type hint")
     for field_name, item_limit, count_limit in (
         ("breadcrumbs", 240, 12),
         ("evidence", MAX_EVIDENCE_CHARS, MAX_EVIDENCE_ITEMS),
@@ -465,8 +507,11 @@ def _validate_request_shape(request: LlmRequest) -> None:
         request.deterministic_direction_evidence,
         request.deterministic_material_type_evidence,
     ):
-        if len(values) > 20 or any(
-            not isinstance(item, str) or len(item) > 500 for item in values
+        if len(values) > MAX_DETERMINISTIC_EVIDENCE_ITEMS or any(
+            not isinstance(item, str)
+            or not item.strip()
+            or len(item) > MAX_DETERMINISTIC_EVIDENCE_CHARS
+            for item in values
         ):
             raise ValueError("invalid deterministic evidence")
     if not isinstance(request.direction_locked, bool) or not isinstance(
@@ -477,6 +522,31 @@ def _validate_request_shape(request: LlmRequest) -> None:
         request.deterministic_proposal, Proposal
     ):
         raise ValueError("invalid deterministic proposal")
+    proposal = request.deterministic_proposal
+    if proposal is not None:
+        if (
+            not isinstance(proposal.rule_code, str)
+            or not proposal.rule_code.strip()
+            or len(proposal.rule_code) > MAX_RULE_CODE_CHARS
+        ):
+            raise ValueError("invalid deterministic proposal rule")
+        if proposal.confidence is not None and (
+            not isinstance(proposal.confidence, (int, float))
+            or isinstance(proposal.confidence, bool)
+            or not 0 <= proposal.confidence <= 1
+        ):
+            raise ValueError("invalid deterministic proposal confidence")
+        if (
+            not isinstance(proposal.evidence, tuple)
+            or len(proposal.evidence) > MAX_DETERMINISTIC_EVIDENCE_ITEMS
+            or any(
+                not isinstance(item, str)
+                or not item.strip()
+                or len(item) > MAX_DETERMINISTIC_EVIDENCE_CHARS
+                for item in proposal.evidence
+            )
+        ):
+            raise ValueError("invalid deterministic proposal evidence")
 
 
 def _validate_request_taxonomy(
@@ -505,6 +575,8 @@ def _validate_request_taxonomy(
             raise ValueError("invalid example direction code")
         if not _valid_optional(example.get("material_type_code"), MATERIAL_TYPE_CODES):
             raise ValueError("invalid example material type code")
+        if not _valid_optional(example.get("material_type_hint"), MATERIAL_TYPE_CODES):
+            raise ValueError("invalid example material type hint")
         if not _valid_optional(example.get("access_code"), ACCESS_CODES):
             raise ValueError("invalid example access code")
 
@@ -600,7 +672,10 @@ def _serialize_request(request: LlmRequest) -> tuple[str, str]:
     serialized = json.dumps(
         payload, ensure_ascii=False, separators=(",", ":"), sort_keys=True
     )
-    return serialized, hashlib.sha256(serialized.encode("utf-8")).hexdigest()
+    encoded = serialized.encode("utf-8")
+    if len(encoded) >= MAX_SERIALIZED_INPUT_BYTES:
+        raise ValueError("serialized input exceeds its safety bound")
+    return serialized, hashlib.sha256(encoded).hexdigest()
 
 
 def _response_has_refusal(response: Any) -> bool:
@@ -654,6 +729,8 @@ def _exception_failure(error: Exception) -> _AttemptFailure:
     error_code = getattr(error, "code", None)
     if isinstance(error, TimeoutError) or name in {"APITimeoutError", "TimeoutException"}:
         return _AttemptFailure("LLM_TIMEOUT", True)
+    if status_code == 408:
+        return _AttemptFailure("LLM_REQUEST_TIMEOUT", True)
     if status_code == 429 or name == "RateLimitError":
         if error_code in _NONRETRYABLE_RATE_CODES:
             return _AttemptFailure("LLM_QUOTA_ERROR", False)
@@ -741,6 +818,10 @@ class OpenAIContentClassifier:
         client_factory: Callable[..., Any] = OpenAI,
         monotonic: Callable[[], float] = time.monotonic,
     ) -> None:
+        if client is not None and isinstance(client, OpenAI):
+            client = client.with_options(max_retries=0)
+        elif client is not None and getattr(client, "max_retries", None) != 0:
+            raise ValueError("injected clients must declare max_retries=0")
         self._client = client
         self._client_factory = client_factory
         self._monotonic = monotonic

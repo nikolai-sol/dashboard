@@ -7,6 +7,7 @@ from pathlib import Path
 from types import SimpleNamespace
 import unittest
 
+from openai import OpenAI
 from pydantic import BaseModel
 
 from agents.abbott_page_classifier.domain import (
@@ -43,6 +44,8 @@ class _FakeResponses:
 
 
 class _FakeClient:
+    max_retries = 0
+
     def __init__(self, outcomes):
         self.responses = _FakeResponses(outcomes)
 
@@ -111,6 +114,7 @@ def _request(**overrides):
                 "title": "Пример",
                 "direction_code": "cardiology",
                 "material_type_code": "articles",
+                "material_type_hint": "articles",
             },
         ),
         "deterministic_direction_evidence": ("path:cardio",),
@@ -337,6 +341,33 @@ class AdapterTests(unittest.TestCase):
         self.assertEqual(result.unresolved_code, "LLM_INPUT_REJECTED")
         self.assertEqual(factory_calls, [])
 
+    def test_deeply_encoded_international_private_data_never_constructs_client(self):
+        too_deep = "%40"
+        for _ in range(20):
+            too_deep = too_deep.replace("%", "%25")
+        cases = (
+            "person%25252540example.com",
+            "+43/664/1234567",
+            "имя@пример.рф",
+            "+43\u00a0664\u202f123\u20094567",
+            "raw%2525252555ser%2525252549d=42",
+            too_deep,
+        )
+        for value in cases:
+            with self.subTest(value=value):
+                factory_calls = []
+
+                def factory(**kwargs):
+                    factory_calls.append(kwargs)
+                    return _FakeClient([_completed()])
+
+                result = OpenAIContentClassifier(client_factory=factory).classify(
+                    _request(content_excerpt=value), LLM_PRIMARY_MODEL
+                )
+                self.assertEqual(result.unresolved_code, "LLM_INPUT_REJECTED")
+                self.assertEqual(result.attempt_count, 0)
+                self.assertEqual(factory_calls, [])
+
     def test_sensitive_nested_example_key_is_rejected(self):
         client = _FakeClient([_completed()])
         request = _request(approved_examples=({"email": "hidden"},))
@@ -378,6 +409,9 @@ class AdapterTests(unittest.TestCase):
             {"breadcrumbs": "not-an-array"},
             {"evidence": ["x"] * 6},
             {"content_excerpt": "x" * 2_001},
+            {"material_type_hint": {"code": "articles"}},
+            {"material_type_hint": "archive"},
+            {"material_type_hint": "articles" * 100},
         )
         for example in cases:
             with self.subTest(example=example):
@@ -387,6 +421,46 @@ class AdapterTests(unittest.TestCase):
                 )
                 self.assertEqual(result.unresolved_code, "LLM_INPUT_REJECTED")
                 self.assertEqual(client.responses.calls, [])
+
+    def test_deterministic_proposal_rule_and_evidence_are_bounded(self):
+        proposals = (
+            Proposal(None, None, None, None, "", 0.8),
+            Proposal(None, None, None, None, "x" * 129, 0.8),
+            Proposal(None, None, None, None, {"nested": "rule"}, 0.8),
+            Proposal(None, None, None, None, "rule", 0.8, ("x",) * 21),
+            Proposal(None, None, None, None, "rule", 0.8, ("x" * 501,)),
+            Proposal(None, None, None, None, "rule", 0.8, (42,)),
+        )
+        for proposal in proposals:
+            with self.subTest(proposal=proposal):
+                client = _FakeClient([_completed()])
+                result = OpenAIContentClassifier(client=client).classify(
+                    _request(deterministic_proposal=proposal), LLM_PRIMARY_MODEL
+                )
+                self.assertEqual(result.unresolved_code, "LLM_INPUT_REJECTED")
+                self.assertEqual(client.responses.calls, [])
+
+    def test_total_serialized_input_is_hard_capped_below_200kb(self):
+        factory_calls = []
+
+        def factory(**kwargs):
+            factory_calls.append(kwargs)
+            return _FakeClient([_completed()])
+
+        result = OpenAIContentClassifier(client_factory=factory).classify(
+            _request(
+                content_excerpt="🙂" * 12_000,
+                breadcrumbs=("🙂" * 500,) * 20,
+                deterministic_direction_evidence=("🙂" * 500,) * 20,
+                deterministic_material_type_evidence=("🙂" * 500,) * 20,
+                approved_examples=tuple(
+                    {"content_excerpt": "🙂" * 2_000} for _ in range(8)
+                ),
+            ),
+            LLM_PRIMARY_MODEL,
+        )
+        self.assertEqual(result.unresolved_code, "LLM_INPUT_REJECTED")
+        self.assertEqual(factory_calls, [])
 
     def test_partial_lock_requests_only_the_missing_field(self):
         value = _classification(direction_code=None, direction_confidence=None)
@@ -485,6 +559,7 @@ class AdapterTests(unittest.TestCase):
     def test_rate_limit_and_5xx_retry_once_then_return_stable_codes(self):
         cases = (
             (RateLimitError("private"), "LLM_RATE_LIMIT"),
+            (APIStatusError(408), "LLM_REQUEST_TIMEOUT"),
             (APIStatusError(503), "LLM_SERVER_ERROR"),
         )
         for error, code in cases:
@@ -577,6 +652,24 @@ class AdapterTests(unittest.TestCase):
         )
         self.assertEqual(result.status, "success")
         self.assertEqual(calls, [{"max_retries": 0}])
+
+    def test_injected_real_sdk_client_is_normalized_to_zero_internal_retries(self):
+        sdk_client = OpenAI(api_key="unit-test-placeholder", max_retries=2)
+        classifier = OpenAIContentClassifier(client=sdk_client)
+        self.assertEqual(classifier._client.max_retries, 0)
+        result = classifier.classify(
+            _request(content_excerpt="person%40example.com"), LLM_PRIMARY_MODEL
+        )
+        self.assertEqual(result.unresolved_code, "LLM_INPUT_REJECTED")
+        self.assertEqual(result.attempt_count, 0)
+
+    def test_uncontracted_injected_fake_is_rejected(self):
+        unsafe = SimpleNamespace(
+            max_retries=2,
+            responses=SimpleNamespace(parse=lambda **kwargs: _completed()),
+        )
+        with self.assertRaises(ValueError):
+            OpenAIContentClassifier(client=unsafe)
 
     def test_sanitized_usage_and_elapsed_time_are_recorded(self):
         first = SimpleNamespace(
