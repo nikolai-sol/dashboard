@@ -12,6 +12,13 @@ from pathlib import Path
 import sys
 from typing import Callable, Mapping, Protocol, Sequence
 
+
+_PYTHON311_RUNTIME = sys.version_info[:2] == (3, 11)
+_PYTHON311_FAILURE = {"status": "ABBOTT_CONTENT_PYTHON311_VERSION_REQUIRED"}
+if __name__ == "__main__" and not _PYTHON311_RUNTIME:
+    print(json.dumps(_PYTHON311_FAILURE, sort_keys=True))
+    raise SystemExit(78)
+
 if __package__ in (None, ""):
     sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 
@@ -518,6 +525,9 @@ def main(
     *,
     dependencies: WorkflowDependencies | None = None,
 ) -> int:
+    if not _PYTHON311_RUNTIME:
+        _emit(_PYTHON311_FAILURE)
+        return 78
     try:
         args = _parser().parse_args(argv)
     except (SystemExit, WorkflowConfigurationError):

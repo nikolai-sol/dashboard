@@ -83,6 +83,11 @@ The bootstrap also packages the additive `src/db/migrations/047_abbott_content_r
 
 Set `ABBOTT_CONTENT_PYTHON311_BIN` to an owner-reviewed absolute Python 3.11
 executable. The bootstrap deliberately has no `python3`/`PATH` fallback.
+Invoke the packaged workflow only through
+`runtime/agents/abbott_page_classifier/run_weekly_proposal.sh` or
+`runtime/agents/abbott_page_classifier/run_classifier.sh`; both wrappers and
+their launcher are part of the attested runtime manifest. The Python
+entrypoints also reject a non-3.11 interpreter if a wrapper is bypassed.
 
 The separately authorized first proposal uses the dedicated workflow role only:
 `ABBOTT_CONTENT_WORKFLOW_DB_HOST`, `ABBOTT_CONTENT_WORKFLOW_DB_PORT`,

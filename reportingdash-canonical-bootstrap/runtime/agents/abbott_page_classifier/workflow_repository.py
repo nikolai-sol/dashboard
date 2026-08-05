@@ -616,7 +616,14 @@ class MySqlWorkflowStore:
                 if (
                     (str(existing[1]) if existing[1] is not None else None) != material_id
                     or str(existing[2]) != title
-                    or str(existing[3]) not in urls
+                    or (
+                        bool(urls)
+                        and str(existing[3]) not in urls
+                    )
+                    or (
+                        not urls
+                        and str(existing[3] or "") != ""
+                    )
                     or str(existing[4]) != "active"
                     or _json_value(existing[5]) != evidence
                 ):
