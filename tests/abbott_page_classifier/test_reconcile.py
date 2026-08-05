@@ -441,6 +441,94 @@ class ReconciliationTests(unittest.TestCase):
         self.assertEqual(item.readiness_state, "ready")
         self.assertNotIn(ConflictCode.ANTI_FLIP_CONFLICT, item.conflict_codes)
 
+    def test_source_occurrences_compare_to_reviewed_correction_lock(self) -> None:
+        correction = proposal(
+            direction="gastroenterology",
+            material_type="video",
+            access="all",
+        )
+        item = reconcile_entity(
+            ReconciliationInput(
+                active_canonical=canonical(),
+                reviewed_correction=correction,
+                registry1=source_candidate(
+                    "registry1",
+                    direction="gastroenterology",
+                    material_type="video",
+                    access="all",
+                ),
+                registry2=source_candidate(
+                    "registry2",
+                    direction="gastroenterology",
+                    material_type="video",
+                    access="all",
+                ),
+            )
+        )
+
+        self.assertEqual(item.final_direction_code, "gastroenterology")
+        self.assertEqual(item.final_material_type_code, "video")
+        self.assertEqual(item.final_access_code, "all")
+        self.assertEqual(item.conflict_codes, ())
+        self.assertEqual(item.readiness_state, "ready")
+
+    def test_reviewed_correction_does_not_hide_occurrence_ambiguity(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            fixture = Path(temporary_directory) / "registry1.xlsx"
+            workbook = Workbook()
+            sheet = workbook.active
+            sheet.title = "кардио"
+            sheet.append(
+                ("ID", "Название", "ссылка", "Направление", "доступ", "Тип материала")
+            )
+            sheet.append(
+                (
+                    700,
+                    "Исправленный",
+                    "https://abbottpro.ru/corrected",
+                    "Гастроэнтерология",
+                    "Все",
+                    "Видео",
+                )
+            )
+            sheet.append(
+                (
+                    700,
+                    "Старый",
+                    "https://abbottpro.ru/old",
+                    "Кардиология",
+                    "Врачи",
+                    "Статьи",
+                )
+            )
+            workbook.save(fixture)
+            registry1 = read_registry1(fixture).candidates[0]
+
+        item = reconcile_entity(
+            ReconciliationInput(
+                active_canonical=canonical(),
+                reviewed_correction=proposal(
+                    direction="gastroenterology",
+                    material_type="video",
+                    access="all",
+                ),
+                registry1=registry1,
+            )
+        )
+
+        self.assertEqual(
+            item.conflict_codes,
+            (
+                ConflictCode.DIRECTION_CONFLICT,
+                ConflictCode.MATERIAL_TYPE_CONFLICT,
+                ConflictCode.ACCESS_CONFLICT,
+            ),
+        )
+        self.assertEqual(item.final_direction_code, "gastroenterology")
+        self.assertEqual(item.final_material_type_code, "video")
+        self.assertEqual(item.final_access_code, "all")
+        self.assertEqual(item.readiness_state, "conflict")
+
     def test_archive_requires_override_or_not_found_evidence(self) -> None:
         invalid = reconcile_entity(
             ReconciliationInput(
@@ -722,6 +810,52 @@ class ReconciliationTests(unittest.TestCase):
         self.assertEqual(item.readiness_state, "conflict")
         self.assertEqual(item.final_lifecycle_code, "archive_candidate")
         self.assertIn(ConflictCode.ARCHIVE_TYPE_INVALID, item.conflict_codes)
+
+    def test_attested_archive_request_advances_lifecycle_monotonically(self) -> None:
+        for lifecycle, expected, state in (
+            ("active", "archive_candidate", "ready"),
+            ("archive_candidate", "archive_candidate", "no_change"),
+            ("archived", "archived", "no_change"),
+        ):
+            with self.subTest(lifecycle=lifecycle):
+                item = reconcile_entity(
+                    ReconciliationInput(
+                        active_canonical=canonical(lifecycle=lifecycle),
+                        registry2=source_candidate(
+                            "registry2",
+                            direction="cardiology",
+                            material_type="articles",
+                            access="doctors",
+                            lifecycle="archive_candidate",
+                            raw_status="Архив",
+                        ),
+                        explicit_archive_override=True,
+                    )
+                )
+
+                self.assertEqual(item.final_lifecycle_code, expected)
+                self.assertEqual(item.readiness_state, state)
+
+    def test_attested_registry2_archive_preserves_reviewed_archived(self) -> None:
+        item = reconcile_entity(
+            ReconciliationInput(
+                active_canonical=canonical(lifecycle="active"),
+                reviewed_correction=proposal(lifecycle="archived"),
+                registry2=source_candidate(
+                    "registry2",
+                    direction="cardiology",
+                    material_type="articles",
+                    access="doctors",
+                    lifecycle="archive_candidate",
+                    raw_status="Архив",
+                ),
+                http_status=404,
+            )
+        )
+
+        self.assertEqual(item.final_lifecycle_code, "archived")
+        self.assertEqual(item.readiness_state, "ready")
+        self.assertEqual(item.conflict_codes, ())
 
     def test_llm_verifier_disagreement_is_a_conflict(self) -> None:
         item = reconcile_entity(

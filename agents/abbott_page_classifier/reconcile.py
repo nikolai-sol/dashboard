@@ -518,9 +518,20 @@ def reconcile_entity(value: ReconciliationInput) -> ApprovalItem:
     locked_direction = final_direction
     locked_material_type = final_material_type
     locked_access = final_access
+    effective_active = (
+        replace(
+            active,
+            direction_code=final_direction,
+            material_type_code=final_material_type,
+            access_code=final_access,
+            lifecycle_code=final_lifecycle or "unknown",
+        )
+        if active is not None
+        else None
+    )
 
-    _record_occurrence_conflicts(registry1_evidence, active, conflicts)
-    _record_occurrence_conflicts(registry2_evidence, active, conflicts)
+    _record_occurrence_conflicts(registry1_evidence, effective_active, conflicts)
+    _record_occurrence_conflicts(registry2_evidence, effective_active, conflicts)
 
     if registry1 is not None:
         if not title and registry1.title:
@@ -547,7 +558,7 @@ def reconcile_entity(value: ReconciliationInput) -> ApprovalItem:
         changed = changed or source_changed
 
     _compare_registry_classification_evidence(
-        active,
+        effective_active,
         registry1_evidence,
         registry2_evidence,
         conflicts,
@@ -608,9 +619,10 @@ def reconcile_entity(value: ReconciliationInput) -> ApprovalItem:
         410,
     }
     if direct_archive_evidence and not archive_evidence_ambiguous:
-        if final_lifecycle != "archive_candidate":
+        # An attested archive request advances lifecycle but never regresses it.
+        if final_lifecycle not in {"archive_candidate", "archived"}:
             changed = True
-        final_lifecycle = "archive_candidate"
+            final_lifecycle = "archive_candidate"
     if archive_requested:
         if not archive_evidence_valid:
             _append_conflict(conflicts, ConflictCode.ARCHIVE_TYPE_INVALID)
