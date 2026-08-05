@@ -14,6 +14,7 @@ from .domain import (
     ApprovalItem,
     CanonicalClassification,
     ClassificationEvent,
+    ConflictCode,
     IngestResult,
     TaxonomyVersion,
 )
@@ -1758,7 +1759,7 @@ class ContentRegistryRepository:
                         "final_lifecycle_code"
                     ],
                     readiness_state=str(row[9]),
-                    conflict_codes=tuple(str(code) for code in conflict_codes),
+                    conflict_codes=tuple(ConflictCode(str(code)) for code in conflict_codes),
                     row_hash=str(row[10]),
                     decision_reason=published_decision["decision_reason"],
                     current_canonical=evidence["current_canonical"],

@@ -1,103 +1,52 @@
-# Abbott directions — процесс (stable + new pages)
+# Abbott content registry process
 
-## Цель
+## State and authority
 
-1. **Не скакать** между направлениями: что уже было задано/принято раньше — **жёсткий lock**.
-2. Чем **старее** acceptance, тем **больше вес**.
-3. **Новые** страницы с сайта (Metrika) → предложение направления → batch approve.
+Registry 1 and accepted Registry 2 are captured inputs. They reconcile against
+the locked active canonical predecessor in MySQL; neither is an approval batch.
+The reconciliation run is content-addressed and immutable. Classification
+finalizes one immutable approval batch, and only `publish-projection` writes a
+Sheet. The dashboard reads the active release's `portal_content_catalog` and
+`portal_content_lookup_projection` only.
 
-## Источники истины (по весу)
+## Weekly stop point
 
-| Приоритет | Источник | Вес |
-|---|---|---|
-| 1 (макс) | `direction_registry.jsonl` lock, `source=workbook_initial` (seed 2020) | oldest |
-| 2 | registry lock, `source=batch_approve` / human | по `approved_at` |
-| 3 | Workbook `Abbott names.xlsx` (если ещё не в registry) | при seed |
-| 4 | URL path / Bitrix section id | heuristic |
-| 5 | Keywords | только proposal → approve |
-
-**Запрет:** heuristic **не может** переписать locked direction.
-
-## Файлы
-
-| Path | Role |
-|---|---|
-| `out/direction_registry.jsonl` | append-only locks |
-| `registry.py` | seed / lookup / lock / stats |
-| `classify.py` | cascade + registry first + Metrika discover |
-| `sheets_sync.py` | batch approve UI; pull → registry lock |
-| `Abbott names.xlsx` | human catalog (merge target) |
-
-## Workflow
-
-### A) Один раз — seed старых направлений
-
-```bash
-cd agents/abbott_page_classifier
-python3 registry.py seed-workbook --workbook "../../Abbott names.xlsx"
-python3 registry.py stats
+```text
+capture inputs -> reconcile -> run_id -> classify -> batch_id -> publish projection
+                                                              -> manual approval
 ```
 
-Все ненулевые направления из workbook → locks с `approved_at=2020-01-01` (максимальный вес).
+No canonical classification, candidate, active release, or pointer changes
+before manual approval. The weekly workflow stops after the projection.
 
-### B) Регулярно (2×/week) — новые страницы сайта
+## Manual review and subsequent controlled stages
 
-```bash
-python3 classify.py \
-  --workbook "../../Abbott names.xlsx" \
-  --from-metrika-new \
-  --approve-queue-only \
-  --out out/approve_pack
+The reviewer checks the eight Sheet tabs: `Апрув batch`, `Готово`, `Конфликты`,
+`Не определено`, `Отклонено`, `Без изменений`, `Справочники`, and `Инструкция`.
+Accepted Registry 2 is Batch 2 source evidence, not an approval decision for
+the proposal batch.
 
-python3 sheets_sync.py publish \
-  --classifications out/approve_pack/classifications.jsonl \
-  --share nikolai.sol@gmail.com
-```
+After separate approval, run `pull-accepted --batch-id N` to attest, then
+`ingest --batch-id N --execute`, `materialize --batch-id N --execute`, and
+`validate --batch-id N`. Activation is a different controlled release decision
+and is unavailable from both proposal/operator workflow CLIs.
 
-Metrika source: `canonical_fact_site_analytics_daily`
-counter `90602537`, scope `page`, last N days.
+## Classification invariants
 
-В очередь попадают только страницы:
-- **не** locked в registry
-- **не** с direction в workbook
+- A direction never changes automatically. A correction is a reviewed event
+  bound to predecessor/hash and carries actor and reason.
+- `Архив` describes lifecycle only; it is never a material type.
+- Reconciliation state is exactly ready, conflict, unresolved, rejected, or
+  no_change, with stable `ConflictCode` values and deterministic counts.
+- Failures are sanitized status codes. Retry exact `run_id`/`batch_id` stages;
+  do not replay by mutating a predecessor or active release.
+- Persist only minimized content metadata and hashes. No credentials, OAuth
+  tokens, raw LLM response/chain-of-thought, or visitor/client data is allowed.
 
-### C) Human batch approve
+## Golden gates
 
-1. Tab **«Апрув batch»** → `Принять batch …`
-2. Опционально: Отклонить отдельные строки
-
-### D) Pull → lock forever
-
-```bash
-python3 sheets_sync.py pull-approved --out out/approved_from_sheets.csv
-```
-
-Каждая accepted строка → `registry.lock_entity(source=batch_approve)`.
-Conflict (попытка другого direction) → **не перезаписывает**, пишет conflict в result.
-
-### E) Merge в workbook (отдельно)
-
-`approved_from_sheets.csv` → append/update `Abbott names.xlsx` / `pages`
-→ dashboard `abbott-bi.ts` enrichment без schema change.
-
-## Анти-скачки (правила)
-
-1. `classify_one` **сначала** `registry.lookup` → `rule=registry_lock:*`, conf=1.0
-2. `registry.append` при другом direction без `human_force` → **conflict**, keep old
-3. Weight = older `approved_at` wins
-4. Batch re-publish **не** шлёт locked rows (`--approve-queue-only`)
-
-## Force override (редко)
-
-Только явно:
-
-```python
-reg.lock_entity(..., direction="...", force=True, notes="reason")
-```
-
-## Критерий успеха
-
-- Старые направления **стабильны** после seed
-- Новые URL из Metrika появляются в Sheet с proposal
-- После batch accept они **locked** и больше не в queue
-- Нет flip «Гастро → Кардио» от keyword noise
+Require source accounting, taxonomy/schema validity, anti-flip correctness,
+and reviewed direction/material-type evaluation before a separately authorized
+LLM evaluation. Review conflict/unresolved tabs and hashes before Sheet
+approval. A failed candidate is recovered by not activating it; active facts
+are append-only and never silently rewritten.

@@ -250,7 +250,7 @@ class ApprovalItem:
     final_access_code: str | None
     final_lifecycle_code: str | None
     readiness_state: Literal["ready", "conflict", "unresolved", "rejected", "no_change"]
-    conflict_codes: tuple[ConflictCode | str, ...] = ()
+    conflict_codes: tuple[ConflictCode, ...] = ()
     row_hash: str = ""
     decision_reason: str | None = None
 

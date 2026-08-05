@@ -1,6 +1,7 @@
 """Canonical taxonomy contract tests."""
 
 import unittest
+from typing import get_type_hints
 
 from agents.abbott_page_classifier.domain import (
     ACCESS_CODES,
@@ -8,11 +9,19 @@ from agents.abbott_page_classifier.domain import (
     LIFECYCLE_CODES,
     MATERIAL_TYPE_CODES,
     DIRECTION_LABELS,
+    ApprovalItem,
+    ConflictCode,
     TaxonomyVersion,
 )
 
 
 class TaxonomyContractTests(unittest.TestCase):
+    def test_approval_items_expose_only_stable_conflict_codes(self):
+        self.assertEqual(
+            get_type_hints(ApprovalItem)["conflict_codes"],
+            tuple[ConflictCode, ...],
+        )
+
     def test_archive_is_not_a_material_type(self):
         self.assertNotIn("archive", MATERIAL_TYPE_CODES)
         self.assertIn("archive_candidate", LIFECYCLE_CODES)

@@ -50,6 +50,18 @@ SYNCHRONIZED_BOOTSTRAP_COPIES = {
     "runtime/agents/abbott_page_classifier/domain.py": "agents/abbott_page_classifier/domain.py",
     "runtime/agents/abbott_page_classifier/normalization.py": "agents/abbott_page_classifier/normalization.py",
     "runtime/agents/abbott_page_classifier/__init__.py": "agents/abbott_page_classifier/__init__.py",
+    "runtime/agents/abbott_page_classifier/weekly_proposal.py": "agents/abbott_page_classifier/weekly_proposal.py",
+    "runtime/agents/abbott_page_classifier/workflow.py": "agents/abbott_page_classifier/workflow.py",
+    "runtime/agents/abbott_page_classifier/workflow_service.py": "agents/abbott_page_classifier/workflow_service.py",
+    "runtime/agents/abbott_page_classifier/workflow_repository.py": "agents/abbott_page_classifier/workflow_repository.py",
+    "runtime/agents/abbott_page_classifier/repository.py": "agents/abbott_page_classifier/repository.py",
+    "runtime/agents/abbott_page_classifier/batch_service.py": "agents/abbott_page_classifier/batch_service.py",
+    "runtime/agents/abbott_page_classifier/reconcile.py": "agents/abbott_page_classifier/reconcile.py",
+    "runtime/agents/abbott_page_classifier/identity.py": "agents/abbott_page_classifier/identity.py",
+    "runtime/agents/abbott_page_classifier/sources.py": "agents/abbott_page_classifier/sources.py",
+    "runtime/agents/abbott_page_classifier/llm_classifier.py": "agents/abbott_page_classifier/llm_classifier.py",
+    "runtime/agents/abbott_page_classifier/sheets_sync.py": "agents/abbott_page_classifier/sheets_sync.py",
+    "src/db/migrations/047_abbott_content_reconciliation_staging.sql": "dashboard-next/src/db/migrations/047_abbott_content_reconciliation_staging.sql",
 }
 VENDORED_CONTENT_RUNTIME = {
     "runtime/agents/__init__.py",
@@ -58,6 +70,17 @@ VENDORED_CONTENT_RUNTIME = {
     "runtime/agents/abbott_page_classifier/approval_hashes.py",
     "runtime/agents/abbott_page_classifier/domain.py",
     "runtime/agents/abbott_page_classifier/normalization.py",
+    "runtime/agents/abbott_page_classifier/weekly_proposal.py",
+    "runtime/agents/abbott_page_classifier/workflow.py",
+    "runtime/agents/abbott_page_classifier/workflow_service.py",
+    "runtime/agents/abbott_page_classifier/workflow_repository.py",
+    "runtime/agents/abbott_page_classifier/repository.py",
+    "runtime/agents/abbott_page_classifier/batch_service.py",
+    "runtime/agents/abbott_page_classifier/reconcile.py",
+    "runtime/agents/abbott_page_classifier/identity.py",
+    "runtime/agents/abbott_page_classifier/sources.py",
+    "runtime/agents/abbott_page_classifier/llm_classifier.py",
+    "runtime/agents/abbott_page_classifier/sheets_sync.py",
 }
 
 
@@ -101,6 +124,8 @@ class AbbottRuntimeClosureTest(unittest.TestCase):
             if not line:
                 continue
             _, path = line.split("  ", 1)
+            if not path.endswith(".py"):
+                continue
             with self.subTest(path=path):
                 ast.parse(
                     (ROOT / path).read_text(encoding="utf-8"),
@@ -237,6 +262,51 @@ assert any(r.control_name == "content.dashboard_smoke_failures" and r.result_sta
         )
         self.assertEqual(result.returncode, 0, result.stderr)
 
+    def test_isolated_bootstrap_executes_weekly_proposal_with_only_a_fake_gateway(self):
+        runtime = ROOT / "dashboard-next/reportingdash-canonical-bootstrap/runtime"
+        script = r'''
+import io
+import json
+from contextlib import redirect_stdout
+from agents.abbott_page_classifier.weekly_proposal import main
+from agents.abbott_page_classifier.workflow import WorkflowDependencies
+
+class Gateway:
+    def __init__(self): self.calls = []
+    def reconcile(self, first, second, *, dry_run):
+        self.calls.append(("reconcile", first.name, second.name, dry_run))
+        return {"run_id": 17, "run_key": "a" * 64, "source_count": 2}
+    def classify(self, run_id, *, execute_llm, dry_run):
+        self.calls.append(("classify", run_id, execute_llm, dry_run))
+        return {"batch_id": 23, "batch_key": "b" * 64}
+    def publish_projection(self, batch_id, *, dry_run):
+        self.calls.append(("publish", batch_id, dry_run))
+        return {"ready_count": 2, "published_input_hash": "c" * 64}
+
+gateway = Gateway()
+stream = io.StringIO()
+with redirect_stdout(stream):
+    result = main([
+        "--registry1", "registry1.xlsx", "--registry2", "registry2.csv",
+        "--taxonomy-version", "abbott.v1", "--prompt-version", "prompt.v1",
+        "--model-routing-version", "routing.v1", "--code-revision", "a" * 40,
+        "--execute",
+    ], dependencies_factory=lambda _configuration: WorkflowDependencies(gateway))
+assert result == 0
+assert gateway.calls == [
+    ("reconcile", "registry1.xlsx", "registry2.csv", False),
+    ("classify", 17, False, False),
+    ("publish", 23, False),
+]
+assert json.loads(stream.getvalue())["status"] == "proposal_published"
+'''
+        result = subprocess.run(
+            [sys.executable, "-c", script], cwd=runtime,
+            env={**os.environ, "PYTHONDONTWRITEBYTECODE": "1"},
+            capture_output=True, text=True,
+        )
+        self.assertEqual(result.returncode, 0, result.stderr)
+
     def test_bootstrap_manifest_hashes_every_runtime_file_against_root_authority(self):
         bootstrap = ROOT / "dashboard-next/reportingdash-canonical-bootstrap"
         manifest = (bootstrap / "MIGRATION-MANIFEST.md").read_text()
@@ -268,7 +338,10 @@ assert any(r.control_name == "content.dashboard_smoke_failures" and r.result_sta
         ).read_text().splitlines()
         packages = {line.split("==", 1)[0].lower() for line in requirements if line and not line.startswith("#")}
         self.assertTrue(
-            {"mysql-connector-python", "python-dotenv", "requests"} <= packages
+            {
+                "mysql-connector-python", "python-dotenv", "requests",
+                "openai", "openpyxl", "pydantic",
+            } <= packages
         )
 
     def test_attestation_rejects_a_dirty_tracked_worktree(self):

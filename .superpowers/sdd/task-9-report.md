@@ -44,7 +44,7 @@ The wider classifier suite ran **245 tests successfully**; its only failure was 
 ## CLI safety proofs
 
 - Fixed command set: `reconcile`, `classify`, `publish-projection`, `pull-accepted`, `ingest`, `materialize`, `validate`, `status`.
-- Every `--execute` stage, including `reconcile`, rejects a missing `--batch-id`; dry-run remains batchless for offline inspection.
+- `reconcile --execute` requires explicit Registry 1/Registry 2 paths and returns a new immutable `run_id`; `classify --run-id N --execute` finalizes the numeric `batch_id`; only later batch stages require `--batch-id N`. Dry runs remain batchless/offline inspections.
 - `classify` asks for `OPENAI_API_KEY` only for eligible rows with explicit `--execute-llm`; locked/zero-eligible rows make no classifier call. Explicit `--execute-llm` is a deliberately separate non-persistence authorization and may run during a dry-run classification evaluation.
 - Only `publish-projection --execute` reaches the injected Sheets gateway. `pull-accepted` reads it only; `materialize` has no Sheets or activation dependency and tests prove no activation call exists.
 - The lazy production adapter calls Tasks 1–8 authorities (`ContentRegistryRepository`, projection/pull/ingest helpers, and candidate materialize/validate helpers) only when its matching command reaches that stage. Offline reconciliation uses `reconcile_entity`, not a second merge implementation, and never constructs a repository.
