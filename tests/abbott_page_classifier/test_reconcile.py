@@ -933,6 +933,14 @@ class ReconciliationTests(unittest.TestCase):
         self.assertEqual(unavailable.conflict_codes, (ConflictCode.CONTENT_UNAVAILABLE,))
         self.assertEqual(rejected.readiness_state, "rejected")
 
+    def test_absent_rejected_source_keeps_existing_input_hash_contract(self) -> None:
+        item = reconcile_entity(ReconciliationInput())
+
+        self.assertEqual(
+            item.input_hash,
+            "e9b5a58769d734fffbe8e82a7cf1d9ba4c30fe5fec057277fd9b11b4e265632e",
+        )
+
     def test_batch2_exact_counts_and_archive_gate(self) -> None:
         items = []
         for row in range(377):

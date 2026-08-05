@@ -249,6 +249,55 @@ class WeeklyProposalServiceTests(unittest.TestCase):
         self.assertEqual(run.context.predecessor_snapshot_ids, (11, 12))
         self.assertNotEqual(run.registry1.source_hash, run.context.predecessor_snapshot_digests[0])
 
+    def test_two_missing_identity_rows_persist_as_distinct_deterministic_items(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            directory = Path(temporary)
+            registry1 = directory / "registry1.xlsx"
+            workbook = Workbook()
+            sheet = workbook.active
+            sheet.title = "кардио"
+            sheet.append(("ID", "Название", "ссылка", "Направление", "Тип контента"))
+            sheet.append(("", "", "", "Кардиология", "Статьи"))
+            sheet.append(("", "", "", "Кардиология", "Статьи"))
+            workbook.save(registry1)
+            registry2 = directory / "registry2.csv"
+            registry2.write_text(
+                "ID,Название,URL,Направление,Тип материала\n", encoding="utf-8"
+            )
+
+            store = StatefulWorkflowStore(context())
+            service = CanonicalWeeklyProposalService(store, CONFIG)
+            first = service.reconcile(registry1, registry2)
+            replay = CanonicalWeeklyProposalService(store, CONFIG).reconcile(
+                registry1, registry2
+            )
+            persisted = store.load_reconciliation_run(first.run_id)
+
+            independent_store = StatefulWorkflowStore(context())
+            independent = CanonicalWeeklyProposalService(
+                independent_store, CONFIG
+            ).reconcile(registry1, registry2)
+            rebuilt = independent_store.load_reconciliation_run(independent.run_id)
+
+        self.assertEqual(first.run_id, replay.run_id)
+        self.assertEqual(len(persisted.items), 2)
+        self.assertEqual(
+            {item.identity_status for item in persisted.items}, {"rejected"}
+        )
+        self.assertEqual(len({item.item_key for item in persisted.items}), 2)
+        self.assertEqual(len({item.input_hash for item in persisted.items}), 2)
+        self.assertEqual(
+            tuple(
+                item.reconciliation_input.rejected_source_row.source_row_id
+                for item in persisted.items
+            ),
+            ("registry1:кардио:2", "registry1:кардио:3"),
+        )
+        self.assertEqual(
+            tuple((item.item_key, item.input_hash) for item in persisted.items),
+            tuple((item.item_key, item.input_hash) for item in rebuilt.items),
+        )
+
     def test_classification_creates_registry1_entity_before_finalizing_ready_batch(self):
         with tempfile.TemporaryDirectory() as temporary:
             registry1, registry2 = write_sources(Path(temporary))

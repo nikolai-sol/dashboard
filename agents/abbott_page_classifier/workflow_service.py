@@ -595,12 +595,22 @@ class CanonicalWeeklyProposalService:
                 reconciliation_input = ReconciliationInput(
                     content_available=False,
                     rejection_code=rejected.reason_code,
+                    rejected_source_row=rejected,
                 )
                 reconciled = reconcile_entity(reconciliation_input)
+                grouping_key = f"{snapshot.source_name}:{rejected.source_row_id}"
                 items.append(
                     PersistedReconciliationItem(
-                        grouping_key=f"{snapshot.source_name}:{rejected.source_row_id}",
-                        item_key=sha256_text(f"{snapshot.source_name}:{rejected.source_row_id}:{rejected.source_fingerprint}"),
+                        grouping_key=grouping_key,
+                        item_key=sha256_text(
+                            _canonical_json(
+                                {
+                                    "grouping_key": grouping_key,
+                                    "identity_status": "rejected",
+                                    "input_hash": reconciled.input_hash,
+                                }
+                            )
+                        ),
                         input_hash=reconciled.input_hash,
                         identity_status="rejected",
                         content_entity_id=None,
