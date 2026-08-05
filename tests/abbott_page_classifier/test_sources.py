@@ -79,6 +79,45 @@ class RegistrySourceReaderTests(unittest.TestCase):
         self.assertEqual(snapshot.rejected_rows, ())
         self.assertEqual(snapshot.outcome_count, snapshot.source_row_count)
 
+    def test_duplicate_material_retains_every_normalized_identity_variant(self):
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            fixture = Path(temporary_directory) / "registry1.xlsx"
+            workbook = Workbook()
+            sheet = workbook.active
+            sheet.title = "кардио"
+            sheet.append(("ID", "Название", "ссылка", "Тип контента"))
+            sheet.append((100, "Первый", "HTTPS://ABBOTTPRO.RU/cardio/a/?utm_source=first", "Статьи"))
+            sheet.append((100, "Второй", "https://abbottpro.ru/cardio/b/", "Статьи"))
+            workbook.save(fixture)
+
+            collapsed = read_registry1(fixture).candidates_by_key["material:100"]
+
+        self.assertEqual(collapsed.material_id, "100")
+        self.assertEqual(collapsed.url, "https://abbottpro.ru/cardio/a")
+        self.assertEqual(len(collapsed.provenance), 2)
+        self.assertEqual(
+            tuple((variant.material_id, variant.normalized_url) for variant in collapsed.identity_variants),
+            (
+                ("100", "https://abbottpro.ru/cardio/a"),
+                ("100", "https://abbottpro.ru/cardio/b"),
+            ),
+        )
+
+    def test_title_type_source_keys_keep_cyrillic_yo_distinct(self):
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            fixture = Path(temporary_directory) / "registry2.csv"
+            fixture.write_text(
+                "Название,Тип контента\nВсе,Статьи\nВсё,Статьи\n",
+                encoding="utf-8",
+            )
+
+            snapshot = read_registry2_csv(fixture)
+
+        self.assertEqual(snapshot.source_row_count, 2)
+        self.assertEqual(len(snapshot.candidates), 2)
+        self.assertEqual(snapshot.duplicate_collapsed_count, 0)
+        self.assertEqual({item.title for item in snapshot.candidates}, {"Все", "Всё"})
+
     def test_registry2_reads_only_captured_csv_and_rejects_rows_without_identity(self):
         snapshot = read_registry2_csv(FIXTURE_CSV)
 

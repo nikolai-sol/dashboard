@@ -2,10 +2,15 @@
 
 from __future__ import annotations
 
+from pathlib import Path
+import tempfile
 import unittest
+
+from openpyxl import Workbook
 
 from agents.abbott_page_classifier.domain import CanonicalClassification, MaterialCandidate
 from agents.abbott_page_classifier.identity import IdentityAlias, IdentityResolver
+from agents.abbott_page_classifier.sources import read_registry1
 
 
 def candidate(
@@ -148,6 +153,78 @@ class IdentityResolverTests(unittest.TestCase):
 
         self.assertEqual((result.status, result.content_entity_id, result.matched_by), ("collision", None, "none"))
         self.assertEqual(result.conflict_code, "IDENTITY_COLLISION")
+
+    def test_duplicate_occurrence_urls_are_all_strong_evidence_independent_of_row_order(self):
+        entities = (
+            entity(41, url="https://abbottpro.ru/cardio/a/"),
+            entity(42, url="https://abbottpro.ru/cardio/b/"),
+        )
+
+        resolutions = []
+        for urls in (
+            ("https://abbottpro.ru/cardio/a/", "https://abbottpro.ru/cardio/b/"),
+            ("https://abbottpro.ru/cardio/b/", "https://abbottpro.ru/cardio/a/"),
+        ):
+            with tempfile.TemporaryDirectory() as temporary_directory:
+                fixture = Path(temporary_directory) / "registry1.xlsx"
+                workbook = Workbook()
+                sheet = workbook.active
+                sheet.title = "кардио"
+                sheet.append(("ID", "Название", "ссылка", "Тип контента"))
+                for ordinal, url in enumerate(urls, start=1):
+                    sheet.append((100, f"Occurrence {ordinal}", url, "Статьи"))
+                workbook.save(fixture)
+                aggregated = read_registry1(fixture).candidates_by_key["material:100"]
+
+            resolutions.append(self.resolver.resolve(aggregated, entities, ()))
+
+        for result in resolutions:
+            self.assertEqual((result.status, result.content_entity_id, result.matched_by), ("collision", None, "none"))
+            self.assertEqual(result.conflict_code, "IDENTITY_COLLISION")
+        self.assertEqual(resolutions[0].evidence_hashes, resolutions[1].evidence_hashes)
+
+    def test_conflicting_canonical_url_alias_and_material_alias_fail_closed(self):
+        result = self.resolver.resolve(
+            candidate(material_id="100", url="HTTPS://ABBOTTPRO.RU/legacy/b/?utm_source=sheet"),
+            (
+                entity(41, url="https://abbottpro.ru/cardio/a/"),
+                entity(42, url="https://abbottpro.ru/cardio/b/"),
+            ),
+            (
+                IdentityAlias(41, "material_id", "100", "strong"),
+                IdentityAlias(42, "canonical_url", "https://abbottpro.ru/legacy/b/", "strong"),
+            ),
+        )
+
+        self.assertEqual((result.status, result.content_entity_id, result.matched_by), ("collision", None, "none"))
+        self.assertEqual(result.conflict_code, "IDENTITY_COLLISION")
+
+    def test_unique_slug_rejects_same_path_context_on_another_host(self):
+        result = self.resolver.resolve(
+            candidate(url="https://example.org/cardio/shared-slug/"),
+            (entity(41, url="https://abbottpro.ru/cardio/existing/"),),
+            (IdentityAlias(41, "slug", "shared-slug", "weak"),),
+        )
+
+        self.assertEqual((result.status, result.content_entity_id, result.matched_by), ("new_candidate", None, "none"))
+
+    def test_blank_title_never_weakly_matches(self):
+        result = self.resolver.resolve(
+            candidate(title=" \u00a0 "),
+            (entity(41, url="https://abbottpro.ru/cardio/a/", title=""),),
+            (IdentityAlias(41, "title", "", "weak"),),
+        )
+
+        self.assertEqual((result.status, result.content_entity_id, result.matched_by), ("new_candidate", None, "none"))
+
+    def test_unknown_material_types_never_weakly_match_by_title(self):
+        result = self.resolver.resolve(
+            candidate(title="Same title", material_type_code=None),
+            (entity(41, url="https://abbottpro.ru/cardio/a/", title="Same title", material_type_code=None),),
+            (IdentityAlias(41, "title", "Same title", "weak"),),
+        )
+
+        self.assertEqual((result.status, result.content_entity_id, result.matched_by), ("new_candidate", None, "none"))
 
     def test_ambiguous_weak_slug_aliases_never_auto_select(self):
         result = self.resolver.resolve(

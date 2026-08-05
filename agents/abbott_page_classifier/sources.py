@@ -76,12 +76,22 @@ class SourceProvenance:
 
 
 @dataclass(frozen=True)
+class SourceIdentityVariant:
+    """Identity evidence from one occurrence in a collapsed source group."""
+
+    source_row_id: str
+    material_id: str | None
+    normalized_url: str
+
+
+@dataclass(frozen=True)
 class SourceCandidate:
     """A Task 1 candidate plus its stable source key and all row provenance."""
 
     key: str
     candidate: MaterialCandidate
     provenance: tuple[SourceProvenance, ...]
+    identity_variants: tuple[SourceIdentityVariant, ...]
 
     @property
     def source_name(self) -> str:
@@ -162,7 +172,7 @@ def _source_key(candidate: MaterialCandidate) -> str | None:
         return f"url:{candidate.url}"
     if candidate.title:
         material_type = candidate.material_type_code or ""
-        return f"title_type:{sha256_text(candidate.title.casefold().replace('ё', 'е') + ':' + material_type)}"
+        return f"title_type:{sha256_text(normalize_title(candidate.title).casefold() + ':' + material_type)}"
     return None
 
 
@@ -224,14 +234,25 @@ def _snapshot_from_candidates(
             source_row_id=candidate.source_row_id,
             source_fingerprint=candidate.source_fingerprint,
         )
+        identity_variant = SourceIdentityVariant(
+            source_row_id=candidate.source_row_id,
+            material_id=candidate.material_id,
+            normalized_url=normalize_url(candidate.url).value,
+        )
         existing = grouped.get(key)
         if existing is None:
-            grouped[key] = SourceCandidate(key=key, candidate=candidate, provenance=(provenance,))
+            grouped[key] = SourceCandidate(
+                key=key,
+                candidate=candidate,
+                provenance=(provenance,),
+                identity_variants=(identity_variant,),
+            )
             continue
         grouped[key] = SourceCandidate(
             key=key,
             candidate=existing.candidate,
             provenance=existing.provenance + (provenance,),
+            identity_variants=existing.identity_variants + (identity_variant,),
         )
         duplicate_collapsed_count += 1
 
@@ -381,6 +402,13 @@ def read_canonical_catalog(rows: Iterable[CanonicalClassification]) -> SourceSna
                         source_name="canonical_catalog",
                         source_row_id=source_row_id,
                         source_fingerprint=candidate.source_fingerprint,
+                    ),
+                ),
+                identity_variants=(
+                    SourceIdentityVariant(
+                        source_row_id=source_row_id,
+                        material_id=None,
+                        normalized_url=candidate.url,
                     ),
                 ),
             )
