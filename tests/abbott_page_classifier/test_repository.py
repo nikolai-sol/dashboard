@@ -31,7 +31,6 @@ from agents.abbott_page_classifier.reconcile import ReconciliationInput
 
 
 PUBLISHED_HASH = "1" * 64
-ACCEPTED_HASH = "2" * 64
 
 
 def canonical_taxonomy() -> TaxonomyVersion:
@@ -121,13 +120,17 @@ def accepted_snapshot(
     *items: ApprovalItem,
     accepted_at: str = "2026-08-05T14:30:00+02:00",
 ) -> AcceptedBatchSnapshot:
+    accepted_hash = compute_accepted_decision_hash(items)
+    accepted_count = sum(1 for item in items if item.readiness_state == "ready")
     return AcceptedBatchSnapshot(
         batch_key="abbott-2026-08-05",
         published_input_hash=PUBLISHED_HASH,
-        accepted_decision_hash=ACCEPTED_HASH,
+        accepted_decision_hash=accepted_hash,
         items=tuple(items),
         accepted_by="content-manager",
         accepted_at=accepted_at,
+        accepted_count=accepted_count,
+        skipped_count=len(items) - accepted_count,
     )
 
 
@@ -154,12 +157,24 @@ class RecordingCursor:
             "FROM portal_content_approval_items" in normalized
             and "FOR UPDATE" in normalized
         ):
-            stored = self.connection.approval_items.get(params)
-            if stored is not None:
-                self.rows = [stored]
+            if "ORDER BY" in normalized:
+                self.rows = list(self.connection.ingest_rows)
+            else:
+                stored = self.connection.approval_items.get(params)
+                if stored is not None:
+                    self.rows = [stored]
+            return
+        if "FROM portal_content_taxonomy_terms" in normalized:
+            self.rows = [
+                (kind, code)
+                for kind, codes in self.connection.taxonomy.terms.items()
+                for code in codes
+            ]
             return
         if "FROM portal_content_taxonomy_versions" in normalized:
-            self.rows = [(self.connection.taxonomy_version_id,)]
+            self.rows = [
+                (self.connection.taxonomy_version_id, self.connection.taxonomy.digest)
+            ]
             return
         if "FROM portal_content_registry_entities AS entity" in normalized:
             self.rows = list(self.connection.catalog_rows)
@@ -194,6 +209,10 @@ class RecordingCursor:
             "INSERT INTO portal_content_classification_events"
         ):
             self.connection.event_insert_count += 1
+            if self.connection.event_insert_count == self.connection.fail_on_event_insert:
+                raise RuntimeError(
+                    "mysql://operator:secret@private-db/report_bd params=sheet-cell-value"
+                )
             self.lastrowid = 700 + self.connection.event_insert_count
 
     def fetchone(self):
@@ -212,9 +231,31 @@ class RecordingConnection:
         *,
         batch_row: tuple[object, ...] | None = None,
         fail_on_item_insert: int | None = None,
+        fail_on_event_insert: int | None = None,
+        ingest_items: tuple[ApprovalItem, ...] | None = None,
     ):
         self.batch_row = batch_row
         self.fail_on_item_insert = fail_on_item_insert
+        self.fail_on_event_insert = fail_on_event_insert
+        self.ingest_items = ingest_items or (approval_item(41),)
+        self.taxonomy = canonical_taxonomy()
+        self.ingest_rows = [
+            (
+                101 + index,
+                item.content_entity_id,
+                item.input_hash,
+                item.title,
+                item.url,
+                item.final_direction_code,
+                item.final_material_type_code,
+                item.final_access_code,
+                item.final_lifecycle_code,
+                item.readiness_state,
+                item.row_hash,
+                item.decision_reason,
+            )
+            for index, item in enumerate(self.ingest_items)
+        ]
         self.taxonomy_version_id = 3
         self.predecessor_event_id = 700
         self.catalog_rows: list[tuple[object, ...]] = []
@@ -322,7 +363,11 @@ class WorkflowCursor:
         elif normalized.startswith(
             ("UPDATE portal_content_approval_batches", "UPDATE portal_content_approval_items")
         ):
-            self.rowcount = 1
+            self.rowcount = (
+                self.connection.item_update_rowcount
+                if normalized.startswith("UPDATE portal_content_approval_items")
+                else 1
+            )
 
     def fetchone(self):
         return self.rows[0] if self.rows else None
@@ -345,6 +390,7 @@ class WorkflowConnection:
         items_exist=False,
         fail_item_insert=False,
         acceptance_items=None,
+        item_update_rowcount=1,
     ):
         self.batch = batch
         self.existing_batch_row = existing_batch_row
@@ -352,6 +398,7 @@ class WorkflowConnection:
         self.history_row = history_row
         self.items_exist = items_exist
         self.fail_item_insert = fail_item_insert
+        self.item_update_rowcount = item_update_rowcount
         self.acceptance_items = (
             list(acceptance_items)
             if acceptance_items is not None
@@ -395,19 +442,38 @@ class WorkflowConnection:
 def accepted_batch_row(
     *,
     published_hash: str = PUBLISHED_HASH,
-    accepted_hash: str | None = ACCEPTED_HASH,
+    accepted_hash: str | None = None,
     status: str = "accepted",
     accepted_by: str | None = "content-manager",
     accepted_at: str | dt.datetime | None = "2026-08-05T14:30:00+02:00",
+    items: tuple[ApprovalItem, ...] | None = None,
 ) -> tuple[object, ...]:
+    items = items or (approval_item(41),)
+    taxonomy = canonical_taxonomy()
+    counts = {
+        state: sum(1 for item in items if item.readiness_state == state)
+        for state in ("ready", "conflict", "unresolved", "rejected", "no_change")
+    }
+    accepted_hash = accepted_hash or compute_accepted_decision_hash(items)
     return (
         17,
+        "abbott-2026-08-05",
         3,
+        taxonomy.digest,
+        taxonomy.version,
+        taxonomy.digest,
         published_hash,
         accepted_hash,
         status,
         accepted_by,
         accepted_at,
+        counts["ready"],
+        counts["conflict"],
+        counts["unresolved"],
+        counts["rejected"],
+        counts["no_change"],
+        counts["ready"],
+        len(items) - counts["ready"],
     )
 
 
@@ -629,7 +695,12 @@ class ContentRegistryRepositoryTests(unittest.TestCase):
         self.assertIn("accepted_decision_hash", update_sql)
         self.assertEqual(
             update_params[:4],
-            ("accepted", accepted_hash, "manager", "2026-08-05T12:00:00Z"),
+            (
+                "accepted",
+                accepted_hash,
+                "manager",
+                dt.datetime(2026, 8, 5, 12, 0),
+            ),
         )
         self.assertEqual(update_params[4:6], (1, 4))
         item_updates = [
@@ -638,6 +709,65 @@ class ContentRegistryRepositoryTests(unittest.TestCase):
             if call[0].startswith("UPDATE portal_content_approval_items")
         ]
         self.assertEqual(len(item_updates), len(snapshot.items))
+
+    def test_record_acceptance_accepts_mysql_unchanged_item_rowcount_zero(self):
+        batch = acceptance_workflow_batch()
+        accepted_hash = compute_accepted_decision_hash(batch.items)
+        snapshot = AcceptedBatchSnapshot(
+            batch_key=batch.batch_key,
+            published_input_hash=batch.published_input_hash,
+            accepted_decision_hash=accepted_hash,
+            items=batch.items,
+            accepted_by="manager",
+            accepted_at="2026-08-05T14:00:00+02:00",
+            accepted_count=1,
+            skipped_count=4,
+        )
+        connection = WorkflowConnection(
+            batch,
+            acceptance_row=acceptance_workflow_row(batch),
+            item_update_rowcount=0,
+        )
+        repository = ContentRegistryRepository(lambda: connection)
+
+        repository.record_batch_acceptance(17, snapshot, "sheet-123")
+
+        batch_update = next(
+            params
+            for sql, params in connection.calls
+            if sql.startswith("UPDATE portal_content_approval_batches")
+        )
+        self.assertEqual(batch_update[3], dt.datetime(2026, 8, 5, 12, 0))
+        self.assertIsInstance(batch_update[3], dt.datetime)
+        self.assertEqual(connection.commit_count, 1)
+        self.assertEqual(connection.rollback_count, 0)
+
+    def test_record_acceptance_rejects_impossible_item_rowcount_anomaly(self):
+        batch = acceptance_workflow_batch()
+        accepted_hash = compute_accepted_decision_hash(batch.items)
+        snapshot = AcceptedBatchSnapshot(
+            batch_key=batch.batch_key,
+            published_input_hash=batch.published_input_hash,
+            accepted_decision_hash=accepted_hash,
+            items=batch.items,
+            accepted_by="manager",
+            accepted_at="2026-08-05T12:00:00Z",
+            accepted_count=1,
+            skipped_count=4,
+        )
+        connection = WorkflowConnection(
+            batch,
+            acceptance_row=acceptance_workflow_row(batch),
+            item_update_rowcount=2,
+        )
+        repository = ContentRegistryRepository(lambda: connection)
+
+        with self.assertRaises(RepositoryError) as raised:
+            repository.record_batch_acceptance(17, snapshot, "sheet-123")
+
+        self.assertEqual(raised.exception.code, "BATCH_ITEMS_MISMATCH")
+        self.assertEqual(connection.commit_count, 0)
+        self.assertEqual(connection.rollback_count, 1)
 
     def test_record_acceptance_rejects_partial_snapshot_before_any_write(self):
         batch = acceptance_workflow_batch()
@@ -1010,12 +1140,19 @@ class ContentRegistryRepositoryTests(unittest.TestCase):
         self.assertTrue(all("content_entity_id <=> %s" in sql for sql in null_safe_selects))
 
     def test_ingest_locks_checks_inserts_events_and_updates_only_batch(self):
-        connection = RecordingConnection(batch_row=accepted_batch_row())
-        repository = ContentRegistryRepository(lambda: connection)
-        snapshot = accepted_snapshot(
+        items = (
             approval_item(41),
-            approval_item(42, readiness="unresolved"),
+            approval_item(42, readiness="conflict"),
+            approval_item(43, readiness="unresolved"),
+            approval_item(44, readiness="rejected"),
+            approval_item(45, readiness="no_change"),
         )
+        connection = RecordingConnection(
+            batch_row=accepted_batch_row(items=items),
+            ingest_items=items,
+        )
+        repository = ContentRegistryRepository(lambda: connection)
+        snapshot = accepted_snapshot(*items)
 
         result = repository.ingest_accepted_snapshot(snapshot)
 
@@ -1031,7 +1168,7 @@ class ContentRegistryRepositoryTests(unittest.TestCase):
             if sql.startswith("INSERT INTO")
         )
         self.assertLess(lock_index, first_insert_index)
-        self.assertEqual(connection.item_insert_count, 2)
+        self.assertEqual(connection.item_insert_count, 0)
         self.assertEqual(connection.event_insert_count, 1)
         update_calls = [
             call for call in connection.calls if call[0].startswith("UPDATE ")
@@ -1054,23 +1191,133 @@ class ContentRegistryRepositoryTests(unittest.TestCase):
         self.assertEqual(connection.rollback_count, 0)
         self.assertEqual(result.status, "ingested")
         self.assertEqual(result.accepted_count, 1)
+        self.assertEqual(result.conflict_count, 1)
         self.assertEqual(result.unresolved_count, 1)
+        self.assertEqual(result.rejected_count, 1)
 
-    def test_ingest_reuses_only_a_hash_matching_published_item(self):
-        connection = RecordingConnection(batch_row=accepted_batch_row())
-        published_item = approval_item(41)
-        connection.approval_items[(17, 41, published_item.input_hash)] = (
-            101,
-            published_item.title,
-            published_item.url,
-            published_item.row_hash,
+    def test_ingest_rejects_stored_acceptance_count_mismatch_before_any_write(self):
+        item = approval_item(41)
+        batch_row = list(accepted_batch_row(items=(item,)))
+        batch_row[16] = 2
+        connection = RecordingConnection(
+            batch_row=tuple(batch_row),
+            ingest_items=(item,),
         )
+        repository = ContentRegistryRepository(lambda: connection)
+
+        with self.assertRaises(RepositoryError) as raised:
+            repository.ingest_accepted_snapshot(accepted_snapshot(item))
+
+        self.assertEqual(raised.exception.code, "BATCH_COUNT_MISMATCH")
+        self.assertEqual(connection.item_insert_count, 0)
+        self.assertEqual(connection.event_insert_count, 0)
+        self.assertEqual(connection.commit_count, 0)
+        self.assertEqual(connection.rollback_count, 1)
+
+    def test_ingest_rejects_partial_caller_snapshot_before_any_write(self):
+        items = (approval_item(41), approval_item(42, readiness="unresolved"))
+        connection = RecordingConnection(
+            batch_row=accepted_batch_row(items=items),
+            ingest_items=items,
+        )
+        connection.approval_items[(17, 41, items[0].input_hash)] = (
+            101,
+            items[0].title,
+            items[0].url,
+            items[0].row_hash,
+        )
+        repository = ContentRegistryRepository(lambda: connection)
+
+        with self.assertRaises(RepositoryError) as raised:
+            repository.ingest_accepted_snapshot(accepted_snapshot(items[0]))
+
+        self.assertEqual(raised.exception.code, "BATCH_ITEMS_MISMATCH")
+        self.assertEqual(connection.item_insert_count, 0)
+        self.assertEqual(connection.event_insert_count, 0)
+        self.assertEqual(connection.commit_count, 0)
+        self.assertEqual(connection.rollback_count, 1)
+
+    def test_ingest_rejects_invented_caller_taxonomy_before_any_write(self):
+        canonical = approval_item(41)
+        invented = replace(canonical, final_direction_code="invented_direction")
+        connection = RecordingConnection(
+            batch_row=accepted_batch_row(),
+            ingest_items=(canonical,),
+        )
+        connection.approval_items[(17, 41, canonical.input_hash)] = (
+            101,
+            canonical.title,
+            canonical.url,
+            canonical.row_hash,
+        )
+        repository = ContentRegistryRepository(lambda: connection)
+
+        with self.assertRaises(RepositoryError) as raised:
+            repository.ingest_accepted_snapshot(accepted_snapshot(invented))
+
+        self.assertEqual(raised.exception.code, "TAXONOMY_CONTRACT_MISMATCH")
+        self.assertEqual(connection.item_insert_count, 0)
+        self.assertEqual(connection.event_insert_count, 0)
+        self.assertEqual(connection.rollback_count, 1)
+
+    def test_ingest_rejects_caller_decision_with_reused_stored_hash(self):
+        canonical = approval_item(41)
+        forged = replace(canonical, final_direction_code="gastroenterology")
+        connection = RecordingConnection(
+            batch_row=accepted_batch_row(),
+            ingest_items=(canonical,),
+        )
+        connection.approval_items[(17, 41, canonical.input_hash)] = (
+            101,
+            canonical.title,
+            canonical.url,
+            canonical.row_hash,
+        )
+        repository = ContentRegistryRepository(lambda: connection)
+
+        with self.assertRaises(RepositoryError) as raised:
+            repository.ingest_accepted_snapshot(accepted_snapshot(forged))
+
+        self.assertEqual(raised.exception.code, "BATCH_HASH_MISMATCH")
+        self.assertEqual(connection.item_insert_count, 0)
+        self.assertEqual(connection.event_insert_count, 0)
+        self.assertEqual(connection.rollback_count, 1)
+
+    def test_ingest_never_inserts_a_caller_only_item(self):
+        canonical = approval_item(41)
+        extra = approval_item(99)
+        connection = RecordingConnection(
+            batch_row=accepted_batch_row(),
+            ingest_items=(canonical,),
+        )
+        connection.approval_items[(17, 41, canonical.input_hash)] = (
+            101,
+            canonical.title,
+            canonical.url,
+            canonical.row_hash,
+        )
+        repository = ContentRegistryRepository(lambda: connection)
+
+        with self.assertRaises(RepositoryError) as raised:
+            repository.ingest_accepted_snapshot(accepted_snapshot(canonical, extra))
+
+        self.assertEqual(raised.exception.code, "BATCH_ITEMS_MISMATCH")
+        self.assertEqual(connection.item_insert_count, 0)
+        self.assertEqual(connection.event_insert_count, 0)
+        self.assertEqual(connection.rollback_count, 1)
+
+    def test_ingest_emits_only_the_locked_persisted_accepted_decision(self):
+        published_item = approval_item(41)
         accepted_item = ApprovalItem(
             **{
                 **published_item.__dict__,
                 "final_direction_code": "gastroenterology",
                 "decision_reason": "manager correction",
             }
+        )
+        connection = RecordingConnection(
+            batch_row=accepted_batch_row(items=(accepted_item,)),
+            ingest_items=(accepted_item,),
         )
         repository = ContentRegistryRepository(lambda: connection)
 
@@ -1118,11 +1365,10 @@ class ContentRegistryRepositoryTests(unittest.TestCase):
     def test_ingest_rejects_changed_published_item_identity_hash(self):
         connection = RecordingConnection(batch_row=accepted_batch_row())
         item = approval_item(41)
-        connection.approval_items[(17, 41, item.input_hash)] = (
-            101,
-            item.title,
-            item.url,
+        connection.ingest_rows[0] = (
+            *connection.ingest_rows[0][:10],
             "f" * 64,
+            connection.ingest_rows[0][11],
         )
         repository = ContentRegistryRepository(lambda: connection)
 
@@ -1243,6 +1489,24 @@ class ContentRegistryRepositoryTests(unittest.TestCase):
                 self.assertEqual(result.status, "ingested")
                 self.assertEqual(connection.commit_count, 1)
                 self.assertEqual(connection.rollback_count, 0)
+                predecessor_call = next(
+                    call
+                    for call in connection.calls
+                    if call[0].startswith("SELECT id")
+                    and "portal_content_classification_events" in call[0]
+                )
+                event_call = next(
+                    call
+                    for call in connection.calls
+                    if call[0].startswith(
+                        "INSERT INTO portal_content_classification_events"
+                    )
+                )
+                expected = dt.datetime(2026, 8, 5, 12, 30, 0, 123456)
+                self.assertEqual(predecessor_call[1][1], expected)
+                self.assertIsInstance(predecessor_call[1][1], dt.datetime)
+                self.assertEqual(event_call[1][14], expected)
+                self.assertIsInstance(event_call[1][14], dt.datetime)
 
     def test_ingest_rejects_a_different_acceptance_instant_at_microseconds(self):
         connection = RecordingConnection(
@@ -1297,7 +1561,6 @@ class ContentRegistryRepositoryTests(unittest.TestCase):
     def test_ingest_is_noop_for_same_accepted_hash(self):
         connection = RecordingConnection(
             batch_row=accepted_batch_row(
-                accepted_hash=ACCEPTED_HASH,
                 status="ingested",
             )
         )
@@ -1318,15 +1581,17 @@ class ContentRegistryRepositoryTests(unittest.TestCase):
         self.assertEqual(connection.rollback_count, 0)
 
     def test_ingest_rolls_back_and_sanitizes_any_row_failure(self):
+        items = (approval_item(41), approval_item(42))
         connection = RecordingConnection(
-            batch_row=accepted_batch_row(),
-            fail_on_item_insert=2,
+            batch_row=accepted_batch_row(items=items),
+            fail_on_event_insert=2,
+            ingest_items=items,
         )
         repository = ContentRegistryRepository(lambda: connection)
 
         with self.assertRaises(RepositoryError) as raised:
             repository.ingest_accepted_snapshot(
-                accepted_snapshot(approval_item(41), approval_item(42))
+                accepted_snapshot(*items)
             )
 
         self.assertEqual(raised.exception.code, "DB_TRANSACTION_FAILED")

@@ -514,7 +514,7 @@ class ContentRegistryRepository:
                         item.row_hash,
                     ),
                 )
-                if getattr(cursor, "rowcount", 1) != 1:
+                if getattr(cursor, "rowcount", 1) not in (0, 1):
                     raise RepositoryError("BATCH_ITEMS_MISMATCH")
             cursor.execute(
                 """
@@ -532,7 +532,7 @@ class ContentRegistryRepository:
                     "accepted",
                     accepted_hash,
                     snapshot.accepted_by,
-                    snapshot.accepted_at,
+                    accepted_at,
                     accepted_count,
                     skipped_count,
                     int(batch_id),
@@ -658,31 +658,57 @@ class ContentRegistryRepository:
             cursor.execute(
                 """
                 SELECT
-                  id,
-                  taxonomy_version_id,
-                  published_input_hash,
-                  accepted_decision_hash,
-                  batch_status,
-                  accepted_by,
-                  accepted_at
-                FROM portal_content_approval_batches
-                WHERE dataset_key = %s
-                  AND batch_key = %s
+                  batch.id,
+                  batch.batch_key,
+                  batch.taxonomy_version_id,
+                  batch.taxonomy_digest,
+                  taxonomy.version,
+                  taxonomy.taxonomy_digest,
+                  batch.published_input_hash,
+                  batch.accepted_decision_hash,
+                  batch.batch_status,
+                  batch.accepted_by,
+                  batch.accepted_at,
+                  batch.ready_count,
+                  batch.conflict_count,
+                  batch.unresolved_count,
+                  batch.rejected_count,
+                  batch.no_change_count,
+                  batch.accepted_count,
+                  batch.skipped_count
+                FROM portal_content_approval_batches AS batch
+                INNER JOIN portal_content_taxonomy_versions AS taxonomy
+                  ON taxonomy.id = batch.taxonomy_version_id
+                 AND taxonomy.dataset_key = batch.dataset_key
+                 AND taxonomy.taxonomy_status = %s
+                WHERE batch.dataset_key = %s
+                  AND batch.batch_key = %s
                 FOR UPDATE
                 """,
-                (DATASET_KEY, snapshot.batch_key),
+                ("active", DATASET_KEY, snapshot.batch_key),
             )
             batch_row = cursor.fetchone()
             if batch_row is None:
                 raise RepositoryError("BATCH_NOT_ACCEPTED")
 
             batch_id = int(batch_row[0])
-            taxonomy_version_id = int(batch_row[1])
-            published_input_hash = batch_row[2]
-            stored_accepted_hash = batch_row[3]
-            batch_status = str(batch_row[4])
-            stored_accepted_by = batch_row[5]
-            stored_accepted_at = batch_row[6]
+            if str(batch_row[1]) != snapshot.batch_key:
+                raise RepositoryError("BATCH_NOT_ACCEPTED")
+            taxonomy_version_id = int(batch_row[2])
+            if str(batch_row[3]) != str(batch_row[5]):
+                raise RepositoryError("TAXONOMY_CONTRACT_MISMATCH")
+            taxonomy = self._load_taxonomy_terms(
+                cursor,
+                taxonomy_version_id,
+                str(batch_row[4]),
+                str(batch_row[5]),
+                lock=True,
+            )
+            published_input_hash = str(batch_row[6])
+            stored_accepted_hash = str(batch_row[7] or "")
+            batch_status = str(batch_row[8])
+            stored_accepted_by = str(batch_row[9] or "")
+            stored_accepted_at = batch_row[10]
 
             if (
                 not snapshot.accepted_decision_hash
@@ -694,28 +720,90 @@ class ContentRegistryRepository:
                 raise RepositoryError("BATCH_HASH_MISMATCH")
             if batch_status not in ("accepted", "ingested"):
                 raise RepositoryError("BATCH_NOT_ACCEPTED")
-            if stored_accepted_hash != snapshot.accepted_decision_hash:
-                raise RepositoryError("BATCH_HASH_MISMATCH")
             if stored_accepted_by != snapshot.accepted_by:
                 raise RepositoryError("BATCH_ACCEPTANCE_METADATA_MISMATCH")
-            if self._canonical_acceptance_timestamp(
-                stored_accepted_at
-            ) != self._canonical_acceptance_timestamp(snapshot.accepted_at):
+            accepted_at = self._canonical_acceptance_timestamp(stored_accepted_at)
+            if accepted_at != self._canonical_acceptance_timestamp(snapshot.accepted_at):
                 raise RepositoryError("BATCH_ACCEPTANCE_METADATA_MISMATCH")
+
+            cursor.execute(
+                """
+                SELECT
+                  id,
+                  content_entity_id,
+                  input_hash,
+                  title,
+                  url,
+                  final_direction_code,
+                  final_material_type_code,
+                  final_access_code,
+                  final_lifecycle_code,
+                  readiness_state,
+                  row_hash,
+                  decision_reason
+                FROM portal_content_approval_items
+                WHERE approval_batch_id = %s
+                ORDER BY content_entity_id, input_hash
+                FOR UPDATE
+                """,
+                (batch_id,),
+            )
+            stored_rows = tuple(cursor.fetchall())
+            stored_items, counts = self._stored_acceptance_items(
+                stored_rows,
+                taxonomy,
+            )
+            expected_input_counts = tuple(
+                counts[state]
+                for state in ("ready", "conflict", "unresolved", "rejected", "no_change")
+            )
+            if tuple(int(value) for value in batch_row[11:16]) != expected_input_counts:
+                raise RepositoryError("BATCH_ITEMS_MISMATCH")
+            accepted_count = counts["ready"]
+            skipped_count = len(stored_items) - accepted_count
+            if (
+                int(batch_row[16]) != accepted_count
+                or int(batch_row[17]) != skipped_count
+            ):
+                raise RepositoryError("BATCH_COUNT_MISMATCH")
+            canonical_items = tuple(item for _approval_item_id, item in stored_items)
+            recomputed_hash = compute_accepted_decision_hash(canonical_items)
+            if stored_accepted_hash != recomputed_hash:
+                raise RepositoryError("BATCH_HASH_MISMATCH")
+            supplied_items, _supplied_counts = self._validate_acceptance_snapshot(
+                snapshot,
+                stored_rows,
+                taxonomy,
+            )
+            supplied_hash = compute_accepted_decision_hash(
+                item for _approval_item_id, item in supplied_items
+            )
+            if (
+                snapshot.accepted_decision_hash != stored_accepted_hash
+                or supplied_hash != stored_accepted_hash
+            ):
+                raise RepositoryError("BATCH_HASH_MISMATCH")
+            for name, expected in (
+                ("accepted_count", accepted_count),
+                ("skipped_count", skipped_count),
+            ):
+                supplied = getattr(snapshot, name, None)
+                if supplied is not None and int(supplied) != expected:
+                    raise RepositoryError("BATCH_COUNT_MISMATCH")
             if batch_status == "ingested":
                 connection.commit()
                 return IngestResult(status="noop")
 
-            counts = {
-                "ready": 0,
-                "conflict": 0,
-                "unresolved": 0,
-                "rejected": 0,
-            }
-            for item in snapshot.items:
-                approval_item_id = self._ensure_item(cursor, batch_id, item)
-                if item.readiness_state in counts:
-                    counts[item.readiness_state] += 1
+            canonical_snapshot = replace(
+                snapshot,
+                accepted_decision_hash=stored_accepted_hash,
+                items=canonical_items,
+                accepted_by=stored_accepted_by,
+                accepted_at=accepted_at.isoformat(timespec="microseconds"),
+                accepted_count=accepted_count,
+                skipped_count=skipped_count,
+            )
+            for approval_item_id, item in stored_items:
                 if item.readiness_state != "ready":
                     continue
                 if (
@@ -733,14 +821,14 @@ class ContentRegistryRepository:
                     ORDER BY effective_at DESC, id DESC
                     LIMIT 1
                     """,
-                    (item.content_entity_id, snapshot.accepted_at),
+                    (item.content_entity_id, accepted_at),
                 )
                 predecessor_row = cursor.fetchone()
                 predecessor_event_id = (
                     int(predecessor_row[0]) if predecessor_row is not None else None
                 )
                 event_fingerprint = self._event_fingerprint(
-                    snapshot,
+                    canonical_snapshot,
                     item,
                     batch_id,
                 )
@@ -782,13 +870,13 @@ class ContentRegistryRepository:
                         event_fingerprint,
                         self._json(
                             {
-                                "accepted_decision_hash": snapshot.accepted_decision_hash,
+                                "accepted_decision_hash": stored_accepted_hash,
                                 "row_hash": item.row_hash,
                             }
                         ),
-                        snapshot.accepted_by,
+                        stored_accepted_by,
                         item.decision_reason,
-                        snapshot.accepted_at,
+                        accepted_at,
                     ),
                 )
 
@@ -807,7 +895,7 @@ class ContentRegistryRepository:
             connection.commit()
             return IngestResult(
                 status="ingested",
-                accepted_count=counts["ready"],
+                accepted_count=accepted_count,
                 conflict_count=counts["conflict"],
                 unresolved_count=counts["unresolved"],
                 rejected_count=counts["rejected"],
@@ -1000,8 +1088,7 @@ class ContentRegistryRepository:
         )
 
     @staticmethod
-    def _validate_acceptance_snapshot(
-        snapshot: AcceptedBatchSnapshot,
+    def _stored_acceptance_items(
         stored_rows: Sequence[Sequence[object]],
         taxonomy: TaxonomyVersion,
     ) -> tuple[tuple[tuple[int, ApprovalItem], ...], dict[str, int]]:
@@ -1038,6 +1125,41 @@ class ContentRegistryRepository:
             raise
         except (IndexError, TypeError, ValueError):
             raise RepositoryError("BATCH_ITEMS_MISMATCH") from None
+
+        taxonomy_fields = (
+            ("direction", "final_direction_code"),
+            ("material_type", "final_material_type_code"),
+            ("access", "final_access_code"),
+            ("lifecycle", "final_lifecycle_code"),
+        )
+        stored_items = tuple(stored_by_key.values())
+        for _approval_item_id, item in stored_items:
+            for kind, field_name in taxonomy_fields:
+                value = getattr(item, field_name)
+                if value is not None and value not in taxonomy.terms[kind]:
+                    raise RepositoryError("TAXONOMY_CONTRACT_MISMATCH")
+        counts = ContentRegistryRepository._batch_counts(
+            tuple(item for _approval_item_id, item in stored_items)
+        )
+        return stored_items, counts
+
+    @staticmethod
+    def _validate_acceptance_snapshot(
+        snapshot: AcceptedBatchSnapshot,
+        stored_rows: Sequence[Sequence[object]],
+        taxonomy: TaxonomyVersion,
+    ) -> tuple[tuple[tuple[int, ApprovalItem], ...], dict[str, int]]:
+        stored_items, counts = ContentRegistryRepository._stored_acceptance_items(
+            stored_rows,
+            taxonomy,
+        )
+        stored_by_key = {
+            (item.content_entity_id, item.input_hash, item.row_hash): (
+                approval_item_id,
+                item,
+            )
+            for approval_item_id, item in stored_items
+        }
 
         supplied_by_key: dict[tuple[int | None, str, str], ApprovalItem] = {}
         supplied_identities: set[tuple[int | None, str]] = set()
@@ -1100,7 +1222,7 @@ class ContentRegistryRepository:
                 if old_values != new_values and not editable.decision_reason:
                     raise RepositoryError("CONFLICT_REASON_REQUIRED")
             accepted.append((approval_item_id, editable))
-        counts = ContentRegistryRepository._batch_counts(
+        ContentRegistryRepository._batch_counts(
             tuple(item for _approval_item_id, item in accepted)
         )
         return tuple(accepted), counts
