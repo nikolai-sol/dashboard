@@ -8,6 +8,7 @@ from decimal import Decimal
 import unittest
 from unittest.mock import patch
 import json
+from collections.abc import Mapping
 
 from agents.abbott_page_classifier.candidate_release import (
     CandidateCatalogRow,
@@ -17,29 +18,68 @@ from agents.abbott_page_classifier.candidate_release import (
     materialize_content_candidate,
     validate_content_candidate,
 )
-from agents.abbott_page_classifier.batch_service import compute_accepted_decision_hash
+from agents.abbott_page_classifier.batch_service import (
+    ApprovalBatchItem,
+    compute_accepted_decision_hash,
+    compute_batch_hash,
+    compute_classification_event_fingerprint,
+    compute_item_hash,
+    compute_taxonomy_digest,
+)
 from agents.abbott_page_classifier.domain import ApprovalItem
 from agents.abbott_page_classifier.normalization import sha256_text
 
 
-def strict_evidence(finals):
-    return {
-        "archive_attestation": None,
-        "concise_evidence": [],
-        "current_canonical": None,
-        "deterministic": None,
-        "published_decision": {
-            "decision_reason": None,
-            "final_access_code": finals[2],
-            "final_direction_code": finals[0],
-            "final_lifecycle_code": finals[3],
-            "final_material_type_code": finals[1],
-        },
-        "registry1": None,
-        "registry2": None,
-        "sol": None,
-        "terra": None,
-    }
+def plain_json(value):
+    if isinstance(value, Mapping):
+        return {str(key): plain_json(item) for key, item in value.items()}
+    if isinstance(value, (tuple, list)):
+        return [plain_json(item) for item in value]
+    return value
+
+
+TEST_TAXONOMY_TERMS = {
+    "direction": ("cardiology", "gastroenterology"),
+    "material_type": ("articles", "video"),
+    "access": ("all", "doctors"),
+    "lifecycle": ("active",),
+}
+TEST_TAXONOMY_DIGEST = compute_taxonomy_digest("abbott.v1", TEST_TAXONOMY_TERMS)
+TEST_SOURCE_IDS = (11, 12)
+TEST_SOURCE_DIGESTS = ("a" * 64, "b" * 64)
+
+
+def audited_approval_item(
+    entity_id: int,
+    *,
+    input_hash: str,
+    title: str,
+    url: str,
+    finals: tuple[str, str, str, str],
+    readiness_state: str,
+    current_canonical: dict[str, object],
+) -> ApprovalBatchItem:
+    item = ApprovalBatchItem(
+        content_entity_id=entity_id,
+        input_hash=input_hash,
+        title=title,
+        url=url,
+        final_direction_code=finals[0],
+        final_material_type_code=finals[1],
+        final_access_code=finals[2],
+        final_lifecycle_code=finals[3],
+        readiness_state=readiness_state,
+        row_hash="",
+        decision_reason=None,
+        current_canonical=current_canonical,
+        taxonomy_digest=TEST_TAXONOMY_DIGEST,
+        taxonomy_terms=TEST_TAXONOMY_TERMS,
+        source_snapshot_ids=TEST_SOURCE_IDS,
+        source_snapshot_digests=TEST_SOURCE_DIGESTS,
+        model_routing_version="routing.v1",
+        prompt_version="prompt.v1",
+    )
+    return replace(item, row_hash=compute_item_hash(item))
 
 
 def catalog_row(
@@ -94,6 +134,14 @@ class CandidateConnection:
         joined_filter_gap: bool = False,
         unauthorized_event: bool = False,
         missing_authorized_event: bool = False,
+        manager_direction_edit: bool = False,
+        manager_material_access_edit: bool = False,
+        mismatched_event_final: bool = False,
+        corrupt_immutable_evidence: bool = False,
+        corrupt_approval_row_hash: bool = False,
+        corrupt_event_fingerprint: bool = False,
+        orphan_event: bool = False,
+        duplicate_event: bool = False,
     ):
         self.events: list[str] = []
         self.calls: list[tuple[str, tuple[object, ...]]] = []
@@ -120,6 +168,14 @@ class CandidateConnection:
         self.joined_filter_gap = joined_filter_gap
         self.unauthorized_event = unauthorized_event
         self.missing_authorized_event = missing_authorized_event
+        self.manager_direction_edit = manager_direction_edit
+        self.manager_material_access_edit = manager_material_access_edit
+        self.mismatched_event_final = mismatched_event_final
+        self.corrupt_immutable_evidence = corrupt_immutable_evidence
+        self.corrupt_approval_row_hash = corrupt_approval_row_hash
+        self.corrupt_event_fingerprint = corrupt_event_fingerprint
+        self.orphan_event = orphan_event
+        self.duplicate_event = duplicate_event
         self.snapshots = {
             11: {
                 "id": 11,
@@ -147,44 +203,78 @@ class CandidateConnection:
             },
         }
         self.candidate_imports = []
-        self.approval_rows = [
-            {
-                "content_entity_id": 1,
-                "input_hash": "a" * 64,
-                "title": "Alpha",
-                "url": "https://abbottpro.ru/cardio/alpha",
-                "final_direction_code": "cardiology",
-                "final_material_type_code": "articles",
-                "final_access_code": "all",
-                "final_lifecycle_code": "active",
-                "readiness_state": "ready",
+        published_items = (
+            audited_approval_item(
+                1,
+                input_hash="a" * 64,
+                title="Alpha",
+                url="https://abbottpro.ru/cardio/alpha",
+                finals=("cardiology", "articles", "all", "active"),
+                readiness_state="ready",
+                current_canonical={
+                    "access_code": "doctors",
+                    "content_entity_id": 1,
+                    "direction_code": "cardiology",
+                    "event_id": 300,
+                    "lifecycle_code": "active",
+                    "material_type_code": "articles",
+                },
+            ),
+            audited_approval_item(
+                2,
+                input_hash="c" * 64,
+                title="Beta",
+                url="https://abbottpro.ru/gastro/beta",
+                finals=("gastroenterology", "video", "doctors", "active"),
+                readiness_state="no_change",
+                current_canonical={
+                    "access_code": "doctors",
+                    "content_entity_id": 2,
+                    "direction_code": "gastroenterology",
+                    "event_id": 400,
+                    "lifecycle_code": "active",
+                    "material_type_code": "video",
+                },
+            ),
+        )
+        self.published_input_hash = compute_batch_hash(published_items)
+        self.approval_rows = []
+        for item_id, item in enumerate(published_items, start=101):
+            self.approval_rows.append({
+                "id": item_id,
+                "content_entity_id": item.content_entity_id,
+                "input_hash": item.input_hash,
+                "title": item.title,
+                "url": item.url,
+                "final_direction_code": item.final_direction_code,
+                "final_material_type_code": item.final_material_type_code,
+                "final_access_code": item.final_access_code,
+                "final_lifecycle_code": item.final_lifecycle_code,
+                "readiness_state": item.readiness_state,
                 "conflict_code": None,
                 "conflict_codes": "[]",
-                "row_hash": "b" * 64,
-                "decision_reason": None,
-                "proposal_evidence": strict_evidence(
-                    ("cardiology", "articles", "all", "active")
-                ),
-            },
-            {
-                "content_entity_id": 2,
-                "input_hash": "c" * 64,
-                "title": "Beta",
-                "url": "https://abbottpro.ru/gastro/beta",
-                "final_direction_code": "gastroenterology",
-                "final_material_type_code": "video",
-                "final_access_code": "doctors",
-                "final_lifecycle_code": "active",
-                "readiness_state": "no_change",
-                "conflict_code": None,
-                "conflict_codes": "[]",
-                "row_hash": "d" * 64,
-                "decision_reason": None,
-                "proposal_evidence": strict_evidence(
-                    ("gastroenterology", "video", "doctors", "active")
-                ),
-            },
-        ]
+                "row_hash": item.row_hash,
+                "decision_reason": item.decision_reason,
+                "proposal_evidence": plain_json(item.proposal_evidence),
+            })
+        if self.manager_direction_edit:
+            self.approval_rows[0].update(
+                final_direction_code="gastroenterology",
+                decision_reason="manager correction",
+            )
+        if self.manager_material_access_edit:
+            self.approval_rows[0].update(
+                final_material_type_code="video",
+                final_access_code="doctors",
+                decision_reason="manager metadata edit",
+            )
+        if self.corrupt_immutable_evidence:
+            self.approval_rows[0]["proposal_evidence"] = {
+                **self.approval_rows[0]["proposal_evidence"],
+                "concise_evidence": ["tampered after publication"],
+            }
+        if self.corrupt_approval_row_hash:
+            self.approval_rows[0]["row_hash"] = "f" * 64
         approval_items = [
             ApprovalItem(
                 content_entity_id=row["content_entity_id"],
@@ -196,7 +286,9 @@ class CandidateConnection:
                 final_access_code=row["final_access_code"],
                 final_lifecycle_code=row["final_lifecycle_code"],
                 readiness_state=row["readiness_state"],
+                conflict_codes=(),
                 row_hash=row["row_hash"],
+                decision_reason=row["decision_reason"],
             )
             for row in self.approval_rows
         ]
@@ -212,7 +304,7 @@ class CandidateConnection:
                 "material_type": "Статьи",
                 "source_slug": "alpha",
                 "source_slug_hash": sha256_text("alpha"),
-                "access_label": "Все",
+                "access_label": "Врачи",
                 "is_active": 1,
                 "source_sheet": "Кардиология [262338]",
                 "source_row_ordinal": 7,
@@ -228,7 +320,7 @@ class CandidateConnection:
                 "projection_provenance_json": json.dumps(
                     {
                         "canonical_codes": {
-                            "access": "all",
+                            "access": "doctors",
                             "direction": "cardiology",
                             "lifecycle": "active",
                             "material_type": "articles",
@@ -335,6 +427,12 @@ class CandidateConnection:
                 "rejected_count": 0,
                 "no_change_count": 1,
                 "taxonomy_version_id": 5,
+                "taxonomy_version": "abbott.v1",
+                "taxonomy_digest": TEST_TAXONOMY_DIGEST,
+                "published_input_hash": self.published_input_hash,
+                "prompt_version": "prompt.v1",
+                "model_routing_version": "routing.v1",
+                "accepted_by": "content-manager",
                 "accepted_at": "2026-08-05T10:00:00.000000+00:00",
                 "source_snapshot_ids": "[11, 12]",
                 "source_snapshot_digests": json.dumps(["a" * 64, "b" * 64]),
@@ -351,7 +449,7 @@ class CandidateConnection:
                     "alias_type": "material_id",
                     "direction_code": "cardiology",
                     "material_type_code": "articles",
-                    "access_code": "all",
+                    "access_code": "doctors",
                     "lifecycle_code": "active",
                     "lifecycle_label": "active",
                 },
@@ -376,18 +474,27 @@ class CandidateConnection:
                 )
         elif "FROM portal_content_catalog AS predecessor_catalog" in normalized:
             self._many = list(self.predecessor_catalog)
-        elif "AS event_coverage_violations" in normalized:
-            self._one = {
-                "event_coverage_violations": 1 if self.missing_authorized_event else 0
-            }
-        elif "AS anti_flip_violations" in normalized:
-            self._one = {
-                "anti_flip_violations": 1 if self.unauthorized_event else 0
-            }
         elif "FROM portal_content_classification_events AS event" in normalized and "event.approval_batch_id = %s" in normalized:
-            self._many = [] if self.missing_authorized_event else [
-                {
+            accepted_item = self.approval_rows[0]
+            event_direction = accepted_item["final_direction_code"]
+            if self.mismatched_event_final:
+                event_direction = (
+                    "cardiology"
+                    if event_direction == "gastroenterology"
+                    else "gastroenterology"
+                )
+            event_evidence = {
+                "accepted_decision_hash": (
+                    "0" * 64 if self.unauthorized_event else self.accepted_hash
+                ),
+                "approval_item_evidence": accepted_item["proposal_evidence"],
+                "row_hash": accepted_item["row_hash"],
+            }
+            event_row = {
+                    "authorized_entity_id": 1,
                     "content_entity_id": 1,
+                    "approval_item_id": 999 if self.orphan_event else 101,
+                    "taxonomy_version_id": 5,
                     "material_id": "100",
                     "title": "Alpha",
                     "canonical_url": "https://abbottpro.ru/cardio/alpha/",
@@ -408,21 +515,60 @@ class CandidateConnection:
                         ]
                     },
                     "classification_event_id": 501,
-                    "direction_code": "cardiology",
-                    "material_type_code": "articles",
-                    "access_code": "all",
-                    "lifecycle_code": "active",
-                    "event_kind": "correct",
+                    "direction_code": event_direction,
+                    "material_type_code": accepted_item["final_material_type_code"],
+                    "access_code": accepted_item["final_access_code"],
+                    "lifecycle_code": accepted_item["final_lifecycle_code"],
+                    "event_kind": "correct" if self.manager_direction_edit else "approve",
                     "event_fingerprint": "2" * 64,
                     "approval_batch_id": 71,
+                    "predecessor_event_id": 300,
+                    "actor": "content-manager",
+                    "reason": accepted_item["decision_reason"],
+                    "proposal_evidence": event_evidence,
                     "effective_at": datetime(2026, 8, 5, 10, 0, 0),
-                    "direction_label": "Кардиология [262338]",
-                    "material_type_label": "Статьи",
-                    "access_label": "Все",
+                    "direction_label": (
+                        "Гастроэнтерология [262340]"
+                        if event_direction == "gastroenterology"
+                        else "Кардиология [262338]"
+                    ),
+                    "material_type_label": (
+                        "Видео"
+                        if accepted_item["final_material_type_code"] == "video"
+                        else "Статьи"
+                    ),
+                    "access_label": (
+                        "Врачи"
+                        if accepted_item["final_access_code"] == "doctors"
+                        else "Все"
+                    ),
                     "lifecycle_label": "active",
-                    "authorization_violation": 1 if self.unauthorized_event else 0,
-                },
-            ]
+                }
+            event_row["event_fingerprint"] = compute_classification_event_fingerprint(
+                {
+                    "access_code": event_row["access_code"],
+                    "actor": event_row["actor"],
+                    "approval_batch_id": event_row["approval_batch_id"],
+                    "approval_item_id": event_row["approval_item_id"],
+                    "content_entity_id": event_row["content_entity_id"],
+                    "direction_code": event_row["direction_code"],
+                    "effective_at": event_row["effective_at"].isoformat(
+                        timespec="microseconds"
+                    ),
+                    "event_kind": event_row["event_kind"],
+                    "lifecycle_code": event_row["lifecycle_code"],
+                    "material_type_code": event_row["material_type_code"],
+                    "predecessor_event_id": event_row["predecessor_event_id"],
+                    "proposal_evidence": event_row["proposal_evidence"],
+                    "reason": event_row["reason"],
+                    "taxonomy_version_id": event_row["taxonomy_version_id"],
+                }
+            )
+            if self.corrupt_event_fingerprint:
+                event_row["event_fingerprint"] = "0" * 64
+            self._many = [] if self.missing_authorized_event else [event_row]
+            if self.duplicate_event:
+                self._many.append({**event_row, "classification_event_id": 502})
         elif "source_kind = 'abbott_canonical_control_pack'" in normalized:
             baseline_id = int(params[-1])
             if baseline_id == 902 and self.baseline_manifest is not None:
@@ -721,7 +867,7 @@ class CandidateReleaseTest(unittest.TestCase):
         self.assertIn("portal_release_source_imports", sql)
         self.assertIn("portal_content_catalog", sql)
         self.assertIn("portal_content_lookup_projection", sql)
-        self.assertIn("event.event_kind IN ('approve', 'correct', 'revoke')", sql)
+        self.assertIn("event.approval_item_id", sql)
         self.assertNotIn("UPDATE portal_active_data_releases", sql)
         self.assertNotIn("UPDATE portal_content_classification_events", sql)
         self.assertNotIn("UPDATE portal_content_catalog", sql)
@@ -757,7 +903,7 @@ class CandidateReleaseTest(unittest.TestCase):
         sql = "\n".join(call[0] for call in connection.calls)
         self.assertIn("FROM portal_content_catalog AS predecessor_catalog", sql)
         self.assertIn("event.approval_batch_id = %s", sql)
-        self.assertIn("event.event_kind IN ('approve', 'correct', 'revoke')", sql)
+        self.assertIn("event.proposal_evidence", sql)
         self.assertNotIn("WITH latest_events AS", sql)
         self.assertIn("batch.source_snapshot_ids", sql)
         self.assertIn("batch.source_snapshot_digests", sql)
@@ -915,6 +1061,94 @@ class CandidateReleaseTest(unittest.TestCase):
             ):
                 materialize_content_candidate(71, 12, "abc1234")
 
+    def test_materialization_accepts_legitimate_manager_direction_correction(self):
+        connection = CandidateConnection(manager_direction_edit=True)
+        self.assertNotEqual(
+            connection.approval_rows[0]["proposal_evidence"]["published_decision"]["final_direction_code"],
+            connection.approval_rows[0]["final_direction_code"],
+        )
+        with (
+            patch("agents.abbott_page_classifier.candidate_release.get_db_connection", return_value=connection),
+            patch("agents.abbott_page_classifier.candidate_release.release_store.create_candidate_release", return_value=41),
+            patch("agents.abbott_page_classifier.candidate_release.release_store.require_mutable_candidate_release", return_value={"id": 41, "release_status": "staging"}),
+        ):
+            try:
+                result = materialize_content_candidate(71, 12, "abc1234")
+            except CandidateMaterializationError as exc:
+                self.fail(f"legitimate manager direction correction was rejected: {exc}")
+        self.assertEqual(result.catalog_row_count, 2)
+        self.assertEqual(connection.events, ["start", "commit"])
+
+    def test_materialization_accepts_legitimate_manager_material_access_edit(self):
+        connection = CandidateConnection(manager_material_access_edit=True)
+        published = connection.approval_rows[0]["proposal_evidence"]["published_decision"]
+        self.assertNotEqual(
+            (published["final_material_type_code"], published["final_access_code"]),
+            (
+                connection.approval_rows[0]["final_material_type_code"],
+                connection.approval_rows[0]["final_access_code"],
+            ),
+        )
+        with (
+            patch("agents.abbott_page_classifier.candidate_release.get_db_connection", return_value=connection),
+            patch("agents.abbott_page_classifier.candidate_release.release_store.create_candidate_release", return_value=41),
+            patch("agents.abbott_page_classifier.candidate_release.release_store.require_mutable_candidate_release", return_value={"id": 41, "release_status": "staging"}),
+        ):
+            try:
+                result = materialize_content_candidate(71, 12, "abc1234")
+            except CandidateMaterializationError as exc:
+                self.fail(f"legitimate manager metadata edit was rejected: {exc}")
+        self.assertEqual(result.catalog_row_count, 2)
+        self.assertEqual(connection.events, ["start", "commit"])
+
+    def test_materialization_rejects_event_decision_different_from_accepted_final(self):
+        connection = CandidateConnection(mismatched_event_final=True)
+        with (
+            patch("agents.abbott_page_classifier.candidate_release.get_db_connection", return_value=connection),
+            patch("agents.abbott_page_classifier.candidate_release.release_store.create_candidate_release", return_value=41),
+            patch("agents.abbott_page_classifier.candidate_release.release_store.require_mutable_candidate_release", return_value={"id": 41, "release_status": "staging"}),
+        ):
+            with self.assertRaisesRegex(
+                CandidateMaterializationError, "CURRENT_BATCH_EVENT_UNAUTHORIZED"
+            ):
+                materialize_content_candidate(71, 12, "abc1234")
+
+    def test_materialization_rejects_corrupted_immutable_proposal_evidence(self):
+        connection = CandidateConnection(corrupt_immutable_evidence=True)
+        with (
+            patch("agents.abbott_page_classifier.candidate_release.get_db_connection", return_value=connection),
+            patch("agents.abbott_page_classifier.candidate_release.release_store.create_candidate_release", return_value=41),
+            patch("agents.abbott_page_classifier.candidate_release.release_store.require_mutable_candidate_release", return_value={"id": 41, "release_status": "staging"}),
+        ):
+            with self.assertRaisesRegex(
+                CandidateMaterializationError, "APPROVAL_BUNDLE_INVALID"
+            ):
+                materialize_content_candidate(71, 12, "abc1234")
+
+    def test_materialization_rejects_corrupted_approval_row_hash(self):
+        connection = CandidateConnection(corrupt_approval_row_hash=True)
+        with (
+            patch("agents.abbott_page_classifier.candidate_release.get_db_connection", return_value=connection),
+            patch("agents.abbott_page_classifier.candidate_release.release_store.create_candidate_release", return_value=41),
+            patch("agents.abbott_page_classifier.candidate_release.release_store.require_mutable_candidate_release", return_value={"id": 41, "release_status": "staging"}),
+        ):
+            with self.assertRaisesRegex(
+                CandidateMaterializationError, "APPROVAL_BUNDLE_INVALID"
+            ):
+                materialize_content_candidate(71, 12, "abc1234")
+
+    def test_materialization_rejects_corrupted_event_fingerprint(self):
+        connection = CandidateConnection(corrupt_event_fingerprint=True)
+        with (
+            patch("agents.abbott_page_classifier.candidate_release.get_db_connection", return_value=connection),
+            patch("agents.abbott_page_classifier.candidate_release.release_store.create_candidate_release", return_value=41),
+            patch("agents.abbott_page_classifier.candidate_release.release_store.require_mutable_candidate_release", return_value={"id": 41, "release_status": "staging"}),
+        ):
+            with self.assertRaisesRegex(
+                CandidateMaterializationError, "CURRENT_BATCH_EVENT_UNAUTHORIZED"
+            ):
+                materialize_content_candidate(71, 12, "abc1234")
+
     def test_materialization_rejects_missing_authorized_current_batch_event(self):
         connection = CandidateConnection(missing_authorized_event=True)
         with (
@@ -928,7 +1162,31 @@ class CandidateReleaseTest(unittest.TestCase):
             ):
                 materialize_content_candidate(71, 12, "abc1234")
 
-    def test_current_batch_event_query_binds_exact_published_approval_item(self):
+    def test_materialization_rejects_orphan_current_batch_event(self):
+        connection = CandidateConnection(orphan_event=True)
+        with (
+            patch("agents.abbott_page_classifier.candidate_release.get_db_connection", return_value=connection),
+            patch("agents.abbott_page_classifier.candidate_release.release_store.create_candidate_release", return_value=41),
+            patch("agents.abbott_page_classifier.candidate_release.release_store.require_mutable_candidate_release", return_value={"id": 41, "release_status": "staging"}),
+        ):
+            with self.assertRaisesRegex(
+                CandidateMaterializationError, "CURRENT_BATCH_EVENT_UNAUTHORIZED"
+            ):
+                materialize_content_candidate(71, 12, "abc1234")
+
+    def test_materialization_rejects_duplicate_current_batch_event(self):
+        connection = CandidateConnection(duplicate_event=True)
+        with (
+            patch("agents.abbott_page_classifier.candidate_release.get_db_connection", return_value=connection),
+            patch("agents.abbott_page_classifier.candidate_release.release_store.create_candidate_release", return_value=41),
+            patch("agents.abbott_page_classifier.candidate_release.release_store.require_mutable_candidate_release", return_value={"id": 41, "release_status": "staging"}),
+        ):
+            with self.assertRaisesRegex(
+                CandidateMaterializationError, "CURRENT_BATCH_EVENT_UNAUTHORIZED"
+            ):
+                materialize_content_candidate(71, 12, "abc1234")
+
+    def test_current_batch_event_query_reads_values_for_python_authorization(self):
         connection = CandidateConnection()
         with (
             patch("agents.abbott_page_classifier.candidate_release.get_db_connection", return_value=connection),
@@ -938,21 +1196,15 @@ class CandidateReleaseTest(unittest.TestCase):
             materialize_content_candidate(71, 12, "abc1234")
         event_sql = next(
             sql for sql, _ in connection.calls
-            if "AS authorization_violation" in sql
+            if "FROM portal_content_classification_events AS event" in sql
         )
         for token in (
-            "item.id = event.approval_item_id",
-            "item.readiness_state = 'ready'",
-            "item.content_entity_id <=> event.content_entity_id",
-            "item.final_direction_code <=> event.direction_code",
-            "item.final_material_type_code <=> event.material_type_code",
-            "item.final_access_code <=> event.access_code",
-            "item.final_lifecycle_code <=> event.lifecycle_code",
-            "batch.accepted_decision_hash",
-            "$.approval_item_evidence.published_decision",
-            "same_item_event.approval_item_id = event.approval_item_id",
+            "event.approval_item_id", "event.taxonomy_version_id",
+            "event.predecessor_event_id", "event.proposal_evidence",
+            "event.actor", "event.reason", "authorized_entity_id",
         ):
             self.assertIn(token, event_sql)
+        self.assertNotIn("published_decision.final_direction_code", event_sql)
 
     def test_catalog_readback_hash_mismatch_rolls_back_everything(self):
         connection = CandidateConnection(mismatch_catalog_hash=True)
@@ -1059,6 +1311,7 @@ class CandidateReleaseTest(unittest.TestCase):
             sql
             for sql, _ in connection.calls
             if "FROM portal_content_taxonomy_terms" in sql
+            and "term_status = 'active'" in sql
         )
         self.assertIn("term_status = 'active'", taxonomy_sql)
         self.assertNotIn("is_active", taxonomy_sql)
@@ -1078,20 +1331,71 @@ class CandidateReleaseTest(unittest.TestCase):
                 accepted_hash=connection.accepted_hash,
             )
         anti_flip_sql = next(
-            sql for sql, _ in connection.calls if "AS anti_flip_violations" in sql
+            sql for sql, _ in connection.calls
+            if "FROM portal_content_classification_events AS event" in sql
         )
         for token in (
-            "item.proposal_evidence", "$.current_canonical.direction_code",
-            "$.current_canonical.event_id", "batch.accepted_decision_hash",
-            "$.accepted_decision_hash", "$.approval_item_evidence", "item.row_hash",
-            "event.event_kind <> 'correct'", "event.predecessor_event_id IS NULL",
-            "TRIM(event.actor) = ''", "TRIM(event.reason) = ''",
+            "event.approval_item_id", "event.taxonomy_version_id",
+            "event.predecessor_event_id", "event.proposal_evidence",
+            "event.actor", "event.reason", "authorized_entity_id",
         ):
             self.assertIn(token, anti_flip_sql)
+
+    def test_validation_accepts_legitimate_manager_direction_correction(self):
+        connection = self._prepare_gate(GateConnection(manager_direction_edit=True))
+        with patch(
+            "agents.abbott_page_classifier.candidate_release.get_db_connection",
+            return_value=connection,
+        ):
+            report = validate_content_candidate(
+                41,
+                expected_counts={
+                    "source": 2, "ready": 1, "conflict": 0, "unresolved": 0,
+                    "rejected": 0, "accepted": 1,
+                },
+                accepted_hash=connection.accepted_hash,
+            )
+        self.assertTrue(report.passed)
+
+    def test_validation_accepts_legitimate_manager_material_access_edit(self):
+        connection = self._prepare_gate(
+            GateConnection(manager_material_access_edit=True)
+        )
+        with patch(
+            "agents.abbott_page_classifier.candidate_release.get_db_connection",
+            return_value=connection,
+        ):
+            report = validate_content_candidate(
+                41,
+                expected_counts={
+                    "source": 2, "ready": 1, "conflict": 0, "unresolved": 0,
+                    "rejected": 0, "accepted": 1,
+                },
+                accepted_hash=connection.accepted_hash,
+            )
+        self.assertTrue(report.passed)
 
     def test_validation_rejects_spoofed_current_batch_event(self):
         connection = self._prepare_gate(GateConnection())
         connection.unauthorized_event = True
+        with patch(
+            "agents.abbott_page_classifier.candidate_release.get_db_connection",
+            return_value=connection,
+        ):
+            report = validate_content_candidate(
+                41,
+                expected_counts={
+                    "source": 2, "ready": 1, "conflict": 0, "unresolved": 0,
+                    "rejected": 0, "accepted": 1,
+                },
+                accepted_hash=connection.accepted_hash,
+            )
+        self.assertEqual(report.anti_flip_violations, 1)
+        self.assertFalse(report.passed)
+
+    def test_validation_rejects_event_decision_different_from_accepted_final(self):
+        connection = self._prepare_gate(GateConnection())
+        connection.mismatched_event_final = True
         with patch(
             "agents.abbott_page_classifier.candidate_release.get_db_connection",
             return_value=connection,

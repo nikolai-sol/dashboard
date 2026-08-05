@@ -10,6 +10,7 @@ from agents.abbott_page_classifier.batch_service import (
     build_batch,
     compute_accepted_decision_hash,
     compute_batch_hash,
+    compute_item_hash,
     compute_taxonomy_digest,
     persist_batch,
 )
@@ -110,6 +111,22 @@ class RecordingRepository:
 
 
 class BatchServiceTests(unittest.TestCase):
+    def test_canonical_approval_hash_vectors_remain_compatible(self):
+        batch = built([reconciliation(10)])
+        item = batch.items[0]
+        self.assertEqual(
+            compute_item_hash(item),
+            "9f8366d8c5b237c4a9327084c10059fa1b7945507b2f987dbdde99b758c21875",
+        )
+        self.assertEqual(
+            compute_batch_hash(batch.items),
+            "357199d01b24014151f155ec105da3cdae46be4eafb2515aaf447879197fffd6",
+        )
+        self.assertEqual(
+            compute_accepted_decision_hash(batch.items),
+            "5a98149c30f90a4b6b37156ad1c1bcd4a48a0d85fd01e90febc27356e3cc4576",
+        )
+
     def test_batch_hash_orders_by_entity_then_input_and_normalizes_newlines(self):
         first = built([reconciliation(20), reconciliation(10)])
         second = built([reconciliation(10), reconciliation(20)])

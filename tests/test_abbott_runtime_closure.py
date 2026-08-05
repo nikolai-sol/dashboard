@@ -45,6 +45,7 @@ SYNCHRONIZED_BOOTSTRAP_COPIES = {
     "runtime/canonical_release_store.py": "canonical_release_store.py",
     "runtime/abbott_canonical_controls.py": "abbott_canonical_controls.py",
     "runtime/agents/abbott_page_classifier/candidate_release.py": "agents/abbott_page_classifier/candidate_release.py",
+    "runtime/agents/abbott_page_classifier/approval_hashes.py": "agents/abbott_page_classifier/approval_hashes.py",
     "runtime/agents/__init__.py": "agents/__init__.py",
     "runtime/agents/abbott_page_classifier/domain.py": "agents/abbott_page_classifier/domain.py",
     "runtime/agents/abbott_page_classifier/normalization.py": "agents/abbott_page_classifier/normalization.py",
@@ -54,6 +55,7 @@ VENDORED_CONTENT_RUNTIME = {
     "runtime/agents/__init__.py",
     "runtime/agents/abbott_page_classifier/__init__.py",
     "runtime/agents/abbott_page_classifier/candidate_release.py",
+    "runtime/agents/abbott_page_classifier/approval_hashes.py",
     "runtime/agents/abbott_page_classifier/domain.py",
     "runtime/agents/abbott_page_classifier/normalization.py",
 }

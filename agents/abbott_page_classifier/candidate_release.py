@@ -18,6 +18,15 @@ from typing import Iterable, Mapping, Sequence
 import canonical_release_store as release_store
 from canonical_writer import get_db_connection
 
+from .approval_hashes import (
+    ApprovalBatchItem,
+    compute_accepted_decision_hash,
+    compute_batch_hash,
+    compute_classification_event_fingerprint,
+    compute_item_hash,
+    compute_taxonomy_digest,
+)
+from .domain import ApprovalItem
 from .normalization import normalize_title, normalize_url, sha256_text
 
 
@@ -372,10 +381,45 @@ def _proposal_evidence_is_strict(value: object) -> bool:
     return True
 
 
-def _load_approval_bundle(cursor, batch_id: int) -> dict[str, object]:
+def _load_approval_bundle(
+    cursor, batch_id: int, batch: Mapping[str, object]
+) -> dict[str, object]:
     cursor.execute(
         """
-        SELECT item.content_entity_id, item.input_hash, item.title, item.url,
+        SELECT taxonomy_kind, term_code, term_label
+        FROM portal_content_taxonomy_terms
+        WHERE taxonomy_version_id = %s
+        ORDER BY taxonomy_kind, term_code
+        """,
+        (batch.get("taxonomy_version_id"),),
+    )
+    taxonomy_rows = tuple(cursor.fetchall())
+    taxonomy_terms: dict[str, list[str]] = {
+        "direction": [], "material_type": [], "access": [], "lifecycle": []
+    }
+    for term in taxonomy_rows:
+        kind = str(_row_value(term, "taxonomy_kind", 0) or "")
+        code = str(_row_value(term, "term_code", 1) or "")
+        if kind in taxonomy_terms and code:
+            taxonomy_terms[kind].append(code)
+    frozen_taxonomy_terms = {
+        kind: tuple(sorted(set(codes))) for kind, codes in taxonomy_terms.items()
+    }
+    source_snapshot_ids = _decode_json(
+        batch.get("source_snapshot_ids"), code="APPROVAL_BUNDLE_INVALID"
+    )
+    source_snapshot_digests = _decode_json(
+        batch.get("source_snapshot_digests"), code="APPROVAL_BUNDLE_INVALID"
+    )
+    if (
+        not isinstance(source_snapshot_ids, list)
+        or not isinstance(source_snapshot_digests, list)
+        or len(source_snapshot_ids) != len(source_snapshot_digests)
+    ):
+        raise CandidateMaterializationError("APPROVAL_BUNDLE_INVALID")
+    cursor.execute(
+        """
+        SELECT item.id, item.content_entity_id, item.input_hash, item.title, item.url,
                item.final_direction_code, item.final_material_type_code,
                item.final_access_code, item.final_lifecycle_code,
                item.readiness_state, item.conflict_code, item.conflict_codes, item.row_hash,
@@ -398,9 +442,16 @@ def _load_approval_bundle(cursor, batch_id: int) -> dict[str, object]:
     schema_failures = 0
     identity_collisions = 0
     unresolved_accepted = 0
+    published_items: list[ApprovalBatchItem] = []
+    accepted_items: list[ApprovalItem] = []
+    approval_rows_by_id: dict[int, Mapping[str, object]] = {}
     for row in rows:
         if not isinstance(row, Mapping):
             raise CandidateMaterializationError("APPROVAL_BUNDLE_INVALID")
+        item_id = int(row.get("id") or 0)
+        if item_id <= 0 or item_id in approval_rows_by_id:
+            raise CandidateMaterializationError("APPROVAL_BUNDLE_INVALID")
+        approval_rows_by_id[item_id] = row
         state = str(row.get("readiness_state") or "")
         if state not in counts:
             raise CandidateMaterializationError("APPROVAL_BUNDLE_INVALID")
@@ -426,39 +477,101 @@ def _load_approval_bundle(cursor, batch_id: int) -> dict[str, object]:
             conflict_values or row.get("content_entity_id") is None
         ):
             unresolved_accepted += 1
-        if not _proposal_evidence_is_strict(row.get("proposal_evidence")):
+        evidence = _decode_json(
+            row.get("proposal_evidence"), code="APPROVAL_BUNDLE_INVALID"
+        )
+        if not _proposal_evidence_is_strict(evidence):
             schema_failures += 1
+            continue
+        published_decision = evidence["published_decision"]
+        entity_id = (
+            int(row["content_entity_id"])
+            if row.get("content_entity_id") is not None else None
+        )
+        try:
+            published_item = ApprovalBatchItem(
+                content_entity_id=entity_id,
+                input_hash=str(row.get("input_hash") or ""),
+                title=str(row.get("title") or ""),
+                url=str(row.get("url") or ""),
+                final_direction_code=published_decision["final_direction_code"],
+                final_material_type_code=published_decision["final_material_type_code"],
+                final_access_code=published_decision["final_access_code"],
+                final_lifecycle_code=published_decision["final_lifecycle_code"],
+                readiness_state=state,
+                conflict_codes=conflict_values,
+                row_hash=str(row.get("row_hash") or ""),
+                decision_reason=published_decision["decision_reason"],
+                current_canonical=evidence["current_canonical"],
+                registry1_values=evidence["registry1"],
+                registry2_values=evidence["registry2"],
+                deterministic_result=evidence["deterministic"],
+                terra_result=evidence["terra"],
+                sol_result=evidence["sol"],
+                archive_attestation=evidence["archive_attestation"],
+                concise_evidence=tuple(evidence["concise_evidence"]),
+                taxonomy_digest=str(batch.get("taxonomy_digest") or ""),
+                taxonomy_terms=frozen_taxonomy_terms,
+                source_snapshot_ids=tuple(int(value) for value in source_snapshot_ids),
+                source_snapshot_digests=tuple(
+                    str(value) for value in source_snapshot_digests
+                ),
+                model_routing_version=str(batch.get("model_routing_version") or ""),
+                prompt_version=str(batch.get("prompt_version") or ""),
+            )
+            accepted_item = ApprovalItem(
+                content_entity_id=entity_id,
+                input_hash=published_item.input_hash,
+                title=published_item.title,
+                url=published_item.url,
+                final_direction_code=row.get("final_direction_code"),
+                final_material_type_code=row.get("final_material_type_code"),
+                final_access_code=row.get("final_access_code"),
+                final_lifecycle_code=row.get("final_lifecycle_code"),
+                readiness_state=state,
+                conflict_codes=conflict_values,
+                row_hash=published_item.row_hash,
+                decision_reason=row.get("decision_reason"),
+            )
+        except (KeyError, TypeError, ValueError):
+            schema_failures += 1
+            continue
+        if compute_item_hash(published_item) != published_item.row_hash:
+            schema_failures += 1
+        published_items.append(published_item)
+        accepted_items.append(accepted_item)
         decisions.append(
             {
-                "content_entity_id": (
-                    int(row["content_entity_id"])
-                    if row.get("content_entity_id") is not None else None
-                ),
-                "decision_reason": row.get("decision_reason"),
-                "final_access_code": row.get("final_access_code"),
-                "final_direction_code": row.get("final_direction_code"),
-                "final_lifecycle_code": row.get("final_lifecycle_code"),
-                "final_material_type_code": row.get("final_material_type_code"),
-                "input_hash": str(row.get("input_hash") or ""),
+                "content_entity_id": entity_id,
+                "decision_reason": accepted_item.decision_reason,
+                "final_access_code": accepted_item.final_access_code,
+                "final_direction_code": accepted_item.final_direction_code,
+                "final_lifecycle_code": accepted_item.final_lifecycle_code,
+                "final_material_type_code": accepted_item.final_material_type_code,
+                "input_hash": accepted_item.input_hash,
                 "readiness_state": state,
-                "row_hash": str(row.get("row_hash") or ""),
+                "row_hash": accepted_item.row_hash,
             }
         )
-    decisions.sort(
-        key=lambda item: (
-            0 if item["content_entity_id"] is None else 1,
-            int(item["content_entity_id"] or 0),
-            str(item["input_hash"]),
-        )
-    )
+    taxonomy_version = str(batch.get("taxonomy_version") or "")
+    taxonomy_digest = str(batch.get("taxonomy_digest") or "")
+    if (
+        len(published_items) != len(rows)
+        or compute_batch_hash(published_items)
+        != str(batch.get("published_input_hash") or "")
+        or compute_taxonomy_digest(taxonomy_version, frozen_taxonomy_terms)
+        != taxonomy_digest
+    ):
+        schema_failures += 1
     counts["source"] = len(decisions)
     counts["accepted"] = counts["ready"]
     return {
-        "accepted_hash": sha256_text(_canonical_json(decisions)),
+        "accepted_hash": compute_accepted_decision_hash(accepted_items),
         "counts": counts,
         "identity_collisions": identity_collisions,
         "schema_failures": schema_failures,
         "unresolved_accepted": unresolved_accepted,
+        "approval_rows_by_id": approval_rows_by_id,
     }
 
 
@@ -960,14 +1073,181 @@ def _event_matches_predecessor(
     return bool(normalized.sha256 and normalized.sha256 == row.normalized_url_hash)
 
 
+def _normalized_audit_text(value: object) -> str | None:
+    normalized = str(value).strip() if value is not None else ""
+    return normalized or None
+
+
+def _authorize_current_batch_events(
+    event_rows: Sequence[Mapping[str, object]],
+    approval_rows_by_id: Mapping[int, Mapping[str, object]],
+    batch: Mapping[str, object],
+    predecessor_rows: Sequence[Mapping[str, object]],
+) -> None:
+    """Fail closed on values emitted by accepted approval-item ingestion."""
+
+    batch_id = int(batch.get("id") or 0)
+    taxonomy_version_id = int(batch.get("taxonomy_version_id") or 0)
+    accepted_hash = str(batch.get("accepted_decision_hash") or "")
+    accepted_by = _normalized_audit_text(batch.get("accepted_by"))
+    predecessor_by_entity = {
+        row.content_entity_id: row
+        for row in (_predecessor_catalog_row(value) for value in predecessor_rows)
+    }
+    expected: dict[int, tuple[Mapping[str, object], Mapping[str, object] | None]] = {}
+    for item_id, item in approval_rows_by_id.items():
+        if item.get("readiness_state") != "ready":
+            continue
+        evidence = _decode_json(
+            item.get("proposal_evidence"), code="CURRENT_BATCH_EVENT_UNAUTHORIZED"
+        )
+        if not isinstance(evidence, Mapping):
+            raise CandidateMaterializationError("CURRENT_BATCH_EVENT_UNAUTHORIZED")
+        current = evidence.get("current_canonical")
+        if current is not None and not isinstance(current, Mapping):
+            raise CandidateMaterializationError("CURRENT_BATCH_EVENT_UNAUTHORIZED")
+        final_values = tuple(item.get(name) for name in (
+            "final_direction_code", "final_material_type_code",
+            "final_access_code", "final_lifecycle_code",
+        ))
+        if isinstance(current, Mapping):
+            try:
+                current_values = tuple(current[name] for name in (
+                    "direction_code", "material_type_code",
+                    "access_code", "lifecycle_code",
+                ))
+            except KeyError:
+                raise CandidateMaterializationError(
+                    "CURRENT_BATCH_EVENT_UNAUTHORIZED"
+                ) from None
+            if current_values == final_values:
+                continue
+        expected[item_id] = (item, current if isinstance(current, Mapping) else None)
+
+    seen: set[int] = set()
+    for event in event_rows:
+        item_id = int(event.get("approval_item_id") or 0)
+        if item_id in seen or item_id not in expected:
+            raise CandidateMaterializationError("CURRENT_BATCH_EVENT_UNAUTHORIZED")
+        seen.add(item_id)
+        item, current = expected[item_id]
+        entity_id = int(item.get("content_entity_id") or 0)
+        final_values = tuple(item.get(name) for name in (
+            "final_direction_code", "final_material_type_code",
+            "final_access_code", "final_lifecycle_code",
+        ))
+        event_values = tuple(event.get(name) for name in (
+            "direction_code", "material_type_code", "access_code", "lifecycle_code"
+        ))
+        predecessor_event_id = None
+        expected_kind = "approve"
+        if current is not None:
+            try:
+                current_entity_id = int(current["content_entity_id"])
+                predecessor_event_id = int(current["event_id"])
+                current_values = tuple(current[name] for name in (
+                    "direction_code", "material_type_code",
+                    "access_code", "lifecycle_code",
+                ))
+            except (KeyError, TypeError, ValueError):
+                raise CandidateMaterializationError(
+                    "CURRENT_BATCH_EVENT_UNAUTHORIZED"
+                ) from None
+            predecessor = predecessor_by_entity.get(entity_id)
+            if (
+                current_entity_id != entity_id
+                or predecessor is None
+                or current_values != (
+                    predecessor.direction_code, predecessor.material_type_code,
+                    predecessor.access_code, predecessor.lifecycle_code,
+                )
+                or (
+                    predecessor.classification_event_id is not None
+                    and predecessor.classification_event_id != predecessor_event_id
+                )
+            ):
+                raise CandidateMaterializationError(
+                    "CURRENT_BATCH_EVENT_UNAUTHORIZED"
+                )
+            if current_values[0] != final_values[0]:
+                expected_kind = "correct"
+        event_evidence = _decode_json(
+            event.get("proposal_evidence"), code="CURRENT_BATCH_EVENT_UNAUTHORIZED"
+        )
+        item_evidence = _decode_json(
+            item.get("proposal_evidence"), code="CURRENT_BATCH_EVENT_UNAUTHORIZED"
+        )
+        event_actor = _normalized_audit_text(event.get("actor"))
+        event_reason = _normalized_audit_text(event.get("reason"))
+        try:
+            effective_at = _database_datetime(event.get("effective_at"))
+        except CandidateMaterializationError:
+            effective_at = None
+        expected_fingerprint = (
+            compute_classification_event_fingerprint(
+                {
+                    "access_code": event.get("access_code"),
+                    "actor": event_actor,
+                    "approval_batch_id": batch_id,
+                    "approval_item_id": item_id,
+                    "content_entity_id": entity_id,
+                    "direction_code": event.get("direction_code"),
+                    "effective_at": effective_at.isoformat(timespec="microseconds"),
+                    "event_kind": expected_kind,
+                    "lifecycle_code": event.get("lifecycle_code"),
+                    "material_type_code": event.get("material_type_code"),
+                    "predecessor_event_id": predecessor_event_id,
+                    "proposal_evidence": event_evidence,
+                    "reason": event_reason,
+                    "taxonomy_version_id": taxonomy_version_id,
+                }
+            )
+            if effective_at is not None
+            else None
+        )
+        if (
+            not accepted_by
+            or int(event.get("approval_batch_id") or 0) != batch_id
+            or int(event.get("content_entity_id") or 0) != entity_id
+            or int(event.get("authorized_entity_id") or 0) != entity_id
+            or int(event.get("taxonomy_version_id") or 0) != taxonomy_version_id
+            or event_values != final_values
+            or event.get("event_kind") != expected_kind
+            or (
+                int(event.get("predecessor_event_id"))
+                if event.get("predecessor_event_id") is not None else None
+            ) != predecessor_event_id
+            or event_actor != accepted_by
+            or event_reason
+            != _normalized_audit_text(item.get("decision_reason"))
+            or event.get("event_fingerprint") != expected_fingerprint
+            or not all(event.get(name) is not None for name in (
+                "direction_label", "material_type_label", "access_label",
+                "lifecycle_label",
+            ))
+            or not isinstance(event_evidence, Mapping)
+            or set(event_evidence) != {
+                "accepted_decision_hash", "approval_item_evidence", "row_hash"
+            }
+            or event_evidence.get("accepted_decision_hash") != accepted_hash
+            or event_evidence.get("row_hash") != item.get("row_hash")
+            or _canonical_json(event_evidence.get("approval_item_evidence"))
+            != _canonical_json(item_evidence)
+            or (expected_kind == "correct" and not _normalized_audit_text(item.get("decision_reason")))
+        ):
+            raise CandidateMaterializationError("CURRENT_BATCH_EVENT_UNAUTHORIZED")
+    if seen != set(expected):
+        raise CandidateMaterializationError(
+            "CURRENT_BATCH_EVENT_AUTHORIZATION_INCOMPLETE"
+        )
+
+
 def _overlay_current_batch_events(
     predecessor_rows: Iterable[Mapping[str, object]],
     event_rows: Iterable[Mapping[str, object]],
 ) -> tuple[CandidateCatalogRow, ...]:
     result = [_predecessor_catalog_row(row) for row in predecessor_rows]
     for event in event_rows:
-        if int(event.get("authorization_violation") or 0) != 0:
-            raise CandidateMaterializationError("CURRENT_BATCH_EVENT_UNAUTHORIZED")
         event_kind = str(event.get("event_kind") or "")
         if event_kind not in {"approve", "correct", "revoke"}:
             raise CandidateMaterializationError("CURRENT_BATCH_EVENT_INVALID")
@@ -1420,9 +1700,15 @@ def materialize_content_candidate(
                    batch.accepted_count, batch.ready_count, batch.conflict_count,
                    batch.unresolved_count, batch.rejected_count,
                    batch.no_change_count, batch.taxonomy_version_id,
+                   batch.taxonomy_digest, batch.published_input_hash,
+                   batch.prompt_version, batch.model_routing_version,
+                   batch.accepted_by, taxonomy.version AS taxonomy_version,
                    batch.accepted_at, batch.source_snapshot_ids,
                    batch.source_snapshot_digests
             FROM portal_content_approval_batches AS batch
+            INNER JOIN portal_content_taxonomy_versions AS taxonomy
+              ON taxonomy.id = batch.taxonomy_version_id
+             AND taxonomy.dataset_key = batch.dataset_key
             WHERE batch.id = %s AND batch.dataset_key = %s
             FOR UPDATE
             """,
@@ -1436,7 +1722,7 @@ def materialize_content_candidate(
             or batch.get("accepted_at") is None
         ):
             raise CandidateMaterializationError("BATCH_NOT_INGESTED")
-        approval_bundle = _load_approval_bundle(cursor, batch_id)
+        approval_bundle = _load_approval_bundle(cursor, batch_id, batch)
         counts = approval_bundle["counts"]
         if not isinstance(counts, Mapping):
             raise CandidateMaterializationError("APPROVAL_BUNDLE_INVALID")
@@ -1595,77 +1881,21 @@ def materialize_content_candidate(
 
         cursor.execute(
             """
-            SELECT entity.id AS content_entity_id, entity.material_id,
+            SELECT entity.id AS authorized_entity_id,
+                   event.content_entity_id, entity.material_id,
                    entity.title, entity.canonical_url, entity.source_evidence,
                    event.id AS classification_event_id, event.direction_code,
                    event.material_type_code, event.access_code,
                    event.lifecycle_code, event.event_kind,
                    event.event_fingerprint, event.approval_batch_id,
+                   event.approval_item_id, event.taxonomy_version_id,
+                   event.predecessor_event_id, event.proposal_evidence,
+                   event.actor, event.reason,
                    event.effective_at, direction.term_label AS direction_label,
                    material.term_label AS material_type_label,
                    access_term.term_label AS access_label,
-                   lifecycle.term_label AS lifecycle_label,
-                   CASE WHEN
-                     item.id IS NOT NULL
-                     AND entity.id IS NOT NULL
-                     AND item.approval_batch_id = event.approval_batch_id
-                     AND item.readiness_state = 'ready'
-                     AND item.content_entity_id <=> event.content_entity_id
-                     AND item.final_direction_code <=> event.direction_code
-                     AND item.final_material_type_code <=> event.material_type_code
-                     AND item.final_access_code <=> event.access_code
-                     AND item.final_lifecycle_code <=> event.lifecycle_code
-                     AND event.taxonomy_version_id = batch.taxonomy_version_id
-                     AND batch.batch_status = 'ingested'
-                     AND batch.accepted_at IS NOT NULL
-                     AND event.event_kind IN ('approve', 'correct', 'revoke')
-                     AND direction.term_label IS NOT NULL
-                     AND material.term_label IS NOT NULL
-                     AND access_term.term_label IS NOT NULL
-                     AND lifecycle.term_label IS NOT NULL
-                     AND event.actor IS NOT NULL AND TRIM(event.actor) <> ''
-                     AND (
-                       SELECT COUNT(*)
-                       FROM portal_content_classification_events AS same_item_event
-                       WHERE same_item_event.approval_batch_id = event.approval_batch_id
-                         AND same_item_event.approval_item_id = event.approval_item_id
-                     ) = 1
-                     AND JSON_CONTAINS_PATH(event.proposal_evidence, 'all',
-                       '$.accepted_decision_hash', '$.row_hash',
-                       '$.approval_item_evidence.published_decision.final_direction_code',
-                       '$.approval_item_evidence.published_decision.final_material_type_code',
-                       '$.approval_item_evidence.published_decision.final_access_code',
-                       '$.approval_item_evidence.published_decision.final_lifecycle_code')
-                     AND JSON_UNQUOTE(JSON_EXTRACT(event.proposal_evidence,
-                       '$.accepted_decision_hash')) = batch.accepted_decision_hash
-                     AND JSON_UNQUOTE(JSON_EXTRACT(event.proposal_evidence,
-                       '$.row_hash')) = item.row_hash
-                     AND JSON_EXTRACT(event.proposal_evidence,
-                       '$.approval_item_evidence') = item.proposal_evidence
-                     AND JSON_UNQUOTE(JSON_EXTRACT(event.proposal_evidence,
-                       '$.approval_item_evidence.published_decision.final_direction_code'))
-                         <=> event.direction_code
-                     AND JSON_UNQUOTE(JSON_EXTRACT(event.proposal_evidence,
-                       '$.approval_item_evidence.published_decision.final_material_type_code'))
-                         <=> event.material_type_code
-                     AND JSON_UNQUOTE(JSON_EXTRACT(event.proposal_evidence,
-                       '$.approval_item_evidence.published_decision.final_access_code'))
-                         <=> event.access_code
-                     AND JSON_UNQUOTE(JSON_EXTRACT(event.proposal_evidence,
-                       '$.approval_item_evidence.published_decision.final_lifecycle_code'))
-                         <=> event.lifecycle_code
-                     AND (event.event_kind <> 'correct' OR (
-                       event.predecessor_event_id IS NOT NULL
-                       AND event.reason IS NOT NULL AND TRIM(event.reason) <> ''
-                     ))
-                   THEN 0 ELSE 1 END AS authorization_violation
+                   lifecycle.term_label AS lifecycle_label
             FROM portal_content_classification_events AS event
-            LEFT JOIN portal_content_approval_items AS item
-              ON item.id = event.approval_item_id
-             AND item.approval_batch_id = event.approval_batch_id
-            INNER JOIN portal_content_approval_batches AS batch
-              ON batch.id = event.approval_batch_id
-             AND batch.dataset_key = %s
             LEFT JOIN portal_content_registry_entities AS entity
               ON entity.id = event.content_entity_id
              AND entity.dataset_key = %s
@@ -1694,7 +1924,6 @@ def materialize_content_candidate(
             """,
             (
                 DATASET_KEY,
-                DATASET_KEY,
                 batch["taxonomy_version_id"],
                 batch["taxonomy_version_id"],
                 batch["taxonomy_version_id"],
@@ -1703,10 +1932,12 @@ def materialize_content_candidate(
             ),
         )
         event_rows = tuple(cursor.fetchall())
-        if len(event_rows) != int(batch.get("accepted_count") or 0):
-            raise CandidateMaterializationError(
-                "CURRENT_BATCH_EVENT_AUTHORIZATION_INCOMPLETE"
-            )
+        _authorize_current_batch_events(
+            event_rows,
+            approval_bundle["approval_rows_by_id"],
+            batch,
+            predecessor_catalog_rows,
+        )
         catalog_rows = _overlay_current_batch_events(
             predecessor_catalog_rows, event_rows
         )
@@ -2373,8 +2604,14 @@ def validate_content_candidate(
                    batch.accepted_count, batch.ready_count, batch.conflict_count,
                    batch.unresolved_count, batch.rejected_count,
                    batch.no_change_count, batch.taxonomy_version_id,
+                   batch.taxonomy_digest, batch.published_input_hash,
+                   batch.prompt_version, batch.model_routing_version,
+                   batch.accepted_by, taxonomy.version AS taxonomy_version,
                    batch.source_snapshot_ids, batch.source_snapshot_digests
             FROM portal_content_approval_batches AS batch
+            INNER JOIN portal_content_taxonomy_versions AS taxonomy
+              ON taxonomy.id = batch.taxonomy_version_id
+             AND taxonomy.dataset_key = batch.dataset_key
             WHERE batch.id = %s AND batch.dataset_key = %s
               AND batch.candidate_release_id = %s
             """,
@@ -2383,7 +2620,7 @@ def validate_content_candidate(
         batch = cursor.fetchone()
         if not isinstance(batch, Mapping):
             raise CandidateMaterializationError("CANDIDATE_GATE_EVIDENCE_MISSING")
-        approval = _load_approval_bundle(cursor, batch_id)
+        approval = _load_approval_bundle(cursor, batch_id, batch)
         actual_counts = approval["counts"]
         expected_bundle_counts = bundle.get("expected_counts")
         if not isinstance(actual_counts, Mapping) or not isinstance(expected_bundle_counts, Mapping):
@@ -2516,100 +2753,66 @@ def validate_content_candidate(
             catalog_schema_failures += 1
         cursor.execute(
             """
-            SELECT COUNT(*) AS anti_flip_violations
+            SELECT entity.id AS authorized_entity_id,
+                   event.content_entity_id, event.id AS classification_event_id,
+                   event.direction_code, event.material_type_code,
+                   event.access_code, event.lifecycle_code, event.event_kind,
+                   event.event_fingerprint, event.approval_batch_id,
+                   event.approval_item_id, event.taxonomy_version_id,
+                   event.predecessor_event_id, event.proposal_evidence,
+                   event.actor, event.reason, event.effective_at,
+                   direction.term_label AS direction_label,
+                   material.term_label AS material_type_label,
+                   access_term.term_label AS access_label,
+                   lifecycle.term_label AS lifecycle_label
             FROM portal_content_classification_events AS event
-            LEFT JOIN portal_content_approval_items AS item
-              ON item.id = event.approval_item_id
-             AND item.approval_batch_id = event.approval_batch_id
-            LEFT JOIN portal_content_approval_batches AS batch
-              ON batch.id = event.approval_batch_id
             LEFT JOIN portal_content_registry_entities AS entity
               ON entity.id = event.content_entity_id
              AND entity.dataset_key = %s
+            LEFT JOIN portal_content_taxonomy_terms AS direction
+              ON direction.taxonomy_version_id = %s
+             AND direction.taxonomy_kind = 'direction'
+             AND direction.term_code = event.direction_code
+             AND direction.term_status = 'active'
+            LEFT JOIN portal_content_taxonomy_terms AS material
+              ON material.taxonomy_version_id = %s
+             AND material.taxonomy_kind = 'material_type'
+             AND material.term_code = event.material_type_code
+             AND material.term_status = 'active'
+            LEFT JOIN portal_content_taxonomy_terms AS access_term
+              ON access_term.taxonomy_version_id = %s
+             AND access_term.taxonomy_kind = 'access'
+             AND access_term.term_code = event.access_code
+             AND access_term.term_status = 'active'
+            LEFT JOIN portal_content_taxonomy_terms AS lifecycle
+              ON lifecycle.taxonomy_version_id = %s
+             AND lifecycle.taxonomy_kind = 'lifecycle'
+             AND lifecycle.term_code = event.lifecycle_code
+             AND lifecycle.term_status = 'active'
             WHERE event.approval_batch_id = %s
-              AND (
-                item.id IS NULL OR batch.id IS NULL OR entity.id IS NULL
-                OR item.readiness_state <> 'ready'
-                OR NOT (item.content_entity_id <=> event.content_entity_id)
-                OR NOT (item.final_direction_code <=> event.direction_code)
-                OR NOT (item.final_material_type_code <=> event.material_type_code)
-                OR NOT (item.final_access_code <=> event.access_code)
-                OR NOT (item.final_lifecycle_code <=> event.lifecycle_code)
-                OR NOT (event.taxonomy_version_id <=> batch.taxonomy_version_id)
-                OR event.event_kind NOT IN ('approve', 'correct', 'revoke')
-                OR event.actor IS NULL OR TRIM(event.actor) = ''
-                OR (
-                  SELECT COUNT(*)
-                  FROM portal_content_classification_events AS same_item_event
-                  WHERE same_item_event.approval_batch_id = event.approval_batch_id
-                    AND same_item_event.approval_item_id = event.approval_item_id
-                ) <> 1
-                OR NOT JSON_CONTAINS_PATH(event.proposal_evidence, 'all',
-                  '$.accepted_decision_hash', '$.row_hash',
-                  '$.approval_item_evidence.published_decision.final_direction_code',
-                  '$.approval_item_evidence.published_decision.final_material_type_code',
-                  '$.approval_item_evidence.published_decision.final_access_code',
-                  '$.approval_item_evidence.published_decision.final_lifecycle_code')
-                OR COALESCE(JSON_UNQUOTE(JSON_EXTRACT(
-                  event.proposal_evidence, '$.accepted_decision_hash'
-                )) <> batch.accepted_decision_hash, 1)
-                OR COALESCE(JSON_UNQUOTE(JSON_EXTRACT(
-                  event.proposal_evidence, '$.row_hash'
-                )) <> item.row_hash, 1)
-                OR COALESCE(JSON_EXTRACT(
-                  event.proposal_evidence, '$.approval_item_evidence'
-                ) <> item.proposal_evidence, 1)
-                OR (
-                  JSON_UNQUOTE(JSON_EXTRACT(
-                    item.proposal_evidence, '$.current_canonical.direction_code'
-                  )) IS NOT NULL
-                  AND JSON_UNQUOTE(JSON_EXTRACT(
-                    item.proposal_evidence, '$.current_canonical.direction_code'
-                  )) <> item.final_direction_code
-                  AND (
-                    event.event_kind <> 'correct'
-                    OR event.predecessor_event_id IS NULL
-                    OR event.predecessor_event_id <> CAST(JSON_UNQUOTE(JSON_EXTRACT(
-                      item.proposal_evidence, '$.current_canonical.event_id'
-                    )) AS UNSIGNED)
-                    OR event.actor IS NULL OR TRIM(event.actor) = ''
-                    OR event.reason IS NULL OR TRIM(event.reason) = ''
-                  )
-                )
-                OR (
-                  event.event_kind = 'correct'
-                  AND (
-                    JSON_UNQUOTE(JSON_EXTRACT(
-                      item.proposal_evidence, '$.current_canonical.direction_code'
-                    )) IS NULL
-                    OR event.predecessor_event_id IS NULL
-                    OR event.actor IS NULL OR TRIM(event.actor) = ''
-                    OR event.reason IS NULL OR TRIM(event.reason) = ''
-                  )
-                )
-              )
+            ORDER BY event.id
             """,
-            (DATASET_KEY, batch_id),
+            (
+                DATASET_KEY,
+                batch["taxonomy_version_id"], batch["taxonomy_version_id"],
+                batch["taxonomy_version_id"], batch["taxonomy_version_id"],
+                batch_id,
+            ),
         )
-        anti_flip = int(_row_value(cursor.fetchone(), "anti_flip_violations", 0) or 0)
-        cursor.execute(
-            """
-            SELECT ABS(
-              (SELECT COUNT(*)
-               FROM portal_content_approval_items AS accepted_item
-               WHERE accepted_item.approval_batch_id = %s
-                 AND accepted_item.readiness_state = 'ready')
-              -
-              (SELECT COUNT(*)
-               FROM portal_content_classification_events AS current_event
-               WHERE current_event.approval_batch_id = %s)
-            ) AS event_coverage_violations
-            """,
-            (batch_id, batch_id),
-        )
-        anti_flip += int(
-            _row_value(cursor.fetchone(), "event_coverage_violations", 0) or 0
-        )
+        validation_event_rows = tuple(cursor.fetchall())
+        try:
+            _authorize_current_batch_events(
+                validation_event_rows,
+                approval["approval_rows_by_id"],
+                batch,
+                tuple(
+                    dict(zip(_PREDECESSOR_CATALOG_COLUMNS, row))
+                    for row in predecessor_catalog_rows
+                ),
+            )
+            anti_flip = 0
+        except CandidateMaterializationError:
+            anti_flip = 1
         cursor.execute(
             """
             SELECT COUNT(*) AS strong_collision_count
