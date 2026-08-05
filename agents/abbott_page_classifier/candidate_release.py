@@ -10,6 +10,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from datetime import date, datetime, time, timezone
 from decimal import Decimal, InvalidOperation
+import hashlib
 import json
 import re
 from typing import Iterable, Mapping, Sequence
@@ -73,6 +74,7 @@ _LOOKUP_COLUMNS = (
 _SNAPSHOT_COLUMNS = (
     "id", "source_kind", "content_sha256", "content_bytes", "parser_version",
     "import_status", "imported_row_count", "rejected_row_count", "manifest_json",
+    "source_row_count",
 )
 _IMPORT_COLUMNS = (
     "source_snapshot_id", "source_kind", "imported_row_count",
@@ -113,6 +115,7 @@ class CandidateCatalogRow:
     lifecycle_code: str | None = None
     provenance_mode: str = "current_batch_event"
     predecessor_catalog_row_id: int | None = None
+    baseline_provenance_fingerprint: str | None = None
 
 
 @dataclass(frozen=True)
@@ -376,7 +379,7 @@ def _load_approval_bundle(cursor, batch_id: int) -> dict[str, object]:
         SELECT item.content_entity_id, item.input_hash, item.title, item.url,
                item.final_direction_code, item.final_material_type_code,
                item.final_access_code, item.final_lifecycle_code,
-               item.readiness_state, item.conflict_codes, item.row_hash,
+               item.readiness_state, item.conflict_code, item.conflict_codes, item.row_hash,
                item.decision_reason, item.proposal_evidence
         FROM portal_content_approval_items AS item
         WHERE item.approval_batch_id = %s
@@ -409,6 +412,14 @@ def _load_approval_bundle(cursor, batch_id: int) -> dict[str, object]:
         if not isinstance(conflict_codes, (list, tuple)):
             raise CandidateMaterializationError("APPROVAL_BUNDLE_INVALID")
         conflict_values = tuple(str(code) for code in conflict_codes)
+        scalar_conflict = (
+            str(row.get("conflict_code"))
+            if row.get("conflict_code") is not None
+            else None
+        )
+        first_conflict = conflict_values[0] if conflict_values else None
+        if scalar_conflict != first_conflict:
+            raise CandidateMaterializationError("APPROVAL_BUNDLE_INVALID")
         identity_collisions += sum(
             code == "IDENTITY_COLLISION" for code in conflict_values
         )
@@ -707,7 +718,12 @@ def _predecessor_catalog_row(row: Mapping[str, object]) -> CandidateCatalogRow:
     if not isinstance(provenance, Mapping):
         raise CandidateMaterializationError("PREDECESSOR_PROVENANCE_INVALID")
     codes = provenance.get("canonical_codes") or {}
-    if not isinstance(codes, Mapping):
+    required_codes = ("direction", "material_type", "access", "lifecycle")
+    if (
+        not isinstance(codes, Mapping)
+        or int(row.get("content_entity_id") or 0) <= 0
+        or any(not str(codes.get(name) or "").strip() for name in required_codes)
+    ):
         raise CandidateMaterializationError("PREDECESSOR_PROVENANCE_INVALID")
     return CandidateCatalogRow(
         content_entity_id=int(row.get("content_entity_id") or 0),
@@ -751,9 +767,171 @@ def _predecessor_catalog_row(row: Mapping[str, object]) -> CandidateCatalogRow:
         lifecycle_code=(
             str(codes["lifecycle"]) if codes.get("lifecycle") is not None else None
         ),
-        provenance_mode="predecessor_catalog",
+        provenance_mode=str(provenance.get("mode") or "predecessor_catalog"),
         predecessor_catalog_row_id=int(row.get("id") or 0),
+        baseline_provenance_fingerprint=(
+            str(provenance["baseline_provenance_fingerprint"])
+            if provenance.get("baseline_provenance_fingerprint") is not None
+            else None
+        ),
     )
+
+
+def _resolve_legacy_predecessor_rows(
+    cursor,
+    rows: Sequence[Mapping[str, object]],
+    *,
+    predecessor_release_id: int,
+    predecessor_snapshot_id: int,
+    taxonomy_version_id: int,
+) -> tuple[Mapping[str, object], ...]:
+    def needs_resolution(row: Mapping[str, object]) -> bool:
+        provenance = _decode_json(
+            row.get("projection_provenance_json") or {},
+            code="PREDECESSOR_PROVENANCE_INVALID",
+        )
+        codes = provenance.get("canonical_codes") if isinstance(provenance, Mapping) else None
+        return (
+            int(row.get("content_entity_id") or 0) <= 0
+            or not isinstance(codes, Mapping)
+            or any(
+                not str(codes.get(name) or "").strip()
+                for name in ("direction", "material_type", "access", "lifecycle")
+            )
+        )
+
+    legacy_ids = {int(row.get("id") or 0) for row in rows if needs_resolution(row)}
+    if not legacy_ids:
+        return tuple(rows)
+    if 0 in legacy_ids:
+        raise CandidateMaterializationError("PREDECESSOR_PROVENANCE_INVALID")
+    cursor.execute(
+        """
+        SELECT legacy_catalog.id AS predecessor_catalog_row_id,
+               alias_row.content_entity_id, alias_row.alias_type,
+               direction.term_code AS direction_code,
+               material.term_code AS material_type_code,
+               access_term.term_code AS access_code,
+               lifecycle.term_code AS lifecycle_code
+        FROM portal_content_catalog AS legacy_catalog
+        INNER JOIN portal_content_registry_aliases AS alias_row
+          ON alias_row.dataset_key = %s
+         AND alias_row.alias_status = 'active'
+         AND alias_row.uniqueness_scope = 'strong'
+         AND ((alias_row.alias_type = 'material_id'
+               AND legacy_catalog.material_id IS NOT NULL
+               AND alias_row.alias_hash = SHA2(legacy_catalog.material_id, 256))
+           OR (alias_row.alias_type IN ('canonical_url', 'url')
+               AND alias_row.alias_hash = legacy_catalog.normalized_url_hash))
+        INNER JOIN portal_content_registry_entities AS entity
+          ON entity.dataset_key = alias_row.dataset_key
+         AND entity.id = alias_row.content_entity_id
+         AND entity.registry_status = 'active'
+        LEFT JOIN portal_content_taxonomy_terms AS direction
+          ON direction.taxonomy_version_id = %s
+         AND direction.taxonomy_kind = 'direction'
+         AND direction.term_label = legacy_catalog.direction_key
+         AND direction.term_status = 'active'
+        LEFT JOIN portal_content_taxonomy_terms AS material
+          ON material.taxonomy_version_id = %s
+         AND material.taxonomy_kind = 'material_type'
+         AND material.term_label = legacy_catalog.material_type
+         AND material.term_status = 'active'
+        LEFT JOIN portal_content_taxonomy_terms AS access_term
+          ON access_term.taxonomy_version_id = %s
+         AND access_term.taxonomy_kind = 'access'
+         AND access_term.term_label = legacy_catalog.access_label
+         AND access_term.term_status = 'active'
+        LEFT JOIN portal_content_taxonomy_terms AS lifecycle
+          ON lifecycle.taxonomy_version_id = %s
+         AND lifecycle.taxonomy_kind = 'lifecycle'
+         AND lifecycle.term_code = CASE
+               WHEN legacy_catalog.is_active = 1 THEN 'active' ELSE 'archived'
+             END
+         AND lifecycle.term_status = 'active'
+        WHERE legacy_catalog.canonical_release_id = %s
+          AND legacy_catalog.source_snapshot_id = %s
+          AND legacy_catalog.id IN ("""
+        + ", ".join(["%s"] * len(legacy_ids))
+        + ") ORDER BY legacy_catalog.id, alias_row.content_entity_id, alias_row.alias_type",
+        (
+            DATASET_KEY,
+            taxonomy_version_id,
+            taxonomy_version_id,
+            taxonomy_version_id,
+            taxonomy_version_id,
+            predecessor_release_id,
+            predecessor_snapshot_id,
+            *sorted(legacy_ids),
+        ),
+    )
+    resolutions: dict[int, list[Mapping[str, object]]] = {}
+    for resolution in cursor.fetchall():
+        if not isinstance(resolution, Mapping):
+            raise CandidateMaterializationError(
+                "LEGACY_PREDECESSOR_PROVENANCE_INVALID"
+            )
+        row_id = int(resolution.get("predecessor_catalog_row_id") or 0)
+        resolutions.setdefault(row_id, []).append(resolution)
+    resolved_rows: list[Mapping[str, object]] = []
+    for row in rows:
+        row_id = int(row.get("id") or 0)
+        if row_id not in legacy_ids:
+            resolved_rows.append(row)
+            continue
+        candidates = resolutions.get(row_id, [])
+        entity_ids = {int(item.get("content_entity_id") or 0) for item in candidates}
+        code_sets = {
+            tuple(str(item.get(name) or "") for name in (
+                "direction_code", "material_type_code", "access_code", "lifecycle_code"
+            ))
+            for item in candidates
+        }
+        if len(entity_ids) != 1 or 0 in entity_ids or len(code_sets) != 1:
+            raise CandidateMaterializationError(
+                "LEGACY_PREDECESSOR_PROVENANCE_AMBIGUOUS"
+            )
+        codes = next(iter(code_sets))
+        if any(not value for value in codes):
+            raise CandidateMaterializationError(
+                "LEGACY_PREDECESSOR_PROVENANCE_UNMAPPED"
+            )
+        entity_id = next(iter(entity_ids))
+        baseline_fingerprint = sha256_text(
+            _canonical_json(
+                {
+                    "canonical_codes": codes,
+                    "content_entity_id": entity_id,
+                    "predecessor_catalog_row_id": row_id,
+                    "predecessor_release_id": predecessor_release_id,
+                    "source_row_fingerprint": row.get("source_row_fingerprint"),
+                }
+            )
+        )
+        resolved_rows.append(
+            {
+                **row,
+                "content_entity_id": entity_id,
+                "classification_event_id": None,
+                "classification_event_fingerprint": None,
+                "projection_provenance_json": _canonical_json(
+                    {
+                        "baseline_provenance_fingerprint": baseline_fingerprint,
+                        "canonical_codes": {
+                            "direction": codes[0],
+                            "material_type": codes[1],
+                            "access": codes[2],
+                            "lifecycle": codes[3],
+                        },
+                        "content_entity_id": entity_id,
+                        "mode": "legacy_active_catalog_baseline",
+                        "predecessor_catalog_row_id": row_id,
+                        "source_row_fingerprint": row.get("source_row_fingerprint"),
+                    }
+                ),
+            }
+        )
+    return tuple(resolved_rows)
 
 
 def _event_matches_predecessor(
@@ -799,6 +977,26 @@ def _overlay_current_batch_events(
     )
 
 
+def _referenced_taxonomy_terms(
+    rows: Iterable[CandidateCatalogRow],
+) -> list[dict[str, str]]:
+    referenced: set[tuple[str, str, str]] = set()
+    for row in rows:
+        for kind, code, label in (
+            ("direction", row.direction_code, row.direction_key),
+            ("material_type", row.material_type_code, row.material_type),
+            ("access", row.access_code, row.access_label),
+            ("lifecycle", row.lifecycle_code, ""),
+        ):
+            if not code:
+                raise CandidateMaterializationError("CANDIDATE_TAXONOMY_INVALID")
+            referenced.add((kind, str(code), str(label or "")))
+    return [
+        {"taxonomy_kind": kind, "term_code": code, "term_label": label}
+        for kind, code, label in sorted(referenced)
+    ]
+
+
 def _catalog_payload(row: CandidateCatalogRow) -> tuple[object, ...]:
     provenance = {
         "canonical_codes": {
@@ -812,6 +1010,7 @@ def _catalog_payload(row: CandidateCatalogRow) -> tuple[object, ...]:
         "content_entity_id": row.content_entity_id,
         "mode": row.provenance_mode,
         "predecessor_catalog_row_id": row.predecessor_catalog_row_id,
+        "baseline_provenance_fingerprint": row.baseline_provenance_fingerprint,
         "source_row_fingerprint": row.source_row_fingerprint,
     }
     visible = (
@@ -884,6 +1083,7 @@ def _snapshot_records(
             "content_sha256": str(_row_value(row, "content_sha256", 2) or ""),
             "content_bytes": int(_row_value(row, "content_bytes", 3) or 0),
             "parser_version": str(_row_value(row, "parser_version", 4) or ""),
+            "source_row_count": int(_row_value(row, "source_row_count", 9) or 0),
         }
         if include_ids:
             manifest = _decode_json(
@@ -924,7 +1124,9 @@ def _records_hash(records: object) -> str:
 
 
 # Explicit columns keep the copy auditable and preserve Abbott UTM/visit grains.
-_NON_CONTENT_RELEASE_TABLES: tuple[tuple[str, tuple[str, ...]], ...] = (
+_NON_CONTENT_RELEASE_TABLES: tuple[
+    tuple[str, tuple[str, ...], tuple[str, ...]], ...
+] = (
     (
         "portal_general_materials",
         (
@@ -933,6 +1135,7 @@ _NON_CONTENT_RELEASE_TABLES: tuple[tuple[str, tuple[str, ...]], ...] = (
             "normalized_path_hash", "direction_key", "published_at", "metadata_json",
             "created_at", "updated_at",
         ),
+        ("source_snapshot_id", "material_key"),
     ),
     (
         "portal_event_catalog",
@@ -941,6 +1144,7 @@ _NON_CONTENT_RELEASE_TABLES: tuple[tuple[str, tuple[str, ...]], ...] = (
             "registration_url_hash", "access_label", "source_row_fingerprint",
             "created_at", "updated_at",
         ),
+        ("source_snapshot_id", "source_row_fingerprint"),
     ),
     (
         "portal_external_events",
@@ -949,6 +1153,7 @@ _NON_CONTENT_RELEASE_TABLES: tuple[tuple[str, tuple[str, ...]], ...] = (
             "occurred_at", "normalized_path", "normalized_path_hash", "event_kind",
             "source_name", "campaign_name", "source_row_fingerprint", "created_at",
         ),
+        ("source_key", "analytics_account_id", "report_date", "source_row_fingerprint"),
     ),
     (
         "portal_bitrix_page_facts",
@@ -961,6 +1166,7 @@ _NON_CONTENT_RELEASE_TABLES: tuple[tuple[str, tuple[str, ...]], ...] = (
             "avg_session_duration_seconds", "top_utm_source", "top_utm_medium",
             "top_utm_campaign", "source_row_fingerprint", "created_at",
         ),
+        ("source_snapshot_id", "analytics_account_id", "report_date", "source_row_fingerprint"),
     ),
     (
         "portal_bitrix_journey_transitions",
@@ -969,6 +1175,7 @@ _NON_CONTENT_RELEASE_TABLES: tuple[tuple[str, tuple[str, ...]], ...] = (
             "from_path_hash", "to_path", "to_path_hash", "transition_count",
             "created_at", "updated_at",
         ),
+        ("source_snapshot_id", "analytics_account_id", "report_date", "from_path_hash", "to_path_hash"),
     ),
     (
         "canonical_fact_metrika_site_analytics_daily",
@@ -978,6 +1185,7 @@ _NON_CONTENT_RELEASE_TABLES: tuple[tuple[str, tuple[str, ...]], ...] = (
             "pageviews", "bounce_rate", "average_session_seconds", "goal_conversions",
             "raw_payload", "ingestion_run_id", "created_at",
         ),
+        ("source_key", "analytics_account_id", "report_date", "analytics_scope", "scope_hash"),
     ),
     (
         "canonical_fact_metrika_returning_pages_release_daily",
@@ -988,6 +1196,7 @@ _NON_CONTENT_RELEASE_TABLES: tuple[tuple[str, tuple[str, ...]], ...] = (
             "derived_count", "is_derived", "request_fingerprint", "ingestion_run_id",
             "created_at",
         ),
+        ("counter_id", "report_date", "raw_page_hash", "return_bucket_code"),
     ),
     (
         "canonical_source_coverage_daily",
@@ -998,6 +1207,7 @@ _NON_CONTENT_RELEASE_TABLES: tuple[tuple[str, tuple[str, ...]], ...] = (
             "collector_run_id", "failure_code", "sanitized_failure_json", "created_at",
             "updated_at",
         ),
+        ("source_key", "counter_id", "scope_key", "report_date"),
     ),
     (
         "report_bd_private.canonical_fact_metrika_user_behavior_daily",
@@ -1007,6 +1217,7 @@ _NON_CONTENT_RELEASE_TABLES: tuple[tuple[str, tuple[str, ...]], ...] = (
             "visit_id_hash", "session_started_at", "session_ended_at", "pageviews",
             "request_fingerprint", "ingestion_run_id", "created_at",
         ),
+        ("counter_id", "report_date", "request_fingerprint"),
     ),
     (
         "report_bd_private.canonical_fact_metrika_visits",
@@ -1018,6 +1229,7 @@ _NON_CONTENT_RELEASE_TABLES: tuple[tuple[str, tuple[str, ...]], ...] = (
             "duration_seconds", "is_bounce", "request_fingerprint", "ingestion_run_id",
             "created_at",
         ),
+        ("counter_id", "report_date", "visit_id_hash"),
     ),
     (
         "report_bd_private.portal_user_directions_private",
@@ -1026,6 +1238,7 @@ _NON_CONTENT_RELEASE_TABLES: tuple[tuple[str, tuple[str, ...]], ...] = (
             "normalized_direction", "normalized_specialization", "created_at",
             "updated_at",
         ),
+        ("source_snapshot_id", "raw_user_id_hash"),
     ),
     (
         "report_bd_private.portal_bitrix_page_facts",
@@ -1038,6 +1251,7 @@ _NON_CONTENT_RELEASE_TABLES: tuple[tuple[str, tuple[str, ...]], ...] = (
             "avg_session_duration_seconds", "top_utm_source", "top_utm_medium",
             "top_utm_campaign", "source_row_fingerprint", "created_at",
         ),
+        ("source_snapshot_id", "analytics_account_id", "report_date", "source_row_fingerprint"),
     ),
     (
         "report_bd_private.portal_bitrix_journeys_private",
@@ -1048,21 +1262,34 @@ _NON_CONTENT_RELEASE_TABLES: tuple[tuple[str, tuple[str, ...]], ...] = (
             "normalized_path", "normalized_path_hash", "event_kind",
             "source_row_fingerprint", "created_at",
         ),
+        ("source_snapshot_id", "analytics_account_id", "report_date", "protected_visit_id_hash", "event_sequence"),
     ),
 )
 
 
 def _read_non_content_bundle(cur, release_id: int) -> dict[str, dict[str, object]]:
     bundle: dict[str, dict[str, object]] = {}
-    for table, columns in _NON_CONTENT_RELEASE_TABLES:
+    for table, columns, natural_grain in _NON_CONTENT_RELEASE_TABLES:
         column_sql = ", ".join(columns)
         cur.execute(
             f"SELECT {column_sql} FROM {table} "
-            "WHERE canonical_release_id = %s ORDER BY id",
+            f"WHERE canonical_release_id = %s ORDER BY {', '.join(natural_grain)}",
             (release_id,),
         )
-        rows = tuple(_ordered_row(row, columns) for row in cur.fetchall())
-        bundle[table] = {"count": len(rows), "hash": _hash_rows(rows), "rows": rows}
+        digest = hashlib.sha256()
+        digest.update(b"[")
+        count = 0
+        while True:
+            chunk = cur.fetchmany(1000)
+            if not chunk:
+                break
+            for row in chunk:
+                if count:
+                    digest.update(b",")
+                digest.update(_canonical_json(list(_ordered_row(row, columns))).encode("utf-8"))
+                count += 1
+        digest.update(b"]")
+        bundle[table] = {"count": count, "hash": digest.hexdigest()}
     return bundle
 
 
@@ -1072,12 +1299,13 @@ def _copy_non_content_facts(
     candidate_id: int,
     predecessor_bundle: Mapping[str, Mapping[str, object]],
 ) -> dict[str, dict[str, object]]:
-    for table, columns in _NON_CONTENT_RELEASE_TABLES:
+    for table, columns, natural_grain in _NON_CONTENT_RELEASE_TABLES:
         expected = predecessor_bundle[table]
         column_sql = ", ".join(columns)
         cur.execute(
             f"INSERT INTO {table} (canonical_release_id, {column_sql}) "
-            f"SELECT %s, {column_sql} FROM {table} WHERE canonical_release_id = %s",
+            f"SELECT %s, {column_sql} FROM {table} WHERE canonical_release_id = %s "
+            f"ORDER BY {', '.join(natural_grain)}",
             (candidate_id, predecessor_id),
         )
         if int(getattr(cur, "rowcount", -1)) != int(expected["count"]):
@@ -1243,7 +1471,7 @@ def materialize_content_candidate(
             f"""
             SELECT id, source_kind, content_sha256, content_bytes,
                    parser_version, import_status, imported_row_count,
-                   rejected_row_count, manifest_json
+                   rejected_row_count, manifest_json, source_row_count
             FROM portal_dataset_snapshots
             WHERE dataset_key = %s AND id IN ({placeholders})
             ORDER BY id
@@ -1341,6 +1569,13 @@ def materialize_content_candidate(
         predecessor_catalog_rows = tuple(cursor.fetchall())
         if not predecessor_catalog_rows:
             raise CandidateMaterializationError("PREDECESSOR_CATALOG_EMPTY")
+        predecessor_catalog_rows = _resolve_legacy_predecessor_rows(
+            cursor,
+            predecessor_catalog_rows,
+            predecessor_release_id=predecessor_release_id,
+            predecessor_snapshot_id=old_catalog_ids[0],
+            taxonomy_version_id=int(batch["taxonomy_version_id"]),
+        )
 
         cursor.execute(
             """
@@ -1362,18 +1597,22 @@ def materialize_content_candidate(
               ON direction.taxonomy_version_id = %s
              AND direction.taxonomy_kind = 'direction'
              AND direction.term_code = event.direction_code
+             AND direction.term_status = 'active'
             LEFT JOIN portal_content_taxonomy_terms AS material
               ON material.taxonomy_version_id = %s
              AND material.taxonomy_kind = 'material_type'
              AND material.term_code = event.material_type_code
+             AND material.term_status = 'active'
             LEFT JOIN portal_content_taxonomy_terms AS access_term
               ON access_term.taxonomy_version_id = %s
              AND access_term.taxonomy_kind = 'access'
              AND access_term.term_code = event.access_code
+             AND access_term.term_status = 'active'
             LEFT JOIN portal_content_taxonomy_terms AS lifecycle
               ON lifecycle.taxonomy_version_id = %s
              AND lifecycle.taxonomy_kind = 'lifecycle'
              AND lifecycle.term_code = event.lifecycle_code
+             AND lifecycle.term_status = 'active'
             WHERE event.approval_batch_id = %s
               AND event.event_kind IN ('approve', 'correct', 'revoke')
             ORDER BY event.id
@@ -1394,6 +1633,7 @@ def materialize_content_candidate(
         if not catalog_rows:
             raise CandidateMaterializationError("EMPTY_CONTENT_CANDIDATE")
         lookup_rows = build_lookup_projection(catalog_rows)
+        referenced_taxonomy_terms = _referenced_taxonomy_terms(catalog_rows)
         catalog_payloads = tuple(_catalog_payload(row) for row in catalog_rows)
         lookup_payloads = tuple(_lookup_payload(row) for row in lookup_rows)
         catalog_hash = _hash_rows(catalog_payloads)
@@ -1459,6 +1699,7 @@ def materialize_content_candidate(
                         "source_kind": CATALOG_SOURCE_KIND,
                         "content_sha256": catalog_hash,
                         "content_bytes": catalog_manifest["content_bytes"],
+                        "source_row_count": len(catalog_rows),
                         "parser_version": CATALOG_PARSER_VERSION,
                         "import_status": "imported",
                         "imported_row_count": len(catalog_rows),
@@ -1526,6 +1767,7 @@ def materialize_content_candidate(
                 predecessor_snapshot_records
             ),
             "taxonomy_version_id": int(batch["taxonomy_version_id"]),
+            "referenced_taxonomy_terms": referenced_taxonomy_terms,
         }
         control_values = dict(predecessor_baseline.get("control_values") or {})
         control_values.update(CONTENT_CONTROL_VALUES)
@@ -1853,7 +2095,8 @@ def _catalog_schema_gates(
                 or provenance.get("classification_event_fingerprint") != row[20]
                 or provenance.get("source_row_fingerprint") != row[12]
                 or provenance.get("mode") not in {
-                    "current_batch_event", "predecessor_catalog"
+                    "current_batch_event", "predecessor_catalog",
+                    "legacy_active_catalog_baseline",
                 }
             ):
                 schema_failures += 1
@@ -1887,12 +2130,44 @@ def _catalog_schema_gates(
     return schema_failures, out_of_taxonomy, archive_types, collisions
 
 
+def _catalog_taxonomy_references(
+    rows: Sequence[Sequence[object]],
+) -> list[dict[str, str]]:
+    referenced: set[tuple[str, str, str]] = set()
+    for row in rows:
+        provenance = _decode_json(row[21], code="CATALOG_PROVENANCE_INVALID")
+        codes = provenance.get("canonical_codes") if isinstance(provenance, Mapping) else None
+        if not isinstance(codes, Mapping):
+            raise CandidateMaterializationError("CATALOG_PROVENANCE_INVALID")
+        for kind, code, label in (
+            ("direction", codes.get("direction"), row[14]),
+            ("material_type", codes.get("material_type"), row[5]),
+            ("access", codes.get("access"), row[8]),
+            ("lifecycle", codes.get("lifecycle"), ""),
+        ):
+            if not str(code or "").strip():
+                raise CandidateMaterializationError("CATALOG_PROVENANCE_INVALID")
+            referenced.add((kind, str(code), str(label or "")))
+    return [
+        {"taxonomy_kind": kind, "term_code": code, "term_label": label}
+        for kind, code, label in sorted(referenced)
+    ]
+
+
 def validate_content_candidate(
     candidate_release_id: int,
     expected_counts: Mapping[str, int],
     accepted_hash: str,
+    *,
+    connection=None,
 ) -> GateReport:
-    """Attest the locked immutable candidate bundle without changing any state."""
+    """Attest the locked immutable candidate bundle without changing any state.
+
+    When a connection is supplied, its caller owns the surrounding transaction;
+    this lets the production control-pack comparator persist the evidence from the
+    same locked snapshot. Standalone inspection always rolls its own transaction
+    back before returning.
+    """
 
     if (
         not isinstance(candidate_release_id, int)
@@ -1924,11 +2199,12 @@ def validate_content_candidate(
     ):
         raise CandidateMaterializationError("CANDIDATE_VALIDATION_INPUT_INVALID")
 
-    connection = None
+    owns_connection = connection is None
     cursor = None
     try:
-        connection = get_db_connection()
-        connection.start_transaction()
+        if owns_connection:
+            connection = get_db_connection()
+            connection.start_transaction()
         cursor = connection.cursor(dictionary=True)
         cursor.execute(
             """
@@ -2063,7 +2339,22 @@ def validate_content_candidate(
         catalog_snapshot_id = int(_row_value(catalog_snapshot, "id", 0) or 0)
         predecessor_catalog_snapshot_id = int(_row_value(predecessor_catalog_snapshots[0], "id", 0) or 0)
         catalog_rows = _load_catalog(cursor, candidate_release_id, catalog_snapshot_id, include_id=False)
-        predecessor_catalog_rows = _load_catalog(cursor, predecessor_id, predecessor_catalog_snapshot_id, include_id=True)
+        predecessor_catalog_rows = _load_catalog(
+            cursor, predecessor_id, predecessor_catalog_snapshot_id, include_id=True
+        )
+        predecessor_catalog_rows = tuple(
+            _ordered_row(row, _PREDECESSOR_CATALOG_COLUMNS)
+            for row in _resolve_legacy_predecessor_rows(
+                cursor,
+                tuple(
+                    dict(zip(_PREDECESSOR_CATALOG_COLUMNS, row))
+                    for row in predecessor_catalog_rows
+                ),
+                predecessor_release_id=predecessor_id,
+                predecessor_snapshot_id=predecessor_catalog_snapshot_id,
+                taxonomy_version_id=int(bundle.get("taxonomy_version_id") or 0),
+            )
+        )
         lookup_rows = _load_lookup(cursor, candidate_release_id, catalog_snapshot_id)
         candidate_catalog_hash = _hash_rows(catalog_rows)
         predecessor_catalog_hash = _hash_rows(predecessor_catalog_rows)
@@ -2086,7 +2377,7 @@ def validate_content_candidate(
             and _decode_json(batch.get("source_snapshot_digests"), code="BATCH_SOURCE_BINDING_INVALID")
             == [str(_row_value(row, "content_sha256", 2) or "") for row in predecessor_snapshots]
             and [
-                {key: record[key] for key in ("source_kind", "content_sha256", "content_bytes", "parser_version")}
+                {key: record[key] for key in ("source_kind", "content_sha256", "content_bytes", "parser_version", "source_row_count")}
                 for record in candidate_snapshot_records
             ] == list(baseline.get("file_snapshots") or [])
             and all(_row_value(row, "import_status", 5) == "imported" and int(_row_value(row, "rejected_row_count", 7) or 0) == 0 for row in candidate_snapshots)
@@ -2122,7 +2413,7 @@ def validate_content_candidate(
             """
             SELECT taxonomy_kind, term_code, term_label
             FROM portal_content_taxonomy_terms
-            WHERE taxonomy_version_id = %s AND is_active = 1
+            WHERE taxonomy_version_id = %s AND term_status = 'active'
             ORDER BY taxonomy_kind, term_code
             """,
             (bundle.get("taxonomy_version_id"),),
@@ -2134,6 +2425,10 @@ def validate_content_candidate(
             archive_types,
             catalog_collisions,
         ) = _catalog_schema_gates(catalog_rows, taxonomy_rows)
+        if bundle.get("referenced_taxonomy_terms") != _catalog_taxonomy_references(
+            catalog_rows
+        ):
+            catalog_schema_failures += 1
         cursor.execute(
             """
             SELECT COUNT(*) AS anti_flip_violations
@@ -2175,24 +2470,46 @@ def validate_content_candidate(
         )
         cursor.execute(
             """
-            SELECT COUNT(*) AS smoke_row_count
-            FROM portal_content_lookup_projection AS projection
-            INNER JOIN portal_content_catalog AS catalog
+            SELECT COUNT(DISTINCT catalog.source_row_fingerprint) AS candidate_catalog_rows,
+                   COUNT(DISTINCT CASE WHEN projection.resolution_status IN
+                     ('unique', 'identical_collapsed')
+                     THEN projection.selected_source_row_fingerprint END) AS resolved_candidate_rows,
+                   COUNT(DISTINCT CASE WHEN projection.lookup_kind = 'title'
+                     THEN projection.selected_source_row_fingerprint END) AS title_lookup_rows,
+                   COUNT(DISTINCT CASE WHEN projection.lookup_kind = 'slug'
+                     THEN projection.selected_source_row_fingerprint END) AS slug_lookup_rows,
+                   COUNT(DISTINCT CASE WHEN projection.lookup_kind = 'path'
+                     THEN projection.selected_source_row_fingerprint END) AS path_lookup_rows,
+                   COUNT(DISTINCT CASE WHEN TRIM(catalog.direction_key) <> ''
+                     THEN catalog.source_row_fingerprint END) AS direction_rows,
+                   COUNT(DISTINCT CASE WHEN TRIM(catalog.material_type) <> ''
+                     THEN catalog.source_row_fingerprint END) AS material_rows,
+                   COUNT(DISTINCT CASE WHEN TRIM(catalog.access_label) <> ''
+                     THEN catalog.source_row_fingerprint END) AS access_rows
+            FROM portal_content_catalog AS catalog
+            LEFT JOIN portal_content_lookup_projection AS projection
               ON catalog.canonical_release_id = projection.canonical_release_id
              AND catalog.source_snapshot_id = projection.source_snapshot_id
              AND catalog.source_row_fingerprint = projection.selected_source_row_fingerprint
-            WHERE projection.canonical_release_id = %s
-              AND projection.source_snapshot_id = %s
-              AND projection.lookup_kind = 'title'
-              AND projection.resolution_status IN ('unique', 'identical_collapsed')
+            WHERE catalog.canonical_release_id = %s
+              AND catalog.source_snapshot_id = %s
+              AND catalog.is_active = 1
               AND catalog.page_title IS NOT NULL AND TRIM(catalog.page_title) <> ''
-              AND catalog.direction_key IS NOT NULL AND TRIM(catalog.direction_key) <> ''
-              AND catalog.material_type IS NOT NULL AND TRIM(catalog.material_type) <> ''
-              AND catalog.access_label IS NOT NULL AND TRIM(catalog.access_label) <> ''
             """,
             (candidate_release_id, catalog_snapshot_id),
         )
-        smoke_failures = 0 if int(_row_value(cursor.fetchone(), "smoke_row_count", 0) or 0) > 0 else 1
+        smoke = cursor.fetchone()
+        smoke_total = int(_row_value(smoke, "candidate_catalog_rows", 0) or 0)
+        smoke_failures = 0 if smoke_total > 0 and all(
+            int(_row_value(smoke, name, index) or 0) == smoke_total
+            for index, name in enumerate(
+                (
+                    "resolved_candidate_rows", "title_lookup_rows", "slug_lookup_rows",
+                    "path_lookup_rows", "direction_rows", "material_rows", "access_rows",
+                ),
+                start=1,
+            )
+        ) else 1
         active_mutations = 0 if (
             int(active.get("canonical_release_id") or 0) == predecessor_id
             and active.get("release_status") == "active"
@@ -2219,19 +2536,20 @@ def validate_content_candidate(
             active_release_mutations=active_mutations,
             dashboard_smoke_failures=smoke_failures,
         )
-        connection.rollback()
+        if owns_connection:
+            connection.rollback()
         return report
     except CandidateMaterializationError:
-        if connection is not None:
+        if owns_connection and connection is not None:
             connection.rollback()
         raise
     except release_store.ReleaseStoreError as exc:
-        if connection is not None:
+        if owns_connection and connection is not None:
             connection.rollback()
         raise CandidateMaterializationError(str(exc)) from None
     except Exception:
-        if connection is not None:
+        if owns_connection and connection is not None:
             connection.rollback()
         raise CandidateMaterializationError("CANDIDATE_VALIDATION_FAILED") from None
     finally:
-        _close(cursor, connection)
+        _close(cursor, connection if owns_connection else None)

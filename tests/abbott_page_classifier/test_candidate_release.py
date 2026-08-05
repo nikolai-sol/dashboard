@@ -85,6 +85,9 @@ class CandidateConnection:
         mismatched_manifest: bool = False,
         corrupt_candidate_fact: bool = False,
         corrupt_candidate_import: bool = False,
+        legacy_predecessor: bool = False,
+        ambiguous_legacy_predecessor: bool = False,
+        partial_smoke: bool = False,
     ):
         self.events: list[str] = []
         self.calls: list[tuple[str, tuple[object, ...]]] = []
@@ -102,12 +105,16 @@ class CandidateConnection:
         self.mismatched_manifest = mismatched_manifest
         self.corrupt_candidate_fact = corrupt_candidate_fact
         self.corrupt_candidate_import = corrupt_candidate_import
+        self.legacy_predecessor = legacy_predecessor
+        self.ambiguous_legacy_predecessor = ambiguous_legacy_predecessor
+        self.partial_smoke = partial_smoke
         self.snapshots = {
             11: {
                 "id": 11,
                 "source_kind": "abbott_workbook_json",
                 "content_sha256": "a" * 64,
                 "content_bytes": 100,
+                "source_row_count": 2,
                 "parser_version": "parser-v1",
                 "import_status": "imported",
                 "imported_row_count": 2,
@@ -119,6 +126,7 @@ class CandidateConnection:
                 "source_kind": "abbott_workbook_catalog",
                 "content_sha256": "b" * 64,
                 "content_bytes": 200,
+                "source_row_count": 2,
                 "parser_version": "parser-v1",
                 "import_status": "imported",
                 "imported_row_count": 2,
@@ -138,6 +146,7 @@ class CandidateConnection:
                 "final_access_code": "all",
                 "final_lifecycle_code": "active",
                 "readiness_state": "ready",
+                "conflict_code": None,
                 "conflict_codes": "[]",
                 "row_hash": "b" * 64,
                 "decision_reason": None,
@@ -155,6 +164,7 @@ class CandidateConnection:
                 "final_access_code": "doctors",
                 "final_lifecycle_code": "active",
                 "readiness_state": "no_change",
+                "conflict_code": None,
                 "conflict_codes": "[]",
                 "row_hash": "d" * 64,
                 "decision_reason": None,
@@ -251,6 +261,15 @@ class CandidateConnection:
                 "projection_row_hash": "7" * 64,
             },
         ]
+        if self.legacy_predecessor:
+            for row in self.predecessor_catalog:
+                row.update(
+                    content_entity_id=None,
+                    classification_event_id=None,
+                    classification_event_fingerprint=None,
+                    projection_provenance_json=None,
+                    projection_row_hash=None,
+                )
 
     def cursor(self, **_kwargs):
         return self
@@ -273,6 +292,7 @@ class CandidateConnection:
         self.calls.append((normalized, params))
         self._one = None
         self._many = []
+        self._stream_many = False
         self.rowcount = 1
         if "FROM portal_data_releases AS candidate" in normalized:
             self._one = {
@@ -311,6 +331,35 @@ class CandidateConnection:
             self._many = list(self.approval_rows)
         elif "strong_collision_count" in normalized:
             self._one = {"strong_collision_count": 0}
+        elif "legacy_catalog.id AS predecessor_catalog_row_id" in normalized:
+            self._many = [
+                {
+                    "predecessor_catalog_row_id": 1001,
+                    "content_entity_id": 1,
+                    "alias_type": "material_id",
+                    "direction_code": "cardiology",
+                    "material_type_code": "articles",
+                    "access_code": "all",
+                    "lifecycle_code": "active",
+                },
+                {
+                    "predecessor_catalog_row_id": 1002,
+                    "content_entity_id": 2,
+                    "alias_type": "canonical_url",
+                    "direction_code": "gastroenterology",
+                    "material_type_code": "video",
+                    "access_code": "doctors",
+                    "lifecycle_code": "active",
+                },
+            ]
+            if self.ambiguous_legacy_predecessor:
+                self._many.append(
+                    {
+                        **self._many[0],
+                        "content_entity_id": 99,
+                        "alias_type": "canonical_url",
+                    }
+                )
         elif "FROM portal_content_catalog AS predecessor_catalog" in normalized:
             self._many = list(self.predecessor_catalog)
         elif "AS anti_flip_violations" in normalized:
@@ -363,6 +412,7 @@ class CandidateConnection:
                         "0" * 64 if self.mismatched_manifest else sha256_text(manifest_json)
                     ),
                     "content_bytes": len(manifest_json.encode("utf-8")),
+                    "source_row_count": 12,
                     "parser_version": "abbott-content-control-v1",
                     "import_status": "imported",
                     "imported_row_count": 12,
@@ -409,6 +459,8 @@ class CandidateConnection:
             if self.corrupt_candidate_import and release_id == 41 and self._many:
                 self._many[0] = {**self._many[0], "imported_row_count": 999}
         elif normalized.startswith("SELECT taxonomy_kind, term_code, term_label"):
+            if "is_active" in normalized:
+                raise AssertionError("UNKNOWN_COLUMN: portal_content_taxonomy_terms.is_active")
             self._many = [
                 {"taxonomy_kind": "direction", "term_code": "cardiology", "term_label": "Кардиология"},
                 {"taxonomy_kind": "direction", "term_code": "gastroenterology", "term_label": "Гастроэнтерология"},
@@ -418,9 +470,18 @@ class CandidateConnection:
                 {"taxonomy_kind": "access", "term_code": "doctors", "term_label": "Врачи"},
                 {"taxonomy_kind": "lifecycle", "term_code": "active", "term_label": "Активный"},
             ]
-        elif "AS smoke_row_count" in normalized:
-            self._one = {"smoke_row_count": 1}
-        elif normalized.startswith("SELECT ") and " WHERE canonical_release_id = %s ORDER BY id" in normalized:
+        elif "AS candidate_catalog_rows" in normalized:
+            self._one = {
+                "candidate_catalog_rows": 2,
+                "resolved_candidate_rows": 1 if self.partial_smoke else 2,
+                "title_lookup_rows": 2,
+                "slug_lookup_rows": 2,
+                "path_lookup_rows": 2,
+                "direction_rows": 2,
+                "material_rows": 2,
+                "access_rows": 2,
+            }
+        elif normalized.startswith("SELECT ") and " WHERE canonical_release_id = %s ORDER BY " in normalized:
             column_sql, table = normalized.split(" FROM ", 1)
             columns = [value.strip() for value in column_sql.removeprefix("SELECT ").split(",")]
             table = table.split(" WHERE ", 1)[0]
@@ -428,6 +489,7 @@ class CandidateConnection:
             self._many = [{column: f"{table}:{column}" for column in columns}]
             if self.corrupt_candidate_fact and release_id == 41:
                 self._many[0][columns[0]] = "corrupted"
+            self._stream_many = True
         elif normalized.startswith("INSERT INTO portal_dataset_snapshots"):
             self.snapshot_insert_count += 1
             self.lastrowid = 900 + self.snapshot_insert_count
@@ -437,6 +499,7 @@ class CandidateConnection:
                     "source_kind": params[1],
                     "content_sha256": params[3],
                     "content_bytes": params[4],
+                    "source_row_count": params[5],
                     "parser_version": params[6],
                     "import_status": "imported",
                     "imported_row_count": params[7],
@@ -493,7 +556,13 @@ class CandidateConnection:
         return self._one
 
     def fetchall(self):
+        if getattr(self, "_stream_many", False):
+            raise AssertionError("non-content reads must stream with fetchmany")
         return list(self._many)
+
+    def fetchmany(self, _size=1):
+        rows, self._many = list(self._many), []
+        return rows
 
 
 class GateConnection(CandidateConnection):
@@ -692,6 +761,93 @@ class CandidateReleaseTest(unittest.TestCase):
             self.assertIn(column, catalog_insert)
         self.assertEqual(result.status, "staging")
 
+    def test_first_post_046_successor_derives_legacy_predecessor_provenance(self):
+        connection = CandidateConnection(legacy_predecessor=True)
+        with (
+            patch(
+                "agents.abbott_page_classifier.candidate_release.get_db_connection",
+                return_value=connection,
+            ),
+            patch(
+                "agents.abbott_page_classifier.candidate_release.release_store.create_candidate_release",
+                return_value=41,
+            ),
+            patch(
+                "agents.abbott_page_classifier.candidate_release.release_store.require_mutable_candidate_release",
+                return_value={"id": 41, "release_status": "staging"},
+            ),
+        ):
+            materialize_content_candidate(71, 12, "abc1234")
+
+        inherited = next(row for row in connection.catalog_rows if row[12] == "Гастроэнтерология")
+        provenance = json.loads(inherited[-2])
+        self.assertEqual(inherited[20], 2)
+        self.assertEqual(provenance["mode"], "legacy_active_catalog_baseline")
+        self.assertEqual(provenance["predecessor_catalog_row_id"], 1002)
+        sql = "\n".join(call[0] for call in connection.calls)
+        self.assertIn("legacy_catalog.id AS predecessor_catalog_row_id", sql)
+        self.assertIn("alias_row.uniqueness_scope = 'strong'", sql)
+        self.assertNotIn("latest_events", sql)
+
+    def test_first_post_046_successor_rejects_ambiguous_legacy_identity(self):
+        connection = CandidateConnection(
+            legacy_predecessor=True,
+            ambiguous_legacy_predecessor=True,
+        )
+        with (
+            patch(
+                "agents.abbott_page_classifier.candidate_release.get_db_connection",
+                return_value=connection,
+            ),
+            patch(
+                "agents.abbott_page_classifier.candidate_release.release_store.create_candidate_release",
+                return_value=41,
+            ),
+            patch(
+                "agents.abbott_page_classifier.candidate_release.release_store.require_mutable_candidate_release",
+                return_value={"id": 41, "release_status": "staging"},
+            ),
+        ):
+            with self.assertRaisesRegex(
+                CandidateMaterializationError,
+                "LEGACY_PREDECESSOR_PROVENANCE_AMBIGUOUS",
+            ):
+                materialize_content_candidate(71, 12, "abc1234")
+
+    def test_first_post_046_successor_legacy_baseline_revalidates_identically(self):
+        connection = self._prepare_gate(GateConnection(legacy_predecessor=True))
+        with patch(
+            "agents.abbott_page_classifier.candidate_release.get_db_connection",
+            return_value=connection,
+        ):
+            report = validate_content_candidate(
+                41,
+                expected_counts={
+                    "source": 2, "ready": 1, "conflict": 0, "unresolved": 0,
+                    "rejected": 0, "accepted": 1,
+                },
+                accepted_hash=connection.accepted_hash,
+            )
+        self.assertTrue(report.passed)
+
+    def test_materialization_rejects_scalar_and_json_conflict_code_mismatch(self):
+        connection = CandidateConnection()
+        connection.approval_rows[0]["conflict_code"] = "IDENTITY_COLLISION"
+        with (
+            patch(
+                "agents.abbott_page_classifier.candidate_release.get_db_connection",
+                return_value=connection,
+            ),
+            patch(
+                "agents.abbott_page_classifier.candidate_release.release_store.create_candidate_release",
+                return_value=41,
+            ),
+        ):
+            with self.assertRaisesRegex(
+                CandidateMaterializationError, "APPROVAL_BUNDLE_INVALID"
+            ):
+                materialize_content_candidate(71, 12, "abc1234")
+
     def test_catalog_readback_hash_mismatch_rolls_back_everything(self):
         connection = CandidateConnection(mismatch_catalog_hash=True)
         with (
@@ -751,6 +907,55 @@ class CandidateReleaseTest(unittest.TestCase):
         self.assertIn("item.final_material_type_code", sql)
         self.assertIn("item.proposal_evidence", sql)
         self.assertIn("projection.resolution_status IN ('unique', 'identical_collapsed')", sql)
+
+    def test_non_content_copy_and_attestation_use_natural_grain_streaming(self):
+        connection = self._prepare_gate(GateConnection())
+        with patch(
+            "agents.abbott_page_classifier.candidate_release.get_db_connection",
+            return_value=connection,
+        ):
+            report = validate_content_candidate(
+                41,
+                expected_counts={
+                    "source": 2, "ready": 1, "conflict": 0, "unresolved": 0,
+                    "rejected": 0, "accepted": 1,
+                },
+                accepted_hash=connection.accepted_hash,
+            )
+        self.assertTrue(report.passed)
+        non_content_sql = [
+            sql for sql, _ in connection.calls
+            if "canonical_release_id = %s ORDER BY" in sql
+        ]
+        self.assertTrue(non_content_sql)
+        self.assertTrue(all("ORDER BY id" not in sql for sql in non_content_sql))
+
+    def test_validation_uses_real_taxonomy_term_status_column(self):
+        connection = self._prepare_gate(GateConnection())
+        with patch(
+            "agents.abbott_page_classifier.candidate_release.get_db_connection",
+            return_value=connection,
+        ):
+            validate_content_candidate(
+                41,
+                expected_counts={
+                    "source": 2,
+                    "ready": 1,
+                    "conflict": 0,
+                    "unresolved": 0,
+                    "rejected": 0,
+                    "accepted": 1,
+                },
+                accepted_hash=connection.accepted_hash,
+            )
+
+        taxonomy_sql = next(
+            sql
+            for sql, _ in connection.calls
+            if "FROM portal_content_taxonomy_terms" in sql
+        )
+        self.assertIn("term_status = 'active'", taxonomy_sql)
+        self.assertNotIn("is_active", taxonomy_sql)
 
     def test_validation_locks_release_pointer_and_attests_real_bundle(self):
         connection = self._prepare_gate(GateConnection())
@@ -869,6 +1074,41 @@ class CandidateReleaseTest(unittest.TestCase):
 
                 self.assertEqual(report.hash_reconciliation_pct, Decimal("0"))
                 self.assertFalse(report.passed)
+
+    def test_validation_hash_binds_snapshot_source_row_count(self):
+        connection = self._prepare_gate(GateConnection())
+        connection.snapshots[11]["source_row_count"] = 999
+        with patch(
+            "agents.abbott_page_classifier.candidate_release.get_db_connection",
+            return_value=connection,
+        ):
+            report = validate_content_candidate(
+                41,
+                expected_counts={
+                    "source": 2, "ready": 1, "conflict": 0, "unresolved": 0,
+                    "rejected": 0, "accepted": 1,
+                },
+                accepted_hash=connection.accepted_hash,
+            )
+        self.assertEqual(report.hash_reconciliation_pct, Decimal("0"))
+        self.assertFalse(report.passed)
+
+    def test_dashboard_smoke_rejects_partial_candidate_projection(self):
+        connection = self._prepare_gate(GateConnection(partial_smoke=True))
+        with patch(
+            "agents.abbott_page_classifier.candidate_release.get_db_connection",
+            return_value=connection,
+        ):
+            report = validate_content_candidate(
+                41,
+                expected_counts={
+                    "source": 2, "ready": 1, "conflict": 0, "unresolved": 0,
+                    "rejected": 0, "accepted": 1,
+                },
+                accepted_hash=connection.accepted_hash,
+            )
+        self.assertEqual(report.dashboard_smoke_failures, 1)
+        self.assertFalse(report.passed)
 
 
 if __name__ == "__main__":
