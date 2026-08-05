@@ -382,9 +382,9 @@ test("workbook loading uses normalized general-material URLs", async () => {
 test("workbook loading uses only resolved hashed projections and reports aggregate ambiguity", async () => {
   const hash = (value: string) => createHash("sha256").update(value).digest("hex");
   const resolvedRows = [
-    { lookup_kind: "title", lookup_key_hash: hash("Shared"), resolution_status: "identical_collapsed", direction_key: "Cardiology", material_type: "article", access_label: "Врачи", is_active: 1 },
-    { lookup_kind: "slug", lookup_key_hash: hash("shared"), resolution_status: "unique", direction_key: "Cardiology", material_type: "article", access_label: "Врачи", is_active: 1 },
-    { lookup_kind: "path", lookup_key_hash: hash("/shared"), resolution_status: "unique", direction_key: "Cardiology", material_type: "article", access_label: "Врачи", is_active: 1 },
+    { lookup_kind: "title", lookup_key_hash: hash("Shared"), resolution_status: "identical_collapsed", direction_key: "Кардиология", material_type: "Статьи", access_label: "Врачи", is_active: 1 },
+    { lookup_kind: "slug", lookup_key_hash: hash("shared"), resolution_status: "unique", direction_key: "Кардиология", material_type: "Статьи", access_label: "Врачи", is_active: 1 },
+    { lookup_kind: "path", lookup_key_hash: hash("/shared"), resolution_status: "unique", direction_key: "Кардиология", material_type: "Статьи", access_label: "Врачи", is_active: 1 },
   ];
   const executor = fakeExecutor(({ sql }) => {
     if (sql.includes("FROM `report_bd`.`dashboards`")) return [{ id: 7 }];
@@ -400,16 +400,16 @@ test("workbook loading uses only resolved hashed projections and reports aggrega
   const result = await loadActiveAbbottWorkbookDataWithExecutor(executor, 7);
 
   assert.deepEqual(result.contentByTitle.get(hash("Shared")), {
-    direction: "Cardiology",
-    material_type: "article",
+    direction: "Кардиология",
+    material_type: "Статьи",
     access: "Врачи",
     is_active: true,
   });
   assert.equal(result.contentBySlug.has("shared"), false);
   assert.equal(result.contentBySlug.has(hash("shared")), true);
   assert.deepEqual(result.urlReturnDirections.get(hash("/shared")), {
-    direction: "Cardiology",
-    material_type: "article",
+    direction: "Кардиология",
+    material_type: "Статьи",
     access: "Врачи",
     is_active: true,
   });
