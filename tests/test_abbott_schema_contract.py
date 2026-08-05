@@ -45,8 +45,83 @@ class AbbottSchemaContractTest(unittest.TestCase):
         private = self._private_sql()
         role_block = private.split("CREATE ROLE IF NOT EXISTS", 1)[1].split(";", 1)[0]
         roles = re.findall(r"'([^']+)'", role_block)
-        self.assertEqual(len(roles), 5)
+        self.assertEqual(len(roles), 6)
         self.assertTrue(all(len(role) <= 32 for role in roles), roles)
+
+    def test_content_catalog_persists_immutable_projection_provenance(self):
+        table = self._table_definition(self._primary_sql(), "portal_content_catalog")
+        self.assertNotIn("projection_provenance_json", table)
+        upgrade = (
+            ROOT
+            / "dashboard-next/src/db/migrations/046_abbott_content_candidate_provenance.sql"
+        ).read_text()
+        for column in (
+            "content_entity_id BIGINT UNSIGNED DEFAULT NULL",
+            "classification_event_id BIGINT UNSIGNED DEFAULT NULL",
+            "classification_event_fingerprint CHAR(64) DEFAULT NULL",
+            "projection_provenance_json JSON DEFAULT NULL",
+            "projection_row_hash CHAR(64) DEFAULT NULL",
+        ):
+            self.assertIn(column, upgrade)
+        self.assertIn("ADD COLUMN content_entity_id", upgrade)
+        self.assertIn("ADD COLUMN projection_row_hash", upgrade)
+        self.assertNotIn("UPDATE portal_content_catalog", upgrade)
+
+    def test_content_materializer_role_is_exact_and_cannot_activate(self):
+        sql = self._normalized(self._private_sql())
+        role = "'abbott_content_materializer_role'"
+        self.assertIn(role, sql)
+        for table in (
+            "portal_data_releases",
+            "portal_dataset_snapshots",
+            "portal_release_source_imports",
+            "portal_content_catalog",
+            "portal_content_lookup_projection",
+            "portal_content_approval_batches",
+            "portal_content_classification_events",
+            "canonical_fact_metrika_site_analytics_daily",
+            "canonical_fact_metrika_returning_pages_release_daily",
+            "canonical_source_coverage_daily",
+        ):
+            self.assertRegex(
+                sql,
+                rf"GRANT [^;]+ ON report_bd\.{table} TO {role};",
+            )
+        for table in (
+            "canonical_fact_metrika_user_behavior_daily",
+            "canonical_fact_metrika_visits",
+            "portal_user_directions_private",
+            "portal_bitrix_page_facts",
+            "portal_bitrix_journeys_private",
+        ):
+            self.assertRegex(
+                sql,
+                rf"GRANT SELECT, INSERT ON report_bd_private\.{table} TO {role};",
+            )
+        materializer_grants = [
+            grant
+            for grant in re.findall(r"GRANT .*?;", sql, flags=re.IGNORECASE)
+            if "TO 'abbott_content_materializer_role'" in grant
+        ]
+        self.assertIn(
+            "GRANT SELECT ON report_bd.portal_active_data_releases "
+            "TO 'abbott_content_materializer_role';",
+            sql,
+        )
+        self.assertFalse(
+            any(
+                "UPDATE" in grant and "portal_active_data_releases" in grant
+                for grant in materializer_grants
+            )
+        )
+        self.assertFalse(
+            any(
+                "UPDATE (release_status" in grant
+                or re.search(r"GRANT [^;]*UPDATE[^;]* ON report_bd\.portal_data_releases", grant)
+                and "UPDATE (source_snapshot_ids" not in grant
+                for grant in materializer_grants
+            )
+        )
 
     def test_coverage_statuses_and_scopes_are_exactly_closed(self):
         sql = self._primary_sql()
@@ -858,7 +933,7 @@ class AbbottSchemaContractTest(unittest.TestCase):
             for grant in re.findall(r"GRANT .*?;", sql, flags=re.IGNORECASE)
             if "portal_content_lookup_projection" in grant
         ]
-        self.assertEqual(len(projection_grants), 3)
+        self.assertEqual(len(projection_grants), 4)
         self.assertTrue(any(
             grant.startswith("GRANT SELECT, INSERT ON ")
             and "TO 'abbott_importer_role'" in grant
@@ -872,6 +947,11 @@ class AbbottSchemaContractTest(unittest.TestCase):
         self.assertTrue(any(
             grant.startswith("GRANT SELECT ON ")
             and "TO 'abbott_embed_reader_role'" in grant
+            for grant in projection_grants
+        ))
+        self.assertTrue(any(
+            grant.startswith("GRANT SELECT, INSERT ON ")
+            and "TO 'abbott_content_materializer_role'" in grant
             for grant in projection_grants
         ))
         self.assertFalse(any(

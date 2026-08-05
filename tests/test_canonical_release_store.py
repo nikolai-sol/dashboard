@@ -312,6 +312,40 @@ class CanonicalReleaseStoreTest(unittest.TestCase):
         self.assertNotIn("source_snapshot_id IN", sql)
         self.assertEqual(params, (41,))
 
+    def test_content_successor_baseline_uses_reviewed_staging_to_validated_flow(self):
+        import canonical_release_store as store
+        from agents.abbott_page_classifier.candidate_release import CONTENT_CONTROL_VALUES
+
+        baseline = baseline_manifest(REQUIRED_WORKBOOK_KINDS)
+        baseline["control_values"].update(CONTENT_CONTROL_VALUES)
+        control_names = set(baseline["control_values"]) | {
+            f"coverage.{scope}.reconciled_days"
+            for scope in ("other", "traffic", "page", "user_behavior", "returning")
+        }
+        evidence = [
+            {
+                "control_name": name,
+                "result_status": "pass",
+                "reviewed_by": None,
+                "accepted_at": None,
+                "code_revision": "abc123",
+            }
+            for name in sorted(control_names)
+        ]
+        conn = ExactValidationConnection(
+            source_kinds=REQUIRED_WORKBOOK_KINDS,
+            baseline=baseline,
+            baseline_snapshot_id=902,
+            predecessor_release_id=12,
+            evidence_rows=evidence,
+        )
+
+        self.validate(store, conn)
+
+        sql = "\n".join(call[0] for call in conn.cursor_instance.calls)
+        self.assertIn("SET release_status = 'validated'", sql)
+        self.assertNotIn("portal_active_data_releases", sql)
+
     def test_metrika_first_candidate_accepts_coverage_only_baseline(self):
         import canonical_release_store as store
 
