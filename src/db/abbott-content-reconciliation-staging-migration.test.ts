@@ -46,12 +46,25 @@ test("migration 047 links one finalized batch to one run repeat-safely", () => {
   assert.match(sql, /information_schema\.TABLE_CONSTRAINTS/);
 });
 
+test("migration 047 upgrades alias uniqueness without collapsing weak owners", () => {
+  assert.match(sql, /DROP INDEX uniq_registry_strong_alias/);
+  assert.match(sql, /ADD COLUMN strong_alias_hash CHAR\(64\) GENERATED ALWAYS AS/);
+  assert.match(sql, /CASE WHEN uniqueness_scope = ''strong'' THEN alias_hash ELSE NULL END/);
+  assert.match(sql, /ADD UNIQUE INDEX uniq_registry_strong_alias \(dataset_key, alias_type, strong_alias_hash\)/);
+  assert.match(sql, /ADD UNIQUE INDEX uniq_registry_alias_owner \(dataset_key, content_entity_id, alias_type, alias_hash\)/);
+  assert.doesNotMatch(sql, /DELETE\s+FROM\s+portal_content_registry_aliases/i);
+});
+
 test("migration 047 attests an existing taxonomy before any canonical term insert", () => {
   assert.match(sql, /abbott\.v1/);
   assert.match(sql, /d6a2bfc39d970a873e309223604f9ae7c37cd83d6c046c107eed08e73ec435d4/);
   assert.match(sql, /CREATE TEMPORARY TABLE abbott_expected_taxonomy_v1_terms/);
-  assert.match(sql, /SIGNAL SQLSTATE '45000'/);
   assert.match(sql, /ABBOTT_TAXONOMY_V1_ATTESTATION_FAILED/);
+  assert.match(sql, /ABBOTT_M047_TAXONOMY_ATTEST_FAIL/);
+  assert.match(sql, /ABBOTT_M047_TAXONOMY_SEED_FAIL/);
+  assert.match(sql, /CONSTRAINT ABBOTT_M047_TAXONOMY_ATTEST_FAIL CHECK/);
+  assert.match(sql, /CONSTRAINT ABBOTT_M047_TAXONOMY_SEED_FAIL CHECK/);
+  assert.doesNotMatch(sql, /PREPARE[\s\S]{0,240}SIGNAL|SIGNAL[\s\S]{0,240}PREPARE/);
   assert.match(sql, /COUNT\(\*\)[\s\S]*portal_content_taxonomy_terms/);
   assert.match(sql, /JSON_LENGTH\(actual\.source_evidence\) = 1/);
   assert.doesNotMatch(sql, /ON DUPLICATE KEY UPDATE/);

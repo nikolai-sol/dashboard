@@ -25,11 +25,15 @@ CREATE TABLE IF NOT EXISTS portal_content_registry_aliases (
   alias_value VARCHAR(2048) NOT NULL,
   alias_hash CHAR(64) NOT NULL,
   uniqueness_scope VARCHAR(191) NOT NULL,
+  strong_alias_hash CHAR(64) GENERATED ALWAYS AS (
+    CASE WHEN uniqueness_scope = 'strong' THEN alias_hash ELSE NULL END
+  ) STORED,
   alias_status ENUM('active', 'retired') NOT NULL DEFAULT 'active',
   source_evidence JSON NOT NULL,
   created_at DATETIME(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6),
   PRIMARY KEY (id),
-  UNIQUE KEY uniq_registry_strong_alias (dataset_key, alias_type, alias_hash, uniqueness_scope),
+  UNIQUE KEY uniq_registry_strong_alias (dataset_key, alias_type, strong_alias_hash),
+  UNIQUE KEY uniq_registry_alias_owner (dataset_key, content_entity_id, alias_type, alias_hash),
   INDEX idx_registry_alias_entity (dataset_key, content_entity_id),
   CONSTRAINT fk_registry_alias_entity
     FOREIGN KEY (dataset_key, content_entity_id)

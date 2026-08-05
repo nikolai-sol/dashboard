@@ -1548,10 +1548,40 @@ def publish_batch_projection(
     approval_batch = batch.batch
     database_batch_id = batch.database_batch_id
     _validate_published_batch_hash(approval_batch)
-    repository.attest_batch_for_publication(database_batch_id, approval_batch)
-    spreadsheet_id = _gateway_spreadsheet_id(sheets_gateway)
     counts = _counts(approval_batch)
     history = repository.load_batch_history(database_batch_id)
+    history_status = str(_history_value(history, "batch_status") or "")
+    if history_status in (
+        "published", "accepted", "ingested", "candidate_materialized"
+    ):
+        spreadsheet_id = str(
+            _history_value(history, "spreadsheet_file_id") or ""
+        )
+        projection_hash = str(
+            _history_value(history, "spreadsheet_projection_hash") or ""
+        )
+        if (
+            not spreadsheet_id
+            or not projection_hash
+            or _history_value(history, "batch_key") != approval_batch.batch_key
+            or _history_value(history, "published_input_hash")
+            != approval_batch.published_input_hash
+        ):
+            raise ProjectionValidationError("PROJECTION_RECEIPT_INCONSISTENT")
+        return PublishedProjection(
+            spreadsheet_id=spreadsheet_id,
+            batch_key=approval_batch.batch_key,
+            published_input_hash=approval_batch.published_input_hash,
+            total_count=len(approval_batch.items),
+            ready_count=counts["ready"],
+            conflict_count=counts["conflict"],
+            unresolved_count=counts["unresolved"],
+            rejected_count=counts["rejected"],
+            no_change_count=counts["no_change"],
+            database_batch_id=database_batch_id,
+        )
+    repository.attest_batch_for_publication(database_batch_id, approval_batch)
+    spreadsheet_id = _gateway_spreadsheet_id(sheets_gateway)
 
     rows_by_tab: dict[str, list[list[object]]] = {
         title: [list(ITEM_HEADERS)]

@@ -271,7 +271,14 @@ class ContentRegistryRepository:
             self._close(cursor, connection)
 
     def load_accepted_snapshot(self, batch_id: int) -> AcceptedBatchSnapshot:
-        """Reconstruct only a canonically accepted batch and re-hash decisions."""
+        """Reconstruct reviewed decisions while separately attesting publication.
+
+        ``load_persisted_batch`` deliberately rehydrates the immutable values under
+        ``proposal_evidence.published_decision``.  Those are the publication audit
+        authority, not the manager's accepted decision.  The editable ``final_*``
+        columns are therefore loaded independently after the published batch has
+        been attested and are the only values used for the accepted hash.
+        """
 
         persisted = self.load_persisted_batch(int(batch_id))
         history = self.load_batch_history(int(batch_id))
@@ -283,9 +290,48 @@ class ContentRegistryRepository:
             or history.accepted_at is None
         ):
             raise RepositoryError("BATCH_NOT_ACCEPTED")
-        items = tuple(persisted.batch.items)
+        stored_rows = self._fetchall(
+            """
+            SELECT
+              id,
+              content_entity_id,
+              input_hash,
+              title,
+              url,
+              final_direction_code,
+              final_material_type_code,
+              final_access_code,
+              final_lifecycle_code,
+              readiness_state,
+              row_hash,
+              decision_reason,
+              proposal_evidence,
+              conflict_codes,
+              conflict_code
+            FROM portal_content_approval_items
+            WHERE approval_batch_id = %s
+            ORDER BY content_entity_id, input_hash
+            """,
+            (int(batch_id),),
+        )
+        taxonomy = TaxonomyVersion(
+            version=persisted.batch.taxonomy_version,
+            terms=persisted.batch.taxonomy_terms,
+            digest=persisted.batch.taxonomy_digest,
+        )
+        stored_items, counts = self._stored_acceptance_items(stored_rows, taxonomy)
+        items = tuple(item for _approval_item_id, item in stored_items)
+        published_keys = {
+            (item.content_entity_id, item.input_hash, item.row_hash)
+            for item in persisted.batch.items
+        }
+        accepted_keys = {
+            (item.content_entity_id, item.input_hash, item.row_hash)
+            for item in items
+        }
+        if published_keys != accepted_keys:
+            raise RepositoryError("BATCH_ITEMS_MISMATCH")
         accepted_hash = compute_accepted_decision_hash(items)
-        counts = self._batch_counts(items)
         accepted_count = counts["ready"]
         skipped_count = len(items) - accepted_count
         if (

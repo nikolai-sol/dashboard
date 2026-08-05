@@ -153,6 +153,8 @@ class WorkflowStore(Protocol):
     def load_reconciliation_context(self, configuration: WorkflowConfiguration) -> ReconciliationContext: ...
     def persist_reconciliation_run(self, draft: PersistedReconciliationRun) -> PersistedReconciliationRun: ...
     def load_reconciliation_run(self, run_id: int) -> PersistedReconciliationRun: ...
+    def load_finalized_batch_for_run(self, run_id: int) -> PersistedApprovalBatch | None: ...
+    def load_llm_attempts(self, run_id: int, item_key: str) -> Mapping[str, LlmAttempt]: ...
     def resolve_or_create_registry1_entities(self, run_id: int, item_keys: Sequence[str]) -> Mapping[str, int]: ...
     def append_llm_attempt(self, run_id: int, item_key: str, route_kind: str, attempt: LlmAttempt) -> None: ...
     def finalize_reconciliation_run(self, run_id: int, batch: object) -> PersistedApprovalBatch: ...
@@ -255,6 +257,15 @@ class CanonicalWeeklyProposalService:
         run = self._store.load_reconciliation_run(int(run_id))
         if run.configuration != self._configuration:
             raise ValueError("RUN_CONFIGURATION_MISMATCH")
+        if run.status == "finalized":
+            finalized = self._store.load_finalized_batch_for_run(run.run_id)
+            if finalized is None:
+                raise ValueError("FINALIZED_BATCH_MISSING")
+            return self._classification_receipt(
+                run,
+                finalized,
+                eligible_count=self._eligible_count(run.items),
+            )
         new_registry1_keys = tuple(
             item.item_key
             for item in run.items
@@ -293,8 +304,6 @@ class CanonicalWeeklyProposalService:
             if not execute_llm:
                 enriched_inputs.append(value)
                 continue
-            if classifier is None:
-                classifier = self._classifier_factory()
             deterministic = value.deterministic_proposal or Proposal(
                 direction_code=preview.final_direction_code,
                 material_type_code=preview.final_material_type_code,
@@ -315,18 +324,42 @@ class CanonicalWeeklyProposalService:
                 direction_locked="direction_code" not in requested_fields,
                 material_type_locked="material_type_code" not in requested_fields,
             )
-            primary = classifier.classify(request, LLM_PRIMARY_MODEL)
-            self._store.append_llm_attempt(
-                run.run_id, persisted_item.item_key, "terra_primary", primary
+            persisted_attempts = self._store.load_llm_attempts(
+                run.run_id, persisted_item.item_key
             )
+            primary = persisted_attempts.get("terra_primary")
+            if primary is None:
+                if classifier is None:
+                    classifier = self._classifier_factory()
+                primary = classifier.classify(request, LLM_PRIMARY_MODEL)
+                self._store.append_llm_attempt(
+                    run.run_id, persisted_item.item_key, "terra_primary", primary
+                )
+            elif (
+                primary.model != LLM_PRIMARY_MODEL
+                or primary.requested_fields != request.requested_fields
+            ):
+                raise ValueError("LLM_ATTEMPT_MISMATCH")
             verifier_attempt: LlmAttempt | None = None
 
             def verifier_factory() -> LlmAttempt:
-                nonlocal verifier_attempt
-                verifier_attempt = classifier.classify(request, LLM_VERIFIER_MODEL)
-                self._store.append_llm_attempt(
-                    run.run_id, persisted_item.item_key, "sol_verifier", verifier_attempt
-                )
+                nonlocal classifier, verifier_attempt
+                verifier_attempt = persisted_attempts.get("sol_verifier")
+                if verifier_attempt is None:
+                    if classifier is None:
+                        classifier = self._classifier_factory()
+                    verifier_attempt = classifier.classify(request, LLM_VERIFIER_MODEL)
+                    self._store.append_llm_attempt(
+                        run.run_id,
+                        persisted_item.item_key,
+                        "sol_verifier",
+                        verifier_attempt,
+                    )
+                elif (
+                    verifier_attempt.model != LLM_VERIFIER_MODEL
+                    or verifier_attempt.requested_fields != request.requested_fields
+                ):
+                    raise ValueError("LLM_ATTEMPT_MISMATCH")
                 return verifier_attempt
 
             routed = route_llm(deterministic, primary, verifier_factory)
@@ -338,7 +371,17 @@ class CanonicalWeeklyProposalService:
             enriched_inputs.append(
                 replace(
                     value,
-                    llm_proposal=routed.proposal,
+                    llm_proposal=(
+                        routed.proposal
+                        or (
+                            _classification_proposal(
+                                primary.classification, "llm_primary"
+                            )
+                            if routed.conflict_code == "LLM_DISAGREEMENT"
+                            and primary.classification is not None
+                            else None
+                        )
+                    ),
                     verifier_proposal=verifier_proposal,
                 )
             )
@@ -352,7 +395,21 @@ class CanonicalWeeklyProposalService:
             model_routing_version=run.configuration.model_routing_version,
         )
         persisted_batch = self._store.finalize_reconciliation_run(run.run_id, batch)
-        counts = {state: 0 for state in ("ready", "conflict", "unresolved", "rejected", "no_change")}
+        return self._classification_receipt(
+            run, persisted_batch, eligible_count=eligible_count
+        )
+
+    @staticmethod
+    def _classification_receipt(
+        run: PersistedReconciliationRun,
+        persisted_batch: PersistedApprovalBatch,
+        *,
+        eligible_count: int,
+    ) -> ClassificationReceipt:
+        counts = {
+            state: 0
+            for state in ("ready", "conflict", "unresolved", "rejected", "no_change")
+        }
         for item in persisted_batch.batch.items:
             counts[item.readiness_state] += 1
         return ClassificationReceipt(
@@ -369,6 +426,43 @@ class CanonicalWeeklyProposalService:
         )
 
     @staticmethod
+    def _eligible_count(items: Sequence[PersistedReconciliationItem]) -> int:
+        total = 0
+        for persisted_item in items:
+            value = persisted_item.reconciliation_input
+            preview = reconcile_entity(value)
+            requested = (
+                preview.final_direction_code in (None, "undetermined")
+                or preview.final_material_type_code in (None, "undetermined")
+            )
+            if (
+                requested
+                and not value.identity_conflict
+                and not value.rejection_code
+                and (value.registry1 is not None or value.registry2 is not None)
+            ):
+                total += 1
+        return total
+
+    @staticmethod
+    def _strong_identity(candidate: SourceCandidate) -> dict[str, frozenset[str]]:
+        material_ids = frozenset(
+            str(variant.material_id).strip().casefold()
+            for variant in candidate.identity_variants
+            if variant.material_id and str(variant.material_id).strip()
+        )
+        urls = frozenset(
+            normalized
+            for normalized in (
+                normalize_url(variant.normalized_url).value
+                for variant in candidate.identity_variants
+                if variant.normalized_url
+            )
+            if normalized
+        )
+        return {"material_id": material_ids, "url": urls}
+
+    @staticmethod
     def _build_items(
         context: ReconciliationContext,
         registry1: SourceSnapshot,
@@ -376,44 +470,104 @@ class CanonicalWeeklyProposalService:
     ) -> tuple[PersistedReconciliationItem, ...]:
         resolver = IdentityResolver()
         entity_by_id = {entity.content_entity_id: entity for entity in context.entities}
-        grouped: dict[str, dict[str, object]] = {}
+        entries: list[tuple[str, SourceCandidate, object]] = []
         for source_name, snapshot in (("registry1", registry1), ("registry2", registry2)):
             for candidate in snapshot.candidates:
                 resolution = resolver.resolve(candidate, context.entities, context.aliases)
-                grouping_key = (
-                    f"entity:{resolution.content_entity_id}"
-                    if resolution.status == "matched"
-                    else _source_candidate_key(source_name, candidate)
-                )
-                group = grouped.setdefault(
-                    grouping_key,
-                    {"registry1": None, "registry2": None, "resolutions": []},
-                )
-                if group[source_name] is not None:
-                    grouping_key = _source_candidate_key(source_name, candidate)
-                    group = grouped.setdefault(
-                        grouping_key,
-                        {"registry1": None, "registry2": None, "resolutions": []},
-                    )
-                group[source_name] = candidate
-                group["resolutions"].append(resolution)
+                entries.append((source_name, candidate, resolution))
+
+        parents = list(range(len(entries)))
+
+        def find(index: int) -> int:
+            while parents[index] != index:
+                parents[index] = parents[parents[index]]
+                index = parents[index]
+            return index
+
+        def union(left: int, right: int) -> None:
+            left_root, right_root = find(left), find(right)
+            if left_root != right_root:
+                parents[right_root] = left_root
+
+        owners: dict[str, int] = {}
+        for index, (_source, candidate, resolution) in enumerate(entries):
+            tokens = []
+            if getattr(resolution, "status", None) == "matched":
+                tokens.append(f"entity:{getattr(resolution, 'content_entity_id', None)}")
+            strong = CanonicalWeeklyProposalService._strong_identity(candidate)
+            tokens.extend(
+                f"{kind}:{value}"
+                for kind, values in strong.items()
+                for value in values
+            )
+            for token in tokens:
+                prior = owners.setdefault(token, index)
+                union(index, prior)
+
+        components: dict[int, list[tuple[str, SourceCandidate, object]]] = {}
+        for index, entry in enumerate(entries):
+            components.setdefault(find(index), []).append(entry)
 
         items: list[PersistedReconciliationItem] = []
-        for grouping_key, group in sorted(grouped.items()):
-            resolutions = tuple(group["resolutions"])
+        ordered_components = sorted(
+            components.values(),
+            key=lambda component: tuple(
+                sorted(_source_candidate_key(source, candidate) for source, candidate, _ in component)
+            ),
+        )
+        for component in ordered_components:
+            resolutions = tuple(entry[2] for entry in component)
             targets = {
                 resolution.content_entity_id
                 for resolution in resolutions
                 if resolution.status == "matched" and resolution.content_entity_id is not None
             }
-            collision = any(resolution.status == "collision" for resolution in resolutions) or len(targets) > 1
+            by_source: dict[str, list[SourceCandidate]] = {
+                "registry1": [], "registry2": []
+            }
+            for source_name, candidate, _resolution in component:
+                by_source[source_name].append(candidate)
+            strong_by_source = {
+                source_name: {
+                    kind: frozenset().union(
+                        *(CanonicalWeeklyProposalService._strong_identity(candidate)[kind]
+                          for candidate in candidates)
+                    )
+                    for kind in ("material_id", "url")
+                }
+                for source_name, candidates in by_source.items()
+            }
+            cross_source_disagreement = any(
+                strong_by_source["registry1"][kind]
+                and strong_by_source["registry2"][kind]
+                and strong_by_source["registry1"][kind]
+                != strong_by_source["registry2"][kind]
+                for kind in ("material_id", "url")
+            )
+            collision = (
+                any(resolution.status == "collision" for resolution in resolutions)
+                or len(targets) > 1
+                or any(len(candidates) > 1 for candidates in by_source.values())
+                or cross_source_disagreement
+            )
             content_entity_id = next(iter(targets)) if len(targets) == 1 and not collision else None
             identity_status = "collision" if collision else ("matched" if content_entity_id else "new")
+            component_keys = tuple(
+                sorted(
+                    _source_candidate_key(source, candidate)
+                    for source, candidate, _resolution in component
+                )
+            )
+            grouping_key = (
+                f"entity:{content_entity_id}"
+                if content_entity_id is not None
+                else f"component:{sha256_text(_canonical_json(component_keys))}"
+            )
             reconciliation_input = ReconciliationInput(
                 content_entity_id=content_entity_id,
                 active_canonical=entity_by_id.get(content_entity_id),
-                registry1=group["registry1"],
-                registry2=group["registry2"],
+                registry1=(by_source["registry1"][0] if by_source["registry1"] else None),
+                registry2=(by_source["registry2"][0] if by_source["registry2"] else None),
                 identity_conflict=collision,
             )
             reconciled = reconcile_entity(reconciliation_input)

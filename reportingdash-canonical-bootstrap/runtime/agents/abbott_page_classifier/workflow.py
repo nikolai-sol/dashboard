@@ -25,7 +25,7 @@ COMMANDS = (
 )
 _BATCH_COMMANDS = frozenset(COMMANDS) - {"reconcile", "classify"}
 _WRITE_COMMANDS = frozenset(
-    {"reconcile", "classify", "publish-projection", "ingest", "materialize"}
+    {"reconcile", "classify", "publish-projection", "ingest", "materialize", "validate"}
 )
 _SAFE_OUTPUT_KEYS = frozenset(
     {
@@ -107,6 +107,53 @@ def _workflow_db_connection():
     )
 
 
+def _materializer_db_connection():
+    required = {
+        "host": os.environ.get("ABBOTT_CONTENT_MATERIALIZER_DB_HOST", "").strip(),
+        "database": os.environ.get("ABBOTT_CONTENT_MATERIALIZER_DB_NAME", "").strip(),
+        "user": os.environ.get("ABBOTT_CONTENT_MATERIALIZER_DB_USER", "").strip(),
+        "password": os.environ.get("ABBOTT_CONTENT_MATERIALIZER_DB_PASSWORD", ""),
+    }
+    raw_port = os.environ.get(
+        "ABBOTT_CONTENT_MATERIALIZER_DB_PORT", "3306"
+    ).strip()
+    try:
+        port = int(raw_port)
+    except ValueError:
+        port = 0
+    if (
+        any(not value for value in required.values())
+        or required["database"] != "report_bd"
+        or not 1 <= port <= 65535
+    ):
+        raise WorkflowConfigurationError("MATERIALIZER_DB_CONFIGURATION_INVALID")
+    import mysql.connector
+
+    return mysql.connector.connect(
+        host=required["host"],
+        port=port,
+        database=required["database"],
+        user=required["user"],
+        password=required["password"],
+        charset="utf8mb4",
+        collation="utf8mb4_unicode_ci",
+    )
+
+
+def _release_operator_db_connection():
+    from abbott_release_operator import (
+        OperatorConfigurationError,
+        get_operator_db_connection,
+    )
+
+    try:
+        return get_operator_db_connection()
+    except OperatorConfigurationError:
+        raise WorkflowConfigurationError(
+            "RELEASE_OPERATOR_DB_CONFIGURATION_INVALID"
+        ) from None
+
+
 def _default_store_factory():
     from agents.abbott_page_classifier.workflow_repository import MySqlWorkflowStore
 
@@ -147,12 +194,16 @@ class ProductionWorkflowGateway:
         sheets_gateway_factory: Callable[[str], object] = _default_sheets_gateway_factory,
         materializer: Callable[[int, int, str], object] | None = None,
         validator: Callable[[int, Mapping[str, int], str], object] | None = None,
+        materializer_connection_factory: Callable[[], object] = _materializer_db_connection,
+        operator_connection_factory: Callable[[], object] = _release_operator_db_connection,
     ) -> None:
         self._store_factory = store_factory
         self._service_factory = service_factory
         self._sheets_gateway_factory = sheets_gateway_factory
         self._materializer = materializer
         self._validator = validator
+        self._materializer_connection_factory = materializer_connection_factory
+        self._operator_connection_factory = operator_connection_factory
 
     @staticmethod
     def _offline_reconcile(registry1: Path, registry2: Path) -> Mapping[str, object]:
@@ -209,6 +260,26 @@ class ProductionWorkflowGateway:
         from agents.abbott_page_classifier.sheets_sync import publish_batch_projection
 
         store = self._store_factory()
+        history = store.load_batch_history(int(batch_id))
+        if history.batch_status in (
+            "published", "accepted", "ingested", "candidate_materialized"
+        ):
+            if (
+                not history.spreadsheet_file_id
+                or not history.spreadsheet_projection_hash
+                or not history.published_input_hash
+            ):
+                raise WorkflowConfigurationError("PROJECTION_RECEIPT_INCONSISTENT")
+            return {
+                "status": "noop", "batch_id": int(batch_id),
+                "batch_key": history.batch_key,
+                "ready_count": history.ready_count,
+                "conflict_count": history.conflict_count,
+                "unresolved_count": history.unresolved_count,
+                "rejected_count": history.rejected_count,
+                "no_change_count": history.no_change_count,
+                "published_input_hash": history.published_input_hash,
+            }
         batch = store.load_persisted_batch(int(batch_id))
         spreadsheet_id = self._spreadsheet_id(store, int(batch_id), publication=True)
         projection = publish_batch_projection(
@@ -298,10 +369,16 @@ class ProductionWorkflowGateway:
         materializer = self._materializer
         if materializer is None:
             from agents.abbott_page_classifier.candidate_release import materialize_content_candidate
-            materializer = materialize_content_candidate
-        candidate = materializer(
-            int(batch_id), predecessor_id, _configuration_from_environment().code_revision
-        )
+            candidate = materialize_content_candidate(
+                int(batch_id), predecessor_id,
+                _configuration_from_environment().code_revision,
+                connection_factory=self._materializer_connection_factory,
+            )
+        else:
+            candidate = materializer(
+                int(batch_id), predecessor_id,
+                _configuration_from_environment().code_revision,
+            )
         return {
             "status": candidate.status,
             "batch_id": int(batch_id),
@@ -317,19 +394,39 @@ class ProductionWorkflowGateway:
             raise WorkflowConfigurationError("CANDIDATE_GATE_EVIDENCE_MISSING")
         validator = self._validator
         if validator is None:
-            from agents.abbott_page_classifier.candidate_release import validate_content_candidate
-            validator = validate_content_candidate
-        report = validator(
-            history.candidate_release_id,
-            {
-                "source": history.ready_count + history.conflict_count
-                + history.unresolved_count + history.rejected_count + history.no_change_count,
-                "ready": history.ready_count, "conflict": history.conflict_count,
-                "unresolved": history.unresolved_count, "rejected": history.rejected_count,
-                "accepted": history.accepted_count, "no_change": history.no_change_count,
-            },
-            history.accepted_decision_hash,
-        )
+            from agents.abbott_page_classifier.candidate_release import (
+                validate_and_transition_content_candidate,
+            )
+            reviewer = os.environ.get(
+                "ABBOTT_CONTENT_VALIDATION_REVIEWED_BY", ""
+            ).strip()
+            report = validate_and_transition_content_candidate(
+                history.candidate_release_id,
+                {
+                    "source": history.ready_count + history.conflict_count
+                    + history.unresolved_count + history.rejected_count + history.no_change_count,
+                    "ready": history.ready_count, "conflict": history.conflict_count,
+                    "unresolved": history.unresolved_count, "rejected": history.rejected_count,
+                    "accepted": history.accepted_count, "no_change": history.no_change_count,
+                },
+                history.accepted_decision_hash,
+                reviewed_by=reviewer,
+                code_revision=_configuration_from_environment().code_revision,
+                materializer_connection_factory=self._materializer_connection_factory,
+                operator_connection_factory=self._operator_connection_factory,
+            )
+        else:
+            report = validator(
+                history.candidate_release_id,
+                {
+                    "source": history.ready_count + history.conflict_count
+                    + history.unresolved_count + history.rejected_count + history.no_change_count,
+                    "ready": history.ready_count, "conflict": history.conflict_count,
+                    "unresolved": history.unresolved_count, "rejected": history.rejected_count,
+                    "accepted": history.accepted_count, "no_change": history.no_change_count,
+                },
+                history.accepted_decision_hash,
+            )
         return {
             "status": "validated" if report.passed else "validation_failed",
             "batch_id": int(batch_id),
@@ -360,6 +457,8 @@ def build_production_dependencies(
     sheets_gateway_factory: Callable[[str], object] = _default_sheets_gateway_factory,
     materializer: Callable[[int, int, str], object] | None = None,
     validator: Callable[[int, Mapping[str, int], str], object] | None = None,
+    materializer_connection_factory: Callable[[], object] = _materializer_db_connection,
+    operator_connection_factory: Callable[[], object] = _release_operator_db_connection,
 ) -> WorkflowDependencies:
     """Construct lazy production factories without opening any external authority."""
 
@@ -370,6 +469,8 @@ def build_production_dependencies(
             sheets_gateway_factory=sheets_gateway_factory,
             materializer=materializer,
             validator=validator,
+            materializer_connection_factory=materializer_connection_factory,
+            operator_connection_factory=operator_connection_factory,
         )
     )
 

@@ -2,6 +2,63 @@
 -- Registry captures are inputs to a reconciliation run; approval batches are
 -- created only after classification and remain bound to predecessor snapshots.
 
+-- Migration 045 originally made weak title/slug hashes globally unique. Upgrade
+-- that index repeat-safely: strong aliases retain one owner, while a weak alias
+-- may have multiple owners and is resolved as ambiguous by the repository.
+SET @abbott_alias_strong_hash_column_exists := (
+  SELECT COUNT(*) FROM information_schema.COLUMNS
+  WHERE TABLE_SCHEMA = DATABASE()
+    AND TABLE_NAME = 'portal_content_registry_aliases'
+    AND COLUMN_NAME = 'strong_alias_hash'
+);
+SET @sql := IF(
+  @abbott_alias_strong_hash_column_exists = 0,
+  'ALTER TABLE portal_content_registry_aliases ADD COLUMN strong_alias_hash CHAR(64) GENERATED ALWAYS AS (CASE WHEN uniqueness_scope = ''strong'' THEN alias_hash ELSE NULL END) STORED AFTER uniqueness_scope',
+  'SELECT ''registry strong alias generated column already available'' AS info'
+);
+PREPARE stmt FROM @sql; EXECUTE stmt; DEALLOCATE PREPARE stmt;
+
+SET @abbott_alias_strong_index_columns := (
+  SELECT GROUP_CONCAT(COLUMN_NAME ORDER BY SEQ_IN_INDEX SEPARATOR ',')
+  FROM information_schema.STATISTICS
+  WHERE TABLE_SCHEMA = DATABASE()
+    AND TABLE_NAME = 'portal_content_registry_aliases'
+    AND INDEX_NAME = 'uniq_registry_strong_alias'
+);
+SET @sql := IF(
+  COALESCE(@abbott_alias_strong_index_columns, '') <> 'dataset_key,alias_type,strong_alias_hash'
+    AND @abbott_alias_strong_index_columns IS NOT NULL,
+  'ALTER TABLE portal_content_registry_aliases DROP INDEX uniq_registry_strong_alias',
+  'SELECT ''registry strong alias legacy index does not need removal'' AS info'
+);
+PREPARE stmt FROM @sql; EXECUTE stmt; DEALLOCATE PREPARE stmt;
+
+SET @abbott_alias_strong_index_exists := (
+  SELECT COUNT(*) FROM information_schema.STATISTICS
+  WHERE TABLE_SCHEMA = DATABASE()
+    AND TABLE_NAME = 'portal_content_registry_aliases'
+    AND INDEX_NAME = 'uniq_registry_strong_alias'
+);
+SET @sql := IF(
+  @abbott_alias_strong_index_exists = 0,
+  'ALTER TABLE portal_content_registry_aliases ADD UNIQUE INDEX uniq_registry_strong_alias (dataset_key, alias_type, strong_alias_hash)',
+  'SELECT ''registry strong alias index already aligned'' AS info'
+);
+PREPARE stmt FROM @sql; EXECUTE stmt; DEALLOCATE PREPARE stmt;
+
+SET @abbott_alias_owner_index_exists := (
+  SELECT COUNT(*) FROM information_schema.STATISTICS
+  WHERE TABLE_SCHEMA = DATABASE()
+    AND TABLE_NAME = 'portal_content_registry_aliases'
+    AND INDEX_NAME = 'uniq_registry_alias_owner'
+);
+SET @sql := IF(
+  @abbott_alias_owner_index_exists = 0,
+  'ALTER TABLE portal_content_registry_aliases ADD UNIQUE INDEX uniq_registry_alias_owner (dataset_key, content_entity_id, alias_type, alias_hash)',
+  'SELECT ''registry alias owner index already aligned'' AS info'
+);
+PREPARE stmt FROM @sql; EXECUTE stmt; DEALLOCATE PREPARE stmt;
+
 CREATE TABLE IF NOT EXISTS portal_content_reconciliation_runs (
   id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
   dataset_key VARCHAR(64) NOT NULL DEFAULT 'abbott',
@@ -189,7 +246,7 @@ CREATE TEMPORARY TABLE abbott_expected_taxonomy_v1_terms (
   term_label VARCHAR(255) NOT NULL,
   term_status VARCHAR(32) NOT NULL,
   source_evidence JSON NOT NULL
-) ENGINE=InnoDB;
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 INSERT INTO abbott_expected_taxonomy_v1_terms (
   taxonomy_version_id, taxonomy_kind, term_code, term_label, term_status, source_evidence
@@ -292,13 +349,22 @@ SET @abbott_taxonomy_v1_existing_exact := (
   AND @abbott_taxonomy_v1_missing_count = 0
 );
 
--- SIGNAL SQLSTATE '45000' on every non-exact pre-existing taxonomy shape.
-SET @sql := IF(
-  @abbott_taxonomy_v1_preexisting = 0 OR @abbott_taxonomy_v1_existing_exact = 1,
-  'SELECT ''taxonomy v1 pre-insert attestation passed'' AS info',
-  'SIGNAL SQLSTATE ''45000'' SET MESSAGE_TEXT = ''ABBOTT_TAXONOMY_V1_ATTESTATION_FAILED'''
+-- Legacy diagnostic: ABBOTT_TAXONOMY_V1_ATTESTATION_FAILED.
+DROP TEMPORARY TABLE IF EXISTS abbott_taxonomy_v1_guard;
+CREATE TEMPORARY TABLE abbott_taxonomy_v1_guard (
+  attestation_ok TINYINT NOT NULL,
+  seed_ok TINYINT NOT NULL,
+  CONSTRAINT ABBOTT_M047_TAXONOMY_ATTEST_FAIL CHECK (attestation_ok = 1),
+  CONSTRAINT ABBOTT_M047_TAXONOMY_SEED_FAIL CHECK (seed_ok = 1)
 );
-PREPARE stmt FROM @sql; EXECUTE stmt; DEALLOCATE PREPARE stmt;
+INSERT INTO abbott_taxonomy_v1_guard (attestation_ok, seed_ok) VALUES (
+  IF(
+    @abbott_taxonomy_v1_preexisting = 0 OR @abbott_taxonomy_v1_existing_exact = 1,
+    1,
+    0
+  ),
+  1
+);
 
 INSERT INTO portal_content_taxonomy_versions (
   dataset_key, version, taxonomy_digest, taxonomy_status, source_evidence, activated_at
@@ -331,12 +397,16 @@ SET @abbott_taxonomy_v1_final_count := (
   FROM portal_content_taxonomy_terms
   WHERE taxonomy_version_id = @abbott_taxonomy_v1_id
 );
-SET @sql := IF(
-  @abbott_taxonomy_v1_id IS NOT NULL
-    AND @abbott_taxonomy_v1_final_count = @abbott_taxonomy_v1_expected_count,
-  'SELECT ''taxonomy v1 final attestation passed'' AS info',
-  'SIGNAL SQLSTATE ''45000'' SET MESSAGE_TEXT = ''ABBOTT_TAXONOMY_V1_SEED_FAILED'''
+DELETE FROM abbott_taxonomy_v1_guard;
+INSERT INTO abbott_taxonomy_v1_guard (attestation_ok, seed_ok) VALUES (
+  1,
+  IF(
+    @abbott_taxonomy_v1_id IS NOT NULL
+      AND @abbott_taxonomy_v1_final_count = @abbott_taxonomy_v1_expected_count,
+    1,
+    0
+  )
 );
-PREPARE stmt FROM @sql; EXECUTE stmt; DEALLOCATE PREPARE stmt;
 
+DROP TEMPORARY TABLE abbott_taxonomy_v1_guard;
 DROP TEMPORARY TABLE abbott_expected_taxonomy_v1_terms;

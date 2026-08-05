@@ -67,7 +67,10 @@ imports. From this bootstrap directory, verify it without reading a parent
 checkout:
 
 ```bash
-(cd runtime && PYTHONDONTWRITEBYTECODE=1 python3 -c \
+test -x "$ABBOTT_CONTENT_PYTHON311_BIN"
+"$ABBOTT_CONTENT_PYTHON311_BIN" -c \
+  'import sys; raise SystemExit(0 if sys.version_info[:2] == (3, 11) else 78)'
+(cd runtime && PYTHONDONTWRITEBYTECODE=1 "$ABBOTT_CONTENT_PYTHON311_BIN" -c \
   'import fetch_yandex_metrika_canonical, canonical_writer, metrika_logs_api, canonical_release_store, run_abbott_metrika_active_release, abbott_release_operator, probe_yandex_metrika_access, capture_abbott_canonical_baseline, compare_abbott_canonical_release, abbott_canonical_controls, metrika_pagination, backfill_abbott_metrika_2026, abbott_health_probe, send_canonical_telegram_report, sources_health_dashboard; import agents.abbott_page_classifier.weekly_proposal, agents.abbott_page_classifier.workflow')
 ```
 
@@ -78,6 +81,9 @@ The bootstrap also packages the additive `src/db/migrations/047_abbott_content_r
 
 ## Abbott weekly proposal configuration
 
+Set `ABBOTT_CONTENT_PYTHON311_BIN` to an owner-reviewed absolute Python 3.11
+executable. The bootstrap deliberately has no `python3`/`PATH` fallback.
+
 The separately authorized first proposal uses the dedicated workflow role only:
 `ABBOTT_CONTENT_WORKFLOW_DB_HOST`, `ABBOTT_CONTENT_WORKFLOW_DB_PORT`,
 `ABBOTT_CONTENT_WORKFLOW_DB_NAME=report_bd`, `ABBOTT_CONTENT_WORKFLOW_DB_USER`,
@@ -86,6 +92,12 @@ and `ABBOTT_CONTENT_WORKFLOW_DB_PASSWORD`. Set the reviewed destination as
 `CODE_REVISION` and the explicit taxonomy, prompt, and model-routing versions
 passed to `weekly_proposal.py`. `OPENAI_API_KEY` is needed only for eligible
 `--execute --execute-llm`, never for a dry run.
+
+Candidate materialization and the first validation-gate read use only
+`ABBOTT_CONTENT_MATERIALIZER_DB_*`. Persisting validation evidence and changing
+`staging` to `validated` use only `ABBOTT_RELEASE_DB_*`, with the human reviewer
+recorded in `ABBOTT_CONTENT_VALIDATION_REVIEWED_BY`. None of these credential
+families falls back to `MYSQL_*`, `DB_*`, or collector credentials.
 
 Google OAuth setup/token ownership remains with the operator at
 `~/.hermes/google_token.json`; this bootstrap neither installs nor prints a
@@ -121,7 +133,10 @@ copied executables and verify both its containment and exact dependency pins:
 ```bash
 export CANONICAL_ROOT=/root/reportingdash-canonical
 test ! -e "$CANONICAL_ROOT/venv"
-python3 -m venv --copies "$CANONICAL_ROOT/venv"
+test -x "$ABBOTT_CONTENT_PYTHON311_BIN"
+"$ABBOTT_CONTENT_PYTHON311_BIN" -c \
+  'import sys; raise SystemExit(0 if sys.version_info[:2] == (3, 11) else 78)'
+"$ABBOTT_CONTENT_PYTHON311_BIN" -m venv --copies "$CANONICAL_ROOT/venv"
 "$CANONICAL_ROOT/venv/bin/python" -m pip install --disable-pip-version-check \
   --no-input --requirement "$CANONICAL_ROOT/requirements.txt"
 "$CANONICAL_ROOT/venv/bin/python" - \
