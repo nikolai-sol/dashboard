@@ -185,3 +185,59 @@ migration/grants, selecting live Registry snapshots, and authorizing a first
 proposal remain separate reviewed operator work. Task 10 owns bootstrap/runtime
 manifest synchronization; Task 9 deliberately did not vendor the new workflow
 closure or change Task 8 runtime hashes.
+
+## Task 9 final-review corrections
+
+The final review identified four replay and attestation gaps. All four are now
+closed without broadening runtime authority:
+
+- Materialization retry idempotency is anchored in stored batch history. A
+  `candidate_materialized` receipt with its numeric `candidate_release_id`
+  returns a no-op through a freshly constructed gateway and does not call the
+  predecessor loader or materializer again. Missing or misplaced receipts fail
+  closed as `CANDIDATE_RECEIPT_INCONSISTENT`.
+- Baseline bootstrap is no longer gated by whole-table emptiness. It locks every
+  predecessor catalog row, exact-attests each existing entity, alias, and
+  baseline event, inserts only missing rows, preserves unrelated eventless
+  entities, and rolls back on alias ownership, taxonomy, or event-payload
+  conflicts.
+- Migration 047 exact-attests any pre-existing `abbott.v1` taxonomy before
+  inserting canonical terms. Missing, extra, relabelled, duplicate,
+  deprecated, or wrong-evidence rows execute an explicit `SIGNAL SQLSTATE
+  '45000'`; only an absent taxonomy is seeded and an exact replay is a no-op.
+- Reconciliation-run rehydration now joins the stored taxonomy-version row and
+  loads its stored version and digest. Non-v1 versions round-trip correctly;
+  stored version/digest mismatches fail closed.
+
+### Final correction RED -> GREEN evidence
+
+RED was captured against the pre-correction code: a fresh-gateway materialize
+retry called the materializer twice; partial bootstrap skipped missing catalog
+members; migration tests exposed repair-style seeding; and a persisted non-v1
+run failed because rehydration hard-coded `abbott.v1`.
+
+GREEN verification after root commit
+`cf2e2c571ce90cb56ef56f88562d970ab7220595` and nested dashboard commit
+`96f3ebf5b620fb7b15c457882f091a0f2e1fc324`:
+
+```text
+focused corrected Python/schema suite: 135 tests, all passed
+MySQL rehearsal contracts: 17 tests, all passed
+full root discovery: 790 tests, all passed
+dashboard-next npm test: 534 tests, all passed
+dashboard-next lint: 0 errors (4 unchanged warnings)
+dashboard-next typecheck: passed
+dashboard-next public-asset scan: passed
+dashboard-next production build: passed
+Python py_compile: passed
+git diff --check: passed
+```
+
+Migrations 033 and 046 remain byte-for-byte unchanged at SHA-256
+`c3d23b0ccbee8ddf2fd77906f7fe3045dcf7e59b8ed8c4d978dd7d774a56c2aa`
+and `460406eb14d98e32ec8b71576a5fd06812384434ba12c74545e118cc0ac3c456`.
+
+No live DB, Sheet, OpenAI, source API, migration/grant execution, deployment,
+secret, cron, Hermes, Telegram, release activation, or active-pointer change
+occurred. Task 10 runtime-manifest synchronization remains separately reviewed
+work.
