@@ -522,12 +522,14 @@ assert json.loads(stream.getvalue())["status"] == "proposal_published"
             ROOT / "dashboard-next/reportingdash-canonical-bootstrap/README.md"
         ).read_text()
         for document in (runbook, bootstrap):
-            self.assertIn("python3 -m venv --copies", document)
+            self.assertIn("-m venv --copies", document)
             self.assertIn("importlib.metadata", document)
             self.assertIn("pip check", document)
             self.assertIn("is_symlink()", document)
             self.assertIn("resolve(strict=False)", document)
             self.assertIn("No package hashes are claimed", document)
+            self.assertIn("ABBOTT_CONTENT_PYTHON311_BIN", document)
+            self.assertIn("sys.version_info[:2]", document)
         cron = runbook.split("Create the new crontab", 1)[1].split(
             "## Checkpoint 10", 1
         )[0]

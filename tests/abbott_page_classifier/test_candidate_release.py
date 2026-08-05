@@ -13,9 +13,11 @@ from collections.abc import Mapping
 from agents.abbott_page_classifier.candidate_release import (
     CandidateCatalogRow,
     CandidateMaterializationError,
+    CONTENT_CONTROL_VALUES,
     GateReport,
     build_lookup_projection,
     materialize_content_candidate,
+    validate_and_transition_content_candidate,
     validate_content_candidate,
 )
 from agents.abbott_page_classifier.batch_service import (
@@ -132,6 +134,7 @@ class CandidateConnection:
         dangling_selected_fingerprint: bool = False,
         expected_slug_group_loss: bool = False,
         joined_filter_gap: bool = False,
+        combined_filter_gap: bool = False,
         unauthorized_event: bool = False,
         missing_authorized_event: bool = False,
         manager_direction_edit: bool = False,
@@ -168,6 +171,7 @@ class CandidateConnection:
         self.dangling_selected_fingerprint = dangling_selected_fingerprint
         self.expected_slug_group_loss = expected_slug_group_loss
         self.joined_filter_gap = joined_filter_gap
+        self.combined_filter_gap = combined_filter_gap
         self.unauthorized_event = unauthorized_event
         self.missing_authorized_event = missing_authorized_event
         self.manager_direction_edit = manager_direction_edit
@@ -397,6 +401,12 @@ class CandidateConnection:
     def execute(self, sql, params=()):
         normalized = " ".join(sql.split())
         params = tuple(params or ())
+        placeholder_count = sql.count("%s")
+        if placeholder_count != len(params):
+            raise AssertionError(
+                "MYSQL_PARAMETER_ARITY_MISMATCH: "
+                f"placeholders={placeholder_count} params={len(params)} sql={normalized}"
+            )
         self.calls.append((normalized, params))
         self._one = None
         self._many = []
@@ -671,6 +681,19 @@ class CandidateConnection:
                 "joined_material_rows": complete,
                 "joined_access_rows": complete,
             }
+        elif normalized.startswith(
+            "SELECT selected_catalog.direction_key, selected_catalog.material_type"
+        ):
+            self._one = {
+                "direction_key": "cardio",
+                "material_type": "articles",
+                "access_label": "all",
+            }
+        elif "AS combined_projection_rows" in normalized:
+            self._one = {
+                "combined_projection_rows": 1,
+                "combined_catalog_rows": 0 if self.combined_filter_gap else 1,
+            }
         elif "AS candidate_catalog_rows" in normalized:
             self._one = {
                 "candidate_catalog_rows": 3 if self.realistic_smoke else 2,
@@ -766,6 +789,57 @@ class GateConnection(CandidateConnection):
     pass
 
 
+class ValidationTransitionCursor:
+    def __init__(self, connection):
+        self.connection = connection
+        self.rows = []
+        self.rowcount = 0
+
+    def execute(self, sql, params=()):
+        normalized = " ".join(sql.split())
+        self.connection.calls.append((normalized, tuple(params or ())))
+        self.rows = []
+        self.rowcount = 0
+        if normalized.startswith("SELECT baseline_validation_run_id"):
+            self.rows = [{
+                "baseline_validation_run_id": 902,
+                "code_revision": "abc1234",
+                "release_status": "staging",
+            }]
+        elif normalized.startswith("INSERT INTO portal_migration_validation_runs"):
+            self.rowcount = 1
+        elif normalized.startswith("UPDATE portal_data_releases"):
+            self.rowcount = 1
+
+    def fetchone(self):
+        return self.rows[0] if self.rows else None
+
+    def close(self):
+        pass
+
+
+class ValidationTransitionConnection:
+    def __init__(self):
+        self.calls = []
+        self.events = []
+        self.cursor_instance = ValidationTransitionCursor(self)
+
+    def start_transaction(self):
+        self.events.append("start")
+
+    def cursor(self, **_kwargs):
+        return self.cursor_instance
+
+    def commit(self):
+        self.events.append("commit")
+
+    def rollback(self):
+        self.events.append("rollback")
+
+    def close(self):
+        self.events.append("close")
+
+
 class CandidateReleaseTest(unittest.TestCase):
     def _prepare_gate(self, connection):
         with (
@@ -834,6 +908,49 @@ class CandidateReleaseTest(unittest.TestCase):
         self.assertFalse(replace(passed, active_release_mutations=1).passed)
         self.assertFalse(replace(passed, dashboard_smoke_failures=1).passed)
         self.assertFalse(replace(passed, hash_reconciliation_pct=Decimal("99.999")).passed)
+
+    def test_reviewed_validation_persists_all_gate_evidence_and_transitions(self):
+        materializer = ValidationTransitionConnection()
+        operator = ValidationTransitionConnection()
+        report = GateReport(candidate_release_id=41)
+        counts = {
+            "source": 2, "ready": 1, "conflict": 0, "unresolved": 0,
+            "rejected": 0, "accepted": 1, "no_change": 1,
+        }
+        with patch(
+            "agents.abbott_page_classifier.candidate_release.validate_content_candidate",
+            side_effect=(report, report),
+        ) as validate:
+            result = validate_and_transition_content_candidate(
+                41,
+                counts,
+                "a" * 64,
+                reviewed_by="content-manager",
+                code_revision="abc1234",
+                materializer_connection_factory=lambda: materializer,
+                operator_connection_factory=lambda: operator,
+            )
+
+        self.assertEqual(result, report)
+        self.assertEqual(validate.call_count, 2)
+        self.assertEqual(materializer.events, ["start", "rollback", "close"])
+        self.assertEqual(operator.events, ["start", "commit", "close"])
+        inserts = [
+            (sql, params) for sql, params in operator.calls
+            if sql.startswith("INSERT INTO portal_migration_validation_runs")
+        ]
+        self.assertEqual(len(inserts), 11)
+        self.assertEqual(len({params[2] for _sql, params in inserts}), 1)
+        self.assertEqual(
+            {params[4] for _sql, params in inserts},
+            set(CONTENT_CONTROL_VALUES),
+        )
+        self.assertTrue(all(params[-1] == "content-manager" for _sql, params in inserts))
+        transition = next(
+            sql for sql, _params in operator.calls
+            if sql.startswith("UPDATE portal_data_releases")
+        )
+        self.assertIn("release_status = 'validated'", transition)
 
     def test_materialization_copies_successor_without_mutating_or_activating(self):
         connection = CandidateConnection()
@@ -915,6 +1032,37 @@ class CandidateReleaseTest(unittest.TestCase):
         self.assertIn("batch.source_snapshot_digests", sql)
         self.assertIn("'$.registry1.material_id'", sql)
         self.assertIn("'$.registry2.material_id'", sql)
+
+    def test_catalog_insert_has_exact_mysql_schema_and_parameter_arity(self):
+        connection = CandidateConnection()
+        with (
+            patch(
+                "agents.abbott_page_classifier.candidate_release.get_db_connection",
+                return_value=connection,
+            ),
+            patch(
+                "agents.abbott_page_classifier.candidate_release.release_store.create_candidate_release",
+                return_value=41,
+            ),
+            patch(
+                "agents.abbott_page_classifier.candidate_release.release_store.require_mutable_candidate_release",
+                return_value={"id": 41, "release_status": "staging"},
+            ),
+        ):
+            materialize_content_candidate(71, 12, "abc1234")
+
+        catalog_inserts = [
+            (sql, params)
+            for sql, params in connection.calls
+            if sql.startswith("INSERT INTO portal_content_catalog (")
+        ]
+        self.assertEqual(len(catalog_inserts), 2)
+        for sql, params in catalog_inserts:
+            column_sql = sql.split("(", 1)[1].split(") VALUES", 1)[0]
+            columns = tuple(value.strip() for value in column_sql.split(","))
+            self.assertEqual(len(columns), 25)
+            self.assertEqual(sql.count("%s"), len(columns))
+            self.assertEqual(len(params), len(columns))
 
     def test_materialization_creates_successor_baseline_and_row_provenance(self):
         connection = CandidateConnection()
@@ -1698,6 +1846,22 @@ class CandidateReleaseTest(unittest.TestCase):
 
     def test_dashboard_smoke_rejects_filter_gap_on_joined_projection(self):
         connection = self._prepare_gate(GateConnection(joined_filter_gap=True))
+        with patch(
+            "agents.abbott_page_classifier.candidate_release.get_db_connection",
+            return_value=connection,
+        ):
+            report = validate_content_candidate(
+                41,
+                expected_counts={
+                    "source": 2, "ready": 1, "conflict": 0, "unresolved": 0,
+                    "rejected": 0, "accepted": 1,
+                },
+                accepted_hash=connection.accepted_hash,
+            )
+        self.assertEqual(report.dashboard_smoke_failures, 1)
+
+    def test_dashboard_smoke_rejects_combined_direction_type_access_gap(self):
+        connection = self._prepare_gate(GateConnection(combined_filter_gap=True))
         with patch(
             "agents.abbott_page_classifier.candidate_release.get_db_connection",
             return_value=connection,

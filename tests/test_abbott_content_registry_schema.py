@@ -56,7 +56,8 @@ class AbbottContentRegistrySchemaTests(unittest.TestCase):
         for unique_key in (
             "UNIQUE KEY uniq_registry_entity_dataset_id (dataset_key, id)",
             "UNIQUE KEY uniq_registry_material_id (dataset_key, material_id)",
-            "UNIQUE KEY uniq_registry_strong_alias (dataset_key, alias_type, alias_hash, uniqueness_scope)",
+            "UNIQUE KEY uniq_registry_strong_alias (dataset_key, alias_type, strong_alias_hash)",
+            "UNIQUE KEY uniq_registry_alias_owner (dataset_key, content_entity_id, alias_type, alias_hash)",
             "UNIQUE KEY uniq_taxonomy_code (taxonomy_version_id, taxonomy_kind, term_code)",
             "UNIQUE KEY uniq_approval_batch_key (dataset_key, batch_key)",
             "UNIQUE KEY uniq_approval_batch_entity (approval_batch_id, content_entity_id, input_hash)",
@@ -93,6 +94,17 @@ class AbbottContentRegistrySchemaTests(unittest.TestCase):
             r"AND uniqueness_scope = 'strong'\)\s*OR\s*"
             r"\(alias_type IN \('slug', 'title'\) "
             r"AND uniqueness_scope = 'weak'\)\s*\)",
+        )
+        self.assertRegex(
+            self.sql,
+            r"strong_alias_hash CHAR\(64\) GENERATED ALWAYS AS \(\s*"
+            r"CASE WHEN uniqueness_scope = 'strong' THEN alias_hash ELSE NULL END\s*"
+            r"\) STORED",
+        )
+        self.assertNotIn(
+            "UNIQUE KEY uniq_registry_strong_alias "
+            "(dataset_key, alias_type, alias_hash, uniqueness_scope)",
+            self.sql,
         )
 
     def test_unresolved_items_have_a_null_safe_identity_key(self):

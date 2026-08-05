@@ -1,8 +1,8 @@
 """Transactional Abbott content successor materialization and hard gates.
 
-This module only constructs and inspects a staging successor.  It deliberately
-has no activation path: the generic reviewed release workflow remains the sole
-owner of validation-state transitions and active-pointer changes.
+This module constructs and attests a staging successor.  Its reviewed validate
+boundary may transition ``staging`` to ``validated`` through the dedicated
+release-operator role; activation and active-pointer changes remain out of scope.
 """
 
 from __future__ import annotations
@@ -13,6 +13,7 @@ from decimal import Decimal, InvalidOperation
 import hashlib
 import json
 import re
+import uuid
 from typing import Iterable, Mapping, Sequence
 
 import canonical_release_store as release_store
@@ -1661,6 +1662,8 @@ def materialize_content_candidate(
     batch_id: int,
     predecessor_release_id: int,
     code_revision: str,
+    *,
+    connection_factory=None,
 ) -> CandidateMaterialization:
     """Transform the locked predecessor bundle into one staging successor."""
 
@@ -1680,7 +1683,7 @@ def materialize_content_candidate(
     connection = None
     cursor = None
     try:
-        connection = get_db_connection()
+        connection = (connection_factory or get_db_connection)()
         connection.start_transaction()
         cursor = connection.cursor(dictionary=True)
         cursor.execute(
@@ -2232,7 +2235,7 @@ def materialize_content_candidate(
                 ) VALUES (
                   %s, %s, %s, %s, %s, %s, %s, %s, %s, %s,
                   %s, %s, %s, %s, %s, %s, %s, %s, %s, %s,
-                  %s, %s, %s, %s, %s, %s, %s
+                  %s, %s, %s, %s, %s
                 )
                 """,
                 (candidate_id, catalog_snapshot_id, *payload),
@@ -2503,6 +2506,7 @@ def validate_content_candidate(
     accepted_hash: str,
     *,
     connection=None,
+    connection_factory=None,
 ) -> GateReport:
     """Attest the locked immutable candidate bundle without changing any state.
 
@@ -2546,7 +2550,7 @@ def validate_content_candidate(
     cursor = None
     try:
         if owns_connection:
-            connection = get_db_connection()
+            connection = (connection_factory or get_db_connection)()
             connection.start_transaction()
         cursor = connection.cursor(dictionary=True)
         cursor.execute(
@@ -2951,11 +2955,90 @@ def validate_content_candidate(
             (candidate_release_id, catalog_snapshot_id),
         )
         joined_smoke = cursor.fetchone()
+        cursor.execute(
+            """
+            SELECT selected_catalog.direction_key,
+                   selected_catalog.material_type,
+                   selected_catalog.access_label
+            FROM portal_content_lookup_projection AS lookup_row
+            INNER JOIN portal_content_catalog AS selected_catalog
+              ON selected_catalog.canonical_release_id = lookup_row.canonical_release_id
+             AND selected_catalog.source_snapshot_id = lookup_row.source_snapshot_id
+             AND selected_catalog.source_row_fingerprint = lookup_row.selected_source_row_fingerprint
+            WHERE lookup_row.canonical_release_id = %s
+              AND lookup_row.source_snapshot_id = %s
+              AND lookup_row.lookup_kind IN ('title', 'slug', 'path')
+              AND lookup_row.resolution_status IN ('unique', 'identical_collapsed')
+              AND selected_catalog.is_active = 1
+            ORDER BY selected_catalog.source_row_fingerprint
+            LIMIT 1
+            """,
+            (candidate_release_id, catalog_snapshot_id),
+        )
+        combined_key = cursor.fetchone()
+        combined_direction = _row_value(combined_key, "direction_key", 0)
+        combined_material = _row_value(combined_key, "material_type", 1)
+        combined_access = _row_value(combined_key, "access_label", 2)
+        combined_smoke = None
+        if combined_direction and combined_material and combined_access:
+            cursor.execute(
+                """
+                SELECT
+                  (SELECT COUNT(DISTINCT selected_catalog.source_row_fingerprint)
+                   FROM portal_content_lookup_projection AS lookup_row
+                   INNER JOIN portal_content_catalog AS selected_catalog
+                     ON selected_catalog.canonical_release_id = lookup_row.canonical_release_id
+                    AND selected_catalog.source_snapshot_id = lookup_row.source_snapshot_id
+                    AND selected_catalog.source_row_fingerprint = lookup_row.selected_source_row_fingerprint
+                   WHERE lookup_row.canonical_release_id = %s
+                     AND lookup_row.source_snapshot_id = %s
+                     AND lookup_row.lookup_kind IN ('title', 'slug', 'path')
+                     AND lookup_row.resolution_status IN ('unique', 'identical_collapsed')
+                     AND selected_catalog.is_active = 1
+                     AND selected_catalog.direction_key = %s
+                     AND selected_catalog.material_type = %s
+                     AND selected_catalog.access_label = %s
+                  ) AS combined_projection_rows,
+                  (SELECT COUNT(DISTINCT catalog.source_row_fingerprint)
+                   FROM portal_content_catalog AS catalog
+                   WHERE catalog.canonical_release_id = %s
+                     AND catalog.source_snapshot_id = %s
+                     AND catalog.is_active = 1
+                     AND catalog.direction_key = %s
+                     AND catalog.material_type = %s
+                     AND catalog.access_label = %s
+                     AND EXISTS (
+                       SELECT 1
+                       FROM portal_content_lookup_projection AS lookup_row
+                       WHERE lookup_row.canonical_release_id = catalog.canonical_release_id
+                         AND lookup_row.source_snapshot_id = catalog.source_snapshot_id
+                         AND lookup_row.selected_source_row_fingerprint = catalog.source_row_fingerprint
+                         AND lookup_row.lookup_kind IN ('title', 'slug', 'path')
+                         AND lookup_row.resolution_status IN ('unique', 'identical_collapsed')
+                     )
+                  ) AS combined_catalog_rows
+                """,
+                (
+                    candidate_release_id, catalog_snapshot_id,
+                    combined_direction, combined_material, combined_access,
+                    candidate_release_id, catalog_snapshot_id,
+                    combined_direction, combined_material, combined_access,
+                ),
+            )
+            combined_smoke = cursor.fetchone()
         joined_total = int(_row_value(joined_smoke, "joined_projection_rows", 0) or 0)
+        combined_projection = int(
+            _row_value(combined_smoke, "combined_projection_rows", 0) or 0
+        )
+        combined_catalog = int(
+            _row_value(combined_smoke, "combined_catalog_rows", 1) or 0
+        )
         lookup_total = int(_row_value(lookup_smoke, "lookup_group_count", 0) or 0)
         smoke_failures = 0 if (
             lookup_total > 0
             and joined_total > 0
+            and combined_projection > 0
+            and combined_projection == combined_catalog
             and int(_row_value(lookup_smoke, "lookup_consistency_failures", 1) or 0) == 0
             and int(_row_value(lookup_smoke, "dangling_selected_count", 2) or 0) == 0
             and int(_row_value(lookup_smoke, "title_group_count", 3) or 0) > 0
@@ -3013,3 +3096,151 @@ def validate_content_candidate(
         raise CandidateMaterializationError("CANDIDATE_VALIDATION_FAILED") from None
     finally:
         _close(cursor, connection if owns_connection else None)
+
+
+def validate_and_transition_content_candidate(
+    candidate_release_id: int,
+    expected_counts: Mapping[str, int],
+    accepted_hash: str,
+    *,
+    reviewed_by: str,
+    code_revision: str,
+    materializer_connection_factory,
+    operator_connection_factory,
+) -> GateReport:
+    """Persist exact content-gate evidence and transition staging to validated.
+
+    A dedicated materializer read first proves that the production read role can
+    inspect the candidate.  The release-operator then repeats the complete gate
+    under its own transaction and persists the evidence atomically with the
+    lifecycle transition.  Neither role can mutate the active pointer here.
+    """
+
+    reviewer = str(reviewed_by or "").strip()
+    if (
+        not reviewer
+        or len(reviewer) > 255
+        or any(ord(character) < 32 for character in reviewer)
+        or not re.fullmatch(r"[0-9a-f]{7,64}", str(code_revision or ""))
+        or not callable(materializer_connection_factory)
+        or not callable(operator_connection_factory)
+    ):
+        raise CandidateMaterializationError("CANDIDATE_VALIDATION_AUTHORITY_INVALID")
+
+    inspection_connection = None
+    operator_connection = None
+    operator_cursor = None
+    try:
+        inspection_connection = materializer_connection_factory()
+        inspection_connection.start_transaction()
+        inspected = validate_content_candidate(
+            candidate_release_id,
+            expected_counts,
+            accepted_hash,
+            connection=inspection_connection,
+        )
+        inspection_connection.rollback()
+        if not inspected.passed:
+            raise CandidateMaterializationError("CANDIDATE_GATE_FAILED")
+
+        operator_connection = operator_connection_factory()
+        operator_connection.start_transaction()
+        authoritative = validate_content_candidate(
+            candidate_release_id,
+            expected_counts,
+            accepted_hash,
+            connection=operator_connection,
+        )
+        if not authoritative.passed or authoritative != inspected:
+            raise CandidateMaterializationError("CANDIDATE_GATE_FAILED")
+
+        operator_cursor = operator_connection.cursor(dictionary=True)
+        operator_cursor.execute(
+            """
+            SELECT baseline_validation_run_id, code_revision, release_status
+            FROM portal_data_releases
+            WHERE dataset_key = %s AND id = %s
+            FOR UPDATE
+            """,
+            (DATASET_KEY, int(candidate_release_id)),
+        )
+        release = operator_cursor.fetchone()
+        if (
+            not isinstance(release, Mapping)
+            or release.get("release_status") != "staging"
+            or str(release.get("code_revision") or "") != code_revision
+            or int(release.get("baseline_validation_run_id") or 0) <= 0
+        ):
+            raise CandidateMaterializationError("CANDIDATE_NOT_MUTABLE")
+        baseline_snapshot_id = int(release["baseline_validation_run_id"])
+        validation_run_id = str(uuid.uuid4())
+        diagnostic = _canonical_json(
+            {
+                "accepted_decision_hash": accepted_hash,
+                "expected_counts": {
+                    str(key): int(value)
+                    for key, value in sorted(expected_counts.items())
+                },
+                "gate_passed": True,
+            }
+        )
+        controls = (
+            ("content.source_reconciliation_pct", EXACT_PERCENT, authoritative.source_reconciliation_pct),
+            ("content.count_reconciliation_pct", EXACT_PERCENT, authoritative.count_reconciliation_pct),
+            ("content.hash_reconciliation_pct", EXACT_PERCENT, authoritative.hash_reconciliation_pct),
+            ("content.schema_compliance_pct", EXACT_PERCENT, authoritative.schema_compliance_pct),
+            ("content.anti_flip_violations", Decimal("0"), Decimal(authoritative.anti_flip_violations)),
+            ("content.strong_identity_collisions", Decimal("0"), Decimal(authoritative.strong_identity_collisions)),
+            ("content.out_of_taxonomy_values", Decimal("0"), Decimal(authoritative.out_of_taxonomy_values)),
+            ("content.archive_material_types", Decimal("0"), Decimal(authoritative.archive_material_types)),
+            ("content.unresolved_accepted_conflicts", Decimal("0"), Decimal(authoritative.unresolved_accepted_conflicts)),
+            ("content.active_release_mutations", Decimal("0"), Decimal(authoritative.active_release_mutations)),
+            ("content.dashboard_smoke_failures", Decimal("0"), Decimal(authoritative.dashboard_smoke_failures)),
+        )
+        for control_name, expected, actual in controls:
+            operator_cursor.execute(
+                """
+                INSERT INTO portal_migration_validation_runs (
+                  canonical_release_id, baseline_snapshot_id,
+                  candidate_snapshot_id, candidate_run_id,
+                  validation_run_id, validation_run_completed_at, code_revision,
+                  control_name, expected_value, actual_value,
+                  absolute_delta, relative_delta, threshold_value,
+                  result_status, diagnostic_json, reviewed_by, accepted_at
+                ) VALUES (
+                  %s, %s, NULL, NULL, %s, NOW(6), %s,
+                  %s, %s, %s, %s, 0, 0,
+                  'pass', %s, %s, NOW(6)
+                )
+                """,
+                (
+                    int(candidate_release_id), baseline_snapshot_id,
+                    validation_run_id, code_revision, control_name,
+                    expected, actual, abs(actual - expected), diagnostic, reviewer,
+                ),
+            )
+            if int(getattr(operator_cursor, "rowcount", -1)) != 1:
+                raise CandidateMaterializationError("VALIDATION_EVIDENCE_WRITE_FAILED")
+        operator_cursor.execute(
+            """
+            UPDATE portal_data_releases
+            SET release_status = 'validated'
+            WHERE dataset_key = %s AND id = %s AND release_status = 'staging'
+            """,
+            (DATASET_KEY, int(candidate_release_id)),
+        )
+        if int(getattr(operator_cursor, "rowcount", -1)) != 1:
+            raise CandidateMaterializationError("CANDIDATE_STATUS_TRANSITION_FAILED")
+        operator_connection.commit()
+        return authoritative
+    except CandidateMaterializationError:
+        if operator_connection is not None:
+            operator_connection.rollback()
+        raise
+    except Exception:
+        if operator_connection is not None:
+            operator_connection.rollback()
+        raise CandidateMaterializationError("CANDIDATE_VALIDATION_FAILED") from None
+    finally:
+        _close(operator_cursor, operator_connection)
+        _close(None, inspection_connection)

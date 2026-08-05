@@ -11,7 +11,11 @@ from agents.abbott_page_classifier.approval_hashes import (
     compute_taxonomy_digest,
 )
 from agents.abbott_page_classifier.domain import TAXONOMY_LABELS, TaxonomyVersion
-from agents.abbott_page_classifier.llm_classifier import LlmAttempt, LlmUsage
+from agents.abbott_page_classifier.llm_classifier import (
+    LlmAttempt,
+    LlmClassification,
+    LlmUsage,
+)
 from agents.abbott_page_classifier.repository import RepositoryError
 from agents.abbott_page_classifier.workflow_repository import (
     MySqlWorkflowStore,
@@ -55,10 +59,13 @@ class FakeCursor:
             self.rows = [(7, "Eventless", "https://abbottpro.ru/eventless", None, None, None, None, None)]
         elif "FROM portal_content_registry_aliases" in normalized:
             self.rows = [(7, "canonical_url", "https://abbottpro.ru/eventless", "strong")]
+        elif (
+            "FROM portal_content_llm_attempts" in normalized
+            or "INNER JOIN portal_content_llm_attempts" in normalized
+        ):
+            self.rows = list(self.connection.llm_rows)
         elif "FROM portal_content_reconciliation_items" in normalized:
             self.rows = [(44,)]
-        elif "FROM portal_content_llm_attempts" in normalized:
-            self.rows = []
         elif normalized.startswith("INSERT INTO portal_content_llm_attempts"):
             self.lastrowid = 91
             self.rowcount = 1
@@ -76,6 +83,7 @@ class FakeCursor:
 class FakeConnection:
     def __init__(self):
         self.calls = []
+        self.llm_rows = []
         self.commit_count = 0
         self.rollback_count = 0
         self.cursor_instance = FakeCursor(self)
@@ -358,6 +366,56 @@ class MySqlWorkflowStoreTests(unittest.TestCase):
         self.assertFalse(any("bounded source" in str(value) for value in insert_params))
         self.assertEqual(connection.commit_count, 1)
 
+    def test_load_llm_attempts_rehydrates_and_attests_stored_primary(self):
+        connection = FakeConnection()
+        classification = LlmClassification(
+            direction_code="cardiology",
+            material_type_code="articles",
+            direction_confidence=0.9,
+            material_type_confidence=0.8,
+            alternative_direction_codes=(),
+            evidence=("path",),
+            requires_medical_review=False,
+            insufficient_evidence=False,
+        )
+        attempt = LlmAttempt(
+            status="success",
+            model="gpt-5.6-terra",
+            classification=classification,
+            attempt_count=1,
+            input_hash="f" * 64,
+            requested_fields=("direction_code", "material_type_code"),
+            usage=LlmUsage(input_tokens=12, output_tokens=3, total_tokens=15),
+            elapsed_ms=7,
+        )
+        payload = {
+            "attempt_count": 1,
+            "input_hash": "f" * 64,
+            "item_key": "b" * 64,
+            "model": "gpt-5.6-terra",
+            "requested_fields": attempt.requested_fields,
+            "route_kind": "terra_primary",
+            "run_id": 4,
+            "status": "success",
+            "strict_result": classification.model_dump(mode="json"),
+            "unresolved_code": None,
+        }
+        connection.llm_rows = [(
+            "terra_primary", 1, attempt.model, attempt.input_hash,
+            _canonical_json(attempt.requested_fields),
+            _canonical_json(classification.model_dump(mode="json")),
+            None, 12, 3, 7,
+            __import__("hashlib").sha256(
+                _canonical_json(payload).encode("utf-8")
+            ).hexdigest(),
+        )]
+
+        loaded = MySqlWorkflowStore(lambda: connection).load_llm_attempts(
+            4, "b" * 64
+        )
+
+        self.assertEqual(loaded, {"terra_primary": attempt})
+
     def test_run_rehydration_uses_the_taxonomy_version_joined_by_stored_fk(self):
         connection = RehydrationConnection(version="abbott.v2")
 
@@ -409,6 +467,110 @@ class MySqlWorkflowStoreTests(unittest.TestCase):
                 self.assertTrue(connection.cursor_instance.catalog_locked)
                 self.assertEqual(connection.commit_count, 0)
                 self.assertEqual(connection.rollback_count, 1)
+
+    def test_baseline_duplicate_material_preserves_every_url_alias(self):
+        connection = BootstrapConnection()
+        cursor = connection.cursor_instance
+        cursor.catalog.insert(
+            1,
+            (
+                "Existing alternate",
+                "https://abbottpro.ru/existing-alternate",
+                "100",
+                "articles",
+                "all",
+                "cardiology",
+                1,
+                11,
+                "pages",
+                3,
+                "f3",
+            ),
+        )
+        # Existing bootstrap evidence must attest the complete material group.
+        grouped_evidence = _baseline_evidence("f1")
+        grouped_evidence["source_row_fingerprints"] = ["f1", "f3"]
+        cursor.entities[7]["source_evidence"] = grouped_evidence
+        for alias in cursor.aliases:
+            alias["source_evidence"] = grouped_evidence
+        cursor.events[7] = _baseline_event(7, "f1")
+        cursor.events[7]["proposal_evidence"] = grouped_evidence
+        event_values = {
+            "content_entity_id": 7,
+            "taxonomy_version_id": 3,
+            "direction_code": "cardiology",
+            "material_type_code": "articles",
+            "access_code": "all",
+            "lifecycle_code": "active",
+            "event_kind": "baseline",
+            "proposal_evidence": grouped_evidence,
+            "effective_at": "1970-01-01T00:00:00.000000+00:00",
+        }
+        cursor.events[7]["event_fingerprint"] = compute_classification_event_fingerprint(
+            event_values
+        )
+
+        MySqlWorkflowStore(lambda: connection).load_reconciliation_context(CONFIG)
+
+        url_aliases = {
+            alias["alias_value"]
+            for alias in cursor.aliases
+            if alias["content_entity_id"] == 7
+            and alias["alias_type"] in {"canonical_url", "url"}
+        }
+        self.assertEqual(
+            url_aliases,
+            {
+                "https://abbottpro.ru/existing",
+                "https://abbottpro.ru/existing-alternate",
+            },
+        )
+
+    def test_baseline_duplicate_material_rejects_direction_or_type_disagreement(self):
+        for column, value in ((5, "gastroenterology"), (3, "video"), (4, "doctors")):
+            with self.subTest(column=column):
+                connection = BootstrapConnection()
+                row = list(connection.cursor_instance.catalog[0])
+                row[column] = value
+                row[9] = 3
+                row[10] = "f3"
+                connection.cursor_instance.catalog.insert(1, tuple(row))
+
+                with self.assertRaisesRegex(
+                    RepositoryError, "BASELINE_CLASSIFICATION_MISMATCH"
+                ):
+                    MySqlWorkflowStore(
+                        lambda: connection
+                    ).load_reconciliation_context(CONFIG)
+
+    def test_baseline_weak_alias_can_have_multiple_entity_owners(self):
+        connection = BootstrapConnection()
+        connection.cursor_instance.catalog[1] = (
+            "Existing",
+            "https://abbottpro.ru/missing",
+            "200",
+            "articles",
+            "all",
+            "cardiology",
+            1,
+            11,
+            "pages",
+            2,
+            "f2",
+        )
+
+        MySqlWorkflowStore(lambda: connection).load_reconciliation_context(CONFIG)
+
+        shared_title = [
+            alias
+            for alias in connection.cursor_instance.aliases
+            if alias["alias_type"] == "title"
+            and alias["alias_value"] == "Existing"
+        ]
+        self.assertEqual(
+            {alias["content_entity_id"] for alias in shared_title},
+            {7, 8},
+        )
 
 
 if __name__ == "__main__":

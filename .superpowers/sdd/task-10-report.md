@@ -25,20 +25,20 @@ The root runtime manifest adds these authorities:
 
 ```text
 weekly_proposal.py      16b67d580b6300de3f6c78871c1639959ae669cd3f6d999c6dc18534e2074420
-workflow.py             00d0e17e0bb56bbc9b1e5720847edcb9fbcf8eb4a3efb063f101a94e31c9073d
-workflow_service.py     f7e14e0008ec1c79868032c8dc542095ed33209dc08c79cfe10806fdf71a335b
-workflow_repository.py  3465652267f7f483dc907d7c05f6fd53e3e153842d6bf7c456ddb123a81ab0d0
-repository.py           cdea0cfc942e40aa416d292cd3672ddb07c307796017c0eba86994832526c24e
+workflow.py             0a5b279e1b813756844a713711ef56ac60d5a4adf01a4c8ec8d7b6136a958485
+workflow_service.py     1f838621b600ac31ef158533d747aa934039f2e847dfb7edd129b62e76a992be
+workflow_repository.py  fd4357bbfe1f802acb8045892807cf3885e50a08c2c610a893f8ec620e504a23
+repository.py           36f0612679b65ee9342f8582696dc837bdfede8952434c6b11edf2113ef7566e
 batch_service.py        619d3b2ce8018be34c150b4b66c74086d04bf1ee6190eb778e9067d7fca589b7
 reconcile.py            45ad50b7459d7808f62e451d2bf75278253e8c53bf21e9bb8e2af736b6f4f7f0
 identity.py             39e0e961dbb5c91a65a737f953f1534141f84719d9690ddc648c4f313d6da6d7
 sources.py              7f0c7fca84b021eac669726165336a978d2eeff0c92a1626f44af60d363dce9d
 llm_classifier.py       43cfd180f64da3afe74aa8252e644fa4ddecc1d294783f9660274b0b17eb3ce7
-sheets_sync.py          6c3a09329cc89bea3fd759fdc860c8eee99ff63a2be438455a5b2c1533173123
+sheets_sync.py          ac179656f8fe46988ef0abfac6ffe23356fd93cdbc49eba54eea14f0cdc1eaca
 ```
 
 The separately packaged additive migration 047 hash is
-`9ba5254bc4adcdd94c17a0dfde09f256d6540f9ae505f8e1c38d90c43a78e032`.
+`0aab4d08ed7c8b2f7dd8cc5aadba5097d7f98cde5fb19226df29d082bd44fe3e`.
 Migrations 033 and 046 remain byte-identical at
 `c3d23b0ccbee8ddf2fd77906f7fe3045dcf7e59b8ed8c4d978dd7d774a56c2aa`
 and `460406eb14d98e32ec8b71576a5fd06812384434ba12c74545e118cc0ac3c456`.

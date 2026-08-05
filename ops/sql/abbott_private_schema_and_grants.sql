@@ -696,6 +696,7 @@ GRANT SELECT ON report_bd.portal_content_approval_items TO 'abbott_release_opera
 GRANT SELECT ON report_bd.portal_content_classification_events TO 'abbott_release_operator_role';
 GRANT SELECT ON report_bd.portal_content_registry_entities TO 'abbott_release_operator_role';
 GRANT SELECT ON report_bd.portal_content_registry_aliases TO 'abbott_release_operator_role';
+GRANT SELECT ON report_bd.portal_content_taxonomy_versions TO 'abbott_release_operator_role';
 GRANT SELECT ON report_bd.portal_content_taxonomy_terms TO 'abbott_release_operator_role';
 GRANT SELECT ON report_bd.portal_general_materials TO 'abbott_release_operator_role';
 GRANT SELECT ON report_bd.portal_event_catalog TO 'abbott_release_operator_role';

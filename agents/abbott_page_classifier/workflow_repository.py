@@ -26,7 +26,7 @@ from .domain import (
     Proposal,
 )
 from .identity import IdentityAlias, IdentityResolver
-from .llm_classifier import LlmAttempt
+from .llm_classifier import LlmAttempt, LlmClassification, LlmUsage
 from .normalization import normalize_taxonomy_label, normalize_title, normalize_url, sha256_text
 from .reconcile import ReconciliationInput, reconcile_entity
 from .repository import ContentRegistryRepository, DATASET_KEY, RepositoryError
@@ -48,6 +48,18 @@ def _canonical_json(value: object) -> str:
 
 def _json_value(value: object) -> object:
     return json.loads(value) if isinstance(value, str) else value
+
+
+def _is_duplicate_key_error(error: Exception) -> bool:
+    """Return true only for the MySQL duplicate-key condition (1062)."""
+
+    errno = getattr(error, "errno", None)
+    if errno is None and getattr(error, "args", ()):
+        errno = error.args[0]
+    try:
+        return int(errno) == 1062
+    except (TypeError, ValueError):
+        return False
 
 
 def _candidate_payload(value: SourceCandidate | None) -> object | None:
@@ -180,6 +192,140 @@ class MySqlWorkflowStore:
     def load_persisted_batch(self, batch_id: int) -> PersistedApprovalBatch:
         return self._registry.load_persisted_batch(int(batch_id))
 
+    def load_finalized_batch_for_run(
+        self, run_id: int
+    ) -> PersistedApprovalBatch | None:
+        connection = cursor = None
+        try:
+            connection = self._connection_factory()
+            cursor = connection.cursor()
+            cursor.execute(
+                """
+                SELECT run.run_status, batch.id
+                FROM portal_content_reconciliation_runs AS run
+                LEFT JOIN portal_content_approval_batches AS batch
+                  ON batch.reconciliation_run_id = run.id
+                 AND batch.dataset_key = run.dataset_key
+                WHERE run.id = %s
+                  AND run.dataset_key = %s
+                """,
+                (int(run_id), DATASET_KEY),
+            )
+            row = cursor.fetchone()
+            if row is None:
+                raise RepositoryError("RECONCILIATION_RUN_NOT_FOUND")
+            if str(row[0]) != "finalized":
+                return None
+            if row[1] is None:
+                raise RepositoryError("FINALIZED_BATCH_MISSING")
+            batch_id = int(row[1])
+        except RepositoryError:
+            raise
+        except Exception:
+            raise RepositoryError("DB_READ_FAILED") from None
+        finally:
+            ContentRegistryRepository._close(cursor, connection)
+        return self.load_persisted_batch(batch_id)
+
+    def load_llm_attempts(
+        self, run_id: int, item_key: str
+    ) -> Mapping[str, LlmAttempt]:
+        connection = cursor = None
+        try:
+            connection = self._connection_factory()
+            cursor = connection.cursor()
+            cursor.execute(
+                """
+                SELECT attempt.route_kind, attempt.attempt_ordinal,
+                       attempt.model_version, attempt.request_hash,
+                       attempt.requested_fields, attempt.strict_result_json,
+                       attempt.unresolved_code, attempt.input_token_count,
+                       attempt.output_token_count, attempt.elapsed_ms,
+                       attempt.event_fingerprint
+                FROM portal_content_reconciliation_items AS item
+                INNER JOIN portal_content_llm_attempts AS attempt
+                  ON attempt.reconciliation_item_id = item.id
+                 AND attempt.reconciliation_run_id = item.reconciliation_run_id
+                WHERE item.reconciliation_run_id = %s
+                  AND item.item_key = %s
+                ORDER BY attempt.route_kind, attempt.attempt_ordinal
+                """,
+                (int(run_id), item_key),
+            )
+            result: dict[str, LlmAttempt] = {}
+            for row in cursor.fetchall():
+                route_kind = str(row[0])
+                if route_kind in result or route_kind not in {
+                    "terra_primary", "sol_verifier"
+                }:
+                    raise RepositoryError("LLM_ATTEMPT_MISMATCH")
+                requested = _json_value(row[4])
+                strict_raw = row[5]
+                strict = _json_value(strict_raw)
+                if not isinstance(requested, list) or any(
+                    not isinstance(value, str) for value in requested
+                ):
+                    raise RepositoryError("LLM_ATTEMPT_MISMATCH")
+                classification = (
+                    LlmClassification.model_validate_json(
+                        strict_raw
+                        if isinstance(strict_raw, (str, bytes, bytearray))
+                        else _canonical_json(strict)
+                    )
+                    if strict is not None
+                    else None
+                )
+                unresolved_code = str(row[6]) if row[6] is not None else None
+                status = "success" if classification is not None else "unresolved"
+                if classification is None and not unresolved_code:
+                    raise RepositoryError("LLM_ATTEMPT_MISMATCH")
+                usage = None
+                if row[7] is not None or row[8] is not None:
+                    input_tokens = int(row[7] or 0)
+                    output_tokens = int(row[8] or 0)
+                    usage = LlmUsage(
+                        input_tokens=input_tokens,
+                        output_tokens=output_tokens,
+                        total_tokens=input_tokens + output_tokens,
+                    )
+                attempt = LlmAttempt(
+                    status=status,
+                    model=str(row[2]),
+                    classification=classification,
+                    unresolved_code=unresolved_code,
+                    attempt_count=int(row[1]),
+                    input_hash=str(row[3]),
+                    requested_fields=tuple(requested),
+                    usage=usage,
+                    elapsed_ms=(int(row[9]) if row[9] is not None else None),
+                )
+                payload = {
+                    "attempt_count": attempt.attempt_count,
+                    "input_hash": attempt.input_hash,
+                    "item_key": item_key,
+                    "model": attempt.model,
+                    "requested_fields": attempt.requested_fields,
+                    "route_kind": route_kind,
+                    "run_id": int(run_id),
+                    "status": attempt.status,
+                    "strict_result": (
+                        attempt.classification.model_dump(mode="json")
+                        if attempt.classification is not None
+                        else None
+                    ),
+                    "unresolved_code": attempt.unresolved_code,
+                }
+                if str(row[10]) != sha256_text(_canonical_json(payload)):
+                    raise RepositoryError("LLM_ATTEMPT_MISMATCH")
+                result[route_kind] = attempt
+            return result
+        except RepositoryError:
+            raise
+        except Exception:
+            raise RepositoryError("DB_READ_FAILED") from None
+        finally:
+            ContentRegistryRepository._close(cursor, connection)
+
     def load_accepted_snapshot(self, batch_id: int):
         return self._registry.load_accepted_snapshot(int(batch_id))
 
@@ -274,12 +420,12 @@ class MySqlWorkflowStore:
     def _lock_active_release(cursor):
         cursor.execute(
             """
-            SELECT release.id, release.source_snapshot_ids
+            SELECT release_row.id, release_row.source_snapshot_ids
             FROM portal_active_data_releases AS active
-            INNER JOIN portal_data_releases AS release
-              ON release.id = active.canonical_release_id
-             AND release.dataset_key = active.dataset_key
-             AND release.release_status = 'active'
+            INNER JOIN portal_data_releases AS release_row
+              ON release_row.id = active.canonical_release_id
+             AND release_row.dataset_key = active.dataset_key
+             AND release_row.release_status = 'active'
             WHERE active.dataset_key = %s
             FOR UPDATE
             """,
@@ -408,7 +554,36 @@ class MySqlWorkflowStore:
             title = normalize_title(str(representative[0] or ""))
             url = normalize_url(str(representative[1] or "")).value
             material_id = str(representative[2] or "").strip() or None
-            for kind, value in (("material_id", material_id or ""), ("canonical_url", url)):
+            urls = tuple(
+                dict.fromkeys(
+                    normalize_url(str(row[1] or "")).value
+                    for row in group_rows
+                    if normalize_url(str(row[1] or "")).value
+                )
+            )
+            titles = tuple(
+                dict.fromkeys(
+                    normalize_title(str(row[0] or ""))
+                    for row in group_rows
+                    if normalize_title(str(row[0] or ""))
+                )
+            )
+            classifications = {
+                (
+                    self._taxonomy_code("direction", row[5]),
+                    self._taxonomy_code("material_type", row[3]),
+                    self._taxonomy_code("access", row[4]) or "unspecified",
+                    "active" if bool(row[6]) else "archive_candidate",
+                )
+                for row in group_rows
+            }
+            if len(classifications) != 1:
+                raise RepositoryError("BASELINE_CLASSIFICATION_MISMATCH")
+            direction, material_type, access, lifecycle = next(iter(classifications))
+            for kind, value in (
+                ("material_id", material_id or ""),
+                *(("canonical_url", value) for value in urls),
+            ):
                 if not value:
                     continue
                 prior = strong_owner.setdefault((kind, value.casefold()), ordinal)
@@ -419,17 +594,18 @@ class MySqlWorkflowStore:
                 "predecessor_release_id": predecessor_id,
                 "source_row_fingerprints": [str(row[10]) for row in group_rows],
             }
+            url_placeholders = ", ".join(["%s"] * len(urls)) or "NULL"
             cursor.execute(
-                """
+                f"""
                 SELECT id, material_id, title, canonical_url,
                        registry_status, source_evidence
                 FROM portal_content_registry_entities
                 WHERE dataset_key = %s
-                  AND (material_id = %s OR canonical_url = %s)
+                  AND (material_id = %s OR canonical_url IN ({url_placeholders}))
                 ORDER BY id
                 FOR UPDATE
                 """,
-                (DATASET_KEY, material_id, url),
+                (DATASET_KEY, material_id, *urls),
             )
             entity_rows = tuple(cursor.fetchall())
             if len(entity_rows) > 1:
@@ -440,7 +616,7 @@ class MySqlWorkflowStore:
                 if (
                     (str(existing[1]) if existing[1] is not None else None) != material_id
                     or str(existing[2]) != title
-                    or str(existing[3]) != url
+                    or str(existing[3]) not in urls
                     or str(existing[4]) != "active"
                     or _json_value(existing[5]) != evidence
                 ):
@@ -449,13 +625,13 @@ class MySqlWorkflowStore:
             aliases = []
             if material_id:
                 aliases.append(("material_id", material_id, "strong"))
-            if url:
-                aliases.extend((("canonical_url", url, "strong"), ("url", url, "strong")))
-                slug = PurePosixPath(urlsplit(url).path).name
+            for alias_url in urls:
+                aliases.extend((("canonical_url", alias_url, "strong"), ("url", alias_url, "strong")))
+                slug = PurePosixPath(urlsplit(alias_url).path).name
                 if slug:
                     aliases.append(("slug", slug, "weak"))
-            if title:
-                aliases.append(("title", title, "weak"))
+            aliases.extend(("title", alias_title, "weak") for alias_title in titles)
+            aliases = list(dict.fromkeys(aliases))
             missing_aliases = []
             for alias_type, alias_value, strength in aliases:
                 alias_hash = sha256_text(alias_value.casefold())
@@ -473,16 +649,21 @@ class MySqlWorkflowStore:
                     (DATASET_KEY, alias_type, alias_hash, strength),
                 )
                 alias_rows = tuple(cursor.fetchall())
-                if len(alias_rows) > 1:
+                owned_rows = tuple(
+                    row for row in alias_rows
+                    if entity_id is not None and int(row[0]) == entity_id
+                )
+                if strength == "strong" and any(
+                    entity_id is None or int(row[0]) != entity_id
+                    for row in alias_rows
+                ):
                     raise RepositoryError("IDENTITY_COLLISION")
-                if not alias_rows:
+                if len(owned_rows) > 1:
+                    raise RepositoryError("BASELINE_ALIAS_MISMATCH")
+                if not owned_rows:
                     missing_aliases.append((alias_type, alias_value, alias_hash, strength))
                     continue
-                alias_row = alias_rows[0]
-                if entity_id is None or int(alias_row[0]) != entity_id:
-                    if strength == "strong":
-                        raise RepositoryError("IDENTITY_COLLISION")
-                    continue
+                alias_row = owned_rows[0]
                 if (
                     str(alias_row[1]) != alias_type
                     or str(alias_row[2]) != alias_value
@@ -517,10 +698,6 @@ class MySqlWorkflowStore:
                         alias_hash, strength, _canonical_json(evidence),
                     ),
                 )
-            direction = self._taxonomy_code("direction", representative[5])
-            material_type = self._taxonomy_code("material_type", representative[3])
-            access = self._taxonomy_code("access", representative[4]) or "unspecified"
-            lifecycle = "active" if bool(representative[6]) else "archive_candidate"
             fingerprint = compute_classification_event_fingerprint(
                 {
                     "content_entity_id": entity_id,
@@ -981,11 +1158,35 @@ class MySqlWorkflowStore:
         try:
             connection = self._connection_factory()
             cursor = connection.cursor()
-            entities = self._load_entities(cursor)
-            aliases = list(self._load_aliases(cursor))
+            # The active-pointer row is the dataset-wide serialization mutex for
+            # canonical identity creation.  It is read-only here; holding it keeps
+            # different reconciliation runs from racing on the same new identity.
+            cursor.execute(
+                """
+                SELECT canonical_release_id
+                FROM portal_active_data_releases
+                WHERE dataset_key = %s
+                FOR UPDATE
+                """,
+                (DATASET_KEY,),
+            )
+            if cursor.fetchone() is None:
+                raise RepositoryError("ACTIVE_PREDECESSOR_NOT_FOUND")
+            cursor.execute(
+                """
+                SELECT run_status
+                FROM portal_content_reconciliation_runs
+                WHERE id = %s AND dataset_key = %s
+                FOR UPDATE
+                """,
+                (int(run_id), DATASET_KEY),
+            )
+            run_row = cursor.fetchone()
+            if run_row is None or str(run_row[0]) not in ("reconciled", "classified"):
+                raise RepositoryError("RECONCILIATION_STATUS_INVALID")
             resolved: dict[str, int] = {}
             resolver = IdentityResolver()
-            for item_key in item_keys:
+            for item_key in sorted(set(item_keys)):
                 cursor.execute(
                     """
                     SELECT identity_status, registry1_json
@@ -1001,6 +1202,33 @@ class MySqlWorkflowStore:
                 candidate = _candidate_from_payload(row[1])
                 if candidate is None:
                     raise RepositoryError("REGISTRY_ENTITY_RESOLUTION_INVALID")
+                # Re-read identity state only after the item is locked.  The
+                # explicit table-range locks protect both existing rows and the
+                # insertion gaps used by a new material/url.
+                cursor.execute(
+                    """
+                    SELECT id
+                    FROM portal_content_registry_entities
+                    WHERE dataset_key = %s
+                    ORDER BY id
+                    FOR UPDATE
+                    """,
+                    (DATASET_KEY,),
+                )
+                cursor.fetchall()
+                cursor.execute(
+                    """
+                    SELECT id
+                    FROM portal_content_registry_aliases
+                    WHERE dataset_key = %s
+                    ORDER BY id
+                    FOR UPDATE
+                    """,
+                    (DATASET_KEY,),
+                )
+                cursor.fetchall()
+                entities = self._load_entities(cursor)
+                aliases = list(self._load_aliases(cursor))
                 resolution = resolver.resolve(candidate, entities, aliases)
                 if resolution.status == "collision":
                     raise RepositoryError("IDENTITY_COLLISION")
@@ -1009,16 +1237,30 @@ class MySqlWorkflowStore:
                     continue
                 value = candidate.candidate
                 evidence = {"authority": "registry1_reconciliation", "run_id": int(run_id), "item_key": item_key}
-                cursor.execute(
-                    """
-                    INSERT INTO portal_content_registry_entities (
-                      dataset_key, material_id, title, canonical_url,
-                      registry_status, source_evidence
-                    ) VALUES (%s, %s, %s, %s, 'active', %s)
-                    """,
-                    (DATASET_KEY, value.material_id, value.title, value.url, _canonical_json(evidence)),
-                )
-                entity_id = int(cursor.lastrowid)
+                try:
+                    cursor.execute(
+                        """
+                        INSERT INTO portal_content_registry_entities (
+                          dataset_key, material_id, title, canonical_url,
+                          registry_status, source_evidence
+                        ) VALUES (%s, %s, %s, %s, 'active', %s)
+                        """,
+                        (DATASET_KEY, value.material_id, value.title, value.url, _canonical_json(evidence)),
+                    )
+                    entity_id = int(cursor.lastrowid)
+                except Exception as error:
+                    if not _is_duplicate_key_error(error):
+                        raise
+                    # A writer outside this workflow may have won after our
+                    # initial lookup.  Re-attest the canonical winner instead of
+                    # surfacing a generic transaction failure.
+                    entities = self._load_entities(cursor)
+                    aliases = list(self._load_aliases(cursor))
+                    recovered = resolver.resolve(candidate, entities, aliases)
+                    if recovered.status != "matched" or recovered.content_entity_id is None:
+                        raise RepositoryError("IDENTITY_COLLISION") from None
+                    resolved[item_key] = int(recovered.content_entity_id)
+                    continue
                 alias_values = []
                 if value.material_id:
                     alias_values.append(("material_id", value.material_id, "strong"))
@@ -1030,15 +1272,34 @@ class MySqlWorkflowStore:
                 if value.title:
                     alias_values.append(("title", value.title, "weak"))
                 for alias_type, alias_value, strength in alias_values:
-                    cursor.execute(
-                        """
-                        INSERT INTO portal_content_registry_aliases (
-                          dataset_key, content_entity_id, alias_type, alias_value,
-                          alias_hash, uniqueness_scope, alias_status, source_evidence
-                        ) VALUES (%s, %s, %s, %s, %s, %s, 'active', %s)
-                        """,
-                        (DATASET_KEY, entity_id, alias_type, alias_value, sha256_text(alias_value.casefold()), strength, _canonical_json(evidence)),
-                    )
+                    try:
+                        cursor.execute(
+                            """
+                            INSERT INTO portal_content_registry_aliases (
+                              dataset_key, content_entity_id, alias_type, alias_value,
+                              alias_hash, uniqueness_scope, alias_status, source_evidence
+                            ) VALUES (%s, %s, %s, %s, %s, %s, 'active', %s)
+                            """,
+                            (DATASET_KEY, entity_id, alias_type, alias_value, sha256_text(alias_value.casefold()), strength, _canonical_json(evidence)),
+                        )
+                    except Exception as error:
+                        if not _is_duplicate_key_error(error):
+                            raise
+                        current_aliases = self._load_aliases(cursor)
+                        matching = tuple(
+                            alias for alias in current_aliases
+                            if alias.alias_kind == alias_type
+                            and alias.alias_value.casefold() == alias_value.casefold()
+                        )
+                        owned = tuple(
+                            alias for alias in matching
+                            if alias.content_entity_id == entity_id
+                        )
+                        if not owned or (
+                            strength == "strong"
+                            and any(alias.content_entity_id != entity_id for alias in matching)
+                        ):
+                            raise RepositoryError("IDENTITY_COLLISION") from None
                     aliases.append(IdentityAlias(entity_id, alias_type, alias_value, strength))
                 entities = (*entities, CanonicalClassification(entity_id, value.title, value.url, None, None, None, "unknown", None))
                 resolved[item_key] = entity_id

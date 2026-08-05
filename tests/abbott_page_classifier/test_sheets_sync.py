@@ -404,6 +404,28 @@ class SheetsProjectionTests(unittest.TestCase):
             2,
         )
 
+    def test_published_replay_preserves_in_progress_manager_edits(self):
+        approval_batch = batch()
+        repository = FakeRepository(approval_batch)
+        gateway = FakeSheetsGateway()
+        first = publish_projection(approval_batch, gateway, repository)
+        direction_index = gateway.values["Предложения"][0].index(
+            "final_direction_code"
+        )
+        gateway.values["Предложения"][1][direction_index] = (
+            "manager-edited-direction"
+        )
+        calls_before = list(gateway.calls)
+
+        replay = publish_projection(approval_batch, gateway, repository)
+
+        self.assertEqual(replay, first)
+        self.assertEqual(gateway.calls, calls_before)
+        self.assertEqual(
+            gateway.values["Предложения"][1][direction_index],
+            "manager-edited-direction",
+        )
+
     def test_every_value_range_quotes_and_escapes_its_a1_tab_name(self):
         gateway = FakeSheetsGateway()
         publish_projection(batch(), gateway)

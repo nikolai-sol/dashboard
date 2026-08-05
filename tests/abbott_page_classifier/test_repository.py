@@ -669,6 +669,62 @@ class ContentRegistryRepositoryTests(unittest.TestCase):
             repository.load_accepted_snapshot(17)
         self.assertEqual(raised.exception.code, "BATCH_NOT_ACCEPTED")
 
+    def test_load_accepted_snapshot_uses_reviewed_final_fields_not_published_evidence(self):
+        batch = workflow_batch()
+        rows = self._published_item_rows(batch)
+        reviewed = replace(
+            batch.items[0],
+            final_direction_code="gastroenterology",
+            final_material_type_code="video",
+            final_access_code="all",
+            decision_reason="manager correction",
+        )
+        rows[0] = (
+            *rows[0][:5],
+            reviewed.final_direction_code,
+            reviewed.final_material_type_code,
+            reviewed.final_access_code,
+            reviewed.final_lifecycle_code,
+            *rows[0][9:11],
+            reviewed.decision_reason,
+            *rows[0][12:],
+        )
+        accepted_hash = compute_accepted_decision_hash((reviewed,))
+        history = (
+            batch.batch_key,
+            batch.published_input_hash,
+            accepted_hash,
+            "content-manager",
+            "2026-08-05T12:30:00+00:00",
+            1, 0, 0, 0, 0, 1, 0,
+            "accepted",
+            "sheet-123",
+            "e" * 64,
+            None,
+            "not_started",
+        )
+        connection = WorkflowConnection(
+            batch,
+            existing_batch_row=draft_workflow_row(batch, status="accepted"),
+            history_row=history,
+            acceptance_items=rows,
+        )
+
+        snapshot = ContentRegistryRepository(
+            lambda: connection
+        ).load_accepted_snapshot(17)
+
+        self.assertEqual(snapshot.accepted_decision_hash, accepted_hash)
+        self.assertEqual(snapshot.items[0].final_direction_code, "gastroenterology")
+        self.assertEqual(snapshot.items[0].final_material_type_code, "video")
+        self.assertEqual(snapshot.items[0].final_access_code, "all")
+        self.assertEqual(snapshot.items[0].decision_reason, "manager correction")
+        self.assertEqual(
+            snapshot.items[0].row_hash,
+            batch.items[0].row_hash,
+            "the immutable published row authority must remain attached",
+        )
+
     def test_load_active_taxonomy_returns_exact_terms_and_verified_digest(self):
         batch = workflow_batch()
         connection = WorkflowConnection(batch)

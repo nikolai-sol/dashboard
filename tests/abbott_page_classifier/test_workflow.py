@@ -185,12 +185,12 @@ class WorkflowTests(unittest.TestCase):
 
     def test_write_stages_default_dry_while_read_stages_require_a_numeric_batch(self):
         gateway = RecordingGateway()
-        for command in ("publish-projection", "ingest", "materialize"):
+        for command in ("publish-projection", "ingest", "materialize", "validate"):
             with self.subTest(command=command):
                 self.assertEqual(main([command], dependencies=WorkflowDependencies(gateway)), 0)
                 self.assertEqual(main([command, "--execute"], dependencies=WorkflowDependencies(gateway)), 2)
                 self.assertEqual(main([command, "--batch-id", "1", "--execute"], dependencies=WorkflowDependencies(gateway)), 0)
-        for command in ("pull-accepted", "validate", "status"):
+        for command in ("pull-accepted", "status"):
             with self.subTest(command=command):
                 self.assertEqual(main([command], dependencies=WorkflowDependencies(gateway)), 2)
                 self.assertEqual(main([command, "--dry-run"], dependencies=WorkflowDependencies(gateway)), 0)

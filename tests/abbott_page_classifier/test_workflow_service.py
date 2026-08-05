@@ -55,6 +55,7 @@ class StatefulWorkflowStore:
         self.attempts = []
         self.entity_creations = []
         self.entity_by_run_item = {}
+        self.persisted_attempts = {}
         self.next_entity_id = 100
 
     def load_reconciliation_context(self, configuration):
@@ -72,6 +73,12 @@ class StatefulWorkflowStore:
 
     def load_reconciliation_run(self, run_id):
         return self.runs_by_id[int(run_id)]
+
+    def load_finalized_batch_for_run(self, run_id):
+        return self.batches_by_run.get(int(run_id))
+
+    def load_llm_attempts(self, run_id, item_key):
+        return dict(self.persisted_attempts.get((int(run_id), item_key), {}))
 
     def resolve_or_create_registry1_entities(self, run_id, item_keys):
         resolved = {}
@@ -93,6 +100,7 @@ class StatefulWorkflowStore:
 
     def append_llm_attempt(self, run_id, item_key, route_kind, attempt):
         self.attempts.append((int(run_id), item_key, route_kind, attempt))
+        self.persisted_attempts.setdefault((int(run_id), item_key), {})[route_kind] = attempt
 
     def finalize_reconciliation_run(self, run_id, batch):
         existing = self.batches_by_run.get(int(run_id))
@@ -101,6 +109,9 @@ class StatefulWorkflowStore:
             return existing
         persisted = PersistedApprovalBatch(batch=batch, database_batch_id=70 + int(run_id))
         self.batches_by_run[int(run_id)] = persisted
+        self.runs_by_id[int(run_id)] = replace(
+            self.runs_by_id[int(run_id)], status="finalized"
+        )
         return persisted
 
     # unittest-style assertions keep fake violations executable, not flags.
@@ -150,7 +161,17 @@ def context(*, entities=(), aliases=(), taxonomy=TAXONOMY):
     )
 
 
-def write_sources(directory: Path, *, material_id="900", direction="Кардиология", material_type="Статьи"):
+def write_sources(
+    directory: Path,
+    *,
+    material_id="900",
+    direction="Кардиология",
+    material_type="Статьи",
+    registry2_material_id="",
+    registry2_url="",
+    registry2_direction="",
+    registry2_material_type="",
+):
     registry1 = directory / "registry1.xlsx"
     workbook = Workbook()
     sheet = workbook.active
@@ -159,11 +180,59 @@ def write_sources(directory: Path, *, material_id="900", direction="Кардио
     sheet.append((material_id, "Новый материал", "https://abbottpro.ru/cardio/new", direction, material_type))
     workbook.save(registry1)
     registry2 = directory / "registry2.csv"
-    registry2.write_text("ID,Название,URL,Направление,Тип материала\n", encoding="utf-8")
+    rows = "ID,Название,URL,Направление,Тип материала\n"
+    if registry2_material_id or registry2_url:
+        rows += (
+            f"{registry2_material_id},Новый материал,{registry2_url},"
+            f"{registry2_direction},{registry2_material_type}\n"
+        )
+    registry2.write_text(rows, encoding="utf-8")
     return registry1, registry2
 
 
 class WeeklyProposalServiceTests(unittest.TestCase):
+    def test_identical_new_strong_identity_merges_registry1_and_registry2(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            registry1, registry2 = write_sources(
+                Path(temporary),
+                registry2_material_id="900",
+                registry2_url="https://abbottpro.ru/cardio/new",
+                registry2_direction="Кардиология",
+                registry2_material_type="Статьи",
+            )
+            store = StatefulWorkflowStore(context())
+            run = CanonicalWeeklyProposalService(store, CONFIG).reconcile(
+                registry1, registry2
+            )
+
+        persisted = store.load_reconciliation_run(run.run_id)
+        self.assertEqual(len(persisted.items), 1)
+        item = persisted.items[0].reconciliation_input
+        self.assertIsNotNone(item.registry1)
+        self.assertIsNotNone(item.registry2)
+        self.assertFalse(item.identity_conflict)
+
+    def test_differing_new_strong_evidence_is_identity_collision(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            registry1, registry2 = write_sources(
+                Path(temporary),
+                registry2_material_id="901",
+                registry2_url="https://abbottpro.ru/cardio/new",
+                registry2_direction="Кардиология",
+                registry2_material_type="Статьи",
+            )
+            store = StatefulWorkflowStore(context())
+            run = CanonicalWeeklyProposalService(store, CONFIG).reconcile(
+                registry1, registry2
+            )
+            receipt = CanonicalWeeklyProposalService(store, CONFIG).classify(
+                run.run_id, execute_llm=False
+            )
+
+        self.assertEqual(len(store.load_reconciliation_run(run.run_id).items), 1)
+        self.assertEqual(receipt.conflict_count, 1)
+        self.assertEqual(store.entity_creations, [])
+
     def test_reconciliation_is_content_addressed_and_repeat_safe(self):
         with tempfile.TemporaryDirectory() as temporary:
             registry1, registry2 = write_sources(Path(temporary))
@@ -242,6 +311,111 @@ class WeeklyProposalServiceTests(unittest.TestCase):
         self.assertEqual(first.batch_id, second.batch_id)
         self.assertEqual(first.batch_key, second.batch_key)
         self.assertEqual(len(store.batches_by_run), 1)
+
+    def test_finalized_replay_returns_before_constructing_or_calling_provider(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            registry1, registry2 = write_sources(
+                Path(temporary), direction="", material_type=""
+            )
+            store = StatefulWorkflowStore(context())
+            run = CanonicalWeeklyProposalService(store, CONFIG).reconcile(
+                registry1, registry2
+            )
+            first_classifier = RecordingClassifier()
+            first = CanonicalWeeklyProposalService(
+                store, CONFIG, classifier_factory=lambda: first_classifier
+            ).classify(run.run_id, execute_llm=True)
+            replay_classifier = RecordingClassifier()
+            second = CanonicalWeeklyProposalService(
+                store, CONFIG, classifier_factory=lambda: replay_classifier
+            ).classify(run.run_id, execute_llm=True)
+
+        self.assertEqual(first.batch_id, second.batch_id)
+        self.assertEqual(replay_classifier.requests, [])
+
+    def test_partial_llm_recovery_reuses_persisted_primary_attempt(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            registry1, registry2 = write_sources(
+                Path(temporary), direction="", material_type=""
+            )
+            store = StatefulWorkflowStore(context())
+            run = CanonicalWeeklyProposalService(store, CONFIG).reconcile(
+                registry1, registry2
+            )
+            item_key = store.load_reconciliation_run(run.run_id).items[0].item_key
+            # This is the exact durable primary row left by an interrupted process.
+            persisted = LlmAttempt(
+                status="success",
+                model=LLM_PRIMARY_MODEL,
+                classification=LlmClassification(
+                    direction_code=None,
+                    material_type_code="articles",
+                    direction_confidence=None,
+                    material_type_confidence=0.99,
+                    alternative_direction_codes=(),
+                    evidence=("bounded source metadata",),
+                    requires_medical_review=False,
+                    insufficient_evidence=False,
+                ),
+                attempt_count=1,
+                input_hash="f" * 64,
+                requested_fields=("material_type_code",),
+                elapsed_ms=3,
+            )
+            store.persisted_attempts[(run.run_id, item_key)] = {
+                "terra_primary": persisted
+            }
+            classifier = RecordingClassifier()
+            receipt = CanonicalWeeklyProposalService(
+                store, CONFIG, classifier_factory=lambda: classifier
+            ).classify(run.run_id, execute_llm=True)
+
+        self.assertEqual(receipt.ready_count, 1)
+        self.assertEqual(classifier.requests, [])
+
+    def test_llm_disagreement_survives_routing_into_conflict_queue(self):
+        class DisagreeingClassifier:
+            def classify(self, request, model):
+                material_type = "articles" if model == LLM_PRIMARY_MODEL else "video"
+                return LlmAttempt(
+                    status="success",
+                    model=model,
+                    classification=LlmClassification(
+                        direction_code=None,
+                        material_type_code=material_type,
+                        direction_confidence=None,
+                        material_type_confidence=(
+                            0.80 if model == LLM_PRIMARY_MODEL else 0.99
+                        ),
+                        alternative_direction_codes=(),
+                        evidence=("bounded source metadata",),
+                        requires_medical_review=False,
+                        insufficient_evidence=False,
+                    ),
+                    attempt_count=1,
+                    input_hash="f" * 64,
+                    requested_fields=request.requested_fields,
+                    elapsed_ms=3,
+                )
+
+        with tempfile.TemporaryDirectory() as temporary:
+            registry1, registry2 = write_sources(
+                Path(temporary), direction="", material_type=""
+            )
+            store = StatefulWorkflowStore(context())
+            run = CanonicalWeeklyProposalService(store, CONFIG).reconcile(
+                registry1, registry2
+            )
+            receipt = CanonicalWeeklyProposalService(
+                store, CONFIG, classifier_factory=DisagreeingClassifier
+            ).classify(run.run_id, execute_llm=True)
+
+        item = store.batches_by_run[run.run_id].batch.items[0]
+        self.assertEqual(receipt.conflict_count, 1)
+        self.assertIn(
+            "LLM_DISAGREEMENT",
+            tuple(getattr(code, "value", str(code)) for code in item.conflict_codes),
+        )
 
     def test_non_v1_reconciliation_classifies_in_a_fresh_service_process(self):
         taxonomy = TaxonomyVersion(
