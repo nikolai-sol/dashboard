@@ -3044,9 +3044,20 @@ export async function loadDashboardData(
 
         if (sourceType === "ads") {
           actualAdsSourceKeys.add(sourceKey);
+          const [aggregateRow, prevAggregateRow, timeseriesRows, campaignRows] = await Promise.all([
+            getAdsAggregate(filter),
+            getAdsAggregate({
+              ...filter,
+              date_from: previousRange.from,
+              date_to: previousRange.to,
+            }),
+            getAdsTimeseries(filter),
+            dashboardType === "performance" ? getCampaignBreakdown(filter) : Promise.resolve([] as CampaignBreakdownItem[]),
+          ]);
+
           const aggregate = await applyAggregateReachOverrides(
             sourceKey,
-            await getAdsAggregate(filter),
+            aggregateRow,
             range.from,
             range.to,
             frequencyOverrideMap,
@@ -3080,11 +3091,7 @@ export async function loadDashboardData(
 
           const prevAggregate = await applyAggregateReachOverrides(
             sourceKey,
-            await getAdsAggregate({
-              ...filter,
-              date_from: previousRange.from,
-              date_to: previousRange.to,
-            }),
+            prevAggregateRow,
             previousRange.from,
             previousRange.to,
             frequencyOverrideMap,
@@ -3112,7 +3119,6 @@ export async function loadDashboardData(
             cpm: Number(asNumber(prevAggregate?.avg_cpm).toFixed(2)),
           });
 
-          const timeseriesRows = await getAdsTimeseries(filter);
           for (const row of timeseriesRows) {
             let tsViews = Math.round(asNumber(row.views));
             if (isGidrofuril && sourceKey === "vk_ads_v2") {
@@ -3130,7 +3136,6 @@ export async function loadDashboardData(
           }
 
           if (dashboardType === "performance") {
-            const campaignRows = await getCampaignBreakdown(filter);
             const platformMeta = PLATFORM_COLORS[source.platform];
             for (const row of campaignRows) {
               campaignBreakdownRaw.push({
@@ -3160,7 +3165,11 @@ export async function loadDashboardData(
             account_ids: parseAccountIds(sourceConfig.account_ids),
           };
 
-          const aggregate = await getPromopagesAggregate(promoFilter);
+          const [aggregate, timeseriesRows, campaignRows] = await Promise.all([
+            getPromopagesAggregate(promoFilter),
+            getPromopagesTimeseries(promoFilter),
+            getPromopagesCampaignBreakdown(promoFilter),
+          ]);
           promopagesKpiRaw.push({
             total_impressions: Math.round(asNumber(aggregate?.total_impressions)),
             total_reach: Math.round(asNumber(aggregate?.total_reach)),
@@ -3174,13 +3183,17 @@ export async function loadDashboardData(
             total_metrica_visits: Math.round(asNumber(aggregate?.total_metrica_visits)),
           });
 
-          promopagesTimeseriesRaw.push(...(await getPromopagesTimeseries(promoFilter)));
-          promopagesCampaignsRaw.push(...(await getPromopagesCampaignBreakdown(promoFilter)));
+          promopagesTimeseriesRaw.push(...timeseriesRows);
+          promopagesCampaignsRaw.push(...campaignRows);
           continue;
         }
 
         if (sourceType === "analytics") {
-          const aggregate = await getAnalyticsAggregate(filter);
+          const [aggregate, timeseriesRows, trafficSourceRows] = await Promise.all([
+            getAnalyticsAggregate(filter),
+            getAnalyticsTimeseries(filter),
+            getAnalyticsTrafficSources(filter),
+          ]);
           analyticsKpiRaw.push({
             total_visits: Math.round(asNumber(aggregate?.total_visits)),
             total_users: Math.round(asNumber(aggregate?.total_users)),
@@ -3189,7 +3202,6 @@ export async function loadDashboardData(
             avg_visit_duration: Number(asNumber(aggregate?.avg_visit_duration).toFixed(2)),
           });
 
-          const timeseriesRows = await getAnalyticsTimeseries(filter);
           for (const row of timeseriesRows) {
             analyticsTimeseriesRaw.push({
               date: toIsoDate(row.date),
@@ -3199,7 +3211,6 @@ export async function loadDashboardData(
               bounce_rate: Number(asNumber(row.bounce_rate).toFixed(2)),
             });
           }
-          const trafficSourceRows = await getAnalyticsTrafficSources(filter);
           for (const row of trafficSourceRows) {
             const trafficSource = String(row.traffic_source ?? "").trim();
             if (!trafficSource) continue;
