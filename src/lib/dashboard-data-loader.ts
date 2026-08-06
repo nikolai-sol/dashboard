@@ -2893,10 +2893,11 @@ export async function loadDashboardData(
   const actualAdsSourceKeys = new Set<string>();
   const customTables: CustomTableData[] = [];
   const leadsRows: LeadRow[] = [];
-  let manualChannels: ManualChannelData[] = [];
+  const manualChannels: ManualChannelData[] = [];
   let manualTableTitle = "";
+  const manualTableTitleBySourceIndex: Array<{ index: number; title: string }> = [];
 
-    await Promise.all(sourceRows.map(async (source) => {
+    await Promise.all(sourceRows.map(async (source, sourceIndex) => {
       try {
         if (source.platform === "manual_data" && source.role === "actual") {
           const sourceConfig = parseJson(source.source_config);
@@ -2975,9 +2976,10 @@ export async function loadDashboardData(
               }
 
               const byChannel = aggregateByChannel(filtered);
-              manualChannels = [...manualChannels, ...byChannel];
-              if (!manualTableTitle && String(sourceConfig?.title ?? "").trim()) {
-                manualTableTitle = String(sourceConfig.title).trim();
+              manualChannels.push(...byChannel);
+              const candidateTitle = String(sourceConfig?.title ?? "").trim();
+              if (candidateTitle) {
+                manualTableTitleBySourceIndex.push({ index: sourceIndex, title: candidateTitle });
               }
             } catch (e) {
               console.warn("Manual data fetch failed:", e);
@@ -3230,6 +3232,12 @@ export async function loadDashboardData(
         console.warn(`Skipping source ${source.platform}:`, sourceError);
       }
     }));
+
+    if (manualTableTitleBySourceIndex.length > 0) {
+      manualTableTitle = manualTableTitleBySourceIndex
+        .sort((a, b) => a.index - b.index)
+        .map((row) => row.title)[0] ?? "";
+    }
 
     const platformResults = mergePlatformStats(platformStatsRaw);
     const prevPlatformResults = mergePlatformStats(prevStatsRaw);
