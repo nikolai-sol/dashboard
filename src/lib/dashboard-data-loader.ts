@@ -2896,7 +2896,7 @@ export async function loadDashboardData(
   let manualChannels: ManualChannelData[] = [];
   let manualTableTitle = "";
 
-    for (const source of sourceRows) {
+    await Promise.all(sourceRows.map(async (source) => {
       try {
         if (source.platform === "manual_data" && source.role === "actual") {
           const sourceConfig = parseJson(source.source_config);
@@ -2983,7 +2983,7 @@ export async function loadDashboardData(
               console.warn("Manual data fetch failed:", e);
             }
           }
-          continue;
+          return;
         }
 
         if (source.role === "custom_table") {
@@ -3001,11 +3001,11 @@ export async function loadDashboardData(
               console.warn("Custom table fetch failed:", e);
             }
           }
-          continue;
+          return;
         }
 
         if (source.platform === "leads" && source.role === "actual") {
-          continue;
+          return;
         }
 
         const schema = loadSchema(source.schema_file);
@@ -3017,17 +3017,17 @@ export async function loadDashboardData(
         }
 
         if (sourceType === "leads") {
-          continue;
+          return;
         }
 
         if (source.role === "plan" && (schema.source === "gsheet" || sourceType === "gsheet")) {
           const rows = await fetchMediaPlanFromSourceConfig(sourceConfig);
           planRows.push(...rows);
-          continue;
+          return;
         }
 
         if (schema.source !== "mysql") {
-          continue;
+          return;
         }
 
         const brandSourceFilter = activeBrand?.source_filters.find((item) => item.platform === source.platform);
@@ -3154,7 +3154,7 @@ export async function loadDashboardData(
               });
             }
           }
-          continue;
+          return;
         }
 
         if (sourceType === "promopages") {
@@ -3185,7 +3185,7 @@ export async function loadDashboardData(
 
           promopagesTimeseriesRaw.push(...timeseriesRows);
           promopagesCampaignsRaw.push(...campaignRows);
-          continue;
+          return;
         }
 
         if (sourceType === "analytics") {
@@ -3229,7 +3229,7 @@ export async function loadDashboardData(
       } catch (sourceError) {
         console.warn(`Skipping source ${source.platform}:`, sourceError);
       }
-    }
+    }));
 
     const platformResults = mergePlatformStats(platformStatsRaw);
     const prevPlatformResults = mergePlatformStats(prevStatsRaw);
@@ -3241,36 +3241,36 @@ export async function loadDashboardData(
     const availablePlatformIds = Array.from(new Set(platformResults.map((row) => row.id)));
     const availablePrevPlatformIds = Array.from(new Set(prevPlatformResults.map((row) => row.id)));
 
-    for (const source of sourceRows) {
-      if (source.platform !== "leads" || source.role !== "actual") {
-        continue;
-      }
+    await Promise.all(
+      sourceRows
+        .filter((source) => source.platform === "leads" && source.role === "actual")
+        .map(async (source) => {
+          try {
+            const sourceConfig = parseJson(source.source_config);
+            const parsedLeads = await fetchLeadsFromSourceConfig(sourceConfig);
+            leadsRows.push(
+              ...parsedLeads.rows.filter((row) => !row.date || (row.date >= range.from && row.date <= range.to)),
+            );
+            const currentConversions = await aggregateConfirmedLeadsByPlatform(
+              sourceConfig,
+              availablePlatformIds,
+              range.from,
+              range.to,
+            );
+            applyPlatformConversions(platformResults, currentConversions);
 
-      try {
-        const sourceConfig = parseJson(source.source_config);
-        const parsedLeads = await fetchLeadsFromSourceConfig(sourceConfig);
-        leadsRows.push(
-          ...parsedLeads.rows.filter((row) => !row.date || (row.date >= range.from && row.date <= range.to)),
-        );
-        const currentConversions = await aggregateConfirmedLeadsByPlatform(
-          sourceConfig,
-          availablePlatformIds,
-          range.from,
-          range.to,
-        );
-        applyPlatformConversions(platformResults, currentConversions);
-
-        const previousConversions = await aggregateConfirmedLeadsByPlatform(
-          sourceConfig,
-          availablePrevPlatformIds,
-          previousRange.from,
-          previousRange.to,
-        );
-        applyPlatformConversions(prevPlatformResults, previousConversions);
-      } catch (leadsError) {
-        console.warn("Confirmed leads merge failed:", leadsError);
-      }
-    }
+            const previousConversions = await aggregateConfirmedLeadsByPlatform(
+              sourceConfig,
+              availablePrevPlatformIds,
+              previousRange.from,
+              previousRange.to,
+            );
+            applyPlatformConversions(prevPlatformResults, previousConversions);
+          } catch (leadsError) {
+            console.warn("Confirmed leads merge failed:", leadsError);
+          }
+        }),
+    );
 
     if (spendSource === "media_plan_derived") {
       buildPlanBasedTimeseriesSpend(timeseriesResults, planRows);
