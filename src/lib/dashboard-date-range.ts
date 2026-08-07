@@ -42,7 +42,7 @@ export function resolveDashboardDateRange(input: DashboardDateRangeInput): Dashb
 
   const isZaruku = input.dashboardType === "zaruku_bi";
   const today = now.toISOString().slice(0, 10);
-  const completeTo = shift(today, -1);
+  const completeTo = shift(today, isZaruku ? -3 : -1);
   const days = Number(daysRaw);
   if (Number.isInteger(days) && days > 0) {
     const rangeTo = isZaruku ? completeTo : today;

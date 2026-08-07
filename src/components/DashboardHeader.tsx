@@ -48,6 +48,7 @@ type DashboardHeaderProps = {
   quickRangePreset?: DashboardQuickRangePreset;
   onQuickRangePresetChange?: (preset: DashboardQuickRangePreset) => void;
   isUpdatingRange?: boolean;
+  maxDate?: string;
   compareOpen?: boolean;
   comparePreset?: ComparisonPreset;
   compareFrom?: string;
@@ -103,6 +104,7 @@ export default function DashboardHeader({
   onClearCompare,
   onExportPdf,
   onExportExcel,
+  maxDate = new Date().toISOString().slice(0, 10),
 }: DashboardHeaderProps) {
   const copy = labels ?? {
     to: "to",
@@ -212,6 +214,7 @@ export default function DashboardHeader({
                 type="date"
                 value={dateFrom ?? ""}
                 disabled={dateControlsDisabled}
+                max={maxDate}
                 onChange={(e) => onDateFromChange?.(e.target.value)}
                 className="bg-transparent outline-none"
               />
@@ -222,6 +225,7 @@ export default function DashboardHeader({
                 type="date"
                 value={dateTo ?? ""}
                 disabled={dateControlsDisabled}
+                max={maxDate}
                 onChange={(e) => onDateToChange?.(e.target.value)}
                 className="bg-transparent outline-none"
               />
@@ -261,6 +265,7 @@ export default function DashboardHeader({
                 onPresetChange={(preset) => onComparePresetChange?.(preset)}
                 onCompareFromChange={(value) => onCompareFromChange?.(value)}
                 onCompareToChange={(value) => onCompareToChange?.(value)}
+                maxDate={maxDate}
                 onApply={() => onApplyCompare?.()}
                 onClear={() => onClearCompare?.()}
               />

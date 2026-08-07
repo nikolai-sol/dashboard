@@ -225,6 +225,14 @@ function isoToday() {
   return new Date().toISOString().slice(0, 10);
 }
 
+function isoYesterday() {
+  return shiftDate(isoToday(), -1);
+}
+
+function maxDateForCurrentDashboard(isZarukuDashboard: boolean) {
+  return shiftDate(isoToday(), isZarukuDashboard ? -3 : -1);
+}
+
 function startOfCurrentMonth() {
   const now = new Date();
   return new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), 1)).toISOString().slice(0, 10);
@@ -237,24 +245,33 @@ function startOfCurrentWeek() {
   return shiftDate(now.toISOString().slice(0, 10), diffToMonday);
 }
 
-function buildQuickRange(preset: Exclude<DashboardQuickRangePreset, "custom">) {
-  const today = isoToday();
+function buildQuickRange(
+  preset: Exclude<DashboardQuickRangePreset, "custom">,
+  completeTo = isoYesterday(),
+) {
+  const completeDay = completeTo;
   if (preset === "this_month") {
-    return { from: startOfCurrentMonth(), to: today };
+    const monthStart = startOfCurrentMonth();
+    return { from: completeDay < monthStart ? completeDay : monthStart, to: completeDay };
   }
   if (preset === "this_week") {
-    return { from: startOfCurrentWeek(), to: today };
+    const weekStart = startOfCurrentWeek();
+    return { from: completeDay < weekStart ? completeDay : weekStart, to: completeDay };
   }
-  return { from: shiftDate(today, -1), to: shiftDate(today, -1) };
+  return { from: completeDay, to: completeDay };
 }
 
-function detectQuickRangePreset(from: string, to: string): DashboardQuickRangePreset {
+function detectQuickRangePreset(
+  from: string,
+  to: string,
+  completeTo = isoYesterday(),
+): DashboardQuickRangePreset {
   if (!from || !to) return "custom";
-  const thisMonth = buildQuickRange("this_month");
+  const thisMonth = buildQuickRange("this_month", completeTo);
   if (from === thisMonth.from && to === thisMonth.to) return "this_month";
-  const thisWeek = buildQuickRange("this_week");
+  const thisWeek = buildQuickRange("this_week", completeTo);
   if (from === thisWeek.from && to === thisWeek.to) return "this_week";
-  const yesterday = buildQuickRange("yesterday");
+  const yesterday = buildQuickRange("yesterday", completeTo);
   if (from === yesterday.from && to === yesterday.to) return "yesterday";
   return "custom";
 }
@@ -316,10 +333,16 @@ export default function DashboardByIdPage() {
   const queryFrom = searchParams.get("from") ?? "";
   const queryTo = searchParams.get("to") ?? "";
   const abbottDefaultRange = dashboardId === "abbott" && !queryFrom && !queryTo ? defaultAbbottRange() : null;
-  const initialFrom = abbottDefaultRange?.from ?? queryFrom;
-  const initialTo = abbottDefaultRange?.to ?? queryTo;
+  const isZarukuDashboard = dashboardId === "zaruku";
+  const maxDate = maxDateForCurrentDashboard(isZarukuDashboard);
+  const rawInitialFrom = abbottDefaultRange?.from ?? queryFrom;
+  const rawInitialTo = abbottDefaultRange?.to ?? queryTo;
+  const initialFrom = rawInitialFrom > maxDate ? maxDate : rawInitialFrom;
+  const initialTo = rawInitialTo > maxDate ? maxDate : rawInitialTo;
   const initialCompareFrom = searchParams.get("compare_from") ?? "";
   const initialCompareTo = searchParams.get("compare_to") ?? "";
+  const safeInitialCompareFrom = initialCompareFrom > maxDate ? maxDate : initialCompareFrom;
+  const safeInitialCompareTo = initialCompareTo > maxDate ? maxDate : initialCompareTo;
   const initialAccessToken = searchParams.get("access_token") ?? "";
   const initialEmbedKey = searchParams.get("embed_key") ?? "";
   const initialBrandId = searchParams.get("brand") ?? "";
@@ -350,17 +373,17 @@ export default function DashboardByIdPage() {
     to: initialTo,
   });
   const [quickRangePreset, setQuickRangePreset] = useState<DashboardQuickRangePreset>(
-    detectQuickRangePreset(initialFrom, initialTo),
+    detectQuickRangePreset(initialFrom, initialTo, maxDate),
   );
-  const [compareOpen, setCompareOpen] = useState(Boolean(initialCompareFrom && initialCompareTo));
+  const [compareOpen, setCompareOpen] = useState(Boolean(safeInitialCompareFrom && safeInitialCompareTo));
   const [comparePreset, setComparePreset] = useState<"previous" | "month" | "week" | "year" | "custom">("month");
   const [compareRange, setCompareRange] = useState<{ from: string; to: string }>({
-    from: initialCompareFrom,
-    to: initialCompareTo,
+    from: safeInitialCompareFrom,
+    to: safeInitialCompareTo,
   });
   const [draftCompareRange, setDraftCompareRange] = useState<{ from: string; to: string }>({
-    from: initialCompareFrom,
-    to: initialCompareTo,
+    from: safeInitialCompareFrom,
+    to: safeInitialCompareTo,
   });
 
   useEffect(() => {
@@ -429,18 +452,26 @@ export default function DashboardByIdPage() {
         from: result.data?.dashboard.period.from || "",
         to: result.data?.dashboard.period.to || "",
       };
-      const effectivePreset = detectQuickRangePreset(resolvedPeriod.from, resolvedPeriod.to);
+      const normalizedResolvedPeriod = {
+        from: resolvedPeriod.from && resolvedPeriod.from > maxDate ? maxDate : resolvedPeriod.from,
+        to: resolvedPeriod.to && resolvedPeriod.to > maxDate ? maxDate : resolvedPeriod.to,
+      };
+      const effectivePreset = detectQuickRangePreset(
+        normalizedResolvedPeriod.from,
+        normalizedResolvedPeriod.to,
+        maxDate,
+      );
       setDateRange((prev) => {
         const next = {
-          from: prev.from || resolvedPeriod.from,
-          to: prev.to || resolvedPeriod.to,
+          from: prev.from || normalizedResolvedPeriod.from,
+          to: prev.to || normalizedResolvedPeriod.to,
         };
         return prev.from === next.from && prev.to === next.to ? prev : next;
       });
       setDraftDateRange((prev) => {
         const next = {
-          from: prev.from || resolvedPeriod.from,
-          to: prev.to || resolvedPeriod.to,
+          from: prev.from || normalizedResolvedPeriod.from,
+          to: prev.to || normalizedResolvedPeriod.to,
         };
         return prev.from === next.from && prev.to === next.to ? prev : next;
       });
@@ -453,7 +484,7 @@ export default function DashboardByIdPage() {
     return () => {
       cancelled = true;
     };
-  }, [compareRange, dashboardId, dateRange, reloadKey, selectedBrandId, viewerAccessToken, viewerEmbedKey]);
+  }, [compareRange, dashboardId, dateRange, maxDate, reloadKey, selectedBrandId, viewerAccessToken, viewerEmbedKey]);
 
   async function generateAiSummary() {
     if (!dashboard?.ai_summary_enabled || isGeneratingAiSummary) {
@@ -1543,12 +1574,16 @@ export default function DashboardByIdPage() {
   };
 
   const applyDateRange = () => {
-    if (!draftDateRange.from || !draftDateRange.to) return;
-    setQuickRangePreset(detectQuickRangePreset(draftDateRange.from, draftDateRange.to));
-    setDateRange(draftDateRange);
+    const resolvedFrom = draftDateRange.from && draftDateRange.from > maxDate ? maxDate : draftDateRange.from;
+    const resolvedTo = draftDateRange.to && draftDateRange.to > maxDate ? maxDate : draftDateRange.to;
+    if (!resolvedFrom || !resolvedTo) return;
+    setQuickRangePreset(detectQuickRangePreset(resolvedFrom, resolvedTo, maxDate));
+    const resolvedRange = { from: resolvedFrom, to: resolvedTo };
+    setDateRange(resolvedRange);
+    setDraftDateRange(resolvedRange);
     const params = new URLSearchParams(searchParams.toString());
-    params.set("from", draftDateRange.from);
-    params.set("to", draftDateRange.to);
+    params.set("from", resolvedFrom);
+    params.set("to", resolvedTo);
     if (compareRange.from && compareRange.to) {
       params.set("compare_from", compareRange.from);
       params.set("compare_to", compareRange.to);
@@ -1569,7 +1604,7 @@ export default function DashboardByIdPage() {
       setQuickRangePreset("custom");
       return;
     }
-    applyImmediateDateRange(buildQuickRange(preset), preset);
+    applyImmediateDateRange(buildQuickRange(preset, maxDate), preset);
   };
 
   const applyCompareRange = () => {
@@ -1628,13 +1663,15 @@ export default function DashboardByIdPage() {
   };
 
   const handleDraftDateFromChange = (value: string) => {
+    const safeValue = value > maxDate ? maxDate : value;
     setQuickRangePreset("custom");
-    setDraftDateRange((prev) => ({ ...prev, from: value }));
+    setDraftDateRange((prev) => ({ ...prev, from: safeValue }));
   };
 
   const handleDraftDateToChange = (value: string) => {
+    const safeValue = value > maxDate ? maxDate : value;
     setQuickRangePreset("custom");
-    setDraftDateRange((prev) => ({ ...prev, to: value }));
+    setDraftDateRange((prev) => ({ ...prev, to: safeValue }));
   };
 
   if (!isLoading && authRequired && authMeta) {
@@ -1755,6 +1792,7 @@ export default function DashboardByIdPage() {
           quickRangePreset={quickRangePreset}
           onQuickRangePresetChange={handleQuickRangePresetChange}
           isUpdatingRange={isLoading}
+          maxDate={maxDate}
         />
 
         {isDemoMode ? (
@@ -1800,6 +1838,7 @@ export default function DashboardByIdPage() {
           quickRangePreset={quickRangePreset}
           onQuickRangePresetChange={handleQuickRangePresetChange}
           isUpdatingRange={isLoading}
+          maxDate={maxDate}
         />
 
         {isDemoMode ? (
@@ -1860,6 +1899,7 @@ export default function DashboardByIdPage() {
           quickRangePreset={quickRangePreset}
           onQuickRangePresetChange={handleQuickRangePresetChange}
           isUpdatingRange={isLoading}
+          maxDate={maxDate}
           compareOpen={false}
           comparePreset={comparePreset}
           compareFrom=""
@@ -1915,14 +1955,19 @@ export default function DashboardByIdPage() {
         quickRangePreset={quickRangePreset}
         onQuickRangePresetChange={handleQuickRangePresetChange}
         isUpdatingRange={isLoading}
+        maxDate={maxDate}
         compareOpen={compareOpen}
         comparePreset={comparePreset}
         compareFrom={effectiveDraftCompareRange.from}
         compareTo={effectiveDraftCompareRange.to}
         onToggleCompare={() => setCompareOpen((prev) => !prev)}
         onComparePresetChange={setComparePreset}
-        onCompareFromChange={(value) => setDraftCompareRange((prev) => ({ ...prev, from: value }))}
-        onCompareToChange={(value) => setDraftCompareRange((prev) => ({ ...prev, to: value }))}
+        onCompareFromChange={(value) =>
+          setDraftCompareRange((prev) => ({ ...prev, from: value > maxDate ? maxDate : value }))
+        }
+        onCompareToChange={(value) =>
+          setDraftCompareRange((prev) => ({ ...prev, to: value > maxDate ? maxDate : value }))
+        }
         onApplyCompare={applyCompareRange}
         onClearCompare={clearCompareRange}
         onExportExcel={exportExcel}
