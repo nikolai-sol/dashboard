@@ -65,9 +65,14 @@ test("localizes traffic sources at display boundaries while preserving raw filte
   );
   assert.match(source, /label: abbottTrafficSourceLabel\(label\)/);
   assert.equal(
-    `${source}\n${userActionFilterSource}`.match(/row\.traffic_source !== filters\.traffic_source/g)?.length,
-    2,
-    "traffic-source equality filters must continue comparing raw values",
+    source.match(/row\.traffic_source !== filters\.traffic_source/g)?.length,
+    1,
+    "the summary table must keep exact raw traffic-source filtering",
+  );
+  assert.match(
+    userActionFilterSource,
+    /row\.traffic_source\.trim\(\) !== filters\.traffic_source/,
+    "the action table must compare the displayed normalized source without relabeling stored data",
   );
 });
 
