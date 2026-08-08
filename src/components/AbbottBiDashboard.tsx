@@ -18,9 +18,13 @@ import {
 import type { AbbottBiData } from "@/lib/types";
 import {
   buildAbbottPageStatsExportRows,
-  buildAbbottPageviewsByDirection,
+  buildAbbottPageDimensionOptions,
+  groupAbbottPageStatsByDimension,
+  labelAbbottPageDimension,
   matchesPageStatsSearch,
+  matchesSelectedPageDimension,
   matchesSelectedMaterialType,
+  summarizeAbbottPageMetadataCoverage,
   summarizeAbbottPageStats,
 } from "./abbott-page-stats";
 import { abbottTrafficSourceLabel, abbottTrafficSourceOption } from "./abbott-localization";
@@ -953,9 +957,9 @@ export default function AbbottBiDashboard({
 
   const pageStatsOptions = useMemo(
     () => ({
-      direction: uniqOptions(data.page_stats.map((row) => row.direction)),
-      material_type: uniqOptions(data.page_stats.map((row) => row.material_type)),
-      access: uniqOptions(data.page_stats.map((row) => row.access)),
+      direction: buildAbbottPageDimensionOptions(data.page_stats, (row) => row.direction),
+      material_type: buildAbbottPageDimensionOptions(data.page_stats, (row) => row.material_type),
+      access: buildAbbottPageDimensionOptions(data.page_stats, (row) => row.access),
     }),
     [data.page_stats],
   );
@@ -1087,9 +1091,9 @@ export default function AbbottBiDashboard({
       )
         return false;
       if (!matchesPageStatsSearch(row.page_title, row.url, filters.page_title_query)) return false;
-      if (filters.direction && (row.direction ?? "") !== filters.direction) return false;
+      if (!matchesSelectedPageDimension(row.direction, filters.direction)) return false;
       if (!matchesSelectedMaterialType(row.material_type, selectedPageMaterialTypes)) return false;
-      if (filters.access && (row.access ?? "") !== filters.access) return false;
+      if (!matchesSelectedPageDimension(row.access, filters.access)) return false;
       return true;
     });
   }, [data.page_stats, filtersByTab.page_stats, queryByTab.page_stats, selectedPageMaterialTypes]);
@@ -1246,19 +1250,19 @@ export default function AbbottBiDashboard({
   );
 
   const pageDirectionData = useMemo(
-    () => excludeUnnamedChartGroups(groupNumberRows(pageStatRows, (row) => row.direction, (row) => row.users)).slice(0, 8),
+    () => groupAbbottPageStatsByDimension(pageStatRows, (row) => row.direction, (row) => row.users).slice(0, 8),
     [pageStatRows],
   );
   const pageViewsDirectionData = useMemo(
-    () => buildAbbottPageviewsByDirection(pageStatRows),
+    () => groupAbbottPageStatsByDimension(pageStatRows, (row) => row.direction, (row) => row.pageviews).slice(0, 8),
     [pageStatRows],
   );
   const pageMaterialData = useMemo(
-    () => excludeUnnamedChartGroups(groupNumberRows(pageStatRows, (row) => row.material_type, (row) => row.users)).slice(0, 8),
+    () => groupAbbottPageStatsByDimension(pageStatRows, (row) => row.material_type, (row) => row.users).slice(0, 8),
     [pageStatRows],
   );
   const pageAccessData = useMemo(
-    () => excludeUnnamedChartGroups(groupNumberRows(pageStatRows, (row) => row.access, (row) => row.users)),
+    () => groupAbbottPageStatsByDimension(pageStatRows, (row) => row.access, (row) => row.users),
     [pageStatRows],
   );
   const bitrixDirectionData = useMemo(
@@ -1384,6 +1388,7 @@ export default function AbbottBiDashboard({
   const returningPage = sliceRows(returningRows, pageByTab.returning);
   const generalMaterialsPage = sliceRows(generalMaterialRows, pageByTab.general_materials);
   const pageStatsTotals = summarizeAbbottPageStats(pageStatRows);
+  const pageMetadataCoverage = summarizeAbbottPageMetadataCoverage(pageStatRows);
   const pageStatsSummaryRow =
     pageStatRows.length > 0
       ? {
@@ -1466,9 +1471,9 @@ export default function AbbottBiDashboard({
     tableRows = pageStatsPage.pageRows.map((row) => ({
       page_title: row.page_title || "—",
       url: row.url || "—",
-      direction: row.direction ?? "—",
-      material_type: row.material_type ?? "—",
-      access: row.access ?? "—",
+      direction: labelAbbottPageDimension(row.direction),
+      material_type: labelAbbottPageDimension(row.material_type),
+      access: labelAbbottPageDimension(row.access),
       pageviews: formatNumber(row.pageviews, locale),
       users: formatNumber(row.users, locale),
       ...(data.bitrix_period_active
@@ -2392,6 +2397,12 @@ export default function AbbottBiDashboard({
           >
             {tabFilterContent[activeTab]}
           </div>
+        ) : null}
+
+        {activeTab === "page_stats" ? (
+          <p className="text-sm text-slate-600">
+            Справочник: тип определён для {formatNumber(pageMetadataCoverage.mappedRows, locale)} из {formatNumber(pageMetadataCoverage.totalRows, locale)} страниц; просмотры — {formatNumber(pageMetadataCoverage.mappedPageviews, locale)} из {formatNumber(pageMetadataCoverage.totalPageviews, locale)}.
+          </p>
         ) : null}
 
         {chartContent}

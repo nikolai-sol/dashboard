@@ -107,3 +107,21 @@ test("adds Abbott UTM and count-first return UI while hiding external transition
   assert.match(source, /dataKey="visitors"/);
   assert.match(source, /return_frequency/);
 });
+
+test("labels unmapped page metadata in the page table and exports", () => {
+  assert.match(source, /labelAbbottPageDimension\(row\.direction\)/);
+  assert.match(source, /labelAbbottPageDimension\(row\.material_type\)/);
+  assert.match(source, /labelAbbottPageDimension\(row\.access\)/);
+});
+
+test("uses page-only metadata grouping that retains the unmapped bucket", () => {
+  const pageChartSource = source.slice(source.indexOf("const pageDirectionData"), source.indexOf("const bitrixDirectionData"));
+  assert.match(pageChartSource, /groupAbbottPageStatsByDimension/);
+  assert.doesNotMatch(pageChartSource, /excludeUnnamedChartGroups/);
+});
+
+test("shows filtered metadata coverage for mapped material types", () => {
+  assert.match(source, /summarizeAbbottPageMetadataCoverage\(pageStatRows\)/);
+  assert.ok(source.includes("Справочник: тип определён для"));
+  assert.ok(source.includes("страниц; просмотры —"));
+});
