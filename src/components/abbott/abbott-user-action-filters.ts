@@ -21,6 +21,7 @@ function normalizedUtmSource(value: string | null): string | null {
 
 function aggregateAbbottUserActions(
   rows: readonly AbbottBiUserActionRow[],
+  trafficSourceLabel?: (value: string) => string,
 ): AbbottBiUserActionRow[] {
   const groups = new Map<
     string,
@@ -33,12 +34,13 @@ function aggregateAbbottUserActions(
     const utmSource = normalizedUtmSource(sourceRow.utm_source);
     const direction = sourceRow.direction?.trim() || null;
     const trafficSource = sourceRow.traffic_source.trim();
+    const displayedTrafficSource = (trafficSourceLabel?.(trafficSource) ?? trafficSource).trim();
     const endUrl = sourceRow.end_url.trim();
-    const visits = Math.max(0, Math.floor(sourceRow.visits));
+    const visits = sourceRow.visits;
     const key = JSON.stringify([
       hasUserId,
       userId,
-      trafficSource,
+      displayedTrafficSource,
       utmSource,
       direction,
       endUrl,
@@ -111,20 +113,8 @@ export function selectAbbottUserActions(
   pageSize: number,
 ) {
   const query = filters.query?.trim().toLowerCase() ?? "";
-  const filteredRows = aggregateAbbottUserActions(rows).filter((row) => {
+  const structurallyFilteredRows = rows.filter((row) => {
     const utmSource = normalizedUtmSource(row.utm_source);
-    if (query) {
-      const trafficSource = filters.traffic_source_label?.(row.traffic_source) ?? row.traffic_source;
-      const values = [
-        row.has_user_id ? row.user_id : "Без User ID",
-        trafficSource,
-        utmSource ?? "Без UTM",
-        row.direction,
-        row.end_url,
-        row.visits,
-      ];
-      if (!values.some((value) => String(value ?? "").toLowerCase().includes(query))) return false;
-    }
     if (filters.user_id && row.user_id !== filters.user_id) return false;
     if (filters.user_id_traffic === "with_user_id" && !row.has_user_id) return false;
     if (filters.user_id_traffic === "without_user_id" && row.has_user_id) return false;
@@ -137,6 +127,22 @@ export function selectAbbottUserActions(
     ) return false;
     if (filters.direction && (row.direction ?? "") !== filters.direction) return false;
     return true;
+  });
+  const filteredRows = aggregateAbbottUserActions(
+    structurallyFilteredRows,
+    filters.traffic_source_label,
+  ).filter((row) => {
+    if (!query) return true;
+    const trafficSource = filters.traffic_source_label?.(row.traffic_source) ?? row.traffic_source;
+    const values = [
+      row.has_user_id ? row.user_id : "Без User ID",
+      trafficSource,
+      normalizedUtmSource(row.utm_source) ?? "Без UTM",
+      row.direction,
+      row.end_url,
+      row.visits,
+    ];
+    return values.some((value) => String(value ?? "").toLowerCase().includes(query));
   });
   const safePageSize = Math.max(1, Math.floor(pageSize));
   const totalPages = Math.max(1, Math.ceil(filteredRows.length / safePageSize));

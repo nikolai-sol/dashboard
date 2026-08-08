@@ -133,3 +133,17 @@ test("groups visits by the five displayed dimensions and preserves weighted tota
     rows.reduce((sum, row) => sum + row.page_depth * row.visits, 0),
   );
 });
+
+test("groups raw traffic sources that have the same displayed source label", () => {
+  const rows = [
+    action("", null, { has_user_id: false, traffic_source: "" }),
+    action("", null, { has_user_id: false, traffic_source: "Unknown traffic" }),
+  ];
+
+  const selected = selectAbbottUserActions(rows, {
+    traffic_source_label: () => "Неизвестный источник",
+  }, 1, 100);
+
+  assert.equal(selected.filteredRows.length, 1);
+  assert.equal(selected.filteredRows[0]?.visits, 2);
+});
