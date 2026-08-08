@@ -382,9 +382,9 @@ test("workbook loading uses normalized general-material URLs", async () => {
 test("workbook loading uses only resolved hashed projections and reports aggregate ambiguity", async () => {
   const hash = (value: string) => createHash("sha256").update(value).digest("hex");
   const resolvedRows = [
-    { lookup_kind: "title", lookup_key_hash: hash("Shared"), resolution_status: "identical_collapsed", direction_key: "Cardiology", material_type: "article", access_label: "Врачи", is_active: 1 },
-    { lookup_kind: "slug", lookup_key_hash: hash("shared"), resolution_status: "unique", direction_key: "Cardiology", material_type: "article", access_label: "Врачи", is_active: 1 },
-    { lookup_kind: "path", lookup_key_hash: hash("/shared"), resolution_status: "unique", direction_key: "Cardiology", material_type: "article", access_label: "Врачи", is_active: 1 },
+    { lookup_kind: "title", lookup_key_hash: hash("Shared"), resolution_status: "identical_collapsed", page_title: "Shared", direction_key: "Cardiology", material_type: "article", access_label: "Врачи", is_active: 1 },
+    { lookup_kind: "slug", lookup_key_hash: hash("shared"), resolution_status: "unique", page_title: "Shared", direction_key: "Cardiology", material_type: "article", access_label: "Врачи", is_active: 1 },
+    { lookup_kind: "path", lookup_key_hash: hash("/shared"), resolution_status: "unique", page_title: "Shared", direction_key: "Cardiology", material_type: "article", access_label: "Врачи", is_active: 1 },
   ];
   const ambiguousPathRow = { lookup_kind: "path", lookup_key_hash: hash("/conflicted"), resolution_status: "ambiguous", direction_key: "Neurology", material_type: "article", access_label: "Врачи", is_active: 1 };
   const executor = fakeExecutor(({ sql }) => {
@@ -403,14 +403,22 @@ test("workbook loading uses only resolved hashed projections and reports aggrega
   const result = await loadActiveAbbottWorkbookDataWithExecutor(executor, 7);
 
   assert.deepEqual(result.contentByTitle.get(hash("Shared")), {
+    page_title: "Shared",
     direction: "Cardiology",
     material_type: "article",
     access: "Врачи",
     is_active: true,
   });
   assert.equal(result.contentBySlug.has("shared"), false);
-  assert.equal(result.contentBySlug.has(hash("shared")), true);
+  assert.deepEqual(result.contentBySlug.get(hash("shared")), {
+    page_title: "Shared",
+    direction: "Cardiology",
+    material_type: "article",
+    access: "Врачи",
+    is_active: true,
+  });
   assert.deepEqual(result.urlReturnDirections.get(hash("/shared")), {
+    page_title: "Shared",
     direction: "Cardiology",
     material_type: "article",
     access: "Врачи",
@@ -423,6 +431,7 @@ test("workbook loading uses only resolved hashed projections and reports aggrega
     .map(({ sql }) => sql)
     .join("\n");
   assert.match(projectionSql, /resolution_status IN \('unique', 'identical_collapsed'\)/);
+  assert.match(projectionSql, /catalog\.page_title/);
   assert.doesNotMatch(projectionSql, /page_title\s*=\s*\?|source_slug\s*=\s*\?|normalized_path\s*=\s*\?/);
 });
 

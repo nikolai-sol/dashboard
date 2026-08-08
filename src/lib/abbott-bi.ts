@@ -219,6 +219,12 @@ function normalizedPagePath(normalized: string): string {
   }
 }
 
+function validRawPageTitle(value: unknown): string | null {
+  if (typeof value !== "string") return null;
+  const normalized = value.trim();
+  return normalized && normalized.toLowerCase() !== "null" ? value : null;
+}
+
 export function toAbbottDateOnly(value: string | null | undefined): string {
   return text(value).slice(0, 10);
 }
@@ -463,16 +469,18 @@ async function queryManagerBehavior(
 
 function metadataForPage(
   rawUrl: string,
-  pageTitle: string,
+  rawPageTitle: unknown,
   workbook: AbbottAggregatePrivateData["workbook"],
-): { direction: string | null; material_type: string | null; access: string | null; hidden: boolean } {
+): { page_title: string; direction: string | null; material_type: string | null; access: string | null; hidden: boolean } {
   const normalized = normalizePage(rawUrl);
   const path = normalizedPagePath(normalized);
   const slug = path.split("/").filter(Boolean).at(-1) ?? "";
-  const metadata = workbook.contentByTitle.get(abbottTitleLookupHash(pageTitle))
-    ?? workbook.contentBySlug.get(lookupHash(slug))
-    ?? workbook.urlReturnDirections.get(lookupHash(path));
+  const rawTitle = validRawPageTitle(rawPageTitle);
+  const metadata = (rawTitle ? workbook.contentByTitle.get(abbottTitleLookupHash(rawTitle)) : undefined)
+    ?? workbook.urlReturnDirections.get(lookupHash(path))
+    ?? workbook.contentBySlug.get(lookupHash(slug));
   return {
+    page_title: rawTitle ?? metadata?.page_title ?? "",
     direction: metadata?.direction ?? null,
     material_type: metadata?.material_type ?? null,
     access: metadata?.access ?? null,
@@ -529,8 +537,8 @@ function buildPageStats(
   const result = new Map<string, AbbottBiPageStatRow & { hidden: boolean }>();
   rows.filter((row) => row.analytics_scope === "page").forEach((row) => {
     const url = normalizePage(row.page_url);
-    const title = text(row.page_title);
-    const metadata = metadataForPage(url, title, workbook);
+    const metadata = metadataForPage(url, row.page_title, workbook);
+    const title = metadata.page_title;
     const key = `${title}\n${url}`;
     const current = result.get(key) ?? {
       page_title: title,
