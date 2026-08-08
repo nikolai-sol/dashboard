@@ -118,14 +118,14 @@ export function selectAbbottUserActions(
     if (filters.user_id && row.user_id !== filters.user_id) return false;
     if (filters.user_id_traffic === "with_user_id" && !row.has_user_id) return false;
     if (filters.user_id_traffic === "without_user_id" && row.has_user_id) return false;
-    if (filters.traffic_source && row.traffic_source !== filters.traffic_source) return false;
+    if (filters.traffic_source && row.traffic_source.trim() !== filters.traffic_source) return false;
     if (filters.utm_source === ABBOTT_WITHOUT_UTM && utmSource !== null) return false;
     if (
       filters.utm_source
       && filters.utm_source !== ABBOTT_WITHOUT_UTM
       && utmSource !== filters.utm_source
     ) return false;
-    if (filters.direction && (row.direction ?? "") !== filters.direction) return false;
+    if (filters.direction && (row.direction?.trim() ?? "") !== filters.direction) return false;
     return true;
   });
   const filteredRows = aggregateAbbottUserActions(

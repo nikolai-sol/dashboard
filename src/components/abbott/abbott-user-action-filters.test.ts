@@ -147,3 +147,17 @@ test("groups raw traffic sources that have the same displayed source label", () 
   assert.equal(selected.filteredRows.length, 1);
   assert.equal(selected.filteredRows[0]?.visits, 2);
 });
+
+test("matches source and direction filters against the displayed trimmed values", () => {
+  const selected = selectAbbottUserActions([
+    action("doctor-a", null, {
+      traffic_source: " Direct traffic ",
+      direction: " Кардиология ",
+    }),
+  ], {
+    traffic_source: "Direct traffic",
+    direction: "Кардиология",
+  }, 1, 100);
+
+  assert.equal(selected.filteredRows.length, 1);
+});
