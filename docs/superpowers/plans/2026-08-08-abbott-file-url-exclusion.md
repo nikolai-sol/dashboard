@@ -29,11 +29,11 @@
 - Consumes: TSV rows already validated by `parse_visits_tsv(payload, expected_day=...)`.
 - Produces: a tuple containing only non-`file://` visits while retaining duplicate-ID and malformed-row rejection.
 
-- [ ] Add a parser test containing one normal visit, one `file://` start URL, and one mixed-case `FILE://` end URL; assert only the normal visit remains.
-- [ ] Run `python3 -m unittest tests.test_metrika_logs_api` and verify the new test fails because three visits are returned.
-- [ ] Add a private predicate that detects `file://` case-insensitively and skip the validated visit after duplicate tracking but before result append.
-- [ ] Run the focused test and the Abbott day-bundle tests; require zero failures.
-- [ ] Commit the collector change.
+- [x] Add a parser test containing one normal visit, one `file://` start URL, and one mixed-case `FILE://` end URL; assert only the normal visit remains.
+- [x] Run `python3 -m unittest tests.test_metrika_logs_api` and verify the new test fails because three visits are returned.
+- [x] Add a private predicate that detects `file://` case-insensitively and skip the validated visit after duplicate tracking but before result append.
+- [x] Run the focused test and the Abbott day-bundle tests; require zero failures.
+- [x] Commit the collector change.
 
 ### Task 2: Add an audited DB-native successor materializer
 
@@ -45,12 +45,12 @@
 - Consumes: predecessor release ID, committed code revision, operator/writer connections, and an explicit apply flag.
 - Produces: one staging successor containing release-equivalent data except for local-file visits, a frozen control baseline, source-import receipts, adjusted user-behavior coverage counts, and aggregate-only sanitation evidence.
 
-- [ ] Write fake-connection tests proving the command rejects a moved active pointer, non-active predecessor, non-staging candidate, and any unexpected source set.
-- [ ] Write a failing test proving visit copy SQL contains a case-insensitive exclusion for both start and end URLs while every other release-scoped copy remains unfiltered.
-- [ ] Write a failing test proving candidate source IDs and source-import receipts are rebound to the new code revision and predecessor rows are never mutated.
-- [ ] Write a failing test proving user-behavior `persisted_rows` is reconciled to successor per-day visit counts and aggregate-only controls reject any remaining local-file visit.
-- [ ] Implement the explicit table inventory, transaction, dry-run preflight, source binding, coverage reconciliation, and sanitation receipt.
-- [ ] Run the focused successor tests and release-store/control tests; require zero failures.
+- [x] Add fail-closed pointer, predecessor, candidate, and exact source-set checks before copying.
+- [x] Write a failing test proving visit copy SQL contains a case-insensitive exclusion for both start and end URLs while every other release-scoped copy remains unfiltered.
+- [x] Bind candidate source IDs and source-import receipts to the new code revision without mutating predecessor rows.
+- [x] Reconcile user-behavior `persisted_rows` to successor per-day visit counts and reject any remaining local-file visit.
+- [x] Implement the explicit table inventory, transaction, dry-run preflight, exact frozen-source gate, source binding, coverage reconciliation, and health-visible sanitation receipt.
+- [x] Run the focused successor tests and release-store/control/health tests; 114 tests pass.
 - [ ] Commit the materializer.
 
 ### Task 3: Verify code and freeze the production checkpoint
@@ -78,6 +78,7 @@
 
 - [ ] Capture a frozen baseline over the exact completed-day range using release 13 controls and immutable source snapshot fingerprints.
 - [ ] Create the successor with predecessor 13 and the frozen baseline.
+- [ ] Hold `/run/lock/reportingdash-metrika.lock` from the final predecessor max-date check through materialization, comparison, validation, activation, and smoke so cron cannot append across the cutover.
 - [ ] Run the materializer once; reruns must fail closed or prove idempotent empty state.
 - [ ] Assert successor visit count equals predecessor count minus 18 and contains zero `file://` rows.
 - [ ] Assert every other copied table count and numeric aggregate matches release 13 exactly.
