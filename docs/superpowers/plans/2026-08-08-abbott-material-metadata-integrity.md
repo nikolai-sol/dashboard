@@ -343,7 +343,7 @@ python3 backfill_abbott_metrika_2026.py \
   --parser-version "$ABBOTT_METRIKA_PARSER_VERSION"
 ```
 
-Require exactly `220` covered dates, `1100` five-scope coverage rows, and zero bad rows before continuing. Resume the same candidate after rate-limit or process interruption; never create parallel workers.
+Require exactly `219` covered dates, `1095` five-scope coverage rows, and zero bad rows before continuing. Resume the same candidate after rate-limit or process interruption; never create parallel workers.
 
 - [ ] **Step 6: Compare, validate, and activate atomically**
 

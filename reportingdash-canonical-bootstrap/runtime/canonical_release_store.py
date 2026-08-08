@@ -685,7 +685,8 @@ def activate_release(release_id: int, *, expected_active_release_id: int) -> Non
 
         cur.execute(
             """
-            SELECT source_snapshot_ids, code_revision
+            SELECT source_snapshot_ids, code_revision, baseline_validation_run_id,
+                   rollback_from_release_id
             FROM portal_data_releases
             WHERE dataset_key = %s AND id = %s AND release_status = 'validated'
             FOR UPDATE
@@ -708,6 +709,56 @@ def activate_release(release_id: int, *, expected_active_release_id: int) -> Non
         receipt_rows = cur.fetchall()
         _validate_release_source_receipts(
             release=release,
+            execution_rows=receipt_rows,
+        )
+        baseline_snapshot_id = release.get("baseline_validation_run_id")
+        if not _is_positive_integer(baseline_snapshot_id):
+            raise ValidationGateError("Frozen baseline manifest is invalid")
+        cur.execute(
+            """
+            SELECT manifest_json
+            FROM portal_dataset_snapshots
+            WHERE id = %s AND dataset_key = %s
+              AND source_kind = 'abbott_canonical_control_pack'
+            FOR UPDATE
+            """,
+            (baseline_snapshot_id, dataset_key),
+        )
+        baseline_row = cur.fetchone()
+        baseline_manifest = _json_value(
+            baseline_row.get("manifest_json") if isinstance(baseline_row, dict) else None,
+            error_message="Frozen baseline manifest is invalid",
+        )
+        if not isinstance(baseline_manifest, dict):
+            raise ValidationGateError("Frozen baseline manifest is invalid")
+        source_snapshot_ids = _json_value(
+            release.get("source_snapshot_ids"),
+            error_message="Canonical release source snapshots are invalid",
+        )
+        if (
+            not isinstance(source_snapshot_ids, list)
+            or not source_snapshot_ids
+            or any(not _is_positive_integer(item) for item in source_snapshot_ids)
+            or len(set(source_snapshot_ids)) != len(source_snapshot_ids)
+        ):
+            raise ValidationGateError("Canonical release source snapshots are invalid")
+        placeholders = ", ".join("%s" for _ in source_snapshot_ids)
+        cur.execute(
+            f"""
+            SELECT id, source_kind, content_sha256, content_bytes,
+                   parser_version, import_status, imported_row_count,
+                   rejected_row_count, manifest_json
+            FROM portal_dataset_snapshots
+            WHERE dataset_key = %s AND id IN ({placeholders})
+            ORDER BY id
+            FOR UPDATE
+            """,
+            (dataset_key, *source_snapshot_ids),
+        )
+        _validate_imported_sources(
+            release=release,
+            baseline_manifest=baseline_manifest,
+            snapshot_rows=cur.fetchall(),
             execution_rows=receipt_rows,
         )
 

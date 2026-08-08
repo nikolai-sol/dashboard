@@ -1,274 +1,166 @@
-# Task 3 report: release source integrity, health alert, and schedule alignment
+# Task 3 Report: Shared ISO Week Comparison Controls
 
-## Scope completed
+## Delivered
 
-- Added migration `046_abbott_release_source_integrity.sql` and its Node contract test.
-- Added release-store and health-probe Python unit tests, both independent of a live
-  database. The release-store test injects a `canonical_writer` stub before import,
-  so it never imports `mysql.connector` or reads credentials.
-- Added workbook JSON semantic-count validation and activation-time receipt
-  re-attestation to both synchronized release-store copies.
-- Added aggregate-only release-source health integrity, its sanitized incident, and
-  the 07:00 Moscow default completion boundary.
-- Added `test:node` and `test:python`; `npm test` now runs both.
-- Updated the real bootstrap SHA-256 entries.
+- Added shared ISO-week selection state to `ZarukuSeoDashboard`, initialized from `data.seo_os.latest_week` and preserved while dashboard tabs change.
+- Added `ZarukuSeoWeekToolbar` with a `Single`/`Compare` segmented control, native A/B ISO-week selects, and a Lucide history icon action titled `Сравнить с предыдущей доступной неделей`.
+- The previous-week action selects the prior available week and is disabled when none exists.
+- Added a client-safe selection helper which prevents equal A/B values by moving the other selection to the nearest prior available week, then the next available week.
+- Kept existing tab navigation and tab content unchanged.
 
-No API collection path, cron, deployment, secret, database instance, or existing
-release data was touched.
+## TDD Evidence
 
-## RED / GREEN evidence
+### RED
 
-### Release gate
+1. `npm test -- src/components/zaruku-seo-week-selection.test.ts`
+   - Failed because `@/components/zaruku-seo-week-selection` did not exist.
+2. After browser verification found a client bundle failure caused by importing the server-side `zaruku-seo-os` module, a focused helper export test was added.
+   - Failed with `TypeError: previousAvailableWeek is not a function`.
 
-RED:
+### GREEN
 
-```sh
-PYTHONDONTWRITEBYTECODE=1 python3 -m unittest reportingdash-canonical-bootstrap/tests/test_canonical_release_store.py
-```
+`npm test -- src/components/zaruku-seo-week-selection.test.ts && npm run typecheck && npm run lint`
 
-Result: expected failure: three semantic workbook cases were accepted and the
-activation receipt helper was absent (3 failures, 2 errors).
+- Tests: 15 passed, 0 failed.
+- `tsc --noEmit`: exit 0.
+- ESLint: exit 0; two pre-existing `react-hooks/exhaustive-deps` warnings remain in `src/components/admin/DashboardUtmSourceMatching.tsx` at lines 66 and 152. No Task 3 lint issues.
 
-GREEN:
+## Browser Verification
 
-```sh
-PYTHONDONTWRITEBYTECODE=1 python3 -m unittest reportingdash-canonical-bootstrap/tests/test_canonical_release_store.py
-cmp reportingdash-canonical-bootstrap/lib/canonical_release_store.py reportingdash-canonical-bootstrap/runtime/canonical_release_store.py
-```
+- Ran `npm run dev -- -p 3000` and opened `/dashboard/28`.
+- Initial browser check revealed a `mysql2`/`net` client-bundle error from importing a server-only module. Replaced the import with a client-safe local ISO-week helper.
+- Recheck loaded the dashboard with no console errors and no error overlay.
+- Verified the toolbar appears on Overview and Content, Compare mode persists after tab navigation, and the previous-week button is disabled for the loaded one-week dataset.
 
-Result: 6 tests passed; `cmp` exited 0.
+## Files
 
-### Health probe
-
-RED:
-
-```sh
-PYTHONDONTWRITEBYTECODE=1 python3 -m unittest reportingdash-canonical-bootstrap/tests/test_abbott_health_probe.py
-```
-
-Result: expected failure: source-integrity builder absent and the old 09:00 Moscow
-default made a 04:23 UTC completion stale (1 failure, 1 error).
-
-GREEN:
-
-```sh
-PYTHONDONTWRITEBYTECODE=1 python3 -m unittest reportingdash-canonical-bootstrap/tests/test_abbott_health_probe.py
-```
-
-Result: 2 tests passed.
-
-Review regression RED/GREEN:
-
-```sh
-PYTHONDONTWRITEBYTECODE=1 python3 -m unittest reportingdash-canonical-bootstrap/tests/test_abbott_health_probe.py
-node --import tsx --test src/db/abbott-release-source-integrity-migration.test.ts
-```
-
-Result: the new tests failed before the fixes: an aggregate match flag could
-override unequal source counts, and a source-ID/status transition had no
-`NEW.release_status` guard. After requiring equal SQL counts and preventing a
-changed source set whenever either status is non-staging, all 3 health tests and
-the migration contract passed.
-
-### Migration contract
-
-RED:
-
-```sh
-node --import tsx --test src/db/abbott-release-source-integrity-migration.test.ts
-```
-
-Result: expected failure because migration 046 did not exist.
-
-GREEN:
-
-```sh
-node --import tsx --test src/db/abbott-release-source-integrity-migration.test.ts
-```
-
-Result: 1 test passed.
-
-## Migration design
-
-Migration 046 creates and seeds a one-row guard table, then drops and recreates
-exactly four event-specific triggers:
-
-1. `portal_data_releases` `BEFORE UPDATE`: a changed Abbott
-   `source_snapshot_ids` value is rejected if either the old or new release
-   status is not `staging`.
-2. `portal_release_source_imports` `BEFORE INSERT`: rejects a receipt for a
-   non-staging Abbott parent.
-3. `portal_release_source_imports` `BEFORE UPDATE`: rejects if either the old or
-   new Abbott parent is non-staging.
-4. `portal_release_source_imports` `BEFORE DELETE`: rejects a receipt belonging
-   to a non-staging Abbott parent.
-
-Each trigger uses a single `INSERT ... SELECT ... WHERE` statement. A forbidden
-operation attempts to insert the already-seeded guard key and therefore fails with
-a duplicate-key error; permitted operations select no row. This avoids
-`DELIMITER`/compound trigger syntax and is compatible with the existing mysql2
-`multipleStatements` migration runner. The migration contains no release IDs and
-does not update any release data.
-
-## Integrity behavior
-
-- Workbook JSON manifests must contain positive integer `direction_count`,
-  `event_catalog_count`, and `general_material_count`; their sum must equal the
-  snapshot's `imported_row_count`.
-- Activation locks the validated candidate release and its import receipts, then
-  verifies exactly one successful, zero-rejection receipt for every pointer source
-  ID before the release-status transition.
-- Health executes one aggregate-only query: source counts and a SQL set-equality
-  flag. IDs are never included in the health payload or incident. A mismatch emits
-  the fixed `abbott|90602537|release_sources|mismatch` CRITICAL incident with only
-  source counts.
-
-## SHA-256
-
-| File | SHA-256 |
-| --- | --- |
-| `lib/canonical_release_store.py` | `fbe5413944aa9ea6062e43f145b04dbffe86d31bd6339a538472072568b565d1` |
-| `runtime/canonical_release_store.py` | `fbe5413944aa9ea6062e43f145b04dbffe86d31bd6339a538472072568b565d1` |
-| `runtime/abbott_health_probe.py` | `6ed7a6c2af250c40ac23bca702a15c2cd60dac5331a392e7e3ac45cc091011ef` |
-
-The manifest entries exactly match these values.
-
-## Full verification
-
-```sh
-npm test
-npm run lint
-npm run typecheck
-npm run build
-cmp reportingdash-canonical-bootstrap/lib/canonical_release_store.py reportingdash-canonical-bootstrap/runtime/canonical_release_store.py
-git diff --check
-```
-
-Results: Node 558/558 and Python 9/9 tests passed; lint exited 0 with four
-pre-existing warnings in unrelated files; typecheck passed; production build
-passed; `cmp` exited 0; diff check passed.
-
-## Self-review and concerns
-
-- Scope was limited to Task 3 files plus the pre-existing package-script contract
-  test that required updating because `test` now composes Node and Python suites.
-- The release-store copies are byte-identical and their manifest hashes were
-  recalculated from the final files.
-- No live MySQL migration was run: doing so would mutate external state and is out
-  of scope. The SQL contract test verifies the repeat-safe four-trigger shape;
-  the migration deliberately avoids `DELIMITER` so mysql2 can execute it.
-- Existing lint warnings remain unchanged:
-  `src/components/abbott-summary.ts`,
-  `src/components/admin/DashboardUtmSourceMatching.tsx`, and
-  `src/lib/zaruku-gsc.ts`.
+- Modified: `src/components/ZarukuSeoDashboard.tsx`
+- Added: `src/components/ZarukuSeoWeekToolbar.tsx`
+- Added: `src/components/zaruku-seo-week-selection.ts`
+- Added: `src/components/zaruku-seo-week-selection.test.ts`
 
 ## Commit
 
-`fix: attest Abbott release source integrity` (final SHA recorded in the task handoff).
+- `5d6143d Add Zaruku ISO week comparison controls`
 
-## Independent review follow-up
+## Self-Review
 
-The initial Task 3 commit (`6205fcfe4d1c969ac1c7459cced3130e62023c14`) was
-independently reviewed and required correction. This follow-up supersedes the
-earlier migration implementation.
+- Shared state is owned by the dashboard shell, so all existing tabs see the same controls without tab remount resets.
+- The toolbar uses stable grid tracks and native controls, with an accessible name and hover title for the icon-only action.
+- Selection logic has no server imports, preventing server database code from entering the client bundle.
+- `git diff --check` is clean.
 
-### Corrected trigger semantics
+## Concerns
 
-- The source-pointer trigger now uses `SIGNAL SQLSTATE '45000'`; it no longer
-  relies on a writable/deletable sentinel table.
-- It blocks an Abbott release that is already non-staging from returning to
-  `staging`, even if its source IDs are unchanged.
-- It blocks source-ID mutation whenever either old or new status is
-  non-staging.
-- It evaluates both old and new dataset keys, so a non-staging release cannot
-  escape Abbott by changing `dataset_key`, nor can another non-staging release
-  enter Abbott. Non-Abbott-to-non-Abbott updates are unaffected.
-- Receipt insert, update, and delete triggers use direct `SIGNAL` rejection for
-  non-staging Abbott parents.
+- The local Zaruku record currently provides a single available week, so browser interaction could only validate the disabled previous-week state. The pure tests cover multi-week predecessor selection and duplicate A/B reconciliation.
+- The existing server-side ISO-week helper remains separate from the client-safe helper to avoid changing server data-loader boundaries in this focused task.
 
-### Executable migration handling and tests
+## Task 3 Accessibility Follow-up (2026-07-12)
 
-`src/db/run-migration.ts` now exports a tested statement splitter. Migrations
-without break markers keep their original single query behavior; migration 046
-uses `-- @migration-statement-break` markers so each `CREATE TRIGGER ... BEGIN
-... END` body is submitted as one MySQL statement without `DELIMITER` parsing.
+### Delivered
 
-Default tests include a transition/receipt operation matrix and verify four
-direct-SIGNAL trigger statements through the runner splitter. These are
-environment-independent. The Python test loader now restores its prior
-`sys.modules` entries after importing the release store, avoiding global
-stub/module pollution. `test:python` now calls a Node launcher that honors
-`PYTHON` or `PYTHON_EXECUTABLE` and uses the Windows `python` fallback; it no
-longer depends on a POSIX inline environment assignment.
+- Wrapped the disabled previous-week icon action in a focusable non-disabled `span` only when no prior week exists.
+- Moved the unavailable-state native tooltip trigger to that wrapper and retained the existing tooltip for the enabled button state.
+- Preserved the native icon button, its accessible name, and its `disabled` behavior.
+- Added `aria-describedby` on the disabled button and a matching `sr-only` unavailable explanation.
 
-An opt-in real MySQL test was added and run:
+### Commands And Results
 
-```sh
-npm run test:migration:abbott-integrity
-```
+1. RED render assertion:
 
-It starts an ephemeral local Docker `mysql:8.4` container, creates the minimal
-release/receipt tables, applies migration 046 twice, confirms staging source and
-receipt mutations succeed, and confirms SQLSTATE `45000` rejection for
-active-to-staging, non-staging source changes, non-staging receipt
-insert/update/delete, Abbott dataset-key escape/entry, while preserving a
-non-Abbott source update. It cleans up the container on exit. Result: passed.
+   ```sh
+   node --import tsx --input-type=module --eval 'import assert from "node:assert/strict"; import { createElement } from "react"; import { renderToStaticMarkup } from "react-dom/server"; const module = await import("./src/components/ZarukuSeoWeekToolbar.tsx"); const ZarukuSeoWeekToolbar = module.default.default; const html = renderToStaticMarkup(createElement(ZarukuSeoWeekToolbar, { weeks: ["2026-W01"], primaryWeek: "2026-W01", comparisonWeek: null, comparisonEnabled: false, onComparisonEnabledChange() {}, onPrimaryWeekChange() {}, onComparisonWeekChange() {}, onComparePrevious() {} })); assert.match(html, /tabindex="0"/); assert.match(html, /aria-describedby="zaruku-previous-week-unavailable-description"/); assert.match(html, /id="zaruku-previous-week-unavailable-description"/);'
+   ```
 
-### Follow-up RED / GREEN evidence
+   Result before the change: exit 1. The assertion failed because rendered markup lacked `tabindex="0"`.
 
-RED:
+2. GREEN render assertion: repeated the exact command above after the change.
 
-```sh
-PYTHONDONTWRITEBYTECODE=1 python3 -m unittest reportingdash-canonical-bootstrap/tests/test_canonical_release_store.py
-node --import tsx --test src/db/abbott-release-source-integrity-migration.test.ts
-node --import tsx --test scripts/run-python-tests.test.ts
-```
+   Result: exit 0. The rendered one-week toolbar includes the focusable wrapper, `aria-describedby`, and hidden description.
 
-Result: import-isolation test failed because the test permanently installed
-stub modules; importing `run-migration.ts` attempted a real run; the portable
-launcher was missing. Additional transition and aggregate-count regressions
-also failed before their respective fixes.
+3. Focused available tests:
 
-GREEN focused:
+   ```sh
+   npm test -- src/components/zaruku-seo-week-selection.test.ts
+   ```
 
-```sh
-PYTHONDONTWRITEBYTECODE=1 python3 -m unittest reportingdash-canonical-bootstrap/tests/test_canonical_release_store.py
-node --import tsx --test src/db/abbott-release-source-integrity-migration.test.ts scripts/run-python-tests.test.ts scripts/set-dashboard-shared-password.test.ts
-npm run test:python
-npm run test:migration:abbott-integrity
-```
+   Result: exit 0; 15 passed, 0 failed.
 
-Result: Python 7/7 for the release-store file; Node 17/17 focused; Python
-suite 10/10; Docker MySQL verification passed.
+4. Typecheck:
 
-Final verification:
+   ```sh
+   npm run typecheck
+   ```
 
-```sh
-npm test
-npm run lint
-npm run typecheck
-npm run build
-npm run test:migration:abbott-integrity
-cmp reportingdash-canonical-bootstrap/lib/canonical_release_store.py reportingdash-canonical-bootstrap/runtime/canonical_release_store.py
-git diff --check
-```
+   Result: exit 0 (`tsc --noEmit`).
 
-Result: Node 560/560 and Python 10/10 passed; lint exited 0 with the same four
-unrelated warnings noted above; typecheck and build passed; Docker MySQL test,
-byte comparison, and diff check passed.
+5. Lint:
 
-The canonical release-store files were not changed in this follow-up; their
-existing identical hashes and manifest entries remain valid. No production
-database, deployment, cron, external API, token, or existing release data was
-modified.
+   ```sh
+   npm run lint
+   ```
 
-### Final adversarial boundary correction
+   Result: exit 0; 0 errors and 2 pre-existing `react-hooks/exhaustive-deps` warnings in `src/components/admin/DashboardUtmSourceMatching.tsx` at lines 66 and 152.
 
-The follow-up review identified one final combined-field escape: a non-Abbott
-active release could enter Abbott while setting its new status to `staging`.
-The source trigger now treats either crossing direction as a protected Abbott
-boundary and allows it only if **both** the old and new statuses are `staging`.
-The transition matrix verifies both allowed staging-to-staging crossings and
-blocked active-to-staging entry / staging-to-active exit. The Docker verifier
-executes both blocked SQL updates in addition to the other replay and receipt
-checks.
+6. Diff validation:
+
+   ```sh
+   git diff --check
+   ```
+
+   Result: exit 0.
+
+7. Browser check:
+
+   ```sh
+   npm run dev -- -p 3000
+   ```
+
+   Opened `http://localhost:3000/dashboard/28` in the in-app browser. The loaded one-week toolbar rendered one wrapper with `tabindex="0"` and title `Нет предыдущей доступной недели для сравнения`; its child button remained disabled, referenced `zaruku-previous-week-unavailable-description`, and that hidden element contained the same explanatory text. The browser automation could not advance tab focus from the selected segmented-control button, and native title tooltips are not captured in its screenshots.
+
+### Files
+
+- Modified: `src/components/ZarukuSeoWeekToolbar.tsx`
+- Appended: `.superpowers/sdd/task-3-report.md`
+
+## Task 3 Accessibility Follow-up: Focus Association (2026-07-12)
+
+### Delivered
+
+- Added `aria-describedby="zaruku-previous-week-unavailable-description"` to the focusable unavailable-state wrapper.
+- Retained the association on the disabled child button.
+- Added `src/components/ZarukuSeoWeekToolbar.test.ts` with a focused assertion that checks the opening wrapper tag itself carries both `tabindex="0"` and `aria-describedby`.
+
+### Commands And Results
+
+1. RED focused assertion:
+
+   ```sh
+   npm test -- src/components/ZarukuSeoWeekToolbar.test.ts
+   ```
+
+   Result before the component change: exit 1; 15 passed, 1 failed. The focused assertion failed because the focusable wrapper had `tabindex="0"` but no `aria-describedby`.
+
+2. GREEN focused assertion:
+
+   ```sh
+   npm test -- src/components/ZarukuSeoWeekToolbar.test.ts
+   ```
+
+   Result: exit 0; 16 passed, 0 failed.
+
+3. Typecheck:
+
+   ```sh
+   npm run typecheck
+   ```
+
+   Result: exit 0 (`tsc --noEmit`).
+
+4. Lint:
+
+   ```sh
+   npm run lint
+   ```
+
+   Result: exit 0; 0 errors and the same 2 pre-existing `react-hooks/exhaustive-deps` warnings in `src/components/admin/DashboardUtmSourceMatching.tsx` at lines 66 and 152.

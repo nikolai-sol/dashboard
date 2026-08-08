@@ -170,6 +170,157 @@ class ActivationReceiptAttestationTests(unittest.TestCase):
             )
 
 
+class FakeActivationCursor:
+    def __init__(self, *, one_rows, all_rows):
+        self.one_rows = list(one_rows)
+        self.all_rows = list(all_rows)
+        self.executions = []
+        self.rowcount = 1
+
+    def execute(self, statement, params=None):
+        self.executions.append((statement, params))
+        self.rowcount = 1
+
+    def fetchone(self):
+        return self.one_rows.pop(0)
+
+    def fetchall(self):
+        return self.all_rows.pop(0)
+
+    def close(self):
+        pass
+
+
+class FakeActivationConnection:
+    def __init__(self, cursor):
+        self.cursor_instance = cursor
+        self.started = False
+        self.committed = False
+        self.rolled_back = False
+
+    def cursor(self, **_kwargs):
+        return self.cursor_instance
+
+    def start_transaction(self):
+        self.started = True
+
+    def commit(self):
+        self.committed = True
+
+    def rollback(self):
+        self.rolled_back = True
+
+    def close(self):
+        pass
+
+
+class ActivationSnapshotAttestationTests(unittest.TestCase):
+    def build_activation(self, *, snapshot_rows=None):
+        cursor = FakeActivationCursor(
+            one_rows=[
+                {"canonical_release_id": 8},
+                {
+                    "source_snapshot_ids": [25, 26],
+                    "code_revision": "revision",
+                    "baseline_validation_run_id": 50,
+                    "rollback_from_release_id": 8,
+                },
+                {"manifest_json": baseline_manifest()},
+            ],
+            all_rows=[receipt_rows(), snapshot_rows if snapshot_rows is not None else source_rows()],
+        )
+        connection = FakeActivationConnection(cursor)
+        return connection, cursor
+
+    def invoke_activation(self, connection):
+        original_connection_factory = release_store.get_db_connection
+        release_store.get_db_connection = lambda: connection
+        try:
+            release_store.activate_release(9, expected_active_release_id=8)
+        finally:
+            release_store.get_db_connection = original_connection_factory
+
+    def test_locks_exact_source_snapshots_before_release_or_pointer_updates(self):
+        connection, cursor = self.build_activation()
+        self.invoke_activation(connection)
+        snapshot_index, (snapshot_statement, snapshot_params) = next(
+            (index, execution)
+            for index, execution in enumerate(cursor.executions)
+            if "portal_dataset_snapshots" in execution[0] and "id IN" in execution[0]
+        )
+        self.assertIn("manifest_json", snapshot_statement)
+        self.assertIn("content_sha256", snapshot_statement)
+        self.assertIn("content_bytes", snapshot_statement)
+        self.assertIn("parser_version", snapshot_statement)
+        self.assertIn("imported_row_count", snapshot_statement)
+        self.assertIn("FOR UPDATE", snapshot_statement)
+        self.assertEqual(snapshot_params, (release_store.ABBOTT_DATASET_KEY, 25, 26))
+        first_update_index = next(
+            index
+            for index, (statement, _params) in enumerate(cursor.executions)
+            if statement.lstrip().startswith("UPDATE")
+        )
+        self.assertLess(snapshot_index, first_update_index)
+        self.assertTrue(connection.committed)
+        self.assertFalse(connection.rolled_back)
+
+    def test_rejects_missing_zero_or_mismatched_workbook_counts_before_updates(self):
+        valid_manifest = source_rows()[0]["manifest_json"]
+        invalid_manifests = []
+        for count_name in (
+            "direction_count",
+            "event_catalog_count",
+            "general_material_count",
+        ):
+            missing = valid_manifest.copy()
+            missing.pop(count_name)
+            invalid_manifests.append((f"missing {count_name}", missing))
+            zero = valid_manifest.copy()
+            zero[count_name] = 0
+            invalid_manifests.append((f"zero {count_name}", zero))
+        mismatched = valid_manifest.copy()
+        mismatched["general_material_count"] = 2
+        invalid_manifests.append(("mismatched sum", mismatched))
+
+        for description, manifest in invalid_manifests:
+            with self.subTest(description=description):
+                connection, cursor = self.build_activation(snapshot_rows=source_rows(manifest))
+                with self.assertRaises(release_store.ValidationGateError):
+                    self.invoke_activation(connection)
+                self.assertTrue(connection.rolled_back)
+                self.assertFalse(connection.committed)
+                self.assertFalse(
+                    any(
+                        statement.lstrip().startswith("UPDATE")
+                        for statement, _params in cursor.executions
+                    )
+                )
+
+    def test_rejects_post_validation_manifest_fingerprint_or_rejection_drift(self):
+        valid_manifest = source_rows()[0]["manifest_json"]
+        fingerprint_drift = valid_manifest.copy()
+        fingerprint_drift["content_sha256"] = "c" * 64
+        rejection_drift = valid_manifest.copy()
+        rejection_drift["rejected_count"] = 1
+
+        for description, manifest in (
+            ("fingerprint", fingerprint_drift),
+            ("rejected count", rejection_drift),
+        ):
+            with self.subTest(description=description):
+                connection, cursor = self.build_activation(snapshot_rows=source_rows(manifest))
+                with self.assertRaises(release_store.ValidationGateError):
+                    self.invoke_activation(connection)
+                self.assertTrue(connection.rolled_back)
+                self.assertFalse(connection.committed)
+                self.assertFalse(
+                    any(
+                        statement.lstrip().startswith("UPDATE")
+                        for statement, _params in cursor.executions
+                    )
+                )
+
+
 class ImportIsolationTests(unittest.TestCase):
     def test_test_import_does_not_replace_global_modules(self):
         self.assertIs(sys.modules.get("canonical_writer"), ORIGINAL_CANONICAL_WRITER)
