@@ -292,7 +292,7 @@ Record the reviewed branch SHA, merge it through the repository's normal non-des
 
 - [ ] **Step 2: Apply migration 046 and verify its triggers without mutating release 12**
 
-Run `npm run db:migrate`, query `information_schema.triggers` for the three named Abbott integrity triggers, and perform the migration's read-only contract query. Do not issue a test update against production release rows.
+Run `npm run db:migrate`, query `information_schema.triggers` for the four named Abbott integrity triggers (release update plus receipt insert/update/delete), and perform the migration's read-only contract query. Do not issue a test update against production release rows.
 
 - [ ] **Step 3: Freeze the successor baseline and create staging**
 
