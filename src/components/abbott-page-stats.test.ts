@@ -7,6 +7,7 @@ import {
   buildAbbottPageviewsByDirection,
   groupAbbottPageStatsByDimension,
   labelAbbottPageDimension,
+  limitAbbottPageDimensionGroups,
   matchesPageStatsSearch,
   matchesSelectedPageDimension,
   matchesSelectedMaterialType,
@@ -112,6 +113,36 @@ test("page metadata options and chart groups retain one unmapped bucket", () => 
   ]);
 });
 
+test("page chart groups retain an unmapped bucket after eight higher-valued mapped groups", () => {
+  const rows = [
+    ...Array.from({ length: 8 }, (_, index) => ({
+      ...sampleRow,
+      direction: `Направление ${index + 1}`,
+      users: 100 - index,
+    })),
+    { ...sampleRow, direction: null, users: 1 },
+    { ...sampleRow, direction: "Направление 9", users: 50 },
+  ];
+
+  assert.deepEqual(
+    limitAbbottPageDimensionGroups(
+      groupAbbottPageStatsByDimension(rows, (row) => row.direction, (row) => row.users),
+      8,
+    ).map((row) => row.label),
+    [
+      "Направление 1",
+      "Направление 2",
+      "Направление 3",
+      "Направление 4",
+      "Направление 5",
+      "Направление 6",
+      "Направление 7",
+      "Направление 8",
+      ABBOTT_UNMAPPED_LABEL,
+    ],
+  );
+});
+
 test("metadata coverage reports mapped material pages and pageviews", () => {
   assert.deepEqual(
     summarizeAbbottPageMetadataCoverage([
@@ -120,6 +151,13 @@ test("metadata coverage reports mapped material pages and pageviews", () => {
       { ...sampleRow, pageviews: 10, material_type: " " },
     ]),
     { mappedRows: 1, totalRows: 3, mappedPageviews: 30, totalPageviews: 60 },
+  );
+});
+
+test("metadata coverage treats a literal unmapped label as a mapped canonical material type", () => {
+  assert.deepEqual(
+    summarizeAbbottPageMetadataCoverage([{ ...sampleRow, pageviews: 30, material_type: ABBOTT_UNMAPPED_LABEL }]),
+    { mappedRows: 1, totalRows: 1, mappedPageviews: 30, totalPageviews: 30 },
   );
 });
 

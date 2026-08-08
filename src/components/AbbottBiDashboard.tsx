@@ -21,6 +21,7 @@ import {
   buildAbbottPageDimensionOptions,
   groupAbbottPageStatsByDimension,
   labelAbbottPageDimension,
+  limitAbbottPageDimensionGroups,
   matchesPageStatsSearch,
   matchesSelectedPageDimension,
   matchesSelectedMaterialType,
@@ -1250,15 +1251,24 @@ export default function AbbottBiDashboard({
   );
 
   const pageDirectionData = useMemo(
-    () => groupAbbottPageStatsByDimension(pageStatRows, (row) => row.direction, (row) => row.users).slice(0, 8),
+    () =>
+      limitAbbottPageDimensionGroups(
+        groupAbbottPageStatsByDimension(pageStatRows, (row) => row.direction, (row) => row.users),
+      ),
     [pageStatRows],
   );
   const pageViewsDirectionData = useMemo(
-    () => groupAbbottPageStatsByDimension(pageStatRows, (row) => row.direction, (row) => row.pageviews).slice(0, 8),
+    () =>
+      limitAbbottPageDimensionGroups(
+        groupAbbottPageStatsByDimension(pageStatRows, (row) => row.direction, (row) => row.pageviews),
+      ),
     [pageStatRows],
   );
   const pageMaterialData = useMemo(
-    () => groupAbbottPageStatsByDimension(pageStatRows, (row) => row.material_type, (row) => row.users).slice(0, 8),
+    () =>
+      limitAbbottPageDimensionGroups(
+        groupAbbottPageStatsByDimension(pageStatRows, (row) => row.material_type, (row) => row.users),
+      ),
     [pageStatRows],
   );
   const pageAccessData = useMemo(

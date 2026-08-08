@@ -44,6 +44,17 @@ export function groupAbbottPageStatsByDimension<T>(
   );
 }
 
+export function limitAbbottPageDimensionGroups(
+  groups: Array<{ label: string; value: number }>,
+  mappedLimit = 8,
+) {
+  const unmapped = groups.filter((group) => group.label === ABBOTT_UNMAPPED_LABEL);
+  const mapped = groups.filter((group) => group.label !== ABBOTT_UNMAPPED_LABEL);
+  return [...mapped.slice(0, Math.max(0, mappedLimit)), ...unmapped].sort(
+    (left, right) => right.value - left.value || left.label.localeCompare(right.label, "ru"),
+  );
+}
+
 export function matchesPageStatsSearch(pageTitle: string, url: string, query: string) {
   const normalizedQuery = normalizeSearchValue(query);
   if (!normalizedQuery) return true;
@@ -61,13 +72,16 @@ export function summarizeAbbottPageStats(rows: AbbottBiPageStatRow[]) {
 }
 
 export function buildAbbottPageviewsByDirection(rows: AbbottBiPageStatRow[], limit = 8) {
-  return groupAbbottPageStatsByDimension(rows, (row) => row.direction, (row) => row.pageviews).slice(0, Math.max(0, limit));
+  return limitAbbottPageDimensionGroups(
+    groupAbbottPageStatsByDimension(rows, (row) => row.direction, (row) => row.pageviews),
+    limit,
+  );
 }
 
 export function summarizeAbbottPageMetadataCoverage(rows: AbbottBiPageStatRow[]) {
   return rows.reduce(
     (coverage, row) => {
-      const mapped = labelAbbottPageDimension(row.material_type) !== ABBOTT_UNMAPPED_LABEL;
+      const mapped = String(row.material_type ?? "").trim().length > 0;
       return {
         mappedRows: coverage.mappedRows + Number(mapped),
         totalRows: coverage.totalRows + 1,
