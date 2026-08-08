@@ -359,7 +359,7 @@ test("package exposes the reviewed shared-password seed command", () => {
   );
   assert.equal(
     packageJson.scripts["test:python"],
-    "PYTHONDONTWRITEBYTECODE=1 python3 -m unittest discover -s reportingdash-canonical-bootstrap/tests -p 'test_*.py'",
+    "node scripts/run-python-tests.mjs",
   );
 });
 

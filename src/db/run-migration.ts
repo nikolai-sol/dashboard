@@ -1,6 +1,16 @@
 import fs from "fs";
 import path from "path";
+import { pathToFileURL } from "url";
 import mysql from "mysql2/promise";
+
+const STATEMENT_BREAK = /^\s*--\s*@migration-statement-break\s*$/gim;
+
+export function splitMigrationStatements(sql: string): string[] {
+  return sql
+    .split(STATEMENT_BREAK)
+    .map((statement) => statement.trim())
+    .filter(Boolean);
+}
 
 function loadEnvFile(filePath: string) {
   if (!fs.existsSync(filePath)) return;
@@ -18,7 +28,7 @@ function loadEnvFile(filePath: string) {
   }
 }
 
-async function run() {
+export async function run() {
   const localEnv = path.join(process.cwd(), ".env.local");
   const rootEnv = path.join(process.cwd(), "..", ".env");
   loadEnvFile(localEnv);
@@ -53,7 +63,9 @@ async function run() {
     for (const file of migrationFiles) {
       const sqlPath = path.join(migrationsDir, file);
       const sql = fs.readFileSync(sqlPath, "utf-8");
-      await connection.query(sql);
+      for (const statement of splitMigrationStatements(sql)) {
+        await connection.query(statement);
+      }
       console.log(`Migration ${file} completed successfully.`);
     }
   } finally {
@@ -61,7 +73,12 @@ async function run() {
   }
 }
 
-run().catch((error) => {
-  console.error("Migration failed:", error);
-  process.exit(1);
-});
+if (
+  process.argv[1]
+  && pathToFileURL(path.resolve(process.argv[1])).href === import.meta.url
+) {
+  run().catch((error) => {
+    console.error("Migration failed:", error);
+    process.exit(1);
+  });
+}

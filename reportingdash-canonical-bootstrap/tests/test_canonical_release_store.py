@@ -7,15 +7,38 @@ import unittest
 
 ROOT = pathlib.Path(__file__).resolve().parents[1]
 MODULE_PATH = ROOT / "lib" / "canonical_release_store.py"
-sys.modules.setdefault(
-    "canonical_writer",
-    types.SimpleNamespace(get_db_connection=lambda: (_ for _ in ()).throw(AssertionError("database access is not allowed in unit tests"))),
-)
-SPEC = importlib.util.spec_from_file_location("canonical_release_store", MODULE_PATH)
-assert SPEC and SPEC.loader
-release_store = importlib.util.module_from_spec(SPEC)
-sys.modules["canonical_release_store"] = release_store
-SPEC.loader.exec_module(release_store)
+ORIGINAL_CANONICAL_WRITER = sys.modules.get("canonical_writer")
+ORIGINAL_RELEASE_STORE = sys.modules.get("canonical_release_store")
+
+
+def load_release_store_for_test():
+    database_stub = types.SimpleNamespace(
+        get_db_connection=lambda: (_ for _ in ()).throw(
+            AssertionError("database access is not allowed in unit tests")
+        ),
+    )
+    previous_writer = sys.modules.get("canonical_writer")
+    previous_store = sys.modules.get("canonical_release_store")
+    try:
+        sys.modules["canonical_writer"] = database_stub
+        spec = importlib.util.spec_from_file_location("canonical_release_store", MODULE_PATH)
+        assert spec and spec.loader
+        module = importlib.util.module_from_spec(spec)
+        sys.modules["canonical_release_store"] = module
+        spec.loader.exec_module(module)
+        return module
+    finally:
+        if previous_writer is None:
+            sys.modules.pop("canonical_writer", None)
+        else:
+            sys.modules["canonical_writer"] = previous_writer
+        if previous_store is None:
+            sys.modules.pop("canonical_release_store", None)
+        else:
+            sys.modules["canonical_release_store"] = previous_store
+
+
+release_store = load_release_store_for_test()
 
 
 def baseline_manifest():
@@ -145,6 +168,12 @@ class ActivationReceiptAttestationTests(unittest.TestCase):
                 release={"source_snapshot_ids": [25, 26]},
                 execution_rows=receipt_rows((25, 22)),
             )
+
+
+class ImportIsolationTests(unittest.TestCase):
+    def test_test_import_does_not_replace_global_modules(self):
+        self.assertIs(sys.modules.get("canonical_writer"), ORIGINAL_CANONICAL_WRITER)
+        self.assertIs(sys.modules.get("canonical_release_store"), ORIGINAL_RELEASE_STORE)
 
 
 if __name__ == "__main__":

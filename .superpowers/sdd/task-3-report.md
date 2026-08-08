@@ -165,3 +165,110 @@ passed; `cmp` exited 0; diff check passed.
 ## Commit
 
 `fix: attest Abbott release source integrity` (final SHA recorded in the task handoff).
+
+## Independent review follow-up
+
+The initial Task 3 commit (`6205fcfe4d1c969ac1c7459cced3130e62023c14`) was
+independently reviewed and required correction. This follow-up supersedes the
+earlier migration implementation.
+
+### Corrected trigger semantics
+
+- The source-pointer trigger now uses `SIGNAL SQLSTATE '45000'`; it no longer
+  relies on a writable/deletable sentinel table.
+- It blocks an Abbott release that is already non-staging from returning to
+  `staging`, even if its source IDs are unchanged.
+- It blocks source-ID mutation whenever either old or new status is
+  non-staging.
+- It evaluates both old and new dataset keys, so a non-staging release cannot
+  escape Abbott by changing `dataset_key`, nor can another non-staging release
+  enter Abbott. Non-Abbott-to-non-Abbott updates are unaffected.
+- Receipt insert, update, and delete triggers use direct `SIGNAL` rejection for
+  non-staging Abbott parents.
+
+### Executable migration handling and tests
+
+`src/db/run-migration.ts` now exports a tested statement splitter. Migrations
+without break markers keep their original single query behavior; migration 046
+uses `-- @migration-statement-break` markers so each `CREATE TRIGGER ... BEGIN
+... END` body is submitted as one MySQL statement without `DELIMITER` parsing.
+
+Default tests include a transition/receipt operation matrix and verify four
+direct-SIGNAL trigger statements through the runner splitter. These are
+environment-independent. The Python test loader now restores its prior
+`sys.modules` entries after importing the release store, avoiding global
+stub/module pollution. `test:python` now calls a Node launcher that honors
+`PYTHON` or `PYTHON_EXECUTABLE` and uses the Windows `python` fallback; it no
+longer depends on a POSIX inline environment assignment.
+
+An opt-in real MySQL test was added and run:
+
+```sh
+npm run test:migration:abbott-integrity
+```
+
+It starts an ephemeral local Docker `mysql:8.4` container, creates the minimal
+release/receipt tables, applies migration 046 twice, confirms staging source and
+receipt mutations succeed, and confirms SQLSTATE `45000` rejection for
+active-to-staging, non-staging source changes, non-staging receipt
+insert/update/delete, Abbott dataset-key escape/entry, while preserving a
+non-Abbott source update. It cleans up the container on exit. Result: passed.
+
+### Follow-up RED / GREEN evidence
+
+RED:
+
+```sh
+PYTHONDONTWRITEBYTECODE=1 python3 -m unittest reportingdash-canonical-bootstrap/tests/test_canonical_release_store.py
+node --import tsx --test src/db/abbott-release-source-integrity-migration.test.ts
+node --import tsx --test scripts/run-python-tests.test.ts
+```
+
+Result: import-isolation test failed because the test permanently installed
+stub modules; importing `run-migration.ts` attempted a real run; the portable
+launcher was missing. Additional transition and aggregate-count regressions
+also failed before their respective fixes.
+
+GREEN focused:
+
+```sh
+PYTHONDONTWRITEBYTECODE=1 python3 -m unittest reportingdash-canonical-bootstrap/tests/test_canonical_release_store.py
+node --import tsx --test src/db/abbott-release-source-integrity-migration.test.ts scripts/run-python-tests.test.ts scripts/set-dashboard-shared-password.test.ts
+npm run test:python
+npm run test:migration:abbott-integrity
+```
+
+Result: Python 7/7 for the release-store file; Node 17/17 focused; Python
+suite 10/10; Docker MySQL verification passed.
+
+Final verification:
+
+```sh
+npm test
+npm run lint
+npm run typecheck
+npm run build
+npm run test:migration:abbott-integrity
+cmp reportingdash-canonical-bootstrap/lib/canonical_release_store.py reportingdash-canonical-bootstrap/runtime/canonical_release_store.py
+git diff --check
+```
+
+Result: Node 560/560 and Python 10/10 passed; lint exited 0 with the same four
+unrelated warnings noted above; typecheck and build passed; Docker MySQL test,
+byte comparison, and diff check passed.
+
+The canonical release-store files were not changed in this follow-up; their
+existing identical hashes and manifest entries remain valid. No production
+database, deployment, cron, external API, token, or existing release data was
+modified.
+
+### Final adversarial boundary correction
+
+The follow-up review identified one final combined-field escape: a non-Abbott
+active release could enter Abbott while setting its new status to `staging`.
+The source trigger now treats either crossing direction as a protected Abbott
+boundary and allows it only if **both** the old and new statuses are `staging`.
+The transition matrix verifies both allowed staging-to-staging crossings and
+blocked active-to-staging entry / staging-to-active exit. The Docker verifier
+executes both blocked SQL updates in addition to the other replay and receipt
+checks.
