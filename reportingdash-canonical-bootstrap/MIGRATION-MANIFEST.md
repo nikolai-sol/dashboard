@@ -15,7 +15,7 @@ private runtime repository.
 | `lib/canonical_writer.py` | `canonical_writer.py` | `3f287a42d1f79360d49a1f484dee823b70683ec5bd0448a205b0f352219a4e19` | Staging resume writer and current-active append-only Abbott day publisher |
 | `lib/metrika_dashboard_breakdowns.py` | `metrika_dashboard_breakdowns.py` | `879822ee16108abccbb0b0c726d88f6d3835e36f2566d2531bdb4cd1a461f6c8` | Shared Metrika dashboard breakdown definitions |
 | `lib/metrika_logs_api.py` | `metrika_logs_api.py` | `5caeee46d0dab58a95eddd6f7750b8f1bbb25b2dff1a6662a3a2d8c37b4a10ce` | Exact Metrika Logs request lifecycle and visit parser |
-| `lib/canonical_release_store.py` | `canonical_release_store.py` | `7c31094a188ed32a9944b32456d302c2e3256abdd554da012b15fcf38db0a301` | Candidate release store, persisted validation gate, atomic activation, and rollback pointer management |
+| `lib/canonical_release_store.py` | `canonical_release_store.py` | `fbe5413944aa9ea6062e43f145b04dbffe86d31bd6339a538472072568b565d1` | Candidate release store, persisted validation gate, atomic activation, and rollback pointer management |
 
 ## Runnable Abbott runtime closure
 
@@ -28,7 +28,7 @@ every runbook entrypoint and each repository-local Python dependency.
 | `runtime/canonical_writer.py` | `canonical_writer.py` | `3f287a42d1f79360d49a1f484dee823b70683ec5bd0448a205b0f352219a4e19` | Atomic staging and active append-only writer |
 | `runtime/metrika_dashboard_breakdowns.py` | `metrika_dashboard_breakdowns.py` | `879822ee16108abccbb0b0c726d88f6d3835e36f2566d2531bdb4cd1a461f6c8` | Shared dashboard breakdown definitions |
 | `runtime/metrika_logs_api.py` | `metrika_logs_api.py` | `5caeee46d0dab58a95eddd6f7750b8f1bbb25b2dff1a6662a3a2d8c37b4a10ce` | Exact Metrika Logs request lifecycle and visit parser |
-| `runtime/canonical_release_store.py` | `canonical_release_store.py` | `7c31094a188ed32a9944b32456d302c2e3256abdd554da012b15fcf38db0a301` | Exact validation and pointer store |
+| `runtime/canonical_release_store.py` | `canonical_release_store.py` | `fbe5413944aa9ea6062e43f145b04dbffe86d31bd6339a538472072568b565d1` | Exact validation and pointer store |
 | `runtime/run_abbott_metrika_active_release.py` | `run_abbott_metrika_active_release.py` | `0f7c132b2cbd4f37ce51ceefa8479d36cf30088e2587dcda4cfc36cb29face0d` | Committed-manifest cron launcher |
 | `runtime/abbott_release_operator.py` | `abbott_release_operator.py` | `4fea3b284743e168011bb4518276576890d76c375a557b9732e6491f326ecd9f` | Least-privilege lifecycle CLI |
 | `runtime/probe_yandex_metrika_access.py` | `probe_yandex_metrika_access.py` | `430603922de9cd3cdbc6d0a7dc103f841924087c39462fc137ec8a26684674bc` | Read-only counter access proof |
@@ -37,7 +37,7 @@ every runbook entrypoint and each repository-local Python dependency.
 | `runtime/abbott_canonical_controls.py` | `abbott_canonical_controls.py` | `4c9fb6291a6ae54958cdcd15eb654be0eefc6a7264b70c894bd01a4b8b9def17` | Baseline/control evidence library |
 | `runtime/metrika_pagination.py` | `metrika_pagination.py` | `7dcb1a05ad8babcc7d696934babb1ab50747ca140c910efc88f3685674386a7c` | Metrika pagination dependency |
 | `runtime/backfill_abbott_metrika_2026.py` | `backfill_abbott_metrika_2026.py` | `1dce2c65082a18848d21cf0659d5a52a4258334fc38be25079308afef977bf9c` | Gap-first full-year backfill CLI |
-| `runtime/abbott_health_probe.py` | `abbott_health_probe.py` | `4abaaf5d51b8ac45b346f7fa01079b0e94a62057464ebae8300ebfac22be4060` | Deterministic Abbott health CLI |
+| `runtime/abbott_health_probe.py` | `abbott_health_probe.py` | `6ed7a6c2af250c40ac23bca702a15c2cd60dac5331a392e7e3ac45cc091011ef` | Deterministic Abbott health CLI |
 | `runtime/send_canonical_telegram_report.py` | `send_canonical_telegram_report.py` | `8ae155f4f1a81a50fa29730bfe1f7e19e1c01d0ab56719a60327c59b37e22da3` | Summary entrypoint |
 | `runtime/sources_health_dashboard.py` | `sources_health_dashboard.py` | `072a3270fa0cac9c7b7384f19aba636485dc89b8c03da2eb80bbde1c50c71116` | Summary health dependency |
 
