@@ -147,6 +147,10 @@ def _valid_day(value: str) -> bool:
         return False
 
 
+def _is_local_file_url(value: str) -> bool:
+    return value.lstrip().lower().startswith("file://")
+
+
 def parse_visits_tsv(payload: str, *, expected_day: str) -> tuple[dict, ...]:
     if not isinstance(payload, str) or not _valid_day(expected_day):
         raise MetrikaLogsError("Metrika Logs payload was invalid")
@@ -196,6 +200,8 @@ def parse_visits_tsv(payload: str, *, expected_day: str) -> tuple[dict, ...]:
         raw_user_id = raw_user_ids[0] if len(raw_user_ids) == 1 else None
         utm_source = utm_source_text if utm_source_text.strip() else None
         seen_visit_ids.add(visit_id)
+        if _is_local_file_url(start_url) or _is_local_file_url(end_url):
+            continue
         result.append({
             "visit_id": visit_id,
             "date_time": date_time,

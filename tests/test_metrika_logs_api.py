@@ -139,6 +139,21 @@ class ParserTests(unittest.TestCase):
             },),
         )
 
+    def test_excludes_local_file_visits_without_rejecting_the_payload(self):
+        payload = "\n".join(
+            (
+                HEADER,
+                visit_row("normal"),
+                visit_row("local-start", start_url="file:///C:/local-copy.html"),
+                visit_row("local-end", end_url="FILE:///Users/local-copy.html"),
+                "",
+            )
+        )
+
+        result = parse_visits_tsv(payload, expected_day="2026-07-19")
+
+        self.assertEqual([row["visit_id"] for row in result], ["normal"])
+
     def test_normalizes_blank_utm_source_to_none(self):
         result = parse_visits_tsv(
             HEADER + "\n" + visit_row(utm_source="") + "\n",
