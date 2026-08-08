@@ -19,6 +19,73 @@ function normalizedUtmSource(value: string | null): string | null {
   return normalized || null;
 }
 
+function aggregateAbbottUserActions(
+  rows: readonly AbbottBiUserActionRow[],
+): AbbottBiUserActionRow[] {
+  const groups = new Map<
+    string,
+    { row: AbbottBiUserActionRow; durationTotal: number; pageviewsTotal: number }
+  >();
+
+  rows.forEach((sourceRow) => {
+    const hasUserId = Boolean(sourceRow.has_user_id);
+    const userId = hasUserId ? sourceRow.user_id : "";
+    const utmSource = normalizedUtmSource(sourceRow.utm_source);
+    const direction = sourceRow.direction?.trim() || null;
+    const trafficSource = sourceRow.traffic_source.trim();
+    const endUrl = sourceRow.end_url.trim();
+    const visits = Math.max(0, Math.floor(sourceRow.visits));
+    const key = JSON.stringify([
+      hasUserId,
+      userId,
+      trafficSource,
+      utmSource,
+      direction,
+      endUrl,
+    ]);
+    const current = groups.get(key) ?? {
+      row: {
+        ...sourceRow,
+        user_id: userId,
+        has_user_id: hasUserId,
+        traffic_source: trafficSource,
+        utm_source: utmSource,
+        direction,
+        start_url: "",
+        end_url: endUrl,
+        visits: 0,
+        avg_duration: 0,
+        page_depth: 0,
+      },
+      durationTotal: 0,
+      pageviewsTotal: 0,
+    };
+    current.row.visits += visits;
+    current.durationTotal += sourceRow.avg_duration * visits;
+    current.pageviewsTotal += sourceRow.page_depth * visits;
+    groups.set(key, current);
+  });
+
+  return [...groups.values()]
+    .map(({ row, durationTotal, pageviewsTotal }) => ({
+      ...row,
+      avg_duration: row.visits > 0
+        ? durationTotal / row.visits
+        : 0,
+      page_depth: row.visits > 0
+        ? pageviewsTotal / row.visits
+        : 0,
+    }))
+    .sort((left, right) =>
+      right.visits - left.visits
+      || left.user_id.localeCompare(right.user_id)
+      || left.traffic_source.localeCompare(right.traffic_source)
+      || (left.utm_source ?? "").localeCompare(right.utm_source ?? "")
+      || (left.direction ?? "").localeCompare(right.direction ?? "", "ru")
+      || left.end_url.localeCompare(right.end_url)
+    );
+}
+
 export function buildAbbottUtmSourceOptions(
   rows: readonly AbbottBiUserActionRow[],
 ): AbbottFilterOption[] {
@@ -44,7 +111,7 @@ export function selectAbbottUserActions(
   pageSize: number,
 ) {
   const query = filters.query?.trim().toLowerCase() ?? "";
-  const filteredRows = rows.filter((row) => {
+  const filteredRows = aggregateAbbottUserActions(rows).filter((row) => {
     const utmSource = normalizedUtmSource(row.utm_source);
     if (query) {
       const trafficSource = filters.traffic_source_label?.(row.traffic_source) ?? row.traffic_source;
@@ -53,7 +120,6 @@ export function selectAbbottUserActions(
         trafficSource,
         utmSource ?? "Без UTM",
         row.direction,
-        row.start_url,
         row.end_url,
         row.visits,
       ];

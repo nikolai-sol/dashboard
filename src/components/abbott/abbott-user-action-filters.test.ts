@@ -74,3 +74,62 @@ test("empty UTM selection preserves all rows and exact values do not match missi
     ["2"],
   );
 });
+
+test("groups visits by the five displayed dimensions and preserves weighted totals", () => {
+  const rows = [
+    action("", null, {
+      has_user_id: false,
+      start_url: "/first-entry",
+      end_url: "/same-exit",
+      visits: 1,
+      avg_duration: 30,
+      page_depth: 2,
+    }),
+    action("", "   ", {
+      has_user_id: false,
+      start_url: "/different-entry",
+      end_url: "/same-exit",
+      visits: 2,
+      avg_duration: 60,
+      page_depth: 4,
+    }),
+    action("", "email", {
+      has_user_id: false,
+      end_url: "/same-exit",
+      visits: 4,
+      avg_duration: 90,
+      page_depth: 5,
+    }),
+  ];
+
+  const selected = selectAbbottUserActions(rows, {}, 1, 100);
+
+  assert.equal(selected.filteredRows.length, 2);
+  assert.deepEqual(
+    selected.filteredRows.map((row) => ({
+      utm_source: row.utm_source,
+      visits: row.visits,
+    })),
+    [
+      { utm_source: "email", visits: 4 },
+      { utm_source: null, visits: 3 },
+    ],
+  );
+  assert.equal(selected.filteredRows[0]?.avg_duration, 90);
+  assert.equal(selected.filteredRows[0]?.page_depth, 5);
+  assert.equal(selected.filteredRows[1]?.avg_duration, 50);
+  assert.ok(Math.abs((selected.filteredRows[1]?.page_depth ?? 0) - (10 / 3)) < 1e-12);
+
+  assert.equal(
+    selected.filteredRows.reduce((sum, row) => sum + row.visits, 0),
+    rows.reduce((sum, row) => sum + row.visits, 0),
+  );
+  assert.equal(
+    selected.filteredRows.reduce((sum, row) => sum + row.avg_duration * row.visits, 0),
+    rows.reduce((sum, row) => sum + row.avg_duration * row.visits, 0),
+  );
+  assert.equal(
+    Math.round(selected.filteredRows.reduce((sum, row) => sum + row.page_depth * row.visits, 0)),
+    rows.reduce((sum, row) => sum + row.page_depth * row.visits, 0),
+  );
+});

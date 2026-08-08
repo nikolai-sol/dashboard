@@ -1,0 +1,90 @@
+{
+  "captured_at_utc": "2026-08-08T18:10:00Z",
+  "dashboard": "abbott",
+  "canonical_release_id": 13,
+  "application_revision": "949d1ed82fe1d590b072b6fae4731369b98f7c00",
+  "source": "authenticated production manager API after URL query/fragment sanitization",
+  "grain_before": "one row per Metrika visit",
+  "grain_after": "one row per displayed user_id, traffic_source, utm_source, direction, end_url combination",
+  "controls": {
+    "june": {
+      "date_from": "2026-06-01",
+      "date_to": "2026-06-30",
+      "source_rows": 11774,
+      "expected_group_rows": 2439,
+      "visits": 11774,
+      "duration_seconds_sum": 2857157,
+      "pageviews_sum": 43315,
+      "avg_duration_seconds": 242.666638,
+      "avg_duration_minutes": 4.044444,
+      "avg_page_depth": 3.678869,
+      "with_user_id_visits": 1879,
+      "without_user_id_visits": 9895,
+      "with_utm_visits": 5137,
+      "without_utm_visits": 6637,
+      "control_referral_no_id_no_utm_root": {
+        "visits": 278,
+        "duration_seconds_sum": 37489,
+        "pageviews_sum": 449,
+        "avg_duration_seconds": 134.852518,
+        "avg_page_depth": 1.615108
+      }
+    },
+    "july": {
+      "date_from": "2026-07-01",
+      "date_to": "2026-07-31",
+      "source_rows": 12222,
+      "expected_group_rows": 2479,
+      "visits": 12222,
+      "duration_seconds_sum": 2860415,
+      "pageviews_sum": 33202,
+      "avg_duration_seconds": 234.03821,
+      "avg_duration_minutes": 3.900637,
+      "avg_page_depth": 2.716577,
+      "with_user_id_visits": 1950,
+      "without_user_id_visits": 10272,
+      "with_utm_visits": 5039,
+      "without_utm_visits": 7183,
+      "control_referral_no_id_no_utm_root": {
+        "visits": 280,
+        "duration_seconds_sum": 27968,
+        "pageviews_sum": 489,
+        "avg_duration_seconds": 99.885714,
+        "avg_page_depth": 1.746429
+      }
+    },
+    "august": {
+      "date_from": "2026-08-01",
+      "date_to": "2026-08-07",
+      "source_rows": 2388,
+      "expected_group_rows": 735,
+      "visits": 2388,
+      "duration_seconds_sum": 601371,
+      "pageviews_sum": 5630,
+      "avg_duration_seconds": 251.830402,
+      "avg_duration_minutes": 4.197173,
+      "avg_page_depth": 2.357621,
+      "with_user_id_visits": 490,
+      "without_user_id_visits": 1898,
+      "with_utm_visits": 951,
+      "without_utm_visits": 1437,
+      "control_referral_no_id_no_utm_root": {
+        "visits": 130,
+        "duration_seconds_sum": 8532,
+        "pageviews_sum": 193,
+        "avg_duration_seconds": 65.630769,
+        "avg_page_depth": 1.484615
+      }
+    }
+  },
+  "publication_invariants": [
+    "sum(visits) is unchanged",
+    "sum(avg_duration * visits) is unchanged",
+    "sum(page_depth * visits) is unchanged",
+    "weighted average duration is unchanged",
+    "weighted average page depth is unchanged",
+    "with/without User ID visit totals are unchanged",
+    "with/without UTM visit totals are unchanged",
+    "canonical MySQL visit rows are not updated, deleted, regrouped, or backfilled"
+  ]
+}

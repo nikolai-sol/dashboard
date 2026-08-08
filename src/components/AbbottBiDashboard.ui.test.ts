@@ -94,7 +94,7 @@ test("adds Abbott UTM and count-first return UI while hiding external transition
   assert.match(source, /external_events:/);
 
   for (const text of [
-    "Одна строка — один визит Метрики",
+    "Одна строка — одно уникальное сочетание User ID, источника, UTM Source, направления и последней страницы",
     "UTM Source",
     "Без UTM",
     "Количество заходов за выбранный период",
@@ -104,6 +104,10 @@ test("adds Abbott UTM and count-first return UI while hiding external transition
   ]) {
     assert.ok(source.includes(text), text);
   }
+  assert.match(
+    source,
+    /activeTab === "user_actions"[\s\S]*?\{ key: "visits", label: "Сессии"/,
+  );
   assert.match(source, /dataKey="visitors"/);
   assert.match(source, /return_frequency/);
 });

@@ -102,7 +102,7 @@ function buildTabs(portalName: string, showUserIdAnalytics: boolean): TabConfig[
   {
     id: "user_actions",
     label: `2. Действия пользователя на сайте ${portalName}`,
-    description: "Одна строка — один визит Метрики. User ID, источник, UTM Source, начальный и конечный URL относятся к одному и тому же визиту.",
+    description: "Одна строка — одно уникальное сочетание User ID, источника, UTM Source, направления и последней страницы за выбранный период. Продолжительность и глубина рассчитаны как средние по сессиям.",
   },
   {
     id: "page_stats",
@@ -1447,6 +1447,7 @@ export default function AbbottBiDashboard({
       { key: "utm_source", label: "UTM Source" },
       { key: "direction", label: "Направление" },
       { key: "end_url", label: "Последняя страница", className: "min-w-[320px] break-all" },
+      { key: "visits", label: "Сессии", className: "text-right" },
       { key: "avg_duration", label: "Продолжительность визита, мин", className: "text-right" },
       { key: "page_depth", label: "Глубина просмотра", className: "text-right" },
     ];
@@ -1456,6 +1457,7 @@ export default function AbbottBiDashboard({
       utm_source: row.utm_source?.trim() || "Без UTM",
       direction: row.direction ?? "—",
       end_url: row.end_url || "—",
+      visits: formatNumber(row.visits, locale),
       avg_duration: formatDurationMinutes(row.avg_duration, locale),
       page_depth: formatDecimal(row.page_depth, locale),
     }));
