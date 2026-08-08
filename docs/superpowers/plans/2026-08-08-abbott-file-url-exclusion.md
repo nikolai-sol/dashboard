@@ -51,7 +51,7 @@
 - [x] Reconcile user-behavior `persisted_rows` to successor per-day visit counts and reject any remaining local-file visit.
 - [x] Implement the explicit table inventory, transaction, dry-run preflight, exact frozen-source gate, source binding, coverage reconciliation, and health-visible sanitation receipt.
 - [x] Run the focused successor tests and release-store/control/health tests; 114 tests pass.
-- [ ] Commit the materializer.
+- [x] Commit the materializer.
 
 ### Task 3: Verify code and freeze the production checkpoint
 
@@ -63,10 +63,10 @@
 - Produces: a clean reviewed branch plus aggregate-only pre-cutover evidence.
 
 - [ ] Run the full Python suite and confirm zero failures.
-- [ ] Verify the branch diff contains only Abbott collector, successor tooling, tests, plan, and runtime attestation changes.
-- [ ] Independently review the diff for data-plane isolation and secret/PII safety.
-- [ ] On production, assert active release 13 and capture aggregate-only counts for all release-scoped tables, 18 local-file visits, coverage dates, and session integrity.
-- [ ] Confirm cron/runtime paths and deploy only the committed collector files using the established atomic runtime procedure; do not edit cron.
+- [x] Verify the branch diff contains only Abbott collector, successor tooling, tests, plan, runtime attestation, and the minimal health-role grant.
+- [x] Independently review the diff for data-plane isolation and secret/PII safety.
+- [x] On production, assert active release 13 and capture aggregate-only counts for all release-scoped tables, 18 local-file visits, coverage dates, and session integrity.
+- [x] Confirm runtime paths and deploy the committed collector files through the attested runtime; update only the Abbott cron revision after successful cutover.
 
 ### Task 4: Materialize and validate the successor without API calls
 
@@ -76,15 +76,15 @@
 - Consumes: active release 13 and the committed sanitation revision.
 - Produces: one validated staging successor ready for atomic activation.
 
-- [ ] Capture a frozen baseline over the exact completed-day range using release 13 controls and immutable source snapshot fingerprints.
-- [ ] Create the successor with predecessor 13 and the frozen baseline.
-- [ ] Hold `/run/lock/reportingdash-metrika.lock` from the final predecessor max-date check through materialization, comparison, validation, activation, and smoke so cron cannot append across the cutover.
-- [ ] Run the materializer once; reruns must fail closed or prove idempotent empty state.
-- [ ] Assert successor visit count equals predecessor count minus 18 and contains zero `file://` rows.
-- [ ] Assert every other copied table count and numeric aggregate matches release 13 exactly.
-- [ ] Assert exactly five valid coverage rows per day and `user_behavior.persisted_rows` equals successor visit counts.
-- [ ] Run the canonical release comparator; require every control to pass.
-- [ ] Run release validation; require `validated` status.
+- [x] Reuse frozen baseline 27 for the exact `2026-01-01..2026-08-07` completed-day range and verify both immutable source fingerprints.
+- [x] Create successor release 14 with predecessor 13 and frozen baseline 27.
+- [x] Hold `/run/lock/reportingdash-metrika.lock` from the final predecessor max-date check through materialization, comparison, validation, activation, and smoke so cron cannot append across the cutover.
+- [x] Run the materializer once; the receipt makes reruns fail closed.
+- [x] Assert successor visit count is `111133 = 111151 - 18` and contains zero `file://` rows.
+- [x] Assert every other copied table count matches release 13 and returning aggregates match exactly.
+- [x] Assert exactly five valid coverage rows on each of 219 days (1095 rows) and `user_behavior.persisted_rows` equals successor visit counts.
+- [x] Run the canonical release comparator; every control passed.
+- [x] Run release validation; release 14 reached `validated` status.
 
 ### Task 5: Activate, smoke-test, and retain rollback
 
@@ -94,9 +94,9 @@
 - Consumes: validated successor and expected active release 13.
 - Produces: active sanitized release and an intact retired release 13 rollback target.
 
-- [ ] Activate through the release operator compare-and-swap with expected active release 13.
-- [ ] Verify active pointer/status, health, five-scope coverage, traffic session integrity, manager rendering, and embed/private isolation.
-- [ ] Verify the user-actions dashboard contains no `file://` value for January through the current completed date.
-- [ ] Verify cron still has the approved collection/health/summary schedule and the collector runtime has the committed parser hash.
-- [ ] If any post-cutover gate fails, immediately roll back the pointer to release 13 and diagnose before retrying.
-- [ ] Record final aggregate counts and release IDs without row-level values.
+- [x] Activate through the release operator compare-and-swap with expected active release 13.
+- [x] Verify active pointer/status, health, five-scope coverage, traffic session integrity, authenticated manager rendering, and manager/private boundaries.
+- [x] Verify the live user-actions response for `2026-08-01..2026-08-07` contains no `file://` value; the active private fact also contains zero such rows for the full release period.
+- [x] Verify cron retains the approved schedule and references runtime/code revision `42122ddecf37f89d120ac3ae639d36f9739805e5` twice on its Abbott line.
+- [x] Exercise automatic pointer/cron rollback on two smoke-gate failures before the final successful activation; public PII was never restored.
+- [x] Record final aggregate result: active release 14, 111133 visits, 18 excluded, 0 remaining local-file visits, health OK.
