@@ -35,7 +35,7 @@
 - `resolveAbbottPreset` returns either `{ kind: "range", from, to }` or `{ kind: "empty", message }`.
 - `normalizeAbbottRequestedRange` returns a clamped range or throws `AbbottDateRangeError` for malformed/inverted input.
 
-- [ ] **Step 1: Write failing preset and normalization tests**
+- [x] **Step 1: Write failing preset and normalization tests**
 
 Add deterministic tests using Moscow business time:
 
@@ -62,12 +62,12 @@ assert.deepEqual(normalizeAbbottRequestedRange(
 Also cover the first business day of a month, New Year, leap-year February,
 custom `from > to`, invalid ISO dates, and preset detection.
 
-- [ ] **Step 2: Run the date tests and verify RED**
+- [x] **Step 2: Run the date tests and verify RED**
 
 Run: `npm test -- --test-name-pattern='Abbott' src/lib/abbott-date-range.test.ts`  
 Expected: FAIL because the new exports and semantics do not exist.
 
-- [ ] **Step 3: Implement the pure date API**
+- [x] **Step 3: Implement the pure date API**
 
 Use UTC date construction only after extracting business-calendar parts:
 
@@ -88,12 +88,12 @@ Keep `defaultAbbottRange` as a compatibility wrapper around
 returns `null` instead of substituting today. Derive Monday with ISO weekday
 arithmetic and clamp requested `to` to `latestCompletedAbbottDate`.
 
-- [ ] **Step 4: Run the date tests and verify GREEN**
+- [x] **Step 4: Run the date tests and verify GREEN**
 
 Run: `npm test -- --test-name-pattern='Abbott' src/lib/abbott-date-range.test.ts`  
 Expected: all Abbott date-range tests pass.
 
-- [ ] **Step 5: Commit Task 1 in the dashboard repository**
+- [x] **Step 5: Commit Task 1 in the dashboard repository**
 
 ```bash
 git add src/lib/abbott-date-range.ts src/lib/abbott-date-range.test.ts
@@ -112,7 +112,7 @@ git commit -m "feat: define Abbott completed-day periods"
 - Consumes `normalizeAbbottRequestedRange` and `defaultAbbottRange` from Task 1.
 - Produces `InvalidDashboardDateRangeError`, mapped to HTTP 400 by the dashboard route.
 
-- [ ] **Step 1: Write failing server-boundary tests**
+- [x] **Step 1: Write failing server-boundary tests**
 
 ```ts
 assert.deepEqual(resolveDashboardDateRange({
@@ -135,12 +135,12 @@ assert.throws(() => resolveDashboardDateRange({
 Retain tests proving Zaruku and generic ranges are unchanged. Add a route test
 that maps `InvalidDashboardDateRangeError` to a private, no-store 400 response.
 
-- [ ] **Step 2: Run the focused server tests and verify RED**
+- [x] **Step 2: Run the focused server tests and verify RED**
 
 Run: `npm test -- src/lib/dashboard-date-range.test.ts`  
 Expected: FAIL because Abbott explicit ranges are currently returned unchanged.
 
-- [ ] **Step 3: Implement the Abbott branch and 400 mapping**
+- [x] **Step 3: Implement the Abbott branch and 400 mapping**
 
 In `resolveDashboardDateRange`, handle `dashboardType === "abbott_bi"` before
 the generic explicit-range return. Normalize valid explicit ranges; reject a
@@ -156,12 +156,12 @@ export class InvalidDashboardDateRangeError extends Error {
 In the API route catch block, return `{ error: "Invalid date range" }` with
 status 400 when this class is caught. Do not expose the supplied values.
 
-- [ ] **Step 4: Run server tests and verify GREEN**
+- [x] **Step 4: Run server tests and verify GREEN**
 
 Run: `npm test -- src/lib/dashboard-date-range.test.ts`  
 Expected: all range tests pass, including unchanged Zaruku behavior.
 
-- [ ] **Step 5: Commit Task 2 in the dashboard repository**
+- [x] **Step 5: Commit Task 2 in the dashboard repository**
 
 ```bash
 git add src/lib/dashboard-date-range.ts src/lib/dashboard-date-range.test.ts \
@@ -186,7 +186,7 @@ git commit -m "fix: enforce completed Abbott query dates"
 - Other dashboards continue using the existing `DashboardQuickRangePreset`
   and callbacks without behavior changes.
 
-- [ ] **Step 1: Write failing UI contract tests**
+- [x] **Step 1: Write failing UI contract tests**
 
 Use the repository's source-contract test style to assert:
 
@@ -205,12 +205,12 @@ Add pure tests for custom validation: missing bounds, inverted bounds, and a
 valid completed-day range. Assert the Abbott page uses the slot only in the
 `dashboardType === "abbott_bi"` render path.
 
-- [ ] **Step 2: Run the UI tests and verify RED**
+- [x] **Step 2: Run the UI tests and verify RED**
 
 Run: `npm test -- src/components/abbott/abbott-date-picker.test.ts`  
 Expected: FAIL because the component and slot do not exist.
 
-- [ ] **Step 3: Implement the picker and header slot**
+- [x] **Step 3: Implement the picker and header slot**
 
 Render one styled `<select>` for the five preset choices. Render the `От` and
 `До` inputs plus «Применить» only for `custom`; set `max={maxDate}` on both.
@@ -225,7 +225,7 @@ In `DashboardHeader`, prefer the slot without altering the shared branch:
 )}
 ```
 
-- [ ] **Step 4: Integrate Abbott state without changing other dashboards**
+- [x] **Step 4: Integrate Abbott state without changing other dashboards**
 
 Replace Abbott's use of `buildQuickRange`/`detectQuickRangePreset` with the
 Task 1 functions. Normalize initial Abbott URL bounds to yesterday and call
@@ -235,7 +235,7 @@ valid applied range unchanged so the effect does not fetch, and hide
 `AbbottBiDashboard` behind the approved empty-state card. Applying a valid
 custom range clears the empty state, updates URL/state, and triggers one load.
 
-- [ ] **Step 5: Run UI and existing header tests and verify GREEN**
+- [x] **Step 5: Run UI and existing header tests and verify GREEN**
 
 Run:
 
@@ -247,7 +247,7 @@ npm test -- src/components/abbott/abbott-date-picker.test.ts \
 Expected: all selected tests pass and the shared-header source remains intact
 for non-Abbott call sites.
 
-- [ ] **Step 6: Commit Task 3 in the dashboard repository**
+- [x] **Step 6: Commit Task 3 in the dashboard repository**
 
 ```bash
 git add src/components/abbott/AbbottDatePicker.tsx \
@@ -266,7 +266,7 @@ git commit -m "feat: add Abbott completed-period picker"
 - Consumes all Task 1–3 commits.
 - Produces a reviewed dashboard child commit and an Abbott-only parent branch.
 
-- [ ] **Step 1: Run the complete dashboard verification**
+- [x] **Step 1: Run the complete dashboard verification**
 
 ```bash
 npm test
@@ -278,20 +278,20 @@ npm run security:public-assets
 
 Expected: zero test/type/lint/build/security failures.
 
-- [ ] **Step 2: Run browser verification**
+- [x] **Step 2: Run browser verification**
 
 Verify Abbott at desktop and mobile widths with a deterministic or current
 date. Confirm all four presets, custom `От–До`, URL normalization, maximum
 yesterday, and the approved empty-state copy. Confirm a Zaruku page retains
 its existing date controls. Do not mutate production data.
 
-- [ ] **Step 3: Perform whole-branch review**
+- [x] **Step 3: Perform whole-branch review**
 
 Review the complete child diff against the approved spec. Reject changes to
 Zaruku behavior, collector code, database code, or shared date behavior outside
 the additive header slot.
 
-- [ ] **Step 4: Commit the parent gitlink and completed plan**
+- [x] **Step 4: Commit the parent gitlink and completed plan**
 
 ```bash
 git add dashboard-next docs/superpowers/plans/2026-08-09-abbott-date-picker.md
