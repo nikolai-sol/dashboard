@@ -1,4 +1,5 @@
 import {
+  AbbottDateRangeError,
   defaultAbbottRange,
   normalizeAbbottRequestedRange,
 } from "./abbott-date-range";
@@ -54,8 +55,11 @@ export function resolveDashboardDateRange(input: DashboardDateRangeInput): Dashb
       }
       try {
         return normalizeAbbottRequestedRange({ from, to }, now);
-      } catch {
-        throw new InvalidDashboardDateRangeError();
+      } catch (error) {
+        if (error instanceof AbbottDateRangeError) {
+          throw new InvalidDashboardDateRangeError();
+        }
+        throw error;
       }
     }
 
