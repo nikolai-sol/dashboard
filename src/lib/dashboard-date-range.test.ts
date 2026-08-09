@@ -1,6 +1,9 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { resolveDashboardDateRange } from "./dashboard-date-range";
+import {
+  InvalidDashboardDateRangeError,
+  resolveDashboardDateRange,
+} from "./dashboard-date-range";
 
 const now = new Date("2026-07-22T10:00:00Z");
 
@@ -62,4 +65,44 @@ test("invalid calendar dates never override a valid configured period", () => {
     dashboardType: "generic",
     now,
   }), { from: "2026-05-01", to: "2026-05-31" });
+});
+
+test("Abbott clamps explicit requests to its latest completed business day", () => {
+  assert.deepEqual(resolveDashboardDateRange({
+    requestUrl: "https://dash.test/abbott?from=2026-08-01&to=2026-08-09",
+    configFrom: null,
+    configTo: null,
+    dashboardType: "abbott_bi",
+    now: new Date("2026-08-09T12:00:00Z"),
+  }), { from: "2026-08-01", to: "2026-08-08" });
+});
+
+test("Abbott rejects partial, malformed, and inverted explicit requests", () => {
+  const base = {
+    configFrom: null,
+    configTo: null,
+    dashboardType: "abbott_bi",
+    now: new Date("2026-08-09T12:00:00Z"),
+  } as const;
+
+  for (const requestUrl of [
+    "https://dash.test/abbott?from=2026-08-01",
+    "https://dash.test/abbott?from=2026-02-30&to=2026-08-01",
+    "https://dash.test/abbott?from=2026-08-08&to=2026-08-01",
+  ]) {
+    assert.throws(
+      () => resolveDashboardDateRange({ ...base, requestUrl }),
+      InvalidDashboardDateRangeError,
+    );
+  }
+});
+
+test("Abbott defaults only to completed current-month days", () => {
+  assert.deepEqual(resolveDashboardDateRange({
+    requestUrl: "https://dash.test/abbott",
+    configFrom: "2026-01-01",
+    configTo: "2026-01-31",
+    dashboardType: "abbott_bi",
+    now: new Date("2026-08-09T12:00:00Z"),
+  }), { from: "2026-08-01", to: "2026-08-08" });
 });

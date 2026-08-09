@@ -1,3 +1,8 @@
+import {
+  defaultAbbottRange,
+  normalizeAbbottRequestedRange,
+} from "./abbott-date-range";
+
 export type DashboardDateRange = { from: string; to: string };
 
 export type DashboardDateRangeInput = {
@@ -9,6 +14,13 @@ export type DashboardDateRangeInput = {
 };
 
 const ISO_DATE = /^\d{4}-\d{2}-\d{2}$/;
+
+export class InvalidDashboardDateRangeError extends Error {
+  constructor() {
+    super("Invalid Abbott date range");
+    this.name = "InvalidDashboardDateRangeError";
+  }
+}
 
 function valid(value: string | null): value is string {
   if (!value || !ISO_DATE.test(value)) return false;
@@ -34,6 +46,25 @@ export function resolveDashboardDateRange(input: DashboardDateRangeInput): Dashb
   const from = params.get("from");
   const to = params.get("to");
   const daysRaw = params.get("days");
+
+  if (input.dashboardType === "abbott_bi") {
+    if (from !== null || to !== null) {
+      if (from === null || to === null) {
+        throw new InvalidDashboardDateRangeError();
+      }
+      try {
+        return normalizeAbbottRequestedRange({ from, to }, now);
+      } catch {
+        throw new InvalidDashboardDateRangeError();
+      }
+    }
+
+    const defaultRange = defaultAbbottRange(now);
+    if (!defaultRange) {
+      throw new InvalidDashboardDateRangeError();
+    }
+    return defaultRange;
+  }
 
   if (valid(from) && valid(to)) return { from, to };
 

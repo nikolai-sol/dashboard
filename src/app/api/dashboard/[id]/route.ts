@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import { projectAbbottDashboardData } from "@/lib/abbott-data-projection";
 import { isDashboardAccessAuthorized } from "@/lib/dashboard-access";
 import { formatPrivateServerTiming, loadDashboardData } from "@/lib/dashboard-data-loader";
+import { InvalidDashboardDateRangeError } from "@/lib/dashboard-date-range";
 
 export const dynamic = "force-dynamic";
 
@@ -54,6 +55,9 @@ export async function GET(
       serverTimingHeader ? { headers: { "Server-Timing": serverTimingHeader } } : undefined,
     );
   } catch (error) {
+    if (error instanceof InvalidDashboardDateRangeError) {
+      return privateJson({ error: "Invalid date range" }, { status: 400 });
+    }
     const message = error instanceof Error ? error.message : String(error);
     if (message === "Dashboard not found") {
       return privateJson({ error: "Dashboard not found" }, { status: 404 });
