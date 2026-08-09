@@ -29,6 +29,12 @@ test("Abbott custom dates require a complete, ordered completed-day range", () =
   assert.equal(validateAbbottCustomRange({ from: "2026-08-01", to: "2026-08-08" }, "2026-08-08"), null);
 });
 
+test("Abbott picker announces range validation and empty-period state accessibly", () => {
+  assert.match(pickerSource, /aria-describedby=\{customError \? customMessageId : undefined\}/);
+  assert.match(pickerSource, /id=\{customMessageId\}[^>]*role="alert"[^>]*aria-live="assertive"/);
+  assert.match(pickerSource, /id=\{emptyMessageId\}[^>]*role="status"[^>]*aria-live="polite"/);
+});
+
 test("only Abbott passes a dedicated period selector into the shared header", () => {
   const abbottBranch = pageSource.slice(
     pageSource.indexOf('if (dashboardType === "abbott_bi"'),

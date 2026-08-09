@@ -43,6 +43,8 @@ export default function AbbottDatePicker({
   onApplyCustom,
 }: AbbottDatePickerProps) {
   const customError = preset === "custom" ? validateAbbottCustomRange(draftRange, maxDate) : null;
+  const customMessageId = "abbott-custom-range-message";
+  const emptyMessageId = "abbott-empty-period-message";
   const activePeriod = appliedRange.from && appliedRange.to
     ? `${appliedRange.from} — ${appliedRange.to}`
     : "Нет завершённых дней";
@@ -74,6 +76,7 @@ export default function AbbottDatePicker({
               value={draftRange.from}
               max={maxDate}
               disabled={isLoading}
+              aria-describedby={customError ? customMessageId : undefined}
               onChange={(event) => onDraftFromChange(event.target.value)}
               className="h-10 rounded-lg border border-slate-200 bg-white px-3 text-sm font-normal text-slate-700 outline-none focus:border-slate-400 disabled:cursor-not-allowed disabled:opacity-50"
             />
@@ -85,6 +88,7 @@ export default function AbbottDatePicker({
               value={draftRange.to}
               max={maxDate}
               disabled={isLoading}
+              aria-describedby={customError ? customMessageId : undefined}
               onChange={(event) => onDraftToChange(event.target.value)}
               className="h-10 rounded-lg border border-slate-200 bg-white px-3 text-sm font-normal text-slate-700 outline-none focus:border-slate-400 disabled:cursor-not-allowed disabled:opacity-50"
             />
@@ -100,8 +104,16 @@ export default function AbbottDatePicker({
         </div>
       ) : null}
 
-      {customError ? <p className="text-xs text-rose-700">{customError}</p> : null}
-      {emptyMessage ? <p className="text-xs text-amber-700">{emptyMessage}</p> : null}
+      {customError ? (
+        <p id={customMessageId} role="alert" aria-live="assertive" className="text-xs text-rose-700">
+          {customError}
+        </p>
+      ) : null}
+      {emptyMessage ? (
+        <p id={emptyMessageId} role="status" aria-live="polite" className="text-xs text-amber-700">
+          {emptyMessage}
+        </p>
+      ) : null}
     </section>
   );
 }
