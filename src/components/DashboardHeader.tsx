@@ -1,6 +1,7 @@
 "use client";
 
 import { CalendarRange, Download } from "lucide-react";
+import type { ReactNode } from "react";
 import ComparisonToggle, { type ComparisonPreset } from "@/components/ComparisonToggle";
 import { ZARUKU_CLIENT_COPY } from "@/components/zaruku-client-copy";
 import type { DashboardLanguage } from "@/lib/dashboard-i18n";
@@ -60,6 +61,7 @@ type DashboardHeaderProps = {
   onClearCompare?: () => void;
   onExportPdf?: () => void;
   onExportExcel?: () => void;
+  dateControlsSlot?: ReactNode;
 };
 
 function getInitials(name: string): string {
@@ -103,6 +105,7 @@ export default function DashboardHeader({
   onClearCompare,
   onExportPdf,
   onExportExcel,
+  dateControlsSlot,
 }: DashboardHeaderProps) {
   const copy = labels ?? {
     to: "to",
@@ -176,7 +179,7 @@ export default function DashboardHeader({
       ) : null}
 
       {showDateControls ? (
-        <div className={`no-print flex flex-col gap-2 ${showIdentity ? "sm:items-end" : "w-full sm:w-auto sm:items-end"}`}>
+        dateControlsSlot ? dateControlsSlot : <div className={`no-print flex flex-col gap-2 ${showIdentity ? "sm:items-end" : "w-full sm:w-auto sm:items-end"}`}>
           {dateControlsDisabled ? (
             <p className="text-xs font-medium text-slate-500">{ZARUKU_CLIENT_COPY.disabledCalendar}</p>
           ) : null}
