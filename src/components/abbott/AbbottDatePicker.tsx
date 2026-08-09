@@ -8,7 +8,6 @@ type AbbottDatePickerProps = {
   draftRange: AbbottDateRange;
   maxDate: string;
   isLoading?: boolean;
-  emptyMessage?: string | null;
   onPresetChange: (preset: AbbottDatePreset) => void;
   onDraftFromChange: (value: string) => void;
   onDraftToChange: (value: string) => void;
@@ -36,7 +35,6 @@ export default function AbbottDatePicker({
   draftRange,
   maxDate,
   isLoading = false,
-  emptyMessage,
   onPresetChange,
   onDraftFromChange,
   onDraftToChange,
@@ -44,7 +42,6 @@ export default function AbbottDatePicker({
 }: AbbottDatePickerProps) {
   const customError = preset === "custom" ? validateAbbottCustomRange(draftRange, maxDate) : null;
   const customMessageId = "abbott-custom-range-message";
-  const emptyMessageId = "abbott-empty-period-message";
   const activePeriod = appliedRange.from && appliedRange.to
     ? `${appliedRange.from} — ${appliedRange.to}`
     : "Нет завершённых дней";
@@ -107,11 +104,6 @@ export default function AbbottDatePicker({
       {customError ? (
         <p id={customMessageId} role="alert" aria-live="assertive" className="text-xs text-rose-700">
           {customError}
-        </p>
-      ) : null}
-      {emptyMessage ? (
-        <p id={emptyMessageId} role="status" aria-live="polite" className="text-xs text-amber-700">
-          {emptyMessage}
         </p>
       ) : null}
     </section>

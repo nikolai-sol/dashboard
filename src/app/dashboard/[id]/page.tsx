@@ -1821,7 +1821,6 @@ export default function DashboardByIdPage() {
               draftRange={draftDateRange}
               maxDate={abbottMaxDate}
               isLoading={isLoading}
-              emptyMessage={abbottEmptyMessage}
               onPresetChange={handleAbbottPresetChange}
               onDraftFromChange={handleAbbottDraftFromChange}
               onDraftToChange={handleAbbottDraftToChange}
@@ -1829,7 +1828,7 @@ export default function DashboardByIdPage() {
             />
           }
         />
-        <section className="rounded-2xl border border-amber-200 bg-amber-50 px-5 py-6 text-sm text-amber-900">
+        <section role="status" aria-live="polite" className="rounded-2xl border border-amber-200 bg-amber-50 px-5 py-6 text-sm text-amber-900">
           {abbottEmptyMessage}
         </section>
       </main>
@@ -1893,7 +1892,6 @@ export default function DashboardByIdPage() {
               draftRange={draftDateRange}
               maxDate={abbottMaxDate}
               isLoading={isLoading}
-              emptyMessage={abbottEmptyMessage}
               onPresetChange={handleAbbottPresetChange}
               onDraftFromChange={handleAbbottDraftFromChange}
               onDraftToChange={handleAbbottDraftToChange}
@@ -1910,7 +1908,7 @@ export default function DashboardByIdPage() {
         ) : null}
 
         {abbottEmptyMessage ? (
-          <section className="rounded-2xl border border-amber-200 bg-amber-50 px-5 py-6 text-sm text-amber-900">
+          <section role="status" aria-live="polite" className="rounded-2xl border border-amber-200 bg-amber-50 px-5 py-6 text-sm text-amber-900">
             {abbottEmptyMessage}
           </section>
         ) : (
