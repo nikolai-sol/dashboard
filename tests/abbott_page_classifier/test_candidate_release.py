@@ -16,6 +16,7 @@ from agents.abbott_page_classifier.candidate_release import (
     CONTENT_CONTROL_VALUES,
     GateReport,
     _database_datetime,
+    _load_catalog,
     _overlay_current_batch_events,
     build_lookup_projection,
     materialize_content_candidate,
@@ -877,6 +878,31 @@ class CandidateReleaseTest(unittest.TestCase):
             _database_datetime("2026-08-10T10:30:45.415864+00:00"),
             datetime(2026, 8, 10, 10, 30, 45),
         )
+
+    def test_loaded_catalog_uses_canonical_json_and_python_order(self):
+        class Cursor:
+            def execute(self, sql, params):
+                self.sql = sql
+                self.params = params
+
+            def fetchall(self):
+                return (
+                    {
+                        "source_sheet": "я",
+                        "source_row_ordinal": 1,
+                        "projection_provenance_json": '{"b": 2, "a": 1}',
+                    },
+                    {
+                        "source_sheet": "A",
+                        "source_row_ordinal": 2,
+                        "projection_provenance_json": '{"a":1,"b":2}',
+                    },
+                )
+
+        rows = _load_catalog(Cursor(), 41, 91, include_id=False)
+
+        self.assertEqual([row[10] for row in rows], ["A", "я"])
+        self.assertEqual({row[21] for row in rows}, {'{"a":1,"b":2}'})
 
     def _prepare_gate(self, connection):
         with (
