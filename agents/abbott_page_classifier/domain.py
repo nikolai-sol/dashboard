@@ -51,6 +51,7 @@ MATERIAL_TYPE_LABELS = _readonly(
         "clinical_decision_support": "Цифровой консультант врача",
         "events": "Мероприятия",
         "general_materials": "Общие материалы",
+        "service_page": "Служебная страница",
         "section": "Раздел",
         "subsection": "Подраздел",
         "special_project": "Спецпроект",

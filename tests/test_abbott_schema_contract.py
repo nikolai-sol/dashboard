@@ -641,6 +641,13 @@ class AbbottSchemaContractTest(unittest.TestCase):
         projection = self._table_definition(
             self._primary_sql(), "portal_content_lookup_projection"
         )
+        url_identity = (
+            ROOT / "dashboard-next/src/db/migrations/050_abbott_content_url_identity.sql"
+        ).read_text()
+        canonical_url_identity = (
+            ROOT
+            / "dashboard-next/reportingdash-canonical-bootstrap/src/db/migrations/050_abbott_content_url_identity.sql"
+        ).read_text()
         for column in (
             "lookup_kind ENUM('title', 'slug', 'path') NOT NULL",
             "lookup_key_hash CHAR(64) NOT NULL",
@@ -663,6 +670,12 @@ class AbbottSchemaContractTest(unittest.TestCase):
             "ALTER TABLE portal_content_lookup_projection MODIFY COLUMN "
             "lookup_kind ENUM(''title'', ''slug'', ''path'') NOT NULL",
             self._normalized(self._primary_sql()),
+        )
+        self.assertEqual(url_identity, canonical_url_identity)
+        self.assertIn(
+            "ALTER TABLE portal_content_lookup_projection MODIFY COLUMN "
+            "lookup_kind ENUM('title','slug','path','url') NOT NULL",
+            self._normalized(url_identity),
         )
 
     def test_workbook_registration_events_have_a_source_faithful_catalog(self):
