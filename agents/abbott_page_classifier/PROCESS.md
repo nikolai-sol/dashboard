@@ -9,6 +9,8 @@ finalizes one immutable approval batch, and only `publish-projection` writes a
 Sheet. The dashboard reads the active release's `portal_content_catalog` and
 `portal_content_lookup_projection` only.
 
+Observed page identity fixes use a DB-native successor release and never trigger a Metrika backfill.
+
 ## Weekly stop point
 
 ```text

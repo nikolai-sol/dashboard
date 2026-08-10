@@ -241,3 +241,70 @@ No live DB, Sheet, OpenAI, source API, migration/grant execution, deployment,
 secret, cron, Hermes, Telegram, release activation, or active-pointer change
 occurred. Task 10 runtime-manifest synchronization remains separately reviewed
 work.
+
+## Runtime closure completion
+
+### Delivered
+
+- Added a runtime-closure contract covering byte-identical vendored classifier
+  authorities, one-and-only-one bootstrap migration `050`, and the exact
+  page-identity/Metrika-backfill boundary in all four operator authorities.
+- Re-copied the reviewed runtime closure with `install -m 644`; the three
+  vendored shell wrappers are intentionally regular mode-`0644` files.
+- Regenerated the sorted root SHA-256 inventory and verified every listed file.
+  The bootstrap manifest independently verifies all 44 synchronized entries.
+- Corrected the stale Task 6 report opening: aliases are mutated only inside
+  `record_batch_acceptance`; ingestion remains read-only for aliases.
+
+### RED -> GREEN
+
+Before documentation or manifest work, the new focused contract was run:
+
+```text
+python3 -m unittest tests.test_abbott_runtime_closure.AbbottRuntimeClosureTest.test_url_identity_runtime_closure_and_operator_boundary -v
+FAILED: all four required operator documents omitted the exact page-identity boundary.
+```
+
+After the changes, the same command passed (`Ran 1 test ... OK`).
+
+### Verification commands and results
+
+```text
+sha256sum -c ops/abbott-runtime-manifest.sha256
+# all 36 attested files: OK
+
+python3 bootstrap-manifest verifier
+# bootstrap manifest verified: 44 synchronized entries
+
+python3 -m unittest discover -s tests/abbott_page_classifier -p 'test_*.py'
+# Ran 262 tests: FAILED (31 failures, 9 errors, 2 skipped)
+
+python3 -m unittest discover -s tests -p 'test_abbott_*.py'
+# Ran 200 tests: FAILED (2 failures, 4 errors)
+
+python3 -m unittest tests.test_canonical_release_store tests.test_abbott_release_retention
+# Ran 45 tests: FAILED (1 error)
+
+cd dashboard-next && npm run ci:verify
+# passed: public-asset scan, lint (8 warnings, 0 errors), typecheck, and production build
+```
+
+### Pre-existing local warnings / blockers
+
+- The prescribed `python3` is macOS Python 3.9 and the worktree has no local
+  virtual environment with the declared `openai` dependency. Import failures
+  for `openai`, Python-3.10 union-type failures, and the classifier's intended
+  `ABBOTT_CONTENT_PYTHON311_VERSION_REQUIRED` response therefore prevent the
+  three full Python commands from reaching their expected all-green result.
+- The root Abbott discovery also has three existing health-probe fixture/schema
+  failures. This task changed only docs, runtime file mode, manifests, and the
+  closure assertion; it did not alter that health-probe code or its fixtures.
+- `npm run ci:verify` succeeds with eight unchanged lint warnings: five unused
+  symbols, two hook dependency warnings, and one unused `DbRow` type.
+
+### Commits
+
+- Nested dashboard/bootstrap: `fa4f966d5175eec78d3d2ffda2d25b138e2489a6`
+  (`chore(abbott): attest URL identity runtime`)
+- Root closure: `e2d2dd7cfb9ab094e4ceec63747269b774606766`
+  (`docs(abbott): close URL identity operations`)

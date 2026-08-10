@@ -108,6 +108,57 @@ class AbbottRuntimeClosureTest(unittest.TestCase):
             hashlib.sha256(typescript_fixture.read_bytes()).hexdigest(),
         )
 
+    def test_url_identity_runtime_closure_and_operator_boundary(self):
+        bootstrap = ROOT / "dashboard-next/reportingdash-canonical-bootstrap"
+        classifier_root = ROOT / "agents/abbott_page_classifier"
+        classifier_runtime = bootstrap / "runtime/agents/abbott_page_classifier"
+        changed_classifier_files = (
+            "approval_hashes.py",
+            "batch_service.py",
+            "candidate_release.py",
+            "domain.py",
+            "identity.py",
+            "llm_classifier.py",
+            "normalization.py",
+            "reconcile.py",
+            "repository.py",
+            "sheets_sync.py",
+            "sources.py",
+            "weekly_proposal.py",
+            "workflow.py",
+            "workflow_repository.py",
+            "workflow_service.py",
+        )
+        for name in changed_classifier_files:
+            with self.subTest(classifier_file=name):
+                self.assertEqual(
+                    (classifier_runtime / name).read_bytes(),
+                    (classifier_root / name).read_bytes(),
+                )
+
+        migration_manifest = (bootstrap / "MIGRATION-MANIFEST.md").read_text(
+            encoding="utf-8"
+        )
+        self.assertEqual(
+            migration_manifest.count(
+                "`src/db/migrations/050_abbott_content_url_identity.sql`"
+            ),
+            1,
+        )
+
+        boundary = (
+            "Observed page identity fixes use a DB-native successor release and "
+            "never trigger a Metrika backfill."
+        )
+        for document in (
+            ROOT / "agents/abbott_page_classifier/PROCESS.md",
+            ROOT / "agents/abbott_page_classifier/README.md",
+            ROOT / "docs/ABBOTT-OPERATIONS-RUNBOOK.md",
+            ROOT / "AGENTS.md",
+        ):
+            with self.subTest(document=str(document.relative_to(ROOT))):
+                self.assertIn(boundary, document.read_text(encoding="utf-8"))
+
     def _committed_runtime(self, root: Path) -> tuple[str, Path]:
         target = root / "entry.py"
         target.write_text("# entry\n", encoding="utf-8")

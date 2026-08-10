@@ -16,6 +16,7 @@ logs and never by silently reusing another period.
 - `METRIKA_TOKEN` remains the only OAuth environment key. Never print it. The owner installs or revokes it; this change does not issue or rotate a token.
 - Current cron remains collection `06:12`, health `07:05`, and one summary `07:10`. The summary includes session integrity; a mismatch is `CRITICAL`.
 - Logs cannot return the current day. Active releases remain append-only: late visit changes require a reviewed successor release/backfill and are never silently rewritten.
+- Observed page identity fixes use a DB-native successor release and never trigger a Metrika backfill.
 - Bitrix dump remains test-only; the live connector is deferred.
 - Abbott embed reads use the separate aggregate-only `abbott_embed_reader_role` and
   `ABBOTT_EMBED_DB_*=report_bd`; manager reads keep `ABBOTT_PRIVATE_DB_*=report_bd_private`.

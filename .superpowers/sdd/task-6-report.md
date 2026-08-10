@@ -8,8 +8,9 @@
   row, and retires it with the accepted review evidence. `reject` writes no
   alias.
 - A conflicting owner, duplicate active aliases, missing selected entity, or a
-  lost retire update raises `IDENTITY_COLLISION`; the enclosing ingestion
-  transaction rolls back before the batch can become `ingested`.
+  lost retire update raises `IDENTITY_COLLISION`; the enclosing
+  `record_batch_acceptance` transaction rolls back before the accepted status
+  update. Ingestion is read-only for aliases.
 - Alias evidence is canonical JSON bound to `accepted_decision_hash`, batch and
   item IDs, immutable `row_hash`, URL, decision, selected entity, and reason.
   Replay remains a status/hash-checked no-op and cannot create another alias.

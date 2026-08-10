@@ -5,6 +5,8 @@ accepted Registry 2 input. Canonical classifications and the active release are
 unchanged until a later, separately authorized approval/ingest/materialize/
 validate/activation sequence.
 
+Observed page identity fixes use a DB-native successor release and never trigger a Metrika backfill.
+
 The canonical state is MySQL. Registry files are captured inputs; Registry 2 is
 not an approval batch. Reconciliation also derives proposal-only items for
 non-archived predecessor entities whose direction or material type is still
