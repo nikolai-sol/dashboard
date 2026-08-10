@@ -86,7 +86,7 @@ function normalizeAbbottIdentityPath(pathname: string): string {
 /** Canonical lookup identity for Abbott content URLs. */
 export function normalizeAbbottContentIdentityUrl(rawValue: unknown): string {
   const value = String(rawValue ?? "").trim().replaceAll("&amp;", "&");
-  if (!isAbbottWebPageUrl(value)) return "";
+  if (value.startsWith("//") || !isAbbottWebPageUrl(value)) return "";
 
   try {
     const absoluteAuthority = value.match(/^https?:\/\/([^/?#]*)/i);
