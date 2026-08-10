@@ -334,6 +334,15 @@ class CanonicalReleaseStoreTest(unittest.TestCase):
             f"coverage.{scope}.reconciled_days"
             for scope in ("other", "traffic", "page", "user_behavior", "returning")
         }
+        control_names.update(
+            f"fact_totals.{start}.{end}.{metric}"
+            for start, end in (
+                ("2026-06-01", "2026-06-30"),
+                ("2026-07-01", "2026-07-31"),
+                ("2026-08-01", "2026-08-09"),
+            )
+            for metric in ("sessions", "users", "pageviews", "goal_conversions")
+        )
         evidence = [
             {
                 "control_name": name,

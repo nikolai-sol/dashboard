@@ -23,16 +23,31 @@ python3 -m unittest ...test_metadata_only_fact_controls_fail_on_a_cloned_pagevie
 Ran 2 tests ... OK
 ```
 
-## Verification
+## Corrected verification
 
-`python3 -m py_compile abbott_canonical_controls.py
-agents/abbott_page_classifier/candidate_release.py` exited 0.
+The supported offline environment is:
 
-`python3 -m unittest tests.test_abbott_canonical_controls -v` ran 17 tests;
-16 passed and one pre-existing environment collection error remains:
-`ModuleNotFoundError: No module named 'openai'`, raised while importing
-`candidate_release` through `workflow_repository -> llm_classifier`. No
-dependency was installed and no external provider, database, service, token,
-or source API was contacted.
+```text
+PYTHONPATH=/tmp/abbott-task1-deps:. /Users/nafanya/.local/bin/python3.11
+```
 
-`git diff --check` exited 0.
+With it, the exact Task 8 gate passed:
+
+```text
+python -m unittest tests.abbott_page_classifier.test_candidate_release \
+  tests.test_abbott_canonical_controls tests.test_abbott_release_operator \
+  tests.test_canonical_release_store -v
+Ran 123 tests ... OK
+```
+
+The full runtime closure passed:
+
+```text
+python -m unittest tests.test_abbott_runtime_closure -v
+Ran 23 tests ... OK
+```
+
+The runtime manifests and root/bootstrap copies were rechecked after the
+correction; `shasum -a 256 -c ops/abbott-runtime-manifest.sha256` and
+`git diff --check` exit 0. No database, source API, provider, service, token,
+or production system was contacted.
