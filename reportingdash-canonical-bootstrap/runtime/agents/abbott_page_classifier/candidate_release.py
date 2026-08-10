@@ -959,26 +959,24 @@ def _resolve_legacy_predecessor_rows(
     cursor.execute(
         """
         SELECT legacy_catalog.id AS predecessor_catalog_row_id,
-               alias_row.content_entity_id, alias_row.alias_type,
+               entity.id AS content_entity_id,
                direction.term_code AS direction_code,
                material.term_code AS material_type_code,
                access_term.term_code AS access_code,
                lifecycle.term_code AS lifecycle_code,
                lifecycle.term_label AS lifecycle_label
         FROM portal_content_catalog AS legacy_catalog
-        INNER JOIN portal_content_registry_aliases AS alias_row
-          ON alias_row.dataset_key = %s
-         AND alias_row.alias_status = 'active'
-         AND alias_row.uniqueness_scope = 'strong'
-         AND ((alias_row.alias_type = 'material_id'
-               AND legacy_catalog.material_id IS NOT NULL
-               AND alias_row.alias_hash = SHA2(legacy_catalog.material_id, 256))
-           OR (alias_row.alias_type IN ('canonical_url', 'url')
-               AND alias_row.alias_hash = legacy_catalog.normalized_url_hash))
         INNER JOIN portal_content_registry_entities AS entity
-          ON entity.dataset_key = alias_row.dataset_key
-         AND entity.id = alias_row.content_entity_id
+          ON entity.dataset_key = %s
          AND entity.registry_status = 'active'
+         AND JSON_UNQUOTE(JSON_EXTRACT(entity.source_evidence, '$.authority'))
+               = 'active_release_baseline'
+         AND CAST(JSON_UNQUOTE(JSON_EXTRACT(
+               entity.source_evidence, '$.predecessor_release_id')) AS UNSIGNED) = %s
+         AND JSON_CONTAINS(
+               JSON_EXTRACT(entity.source_evidence, '$.source_row_fingerprints'),
+               JSON_QUOTE(legacy_catalog.source_row_fingerprint)
+             )
         LEFT JOIN portal_content_taxonomy_terms AS direction
           ON direction.taxonomy_version_id = %s
          AND direction.taxonomy_kind = 'direction'
@@ -1005,9 +1003,10 @@ def _resolve_legacy_predecessor_rows(
           AND legacy_catalog.source_snapshot_id = %s
           AND legacy_catalog.id IN ("""
         + ", ".join(["%s"] * len(legacy_ids))
-        + ") ORDER BY legacy_catalog.id, alias_row.content_entity_id, alias_row.alias_type",
+        + ") ORDER BY legacy_catalog.id, entity.id",
         (
             DATASET_KEY,
+            predecessor_release_id,
             taxonomy_version_id,
             taxonomy_version_id,
             taxonomy_version_id,
