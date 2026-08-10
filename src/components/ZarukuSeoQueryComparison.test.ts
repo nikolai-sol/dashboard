@@ -16,7 +16,16 @@ const rows: UnifiedSeoQueryRow[] = [{
   webmaster: { impressions: 200, clicks: 20, ctr: 10, average_position: null },
   seo_os: { tracked_position: 4, delta_prev: -2, status: "found", matched_url: "https://zaruku.ru/map/" },
   google_pages: ["https://zaruku.ru/article/"],
+  webmaster_pages: ["https://zaruku.ru/yandex-landing/"],
 }];
+
+function sourceWeek(
+  requestedWeek: string | null,
+  actualWeek: string | null = requestedWeek,
+  fallback = false,
+) {
+  return { requestedWeek, actualWeek, fallback };
+}
 
 test("toggles an active sort and defaults each metric family correctly", () => {
   assert.deepEqual(
@@ -40,7 +49,11 @@ test("toggles an active sort and defaults each metric family correctly", () => {
 test("renders grouped source columns, accessible sorting, and missing positions", () => {
   const markup = renderToStaticMarkup(createElement(ZarukuSeoQueryComparison, {
     rows,
-    sourceWeeks: { google: "2026-W29", webmaster: "2026-W28", seoOs: "2026-W29" },
+    sourceWeekSelections: {
+      google: sourceWeek("2026-W30"),
+      webmaster: sourceWeek("2026-W30", "2026-W31", true),
+      seoOs: sourceWeek("2026-W30"),
+    },
     defaultSort: { key: "google_position", direction: "asc" },
     locale: "ru-RU",
   }));
@@ -49,12 +62,14 @@ test("renders grouped source columns, accessible sorting, and missing positions"
   assert.match(markup, /Раздел/);
   assert.match(markup, /Google RF/);
   assert.match(markup, /Яндекс Вебмастер/);
+  assert.match(markup, /Яндекс: \/yandex-landing\//);
   assert.match(markup, /SEO OS/);
   assert.match(markup, /Позиция/);
   assert.match(markup, /<button/);
   assert.match(markup, /aria-pressed="true"/);
   assert.match(markup, />—</);
   assert.match(markup, /Периоды источников различаются/);
+  assert.match(markup, /W30 недоступна, показано W31/);
   assert.doesNotMatch(markup, /Яндекс RF/);
 });
 
@@ -76,7 +91,7 @@ test("query workspace exposes search and mounts at most 50 rows", () => {
   }));
   const markup = renderToStaticMarkup(createElement(ZarukuSeoQueryComparison, {
     rows: manyRows,
-    sourceWeeks: { google: "2026-W29", webmaster: "2026-W29", seoOs: "2026-W29" },
+    sourceWeekSelections: { google: sourceWeek("2026-W29"), webmaster: sourceWeek("2026-W29"), seoOs: sourceWeek("2026-W29") },
   }));
   assert.match(markup, /type="search"/);
   assert.match(markup, /Страница 1 из 2/);
@@ -93,10 +108,11 @@ test("confirmed-landing filter runs across the full row set before pagination", 
     key: `query-${index}`,
     query: `Запрос ${index}`,
     google_pages: index >= 60 ? [`https://zaruku.ru/page-${index}/`] : [],
+    webmaster_pages: [],
   }));
   const markup = renderToStaticMarkup(createElement(ZarukuSeoQueryComparison, {
     rows: manyRows,
-    sourceWeeks: { google: "2026-W29", webmaster: "2026-W29", seoOs: "2026-W29" },
+    sourceWeekSelections: { google: sourceWeek("2026-W29"), webmaster: sourceWeek("2026-W29"), seoOs: sourceWeek("2026-W29") },
     defaultFilter: "confirmed_landing",
   }));
 
@@ -104,15 +120,15 @@ test("confirmed-landing filter runs across the full row set before pagination", 
   assert.match(markup, /15 найдено · Страница 1 из 1/);
   assert.match(markup, /Запрос 60/);
   assert.match(markup, /Google:/);
-  assert.match(markup, /подтверждает посадочные только по данным Google/);
-  assert.match(markup, /в Яндексе по той же фразе может вести другая страница/);
+  assert.match(markup, /Google Search Console или Яндекс Вебмастер/);
+  assert.match(markup, /SEO OS и представительская страница Яндекса фильтр не подтверждают/);
   assert.doesNotMatch(markup, /Запрос 59/);
 });
 
 test("confirmed-landing filter shows its quiet empty state", () => {
   const markup = renderToStaticMarkup(createElement(ZarukuSeoQueryComparison, {
-    rows: [{ ...rows[0], google_pages: [] }],
-    sourceWeeks: { google: "2026-W29", webmaster: "2026-W29", seoOs: "2026-W29" },
+    rows: [{ ...rows[0], google_pages: [], webmaster_pages: [] }],
+    sourceWeekSelections: { google: sourceWeek("2026-W29"), webmaster: sourceWeek("2026-W29"), seoOs: sourceWeek("2026-W29") },
     defaultFilter: "confirmed_landing",
   }));
 
@@ -122,9 +138,23 @@ test("confirmed-landing filter shows its quiet empty state", () => {
 test("query workspace distinguishes unavailable sources from an empty result", () => {
   const markup = renderToStaticMarkup(createElement(ZarukuSeoQueryComparison, {
     rows: [],
-    sourceWeeks: { google: null, webmaster: null, seoOs: null },
+    sourceWeekSelections: { google: sourceWeek(null), webmaster: sourceWeek(null), seoOs: sourceWeek(null) },
     sourceAvailability: { google: false, webmaster: false, seoOs: false },
   }));
   assert.match(markup, /Источник недоступен/);
   assert.doesNotMatch(markup, /По выбранному фильтру запросов нет/);
+});
+
+test("does not show a mismatch notice when every source renders the requested week", () => {
+  const markup = renderToStaticMarkup(createElement(ZarukuSeoQueryComparison, {
+    rows,
+    sourceWeekSelections: {
+      google: sourceWeek("2026-W30"),
+      webmaster: sourceWeek("2026-W30"),
+      seoOs: sourceWeek("2026-W30"),
+    },
+  }));
+
+  assert.doesNotMatch(markup, /Периоды источников различаются/);
+  assert.doesNotMatch(markup, /недоступна, показано/);
 });

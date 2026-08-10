@@ -129,3 +129,12 @@ test("returns stable empty aggregates without dividing by zero", () => {
     return_pages: [],
   });
 });
+
+test("resolves a raw root start URL by its root path while retaining the root display URL", () => {
+  const result = buildAbbottReturnFrequency([
+    visit("client", "one", "2026-06-01T08:00:00Z", "/"),
+    visit("client", "two", "2026-06-02T08:00:00Z", "/"),
+  ], new Map(), (path) => path === "/" ? "Кардиология" : null);
+  assert.equal(result.return_pages[0]?.url, "/");
+  assert.equal(result.return_pages[0]?.direction, "Кардиология");
+});

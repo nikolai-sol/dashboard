@@ -77,6 +77,13 @@ Current auth note:
 This MySQL-only Metrika breakdown path is a branch target. It is not production
 state until the migration, deploy, and backfill are accepted.
 
+### Webmaster query→page rollout status 2026-07-29
+
+- Dashboard `main` commit `833db89` reads exact pairs only from `canonical_fact_webmaster_query_pages_daily`; the confirmed filter accepts a GSC pair or an exact Webmaster pair and rejects SEO OS and `popular_complementary_indicator` URLs.
+- Migration `045` is applied and manual collector run `1715` succeeded for 15 priority pages over `2026-07-21..2026-07-27`, producing 105 coverage rows and 67 pair facts with zero bad rows.
+- Application commit `833db89` is not deployed while Abbott successor release `10` remains staging and release `8` remains active. The production UI therefore does not yet show the new `Яндекс:` links.
+- The proposed weekly `20 3 * * 1` UTC cron with priority limit 15 is not installed. Deployment, SEO smoke, and first scheduled-run verification remain required before cron activation or expansion toward 30 pages.
+
 `Geography` means visitor countries/cities from Metrika. It is not `GEO`: in `AI/GEO visibility`, GEO means Generative Engine Optimization.
 
 ## Platform access / cron memory
@@ -206,6 +213,7 @@ Current Zaruku source truth:
 - No Webmaster backfill is allowed before the deployed active cron completes successfully on 2026-07-29 at 06:50, both query/page maxima advance, and the SELECT-only gap/lineage snapshot is refreshed. GSC `--layers optional` remains separately blocked until the scheduled 06:55 cron has `status=success` and `error_count=0`.
 - The JavaScript Webmaster weekly collector is a fail-closed tombstone. `fetch_yandex_webmaster_canonical.py` is the only fact writer. Tables `seo_webmaster_queries_weekly` and `seo_webmaster_pages_weekly` are deprecated, have no writer, and must not be read.
 - Google Search Console: Zaruku property `https://zaruku.ru/` is connected through root collector `fetch_gsc_canonical.py`, not the old temporary / teletask path. Daily query/page/country/device rows live in `canonical_fact_gsc_queries_daily`; optional Search appearance rows live in `canonical_fact_gsc_search_appearance_daily`; result/search type rows live in `canonical_fact_gsc_search_type_daily`. Canonical lineage is `source_key=google_search_console`; legacy compatibility columns are not contract fields. Optional-layer HTTP 400/403 makes the collector run `partial` while preserving successful core facts. The dashboard read model should expose `zaruku_seo.gsc.status = available` when rows exist and surface recent partial freshness.
+- Zaruku GSC landing-page reads order weekly aggregates newest-first before the display `LIMIT 200`; otherwise an older week can consume the limit while the SEO UI selects the current GSC week. App release `20260729155705-1b2cd27` deployed this correction on 2026-07-29 from the isolated `codex/fix-gsc-latest-week-pages` branch. Local/public health, loopback isolation, active-bundle SQL presence, and a canonical W30 read passed. The deployment did not run or alter collectors, backfills, migrations, cron, or secrets.
 - On 2026-07-28, GSC `3/3`, returning-content `1/3`, Webmaster `2/3`, and the RD-11 source-specific health/Telegram renderer were deployed with dated backups. All deployed SHA-256 values, modes, and imports were verified; the read-only health snapshot returned four sources, four partial dates, and zero lineage defects. No collector, backfill, Telegram send, cron edit, schema change, or secret change occurred during deployment.
 - `seo_ai_visibility_weekly` is deprecated, has no writer, and must not be read; use `seo_ai_visibility` and canonical AI-visibility facts.
 

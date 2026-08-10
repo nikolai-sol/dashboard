@@ -706,6 +706,15 @@ export interface ZarukuSeoMetricRow {
   layer?: ZarukuSeoLayerId;
 }
 
+export interface ZarukuSeoWeeklyMetricRow extends ZarukuSeoMetricRow {
+  week: string;
+}
+
+export interface ZarukuMetrikaWeeklyOrganicLandingData {
+  weeks: string[];
+  rows: ZarukuSeoWeeklyMetricRow[];
+}
+
 export type ZarukuMetrikaBreakdownReportKey =
   | "search_engines"
   | "search_phrases"
@@ -891,6 +900,22 @@ export interface ZarukuYandexWebmasterPageRow {
   is_partial_week: boolean;
 }
 
+export interface ZarukuYandexWebmasterQueryPageRow {
+  week: string;
+  query_id: string;
+  query: string;
+  page_id: string;
+  url: string;
+  device: string;
+  impressions: number;
+  clicks: number;
+  ctr: number | null;
+  average_position: number | null;
+  week_from: string;
+  week_to: string;
+  is_partial_week: boolean;
+}
+
 export interface ZarukuYandexWebmasterSummaryRow {
   week: string;
   device: string;
@@ -910,12 +935,14 @@ export interface ZarukuYandexWebmasterData {
   data_availability: {
     queries: boolean;
     pages: boolean;
+    query_pages: boolean;
   };
   weeks: string[];
   latest_week: string | null;
   summary: ZarukuYandexWebmasterSummaryRow[];
   queries: ZarukuYandexWebmasterQueryRow[];
   pages: ZarukuYandexWebmasterPageRow[];
+  query_pages: ZarukuYandexWebmasterQueryPageRow[];
 }
 
 // Compatibility contract for the earlier property-scoped GSC reader. The
@@ -1221,6 +1248,7 @@ export interface ZarukuSeoData {
   search_engines: ZarukuSeoMetricRow[];
   search_phrases: ZarukuSeoMetricRow[];
   organic_landing_pages: ZarukuSeoMetricRow[];
+  organic_landing_pages_weekly: ZarukuMetrikaWeeklyOrganicLandingData;
   top_pages: ZarukuSeoMetricRow[];
   content_sections: ZarukuSeoMetricRow[];
   high_bounce_pages: ZarukuSeoMetricRow[];

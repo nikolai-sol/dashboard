@@ -65,9 +65,14 @@ test("localizes traffic sources at display boundaries while preserving raw filte
   );
   assert.match(source, /label: abbottTrafficSourceLabel\(label\)/);
   assert.equal(
-    `${source}\n${userActionFilterSource}`.match(/row\.traffic_source !== filters\.traffic_source/g)?.length,
-    2,
-    "traffic-source equality filters must continue comparing raw values",
+    source.match(/row\.traffic_source !== filters\.traffic_source/g)?.length,
+    1,
+    "the summary table must keep exact raw traffic-source filtering",
+  );
+  assert.match(
+    userActionFilterSource,
+    /row\.traffic_source\.trim\(\) !== filters\.traffic_source/,
+    "the action table must compare the displayed normalized source without relabeling stored data",
   );
 });
 
@@ -94,7 +99,7 @@ test("adds Abbott UTM and count-first return UI while hiding external transition
   assert.match(source, /external_events:/);
 
   for (const text of [
-    "Одна строка — один визит Метрики",
+    "Одна строка — одно уникальное сочетание User ID, источника, UTM Source, направления и последней страницы",
     "UTM Source",
     "Без UTM",
     "Количество заходов за выбранный период",
@@ -104,6 +109,28 @@ test("adds Abbott UTM and count-first return UI while hiding external transition
   ]) {
     assert.ok(source.includes(text), text);
   }
+  assert.match(
+    source,
+    /activeTab === "user_actions"[\s\S]*?\{ key: "visits", label: "Сессии"/,
+  );
   assert.match(source, /dataKey="visitors"/);
   assert.match(source, /return_frequency/);
+});
+
+test("labels unmapped page metadata in the page table and exports", () => {
+  assert.match(source, /labelAbbottPageDimension\(row\.direction\)/);
+  assert.match(source, /labelAbbottPageDimension\(row\.material_type\)/);
+  assert.match(source, /labelAbbottPageDimension\(row\.access\)/);
+});
+
+test("uses page-only metadata grouping that retains the unmapped bucket", () => {
+  const pageChartSource = source.slice(source.indexOf("const pageDirectionData"), source.indexOf("const bitrixDirectionData"));
+  assert.match(pageChartSource, /groupAbbottPageStatsByDimension/);
+  assert.doesNotMatch(pageChartSource, /excludeUnnamedChartGroups/);
+});
+
+test("shows filtered metadata coverage for mapped material types", () => {
+  assert.match(source, /summarizeAbbottPageMetadataCoverage\(pageStatRows\)/);
+  assert.ok(source.includes("Справочник: тип определён для"));
+  assert.ok(source.includes("страниц; просмотры —"));
 });

@@ -1,4 +1,4 @@
-import { normalizeAbbottPageUrl } from "@/lib/abbott-page-url";
+import { normalizeAbbottPagePath, normalizeAbbottPageUrl } from "@/lib/abbott-page-url";
 import type {
   AbbottBiReturnFrequency,
   AbbottVisitFrequencyGroupId,
@@ -104,7 +104,7 @@ export function buildAbbottReturnFrequency(
 
     clientVisits.slice(1).forEach((repeatVisit) => {
       const url = normalizeAbbottPageUrl(repeatVisit.start_url);
-      const direction = resolvePageDirection(url)?.trim() || UNKNOWN_DIRECTION;
+      const direction = resolvePageDirection(normalizeAbbottPagePath(url))?.trim() || UNKNOWN_DIRECTION;
       const pageKey = `${group}\n${direction}\n${url}`;
       const pageRow = pageTotals.get(pageKey) ?? {
         url,

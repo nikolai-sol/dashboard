@@ -40,6 +40,7 @@ export interface AbbottActiveRelease {
 }
 
 export interface AbbottContentMetadata {
+  page_title: string | null;
   direction: string | null;
   material_type: string | null;
   access: string | null;

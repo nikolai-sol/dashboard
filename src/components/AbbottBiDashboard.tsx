@@ -20,6 +20,14 @@ import {
   buildAbbottPageStatsExportRows,
   buildAbbottPageviewsByDirection,
   filterAbbottPageStatsRows,
+  buildAbbottPageDimensionOptions,
+  groupAbbottPageStatsByDimension,
+  labelAbbottPageDimension,
+  limitAbbottPageDimensionGroups,
+  matchesPageStatsSearch,
+  matchesSelectedPageDimension,
+  matchesSelectedMaterialType,
+  summarizeAbbottPageMetadataCoverage,
   summarizeAbbottPageStats,
 } from "./abbott-page-stats";
 import { abbottTrafficSourceLabel, abbottTrafficSourceOption } from "./abbott-localization";
@@ -96,7 +104,7 @@ function buildTabs(portalName: string, showUserIdAnalytics: boolean): TabConfig[
   {
     id: "user_actions",
     label: `2. Действия пользователя на сайте ${portalName}`,
-    description: "Одна строка — один визит Метрики. User ID, источник, UTM Source, начальный и конечный URL относятся к одному и тому же визиту.",
+    description: "Одна строка — одно уникальное сочетание User ID, источника, UTM Source, направления и последней страницы за выбранный период. Продолжительность и глубина рассчитаны как средние по сессиям.",
   },
   {
     id: "page_stats",
@@ -952,9 +960,9 @@ export default function AbbottBiDashboard({
 
   const pageStatsOptions = useMemo(
     () => ({
-      direction: uniqOptions(data.page_stats.map((row) => row.direction)),
-      material_type: uniqOptions(data.page_stats.map((row) => row.material_type)),
-      access: uniqOptions(data.page_stats.map((row) => row.access)),
+      direction: buildAbbottPageDimensionOptions(data.page_stats, (row) => row.direction),
+      material_type: buildAbbottPageDimensionOptions(data.page_stats, (row) => row.material_type),
+      access: buildAbbottPageDimensionOptions(data.page_stats, (row) => row.access),
     }),
     [data.page_stats],
   );
@@ -1226,19 +1234,28 @@ export default function AbbottBiDashboard({
   );
 
   const pageDirectionData = useMemo(
-    () => excludeUnnamedChartGroups(groupNumberRows(pageStatRows, (row) => row.direction, (row) => row.users)).slice(0, 8),
+    () =>
+      limitAbbottPageDimensionGroups(
+        groupAbbottPageStatsByDimension(pageStatRows, (row) => row.direction, (row) => row.users),
+      ),
     [pageStatRows],
   );
   const pageViewsDirectionData = useMemo(
-    () => buildAbbottPageviewsByDirection(pageStatRows),
+    () =>
+      limitAbbottPageDimensionGroups(
+        groupAbbottPageStatsByDimension(pageStatRows, (row) => row.direction, (row) => row.pageviews),
+      ),
     [pageStatRows],
   );
   const pageMaterialData = useMemo(
-    () => excludeUnnamedChartGroups(groupNumberRows(pageStatRows, (row) => row.material_type, (row) => row.users)).slice(0, 8),
+    () =>
+      limitAbbottPageDimensionGroups(
+        groupAbbottPageStatsByDimension(pageStatRows, (row) => row.material_type, (row) => row.users),
+      ),
     [pageStatRows],
   );
   const pageAccessData = useMemo(
-    () => excludeUnnamedChartGroups(groupNumberRows(pageStatRows, (row) => row.access, (row) => row.users)),
+    () => groupAbbottPageStatsByDimension(pageStatRows, (row) => row.access, (row) => row.users),
     [pageStatRows],
   );
   const bitrixDirectionData = useMemo(
@@ -1364,6 +1381,7 @@ export default function AbbottBiDashboard({
   const returningPage = sliceRows(returningRows, pageByTab.returning);
   const generalMaterialsPage = sliceRows(generalMaterialRows, pageByTab.general_materials);
   const pageStatsTotals = summarizeAbbottPageStats(pageStatRows);
+  const pageMetadataCoverage = summarizeAbbottPageMetadataCoverage(pageStatRows);
   const pageStatsSummaryRow =
     pageStatRows.length > 0
       ? {
@@ -1412,6 +1430,7 @@ export default function AbbottBiDashboard({
       { key: "utm_source", label: "UTM Source" },
       { key: "direction", label: "Направление" },
       { key: "end_url", label: "Последняя страница", className: "min-w-[320px] break-all" },
+      { key: "visits", label: "Сессии", className: "text-right" },
       { key: "avg_duration", label: "Продолжительность визита, мин", className: "text-right" },
       { key: "page_depth", label: "Глубина просмотра", className: "text-right" },
     ];
@@ -1421,6 +1440,7 @@ export default function AbbottBiDashboard({
       utm_source: row.utm_source?.trim() || "Без UTM",
       direction: row.direction ?? "—",
       end_url: row.end_url || "—",
+      visits: formatNumber(row.visits, locale),
       avg_duration: formatDurationMinutes(row.avg_duration, locale),
       page_depth: formatDecimal(row.page_depth, locale),
     }));
@@ -1446,9 +1466,9 @@ export default function AbbottBiDashboard({
     tableRows = pageStatsPage.pageRows.map((row) => ({
       page_title: row.page_title || "—",
       url: row.url || "—",
-      direction: row.direction ?? "—",
-      material_type: row.material_type ?? "—",
-      access: row.access ?? "—",
+      direction: labelAbbottPageDimension(row.direction),
+      material_type: labelAbbottPageDimension(row.material_type),
+      access: labelAbbottPageDimension(row.access),
       pageviews: formatNumber(row.pageviews, locale),
       users: formatNumber(row.users, locale),
       ...(data.bitrix_period_active
@@ -2372,6 +2392,12 @@ export default function AbbottBiDashboard({
           >
             {tabFilterContent[activeTab]}
           </div>
+        ) : null}
+
+        {activeTab === "page_stats" ? (
+          <p className="text-sm text-slate-600">
+            Справочник: тип определён для {formatNumber(pageMetadataCoverage.mappedRows, locale)} из {formatNumber(pageMetadataCoverage.totalRows, locale)} страниц; просмотры — {formatNumber(pageMetadataCoverage.mappedPageviews, locale)} из {formatNumber(pageMetadataCoverage.totalPageviews, locale)}.
+          </p>
         ) : null}
 
         {chartContent}

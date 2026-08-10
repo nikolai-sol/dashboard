@@ -9,6 +9,7 @@ import {
   parseAbbottWorkbookCatalog,
   type AbbottWorkbookCatalogRow,
 } from "../src/lib/abbott-workbook-catalog";
+import { abbottTitleLookupHash } from "../src/lib/abbott-content-lookup";
 
 const DATASET_KEY = "abbott";
 const PRIMARY_SCHEMA = "report_bd";
@@ -482,7 +483,7 @@ export function buildAbbottContentLookupProjection(
     if (row.sourceSlug) keys.push(["slug", row.sourceSlug]);
     if (row.normalizedPath) keys.push(["path", row.normalizedPath]);
     for (const [kind, value] of keys) {
-      const keyHash = sha256(value);
+      const keyHash = kind === "title" ? abbottTitleLookupHash(value) : sha256(value);
       const groupKey = `${kind}:${keyHash}`;
       const current = groups.get(groupKey) ?? { kind, keyHash, rows: [] };
       current.rows.push(row);

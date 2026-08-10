@@ -2,8 +2,10 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import {
   ZARUKU_METRIKA_BREAKDOWN_REPORTS,
+  buildZarukuMetrikaOrganicLandingWeekQueries,
   buildZarukuMetrikaBreakdownQueries,
   loadZarukuMetrikaBreakdowns,
+  loadZarukuMetrikaOrganicLandingWeeks,
 } from "@/lib/zaruku-metrika";
 
 const accountIds = ["66624469", "secondary"];
@@ -295,4 +297,76 @@ test("presentation limits do not truncate canonical report totals", async () => 
 
   assert.equal(readModel.reports.search_phrases.rows.length, 30);
   assert.equal(readModel.reports.search_phrases.total_visits, 1_000);
+});
+
+test("weekly organic landing queries span complete ISO week boundaries", () => {
+  const queries = buildZarukuMetrikaOrganicLandingWeekQueries(
+    ["66624469"],
+    ["2026-W30", "2026-W31"],
+  );
+
+  assert.ok(queries);
+  assert.match(queries.detail.sql, /canonical_fact_metrika_breakdowns_daily/i);
+  assert.match(queries.detail.sql, /report_key\s*=\s*'organic_landing'/i);
+  assert.match(queries.detail.sql, /GROUP BY\s+week_key/i);
+  assert.match(queries.coverage.sql, /canonical_metrika_breakdown_coverage_daily/i);
+  assert.deepEqual(queries.detail.params.slice(-2), ["2026-07-20", "2026-08-02"]);
+  assert.deepEqual(queries.coverage.params.slice(-2), ["2026-07-20", "2026-08-02"]);
+});
+
+test("weekly organic landing loader publishes only fully covered ISO weeks", async () => {
+  const model = await loadZarukuMetrikaOrganicLandingWeeks(
+    ["66624469"],
+    ["2026-W30", "2026-W31"],
+    async (query) => {
+      if (query.sql.includes("canonical_metrika_breakdown_coverage_daily")) {
+        return [
+          { week_key: "2026-W30", coverage_rows: 7, complete_rows: 7 },
+          { week_key: "2026-W31", coverage_rows: 3, complete_rows: 3 },
+        ];
+      }
+      return [
+        {
+          week_key: "2026-W30",
+          report_key: "organic_landing",
+          row_kind: "detail",
+          dimension_1_id: "google",
+          dimension_1_value: "Google, search results",
+          dimension_2_id: null,
+          dimension_2_value: null,
+          page_url: "https://zaruku.ru/example/",
+          visits: 10,
+          users: 0,
+          pageviews: 12,
+          bounce_rate: 20,
+          avg_visit_duration_seconds: 60,
+          page_depth: 2,
+          share: 100,
+        },
+        {
+          week_key: "2026-W31",
+          report_key: "organic_landing",
+          row_kind: "detail",
+          dimension_1_id: "yandex",
+          dimension_1_value: "Yandex, search results",
+          dimension_2_id: null,
+          dimension_2_value: null,
+          page_url: "https://zaruku.ru/partial/",
+          visits: 5,
+          users: 0,
+          pageviews: 6,
+          bounce_rate: 10,
+          avg_visit_duration_seconds: 30,
+          page_depth: 1,
+          share: 100,
+        },
+      ];
+    },
+  );
+
+  assert.deepEqual(model.weeks, ["2026-W30"]);
+  assert.equal(model.rows.length, 1);
+  assert.equal(model.rows[0].week, "2026-W30");
+  assert.equal(model.rows[0].url, "https://zaruku.ru/example/");
+  assert.equal(model.rows[0].users_available, false);
 });

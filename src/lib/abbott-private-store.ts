@@ -251,6 +251,7 @@ async function requireActiveAbbottDashboard(executor: AbbottPrivateQueryExecutor
 
 function contentMetadata(row: Record<string, unknown>): AbbottContentMetadata {
   return {
+    page_title: nullableText(row.page_title),
     direction: nullableText(row.direction_key),
     material_type: nullableText(row.material_type),
     access: nullableText(row.access_label),
@@ -271,7 +272,7 @@ async function loadAggregateWorkbook(
   const catalogRows = await queryRows(
     executor,
     `SELECT projection.lookup_kind, projection.lookup_key_hash, projection.resolution_status,
-            catalog.material_type, catalog.direction_key, catalog.access_label, catalog.is_active
+            catalog.page_title, catalog.material_type, catalog.direction_key, catalog.access_label, catalog.is_active
      FROM \`report_bd\`.\`portal_content_lookup_projection\` AS projection
      INNER JOIN \`report_bd\`.\`portal_content_catalog\` AS catalog
        ON catalog.canonical_release_id = projection.canonical_release_id

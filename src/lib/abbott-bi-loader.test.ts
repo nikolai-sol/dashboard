@@ -32,6 +32,7 @@ const aggregateWorkbook: AbbottAggregatePrivateData["workbook"] = {
   contentByTitle: new Map(),
   contentBySlug: new Map(),
   urlReturnDirections: new Map([[lookupHash("/page"), {
+    page_title: "Page",
     direction: "Cardiology",
     material_type: null,
     access: null,
@@ -408,6 +409,7 @@ test("ambiguous path lookup keeps canonical page metrics visible with null enric
 
 test("path-only lookup applies full metadata and hides inactive canonical pages", async () => {
   const pathMetadata = {
+    page_title: "Page",
     direction: "Neurology",
     material_type: "guide",
     access: "Врачи",
@@ -453,6 +455,138 @@ test("path-only lookup applies full metadata and hides inactive canonical pages"
     7, ["90602537"], "2026-01-01", "2026-01-01", "embed", inactiveDeps,
   );
   assert.equal(inactive.page_stats.length, 0);
+});
+
+test("missing Metrika titles use path metadata, catalog titles, and hide inactive pages", async () => {
+  const aggregate = executor((sql) => {
+    if (sql.includes("canonical_fact_metrika_site_analytics_daily")) {
+      return [
+        { analytics_scope: "page", page_url: "https://example.test/catalog-title", page_title: " NuLl ", pageviews: "4", users: "2" },
+        { analytics_scope: "page", page_url: "https://example.test/null-title", page_title: null, pageviews: "1", users: "1" },
+        { analytics_scope: "page", page_url: "https://example.test/empty-title", page_title: "", pageviews: "1", users: "1" },
+        { analytics_scope: "page", page_url: "https://example.test/whitespace-title", page_title: "   ", pageviews: "1", users: "1" },
+        { analytics_scope: "page", page_url: "https://example.test/inactive", page_title: "null", pageviews: "9", users: "8" },
+      ];
+    }
+    return aggregateRows(sql);
+  });
+  const deps = dependencies(aggregate, executor(() => []));
+  deps.loadReleaseBundle = async () => ({
+    releaseId: 41,
+    audience: "embed" as const,
+    workbook: {
+      ...aggregateWorkbook,
+      urlReturnDirections: new Map([
+        [lookupHash("/catalog-title"), { page_title: "Catalog title", direction: "Cardiology", material_type: "article", access: "Врачи", is_active: true }],
+        [lookupHash("/null-title"), { page_title: "Null catalog", direction: "Cardiology", material_type: "article", access: "Врачи", is_active: true }],
+        [lookupHash("/empty-title"), { page_title: "Empty catalog", direction: "Cardiology", material_type: "article", access: "Врачи", is_active: true }],
+        [lookupHash("/whitespace-title"), { page_title: "Whitespace catalog", direction: "Cardiology", material_type: "article", access: "Врачи", is_active: true }],
+        [lookupHash("/inactive"), { page_title: "Inactive catalog", direction: "Neurology", material_type: "guide", access: "Врачи", is_active: false }],
+      ]),
+    },
+    bitrixPages: missingBitrix,
+    journeyTransitions: { source: missingBitrix.source, rows: [] },
+  });
+
+  const result = await loadAbbottBiDataWithDependencies(
+    7, ["90602537"], "2026-01-01", "2026-01-01", "embed", deps,
+  );
+
+  assert.deepEqual(result.page_stats.map((row) => ({
+    page_title: row.page_title,
+    direction: row.direction,
+    material_type: row.material_type,
+    access: row.access,
+    pageviews: row.pageviews,
+    users: row.users,
+  })), [
+    { page_title: "Catalog title", direction: "Cardiology", material_type: "article", access: "Врачи", pageviews: 4, users: 2 },
+    { page_title: "Empty catalog", direction: "Cardiology", material_type: "article", access: "Врачи", pageviews: 1, users: 1 },
+    { page_title: "Null catalog", direction: "Cardiology", material_type: "article", access: "Врачи", pageviews: 1, users: 1 },
+    { page_title: "Whitespace catalog", direction: "Cardiology", material_type: "article", access: "Врачи", pageviews: 1, users: 1 },
+  ]);
+});
+
+test("valid Metrika title remains authoritative over conflicting path metadata", async () => {
+  const aggregate = executor((sql) => {
+    if (sql.includes("canonical_fact_metrika_site_analytics_daily")) {
+      return [{ analytics_scope: "page", page_url: "https://example.test/raw-title", page_title: "Raw Metrika title", pageviews: "4", users: "2" }];
+    }
+    return aggregateRows(sql);
+  });
+  const deps = dependencies(aggregate, executor(() => []));
+  deps.loadReleaseBundle = async () => ({
+    releaseId: 41,
+    audience: "embed" as const,
+    workbook: {
+      ...aggregateWorkbook,
+      contentByTitle: new Map([[lookupHash("Raw Metrika title"), { page_title: "Catalog title", direction: "Cardiology", material_type: "article", access: "Врачи", is_active: true }]]),
+      urlReturnDirections: new Map([[lookupHash("/raw-title"), { page_title: "Wrong path", direction: "Neurology", material_type: "guide", access: "Гости", is_active: false }]]),
+    },
+    bitrixPages: missingBitrix,
+    journeyTransitions: { source: missingBitrix.source, rows: [] },
+  });
+
+  const result = await loadAbbottBiDataWithDependencies(
+    7, ["90602537"], "2026-01-01", "2026-01-01", "embed", deps,
+  );
+
+  assert.deepEqual(result.page_stats, [{
+    page_title: "Raw Metrika title",
+    url: "https://example.test/raw-title",
+    direction: "Cardiology",
+    material_type: "article",
+    access: "Врачи",
+    pageviews: 4,
+    users: 2,
+    bitrix_pageviews: 0,
+    bitrix_sessions: 0,
+    bitrix_users: 0,
+    bitrix_logged_in_sessions: 0,
+    bitrix_anonymous_sessions: 0,
+    bitrix_avg_session_duration: 0,
+  }]);
+});
+
+test("missing Metrika title resolves exact path before conflicting slug", async () => {
+  const aggregate = executor((sql) => {
+    if (sql.includes("canonical_fact_metrika_site_analytics_daily")) {
+      return [{ analytics_scope: "page", page_url: "https://example.test/materials/shared", page_title: "", pageviews: "4", users: "2" }];
+    }
+    return aggregateRows(sql);
+  });
+  const deps = dependencies(aggregate, executor(() => []));
+  deps.loadReleaseBundle = async () => ({
+    releaseId: 41,
+    audience: "embed" as const,
+    workbook: {
+      ...aggregateWorkbook,
+      contentBySlug: new Map([[lookupHash("shared"), { page_title: "Wrong slug", direction: "Neurology", material_type: "guide", access: "Гости", is_active: false }]]),
+      urlReturnDirections: new Map([[lookupHash("/materials/shared"), { page_title: "Catalog path title", direction: "Cardiology", material_type: "article", access: "Врачи", is_active: true }]]),
+    },
+    bitrixPages: missingBitrix,
+    journeyTransitions: { source: missingBitrix.source, rows: [] },
+  });
+
+  const result = await loadAbbottBiDataWithDependencies(
+    7, ["90602537"], "2026-01-01", "2026-01-01", "embed", deps,
+  );
+
+  assert.deepEqual(result.page_stats, [{
+    page_title: "Catalog path title",
+    url: "https://example.test/materials/shared",
+    direction: "Cardiology",
+    material_type: "article",
+    access: "Врачи",
+    pageviews: 4,
+    users: 2,
+    bitrix_pageviews: 0,
+    bitrix_sessions: 0,
+    bitrix_users: 0,
+    bitrix_logged_in_sessions: 0,
+    bitrix_anonymous_sessions: 0,
+    bitrix_avg_session_duration: 0,
+  }]);
 });
 
 test("loader pins every canonical fact query to the store bundle release when the pointer changes", async () => {

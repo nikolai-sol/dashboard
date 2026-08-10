@@ -16,6 +16,7 @@ import type {
   ZarukuSeoMetricRow,
   ZarukuSeoPositionTrendPoint,
   ZarukuYandexWebmasterPageRow,
+  ZarukuYandexWebmasterQueryPageRow,
   ZarukuYandexWebmasterQueryRow,
 } from "@/lib/types";
 
@@ -48,6 +49,27 @@ function webmasterQuery(overrides: Partial<ZarukuYandexWebmasterQueryRow> = {}):
     clicks: 20,
     ctr: 10,
     average_position: 8,
+    week_from: "2026-07-13",
+    week_to: "2026-07-19",
+    is_partial_week: false,
+    ...overrides,
+  };
+}
+
+function webmasterQueryPage(
+  overrides: Partial<ZarukuYandexWebmasterQueryPageRow> = {},
+): ZarukuYandexWebmasterQueryPageRow {
+  return {
+    week: "2026-W29",
+    query_id: "webmaster-query",
+    query: "инвалидность при онкологии",
+    page_id: "webmaster-page",
+    url: "https://zaruku.ru/yandex-landing/",
+    device: "ALL",
+    impressions: 7,
+    clicks: 1,
+    ctr: 14.2857,
+    average_position: 5,
     week_from: "2026-07-13",
     week_to: "2026-07-19",
     is_partial_week: false,
@@ -122,6 +144,7 @@ test("normalizes exact Russian phrases without fuzzy matching", () => {
   const rows = buildUnifiedSeoQueryRows({
     gscRows: [gscQuery({ query: "  Инвалидность   при онкологии " })],
     webmasterRows: [webmasterQuery({ query: "инвалидность при онкологии" })],
+    webmasterQueryPageRows: [],
     seoOsRows: [seoOsQuery({ query: "инвалидность после онкологии" })],
   });
 
@@ -137,6 +160,7 @@ test("aggregates repeated Google facts with weighted position", () => {
       gscQuery({ query_id: "b", page: "/b/", impressions: 300, clicks: 15, average_position: 6 }),
     ],
     webmasterRows: [],
+    webmasterQueryPageRows: [],
     seoOsRows: [],
   });
 
@@ -153,6 +177,7 @@ test("keeps Webmaster average position separate from SEO OS tracked position", (
   const [row] = buildUnifiedSeoQueryRows({
     gscRows: [],
     webmasterRows: [webmasterQuery({ average_position: 8 })],
+    webmasterQueryPageRows: [],
     seoOsRows: [seoOsQuery({ serp_position: 4, delta_prev: -2 })],
   });
 
@@ -174,6 +199,7 @@ test("sorts positions with nulls last in both directions", () => {
       gscQuery({ query_id: "none", query: "нет позиции", average_position: null }),
     ],
     webmasterRows: [],
+    webmasterQueryPageRows: [],
     seoOsRows: [],
   });
 
@@ -191,6 +217,7 @@ test("filters SEO OS movement and not-found rows without inventing zero position
   const rows = buildUnifiedSeoQueryRows({
     gscRows: [],
     webmasterRows: [],
+    webmasterQueryPageRows: [],
     seoOsRows: [
       seoOsQuery({ cluster_id: "up", query: "рост", delta_prev: -3 }),
       seoOsQuery({ cluster_id: "down", query: "падение", delta_prev: 2 }),
@@ -204,16 +231,37 @@ test("filters SEO OS movement and not-found rows without inventing zero position
   assert.equal(filterUnifiedSeoQueryRows(rows, "not_found")[0].seo_os?.tracked_position, null);
 });
 
-test("confirmed-landing filter keeps only rows with a GSC query-page relationship", () => {
+test("exact Webmaster pairs add landing URLs without changing Webmaster query totals", () => {
+  const [row] = buildUnifiedSeoQueryRows({
+    gscRows: [],
+    webmasterRows: [webmasterQuery({ impressions: 200, clicks: 20, average_position: 8 })],
+    webmasterQueryPageRows: [
+      webmasterQueryPage({ impressions: 999, clicks: 99, average_position: 1 }),
+      webmasterQueryPage({ page_id: "duplicate", url: "https://zaruku.ru/yandex-landing/" }),
+    ],
+    seoOsRows: [],
+  });
+
+  assert.deepEqual(row.webmaster_pages, ["https://zaruku.ru/yandex-landing/"]);
+  assert.deepEqual(row.webmaster, {
+    impressions: 200,
+    clicks: 20,
+    ctr: 10,
+    average_position: 8,
+  });
+});
+
+test("confirmed-landing filter keeps exact Google or Webmaster query-page relationships", () => {
   const rows = buildUnifiedSeoQueryRows({
     gscRows: [gscQuery({ query_id: "confirmed", query: "подтверждённая посадочная", page: "/confirmed/" })],
     webmasterRows: [webmasterQuery({ query_id: "wm-only", query: "только вебмастер" })],
+    webmasterQueryPageRows: [webmasterQueryPage({ query_id: "wm-only-pair", query: "только вебмастер" })],
     seoOsRows: [seoOsQuery({ cluster_id: "seo-only", query: "только seo os", matched_url: "/target/" })],
   });
 
   assert.deepEqual(
     filterUnifiedSeoQueryRows(rows, "confirmed_landing").map((row) => row.query),
-    ["подтверждённая посадочная"],
+    ["подтверждённая посадочная", "только вебмастер"],
   );
 });
 
@@ -227,6 +275,7 @@ test("top filters honor valid positive positions and ignore zero/null/invalid va
       gscQuery({ query_id: "too-deep", query: "query-too-deep", average_position: 21 }),
     ],
     webmasterRows: [],
+    webmasterQueryPageRows: [],
     seoOsRows: [],
   });
 
@@ -251,11 +300,13 @@ test("not-found filter treats non-positive positions as missing", () => {
       gscQuery({ query_id: "positive", query: "real-position", average_position: 5 }),
     ],
     webmasterRows: [],
+    webmasterQueryPageRows: [],
     seoOsRows: [],
   });
   const [missingSeoOsRow] = buildUnifiedSeoQueryRows({
     gscRows: [],
     webmasterRows: [],
+    webmasterQueryPageRows: [],
     seoOsRows: [seoOsQuery({ query: "os-missing", serp_position: null, status: "no_data", delta_prev: null })],
   });
 
