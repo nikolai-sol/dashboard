@@ -73,7 +73,7 @@ class ReconciliationContext:
     taxonomy: TaxonomyVersion
     entities: tuple[CanonicalClassification, ...]
     aliases: tuple[IdentityAlias, ...]
-    predecessor_active_content_entity_ids: tuple[int, ...] = ()
+    predecessor_content_entity_ids: tuple[int, ...] = ()
 
     def __post_init__(self) -> None:
         object.__setattr__(self, "predecessor_snapshot_ids", tuple(self.predecessor_snapshot_ids))
@@ -82,8 +82,8 @@ class ReconciliationContext:
         object.__setattr__(self, "aliases", tuple(self.aliases))
         object.__setattr__(
             self,
-            "predecessor_active_content_entity_ids",
-            tuple(self.predecessor_active_content_entity_ids),
+            "predecessor_content_entity_ids",
+            tuple(self.predecessor_content_entity_ids),
         )
         if (
             self.predecessor_release_id <= 0
@@ -93,10 +93,10 @@ class ReconciliationContext:
             or any(snapshot_id <= 0 for snapshot_id in self.predecessor_snapshot_ids)
             or any(
                 entity_id <= 0
-                for entity_id in self.predecessor_active_content_entity_ids
+                for entity_id in self.predecessor_content_entity_ids
             )
-            or len(set(self.predecessor_active_content_entity_ids))
-            != len(self.predecessor_active_content_entity_ids)
+            or len(set(self.predecessor_content_entity_ids))
+            != len(self.predecessor_content_entity_ids)
             or any(
                 len(digest) != 64
                 or any(character not in "0123456789abcdef" for character in digest.lower())
@@ -639,15 +639,15 @@ class CanonicalWeeklyProposalService:
             for item in items
             if item.content_entity_id is not None
         }
-        active_predecessor_entity_ids = set(
-            context.predecessor_active_content_entity_ids
+        predecessor_entity_ids = set(
+            context.predecessor_content_entity_ids
         )
         catalog_gaps = tuple(
             entity
             for entity in sorted(
                 context.entities, key=lambda value: value.content_entity_id
             )
-            if entity.content_entity_id in active_predecessor_entity_ids
+            if entity.content_entity_id in predecessor_entity_ids
             and entity.content_entity_id not in represented_entity_ids
             and entity.lifecycle_code != "archived"
             and (
