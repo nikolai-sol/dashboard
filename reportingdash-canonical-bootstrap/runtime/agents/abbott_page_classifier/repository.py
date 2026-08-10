@@ -1364,9 +1364,9 @@ class ContentRegistryRepository:
         if decision == "retire":
             cursor.execute(
                 """UPDATE portal_content_registry_aliases
-                   SET alias_status = 'retired', source_evidence = %s
+                   SET alias_status = 'retired'
                    WHERE id = %s AND alias_status = 'active'""",
-                (evidence, int(url_active[0][0])),
+                (int(url_active[0][0]),),
             )
             if getattr(cursor, "rowcount", 1) != 1:
                 raise RepositoryError("IDENTITY_COLLISION")
