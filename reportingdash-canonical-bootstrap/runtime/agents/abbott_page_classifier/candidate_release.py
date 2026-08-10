@@ -496,9 +496,10 @@ def _load_approval_bundle(
         first_conflict = conflict_values[0].value if conflict_values else None
         if scalar_conflict != first_conflict:
             raise CandidateMaterializationError("APPROVAL_BUNDLE_INVALID")
-        identity_collisions += sum(
-            code is ConflictCode.IDENTITY_COLLISION for code in conflict_values
-        )
+        if state == "ready":
+            identity_collisions += sum(
+                code is ConflictCode.IDENTITY_COLLISION for code in conflict_values
+            )
         if state == "ready" and (
             conflict_values or row.get("content_entity_id") is None
         ):
