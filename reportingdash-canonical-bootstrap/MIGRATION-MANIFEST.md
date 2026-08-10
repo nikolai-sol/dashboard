@@ -53,13 +53,13 @@ every runbook entrypoint and each repository-local Python dependency.
 | `runtime/agents/abbott_page_classifier/run_weekly_proposal.sh` | `agents/abbott_page_classifier/run_weekly_proposal.sh` | `71b76309ff5f96084c9d9e62654db9383e957f4a4d4acc821a7c723531243656` | Reviewed weekly proposal wrapper through the exact-3.11 launcher |
 | `runtime/agents/abbott_page_classifier/workflow_service.py` | `agents/abbott_page_classifier/workflow_service.py` | `56c56798754638abbe28d6da1d6bec7e826bdbc648fabb7e9d0a12ee4aa6c6fb` | Canonical weekly proposal service |
 | `runtime/agents/abbott_page_classifier/workflow_repository.py` | `agents/abbott_page_classifier/workflow_repository.py` | `5de426702519de712e8fb74edfb64d4bdcc82422d847b04b55ce23e974b1cf11` | MySQL reconciliation staging repository |
-| `runtime/agents/abbott_page_classifier/repository.py` | `agents/abbott_page_classifier/repository.py` | `6e6b1073f189919a9cdf11e8d19fa41bbb87dcd650b957cba91aa0d515dc26e9` | Canonical content registry repository |
+| `runtime/agents/abbott_page_classifier/repository.py` | `agents/abbott_page_classifier/repository.py` | `5f290cc62d045e4d6a27bcb6dd5f3304081d8afe6efad5f8d74d104091c00638` | Canonical content registry repository |
 | `runtime/agents/abbott_page_classifier/batch_service.py` | `agents/abbott_page_classifier/batch_service.py` | `619d3b2ce8018be34c150b4b66c74086d04bf1ee6190eb778e9067d7fca589b7` | Immutable batch construction and acceptance ingestion |
 | `runtime/agents/abbott_page_classifier/reconcile.py` | `agents/abbott_page_classifier/reconcile.py` | `61b461c29cffa6cc8bc2a1cd900394d465ed910c6f47643339f7d0989c96b5ed` | Deterministic reconciliation and anti-flip gate |
 | `runtime/agents/abbott_page_classifier/identity.py` | `agents/abbott_page_classifier/identity.py` | `39e0e961dbb5c91a65a737f953f1534141f84719d9690ddc648c4f313d6da6d7` | Canonical identity resolution |
 | `runtime/agents/abbott_page_classifier/sources.py` | `agents/abbott_page_classifier/sources.py` | `d2fd74b70dd61a51c0791c5ac9276812177a272c1887b06c1f293374cf098aef` | Offline Registry 1/Registry 2 snapshot parsers |
 | `runtime/agents/abbott_page_classifier/llm_classifier.py` | `agents/abbott_page_classifier/llm_classifier.py` | `43cfd180f64da3afe74aa8252e644fa4ddecc1d294783f9660274b0b17eb3ce7` | Privacy-minimized classifier adapter, invoked only with execute authorization |
-| `runtime/agents/abbott_page_classifier/sheets_sync.py` | `agents/abbott_page_classifier/sheets_sync.py` | `ddbeb1e2741825aadc85eb70185b6517166ff02c7f95695a893082ae46398610` | Approval projection publisher and accepted snapshot reader |
+| `runtime/agents/abbott_page_classifier/sheets_sync.py` | `agents/abbott_page_classifier/sheets_sync.py` | `601111217c06d9b9b1406c6fa664157aa6bacfd5d677970853ec73db110bf8f7` | Approval projection publisher and accepted snapshot reader |
 | `src/db/migrations/049_abbott_content_reconciliation_staging.sql` | `dashboard-next/src/db/migrations/049_abbott_content_reconciliation_staging.sql` | `783414b93e48edf29c5eece51de21db97bf37d9dfeeb6e01490e12729e6afca9` | Additive reconciliation staging schema; package only, never applied by runtime |
 
 ## collectors/
