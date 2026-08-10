@@ -636,6 +636,33 @@ class ApprovalIngestionTests(unittest.TestCase):
                 self.assertEqual(result.status, "ingested")
                 self.assertEqual(event_calls(connection)[0][1][8], "archive_candidate")
 
+    def test_existing_archive_candidate_can_receive_metadata_without_new_archive_evidence(self):
+        item = replace(
+            approval_item(41),
+            final_direction_code="gastroenterology",
+            final_lifecycle_code="archive_candidate",
+        )
+        connection = Task7Connection(
+            items=(item,),
+            predecessor_event_row=(
+                700,
+                "cardiology",
+                "articles",
+                "doctors",
+                "archive_candidate",
+            ),
+            evidence_by_entity={
+                41: reviewed_canonical_evidence(lifecycle="archive_candidate")
+            },
+        )
+
+        result = ingest_accepted_batch(
+            connection.snapshot(), repository_for(connection)
+        )
+
+        self.assertEqual(result.status, "ingested")
+        self.assertEqual(event_calls(connection)[0][1][8], "archive_candidate")
+
     def test_tampered_hash_bound_evidence_fails_before_writes(self):
         cases = (
             (
