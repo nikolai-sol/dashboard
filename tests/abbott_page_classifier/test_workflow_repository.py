@@ -350,6 +350,31 @@ class BootstrapCursor(FakeCursor):
                     == fingerprints
                 )
             ]
+        elif (
+            "SELECT entity.id, entity.registry_status" in normalized
+            and "entity.id IN" in normalized
+        ):
+            entity_ids = {int(value) for value in params[1:]}
+            self.rows = [
+                (entity_id, entity["registry_status"])
+                for entity_id, entity in sorted(self.entities.items())
+                if entity_id in entity_ids
+            ]
+        elif (
+            "SELECT event.id, event.content_entity_id" in normalized
+            and "event.id IN" in normalized
+        ):
+            event_ids = {int(value) for value in params}
+            self.rows = [
+                (
+                    event["id"], entity_id, event["taxonomy_version_id"],
+                    event["direction_code"], event["material_type_code"],
+                    event["access_code"], event["lifecycle_code"],
+                    event["event_fingerprint"],
+                )
+                for entity_id, event in sorted(self.events.items())
+                if event["id"] in event_ids
+            ]
         elif "FROM portal_content_registry_aliases" in normalized and "alias_type = %s" in normalized:
             alias_type, alias_hash, scope = params[1], params[2], params[3]
             self.rows = [
@@ -697,6 +722,46 @@ class MySqlWorkflowStoreTests(unittest.TestCase):
         self.assertEqual(sorted(entity.content_entity_id for entity in context_value.entities), [7, 8])
         self.assertEqual(connection.commit_count, 1)
         self.assertEqual(connection.rollback_count, 0)
+
+    def test_successor_release_uses_catalog_provenance_without_rebootstrapping_entities(self):
+        connection = BootstrapConnection()
+        cursor = connection.cursor_instance
+        event = cursor.events[7]
+        cursor.catalog = [
+            cursor.catalog[0]
+            + (7, event["id"], event["event_fingerprint"])
+        ]
+        cursor.entities[7]["source_evidence"] = {
+            "authority": "registry1_reconciliation",
+            "reconciliation_run_id": 3,
+        }
+
+        context = MySqlWorkflowStore(
+            lambda: connection
+        ).load_reconciliation_context(CONFIG)
+
+        self.assertEqual(
+            [entity.content_entity_id for entity in context.entities], [7]
+        )
+        self.assertEqual(cursor.inserted_entity_ids, [])
+        self.assertEqual(connection.commit_count, 1)
+        self.assertEqual(connection.rollback_count, 0)
+
+    def test_successor_release_rejects_catalog_event_fingerprint_mismatch(self):
+        connection = BootstrapConnection()
+        cursor = connection.cursor_instance
+        event = cursor.events[7]
+        cursor.catalog = [cursor.catalog[0] + (7, event["id"], "0" * 64)]
+
+        with self.assertRaisesRegex(
+            RepositoryError, "BASELINE_PROVENANCE_EVENT_MISMATCH"
+        ):
+            MySqlWorkflowStore(
+                lambda: connection
+            ).load_reconciliation_context(CONFIG)
+
+        self.assertEqual(connection.commit_count, 0)
+        self.assertEqual(connection.rollback_count, 1)
 
     def test_identityless_baseline_bootstrap_is_replay_safe_by_source_evidence(self):
         connection = BootstrapConnection()
