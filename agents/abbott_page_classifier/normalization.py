@@ -201,7 +201,7 @@ def normalize_url(raw: str) -> NormalizedUrl:
     """Normalize a URL while retaining semantic query parameters deterministically."""
 
     value = (raw or "").replace("&amp;", "&").strip()
-    if not value:
+    if not value or value.startswith("//"):
         return _empty_normalized_url()
     is_absolute = "://" in value
     if not is_absolute:
@@ -228,7 +228,8 @@ def normalize_url(raw: str) -> NormalizedUrl:
             scheme = "https"
         port = parts.port
         source_default_port = 443 if parts.scheme.casefold() == "https" else 80
-        if port and port != source_default_port:
+        final_default_port = 443 if scheme == "https" else 80
+        if port and port not in {source_default_port, final_default_port}:
             host = f"{host}:{port}"
         path = _normalize_path(parts.path)
         query_pairs = [
