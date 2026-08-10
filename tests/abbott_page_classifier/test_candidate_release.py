@@ -15,6 +15,7 @@ from agents.abbott_page_classifier.candidate_release import (
     CandidateMaterializationError,
     CONTENT_CONTROL_VALUES,
     GateReport,
+    _database_datetime,
     _overlay_current_batch_events,
     build_lookup_projection,
     materialize_content_candidate,
@@ -871,6 +872,12 @@ class ValidationTransitionConnection:
 
 
 class CandidateReleaseTest(unittest.TestCase):
+    def test_catalog_datetime_is_canonicalized_to_mysql_column_precision(self):
+        self.assertEqual(
+            _database_datetime("2026-08-10T10:30:45.415864+00:00"),
+            datetime(2026, 8, 10, 10, 30, 45),
+        )
+
     def _prepare_gate(self, connection):
         with (
             patch(
