@@ -3,6 +3,9 @@
 This manifest maps current unversioned root files to their intended locations
 in the future `reportingdash-canonical` repository.
 
+Observed page identity fixes use a DB-native successor release and never
+trigger a Metrika backfill.
+
 ## Canonical synchronized runtime files
 
 These files are byte-for-byte copies of the root canonical authorities. Verify
