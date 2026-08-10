@@ -326,6 +326,29 @@ class BootstrapCursor(FakeCursor):
             self.rows = [(3, DIGEST)]
         elif "FROM portal_content_taxonomy_terms" in normalized:
             self.rows = [(kind, code) for kind, codes in TERMS.items() for code in codes]
+        elif "WITH ranked_catalog AS" in normalized:
+            rows_by_entity = {}
+            for row in self.catalog:
+                entity_id = int(row[11]) if len(row) > 11 and row[11] else None
+                if entity_id is None:
+                    for current_id, entity in self.entities.items():
+                        if (
+                            entity["material_id"] == row[2]
+                            or entity["canonical_url"] == row[1]
+                        ):
+                            entity_id = current_id
+                            break
+                if entity_id is None:
+                    continue
+                candidate = (
+                    entity_id, row[0], row[1], row[5], row[3], row[4], row[6]
+                )
+                prior = rows_by_entity.get(entity_id)
+                if prior is None or (not prior[2], prior[2]) > (
+                    not candidate[2], candidate[2]
+                ):
+                    rows_by_entity[entity_id] = candidate
+            self.rows = [rows_by_entity[key] for key in sorted(rows_by_entity)]
         elif normalized.startswith(
             "SELECT DISTINCT content_entity_id FROM portal_content_catalog"
         ):
@@ -623,6 +646,10 @@ class MySqlWorkflowStoreTests(unittest.TestCase):
         self.assertEqual(eventless.event_id, None)
         self.assertNotIn(9, context.predecessor_content_entity_ids)
         self.assertTrue(context.predecessor_content_entity_ids)
+        self.assertEqual(
+            {entity.content_entity_id for entity in context.predecessor_catalog_entities},
+            set(context.predecessor_content_entity_ids),
+        )
         sql = "\n".join(statement for statement, _ in connection.calls)
         self.assertIn("FOR UPDATE", sql)
         self.assertIn("LEFT JOIN latest_events AS event", sql)

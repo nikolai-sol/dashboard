@@ -156,7 +156,15 @@ def context(
     aliases=(),
     taxonomy=TAXONOMY,
     predecessor_content_entity_ids=(),
+    predecessor_catalog_entities=None,
 ):
+    if predecessor_catalog_entities is None:
+        predecessor_ids = set(predecessor_content_entity_ids)
+        predecessor_catalog_entities = tuple(
+            entity
+            for entity in entities
+            if entity.content_entity_id in predecessor_ids
+        )
     return ReconciliationContext(
         predecessor_release_id=8,
         predecessor_snapshot_ids=(11, 12),
@@ -167,6 +175,7 @@ def context(
         predecessor_content_entity_ids=tuple(
             predecessor_content_entity_ids
         ),
+        predecessor_catalog_entities=tuple(predecessor_catalog_entities),
     )
 
 
@@ -218,7 +227,7 @@ class WeeklyProposalServiceTests(unittest.TestCase):
         entity = CanonicalClassification(
             7,
             "Материал без направления",
-            "https://abbottpro.ru/articles/gap",
+            "",
             None,
             "articles",
             "all",
@@ -232,6 +241,12 @@ class WeeklyProposalServiceTests(unittest.TestCase):
                 context(
                     entities=(entity,),
                     predecessor_content_entity_ids=(entity.content_entity_id,),
+                    predecessor_catalog_entities=(
+                        replace(
+                            entity,
+                            url="https://abbottpro.ru/articles/gap",
+                        ),
+                    ),
                 )
             )
             service = CanonicalWeeklyProposalService(
@@ -250,6 +265,10 @@ class WeeklyProposalServiceTests(unittest.TestCase):
         self.assertEqual(gap.identity_status, "matched")
         self.assertEqual(gap.content_entity_id, entity.content_entity_id)
         self.assertEqual(gap.reconciliation_input.registry1.source_name, "canonical_catalog")
+        self.assertEqual(
+            gap.reconciliation_input.active_canonical.url,
+            "https://abbottpro.ru/articles/gap",
+        )
         self.assertEqual(store.entity_creations, [])
         self.assertEqual(receipt.eligible_count, 1)
         self.assertEqual(receipt.ready_count, 1)
