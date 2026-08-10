@@ -95,6 +95,14 @@ test("release scans reject private data outside public while allowing Abbott sch
     await writeFile(path.join(releaseRoot, "src", "db", "migrations", "041_abbott_private_visit_user_ids.sql"), "DDL");
     await writeFile(path.join(releaseRoot, "src", "db", "migrations", "044_abbott_private_visit_utm_source.sql"), "DDL");
     await writeFile(path.join(releaseRoot, "src", "db", "migrations", "046_abbott_release_source_integrity.sql"), "DDL");
+    await writeFile(path.join(releaseRoot, "src", "db", "migrations", "047_abbott_content_registry_workflow.sql"), "DDL");
+    await writeFile(path.join(releaseRoot, "src", "db", "migrations", "048_abbott_content_candidate_provenance.sql"), "DDL");
+    await writeFile(path.join(releaseRoot, "src", "db", "migrations", "049_abbott_content_reconciliation_staging.sql"), "DDL");
+    await mkdir(path.join(releaseRoot, "reportingdash-canonical-bootstrap", "src", "db", "migrations"), { recursive: true });
+    await writeFile(
+      path.join(releaseRoot, "reportingdash-canonical-bootstrap", "src", "db", "migrations", "049_abbott_content_reconciliation_staging.sql"),
+      "DDL",
+    );
     await writeFile(path.join(releaseRoot, "src", "db", "migrations", "034_abbott_unreviewed.sql"), "DDL");
     await writeFile(path.join(releaseRoot, "public", "abbott", "source.json"), "fixture");
 
