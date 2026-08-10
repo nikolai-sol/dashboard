@@ -881,15 +881,15 @@ class MySqlWorkflowStore:
         ):
             raise RepositoryError("BASELINE_PROVENANCE_ENTITY_MISMATCH")
 
-        classifications: dict[int, set[tuple[str | None, str | None, str, str]]] = {}
-        attached_events: dict[int, tuple[int, str, tuple[str | None, str | None, str, str]]] = {}
+        classifications: dict[int, set[tuple[str | None, str | None, str, bool]]] = {}
+        attached_events: dict[int, tuple[int, str, tuple[str | None, str | None, str, bool]]] = {}
         for row in rows:
             entity_id = int(row[11])
             classification = (
                 self._taxonomy_code("direction", row[5]),
                 self._taxonomy_code("material_type", row[3]),
                 self._taxonomy_code("access", row[4]) or "unspecified",
-                "active" if bool(row[6]) else "archive_candidate",
+                bool(row[6]),
             )
             classifications.setdefault(entity_id, set()).add(classification)
             event_id = int(row[12] or 0)
@@ -935,11 +935,12 @@ class MySqlWorkflowStore:
             expected_entity, expected_fingerprint, expected_classification = attached_events[
                 int(event[0])
             ]
+            stored_lifecycle = self._taxonomy_code("lifecycle", event[6]) or "unknown"
             stored_classification = (
                 str(event[3]) if event[3] is not None else None,
                 str(event[4]) if event[4] is not None else None,
                 str(event[5]) if event[5] is not None else "unspecified",
-                str(event[6]),
+                stored_lifecycle != "archived",
             )
             if (
                 int(event[1]) != expected_entity
