@@ -511,6 +511,11 @@ class MySqlWorkflowStore:
             self._bootstrap_registry_cursor(cursor, predecessor_id, taxonomy_id)
             entities = self._load_entities(cursor)
             aliases = self._load_aliases(cursor)
+            predecessor_active_content_entity_ids = (
+                self._load_predecessor_active_content_entity_ids(
+                    cursor, predecessor_id
+                )
+            )
             connection.commit()
             return ReconciliationContext(
                 predecessor_release_id=predecessor_id,
@@ -519,6 +524,9 @@ class MySqlWorkflowStore:
                 taxonomy=taxonomy,
                 entities=entities,
                 aliases=aliases,
+                predecessor_active_content_entity_ids=(
+                    predecessor_active_content_entity_ids
+                ),
             )
         except RepositoryError:
             ContentRegistryRepository._rollback(connection)
@@ -637,6 +645,26 @@ class MySqlWorkflowStore:
             )
             for row in cursor.fetchall()
         )
+
+    @staticmethod
+    def _load_predecessor_active_content_entity_ids(
+        cursor, predecessor_id: int
+    ) -> tuple[int, ...]:
+        cursor.execute(
+            """
+            SELECT DISTINCT content_entity_id
+            FROM portal_content_catalog
+            WHERE canonical_release_id = %s
+              AND is_active = 1
+              AND content_entity_id IS NOT NULL
+            ORDER BY content_entity_id
+            """,
+            (int(predecessor_id),),
+        )
+        values = tuple(int(row[0]) for row in cursor.fetchall())
+        if any(value <= 0 for value in values):
+            raise RepositoryError("BASELINE_ENTITY_MISMATCH")
+        return values
 
     def _bootstrap_registry_cursor(self, cursor, predecessor_id: int, taxonomy_id: int) -> None:
         cursor.execute(
