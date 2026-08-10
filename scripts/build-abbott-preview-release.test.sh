@@ -37,9 +37,24 @@ if DRY_RUN=1 TEST_PREVIEW_RELEASE_ROOT="$TARGET_ROOT" RUN_ID=unsafe APP_DIR="$SO
   echo 'builder accepted unsafe run id' >&2
   exit 1
 fi
+
+ROOT_LINK="$TMP_DIR/root-link"
+ln -s "$TMP_DIR/missing-target" "$ROOT_LINK"
+if DRY_RUN=1 TEST_PREVIEW_RELEASE_ROOT="$ROOT_LINK/releases" RUN_ID="$RUN_ID" APP_DIR="$SOURCE" APP_PORT=3301 \
+  bash "$SCRIPT_DIR/build-abbott-preview-release.sh" >/dev/null 2>&1; then
+  echo 'builder accepted a symlink ancestor before creating the release root' >&2
+  exit 1
+fi
 if DRY_RUN=1 TEST_PREVIEW_RELEASE_ROOT="$TMP_DIR/outside" RUN_ID="$RUN_ID" APP_DIR="$SOURCE" APP_PORT=3001 \
   bash "$SCRIPT_DIR/build-abbott-preview-release.sh" >/dev/null 2>&1; then
   echo 'builder accepted production port' >&2
+  exit 1
+fi
+
+ln -s "$SOURCE/.next/static/a.js" "$SOURCE/public/escaped.js"
+if DRY_RUN=1 TEST_PREVIEW_RELEASE_ROOT="$TMP_DIR/symlink-releases" RUN_ID="$RUN_ID" APP_DIR="$SOURCE" APP_PORT=3301 \
+  bash "$SCRIPT_DIR/build-abbott-preview-release.sh" >/dev/null 2>&1; then
+  echo 'builder accepted a nested symlinked source asset' >&2
   exit 1
 fi
 
