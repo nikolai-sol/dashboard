@@ -274,7 +274,7 @@ After the changes, the same command passed (`Ran 1 test ... OK`).
 # all 37 attested files: OK
 
 python3 bootstrap-manifest verifier
-# bootstrap manifest verified: 44 synchronized entries
+# bootstrap manifest verified: 45 synchronized entries
 
 PYTHONPATH=/tmp/abbott-task1-deps:. /Users/nafanya/.local/bin/python3.11 -m unittest discover -s tests/abbott_page_classifier -p 'test_*.py'
 # Ran 424 tests: OK (1 skipped)
