@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import datetime as dt
+import copy
 from dataclasses import replace
 import unittest
 
@@ -484,6 +485,178 @@ class WorkflowConnection:
         pass
 
 
+class StatefulAcceptanceCursor:
+    """Minimal transactional MySQL model for acceptance-boundary lifecycle tests."""
+
+    def __init__(self, connection: "StatefulAcceptanceConnection"):
+        self.connection = connection
+        self.rows: list[tuple[object, ...]] = []
+        self.lastrowid = 0
+        self.rowcount = 0
+
+    def execute(self, sql: str, params: tuple[object, ...] = ()) -> None:
+        normalized = " ".join(sql.split())
+        self.connection.calls.append((normalized, params))
+        self.rows = []
+        self.rowcount = 0
+        if "FROM portal_content_approval_batches AS batch" in normalized:
+            self.rows = [self.connection.batch_row()]
+        elif "FROM portal_content_taxonomy_terms" in normalized:
+            self.rows = [
+                (kind, code)
+                for kind, codes in self.connection.batch.taxonomy_terms.items()
+                for code in codes
+            ]
+        elif "FROM portal_content_approval_items" in normalized and "FOR UPDATE" in normalized:
+            self.rows = self.connection.item_rows()
+        elif "FROM portal_content_registry_entities" in normalized and "FOR UPDATE" in normalized:
+            self.rows = (
+                [(self.connection.selected_entity_id,)]
+                if params[0] == self.connection.selected_entity_id
+                else []
+            )
+        elif "FROM portal_content_classification_events" in normalized:
+            self.rows = []
+        elif "FROM portal_content_registry_aliases" in normalized:
+            self.rows = [
+                (
+                    alias["id"], alias["content_entity_id"],
+                    alias["alias_type"], alias["alias_status"],
+                )
+                for alias in self.connection.aliases
+            ]
+        elif normalized.startswith("INSERT INTO portal_content_url_alias_decision_events"):
+            self.connection.decision_events.append({
+                "approval_batch_id": params[0],
+                "approval_item_id": params[1],
+                "accepted_decision_hash": params[2],
+                "url_alias_decision": params[6],
+            })
+            self.lastrowid = 800 + len(self.connection.decision_events)
+        elif normalized.startswith("INSERT INTO portal_content_registry_aliases"):
+            self.connection.aliases.append({
+                "id": 900 + len(self.connection.aliases) + 1,
+                "content_entity_id": params[1],
+                "alias_type": "url",
+                "alias_status": "active",
+            })
+            self.lastrowid = self.connection.aliases[-1]["id"]
+        elif normalized.startswith("UPDATE portal_content_approval_items"):
+            index = int(params[7]) - 100
+            existing = self.connection.approval_items[index]
+            self.connection.approval_items[index] = replace(
+                existing,
+                final_direction_code=params[0],
+                final_material_type_code=params[1],
+                final_access_code=params[2],
+                final_lifecycle_code=params[3],
+                decision_reason=params[4],
+                selected_content_entity_id=params[5],
+                url_alias_decision=params[6],
+            )
+            self.rowcount = 1
+        elif normalized.startswith("UPDATE portal_content_approval_batches"):
+            self.connection.batch_status = str(params[0])
+            self.connection.accepted_decision_hash = str(params[1])
+            self.connection.accepted_by = str(params[2])
+            self.connection.accepted_at = params[3]
+            self.connection.accepted_count = int(params[4])
+            self.connection.skipped_count = int(params[5])
+            self.rowcount = 1
+        else:
+            raise AssertionError(f"unhandled acceptance SQL: {normalized}")
+
+    def fetchone(self):
+        return self.rows[0] if self.rows else None
+
+    def fetchall(self):
+        return list(self.rows)
+
+    def close(self) -> None:
+        pass
+
+
+class StatefulAcceptanceConnection:
+    def __init__(self, batch, *, selected_entity_id: int, aliases=None):
+        self.batch = batch
+        self.selected_entity_id = selected_entity_id
+        self.approval_items = list(batch.items)
+        self.aliases = copy.deepcopy(aliases or [])
+        self.decision_events: list[dict[str, object]] = []
+        self.batch_status = "published"
+        self.accepted_decision_hash = None
+        self.accepted_by = None
+        self.accepted_at = None
+        self.accepted_count = 0
+        self.skipped_count = 0
+        self.calls: list[tuple[str, tuple[object, ...]]] = []
+        self.commit_count = 0
+        self.rollback_count = 0
+        self._transaction_snapshot = None
+        self.cursor_instance = StatefulAcceptanceCursor(self)
+
+    def cursor(self):
+        self._transaction_snapshot = (
+            list(self.approval_items), copy.deepcopy(self.aliases),
+            copy.deepcopy(self.decision_events), self.batch_status,
+            self.accepted_decision_hash, self.accepted_by, self.accepted_at,
+            self.accepted_count, self.skipped_count,
+        )
+        return self.cursor_instance
+
+    def batch_row(self):
+        counts = {
+            state: sum(1 for item in self.approval_items if item.readiness_state == state)
+            for state in ("ready", "conflict", "unresolved", "rejected", "no_change")
+        }
+        return (
+            self.batch.batch_key, 3, self.batch.taxonomy_digest,
+            self.batch.taxonomy_version, self.batch.taxonomy_digest,
+            self.batch.published_input_hash, self.batch_status, "sheet-123",
+            self.accepted_decision_hash, self.accepted_by, self.accepted_at,
+            counts["ready"], counts["conflict"], counts["unresolved"],
+            counts["rejected"], counts["no_change"], self.accepted_count,
+            self.skipped_count,
+        )
+
+    def item_rows(self):
+        return [
+            (
+                100 + index, item.content_entity_id, item.input_hash, item.title,
+                item.url, item.final_direction_code, item.final_material_type_code,
+                item.final_access_code, item.final_lifecycle_code, item.readiness_state,
+                item.row_hash, item.decision_reason,
+                ContentRegistryRepository._json(item.proposal_evidence),
+                ContentRegistryRepository._json([
+                    code.value if hasattr(code, "value") else str(code)
+                    for code in item.conflict_codes
+                ]),
+                item.conflict_codes[0].value if item.conflict_codes and hasattr(item.conflict_codes[0], "value") else (
+                    str(item.conflict_codes[0]) if item.conflict_codes else None
+                ),
+                item.selected_content_entity_id, item.url_alias_decision,
+            )
+            for index, item in enumerate(self.approval_items)
+        ]
+
+    def commit(self):
+        self.commit_count += 1
+        self._transaction_snapshot = None
+
+    def rollback(self):
+        self.rollback_count += 1
+        if self._transaction_snapshot is not None:
+            (
+                self.approval_items, self.aliases, self.decision_events, self.batch_status,
+                self.accepted_decision_hash, self.accepted_by, self.accepted_at,
+                self.accepted_count, self.skipped_count,
+            ) = self._transaction_snapshot
+            self._transaction_snapshot = None
+
+    def close(self):
+        pass
+
+
 def accepted_batch_row(
     *,
     published_hash: str | None = None,
@@ -584,6 +757,92 @@ def acceptance_workflow_row(
 
 
 class ContentRegistryRepositoryTests(unittest.TestCase):
+    def test_record_acceptance_applies_sheet_attach_to_blank_published_collision_atomically(self):
+        published_item = replace(
+            approval_item(None, readiness="conflict"),
+            url="https://abbottpro.ru/review/collision",
+            conflict_codes=("IDENTITY_COLLISION",),
+            decision_reason=None,
+        )
+        published = audited_batch((published_item,))
+        accepted_item = replace(
+            published.items[0],
+            selected_content_entity_id=88,
+            url_alias_decision="attach",
+            decision_reason="same reviewed material",
+        )
+        snapshot = AcceptedBatchSnapshot(
+            batch_key=published.batch_key,
+            published_input_hash=published.published_input_hash,
+            accepted_decision_hash=compute_accepted_decision_hash((accepted_item,)),
+            items=(accepted_item,),
+            accepted_by="content-manager",
+            accepted_at="2026-08-05T12:00:00Z",
+        )
+        connection = StatefulAcceptanceConnection(published, selected_entity_id=88)
+        self.assertIsNone(connection.approval_items[0].url_alias_decision)
+        self.assertIsNone(connection.approval_items[0].selected_content_entity_id)
+        self.assertEqual(snapshot.published_input_hash, published.published_input_hash)
+
+        ContentRegistryRepository(lambda: connection).record_batch_acceptance(
+            17, snapshot, "sheet-123"
+        )
+
+        self.assertEqual(connection.batch_status, "accepted")
+        self.assertEqual(connection.approval_items[0].url_alias_decision, "attach")
+        self.assertEqual(connection.approval_items[0].selected_content_entity_id, 88)
+        self.assertEqual(len(connection.decision_events), 1)
+        self.assertEqual(
+            connection.decision_events[0]["accepted_decision_hash"],
+            snapshot.accepted_decision_hash,
+        )
+        self.assertEqual(len(connection.aliases), 1)
+        self.assertEqual(connection.aliases[0]["content_entity_id"], 88)
+        self.assertEqual(connection.aliases[0]["alias_type"], "url")
+        self.assertEqual(connection.commit_count, 1)
+        self.assertEqual(connection.rollback_count, 0)
+
+    def test_record_acceptance_rolls_back_when_locked_canonical_url_has_other_owner(self):
+        published_item = replace(
+            approval_item(None, readiness="conflict"),
+            url="https://abbottpro.ru/review/collision",
+            conflict_codes=("IDENTITY_COLLISION",),
+            decision_reason=None,
+        )
+        published = audited_batch((published_item,))
+        accepted_item = replace(
+            published.items[0],
+            selected_content_entity_id=88,
+            url_alias_decision="attach",
+            decision_reason="same reviewed material",
+        )
+        snapshot = AcceptedBatchSnapshot(
+            batch_key=published.batch_key,
+            published_input_hash=published.published_input_hash,
+            accepted_decision_hash=compute_accepted_decision_hash((accepted_item,)),
+            items=(accepted_item,),
+            accepted_by="content-manager",
+            accepted_at="2026-08-05T12:00:00Z",
+        )
+        connection = StatefulAcceptanceConnection(
+            published,
+            selected_entity_id=88,
+            aliases=[{"id": 901, "content_entity_id": 99, "alias_type": "canonical_url", "alias_status": "active"}],
+        )
+
+        with self.assertRaises(RepositoryError) as raised:
+            ContentRegistryRepository(lambda: connection).record_batch_acceptance(
+                17, snapshot, "sheet-123"
+            )
+
+        self.assertEqual(raised.exception.code, "IDENTITY_COLLISION")
+        self.assertEqual(connection.batch_status, "published")
+        self.assertEqual(connection.decision_events, [])
+        self.assertIsNone(connection.approval_items[0].url_alias_decision)
+        self.assertEqual(len(connection.aliases), 1)
+        self.assertEqual(connection.commit_count, 0)
+        self.assertEqual(connection.rollback_count, 1)
+
     @staticmethod
     def _published_item_rows(batch):
         return [

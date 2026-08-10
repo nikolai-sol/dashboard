@@ -30,7 +30,7 @@
 
 ```text
 PYTHONPATH=/tmp/abbott-task1-deps:. /Users/nafanya/.local/bin/python3.11 -m unittest tests.abbott_page_classifier.test_sheets_sync tests.abbott_page_classifier.test_approval_ingestion tests.abbott_page_classifier.test_repository tests.abbott_page_classifier.test_workflow_repository tests.test_abbott_content_registry_schema tests.test_abbott_runtime_closure.AbbottRuntimeClosureTest.test_all_synchronized_bootstrap_copies_match_root_authorities_and_manifest tests.test_abbott_runtime_closure.AbbottRuntimeClosureTest.test_runtime_manifest_covers_runbook_entrypoints_and_local_import_closure tests.test_abbott_runtime_closure.AbbottRuntimeClosureTest.test_bootstrap_manifest_hashes_every_runtime_file_against_root_authority
-# Ran 142 tests in 0.441s: OK
+# Ran 145 tests in 0.446s: OK
 ```
 
 ## Authority closure
@@ -74,3 +74,20 @@ PYTHONPATH=/tmp/abbott-task1-deps:. /Users/nafanya/.local/bin/python3.11 -m unit
   integer selected entity ID. The existing reason-required validation remains.
 - Retirement changes only alias status. It does not overwrite the original
   alias `source_evidence`; the immutable decision event is the retirement audit.
+
+## Final review follow-up: stateful acceptance lifecycle
+
+- Added stateful `record_batch_acceptance` boundary tests that begin with a
+  persisted published `IDENTITY_COLLISION` item whose decision cells are blank
+  and whose original row/batch hashes remain authoritative. The accepted
+  snapshot then supplies the Sheets-review `attach` decision.
+- The successful path proves one transaction durably writes the accepted batch
+  state, approval-item decision fields, immutable decision event, and exactly
+  one strong `url` alias for the selected entity.
+- A locked conflicting `canonical_url` owned by another entity raises
+  `IDENTITY_COLLISION`; transaction rollback restores the published batch,
+  blank approval-item decision fields, and leaves no decision event or alias
+  mutation.
+- TDD: both tests first failed because the stateful transaction fake was absent
+  (`NameError`), then passed after the fake implemented the repository's actual
+  lock/read/write sequence and rollback snapshot semantics.
