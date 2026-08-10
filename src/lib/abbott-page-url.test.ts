@@ -1,11 +1,25 @@
 import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
 import test from "node:test";
 
 import {
   isAbbottWebPageUrl,
+  normalizeAbbottContentIdentityUrl,
   normalizeAbbottPagePath,
   normalizeAbbottPageUrl,
 } from "@/lib/abbott-page-url";
+
+const identityCases = JSON.parse(
+  readFileSync(new URL("./abbott-url-identity-cases.json", import.meta.url), "utf8"),
+) as Array<{ raw: string; value: string; path: string }>;
+
+test("normalizes Abbott content identities from shared parity fixtures", () => {
+  for (const identityCase of identityCases) {
+    const value = normalizeAbbottContentIdentityUrl(identityCase.raw);
+    assert.equal(value, identityCase.value, identityCase.raw);
+    assert.equal(value ? new URL(value).pathname : "", identityCase.path, identityCase.raw);
+  }
+});
 
 test("normalizes absolute Abbott page URLs without tracking identity", () => {
   assert.equal(
