@@ -1229,7 +1229,8 @@ def _authorize_current_batch_events(
                     )
                     or (
                         current_value is None
-                        and final_value != predecessor_value
+                        and predecessor_value
+                        not in (None, "undetermined", "unspecified")
                     )
                     for current_value, final_value, predecessor_value in zip(
                         current_values, final_values, predecessor_values or ()
