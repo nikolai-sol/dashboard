@@ -2,6 +2,7 @@ import { createHash } from "node:crypto";
 
 import {
   isAbbottWebPageUrl,
+  normalizeAbbottContentIdentityUrl,
   normalizeAbbottPageUrl as normalizePage,
 } from "@/lib/abbott-page-url";
 import { abbottTitleLookupHash } from "@/lib/abbott-content-lookup";
@@ -475,12 +476,14 @@ function metadataForPage(
   rawPageTitle: unknown,
   workbook: AbbottAggregatePrivateData["workbook"],
 ): { page_title: string; direction: string | null; material_type: string | null; access: string | null; hidden: boolean } {
+  const identityUrl = normalizeAbbottContentIdentityUrl(rawUrl);
   const normalized = normalizePage(rawUrl);
-  const path = normalizedPagePath(normalized);
+  const path = normalizedPagePath(identityUrl || normalized);
   const slug = path.split("/").filter(Boolean).at(-1) ?? "";
   const rawTitle = validRawPageTitle(rawPageTitle);
-  const metadata = (rawTitle ? workbook.contentByTitle.get(abbottTitleLookupHash(rawTitle)) : undefined)
+  const metadata = (identityUrl ? workbook.contentByUrl.get(lookupHash(identityUrl)) : undefined)
     ?? workbook.urlReturnDirections.get(lookupHash(path))
+    ?? (rawTitle ? workbook.contentByTitle.get(abbottTitleLookupHash(rawTitle)) : undefined)
     ?? workbook.contentBySlug.get(lookupHash(slug));
   return {
     page_title: rawTitle ?? metadata?.page_title ?? "",
@@ -539,8 +542,9 @@ function buildPageStats(
 ): AbbottBiPageStatRow[] {
   const result = new Map<string, AbbottBiPageStatRow & { hidden: boolean }>();
   rows.filter((row) => row.analytics_scope === "page").forEach((row) => {
-    const url = normalizePage(row.page_url);
-    const metadata = metadataForPage(url, row.page_title, workbook);
+    const rawUrl = text(row.page_url);
+    const url = normalizePage(rawUrl);
+    const metadata = metadataForPage(rawUrl, row.page_title, workbook);
     const title = metadata.page_title;
     const key = `${title}\n${url}`;
     const current = result.get(key) ?? {
@@ -761,7 +765,7 @@ function buildReturning(
     const count = deriveReturningCount(row.source_denominator, row.source_percentage);
     const current = totals.get(url) ?? {
       url,
-      direction: workbook.urlReturnDirections.get(lookupHash(normalizedPagePath(url)))?.direction ?? null,
+      direction: metadataForPage(text(row.normalized_page), "", workbook).direction,
       visits: 0,
       returning_1_day: 0,
       returning_2_7_days: 0,
@@ -1089,9 +1093,7 @@ export async function loadAbbottBiDataWithDependencies(
         ? buildAbbottReturnFrequency(
             managerBehavior.frequencyVisits,
             releaseBundle.workbook.userDirections,
-            (url) => releaseBundle.workbook.urlReturnDirections.get(
-              lookupHash(normalizedPagePath(url)),
-            )?.direction ?? null,
+            (url) => metadataForPage(url, "", releaseBundle.workbook).direction,
           )
         : {
             available: false,

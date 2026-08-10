@@ -55,6 +55,7 @@ export interface AbbottAggregateWorkbookData {
     registration_url: string;
     access: string | null;
   }>;
+  contentByUrl: Map<string, AbbottContentMetadata>;
   contentByTitle: Map<string, AbbottContentMetadata>;
   contentBySlug: Map<string, AbbottContentMetadata>;
   urlReturnDirections: Map<string, AbbottContentMetadata>;

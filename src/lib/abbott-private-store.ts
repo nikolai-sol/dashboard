@@ -309,6 +309,7 @@ async function loadAggregateWorkbook(
     [release.id, release.snapshots.workbookJson.id],
   );
 
+  const contentByUrl = new Map<string, AbbottContentMetadata>();
   const contentByTitle = new Map<string, AbbottContentMetadata>();
   const contentBySlug = new Map<string, AbbottContentMetadata>();
   const urlReturnDirections = new Map<string, AbbottContentMetadata>();
@@ -319,7 +320,8 @@ async function loadAggregateWorkbook(
       throw storeError("PRIVATE_DATA_UNAVAILABLE", PRIVATE_UNAVAILABLE_MESSAGE);
     }
     const metadata = contentMetadata(row);
-    if (lookupKind === "title") addUniqueLookup(contentByTitle, lookupKeyHash, metadata);
+    if (lookupKind === "url") addUniqueLookup(contentByUrl, lookupKeyHash, metadata);
+    else if (lookupKind === "title") addUniqueLookup(contentByTitle, lookupKeyHash, metadata);
     else if (lookupKind === "slug") addUniqueLookup(contentBySlug, lookupKeyHash, metadata);
     else if (lookupKind === "path") addUniqueLookup(urlReturnDirections, lookupKeyHash, metadata);
     else throw storeError("PRIVATE_DATA_UNAVAILABLE", PRIVATE_UNAVAILABLE_MESSAGE);
@@ -338,6 +340,7 @@ async function loadAggregateWorkbook(
         access: nullableText(row.access_label),
       }))
       .filter((row) => row.title && row.registration_url),
+    contentByUrl,
     contentByTitle,
     contentBySlug,
     urlReturnDirections,

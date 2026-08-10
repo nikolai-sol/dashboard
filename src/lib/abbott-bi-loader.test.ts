@@ -29,6 +29,7 @@ const lookupHash = (value: string) => createHash("sha256").update(value).digest(
 const aggregateWorkbook: AbbottAggregatePrivateData["workbook"] = {
   generalMaterials: [],
   externalEvents: [],
+  contentByUrl: new Map(),
   contentByTitle: new Map(),
   contentBySlug: new Map(),
   urlReturnDirections: new Map([[lookupHash("/page"), {
@@ -536,7 +537,7 @@ test("missing Metrika titles use path metadata, catalog titles, and hide inactiv
   ]);
 });
 
-test("valid Metrika title remains authoritative over conflicting path metadata", async () => {
+test("path metadata precedes a conflicting valid Metrika title when URL identity is unavailable", async () => {
   const aggregate = executor((sql) => {
     if (sql.includes("canonical_fact_metrika_site_analytics_daily")) {
       return [{ analytics_scope: "page", page_url: "https://example.test/raw-title", page_title: "Raw Metrika title", pageviews: "4", users: "2" }];
@@ -550,7 +551,7 @@ test("valid Metrika title remains authoritative over conflicting path metadata",
     workbook: {
       ...aggregateWorkbook,
       contentByTitle: new Map([[lookupHash("Raw Metrika title"), { page_title: "Catalog title", direction: "Cardiology", material_type: "article", access: "Врачи", is_active: true }]]),
-      urlReturnDirections: new Map([[lookupHash("/raw-title"), { page_title: "Wrong path", direction: "Neurology", material_type: "guide", access: "Гости", is_active: false }]]),
+      urlReturnDirections: new Map([[lookupHash("/raw-title"), { page_title: "Path metadata", direction: "Neurology", material_type: "guide", access: "Гости", is_active: true }]]),
     },
     bitrixPages: missingBitrix,
     journeyTransitions: { source: missingBitrix.source, rows: [] },
@@ -563,7 +564,70 @@ test("valid Metrika title remains authoritative over conflicting path metadata",
   assert.deepEqual(result.page_stats, [{
     page_title: "Raw Metrika title",
     url: "https://example.test/raw-title",
+    direction: "Neurology",
+    material_type: "guide",
+    access: "Гости",
+    pageviews: 4,
+    users: 2,
+    bitrix_pageviews: 0,
+    bitrix_sessions: 0,
+    bitrix_users: 0,
+    bitrix_logged_in_sessions: 0,
+    bitrix_anonymous_sessions: 0,
+    bitrix_avg_session_duration: 0,
+  }]);
+});
+
+test("exact Abbott URL metadata wins over conflicting path, title, and slug projections", async () => {
+  const gastroArticle = {
+    page_title: "Gastro article",
+    direction: "Gastroenterology",
+    material_type: "article",
+    access: "Врачи",
+    is_active: true,
+  };
+  const cardioArticle = {
+    page_title: "Cardio article",
     direction: "Cardiology",
+    material_type: "guide",
+    access: "Гости",
+    is_active: false,
+  };
+  const aggregate = executor((sql) => {
+    if (sql.includes("canonical_fact_metrika_site_analytics_daily")) {
+      return [{
+        analytics_scope: "page",
+        page_url: "https://abbottpro.ru/academy/articles/a?utm_source=test",
+        page_title: "Одинаковый заголовок",
+        pageviews: "4",
+        users: "2",
+      }];
+    }
+    return aggregateRows(sql);
+  });
+  const deps = dependencies(aggregate, executor(() => []));
+  deps.loadReleaseBundle = async () => ({
+    releaseId: 41,
+    audience: "embed" as const,
+    workbook: {
+      ...aggregateWorkbook,
+      contentByUrl: new Map([[lookupHash("https://abbottpro.ru/academy/articles/a"), gastroArticle]]),
+      urlReturnDirections: new Map([[lookupHash("/academy/articles/a"), gastroArticle]]),
+      contentByTitle: new Map([[lookupHash("Одинаковый заголовок"), cardioArticle]]),
+      contentBySlug: new Map([[lookupHash("a"), cardioArticle]]),
+    },
+    bitrixPages: missingBitrix,
+    journeyTransitions: { source: missingBitrix.source, rows: [] },
+  });
+
+  const result = await loadAbbottBiDataWithDependencies(
+    7, ["90602537"], "2026-01-01", "2026-01-01", "embed", deps,
+  );
+
+  assert.deepEqual(result.page_stats, [{
+    page_title: "Одинаковый заголовок",
+    url: "https://abbottpro.ru/academy/articles/a",
+    direction: "Gastroenterology",
     material_type: "article",
     access: "Врачи",
     pageviews: 4,
