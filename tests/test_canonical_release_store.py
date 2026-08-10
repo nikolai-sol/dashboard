@@ -970,6 +970,40 @@ class CanonicalReleaseStoreTest(unittest.TestCase):
         self.assertEqual(conn.events.count(("start_transaction", None)), 1)
         self.assertIn(("commit", None), conn.events)
 
+    def test_activation_does_not_request_write_locks_on_immutable_evidence(self):
+        import canonical_release_store as store
+
+        source_ids = [index + 11 for index in range(len(SOURCE_KINDS))]
+        conn = RecordingConnection(
+            [
+                {"canonical_release_id": 12},
+                {
+                    "source_snapshot_ids": json.dumps(source_ids),
+                    "code_revision": "abc123",
+                    "baseline_validation_run_id": 13,
+                    "rollback_from_release_id": 12,
+                },
+                import_execution_rows(),
+                {"manifest_json": json.dumps(baseline_manifest())},
+                imported_snapshot_rows(),
+            ]
+        )
+        with patch.object(store, "get_db_connection", return_value=conn):
+            store.activate_release(41, expected_active_release_id=12)
+
+        immutable_tables = (
+            "portal_release_source_imports",
+            "portal_dataset_snapshots",
+        )
+        immutable_reads = [
+            sql
+            for sql, _ in conn.cursor_instance.calls
+            if sql.startswith("SELECT")
+            and any(table in sql for table in immutable_tables)
+        ]
+        self.assertTrue(immutable_reads)
+        self.assertTrue(all("FOR UPDATE" not in sql for sql in immutable_reads))
+
     def test_activation_rejects_stale_expected_pointer_and_rolls_back(self):
         import canonical_release_store as store
 
