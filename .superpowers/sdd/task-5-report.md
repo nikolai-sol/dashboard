@@ -32,3 +32,12 @@ not loaded or mutated by this task.
 
 - Bootstrap runtime closure: `8ae6881949767e799d66a72d3362fe8515c5e5d0`
 - Root Task 5: `0096afdb3ae673cb74ad8ba0ccf6a11d1f83c8a5`
+
+## Review follow-up
+
+- RED: unique weak-slug observed URL suppression and observed strong-URL
+  collision status tests failed as expected.
+- GREEN: suppression now requires exactly one matching active strong
+  `canonical_url`/`url` identity; weak matches remain review items and a strong
+  collision is persisted as `collision` with `IDENTITY_COLLISION` evidence.
+- Bootstrap runtime follow-up: `137c9eb38be0dd775f3126b74648e491ef9a473d`.

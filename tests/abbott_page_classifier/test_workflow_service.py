@@ -269,6 +269,31 @@ class WeeklyProposalServiceTests(unittest.TestCase):
 
         self.assertEqual(receipt.catalog_gap_count, 0)
         self.assertEqual(store.runs_by_id[receipt.run_id].items, ())
+
+    def test_unique_weak_observed_slug_match_still_creates_review_item(self):
+        entity = CanonicalClassification(7, "Known", "https://abbottpro.ru/cardio/known", "cardiology", "articles", "all", "active", 1)
+        observed = ObservedPage("https://abbottpro.ru/cardio/known?version=2", "Other title", 3, date(2026, 8, 1), date(2026, 8, 1))
+        with tempfile.TemporaryDirectory() as temporary:
+            registry1, registry2 = write_empty_sources(Path(temporary))
+            store = StatefulWorkflowStore(context(entities=(entity,), aliases=(IdentityAlias(7, "slug", "known", "weak"),), observed_pages=(observed,)))
+            receipt = CanonicalWeeklyProposalService(store, CONFIG).reconcile(registry1, registry2)
+
+        self.assertEqual(receipt.catalog_gap_count, 1)
+        self.assertEqual(store.runs_by_id[receipt.run_id].items[0].identity_status, "new")
+
+    def test_observed_strong_url_collision_is_a_collision_item(self):
+        left = CanonicalClassification(7, "Left", "https://abbottpro.ru/left", "cardiology", "articles", "all", "active", 1)
+        right = CanonicalClassification(8, "Right", "https://abbottpro.ru/right", "cardiology", "articles", "all", "active", 2)
+        observed = ObservedPage("https://abbottpro.ru/collision", "Collision", 3, date(2026, 8, 1), date(2026, 8, 1))
+        aliases = (IdentityAlias(7, "url", observed.normalized_url, "strong"), IdentityAlias(8, "url", observed.normalized_url, "strong"))
+        with tempfile.TemporaryDirectory() as temporary:
+            registry1, registry2 = write_empty_sources(Path(temporary))
+            store = StatefulWorkflowStore(context(entities=(left, right), aliases=aliases, observed_pages=(observed,)))
+            receipt = CanonicalWeeklyProposalService(store, CONFIG).reconcile(registry1, registry2)
+
+        item = store.runs_by_id[receipt.run_id].items[0]
+        self.assertEqual(item.identity_status, "collision")
+        self.assertTrue(item.reconciliation_input.identity_conflict)
     def test_active_catalog_gap_is_included_and_classified_without_entity_creation(self):
         entity = CanonicalClassification(
             7,
