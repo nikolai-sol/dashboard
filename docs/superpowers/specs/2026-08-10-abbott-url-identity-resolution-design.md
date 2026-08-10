@@ -56,6 +56,13 @@ materialization, not in Metrika collection.
    only.
 7. Google Sheets remains the human approval surface; canonical MySQL remains
    the only runtime source of truth.
+8. Implementation and automated tests do not mutate production MySQL or the
+   production application. Candidate visual review runs in an isolated preview
+   application/database context. Production receives only an additive schema
+   migration and release-scoped staging rows after the branch and preview have
+   passed review; those rows are invisible to the current active release.
+9. The active release pointer and production dashboard application release are
+   changed only after a separate explicit cutover approval.
 
 ## Canonical URL Identity
 
@@ -188,6 +195,9 @@ Activation requires:
   previous dashboard application release.
 - No rollback restores removed public PII assets.
 - Candidate failure never triggers a Metrika backfill.
+- Before cutover, every production check asserts that the active pointer is
+  still `24` and the production application revision is unchanged. Pointer or
+  application drift stops the rollout.
 
 ## Verification
 
@@ -204,4 +214,3 @@ Automated coverage includes:
 - dashboard API, filter, export, and browser smoke tests;
 - checks that no source API, token, Bitrix connector, Zaruku code, or unrelated
   dashboard code changed.
-

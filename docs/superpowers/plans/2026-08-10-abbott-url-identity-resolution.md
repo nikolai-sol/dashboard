@@ -19,6 +19,14 @@
 - Raw User ID, visit ID, client ID, and private visit rows never enter classification, Sheets, logs, fixtures, or prompts.
 - Every migration, runtime copy, manifest, and nested dashboard gitlink must be byte-attested before deployment.
 - Use TDD for every behavior change and commit after each independently reviewable task.
+- Tasks 1-9 are local/isolated work only: no production DB migration, runtime
+  replacement, service restart, application deploy, batch publication, or
+  release activation.
+- Candidate visual review uses a separate preview application/database context;
+  it never changes the production active pointer or production application
+  symlink.
+- Production staging rows remain invisible to current dashboard reads until a
+  separately approved active-pointer cutover.
 
 ---
 
@@ -831,49 +839,73 @@ June/July/August totals, lookup ambiguity, batch `6` counts, health, disk, cron,
 and deployed runtime/application revisions. Do not print secrets or row-level
 identifiers.
 
-- [ ] **Step 2: Deploy migration and runtime with rollback copies**
+- [ ] **Step 2: Generate and publish the successor approval batch read-only against production**
+
+Run discovery using read-only production facts and immutable Registry 1/2
+captures, persist the draft in the isolated review database, and publish its
+Google Sheet projection. Verify batch `6` is unchanged and the new batch has
+exact ready/conflict/unresolved/rejected/no-change reconciliation. Publish the
+Google Sheet link without sending PII.
+
+- [ ] **Step 3: Pause for human batch approval**
+
+Do not ingest, materialize, validate, migrate production, or activate until the
+manager accepts the new Sheet batch. Capture the accepted decision snapshot and
+hash into the isolated review database only.
+
+- [ ] **Step 4: Build an isolated accepted-candidate preview before production mutation**
+
+Restore the aggregate Abbott release metadata/facts needed for page statistics
+into a disposable review database, apply migration `050`, materialize the
+accepted candidate there, and start a separate preview application bound to a
+private listener. The preview uses its own env file and application symlink.
+Confirm the production active pointer remains `24`, the production application
+symlink is unchanged, and no production table was written.
+
+- [ ] **Step 5: Obtain visual preview approval**
+
+Verify June, July, August, direction/type filters, table totals, charts, and
+XLSX export in the preview. Stop before any production DB migration until the
+manager approves the preview.
+
+- [ ] **Step 6: Deploy the additive production migration and runtime with rollback copies**
 
 Install exact committed files into a timestamped staging directory, verify
 SHA-256, back up replaced files, apply migration `050`, run schema probes, and
-activate no release yet.
+activate no release. Assert the active pointer is still `24` before and after
+every production write.
 
-- [ ] **Step 3: Generate and publish the successor approval batch**
-
-Run the weekly workflow against the immutable Registry 1/2 captures and
-observed canonical page facts. Verify batch `6` is unchanged and the new batch
-has exact ready/conflict/unresolved/rejected/no-change reconciliation. Publish
-the Google Sheet link without sending PII.
-
-- [ ] **Step 4: Pause for human approval**
-
-Do not ingest, materialize, validate, or activate until the manager accepts the
-new Sheet batch. Record the accepted decision hash after approval.
-
-- [ ] **Step 5: Ingest and materialize the DB-native candidate**
+- [ ] **Step 7: Ingest and materialize the DB-native production candidate**
 
 Ingest idempotently, create the candidate from active release `24`, clone facts
 inside MySQL, rebuild catalog/projection with URL aliases, and verify no source
 API request log or Logs API job was created.
 
-- [ ] **Step 6: Validate and activate**
+- [ ] **Step 8: Validate without cutover**
 
 Require exact June/July/August metric equality, zero bad coverage rows, zero
 accepted strong-identity collisions, and complete observed URL classification.
-Activate through the existing CAS release operator only after all gates pass.
+Keep release `24` active after validation and provide the final candidate report
+for explicit cutover approval.
 
-- [ ] **Step 7: Deploy dashboard and smoke test**
+- [ ] **Step 9: Activate and deploy only after explicit cutover approval**
+
+Activate through the existing CAS release operator only after the manager
+approves the validated candidate and preview.
+
+- [ ] **Step 10: Deploy dashboard and smoke test**
 
 Build and install the reviewed standalone release atomically. Verify health,
 Abbott authentication, July and August page totals, direction/type filters,
 charts, XLSX export, public Abbott asset `404`, and no client-side exception.
 
-- [ ] **Step 8: Roll back on failure**
+- [ ] **Step 11: Roll back on failure**
 
 On candidate or smoke failure, restore the active pointer to release `24` and
 the previous application release. Never restore public PII and never launch a
 Metrika backfill.
 
-- [ ] **Step 9: Record aggregate completion evidence**
+- [ ] **Step 12: Record aggregate completion evidence**
 
 Store mode-`0600` production receipts and commit only sanitized counts,
 revisions, hashes, and gate results. Confirm Zaruku runtime, gitlink, and health
