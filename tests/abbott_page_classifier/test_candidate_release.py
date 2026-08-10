@@ -397,6 +397,15 @@ class CandidateConnection:
                 "projection_row_hash": "7" * 64,
             },
         ]
+        if baseline_missing_direction:
+            self.predecessor_catalog[0]["direction_key"] = "Не определено"
+            provenance = json.loads(
+                self.predecessor_catalog[0]["projection_provenance_json"]
+            )
+            provenance["canonical_codes"]["direction"] = "undetermined"
+            self.predecessor_catalog[0]["projection_provenance_json"] = json.dumps(
+                provenance
+            )
         if self.legacy_predecessor:
             for row in self.predecessor_catalog:
                 row.update(
