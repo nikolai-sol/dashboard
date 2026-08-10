@@ -1231,8 +1231,17 @@ class CandidateReleaseTest(unittest.TestCase):
         self.assertEqual(provenance["mode"], "legacy_active_catalog_baseline")
         self.assertEqual(provenance["predecessor_catalog_row_id"], 1002)
         sql = "\n".join(call[0] for call in connection.calls)
-        self.assertIn("legacy_catalog.id AS predecessor_catalog_row_id", sql)
-        self.assertIn("alias_row.uniqueness_scope = 'strong'", sql)
+        legacy_resolution_sql = next(
+            statement
+            for statement, _params in connection.calls
+            if "legacy_catalog.id AS predecessor_catalog_row_id" in statement
+        )
+        self.assertIn("active_release_baseline", legacy_resolution_sql)
+        self.assertIn("JSON_CONTAINS", legacy_resolution_sql)
+        self.assertNotIn(
+            "portal_content_registry_aliases AS alias_row",
+            legacy_resolution_sql,
+        )
         self.assertNotIn("latest_events", sql)
 
     def test_first_post_046_successor_rejects_ambiguous_legacy_identity(self):
