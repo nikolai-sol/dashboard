@@ -55,10 +55,14 @@ class Task7Cursor(RecordingCursor):
             self.rows = [predecessor] if predecessor is not None else []
         if "FROM portal_content_registry_aliases" in normalized:
             self.rows = [
-                (alias["id"], alias["content_entity_id"], alias["alias_status"])
+                (
+                    alias["id"],
+                    alias["content_entity_id"],
+                    alias["alias_type"],
+                    alias["alias_status"],
+                )
                 for alias in self.connection.aliases
-                if alias["alias_type"] == params[1]
-                and alias["alias_hash"] == params[2]
+                if alias["alias_hash"] == params[1]
                 and alias["uniqueness_scope"] == "strong"
             ]
         if normalized.startswith("UPDATE portal_content_registry_aliases"):
@@ -268,7 +272,7 @@ def reviewed_canonical_evidence(
 
 
 class ApprovalIngestionTests(unittest.TestCase):
-    def test_url_alias_decisions_are_locked_before_batch_ingestion_finishes(self):
+    def test_ingestion_never_mutates_aliases_after_acceptance(self):
         item = replace(
             approval_item(41, readiness="conflict"),
             conflict_codes=("IDENTITY_COLLISION",),
@@ -280,31 +284,11 @@ class ApprovalIngestionTests(unittest.TestCase):
         result = ingest_accepted_batch(connection.snapshot(), repository_for(connection))
 
         self.assertEqual(result.status, "ingested")
-        alias_lock = next(
-            (sql, params)
-            for sql, params in connection.calls
-            if "FROM portal_content_registry_aliases" in sql and "FOR UPDATE" in sql
-        )
-        entity_lock_index = next(index for index, (sql, _) in enumerate(connection.calls) if "portal_content_registry_entities" in sql and "FOR UPDATE" in sql)
-        alias_lock_index = connection.calls.index(alias_lock)
-        self.assertLess(entity_lock_index, alias_lock_index)
-        self.assertEqual(connection.aliases[0]["content_entity_id"], 41)
-        self.assertEqual(connection.aliases[0]["alias_status"], "active")
-        self.assertEqual(
-            connection.aliases[0]["source_evidence"],
-            {
-                "accepted_decision_hash": connection.batch_row[7],
-                "approval_batch_id": 17,
-                "approval_item_id": 101,
-                "decision_reason": "reviewed URL owner",
-                "row_hash": connection.ingest_items[0].row_hash,
-                "selected_content_entity_id": 41,
-                "url_alias_decision": "attach",
-                "url": item.url,
-            },
-        )
+        self.assertFalse(connection.aliases)
+        self.assertFalse(any("portal_content_registry_aliases" in sql for sql, _ in connection.calls))
+        self.assertFalse(any("portal_content_url_alias_decision_events" in sql for sql, _ in connection.calls))
 
-    def test_url_alias_collision_rolls_back_before_batch_transition(self):
+    def test_ingestion_does_not_recheck_or_reject_previously_accepted_aliases(self):
         item = replace(
             approval_item(41, readiness="conflict"),
             conflict_codes=("IDENTITY_COLLISION",),
@@ -325,15 +309,12 @@ class ApprovalIngestionTests(unittest.TestCase):
             }
         )
 
-        with self.assertRaises(RepositoryError) as raised:
-            ingest_accepted_batch(connection.snapshot(), repository_for(connection))
+        result = ingest_accepted_batch(connection.snapshot(), repository_for(connection))
 
-        self.assertEqual(raised.exception.code, "IDENTITY_COLLISION")
-        self.assertEqual(connection.commit_count, 0)
-        self.assertEqual(connection.rollback_count, 1)
-        self.assertFalse(any(sql.startswith("UPDATE portal_content_approval_batches") for sql, _ in connection.calls))
+        self.assertEqual(result.status, "ingested")
+        self.assertEqual(connection.aliases[0]["alias_status"], "active")
 
-    def test_retire_alias_requires_locked_active_url_alias_and_preserves_review_evidence(self):
+    def test_ingestion_does_not_retire_aliases(self):
         item = replace(
             approval_item(41, readiness="conflict"),
             conflict_codes=("IDENTITY_COLLISION",),
@@ -356,12 +337,8 @@ class ApprovalIngestionTests(unittest.TestCase):
         result = ingest_accepted_batch(connection.snapshot(), repository_for(connection))
 
         self.assertEqual(result.status, "ingested")
-        self.assertEqual(connection.aliases[0]["alias_status"], "retired")
-        self.assertEqual(
-            connection.aliases[0]["source_evidence"]["accepted_decision_hash"],
-            connection.batch_row[7],
-        )
-        self.assertEqual(connection.aliases[0]["source_evidence"]["url_alias_decision"], "retire")
+        self.assertEqual(connection.aliases[0]["alias_status"], "active")
+        self.assertEqual(connection.aliases[0]["source_evidence"], {"authority": "old"})
     def test_service_delegates_to_canonical_repository_and_carries_exact_counts(self):
         snapshot = accepted_snapshot(approval_item(41))
 

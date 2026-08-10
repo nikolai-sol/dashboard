@@ -116,15 +116,15 @@ class BatchServiceTests(unittest.TestCase):
         item = batch.items[0]
         self.assertEqual(
             compute_item_hash(item),
-            "9f8366d8c5b237c4a9327084c10059fa1b7945507b2f987dbdde99b758c21875",
+            "70236f6acb6803ca8767e76327b71bc24c6a140044e48b367eaf8f66ac32cb14",
         )
         self.assertEqual(
             compute_batch_hash(batch.items),
-            "357199d01b24014151f155ec105da3cdae46be4eafb2515aaf447879197fffd6",
+            "5b9ac122f723ff7ed7b549d217af37f604ffea249455afc3794ec4eb01222fd2",
         )
         self.assertEqual(
             compute_accepted_decision_hash(batch.items),
-            "5a98149c30f90a4b6b37156ad1c1bcd4a48a0d85fd01e90febc27356e3cc4576",
+            "7253ed6b2aa228006b8ef22301a27f51ba736fa5dfcee430b2abe44bf7243bca",
         )
 
     def test_batch_hash_orders_by_entity_then_input_and_normalizes_newlines(self):
@@ -138,6 +138,21 @@ class BatchServiceTests(unittest.TestCase):
         crlf_item = replace(first.items[0], title="same\r\ntext")
         lf_item = replace(first.items[0], title="same\ntext")
         self.assertEqual(compute_batch_hash((crlf_item,)), compute_batch_hash((lf_item,)))
+
+    def test_alias_review_fields_are_accepted_hash_only(self):
+        item = built([reconciliation(10)]).items[0]
+        reviewed = replace(
+            item,
+            selected_content_entity_id=77,
+            url_alias_decision="attach",
+        )
+
+        self.assertEqual(compute_item_hash(item), compute_item_hash(reviewed))
+        self.assertEqual(compute_batch_hash((item,)), compute_batch_hash((reviewed,)))
+        self.assertNotEqual(
+            compute_accepted_decision_hash((item,)),
+            compute_accepted_decision_hash((reviewed,)),
+        )
 
     def test_unresolved_identity_uses_null_entity_then_input_hash_order(self):
         unresolved = replace(

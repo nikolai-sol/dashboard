@@ -29,6 +29,7 @@ from .batch_service import (
     compute_item_hash,
     compute_taxonomy_digest,
 )
+from .normalization import normalize_url
 
 
 DATASET_KEY = "abbott"
@@ -706,6 +707,12 @@ class ContentRegistryRepository:
                 connection.commit()
                 return
             for approval_item_id, item in accepted_items:
+                if item.url_alias_decision is not None:
+                    self._apply_url_alias_decision(
+                        cursor, item, int(batch_id), approval_item_id, accepted_hash,
+                        snapshot.accepted_by,
+                    )
+            for approval_item_id, item in accepted_items:
                 cursor.execute(
                     """
                     UPDATE portal_content_approval_items
@@ -1211,15 +1218,6 @@ class ContentRegistryRepository:
                     ),
                 )
 
-            # Alias decisions are separate from classification readiness: a reviewed
-            # collision resolves identity even when no taxonomy event is emitted.
-            for approval_item_id, item in stored_items:
-                if item.url_alias_decision is None:
-                    continue
-                self._apply_url_alias_decision(
-                    cursor, item, batch_id, approval_item_id, stored_accepted_hash
-                )
-
             cursor.execute(
                 """
                 UPDATE portal_content_approval_batches
@@ -1258,13 +1256,16 @@ class ContentRegistryRepository:
         batch_id: int,
         approval_item_id: int,
         accepted_hash: str,
+        actor: str,
     ) -> None:
         """Lock and mutate one reviewed strong URL identity, fail-closed on races."""
         ContentRegistryRepository._validate_url_alias_decision(item)
         decision = item.url_alias_decision
-        if decision == "reject":
-            return
-        alias_hash = hashlib.sha256(item.url.casefold().encode("utf-8")).hexdigest()
+        normalized_url = normalize_url(item.url)
+        if not normalized_url.value:
+            raise RepositoryError("IDENTITY_COLLISION")
+        alias_hash = normalized_url.sha256
+        predecessor = (None, None)
         if decision == "attach":
             cursor.execute(
                 """SELECT id FROM portal_content_registry_entities
@@ -1275,22 +1276,54 @@ class ContentRegistryRepository:
             entity = cursor.fetchone()
             if entity is None or int(entity[0]) != item.selected_content_entity_id:
                 raise RepositoryError("IDENTITY_COLLISION")
-        cursor.execute(
-            """SELECT id, content_entity_id, alias_status
-               FROM portal_content_registry_aliases
-               WHERE dataset_key = %s AND alias_type = %s
-                 AND alias_hash = %s AND uniqueness_scope = 'strong'
-               FOR UPDATE""",
-            (DATASET_KEY, "url", alias_hash),
-        )
-        rows = tuple(cursor.fetchall())
-        active = [row for row in rows if str(row[2]) == "active"]
-        if len(active) > 1 or (
-            decision == "attach"
-            and active
-            and int(active[0][1]) != item.selected_content_entity_id
-        ):
-            raise RepositoryError("IDENTITY_COLLISION")
+            cursor.execute(
+                """SELECT id, event_fingerprint
+                   FROM portal_content_classification_events
+                   WHERE content_entity_id = %s
+                   ORDER BY effective_at DESC, id DESC LIMIT 1 FOR UPDATE""",
+                (item.selected_content_entity_id,),
+            )
+            locked_event = cursor.fetchone()
+            predecessor = (
+                int(locked_event[0]) if locked_event is not None else None,
+                str(locked_event[1]) if locked_event is not None else None,
+            )
+        rows: tuple[Sequence[object], ...] = ()
+        url_active: list[Sequence[object]] = []
+        if decision != "reject":
+            cursor.execute(
+                """SELECT id, content_entity_id, alias_type, alias_status
+                   FROM portal_content_registry_aliases
+                   WHERE dataset_key = %s AND alias_type IN ('canonical_url', 'url')
+                     AND alias_hash = %s AND uniqueness_scope = 'strong'
+                   FOR UPDATE""",
+                (DATASET_KEY, alias_hash),
+            )
+            rows = tuple(cursor.fetchall())
+            active = [row for row in rows if str(row[3]) == "active"]
+            if any(
+                decision == "attach" and int(row[1]) != item.selected_content_entity_id
+                for row in active
+            ):
+                raise RepositoryError("IDENTITY_COLLISION")
+            url_active = [row for row in active if str(row[2]) == "url"]
+            if len(url_active) > 1:
+                raise RepositoryError("IDENTITY_COLLISION")
+            if decision == "retire" and len(url_active) != 1:
+                raise RepositoryError("IDENTITY_COLLISION")
+            if decision == "retire":
+                cursor.execute(
+                    """SELECT id, event_fingerprint
+                       FROM portal_content_classification_events
+                       WHERE content_entity_id = %s
+                       ORDER BY effective_at DESC, id DESC LIMIT 1 FOR UPDATE""",
+                    (int(url_active[0][1]),),
+                )
+                locked_event = cursor.fetchone()
+                predecessor = (
+                    int(locked_event[0]) if locked_event is not None else None,
+                    str(locked_event[1]) if locked_event is not None else None,
+                )
         evidence = ContentRegistryRepository._json(
             {
                 "accepted_decision_hash": accepted_hash,
@@ -1300,22 +1333,45 @@ class ContentRegistryRepository:
                 "row_hash": item.row_hash,
                 "selected_content_entity_id": item.selected_content_entity_id,
                 "url_alias_decision": decision,
-                "url": item.url,
+                "url": normalized_url.value,
             }
         )
+        event_fingerprint = hashlib.sha256(ContentRegistryRepository._json({
+            "accepted_decision_hash": accepted_hash,
+            "actor": actor,
+            "approval_batch_id": batch_id,
+            "approval_item_id": approval_item_id,
+            "decision_reason": item.decision_reason,
+            "normalized_url": normalized_url.value,
+            "selected_content_entity_id": item.selected_content_entity_id,
+            "selected_predecessor_event_fingerprint": predecessor[1],
+            "selected_predecessor_event_id": predecessor[0],
+            "url_alias_decision": decision,
+        }).encode("utf-8")).hexdigest()
+        cursor.execute(
+            """INSERT INTO portal_content_url_alias_decision_events (
+                 approval_batch_id, approval_item_id, accepted_decision_hash, actor,
+                 decision_reason, normalized_url, url_alias_decision,
+                 selected_content_entity_id, selected_predecessor_event_id,
+                 selected_predecessor_event_fingerprint, event_fingerprint
+               ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)""",
+            (batch_id, approval_item_id, accepted_hash, actor, item.decision_reason,
+             normalized_url.value, decision, item.selected_content_entity_id,
+             predecessor[0], predecessor[1], event_fingerprint),
+        )
+        if decision == "reject":
+            return
         if decision == "retire":
-            if len(active) != 1:
-                raise RepositoryError("IDENTITY_COLLISION")
             cursor.execute(
                 """UPDATE portal_content_registry_aliases
                    SET alias_status = 'retired', source_evidence = %s
                    WHERE id = %s AND alias_status = 'active'""",
-                (evidence, int(active[0][0])),
+                (evidence, int(url_active[0][0])),
             )
             if getattr(cursor, "rowcount", 1) != 1:
                 raise RepositoryError("IDENTITY_COLLISION")
             return
-        if active:
+        if url_active:
             return
         cursor.execute(
             """INSERT INTO portal_content_registry_aliases (
@@ -1325,7 +1381,7 @@ class ContentRegistryRepository:
             (
                 DATASET_KEY,
                 item.selected_content_entity_id,
-                item.url,
+                normalized_url.value,
                 alias_hash,
                 evidence,
             ),

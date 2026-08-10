@@ -46,3 +46,23 @@ PYTHONPATH=/tmp/abbott-task1-deps:. /Users/nafanya/.local/bin/python3.11 -m unit
 
 - Nested dashboard/bootstrap: `35ff05af3c8ab9f2b0be5bb8660acdf7c7103790`
 - Root: recorded by the follow-up root commit.
+
+## Follow-up transaction correction
+
+- The published item hash deliberately excludes the two editable URL-decision
+  cells; the accepted-decision hash includes them. This permits a blank
+  published collision row to be edited in Sheets and accepted without changing
+  the immutable published attestation.
+- URL alias decisions now run only in `record_batch_acceptance`, before the
+  accepted status update. Ingestion is read-only for aliases, so a replay
+  cannot mutate alias state.
+- The decision-event table intentionally has no foreign keys: this additive
+  migration follows the existing approval-table migration contract and avoids
+  coupling historical batch cleanup to an immutable audit ledger. The event is
+  instead bound by non-null batch/item/hash fields plus unique item and
+  deterministic fingerprint keys, and is inserted in the same locked
+  transaction as the acceptance and alias mutation.
+- Attach and retire normalize with the shared URL normalizer, lock both strong
+  alias types, retain the current classification-event identity where an owner
+  exists, and include actor, reason, normalized URL, decision, selected entity,
+  accepted hash, and predecessor identity in the deterministic event fingerprint.
