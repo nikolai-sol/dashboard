@@ -606,12 +606,14 @@ def compare_release_control_pack(
         coverage_rows = cursor.fetchall()
         candidate_values = _control_values(site_rows, coverage_rows)
         predecessor_release_id = int(release.get("rollback_from_release_id") or 0)
-        if predecessor_release_id <= 0:
-            raise AbbottControlError("Candidate predecessor release is invalid")
-        metadata_fact_results = compare_metadata_only_fact_totals(
-            _release_metadata_only_fact_totals(conn, predecessor_release_id),
-            _release_metadata_only_fact_totals(conn, candidate_release_id),
-        )
+        metadata_fact_results = []
+        # Coverage-only bootstrap packs predate successor provenance. A true
+        # successor carries an immutable rollback predecessor and is compared.
+        if predecessor_release_id > 0:
+            metadata_fact_results = compare_metadata_only_fact_totals(
+                _release_metadata_only_fact_totals(conn, predecessor_release_id),
+                _release_metadata_only_fact_totals(conn, candidate_release_id),
+            )
         baseline_control_names = set(manifest["control_values"])
         if any(name.startswith("content.") for name in baseline_control_names):
             content_bundle = manifest.get("content_candidate_bundle")

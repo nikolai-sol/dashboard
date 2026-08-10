@@ -15,7 +15,7 @@ private runtime repository.
 | `lib/canonical_writer.py` | `canonical_writer.py` | `3f287a42d1f79360d49a1f484dee823b70683ec5bd0448a205b0f352219a4e19` | Staging resume writer and current-active append-only Abbott day publisher |
 | `lib/metrika_dashboard_breakdowns.py` | `metrika_dashboard_breakdowns.py` | `879822ee16108abccbb0b0c726d88f6d3835e36f2566d2531bdb4cd1a461f6c8` | Shared Metrika dashboard breakdown definitions |
 | `lib/metrika_logs_api.py` | `metrika_logs_api.py` | `16b80558fbeca808d2dc28a8a163c9a2604e50d28a903725728f26cef7f10084` | Exact Metrika Logs request lifecycle and visit parser |
-| `lib/canonical_release_store.py` | `canonical_release_store.py` | `3ad66bbfc399529099ff6995158520c4127434ff7ca04e0c64179b234fe9365a` | Candidate release store with least-privilege evidence reads, atomic activation, rollback, and audited staging failure management |
+| `lib/canonical_release_store.py` | `canonical_release_store.py` | `388937d78b6e05ad98493b35d0dd85103be475cedb972ff3859af634bf8efa5f` | Candidate release store with least-privilege evidence reads, atomic activation, rollback, and audited staging failure management |
 
 ## Runnable Abbott runtime closure
 
@@ -28,13 +28,13 @@ every runbook entrypoint and each repository-local Python dependency.
 | `runtime/canonical_writer.py` | `canonical_writer.py` | `3f287a42d1f79360d49a1f484dee823b70683ec5bd0448a205b0f352219a4e19` | Atomic staging and active append-only writer |
 | `runtime/metrika_dashboard_breakdowns.py` | `metrika_dashboard_breakdowns.py` | `879822ee16108abccbb0b0c726d88f6d3835e36f2566d2531bdb4cd1a461f6c8` | Shared dashboard breakdown definitions |
 | `runtime/metrika_logs_api.py` | `metrika_logs_api.py` | `16b80558fbeca808d2dc28a8a163c9a2604e50d28a903725728f26cef7f10084` | Exact Metrika Logs request lifecycle and visit parser |
-| `runtime/canonical_release_store.py` | `canonical_release_store.py` | `3ad66bbfc399529099ff6995158520c4127434ff7ca04e0c64179b234fe9365a` | Exact validation, least-privilege pointer activation, and audited staging-failure store |
+| `runtime/canonical_release_store.py` | `canonical_release_store.py` | `388937d78b6e05ad98493b35d0dd85103be475cedb972ff3859af634bf8efa5f` | Exact validation, least-privilege pointer activation, and audited staging-failure store |
 | `runtime/run_abbott_metrika_active_release.py` | `run_abbott_metrika_active_release.py` | `0f7c132b2cbd4f37ce51ceefa8479d36cf30088e2587dcda4cfc36cb29face0d` | Committed-manifest cron launcher |
 | `runtime/abbott_release_operator.py` | `abbott_release_operator.py` | `493decb85ca7ac25ae55e125023b1aff3e3146b2a122e190097243790c76067d` | Least-privilege lifecycle CLI with audited staging failure |
 | `runtime/probe_yandex_metrika_access.py` | `probe_yandex_metrika_access.py` | `430603922de9cd3cdbc6d0a7dc103f841924087c39462fc137ec8a26684674bc` | Read-only counter access proof |
 | `runtime/capture_abbott_canonical_baseline.py` | `capture_abbott_canonical_baseline.py` | `24692288fd1e8c6bf61b0b59b52963c60068df13e068bf4336e6d9fd9ce998e2` | Frozen baseline CLI |
 | `runtime/compare_abbott_canonical_release.py` | `compare_abbott_canonical_release.py` | `3cbe72196853ec89d435b214cb7ac106732d94e5b2a05ac95e035e7942d5c015` | Candidate comparator CLI |
-| `runtime/abbott_canonical_controls.py` | `abbott_canonical_controls.py` | `38835f07e5fd202d93779cd55857354a1400e4cfd4912700d408e93c8f46282d` | Baseline/control evidence library |
+| `runtime/abbott_canonical_controls.py` | `abbott_canonical_controls.py` | `96e4b2a866f86e75a32b8357a829fe13b841dfdadedd833f637ad069f6c7641d` | Baseline/control evidence library |
 | `runtime/metrika_pagination.py` | `metrika_pagination.py` | `7dcb1a05ad8babcc7d696934babb1ab50747ca140c910efc88f3685674386a7c` | Metrika pagination dependency |
 | `runtime/backfill_abbott_metrika_2026.py` | `backfill_abbott_metrika_2026.py` | `1dce2c65082a18848d21cf0659d5a52a4258334fc38be25079308afef977bf9c` | Gap-first full-year backfill CLI |
 | `runtime/abbott_health_probe.py` | `abbott_health_probe.py` | `6ed7a6c2af250c40ac23bca702a15c2cd60dac5331a392e7e3ac45cc091011ef` | Deterministic Abbott health CLI |

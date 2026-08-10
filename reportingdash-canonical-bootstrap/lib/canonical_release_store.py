@@ -33,6 +33,12 @@ ABBOTT_ALLOWED_SOURCE_KINDS = frozenset(
 )
 ABBOTT_COVERAGE_ONLY_BOOTSTRAP_BASELINE_ID = 13
 ABBOTT_COVERAGE_ONLY_BOOTSTRAP_PREDECESSOR_ID = 1
+_METADATA_ONLY_PERIODS = (
+    ("2026-06-01", "2026-06-30"),
+    ("2026-07-01", "2026-07-31"),
+    ("2026-08-01", "2026-08-09"),
+)
+_METADATA_ONLY_METRICS = ("sessions", "users", "pageviews", "goal_conversions")
 
 
 class ReleaseStoreError(RuntimeError):
@@ -154,6 +160,12 @@ def _required_control_names(
         f"coverage.{scope}.reconciled_days"
         for scope in ABBOTT_REQUIRED_METRIKA_SCOPES
     )
+    if any(name.startswith("content.") for name in names):
+        names.update(
+            f"fact_totals.{start}.{end}.{metric}"
+            for start, end in _METADATA_ONLY_PERIODS
+            for metric in _METADATA_ONLY_METRICS
+        )
     return names
 
 
