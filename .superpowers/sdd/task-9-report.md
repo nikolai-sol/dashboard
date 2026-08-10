@@ -270,20 +270,17 @@ After the changes, the same command passed (`Ran 1 test ... OK`).
 ### Verification commands and results
 
 ```text
-sha256sum -c ops/abbott-runtime-manifest.sha256
-# all 36 attested files: OK
+/sbin/sha256sum -c ops/abbott-runtime-manifest.sha256
+# all 37 attested files: OK
 
 python3 bootstrap-manifest verifier
 # bootstrap manifest verified: 44 synchronized entries
 
 PYTHONPATH=/tmp/abbott-task1-deps:. /Users/nafanya/.local/bin/python3.11 -m unittest discover -s tests/abbott_page_classifier -p 'test_*.py'
-# Ran 423 tests: FAILED (1 failure, 1 skipped):
-# test_normalize_url_wrapper_keeps_string_surface_and_semantic_direction
-# expected a lowercase query key; the current normalizer preserves `DIRECTION`.
+# Ran 424 tests: OK (1 skipped)
 
 PYTHONPATH=/tmp/abbott-task1-deps:. /Users/nafanya/.local/bin/python3.11 -m unittest discover -s tests -p 'test_abbott_*.py'
-# Ran 200 tests: FAILED (3 errors), all in test_abbott_health_probe because
-# healthy_snapshot no longer matches sanitize_snapshot's exact root schema.
+# Ran 200 tests: OK
 
 PYTHONPATH=/tmp/abbott-task1-deps:. /Users/nafanya/.local/bin/python3.11 -m unittest tests.test_canonical_release_store tests.test_abbott_release_retention
 # Ran 45 tests: OK
@@ -292,20 +289,14 @@ cd dashboard-next && npm run ci:verify
 # passed: public-asset scan, lint (8 warnings, 0 errors), typecheck, and production build
 ```
 
-### Pre-existing local warnings / blockers
+### Local warnings
 
-- The established supported Python command is the Python 3.11 executable above
-  with `/tmp/abbott-task1-deps` on `PYTHONPATH`; it removes the earlier
-  system-Python/dependency blocker. Two pre-existing unrelated failures remain:
-  one URL query-key casing compatibility expectation and three exact
-  health-probe fixture/schema errors. This task changed only docs, runtime file
-  mode, manifests, and the closure assertion; it did not alter either surface.
 - `npm run ci:verify` succeeds with eight unchanged lint warnings: five unused
   symbols, two hook dependency warnings, and one unused `DbRow` type.
 
 ### Commits
 
-- Nested dashboard/bootstrap: `fa4f966d5175eec78d3d2ffda2d25b138e2489a6`
-  (`chore(abbott): attest URL identity runtime`)
-- Root closure: `2f10c5b4ab793cf7b5c6ee86fe6d2122ca6ff9fd`
-  (`docs(abbott): close URL identity operations`)
+- Nested dashboard/bootstrap: `b4a7fd9`
+  (`fix(abbott): preserve classifier runtime compatibility`)
+- Root compatibility/health closure: `b2f0b6c`
+  (`fix(abbott): restore URL and health closure tests`)
