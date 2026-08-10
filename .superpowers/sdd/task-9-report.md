@@ -276,14 +276,17 @@ sha256sum -c ops/abbott-runtime-manifest.sha256
 python3 bootstrap-manifest verifier
 # bootstrap manifest verified: 44 synchronized entries
 
-python3 -m unittest discover -s tests/abbott_page_classifier -p 'test_*.py'
-# Ran 262 tests: FAILED (31 failures, 9 errors, 2 skipped)
+PYTHONPATH=/tmp/abbott-task1-deps:. /Users/nafanya/.local/bin/python3.11 -m unittest discover -s tests/abbott_page_classifier -p 'test_*.py'
+# Ran 423 tests: FAILED (1 failure, 1 skipped):
+# test_normalize_url_wrapper_keeps_string_surface_and_semantic_direction
+# expected a lowercase query key; the current normalizer preserves `DIRECTION`.
 
-python3 -m unittest discover -s tests -p 'test_abbott_*.py'
-# Ran 200 tests: FAILED (2 failures, 4 errors)
+PYTHONPATH=/tmp/abbott-task1-deps:. /Users/nafanya/.local/bin/python3.11 -m unittest discover -s tests -p 'test_abbott_*.py'
+# Ran 200 tests: FAILED (3 errors), all in test_abbott_health_probe because
+# healthy_snapshot no longer matches sanitize_snapshot's exact root schema.
 
-python3 -m unittest tests.test_canonical_release_store tests.test_abbott_release_retention
-# Ran 45 tests: FAILED (1 error)
+PYTHONPATH=/tmp/abbott-task1-deps:. /Users/nafanya/.local/bin/python3.11 -m unittest tests.test_canonical_release_store tests.test_abbott_release_retention
+# Ran 45 tests: OK
 
 cd dashboard-next && npm run ci:verify
 # passed: public-asset scan, lint (8 warnings, 0 errors), typecheck, and production build
@@ -291,14 +294,12 @@ cd dashboard-next && npm run ci:verify
 
 ### Pre-existing local warnings / blockers
 
-- The prescribed `python3` is macOS Python 3.9 and the worktree has no local
-  virtual environment with the declared `openai` dependency. Import failures
-  for `openai`, Python-3.10 union-type failures, and the classifier's intended
-  `ABBOTT_CONTENT_PYTHON311_VERSION_REQUIRED` response therefore prevent the
-  three full Python commands from reaching their expected all-green result.
-- The root Abbott discovery also has three existing health-probe fixture/schema
-  failures. This task changed only docs, runtime file mode, manifests, and the
-  closure assertion; it did not alter that health-probe code or its fixtures.
+- The established supported Python command is the Python 3.11 executable above
+  with `/tmp/abbott-task1-deps` on `PYTHONPATH`; it removes the earlier
+  system-Python/dependency blocker. Two pre-existing unrelated failures remain:
+  one URL query-key casing compatibility expectation and three exact
+  health-probe fixture/schema errors. This task changed only docs, runtime file
+  mode, manifests, and the closure assertion; it did not alter either surface.
 - `npm run ci:verify` succeeds with eight unchanged lint warnings: five unused
   symbols, two hook dependency warnings, and one unused `DbRow` type.
 
@@ -306,5 +307,5 @@ cd dashboard-next && npm run ci:verify
 
 - Nested dashboard/bootstrap: `fa4f966d5175eec78d3d2ffda2d25b138e2489a6`
   (`chore(abbott): attest URL identity runtime`)
-- Root closure: `e2d2dd7cfb9ab094e4ceec63747269b774606766`
+- Root closure: `2f10c5b4ab793cf7b5c6ee86fe6d2122ca6ff9fd`
   (`docs(abbott): close URL identity operations`)
