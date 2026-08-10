@@ -33,6 +33,7 @@ ABBOTT_ALLOWED_SOURCE_KINDS = frozenset(
 )
 ABBOTT_COVERAGE_ONLY_BOOTSTRAP_BASELINE_ID = 13
 ABBOTT_COVERAGE_ONLY_BOOTSTRAP_PREDECESSOR_ID = 1
+PREVIEW_ONLY_REVISION_PREFIX = "preview_only:"
 _METADATA_ONLY_PERIODS = (
     ("2026-06-01", "2026-06-30"),
     ("2026-07-01", "2026-07-31"),
@@ -795,6 +796,11 @@ def activate_release(release_id: int, *, expected_active_release_id: int) -> Non
         release = cur.fetchone()
         if not isinstance(release, dict):
             raise ImmutableReleaseError("Canonical release is not validated for activation")
+        # A disposable preview may create a validated-looking successor in its
+        # own MySQL instance.  Its explicit provenance must never be accepted
+        # by this production activation authority, even if its rows are copied.
+        if str(release.get("code_revision") or "").startswith(PREVIEW_ONLY_REVISION_PREFIX):
+            raise ImmutableReleaseError("Preview-only canonical release cannot be activated")
         cur.execute(
             """
             SELECT source_snapshot_id, source_kind, code_revision,
