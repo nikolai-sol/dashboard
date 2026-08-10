@@ -41,3 +41,4 @@ not loaded or mutated by this task.
   `canonical_url`/`url` identity; weak matches remain review items and a strong
   collision is persisted as `collision` with `IDENTITY_COLLISION` evidence.
 - Bootstrap runtime follow-up: `137c9eb38be0dd775f3126b74648e491ef9a473d`.
+- Root review follow-up: `9c4ae35`.
