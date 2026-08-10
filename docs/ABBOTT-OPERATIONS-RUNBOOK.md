@@ -960,6 +960,12 @@ eligible fields, creates one immutable approval batch, and publishes its Google
 Sheet projection. It stops at manual approval: it does not ingest, materialize,
 validate, activate a release, or mutate the active pointer.
 
+The reconcile stage also includes non-archived active-predecessor entities with
+missing direction or material type when neither registry already represents
+the entity. These DB-native proposal rows are reported separately as
+`catalog_gap_count`; they do not increase the external `source_count` and do
+not call a source API.
+
 Review the exact local snapshot paths and all four version bindings before an
 operator authorizes execution. A dry run validates only the command
 configuration and intentionally performs zero DB, Sheets, OpenAI, source API,

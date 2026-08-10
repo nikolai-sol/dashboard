@@ -6,8 +6,11 @@ unchanged until a later, separately authorized approval/ingest/materialize/
 validate/activation sequence.
 
 The canonical state is MySQL. Registry files are captured inputs; Registry 2 is
-not an approval batch. Legacy JSONL registry state is not a workflow input or
-output.
+not an approval batch. Reconciliation also derives proposal-only items for
+non-archived predecessor entities whose direction or material type is still
+missing and which are not already represented by either registry. The
+sanitized `catalog_gap_count` receipt accounts for those derived items. Legacy
+JSONL registry state is not a workflow input or output.
 
 ## Weekly proposal
 

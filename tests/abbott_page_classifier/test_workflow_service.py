@@ -190,7 +190,106 @@ def write_sources(
     return registry1, registry2
 
 
+def write_empty_sources(directory: Path):
+    registry1 = directory / "registry1.xlsx"
+    workbook = Workbook()
+    sheet = workbook.active
+    sheet.title = "кардио"
+    sheet.append(("ID", "Название", "ссылка", "Направление", "Тип контента"))
+    workbook.save(registry1)
+    registry2 = directory / "registry2.csv"
+    registry2.write_text(
+        "ID,Название,URL,Направление,Тип материала\n", encoding="utf-8"
+    )
+    return registry1, registry2
+
+
 class WeeklyProposalServiceTests(unittest.TestCase):
+    def test_active_catalog_gap_is_included_and_classified_without_entity_creation(self):
+        entity = CanonicalClassification(
+            7,
+            "Материал без направления",
+            "https://abbottpro.ru/articles/gap",
+            None,
+            "articles",
+            "all",
+            "active",
+            17,
+        )
+        with tempfile.TemporaryDirectory() as temporary:
+            registry1, registry2 = write_empty_sources(Path(temporary))
+            classifier = RecordingClassifier()
+            store = StatefulWorkflowStore(context(entities=(entity,)))
+            service = CanonicalWeeklyProposalService(
+                store, CONFIG, classifier_factory=lambda: classifier
+            )
+            first = service.reconcile(registry1, registry2)
+            replay = service.reconcile(registry1, registry2)
+            receipt = service.classify(first.run_id, execute_llm=True)
+
+        self.assertEqual(first.run_id, replay.run_id)
+        self.assertEqual(first.source_count, 0)
+        self.assertEqual(first.catalog_gap_count, 1)
+        persisted = store.load_reconciliation_run(first.run_id)
+        self.assertEqual(len(persisted.items), 1)
+        gap = persisted.items[0]
+        self.assertEqual(gap.identity_status, "matched")
+        self.assertEqual(gap.content_entity_id, entity.content_entity_id)
+        self.assertEqual(gap.reconciliation_input.registry1.source_name, "canonical_catalog")
+        self.assertEqual(store.entity_creations, [])
+        self.assertEqual(receipt.eligible_count, 1)
+        self.assertEqual(receipt.ready_count, 1)
+        self.assertEqual(len(classifier.requests), 1)
+        self.assertEqual(classifier.requests[0][0].requested_fields, ("direction_code",))
+
+    def test_complete_or_archived_catalog_entities_do_not_create_gap_items(self):
+        entities = (
+            CanonicalClassification(
+                7, "Complete", "https://abbottpro.ru/complete", "cardiology",
+                "articles", "all", "active", 17,
+            ),
+            CanonicalClassification(
+                8, "Archived", "https://abbottpro.ru/archived", None,
+                "articles", "all", "archived", 18,
+            ),
+        )
+        with tempfile.TemporaryDirectory() as temporary:
+            registry1, registry2 = write_empty_sources(Path(temporary))
+            store = StatefulWorkflowStore(context(entities=entities))
+            receipt = CanonicalWeeklyProposalService(store, CONFIG).reconcile(
+                registry1, registry2
+            )
+
+        self.assertEqual(receipt.catalog_gap_count, 0)
+        self.assertEqual(store.load_reconciliation_run(receipt.run_id).items, ())
+
+    def test_catalog_gap_does_not_duplicate_entity_already_in_registry_source(self):
+        entity = CanonicalClassification(
+            7,
+            "Новый материал",
+            "https://abbottpro.ru/cardio/new",
+            None,
+            "articles",
+            "all",
+            "active",
+            17,
+        )
+        aliases = (IdentityAlias(7, "material_id", "900", "strong"),)
+        with tempfile.TemporaryDirectory() as temporary:
+            registry1, registry2 = write_sources(
+                Path(temporary), direction="", material_type="Статьи"
+            )
+            store = StatefulWorkflowStore(context(entities=(entity,), aliases=aliases))
+            receipt = CanonicalWeeklyProposalService(store, CONFIG).reconcile(
+                registry1, registry2
+            )
+
+        persisted = store.load_reconciliation_run(receipt.run_id)
+        self.assertEqual(receipt.catalog_gap_count, 0)
+        self.assertEqual(len(persisted.items), 1)
+        self.assertEqual(persisted.items[0].content_entity_id, 7)
+        self.assertEqual(persisted.items[0].reconciliation_input.registry1.source_name, "registry1")
+
     def test_identical_new_strong_identity_merges_registry1_and_registry2(self):
         with tempfile.TemporaryDirectory() as temporary:
             registry1, registry2 = write_sources(
