@@ -6,7 +6,7 @@ import unittest
 
 
 ROOT = Path(__file__).resolve().parents[1]
-MIGRATION = ROOT / "dashboard-next/src/db/migrations/047_abbott_content_reconciliation_staging.sql"
+MIGRATION = ROOT / "dashboard-next/src/db/migrations/049_abbott_content_reconciliation_staging.sql"
 GRANTS = ROOT / "ops/sql/abbott_private_schema_and_grants.sql"
 
 

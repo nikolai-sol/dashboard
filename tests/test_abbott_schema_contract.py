@@ -53,7 +53,7 @@ class AbbottSchemaContractTest(unittest.TestCase):
         self.assertNotIn("projection_provenance_json", table)
         upgrade = (
             ROOT
-            / "dashboard-next/src/db/migrations/046_abbott_content_candidate_provenance.sql"
+            / "dashboard-next/src/db/migrations/048_abbott_content_candidate_provenance.sql"
         ).read_text()
         for column in (
             "content_entity_id BIGINT UNSIGNED DEFAULT NULL",

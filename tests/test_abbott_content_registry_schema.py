@@ -11,7 +11,7 @@ MIGRATION = (
     / "src"
     / "db"
     / "migrations"
-    / "045_abbott_content_registry_workflow.sql"
+    / "047_abbott_content_registry_workflow.sql"
 )
 
 

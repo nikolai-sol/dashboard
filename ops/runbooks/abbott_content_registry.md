@@ -171,7 +171,7 @@ read authorities remain internal to the canonical workflow; only
 
 Golden gates are source accounting, taxonomy and schema validity, anti-flip
 correctness, and reviewed direction/material-type accuracy. Real LLM evaluation
-is separately authorized and stores sanitized metrics only. Migration 047,
+is separately authorized and stores sanitized metrics only. Migrations 047–049,
 workflow-role grants, secrets, the first proposal, and any live schedule each
 need distinct review/authorization.
 
