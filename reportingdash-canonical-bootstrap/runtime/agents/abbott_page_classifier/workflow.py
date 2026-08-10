@@ -37,7 +37,7 @@ _WRITE_COMMANDS = frozenset(
 _SAFE_OUTPUT_KEYS = frozenset(
     {
         "status", "run_id", "run_key", "batch_id", "batch_key",
-        "source_count", "ready_count", "conflict_count", "unresolved_count",
+        "source_count", "catalog_gap_count", "ready_count", "conflict_count", "unresolved_count",
         "rejected_count", "no_change_count", "accepted_count", "skipped_count",
         "eligible_count", "candidate_release_id", "registry1_hash", "registry2_hash",
         "published_input_hash", "accepted_decision_hash", "batch_hash",

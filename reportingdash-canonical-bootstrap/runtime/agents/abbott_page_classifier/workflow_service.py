@@ -27,7 +27,13 @@ from .llm_classifier import (
 )
 from .normalization import normalize_url, sha256_text
 from .reconcile import ReconciliationInput, reconcile_entity
-from .sources import SourceCandidate, SourceSnapshot, read_registry1, read_registry2_csv
+from .sources import (
+    SourceCandidate,
+    SourceSnapshot,
+    read_canonical_catalog,
+    read_registry1,
+    read_registry2_csv,
+)
 
 
 REGISTRY1_PARSER_VERSION = "registry1.xlsx.v1"
@@ -128,6 +134,7 @@ class ReconciliationReceipt:
     registry1_hash: str
     registry2_hash: str
     source_count: int
+    catalog_gap_count: int
     ready_count: int
     conflict_count: int
     unresolved_count: int
@@ -246,6 +253,13 @@ class CanonicalWeeklyProposalService:
             registry1_hash=persisted.registry1.source_hash,
             registry2_hash=persisted.registry2.source_hash,
             source_count=persisted.registry1.source_row_count + persisted.registry2.source_row_count,
+            catalog_gap_count=sum(
+                1
+                for item in persisted.items
+                if item.reconciliation_input.registry1 is not None
+                and item.reconciliation_input.registry1.source_name
+                == "canonical_catalog"
+            ),
             ready_count=counts["ready"],
             conflict_count=counts["conflict"],
             unresolved_count=counts["unresolved"],
@@ -605,6 +619,52 @@ class CanonicalWeeklyProposalService:
                     input_hash=reconciled.input_hash,
                     identity_status=identity_status,
                     content_entity_id=content_entity_id,
+                    reconciliation_input=reconciliation_input,
+                )
+            )
+        represented_entity_ids = {
+            item.content_entity_id
+            for item in items
+            if item.content_entity_id is not None
+        }
+        catalog_gaps = tuple(
+            entity
+            for entity in sorted(
+                context.entities, key=lambda value: value.content_entity_id
+            )
+            if entity.content_entity_id not in represented_entity_ids
+            and entity.lifecycle_code != "archived"
+            and (
+                entity.direction_code in (None, "undetermined")
+                or entity.material_type_code in (None, "undetermined")
+            )
+        )
+        for entity, candidate in zip(
+            catalog_gaps, read_canonical_catalog(catalog_gaps).candidates
+        ):
+            grouping_key = f"entity:{entity.content_entity_id}"
+            reconciliation_input = ReconciliationInput(
+                content_entity_id=entity.content_entity_id,
+                active_canonical=entity,
+                registry1=candidate,
+            )
+            reconciled = reconcile_entity(reconciliation_input)
+            identity_status = "matched"
+            items.append(
+                PersistedReconciliationItem(
+                    grouping_key=grouping_key,
+                    item_key=sha256_text(
+                        _canonical_json(
+                            {
+                                "grouping_key": grouping_key,
+                                "identity_status": identity_status,
+                                "input_hash": reconciled.input_hash,
+                            }
+                        )
+                    ),
+                    input_hash=reconciled.input_hash,
+                    identity_status=identity_status,
+                    content_entity_id=entity.content_entity_id,
                     reconciliation_input=reconciliation_input,
                 )
             )
