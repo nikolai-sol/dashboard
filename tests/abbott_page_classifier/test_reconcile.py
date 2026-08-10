@@ -806,6 +806,23 @@ class ReconciliationTests(unittest.TestCase):
         self.assertEqual(item.final_lifecycle_code, "archive_candidate")
         self.assertEqual(item.readiness_state, "ready")
 
+    def test_new_inactive_registry_row_requires_archive_review(self) -> None:
+        item = reconcile_entity(
+            ReconciliationInput(
+                registry1=candidate(
+                    "registry1",
+                    direction="cardiology",
+                    material_type="articles",
+                    access="doctors",
+                    lifecycle="archive_candidate",
+                )
+            )
+        )
+
+        self.assertEqual(item.final_lifecycle_code, "archive_candidate")
+        self.assertEqual(item.readiness_state, "conflict")
+        self.assertIn(ConflictCode.ARCHIVE_TYPE_INVALID, item.conflict_codes)
+
     def test_invalid_registry2_archive_preserves_canonical_archived_lifecycle(self) -> None:
         item = reconcile_entity(
             ReconciliationInput(
