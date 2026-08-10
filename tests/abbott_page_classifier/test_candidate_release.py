@@ -156,6 +156,7 @@ class CandidateConnection:
         duplicate_event: bool = False,
         skipped_identity_conflict: bool = False,
         baseline_missing_direction: bool = False,
+        candidate_status: str = "staging",
     ):
         self.events: list[str] = []
         self.calls: list[tuple[str, tuple[object, ...]]] = []
@@ -194,6 +195,7 @@ class CandidateConnection:
         self.orphan_event = orphan_event
         self.duplicate_event = duplicate_event
         self.skipped_identity_conflict = skipped_identity_conflict
+        self.candidate_status = candidate_status
         self.snapshots = {
             11: {
                 "id": 11,
@@ -455,7 +457,7 @@ class CandidateConnection:
         if "FROM portal_data_releases AS candidate" in normalized:
             self._one = {
                 "id": 41,
-                "release_status": "staging",
+                "release_status": self.candidate_status,
                 "baseline_validation_run_id": 902,
                 "rollback_from_release_id": 12,
                 "source_snapshot_ids": "[11, 901]",
@@ -1929,6 +1931,51 @@ class CandidateReleaseTest(unittest.TestCase):
             and "batch.candidate_release_id = %s" in query
         )
         self.assertIn("batch.accepted_at", validation_batch_sql)
+
+    def test_read_only_validation_accepts_a_validated_candidate_for_comparison(self):
+        connection = self._prepare_gate(
+            GateConnection(candidate_status="validated")
+        )
+
+        report = validate_content_candidate(
+            41,
+            expected_counts={
+                "source": 2,
+                "ready": 1,
+                "conflict": 0,
+                "unresolved": 0,
+                "rejected": 0,
+                "accepted": 1,
+            },
+            accepted_hash=connection.accepted_hash,
+            connection_factory=lambda: connection,
+        )
+
+        self.assertTrue(report.passed)
+        self.assertNotIn("commit", connection.events)
+
+    def test_read_only_validation_rejects_active_retired_and_failed_releases(self):
+        for status in ("active", "retired", "failed"):
+            with self.subTest(status=status):
+                connection = self._prepare_gate(
+                    GateConnection(candidate_status=status)
+                )
+                with self.assertRaisesRegex(
+                    CandidateMaterializationError, "CANDIDATE_NOT_MUTABLE"
+                ):
+                    validate_content_candidate(
+                        41,
+                        expected_counts={
+                            "source": 2,
+                            "ready": 1,
+                            "conflict": 0,
+                            "unresolved": 0,
+                            "rejected": 0,
+                            "accepted": 1,
+                        },
+                        accepted_hash=connection.accepted_hash,
+                        connection_factory=lambda: connection,
+                    )
 
     def test_non_content_copy_and_attestation_use_natural_grain_streaming(self):
         connection = self._prepare_gate(GateConnection())
