@@ -1901,6 +1901,126 @@ def _close(cursor, connection) -> None:
             pass
 
 
+def reset_failed_content_candidate(
+    batch_id: int,
+    candidate_release_id: int,
+    expected_active_release_id: int,
+    *,
+    connection_factory=None,
+) -> str:
+    """Resume a reviewed batch after its staging candidate failed validation."""
+
+    try:
+        batch_id = int(batch_id)
+        candidate_release_id = int(candidate_release_id)
+        expected_active_release_id = int(expected_active_release_id)
+    except (TypeError, ValueError):
+        raise CandidateMaterializationError("CANDIDATE_RESET_INPUT_INVALID") from None
+    if min(batch_id, candidate_release_id, expected_active_release_id) <= 0:
+        raise CandidateMaterializationError("CANDIDATE_RESET_INPUT_INVALID")
+
+    connection = None
+    cursor = None
+    try:
+        connection = (connection_factory or get_db_connection)()
+        connection.start_transaction()
+        cursor = connection.cursor(dictionary=True)
+        cursor.execute(
+            """
+            SELECT canonical_release_id
+            FROM portal_active_data_releases
+            WHERE dataset_key = %s
+            FOR UPDATE
+            """,
+            (DATASET_KEY,),
+        )
+        active = cursor.fetchone()
+        if (
+            not isinstance(active, Mapping)
+            or int(active.get("canonical_release_id") or 0)
+            != expected_active_release_id
+        ):
+            raise CandidateMaterializationError("ACTIVE_PREDECESSOR_MISMATCH")
+
+        cursor.execute(
+            """
+            SELECT id, release_status, rollback_from_release_id
+            FROM portal_data_releases
+            WHERE dataset_key = %s AND id = %s
+            FOR UPDATE
+            """,
+            (DATASET_KEY, candidate_release_id),
+        )
+        candidate = cursor.fetchone()
+        if (
+            not isinstance(candidate, Mapping)
+            or int(candidate.get("id") or 0) != candidate_release_id
+            or candidate.get("release_status") != "failed"
+            or int(candidate.get("rollback_from_release_id") or 0)
+            != expected_active_release_id
+        ):
+            raise CandidateMaterializationError("FAILED_CANDIDATE_MISMATCH")
+
+        cursor.execute(
+            """
+            SELECT id, batch_status, candidate_release_id, activation_status,
+                   accepted_decision_hash, accepted_at
+            FROM portal_content_approval_batches
+            WHERE id = %s AND dataset_key = %s
+            FOR UPDATE
+            """,
+            (batch_id, DATASET_KEY),
+        )
+        batch = cursor.fetchone()
+        if not isinstance(batch, Mapping) or int(batch.get("id") or 0) != batch_id:
+            raise CandidateMaterializationError("FAILED_CANDIDATE_BATCH_MISMATCH")
+        if (
+            batch.get("batch_status") == "ingested"
+            and batch.get("candidate_release_id") is None
+            and batch.get("activation_status") == "not_started"
+        ):
+            connection.commit()
+            return "noop"
+        accepted_hash = batch.get("accepted_decision_hash")
+        if (
+            batch.get("batch_status") != "candidate_materialized"
+            or int(batch.get("candidate_release_id") or 0) != candidate_release_id
+            or batch.get("activation_status") != "candidate"
+            or not isinstance(accepted_hash, str)
+            or not re.fullmatch(r"[0-9a-f]{64}", accepted_hash)
+            or batch.get("accepted_at") is None
+        ):
+            raise CandidateMaterializationError("FAILED_CANDIDATE_BATCH_MISMATCH")
+
+        cursor.execute(
+            """
+            UPDATE portal_content_approval_batches
+            SET batch_status = 'ingested',
+                candidate_release_id = NULL,
+                activation_status = 'not_started'
+            WHERE id = %s AND dataset_key = %s
+              AND candidate_release_id = %s
+              AND batch_status = 'candidate_materialized'
+              AND activation_status = 'candidate'
+            """,
+            (batch_id, DATASET_KEY, candidate_release_id),
+        )
+        if cursor.rowcount != 1:
+            raise CandidateMaterializationError("FAILED_CANDIDATE_BATCH_MISMATCH")
+        connection.commit()
+        return "reset"
+    except CandidateMaterializationError:
+        if connection is not None:
+            connection.rollback()
+        raise
+    except Exception:
+        if connection is not None:
+            connection.rollback()
+        raise CandidateMaterializationError("CANDIDATE_RESET_FAILED") from None
+    finally:
+        _close(cursor, connection)
+
+
 def materialize_content_candidate(
     batch_id: int,
     predecessor_release_id: int,

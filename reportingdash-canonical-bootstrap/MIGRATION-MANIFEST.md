@@ -15,7 +15,7 @@ private runtime repository.
 | `lib/canonical_writer.py` | `canonical_writer.py` | `3f287a42d1f79360d49a1f484dee823b70683ec5bd0448a205b0f352219a4e19` | Staging resume writer and current-active append-only Abbott day publisher |
 | `lib/metrika_dashboard_breakdowns.py` | `metrika_dashboard_breakdowns.py` | `879822ee16108abccbb0b0c726d88f6d3835e36f2566d2531bdb4cd1a461f6c8` | Shared Metrika dashboard breakdown definitions |
 | `lib/metrika_logs_api.py` | `metrika_logs_api.py` | `16b80558fbeca808d2dc28a8a163c9a2604e50d28a903725728f26cef7f10084` | Exact Metrika Logs request lifecycle and visit parser |
-| `lib/canonical_release_store.py` | `canonical_release_store.py` | `697ddfad495b4263dff48b2b261576717d5e93d493869125387073fb71adb1d8` | Candidate release store, persisted validation gate, atomic activation, and rollback pointer management |
+| `lib/canonical_release_store.py` | `canonical_release_store.py` | `b00c3743c034ca39b9db2da77c586ec537c2944880babc35e1bc473373d7f9b8` | Candidate release store, persisted validation gate, atomic activation, rollback, and audited staging failure management |
 
 ## Runnable Abbott runtime closure
 
@@ -28,9 +28,9 @@ every runbook entrypoint and each repository-local Python dependency.
 | `runtime/canonical_writer.py` | `canonical_writer.py` | `3f287a42d1f79360d49a1f484dee823b70683ec5bd0448a205b0f352219a4e19` | Atomic staging and active append-only writer |
 | `runtime/metrika_dashboard_breakdowns.py` | `metrika_dashboard_breakdowns.py` | `879822ee16108abccbb0b0c726d88f6d3835e36f2566d2531bdb4cd1a461f6c8` | Shared dashboard breakdown definitions |
 | `runtime/metrika_logs_api.py` | `metrika_logs_api.py` | `16b80558fbeca808d2dc28a8a163c9a2604e50d28a903725728f26cef7f10084` | Exact Metrika Logs request lifecycle and visit parser |
-| `runtime/canonical_release_store.py` | `canonical_release_store.py` | `697ddfad495b4263dff48b2b261576717d5e93d493869125387073fb71adb1d8` | Exact validation and pointer store |
+| `runtime/canonical_release_store.py` | `canonical_release_store.py` | `b00c3743c034ca39b9db2da77c586ec537c2944880babc35e1bc473373d7f9b8` | Exact validation, pointer, and audited staging-failure store |
 | `runtime/run_abbott_metrika_active_release.py` | `run_abbott_metrika_active_release.py` | `0f7c132b2cbd4f37ce51ceefa8479d36cf30088e2587dcda4cfc36cb29face0d` | Committed-manifest cron launcher |
-| `runtime/abbott_release_operator.py` | `abbott_release_operator.py` | `4fea3b284743e168011bb4518276576890d76c375a557b9732e6491f326ecd9f` | Least-privilege lifecycle CLI |
+| `runtime/abbott_release_operator.py` | `abbott_release_operator.py` | `493decb85ca7ac25ae55e125023b1aff3e3146b2a122e190097243790c76067d` | Least-privilege lifecycle CLI with audited staging failure |
 | `runtime/probe_yandex_metrika_access.py` | `probe_yandex_metrika_access.py` | `430603922de9cd3cdbc6d0a7dc103f841924087c39462fc137ec8a26684674bc` | Read-only counter access proof |
 | `runtime/capture_abbott_canonical_baseline.py` | `capture_abbott_canonical_baseline.py` | `24692288fd1e8c6bf61b0b59b52963c60068df13e068bf4336e6d9fd9ce998e2` | Frozen baseline CLI |
 | `runtime/compare_abbott_canonical_release.py` | `compare_abbott_canonical_release.py` | `3cbe72196853ec89d435b214cb7ac106732d94e5b2a05ac95e035e7942d5c015` | Candidate comparator CLI |
@@ -43,7 +43,7 @@ every runbook entrypoint and each repository-local Python dependency.
 | `runtime/agents/__init__.py` | `agents/__init__.py` | `cf17c37c950a6d792c42de4580180ddefa478dbebc01109674658756473d9cc8` | Vendored content-attestor package root |
 | `runtime/agents/abbott_page_classifier/__init__.py` | `agents/abbott_page_classifier/__init__.py` | `ea902dc7a2b24b5bdc073342296a16a013af63a3b7afc26789f82e2511f576b0` | Vendored content-attestor package |
 | `runtime/agents/abbott_page_classifier/approval_hashes.py` | `agents/abbott_page_classifier/approval_hashes.py` | `2e651e0cc8627ea91fef10846929bf7d63870e1d341b459f1aab49c7e84fa042` | Lightweight canonical approval hash authority |
-| `runtime/agents/abbott_page_classifier/candidate_release.py` | `agents/abbott_page_classifier/candidate_release.py` | `02e8c33c4bc0a577a6c2f00d8b80dc0922368f42fa987c7cfd840af4ea588940` | Shared content materializer, reviewed validation evidence, and staging-to-validated authority |
+| `runtime/agents/abbott_page_classifier/candidate_release.py` | `agents/abbott_page_classifier/candidate_release.py` | `2fa14b7cdd4b6a6b2234cef58b8bd8364a68b65331322c7b602fd2995931c19b` | Shared content materializer with pre-attested return paths, resume-safe failed-candidate reset, and reviewed validation evidence |
 | `runtime/agents/abbott_page_classifier/domain.py` | `agents/abbott_page_classifier/domain.py` | `c2d54e20e09fac9772b176b7f51e78750af78d71cdcea409e1f6d78508d37efb` | Content taxonomy domain dependency |
 | `runtime/agents/abbott_page_classifier/normalization.py` | `agents/abbott_page_classifier/normalization.py` | `089b6a8ed3a2f47432a972bedb848a9c89d889981445eaf0804b40677899a1df` | Content normalization dependency |
 | `runtime/agents/abbott_page_classifier/weekly_proposal.py` | `agents/abbott_page_classifier/weekly_proposal.py` | `b209e49ac51f5bba26f4e46ce6d6797d716968be5efc0030e30c29671267d706` | Weekly reconcile/classify/publish entrypoint; direct execution rejects non-3.11 Python and stops for manual approval |

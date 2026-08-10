@@ -690,6 +690,74 @@ def _compare_and_swap_pointer(
         raise ReleasePointerConflictError("Active canonical release pointer changed")
 
 
+def fail_staging_release(
+    release_id: int, *, expected_active_release_id: int
+) -> str:
+    """Audit a superseded staging candidate without changing the active pointer."""
+
+    dataset_key = ABBOTT_DATASET_KEY
+    conn = None
+    cur = None
+    try:
+        conn = get_db_connection()
+        cur = conn.cursor(dictionary=True)
+        conn.start_transaction()
+        current_release_id = _lock_active_pointer(cur, dataset_key)
+        if current_release_id != expected_active_release_id:
+            raise ReleasePointerConflictError("Active canonical release pointer changed")
+
+        cur.execute(
+            """
+            SELECT id, release_status, rollback_from_release_id
+            FROM portal_data_releases
+            WHERE dataset_key = %s AND id = %s
+            FOR UPDATE
+            """,
+            (dataset_key, release_id),
+        )
+        release = cur.fetchone()
+        if (
+            not isinstance(release, dict)
+            or int(release.get("id") or 0) != release_id
+            or int(release.get("rollback_from_release_id") or 0)
+            != expected_active_release_id
+        ):
+            raise ImmutableReleaseError("Canonical staging release cannot be failed")
+        if release.get("release_status") == "failed":
+            conn.commit()
+            return "noop"
+        if release.get("release_status") != "staging":
+            raise ImmutableReleaseError("Canonical staging release cannot be failed")
+
+        cur.execute(
+            """
+            UPDATE portal_data_releases
+            SET release_status = 'failed',
+                rollback_reason = %s
+            WHERE dataset_key = %s AND id = %s AND release_status = 'staging'
+            """,
+            (
+                "superseded after failed content validation",
+                dataset_key,
+                release_id,
+            ),
+        )
+        if cur.rowcount != 1:
+            raise ImmutableReleaseError("Canonical staging release cannot be failed")
+        conn.commit()
+        return "failed"
+    except ReleaseStoreError:
+        if conn is not None:
+            conn.rollback()
+        raise
+    except Exception:
+        if conn is not None:
+            conn.rollback()
+        raise ReleaseStoreError("Unable to fail canonical staging release") from None
+    finally:
+        _close(cur, conn)
+
+
 def activate_release(release_id: int, *, expected_active_release_id: int) -> None:
     dataset_key = ABBOTT_DATASET_KEY
     conn = None
