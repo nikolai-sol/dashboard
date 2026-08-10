@@ -1532,6 +1532,19 @@ def _canonical_catalog_rows(
     )
 
 
+def _canonical_lookup_rows(
+    rows: Iterable[object], columns: Sequence[str] = _LOOKUP_COLUMNS
+) -> tuple[tuple[object, ...], ...]:
+    kind_index = columns.index("lookup_kind")
+    hash_index = columns.index("lookup_key_hash")
+    return tuple(
+        sorted(
+            (_ordered_row(row, columns) for row in rows),
+            key=lambda row: (str(row[kind_index] or ""), str(row[hash_index] or "")),
+        )
+    )
+
+
 def _snapshot_records(
     rows: Iterable[object], *, include_ids: bool
 ) -> list[dict[str, object]]:
@@ -2422,9 +2435,7 @@ def materialize_content_candidate(
             "ORDER BY lookup_kind, lookup_key_hash",
             (candidate_id, catalog_snapshot_id),
         )
-        stored_lookup = tuple(
-            _ordered_row(row, lookup_columns) for row in cursor.fetchall()
-        )
+        stored_lookup = _canonical_lookup_rows(cursor.fetchall(), lookup_columns)
         if len(stored_lookup) != len(lookup_payloads) or _hash_rows(stored_lookup) != lookup_hash:
             raise CandidateMaterializationError("LOOKUP_HASH_MISMATCH")
         cursor.execute(
@@ -2536,7 +2547,7 @@ def _load_lookup(
         "ORDER BY lookup_kind, lookup_key_hash",
         (release_id, snapshot_id),
     )
-    return tuple(_ordered_row(row, _LOOKUP_COLUMNS) for row in cursor.fetchall())
+    return _canonical_lookup_rows(cursor.fetchall())
 
 
 def _catalog_schema_gates(
