@@ -31,13 +31,22 @@ import TrendChart from "@/components/TrendChart";
 import MultibrandPanel from "@/components/MultibrandPanel";
 import MultibrandExecutivePage from "@/components/MultibrandExecutivePage";
 import AbbottBiDashboard from "@/components/AbbottBiDashboard";
+import AbbottDatePicker from "@/components/abbott/AbbottDatePicker";
 import ZarukuSeoDashboard, { type ZarukuTabId } from "@/components/ZarukuSeoDashboard";
 import { zarukuTimeOwner } from "@/components/zaruku-seo-week-selection";
 import type { MultibrandBrandSummary } from "@/components/MultibrandExecutivePage";
 import { getDashboardI18n } from "@/lib/dashboard-i18n";
 import type { DashboardData } from "@/lib/types";
 import { resolvePlatformIdFromSourceKey } from "@/lib/source-mapping";
-import { defaultAbbottRange } from "@/lib/abbott-date-range";
+import {
+  ABBOTT_NO_COMPLETED_DAYS,
+  defaultAbbottRange,
+  detectAbbottPreset,
+  latestCompletedAbbottDate,
+  normalizeAbbottRequestedRange,
+  resolveAbbottPreset,
+  type AbbottDatePreset,
+} from "@/lib/abbott-date-range";
 
 const SPEND_RELATED_KPIS = new Set(["spend", "cpm", "cpc", "cpv", "cpa", "roas"]);
 
@@ -259,6 +268,17 @@ function detectQuickRangePreset(from: string, to: string): DashboardQuickRangePr
   return "custom";
 }
 
+function resolveInitialAbbottRange(from: string, to: string) {
+  if (from && to) {
+    try {
+      return normalizeAbbottRequestedRange({ from, to });
+    } catch {
+      return { from, to };
+    }
+  }
+  return !from && !to ? defaultAbbottRange() : { from, to };
+}
+
 function shiftMonth(isoDate: string, months: number) {
   const [year, month, day] = isoDate.split("-").map(Number);
   const targetMonth = month - 1 + months;
@@ -315,9 +335,11 @@ export default function DashboardByIdPage() {
   const dashboardId = params?.id ? String(params.id).toLowerCase() : "";
   const queryFrom = searchParams.get("from") ?? "";
   const queryTo = searchParams.get("to") ?? "";
-  const abbottDefaultRange = dashboardId === "abbott" && !queryFrom && !queryTo ? defaultAbbottRange() : null;
-  const initialFrom = abbottDefaultRange?.from ?? queryFrom;
-  const initialTo = abbottDefaultRange?.to ?? queryTo;
+  const isAbbottDashboard = dashboardId === "abbott";
+  const initialAbbottRange = isAbbottDashboard ? resolveInitialAbbottRange(queryFrom, queryTo) : null;
+  const initialFrom = initialAbbottRange?.from ?? queryFrom;
+  const initialTo = initialAbbottRange?.to ?? queryTo;
+  const abbottMaxDate = latestCompletedAbbottDate();
   const initialCompareFrom = searchParams.get("compare_from") ?? "";
   const initialCompareTo = searchParams.get("compare_to") ?? "";
   const initialAccessToken = searchParams.get("access_token") ?? "";
@@ -352,6 +374,14 @@ export default function DashboardByIdPage() {
   const [quickRangePreset, setQuickRangePreset] = useState<DashboardQuickRangePreset>(
     detectQuickRangePreset(initialFrom, initialTo),
   );
+  const [abbottPreset, setAbbottPreset] = useState<AbbottDatePreset>(() =>
+    initialAbbottRange?.from && initialAbbottRange?.to
+      ? detectAbbottPreset(initialAbbottRange)
+      : "this_month",
+  );
+  const [abbottEmptyMessage, setAbbottEmptyMessage] = useState<string | null>(() =>
+    isAbbottDashboard && !initialAbbottRange ? ABBOTT_NO_COMPLETED_DAYS : null,
+  );
   const [compareOpen, setCompareOpen] = useState(Boolean(initialCompareFrom && initialCompareTo));
   const [comparePreset, setComparePreset] = useState<"previous" | "month" | "week" | "year" | "custom">("month");
   const [compareRange, setCompareRange] = useState<{ from: string; to: string }>({
@@ -364,9 +394,22 @@ export default function DashboardByIdPage() {
   });
 
   useEffect(() => {
+    if (!isAbbottDashboard || !queryFrom || !queryTo || !initialAbbottRange) return;
+    if (queryFrom === initialAbbottRange.from && queryTo === initialAbbottRange.to) return;
+    const params = new URLSearchParams(searchParams.toString());
+    params.set("from", initialAbbottRange.from);
+    params.set("to", initialAbbottRange.to);
+    router.replace(`/dashboard/${dashboardId}?${params.toString()}`, { scroll: false });
+  }, [dashboardId, initialAbbottRange, isAbbottDashboard, queryFrom, queryTo, router, searchParams]);
+
+  useEffect(() => {
     let cancelled = false;
 
     async function load() {
+      if (isAbbottDashboard && abbottEmptyMessage) {
+        setIsLoading(false);
+        return;
+      }
       if (!dashboardId) {
         setDashboard(null);
         setIsDemoMode(false);
@@ -453,7 +496,7 @@ export default function DashboardByIdPage() {
     return () => {
       cancelled = true;
     };
-  }, [compareRange, dashboardId, dateRange, reloadKey, selectedBrandId, viewerAccessToken, viewerEmbedKey]);
+  }, [abbottEmptyMessage, compareRange, dashboardId, dateRange, isAbbottDashboard, reloadKey, selectedBrandId, viewerAccessToken, viewerEmbedKey]);
 
   async function generateAiSummary() {
     if (!dashboard?.ai_summary_enabled || isGeneratingAiSummary) {
@@ -1542,6 +1585,50 @@ export default function DashboardByIdPage() {
     router.replace(`/dashboard/${dashboardId}?${params.toString()}`, { scroll: false });
   };
 
+  const applyAbbottDateRange = (range: { from: string; to: string }, preset: AbbottDatePreset) => {
+    setAbbottPreset(preset);
+    setAbbottEmptyMessage(null);
+    setDraftDateRange(range);
+    setDateRange(range);
+    const params = new URLSearchParams(searchParams.toString());
+    params.set("from", range.from);
+    params.set("to", range.to);
+    if (compareRange.from && compareRange.to) {
+      params.set("compare_from", compareRange.from);
+      params.set("compare_to", compareRange.to);
+    } else {
+      params.delete("compare_from");
+      params.delete("compare_to");
+    }
+    if (selectedBrandId) {
+      params.set("brand", selectedBrandId);
+    } else {
+      params.delete("brand");
+    }
+    router.replace(`/dashboard/${dashboardId}?${params.toString()}`, { scroll: false });
+  };
+
+  const handleAbbottPresetChange = (preset: AbbottDatePreset) => {
+    setAbbottPreset(preset);
+    if (preset === "custom") return;
+    const resolved = resolveAbbottPreset(preset);
+    if (resolved.kind === "empty") {
+      setAbbottEmptyMessage(resolved.message);
+      return;
+    }
+    applyAbbottDateRange({ from: resolved.from, to: resolved.to }, preset);
+  };
+
+  const applyAbbottCustomRange = () => {
+    try {
+      const range = normalizeAbbottRequestedRange(draftDateRange);
+      applyAbbottDateRange(range, detectAbbottPreset(range));
+    } catch {
+      // The picker prevents ordinary invalid input; preserve the current data
+      // if a malformed value still reaches this client boundary.
+    }
+  };
+
   const applyDateRange = () => {
     if (!draftDateRange.from || !draftDateRange.to) return;
     setQuickRangePreset(detectQuickRangePreset(draftDateRange.from, draftDateRange.to));
@@ -1637,6 +1724,16 @@ export default function DashboardByIdPage() {
     setDraftDateRange((prev) => ({ ...prev, to: value }));
   };
 
+  const handleAbbottDraftFromChange = (value: string) => {
+    setAbbottPreset("custom");
+    setDraftDateRange((prev) => ({ ...prev, from: value }));
+  };
+
+  const handleAbbottDraftToChange = (value: string) => {
+    setAbbottPreset("custom");
+    setDraftDateRange((prev) => ({ ...prev, to: value }));
+  };
+
   if (!isLoading && authRequired && authMeta) {
     return (
       <main
@@ -1705,6 +1802,39 @@ export default function DashboardByIdPage() {
     );
   }
 
+  if (!isLoading && isAbbottDashboard && abbottEmptyMessage && !dashboard) {
+    return (
+      <main
+        data-dashboard-ready="true"
+        className={`mx-auto min-h-screen w-full max-w-[1600px] px-4 py-6 sm:px-6 lg:px-8 ${isPdfMode ? "pdf-mode" : ""}`}
+        style={isMobileMode ? ({ maxWidth: "430px" } as CSSProperties) : undefined}
+      >
+        <DashboardHeader
+          clientName="Abbott"
+          title="Аналитика трафика"
+          periodLabel="Нет завершённых дней"
+          pdfMode={isPdfMode}
+          dateControlsSlot={
+            <AbbottDatePicker
+              preset={abbottPreset}
+              appliedRange={dateRange}
+              draftRange={draftDateRange}
+              maxDate={abbottMaxDate}
+              isLoading={isLoading}
+              onPresetChange={handleAbbottPresetChange}
+              onDraftFromChange={handleAbbottDraftFromChange}
+              onDraftToChange={handleAbbottDraftToChange}
+              onApplyCustom={applyAbbottCustomRange}
+            />
+          }
+        />
+        <section role="status" aria-live="polite" className="rounded-2xl border border-amber-200 bg-amber-50 px-5 py-6 text-sm text-amber-900">
+          {abbottEmptyMessage}
+        </section>
+      </main>
+    );
+  }
+
   if (isLoading || !dashboard) {
     return (
       <main
@@ -1755,6 +1885,19 @@ export default function DashboardByIdPage() {
           quickRangePreset={quickRangePreset}
           onQuickRangePresetChange={handleQuickRangePresetChange}
           isUpdatingRange={isLoading}
+          dateControlsSlot={
+            <AbbottDatePicker
+              preset={abbottPreset}
+              appliedRange={dateRange}
+              draftRange={draftDateRange}
+              maxDate={abbottMaxDate}
+              isLoading={isLoading}
+              onPresetChange={handleAbbottPresetChange}
+              onDraftFromChange={handleAbbottDraftFromChange}
+              onDraftToChange={handleAbbottDraftToChange}
+              onApplyCustom={applyAbbottCustomRange}
+            />
+          }
         />
 
         {isDemoMode ? (
@@ -1764,13 +1907,19 @@ export default function DashboardByIdPage() {
           </div>
         ) : null}
 
-        <AbbottBiDashboard
-          data={abbottBiData}
-          locale={locale}
-          portalName="ABBOTT"
-          periodFrom={dashboard.dashboard.period.from}
-          periodTo={dashboard.dashboard.period.to}
-        />
+        {abbottEmptyMessage ? (
+          <section role="status" aria-live="polite" className="rounded-2xl border border-amber-200 bg-amber-50 px-5 py-6 text-sm text-amber-900">
+            {abbottEmptyMessage}
+          </section>
+        ) : (
+          <AbbottBiDashboard
+            data={abbottBiData}
+            locale={locale}
+            portalName="ABBOTT"
+            periodFrom={dashboard.dashboard.period.from}
+            periodTo={dashboard.dashboard.period.to}
+          />
+        )}
       </main>
     );
   }
