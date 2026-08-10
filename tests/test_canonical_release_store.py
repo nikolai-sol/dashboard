@@ -132,6 +132,14 @@ def imported_snapshot_rows(
             "parser_version": "parser-v1",
             "code_revision": manifest_revision,
         }
+        imported_row_count = 1
+        if kind == "abbott_workbook_json":
+            manifest.update(
+                direction_count=1,
+                event_catalog_count=1,
+                general_material_count=1,
+            )
+            imported_row_count = 3
         rows.append(
             {
                 "id": index + 11,
@@ -140,7 +148,7 @@ def imported_snapshot_rows(
                 "content_bytes": manifest["content_bytes"],
                 "parser_version": manifest["parser_version"],
                 "import_status": "failed" if kind == failed_kind else "imported",
-                "imported_row_count": 1,
+                "imported_row_count": imported_row_count,
                 "rejected_row_count": 0,
                 "manifest_json": json.dumps(manifest),
             }
@@ -153,7 +161,7 @@ def import_execution_rows(
     *,
     code_revision="abc123",
     failed_kind=None,
-    imported_row_count=1,
+    imported_row_count=None,
 ):
     return [
         {
@@ -161,7 +169,11 @@ def import_execution_rows(
             "source_kind": kind,
             "code_revision": code_revision,
             "import_status": "rejected" if kind == failed_kind else "imported",
-            "imported_row_count": imported_row_count,
+            "imported_row_count": (
+                imported_row_count
+                if imported_row_count is not None
+                else (3 if kind == "abbott_workbook_json" else 1)
+            ),
             "rejected_row_count": 0,
         }
         for index, kind in enumerate(source_kinds)
@@ -843,10 +855,104 @@ class CanonicalReleaseStoreTest(unittest.TestCase):
             with self.assertRaises(store.ImmutableReleaseError):
                 store.require_mutable_candidate_release(41)
 
+    def test_failed_staging_release_is_audited_without_moving_active_pointer(self):
+        import canonical_release_store as store
+
+        conn = RecordingConnection(
+            [
+                {"canonical_release_id": 14},
+                {
+                    "id": 23,
+                    "release_status": "staging",
+                    "rollback_from_release_id": 14,
+                },
+            ]
+        )
+        with patch.object(store, "get_db_connection", return_value=conn):
+            result = store.fail_staging_release(
+                23, expected_active_release_id=14
+            )
+
+        self.assertEqual(result, "failed")
+        update_sql, update_params = next(
+            (sql, params)
+            for sql, params in conn.cursor_instance.calls
+            if sql.startswith("UPDATE portal_data_releases")
+        )
+        self.assertIn("release_status = 'failed'", update_sql)
+        self.assertIn("rollback_reason = %s", update_sql)
+        self.assertEqual(update_params[-2:], ("abbott", 23))
+        self.assertFalse(
+            any(
+                sql.startswith("UPDATE portal_active_data_releases")
+                for sql, _ in conn.cursor_instance.calls
+            )
+        )
+        self.assertIn(("commit", None), conn.events)
+
+    def test_failed_staging_release_retry_is_idempotent(self):
+        import canonical_release_store as store
+
+        conn = RecordingConnection(
+            [
+                {"canonical_release_id": 14},
+                {
+                    "id": 23,
+                    "release_status": "failed",
+                    "rollback_from_release_id": 14,
+                },
+            ]
+        )
+        with patch.object(store, "get_db_connection", return_value=conn):
+            result = store.fail_staging_release(
+                23, expected_active_release_id=14
+            )
+
+        self.assertEqual(result, "noop")
+        self.assertFalse(
+            any(
+                sql.startswith("UPDATE portal_data_releases")
+                for sql, _ in conn.cursor_instance.calls
+            )
+        )
+        self.assertIn(("commit", None), conn.events)
+
+    def test_failed_staging_release_rejects_a_stale_active_pointer(self):
+        import canonical_release_store as store
+
+        conn = RecordingConnection([{"canonical_release_id": 15}])
+        with patch.object(store, "get_db_connection", return_value=conn):
+            with self.assertRaises(store.ReleasePointerConflictError):
+                store.fail_staging_release(
+                    23, expected_active_release_id=14
+                )
+
+        self.assertFalse(
+            any(
+                sql.startswith("UPDATE portal_data_releases")
+                for sql, _ in conn.cursor_instance.calls
+            )
+        )
+        self.assertIn(("rollback", None), conn.events)
+
     def test_activation_locks_pointer_and_compare_and_swaps_expected_release(self):
         import canonical_release_store as store
 
-        conn = RecordingConnection([{"canonical_release_id": 12}])
+        source_ids = [index + 11 for index in range(len(SOURCE_KINDS))]
+        conn = RecordingConnection(
+            [
+                {"canonical_release_id": 12},
+                {
+                    "source_snapshot_ids": json.dumps(source_ids),
+                    "code_revision": "abc123",
+                    "baseline_validation_run_id": 13,
+                    "rollback_from_release_id": 12,
+                },
+                import_execution_rows(),
+                {"manifest_json": json.dumps(baseline_manifest())},
+                imported_snapshot_rows(),
+            ]
+        )
         with patch.object(store, "get_db_connection", return_value=conn):
             store.activate_release(41, expected_active_release_id=12)
 

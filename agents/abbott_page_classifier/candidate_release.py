@@ -15,6 +15,7 @@ import json
 import re
 import uuid
 from typing import Iterable, Mapping, Sequence
+from urllib.parse import urlsplit
 
 import canonical_release_store as release_store
 from canonical_writer import get_db_connection
@@ -37,6 +38,7 @@ from .normalization import (
 
 
 DATASET_KEY = "abbott"
+ABBOTT_COUNTER_ID = "90602537"
 CATALOG_SOURCE_KIND = "abbott_workbook_catalog"
 CATALOG_PARSER_VERSION = "abbott-content-candidate-v1"
 EXACT_PERCENT = Decimal("100")
@@ -634,6 +636,26 @@ def _title_key(title: str) -> str:
     return normalize_title(title)
 
 
+def _return_page_path(raw: object) -> str:
+    value = str(raw or "").strip().replace("&amp;", "&")
+    if not value or re.match(r"^[a-z]:[\\/]", value, flags=re.IGNORECASE):
+        return ""
+    scheme = re.match(r"^([a-z][a-z0-9+.-]*):", value, flags=re.IGNORECASE)
+    if scheme and scheme.group(1).casefold() not in {"http", "https"}:
+        return ""
+    if re.match(r"^[a-z][a-z0-9+.-]*://", value, flags=re.IGNORECASE):
+        try:
+            path = urlsplit(value).path
+        except (TypeError, ValueError):
+            path = re.split(r"[?#]", value, maxsplit=1)[0]
+    else:
+        path = re.split(r"[?#]", value, maxsplit=1)[0]
+    path = re.sub(r"/{2,}", "/", path)
+    if not path.startswith("/"):
+        path = f"/{path}"
+    return path.rstrip("/") or "/"
+
+
 def _metadata_signature(row: CandidateCatalogRow) -> str:
     return sha256_text(
         _canonical_json(
@@ -653,9 +675,12 @@ def _metadata_signature(row: CandidateCatalogRow) -> str:
 
 def build_lookup_projection(
     catalog_rows: Iterable[CandidateCatalogRow],
+    *,
+    page_facts: Iterable[Mapping[str, object]] = (),
 ) -> tuple[LookupProjectionRow, ...]:
     """Build deterministic title/slug/path groups without resolving ambiguity."""
 
+    catalog_rows = tuple(catalog_rows)
     groups: dict[tuple[str, str], list[CandidateCatalogRow]] = {}
     for row in catalog_rows:
         values = (
@@ -703,7 +728,73 @@ def build_lookup_projection(
                 group_fingerprint=group_fingerprint,
             )
         )
-    return tuple(result)
+    facts = tuple(page_facts)
+    if not facts:
+        return tuple(result)
+
+    catalog_by_fingerprint = {
+        row.source_row_fingerprint: row for row in catalog_rows
+    }
+    title_selection = {
+        row.lookup_key_hash: row.selected_source_row_fingerprint
+        for row in result
+        if row.lookup_kind == "title"
+        and row.resolution_status in {"unique", "identical_collapsed"}
+        and row.selected_source_row_fingerprint
+    }
+    path_candidates: dict[str, set[str]] = {}
+    for row in catalog_rows:
+        path = _return_page_path(row.normalized_path)
+        if path:
+            path_candidates.setdefault(path, set()).add(
+                row.source_row_fingerprint
+            )
+    evidence_by_path: dict[str, list[str]] = {}
+    for fact in facts:
+        path = _return_page_path(fact.get("page_url"))
+        title = normalize_title(str(fact.get("page_title") or ""))
+        if not path or not title:
+            continue
+        selected = title_selection.get(sha256_text(title))
+        if not selected or selected not in catalog_by_fingerprint:
+            continue
+        path_candidates.setdefault(path, set()).add(selected)
+        evidence_by_path.setdefault(path, []).append(selected)
+
+    path_rows = []
+    for path, fingerprints in path_candidates.items():
+        selected = sorted(fingerprints)
+        if len(selected) == 1:
+            evidence_count = evidence_by_path.get(path, []).count(selected[0])
+            status = "identical_collapsed" if evidence_count > 1 else "unique"
+            selected_fingerprint = selected[0]
+            candidate_count = max(1, evidence_count)
+        else:
+            status = "ambiguous"
+            selected_fingerprint = None
+            candidate_count = len(selected)
+        path_rows.append(
+            LookupProjectionRow(
+                lookup_kind="path",
+                lookup_key_hash=sha256_text(path),
+                candidate_count=candidate_count,
+                metadata_signature_count=len(selected),
+                resolution_status=status,
+                selected_source_row_fingerprint=selected_fingerprint,
+                group_fingerprint=sha256_text(
+                    "\x1f".join(("path", path, status, *selected))
+                ),
+            )
+        )
+    return tuple(
+        sorted(
+            (
+                *(row for row in result if row.lookup_kind != "path"),
+                *path_rows,
+            ),
+            key=lambda row: (row.lookup_kind, row.lookup_key_hash),
+        )
+    )
 
 
 def _provenance_rows(entity_row: Mapping[str, object]) -> tuple[Mapping[str, object], ...]:
@@ -1094,6 +1185,10 @@ def _resolve_legacy_predecessor_rows(
         resolved_rows.append(
             {
                 **row,
+                "direction_key": active_terms["direction"][codes[0]],
+                "material_type": active_terms["material_type"][codes[1]],
+                "access_label": active_terms["access"][codes[2]],
+                "is_active": codes[3] != "archived",
                 "content_entity_id": entity_id,
                 "classification_event_id": None,
                 "classification_event_fingerprint": None,
@@ -1806,6 +1901,126 @@ def _close(cursor, connection) -> None:
             pass
 
 
+def reset_failed_content_candidate(
+    batch_id: int,
+    candidate_release_id: int,
+    expected_active_release_id: int,
+    *,
+    connection_factory=None,
+) -> str:
+    """Resume a reviewed batch after its staging candidate failed validation."""
+
+    try:
+        batch_id = int(batch_id)
+        candidate_release_id = int(candidate_release_id)
+        expected_active_release_id = int(expected_active_release_id)
+    except (TypeError, ValueError):
+        raise CandidateMaterializationError("CANDIDATE_RESET_INPUT_INVALID") from None
+    if min(batch_id, candidate_release_id, expected_active_release_id) <= 0:
+        raise CandidateMaterializationError("CANDIDATE_RESET_INPUT_INVALID")
+
+    connection = None
+    cursor = None
+    try:
+        connection = (connection_factory or get_db_connection)()
+        connection.start_transaction()
+        cursor = connection.cursor(dictionary=True)
+        cursor.execute(
+            """
+            SELECT canonical_release_id
+            FROM portal_active_data_releases
+            WHERE dataset_key = %s
+            FOR UPDATE
+            """,
+            (DATASET_KEY,),
+        )
+        active = cursor.fetchone()
+        if (
+            not isinstance(active, Mapping)
+            or int(active.get("canonical_release_id") or 0)
+            != expected_active_release_id
+        ):
+            raise CandidateMaterializationError("ACTIVE_PREDECESSOR_MISMATCH")
+
+        cursor.execute(
+            """
+            SELECT id, release_status, rollback_from_release_id
+            FROM portal_data_releases
+            WHERE dataset_key = %s AND id = %s
+            FOR UPDATE
+            """,
+            (DATASET_KEY, candidate_release_id),
+        )
+        candidate = cursor.fetchone()
+        if (
+            not isinstance(candidate, Mapping)
+            or int(candidate.get("id") or 0) != candidate_release_id
+            or candidate.get("release_status") != "failed"
+            or int(candidate.get("rollback_from_release_id") or 0)
+            != expected_active_release_id
+        ):
+            raise CandidateMaterializationError("FAILED_CANDIDATE_MISMATCH")
+
+        cursor.execute(
+            """
+            SELECT id, batch_status, candidate_release_id, activation_status,
+                   accepted_decision_hash, accepted_at
+            FROM portal_content_approval_batches
+            WHERE id = %s AND dataset_key = %s
+            FOR UPDATE
+            """,
+            (batch_id, DATASET_KEY),
+        )
+        batch = cursor.fetchone()
+        if not isinstance(batch, Mapping) or int(batch.get("id") or 0) != batch_id:
+            raise CandidateMaterializationError("FAILED_CANDIDATE_BATCH_MISMATCH")
+        if (
+            batch.get("batch_status") == "ingested"
+            and batch.get("candidate_release_id") is None
+            and batch.get("activation_status") == "not_started"
+        ):
+            connection.commit()
+            return "noop"
+        accepted_hash = batch.get("accepted_decision_hash")
+        if (
+            batch.get("batch_status") != "candidate_materialized"
+            or int(batch.get("candidate_release_id") or 0) != candidate_release_id
+            or batch.get("activation_status") != "candidate"
+            or not isinstance(accepted_hash, str)
+            or not re.fullmatch(r"[0-9a-f]{64}", accepted_hash)
+            or batch.get("accepted_at") is None
+        ):
+            raise CandidateMaterializationError("FAILED_CANDIDATE_BATCH_MISMATCH")
+
+        cursor.execute(
+            """
+            UPDATE portal_content_approval_batches
+            SET batch_status = 'ingested',
+                candidate_release_id = NULL,
+                activation_status = 'not_started'
+            WHERE id = %s AND dataset_key = %s
+              AND candidate_release_id = %s
+              AND batch_status = 'candidate_materialized'
+              AND activation_status = 'candidate'
+            """,
+            (batch_id, DATASET_KEY, candidate_release_id),
+        )
+        if cursor.rowcount != 1:
+            raise CandidateMaterializationError("FAILED_CANDIDATE_BATCH_MISMATCH")
+        connection.commit()
+        return "reset"
+    except CandidateMaterializationError:
+        if connection is not None:
+            connection.rollback()
+        raise
+    except Exception:
+        if connection is not None:
+            connection.rollback()
+        raise CandidateMaterializationError("CANDIDATE_RESET_FAILED") from None
+    finally:
+        _close(cursor, connection)
+
+
 def materialize_content_candidate(
     batch_id: int,
     predecessor_release_id: int,
@@ -2121,7 +2336,24 @@ def materialize_content_candidate(
         )
         if not catalog_rows:
             raise CandidateMaterializationError("EMPTY_CONTENT_CANDIDATE")
-        lookup_rows = build_lookup_projection(catalog_rows)
+        cursor.execute(
+            """
+            SELECT JSON_UNQUOTE(JSON_EXTRACT(
+                     scope_dimensions, '$.page_url')) AS page_url,
+                   JSON_UNQUOTE(JSON_EXTRACT(
+                     scope_dimensions, '$.page_title')) AS page_title
+            FROM canonical_fact_metrika_site_analytics_daily
+            WHERE canonical_release_id = %s
+              AND counter_id = %s
+              AND analytics_scope = 'page'
+            ORDER BY report_date, scope_hash
+            """,
+            (predecessor_release_id, ABBOTT_COUNTER_ID),
+        )
+        page_fact_rows = tuple(cursor.fetchall())
+        lookup_rows = build_lookup_projection(
+            catalog_rows, page_facts=page_fact_rows
+        )
         referenced_taxonomy_terms = _referenced_taxonomy_terms(catalog_rows)
         catalog_payloads = tuple(_catalog_payload(row) for row in catalog_rows)
         lookup_payloads = tuple(_lookup_payload(row) for row in lookup_rows)
@@ -2604,7 +2836,7 @@ def _catalog_schema_gates(
             entity_id = int(row[18] or 0)
             for kind, value in (
                 ("material_id", str(row[4] or "").casefold()),
-                ("normalized_url", str(row[1] or "")),
+                ("normalized_url", str(row[1] or "") if row[0] else ""),
             ):
                 if not value:
                     continue

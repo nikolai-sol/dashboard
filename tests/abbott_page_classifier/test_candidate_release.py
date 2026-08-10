@@ -16,11 +16,14 @@ from agents.abbott_page_classifier.candidate_release import (
     CONTENT_CONTROL_VALUES,
     GateReport,
     _database_datetime,
+    _catalog_payload,
+    _catalog_schema_gates,
     _load_catalog,
     _load_lookup,
     _overlay_current_batch_events,
     build_lookup_projection,
     materialize_content_candidate,
+    reset_failed_content_candidate,
     validate_and_transition_content_candidate,
     validate_content_candidate,
 )
@@ -873,7 +876,237 @@ class ValidationTransitionConnection:
         self.events.append("close")
 
 
+class FailedCandidateResetConnection:
+    def __init__(
+        self,
+        *,
+        active_release_id=14,
+        candidate_status="failed",
+        candidate_predecessor=14,
+        batch_status="candidate_materialized",
+        batch_candidate_release_id=23,
+        activation_status="candidate",
+    ):
+        self.active_release_id = active_release_id
+        self.candidate_status = candidate_status
+        self.candidate_predecessor = candidate_predecessor
+        self.batch_status = batch_status
+        self.batch_candidate_release_id = batch_candidate_release_id
+        self.activation_status = activation_status
+        self.events = []
+        self.calls = []
+        self._one = None
+        self.rowcount = 1
+
+    def cursor(self, **_kwargs):
+        return self
+
+    def start_transaction(self):
+        self.events.append("start")
+
+    def commit(self):
+        self.events.append("commit")
+
+    def rollback(self):
+        self.events.append("rollback")
+
+    def close(self):
+        self.events.append("close")
+
+    def execute(self, sql, params=()):
+        normalized = " ".join(sql.split())
+        params = tuple(params or ())
+        self.calls.append((normalized, params))
+        self._one = None
+        self.rowcount = 1
+        if "FROM portal_active_data_releases" in normalized:
+            self._one = {"canonical_release_id": self.active_release_id}
+        elif "FROM portal_data_releases" in normalized:
+            self._one = {
+                "id": 23,
+                "release_status": self.candidate_status,
+                "rollback_from_release_id": self.candidate_predecessor,
+            }
+        elif "FROM portal_content_approval_batches" in normalized:
+            self._one = {
+                "id": 2,
+                "batch_status": self.batch_status,
+                "candidate_release_id": self.batch_candidate_release_id,
+                "activation_status": self.activation_status,
+                "accepted_decision_hash": "a" * 64,
+                "accepted_at": datetime(2026, 8, 8),
+            }
+        elif normalized.startswith("UPDATE portal_content_approval_batches"):
+            self.batch_status = "ingested"
+            self.batch_candidate_release_id = None
+            self.activation_status = "not_started"
+
+    def fetchone(self):
+        return self._one
+
+
 class CandidateReleaseTest(unittest.TestCase):
+    def test_failed_candidate_reset_preserves_batch_evidence_for_rematerialization(self):
+        connection = FailedCandidateResetConnection()
+
+        result = reset_failed_content_candidate(
+            2,
+            23,
+            14,
+            connection_factory=lambda: connection,
+        )
+
+        self.assertEqual(result, "reset")
+        update_sql, update_params = next(
+            (sql, params)
+            for sql, params in connection.calls
+            if sql.startswith("UPDATE portal_content_approval_batches")
+        )
+        self.assertIn("batch_status = 'ingested'", update_sql)
+        self.assertIn("candidate_release_id = NULL", update_sql)
+        self.assertIn("activation_status = 'not_started'", update_sql)
+        self.assertEqual(update_params, (2, "abbott", 23))
+        self.assertEqual(connection.events, ["start", "commit", "close", "close"])
+
+    def test_failed_candidate_reset_retry_is_idempotent(self):
+        connection = FailedCandidateResetConnection(
+            batch_status="ingested",
+            batch_candidate_release_id=None,
+            activation_status="not_started",
+        )
+
+        result = reset_failed_content_candidate(
+            2,
+            23,
+            14,
+            connection_factory=lambda: connection,
+        )
+
+        self.assertEqual(result, "noop")
+        self.assertFalse(
+            any(
+                sql.startswith("UPDATE portal_content_approval_batches")
+                for sql, _ in connection.calls
+            )
+        )
+        self.assertEqual(connection.events, ["start", "commit", "close", "close"])
+
+    def test_failed_candidate_reset_rejects_active_pointer_change(self):
+        connection = FailedCandidateResetConnection(active_release_id=15)
+
+        with self.assertRaisesRegex(
+            CandidateMaterializationError, "ACTIVE_PREDECESSOR_MISMATCH"
+        ):
+            reset_failed_content_candidate(
+                2,
+                23,
+                14,
+                connection_factory=lambda: connection,
+            )
+
+        self.assertFalse(
+            any(
+                sql.startswith("UPDATE portal_content_approval_batches")
+                for sql, _ in connection.calls
+            )
+        )
+        self.assertEqual(connection.events, ["start", "rollback", "close", "close"])
+
+    def test_lookup_projection_enriches_return_paths_before_attestation(self):
+        row = catalog_row("1" * 64, title="Guide")
+
+        projection = build_lookup_projection(
+            (row,),
+            page_facts=(
+                {"page_url": "https://abbottpro.ru/return/?utm_source=x", "page_title": "Guide"},
+                {"page_url": "/return#again", "page_title": "  Guide  "},
+                {"page_url": "file:///C:/Users/user/guide.html", "page_title": "Guide"},
+            ),
+        )
+        return_path = next(
+            item
+            for item in projection
+            if item.lookup_kind == "path"
+            and item.lookup_key_hash == sha256_text("/return")
+        )
+        self.assertEqual(return_path.resolution_status, "identical_collapsed")
+        self.assertEqual(return_path.candidate_count, 2)
+        self.assertEqual(return_path.selected_source_row_fingerprint, "1" * 64)
+        self.assertNotIn(
+            sha256_text("/C:/Users/user/guide.html"),
+            {item.lookup_key_hash for item in projection if item.lookup_kind == "path"},
+        )
+
+    def test_validation_does_not_collide_distinct_entities_with_absent_urls(self):
+        def row(entity_id: int, fingerprint: str):
+            return replace(
+                catalog_row(fingerprint),
+                content_entity_id=entity_id,
+                normalized_url="",
+                normalized_url_hash=sha256_text(""),
+                normalized_path="",
+                material_id=None,
+                direction_key="Кардиология [262338]",
+                material_type="Статьи",
+                access_label="Все",
+                direction_code="cardiology",
+                material_type_code="articles",
+                access_code="all",
+                lifecycle_code="active",
+                lifecycle_label="active",
+            )
+
+        taxonomy = (
+            {"taxonomy_kind": "direction", "term_code": "cardiology", "term_label": "Кардиология [262338]"},
+            {"taxonomy_kind": "material_type", "term_code": "articles", "term_label": "Статьи"},
+            {"taxonomy_kind": "access", "term_code": "all", "term_label": "Все"},
+            {"taxonomy_kind": "lifecycle", "term_code": "active", "term_label": "active"},
+        )
+
+        _, _, _, collisions = _catalog_schema_gates(
+            (_catalog_payload(row(1, "1" * 64)), _catalog_payload(row(2, "2" * 64))),
+            taxonomy,
+        )
+
+        self.assertEqual(collisions, 0)
+
+    def test_legacy_visible_labels_are_projected_from_canonical_taxonomy(self):
+        class LegacyLabelsConnection(CandidateConnection):
+            def execute(self, sql, params=()):
+                result = super().execute(sql, params)
+                if "legacy_catalog.id AS predecessor_catalog_row_id" in " ".join(sql.split()):
+                    self._many[1] = {
+                        **self._many[1],
+                        "direction_label": "Гастроэнтерология",
+                        "access_label": "Доступно всем",
+                    }
+                return result
+
+        connection = LegacyLabelsConnection(legacy_predecessor=True)
+        connection.predecessor_catalog[1].update(
+            direction_key="Гастроэнтерология",
+            access_label="Доступно всем",
+        )
+        with (
+            patch(
+                "agents.abbott_page_classifier.candidate_release.get_db_connection",
+                return_value=connection,
+            ),
+            patch(
+                "agents.abbott_page_classifier.candidate_release.release_store.create_candidate_release",
+                return_value=41,
+            ),
+            patch(
+                "agents.abbott_page_classifier.candidate_release.release_store.require_mutable_candidate_release",
+                return_value={"id": 41, "release_status": "staging"},
+            ),
+        ):
+            materialize_content_candidate(71, 12, "abc1234")
+
+        legacy_row = next(row for row in connection.catalog_rows if row[20] == 2)
+        self.assertEqual(legacy_row[16], "Гастроэнтерология [262340]")
+        self.assertEqual(legacy_row[10], "Все")
+
     def test_catalog_datetime_is_canonicalized_to_mysql_column_precision(self):
         self.assertEqual(
             _database_datetime("2026-08-10T10:30:45.415864+00:00"),
@@ -1113,6 +1346,8 @@ class CandidateReleaseTest(unittest.TestCase):
         self.assertIn("FROM portal_content_catalog AS predecessor_catalog", sql)
         self.assertIn("event.approval_batch_id = %s", sql)
         self.assertIn("event.proposal_evidence", sql)
+        self.assertIn("analytics_scope = 'page'", sql)
+        self.assertIn("'$.page_url'", sql)
         self.assertNotIn("WITH latest_events AS", sql)
         self.assertIn("batch.source_snapshot_ids", sql)
         self.assertIn("batch.source_snapshot_digests", sql)
