@@ -140,6 +140,20 @@ def proposal(
 
 
 class ReconciliationTests(unittest.TestCase):
+    def test_raw_archive_type_moves_only_lifecycle_when_active_type_is_valid(self) -> None:
+        item = reconcile_entity(
+            ReconciliationInput(
+                active_canonical=canonical(material_type="articles"),
+                registry2=source_candidate(
+                    "registry2", material_type=None, raw_material_type="Архив"
+                ),
+            )
+        )
+
+        self.assertEqual(item.final_material_type_code, "articles")
+        self.assertEqual(item.final_lifecycle_code, "archive_candidate")
+        self.assertNotIn(ConflictCode.ARCHIVE_TYPE_INVALID, item.conflict_codes)
+
     def test_registry2_public_contract_requires_source_candidate_evidence(self) -> None:
         self.assertEqual(
             ReconciliationInput.__annotations__["registry2"],
@@ -579,11 +593,11 @@ class ReconciliationTests(unittest.TestCase):
             invalid.conflict_codes,
             (ConflictCode.ARCHIVE_TYPE_INVALID,),
         )
-        self.assertEqual(invalid.final_lifecycle_code, "active")
+        self.assertEqual(invalid.final_lifecycle_code, "archive_candidate")
         self.assertEqual(overridden.final_lifecycle_code, "archive_candidate")
-        self.assertNotIn(ConflictCode.ARCHIVE_TYPE_INVALID, overridden.conflict_codes)
+        self.assertIn(ConflictCode.ARCHIVE_TYPE_INVALID, overridden.conflict_codes)
         self.assertEqual(not_found.final_lifecycle_code, "archive_candidate")
-        self.assertNotIn(ConflictCode.ARCHIVE_TYPE_INVALID, not_found.conflict_codes)
+        self.assertIn(ConflictCode.ARCHIVE_TYPE_INVALID, not_found.conflict_codes)
         self.assertEqual(
             override_without_legacy_type.final_lifecycle_code,
             "archive_candidate",
@@ -837,9 +851,9 @@ class ReconciliationTests(unittest.TestCase):
             )
         )
 
-        self.assertEqual(item.readiness_state, "conflict")
+        self.assertEqual(item.readiness_state, "no_change")
         self.assertEqual(item.final_lifecycle_code, "archived")
-        self.assertIn(ConflictCode.ARCHIVE_TYPE_INVALID, item.conflict_codes)
+        self.assertNotIn(ConflictCode.ARCHIVE_TYPE_INVALID, item.conflict_codes)
 
     def test_invalid_registry2_archive_preserves_reviewed_lifecycle(self) -> None:
         item = reconcile_entity(
@@ -1000,15 +1014,15 @@ class ReconciliationTests(unittest.TestCase):
             counts,
             {
                 "ready": 88,
-                "conflict": 140,
-                "unresolved": 149,
+                "conflict": 146,
+                "unresolved": 143,
                 "rejected": 0,
                 "no_change": 0,
             },
         )
         self.assertEqual(len(directionless), 143)
         self.assertTrue(all(item.readiness_state == "unresolved" for item in directionless))
-        self.assertEqual(len(archive_invalid), 140)
+        self.assertEqual(len(archive_invalid), 146)
         self.assertTrue(
             all(items[row].final_lifecycle_code == "archive_candidate" for row in range(6))
         )

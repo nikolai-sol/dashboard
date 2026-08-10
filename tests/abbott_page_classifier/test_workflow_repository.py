@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import asdict
-from datetime import datetime, timezone
+from datetime import date, datetime, timezone
 import json
 import unittest
 
@@ -498,6 +498,27 @@ class BootstrapConnection(FakeConnection):
 
 
 class MySqlWorkflowStoreTests(unittest.TestCase):
+    def test_observed_page_query_is_aggregate_only_and_drops_off_domain_rows(self):
+        class Cursor:
+            def __init__(self): self.calls = []
+            def execute(self, sql, params): self.calls.append((" ".join(sql.split()), params))
+            def fetchall(self):
+                return [
+                    ("https://abbottpro.ru/auth", "Вход", 5, date(2026, 8, 1), date(2026, 8, 2)),
+                    ("https://example.test/nope", "Nope", 3, date(2026, 8, 1), date(2026, 8, 1)),
+                ]
+
+        cursor = Cursor()
+        pages = MySqlWorkflowStore._load_observed_pages(cursor, 24)
+
+        self.assertEqual(pages[0].normalized_url, "https://abbottpro.ru/auth")
+        self.assertEqual(len(pages), 1)
+        sql, params = cursor.calls[0]
+        self.assertEqual(params, (24,))
+        self.assertIn("canonical_fact_metrika_site_analytics_daily", sql)
+        self.assertIn("SUM(pageviews)", sql)
+        self.assertNotIn("canonical_fact_metrika_visits", sql)
+
     def test_load_active_strong_url_aliases_is_constrained_and_ordered(self):
         cursor = StrongAliasCursor()
 

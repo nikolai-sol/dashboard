@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, replace
 import json
+from decimal import Decimal
 from typing import Union
 
 from .domain import (
@@ -55,7 +56,7 @@ def _proposal_payload(value: Proposal | None) -> dict[str, object] | None:
         return None
     return {
         "access_code": value.access_code,
-        "confidence": value.confidence,
+        "confidence": str(value.confidence) if isinstance(value.confidence, Decimal) else value.confidence,
         "direction_code": value.direction_code,
         "evidence": list(value.evidence),
         "lifecycle_code": value.lifecycle_code,
@@ -381,9 +382,9 @@ def _record_occurrence_conflicts(
 
 def _registry2_archive_evidence(
     value: SourceCandidate | None,
-) -> tuple[bool, bool]:
+) -> tuple[bool, bool, bool]:
     if value is None:
-        return False, False
+        return False, False, False
 
     raw_material_types = {
         _raw_key(variant.raw_material_type)
@@ -407,7 +408,7 @@ def _registry2_archive_evidence(
         or (status_archive and len(raw_statuses) > 1)
         or (lifecycle_archive and not status_archive)
     )
-    return archive_requested, ambiguous
+    return archive_requested, ambiguous, material_archive
 
 
 def _compare_registry_classification_evidence(
@@ -487,7 +488,7 @@ def reconcile_entity(value: ReconciliationInput) -> ApprovalItem:
     registry2_direction_missing = (
         registry2 is not None and registry2_evidence.direction_missing
     )
-    archive_requested, archive_evidence_ambiguous = _registry2_archive_evidence(
+    archive_requested, archive_evidence_ambiguous, material_archive = _registry2_archive_evidence(
         registry2_source
     )
     has_archive_attestation = value.explicit_archive_override or value.http_status in {
@@ -495,9 +496,11 @@ def reconcile_entity(value: ReconciliationInput) -> ApprovalItem:
         410,
     }
     archive_evidence_valid = (
-        archive_requested
-        and has_archive_attestation
-        and not archive_evidence_ambiguous
+        not archive_evidence_ambiguous
+        and (
+            (material_archive and bool(final_material_type))
+            or (not material_archive and archive_requested and has_archive_attestation)
+        )
     )
 
     if value.identity_conflict:
@@ -631,9 +634,15 @@ def reconcile_entity(value: ReconciliationInput) -> ApprovalItem:
             changed = True
             final_lifecycle = "archive_candidate"
     if archive_requested:
+        # A raw "Архив" material type is lifecycle evidence, never a type.
+        # Keep an existing canonical type; otherwise leave it unresolved.
+        if material_archive and final_lifecycle not in {"archive_candidate", "archived"}:
+            final_lifecycle = "archive_candidate"
+            changed = True
         if not archive_evidence_valid:
             _append_conflict(conflicts, ConflictCode.ARCHIVE_TYPE_INVALID)
-            final_lifecycle = lifecycle_before_registry2 or "active"
+            if not material_archive:
+                final_lifecycle = lifecycle_before_registry2 or "active"
     if (
         active is None
         and final_lifecycle == "archive_candidate"

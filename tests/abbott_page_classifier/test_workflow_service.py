@@ -6,6 +6,7 @@ from dataclasses import replace
 from pathlib import Path
 import tempfile
 import unittest
+from datetime import date
 
 from openpyxl import Workbook
 
@@ -25,9 +26,11 @@ from agents.abbott_page_classifier.llm_classifier import (
 )
 from agents.abbott_page_classifier.workflow_service import (
     CanonicalWeeklyProposalService,
+    ObservedPage,
     ReconciliationContext,
     WorkflowConfiguration,
 )
+from agents.abbott_page_classifier.sources import collapse_observed_pages
 
 
 TERMS = {kind: tuple(sorted(labels)) for kind, labels in TAXONOMY_LABELS.items()}
@@ -157,6 +160,7 @@ def context(
     taxonomy=TAXONOMY,
     predecessor_content_entity_ids=(),
     predecessor_catalog_entities=None,
+    observed_pages=(),
 ):
     if predecessor_catalog_entities is None:
         predecessor_ids = set(predecessor_content_entity_ids)
@@ -176,6 +180,7 @@ def context(
             predecessor_content_entity_ids
         ),
         predecessor_catalog_entities=tuple(predecessor_catalog_entities),
+        observed_pages=tuple(observed_pages),
     )
 
 
@@ -223,6 +228,47 @@ def write_empty_sources(directory: Path):
 
 
 class WeeklyProposalServiceTests(unittest.TestCase):
+    def test_unaliased_observed_page_creates_one_immutable_review_item(self):
+        observed = ObservedPage(
+            "https://abbottpro.ru/auth", "Вход", 7, date(2026, 8, 1), date(2026, 8, 2)
+        )
+        with tempfile.TemporaryDirectory() as temporary:
+            registry1, registry2 = write_empty_sources(Path(temporary))
+            store = StatefulWorkflowStore(context(observed_pages=(observed,)))
+            receipt = CanonicalWeeklyProposalService(store, CONFIG).reconcile(registry1, registry2)
+
+        item = store.runs_by_id[receipt.run_id].items[0]
+        self.assertEqual(receipt.catalog_gap_count, 1)
+        self.assertEqual(item.identity_status, "new")
+        self.assertEqual(item.reconciliation_input.registry1.url, observed.normalized_url)
+        self.assertEqual(item.reconciliation_input.deterministic_proposal.rule_code, "SERVICE_ROUTE")
+
+    def test_repeated_observed_page_rows_collapse_before_item_creation(self):
+        first = ObservedPage("https://abbottpro.ru/unknown", "One", 2, date(2026, 8, 1), date(2026, 8, 1))
+        second = ObservedPage("https://abbottpro.ru/unknown", "Two", 3, date(2026, 8, 2), date(2026, 8, 2))
+        collapsed = collapse_observed_pages((first, second))
+        self.assertEqual(
+            collapsed,
+            (ObservedPage("https://abbottpro.ru/unknown", "Two", 5, date(2026, 8, 1), date(2026, 8, 2)),),
+        )
+        with tempfile.TemporaryDirectory() as temporary:
+            registry1, registry2 = write_empty_sources(Path(temporary))
+            store = StatefulWorkflowStore(context(observed_pages=(first, second)))
+            receipt = CanonicalWeeklyProposalService(store, CONFIG).reconcile(registry1, registry2)
+
+        self.assertEqual(receipt.catalog_gap_count, 1)
+        self.assertEqual(len(store.runs_by_id[receipt.run_id].items), 1)
+
+    def test_known_observed_alias_does_not_create_duplicate_item(self):
+        entity = CanonicalClassification(7, "Known", "https://abbottpro.ru/known", "cardiology", "articles", "all", "active", 1)
+        observed = ObservedPage("https://abbottpro.ru/known", "Known", 3, date(2026, 8, 1), date(2026, 8, 1))
+        with tempfile.TemporaryDirectory() as temporary:
+            registry1, registry2 = write_empty_sources(Path(temporary))
+            store = StatefulWorkflowStore(context(entities=(entity,), aliases=(IdentityAlias(7, "url", entity.url, "strong"),), observed_pages=(observed,)))
+            receipt = CanonicalWeeklyProposalService(store, CONFIG).reconcile(registry1, registry2)
+
+        self.assertEqual(receipt.catalog_gap_count, 0)
+        self.assertEqual(store.runs_by_id[receipt.run_id].items, ())
     def test_active_catalog_gap_is_included_and_classified_without_entity_creation(self):
         entity = CanonicalClassification(
             7,

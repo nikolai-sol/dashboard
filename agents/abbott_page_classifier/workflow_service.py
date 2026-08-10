@@ -9,12 +9,13 @@ separate stages.
 from __future__ import annotations
 
 from dataclasses import dataclass, replace
+from decimal import Decimal
 import json
 from pathlib import Path
 from typing import Callable, Mapping, Protocol, Sequence
 
 from .batch_service import PersistedApprovalBatch, build_batch
-from .domain import CanonicalClassification, ConflictCode, Proposal, TaxonomyVersion
+from .domain import CanonicalClassification, ConflictCode, MaterialCandidate, Proposal, TaxonomyVersion
 from .identity import IdentityAlias, IdentityResolver
 from .llm_classifier import (
     LLM_PRIMARY_MODEL,
@@ -29,7 +30,9 @@ from .normalization import normalize_url, sha256_text
 from .reconcile import ReconciliationInput, reconcile_entity
 from .sources import (
     SourceCandidate,
+    ObservedPage,
     SourceSnapshot,
+    collapse_observed_pages,
     read_canonical_catalog,
     read_registry1,
     read_registry2_csv,
@@ -75,6 +78,7 @@ class ReconciliationContext:
     aliases: tuple[IdentityAlias, ...]
     predecessor_content_entity_ids: tuple[int, ...] = ()
     predecessor_catalog_entities: tuple[CanonicalClassification, ...] = ()
+    observed_pages: tuple[ObservedPage, ...] = ()
 
     def __post_init__(self) -> None:
         object.__setattr__(self, "predecessor_snapshot_ids", tuple(self.predecessor_snapshot_ids))
@@ -91,6 +95,7 @@ class ReconciliationContext:
             "predecessor_catalog_entities",
             tuple(self.predecessor_catalog_entities),
         )
+        object.__setattr__(self, "observed_pages", tuple(self.observed_pages))
         if (
             self.predecessor_release_id <= 0
             or not self.predecessor_snapshot_ids
@@ -283,7 +288,7 @@ class CanonicalWeeklyProposalService:
                 for item in persisted.items
                 if item.reconciliation_input.registry1 is not None
                 and item.reconciliation_input.registry1.source_name
-                == "canonical_catalog"
+                in {"canonical_catalog", "observed_page"}
             ),
             ready_count=counts["ready"],
             conflict_count=counts["conflict"],
@@ -308,7 +313,9 @@ class CanonicalWeeklyProposalService:
         new_registry1_keys = tuple(
             item.item_key
             for item in run.items
-            if item.identity_status == "new" and item.reconciliation_input.registry1 is not None
+            if item.identity_status == "new"
+            and item.reconciliation_input.registry1 is not None
+            and item.reconciliation_input.registry1.source_name == "registry1"
         )
         created = self._store.resolve_or_create_registry1_entities(run.run_id, new_registry1_keys)
         if set(created) != set(new_registry1_keys):
@@ -334,7 +341,10 @@ class CanonicalWeeklyProposalService:
                 bool(requested_fields)
                 and not value.identity_conflict
                 and not value.rejection_code
-                and (value.registry1 is not None or value.registry2 is not None)
+                and (
+                    (value.registry1 is not None and value.registry1.source_name in {"registry1", "canonical_catalog"})
+                    or value.registry2 is not None
+                )
             )
             if not eligible:
                 enriched_inputs.append(value)
@@ -478,7 +488,10 @@ class CanonicalWeeklyProposalService:
                 requested
                 and not value.identity_conflict
                 and not value.rejection_code
-                and (value.registry1 is not None or value.registry2 is not None)
+                and (
+                    (value.registry1 is not None and value.registry1.source_name in {"registry1", "canonical_catalog"})
+                    or value.registry2 is not None
+                )
             ):
                 total += 1
         return total
@@ -691,21 +704,65 @@ class CanonicalWeeklyProposalService:
             items.append(
                 PersistedReconciliationItem(
                     grouping_key=grouping_key,
-                    item_key=sha256_text(
-                        _canonical_json(
-                            {
-                                "grouping_key": grouping_key,
-                                "identity_status": identity_status,
-                                "input_hash": reconciled.input_hash,
-                            }
-                        )
-                    ),
+                    item_key=sha256_text(_canonical_json({
+                        "grouping_key": grouping_key,
+                        "identity_status": identity_status,
+                        "input_hash": reconciled.input_hash,
+                    })),
                     input_hash=reconciled.input_hash,
                     identity_status=identity_status,
                     content_entity_id=entity.content_entity_id,
                     reconciliation_input=reconciliation_input,
                 )
             )
+        for observed in collapse_observed_pages(context.observed_pages):
+            candidate = MaterialCandidate(
+                source_name="observed_page",
+                source_row_id=f"observed:{observed.normalized_url}",
+                title=observed.page_title,
+                url=observed.normalized_url,
+                material_id=None,
+                direction_code=None,
+                material_type_code=None,
+                access_code=None,
+                lifecycle_code="active",
+                source_fingerprint=sha256_text(_canonical_json({
+                    "url": observed.normalized_url, "title": observed.page_title,
+                    "pageviews": observed.pageviews, "first_seen": observed.first_seen.isoformat(),
+                    "last_seen": observed.last_seen.isoformat(),
+                })),
+            )
+            resolution = resolver.resolve(candidate, context.entities, context.aliases)
+            if resolution.status == "matched":
+                continue
+            service_route = normalize_url(observed.normalized_url).path in {
+                "/auth", "/registration.php", "/personal", "/rules", "/privacy", "/cookies", "/sitemap.php",
+            } or normalize_url(observed.normalized_url).path.startswith("/personal/")
+            deterministic = Proposal(
+                direction_code="not_applicable",
+                material_type_code="service_page",
+                access_code="unspecified",
+                lifecycle_code="active",
+                rule_code="SERVICE_ROUTE",
+                confidence=Decimal("1.0"),
+                evidence=("reviewed service route",),
+            ) if service_route else None
+            conflict = resolution.status == "collision"
+            reconciliation_input = ReconciliationInput(
+                registry1=candidate,
+                identity_conflict=conflict,
+                deterministic_proposal=deterministic,
+            )
+            reconciled = reconcile_entity(reconciliation_input)
+            grouping_key = f"observed:{observed.normalized_url}"
+            items.append(PersistedReconciliationItem(
+                grouping_key=grouping_key,
+                item_key=sha256_text(_canonical_json({"grouping_key": grouping_key, "identity_status": "new", "input_hash": reconciled.input_hash})),
+                input_hash=reconciled.input_hash,
+                identity_status="new",
+                content_entity_id=None,
+                reconciliation_input=reconciliation_input,
+            ))
         for snapshot in (registry1, registry2):
             for rejected in snapshot.rejected_rows:
                 reconciliation_input = ReconciliationInput(
@@ -747,4 +804,5 @@ __all__ = [
     "ReconciliationContext",
     "ReconciliationReceipt",
     "WorkflowConfiguration",
+    "ObservedPage",
 ]
