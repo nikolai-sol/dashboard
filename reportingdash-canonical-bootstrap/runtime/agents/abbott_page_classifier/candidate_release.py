@@ -2945,7 +2945,7 @@ def validate_content_candidate(
         candidate = cursor.fetchone()
         if (
             not isinstance(candidate, Mapping)
-            or candidate.get("release_status") != "staging"
+            or candidate.get("release_status") not in {"staging", "validated"}
             or int(candidate.get("baseline_validation_run_id") or 0) <= 0
         ):
             raise CandidateMaterializationError("CANDIDATE_NOT_MUTABLE")
