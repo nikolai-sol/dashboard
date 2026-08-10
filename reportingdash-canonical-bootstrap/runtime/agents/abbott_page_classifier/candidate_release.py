@@ -28,7 +28,12 @@ from .approval_hashes import (
     compute_taxonomy_digest,
 )
 from .domain import ApprovalItem, ConflictCode
-from .normalization import normalize_title, normalize_url, sha256_text
+from .normalization import (
+    normalize_taxonomy_label,
+    normalize_title,
+    normalize_url,
+    sha256_text,
+)
 
 
 DATASET_KEY = "abbott"
@@ -960,11 +965,10 @@ def _resolve_legacy_predecessor_rows(
         """
         SELECT legacy_catalog.id AS predecessor_catalog_row_id,
                entity.id AS content_entity_id,
-               direction.term_code AS direction_code,
-               material.term_code AS material_type_code,
-               access_term.term_code AS access_code,
-               lifecycle.term_code AS lifecycle_code,
-               lifecycle.term_label AS lifecycle_label
+               legacy_catalog.direction_key AS direction_label,
+               legacy_catalog.material_type AS material_type_label,
+               legacy_catalog.access_label,
+               legacy_catalog.is_active
         FROM portal_content_catalog AS legacy_catalog
         INNER JOIN portal_content_registry_entities AS entity
           ON entity.dataset_key = %s
@@ -977,28 +981,6 @@ def _resolve_legacy_predecessor_rows(
                JSON_EXTRACT(entity.source_evidence, '$.source_row_fingerprints'),
                JSON_QUOTE(legacy_catalog.source_row_fingerprint)
              )
-        LEFT JOIN portal_content_taxonomy_terms AS direction
-          ON direction.taxonomy_version_id = %s
-         AND direction.taxonomy_kind = 'direction'
-         AND direction.term_label = legacy_catalog.direction_key
-         AND direction.term_status = 'active'
-        LEFT JOIN portal_content_taxonomy_terms AS material
-          ON material.taxonomy_version_id = %s
-         AND material.taxonomy_kind = 'material_type'
-         AND material.term_label = legacy_catalog.material_type
-         AND material.term_status = 'active'
-        LEFT JOIN portal_content_taxonomy_terms AS access_term
-          ON access_term.taxonomy_version_id = %s
-         AND access_term.taxonomy_kind = 'access'
-         AND access_term.term_label = legacy_catalog.access_label
-         AND access_term.term_status = 'active'
-        LEFT JOIN portal_content_taxonomy_terms AS lifecycle
-          ON lifecycle.taxonomy_version_id = %s
-         AND lifecycle.taxonomy_kind = 'lifecycle'
-         AND lifecycle.term_code = CASE
-               WHEN legacy_catalog.is_active = 1 THEN 'active' ELSE 'archived'
-             END
-         AND lifecycle.term_status = 'active'
         WHERE legacy_catalog.canonical_release_id = %s
           AND legacy_catalog.source_snapshot_id = %s
           AND legacy_catalog.id IN ("""
@@ -1007,23 +989,73 @@ def _resolve_legacy_predecessor_rows(
         (
             DATASET_KEY,
             predecessor_release_id,
-            taxonomy_version_id,
-            taxonomy_version_id,
-            taxonomy_version_id,
-            taxonomy_version_id,
             predecessor_release_id,
             predecessor_snapshot_id,
             *sorted(legacy_ids),
         ),
     )
+    legacy_resolution_rows = tuple(cursor.fetchall())
+    cursor.execute(
+        """
+        SELECT taxonomy_kind, term_code, term_label
+        FROM portal_content_taxonomy_terms
+        WHERE taxonomy_version_id = %s
+          AND term_status = 'active'
+        ORDER BY taxonomy_kind, term_code
+        """,
+        (taxonomy_version_id,),
+    )
+    active_terms: dict[str, dict[str, str]] = {
+        "direction": {}, "material_type": {}, "access": {}, "lifecycle": {}
+    }
+    for term in cursor.fetchall():
+        if not isinstance(term, Mapping):
+            raise CandidateMaterializationError(
+                "LEGACY_PREDECESSOR_PROVENANCE_INVALID"
+            )
+        kind = str(term.get("taxonomy_kind") or "")
+        code = str(term.get("term_code") or "")
+        if kind in active_terms and code:
+            active_terms[kind][code] = str(term.get("term_label") or code)
     resolutions: dict[int, list[Mapping[str, object]]] = {}
-    for resolution in cursor.fetchall():
+    for resolution in legacy_resolution_rows:
         if not isinstance(resolution, Mapping):
             raise CandidateMaterializationError(
                 "LEGACY_PREDECESSOR_PROVENANCE_INVALID"
             )
         row_id = int(resolution.get("predecessor_catalog_row_id") or 0)
-        resolutions.setdefault(row_id, []).append(resolution)
+        raw_direction = str(resolution.get("direction_label") or "")
+        direction_code = normalize_taxonomy_label("direction", raw_direction)
+        if not raw_direction.strip():
+            direction_code = "undetermined"
+        material_type_code = normalize_taxonomy_label(
+            "material_type", str(resolution.get("material_type_label") or "")
+        )
+        raw_access = str(resolution.get("access_label") or "")
+        access_code = normalize_taxonomy_label("access", raw_access)
+        if not raw_access.strip():
+            access_code = "unspecified"
+        lifecycle_code = "active" if bool(resolution.get("is_active")) else "archived"
+        codes = (direction_code, material_type_code, access_code, lifecycle_code)
+        if any(
+            not code or code not in active_terms[kind]
+            for kind, code in zip(
+                ("direction", "material_type", "access", "lifecycle"), codes
+            )
+        ):
+            raise CandidateMaterializationError(
+                "LEGACY_PREDECESSOR_PROVENANCE_UNMAPPED"
+            )
+        resolutions.setdefault(row_id, []).append(
+            {
+                **resolution,
+                "direction_code": direction_code,
+                "material_type_code": material_type_code,
+                "access_code": access_code,
+                "lifecycle_code": lifecycle_code,
+                "lifecycle_label": active_terms["lifecycle"][lifecycle_code],
+            }
+        )
     resolved_rows: list[Mapping[str, object]] = []
     for row in rows:
         row_id = int(row.get("id") or 0)
