@@ -130,7 +130,7 @@ export default function WizardStepBinding({ data, onChange }: WizardStepBindingP
         if (resolveSourceType(resolveSourceKey(source.platform)) !== "ads") {
           return false;
         }
-        return parseAccountIds(source.source_config?.account_ids).length > 0;
+        return true;
       }),
     [actualSources],
   );
