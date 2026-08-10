@@ -259,6 +259,8 @@ class AbbottOperationsRunbookTest(unittest.TestCase):
             "OPTIMIZE TABLE",
             "one table at a time",
             "Abbott health probe",
+            "binary log retention",
+            "PITR",
         ):
             with self.subTest(required=required):
                 self.assertIn(required, text)

@@ -84,3 +84,9 @@ The current priority order is:
 Compaction is not a rollback mechanism. After a purge, recovery of removed fact
 rows requires rebuilding a reviewed successor release from retained source and
 provenance; active and previous releases remain immediately available.
+
+Large deletes are also written to the MySQL binary logs. Filesystem space can
+therefore recover more slowly than the logical purge when binary log retention
+is longer than the cleanup window. Do not purge or shorten binary logs as part
+of this procedure: that is a separate backup/PITR policy change and requires
+explicit approval plus a verified recovery plan.
