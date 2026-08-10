@@ -602,7 +602,7 @@ function mapBitrixPages(
   const byUrl = new Map<string, AggregatedBitrixRow>();
   data.rows.forEach((row) => {
     const url = normalizePage(row.url);
-    const metadata = metadataForPage(url, "", workbook);
+    const metadata = metadataForPage(row.url, "", workbook);
     const current = byUrl.get(url) ?? {
       url,
       path: normalizePage(row.path),
@@ -763,9 +763,12 @@ function buildReturning(
       throw new Error("Abbott canonical data is unavailable");
     }
     const count = deriveReturningCount(row.source_denominator, row.source_percentage);
+    const metadataUrl = normalizeAbbottContentIdentityUrl(rawPage) && /^(?:https?:\/\/|\/)/i.test(rawPage)
+      ? rawPage
+      : text(row.normalized_page);
     const current = totals.get(url) ?? {
       url,
-      direction: metadataForPage(text(row.normalized_page), "", workbook).direction,
+      direction: metadataForPage(metadataUrl, "", workbook).direction,
       visits: 0,
       returning_1_day: 0,
       returning_2_7_days: 0,

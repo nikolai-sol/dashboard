@@ -304,6 +304,51 @@ test("returning control rows ignore non-web page identities without failing the 
   }]);
 });
 
+test("returning pages resolve semantic-query URL metadata while retaining normalized display grouping", async () => {
+  const urlMetadata = { page_title: "Query article", direction: "Gastroenterology", material_type: "article", access: "Врачи", is_active: true };
+  const pathMetadata = { page_title: "Path article", direction: "Cardiology", material_type: "guide", access: "Гости", is_active: true };
+  const aggregate = executor((sql) => {
+    if (sql.includes("canonical_fact_metrika_returning_pages_release_daily")) {
+      return [{
+        report_date: "2026-01-01",
+        raw_page_value: "https://abbottpro.ru/academy/articles/a?topic=gastro&utm_source=test",
+        normalized_page: "https://abbottpro.ru/academy/articles/a",
+        return_bucket_code: "next_day",
+        source_percentage: "100.0000000000",
+        source_denominator: "3",
+      }];
+    }
+    return aggregateRows(sql);
+  });
+  const deps = dependencies(aggregate, executor(() => []));
+  deps.loadReleaseBundle = async () => ({
+    releaseId: 41,
+    audience: "embed" as const,
+    workbook: {
+      ...aggregateWorkbook,
+      contentByUrl: new Map([[lookupHash("https://abbottpro.ru/academy/articles/a?topic=gastro"), urlMetadata]]),
+      urlReturnDirections: new Map([[lookupHash("/academy/articles/a"), pathMetadata]]),
+    },
+    bitrixPages: missingBitrix,
+    journeyTransitions: { source: missingBitrix.source, rows: [] },
+  });
+
+  const result = await loadAbbottBiDataWithDependencies(
+    7, ["90602537"], "2026-01-01", "2026-01-01", "embed", deps,
+  );
+
+  assert.deepEqual(result.returning, [{
+    url: "https://abbottpro.ru/academy/articles/a",
+    direction: "Gastroenterology",
+    visits: 3,
+    returning_1_day: 3,
+    returning_2_7_days: 0,
+    returning_8_31_days: 0,
+    is_derived: true,
+    normalization_collision: false,
+  }]);
+});
+
 test("aggregate traffic keeps exact User ID partitions with weighted metrics", async () => {
   const siteRows = [
     { analytics_scope: "other", user_id_presence: "all", traffic_source: "Direct", sessions: "10", users: "8", pageviews: "20", bounce_rate: "10", average_session_seconds: "100" },
@@ -806,6 +851,74 @@ test("loader maps every Bitrix metric and exposes snapshot metadata", async () =
   });
   assert.deepEqual(result.bitrix_sources?.pages, source);
   assert.deepEqual(result.bitrix_sources?.journeys, source);
+});
+
+test("Bitrix pages resolve semantic-query URL metadata without changing page grouping or metrics", async () => {
+  const urlMetadata = { page_title: "Query article", direction: "Gastroenterology", material_type: "article", access: "Врачи", is_active: true };
+  const pathMetadata = { page_title: "Path article", direction: "Cardiology", material_type: "guide", access: "Гости", is_active: true };
+  const aggregate = executor(aggregateRows);
+  const deps = dependencies(aggregate, executor(() => []));
+  deps.loadReleaseBundle = async () => ({
+    releaseId: 41,
+    audience: "embed" as const,
+    workbook: {
+      ...aggregateWorkbook,
+      contentByUrl: new Map([[lookupHash("https://abbottpro.ru/academy/articles/a?topic=gastro"), urlMetadata]]),
+      urlReturnDirections: new Map([[lookupHash("/academy/articles/a"), pathMetadata]]),
+    },
+    bitrixPages: {
+      source: { ...missingBitrix.source, source_status: "test_dump", snapshot_id: 13 },
+      summary: { date_from: "2026-01-01", date_to: "2026-01-01", page_rows: 1 },
+      rows: [{
+        report_date: "2026-01-01",
+        url: "https://abbottpro.ru/academy/articles/a?topic=gastro&utm_source=test",
+        path: "/academy/articles/a",
+        material_id: "m-1",
+        material_type_hint: null,
+        pageviews: 11,
+        sessions: 10,
+        users: 9,
+        guests: 8,
+        logged_in_hits: 7,
+        anonymous_hits: 6,
+        logged_in_sessions: 5,
+        anonymous_sessions: 4,
+        entry_sessions: 3,
+        exit_sessions: 2,
+        avg_session_duration_seconds: 42.75,
+        top_utm_source: null,
+        top_utm_medium: null,
+        top_utm_campaign: null,
+      }],
+    },
+    journeyTransitions: { source: missingBitrix.source, rows: [] },
+  });
+
+  const result = await loadAbbottBiDataWithDependencies(
+    7, ["90602537"], "2026-01-01", "2026-01-01", "embed", deps,
+  );
+
+  assert.deepEqual(result.bitrix_pages, [{
+    url: "https://abbottpro.ru/academy/articles/a",
+    path: "/academy/articles/a",
+    direction: "Gastroenterology",
+    material_type: "article",
+    access: "Врачи",
+    pageviews: 11,
+    sessions: 10,
+    users: 9,
+    guests: 8,
+    logged_in_hits: 7,
+    anonymous_hits: 6,
+    logged_in_sessions: 5,
+    anonymous_sessions: 4,
+    entry_sessions: 3,
+    exit_sessions: 2,
+    avg_session_duration: 42.75,
+    top_utm_source: "",
+    top_utm_medium: "",
+    top_utm_campaign: "",
+  }]);
 });
 
 test("loader aggregates multi-day Bitrix rows without last-row overwrite", async () => {
