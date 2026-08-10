@@ -222,6 +222,8 @@ def normalize_url(raw: str) -> NormalizedUrl:
         host = source_host.casefold().encode("idna").decode("ascii")
         if host == "www.abbottpro.ru":
             host = "abbottpro.ru"
+        if host != "abbottpro.ru":
+            return _empty_normalized_url()
         if host == "abbottpro.ru":
             scheme = "https"
         port = parts.port
