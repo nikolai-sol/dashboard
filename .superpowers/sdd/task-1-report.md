@@ -60,3 +60,74 @@ outside Task 1's explicit requirement to leave the nested dashboard at the
 merged gitlink and not change the production dashboard. The imported
 classifier pipeline is green, but the full prescribed baseline is not green
 until that runtime-closure inconsistency is addressed in an authorized task.
+
+---
+
+## Review follow-up — runtime-closure attestation repair
+
+### Root cause and scope
+
+The runtime-closure failure was an attestation drift, not a bootstrap-source
+drift. The four approved bootstrap runtime files were already byte-identical
+to their root authorities. Their SHA-256 values in the nested
+`reportingdash-canonical-bootstrap/MIGRATION-MANIFEST.md` were stale, as were
+the corresponding four entries in the root
+`ops/abbott-runtime-manifest.sha256`. The closure test explicitly validates
+the root runtime manifest, so its four entries were updated as required by
+the test.
+
+Only these four authority paths were re-attested:
+
+- `agents/abbott_page_classifier/weekly_proposal.py`
+- `agents/abbott_page_classifier/workflow.py`
+- `agents/abbott_page_classifier/workflow_service.py`
+- `agents/abbott_page_classifier/workflow_repository.py`
+
+The nested source copies were not rewritten because their bytes already
+matched the root files. The nested dashboard change is limited to the four
+manifest hashes; the root change is limited to the four runtime-manifest
+hashes and the resulting `dashboard-next` gitlink.
+
+### Commands and results
+
+1. Reproduced the finding with:
+   ```bash
+   /Users/nafanya/.local/bin/python3.11 -m unittest tests.test_abbott_runtime_closure
+   ```
+   The closure assertions identified exactly the four stale nested-manifest
+   hashes. The initial environment lacked optional test imports
+   (`mysql.connector`, `openpyxl`), causing unrelated import errors.
+2. Compared both sides with:
+   ```bash
+   shasum -a 256 agents/abbott_page_classifier/{weekly_proposal.py,workflow.py,workflow_service.py,workflow_repository.py}
+   shasum -a 256 dashboard-next/reportingdash-canonical-bootstrap/runtime/agents/abbott_page_classifier/{weekly_proposal.py,workflow.py,workflow_service.py,workflow_repository.py}
+   ```
+   Each root/bootstrap pair had identical bytes. The authoritative digests
+   are `b17d597a…fb2a5`, `c0e9e526…5b66`, `90d2cf1b…cff3`, and
+   `bf23d9c1…b981`, respectively.
+3. Installed only local, isolated Python 3.11 test dependencies under
+   `/tmp/abbott-task1-deps`; no repository dependency, production, database,
+   API, SSH, deployment, service, cron, Google Sheets, or LLM operation was
+   performed.
+4. Updated the four hashes in the nested bootstrap migration manifest and
+   committed the nested dashboard:
+   ```text
+   ac97675 fix(abbott): refresh bootstrap runtime attestations
+   ```
+5. Updated the matching root runtime-manifest hashes and advanced the root
+   `dashboard-next` gitlink to the nested commit.
+6. Ran fresh verification with Python 3.11 and the isolated dependency path:
+   ```bash
+   env PYTHONPATH=/tmp/abbott-task1-deps /Users/nafanya/.local/bin/python3.11 -m unittest tests.test_abbott_runtime_closure
+   env PYTHONPATH=/tmp/abbott-task1-deps /Users/nafanya/.local/bin/python3.11 -m unittest discover -s tests/abbott_page_classifier -p 'test_*.py'
+   env PYTHONPATH=/tmp/abbott-task1-deps /Users/nafanya/.local/bin/python3.11 -m unittest tests.test_abbott_content_registry_schema tests.test_abbott_content_reconciliation_schema tests.test_abbott_runtime_closure tests.test_abbott_release_operator tests.test_canonical_release_store tests.test_abbott_release_retention
+   ```
+   Results: runtime closure `22` tests passed; classifier suite `394` tests
+   passed with `1` expected skip; exact Task 1 root contract suite `84` tests
+   passed.
+
+### Follow-up scope check
+
+No active release, including release 24, was modified. Zaruku, Gidrofuril,
+`nest-second`, all other worktrees/dashboards, and the parallel sales
+analytics work were untouched.
