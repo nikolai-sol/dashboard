@@ -629,6 +629,11 @@ GRANT UPDATE (source_snapshot_ids) ON report_bd.portal_data_releases
   TO 'abbott_content_materializer_role';
 GRANT SELECT ON report_bd.portal_active_data_releases
   TO 'abbott_content_materializer_role';
+-- MySQL requires LOCK TABLES (or broader DML authority) for SELECT ... FOR
+-- UPDATE. Grant the narrower locking capability so the materializer can freeze
+-- the predecessor pointer without receiving UPDATE authority over it.
+GRANT LOCK TABLES ON report_bd.*
+  TO 'abbott_content_materializer_role';
 GRANT SELECT, INSERT ON report_bd.portal_dataset_snapshots
   TO 'abbott_content_materializer_role';
 GRANT SELECT, INSERT ON report_bd.portal_release_source_imports

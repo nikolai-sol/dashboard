@@ -108,6 +108,11 @@ class AbbottSchemaContractTest(unittest.TestCase):
             "TO 'abbott_content_materializer_role';",
             sql,
         )
+        self.assertIn(
+            "GRANT LOCK TABLES ON report_bd.* "
+            "TO 'abbott_content_materializer_role';",
+            sql,
+        )
 
     def test_release_operator_supports_lifecycle_and_keeps_data_plane_read_only(self):
         sql = self._normalized(self._private_sql())

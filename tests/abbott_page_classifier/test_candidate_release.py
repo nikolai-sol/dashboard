@@ -28,7 +28,7 @@ from agents.abbott_page_classifier.batch_service import (
     compute_item_hash,
     compute_taxonomy_digest,
 )
-from agents.abbott_page_classifier.domain import ApprovalItem
+from agents.abbott_page_classifier.domain import ApprovalItem, ConflictCode
 from agents.abbott_page_classifier.normalization import sha256_text
 
 
@@ -147,6 +147,7 @@ class CandidateConnection:
         batch_accepted_at: object = "2026-08-05T10:00:00.000000+00:00",
         orphan_event: bool = False,
         duplicate_event: bool = False,
+        skipped_identity_conflict: bool = False,
     ):
         self.events: list[str] = []
         self.calls: list[tuple[str, tuple[object, ...]]] = []
@@ -184,6 +185,7 @@ class CandidateConnection:
         self.batch_accepted_at = batch_accepted_at
         self.orphan_event = orphan_event
         self.duplicate_event = duplicate_event
+        self.skipped_identity_conflict = skipped_identity_conflict
         self.snapshots = {
             11: {
                 "id": 11,
@@ -234,7 +236,9 @@ class CandidateConnection:
                 title="Beta",
                 url="https://abbottpro.ru/gastro/beta",
                 finals=("gastroenterology", "video", "doctors", "active"),
-                readiness_state="no_change",
+                readiness_state=(
+                    "conflict" if skipped_identity_conflict else "no_change"
+                ),
                 current_canonical={
                     "access_code": "doctors",
                     "content_entity_id": 2,
@@ -245,6 +249,16 @@ class CandidateConnection:
                 },
             ),
         )
+        if skipped_identity_conflict:
+            second = replace(
+                published_items[1],
+                conflict_codes=(ConflictCode.IDENTITY_COLLISION,),
+                row_hash="",
+            )
+            published_items = (
+                published_items[0],
+                replace(second, row_hash=compute_item_hash(second)),
+            )
         self.published_input_hash = compute_batch_hash(published_items)
         self.approval_rows = []
         for item_id, item in enumerate(published_items, start=101):
@@ -259,8 +273,12 @@ class CandidateConnection:
                 "final_access_code": item.final_access_code,
                 "final_lifecycle_code": item.final_lifecycle_code,
                 "readiness_state": item.readiness_state,
-                "conflict_code": None,
-                "conflict_codes": "[]",
+                "conflict_code": (
+                    item.conflict_codes[0].value if item.conflict_codes else None
+                ),
+                "conflict_codes": json.dumps(
+                    [code.value for code in item.conflict_codes]
+                ),
                 "row_hash": item.row_hash,
                 "decision_reason": item.decision_reason,
                 "proposal_evidence": plain_json(item.proposal_evidence),
@@ -294,7 +312,10 @@ class CandidateConnection:
                 final_access_code=row["final_access_code"],
                 final_lifecycle_code=row["final_lifecycle_code"],
                 readiness_state=row["readiness_state"],
-                conflict_codes=(),
+                conflict_codes=tuple(
+                    ConflictCode(code)
+                    for code in json.loads(row["conflict_codes"])
+                ),
                 row_hash=row["row_hash"],
                 decision_reason=row["decision_reason"],
             )
@@ -436,10 +457,10 @@ class CandidateConnection:
                 "accepted_decision_hash": self.accepted_hash,
                 "accepted_count": 1,
                 "ready_count": 1,
-                "conflict_count": 0,
+                "conflict_count": 1 if self.skipped_identity_conflict else 0,
                 "unresolved_count": 0,
                 "rejected_count": 0,
-                "no_change_count": 1,
+                "no_change_count": 0 if self.skipped_identity_conflict else 1,
                 "taxonomy_version_id": 5,
                 "taxonomy_version": "abbott.v1",
                 "taxonomy_digest": TEST_TAXONOMY_DIGEST,
@@ -1272,6 +1293,27 @@ class CandidateReleaseTest(unittest.TestCase):
                 CandidateMaterializationError, "APPROVAL_BUNDLE_INVALID"
             ):
                 materialize_content_candidate(71, 12, "abc1234")
+
+    def test_materialization_ignores_identity_collision_on_skipped_conflict_row(self):
+        connection = CandidateConnection(skipped_identity_conflict=True)
+        with (
+            patch(
+                "agents.abbott_page_classifier.candidate_release.get_db_connection",
+                return_value=connection,
+            ),
+            patch(
+                "agents.abbott_page_classifier.candidate_release.release_store.create_candidate_release",
+                return_value=41,
+            ),
+            patch(
+                "agents.abbott_page_classifier.candidate_release.release_store.require_mutable_candidate_release",
+                return_value={"id": 41, "release_status": "staging"},
+            ),
+        ):
+            result = materialize_content_candidate(71, 12, "abc1234")
+
+        self.assertEqual(result.status, "staging")
+        self.assertEqual(connection.events, ["start", "commit"])
 
     def test_materialization_rejects_unauthorized_current_batch_event(self):
         connection = CandidateConnection(unauthorized_event=True)

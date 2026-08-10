@@ -543,6 +543,16 @@ assert json.loads(stream.getvalue())["status"] == "proposal_published"
         self.assertIn('root = "/root/reportingdash-abbott-canonical"', cron)
         self.assertIn('python = f"{root}/venv/bin/python"', cron)
 
+    def test_bootstrap_smoke_imports_content_materializer_eagerly(self):
+        bootstrap = (
+            ROOT / "dashboard-next/reportingdash-canonical-bootstrap/README.md"
+        ).read_text(encoding="utf-8")
+
+        self.assertIn(
+            "agents.abbott_page_classifier.candidate_release",
+            bootstrap,
+        )
+
     def test_documented_pin_verifiers_accept_an_inactive_python38_marker(self):
         documents = (
             ROOT / "docs/ABBOTT-OPERATIONS-RUNBOOK.md",
