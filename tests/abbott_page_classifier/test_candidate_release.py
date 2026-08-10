@@ -22,6 +22,7 @@ from agents.abbott_page_classifier.candidate_release import (
     _load_lookup,
     _overlay_current_batch_events,
     build_lookup_projection,
+    acknowledge_content_candidate_activation,
     materialize_content_candidate,
     reset_failed_content_candidate,
     validate_and_transition_content_candidate,
@@ -948,6 +949,52 @@ class FailedCandidateResetConnection:
 
 
 class CandidateReleaseTest(unittest.TestCase):
+    def test_activation_acknowledgement_marks_only_the_reviewed_batch_receipt_active(self):
+        connection = FailedCandidateResetConnection(
+            active_release_id=23,
+            candidate_status="active",
+        )
+
+        result = acknowledge_content_candidate_activation(
+            2,
+            23,
+            14,
+            connection_factory=lambda: connection,
+        )
+
+        self.assertEqual(result, "active")
+        update_sql, update_params = next(
+            (sql, params)
+            for sql, params in connection.calls
+            if sql.startswith("UPDATE portal_content_approval_batches")
+        )
+        self.assertIn("activation_status = 'active'", update_sql)
+        self.assertNotIn("SET batch_status =", update_sql)
+        self.assertNotIn("candidate_release_id = NULL", update_sql)
+        self.assertEqual(update_params, (2, "abbott", 23))
+
+    def test_activation_acknowledgement_retry_is_idempotent(self):
+        connection = FailedCandidateResetConnection(
+            active_release_id=23,
+            candidate_status="active",
+            activation_status="active",
+        )
+
+        result = acknowledge_content_candidate_activation(
+            2,
+            23,
+            14,
+            connection_factory=lambda: connection,
+        )
+
+        self.assertEqual(result, "noop")
+        self.assertFalse(
+            any(
+                sql.startswith("UPDATE portal_content_approval_batches")
+                for sql, _ in connection.calls
+            )
+        )
+
     def test_failed_candidate_reset_preserves_batch_evidence_for_rematerialization(self):
         connection = FailedCandidateResetConnection()
 
