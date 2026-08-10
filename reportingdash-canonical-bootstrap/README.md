@@ -71,7 +71,7 @@ test -x "$ABBOTT_CONTENT_PYTHON311_BIN"
 "$ABBOTT_CONTENT_PYTHON311_BIN" -c \
   'import sys; raise SystemExit(0 if sys.version_info[:2] == (3, 11) else 78)'
 (cd runtime && PYTHONDONTWRITEBYTECODE=1 "$ABBOTT_CONTENT_PYTHON311_BIN" -c \
-  'import fetch_yandex_metrika_canonical, canonical_writer, metrika_logs_api, canonical_release_store, run_abbott_metrika_active_release, abbott_release_operator, probe_yandex_metrika_access, capture_abbott_canonical_baseline, compare_abbott_canonical_release, abbott_canonical_controls, metrika_pagination, backfill_abbott_metrika_2026, abbott_health_probe, send_canonical_telegram_report, sources_health_dashboard; import agents.abbott_page_classifier.weekly_proposal, agents.abbott_page_classifier.workflow')
+  'import fetch_yandex_metrika_canonical, canonical_writer, metrika_logs_api, canonical_release_store, run_abbott_metrika_active_release, abbott_release_operator, probe_yandex_metrika_access, capture_abbott_canonical_baseline, compare_abbott_canonical_release, abbott_canonical_controls, metrika_pagination, backfill_abbott_metrika_2026, abbott_health_probe, send_canonical_telegram_report, sources_health_dashboard; import agents.abbott_page_classifier.candidate_release, agents.abbott_page_classifier.weekly_proposal, agents.abbott_page_classifier.workflow')
 ```
 
 Then verify every `runtime/` digest against `MIGRATION-MANIFEST.md` before
