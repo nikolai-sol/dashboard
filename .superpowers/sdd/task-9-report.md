@@ -252,7 +252,7 @@ work.
 - Re-copied the reviewed runtime closure with `install -m 644`; the three
   vendored shell wrappers are intentionally regular mode-`0644` files.
 - Regenerated the sorted root SHA-256 inventory and verified every listed file.
-  The bootstrap manifest independently verifies all 44 synchronized entries.
+  The bootstrap manifest independently verifies all 45 synchronized entries.
 - Corrected the stale Task 6 report opening: aliases are mutated only inside
   `record_batch_acceptance`; ingestion remains read-only for aliases.
 
