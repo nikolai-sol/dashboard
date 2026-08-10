@@ -220,7 +220,9 @@ class ContentRegistryRepository:
                   decision_reason,
                   proposal_evidence,
                   conflict_codes,
-                  conflict_code
+                  conflict_code,
+                  selected_content_entity_id,
+                  url_alias_decision
                 FROM portal_content_approval_items
                 WHERE approval_batch_id = %s
                 ORDER BY content_entity_id, input_hash
@@ -648,7 +650,9 @@ class ContentRegistryRepository:
                   final_lifecycle_code,
                   readiness_state,
                   row_hash,
-                  decision_reason
+                  decision_reason,
+                  selected_content_entity_id,
+                  url_alias_decision
                 FROM portal_content_approval_items
                 WHERE approval_batch_id = %s
                 ORDER BY content_entity_id, input_hash
@@ -705,7 +709,9 @@ class ContentRegistryRepository:
                         final_material_type_code = %s,
                         final_access_code = %s,
                         final_lifecycle_code = %s,
-                        decision_reason = %s
+                        decision_reason = %s,
+                        selected_content_entity_id = %s,
+                        url_alias_decision = %s
                     WHERE id = %s
                       AND approval_batch_id = %s
                       AND row_hash = %s
@@ -716,6 +722,8 @@ class ContentRegistryRepository:
                         item.final_access_code,
                         item.final_lifecycle_code,
                         item.decision_reason,
+                        item.selected_content_entity_id,
+                        item.url_alias_decision,
                         approval_item_id,
                         int(batch_id),
                         item.row_hash,
@@ -1429,6 +1437,12 @@ class ContentRegistryRepository:
                     readiness_state=str(row[9]),
                     row_hash=str(row[10]),
                     decision_reason=(str(row[11]) if row[11] is not None else None),
+                    selected_content_entity_id=(
+                        int(row[15]) if len(row) >= 17 and row[15] is not None else None
+                    ),
+                    url_alias_decision=(
+                        str(row[16]) if len(row) >= 17 and row[16] is not None else None
+                    ),
                 )
                 identity = (item.content_entity_id, item.input_hash)
                 key = (*identity, item.row_hash)
@@ -1468,6 +1482,24 @@ class ContentRegistryRepository:
             tuple(item for _approval_item_id, item in stored_items)
         )
         return stored_items, counts
+
+    @staticmethod
+    def _validate_url_alias_decision(item: ApprovalItem) -> None:
+        collision = any(str(code) == "IDENTITY_COLLISION" for code in item.conflict_codes)
+        decision = item.url_alias_decision
+        selected = item.selected_content_entity_id
+        if decision is not None and decision not in {"attach", "retire", "reject"}:
+            raise RepositoryError("URL_ALIAS_DECISION_INVALID")
+        if not collision:
+            if decision is not None or selected is not None:
+                raise RepositoryError("URL_ALIAS_DECISION_UNEXPECTED")
+            return
+        if not item.decision_reason or decision is None:
+            raise RepositoryError("IDENTITY_COLLISION_DECISION_REQUIRED")
+        if decision == "attach" and (selected is None or selected <= 0):
+            raise RepositoryError("IDENTITY_COLLISION_DECISION_REQUIRED")
+        if decision in {"retire", "reject"} and selected is not None:
+            raise RepositoryError("URL_ALIAS_DECISION_INVALID")
 
     @staticmethod
     def _validate_acceptance_snapshot(
@@ -1531,7 +1563,10 @@ class ContentRegistryRepository:
                 final_access_code=supplied.final_access_code,
                 final_lifecycle_code=supplied.final_lifecycle_code,
                 decision_reason=supplied.decision_reason,
+                selected_content_entity_id=supplied.selected_content_entity_id,
+                url_alias_decision=supplied.url_alias_decision,
             )
+            ContentRegistryRepository._validate_url_alias_decision(editable)
             if editable.readiness_state == "conflict":
                 old_values = (
                     canonical.final_direction_code,

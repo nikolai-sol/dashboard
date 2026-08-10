@@ -151,7 +151,9 @@ def _item_payload(item: ApprovalItem, *, include_row_hash: bool) -> dict[str, ob
         "final_material_type_code": item.final_material_type_code,
         "input_hash": item.input_hash,
         "readiness_state": item.readiness_state,
+        "selected_content_entity_id": item.selected_content_entity_id,
         "title": item.title,
+        "url_alias_decision": item.url_alias_decision,
         "url": item.url,
     }
     if isinstance(item, ApprovalBatchItem):
@@ -197,6 +199,8 @@ def compute_accepted_decision_hash(items: Iterable[ApprovalItem]) -> str:
         "input_hash": item.input_hash,
         "readiness_state": item.readiness_state,
         "row_hash": item.row_hash,
+        "selected_content_entity_id": item.selected_content_entity_id,
+        "url_alias_decision": item.url_alias_decision,
     } for item in ordered])
 
 

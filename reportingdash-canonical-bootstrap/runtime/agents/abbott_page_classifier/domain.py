@@ -255,6 +255,8 @@ class ApprovalItem:
     conflict_codes: tuple[ConflictCode, ...] = ()
     row_hash: str = ""
     decision_reason: str | None = None
+    selected_content_entity_id: int | None = None
+    url_alias_decision: str | None = None
 
 
 @dataclass(frozen=True)
