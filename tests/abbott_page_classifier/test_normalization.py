@@ -27,6 +27,26 @@ class NormalizationTests(unittest.TestCase):
             normalize_taxonomy_label("direction", "Дерматология"), "dermatology"
         )
         self.assertEqual(normalize_taxonomy_label("access", "фарм"), "pharmacists")
+        self.assertEqual(
+            normalize_taxonomy_label("material_type", "Алгоритмы"),
+            "pharmacy_consulting_algorithms",
+        )
+        self.assertEqual(normalize_taxonomy_label("access", "Доступно всем"), "all")
+
+    def test_known_legacy_ambiguous_values_fail_closed_to_reviewable_codes(self):
+        for value in (
+            "332987",
+            "Гастроэнтерология [262340] / Здоровье дыхательной системы [263746]",
+            "Гастроэнтерология [262340] / Женское здоровье [262337] / Кардиология [262338] / Неврология и психиатрия [262339]",
+        ):
+            with self.subTest(value=value):
+                self.assertEqual(
+                    normalize_taxonomy_label("direction", value), "undetermined"
+                )
+        self.assertEqual(
+            normalize_taxonomy_label("access", "Гастроэнтерология [262340]"),
+            "unspecified",
+        )
 
     def test_url_normalization_preserves_semantic_query_and_drops_tracking(self):
         result = normalize_url(
