@@ -174,7 +174,16 @@ def classification_to_proposal(result: Classification) -> Proposal:
 def normalize_url(raw: str | None) -> str:
     """Compatibility wrapper returning the normalized URL string."""
 
-    return normalize_canonical_url(raw or "").value
+    normalized = normalize_canonical_url(raw or "").value
+    prefix, separator, query = normalized.partition("?")
+    if not separator:
+        return normalized
+    return prefix + separator + re.sub(
+        r"(^|&)(direction|section_id)(?==)",
+        lambda match: match.group(1) + match.group(2).lower(),
+        query,
+        flags=re.IGNORECASE,
+    )
 
 
 def extract_slug(raw_url: str | None) -> str:

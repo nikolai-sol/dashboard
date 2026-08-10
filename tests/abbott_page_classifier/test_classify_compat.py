@@ -28,6 +28,15 @@ class ClassifierCompatibilityTests(unittest.TestCase):
         self.assertIsInstance(value, str)
         self.assertEqual(value, "https://abbottpro.ru/cardio?direction=262338")
 
+    def test_normalize_url_wrapper_lowercases_legacy_semantic_query_keys_only(self):
+        value = classify.normalize_url(
+            "https://abbottpro.ru/cardio/?SECTION_ID=262338&DIRECTION=624635&utm_medium=x"
+        )
+        self.assertEqual(
+            value,
+            "https://abbottpro.ru/cardio?direction=624635&section_id=262338",
+        )
+
     def test_legacy_uppercase_section_id_query_inferrs_cardiology(self):
         result = classify.classify_one(
             url="https://abbottpro.ru/articles/example?SECTION_ID=262338",
