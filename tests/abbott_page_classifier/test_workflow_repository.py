@@ -331,8 +331,6 @@ class BootstrapCursor(FakeCursor):
         ):
             entity_ids = set()
             for row in self.catalog:
-                if not bool(row[6]):
-                    continue
                 if len(row) > 11 and row[11] is not None:
                     entity_ids.add(int(row[11]))
                     continue
@@ -623,8 +621,8 @@ class MySqlWorkflowStoreTests(unittest.TestCase):
         eventless = next(entity for entity in context.entities if entity.content_entity_id == 9)
         self.assertEqual(eventless.lifecycle_code, "unknown")
         self.assertEqual(eventless.event_id, None)
-        self.assertNotIn(9, context.predecessor_active_content_entity_ids)
-        self.assertTrue(context.predecessor_active_content_entity_ids)
+        self.assertNotIn(9, context.predecessor_content_entity_ids)
+        self.assertTrue(context.predecessor_content_entity_ids)
         sql = "\n".join(statement for statement, _ in connection.calls)
         self.assertIn("FOR UPDATE", sql)
         self.assertIn("LEFT JOIN latest_events AS event", sql)

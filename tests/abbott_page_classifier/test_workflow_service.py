@@ -155,7 +155,7 @@ def context(
     entities=(),
     aliases=(),
     taxonomy=TAXONOMY,
-    predecessor_active_content_entity_ids=(),
+    predecessor_content_entity_ids=(),
 ):
     return ReconciliationContext(
         predecessor_release_id=8,
@@ -164,8 +164,8 @@ def context(
         taxonomy=taxonomy,
         entities=tuple(entities),
         aliases=tuple(aliases),
-        predecessor_active_content_entity_ids=tuple(
-            predecessor_active_content_entity_ids
+        predecessor_content_entity_ids=tuple(
+            predecessor_content_entity_ids
         ),
     )
 
@@ -231,7 +231,7 @@ class WeeklyProposalServiceTests(unittest.TestCase):
             store = StatefulWorkflowStore(
                 context(
                     entities=(entity,),
-                    predecessor_active_content_entity_ids=(entity.content_entity_id,),
+                    predecessor_content_entity_ids=(entity.content_entity_id,),
                 )
             )
             service = CanonicalWeeklyProposalService(
@@ -256,7 +256,7 @@ class WeeklyProposalServiceTests(unittest.TestCase):
         self.assertEqual(len(classifier.requests), 1)
         self.assertEqual(classifier.requests[0][0].requested_fields, ("direction_code",))
 
-    def test_complete_or_archived_catalog_entities_do_not_create_gap_items(self):
+    def test_catalog_gap_includes_archive_candidate_but_not_archived_entity(self):
         entities = (
             CanonicalClassification(
                 7, "Complete", "https://abbottpro.ru/complete", "cardiology",
@@ -266,21 +266,27 @@ class WeeklyProposalServiceTests(unittest.TestCase):
                 8, "Archived", "https://abbottpro.ru/archived", None,
                 "articles", "all", "archived", 18,
             ),
+            CanonicalClassification(
+                9, "Archive candidate", "https://abbottpro.ru/archive-candidate", None,
+                "articles", "all", "archive_candidate", 19,
+            ),
         )
         with tempfile.TemporaryDirectory() as temporary:
             registry1, registry2 = write_empty_sources(Path(temporary))
             store = StatefulWorkflowStore(
                 context(
                     entities=entities,
-                    predecessor_active_content_entity_ids=(7, 8),
+                    predecessor_content_entity_ids=(7, 8, 9),
                 )
             )
             receipt = CanonicalWeeklyProposalService(store, CONFIG).reconcile(
                 registry1, registry2
             )
 
-        self.assertEqual(receipt.catalog_gap_count, 0)
-        self.assertEqual(store.load_reconciliation_run(receipt.run_id).items, ())
+        self.assertEqual(receipt.catalog_gap_count, 1)
+        items = store.load_reconciliation_run(receipt.run_id).items
+        self.assertEqual(len(items), 1)
+        self.assertEqual(items[0].content_entity_id, 9)
 
     def test_catalog_gap_does_not_duplicate_entity_already_in_registry_source(self):
         entity = CanonicalClassification(
@@ -302,7 +308,7 @@ class WeeklyProposalServiceTests(unittest.TestCase):
                 context(
                     entities=(entity,),
                     aliases=aliases,
-                    predecessor_active_content_entity_ids=(7,),
+                    predecessor_content_entity_ids=(7,),
                 )
             )
             receipt = CanonicalWeeklyProposalService(store, CONFIG).reconcile(

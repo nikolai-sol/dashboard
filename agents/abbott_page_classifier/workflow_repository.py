@@ -511,8 +511,8 @@ class MySqlWorkflowStore:
             self._bootstrap_registry_cursor(cursor, predecessor_id, taxonomy_id)
             entities = self._load_entities(cursor)
             aliases = self._load_aliases(cursor)
-            predecessor_active_content_entity_ids = (
-                self._load_predecessor_active_content_entity_ids(
+            predecessor_content_entity_ids = (
+                self._load_predecessor_content_entity_ids(
                     cursor, predecessor_id
                 )
             )
@@ -524,8 +524,8 @@ class MySqlWorkflowStore:
                 taxonomy=taxonomy,
                 entities=entities,
                 aliases=aliases,
-                predecessor_active_content_entity_ids=(
-                    predecessor_active_content_entity_ids
+                predecessor_content_entity_ids=(
+                    predecessor_content_entity_ids
                 ),
             )
         except RepositoryError:
@@ -647,7 +647,7 @@ class MySqlWorkflowStore:
         )
 
     @staticmethod
-    def _load_predecessor_active_content_entity_ids(
+    def _load_predecessor_content_entity_ids(
         cursor, predecessor_id: int
     ) -> tuple[int, ...]:
         cursor.execute(
@@ -655,7 +655,6 @@ class MySqlWorkflowStore:
             SELECT DISTINCT content_entity_id
             FROM portal_content_catalog
             WHERE canonical_release_id = %s
-              AND is_active = 1
               AND content_entity_id IS NOT NULL
             ORDER BY content_entity_id
             """,
