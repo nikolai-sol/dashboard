@@ -644,7 +644,8 @@ class MySqlWorkflowStore:
             SELECT page_title, normalized_url, material_id, material_type,
                    access_label, direction_key, is_active,
                    source_snapshot_id, source_sheet, source_row_ordinal,
-                   source_row_fingerprint
+                   source_row_fingerprint, content_entity_id,
+                   classification_event_id, classification_event_fingerprint
             FROM portal_content_catalog
             WHERE canonical_release_id = %s
             ORDER BY source_snapshot_id, source_sheet, source_row_ordinal
@@ -655,6 +656,16 @@ class MySqlWorkflowStore:
         rows = tuple(cursor.fetchall())
         if not rows:
             raise RepositoryError("BASELINE_CATALOG_EMPTY")
+        provenance_rows = tuple(
+            row for row in rows if len(row) > 11 and row[11] is not None
+        )
+        if provenance_rows:
+            if len(provenance_rows) != len(rows):
+                raise RepositoryError("BASELINE_PROVENANCE_MIXED")
+            self._attest_provenance_registry_cursor(
+                cursor, provenance_rows, taxonomy_id
+            )
+            return
         strong_owner: dict[tuple[str, str], int] = {}
         grouped: dict[str, list[object]] = {}
         for row in rows:
@@ -834,64 +845,180 @@ class MySqlWorkflowStore:
                         alias_hash, strength, _canonical_json(evidence),
                     ),
                 )
-            fingerprint = compute_classification_event_fingerprint(
-                {
-                    "content_entity_id": entity_id,
-                    "taxonomy_version_id": taxonomy_id,
-                    "direction_code": direction,
-                    "material_type_code": material_type,
-                    "access_code": access,
-                    "lifecycle_code": lifecycle,
-                    "event_kind": "baseline",
-                    "proposal_evidence": evidence,
-                    "effective_at": "1970-01-01T00:00:00.000000+00:00",
-                }
+            self._ensure_baseline_event_cursor(
+                cursor,
+                entity_id=entity_id,
+                taxonomy_id=taxonomy_id,
+                direction=direction,
+                material_type=material_type,
+                access=access,
+                lifecycle=lifecycle,
+                evidence=evidence,
             )
+
+    def _attest_provenance_registry_cursor(
+        self, cursor, rows: Sequence[Sequence[object]], taxonomy_id: int
+    ) -> None:
+        entity_ids = tuple(sorted({int(row[11] or 0) for row in rows}))
+        if not entity_ids or any(value <= 0 for value in entity_ids):
+            raise RepositoryError("BASELINE_PROVENANCE_ENTITY_MISMATCH")
+        placeholders = ", ".join(["%s"] * len(entity_ids))
+        cursor.execute(
+            f"""
+            SELECT entity.id, entity.registry_status
+            FROM portal_content_registry_entities AS entity
+            WHERE entity.dataset_key = %s
+              AND entity.id IN ({placeholders})
+            ORDER BY entity.id
+            FOR UPDATE
+            """,
+            (DATASET_KEY, *entity_ids),
+        )
+        entity_rows = tuple(cursor.fetchall())
+        if (
+            tuple(int(row[0]) for row in entity_rows) != entity_ids
+            or any(str(row[1]) != "active" for row in entity_rows)
+        ):
+            raise RepositoryError("BASELINE_PROVENANCE_ENTITY_MISMATCH")
+
+        classifications: dict[int, set[tuple[str | None, str | None, str, str]]] = {}
+        attached_events: dict[int, tuple[int, str, tuple[str | None, str | None, str, str]]] = {}
+        for row in rows:
+            entity_id = int(row[11])
+            classification = (
+                self._taxonomy_code("direction", row[5]),
+                self._taxonomy_code("material_type", row[3]),
+                self._taxonomy_code("access", row[4]) or "unspecified",
+                "active" if bool(row[6]) else "archive_candidate",
+            )
+            classifications.setdefault(entity_id, set()).add(classification)
+            event_id = int(row[12] or 0)
+            event_fingerprint = str(row[13] or "").lower()
+            if bool(event_id) != bool(event_fingerprint):
+                raise RepositoryError("BASELINE_PROVENANCE_EVENT_MISMATCH")
+            if not event_id:
+                continue
+            if (
+                len(event_fingerprint) != 64
+                or any(character not in "0123456789abcdef" for character in event_fingerprint)
+            ):
+                raise RepositoryError("BASELINE_PROVENANCE_EVENT_MISMATCH")
+            prior = attached_events.setdefault(
+                event_id, (entity_id, event_fingerprint, classification)
+            )
+            if prior != (entity_id, event_fingerprint, classification):
+                raise RepositoryError("BASELINE_PROVENANCE_EVENT_MISMATCH")
+        if any(len(values) != 1 for values in classifications.values()):
+            raise RepositoryError("BASELINE_CLASSIFICATION_MISMATCH")
+
+        if not attached_events:
+            return
+        event_ids = tuple(sorted(attached_events))
+        event_placeholders = ", ".join(["%s"] * len(event_ids))
+        cursor.execute(
+            f"""
+            SELECT event.id, event.content_entity_id, event.taxonomy_version_id,
+                   event.direction_code, event.material_type_code,
+                   event.access_code, event.lifecycle_code,
+                   event.event_fingerprint
+            FROM portal_content_classification_events AS event
+            WHERE event.id IN ({event_placeholders})
+            ORDER BY event.id
+            FOR UPDATE
+            """,
+            event_ids,
+        )
+        stored_events = tuple(cursor.fetchall())
+        if tuple(int(row[0]) for row in stored_events) != event_ids:
+            raise RepositoryError("BASELINE_PROVENANCE_EVENT_MISMATCH")
+        for event in stored_events:
+            expected_entity, expected_fingerprint, expected_classification = attached_events[
+                int(event[0])
+            ]
+            stored_classification = (
+                str(event[3]) if event[3] is not None else None,
+                str(event[4]) if event[4] is not None else None,
+                str(event[5]) if event[5] is not None else "unspecified",
+                str(event[6]),
+            )
+            if (
+                int(event[1]) != expected_entity
+                or int(event[2]) != taxonomy_id
+                or stored_classification != expected_classification
+                or str(event[7]).lower() != expected_fingerprint
+            ):
+                raise RepositoryError("BASELINE_PROVENANCE_EVENT_MISMATCH")
+
+    @staticmethod
+    def _ensure_baseline_event_cursor(
+        cursor,
+        *,
+        entity_id: int,
+        taxonomy_id: int,
+        direction: str | None,
+        material_type: str | None,
+        access: str,
+        lifecycle: str,
+        evidence: dict[str, object],
+    ) -> None:
+        fingerprint = compute_classification_event_fingerprint(
+            {
+                "content_entity_id": entity_id,
+                "taxonomy_version_id": taxonomy_id,
+                "direction_code": direction,
+                "material_type_code": material_type,
+                "access_code": access,
+                "lifecycle_code": lifecycle,
+                "event_kind": "baseline",
+                "proposal_evidence": evidence,
+                "effective_at": "1970-01-01T00:00:00.000000+00:00",
+            }
+        )
+        cursor.execute(
+            """
+            SELECT taxonomy_version_id, direction_code, material_type_code,
+                   access_code, lifecycle_code, event_fingerprint,
+                   proposal_evidence, effective_at
+            FROM portal_content_classification_events
+            WHERE content_entity_id = %s
+              AND event_kind = 'baseline'
+            ORDER BY id
+            FOR UPDATE
+            """,
+            (entity_id,),
+        )
+        event_rows = tuple(cursor.fetchall())
+        if len(event_rows) > 1:
+            raise RepositoryError("BASELINE_EVENT_MISMATCH")
+        if event_rows:
+            event = event_rows[0]
+            if (
+                int(event[0]) != taxonomy_id
+                or (str(event[1]) if event[1] is not None else None) != direction
+                or (str(event[2]) if event[2] is not None else None) != material_type
+                or (str(event[3]) if event[3] is not None else None) != access
+                or str(event[4]) != lifecycle
+                or str(event[5]) != fingerprint
+                or _json_value(event[6]) != evidence
+                or ContentRegistryRepository._canonical_event_timestamp(event[7])
+                   != datetime(1970, 1, 1)
+            ):
+                raise RepositoryError("BASELINE_EVENT_MISMATCH")
+        else:
             cursor.execute(
                 """
-                SELECT taxonomy_version_id, direction_code, material_type_code,
-                       access_code, lifecycle_code, event_fingerprint,
-                       proposal_evidence, effective_at
-                FROM portal_content_classification_events
-                WHERE content_entity_id = %s
-                  AND event_kind = 'baseline'
-                ORDER BY id
-                FOR UPDATE
+                INSERT INTO portal_content_classification_events (
+                  content_entity_id, taxonomy_version_id, direction_code,
+                  material_type_code, access_code, lifecycle_code, event_kind,
+                  event_fingerprint, proposal_evidence, effective_at
+                ) VALUES (%s, %s, %s, %s, %s, %s, 'baseline', %s, %s, %s)
                 """,
-                (entity_id,),
+                (
+                    entity_id, taxonomy_id, direction, material_type, access,
+                    lifecycle, fingerprint, _canonical_json(evidence),
+                    datetime(1970, 1, 1, tzinfo=timezone.utc),
+                ),
             )
-            event_rows = tuple(cursor.fetchall())
-            if len(event_rows) > 1:
-                raise RepositoryError("BASELINE_EVENT_MISMATCH")
-            if event_rows:
-                event = event_rows[0]
-                if (
-                    int(event[0]) != taxonomy_id
-                    or (str(event[1]) if event[1] is not None else None) != direction
-                    or (str(event[2]) if event[2] is not None else None) != material_type
-                    or (str(event[3]) if event[3] is not None else None) != access
-                    or str(event[4]) != lifecycle
-                    or str(event[5]) != fingerprint
-                    or _json_value(event[6]) != evidence
-                    or ContentRegistryRepository._canonical_event_timestamp(event[7])
-                       != datetime(1970, 1, 1)
-                ):
-                    raise RepositoryError("BASELINE_EVENT_MISMATCH")
-            else:
-                cursor.execute(
-                    """
-                    INSERT INTO portal_content_classification_events (
-                      content_entity_id, taxonomy_version_id, direction_code,
-                      material_type_code, access_code, lifecycle_code, event_kind,
-                      event_fingerprint, proposal_evidence, effective_at
-                    ) VALUES (%s, %s, %s, %s, %s, %s, 'baseline', %s, %s, %s)
-                    """,
-                    (
-                        entity_id, taxonomy_id, direction, material_type, access,
-                        lifecycle, fingerprint, _canonical_json(evidence),
-                        datetime(1970, 1, 1, tzinfo=timezone.utc),
-                    ),
-                )
 
     @staticmethod
     def _taxonomy_code(kind: str, raw: object) -> str | None:
