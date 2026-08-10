@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import csv
 from dataclasses import dataclass, field
+from datetime import date
 import json
 from pathlib import Path
 from types import MappingProxyType
@@ -73,6 +74,46 @@ class SourceProvenance:
     source_name: str
     source_row_id: str
     source_fingerprint: str
+
+
+@dataclass(frozen=True)
+class ObservedPage:
+    """Aggregate-only canonical page evidence for a review-only URL gap."""
+
+    normalized_url: str
+    page_title: str
+    pageviews: int
+    first_seen: date
+    last_seen: date
+
+
+def collapse_observed_pages(values: Iterable[ObservedPage]) -> tuple[ObservedPage, ...]:
+    """Normalize and deterministically collapse canonical daily page observations."""
+
+    grouped: dict[str, ObservedPage] = {}
+    for value in values:
+        normalized_url = normalize_url(value.normalized_url).value
+        if not normalized_url or value.pageviews <= 0 or value.first_seen > value.last_seen:
+            continue
+        candidate = ObservedPage(
+            normalized_url=normalized_url,
+            page_title=normalize_title(value.page_title),
+            pageviews=int(value.pageviews),
+            first_seen=value.first_seen,
+            last_seen=value.last_seen,
+        )
+        previous = grouped.get(normalized_url)
+        if previous is None:
+            grouped[normalized_url] = candidate
+            continue
+        grouped[normalized_url] = ObservedPage(
+            normalized_url=normalized_url,
+            page_title=max(previous.page_title, candidate.page_title),
+            pageviews=previous.pageviews + candidate.pageviews,
+            first_seen=min(previous.first_seen, candidate.first_seen),
+            last_seen=max(previous.last_seen, candidate.last_seen),
+        )
+    return tuple(grouped[key] for key in sorted(grouped))
 
 
 @dataclass(frozen=True)

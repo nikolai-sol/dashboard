@@ -31,6 +31,7 @@ from .normalization import normalize_taxonomy_label, normalize_title, normalize_
 from .reconcile import ReconciliationInput, reconcile_entity
 from .repository import ContentRegistryRepository, DATASET_KEY, RepositoryError
 from .sources import (
+    ObservedPage,
     RejectedSourceRow,
     SourceCandidate,
     SourceIdentityVariant,
@@ -545,6 +546,7 @@ class MySqlWorkflowStore:
             self._bootstrap_registry_cursor(cursor, predecessor_id, taxonomy_id)
             entities = self._load_entities(cursor)
             aliases = self._load_aliases(cursor)
+            observed_pages = self._load_observed_pages(cursor, predecessor_id)
             predecessor_content_entity_ids = (
                 self._load_predecessor_content_entity_ids(
                     cursor, predecessor_id
@@ -565,6 +567,7 @@ class MySqlWorkflowStore:
                     predecessor_content_entity_ids
                 ),
                 predecessor_catalog_entities=predecessor_catalog_entities,
+                observed_pages=observed_pages,
             )
         except RepositoryError:
             ContentRegistryRepository._rollback(connection)
@@ -683,6 +686,44 @@ class MySqlWorkflowStore:
             )
             for row in cursor.fetchall()
         )
+
+    @staticmethod
+    def _load_observed_pages(cursor, predecessor_id: int) -> tuple[ObservedPage, ...]:
+        """Read aggregate canonical page facts only; never private visit records."""
+        cursor.execute(
+            """
+            SELECT
+              JSON_UNQUOTE(JSON_EXTRACT(scope_dimensions, '$.page_url')) AS page_url,
+              MAX(JSON_UNQUOTE(JSON_EXTRACT(scope_dimensions, '$.page_title'))) AS page_title,
+              SUM(pageviews) AS pageviews,
+              MIN(report_date) AS first_seen,
+              MAX(report_date) AS last_seen
+            FROM canonical_fact_metrika_site_analytics_daily
+            WHERE canonical_release_id = %s
+              AND counter_id = 90602537
+              AND analytics_scope = 'page'
+              AND pageviews > 0
+            GROUP BY JSON_UNQUOTE(JSON_EXTRACT(scope_dimensions, '$.page_url'))
+            ORDER BY page_url
+            """,
+            (int(predecessor_id),),
+        )
+        observed: list[ObservedPage] = []
+        for row in cursor.fetchall():
+            normalized_url = normalize_url(str(row[0] or "")).value
+            if not normalized_url:
+                continue
+            try:
+                observed.append(ObservedPage(
+                    normalized_url=normalized_url,
+                    page_title=str(row[1] or ""),
+                    pageviews=int(row[2]),
+                    first_seen=row[3],
+                    last_seen=row[4],
+                ))
+            except (TypeError, ValueError):
+                raise RepositoryError("OBSERVED_PAGE_INVALID") from None
+        return tuple(observed)
 
     @staticmethod
     def _load_predecessor_content_entity_ids(
