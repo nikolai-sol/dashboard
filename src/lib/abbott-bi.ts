@@ -763,7 +763,10 @@ function buildReturning(
       throw new Error("Abbott canonical data is unavailable");
     }
     const count = deriveReturningCount(row.source_denominator, row.source_percentage);
-    const metadataUrl = normalizeAbbottContentIdentityUrl(rawPage) && /^(?:https?:\/\/|\/)/i.test(rawPage)
+    const rawIdentityUrl = normalizeAbbottContentIdentityUrl(rawPage);
+    const displayIdentityUrl = normalizeAbbottContentIdentityUrl(row.normalized_page);
+    const metadataUrl = rawIdentityUrl && displayIdentityUrl
+      && normalizedPagePath(rawIdentityUrl) === normalizedPagePath(displayIdentityUrl)
       ? rawPage
       : text(row.normalized_page);
     const current = totals.get(url) ?? {

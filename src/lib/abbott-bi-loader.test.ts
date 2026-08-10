@@ -349,6 +349,51 @@ test("returning pages resolve semantic-query URL metadata while retaining normal
   }]);
 });
 
+test("returning pages resolve relative semantic-query URL metadata without changing display grouping", async () => {
+  const urlMetadata = { page_title: "Relative query article", direction: "Gastroenterology", material_type: "article", access: "Врачи", is_active: true };
+  const pathMetadata = { page_title: "Path article", direction: "Cardiology", material_type: "guide", access: "Гости", is_active: true };
+  const aggregate = executor((sql) => {
+    if (sql.includes("canonical_fact_metrika_returning_pages_release_daily")) {
+      return [{
+        report_date: "2026-01-01",
+        raw_page_value: "academy/articles/a?topic=gastro&utm_source=test",
+        normalized_page: "https://abbottpro.ru/academy/articles/a",
+        return_bucket_code: "next_day",
+        source_percentage: "100.0000000000",
+        source_denominator: "3",
+      }];
+    }
+    return aggregateRows(sql);
+  });
+  const deps = dependencies(aggregate, executor(() => []));
+  deps.loadReleaseBundle = async () => ({
+    releaseId: 41,
+    audience: "embed" as const,
+    workbook: {
+      ...aggregateWorkbook,
+      contentByUrl: new Map([[lookupHash("https://abbottpro.ru/academy/articles/a?topic=gastro"), urlMetadata]]),
+      urlReturnDirections: new Map([[lookupHash("/academy/articles/a"), pathMetadata]]),
+    },
+    bitrixPages: missingBitrix,
+    journeyTransitions: { source: missingBitrix.source, rows: [] },
+  });
+
+  const result = await loadAbbottBiDataWithDependencies(
+    7, ["90602537"], "2026-01-01", "2026-01-01", "embed", deps,
+  );
+
+  assert.deepEqual(result.returning, [{
+    url: "https://abbottpro.ru/academy/articles/a",
+    direction: "Gastroenterology",
+    visits: 3,
+    returning_1_day: 3,
+    returning_2_7_days: 0,
+    returning_8_31_days: 0,
+    is_derived: true,
+    normalization_collision: false,
+  }]);
+});
+
 test("aggregate traffic keeps exact User ID partitions with weighted metrics", async () => {
   const siteRows = [
     { analytics_scope: "other", user_id_presence: "all", traffic_source: "Direct", sessions: "10", users: "8", pageviews: "20", bounce_rate: "10", average_session_seconds: "100" },
