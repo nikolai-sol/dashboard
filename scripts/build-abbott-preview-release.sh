@@ -1,40 +1,21 @@
 #!/bin/bash
-# Package only Next's standalone output into a derived Abbott preview release.
 set -euo pipefail
-
-fail() { printf '%s\n' "$1" >&2; exit 1; }
-
-APP_DIR="${APP_DIR:?APP_DIR is required}"
-RELEASE_DIR="${RELEASE_DIR:?RELEASE_DIR is required}"
-APP_NAME="${APP_NAME:?APP_NAME is required}"
-APP_PORT="${APP_PORT:?APP_PORT is required}"
-
-[[ "$APP_DIR" != "/var/www/dashboard" ]] || fail "preview source is forbidden"
-[[ "$APP_NAME" != "dashboard-next" ]] || fail "production process is forbidden"
-[[ "$APP_PORT" != "3001" ]] || fail "production port is forbidden"
-[[ "$APP_NAME" == dashboard-abbott-preview-* ]] || fail "derived preview process is required"
-[[ "$APP_PORT" =~ ^[0-9]+$ ]] && (( APP_PORT > 1023 && APP_PORT < 65536 )) || fail "preview port is invalid"
-[[ -d "$APP_DIR" && ! -L "$APP_DIR" ]] || fail "preview source is invalid"
-[[ ! -e "$RELEASE_DIR" ]] || fail "preview release already exists"
-
-if [[ "${DRY_RUN:-0}" != "1" ]]; then
-  (
-    cd "$APP_DIR"
-    npm ci
-    npm run security:public-assets
-    npm run ci:verify
-    npm run build
-  )
-fi
-
-for required in "$APP_DIR/.next/standalone/server.js" "$APP_DIR/.next/static" "$APP_DIR/public"; do
-  [[ -e "$required" && ! -L "$required" ]] || fail "standalone output is incomplete"
-done
-
+fail(){ printf '%s\n' "$1" >&2; exit 1; }
+RUN_ID="${RUN_ID:?RUN_ID is required}"; APP_DIR="${APP_DIR:?APP_DIR is required}"; APP_PORT="${APP_PORT:?APP_PORT is required}"
+[[ "$RUN_ID" =~ ^[0-9]{8}T[0-9]{6}Z-[0-9a-f]{8}$ ]] || fail 'preview run id is invalid'
+[[ "$APP_PORT" =~ ^[0-9]+$ ]] && ((APP_PORT>1023 && APP_PORT<65536 && APP_PORT!=3001)) || fail 'preview port is invalid'
+if [[ "${DRY_RUN:-0}" == 1 ]]; then ROOT="${TEST_PREVIEW_RELEASE_ROOT:?test release root is required}"; else ROOT=/srv/reportingdash/abbott-preview; fi
+physical(){ cd -P -- "$1" && pwd -P; }
+reject_symlink_ancestors(){ local p="$1"; while [[ "$p" != / ]]; do [[ ! -L "$p" ]] || fail 'preview path has symlink ancestor'; p="${p%/*}"; [[ -n "$p" ]] || p=/; done; }
+reject_symlink_ancestors "$APP_DIR"
+APP_DIR="$(physical "$APP_DIR")"
+[[ "$APP_DIR" != /var/www/dashboard && "$APP_DIR" != /var/www/dashboard/* ]] || fail 'preview source is forbidden'
+mkdir -p "$ROOT"; reject_symlink_ancestors "$ROOT"; ROOT="$(physical "$ROOT")"
+if [[ "${DRY_RUN:-0}" != 1 ]]; then [[ "$ROOT" == /srv/reportingdash/abbott-preview ]] || fail 'preview root is invalid'; fi
+RELEASE_DIR="$ROOT/$RUN_ID"; [[ ! -e "$RELEASE_DIR" && ! -L "$RELEASE_DIR" ]] || fail 'preview release already exists'
+if [[ "${DRY_RUN:-0}" != 1 ]]; then (cd "$APP_DIR"; npm ci; npm run security:public-assets; npm run ci:verify; npm run build); fi
+for p in "$APP_DIR/.next/standalone/server.js" "$APP_DIR/.next/static" "$APP_DIR/public"; do [[ -e "$p" && ! -L "$p" ]] || fail 'standalone output is incomplete'; done
 mkdir -p "$RELEASE_DIR/.next"
-cp -a "$APP_DIR/.next/standalone/." "$RELEASE_DIR/"
-cp -a "$APP_DIR/.next/static" "$RELEASE_DIR/.next/static"
-cp -a "$APP_DIR/public" "$RELEASE_DIR/public"
-find "$RELEASE_DIR" -type f -print0 | LC_ALL=C sort -z | xargs -0 sha256sum > "$RELEASE_DIR/manifest.sha256"
-chmod -R go-rwx "$RELEASE_DIR"
-printf '%s\n' "preview release packaged"
+cp -a "$APP_DIR/.next/standalone/." "$RELEASE_DIR/"; cp -a "$APP_DIR/.next/static" "$RELEASE_DIR/.next/static"; cp -a "$APP_DIR/public" "$RELEASE_DIR/public"
+(cd "$RELEASE_DIR"; find . -type f ! -name manifest.sha256 ! -name '.manifest.*' -print0 | LC_ALL=C sort -z | xargs -0 sha256sum > .manifest.$$; mv .manifest.$$ manifest.sha256; sha256sum -c manifest.sha256 >/dev/null)
+chmod -R go-rwx "$RELEASE_DIR"; printf '%s\n' 'preview release packaged'
