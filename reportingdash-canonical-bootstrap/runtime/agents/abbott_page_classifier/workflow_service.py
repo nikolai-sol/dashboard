@@ -74,6 +74,7 @@ class ReconciliationContext:
     entities: tuple[CanonicalClassification, ...]
     aliases: tuple[IdentityAlias, ...]
     predecessor_content_entity_ids: tuple[int, ...] = ()
+    predecessor_catalog_entities: tuple[CanonicalClassification, ...] = ()
 
     def __post_init__(self) -> None:
         object.__setattr__(self, "predecessor_snapshot_ids", tuple(self.predecessor_snapshot_ids))
@@ -84,6 +85,11 @@ class ReconciliationContext:
             self,
             "predecessor_content_entity_ids",
             tuple(self.predecessor_content_entity_ids),
+        )
+        object.__setattr__(
+            self,
+            "predecessor_catalog_entities",
+            tuple(self.predecessor_catalog_entities),
         )
         if (
             self.predecessor_release_id <= 0
@@ -97,6 +103,13 @@ class ReconciliationContext:
             )
             or len(set(self.predecessor_content_entity_ids))
             != len(self.predecessor_content_entity_ids)
+            or len(
+                {
+                    entity.content_entity_id
+                    for entity in self.predecessor_catalog_entities
+                }
+            )
+            != len(self.predecessor_catalog_entities)
             or any(
                 len(digest) != 64
                 or any(character not in "0123456789abcdef" for character in digest.lower())
@@ -642,12 +655,21 @@ class CanonicalWeeklyProposalService:
         predecessor_entity_ids = set(
             context.predecessor_content_entity_ids
         )
+        predecessor_catalog_by_id = {
+            entity.content_entity_id: entity
+            for entity in context.predecessor_catalog_entities
+        }
         catalog_gaps = tuple(
-            entity
+            replace(
+                entity,
+                title=predecessor_catalog_by_id[entity.content_entity_id].title,
+                url=predecessor_catalog_by_id[entity.content_entity_id].url,
+            )
             for entity in sorted(
                 context.entities, key=lambda value: value.content_entity_id
             )
             if entity.content_entity_id in predecessor_entity_ids
+            and entity.content_entity_id in predecessor_catalog_by_id
             and entity.content_entity_id not in represented_entity_ids
             and entity.lifecycle_code != "archived"
             and (

@@ -516,6 +516,9 @@ class MySqlWorkflowStore:
                     cursor, predecessor_id
                 )
             )
+            predecessor_catalog_entities = self._load_predecessor_catalog_entities(
+                cursor, predecessor_id
+            )
             connection.commit()
             return ReconciliationContext(
                 predecessor_release_id=predecessor_id,
@@ -527,6 +530,7 @@ class MySqlWorkflowStore:
                 predecessor_content_entity_ids=(
                     predecessor_content_entity_ids
                 ),
+                predecessor_catalog_entities=predecessor_catalog_entities,
             )
         except RepositoryError:
             ContentRegistryRepository._rollback(connection)
@@ -664,6 +668,47 @@ class MySqlWorkflowStore:
         if any(value <= 0 for value in values):
             raise RepositoryError("BASELINE_ENTITY_MISMATCH")
         return values
+
+    def _load_predecessor_catalog_entities(
+        self, cursor, predecessor_id: int
+    ) -> tuple[CanonicalClassification, ...]:
+        cursor.execute(
+            """
+            WITH ranked_catalog AS (
+              SELECT content_entity_id, page_title, normalized_url,
+                     direction_key, material_type, access_label, is_active,
+                     ROW_NUMBER() OVER (
+                       PARTITION BY content_entity_id
+                       ORDER BY
+                         CASE WHEN normalized_url IS NULL OR TRIM(normalized_url) = ''
+                              THEN 1 ELSE 0 END,
+                         normalized_url, source_snapshot_id, source_sheet,
+                         source_row_ordinal
+                     ) AS row_rank
+              FROM portal_content_catalog
+              WHERE canonical_release_id = %s
+                AND content_entity_id IS NOT NULL
+            )
+            SELECT content_entity_id, page_title, normalized_url,
+                   direction_key, material_type, access_label, is_active
+            FROM ranked_catalog
+            WHERE row_rank = 1
+            ORDER BY content_entity_id
+            """,
+            (int(predecessor_id),),
+        )
+        return tuple(
+            CanonicalClassification(
+                content_entity_id=int(row[0]),
+                title=str(row[1] or ""),
+                url=str(row[2] or ""),
+                direction_code=self._taxonomy_code("direction", row[3]),
+                material_type_code=self._taxonomy_code("material_type", row[4]),
+                access_code=self._taxonomy_code("access", row[5]) or "unspecified",
+                lifecycle_code="active" if bool(row[6]) else "archive_candidate",
+            )
+            for row in cursor.fetchall()
+        )
 
     def _bootstrap_registry_cursor(self, cursor, predecessor_id: int, taxonomy_id: int) -> None:
         cursor.execute(
