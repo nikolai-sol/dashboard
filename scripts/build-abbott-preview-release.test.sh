@@ -9,7 +9,7 @@ SOURCE="$TMP_DIR/source"
 TARGET_ROOT="$TMP_DIR/releases"
 RUN_ID='20260810T220000Z-acde1234'
 TARGET="$TARGET_ROOT/$RUN_ID"
-mkdir -p "$SOURCE/.next/standalone/.next" "$SOURCE/.next/static" "$SOURCE/public"
+mkdir -p "$SOURCE/.next/standalone/.next" "$SOURCE/.next/static" "$SOURCE/public/empty"
 printf 'server' > "$SOURCE/.next/standalone/server.js"
 printf 'static' > "$SOURCE/.next/static/a.js"
 printf 'public' > "$SOURCE/public/a.txt"
@@ -22,6 +22,7 @@ DRY_RUN=1 TEST_PREVIEW_RELEASE_ROOT="$TARGET_ROOT" RUN_ID="$RUN_ID" APP_DIR="$SO
 [[ -f "$TARGET/.next/static/a.js" ]] || { echo 'static assets were not packaged' >&2; exit 1; }
 [[ -f "$TARGET/public/a.txt" ]] || { echo 'public assets were not packaged' >&2; exit 1; }
 [[ -f "$TARGET/manifest.sha256" ]] || { echo 'manifest missing' >&2; exit 1; }
+[[ ! -d "$TARGET/public/empty" ]] || { echo 'empty source directory was not sealed out of release' >&2; exit 1; }
 [[ ! -e "$TARGET/.env.production" ]] || { echo 'production env was copied' >&2; exit 1; }
 ! grep -Fq 'manifest.sha256' "$TARGET/manifest.sha256"
 (cd "$TARGET" && sha256sum -c manifest.sha256 >/dev/null)
