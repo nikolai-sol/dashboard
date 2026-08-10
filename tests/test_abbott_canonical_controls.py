@@ -593,7 +593,7 @@ class AbbottCanonicalControlsTest(unittest.TestCase):
             )
 
         content_results = [r for r in results if r.control_name.startswith("content.")]
-        self.assertEqual(len(content_results), 11)
+        self.assertEqual(len(content_results), 14)
         self.assertTrue(all(r.result_status == "pass" for r in content_results))
         self.assertTrue(all(r.threshold_value == 0 for r in content_results))
         inspect_candidate.assert_called_once()

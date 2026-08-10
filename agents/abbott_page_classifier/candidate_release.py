@@ -238,6 +238,29 @@ def observed_page_resolution_gates(
 
 _METADATA_FACT_PERIODS = (("2026-06-01", "2026-06-30"), ("2026-07-01", "2026-07-31"), ("2026-08-01", "2026-08-09"))
 _METADATA_FACT_METRICS = ("sessions", "users", "pageviews", "goal_conversions")
+FACT_TOTAL_CONTROL_NAMES = tuple(
+    f"fact_totals.{start}.{end}.{metric}"
+    for start, end in _METADATA_FACT_PERIODS
+    for metric in _METADATA_FACT_METRICS
+)
+
+
+def _validated_fact_total_controls(
+    controls: Iterable[tuple[str, Decimal, Decimal]],
+) -> tuple[tuple[str, Decimal, Decimal], ...]:
+    """Require the complete fixed fact-control set before evidence is written."""
+    normalized = tuple(controls)
+    if (
+        len(normalized) != len(FACT_TOTAL_CONTROL_NAMES)
+        or {str(name) for name, _expected, _actual in normalized}
+        != set(FACT_TOTAL_CONTROL_NAMES)
+        or any(
+            not isinstance(expected, Decimal) or not isinstance(actual, Decimal)
+            for _name, expected, actual in normalized
+        )
+    ):
+        raise CandidateMaterializationError("FACT_TOTAL_EVIDENCE_INVALID")
+    return normalized
 
 
 def _metadata_fact_controls(cursor, predecessor_id: int, candidate_id: int) -> tuple[tuple[str, Decimal, Decimal], ...]:
@@ -265,31 +288,50 @@ def _metadata_fact_controls(cursor, predecessor_id: int, candidate_id: int) -> t
 
 
 def _observed_page_resolution_counts(cursor, candidate_id: int) -> tuple[int, int]:
-    """Count unresolved observed pages as aggregates; reviewed exclusions are aliases.
+    """Count unresolved observed pages from aggregate facts only.
 
-    A reviewed exclusion is an active `reviewed_exclusion` alias bound to the
-    normalized observed URL hash. No URL or visit/user identifier is selected.
+    A non-content exception is an immutable, accepted ``reject`` URL-decision
+    event for this candidate's approval batch.  Mutable registry aliases are
+    deliberately not an exception authority.  The query returns only counts;
+    no URL, visit, or user identifier is selected into gate evidence.
     """
     cursor.execute(
         """
-        SELECT COALESCE(SUM(selected.direction_key IS NULL OR TRIM(selected.direction_key) = ''
-                         OR selected.material_type IS NULL OR TRIM(selected.material_type) = ''), 0) AS content_unresolved,
-               COALESCE(SUM(selected.material_type <> 'service_page'
-                         AND exclusion.id IS NULL), 0) AS non_content_unresolved
+        SELECT COALESCE(SUM(
+                 selected.source_row_fingerprint IS NOT NULL
+                 AND (selected.material_type IS NULL
+                      OR selected.material_type <> 'service_page')
+                 AND (selected.direction_key IS NULL
+                      OR TRIM(selected.direction_key) = ''
+                      OR selected.material_type IS NULL
+                      OR TRIM(selected.material_type) = '')
+               ), 0) AS content_unresolved,
+               COALESCE(SUM(
+                 selected.source_row_fingerprint IS NULL
+                 AND exclusion.id IS NULL
+               ), 0) AS non_content_unresolved
         FROM canonical_fact_metrika_site_analytics_daily AS facts
+        INNER JOIN portal_content_approval_batches AS candidate_batch
+          ON candidate_batch.dataset_key = %s
+         AND candidate_batch.candidate_release_id = facts.canonical_release_id
+         AND candidate_batch.batch_status = 'candidate_materialized'
         LEFT JOIN portal_content_lookup_projection AS projection
           ON projection.canonical_release_id = facts.canonical_release_id
          AND projection.lookup_kind = 'url'
-         AND projection.lookup_key_hash = SHA2(JSON_UNQUOTE(JSON_EXTRACT(facts.raw_payload, '$.page_url')), 256)
+         AND projection.lookup_key_hash = SHA2(JSON_UNQUOTE(JSON_EXTRACT(
+               facts.scope_dimensions, '$.page_url')), 256)
          AND projection.resolution_status IN ('unique', 'identical_collapsed')
         LEFT JOIN portal_content_catalog AS selected
           ON selected.canonical_release_id = projection.canonical_release_id
          AND selected.source_snapshot_id = projection.source_snapshot_id
          AND selected.source_row_fingerprint = projection.selected_source_row_fingerprint
-        LEFT JOIN portal_content_registry_aliases AS exclusion
-          ON exclusion.dataset_key = %s AND exclusion.alias_status = 'active'
-         AND exclusion.alias_type = 'reviewed_exclusion'
-         AND exclusion.alias_hash = SHA2(JSON_UNQUOTE(JSON_EXTRACT(facts.raw_payload, '$.page_url')), 256)
+        LEFT JOIN portal_content_url_alias_decision_events AS exclusion
+          ON exclusion.approval_batch_id = candidate_batch.id
+         AND exclusion.accepted_decision_hash = candidate_batch.accepted_decision_hash
+         AND exclusion.url_alias_decision = 'reject'
+         AND CHAR_LENGTH(TRIM(exclusion.decision_reason)) > 0
+         AND SHA2(exclusion.normalized_url, 256) = SHA2(JSON_UNQUOTE(JSON_EXTRACT(
+               facts.scope_dimensions, '$.page_url')), 256)
         WHERE facts.canonical_release_id = %s AND facts.counter_id = %s
           AND facts.analytics_scope = 'page'
         """,
@@ -3861,6 +3903,9 @@ def validate_and_transition_content_candidate(
                 "gate_passed": True,
             }
         )
+        fact_total_controls = _validated_fact_total_controls(
+            authoritative.fact_total_controls
+        )
         controls = (
             ("content.source_reconciliation_pct", EXACT_PERCENT, authoritative.source_reconciliation_pct),
             ("content.count_reconciliation_pct", EXACT_PERCENT, authoritative.count_reconciliation_pct),
@@ -3876,7 +3921,7 @@ def validate_and_transition_content_candidate(
             ("content.fact_total_mismatches", Decimal("0"), Decimal(authoritative.fact_total_mismatches)),
             ("content.content_unresolved", Decimal("0"), Decimal(authoritative.content_unresolved)),
             ("content.non_content_unresolved", Decimal("0"), Decimal(authoritative.non_content_unresolved)),
-            *authoritative.fact_total_controls,
+            *fact_total_controls,
         )
         for control_name, expected, actual in controls:
             operator_cursor.execute(

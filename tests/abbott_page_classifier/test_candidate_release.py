@@ -14,6 +14,7 @@ from agents.abbott_page_classifier.candidate_release import (
     CandidateCatalogRow,
     CandidateMaterializationError,
     CONTENT_CONTROL_VALUES,
+    FACT_TOTAL_CONTROL_NAMES,
     GateReport,
     StrongUrlAlias,
     _database_datetime,
@@ -881,6 +882,84 @@ class ValidationTransitionConnection:
         self.events.append("close")
 
 
+class ProductionValidationConnection(CandidateConnection):
+    """SQL-shaped canonical fixture for the real content validation boundary.
+
+    It exposes aggregate facts only.  In particular it has no private-visit,
+    raw-user, or raw-client fields to accidentally make validation depend on.
+    """
+
+    def __init__(
+        self,
+        *,
+        candidate_pageview_delta: int = 0,
+        content_unresolved: int = 0,
+        non_content_unresolved: int = 0,
+    ):
+        super().__init__()
+        self.candidate_pageview_delta = candidate_pageview_delta
+        self.content_unresolved = content_unresolved
+        self.non_content_unresolved = non_content_unresolved
+        self.validation_evidence = []
+        self.release_status = "staging"
+
+    def execute(self, sql, params=()):
+        normalized = " ".join(sql.split())
+        params = tuple(params or ())
+        if "COALESCE(SUM(" in normalized and "AS total" in normalized:
+            self.calls.append((normalized, params))
+            self._many = []
+            self._stream_many = False
+            self.rowcount = 0
+            self._one = {
+                "total": 100 + self.candidate_pageview_delta if (
+                    int(params[0]) == 41
+                    and "SUM(pageviews)" in normalized
+                    and params[-2:] == ("2026-07-01", "2026-07-31")
+                ) else 100
+            }
+            return
+        if "AS content_unresolved" in normalized:
+            self.calls.append((normalized, params))
+            self._many = []
+            self._stream_many = False
+            self.rowcount = 0
+            self._one = {
+                "content_unresolved": self.content_unresolved,
+                "non_content_unresolved": self.non_content_unresolved,
+            }
+            return
+        if normalized.startswith("SELECT baseline_validation_run_id"):
+            self.calls.append((normalized, params))
+            self._many = []
+            self._stream_many = False
+            self.rowcount = 0
+            self._one = {
+                "baseline_validation_run_id": 902,
+                "code_revision": "abc1234",
+                "release_status": self.release_status,
+            }
+            return
+        if normalized.startswith("INSERT INTO portal_migration_validation_runs"):
+            self.calls.append((normalized, params))
+            self.validation_evidence.append(params)
+            self.rowcount = 1
+            self._one = None
+            self._many = []
+            return
+        if (
+            normalized.startswith("UPDATE portal_data_releases")
+            and "SET release_status = 'validated'" in normalized
+        ):
+            self.calls.append((normalized, params))
+            self.release_status = "validated"
+            self.rowcount = 1
+            self._one = None
+            self._many = []
+            return
+        super().execute(sql, params)
+
+
 class FailedCandidateResetConnection:
     def __init__(
         self,
@@ -1393,7 +1472,13 @@ class CandidateReleaseTest(unittest.TestCase):
     def test_reviewed_validation_persists_all_gate_evidence_and_transitions(self):
         materializer = ValidationTransitionConnection()
         operator = ValidationTransitionConnection()
-        report = GateReport(candidate_release_id=41)
+        report = GateReport(
+            candidate_release_id=41,
+            fact_total_controls=tuple(
+                (name, Decimal("100"), Decimal("100"))
+                for name in FACT_TOTAL_CONTROL_NAMES
+            ),
+        )
         counts = {
             "source": 2, "ready": 1, "conflict": 0, "unresolved": 0,
             "rejected": 0, "accepted": 1, "no_change": 1,
@@ -1420,11 +1505,11 @@ class CandidateReleaseTest(unittest.TestCase):
             (sql, params) for sql, params in operator.calls
             if sql.startswith("INSERT INTO portal_migration_validation_runs")
         ]
-        self.assertEqual(len(inserts), 11)
+        self.assertEqual(len(inserts), 26)
         self.assertEqual(len({params[2] for _sql, params in inserts}), 1)
         self.assertEqual(
             {params[4] for _sql, params in inserts},
-            set(CONTENT_CONTROL_VALUES),
+            set(CONTENT_CONTROL_VALUES) | set(FACT_TOTAL_CONTROL_NAMES),
         )
         self.assertTrue(all(params[-1] == "content-manager" for _sql, params in inserts))
         transition = next(
@@ -1432,6 +1517,140 @@ class CandidateReleaseTest(unittest.TestCase):
             if sql.startswith("UPDATE portal_data_releases")
         )
         self.assertIn("release_status = 'validated'", transition)
+
+    def test_real_validation_blocks_a_candidate_pageview_mutation_before_transition(self):
+        materializer = self._prepare_gate(
+            ProductionValidationConnection(candidate_pageview_delta=1)
+        )
+        operator = self._prepare_gate(
+            ProductionValidationConnection(candidate_pageview_delta=1)
+        )
+        counts = {
+            "source": 2, "ready": 1, "conflict": 0, "unresolved": 0,
+            "rejected": 0, "accepted": 1, "no_change": 1,
+        }
+
+        report = validate_content_candidate(
+            41, counts, materializer.accepted_hash,
+            connection_factory=lambda: materializer,
+        )
+
+        self.assertEqual(report.fact_total_mismatches, 1)
+        self.assertIn(
+            ("fact_totals.2026-07-01.2026-07-31.pageviews", Decimal("100"), Decimal("101")),
+            report.fact_total_controls,
+        )
+        with self.assertRaisesRegex(CandidateMaterializationError, "CANDIDATE_GATE_FAILED"):
+            validate_and_transition_content_candidate(
+                41, counts, materializer.accepted_hash,
+                reviewed_by="content-manager", code_revision="abc1234",
+                materializer_connection_factory=lambda: materializer,
+                operator_connection_factory=lambda: operator,
+            )
+        self.assertFalse(any(
+            sql.startswith("UPDATE portal_data_releases")
+            for sql, _params in operator.calls
+        ))
+
+    def test_real_validation_blocks_observed_content_without_direction_or_type(self):
+        connection = self._prepare_gate(
+            ProductionValidationConnection(content_unresolved=1)
+        )
+        counts = {
+            "source": 2, "ready": 1, "conflict": 0, "unresolved": 0,
+            "rejected": 0, "accepted": 1, "no_change": 1,
+        }
+
+        report = validate_content_candidate(
+            41, counts, connection.accepted_hash,
+            connection_factory=lambda: connection,
+        )
+
+        self.assertEqual(report.content_unresolved, 1)
+        self.assertFalse(report.passed)
+        observed_sql = next(
+            sql for sql, _params in connection.calls if "AS content_unresolved" in sql
+        )
+        self.assertIn("scope_dimensions", observed_sql)
+        self.assertNotIn("raw_payload", observed_sql)
+
+    def test_real_validation_blocks_non_content_without_service_page_or_reviewed_exclusion(self):
+        connection = self._prepare_gate(
+            ProductionValidationConnection(non_content_unresolved=1)
+        )
+        counts = {
+            "source": 2, "ready": 1, "conflict": 0, "unresolved": 0,
+            "rejected": 0, "accepted": 1, "no_change": 1,
+        }
+
+        report = validate_content_candidate(
+            41, counts, connection.accepted_hash,
+            connection_factory=lambda: connection,
+        )
+
+        self.assertEqual(report.non_content_unresolved, 1)
+        self.assertFalse(report.passed)
+        observed_sql = next(
+            sql for sql, _params in connection.calls if "AS content_unresolved" in sql
+        )
+        self.assertIn("portal_content_url_alias_decision_events", observed_sql)
+        self.assertIn("url_alias_decision = 'reject'", observed_sql)
+        self.assertIn("decision_reason", observed_sql)
+
+    def test_real_validation_writes_exact_full_control_evidence_before_validating(self):
+        materializer = self._prepare_gate(ProductionValidationConnection())
+        operator = self._prepare_gate(ProductionValidationConnection())
+        counts = {
+            "source": 2, "ready": 1, "conflict": 0, "unresolved": 0,
+            "rejected": 0, "accepted": 1, "no_change": 1,
+        }
+
+        report = validate_and_transition_content_candidate(
+            41, counts, materializer.accepted_hash,
+            reviewed_by="content-manager", code_revision="abc1234",
+            materializer_connection_factory=lambda: materializer,
+            operator_connection_factory=lambda: operator,
+        )
+
+        fact_names = {
+            f"fact_totals.{start}.{end}.{metric}"
+            for start, end in (
+                ("2026-06-01", "2026-06-30"),
+                ("2026-07-01", "2026-07-31"),
+                ("2026-08-01", "2026-08-09"),
+            )
+            for metric in ("sessions", "users", "pageviews", "goal_conversions")
+        }
+        evidence_names = {params[4] for params in operator.validation_evidence}
+        self.assertTrue(report.passed)
+        self.assertEqual(evidence_names, set(CONTENT_CONTROL_VALUES) | fact_names)
+        self.assertEqual(len(operator.validation_evidence), 26)
+        self.assertEqual(operator.release_status, "validated")
+
+    def test_transition_rejects_a_gate_report_that_omits_required_fact_controls(self):
+        materializer = ValidationTransitionConnection()
+        operator = ValidationTransitionConnection()
+        counts = {
+            "source": 2, "ready": 1, "conflict": 0, "unresolved": 0,
+            "rejected": 0, "accepted": 1, "no_change": 1,
+        }
+        with patch(
+            "agents.abbott_page_classifier.candidate_release.validate_content_candidate",
+            side_effect=(GateReport(candidate_release_id=41), GateReport(candidate_release_id=41)),
+        ):
+            with self.assertRaisesRegex(
+                CandidateMaterializationError, "FACT_TOTAL_EVIDENCE_INVALID"
+            ):
+                validate_and_transition_content_candidate(
+                    41, counts, "a" * 64,
+                    reviewed_by="content-manager", code_revision="abc1234",
+                    materializer_connection_factory=lambda: materializer,
+                    operator_connection_factory=lambda: operator,
+                )
+        self.assertFalse(any(
+            sql.startswith("UPDATE portal_data_releases")
+            for sql, _params in operator.calls
+        ))
 
     def test_materialization_copies_successor_without_mutating_or_activating(self):
         connection = CandidateConnection()

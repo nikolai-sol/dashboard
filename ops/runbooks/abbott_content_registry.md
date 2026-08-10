@@ -138,8 +138,11 @@ changes are permitted only when all fact controls still match.
 Observed-page publication evidence contains aggregate unresolved counts only.
 Every content-like observed page must resolve both direction and material type.
 Every non-content observed page must be `service_page` or have a reviewed
-exclusion. Do not include URLs, visitor/user/client identifiers, or visit data
-in validation evidence or operator output.
+exclusion. An exclusion is only an immutable accepted `reject` URL-decision
+event bound to this candidate batch and its accepted-decision hash; registry
+aliases and mutable review state are never exclusion authority. Do not include
+URLs, visitor/user/client identifiers, or visit data in validation evidence or
+operator output.
 
 ## Data minimization and gates
 
