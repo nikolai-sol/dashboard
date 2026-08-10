@@ -17,6 +17,7 @@ from agents.abbott_page_classifier.candidate_release import (
     GateReport,
     _database_datetime,
     _load_catalog,
+    _load_lookup,
     _overlay_current_batch_events,
     build_lookup_projection,
     materialize_content_candidate,
@@ -903,6 +904,25 @@ class CandidateReleaseTest(unittest.TestCase):
 
         self.assertEqual([row[10] for row in rows], ["A", "я"])
         self.assertEqual({row[21] for row in rows}, {'{"a":1,"b":2}'})
+
+    def test_loaded_lookup_uses_python_canonical_order(self):
+        class Cursor:
+            def execute(self, sql, params):
+                self.sql = sql
+                self.params = params
+
+            def fetchall(self):
+                return (
+                    {"lookup_kind": "title", "lookup_key_hash": "b" * 64},
+                    {"lookup_kind": "path", "lookup_key_hash": "a" * 64},
+                )
+
+        rows = _load_lookup(Cursor(), 41, 91)
+
+        self.assertEqual([(row[0], row[1]) for row in rows], [
+            ("path", "a" * 64),
+            ("title", "b" * 64),
+        ])
 
     def _prepare_gate(self, connection):
         with (
