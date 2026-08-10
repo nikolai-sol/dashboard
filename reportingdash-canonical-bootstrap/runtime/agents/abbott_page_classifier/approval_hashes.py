@@ -208,6 +208,34 @@ def compute_classification_event_fingerprint(payload: Mapping[str, object]) -> s
     return _sha256_json(payload)
 
 
+def compute_url_alias_decision_event_fingerprint(
+    *,
+    accepted_decision_hash: object,
+    actor: object,
+    approval_batch_id: object,
+    approval_item_id: object,
+    decision_reason: object,
+    normalized_url: object,
+    selected_content_entity_id: object,
+    selected_predecessor_event_fingerprint: object,
+    selected_predecessor_event_id: object,
+    url_alias_decision: object,
+) -> str:
+    """Hash the immutable URL-alias decision event payload exactly once."""
+    return _sha256_json({
+        "accepted_decision_hash": accepted_decision_hash,
+        "actor": actor,
+        "approval_batch_id": approval_batch_id,
+        "approval_item_id": approval_item_id,
+        "decision_reason": decision_reason,
+        "normalized_url": normalized_url,
+        "selected_content_entity_id": selected_content_entity_id,
+        "selected_predecessor_event_fingerprint": selected_predecessor_event_fingerprint,
+        "selected_predecessor_event_id": selected_predecessor_event_id,
+        "url_alias_decision": url_alias_decision,
+    })
+
+
 def compute_taxonomy_digest(
     version: str, terms: Mapping[str, Iterable[str]]
 ) -> str:

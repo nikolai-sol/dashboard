@@ -4,7 +4,6 @@ from __future__ import annotations
 
 from datetime import datetime, timezone
 from dataclasses import dataclass, replace
-import hashlib
 import json
 from enum import Enum
 from typing import Any, Callable, Mapping, Protocol, Sequence
@@ -29,6 +28,7 @@ from .batch_service import (
     compute_item_hash,
     compute_taxonomy_digest,
 )
+from .approval_hashes import compute_url_alias_decision_event_fingerprint
 from .normalization import normalize_url
 
 
@@ -1336,18 +1336,18 @@ class ContentRegistryRepository:
                 "url": normalized_url.value,
             }
         )
-        event_fingerprint = hashlib.sha256(ContentRegistryRepository._json({
-            "accepted_decision_hash": accepted_hash,
-            "actor": actor,
-            "approval_batch_id": batch_id,
-            "approval_item_id": approval_item_id,
-            "decision_reason": item.decision_reason,
-            "normalized_url": normalized_url.value,
-            "selected_content_entity_id": item.selected_content_entity_id,
-            "selected_predecessor_event_fingerprint": predecessor[1],
-            "selected_predecessor_event_id": predecessor[0],
-            "url_alias_decision": decision,
-        }).encode("utf-8")).hexdigest()
+        event_fingerprint = compute_url_alias_decision_event_fingerprint(
+            accepted_decision_hash=accepted_hash,
+            actor=actor,
+            approval_batch_id=batch_id,
+            approval_item_id=approval_item_id,
+            decision_reason=item.decision_reason,
+            normalized_url=normalized_url.value,
+            selected_content_entity_id=item.selected_content_entity_id,
+            selected_predecessor_event_fingerprint=predecessor[1],
+            selected_predecessor_event_id=predecessor[0],
+            url_alias_decision=decision,
+        )
         cursor.execute(
             """INSERT INTO portal_content_url_alias_decision_events (
                  approval_batch_id, approval_item_id, accepted_decision_hash, actor,

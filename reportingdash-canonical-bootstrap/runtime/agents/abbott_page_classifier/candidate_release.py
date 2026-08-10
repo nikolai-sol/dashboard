@@ -27,6 +27,7 @@ from .approval_hashes import (
     compute_classification_event_fingerprint,
     compute_item_hash,
     compute_taxonomy_digest,
+    compute_url_alias_decision_event_fingerprint,
 )
 from .domain import ApprovalItem, ConflictCode
 from .normalization import (
@@ -345,6 +346,71 @@ def _observed_page_resolution_counts(cursor, candidate_id: int) -> tuple[int, in
         # Test/dry-run cursors without observed facts represent zero rows.
         content, non_content = 0, 0
     return content, non_content
+
+
+def _validate_reviewed_url_exclusions(cursor, candidate_id: int) -> None:
+    """Verify every candidate-scoped reject event before it may exclude a URL."""
+    cursor.execute(
+        """
+        SELECT exclusion.approval_batch_id, exclusion.approval_item_id,
+               exclusion.accepted_decision_hash, exclusion.actor,
+               exclusion.decision_reason, exclusion.normalized_url,
+               exclusion.url_alias_decision, exclusion.selected_content_entity_id,
+               exclusion.selected_predecessor_event_id,
+               exclusion.selected_predecessor_event_fingerprint,
+               exclusion.event_fingerprint
+        FROM portal_content_url_alias_decision_events AS exclusion
+        INNER JOIN portal_content_approval_batches AS batch
+          ON batch.id = exclusion.approval_batch_id
+         AND batch.dataset_key = %s
+         AND batch.candidate_release_id = %s
+         AND batch.batch_status = 'candidate_materialized'
+         AND batch.accepted_decision_hash = exclusion.accepted_decision_hash
+        WHERE exclusion.url_alias_decision = 'reject'
+        ORDER BY exclusion.id
+        """,
+        (DATASET_KEY, candidate_id),
+    )
+    for row in cursor.fetchall():
+        if not isinstance(row, Mapping):
+            raise CandidateMaterializationError("REVIEWED_EXCLUSION_INVALID")
+        try:
+            batch_id = int(row["approval_batch_id"])
+            item_id = int(row["approval_item_id"])
+            normalized_url = str(row["normalized_url"])
+            event_fingerprint = str(row["event_fingerprint"]).lower()
+            selected_entity_id = row.get("selected_content_entity_id")
+            predecessor_id = row.get("selected_predecessor_event_id")
+            predecessor_fingerprint = row.get("selected_predecessor_event_fingerprint")
+            if (
+                batch_id <= 0 or item_id <= 0
+                or row.get("url_alias_decision") != "reject"
+                or selected_entity_id is not None
+                or not str(row.get("decision_reason") or "").strip()
+                or normalize_url(normalized_url).value != normalized_url
+                or not re.fullmatch(r"[0-9a-f]{64}", event_fingerprint)
+                or (predecessor_id is not None and int(predecessor_id) <= 0)
+                or (predecessor_fingerprint is not None and not re.fullmatch(
+                    r"[0-9a-f]{64}", str(predecessor_fingerprint).lower()
+                ))
+            ):
+                raise ValueError
+            expected = compute_url_alias_decision_event_fingerprint(
+                accepted_decision_hash=row["accepted_decision_hash"],
+                actor=row["actor"],
+                approval_batch_id=batch_id,
+                approval_item_id=item_id,
+                decision_reason=row["decision_reason"],
+                normalized_url=normalized_url,
+                selected_content_entity_id=selected_entity_id,
+                selected_predecessor_event_fingerprint=predecessor_fingerprint,
+                selected_predecessor_event_id=predecessor_id,
+                url_alias_decision=row["url_alias_decision"],
+            )
+            if expected != event_fingerprint:
+                raise ValueError
+        except (KeyError, TypeError, ValueError):
+            raise CandidateMaterializationError("REVIEWED_EXCLUSION_INVALID") from None
 
 
 def _canonical_json(value: object) -> str:
@@ -3777,6 +3843,7 @@ def validate_content_candidate(
         fact_total_controls = _metadata_fact_controls(
             cursor, predecessor_id, candidate_release_id
         )
+        _validate_reviewed_url_exclusions(cursor, candidate_release_id)
         content_unresolved, non_content_unresolved = _observed_page_resolution_counts(
             cursor, candidate_release_id
         )
