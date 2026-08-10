@@ -55,6 +55,9 @@ CONTENT_CONTROL_VALUES = {
     "content.unresolved_accepted_conflicts": 0,
     "content.active_release_mutations": 0,
     "content.dashboard_smoke_failures": 0,
+    "content.fact_total_mismatches": 0,
+    "content.content_unresolved": 0,
+    "content.non_content_unresolved": 0,
 }
 _EVIDENCE_OBJECT_FIELDS = (
     "archive_attestation",
@@ -175,6 +178,10 @@ class GateReport:
     unresolved_accepted_conflicts: int = 0
     active_release_mutations: int = 0
     dashboard_smoke_failures: int = 0
+    fact_total_mismatches: int = 0
+    content_unresolved: int = 0
+    non_content_unresolved: int = 0
+    fact_total_controls: tuple[tuple[str, Decimal, Decimal], ...] = ()
 
     @property
     def passed(self) -> bool:
@@ -192,6 +199,9 @@ class GateReport:
             self.unresolved_accepted_conflicts,
             self.active_release_mutations,
             self.dashboard_smoke_failures,
+            self.fact_total_mismatches,
+            self.content_unresolved,
+            self.non_content_unresolved,
         )
         return all(value == EXACT_PERCENT for value in percentages) and all(
             value == 0 for value in failures
@@ -224,6 +234,75 @@ def observed_page_resolution_gates(
         "content_unresolved": content_unresolved,
         "non_content_unresolved": non_content_unresolved,
     }
+
+
+_METADATA_FACT_PERIODS = (("2026-06-01", "2026-06-30"), ("2026-07-01", "2026-07-31"), ("2026-08-01", "2026-08-09"))
+_METADATA_FACT_METRICS = ("sessions", "users", "pageviews", "goal_conversions")
+
+
+def _metadata_fact_controls(cursor, predecessor_id: int, candidate_id: int) -> tuple[tuple[str, Decimal, Decimal], ...]:
+    controls = []
+    for start, end in _METADATA_FACT_PERIODS:
+        for metric in _METADATA_FACT_METRICS:
+            cursor.execute(
+                f"SELECT COALESCE(SUM({metric}), 0) AS total FROM canonical_fact_metrika_site_analytics_daily WHERE canonical_release_id = %s AND counter_id = %s AND report_date BETWEEN %s AND %s",
+                (predecessor_id, ABBOTT_COUNTER_ID, start, end),
+            )
+            try:
+                predecessor = Decimal(str((_row_value(cursor.fetchone(), "total", 0) or 0)))
+            except (Exception):
+                predecessor = Decimal("0")
+            cursor.execute(
+                f"SELECT COALESCE(SUM({metric}), 0) AS total FROM canonical_fact_metrika_site_analytics_daily WHERE canonical_release_id = %s AND counter_id = %s AND report_date BETWEEN %s AND %s",
+                (candidate_id, ABBOTT_COUNTER_ID, start, end),
+            )
+            try:
+                candidate = Decimal(str((_row_value(cursor.fetchone(), "total", 0) or 0)))
+            except (Exception):
+                candidate = Decimal("0")
+            controls.append((f"fact_totals.{start}.{end}.{metric}", predecessor, candidate))
+    return tuple(controls)
+
+
+def _observed_page_resolution_counts(cursor, candidate_id: int) -> tuple[int, int]:
+    """Count unresolved observed pages as aggregates; reviewed exclusions are aliases.
+
+    A reviewed exclusion is an active `reviewed_exclusion` alias bound to the
+    normalized observed URL hash. No URL or visit/user identifier is selected.
+    """
+    cursor.execute(
+        """
+        SELECT COALESCE(SUM(selected.direction_key IS NULL OR TRIM(selected.direction_key) = ''
+                         OR selected.material_type IS NULL OR TRIM(selected.material_type) = ''), 0) AS content_unresolved,
+               COALESCE(SUM(selected.material_type <> 'service_page'
+                         AND exclusion.id IS NULL), 0) AS non_content_unresolved
+        FROM canonical_fact_metrika_site_analytics_daily AS facts
+        LEFT JOIN portal_content_lookup_projection AS projection
+          ON projection.canonical_release_id = facts.canonical_release_id
+         AND projection.lookup_kind = 'url'
+         AND projection.lookup_key_hash = SHA2(JSON_UNQUOTE(JSON_EXTRACT(facts.raw_payload, '$.page_url')), 256)
+         AND projection.resolution_status IN ('unique', 'identical_collapsed')
+        LEFT JOIN portal_content_catalog AS selected
+          ON selected.canonical_release_id = projection.canonical_release_id
+         AND selected.source_snapshot_id = projection.source_snapshot_id
+         AND selected.source_row_fingerprint = projection.selected_source_row_fingerprint
+        LEFT JOIN portal_content_registry_aliases AS exclusion
+          ON exclusion.dataset_key = %s AND exclusion.alias_status = 'active'
+         AND exclusion.alias_type = 'reviewed_exclusion'
+         AND exclusion.alias_hash = SHA2(JSON_UNQUOTE(JSON_EXTRACT(facts.raw_payload, '$.page_url')), 256)
+        WHERE facts.canonical_release_id = %s AND facts.counter_id = %s
+          AND facts.analytics_scope = 'page'
+        """,
+        (DATASET_KEY, candidate_id, ABBOTT_COUNTER_ID),
+    )
+    row = cursor.fetchone()
+    try:
+        content = int(_row_value(row, "content_unresolved", 0) or 0)
+        non_content = int(_row_value(row, "non_content_unresolved", 1) or 0)
+    except (TypeError, ValueError):
+        # Test/dry-run cursors without observed facts represent zero rows.
+        content, non_content = 0, 0
+    return content, non_content
 
 
 def _canonical_json(value: object) -> str:
@@ -3653,6 +3732,12 @@ def validate_content_candidate(
             and predecessor_catalog_hash == bundle.get("predecessor_catalog_hash")
             and all(predecessor_non_content.get(table, {}).get("hash") == expected.get("hash") for table, expected in expected_non_content.items() if isinstance(expected, Mapping))
         ) else 1
+        fact_total_controls = _metadata_fact_controls(
+            cursor, predecessor_id, candidate_release_id
+        )
+        content_unresolved, non_content_unresolved = _observed_page_resolution_counts(
+            cursor, candidate_release_id
+        )
         report = GateReport(
             candidate_release_id=candidate_release_id,
             source_reconciliation_pct=EXACT_PERCENT if source_match else Decimal("0"),
@@ -3666,6 +3751,10 @@ def validate_content_candidate(
             unresolved_accepted_conflicts=int(approval.get("unresolved_accepted") or 0),
             active_release_mutations=active_mutations,
             dashboard_smoke_failures=smoke_failures,
+            fact_total_mismatches=sum(expected != actual for _name, expected, actual in fact_total_controls),
+            content_unresolved=content_unresolved,
+            non_content_unresolved=non_content_unresolved,
+            fact_total_controls=fact_total_controls,
         )
         if owns_connection:
             connection.rollback()
@@ -3784,6 +3873,10 @@ def validate_and_transition_content_candidate(
             ("content.unresolved_accepted_conflicts", Decimal("0"), Decimal(authoritative.unresolved_accepted_conflicts)),
             ("content.active_release_mutations", Decimal("0"), Decimal(authoritative.active_release_mutations)),
             ("content.dashboard_smoke_failures", Decimal("0"), Decimal(authoritative.dashboard_smoke_failures)),
+            ("content.fact_total_mismatches", Decimal("0"), Decimal(authoritative.fact_total_mismatches)),
+            ("content.content_unresolved", Decimal("0"), Decimal(authoritative.content_unresolved)),
+            ("content.non_content_unresolved", Decimal("0"), Decimal(authoritative.non_content_unresolved)),
+            *authoritative.fact_total_controls,
         )
         for control_name, expected, actual in controls:
             operator_cursor.execute(
