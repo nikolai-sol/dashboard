@@ -234,7 +234,7 @@ def _database_datetime(value: object | None) -> datetime | None:
         raise CandidateMaterializationError("SOURCE_PROVENANCE_INVALID")
     if parsed.tzinfo is not None:
         parsed = parsed.astimezone(timezone.utc).replace(tzinfo=None)
-    return parsed
+    return parsed.replace(microsecond=0)
 
 
 def _canonical_ingestion_timestamp(value: object) -> datetime:
