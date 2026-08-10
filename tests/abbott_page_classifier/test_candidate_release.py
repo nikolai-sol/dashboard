@@ -148,6 +148,7 @@ class CandidateConnection:
         orphan_event: bool = False,
         duplicate_event: bool = False,
         skipped_identity_conflict: bool = False,
+        baseline_missing_direction: bool = False,
     ):
         self.events: list[str] = []
         self.calls: list[tuple[str, tuple[object, ...]]] = []
@@ -224,7 +225,9 @@ class CandidateConnection:
                 current_canonical={
                     "access_code": "doctors",
                     "content_entity_id": 1,
-                    "direction_code": "cardiology",
+                    "direction_code": (
+                        None if baseline_missing_direction else "cardiology"
+                    ),
                     "event_id": 300,
                     "lifecycle_code": "active",
                     "material_type_code": "articles",
@@ -1348,6 +1351,27 @@ class CandidateReleaseTest(unittest.TestCase):
             except CandidateMaterializationError as exc:
                 self.fail(f"legitimate manager direction correction was rejected: {exc}")
         self.assertEqual(result.catalog_row_count, 2)
+        self.assertEqual(connection.events, ["start", "commit"])
+
+    def test_materialization_accepts_missing_baseline_direction_fill(self):
+        connection = CandidateConnection(baseline_missing_direction=True)
+        with (
+            patch(
+                "agents.abbott_page_classifier.candidate_release.get_db_connection",
+                return_value=connection,
+            ),
+            patch(
+                "agents.abbott_page_classifier.candidate_release.release_store.create_candidate_release",
+                return_value=41,
+            ),
+            patch(
+                "agents.abbott_page_classifier.candidate_release.release_store.require_mutable_candidate_release",
+                return_value={"id": 41, "release_status": "staging"},
+            ),
+        ):
+            result = materialize_content_candidate(71, 12, "abc1234")
+
+        self.assertEqual(result.status, "staging")
         self.assertEqual(connection.events, ["start", "commit"])
 
     def test_materialization_accepts_legitimate_manager_material_access_edit(self):
