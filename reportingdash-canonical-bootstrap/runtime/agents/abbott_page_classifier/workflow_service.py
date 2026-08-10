@@ -515,6 +515,27 @@ class CanonicalWeeklyProposalService:
         return {"material_id": material_ids, "url": urls}
 
     @staticmethod
+    def _has_active_strong_url_identity(
+        normalized_url: str,
+        entities: Sequence[CanonicalClassification],
+        aliases: Sequence[IdentityAlias],
+    ) -> bool:
+        """Only exact reviewed URL identity suppresses an observed review gap."""
+        targets = {
+            entity.content_entity_id
+            for entity in entities
+            if normalize_url(entity.url).value == normalized_url
+        }
+        targets.update(
+            alias.content_entity_id
+            for alias in aliases
+            if alias.strength == "strong"
+            and alias.alias_kind in {"canonical_url", "url"}
+            and normalize_url(alias.alias_value).value == normalized_url
+        )
+        return len(targets) == 1
+
+    @staticmethod
     def _build_items(
         context: ReconciliationContext,
         registry1: SourceSnapshot,
@@ -733,7 +754,9 @@ class CanonicalWeeklyProposalService:
                 })),
             )
             resolution = resolver.resolve(candidate, context.entities, context.aliases)
-            if resolution.status == "matched":
+            if CanonicalWeeklyProposalService._has_active_strong_url_identity(
+                observed.normalized_url, context.entities, context.aliases
+            ):
                 continue
             service_route = normalize_url(observed.normalized_url).path in {
                 "/auth", "/registration.php", "/personal", "/rules", "/privacy", "/cookies", "/sitemap.php",
@@ -757,9 +780,9 @@ class CanonicalWeeklyProposalService:
             grouping_key = f"observed:{observed.normalized_url}"
             items.append(PersistedReconciliationItem(
                 grouping_key=grouping_key,
-                item_key=sha256_text(_canonical_json({"grouping_key": grouping_key, "identity_status": "new", "input_hash": reconciled.input_hash})),
+                item_key=sha256_text(_canonical_json({"grouping_key": grouping_key, "identity_status": "collision" if conflict else "new", "input_hash": reconciled.input_hash})),
                 input_hash=reconciled.input_hash,
-                identity_status="new",
+                identity_status="collision" if conflict else "new",
                 content_entity_id=None,
                 reconciliation_input=reconciliation_input,
             ))
