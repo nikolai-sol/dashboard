@@ -553,7 +553,7 @@ class MySqlWorkflowStoreTests(unittest.TestCase):
             },
         )
 
-    def test_context_locks_active_predecessor_and_keeps_eventless_entities(self):
+    def test_context_reads_immutable_release_without_locking_and_keeps_eventless_entities(self):
         connection = BootstrapConnection()
         connection.cursor_instance.entities[9] = {
             "material_id": "unrelated", "title": "Eventless",
@@ -570,7 +570,18 @@ class MySqlWorkflowStoreTests(unittest.TestCase):
         self.assertEqual(eventless.lifecycle_code, "unknown")
         self.assertEqual(eventless.event_id, None)
         sql = "\n".join(statement for statement, _ in connection.calls)
-        self.assertIn("FOR UPDATE", sql)
+        active_query = next(
+            statement
+            for statement, _ in connection.calls
+            if "FROM portal_active_data_releases AS active" in statement
+        )
+        catalog_query = next(
+            statement
+            for statement, _ in connection.calls
+            if "FROM portal_content_catalog" in statement
+        )
+        self.assertNotIn("FOR UPDATE", active_query)
+        self.assertNotIn("FOR UPDATE", catalog_query)
         self.assertIn("LEFT JOIN latest_events AS event", sql)
         self.assertEqual(connection.commit_count, 1)
 
@@ -680,7 +691,7 @@ class MySqlWorkflowStoreTests(unittest.TestCase):
         ).load_reconciliation_context(CONFIG)
 
         cursor = connection.cursor_instance
-        self.assertTrue(cursor.catalog_locked)
+        self.assertFalse(cursor.catalog_locked)
         self.assertEqual(cursor.inserted_entity_ids, [8])
         self.assertEqual(sorted(entity.content_entity_id for entity in context_value.entities), [7, 8])
         self.assertEqual(connection.commit_count, 1)
@@ -698,7 +709,7 @@ class MySqlWorkflowStoreTests(unittest.TestCase):
                     MySqlWorkflowStore(
                         lambda: connection
                     ).load_reconciliation_context(CONFIG)
-                self.assertTrue(connection.cursor_instance.catalog_locked)
+                    self.assertFalse(connection.cursor_instance.catalog_locked)
                 self.assertEqual(connection.commit_count, 0)
                 self.assertEqual(connection.rollback_count, 1)
 

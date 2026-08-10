@@ -540,7 +540,6 @@ class MySqlWorkflowStore:
              AND release_row.dataset_key = active.dataset_key
              AND release_row.release_status = 'active'
             WHERE active.dataset_key = %s
-            FOR UPDATE
             """,
             (DATASET_KEY,),
         )
@@ -648,7 +647,6 @@ class MySqlWorkflowStore:
             FROM portal_content_catalog
             WHERE canonical_release_id = %s
             ORDER BY source_snapshot_id, source_sheet, source_row_ordinal
-            FOR UPDATE
             """,
             (predecessor_id,),
         )
