@@ -330,13 +330,25 @@ class BootstrapCursor(FakeCursor):
             self.catalog_locked = "FOR UPDATE" in normalized
             self.rows = list(self.catalog)
         elif "SELECT id, material_id, title, canonical_url" in normalized:
-            material_id, urls = params[1], tuple(params[2:])
+            material_id, urls = params[1], tuple(params[2:-2])
+            predecessor_id = int(params[-2])
+            fingerprints = json.loads(params[-1])
             self.rows = [
                 (entity_id, entity["material_id"], entity["title"],
                  entity["canonical_url"], entity["registry_status"],
                  _canonical_json(entity["source_evidence"]))
                 for entity_id, entity in self.entities.items()
-                if entity["material_id"] == material_id or entity["canonical_url"] in urls
+                if (
+                    material_id is not None
+                    and entity["material_id"] == material_id
+                ) or entity["canonical_url"] in urls or (
+                    entity["source_evidence"].get("authority")
+                    == "active_release_baseline"
+                    and entity["source_evidence"].get("predecessor_release_id")
+                    == predecessor_id
+                    and entity["source_evidence"].get("source_row_fingerprints")
+                    == fingerprints
+                )
             ]
         elif "FROM portal_content_registry_aliases" in normalized and "alias_type = %s" in normalized:
             alias_type, alias_hash, scope = params[1], params[2], params[3]
@@ -685,6 +697,36 @@ class MySqlWorkflowStoreTests(unittest.TestCase):
         self.assertEqual(sorted(entity.content_entity_id for entity in context_value.entities), [7, 8])
         self.assertEqual(connection.commit_count, 1)
         self.assertEqual(connection.rollback_count, 0)
+
+    def test_identityless_baseline_bootstrap_is_replay_safe_by_source_evidence(self):
+        connection = BootstrapConnection()
+        cursor = connection.cursor_instance
+        cursor.catalog = [
+            (
+                "Identityless",
+                "",
+                None,
+                "articles",
+                "all",
+                "cardiology",
+                1,
+                11,
+                "pages",
+                7,
+                "identityless-fingerprint",
+            )
+        ]
+        cursor.entities = {}
+        cursor.aliases = []
+        cursor.events = {}
+
+        store = MySqlWorkflowStore(lambda: connection)
+        first = store.load_reconciliation_context(CONFIG)
+        second = store.load_reconciliation_context(CONFIG)
+
+        self.assertEqual(len(first.entities), 1)
+        self.assertEqual(len(second.entities), 1)
+        self.assertEqual(cursor.inserted_entity_ids, [1])
 
     def test_partial_baseline_bootstrap_rolls_back_identity_taxonomy_and_event_conflicts(self):
         for conflict, code in (

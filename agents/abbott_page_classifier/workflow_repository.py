@@ -714,11 +714,27 @@ class MySqlWorkflowStore:
                        registry_status, source_evidence
                 FROM portal_content_registry_entities
                 WHERE dataset_key = %s
-                  AND (material_id = %s OR canonical_url IN ({url_placeholders}))
+                  AND (
+                    material_id = %s
+                    OR canonical_url IN ({url_placeholders})
+                    OR (
+                      JSON_UNQUOTE(JSON_EXTRACT(source_evidence, '$.authority'))
+                        = 'active_release_baseline'
+                      AND JSON_EXTRACT(source_evidence, '$.predecessor_release_id') = %s
+                      AND JSON_EXTRACT(source_evidence, '$.source_row_fingerprints')
+                        = CAST(%s AS JSON)
+                    )
+                  )
                 ORDER BY id
                 FOR UPDATE
                 """,
-                (DATASET_KEY, material_id, *urls),
+                (
+                    DATASET_KEY,
+                    material_id,
+                    *urls,
+                    predecessor_id,
+                    _canonical_json(evidence["source_row_fingerprints"]),
+                ),
             )
             entity_rows = tuple(cursor.fetchall())
             if len(entity_rows) > 1:
