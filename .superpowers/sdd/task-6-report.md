@@ -66,3 +66,11 @@ PYTHONPATH=/tmp/abbott-task1-deps:. /Users/nafanya/.local/bin/python3.11 -m unit
   alias types, retain the current classification-event identity where an owner
   exists, and include actor, reason, normalized URL, decision, selected entity,
   accepted hash, and predecessor identity in the deterministic event fingerprint.
+
+## Review follow-up: projection guardrails
+
+- The conflict tab now has a strict `attach` / `retire` / `reject` dropdown for
+  URL decisions and a strict custom-formula guard for a blank or positive
+  integer selected entity ID. The existing reason-required validation remains.
+- Retirement changes only alias status. It does not overwrite the original
+  alias `source_evidence`; the immutable decision event is the retirement audit.

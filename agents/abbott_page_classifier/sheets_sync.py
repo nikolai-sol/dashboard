@@ -1534,6 +1534,57 @@ def _projection_requests(
             }
         }
     )
+    requests.extend(
+        [
+            {
+                "setDataValidation": {
+                    "range": {
+                        "sheetId": sheet_ids[TAB_CONFLICTS],
+                        "startRowIndex": 1,
+                        "endRowIndex": max(conflict_rows, 2),
+                        "startColumnIndex": _URL_ALIAS_DECISION_COLUMN,
+                        "endColumnIndex": _URL_ALIAS_DECISION_COLUMN + 1,
+                    },
+                    "rule": {
+                        "condition": {
+                            "type": "ONE_OF_LIST",
+                            "values": [
+                                {"userEnteredValue": value}
+                                for value in ("attach", "retire", "reject")
+                            ],
+                        },
+                        "showCustomUi": True,
+                        "strict": True,
+                    },
+                }
+            },
+            {
+                "setDataValidation": {
+                    "range": {
+                        "sheetId": sheet_ids[TAB_CONFLICTS],
+                        "startRowIndex": 1,
+                        "endRowIndex": max(conflict_rows, 2),
+                        "startColumnIndex": _SELECTED_ENTITY_COLUMN,
+                        "endColumnIndex": _SELECTED_ENTITY_COLUMN + 1,
+                    },
+                    "rule": {
+                        "condition": {
+                            "type": "CUSTOM_FORMULA",
+                            "values": [
+                                {
+                                    "userEnteredValue": (
+                                        "=OR($V2=\"\",AND(ISNUMBER($V2),$V2=INT($V2),$V2>0))"
+                                    )
+                                }
+                            ],
+                        },
+                        "inputMessage": "Candidate entity ID must be blank or a positive integer",
+                        "strict": True,
+                    },
+                }
+            },
+        ]
+    )
     requests.append(
         {
             "addProtectedRange": {

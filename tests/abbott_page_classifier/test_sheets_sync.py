@@ -527,6 +527,43 @@ class SheetsProjectionTests(unittest.TestCase):
             )
         )
 
+    def test_publish_adds_strict_url_decision_and_positive_entity_validations_for_conflicts(self):
+        gateway = FakeSheetsGateway()
+
+        publish_projection(batch(), gateway)
+
+        conflict_sheet_id = gateway.titles.index("Конфликты") + 10
+        validations = [
+            request["setDataValidation"]
+            for request in gateway.requests
+            if "setDataValidation" in request
+            and request["setDataValidation"]["range"]["sheetId"] == conflict_sheet_id
+        ]
+        decision = next(
+            validation for validation in validations
+            if validation["range"]["startColumnIndex"]
+            == ITEM_HEADERS.index("Решение по URL")
+        )
+        self.assertEqual(decision["range"], {
+            "sheetId": conflict_sheet_id, "startRowIndex": 1, "endRowIndex": 2,
+            "startColumnIndex": ITEM_HEADERS.index("Решение по URL"),
+            "endColumnIndex": ITEM_HEADERS.index("Решение по URL") + 1,
+        })
+        self.assertEqual(decision["rule"]["condition"], {
+            "type": "ONE_OF_LIST",
+            "values": [{"userEnteredValue": value} for value in ("attach", "retire", "reject")],
+        })
+        self.assertTrue(decision["rule"]["strict"])
+        entity = next(
+            validation for validation in validations
+            if validation["range"]["startColumnIndex"]
+            == ITEM_HEADERS.index("Кандидат entity ID")
+        )
+        self.assertEqual(entity["rule"]["condition"]["type"], "CUSTOM_FORMULA")
+        self.assertIn("$V2", entity["rule"]["condition"]["values"][0]["userEnteredValue"])
+        self.assertIn("positive integer", entity["rule"]["inputMessage"])
+        self.assertTrue(entity["rule"]["strict"])
+
     def test_publish_adds_strict_batch_decision_dropdown(self):
         gateway = FakeSheetsGateway()
 
