@@ -1506,6 +1506,32 @@ def _ordered_row(row: object, names: Sequence[str]) -> tuple[object, ...]:
     return tuple(row)  # type: ignore[arg-type]
 
 
+def _canonical_catalog_rows(
+    rows: Iterable[object], columns: Sequence[str]
+) -> tuple[tuple[object, ...], ...]:
+    projection_index = columns.index("projection_provenance_json")
+    sheet_index = columns.index("source_sheet")
+    ordinal_index = columns.index("source_row_ordinal")
+    result = []
+    for row in rows:
+        values = list(_ordered_row(row, columns))
+        values[projection_index] = _canonical_json(
+            _decode_json(
+                values[projection_index] or {},
+                code="CATALOG_PROVENANCE_INVALID",
+            )
+        )
+        result.append(tuple(values))
+    return tuple(
+        sorted(
+            result,
+            key=lambda row: (
+                str(row[sheet_index] or ""), int(row[ordinal_index] or 0)
+            ),
+        )
+    )
+
+
 def _snapshot_records(
     rows: Iterable[object], *, include_ids: bool
 ) -> list[dict[str, object]]:
@@ -2194,8 +2220,9 @@ def materialize_content_candidate(
             for table, value in predecessor_non_content.items()
         }
         predecessor_catalog_hash = _hash_rows(
-            _ordered_row(row, _PREDECESSOR_CATALOG_COLUMNS)
-            for row in predecessor_catalog_rows
+            _canonical_catalog_rows(
+                predecessor_catalog_rows, _PREDECESSOR_CATALOG_COLUMNS
+            )
         )
         bundle = {
             "accepted_decision_hash": approval_bundle["accepted_hash"],
@@ -2381,9 +2408,7 @@ def materialize_content_candidate(
             "ORDER BY source_sheet, source_row_ordinal",
             (candidate_id, catalog_snapshot_id),
         )
-        stored_catalog = tuple(
-            _ordered_row(row, catalog_columns) for row in cursor.fetchall()
-        )
+        stored_catalog = _canonical_catalog_rows(cursor.fetchall(), catalog_columns)
         if len(stored_catalog) != len(catalog_payloads) or _hash_rows(stored_catalog) != catalog_hash:
             raise CandidateMaterializationError("CATALOG_HASH_MISMATCH")
         lookup_columns = (
@@ -2498,7 +2523,7 @@ def _load_catalog(
         "ORDER BY source_sheet, source_row_ordinal",
         (release_id, snapshot_id),
     )
-    return tuple(_ordered_row(row, columns) for row in cursor.fetchall())
+    return _canonical_catalog_rows(cursor.fetchall(), columns)
 
 
 def _load_lookup(
@@ -2805,9 +2830,8 @@ def validate_content_candidate(
         predecessor_catalog_rows = _load_catalog(
             cursor, predecessor_id, predecessor_catalog_snapshot_id, include_id=True
         )
-        predecessor_catalog_rows = tuple(
-            _ordered_row(row, _PREDECESSOR_CATALOG_COLUMNS)
-            for row in _resolve_legacy_predecessor_rows(
+        predecessor_catalog_rows = _canonical_catalog_rows(
+            _resolve_legacy_predecessor_rows(
                 cursor,
                 tuple(
                     dict(zip(_PREDECESSOR_CATALOG_COLUMNS, row))
@@ -2816,7 +2840,8 @@ def validate_content_candidate(
                 predecessor_release_id=predecessor_id,
                 predecessor_snapshot_id=predecessor_catalog_snapshot_id,
                 taxonomy_version_id=int(bundle.get("taxonomy_version_id") or 0),
-            )
+            ),
+            _PREDECESSOR_CATALOG_COLUMNS,
         )
         lookup_rows = _load_lookup(cursor, candidate_release_id, catalog_snapshot_id)
         candidate_catalog_hash = _hash_rows(catalog_rows)
