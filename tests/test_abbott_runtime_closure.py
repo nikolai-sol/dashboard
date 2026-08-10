@@ -96,6 +96,16 @@ DEFAULT_SHEETS_GATEWAY_IMPORTS = {
 
 
 class AbbottRuntimeClosureTest(unittest.TestCase):
+    def test_url_identity_parity_fixtures_are_byte_identical(self):
+        python_fixture = ROOT / "tests/fixtures/abbott_url_identity_cases.json"
+        typescript_fixture = (
+            ROOT / "dashboard-next/src/lib/abbott-url-identity-cases.json"
+        )
+        self.assertEqual(
+            hashlib.sha256(python_fixture.read_bytes()).hexdigest(),
+            hashlib.sha256(typescript_fixture.read_bytes()).hexdigest(),
+        )
+
     def _committed_runtime(self, root: Path) -> tuple[str, Path]:
         target = root / "entry.py"
         target.write_text("# entry\n", encoding="utf-8")

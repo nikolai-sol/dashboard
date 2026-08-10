@@ -163,7 +163,38 @@ def _normalize_path(path: str) -> str:
             else:
                 normalized.append(quote(character, safe=_PATH_SAFE))
 
-    return "".join(normalized).rstrip("/") or "/"
+    parts: list[str] = []
+    for segment in re.sub(r"/{2,}", "/", "".join(normalized)).split("/"):
+        if not segment or segment == ".":
+            continue
+        if segment == "..":
+            if parts:
+                parts.pop()
+            continue
+        parts.append(segment)
+    return "/" + "/".join(parts) if parts else "/"
+
+
+def _quote_query_component(value: str) -> str:
+    """Serialize query data like URLSearchParams after its stable sort."""
+
+    return "".join(
+        character
+        if (
+            "a" <= character <= "z"
+            or "A" <= character <= "Z"
+            or "0" <= character <= "9"
+            or character in "*-._"
+        )
+        else "+"
+        if character == " "
+        else "".join(f"%{byte:02X}" for byte in character.encode("utf-8"))
+        for character in value
+    )
+
+
+def _empty_normalized_url() -> NormalizedUrl:
+    return NormalizedUrl("", "", sha256_text(""), sha256_text(""))
 
 
 def normalize_url(raw: str) -> NormalizedUrl:
@@ -171,32 +202,37 @@ def normalize_url(raw: str) -> NormalizedUrl:
 
     value = (raw or "").replace("&amp;", "&").strip()
     if not value:
-        return NormalizedUrl("", "", sha256_text(""), sha256_text(""))
+        return _empty_normalized_url()
     if "://" not in value:
         value = f"https://abbottpro.ru{value if value.startswith('/') else '/' + value}"
 
     try:
         parts = urlsplit(value)
         scheme = (parts.scheme or "https").casefold()
+        if scheme not in {"http", "https"}:
+            return _empty_normalized_url()
         host = (parts.hostname or "abbottpro.ru").casefold()
+        if host == "www.abbottpro.ru":
+            host = "abbottpro.ru"
+        if host == "abbottpro.ru":
+            scheme = "https"
         port = parts.port
         if port and not ((scheme == "https" and port == 443) or (scheme == "http" and port == 80)):
             host = f"{host}:{port}"
         path = _normalize_path(parts.path)
         query_pairs = [
-            (key.casefold(), value)
+            (key, value)
             for key, value in parse_qsl(parts.query, keep_blank_values=True)
             if not _is_tracking_query_key(key)
         ]
-        query_pairs.sort(key=lambda pair: (pair[0], pair[1]))
+        query_pairs.sort(key=lambda pair: pair[0].encode("utf-16-be"))
         query = "&".join(
-            f"{quote(key, safe='-._~')}={quote(value, safe='-._~')}"
+            f"{_quote_query_component(key)}={_quote_query_component(value)}"
             for key, value in query_pairs
         )
         normalized = urlunsplit((scheme, host, path, query, ""))
     except (TypeError, ValueError):
-        normalized = value.split("#", 1)[0].rstrip("/")
-        path = ""
+        return _empty_normalized_url()
 
     return NormalizedUrl(
         value=normalized,

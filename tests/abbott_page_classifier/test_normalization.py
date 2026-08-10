@@ -1,5 +1,7 @@
 """Normalization contract tests."""
 
+import json
+from pathlib import Path
 import unittest
 
 from agents.abbott_page_classifier.normalization import (
@@ -12,6 +14,16 @@ from agents.abbott_page_classifier import classify
 
 
 class NormalizationTests(unittest.TestCase):
+    def test_url_identity_matches_shared_parity_fixtures(self):
+        fixture_path = Path(__file__).parents[1] / "fixtures/abbott_url_identity_cases.json"
+        cases = json.loads(fixture_path.read_text(encoding="utf-8"))
+
+        for case in cases:
+            with self.subTest(raw=case["raw"]):
+                result = normalize_url(case["raw"])
+                self.assertEqual(result.value, case["value"])
+                self.assertEqual(result.path, case["path"])
+
     def test_archive_is_rejected_as_a_material_type(self):
         self.assertIsNone(normalize_taxonomy_label("material_type", "Архив"))
 
@@ -53,7 +65,7 @@ class NormalizationTests(unittest.TestCase):
             "HTTPS://ABBOTTPRO.RU/cardio/?utm_source=x&DIRECTION=262338#top"
         )
         self.assertEqual(
-            result.value, "https://abbottpro.ru/cardio?direction=262338"
+            result.value, "https://abbottpro.ru/cardio?DIRECTION=262338"
         )
         self.assertEqual(len(result.sha256), 64)
 
