@@ -104,6 +104,7 @@ export function normalizeAbbottContentIdentityUrl(rawValue: unknown): string {
     const url = new URL(source);
     if (url.username || url.password) return "";
     if (url.hostname.toLowerCase() === "www.abbottpro.ru") url.hostname = "abbottpro.ru";
+    if (url.hostname.toLowerCase() !== "abbottpro.ru") return "";
     if (url.hostname.toLowerCase() === "abbottpro.ru") url.protocol = "https:";
     url.hash = "";
     for (const key of [...url.searchParams.keys()]) {
