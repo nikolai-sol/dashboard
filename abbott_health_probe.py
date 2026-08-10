@@ -56,7 +56,7 @@ ABBOTT_COUNTER_ID = "90602537"
 REQUIRED_SCOPES = ("other", "traffic", "page", "user_behavior", "returning")
 DEFAULT_LOOKBACK_DAYS = 10
 DEFAULT_HEALTH_TIMEZONE = "Europe/Moscow"
-DEFAULT_EXPECTED_COMPLETION_HOUR = 9
+DEFAULT_EXPECTED_COMPLETION_HOUR = 7
 GOOD_COVERAGE_STATUSES = {"success", "success_empty"}
 BAD_COVERAGE_STATUSES = {"partial", "skipped", "sampled", "failed"}
 
@@ -127,6 +127,47 @@ GROUP BY report_date, traffic_source, user_id_presence
 ORDER BY report_date, traffic_source, user_id_presence
 """
 
+RELEASE_SOURCE_INTEGRITY_SQL = """
+WITH pointer_source_ids AS (
+  SELECT pointer_id.source_snapshot_id
+  FROM portal_data_releases AS release_row
+  JOIN JSON_TABLE(
+    release_row.source_snapshot_ids,
+    '$[*]' COLUMNS(source_snapshot_id BIGINT PATH '$')
+  ) AS pointer_id
+  WHERE release_row.dataset_key = 'abbott'
+    AND release_row.id = %s
+), receipt_source_ids AS (
+  SELECT source_snapshot_id
+  FROM portal_release_source_imports
+  WHERE canonical_release_id = %s
+    AND import_status = 'imported'
+    AND rejected_row_count = 0
+)
+SELECT
+  (SELECT COUNT(*) FROM pointer_source_ids) AS active_source_count,
+  (SELECT COUNT(*) FROM receipt_source_ids) AS receipt_source_count,
+  CASE WHEN
+    (SELECT COUNT(*) FROM pointer_source_ids) > 0
+    AND (SELECT COUNT(*) FROM receipt_source_ids) > 0
+    AND (SELECT COUNT(*) FROM pointer_source_ids) = (SELECT COUNT(*) FROM receipt_source_ids)
+    AND NOT EXISTS (
+      SELECT 1
+      FROM pointer_source_ids AS pointer_id
+      LEFT JOIN receipt_source_ids AS receipt_id
+        ON receipt_id.source_snapshot_id = pointer_id.source_snapshot_id
+      WHERE receipt_id.source_snapshot_id IS NULL
+    )
+    AND NOT EXISTS (
+      SELECT 1
+      FROM receipt_source_ids AS receipt_id
+      LEFT JOIN pointer_source_ids AS pointer_id
+        ON pointer_id.source_snapshot_id = receipt_id.source_snapshot_id
+      WHERE pointer_id.source_snapshot_id IS NULL
+    )
+  THEN 1 ELSE 0 END AS source_sets_match
+"""
+
 RELEASE_STATUSES = {"staging", "validated", "active", "retired", "failed"}
 RUN_STATUSES = {"running", "success", "partial", "failed"}
 RUN_TYPES = {"manual", "cron", "backfill", "reconcile", "preview"}
@@ -139,6 +180,7 @@ CHECK_IDS = {
     "scope_collection_status",
     "scope_rows",
     "session_partition_integrity",
+    "release_source_integrity",
     "hermes_input_adapter",
 }
 FIXED_INCIDENT_IDENTITIES = {
@@ -147,8 +189,61 @@ FIXED_INCIDENT_IDENTITIES = {
     "latest_release_run_freshness": ("collector", "stale"),
     "exact_counter_skipped": ("counter", "skipped"),
     "session_partition_integrity": ("sessions", "partition_mismatch"),
+    "release_source_integrity": ("release_sources", "mismatch"),
     "hermes_input_adapter": ("adapter", "failure"),
 }
+
+
+def _positive_source_id_set(values: list[int]) -> set[int]:
+    if (
+        not isinstance(values, list)
+        or any(isinstance(value, bool) or not isinstance(value, int) or value <= 0 for value in values)
+        or len(set(values)) != len(values)
+    ):
+        raise ValueError("Abbott release source integrity data is invalid")
+    return set(values)
+
+
+def build_release_source_integrity(
+    *, active_source_ids: list[int], receipt_source_ids: list[int]
+) -> dict:
+    active_ids = _positive_source_id_set(active_source_ids)
+    receipt_ids = _positive_source_id_set(receipt_source_ids)
+    return {
+        "status": "ok" if active_ids and active_ids == receipt_ids else "mismatch",
+        "active_source_count": len(active_ids),
+        "receipt_source_count": len(receipt_ids),
+    }
+
+
+def _build_release_source_integrity_from_aggregate(row: dict | None) -> dict:
+    if not row:
+        return {
+            "status": "unavailable",
+            "active_source_count": 0,
+            "receipt_source_count": 0,
+        }
+    active_count = row.get("active_source_count")
+    receipt_count = row.get("receipt_source_count")
+    source_sets_match = row.get("source_sets_match")
+    if (
+        isinstance(active_count, bool)
+        or not isinstance(active_count, int)
+        or active_count < 0
+        or isinstance(receipt_count, bool)
+        or not isinstance(receipt_count, int)
+        or receipt_count < 0
+        or source_sets_match not in {0, 1, False, True}
+    ):
+        raise ValueError("Abbott release source integrity data is invalid")
+    return {
+        "status": "ok" if (
+            (source_sets_match is True or source_sets_match == 1)
+            and active_count == receipt_count
+        ) else "mismatch",
+        "active_source_count": active_count,
+        "receipt_source_count": receipt_count,
+    }
 SCOPE_INCIDENT_CONDITIONS = {
     "scope_date_coverage": "missing_dates",
     "scope_collection_status": "unpublishable_status",
@@ -388,6 +483,17 @@ def evaluate_snapshot(snapshot: dict) -> list[dict]:
             },
         ))
 
+    release_source_integrity = snapshot.get("release_source_integrity") or {}
+    if release_source_integrity.get("status") == "mismatch":
+        incidents.append(_incident(
+            "release_sources", "mismatch", "release_source_integrity",
+            {
+                "active_source_count": release_source_integrity.get("active_source_count"),
+                "receipt_source_count": release_source_integrity.get("receipt_source_count"),
+            },
+            {"source_sets_match": True},
+        ))
+
     for scope in snapshot.get("scopes") or []:
         name = str(scope.get("scope") or "unknown")
         missing = list(scope.get("missing_dates") or [])
@@ -553,6 +659,16 @@ def _validate_incident(incident: object, index: int) -> None:
             "all_sessions_equals_partitions": True,
         }:
             raise ValueError(f"{location}.expected is invalid")
+    elif check_id == "release_source_integrity":
+        observed = _exact_object(
+            observed,
+            {"active_source_count", "receipt_source_count"},
+            f"{location}.observed",
+        )
+        for field, value in observed.items():
+            _nonnegative_int(value, f"{location}.observed.{field}")
+        if expected != {"source_sets_match": True}:
+            raise ValueError(f"{location}.expected is invalid")
     else:
         observed = _exact_object(observed, {"status"}, f"{location}.observed")
         expected = _exact_object(expected, {"status"}, f"{location}.expected")
@@ -563,7 +679,8 @@ def _validate_incident(incident: object, index: int) -> None:
 def sanitize_snapshot(snapshot: dict) -> dict:
     root = _exact_object(snapshot, {
         "generated_at_utc", "dashboard", "counter_id", "overall", "release",
-        "latest_run", "scopes", "backfill", "session_integrity", "skipped_counter", "incidents",
+        "latest_run", "scopes", "backfill", "session_integrity",
+        "release_source_integrity", "skipped_counter", "incidents",
     }, "payload")
     _aware_datetime(root["generated_at_utc"], "payload.generated_at_utc")
     if root["dashboard"] != "abbott" or root["counter_id"] != ABBOTT_COUNTER_ID:
@@ -634,6 +751,19 @@ def sanitize_snapshot(snapshot: dict) -> dict:
     if (session_integrity["status"] == "mismatch") != has_mismatch:
         raise ValueError("payload.session_integrity status is inconsistent")
 
+    release_source_integrity = _exact_object(
+        root["release_source_integrity"],
+        {"status", "active_source_count", "receipt_source_count"},
+        "payload.release_source_integrity",
+    )
+    for field in ("active_source_count", "receipt_source_count"):
+        _nonnegative_int(
+            release_source_integrity[field],
+            f"payload.release_source_integrity.{field}",
+        )
+    if release_source_integrity["status"] not in {"ok", "mismatch", "unavailable"}:
+        raise ValueError("payload.release_source_integrity.status is invalid")
+
     if not isinstance(root["incidents"], list):
         raise ValueError("payload.incidents must be a list")
     for index, incident in enumerate(root["incidents"]):
@@ -689,6 +819,10 @@ def collect_snapshot(
         )
         if release_id is not None else []
     )
+    release_source_row = (
+        _fetch_one(cur, RELEASE_SOURCE_INTEGRITY_SQL, (release_id, release_id))
+        if release_id is not None else None
+    )
     scopes = build_scope_status(coverage_rows, expected_date, lookback_days)
     complete_dates = set.intersection(*(
         {(_as_date(row.get("report_date"))) for row in coverage_rows if row.get("scope_key") == scope and _coverage_status(row) in GOOD_COVERAGE_STATUSES}
@@ -727,6 +861,9 @@ def collect_snapshot(
         "session_integrity": build_session_integrity(
             session_rows,
             days_checked=lookback_days,
+        ),
+        "release_source_integrity": _build_release_source_integrity_from_aggregate(
+            release_source_row,
         ),
         "skipped_counter": _counter_is_skipped(event_payload, counter_id) or any(
             row.get("collection_status") == "skipped" for row in coverage_rows

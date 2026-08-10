@@ -87,6 +87,55 @@ def _json_value(value, *, error_message: str):
     return value
 
 
+def _is_positive_integer(value) -> bool:
+    return isinstance(value, int) and not isinstance(value, bool) and value > 0
+
+
+def _validate_workbook_semantic_counts(source_manifest: dict, *, imported_row_count) -> None:
+    if source_manifest.get("source_kind") != "abbott_workbook_json":
+        return
+    count_names = (
+        "direction_count",
+        "event_catalog_count",
+        "general_material_count",
+    )
+    counts = [source_manifest.get(name) for name in count_names]
+    if (
+        not all(_is_positive_integer(value) for value in counts)
+        or not _is_positive_integer(imported_row_count)
+        or sum(counts) != imported_row_count
+    ):
+        raise ValidationGateError("Workbook source semantic counts are invalid")
+
+
+def _validate_release_source_receipts(*, release: dict, execution_rows: list[dict]) -> None:
+    source_ids = _json_value(
+        release.get("source_snapshot_ids"),
+        error_message="Canonical release source snapshots are invalid",
+    )
+    if (
+        not isinstance(source_ids, list)
+        or not source_ids
+        or any(not _is_positive_integer(item) for item in source_ids)
+        or len(set(source_ids)) != len(source_ids)
+        or any(not isinstance(row, dict) for row in execution_rows)
+    ):
+        raise ValidationGateError("Canonical release source receipts are invalid")
+    receipt_ids = [row.get("source_snapshot_id") for row in execution_rows]
+    if (
+        len(receipt_ids) != len(source_ids)
+        or any(not _is_positive_integer(item) for item in receipt_ids)
+        or len(set(receipt_ids)) != len(receipt_ids)
+        or set(receipt_ids) != set(source_ids)
+        or any(
+            row.get("import_status") != "imported"
+            or int(row.get("rejected_row_count") or 0) != 0
+            for row in execution_rows
+        )
+    ):
+        raise ValidationGateError("Canonical release source receipts do not match candidate")
+
+
 def _required_control_names(
     manifest: dict, *, baseline_snapshot_id: int, predecessor_release_id: int
 ) -> set[str]:
@@ -190,6 +239,10 @@ def _validate_imported_sources(
         )
         if not isinstance(source_manifest, dict):
             raise ValidationGateError("Imported source manifest is invalid")
+        _validate_workbook_semantic_counts(
+            source_manifest,
+            imported_row_count=snapshot.get("imported_row_count"),
+        )
         fingerprint_fields = ("content_sha256", "content_bytes", "parser_version")
         if (
             snapshot.get("import_status") != "imported"
@@ -254,11 +307,18 @@ def _close(cur, conn) -> None:
             pass
 
 
-def get_release(release_id: int, *, portal_key: str = ABBOTT_DATASET_KEY) -> dict:
-    conn = None
+def get_release(
+    release_id: int,
+    *,
+    portal_key: str = ABBOTT_DATASET_KEY,
+    connection=None,
+) -> dict:
+    conn = connection
     cur = None
+    owns_connection = connection is None
     try:
-        conn = get_db_connection()
+        if conn is None:
+            conn = get_db_connection()
         cur = conn.cursor(dictionary=True)
         cur.execute(
             """
@@ -272,7 +332,7 @@ def get_release(release_id: int, *, portal_key: str = ABBOTT_DATASET_KEY) -> dic
     except Exception:
         raise ReleaseStoreError("Unable to read canonical release") from None
     finally:
-        _close(cur, conn)
+        _close(cur, conn if owns_connection else None)
 
     if release is None:
         raise ReleaseNotFoundError("Canonical release was not found for dataset")
@@ -280,9 +340,16 @@ def get_release(release_id: int, *, portal_key: str = ABBOTT_DATASET_KEY) -> dic
 
 
 def require_mutable_candidate_release(
-    release_id: int, *, portal_key: str = ABBOTT_DATASET_KEY
+    release_id: int,
+    *,
+    portal_key: str = ABBOTT_DATASET_KEY,
+    connection=None,
 ) -> dict:
-    release = get_release(release_id, portal_key=portal_key)
+    release = get_release(
+        release_id,
+        portal_key=portal_key,
+        connection=connection,
+    )
     if release.get("release_status") != MUTABLE_RELEASE_STATUS:
         raise ImmutableReleaseError("Canonical release is immutable")
     return release
@@ -294,14 +361,18 @@ def create_candidate_release(
     predecessor_release_id: int,
     baseline_validation_run_id: int,
     code_revision: str,
+    connection=None,
 ) -> int:
-    conn = None
+    conn = connection
     cur = None
+    owns_connection = connection is None
     release_key = f"{portal_key}-{uuid.uuid4().hex}"
     try:
-        conn = get_db_connection()
+        if conn is None:
+            conn = get_db_connection()
         cur = conn.cursor(dictionary=True)
-        conn.start_transaction()
+        if owns_connection:
+            conn.start_transaction()
         current_release_id = _lock_active_pointer(cur, portal_key)
         if current_release_id != predecessor_release_id:
             raise ReleasePointerConflictError("Active canonical release pointer changed")
@@ -324,18 +395,19 @@ def create_candidate_release(
             ),
         )
         release_id = int(cur.lastrowid)
-        conn.commit()
+        if owns_connection:
+            conn.commit()
         return release_id
     except ReleaseStoreError:
-        if conn is not None:
+        if owns_connection and conn is not None:
             conn.rollback()
         raise
     except Exception:
-        if conn is not None:
+        if owns_connection and conn is not None:
             conn.rollback()
         raise ReleaseStoreError("Unable to create canonical release") from None
     finally:
-        _close(cur, conn)
+        _close(cur, conn if owns_connection else None)
 
 
 def validate_release(
@@ -618,6 +690,74 @@ def _compare_and_swap_pointer(
         raise ReleasePointerConflictError("Active canonical release pointer changed")
 
 
+def fail_staging_release(
+    release_id: int, *, expected_active_release_id: int
+) -> str:
+    """Audit a superseded staging candidate without changing the active pointer."""
+
+    dataset_key = ABBOTT_DATASET_KEY
+    conn = None
+    cur = None
+    try:
+        conn = get_db_connection()
+        cur = conn.cursor(dictionary=True)
+        conn.start_transaction()
+        current_release_id = _lock_active_pointer(cur, dataset_key)
+        if current_release_id != expected_active_release_id:
+            raise ReleasePointerConflictError("Active canonical release pointer changed")
+
+        cur.execute(
+            """
+            SELECT id, release_status, rollback_from_release_id
+            FROM portal_data_releases
+            WHERE dataset_key = %s AND id = %s
+            FOR UPDATE
+            """,
+            (dataset_key, release_id),
+        )
+        release = cur.fetchone()
+        if (
+            not isinstance(release, dict)
+            or int(release.get("id") or 0) != release_id
+            or int(release.get("rollback_from_release_id") or 0)
+            != expected_active_release_id
+        ):
+            raise ImmutableReleaseError("Canonical staging release cannot be failed")
+        if release.get("release_status") == "failed":
+            conn.commit()
+            return "noop"
+        if release.get("release_status") != "staging":
+            raise ImmutableReleaseError("Canonical staging release cannot be failed")
+
+        cur.execute(
+            """
+            UPDATE portal_data_releases
+            SET release_status = 'failed',
+                rollback_reason = %s
+            WHERE dataset_key = %s AND id = %s AND release_status = 'staging'
+            """,
+            (
+                "superseded after failed content validation",
+                dataset_key,
+                release_id,
+            ),
+        )
+        if cur.rowcount != 1:
+            raise ImmutableReleaseError("Canonical staging release cannot be failed")
+        conn.commit()
+        return "failed"
+    except ReleaseStoreError:
+        if conn is not None:
+            conn.rollback()
+        raise
+    except Exception:
+        if conn is not None:
+            conn.rollback()
+        raise ReleaseStoreError("Unable to fail canonical staging release") from None
+    finally:
+        _close(cur, conn)
+
+
 def activate_release(release_id: int, *, expected_active_release_id: int) -> None:
     dataset_key = ABBOTT_DATASET_KEY
     conn = None
@@ -629,6 +769,82 @@ def activate_release(release_id: int, *, expected_active_release_id: int) -> Non
         current_release_id = _lock_active_pointer(cur, dataset_key)
         if current_release_id != expected_active_release_id:
             raise ReleasePointerConflictError("Active canonical release pointer changed")
+
+        cur.execute(
+            """
+            SELECT source_snapshot_ids, code_revision, baseline_validation_run_id,
+                   rollback_from_release_id
+            FROM portal_data_releases
+            WHERE dataset_key = %s AND id = %s AND release_status = 'validated'
+            FOR UPDATE
+            """,
+            (dataset_key, release_id),
+        )
+        release = cur.fetchone()
+        if not isinstance(release, dict):
+            raise ImmutableReleaseError("Canonical release is not validated for activation")
+        cur.execute(
+            """
+            SELECT source_snapshot_id, source_kind, code_revision,
+                   import_status, imported_row_count, rejected_row_count
+            FROM portal_release_source_imports
+            WHERE canonical_release_id = %s
+            """,
+            (release_id,),
+        )
+        receipt_rows = cur.fetchall()
+        _validate_release_source_receipts(
+            release=release,
+            execution_rows=receipt_rows,
+        )
+        baseline_snapshot_id = release.get("baseline_validation_run_id")
+        if not _is_positive_integer(baseline_snapshot_id):
+            raise ValidationGateError("Frozen baseline manifest is invalid")
+        cur.execute(
+            """
+            SELECT manifest_json
+            FROM portal_dataset_snapshots
+            WHERE id = %s AND dataset_key = %s
+              AND source_kind = 'abbott_canonical_control_pack'
+            """,
+            (baseline_snapshot_id, dataset_key),
+        )
+        baseline_row = cur.fetchone()
+        baseline_manifest = _json_value(
+            baseline_row.get("manifest_json") if isinstance(baseline_row, dict) else None,
+            error_message="Frozen baseline manifest is invalid",
+        )
+        if not isinstance(baseline_manifest, dict):
+            raise ValidationGateError("Frozen baseline manifest is invalid")
+        source_snapshot_ids = _json_value(
+            release.get("source_snapshot_ids"),
+            error_message="Canonical release source snapshots are invalid",
+        )
+        if (
+            not isinstance(source_snapshot_ids, list)
+            or not source_snapshot_ids
+            or any(not _is_positive_integer(item) for item in source_snapshot_ids)
+            or len(set(source_snapshot_ids)) != len(source_snapshot_ids)
+        ):
+            raise ValidationGateError("Canonical release source snapshots are invalid")
+        placeholders = ", ".join("%s" for _ in source_snapshot_ids)
+        cur.execute(
+            f"""
+            SELECT id, source_kind, content_sha256, content_bytes,
+                   parser_version, import_status, imported_row_count,
+                   rejected_row_count, manifest_json
+            FROM portal_dataset_snapshots
+            WHERE dataset_key = %s AND id IN ({placeholders})
+            ORDER BY id
+            """,
+            (dataset_key, *source_snapshot_ids),
+        )
+        _validate_imported_sources(
+            release=release,
+            baseline_manifest=baseline_manifest,
+            snapshot_rows=cur.fetchall(),
+            execution_rows=receipt_rows,
+        )
 
         cur.execute(
             """

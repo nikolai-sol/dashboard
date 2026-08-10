@@ -952,6 +952,90 @@ The operating schedule does not change: collection `06:12`, health `07:05`,
 summary `07:10`. The summary continues to include session integrity and an
 integrity mismatch remains `CRITICAL`.
 
+## Abbott content-registry weekly proposal
+
+This is a proposal-only workflow. It captures the two reviewed registry
+snapshots, reconciles them against the locked canonical predecessor, classifies
+eligible fields, creates one immutable approval batch, and publishes its Google
+Sheet projection. It stops at manual approval: it does not ingest, materialize,
+validate, activate a release, or mutate the active pointer.
+
+The reconcile stage also includes non-archived active-predecessor entities with
+missing direction or material type when neither registry already represents
+the entity. These DB-native proposal rows are reported separately as
+`catalog_gap_count`; they do not increase the external `source_count` and do
+not call a source API.
+
+Review the exact local snapshot paths and all four version bindings before an
+operator authorizes execution. A dry run validates only the command
+configuration and intentionally performs zero DB, Sheets, OpenAI, source API,
+or materializer calls. Select an owner-reviewed absolute Python 3.11 binary;
+the content launcher has no `python3`, `CANONICAL_PYTHON`, or `PATH` fallback:
+
+```bash
+export ABBOTT_CONTENT_PYTHON311_BIN=/absolute/reviewed/path/to/python3.11
+case "$ABBOTT_CONTENT_PYTHON311_BIN" in /*) ;; *) exit 78 ;; esac
+test -x "$ABBOTT_CONTENT_PYTHON311_BIN"
+"$ABBOTT_CONTENT_PYTHON311_BIN" -c \
+  'import sys; raise SystemExit(78 if sys.version_info[:2] != (3, 11) else 0)'
+
+agents/abbott_page_classifier/run_weekly_proposal.sh \
+  --registry1 "$ABBOTT_REGISTRY1_SNAPSHOT" \
+  --registry2 "$ABBOTT_REGISTRY2_ACCEPTED_SNAPSHOT" \
+  --taxonomy-version abbott.v1 \
+  --prompt-version "$ABBOTT_CONTENT_PROMPT_VERSION" \
+  --model-routing-version "$ABBOTT_CONTENT_MODEL_ROUTING_VERSION" \
+  --code-revision "$REVIEWED_CODE_REVISION"
+```
+
+After reviewing the dry-run status, install the dedicated workflow-role DB
+values as `ABBOTT_CONTENT_WORKFLOW_DB_HOST`, `_PORT`, `_NAME=report_bd`, `_USER`,
+and `_PASSWORD`, plus the separately managed Sheets and optional OpenAI
+credentials. Do not fall back to collector or materializer credentials. The
+proposal-only execution is:
+
+```bash
+agents/abbott_page_classifier/run_weekly_proposal.sh \
+  --registry1 "$ABBOTT_REGISTRY1_SNAPSHOT" \
+  --registry2 "$ABBOTT_REGISTRY2_ACCEPTED_SNAPSHOT" \
+  --taxonomy-version abbott.v1 \
+  --prompt-version "$ABBOTT_CONTENT_PROMPT_VERSION" \
+  --model-routing-version "$ABBOTT_CONTENT_MODEL_ROUTING_VERSION" \
+  --code-revision "$REVIEWED_CODE_REVISION" \
+  --execute --execute-llm
+```
+
+Before manual approval, confirm that unmatched Registry 2-only materials are
+listed on `Не определено` with readiness `rejected` and reason/conflict code
+`REGISTRY1_IDENTITY_REQUIRED`. Their `registry2_values` are retained as
+evidence, but the workflow must report no created canonical entity for those
+rows. Resolve them by adding/reviewing the identity in a subsequent Registry 1
+capture; do not convert Registry 2 acceptance into identity authority.
+
+The separately authorized post-approval stages use two additional, isolated
+roles. Candidate materialization and its gate reads require
+`ABBOTT_CONTENT_MATERIALIZER_DB_HOST`, `_PORT`, `_NAME=report_bd`, `_USER`, and
+`_PASSWORD`. The reviewed validation evidence write and the only permitted
+`staging` to `validated` transition use the existing `ABBOTT_RELEASE_DB_HOST`,
+`_PORT`, `_NAME=report_bd`, `_USER`, and `_PASSWORD`, plus the non-secret
+reviewer identifier `ABBOTT_CONTENT_VALIDATION_REVIEWED_BY`. Invoke validation
+as `validate --batch-id N --execute`; it persists the evidence and transition
+but never activates a release. These families never fall back to generic,
+collector, workflow, or each other's credentials.
+
+For a separately reviewed Monday `08:30` Europe/Vienna schedule, place that
+same execution in a protected wrapper and use the following candidate cron
+shape. Do not inline credentials or mutable snapshot discovery in crontab:
+
+```text
+30 8 * * 1 /usr/bin/flock -n /run/lock/abbott-content-proposal.lock /opt/reportingdash/bin/run-abbott-content-proposal
+```
+
+No live cron or Hermes schedule was installed or changed by this implementation.
+Replaying the same source digests and reviewed bindings resumes the same
+content-addressed run and batch; a changed predecessor or binding produces a
+different run.
+
 ## Rollback
 
 Rollback is a pointer operation, not a data rewrite. Use the candidate as the
