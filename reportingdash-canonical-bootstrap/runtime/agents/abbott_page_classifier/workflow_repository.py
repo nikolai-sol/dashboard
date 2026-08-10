@@ -7,7 +7,7 @@ MySQL state; this module never reads or writes legacy local registry state.
 
 from __future__ import annotations
 
-from dataclasses import asdict, replace
+from dataclasses import asdict, dataclass, replace
 from datetime import datetime, timezone
 import json
 from pathlib import PurePosixPath
@@ -46,6 +46,40 @@ from .workflow_service import (
     ReconciliationContext,
     WorkflowConfiguration,
 )
+
+
+@dataclass(frozen=True)
+class StrongUrlAlias:
+    content_entity_id: int
+    alias_type: str
+    alias_value: str
+
+
+def _load_active_strong_url_aliases(cursor) -> tuple[StrongUrlAlias, ...]:
+    """Read only reviewed URL identities that may enter a release projection."""
+
+    cursor.execute(
+        """
+        SELECT content_entity_id, alias_type, alias_value
+        FROM portal_content_registry_aliases
+        WHERE dataset_key = 'abbott'
+          AND alias_status = 'active'
+          AND uniqueness_scope = 'strong'
+          AND alias_type IN ('canonical_url', 'url')
+        ORDER BY content_entity_id, alias_type, alias_hash
+        """
+    )
+    try:
+        return tuple(
+            StrongUrlAlias(
+                content_entity_id=int(row[0]),
+                alias_type=str(row[1]),
+                alias_value=str(row[2]),
+            )
+            for row in cursor.fetchall()
+        )
+    except (IndexError, TypeError, ValueError):
+        raise RepositoryError("STRONG_URL_ALIAS_INVALID") from None
 
 
 def _canonical_json(value: object) -> str:
