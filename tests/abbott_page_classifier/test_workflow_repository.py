@@ -727,6 +727,21 @@ class MySqlWorkflowStoreTests(unittest.TestCase):
         connection = BootstrapConnection()
         cursor = connection.cursor_instance
         event = cursor.events[7]
+        event["lifecycle_code"] = "archive_candidate"
+        event_values = {
+            "content_entity_id": 7,
+            "taxonomy_version_id": event["taxonomy_version_id"],
+            "direction_code": event["direction_code"],
+            "material_type_code": event["material_type_code"],
+            "access_code": event["access_code"],
+            "lifecycle_code": event["lifecycle_code"],
+            "event_kind": "baseline",
+            "proposal_evidence": event["proposal_evidence"],
+            "effective_at": "1970-01-01T00:00:00.000000+00:00",
+        }
+        event["event_fingerprint"] = compute_classification_event_fingerprint(
+            event_values
+        )
         cursor.catalog = [
             cursor.catalog[0]
             + (7, event["id"], event["event_fingerprint"])
