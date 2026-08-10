@@ -243,6 +243,26 @@ class AbbottOperationsRunbookTest(unittest.TestCase):
                 matches.append(str(path.relative_to(ROOT)))
         self.assertEqual(matches, [])
 
+    def test_release_retention_runbook_is_fail_closed(self):
+        text = (ROOT / "ops/runbooks/abbott_release_retention.md").read_text(
+            encoding="utf-8"
+        )
+        for required in (
+            "canonical_release_id",
+            "previous_release_id",
+            "staging",
+            "validated",
+            "--sha256",
+            "--batch-size",
+            "mode 0600",
+            "portal_data_releases",
+            "OPTIMIZE TABLE",
+            "one table at a time",
+            "Abbott health probe",
+        ):
+            with self.subTest(required=required):
+                self.assertIn(required, text)
+
 
 if __name__ == "__main__":
     unittest.main()
