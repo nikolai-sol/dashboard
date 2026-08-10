@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from datetime import datetime, timezone
 from dataclasses import dataclass, replace
+import hashlib
 import json
 from enum import Enum
 from typing import Any, Callable, Mapping, Protocol, Sequence
@@ -651,6 +652,9 @@ class ContentRegistryRepository:
                   readiness_state,
                   row_hash,
                   decision_reason,
+                  proposal_evidence,
+                  conflict_codes,
+                  conflict_code,
                   selected_content_entity_id,
                   url_alias_decision
                 FROM portal_content_approval_items
@@ -967,7 +971,9 @@ class ContentRegistryRepository:
                   decision_reason,
                   proposal_evidence,
                   conflict_codes,
-                  conflict_code
+                  conflict_code,
+                  selected_content_entity_id,
+                  url_alias_decision
                 FROM portal_content_approval_items
                 WHERE approval_batch_id = %s
                 ORDER BY content_entity_id, input_hash
@@ -1205,6 +1211,15 @@ class ContentRegistryRepository:
                     ),
                 )
 
+            # Alias decisions are separate from classification readiness: a reviewed
+            # collision resolves identity even when no taxonomy event is emitted.
+            for approval_item_id, item in stored_items:
+                if item.url_alias_decision is None:
+                    continue
+                self._apply_url_alias_decision(
+                    cursor, item, batch_id, approval_item_id, stored_accepted_hash
+                )
+
             cursor.execute(
                 """
                 UPDATE portal_content_approval_batches
@@ -1235,6 +1250,86 @@ class ContentRegistryRepository:
             raise RepositoryError("DB_TRANSACTION_FAILED") from None
         finally:
             self._close(cursor, connection)
+
+    @staticmethod
+    def _apply_url_alias_decision(
+        cursor: Cursor,
+        item: ApprovalItem,
+        batch_id: int,
+        approval_item_id: int,
+        accepted_hash: str,
+    ) -> None:
+        """Lock and mutate one reviewed strong URL identity, fail-closed on races."""
+        ContentRegistryRepository._validate_url_alias_decision(item)
+        decision = item.url_alias_decision
+        if decision == "reject":
+            return
+        alias_hash = hashlib.sha256(item.url.casefold().encode("utf-8")).hexdigest()
+        if decision == "attach":
+            cursor.execute(
+                """SELECT id FROM portal_content_registry_entities
+                   WHERE id = %s AND dataset_key = %s AND registry_status = 'active'
+                   FOR UPDATE""",
+                (item.selected_content_entity_id, DATASET_KEY),
+            )
+            entity = cursor.fetchone()
+            if entity is None or int(entity[0]) != item.selected_content_entity_id:
+                raise RepositoryError("IDENTITY_COLLISION")
+        cursor.execute(
+            """SELECT id, content_entity_id, alias_status
+               FROM portal_content_registry_aliases
+               WHERE dataset_key = %s AND alias_type = %s
+                 AND alias_hash = %s AND uniqueness_scope = 'strong'
+               FOR UPDATE""",
+            (DATASET_KEY, "url", alias_hash),
+        )
+        rows = tuple(cursor.fetchall())
+        active = [row for row in rows if str(row[2]) == "active"]
+        if len(active) > 1 or (
+            decision == "attach"
+            and active
+            and int(active[0][1]) != item.selected_content_entity_id
+        ):
+            raise RepositoryError("IDENTITY_COLLISION")
+        evidence = ContentRegistryRepository._json(
+            {
+                "accepted_decision_hash": accepted_hash,
+                "approval_batch_id": batch_id,
+                "approval_item_id": approval_item_id,
+                "decision_reason": item.decision_reason,
+                "row_hash": item.row_hash,
+                "selected_content_entity_id": item.selected_content_entity_id,
+                "url_alias_decision": decision,
+                "url": item.url,
+            }
+        )
+        if decision == "retire":
+            if len(active) != 1:
+                raise RepositoryError("IDENTITY_COLLISION")
+            cursor.execute(
+                """UPDATE portal_content_registry_aliases
+                   SET alias_status = 'retired', source_evidence = %s
+                   WHERE id = %s AND alias_status = 'active'""",
+                (evidence, int(active[0][0])),
+            )
+            if getattr(cursor, "rowcount", 1) != 1:
+                raise RepositoryError("IDENTITY_COLLISION")
+            return
+        if active:
+            return
+        cursor.execute(
+            """INSERT INTO portal_content_registry_aliases (
+                 dataset_key, content_entity_id, alias_type, alias_value, alias_hash,
+                 uniqueness_scope, alias_status, source_evidence
+               ) VALUES (%s, %s, 'url', %s, %s, 'strong', 'active', %s)""",
+            (
+                DATASET_KEY,
+                item.selected_content_entity_id,
+                item.url,
+                alias_hash,
+                evidence,
+            ),
+        )
 
     def load_effective_classifications(self) -> dict[int, ClassificationEvent]:
         sql = """
@@ -1435,6 +1530,10 @@ class ContentRegistryRepository:
                     final_access_code=(str(row[7]) if row[7] is not None else None),
                     final_lifecycle_code=(str(row[8]) if row[8] is not None else None),
                     readiness_state=str(row[9]),
+                    conflict_codes=tuple(
+                        ConflictCode(str(code))
+                        for code in (json.loads(row[13]) if isinstance(row[13], str) else row[13])
+                    ) if len(row) >= 15 else (),
                     row_hash=str(row[10]),
                     decision_reason=(str(row[11]) if row[11] is not None else None),
                     selected_content_entity_id=(
@@ -1485,7 +1584,7 @@ class ContentRegistryRepository:
 
     @staticmethod
     def _validate_url_alias_decision(item: ApprovalItem) -> None:
-        collision = any(str(code) == "IDENTITY_COLLISION" for code in item.conflict_codes)
+        collision = any(getattr(code, "value", str(code)) == "IDENTITY_COLLISION" for code in item.conflict_codes)
         decision = item.url_alias_decision
         selected = item.selected_content_entity_id
         if decision is not None and decision not in {"attach", "retire", "reject"}:
@@ -1847,6 +1946,12 @@ class ContentRegistryRepository:
                     conflict_codes=tuple(ConflictCode(str(code)) for code in conflict_codes),
                     row_hash=str(row[10]),
                     decision_reason=published_decision["decision_reason"],
+                    selected_content_entity_id=(
+                        int(row[15]) if row[15] is not None else None
+                    ),
+                    url_alias_decision=(
+                        str(row[16]) if row[16] is not None else None
+                    ),
                     current_canonical=evidence["current_canonical"],
                     registry1_values=evidence["registry1"],
                     registry2_values=evidence["registry2"],

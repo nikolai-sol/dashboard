@@ -53,6 +53,36 @@ class Task7Cursor(RecordingCursor):
             if predecessor is not None and len(predecessor) == 5:
                 predecessor = (*predecessor, datetime(2026, 8, 5, 12, 0))
             self.rows = [predecessor] if predecessor is not None else []
+        if "FROM portal_content_registry_aliases" in normalized:
+            self.rows = [
+                (alias["id"], alias["content_entity_id"], alias["alias_status"])
+                for alias in self.connection.aliases
+                if alias["alias_type"] == params[1]
+                and alias["alias_hash"] == params[2]
+                and alias["uniqueness_scope"] == "strong"
+            ]
+        if normalized.startswith("UPDATE portal_content_registry_aliases"):
+            alias_id = int(params[1])
+            for alias in self.connection.aliases:
+                if alias["id"] == alias_id and alias["alias_status"] == "active":
+                    alias["alias_status"] = "retired"
+                    alias["source_evidence"] = json.loads(params[0])
+                    self.rowcount = 1
+                    break
+            else:
+                self.rowcount = 0
+        if normalized.startswith("INSERT INTO portal_content_registry_aliases"):
+            self.connection.aliases.append(
+                {
+                    "id": 900 + len(self.connection.aliases),
+                    "content_entity_id": int(params[1]),
+                    "alias_type": "url",
+                    "alias_hash": str(params[3]),
+                    "uniqueness_scope": "strong",
+                    "alias_status": "active",
+                    "source_evidence": json.loads(params[4]),
+                }
+            )
 
 
 class Task7Connection(RecordingConnection):
@@ -73,6 +103,7 @@ class Task7Connection(RecordingConnection):
         )
         self.predecessor_event_row = predecessor_event_row
         self.abbott_entity_exists = abbott_entity_exists
+        self.aliases: list[dict[str, object]] = []
         evidence_by_entity = evidence_by_entity or {}
         audited_items: list[ApprovalBatchItem] = []
         for item in self.ingest_items:
@@ -126,6 +157,8 @@ class Task7Connection(RecordingConnection):
                     and hasattr(item.conflict_codes[0], "value")
                     else (str(item.conflict_codes[0]) if item.conflict_codes else None)
                 ),
+                item.selected_content_entity_id,
+                item.url_alias_decision,
             )
             for index, item in enumerate(self.ingest_items)
         ]
@@ -235,6 +268,100 @@ def reviewed_canonical_evidence(
 
 
 class ApprovalIngestionTests(unittest.TestCase):
+    def test_url_alias_decisions_are_locked_before_batch_ingestion_finishes(self):
+        item = replace(
+            approval_item(41, readiness="conflict"),
+            conflict_codes=("IDENTITY_COLLISION",),
+            selected_content_entity_id=41,
+            url_alias_decision="attach",
+            decision_reason="reviewed URL owner",
+        )
+        connection = Task7Connection(items=(item,))
+        result = ingest_accepted_batch(connection.snapshot(), repository_for(connection))
+
+        self.assertEqual(result.status, "ingested")
+        alias_lock = next(
+            (sql, params)
+            for sql, params in connection.calls
+            if "FROM portal_content_registry_aliases" in sql and "FOR UPDATE" in sql
+        )
+        entity_lock_index = next(index for index, (sql, _) in enumerate(connection.calls) if "portal_content_registry_entities" in sql and "FOR UPDATE" in sql)
+        alias_lock_index = connection.calls.index(alias_lock)
+        self.assertLess(entity_lock_index, alias_lock_index)
+        self.assertEqual(connection.aliases[0]["content_entity_id"], 41)
+        self.assertEqual(connection.aliases[0]["alias_status"], "active")
+        self.assertEqual(
+            connection.aliases[0]["source_evidence"],
+            {
+                "accepted_decision_hash": connection.batch_row[7],
+                "approval_batch_id": 17,
+                "approval_item_id": 101,
+                "decision_reason": "reviewed URL owner",
+                "row_hash": connection.ingest_items[0].row_hash,
+                "selected_content_entity_id": 41,
+                "url_alias_decision": "attach",
+                "url": item.url,
+            },
+        )
+
+    def test_url_alias_collision_rolls_back_before_batch_transition(self):
+        item = replace(
+            approval_item(41, readiness="conflict"),
+            conflict_codes=("IDENTITY_COLLISION",),
+            selected_content_entity_id=41,
+            url_alias_decision="attach",
+            decision_reason="reviewed URL owner",
+        )
+        connection = Task7Connection(items=(item,))
+        connection.aliases.append(
+            {
+                "id": 801,
+                "content_entity_id": 99,
+                "alias_type": "url",
+                "alias_hash": __import__("hashlib").sha256(item.url.casefold().encode()).hexdigest(),
+                "uniqueness_scope": "strong",
+                "alias_status": "active",
+                "source_evidence": {},
+            }
+        )
+
+        with self.assertRaises(RepositoryError) as raised:
+            ingest_accepted_batch(connection.snapshot(), repository_for(connection))
+
+        self.assertEqual(raised.exception.code, "IDENTITY_COLLISION")
+        self.assertEqual(connection.commit_count, 0)
+        self.assertEqual(connection.rollback_count, 1)
+        self.assertFalse(any(sql.startswith("UPDATE portal_content_approval_batches") for sql, _ in connection.calls))
+
+    def test_retire_alias_requires_locked_active_url_alias_and_preserves_review_evidence(self):
+        item = replace(
+            approval_item(41, readiness="conflict"),
+            conflict_codes=("IDENTITY_COLLISION",),
+            url_alias_decision="retire",
+            decision_reason="reviewed stale URL",
+        )
+        connection = Task7Connection(items=(item,))
+        connection.aliases.append(
+            {
+                "id": 801,
+                "content_entity_id": 41,
+                "alias_type": "url",
+                "alias_hash": __import__("hashlib").sha256(item.url.casefold().encode()).hexdigest(),
+                "uniqueness_scope": "strong",
+                "alias_status": "active",
+                "source_evidence": {"authority": "old"},
+            }
+        )
+
+        result = ingest_accepted_batch(connection.snapshot(), repository_for(connection))
+
+        self.assertEqual(result.status, "ingested")
+        self.assertEqual(connection.aliases[0]["alias_status"], "retired")
+        self.assertEqual(
+            connection.aliases[0]["source_evidence"]["accepted_decision_hash"],
+            connection.batch_row[7],
+        )
+        self.assertEqual(connection.aliases[0]["source_evidence"]["url_alias_decision"], "retire")
     def test_service_delegates_to_canonical_repository_and_carries_exact_counts(self):
         snapshot = accepted_snapshot(approval_item(41))
 

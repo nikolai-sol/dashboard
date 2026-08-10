@@ -296,6 +296,8 @@ class RecordingConnection:
                     and hasattr(item.conflict_codes[0], "value")
                     else (str(item.conflict_codes[0]) if item.conflict_codes else None)
                 ),
+                item.selected_content_entity_id,
+                item.url_alias_decision,
             )
             for index, item in enumerate(self.ingest_items)
         ]
@@ -607,6 +609,8 @@ class ContentRegistryRepositoryTests(unittest.TestCase):
                     if item.conflict_codes and hasattr(item.conflict_codes[0], "value")
                     else (str(item.conflict_codes[0]) if item.conflict_codes else None)
                 ),
+                item.selected_content_entity_id,
+                item.url_alias_decision,
             )
             for index, item in enumerate(batch.items)
         ]

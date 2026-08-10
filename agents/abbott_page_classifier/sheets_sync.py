@@ -1755,7 +1755,7 @@ def _optional_positive_int(value: object) -> int | None:
 
 
 def _validate_url_alias_decision(item: ApprovalItem) -> None:
-    collision = any(str(code) == "IDENTITY_COLLISION" for code in item.conflict_codes)
+    collision = any(getattr(code, "value", str(code)) == "IDENTITY_COLLISION" for code in item.conflict_codes)
     decision = item.url_alias_decision
     selected = item.selected_content_entity_id
     reason = item.decision_reason
