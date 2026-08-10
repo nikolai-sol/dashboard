@@ -89,12 +89,20 @@ export function normalizeAbbottContentIdentityUrl(rawValue: unknown): string {
   if (!isAbbottWebPageUrl(value)) return "";
 
   try {
+    const absoluteAuthority = value.match(/^https?:\/\/([^/?#]*)/i);
+    if (
+      absoluteAuthority
+      && (!absoluteAuthority[1] || absoluteAuthority[1].includes("@") || absoluteAuthority[1].includes("%"))
+    ) {
+      return "";
+    }
     const source = value.startsWith("/")
       ? `https://abbottpro.ru${value}`
       : /^[a-z][a-z0-9+.-]*:\/\//i.test(value)
         ? value
         : `https://abbottpro.ru/${value}`;
     const url = new URL(source);
+    if (url.username || url.password) return "";
     if (url.hostname.toLowerCase() === "www.abbottpro.ru") url.hostname = "abbottpro.ru";
     if (url.hostname.toLowerCase() === "abbottpro.ru") url.protocol = "https:";
     url.hash = "";

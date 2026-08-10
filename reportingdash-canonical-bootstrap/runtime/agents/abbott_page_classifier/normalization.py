@@ -203,7 +203,8 @@ def normalize_url(raw: str) -> NormalizedUrl:
     value = (raw or "").replace("&amp;", "&").strip()
     if not value:
         return _empty_normalized_url()
-    if "://" not in value:
+    is_absolute = "://" in value
+    if not is_absolute:
         value = f"https://abbottpro.ru{value if value.startswith('/') else '/' + value}"
 
     try:
@@ -211,13 +212,21 @@ def normalize_url(raw: str) -> NormalizedUrl:
         scheme = (parts.scheme or "https").casefold()
         if scheme not in {"http", "https"}:
             return _empty_normalized_url()
-        host = (parts.hostname or "abbottpro.ru").casefold()
+        if is_absolute and (not parts.netloc or not parts.hostname):
+            return _empty_normalized_url()
+        if parts.username is not None or parts.password is not None:
+            return _empty_normalized_url()
+        source_host = parts.hostname or "abbottpro.ru"
+        if "%" in source_host:
+            return _empty_normalized_url()
+        host = source_host.casefold().encode("idna").decode("ascii")
         if host == "www.abbottpro.ru":
             host = "abbottpro.ru"
         if host == "abbottpro.ru":
             scheme = "https"
         port = parts.port
-        if port and not ((scheme == "https" and port == 443) or (scheme == "http" and port == 80)):
+        source_default_port = 443 if parts.scheme.casefold() == "https" else 80
+        if port and port != source_default_port:
             host = f"{host}:{port}"
         path = _normalize_path(parts.path)
         query_pairs = [
