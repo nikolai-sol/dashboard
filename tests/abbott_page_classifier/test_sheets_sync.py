@@ -522,7 +522,7 @@ class SheetsProjectionTests(unittest.TestCase):
         self.assertTrue(
             any(
                 validation["rule"]["condition"]["type"] == "CUSTOM_FORMULA"
-                and "decision_reason" in validation["rule"].get("inputMessage", "")
+                and "Причина решения" in validation["rule"].get("inputMessage", "")
                 for validation in validations
             )
         )
@@ -571,7 +571,7 @@ class SheetsProjectionTests(unittest.TestCase):
         )
         rejected = gateway.values["Не определено"][2]
         self.assertEqual(
-            rejected[unresolved_headers.index("decision_reason")],
+            rejected[unresolved_headers.index("Причина решения")],
             "REGISTRY1_IDENTITY_REQUIRED",
         )
         self.assertIn(
@@ -647,10 +647,53 @@ class SheetsProjectionTests(unittest.TestCase):
         publish_projection(approval_batch, gateway)
         gateway.accept()
         first = read_accepted_projection(approval_batch, gateway)
-        gateway.edit_item("Предложения", 1, "decision_reason", "manager reviewed")
+        gateway.edit_item("Предложения", 1, "Причина решения", "manager reviewed")
 
         second = read_accepted_projection(approval_batch, gateway)
 
+        self.assertNotEqual(first.accepted_decision_hash, second.accepted_decision_hash)
+
+    def test_identity_collision_requires_selected_entity_and_reason_and_binds_hash(self):
+        gateway = FakeSheetsGateway()
+        collision = replace(
+            item(2, "conflict"),
+            conflict_codes=("IDENTITY_COLLISION",),
+        )
+        approval_batch = build_batch(
+            (collision,),
+            TaxonomyVersion(
+                version="abbott.v1",
+                terms={
+                    "direction": tuple(sorted(DIRECTION_CODES)),
+                    "material_type": tuple(sorted(MATERIAL_TYPE_CODES)),
+                    "access": tuple(sorted(ACCESS_CODES)),
+                    "lifecycle": tuple(sorted(LIFECYCLE_CODES)),
+                },
+                digest=compute_taxonomy_digest("abbott.v1", {
+                    "direction": tuple(sorted(DIRECTION_CODES)),
+                    "material_type": tuple(sorted(MATERIAL_TYPE_CODES)),
+                    "access": tuple(sorted(ACCESS_CODES)),
+                    "lifecycle": tuple(sorted(LIFECYCLE_CODES)),
+                }),
+            ),
+            "prompt.v1",
+            source_snapshot_ids=(101,),
+            source_snapshot_digests=("a" * 64,),
+            model_routing_version="routing.v1",
+        )
+        publish_projection(approval_batch, gateway)
+        gateway.accept()
+
+        with self.assertRaises(ProjectionValidationError) as raised:
+            read_accepted_projection(approval_batch, gateway)
+        self.assertEqual(raised.exception.code, "IDENTITY_COLLISION_DECISION_REQUIRED")
+
+        gateway.edit_item("Конфликты", 2, "Кандидат entity ID", 41)
+        gateway.edit_item("Конфликты", 2, "Решение по URL", "attach")
+        gateway.edit_item("Конфликты", 2, "Причина решения", "reviewed URL owner")
+        first = read_accepted_projection(approval_batch, gateway)
+        gateway.edit_item("Конфликты", 2, "Кандидат entity ID", 42)
+        second = read_accepted_projection(approval_batch, gateway)
         self.assertNotEqual(first.accepted_decision_hash, second.accepted_decision_hash)
 
     def test_read_rejects_formula_in_an_editable_decision_cell(self):
@@ -658,7 +701,7 @@ class SheetsProjectionTests(unittest.TestCase):
         approval_batch = batch()
         publish_projection(approval_batch, gateway)
         gateway.accept()
-        gateway.edit_item("Предложения", 1, "decision_reason", "=HYPERLINK(\"x\")")
+        gateway.edit_item("Предложения", 1, "Причина решения", "=HYPERLINK(\"x\")")
 
         with self.assertRaises(ProjectionValidationError) as raised:
             read_accepted_projection(approval_batch, gateway)

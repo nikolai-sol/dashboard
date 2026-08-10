@@ -1126,7 +1126,11 @@ ITEM_HEADERS = (
     "final_material_type_code",
     "final_access_code",
     "final_lifecycle_code",
-    "decision_reason",
+    "Нормализованный URL",
+    "Текущий entity ID",
+    "Кандидат entity ID",
+    "Решение по URL",
+    "Причина решения",
     "input_hash",
     "row_hash",
 )
@@ -1156,7 +1160,11 @@ _FINAL_COLUMNS = {
     "access": ITEM_HEADERS.index("final_access_code"),
     "lifecycle": ITEM_HEADERS.index("final_lifecycle_code"),
 }
-_REASON_COLUMN = ITEM_HEADERS.index("decision_reason")
+_NORMALIZED_URL_COLUMN = ITEM_HEADERS.index("Нормализованный URL")
+_CURRENT_ENTITY_COLUMN = ITEM_HEADERS.index("Текущий entity ID")
+_SELECTED_ENTITY_COLUMN = ITEM_HEADERS.index("Кандидат entity ID")
+_URL_ALIAS_DECISION_COLUMN = ITEM_HEADERS.index("Решение по URL")
+_REASON_COLUMN = ITEM_HEADERS.index("Причина решения")
 _HASH_COLUMN = ITEM_HEADERS.index("input_hash")
 _STATE_TABS = {
     "ready": TAB_PROPOSALS,
@@ -1276,6 +1284,10 @@ def _item_row(item: ApprovalItem) -> list[object]:
         item.final_material_type_code or "",
         item.final_access_code or "",
         item.final_lifecycle_code or "",
+        _safe_display(item.url),
+        "" if item.content_entity_id is None else item.content_entity_id,
+        "" if item.selected_content_entity_id is None else item.selected_content_entity_id,
+        item.url_alias_decision or "",
         _safe_display(item.decision_reason),
         item.input_hash,
         item.row_hash,
@@ -1514,9 +1526,9 @@ def _projection_requests(
                 "rule": {
                     "condition": {
                         "type": "CUSTOM_FORMULA",
-                        "values": [{"userEnteredValue": "=LEN(TRIM($T2))>0"}],
+                        "values": [{"userEnteredValue": "=LEN(TRIM($Y2))>0"}],
                     },
-                    "inputMessage": "decision_reason is mandatory for an edited conflict",
+                    "inputMessage": "Причина решения is mandatory for an edited conflict",
                     "strict": True,
                 },
             }
@@ -1729,6 +1741,38 @@ def _optional_cell(value: object) -> str | None:
     return normalized or None
 
 
+def _optional_positive_int(value: object) -> int | None:
+    normalized = _optional_cell(value)
+    if normalized is None:
+        return None
+    try:
+        parsed = int(normalized)
+    except ValueError:
+        raise ProjectionValidationError("URL_ENTITY_ID_INVALID") from None
+    if str(parsed) != normalized or parsed <= 0:
+        raise ProjectionValidationError("URL_ENTITY_ID_INVALID")
+    return parsed
+
+
+def _validate_url_alias_decision(item: ApprovalItem) -> None:
+    collision = any(str(code) == "IDENTITY_COLLISION" for code in item.conflict_codes)
+    decision = item.url_alias_decision
+    selected = item.selected_content_entity_id
+    reason = item.decision_reason
+    if decision is not None and decision not in {"attach", "retire", "reject"}:
+        raise ProjectionValidationError("URL_ALIAS_DECISION_INVALID")
+    if not collision and (decision is not None or selected is not None):
+        raise ProjectionValidationError("URL_ALIAS_DECISION_UNEXPECTED")
+    if not collision:
+        return
+    if decision is None or not reason:
+        raise ProjectionValidationError("IDENTITY_COLLISION_DECISION_REQUIRED")
+    if decision == "attach" and selected is None:
+        raise ProjectionValidationError("IDENTITY_COLLISION_DECISION_REQUIRED")
+    if decision in {"retire", "reject"} and selected is not None:
+        raise ProjectionValidationError("URL_ALIAS_DECISION_INVALID")
+
+
 def _validate_taxonomy(
     item: ApprovalItem,
     terms: Mapping[str, tuple[str, ...]],
@@ -1809,9 +1853,9 @@ def read_accepted_projection(
 
     if set(row_hashes) != set(expected_by_hash):
         raise ProjectionValidationError("SHEET_IDENTITY_MISMATCH")
-    immutable_indexes = tuple(range(0, min(_FINAL_COLUMNS.values()))) + tuple(
-        range(_HASH_COLUMN, len(ITEM_HEADERS))
-    )
+    immutable_indexes = tuple(range(0, min(_FINAL_COLUMNS.values()))) + (
+        _NORMALIZED_URL_COLUMN, _CURRENT_ENTITY_COLUMN,
+    ) + tuple(range(_HASH_COLUMN, len(ITEM_HEADERS)))
     terms = _taxonomy_terms(approval_batch)
     accepted_items: list[ApprovalItem] = []
     seen_identities: set[tuple[int | None, str]] = set()
@@ -1831,9 +1875,12 @@ def read_accepted_projection(
             final_material_type_code=_optional_cell(row[_FINAL_COLUMNS["material_type"]]),
             final_access_code=_optional_cell(row[_FINAL_COLUMNS["access"]]),
             final_lifecycle_code=_optional_cell(row[_FINAL_COLUMNS["lifecycle"]]),
+            selected_content_entity_id=_optional_positive_int(row[_SELECTED_ENTITY_COLUMN]),
+            url_alias_decision=_optional_cell(row[_URL_ALIAS_DECISION_COLUMN]),
             decision_reason=_optional_cell(row[_REASON_COLUMN]),
         )
         _validate_taxonomy(accepted, terms)
+        _validate_url_alias_decision(accepted)
         if accepted.readiness_state == "conflict":
             old_values = (
                 expected.final_direction_code,

@@ -13,6 +13,7 @@ MIGRATION = (
     / "migrations"
     / "047_abbott_content_registry_workflow.sql"
 )
+URL_ALIAS_DECISIONS_MIGRATION = MIGRATION.parent / "051_abbott_content_url_alias_decisions.sql"
 
 
 class AbbottContentRegistrySchemaTests(unittest.TestCase):
@@ -150,6 +151,12 @@ class AbbottContentRegistrySchemaTests(unittest.TestCase):
             "'candidate_materialized', 'rejected', 'failed') NOT NULL DEFAULT 'draft'",
             self.sql,
         )
+
+    def test_url_alias_decisions_are_additive_and_replay_safe(self):
+        sql = URL_ALIAS_DECISIONS_MIGRATION.read_text(encoding="utf-8")
+        self.assertIn("ADD COLUMN IF NOT EXISTS selected_content_entity_id BIGINT UNSIGNED DEFAULT NULL", sql)
+        self.assertIn("ENUM('attach', 'retire', 'reject') DEFAULT NULL", sql)
+        self.assertNotIn("FOREIGN KEY", sql)
 
 
 if __name__ == "__main__":
