@@ -642,6 +642,10 @@ GRANT SELECT, INSERT ON report_bd.portal_content_catalog
   TO 'abbott_content_materializer_role';
 GRANT SELECT, INSERT ON report_bd.portal_content_lookup_projection
   TO 'abbott_content_materializer_role';
+-- The reviewed return-page projection replaces only path rows after locking and
+-- verifying that its target release is Abbott staging.
+GRANT DELETE ON report_bd.portal_content_lookup_projection
+  TO 'abbott_content_materializer_role';
 GRANT SELECT, INSERT ON report_bd.portal_general_materials
   TO 'abbott_content_materializer_role';
 GRANT SELECT, INSERT ON report_bd.portal_event_catalog

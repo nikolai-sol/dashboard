@@ -969,7 +969,7 @@ class AbbottSchemaContractTest(unittest.TestCase):
             for grant in re.findall(r"GRANT .*?;", sql, flags=re.IGNORECASE)
             if "portal_content_lookup_projection" in grant
         ]
-        self.assertEqual(len(projection_grants), 6)
+        self.assertEqual(len(projection_grants), 7)
         self.assertTrue(any(
             grant.startswith("GRANT SELECT, INSERT ON ")
             and "TO 'abbott_importer_role'" in grant
@@ -992,6 +992,11 @@ class AbbottSchemaContractTest(unittest.TestCase):
         ))
         self.assertTrue(any(
             grant.startswith("GRANT SELECT, INSERT ON ")
+            and "TO 'abbott_content_materializer_role'" in grant
+            for grant in projection_grants
+        ))
+        self.assertTrue(any(
+            grant.startswith("GRANT DELETE ON ")
             and "TO 'abbott_content_materializer_role'" in grant
             for grant in projection_grants
         ))
