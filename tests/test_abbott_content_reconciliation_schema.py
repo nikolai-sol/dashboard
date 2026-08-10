@@ -111,6 +111,18 @@ class AbbottContentReconciliationSchemaTests(unittest.TestCase):
         ):
             with self.subTest(table=table):
                 self.assertTrue(any(f"report_bd.{table}" in grant for grant in grants))
+        for table in (
+            "portal_active_data_releases",
+            "portal_content_catalog",
+            "portal_content_classification_events",
+        ):
+            with self.subTest(locking_read_table=table):
+                self.assertTrue(
+                    any(
+                        f"LOCK TABLES ON report_bd.{table}" in grant
+                        for grant in grants
+                    )
+                )
 
 
 if __name__ == "__main__":

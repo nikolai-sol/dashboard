@@ -582,6 +582,14 @@ GRANT SELECT, INSERT, UPDATE (final_direction_code, final_material_type_code,
   TO 'abbott_content_workflow_role';
 GRANT SELECT, INSERT ON report_bd.portal_content_classification_events
   TO 'abbott_content_workflow_role';
+-- Locking reads serialize immutable baseline/bootstrap checks without granting
+-- UPDATE authority over the active pointer, release catalog, or event history.
+GRANT LOCK TABLES ON report_bd.portal_active_data_releases
+  TO 'abbott_content_workflow_role';
+GRANT LOCK TABLES ON report_bd.portal_content_catalog
+  TO 'abbott_content_workflow_role';
+GRANT LOCK TABLES ON report_bd.portal_content_classification_events
+  TO 'abbott_content_workflow_role';
 
 -- The CLI importer uses one connection for a single transaction spanning both
 -- schemas. It may attach imported snapshot IDs to a staging release, but it
