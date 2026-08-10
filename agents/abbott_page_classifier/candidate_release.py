@@ -1393,7 +1393,10 @@ def _overlay_current_batch_events(
         entity_id = row.content_entity_id
         for kind, value in (
             ("material_id", (row.material_id or "").casefold()),
-            ("normalized_url", row.normalized_url_hash),
+            (
+                "normalized_url",
+                row.normalized_url_hash if row.normalized_url else "",
+            ),
         ):
             if not value:
                 continue

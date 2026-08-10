@@ -15,6 +15,7 @@ from agents.abbott_page_classifier.candidate_release import (
     CandidateMaterializationError,
     CONTENT_CONTROL_VALUES,
     GateReport,
+    _overlay_current_batch_events,
     build_lookup_projection,
     materialize_content_candidate,
     validate_and_transition_content_candidate,
@@ -1131,6 +1132,42 @@ class CandidateReleaseTest(unittest.TestCase):
             {item["predecessor_catalog_row_id"] for item in provenances},
             {1001, 1003},
         )
+
+    def test_empty_urls_are_not_treated_as_strong_identity_collisions(self):
+        def predecessor(entity_id: int, ordinal: int, fingerprint: str):
+            row = catalog_row(fingerprint)
+            return {
+                **row.__dict__,
+                "id": 1000 + ordinal,
+                "content_entity_id": entity_id,
+                "material_id": None,
+                "normalized_url": "",
+                "normalized_url_hash": sha256_text(""),
+                "normalized_path": "",
+                "source_row_ordinal": ordinal,
+                "projection_provenance_json": json.dumps(
+                    {
+                        "canonical_codes": {
+                            "direction": "cardiology",
+                            "material_type": "articles",
+                            "access": "all",
+                            "lifecycle": "active",
+                        },
+                        "canonical_labels": {"lifecycle": "active"},
+                        "mode": "legacy_active_catalog_baseline",
+                    }
+                ),
+            }
+
+        result = _overlay_current_batch_events(
+            (
+                predecessor(1, 7, "1" * 64),
+                predecessor(2, 8, "2" * 64),
+            ),
+            (),
+        )
+
+        self.assertEqual({row.content_entity_id for row in result}, {1, 2})
 
     def test_catalog_insert_has_exact_mysql_schema_and_parameter_arity(self):
         connection = CandidateConnection()
