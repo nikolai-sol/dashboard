@@ -421,7 +421,8 @@ class AbbottSchemaContractTest(unittest.TestCase):
             "GRANT SELECT ON report_bd.canonical_source_account_collection_settings TO 'abbott_collector_role';",
             "GRANT SELECT, INSERT, UPDATE ON report_bd.canonical_source_accounts TO 'abbott_collector_role';",
             "GRANT SELECT, INSERT, UPDATE ON report_bd.canonical_collector_runs TO 'abbott_collector_role';",
-            "GRANT INSERT ON report_bd.canonical_collector_run_events TO 'abbott_collector_role';",
+            "GRANT SELECT, INSERT ON report_bd.canonical_collector_run_events TO 'abbott_collector_role';",
+            "GRANT SELECT ON report_bd.portal_release_source_imports TO 'abbott_collector_role';",
         ):
             self.assertIn(contract, sql)
 

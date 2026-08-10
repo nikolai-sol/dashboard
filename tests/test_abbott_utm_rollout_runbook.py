@@ -41,6 +41,31 @@ class AbbottUtmRolloutRunbookTest(unittest.TestCase):
         self.assertIn("`all.sessions = with_user_id.sessions + without_user_id.sessions`", normalized)
         self.assertIn("for every date/source", normalized)
 
+    def test_return_page_direction_projection_is_a_staging_only_pre_comparison_gate(self):
+        normalized = " ".join(self.section.split())
+        self.assertIn(
+            "after the candidate backfill is complete and before comparison, validation, activation, or dashboard deployment",
+            normalized,
+        )
+        self.assertIn("staging-only Abbott counter `90602537`", normalized)
+        self.assertIn("catalog_rows=1769", normalized)
+        self.assertIn("catalog_rows_with_direction=1639", normalized)
+        self.assertIn("catalog_rows_with_normalized_url=0", normalized)
+        self.assertIn("catalog_rows_with_normalized_path=0", normalized)
+        self.assertIn("path_lookup_rows=0", normalized)
+        self.assertIn("distinct normalized paths seen in candidate page facts", normalized)
+        self.assertIn("matched path projections with non-empty direction", normalized)
+        self.assertIn("unmatched paths", normalized)
+        self.assertIn("ambiguous paths", normalized)
+        self.assertIn("returning-page rows and returning visitors with/without page direction", normalized)
+        self.assertIn("zero path rows falsely marked resolved when their evidence conflicts", normalized)
+        self.assertIn(
+            "direction coverage must improve from the frozen zero-path baseline",
+            normalized.lower(),
+        )
+        self.assertIn("no slug or substring fallback", normalized.lower())
+        self.assertIn("never rewrite an active release, title projection, or slug projection", normalized.lower())
+
     def test_access_cutover_and_rollback_boundaries_are_explicit(self):
         normalized = " ".join(self.section.split())
         self.assertIn("manager-only UTM/frequency reads", normalized)

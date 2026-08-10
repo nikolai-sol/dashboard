@@ -2,7 +2,7 @@ import datetime as dt
 import inspect
 import unittest
 from types import SimpleNamespace
-from unittest.mock import patch
+from unittest.mock import MagicMock, patch
 
 
 class FakeCursor:
@@ -88,6 +88,26 @@ class YandexWebmasterCanonicalTests(unittest.TestCase):
                 "position": 3.5,
             }
         ]
+        self.pair_rows = [
+            {
+                **self.summary_row,
+                "query_hash": "query-hash",
+                "page_hash": "page-hash",
+                "query_text": "рак груди",
+                "page_url": "/requested/",
+            }
+        ]
+        self.pair_coverage = {
+            "source_key": "yandex_webmaster",
+            "analytics_account_id": "66624469",
+            "host_id": "https:zaruku.ru:443",
+            "report_date": "2026-07-13",
+            "device_type": "ALL",
+            "page_hash": "page-hash",
+            "page_url": "/requested/",
+            "row_count": 1,
+            "ingestion_run_id": 42,
+        }
 
     def test_replace_webmaster_day_rows_deletes_before_inserts_and_commits_once(self):
         from fetch_yandex_webmaster_canonical import (
@@ -220,6 +240,143 @@ class YandexWebmasterCanonicalTests(unittest.TestCase):
             collection_dates(dt.date(2026, 7, 14), lag_days=3),
             ["2026-07-10", "2026-07-11", "2026-07-12"],
         )
+
+    def test_default_layer_remains_core(self):
+        from fetch_yandex_webmaster_canonical import parse_args
+
+        with patch("sys.argv", ["collector"]):
+            args = parse_args()
+
+        self.assertEqual(args.layers, "core")
+        self.assertEqual(args.priority_limit, 30)
+
+    def test_query_page_default_window_uses_seven_collectable_dates(self):
+        from fetch_yandex_webmaster_canonical import selected_query_page_dates
+
+        args = SimpleNamespace(date_from="", date_to="")
+
+        self.assertEqual(
+            selected_query_page_dates(args, anchor=dt.date(2026, 7, 14)),
+            [
+                "2026-07-06",
+                "2026-07-07",
+                "2026-07-08",
+                "2026-07-09",
+                "2026-07-10",
+                "2026-07-11",
+                "2026-07-12",
+            ],
+        )
+
+    def test_priority_pages_keep_sections_first_deduplicate_and_cap_at_30(self):
+        from fetch_yandex_webmaster_canonical import load_priority_query_pages
+
+        pattern_rows = [
+            {"section": f"/section-{index}/", "priority": 1}
+            for index in range(15)
+        ] + [{"section": "/section-0/", "priority": 2}]
+        fill_rows = [
+            {
+                "page_url": "/section-0/" if index == 0 else f"/page-{index}/",
+                "impressions": 100 - index,
+                "clicks": 10 - min(index, 10),
+            }
+            for index in range(17)
+        ]
+        cursor = MagicMock()
+        cursor.fetchall.side_effect = [
+            pattern_rows,
+            [{"week_from": dt.date(2026, 7, 20), "week_to": dt.date(2026, 7, 26)}],
+            fill_rows,
+        ]
+        connection = MagicMock()
+        connection.cursor.return_value = cursor
+        with patch(
+            "fetch_yandex_webmaster_canonical.get_db_connection",
+            return_value=connection,
+        ):
+            pages = load_priority_query_pages("66624469", limit=30)
+
+        self.assertEqual(
+            pages[:15],
+            [f"/section-{index}/" for index in range(15)],
+        )
+        self.assertEqual(len(pages), 30)
+        self.assertEqual(len(set(pages)), 30)
+        self.assertNotIn("/page-0/", pages)
+        connection.close.assert_called_once()
+
+    def test_query_pages_layer_does_not_call_core_fetchers(self):
+        import fetch_yandex_webmaster_canonical as collector
+
+        args = SimpleNamespace(
+            layers="query_pages",
+            run_type="manual",
+            force=False,
+            priority_limit=15,
+            account_id="66624469",
+            domain="zaruku.ru",
+            host_id="host",
+            date_from="",
+            date_to="",
+        )
+        account = collector.WebmasterAccount("66624469", "zaruku.ru", "host")
+        pair_row = {
+            **self.pair_rows[0],
+            "report_date": "2026-07-22",
+            "page_url": "/article/",
+        }
+        with patch.object(
+            collector,
+            "selected_query_page_dates",
+            return_value=["2026-07-22"],
+        ), patch.object(collector, "start_run", return_value=84), patch.object(
+            collector,
+            "refresh_access_token",
+            return_value="token",
+        ), patch.object(collector, "get_user_id", return_value="user"), patch.object(
+            collector,
+            "configured_accounts",
+            return_value=[account],
+        ), patch.object(
+            collector,
+            "load_priority_query_pages",
+            return_value=["/article/"],
+        ), patch.object(
+            collector,
+            "fetch_query_page_rows",
+            return_value=[{"text_indicator": {"type": "QUERY", "value": "query"}}],
+        ), patch.object(
+            collector,
+            "normalize_query_page_rows",
+            return_value=[pair_row],
+        ), patch.object(
+            collector,
+            "replace_webmaster_query_page_snapshot",
+            return_value=2,
+        ) as replace, patch.object(collector, "fetch_query_rows") as fetch_queries, patch.object(
+            collector,
+            "fetch_page_rows",
+        ) as fetch_pages, patch.object(collector, "upsert_accounts"), patch.object(
+            collector,
+            "log_collector_event",
+        ) as log_event, patch.object(collector, "finish_run"):
+            result = collector.collect(args)
+
+        self.assertEqual(result["status"], "success")
+        fetch_queries.assert_not_called()
+        fetch_pages.assert_not_called()
+        coverage = replace.call_args.args[1]
+        self.assertEqual(coverage["row_count"], 1)
+        self.assertEqual(coverage["page_url"], "/article/")
+        scope_calls = [
+            call
+            for call in log_event.call_args_list
+            if call.args[2] == "webmaster_query_page_scope"
+        ]
+        self.assertEqual(len(scope_calls), 1)
+        self.assertEqual(scope_calls[0].args[4]["selected_pages"], 1)
+        self.assertEqual(scope_calls[0].args[4]["date_count"], 1)
 
     def test_selected_dates_clip_explicit_webmaster_window_to_collection_floor(self):
         from fetch_yandex_webmaster_canonical import selected_dates
@@ -463,6 +620,169 @@ class YandexWebmasterCanonicalTests(unittest.TestCase):
         self.assertEqual(body["sort_by_date"]["date"], "2026-07-13")
         self.assertEqual(body["offset"], 0)
         self.assertEqual(body["limit"], 500)
+
+    def test_query_page_request_uses_query_primary_and_exact_url_filter(self):
+        from fetch_yandex_webmaster_canonical import build_query_page_request_body
+
+        body = build_query_page_request_body("/article/", "2026-07-22", 0)
+
+        self.assertEqual(body["text_indicator"], "QUERY")
+        self.assertEqual(
+            body["filters"]["text_filters"][0],
+            {
+                "text_indicator": "URL",
+                "operation": "TEXT_MATCH",
+                "value": "/article/",
+            },
+        )
+
+    def test_fetch_query_page_rows_posts_exact_filter_and_paginates(self):
+        from fetch_yandex_webmaster_canonical import fetch_query_page_rows
+
+        first_rows = [
+            {"text_indicator": {"type": "QUERY", "value": f"query {index}"}}
+            for index in range(500)
+        ]
+        second_rows = [
+            {"text_indicator": {"type": "QUERY", "value": "query 500"}}
+        ]
+        payloads = [
+            {"count": 501, "text_indicator_to_statistics": first_rows},
+            {"count": 501, "text_indicator_to_statistics": second_rows},
+        ]
+        with patch(
+            "fetch_yandex_webmaster_canonical.request_with_retry",
+            side_effect=payloads,
+        ) as request:
+            rows = fetch_query_page_rows(
+                "token",
+                "user",
+                "https:zaruku.ru:443",
+                "/article/",
+                "2026-07-22",
+                42,
+            )
+
+        self.assertEqual(len(rows), 501)
+        self.assertEqual(request.call_count, 2)
+        self.assertTrue(request.call_args_list[0].args[1].endswith("/query-analytics/list"))
+        self.assertEqual(request.call_args_list[0].kwargs["method"], "POST")
+        self.assertEqual(request.call_args_list[0].kwargs["body"]["offset"], 0)
+        self.assertEqual(request.call_args_list[1].kwargs["body"]["offset"], 500)
+
+    def test_query_page_normalizer_uses_requested_url_and_drops_zero_facts(self):
+        from fetch_yandex_webmaster_canonical import normalize_query_page_rows
+
+        rows = normalize_query_page_rows(
+            {
+                "text_indicator_to_statistics": [
+                    {
+                        "text_indicator": {"type": "QUERY", "value": " рак  груди "},
+                        "popular_complementary_indicator": {
+                            "type": "URL",
+                            "value": "/wrong/",
+                        },
+                        "statistics": [
+                            {
+                                "date": "2026-07-22",
+                                "field": "IMPRESSIONS",
+                                "value": 9,
+                            },
+                            {
+                                "date": "2026-07-22",
+                                "field": "CLICKS",
+                                "value": 2,
+                            },
+                        ],
+                    },
+                    {
+                        "text_indicator": {"type": "QUERY", "value": "old query"},
+                        "statistics": [
+                            {
+                                "date": "2026-07-22",
+                                "field": "IMPRESSIONS",
+                                "value": 0,
+                            }
+                        ],
+                    },
+                ]
+            },
+            page_url="/requested/",
+            source_key="yandex_webmaster",
+            analytics_account_id="66624469",
+            host_id="https:zaruku.ru:443",
+            report_date="2026-07-22",
+            device_type="ALL",
+            run_id=91,
+        )
+
+        self.assertEqual(len(rows), 1)
+        self.assertEqual(rows[0]["page_url"], "/requested/")
+        self.assertEqual(rows[0]["query_text"], "рак груди")
+        self.assertEqual(rows[0]["impressions"], 9)
+        self.assertEqual(rows[0]["clicks"], 2)
+
+    def test_empty_pair_success_replaces_stale_rows_and_writes_zero_coverage(self):
+        from fetch_yandex_webmaster_canonical import (
+            WEBMASTER_QUERY_PAGE_COVERAGE_UPSERT_SQL,
+            WEBMASTER_QUERY_PAGE_SNAPSHOT_DELETE_SQL,
+            replace_webmaster_query_page_snapshot,
+        )
+
+        connection = FakeConnection()
+        coverage = {**self.pair_coverage, "row_count": 0}
+        with patch(
+            "fetch_yandex_webmaster_canonical.get_db_connection",
+            return_value=connection,
+        ):
+            written = replace_webmaster_query_page_snapshot([], coverage)
+
+        self.assertEqual(written, 1)
+        self.assertEqual(connection.commit_calls, 1)
+        self.assertEqual(connection.rollback_calls, 0)
+        self.assertEqual(
+            connection.events,
+            [
+                ("cursor",),
+                (
+                    "execute",
+                    WEBMASTER_QUERY_PAGE_SNAPSHOT_DELETE_SQL,
+                    (
+                        coverage["source_key"],
+                        coverage["analytics_account_id"],
+                        coverage["host_id"],
+                        coverage["report_date"],
+                        coverage["device_type"],
+                        coverage["page_hash"],
+                    ),
+                ),
+                ("execute", WEBMASTER_QUERY_PAGE_COVERAGE_UPSERT_SQL, coverage),
+                ("commit",),
+                ("cursor_close",),
+                ("connection_close",),
+            ],
+        )
+
+    def test_pair_snapshot_rolls_back_pair_and_coverage_on_insert_failure(self):
+        from fetch_yandex_webmaster_canonical import replace_webmaster_query_page_snapshot
+
+        connection = FakeConnection(fail_on_executemany=True)
+        with patch(
+            "fetch_yandex_webmaster_canonical.get_db_connection",
+            return_value=connection,
+        ):
+            with self.assertRaisesRegex(RuntimeError, "query insert failed"):
+                replace_webmaster_query_page_snapshot(
+                    self.pair_rows,
+                    self.pair_coverage,
+                )
+
+        self.assertEqual(connection.commit_calls, 0)
+        self.assertEqual(connection.rollback_calls, 1)
+        self.assertEqual(
+            connection.events[-3:],
+            [("rollback",), ("cursor_close",), ("connection_close",)],
+        )
 
     def test_collect_writes_page_facts_alongside_query_snapshot(self):
         import fetch_yandex_webmaster_canonical as collector

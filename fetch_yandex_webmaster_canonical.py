@@ -15,7 +15,7 @@ from dataclasses import dataclass
 from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
-from urllib.parse import quote, urlencode
+from urllib.parse import quote, urlencode, urlsplit
 
 import requests
 try:
@@ -171,6 +171,54 @@ ON DUPLICATE KEY UPDATE
     updated_at = CURRENT_TIMESTAMP
 """
 
+WEBMASTER_QUERY_PAGE_SNAPSHOT_DELETE_SQL = """
+DELETE FROM canonical_fact_webmaster_query_pages_daily
+WHERE source_key = %s
+  AND analytics_account_id = %s
+  AND host_id = %s
+  AND report_date = %s
+  AND device_type = %s
+  AND page_hash = %s
+"""
+
+WEBMASTER_QUERY_PAGE_UPSERT_SQL = """
+INSERT INTO canonical_fact_webmaster_query_pages_daily (
+    source_key, analytics_account_id, host_id, report_date, device_type,
+    query_hash, page_hash, query_text, page_url, impressions, clicks, ctr,
+    average_position, raw_payload, ingestion_run_id
+) VALUES (
+    %(source_key)s, %(analytics_account_id)s, %(host_id)s, %(report_date)s, %(device_type)s,
+    %(query_hash)s, %(page_hash)s, %(query_text)s, %(page_url)s, %(impressions)s, %(clicks)s, %(ctr)s,
+    %(average_position)s, %(raw_payload)s, %(ingestion_run_id)s
+)
+ON DUPLICATE KEY UPDATE
+    query_text = VALUES(query_text),
+    page_url = VALUES(page_url),
+    impressions = VALUES(impressions),
+    clicks = VALUES(clicks),
+    ctr = VALUES(ctr),
+    average_position = VALUES(average_position),
+    raw_payload = VALUES(raw_payload),
+    ingestion_run_id = VALUES(ingestion_run_id),
+    updated_at = CURRENT_TIMESTAMP
+"""
+
+WEBMASTER_QUERY_PAGE_COVERAGE_UPSERT_SQL = """
+INSERT INTO canonical_webmaster_query_page_coverage_daily (
+    source_key, analytics_account_id, host_id, report_date, device_type,
+    page_hash, page_url, row_count, ingestion_run_id, collected_at
+) VALUES (
+    %(source_key)s, %(analytics_account_id)s, %(host_id)s, %(report_date)s, %(device_type)s,
+    %(page_hash)s, %(page_url)s, %(row_count)s, %(ingestion_run_id)s, CURRENT_TIMESTAMP
+)
+ON DUPLICATE KEY UPDATE
+    page_url = VALUES(page_url),
+    row_count = VALUES(row_count),
+    ingestion_run_id = VALUES(ingestion_run_id),
+    collected_at = CURRENT_TIMESTAMP,
+    updated_at = CURRENT_TIMESTAMP
+"""
+
 
 @dataclass(frozen=True)
 class WebmasterAccount:
@@ -189,6 +237,8 @@ def parse_args():
     parser.add_argument("--domain", default="")
     parser.add_argument("--host-id", default="")
     parser.add_argument("--force", action="store_true")
+    parser.add_argument("--layers", default="core", choices=["core", "query_pages"])
+    parser.add_argument("--priority-limit", type=int, default=30)
     return parser.parse_args()
 
 
@@ -265,6 +315,15 @@ def selected_dates(args, anchor: date | None = None) -> list[str]:
         date_from = args.date_from or date_to
         return [day for day in daterange(date_from, date_to) if day <= max_collectable_date.isoformat()]
     return collection_dates(anchor=effective_anchor, lag_days=args.lag_days)
+
+
+def selected_query_page_dates(args, anchor: date | None = None) -> list[str]:
+    effective_anchor = anchor or datetime.now(timezone.utc).date()
+    if getattr(args, "date_from", "") or getattr(args, "date_to", ""):
+        return selected_dates(args, anchor=effective_anchor)
+    date_to = effective_anchor - timedelta(days=COLLECTION_FLOOR_DAYS)
+    date_from = date_to - timedelta(days=6)
+    return [day for day in daterange(date_from.isoformat(), date_to.isoformat())]
 
 
 def query_hash(query: str) -> str:
@@ -375,6 +434,55 @@ def normalize_query_analytics_url_rows(
                 "page_hash": page_hash(page_url),
                 "page_url": page_url,
                 "popular_query_text": clean_text(complementary.get("value")) if complementary.get("type") == "QUERY" else None,
+                "impressions": safe_int(metrics["impressions"]),
+                "clicks": safe_int(metrics["clicks"]),
+                "ctr": metrics["ctr"],
+                "average_position": metrics["average_position"],
+                "raw_payload": json.dumps(row, ensure_ascii=False),
+                "ingestion_run_id": run_id,
+            }
+        )
+    return result
+
+
+def normalize_query_page_rows(
+    payload: dict,
+    *,
+    page_url: str,
+    source_key: str,
+    analytics_account_id: str,
+    host_id: str,
+    report_date: str,
+    device_type: str,
+    run_id: int,
+) -> list[dict]:
+    result: list[dict] = []
+    for row in payload.get("text_indicator_to_statistics") or []:
+        indicator = row.get("text_indicator") or {}
+        query = (
+            " ".join(clean_text(indicator.get("value")).split())
+            if indicator.get("type") == "QUERY"
+            else ""
+        )
+        metrics = _statistics_for_report_date(row, report_date)
+        has_selected_day_fact = (
+            safe_int(metrics["impressions"]) > 0
+            or safe_int(metrics["clicks"]) > 0
+            or metrics["average_position"] is not None
+        )
+        if not query or not metrics["seen"] or not has_selected_day_fact:
+            continue
+        result.append(
+            {
+                "source_key": source_key,
+                "analytics_account_id": analytics_account_id,
+                "host_id": host_id,
+                "report_date": report_date,
+                "device_type": device_type,
+                "query_hash": query_hash(query),
+                "page_hash": page_hash(page_url),
+                "query_text": query,
+                "page_url": page_url,
                 "impressions": safe_int(metrics["impressions"]),
                 "clicks": safe_int(metrics["clicks"]),
                 "ctr": metrics["ctr"],
@@ -541,6 +649,90 @@ def configured_accounts(args) -> list[WebmasterAccount]:
         conn.close()
 
 
+def normalize_priority_page(value: Any) -> str:
+    raw = clean_text(value)
+    if not raw:
+        return ""
+    path = urlsplit(raw).path
+    if not path:
+        return ""
+    if not path.startswith("/"):
+        path = f"/{path}"
+    while "//" in path:
+        path = path.replace("//", "/")
+    return path
+
+
+def load_priority_query_pages(account_id: str, limit: int = 30) -> list[str]:
+    bounded_limit = min(max(int(limit), 15), 30)
+    conn = get_db_connection()
+    cur = conn.cursor(dictionary=True)
+    try:
+        cur.execute(
+            """
+            SELECT section, priority
+            FROM seo_section_patterns
+            WHERE analytics_account_id = %s
+            ORDER BY priority ASC, section ASC, url_pattern ASC
+            """,
+            (account_id,),
+        )
+        pattern_rows = cur.fetchall()
+        selected: list[str] = []
+        selected_keys: set[str] = set()
+
+        def append_page(value: Any) -> None:
+            page = normalize_priority_page(value)
+            key = page.lower()
+            if page and key not in selected_keys and len(selected) < bounded_limit:
+                selected.append(page)
+                selected_keys.add(key)
+
+        for row in pattern_rows:
+            append_page(row.get("section"))
+
+        if len(selected) >= bounded_limit:
+            return selected
+
+        cur.execute(
+            """
+            SELECT
+              MIN(report_date) AS week_from,
+              MAX(report_date) AS week_to
+            FROM canonical_fact_webmaster_pages_daily
+            WHERE analytics_account_id = %s
+            GROUP BY YEARWEEK(report_date, 3)
+            HAVING COUNT(DISTINCT report_date) = 7
+            ORDER BY week_to DESC
+            LIMIT 1
+            """,
+            (account_id,),
+        )
+        week_rows = cur.fetchall()
+        if not week_rows:
+            return selected
+        week_from = week_rows[0].get("week_from")
+        week_to = week_rows[0].get("week_to")
+        cur.execute(
+            """
+            SELECT page_url, SUM(impressions) AS impressions, SUM(clicks) AS clicks
+            FROM canonical_fact_webmaster_pages_daily
+            WHERE analytics_account_id = %s
+              AND report_date BETWEEN %s AND %s
+            GROUP BY page_hash, page_url
+            ORDER BY impressions DESC, clicks DESC, page_url ASC
+            LIMIT 200
+            """,
+            (account_id, week_from, week_to),
+        )
+        for row in cur.fetchall():
+            append_page(row.get("page_url"))
+        return selected
+    finally:
+        cur.close()
+        conn.close()
+
+
 def request_with_retry(access_token: str, path_part: str, *, run_id: int | None = None, method: str = "GET", body: dict | None = None) -> dict:
     headers = {"Authorization": f"OAuth {access_token}", "Accept": "application/json"}
     data = None
@@ -696,6 +888,65 @@ def fetch_query_rows(access_token: str, user_id: str, host_id: str, day: str, de
     return all_rows
 
 
+def build_query_page_request_body(page_url: str, day: str, offset: int) -> dict:
+    return {
+        "offset": offset,
+        "limit": QUERY_PAGE_SIZE,
+        "device_type_indicator": DEFAULT_DEVICE,
+        "search_location": DEFAULT_SEARCH_LOCATION,
+        "text_indicator": "QUERY",
+        "filters": {
+            "text_filters": [
+                {
+                    "text_indicator": "URL",
+                    "operation": "TEXT_MATCH",
+                    "value": page_url,
+                }
+            ]
+        },
+        "sort_by_date": {
+            "date": day,
+            "statistic_field": "IMPRESSIONS",
+            "by": "DESC",
+        },
+    }
+
+
+def fetch_query_page_rows(
+    access_token: str,
+    user_id: str,
+    host_id: str,
+    page_url: str,
+    day: str,
+    run_id: int,
+) -> list[dict]:
+    all_rows: list[dict] = []
+    reported_count: int | None = None
+    for offset in range(0, MAX_QUERY_ROWS, QUERY_PAGE_SIZE):
+        payload = request_with_retry(
+            access_token,
+            f"/user/{user_id}/hosts/{quote(host_id, safe='')}/query-analytics/list",
+            run_id=run_id,
+            method="POST",
+            body=build_query_page_request_body(page_url, day, offset),
+        )
+        rows = payload.get("text_indicator_to_statistics") or []
+        all_rows.extend(rows)
+        if payload.get("count") is not None:
+            reported_count = max(reported_count or 0, safe_int(payload.get("count")))
+        if reported_count is not None and len(all_rows) >= reported_count:
+            break
+        if len(rows) < QUERY_PAGE_SIZE:
+            break
+    if reported_count is not None and reported_count > len(all_rows):
+        raise RuntimeError(
+            "incomplete Yandex Webmaster query-page response: "
+            f"reported count={reported_count}, fetched_rows={len(all_rows)}, "
+            f"max_query_rows={MAX_QUERY_ROWS}"
+        )
+    return all_rows
+
+
 def fetch_page_rows(access_token: str, user_id: str, host_id: str, day: str, device: str, run_id: int) -> list[dict]:
     all_rows: list[dict] = []
     for offset in range(0, 100000, 500):
@@ -783,6 +1034,43 @@ def replace_webmaster_day_rows(query_rows: list[dict], summary_row: dict) -> int
                 cur.close()
         finally:
             conn.close()
+
+
+def replace_webmaster_query_page_snapshot(
+    rows: list[dict],
+    coverage: dict,
+) -> int:
+    conn = get_db_connection()
+    cur = None
+    try:
+        cur = conn.cursor()
+        cur.execute(
+            WEBMASTER_QUERY_PAGE_SNAPSHOT_DELETE_SQL,
+            (
+                coverage["source_key"],
+                coverage["analytics_account_id"],
+                coverage["host_id"],
+                coverage["report_date"],
+                coverage["device_type"],
+                coverage["page_hash"],
+            ),
+        )
+        if rows:
+            cur.executemany(WEBMASTER_QUERY_PAGE_UPSERT_SQL, rows)
+        cur.execute(WEBMASTER_QUERY_PAGE_COVERAGE_UPSERT_SQL, coverage)
+        conn.commit()
+        return len(rows) + 1
+    except Exception:
+        conn.rollback()
+        raise
+    finally:
+        try:
+            if cur is not None:
+                cur.close()
+        finally:
+            conn.close()
+
+
 def upsert_webmaster_page_rows(rows: list[dict]) -> int:
     if not rows:
         return 0
@@ -797,7 +1085,12 @@ def upsert_webmaster_page_rows(rows: list[dict]) -> int:
         conn.close()
 
 
-def cron_run_already_completed(today: date | None = None) -> bool:
+def cron_run_already_completed(
+    today: date | None = None,
+    *,
+    run_mode: str = "daily",
+    job_key: str = f"{SOURCE_KEY}:daily",
+) -> bool:
     day = today or datetime.now(timezone.utc).date()
     conn = get_db_connection()
     cur = conn.cursor()
@@ -808,11 +1101,12 @@ def cron_run_already_completed(today: date | None = None) -> bool:
             FROM canonical_collector_runs
             WHERE source_key = %s
               AND run_type = 'cron'
-              AND run_mode = 'daily'
+              AND run_mode = %s
+              AND job_key = %s
               AND status = 'success'
               AND DATE(started_at) = %s
             """,
-            (SOURCE_KEY, day.strftime("%Y-%m-%d")),
+            (SOURCE_KEY, run_mode, job_key, day.strftime("%Y-%m-%d")),
         )
         return bool(cur.fetchone()[0])
     finally:
@@ -867,19 +1161,27 @@ def upsert_accounts(*args, **kwargs):
 def collect(args) -> dict[str, Any]:
     if env_first("YANDEX_WEBMASTER_ENABLED", default="true").lower() == "false":
         return {"status": "skipped", "rows_read": 0, "rows_written": 0}
-    dates = selected_dates(args)
+    layers = getattr(args, "layers", "core")
+    is_query_page_run = layers == "query_pages"
+    dates = selected_query_page_dates(args) if is_query_page_run else selected_dates(args)
     if not dates:
         log.info("Skipping Webmaster run: requested window is newer than the collection floor")
         return {"status": "skipped_unavailable", "rows_read": 0, "rows_written": 0, "dates": []}
-    if args.run_type == "cron" and not args.force and cron_run_already_completed():
-        log.info("Skipping cron run: successful daily run already exists today")
+    run_mode = "weekly" if is_query_page_run else "daily"
+    job_key = f"{SOURCE_KEY}:query_pages" if is_query_page_run else f"{SOURCE_KEY}:daily"
+    if (
+        args.run_type == "cron"
+        and not args.force
+        and cron_run_already_completed(run_mode=run_mode, job_key=job_key)
+    ):
+        log.info("Skipping cron run: successful %s run already exists today", run_mode)
         return {"status": "skipped_quota", "rows_read": 0, "rows_written": 0, "dates": dates}
     correlation_id = str(uuid.uuid4())
     run_id = start_run(
         SOURCE_KEY,
         args.run_type,
-        "daily",
-        f"{SOURCE_KEY}:daily",
+        run_mode,
+        job_key,
         correlation_id,
         dates[0],
         dates[-1],
@@ -894,6 +1196,78 @@ def collect(args) -> dict[str, Any]:
         for account in configured_accounts(args):
             host_id = account.host_id or discover_host_id(access_token, user_id, account.domain, run_id)
             account_rows.append(build_account_registry_row(account, host_id))
+            if is_query_page_run:
+                priority_pages = load_priority_query_pages(
+                    account.analytics_account_id,
+                    limit=getattr(args, "priority_limit", 30),
+                )
+                if not priority_pages:
+                    raise RuntimeError(
+                        f"No Webmaster query-page priority URLs configured for account {account.analytics_account_id}"
+                    )
+                log_collector_event(
+                    run_id,
+                    "info",
+                    "webmaster_query_page_scope",
+                    f"Selected Webmaster query-page scope for {account.domain}",
+                    {
+                        "selected_pages": len(priority_pages),
+                        "date_count": len(dates),
+                        "priority_limit": min(
+                            max(int(getattr(args, "priority_limit", 30)), 15),
+                            30,
+                        ),
+                        "page_hashes": [page_hash(value) for value in priority_pages],
+                    },
+                )
+                for page_url in priority_pages:
+                    for day in dates:
+                        raw_query_pages = fetch_query_page_rows(
+                            access_token,
+                            user_id,
+                            host_id,
+                            page_url,
+                            day,
+                            run_id,
+                        )
+                        pair_rows = normalize_query_page_rows(
+                            {"text_indicator_to_statistics": raw_query_pages},
+                            page_url=page_url,
+                            source_key=SOURCE_KEY,
+                            analytics_account_id=account.analytics_account_id,
+                            host_id=host_id,
+                            report_date=day,
+                            device_type=DEFAULT_DEVICE,
+                            run_id=run_id,
+                        )
+                        coverage = {
+                            "source_key": SOURCE_KEY,
+                            "analytics_account_id": account.analytics_account_id,
+                            "host_id": host_id,
+                            "report_date": day,
+                            "device_type": DEFAULT_DEVICE,
+                            "page_hash": page_hash(page_url),
+                            "page_url": page_url,
+                            "row_count": len(pair_rows),
+                            "ingestion_run_id": run_id,
+                        }
+                        rows_read += len(raw_query_pages)
+                        rows_written += replace_webmaster_query_page_snapshot(
+                            pair_rows,
+                            coverage,
+                        )
+                        log_collector_event(
+                            run_id,
+                            "info",
+                            "webmaster_query_page_collected",
+                            f"Collected Webmaster exact query-page facts for {account.domain} {day}",
+                            {
+                                "page_hash": coverage["page_hash"],
+                                "query_page_rows": len(pair_rows),
+                                "coverage_status": "success_empty" if not pair_rows else "success",
+                            },
+                        )
+                continue
             for day in dates:
                 raw_queries = fetch_query_rows(access_token, user_id, host_id, day, DEFAULT_DEVICE, run_id)
                 raw_pages = fetch_page_rows(access_token, user_id, host_id, day, DEFAULT_DEVICE, run_id)
@@ -943,7 +1317,14 @@ def collect(args) -> dict[str, Any]:
                 )
         upsert_accounts(account_rows)
         finish_run(run_id, "success", rows_read, rows_written, rows_written)
-        return {"status": "success", "run_id": run_id, "rows_read": rows_read, "rows_written": rows_written, "dates": dates}
+        return {
+            "status": "success",
+            "run_id": run_id,
+            "layers": layers,
+            "rows_read": rows_read,
+            "rows_written": rows_written,
+            "dates": dates,
+        }
     except Exception as exc:
         errors.append(str(exc))
         finish_run(run_id, "failed", rows_read, rows_written, rows_written, len(errors), "; ".join(errors)[:1000])

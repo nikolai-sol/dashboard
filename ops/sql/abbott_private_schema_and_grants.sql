@@ -518,7 +518,9 @@ GRANT SELECT, INSERT, UPDATE ON report_bd.canonical_source_accounts
   TO 'abbott_collector_role';
 GRANT SELECT, INSERT, UPDATE ON report_bd.canonical_collector_runs
   TO 'abbott_collector_role';
-GRANT INSERT ON report_bd.canonical_collector_run_events
+GRANT SELECT, INSERT ON report_bd.canonical_collector_run_events
+  TO 'abbott_collector_role';
+GRANT SELECT ON report_bd.portal_release_source_imports
   TO 'abbott_collector_role';
 GRANT SELECT, INSERT, UPDATE, DELETE ON report_bd.canonical_fact_metrika_site_analytics_daily
   TO 'abbott_collector_role';

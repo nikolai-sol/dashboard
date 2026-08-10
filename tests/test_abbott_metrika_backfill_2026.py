@@ -1,8 +1,10 @@
 from __future__ import annotations
 
+import ast
 from contextlib import redirect_stderr
 from datetime import date
 import io
+from pathlib import Path
 from types import SimpleNamespace
 import unittest
 from unittest.mock import Mock, patch
@@ -47,6 +49,37 @@ def coverage_row(scope, status="success", **overrides):
 
 
 class AbbottMetrikaBackfill2026Test(unittest.TestCase):
+    def test_disables_bytecode_before_importing_local_modules(self):
+        source = Path(__file__).resolve().parents[1] / "backfill_abbott_metrika_2026.py"
+        tree = ast.parse(source.read_text(encoding="utf-8"))
+        assignment_indexes = [
+            index
+            for index, node in enumerate(tree.body)
+            if isinstance(node, ast.Assign)
+            and any(
+                isinstance(target, ast.Attribute)
+                and isinstance(target.value, ast.Name)
+                and target.value.id == "sys"
+                and target.attr == "dont_write_bytecode"
+                for target in node.targets
+            )
+            and isinstance(node.value, ast.Constant)
+            and node.value.value is True
+        ]
+        local_import_indexes = [
+            index
+            for index, node in enumerate(tree.body)
+            if isinstance(node, ast.ImportFrom)
+            and node.module in {
+                "canonical_writer",
+                "fetch_yandex_metrika_canonical",
+            }
+        ]
+
+        self.assertEqual(len(assignment_indexes), 1)
+        self.assertEqual(len(local_import_indexes), 2)
+        self.assertLess(assignment_indexes[0], min(local_import_indexes))
+
     def test_windows_cover_2026_from_january_first_through_yesterday(self):
         from backfill_abbott_metrika_2026 import build_backfill_windows
 
@@ -189,6 +222,46 @@ class AbbottMetrikaBackfill2026Test(unittest.TestCase):
                         baseline_guard=baseline_guard,
                     )
                 baseline_guard.assert_not_called()
+
+    def test_runner_logs_sanitized_aggregate_for_failed_days(self):
+        from backfill_abbott_metrika_2026 import run_backfill
+
+        collect_day = Mock(side_effect=RuntimeError(
+            "https://private.example/visit/123?token=SECRET"
+        ))
+        log_event = Mock()
+
+        summary = run_backfill(
+            Mock(),
+            canonical_release_id=41,
+            run_id=77,
+            code_revision="revision-a",
+            parser_version="metrika-parser-v1",
+            days=("2026-03-29", "2026-03-30"),
+            is_reconciled=lambda *_args: False,
+            collect_day=collect_day,
+            baseline_guard=Mock(),
+            log_event=log_event,
+        )
+
+        self.assertEqual(summary["failed_days"], [
+            {"report_date": "2026-03-29", "error_class": "RuntimeError"},
+            {"report_date": "2026-03-30", "error_class": "RuntimeError"},
+        ])
+        log_event.assert_called_once_with(
+            77,
+            "error",
+            "abbott_backfill_days_failed",
+            "Abbott backfill days failed",
+            {
+                "failed_day_count": 2,
+                "failed_days": summary["failed_days"],
+            },
+        )
+        logged = str(log_event.call_args)
+        self.assertNotIn("private.example", logged)
+        self.assertNotIn("SECRET", logged)
+        self.assertNotIn("123", logged)
 
     def test_cli_requires_canonical_release_id_and_has_no_counter_override(self):
         from backfill_abbott_metrika_2026 import build_parser
