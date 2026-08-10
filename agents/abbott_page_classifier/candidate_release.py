@@ -35,6 +35,7 @@ from .normalization import (
     normalize_url,
     sha256_text,
 )
+from .workflow_repository import StrongUrlAlias, _load_active_strong_url_aliases
 
 
 DATASET_KEY = "abbott"
@@ -677,8 +678,9 @@ def build_lookup_projection(
     catalog_rows: Iterable[CandidateCatalogRow],
     *,
     page_facts: Iterable[Mapping[str, object]] = (),
+    strong_aliases: Iterable[StrongUrlAlias | Mapping[str, object]] = (),
 ) -> tuple[LookupProjectionRow, ...]:
-    """Build deterministic title/slug/path groups without resolving ambiguity."""
+    """Build deterministic lookup groups, with fail-closed strong URL identity."""
 
     catalog_rows = tuple(catalog_rows)
     groups: dict[tuple[str, str], list[CandidateCatalogRow]] = {}
@@ -692,6 +694,33 @@ def build_lookup_projection(
             if not value:
                 continue
             groups.setdefault((kind, sha256_text(value)), []).append(row)
+
+    url_entities: dict[str, set[int]] = {}
+    for row in catalog_rows:
+        normalized = normalize_url(row.normalized_url).value
+        if normalized:
+            url_entities.setdefault(normalized, set()).add(row.content_entity_id)
+    for alias in strong_aliases:
+        try:
+            entity_id = int(
+                alias.content_entity_id if isinstance(alias, StrongUrlAlias)
+                else alias["content_entity_id"]
+            )
+            alias_type = (
+                alias.alias_type if isinstance(alias, StrongUrlAlias)
+                else str(alias["alias_type"])
+            )
+            alias_value = (
+                alias.alias_value if isinstance(alias, StrongUrlAlias)
+                else str(alias["alias_value"])
+            )
+        except (KeyError, TypeError, ValueError):
+            raise CandidateMaterializationError("STRONG_IDENTITY_COLLISION") from None
+        if entity_id <= 0 or alias_type not in {"canonical_url", "url"}:
+            raise CandidateMaterializationError("STRONG_IDENTITY_COLLISION")
+        normalized = normalize_url(alias_value).value
+        if normalized:
+            url_entities.setdefault(normalized, set()).add(entity_id)
 
     result: list[LookupProjectionRow] = []
     for (kind, key_hash), rows in sorted(groups.items()):
@@ -728,9 +757,47 @@ def build_lookup_projection(
                 group_fingerprint=group_fingerprint,
             )
         )
+
+    catalog_by_entity: dict[int, list[CandidateCatalogRow]] = {}
+    for row in catalog_rows:
+        catalog_by_entity.setdefault(row.content_entity_id, []).append(row)
+    for normalized_url, entity_ids in sorted(url_entities.items()):
+        if len(entity_ids) != 1:
+            raise CandidateMaterializationError("STRONG_IDENTITY_COLLISION")
+        entity_id = next(iter(entity_ids))
+        selected_rows = sorted(
+            catalog_by_entity.get(entity_id, ()),
+            key=lambda item: item.source_row_fingerprint,
+        )
+        if not selected_rows:
+            raise CandidateMaterializationError("STRONG_IDENTITY_COLLISION")
+        selected = selected_rows[0]
+        result.append(
+            LookupProjectionRow(
+                lookup_kind="url",
+                lookup_key_hash=sha256_text(normalized_url),
+                candidate_count=len(selected_rows),
+                metadata_signature_count=len(
+                    {_metadata_signature(item) for item in selected_rows}
+                ),
+                resolution_status="unique",
+                selected_source_row_fingerprint=selected.source_row_fingerprint,
+                group_fingerprint=sha256_text(
+                    _canonical_json(
+                        {
+                            "content_entity_id": entity_id,
+                            "url": normalized_url,
+                            "source_row_fingerprints": [
+                                item.source_row_fingerprint for item in selected_rows
+                            ],
+                        }
+                    )
+                ),
+            )
+        )
     facts = tuple(page_facts)
     if not facts:
-        return tuple(result)
+        return tuple(sorted(result, key=lambda row: (row.lookup_kind, row.lookup_key_hash)))
 
     catalog_by_fingerprint = {
         row.source_row_fingerprint: row for row in catalog_rows
@@ -2464,8 +2531,9 @@ def materialize_content_candidate(
             (predecessor_release_id, ABBOTT_COUNTER_ID),
         )
         page_fact_rows = tuple(cursor.fetchall())
+        strong_aliases = _load_active_strong_url_aliases(cursor)
         lookup_rows = build_lookup_projection(
-            catalog_rows, page_facts=page_fact_rows
+            catalog_rows, page_facts=page_fact_rows, strong_aliases=strong_aliases
         )
         referenced_taxonomy_terms = _referenced_taxonomy_terms(catalog_rows)
         catalog_payloads = tuple(_catalog_payload(row) for row in catalog_rows)
@@ -3378,7 +3446,8 @@ def validate_content_candidate(
                    ), 0) AS dangling_selected_count,
                    COALESCE(SUM(lookup_row.lookup_kind = 'title'), 0) AS title_group_count,
                    COALESCE(SUM(lookup_row.lookup_kind = 'slug'), 0) AS slug_group_count,
-                   COALESCE(SUM(lookup_row.lookup_kind = 'path'), 0) AS path_group_count
+                   COALESCE(SUM(lookup_row.lookup_kind = 'path'), 0) AS path_group_count,
+                   COALESCE(SUM(lookup_row.lookup_kind = 'url'), 0) AS url_group_count
             FROM portal_content_lookup_projection AS lookup_row
             LEFT JOIN portal_content_catalog AS selected_catalog
               ON selected_catalog.canonical_release_id = lookup_row.canonical_release_id
@@ -3386,7 +3455,7 @@ def validate_content_candidate(
              AND selected_catalog.source_row_fingerprint = lookup_row.selected_source_row_fingerprint
             WHERE lookup_row.canonical_release_id = %s
               AND lookup_row.source_snapshot_id = %s
-              AND lookup_row.lookup_kind IN ('title', 'slug', 'path')
+              AND lookup_row.lookup_kind IN ('title', 'slug', 'path', 'url')
             """,
             (candidate_release_id, catalog_snapshot_id),
         )
@@ -3438,7 +3507,7 @@ def validate_content_candidate(
              AND selected_catalog.source_row_fingerprint = lookup_row.selected_source_row_fingerprint
             WHERE lookup_row.canonical_release_id = %s
               AND lookup_row.source_snapshot_id = %s
-              AND lookup_row.lookup_kind IN ('title', 'slug', 'path')
+              AND lookup_row.lookup_kind IN ('title', 'slug', 'path', 'url')
               AND lookup_row.resolution_status IN ('unique', 'identical_collapsed')
               AND selected_catalog.is_active = 1
             """,
@@ -3457,7 +3526,7 @@ def validate_content_candidate(
              AND selected_catalog.source_row_fingerprint = lookup_row.selected_source_row_fingerprint
             WHERE lookup_row.canonical_release_id = %s
               AND lookup_row.source_snapshot_id = %s
-              AND lookup_row.lookup_kind IN ('title', 'slug', 'path')
+              AND lookup_row.lookup_kind IN ('title', 'slug', 'path', 'url')
               AND lookup_row.resolution_status IN ('unique', 'identical_collapsed')
               AND selected_catalog.is_active = 1
             ORDER BY selected_catalog.source_row_fingerprint
@@ -3482,7 +3551,7 @@ def validate_content_candidate(
                     AND selected_catalog.source_row_fingerprint = lookup_row.selected_source_row_fingerprint
                    WHERE lookup_row.canonical_release_id = %s
                      AND lookup_row.source_snapshot_id = %s
-                     AND lookup_row.lookup_kind IN ('title', 'slug', 'path')
+                     AND lookup_row.lookup_kind IN ('title', 'slug', 'path', 'url')
                      AND lookup_row.resolution_status IN ('unique', 'identical_collapsed')
                      AND selected_catalog.is_active = 1
                      AND selected_catalog.direction_key = %s
@@ -3503,7 +3572,7 @@ def validate_content_candidate(
                        WHERE lookup_row.canonical_release_id = catalog.canonical_release_id
                          AND lookup_row.source_snapshot_id = catalog.source_snapshot_id
                          AND lookup_row.selected_source_row_fingerprint = catalog.source_row_fingerprint
-                         AND lookup_row.lookup_kind IN ('title', 'slug', 'path')
+                         AND lookup_row.lookup_kind IN ('title', 'slug', 'path', 'url')
                          AND lookup_row.resolution_status IN ('unique', 'identical_collapsed')
                      )
                   ) AS combined_catalog_rows
@@ -3533,6 +3602,7 @@ def validate_content_candidate(
             and int(_row_value(lookup_smoke, "dangling_selected_count", 2) or 0) == 0
             and int(_row_value(lookup_smoke, "title_group_count", 3) or 0) > 0
             and int(_row_value(lookup_smoke, "path_group_count", 5) or 0) > 0
+            and int(_row_value(lookup_smoke, "url_group_count", 6) or 0) > 0
             and int(_row_value(slug_smoke, "expected_slug_group_count", 0) or 0)
             == int(_row_value(slug_smoke, "projected_slug_group_count", 1) or 0)
             and all(

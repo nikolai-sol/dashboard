@@ -23,6 +23,7 @@ from agents.abbott_page_classifier.repository import RepositoryError
 from agents.abbott_page_classifier.sources import RejectedSourceRow
 from agents.abbott_page_classifier.workflow_repository import (
     MySqlWorkflowStore,
+    _load_active_strong_url_aliases,
     _canonical_json,
     _input_from_payload,
     _input_payload,
@@ -111,6 +112,17 @@ class FakeConnection:
 
     def close(self):
         pass
+
+
+class StrongAliasCursor:
+    def __init__(self):
+        self.calls = []
+
+    def execute(self, sql, params=()):
+        self.calls.append((" ".join(sql.split()), params))
+
+    def fetchall(self):
+        return [(7, "canonical_url", "https://abbottpro.ru/cardio/alpha")]
 
 
 class RehydrationCursor(FakeCursor):
@@ -486,6 +498,21 @@ class BootstrapConnection(FakeConnection):
 
 
 class MySqlWorkflowStoreTests(unittest.TestCase):
+    def test_load_active_strong_url_aliases_is_constrained_and_ordered(self):
+        cursor = StrongAliasCursor()
+
+        aliases = _load_active_strong_url_aliases(cursor)
+
+        self.assertEqual(aliases[0].content_entity_id, 7)
+        self.assertEqual(aliases[0].alias_type, "canonical_url")
+        self.assertEqual(aliases[0].alias_value, "https://abbottpro.ru/cardio/alpha")
+        sql, params = cursor.calls[0]
+        self.assertEqual(params, ())
+        self.assertIn("dataset_key = 'abbott'", sql)
+        self.assertIn("alias_status = 'active'", sql)
+        self.assertIn("uniqueness_scope = 'strong'", sql)
+        self.assertIn("alias_type IN ('canonical_url', 'url')", sql)
+        self.assertIn("ORDER BY content_entity_id, alias_type, alias_hash", sql)
     def test_distinct_rejected_source_inputs_round_trip_durable_payload(self):
         rejected_rows = tuple(
             RejectedSourceRow(

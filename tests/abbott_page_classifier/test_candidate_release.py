@@ -15,6 +15,7 @@ from agents.abbott_page_classifier.candidate_release import (
     CandidateMaterializationError,
     CONTENT_CONTROL_VALUES,
     GateReport,
+    StrongUrlAlias,
     _database_datetime,
     _catalog_payload,
     _catalog_schema_gates,
@@ -702,6 +703,7 @@ class CandidateConnection:
                 "title_group_count": 2,
                 "slug_group_count": 0 if self.realistic_smoke else 2,
                 "path_group_count": 2,
+                "url_group_count": 2,
             }
         elif "AS expected_slug_group_count" in normalized:
             expected = 0 if self.realistic_smoke else 2
@@ -1239,13 +1241,38 @@ class CandidateReleaseTest(unittest.TestCase):
 
         collapsed = build_lookup_projection((identical, first))
         self.assertTrue(collapsed)
-        self.assertEqual({item.resolution_status for item in collapsed}, {"identical_collapsed"})
-        self.assertTrue(all(item.selected_source_row_fingerprint == "1" * 64 for item in collapsed))
+        self.assertEqual(
+            {item.resolution_status for item in collapsed},
+            {"identical_collapsed", "unique"},
+        )
+        self.assertTrue(
+            all(item.selected_source_row_fingerprint == "1" * 64 for item in collapsed)
+        )
         self.assertEqual(collapsed, build_lookup_projection((first, identical)))
 
         ambiguous = build_lookup_projection((first, conflicting))
-        self.assertTrue(all(item.resolution_status == "ambiguous" for item in ambiguous))
-        self.assertTrue(all(item.selected_source_row_fingerprint is None for item in ambiguous))
+        self.assertTrue(
+            all(
+                item.resolution_status == "ambiguous"
+                for item in ambiguous
+                if item.lookup_kind != "url"
+            )
+        )
+        self.assertTrue(
+            all(
+                item.selected_source_row_fingerprint is None
+                for item in ambiguous
+                if item.lookup_kind != "url"
+            )
+        )
+        self.assertTrue(
+            all(
+                item.resolution_status == "unique"
+                and item.selected_source_row_fingerprint == "1" * 64
+                for item in ambiguous
+                if item.lookup_kind == "url"
+            )
+        )
 
     def test_lookup_hashes_match_dashboard_exact_title_slug_and_path_keys(self):
         rows = build_lookup_projection(
@@ -1255,6 +1282,85 @@ class CandidateReleaseTest(unittest.TestCase):
         self.assertEqual(hashes["title"], sha256_text("Shared"))
         self.assertEqual(hashes["slug"], sha256_text("Mixed-Slug"))
         self.assertEqual(hashes["path"], sha256_text("/cardio/alpha"))
+        self.assertEqual(hashes["url"], sha256_text("https://abbottpro.ru/cardio/alpha"))
+
+    def test_lookup_projection_materializes_canonical_and_strong_url_aliases(self):
+        row = replace(
+            catalog_row("1" * 64),
+            content_entity_id=7,
+            normalized_url="https://abbottpro.ru/cardio/alpha/",
+        )
+        rows = build_lookup_projection(
+            (row,),
+            strong_aliases=(
+                StrongUrlAlias(7, "url", "https://abbottpro.ru/legacy/"),
+            ),
+        )
+
+        url_rows = [item for item in rows if item.lookup_kind == "url"]
+        self.assertEqual(len(url_rows), 2)
+        self.assertTrue(all(item.resolution_status == "unique" for item in url_rows))
+        self.assertEqual(
+            {item.lookup_key_hash for item in url_rows},
+            {
+                sha256_text("https://abbottpro.ru/cardio/alpha"),
+                sha256_text("https://abbottpro.ru/legacy"),
+            },
+        )
+
+    def test_lookup_projection_rejects_normalized_strong_url_collision(self):
+        first = replace(catalog_row("1" * 64), content_entity_id=7)
+        second = replace(
+            catalog_row("2" * 64, url="https://abbottpro.ru/cardio/beta"),
+            content_entity_id=8,
+        )
+
+        with self.assertRaisesRegex(
+            CandidateMaterializationError, "^STRONG_IDENTITY_COLLISION$"
+        ):
+            build_lookup_projection(
+                (first, second),
+                strong_aliases=(
+                    StrongUrlAlias(7, "url", "https://abbottpro.ru/legacy"),
+                    StrongUrlAlias(8, "canonical_url", "https://abbottpro.ru/legacy/"),
+                ),
+            )
+
+    def test_materialization_aborts_before_catalog_insert_on_strong_url_collision(self):
+        connection = CandidateConnection()
+        aliases = (
+            StrongUrlAlias(1, "url", "https://abbottpro.ru/legacy"),
+            StrongUrlAlias(2, "canonical_url", "https://abbottpro.ru/legacy/"),
+        )
+        with (
+            patch(
+                "agents.abbott_page_classifier.candidate_release.get_db_connection",
+                return_value=connection,
+            ),
+            patch(
+                "agents.abbott_page_classifier.candidate_release.release_store.create_candidate_release",
+                return_value=41,
+            ),
+            patch(
+                "agents.abbott_page_classifier.candidate_release.release_store.require_mutable_candidate_release",
+                return_value={"id": 41, "release_status": "staging"},
+            ),
+            patch(
+                "agents.abbott_page_classifier.candidate_release._load_active_strong_url_aliases",
+                return_value=aliases,
+            ),
+        ):
+            with self.assertRaisesRegex(
+                CandidateMaterializationError, "^STRONG_IDENTITY_COLLISION$"
+            ):
+                materialize_content_candidate(71, 12, "abc1234")
+
+        self.assertFalse(
+            any(
+                sql.startswith("INSERT INTO portal_content_catalog")
+                for sql, _ in connection.calls
+            )
+        )
 
     def test_gate_report_requires_every_exact_percentage_and_zero_failure(self):
         passed = GateReport(
@@ -2378,7 +2484,7 @@ class CandidateReleaseTest(unittest.TestCase):
         smoke_sql = "\n".join(sql for sql, _ in connection.calls)
         self.assertIn("resolution_status = 'ambiguous'", smoke_sql)
         self.assertIn("selected_source_row_fingerprint IS NULL", smoke_sql)
-        self.assertIn("lookup_kind IN ('title', 'slug', 'path')", smoke_sql)
+        self.assertIn("lookup_kind IN ('title', 'slug', 'path', 'url')", smoke_sql)
         self.assertIn("INNER JOIN portal_content_catalog AS selected_catalog", smoke_sql)
 
     def test_dashboard_smoke_rejects_dangling_selected_fingerprint(self):
