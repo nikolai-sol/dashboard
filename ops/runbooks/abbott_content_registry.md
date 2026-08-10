@@ -144,6 +144,13 @@ aliases and mutable review state are never exclusion authority. Do not include
 URLs, visitor/user/client identifiers, or visit data in validation evidence or
 operator output.
 
+The URL-decision event table rejects every update and delete in the database.
+Candidate validation recomputes the event fingerprint from the accepted hash,
+actor, batch/item IDs, normalized URL, decision, reason, and optional reviewed
+predecessor binding before it can honor a rejection. A malformed or altered
+event fails closed; never repair an exclusion in place—submit a reviewed
+successor decision.
+
 ## Data minimization and gates
 
 Persist and print only bounded content metadata, taxonomy codes, source/batch

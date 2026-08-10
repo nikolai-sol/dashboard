@@ -17,6 +17,12 @@
 - The transition requires exactly the 14 content controls and all 12 fixed
   fact-total controls. An incomplete or fabricated `GateReport` fails closed
   with `FACT_TOTAL_EVIDENCE_INVALID` before any lifecycle update.
+- Migration 051 makes URL-decision event rows database-immutable with
+  unconditional update/delete triggers and replay-safe foreign keys to the
+  reviewed batch, item, optional entity, and optional predecessor event.
+  Candidate validation uses the repository's shared event-fingerprint helper
+  and rejects altered URL, decision, reason, or fingerprint values before a
+  reject event can serve as an exclusion.
 - Runtime authorities were synchronized byte-for-byte and both SHA manifests
   updated. The operator runbook now states the DB-native/no-backfill boundary.
 
@@ -51,6 +57,14 @@ python -m unittest tests.abbott_page_classifier.test_candidate_release \
   tests.test_abbott_canonical_controls tests.test_abbott_release_operator \
   tests.test_canonical_release_store -v
 Ran 128 tests ... OK
+```
+
+The immutable-reject re-review closure additionally ran the candidate, schema,
+repository, approval-ingestion, workflow, canonical-control, release-store,
+and runtime-closure suites together:
+
+```text
+Ran 278 tests ... OK
 ```
 
 The full runtime closure passed:

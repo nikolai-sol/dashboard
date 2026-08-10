@@ -30,6 +30,9 @@ from agents.abbott_page_classifier.candidate_release import (
     validate_and_transition_content_candidate,
     validate_content_candidate,
 )
+from agents.abbott_page_classifier.approval_hashes import (
+    compute_url_alias_decision_event_fingerprint,
+)
 from agents.abbott_page_classifier.batch_service import (
     ApprovalBatchItem,
     compute_accepted_decision_hash,
@@ -895,11 +898,13 @@ class ProductionValidationConnection(CandidateConnection):
         candidate_pageview_delta: int = 0,
         content_unresolved: int = 0,
         non_content_unresolved: int = 0,
+        reviewed_exclusion_event: dict[str, object] | None = None,
     ):
         super().__init__()
         self.candidate_pageview_delta = candidate_pageview_delta
         self.content_unresolved = content_unresolved
         self.non_content_unresolved = non_content_unresolved
+        self.reviewed_exclusion_event = reviewed_exclusion_event
         self.validation_evidence = []
         self.release_status = "staging"
 
@@ -928,6 +933,16 @@ class ProductionValidationConnection(CandidateConnection):
                 "content_unresolved": self.content_unresolved,
                 "non_content_unresolved": self.non_content_unresolved,
             }
+            return
+        if "FROM portal_content_url_alias_decision_events AS exclusion" in normalized:
+            self.calls.append((normalized, params))
+            self._one = None
+            self._many = (
+                [self.reviewed_exclusion_event]
+                if self.reviewed_exclusion_event is not None else []
+            )
+            self._stream_many = False
+            self.rowcount = 0
             return
         if normalized.startswith("SELECT baseline_validation_run_id"):
             self.calls.append((normalized, params))
@@ -1596,6 +1611,68 @@ class CandidateReleaseTest(unittest.TestCase):
         self.assertIn("portal_content_url_alias_decision_events", observed_sql)
         self.assertIn("url_alias_decision = 'reject'", observed_sql)
         self.assertIn("decision_reason", observed_sql)
+
+    def test_real_validation_rejects_a_tampered_reviewed_exclusion_event(self):
+        connection = self._prepare_gate(ProductionValidationConnection(
+            reviewed_exclusion_event={"event_fingerprint": "0" * 64},
+        ))
+        counts = {
+            "source": 2, "ready": 1, "conflict": 0, "unresolved": 0,
+            "rejected": 0, "accepted": 1, "no_change": 1,
+        }
+
+        with self.assertRaisesRegex(
+            CandidateMaterializationError, "REVIEWED_EXCLUSION_INVALID"
+        ):
+            validate_content_candidate(
+                41, counts, connection.accepted_hash,
+                connection_factory=lambda: connection,
+            )
+
+    def test_real_validation_accepts_only_an_intact_candidate_bound_reject_event(self):
+        base_connection = self._prepare_gate(ProductionValidationConnection())
+        event = {
+            "approval_batch_id": 71,
+            "approval_item_id": 101,
+            "accepted_decision_hash": base_connection.accepted_hash,
+            "actor": "content-manager",
+            "decision_reason": "reviewed non-content route",
+            "normalized_url": "https://abbottpro.ru/removed",
+            "url_alias_decision": "reject",
+            "selected_content_entity_id": None,
+            "selected_predecessor_event_id": None,
+            "selected_predecessor_event_fingerprint": None,
+        }
+        event["event_fingerprint"] = compute_url_alias_decision_event_fingerprint(**event)
+        counts = {
+            "source": 2, "ready": 1, "conflict": 0, "unresolved": 0,
+            "rejected": 0, "accepted": 1, "no_change": 1,
+        }
+        clean = self._prepare_gate(ProductionValidationConnection(
+            reviewed_exclusion_event=event,
+        ))
+        report = validate_content_candidate(
+            41, counts, clean.accepted_hash, connection_factory=lambda: clean,
+        )
+        self.assertTrue(report.passed)
+
+        for field, value in (
+            ("normalized_url", "https://abbottpro.ru/tampered"),
+            ("url_alias_decision", "attach"),
+            ("decision_reason", "tampered reason"),
+            ("event_fingerprint", "f" * 64),
+        ):
+            with self.subTest(field=field):
+                connection = self._prepare_gate(ProductionValidationConnection(
+                    reviewed_exclusion_event={**event, field: value},
+                ))
+                with self.assertRaisesRegex(
+                    CandidateMaterializationError, "REVIEWED_EXCLUSION_INVALID"
+                ):
+                    validate_content_candidate(
+                        41, counts, connection.accepted_hash,
+                        connection_factory=lambda: connection,
+                    )
 
     def test_real_validation_writes_exact_full_control_evidence_before_validating(self):
         materializer = self._prepare_gate(ProductionValidationConnection())

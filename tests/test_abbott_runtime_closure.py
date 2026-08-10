@@ -65,6 +65,8 @@ SYNCHRONIZED_BOOTSTRAP_COPIES = {
     "runtime/agents/abbott_page_classifier/run_classifier.sh": "agents/abbott_page_classifier/run_classifier.sh",
     "runtime/agents/abbott_page_classifier/run_weekly_proposal.sh": "agents/abbott_page_classifier/run_weekly_proposal.sh",
     "src/db/migrations/049_abbott_content_reconciliation_staging.sql": "dashboard-next/src/db/migrations/049_abbott_content_reconciliation_staging.sql",
+    "src/db/migrations/050_abbott_content_url_identity.sql": "dashboard-next/src/db/migrations/050_abbott_content_url_identity.sql",
+    "src/db/migrations/051_abbott_content_url_alias_decisions.sql": "dashboard-next/src/db/migrations/051_abbott_content_url_alias_decisions.sql",
 }
 VENDORED_CONTENT_RUNTIME = {
     "runtime/agents/__init__.py",

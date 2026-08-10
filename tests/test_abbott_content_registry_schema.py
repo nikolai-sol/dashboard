@@ -156,7 +156,30 @@ class AbbottContentRegistrySchemaTests(unittest.TestCase):
         sql = URL_ALIAS_DECISIONS_MIGRATION.read_text(encoding="utf-8")
         self.assertIn("ADD COLUMN IF NOT EXISTS selected_content_entity_id BIGINT UNSIGNED DEFAULT NULL", sql)
         self.assertIn("ENUM('attach', 'retire', 'reject') DEFAULT NULL", sql)
-        self.assertNotIn("FOREIGN KEY", sql)
+
+    def test_url_alias_decision_events_are_append_only_and_linked_to_review_authority(self):
+        sql = URL_ALIAS_DECISIONS_MIGRATION.read_text(encoding="utf-8")
+        for trigger, operation in (
+            ("trg_abbott_url_alias_decision_events_immutable_update", "UPDATE"),
+            ("trg_abbott_url_alias_decision_events_immutable_delete", "DELETE"),
+        ):
+            with self.subTest(trigger=trigger):
+                self.assertIn(f"DROP TRIGGER IF EXISTS {trigger}", sql)
+                self.assertRegex(
+                    sql,
+                    rf"CREATE TRIGGER {trigger}\s+BEFORE {operation} ON "
+                    r"portal_content_url_alias_decision_events[\s\S]*?"
+                    r"SIGNAL SQLSTATE '45000'",
+                )
+        self.assertGreaterEqual(sql.count("-- @migration-statement-break"), 4)
+        for constraint in (
+            "fk_url_alias_decision_batch",
+            "fk_url_alias_decision_item",
+            "fk_url_alias_decision_entity",
+            "fk_url_alias_decision_predecessor_event",
+        ):
+            with self.subTest(constraint=constraint):
+                self.assertIn(constraint, sql)
 
 
 if __name__ == "__main__":
