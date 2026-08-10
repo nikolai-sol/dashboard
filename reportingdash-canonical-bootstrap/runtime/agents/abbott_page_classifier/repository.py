@@ -1123,6 +1123,10 @@ class ContentRegistryRepository:
 
                 if (
                     item.final_lifecycle_code == "archive_candidate"
+                    and (
+                        predecessor_values is None
+                        or predecessor_values[3] != "archive_candidate"
+                    )
                     and not self._archive_evidence_authorized(proposal_evidence)
                 ):
                     raise RepositoryError("ARCHIVE_EVIDENCE_REQUIRED")

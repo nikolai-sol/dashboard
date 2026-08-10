@@ -70,6 +70,9 @@ _DIRECTION_ALIASES = _aliases(
         "Здоровье дыхательной системы": "respiratory_health",
         "Управление сахарным диабетом": "diabetes_management",
         "Дерматология": "dermatology",
+        "332987": "undetermined",
+        "Гастроэнтерология [262340] / Здоровье дыхательной системы [263746]": "undetermined",
+        "Гастроэнтерология [262340] / Женское здоровье [262337] / Кардиология [262338] / Неврология и психиатрия [262339]": "undetermined",
     },
 )
 _MATERIAL_TYPE_ALIASES = _aliases(
@@ -79,6 +82,7 @@ _MATERIAL_TYPE_ALIASES = _aliases(
         "КС": "clinical_cases",
         "Брошюры": "educational_brochures",
         "Научно-брошюры": "educational_brochures",
+        "Алгоритмы": "pharmacy_consulting_algorithms",
     },
 )
 _ACCESS_ALIASES = _aliases(
@@ -87,6 +91,8 @@ _ACCESS_ALIASES = _aliases(
         "фарм": "pharmacists",
         "для фармацевтов": "pharmacists",
         "для врачей": "doctors",
+        "Доступно всем": "all",
+        "Гастроэнтерология [262340]": "unspecified",
     },
 )
 _LIFECYCLE_ALIASES = _aliases(

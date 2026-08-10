@@ -634,6 +634,12 @@ def reconcile_entity(value: ReconciliationInput) -> ApprovalItem:
         if not archive_evidence_valid:
             _append_conflict(conflicts, ConflictCode.ARCHIVE_TYPE_INVALID)
             final_lifecycle = lifecycle_before_registry2 or "active"
+    if (
+        active is None
+        and final_lifecycle == "archive_candidate"
+        and not direct_archive_evidence
+    ):
+        _append_conflict(conflicts, ConflictCode.ARCHIVE_TYPE_INVALID)
 
     if final_access is None:
         final_access = "unspecified"
