@@ -126,6 +126,21 @@ activate it. Retry a stable failure with the same `run_id` or `batch_id`.
 If a candidate fails, do not activate it and do not silently rewrite the active
 release; retain the receipt for review.
 
+URL-identity successors are DB-native clones of the active Abbott release. They
+never trigger a Metrika backfill, OAuth use, Logs job, or Reports request. The
+materializer records an exact predecessor/candidate count and deterministic
+hash for every release-scoped fact table (including coverage, receipts,
+snapshots, and manifests). Validation compares sessions, users, pageviews, and
+goal conversions exactly for 2026-06-01..2026-06-30,
+2026-07-01..2026-07-31, and 2026-08-01..2026-08-09; metadata direction/type
+changes are permitted only when all fact controls still match.
+
+Observed-page publication evidence contains aggregate unresolved counts only.
+Every content-like observed page must resolve both direction and material type.
+Every non-content observed page must be `service_page` or have a reviewed
+exclusion. Do not include URLs, visitor/user/client identifiers, or visit data
+in validation evidence or operator output.
+
 ## Data minimization and gates
 
 Persist and print only bounded content metadata, taxonomy codes, source/batch

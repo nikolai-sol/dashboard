@@ -101,6 +101,14 @@ class ComparatorCursor:
             self._one = {
                 "code_revision": "candidate-revision",
                 "baseline_validation_run_id": self.release_baseline_id,
+                "rollback_from_release_id": 12,
+            }
+        elif "SUM(goal_conversions)" in normalized:
+            self._one = {
+                "sessions": 100,
+                "users": 80,
+                "pageviews": 120,
+                "goal_conversions": 5,
             }
         elif "canonical_fact_metrika_site_analytics_daily" in normalized:
             self._rows = [
@@ -136,6 +144,40 @@ class ComparatorConnection(RecordingConnection):
 
 
 class AbbottCanonicalControlsTest(unittest.TestCase):
+    def test_metadata_only_fact_controls_fail_on_a_cloned_pageview_mutation(self):
+        from abbott_canonical_controls import compare_metadata_only_fact_totals
+
+        predecessor = {
+            ("2026-06-01", "2026-06-30"): {"sessions": 10, "users": 8, "pageviews": 12, "goal_conversions": 2},
+            ("2026-07-01", "2026-07-31"): {"sessions": 20, "users": 16, "pageviews": 24, "goal_conversions": 4},
+            ("2026-08-01", "2026-08-09"): {"sessions": 30, "users": 24, "pageviews": 36, "goal_conversions": 6},
+        }
+        candidate = {period: dict(metrics) for period, metrics in predecessor.items()}
+        candidate[("2026-07-01", "2026-07-31")]["pageviews"] += 1
+
+        results = compare_metadata_only_fact_totals(predecessor, candidate)
+
+        mismatch = next(result for result in results if result.control_name == "fact_totals.2026-07-01.2026-07-31.pageviews")
+        self.assertEqual(mismatch.result_status, "fail")
+        self.assertEqual(mismatch.diagnostic["reason_code"], "FACT_TOTAL_MISMATCH")
+
+    def test_metadata_only_fact_controls_ignore_direction_and_type_metadata(self):
+        from abbott_canonical_controls import compare_metadata_only_fact_totals
+
+        totals = {
+            ("2026-06-01", "2026-06-30"): {"sessions": 10, "users": 8, "pageviews": 12, "goal_conversions": 2},
+            ("2026-07-01", "2026-07-31"): {"sessions": 20, "users": 16, "pageviews": 24, "goal_conversions": 4},
+            ("2026-08-01", "2026-08-09"): {"sessions": 30, "users": 24, "pageviews": 36, "goal_conversions": 6},
+        }
+
+        results = compare_metadata_only_fact_totals(
+            totals,
+            totals,
+            predecessor_metadata={"direction": "cardiology", "material_type": "articles"},
+            candidate_metadata={"direction": "gastroenterology", "material_type": "video"},
+        )
+
+        self.assertTrue(all(result.result_status == "pass" for result in results))
     def test_other_scope_user_id_partition_contract_is_exact(self):
         import fetch_yandex_metrika_canonical as collector
 

@@ -198,6 +198,34 @@ class GateReport:
         )
 
 
+def observed_page_resolution_gates(
+    *,
+    content_like_rows: Iterable[Mapping[str, object]],
+    non_content_rows: Iterable[Mapping[str, object]],
+) -> dict[str, int]:
+    """Return aggregate-only unresolved observed-page counts.
+
+    Callers must pass query results containing only classification fields and
+    reviewed-exclusion counts; URLs, visitors, and visit identifiers are never
+    accepted into publication evidence.
+    """
+
+    content_unresolved = sum(
+        not str(row.get("direction_key") or "").strip()
+        or not str(row.get("material_type") or "").strip()
+        for row in content_like_rows
+    )
+    non_content_unresolved = sum(
+        str(row.get("material_type") or "").strip() != "service_page"
+        and int(row.get("reviewed_exclusion_count") or 0) <= 0
+        for row in non_content_rows
+    )
+    return {
+        "content_unresolved": content_unresolved,
+        "non_content_unresolved": non_content_unresolved,
+    }
+
+
 def _canonical_json(value: object) -> str:
     def encode(item: object):
         if isinstance(item, datetime):

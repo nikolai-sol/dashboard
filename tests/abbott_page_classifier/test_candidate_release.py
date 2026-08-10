@@ -951,6 +951,16 @@ class FailedCandidateResetConnection:
 
 
 class CandidateReleaseTest(unittest.TestCase):
+    def test_observed_page_resolution_gate_counts_only_aggregate_failures(self):
+        from agents.abbott_page_classifier.candidate_release import observed_page_resolution_gates
+
+        gates = observed_page_resolution_gates(
+            content_like_rows=[{"direction_key": None, "material_type": "articles"}],
+            non_content_rows=[{"material_type": None, "reviewed_exclusion_count": 0}],
+        )
+
+        self.assertEqual(gates, {"content_unresolved": 1, "non_content_unresolved": 1})
+        self.assertNotIn("url", repr(gates).lower())
     def test_activation_acknowledgement_marks_only_the_reviewed_batch_receipt_active(self):
         connection = FailedCandidateResetConnection(
             active_release_id=23,
