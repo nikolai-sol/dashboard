@@ -3,9 +3,9 @@ import { readFileSync } from "node:fs";
 import path from "node:path";
 import test from "node:test";
 
-test("migration 045 creates append-only Abbott registry workflow tables", () => {
+test("migration 047 creates append-only Abbott registry workflow tables", () => {
   const sql = readFileSync(
-    path.resolve("src/db/migrations/045_abbott_content_registry_workflow.sql"),
+    path.resolve("src/db/migrations/047_abbott_content_registry_workflow.sql"),
     "utf8",
   );
 

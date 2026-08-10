@@ -60,7 +60,7 @@ every runbook entrypoint and each repository-local Python dependency.
 | `runtime/agents/abbott_page_classifier/sources.py` | `agents/abbott_page_classifier/sources.py` | `7f0c7fca84b021eac669726165336a978d2eeff0c92a1626f44af60d363dce9d` | Offline Registry 1/Registry 2 snapshot parsers |
 | `runtime/agents/abbott_page_classifier/llm_classifier.py` | `agents/abbott_page_classifier/llm_classifier.py` | `43cfd180f64da3afe74aa8252e644fa4ddecc1d294783f9660274b0b17eb3ce7` | Privacy-minimized classifier adapter, invoked only with execute authorization |
 | `runtime/agents/abbott_page_classifier/sheets_sync.py` | `agents/abbott_page_classifier/sheets_sync.py` | `ac179656f8fe46988ef0abfac6ffe23356fd93cdbc49eba54eea14f0cdc1eaca` | Approval projection publisher and accepted snapshot reader |
-| `src/db/migrations/047_abbott_content_reconciliation_staging.sql` | `dashboard-next/src/db/migrations/047_abbott_content_reconciliation_staging.sql` | `0aab4d08ed7c8b2f7dd8cc5aadba5097d7f98cde5fb19226df29d082bd44fe3e` | Additive reconciliation staging schema; package only, never applied by runtime |
+| `src/db/migrations/049_abbott_content_reconciliation_staging.sql` | `dashboard-next/src/db/migrations/049_abbott_content_reconciliation_staging.sql` | `783414b93e48edf29c5eece51de21db97bf37d9dfeeb6e01490e12729e6afca9` | Additive reconciliation staging schema; package only, never applied by runtime |
 
 ## collectors/
 

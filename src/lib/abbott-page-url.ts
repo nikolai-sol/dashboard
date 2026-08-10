@@ -1,6 +1,17 @@
+export function isAbbottWebPageUrl(rawValue: unknown): boolean {
+  const value = String(rawValue ?? "").trim().replaceAll("&amp;", "&");
+  if (!value || /^[a-z]:[\\/]/i.test(value)) return false;
+  try {
+    const url = new URL(value);
+    return url.protocol === "http:" || url.protocol === "https:";
+  } catch {
+    return !/^[a-z][a-z0-9+.-]*:/i.test(value);
+  }
+}
+
 export function normalizeAbbottPageUrl(rawValue: unknown): string {
   const value = String(rawValue ?? "").trim().replaceAll("&amp;", "&");
-  if (!value) return "";
+  if (!isAbbottWebPageUrl(value)) return "";
   try {
     const url = new URL(value);
     url.search = "";
@@ -18,7 +29,7 @@ export function normalizeAbbottPageUrl(rawValue: unknown): string {
 /** Canonical lookup identity for Abbott return-page directions. */
 export function normalizeAbbottPagePath(value: string): string {
   const raw = value.trim().replaceAll("&amp;", "&");
-  if (!raw) return "";
+  if (!isAbbottWebPageUrl(raw)) return "";
   const isAbsolute = /^[a-z][a-z0-9+.-]*:\/\//i.test(raw);
   let pathname: string;
   if (isAbsolute) {

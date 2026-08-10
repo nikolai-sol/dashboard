@@ -77,7 +77,7 @@ test -x "$ABBOTT_CONTENT_PYTHON311_BIN"
 Then verify every `runtime/` digest against `MIGRATION-MANIFEST.md` before
 packaging it into the private canonical repository.
 
-The bootstrap also packages the additive `src/db/migrations/047_abbott_content_reconciliation_staging.sql` beside its exact root authority. It is not copied into `runtime/` and this package does not apply it. The weekly Abbott entrypoint composes only reconcile, classify, and Sheet projection, then stops for manual batch approval; ingest, candidate materialization, validation, and activation are separately controlled stages.
+The bootstrap also packages the additive `src/db/migrations/049_abbott_content_reconciliation_staging.sql` beside its exact root authority. It is not copied into `runtime/` and this package does not apply it. The weekly Abbott entrypoint composes only reconcile, classify, and Sheet projection, then stops for manual batch approval; ingest, candidate materialization, validation, and activation are separately controlled stages.
 
 ## Abbott weekly proposal configuration
 

@@ -1,8 +1,8 @@
--- Canonical, immutable staging for the weekly Abbott content proposal workflow.
+-- Migration 049: canonical, immutable staging for the weekly Abbott content proposal workflow.
 -- Registry captures are inputs to a reconciliation run; approval batches are
 -- created only after classification and remain bound to predecessor snapshots.
 
--- Migration 045 originally made weak title/slug hashes globally unique. Upgrade
+-- Migration 047 originally made weak title/slug hashes globally unique. Upgrade
 -- that index repeat-safely: strong aliases retain one owner, while a weak alias
 -- may have multiple owners and is resolved as ambiguous by the repository.
 SET @abbott_alias_strong_hash_column_exists := (

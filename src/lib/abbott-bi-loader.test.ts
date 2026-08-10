@@ -274,6 +274,35 @@ test("embed uses aggregate store only and derives returning counts with decimal 
   });
 });
 
+test("returning control rows ignore non-web page identities without failing the period", async () => {
+  const aggregate = executor((sql) => {
+    if (sql.includes("canonical_fact_metrika_returning_pages_release_daily")) {
+      return [
+        { report_date: "2026-01-01", raw_page_value: "raw-file", normalized_page: "file:///C:/Users/user/Downloads/page.html", return_bucket_code: "next_day", source_percentage: "100.0000000000", source_denominator: "7" },
+        { report_date: "2026-01-01", raw_page_value: "raw-web", normalized_page: "https://example.test/page?utm_source=test", return_bucket_code: "next_day", source_percentage: "50.0000000000", source_denominator: "2" },
+      ];
+    }
+    return aggregateRows(sql);
+  });
+
+  const result = await loadAbbottBiDataWithDependencies(
+    7, ["90602537"], "2026-01-01", "2026-01-01", "embed",
+    dependencies(aggregate, executor(() => [])),
+  );
+
+  assert.equal(result.data_quality.status, "complete");
+  assert.deepEqual(result.returning, [{
+    url: "https://example.test/page",
+    direction: "Cardiology",
+    visits: 2,
+    returning_1_day: 1,
+    returning_2_7_days: 0,
+    returning_8_31_days: 0,
+    is_derived: true,
+    normalization_collision: false,
+  }]);
+});
+
 test("aggregate traffic keeps exact User ID partitions with weighted metrics", async () => {
   const siteRows = [
     { analytics_scope: "other", user_id_presence: "all", traffic_source: "Direct", sessions: "10", users: "8", pageviews: "20", bounce_rate: "10", average_session_seconds: "100" },

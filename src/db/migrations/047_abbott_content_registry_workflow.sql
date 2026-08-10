@@ -1,4 +1,4 @@
--- Canonical Abbott content registry, taxonomy, review, and append-only events.
+-- Migration 047: canonical Abbott content registry, taxonomy, review, and append-only events.
 -- Source APIs remain collector-only; workflow consumers read these MySQL tables.
 
 CREATE TABLE IF NOT EXISTS portal_content_registry_entities (

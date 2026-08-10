@@ -1,6 +1,9 @@
 import { createHash } from "node:crypto";
 
-import { normalizeAbbottPageUrl as normalizePage } from "@/lib/abbott-page-url";
+import {
+  isAbbottWebPageUrl,
+  normalizeAbbottPageUrl as normalizePage,
+} from "@/lib/abbott-page-url";
 import { abbottTitleLookupHash } from "@/lib/abbott-content-lookup";
 import { buildAbbottReturnFrequency, type AbbottFrequencyVisit } from "@/lib/abbott-return-frequency";
 import {
@@ -747,6 +750,7 @@ function buildReturning(
 ): AbbottReturningOutput[] {
   const totals = new Map<string, AbbottReturningOutput & { rawPages: Set<string>; denominatorKeys: Set<string> }>();
   rows.forEach((row) => {
+    if (!isAbbottWebPageUrl(row.normalized_page)) return;
     const url = normalizePage(row.normalized_page);
     const rawPage = rawIdentifier(row.raw_page_value);
     const reportDate = text(row.report_date).slice(0, 10);

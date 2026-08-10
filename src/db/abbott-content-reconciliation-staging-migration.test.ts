@@ -4,11 +4,11 @@ import path from "node:path";
 import test from "node:test";
 
 const sql = readFileSync(
-  path.resolve("src/db/migrations/047_abbott_content_reconciliation_staging.sql"),
+  path.resolve("src/db/migrations/049_abbott_content_reconciliation_staging.sql"),
   "utf8",
 );
 
-test("migration 047 adds immutable Abbott reconciliation staging", () => {
+test("migration 049 adds immutable Abbott reconciliation staging", () => {
   for (const table of [
     "portal_content_reconciliation_runs",
     "portal_content_reconciliation_items",
@@ -26,7 +26,7 @@ test("migration 047 adds immutable Abbott reconciliation staging", () => {
   assert.match(sql, /run_status ENUM\('reconciled', 'classified', 'finalized', 'failed'\)/);
 });
 
-test("migration 047 separates registry inputs from predecessor release snapshots", () => {
+test("migration 049 separates registry inputs from predecessor release snapshots", () => {
   assert.match(sql, /registry1_snapshot_id BIGINT UNSIGNED NOT NULL/);
   assert.match(sql, /registry2_snapshot_id BIGINT UNSIGNED NOT NULL/);
   assert.match(sql, /registry1_sha256 CHAR\(64\) NOT NULL/);
@@ -37,7 +37,7 @@ test("migration 047 separates registry inputs from predecessor release snapshots
   assert.doesNotMatch(sql, /UPDATE\s+portal_content_approval_batches\s+SET\s+source_snapshot_ids/i);
 });
 
-test("migration 047 links one finalized batch to one run repeat-safely", () => {
+test("migration 049 links one finalized batch to one run repeat-safely", () => {
   assert.match(sql, /ADD COLUMN reconciliation_run_id BIGINT UNSIGNED DEFAULT NULL/);
   assert.match(sql, /ADD UNIQUE INDEX uniq_approval_batch_reconciliation_run \(reconciliation_run_id\)/);
   assert.match(sql, /ADD CONSTRAINT fk_approval_batch_reconciliation_run/);
@@ -46,7 +46,7 @@ test("migration 047 links one finalized batch to one run repeat-safely", () => {
   assert.match(sql, /information_schema\.TABLE_CONSTRAINTS/);
 });
 
-test("migration 047 upgrades alias uniqueness without collapsing weak owners", () => {
+test("migration 049 upgrades alias uniqueness without collapsing weak owners", () => {
   assert.match(sql, /DROP INDEX uniq_registry_strong_alias/);
   assert.match(sql, /ADD COLUMN strong_alias_hash CHAR\(64\) GENERATED ALWAYS AS/);
   assert.match(sql, /CASE WHEN uniqueness_scope = ''strong'' THEN alias_hash ELSE NULL END/);
@@ -55,7 +55,7 @@ test("migration 047 upgrades alias uniqueness without collapsing weak owners", (
   assert.doesNotMatch(sql, /DELETE\s+FROM\s+portal_content_registry_aliases/i);
 });
 
-test("migration 047 attests an existing taxonomy before any canonical term insert", () => {
+test("migration 049 attests an existing taxonomy before any canonical term insert", () => {
   assert.match(sql, /abbott\.v1/);
   assert.match(sql, /d6a2bfc39d970a873e309223604f9ae7c37cd83d6c046c107eed08e73ec435d4/);
   assert.match(sql, /CREATE TEMPORARY TABLE abbott_expected_taxonomy_v1_terms/);
