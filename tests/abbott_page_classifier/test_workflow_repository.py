@@ -326,6 +326,23 @@ class BootstrapCursor(FakeCursor):
             self.rows = [(3, DIGEST)]
         elif "FROM portal_content_taxonomy_terms" in normalized:
             self.rows = [(kind, code) for kind, codes in TERMS.items() for code in codes]
+        elif normalized.startswith(
+            "SELECT DISTINCT content_entity_id FROM portal_content_catalog"
+        ):
+            entity_ids = set()
+            for row in self.catalog:
+                if not bool(row[6]):
+                    continue
+                if len(row) > 11 and row[11] is not None:
+                    entity_ids.add(int(row[11]))
+                    continue
+                for entity_id, entity in self.entities.items():
+                    if (
+                        entity["material_id"] == row[2]
+                        or entity["canonical_url"] == row[1]
+                    ):
+                        entity_ids.add(entity_id)
+            self.rows = [(entity_id,) for entity_id in sorted(entity_ids)]
         elif "FROM portal_content_catalog" in normalized:
             self.catalog_locked = "FOR UPDATE" in normalized
             self.rows = list(self.catalog)
@@ -606,6 +623,8 @@ class MySqlWorkflowStoreTests(unittest.TestCase):
         eventless = next(entity for entity in context.entities if entity.content_entity_id == 9)
         self.assertEqual(eventless.lifecycle_code, "unknown")
         self.assertEqual(eventless.event_id, None)
+        self.assertNotIn(9, context.predecessor_active_content_entity_ids)
+        self.assertTrue(context.predecessor_active_content_entity_ids)
         sql = "\n".join(statement for statement, _ in connection.calls)
         self.assertIn("FOR UPDATE", sql)
         self.assertIn("LEFT JOIN latest_events AS event", sql)

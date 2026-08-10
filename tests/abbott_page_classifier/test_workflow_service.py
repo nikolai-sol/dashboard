@@ -150,7 +150,13 @@ class RecordingClassifier:
         )
 
 
-def context(*, entities=(), aliases=(), taxonomy=TAXONOMY):
+def context(
+    *,
+    entities=(),
+    aliases=(),
+    taxonomy=TAXONOMY,
+    predecessor_active_content_entity_ids=(),
+):
     return ReconciliationContext(
         predecessor_release_id=8,
         predecessor_snapshot_ids=(11, 12),
@@ -158,6 +164,9 @@ def context(*, entities=(), aliases=(), taxonomy=TAXONOMY):
         taxonomy=taxonomy,
         entities=tuple(entities),
         aliases=tuple(aliases),
+        predecessor_active_content_entity_ids=tuple(
+            predecessor_active_content_entity_ids
+        ),
     )
 
 
@@ -219,7 +228,12 @@ class WeeklyProposalServiceTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as temporary:
             registry1, registry2 = write_empty_sources(Path(temporary))
             classifier = RecordingClassifier()
-            store = StatefulWorkflowStore(context(entities=(entity,)))
+            store = StatefulWorkflowStore(
+                context(
+                    entities=(entity,),
+                    predecessor_active_content_entity_ids=(entity.content_entity_id,),
+                )
+            )
             service = CanonicalWeeklyProposalService(
                 store, CONFIG, classifier_factory=lambda: classifier
             )
@@ -255,7 +269,12 @@ class WeeklyProposalServiceTests(unittest.TestCase):
         )
         with tempfile.TemporaryDirectory() as temporary:
             registry1, registry2 = write_empty_sources(Path(temporary))
-            store = StatefulWorkflowStore(context(entities=entities))
+            store = StatefulWorkflowStore(
+                context(
+                    entities=entities,
+                    predecessor_active_content_entity_ids=(7, 8),
+                )
+            )
             receipt = CanonicalWeeklyProposalService(store, CONFIG).reconcile(
                 registry1, registry2
             )
@@ -279,7 +298,13 @@ class WeeklyProposalServiceTests(unittest.TestCase):
             registry1, registry2 = write_sources(
                 Path(temporary), direction="", material_type="Статьи"
             )
-            store = StatefulWorkflowStore(context(entities=(entity,), aliases=aliases))
+            store = StatefulWorkflowStore(
+                context(
+                    entities=(entity,),
+                    aliases=aliases,
+                    predecessor_active_content_entity_ids=(7,),
+                )
+            )
             receipt = CanonicalWeeklyProposalService(store, CONFIG).reconcile(
                 registry1, registry2
             )
@@ -289,6 +314,21 @@ class WeeklyProposalServiceTests(unittest.TestCase):
         self.assertEqual(len(persisted.items), 1)
         self.assertEqual(persisted.items[0].content_entity_id, 7)
         self.assertEqual(persisted.items[0].reconciliation_input.registry1.source_name, "registry1")
+
+    def test_incomplete_registry_entity_outside_active_predecessor_is_not_a_gap(self):
+        entity = CanonicalClassification(
+            7, "Old", "https://abbottpro.ru/old", None,
+            "articles", "all", "active", 17,
+        )
+        with tempfile.TemporaryDirectory() as temporary:
+            registry1, registry2 = write_empty_sources(Path(temporary))
+            store = StatefulWorkflowStore(context(entities=(entity,)))
+            receipt = CanonicalWeeklyProposalService(store, CONFIG).reconcile(
+                registry1, registry2
+            )
+
+        self.assertEqual(receipt.catalog_gap_count, 0)
+        self.assertEqual(store.load_reconciliation_run(receipt.run_id).items, ())
 
     def test_identical_new_strong_identity_merges_registry1_and_registry2(self):
         with tempfile.TemporaryDirectory() as temporary:
