@@ -1213,12 +1213,27 @@ def _authorize_current_batch_events(
                     "CURRENT_BATCH_EVENT_UNAUTHORIZED"
                 ) from None
             predecessor = predecessor_by_entity.get(entity_id)
+            predecessor_values = (
+                predecessor.direction_code,
+                predecessor.material_type_code,
+                predecessor.access_code,
+                predecessor.lifecycle_code,
+            ) if predecessor is not None else None
             if (
                 current_entity_id != entity_id
                 or predecessor is None
-                or current_values != (
-                    predecessor.direction_code, predecessor.material_type_code,
-                    predecessor.access_code, predecessor.lifecycle_code,
+                or any(
+                    (
+                        current_value is not None
+                        and current_value != predecessor_value
+                    )
+                    or (
+                        current_value is None
+                        and final_value != predecessor_value
+                    )
+                    for current_value, final_value, predecessor_value in zip(
+                        current_values, final_values, predecessor_values or ()
+                    )
                 )
                 or (
                     predecessor.classification_event_id is not None
@@ -1228,7 +1243,7 @@ def _authorize_current_batch_events(
                 raise CandidateMaterializationError(
                     "CURRENT_BATCH_EVENT_UNAUTHORIZED"
                 )
-            if current_values[0] != final_values[0]:
+            if current_values[0] and current_values[0] != final_values[0]:
                 expected_kind = "correct"
         event_evidence = _decode_json(
             event.get("proposal_evidence"), code="CURRENT_BATCH_EVENT_UNAUTHORIZED"
