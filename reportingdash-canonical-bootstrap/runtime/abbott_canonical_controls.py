@@ -648,6 +648,9 @@ def compare_release_control_pack(
                     "content.unresolved_accepted_conflicts": content_report.unresolved_accepted_conflicts,
                     "content.active_release_mutations": content_report.active_release_mutations,
                     "content.dashboard_smoke_failures": content_report.dashboard_smoke_failures,
+                    "content.fact_total_mismatches": content_report.fact_total_mismatches,
+                    "content.content_unresolved": content_report.content_unresolved,
+                    "content.non_content_unresolved": content_report.non_content_unresolved,
                 }
             )
         results = []
