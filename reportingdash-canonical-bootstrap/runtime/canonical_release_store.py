@@ -789,7 +789,6 @@ def activate_release(release_id: int, *, expected_active_release_id: int) -> Non
                    import_status, imported_row_count, rejected_row_count
             FROM portal_release_source_imports
             WHERE canonical_release_id = %s
-            FOR UPDATE
             """,
             (release_id,),
         )
@@ -807,7 +806,6 @@ def activate_release(release_id: int, *, expected_active_release_id: int) -> Non
             FROM portal_dataset_snapshots
             WHERE id = %s AND dataset_key = %s
               AND source_kind = 'abbott_canonical_control_pack'
-            FOR UPDATE
             """,
             (baseline_snapshot_id, dataset_key),
         )
@@ -838,7 +836,6 @@ def activate_release(release_id: int, *, expected_active_release_id: int) -> Non
             FROM portal_dataset_snapshots
             WHERE dataset_key = %s AND id IN ({placeholders})
             ORDER BY id
-            FOR UPDATE
             """,
             (dataset_key, *source_snapshot_ids),
         )

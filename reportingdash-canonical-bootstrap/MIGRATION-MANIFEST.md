@@ -15,7 +15,7 @@ private runtime repository.
 | `lib/canonical_writer.py` | `canonical_writer.py` | `3f287a42d1f79360d49a1f484dee823b70683ec5bd0448a205b0f352219a4e19` | Staging resume writer and current-active append-only Abbott day publisher |
 | `lib/metrika_dashboard_breakdowns.py` | `metrika_dashboard_breakdowns.py` | `879822ee16108abccbb0b0c726d88f6d3835e36f2566d2531bdb4cd1a461f6c8` | Shared Metrika dashboard breakdown definitions |
 | `lib/metrika_logs_api.py` | `metrika_logs_api.py` | `16b80558fbeca808d2dc28a8a163c9a2604e50d28a903725728f26cef7f10084` | Exact Metrika Logs request lifecycle and visit parser |
-| `lib/canonical_release_store.py` | `canonical_release_store.py` | `b00c3743c034ca39b9db2da77c586ec537c2944880babc35e1bc473373d7f9b8` | Candidate release store, persisted validation gate, atomic activation, rollback, and audited staging failure management |
+| `lib/canonical_release_store.py` | `canonical_release_store.py` | `3ad66bbfc399529099ff6995158520c4127434ff7ca04e0c64179b234fe9365a` | Candidate release store with least-privilege evidence reads, atomic activation, rollback, and audited staging failure management |
 
 ## Runnable Abbott runtime closure
 
@@ -28,7 +28,7 @@ every runbook entrypoint and each repository-local Python dependency.
 | `runtime/canonical_writer.py` | `canonical_writer.py` | `3f287a42d1f79360d49a1f484dee823b70683ec5bd0448a205b0f352219a4e19` | Atomic staging and active append-only writer |
 | `runtime/metrika_dashboard_breakdowns.py` | `metrika_dashboard_breakdowns.py` | `879822ee16108abccbb0b0c726d88f6d3835e36f2566d2531bdb4cd1a461f6c8` | Shared dashboard breakdown definitions |
 | `runtime/metrika_logs_api.py` | `metrika_logs_api.py` | `16b80558fbeca808d2dc28a8a163c9a2604e50d28a903725728f26cef7f10084` | Exact Metrika Logs request lifecycle and visit parser |
-| `runtime/canonical_release_store.py` | `canonical_release_store.py` | `b00c3743c034ca39b9db2da77c586ec537c2944880babc35e1bc473373d7f9b8` | Exact validation, pointer, and audited staging-failure store |
+| `runtime/canonical_release_store.py` | `canonical_release_store.py` | `3ad66bbfc399529099ff6995158520c4127434ff7ca04e0c64179b234fe9365a` | Exact validation, least-privilege pointer activation, and audited staging-failure store |
 | `runtime/run_abbott_metrika_active_release.py` | `run_abbott_metrika_active_release.py` | `0f7c132b2cbd4f37ce51ceefa8479d36cf30088e2587dcda4cfc36cb29face0d` | Committed-manifest cron launcher |
 | `runtime/abbott_release_operator.py` | `abbott_release_operator.py` | `493decb85ca7ac25ae55e125023b1aff3e3146b2a122e190097243790c76067d` | Least-privilege lifecycle CLI with audited staging failure |
 | `runtime/probe_yandex_metrika_access.py` | `probe_yandex_metrika_access.py` | `430603922de9cd3cdbc6d0a7dc103f841924087c39462fc137ec8a26684674bc` | Read-only counter access proof |
