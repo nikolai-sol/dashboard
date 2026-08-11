@@ -1862,6 +1862,12 @@ class CandidateReleaseTest(unittest.TestCase):
             provenance_mode="current_batch_event",
             predecessor_catalog_row_id=None,
         )
+        prior = replace(
+            legacy,
+            source_row_fingerprint="3" * 64,
+            provenance_mode="prior_accepted_event",
+            predecessor_catalog_row_id=None,
+        )
         taxonomy = (
             {"taxonomy_kind": "direction", "term_code": "cardiology", "term_label": "cardiology"},
             {"taxonomy_kind": "access", "term_code": "all", "term_label": "all"},
@@ -1875,6 +1881,18 @@ class CandidateReleaseTest(unittest.TestCase):
         self.assertEqual(
             _catalog_schema_gates((_catalog_payload(current),), taxonomy)[1],
             1,
+        )
+        self.assertEqual(
+            _catalog_schema_gates(
+                (_catalog_payload(current),),
+                taxonomy,
+                prior_service_page_event_ids={current.classification_event_id},
+            )[1],
+            0,
+        )
+        self.assertEqual(
+            _catalog_schema_gates((_catalog_payload(prior),), taxonomy)[1],
+            0,
         )
 
     def test_legacy_visible_labels_are_projected_from_canonical_taxonomy(self):
