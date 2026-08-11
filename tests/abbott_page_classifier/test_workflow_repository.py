@@ -893,6 +893,24 @@ class MySqlWorkflowStoreTests(unittest.TestCase):
         self.assertEqual(connection.commit_count, 0)
         self.assertEqual(connection.rollback_count, 1)
 
+    def test_successor_taxonomy_accepts_attested_compatible_predecessor_event(self):
+        connection = BootstrapConnection()
+        cursor = connection.cursor_instance
+        event = cursor.events[7]
+        provenance_row = cursor.catalog[0] + (
+            7,
+            event["id"],
+            event["event_fingerprint"],
+        )
+
+        MySqlWorkflowStore(
+            lambda: connection
+        )._attest_provenance_registry_cursor(cursor, (provenance_row,), 4)
+
+        sql = "\n".join(statement for statement, _params in connection.calls)
+        self.assertIn("portal_content_taxonomy_terms", sql)
+        self.assertIn("portal_content_taxonomy_versions AS source_taxonomy", sql)
+
     def test_identityless_baseline_bootstrap_is_replay_safe_by_source_evidence(self):
         connection = BootstrapConnection()
         cursor = connection.cursor_instance
