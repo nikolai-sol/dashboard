@@ -55,8 +55,8 @@ every runbook entrypoint and each repository-local Python dependency.
 | `runtime/agents/abbott_page_classifier/python311_runtime.sh` | `agents/abbott_page_classifier/python311_runtime.sh` | `15a135ba0d6db46c91c238a712f32cf6079b9dcf3761744a261521c677d401d9` | Fail-closed absolute exact-Python-3.11 launcher |
 | `runtime/agents/abbott_page_classifier/run_classifier.sh` | `agents/abbott_page_classifier/run_classifier.sh` | `d16f21b08c0b0eee8c8eea50d1ab1d4018c54a373ec5a6a13ddff300d5bf557b` | Reviewed workflow wrapper through the exact-3.11 launcher |
 | `runtime/agents/abbott_page_classifier/run_weekly_proposal.sh` | `agents/abbott_page_classifier/run_weekly_proposal.sh` | `71b76309ff5f96084c9d9e62654db9383e957f4a4d4acc821a7c723531243656` | Reviewed weekly proposal wrapper through the exact-3.11 launcher |
-| `runtime/agents/abbott_page_classifier/workflow_service.py` | `agents/abbott_page_classifier/workflow_service.py` | `ecd801c2a122eab35f1318313e4aecfe8129594311d7bf91cc1417e7ed265e1a` | Canonical weekly proposal service |
-| `runtime/agents/abbott_page_classifier/workflow_repository.py` | `agents/abbott_page_classifier/workflow_repository.py` | `4d60178e96b4ff8e79170451cabee0db1cd0605dbbbad6f26d837c2eb6ce9836` | MySQL reconciliation staging repository |
+| `runtime/agents/abbott_page_classifier/workflow_service.py` | `agents/abbott_page_classifier/workflow_service.py` | `ed64949f1c8b14fdc4497fd18a5941fdd90cb8c2d442c75139148443a26c86bf` | Canonical weekly proposal service |
+| `runtime/agents/abbott_page_classifier/workflow_repository.py` | `agents/abbott_page_classifier/workflow_repository.py` | `2aa79a6078d79cdc4fb081dd9112cb614e19e431154f5174f49351b8175519ce` | MySQL reconciliation staging repository |
 | `runtime/agents/abbott_page_classifier/repository.py` | `agents/abbott_page_classifier/repository.py` | `1be40fd7f84a9239ed9df53429aea8f26d291a5960b0f3951652f236d00a3fbb` | Canonical content registry repository |
 | `runtime/agents/abbott_page_classifier/batch_service.py` | `agents/abbott_page_classifier/batch_service.py` | `619d3b2ce8018be34c150b4b66c74086d04bf1ee6190eb778e9067d7fca589b7` | Immutable batch construction and acceptance ingestion |
 | `runtime/agents/abbott_page_classifier/reconcile.py` | `agents/abbott_page_classifier/reconcile.py` | `3dbc4211d8fe60b063125f5d29833054076b2964cebadf6994f2d99350d871e5` | Deterministic reconciliation and anti-flip gate |
@@ -68,6 +68,7 @@ every runbook entrypoint and each repository-local Python dependency.
 | `src/db/migrations/050_abbott_content_url_identity.sql` | `dashboard-next/src/db/migrations/050_abbott_content_url_identity.sql` | `43340bffb352662ef25f5b9b841de8580d5948ad6d49ff2a47824b5d0be62094` | URL lookup identity schema; package only, never applied by runtime |
 | `src/db/migrations/051_abbott_content_url_alias_decisions.sql` | `dashboard-next/src/db/migrations/051_abbott_content_url_alias_decisions.sql` | `59277a9bbde2bc2916effc773acb8a3ec31d6f1bae93be44215fef9320954dab` | Immutable reviewed URL-decision event authority; package only, never applied by runtime |
 | `src/db/migrations/052_abbott_content_taxonomy_v2.sql` | `dashboard-next/src/db/migrations/052_abbott_content_taxonomy_v2.sql` | `2ddd08ea9b737d6a10ee4149b765ce0ef536783401b2abb4e5c2ba7e3e2c16c6` | Content-addressed Abbott taxonomy v2 with service pages; package only, never applied by runtime |
+| `src/db/migrations/053_abbott_observed_pages_hash.sql` | `dashboard-next/src/db/migrations/053_abbott_observed_pages_hash.sql` | `e81aee4cd8395760622a0e5e9a65817769c14b533c9cc90427adc67a508c2dad` | Aggregate observed-page evidence digest binding; package only, never applied by runtime |
 
 ## collectors/
 

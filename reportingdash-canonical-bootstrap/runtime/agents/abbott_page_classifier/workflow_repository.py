@@ -319,22 +319,30 @@ def _run_key(
     context: ReconciliationContext,
     registry1_hash: str,
     registry2_hash: str,
+    *,
+    observed_pages_hash: str | None = None,
 ) -> str:
+    if observed_pages_hash is not None and (
+        len(observed_pages_hash) != 64
+        or any(character not in "0123456789abcdef" for character in observed_pages_hash)
+    ):
+        raise RepositoryError("OBSERVED_PAGES_HASH_INVALID")
+    payload = {
+        "code_revision": configuration.code_revision,
+        "model_routing_version": configuration.model_routing_version,
+        "predecessor_release_id": context.predecessor_release_id,
+        "predecessor_snapshot_digests": context.predecessor_snapshot_digests,
+        "predecessor_snapshot_ids": context.predecessor_snapshot_ids,
+        "prompt_version": configuration.prompt_version,
+        "registry1_hash": registry1_hash,
+        "registry2_hash": registry2_hash,
+        "taxonomy_digest": context.taxonomy.digest,
+        "taxonomy_version": context.taxonomy.version,
+    }
+    if observed_pages_hash is not None:
+        payload["observed_pages_hash"] = observed_pages_hash
     return sha256_text(
-        _canonical_json(
-            {
-                "code_revision": configuration.code_revision,
-                "model_routing_version": configuration.model_routing_version,
-                "predecessor_release_id": context.predecessor_release_id,
-                "predecessor_snapshot_digests": context.predecessor_snapshot_digests,
-                "predecessor_snapshot_ids": context.predecessor_snapshot_ids,
-                "prompt_version": configuration.prompt_version,
-                "registry1_hash": registry1_hash,
-                "registry2_hash": registry2_hash,
-                "taxonomy_digest": context.taxonomy.digest,
-                "taxonomy_version": context.taxonomy.version,
-            }
-        )
+        _canonical_json(payload)
     )
 
 
@@ -1328,6 +1336,7 @@ class MySqlWorkflowStore:
             if draft.run_id not in (0, None) or draft.run_key != _run_key(
                 draft.configuration, draft.context,
                 draft.registry1.source_hash, draft.registry2.source_hash,
+                observed_pages_hash=draft.observed_pages_hash,
             ):
                 raise RepositoryError("RECONCILIATION_HASH_MISMATCH")
             connection = self._connection_factory()
@@ -1380,11 +1389,11 @@ class MySqlWorkflowStore:
                   predecessor_release_id, predecessor_snapshot_ids,
                   predecessor_snapshot_digests, taxonomy_version_id,
                   taxonomy_digest, prompt_version, model_routing_version,
-                  code_revision
+                  code_revision, observed_pages_hash
                 ) VALUES (
                   %s, %s, 'reconciled', %s, %s, %s, %s, %s, %s, %s, %s,
                   %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s,
-                  %s, %s, %s
+                  %s, %s, %s, %s
                 )
                 """,
                 (
@@ -1400,6 +1409,7 @@ class MySqlWorkflowStore:
                     predecessor_id, _canonical_json(snapshot_ids), _canonical_json(digests),
                     taxonomy_id, taxonomy.digest, draft.configuration.prompt_version,
                     draft.configuration.model_routing_version, draft.configuration.code_revision,
+                    draft.observed_pages_hash,
                 ),
             )
             run_id = int(cursor.lastrowid)
@@ -1505,7 +1515,7 @@ class MySqlWorkflowStore:
                        predecessor_release_id, predecessor_snapshot_ids,
                        predecessor_snapshot_digests, run.taxonomy_version_id,
                        taxonomy.version, run.taxonomy_digest, prompt_version,
-                       model_routing_version, code_revision
+                       model_routing_version, code_revision, observed_pages_hash
                 FROM portal_content_reconciliation_runs AS run
                 INNER JOIN portal_content_taxonomy_versions AS taxonomy
                   ON taxonomy.id = run.taxonomy_version_id
@@ -1579,10 +1589,20 @@ class MySqlWorkflowStore:
                 "registry2", str(row[9]), int(row[10]), int(row[11]), int(row[12]),
                 int(row[13]), int(row[8]),
             )
-            if str(row[0]) != _run_key(configuration, context, registry1.source_hash, registry2.source_hash):
+            observed_pages_hash = (
+                str(row[23]).lower() if row[23] is not None else None
+            )
+            if str(row[0]) != _run_key(
+                configuration,
+                context,
+                registry1.source_hash,
+                registry2.source_hash,
+                observed_pages_hash=observed_pages_hash,
+            ):
                 raise RepositoryError("RECONCILIATION_HASH_MISMATCH")
             return PersistedReconciliationRun(
-                run_id=int(run_id), run_key=str(row[0]), status=str(row[1]),
+                run_id=int(run_id), run_key=str(row[0]),
+                observed_pages_hash=observed_pages_hash, status=str(row[1]),
                 configuration=configuration, context=context,
                 registry1=registry1, registry2=registry2, items=tuple(items),
             )
