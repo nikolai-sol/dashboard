@@ -67,6 +67,7 @@ every runbook entrypoint and each repository-local Python dependency.
 | `src/db/migrations/049_abbott_content_reconciliation_staging.sql` | `dashboard-next/src/db/migrations/049_abbott_content_reconciliation_staging.sql` | `783414b93e48edf29c5eece51de21db97bf37d9dfeeb6e01490e12729e6afca9` | Additive reconciliation staging schema; package only, never applied by runtime |
 | `src/db/migrations/050_abbott_content_url_identity.sql` | `dashboard-next/src/db/migrations/050_abbott_content_url_identity.sql` | `43340bffb352662ef25f5b9b841de8580d5948ad6d49ff2a47824b5d0be62094` | URL lookup identity schema; package only, never applied by runtime |
 | `src/db/migrations/051_abbott_content_url_alias_decisions.sql` | `dashboard-next/src/db/migrations/051_abbott_content_url_alias_decisions.sql` | `59277a9bbde2bc2916effc773acb8a3ec31d6f1bae93be44215fef9320954dab` | Immutable reviewed URL-decision event authority; package only, never applied by runtime |
+| `src/db/migrations/052_abbott_content_taxonomy_v2.sql` | `dashboard-next/src/db/migrations/052_abbott_content_taxonomy_v2.sql` | `2ddd08ea9b737d6a10ee4149b765ce0ef536783401b2abb4e5c2ba7e3e2c16c6` | Content-addressed Abbott taxonomy v2 with service pages; package only, never applied by runtime |
 
 ## collectors/
 
