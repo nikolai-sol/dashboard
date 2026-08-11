@@ -1931,6 +1931,12 @@ class CandidateReleaseTest(unittest.TestCase):
             sql for sql, _params in connection.calls if "AS content_unresolved" in sql
         )
         self.assertIn("scope_dimensions", observed_sql)
+        self.assertIn("portal_release_source_imports AS catalog_import", observed_sql)
+        self.assertIn(
+            "projection.source_snapshot_id = catalog_import.source_snapshot_id",
+            observed_sql,
+        )
+        self.assertIn("catalog_import.source_kind = 'abbott_workbook_catalog'", observed_sql)
         self.assertNotIn("raw_payload", observed_sql)
 
     def test_real_validation_blocks_non_content_without_service_page_or_reviewed_exclusion(self):

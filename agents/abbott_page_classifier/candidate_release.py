@@ -317,8 +317,13 @@ def _observed_page_resolution_counts(cursor, candidate_id: int) -> tuple[int, in
           ON candidate_batch.dataset_key = %s
          AND candidate_batch.candidate_release_id = facts.canonical_release_id
          AND candidate_batch.batch_status = 'candidate_materialized'
+        INNER JOIN portal_release_source_imports AS catalog_import
+          ON catalog_import.canonical_release_id = facts.canonical_release_id
+         AND catalog_import.source_kind = 'abbott_workbook_catalog'
+         AND catalog_import.import_status = 'imported'
         LEFT JOIN portal_content_lookup_projection AS projection
           ON projection.canonical_release_id = facts.canonical_release_id
+         AND projection.source_snapshot_id = catalog_import.source_snapshot_id
          AND projection.lookup_kind = 'url'
          AND projection.lookup_key_hash = SHA2(JSON_UNQUOTE(JSON_EXTRACT(
                facts.scope_dimensions, '$.page_url')), 256)
