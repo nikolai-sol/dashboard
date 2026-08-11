@@ -52,6 +52,24 @@ class AbbottReleaseOperatorTest(unittest.TestCase):
         )
         self.assertEqual(result, "release_id=41 status=staging")
 
+    def test_fail_staging_requires_expected_active_release_and_keeps_pointer_unchanged(self):
+        import abbott_release_operator as operator
+
+        args = operator.build_parser().parse_args(
+            [
+                "fail-staging",
+                "--release-id", "23",
+                "--expected-active-release-id", "14",
+            ]
+        )
+        with patch.object(
+            operator.release_store, "fail_staging_release", return_value="failed"
+        ) as fail:
+            result = operator.run(args)
+
+        fail.assert_called_once_with(23, expected_active_release_id=14)
+        self.assertEqual(result, "release_id=23 status=failed")
+
     def test_operator_db_does_not_fall_back_to_collector_credentials(self):
         import abbott_release_operator as operator
 

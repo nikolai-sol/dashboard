@@ -498,6 +498,8 @@ PREPARE stmt FROM @sql; EXECUTE stmt; DEALLOCATE PREPARE stmt;
 CREATE ROLE IF NOT EXISTS
   'abbott_collector_role',
   'abbott_importer_role',
+  'abbott_content_workflow_role',
+  'abbott_content_materializer_role',
   'abbott_release_operator_role',
   'abbott_runtime_reader_role',
   'abbott_embed_reader_role';
@@ -530,6 +532,60 @@ GRANT SELECT, INSERT, UPDATE, DELETE ON report_bd_private.canonical_fact_metrika
   TO 'abbott_collector_role';
 GRANT SELECT, INSERT, UPDATE, DELETE ON report_bd_private.canonical_fact_metrika_visits
   TO 'abbott_collector_role';
+
+-- Weekly content reconciliation is a separate workflow role. It can register
+-- immutable captures, stage and finalize proposals, and ingest reviewed events.
+-- Candidate materialization and active-release changes remain separate roles.
+GRANT SELECT ON report_bd.portal_data_releases
+  TO 'abbott_content_workflow_role';
+GRANT SELECT ON report_bd.portal_active_data_releases
+  TO 'abbott_content_workflow_role';
+GRANT SELECT, INSERT ON report_bd.portal_dataset_snapshots
+  TO 'abbott_content_workflow_role';
+GRANT SELECT ON report_bd.portal_release_source_imports
+  TO 'abbott_content_workflow_role';
+GRANT SELECT ON report_bd.portal_content_catalog
+  TO 'abbott_content_workflow_role';
+GRANT SELECT ON report_bd.portal_content_lookup_projection
+  TO 'abbott_content_workflow_role';
+GRANT SELECT ON report_bd.portal_content_taxonomy_versions
+  TO 'abbott_content_workflow_role';
+GRANT SELECT ON report_bd.portal_content_taxonomy_terms
+  TO 'abbott_content_workflow_role';
+GRANT SELECT, INSERT, UPDATE (material_id, title, canonical_url, registry_status,
+                              source_evidence, updated_at)
+  ON report_bd.portal_content_registry_entities
+  TO 'abbott_content_workflow_role';
+GRANT SELECT, INSERT, UPDATE (alias_status)
+  ON report_bd.portal_content_registry_aliases
+  TO 'abbott_content_workflow_role';
+GRANT SELECT, INSERT, UPDATE (run_status, failure_code, classified_at,
+                              finalized_at, failed_at)
+  ON report_bd.portal_content_reconciliation_runs
+  TO 'abbott_content_workflow_role';
+GRANT SELECT, INSERT ON report_bd.portal_content_reconciliation_items
+  TO 'abbott_content_workflow_role';
+GRANT SELECT, INSERT ON report_bd.portal_content_llm_attempts
+  TO 'abbott_content_workflow_role';
+GRANT SELECT, INSERT, UPDATE (batch_status, accepted_decision_hash, ready_count,
+                              conflict_count, unresolved_count, rejected_count,
+                              no_change_count, accepted_count, skipped_count,
+                              spreadsheet_file_id, spreadsheet_projection_hash,
+                              published_at, failed_at, failure_code, accepted_by,
+                              accepted_at, ingested_at)
+  ON report_bd.portal_content_approval_batches
+  TO 'abbott_content_workflow_role';
+GRANT SELECT, INSERT, UPDATE (final_direction_code, final_material_type_code,
+                              final_access_code, final_lifecycle_code,
+                              decision_reason)
+  ON report_bd.portal_content_approval_items
+  TO 'abbott_content_workflow_role';
+GRANT SELECT, INSERT ON report_bd.portal_content_classification_events
+  TO 'abbott_content_workflow_role';
+-- Locking reads serialize immutable baseline/bootstrap checks without granting
+-- UPDATE authority over the active pointer, release catalog, or event history.
+GRANT LOCK TABLES ON report_bd.*
+  TO 'abbott_content_workflow_role';
 
 -- The CLI importer uses one connection for a single transaction spanning both
 -- schemas. It may attach imported snapshot IDs to a staging release, but it
@@ -564,9 +620,81 @@ GRANT SELECT, INSERT ON report_bd_private.portal_bitrix_page_facts
 GRANT SELECT, INSERT ON report_bd_private.portal_bitrix_journeys_private
   TO 'abbott_importer_role';
 
+-- Candidate materialization has a dedicated cross-schema role. It can create a
+-- staging release and copy immutable bundles, but cannot write the active pointer
+-- and no privilege to update release_status or activation audit columns.
+GRANT SELECT, INSERT ON report_bd.portal_data_releases
+  TO 'abbott_content_materializer_role';
+GRANT UPDATE (source_snapshot_ids) ON report_bd.portal_data_releases
+  TO 'abbott_content_materializer_role';
+GRANT SELECT ON report_bd.portal_active_data_releases
+  TO 'abbott_content_materializer_role';
+-- MySQL requires LOCK TABLES (or broader DML authority) for SELECT ... FOR
+-- UPDATE. Grant the narrower locking capability so the materializer can freeze
+-- the predecessor pointer without receiving UPDATE authority over it.
+GRANT LOCK TABLES ON report_bd.*
+  TO 'abbott_content_materializer_role';
+GRANT SELECT, INSERT ON report_bd.portal_dataset_snapshots
+  TO 'abbott_content_materializer_role';
+GRANT SELECT, INSERT ON report_bd.portal_release_source_imports
+  TO 'abbott_content_materializer_role';
+GRANT SELECT, INSERT ON report_bd.portal_content_catalog
+  TO 'abbott_content_materializer_role';
+GRANT SELECT, INSERT ON report_bd.portal_content_lookup_projection
+  TO 'abbott_content_materializer_role';
+-- The reviewed return-page projection replaces only path and URL rows after
+-- locking and verifying that its target release is Abbott staging. Migration
+-- 050 defines the complete lookup-kind enum: title, slug, path, and url.
+GRANT DELETE ON report_bd.portal_content_lookup_projection
+  TO 'abbott_content_materializer_role';
+GRANT SELECT, INSERT ON report_bd.portal_general_materials
+  TO 'abbott_content_materializer_role';
+GRANT SELECT, INSERT ON report_bd.portal_event_catalog
+  TO 'abbott_content_materializer_role';
+GRANT SELECT, INSERT ON report_bd.portal_external_events
+  TO 'abbott_content_materializer_role';
+GRANT SELECT, INSERT ON report_bd.portal_bitrix_page_facts
+  TO 'abbott_content_materializer_role';
+GRANT SELECT, INSERT ON report_bd.portal_bitrix_journey_transitions
+  TO 'abbott_content_materializer_role';
+GRANT SELECT, INSERT ON report_bd.canonical_fact_metrika_site_analytics_daily
+  TO 'abbott_content_materializer_role';
+GRANT SELECT, INSERT ON report_bd.canonical_fact_metrika_returning_pages_release_daily
+  TO 'abbott_content_materializer_role';
+GRANT SELECT, INSERT ON report_bd.canonical_source_coverage_daily
+  TO 'abbott_content_materializer_role';
+GRANT SELECT ON report_bd.portal_content_registry_entities
+  TO 'abbott_content_materializer_role';
+GRANT SELECT ON report_bd.portal_content_registry_aliases
+  TO 'abbott_content_materializer_role';
+GRANT SELECT ON report_bd.portal_content_taxonomy_versions
+  TO 'abbott_content_materializer_role';
+GRANT SELECT ON report_bd.portal_content_taxonomy_terms
+  TO 'abbott_content_materializer_role';
+GRANT SELECT, UPDATE (batch_status, candidate_release_id, activation_status)
+  ON report_bd.portal_content_approval_batches
+  TO 'abbott_content_materializer_role';
+GRANT SELECT ON report_bd.portal_content_approval_items
+  TO 'abbott_content_materializer_role';
+GRANT SELECT ON report_bd.portal_content_classification_events
+  TO 'abbott_content_materializer_role';
+GRANT SELECT ON report_bd.portal_migration_validation_runs
+  TO 'abbott_content_materializer_role';
+GRANT SELECT, INSERT ON report_bd_private.canonical_fact_metrika_user_behavior_daily
+  TO 'abbott_content_materializer_role';
+GRANT SELECT, INSERT ON report_bd_private.canonical_fact_metrika_visits
+  TO 'abbott_content_materializer_role';
+GRANT SELECT, INSERT ON report_bd_private.portal_user_directions_private
+  TO 'abbott_content_materializer_role';
+GRANT SELECT, INSERT ON report_bd_private.portal_bitrix_page_facts
+  TO 'abbott_content_materializer_role';
+GRANT SELECT, INSERT ON report_bd_private.portal_bitrix_journeys_private
+  TO 'abbott_content_materializer_role';
+
 -- Baseline capture, comparison, candidate creation, validation, activation,
--- and rollback use a separate operator account. It cannot write canonical or
--- private facts; only the collector/importer roles can do that.
+-- rollback, and content attestation use a separate operator account. It can
+-- mutate only lifecycle/control-plane rows and cannot write public/private
+-- facts, content projections, registry, taxonomy, or approval workflow rows.
 GRANT SELECT, INSERT, UPDATE ON report_bd.portal_data_releases
   TO 'abbott_release_operator_role';
 GRANT SELECT, UPDATE ON report_bd.portal_active_data_releases
@@ -577,9 +705,35 @@ GRANT SELECT ON report_bd.portal_release_source_imports
   TO 'abbott_release_operator_role';
 GRANT SELECT, INSERT, UPDATE ON report_bd.portal_migration_validation_runs
   TO 'abbott_release_operator_role';
+GRANT SELECT ON report_bd.portal_content_catalog TO 'abbott_release_operator_role';
+GRANT SELECT ON report_bd.portal_content_lookup_projection TO 'abbott_release_operator_role';
+GRANT SELECT ON report_bd.portal_content_approval_batches TO 'abbott_release_operator_role';
+GRANT SELECT ON report_bd.portal_content_approval_items TO 'abbott_release_operator_role';
+GRANT SELECT ON report_bd.portal_content_classification_events TO 'abbott_release_operator_role';
+GRANT SELECT ON report_bd.portal_content_registry_entities TO 'abbott_release_operator_role';
+GRANT SELECT ON report_bd.portal_content_registry_aliases TO 'abbott_release_operator_role';
+GRANT SELECT ON report_bd.portal_content_taxonomy_versions TO 'abbott_release_operator_role';
+GRANT SELECT ON report_bd.portal_content_taxonomy_terms TO 'abbott_release_operator_role';
+GRANT SELECT ON report_bd.portal_general_materials TO 'abbott_release_operator_role';
+GRANT SELECT ON report_bd.portal_event_catalog TO 'abbott_release_operator_role';
+GRANT SELECT ON report_bd.portal_external_events TO 'abbott_release_operator_role';
+GRANT SELECT ON report_bd.portal_bitrix_page_facts TO 'abbott_release_operator_role';
+GRANT SELECT ON report_bd.portal_bitrix_journey_transitions TO 'abbott_release_operator_role';
 GRANT SELECT ON report_bd.canonical_fact_metrika_site_analytics_daily
   TO 'abbott_release_operator_role';
+GRANT SELECT ON report_bd.canonical_fact_metrika_returning_pages_release_daily
+  TO 'abbott_release_operator_role';
 GRANT SELECT ON report_bd.canonical_source_coverage_daily
+  TO 'abbott_release_operator_role';
+GRANT SELECT ON report_bd_private.canonical_fact_metrika_user_behavior_daily
+  TO 'abbott_release_operator_role';
+GRANT SELECT ON report_bd_private.canonical_fact_metrika_visits
+  TO 'abbott_release_operator_role';
+GRANT SELECT ON report_bd_private.portal_user_directions_private
+  TO 'abbott_release_operator_role';
+GRANT SELECT ON report_bd_private.portal_bitrix_page_facts
+  TO 'abbott_release_operator_role';
+GRANT SELECT ON report_bd_private.portal_bitrix_journeys_private
   TO 'abbott_release_operator_role';
 
 -- The server-side manager runtime is read-only across the release metadata,

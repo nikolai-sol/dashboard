@@ -97,6 +97,11 @@ def healthy_snapshot():
             "mismatched_sources": 0,
             "status": "ok",
         },
+        "release_source_integrity": {
+            "status": "ok",
+            "active_source_count": 2,
+            "receipt_source_count": 2,
+        },
         "skipped_counter": False,
         "incidents": [],
     }

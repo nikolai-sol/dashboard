@@ -65,7 +65,7 @@ class RecordingConnection:
 
 
 class ComparatorCursor:
-    def __init__(self, *, release_baseline_id=33, coverage_rows=None):
+    def __init__(self, *, release_baseline_id=33, coverage_rows=None, manifest=None):
         self.release_baseline_id = release_baseline_id
         self.coverage_rows = coverage_rows or [
             {
@@ -80,6 +80,7 @@ class ComparatorCursor:
         self.calls = []
         self._one = None
         self._rows = []
+        self.manifest = manifest
 
     def execute(self, sql, params=None):
         normalized = " ".join(sql.split())
@@ -89,7 +90,7 @@ class ComparatorCursor:
         if normalized.startswith("SELECT manifest_json"):
             self._one = {
                 "manifest_json": json.dumps(
-                    {
+                    self.manifest or {
                         "date_from": "2026-01-01",
                         "date_to": "2026-07-15",
                         "control_values": {"site.traffic.sessions": 100},
@@ -100,6 +101,14 @@ class ComparatorCursor:
             self._one = {
                 "code_revision": "candidate-revision",
                 "baseline_validation_run_id": self.release_baseline_id,
+                "rollback_from_release_id": 12,
+            }
+        elif "SUM(goal_conversions)" in normalized:
+            self._one = {
+                "sessions": 100,
+                "users": 80,
+                "pageviews": 120,
+                "goal_conversions": 5,
             }
         elif "canonical_fact_metrika_site_analytics_daily" in normalized:
             self._rows = [
@@ -125,15 +134,50 @@ class ComparatorCursor:
 
 
 class ComparatorConnection(RecordingConnection):
-    def __init__(self, *, release_baseline_id=33, coverage_rows=None):
+    def __init__(self, *, release_baseline_id=33, coverage_rows=None, manifest=None):
         self.cursor_instance = ComparatorCursor(
             release_baseline_id=release_baseline_id,
             coverage_rows=coverage_rows,
+            manifest=manifest,
         )
         self.events = []
 
 
 class AbbottCanonicalControlsTest(unittest.TestCase):
+    def test_metadata_only_fact_controls_fail_on_a_cloned_pageview_mutation(self):
+        from abbott_canonical_controls import compare_metadata_only_fact_totals
+
+        predecessor = {
+            ("2026-06-01", "2026-06-30"): {"sessions": 10, "users": 8, "pageviews": 12, "goal_conversions": 2},
+            ("2026-07-01", "2026-07-31"): {"sessions": 20, "users": 16, "pageviews": 24, "goal_conversions": 4},
+            ("2026-08-01", "2026-08-09"): {"sessions": 30, "users": 24, "pageviews": 36, "goal_conversions": 6},
+        }
+        candidate = {period: dict(metrics) for period, metrics in predecessor.items()}
+        candidate[("2026-07-01", "2026-07-31")]["pageviews"] += 1
+
+        results = compare_metadata_only_fact_totals(predecessor, candidate)
+
+        mismatch = next(result for result in results if result.control_name == "fact_totals.2026-07-01.2026-07-31.pageviews")
+        self.assertEqual(mismatch.result_status, "fail")
+        self.assertEqual(mismatch.diagnostic["reason_code"], "FACT_TOTAL_MISMATCH")
+
+    def test_metadata_only_fact_controls_ignore_direction_and_type_metadata(self):
+        from abbott_canonical_controls import compare_metadata_only_fact_totals
+
+        totals = {
+            ("2026-06-01", "2026-06-30"): {"sessions": 10, "users": 8, "pageviews": 12, "goal_conversions": 2},
+            ("2026-07-01", "2026-07-31"): {"sessions": 20, "users": 16, "pageviews": 24, "goal_conversions": 4},
+            ("2026-08-01", "2026-08-09"): {"sessions": 30, "users": 24, "pageviews": 36, "goal_conversions": 6},
+        }
+
+        results = compare_metadata_only_fact_totals(
+            totals,
+            totals,
+            predecessor_metadata={"direction": "cardiology", "material_type": "articles"},
+            candidate_metadata={"direction": "gastroenterology", "material_type": "video"},
+        )
+
+        self.assertTrue(all(result.result_status == "pass" for result in results))
     def test_other_scope_user_id_partition_contract_is_exact(self):
         import fetch_yandex_metrika_canonical as collector
 
@@ -510,6 +554,79 @@ class AbbottCanonicalControlsTest(unittest.TestCase):
             if result.control_name == "coverage.returning.reconciled_days"
         )
         self.assertEqual(returning.result_status, "fail")
+
+    def test_content_controls_flow_from_production_generator_to_validation_transition(self):
+        import canonical_release_store as store
+        from abbott_canonical_controls import compare_release_control_pack
+        from agents.abbott_page_classifier.candidate_release import (
+            CONTENT_CONTROL_VALUES,
+            GateReport,
+        )
+        from tests.test_canonical_release_store import (
+            ExactValidationConnection,
+            REQUIRED_WORKBOOK_KINDS,
+            baseline_manifest,
+        )
+
+        manifest = {
+            "date_from": "2026-01-01",
+            "date_to": "2026-07-15",
+            "control_values": {
+                "site.traffic.sessions": 100,
+                **CONTENT_CONTROL_VALUES,
+            },
+            "content_candidate_bundle": {
+                "expected_counts": {
+                    "source": 2, "ready": 1, "conflict": 0, "unresolved": 0,
+                    "rejected": 0, "accepted": 1,
+                },
+                "accepted_decision_hash": "a" * 64,
+            },
+        }
+        comparator = ComparatorConnection(manifest=manifest)
+        with patch(
+            "agents.abbott_page_classifier.candidate_release.validate_content_candidate",
+            return_value=GateReport(candidate_release_id=41),
+        ) as inspect_candidate:
+            results = compare_release_control_pack(
+                comparator, baseline_run_id=33, candidate_release_id=41
+            )
+
+        content_results = [r for r in results if r.control_name.startswith("content.")]
+        self.assertEqual(len(content_results), 14)
+        self.assertTrue(all(r.result_status == "pass" for r in content_results))
+        self.assertTrue(all(r.threshold_value == 0 for r in content_results))
+        inspect_candidate.assert_called_once()
+
+        release_baseline = baseline_manifest(REQUIRED_WORKBOOK_KINDS)
+        release_baseline["control_values"].update(CONTENT_CONTROL_VALUES)
+        evidence = [
+            {
+                "control_name": result.control_name,
+                "result_status": result.result_status,
+                "reviewed_by": result.reviewed_by,
+                "accepted_at": result.accepted_at,
+                "code_revision": "abc123",
+            }
+            for result in results
+        ]
+        validation = ExactValidationConnection(
+            source_kinds=REQUIRED_WORKBOOK_KINDS,
+            baseline=release_baseline,
+            baseline_snapshot_id=902,
+            predecessor_release_id=12,
+            evidence_rows=evidence,
+        )
+        with patch.object(store, "get_db_connection", return_value=validation):
+            store.validate_release(
+                41,
+                date_from="2026-01-01",
+                date_to="2026-01-02",
+                expected_code_revision="abc123",
+            )
+        sql = "\n".join(call[0] for call in validation.cursor_instance.calls)
+        self.assertIn("SET release_status = 'validated'", sql)
+        self.assertNotIn("portal_active_data_releases", sql)
 
 
 if __name__ == "__main__":
