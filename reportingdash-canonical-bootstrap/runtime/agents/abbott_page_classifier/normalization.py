@@ -266,6 +266,14 @@ def normalize_observed_page_grouping_url(raw: str) -> NormalizedUrl:
     normalized = normalize_url(raw)
     if not normalized.value:
         return normalized
+    path_lower = normalized.path.casefold()
+    if (
+        re.search(r"(^|/)blob:", path_lower)
+        or re.search(r"(^|/)[a-z][a-z0-9+.-]*:/{1,2}", path_lower)
+        or "…" in normalized.path
+        or "%e2%80%a6" in path_lower
+    ):
+        return _empty_normalized_url()
     parts = urlsplit(normalized.value)
     value = urlunsplit((parts.scheme, parts.netloc, normalized.path, "", ""))
     return NormalizedUrl(

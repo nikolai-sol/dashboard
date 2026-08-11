@@ -338,6 +338,17 @@ def _observed_page_resolution_counts(cursor, candidate_id: int) -> tuple[int, in
                  COUNT(*) AS fact_count
           FROM normalized_rows
           GROUP BY canonical_release_id, normalized_path
+        ), eligible_facts AS (
+          SELECT facts.*
+          FROM normalized_facts AS facts
+          WHERE facts.normalized_path IS NULL
+             OR (
+               facts.normalized_path NOT REGEXP
+                 '(^|/)[a-z][a-z0-9+.-]*:/{1,2}'
+               AND facts.normalized_path NOT REGEXP '(^|/)blob:'
+               AND facts.normalized_path NOT LIKE '%…%'
+               AND UPPER(facts.normalized_path) NOT REGEXP '%E2%80%A6'
+             )
         )
         SELECT COALESCE(SUM((
                  facts.normalized_path IS NOT NULL
@@ -354,7 +365,7 @@ def _observed_page_resolution_counts(cursor, candidate_id: int) -> tuple[int, in
                  AND selected.source_row_fingerprint IS NULL
                  AND exclusion.id IS NULL
                ) * facts.fact_count), 0) AS non_content_unresolved
-        FROM normalized_facts AS facts
+        FROM eligible_facts AS facts
         INNER JOIN portal_content_approval_batches AS candidate_batch
           ON candidate_batch.dataset_key = %s
          AND candidate_batch.candidate_release_id = facts.canonical_release_id

@@ -1296,6 +1296,28 @@ class ContentRegistryRepository:
                     and current_entity_id == item.content_entity_id
                     and current_canonical.get("event_id") in (None, 0)
                 )
+                registry1_evidence = (
+                    proposal_evidence.get("registry1")
+                    if isinstance(proposal_evidence, Mapping)
+                    else None
+                )
+                reviewed_selected_attach = (
+                    local_projection
+                    and item.content_entity_id is None
+                    and item.selected_content_entity_id is not None
+                    and int(item.selected_content_entity_id) > 0
+                    and item.url_alias_decision == "attach"
+                    and item.decision_reason is not None
+                    and bool(item.decision_reason.strip())
+                    and all(value is not None for value in final_values)
+                    and isinstance(registry1_evidence, Mapping)
+                    and registry1_evidence.get("source_name") == "observed_page"
+                )
+                classification_entity_id = (
+                    int(item.selected_content_entity_id)
+                    if reviewed_selected_attach
+                    else item.content_entity_id
+                )
                 reviewed_local_classification = (
                     local_projection
                     and item.content_entity_id is not None
@@ -1305,16 +1327,21 @@ class ContentRegistryRepository:
                     and all(value is not None for value in final_values)
                     and current_values != final_values
                 )
-                if already_ingested and not reviewed_baseline_attach:
+                if (
+                    already_ingested
+                    and not reviewed_baseline_attach
+                    and not reviewed_selected_attach
+                ):
                     continue
                 if (
                     item.readiness_state != "ready"
                     and not reviewed_baseline_attach
+                    and not reviewed_selected_attach
                     and not reviewed_local_classification
                 ):
                     continue
                 if (
-                    item.content_entity_id is None
+                    classification_entity_id is None
                     or item.final_lifecycle_code is None
                 ):
                     raise RepositoryError("BATCH_NOT_ACCEPTED")
@@ -1329,12 +1356,12 @@ class ContentRegistryRepository:
                       AND dataset_key = %s
                     FOR UPDATE
                     """,
-                    (item.content_entity_id, DATASET_KEY),
+                    (classification_entity_id, DATASET_KEY),
                 )
                 entity_row = cursor.fetchone()
                 if (
                     entity_row is None
-                    or int(entity_row[0]) != item.content_entity_id
+                    or int(entity_row[0]) != classification_entity_id
                 ):
                     raise RepositoryError("CONTENT_ENTITY_NOT_ABBOTT")
                 cursor.execute(
@@ -1352,7 +1379,7 @@ class ContentRegistryRepository:
                     LIMIT 1
                     FOR UPDATE
                     """,
-                    (item.content_entity_id,),
+                    (classification_entity_id,),
                 )
                 predecessor_row = cursor.fetchone()
                 predecessor_event_id = (
@@ -1408,10 +1435,13 @@ class ContentRegistryRepository:
                         or baseline_event_id not in (None, 0)
                     ):
                         raise RepositoryError("CORRECTION_PREDECESSOR_MISMATCH")
+                elif reviewed_selected_attach:
+                    if predecessor_event_id is not None:
+                        raise RepositoryError("CORRECTION_AUDIT_REQUIRED")
                 else:
                     self._attest_reviewed_predecessor(
                         proposal_evidence,
-                        item.content_entity_id,
+                        classification_entity_id,
                         predecessor_event_id,
                         predecessor_values,
                     )
@@ -1447,7 +1477,7 @@ class ContentRegistryRepository:
                         "actor": actor,
                         "approval_batch_id": batch_id,
                         "approval_item_id": approval_item_id,
-                        "content_entity_id": item.content_entity_id,
+                        "content_entity_id": classification_entity_id,
                         "direction_code": item.final_direction_code,
                         "effective_at": accepted_at.isoformat(timespec="microseconds"),
                         "event_kind": event_kind,
@@ -1484,7 +1514,7 @@ class ContentRegistryRepository:
                     )
                     """,
                     (
-                        item.content_entity_id,
+                        classification_entity_id,
                         taxonomy_version_id,
                         batch_id,
                         approval_item_id,
