@@ -25,6 +25,7 @@ from agents.abbott_page_classifier.llm_classifier import (
     LlmAttempt,
     LlmClassification,
 )
+from agents.abbott_page_classifier.reconcile import reconcile_entity
 from agents.abbott_page_classifier.workflow_service import (
     CanonicalWeeklyProposalService,
     ObservedPage,
@@ -245,6 +246,10 @@ class WeeklyProposalServiceTests(unittest.TestCase):
         self.assertEqual(item.reconciliation_input.deterministic_proposal.rule_code, "SERVICE_ROUTE")
         self.assertIsInstance(
             item.reconciliation_input.deterministic_proposal.confidence, float
+        )
+        self.assertEqual(
+            reconcile_entity(item.reconciliation_input).readiness_state,
+            "unresolved",
         )
 
     def test_repeated_observed_page_rows_collapse_before_item_creation(self):
