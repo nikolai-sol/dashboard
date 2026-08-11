@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import datetime as dt
 import copy
+import json
 from dataclasses import replace
 import unittest
 
@@ -530,22 +531,38 @@ class StatefulAcceptanceCursor:
         elif normalized.startswith("INSERT INTO portal_content_registry_entities"):
             self.connection.created_entity_count += 1
             self.lastrowid = 500 + self.connection.created_entity_count
+            self.connection.created_entities.append({
+                "id": self.lastrowid,
+                "title": params[1],
+                "canonical_url": params[2],
+                "source_evidence": json.loads(params[3]),
+            })
         elif normalized.startswith("INSERT INTO portal_content_classification_events"):
             self.connection.created_classification_count += 1
             self.lastrowid = 700 + self.connection.created_classification_count
+            self.connection.created_classifications.append({
+                "id": self.lastrowid,
+                "proposal_evidence": json.loads(params[9]),
+                "event_fingerprint": params[8],
+            })
         elif normalized.startswith("INSERT INTO portal_content_url_alias_decision_events"):
             self.connection.decision_events.append({
                 "approval_batch_id": params[0],
                 "approval_item_id": params[1],
                 "accepted_decision_hash": params[2],
+                "normalized_url": params[5],
                 "url_alias_decision": params[6],
+                "event_fingerprint": params[10],
             })
             self.lastrowid = 800 + len(self.connection.decision_events)
         elif normalized.startswith("INSERT INTO portal_content_registry_aliases"):
             self.connection.aliases.append({
                 "id": 900 + len(self.connection.aliases) + 1,
                 "content_entity_id": params[1],
-                "alias_type": params[2] if len(params) > 2 else "url",
+                "alias_type": params[2] if len(params) == 6 else "url",
+                "alias_value": params[3] if len(params) == 6 else params[2],
+                "alias_hash": params[4] if len(params) == 6 else params[3],
+                "uniqueness_scope": "strong",
                 "alias_status": "active",
             })
             self.lastrowid = self.connection.aliases[-1]["id"]
@@ -593,6 +610,8 @@ class StatefulAcceptanceConnection:
         self.decision_events: list[dict[str, object]] = []
         self.created_entity_count = 0
         self.created_classification_count = 0
+        self.created_entities: list[dict[str, object]] = []
+        self.created_classifications: list[dict[str, object]] = []
         self.batch_status = "published"
         self.accepted_decision_hash = None
         self.accepted_by = None
@@ -610,7 +629,9 @@ class StatefulAcceptanceConnection:
             list(self.approval_items), copy.deepcopy(self.aliases),
             copy.deepcopy(self.decision_events), self.batch_status,
             self.accepted_decision_hash, self.accepted_by, self.accepted_at,
-            self.accepted_count, self.skipped_count,
+            self.accepted_count, self.skipped_count, self.created_entity_count,
+            self.created_classification_count, copy.deepcopy(self.created_entities),
+            copy.deepcopy(self.created_classifications),
         )
         return self.cursor_instance
 
@@ -659,7 +680,9 @@ class StatefulAcceptanceConnection:
             (
                 self.approval_items, self.aliases, self.decision_events, self.batch_status,
                 self.accepted_decision_hash, self.accepted_by, self.accepted_at,
-                self.accepted_count, self.skipped_count,
+                self.accepted_count, self.skipped_count, self.created_entity_count,
+                self.created_classification_count, self.created_entities,
+                self.created_classifications,
             ) = self._transaction_snapshot
             self._transaction_snapshot = None
 

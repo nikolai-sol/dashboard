@@ -23,6 +23,7 @@ from agents.abbott_page_classifier.candidate_release import (
     _load_catalog,
     _load_lookup,
     _overlay_current_batch_events,
+    _authorize_created_page_identities,
     build_lookup_projection,
     acknowledge_content_candidate_activation,
     materialize_content_candidate,
@@ -73,6 +74,7 @@ def audited_approval_item(
     finals: tuple[str, str, str, str],
     readiness_state: str,
     current_canonical: dict[str, object],
+    registry1_values: dict[str, object] | None = None,
 ) -> ApprovalBatchItem:
     item = ApprovalBatchItem(
         content_entity_id=entity_id,
@@ -87,6 +89,7 @@ def audited_approval_item(
         row_hash="",
         decision_reason=None,
         current_canonical=current_canonical,
+        registry1_values=registry1_values,
         taxonomy_digest=TEST_TAXONOMY_DIGEST,
         taxonomy_terms=TEST_TAXONOMY_TERMS,
         source_snapshot_ids=TEST_SOURCE_IDS,
@@ -163,6 +166,8 @@ class CandidateConnection:
         skipped_identity_conflict: bool = False,
         baseline_missing_direction: bool = False,
         candidate_status: str = "staging",
+        create_observed_page: bool = False,
+        tamper_created_identity: str | None = None,
     ):
         self.events: list[str] = []
         self.calls: list[tuple[str, tuple[object, ...]]] = []
@@ -202,6 +207,8 @@ class CandidateConnection:
         self.duplicate_event = duplicate_event
         self.skipped_identity_conflict = skipped_identity_conflict
         self.candidate_status = candidate_status
+        self.create_observed_page = create_observed_page
+        self.tamper_created_identity = tamper_created_identity
         self.snapshots = {
             11: {
                 "id": 11,
@@ -277,6 +284,29 @@ class CandidateConnection:
                 published_items[0],
                 replace(second, row_hash=compute_item_hash(second)),
             )
+        if create_observed_page:
+            created = audited_approval_item(
+                None,
+                input_hash="e" * 64,
+                title="Observed Gamma",
+                url="https://www.abbottpro.ru/cardio/gamma",
+                finals=("cardiology", "articles", "all", "active"),
+                readiness_state="conflict",
+                current_canonical=None,
+                registry1_values={
+                    "source_name": "observed_page",
+                    "url": "https://www.abbottpro.ru/cardio/gamma",
+                },
+            )
+            created = replace(
+                created,
+                conflict_codes=(ConflictCode.IDENTITY_COLLISION,),
+                row_hash="",
+            )
+            published_items = (
+                published_items[0],
+                replace(created, row_hash=compute_item_hash(created)),
+            )
         self.published_input_hash = compute_batch_hash(published_items)
         self.approval_rows = []
         for item_id, item in enumerate(published_items, start=101):
@@ -300,7 +330,15 @@ class CandidateConnection:
                 "row_hash": item.row_hash,
                 "decision_reason": item.decision_reason,
                 "proposal_evidence": plain_json(item.proposal_evidence),
+                "selected_content_entity_id": None,
+                "url_alias_decision": None,
             })
+        if create_observed_page:
+            self.approval_rows[1].update(
+                selected_content_entity_id=900,
+                url_alias_decision="create",
+                decision_reason="reviewed observed canonical page",
+            )
         if self.manager_direction_edit:
             self.approval_rows[0].update(
                 final_direction_code="gastroenterology",
@@ -336,6 +374,8 @@ class CandidateConnection:
                 ),
                 row_hash=row["row_hash"],
                 decision_reason=row["decision_reason"],
+                selected_content_entity_id=row.get("selected_content_entity_id"),
+                url_alias_decision=row.get("url_alias_decision"),
             )
             for row in self.approval_rows
         ]
@@ -434,6 +474,23 @@ class CandidateConnection:
     def cursor(self, **_kwargs):
         return self
 
+    @staticmethod
+    def _created_source_evidence(item, normalized_url):
+        return {
+            "authority": "local_observed_page_acceptance",
+            "approval_batch_id": 71,
+            "approval_item_id": 102,
+            "actor": "content-manager",
+            "row_hash": item["row_hash"],
+            "provenance": [{
+                "source_sheet": "local_observed_page",
+                "source_row_ordinal": 102,
+                "source_row_fingerprint": item["row_hash"],
+                "canonical_url": normalized_url,
+                "page_title": item["title"],
+            }],
+        }
+
     def start_transaction(self):
         self.events.append("start")
 
@@ -482,12 +539,12 @@ class CandidateConnection:
                 "activation_status": "candidate" if self.batch_materialized else "pending",
                 "candidate_release_id": 41 if self.batch_materialized else None,
                 "accepted_decision_hash": self.accepted_hash,
-                "accepted_count": 1,
+                "accepted_count": 2 if self.create_observed_page else 1,
                 "ready_count": 1,
-                "conflict_count": 1 if self.skipped_identity_conflict else 0,
+                "conflict_count": 1 if (self.skipped_identity_conflict or self.create_observed_page) else 0,
                 "unresolved_count": 0,
                 "rejected_count": 0,
-                "no_change_count": 0 if self.skipped_identity_conflict else 1,
+                "no_change_count": 0 if (self.skipped_identity_conflict or self.create_observed_page) else 1,
                 "taxonomy_version_id": 5,
                 "taxonomy_version": "abbott.v1",
                 "taxonomy_digest": TEST_TAXONOMY_DIGEST,
@@ -503,6 +560,65 @@ class CandidateConnection:
             self._many = list(self.approval_rows)
         elif "strong_collision_count" in normalized:
             self._one = {"strong_collision_count": 0}
+        elif "url_event.url_alias_decision = 'create'" in normalized:
+            if self.create_observed_page:
+                item = self.approval_rows[1]
+                normalized_url = "https://abbottpro.ru/cardio/gamma"
+                alias_hash = sha256_text(normalized_url)
+                source_evidence = {
+                    "authority": "local_observed_page_acceptance",
+                    "approval_batch_id": 71,
+                    "approval_item_id": 102,
+                    "actor": "content-manager",
+                    "row_hash": item["row_hash"],
+                    "provenance": [{
+                        "source_sheet": "local_observed_page",
+                        "source_row_ordinal": 102,
+                        "source_row_fingerprint": item["row_hash"],
+                        "canonical_url": normalized_url,
+                        "page_title": item["title"],
+                    }],
+                }
+                fingerprint = compute_url_alias_decision_event_fingerprint(
+                    accepted_decision_hash=self.accepted_hash,
+                    actor="content-manager", approval_batch_id=71,
+                    approval_item_id=102,
+                    decision_reason=item["decision_reason"],
+                    normalized_url=normalized_url,
+                    selected_content_entity_id=900,
+                    selected_predecessor_event_fingerprint=None,
+                    selected_predecessor_event_id=None,
+                    url_alias_decision="create",
+                )
+                self.created_url_event_fingerprint = fingerprint
+                rows = []
+                for alias_type in ("canonical_url", "url"):
+                    row = {
+                        "approval_item_id": 102, "entity_id": 900,
+                        "entity_canonical_url": normalized_url,
+                        "entity_status": "active",
+                        "entity_source_evidence": source_evidence,
+                        "alias_entity_id": 900, "alias_type": alias_type,
+                        "alias_value": normalized_url, "alias_hash": alias_hash,
+                        "alias_uniqueness_scope": "strong", "alias_status": "active",
+                        "alias_source_evidence": source_evidence,
+                        "url_event_batch_id": 71, "url_event_item_id": 102,
+                        "url_event_accepted_hash": self.accepted_hash,
+                        "url_event_actor": "content-manager",
+                        "url_event_reason": item["decision_reason"],
+                        "url_event_normalized_url": normalized_url,
+                        "url_event_decision": "create",
+                        "url_event_selected_entity_id": 900,
+                        "url_event_predecessor_id": None,
+                        "url_event_predecessor_fingerprint": None,
+                        "url_event_fingerprint": fingerprint,
+                    }
+                    if self.tamper_created_identity == "alias_hash" and alias_type == "url":
+                        row["alias_hash"] = "0" * 64
+                    if self.tamper_created_identity == "accepted_hash":
+                        row["url_event_accepted_hash"] = "0" * 64
+                    rows.append(row)
+                self._many = rows
         elif "legacy_catalog.id AS predecessor_catalog_row_id" in normalized:
             self._many = [
                 {
@@ -627,6 +743,57 @@ class CandidateConnection:
             if self.corrupt_event_fingerprint:
                 event_row["event_fingerprint"] = "0" * 64
             self._many = [] if self.missing_authorized_event else [event_row]
+            if self.create_observed_page:
+                item = self.approval_rows[1]
+                normalized_url = "https://abbottpro.ru/cardio/gamma"
+                event_evidence = {
+                    "accepted_decision_hash": self.accepted_hash,
+                    "approval_item_evidence": item["proposal_evidence"],
+                    "canonical_classification": {
+                        "access_code": item["final_access_code"],
+                        "direction_code": item["final_direction_code"],
+                        "lifecycle_code": item["final_lifecycle_code"],
+                        "material_type_code": item["final_material_type_code"],
+                    },
+                    "created_identity": {
+                        "alias_hash": sha256_text(normalized_url),
+                        "normalized_url": normalized_url,
+                        "selected_content_entity_id": 900,
+                        "url_alias_decision": "create",
+                        "url_decision_event_fingerprint": self.created_url_event_fingerprint,
+                    },
+                    "row_hash": item["row_hash"],
+                }
+                created_event = {
+                    "authorized_entity_id": 900, "content_entity_id": 900,
+                    "material_id": None, "title": item["title"],
+                    "canonical_url": normalized_url,
+                    "source_evidence": self._created_source_evidence(item, normalized_url),
+                    "classification_event_id": 502,
+                    "direction_code": item["final_direction_code"],
+                    "material_type_code": item["final_material_type_code"],
+                    "access_code": item["final_access_code"],
+                    "lifecycle_code": item["final_lifecycle_code"],
+                    "event_kind": "approve", "approval_batch_id": 71,
+                    "approval_item_id": 102, "taxonomy_version_id": 5,
+                    "predecessor_event_id": None, "proposal_evidence": event_evidence,
+                    "actor": "content-manager", "reason": item["decision_reason"],
+                    "effective_at": datetime(2026, 8, 5, 10, 0),
+                    "direction_label": "Кардиология [262338]",
+                    "material_type_label": "Статьи", "access_label": "Все",
+                    "lifecycle_label": "active",
+                }
+                created_event["event_fingerprint"] = compute_classification_event_fingerprint({
+                    "access_code": created_event["access_code"], "actor": created_event["actor"],
+                    "approval_batch_id": 71, "approval_item_id": 102,
+                    "content_entity_id": 900, "direction_code": created_event["direction_code"],
+                    "effective_at": created_event["effective_at"].isoformat(timespec="microseconds"),
+                    "event_kind": "approve", "lifecycle_code": created_event["lifecycle_code"],
+                    "material_type_code": created_event["material_type_code"],
+                    "predecessor_event_id": None, "proposal_evidence": event_evidence,
+                    "reason": created_event["reason"], "taxonomy_version_id": 5,
+                })
+                self._many.append(created_event)
             if self.duplicate_event:
                 self._many.append({**event_row, "classification_event_id": 502})
         elif "source_kind = 'abbott_canonical_control_pack'" in normalized:
@@ -697,6 +864,11 @@ class CandidateConnection:
                 {"taxonomy_kind": "access", "term_code": "doctors", "term_label": "Врачи"},
                 {"taxonomy_kind": "lifecycle", "term_code": "active", "term_label": "active"},
             ]
+        elif normalized.startswith("SELECT content_entity_id, alias_type, alias_value"):
+            self._many = ([
+                (900, "canonical_url", "https://abbottpro.ru/cardio/gamma"),
+                (900, "url", "https://abbottpro.ru/cardio/gamma"),
+            ] if self.create_observed_page else [])
         elif "AS lookup_consistency_failures" in normalized:
             self._one = {
                 "lookup_group_count": 4 if self.realistic_smoke else 6,
@@ -1045,6 +1217,85 @@ class FailedCandidateResetConnection:
 
 
 class CandidateReleaseTest(unittest.TestCase):
+    def test_lookup_uses_query_free_abbott_identity_for_catalog_alias_and_fact(self):
+        row = replace(
+            catalog_row("1" * 64),
+            normalized_url="https://www.abbottpro.ru/cardio/alpha?utm_source=x",
+        )
+        lookup = build_lookup_projection(
+            (row,),
+            page_facts=({"page_url": "http://abbottpro.ru/cardio/alpha?semantic=1"},),
+            strong_aliases=({
+                "content_entity_id": row.content_entity_id,
+                "alias_type": "url",
+                "alias_value": "https://abbottpro.ru/cardio/alpha?another=2",
+            },),
+        )
+
+        url_rows = [item for item in lookup if item.lookup_kind == "url"]
+        self.assertEqual(len(url_rows), 1)
+        self.assertEqual(
+            url_rows[0].lookup_key_hash,
+            sha256_text("https://abbottpro.ru/cardio/alpha"),
+        )
+
+    def test_materializer_create_adds_catalog_row_and_unique_url_lookup(self):
+        connection = CandidateConnection(create_observed_page=True)
+        with (
+            patch(
+                "agents.abbott_page_classifier.candidate_release.get_db_connection",
+                return_value=connection,
+            ),
+            patch(
+                "agents.abbott_page_classifier.candidate_release.release_store.create_candidate_release",
+                return_value=41,
+            ),
+            patch(
+                "agents.abbott_page_classifier.candidate_release.release_store.require_mutable_candidate_release",
+                return_value={"id": 41, "release_status": "staging"},
+            ),
+        ):
+            result = materialize_content_candidate(71, 12, "abc1234")
+
+        self.assertEqual(result.catalog_row_count, 3)
+        created_catalog = [row for row in connection.catalog_rows if row[20] == 900]
+        self.assertEqual(len(created_catalog), 1)
+        self.assertEqual(created_catalog[0][2], "https://abbottpro.ru/cardio/gamma")
+        created_hash = sha256_text("https://abbottpro.ru/cardio/gamma")
+        created_lookup = [
+            row for row in connection.lookup_rows
+            if row[2] == "url" and row[3] == created_hash
+        ]
+        self.assertEqual(len(created_lookup), 1)
+        self.assertEqual(created_lookup[0][6], "unique")
+        self.assertEqual(connection.events, ["start", "commit"])
+
+    def test_materializer_rolls_back_on_created_identity_tamper_matrix(self):
+        for tamper in ("alias_hash", "accepted_hash"):
+            with self.subTest(tamper=tamper):
+                connection = CandidateConnection(
+                    create_observed_page=True,
+                    tamper_created_identity=tamper,
+                )
+                with (
+                    patch(
+                        "agents.abbott_page_classifier.candidate_release.get_db_connection",
+                        return_value=connection,
+                    ),
+                    patch(
+                        "agents.abbott_page_classifier.candidate_release.release_store.create_candidate_release",
+                        return_value=41,
+                    ),
+                ):
+                    with self.assertRaisesRegex(
+                        CandidateMaterializationError,
+                        "CREATED_PAGE_IDENTITY_UNAUTHORIZED",
+                    ):
+                        materialize_content_candidate(71, 12, "abc1234")
+                self.assertEqual(connection.events, ["start", "rollback"])
+                self.assertEqual(connection.catalog_rows, [])
+                self.assertEqual(connection.lookup_rows, [])
+
     def test_observed_page_resolution_gate_counts_only_aggregate_failures(self):
         from agents.abbott_page_classifier.candidate_release import observed_page_resolution_gates
 

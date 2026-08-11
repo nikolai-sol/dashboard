@@ -56,6 +56,7 @@ SYNCHRONIZED_BOOTSTRAP_COPIES = {
     "runtime/agents/abbott_page_classifier/workflow_service.py": "agents/abbott_page_classifier/workflow_service.py",
     "runtime/agents/abbott_page_classifier/workflow_repository.py": "agents/abbott_page_classifier/workflow_repository.py",
     "runtime/agents/abbott_page_classifier/repository.py": "agents/abbott_page_classifier/repository.py",
+    "runtime/agents/abbott_page_classifier/local_acceptance.py": "agents/abbott_page_classifier/local_acceptance.py",
     "runtime/agents/abbott_page_classifier/batch_service.py": "agents/abbott_page_classifier/batch_service.py",
     "runtime/agents/abbott_page_classifier/reconcile.py": "agents/abbott_page_classifier/reconcile.py",
     "runtime/agents/abbott_page_classifier/identity.py": "agents/abbott_page_classifier/identity.py",
@@ -85,6 +86,7 @@ VENDORED_CONTENT_RUNTIME = {
     "runtime/agents/abbott_page_classifier/workflow_service.py",
     "runtime/agents/abbott_page_classifier/workflow_repository.py",
     "runtime/agents/abbott_page_classifier/repository.py",
+    "runtime/agents/abbott_page_classifier/local_acceptance.py",
     "runtime/agents/abbott_page_classifier/batch_service.py",
     "runtime/agents/abbott_page_classifier/reconcile.py",
     "runtime/agents/abbott_page_classifier/identity.py",
@@ -103,6 +105,24 @@ DEFAULT_SHEETS_GATEWAY_IMPORTS = {
 
 
 class AbbottRuntimeClosureTest(unittest.TestCase):
+    def test_migration_054_is_idempotent_and_preserves_identity_guards(self):
+        root = ROOT / "dashboard-next/src/db/migrations/054_abbott_observed_page_creation.sql"
+        bootstrap = (
+            ROOT / "dashboard-next/reportingdash-canonical-bootstrap/src/db/migrations/054_abbott_observed_page_creation.sql"
+        )
+        self.assertEqual(root.read_bytes(), bootstrap.read_bytes())
+        sql = root.read_text(encoding="utf-8")
+        decoded_sql_literals = sql.replace("''", "'")
+        self.assertEqual(
+            decoded_sql_literals.count("ENUM('attach', 'retire', 'reject', 'create')"),
+            2,
+        )
+        self.assertEqual(sql.count("information_schema.COLUMNS"), 2)
+        self.assertEqual(sql.count("PREPARE stmt FROM @sql"), 2)
+        self.assertNotIn("DROP TRIGGER", sql.upper())
+        self.assertNotIn("DROP FOREIGN KEY", sql.upper())
+        self.assertNotIn('"enum(', sql)
+
     def test_url_identity_parity_fixtures_are_byte_identical(self):
         python_fixture = ROOT / "tests/fixtures/abbott_url_identity_cases.json"
         typescript_fixture = (
