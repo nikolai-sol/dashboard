@@ -194,6 +194,20 @@ commands always return `LEGACY_SHEETS_CLI_DISABLED`. The library projection and
 read authorities remain internal to the canonical workflow; only
 `workflow.py publish-projection` writes a Sheet.
 
+## Owner-local acceptance
+
+An owner may use `workflow.py publish-local --batch-id N --decision-file PATH
+--execute` followed by `accept-local` with the same arguments. Both commands
+default to a dry run and never open the decision file without `--execute`.
+`ABBOTT_CONTENT_LOCAL_DECISION_ROOT` is an owner-managed absolute directory;
+the file must remain an owner-owned mode-0600 regular file beneath it. Publish
+re-attests the draft batch and records only the immutable locator and exact
+descriptor hash. Accept re-attests the published batch and requires that same
+locator/hash before the transactional canonical acceptance. Operator output is
+limited to status, IDs, hashes, and counts; it never prints the file path or
+decision content. `--decision-file` is rejected for all Google and other
+workflow commands, whose semantics remain unchanged.
+
 Golden gates are source accounting, taxonomy and schema validity, anti-flip
 correctness, and reviewed direction/material-type accuracy. Real LLM evaluation
 is separately authorized and stores sanitized metrics only. Migrations 047–049,

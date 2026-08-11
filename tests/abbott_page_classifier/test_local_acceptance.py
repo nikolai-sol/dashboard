@@ -14,6 +14,7 @@ from agents.abbott_page_classifier.batch_service import BuiltApprovalBatch, Pers
 from agents.abbott_page_classifier.domain import ApprovalItem
 from agents.abbott_page_classifier.local_acceptance import (
     LocalAcceptanceError,
+    read_local_acceptance_artifact,
     read_local_acceptance_intent,
 )
 
@@ -103,6 +104,20 @@ class LocalAcceptanceIntentTests(unittest.TestCase):
             tuple(row.row_hash for row in intent.decisions),
             tuple(item.row_hash for item in self.persisted_batch.batch.items),
         )
+
+    def test_local_artifact_binds_locator_and_exact_descriptor_hash(self):
+        decision_path = self._write("decision.json", self._payload())
+
+        artifact = read_local_acceptance_artifact(
+            decision_path, self.persisted_batch, self.private_root
+        )
+
+        self.assertEqual(artifact.locator, str(decision_path))
+        self.assertEqual(
+            artifact.content_hash,
+            hashlib.sha256(decision_path.read_bytes()).hexdigest(),
+        )
+        self.assertEqual(artifact.intent.batch_id, 8)
 
     def test_local_intent_rejects_symlink_mode_and_hash_drift(self):
         good_path = self._write("good.json", self._payload())

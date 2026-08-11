@@ -49,6 +49,14 @@ class RecordingGateway:
             self.sheet_calls += 1
         return {"status": "dry_run" if dry_run else "published", "ready_count": 1}
 
+    def publish_local(self, batch_id, decision_file, *, dry_run):
+        self.calls.append(("publish_local", batch_id, Path(decision_file)))
+        return {"status": "dry_run" if dry_run else "published", "batch_id": batch_id}
+
+    def accept_local(self, batch_id, decision_file, *, dry_run):
+        self.calls.append(("accept_local", batch_id, Path(decision_file)))
+        return {"status": "dry_run" if dry_run else "accepted", "batch_id": batch_id}
+
     def pull_accepted(self, batch_id, *, dry_run):
         self.calls.append(("pull-accepted", (batch_id, dry_run)))
         return {"status": "dry_run" if dry_run else "accepted", "accepted_count": 1}
@@ -170,8 +178,34 @@ class WorkflowTests(unittest.TestCase):
     def test_command_surface_is_fixed(self):
         self.assertEqual(
             COMMANDS,
-            ("reconcile", "classify", "publish-projection", "pull-accepted", "ingest", "materialize", "validate", "status"),
+            ("reconcile", "classify", "publish-projection", "publish-local", "accept-local", "pull-accepted", "ingest", "materialize", "validate", "status"),
         )
+
+    def test_publish_local_defaults_to_dry_run_without_opening_file(self):
+        gateway = RecordingGateway()
+
+        self.assertEqual(main([
+            "publish-local", "--batch-id", "8", "--decision-file", "/private/decision.json",
+        ], dependencies=WorkflowDependencies(gateway)), 0)
+
+        self.assertEqual(gateway.calls, [])
+
+    def test_accept_local_requires_execute_and_exact_batch(self):
+        gateway = RecordingGateway()
+        decision_file = "/private/decision.json"
+
+        self.assertEqual(main([
+            "accept-local", "--batch-id", "8", "--decision-file", decision_file, "--execute",
+        ], dependencies=WorkflowDependencies(gateway)), 0)
+        self.assertEqual(gateway.calls, [("accept_local", 8, Path(decision_file))])
+
+    def test_decision_file_is_rejected_for_non_local_commands(self):
+        gateway = RecordingGateway()
+
+        self.assertEqual(main([
+            "status", "--batch-id", "8", "--decision-file", "/private/decision.json",
+        ], dependencies=WorkflowDependencies(gateway)), 2)
+        self.assertEqual(gateway.calls, [])
 
     def test_reconcile_is_offline_dry_run_and_reports_only_sanitized_counts_hashes(self):
         gateway = RecordingGateway()
