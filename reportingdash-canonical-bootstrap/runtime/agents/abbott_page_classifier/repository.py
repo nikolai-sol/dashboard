@@ -1010,7 +1010,15 @@ class ContentRegistryRepository:
             projection_kind=(str(row[15]) if len(row) > 15 and row[15] is not None else None),
             local_projection_locator=(str(row[16]) if len(row) > 16 and row[16] is not None else None),
             local_projection_content_hash=(str(row[17]) if len(row) > 17 and row[17] is not None else None),
-            candidate_release_id=(int(row[18]) if len(row) > 18 and row[18] is not None else (int(row[15]) if row[15] is not None else None)),
+            candidate_release_id=(
+                int(row[18])
+                if len(row) > 18 and row[18] is not None
+                else (
+                    int(row[15])
+                    if len(row) <= 18 and row[15] is not None
+                    else None
+                )
+            ),
             activation_status=(str(row[19]) if len(row) > 19 else str(row[16])),
         )
 
