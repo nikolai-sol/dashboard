@@ -455,6 +455,41 @@ class WeeklyProposalServiceTests(unittest.TestCase):
         self.assertEqual(receipt.catalog_gap_count, 0)
         self.assertEqual(store.runs_by_id[receipt.run_id].items, ())
 
+    def test_known_observed_alias_without_metadata_creates_matched_review_item(self):
+        entity = CanonicalClassification(
+            7,
+            "Known without metadata",
+            "https://abbottpro.ru/known",
+            None,
+            None,
+            None,
+            "unknown",
+            None,
+        )
+        observed = ObservedPage(
+            entity.url,
+            entity.title,
+            3,
+            date(2026, 8, 1),
+            date(2026, 8, 1),
+        )
+        with tempfile.TemporaryDirectory() as temporary:
+            registry1, registry2 = write_empty_sources(Path(temporary))
+            store = StatefulWorkflowStore(context(
+                entities=(entity,),
+                aliases=(IdentityAlias(7, "url", entity.url, "strong"),),
+                observed_pages=(observed,),
+            ))
+            receipt = CanonicalWeeklyProposalService(store, CONFIG).reconcile(
+                registry1, registry2
+            )
+
+        self.assertEqual(receipt.catalog_gap_count, 1)
+        item = store.runs_by_id[receipt.run_id].items[0]
+        self.assertEqual(item.identity_status, "matched")
+        self.assertEqual(item.content_entity_id, 7)
+        self.assertEqual(item.reconciliation_input.active_canonical, entity)
+
     def test_unique_weak_observed_slug_match_still_creates_review_item(self):
         entity = CanonicalClassification(7, "Known", "https://abbottpro.ru/cardio/known", "cardiology", "articles", "all", "active", 1)
         observed = ObservedPage("https://abbottpro.ru/cardio/known?version=2", "Other title", 3, date(2026, 8, 1), date(2026, 8, 1))
