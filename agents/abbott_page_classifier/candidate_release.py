@@ -1900,7 +1900,7 @@ def _authorize_current_batch_events(
 
 
 def _load_prior_accepted_event_rows(
-    cursor, batch_id: int, taxonomy_version_id: int
+    cursor, batch_id: int
 ) -> tuple[Mapping[str, object], ...]:
     """Load the latest immutable accepted event for every registry entity.
 
@@ -1964,25 +1964,21 @@ def _load_prior_accepted_event_rows(
          AND entity.dataset_key = %s
          AND entity.registry_status = 'active'
         LEFT JOIN portal_content_taxonomy_terms AS direction
-          ON direction.taxonomy_version_id = %s
+          ON direction.taxonomy_version_id = event.taxonomy_version_id
          AND direction.taxonomy_kind = 'direction'
          AND direction.term_code = event.direction_code
-         AND direction.term_status = 'active'
         LEFT JOIN portal_content_taxonomy_terms AS material
-          ON material.taxonomy_version_id = %s
+          ON material.taxonomy_version_id = event.taxonomy_version_id
          AND material.taxonomy_kind = 'material_type'
          AND material.term_code = event.material_type_code
-         AND material.term_status = 'active'
         LEFT JOIN portal_content_taxonomy_terms AS access_term
-          ON access_term.taxonomy_version_id = %s
+          ON access_term.taxonomy_version_id = event.taxonomy_version_id
          AND access_term.taxonomy_kind = 'access'
          AND access_term.term_code = event.access_code
-         AND access_term.term_status = 'active'
         LEFT JOIN portal_content_taxonomy_terms AS lifecycle
-          ON lifecycle.taxonomy_version_id = %s
+          ON lifecycle.taxonomy_version_id = event.taxonomy_version_id
          AND lifecycle.taxonomy_kind = 'lifecycle'
          AND lifecycle.term_code = event.lifecycle_code
-         AND lifecycle.term_status = 'active'
         WHERE event.row_rank = 1
         ORDER BY event.effective_at, event.id
         """,
@@ -1990,10 +1986,6 @@ def _load_prior_accepted_event_rows(
             DATASET_KEY,
             batch_id,
             DATASET_KEY,
-            taxonomy_version_id,
-            taxonomy_version_id,
-            taxonomy_version_id,
-            taxonomy_version_id,
         ),
     )
     rows = tuple(cursor.fetchall())
@@ -3343,7 +3335,7 @@ def materialize_content_candidate(
             created_url_event_fingerprints,
         )
         prior_event_rows = _load_prior_accepted_event_rows(
-            cursor, batch_id, int(batch["taxonomy_version_id"])
+            cursor, batch_id
         )
         _authorize_prior_accepted_events(prior_event_rows)
         catalog_rows = _overlay_current_batch_events(
@@ -4239,7 +4231,7 @@ def validate_content_candidate(
         validation_event_rows = tuple(cursor.fetchall())
         try:
             validation_prior_event_rows = _load_prior_accepted_event_rows(
-                cursor, batch_id, int(batch["taxonomy_version_id"])
+                cursor, batch_id
             )
             _authorize_prior_accepted_events(validation_prior_event_rows)
             _authorize_current_batch_events(

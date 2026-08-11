@@ -2175,6 +2175,11 @@ class CandidateReleaseTest(unittest.TestCase):
         )
         self.assertIn("event.approval_batch_id <> %s", prior_sql)
         self.assertIn("event.row_rank = 1", prior_sql)
+        self.assertIn(
+            "direction.taxonomy_version_id = event.taxonomy_version_id",
+            prior_sql,
+        )
+        self.assertNotIn("direction.term_status = 'active'", prior_sql)
         self.assertIn("batch.source_snapshot_ids", sql)
         self.assertIn("batch.source_snapshot_digests", sql)
         self.assertIn("'$.registry1.material_id'", sql)
