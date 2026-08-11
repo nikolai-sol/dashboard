@@ -172,6 +172,7 @@ class CandidateConnection:
         candidate_status: str = "staging",
         create_observed_page: bool = False,
         tamper_created_identity: str | None = None,
+        reusable_catalog_snapshot: Mapping[str, object] | None = None,
     ):
         self.events: list[str] = []
         self.calls: list[tuple[str, tuple[object, ...]]] = []
@@ -213,6 +214,7 @@ class CandidateConnection:
         self.candidate_status = candidate_status
         self.create_observed_page = create_observed_page
         self.tamper_created_identity = tamper_created_identity
+        self.reusable_catalog_snapshot = reusable_catalog_snapshot
         self.snapshots = {
             11: {
                 "id": 11,
@@ -823,6 +825,22 @@ class CandidateConnection:
                 self._many.append(created_event)
             if self.duplicate_event:
                 self._many.append({**event_row, "classification_event_id": 502})
+        elif normalized.startswith(
+            "SELECT id, source_kind, source_locator, content_sha256"
+        ) and "content_sha256 = %s" in normalized:
+            candidates = [
+                row
+                for row in (
+                    self.reusable_catalog_snapshot,
+                    *self.snapshots.values(),
+                )
+                if row is not None
+                and row.get("source_kind") == params[1]
+                and row.get("content_sha256") == params[2]
+                and row.get("parser_version") == params[3]
+            ]
+            if candidates:
+                self._one = dict(candidates[0])
         elif "source_kind = 'abbott_canonical_control_pack'" in normalized:
             baseline_id = int(params[-1])
             if baseline_id == 902 and self.baseline_manifest is not None:
@@ -956,11 +974,12 @@ class CandidateConnection:
             self._stream_many = True
         elif normalized.startswith("INSERT INTO portal_dataset_snapshots"):
             self.snapshot_insert_count += 1
-            self.lastrowid = 900 + self.snapshot_insert_count
-            if self.snapshot_insert_count == 1:
+            if "'abbott_canonical_control_pack'" not in normalized:
+                self.lastrowid = 901
                 self.snapshots[self.lastrowid] = {
                     "id": self.lastrowid,
                     "source_kind": params[1],
+                    "source_locator": params[2],
                     "content_sha256": params[3],
                     "content_bytes": params[4],
                     "source_row_count": params[5],
@@ -968,9 +987,11 @@ class CandidateConnection:
                     "import_status": "imported",
                     "imported_row_count": params[7],
                     "rejected_row_count": 0,
+                    "private_archive_locator": params[8],
                     "manifest_json": params[-1],
                 }
             else:
+                self.lastrowid = 902
                 self.baseline_manifest = params[-1]
         elif normalized.startswith("INSERT INTO portal_release_source_imports"):
             self.candidate_imports.append(
@@ -2489,6 +2510,52 @@ class CandidateReleaseTest(unittest.TestCase):
         provenance = json.loads(first_catalog_row[23])
         self.assertEqual(provenance["predecessor_catalog_row_id"], 1001)
         self.assertEqual(provenance["source_row_fingerprint"], "1" * 64)
+
+    def test_materialization_reuses_an_identical_immutable_catalog_snapshot(self):
+        first = CandidateConnection()
+        with (
+            patch(
+                "agents.abbott_page_classifier.candidate_release.get_db_connection",
+                return_value=first,
+            ),
+            patch(
+                "agents.abbott_page_classifier.candidate_release.release_store.create_candidate_release",
+                return_value=41,
+            ),
+            patch(
+                "agents.abbott_page_classifier.candidate_release.release_store.require_mutable_candidate_release",
+                return_value={"id": 41, "release_status": "staging"},
+            ),
+        ):
+            materialize_content_candidate(71, 12, "abc1234")
+
+        reusable = {**first.snapshots[901], "id": 777}
+        retry = CandidateConnection(reusable_catalog_snapshot=reusable)
+        with (
+            patch(
+                "agents.abbott_page_classifier.candidate_release.get_db_connection",
+                return_value=retry,
+            ),
+            patch(
+                "agents.abbott_page_classifier.candidate_release.release_store.create_candidate_release",
+                return_value=42,
+            ),
+            patch(
+                "agents.abbott_page_classifier.candidate_release.release_store.require_mutable_candidate_release",
+                return_value={"id": 42, "release_status": "staging"},
+            ),
+        ):
+            result = materialize_content_candidate(71, 12, "def5678")
+
+        self.assertEqual(result.catalog_snapshot_id, 777)
+        self.assertEqual(result.source_snapshot_ids, (11, 777))
+        catalog_inserts = [
+            sql
+            for sql, _params in retry.calls
+            if sql.startswith("INSERT INTO portal_dataset_snapshots")
+            and "abbott-content-control-v1" not in sql
+        ]
+        self.assertEqual(catalog_inserts, [])
 
     def test_materialization_replays_latest_prior_accepted_events(self):
         connection = CandidateConnection()
