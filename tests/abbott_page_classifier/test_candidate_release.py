@@ -1422,6 +1422,20 @@ class CandidateReleaseTest(unittest.TestCase):
             (),
         )
 
+        _authorize_current_batch_events(
+            (),
+            {101: item},
+            {
+                "id": 10,
+                "taxonomy_version_id": 5,
+                "accepted_decision_hash": accepted_hash,
+                "accepted_by": "content-manager",
+                "accepted_at": accepted_at,
+                "projection_kind": "local",
+            },
+            (),
+        )
+
     def test_ignores_reviewed_attach_that_already_has_classification_event(self):
         item = {
             "content_entity_id": 41,
