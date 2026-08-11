@@ -613,6 +613,11 @@ class ContentRegistryRepository:
             row = cursor.fetchone()
             if row is None or str(row[0]) != intent.batch_key or str(row[5]) != intent.published_input_hash:
                 raise RepositoryError("BATCH_NOT_PERSISTED")
+            if (
+                str(row[2]) != str(row[4])
+                or str(row[7] or "") != str(projection_locator).strip()
+            ):
+                raise RepositoryError("BATCH_ACCEPTANCE_METADATA_MISMATCH")
             if str(row[6]) != "published":
                 raise RepositoryError("BATCH_NOT_PUBLISHED")
             taxonomy = self._load_taxonomy_terms(cursor, int(row[1]), str(row[3]), str(row[4]), lock=True)
@@ -1525,7 +1530,11 @@ class ContentRegistryRepository:
         """Lock and mutate one reviewed strong URL identity, fail-closed on races."""
         ContentRegistryRepository._validate_url_alias_decision(item)
         decision = item.url_alias_decision
-        normalized_url = normalize_observed_page_grouping_url(item.url)
+        normalized_url = (
+            normalize_observed_page_grouping_url(item.url)
+            if decision == "create"
+            else normalize_url(item.url)
+        )
         if not normalized_url.value:
             raise RepositoryError("IDENTITY_COLLISION")
         alias_hash = normalized_url.sha256

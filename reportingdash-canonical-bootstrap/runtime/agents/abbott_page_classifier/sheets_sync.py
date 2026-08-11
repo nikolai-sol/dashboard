@@ -1810,7 +1810,7 @@ def _validate_url_alias_decision(item: ApprovalItem) -> None:
     decision = item.url_alias_decision
     selected = item.selected_content_entity_id
     reason = item.decision_reason
-    if decision is not None and decision not in {"attach", "retire", "reject", "create"}:
+    if decision is not None and decision not in {"attach", "retire", "reject"}:
         raise ProjectionValidationError("URL_ALIAS_DECISION_INVALID")
     if not collision and (decision is not None or selected is not None):
         raise ProjectionValidationError("URL_ALIAS_DECISION_UNEXPECTED")
@@ -1818,7 +1818,7 @@ def _validate_url_alias_decision(item: ApprovalItem) -> None:
         return
     if decision is None or not reason:
         raise ProjectionValidationError("IDENTITY_COLLISION_DECISION_REQUIRED")
-    if decision in {"attach", "create"} and selected is None:
+    if decision == "attach" and selected is None:
         raise ProjectionValidationError("IDENTITY_COLLISION_DECISION_REQUIRED")
     if decision in {"retire", "reject"} and selected is not None:
         raise ProjectionValidationError("URL_ALIAS_DECISION_INVALID")

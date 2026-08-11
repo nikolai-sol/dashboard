@@ -928,7 +928,7 @@ def build_lookup_projection(
 
     url_entities: dict[str, set[int]] = {}
     for row in catalog_rows:
-        normalized = normalize_observed_page_grouping_url(row.normalized_url).value
+        normalized = normalize_url(row.normalized_url).value
         if normalized:
             url_entities.setdefault(normalized, set()).add(row.content_entity_id)
     for alias in strong_aliases:
@@ -949,7 +949,7 @@ def build_lookup_projection(
             raise CandidateMaterializationError("STRONG_IDENTITY_COLLISION") from None
         if entity_id <= 0 or alias_type not in {"canonical_url", "url"}:
             raise CandidateMaterializationError("STRONG_IDENTITY_COLLISION")
-        normalized = normalize_observed_page_grouping_url(alias_value).value
+        normalized = normalize_url(alias_value).value
         if normalized:
             url_entities.setdefault(normalized, set()).add(entity_id)
 
@@ -1163,7 +1163,16 @@ def _catalog_rows(entity_rows: Iterable[Mapping[str, object]]) -> tuple[Candidat
                 or entity.get("canonical_url")
                 or ""
             )
-            normalized = normalize_observed_page_grouping_url(str(source_url))
+            event_evidence = _decode_json(
+                entity.get("proposal_evidence") or {},
+                code="SOURCE_EVIDENCE_INVALID",
+            )
+            normalized = (
+                normalize_observed_page_grouping_url(str(source_url))
+                if isinstance(event_evidence, Mapping)
+                and isinstance(event_evidence.get("created_identity"), Mapping)
+                else normalize_url(str(source_url))
+            )
             title = normalize_title(
                 str(
                     provenance.get("page_title")
@@ -1520,9 +1529,7 @@ def _event_matches_predecessor(
     material_id = str(event.get("material_id") or "")
     if material_id and row.material_id:
         return material_id.casefold() == row.material_id.casefold()
-    normalized = normalize_observed_page_grouping_url(
-        str(event.get("canonical_url") or "")
-    )
+    normalized = normalize_url(str(event.get("canonical_url") or ""))
     return bool(normalized.sha256 and normalized.sha256 == row.normalized_url_hash)
 
 
@@ -1857,6 +1864,8 @@ def _authorize_created_page_identities(
                 ) from None
             if (
                 int(row.get("entity_id") or 0) != entity_id
+                or row.get("entity_title") != item.get("title")
+                or row.get("entity_material_id") is not None
                 or row.get("entity_status") != "active"
                 or row.get("entity_canonical_url") != normalized.value
                 or alias_type not in {"canonical_url", "url"}
@@ -1892,13 +1901,24 @@ def _authorize_created_page_identities(
             raise CandidateMaterializationError("CREATED_PAGE_IDENTITY_UNAUTHORIZED")
         provenance = entity_evidence_value.get("provenance")
         if (
-            entity_evidence_value.get("authority") != "local_observed_page_acceptance"
+            set(entity_evidence_value) != {
+                "actor", "approval_batch_id", "approval_item_id", "authority",
+                "provenance", "row_hash",
+            }
+            or entity_evidence_value.get("authority") != "local_observed_page_acceptance"
             or int(entity_evidence_value.get("approval_batch_id") or 0) != batch_id
             or int(entity_evidence_value.get("approval_item_id") or 0) != item_id
             or entity_evidence_value.get("actor") != accepted_by
             or entity_evidence_value.get("row_hash") != item.get("row_hash")
             or not isinstance(provenance, list) or len(provenance) != 1
+            or set(provenance[0]) != {
+                "canonical_url", "page_title", "source_row_fingerprint",
+                "source_row_ordinal", "source_sheet",
+            }
+            or provenance[0].get("source_sheet") != "local_observed_page"
+            or int(provenance[0].get("source_row_ordinal") or 0) != item_id
             or provenance[0].get("canonical_url") != normalized.value
+            or provenance[0].get("page_title") != item.get("title")
             or provenance[0].get("source_row_fingerprint") != item.get("row_hash")
             or not re.fullmatch(r"[0-9a-f]{64}", str(decision_fingerprint or ""))
         ):
@@ -1913,7 +1933,9 @@ def _load_created_page_identity_rows(
     cursor.execute(
         """
         SELECT item.id AS approval_item_id,
-               entity.id AS entity_id, entity.canonical_url AS entity_canonical_url,
+               entity.id AS entity_id, entity.title AS entity_title,
+               entity.material_id AS entity_material_id,
+               entity.canonical_url AS entity_canonical_url,
                entity.registry_status AS entity_status,
                entity.source_evidence AS entity_source_evidence,
                alias_row.content_entity_id AS alias_entity_id,
