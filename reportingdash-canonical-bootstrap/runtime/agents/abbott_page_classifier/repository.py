@@ -1468,6 +1468,11 @@ class ContentRegistryRepository:
                     ))):
                 raise RepositoryError("IDENTITY_COLLISION_DECISION_REQUIRED")
             return
+        if (
+            item.url_alias_decision is None
+            and item.selected_content_entity_id is None
+        ):
+            return
         ContentRegistryRepository._validate_url_alias_decision(item)
 
     @staticmethod
