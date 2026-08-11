@@ -496,11 +496,11 @@ class WeeklyProposalServiceTests(unittest.TestCase):
         self.assertEqual(reconciled.final_access_code, "unspecified")
         self.assertEqual(reconciled.final_lifecycle_code, "active")
 
-    def test_known_service_route_does_not_republish_legacy_service_page_type(self):
+    def test_observed_metadata_gap_does_not_republish_legacy_service_page_type(self):
         entity = CanonicalClassification(
             7,
             "Legacy service route",
-            "https://abbottpro.ru/auth",
+            "https://abbottpro.ru/known-legacy-service-page",
             None,
             "service_page",
             "unspecified",

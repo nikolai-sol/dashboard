@@ -527,13 +527,16 @@ def reconcile_entity(value: ReconciliationInput) -> ApprovalItem:
 
     if (
         value.deterministic_proposal is not None
-        and value.deterministic_proposal.rule_code == "SERVICE_ROUTE"
+        and value.deterministic_proposal.rule_code in {
+            "SERVICE_ROUTE",
+            "OBSERVED_METADATA_GAP",
+        }
         and final_material_type == "service_page"
     ):
         # `service_page` existed in an older application taxonomy but is not
         # part of every reviewed DB taxonomy.  Preserve the original value in
-        # active_canonical evidence while keeping the service route unresolved
-        # for an explicit non-content reject decision.
+        # active_canonical evidence while keeping the observed metadata gap
+        # unresolved for an explicit reviewed decision.
         final_material_type = None
         changed = True
 
