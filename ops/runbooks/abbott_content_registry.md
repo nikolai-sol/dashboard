@@ -208,6 +208,12 @@ limited to status, IDs, hashes, and counts; it never prints the file path or
 decision content. `--decision-file` is rejected for all Google and other
 workflow commands, whose semantics remain unchanged.
 
+Local and Google projection receipts are disjoint persisted modalities. A
+local-published batch cannot invoke Sheet publish, pull, or ingest; a
+Google-published batch cannot invoke local acceptance. The local artifact hash
+is compared again while the batch is locked, before any acceptance item or
+entity write.
+
 Golden gates are source accounting, taxonomy and schema validity, anti-flip
 correctness, and reviewed direction/material-type accuracy. Real LLM evaluation
 is separately authorized and stores sanitized metrics only. Migrations 047–049,

@@ -72,6 +72,7 @@ SYNCHRONIZED_BOOTSTRAP_COPIES = {
     "src/db/migrations/052_abbott_content_taxonomy_v2.sql": "dashboard-next/src/db/migrations/052_abbott_content_taxonomy_v2.sql",
     "src/db/migrations/053_abbott_observed_pages_hash.sql": "dashboard-next/src/db/migrations/053_abbott_observed_pages_hash.sql",
     "src/db/migrations/054_abbott_observed_page_creation.sql": "dashboard-next/src/db/migrations/054_abbott_observed_page_creation.sql",
+    "src/db/migrations/055_abbott_projection_modality.sql": "dashboard-next/src/db/migrations/055_abbott_projection_modality.sql",
 }
 VENDORED_CONTENT_RUNTIME = {
     "runtime/agents/__init__.py",

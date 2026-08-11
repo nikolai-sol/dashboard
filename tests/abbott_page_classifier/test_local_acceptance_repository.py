@@ -57,7 +57,7 @@ class LocalAcceptanceRepositoryTests(unittest.TestCase):
         )
 
         snapshot = ContentRegistryRepository(lambda: connection).record_local_batch_acceptance(
-            8, intent, "sheet-123"
+            8, intent, "sheet-123", "a" * 64
         )
 
         self.assertEqual(snapshot.accepted_decision_hash, compute_accepted_decision_hash(snapshot.items))
@@ -98,7 +98,7 @@ class LocalAcceptanceRepositoryTests(unittest.TestCase):
         )
 
         ContentRegistryRepository(lambda: connection).record_local_batch_acceptance(
-            8, intent, "sheet-123"
+            8, intent, "sheet-123", "a" * 64
         )
 
         expected = "https://abbottpro.ru/articles/observed-page"
@@ -135,7 +135,7 @@ class LocalAcceptanceRepositoryTests(unittest.TestCase):
 
         with self.assertRaisesRegex(RepositoryError, "IDENTITY_COLLISION"):
             ContentRegistryRepository(lambda: connection).record_local_batch_acceptance(
-                8, intent, "sheet-123"
+                8, intent, "sheet-123", "a" * 64
             )
 
         self.assertEqual(connection.commit_count, 0)
@@ -185,7 +185,7 @@ class LocalAcceptanceRepositoryTests(unittest.TestCase):
                 )
                 with self.assertRaises(RepositoryError):
                     ContentRegistryRepository(lambda: connection).record_local_batch_acceptance(
-                        8, intent, "sheet-123"
+                        8, intent, "sheet-123", "a" * 64
                     )
                 self.assertEqual(connection.commit_count, 0)
                 self.assertEqual(connection.rollback_count, 1)
@@ -231,7 +231,7 @@ class LocalAcceptanceRepositoryTests(unittest.TestCase):
                 with self.assertRaises(RepositoryError):
                     ContentRegistryRepository(
                         lambda connection=connection: connection
-                    ).record_local_batch_acceptance(8, intent, locator)
+                    ).record_local_batch_acceptance(8, intent, locator, "a" * 64)
                 self.assertEqual(connection.commit_count, 0)
                 self.assertEqual(connection.rollback_count, 1)
                 self.assertEqual(connection.created_entity_count, 0)
@@ -239,3 +239,29 @@ class LocalAcceptanceRepositoryTests(unittest.TestCase):
                     "portal_content_approval_items" in sql
                     for sql, _params in connection.calls
                 ))
+
+    def test_locked_local_receipt_hash_mismatch_rolls_back_before_item_writes(self):
+        item = create_item()
+        batch = replace(acceptance_workflow_batch(), items=(item,))
+        connection = StatefulAcceptanceConnection(batch, selected_entity_id=41)
+        intent = LocalAcceptanceIntent(
+            batch_id=8, batch_key=batch.batch_key,
+            published_input_hash=batch.published_input_hash,
+            accepted_by="manager", accepted_at=datetime(2026, 8, 11, 8, 0),
+            decisions=(LocalDecision(
+                input_hash=item.input_hash, row_hash=item.row_hash,
+                final_direction_code="cardiology", final_material_type_code="articles",
+                final_access_code="doctors", final_lifecycle_code="active",
+                selected_content_entity_id=None, url_alias_decision="create",
+                decision_reason="observed canonical page",
+            ),),
+        )
+
+        with self.assertRaisesRegex(RepositoryError, "LOCAL_PROJECTION_RECEIPT_MISMATCH"):
+            ContentRegistryRepository(lambda: connection).record_local_batch_acceptance(
+                8, intent, "sheet-123", "f" * 64
+            )
+
+        self.assertEqual(connection.commit_count, 0)
+        self.assertEqual(connection.rollback_count, 1)
+        self.assertEqual(connection.created_entity_count, 0)

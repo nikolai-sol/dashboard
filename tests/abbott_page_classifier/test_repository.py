@@ -607,12 +607,18 @@ class StatefulAcceptanceConnection:
         batch_taxonomy_digest: str | None = None,
         table_taxonomy_digest: str | None = None,
         spreadsheet_file_id: str = "sheet-123",
+        projection_kind: str = "local",
+        local_projection_locator: str = "sheet-123",
+        local_projection_content_hash: str = "a" * 64,
     ):
         self.batch = batch
         self.selected_entity_id = selected_entity_id
         self.batch_taxonomy_digest = batch_taxonomy_digest or batch.taxonomy_digest
         self.table_taxonomy_digest = table_taxonomy_digest or batch.taxonomy_digest
         self.spreadsheet_file_id = spreadsheet_file_id
+        self.projection_kind = projection_kind
+        self.local_projection_locator = local_projection_locator
+        self.local_projection_content_hash = local_projection_content_hash
         self.approval_items = list(batch.items)
         self.aliases = copy.deepcopy(aliases or [])
         self.decision_events: list[dict[str, object]] = []
@@ -654,8 +660,8 @@ class StatefulAcceptanceConnection:
             self.batch.published_input_hash, self.batch_status, self.spreadsheet_file_id,
             self.accepted_decision_hash, self.accepted_by, self.accepted_at,
             counts["ready"], counts["conflict"], counts["unresolved"],
-            counts["rejected"], counts["no_change"], self.accepted_count,
-            self.skipped_count,
+            counts["rejected"], counts["no_change"], self.projection_kind, self.local_projection_locator,
+            self.local_projection_content_hash,
         )
 
     def item_rows(self):

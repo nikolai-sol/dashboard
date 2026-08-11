@@ -88,6 +88,49 @@ class CorrectedWorkflowCliTests(unittest.TestCase):
         self.assertEqual(code, 2)
         self.assertEqual(result["status"], "IDENTIFIER_INVALID")
 
+
+class ProjectionModalityTests(CorrectedWorkflowCliTests):
+    def test_google_commands_reject_a_local_projection_before_sheets(self):
+        history = SimpleNamespace(
+            batch_status="published", projection_kind="local",
+            batch_key="local-batch", published_input_hash="a" * 64,
+            spreadsheet_file_id=None, spreadsheet_projection_hash=None,
+            local_projection_locator="/owner/decision.json",
+            local_projection_content_hash="b" * 64,
+            ready_count=0, conflict_count=0, unresolved_count=0,
+            rejected_count=0, no_change_count=0,
+        )
+
+        class Store:
+            def load_batch_history(self, _batch_id):
+                return history
+
+            def load_persisted_batch(self, _batch_id):
+                raise AssertionError("local projection must not reach Sheets")
+
+        gateway = ProductionWorkflowGateway(
+            store_factory=Store,
+            sheets_gateway_factory=lambda _id: self.fail("Sheets reached"),
+        )
+        for command in (gateway.publish_projection, gateway.pull_accepted, gateway.ingest):
+            with self.subTest(command=command.__name__), self.assertRaisesRegex(
+                WorkflowConfigurationError, "PROJECTION_KIND_LOCAL"
+            ):
+                command(73, dry_run=False)
+
+    def test_accept_local_rejects_google_projection_before_loading_file(self):
+        class Store:
+            def load_batch_history(self, _batch_id):
+                return SimpleNamespace(batch_status="published", projection_kind="google")
+
+            def load_persisted_batch(self, _batch_id):
+                raise AssertionError("Google projection must not read a local file")
+
+        with self.assertRaisesRegex(WorkflowConfigurationError, "PROJECTION_KIND_LOCAL_REQUIRED"):
+            ProductionWorkflowGateway(store_factory=Store).accept_local(
+                73, __import__("pathlib").Path("/owner/decision.json"), dry_run=False
+            )
+
     def test_classify_execute_requires_numeric_run_id_and_forbids_batch_id(self):
         gateway = CorrectedRecordingGateway()
         code, result = self.run_cli(["classify", "--execute"], gateway)

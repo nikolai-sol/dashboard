@@ -522,10 +522,10 @@ class MySqlWorkflowStore:
         )
 
     def record_local_batch_acceptance(
-        self, batch_id: int, intent, locator: str
+        self, batch_id: int, intent, locator: str, content_hash: str
     ):
         return self._registry.record_local_batch_acceptance(
-            int(batch_id), intent, locator
+            int(batch_id), intent, locator, content_hash
         )
 
     def ingest_accepted_snapshot(self, snapshot):
