@@ -23,6 +23,7 @@ from agents.abbott_page_classifier.repository import RepositoryError
 from agents.abbott_page_classifier.sources import RejectedSourceRow
 from agents.abbott_page_classifier.workflow_repository import (
     MySqlWorkflowStore,
+    StrongUrlAlias,
     _load_active_strong_url_aliases,
     _canonical_json,
     _input_from_payload,
@@ -583,6 +584,25 @@ class MySqlWorkflowStoreTests(unittest.TestCase):
         self.assertIn("uniqueness_scope = 'strong'", sql)
         self.assertIn("alias_type IN ('canonical_url', 'url')", sql)
         self.assertIn("ORDER BY content_entity_id, alias_type, alias_hash", sql)
+
+    def test_load_active_strong_url_aliases_accepts_dictionary_cursor_rows(self):
+        class DictionaryCursor:
+            def execute(self, sql, params=()):
+                self.call = (" ".join(sql.split()), params)
+
+            def fetchall(self):
+                return [{
+                    "content_entity_id": 7,
+                    "alias_type": "url",
+                    "alias_value": "https://abbottpro.ru/cardio/alpha",
+                }]
+
+        aliases = _load_active_strong_url_aliases(DictionaryCursor())
+
+        self.assertEqual(
+            aliases,
+            (StrongUrlAlias(7, "url", "https://abbottpro.ru/cardio/alpha"),),
+        )
     def test_distinct_rejected_source_inputs_round_trip_durable_payload(self):
         rejected_rows = tuple(
             RejectedSourceRow(
