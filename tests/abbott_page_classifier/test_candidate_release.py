@@ -23,6 +23,7 @@ from agents.abbott_page_classifier.candidate_release import (
     _catalog_schema_gates,
     _authorize_current_batch_events,
     _load_catalog,
+    _load_prior_accepted_event_rows,
     _load_lookup,
     _overlay_current_batch_events,
     _authorize_prior_accepted_events,
@@ -670,7 +671,11 @@ class CandidateConnection:
                 )
         elif "FROM portal_content_catalog AS predecessor_catalog" in normalized:
             self._many = list(self.predecessor_catalog)
-        elif "FROM portal_content_classification_events AS event" in normalized and "event.approval_batch_id = %s" in normalized:
+        elif (
+            "WITH latest_events AS" not in normalized
+            and "FROM portal_content_classification_events AS event" in normalized
+            and "event.approval_batch_id = %s" in normalized
+        ):
             accepted_item = self.approval_rows[0]
             event_direction = accepted_item["final_direction_code"]
             if self.mismatched_event_final:
@@ -1239,6 +1244,25 @@ class FailedCandidateResetConnection:
 
 
 class CandidateReleaseTest(unittest.TestCase):
+    def test_prior_event_loader_excludes_entities_superseded_by_current_batch(self):
+        class Cursor:
+            def execute(self, sql, params):
+                self.sql = " ".join(sql.split())
+                self.params = params
+
+            def fetchall(self):
+                return ()
+
+        cursor = Cursor()
+
+        self.assertEqual(_load_prior_accepted_event_rows(cursor, 11), ())
+        self.assertIn("NOT EXISTS", cursor.sql)
+        self.assertIn(
+            "current_event.content_entity_id = event.content_entity_id",
+            cursor.sql,
+        )
+        self.assertEqual(cursor.params, ("abbott", 11, 11, "abbott"))
+
     def test_authorizes_reviewed_baseline_attach_without_prior_event(self):
         accepted_at = datetime(2026, 8, 11, 12, 0, 0)
         accepted_hash = "a" * 64
@@ -1356,6 +1380,88 @@ class CandidateReleaseTest(unittest.TestCase):
                 "accepted_decision_hash": "a" * 64,
                 "accepted_by": "content-manager",
                 "accepted_at": datetime(2026, 8, 11, 12, 0, 0),
+                "projection_kind": "local",
+            },
+            (),
+        )
+
+    def test_authorizes_local_catalog_gap_correction_without_active_catalog_row(self):
+        accepted_at = datetime(2026, 8, 11, 13, 0, 0)
+        item_evidence = {
+            "current_canonical": {
+                "content_entity_id": 41,
+                "event_id": 700,
+                "direction_code": None,
+                "material_type_code": None,
+                "access_code": "unspecified",
+                "lifecycle_code": "active",
+            }
+        }
+        item = {
+            "content_entity_id": 41,
+            "selected_content_entity_id": None,
+            "url_alias_decision": None,
+            "readiness_state": "conflict",
+            "decision_reason": "reviewed classification for catalog gap",
+            "final_direction_code": "diabetes_management",
+            "final_material_type_code": "articles",
+            "final_access_code": "all",
+            "final_lifecycle_code": "active",
+            "proposal_evidence": item_evidence,
+            "row_hash": "b" * 64,
+        }
+        event_evidence = {
+            "accepted_decision_hash": "a" * 64,
+            "approval_item_evidence": item_evidence,
+            "row_hash": "b" * 64,
+        }
+        event = {
+            "approval_batch_id": 11,
+            "approval_item_id": 101,
+            "content_entity_id": 41,
+            "authorized_entity_id": 41,
+            "taxonomy_version_id": 5,
+            "direction_code": "diabetes_management",
+            "material_type_code": "articles",
+            "access_code": "all",
+            "lifecycle_code": "active",
+            "event_kind": "approve",
+            "predecessor_event_id": 700,
+            "proposal_evidence": event_evidence,
+            "actor": "content-manager",
+            "reason": "reviewed classification for catalog gap",
+            "effective_at": accepted_at,
+            "direction_label": "Управление сахарным диабетом",
+            "material_type_label": "Статьи",
+            "access_label": "Все",
+            "lifecycle_label": "active",
+        }
+        event["event_fingerprint"] = compute_classification_event_fingerprint({
+            "access_code": "all",
+            "actor": "content-manager",
+            "approval_batch_id": 11,
+            "approval_item_id": 101,
+            "content_entity_id": 41,
+            "direction_code": "diabetes_management",
+            "effective_at": accepted_at.isoformat(timespec="microseconds"),
+            "event_kind": "approve",
+            "lifecycle_code": "active",
+            "material_type_code": "articles",
+            "predecessor_event_id": 700,
+            "proposal_evidence": event_evidence,
+            "reason": "reviewed classification for catalog gap",
+            "taxonomy_version_id": 5,
+        })
+
+        _authorize_current_batch_events(
+            (event,),
+            {101: item},
+            {
+                "id": 11,
+                "taxonomy_version_id": 5,
+                "accepted_decision_hash": "a" * 64,
+                "accepted_by": "content-manager",
+                "accepted_at": accepted_at,
                 "projection_kind": "local",
             },
             (),

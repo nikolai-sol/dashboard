@@ -1703,10 +1703,16 @@ def _authorize_current_batch_events(
             and selected_entity_id == content_entity_id
             and bool(_normalized_audit_text(item.get("decision_reason")))
         )
+        reviewed_local_candidate = (
+            batch.get("projection_kind") == "local"
+            and content_entity_id > 0
+            and bool(_normalized_audit_text(item.get("decision_reason")))
+        )
         if (
             item.get("readiness_state") != "ready"
             and not is_create
             and not reviewed_same_entity_attach
+            and not reviewed_local_candidate
         ):
             continue
         evidence = _decode_json(
@@ -1717,21 +1723,11 @@ def _authorize_current_batch_events(
         current = evidence.get("current_canonical")
         if current is not None and not isinstance(current, Mapping):
             raise CandidateMaterializationError("CURRENT_BATCH_EVENT_UNAUTHORIZED")
-        reviewed_baseline_attach = (
-            reviewed_same_entity_attach
-            and isinstance(current, Mapping)
-            and current.get("event_id") in (None, 0)
-        )
-        if (
-            item.get("readiness_state") != "ready"
-            and not is_create
-            and not reviewed_baseline_attach
-        ):
-            continue
         final_values = tuple(item.get(name) for name in (
             "final_direction_code", "final_material_type_code",
             "final_access_code", "final_lifecycle_code",
         ))
+        current_values = None
         if isinstance(current, Mapping):
             try:
                 current_values = tuple(current[name] for name in (
@@ -1742,6 +1738,26 @@ def _authorize_current_batch_events(
                 raise CandidateMaterializationError(
                     "CURRENT_BATCH_EVENT_UNAUTHORIZED"
                 ) from None
+        reviewed_baseline_attach = (
+            reviewed_same_entity_attach
+            and isinstance(current, Mapping)
+            and current.get("event_id") in (None, 0)
+        )
+        reviewed_local_classification = (
+            reviewed_local_candidate
+            and isinstance(current, Mapping)
+            and int(current.get("content_entity_id") or 0) == content_entity_id
+            and all(_normalized_audit_text(value) for value in final_values)
+            and current_values != final_values
+        )
+        if (
+            item.get("readiness_state") != "ready"
+            and not is_create
+            and not reviewed_baseline_attach
+            and not reviewed_local_classification
+        ):
+            continue
+        if isinstance(current, Mapping):
             if current_values == final_values and not reviewed_baseline_attach:
                 continue
         if reviewed_baseline_attach:
@@ -1778,6 +1794,18 @@ def _authorize_current_batch_events(
             == content_entity_id
             and isinstance(current, Mapping)
             and current.get("event_id") in (None, 0)
+        )
+        reviewed_local_classification = (
+            batch.get("projection_kind") == "local"
+            and content_entity_id > 0
+            and isinstance(current, Mapping)
+            and int(current.get("content_entity_id") or 0) == content_entity_id
+            and all(_normalized_audit_text(value) for value in final_values)
+            and tuple(current.get(name) for name in (
+                "direction_code", "material_type_code",
+                "access_code", "lifecycle_code",
+            )) != final_values
+            and bool(_normalized_audit_text(item.get("decision_reason")))
         )
         entity_id = int(
             item.get("selected_content_entity_id") if is_create
@@ -1826,7 +1854,11 @@ def _authorize_current_batch_events(
             ) if predecessor is not None else None
             if (
                 current_entity_id != entity_id
-                or (predecessor is None and not reviewed_baseline_attach)
+                or (
+                    predecessor is None
+                    and not reviewed_baseline_attach
+                    and not reviewed_local_classification
+                )
                 or any(
                     (
                         current_value is not None
@@ -2002,6 +2034,12 @@ def _load_prior_accepted_event_rows(
            AND batch.batch_status IN ('accepted','ingested','candidate_materialized')
            AND batch.accepted_decision_hash IS NOT NULL
           WHERE event.approval_batch_id <> %s
+            AND NOT EXISTS (
+              SELECT 1
+              FROM portal_content_classification_events AS current_event
+              WHERE current_event.approval_batch_id = %s
+                AND current_event.content_entity_id = event.content_entity_id
+            )
         )
         SELECT entity.id AS authorized_entity_id,
                event.content_entity_id, entity.material_id,
@@ -2059,6 +2097,7 @@ def _load_prior_accepted_event_rows(
         """,
         (
             DATASET_KEY,
+            batch_id,
             batch_id,
             DATASET_KEY,
         ),

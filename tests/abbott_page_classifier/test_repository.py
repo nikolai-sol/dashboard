@@ -214,11 +214,14 @@ class RecordingCursor:
             normalized.startswith("SELECT id")
             and "FROM portal_content_classification_events" in normalized
         ):
-            self.rows = (
-                [(self.connection.predecessor_event_id,)]
-                if self.connection.predecessor_event_id is not None
-                else []
-            )
+            if self.connection.predecessor_event_row is not None:
+                self.rows = [self.connection.predecessor_event_row]
+            else:
+                self.rows = (
+                    [(self.connection.predecessor_event_id,)]
+                    if self.connection.predecessor_event_id is not None
+                    else []
+                )
             return
         if normalized.startswith("INSERT INTO portal_content_approval_batches"):
             self.lastrowid = 17
@@ -265,6 +268,7 @@ class RecordingConnection:
         fail_on_item_insert: int | None = None,
         fail_on_event_insert: int | None = None,
         ingest_items: tuple[ApprovalItem, ...] | None = None,
+        predecessor_event_row: tuple[object, ...] | None = None,
     ):
         self.batch_row = batch_row
         self.fail_on_item_insert = fail_on_item_insert
@@ -306,6 +310,7 @@ class RecordingConnection:
         ]
         self.taxonomy_version_id = 3
         self.predecessor_event_id = None
+        self.predecessor_event_row = predecessor_event_row
         self.catalog_rows: list[tuple[object, ...]] = []
         self.event_rows: list[tuple[object, ...]] = []
         self.approval_items: dict[
@@ -2284,6 +2289,42 @@ class ContentRegistryRepositoryTests(unittest.TestCase):
             sql.startswith("UPDATE portal_content_approval_batches")
             for sql, _params in connection.calls
         ))
+        self.assertEqual(connection.commit_count, 1)
+
+    def test_ingest_local_conflict_appends_reviewed_catalog_gap_correction(self):
+        item = replace(
+            workflow_batch().items[0],
+            content_entity_id=41,
+            readiness_state="conflict",
+            conflict_codes=("DIRECTION_CONFLICT",),
+            decision_reason="reviewed classification for catalog gap",
+            current_canonical={
+                "content_entity_id": 41,
+                "event_id": 700,
+                "direction_code": None,
+                "material_type_code": None,
+                "access_code": "unspecified",
+                "lifecycle_code": "active",
+            },
+        )
+        connection = RecordingConnection(
+            batch_row=(
+                *accepted_batch_row(items=(item,)),
+                "local",
+            ),
+            ingest_items=(item,),
+            predecessor_event_row=(
+                700, None, None, "unspecified", "active",
+                dt.datetime(2026, 8, 5, 12, 0),
+            ),
+        )
+
+        result = ContentRegistryRepository(
+            lambda: connection
+        ).ingest_accepted_snapshot(accepted_snapshot(item))
+
+        self.assertEqual(result.status, "ingested")
+        self.assertEqual(connection.event_insert_count, 1)
         self.assertEqual(connection.commit_count, 1)
 
     def test_ingest_rolls_back_and_sanitizes_any_row_failure(self):
