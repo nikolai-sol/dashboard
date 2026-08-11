@@ -14,7 +14,7 @@
     "typecheck": "tsc --noEmit",
     "security:public-assets": "tsx scripts/assert-no-private-public-assets.ts",
     "access:set-shared-password": "tsx scripts/set-dashboard-shared-password.ts",
-    "preview-builder:test": "bash scripts/build-abbott-preview-release.test.sh",
+    "preview-builder:test": "python3 scripts/copy_preview_tree_test.py && bash scripts/build-abbott-preview-release.test.sh",
     "ci:verify": "npm run security:public-assets && npm run lint && npm run typecheck && npm run build && npm run preview-builder:test",
     "collect:yandex-webmaster": "bash scripts/collect-yandex-webmaster-canonical.sh --run-type cron",
     "db:migrate": "tsx src/db/run-migration.ts",
