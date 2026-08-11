@@ -94,6 +94,13 @@ class ContentRegistryRepository:
     def __init__(self, connection_factory: Callable[[], Connection]):
         self._connection_factory = connection_factory
 
+    @staticmethod
+    def _decoded_json_mapping(value: object) -> Mapping[str, object]:
+        decoded = json.loads(value) if isinstance(value, str) else value
+        if not isinstance(decoded, Mapping):
+            raise RepositoryError("BATCH_ITEMS_MISMATCH")
+        return decoded
+
     def load_active_catalog(self) -> tuple[CanonicalClassification, ...]:
         sql = """
             WITH latest_events AS (
@@ -617,13 +624,17 @@ class ContentRegistryRepository:
                 FROM portal_content_approval_items WHERE approval_batch_id = %s
                 ORDER BY content_entity_id, input_hash FOR UPDATE
             """, (int(batch_id),))
-            stored, counts = self._stored_acceptance_items(tuple(cursor.fetchall()), taxonomy)
+            stored_rows = tuple(cursor.fetchall())
+            stored, counts = self._stored_acceptance_items(stored_rows, taxonomy)
             if tuple(counts[state] for state in ("ready", "conflict", "unresolved", "rejected", "no_change")) != tuple(int(x) for x in row[11:16]):
                 raise RepositoryError("BATCH_ITEMS_MISMATCH")
             decisions = {(d.input_hash, d.row_hash): d for d in intent.decisions}
             if len(decisions) != len(intent.decisions) or set(decisions) != {(i.input_hash, i.row_hash) for _, i in stored}:
                 raise RepositoryError("BATCH_ITEMS_MISMATCH")
             accepted: list[tuple[int, ApprovalItem]] = []
+            evidence_by_item_id = {
+                int(row[0]): self._decoded_json_mapping(row[12]) for row in stored_rows
+            }
             for item_id, published in stored:
                 decision = decisions[(published.input_hash, published.row_hash)]
                 item = replace(published,
@@ -648,7 +659,7 @@ class ContentRegistryRepository:
                 if item.url_alias_decision is not None:
                     self._apply_url_alias_decision(cursor, item, int(batch_id), item_id, accepted_hash, intent.accepted_by)
                 if item.url_alias_decision == "create":
-                    self._insert_created_classification_event(cursor, item, int(row[1]), int(batch_id), item_id, accepted_hash, intent.accepted_by, accepted_at)
+                    self._insert_created_classification_event(cursor, item, int(row[1]), int(batch_id), item_id, accepted_hash, intent.accepted_by, accepted_at, evidence_by_item_id[item_id])
                 cursor.execute("""UPDATE portal_content_approval_items SET
                     final_direction_code=%s, final_material_type_code=%s, final_access_code=%s,
                     final_lifecycle_code=%s, decision_reason=%s, selected_content_entity_id=%s,
@@ -1407,6 +1418,10 @@ class ContentRegistryRepository:
         evidence = ContentRegistryRepository._json({
             "authority": "local_observed_page_acceptance", "approval_batch_id": batch_id,
             "approval_item_id": approval_item_id, "actor": actor, "row_hash": item.row_hash,
+            "provenance": [{"source_sheet": "local_observed_page",
+                "source_row_ordinal": approval_item_id,
+                "source_row_fingerprint": item.row_hash,
+                "canonical_url": normalized.value, "page_title": item.title}],
         })
         cursor.execute("""INSERT INTO portal_content_registry_entities
             (dataset_key, material_id, title, canonical_url, registry_status, source_evidence)
@@ -1427,12 +1442,17 @@ class ContentRegistryRepository:
     def _insert_created_classification_event(
         cursor: Cursor, item: ApprovalItem, taxonomy_id: int, batch_id: int,
         item_id: int, accepted_hash: str, actor: str, accepted_at: datetime,
+        approval_item_evidence: Mapping[str, object],
     ) -> None:
+        evidence = {"accepted_decision_hash": accepted_hash,
+                    "approval_item_evidence": approval_item_evidence,
+                    "row_hash": item.row_hash}
         payload = {"content_entity_id": item.selected_content_entity_id, "taxonomy_version_id": taxonomy_id,
             "approval_batch_id": batch_id, "approval_item_id": item_id, "predecessor_event_id": None,
             "direction_code": item.final_direction_code, "material_type_code": item.final_material_type_code,
             "access_code": item.final_access_code, "lifecycle_code": item.final_lifecycle_code,
-            "event_kind": "approve", "accepted_decision_hash": accepted_hash}
+            "event_kind": "approve", "actor": actor, "reason": item.decision_reason,
+            "effective_at": accepted_at.isoformat(timespec="microseconds"), "proposal_evidence": evidence}
         cursor.execute("""INSERT INTO portal_content_classification_events
             (content_entity_id,taxonomy_version_id,approval_batch_id,approval_item_id,
              predecessor_event_id,direction_code,material_type_code,access_code,lifecycle_code,
@@ -1441,7 +1461,7 @@ class ContentRegistryRepository:
             (item.selected_content_entity_id, taxonomy_id, batch_id, item_id,
              item.final_direction_code, item.final_material_type_code, item.final_access_code,
              item.final_lifecycle_code, compute_classification_event_fingerprint(payload),
-             ContentRegistryRepository._json(payload), actor, item.decision_reason, accepted_at))
+             ContentRegistryRepository._json(evidence), actor, item.decision_reason, accepted_at))
 
     @staticmethod
     def _apply_url_alias_decision(

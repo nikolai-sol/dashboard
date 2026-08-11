@@ -1543,7 +1543,8 @@ def _authorize_current_batch_events(
     }
     expected: dict[int, tuple[Mapping[str, object], Mapping[str, object] | None]] = {}
     for item_id, item in approval_rows_by_id.items():
-        if item.get("readiness_state") != "ready":
+        is_create = item.get("url_alias_decision") == "create"
+        if item.get("readiness_state") != "ready" and not is_create:
             continue
         evidence = _decode_json(
             item.get("proposal_evidence"), code="CURRENT_BATCH_EVENT_UNAUTHORIZED"
@@ -1569,6 +1570,11 @@ def _authorize_current_batch_events(
                 ) from None
             if current_values == final_values:
                 continue
+        if is_create:
+            selected = int(item.get("selected_content_entity_id") or 0)
+            if (int(item.get("content_entity_id") or 0) != 0 or selected <= 0
+                    or current is not None or not _normalized_audit_text(item.get("decision_reason"))):
+                raise CandidateMaterializationError("CURRENT_BATCH_EVENT_UNAUTHORIZED")
         expected[item_id] = (item, current if isinstance(current, Mapping) else None)
 
     seen: set[int] = set()
@@ -1578,7 +1584,11 @@ def _authorize_current_batch_events(
             raise CandidateMaterializationError("CURRENT_BATCH_EVENT_UNAUTHORIZED")
         seen.add(item_id)
         item, current = expected[item_id]
-        entity_id = int(item.get("content_entity_id") or 0)
+        is_create = item.get("url_alias_decision") == "create"
+        entity_id = int(
+            item.get("selected_content_entity_id") if is_create
+            else item.get("content_entity_id") or 0
+        )
         final_values = tuple(item.get(name) for name in (
             "final_direction_code", "final_material_type_code",
             "final_access_code", "final_lifecycle_code",
