@@ -293,8 +293,8 @@ def _observed_page_resolution_counts(cursor, candidate_id: int) -> tuple[int, in
 
     A non-content exception is an immutable, accepted ``reject`` URL-decision
     event for this candidate's approval batch.  Mutable registry aliases are
-    deliberately not an exception authority.  The query returns only counts;
-    no URL, visit, or user identifier is selected into gate evidence.
+    deliberately not an exception authority. The helper returns and persists
+    only counts; no URL, visit, or user identifier is retained in gate evidence.
     """
     cursor.execute(
         """
