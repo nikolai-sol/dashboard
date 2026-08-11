@@ -409,8 +409,8 @@ class ProductionWorkflowGateway:
 
         store = self._store_factory()
         history = store.load_batch_history(int(batch_id))
-        self._require_google_projection(history)
         if history.batch_status == "published":
+            self._require_google_projection(history)
             batch = store.load_persisted_batch(int(batch_id))
             spreadsheet_id = self._spreadsheet_id(store, int(batch_id), publication=False)
             snapshot = read_accepted_projection(

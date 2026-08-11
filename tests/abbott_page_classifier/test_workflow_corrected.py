@@ -266,7 +266,9 @@ class ProjectionModalityTests(CorrectedWorkflowCliTests):
         class Store:
             def load_batch_history(self, batch_id):
                 self.batch_id = batch_id
-                return SimpleNamespace(batch_status="accepted")
+                return SimpleNamespace(
+                    batch_status="accepted", projection_kind="local"
+                )
 
             def load_accepted_snapshot(self, batch_id):
                 self.snapshot_batch_id = batch_id
