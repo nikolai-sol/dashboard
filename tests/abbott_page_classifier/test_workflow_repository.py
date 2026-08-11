@@ -529,6 +529,24 @@ class BootstrapConnection(FakeConnection):
 
 
 class MySqlWorkflowStoreTests(unittest.TestCase):
+    def test_attest_batch_for_acceptance_delegates_to_registry(self):
+        calls = []
+        store = MySqlWorkflowStore(lambda: None)
+        store._registry = type(
+            "Registry",
+            (),
+            {
+                "attest_batch_for_acceptance": lambda _self, batch_id, batch: calls.append(
+                    (batch_id, batch)
+                )
+            },
+        )()
+        batch = object()
+
+        store.attest_batch_for_acceptance(8, batch)
+
+        self.assertEqual(calls, [(8, batch)])
+
     def test_observed_page_query_is_aggregate_only_and_drops_off_domain_rows(self):
         class Cursor:
             def __init__(self): self.calls = []

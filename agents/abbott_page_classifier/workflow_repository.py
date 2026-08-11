@@ -497,6 +497,9 @@ class MySqlWorkflowStore:
     def attest_batch_for_publication(self, batch_id: int, batch) -> None:
         self._registry.attest_batch_for_publication(int(batch_id), batch)
 
+    def attest_batch_for_acceptance(self, batch_id: int, batch) -> None:
+        self._registry.attest_batch_for_acceptance(int(batch_id), batch)
+
     def mark_batch_published(
         self, batch_id: int, spreadsheet_id: str, projection_hash: str
     ) -> None:
