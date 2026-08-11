@@ -36,7 +36,11 @@ def dest(root, relative):
         nfd=mkdirat(fd,p); os.close(fd); fd=nfd
     return fd
 def checked(fd,name,flags,old):
-    new=os.open(name,flags|N|NB,dir_fd=fd); now=os.fstat(new)
+    try: new=os.open(name,flags|N|NB,dir_fd=fd)
+    except OSError as error:
+        if error.errno in (errno.ELOOP,errno.ENOENT,errno.ENOTDIR): fail('changed, hard-linked, or nonregular during copy')
+        raise
+    now=os.fstat(new)
     if (now.st_dev,now.st_ino,stat.S_IFMT(now.st_mode)) != (old.st_dev,old.st_ino,stat.S_IFMT(old.st_mode)) or (stat.S_ISREG(now.st_mode) and now.st_nlink!=1): os.close(new); fail('changed, hard-linked, or nonregular during copy')
     return new
 def filecopy(srcfd,dstfd,name,merge):
@@ -47,7 +51,10 @@ def filecopy(srcfd,dstfd,name,merge):
         if not stat.S_ISREG(old.st_mode) or old.st_nlink!=1: os.close(srcfd); fail('destination collision')
         out=checked(dstfd,name,os.O_RDONLY,old)
         with os.fdopen(srcfd,'rb') as s, os.fdopen(out,'rb') as d:
-            if s.read()!=d.read(): fail('destination content mismatch')
+            while True:
+                left=s.read(1024*1024); right=d.read(1024*1024)
+                if left!=right: fail('destination content mismatch')
+                if not left: break
         return
     with os.fdopen(srcfd,'rb') as s, os.fdopen(out,'wb') as d: shutil.copyfileobj(s,d)
 def tree(root,src,parts,dst,seen,merge):
