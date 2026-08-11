@@ -1709,6 +1709,54 @@ class CandidateReleaseTest(unittest.TestCase):
                 ),
             )
 
+    def test_lookup_projection_reviewed_alias_overrides_stale_catalog_url_owner(self):
+        stale = replace(
+            catalog_row("1" * 64),
+            content_entity_id=7,
+            normalized_url="https://abbottpro.ru/legacy",
+        )
+        reviewed_owner = replace(
+            catalog_row("2" * 64, url="https://abbottpro.ru/cardio/beta"),
+            content_entity_id=8,
+        )
+
+        rows = build_lookup_projection(
+            (stale, reviewed_owner),
+            strong_aliases=(
+                StrongUrlAlias(8, "url", "https://abbottpro.ru/legacy/"),
+            ),
+        )
+
+        legacy = next(
+            row
+            for row in rows
+            if row.lookup_kind == "url"
+            and row.lookup_key_hash == sha256_text("https://abbottpro.ru/legacy")
+        )
+        self.assertEqual(
+            legacy.selected_source_row_fingerprint,
+            reviewed_owner.source_row_fingerprint,
+        )
+
+    def test_lookup_projection_omits_unclassified_alias_owner(self):
+        catalog = replace(catalog_row("1" * 64), content_entity_id=7)
+
+        rows = build_lookup_projection(
+            (catalog,),
+            strong_aliases=(
+                StrongUrlAlias(8, "url", "https://abbottpro.ru/not-classified"),
+            ),
+        )
+
+        self.assertNotIn(
+            sha256_text("https://abbottpro.ru/not-classified"),
+            {
+                row.lookup_key_hash
+                for row in rows
+                if row.lookup_kind == "url"
+            },
+        )
+
     def test_materialization_aborts_before_catalog_insert_on_strong_url_collision(self):
         connection = CandidateConnection()
         aliases = (

@@ -963,11 +963,14 @@ def build_lookup_projection(
                 continue
             groups.setdefault((kind, sha256_text(value)), []).append(row)
 
-    url_entities: dict[str, set[int]] = {}
+    catalog_url_entities: dict[str, set[int]] = {}
     for row in catalog_rows:
         normalized = normalize_url(row.normalized_url).value
         if normalized:
-            url_entities.setdefault(normalized, set()).add(row.content_entity_id)
+            catalog_url_entities.setdefault(normalized, set()).add(
+                row.content_entity_id
+            )
+    alias_url_entities: dict[str, set[int]] = {}
     for alias in strong_aliases:
         try:
             entity_id = int(
@@ -988,7 +991,13 @@ def build_lookup_projection(
             raise CandidateMaterializationError("STRONG_IDENTITY_COLLISION")
         normalized = normalize_url(alias_value).value
         if normalized:
-            url_entities.setdefault(normalized, set()).add(entity_id)
+            alias_url_entities.setdefault(normalized, set()).add(entity_id)
+
+    for entity_ids in alias_url_entities.values():
+        if len(entity_ids) != 1:
+            raise CandidateMaterializationError("STRONG_IDENTITY_COLLISION")
+    url_entities = dict(catalog_url_entities)
+    url_entities.update(alias_url_entities)
 
     result: list[LookupProjectionRow] = []
     for (kind, key_hash), rows in sorted(groups.items()):
@@ -1038,7 +1047,11 @@ def build_lookup_projection(
             key=lambda item: item.source_row_fingerprint,
         )
         if not selected_rows:
-            raise CandidateMaterializationError("STRONG_IDENTITY_COLLISION")
+            # An active reviewed alias may predate a classified catalog row.
+            # It cannot enter the dashboard lookup until metadata exists; an
+            # observed URL remains fail-closed in the publication resolution
+            # gate instead of blocking unrelated aliases globally.
+            continue
         selected = selected_rows[0]
         result.append(
             LookupProjectionRow(
