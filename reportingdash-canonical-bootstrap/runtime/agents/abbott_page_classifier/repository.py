@@ -86,6 +86,9 @@ class BatchHistoryRecord:
     batch_status: str
     spreadsheet_file_id: str | None
     spreadsheet_projection_hash: str | None
+    projection_kind: str | None
+    local_projection_locator: str | None
+    local_projection_content_hash: str | None
     candidate_release_id: int | None
     activation_status: str
 
@@ -559,6 +562,9 @@ class ContentRegistryRepository:
             SET batch_status = %s,
                 spreadsheet_file_id = %s,
                 spreadsheet_projection_hash = %s,
+                projection_kind = 'google',
+                local_projection_locator = NULL,
+                local_projection_content_hash = NULL,
                 published_at = CURRENT_TIMESTAMP(6),
                 failed_at = NULL,
                 failure_code = NULL
@@ -578,8 +584,11 @@ class ContentRegistryRepository:
             """
             UPDATE portal_content_approval_batches
             SET batch_status = %s,
-                spreadsheet_file_id = %s,
-                spreadsheet_projection_hash = %s,
+                spreadsheet_file_id = NULL,
+                spreadsheet_projection_hash = NULL,
+                projection_kind = 'local',
+                local_projection_locator = %s,
+                local_projection_content_hash = %s,
                 published_at = CURRENT_TIMESTAMP(6),
                 failed_at = NULL,
                 failure_code = NULL
@@ -606,6 +615,7 @@ class ContentRegistryRepository:
 
     def record_local_batch_acceptance(
         self, batch_id: int, intent: LocalAcceptanceIntent, projection_locator: str,
+        projection_content_hash: str,
     ) -> AcceptedBatchSnapshot:
         """Accept a descriptor-validated owner decision without a Sheets round-trip.
 
@@ -615,7 +625,11 @@ class ContentRegistryRepository:
         connection: Connection | None = None
         cursor: Cursor | None = None
         try:
-            if int(batch_id) != intent.batch_id or not str(projection_locator).strip():
+            if (
+                int(batch_id) != intent.batch_id
+                or not str(projection_locator).strip()
+                or len(str(projection_content_hash)) != 64
+            ):
                 raise RepositoryError("BATCH_ACCEPTANCE_METADATA_MISMATCH")
             connection = self._connection_factory()
             cursor = connection.cursor()
@@ -624,7 +638,9 @@ class ContentRegistryRepository:
                   taxonomy.version, taxonomy.taxonomy_digest, batch.published_input_hash,
                   batch.batch_status, batch.spreadsheet_file_id, batch.accepted_decision_hash,
                   batch.accepted_by, batch.accepted_at, batch.ready_count, batch.conflict_count,
-                  batch.unresolved_count, batch.rejected_count, batch.no_change_count
+                  batch.unresolved_count, batch.rejected_count, batch.no_change_count,
+                  batch.projection_kind, batch.local_projection_locator,
+                  batch.local_projection_content_hash
                 FROM portal_content_approval_batches AS batch
                 JOIN portal_content_taxonomy_versions AS taxonomy
                   ON taxonomy.id = batch.taxonomy_version_id AND taxonomy.dataset_key = batch.dataset_key
@@ -636,9 +652,11 @@ class ContentRegistryRepository:
                 raise RepositoryError("BATCH_NOT_PERSISTED")
             if (
                 str(row[2]) != str(row[4])
-                or str(row[7] or "") != str(projection_locator).strip()
+                or str(row[16] or "") != "local"
+                or str(row[17] or "") != str(projection_locator).strip()
+                or str(row[18] or "") != str(projection_content_hash)
             ):
-                raise RepositoryError("BATCH_ACCEPTANCE_METADATA_MISMATCH")
+                raise RepositoryError("LOCAL_PROJECTION_RECEIPT_MISMATCH")
             if str(row[6]) != "published":
                 raise RepositoryError("BATCH_NOT_PUBLISHED")
             taxonomy = self._load_taxonomy_terms(cursor, int(row[1]), str(row[3]), str(row[4]), lock=True)
@@ -765,7 +783,8 @@ class ContentRegistryRepository:
                   batch.rejected_count,
                   batch.no_change_count,
                   batch.accepted_count,
-                  batch.skipped_count
+                  batch.skipped_count,
+                  batch.projection_kind
                 FROM portal_content_approval_batches AS batch
                 INNER JOIN portal_content_taxonomy_versions AS taxonomy
                   ON taxonomy.id = batch.taxonomy_version_id
@@ -796,7 +815,10 @@ class ContentRegistryRepository:
             if str(row[5]) != snapshot.published_input_hash:
                 raise RepositoryError("BATCH_HASH_MISMATCH")
             status = str(row[6])
-            if str(row[7]) != spreadsheet_id or status not in ("published", "accepted"):
+            if (
+                str(row[7]) != spreadsheet_id
+                or status not in ("published", "accepted")
+            ):
                 raise RepositoryError("BATCH_NOT_PUBLISHED")
 
             cursor.execute(
@@ -956,6 +978,9 @@ class ContentRegistryRepository:
               batch_status,
               spreadsheet_file_id,
               spreadsheet_projection_hash,
+              projection_kind,
+              local_projection_locator,
+              local_projection_content_hash,
               candidate_release_id,
               activation_status
             FROM portal_content_approval_batches
@@ -982,8 +1007,11 @@ class ContentRegistryRepository:
             batch_status=str(row[12]),
             spreadsheet_file_id=(str(row[13]) if row[13] is not None else None),
             spreadsheet_projection_hash=(str(row[14]) if row[14] is not None else None),
-            candidate_release_id=(int(row[15]) if row[15] is not None else None),
-            activation_status=str(row[16]),
+            projection_kind=(str(row[15]) if len(row) > 15 and row[15] is not None else None),
+            local_projection_locator=(str(row[16]) if len(row) > 16 and row[16] is not None else None),
+            local_projection_content_hash=(str(row[17]) if len(row) > 17 and row[17] is not None else None),
+            candidate_release_id=(int(row[18]) if len(row) > 18 and row[18] is not None else (int(row[15]) if row[15] is not None else None)),
+            activation_status=(str(row[19]) if len(row) > 19 else str(row[16])),
         )
 
     def _update_projection_status(self, sql: str, params: tuple[object, ...]) -> None:

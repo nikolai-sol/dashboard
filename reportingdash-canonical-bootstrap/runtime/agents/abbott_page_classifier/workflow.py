@@ -273,6 +273,11 @@ class ProductionWorkflowGateway:
             "SPREADSHEET_ID_REQUIRED" if publication else "BATCH_NOT_PUBLISHED"
         )
 
+    @staticmethod
+    def _require_google_projection(history) -> None:
+        if getattr(history, "projection_kind", "google") == "local":
+            raise WorkflowConfigurationError("PROJECTION_KIND_LOCAL")
+
     def publish_projection(self, batch_id: int, *, dry_run: bool) -> Mapping[str, object]:
         if dry_run:
             return {"status": "dry_run"}
@@ -280,6 +285,7 @@ class ProductionWorkflowGateway:
 
         store = self._store_factory()
         history = store.load_batch_history(int(batch_id))
+        self._require_google_projection(history)
         if history.batch_status in (
             "published", "accepted", "ingested", "candidate_materialized"
         ):
@@ -351,18 +357,20 @@ class ProductionWorkflowGateway:
         history = store.load_batch_history(int(batch_id))
         if history.batch_status != "published":
             raise WorkflowConfigurationError("BATCH_NOT_PUBLISHED")
+        if getattr(history, "projection_kind", None) != "local":
+            raise WorkflowConfigurationError("PROJECTION_KIND_LOCAL_REQUIRED")
         batch = store.load_persisted_batch(int(batch_id))
         store.attest_batch_for_acceptance(int(batch_id), batch.batch)
         artifact = read_local_acceptance_artifact(
             Path(decision_file), batch, _local_decision_root()
         )
         if (
-            history.spreadsheet_file_id != artifact.locator
-            or history.spreadsheet_projection_hash != artifact.content_hash
+            history.local_projection_locator != artifact.locator
+            or history.local_projection_content_hash != artifact.content_hash
         ):
             raise WorkflowConfigurationError("LOCAL_PROJECTION_RECEIPT_MISMATCH")
         snapshot = store.record_local_batch_acceptance(
-            int(batch_id), artifact.intent, artifact.locator
+            int(batch_id), artifact.intent, artifact.locator, artifact.content_hash
         )
         return {
             "status": "accepted", "batch_id": int(batch_id),
@@ -379,6 +387,8 @@ class ProductionWorkflowGateway:
         from agents.abbott_page_classifier.sheets_sync import read_accepted_projection
 
         store = self._store_factory()
+        history = store.load_batch_history(int(batch_id))
+        self._require_google_projection(history)
         batch = store.load_persisted_batch(int(batch_id))
         spreadsheet_id = self._spreadsheet_id(store, int(batch_id), publication=False)
         snapshot = read_accepted_projection(
@@ -399,6 +409,7 @@ class ProductionWorkflowGateway:
 
         store = self._store_factory()
         history = store.load_batch_history(int(batch_id))
+        self._require_google_projection(history)
         if history.batch_status == "published":
             batch = store.load_persisted_batch(int(batch_id))
             spreadsheet_id = self._spreadsheet_id(store, int(batch_id), publication=False)
