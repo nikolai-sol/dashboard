@@ -1347,6 +1347,81 @@ class CandidateReleaseTest(unittest.TestCase):
             (),
         )
 
+    def test_authorizes_reviewed_attach_to_unclassified_selected_entity(self):
+        accepted_at = datetime(2026, 8, 11, 12, 0, 0)
+        accepted_hash = "a" * 64
+        row_hash = "b" * 64
+        item_evidence = {"current_canonical": None}
+        item = {
+            "content_entity_id": None,
+            "selected_content_entity_id": 41,
+            "url_alias_decision": "attach",
+            "readiness_state": "unresolved",
+            "decision_reason": "reviewed observed URL and target classification",
+            "final_direction_code": "cardiology",
+            "final_material_type_code": "articles",
+            "final_access_code": "all",
+            "final_lifecycle_code": "active",
+            "proposal_evidence": item_evidence,
+            "row_hash": row_hash,
+        }
+        event_evidence = {
+            "accepted_decision_hash": accepted_hash,
+            "approval_item_evidence": item_evidence,
+            "row_hash": row_hash,
+        }
+        event = {
+            "approval_batch_id": 10,
+            "approval_item_id": 101,
+            "content_entity_id": 41,
+            "authorized_entity_id": 41,
+            "taxonomy_version_id": 5,
+            "direction_code": "cardiology",
+            "material_type_code": "articles",
+            "access_code": "all",
+            "lifecycle_code": "active",
+            "event_kind": "approve",
+            "predecessor_event_id": None,
+            "proposal_evidence": event_evidence,
+            "actor": "content-manager",
+            "reason": "reviewed observed URL and target classification",
+            "effective_at": accepted_at,
+            "direction_label": "Cardiology",
+            "material_type_label": "Articles",
+            "access_label": "All",
+            "lifecycle_label": "Active",
+        }
+        event["event_fingerprint"] = compute_classification_event_fingerprint({
+            "access_code": "all",
+            "actor": "content-manager",
+            "approval_batch_id": 10,
+            "approval_item_id": 101,
+            "content_entity_id": 41,
+            "direction_code": "cardiology",
+            "effective_at": accepted_at.isoformat(timespec="microseconds"),
+            "event_kind": "approve",
+            "lifecycle_code": "active",
+            "material_type_code": "articles",
+            "predecessor_event_id": None,
+            "proposal_evidence": event_evidence,
+            "reason": "reviewed observed URL and target classification",
+            "taxonomy_version_id": 5,
+        })
+
+        _authorize_current_batch_events(
+            (event,),
+            {101: item},
+            {
+                "id": 10,
+                "taxonomy_version_id": 5,
+                "accepted_decision_hash": accepted_hash,
+                "accepted_by": "content-manager",
+                "accepted_at": accepted_at,
+                "projection_kind": "local",
+            },
+            (),
+        )
+
     def test_ignores_reviewed_attach_that_already_has_classification_event(self):
         item = {
             "content_entity_id": 41,
