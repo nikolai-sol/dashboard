@@ -1707,6 +1707,14 @@ def _authorize_current_batch_events(
         is_create = item.get("url_alias_decision") == "create"
         content_entity_id = int(item.get("content_entity_id") or 0)
         selected_entity_id = int(item.get("selected_content_entity_id") or 0)
+        reviewed_selected_attach = (
+            batch.get("projection_kind") == "local"
+            and item.get("url_alias_decision") == "attach"
+            and content_entity_id == 0
+            and selected_entity_id > 0
+            and selected_entity_id not in predecessor_by_entity
+            and bool(_normalized_audit_text(item.get("decision_reason")))
+        )
         reviewed_same_entity_attach = (
             batch.get("projection_kind") == "local"
             and item.get("url_alias_decision") == "attach"
@@ -1722,6 +1730,7 @@ def _authorize_current_batch_events(
         if (
             item.get("readiness_state") != "ready"
             and not is_create
+            and not reviewed_selected_attach
             and not reviewed_same_entity_attach
             and not reviewed_local_candidate
         ):
@@ -1764,6 +1773,7 @@ def _authorize_current_batch_events(
         if (
             item.get("readiness_state") != "ready"
             and not is_create
+            and not reviewed_selected_attach
             and not reviewed_baseline_attach
             and not reviewed_local_classification
         ):
@@ -1786,6 +1796,11 @@ def _authorize_current_batch_events(
             if (int(item.get("content_entity_id") or 0) != 0 or selected <= 0
                     or current is not None or not _normalized_audit_text(item.get("decision_reason"))):
                 raise CandidateMaterializationError("CURRENT_BATCH_EVENT_UNAUTHORIZED")
+        if reviewed_selected_attach and (
+            current is not None
+            or not all(_normalized_audit_text(value) for value in final_values)
+        ):
+            raise CandidateMaterializationError("CURRENT_BATCH_EVENT_UNAUTHORIZED")
         expected[item_id] = (item, current if isinstance(current, Mapping) else None)
 
     seen: set[int] = set()
@@ -1797,6 +1812,21 @@ def _authorize_current_batch_events(
         item, current = expected[item_id]
         is_create = item.get("url_alias_decision") == "create"
         content_entity_id = int(item.get("content_entity_id") or 0)
+        selected_entity_id = int(item.get("selected_content_entity_id") or 0)
+        final_values = tuple(item.get(name) for name in (
+            "final_direction_code", "final_material_type_code",
+            "final_access_code", "final_lifecycle_code",
+        ))
+        reviewed_selected_attach = (
+            batch.get("projection_kind") == "local"
+            and item.get("url_alias_decision") == "attach"
+            and content_entity_id == 0
+            and selected_entity_id > 0
+            and selected_entity_id not in predecessor_by_entity
+            and current is None
+            and all(_normalized_audit_text(value) for value in final_values)
+            and bool(_normalized_audit_text(item.get("decision_reason")))
+        )
         reviewed_baseline_attach = (
             batch.get("projection_kind") == "local"
             and item.get("url_alias_decision") == "attach"
@@ -1819,13 +1849,10 @@ def _authorize_current_batch_events(
             and bool(_normalized_audit_text(item.get("decision_reason")))
         )
         entity_id = int(
-            item.get("selected_content_entity_id") if is_create
+            item.get("selected_content_entity_id")
+            if (is_create or reviewed_selected_attach)
             else content_entity_id
         )
-        final_values = tuple(item.get(name) for name in (
-            "final_direction_code", "final_material_type_code",
-            "final_access_code", "final_lifecycle_code",
-        ))
         event_values = tuple(event.get(name) for name in (
             "direction_code", "material_type_code", "access_code", "lifecycle_code"
         ))
