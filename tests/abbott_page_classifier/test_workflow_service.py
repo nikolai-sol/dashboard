@@ -496,6 +496,41 @@ class WeeklyProposalServiceTests(unittest.TestCase):
         self.assertEqual(reconciled.final_access_code, "unspecified")
         self.assertEqual(reconciled.final_lifecycle_code, "active")
 
+    def test_known_service_route_does_not_republish_legacy_service_page_type(self):
+        entity = CanonicalClassification(
+            7,
+            "Legacy service route",
+            "https://abbottpro.ru/auth",
+            None,
+            "service_page",
+            "unspecified",
+            "active",
+            1,
+        )
+        observed = ObservedPage(
+            entity.url,
+            entity.title,
+            3,
+            date(2026, 8, 1),
+            date(2026, 8, 1),
+        )
+        with tempfile.TemporaryDirectory() as temporary:
+            registry1, registry2 = write_empty_sources(Path(temporary))
+            store = StatefulWorkflowStore(context(
+                entities=(entity,),
+                aliases=(IdentityAlias(7, "url", entity.url, "strong"),),
+                observed_pages=(observed,),
+            ))
+            receipt = CanonicalWeeklyProposalService(store, CONFIG).reconcile(
+                registry1, registry2
+            )
+
+        item = store.runs_by_id[receipt.run_id].items[0]
+        reconciled = reconcile_entity(item.reconciliation_input)
+        self.assertEqual(item.identity_status, "matched")
+        self.assertIsNone(reconciled.final_material_type_code)
+        self.assertEqual(reconciled.readiness_state, "unresolved")
+
     def test_unique_weak_observed_slug_match_still_creates_review_item(self):
         entity = CanonicalClassification(7, "Known", "https://abbottpro.ru/cardio/known", "cardiology", "articles", "all", "active", 1)
         observed = ObservedPage("https://abbottpro.ru/cardio/known?version=2", "Other title", 3, date(2026, 8, 1), date(2026, 8, 1))
