@@ -1702,6 +1702,9 @@ def _authorize_current_batch_events(
         row.content_entity_id: row
         for row in (_predecessor_catalog_row(value) for value in predecessor_rows)
     }
+    current_event_item_ids = {
+        int(event.get("approval_item_id") or 0) for event in event_rows
+    }
     expected: dict[int, tuple[Mapping[str, object], Mapping[str, object] | None]] = {}
     for item_id, item in approval_rows_by_id.items():
         is_create = item.get("url_alias_decision") == "create"
@@ -1713,6 +1716,7 @@ def _authorize_current_batch_events(
             and content_entity_id == 0
             and selected_entity_id > 0
             and selected_entity_id not in predecessor_by_entity
+            and item_id in current_event_item_ids
             and bool(_normalized_audit_text(item.get("decision_reason")))
         )
         reviewed_same_entity_attach = (
