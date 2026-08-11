@@ -36,6 +36,13 @@ python3 "$APP_DIR/scripts/copy-preview-tree.py" "$APP_DIR/.next/static" "$RELEAS
 python3 "$APP_DIR/scripts/copy-preview-tree.py" "$APP_DIR/public" "$RELEASE_DIR" public merge-identical
 find -P "$RELEASE_DIR" -depth -type d -empty -delete
 reject_nonregular_tree "$RELEASE_DIR"
-(cd "$RELEASE_DIR"; find . -type f ! -name manifest.sha256 ! -name '.manifest.*' -print0 | LC_ALL=C sort -z | xargs -0 sha256sum > .manifest.$$; mv .manifest.$$ manifest.sha256; sha256sum -c manifest.sha256 >/dev/null)
+(cd "$RELEASE_DIR"; python3 - <<'PY' > .manifest.$$
+import hashlib
+from pathlib import Path
+for path in sorted(item for item in Path('.').rglob('*') if item.is_file() and item.name != 'manifest.sha256' and not item.name.startswith('.manifest.')):
+    relative = path.relative_to('.').as_posix()
+    print(hashlib.sha256(path.read_bytes()).hexdigest() + '  ' + relative)
+PY
+mv .manifest.$$ manifest.sha256; sha256sum -c manifest.sha256 >/dev/null)
 reject_nonregular_tree "$RELEASE_DIR"
 chmod -R go-rwx "$RELEASE_DIR"; printf '%s\n' 'preview release packaged'

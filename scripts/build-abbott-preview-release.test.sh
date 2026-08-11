@@ -31,6 +31,7 @@ DRY_RUN=1 TEST_PREVIEW_RELEASE_ROOT="$TARGET_ROOT" RUN_ID="$RUN_ID" APP_DIR="$SO
 [[ ! -d "$TARGET/public/empty" ]] || { echo 'empty source directory was not sealed out of release' >&2; exit 1; }
 [[ ! -e "$TARGET/.env.production" ]] || { echo 'production env was copied' >&2; exit 1; }
 ! grep -Fq 'manifest.sha256' "$TARGET/manifest.sha256"
+! grep -Fq '  ./' "$TARGET/manifest.sha256"
 (cd "$TARGET" && sha256sum -c manifest.sha256 >/dev/null)
 ! grep -Eqi '(activate-release|install-reviewed-release|deploy\.sh|/var/www/dashboard|dashboard-next|3001)' "$TMP_DIR/output"
 
