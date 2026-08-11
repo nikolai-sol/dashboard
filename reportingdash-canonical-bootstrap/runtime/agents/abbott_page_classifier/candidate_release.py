@@ -298,53 +298,69 @@ def _observed_page_resolution_counts(cursor, candidate_id: int) -> tuple[int, in
     """
     cursor.execute(
         """
-        SELECT COALESCE(SUM(
-                 selected.source_row_fingerprint IS NOT NULL
-                 AND (selected.material_type IS NULL
-                      OR selected.material_type <> 'service_page')
-                 AND (selected.direction_key IS NULL
-                      OR TRIM(selected.direction_key) = ''
-                      OR selected.material_type IS NULL
-                      OR TRIM(selected.material_type) = '')
-               ), 0) AS content_unresolved,
-               COALESCE(SUM(
-                 selected.source_row_fingerprint IS NULL
-                 AND exclusion.id IS NULL
-               ), 0) AS non_content_unresolved
-        FROM canonical_fact_metrika_site_analytics_daily AS facts
-        INNER JOIN portal_content_approval_batches AS candidate_batch
-          ON candidate_batch.dataset_key = %s
-         AND candidate_batch.candidate_release_id = facts.canonical_release_id
-         AND candidate_batch.batch_status = 'candidate_materialized'
-        LEFT JOIN portal_content_lookup_projection AS projection
-          ON projection.canonical_release_id = facts.canonical_release_id
-         AND projection.lookup_kind = 'url'
-         AND projection.lookup_key_hash = SHA2(JSON_UNQUOTE(JSON_EXTRACT(
-               facts.scope_dimensions, '$.page_url')), 256)
-         AND projection.resolution_status IN ('unique', 'identical_collapsed')
+        SELECT JSON_UNQUOTE(JSON_EXTRACT(scope_dimensions, '$.page_url')) AS page_url
+        FROM canonical_fact_metrika_site_analytics_daily
+        WHERE canonical_release_id = %s AND counter_id = %s
+          AND analytics_scope = 'page'
+        ORDER BY report_date, scope_hash
+        """,
+        (candidate_id, ABBOTT_COUNTER_ID),
+    )
+    fact_rows = tuple(cursor.fetchall())
+    cursor.execute(
+        """
+        SELECT projection.lookup_key_hash, projection.resolution_status,
+               projection.selected_source_row_fingerprint, selected.direction_key,
+               selected.material_type
+        FROM portal_content_lookup_projection AS projection
         LEFT JOIN portal_content_catalog AS selected
           ON selected.canonical_release_id = projection.canonical_release_id
          AND selected.source_snapshot_id = projection.source_snapshot_id
          AND selected.source_row_fingerprint = projection.selected_source_row_fingerprint
-        LEFT JOIN portal_content_url_alias_decision_events AS exclusion
-          ON exclusion.approval_batch_id = candidate_batch.id
-         AND exclusion.accepted_decision_hash = candidate_batch.accepted_decision_hash
-         AND exclusion.url_alias_decision = 'reject'
-         AND CHAR_LENGTH(TRIM(exclusion.decision_reason)) > 0
-         AND SHA2(exclusion.normalized_url, 256) = SHA2(JSON_UNQUOTE(JSON_EXTRACT(
-               facts.scope_dimensions, '$.page_url')), 256)
-        WHERE facts.canonical_release_id = %s AND facts.counter_id = %s
-          AND facts.analytics_scope = 'page'
+        WHERE projection.canonical_release_id = %s AND projection.lookup_kind = 'url'
+        ORDER BY projection.lookup_key_hash
         """,
-        (DATASET_KEY, candidate_id, ABBOTT_COUNTER_ID),
+        (candidate_id,),
     )
-    row = cursor.fetchone()
-    try:
-        content = int(_row_value(row, "content_unresolved", 0) or 0)
-        non_content = int(_row_value(row, "non_content_unresolved", 1) or 0)
-    except (TypeError, ValueError):
-        # Test/dry-run cursors without observed facts represent zero rows.
-        content, non_content = 0, 0
+    lookups = {
+        str(_row_value(row, "lookup_key_hash", 0) or ""): row
+        for row in cursor.fetchall()
+    }
+    cursor.execute(
+        """
+        SELECT exclusion.normalized_url
+        FROM portal_content_url_alias_decision_events AS exclusion
+        INNER JOIN portal_content_approval_batches AS batch
+          ON batch.id = exclusion.approval_batch_id
+         AND batch.dataset_key = %s
+         AND batch.candidate_release_id = %s
+         AND batch.batch_status = 'candidate_materialized'
+         AND batch.accepted_decision_hash = exclusion.accepted_decision_hash
+        WHERE exclusion.url_alias_decision = 'reject'
+        ORDER BY exclusion.id
+        """,
+        (DATASET_KEY, candidate_id),
+    )
+    rejected = {
+        normalize_url(str(_row_value(row, "normalized_url", 0) or "")).value
+        for row in cursor.fetchall()
+    }
+    content = non_content = 0
+    seen: set[str] = set()
+    for fact in fact_rows:
+        normalized = normalize_url(str(_row_value(fact, "page_url", 0) or "")).value
+        if not normalized or normalized in seen:
+            continue
+        seen.add(normalized)
+        row = lookups.get(sha256_text(normalized))
+        selected = row is not None and str(_row_value(row, "selected_source_row_fingerprint", 2) or "")
+        if selected and str(_row_value(row, "resolution_status", 1) or "") in {"unique", "identical_collapsed"}:
+            material_type = str(_row_value(row, "material_type", 4) or "").strip()
+            direction = str(_row_value(row, "direction_key", 3) or "").strip()
+            if material_type != "service_page" and (not direction or not material_type):
+                content += 1
+        elif normalized not in rejected:
+            non_content += 1
     return content, non_content
 
 
@@ -447,6 +463,7 @@ def validate_reviewed_url_alias_decisions(
         (batch_id,),
     )
     seen: set[int] = set()
+    verified: list[tuple[str, str, int | None, int | None, str | None]] = []
     for row in cursor.fetchall():
         if not isinstance(row, Mapping):
             raise CandidateMaterializationError("REVIEWED_URL_DECISION_INVALID")
@@ -470,6 +487,7 @@ def validate_reviewed_url_alias_decisions(
                 or _normalized_audit_text(row.get("actor")) != actor
                 or decision != item.get("url_alias_decision")
                 or selected != item.get("selected_content_entity_id")
+                or normalize_url(str(item.get("url") or "")).value != normalized_url
                 or decision not in {"attach", "retire", "reject"}
                 or not reason
                 or reason != _normalized_audit_text(item.get("decision_reason"))
@@ -493,10 +511,55 @@ def validate_reviewed_url_alias_decisions(
             if expected_fingerprint != fingerprint:
                 raise ValueError
             seen.add(item_id)
+            verified.append((decision, normalized_url, selected, predecessor_id, predecessor_fingerprint))
         except (KeyError, TypeError, ValueError):
             raise CandidateMaterializationError("REVIEWED_URL_DECISION_INVALID") from None
     if seen != set(expected):
         raise CandidateMaterializationError("REVIEWED_URL_DECISION_INVALID")
+    for decision, normalized_url, selected, predecessor_id, predecessor_fingerprint in verified:
+        alias_hash = sha256_text(normalized_url)
+        cursor.execute(
+            """SELECT content_entity_id, alias_status, source_evidence
+               FROM portal_content_registry_aliases
+               WHERE dataset_key = %s AND alias_type = 'url'
+                 AND uniqueness_scope = 'strong' AND alias_hash = %s
+               ORDER BY id""",
+            (DATASET_KEY, alias_hash),
+        )
+        aliases = tuple(cursor.fetchall())
+        active = tuple(
+            row for row in aliases
+            if str(_row_value(row, "alias_status", 1) or "") == "active"
+        )
+        if decision == "attach":
+            if len(active) != 1 or int(_row_value(active[0], "content_entity_id", 0) or 0) != selected:
+                raise CandidateMaterializationError("REVIEWED_URL_DECISION_INVALID")
+            evidence = _decode_json(_row_value(active[0], "source_evidence", 2), code="REVIEWED_URL_DECISION_INVALID")
+            if not isinstance(evidence, Mapping) or evidence.get("accepted_decision_hash") != accepted_hash:
+                raise CandidateMaterializationError("REVIEWED_URL_DECISION_INVALID")
+        elif active:
+            raise CandidateMaterializationError("REVIEWED_URL_DECISION_INVALID")
+        if (predecessor_id is None) != (predecessor_fingerprint is None):
+            raise CandidateMaterializationError("REVIEWED_URL_DECISION_INVALID")
+        if predecessor_id is None:
+            continue
+        cursor.execute(
+            """SELECT content_entity_id, event_fingerprint
+               FROM portal_content_classification_events
+               WHERE id = %s""",
+            (predecessor_id,),
+        )
+        predecessor = cursor.fetchone()
+        owner = selected if decision == "attach" else (
+            int(_row_value(aliases[0], "content_entity_id", 0) or 0) if aliases else 0
+        )
+        if (
+            predecessor is None
+            or int(_row_value(predecessor, "content_entity_id", 0) or 0) != owner
+            or str(_row_value(predecessor, "event_fingerprint", 1) or "").lower()
+            != predecessor_fingerprint.lower()
+        ):
+            raise CandidateMaterializationError("REVIEWED_URL_DECISION_INVALID")
 
 
 def _canonical_json(value: object) -> str:
