@@ -1364,6 +1364,9 @@ def _catalog_rows(entity_rows: Iterable[Mapping[str, object]]) -> tuple[Candidat
                         if entity.get("lifecycle_label") is not None
                         else None
                     ),
+                    provenance_mode=str(
+                        entity.get("_projection_mode") or "current_batch_event"
+                    ),
                 )
             )
     return tuple(
@@ -2147,7 +2150,9 @@ def _load_prior_accepted_event_rows(
     rows = tuple(cursor.fetchall())
     if any(not isinstance(row, Mapping) for row in rows):
         raise CandidateMaterializationError("PRIOR_ACCEPTED_EVENT_UNAUTHORIZED")
-    return rows  # type: ignore[return-value]
+    return tuple(
+        {**row, "_projection_mode": "prior_accepted_event"} for row in rows
+    )  # type: ignore[return-value]
 
 
 def _authorize_prior_accepted_events(
@@ -2534,7 +2539,9 @@ def _overlay_current_batch_events(
                     access_code=access_code,
                     lifecycle_code=lifecycle_code,
                     lifecycle_label=lifecycle_label,
-                    provenance_mode="current_batch_event",
+                    provenance_mode=str(
+                        event.get("_projection_mode") or "current_batch_event"
+                    ),
                 )
                 for row in matched
             )
@@ -4018,7 +4025,10 @@ def _load_lookup(
 
 
 def _catalog_schema_gates(
-    rows: Sequence[Sequence[object]], taxonomy_rows: Iterable[object]
+    rows: Sequence[Sequence[object]],
+    taxonomy_rows: Iterable[object],
+    *,
+    prior_service_page_event_ids: set[int] | frozenset[int] = frozenset(),
 ) -> tuple[int, int, int, int]:
     taxonomy: dict[tuple[str, str], str] = {}
     for row in taxonomy_rows:
@@ -4050,7 +4060,7 @@ def _catalog_schema_gates(
                 or provenance.get("source_row_fingerprint") != row[12]
                 or provenance.get("mode") not in {
                     "current_batch_event", "predecessor_catalog",
-                    "legacy_active_catalog_baseline",
+                    "legacy_active_catalog_baseline", "prior_accepted_event",
                 }
             ):
                 schema_failures += 1
@@ -4067,7 +4077,14 @@ def _catalog_schema_gates(
                     and provenance.get("mode") in {
                         "predecessor_catalog",
                         "legacy_active_catalog_baseline",
+                        "prior_accepted_event",
                     }
+                    or (
+                        kind == "material_type"
+                        and str(code or "") == "service_page"
+                        and int(provenance.get("classification_event_id") or 0)
+                        in prior_service_page_event_ids
+                    )
                 ):
                     # ``service_page`` is a legacy non-content sentinel used by
                     # the observed-page gate, not a selectable taxonomy term.
@@ -4095,6 +4112,36 @@ def _catalog_schema_gates(
             schema_failures += 1
             out_of_taxonomy += 1
     return schema_failures, out_of_taxonomy, archive_types, collisions
+
+
+def _prior_service_page_event_ids(
+    cursor, candidate_release_id: int, current_batch_id: int
+) -> set[int]:
+    cursor.execute(
+        """
+        SELECT DISTINCT event.id AS event_id
+        FROM portal_content_catalog AS catalog
+        INNER JOIN portal_content_classification_events AS event
+          ON event.id = catalog.classification_event_id
+        INNER JOIN portal_content_approval_batches AS authority
+          ON authority.id = event.approval_batch_id
+         AND authority.dataset_key = %s
+         AND authority.batch_status IN (
+           'accepted', 'ingested', 'candidate_materialized'
+         )
+        WHERE catalog.canonical_release_id = %s
+          AND event.approval_batch_id <> %s
+          AND event.material_type_code = 'service_page'
+          AND event.event_kind IN ('approve', 'correct')
+        ORDER BY event.id
+        """,
+        (DATASET_KEY, candidate_release_id, current_batch_id),
+    )
+    return {
+        int(_row_value(row, "event_id", 0) or 0)
+        for row in cursor.fetchall()
+        if int(_row_value(row, "event_id", 0) or 0) > 0
+    }
 
 
 def _catalog_taxonomy_references(
@@ -4404,7 +4451,13 @@ def validate_content_candidate(
             out_of_taxonomy,
             archive_types,
             catalog_collisions,
-        ) = _catalog_schema_gates(catalog_rows, taxonomy_rows)
+        ) = _catalog_schema_gates(
+            catalog_rows,
+            taxonomy_rows,
+            prior_service_page_event_ids=_prior_service_page_event_ids(
+                cursor, candidate_release_id, batch_id
+            ),
+        )
         if bundle.get("referenced_taxonomy_terms") != _catalog_taxonomy_references(
             catalog_rows
         ):
