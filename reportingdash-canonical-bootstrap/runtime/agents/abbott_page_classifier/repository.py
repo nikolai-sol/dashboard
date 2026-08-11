@@ -351,11 +351,7 @@ class ContentRegistryRepository:
         if published_keys != accepted_keys:
             raise RepositoryError("BATCH_ITEMS_MISMATCH")
         accepted_hash = compute_accepted_decision_hash(items)
-        accepted_count = sum(
-            item.readiness_state == "ready"
-            or item.url_alias_decision == "create"
-            for item in items
-        )
+        accepted_count = self._accepted_item_count(items)
         skipped_count = len(items) - accepted_count
         if (
             accepted_hash != history.accepted_decision_hash
@@ -741,11 +737,7 @@ class ContentRegistryRepository:
                      item.url_alias_decision, item_id, int(batch_id), item.row_hash))
                 if getattr(cursor, "rowcount", 1) != 1:
                     raise RepositoryError("BATCH_ITEMS_MISMATCH")
-            accepted_count = sum(
-                item.readiness_state == "ready"
-                or item.url_alias_decision == "create"
-                for item in accepted_items
-            )
+            accepted_count = self._accepted_item_count(accepted_items)
             cursor.execute("""UPDATE portal_content_approval_batches SET batch_status=%s,
                 accepted_decision_hash=%s, accepted_by=%s, accepted_at=%s, accepted_count=%s,
                 skipped_count=%s WHERE id=%s AND batch_status='published'""",
@@ -1118,7 +1110,8 @@ class ContentRegistryRepository:
                   batch.source_snapshot_ids,
                   batch.source_snapshot_digests,
                   batch.prompt_version,
-                  batch.model_routing_version
+                  batch.model_routing_version,
+                  batch.projection_kind
                 FROM portal_content_approval_batches AS batch
                 INNER JOIN portal_content_taxonomy_versions AS taxonomy
                   ON taxonomy.id = batch.taxonomy_version_id
@@ -1223,7 +1216,9 @@ class ContentRegistryRepository:
             )
             if tuple(int(value) for value in batch_row[11:16]) != expected_input_counts:
                 raise RepositoryError("BATCH_ITEMS_MISMATCH")
-            accepted_count = counts["ready"]
+            accepted_count = self._accepted_item_count(
+                tuple(item for _approval_item_id, item in stored_items)
+            )
             skipped_count = len(stored_items) - accepted_count
             if (
                 int(batch_row[16]) != accepted_count
@@ -1238,6 +1233,9 @@ class ContentRegistryRepository:
                 snapshot,
                 stored_rows,
                 taxonomy,
+                allow_local_observed=(
+                    len(batch_row) > 22 and str(batch_row[22] or "") == "local"
+                ),
             )
             supplied_hash = compute_accepted_decision_hash(
                 item for _approval_item_id, item in supplied_items
@@ -1467,6 +1465,8 @@ class ContentRegistryRepository:
         item: ApprovalItem,
         taxonomy: TaxonomyVersion,
         evidence: Mapping[str, object],
+        *,
+        accepted_create: bool = False,
     ) -> None:
         """Validate only mutable local decisions; published identity is immutable."""
         for kind, field in (
@@ -1479,7 +1479,20 @@ class ContentRegistryRepository:
         if item.readiness_state == "ready" and (not item.final_direction_code or not item.final_material_type_code):
             raise RepositoryError("READY_CLASSIFICATION_INCOMPLETE")
         if item.url_alias_decision == "create":
-            if item.content_entity_id is not None or item.selected_content_entity_id is not None:
+            if (
+                item.content_entity_id is not None
+                or (
+                    accepted_create
+                    and (
+                        item.selected_content_entity_id is None
+                        or item.selected_content_entity_id <= 0
+                    )
+                )
+                or (
+                    not accepted_create
+                    and item.selected_content_entity_id is not None
+                )
+            ):
                 raise RepositoryError("URL_ALIAS_DECISION_INVALID")
             if (not str(item.decision_reason or "").strip()
                     or any(not getattr(item, field) for field in (
@@ -1908,6 +1921,14 @@ class ContentRegistryRepository:
         return counts
 
     @staticmethod
+    def _accepted_item_count(items: Sequence[ApprovalItem]) -> int:
+        return sum(
+            item.readiness_state == "ready"
+            or item.url_alias_decision == "create"
+            for item in items
+        )
+
+    @staticmethod
     def _load_taxonomy(cursor: Cursor, version: str) -> tuple[int, TaxonomyVersion]:
         cursor.execute(
             """
@@ -2069,10 +2090,22 @@ class ContentRegistryRepository:
         snapshot: AcceptedBatchSnapshot,
         stored_rows: Sequence[Sequence[object]],
         taxonomy: TaxonomyVersion,
+        *,
+        allow_local_observed: bool = False,
     ) -> tuple[tuple[tuple[int, ApprovalItem], ...], dict[str, int]]:
         stored_items, counts = ContentRegistryRepository._stored_acceptance_items(
             stored_rows,
             taxonomy,
+        )
+        evidence_by_item_id = (
+            {
+                int(row[0]): ContentRegistryRepository._decoded_json_mapping(
+                    row[12]
+                )
+                for row in stored_rows
+            }
+            if allow_local_observed
+            else {}
         )
         stored_by_key = {
             (item.content_entity_id, item.input_hash, item.row_hash): (
@@ -2129,7 +2162,15 @@ class ContentRegistryRepository:
                 selected_content_entity_id=supplied.selected_content_entity_id,
                 url_alias_decision=supplied.url_alias_decision,
             )
-            ContentRegistryRepository._validate_url_alias_decision(editable)
+            if allow_local_observed:
+                ContentRegistryRepository._validate_local_item(
+                    editable,
+                    taxonomy,
+                    evidence_by_item_id[approval_item_id],
+                    accepted_create=True,
+                )
+            else:
+                ContentRegistryRepository._validate_url_alias_decision(editable)
             if editable.readiness_state == "conflict":
                 old_values = (
                     canonical.final_direction_code,
