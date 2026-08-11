@@ -547,6 +547,21 @@ def validate_reviewed_url_alias_decisions(
             int(_row_value(aliases[0], "content_entity_id", 0) or 0) if aliases else 0
         )
         cursor.execute(
+            """SELECT id, content_entity_id, event_fingerprint
+               FROM portal_content_classification_events
+               WHERE id = %s""",
+            (predecessor_id,),
+        )
+        captured = cursor.fetchone()
+        if (
+            captured is None
+            or int(_row_value(captured, "id", 0) or 0) != predecessor_id
+            or int(_row_value(captured, "content_entity_id", 1) or 0) != owner
+            or str(_row_value(captured, "event_fingerprint", 2) or "").lower()
+            != predecessor_fingerprint.lower()
+        ):
+            raise CandidateMaterializationError("REVIEWED_URL_DECISION_INVALID")
+        cursor.execute(
             """SELECT id, content_entity_id, event_fingerprint, approval_batch_id,
                       predecessor_event_id
                FROM portal_content_classification_events
