@@ -31,6 +31,7 @@ from .approval_hashes import (
 )
 from .domain import ApprovalItem, ConflictCode
 from .normalization import (
+    normalize_observed_page_grouping_url,
     normalize_taxonomy_label,
     normalize_title,
     normalize_url,
@@ -825,7 +826,11 @@ def _load_approval_bundle(
     ):
         schema_failures += 1
     counts["source"] = len(decisions)
-    counts["accepted"] = counts["ready"]
+    counts["accepted"] = sum(
+        item.readiness_state == "ready"
+        or item.url_alias_decision == "create"
+        for item in accepted_items
+    )
     return {
         "accepted_hash": compute_accepted_decision_hash(accepted_items),
         "counts": counts,
@@ -923,7 +928,7 @@ def build_lookup_projection(
 
     url_entities: dict[str, set[int]] = {}
     for row in catalog_rows:
-        normalized = normalize_url(row.normalized_url).value
+        normalized = normalize_observed_page_grouping_url(row.normalized_url).value
         if normalized:
             url_entities.setdefault(normalized, set()).add(row.content_entity_id)
     for alias in strong_aliases:
@@ -944,7 +949,7 @@ def build_lookup_projection(
             raise CandidateMaterializationError("STRONG_IDENTITY_COLLISION") from None
         if entity_id <= 0 or alias_type not in {"canonical_url", "url"}:
             raise CandidateMaterializationError("STRONG_IDENTITY_COLLISION")
-        normalized = normalize_url(alias_value).value
+        normalized = normalize_observed_page_grouping_url(alias_value).value
         if normalized:
             url_entities.setdefault(normalized, set()).add(entity_id)
 
@@ -1158,7 +1163,7 @@ def _catalog_rows(entity_rows: Iterable[Mapping[str, object]]) -> tuple[Candidat
                 or entity.get("canonical_url")
                 or ""
             )
-            normalized = normalize_url(str(source_url))
+            normalized = normalize_observed_page_grouping_url(str(source_url))
             title = normalize_title(
                 str(
                     provenance.get("page_title")
@@ -1515,7 +1520,9 @@ def _event_matches_predecessor(
     material_id = str(event.get("material_id") or "")
     if material_id and row.material_id:
         return material_id.casefold() == row.material_id.casefold()
-    normalized = normalize_url(str(event.get("canonical_url") or ""))
+    normalized = normalize_observed_page_grouping_url(
+        str(event.get("canonical_url") or "")
+    )
     return bool(normalized.sha256 and normalized.sha256 == row.normalized_url_hash)
 
 
@@ -1529,6 +1536,7 @@ def _authorize_current_batch_events(
     approval_rows_by_id: Mapping[int, Mapping[str, object]],
     batch: Mapping[str, object],
     predecessor_rows: Sequence[Mapping[str, object]],
+    created_url_event_fingerprints: Mapping[int, str] | None = None,
 ) -> None:
     """Fail closed on values emitted by accepted approval-item ingestion."""
 
@@ -1678,6 +1686,25 @@ def _authorize_current_batch_events(
             if effective_at is not None
             else None
         )
+        expected_evidence_keys = {
+            "accepted_decision_hash", "approval_item_evidence", "row_hash"
+        }
+        if is_create:
+            expected_evidence_keys.update({
+                "canonical_classification", "created_identity"
+            })
+        created_identity = (
+            event_evidence.get("created_identity")
+            if isinstance(event_evidence, Mapping) else None
+        )
+        canonical_classification = (
+            event_evidence.get("canonical_classification")
+            if isinstance(event_evidence, Mapping) else None
+        )
+        normalized_created = (
+            normalize_observed_page_grouping_url(str(item.get("url") or ""))
+            if is_create else None
+        )
         if (
             not accepted_by
             or int(event.get("approval_batch_id") or 0) != batch_id
@@ -1700,13 +1727,38 @@ def _authorize_current_batch_events(
                 "lifecycle_label",
             ))
             or not isinstance(event_evidence, Mapping)
-            or set(event_evidence) != {
-                "accepted_decision_hash", "approval_item_evidence", "row_hash"
-            }
+            or set(event_evidence) != expected_evidence_keys
             or event_evidence.get("accepted_decision_hash") != accepted_hash
             or event_evidence.get("row_hash") != item.get("row_hash")
             or _canonical_json(event_evidence.get("approval_item_evidence"))
             != _canonical_json(item_evidence)
+            or (is_create and (
+                not isinstance(created_identity, Mapping)
+                or created_identity != {
+                    "alias_hash": normalized_created.sha256,
+                    "normalized_url": normalized_created.value,
+                    "selected_content_entity_id": entity_id,
+                    "url_alias_decision": "create",
+                    "url_decision_event_fingerprint": created_identity.get(
+                        "url_decision_event_fingerprint"
+                    ),
+                }
+                or not re.fullmatch(
+                    r"[0-9a-f]{64}",
+                    str(created_identity.get("url_decision_event_fingerprint") or ""),
+                )
+                or (
+                    created_url_event_fingerprints is not None
+                    and created_identity.get("url_decision_event_fingerprint")
+                    != created_url_event_fingerprints.get(item_id)
+                )
+                or canonical_classification != {
+                    "access_code": final_values[2],
+                    "direction_code": final_values[0],
+                    "lifecycle_code": final_values[3],
+                    "material_type_code": final_values[1],
+                }
+            ))
             or (expected_kind == "correct" and not _normalized_audit_text(item.get("decision_reason")))
         ):
             raise CandidateMaterializationError("CURRENT_BATCH_EVENT_UNAUTHORIZED")
@@ -1715,6 +1767,193 @@ def _authorize_current_batch_events(
             "CURRENT_BATCH_EVENT_AUTHORIZATION_INCOMPLETE"
         )
 
+
+def _authorize_created_page_identities(
+    rows: Sequence[Mapping[str, object]],
+    approval_rows_by_id: Mapping[int, Mapping[str, object]],
+    batch: Mapping[str, object],
+) -> dict[int, str]:
+    """Verify every local ``create`` entity, aliases and immutable URL event."""
+
+    expected_ids = {
+        item_id for item_id, item in approval_rows_by_id.items()
+        if item.get("url_alias_decision") == "create"
+    }
+    grouped: dict[int, list[Mapping[str, object]]] = {}
+    for row in rows:
+        if not isinstance(row, Mapping):
+            raise CandidateMaterializationError("CREATED_PAGE_IDENTITY_UNAUTHORIZED")
+        try:
+            item_id = int(row.get("approval_item_id") or 0)
+        except (TypeError, ValueError):
+            raise CandidateMaterializationError(
+                "CREATED_PAGE_IDENTITY_UNAUTHORIZED"
+            ) from None
+        grouped.setdefault(item_id, []).append(row)
+    if set(grouped) != expected_ids:
+        raise CandidateMaterializationError(
+            "CREATED_PAGE_IDENTITY_AUTHORIZATION_INCOMPLETE"
+        )
+
+    batch_id = int(batch.get("id") or 0)
+    accepted_hash = str(batch.get("accepted_decision_hash") or "")
+    accepted_by = _normalized_audit_text(batch.get("accepted_by"))
+    authorized: dict[int, str] = {}
+    for item_id in sorted(expected_ids):
+        item = approval_rows_by_id[item_id]
+        item_rows = grouped[item_id]
+        normalized = normalize_observed_page_grouping_url(str(item.get("url") or ""))
+        entity_id = int(item.get("selected_content_entity_id") or 0)
+        item_evidence = _decode_json(
+            item.get("proposal_evidence"),
+            code="CREATED_PAGE_IDENTITY_UNAUTHORIZED",
+        )
+        registry1 = (
+            item_evidence.get("registry1")
+            if isinstance(item_evidence, Mapping) else None
+        )
+        if (
+            not normalized.value or entity_id <= 0
+            or item.get("content_entity_id") is not None
+            or not _normalized_audit_text(item.get("decision_reason"))
+            or not isinstance(registry1, Mapping)
+            or registry1.get("source_name") != "observed_page"
+        ):
+            raise CandidateMaterializationError("CREATED_PAGE_IDENTITY_UNAUTHORIZED")
+        alias_types: set[str] = set()
+        entity_evidence_value = None
+        decision_fingerprint = None
+        for row in item_rows:
+            try:
+                alias_type = str(row["alias_type"])
+                alias_hash = str(row["alias_hash"])
+                alias_value = str(row["alias_value"])
+                entity_evidence = _decode_json(
+                    row["entity_source_evidence"],
+                    code="CREATED_PAGE_IDENTITY_UNAUTHORIZED",
+                )
+                alias_evidence = _decode_json(
+                    row["alias_source_evidence"],
+                    code="CREATED_PAGE_IDENTITY_UNAUTHORIZED",
+                )
+                fingerprint = str(row["url_event_fingerprint"])
+                expected_fingerprint = compute_url_alias_decision_event_fingerprint(
+                    accepted_decision_hash=row["url_event_accepted_hash"],
+                    actor=row["url_event_actor"],
+                    approval_batch_id=int(row["url_event_batch_id"]),
+                    approval_item_id=int(row["url_event_item_id"]),
+                    decision_reason=row["url_event_reason"],
+                    normalized_url=row["url_event_normalized_url"],
+                    selected_content_entity_id=int(row["url_event_selected_entity_id"]),
+                    selected_predecessor_event_fingerprint=row.get(
+                        "url_event_predecessor_fingerprint"
+                    ),
+                    selected_predecessor_event_id=row.get("url_event_predecessor_id"),
+                    url_alias_decision=row["url_event_decision"],
+                )
+            except (KeyError, TypeError, ValueError):
+                raise CandidateMaterializationError(
+                    "CREATED_PAGE_IDENTITY_UNAUTHORIZED"
+                ) from None
+            if (
+                int(row.get("entity_id") or 0) != entity_id
+                or row.get("entity_status") != "active"
+                or row.get("entity_canonical_url") != normalized.value
+                or alias_type not in {"canonical_url", "url"}
+                or alias_type in alias_types
+                or row.get("alias_status") != "active"
+                or row.get("alias_uniqueness_scope") != "strong"
+                or int(row.get("alias_entity_id") or 0) != entity_id
+                or alias_hash != normalized.sha256
+                or alias_value != normalized.value
+                or alias_evidence != entity_evidence
+                or int(row.get("url_event_batch_id") or 0) != batch_id
+                or int(row.get("url_event_item_id") or 0) != item_id
+                or row.get("url_event_accepted_hash") != accepted_hash
+                or _normalized_audit_text(row.get("url_event_actor")) != accepted_by
+                or row.get("url_event_decision") != "create"
+                or int(row.get("url_event_selected_entity_id") or 0) != entity_id
+                or row.get("url_event_normalized_url") != normalized.value
+                or row.get("url_event_predecessor_id") is not None
+                or row.get("url_event_predecessor_fingerprint") is not None
+                or fingerprint != expected_fingerprint
+            ):
+                raise CandidateMaterializationError(
+                    "CREATED_PAGE_IDENTITY_UNAUTHORIZED"
+                )
+            alias_types.add(alias_type)
+            entity_evidence_value = entity_evidence
+            decision_fingerprint = fingerprint
+        if alias_types != {"canonical_url", "url"}:
+            raise CandidateMaterializationError(
+                "CREATED_PAGE_IDENTITY_AUTHORIZATION_INCOMPLETE"
+            )
+        if not isinstance(entity_evidence_value, Mapping):
+            raise CandidateMaterializationError("CREATED_PAGE_IDENTITY_UNAUTHORIZED")
+        provenance = entity_evidence_value.get("provenance")
+        if (
+            entity_evidence_value.get("authority") != "local_observed_page_acceptance"
+            or int(entity_evidence_value.get("approval_batch_id") or 0) != batch_id
+            or int(entity_evidence_value.get("approval_item_id") or 0) != item_id
+            or entity_evidence_value.get("actor") != accepted_by
+            or entity_evidence_value.get("row_hash") != item.get("row_hash")
+            or not isinstance(provenance, list) or len(provenance) != 1
+            or provenance[0].get("canonical_url") != normalized.value
+            or provenance[0].get("source_row_fingerprint") != item.get("row_hash")
+            or not re.fullmatch(r"[0-9a-f]{64}", str(decision_fingerprint or ""))
+        ):
+            raise CandidateMaterializationError("CREATED_PAGE_IDENTITY_UNAUTHORIZED")
+        authorized[item_id] = str(decision_fingerprint)
+    return authorized
+
+
+def _load_created_page_identity_rows(
+    cursor, batch_id: int,
+) -> tuple[Mapping[str, object], ...]:
+    cursor.execute(
+        """
+        SELECT item.id AS approval_item_id,
+               entity.id AS entity_id, entity.canonical_url AS entity_canonical_url,
+               entity.registry_status AS entity_status,
+               entity.source_evidence AS entity_source_evidence,
+               alias_row.content_entity_id AS alias_entity_id,
+               alias_row.alias_type, alias_row.alias_value, alias_row.alias_hash,
+               alias_row.uniqueness_scope AS alias_uniqueness_scope,
+               alias_row.alias_status, alias_row.source_evidence AS alias_source_evidence,
+               url_event.approval_batch_id AS url_event_batch_id,
+               url_event.approval_item_id AS url_event_item_id,
+               url_event.accepted_decision_hash AS url_event_accepted_hash,
+               url_event.actor AS url_event_actor,
+               url_event.decision_reason AS url_event_reason,
+               url_event.normalized_url AS url_event_normalized_url,
+               url_event.url_alias_decision AS url_event_decision,
+               url_event.selected_content_entity_id AS url_event_selected_entity_id,
+               url_event.selected_predecessor_event_id AS url_event_predecessor_id,
+               url_event.selected_predecessor_event_fingerprint AS url_event_predecessor_fingerprint,
+               url_event.event_fingerprint AS url_event_fingerprint
+        FROM portal_content_approval_items AS item
+        INNER JOIN portal_content_registry_entities AS entity
+          ON entity.id = item.selected_content_entity_id
+         AND entity.dataset_key = %s
+        INNER JOIN portal_content_registry_aliases AS alias_row
+          ON alias_row.content_entity_id = entity.id
+         AND alias_row.dataset_key = %s
+         AND alias_row.alias_type IN ('canonical_url', 'url')
+         AND alias_row.uniqueness_scope = 'strong'
+        INNER JOIN portal_content_url_alias_decision_events AS url_event
+          ON url_event.approval_batch_id = item.approval_batch_id
+         AND url_event.approval_item_id = item.id
+         AND url_event.url_alias_decision = 'create'
+        WHERE item.approval_batch_id = %s
+          AND item.url_alias_decision = 'create'
+        ORDER BY item.id, alias_row.alias_type, alias_row.id
+        """,
+        (DATASET_KEY, DATASET_KEY, batch_id),
+    )
+    rows = tuple(cursor.fetchall())
+    if any(not isinstance(row, Mapping) for row in rows):
+        raise CandidateMaterializationError("CREATED_PAGE_IDENTITY_UNAUTHORIZED")
+    return rows  # type: ignore[return-value]
 
 def _overlay_current_batch_events(
     predecessor_rows: Iterable[Mapping[str, object]],
@@ -2688,6 +2927,12 @@ def materialize_content_candidate(
             taxonomy_version_id=int(batch["taxonomy_version_id"]),
         )
 
+        created_url_event_fingerprints = _authorize_created_page_identities(
+            _load_created_page_identity_rows(cursor, batch_id),
+            approval_bundle["approval_rows_by_id"],
+            batch,
+        )
+
         cursor.execute(
             """
             SELECT entity.id AS authorized_entity_id,
@@ -2746,6 +2991,7 @@ def materialize_content_candidate(
             approval_bundle["approval_rows_by_id"],
             batch,
             predecessor_catalog_rows,
+            created_url_event_fingerprints,
         )
         catalog_rows = _overlay_current_batch_events(
             predecessor_catalog_rows, event_rows
@@ -3577,6 +3823,11 @@ def validate_content_candidate(
             catalog_rows
         ):
             catalog_schema_failures += 1
+        created_url_event_fingerprints = _authorize_created_page_identities(
+            _load_created_page_identity_rows(cursor, batch_id),
+            approval["approval_rows_by_id"],
+            batch,
+        )
         cursor.execute(
             """
             SELECT entity.id AS authorized_entity_id,
@@ -3635,6 +3886,7 @@ def validate_content_candidate(
                     dict(zip(_PREDECESSOR_CATALOG_COLUMNS, row))
                     for row in predecessor_catalog_rows
                 ),
+                created_url_event_fingerprints,
             )
             anti_flip = 0
         except CandidateMaterializationError:

@@ -469,7 +469,7 @@ class ContentRegistryRepository:
             raise
         except Exception:
             self._rollback(connection)
-            raise
+            raise RepositoryError("DB_TRANSACTION_FAILED") from None
         finally:
             self._close(cursor, connection)
 
@@ -648,6 +648,9 @@ class ContentRegistryRepository:
                 )
                 self._validate_local_item(item, taxonomy)
                 if item.url_alias_decision == "create":
+                    self._validate_local_create_evidence(
+                        item, evidence_by_item_id[item_id]
+                    )
                     entity_id = self._create_observed_entity(cursor, item, int(batch_id), item_id, intent.accepted_by)
                     item = replace(item, selected_content_entity_id=entity_id)
                 self._validate_url_alias_decision(item)
@@ -656,10 +659,19 @@ class ContentRegistryRepository:
             accepted_hash = compute_accepted_decision_hash(accepted_items)
             accepted_at = self._canonical_acceptance_timestamp(intent.accepted_at)
             for item_id, item in accepted:
+                url_decision_fingerprint = None
                 if item.url_alias_decision is not None:
-                    self._apply_url_alias_decision(cursor, item, int(batch_id), item_id, accepted_hash, intent.accepted_by)
+                    url_decision_fingerprint = self._apply_url_alias_decision(
+                        cursor, item, int(batch_id), item_id, accepted_hash,
+                        intent.accepted_by,
+                    )
                 if item.url_alias_decision == "create":
-                    self._insert_created_classification_event(cursor, item, int(row[1]), int(batch_id), item_id, accepted_hash, intent.accepted_by, accepted_at, evidence_by_item_id[item_id])
+                    self._insert_created_classification_event(
+                        cursor, item, int(row[1]), int(batch_id), item_id,
+                        accepted_hash, intent.accepted_by, accepted_at,
+                        evidence_by_item_id[item_id],
+                        str(url_decision_fingerprint or ""),
+                    )
                 cursor.execute("""UPDATE portal_content_approval_items SET
                     final_direction_code=%s, final_material_type_code=%s, final_access_code=%s,
                     final_lifecycle_code=%s, decision_reason=%s, selected_content_entity_id=%s,
@@ -669,7 +681,11 @@ class ContentRegistryRepository:
                      item.url_alias_decision, item_id, int(batch_id), item.row_hash))
                 if getattr(cursor, "rowcount", 1) != 1:
                     raise RepositoryError("BATCH_ITEMS_MISMATCH")
-            accepted_count = sum(item.readiness_state == "ready" for item in accepted_items)
+            accepted_count = sum(
+                item.readiness_state == "ready"
+                or item.url_alias_decision == "create"
+                for item in accepted_items
+            )
             cursor.execute("""UPDATE portal_content_approval_batches SET batch_status=%s,
                 accepted_decision_hash=%s, accepted_by=%s, accepted_at=%s, accepted_count=%s,
                 skipped_count=%s WHERE id=%s AND batch_status='published'""",
@@ -1383,18 +1399,35 @@ class ContentRegistryRepository:
         if item.url_alias_decision == "create":
             if item.content_entity_id is not None or item.selected_content_entity_id is not None:
                 raise RepositoryError("URL_ALIAS_DECISION_INVALID")
-            if not item.decision_reason or not item.final_direction_code or not item.final_material_type_code:
+            if (not str(item.decision_reason or "").strip()
+                    or any(not getattr(item, field) for field in (
+                        "final_direction_code", "final_material_type_code",
+                        "final_access_code", "final_lifecycle_code",
+                    ))):
                 raise RepositoryError("IDENTITY_COLLISION_DECISION_REQUIRED")
             return
         ContentRegistryRepository._validate_url_alias_decision(item)
+
+    @staticmethod
+    def _validate_local_create_evidence(
+        item: ApprovalItem, evidence: Mapping[str, object]
+    ) -> None:
+        registry1 = evidence.get("registry1") if isinstance(evidence, Mapping) else None
+        if (
+            item.content_entity_id is not None
+            or evidence.get("current_canonical") is not None
+            or not isinstance(registry1, Mapping)
+            or registry1.get("source_name") != "observed_page"
+        ):
+            raise RepositoryError("CREATE_SOURCE_NOT_OBSERVED")
 
     @staticmethod
     def _require_query_free_abbott_url(raw_url: str, normalized: object) -> None:
         raw = urlsplit(raw_url)
         value = getattr(normalized, "value", "")
         parsed = urlsplit(value)
-        if (raw.query or raw.fragment or raw.scheme != "https" or
-                raw.hostname not in {"abbottpro.ru", "www.abbottpro.ru"} or
+        if (raw.query or raw.fragment or raw.scheme.casefold() not in {"http", "https"} or
+                (raw.hostname or "").casefold() not in {"abbottpro.ru", "www.abbottpro.ru"} or
                 not value or parsed.query or parsed.fragment):
             raise RepositoryError("IDENTITY_COLLISION")
 
@@ -1443,10 +1476,27 @@ class ContentRegistryRepository:
         cursor: Cursor, item: ApprovalItem, taxonomy_id: int, batch_id: int,
         item_id: int, accepted_hash: str, actor: str, accepted_at: datetime,
         approval_item_evidence: Mapping[str, object],
+        url_decision_event_fingerprint: str,
     ) -> None:
-        evidence = {"accepted_decision_hash": accepted_hash,
-                    "approval_item_evidence": approval_item_evidence,
-                    "row_hash": item.row_hash}
+        normalized = normalize_observed_page_grouping_url(item.url)
+        evidence = {
+            "accepted_decision_hash": accepted_hash,
+            "approval_item_evidence": approval_item_evidence,
+            "canonical_classification": {
+                "access_code": item.final_access_code,
+                "direction_code": item.final_direction_code,
+                "lifecycle_code": item.final_lifecycle_code,
+                "material_type_code": item.final_material_type_code,
+            },
+            "created_identity": {
+                "alias_hash": normalized.sha256,
+                "normalized_url": normalized.value,
+                "selected_content_entity_id": item.selected_content_entity_id,
+                "url_alias_decision": "create",
+                "url_decision_event_fingerprint": url_decision_event_fingerprint,
+            },
+            "row_hash": item.row_hash,
+        }
         payload = {"content_entity_id": item.selected_content_entity_id, "taxonomy_version_id": taxonomy_id,
             "approval_batch_id": batch_id, "approval_item_id": item_id, "predecessor_event_id": None,
             "direction_code": item.final_direction_code, "material_type_code": item.final_material_type_code,
@@ -1471,11 +1521,11 @@ class ContentRegistryRepository:
         approval_item_id: int,
         accepted_hash: str,
         actor: str,
-    ) -> None:
+    ) -> str:
         """Lock and mutate one reviewed strong URL identity, fail-closed on races."""
         ContentRegistryRepository._validate_url_alias_decision(item)
         decision = item.url_alias_decision
-        normalized_url = normalize_url(item.url)
+        normalized_url = normalize_observed_page_grouping_url(item.url)
         if not normalized_url.value:
             raise RepositoryError("IDENTITY_COLLISION")
         alias_hash = normalized_url.sha256
@@ -1574,7 +1624,7 @@ class ContentRegistryRepository:
              predecessor[0], predecessor[1], event_fingerprint),
         )
         if decision == "reject":
-            return
+            return event_fingerprint
         if decision == "retire":
             cursor.execute(
                 """UPDATE portal_content_registry_aliases
@@ -1584,9 +1634,9 @@ class ContentRegistryRepository:
             )
             if getattr(cursor, "rowcount", 1) != 1:
                 raise RepositoryError("IDENTITY_COLLISION")
-            return
+            return event_fingerprint
         if url_active:
-            return
+            return event_fingerprint
         cursor.execute(
             """INSERT INTO portal_content_registry_aliases (
                  dataset_key, content_entity_id, alias_type, alias_value, alias_hash,
@@ -1600,6 +1650,7 @@ class ContentRegistryRepository:
                 evidence,
             ),
         )
+        return event_fingerprint
 
     def load_effective_classifications(self) -> dict[int, ClassificationEvent]:
         sql = """
