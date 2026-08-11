@@ -247,6 +247,9 @@ class WeeklyProposalServiceTests(unittest.TestCase):
         self.assertEqual(item.identity_status, "new")
         self.assertEqual(item.reconciliation_input.registry1.url, observed.normalized_url)
         self.assertEqual(item.reconciliation_input.deterministic_proposal.rule_code, "SERVICE_ROUTE")
+        self.assertIsNone(
+            item.reconciliation_input.deterministic_proposal.material_type_code
+        )
         self.assertIsInstance(
             item.reconciliation_input.deterministic_proposal.confidence, float
         )
