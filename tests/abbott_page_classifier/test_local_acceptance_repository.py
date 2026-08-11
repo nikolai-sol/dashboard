@@ -24,8 +24,8 @@ def create_item():
         row_hash="d" * 64,
         title="Observed page",
         url="https://www.abbottpro.ru/articles/observed-page",
-        readiness_state="conflict",
-        conflict_codes=(ConflictCode.IDENTITY_COLLISION,),
+        readiness_state="unresolved",
+        conflict_codes=(),
         registry1_values={
             "source_name": "observed_page",
             "url": "https://www.abbottpro.ru/articles/observed-page",

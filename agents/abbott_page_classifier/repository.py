@@ -697,7 +697,6 @@ class ContentRegistryRepository:
                     )
                     entity_id = self._create_observed_entity(cursor, item, int(batch_id), item_id, intent.accepted_by)
                     item = replace(item, selected_content_entity_id=entity_id)
-                self._validate_url_alias_decision(item)
                 accepted.append((item_id, item))
             accepted_items = tuple(item for _, item in accepted)
             accepted_hash = compute_accepted_decision_hash(accepted_items)
@@ -708,6 +707,7 @@ class ContentRegistryRepository:
                     url_decision_fingerprint = self._apply_url_alias_decision(
                         cursor, item, int(batch_id), item_id, accepted_hash,
                         intent.accepted_by,
+                        allow_local_create=True,
                     )
                 if item.url_alias_decision == "create":
                     self._insert_created_classification_event(
@@ -1583,9 +1583,19 @@ class ContentRegistryRepository:
         approval_item_id: int,
         accepted_hash: str,
         actor: str,
+        *,
+        allow_local_create: bool = False,
     ) -> str:
         """Lock and mutate one reviewed strong URL identity, fail-closed on races."""
-        ContentRegistryRepository._validate_url_alias_decision(item)
+        if item.url_alias_decision == "create" and allow_local_create:
+            if (
+                item.selected_content_entity_id is None
+                or item.selected_content_entity_id <= 0
+                or not str(item.decision_reason or "").strip()
+            ):
+                raise RepositoryError("IDENTITY_COLLISION_DECISION_REQUIRED")
+        else:
+            ContentRegistryRepository._validate_url_alias_decision(item)
         decision = item.url_alias_decision
         normalized_url = (
             normalize_observed_page_grouping_url(item.url)
