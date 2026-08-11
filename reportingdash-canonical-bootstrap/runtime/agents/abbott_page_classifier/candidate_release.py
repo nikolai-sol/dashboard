@@ -2734,6 +2734,52 @@ def _snapshot_records(
     return records
 
 
+def _require_catalog_snapshot_authority(
+    row: object,
+    expected_manifest: Mapping[str, object],
+) -> Mapping[str, object]:
+    if not isinstance(row, Mapping):
+        raise CandidateMaterializationError("CATALOG_SNAPSHOT_REUSE_INVALID")
+    manifest = _decode_json(
+        row.get("manifest_json"), code="CATALOG_SNAPSHOT_REUSE_INVALID"
+    )
+    authority_fields = (
+        "accepted_decision_hash",
+        "batch_id",
+        "catalog_hash",
+        "content_bytes",
+        "content_sha256",
+        "lookup_hash",
+        "lookup_row_count",
+        "parser_version",
+        "predecessor_release_id",
+        "rejected_count",
+        "source_kind",
+        "source_row_count",
+    )
+    if (
+        not isinstance(manifest, Mapping)
+        or int(row.get("id") or 0) <= 0
+        or str(row.get("source_kind") or "") != CATALOG_SOURCE_KIND
+        or str(row.get("source_locator") or "")
+        != f"canonical://abbott/content-batch/{expected_manifest['batch_id']}"
+        or str(row.get("content_sha256") or "")
+        != str(expected_manifest["content_sha256"])
+        or int(row.get("content_bytes") or 0)
+        != int(expected_manifest["content_bytes"])
+        or int(row.get("source_row_count") or 0)
+        != int(expected_manifest["source_row_count"])
+        or str(row.get("parser_version") or "") != CATALOG_PARSER_VERSION
+        or str(row.get("import_status") or "") != "imported"
+        or int(row.get("imported_row_count") or 0)
+        != int(expected_manifest["source_row_count"])
+        or int(row.get("rejected_row_count") or 0) != 0
+        or any(manifest.get(name) != expected_manifest.get(name) for name in authority_fields)
+    ):
+        raise CandidateMaterializationError("CATALOG_SNAPSHOT_REUSE_INVALID")
+    return row
+
+
 def _import_records(rows: Iterable[object]) -> list[dict[str, object]]:
     return [
         {
@@ -3549,34 +3595,65 @@ def materialize_content_candidate(
             "source_kind": CATALOG_SOURCE_KIND,
             "source_row_count": len(catalog_rows),
         }
+        catalog_snapshot_query = """
+            SELECT id, source_kind, source_locator, content_sha256,
+                   content_bytes, source_row_count, parser_version,
+                   import_status, imported_row_count, rejected_row_count,
+                   private_archive_locator, manifest_json
+            FROM portal_dataset_snapshots
+            WHERE dataset_key = %s AND source_kind = %s
+              AND content_sha256 = %s AND parser_version = %s
+            FOR UPDATE
+        """
         cursor.execute(
-            """
-            INSERT INTO portal_dataset_snapshots (
-              snapshot_key, dataset_key, source_kind, source_locator,
-              content_sha256, content_bytes, source_row_count, parser_version,
-              import_status, imported_row_count, rejected_row_count,
-              private_archive_locator, manifest_json, imported_at
-            ) VALUES (
-              UUID(), %s, %s, %s, %s, %s, %s, %s,
-              'imported', %s, 0, %s, %s, NOW(6)
-            )
-            """,
-            (
-                DATASET_KEY,
-                CATALOG_SOURCE_KIND,
-                f"canonical://abbott/content-batch/{batch_id}",
-                catalog_hash,
-                catalog_manifest["content_bytes"],
-                len(catalog_rows),
-                CATALOG_PARSER_VERSION,
-                len(catalog_rows),
-                f"canonical://abbott/content-batch/{batch_id}",
-                _canonical_json(catalog_manifest),
-            ),
+            catalog_snapshot_query,
+            (DATASET_KEY, CATALOG_SOURCE_KIND, catalog_hash, CATALOG_PARSER_VERSION),
         )
-        catalog_snapshot_id = int(cursor.lastrowid)
-        if int(getattr(cursor, "rowcount", -1)) != 1 or catalog_snapshot_id <= 0:
-            raise CandidateMaterializationError("CATALOG_SNAPSHOT_INSERT_FAILED")
+        catalog_snapshot_row = cursor.fetchone()
+        if catalog_snapshot_row is None:
+            cursor.execute(
+                """
+                INSERT INTO portal_dataset_snapshots (
+                  snapshot_key, dataset_key, source_kind, source_locator,
+                  content_sha256, content_bytes, source_row_count, parser_version,
+                  import_status, imported_row_count, rejected_row_count,
+                  private_archive_locator, manifest_json, imported_at
+                ) VALUES (
+                  UUID(), %s, %s, %s, %s, %s, %s, %s,
+                  'imported', %s, 0, %s, %s, NOW(6)
+                )
+                ON DUPLICATE KEY UPDATE id = LAST_INSERT_ID(id)
+                """,
+                (
+                    DATASET_KEY,
+                    CATALOG_SOURCE_KIND,
+                    f"canonical://abbott/content-batch/{batch_id}",
+                    catalog_hash,
+                    catalog_manifest["content_bytes"],
+                    len(catalog_rows),
+                    CATALOG_PARSER_VERSION,
+                    len(catalog_rows),
+                    f"canonical://abbott/content-batch/{batch_id}",
+                    _canonical_json(catalog_manifest),
+                ),
+            )
+            catalog_snapshot_id = int(cursor.lastrowid)
+            if catalog_snapshot_id <= 0:
+                raise CandidateMaterializationError("CATALOG_SNAPSHOT_INSERT_FAILED")
+            cursor.execute(
+                catalog_snapshot_query,
+                (
+                    DATASET_KEY,
+                    CATALOG_SOURCE_KIND,
+                    catalog_hash,
+                    CATALOG_PARSER_VERSION,
+                ),
+            )
+            catalog_snapshot_row = cursor.fetchone()
+        catalog_snapshot_row = _require_catalog_snapshot_authority(
+            catalog_snapshot_row, catalog_manifest
+        )
+        catalog_snapshot_id = int(catalog_snapshot_row["id"])
         source_snapshot_ids = tuple(
             catalog_snapshot_id if value == old_catalog_ids[0] else value
             for value in predecessor_source_ids
@@ -3585,20 +3662,7 @@ def materialize_content_candidate(
         candidate_snapshot_rows = []
         for snapshot_id in source_snapshot_ids:
             if snapshot_id == catalog_snapshot_id:
-                candidate_snapshot_rows.append(
-                    {
-                        "id": catalog_snapshot_id,
-                        "source_kind": CATALOG_SOURCE_KIND,
-                        "content_sha256": catalog_hash,
-                        "content_bytes": catalog_manifest["content_bytes"],
-                        "source_row_count": len(catalog_rows),
-                        "parser_version": CATALOG_PARSER_VERSION,
-                        "import_status": "imported",
-                        "imported_row_count": len(catalog_rows),
-                        "rejected_row_count": 0,
-                        "manifest_json": catalog_manifest,
-                    }
-                )
+                candidate_snapshot_rows.append(catalog_snapshot_row)
             else:
                 candidate_snapshot_rows.append(snapshots_by_id[snapshot_id])
         file_snapshots = _snapshot_records(
