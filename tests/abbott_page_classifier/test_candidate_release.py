@@ -1937,6 +1937,9 @@ class CandidateReleaseTest(unittest.TestCase):
             observed_sql,
         )
         self.assertIn("catalog_import.source_kind = 'abbott_workbook_catalog'", observed_sql)
+        self.assertIn("projection.lookup_kind = 'path'", observed_sql)
+        self.assertIn("SHA2(facts.normalized_path, 256)", observed_sql)
+        self.assertNotIn("projection.lookup_kind = 'url'", observed_sql)
         self.assertNotIn("raw_payload", observed_sql)
 
     def test_real_validation_blocks_non_content_without_service_page_or_reviewed_exclusion(self):

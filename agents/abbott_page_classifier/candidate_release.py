@@ -299,6 +299,41 @@ def _observed_page_resolution_counts(cursor, candidate_id: int) -> tuple[int, in
     """
     cursor.execute(
         """
+        WITH raw_facts AS (
+          SELECT canonical_release_id,
+                 JSON_UNQUOTE(JSON_EXTRACT(
+                   scope_dimensions, '$.page_url')) AS raw_url
+          FROM canonical_fact_metrika_site_analytics_daily
+          WHERE canonical_release_id = %s AND counter_id = %s
+            AND analytics_scope = 'page'
+        ), path_facts AS (
+          SELECT canonical_release_id,
+                 CASE
+                   WHEN raw_url REGEXP '^https?://(www\\.)?abbottpro\\.ru([/?#]|$)'
+                     THEN REGEXP_REPLACE(
+                       SUBSTRING_INDEX(SUBSTRING_INDEX(raw_url, '?', 1), '#', 1),
+                       '^[a-z][a-z0-9+.-]*://[^/]*', ''
+                     )
+                   WHEN raw_url NOT REGEXP '^[a-z][a-z0-9+.-]*://'
+                     THEN SUBSTRING_INDEX(SUBSTRING_INDEX(raw_url, '?', 1), '#', 1)
+                   ELSE NULL
+                 END AS raw_path
+          FROM raw_facts
+        ), collapsed_paths AS (
+          SELECT canonical_release_id,
+                 CASE WHEN raw_path IS NULL THEN NULL
+                      ELSE REGEXP_REPLACE(raw_path, '/{2,}', '/') END AS path_value
+          FROM path_facts
+        ), normalized_facts AS (
+          SELECT canonical_release_id,
+                 CASE WHEN path_value IS NULL THEN NULL ELSE
+                   COALESCE(NULLIF(TRIM(TRAILING '/' FROM
+                     CASE WHEN LEFT(path_value, 1) = '/' THEN path_value
+                          ELSE CONCAT('/', path_value) END
+                   ), ''), '/')
+                 END AS normalized_path
+          FROM collapsed_paths
+        )
         SELECT COALESCE(SUM(
                  selected.source_row_fingerprint IS NOT NULL
                  AND (selected.material_type IS NULL
@@ -312,7 +347,7 @@ def _observed_page_resolution_counts(cursor, candidate_id: int) -> tuple[int, in
                  selected.source_row_fingerprint IS NULL
                  AND exclusion.id IS NULL
                ), 0) AS non_content_unresolved
-        FROM canonical_fact_metrika_site_analytics_daily AS facts
+        FROM normalized_facts AS facts
         INNER JOIN portal_content_approval_batches AS candidate_batch
           ON candidate_batch.dataset_key = %s
          AND candidate_batch.candidate_release_id = facts.canonical_release_id
@@ -322,11 +357,10 @@ def _observed_page_resolution_counts(cursor, candidate_id: int) -> tuple[int, in
          AND catalog_import.source_kind = 'abbott_workbook_catalog'
          AND catalog_import.import_status = 'imported'
         LEFT JOIN portal_content_lookup_projection AS projection
-          ON projection.canonical_release_id = facts.canonical_release_id
+         ON projection.canonical_release_id = facts.canonical_release_id
          AND projection.source_snapshot_id = catalog_import.source_snapshot_id
-         AND projection.lookup_kind = 'url'
-         AND projection.lookup_key_hash = SHA2(JSON_UNQUOTE(JSON_EXTRACT(
-               facts.scope_dimensions, '$.page_url')), 256)
+         AND projection.lookup_kind = 'path'
+         AND projection.lookup_key_hash = SHA2(facts.normalized_path, 256)
          AND projection.resolution_status IN ('unique', 'identical_collapsed')
         LEFT JOIN portal_content_catalog AS selected
           ON selected.canonical_release_id = projection.canonical_release_id
@@ -337,12 +371,10 @@ def _observed_page_resolution_counts(cursor, candidate_id: int) -> tuple[int, in
          AND exclusion.accepted_decision_hash = candidate_batch.accepted_decision_hash
          AND exclusion.url_alias_decision = 'reject'
          AND CHAR_LENGTH(TRIM(exclusion.decision_reason)) > 0
-         AND SHA2(exclusion.normalized_url, 256) = SHA2(JSON_UNQUOTE(JSON_EXTRACT(
-               facts.scope_dimensions, '$.page_url')), 256)
-        WHERE facts.canonical_release_id = %s AND facts.counter_id = %s
-          AND facts.analytics_scope = 'page'
+         AND SHA2(exclusion.normalized_url, 256) = SHA2(
+               CONCAT('https://abbottpro.ru', facts.normalized_path), 256)
         """,
-        (DATASET_KEY, candidate_id, ABBOTT_COUNTER_ID),
+        (candidate_id, ABBOTT_COUNTER_ID, DATASET_KEY),
     )
     row = cursor.fetchone()
     try:
