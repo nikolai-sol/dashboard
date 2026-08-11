@@ -1501,7 +1501,9 @@ class ContentRegistryRepository:
                     ))):
                 raise RepositoryError("IDENTITY_COLLISION_DECISION_REQUIRED")
             ContentRegistryRepository._validate_local_create_evidence(
-                item, evidence
+                item,
+                evidence,
+                allow_current=item.url_alias_decision == "reject",
             )
             return
         if (
@@ -1518,7 +1520,9 @@ class ContentRegistryRepository:
             and item.url_alias_decision in {"attach", "reject"}
         ):
             ContentRegistryRepository._validate_local_create_evidence(
-                item, evidence
+                item,
+                evidence,
+                allow_current=item.url_alias_decision == "reject",
             )
             if (
                 not str(item.decision_reason or "").strip()
@@ -1540,12 +1544,20 @@ class ContentRegistryRepository:
 
     @staticmethod
     def _validate_local_create_evidence(
-        item: ApprovalItem, evidence: Mapping[str, object]
+        item: ApprovalItem,
+        evidence: Mapping[str, object],
+        *,
+        allow_current: bool = False,
     ) -> None:
         registry1 = evidence.get("registry1") if isinstance(evidence, Mapping) else None
         if (
-            item.content_entity_id is not None
-            or evidence.get("current_canonical") is not None
+            (
+                not allow_current
+                and (
+                    item.content_entity_id is not None
+                    or evidence.get("current_canonical") is not None
+                )
+            )
             or not isinstance(registry1, Mapping)
             or registry1.get("source_name") != "observed_page"
         ):

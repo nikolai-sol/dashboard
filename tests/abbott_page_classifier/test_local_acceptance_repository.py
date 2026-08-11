@@ -79,6 +79,48 @@ class LocalAcceptanceRepositoryTests(unittest.TestCase):
                     connection.decision_events[0]["url_alias_decision"], action
                 )
 
+    def test_unresolved_observed_with_current_metadata_can_be_rejected_as_non_content(self):
+        item = replace(
+            create_item(),
+            content_entity_id=41,
+            current_canonical={
+                "content_entity_id": 41,
+                "direction_code": "undetermined",
+                "material_type_code": "service_page",
+                "access_code": "unspecified",
+                "lifecycle_code": "active",
+            },
+        )
+        batch = replace(acceptance_workflow_batch(), items=(item,))
+        connection = StatefulAcceptanceConnection(batch, selected_entity_id=41)
+        intent = LocalAcceptanceIntent(
+            batch_id=8,
+            batch_key=batch.batch_key,
+            published_input_hash=batch.published_input_hash,
+            accepted_by="manager",
+            accepted_at=datetime(2026, 8, 11, 8, 0),
+            decisions=(LocalDecision(
+                input_hash=item.input_hash,
+                row_hash=item.row_hash,
+                final_direction_code="not_applicable",
+                final_material_type_code=None,
+                final_access_code="unspecified",
+                final_lifecycle_code="active",
+                selected_content_entity_id=None,
+                url_alias_decision="reject",
+                decision_reason="reviewed legacy non-content page",
+            ),),
+        )
+
+        snapshot = ContentRegistryRepository(
+            lambda: connection
+        ).record_local_batch_acceptance(8, intent, "sheet-123", "a" * 64)
+
+        self.assertEqual(snapshot.accepted_count, 0)
+        self.assertEqual(connection.commit_count, 1)
+        self.assertEqual(len(connection.decision_events), 1)
+        self.assertEqual(connection.decision_events[0]["url_alias_decision"], "reject")
+
     def test_non_observed_unresolved_attach_is_rejected(self):
         item = replace(
             create_item(),
