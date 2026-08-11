@@ -324,7 +324,7 @@ def _observed_page_resolution_counts(cursor, candidate_id: int) -> tuple[int, in
                  CASE WHEN raw_path IS NULL THEN NULL
                       ELSE REGEXP_REPLACE(raw_path, '/{2,}', '/') END AS path_value
           FROM path_facts
-        ), normalized_facts AS (
+        ), normalized_rows AS (
           SELECT canonical_release_id,
                  CASE WHEN path_value IS NULL THEN NULL ELSE
                    COALESCE(NULLIF(TRIM(TRAILING '/' FROM
@@ -333,8 +333,13 @@ def _observed_page_resolution_counts(cursor, candidate_id: int) -> tuple[int, in
                    ), ''), '/')
                  END AS normalized_path
           FROM collapsed_paths
+        ), normalized_facts AS (
+          SELECT canonical_release_id, normalized_path,
+                 COUNT(*) AS fact_count
+          FROM normalized_rows
+          GROUP BY canonical_release_id, normalized_path
         )
-        SELECT COALESCE(SUM(
+        SELECT COALESCE(SUM((
                  selected.source_row_fingerprint IS NOT NULL
                  AND (selected.material_type IS NULL
                       OR selected.material_type <> 'service_page')
@@ -342,11 +347,11 @@ def _observed_page_resolution_counts(cursor, candidate_id: int) -> tuple[int, in
                       OR TRIM(selected.direction_key) = ''
                       OR selected.material_type IS NULL
                       OR TRIM(selected.material_type) = '')
-               ), 0) AS content_unresolved,
-               COALESCE(SUM(
+               ) * facts.fact_count), 0) AS content_unresolved,
+               COALESCE(SUM((
                  selected.source_row_fingerprint IS NULL
                  AND exclusion.id IS NULL
-               ), 0) AS non_content_unresolved
+               ) * facts.fact_count), 0) AS non_content_unresolved
         FROM normalized_facts AS facts
         INNER JOIN portal_content_approval_batches AS candidate_batch
           ON candidate_batch.dataset_key = %s
@@ -1894,6 +1899,226 @@ def _authorize_current_batch_events(
         )
 
 
+def _load_prior_accepted_event_rows(
+    cursor, batch_id: int, taxonomy_version_id: int
+) -> tuple[Mapping[str, object], ...]:
+    """Load the latest immutable accepted event for every registry entity.
+
+    A content candidate is always cloned from the active release.  Accepted
+    registry events from an earlier, not-yet-active content batch therefore
+    have to be replayed into each later candidate instead of disappearing.
+    """
+
+    cursor.execute(
+        """
+        WITH latest_events AS (
+          SELECT event.*,
+                 batch.accepted_decision_hash AS authority_accepted_hash,
+                 batch.accepted_by AS authority_accepted_by,
+                 batch.accepted_at AS authority_accepted_at,
+                 ROW_NUMBER() OVER (
+                   PARTITION BY event.content_entity_id
+                   ORDER BY event.effective_at DESC, event.id DESC
+                 ) AS row_rank
+          FROM portal_content_classification_events AS event
+          INNER JOIN portal_content_approval_batches AS batch
+            ON batch.id = event.approval_batch_id
+           AND batch.dataset_key = %s
+           AND batch.batch_status IN ('accepted','ingested','candidate_materialized')
+           AND batch.accepted_decision_hash IS NOT NULL
+          WHERE event.approval_batch_id <> %s
+        )
+        SELECT entity.id AS authorized_entity_id,
+               event.content_entity_id, entity.material_id,
+               entity.title, entity.canonical_url, entity.source_evidence,
+               event.id AS classification_event_id, event.direction_code,
+               event.material_type_code, event.access_code,
+               event.lifecycle_code, event.event_kind,
+               event.event_fingerprint, event.approval_batch_id,
+               event.approval_item_id, event.taxonomy_version_id,
+               event.predecessor_event_id, event.proposal_evidence,
+               event.actor, event.reason, event.effective_at,
+               direction.term_label AS direction_label,
+               material.term_label AS material_type_label,
+               access_term.term_label AS access_label,
+               lifecycle.term_label AS lifecycle_label,
+               event.authority_accepted_hash,
+               event.authority_accepted_by,
+               event.authority_accepted_at,
+               item.content_entity_id AS authority_content_entity_id,
+               item.selected_content_entity_id AS authority_selected_entity_id,
+               item.url_alias_decision AS authority_url_decision,
+               item.row_hash AS authority_row_hash,
+               item.decision_reason AS authority_decision_reason,
+               item.proposal_evidence AS authority_item_evidence,
+               item.final_direction_code AS authority_direction_code,
+               item.final_material_type_code AS authority_material_type_code,
+               item.final_access_code AS authority_access_code,
+               item.final_lifecycle_code AS authority_lifecycle_code
+        FROM latest_events AS event
+        INNER JOIN portal_content_approval_items AS item
+          ON item.id = event.approval_item_id
+         AND item.approval_batch_id = event.approval_batch_id
+        INNER JOIN portal_content_registry_entities AS entity
+          ON entity.id = event.content_entity_id
+         AND entity.dataset_key = %s
+         AND entity.registry_status = 'active'
+        LEFT JOIN portal_content_taxonomy_terms AS direction
+          ON direction.taxonomy_version_id = %s
+         AND direction.taxonomy_kind = 'direction'
+         AND direction.term_code = event.direction_code
+         AND direction.term_status = 'active'
+        LEFT JOIN portal_content_taxonomy_terms AS material
+          ON material.taxonomy_version_id = %s
+         AND material.taxonomy_kind = 'material_type'
+         AND material.term_code = event.material_type_code
+         AND material.term_status = 'active'
+        LEFT JOIN portal_content_taxonomy_terms AS access_term
+          ON access_term.taxonomy_version_id = %s
+         AND access_term.taxonomy_kind = 'access'
+         AND access_term.term_code = event.access_code
+         AND access_term.term_status = 'active'
+        LEFT JOIN portal_content_taxonomy_terms AS lifecycle
+          ON lifecycle.taxonomy_version_id = %s
+         AND lifecycle.taxonomy_kind = 'lifecycle'
+         AND lifecycle.term_code = event.lifecycle_code
+         AND lifecycle.term_status = 'active'
+        WHERE event.row_rank = 1
+        ORDER BY event.effective_at, event.id
+        """,
+        (
+            DATASET_KEY,
+            batch_id,
+            DATASET_KEY,
+            taxonomy_version_id,
+            taxonomy_version_id,
+            taxonomy_version_id,
+            taxonomy_version_id,
+        ),
+    )
+    rows = tuple(cursor.fetchall())
+    if any(not isinstance(row, Mapping) for row in rows):
+        raise CandidateMaterializationError("PRIOR_ACCEPTED_EVENT_UNAUTHORIZED")
+    return rows  # type: ignore[return-value]
+
+
+def _authorize_prior_accepted_events(
+    rows: Sequence[Mapping[str, object]],
+) -> None:
+    """Re-attest prior events before they may enter a later candidate."""
+
+    seen_entities: set[int] = set()
+    for row in rows:
+        try:
+            entity_id = int(row.get("content_entity_id") or 0)
+            event_id = int(row.get("classification_event_id") or 0)
+            batch_id = int(row.get("approval_batch_id") or 0)
+            item_id = int(row.get("approval_item_id") or 0)
+            taxonomy_id = int(row.get("taxonomy_version_id") or 0)
+            accepted_at = _canonical_ingestion_timestamp(
+                row.get("authority_accepted_at")
+            )
+            effective_at = _canonical_ingestion_timestamp(row.get("effective_at"))
+        except (CandidateMaterializationError, TypeError, ValueError):
+            raise CandidateMaterializationError(
+                "PRIOR_ACCEPTED_EVENT_UNAUTHORIZED"
+            ) from None
+        evidence = _decode_json(
+            row.get("proposal_evidence"),
+            code="PRIOR_ACCEPTED_EVENT_UNAUTHORIZED",
+        )
+        item_evidence = _decode_json(
+            row.get("authority_item_evidence"),
+            code="PRIOR_ACCEPTED_EVENT_UNAUTHORIZED",
+        )
+        accepted_hash = str(row.get("authority_accepted_hash") or "")
+        actor = _normalized_audit_text(row.get("actor"))
+        reason = _normalized_audit_text(row.get("reason"))
+        event_kind = str(row.get("event_kind") or "")
+        selected = int(row.get("authority_selected_entity_id") or 0)
+        published_entity = int(row.get("authority_content_entity_id") or 0)
+        expected_entity = selected if row.get("authority_url_decision") == "create" else published_entity
+        final_values = tuple(
+            row.get(name)
+            for name in (
+                "authority_direction_code",
+                "authority_material_type_code",
+                "authority_access_code",
+                "authority_lifecycle_code",
+            )
+        )
+        event_values = tuple(
+            row.get(name)
+            for name in (
+                "direction_code",
+                "material_type_code",
+                "access_code",
+                "lifecycle_code",
+            )
+        )
+        expected_fingerprint = (
+            compute_classification_event_fingerprint(
+                {
+                    "access_code": row.get("access_code"),
+                    "actor": actor,
+                    "approval_batch_id": batch_id,
+                    "approval_item_id": item_id,
+                    "content_entity_id": entity_id,
+                    "direction_code": row.get("direction_code"),
+                    "effective_at": effective_at.isoformat(timespec="microseconds"),
+                    "event_kind": event_kind,
+                    "lifecycle_code": row.get("lifecycle_code"),
+                    "material_type_code": row.get("material_type_code"),
+                    "predecessor_event_id": (
+                        int(row.get("predecessor_event_id"))
+                        if row.get("predecessor_event_id") is not None
+                        else None
+                    ),
+                    "proposal_evidence": evidence,
+                    "reason": reason,
+                    "taxonomy_version_id": taxonomy_id,
+                }
+            )
+            if effective_at is not None
+            else None
+        )
+        if (
+            min(entity_id, event_id, batch_id, item_id, taxonomy_id) <= 0
+            or entity_id in seen_entities
+            or int(row.get("authorized_entity_id") or 0) != entity_id
+            or expected_entity != entity_id
+            or event_values != final_values
+            or event_kind not in {"approve", "correct", "revoke"}
+            or not re.fullmatch(r"[0-9a-f]{64}", accepted_hash)
+            or _normalized_audit_text(row.get("authority_accepted_by")) != actor
+            or accepted_at != effective_at
+            or reason
+            != _normalized_audit_text(row.get("authority_decision_reason"))
+            or not isinstance(evidence, Mapping)
+            or evidence.get("accepted_decision_hash") != accepted_hash
+            or evidence.get("row_hash") != row.get("authority_row_hash")
+            or _canonical_json(evidence.get("approval_item_evidence"))
+            != _canonical_json(item_evidence)
+            or row.get("event_fingerprint") != expected_fingerprint
+            or (
+                event_kind != "revoke"
+                and not all(
+                    row.get(name) is not None
+                    for name in (
+                        "direction_label",
+                        "material_type_label",
+                        "access_label",
+                        "lifecycle_label",
+                    )
+                )
+            )
+        ):
+            raise CandidateMaterializationError(
+                "PRIOR_ACCEPTED_EVENT_UNAUTHORIZED"
+            )
+        seen_entities.add(entity_id)
+
+
 def _authorize_created_page_identities(
     rows: Sequence[Mapping[str, object]],
     approval_rows_by_id: Mapping[int, Mapping[str, object]],
@@ -3117,8 +3342,19 @@ def materialize_content_candidate(
             predecessor_catalog_rows,
             created_url_event_fingerprints,
         )
+        prior_event_rows = _load_prior_accepted_event_rows(
+            cursor, batch_id, int(batch["taxonomy_version_id"])
+        )
+        _authorize_prior_accepted_events(prior_event_rows)
         catalog_rows = _overlay_current_batch_events(
-            predecessor_catalog_rows, event_rows
+            predecessor_catalog_rows,
+            tuple(sorted(
+                (*prior_event_rows, *event_rows),
+                key=lambda row: (
+                    row.get("effective_at"),
+                    int(row.get("classification_event_id") or 0),
+                ),
+            )),
         )
         if not catalog_rows:
             raise CandidateMaterializationError("EMPTY_CONTENT_CANDIDATE")
@@ -4002,6 +4238,10 @@ def validate_content_candidate(
         )
         validation_event_rows = tuple(cursor.fetchall())
         try:
+            validation_prior_event_rows = _load_prior_accepted_event_rows(
+                cursor, batch_id, int(batch["taxonomy_version_id"])
+            )
+            _authorize_prior_accepted_events(validation_prior_event_rows)
             _authorize_current_batch_events(
                 validation_event_rows,
                 approval["approval_rows_by_id"],
