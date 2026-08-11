@@ -668,12 +668,19 @@ def reconcile_entity(value: ReconciliationInput) -> ApprovalItem:
     classification_incomplete = (
         final_direction in {None, "undetermined"} or not final_material_type
     )
+    observed_identity_pending = (
+        content_entity_id is None
+        and isinstance(value.registry1, MaterialCandidate)
+        and value.registry1.source_name == "observed_page"
+    )
     if value.rejection_code:
         readiness_state = "rejected"
     elif registry2_evidence_missing or registry2_direction_missing:
         readiness_state = "unresolved"
     elif hard_conflicts:
         readiness_state = "conflict"
+    elif observed_identity_pending:
+        readiness_state = "unresolved"
     elif not value.content_available or classification_incomplete:
         readiness_state = "unresolved"
     elif active is not None and not changed:
