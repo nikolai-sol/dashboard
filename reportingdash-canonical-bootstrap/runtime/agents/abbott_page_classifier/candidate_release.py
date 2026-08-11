@@ -361,16 +361,25 @@ def _observed_page_resolution_counts(cursor, candidate_id: int) -> tuple[int, in
           ON catalog_import.canonical_release_id = facts.canonical_release_id
          AND catalog_import.source_kind = 'abbott_workbook_catalog'
          AND catalog_import.import_status = 'imported'
-        LEFT JOIN portal_content_lookup_projection AS projection
-         ON projection.canonical_release_id = facts.canonical_release_id
-         AND projection.source_snapshot_id = catalog_import.source_snapshot_id
-         AND projection.lookup_kind = 'path'
-         AND projection.lookup_key_hash = SHA2(facts.normalized_path, 256)
-         AND projection.resolution_status IN ('unique', 'identical_collapsed')
+        LEFT JOIN portal_content_lookup_projection AS exact_url
+         ON exact_url.canonical_release_id = facts.canonical_release_id
+         AND exact_url.source_snapshot_id = catalog_import.source_snapshot_id
+         AND exact_url.lookup_kind = 'url'
+         AND exact_url.lookup_key_hash = SHA2(
+               CONCAT('https://abbottpro.ru', facts.normalized_path), 256)
+         AND exact_url.resolution_status IN ('unique', 'identical_collapsed')
+        LEFT JOIN portal_content_lookup_projection AS path_lookup
+         ON path_lookup.canonical_release_id = facts.canonical_release_id
+         AND path_lookup.source_snapshot_id = catalog_import.source_snapshot_id
+         AND path_lookup.lookup_kind = 'path'
+         AND path_lookup.lookup_key_hash = SHA2(facts.normalized_path, 256)
+         AND path_lookup.resolution_status IN ('unique', 'identical_collapsed')
         LEFT JOIN portal_content_catalog AS selected
-          ON selected.canonical_release_id = projection.canonical_release_id
-         AND selected.source_snapshot_id = projection.source_snapshot_id
-         AND selected.source_row_fingerprint = projection.selected_source_row_fingerprint
+          ON selected.canonical_release_id = facts.canonical_release_id
+         AND selected.source_snapshot_id = catalog_import.source_snapshot_id
+         AND selected.source_row_fingerprint = COALESCE(
+               exact_url.selected_source_row_fingerprint,
+               path_lookup.selected_source_row_fingerprint)
         LEFT JOIN portal_content_url_alias_decision_events AS exclusion
           ON exclusion.approval_batch_id = candidate_batch.id
          AND exclusion.accepted_decision_hash = candidate_batch.accepted_decision_hash
