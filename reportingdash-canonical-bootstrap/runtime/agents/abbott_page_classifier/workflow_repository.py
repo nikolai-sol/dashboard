@@ -73,13 +73,19 @@ def _load_active_strong_url_aliases(cursor) -> tuple[StrongUrlAlias, ...]:
     try:
         return tuple(
             StrongUrlAlias(
-                content_entity_id=int(row[0]),
-                alias_type=str(row[1]),
-                alias_value=str(row[2]),
+                content_entity_id=int(
+                    row["content_entity_id"] if isinstance(row, Mapping) else row[0]
+                ),
+                alias_type=str(
+                    row["alias_type"] if isinstance(row, Mapping) else row[1]
+                ),
+                alias_value=str(
+                    row["alias_value"] if isinstance(row, Mapping) else row[2]
+                ),
             )
             for row in cursor.fetchall()
         )
-    except (IndexError, TypeError, ValueError):
+    except (IndexError, KeyError, TypeError, ValueError):
         raise RepositoryError("STRONG_URL_ALIAS_INVALID") from None
 
 
