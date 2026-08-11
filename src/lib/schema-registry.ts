@@ -43,5 +43,10 @@ export function listSchemaMetas(): SchemaMeta[] {
 
 export function getSchemaMetaByPlatform(platformId: string): SchemaMeta | null {
   const metas = listSchemaMetas();
-  return metas.find((meta) => meta.id === platformId) ?? null;
+  const normalized = String(platformId ?? "").trim().toLowerCase();
+  return (
+    metas.find((meta) => meta.id === normalized) ??
+    metas.find((meta) => meta.source_key === normalized) ??
+    null
+  );
 }
