@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
 import { getActiveAccounts } from "@/lib/canonical-adapter";
 import { getSchemaMetaByPlatform } from "@/lib/schema-registry";
-import { resolveSourceType } from "@/lib/source-mapping";
+import { resolveSourceKey, resolveSourceType } from "@/lib/source-mapping";
 
 export async function GET(request: Request) {
   try {
@@ -9,6 +9,7 @@ export async function GET(request: Request) {
     const platform = String(url.searchParams.get("platform") ?? "")
       .trim()
       .toLowerCase();
+    const sourcePlatform = resolveSourceKey(platform);
     const search = String(url.searchParams.get("search") ?? "").trim();
     const clientName = String(url.searchParams.get("client_name") ?? "").trim();
     const dateFrom = String(url.searchParams.get("date_from") ?? "").trim();
@@ -18,7 +19,7 @@ export async function GET(request: Request) {
       return NextResponse.json({ error: "platform query param is required" }, { status: 400 });
     }
 
-    const schemaMeta = getSchemaMetaByPlatform(platform);
+    const schemaMeta = getSchemaMetaByPlatform(sourcePlatform);
     if (!schemaMeta) {
       return NextResponse.json({ accounts: [], total: 0, message: "Platform schema not found" });
     }
