@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """FD-only copier for attested preview artifacts."""
 import errno, os, shutil, stat, sys
-N = getattr(os, "O_NOFOLLOW", 0); D = getattr(os, "O_DIRECTORY", 0)
+N = getattr(os, "O_NOFOLLOW", 0); D = getattr(os, "O_DIRECTORY", 0); NB = getattr(os, "O_NONBLOCK", 0)
 def fail(s): raise SystemExit("preview tree " + s)
 def norm(parent, target):
     if target.startswith('/'): fail('symlink escapes source')
@@ -17,7 +17,7 @@ def openat(root, parts):
     fd=os.dup(root)
     try:
         for i,p in enumerate(parts):
-            nfd=os.open(p, os.O_RDONLY|N|(D if i<len(parts)-1 else 0), dir_fd=fd); os.close(fd); fd=nfd
+            nfd=os.open(p, os.O_RDONLY|N|NB|(D if i<len(parts)-1 else 0), dir_fd=fd); os.close(fd); fd=nfd
         return fd
     except OSError as e:
         os.close(fd)
@@ -53,7 +53,9 @@ def tree(root,src,parts,dst,seen):
         elif stat.S_ISREG(old.st_mode): fd=checked(src,e.name,os.O_RDONLY,old)
         elif stat.S_ISDIR(old.st_mode): fd=checked(src,e.name,os.O_RDONLY|D,old)
         else: fail('contains nonregular object')
-        if stat.S_ISREG(old.st_mode): filecopy(fd,dst,e.name)
+        if stat.S_ISREG(old.st_mode):
+            if old.st_nlink != 1: os.close(fd); fail('contains hard-linked object')
+            filecopy(fd,dst,e.name)
         elif stat.S_ISDIR(old.st_mode):
             child=mkdirat(dst,e.name); tree(root,fd,targetparts if e.is_symlink() else parts+[e.name],child,seen); os.close(fd); os.close(child)
         else: os.close(fd); fail('symlink targets nonregular object')
@@ -61,7 +63,10 @@ def main():
     if len(sys.argv)!=4: fail('copier arguments are invalid')
     source,release,relative=sys.argv[1:]; parts=[] if relative=='.' else relative.split('/')
     if any(p in ('','.', '..') for p in parts): fail('destination is invalid')
-    s=os.open(source,os.O_RDONLY|D|N); d=os.open(release,os.O_RDONLY|D|N)
-    try: tree(s,s,[],dest(d,parts),set())
-    finally: os.close(s); os.close(d)
+    s=os.open(source,os.O_RDONLY|D|N); d=os.open(release,os.O_RDONLY|D|N); out=None
+    try:
+        out=dest(d,parts); tree(s,s,[],out,set())
+    finally:
+        if out is not None: os.close(out)
+        os.close(s); os.close(d)
 if __name__=='__main__': main()
