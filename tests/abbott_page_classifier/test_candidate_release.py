@@ -10,6 +10,7 @@ from unittest.mock import patch
 import json
 from collections.abc import Mapping
 
+from agents.abbott_page_classifier import candidate_release
 from agents.abbott_page_classifier.candidate_release import (
     CandidateCatalogRow,
     CandidateMaterializationError,
@@ -1743,6 +1744,23 @@ class CandidateReleaseTest(unittest.TestCase):
                 for sql, _ in connection.calls
             )
         )
+
+    def test_materialization_collision_query_honors_accepted_url_owner(self):
+        connection = CandidateConnection()
+
+        candidate_release._strong_identity_collision_count(connection, 71)
+
+        sql, params = next(
+            (sql, params)
+            for sql, params in connection.calls
+            if "strong_collision_count" in sql
+        )
+        self.assertIn("NOT EXISTS", sql)
+        self.assertIn("authority.approval_batch_id = item.approval_batch_id", sql)
+        self.assertIn("authority.selected_content_entity_id = alias_row.content_entity_id", sql)
+        self.assertIn("authority.url_alias_decision IN ('attach', 'create')", sql)
+        self.assertIn("SHA2(authority.url, 256) = alias_row.alias_hash", sql)
+        self.assertEqual(params, ("abbott", 71))
 
     def test_gate_report_requires_every_exact_percentage_and_zero_failure(self):
         passed = GateReport(
