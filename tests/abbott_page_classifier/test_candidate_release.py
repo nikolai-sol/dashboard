@@ -1247,9 +1247,9 @@ class CandidateReleaseTest(unittest.TestCase):
             "current_canonical": {
                 "content_entity_id": 41,
                 "event_id": None,
-                "direction_code": "cardiology",
-                "material_type_code": "articles",
-                "access_code": "all",
+                "direction_code": "undetermined",
+                "material_type_code": "service_page",
+                "access_code": "unspecified",
                 "lifecycle_code": "active",
             }
         }
@@ -1318,6 +1318,7 @@ class CandidateReleaseTest(unittest.TestCase):
                 "accepted_decision_hash": accepted_hash,
                 "accepted_by": "content-manager",
                 "accepted_at": accepted_at,
+                "projection_kind": "local",
             },
             (),
         )

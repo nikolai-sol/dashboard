@@ -2256,9 +2256,9 @@ class ContentRegistryRepositoryTests(unittest.TestCase):
             current_canonical={
                 "content_entity_id": 41,
                 "event_id": None,
-                "direction_code": "cardiology",
-                "material_type_code": "articles",
-                "access_code": "doctors",
+                "direction_code": "undetermined",
+                "material_type_code": "service_page",
+                "access_code": "unspecified",
                 "lifecycle_code": "active",
             },
             registry1_values={
