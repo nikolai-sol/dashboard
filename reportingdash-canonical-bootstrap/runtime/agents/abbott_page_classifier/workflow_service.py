@@ -809,7 +809,11 @@ class CanonicalWeeklyProposalService:
             } or normalize_url(observed.normalized_url).path.startswith("/personal/")
             deterministic = Proposal(
                 direction_code="not_applicable",
-                material_type_code="service_page",
+                # The active reviewed taxonomy does not publish a service-page
+                # material type.  Keep the route unresolved so local review can
+                # explicitly reject it as non-content instead of persisting an
+                # out-of-taxonomy classification.
+                material_type_code=None,
                 access_code="unspecified",
                 lifecycle_code="active",
                 rule_code="SERVICE_ROUTE",
