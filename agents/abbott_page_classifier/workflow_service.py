@@ -137,6 +137,7 @@ class PersistedReconciliationItem:
 class PersistedReconciliationRun:
     run_id: int
     run_key: str
+    observed_pages_hash: str | None
     status: str
     configuration: WorkflowConfiguration
     context: ReconciliationContext
@@ -283,6 +284,7 @@ class CanonicalWeeklyProposalService:
             PersistedReconciliationRun(
                 run_id=0,
                 run_key=run_key,
+                observed_pages_hash=observed_pages_hash,
                 status="reconciled",
                 configuration=self._configuration,
                 context=context,

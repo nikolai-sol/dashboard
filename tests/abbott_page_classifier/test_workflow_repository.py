@@ -159,7 +159,7 @@ class RehydrationCursor(FakeCursor):
                 32, "4" * 64, 1, 1, 0, 0,
                 8, "[11,12]", f'["{"1" * 64}","{"2" * 64}"]',
                 5, self.version, self.stored_digest,
-                "prompt.v2", "routing.v2", "b" * 40,
+                "prompt.v2", "routing.v2", "b" * 40, None,
             )]
         elif "FROM portal_content_taxonomy_terms" in normalized:
             self.rows = [
@@ -175,6 +175,37 @@ class RehydrationConnection(FakeConnection):
         self.cursor_instance = RehydrationCursor(
             self, version=version, stored_digest=stored_digest
         )
+
+
+class ObservedHashContractTest(unittest.TestCase):
+    def test_run_key_binds_the_persisted_observed_pages_hash(self):
+        context_value = ReconciliationContext(
+            predecessor_release_id=8,
+            predecessor_snapshot_ids=(11, 12),
+            predecessor_snapshot_digests=("1" * 64, "2" * 64),
+            taxonomy=TaxonomyVersion(
+                version="abbott.v1", terms=TERMS, digest=DIGEST
+            ),
+            entities=(),
+            aliases=(),
+        )
+
+        first = _run_key(
+            CONFIG,
+            context_value,
+            "3" * 64,
+            "4" * 64,
+            observed_pages_hash="5" * 64,
+        )
+        second = _run_key(
+            CONFIG,
+            context_value,
+            "3" * 64,
+            "4" * 64,
+            observed_pages_hash="6" * 64,
+        )
+
+        self.assertNotEqual(first, second)
 
 
 class EntityCreationCursor(FakeCursor):
