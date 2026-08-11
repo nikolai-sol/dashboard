@@ -2291,6 +2291,48 @@ class ContentRegistryRepositoryTests(unittest.TestCase):
         ))
         self.assertEqual(connection.commit_count, 1)
 
+    def test_ingest_retry_classifies_reviewed_attach_target_without_prior_event(self):
+        item = replace(
+            workflow_batch().items[0],
+            content_entity_id=None,
+            readiness_state="unresolved",
+            selected_content_entity_id=41,
+            url_alias_decision="attach",
+            decision_reason="reviewed observed URL and target classification",
+            current_canonical=None,
+            registry1_values={
+                "source_name": "observed_page",
+                "url": "https://abbottpro.ru/material/41",
+            },
+        )
+        connection = RecordingConnection(
+            batch_row=(
+                *accepted_batch_row(status="ingested", items=(item,)),
+                "local",
+            ),
+            ingest_items=(item,),
+        )
+
+        result = ContentRegistryRepository(
+            lambda: connection
+        ).ingest_accepted_snapshot(accepted_snapshot(item))
+
+        self.assertEqual(result.status, "noop")
+        self.assertEqual(connection.event_insert_count, 1)
+        event_call = next(
+            call for call in connection.calls
+            if call[0].startswith("INSERT INTO portal_content_classification_events")
+        )
+        self.assertEqual(event_call[1][0], 41)
+        self.assertEqual(event_call[1][4], None)
+        self.assertEqual(event_call[1][5:9], (
+            item.final_direction_code,
+            item.final_material_type_code,
+            item.final_access_code,
+            item.final_lifecycle_code,
+        ))
+        self.assertEqual(connection.commit_count, 1)
+
     def test_ingest_local_conflict_appends_reviewed_catalog_gap_correction(self):
         item = replace(
             workflow_batch().items[0],

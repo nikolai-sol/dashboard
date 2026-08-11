@@ -5,6 +5,7 @@ from pathlib import Path
 import unittest
 
 from agents.abbott_page_classifier.normalization import (
+    normalize_observed_page_grouping_url,
     normalize_taxonomy_label,
     normalize_title,
     normalize_url,
@@ -88,6 +89,18 @@ class NormalizationTests(unittest.TestCase):
         result = normalize_url("https://abbottpro.ru/articles/foo%2fbar/")
         self.assertEqual(result.path, "/articles/foo%2Fbar")
         self.assertEqual(classify.extract_slug(result.value), "foo/bar")
+
+    def test_observed_page_grouping_rejects_malformed_telemetry_paths(self):
+        for raw in (
+            "https://abbottpro.ru/blob:https://chat.example/opaque-id",
+            "https://abbottpro.ru/academy/articles/truncated…",
+            "https://abbottpro.ru/academy/articles/truncated%E2%80%A6",
+        ):
+            with self.subTest(raw=raw):
+                self.assertEqual(
+                    normalize_observed_page_grouping_url(raw).value,
+                    "",
+                )
 
     def test_title_and_hash_normalization_are_stable(self):
         self.assertEqual(normalize_title("  Тема\u00a0\u00a0материала  "), "Тема материала")
