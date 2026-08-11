@@ -1270,6 +1270,21 @@ class ContentRegistryRepository:
                     ) if isinstance(current_canonical, Mapping) else 0
                 except (TypeError, ValueError):
                     current_entity_id = 0
+                current_values = tuple(
+                    current_canonical.get(key)
+                    for key in (
+                        "direction_code",
+                        "material_type_code",
+                        "access_code",
+                        "lifecycle_code",
+                    )
+                ) if isinstance(current_canonical, Mapping) else None
+                final_values = (
+                    item.final_direction_code,
+                    item.final_material_type_code,
+                    item.final_access_code,
+                    item.final_lifecycle_code,
+                )
                 reviewed_baseline_attach = (
                     local_projection
                     and item.decision_reason is not None
@@ -1281,9 +1296,22 @@ class ContentRegistryRepository:
                     and current_entity_id == item.content_entity_id
                     and current_canonical.get("event_id") in (None, 0)
                 )
+                reviewed_local_classification = (
+                    local_projection
+                    and item.content_entity_id is not None
+                    and current_entity_id == item.content_entity_id
+                    and item.decision_reason is not None
+                    and bool(item.decision_reason.strip())
+                    and all(value is not None for value in final_values)
+                    and current_values != final_values
+                )
                 if already_ingested and not reviewed_baseline_attach:
                     continue
-                if item.readiness_state != "ready" and not reviewed_baseline_attach:
+                if (
+                    item.readiness_state != "ready"
+                    and not reviewed_baseline_attach
+                    and not reviewed_local_classification
+                ):
                     continue
                 if (
                     item.content_entity_id is None
