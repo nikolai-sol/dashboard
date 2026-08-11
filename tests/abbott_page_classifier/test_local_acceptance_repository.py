@@ -34,6 +34,86 @@ def create_item():
 
 
 class LocalAcceptanceRepositoryTests(unittest.TestCase):
+    def test_unresolved_observed_attach_and_reject_are_local_actions(self):
+        for action, selected in (("attach", 41), ("reject", None)):
+            with self.subTest(action=action):
+                item = replace(
+                    create_item(),
+                    input_hash=("a" if action == "attach" else "b") * 64,
+                    row_hash=("e" if action == "attach" else "f") * 64,
+                )
+                batch = replace(acceptance_workflow_batch(), items=(item,))
+                connection = StatefulAcceptanceConnection(
+                    batch, selected_entity_id=41
+                )
+                intent = LocalAcceptanceIntent(
+                    batch_id=8,
+                    batch_key=batch.batch_key,
+                    published_input_hash=batch.published_input_hash,
+                    accepted_by="manager",
+                    accepted_at=datetime(2026, 8, 11, 8, 0),
+                    decisions=(LocalDecision(
+                        input_hash=item.input_hash,
+                        row_hash=item.row_hash,
+                        final_direction_code=item.final_direction_code,
+                        final_material_type_code=item.final_material_type_code,
+                        final_access_code=item.final_access_code,
+                        final_lifecycle_code=item.final_lifecycle_code,
+                        selected_content_entity_id=selected,
+                        url_alias_decision=action,
+                        decision_reason="reviewed observed page",
+                    ),),
+                )
+
+                snapshot = ContentRegistryRepository(
+                    lambda: connection
+                ).record_local_batch_acceptance(
+                    8, intent, "sheet-123", "a" * 64
+                )
+
+                self.assertEqual(snapshot.accepted_count, 0)
+                self.assertEqual(snapshot.skipped_count, 1)
+                self.assertEqual(connection.commit_count, 1)
+                self.assertEqual(len(connection.decision_events), 1)
+                self.assertEqual(
+                    connection.decision_events[0]["url_alias_decision"], action
+                )
+
+    def test_non_observed_unresolved_attach_is_rejected(self):
+        item = replace(
+            create_item(),
+            registry1_values=None,
+        )
+        batch = replace(acceptance_workflow_batch(), items=(item,))
+        connection = StatefulAcceptanceConnection(batch, selected_entity_id=41)
+        intent = LocalAcceptanceIntent(
+            batch_id=8,
+            batch_key=batch.batch_key,
+            published_input_hash=batch.published_input_hash,
+            accepted_by="manager",
+            accepted_at=datetime(2026, 8, 11, 8, 0),
+            decisions=(LocalDecision(
+                input_hash=item.input_hash,
+                row_hash=item.row_hash,
+                final_direction_code=item.final_direction_code,
+                final_material_type_code=item.final_material_type_code,
+                final_access_code=item.final_access_code,
+                final_lifecycle_code=item.final_lifecycle_code,
+                selected_content_entity_id=41,
+                url_alias_decision="attach",
+                decision_reason="reviewed observed page",
+            ),),
+        )
+
+        with self.assertRaisesRegex(RepositoryError, "CREATE_SOURCE_NOT_OBSERVED"):
+            ContentRegistryRepository(
+                lambda: connection
+            ).record_local_batch_acceptance(8, intent, "sheet-123", "a" * 64)
+
+        self.assertEqual(connection.commit_count, 0)
+        self.assertEqual(connection.rollback_count, 1)
+        self.assertEqual(connection.decision_events, [])
+
     def test_unresolved_identity_collision_without_local_action_is_skipped(self):
         item = replace(
             acceptance_workflow_batch().items[1],

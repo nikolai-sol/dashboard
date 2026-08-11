@@ -690,11 +690,10 @@ class ContentRegistryRepository:
                     url_alias_decision=decision.url_alias_decision,
                     decision_reason=decision.decision_reason,
                 )
-                self._validate_local_item(item, taxonomy)
+                self._validate_local_item(
+                    item, taxonomy, evidence_by_item_id[item_id]
+                )
                 if item.url_alias_decision == "create":
-                    self._validate_local_create_evidence(
-                        item, evidence_by_item_id[item_id]
-                    )
                     entity_id = self._create_observed_entity(cursor, item, int(batch_id), item_id, intent.accepted_by)
                     item = replace(item, selected_content_entity_id=entity_id)
                 accepted.append((item_id, item))
@@ -707,7 +706,7 @@ class ContentRegistryRepository:
                     url_decision_fingerprint = self._apply_url_alias_decision(
                         cursor, item, int(batch_id), item_id, accepted_hash,
                         intent.accepted_by,
-                        allow_local_create=True,
+                        allow_local_observed=True,
                     )
                 if item.url_alias_decision == "create":
                     self._insert_created_classification_event(
@@ -1447,7 +1446,11 @@ class ContentRegistryRepository:
             self._close(cursor, connection)
 
     @staticmethod
-    def _validate_local_item(item: ApprovalItem, taxonomy: TaxonomyVersion) -> None:
+    def _validate_local_item(
+        item: ApprovalItem,
+        taxonomy: TaxonomyVersion,
+        evidence: Mapping[str, object],
+    ) -> None:
         """Validate only mutable local decisions; published identity is immutable."""
         for kind, field in (
             ("direction", "final_direction_code"), ("material_type", "final_material_type_code"),
@@ -1467,11 +1470,41 @@ class ContentRegistryRepository:
                         "final_access_code", "final_lifecycle_code",
                     ))):
                 raise RepositoryError("IDENTITY_COLLISION_DECISION_REQUIRED")
+            ContentRegistryRepository._validate_local_create_evidence(
+                item, evidence
+            )
             return
         if (
             item.url_alias_decision is None
             and item.selected_content_entity_id is None
         ):
+            return
+        collision = any(
+            getattr(code, "value", str(code)) == "IDENTITY_COLLISION"
+            for code in item.conflict_codes
+        )
+        if (
+            not collision
+            and item.url_alias_decision in {"attach", "reject"}
+        ):
+            ContentRegistryRepository._validate_local_create_evidence(
+                item, evidence
+            )
+            if (
+                not str(item.decision_reason or "").strip()
+                or (
+                    item.url_alias_decision == "attach"
+                    and (
+                        item.selected_content_entity_id is None
+                        or item.selected_content_entity_id <= 0
+                    )
+                )
+                or (
+                    item.url_alias_decision == "reject"
+                    and item.selected_content_entity_id is not None
+                )
+            ):
+                raise RepositoryError("IDENTITY_COLLISION_DECISION_REQUIRED")
             return
         ContentRegistryRepository._validate_url_alias_decision(item)
 
@@ -1589,14 +1622,26 @@ class ContentRegistryRepository:
         accepted_hash: str,
         actor: str,
         *,
-        allow_local_create: bool = False,
+        allow_local_observed: bool = False,
     ) -> str:
         """Lock and mutate one reviewed strong URL identity, fail-closed on races."""
-        if item.url_alias_decision == "create" and allow_local_create:
+        if (
+            allow_local_observed
+            and item.url_alias_decision in {"attach", "reject", "create"}
+        ):
             if (
-                item.selected_content_entity_id is None
-                or item.selected_content_entity_id <= 0
-                or not str(item.decision_reason or "").strip()
+                not str(item.decision_reason or "").strip()
+                or (
+                    item.url_alias_decision in {"attach", "create"}
+                    and (
+                        item.selected_content_entity_id is None
+                        or item.selected_content_entity_id <= 0
+                    )
+                )
+                or (
+                    item.url_alias_decision == "reject"
+                    and item.selected_content_entity_id is not None
+                )
             ):
                 raise RepositoryError("IDENTITY_COLLISION_DECISION_REQUIRED")
         else:
