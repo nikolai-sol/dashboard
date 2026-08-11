@@ -1570,6 +1570,42 @@ class ContentRegistryRepositoryTests(unittest.TestCase):
         self.assertEqual(history.candidate_release_id, 10)
         self.assertEqual(history.activation_status, "candidate")
 
+    def test_load_local_batch_history_allows_no_candidate_release(self):
+        batch = workflow_batch()
+        connection = WorkflowConnection(
+            batch,
+            history_row=(
+                batch.batch_key,
+                batch.published_input_hash,
+                None,
+                None,
+                None,
+                1,
+                0,
+                0,
+                0,
+                0,
+                0,
+                0,
+                "published",
+                None,
+                None,
+                "local",
+                "/owner/decision.json",
+                "c" * 64,
+                None,
+                "not_started",
+            ),
+        )
+
+        history = ContentRegistryRepository(
+            lambda: connection
+        ).load_batch_history(17)
+
+        self.assertEqual(history.projection_kind, "local")
+        self.assertIsNone(history.candidate_release_id)
+        self.assertEqual(history.activation_status, "not_started")
+
     def test_insert_items_persists_enriched_task6_proposal_evidence(self):
         connection = RecordingConnection()
         repository = ContentRegistryRepository(lambda: connection)
