@@ -243,6 +243,9 @@ class WeeklyProposalServiceTests(unittest.TestCase):
         self.assertEqual(item.identity_status, "new")
         self.assertEqual(item.reconciliation_input.registry1.url, observed.normalized_url)
         self.assertEqual(item.reconciliation_input.deterministic_proposal.rule_code, "SERVICE_ROUTE")
+        self.assertIsInstance(
+            item.reconciliation_input.deterministic_proposal.confidence, float
+        )
 
     def test_repeated_observed_page_rows_collapse_before_item_creation(self):
         first = ObservedPage("https://abbottpro.ru/unknown", "One", 2, date(2026, 8, 1), date(2026, 8, 1))
