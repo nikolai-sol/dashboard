@@ -413,6 +413,92 @@ def _validate_reviewed_url_exclusions(cursor, candidate_id: int) -> None:
             raise CandidateMaterializationError("REVIEWED_EXCLUSION_INVALID") from None
 
 
+def validate_reviewed_url_alias_decisions(
+    cursor,
+    batch: Mapping[str, object],
+    approval_rows_by_id: Mapping[int, Mapping[str, object]],
+) -> None:
+    """Bind all URL decisions to the accepted immutable batch before projection.
+
+    Registry aliases are an operational cache of accepted decisions, never the
+    review authority.  A preview must verify every attach/retire/reject event
+    against the same fields that were included in ``accepted_decision_hash``.
+    """
+    batch_id = int(batch.get("id") or 0)
+    accepted_hash = str(batch.get("accepted_decision_hash") or "")
+    actor = _normalized_audit_text(batch.get("accepted_by"))
+    if batch_id <= 0 or not re.fullmatch(r"[0-9a-f]{64}", accepted_hash) or not actor:
+        raise CandidateMaterializationError("REVIEWED_URL_DECISION_INVALID")
+    expected = {
+        int(item_id): row
+        for item_id, row in approval_rows_by_id.items()
+        if row.get("url_alias_decision") is not None
+    }
+    cursor.execute(
+        """
+        SELECT id, approval_batch_id, approval_item_id, accepted_decision_hash,
+               actor, decision_reason, normalized_url, url_alias_decision,
+               selected_content_entity_id, selected_predecessor_event_id,
+               selected_predecessor_event_fingerprint, event_fingerprint
+        FROM portal_content_url_alias_decision_events
+        WHERE approval_batch_id = %s
+        ORDER BY id
+        """,
+        (batch_id,),
+    )
+    seen: set[int] = set()
+    for row in cursor.fetchall():
+        if not isinstance(row, Mapping):
+            raise CandidateMaterializationError("REVIEWED_URL_DECISION_INVALID")
+        try:
+            item_id = int(row["approval_item_id"])
+            item = expected[item_id]
+            decision = str(row["url_alias_decision"])
+            selected = row.get("selected_content_entity_id")
+            selected = int(selected) if selected is not None else None
+            predecessor_id = row.get("selected_predecessor_event_id")
+            predecessor_id = int(predecessor_id) if predecessor_id is not None else None
+            predecessor_fingerprint = row.get("selected_predecessor_event_fingerprint")
+            predecessor_fingerprint = str(predecessor_fingerprint) if predecessor_fingerprint is not None else None
+            normalized_url = str(row["normalized_url"])
+            reason = _normalized_audit_text(row.get("decision_reason"))
+            fingerprint = str(row["event_fingerprint"]).lower()
+            if (
+                item_id in seen
+                or int(row["approval_batch_id"]) != batch_id
+                or row.get("accepted_decision_hash") != accepted_hash
+                or _normalized_audit_text(row.get("actor")) != actor
+                or decision != item.get("url_alias_decision")
+                or selected != item.get("selected_content_entity_id")
+                or decision not in {"attach", "retire", "reject"}
+                or not reason
+                or reason != _normalized_audit_text(item.get("decision_reason"))
+                or normalize_url(normalized_url).value != normalized_url
+                or not re.fullmatch(r"[0-9a-f]{64}", fingerprint)
+                or (decision == "attach" and (selected is None or selected <= 0))
+                or (decision in {"retire", "reject"} and selected is not None)
+                or (predecessor_id is not None and predecessor_id <= 0)
+                or (predecessor_fingerprint is not None and not re.fullmatch(r"[0-9a-f]{64}", predecessor_fingerprint.lower()))
+            ):
+                raise ValueError
+            expected_fingerprint = compute_url_alias_decision_event_fingerprint(
+                accepted_decision_hash=accepted_hash, actor=actor,
+                approval_batch_id=batch_id, approval_item_id=item_id,
+                decision_reason=reason, normalized_url=normalized_url,
+                selected_content_entity_id=selected,
+                selected_predecessor_event_id=predecessor_id,
+                selected_predecessor_event_fingerprint=predecessor_fingerprint,
+                url_alias_decision=decision,
+            )
+            if expected_fingerprint != fingerprint:
+                raise ValueError
+            seen.add(item_id)
+        except (KeyError, TypeError, ValueError):
+            raise CandidateMaterializationError("REVIEWED_URL_DECISION_INVALID") from None
+    if seen != set(expected):
+        raise CandidateMaterializationError("REVIEWED_URL_DECISION_INVALID")
+
+
 def _canonical_json(value: object) -> str:
     def encode(item: object):
         if isinstance(item, datetime):
@@ -669,7 +755,8 @@ def _load_approval_bundle(
                item.final_direction_code, item.final_material_type_code,
                item.final_access_code, item.final_lifecycle_code,
                item.readiness_state, item.conflict_code, item.conflict_codes, item.row_hash,
-               item.decision_reason, item.proposal_evidence
+               item.decision_reason, item.proposal_evidence,
+               item.selected_content_entity_id, item.url_alias_decision
         FROM portal_content_approval_items AS item
         WHERE item.approval_batch_id = %s
         ORDER BY item.content_entity_identity, item.input_hash
@@ -782,6 +869,14 @@ def _load_approval_bundle(
                 conflict_codes=conflict_values,
                 row_hash=published_item.row_hash,
                 decision_reason=row.get("decision_reason"),
+                selected_content_entity_id=(
+                    int(row["selected_content_entity_id"])
+                    if row.get("selected_content_entity_id") is not None else None
+                ),
+                url_alias_decision=(
+                    str(row["url_alias_decision"])
+                    if row.get("url_alias_decision") is not None else None
+                ),
             )
         except (KeyError, TypeError, ValueError):
             schema_failures += 1
