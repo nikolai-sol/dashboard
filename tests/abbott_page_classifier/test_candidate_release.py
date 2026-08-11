@@ -1934,13 +1934,13 @@ class CandidateReleaseTest(unittest.TestCase):
         self.assertIn("scope_dimensions", observed_sql)
         self.assertIn("portal_release_source_imports AS catalog_import", observed_sql)
         self.assertIn(
-            "projection.source_snapshot_id = catalog_import.source_snapshot_id",
+            "exact_url.source_snapshot_id = catalog_import.source_snapshot_id",
             observed_sql,
         )
         self.assertIn("catalog_import.source_kind = 'abbott_workbook_catalog'", observed_sql)
-        self.assertIn("projection.lookup_kind = 'path'", observed_sql)
+        self.assertIn("path_lookup.lookup_kind = 'path'", observed_sql)
+        self.assertIn("exact_url.lookup_kind = 'url'", observed_sql)
         self.assertIn("SHA2(facts.normalized_path, 256)", observed_sql)
-        self.assertNotIn("projection.lookup_kind = 'url'", observed_sql)
         self.assertNotIn("raw_payload", observed_sql)
 
     def test_real_validation_blocks_non_content_without_service_page_or_reviewed_exclusion(self):
@@ -2930,6 +2930,14 @@ class CandidateReleaseTest(unittest.TestCase):
         self.assertIn("COUNT(*) AS fact_count", observed_sql)
         self.assertIn("* facts.fact_count", observed_sql)
         self.assertIn("GROUP BY canonical_release_id, normalized_path", observed_sql)
+        self.assertIn("exact_url.lookup_kind = 'url'", observed_sql)
+        self.assertIn(
+            "exact_url.lookup_key_hash = SHA2( CONCAT('https://abbottpro.ru', facts.normalized_path), 256)",
+            observed_sql,
+        )
+        self.assertIn("COALESCE(", observed_sql)
+        self.assertIn("exact_url.selected_source_row_fingerprint", observed_sql)
+        self.assertIn("path_lookup.selected_source_row_fingerprint", observed_sql)
         validation_batch_sql = next(
             query for query, _ in connection.calls
             if "FROM portal_content_approval_batches AS batch" in query
