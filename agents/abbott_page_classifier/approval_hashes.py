@@ -222,6 +222,14 @@ def compute_url_alias_decision_event_fingerprint(
     url_alias_decision: object,
 ) -> str:
     """Hash the immutable URL-alias decision event payload exactly once."""
+    if url_alias_decision not in {"attach", "retire", "reject", "create"}:
+        raise ValueError("URL_ALIAS_DECISION_INVALID")
+    if url_alias_decision in {"attach", "create"} and (
+        type(selected_content_entity_id) is not int or selected_content_entity_id <= 0
+    ):
+        raise ValueError("URL_ALIAS_DECISION_INVALID")
+    if url_alias_decision in {"retire", "reject"} and selected_content_entity_id is not None:
+        raise ValueError("URL_ALIAS_DECISION_INVALID")
     return _sha256_json({
         "accepted_decision_hash": accepted_decision_hash,
         "actor": actor,

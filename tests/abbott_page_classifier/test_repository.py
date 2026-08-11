@@ -509,6 +509,8 @@ class StatefulAcceptanceCursor:
             ]
         elif "FROM portal_content_approval_items" in normalized and "FOR UPDATE" in normalized:
             self.rows = self.connection.item_rows()
+        elif "canonical_url=%s" in normalized and "FROM portal_content_registry_entities" in normalized:
+            self.rows = []
         elif "FROM portal_content_registry_entities" in normalized and "FOR UPDATE" in normalized:
             self.rows = (
                 [(self.connection.selected_entity_id,)]
@@ -525,6 +527,12 @@ class StatefulAcceptanceCursor:
                 )
                 for alias in self.connection.aliases
             ]
+        elif normalized.startswith("INSERT INTO portal_content_registry_entities"):
+            self.connection.created_entity_count += 1
+            self.lastrowid = 500 + self.connection.created_entity_count
+        elif normalized.startswith("INSERT INTO portal_content_classification_events"):
+            self.connection.created_classification_count += 1
+            self.lastrowid = 700 + self.connection.created_classification_count
         elif normalized.startswith("INSERT INTO portal_content_url_alias_decision_events"):
             self.connection.decision_events.append({
                 "approval_batch_id": params[0],
@@ -537,7 +545,7 @@ class StatefulAcceptanceCursor:
             self.connection.aliases.append({
                 "id": 900 + len(self.connection.aliases) + 1,
                 "content_entity_id": params[1],
-                "alias_type": "url",
+                "alias_type": params[2] if len(params) > 2 else "url",
                 "alias_status": "active",
             })
             self.lastrowid = self.connection.aliases[-1]["id"]
@@ -583,6 +591,8 @@ class StatefulAcceptanceConnection:
         self.approval_items = list(batch.items)
         self.aliases = copy.deepcopy(aliases or [])
         self.decision_events: list[dict[str, object]] = []
+        self.created_entity_count = 0
+        self.created_classification_count = 0
         self.batch_status = "published"
         self.accepted_decision_hash = None
         self.accepted_by = None

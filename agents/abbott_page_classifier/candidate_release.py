@@ -669,7 +669,8 @@ def _load_approval_bundle(
                item.final_direction_code, item.final_material_type_code,
                item.final_access_code, item.final_lifecycle_code,
                item.readiness_state, item.conflict_code, item.conflict_codes, item.row_hash,
-               item.decision_reason, item.proposal_evidence
+               item.decision_reason, item.proposal_evidence,
+               item.selected_content_entity_id, item.url_alias_decision
         FROM portal_content_approval_items AS item
         WHERE item.approval_batch_id = %s
         ORDER BY item.content_entity_identity, item.input_hash
@@ -782,6 +783,14 @@ def _load_approval_bundle(
                 conflict_codes=conflict_values,
                 row_hash=published_item.row_hash,
                 decision_reason=row.get("decision_reason"),
+                selected_content_entity_id=(
+                    int(row["selected_content_entity_id"])
+                    if row.get("selected_content_entity_id") is not None else None
+                ),
+                url_alias_decision=(
+                    str(row["url_alias_decision"])
+                    if row.get("url_alias_decision") is not None else None
+                ),
             )
         except (KeyError, TypeError, ValueError):
             schema_failures += 1
@@ -801,6 +810,8 @@ def _load_approval_bundle(
                 "input_hash": accepted_item.input_hash,
                 "readiness_state": state,
                 "row_hash": accepted_item.row_hash,
+                "selected_content_entity_id": accepted_item.selected_content_entity_id,
+                "url_alias_decision": accepted_item.url_alias_decision,
             }
         )
     taxonomy_version = str(batch.get("taxonomy_version") or "")
