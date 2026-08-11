@@ -26,6 +26,7 @@ from agents.abbott_page_classifier.batch_service import (
     build_batch,
     compute_accepted_decision_hash,
     compute_batch_hash,
+    compute_item_hash,
     compute_taxonomy_digest,
 )
 from agents.abbott_page_classifier.domain import TaxonomyVersion
@@ -1034,6 +1035,75 @@ class ContentRegistryRepositoryTests(unittest.TestCase):
             batch.items[0].row_hash,
             "the immutable published row authority must remain attached",
         )
+
+    def test_load_accepted_snapshot_rehydrates_created_identity_and_count(self):
+        original = workflow_batch()
+        published = replace(
+            original.items[0],
+            content_entity_id=None,
+            readiness_state="unresolved",
+            selected_content_entity_id=None,
+            url_alias_decision=None,
+            decision_reason="observed page needs review",
+        )
+        published = replace(published, row_hash=compute_item_hash(published))
+        batch = replace(
+            original,
+            items=(published,),
+            published_input_hash=compute_batch_hash((published,)),
+        )
+        reviewed = replace(
+            published,
+            selected_content_entity_id=88,
+            url_alias_decision="create",
+            decision_reason="reviewed observed page",
+        )
+        rows = self._published_item_rows(batch)
+        rows[0] = (
+            *rows[0][:11],
+            reviewed.decision_reason,
+            *rows[0][12:15],
+            reviewed.selected_content_entity_id,
+            reviewed.url_alias_decision,
+        )
+        accepted_hash = compute_accepted_decision_hash((reviewed,))
+        history = (
+            batch.batch_key,
+            batch.published_input_hash,
+            accepted_hash,
+            "content-manager",
+            "2026-08-05T12:30:00+00:00",
+            0, 0, 1, 0, 0, 1, 0,
+            "accepted",
+            None,
+            None,
+            None,
+            "not_started",
+        )
+        batch_row = list(draft_workflow_row(batch, status="accepted"))
+        batch_row[10:15] = [0, 0, 1, 0, 0]
+        connection = WorkflowConnection(
+            batch,
+            existing_batch_row=tuple(batch_row),
+            history_row=history,
+            acceptance_items=rows,
+        )
+
+        snapshot = ContentRegistryRepository(
+            lambda: connection
+        ).load_accepted_snapshot(17)
+
+        self.assertEqual(snapshot.accepted_decision_hash, accepted_hash)
+        self.assertEqual(snapshot.accepted_count, 1)
+        self.assertEqual(snapshot.skipped_count, 0)
+        self.assertEqual(snapshot.items[0].selected_content_entity_id, 88)
+        self.assertEqual(snapshot.items[0].url_alias_decision, "create")
+        accepted_sql = next(
+            sql for sql, _params in reversed(connection.calls)
+            if "FROM portal_content_approval_items" in sql
+        )
+        self.assertIn("selected_content_entity_id", accepted_sql)
+        self.assertIn("url_alias_decision", accepted_sql)
 
     def test_load_active_taxonomy_returns_exact_terms_and_verified_digest(self):
         batch = workflow_batch()
