@@ -7,6 +7,7 @@ from pathlib import Path
 import tempfile
 import unittest
 from datetime import date
+from unittest.mock import patch
 
 from openpyxl import Workbook
 
@@ -18,7 +19,7 @@ from agents.abbott_page_classifier.domain import (
     TAXONOMY_LABELS,
     TaxonomyVersion,
 )
-from agents.abbott_page_classifier.identity import IdentityAlias
+from agents.abbott_page_classifier.identity import IdentityAlias, IdentityResolver
 from agents.abbott_page_classifier.llm_classifier import (
     LLM_PRIMARY_MODEL,
     LlmAttempt,
@@ -294,6 +295,25 @@ class WeeklyProposalServiceTests(unittest.TestCase):
         item = store.runs_by_id[receipt.run_id].items[0]
         self.assertEqual(item.identity_status, "collision")
         self.assertTrue(item.reconciliation_input.identity_conflict)
+
+    def test_observed_pages_use_preindexed_strong_urls(self):
+        observed = (
+            ObservedPage("https://abbottpro.ru/one", "One", 1, date(2026, 8, 1), date(2026, 8, 1)),
+            ObservedPage("https://abbottpro.ru/two", "Two", 1, date(2026, 8, 1), date(2026, 8, 1)),
+        )
+        with tempfile.TemporaryDirectory() as temporary:
+            registry1, registry2 = write_empty_sources(Path(temporary))
+            store = StatefulWorkflowStore(context(observed_pages=observed))
+            with patch.object(
+                IdentityResolver,
+                "resolve",
+                side_effect=AssertionError("observed URL resolution must use the prebuilt index"),
+            ):
+                receipt = CanonicalWeeklyProposalService(store, CONFIG).reconcile(
+                    registry1, registry2
+                )
+
+        self.assertEqual(receipt.catalog_gap_count, 2)
     def test_active_catalog_gap_is_included_and_classified_without_entity_creation(self):
         entity = CanonicalClassification(
             7,

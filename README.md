@@ -638,7 +638,7 @@ ssh beget
 
 Что уже работает на VPS:
 
-- `dashboard-next` как отдельный `systemd` service
+- `dashboard-next` как отдельный процесс PM2
 - legacy `nest-analytics` остаётся в root PM2
 - HTTPS для `dashboards.adreports.ru` выпущен через Let's Encrypt
 
@@ -656,10 +656,17 @@ https://dashboards.adreports.ru
 
 Текущий runtime split на VPS:
 
-- `dashboard-next` -> `systemd`, user `dashboard`, internal bind `127.0.0.1:3002`
+- `dashboard-next` -> PM2, app `dashboard-next`, internal bind `127.0.0.1:3001`
 - `nest-analytics` -> legacy root PM2
 
-Это сделано специально, чтобы не смешивать новый дашборд с чужим / legacy PM2-контуром.
+Процессы имеют отдельные имена и конфигурации PM2; публичный доступ к
+`dashboard-next` идёт только через nginx.
+
+Ресурсы VPS, проверенные 2026-08-11: 4 vCPU, 5.8 GiB RAM без swap, 78 GiB
+диска (около 49 GiB свободно), `ulimit -n` 1024. Для локальных вычислений можно
+использовать до 3 CPU-воркеров, оставляя один vCPU и запас памяти MySQL,
+Next.js, nginx и мониторингу. Сборщики внешних API, миграции и публикация
+canonical-релизов всегда выполняются одним writer-процессом.
 
 ## Как запускать дашборд локально
 

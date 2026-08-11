@@ -8,6 +8,23 @@ OAuth tokens or call source APIs. Successful-empty collection is represented
 by canonical coverage; failed collection is represented by collector/request
 logs and never by silently reusing another period.
 
+## VPS resource profile
+
+Observed on the production VPS on 2026-08-11:
+
+- 4 vCPU;
+- 5.8 GiB RAM, no swap;
+- 78 GiB root filesystem with about 49 GiB available;
+- per-process open-file limit: 1024.
+
+Use at most 3 CPU workers for pure, local, deterministic transforms and keep one
+vCPU plus memory headroom for MySQL, Next.js, nginx, and monitoring. Prefer
+indexes and bounded algorithms before adding workers. Because the host has no
+swap, do not start memory-heavy parallel jobs without measuring available RAM.
+Metrika/API collection, Logs API lifecycle, canonical DB writes, migrations,
+release validation, and activation remain single-writer even when spare CPU is
+available. Do not run parallel DB publishers or parallel backfills.
+
 ## Abbott visit-level operational truth
 
 - Abbott source summaries use Reports API attribution `lastsign` and exact traffic segments `all`, `with_user_id`, and `without_user_id`. Per day/source, `all.sessions = with_user_id.sessions + without_user_id.sessions` is a hard publication gate.

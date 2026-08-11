@@ -515,25 +515,36 @@ class CanonicalWeeklyProposalService:
         return {"material_id": material_ids, "url": urls}
 
     @staticmethod
-    def _has_active_strong_url_identity(
-        normalized_url: str,
+    def _strong_url_target_indexes(
         entities: Sequence[CanonicalClassification],
         aliases: Sequence[IdentityAlias],
-    ) -> bool:
-        """Only exact reviewed URL identity suppresses an observed review gap."""
-        targets = {
-            entity.content_entity_id
-            for entity in entities
-            if normalize_url(entity.url).value == normalized_url
-        }
-        targets.update(
-            alias.content_entity_id
-            for alias in aliases
-            if alias.strength == "strong"
-            and alias.alias_kind in {"canonical_url", "url"}
-            and normalize_url(alias.alias_value).value == normalized_url
+    ) -> tuple[dict[str, frozenset[int]], dict[str, frozenset[int]]]:
+        """Index exact reviewed URLs once for bounded observed-page lookups."""
+        entity_ids = {entity.content_entity_id for entity in entities}
+        all_targets: dict[str, set[int]] = {}
+        usable_targets: dict[str, set[int]] = {}
+
+        def add(targets: dict[str, set[int]], url: str, entity_id: int) -> None:
+            normalized = normalize_url(url).value
+            if normalized:
+                targets.setdefault(normalized, set()).add(entity_id)
+
+        for entity in entities:
+            add(all_targets, entity.url, entity.content_entity_id)
+            add(usable_targets, entity.url, entity.content_entity_id)
+        for alias in aliases:
+            if alias.strength != "strong" or alias.alias_kind not in {
+                "canonical_url", "url"
+            }:
+                continue
+            add(all_targets, alias.alias_value, alias.content_entity_id)
+            if alias.content_entity_id in entity_ids:
+                add(usable_targets, alias.alias_value, alias.content_entity_id)
+
+        return (
+            {url: frozenset(targets) for url, targets in all_targets.items()},
+            {url: frozenset(targets) for url, targets in usable_targets.items()},
         )
-        return len(targets) == 1
 
     @staticmethod
     def _build_items(
@@ -736,7 +747,13 @@ class CanonicalWeeklyProposalService:
                     reconciliation_input=reconciliation_input,
                 )
             )
+        strong_url_targets, usable_strong_url_targets = (
+            CanonicalWeeklyProposalService._strong_url_target_indexes(
+                context.entities, context.aliases
+            )
+        )
         for observed in collapse_observed_pages(context.observed_pages):
+            normalized_observed_url = normalize_url(observed.normalized_url).value
             candidate = MaterialCandidate(
                 source_name="observed_page",
                 source_row_id=f"observed:{observed.normalized_url}",
@@ -753,10 +770,7 @@ class CanonicalWeeklyProposalService:
                     "last_seen": observed.last_seen.isoformat(),
                 })),
             )
-            resolution = resolver.resolve(candidate, context.entities, context.aliases)
-            if CanonicalWeeklyProposalService._has_active_strong_url_identity(
-                observed.normalized_url, context.entities, context.aliases
-            ):
+            if len(strong_url_targets.get(normalized_observed_url, ())) == 1:
                 continue
             service_route = normalize_url(observed.normalized_url).path in {
                 "/auth", "/registration.php", "/personal", "/rules", "/privacy", "/cookies", "/sitemap.php",
@@ -770,7 +784,9 @@ class CanonicalWeeklyProposalService:
                 confidence=Decimal("1.0"),
                 evidence=("reviewed service route",),
             ) if service_route else None
-            conflict = resolution.status == "collision"
+            conflict = len(
+                usable_strong_url_targets.get(normalized_observed_url, ())
+            ) > 1
             reconciliation_input = ReconciliationInput(
                 registry1=candidate,
                 identity_conflict=conflict,
