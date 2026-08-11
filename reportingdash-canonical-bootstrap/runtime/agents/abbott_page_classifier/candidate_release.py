@@ -1694,7 +1694,18 @@ def _authorize_current_batch_events(
     expected: dict[int, tuple[Mapping[str, object], Mapping[str, object] | None]] = {}
     for item_id, item in approval_rows_by_id.items():
         is_create = item.get("url_alias_decision") == "create"
-        if item.get("readiness_state") != "ready" and not is_create:
+        content_entity_id = int(item.get("content_entity_id") or 0)
+        selected_entity_id = int(item.get("selected_content_entity_id") or 0)
+        reviewed_baseline_attach = (
+            item.get("url_alias_decision") == "attach"
+            and content_entity_id > 0
+            and selected_entity_id == content_entity_id
+        )
+        if (
+            item.get("readiness_state") != "ready"
+            and not is_create
+            and not reviewed_baseline_attach
+        ):
             continue
         evidence = _decode_json(
             item.get("proposal_evidence"), code="CURRENT_BATCH_EVENT_UNAUTHORIZED"
@@ -1718,8 +1729,19 @@ def _authorize_current_batch_events(
                 raise CandidateMaterializationError(
                     "CURRENT_BATCH_EVENT_UNAUTHORIZED"
                 ) from None
-            if current_values == final_values:
+            if current_values == final_values and not reviewed_baseline_attach:
                 continue
+        if reviewed_baseline_attach:
+            if (
+                not isinstance(current, Mapping)
+                or int(current.get("content_entity_id") or 0) != content_entity_id
+                or current.get("event_id") not in (None, 0)
+                or current_values != final_values
+                or not _normalized_audit_text(item.get("decision_reason"))
+            ):
+                raise CandidateMaterializationError(
+                    "CURRENT_BATCH_EVENT_UNAUTHORIZED"
+                )
         if is_create:
             selected = int(item.get("selected_content_entity_id") or 0)
             if (int(item.get("content_entity_id") or 0) != 0 or selected <= 0
@@ -1735,9 +1757,16 @@ def _authorize_current_batch_events(
         seen.add(item_id)
         item, current = expected[item_id]
         is_create = item.get("url_alias_decision") == "create"
+        content_entity_id = int(item.get("content_entity_id") or 0)
+        reviewed_baseline_attach = (
+            item.get("url_alias_decision") == "attach"
+            and content_entity_id > 0
+            and int(item.get("selected_content_entity_id") or 0)
+            == content_entity_id
+        )
         entity_id = int(
             item.get("selected_content_entity_id") if is_create
-            else item.get("content_entity_id") or 0
+            else content_entity_id
         )
         final_values = tuple(item.get(name) for name in (
             "final_direction_code", "final_material_type_code",
@@ -1751,7 +1780,6 @@ def _authorize_current_batch_events(
         if current is not None:
             try:
                 current_entity_id = int(current["content_entity_id"])
-                predecessor_event_id = int(current["event_id"])
                 current_values = tuple(current[name] for name in (
                     "direction_code", "material_type_code",
                     "access_code", "lifecycle_code",
@@ -1760,6 +1788,20 @@ def _authorize_current_batch_events(
                 raise CandidateMaterializationError(
                     "CURRENT_BATCH_EVENT_UNAUTHORIZED"
                 ) from None
+            raw_predecessor_event_id = current.get("event_id")
+            if reviewed_baseline_attach:
+                if raw_predecessor_event_id not in (None, 0):
+                    raise CandidateMaterializationError(
+                        "CURRENT_BATCH_EVENT_UNAUTHORIZED"
+                    )
+                predecessor_event_id = None
+            else:
+                try:
+                    predecessor_event_id = int(raw_predecessor_event_id)
+                except (TypeError, ValueError):
+                    raise CandidateMaterializationError(
+                        "CURRENT_BATCH_EVENT_UNAUTHORIZED"
+                    ) from None
             predecessor = predecessor_by_entity.get(entity_id)
             predecessor_values = (
                 predecessor.direction_code,
@@ -1769,7 +1811,11 @@ def _authorize_current_batch_events(
             ) if predecessor is not None else None
             if (
                 current_entity_id != entity_id
-                or predecessor is None
+                or (predecessor is None and not reviewed_baseline_attach)
+                or (
+                    reviewed_baseline_attach
+                    and current_values != final_values
+                )
                 or any(
                     (
                         current_value is not None
@@ -1780,12 +1826,15 @@ def _authorize_current_batch_events(
                         and predecessor_value
                         not in (None, "undetermined", "unspecified")
                     )
-                    for current_value, final_value, predecessor_value in zip(
-                        current_values, final_values, predecessor_values or ()
+                    for current_value, final_value, predecessor_value in (
+                        zip(current_values, final_values, predecessor_values or ())
+                        if predecessor_values is not None
+                        else ()
                     )
                 )
                 or (
-                    predecessor.classification_event_id is not None
+                    predecessor is not None
+                    and predecessor.classification_event_id is not None
                     and predecessor.classification_event_id != predecessor_event_id
                 )
             ):
