@@ -489,6 +489,9 @@ class WeeklyProposalServiceTests(unittest.TestCase):
         self.assertEqual(item.identity_status, "matched")
         self.assertEqual(item.content_entity_id, 7)
         self.assertEqual(item.reconciliation_input.active_canonical, entity)
+        reconciled = reconcile_entity(item.reconciliation_input)
+        self.assertEqual(reconciled.final_access_code, "unspecified")
+        self.assertEqual(reconciled.final_lifecycle_code, "active")
 
     def test_unique_weak_observed_slug_match_still_creates_review_item(self):
         entity = CanonicalClassification(7, "Known", "https://abbottpro.ru/cardio/known", "cardiology", "articles", "all", "active", 1)

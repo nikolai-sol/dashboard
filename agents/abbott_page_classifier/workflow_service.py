@@ -834,7 +834,18 @@ class CanonicalWeeklyProposalService:
                     content_entity_id=target_id,
                     active_canonical=canonical,
                     registry1=candidate,
-                    deterministic_proposal=deterministic,
+                    deterministic_proposal=(
+                        deterministic
+                        or Proposal(
+                            direction_code=None,
+                            material_type_code=None,
+                            access_code="unspecified",
+                            lifecycle_code="active",
+                            rule_code="OBSERVED_METADATA_GAP",
+                            confidence=1.0,
+                            evidence=("reviewed URL owner lacks published metadata",),
+                        )
+                    ),
                 )
                 reconciled = reconcile_entity(reconciliation_input)
                 grouping_key = f"observed:{observed.normalized_url}"
