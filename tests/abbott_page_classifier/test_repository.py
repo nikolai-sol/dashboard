@@ -2245,6 +2245,47 @@ class ContentRegistryRepositoryTests(unittest.TestCase):
         self.assertEqual(connection.commit_count, 1)
         self.assertEqual(connection.rollback_count, 0)
 
+    def test_ingest_retry_repairs_reviewed_observed_attach_without_prior_event(self):
+        item = replace(
+            workflow_batch().items[0],
+            content_entity_id=41,
+            readiness_state="unresolved",
+            selected_content_entity_id=41,
+            url_alias_decision="attach",
+            decision_reason="reviewed observed URL for current entity",
+            current_canonical={
+                "content_entity_id": 41,
+                "event_id": None,
+                "direction_code": "cardiology",
+                "material_type_code": "articles",
+                "access_code": "doctors",
+                "lifecycle_code": "active",
+            },
+            registry1_values={
+                "source_name": "observed_page",
+                "url": "https://abbottpro.ru/material/41",
+            },
+        )
+        connection = RecordingConnection(
+            batch_row=(
+                *accepted_batch_row(status="ingested", items=(item,)),
+                "local",
+            ),
+            ingest_items=(item,),
+        )
+
+        result = ContentRegistryRepository(
+            lambda: connection
+        ).ingest_accepted_snapshot(accepted_snapshot(item))
+
+        self.assertEqual(result.status, "noop")
+        self.assertEqual(connection.event_insert_count, 1)
+        self.assertFalse(any(
+            sql.startswith("UPDATE portal_content_approval_batches")
+            for sql, _params in connection.calls
+        ))
+        self.assertEqual(connection.commit_count, 1)
+
     def test_ingest_rolls_back_and_sanitizes_any_row_failure(self):
         items = (approval_item(41), approval_item(42))
         connection = RecordingConnection(

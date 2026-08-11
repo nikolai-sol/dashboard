@@ -1252,18 +1252,32 @@ class ContentRegistryRepository:
                 supplied = getattr(snapshot, name, None)
                 if supplied is not None and int(supplied) != expected:
                     raise RepositoryError("BATCH_COUNT_MISMATCH")
-            if batch_status == "ingested":
-                connection.commit()
-                return IngestResult(
-                    status="noop",
-                    accepted_count=accepted_count,
-                    conflict_count=counts["conflict"],
-                    unresolved_count=counts["unresolved"],
-                    rejected_count=counts["rejected"],
-                )
+            already_ingested = batch_status == "ingested"
 
             for approval_item_id, item in stored_items:
-                if item.readiness_state != "ready":
+                proposal_evidence = evidence_by_item_id[approval_item_id]
+                current_canonical = (
+                    proposal_evidence.get("current_canonical")
+                    if isinstance(proposal_evidence, Mapping)
+                    else None
+                )
+                try:
+                    current_entity_id = int(
+                        current_canonical.get("content_entity_id") or 0
+                    ) if isinstance(current_canonical, Mapping) else 0
+                except (TypeError, ValueError):
+                    current_entity_id = 0
+                reviewed_baseline_attach = (
+                    item.url_alias_decision == "attach"
+                    and item.content_entity_id is not None
+                    and item.selected_content_entity_id == item.content_entity_id
+                    and isinstance(current_canonical, Mapping)
+                    and current_entity_id == item.content_entity_id
+                    and current_canonical.get("event_id") in (None, 0)
+                )
+                if already_ingested and not reviewed_baseline_attach:
+                    continue
+                if item.readiness_state != "ready" and not reviewed_baseline_attach:
                     continue
                 if (
                     item.content_entity_id is None
@@ -1321,7 +1335,7 @@ class ContentRegistryRepository:
                     item.final_access_code,
                     item.final_lifecycle_code,
                 )
-                if predecessor_values == event_values:
+                if predecessor_values is not None and predecessor_values == event_values:
                     continue
                 if predecessor_row is not None:
                     if len(predecessor_row) < 6:
@@ -1335,13 +1349,39 @@ class ContentRegistryRepository:
                 event_kind = "approve"
                 reason = item.decision_reason.strip() if item.decision_reason else None
                 actor = stored_accepted_by.strip()
-                proposal_evidence = evidence_by_item_id[approval_item_id]
-                self._attest_reviewed_predecessor(
-                    proposal_evidence,
-                    item.content_entity_id,
-                    predecessor_event_id,
-                    predecessor_values,
-                )
+                if reviewed_baseline_attach and predecessor_event_id is None:
+                    current = (
+                        proposal_evidence.get("current_canonical")
+                        if isinstance(proposal_evidence, Mapping)
+                        else None
+                    )
+                    try:
+                        baseline_values = tuple(
+                            current[key]
+                            for key in (
+                                "direction_code",
+                                "material_type_code",
+                                "access_code",
+                                "lifecycle_code",
+                            )
+                        )
+                        baseline_entity_id = int(current["content_entity_id"])
+                        baseline_event_id = current.get("event_id")
+                    except (KeyError, TypeError, ValueError):
+                        raise RepositoryError("CORRECTION_AUDIT_REQUIRED") from None
+                    if (
+                        baseline_entity_id != item.content_entity_id
+                        or baseline_event_id not in (None, 0)
+                        or baseline_values != event_values
+                    ):
+                        raise RepositoryError("CORRECTION_PREDECESSOR_MISMATCH")
+                else:
+                    self._attest_reviewed_predecessor(
+                        proposal_evidence,
+                        item.content_entity_id,
+                        predecessor_event_id,
+                        predecessor_values,
+                    )
                 if (
                     predecessor_values is not None
                     and predecessor_values[0]
@@ -1427,6 +1467,16 @@ class ContentRegistryRepository:
                         reason,
                         accepted_at,
                     ),
+                )
+
+            if already_ingested:
+                connection.commit()
+                return IngestResult(
+                    status="noop",
+                    accepted_count=accepted_count,
+                    conflict_count=counts["conflict"],
+                    unresolved_count=counts["unresolved"],
+                    rejected_count=counts["rejected"],
                 )
 
             cursor.execute(
