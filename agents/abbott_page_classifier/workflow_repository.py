@@ -103,17 +103,23 @@ def _is_duplicate_key_error(error: Exception) -> bool:
         return False
 
 
-def _candidate_payload(value: SourceCandidate | None) -> object | None:
+def _candidate_payload(
+    value: SourceCandidate | MaterialCandidate | None,
+) -> object | None:
     return asdict(value) if value is not None else None
 
 
-def _candidate_from_payload(value: object | None) -> SourceCandidate | None:
+def _candidate_from_payload(
+    value: object | None,
+) -> SourceCandidate | MaterialCandidate | None:
     value = _json_value(value)
     if value is None:
         return None
     if not isinstance(value, Mapping):
         raise RepositoryError("RECONCILIATION_ITEM_INVALID")
     try:
+        if "candidate" not in value:
+            return MaterialCandidate(**dict(value))
         candidate = MaterialCandidate(**dict(value["candidate"]))
         provenance = tuple(SourceProvenance(**dict(item)) for item in value["provenance"])
         variants = tuple(SourceIdentityVariant(**dict(item)) for item in value["identity_variants"])
@@ -265,7 +271,7 @@ def _input_payload(value: ReconciliationInput) -> dict[str, object]:
         "content_entity_id": value.content_entity_id,
         "active_canonical": _canonical_payload(value.active_canonical),
         "reviewed_correction": _proposal_payload(value.reviewed_correction),
-        "registry1": _candidate_payload(value.registry1 if isinstance(value.registry1, SourceCandidate) else None),
+        "registry1": _candidate_payload(value.registry1),
         "registry2": _candidate_payload(value.registry2),
         "deterministic_proposal": _proposal_payload(value.deterministic_proposal),
         "llm_proposal": _proposal_payload(value.llm_proposal),

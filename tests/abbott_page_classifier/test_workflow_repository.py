@@ -561,6 +561,29 @@ class MySqlWorkflowStoreTests(unittest.TestCase):
             len({reconcile_entity(value).input_hash for value in replayed}), 2
         )
 
+    def test_observed_material_candidate_round_trips_durable_payload(self):
+        observed = MaterialCandidate(
+            source_name="observed_page",
+            source_row_id="observed:https://abbottpro.ru/auth",
+            title="Вход",
+            url="https://abbottpro.ru/auth",
+            material_id=None,
+            direction_code=None,
+            material_type_code=None,
+            access_code=None,
+            lifecycle_code="active",
+            source_fingerprint="a" * 64,
+        )
+        value = ReconciliationInput(registry1=observed)
+
+        replayed = _input_from_payload(_input_payload(value))
+
+        self.assertEqual(replayed, value)
+        self.assertEqual(
+            reconcile_entity(replayed).input_hash,
+            reconcile_entity(value).input_hash,
+        )
+
     def test_new_registry1_entity_persists_and_emits_every_source_occurrence(self):
         candidate = SourceCandidate(
             key="material:900",
