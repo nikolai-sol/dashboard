@@ -22,6 +22,15 @@ class CopierRaceTests(unittest.TestCase):
                 with self.assertRaises(SystemExit): copier.checked(fd, "asset", os.O_RDONLY, old)
             finally: os.close(fd)
 
+    def test_regular_to_fifo_swap_is_rejected_without_blocking(self):
+        with tempfile.TemporaryDirectory() as raw:
+            root = Path(raw); source = root / "source"; source.mkdir(); (source / "asset").write_text("old")
+            fd = os.open(source, os.O_RDONLY); old = os.stat("asset", dir_fd=fd)
+            os.unlink(source / "asset"); os.mkfifo(source / "asset")
+            try:
+                with self.assertRaises(SystemExit): copier.checked(fd, "asset", os.O_RDONLY, old)
+            finally: os.close(fd)
+
     def test_destination_symlink_is_rejected_without_outside_write(self):
         with tempfile.TemporaryDirectory() as raw:
             root = Path(raw); outside = root / "outside"; outside.mkdir()

@@ -36,7 +36,7 @@ def dest(root, relative):
         nfd=mkdirat(fd,p); os.close(fd); fd=nfd
     return fd
 def checked(fd,name,flags,old):
-    new=os.open(name,flags|N,dir_fd=fd); now=os.fstat(new)
+    new=os.open(name,flags|N|NB,dir_fd=fd); now=os.fstat(new)
     if (now.st_dev,now.st_ino,stat.S_IFMT(now.st_mode)) != (old.st_dev,old.st_ino,stat.S_IFMT(old.st_mode)) or (stat.S_ISREG(now.st_mode) and now.st_nlink!=1): os.close(new); fail('changed, hard-linked, or nonregular during copy')
     return new
 def filecopy(srcfd,dstfd,name):
