@@ -2938,6 +2938,7 @@ class CandidateReleaseTest(unittest.TestCase):
         self.assertIn("COALESCE(", observed_sql)
         self.assertIn("exact_url.selected_source_row_fingerprint", observed_sql)
         self.assertIn("path_lookup.selected_source_row_fingerprint", observed_sql)
+        self.assertIn("facts.normalized_path IS NOT NULL", observed_sql)
         validation_batch_sql = next(
             query for query, _ in connection.calls
             if "FROM portal_content_approval_batches AS batch" in query

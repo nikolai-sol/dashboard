@@ -340,7 +340,8 @@ def _observed_page_resolution_counts(cursor, candidate_id: int) -> tuple[int, in
           GROUP BY canonical_release_id, normalized_path
         )
         SELECT COALESCE(SUM((
-                 selected.source_row_fingerprint IS NOT NULL
+                 facts.normalized_path IS NOT NULL
+                 AND selected.source_row_fingerprint IS NOT NULL
                  AND (selected.material_type IS NULL
                       OR selected.material_type <> 'service_page')
                  AND (selected.direction_key IS NULL
@@ -349,7 +350,8 @@ def _observed_page_resolution_counts(cursor, candidate_id: int) -> tuple[int, in
                       OR TRIM(selected.material_type) = '')
                ) * facts.fact_count), 0) AS content_unresolved,
                COALESCE(SUM((
-                 selected.source_row_fingerprint IS NULL
+                 facts.normalized_path IS NOT NULL
+                 AND selected.source_row_fingerprint IS NULL
                  AND exclusion.id IS NULL
                ) * facts.fact_count), 0) AS non_content_unresolved
         FROM normalized_facts AS facts
