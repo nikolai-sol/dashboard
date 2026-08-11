@@ -1696,16 +1696,17 @@ def _authorize_current_batch_events(
         is_create = item.get("url_alias_decision") == "create"
         content_entity_id = int(item.get("content_entity_id") or 0)
         selected_entity_id = int(item.get("selected_content_entity_id") or 0)
-        reviewed_baseline_attach = (
+        reviewed_same_entity_attach = (
             batch.get("projection_kind") == "local"
             and item.get("url_alias_decision") == "attach"
             and content_entity_id > 0
             and selected_entity_id == content_entity_id
+            and bool(_normalized_audit_text(item.get("decision_reason")))
         )
         if (
             item.get("readiness_state") != "ready"
             and not is_create
-            and not reviewed_baseline_attach
+            and not reviewed_same_entity_attach
         ):
             continue
         evidence = _decode_json(
@@ -1716,6 +1717,17 @@ def _authorize_current_batch_events(
         current = evidence.get("current_canonical")
         if current is not None and not isinstance(current, Mapping):
             raise CandidateMaterializationError("CURRENT_BATCH_EVENT_UNAUTHORIZED")
+        reviewed_baseline_attach = (
+            reviewed_same_entity_attach
+            and isinstance(current, Mapping)
+            and current.get("event_id") in (None, 0)
+        )
+        if (
+            item.get("readiness_state") != "ready"
+            and not is_create
+            and not reviewed_baseline_attach
+        ):
+            continue
         final_values = tuple(item.get(name) for name in (
             "final_direction_code", "final_material_type_code",
             "final_access_code", "final_lifecycle_code",
@@ -1764,6 +1776,8 @@ def _authorize_current_batch_events(
             and content_entity_id > 0
             and int(item.get("selected_content_entity_id") or 0)
             == content_entity_id
+            and isinstance(current, Mapping)
+            and current.get("event_id") in (None, 0)
         )
         entity_id = int(
             item.get("selected_content_entity_id") if is_create
