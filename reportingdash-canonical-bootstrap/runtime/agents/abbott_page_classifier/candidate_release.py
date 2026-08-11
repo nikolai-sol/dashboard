@@ -849,6 +849,43 @@ def _row_value(row: object, name: str, index: int | None = None):
     return row[index]
 
 
+def _strong_identity_collision_count(cursor: object, batch_id: int) -> int:
+    """Count strong collisions not resolved by this batch's URL decision."""
+    cursor.execute(
+        """
+        SELECT COUNT(*) AS strong_collision_count
+        FROM portal_content_approval_items AS item
+        INNER JOIN portal_content_registry_aliases AS alias_row
+          ON alias_row.dataset_key = %s
+         AND alias_row.alias_status = 'active'
+         AND alias_row.uniqueness_scope = 'strong'
+         AND alias_row.content_entity_id <> item.content_entity_id
+         AND ((alias_row.alias_type = 'material_id'
+               AND alias_row.alias_hash IN (
+                 SHA2(JSON_UNQUOTE(JSON_EXTRACT(
+                   item.proposal_evidence, '$.registry1.material_id')), 256),
+                 SHA2(JSON_UNQUOTE(JSON_EXTRACT(
+                   item.proposal_evidence, '$.registry2.material_id')), 256)
+               ))
+           OR (alias_row.alias_type IN ('canonical_url', 'url')
+               AND alias_row.alias_hash = SHA2(item.url, 256)
+               AND NOT EXISTS (
+                 SELECT 1
+                 FROM portal_content_approval_items AS authority
+                 WHERE authority.approval_batch_id = item.approval_batch_id
+                   AND authority.url_alias_decision IN ('attach', 'create')
+                   AND authority.selected_content_entity_id = alias_row.content_entity_id
+                   AND SHA2(authority.url, 256) = alias_row.alias_hash
+               )))
+        WHERE item.approval_batch_id = %s
+        """,
+        (DATASET_KEY, batch_id),
+    )
+    return int(
+        _row_value(cursor.fetchone(), "strong_collision_count", 0) or 0
+    )
+
+
 def _decode_json(value: object, *, code: str):
     if isinstance(value, str):
         try:
@@ -2812,30 +2849,7 @@ def materialize_content_candidate(
         ):
             raise CandidateMaterializationError("APPROVAL_BUNDLE_INVALID")
 
-        cursor.execute(
-            """
-            SELECT COUNT(*) AS strong_collision_count
-            FROM portal_content_approval_items AS item
-            INNER JOIN portal_content_registry_aliases AS alias_row
-              ON alias_row.dataset_key = %s
-             AND alias_row.alias_status = 'active'
-             AND alias_row.uniqueness_scope = 'strong'
-             AND alias_row.content_entity_id <> item.content_entity_id
-             AND ((alias_row.alias_type = 'material_id'
-                   AND alias_row.alias_hash IN (
-                     SHA2(JSON_UNQUOTE(JSON_EXTRACT(
-                       item.proposal_evidence, '$.registry1.material_id')), 256),
-                     SHA2(JSON_UNQUOTE(JSON_EXTRACT(
-                       item.proposal_evidence, '$.registry2.material_id')), 256)
-                   ))
-               OR (alias_row.alias_type IN ('canonical_url', 'url')
-                   AND alias_row.alias_hash = SHA2(item.url, 256)))
-            WHERE item.approval_batch_id = %s
-            """,
-            (DATASET_KEY, batch_id),
-        )
-        collision = cursor.fetchone()
-        if int(_row_value(collision, "strong_collision_count", 0) or 0) != 0:
+        if _strong_identity_collision_count(cursor, batch_id) != 0:
             raise CandidateMaterializationError("STRONG_IDENTITY_COLLISION")
 
         placeholders = ", ".join(["%s"] * len(predecessor_source_ids))
@@ -3913,28 +3927,8 @@ def validate_content_candidate(
             anti_flip = 0
         except CandidateMaterializationError:
             anti_flip = 1
-        cursor.execute(
-            """
-            SELECT COUNT(*) AS strong_collision_count
-            FROM portal_content_approval_items AS item
-            INNER JOIN portal_content_registry_aliases AS alias_row
-              ON alias_row.dataset_key = %s
-             AND alias_row.alias_status = 'active'
-             AND alias_row.uniqueness_scope = 'strong'
-             AND alias_row.content_entity_id <> item.content_entity_id
-             AND ((alias_row.alias_type = 'material_id'
-                   AND alias_row.alias_hash IN (
-                     SHA2(JSON_UNQUOTE(JSON_EXTRACT(item.proposal_evidence, '$.registry1.material_id')), 256),
-                     SHA2(JSON_UNQUOTE(JSON_EXTRACT(item.proposal_evidence, '$.registry2.material_id')), 256)
-                   ))
-               OR (alias_row.alias_type IN ('canonical_url', 'url')
-                   AND alias_row.alias_hash = SHA2(item.url, 256)))
-            WHERE item.approval_batch_id = %s
-            """,
-            (DATASET_KEY, batch_id),
-        )
         strong_collisions = (
-            int(_row_value(cursor.fetchone(), "strong_collision_count", 0) or 0)
+            _strong_identity_collision_count(cursor, batch_id)
             + int(approval.get("identity_collisions") or 0)
             + catalog_collisions
         )
