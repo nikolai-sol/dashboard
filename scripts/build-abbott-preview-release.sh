@@ -30,10 +30,10 @@ for p in "$APP_DIR/.next/standalone" "$APP_DIR/.next/static" "$APP_DIR/public"; 
   [[ -d "$p" && ! -L "$p" ]] || fail 'preview tree is incomplete'
 done
 [[ -f "$APP_DIR/.next/standalone/server.js" ]] || fail 'standalone output is incomplete'
-mkdir -p "$RELEASE_DIR/.next"
-python3 "$APP_DIR/scripts/copy-preview-tree.py" "$APP_DIR/.next/standalone" "$RELEASE_DIR"
-python3 "$APP_DIR/scripts/copy-preview-tree.py" "$APP_DIR/.next/static" "$RELEASE_DIR/.next/static"
-python3 "$APP_DIR/scripts/copy-preview-tree.py" "$APP_DIR/public" "$RELEASE_DIR/public"
+mkdir "$RELEASE_DIR"
+python3 "$APP_DIR/scripts/copy-preview-tree.py" "$APP_DIR/.next/standalone" "$RELEASE_DIR" .
+python3 "$APP_DIR/scripts/copy-preview-tree.py" "$APP_DIR/.next/static" "$RELEASE_DIR" .next/static
+python3 "$APP_DIR/scripts/copy-preview-tree.py" "$APP_DIR/public" "$RELEASE_DIR" public
 find -P "$RELEASE_DIR" -depth -type d -empty -delete
 reject_nonregular_tree "$RELEASE_DIR"
 (cd "$RELEASE_DIR"; find . -type f ! -name manifest.sha256 ! -name '.manifest.*' -print0 | LC_ALL=C sort -z | xargs -0 sha256sum > .manifest.$$; mv .manifest.$$ manifest.sha256; sha256sum -c manifest.sha256 >/dev/null)

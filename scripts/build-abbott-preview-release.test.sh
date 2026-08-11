@@ -10,16 +10,20 @@ TARGET_ROOT="$TMP_DIR/releases"
 RUN_ID='20260810T220000Z-acde1234'
 TARGET="$TARGET_ROOT/$RUN_ID"
 mkdir -p "$SOURCE/.next/standalone/.next" "$SOURCE/.next/static" "$SOURCE/public/empty"
+mkdir -p "$SOURCE/scripts"
+cp "$SCRIPT_DIR/copy-preview-tree.py" "$SOURCE/scripts/copy-preview-tree.py"
 printf 'server' > "$SOURCE/.next/standalone/server.js"
 printf 'static' > "$SOURCE/.next/static/a.js"
 printf 'public' > "$SOURCE/public/a.txt"
 printf 'secret' > "$SOURCE/.env.production"
+ln -s a.js "$SOURCE/.next/static/internal.js"
 
 DRY_RUN=1 TEST_PREVIEW_RELEASE_ROOT="$TARGET_ROOT" RUN_ID="$RUN_ID" APP_DIR="$SOURCE" APP_PORT=3301 \
   bash "$SCRIPT_DIR/build-abbott-preview-release.sh" >"$TMP_DIR/output" 2>&1
 
 [[ -f "$TARGET/server.js" ]] || { echo 'standalone server was not packaged' >&2; exit 1; }
 [[ -f "$TARGET/.next/static/a.js" ]] || { echo 'static assets were not packaged' >&2; exit 1; }
+[[ -f "$TARGET/.next/static/internal.js" && ! -L "$TARGET/.next/static/internal.js" ]] || { echo 'internal symlink was not materialized' >&2; exit 1; }
 [[ -f "$TARGET/public/a.txt" ]] || { echo 'public assets were not packaged' >&2; exit 1; }
 [[ -f "$TARGET/manifest.sha256" ]] || { echo 'manifest missing' >&2; exit 1; }
 [[ ! -d "$TARGET/public/empty" ]] || { echo 'empty source directory was not sealed out of release' >&2; exit 1; }
@@ -52,10 +56,10 @@ if DRY_RUN=1 TEST_PREVIEW_RELEASE_ROOT="$TMP_DIR/outside" RUN_ID="$RUN_ID" APP_D
   exit 1
 fi
 
-ln -s "$SOURCE/.next/static/a.js" "$SOURCE/public/escaped.js"
+ln -s /etc/passwd "$SOURCE/public/escaped.js"
 if DRY_RUN=1 TEST_PREVIEW_RELEASE_ROOT="$TMP_DIR/symlink-releases" RUN_ID="$RUN_ID" APP_DIR="$SOURCE" APP_PORT=3301 \
   bash "$SCRIPT_DIR/build-abbott-preview-release.sh" >/dev/null 2>&1; then
-  echo 'builder accepted a nested symlinked source asset' >&2
+  echo 'builder accepted an escaping source asset' >&2
   exit 1
 fi
 
