@@ -33,7 +33,7 @@ done
 mkdir "$RELEASE_DIR"
 python3 "$APP_DIR/scripts/copy-preview-tree.py" "$APP_DIR/.next/standalone" "$RELEASE_DIR" .
 python3 "$APP_DIR/scripts/copy-preview-tree.py" "$APP_DIR/.next/static" "$RELEASE_DIR" .next/static
-python3 "$APP_DIR/scripts/copy-preview-tree.py" "$APP_DIR/public" "$RELEASE_DIR" public
+python3 "$APP_DIR/scripts/copy-preview-tree.py" "$APP_DIR/public" "$RELEASE_DIR" public merge-identical
 find -P "$RELEASE_DIR" -depth -type d -empty -delete
 reject_nonregular_tree "$RELEASE_DIR"
 (cd "$RELEASE_DIR"; find . -type f ! -name manifest.sha256 ! -name '.manifest.*' -print0 | LC_ALL=C sort -z | xargs -0 sha256sum > .manifest.$$; mv .manifest.$$ manifest.sha256; sha256sum -c manifest.sha256 >/dev/null)

@@ -39,10 +39,18 @@ def checked(fd,name,flags,old):
     new=os.open(name,flags|N|NB,dir_fd=fd); now=os.fstat(new)
     if (now.st_dev,now.st_ino,stat.S_IFMT(now.st_mode)) != (old.st_dev,old.st_ino,stat.S_IFMT(old.st_mode)) or (stat.S_ISREG(now.st_mode) and now.st_nlink!=1): os.close(new); fail('changed, hard-linked, or nonregular during copy')
     return new
-def filecopy(srcfd,dstfd,name):
-    out=os.open(name,os.O_WRONLY|os.O_CREAT|os.O_EXCL|N,0o600,dir_fd=dstfd)
+def filecopy(srcfd,dstfd,name,merge):
+    try: out=os.open(name,os.O_WRONLY|os.O_CREAT|os.O_EXCL|N,0o600,dir_fd=dstfd)
+    except FileExistsError:
+        if not merge: os.close(srcfd); fail('destination collision')
+        old=os.stat(name,dir_fd=dstfd,follow_symlinks=False)
+        if not stat.S_ISREG(old.st_mode) or old.st_nlink!=1: os.close(srcfd); fail('destination collision')
+        out=checked(dstfd,name,os.O_RDONLY,old)
+        with os.fdopen(srcfd,'rb') as s, os.fdopen(out,'rb') as d:
+            if s.read()!=d.read(): fail('destination content mismatch')
+        return
     with os.fdopen(srcfd,'rb') as s, os.fdopen(out,'wb') as d: shutil.copyfileobj(s,d)
-def tree(root,src,parts,dst,seen):
+def tree(root,src,parts,dst,seen,merge):
     inode=(os.fstat(src).st_dev,os.fstat(src).st_ino)
     if inode in seen: fail('symlink creates directory cycle')
     seen=seen|{inode}
@@ -56,17 +64,17 @@ def tree(root,src,parts,dst,seen):
         else: fail('contains nonregular object')
         if stat.S_ISREG(old.st_mode):
             if old.st_nlink != 1: os.close(fd); fail('contains hard-linked object')
-            filecopy(fd,dst,e.name)
+            filecopy(fd,dst,e.name,merge)
         elif stat.S_ISDIR(old.st_mode):
-            child=mkdirat(dst,e.name); tree(root,fd,targetparts if e.is_symlink() else parts+[e.name],child,seen); os.close(fd); os.close(child)
+            child=mkdirat(dst,e.name); tree(root,fd,targetparts if e.is_symlink() else parts+[e.name],child,seen,merge); os.close(fd); os.close(child)
         else: os.close(fd); fail('symlink targets nonregular object')
 def main():
-    if len(sys.argv)!=4: fail('copier arguments are invalid')
-    source,release,relative=sys.argv[1:]; parts=[] if relative=='.' else relative.split('/')
+    if len(sys.argv) not in (4,5): fail('copier arguments are invalid')
+    source,release,relative=sys.argv[1:4]; merge=len(sys.argv)==5 and sys.argv[4]=='merge-identical'; parts=[] if relative=='.' else relative.split('/')
     if any(p in ('','.', '..') for p in parts): fail('destination is invalid')
     s=os.open(source,os.O_RDONLY|D|N); d=os.open(release,os.O_RDONLY|D|N); out=None
     try:
-        out=dest(d,parts); tree(s,s,[],out,set())
+        out=dest(d,parts); tree(s,s,[],out,set(),merge)
     finally:
         if out is not None: os.close(out)
         os.close(s); os.close(d)

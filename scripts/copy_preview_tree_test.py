@@ -49,7 +49,7 @@ class CopierRaceTests(unittest.TestCase):
             destination = root / "destination"; destination.mkdir()
             sfd = os.open(source, os.O_RDONLY); dfd = os.open(destination, os.O_RDONLY)
             try:
-                with self.assertRaises(SystemExit): copier.tree(sfd, sfd, [], dfd, set())
+                with self.assertRaises(SystemExit): copier.tree(sfd, sfd, [], dfd, set(), False)
             finally: os.close(sfd); os.close(dfd)
 
 
