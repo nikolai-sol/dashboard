@@ -504,6 +504,13 @@ class MySqlWorkflowStore:
             int(batch_id), spreadsheet_id, projection_hash
         )
 
+    def mark_local_batch_published(
+        self, batch_id: int, locator: str, content_hash: str
+    ) -> None:
+        self._registry.mark_local_batch_published(
+            int(batch_id), locator, content_hash
+        )
+
     def mark_batch_projection_failed(self, batch_id: int, failure_code: str) -> None:
         self._registry.mark_batch_projection_failed(int(batch_id), failure_code)
 
@@ -512,6 +519,13 @@ class MySqlWorkflowStore:
     ) -> None:
         self._registry.record_batch_acceptance(
             int(batch_id), snapshot, spreadsheet_id
+        )
+
+    def record_local_batch_acceptance(
+        self, batch_id: int, intent, locator: str
+    ):
+        return self._registry.record_local_batch_acceptance(
+            int(batch_id), intent, locator
         )
 
     def ingest_accepted_snapshot(self, snapshot):

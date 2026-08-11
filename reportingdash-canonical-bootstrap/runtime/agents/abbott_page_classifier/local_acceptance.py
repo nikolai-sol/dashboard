@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from datetime import datetime
+import hashlib
 import json
 import os
 from pathlib import Path
@@ -41,6 +42,15 @@ class LocalAcceptanceIntent:
     decisions: tuple[LocalDecision, ...]
 
 
+@dataclass(frozen=True)
+class LocalAcceptanceArtifact:
+    """A descriptor-validated decision document and its immutable receipt."""
+
+    intent: LocalAcceptanceIntent
+    locator: str
+    content_hash: str
+
+
 _MAX_BYTES = 8 * 1024 * 1024
 _TOP_LEVEL_FIELDS = frozenset((
     "schema_version", "dataset_key", "batch_id", "batch_key",
@@ -63,7 +73,7 @@ def _invalid() -> None:
     raise LocalAcceptanceError("LOCAL_DECISION_FILE_INVALID")
 
 
-def _read_bounded(fd: int, maximum: int) -> str:
+def _read_bounded(fd: int, maximum: int) -> bytes:
     chunks: list[bytes] = []
     remaining = maximum + 1
     while remaining:
@@ -75,11 +85,7 @@ def _read_bounded(fd: int, maximum: int) -> str:
     raw = b"".join(chunks)
     if len(raw) > maximum:
         _invalid()
-    try:
-        return raw.decode("utf-8")
-    except UnicodeDecodeError:
-        _invalid()
-    raise AssertionError("unreachable")
+    return raw
 
 
 def _secure_owned_directory(descriptor: os.stat_result) -> bool:
@@ -248,6 +254,14 @@ def read_local_acceptance_intent(
 ) -> LocalAcceptanceIntent:
     """Read a bounded decision file only after descriptor and batch attestation."""
 
+    return read_local_acceptance_artifact(path, batch, private_root).intent
+
+
+def read_local_acceptance_artifact(
+    path: Path, batch: PersistedApprovalBatch, private_root: Path
+) -> LocalAcceptanceArtifact:
+    """Return the validated local intent with a hash of its opened descriptor."""
+
     fd = _open_decision_descriptor(Path(path), Path(private_root))
     try:
         descriptor = os.fstat(fd)
@@ -258,9 +272,14 @@ def read_local_acceptance_intent(
         ):
             _invalid()
         try:
-            payload = json.loads(_read_bounded(fd, _MAX_BYTES))
+            raw = _read_bounded(fd, _MAX_BYTES)
+            payload = json.loads(raw.decode("utf-8"))
         except (TypeError, ValueError, json.JSONDecodeError):
             _invalid()
     finally:
         os.close(fd)
-    return _validate_intent_against_batch(payload, batch)
+    return LocalAcceptanceArtifact(
+        intent=_validate_intent_against_batch(payload, batch),
+        locator=str(Path(path)),
+        content_hash=hashlib.sha256(raw).hexdigest(),
+    )

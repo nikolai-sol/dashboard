@@ -569,6 +569,27 @@ class ContentRegistryRepository:
             ("published", spreadsheet_id, projection_hash, int(batch_id), DATASET_KEY),
         )
 
+    def mark_local_batch_published(
+        self, batch_id: int, locator: str, content_hash: str
+    ) -> None:
+        """Persist a local receipt only for the one allowed draft transition."""
+
+        self._update_projection_status(
+            """
+            UPDATE portal_content_approval_batches
+            SET batch_status = %s,
+                spreadsheet_file_id = %s,
+                spreadsheet_projection_hash = %s,
+                published_at = CURRENT_TIMESTAMP(6),
+                failed_at = NULL,
+                failure_code = NULL
+            WHERE id = %s
+              AND dataset_key = %s
+              AND batch_status = 'draft'
+            """,
+            ("published", locator, content_hash, int(batch_id), DATASET_KEY),
+        )
+
     def mark_batch_projection_failed(self, batch_id: int, failure_code: str) -> None:
         self._update_projection_status(
             """

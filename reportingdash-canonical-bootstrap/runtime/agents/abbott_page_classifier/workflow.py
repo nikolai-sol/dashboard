@@ -27,12 +27,12 @@ from agents.abbott_page_classifier.sources import read_registry1, read_registry2
 
 
 COMMANDS = (
-    "reconcile", "classify", "publish-projection", "pull-accepted",
+    "reconcile", "classify", "publish-projection", "publish-local", "accept-local", "pull-accepted",
     "ingest", "materialize", "validate", "status",
 )
 _BATCH_COMMANDS = frozenset(COMMANDS) - {"reconcile", "classify"}
 _WRITE_COMMANDS = frozenset(
-    {"reconcile", "classify", "publish-projection", "ingest", "materialize", "validate"}
+    {"reconcile", "classify", "publish-projection", "publish-local", "accept-local", "ingest", "materialize", "validate"}
 )
 _SAFE_OUTPUT_KEYS = frozenset(
     {
@@ -49,6 +49,8 @@ class WorkflowGateway(Protocol):
     def reconcile(self, registry1: Path, registry2: Path, *, dry_run: bool) -> Mapping[str, object]: ...
     def classify(self, run_id: int, *, execute_llm: bool, dry_run: bool) -> Mapping[str, object]: ...
     def publish_projection(self, batch_id: int, *, dry_run: bool) -> Mapping[str, object]: ...
+    def publish_local(self, batch_id: int, decision_file: Path, *, dry_run: bool) -> Mapping[str, object]: ...
+    def accept_local(self, batch_id: int, decision_file: Path, *, dry_run: bool) -> Mapping[str, object]: ...
     def pull_accepted(self, batch_id: int, *, dry_run: bool) -> Mapping[str, object]: ...
     def ingest(self, batch_id: int, *, dry_run: bool) -> Mapping[str, object]: ...
     def materialize(self, batch_id: int, *, dry_run: bool) -> Mapping[str, object]: ...
@@ -165,6 +167,16 @@ def _default_store_factory():
     from agents.abbott_page_classifier.workflow_repository import MySqlWorkflowStore
 
     return MySqlWorkflowStore(_workflow_db_connection)
+
+
+def _local_decision_root() -> Path:
+    root = os.environ.get("ABBOTT_CONTENT_LOCAL_DECISION_ROOT", "").strip()
+    if not root:
+        raise WorkflowConfigurationError("LOCAL_DECISION_ROOT_REQUIRED")
+    path = Path(root)
+    if not path.is_absolute():
+        raise WorkflowConfigurationError("LOCAL_DECISION_ROOT_INVALID")
+    return path
 
 
 def _default_service_factory(store):
@@ -301,6 +313,64 @@ class ProductionWorkflowGateway:
             "rejected_count": projection.rejected_count,
             "no_change_count": projection.no_change_count,
             "published_input_hash": projection.published_input_hash,
+        }
+
+    def publish_local(self, batch_id: int, decision_file: Path, *, dry_run: bool) -> Mapping[str, object]:
+        if dry_run:
+            return {"status": "dry_run"}
+        from agents.abbott_page_classifier.local_acceptance import read_local_acceptance_artifact
+
+        store = self._store_factory()
+        history = store.load_batch_history(int(batch_id))
+        if history.batch_status != "draft":
+            raise WorkflowConfigurationError("BATCH_NOT_DRAFT")
+        batch = store.load_persisted_batch(int(batch_id))
+        store.attest_batch_for_publication(int(batch_id), batch.batch)
+        artifact = read_local_acceptance_artifact(
+            Path(decision_file), batch, _local_decision_root()
+        )
+        store.mark_local_batch_published(
+            int(batch_id), artifact.locator, artifact.content_hash
+        )
+        return {
+            "status": "published", "batch_id": int(batch_id),
+            "batch_key": batch.batch.batch_key,
+            "ready_count": history.ready_count, "conflict_count": history.conflict_count,
+            "unresolved_count": history.unresolved_count,
+            "rejected_count": history.rejected_count,
+            "no_change_count": history.no_change_count,
+            "published_input_hash": batch.batch.published_input_hash,
+        }
+
+    def accept_local(self, batch_id: int, decision_file: Path, *, dry_run: bool) -> Mapping[str, object]:
+        if dry_run:
+            return {"status": "dry_run"}
+        from agents.abbott_page_classifier.local_acceptance import read_local_acceptance_artifact
+
+        store = self._store_factory()
+        history = store.load_batch_history(int(batch_id))
+        if history.batch_status != "published":
+            raise WorkflowConfigurationError("BATCH_NOT_PUBLISHED")
+        batch = store.load_persisted_batch(int(batch_id))
+        store.attest_batch_for_acceptance(int(batch_id), batch.batch)
+        artifact = read_local_acceptance_artifact(
+            Path(decision_file), batch, _local_decision_root()
+        )
+        if (
+            history.spreadsheet_file_id != artifact.locator
+            or history.spreadsheet_projection_hash != artifact.content_hash
+        ):
+            raise WorkflowConfigurationError("LOCAL_PROJECTION_RECEIPT_MISMATCH")
+        snapshot = store.record_local_batch_acceptance(
+            int(batch_id), artifact.intent, artifact.locator
+        )
+        return {
+            "status": "accepted", "batch_id": int(batch_id),
+            "batch_key": snapshot.batch_key,
+            "published_input_hash": snapshot.published_input_hash,
+            "accepted_decision_hash": snapshot.accepted_decision_hash,
+            "accepted_count": snapshot.accepted_count,
+            "skipped_count": snapshot.skipped_count,
         }
 
     def pull_accepted(self, batch_id: int, *, dry_run: bool) -> Mapping[str, object]:
@@ -489,6 +559,7 @@ def _parser() -> argparse.ArgumentParser:
     parser.add_argument("--batch-id")
     parser.add_argument("--registry1")
     parser.add_argument("--registry2")
+    parser.add_argument("--decision-file")
     execution = parser.add_mutually_exclusive_group()
     execution.add_argument("--dry-run", action="store_true")
     execution.add_argument("--execute", action="store_true")
@@ -537,6 +608,10 @@ def main(
     )
     if args.execute_llm and args.command != "classify":
         return _error("ARGUMENTS_INVALID")
+    if args.decision_file is not None and args.command not in {"publish-local", "accept-local"}:
+        return _error("ARGUMENTS_INVALID")
+    if args.command in {"publish-local", "accept-local"} and not args.decision_file:
+        return _error("DECISION_FILE_REQUIRED")
     if args.command == "reconcile":
         if args.run_id is not None or args.batch_id is not None:
             return _error("IDENTIFIER_INVALID")
@@ -569,6 +644,10 @@ def main(
             result = gateway.classify(run_id, execute_llm=bool(args.execute_llm), dry_run=False)
         elif args.command == "publish-projection":
             result = gateway.publish_projection(batch_id, dry_run=False)
+        elif args.command == "publish-local":
+            result = gateway.publish_local(batch_id, Path(args.decision_file), dry_run=False)
+        elif args.command == "accept-local":
+            result = gateway.accept_local(batch_id, Path(args.decision_file), dry_run=False)
         elif args.command == "pull-accepted":
             result = gateway.pull_accepted(batch_id, dry_run=False)
         elif args.command == "ingest":
