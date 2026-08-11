@@ -162,6 +162,20 @@ Dashboard AI summary (`/api/dashboard/[id]/ai-summary/generate`):
 Do not assume `systemd` or port `3002` for `dashboard-next`.
 Current truth is `PM2 + 3001`.
 
+### VPS resource profile
+
+Measured on 2026-08-11: 4 vCPU, 5.8 GiB RAM with no swap, and a 78 GiB root
+filesystem with about 49 GiB available. The open-file limit is 1024.
+
+- Pure local computations may use up to 3 CPU workers.
+- Reserve one vCPU and memory headroom for MySQL, `dashboard-next`, nginx, and
+  monitoring.
+- Prefer indexed/bounded algorithms to multiplying workers.
+- Keep collectors, external APIs, migrations, canonical publication, release
+  validation, and activation single-writer.
+- With no swap, do not start concurrent memory-heavy builds or data jobs unless
+  current available memory has been checked.
+
 ### Agent model guidance
 
 - Agent model versions are selected in Codex configuration.
