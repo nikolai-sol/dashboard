@@ -82,14 +82,59 @@ def _read_bounded(fd: int, maximum: int) -> str:
     raise AssertionError("unreachable")
 
 
-def _under_private_root(path: Path, private_root: Path) -> bool:
+def _secure_owned_directory(descriptor: os.stat_result) -> bool:
+    return (
+        stat.S_ISDIR(descriptor.st_mode)
+        and descriptor.st_uid == os.geteuid()
+        and stat.S_IMODE(descriptor.st_mode) & 0o077 == 0
+    )
+
+
+def _decision_components(path: Path, private_root: Path) -> tuple[str, ...]:
     if not path.is_absolute() or not private_root.is_absolute():
-        return False
+        _invalid()
+    root_parts = private_root.parts
+    if path.parts[:len(root_parts)] != root_parts:
+        _invalid()
+    components = path.parts[len(root_parts):]
+    if not components or any(component in ("", ".", "..") for component in components):
+        _invalid()
+    return components
+
+
+def _open_decision_descriptor(path: Path, private_root: Path) -> int:
+    components = _decision_components(path, private_root)
+    no_follow = getattr(os, "O_NOFOLLOW", None)
+    directory = getattr(os, "O_DIRECTORY", None)
+    if no_follow is None or directory is None:
+        _invalid()
     try:
-        path.relative_to(private_root)
-    except ValueError:
-        return False
-    return path != private_root
+        current_fd = os.open(private_root, os.O_RDONLY | directory | no_follow)
+    except OSError:
+        _invalid()
+    try:
+        if not _secure_owned_directory(os.fstat(current_fd)):
+            _invalid()
+        for component in components[:-1]:
+            try:
+                child_fd = os.open(
+                    component, os.O_RDONLY | directory | no_follow, dir_fd=current_fd
+                )
+            except OSError:
+                _invalid()
+            os.close(current_fd)
+            current_fd = child_fd
+            if not _secure_owned_directory(os.fstat(current_fd)):
+                _invalid()
+        try:
+            decision_fd = os.open(
+                components[-1], os.O_RDONLY | no_follow, dir_fd=current_fd
+            )
+        except OSError:
+            _invalid()
+        return decision_fd
+    finally:
+        os.close(current_fd)
 
 
 def _object(value: object) -> Mapping[str, Any]:
@@ -203,15 +248,7 @@ def read_local_acceptance_intent(
 ) -> LocalAcceptanceIntent:
     """Read a bounded decision file only after descriptor and batch attestation."""
 
-    path = Path(path)
-    private_root = Path(private_root)
-    if not _under_private_root(path, private_root):
-        _invalid()
-    flags = os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0)
-    try:
-        fd = os.open(path, flags)
-    except OSError:
-        _invalid()
+    fd = _open_decision_descriptor(Path(path), Path(private_root))
     try:
         descriptor = os.fstat(fd)
         if (

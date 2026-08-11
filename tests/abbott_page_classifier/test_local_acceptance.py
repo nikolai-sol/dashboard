@@ -129,6 +129,27 @@ class LocalAcceptanceIntentTests(unittest.TestCase):
                     bad_path, self.persisted_batch, self.private_root
                 )
 
+    def test_local_intent_rejects_parent_traversal_and_intermediate_symlink_escape(self):
+        outside = Path(self.temporary_directory.name) / "outside"
+        outside.mkdir(mode=0o700)
+        escaped_file = outside / "decision.json"
+        escaped_file.write_text(json.dumps(self._payload()), encoding="utf-8")
+        escaped_file.chmod(0o600)
+        intermediate_symlink = self.private_root / "linked-directory"
+        intermediate_symlink.symlink_to(outside, target_is_directory=True)
+        parent_traversal = self.private_root / ".." / "outside" / "decision.json"
+
+        for bad_path in (
+            parent_traversal,
+            intermediate_symlink / "decision.json",
+        ):
+            with self.subTest(path=bad_path), self.assertRaisesRegex(
+                LocalAcceptanceError, "LOCAL_DECISION_FILE_INVALID"
+            ):
+                read_local_acceptance_intent(
+                    bad_path, self.persisted_batch, self.private_root
+                )
+
     def test_local_intent_rejects_reordered_or_mutated_identity_and_invalid_decision_fields(self):
         cases = []
         reordered = self._payload()
