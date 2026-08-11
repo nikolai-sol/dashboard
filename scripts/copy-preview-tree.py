@@ -46,7 +46,8 @@ def tree(root,src,parts,dst,seen):
     inode=(os.fstat(src).st_dev,os.fstat(src).st_ino)
     if inode in seen: fail('symlink creates directory cycle')
     seen=seen|{inode}
-    for e in os.scandir(src):
+    with os.scandir(src) as entries:
+      for e in entries:
         old=os.stat(e.name,dir_fd=src,follow_symlinks=False); targetparts=parts
         if stat.S_ISLNK(old.st_mode):
             targetparts=norm(parts,os.readlink(e.name,dir_fd=src)); fd=openat(root,targetparts); old=os.fstat(fd)
