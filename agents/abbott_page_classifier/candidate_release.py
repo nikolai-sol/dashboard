@@ -3997,6 +3997,19 @@ def _catalog_schema_gates(
                 ("lifecycle", codes.get("lifecycle"), labels.get("lifecycle")),
             )
             for kind, code, visible in mappings:
+                if (
+                    kind == "material_type"
+                    and str(code or "") == "service_page"
+                    and provenance.get("mode") in {
+                        "predecessor_catalog",
+                        "legacy_active_catalog_baseline",
+                    }
+                ):
+                    # ``service_page`` is a legacy non-content sentinel used by
+                    # the observed-page gate, not a selectable taxonomy term.
+                    # It may only survive unchanged from the active baseline;
+                    # current reviewed events remain subject to exact taxonomy.
+                    continue
                 label = taxonomy.get((kind, str(code or "")))
                 if label is None or (visible is not None and str(visible) != label):
                     out_of_taxonomy += 1
@@ -4187,7 +4200,8 @@ def validate_content_candidate(
                    batch.prompt_version, batch.model_routing_version,
                    batch.accepted_by, taxonomy.version AS taxonomy_version,
                    batch.accepted_at,
-                   batch.source_snapshot_ids, batch.source_snapshot_digests
+                   batch.source_snapshot_ids, batch.source_snapshot_digests,
+                   batch.projection_kind
             FROM portal_content_approval_batches AS batch
             INNER JOIN portal_content_taxonomy_versions AS taxonomy
               ON taxonomy.id = batch.taxonomy_version_id

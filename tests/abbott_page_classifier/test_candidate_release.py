@@ -1823,6 +1823,39 @@ class CandidateReleaseTest(unittest.TestCase):
 
         self.assertEqual(collisions, 0)
 
+    def test_validation_allows_only_legacy_service_page_sentinel(self):
+        legacy = replace(
+            catalog_row("1" * 64),
+            material_type="Сервисная страница",
+            material_type_code="service_page",
+            direction_code="cardiology",
+            access_code="all",
+            lifecycle_code="active",
+            lifecycle_label="active",
+            provenance_mode="predecessor_catalog",
+            predecessor_catalog_row_id=17,
+        )
+        current = replace(
+            legacy,
+            source_row_fingerprint="2" * 64,
+            provenance_mode="current_batch_event",
+            predecessor_catalog_row_id=None,
+        )
+        taxonomy = (
+            {"taxonomy_kind": "direction", "term_code": "cardiology", "term_label": "cardiology"},
+            {"taxonomy_kind": "access", "term_code": "all", "term_label": "all"},
+            {"taxonomy_kind": "lifecycle", "term_code": "active", "term_label": "active"},
+        )
+
+        self.assertEqual(
+            _catalog_schema_gates((_catalog_payload(legacy),), taxonomy)[1],
+            0,
+        )
+        self.assertEqual(
+            _catalog_schema_gates((_catalog_payload(current),), taxonomy)[1],
+            1,
+        )
+
     def test_legacy_visible_labels_are_projected_from_canonical_taxonomy(self):
         class LegacyLabelsConnection(CandidateConnection):
             def execute(self, sql, params=()):
@@ -3265,6 +3298,7 @@ class CandidateReleaseTest(unittest.TestCase):
             and "batch.candidate_release_id = %s" in query
         )
         self.assertIn("batch.accepted_at", validation_batch_sql)
+        self.assertIn("batch.projection_kind", validation_batch_sql)
 
     def test_read_only_validation_accepts_a_validated_candidate_for_comparison(self):
         connection = self._prepare_gate(
