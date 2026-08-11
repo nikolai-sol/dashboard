@@ -113,21 +113,85 @@ def _evidence_hashes(evidence: Iterable[tuple[str, str]]) -> tuple[str, ...]:
     )
 
 
-class IdentityResolver:
-    """Resolve only unambiguous canonical identities from supplied snapshots."""
+class _PreparedIdentityResolver:
+    """Resolve candidates against immutable indexes built once per snapshot."""
+
+    def __init__(
+        self,
+        entities: Iterable[CanonicalClassification],
+        aliases: Iterable[IdentityAlias],
+    ) -> None:
+        self.canonical_entities = tuple(entities)
+        self.entity_by_id = {
+            entity.content_entity_id: entity for entity in self.canonical_entities
+        }
+        usable_aliases = tuple(
+            alias for alias in aliases if alias.content_entity_id in self.entity_by_id
+        )
+        material_targets: dict[str, set[int]] = {}
+        url_targets: dict[str, set[tuple[str, int]]] = {}
+        slug_targets: dict[tuple[str, tuple[str, str]], set[int]] = {}
+        title_targets: dict[tuple[str, str], set[int]] = {}
+
+        for entity in self.canonical_entities:
+            normalized_url = normalize_url(entity.url).value
+            if normalized_url:
+                url_targets.setdefault(normalized_url, set()).add(
+                    ("canonical_url", entity.content_entity_id)
+                )
+        for alias in usable_aliases:
+            entity = self.entity_by_id[alias.content_entity_id]
+            if alias.strength == "strong" and alias.alias_kind == "material_id":
+                normalized = _normalized_alias_value("material_id", alias.alias_value)
+                if normalized:
+                    material_targets.setdefault(normalized, set()).add(
+                        alias.content_entity_id
+                    )
+            elif alias.strength == "strong" and alias.alias_kind in {
+                "canonical_url", "url"
+            }:
+                normalized = _normalized_alias_value(
+                    alias.alias_kind, alias.alias_value
+                )
+                if normalized:
+                    url_targets.setdefault(normalized, set()).add(
+                        (alias.alias_kind, alias.content_entity_id)
+                    )
+            elif alias.strength == "weak" and alias.alias_kind == "slug":
+                normalized = _normalized_alias_value("slug", alias.alias_value)
+                if normalized:
+                    slug_targets.setdefault(
+                        (normalized, _url_context(entity.url)), set()
+                    ).add(alias.content_entity_id)
+            elif (
+                alias.strength == "weak"
+                and alias.alias_kind == "title"
+                and entity.material_type_code is not None
+            ):
+                normalized = _normalized_alias_value("title", alias.alias_value)
+                if normalized:
+                    title_targets.setdefault(
+                        (normalized, entity.material_type_code), set()
+                    ).add(alias.content_entity_id)
+
+        self.material_targets = {
+            key: frozenset(value) for key, value in material_targets.items()
+        }
+        self.url_targets = {
+            key: frozenset(value) for key, value in url_targets.items()
+        }
+        self.slug_targets = {
+            key: frozenset(value) for key, value in slug_targets.items()
+        }
+        self.title_targets = {
+            key: frozenset(value) for key, value in title_targets.items()
+        }
 
     def resolve(
         self,
         candidate: MaterialCandidate | SourceCandidate,
-        entities: Iterable[CanonicalClassification],
-        aliases: Iterable[IdentityAlias],
     ) -> IdentityResolution:
         representative = candidate.candidate if isinstance(candidate, SourceCandidate) else candidate
-        canonical_entities = tuple(entities)
-        entity_by_id = {entity.content_entity_id: entity for entity in canonical_entities}
-        usable_aliases = tuple(
-            alias for alias in aliases if alias.content_entity_id in entity_by_id
-        )
         candidate_url = normalize_url(representative.url).value
         if isinstance(candidate, SourceCandidate):
             material_ids = {
@@ -159,26 +223,19 @@ class IdentityResolver:
 
         strong_evidence: list[tuple[str, int, str]] = []
         for material_id in material_ids:
-            for alias in usable_aliases:
-                if (
-                    alias.strength == "strong"
-                    and alias.alias_kind == "material_id"
-                    and _normalized_alias_value(alias.alias_kind, alias.alias_value)
-                    == _normalized_alias_value("material_id", material_id)
-                ):
-                    strong_evidence.append(("material_id", alias.content_entity_id, material_id))
+            normalized_material_id = _normalized_alias_value("material_id", material_id)
+            strong_evidence.extend(
+                ("material_id", entity_id, material_id)
+                for entity_id in self.material_targets.get(
+                    normalized_material_id, ()
+                )
+            )
 
         for occurrence_url in candidate_urls:
-            for entity in canonical_entities:
-                if normalize_url(entity.url).value == occurrence_url:
-                    strong_evidence.append(("canonical_url", entity.content_entity_id, occurrence_url))
-            for alias in usable_aliases:
-                if (
-                    alias.strength == "strong"
-                    and alias.alias_kind in {"canonical_url", "url"}
-                    and _normalized_alias_value(alias.alias_kind, alias.alias_value) == occurrence_url
-                ):
-                    strong_evidence.append((alias.alias_kind, alias.content_entity_id, occurrence_url))
+            strong_evidence.extend(
+                (kind, entity_id, occurrence_url)
+                for kind, entity_id in self.url_targets.get(occurrence_url, ())
+            )
 
         strong_targets = {entity_id for _, entity_id, _ in strong_evidence}
         if len(strong_targets) > 1:
@@ -210,17 +267,7 @@ class IdentityResolver:
         for variant_url, variant_title, material_type in weak_variants:
             slug = _slug_from_url(variant_url)
             candidate_context = _url_context(variant_url)
-            slug_matches = {
-                alias.content_entity_id
-                for alias in usable_aliases
-                if (
-                    alias.strength == "weak"
-                    and alias.alias_kind == "slug"
-                    and bool(slug)
-                    and _normalized_alias_value("slug", alias.alias_value) == slug
-                    and _url_context(entity_by_id[alias.content_entity_id].url) == candidate_context
-                )
-            }
+            slug_matches = self.slug_targets.get((slug, candidate_context), ()) if slug else ()
             if len(slug_matches) > 1:
                 return IdentityResolution("new_candidate", None, "none", None, ())
             if slug_matches:
@@ -229,19 +276,11 @@ class IdentityResolver:
                 matched_by_slug = True
 
             title = normalize_title(variant_title).casefold()
-            title_matches = {
-                alias.content_entity_id
-                for alias in usable_aliases
-                if (
-                    alias.strength == "weak"
-                    and alias.alias_kind == "title"
-                    and bool(title)
-                    and material_type is not None
-                    and _normalized_alias_value("title", alias.alias_value) == title
-                    and entity_by_id[alias.content_entity_id].material_type_code is not None
-                    and entity_by_id[alias.content_entity_id].material_type_code == material_type
-                )
-            }
+            title_matches = (
+                self.title_targets.get((title, material_type), ())
+                if title and material_type is not None
+                else ()
+            )
             if len(title_matches) > 1:
                 return IdentityResolution("new_candidate", None, "none", None, ())
             if title_matches:
@@ -259,3 +298,22 @@ class IdentityResolver:
             )
 
         return IdentityResolution("new_candidate", None, "none", None, ())
+
+
+class IdentityResolver:
+    """Resolve only unambiguous canonical identities from supplied snapshots."""
+
+    @staticmethod
+    def prepare(
+        entities: Iterable[CanonicalClassification],
+        aliases: Iterable[IdentityAlias],
+    ) -> _PreparedIdentityResolver:
+        return _PreparedIdentityResolver(entities, aliases)
+
+    def resolve(
+        self,
+        candidate: MaterialCandidate | SourceCandidate,
+        entities: Iterable[CanonicalClassification],
+        aliases: Iterable[IdentityAlias],
+    ) -> IdentityResolution:
+        return self.prepare(entities, aliases).resolve(candidate)

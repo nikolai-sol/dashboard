@@ -552,12 +552,12 @@ class CanonicalWeeklyProposalService:
         registry1: SourceSnapshot,
         registry2: SourceSnapshot,
     ) -> tuple[PersistedReconciliationItem, ...]:
-        resolver = IdentityResolver()
+        resolver = IdentityResolver.prepare(context.entities, context.aliases)
         entity_by_id = {entity.content_entity_id: entity for entity in context.entities}
         entries: list[tuple[str, SourceCandidate, object]] = []
         for source_name, snapshot in (("registry1", registry1), ("registry2", registry2)):
             for candidate in snapshot.candidates:
-                resolution = resolver.resolve(candidate, context.entities, context.aliases)
+                resolution = resolver.resolve(candidate)
                 entries.append((source_name, candidate, resolution))
 
         parents = list(range(len(entries)))

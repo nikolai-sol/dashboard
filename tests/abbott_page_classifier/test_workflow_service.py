@@ -314,6 +314,35 @@ class WeeklyProposalServiceTests(unittest.TestCase):
                 )
 
         self.assertEqual(receipt.catalog_gap_count, 2)
+
+    def test_registry_rows_use_prepared_identity_index(self):
+        active = CanonicalClassification(
+            7,
+            "Known",
+            "https://abbottpro.ru/cardio/new",
+            "cardiology",
+            "articles",
+            "all",
+            "active",
+            1,
+        )
+        with tempfile.TemporaryDirectory() as temporary:
+            registry1, registry2 = write_sources(Path(temporary))
+            store = StatefulWorkflowStore(context(entities=(active,)))
+            with patch.object(
+                IdentityResolver,
+                "resolve",
+                side_effect=AssertionError(
+                    "registry identity resolution must use the prepared index"
+                ),
+            ):
+                receipt = CanonicalWeeklyProposalService(store, CONFIG).reconcile(
+                    registry1, registry2
+                )
+
+        self.assertEqual(receipt.source_count, 1)
+        self.assertEqual(store.runs_by_id[receipt.run_id].items[0].identity_status, "matched")
+
     def test_active_catalog_gap_is_included_and_classified_without_entity_creation(self):
         entity = CanonicalClassification(
             7,
