@@ -66,7 +66,7 @@ every runbook entrypoint and each repository-local Python dependency.
 | `runtime/agents/abbott_page_classifier/sheets_sync.py` | `agents/abbott_page_classifier/sheets_sync.py` | `7e1e2ff2487d925d696e7c47426bea018fcf3e5bb3fcb045e3831919824cd31a` | Approval projection publisher and accepted snapshot reader |
 | `src/db/migrations/049_abbott_content_reconciliation_staging.sql` | `dashboard-next/src/db/migrations/049_abbott_content_reconciliation_staging.sql` | `783414b93e48edf29c5eece51de21db97bf37d9dfeeb6e01490e12729e6afca9` | Additive reconciliation staging schema; package only, never applied by runtime |
 | `src/db/migrations/050_abbott_content_url_identity.sql` | `dashboard-next/src/db/migrations/050_abbott_content_url_identity.sql` | `43340bffb352662ef25f5b9b841de8580d5948ad6d49ff2a47824b5d0be62094` | URL lookup identity schema; package only, never applied by runtime |
-| `src/db/migrations/051_abbott_content_url_alias_decisions.sql` | `dashboard-next/src/db/migrations/051_abbott_content_url_alias_decisions.sql` | `d58475989f43d43541094db4fef39c5ac23f9759f8c9a0e9766ecfa1c0f7710f` | Immutable reviewed URL-decision event authority; package only, never applied by runtime |
+| `src/db/migrations/051_abbott_content_url_alias_decisions.sql` | `dashboard-next/src/db/migrations/051_abbott_content_url_alias_decisions.sql` | `59277a9bbde2bc2916effc773acb8a3ec31d6f1bae93be44215fef9320954dab` | Immutable reviewed URL-decision event authority; package only, never applied by runtime |
 
 ## collectors/
 
