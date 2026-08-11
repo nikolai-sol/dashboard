@@ -595,6 +595,7 @@ class CandidateConnection:
                 for alias_type in ("canonical_url", "url"):
                     row = {
                         "approval_item_id": 102, "entity_id": 900,
+                        "entity_title": item["title"], "entity_material_id": None,
                         "entity_canonical_url": normalized_url,
                         "entity_status": "active",
                         "entity_source_evidence": source_evidence,
@@ -617,6 +618,24 @@ class CandidateConnection:
                         row["alias_hash"] = "0" * 64
                     if self.tamper_created_identity == "accepted_hash":
                         row["url_event_accepted_hash"] = "0" * 64
+                    if self.tamper_created_identity == "entity_title":
+                        row["entity_title"] = "Tampered title"
+                    if self.tamper_created_identity == "material_id":
+                        row["entity_material_id"] = "unexpected"
+                    if self.tamper_created_identity in {
+                        "source_sheet", "source_row_ordinal", "page_title"
+                    }:
+                        changed = plain_json(source_evidence)
+                        key = self.tamper_created_identity
+                        changed["provenance"][0][key] = (
+                            "tampered" if key != "source_row_ordinal" else 999
+                        )
+                        row["entity_source_evidence"] = changed
+                        row["alias_source_evidence"] = changed
+                    if self.tamper_created_identity == "alias_evidence":
+                        changed = plain_json(source_evidence)
+                        changed["actor"] = "tampered"
+                        row["alias_source_evidence"] = changed
                     rows.append(row)
                 self._many = rows
         elif "legacy_catalog.id AS predecessor_catalog_row_id" in normalized:
@@ -1217,26 +1236,30 @@ class FailedCandidateResetConnection:
 
 
 class CandidateReleaseTest(unittest.TestCase):
-    def test_lookup_uses_query_free_abbott_identity_for_catalog_alias_and_fact(self):
+    def test_lookup_preserves_distinct_semantic_query_aliases(self):
         row = replace(
             catalog_row("1" * 64),
-            normalized_url="https://www.abbottpro.ru/cardio/alpha?utm_source=x",
+            normalized_url="https://abbottpro.ru/cardio/alpha?view=doctor",
         )
         lookup = build_lookup_projection(
             (row,),
-            page_facts=({"page_url": "http://abbottpro.ru/cardio/alpha?semantic=1"},),
-            strong_aliases=({
-                "content_entity_id": row.content_entity_id,
-                "alias_type": "url",
-                "alias_value": "https://abbottpro.ru/cardio/alpha?another=2",
-            },),
+            strong_aliases=(
+                {
+                    "content_entity_id": row.content_entity_id,
+                    "alias_type": "url",
+                    "alias_value": "https://abbottpro.ru/cardio/alpha?view=patient",
+                },
+            ),
         )
 
         url_rows = [item for item in lookup if item.lookup_kind == "url"]
-        self.assertEqual(len(url_rows), 1)
+        self.assertEqual(len(url_rows), 2)
         self.assertEqual(
-            url_rows[0].lookup_key_hash,
-            sha256_text("https://abbottpro.ru/cardio/alpha"),
+            {item.lookup_key_hash for item in url_rows},
+            {
+                sha256_text("https://abbottpro.ru/cardio/alpha?view=doctor"),
+                sha256_text("https://abbottpro.ru/cardio/alpha?view=patient"),
+            },
         )
 
     def test_materializer_create_adds_catalog_row_and_unique_url_lookup(self):
@@ -1271,7 +1294,11 @@ class CandidateReleaseTest(unittest.TestCase):
         self.assertEqual(connection.events, ["start", "commit"])
 
     def test_materializer_rolls_back_on_created_identity_tamper_matrix(self):
-        for tamper in ("alias_hash", "accepted_hash"):
+        for tamper in (
+            "alias_hash", "accepted_hash", "entity_title", "material_id",
+            "source_sheet", "source_row_ordinal", "page_title",
+            "alias_evidence",
+        ):
             with self.subTest(tamper=tamper):
                 connection = CandidateConnection(
                     create_observed_page=True,

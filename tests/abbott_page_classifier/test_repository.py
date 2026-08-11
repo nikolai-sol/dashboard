@@ -602,9 +602,17 @@ class StatefulAcceptanceCursor:
 
 
 class StatefulAcceptanceConnection:
-    def __init__(self, batch, *, selected_entity_id: int, aliases=None):
+    def __init__(
+        self, batch, *, selected_entity_id: int, aliases=None,
+        batch_taxonomy_digest: str | None = None,
+        table_taxonomy_digest: str | None = None,
+        spreadsheet_file_id: str = "sheet-123",
+    ):
         self.batch = batch
         self.selected_entity_id = selected_entity_id
+        self.batch_taxonomy_digest = batch_taxonomy_digest or batch.taxonomy_digest
+        self.table_taxonomy_digest = table_taxonomy_digest or batch.taxonomy_digest
+        self.spreadsheet_file_id = spreadsheet_file_id
         self.approval_items = list(batch.items)
         self.aliases = copy.deepcopy(aliases or [])
         self.decision_events: list[dict[str, object]] = []
@@ -641,9 +649,9 @@ class StatefulAcceptanceConnection:
             for state in ("ready", "conflict", "unresolved", "rejected", "no_change")
         }
         return (
-            self.batch.batch_key, 3, self.batch.taxonomy_digest,
-            self.batch.taxonomy_version, self.batch.taxonomy_digest,
-            self.batch.published_input_hash, self.batch_status, "sheet-123",
+            self.batch.batch_key, 3, self.batch_taxonomy_digest,
+            self.batch.taxonomy_version, self.table_taxonomy_digest,
+            self.batch.published_input_hash, self.batch_status, self.spreadsheet_file_id,
             self.accepted_decision_hash, self.accepted_by, self.accepted_at,
             counts["ready"], counts["conflict"], counts["unresolved"],
             counts["rejected"], counts["no_change"], self.accepted_count,

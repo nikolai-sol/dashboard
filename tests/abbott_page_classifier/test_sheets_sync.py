@@ -733,6 +733,51 @@ class SheetsProjectionTests(unittest.TestCase):
         second = read_accepted_projection(approval_batch, gateway)
         self.assertNotEqual(first.accepted_decision_hash, second.accepted_decision_hash)
 
+    def test_sheets_create_is_rejected_before_repository_mutation(self):
+        gateway = FakeSheetsGateway()
+        collision = replace(
+            item(2, "conflict"),
+            conflict_codes=("IDENTITY_COLLISION",),
+        )
+        approval_batch = build_batch(
+            (collision,),
+            TaxonomyVersion(
+                version="abbott.v1",
+                terms={
+                    "direction": tuple(sorted(DIRECTION_CODES)),
+                    "material_type": tuple(sorted(MATERIAL_TYPE_CODES)),
+                    "access": tuple(sorted(ACCESS_CODES)),
+                    "lifecycle": tuple(sorted(LIFECYCLE_CODES)),
+                },
+                digest=compute_taxonomy_digest("abbott.v1", {
+                    "direction": tuple(sorted(DIRECTION_CODES)),
+                    "material_type": tuple(sorted(MATERIAL_TYPE_CODES)),
+                    "access": tuple(sorted(ACCESS_CODES)),
+                    "lifecycle": tuple(sorted(LIFECYCLE_CODES)),
+                }),
+            ),
+            "prompt.v1", source_snapshot_ids=(101,),
+            source_snapshot_digests=("a" * 64,),
+            model_routing_version="routing.v1",
+        )
+        repository = FakeRepository(approval_batch)
+        publish_projection(approval_batch, gateway)
+        gateway.accept()
+        gateway.edit_item("Конфликты", 2, "Кандидат entity ID", 41)
+        gateway.edit_item("Конфликты", 2, "Решение по URL", "create")
+        gateway.edit_item("Конфликты", 2, "Причина решения", "create locally")
+
+        with self.assertRaises(ProjectionValidationError) as raised:
+            persist_accepted_projection(
+                persisted(approval_batch), gateway, repository
+            )
+
+        self.assertEqual(raised.exception.code, "URL_ALIAS_DECISION_INVALID")
+        self.assertEqual(
+            [name for name, _value in repository.calls],
+            ["attest_batch_for_acceptance"],
+        )
+
     def test_read_rejects_formula_in_an_editable_decision_cell(self):
         gateway = FakeSheetsGateway()
         approval_batch = batch()

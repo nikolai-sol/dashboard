@@ -217,6 +217,22 @@ class AbbottRuntimeClosureTest(unittest.TestCase):
                 entries[path],
             )
 
+    def test_every_runtime_manifest_entry_matches_its_root_file(self):
+        manifest = ROOT / "ops/abbott-runtime-manifest.sha256"
+        seen: set[str] = set()
+        for line in manifest.read_text(encoding="utf-8").splitlines():
+            digest, path = line.split("  ", 1)
+            self.assertNotIn(path, seen)
+            seen.add(path)
+            target = ROOT / path
+            self.assertTrue(target.is_file(), path)
+            self.assertEqual(
+                hashlib.sha256(target.read_bytes()).hexdigest(),
+                digest,
+                path,
+            )
+        self.assertTrue(seen)
+
     def test_attested_runtime_uses_python38_compatible_syntax(self):
         manifest = (ROOT / "ops/abbott-runtime-manifest.sha256").read_text()
         for line in manifest.splitlines():
