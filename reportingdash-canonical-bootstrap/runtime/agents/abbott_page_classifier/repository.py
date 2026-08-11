@@ -324,7 +324,9 @@ class ContentRegistryRepository:
               decision_reason,
               proposal_evidence,
               conflict_codes,
-              conflict_code
+              conflict_code,
+              selected_content_entity_id,
+              url_alias_decision
             FROM portal_content_approval_items
             WHERE approval_batch_id = %s
             ORDER BY content_entity_id, input_hash
@@ -349,7 +351,11 @@ class ContentRegistryRepository:
         if published_keys != accepted_keys:
             raise RepositoryError("BATCH_ITEMS_MISMATCH")
         accepted_hash = compute_accepted_decision_hash(items)
-        accepted_count = counts["ready"]
+        accepted_count = sum(
+            item.readiness_state == "ready"
+            or item.url_alias_decision == "create"
+            for item in items
+        )
         skipped_count = len(items) - accepted_count
         if (
             accepted_hash != history.accepted_decision_hash
