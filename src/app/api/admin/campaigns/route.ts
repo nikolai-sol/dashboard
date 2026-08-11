@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
 import { getSchemaMetaByPlatform } from "@/lib/schema-registry";
 import { getCampaignNames } from "@/lib/canonical-adapter";
-import { resolveSourceType } from "@/lib/source-mapping";
+import { resolveSourceKey, resolveSourceType } from "@/lib/source-mapping";
 
 function parseAccountIds(value: string): string[] {
   return value
@@ -16,6 +16,7 @@ export async function GET(request: Request) {
     const platform = String(url.searchParams.get("platform") ?? "")
       .trim()
       .toLowerCase();
+    const sourcePlatform = resolveSourceKey(platform);
     const search = String(url.searchParams.get("search") ?? "").trim();
     const accountIds = parseAccountIds(String(url.searchParams.get("account_ids") ?? ""));
     const dateFrom = String(url.searchParams.get("date_from") ?? "").trim();
@@ -25,7 +26,7 @@ export async function GET(request: Request) {
       return NextResponse.json({ error: "platform query param is required" }, { status: 400 });
     }
 
-    const schemaMeta = getSchemaMetaByPlatform(platform);
+    const schemaMeta = getSchemaMetaByPlatform(sourcePlatform);
     if (!schemaMeta) {
       return NextResponse.json({ campaigns: [], total: 0, message: "Platform schema not found" });
     }
@@ -48,7 +49,7 @@ export async function GET(request: Request) {
       return {
         id,
         name: String(row.name),
-        platform,
+        platform: sourcePlatform,
         copyable_id: id,
       };
     });
