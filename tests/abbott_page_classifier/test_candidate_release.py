@@ -24,6 +24,7 @@ from agents.abbott_page_classifier.candidate_release import (
     _load_catalog,
     _load_lookup,
     _overlay_current_batch_events,
+    _authorize_prior_accepted_events,
     _authorize_created_page_identities,
     build_lookup_projection,
     acknowledge_content_candidate_activation,
@@ -2138,7 +2139,7 @@ class CandidateReleaseTest(unittest.TestCase):
         self.assertEqual(provenance["predecessor_catalog_row_id"], 1001)
         self.assertEqual(provenance["source_row_fingerprint"], "1" * 64)
 
-    def test_materialization_derives_only_from_predecessor_and_current_batch(self):
+    def test_materialization_replays_latest_prior_accepted_events(self):
         connection = CandidateConnection()
         with (
             patch(
@@ -2162,7 +2163,18 @@ class CandidateReleaseTest(unittest.TestCase):
         self.assertIn("event.proposal_evidence", sql)
         self.assertIn("analytics_scope = 'page'", sql)
         self.assertIn("'$.page_url'", sql)
-        self.assertNotIn("WITH latest_events AS", sql)
+        self.assertIn("WITH latest_events AS", sql)
+        prior_sql = next(
+            statement
+            for statement, _params in connection.calls
+            if "WITH latest_events AS" in statement
+        )
+        self.assertIn(
+            "batch.batch_status IN ('accepted','ingested','candidate_materialized')",
+            prior_sql,
+        )
+        self.assertIn("event.approval_batch_id <> %s", prior_sql)
+        self.assertIn("event.row_rank = 1", prior_sql)
         self.assertIn("batch.source_snapshot_ids", sql)
         self.assertIn("batch.source_snapshot_digests", sql)
         self.assertIn("'$.registry1.material_id'", sql)
@@ -2485,7 +2497,79 @@ class CandidateReleaseTest(unittest.TestCase):
             "portal_content_registry_aliases AS alias_row",
             legacy_resolution_sql,
         )
-        self.assertNotIn("latest_events", sql)
+        self.assertIn("latest_events", sql)
+
+    def test_prior_accepted_event_rejects_item_classification_tamper(self):
+        accepted_hash = "a" * 64
+        accepted_at = datetime(2026, 8, 4, 10, 0)
+        item_evidence = {"source": "reviewed-batch"}
+        event_evidence = {
+            "accepted_decision_hash": accepted_hash,
+            "approval_item_evidence": item_evidence,
+            "row_hash": "b" * 64,
+        }
+        row = {
+            "authorized_entity_id": 900,
+            "content_entity_id": 900,
+            "classification_event_id": 800,
+            "approval_batch_id": 70,
+            "approval_item_id": 700,
+            "taxonomy_version_id": 5,
+            "direction_code": "cardiology",
+            "material_type_code": "articles",
+            "access_code": "all",
+            "lifecycle_code": "active",
+            "event_kind": "approve",
+            "predecessor_event_id": None,
+            "proposal_evidence": event_evidence,
+            "actor": "content-manager",
+            "reason": "reviewed prior classification",
+            "effective_at": accepted_at,
+            "direction_label": "Кардиология [262338]",
+            "material_type_label": "Статьи",
+            "access_label": "Все",
+            "lifecycle_label": "active",
+            "authority_accepted_hash": accepted_hash,
+            "authority_accepted_by": "content-manager",
+            "authority_accepted_at": accepted_at,
+            "authority_content_entity_id": 900,
+            "authority_selected_entity_id": None,
+            "authority_url_decision": None,
+            "authority_row_hash": "b" * 64,
+            "authority_decision_reason": "reviewed prior classification",
+            "authority_item_evidence": item_evidence,
+            "authority_direction_code": "cardiology",
+            "authority_material_type_code": "articles",
+            "authority_access_code": "all",
+            "authority_lifecycle_code": "active",
+        }
+        row["event_fingerprint"] = compute_classification_event_fingerprint(
+            {
+                "access_code": row["access_code"],
+                "actor": row["actor"],
+                "approval_batch_id": row["approval_batch_id"],
+                "approval_item_id": row["approval_item_id"],
+                "content_entity_id": row["content_entity_id"],
+                "direction_code": row["direction_code"],
+                "effective_at": accepted_at.isoformat(timespec="microseconds"),
+                "event_kind": row["event_kind"],
+                "lifecycle_code": row["lifecycle_code"],
+                "material_type_code": row["material_type_code"],
+                "predecessor_event_id": None,
+                "proposal_evidence": event_evidence,
+                "reason": row["reason"],
+                "taxonomy_version_id": row["taxonomy_version_id"],
+            }
+        )
+
+        _authorize_prior_accepted_events((row,))
+        with self.assertRaisesRegex(
+            CandidateMaterializationError,
+            "PRIOR_ACCEPTED_EVENT_UNAUTHORIZED",
+        ):
+            _authorize_prior_accepted_events(
+                ({**row, "authority_material_type_code": "video"},)
+            )
 
     def test_first_post_046_successor_rejects_ambiguous_legacy_identity(self):
         connection = CandidateConnection(
@@ -2833,6 +2917,14 @@ class CandidateReleaseTest(unittest.TestCase):
         self.assertIn("item.final_material_type_code", sql)
         self.assertIn("item.proposal_evidence", sql)
         self.assertIn("resolution_status IN ('unique', 'identical_collapsed')", sql)
+        observed_sql = next(
+            query
+            for query, _params in connection.calls
+            if "AS non_content_unresolved" in query
+        )
+        self.assertIn("COUNT(*) AS fact_count", observed_sql)
+        self.assertIn("* facts.fact_count", observed_sql)
+        self.assertIn("GROUP BY canonical_release_id, normalized_path", observed_sql)
         validation_batch_sql = next(
             query for query, _ in connection.calls
             if "FROM portal_content_approval_batches AS batch" in query
