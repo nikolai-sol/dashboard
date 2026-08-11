@@ -118,6 +118,13 @@ class AbbottContentReconciliationSchemaTests(unittest.TestCase):
     def test_url_identity_roles_have_only_the_required_authority(self):
         normalized = " ".join(self.grants.split())
         self.assertIn(
+            "GRANT UPDATE (projection_kind, local_projection_locator, "
+            "local_projection_content_hash) "
+            "ON report_bd.portal_content_approval_batches "
+            "TO 'abbott_content_workflow_role';",
+            normalized,
+        )
+        self.assertIn(
             "GRANT SELECT ON report_bd.canonical_fact_metrika_site_analytics_daily "
             "TO 'abbott_content_workflow_role';",
             normalized,

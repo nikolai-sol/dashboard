@@ -577,6 +577,10 @@ GRANT SELECT, INSERT, UPDATE (batch_status, accepted_decision_hash, ready_count,
                               accepted_at, ingested_at)
   ON report_bd.portal_content_approval_batches
   TO 'abbott_content_workflow_role';
+GRANT UPDATE (projection_kind, local_projection_locator,
+              local_projection_content_hash)
+  ON report_bd.portal_content_approval_batches
+  TO 'abbott_content_workflow_role';
 GRANT SELECT, INSERT, UPDATE (final_direction_code, final_material_type_code,
                               final_access_code, final_lifecycle_code,
                               decision_reason)
