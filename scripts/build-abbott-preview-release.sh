@@ -16,6 +16,32 @@ reject_nonregular_tree(){
     fi
   done < <(find -P "$root" -print0)
 }
+materialize_internal_symlinks(){
+  local root="$1" path target temporary found
+  [[ -d "$root" && ! -L "$root" ]] || fail 'preview tree is incomplete'
+  while :; do
+    found=0
+    while IFS= read -r -d '' path; do
+      found=1
+    target="$(realpath -e -- "$path")" || fail 'preview tree has dangling symlink'
+    [[ "$target" == "$root" || "$target" == "$root/"* ]] || fail 'preview tree symlink escapes source'
+    temporary="${path}.materialize.$$"
+    [[ ! -e "$temporary" && ! -L "$temporary" ]] || fail 'preview materialization collision'
+    if [[ -d "$target" ]]; then
+      mkdir "$temporary"
+      cp -a -- "$target/." "$temporary/"
+    elif [[ -f "$target" ]]; then
+      cp -aL -- "$target" "$temporary"
+    else
+      fail 'preview tree symlink targets nonregular object'
+    fi
+    rm -- "$path"
+      mv -- "$temporary" "$path"
+      break
+    done < <(find -P "$root" -type l -print0)
+    (( found )) || return
+  done
+}
 reject_symlink_ancestors "$APP_DIR"
 APP_DIR="$(physical "$APP_DIR")"
 [[ "$APP_DIR" != /var/www/dashboard && "$APP_DIR" != /var/www/dashboard/* ]] || fail 'preview source is forbidden'
@@ -27,6 +53,7 @@ if [[ "${DRY_RUN:-0}" != 1 ]]; then [[ "$ROOT" == /srv/reportingdash/abbott-prev
 RELEASE_DIR="$ROOT/$RUN_ID"; [[ ! -e "$RELEASE_DIR" && ! -L "$RELEASE_DIR" ]] || fail 'preview release already exists'
 if [[ "${DRY_RUN:-0}" != 1 ]]; then (cd "$APP_DIR"; npm ci; npm run security:public-assets; npm run ci:verify; npm run build); fi
 for p in "$APP_DIR/.next/standalone" "$APP_DIR/.next/static" "$APP_DIR/public"; do
+  materialize_internal_symlinks "$p"
   reject_nonregular_tree "$p"
 done
 [[ -f "$APP_DIR/.next/standalone/server.js" ]] || fail 'standalone output is incomplete'
