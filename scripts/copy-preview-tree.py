@@ -51,22 +51,40 @@ def copy_file(fd, destination):
         shutil.copyfileobj(source, target)
 
 
+def checked_open(directory, name, flags, expected):
+    fd = os.open(name, flags | NOFOLLOW, dir_fd=directory)
+    actual = os.fstat(fd)
+    if (actual.st_dev, actual.st_ino, stat.S_IFMT(actual.st_mode)) != (expected.st_dev, expected.st_ino, stat.S_IFMT(expected.st_mode)) or (stat.S_ISREG(actual.st_mode) and actual.st_nlink != 1):
+        os.close(fd); fail("changed, hard-linked, or nonregular during copy")
+    return fd
+
+
 def copy_entry(rootfd, sourcefd, components, name, destination):
     metadata = os.stat(name, dir_fd=sourcefd, follow_symlinks=False)
     if stat.S_ISLNK(metadata.st_mode):
         target = os.readlink(name, dir_fd=sourcefd)
-        fd = open_under(rootfd, normalized(components, target))
+        if target.startswith("/"):
+            fail("symlink escapes source")
+        resolved = normalized(components, target)
+        if resolved == components or components[:len(resolved)] == resolved:
+            fail("symlink creates directory cycle")
+        fd = open_under(rootfd, resolved)
         metadata = os.fstat(fd)
         if stat.S_ISREG(metadata.st_mode):
             copy_file(fd, destination); return
         if stat.S_ISDIR(metadata.st_mode):
-            os.mkdir(destination); copy_tree(rootfd, fd, normalized(components, target), destination); os.close(fd); return
+            os.mkdir(destination); copy_tree(rootfd, fd, resolved, destination); os.close(fd); return
         os.close(fd); fail("symlink targets nonregular object")
     if stat.S_ISREG(metadata.st_mode):
-        copy_file(os.open(name, os.O_RDONLY | NOFOLLOW, dir_fd=sourcefd), destination); return
+        if metadata.st_nlink != 1:
+            fail("contains hard-linked object")
+        copy_file(checked_open(sourcefd, name, os.O_RDONLY, metadata), destination); return
     if stat.S_ISDIR(metadata.st_mode):
-        fd = os.open(name, os.O_RDONLY | DIRECTORY | NOFOLLOW, dir_fd=sourcefd)
-        os.mkdir(destination); copy_tree(rootfd, fd, components + [name], destination); os.close(fd); return
+        fd = checked_open(sourcefd, name, os.O_RDONLY | DIRECTORY, metadata)
+        if os.path.lexists(destination) and not os.path.isdir(destination):
+            os.close(fd); fail("destination collision")
+        if not os.path.exists(destination): os.mkdir(destination)
+        copy_tree(rootfd, fd, components + [name], destination); os.close(fd); return
     fail("contains nonregular object")
 
 
