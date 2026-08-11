@@ -9,7 +9,6 @@ separate stages.
 from __future__ import annotations
 
 from dataclasses import dataclass, replace
-from decimal import Decimal
 import json
 from pathlib import Path
 from typing import Callable, Mapping, Protocol, Sequence
@@ -781,7 +780,7 @@ class CanonicalWeeklyProposalService:
                 access_code="unspecified",
                 lifecycle_code="active",
                 rule_code="SERVICE_ROUTE",
-                confidence=Decimal("1.0"),
+                confidence=1.0,
                 evidence=("reviewed service route",),
             ) if service_route else None
             conflict = len(
