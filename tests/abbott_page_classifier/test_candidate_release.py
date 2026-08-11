@@ -1323,6 +1323,44 @@ class CandidateReleaseTest(unittest.TestCase):
             (),
         )
 
+    def test_ignores_reviewed_attach_that_already_has_classification_event(self):
+        item = {
+            "content_entity_id": 41,
+            "selected_content_entity_id": 41,
+            "url_alias_decision": "attach",
+            "readiness_state": "unresolved",
+            "decision_reason": "reviewed observed URL for current entity",
+            "final_direction_code": "cardiology",
+            "final_material_type_code": "articles",
+            "final_access_code": "all",
+            "final_lifecycle_code": "active",
+            "proposal_evidence": {
+                "current_canonical": {
+                    "content_entity_id": 41,
+                    "event_id": 700,
+                    "direction_code": "cardiology",
+                    "material_type_code": "articles",
+                    "access_code": "all",
+                    "lifecycle_code": "active",
+                }
+            },
+            "row_hash": "b" * 64,
+        }
+
+        _authorize_current_batch_events(
+            (),
+            {101: item},
+            {
+                "id": 10,
+                "taxonomy_version_id": 5,
+                "accepted_decision_hash": "a" * 64,
+                "accepted_by": "content-manager",
+                "accepted_at": datetime(2026, 8, 11, 12, 0, 0),
+                "projection_kind": "local",
+            },
+            (),
+        )
+
     def test_lookup_preserves_distinct_semantic_query_aliases(self):
         row = replace(
             catalog_row("1" * 64),
