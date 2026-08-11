@@ -1803,6 +1803,46 @@ class ContentRegistryRepositoryTests(unittest.TestCase):
         self.assertEqual(result.unresolved_count, 1)
         self.assertEqual(result.rejected_count, 1)
 
+    def test_ingest_local_created_identity_uses_persisted_modality_and_count(self):
+        item = replace(
+            workflow_batch().items[0],
+            content_entity_id=None,
+            url="https://abbottpro.ru/articles/observed-page",
+            readiness_state="unresolved",
+            conflict_codes=(),
+            selected_content_entity_id=88,
+            url_alias_decision="create",
+            decision_reason="reviewed observed page",
+            current_canonical=None,
+            registry1_values={
+                "source_name": "observed_page",
+                "url": "https://abbottpro.ru/articles/observed-page",
+            },
+        )
+        item = replace(item, row_hash=compute_item_hash(item))
+        batch_row = list(accepted_batch_row(items=(item,)))
+        batch_row[16] = 1
+        batch_row[17] = 0
+        batch_row.append("local")
+        connection = RecordingConnection(
+            batch_row=tuple(batch_row),
+            ingest_items=(item,),
+        )
+        repository = ContentRegistryRepository(lambda: connection)
+        snapshot = replace(
+            accepted_snapshot(item),
+            accepted_count=1,
+            skipped_count=0,
+        )
+
+        result = repository.ingest_accepted_snapshot(snapshot)
+
+        self.assertEqual(result.status, "ingested")
+        self.assertEqual(result.accepted_count, 1)
+        self.assertEqual(connection.event_insert_count, 0)
+        self.assertEqual(connection.commit_count, 1)
+        self.assertEqual(connection.rollback_count, 0)
+
     def test_ingest_rejects_stored_acceptance_count_mismatch_before_any_write(self):
         item = approval_item(41)
         batch_row = list(accepted_batch_row(items=(item,)))
