@@ -14,6 +14,7 @@ from openpyxl import load_workbook
 
 from .domain import CanonicalClassification, MaterialCandidate
 from .normalization import (
+    normalize_observed_page_grouping_url,
     normalize_taxonomy_label,
     normalize_title,
     normalize_url,
@@ -85,6 +86,7 @@ class ObservedPage:
     pageviews: int
     first_seen: date
     last_seen: date
+    exact_url_hashes: tuple[str, ...] = ()
 
 
 def collapse_observed_pages(values: Iterable[ObservedPage]) -> tuple[ObservedPage, ...]:
@@ -92,15 +94,27 @@ def collapse_observed_pages(values: Iterable[ObservedPage]) -> tuple[ObservedPag
 
     grouped: dict[str, ObservedPage] = {}
     for value in values:
-        normalized_url = normalize_url(value.normalized_url).value
-        if not normalized_url or value.pageviews <= 0 or value.first_seen > value.last_seen:
+        exact_url = normalize_url(value.normalized_url).value
+        normalized_url = normalize_observed_page_grouping_url(
+            value.normalized_url
+        ).value
+        if (
+            not exact_url
+            or not normalized_url
+            or value.pageviews <= 0
+            or value.first_seen > value.last_seen
+        ):
             continue
+        exact_hashes = tuple(
+            sorted({*value.exact_url_hashes, sha256_text(exact_url)})
+        )
         candidate = ObservedPage(
             normalized_url=normalized_url,
             page_title=normalize_title(value.page_title),
             pageviews=int(value.pageviews),
             first_seen=value.first_seen,
             last_seen=value.last_seen,
+            exact_url_hashes=exact_hashes,
         )
         previous = grouped.get(normalized_url)
         if previous is None:
@@ -112,6 +126,9 @@ def collapse_observed_pages(values: Iterable[ObservedPage]) -> tuple[ObservedPag
             pageviews=previous.pageviews + candidate.pageviews,
             first_seen=min(previous.first_seen, candidate.first_seen),
             last_seen=max(previous.last_seen, candidate.last_seen),
+            exact_url_hashes=tuple(
+                sorted({*previous.exact_url_hashes, *candidate.exact_url_hashes})
+            ),
         )
     return tuple(grouped[key] for key in sorted(grouped))
 

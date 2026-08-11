@@ -246,11 +246,28 @@ class CanonicalWeeklyProposalService:
         ):
             raise ValueError("TAXONOMY_CONTRACT_MISMATCH")
         items = self._build_items(context, registry1, registry2)
+        observed_pages = collapse_observed_pages(context.observed_pages)
+        observed_pages_hash = sha256_text(
+            _canonical_json(
+                [
+                    {
+                        "exact_url_hashes": page.exact_url_hashes,
+                        "first_seen": page.first_seen.isoformat(),
+                        "last_seen": page.last_seen.isoformat(),
+                        "normalized_url": page.normalized_url,
+                        "page_title": page.page_title,
+                        "pageviews": page.pageviews,
+                    }
+                    for page in observed_pages
+                ]
+            )
+        )
         run_key = sha256_text(
             _canonical_json(
                 {
                     "code_revision": self._configuration.code_revision,
                     "model_routing_version": self._configuration.model_routing_version,
+                    "observed_pages_hash": observed_pages_hash,
                     "predecessor_release_id": context.predecessor_release_id,
                     "predecessor_snapshot_digests": context.predecessor_snapshot_digests,
                     "predecessor_snapshot_ids": context.predecessor_snapshot_ids,
@@ -526,7 +543,7 @@ class CanonicalWeeklyProposalService:
         def add(targets: dict[str, set[int]], url: str, entity_id: int) -> None:
             normalized = normalize_url(url).value
             if normalized:
-                targets.setdefault(normalized, set()).add(entity_id)
+                targets.setdefault(sha256_text(normalized), set()).add(entity_id)
 
         for entity in entities:
             add(all_targets, entity.url, entity.content_entity_id)
@@ -541,8 +558,14 @@ class CanonicalWeeklyProposalService:
                 add(usable_targets, alias.alias_value, alias.content_entity_id)
 
         return (
-            {url: frozenset(targets) for url, targets in all_targets.items()},
-            {url: frozenset(targets) for url, targets in usable_targets.items()},
+            {
+                url_hash: frozenset(targets)
+                for url_hash, targets in all_targets.items()
+            },
+            {
+                url_hash: frozenset(targets)
+                for url_hash, targets in usable_targets.items()
+            },
         )
 
     @staticmethod
@@ -752,7 +775,6 @@ class CanonicalWeeklyProposalService:
             )
         )
         for observed in collapse_observed_pages(context.observed_pages):
-            normalized_observed_url = normalize_url(observed.normalized_url).value
             candidate = MaterialCandidate(
                 source_name="observed_page",
                 source_row_id=f"observed:{observed.normalized_url}",
@@ -767,9 +789,21 @@ class CanonicalWeeklyProposalService:
                     "url": observed.normalized_url, "title": observed.page_title,
                     "pageviews": observed.pageviews, "first_seen": observed.first_seen.isoformat(),
                     "last_seen": observed.last_seen.isoformat(),
+                    "exact_url_hashes": observed.exact_url_hashes,
                 })),
             )
-            if len(strong_url_targets.get(normalized_observed_url, ())) == 1:
+            exact_target_sets = tuple(
+                strong_url_targets.get(url_hash, frozenset())
+                for url_hash in observed.exact_url_hashes
+            )
+            exact_targets = (
+                set().union(*exact_target_sets) if exact_target_sets else set()
+            )
+            if (
+                exact_target_sets
+                and all(len(targets) == 1 for targets in exact_target_sets)
+                and len(exact_targets) == 1
+            ):
                 continue
             service_route = normalize_url(observed.normalized_url).path in {
                 "/auth", "/registration.php", "/personal", "/rules", "/privacy", "/cookies", "/sitemap.php",
@@ -783,8 +817,15 @@ class CanonicalWeeklyProposalService:
                 confidence=1.0,
                 evidence=("reviewed service route",),
             ) if service_route else None
-            conflict = len(
-                usable_strong_url_targets.get(normalized_observed_url, ())
+            usable_target_sets = tuple(
+                usable_strong_url_targets.get(url_hash, frozenset())
+                for url_hash in observed.exact_url_hashes
+            )
+            usable_targets = (
+                set().union(*usable_target_sets) if usable_target_sets else set()
+            )
+            conflict = any(len(targets) > 1 for targets in usable_target_sets) or len(
+                usable_targets
             ) > 1
             reconciliation_input = ReconciliationInput(
                 registry1=candidate,

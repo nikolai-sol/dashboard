@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from dataclasses import replace
 from pathlib import Path
+import json
 import tempfile
 import unittest
 from datetime import date
@@ -25,6 +26,7 @@ from agents.abbott_page_classifier.llm_classifier import (
     LlmAttempt,
     LlmClassification,
 )
+from agents.abbott_page_classifier.normalization import sha256_text
 from agents.abbott_page_classifier.reconcile import reconcile_entity
 from agents.abbott_page_classifier.workflow_service import (
     CanonicalWeeklyProposalService,
@@ -32,6 +34,7 @@ from agents.abbott_page_classifier.workflow_service import (
     ReconciliationContext,
     WorkflowConfiguration,
 )
+from agents.abbott_page_classifier.workflow_repository import _input_payload
 from agents.abbott_page_classifier.sources import collapse_observed_pages
 
 
@@ -258,7 +261,16 @@ class WeeklyProposalServiceTests(unittest.TestCase):
         collapsed = collapse_observed_pages((first, second))
         self.assertEqual(
             collapsed,
-            (ObservedPage("https://abbottpro.ru/unknown", "Two", 5, date(2026, 8, 1), date(2026, 8, 2)),),
+            (
+                ObservedPage(
+                    "https://abbottpro.ru/unknown",
+                    "Two",
+                    5,
+                    date(2026, 8, 1),
+                    date(2026, 8, 2),
+                    (sha256_text("https://abbottpro.ru/unknown"),),
+                ),
+            ),
         )
         with tempfile.TemporaryDirectory() as temporary:
             registry1, registry2 = write_empty_sources(Path(temporary))
@@ -267,6 +279,170 @@ class WeeklyProposalServiceTests(unittest.TestCase):
 
         self.assertEqual(receipt.catalog_gap_count, 1)
         self.assertEqual(len(store.runs_by_id[receipt.run_id].items), 1)
+
+    def test_observed_query_variants_collapse_to_one_page_path_identity(self):
+        first = ObservedPage(
+            "https://abbottpro.ru/academy/video?session=one",
+            "Видео",
+            2,
+            date(2026, 8, 1),
+            date(2026, 8, 1),
+        )
+        second = ObservedPage(
+            "https://abbottpro.ru/academy/video?session=two&utm_source=email",
+            "Видео",
+            3,
+            date(2026, 8, 2),
+            date(2026, 8, 2),
+        )
+
+        collapsed = collapse_observed_pages((first, second))
+
+        self.assertEqual(
+            collapsed,
+            (
+                ObservedPage(
+                    "https://abbottpro.ru/academy/video",
+                    "Видео",
+                    5,
+                    date(2026, 8, 1),
+                    date(2026, 8, 2),
+                    tuple(
+                        sorted(
+                            (
+                                sha256_text(
+                                    "https://abbottpro.ru/academy/video?session=one"
+                                ),
+                                sha256_text(
+                                    "https://abbottpro.ru/academy/video?session=two"
+                                ),
+                            )
+                        )
+                    ),
+                ),
+            ),
+        )
+
+    def test_observed_unknown_query_variant_stays_query_free_and_unresolved(self):
+        entity = CanonicalClassification(
+            7,
+            "Known",
+            "https://abbottpro.ru/academy/known",
+            "cardiology",
+            "video",
+            "all",
+            "active",
+            1,
+        )
+        observed = ObservedPage(
+            "https://abbottpro.ru/academy/known?session=one",
+            "Known",
+            3,
+            date(2026, 8, 1),
+            date(2026, 8, 1),
+        )
+        with tempfile.TemporaryDirectory() as temporary:
+            registry1, registry2 = write_empty_sources(Path(temporary))
+            store = StatefulWorkflowStore(
+                context(entities=(entity,), observed_pages=(observed,))
+            )
+            receipt = CanonicalWeeklyProposalService(store, CONFIG).reconcile(
+                registry1, registry2
+            )
+
+        self.assertEqual(receipt.catalog_gap_count, 1)
+        item = store.runs_by_id[receipt.run_id].items[0]
+        self.assertEqual(
+            item.reconciliation_input.registry1.url,
+            "https://abbottpro.ru/academy/known",
+        )
+        self.assertNotIn("?", item.grouping_key)
+        self.assertEqual(item.identity_status, "new")
+        durable_payload = json.dumps(
+            _input_payload(item.reconciliation_input),
+            ensure_ascii=False,
+            sort_keys=True,
+        )
+        self.assertNotIn("?", durable_payload)
+        self.assertNotIn("session=one", durable_payload)
+
+    def test_observed_variants_all_bound_to_one_exact_target_are_skipped(self):
+        entity = CanonicalClassification(
+            7,
+            "Known",
+            "https://abbottpro.ru/academy/known?session=one",
+            "cardiology",
+            "video",
+            "all",
+            "active",
+            1,
+        )
+        observed = (
+            ObservedPage(
+                "https://abbottpro.ru/academy/known?session=one",
+                "Known",
+                2,
+                date(2026, 8, 1),
+                date(2026, 8, 1),
+            ),
+            ObservedPage(
+                "https://abbottpro.ru/academy/known?session=two",
+                "Known",
+                3,
+                date(2026, 8, 2),
+                date(2026, 8, 2),
+            ),
+        )
+        aliases = (
+            IdentityAlias(
+                7,
+                "url",
+                "https://abbottpro.ru/academy/known?session=two",
+                "strong",
+            ),
+        )
+        with tempfile.TemporaryDirectory() as temporary:
+            registry1, registry2 = write_empty_sources(Path(temporary))
+            store = StatefulWorkflowStore(
+                context(entities=(entity,), aliases=aliases, observed_pages=observed)
+            )
+            receipt = CanonicalWeeklyProposalService(store, CONFIG).reconcile(
+                registry1, registry2
+            )
+
+        self.assertEqual(receipt.catalog_gap_count, 0)
+        self.assertEqual(store.runs_by_id[receipt.run_id].items, ())
+
+    def test_observed_variants_bound_to_distinct_targets_create_one_collision(self):
+        first_entity = CanonicalClassification(
+            7, "First", "https://abbottpro.ru/shared?version=one",
+            "cardiology", "articles", "all", "active", 1,
+        )
+        second_entity = CanonicalClassification(
+            8, "Second", "https://abbottpro.ru/shared?version=two",
+            "gastroenterology", "articles", "all", "active", 2,
+        )
+        observed = (
+            ObservedPage(
+                first_entity.url, "First", 2, date(2026, 8, 1), date(2026, 8, 1)
+            ),
+            ObservedPage(
+                second_entity.url, "Second", 3, date(2026, 8, 2), date(2026, 8, 2)
+            ),
+        )
+        with tempfile.TemporaryDirectory() as temporary:
+            registry1, registry2 = write_empty_sources(Path(temporary))
+            store = StatefulWorkflowStore(
+                context(entities=(first_entity, second_entity), observed_pages=observed)
+            )
+            receipt = CanonicalWeeklyProposalService(store, CONFIG).reconcile(
+                registry1, registry2
+            )
+
+        self.assertEqual(receipt.catalog_gap_count, 1)
+        item = store.runs_by_id[receipt.run_id].items[0]
+        self.assertEqual(item.identity_status, "collision")
+        self.assertNotIn("?", item.grouping_key)
 
     def test_known_observed_alias_does_not_create_duplicate_item(self):
         entity = CanonicalClassification(7, "Known", "https://abbottpro.ru/known", "cardiology", "articles", "all", "active", 1)
@@ -591,6 +767,26 @@ class WeeklyProposalServiceTests(unittest.TestCase):
         run = store.load_reconciliation_run(first.run_id)
         self.assertEqual(run.context.predecessor_snapshot_ids, (11, 12))
         self.assertNotEqual(run.registry1.source_hash, run.context.predecessor_snapshot_digests[0])
+
+    def test_reconciliation_key_changes_with_sanitized_observed_evidence(self):
+        first_page = ObservedPage(
+            "https://abbottpro.ru/unknown?session=one",
+            "Unknown",
+            2,
+            date(2026, 8, 1),
+            date(2026, 8, 1),
+        )
+        second_page = replace(first_page, pageviews=3)
+        with tempfile.TemporaryDirectory() as temporary:
+            registry1, registry2 = write_empty_sources(Path(temporary))
+            first = CanonicalWeeklyProposalService(
+                StatefulWorkflowStore(context(observed_pages=(first_page,))), CONFIG
+            ).reconcile(registry1, registry2)
+            second = CanonicalWeeklyProposalService(
+                StatefulWorkflowStore(context(observed_pages=(second_page,))), CONFIG
+            ).reconcile(registry1, registry2)
+
+        self.assertNotEqual(first.run_key, second.run_key)
 
     def test_two_missing_identity_rows_persist_as_distinct_deterministic_items(self):
         with tempfile.TemporaryDirectory() as temporary:
