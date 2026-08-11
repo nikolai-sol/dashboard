@@ -776,6 +776,9 @@ class CanonicalWeeklyProposalService:
                 context.entities, context.aliases
             )
         )
+        entities_by_id = {
+            entity.content_entity_id: entity for entity in context.entities
+        }
         for observed in collapse_observed_pages(context.observed_pages):
             candidate = MaterialCandidate(
                 source_name="observed_page",
@@ -801,12 +804,6 @@ class CanonicalWeeklyProposalService:
             exact_targets = (
                 set().union(*exact_target_sets) if exact_target_sets else set()
             )
-            if (
-                exact_target_sets
-                and all(len(targets) == 1 for targets in exact_target_sets)
-                and len(exact_targets) == 1
-            ):
-                continue
             service_route = normalize_url(observed.normalized_url).path in {
                 "/auth", "/registration.php", "/personal", "/rules", "/privacy", "/cookies", "/sitemap.php",
             } or normalize_url(observed.normalized_url).path.startswith("/personal/")
@@ -819,6 +816,41 @@ class CanonicalWeeklyProposalService:
                 confidence=1.0,
                 evidence=("reviewed service route",),
             ) if service_route else None
+            if (
+                exact_target_sets
+                and all(len(targets) == 1 for targets in exact_target_sets)
+                and len(exact_targets) == 1
+            ):
+                target_id = next(iter(exact_targets))
+                canonical = entities_by_id.get(target_id)
+                if canonical is None:
+                    raise ValueError("STRONG_URL_TARGET_MISSING")
+                if (
+                    canonical.direction_code not in (None, "undetermined")
+                    and canonical.material_type_code not in (None, "undetermined")
+                ):
+                    continue
+                reconciliation_input = ReconciliationInput(
+                    content_entity_id=target_id,
+                    active_canonical=canonical,
+                    registry1=candidate,
+                    deterministic_proposal=deterministic,
+                )
+                reconciled = reconcile_entity(reconciliation_input)
+                grouping_key = f"observed:{observed.normalized_url}"
+                items.append(PersistedReconciliationItem(
+                    grouping_key=grouping_key,
+                    item_key=sha256_text(_canonical_json({
+                        "grouping_key": grouping_key,
+                        "identity_status": "matched",
+                        "input_hash": reconciled.input_hash,
+                    })),
+                    input_hash=reconciled.input_hash,
+                    identity_status="matched",
+                    content_entity_id=target_id,
+                    reconciliation_input=reconciliation_input,
+                ))
+                continue
             usable_target_sets = tuple(
                 usable_strong_url_targets.get(url_hash, frozenset())
                 for url_hash in observed.exact_url_hashes
