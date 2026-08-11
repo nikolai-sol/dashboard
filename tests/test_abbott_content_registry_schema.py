@@ -154,8 +154,21 @@ class AbbottContentRegistrySchemaTests(unittest.TestCase):
 
     def test_url_alias_decisions_are_additive_and_replay_safe(self):
         sql = URL_ALIAS_DECISIONS_MIGRATION.read_text(encoding="utf-8")
-        self.assertIn("ADD COLUMN IF NOT EXISTS selected_content_entity_id BIGINT UNSIGNED DEFAULT NULL", sql)
-        self.assertIn("ENUM('attach', 'retire', 'reject') DEFAULT NULL", sql)
+        self.assertNotIn("ADD COLUMN IF NOT EXISTS", sql)
+        self.assertIn("information_schema.COLUMNS", sql)
+        self.assertIn("information_schema.STATISTICS", sql)
+        self.assertIn(
+            "ALTER TABLE portal_content_approval_items ADD COLUMN selected_content_entity_id BIGINT UNSIGNED DEFAULT NULL",
+            sql,
+        )
+        self.assertIn(
+            "ALTER TABLE portal_content_approval_items ADD COLUMN url_alias_decision ENUM(''attach'', ''retire'', ''reject'') DEFAULT NULL",
+            sql,
+        )
+        self.assertIn(
+            "url_alias_decision ENUM('attach', 'retire', 'reject') NOT NULL",
+            sql,
+        )
 
     def test_url_alias_decision_events_are_append_only_and_linked_to_review_authority(self):
         sql = URL_ALIAS_DECISIONS_MIGRATION.read_text(encoding="utf-8")

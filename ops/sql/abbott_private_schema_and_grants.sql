@@ -548,6 +548,8 @@ GRANT SELECT ON report_bd.portal_content_catalog
   TO 'abbott_content_workflow_role';
 GRANT SELECT ON report_bd.portal_content_lookup_projection
   TO 'abbott_content_workflow_role';
+GRANT SELECT ON report_bd.canonical_fact_metrika_site_analytics_daily
+  TO 'abbott_content_workflow_role';
 GRANT SELECT ON report_bd.portal_content_taxonomy_versions
   TO 'abbott_content_workflow_role';
 GRANT SELECT ON report_bd.portal_content_taxonomy_terms
@@ -580,7 +582,12 @@ GRANT SELECT, INSERT, UPDATE (final_direction_code, final_material_type_code,
                               decision_reason)
   ON report_bd.portal_content_approval_items
   TO 'abbott_content_workflow_role';
+GRANT UPDATE (selected_content_entity_id, url_alias_decision)
+  ON report_bd.portal_content_approval_items
+  TO 'abbott_content_workflow_role';
 GRANT SELECT, INSERT ON report_bd.portal_content_classification_events
+  TO 'abbott_content_workflow_role';
+GRANT SELECT, INSERT ON report_bd.portal_content_url_alias_decision_events
   TO 'abbott_content_workflow_role';
 -- Locking reads serialize immutable baseline/bootstrap checks without granting
 -- UPDATE authority over the active pointer, release catalog, or event history.
@@ -678,6 +685,8 @@ GRANT SELECT ON report_bd.portal_content_approval_items
   TO 'abbott_content_materializer_role';
 GRANT SELECT ON report_bd.portal_content_classification_events
   TO 'abbott_content_materializer_role';
+GRANT SELECT ON report_bd.portal_content_url_alias_decision_events
+  TO 'abbott_content_materializer_role';
 GRANT SELECT ON report_bd.portal_migration_validation_runs
   TO 'abbott_content_materializer_role';
 GRANT SELECT, INSERT ON report_bd_private.canonical_fact_metrika_user_behavior_daily
@@ -710,6 +719,7 @@ GRANT SELECT ON report_bd.portal_content_lookup_projection TO 'abbott_release_op
 GRANT SELECT ON report_bd.portal_content_approval_batches TO 'abbott_release_operator_role';
 GRANT SELECT ON report_bd.portal_content_approval_items TO 'abbott_release_operator_role';
 GRANT SELECT ON report_bd.portal_content_classification_events TO 'abbott_release_operator_role';
+GRANT SELECT ON report_bd.portal_content_url_alias_decision_events TO 'abbott_release_operator_role';
 GRANT SELECT ON report_bd.portal_content_registry_entities TO 'abbott_release_operator_role';
 GRANT SELECT ON report_bd.portal_content_registry_aliases TO 'abbott_release_operator_role';
 GRANT SELECT ON report_bd.portal_content_taxonomy_versions TO 'abbott_release_operator_role';

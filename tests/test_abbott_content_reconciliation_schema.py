@@ -115,6 +115,35 @@ class AbbottContentReconciliationSchemaTests(unittest.TestCase):
             any("LOCK TABLES ON report_bd.*" in grant for grant in grants)
         )
 
+    def test_url_identity_roles_have_only_the_required_authority(self):
+        normalized = " ".join(self.grants.split())
+        self.assertIn(
+            "GRANT SELECT ON report_bd.canonical_fact_metrika_site_analytics_daily "
+            "TO 'abbott_content_workflow_role';",
+            normalized,
+        )
+        self.assertIn(
+            "GRANT UPDATE (selected_content_entity_id, url_alias_decision) "
+            "ON report_bd.portal_content_approval_items "
+            "TO 'abbott_content_workflow_role';",
+            normalized,
+        )
+        self.assertIn(
+            "GRANT SELECT, INSERT ON report_bd.portal_content_url_alias_decision_events "
+            "TO 'abbott_content_workflow_role';",
+            normalized,
+        )
+        for role in (
+            "abbott_content_materializer_role",
+            "abbott_release_operator_role",
+        ):
+            with self.subTest(role=role):
+                self.assertIn(
+                    "GRANT SELECT ON report_bd.portal_content_url_alias_decision_events "
+                    f"TO '{role}';",
+                    normalized,
+                )
+
 
 if __name__ == "__main__":
     unittest.main()
