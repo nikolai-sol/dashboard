@@ -63,4 +63,19 @@ if DRY_RUN=1 TEST_PREVIEW_RELEASE_ROOT="$TMP_DIR/symlink-releases" RUN_ID="$RUN_
   exit 1
 fi
 
+for kind in dangling chained cycle fifo hardlink; do
+  CASE="$TMP_DIR/$kind"; cp -R "$SOURCE" "$CASE"; rm -f "$CASE/public/escaped.js"
+  case "$kind" in
+    dangling) ln -s missing "$CASE/public/bad" ;;
+    chained) ln -s first "$CASE/public/bad"; ln -s a.txt "$CASE/public/first" ;;
+    cycle) ln -s . "$CASE/public/bad" ;;
+    fifo) mkfifo "$CASE/public/bad" ;;
+    hardlink) ln "$CASE/public/a.txt" "$CASE/public/bad" ;;
+  esac
+  if DRY_RUN=1 TEST_PREVIEW_RELEASE_ROOT="$TMP_DIR/$kind-releases" RUN_ID="$RUN_ID" APP_DIR="$CASE" APP_PORT=3301 \
+    bash "$SCRIPT_DIR/build-abbott-preview-release.sh" >/dev/null 2>&1; then
+    echo "builder accepted $kind preview object" >&2; exit 1
+  fi
+done
+
 echo 'build abbott preview release tests passed'
