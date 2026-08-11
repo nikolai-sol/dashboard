@@ -1697,7 +1697,8 @@ def _authorize_current_batch_events(
         content_entity_id = int(item.get("content_entity_id") or 0)
         selected_entity_id = int(item.get("selected_content_entity_id") or 0)
         reviewed_baseline_attach = (
-            item.get("url_alias_decision") == "attach"
+            batch.get("projection_kind") == "local"
+            and item.get("url_alias_decision") == "attach"
             and content_entity_id > 0
             and selected_entity_id == content_entity_id
         )
@@ -1736,7 +1737,6 @@ def _authorize_current_batch_events(
                 not isinstance(current, Mapping)
                 or int(current.get("content_entity_id") or 0) != content_entity_id
                 or current.get("event_id") not in (None, 0)
-                or current_values != final_values
                 or not _normalized_audit_text(item.get("decision_reason"))
             ):
                 raise CandidateMaterializationError(
@@ -1759,7 +1759,8 @@ def _authorize_current_batch_events(
         is_create = item.get("url_alias_decision") == "create"
         content_entity_id = int(item.get("content_entity_id") or 0)
         reviewed_baseline_attach = (
-            item.get("url_alias_decision") == "attach"
+            batch.get("projection_kind") == "local"
+            and item.get("url_alias_decision") == "attach"
             and content_entity_id > 0
             and int(item.get("selected_content_entity_id") or 0)
             == content_entity_id
@@ -1812,10 +1813,6 @@ def _authorize_current_batch_events(
             if (
                 current_entity_id != entity_id
                 or (predecessor is None and not reviewed_baseline_attach)
-                or (
-                    reviewed_baseline_attach
-                    and current_values != final_values
-                )
                 or any(
                     (
                         current_value is not None
@@ -1841,7 +1838,11 @@ def _authorize_current_batch_events(
                 raise CandidateMaterializationError(
                     "CURRENT_BATCH_EVENT_UNAUTHORIZED"
                 )
-            if current_values[0] and current_values[0] != final_values[0]:
+            if (
+                not reviewed_baseline_attach
+                and current_values[0]
+                and current_values[0] != final_values[0]
+            ):
                 expected_kind = "correct"
         event_evidence = _decode_json(
             event.get("proposal_evidence"), code="CURRENT_BATCH_EVENT_UNAUTHORIZED"
@@ -3176,7 +3177,7 @@ def materialize_content_candidate(
                    batch.prompt_version, batch.model_routing_version,
                    batch.accepted_by, taxonomy.version AS taxonomy_version,
                    batch.accepted_at, batch.source_snapshot_ids,
-                   batch.source_snapshot_digests
+                   batch.source_snapshot_digests, batch.projection_kind
             FROM portal_content_approval_batches AS batch
             INNER JOIN portal_content_taxonomy_versions AS taxonomy
               ON taxonomy.id = batch.taxonomy_version_id

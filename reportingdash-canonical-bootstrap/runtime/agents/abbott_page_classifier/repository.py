@@ -1253,6 +1253,9 @@ class ContentRegistryRepository:
                 if supplied is not None and int(supplied) != expected:
                     raise RepositoryError("BATCH_COUNT_MISMATCH")
             already_ingested = batch_status == "ingested"
+            local_projection = (
+                len(batch_row) > 22 and str(batch_row[22] or "") == "local"
+            )
 
             for approval_item_id, item in stored_items:
                 proposal_evidence = evidence_by_item_id[approval_item_id]
@@ -1268,7 +1271,10 @@ class ContentRegistryRepository:
                 except (TypeError, ValueError):
                     current_entity_id = 0
                 reviewed_baseline_attach = (
-                    item.url_alias_decision == "attach"
+                    local_projection
+                    and item.decision_reason is not None
+                    and bool(item.decision_reason.strip())
+                    and item.url_alias_decision == "attach"
                     and item.content_entity_id is not None
                     and item.selected_content_entity_id == item.content_entity_id
                     and isinstance(current_canonical, Mapping)
@@ -1372,7 +1378,6 @@ class ContentRegistryRepository:
                     if (
                         baseline_entity_id != item.content_entity_id
                         or baseline_event_id not in (None, 0)
-                        or baseline_values != event_values
                     ):
                         raise RepositoryError("CORRECTION_PREDECESSOR_MISMATCH")
                 else:
