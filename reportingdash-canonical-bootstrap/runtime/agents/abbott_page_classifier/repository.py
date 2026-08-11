@@ -1519,10 +1519,17 @@ class ContentRegistryRepository:
             not collision
             and item.url_alias_decision in {"attach", "reject"}
         ):
+            same_entity_attach = (
+                item.url_alias_decision == "attach"
+                and item.content_entity_id is not None
+                and item.selected_content_entity_id == item.content_entity_id
+            )
             ContentRegistryRepository._validate_local_create_evidence(
                 item,
                 evidence,
-                allow_current=item.url_alias_decision == "reject",
+                allow_current=(
+                    item.url_alias_decision == "reject" or same_entity_attach
+                ),
             )
             if (
                 not str(item.decision_reason or "").strip()
