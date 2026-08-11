@@ -1575,7 +1575,39 @@ def _event_matches_predecessor(
 ) -> bool:
     entity_id = int(event.get("content_entity_id") or 0)
     if row.content_entity_id > 0:
-        return row.content_entity_id == entity_id
+        if row.content_entity_id == entity_id:
+            return True
+        evidence = _decode_json(
+            event.get("source_evidence") or {},
+            code="SOURCE_EVIDENCE_INVALID",
+        )
+        provenance = evidence.get("provenance") if isinstance(evidence, Mapping) else None
+        if not isinstance(provenance, (list, tuple)):
+            return False
+        source_match = False
+        for source in provenance:
+            if not isinstance(source, Mapping):
+                continue
+            sheet = str(
+                source.get("source_sheet") or source.get("source_name") or ""
+            ).strip()
+            ordinal = source.get("source_row_ordinal")
+            if ordinal is None:
+                ordinal = source.get("source_row_id")
+            try:
+                source_match = (
+                    sheet == row.source_sheet and int(ordinal) == row.source_row_ordinal
+                )
+            except (TypeError, ValueError):
+                source_match = False
+            if source_match:
+                break
+        normalized = normalize_url(str(event.get("canonical_url") or ""))
+        return bool(
+            source_match
+            and normalized.sha256
+            and normalized.sha256 == row.normalized_url_hash
+        )
     material_id = str(event.get("material_id") or "")
     if material_id and row.material_id:
         return material_id.casefold() == row.material_id.casefold()
@@ -2078,6 +2110,7 @@ def _overlay_current_batch_events(
             result.extend(
                 replace(
                     row,
+                    content_entity_id=int(event["content_entity_id"]),
                     material_type=material_type_label,
                     access_label=access_label,
                     is_active=lifecycle_code != "archived",
@@ -2098,7 +2131,12 @@ def _overlay_current_batch_events(
         elif event_kind != "revoke":
             result.extend(_catalog_rows((event,)))
     strong_keys: dict[tuple[str, str], int] = {}
+    source_keys: set[tuple[str, int]] = set()
     for row in result:
+        source_key = (row.source_sheet, row.source_row_ordinal)
+        if source_key in source_keys:
+            raise CandidateMaterializationError("SOURCE_PROVENANCE_COLLISION")
+        source_keys.add(source_key)
         entity_id = row.content_entity_id
         for kind, value in (
             ("material_id", (row.material_id or "").casefold()),

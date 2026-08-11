@@ -2262,6 +2262,102 @@ class CandidateReleaseTest(unittest.TestCase):
 
         self.assertEqual({row.content_entity_id for row in result}, {1, 2})
 
+    def test_overlay_rekeys_exact_legacy_source_row_to_current_registry_entity(self):
+        predecessor = catalog_row("1" * 64).__dict__ | {
+            "id": 1001,
+            "content_entity_id": 7,
+            "source_sheet": "Лист1",
+            "source_row_ordinal": 27,
+            "normalized_url_hash": sha256_text(
+                "https://abbottpro.ru/cardio/alpha"
+            ),
+            "projection_provenance_json": json.dumps({
+                "canonical_codes": {
+                    "direction": "cardiology",
+                    "material_type": "articles",
+                    "access": "all",
+                    "lifecycle": "active",
+                }
+            }),
+        }
+        event = {
+            "content_entity_id": 8,
+            "material_id": None,
+            "canonical_url": predecessor["normalized_url"],
+            "source_evidence": {
+                "provenance": [{
+                    "source_sheet": "Лист1",
+                    "source_row_ordinal": 27,
+                }]
+            },
+            "event_kind": "approve",
+            "classification_event_id": 501,
+            "event_fingerprint": "f" * 64,
+            "effective_at": datetime(2026, 8, 11),
+            "direction_code": "cardiology",
+            "material_type_code": "articles",
+            "access_code": "all",
+            "lifecycle_code": "active",
+            "direction_label": "Кардиология [262338]",
+            "material_type_label": "Статьи",
+            "access_label": "Все",
+            "lifecycle_label": "active",
+        }
+
+        result = _overlay_current_batch_events((predecessor,), (event,))
+
+        self.assertEqual(len(result), 1)
+        self.assertEqual(result[0].content_entity_id, 8)
+        self.assertEqual(result[0].source_sheet, "Лист1")
+        self.assertEqual(result[0].source_row_ordinal, 27)
+
+    def test_overlay_does_not_rekey_source_row_when_url_differs(self):
+        predecessor = catalog_row("1" * 64).__dict__ | {
+            "id": 1001,
+            "content_entity_id": 7,
+            "source_sheet": "Лист1",
+            "source_row_ordinal": 27,
+            "normalized_url_hash": sha256_text(
+                "https://abbottpro.ru/cardio/alpha"
+            ),
+            "projection_provenance_json": json.dumps({
+                "canonical_codes": {
+                    "direction": "cardiology",
+                    "material_type": "articles",
+                    "access": "all",
+                    "lifecycle": "active",
+                }
+            }),
+        }
+        event = {
+            "content_entity_id": 8,
+            "material_id": None,
+            "canonical_url": "https://abbottpro.ru/different",
+            "source_evidence": {
+                "provenance": [{
+                    "source_sheet": "Лист1",
+                    "source_row_ordinal": 27,
+                }]
+            },
+            "event_kind": "approve",
+            "classification_event_id": 501,
+            "event_fingerprint": "f" * 64,
+            "effective_at": datetime(2026, 8, 11),
+            "direction_code": "cardiology",
+            "material_type_code": "articles",
+            "access_code": "all",
+            "lifecycle_code": "active",
+            "direction_label": "Кардиология [262338]",
+            "material_type_label": "Статьи",
+            "access_label": "Все",
+            "lifecycle_label": "active",
+        }
+
+        with self.assertRaisesRegex(
+            CandidateMaterializationError, "^SOURCE_PROVENANCE_COLLISION$"
+        ):
+            _overlay_current_batch_events((predecessor,), (event,))
+
     def test_catalog_insert_has_exact_mysql_schema_and_parameter_arity(self):
         connection = CandidateConnection()
         with (
