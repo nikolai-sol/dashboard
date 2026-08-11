@@ -153,6 +153,10 @@ class LocalAcceptanceRepositoryTests(unittest.TestCase):
         self.assertEqual(connection.created_entity_count, 0)
         self.assertEqual(connection.created_classification_count, 0)
         self.assertEqual(connection.decision_events, [])
+        self.assertFalse(any(
+            sql.startswith("UPDATE portal_content_approval_items")
+            for sql, _params in connection.calls
+        ))
 
     def test_create_observed_page_is_one_atomic_acceptance_transaction(self):
         batch = replace(acceptance_workflow_batch(), items=(create_item(),))
