@@ -1075,6 +1075,10 @@ class MySqlWorkflowStore:
                    event.access_code, event.lifecycle_code,
                    event.event_fingerprint
             FROM portal_content_classification_events AS event
+            INNER JOIN portal_content_taxonomy_versions AS source_taxonomy
+              ON source_taxonomy.id = event.taxonomy_version_id
+             AND source_taxonomy.dataset_key = 'abbott'
+             AND source_taxonomy.taxonomy_status = 'active'
             WHERE event.id IN ({event_placeholders})
             ORDER BY event.id
             FOR UPDATE
@@ -1084,6 +1088,19 @@ class MySqlWorkflowStore:
         stored_events = tuple(cursor.fetchall())
         if tuple(int(row[0]) for row in stored_events) != event_ids:
             raise RepositoryError("BASELINE_PROVENANCE_EVENT_MISMATCH")
+        cursor.execute(
+            """
+            SELECT taxonomy_kind, term_code
+            FROM portal_content_taxonomy_terms
+            WHERE taxonomy_version_id = %s
+              AND term_status = 'active'
+            ORDER BY taxonomy_kind, term_code
+            """,
+            (int(taxonomy_id),),
+        )
+        compatible_terms = {
+            (str(row[0]), str(row[1])) for row in cursor.fetchall()
+        }
         for event in stored_events:
             expected_entity, expected_fingerprint, expected_classification = attached_events[
                 int(event[0])
@@ -1095,9 +1112,19 @@ class MySqlWorkflowStore:
                 str(event[5]) if event[5] is not None else "unspecified",
                 stored_lifecycle != "archived",
             )
+            event_terms = (
+                ("direction", event[3]),
+                ("material_type", event[4]),
+                ("access", event[5] or "unspecified"),
+                ("lifecycle", event[6] or "unknown"),
+            )
             if (
                 int(event[1]) != expected_entity
-                or int(event[2]) != taxonomy_id
+                or int(event[2]) <= 0
+                or any(
+                    code is not None and (kind, str(code)) not in compatible_terms
+                    for kind, code in event_terms
+                )
                 or stored_classification != expected_classification
                 or str(event[7]).lower() != expected_fingerprint
             ):
