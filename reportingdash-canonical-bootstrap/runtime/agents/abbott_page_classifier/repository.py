@@ -675,7 +675,7 @@ class ContentRegistryRepository:
             decisions = {(d.input_hash, d.row_hash): d for d in intent.decisions}
             if len(decisions) != len(intent.decisions) or set(decisions) != {(i.input_hash, i.row_hash) for _, i in stored}:
                 raise RepositoryError("BATCH_ITEMS_MISMATCH")
-            accepted: list[tuple[int, ApprovalItem]] = []
+            accepted: list[tuple[int, ApprovalItem, ApprovalItem]] = []
             evidence_by_item_id = {
                 int(row[0]): self._decoded_json_mapping(row[12]) for row in stored_rows
             }
@@ -696,11 +696,11 @@ class ContentRegistryRepository:
                 if item.url_alias_decision == "create":
                     entity_id = self._create_observed_entity(cursor, item, int(batch_id), item_id, intent.accepted_by)
                     item = replace(item, selected_content_entity_id=entity_id)
-                accepted.append((item_id, item))
-            accepted_items = tuple(item for _, item in accepted)
+                accepted.append((item_id, published, item))
+            accepted_items = tuple(item for _, _, item in accepted)
             accepted_hash = compute_accepted_decision_hash(accepted_items)
             accepted_at = self._canonical_acceptance_timestamp(intent.accepted_at)
-            for item_id, item in accepted:
+            for item_id, published, item in accepted:
                 url_decision_fingerprint = None
                 if item.url_alias_decision is not None:
                     url_decision_fingerprint = self._apply_url_alias_decision(
@@ -715,6 +715,17 @@ class ContentRegistryRepository:
                         evidence_by_item_id[item_id],
                         str(url_decision_fingerprint or ""),
                     )
+                mutable_fields = (
+                    "final_direction_code", "final_material_type_code",
+                    "final_access_code", "final_lifecycle_code",
+                    "decision_reason", "selected_content_entity_id",
+                    "url_alias_decision",
+                )
+                if all(
+                    getattr(item, field) == getattr(published, field)
+                    for field in mutable_fields
+                ):
+                    continue
                 cursor.execute("""UPDATE portal_content_approval_items SET
                     final_direction_code=%s, final_material_type_code=%s, final_access_code=%s,
                     final_lifecycle_code=%s, decision_reason=%s, selected_content_entity_id=%s,
