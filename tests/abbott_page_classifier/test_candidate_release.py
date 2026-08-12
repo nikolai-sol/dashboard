@@ -2511,6 +2511,13 @@ class CandidateReleaseTest(unittest.TestCase):
         self.assertIn("portal_release_source_imports", sql)
         self.assertIn("portal_content_catalog", sql)
         self.assertIn("portal_content_lookup_projection", sql)
+        catalog_snapshot_insert = next(
+            statement
+            for statement, _params in connection.calls
+            if statement.startswith("INSERT INTO portal_dataset_snapshots")
+            and "abbott_canonical_control_pack" not in statement
+        )
+        self.assertNotIn("ON DUPLICATE KEY UPDATE", catalog_snapshot_insert)
         self.assertIn("event.approval_item_id", sql)
         self.assertNotIn("UPDATE portal_active_data_releases", sql)
         self.assertNotIn("UPDATE portal_content_classification_events", sql)
