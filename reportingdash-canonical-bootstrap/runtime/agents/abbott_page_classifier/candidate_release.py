@@ -3618,35 +3618,35 @@ def materialize_content_candidate(
         )
         catalog_snapshot_row = cursor.fetchone()
         if catalog_snapshot_row is None:
-            cursor.execute(
-                """
-                INSERT INTO portal_dataset_snapshots (
-                  snapshot_key, dataset_key, source_kind, source_locator,
-                  content_sha256, content_bytes, source_row_count, parser_version,
-                  import_status, imported_row_count, rejected_row_count,
-                  private_archive_locator, manifest_json, imported_at
-                ) VALUES (
-                  UUID(), %s, %s, %s, %s, %s, %s, %s,
-                  'imported', %s, 0, %s, %s, NOW(6)
+            try:
+                cursor.execute(
+                    """
+                    INSERT INTO portal_dataset_snapshots (
+                      snapshot_key, dataset_key, source_kind, source_locator,
+                      content_sha256, content_bytes, source_row_count, parser_version,
+                      import_status, imported_row_count, rejected_row_count,
+                      private_archive_locator, manifest_json, imported_at
+                    ) VALUES (
+                      UUID(), %s, %s, %s, %s, %s, %s, %s,
+                      'imported', %s, 0, %s, %s, NOW(6)
+                    )
+                    """,
+                    (
+                        DATASET_KEY,
+                        CATALOG_SOURCE_KIND,
+                        f"canonical://abbott/content-batch/{batch_id}",
+                        catalog_hash,
+                        catalog_manifest["content_bytes"],
+                        len(catalog_rows),
+                        CATALOG_PARSER_VERSION,
+                        len(catalog_rows),
+                        f"canonical://abbott/content-batch/{batch_id}",
+                        _canonical_json(catalog_manifest),
+                    ),
                 )
-                ON DUPLICATE KEY UPDATE id = LAST_INSERT_ID(id)
-                """,
-                (
-                    DATASET_KEY,
-                    CATALOG_SOURCE_KIND,
-                    f"canonical://abbott/content-batch/{batch_id}",
-                    catalog_hash,
-                    catalog_manifest["content_bytes"],
-                    len(catalog_rows),
-                    CATALOG_PARSER_VERSION,
-                    len(catalog_rows),
-                    f"canonical://abbott/content-batch/{batch_id}",
-                    _canonical_json(catalog_manifest),
-                ),
-            )
-            catalog_snapshot_id = int(cursor.lastrowid)
-            if catalog_snapshot_id <= 0:
-                raise CandidateMaterializationError("CATALOG_SNAPSHOT_INSERT_FAILED")
+            except Exception as exc:
+                if int(getattr(exc, "errno", 0) or 0) != 1062:
+                    raise
             cursor.execute(
                 catalog_snapshot_query,
                 (
