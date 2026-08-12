@@ -3136,7 +3136,7 @@ def reset_failed_content_candidate(
     *,
     connection_factory=None,
 ) -> str:
-    """Resume a reviewed batch after its staging candidate failed validation."""
+    """Resume a reviewed batch after validation failure or a proven smoke rollback."""
 
     try:
         batch_id = int(batch_id)
@@ -3180,13 +3180,35 @@ def reset_failed_content_candidate(
             (DATASET_KEY, candidate_release_id),
         )
         candidate = cursor.fetchone()
-        if (
-            not isinstance(candidate, Mapping)
-            or int(candidate.get("id") or 0) != candidate_release_id
-            or candidate.get("release_status") != "failed"
-            or int(candidate.get("rollback_from_release_id") or 0)
-            != expected_active_release_id
-        ):
+        candidate_matches_predecessor = (
+            isinstance(candidate, Mapping)
+            and int(candidate.get("id") or 0) == candidate_release_id
+            and int(candidate.get("rollback_from_release_id") or 0)
+            == expected_active_release_id
+        )
+        if not candidate_matches_predecessor:
+            raise CandidateMaterializationError("FAILED_CANDIDATE_MISMATCH")
+        candidate_status = candidate.get("release_status")
+        if candidate_status == "retired":
+            cursor.execute(
+                """
+                SELECT id, release_status, rollback_from_release_id
+                FROM portal_data_releases
+                WHERE dataset_key = %s AND id = %s
+                FOR UPDATE
+                """,
+                (DATASET_KEY, expected_active_release_id),
+            )
+            active_release = cursor.fetchone()
+            if (
+                not isinstance(active_release, Mapping)
+                or int(active_release.get("id") or 0) != expected_active_release_id
+                or active_release.get("release_status") != "active"
+                or int(active_release.get("rollback_from_release_id") or 0)
+                != candidate_release_id
+            ):
+                raise CandidateMaterializationError("FAILED_CANDIDATE_MISMATCH")
+        elif candidate_status != "failed":
             raise CandidateMaterializationError("FAILED_CANDIDATE_MISMATCH")
 
         cursor.execute(

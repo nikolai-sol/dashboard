@@ -1202,6 +1202,7 @@ class FailedCandidateResetConnection:
         active_release_id=14,
         candidate_status="failed",
         candidate_predecessor=14,
+        active_rollback_from=None,
         batch_status="candidate_materialized",
         batch_candidate_release_id=23,
         activation_status="candidate",
@@ -1209,6 +1210,7 @@ class FailedCandidateResetConnection:
         self.active_release_id = active_release_id
         self.candidate_status = candidate_status
         self.candidate_predecessor = candidate_predecessor
+        self.active_rollback_from = active_rollback_from
         self.batch_status = batch_status
         self.batch_candidate_release_id = batch_candidate_release_id
         self.activation_status = activation_status
@@ -1241,11 +1243,21 @@ class FailedCandidateResetConnection:
         if "FROM portal_active_data_releases" in normalized:
             self._one = {"canonical_release_id": self.active_release_id}
         elif "FROM portal_data_releases" in normalized:
-            self._one = {
-                "id": 23,
-                "release_status": self.candidate_status,
-                "rollback_from_release_id": self.candidate_predecessor,
-            }
+            release_id = int(params[1])
+            self._one = (
+                {
+                    "id": self.active_release_id,
+                    "release_status": "active",
+                    "rollback_from_release_id": self.active_rollback_from,
+                }
+                if release_id == self.active_release_id
+                and self.candidate_status == "retired"
+                else {
+                    "id": 23,
+                    "release_status": self.candidate_status,
+                    "rollback_from_release_id": self.candidate_predecessor,
+                }
+            )
         elif "FROM portal_content_approval_batches" in normalized:
             self._one = {
                 "id": 2,
@@ -1764,6 +1776,37 @@ class CandidateReleaseTest(unittest.TestCase):
             )
         )
         self.assertEqual(connection.events, ["start", "commit", "close", "close"])
+
+    def test_retired_candidate_reset_requires_proven_pointer_rollback(self):
+        connection = FailedCandidateResetConnection(
+            candidate_status="retired",
+            active_rollback_from=23,
+        )
+
+        result = reset_failed_content_candidate(
+            2,
+            23,
+            14,
+            connection_factory=lambda: connection,
+        )
+
+        self.assertEqual(result, "reset")
+        self.assertEqual(connection.batch_status, "ingested")
+
+    def test_retired_candidate_reset_rejects_unrelated_active_release(self):
+        connection = FailedCandidateResetConnection(candidate_status="retired")
+
+        with self.assertRaisesRegex(
+            CandidateMaterializationError, "FAILED_CANDIDATE_MISMATCH"
+        ):
+            reset_failed_content_candidate(
+                2,
+                23,
+                14,
+                connection_factory=lambda: connection,
+            )
+
+        self.assertEqual(connection.events, ["start", "rollback", "close", "close"])
 
     def test_failed_candidate_reset_rejects_active_pointer_change(self):
         connection = FailedCandidateResetConnection(active_release_id=15)
