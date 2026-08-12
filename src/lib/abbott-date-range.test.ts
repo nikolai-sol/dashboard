@@ -4,6 +4,7 @@ import test from "node:test";
 import {
   ABBOTT_NO_COMPLETED_DAYS,
   AbbottDateRangeError,
+  clampAbbottCurrentPresetToCoverage,
   defaultAbbottRange,
   detectAbbottPreset,
   latestCompletedAbbottDate,
@@ -88,4 +89,35 @@ test("Abbott detects each exact preset and treats all other ranges as custom", (
   assert.equal(detectAbbottPreset({ from: "2026-08-03", to: "2026-08-08" }, now), "this_week");
   assert.equal(detectAbbottPreset({ from: "2026-07-27", to: "2026-08-02" }, now), "previous_week");
   assert.equal(detectAbbottPreset({ from: "2026-08-02", to: "2026-08-08" }, now), "custom");
+});
+
+test("Abbott current presets stop before the first canonical coverage gap", () => {
+  assert.deepEqual(clampAbbottCurrentPresetToCoverage(
+    { from: "2026-08-01", to: "2026-08-11" },
+    "this_month",
+    [
+      { report_date: "2026-08-10" },
+      { report_date: "2026-08-10" },
+      { report_date: "2026-08-11" },
+    ],
+  ), { from: "2026-08-01", to: "2026-08-09" });
+
+  assert.deepEqual(clampAbbottCurrentPresetToCoverage(
+    { from: "2026-08-10", to: "2026-08-11" },
+    "this_week",
+    [{ report_date: "2026-08-11" }],
+  ), { from: "2026-08-10", to: "2026-08-10" });
+});
+
+test("Abbott coverage clamping never changes custom or empty covered ranges", () => {
+  assert.equal(clampAbbottCurrentPresetToCoverage(
+    { from: "2026-08-01", to: "2026-08-11" },
+    "custom",
+    [{ report_date: "2026-08-10" }],
+  ), null);
+  assert.equal(clampAbbottCurrentPresetToCoverage(
+    { from: "2026-08-10", to: "2026-08-11" },
+    "this_week",
+    [{ report_date: "2026-08-10" }],
+  ), null);
 });

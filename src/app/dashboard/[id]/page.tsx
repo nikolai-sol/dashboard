@@ -40,6 +40,7 @@ import type { DashboardData } from "@/lib/types";
 import { resolvePlatformIdFromSourceKey } from "@/lib/source-mapping";
 import {
   ABBOTT_NO_COMPLETED_DAYS,
+  clampAbbottCurrentPresetToCoverage,
   defaultAbbottRange,
   detectAbbottPreset,
   latestCompletedAbbottDate,
@@ -455,6 +456,24 @@ export default function DashboardByIdPage() {
         return;
       }
 
+      const abbottQuality = result.data?.abbott_bi?.data_quality;
+      const coveredRange = isAbbottDashboard && abbottQuality?.status === "incomplete"
+        ? clampAbbottCurrentPresetToCoverage(
+            dateRange,
+            abbottPreset,
+            abbottQuality.blocking_gaps,
+          )
+        : null;
+      if (coveredRange) {
+        setDraftDateRange(coveredRange);
+        setDateRange(coveredRange);
+        const params = new URLSearchParams(searchParams.toString());
+        params.set("from", coveredRange.from);
+        params.set("to", coveredRange.to);
+        router.replace(`/dashboard/${dashboardId}?${params.toString()}`, { scroll: false });
+        return;
+      }
+
       setDashboard(result.data);
       setIsDemoMode(result.demoMode);
       setApiError(result.errorMessage ? TECH_ISSUES_MESSAGE : null);
@@ -496,7 +515,7 @@ export default function DashboardByIdPage() {
     return () => {
       cancelled = true;
     };
-  }, [abbottEmptyMessage, compareRange, dashboardId, dateRange, isAbbottDashboard, reloadKey, selectedBrandId, viewerAccessToken, viewerEmbedKey]);
+  }, [abbottEmptyMessage, abbottPreset, compareRange, dashboardId, dateRange, isAbbottDashboard, reloadKey, router, searchParams, selectedBrandId, viewerAccessToken, viewerEmbedKey]);
 
   async function generateAiSummary() {
     if (!dashboard?.ai_summary_enabled || isGeneratingAiSummary) {

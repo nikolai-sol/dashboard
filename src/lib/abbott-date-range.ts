@@ -168,6 +168,21 @@ export function normalizeAbbottRequestedRange(
   return { from: range.from, to };
 }
 
+export function clampAbbottCurrentPresetToCoverage(
+  range: AbbottDateRange,
+  preset: AbbottDatePreset,
+  gaps: readonly { report_date: string }[],
+): AbbottDateRange | null {
+  if (preset !== "this_month" && preset !== "this_week") return null;
+  const firstGap = gaps
+    .map((gap) => String(gap.report_date || "").slice(0, 10))
+    .filter((date) => isValidIsoDate(date) && date >= range.from && date <= range.to)
+    .sort()[0];
+  if (!firstGap) return null;
+  const to = shiftIsoDate(firstGap, -1);
+  return to >= range.from && to < range.to ? { from: range.from, to } : null;
+}
+
 export function defaultAbbottRange(
   now = new Date(),
   timeZone = ABBOTT_BUSINESS_TIME_ZONE,

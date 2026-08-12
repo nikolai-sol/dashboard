@@ -597,6 +597,10 @@ export interface AbbottBiSessionJourneysData {
 }
 
 export interface AbbottBiData {
+  data_quality?: {
+    status: "complete" | "incomplete";
+    blocking_gaps: Array<{ report_date: string }>;
+  };
   counters: string[];
   users_summary: AbbottBiUserSummaryRow[];
   traffic_summary?: AbbottBiUserSummaryRow[];
