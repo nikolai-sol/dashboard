@@ -240,7 +240,7 @@ class ActivationSnapshotAttestationTests(unittest.TestCase):
         finally:
             release_store.get_db_connection = original_connection_factory
 
-    def test_locks_exact_source_snapshots_before_release_or_pointer_updates(self):
+    def test_attests_exact_immutable_source_snapshots_before_release_or_pointer_updates(self):
         connection, cursor = self.build_activation()
         self.invoke_activation(connection)
         snapshot_index, (snapshot_statement, snapshot_params) = next(
@@ -253,7 +253,7 @@ class ActivationSnapshotAttestationTests(unittest.TestCase):
         self.assertIn("content_bytes", snapshot_statement)
         self.assertIn("parser_version", snapshot_statement)
         self.assertIn("imported_row_count", snapshot_statement)
-        self.assertIn("FOR UPDATE", snapshot_statement)
+        self.assertNotIn("FOR UPDATE", snapshot_statement)
         self.assertEqual(snapshot_params, (release_store.ABBOTT_DATASET_KEY, 25, 26))
         first_update_index = next(
             index
