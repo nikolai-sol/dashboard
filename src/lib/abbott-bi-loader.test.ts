@@ -1319,3 +1319,97 @@ test("Abbott calls without a trusted audience fail closed before any query", asy
   assert.equal(aggregate.queries.length, 0);
   assert.equal(privateDb.queries.length, 0);
 });
+
+function hubDeps(pageUrl: string, catalogDirection: string | null) {
+  const hubMetadata = {
+    page_title: "Препараты и продукты",
+    direction: catalogDirection,
+    material_type: "Препараты и продукты",
+    access: "Врачи",
+    is_active: true,
+  };
+  const known = {
+    page_title: "Известный материал",
+    direction: "Кардиология [262338]",
+    material_type: "Статьи",
+    access: "Врачи",
+    is_active: true,
+  };
+  const aggregate = executor((sql) => {
+    if (sql.includes("canonical_fact_metrika_site_analytics_daily")) {
+      return [{
+        analytics_scope: "page",
+        traffic_source: null,
+        utm_source: null,
+        page_url: pageUrl,
+        page_title: "Препараты и продукты",
+        sessions: "0",
+        users: "2",
+        pageviews: "4",
+        bounce_rate: null,
+        average_session_seconds: null,
+      }];
+    }
+    return aggregateRows(sql);
+  });
+  const deps = dependencies(aggregate, executor(() => []));
+  deps.loadReleaseBundle = async () => ({
+    releaseId: 41,
+    audience: "embed" as const,
+    workbook: {
+      ...aggregateWorkbook,
+      contentByUrl: new Map([
+        [lookupHash("https://abbottpro.ru/academy/articles/known"), known],
+      ]),
+      urlReturnDirections: new Map([[lookupHash("/preparation"), hubMetadata]]),
+    },
+    bitrixPages: missingBitrix,
+    journeyTransitions: { source: missingBitrix.source, rows: [] },
+  });
+  return deps;
+}
+
+async function hubDirection(pageUrl: string, catalogDirection: string | null) {
+  const result = await loadAbbottBiDataWithDependencies(
+    7, ["90602537"], "2026-01-01", "2026-01-01", "embed", hubDeps(pageUrl, catalogDirection),
+  );
+  return result.page_stats[0]?.direction ?? null;
+}
+
+test("an unambiguous hub filter resolves the undetermined catalog direction", async () => {
+  assert.equal(
+    await hubDirection("https://abbottpro.ru/preparation/?direction[]=&direction[]=262338", "Не определено"),
+    "Кардиология [262338]",
+  );
+});
+
+test("several selected hub directions keep the undetermined catalog value", async () => {
+  assert.equal(
+    await hubDirection(
+      "https://abbottpro.ru/preparation/?direction[]=&direction[]=262338&direction[]=262340",
+      "Не определено",
+    ),
+    "Не определено",
+  );
+});
+
+test("an unfiltered hub view keeps the undetermined catalog value", async () => {
+  assert.equal(
+    await hubDirection("https://abbottpro.ru/preparation/", "Не определено"),
+    "Не определено",
+  );
+});
+
+test("a hub filter never overrides a decided catalog direction", async () => {
+  assert.equal(
+    await hubDirection("https://abbottpro.ru/preparation/?direction[]=262338", "Гастроэнтерология [262340]"),
+    "Гастроэнтерология [262340]",
+  );
+});
+
+test("an unknown section id leaves the direction untouched", async () => {
+  assert.equal(
+    await hubDirection("https://abbottpro.ru/preparation/?direction[]=999999", "Не определено"),
+    "Не определено",
+  );
+});
