@@ -467,6 +467,68 @@ async function queryManagerBehavior(
   )) as readonly PrivateBehaviorRow[];
 }
 
+/**
+ * Hub pages such as `/preparation/` carry the reviewed direction in the query
+ * filter rather than in the catalog: one page serves every direction the
+ * visitor selects. The canonical catalog therefore records "Не определено",
+ * which is correct for the page but hides an unambiguous single-filter view.
+ *
+ * Only an unambiguous filter is honoured. A visitor who selected several
+ * directions, or none at all, keeps the catalog value untouched.
+ */
+const ABBOTT_UNDETERMINED_DIRECTION = "Не определено";
+const DIRECTION_FILTER_KEY = /^direction(\[\d*\])?$/i;
+const DIRECTION_SECTION_ID = /\[(\d+)\]\s*$/;
+
+const directionBySectionIdCache = new WeakMap<object, Map<string, string>>();
+
+function directionBySectionId(
+  workbook: AbbottAggregatePrivateData["workbook"],
+): Map<string, string> {
+  const cached = directionBySectionIdCache.get(workbook);
+  if (cached) return cached;
+  const result = new Map<string, string>();
+  for (const source of [
+    workbook.contentByUrl,
+    workbook.contentByTitle,
+    workbook.contentBySlug,
+    workbook.urlReturnDirections,
+  ]) {
+    for (const metadata of source.values()) {
+      const label = metadata.direction;
+      if (!label) continue;
+      const sectionId = DIRECTION_SECTION_ID.exec(label)?.[1];
+      if (sectionId) result.set(sectionId, label);
+    }
+  }
+  directionBySectionIdCache.set(workbook, result);
+  return result;
+}
+
+function directionFromFilter(
+  rawUrl: string,
+  workbook: AbbottAggregatePrivateData["workbook"],
+): string | null {
+  const query = String(rawUrl ?? "").replaceAll("&amp;", "&").split("#", 1)[0]?.split("?").slice(1).join("?");
+  if (!query) return null;
+  const sectionIds = new Set<string>();
+  for (const pair of query.split("&")) {
+    const [rawKey, rawValue = ""] = pair.split("=", 2);
+    let key: string;
+    let value: string;
+    try {
+      key = decodeURIComponent(rawKey.replaceAll("+", " "));
+      value = decodeURIComponent(rawValue.replaceAll("+", " ")).trim();
+    } catch {
+      continue;
+    }
+    if (!value || !DIRECTION_FILTER_KEY.test(key)) continue;
+    sectionIds.add(value);
+  }
+  if (sectionIds.size !== 1) return null;
+  return directionBySectionId(workbook).get([...sectionIds][0]) ?? null;
+}
+
 function metadataForPage(
   rawUrl: string,
   rawPageTitle: unknown,
@@ -479,9 +541,13 @@ function metadataForPage(
   const metadata = (rawTitle ? workbook.contentByTitle.get(abbottTitleLookupHash(rawTitle)) : undefined)
     ?? workbook.urlReturnDirections.get(lookupHash(path))
     ?? workbook.contentBySlug.get(lookupHash(slug));
+  const catalogDirection = metadata?.direction ?? null;
+  const direction = !catalogDirection || catalogDirection === ABBOTT_UNDETERMINED_DIRECTION
+    ? directionFromFilter(rawUrl, workbook) ?? catalogDirection
+    : catalogDirection;
   return {
     page_title: rawTitle ?? metadata?.page_title ?? "",
-    direction: metadata?.direction ?? null,
+    direction,
     material_type: metadata?.material_type ?? null,
     access: metadata?.access ?? null,
     hidden: metadata?.is_active === false,
