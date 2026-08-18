@@ -106,6 +106,16 @@ test("advertising collector-run foreign keys match migration 003 signed BIGINT k
   assert.doesNotMatch(mysqlVerifier, /id BIGINT UNSIGNED NOT NULL PRIMARY KEY/);
 });
 
+test("advertising MySQL verifier source fixtures match canonical utf8mb4 collation", () => {
+  for (const table of ["canonical_source_accounts", "canonical_source_campaigns"]) {
+    assert.match(
+      mysqlVerifier,
+      new RegExp(`CREATE TABLE ${table} \\([\\s\\S]*?\\) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci`),
+      `${table} fixture must match canonical string foreign-key collation`,
+    );
+  }
+});
+
 test("advertising migration can replay its lifecycle triggers and current view contract", () => {
   assert.equal((sql.match(/DROP TRIGGER IF EXISTS trg_ad_/g) ?? []).length, 3);
   assert.equal((sql.match(/CREATE TRIGGER trg_ad_/g) ?? []).length, 3);

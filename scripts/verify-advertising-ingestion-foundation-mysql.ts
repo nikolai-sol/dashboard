@@ -36,7 +36,7 @@ async function main() {
         source_key VARCHAR(64) NOT NULL,
         platform_account_id VARCHAR(128) NOT NULL,
         UNIQUE KEY uniq_canonical_source_accounts (source_key, platform_account_id)
-      ) ENGINE=InnoDB
+      ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
     `);
     await connection.query(`
       CREATE TABLE canonical_source_campaigns (
@@ -45,7 +45,7 @@ async function main() {
         platform_account_id VARCHAR(128) NOT NULL,
         platform_campaign_id VARCHAR(128) NOT NULL,
         UNIQUE KEY uniq_canonical_source_campaigns (source_key, platform_account_id, platform_campaign_id)
-      ) ENGINE=InnoDB
+      ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
     `);
     await connection.query("INSERT INTO canonical_collector_runs (id) VALUES (1), (2)");
     await connection.query(`
