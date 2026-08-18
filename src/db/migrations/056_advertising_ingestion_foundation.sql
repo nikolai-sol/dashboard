@@ -1,11 +1,11 @@
 -- Versioned advertising publication foundation.
 --
--- A publication owns one account/day authority scope. Its active row is the
--- only one stored with is_active = 1; superseded history uses NULL so MySQL's
+-- A publication owns one account/day authority scope. Its active row is a
+-- published is_active = 1 row; superseded history uses NULL so MySQL's
 -- nullable unique key permits retention of every prior publication.
 
 CREATE TABLE IF NOT EXISTS canonical_ad_source_artifacts (
-    id BIGINT AUTO_INCREMENT PRIMARY KEY,
+    id BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
     source_key VARCHAR(64) NOT NULL,
     platform_account_id VARCHAR(128) NOT NULL,
     transport ENUM('api','gmail','upload','google_sheet','backfill') NOT NULL,
@@ -18,24 +18,33 @@ CREATE TABLE IF NOT EXISTS canonical_ad_source_artifacts (
     metadata_json JSON NULL,
     created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
     UNIQUE KEY uniq_ad_artifact_identity (source_key, platform_account_id, transport, artifact_key),
-    KEY idx_ad_artifact_hash (content_sha256)
+    KEY idx_ad_artifact_hash (content_sha256),
+    KEY idx_ad_artifact_source_account (source_key, platform_account_id),
+    CONSTRAINT fk_ad_artifact_source_account
+        FOREIGN KEY (source_key, platform_account_id)
+        REFERENCES canonical_source_accounts (source_key, platform_account_id)
+        ON DELETE RESTRICT
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 CREATE TABLE IF NOT EXISTS canonical_advertiser_source_accounts (
-    id BIGINT AUTO_INCREMENT PRIMARY KEY,
+    id BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
     advertiser_key VARCHAR(128) NOT NULL,
     source_key VARCHAR(64) NOT NULL,
     platform_account_id VARCHAR(128) NOT NULL,
     created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
     updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
     UNIQUE KEY uniq_advertiser_source_account (advertiser_key, source_key, platform_account_id),
-    KEY idx_source_account_advertiser (source_key, platform_account_id, advertiser_key)
+    KEY idx_source_account_advertiser (source_key, platform_account_id, advertiser_key),
+    CONSTRAINT fk_advertiser_source_account
+        FOREIGN KEY (source_key, platform_account_id)
+        REFERENCES canonical_source_accounts (source_key, platform_account_id)
+        ON DELETE RESTRICT
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 CREATE TABLE IF NOT EXISTS canonical_ad_publications (
-    id BIGINT AUTO_INCREMENT PRIMARY KEY,
-    ingestion_run_id BIGINT NOT NULL,
-    artifact_id BIGINT NULL,
+    id BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+    ingestion_run_id BIGINT UNSIGNED NOT NULL,
+    artifact_id BIGINT UNSIGNED NULL,
     source_key VARCHAR(64) NOT NULL,
     platform_account_id VARCHAR(128) NOT NULL,
     report_date DATE NOT NULL,
@@ -45,7 +54,7 @@ CREATE TABLE IF NOT EXISTS canonical_ad_publications (
     received_at DATETIME NOT NULL,
     status ENUM('staged','validated','published','rejected','failed','superseded') NOT NULL,
     is_active TINYINT(1) NULL,
-    supersedes_publication_id BIGINT NULL,
+    supersedes_publication_id BIGINT UNSIGNED NULL,
     rows_received INT NOT NULL DEFAULT 0,
     rows_rejected INT NOT NULL DEFAULT 0,
     rows_published INT NOT NULL DEFAULT 0,
@@ -53,14 +62,24 @@ CREATE TABLE IF NOT EXISTS canonical_ad_publications (
     created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
     updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
     UNIQUE KEY uniq_ad_active_scope (source_key, platform_account_id, report_date, is_active),
+    UNIQUE KEY uniq_ad_publication_scope (id, source_key, platform_account_id, report_date),
     KEY idx_ad_publication_run (ingestion_run_id),
-    CONSTRAINT fk_ad_publication_artifact FOREIGN KEY (artifact_id) REFERENCES canonical_ad_source_artifacts(id),
-    CONSTRAINT fk_ad_publication_supersedes FOREIGN KEY (supersedes_publication_id) REFERENCES canonical_ad_publications(id)
+    CONSTRAINT chk_ad_publication_active_value CHECK (is_active IS NULL OR is_active = 1),
+    CONSTRAINT chk_ad_publication_active_published CHECK (is_active IS NULL OR status = 'published'),
+    CONSTRAINT fk_ad_publication_run
+        FOREIGN KEY (ingestion_run_id) REFERENCES canonical_collector_runs(id) ON DELETE RESTRICT,
+    CONSTRAINT fk_ad_publication_artifact
+        FOREIGN KEY (artifact_id) REFERENCES canonical_ad_source_artifacts(id) ON DELETE RESTRICT,
+    CONSTRAINT fk_ad_publication_source_account
+        FOREIGN KEY (source_key, platform_account_id)
+        REFERENCES canonical_source_accounts (source_key, platform_account_id) ON DELETE RESTRICT,
+    CONSTRAINT fk_ad_publication_supersedes
+        FOREIGN KEY (supersedes_publication_id) REFERENCES canonical_ad_publications(id) ON DELETE RESTRICT
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 CREATE TABLE IF NOT EXISTS canonical_ad_staging_facts (
-    id BIGINT AUTO_INCREMENT PRIMARY KEY,
-    publication_id BIGINT NOT NULL,
+    id BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+    publication_id BIGINT UNSIGNED NOT NULL,
     source_key VARCHAR(64) NOT NULL,
     platform_account_id VARCHAR(128) NOT NULL,
     platform_campaign_id VARCHAR(128) NOT NULL,
@@ -94,22 +113,31 @@ CREATE TABLE IF NOT EXISTS canonical_ad_staging_facts (
     reactions BIGINT DEFAULT NULL,
     follows BIGINT DEFAULT NULL,
     currency_code VARCHAR(8) DEFAULT NULL,
-    ingestion_run_id BIGINT DEFAULT NULL,
+    ingestion_run_id BIGINT UNSIGNED DEFAULT NULL,
     created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
     updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
     UNIQUE KEY uniq_ad_fact_version (
         publication_id, source_key, platform_account_id, platform_campaign_id,
-        fact_scope, breakdown_scope, platform_delivery_entity_id, platform_creative_id
+        fact_scope, native_grain, breakdown_scope, platform_delivery_entity_id, platform_creative_id
     ),
     KEY idx_ad_staging_publication (publication_id),
     KEY idx_ad_staging_account_date (source_key, platform_account_id, report_date),
-    CONSTRAINT fk_ad_staging_publication FOREIGN KEY (publication_id) REFERENCES canonical_ad_publications(id)
+    CONSTRAINT fk_ad_staging_publication_scope
+        FOREIGN KEY (publication_id, source_key, platform_account_id, report_date)
+        REFERENCES canonical_ad_publications (id, source_key, platform_account_id, report_date)
+        ON DELETE RESTRICT,
+    CONSTRAINT fk_ad_staging_run
+        FOREIGN KEY (ingestion_run_id) REFERENCES canonical_collector_runs (id) ON DELETE RESTRICT,
+    CONSTRAINT fk_ad_staging_campaign
+        FOREIGN KEY (source_key, platform_account_id, platform_campaign_id)
+        REFERENCES canonical_source_campaigns (source_key, platform_account_id, platform_campaign_id)
+        ON DELETE RESTRICT
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 CREATE TABLE IF NOT EXISTS canonical_ad_validation_issues (
-    id BIGINT AUTO_INCREMENT PRIMARY KEY,
-    publication_id BIGINT NOT NULL,
-    staging_fact_id BIGINT NULL,
+    id BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+    publication_id BIGINT UNSIGNED NOT NULL,
+    staging_fact_id BIGINT UNSIGNED NULL,
     severity ENUM('warning','error') NOT NULL,
     issue_code VARCHAR(128) NOT NULL,
     field_name VARCHAR(128) NULL,
@@ -118,13 +146,15 @@ CREATE TABLE IF NOT EXISTS canonical_ad_validation_issues (
     created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
     KEY idx_ad_validation_issue_publication (publication_id, severity),
     KEY idx_ad_validation_issue_staging_fact (staging_fact_id),
-    CONSTRAINT fk_ad_validation_publication FOREIGN KEY (publication_id) REFERENCES canonical_ad_publications(id),
-    CONSTRAINT fk_ad_validation_staging_fact FOREIGN KEY (staging_fact_id) REFERENCES canonical_ad_staging_facts(id)
+    CONSTRAINT fk_ad_validation_publication
+        FOREIGN KEY (publication_id) REFERENCES canonical_ad_publications(id) ON DELETE RESTRICT,
+    CONSTRAINT fk_ad_validation_staging_fact
+        FOREIGN KEY (staging_fact_id) REFERENCES canonical_ad_staging_facts(id) ON DELETE RESTRICT
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 CREATE TABLE IF NOT EXISTS canonical_ad_fact_versions_daily (
-    id BIGINT AUTO_INCREMENT PRIMARY KEY,
-    publication_id BIGINT NOT NULL,
+    id BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+    publication_id BIGINT UNSIGNED NOT NULL,
     source_key VARCHAR(64) NOT NULL,
     platform_account_id VARCHAR(128) NOT NULL,
     platform_campaign_id VARCHAR(128) NOT NULL,
@@ -158,27 +188,36 @@ CREATE TABLE IF NOT EXISTS canonical_ad_fact_versions_daily (
     reactions BIGINT DEFAULT NULL,
     follows BIGINT DEFAULT NULL,
     currency_code VARCHAR(8) DEFAULT NULL,
-    ingestion_run_id BIGINT DEFAULT NULL,
+    ingestion_run_id BIGINT UNSIGNED DEFAULT NULL,
     created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
     updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
     UNIQUE KEY uniq_ad_fact_version (
         publication_id, source_key, platform_account_id, platform_campaign_id,
-        fact_scope, breakdown_scope, platform_delivery_entity_id, platform_creative_id
+        fact_scope, native_grain, breakdown_scope, platform_delivery_entity_id, platform_creative_id
     ),
     KEY idx_ad_fact_version_publication (publication_id),
     KEY idx_ad_fact_version_account_date (source_key, platform_account_id, report_date),
     KEY idx_ad_fact_version_campaign_date (source_key, platform_campaign_id, report_date),
-    CONSTRAINT fk_ad_fact_version_publication FOREIGN KEY (publication_id) REFERENCES canonical_ad_publications(id)
+    CONSTRAINT fk_ad_fact_version_publication_scope
+        FOREIGN KEY (publication_id, source_key, platform_account_id, report_date)
+        REFERENCES canonical_ad_publications (id, source_key, platform_account_id, report_date)
+        ON DELETE RESTRICT,
+    CONSTRAINT fk_ad_fact_version_run
+        FOREIGN KEY (ingestion_run_id) REFERENCES canonical_collector_runs (id) ON DELETE RESTRICT,
+    CONSTRAINT fk_ad_fact_version_campaign
+        FOREIGN KEY (source_key, platform_account_id, platform_campaign_id)
+        REFERENCES canonical_source_campaigns (source_key, platform_account_id, platform_campaign_id)
+        ON DELETE RESTRICT
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 CREATE TABLE IF NOT EXISTS canonical_ad_coverage_daily (
-    id BIGINT AUTO_INCREMENT PRIMARY KEY,
+    id BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
     source_key VARCHAR(64) NOT NULL,
     platform_account_id VARCHAR(128) NOT NULL,
     report_date DATE NOT NULL,
     coverage_state ENUM('complete_with_data','complete_empty','not_due','failed','missing') NOT NULL,
-    ingestion_run_id BIGINT NULL,
-    publication_id BIGINT NULL,
+    ingestion_run_id BIGINT UNSIGNED NULL,
+    publication_id BIGINT UNSIGNED NULL,
     expected_at DATETIME NULL,
     observed_at DATETIME NULL,
     rows_received INT NOT NULL DEFAULT 0,
@@ -190,8 +229,80 @@ CREATE TABLE IF NOT EXISTS canonical_ad_coverage_daily (
     updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
     UNIQUE KEY uniq_ad_coverage_scope (source_key, platform_account_id, report_date),
     KEY idx_ad_coverage_state_date (coverage_state, report_date),
-    CONSTRAINT fk_ad_coverage_publication FOREIGN KEY (publication_id) REFERENCES canonical_ad_publications(id)
+    CONSTRAINT fk_ad_coverage_run
+        FOREIGN KEY (ingestion_run_id) REFERENCES canonical_collector_runs (id) ON DELETE RESTRICT,
+    CONSTRAINT fk_ad_coverage_source_account
+        FOREIGN KEY (source_key, platform_account_id)
+        REFERENCES canonical_source_accounts (source_key, platform_account_id) ON DELETE RESTRICT,
+    CONSTRAINT fk_ad_coverage_publication_scope
+        FOREIGN KEY (publication_id, source_key, platform_account_id, report_date)
+        REFERENCES canonical_ad_publications (id, source_key, platform_account_id, report_date)
+        ON DELETE RESTRICT
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+DROP TRIGGER IF EXISTS trg_ad_coverage_publication_active_insert;
+-- @migration-statement-break
+CREATE TRIGGER trg_ad_coverage_publication_active_insert
+BEFORE INSERT ON canonical_ad_coverage_daily
+FOR EACH ROW
+BEGIN
+    IF NEW.publication_id IS NOT NULL AND NOT EXISTS (
+        SELECT 1
+        FROM canonical_ad_publications AS p
+        WHERE p.id = NEW.publication_id
+          AND p.source_key = NEW.source_key
+          AND p.platform_account_id = NEW.platform_account_id
+          AND p.report_date = NEW.report_date
+          AND p.status = 'published'
+          AND p.is_active = 1
+    ) THEN
+        SIGNAL SQLSTATE '45000'
+            SET MESSAGE_TEXT = 'Advertising coverage requires the active published publication';
+    END IF;
+END;
+-- @migration-statement-break
+
+DROP TRIGGER IF EXISTS trg_ad_coverage_publication_active_update;
+-- @migration-statement-break
+CREATE TRIGGER trg_ad_coverage_publication_active_update
+BEFORE UPDATE ON canonical_ad_coverage_daily
+FOR EACH ROW
+BEGIN
+    IF NEW.publication_id IS NOT NULL AND NOT EXISTS (
+        SELECT 1
+        FROM canonical_ad_publications AS p
+        WHERE p.id = NEW.publication_id
+          AND p.source_key = NEW.source_key
+          AND p.platform_account_id = NEW.platform_account_id
+          AND p.report_date = NEW.report_date
+          AND p.status = 'published'
+          AND p.is_active = 1
+    ) THEN
+        SIGNAL SQLSTATE '45000'
+            SET MESSAGE_TEXT = 'Advertising coverage requires the active published publication';
+    END IF;
+END;
+-- @migration-statement-break
+
+DROP TRIGGER IF EXISTS trg_ad_publication_coverage_active_update;
+-- @migration-statement-break
+CREATE TRIGGER trg_ad_publication_coverage_active_update
+BEFORE UPDATE ON canonical_ad_publications
+FOR EACH ROW
+BEGIN
+    IF EXISTS (
+        SELECT 1
+        FROM canonical_ad_coverage_daily AS c
+        WHERE c.publication_id = OLD.id
+    ) AND (
+        NOT (NEW.status <=> 'published')
+        OR NOT (NEW.is_active <=> 1)
+    ) THEN
+        SIGNAL SQLSTATE '45000'
+            SET MESSAGE_TEXT = 'Coverage publication must remain active and published';
+    END IF;
+END;
+-- @migration-statement-break
 
 CREATE OR REPLACE VIEW canonical_advertising_facts_current AS
 SELECT
