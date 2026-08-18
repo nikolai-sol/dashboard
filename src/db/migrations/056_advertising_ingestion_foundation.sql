@@ -43,7 +43,7 @@ CREATE TABLE IF NOT EXISTS canonical_advertiser_source_accounts (
 
 CREATE TABLE IF NOT EXISTS canonical_ad_publications (
     id BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
-    ingestion_run_id BIGINT UNSIGNED NOT NULL,
+    ingestion_run_id BIGINT NOT NULL,
     artifact_id BIGINT UNSIGNED NULL,
     source_key VARCHAR(64) NOT NULL,
     platform_account_id VARCHAR(128) NOT NULL,
@@ -113,7 +113,7 @@ CREATE TABLE IF NOT EXISTS canonical_ad_staging_facts (
     reactions BIGINT DEFAULT NULL,
     follows BIGINT DEFAULT NULL,
     currency_code VARCHAR(8) DEFAULT NULL,
-    ingestion_run_id BIGINT UNSIGNED DEFAULT NULL,
+    ingestion_run_id BIGINT DEFAULT NULL,
     created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
     updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
     UNIQUE KEY uniq_ad_fact_version (
@@ -188,7 +188,7 @@ CREATE TABLE IF NOT EXISTS canonical_ad_fact_versions_daily (
     reactions BIGINT DEFAULT NULL,
     follows BIGINT DEFAULT NULL,
     currency_code VARCHAR(8) DEFAULT NULL,
-    ingestion_run_id BIGINT UNSIGNED DEFAULT NULL,
+    ingestion_run_id BIGINT DEFAULT NULL,
     created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
     updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
     UNIQUE KEY uniq_ad_fact_version (
@@ -216,7 +216,7 @@ CREATE TABLE IF NOT EXISTS canonical_ad_coverage_daily (
     platform_account_id VARCHAR(128) NOT NULL,
     report_date DATE NOT NULL,
     coverage_state ENUM('complete_with_data','complete_empty','not_due','failed','missing') NOT NULL,
-    ingestion_run_id BIGINT UNSIGNED NULL,
+    ingestion_run_id BIGINT NULL,
     publication_id BIGINT UNSIGNED NULL,
     expected_at DATETIME NULL,
     observed_at DATETIME NULL,

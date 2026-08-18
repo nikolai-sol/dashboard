@@ -27,7 +27,7 @@ async function main() {
   try {
     await connection.query(`
       CREATE TABLE canonical_collector_runs (
-        id BIGINT UNSIGNED NOT NULL PRIMARY KEY
+        id BIGINT NOT NULL PRIMARY KEY
       ) ENGINE=InnoDB
     `);
     await connection.query(`

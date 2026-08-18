@@ -87,6 +87,25 @@ test("advertising provenance references canonical runs and dictionaries with ret
   assert.match(coverage, /FOREIGN KEY \(ingestion_run_id\)[\s\S]*?REFERENCES canonical_collector_runs\s*\(id\)[\s\S]*?ON DELETE RESTRICT/);
 });
 
+test("advertising collector-run foreign keys match migration 003 signed BIGINT keys", () => {
+  for (const table of [
+    "canonical_ad_publications",
+    "canonical_ad_staging_facts",
+    "canonical_ad_fact_versions_daily",
+    "canonical_ad_coverage_daily",
+  ]) {
+    const definition = tableDefinition(table);
+    assert.match(definition, /ingestion_run_id BIGINT(?:\s+(?:NOT NULL|DEFAULT NULL))?/);
+    assert.doesNotMatch(definition, /ingestion_run_id BIGINT UNSIGNED/);
+  }
+
+  assert.match(
+    mysqlVerifier,
+    /CREATE TABLE canonical_collector_runs \([\s\S]*?id BIGINT NOT NULL PRIMARY KEY/,
+  );
+  assert.doesNotMatch(mysqlVerifier, /id BIGINT UNSIGNED NOT NULL PRIMARY KEY/);
+});
+
 test("advertising migration can replay its lifecycle triggers and current view contract", () => {
   assert.equal((sql.match(/DROP TRIGGER IF EXISTS trg_ad_/g) ?? []).length, 3);
   assert.equal((sql.match(/CREATE TRIGGER trg_ad_/g) ?? []).length, 3);
