@@ -64,6 +64,23 @@ Current auth note:
   predecessor, it stops PM2 and leaves the app fail-closed until a corrected compatible release is
   deployed. Zaruku must never become public during rollback.
 
+### Advertising canonical authority
+
+- This rule covers versioned advertising ingestion only. Abbott, Zaruku, and SEO operational rules,
+  collectors, releases, health checks, cron entries, and dashboard behavior remain separately scoped
+  and unchanged.
+- External advertising APIs, email, files, and sheets are collector-only inputs. Dashboard and admin
+  request, render, filter, export, binding, and read-model code must read canonical MySQL only; it
+  must not call source APIs, use source OAuth tokens, or read source artifacts.
+- Staged and rejected advertising data is not visible to dashboards or admin reads. Advertising facts
+  resolve through the active published version only; there is no legacy or unpublished fallback.
+- Canonical coverage distinguishes successful complete-empty from failed or missing collection.
+  Absence of facts is not complete-empty evidence and must not be presented as an empty result.
+- Dashboard source bindings use canonical campaigns, not source-specific campaign artifacts or
+  identifiers outside the canonical campaign model.
+- Merging code does not run a migration, backfill, deployment, cron edit, or Telegram send. Those are
+  separate reviewed operational actions.
+
 ### Zaruku source matrix (branch target)
 
 | Source | Collection | Branch-target dashboard role |
