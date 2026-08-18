@@ -23,6 +23,7 @@ test("advertising ingestion migration defines versioned publication authority", 
     "canonical_ad_source_artifacts",
     "canonical_advertiser_source_accounts",
     "canonical_ad_publications",
+    "canonical_ad_publication_activations",
     "canonical_ad_staging_facts",
     "canonical_ad_validation_issues",
     "canonical_ad_fact_versions_daily",
@@ -32,6 +33,42 @@ test("advertising ingestion migration defines versioned publication authority", 
   assert.match(sql, /UNIQUE KEY uniq_ad_active_scope/);
   assert.match(sql, /content_sha256 CHAR\(64\)/);
   assert.match(sql, /ENUM\('complete_with_data','complete_empty','not_due','failed','missing'\)/);
+});
+
+test("advertising publications persist their ordering policy", () => {
+  const publication = tableDefinition("canonical_ad_publications");
+  assert.match(
+    publication,
+    /ordering_policy ENUM\('revision','source_generated_at','received_at_monotonic','manual_review'\) NOT NULL/,
+  );
+});
+
+test("advertising publication activations are scope-bound immutable audit events", () => {
+  const activation = tableDefinition("canonical_ad_publication_activations");
+  assert.match(activation, /publication_id BIGINT UNSIGNED NOT NULL/);
+  assert.match(activation, /previous_publication_id BIGINT UNSIGNED NULL/);
+  assert.match(activation, /source_key VARCHAR\(64\) NOT NULL/);
+  assert.match(activation, /platform_account_id VARCHAR\(128\) NOT NULL/);
+  assert.match(activation, /report_date DATE NOT NULL/);
+  assert.match(activation, /collector_run_id BIGINT NULL/);
+  assert.match(activation, /actor VARCHAR\(255\) NOT NULL/);
+  assert.match(activation, /reason TEXT NOT NULL/);
+  assert.match(activation, /activated_at DATETIME(?:\(6\))? NOT NULL/);
+  assert.match(activation, /KEY idx_ad_publication_activation_scope \(source_key, platform_account_id, report_date, activated_at\)/);
+  assert.match(
+    activation,
+    /FOREIGN KEY \(publication_id, source_key, platform_account_id, report_date\)[\s\S]*?REFERENCES canonical_ad_publications \(id, source_key, platform_account_id, report_date\)[\s\S]*?ON DELETE RESTRICT/,
+  );
+  assert.match(
+    activation,
+    /FOREIGN KEY \(previous_publication_id, source_key, platform_account_id, report_date\)[\s\S]*?REFERENCES canonical_ad_publications \(id, source_key, platform_account_id, report_date\)[\s\S]*?ON DELETE RESTRICT/,
+  );
+  assert.match(
+    activation,
+    /FOREIGN KEY \(collector_run_id\)[\s\S]*?REFERENCES canonical_collector_runs \(id\)[\s\S]*?ON DELETE RESTRICT/,
+  );
+  assert.match(sql, /CREATE TRIGGER trg_ad_publication_activations_immutable_update/);
+  assert.match(sql, /CREATE TRIGGER trg_ad_publication_activations_immutable_delete/);
 });
 
 test("advertising facts retain native grain in their version identity", () => {
@@ -70,6 +107,7 @@ test("advertising active publication and coverage authority are lifecycle guarde
   assert.match(sql, /CREATE TRIGGER trg_ad_coverage_publication_active_insert[\s\S]*?p\.status = 'published'[\s\S]*?p\.is_active = 1[\s\S]*?SIGNAL SQLSTATE '45000'/);
   assert.match(sql, /CREATE TRIGGER trg_ad_coverage_publication_active_update/);
   assert.match(sql, /CREATE TRIGGER trg_ad_publication_coverage_active_update[\s\S]*?canonical_ad_coverage_daily[\s\S]*?SIGNAL SQLSTATE '45000'/);
+  assert.match(sql, /CREATE TRIGGER trg_ad_publication_published_at_first_value_update[\s\S]*?SET NEW\.published_at = OLD\.published_at/);
 });
 
 test("advertising provenance references canonical runs and dictionaries with retained history", () => {
@@ -117,8 +155,8 @@ test("advertising MySQL verifier source fixtures match canonical utf8mb4 collati
 });
 
 test("advertising migration can replay its lifecycle triggers and current view contract", () => {
-  assert.equal((sql.match(/DROP TRIGGER IF EXISTS trg_ad_/g) ?? []).length, 3);
-  assert.equal((sql.match(/CREATE TRIGGER trg_ad_/g) ?? []).length, 3);
+  assert.equal((sql.match(/DROP TRIGGER IF EXISTS trg_ad_/g) ?? []).length, 6);
+  assert.equal((sql.match(/CREATE TRIGGER trg_ad_/g) ?? []).length, 6);
   assert.doesNotMatch(sql, /DELIMITER/i);
   assert.match(sql, /CREATE OR REPLACE VIEW canonical_advertising_facts_current/);
   assert.match(sql, /WHERE p\.status = 'published' AND p\.is_active = 1/);
@@ -127,4 +165,9 @@ test("advertising migration can replay its lifecycle triggers and current view c
 test("advertising MySQL verifier replays migration sections with the app runner mode", () => {
   assert.match(mysqlVerifier, /multipleStatements:\s*true/);
   assert.match(mysqlVerifier, /for \(let replay = 0; replay < 2; replay \+= 1\)/);
+  assert.match(mysqlVerifier, /UPDATE canonical_ad_coverage_daily SET publication_id = NULL/);
+  assert.match(mysqlVerifier, /canonical_ad_publication_activations/);
+  assert.match(mysqlVerifier, /SELECT ordering_policy FROM canonical_ad_publications/);
+  assert.match(mysqlVerifier, /UPDATE canonical_ad_publications SET status = 'superseded', is_active = NULL WHERE id = 1/);
+  assert.match(mysqlVerifier, /UPDATE canonical_ad_publications SET status = 'superseded', is_active = NULL WHERE id = 2/);
 });

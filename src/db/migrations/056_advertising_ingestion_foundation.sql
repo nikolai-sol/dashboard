@@ -49,6 +49,7 @@ CREATE TABLE IF NOT EXISTS canonical_ad_publications (
     platform_account_id VARCHAR(128) NOT NULL,
     report_date DATE NOT NULL,
     publication_mode ENUM('incremental','authoritative_snapshot','baseline') NOT NULL,
+    ordering_policy ENUM('revision','source_generated_at','received_at_monotonic','manual_review') NOT NULL,
     source_revision VARCHAR(128) NULL,
     source_generated_at DATETIME NULL,
     received_at DATETIME NOT NULL,
@@ -75,6 +76,34 @@ CREATE TABLE IF NOT EXISTS canonical_ad_publications (
         REFERENCES canonical_source_accounts (source_key, platform_account_id) ON DELETE RESTRICT,
     CONSTRAINT fk_ad_publication_supersedes
         FOREIGN KEY (supersedes_publication_id) REFERENCES canonical_ad_publications(id) ON DELETE RESTRICT
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+CREATE TABLE IF NOT EXISTS canonical_ad_publication_activations (
+    id BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+    publication_id BIGINT UNSIGNED NOT NULL,
+    previous_publication_id BIGINT UNSIGNED NULL,
+    source_key VARCHAR(64) NOT NULL,
+    platform_account_id VARCHAR(128) NOT NULL,
+    report_date DATE NOT NULL,
+    collector_run_id BIGINT NULL,
+    actor VARCHAR(255) NOT NULL,
+    reason TEXT NOT NULL,
+    activated_at DATETIME NOT NULL,
+    created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    KEY idx_ad_publication_activation_scope (source_key, platform_account_id, report_date, activated_at),
+    KEY idx_ad_publication_activation_publication (publication_id, source_key, platform_account_id, report_date),
+    KEY idx_ad_publication_activation_previous (previous_publication_id, source_key, platform_account_id, report_date),
+    KEY idx_ad_publication_activation_run (collector_run_id),
+    CONSTRAINT fk_ad_publication_activation_publication_scope
+        FOREIGN KEY (publication_id, source_key, platform_account_id, report_date)
+        REFERENCES canonical_ad_publications (id, source_key, platform_account_id, report_date)
+        ON DELETE RESTRICT,
+    CONSTRAINT fk_ad_publication_activation_previous_scope
+        FOREIGN KEY (previous_publication_id, source_key, platform_account_id, report_date)
+        REFERENCES canonical_ad_publications (id, source_key, platform_account_id, report_date)
+        ON DELETE RESTRICT,
+    CONSTRAINT fk_ad_publication_activation_run
+        FOREIGN KEY (collector_run_id) REFERENCES canonical_collector_runs (id) ON DELETE RESTRICT
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 CREATE TABLE IF NOT EXISTS canonical_ad_staging_facts (
@@ -301,6 +330,40 @@ BEGIN
         SIGNAL SQLSTATE '45000'
             SET MESSAGE_TEXT = 'Coverage publication must remain active and published';
     END IF;
+END;
+-- @migration-statement-break
+
+DROP TRIGGER IF EXISTS trg_ad_publication_published_at_first_value_update;
+-- @migration-statement-break
+CREATE TRIGGER trg_ad_publication_published_at_first_value_update
+BEFORE UPDATE ON canonical_ad_publications
+FOR EACH ROW
+BEGIN
+    IF OLD.published_at IS NOT NULL AND NOT (NEW.published_at <=> OLD.published_at) THEN
+        SET NEW.published_at = OLD.published_at;
+    END IF;
+END;
+-- @migration-statement-break
+
+DROP TRIGGER IF EXISTS trg_ad_publication_activations_immutable_update;
+-- @migration-statement-break
+CREATE TRIGGER trg_ad_publication_activations_immutable_update
+BEFORE UPDATE ON canonical_ad_publication_activations
+FOR EACH ROW
+BEGIN
+    SIGNAL SQLSTATE '45000'
+        SET MESSAGE_TEXT = 'Advertising publication activation events are immutable';
+END;
+-- @migration-statement-break
+
+DROP TRIGGER IF EXISTS trg_ad_publication_activations_immutable_delete;
+-- @migration-statement-break
+CREATE TRIGGER trg_ad_publication_activations_immutable_delete
+BEFORE DELETE ON canonical_ad_publication_activations
+FOR EACH ROW
+BEGIN
+    SIGNAL SQLSTATE '45000'
+        SET MESSAGE_TEXT = 'Advertising publication activation events are immutable';
 END;
 -- @migration-statement-break
 
