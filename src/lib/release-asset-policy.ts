@@ -30,7 +30,13 @@ const SAFE_ABBOTT_MIGRATIONS = new Set([
   "src/db/migrations/047_abbott_content_registry_workflow.sql",
   "src/db/migrations/048_abbott_content_candidate_provenance.sql",
   "src/db/migrations/049_abbott_content_reconciliation_staging.sql",
+  "src/db/migrations/050_abbott_content_url_identity.sql",
+  "src/db/migrations/051_abbott_content_url_alias_decisions.sql",
+  "src/db/migrations/052_abbott_content_mnn.sql",
   "reportingdash-canonical-bootstrap/src/db/migrations/049_abbott_content_reconciliation_staging.sql",
+  "reportingdash-canonical-bootstrap/src/db/migrations/050_abbott_content_url_identity.sql",
+  "reportingdash-canonical-bootstrap/src/db/migrations/051_abbott_content_url_alias_decisions.sql",
+  "reportingdash-canonical-bootstrap/src/db/migrations/052_abbott_content_mnn.sql",
 ]);
 
 const INSPECTED_DATA_SUFFIXES = [".json", ".jsonl", ".csv", ".tsv", ".xlsx", ".xls"] as const;
