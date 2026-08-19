@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { existsSync } from "node:fs";
-import { mkdtemp, readFile, rm, stat } from "node:fs/promises";
+import { mkdtemp, readFile, rm, stat, symlink } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import test from "node:test";
@@ -87,6 +87,75 @@ test("confirmed upload writes a protected artifact and queues a canonical import
   }
 });
 
+test("configured spool roots may not be symlinks", async () => {
+  const parent = await mkdtemp(path.join(os.tmpdir(), "canonical-import-parent-"));
+  const external = await mkdtemp(path.join(os.tmpdir(), "canonical-import-external-"));
+  const spoolDir = path.join(parent, "spool");
+  try {
+    await symlink(external, spoolDir);
+    await assert.rejects(
+      enqueueCanonicalImport(
+        new FakeConnection(),
+        {
+          advertiserKey: "gidrofuril",
+          sourceKey: "yandex_direct",
+          platformAccountId: "gidrofuril-search",
+          transport: "upload",
+          upload: {
+            filename: "report.csv",
+            contentBase64: Buffer.from("date,campaign\n2026-08-18,Search\n").toString("base64"),
+          },
+          adapterConfig: {
+            adapter_config_version: "file-v1",
+            source_key: "yandex_direct",
+            platform_account_id: "gidrofuril-search",
+          },
+        },
+        { spoolDir },
+      ),
+      /Protected spool path may not contain symlinks/,
+    );
+    assert.equal(existsSync(path.join(external, "uploads")), false);
+  } finally {
+    await rm(parent, { recursive: true, force: true });
+    await rm(external, { recursive: true, force: true });
+  }
+});
+
+test("configured uploads directories may not be symlinks", async () => {
+  const spoolDir = await mkdtemp(path.join(os.tmpdir(), "canonical-import-"));
+  const external = await mkdtemp(path.join(os.tmpdir(), "canonical-import-external-"));
+  try {
+    await symlink(external, path.join(spoolDir, "uploads"));
+    await assert.rejects(
+      enqueueCanonicalImport(
+        new FakeConnection(),
+        {
+          advertiserKey: "gidrofuril",
+          sourceKey: "yandex_direct",
+          platformAccountId: "gidrofuril-search",
+          transport: "upload",
+          upload: {
+            filename: "report.csv",
+            contentBase64: Buffer.from("date,campaign\n2026-08-18,Search\n").toString("base64"),
+          },
+          adapterConfig: {
+            adapter_config_version: "file-v1",
+            source_key: "yandex_direct",
+            platform_account_id: "gidrofuril-search",
+          },
+        },
+        { spoolDir },
+      ),
+      /Protected spool path may not contain symlinks/,
+    );
+    assert.equal(existsSync(path.join(external, "uploads")), false);
+  } finally {
+    await rm(spoolDir, { recursive: true, force: true });
+    await rm(external, { recursive: true, force: true });
+  }
+});
+
 test("Google Sheet confirmation queues a collector-owned snapshot intent without fetching content", async () => {
   const connection = new FakeConnection();
   const result = await enqueueCanonicalImport(
@@ -116,9 +185,72 @@ test("Google Sheet confirmation queues a collector-owned snapshot intent without
   );
   assert.ok(request);
   assert.equal(request!.params[4], null);
-  assert.equal(request!.params[5], "https://docs.google.com/spreadsheets/d/sheet123/edit#gid=0");
+  assert.equal(request!.params[5], "https://docs.google.com/spreadsheets/d/sheet123/export?format=csv&gid=0");
   assert.equal(request!.params[7], null);
   assert.equal(request!.params[8], "2166d807-11f8-4e34-a59b-fc9f0c64fe4f");
+});
+
+test("Google Sheet confirmation stores the worker-normalized export URL", async () => {
+  const connection = new FakeConnection();
+  await enqueueCanonicalImport(
+    connection,
+    {
+      advertiserKey: "gidrofuril",
+      sourceKey: "yandex_direct",
+      platformAccountId: "gidrofuril-search",
+      transport: "google_sheet",
+      sourceUrl: "https://docs.google.com/spreadsheets/d/sheet_123-abc/edit?gid=42",
+      sheetSnapshotKey: "2166d807-11f8-4e34-a59b-fc9f0c64fe4f",
+      adapterConfig: {
+        adapter_config_version: "file-v1",
+        source_key: "yandex_direct",
+        platform_account_id: "gidrofuril-search",
+      },
+    },
+  );
+
+  const request = connection.statements.find((statement) =>
+    statement.sql.includes("INSERT INTO canonical_ad_import_requests"),
+  );
+  assert.ok(request);
+  assert.equal(
+    request.params[5],
+    "https://docs.google.com/spreadsheets/d/sheet_123-abc/export?format=csv&gid=42",
+  );
+});
+
+test("Google Sheet confirmation rejects URLs outside the worker contract", async () => {
+  const invalidUrls = [
+    "http://docs.google.com/spreadsheets/d/sheet123/edit#gid=0",
+    "https://docs.google.com:443/spreadsheets/d/sheet123/edit#gid=0",
+    "https://DOCS.google.com/spreadsheets/d/sheet123/edit#gid=0",
+    "https://docs.google.com/spreadsheets/d/sheet123/edit",
+    "https://docs.google.com/spreadsheets/d/sheet123/edit#gid=abc",
+    "https://docs.google.com/spreadsheets/d//edit#gid=0",
+  ];
+
+  for (const sourceUrl of invalidUrls) {
+    await assert.rejects(
+      enqueueCanonicalImport(
+        new FakeConnection(),
+        {
+          advertiserKey: "gidrofuril",
+          sourceKey: "yandex_direct",
+          platformAccountId: "gidrofuril-search",
+          transport: "google_sheet",
+          sourceUrl,
+          sheetSnapshotKey: "2166d807-11f8-4e34-a59b-fc9f0c64fe4f",
+          adapterConfig: {
+            adapter_config_version: "file-v1",
+            source_key: "yandex_direct",
+            platform_account_id: "gidrofuril-search",
+          },
+        },
+      ),
+      /source_url must be a Google Sheets URL/,
+      sourceUrl,
+    );
+  }
 });
 
 test("duplicate uploads remove their newly spooled artifact and return the persisted request", async () => {

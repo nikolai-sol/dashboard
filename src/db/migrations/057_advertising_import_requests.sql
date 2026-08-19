@@ -74,7 +74,7 @@ CREATE TABLE IF NOT EXISTS canonical_ad_import_requests (
                 OR
                 (content_sha256 IS NULL
                     AND protected_ref IS NULL
-                    AND status IN ('pending', 'processing', 'retryable'))
+                    AND status IN ('pending', 'processing', 'retryable', 'rejected', 'failed'))
             ))
     ),
     CONSTRAINT chk_ad_import_request_config_version CHECK (CHAR_LENGTH(TRIM(adapter_config_version)) > 0),

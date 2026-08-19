@@ -99,11 +99,11 @@ test("import request transports require exactly their safe locator", () => {
   );
 });
 
-test("collector Sheet intents require a snapshot key and defer materialization", () => {
+test("collector Sheet intents may terminalize before materialization", () => {
   const request = tableDefinition("canonical_ad_import_requests");
   assert.match(request, /sheet_snapshot_key CHAR\(36\) NULL/);
   assert.match(request, /UNIQUE KEY uniq_ad_import_sheet_snapshot/);
-  assert.match(request, /CONSTRAINT chk_ad_import_request_sheet_materialization CHECK \([\s\S]*?content_sha256 IS NULL[\s\S]*?protected_ref IS NULL[\s\S]*?status IN \('pending', 'processing', 'retryable'\)[\s\S]*?\)/);
+  assert.match(request, /CONSTRAINT chk_ad_import_request_sheet_materialization CHECK \([\s\S]*?content_sha256 IS NULL[\s\S]*?protected_ref IS NULL[\s\S]*?status IN \('pending', 'processing', 'retryable', 'rejected', 'failed'\)[\s\S]*?\)/);
 });
 
 test("import request lifecycle supports FIFO lease recovery and bounded retries", () => {
@@ -250,6 +250,8 @@ test("MySQL verifier exercises generated identity, fenced lease races, and diges
   assert.match(verifier, /finalAttemptRunningRejected/);
   assert.match(verifier, /finalAttemptFailedRejected/);
   assert.match(verifier, /finalAttemptMissingRejected/);
+  assert.match(verifier, /preSnapshotRejected/);
+  assert.match(verifier, /preSnapshotFailed/);
   assert.match(verifier, /workerSuccessWins/);
   assert.match(verifier, /reaperWins/);
   assert.match(verifier, /beginTransaction\(\)/);

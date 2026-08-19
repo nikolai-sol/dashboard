@@ -44,19 +44,20 @@ async function insertSheetIntent(
   connection: mysql.Connection,
   version: string,
   snapshotKey = "12121212-1212-4121-8121-121212121212",
+  maxAttempts = 2,
 ) {
   const adapterConfig = await config(connection, version);
   const [result] = await connection.execute<mysql.ResultSetHeader>(`
     INSERT INTO canonical_ad_import_requests (
       advertiser_key, source_key, platform_account_id, transport, source_url,
       sheet_snapshot_key, adapter_config, adapter_config_version,
-      requested_at, next_attempt_at
+      max_attempts, requested_at, next_attempt_at
     ) VALUES (
       'advertiser_a', 'test_source', 'account_a', 'google_sheet',
       'https://docs.google.com/spreadsheets/d/sheet-123/edit#gid=0',
-      ?, ?, ?, UTC_TIMESTAMP() - INTERVAL 5 MINUTE, UTC_TIMESTAMP() - INTERVAL 5 MINUTE
+      ?, ?, ?, ?, UTC_TIMESTAMP() - INTERVAL 5 MINUTE, UTC_TIMESTAMP() - INTERVAL 5 MINUTE
     )
-  `, [snapshotKey, adapterConfig, version]);
+  `, [snapshotKey, adapterConfig, version, maxAttempts]);
   return Number(result.insertId);
 }
 
@@ -169,6 +170,92 @@ async function main() {
       SET content_sha256 = '${"c".repeat(64)}'
       WHERE id = ?
     `, [sheetIntentId]));
+
+    const preSnapshotRejectedId = await insertSheetIntent(
+      connection,
+      "sheet-pre-snapshot-rejected",
+      "13131313-1313-4131-8131-131313131313",
+    );
+    const preSnapshotRejectedLeaseToken = "d1d1d1d1-d1d1-41d1-81d1-d1d1d1d1d1d1";
+    const [preSnapshotRejectedClaim] = await connection.query<mysql.ResultSetHeader>(`
+      UPDATE canonical_ad_import_requests
+      SET status = 'processing', attempt_count = 1, started_at = UTC_TIMESTAMP(),
+          lease_expires_at = UTC_TIMESTAMP() + INTERVAL 5 MINUTE, lease_token = ?, next_attempt_at = NULL
+      WHERE id = ? AND status = 'pending'
+    `, [preSnapshotRejectedLeaseToken, preSnapshotRejectedId]);
+    assert.equal(preSnapshotRejectedClaim.affectedRows, 1);
+    const [preSnapshotRejected] = await connection.query<mysql.ResultSetHeader>(`
+      UPDATE canonical_ad_import_requests
+      SET status = 'rejected', lease_expires_at = NULL, next_attempt_at = NULL,
+          finished_at = UTC_TIMESTAMP(), error_summary = 'Google Sheets export returned HTTP 404'
+      WHERE id = ?
+        AND status = 'processing'
+        AND lease_token = ?
+        AND lease_expires_at > UTC_TIMESTAMP()
+    `, [preSnapshotRejectedId, preSnapshotRejectedLeaseToken]);
+    assert.equal(preSnapshotRejected.affectedRows, 1, "a terminal Sheet 4xx may remain unmaterialized");
+    const [preSnapshotRejectedRows] = await connection.query<mysql.RowDataPacket[]>(`
+      SELECT status, content_sha256, protected_ref, lease_expires_at, lease_token, next_attempt_at, finished_at, error_summary
+      FROM canonical_ad_import_requests
+      WHERE id = ?
+    `, [preSnapshotRejectedId]);
+    assert.deepEqual(preSnapshotRejectedRows[0], {
+      status: "rejected",
+      content_sha256: null,
+      protected_ref: null,
+      lease_expires_at: null,
+      lease_token: preSnapshotRejectedLeaseToken,
+      next_attempt_at: null,
+      finished_at: preSnapshotRejectedRows[0].finished_at,
+      error_summary: "Google Sheets export returned HTTP 404",
+    });
+    assert.notEqual(preSnapshotRejectedRows[0].finished_at, null);
+
+    const preSnapshotFailedId = await insertSheetIntent(
+      connection,
+      "sheet-pre-snapshot-failed",
+      "14141414-1414-4141-8141-141414141414",
+      1,
+    );
+    const preSnapshotFailedLeaseToken = "e1e1e1e1-e1e1-41e1-81e1-e1e1e1e1e1e1";
+    const [preSnapshotFailedClaim] = await connection.query<mysql.ResultSetHeader>(`
+      UPDATE canonical_ad_import_requests
+      SET status = 'processing', attempt_count = 1, started_at = UTC_TIMESTAMP(),
+          lease_expires_at = UTC_TIMESTAMP() + INTERVAL 5 MINUTE, lease_token = ?, next_attempt_at = NULL
+      WHERE id = ? AND status = 'pending'
+    `, [preSnapshotFailedLeaseToken, preSnapshotFailedId]);
+    assert.equal(preSnapshotFailedClaim.affectedRows, 1);
+    const [preSnapshotFailed] = await connection.query<mysql.ResultSetHeader>(`
+      UPDATE canonical_ad_import_requests
+      SET status = 'failed', lease_expires_at = NULL, lease_token = NULL, next_attempt_at = NULL,
+          finished_at = UTC_TIMESTAMP(), error_summary = 'Google Sheets transient retry budget exhausted'
+      WHERE id = ?
+        AND status = 'processing'
+        AND lease_token = ?
+        AND attempt_count = max_attempts
+        AND lease_expires_at > UTC_TIMESTAMP()
+    `, [preSnapshotFailedId, preSnapshotFailedLeaseToken]);
+    assert.equal(preSnapshotFailed.affectedRows, 1, "an exhausted transient Sheet failure may remain unmaterialized");
+    const [preSnapshotFailedRows] = await connection.query<mysql.RowDataPacket[]>(`
+      SELECT status, attempt_count, max_attempts, content_sha256, protected_ref,
+             lease_expires_at, lease_token, next_attempt_at, finished_at, ingestion_run_id, error_summary
+      FROM canonical_ad_import_requests
+      WHERE id = ?
+    `, [preSnapshotFailedId]);
+    assert.deepEqual(preSnapshotFailedRows[0], {
+      status: "failed",
+      attempt_count: 1,
+      max_attempts: 1,
+      content_sha256: null,
+      protected_ref: null,
+      lease_expires_at: null,
+      lease_token: null,
+      next_attempt_at: null,
+      finished_at: preSnapshotFailedRows[0].finished_at,
+      ingestion_run_id: null,
+      error_summary: "Google Sheets transient retry budget exhausted",
+    });
+    assert.notEqual(preSnapshotFailedRows[0].finished_at, null);
 
     const attempt1LeaseToken = "11111111-1111-4111-8111-111111111111";
     const attempt2LeaseToken = "22222222-2222-4222-8222-222222222222";

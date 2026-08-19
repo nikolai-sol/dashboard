@@ -1,5 +1,6 @@
 import { createHash, randomUUID } from "node:crypto";
-import { chmod, lstat, mkdir, open, realpath, rename, rm } from "node:fs/promises";
+import { constants } from "node:fs";
+import { lstat, mkdir, open, rename, rm, type FileHandle } from "node:fs/promises";
 import path from "node:path";
 
 export const MAX_IMPORT_UPLOAD_BYTES = 20 * 1024 * 1024;
@@ -69,12 +70,24 @@ function decodeUpload(contentBase64: string): Buffer {
   return data;
 }
 
-function isGoogleSheetUrl(value: string): boolean {
+function googleSheetExportUrl(value: string): string {
   try {
     const url = new URL(value);
-    return url.protocol === "https:" && url.hostname === "docs.google.com" && /^\/spreadsheets\/d\/[A-Za-z0-9_-]+(?:\/|$)/.test(url.pathname);
+    const authority = value.match(/^[a-zA-Z][a-zA-Z\d+.-]*:\/\/([^/?#]*)/)?.[1];
+    const sheet = url.pathname.match(/^\/spreadsheets\/d\/([A-Za-z0-9_-]+)(?:\/.*)?$/);
+    const gid = new URLSearchParams(url.hash.replace(/^#/, "")).get("gid") ?? url.searchParams.get("gid");
+    if (
+      url.protocol !== "https:"
+      || authority !== "docs.google.com"
+      || !sheet
+      || !gid
+      || !/^\d+$/.test(gid)
+    ) {
+      throw new Error("source_url must be a Google Sheets URL");
+    }
+    return `https://docs.google.com/spreadsheets/d/${sheet[1]}/export?format=csv&gid=${gid}`;
   } catch {
-    return false;
+    throw new Error("source_url must be a Google Sheets URL");
   }
 }
 
@@ -82,69 +95,97 @@ function isUuid(value: string): boolean {
   return /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(value);
 }
 
-async function assertNoSymlinks(directory: string): Promise<void> {
-  const absolute = path.resolve(directory);
-  const parsed = path.parse(absolute);
-  let current = parsed.root;
-  for (const part of absolute.slice(parsed.root.length).split(path.sep).filter(Boolean)) {
-    current = path.join(current, part);
-    try {
-      const metadata = await lstat(current);
-      if (metadata.isSymbolicLink()) throw new Error(`Protected spool path may not contain symlinks: ${current}`);
-    } catch (error: unknown) {
-      if ((error as NodeJS.ErrnoException).code === "ENOENT") break;
-      throw error;
-    }
-  }
+const DIRECTORY_OPEN_FLAGS = constants.O_RDONLY | constants.O_DIRECTORY | constants.O_NOFOLLOW;
+const FILE_CREATE_FLAGS = constants.O_WRONLY | constants.O_CREAT | constants.O_EXCL | constants.O_NOFOLLOW;
+
+type ProtectedDirectory = {
+  path: string;
+  handle: FileHandle;
+};
+
+function descriptorPath(handle: FileHandle): string | null {
+  return process.platform === "linux" ? path.join("/proc/self/fd", String(handle.fd)) : null;
 }
 
-async function protectedDirectory(directory: string): Promise<string> {
-  const absolute = path.resolve(directory);
-  await mkdir(absolute, { recursive: true, mode: 0o750 });
-  const canonical = await realpath(absolute);
-  await assertNoSymlinks(canonical);
-  const metadata = await lstat(canonical);
-  if (!metadata.isDirectory() || metadata.isSymbolicLink()) {
-    throw new Error("AD_IMPORT_SPOOL_DIR must be a non-symlink directory");
-  }
-  await chmod(canonical, 0o750);
-  return canonical;
-}
-
-async function fsyncDirectory(directory: string): Promise<void> {
-  const handle = await open(directory, "r");
+async function assertOriginalDirectory(entry: string): Promise<boolean> {
   try {
-    await handle.sync();
-  } finally {
+    const metadata = await lstat(entry);
+    if (metadata.isSymbolicLink()) throw new Error(`Protected spool path may not contain symlinks: ${entry}`);
+    if (!metadata.isDirectory()) throw new Error(`Protected spool path must be a directory: ${entry}`);
+    return true;
+  } catch (error: unknown) {
+    if ((error as NodeJS.ErrnoException).code === "ENOENT") return false;
+    throw error;
+  }
+}
+
+async function openProtectedChild(parent: ProtectedDirectory, name: string): Promise<ProtectedDirectory> {
+  const anchoredPath = path.join(descriptorPath(parent.handle) ?? parent.path, name);
+  if (!await assertOriginalDirectory(anchoredPath)) {
+    await mkdir(anchoredPath, { mode: 0o750 });
+    await assertOriginalDirectory(anchoredPath);
+  }
+
+  const handle = await open(anchoredPath, DIRECTORY_OPEN_FLAGS);
+  try {
+    const metadata = await handle.stat();
+    if (!metadata.isDirectory()) throw new Error(`Protected spool path must be a directory: ${anchoredPath}`);
+    return { path: path.join(parent.path, name), handle };
+  } catch (error) {
     await handle.close();
+    throw error;
+  }
+}
+
+async function protectedDirectory(directory: string): Promise<ProtectedDirectory> {
+  const absolute = path.resolve(directory);
+  if (!await assertOriginalDirectory(absolute)) {
+    await mkdir(absolute, { recursive: true, mode: 0o750 });
+    await assertOriginalDirectory(absolute);
+  }
+
+  const handle = await open(absolute, DIRECTORY_OPEN_FLAGS);
+  try {
+    const metadata = await handle.stat();
+    if (!metadata.isDirectory()) throw new Error(`Protected spool path must be a directory: ${absolute}`);
+    await handle.chmod(0o750);
+    return { path: absolute, handle };
+  } catch (error) {
+    await handle.close();
+    throw error;
   }
 }
 
 async function writeProtectedArtifact(spoolDir: string, data: Buffer): Promise<string> {
   const root = await protectedDirectory(spoolDir);
-  const uploadsDir = await protectedDirectory(path.join(root, "uploads"));
-  const target = path.join(uploadsDir, `${randomUUID()}.bin`);
-  const temporary = path.join(uploadsDir, `.${randomUUID()}.tmp`);
-  if (path.dirname(target) !== uploadsDir || path.dirname(temporary) !== uploadsDir) {
-    throw new Error("Protected spool artifact escaped its upload directory");
-  }
+  let uploads: ProtectedDirectory | null = null;
+  let target: string | null = null;
+  let temporary: string | null = null;
 
   try {
-    const handle = await open(temporary, "wx", 0o640);
+    uploads = await openProtectedChild(root, "uploads");
+    const filename = `${randomUUID()}.bin`;
+    const uploadsPath = descriptorPath(uploads.handle) ?? uploads.path;
+    target = path.join(uploadsPath, filename);
+    temporary = path.join(uploadsPath, `.${randomUUID()}.tmp`);
+    const handle = await open(temporary, FILE_CREATE_FLAGS, 0o640);
     try {
       await handle.writeFile(data);
+      await handle.chmod(0o640);
       await handle.sync();
     } finally {
       await handle.close();
     }
     await rename(temporary, target);
-    await chmod(target, 0o640);
-    await fsyncDirectory(uploadsDir);
-    return target;
+    await uploads.handle.sync();
+    return path.join(uploads.path, filename);
   } catch (error) {
-    await rm(temporary, { force: true });
-    await rm(target, { force: true });
+    if (temporary) await rm(temporary, { force: true });
+    if (target) await rm(target, { force: true });
     throw error;
+  } finally {
+    if (uploads) await uploads.handle.close();
+    await root.handle.close();
   }
 }
 
@@ -192,8 +233,7 @@ export async function enqueueCanonicalImport(
       originalName = requiredText(input.upload.filename, "upload filename").slice(0, 255);
       contentSha256 = createHash("sha256").update(content).digest("hex");
     } else {
-      sourceUrl = requiredText(input.sourceUrl, "source_url");
-      if (!isGoogleSheetUrl(sourceUrl)) throw new Error("source_url must be a Google Sheets URL");
+      sourceUrl = googleSheetExportUrl(requiredText(input.sourceUrl, "source_url"));
       sheetSnapshotKey = requiredText(input.sheetSnapshotKey, "sheet_snapshot_key").toLowerCase();
       if (!isUuid(sheetSnapshotKey)) throw new Error("sheet_snapshot_key must be a UUID");
     }
