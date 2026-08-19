@@ -13,7 +13,7 @@ export async function GET(request: Request) {
   try {
     const rows = await fetchManualData(sheetUrl, { defaultPlatform, defaultChannel });
     const preview = rows.slice(0, 5);
-    return NextResponse.json({ rows: preview });
+    return NextResponse.json({ rows: preview, publication_status: "unpublished_preview" });
   } catch (error) {
     return NextResponse.json(
       { error: "Failed to fetch manual data", details: String(error) },
@@ -30,7 +30,7 @@ export async function POST(request: Request) {
     const rows = await fetchManualDataFromSourceConfig(
       sourceConfig && typeof sourceConfig === "object" ? (sourceConfig as Record<string, unknown>) : null,
     );
-    return NextResponse.json({ rows: rows.slice(0, 5) });
+    return NextResponse.json({ rows: rows.slice(0, 5), publication_status: "unpublished_preview" });
   } catch (error) {
     return NextResponse.json(
       { error: "Failed to fetch manual data", details: String(error) },

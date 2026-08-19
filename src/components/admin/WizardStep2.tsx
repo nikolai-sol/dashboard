@@ -171,18 +171,39 @@ type LeadsConfirmResponse = {
 };
 
 type ManualDataConfirmResponse = {
-  reviewed_source_config: Record<string, unknown>;
-  confirmed_manual_data?: {
-    status: "confirmed";
-    confirmed_at: string;
-    rows: number;
-    date_from: string | null;
-    date_to: string | null;
-    source_upload_name: string | null;
+  status: ImportPublicationStatus;
+  import_request_id: number;
+  content_sha256: string;
+  reviewed_source: {
+    platform: string;
+    schema_file: string;
+    source_config: Record<string, unknown>;
   };
-  rows_written?: number;
-  deleted?: boolean;
 };
+
+type ImportPublicationStatus = "pending" | "processing" | "retryable" | "published" | "rejected" | "failed";
+
+const IMPORT_STATUS_LABEL: Record<ImportPublicationStatus, string> = {
+  pending: "Queued for import",
+  processing: "Import processing",
+  retryable: "Import will retry",
+  published: "Published to canonical data",
+  rejected: "Import rejected",
+  failed: "Import failed",
+};
+
+function importStatusClass(status: ImportPublicationStatus) {
+  if (status === "published") return "border-emerald-200 bg-emerald-50 text-emerald-800";
+  if (status === "rejected" || status === "failed") return "border-rose-200 bg-rose-50 text-rose-800";
+  if (status === "retryable") return "border-amber-200 bg-amber-50 text-amber-800";
+  return "border-sky-200 bg-sky-50 text-sky-800";
+}
+
+function asImportPublicationStatus(value: unknown): ImportPublicationStatus {
+  return typeof value === "string" && value in IMPORT_STATUS_LABEL
+    ? (value as ImportPublicationStatus)
+    : "pending";
+}
 
 function severityClass(severity: "error" | "warn" | "info") {
   if (severity === "error") return "border-rose-200 bg-rose-50 text-rose-700";
@@ -224,6 +245,7 @@ export default function WizardStep2({ data, platforms, onChange, dashboardId }: 
   const [manualDataConfirmLoading, setManualDataConfirmLoading] = useState<Record<number, boolean>>({});
   const [manualDataConfirmError, setManualDataConfirmError] = useState<Record<number, string | null>>({});
   const [manualDataConfirmMessage, setManualDataConfirmMessage] = useState<Record<number, string | null>>({});
+  const [importStatusBySource, setImportStatusBySource] = useState<Record<number, ImportPublicationStatus>>({});
   const [leadsAnalysisBySource, setLeadsAnalysisBySource] = useState<Record<number, LeadsAnalysis | null>>({});
   const [leadsAnalysisLoadingBySource, setLeadsAnalysisLoadingBySource] = useState<Record<number, boolean>>({});
   const [leadsAnalysisErrorBySource, setLeadsAnalysisErrorBySource] = useState<Record<number, string | null>>({});
@@ -650,9 +672,9 @@ export default function WizardStep2({ data, platforms, onChange, dashboardId }: 
           sheet_url: "",
           upload_file: null,
           title: "Additional sources",
-          platform: "",
-          channel: "",
-          force_fallback_channel: false,
+          source_key: "",
+          advertiser_key: "",
+          platform_account_id: "",
         },
         filters: [{ filter_type: "all", filter_value: null }],
       },
@@ -665,6 +687,9 @@ export default function WizardStep2({ data, platforms, onChange, dashboardId }: 
       title?: string;
       sheet_url?: string;
       platform?: string;
+      source_key?: string;
+      advertiser_key?: string;
+      platform_account_id?: string;
       channel?: string;
       upload_file?: unknown | null;
       force_fallback_channel?: boolean;
@@ -772,19 +797,25 @@ export default function WizardStep2({ data, platforms, onChange, dashboardId }: 
       if (!response.ok) {
         throw new Error(json.error ?? `HTTP ${response.status}`);
       }
-      if (!json.reviewed_source_config) {
-        throw new Error("Confirm endpoint returned no reviewed source config.");
+      if (!json.reviewed_source || json.status !== "pending") {
+        throw new Error("Confirm endpoint returned no pending canonical import.");
       }
 
-      const nextManual = [...manualDataSources];
-      nextManual[index] = {
-        ...source,
-        source_config: json.reviewed_source_config,
-      };
-      setSources(actualSources, planSource, customTableSources, nextManual, leadsSources);
+      const nextManual = manualDataSources.filter((_, manualIndex) => manualIndex !== index);
+      const nextActual = [
+        ...actualSources,
+        {
+          ...source,
+          platform: json.reviewed_source.platform,
+          schema_file: json.reviewed_source.schema_file,
+          source_config: json.reviewed_source.source_config,
+        },
+      ];
+      setSources(nextActual, planSource, customTableSources, nextManual, leadsSources);
+      setImportStatusBySource((prev) => ({ ...prev, [sourceId]: "pending" }));
       setManualDataConfirmMessage((prev) => ({
         ...prev,
-        [index]: `Manual data confirmed and stored in DB${json.rows_written ? ` (${json.rows_written} daily rows)` : ""}.`,
+        [index]: `Import request #${json.import_request_id} is queued. Dashboard data remains unchanged until publication.`,
       }));
     } catch (error) {
       setManualDataConfirmError((prev) => ({
@@ -796,8 +827,8 @@ export default function WizardStep2({ data, platforms, onChange, dashboardId }: 
     }
   };
 
-  const deleteConfirmedManualData = async (index: number) => {
-    const source = manualDataSources[index];
+  const unlinkCanonicalImportSource = async (index: number) => {
+    const source = actualSources[index];
     const sourceId = Number(source?.id);
     const numericDashboardId = Number(dashboardId);
     if (!source || !Number.isFinite(sourceId) || !Number.isFinite(numericDashboardId)) return;
@@ -815,33 +846,60 @@ export default function WizardStep2({ data, platforms, onChange, dashboardId }: 
           source_id: sourceId,
         }),
       });
-      const json = (await response.json()) as Partial<ManualDataConfirmResponse> & { error?: string };
+      const json = (await response.json()) as { status?: string; error?: string };
       if (!response.ok) {
         throw new Error(json.error ?? `HTTP ${response.status}`);
       }
-      if (!json.reviewed_source_config) {
-        throw new Error("Delete endpoint returned no reviewed source config.");
-      }
-
-      const nextManual = [...manualDataSources];
-      nextManual[index] = {
-        ...source,
-        source_config: json.reviewed_source_config,
-      };
-      setSources(actualSources, planSource, customTableSources, nextManual, leadsSources);
-      setManualDataConfirmMessage((prev) => ({
-        ...prev,
-        [index]: "Confirmed manual data deleted.",
-      }));
+      setSources(
+        actualSources.filter((_, actualIndex) => actualIndex !== index),
+        planSource,
+        customTableSources,
+        manualDataSources,
+        leadsSources,
+      );
     } catch (error) {
       setManualDataConfirmError((prev) => ({
         ...prev,
-        [index]: error instanceof Error ? error.message : "Failed to delete manual data",
+        [index]: error instanceof Error ? error.message : "Failed to unlink canonical import source",
       }));
     } finally {
       setManualDataConfirmLoading((prev) => ({ ...prev, [index]: false }));
     }
   };
+
+  useEffect(() => {
+    const numericDashboardId = Number(dashboardId);
+    if (!Number.isFinite(numericDashboardId)) return;
+    const imports = actualSources
+      .map((source) => ({ sourceId: Number(source.id), importRequestId: Number(source.source_config?.import_request_id) }))
+      .filter((item) => Number.isFinite(item.sourceId) && Number.isFinite(item.importRequestId));
+    if (!imports.length) return;
+
+    let cancelled = false;
+    const refresh = async () => {
+      await Promise.all(
+        imports.map(async ({ sourceId }) => {
+          try {
+            const response = await fetch(`/api/admin/manual-data/confirm?dashboard_id=${numericDashboardId}&source_id=${sourceId}`);
+            const json = (await response.json().catch(() => ({}))) as { status?: ImportPublicationStatus };
+            if (!cancelled && response.ok && json.status && IMPORT_STATUS_LABEL[json.status]) {
+              setImportStatusBySource((previous) =>
+                previous[sourceId] === json.status ? previous : { ...previous, [sourceId]: json.status! },
+              );
+            }
+          } catch {
+            // Status refreshes are best effort; the saved pending status remains visible.
+          }
+        }),
+      );
+    };
+    void refresh();
+    const interval = window.setInterval(() => void refresh(), 15_000);
+    return () => {
+      cancelled = true;
+      window.clearInterval(interval);
+    };
+  }, [actualSources, dashboardId]);
 
   const addLeadsSource = () => {
     setSources(actualSources, planSource, customTableSources, manualDataSources, [
@@ -1248,6 +1306,24 @@ export default function WizardStep2({ data, platforms, onChange, dashboardId }: 
                   Remove
                 </button>
               </div>
+
+              {Number.isFinite(Number(source.source_config?.import_request_id)) ? (() => {
+                const sourceId = Number(source.id);
+                const configuredStatus = asImportPublicationStatus(source.source_config?.import_status);
+                const status = importStatusBySource[sourceId] ?? configuredStatus;
+                return (
+                  <div className={`mt-3 flex flex-wrap items-center justify-between gap-2 rounded-lg border px-3 py-2 text-xs ${importStatusClass(status)}`}>
+                    <span>{IMPORT_STATUS_LABEL[status]}</span>
+                    <button
+                      type="button"
+                      onClick={() => void unlinkCanonicalImportSource(index)}
+                      className="border border-current px-2 py-1 text-xs"
+                    >
+                      Unlink import source
+                    </button>
+                  </div>
+                );
+              })() : null}
 
               <div className="mt-3 rounded-lg border border-slate-200 p-3">
                 <div className="mb-2 flex items-center justify-between gap-2">
@@ -2176,30 +2252,11 @@ export default function WizardStep2({ data, platforms, onChange, dashboardId }: 
       <div className="rounded-xl border border-slate-200 p-4">
         <h4 className="text-sm font-semibold text-slate-900">Ручные данные (Manual Data Source)</h4>
         <p className="mt-1 text-xs text-slate-500">
-          Структурированная таблица с date и метриками. Platform/channel можно брать из колонок файла или задать здесь
-          как fallback, чтобы строки попадали в общий platform/channel breakdown дашборда.
+          CSV/XLSX or a Google Sheet is reviewed and then queued for canonical advertising publication.
         </p>
         <div className="mt-3 space-y-3">
           {manualDataSources.map((source, index) => (
             <div key={`manual-${index}`} className="rounded-xl border border-slate-200 p-3">
-              {source.source_config?.confirmed_manual_data &&
-              typeof source.source_config.confirmed_manual_data === "object" ? (
-                <div className="mb-3 flex flex-wrap items-center gap-2 rounded-lg border border-emerald-200 bg-emerald-50 px-3 py-2 text-xs text-emerald-800">
-                  <span className="font-medium">Confirmed in DB</span>
-                  <span>
-                    rows: {String((source.source_config.confirmed_manual_data as Record<string, unknown>).rows ?? "0")}
-                  </span>
-                  <span>
-                    period: {String((source.source_config.confirmed_manual_data as Record<string, unknown>).date_from ?? "—")} -{" "}
-                    {String((source.source_config.confirmed_manual_data as Record<string, unknown>).date_to ?? "—")}
-                  </span>
-                  {String((source.source_config.confirmed_manual_data as Record<string, unknown>).source_upload_name ?? "").trim() ? (
-                    <span>
-                      file: {String((source.source_config.confirmed_manual_data as Record<string, unknown>).source_upload_name)}
-                    </span>
-                  ) : null}
-                </div>
-              ) : null}
               <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-[1fr_1fr_220px_220px_auto] xl:items-end">
                 <label className="text-sm">
                   <span className="mb-1 block font-medium text-slate-700">Заголовок</span>
@@ -2220,30 +2277,31 @@ export default function WizardStep2({ data, platforms, onChange, dashboardId }: 
                   />
                 </label>
                 <label className="text-sm">
-                  <span className="mb-1 block font-medium text-slate-700">Платформа</span>
+                  <span className="mb-1 block font-medium text-slate-700">Canonical source</span>
                   <input
                     className="w-full rounded-lg border border-slate-300 px-3 py-2"
-                    value={String(source.source_config?.platform ?? "")}
-                    onChange={(e) => updateManualDataSource(index, { platform: e.target.value })}
-                    placeholder="linkedin / vk / telegram / brevo"
+                    value={String(source.source_config?.source_key ?? "")}
+                    onChange={(e) => updateManualDataSource(index, { source_key: e.target.value })}
+                    placeholder="yandex_direct / vk / meta"
                   />
                 </label>
                 <label className="text-sm">
-                  <span className="mb-1 block font-medium text-slate-700">Channel</span>
+                  <span className="mb-1 block font-medium text-slate-700">Cabinet</span>
                   <input
                     className="w-full rounded-lg border border-slate-300 px-3 py-2"
-                    value={String(source.source_config?.channel ?? "")}
-                    onChange={(e) => updateManualDataSource(index, { channel: e.target.value })}
-                    placeholder="Fallback if file has no channel/campaign column"
+                    value={String(source.source_config?.platform_account_id ?? "")}
+                    onChange={(e) => updateManualDataSource(index, { platform_account_id: e.target.value })}
+                    placeholder="platform account id"
                   />
                 </label>
-                <label className="flex items-center gap-2 rounded-lg border border-slate-200 bg-slate-50 px-3 py-2 text-sm text-slate-700">
+                <label className="text-sm">
+                  <span className="mb-1 block font-medium text-slate-700">Advertiser key</span>
                   <input
-                    type="checkbox"
-                    checked={Boolean(source.source_config?.force_fallback_channel)}
-                    onChange={(e) => updateManualDataSource(index, { force_fallback_channel: e.target.checked })}
+                    className="w-full rounded-lg border border-slate-300 px-3 py-2"
+                    value={String(source.source_config?.advertiser_key ?? "")}
+                    onChange={(e) => updateManualDataSource(index, { advertiser_key: e.target.value })}
+                    placeholder="client canonical key"
                   />
-                  <span>Force fallback channel for every imported row</span>
                 </label>
                 <div className="flex flex-wrap gap-2">
                   <a
@@ -2271,26 +2329,15 @@ export default function WizardStep2({ data, platforms, onChange, dashboardId }: 
                     disabled={
                       !dashboardId ||
                       manualDataConfirmLoading[index] ||
+                      !String(source.source_config?.source_key ?? "").trim() ||
+                      !String(source.source_config?.platform_account_id ?? "").trim() ||
+                      !String(source.source_config?.advertiser_key ?? "").trim() ||
                       (!String(source.source_config?.sheet_url ?? "").trim() &&
                         !(typeof source.source_config?.upload_file === "object" && source.source_config?.upload_file))
                     }
                     className="rounded-lg border border-emerald-300 px-3 py-2 text-sm text-emerald-700 hover:bg-emerald-50 disabled:opacity-50"
                   >
-                    {manualDataConfirmLoading[index] ? "..." : "Confirm to DB"}
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => void deleteConfirmedManualData(index)}
-                    disabled={
-                      manualDataConfirmLoading[index] ||
-                      !(
-                        source.source_config?.confirmed_manual_data &&
-                        typeof source.source_config.confirmed_manual_data === "object"
-                      )
-                    }
-                    className="rounded-lg border border-amber-300 px-3 py-2 text-sm text-amber-700 hover:bg-amber-50 disabled:opacity-50"
-                  >
-                    Delete confirmed data
+                    {manualDataConfirmLoading[index] ? "..." : "Queue canonical import"}
                   </button>
                   <button
                     type="button"
@@ -2328,16 +2375,11 @@ export default function WizardStep2({ data, platforms, onChange, dashboardId }: 
                     </button>
                   </div>
                   <p className="mt-2 text-xs text-slate-500">
-                    Supported: CSV, XLSX. Upload stays pending until you confirm it. After confirm, normalized rows are stored in DB and runtime reads them from there.
+                    Supported: CSV, XLSX. Confirmation queues a protected canonical import; dashboard data changes only after the request is published.
                   </p>
                   {!dashboardId ? (
                     <p className="mt-2 text-xs text-amber-600">
-                      Save the dashboard first to enable Confirm to DB for manual data.
-                    </p>
-                  ) : null}
-                  {source.source_config?.force_fallback_channel ? (
-                    <p className="mt-2 text-xs text-slate-500">
-                      File channel column will be ignored. Every row will use the fallback channel above.
+                      Save the dashboard first to queue a canonical import.
                     </p>
                   ) : null}
                   {manualDataConfirmError[index] ? (

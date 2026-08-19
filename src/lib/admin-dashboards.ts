@@ -1,6 +1,6 @@
 import type { PoolConnection, ResultSetHeader, RowDataPacket } from "mysql2/promise";
 import { normalizeMultibrandConfig } from "@/lib/multibrand";
-import { buildManualSourceKey, deleteDashboardManualFactsExceptKeys } from "@/lib/manual-data-store";
+import { listSchemaMetas } from "@/lib/schema-registry";
 import {
   buildAliasMemoryFromRows,
   loadDashboardMediaPlanAliases,
@@ -176,13 +176,6 @@ function normalizeSource(raw: unknown): DashboardSourceInput {
     sourceConfig.stored_aliases_count = aliasEntriesCount;
   }
 
-  if (platform === "manual_data") {
-    const sourceKey = String(sourceConfig?.manual_source_key ?? "").trim();
-    if (!sourceKey) {
-      sourceConfig.manual_source_key = buildManualSourceKey();
-    }
-  }
-
   return {
     id: input.id,
     platform,
@@ -190,6 +183,69 @@ function normalizeSource(raw: unknown): DashboardSourceInput {
     role,
     source_config: sourceConfig,
     filters: filters.length ? filters : [{ filter_type: "all", filter_value: null }],
+  };
+}
+
+const DEFAULT_IMPORT_COLUMN_MAP = {
+  date: "date",
+  campaign_id: "campaign_id",
+  campaign_name: "campaign",
+  impressions: "impressions",
+  clicks: "clicks",
+  spend: "spend",
+  views: "views",
+  conversions: "conversions",
+  reach: "reach",
+};
+
+export type ReviewedAdvertisingSource = {
+  advertiserKey: string;
+  sourceKey: string;
+  platformAccountId: string;
+  platform: string;
+  schemaFile: string;
+  adapterConfig: Record<string, unknown>;
+};
+
+export function resolveReviewedAdvertisingSource(sourceConfig: Record<string, unknown>): ReviewedAdvertisingSource {
+  const advertiserKey = String(sourceConfig.advertiser_key ?? "").trim();
+  const requestedSource = String(sourceConfig.source_key ?? sourceConfig.platform ?? "").trim().toLowerCase();
+  const platformAccountId = String(sourceConfig.platform_account_id ?? "").trim();
+  if (!advertiserKey) throw new Error("advertiser_key is required");
+  if (!requestedSource) throw new Error("source_key is required");
+  if (!platformAccountId) throw new Error("platform_account_id is required");
+
+  const schema = listSchemaMetas().find(
+    (candidate) =>
+      (candidate.source_key === requestedSource || candidate.id === requestedSource) &&
+      !["manual_data", "media_plan", "leads"].includes(candidate.id) &&
+      candidate.source_type === "ads",
+  );
+  if (!schema) throw new Error("source_key must identify a real advertising platform");
+
+  const configuredAdapter =
+    sourceConfig.adapter_config && typeof sourceConfig.adapter_config === "object"
+      ? (sourceConfig.adapter_config as Record<string, unknown>)
+      : {};
+  const configuredColumnMap =
+    configuredAdapter.column_map && typeof configuredAdapter.column_map === "object"
+      ? configuredAdapter.column_map
+      : DEFAULT_IMPORT_COLUMN_MAP;
+  const adapterConfig = {
+    ...configuredAdapter,
+    adapter_config_version: String(configuredAdapter.adapter_config_version ?? "file-v1").trim() || "file-v1",
+    source_key: schema.source_key,
+    platform_account_id: platformAccountId,
+    column_map: configuredColumnMap,
+  };
+
+  return {
+    advertiserKey,
+    sourceKey: schema.source_key,
+    platformAccountId,
+    platform: schema.id,
+    schemaFile: schema.schema_file,
+    adapterConfig,
   };
 }
 
@@ -542,19 +598,6 @@ export async function syncDashboardMediaPlanStorage(
 
   await replaceDashboardMediaPlanRows(conn, dashboardId, sourceConfig.inline_rows);
   await replaceDashboardMediaPlanAliases(conn, dashboardId, review.alias_memory);
-}
-
-export async function cleanupRemovedManualDataSources(
-  conn: PoolConnection,
-  dashboardId: number,
-  sources: DashboardSourceInput[],
-): Promise<void> {
-  const retainedKeys = sources
-    .filter((source) => source.platform === "manual_data")
-    .map((source) => String(source.source_config?.manual_source_key ?? "").trim())
-    .filter(Boolean);
-
-  await deleteDashboardManualFactsExceptKeys(conn, dashboardId, retainedKeys);
 }
 
 export async function loadDashboardWithSources(

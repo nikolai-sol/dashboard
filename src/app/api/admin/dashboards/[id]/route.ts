@@ -2,7 +2,6 @@ import { NextResponse } from "next/server";
 import type { ResultSetHeader, RowDataPacket } from "mysql2/promise";
 import pool from "@/lib/db";
 import {
-  cleanupRemovedManualDataSources,
   insertSourcesWithFilters,
   loadDashboardWithSources,
   normalizeDashboardPayload,
@@ -147,8 +146,6 @@ export async function PUT(
     await insertSourcesWithFilters(conn, dashboardId, payload.sources);
     await replaceMediaPlanBindings(conn, dashboardId, payload.media_plan_bindings);
     await syncDashboardMediaPlanStorage(conn, dashboardId, payload.sources);
-    await cleanupRemovedManualDataSources(conn, dashboardId, payload.sources);
-
     await conn.commit();
     return NextResponse.json({
       id: dashboardId,
