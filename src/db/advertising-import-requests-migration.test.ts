@@ -68,8 +68,9 @@ test("import request artifact hash is canonical lowercase SHA-256", () => {
   const request = tableDefinition("canonical_ad_import_requests");
   assert.match(
     request,
-    /CONSTRAINT chk_ad_import_request_content_digest CHECK \(content_sha256 IS NULL OR BINARY content_sha256 REGEXP '\^\[0-9a-f\]\{64\}\$'\)/,
+    /CONSTRAINT chk_ad_import_request_content_digest CHECK \(content_sha256 IS NULL OR content_sha256 COLLATE utf8mb4_bin REGEXP '\^\[0-9a-f\]\{64\}\$'\)/,
   );
+  assert.doesNotMatch(request, /BINARY content_sha256 REGEXP/);
 });
 
 test("import request provenance matches canonical advertising dictionaries and run keys", () => {

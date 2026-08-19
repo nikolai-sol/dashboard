@@ -62,7 +62,7 @@ CREATE TABLE IF NOT EXISTS canonical_ad_import_requests (
         AND (finished_at IS NULL OR (started_at IS NOT NULL AND started_at <= finished_at))
         AND (next_attempt_at IS NULL OR requested_at <= next_attempt_at)
     ),
-    CONSTRAINT chk_ad_import_request_content_digest CHECK (content_sha256 IS NULL OR BINARY content_sha256 REGEXP '^[0-9a-f]{64}$'),
+    CONSTRAINT chk_ad_import_request_content_digest CHECK (content_sha256 IS NULL OR content_sha256 COLLATE utf8mb4_bin REGEXP '^[0-9a-f]{64}$'),
     CONSTRAINT chk_ad_import_request_sheet_materialization CHECK (
         (transport = 'upload'
             AND content_sha256 IS NOT NULL
