@@ -49,6 +49,11 @@ import {
 } from "@/lib/leads-fetcher";
 import { loadDashboardManualFacts } from "@/lib/manual-data-store";
 import { loadDashboardMediaPlanRows } from "@/lib/media-plan-store";
+import {
+  loadBoundAdvertisingFacts,
+  type AdvertisingBindingReadModel,
+  type BoundAdvertisingLine,
+} from "@/lib/advertising-binding-read-model";
 import { PLATFORM_COLORS } from "@/lib/platform-colors";
 import {
   resolvePlatformIdFromSourceKey,
@@ -2716,6 +2721,118 @@ function applyChannelLeadConversions(
   channelTimeseries.sort((a, b) => a.date.localeCompare(b.date) || a.channel.localeCompare(b.channel));
 }
 
+function buildDirectMonthlyBreakdown(
+  group: ChannelGroup,
+  line: BoundAdvertisingLine | undefined,
+): PlanVsFactItem["monthly_breakdown"] {
+  const monthly = line?.monthlyPlan ?? group.monthly;
+  const buyType = String(line?.plan?.buy_type ?? group.buy_type).toUpperCase();
+  const unitPrice = asNumber(line?.plan?.unit_price);
+  const frequency = asNumber(line?.plan?.frequency_plan ?? group.frequency_plan);
+
+  return Object.fromEntries(Object.entries(monthly).map(([month, rawUnits]) => {
+    const units = asNumber(rawUnits);
+    const impressions = buyType === "CPM" ? units : 0;
+    const clicks = buyType === "CPC" ? units : 0;
+    const views = buyType === "CPV" ? units : 0;
+    const conversions = buyType === "CPA" ? units : 0;
+    const budget = buyType === "CPM" ? (units / 1000) * unitPrice : units * unitPrice;
+    return [month, {
+      units,
+      budget: Number(budget.toFixed(2)),
+      impressions,
+      clicks,
+      views,
+      conversions,
+      reach: impressions > 0 && frequency > 0 ? impressions / frequency : 0,
+      ctr: impressions > 0 ? (clicks / impressions) * 100 : 0,
+    }];
+  }));
+}
+
+function buildCanonicalPlanVsFactRows(
+  channelGroups: ChannelGroup[],
+  readModel: AdvertisingBindingReadModel,
+): PlanVsFactItem[] {
+  return channelGroups.map((group) => {
+    const line = readModel.lines.get(group.line_key || group.channel);
+    const platforms = Array.from(new Set(line?.campaigns.map((campaign) => campaign.sourceKey) ?? []))
+      .map((sourceKey) => {
+        const platformId = resolvePlatformIdFromSourceKey(sourceKey);
+        const meta = PLATFORM_COLORS[platformId];
+        return { source_key: sourceKey, label: meta?.label ?? sourceKey, color: meta?.hex ?? "#94a3b8" };
+      });
+    const totalImpressions = asNumber(line?.impressions);
+    const totalReach = asNumber(line?.reach);
+    const totalClicks = asNumber(line?.clicks);
+    const totalViews = asNumber(line?.views);
+    const totalConversions = asNumber(line?.conversions);
+    const totalSpend = asNumber(line?.spend);
+    const budgetPlan = asNumber(group.budget_plan);
+    const impressionsPlan = asNumber(group.impressions_plan);
+    const reachPlan = asNumber(group.reach_plan);
+    const clicksPlan = asNumber(group.clicks_plan);
+    const viewsPlan = asNumber(group.views_plan);
+    const conversionsPlan = asNumber(group.conversions_plan);
+
+    return {
+      channel: group.channel,
+      instrument: group.instrument,
+      format: group.format,
+      buy_type: group.buy_type,
+      platforms,
+      campaign_count: line?.campaignIds.length ?? 0,
+      budget_plan: Number(budgetPlan.toFixed(2)),
+      impressions_plan: impressionsPlan,
+      reach_plan: Math.round(reachPlan),
+      clicks_plan: clicksPlan,
+      views_plan: viewsPlan,
+      conversions_plan: conversionsPlan,
+      monthly_plan: { ...(line?.monthlyPlan ?? group.monthly) },
+      monthly_breakdown: buildDirectMonthlyBreakdown(group, line),
+      budget_fact: Number(totalSpend.toFixed(2)),
+      impressions_fact: Math.round(totalImpressions),
+      reach_fact: Math.round(totalReach),
+      clicks_fact: Math.round(totalClicks),
+      views_fact: Math.round(totalViews),
+      conversions_fact: Math.round(totalConversions),
+      pacing: budgetPlan > 0 ? totalSpend / budgetPlan : 0,
+      frequency_plan: Number((reachPlan > 0 ? impressionsPlan / reachPlan : 0).toFixed(4)),
+      frequency_fact: Number((totalReach > 0 ? totalImpressions / totalReach : 0).toFixed(4)),
+      cpm_plan: Number((impressionsPlan > 0 ? (budgetPlan / impressionsPlan) * 1000 : 0).toFixed(4)),
+      cpm_fact: Number((totalImpressions > 0 ? (totalSpend / totalImpressions) * 1000 : 0).toFixed(4)),
+      cpc_plan: Number((clicksPlan > 0 ? budgetPlan / clicksPlan : 0).toFixed(4)),
+      cpc_fact: Number((totalClicks > 0 ? totalSpend / totalClicks : 0).toFixed(4)),
+      cpv_plan: Number((viewsPlan > 0 ? budgetPlan / viewsPlan : 0).toFixed(4)),
+      cpv_fact: Number((totalViews > 0 ? totalSpend / totalViews : 0).toFixed(4)),
+      cpa_plan: Number((conversionsPlan > 0 ? budgetPlan / conversionsPlan : 0).toFixed(4)),
+      cpa_fact: Number((totalConversions > 0 ? totalSpend / totalConversions : 0).toFixed(4)),
+    };
+  });
+}
+
+function buildCanonicalChannelTimeseries(
+  channelGroups: ChannelGroup[],
+  readModel: AdvertisingBindingReadModel,
+): NonNullable<DashboardData["channel_timeseries"]> {
+  const groups = new Map(channelGroups.map((group) => [group.line_key || group.channel, group]));
+  return readModel.lineDaily.flatMap((row) => {
+    const group = groups.get(row.lineKey);
+    if (!group) return [];
+    return [{
+      date: row.date,
+      channel: group.channel,
+      instrument: group.instrument,
+      impressions: Math.round(row.impressions),
+      reach: Math.round(row.reach),
+      clicks: Math.round(row.clicks),
+      spend: Number(row.spend.toFixed(2)),
+      views: Math.round(row.views),
+      conversions: Math.round(row.conversions),
+    }];
+  });
+}
+
 export async function invokeDashboardLoaderWithAudience<T>(
   request: Request,
   requestedId: string,
@@ -3329,27 +3446,35 @@ export async function loadDashboardData(
       acc.get(row.channel)!.push(row);
       return acc;
     }, new Map<string, BoundPromopagesTimeSeriesOverlay[]>());
-    const planVsFactBase = await buildPlanVsFactRowsByChannel(
-      planByChannel,
-      bindingsByLineKey,
-      hasExplicitBindings,
-      actualAdsSourceKeys,
-      range.from,
-      range.to,
-      frequencyOverrideMap,
-      manualChannels,
-      isGidrofuril,
-    );
-    const channelTimeseries = await buildChannelTimeseries(
-      planByChannel,
-      bindingsByLineKey,
-      hasExplicitBindings,
-      actualAdsSourceKeys,
-      range.from,
-      range.to,
-      frequencyOverrideMap,
-      boundPromopagesTimeseriesByChannel,
-    );
+    const useCanonicalBindingRead = process.env.AD_CANONICAL_READ_V2 === "1";
+    const canonicalBindingRead = useCanonicalBindingRead
+      ? await loadBoundAdvertisingFacts(dashboard.id, range.from, range.to)
+      : null;
+    const planVsFactBase = canonicalBindingRead
+      ? buildCanonicalPlanVsFactRows(planByChannel, canonicalBindingRead)
+      : await buildPlanVsFactRowsByChannel(
+          planByChannel,
+          bindingsByLineKey,
+          hasExplicitBindings,
+          actualAdsSourceKeys,
+          range.from,
+          range.to,
+          frequencyOverrideMap,
+          manualChannels,
+          isGidrofuril,
+        );
+    const channelTimeseries = canonicalBindingRead
+      ? buildCanonicalChannelTimeseries(planByChannel, canonicalBindingRead)
+      : await buildChannelTimeseries(
+          planByChannel,
+          bindingsByLineKey,
+          hasExplicitBindings,
+          actualAdsSourceKeys,
+          range.from,
+          range.to,
+          frequencyOverrideMap,
+          boundPromopagesTimeseriesByChannel,
+        );
 
     for (const source of sourceRows) {
       if (source.platform !== "leads" || source.role !== "actual") {
@@ -3390,14 +3515,17 @@ export async function loadDashboardData(
       });
     }
 
-    const channelPerformance = mergeManualChannelPerformance(buildChannelPerformance(
+    const channelPerformanceBase = buildChannelPerformance(
       planVsFact,
       channelTimeseries,
       range.from,
       range.to,
       String(config.period_from ?? range.from),
       String(config.period_to ?? range.to),
-    ), manualChannels, boundManualChannelKeys);
+    );
+    const channelPerformance = canonicalBindingRead
+      ? channelPerformanceBase
+      : mergeManualChannelPerformance(channelPerformanceBase, manualChannels, boundManualChannelKeys);
     const analyticsKpi = mergeAnalyticsKpi(analyticsKpiRaw);
     const analyticsTimeseries = mergeAnalyticsTimeseries(analyticsTimeseriesRaw);
     const trafficSources = mergeTrafficSources(trafficSourcesRaw);
