@@ -46,7 +46,11 @@ export type MediaPlanBindingForm = {
   line_key?: string;
   channel: string;
   source_key: string;
+  canonical_campaign_id: number | null;
+  platform_account_id: string;
   platform_campaign_id: string;
+  effective_from: string | null;
+  effective_to: string | null;
 };
 
 export type DashboardUtmSourceBindingForm = {

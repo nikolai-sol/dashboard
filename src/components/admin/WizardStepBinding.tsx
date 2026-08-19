@@ -37,11 +37,28 @@ type ParsedPlanRow = {
   source_keys?: string[];
 };
 
-type CampaignItem = {
+export type CampaignItem = {
+  canonical_campaign_id: number;
   source_key: string;
+  platform_account_id: string;
+  account_name: string;
   platform_campaign_id: string;
   campaign_name: string;
+  display_label: string;
 };
+
+export type CampaignOption = CampaignItem & {
+  value: number;
+  label: string;
+};
+
+export function buildCampaignOptions(campaigns: CampaignItem[]): CampaignOption[] {
+  return campaigns.map((campaign) => ({
+    ...campaign,
+    value: campaign.canonical_campaign_id,
+    label: `${campaign.campaign_name} · ${campaign.platform_campaign_id} · ${campaign.account_name}`,
+  }));
+}
 
 type WizardStepBindingProps = {
   data: DashboardFormData;
@@ -62,9 +79,25 @@ function compact(value: number) {
   return `${Math.round(value)}`;
 }
 
-function parseAccountIds(value: unknown): string[] {
-  if (!Array.isArray(value)) return [];
-  return value.map((item) => String(item).trim()).filter(Boolean);
+export function selectedAccountIds(config: Record<string, unknown> | null | undefined): string[] {
+  const accountIds = Array.isArray(config?.account_ids)
+    ? config.account_ids.map((item) => String(item).trim()).filter(Boolean)
+    : [];
+  if (accountIds.length) return Array.from(new Set(accountIds));
+  const singular = String(config?.platform_account_id ?? "").trim();
+  return singular ? [singular] : [];
+}
+
+export function retainBindingsForRowSources(
+  bindings: MediaPlanBindingForm[],
+  lineKey: string,
+  sourceKeys: string[],
+): MediaPlanBindingForm[] {
+  const selected = new Set(sourceKeys);
+  return bindings.filter((binding) => {
+    const bindingLineKey = String(binding.line_key ?? binding.channel).trim();
+    return bindingLineKey !== lineKey || selected.has(binding.source_key);
+  });
 }
 
 function monthSummary(monthly: Record<string, number>): string {
@@ -115,6 +148,10 @@ export default function WizardStepBinding({ data, onChange }: WizardStepBindingP
     () => data.sources.filter((source) => source.role === "actual" && source.platform !== "leads"),
     [data.sources],
   );
+  const advertisingSources = useMemo(
+    () => actualSources.filter((source) => resolveSourceType(resolveSourceKey(source.platform)) === "ads"),
+    [actualSources],
+  );
   const planSource = useMemo(
     () => data.sources.find((source) => source.role === "plan"),
     [data.sources],
@@ -122,11 +159,6 @@ export default function WizardStepBinding({ data, onChange }: WizardStepBindingP
   const bindingCampaignSources = useMemo(
     () =>
       actualSources.filter((source) => {
-        if (source.platform === "manual_data") {
-          return Boolean(
-            String(source.source_config?.sheet_url ?? "").trim() || source.source_config?.upload_file,
-          );
-        }
         if (resolveSourceType(resolveSourceKey(source.platform)) !== "ads") {
           return false;
         }
@@ -138,7 +170,7 @@ export default function WizardStepBinding({ data, onChange }: WizardStepBindingP
     const seen = new Set<string>();
     return bindingCampaignSources
       .map((source) => {
-        const sourceKey = source.platform === "manual_data" ? "manual_data" : resolveSourceKey(source.platform);
+        const sourceKey = resolveSourceKey(source.platform);
         const platformId = resolvePlatformIdFromSourceKey(sourceKey);
         const meta = PLATFORM_COLORS[platformId];
         return {
@@ -225,22 +257,11 @@ export default function WizardStepBinding({ data, onChange }: WizardStepBindingP
       setLoadingCampaigns(true);
       try {
         const sources = bindingCampaignSources.map((source) => {
-          const base = {
+          return {
             platform: source.platform,
             source_key: resolveSourceKey(source.platform),
-            account_ids: parseAccountIds(source.source_config?.account_ids),
+            account_ids: selectedAccountIds(source.source_config),
           };
-          if (source.platform === "manual_data") {
-            return {
-              ...base,
-              source_key: "manual_data",
-              sheet_url: String(source.source_config?.sheet_url ?? "").trim(),
-              upload_file: source.source_config?.upload_file ?? null,
-              default_platform: String(source.source_config?.platform ?? "").trim(),
-              default_channel: String(source.source_config?.channel ?? "").trim(),
-            };
-          }
-          return base;
         });
         const response = await fetch("/api/admin/campaigns/all", {
           method: "POST",
@@ -276,35 +297,11 @@ export default function WizardStepBinding({ data, onChange }: WizardStepBindingP
     };
   }, [bindingCampaignSources, data.config.period_from, data.config.period_to]);
 
-  useEffect(() => {
-    if (loadingCampaigns) return;
-
-    const activeSourceKeys = new Set(
-      actualSources.map((source) => (source.platform === "manual_data" ? "manual_data" : resolveSourceKey(source.platform))),
-    );
-    const validManualBindingIds = new Set(
-      campaigns
-        .filter((campaign) => campaign.source_key === "manual_data")
-        .map((campaign) => campaign.platform_campaign_id),
-    );
-
-    const sanitizedBindings = data.media_plan_bindings.filter((binding) => {
-      if (!activeSourceKeys.has(binding.source_key)) {
-        return false;
-      }
-      if (binding.source_key === "manual_data") {
-        return validManualBindingIds.has(binding.platform_campaign_id);
-      }
-      return true;
-    });
-
-    if (sanitizedBindings.length !== data.media_plan_bindings.length) {
-      onChange({
-        ...data,
-        media_plan_bindings: sanitizedBindings,
-      });
-    }
-  }, [actualSources, campaigns, data, loadingCampaigns, onChange]);
+  const campaignOptions = useMemo(() => buildCampaignOptions(campaigns), [campaigns]);
+  const campaignByCanonicalId = useMemo(
+    () => new Map(campaignOptions.map((campaign) => [campaign.canonical_campaign_id, campaign])),
+    [campaignOptions],
+  );
 
   const activeRow = useMemo(
     () => rows.find((row) => row.line_key === activeLineKey) ?? null,
@@ -317,7 +314,7 @@ export default function WizardStepBinding({ data, onChange }: WizardStepBindingP
   }, [activeRow, availableSourceKeys]);
 
   const groupedCampaigns = useMemo(() => {
-    const filtered = campaigns.filter((campaign) => {
+    const filtered = campaignOptions.filter((campaign) => {
       if (activeRowSourceKeys && !activeRowSourceKeys.has(campaign.source_key)) {
         return false;
       }
@@ -325,11 +322,12 @@ export default function WizardStepBinding({ data, onChange }: WizardStepBindingP
       if (!match) return true;
       return (
         campaign.campaign_name.toLowerCase().includes(match) ||
-        campaign.platform_campaign_id.toLowerCase().includes(match)
+        campaign.platform_campaign_id.toLowerCase().includes(match) ||
+        campaign.account_name.toLowerCase().includes(match)
       );
     });
 
-    const groups = new Map<string, CampaignItem[]>();
+    const groups = new Map<string, CampaignOption[]>();
     filtered.forEach((campaign) => {
       if (!groups.has(campaign.source_key)) {
         groups.set(campaign.source_key, []);
@@ -337,7 +335,7 @@ export default function WizardStepBinding({ data, onChange }: WizardStepBindingP
       groups.get(campaign.source_key)!.push(campaign);
     });
     return groups;
-  }, [activeRowSourceKeys, campaigns, search]);
+  }, [activeRowSourceKeys, campaignOptions, search]);
 
   const bindingsByLineKey = useMemo(() => {
     const map = new Map<string, MediaPlanBindingForm[]>();
@@ -365,8 +363,17 @@ export default function WizardStepBinding({ data, onChange }: WizardStepBindingP
           source_keys: toggleMediaPlanRowSourceKey(currentKeys, sourceKey, checked, availableSourceKeys),
         };
       });
+      const editedRow = nextRows[rowIndex];
+      const nextBindings = editedRow
+        ? retainBindingsForRowSources(
+            data.media_plan_bindings,
+            editedRow.line_key,
+            resolveMediaPlanRowSourceKeys(editedRow, availableSourceKeys),
+          )
+        : data.media_plan_bindings;
       onChange({
         ...data,
+        media_plan_bindings: nextBindings,
         sources: data.sources.map((source) => {
           if (source.role !== "plan") return source;
           return {
@@ -389,29 +396,34 @@ export default function WizardStepBinding({ data, onChange }: WizardStepBindingP
     });
   };
 
-  const toggleBinding = (lineKey: string, channel: string, sourceKey: string, campaignId: string, checked: boolean) => {
+  const toggleBinding = (lineKey: string, channel: string, campaign: CampaignOption, checked: boolean) => {
     const current = data.media_plan_bindings.filter(
       (binding) => String(binding.line_key ?? binding.channel ?? "").trim() !== lineKey,
     );
     const channelBindings = data.media_plan_bindings.filter(
       (binding) => String(binding.line_key ?? binding.channel ?? "").trim() === lineKey,
     );
-    const key = `${lineKey}:${sourceKey}:${campaignId}`;
     const nextChannelBindings = checked
       ? [
           ...channelBindings,
-          { line_key: lineKey, channel, source_key: sourceKey, platform_campaign_id: campaignId },
+          {
+            line_key: lineKey,
+            channel,
+            canonical_campaign_id: campaign.canonical_campaign_id,
+            source_key: campaign.source_key,
+            platform_account_id: campaign.platform_account_id,
+            platform_campaign_id: campaign.platform_campaign_id,
+            effective_from: null,
+            effective_to: null,
+          },
         ].filter(
           (binding, index, list) =>
             list.findIndex(
-              (item) =>
-                `${item.line_key ?? item.channel}:${item.source_key}:${item.platform_campaign_id}` ===
-                `${binding.line_key ?? binding.channel}:${binding.source_key}:${binding.platform_campaign_id}`,
+              (item) => item.canonical_campaign_id === binding.canonical_campaign_id,
             ) === index,
         )
       : channelBindings.filter(
-          (binding) =>
-            `${binding.line_key ?? binding.channel}:${binding.source_key}:${binding.platform_campaign_id}` !== key,
+          (binding) => binding.canonical_campaign_id !== campaign.canonical_campaign_id,
         );
 
     updateBindings([...current, ...nextChannelBindings]);
@@ -457,9 +469,17 @@ export default function WizardStepBinding({ data, onChange }: WizardStepBindingP
           <p className="mt-3 text-sm text-slate-500">No parsed media plan rows yet.</p>
         ) : null}
 
-        {!loadingCampaigns && bindingCampaignSources.length < actualSources.filter((s) => s.platform !== "leads" && resolveSourceType(resolveSourceKey(s.platform)) === "ads").length ? (
+        {!loadingCampaigns && bindingCampaignSources.length < advertisingSources.length ? (
           <p className="mt-3 text-sm text-amber-700">
-            Для части рекламных источников не выбраны аккаунты на шаге Sources — их кампании не показываются в привязках.
+            {bindingCampaignSources.length
+              ? "Для части рекламных источников не выбраны аккаунты на шаге Sources."
+              : "На шаге Sources не выбраны аккаунты рекламных платформ."}
+          </p>
+        ) : null}
+
+        {!loadingCampaigns && !error && bindingCampaignSources.length > 0 && campaignOptions.length === 0 ? (
+          <p className="mt-3 text-sm text-amber-700">
+            В выбранных аккаунтах пока нет опубликованных и проверенных кампаний.
           </p>
         ) : null}
 
@@ -467,7 +487,11 @@ export default function WizardStepBinding({ data, onChange }: WizardStepBindingP
           <div className="mt-4 space-y-3">
             {rows.map((row, index) => {
               const bound = bindingsByLineKey.get(row.line_key) ?? [];
-              const platformCount = new Set(bound.map((item) => item.source_key)).size;
+              const platformCount = new Set(
+                bound
+                  .map((item) => campaignByCanonicalId.get(Number(item.canonical_campaign_id))?.source_key ?? item.source_key)
+                  .filter(Boolean),
+              ).size;
               const rowSourceKeys = resolveMediaPlanRowSourceKeys(row, availableSourceKeys);
               return (
                 <div key={row.line_key || `${row.channel}-${index}`} className="rounded-lg border border-slate-200 bg-white p-3">
@@ -579,7 +603,7 @@ export default function WizardStepBinding({ data, onChange }: WizardStepBindingP
                 className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm"
                 value={search}
                 onChange={(e) => setSearch(e.target.value)}
-                placeholder="Поиск кампаний по названию или ID"
+                placeholder="Поиск по названию, ID или аккаунту"
               />
             </div>
 
@@ -600,33 +624,42 @@ export default function WizardStepBinding({ data, onChange }: WizardStepBindingP
                       {sourceCampaigns.length ? (
                         sourceCampaigns.map((campaign) => {
                           const checked = activeBindings.some(
+                            (binding) => binding.canonical_campaign_id === campaign.canonical_campaign_id,
+                          );
+                          const boundToAnotherLine = data.media_plan_bindings.some(
                             (binding) =>
-                              binding.source_key === sourceKey &&
-                              binding.platform_campaign_id === campaign.platform_campaign_id,
+                              binding.canonical_campaign_id === campaign.canonical_campaign_id &&
+                              String(binding.line_key ?? binding.channel).trim() !== activeLineKey,
                           );
                           return (
                             <label
-                              key={`${sourceKey}-${campaign.platform_campaign_id}`}
-                              className="flex items-start gap-2 rounded border border-slate-200 px-3 py-2"
+                              key={campaign.canonical_campaign_id}
+                              className={`flex items-start gap-2 rounded border px-3 py-2 ${
+                                boundToAnotherLine
+                                  ? "border-slate-100 bg-slate-50 text-slate-400"
+                                  : "border-slate-200"
+                              }`}
                             >
                               <input
                                 type="checkbox"
                                 checked={checked}
+                                disabled={boundToAnotherLine}
                                 onChange={(e) =>
                                   toggleBinding(
                                     activeLineKey,
                                     activeLabel,
-                                    sourceKey,
-                                    campaign.platform_campaign_id,
+                                    campaign,
                                     e.target.checked,
                                   )
                                 }
                               />
                               <span className="min-w-0">
-                                <span className="block font-mono text-xs text-slate-500">
-                                  {campaign.platform_campaign_id}
-                                </span>
-                                <span className="block text-sm text-slate-900">{campaign.campaign_name}</span>
+                                <span className="block text-sm text-slate-900">{campaign.label}</span>
+                                {boundToAnotherLine ? (
+                                  <span className="mt-0.5 block text-xs text-slate-500">
+                                    Уже привязана к другой строке медиаплана
+                                  </span>
+                                ) : null}
                               </span>
                             </label>
                           );
@@ -640,7 +673,9 @@ export default function WizardStepBinding({ data, onChange }: WizardStepBindingP
               })}
               {!groupedCampaigns.size ? (
                 <p className="rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-800">
-                  Для выбранных источников нет кампаний. Проверьте выбор sources у строки или аккаунты на шаге Sources.
+                  {!bindingCampaignSources.length
+                    ? "На шаге Sources не выбраны аккаунты рекламных платформ."
+                    : "Для выбранных аккаунтов пока нет опубликованных и проверенных кампаний."}
                 </p>
               ) : null}
             </div>
@@ -648,7 +683,11 @@ export default function WizardStepBinding({ data, onChange }: WizardStepBindingP
             <div className="mt-4 flex items-center justify-between gap-3">
               <p className="text-sm text-slate-600">
                 Выбрано: {activeBindings.length} кампаний с{" "}
-                {new Set(activeBindings.map((binding) => binding.source_key)).size} платформ
+                {new Set(
+                  activeBindings
+                    .map((binding) => campaignByCanonicalId.get(Number(binding.canonical_campaign_id))?.source_key ?? binding.source_key)
+                    .filter(Boolean),
+                ).size} платформ
               </p>
               <button
                 type="button"

@@ -443,8 +443,13 @@ export function validateDashboardPayload(payload: DashboardUpsertPayload): strin
   }
 
   for (const binding of payload.media_plan_bindings) {
-    if (!binding.channel || !(binding.line_key ?? binding.channel) || !binding.source_key || !binding.platform_campaign_id) {
-      return "Each media plan binding must include line_key, channel, source_key and platform_campaign_id";
+    if (
+      !binding.channel ||
+      !(binding.line_key ?? binding.channel) ||
+      !Number.isSafeInteger(Number(binding.canonical_campaign_id)) ||
+      Number(binding.canonical_campaign_id) <= 0
+    ) {
+      return "Each advertising media plan binding must include line_key, channel and canonical_campaign_id";
     }
   }
 

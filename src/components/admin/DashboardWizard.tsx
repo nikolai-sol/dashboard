@@ -442,17 +442,35 @@ export default function DashboardWizard({ dashboardId }: DashboardWizardProps) {
                   return {
                     line_key: String(item.line_key ?? item.channel ?? "").trim(),
                     channel: String(item.channel ?? "").trim(),
+                    canonical_campaign_id: Number.isSafeInteger(Number(item.canonical_campaign_id))
+                      ? Number(item.canonical_campaign_id)
+                      : null,
                     source_key: String(item.source_key ?? "").trim().toLowerCase(),
+                    platform_account_id: String(item.platform_account_id ?? "").trim(),
                     platform_campaign_id: String(item.platform_campaign_id ?? "").trim(),
+                    effective_from: item.effective_from === null
+                      ? null
+                      : String(item.effective_from ?? "").trim() || null,
+                    effective_to: item.effective_to === null
+                      ? null
+                      : String(item.effective_to ?? "").trim() || null,
                   };
                 })
                 .filter(
                   (binding: {
                     line_key?: string;
                     channel: string;
+                    canonical_campaign_id: number | null;
                     source_key: string;
+                    platform_account_id: string;
                     platform_campaign_id: string;
-                  }) => (binding.line_key || binding.channel) && binding.channel && binding.source_key && binding.platform_campaign_id,
+                    effective_from: string | null;
+                    effective_to: string | null;
+                  }) =>
+                    (binding.line_key || binding.channel) &&
+                    binding.channel &&
+                    binding.source_key &&
+                    binding.platform_campaign_id,
                 )
             : [],
         });
