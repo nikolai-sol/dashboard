@@ -246,6 +246,7 @@ async function main() {
       UPDATE canonical_ad_import_requests
       SET status = 'failed',
           lease_expires_at = NULL,
+          lease_token = NULL,
           next_attempt_at = NULL,
           finished_at = UTC_TIMESTAMP(),
           error_summary = 'transient retry budget exhausted'
@@ -260,6 +261,66 @@ async function main() {
       SET status = 'retryable', next_attempt_at = UTC_TIMESTAMP()
       WHERE id = ${requestId}
     `));
+
+    const maxBudgetRequestId = await insertRequest(connection, "v4", 1);
+    const maxBudgetLeaseToken = "33333333-3333-4333-8333-333333333333";
+    const [maxBudgetClaim] = await connection.query<mysql.ResultSetHeader>(`
+      UPDATE canonical_ad_import_requests
+      SET status = 'processing',
+          attempt_count = 1,
+          started_at = UTC_TIMESTAMP() - INTERVAL 3 MINUTE,
+          lease_expires_at = UTC_TIMESTAMP() - INTERVAL 2 MINUTE,
+          lease_token = ?,
+          next_attempt_at = NULL
+      WHERE id = ?
+        AND status = 'pending'
+        AND next_attempt_at <= UTC_TIMESTAMP()
+    `, [maxBudgetLeaseToken, maxBudgetRequestId]);
+    assert.equal(maxBudgetClaim.affectedRows, 1);
+
+    const maxBudgetReclaim = () => connection.query(`
+      UPDATE canonical_ad_import_requests
+      SET status = 'processing',
+          started_at = UTC_TIMESTAMP(),
+          lease_expires_at = UTC_TIMESTAMP() + INTERVAL 5 MINUTE,
+          lease_token = '44444444-4444-4444-8444-444444444444'
+      WHERE id = ?
+        AND status = 'processing'
+        AND lease_expires_at <= UTC_TIMESTAMP()
+    `, [maxBudgetRequestId]);
+    await expectReject(maxBudgetReclaim);
+
+    const [maxBudgetFailed] = await connection.query<mysql.ResultSetHeader>(`
+      UPDATE canonical_ad_import_requests
+      SET status = 'failed',
+          lease_expires_at = NULL,
+          lease_token = NULL,
+          next_attempt_at = NULL,
+          finished_at = UTC_TIMESTAMP(),
+          ingestion_run_id = NULL,
+          error_summary = 'lease expired after retry budget'
+      WHERE id = ?
+        AND status = 'processing'
+        AND attempt_count = max_attempts
+        AND lease_expires_at <= UTC_TIMESTAMP()
+    `, [maxBudgetRequestId]);
+    assert.equal(maxBudgetFailed.affectedRows, 1, "max-budget lease recovery must terminalize once");
+
+    const maxBudgetFailedAgain = () => connection.query(`
+      UPDATE canonical_ad_import_requests
+      SET status = 'failed',
+          finished_at = UTC_TIMESTAMP(),
+          error_summary = 'second terminal recovery'
+      WHERE id = ?
+    `, [maxBudgetRequestId]);
+    await expectReject(maxBudgetFailedAgain);
+
+    const maxBudgetRetry = () => connection.query(`
+      UPDATE canonical_ad_import_requests
+      SET status = 'retryable', next_attempt_at = UTC_TIMESTAMP()
+      WHERE id = ?
+    `, [maxBudgetRequestId]);
+    await expectReject(maxBudgetRetry);
     await expectReject(() => connection.query(`
       DELETE FROM canonical_ad_import_requests WHERE id = ${requestId}
     `));

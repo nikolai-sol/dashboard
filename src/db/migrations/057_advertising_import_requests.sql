@@ -96,22 +96,36 @@ CREATE TABLE IF NOT EXISTS canonical_ad_import_requests (
             AND error_summary IS NOT NULL
             AND CHAR_LENGTH(TRIM(error_summary)) > 0)
         OR
-        (status IN ('published','rejected','failed')
+        (status = 'published'
             AND attempt_count >= 1
             AND started_at IS NOT NULL
             AND lease_expires_at IS NULL
             AND lease_token IS NOT NULL
             AND next_attempt_at IS NULL
             AND finished_at IS NOT NULL
-            AND (
-                (status = 'published'
-                    AND ingestion_run_id IS NOT NULL
-                    AND error_summary IS NULL)
-                OR
-                (status IN ('rejected','failed')
-                    AND error_summary IS NOT NULL
-                    AND CHAR_LENGTH(TRIM(error_summary)) > 0)
-            ))
+            AND ingestion_run_id IS NOT NULL
+            AND error_summary IS NULL)
+        OR
+        (status = 'rejected'
+            AND attempt_count >= 1
+            AND started_at IS NOT NULL
+            AND lease_expires_at IS NULL
+            AND lease_token IS NOT NULL
+            AND next_attempt_at IS NULL
+            AND finished_at IS NOT NULL
+            AND error_summary IS NOT NULL
+            AND CHAR_LENGTH(TRIM(error_summary)) > 0)
+        OR
+        (status = 'failed'
+            AND attempt_count >= 1
+            AND started_at IS NOT NULL
+            AND lease_expires_at IS NULL
+            AND lease_token IS NULL
+            AND next_attempt_at IS NULL
+            AND finished_at IS NOT NULL
+            AND ingestion_run_id IS NULL
+            AND error_summary IS NOT NULL
+            AND CHAR_LENGTH(TRIM(error_summary)) > 0)
     ),
     CONSTRAINT fk_ad_import_request_source_account
         FOREIGN KEY (source_key, platform_account_id)
@@ -214,12 +228,8 @@ BEGIN
         (OLD.status = 'processing'
             AND NEW.status = 'processing'
             AND OLD.lease_expires_at <= UTC_TIMESTAMP()
-            AND (
-                (OLD.attempt_count < OLD.max_attempts
-                    AND NEW.attempt_count = OLD.attempt_count + 1)
-                OR (OLD.attempt_count = OLD.max_attempts
-                    AND NEW.attempt_count = OLD.attempt_count)
-            )
+            AND OLD.attempt_count < OLD.max_attempts
+            AND NEW.attempt_count = OLD.attempt_count + 1
             AND NEW.started_at >= OLD.started_at
             AND NOT (NEW.lease_token <=> OLD.lease_token)
             AND NEW.lease_expires_at > UTC_TIMESTAMP())
@@ -232,10 +242,26 @@ BEGIN
             AND NEW.next_attempt_at >= OLD.started_at)
         OR
         (OLD.status = 'processing'
-            AND NEW.status IN ('published','rejected','failed')
+            AND NEW.status IN ('published','rejected')
             AND NEW.attempt_count = OLD.attempt_count
             AND NEW.lease_token <=> OLD.lease_token
             AND OLD.lease_expires_at > UTC_TIMESTAMP())
+        OR
+        (OLD.status = 'processing'
+            AND NEW.status = 'failed'
+            AND NEW.attempt_count = OLD.attempt_count
+            AND NEW.lease_expires_at IS NULL
+            AND NEW.lease_token IS NULL
+            AND NEW.finished_at IS NOT NULL
+            AND NEW.error_summary IS NOT NULL
+            AND CHAR_LENGTH(TRIM(NEW.error_summary)) > 0
+            AND (
+                OLD.lease_expires_at > UTC_TIMESTAMP()
+                OR (
+                    OLD.lease_expires_at <= UTC_TIMESTAMP()
+                    AND OLD.attempt_count = OLD.max_attempts
+                )
+            ))
     ) THEN
         SIGNAL SQLSTATE '45000'
             SET MESSAGE_TEXT = 'Advertising import request lifecycle transition is invalid';
