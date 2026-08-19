@@ -47,14 +47,16 @@ async function main() {
   }
 
   const parsedDatabaseUrl = new URL(databaseUrl);
-  const connection = await mysql.createConnection({
+  const connectionOptions = {
     host: parsedDatabaseUrl.hostname,
     port: Number(parsedDatabaseUrl.port || 3306),
     user: decodeURIComponent(parsedDatabaseUrl.username),
     password: decodeURIComponent(parsedDatabaseUrl.password),
     database: decodeURIComponent(parsedDatabaseUrl.pathname.slice(1)),
     multipleStatements: true,
-  });
+  };
+  const connection = await mysql.createConnection(connectionOptions);
+  const openConnection = () => mysql.createConnection(connectionOptions);
 
   try {
     await connection.query(`
@@ -399,6 +401,261 @@ async function main() {
     const finalAttemptMissingRequestId = await claimExpiredFinalAttempt("v8", 4);
     const finalAttemptMissingRejected = () => reconcileExpiredFinalAttempt(finalAttemptMissingRequestId);
     await expectReject(finalAttemptMissingRejected);
+
+    async function claimLinkedRequest(
+      version: string,
+      ingestionRunId: number,
+      leaseToken: string,
+      { expired = false, maxAttempts = 1 } = {},
+    ) {
+      const linkedRequestId = await insertRequest(connection, version, maxAttempts);
+      const [claim] = await connection.query<mysql.ResultSetHeader>(`
+        UPDATE canonical_ad_import_requests
+        SET status = 'processing',
+            attempt_count = 1,
+            ingestion_run_id = ?,
+            started_at = UTC_TIMESTAMP() - INTERVAL 3 MINUTE,
+            lease_expires_at = ${expired ? "UTC_TIMESTAMP() - INTERVAL 2 MINUTE" : "UTC_TIMESTAMP() + INTERVAL 5 MINUTE"},
+            lease_token = ?,
+            next_attempt_at = NULL
+        WHERE id = ?
+          AND status = 'pending'
+      `, [ingestionRunId, leaseToken, linkedRequestId]);
+      assert.equal(claim.affectedRows, 1);
+      return linkedRequestId;
+    }
+
+    const retryRunId = 10;
+    await connection.query(`
+      INSERT INTO canonical_collector_runs (id, status) VALUES (?, 'failed')
+    `, [retryRunId]);
+    const retryRequestId = await claimLinkedRequest(
+      "v9",
+      retryRunId,
+      "66666666-6666-4666-8666-666666666666",
+      { maxAttempts: 2 },
+    );
+    await expectReject(() => connection.query(`
+      UPDATE canonical_ad_import_requests
+      SET status = 'retryable',
+          lease_expires_at = NULL,
+          next_attempt_at = UTC_TIMESTAMP(),
+          error_summary = 'must clear failed run before retry'
+      WHERE id = ?
+    `, [retryRequestId]));
+    const [retryable] = await connection.query<mysql.ResultSetHeader>(`
+      UPDATE canonical_ad_import_requests
+      SET status = 'retryable',
+          ingestion_run_id = NULL,
+          lease_expires_at = NULL,
+          next_attempt_at = UTC_TIMESTAMP(),
+          error_summary = 'cleared failed run before retry'
+      WHERE id = ?
+        AND status = 'processing'
+        AND lease_token = '66666666-6666-4666-8666-666666666666'
+        AND lease_expires_at > UTC_TIMESTAMP()
+    `, [retryRequestId]);
+    assert.equal(retryable.affectedRows, 1, "retryable work clears its prior run ownership");
+    const [retryRows] = await connection.query<mysql.RowDataPacket[]>(`
+      SELECT status, ingestion_run_id FROM canonical_ad_import_requests WHERE id = ?
+    `, [retryRequestId]);
+    assert.deepEqual(retryRows[0], { status: "retryable", ingestion_run_id: null });
+    const [retryClaim] = await connection.query<mysql.ResultSetHeader>(`
+      UPDATE canonical_ad_import_requests
+      SET status = 'processing',
+          attempt_count = attempt_count + 1,
+          started_at = UTC_TIMESTAMP(),
+          lease_expires_at = UTC_TIMESTAMP() + INTERVAL 5 MINUTE,
+          lease_token = '77777777-7777-4777-8777-777777777777',
+          next_attempt_at = NULL,
+          error_summary = NULL
+      WHERE id = ?
+        AND status = 'retryable'
+        AND lease_token = '66666666-6666-4666-8666-666666666666'
+    `, [retryRequestId]);
+    assert.equal(retryClaim.affectedRows, 1);
+    const replacementRunId = 11;
+    await connection.query(`
+      INSERT INTO canonical_collector_runs (id, status) VALUES (?, 'running')
+    `, [replacementRunId]);
+    const [newRunAfterRetry] = await connection.query<mysql.ResultSetHeader>(`
+      UPDATE canonical_ad_import_requests
+      SET ingestion_run_id = ?,
+          lease_expires_at = UTC_TIMESTAMP() + INTERVAL 10 MINUTE
+      WHERE id = ?
+        AND status = 'processing'
+        AND lease_token = '77777777-7777-4777-8777-777777777777'
+        AND ingestion_run_id IS NULL
+    `, [replacementRunId, retryRequestId]);
+    assert.equal(newRunAfterRetry.affectedRows, 1, "the next claim accepts a new run after retry");
+
+    const normalSuccessRunId = 12;
+    await connection.query(`
+      INSERT INTO canonical_collector_runs (id, status) VALUES (?, 'running')
+    `, [normalSuccessRunId]);
+    const normalSuccessRequestId = await claimLinkedRequest(
+      "v10",
+      normalSuccessRunId,
+      "88888888-8888-4888-8888-888888888888",
+    );
+    await expectReject(() => connection.query(`
+      UPDATE canonical_ad_import_requests
+      SET status = 'published', lease_expires_at = NULL, lease_token = NULL,
+          next_attempt_at = NULL, finished_at = UTC_TIMESTAMP(), error_summary = NULL
+      WHERE id = ?
+    `, [normalSuccessRequestId]));
+    await connection.query(`
+      UPDATE canonical_collector_runs SET status = 'success' WHERE id = ?
+    `, [normalSuccessRunId]);
+    const [normalSuccess] = await connection.query<mysql.ResultSetHeader>(`
+      UPDATE canonical_ad_import_requests
+      SET status = 'published', lease_expires_at = NULL, lease_token = NULL,
+          next_attempt_at = NULL, finished_at = UTC_TIMESTAMP(), error_summary = NULL
+      WHERE id = ?
+        AND status = 'processing'
+    `, [normalSuccessRequestId]);
+    assert.equal(normalSuccess.affectedRows, 1, "a normal publication follows a successful run");
+
+    const normalFailureRunId = 13;
+    await connection.query(`
+      INSERT INTO canonical_collector_runs (id, status) VALUES (?, 'running')
+    `, [normalFailureRunId]);
+    const normalFailureRequestId = await claimLinkedRequest(
+      "v11",
+      normalFailureRunId,
+      "99999999-9999-4999-8999-999999999999",
+    );
+    await expectReject(() => connection.query(`
+      UPDATE canonical_ad_import_requests
+      SET status = 'failed', lease_expires_at = NULL, lease_token = NULL,
+          next_attempt_at = NULL, finished_at = UTC_TIMESTAMP(),
+          error_summary = 'run must fail before request failure'
+      WHERE id = ?
+    `, [normalFailureRequestId]));
+    await connection.query(`
+      UPDATE canonical_collector_runs SET status = 'failed' WHERE id = ?
+    `, [normalFailureRunId]);
+    const [normalFailure] = await connection.query<mysql.ResultSetHeader>(`
+      UPDATE canonical_ad_import_requests
+      SET status = 'failed', lease_expires_at = NULL, lease_token = NULL,
+          next_attempt_at = NULL, finished_at = UTC_TIMESTAMP(),
+          error_summary = 'run failed before request failure'
+      WHERE id = ?
+        AND status = 'processing'
+    `, [normalFailureRequestId]);
+    assert.equal(normalFailure.affectedRows, 1, "a linked normal failure follows a failed run");
+
+    async function selectRunStatus(
+      runConnection: mysql.Connection,
+      ingestionRunId: number,
+    ) {
+      const [rows] = await runConnection.query<mysql.RowDataPacket[]>(`
+        SELECT status FROM canonical_collector_runs WHERE id = ? FOR UPDATE
+      `, [ingestionRunId]);
+      return String(rows[0].status);
+    }
+
+    async function assertRunRequestOutcome(
+      requestIdForOutcome: number,
+      runIdForOutcome: number,
+      expectedStatus: "published" | "failed",
+    ) {
+      const [rows] = await connection.query<mysql.RowDataPacket[]>(`
+        SELECT request.status AS request_status, run.status AS run_status
+        FROM canonical_ad_import_requests AS request
+        JOIN canonical_collector_runs AS run ON run.id = request.ingestion_run_id
+        WHERE request.id = ? AND run.id = ?
+      `, [requestIdForOutcome, runIdForOutcome]);
+      assert.deepEqual(rows[0], {
+        request_status: expectedStatus,
+        run_status: expectedStatus === "published" ? "success" : "failed",
+      });
+    }
+
+    const workerSuccessWinsRunId = 14;
+    await connection.query(`
+      INSERT INTO canonical_collector_runs (id, status) VALUES (?, 'running')
+    `, [workerSuccessWinsRunId]);
+    const workerSuccessWinsRequestId = await claimLinkedRequest(
+      "v12",
+      workerSuccessWinsRunId,
+      "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+      { expired: true },
+    );
+    const workerSuccess = await openConnection();
+    const reaperAfterWorker = await openConnection();
+    try {
+      await workerSuccess.beginTransaction();
+      const [workerRunSuccess] = await workerSuccess.query<mysql.ResultSetHeader>(`
+        UPDATE canonical_collector_runs SET status = 'success'
+        WHERE id = ? AND status = 'running'
+      `, [workerSuccessWinsRunId]);
+      assert.equal(workerRunSuccess.affectedRows, 1);
+      await reaperAfterWorker.beginTransaction();
+      const reaperRunFailure = reaperAfterWorker.query<mysql.ResultSetHeader>(`
+        UPDATE canonical_collector_runs SET status = 'failed'
+        WHERE id = ? AND status = 'running'
+      `, [workerSuccessWinsRunId]);
+      const [workerRequestPublished] = await workerSuccess.query<mysql.ResultSetHeader>(`
+        UPDATE canonical_ad_import_requests
+        SET status = 'published', lease_expires_at = NULL, lease_token = NULL,
+            next_attempt_at = NULL, finished_at = UTC_TIMESTAMP(), error_summary = NULL
+        WHERE id = ? AND status = 'processing'
+      `, [workerSuccessWinsRequestId]);
+      assert.equal(workerRequestPublished.affectedRows, 1);
+      await workerSuccess.commit();
+      const [reaperRunFailureResult] = await reaperRunFailure;
+      assert.equal(reaperRunFailureResult.affectedRows, 0);
+      assert.equal(await selectRunStatus(reaperAfterWorker, workerSuccessWinsRunId), "success");
+      await reaperAfterWorker.commit();
+    } finally {
+      await workerSuccess.end();
+      await reaperAfterWorker.end();
+    }
+    await assertRunRequestOutcome(workerSuccessWinsRequestId, workerSuccessWinsRunId, "published");
+
+    const reaperWinsRunId = 15;
+    await connection.query(`
+      INSERT INTO canonical_collector_runs (id, status) VALUES (?, 'running')
+    `, [reaperWinsRunId]);
+    const reaperWinsRequestId = await claimLinkedRequest(
+      "v13",
+      reaperWinsRunId,
+      "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb",
+      { expired: true },
+    );
+    const reaperWins = await openConnection();
+    const workerAfterReaper = await openConnection();
+    try {
+      await reaperWins.beginTransaction();
+      const [reaperRunFailed] = await reaperWins.query<mysql.ResultSetHeader>(`
+        UPDATE canonical_collector_runs SET status = 'failed'
+        WHERE id = ? AND status = 'running'
+      `, [reaperWinsRunId]);
+      assert.equal(reaperRunFailed.affectedRows, 1);
+      await workerAfterReaper.beginTransaction();
+      const workerRunSuccess = workerAfterReaper.query<mysql.ResultSetHeader>(`
+        UPDATE canonical_collector_runs SET status = 'success'
+        WHERE id = ? AND status = 'running'
+      `, [reaperWinsRunId]);
+      const [reaperRequestFailed] = await reaperWins.query<mysql.ResultSetHeader>(`
+        UPDATE canonical_ad_import_requests
+        SET status = 'failed', lease_expires_at = NULL, lease_token = NULL,
+            next_attempt_at = NULL, finished_at = UTC_TIMESTAMP(),
+            error_summary = 'worker lease expired at retry budget'
+        WHERE id = ? AND status = 'processing'
+      `, [reaperWinsRequestId]);
+      assert.equal(reaperRequestFailed.affectedRows, 1);
+      await reaperWins.commit();
+      const [workerRunSuccessResult] = await workerRunSuccess;
+      assert.equal(workerRunSuccessResult.affectedRows, 0);
+      assert.equal(await selectRunStatus(workerAfterReaper, reaperWinsRunId), "failed");
+      await workerAfterReaper.commit();
+    } finally {
+      await reaperWins.end();
+      await workerAfterReaper.end();
+    }
+    await assertRunRequestOutcome(reaperWinsRequestId, reaperWinsRunId, "failed");
 
     await expectReject(() => connection.query(`
       DELETE FROM canonical_ad_import_requests WHERE id = ${requestId}

@@ -190,6 +190,21 @@ test("an expired final attempt may reconcile only an already-successful collecto
   );
 });
 
+test("atomic worker finalization binds every linked terminal request to its collector run", () => {
+  assert.match(
+    sql,
+    /OLD\.status = 'processing'[\s\S]*?NEW\.status = 'retryable'[\s\S]*?NEW\.ingestion_run_id IS NULL[\s\S]*?NEW\.lease_token <=> OLD\.lease_token[\s\S]*?OLD\.lease_expires_at > UTC_TIMESTAMP\(\)/,
+  );
+  assert.match(
+    sql,
+    /OLD\.status = 'processing'[\s\S]*?NEW\.status = 'published'[\s\S]*?OLD\.lease_expires_at > UTC_TIMESTAMP\(\)[\s\S]*?EXISTS \([\s\S]*?FROM canonical_collector_runs[\s\S]*?id = NEW\.ingestion_run_id[\s\S]*?status = 'success'/,
+  );
+  assert.match(
+    sql,
+    /OLD\.status = 'processing'[\s\S]*?NEW\.status = 'failed'[\s\S]*?NEW\.ingestion_run_id IS NULL[\s\S]*?OR EXISTS \([\s\S]*?FROM canonical_collector_runs[\s\S]*?id = NEW\.ingestion_run_id[\s\S]*?status = 'failed'/,
+  );
+});
+
 test("import request migration can replay its trigger definitions", () => {
   assert.equal((sql.match(/DROP TRIGGER IF EXISTS trg_ad_import_request_/g) ?? []).length, 4);
   assert.equal((sql.match(/CREATE TRIGGER trg_ad_import_request_/g) ?? []).length, 4);
@@ -227,5 +242,10 @@ test("MySQL verifier exercises generated identity, fenced lease races, and diges
   assert.match(verifier, /finalAttemptRunningRejected/);
   assert.match(verifier, /finalAttemptFailedRejected/);
   assert.match(verifier, /finalAttemptMissingRejected/);
+  assert.match(verifier, /workerSuccessWins/);
+  assert.match(verifier, /reaperWins/);
+  assert.match(verifier, /beginTransaction\(\)/);
+  assert.match(verifier, /retryable[\s\S]*?ingestion_run_id = NULL/);
+  assert.match(verifier, /new run after retry/);
   assert.match(verifier, /DELETE FROM canonical_ad_import_requests/);
 });

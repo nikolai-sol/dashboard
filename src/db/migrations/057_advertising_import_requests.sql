@@ -93,6 +93,7 @@ CREATE TABLE IF NOT EXISTS canonical_ad_import_requests (
             AND lease_token IS NOT NULL
             AND next_attempt_at IS NOT NULL
             AND finished_at IS NULL
+            AND ingestion_run_id IS NULL
             AND error_summary IS NOT NULL
             AND CHAR_LENGTH(TRIM(error_summary)) > 0)
         OR
@@ -123,7 +124,6 @@ CREATE TABLE IF NOT EXISTS canonical_ad_import_requests (
             AND lease_token IS NULL
             AND next_attempt_at IS NULL
             AND finished_at IS NOT NULL
-            AND ingestion_run_id IS NULL
             AND error_summary IS NOT NULL
             AND CHAR_LENGTH(TRIM(error_summary)) > 0)
     ),
@@ -237,6 +237,7 @@ BEGIN
         (OLD.status = 'processing'
             AND NEW.status = 'retryable'
             AND NEW.attempt_count = OLD.attempt_count
+            AND NEW.ingestion_run_id IS NULL
             AND NEW.lease_token <=> OLD.lease_token
             AND OLD.lease_expires_at > UTC_TIMESTAMP()
             AND NEW.next_attempt_at >= OLD.started_at)
@@ -245,6 +246,16 @@ BEGIN
             AND NEW.status = 'rejected'
             AND NEW.attempt_count = OLD.attempt_count
             AND NEW.lease_token <=> OLD.lease_token
+            AND NEW.ingestion_run_id <=> OLD.ingestion_run_id
+            AND (
+                NEW.ingestion_run_id IS NULL
+                OR EXISTS (
+                    SELECT 1
+                    FROM canonical_collector_runs
+                    WHERE id = NEW.ingestion_run_id
+                      AND status = 'failed'
+                )
+            )
             AND OLD.lease_expires_at > UTC_TIMESTAMP())
         OR
         (OLD.status = 'processing'
@@ -256,7 +267,13 @@ BEGIN
             AND NEW.finished_at IS NOT NULL
             AND NEW.ingestion_run_id IS NOT NULL
             AND NEW.error_summary IS NULL
-            AND OLD.lease_expires_at > UTC_TIMESTAMP())
+            AND OLD.lease_expires_at > UTC_TIMESTAMP()
+            AND EXISTS (
+                SELECT 1
+                FROM canonical_collector_runs
+                WHERE id = NEW.ingestion_run_id
+                  AND status = 'success'
+            ))
         OR
         (OLD.status = 'processing'
             AND NEW.status = 'published'
@@ -284,6 +301,16 @@ BEGIN
             AND NEW.finished_at IS NOT NULL
             AND NEW.error_summary IS NOT NULL
             AND CHAR_LENGTH(TRIM(NEW.error_summary)) > 0
+            AND NEW.ingestion_run_id <=> OLD.ingestion_run_id
+            AND (
+                NEW.ingestion_run_id IS NULL
+                OR EXISTS (
+                    SELECT 1
+                    FROM canonical_collector_runs
+                    WHERE id = NEW.ingestion_run_id
+                      AND status = 'failed'
+                )
+            )
             AND (
                 OLD.lease_expires_at > UTC_TIMESTAMP()
                 OR (
