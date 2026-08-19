@@ -43,6 +43,7 @@ DATASET_KEY = "abbott"
 ABBOTT_COUNTER_ID = "90602537"
 CATALOG_SOURCE_KIND = "abbott_workbook_catalog"
 CATALOG_PARSER_VERSION = "abbott-content-candidate-v1"
+MNN_SOURCE_KIND = "abbott_mnn_workbook"
 EXACT_PERCENT = Decimal("100")
 CONTENT_CONTROL_VALUES = {
     "content.source_reconciliation_pct": 100,
@@ -719,7 +720,7 @@ def _strict_proposal_evidence_sql() -> str:
     return f"""(
       JSON_VALID(item.proposal_evidence)
       AND JSON_TYPE(item.proposal_evidence) = 'OBJECT'
-      AND JSON_LENGTH(JSON_KEYS(item.proposal_evidence)) = 9
+      AND JSON_LENGTH(JSON_KEYS(item.proposal_evidence)) IN (9, 10)
       AND JSON_CONTAINS_PATH(item.proposal_evidence, 'all', {top_level_paths})
       AND {nullable_objects}
       AND JSON_TYPE(JSON_EXTRACT(
@@ -732,6 +733,10 @@ def _strict_proposal_evidence_sql() -> str:
       AND {published_types}
       AND {_strict_proposal_object_sql('terra')}
       AND {_strict_proposal_object_sql('sol')}
+      AND (
+        NOT JSON_CONTAINS_PATH(item.proposal_evidence, 'one', '$.mnn')
+        OR JSON_TYPE(JSON_EXTRACT(item.proposal_evidence, '$.mnn')) = 'ARRAY'
+      )
     )"""
 
 
@@ -748,7 +753,14 @@ def _proposal_evidence_is_strict(value: object) -> bool:
         "sol",
         "terra",
     }
-    if not isinstance(value, Mapping) or set(value) != expected:
+    if not isinstance(value, Mapping) or set(value) not in (expected, expected | {"mnn"}):
+        return False
+    if "mnn" in value and (
+        not isinstance(value["mnn"], (list, tuple))
+        or not value["mnn"]
+        or any(not isinstance(item, str) or not item.strip() for item in value["mnn"])
+        or tuple(value["mnn"]) != tuple(sorted(set(value["mnn"])))
+    ):
         return False
     if any(
         value[name] is not None and not isinstance(value[name], Mapping)
@@ -943,6 +955,7 @@ def _load_approval_bundle(
                 ),
                 model_routing_version=str(batch.get("model_routing_version") or ""),
                 prompt_version=str(batch.get("prompt_version") or ""),
+                mnn=tuple(evidence.get("mnn") or ()),
             )
             accepted_item = ApprovalItem(
                 content_entity_id=entity_id,
@@ -2155,6 +2168,160 @@ def _records_hash(records: object) -> str:
     return sha256_text(_canonical_json(records))
 
 
+def _snapshot_rejections_allowed(row: object) -> bool:
+    if str(_row_value(row, "import_status", 5) or "") != "imported":
+        return False
+    rejected_count = int(_row_value(row, "rejected_row_count", 7) or 0)
+    if str(_row_value(row, "source_kind", 1) or "") != MNN_SOURCE_KIND:
+        return rejected_count == 0
+    manifest = _decode_json(
+        _row_value(row, "manifest_json", 8), code="SOURCE_MANIFEST_INVALID"
+    )
+    return (
+        isinstance(manifest, Mapping)
+        and int(manifest.get("rejected_placeholder_count") or 0) == rejected_count
+        and int(manifest.get("rejected_count") or 0) == rejected_count
+        and int(manifest.get("unknown_malformed_count") or 0) == 0
+    )
+
+
+def _mnn_semantic_rows(
+    cursor,
+    *,
+    predecessor_release_id: int,
+    old_mnn_snapshot_id: int | None,
+    new_mnn_snapshot_id: int | None,
+) -> tuple[tuple[int, int, int, str, str], ...]:
+    predecessor_rows: list[tuple[int, int, int, str, str]] = []
+    if old_mnn_snapshot_id is not None:
+        cursor.execute(
+            """
+            SELECT content_entity_id, mnn_source_snapshot_id, source_claim_id,
+                   mnn_key, mnn_label
+            FROM portal_content_catalog_mnn
+            WHERE canonical_release_id = %s
+            ORDER BY content_entity_id, mnn_key, source_claim_id
+            """,
+            (predecessor_release_id,),
+        )
+        predecessor_rows = [
+            (
+                int(_row_value(row, "content_entity_id", 0)),
+                int(_row_value(row, "mnn_source_snapshot_id", 1)),
+                int(_row_value(row, "source_claim_id", 2)),
+                str(_row_value(row, "mnn_key", 3) or ""),
+                str(_row_value(row, "mnn_label", 4) or ""),
+            )
+            for row in cursor.fetchall()
+        ]
+    if new_mnn_snapshot_id is None or new_mnn_snapshot_id == old_mnn_snapshot_id:
+        return tuple(predecessor_rows)
+    cursor.execute(
+        """
+        SELECT claim.resolved_content_entity_id AS content_entity_id,
+               claim.source_snapshot_id AS mnn_source_snapshot_id,
+               claim.id AS source_claim_id, claim.mnn_key, claim.mnn_label,
+               entity.registry_status
+        FROM portal_content_mnn_source_claims AS claim
+        LEFT JOIN portal_content_registry_entities AS entity
+          ON entity.id = claim.resolved_content_entity_id
+         AND entity.dataset_key = %s
+        WHERE claim.source_snapshot_id = %s
+          AND claim.resolution_status = 'mapped'
+        ORDER BY claim.resolved_content_entity_id, claim.mnn_key, claim.id
+        FOR UPDATE
+        """,
+        (DATASET_KEY, new_mnn_snapshot_id),
+    )
+    new_rows: list[tuple[int, int, int, str, str]] = []
+    for row in cursor.fetchall():
+        values = (
+            int(_row_value(row, "content_entity_id", 0) or 0),
+            int(_row_value(row, "mnn_source_snapshot_id", 1) or 0),
+            int(_row_value(row, "source_claim_id", 2) or 0),
+            str(_row_value(row, "mnn_key", 3) or ""),
+            str(_row_value(row, "mnn_label", 4) or ""),
+        )
+        if (
+            values[0] <= 0
+            or values[1] != new_mnn_snapshot_id
+            or values[2] <= 0
+            or not values[3]
+            or not values[4]
+            or str(_row_value(row, "registry_status", 5) or "") != "active"
+        ):
+            raise CandidateMaterializationError("MNN_MAPPING_INVALID")
+        new_rows.append(values)
+    # A reviewed replacement workbook is authoritative as a whole.  Keeping
+    # predecessor rows here would orphan their source-claim provenance after
+    # the predecessor snapshot/import receipt is removed from the successor.
+    result = new_rows
+    identities = [(row[0], row[3]) for row in result]
+    if len(identities) != len(set(identities)):
+        raise CandidateMaterializationError("MNN_MAPPING_DUPLICATE")
+    return tuple(sorted(result, key=lambda row: (row[0], row[3], row[2])))
+
+
+def _persist_mnn_projection(
+    cursor,
+    *,
+    candidate_release_id: int,
+    rows: Sequence[tuple[int, int, int, str, str]],
+) -> None:
+    for entity_id, snapshot_id, claim_id, mnn_key, mnn_label in rows:
+        fingerprint = sha256_text(
+            _canonical_json(
+                {
+                    "canonical_release_id": candidate_release_id,
+                    "content_entity_id": entity_id,
+                    "mnn_key": mnn_key,
+                    "source_claim_id": claim_id,
+                }
+            )
+        )
+        cursor.execute(
+            """
+            INSERT INTO portal_content_catalog_mnn (
+              canonical_release_id, content_entity_id, mnn_source_snapshot_id,
+              source_claim_id, mnn_key, mnn_label, mapping_fingerprint
+            ) VALUES (%s, %s, %s, %s, %s, %s, %s)
+            """,
+            (
+                candidate_release_id,
+                entity_id,
+                snapshot_id,
+                claim_id,
+                mnn_key,
+                mnn_label,
+                fingerprint,
+            ),
+        )
+        if int(getattr(cursor, "rowcount", -1)) != 1:
+            raise CandidateMaterializationError("MNN_MAPPING_INSERT_FAILED")
+    cursor.execute(
+        """
+        SELECT content_entity_id, mnn_source_snapshot_id, source_claim_id,
+               mnn_key, mnn_label
+        FROM portal_content_catalog_mnn
+        WHERE canonical_release_id = %s
+        ORDER BY content_entity_id, mnn_key, source_claim_id
+        """,
+        (candidate_release_id,),
+    )
+    actual = tuple(
+        (
+            int(_row_value(row, "content_entity_id", 0)),
+            int(_row_value(row, "mnn_source_snapshot_id", 1)),
+            int(_row_value(row, "source_claim_id", 2)),
+            str(_row_value(row, "mnn_key", 3) or ""),
+            str(_row_value(row, "mnn_label", 4) or ""),
+        )
+        for row in cursor.fetchall()
+    )
+    if actual != tuple(rows):
+        raise CandidateMaterializationError("MNN_MAPPING_ATTESTATION_FAILED")
+
+
 # Explicit columns keep the copy auditable and preserve Abbott UTM/visit grains.
 _NON_CONTENT_RELEASE_TABLES: tuple[
     tuple[str, tuple[str, ...], tuple[str, ...]], ...
@@ -2604,6 +2771,7 @@ def materialize_content_candidate(
     predecessor_release_id: int,
     code_revision: str,
     *,
+    mnn_snapshot_id: int | None = None,
     connection_factory=None,
 ) -> CandidateMaterialization:
     """Transform the locked predecessor bundle into one staging successor."""
@@ -2611,6 +2779,9 @@ def materialize_content_candidate(
     try:
         batch_id = int(batch_id)
         predecessor_release_id = int(predecessor_release_id)
+        requested_mnn_snapshot_id = (
+            int(mnn_snapshot_id) if mnn_snapshot_id is not None else None
+        )
     except (TypeError, ValueError):
         raise CandidateMaterializationError("CANDIDATE_INPUT_INVALID") from None
     if (
@@ -2618,6 +2789,7 @@ def materialize_content_candidate(
         or predecessor_release_id <= 0
         or not isinstance(code_revision, str)
         or not re.fullmatch(r"[0-9a-f]{7,64}", code_revision)
+        or (requested_mnn_snapshot_id is not None and requested_mnn_snapshot_id <= 0)
     ):
         raise CandidateMaterializationError("CANDIDATE_INPUT_INVALID")
 
@@ -2762,6 +2934,34 @@ def materialize_content_candidate(
         ]
         if len(old_catalog_ids) != 1:
             raise CandidateMaterializationError("CATALOG_SNAPSHOT_SET_INVALID")
+        old_mnn_ids = [
+            snapshot_id
+            for snapshot_id, row in snapshots_by_id.items()
+            if row.get("source_kind") == MNN_SOURCE_KIND
+        ]
+        if len(old_mnn_ids) > 1:
+            raise CandidateMaterializationError("MNN_SNAPSHOT_SET_INVALID")
+        if requested_mnn_snapshot_id is not None and requested_mnn_snapshot_id not in snapshots_by_id:
+            cursor.execute(
+                """
+                SELECT id, source_kind, content_sha256, content_bytes,
+                       parser_version, import_status, imported_row_count,
+                       rejected_row_count, manifest_json, source_row_count
+                FROM portal_dataset_snapshots
+                WHERE dataset_key = %s AND id = %s
+                FOR UPDATE
+                """,
+                (DATASET_KEY, requested_mnn_snapshot_id),
+            )
+            requested_snapshot = cursor.fetchone()
+            if (
+                not isinstance(requested_snapshot, Mapping)
+                or int(requested_snapshot.get("id") or 0) != requested_mnn_snapshot_id
+                or requested_snapshot.get("source_kind") != MNN_SOURCE_KIND
+                or requested_snapshot.get("import_status") != "imported"
+            ):
+                raise CandidateMaterializationError("MNN_SNAPSHOT_INVALID")
+            snapshots_by_id[requested_mnn_snapshot_id] = requested_snapshot
         batch_source_ids = _decode_json(
             batch.get("source_snapshot_ids"), code="BATCH_SOURCE_BINDING_INVALID"
         )
@@ -2941,6 +3141,19 @@ def materialize_content_candidate(
         predecessor_non_content = _read_non_content_bundle(
             cursor, predecessor_release_id
         )
+        old_mnn_snapshot_id = old_mnn_ids[0] if old_mnn_ids else None
+        effective_mnn_snapshot_id = (
+            requested_mnn_snapshot_id
+            if requested_mnn_snapshot_id is not None
+            else old_mnn_snapshot_id
+        )
+        mnn_rows = _mnn_semantic_rows(
+            cursor,
+            predecessor_release_id=predecessor_release_id,
+            old_mnn_snapshot_id=old_mnn_snapshot_id,
+            new_mnn_snapshot_id=effective_mnn_snapshot_id,
+        )
+        mnn_hash = _hash_rows(mnn_rows)
 
         catalog_manifest = {
             "accepted_decision_hash": approval_bundle["accepted_hash"],
@@ -2985,10 +3198,22 @@ def materialize_content_candidate(
         catalog_snapshot_id = int(cursor.lastrowid)
         if int(getattr(cursor, "rowcount", -1)) != 1 or catalog_snapshot_id <= 0:
             raise CandidateMaterializationError("CATALOG_SNAPSHOT_INSERT_FAILED")
-        source_snapshot_ids = tuple(
+        source_snapshot_ids_list = [
             catalog_snapshot_id if value == old_catalog_ids[0] else value
             for value in predecessor_source_ids
-        )
+        ]
+        if (
+            effective_mnn_snapshot_id is not None
+            and effective_mnn_snapshot_id != old_mnn_snapshot_id
+        ):
+            if old_mnn_snapshot_id is not None:
+                source_snapshot_ids_list = [
+                    effective_mnn_snapshot_id if value == old_mnn_snapshot_id else value
+                    for value in source_snapshot_ids_list
+                ]
+            else:
+                source_snapshot_ids_list.append(effective_mnn_snapshot_id)
+        source_snapshot_ids = tuple(source_snapshot_ids_list)
 
         candidate_snapshot_rows = []
         for snapshot_id in source_snapshot_ids:
@@ -3026,6 +3251,11 @@ def materialize_content_candidate(
             }
             for record in predecessor_import_records
             if record["source_snapshot_id"] != old_catalog_ids[0]
+            and not (
+                effective_mnn_snapshot_id is not None
+                and effective_mnn_snapshot_id != old_mnn_snapshot_id
+                and record["source_snapshot_id"] == old_mnn_snapshot_id
+            )
         ]
         candidate_import_records.append(
             {
@@ -3037,6 +3267,21 @@ def materialize_content_candidate(
                 "code_revision": code_revision,
             }
         )
+        if (
+            effective_mnn_snapshot_id is not None
+            and effective_mnn_snapshot_id != old_mnn_snapshot_id
+        ):
+            mnn_snapshot = snapshots_by_id[effective_mnn_snapshot_id]
+            candidate_import_records.append(
+                {
+                    "source_snapshot_id": effective_mnn_snapshot_id,
+                    "source_kind": MNN_SOURCE_KIND,
+                    "imported_row_count": int(mnn_snapshot.get("imported_row_count") or 0),
+                    "rejected_row_count": int(mnn_snapshot.get("rejected_row_count") or 0),
+                    "import_status": "imported",
+                    "code_revision": code_revision,
+                }
+            )
         candidate_import_records.sort(key=lambda row: int(row["source_snapshot_id"]))
         expected_counts = {name: int(value) for name, value in counts.items()}
         expected_non_content = {
@@ -3070,6 +3315,9 @@ def materialize_content_candidate(
             "taxonomy_version_id": int(batch["taxonomy_version_id"]),
             "referenced_taxonomy_terms": referenced_taxonomy_terms,
         }
+        if effective_mnn_snapshot_id is not None:
+            bundle["candidate_mnn_count"] = len(mnn_rows)
+            bundle["candidate_mnn_hash"] = mnn_hash
         control_values = dict(predecessor_baseline.get("control_values") or {})
         control_values.update(CONTENT_CONTROL_VALUES)
         baseline_manifest = {
@@ -3135,6 +3383,12 @@ def materialize_content_candidate(
             source_id = int(_row_value(row, "source_snapshot_id", 0))
             if source_id == old_catalog_ids[0]:
                 continue
+            if (
+                effective_mnn_snapshot_id is not None
+                and effective_mnn_snapshot_id != old_mnn_snapshot_id
+                and source_id == old_mnn_snapshot_id
+            ):
+                continue
             cursor.execute(
                 """
                 INSERT INTO portal_release_source_imports (
@@ -3172,6 +3426,30 @@ def materialize_content_candidate(
         )
         if int(getattr(cursor, "rowcount", -1)) != 1:
             raise CandidateMaterializationError("SOURCE_IMPORT_COPY_MISMATCH")
+        if (
+            effective_mnn_snapshot_id is not None
+            and effective_mnn_snapshot_id != old_mnn_snapshot_id
+        ):
+            mnn_snapshot = snapshots_by_id[effective_mnn_snapshot_id]
+            cursor.execute(
+                """
+                INSERT INTO portal_release_source_imports (
+                  canonical_release_id, source_snapshot_id, source_kind,
+                  code_revision, import_status, imported_row_count,
+                  rejected_row_count, imported_at
+                ) VALUES (%s, %s, %s, %s, 'imported', %s, %s, NOW(6))
+                """,
+                (
+                    candidate_id,
+                    effective_mnn_snapshot_id,
+                    MNN_SOURCE_KIND,
+                    code_revision,
+                    int(mnn_snapshot.get("imported_row_count") or 0),
+                    int(mnn_snapshot.get("rejected_row_count") or 0),
+                ),
+            )
+            if int(getattr(cursor, "rowcount", -1)) != 1:
+                raise CandidateMaterializationError("MNN_IMPORT_INSERT_FAILED")
         _copy_non_content_facts(
             cursor,
             predecessor_release_id,
@@ -3216,6 +3494,12 @@ def materialize_content_candidate(
             )
             if int(getattr(cursor, "rowcount", -1)) != 1:
                 raise CandidateMaterializationError("LOOKUP_COUNT_MISMATCH")
+        if mnn_rows:
+            _persist_mnn_projection(
+                cursor,
+                candidate_release_id=candidate_id,
+                rows=mnn_rows,
+            )
 
         catalog_columns = (
             "normalized_url", "normalized_url_hash", "normalized_path", "page_title",
@@ -3679,6 +3963,57 @@ def validate_content_candidate(
         expected_non_content = bundle.get("non_content")
         if not isinstance(expected_non_content, Mapping):
             raise CandidateMaterializationError("CANDIDATE_BASELINE_INVALID")
+        candidate_mnn_rows: tuple[tuple[int, int, int, str, str], ...] = ()
+        if "candidate_mnn_hash" in bundle or "candidate_mnn_count" in bundle:
+            cursor.execute(
+                """
+                SELECT mapping.content_entity_id, mapping.mnn_source_snapshot_id,
+                       mapping.source_claim_id, mapping.mnn_key, mapping.mnn_label,
+                       claim.source_snapshot_id AS claim_source_snapshot_id,
+                       claim.resolved_content_entity_id AS claim_content_entity_id,
+                       claim.resolution_status AS claim_resolution_status,
+                       claim.mnn_key AS claim_mnn_key,
+                       claim.mnn_label AS claim_mnn_label
+                FROM portal_content_catalog_mnn AS mapping
+                INNER JOIN portal_content_mnn_source_claims AS claim
+                  ON claim.id = mapping.source_claim_id
+                WHERE mapping.canonical_release_id = %s
+                ORDER BY mapping.content_entity_id, mapping.mnn_key, mapping.source_claim_id
+                """,
+                (candidate_release_id,),
+            )
+            candidate_mnn_db_rows = tuple(cursor.fetchall())
+            candidate_mnn_rows = tuple(
+                (
+                    int(_row_value(row, "content_entity_id", 0)),
+                    int(_row_value(row, "mnn_source_snapshot_id", 1)),
+                    int(_row_value(row, "source_claim_id", 2)),
+                    str(_row_value(row, "mnn_key", 3) or ""),
+                    str(_row_value(row, "mnn_label", 4) or ""),
+                )
+                for row in candidate_mnn_db_rows
+            )
+            mnn_claims_match = all(
+                int(_row_value(row, "claim_source_snapshot_id", 5) or 0)
+                == int(_row_value(row, "mnn_source_snapshot_id", 1) or 0)
+                and int(_row_value(row, "claim_content_entity_id", 6) or 0)
+                == int(_row_value(row, "content_entity_id", 0) or 0)
+                and str(_row_value(row, "claim_resolution_status", 7) or "") == "mapped"
+                and str(_row_value(row, "claim_mnn_key", 8) or "")
+                == str(_row_value(row, "mnn_key", 3) or "")
+                and str(_row_value(row, "claim_mnn_label", 9) or "")
+                == str(_row_value(row, "mnn_label", 4) or "")
+                for row in candidate_mnn_db_rows
+            )
+        else:
+            mnn_claims_match = True
+        mnn_match = (
+            len(candidate_mnn_rows) == int(bundle.get("candidate_mnn_count") or 0)
+            and _hash_rows(candidate_mnn_rows)
+            == str(bundle.get("candidate_mnn_hash") or _hash_rows(()))
+            and all(row[1] in candidate_source_ids for row in candidate_mnn_rows)
+            and mnn_claims_match
+        )
 
         source_match = (
             candidate_source_ids == list(bundle.get("candidate_source_snapshot_ids") or [])
@@ -3690,7 +4025,7 @@ def validate_content_candidate(
                 {key: record[key] for key in ("source_kind", "content_sha256", "content_bytes", "parser_version", "source_row_count")}
                 for record in candidate_snapshot_records
             ] == list(baseline.get("file_snapshots") or [])
-            and all(_row_value(row, "import_status", 5) == "imported" and int(_row_value(row, "rejected_row_count", 7) or 0) == 0 for row in candidate_snapshots)
+            and all(_snapshot_rejections_allowed(row) for row in candidate_snapshots)
             and {record["source_snapshot_id"] for record in candidate_import_records} == set(candidate_source_ids)
         )
         non_content_match = all(
@@ -3716,6 +4051,7 @@ def validate_content_candidate(
             and lookup_hash == bundle.get("candidate_lookup_hash") == catalog_manifest.get("lookup_hash")
             and len(catalog_rows) == int(catalog_manifest.get("source_row_count") or -1)
             and len(lookup_rows) == int(catalog_manifest.get("lookup_row_count") or -1)
+            and mnn_match
             and non_content_match
         )
 

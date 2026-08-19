@@ -141,6 +141,7 @@ def _enrich(
     source_snapshot_digests: tuple[str, ...],
     model_routing_version: str,
     prompt_version: str,
+    mnn: tuple[str, ...],
 ) -> ApprovalBatchItem:
     if isinstance(value, ReconciliationInput):
         item = reconcile_entity(value)
@@ -198,6 +199,7 @@ def _enrich(
         source_snapshot_digests=source_snapshot_digests,
         model_routing_version=model_routing_version,
         prompt_version=prompt_version,
+        mnn=mnn,
     )
     return replace(
         enriched,
@@ -223,6 +225,7 @@ def build_batch(
     source_snapshot_ids: Sequence[int],
     source_snapshot_digests: Sequence[str],
     model_routing_version: str,
+    mnn_by_entity: Mapping[int, Sequence[str]] | None = None,
 ) -> BuiltApprovalBatch:
     """Build one immutable, deterministic batch from canonical reconciliation data."""
 
@@ -257,6 +260,9 @@ def build_batch(
         raise ValueError("SOURCE_SNAPSHOTS_REQUIRED")
     if not isinstance(model_routing_version, str) or not model_routing_version.strip():
         raise ValueError("MODEL_ROUTING_VERSION_REQUIRED")
+    mnn_context = mnn_by_entity or {}
+    if any(int(entity_id) <= 0 for entity_id in mnn_context):
+        raise ValueError("MNN_CONTEXT_INVALID")
     items = tuple(
         sorted(
             (
@@ -268,6 +274,12 @@ def build_batch(
                     source_snapshot_digests=snapshot_digests,
                     model_routing_version=model_routing_version,
                     prompt_version=prompt_version,
+                    mnn=tuple(
+                        mnn_context.get(
+                            int(getattr(value, "content_entity_id", 0) or 0),
+                            (),
+                        )
+                    ),
                 )
                 for value in inputs
             ),

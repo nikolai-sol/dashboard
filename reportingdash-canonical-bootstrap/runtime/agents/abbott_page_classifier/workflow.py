@@ -376,10 +376,19 @@ class ProductionWorkflowGateway:
         materializer = self._materializer
         if materializer is None:
             from agents.abbott_page_classifier.candidate_release import materialize_content_candidate
+            mnn_snapshot = os.environ.get("ABBOTT_CONTENT_MNN_SNAPSHOT_ID", "").strip()
+            materialize_kwargs = {
+                "connection_factory": self._materializer_connection_factory,
+            }
+            if mnn_snapshot:
+                try:
+                    materialize_kwargs["mnn_snapshot_id"] = int(mnn_snapshot)
+                except ValueError:
+                    raise WorkflowConfigurationError("MNN_SNAPSHOT_ID_INVALID") from None
             candidate = materialize_content_candidate(
                 int(batch_id), predecessor_id,
                 _configuration_from_environment().code_revision,
-                connection_factory=self._materializer_connection_factory,
+                **materialize_kwargs,
             )
         else:
             candidate = materializer(

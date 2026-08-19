@@ -1939,7 +1939,10 @@ class ContentRegistryRepository:
                 )
                 if (
                     not isinstance(evidence, Mapping)
-                    or set(evidence) != expected_evidence_keys
+                    or set(evidence) not in (
+                        expected_evidence_keys,
+                        expected_evidence_keys | {"mnn"},
+                    )
                     or not isinstance(conflict_codes, (tuple, list))
                     or any(not isinstance(code, str) for code in conflict_codes)
                 ):
@@ -1965,6 +1968,13 @@ class ContentRegistryRepository:
                 concise_evidence = evidence["concise_evidence"]
                 if not isinstance(concise_evidence, (tuple, list)) or any(
                     not isinstance(value, str) for value in concise_evidence
+                ):
+                    raise RepositoryError("BATCH_ITEMS_MISMATCH")
+                mnn = evidence.get("mnn", ())
+                if (
+                    not isinstance(mnn, (tuple, list))
+                    or any(not isinstance(value, str) or not value.strip() for value in mnn)
+                    or tuple(mnn) != tuple(sorted(set(mnn)))
                 ):
                     raise RepositoryError("BATCH_ITEMS_MISMATCH")
                 published_decision = evidence["published_decision"]
@@ -2024,6 +2034,7 @@ class ContentRegistryRepository:
                     ),
                     model_routing_version=model_routing_version,
                     prompt_version=prompt_version,
+                    mnn=tuple(mnn),
                 )
             except RepositoryError:
                 raise

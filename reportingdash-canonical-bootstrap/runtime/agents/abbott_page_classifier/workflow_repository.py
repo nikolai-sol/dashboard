@@ -555,6 +555,7 @@ class MySqlWorkflowStore:
             predecessor_catalog_entities = self._load_predecessor_catalog_entities(
                 cursor, predecessor_id
             )
+            mnn_by_entity = self._load_mnn_by_entity(cursor, predecessor_id)
             connection.commit()
             return ReconciliationContext(
                 predecessor_release_id=predecessor_id,
@@ -568,6 +569,7 @@ class MySqlWorkflowStore:
                 ),
                 predecessor_catalog_entities=predecessor_catalog_entities,
                 observed_pages=observed_pages,
+                mnn_by_entity=mnn_by_entity,
             )
         except RepositoryError:
             ContentRegistryRepository._rollback(connection)
@@ -577,6 +579,28 @@ class MySqlWorkflowStore:
             raise RepositoryError("DB_READ_FAILED") from None
         finally:
             ContentRegistryRepository._close(cursor, connection)
+
+    @staticmethod
+    def _load_mnn_by_entity(cursor, release_id: int) -> Mapping[int, tuple[str, ...]]:
+        cursor.execute(
+            """
+            SELECT content_entity_id, mnn_label
+            FROM portal_content_catalog_mnn
+            WHERE canonical_release_id = %s
+            ORDER BY content_entity_id, mnn_key, mnn_label
+            """,
+            (release_id,),
+        )
+        result: dict[int, list[str]] = {}
+        for raw_entity_id, raw_label in cursor.fetchall():
+            entity_id = int(raw_entity_id)
+            label = str(raw_label or "").strip()
+            if entity_id <= 0 or not label:
+                raise RepositoryError("MNN_CONTEXT_INVALID")
+            values = result.setdefault(entity_id, [])
+            if label not in values:
+                values.append(label)
+        return {entity_id: tuple(values) for entity_id, values in result.items()}
 
     @staticmethod
     def _lock_active_release(cursor):
