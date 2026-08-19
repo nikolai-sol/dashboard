@@ -54,6 +54,7 @@ export type AdvertisingBindingReadModel = {
   daily: BoundAdvertisingDailyFact[];
   lineDaily: Array<MetricValues & { date: string; lineKey: string; channel: string }>;
   lines: Map<string, BoundAdvertisingLine>;
+  selectedAccounts: Array<{ sourceKey: string; platformAccountId: string }>;
   unboundFacts: UnboundAdvertisingFact[];
   unresolvedLegacyBindings: Array<{
     lineKey: string;
@@ -481,6 +482,10 @@ export async function loadBoundAdvertisingFacts(
       (left, right) => left.date.localeCompare(right.date) || left.lineKey.localeCompare(right.lineKey),
     ),
     lines,
+    selectedAccounts: selectedAccounts.map((item) => ({
+      sourceKey: item.sourceKey,
+      platformAccountId: item.accountId,
+    })),
     unboundFacts: unboundRows.map((row) => ({
       ...metrics(row),
       date: isoDate(row.report_date, "unbound fact report_date"),

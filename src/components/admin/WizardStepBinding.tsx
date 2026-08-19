@@ -63,6 +63,13 @@ export function buildCampaignOptions(campaigns: CampaignItem[]): CampaignOption[
 type WizardStepBindingProps = {
   data: DashboardFormData;
   onChange: (next: DashboardFormData) => void;
+  dashboardId?: string;
+};
+
+type BindingDiagnostics = {
+  unresolved_legacy_bindings: unknown[];
+  unbound_campaigns: unknown[];
+  missing_coverage_dates: unknown[];
 };
 
 function formatMoney(value: number) {
@@ -134,13 +141,15 @@ function parsedRowToInlineRow(row: ParsedPlanRow): Record<string, unknown> {
   };
 }
 
-export default function WizardStepBinding({ data, onChange }: WizardStepBindingProps) {
+export default function WizardStepBinding({ data, onChange, dashboardId }: WizardStepBindingProps) {
   const [rows, setRows] = useState<ParsedPlanRow[]>([]);
   const [monthsFound, setMonthsFound] = useState<string[]>([]);
   const [campaigns, setCampaigns] = useState<CampaignItem[]>([]);
   const [loadingRows, setLoadingRows] = useState(false);
   const [loadingCampaigns, setLoadingCampaigns] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [diagnostics, setDiagnostics] = useState<BindingDiagnostics | null>(null);
+  const [diagnosticsError, setDiagnosticsError] = useState<string | null>(null);
   const [activeLineKey, setActiveLineKey] = useState<string | null>(null);
   const [search, setSearch] = useState("");
 
@@ -296,6 +305,44 @@ export default function WizardStepBinding({ data, onChange }: WizardStepBindingP
       cancelled = true;
     };
   }, [bindingCampaignSources, data.config.period_from, data.config.period_to]);
+
+  useEffect(() => {
+    let cancelled = false;
+    if (!dashboardId || !data.config.period_from || !data.config.period_to) {
+      setDiagnostics(null);
+      setDiagnosticsError(null);
+      return;
+    }
+
+    async function loadDiagnostics() {
+      try {
+        const params = new URLSearchParams({
+          from: data.config.period_from,
+          to: data.config.period_to,
+        });
+        const response = await fetch(
+          `/api/admin/dashboards/${dashboardId}/binding-diagnostics?${params.toString()}`,
+          { cache: "no-store" },
+        );
+        const json = (await response.json()) as BindingDiagnostics & { error?: string; details?: string };
+        if (!response.ok) throw new Error(json.details ?? json.error ?? `HTTP ${response.status}`);
+        if (!cancelled) {
+          setDiagnostics(json);
+          setDiagnosticsError(null);
+        }
+      } catch (err) {
+        if (!cancelled) {
+          setDiagnostics(null);
+          setDiagnosticsError(err instanceof Error ? err.message : "Failed to load binding diagnostics");
+        }
+      }
+    }
+
+    void loadDiagnostics();
+    return () => {
+      cancelled = true;
+    };
+  }, [dashboardId, data.config.period_from, data.config.period_to]);
 
   const campaignOptions = useMemo(() => buildCampaignOptions(campaigns), [campaigns]);
   const campaignByCanonicalId = useMemo(
@@ -464,6 +511,26 @@ export default function WizardStepBinding({ data, onChange }: WizardStepBindingP
           <p className="mt-3 text-sm text-slate-500">Loading media plan and campaign catalog...</p>
         ) : null}
         {error ? <p className="mt-3 text-sm text-rose-600">{error}</p> : null}
+        {diagnosticsError ? (
+          <p className="mt-3 text-sm text-rose-600">Диагностика bindings: {diagnosticsError}</p>
+        ) : null}
+
+        {diagnostics ? (
+          <div className="mt-3 grid grid-cols-1 gap-2 border-y border-slate-200 py-3 text-sm sm:grid-cols-3">
+            <p>
+              <span className="font-semibold text-slate-900">{diagnostics.unresolved_legacy_bindings.length}</span>{" "}
+              <span className="text-slate-600">legacy-связей требуют проверки</span>
+            </p>
+            <p>
+              <span className="font-semibold text-slate-900">{diagnostics.unbound_campaigns.length}</span>{" "}
+              <span className="text-slate-600">кампаний с фактами без binding</span>
+            </p>
+            <p>
+              <span className="font-semibold text-slate-900">{diagnostics.missing_coverage_dates.length}</span>{" "}
+              <span className="text-slate-600">пропусков coverage</span>
+            </p>
+          </div>
+        ) : null}
 
         {!loadingRows && !rows.length ? (
           <p className="mt-3 text-sm text-slate-500">No parsed media plan rows yet.</p>

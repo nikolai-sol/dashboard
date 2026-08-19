@@ -57,6 +57,9 @@ test("catalog refresh never sanitizes saved bindings by activity", () => {
   assert.doesNotMatch(source, /sanitizedBindings|validManualBindingIds/);
   assert.match(source, /нет опубликованных и проверенных кампаний/);
   assert.match(source, /не выбраны аккаунты рекламных платформ/);
+  assert.match(source, /binding-diagnostics/);
+  assert.match(source, /unresolved_legacy_bindings/);
+  assert.match(source, /unbound_campaigns/);
 });
 
 test("account selection accepts both list and singular canonical source config", () => {

@@ -30,24 +30,15 @@ import {
   type CanonicalFilter,
   type PromopagesFilter,
 } from "@/lib/canonical-adapter";
-import { fetchCustomTable, fetchMediaPlanFromSourceConfig, groupByChannel, type ChannelGroup, type MediaPlanRow } from "@/lib/gsheet-fetcher";
-import {
-  aggregateByChannel,
-  aggregateByPlatform,
-  fetchManualDataFromSourceConfig,
-  filterByDateRange,
-  getTimeseriesByPlatform,
-  type ManualDataRow,
-  normalizeManualPlatformId,
-} from "@/lib/manual-data-fetcher";
+import { fetchCustomTable, groupByChannel, type ChannelGroup, type MediaPlanRow } from "@/lib/gsheet-fetcher";
+import { normalizeManualPlatformId } from "@/lib/manual-data-fetcher";
 import {
   aggregateConfirmedLeadsByCanonicalChannel,
   aggregateConfirmedLeadsByPlatform,
-  fetchLeadsFromSourceConfig,
+  getConfirmedLeadRowsFromStoredSnapshot,
   type ConfirmedLeadChannelRow,
   type LeadRow,
 } from "@/lib/leads-fetcher";
-import { loadDashboardManualFacts } from "@/lib/manual-data-store";
 import { loadDashboardMediaPlanRows } from "@/lib/media-plan-store";
 import {
   loadBoundAdvertisingFacts,
@@ -347,31 +338,6 @@ function resolveDashboardMetrikaAccountIds(sourceRows: SourceRow[]): string[] {
   });
 
   return Array.from(new Set(ids)).filter(Boolean);
-}
-
-function filterManualRowsByBrand(rows: ManualDataRow[], patterns: string[]): ManualDataRow[] {
-  if (!patterns.length) return rows;
-  return rows.filter((row) => matchesAnyMultibrandPattern(row.channel, patterns));
-}
-
-function adaptStoredManualFacts(rows: Awaited<ReturnType<typeof loadDashboardManualFacts>>): ManualDataRow[] {
-  return rows.map((row) => ({
-    date: row.date,
-    platform: row.platform,
-    channel: row.channel,
-    impressions: row.impressions,
-    clicks: row.clicks,
-    spend: row.spend,
-    views: row.views,
-    conversions: row.conversions,
-    reach: row.reach,
-    sessions: row.sessions,
-    cr: null,
-    ctr: null,
-    cpc: null,
-    cpm: null,
-    cpv: null,
-  }));
 }
 
 function shiftDate(dateIso: string, days: number): string {
@@ -2989,7 +2955,7 @@ export async function loadDashboardData(
   const timeseriesRaw: TimeSeriesPoint[] = [];
   const prevStatsRaw: PlatformStats[] = [];
   const campaignBreakdownRaw: CampaignBreakdownItem[] = [];
-  const planRows: MediaPlanRow[] = [];
+  const planRows: MediaPlanRow[] = storedMediaPlanRows.map((row) => ({ ...row })) as MediaPlanRow[];
   const analyticsKpiRaw: AnalyticsKPI[] = [];
   const analyticsTimeseriesRaw: AnalyticsTimeSeriesPoint[] = [];
   const trafficSourcesRaw: TrafficSourceRow[] = [];
@@ -3010,96 +2976,12 @@ export async function loadDashboardData(
   const actualAdsSourceKeys = new Set<string>();
   const customTables: CustomTableData[] = [];
   const leadsRows: LeadRow[] = [];
-  let manualChannels: ManualChannelData[] = [];
-  let manualTableTitle = "";
+  const manualChannels: ManualChannelData[] = [];
+  const manualTableTitle = "";
 
     for (const source of sourceRows) {
       try {
         if (source.platform === "manual_data" && source.role === "actual") {
-          const sourceConfig = parseJson(source.source_config);
-          const manualSourceKey = String(sourceConfig?.manual_source_key ?? "").trim();
-          const hasConfirmedManualData =
-            Boolean(manualSourceKey) &&
-            Boolean(sourceConfig?.confirmed_manual_data && typeof sourceConfig.confirmed_manual_data === "object");
-          const hasManualInput =
-            Boolean(String(sourceConfig?.sheet_url ?? "").trim()) ||
-            (typeof sourceConfig?.upload_file === "object" && sourceConfig?.upload_file);
-          if (hasConfirmedManualData || hasManualInput) {
-            try {
-              const allRows = hasConfirmedManualData
-                ? adaptStoredManualFacts(await loadDashboardManualFacts(dashboard.id, manualSourceKey, previousRange.from, range.to))
-                : await fetchManualDataFromSourceConfig(sourceConfig);
-              const filtered = filterManualRowsByBrand(
-                filterByDateRange(allRows, range.from, range.to),
-                activeBrand?.channel_patterns ?? [],
-              );
-
-              const byPlatform = aggregateByPlatform(filtered);
-              for (const p of byPlatform) {
-                const platformId = p.platform;
-                const meta = PLATFORM_COLORS[platformId];
-                platformStatsRaw.push({
-                  id: platformId,
-                  name: meta?.label ?? p.platform.charAt(0).toUpperCase() + p.platform.slice(1),
-                  color: meta?.hex ?? "#94a3b8",
-                  impressions: p.impressions,
-                  clicks: p.clicks,
-                  spend: p.spend,
-                  conversions: p.conversions,
-                  views: p.views,
-                  reach: p.reach,
-                  frequency: p.reach > 0 ? p.impressions / p.reach : 0,
-                  ctr: p.impressions > 0 ? Number(((p.clicks / p.impressions) * 100).toFixed(2)) : 0,
-                  cpm: p.impressions > 0 ? Number(((p.spend / p.impressions) * 1000).toFixed(2)) : 0,
-                });
-              }
-
-              const prevFiltered = filterManualRowsByBrand(
-                filterByDateRange(allRows, previousRange.from, previousRange.to),
-                activeBrand?.channel_patterns ?? [],
-              );
-              const prevByPlatform = aggregateByPlatform(prevFiltered);
-              for (const p of prevByPlatform) {
-                const platformId = p.platform;
-                const meta = PLATFORM_COLORS[platformId];
-                prevStatsRaw.push({
-                  id: platformId,
-                  name: meta?.label ?? p.platform.charAt(0).toUpperCase() + p.platform.slice(1),
-                  color: meta?.hex ?? "#94a3b8",
-                  impressions: p.impressions,
-                  clicks: p.clicks,
-                  spend: p.spend,
-                  conversions: p.conversions,
-                  views: p.views,
-                  reach: p.reach,
-                  frequency: p.reach > 0 ? p.impressions / p.reach : 0,
-                  ctr: p.impressions > 0 ? Number(((p.clicks / p.impressions) * 100).toFixed(2)) : 0,
-                  cpm: p.impressions > 0 ? Number(((p.spend / p.impressions) * 1000).toFixed(2)) : 0,
-                });
-              }
-
-              const ts = getTimeseriesByPlatform(filtered);
-              for (const t of ts) {
-                timeseriesRaw.push({
-                  date: t.date,
-                  platform: t.platform,
-                  impressions: t.impressions,
-                  clicks: t.clicks,
-                  spend: t.spend,
-                  views: t.views,
-                  conversions: t.conversions,
-                });
-              }
-
-              const byChannel = aggregateByChannel(filtered);
-              manualChannels = [...manualChannels, ...byChannel];
-              if (!manualTableTitle && String(sourceConfig?.title ?? "").trim()) {
-                manualTableTitle = String(sourceConfig.title).trim();
-              }
-            } catch (e) {
-              console.warn("Manual data fetch failed:", e);
-            }
-          }
           continue;
         }
 
@@ -3129,17 +3011,11 @@ export async function loadDashboardData(
         const sourceKey = schema.source_key ?? resolveSourceKey(source.platform);
         const sourceType = schema.source_type ?? resolveSourceType(sourceKey);
         const sourceConfig = parseJson(source.source_config);
-        if (source.role === "plan" && storedMediaPlanRows.length) {
-          sourceConfig.inline_rows = storedMediaPlanRows.map((row) => ({ ...row }));
-        }
-
         if (sourceType === "leads") {
           continue;
         }
 
         if (source.role === "plan" && (schema.source === "gsheet" || sourceType === "gsheet")) {
-          const rows = await fetchMediaPlanFromSourceConfig(sourceConfig);
-          planRows.push(...rows);
           continue;
         }
 
@@ -3354,9 +3230,10 @@ export async function loadDashboardData(
 
       try {
         const sourceConfig = parseJson(source.source_config);
-        const parsedLeads = await fetchLeadsFromSourceConfig(sourceConfig);
         leadsRows.push(
-          ...parsedLeads.rows.filter((row) => !row.date || (row.date >= range.from && row.date <= range.to)),
+          ...getConfirmedLeadRowsFromStoredSnapshot(sourceConfig).filter(
+            (row) => !row.date || (row.date >= range.from && row.date <= range.to),
+          ),
         );
         const currentConversions = await aggregateConfirmedLeadsByPlatform(
           sourceConfig,

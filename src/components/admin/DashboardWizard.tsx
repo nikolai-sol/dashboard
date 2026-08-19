@@ -705,7 +705,9 @@ export default function DashboardWizard({ dashboardId }: DashboardWizardProps) {
           />
         ) : null}
         {step === 2 ? <WizardStep3 data={formData} onChange={handleFormChange} /> : null}
-        {step === 3 ? <WizardStepBinding data={formData} onChange={handleFormChange} /> : null}
+        {step === 3 ? (
+          <WizardStepBinding data={formData} onChange={handleFormChange} dashboardId={dashboardId} />
+        ) : null}
         {utmMatchingStepIndex >= 0 && step === utmMatchingStepIndex ? (
           <DashboardUtmSourceMatching
             dashboardId={String(dashboardId)}

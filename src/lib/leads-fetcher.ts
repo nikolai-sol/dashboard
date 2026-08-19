@@ -337,6 +337,13 @@ function reviewStatus(sourceConfig: LeadsSourceConfig): string {
   return String((review as Record<string, unknown>).status ?? "").trim().toLowerCase();
 }
 
+export function getConfirmedLeadRowsFromStoredSnapshot(sourceConfig: LeadsSourceConfig): LeadRow[] {
+  if (reviewStatus(sourceConfig) !== "confirmed") {
+    return [];
+  }
+  return parseInlineRows(sourceConfig.inline_rows);
+}
+
 export async function fetchLeadsFromSourceConfig(sourceConfig: LeadsSourceConfig): Promise<LeadsParseResult> {
   const inputUrl = String(sourceConfig.sheet_url ?? "").trim();
 
@@ -657,7 +664,7 @@ export async function aggregateConfirmedLeadsByPlatform(
     return {};
   }
 
-  const rows = (await fetchLeadsFromSourceConfig(sourceConfig)).rows;
+  const rows = getConfirmedLeadRowsFromStoredSnapshot(sourceConfig);
   const bindings = extractReviewBindings(sourceConfig);
   const totals: LeadsPlatformConversions = {};
 
@@ -711,7 +718,21 @@ export async function aggregateConfirmedLeadsByCanonicalChannel(
     return [];
   }
 
-  const analysis = await analyzeLeadSourceConfig(sourceConfig, allowedPlatforms, Array.from(normalizedChannelMap.values()));
+  const storedRows = getConfirmedLeadRowsFromStoredSnapshot(sourceConfig);
+  if (!storedRows.length) {
+    return [];
+  }
+
+  const analysis = await analyzeLeadSourceConfig(
+    {
+      ...sourceConfig,
+      sheet_url: "",
+      upload_file: undefined,
+      inline_rows: storedRows,
+    },
+    allowedPlatforms,
+    Array.from(normalizedChannelMap.values()),
+  );
   const canonicalBindings = new Map(
     analysis.channel_review
       .filter((item) => item.status === "canonical_bound" && item.bound_platform && item.bound_channel)
@@ -728,7 +749,7 @@ export async function aggregateConfirmedLeadsByCanonicalChannel(
     return [];
   }
 
-  const rows = (await fetchLeadsFromSourceConfig(sourceConfig)).rows;
+  const rows = storedRows;
   const aggregated = new Map<string, ConfirmedLeadChannelRow>();
 
   for (const row of rows) {
