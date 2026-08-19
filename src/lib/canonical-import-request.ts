@@ -1,6 +1,6 @@
 import { createHash, randomUUID } from "node:crypto";
 import { constants } from "node:fs";
-import { lstat, mkdir, open, rename, rm, type FileHandle } from "node:fs/promises";
+import { mkdir, open, rename, rm, type FileHandle } from "node:fs/promises";
 import path from "node:path";
 
 export const MAX_IMPORT_UPLOAD_BYTES = 20 * 1024 * 1024;
@@ -70,22 +70,30 @@ function decodeUpload(contentBase64: string): Buffer {
   return data;
 }
 
-function googleSheetExportUrl(value: string): string {
+function normalizeGoogleSheetUrl(value: string): string {
   try {
     const url = new URL(value);
-    const authority = value.match(/^[a-zA-Z][a-zA-Z\d+.-]*:\/\/([^/?#]*)/)?.[1];
-    const sheet = url.pathname.match(/^\/spreadsheets\/d\/([A-Za-z0-9_-]+)(?:\/.*)?$/);
-    const gid = new URLSearchParams(url.hash.replace(/^#/, "")).get("gid") ?? url.searchParams.get("gid");
+    const source = value.match(/^[a-zA-Z][a-zA-Z\d+.-]*:\/\/([^/?#]*)([^?#]*)(?:\?([^#]*))?(?:#(.*))?$/);
+    if (!source) throw new Error("source_url must be a Google Sheets URL");
+    const [, authority, rawPath, query = "", fragment = ""] = source;
+    const sheet = rawPath.match(/^\/spreadsheets\/d\/([A-Za-z0-9_-]+)(?:\/.*)?/);
+    const gid = [...new URLSearchParams(query), ...new URLSearchParams(fragment)]
+      .filter(([key]) => key === "gid")
+      .map(([, parameterValue]) => parameterValue);
     if (
       url.protocol !== "https:"
-      || authority !== "docs.google.com"
+      || url.hostname !== "docs.google.com"
+      || url.username
+      || url.password
+      || authority.includes("@")
+      || (authority.includes(":") && !authority.endsWith(":"))
       || !sheet
-      || !gid
-      || !/^\d+$/.test(gid)
+      || gid.length > 1
+      || (gid.length === 1 && !/^\d+$/.test(gid[0]))
     ) {
       throw new Error("source_url must be a Google Sheets URL");
     }
-    return `https://docs.google.com/spreadsheets/d/${sheet[1]}/export?format=csv&gid=${gid}`;
+    return `https://docs.google.com/spreadsheets/d/${sheet[1]}#gid=${gid.length === 0 ? "0" : gid[0].replace(/^0+/, "") || "0"}`;
   } catch {
     throw new Error("source_url must be a Google Sheets URL");
   }
@@ -99,73 +107,118 @@ const DIRECTORY_OPEN_FLAGS = constants.O_RDONLY | constants.O_DIRECTORY | consta
 const FILE_CREATE_FLAGS = constants.O_WRONLY | constants.O_CREAT | constants.O_EXCL | constants.O_NOFOLLOW;
 
 type ProtectedDirectory = {
-  path: string;
   handle: FileHandle;
 };
 
-function descriptorPath(handle: FileHandle): string | null {
-  return process.platform === "linux" ? path.join("/proc/self/fd", String(handle.fd)) : null;
+type CreatedArtifact = {
+  protectedRef: string;
+  discard: () => Promise<void>;
+};
+
+function requireDescriptorAnchoredWrites(): void {
+  if (process.platform !== "linux") {
+    throw new Error("Protected spool descriptor-anchored writes are only supported on Linux");
+  }
 }
 
-async function assertOriginalDirectory(entry: string): Promise<boolean> {
+function descriptorPath(handle: FileHandle): string {
+  requireDescriptorAnchoredWrites();
+  return path.join("/proc/self/fd", String(handle.fd));
+}
+
+function protectedSpoolError(entry: string, error: unknown): Error | null {
+  const code = (error as NodeJS.ErrnoException).code;
+  if (code === "ELOOP") return new Error(`Protected spool path may not contain symlinks: ${entry}`);
+  if (code === "ENOTDIR") return new Error(`Protected spool path must be a directory: ${entry}`);
+  return null;
+}
+
+function configuredSpoolPath(directory: string): { absolute: string; components: string[] } {
+  if (!path.isAbsolute(directory)) {
+    throw new Error("AD_IMPORT_SPOOL_DIR must be an absolute path");
+  }
+  const parsed = path.parse(directory);
+  const components = directory.slice(parsed.root.length).split(path.sep).filter(Boolean);
+  if (components.some((component) => component === "." || component === "..")) {
+    throw new Error("Protected spool path may not contain traversal components");
+  }
+  return { absolute: path.join(parsed.root, ...components), components };
+}
+
+async function openNoFollowDirectory(entry: string): Promise<FileHandle> {
+  let handle: FileHandle | null = null;
   try {
-    const metadata = await lstat(entry);
-    if (metadata.isSymbolicLink()) throw new Error(`Protected spool path may not contain symlinks: ${entry}`);
+    handle = await open(entry, DIRECTORY_OPEN_FLAGS);
+    const metadata = await handle.stat();
     if (!metadata.isDirectory()) throw new Error(`Protected spool path must be a directory: ${entry}`);
-    return true;
+    return handle;
+  } catch (error) {
+    await handle?.close();
+    const protectedError = protectedSpoolError(entry, error);
+    if (protectedError) throw protectedError;
+    throw error;
+  }
+}
+
+async function openProtectedChild(parent: ProtectedDirectory, name: string, create: boolean): Promise<ProtectedDirectory> {
+  const anchoredPath = path.join(descriptorPath(parent.handle), name);
+  try {
+    return { handle: await openNoFollowDirectory(anchoredPath) };
   } catch (error: unknown) {
-    if ((error as NodeJS.ErrnoException).code === "ENOENT") return false;
-    throw error;
+    if (!create || (error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
   }
-}
 
-async function openProtectedChild(parent: ProtectedDirectory, name: string): Promise<ProtectedDirectory> {
-  const anchoredPath = path.join(descriptorPath(parent.handle) ?? parent.path, name);
-  if (!await assertOriginalDirectory(anchoredPath)) {
+  try {
     await mkdir(anchoredPath, { mode: 0o750 });
-    await assertOriginalDirectory(anchoredPath);
-  }
-
-  const handle = await open(anchoredPath, DIRECTORY_OPEN_FLAGS);
-  try {
-    const metadata = await handle.stat();
-    if (!metadata.isDirectory()) throw new Error(`Protected spool path must be a directory: ${anchoredPath}`);
-    return { path: path.join(parent.path, name), handle };
   } catch (error) {
-    await handle.close();
+    if ((error as NodeJS.ErrnoException).code !== "EEXIST") throw error;
+  }
+  return { handle: await openNoFollowDirectory(anchoredPath) };
+}
+
+async function protectedDirectory(directory: string, create: boolean): Promise<ProtectedDirectory> {
+  requireDescriptorAnchoredWrites();
+  const { absolute, components } = configuredSpoolPath(directory);
+  const parsed = path.parse(absolute);
+  let current: ProtectedDirectory = { handle: await openNoFollowDirectory(parsed.root) };
+  try {
+    for (const component of components) {
+      const child = await openProtectedChild(current, component, create);
+      await current.handle.close();
+      current = child;
+    }
+    await current.handle.chmod(0o750);
+    return current;
+  } catch (error) {
+    await current.handle.close();
     throw error;
   }
 }
 
-async function protectedDirectory(directory: string): Promise<ProtectedDirectory> {
-  const absolute = path.resolve(directory);
-  if (!await assertOriginalDirectory(absolute)) {
-    await mkdir(absolute, { recursive: true, mode: 0o750 });
-    await assertOriginalDirectory(absolute);
-  }
-
-  const handle = await open(absolute, DIRECTORY_OPEN_FLAGS);
+async function removeProtectedArtifact(spoolDir: string, filename: string): Promise<void> {
+  const root = await protectedDirectory(spoolDir, false);
+  let uploads: ProtectedDirectory | null = null;
   try {
-    const metadata = await handle.stat();
-    if (!metadata.isDirectory()) throw new Error(`Protected spool path must be a directory: ${absolute}`);
-    await handle.chmod(0o750);
-    return { path: absolute, handle };
-  } catch (error) {
-    await handle.close();
-    throw error;
+    uploads = await openProtectedChild(root, "uploads", false);
+    await rm(path.join(descriptorPath(uploads.handle), filename), { force: true });
+  } finally {
+    if (uploads) await uploads.handle.close();
+    await root.handle.close();
   }
 }
 
-async function writeProtectedArtifact(spoolDir: string, data: Buffer): Promise<string> {
-  const root = await protectedDirectory(spoolDir);
+async function writeProtectedArtifact(spoolDir: string, data: Buffer): Promise<CreatedArtifact> {
+  const { absolute } = configuredSpoolPath(spoolDir);
+  const root = await protectedDirectory(spoolDir, true);
   let uploads: ProtectedDirectory | null = null;
   let target: string | null = null;
   let temporary: string | null = null;
+  let filename: string | null = null;
 
   try {
-    uploads = await openProtectedChild(root, "uploads");
-    const filename = `${randomUUID()}.bin`;
-    const uploadsPath = descriptorPath(uploads.handle) ?? uploads.path;
+    uploads = await openProtectedChild(root, "uploads", true);
+    filename = `${randomUUID()}.bin`;
+    const uploadsPath = descriptorPath(uploads.handle);
     target = path.join(uploadsPath, filename);
     temporary = path.join(uploadsPath, `.${randomUUID()}.tmp`);
     const handle = await open(temporary, FILE_CREATE_FLAGS, 0o640);
@@ -178,7 +231,11 @@ async function writeProtectedArtifact(spoolDir: string, data: Buffer): Promise<s
     }
     await rename(temporary, target);
     await uploads.handle.sync();
-    return path.join(uploads.path, filename);
+    const protectedRef = path.join(absolute, "uploads", filename);
+    return {
+      protectedRef,
+      discard: () => removeProtectedArtifact(spoolDir, filename!),
+    };
   } catch (error) {
     if (temporary) await rm(temporary, { force: true });
     if (target) await rm(target, { force: true });
@@ -209,12 +266,12 @@ export async function enqueueCanonicalImport(
     throw new Error("adapter_config must match the reviewed source account");
   }
 
-  let createdArtifactRef: string | null = null;
+  let createdArtifact: CreatedArtifact | null = null;
   const discardCreatedArtifact = async () => {
-    if (!createdArtifactRef) return;
-    const artifact = createdArtifactRef;
-    createdArtifactRef = null;
-    await rm(artifact, { force: true });
+    if (!createdArtifact) return;
+    const artifact = createdArtifact;
+    createdArtifact = null;
+    await artifact.discard();
   };
 
   let protectedRef: string | null = null;
@@ -228,12 +285,12 @@ export async function enqueueCanonicalImport(
       if (!input.upload) throw new Error("upload is required for upload transport");
       const content = decodeUpload(input.upload.contentBase64);
       const spoolDir = requiredText(options.spoolDir ?? process.env.AD_IMPORT_SPOOL_DIR, "AD_IMPORT_SPOOL_DIR");
-      protectedRef = await writeProtectedArtifact(spoolDir, content);
-      createdArtifactRef = protectedRef;
+      createdArtifact = await writeProtectedArtifact(spoolDir, content);
+      protectedRef = createdArtifact.protectedRef;
       originalName = requiredText(input.upload.filename, "upload filename").slice(0, 255);
       contentSha256 = createHash("sha256").update(content).digest("hex");
     } else {
-      sourceUrl = googleSheetExportUrl(requiredText(input.sourceUrl, "source_url"));
+      sourceUrl = normalizeGoogleSheetUrl(requiredText(input.sourceUrl, "source_url"));
       sheetSnapshotKey = requiredText(input.sheetSnapshotKey, "sheet_snapshot_key").toLowerCase();
       if (!isUuid(sheetSnapshotKey)) throw new Error("sheet_snapshot_key must be a UUID");
     }
@@ -266,7 +323,7 @@ export async function enqueueCanonicalImport(
     ));
     if (!persisted) throw new Error("Canonical import request was not persisted");
 
-    if (createdArtifactRef && persisted.protected_ref !== createdArtifactRef) await discardCreatedArtifact();
+    if (createdArtifact && persisted.protected_ref !== createdArtifact.protectedRef) await discardCreatedArtifact();
     return {
       requestId: Number(persisted.id),
       status: persisted.status,
