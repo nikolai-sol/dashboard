@@ -152,8 +152,10 @@ JOIN (
   GROUP BY source_key, platform_campaign_id
   HAVING COUNT(*) = 1
 ) AS resolved
-  ON resolved.source_key = bindings.source_key
- AND resolved.platform_campaign_id = bindings.platform_campaign_id
+  ON resolved.source_key COLLATE utf8mb4_bin
+     = bindings.source_key COLLATE utf8mb4_bin
+ AND resolved.platform_campaign_id COLLATE utf8mb4_bin
+     = bindings.platform_campaign_id COLLATE utf8mb4_bin
 SET bindings.canonical_campaign_id = resolved.canonical_campaign_id,
     bindings.platform_account_id = resolved.platform_account_id,
     bindings.created_by = 'migration:058'

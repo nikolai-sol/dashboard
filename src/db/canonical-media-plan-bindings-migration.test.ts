@@ -73,6 +73,14 @@ test("backfill resolves only one account-aware canonical campaign", () => {
     sql,
     /SET bindings\.canonical_campaign_id = resolved\.canonical_campaign_id[\s\S]*?bindings\.platform_account_id = resolved\.platform_account_id/i,
   );
+  assert.match(
+    sql,
+    /resolved\.source_key COLLATE utf8mb4_bin\s*= bindings\.source_key COLLATE utf8mb4_bin/i,
+  );
+  assert.match(
+    sql,
+    /resolved\.platform_campaign_id COLLATE utf8mb4_bin\s*= bindings\.platform_campaign_id COLLATE utf8mb4_bin/i,
+  );
   assert.match(sql, /WHERE bindings\.canonical_campaign_id IS NULL/i);
   assert.doesNotMatch(sql, /LIMIT 1/i);
 });
