@@ -562,6 +562,7 @@ function metadataForPage(
   const slug = path.split("/").filter(Boolean).at(-1) ?? "";
   const rawTitle = validRawPageTitle(rawPageTitle);
   const metadata = (rawTitle ? workbook.contentByTitle.get(abbottTitleLookupHash(rawTitle)) : undefined)
+    ?? workbook.contentByUrl.get(lookupHash(normalized))
     ?? workbook.urlReturnDirections.get(lookupHash(path))
     ?? workbook.contentBySlug.get(lookupHash(slug));
   const catalogDirection = metadata?.direction ?? null;
@@ -846,7 +847,9 @@ function buildReturning(
     const count = deriveReturningCount(row.source_denominator, row.source_percentage);
     const current = totals.get(url) ?? {
       url,
-      direction: workbook.urlReturnDirections.get(lookupHash(normalizedPagePath(url)))?.direction ?? null,
+      direction: workbook.contentByUrl?.get(lookupHash(url))?.direction
+        ?? workbook.urlReturnDirections.get(lookupHash(normalizedPagePath(url)))?.direction
+        ?? null,
       visits: 0,
       returning_1_day: 0,
       returning_2_7_days: 0,
@@ -1220,9 +1223,11 @@ export async function loadAbbottBiDataWithDependencies(
         ? buildAbbottReturnFrequency(
             managerBehavior.frequencyVisits,
             releaseBundle.workbook.userDirections,
-            (url) => releaseBundle.workbook.urlReturnDirections.get(
-              lookupHash(normalizedPagePath(url)),
-            )?.direction ?? null,
+            (url) => releaseBundle.workbook.contentByUrl?.get(lookupHash(url))?.direction
+              ?? releaseBundle.workbook.urlReturnDirections.get(
+                lookupHash(normalizedPagePath(url)),
+              )?.direction
+              ?? null,
           )
         : {
             available: false,

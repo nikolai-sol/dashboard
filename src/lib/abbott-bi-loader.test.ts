@@ -31,6 +31,7 @@ const aggregateWorkbook: AbbottAggregatePrivateData["workbook"] = {
   externalEvents: [],
   contentByTitle: new Map(),
   contentBySlug: new Map(),
+  contentByUrl: new Map(),
   urlReturnDirections: new Map([[lookupHash("/page"), {
     page_title: "Page",
     direction: "Cardiology",
