@@ -412,6 +412,7 @@ export interface AbbottBiPageStatRow {
   page_title: string;
   url: string;
   direction: string | null;
+  mnn?: string[];
   material_type: string | null;
   access: string | null;
   pageviews: number;

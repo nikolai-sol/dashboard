@@ -5,12 +5,14 @@ import {
   buildAbbottPageDimensionOptions,
   buildAbbottPageStatsExportRows,
   buildAbbottPageviewsByDirection,
+  filterAbbottPageStatsRows,
   groupAbbottPageStatsByDimension,
   labelAbbottPageDimension,
   limitAbbottPageDimensionGroups,
   matchesPageStatsSearch,
   matchesSelectedPageDimension,
   matchesSelectedMaterialType,
+  matchesSelectedMnn,
   summarizeAbbottPageMetadataCoverage,
   summarizeAbbottPageStats,
 } from "./abbott-page-stats";
@@ -20,6 +22,7 @@ const sampleRow: AbbottBiPageStatRow = {
   page_title: "Видеолекция о головокружении",
   url: "https://abbottpro.ru/video/262339",
   direction: "Неврология и психиатрия",
+  mnn: ["Омакор", "Трайкор"],
   material_type: "Видео",
   access: "Врачи",
   pageviews: 157,
@@ -43,6 +46,27 @@ test("material selection matches any selected type", () => {
   assert.equal(matchesSelectedMaterialType(null, [ABBOTT_UNMAPPED_LABEL]), true);
 });
 
+test("MNN selection uses OR within the filter and keeps unmapped rows explicit", () => {
+  assert.equal(matchesSelectedMnn(["Омакор", "Трайкор"], ["Трайкор", "Клацид"]), true);
+  assert.equal(matchesSelectedMnn(["Омакор"], ["Трайкор", "Клацид"]), false);
+  assert.equal(matchesSelectedMnn([], []), true);
+  assert.equal(matchesSelectedMnn([], [ABBOTT_UNMAPPED_LABEL]), true);
+});
+
+test("global page search includes every MNN label", () => {
+  assert.equal(
+    filterAbbottPageStatsRows([sampleRow], {
+      query: "трайкор",
+      pageTitleQuery: "",
+      direction: "",
+      mnn: [],
+      materialTypes: [],
+      access: "",
+    }).length,
+    1,
+  );
+});
+
 test("page dimension labels normalize null and blank values to the unmapped label", () => {
   assert.equal(labelAbbottPageDimension(null), ABBOTT_UNMAPPED_LABEL);
   assert.equal(labelAbbottPageDimension("  "), ABBOTT_UNMAPPED_LABEL);
@@ -54,6 +78,30 @@ test("page stats search matches title or URL case-insensitively", () => {
   assert.equal(matchesPageStatsSearch(sampleRow.page_title, sampleRow.url, "головокружении"), true);
   assert.equal(matchesPageStatsSearch(sampleRow.page_title, sampleRow.url, "262339"), true);
   assert.equal(matchesPageStatsSearch(sampleRow.page_title, sampleRow.url, "неизвестная страница"), false);
+});
+
+test("page stats selector applies direction, material type, access, and both searches as one predicate", () => {
+  const matchingRow = { ...sampleRow };
+  const rows = [
+    matchingRow,
+    { ...sampleRow, url: "https://abbottpro.ru/video/other-direction", direction: "Кардиология" },
+    { ...sampleRow, url: "https://abbottpro.ru/article/262339", material_type: "Статья" },
+    { ...sampleRow, url: "https://abbottpro.ru/public/262339", access: "Все" },
+    { ...sampleRow, page_title: "Видеолекция о мигрени" },
+    { ...sampleRow, url: "https://abbottpro.ru/video/no-material-id" },
+  ];
+
+  assert.deepEqual(
+    filterAbbottPageStatsRows(rows, {
+      query: "головокружении",
+      pageTitleQuery: "262339",
+      direction: "Неврология и психиатрия",
+      mnn: ["Омакор"],
+      materialTypes: ["Видео"],
+      access: "Врачи",
+    }),
+    [matchingRow],
+  );
 });
 
 test("page stats summary sums views and page-level visitors across every filtered row", () => {
@@ -193,6 +241,7 @@ test("export rows keep page identity and raw numeric metrics", () => {
       "Заголовок страницы": "Видеолекция о головокружении",
       URL: "https://abbottpro.ru/video/262339",
       Направление: "Неврология и психиатрия",
+      МНН: "Омакор; Трайкор",
       "Тип материала": "Видео",
       Доступ: "Врачи",
       "Просмотры Метрики": 157,
@@ -212,6 +261,7 @@ test("export rows label unmapped page metadata without changing metrics", () => 
     "Заголовок страницы": "Видеолекция о головокружении",
     URL: "https://abbottpro.ru/video/262339",
     Направление: ABBOTT_UNMAPPED_LABEL,
+    МНН: "Омакор; Трайкор",
     "Тип материала": ABBOTT_UNMAPPED_LABEL,
     Доступ: ABBOTT_UNMAPPED_LABEL,
     "Просмотры Метрики": 157,

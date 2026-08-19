@@ -26,6 +26,40 @@ function options(values: readonly string[]): AbbottFilterOption[] {
     .map((value) => ({ value, label: value }));
 }
 
+function visibleReturnPages(
+  rows: AbbottBiReturnFrequency["return_pages"],
+  filters: AbbottReturnFrequencyFilters,
+) {
+  const totals = new Map<string, {
+    url: string;
+    direction: string;
+    returning_visitors: number;
+    repeat_visits: number;
+  }>();
+  rows.forEach((row) => {
+    if (
+      (filters.frequency_group && row.frequency_group !== filters.frequency_group)
+      || (filters.page_direction && row.direction !== filters.page_direction)
+      || (filters.page_url && row.url !== filters.page_url)
+    ) return;
+    const key = `${row.url}\n${row.direction}`;
+    const total = totals.get(key) ?? {
+      url: row.url,
+      direction: row.direction,
+      returning_visitors: 0,
+      repeat_visits: 0,
+    };
+    total.returning_visitors += row.returning_visitors;
+    total.repeat_visits += row.repeat_visits;
+    totals.set(key, total);
+  });
+  return [...totals.values()].sort((left, right) =>
+    right.returning_visitors - left.returning_visitors
+    || right.repeat_visits - left.repeat_visits
+    || left.url.localeCompare(right.url, "ru"),
+  );
+}
+
 export function buildAbbottReturnFrequencyUi(
   frequency: AbbottBiReturnFrequency,
   filters: AbbottReturnFrequencyFilters,
@@ -76,11 +110,7 @@ export function buildAbbottReturnFrequencyUi(
       (!filters.frequency_group || row.frequency_group === filters.frequency_group)
       && (!filters.user_direction || row.direction === filters.user_direction),
     ),
-    returnPages: frequency.return_pages.filter((row) =>
-      (!filters.frequency_group || row.frequency_group === filters.frequency_group)
-      && (!filters.page_direction || row.direction === filters.page_direction)
-      && (!filters.page_url || row.url === filters.page_url),
-    ),
+    returnPages: visibleReturnPages(frequency.return_pages, filters),
     options: {
       frequency_group: groupOptions,
       user_direction: options(frequency.user_directions.map((row) => row.direction)),

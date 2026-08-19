@@ -1,6 +1,7 @@
 import { createHash } from "node:crypto";
 
-/** The importer and reader contract for a workbook title lookup is SHA-256 of its exact title text. */
+/** Match the canonical classifier's NFKC and collapsed-whitespace title key. */
 export function abbottTitleLookupHash(title: string): string {
-  return createHash("sha256").update(title).digest("hex");
+  const normalized = title.normalize("NFKC").replace(/\s+/gu, " ").trim();
+  return createHash("sha256").update(normalized).digest("hex");
 }
