@@ -40,6 +40,26 @@ async function insertRequest(
   return Number(result.insertId);
 }
 
+async function insertSheetIntent(
+  connection: mysql.Connection,
+  version: string,
+  snapshotKey = "12121212-1212-4121-8121-121212121212",
+) {
+  const adapterConfig = await config(connection, version);
+  const [result] = await connection.execute<mysql.ResultSetHeader>(`
+    INSERT INTO canonical_ad_import_requests (
+      advertiser_key, source_key, platform_account_id, transport, source_url,
+      sheet_snapshot_key, adapter_config, adapter_config_version,
+      requested_at, next_attempt_at
+    ) VALUES (
+      'advertiser_a', 'test_source', 'account_a', 'google_sheet',
+      'https://docs.google.com/spreadsheets/d/sheet-123/edit#gid=0',
+      ?, ?, ?, UTC_TIMESTAMP() - INTERVAL 5 MINUTE, UTC_TIMESTAMP() - INTERVAL 5 MINUTE
+    )
+  `, [snapshotKey, adapterConfig, version]);
+  return Number(result.insertId);
+}
+
 async function main() {
   const databaseUrl = process.env.ADVERTISING_IMPORT_REQUESTS_MIGRATION_TEST_URL;
   if (!databaseUrl) {
@@ -122,6 +142,33 @@ async function main() {
       SET adapter_config = JSON_OBJECT('adapter_config_version', 'v3', 'identity_rule', 'sheet_name_v2')
       WHERE id = ?
     `, [requestId]));
+
+    const sheetIntentId = await insertSheetIntent(connection, "sheet-v1");
+    await expectReject(() => insertSheetIntent(connection, "sheet-v1"));
+    await expectReject(() => connection.execute(`
+      UPDATE canonical_ad_import_requests
+      SET content_sha256 = '${"b".repeat(64)}', protected_ref = '/protected/sheet.csv'
+      WHERE id = ?
+    `, [sheetIntentId]));
+    const sheetLeaseToken = "c1c1c1c1-c1c1-41c1-81c1-c1c1c1c1c1c1";
+    const [sheetClaim] = await connection.query<mysql.ResultSetHeader>(`
+      UPDATE canonical_ad_import_requests
+      SET status = 'processing', attempt_count = 1, started_at = UTC_TIMESTAMP(),
+          lease_expires_at = UTC_TIMESTAMP() + INTERVAL 5 MINUTE, lease_token = ?, next_attempt_at = NULL
+      WHERE id = ? AND status = 'pending'
+    `, [sheetLeaseToken, sheetIntentId]);
+    assert.equal(sheetClaim.affectedRows, 1);
+    const [sheetMaterialized] = await connection.query<mysql.ResultSetHeader>(`
+      UPDATE canonical_ad_import_requests
+      SET content_sha256 = '${"b".repeat(64)}', protected_ref = '/protected/sheet.csv'
+      WHERE id = ? AND status = 'processing' AND lease_token = ? AND lease_expires_at > UTC_TIMESTAMP()
+    `, [sheetIntentId, sheetLeaseToken]);
+    assert.equal(sheetMaterialized.affectedRows, 1, "the active fenced worker may materialize a Sheet snapshot once");
+    await expectReject(() => connection.execute(`
+      UPDATE canonical_ad_import_requests
+      SET content_sha256 = '${"c".repeat(64)}'
+      WHERE id = ?
+    `, [sheetIntentId]));
 
     const attempt1LeaseToken = "11111111-1111-4111-8111-111111111111";
     const attempt2LeaseToken = "22222222-2222-4222-8222-222222222222";

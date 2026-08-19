@@ -26,7 +26,7 @@ function tableDefinition(name: string) {
   return match[1];
 }
 
-test("import requests identify advertiser, source account, and protected artifact", () => {
+test("import requests identify advertiser, source account, protected artifact, and Sheet snapshot intent", () => {
   const request = tableDefinition("canonical_ad_import_requests");
   for (const column of [
     "advertiser_key",
@@ -35,16 +35,15 @@ test("import requests identify advertiser, source account, and protected artifac
     "transport",
     "protected_ref",
     "source_url",
+    "sheet_snapshot_key",
     "content_sha256",
     "adapter_config",
     "status",
   ]) {
     assert.match(request, new RegExp(column));
   }
-  assert.match(
-    request,
-    /UNIQUE KEY uniq_ad_import_request/,
-  );
+  assert.match(request, /UNIQUE KEY uniq_ad_import_upload/);
+  assert.match(request, /UNIQUE KEY uniq_ad_import_sheet_snapshot/);
 });
 
 test("import request identity binds advertiser scope to a canonical adapter configuration", () => {
@@ -56,7 +55,7 @@ test("import request identity binds advertiser scope to a canonical adapter conf
   assert.match(request, /adapter_config_version VARCHAR\(64\) NOT NULL/);
   assert.match(
     request,
-    /UNIQUE KEY uniq_ad_import_request \(advertiser_key, source_key, platform_account_id, transport, content_sha256, adapter_config_sha256\)/,
+    /UNIQUE KEY uniq_ad_import_upload \(advertiser_key, source_key, platform_account_id, transport, content_sha256, adapter_config_sha256\)/,
   );
   assert.doesNotMatch(request, /adapter_config_sha256 CHAR\(64\) NOT NULL/);
   assert.match(
@@ -69,7 +68,7 @@ test("import request artifact hash is canonical lowercase SHA-256", () => {
   const request = tableDefinition("canonical_ad_import_requests");
   assert.match(
     request,
-    /CONSTRAINT chk_ad_import_request_content_digest CHECK \(BINARY content_sha256 REGEXP '\^\[0-9a-f\]\{64\}\$'\)/,
+    /CONSTRAINT chk_ad_import_request_content_digest CHECK \(content_sha256 IS NULL OR BINARY content_sha256 REGEXP '\^\[0-9a-f\]\{64\}\$'\)/,
   );
 });
 
@@ -98,6 +97,13 @@ test("import request transports require exactly their safe locator", () => {
     request,
     /CONSTRAINT chk_ad_import_request_transport_locator CHECK \([\s\S]*?transport = 'upload'[\s\S]*?protected_ref IS NOT NULL[\s\S]*?source_url IS NULL[\s\S]*?transport = 'google_sheet'[\s\S]*?protected_ref IS NULL[\s\S]*?source_url LIKE 'https:\/\/docs\.google\.com\/spreadsheets\/%'[\s\S]*?\)/,
   );
+});
+
+test("collector Sheet intents require a snapshot key and defer materialization", () => {
+  const request = tableDefinition("canonical_ad_import_requests");
+  assert.match(request, /sheet_snapshot_key CHAR\(36\) NULL/);
+  assert.match(request, /UNIQUE KEY uniq_ad_import_sheet_snapshot/);
+  assert.match(request, /CONSTRAINT chk_ad_import_request_sheet_materialization CHECK \([\s\S]*?content_sha256 IS NULL[\s\S]*?protected_ref IS NULL[\s\S]*?status IN \('pending', 'processing', 'retryable'\)[\s\S]*?\)/);
 });
 
 test("import request lifecycle supports FIFO lease recovery and bounded retries", () => {
@@ -216,6 +222,8 @@ test("MySQL verifier exercises generated identity, fenced lease races, and diges
   const verifier = readFileSync(mysqlVerifierPath, "utf8");
   assert.match(verifier, /for \(let replay = 0; replay < 2; replay \+= 1\)/);
   assert.match(verifier, /canonical_ad_import_requests/);
+  assert.match(verifier, /insertSheetIntent/);
+  assert.match(verifier, /the active fenced worker may materialize a Sheet snapshot once/);
   assert.match(verifier, /expectReject\(\(\) => insertRequest\(connection, "v1"\)\)/);
   assert.doesNotMatch(verifier, /adapter_config_sha256, adapter_config_version/);
   assert.match(verifier, /content_sha256, adapter_config, adapter_config_version/);

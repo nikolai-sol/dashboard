@@ -17,7 +17,8 @@ CREATE TABLE IF NOT EXISTS canonical_ad_import_requests (
     protected_ref VARCHAR(500) NULL,
     source_url TEXT NULL,
     original_name VARCHAR(255) NULL,
-    content_sha256 CHAR(64) NOT NULL,
+    content_sha256 CHAR(64) NULL,
+    sheet_snapshot_key CHAR(36) NULL,
     adapter_config JSON NOT NULL,
     adapter_config_sha256 CHAR(64)
         GENERATED ALWAYS AS (SHA2(CAST(adapter_config AS CHAR), 256)) STORED,
@@ -34,7 +35,8 @@ CREATE TABLE IF NOT EXISTS canonical_ad_import_requests (
     lease_token CHAR(36) NULL,
     next_attempt_at DATETIME NULL DEFAULT CURRENT_TIMESTAMP,
     finished_at DATETIME NULL,
-    UNIQUE KEY uniq_ad_import_request (advertiser_key, source_key, platform_account_id, transport, content_sha256, adapter_config_sha256),
+    UNIQUE KEY uniq_ad_import_upload (advertiser_key, source_key, platform_account_id, transport, content_sha256, adapter_config_sha256),
+    UNIQUE KEY uniq_ad_import_sheet_snapshot (advertiser_key, source_key, platform_account_id, transport, sheet_snapshot_key, adapter_config_sha256),
     KEY idx_ad_import_queue (status, next_attempt_at, requested_at, id),
     KEY idx_ad_import_processing (status, lease_expires_at, id),
     KEY idx_ad_import_source_account_status (source_key, platform_account_id, status, next_attempt_at, id),
@@ -44,13 +46,15 @@ CREATE TABLE IF NOT EXISTS canonical_ad_import_requests (
         (transport = 'upload'
             AND protected_ref IS NOT NULL
             AND CHAR_LENGTH(TRIM(protected_ref)) > 0
-            AND source_url IS NULL)
+            AND source_url IS NULL
+            AND sheet_snapshot_key IS NULL)
         OR
         (transport = 'google_sheet'
-            AND protected_ref IS NULL
+            AND (protected_ref IS NULL OR CHAR_LENGTH(TRIM(protected_ref)) > 0)
             AND source_url IS NOT NULL
             AND CHAR_LENGTH(TRIM(source_url)) > 0
-            AND source_url LIKE 'https://docs.google.com/spreadsheets/%')
+            AND source_url LIKE 'https://docs.google.com/spreadsheets/%'
+            AND sheet_snapshot_key REGEXP '^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$')
     ),
     CONSTRAINT chk_ad_import_request_timestamps CHECK (
         (started_at IS NULL OR requested_at <= started_at)
@@ -58,7 +62,21 @@ CREATE TABLE IF NOT EXISTS canonical_ad_import_requests (
         AND (finished_at IS NULL OR (started_at IS NOT NULL AND started_at <= finished_at))
         AND (next_attempt_at IS NULL OR requested_at <= next_attempt_at)
     ),
-    CONSTRAINT chk_ad_import_request_content_digest CHECK (BINARY content_sha256 REGEXP '^[0-9a-f]{64}$'),
+    CONSTRAINT chk_ad_import_request_content_digest CHECK (content_sha256 IS NULL OR BINARY content_sha256 REGEXP '^[0-9a-f]{64}$'),
+    CONSTRAINT chk_ad_import_request_sheet_materialization CHECK (
+        (transport = 'upload'
+            AND content_sha256 IS NOT NULL
+            AND protected_ref IS NOT NULL)
+        OR
+        (transport = 'google_sheet'
+            AND (
+                (content_sha256 IS NOT NULL AND protected_ref IS NOT NULL)
+                OR
+                (content_sha256 IS NULL
+                    AND protected_ref IS NULL
+                    AND status IN ('pending', 'processing', 'retryable'))
+            ))
+    ),
     CONSTRAINT chk_ad_import_request_config_version CHECK (CHAR_LENGTH(TRIM(adapter_config_version)) > 0),
     CONSTRAINT chk_ad_import_request_attempts CHECK (max_attempts >= 1 AND attempt_count <= max_attempts),
     CONSTRAINT chk_ad_import_request_lease_token CHECK (
@@ -179,10 +197,23 @@ BEGIN
         AND NEW.source_key <=> OLD.source_key
         AND NEW.platform_account_id <=> OLD.platform_account_id
         AND NEW.transport <=> OLD.transport
-        AND NEW.protected_ref <=> OLD.protected_ref
         AND NEW.source_url <=> OLD.source_url
         AND NEW.original_name <=> OLD.original_name
-        AND NEW.content_sha256 <=> OLD.content_sha256
+        AND NEW.sheet_snapshot_key <=> OLD.sheet_snapshot_key
+        AND (
+            (NEW.protected_ref <=> OLD.protected_ref
+                AND NEW.content_sha256 <=> OLD.content_sha256)
+            OR
+            (OLD.transport = 'google_sheet'
+                AND OLD.status = 'processing'
+                AND NEW.status = 'processing'
+                AND OLD.protected_ref IS NULL
+                AND OLD.content_sha256 IS NULL
+                AND NEW.protected_ref IS NOT NULL
+                AND NEW.content_sha256 IS NOT NULL
+                AND NEW.lease_token <=> OLD.lease_token
+                AND OLD.lease_expires_at > UTC_TIMESTAMP())
+        )
         AND NEW.adapter_config <=> OLD.adapter_config
         AND NEW.adapter_config_version <=> OLD.adapter_config_version
         AND NEW.requested_by <=> OLD.requested_by
@@ -224,6 +255,19 @@ BEGIN
             AND NEW.lease_token <=> OLD.lease_token
             AND OLD.lease_expires_at > UTC_TIMESTAMP()
             AND NEW.lease_expires_at > OLD.lease_expires_at)
+        OR
+        (OLD.status = 'processing'
+            AND NEW.status = 'processing'
+            AND OLD.transport = 'google_sheet'
+            AND OLD.protected_ref IS NULL
+            AND OLD.content_sha256 IS NULL
+            AND NEW.protected_ref IS NOT NULL
+            AND NEW.content_sha256 IS NOT NULL
+            AND NEW.attempt_count = OLD.attempt_count
+            AND NEW.started_at <=> OLD.started_at
+            AND NEW.lease_token <=> OLD.lease_token
+            AND OLD.lease_expires_at > UTC_TIMESTAMP()
+            AND NEW.lease_expires_at >= OLD.lease_expires_at)
         OR
         (OLD.status = 'processing'
             AND NEW.status = 'processing'

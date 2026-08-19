@@ -173,7 +173,7 @@ type LeadsConfirmResponse = {
 type ManualDataConfirmResponse = {
   status: ImportPublicationStatus;
   import_request_id: number;
-  content_sha256: string;
+  content_sha256: string | null;
   reviewed_source: {
     platform: string;
     schema_file: string;
@@ -182,6 +182,16 @@ type ManualDataConfirmResponse = {
 };
 
 type ImportPublicationStatus = "pending" | "processing" | "retryable" | "published" | "rejected" | "failed";
+
+type ImportRequestState = {
+  status: ImportPublicationStatus;
+  error_summary: string | null;
+  attempt_count: number;
+  max_attempts: number;
+  next_attempt_at: string | null;
+};
+
+const MAX_IMPORT_UPLOAD_BYTES = 20 * 1024 * 1024;
 
 const IMPORT_STATUS_LABEL: Record<ImportPublicationStatus, string> = {
   pending: "Queued for import",
@@ -216,14 +226,24 @@ function parseAccountIds(value: unknown): string[] {
   return value.map((item) => String(item).trim()).filter(Boolean);
 }
 
-async function fileToBase64(file: File): Promise<string> {
-  const buffer = await file.arrayBuffer();
-  let binary = "";
-  const bytes = new Uint8Array(buffer);
-  bytes.forEach((byte) => {
-    binary += String.fromCharCode(byte);
+async function fileToBase64(file: File, maxBytes?: number): Promise<string> {
+  if (maxBytes && file.size > maxBytes) {
+    throw new Error(`Upload must be no larger than ${Math.floor(maxBytes / 1024 / 1024)} MiB`);
+  }
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onerror = () => reject(reader.error ?? new Error("Unable to read upload"));
+    reader.onload = () => {
+      const result = String(reader.result ?? "");
+      const comma = result.indexOf(",");
+      if (!result.startsWith("data:") || comma < 0) {
+        reject(new Error("Unable to encode upload"));
+        return;
+      }
+      resolve(result.slice(comma + 1));
+    };
+    reader.readAsDataURL(file);
   });
-  return btoa(binary);
 }
 
 export default function WizardStep2({ data, platforms, onChange, dashboardId }: WizardStep2Props) {
@@ -241,11 +261,10 @@ export default function WizardStep2({ data, platforms, onChange, dashboardId }: 
   const [customTablePreview, setCustomTablePreview] = useState<Record<number, { headers: string[]; rows: string[][] } | null>>({});
   const [customTablePreviewLoading, setCustomTablePreviewLoading] = useState<Record<number, boolean>>({});
   const [manualDataPreview, setManualDataPreview] = useState<Record<number, Array<Record<string, unknown>> | null>>({});
-  const [manualDataPreviewLoading, setManualDataPreviewLoading] = useState<Record<number, boolean>>({});
   const [manualDataConfirmLoading, setManualDataConfirmLoading] = useState<Record<number, boolean>>({});
   const [manualDataConfirmError, setManualDataConfirmError] = useState<Record<number, string | null>>({});
   const [manualDataConfirmMessage, setManualDataConfirmMessage] = useState<Record<number, string | null>>({});
-  const [importStatusBySource, setImportStatusBySource] = useState<Record<number, ImportPublicationStatus>>({});
+  const [importStatusBySource, setImportStatusBySource] = useState<Record<number, ImportRequestState>>({});
   const [leadsAnalysisBySource, setLeadsAnalysisBySource] = useState<Record<number, LeadsAnalysis | null>>({});
   const [leadsAnalysisLoadingBySource, setLeadsAnalysisLoadingBySource] = useState<Record<number, boolean>>({});
   const [leadsAnalysisErrorBySource, setLeadsAnalysisErrorBySource] = useState<Record<number, string | null>>({});
@@ -716,14 +735,21 @@ export default function WizardStep2({ data, platforms, onChange, dashboardId }: 
       return;
     }
 
-    const contentBase64 = await fileToBase64(file);
-    updateManualDataSource(index, {
-      upload_file: {
-        filename: file.name,
-        mime_type: file.type,
-        content_base64: contentBase64,
-      },
-    });
+    try {
+      const contentBase64 = await fileToBase64(file, MAX_IMPORT_UPLOAD_BYTES);
+      updateManualDataSource(index, {
+        upload_file: {
+          filename: file.name,
+          mime_type: file.type,
+          content_base64: contentBase64,
+        },
+      });
+    } catch (error) {
+      setManualDataConfirmError((prev) => ({
+        ...prev,
+        [index]: error instanceof Error ? error.message : "Unable to read upload",
+      }));
+    }
   };
 
   const removeManualDataSource = (index: number) => {
@@ -752,25 +778,11 @@ export default function WizardStep2({ data, platforms, onChange, dashboardId }: 
       Boolean(String(source?.source_config?.sheet_url ?? "").trim()) ||
       (typeof source?.source_config?.upload_file === "object" && source?.source_config?.upload_file);
     if (!hasInput) return;
-    setManualDataPreviewLoading((prev) => ({ ...prev, [index]: true }));
     setManualDataPreview((prev) => ({ ...prev, [index]: null }));
-    try {
-      const response = await fetch("/api/admin/manual-data/preview", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ source_config: source?.source_config ?? {} }),
-      });
-      const json = await response.json();
-      if (response.ok && Array.isArray(json.rows)) {
-        setManualDataPreview((prev) => ({ ...prev, [index]: json.rows }));
-      } else {
-        setManualDataPreview((prev) => ({ ...prev, [index]: [{ error: json.error ?? "Fetch failed" }] }));
-      }
-    } catch {
-      setManualDataPreview((prev) => ({ ...prev, [index]: [{ error: "Network error" }] }));
-    } finally {
-      setManualDataPreviewLoading((prev) => ({ ...prev, [index]: false }));
-    }
+    setManualDataConfirmError((prev) => ({
+      ...prev,
+      [index]: "Preview is unavailable. Google Sheets are snapshotted by the collector after queueing.",
+    }));
   };
 
   const confirmManualDataSource = async (index: number) => {
@@ -797,8 +809,8 @@ export default function WizardStep2({ data, platforms, onChange, dashboardId }: 
       if (!response.ok) {
         throw new Error(json.error ?? `HTTP ${response.status}`);
       }
-      if (!json.reviewed_source || json.status !== "pending") {
-        throw new Error("Confirm endpoint returned no pending canonical import.");
+      if (!json.reviewed_source || !json.status || !IMPORT_STATUS_LABEL[json.status]) {
+        throw new Error("Confirm endpoint returned no canonical import request.");
       }
 
       const nextManual = manualDataSources.filter((_, manualIndex) => manualIndex !== index);
@@ -812,7 +824,16 @@ export default function WizardStep2({ data, platforms, onChange, dashboardId }: 
         },
       ];
       setSources(nextActual, planSource, customTableSources, nextManual, leadsSources);
-      setImportStatusBySource((prev) => ({ ...prev, [sourceId]: "pending" }));
+      setImportStatusBySource((prev) => ({
+        ...prev,
+        [sourceId]: {
+          status: json.status!,
+          error_summary: null,
+          attempt_count: 0,
+          max_attempts: 3,
+          next_attempt_at: null,
+        },
+      }));
       setManualDataConfirmMessage((prev) => ({
         ...prev,
         [index]: `Import request #${json.import_request_id} is queued. Dashboard data remains unchanged until publication.`,
@@ -881,10 +902,17 @@ export default function WizardStep2({ data, platforms, onChange, dashboardId }: 
         imports.map(async ({ sourceId }) => {
           try {
             const response = await fetch(`/api/admin/manual-data/confirm?dashboard_id=${numericDashboardId}&source_id=${sourceId}`);
-            const json = (await response.json().catch(() => ({}))) as { status?: ImportPublicationStatus };
+            const json = (await response.json().catch(() => ({}))) as Partial<ImportRequestState>;
             if (!cancelled && response.ok && json.status && IMPORT_STATUS_LABEL[json.status]) {
+              const next: ImportRequestState = {
+                status: json.status,
+                error_summary: typeof json.error_summary === "string" ? json.error_summary : null,
+                attempt_count: Number(json.attempt_count ?? 0),
+                max_attempts: Number(json.max_attempts ?? 3),
+                next_attempt_at: typeof json.next_attempt_at === "string" ? json.next_attempt_at : null,
+              };
               setImportStatusBySource((previous) =>
-                previous[sourceId] === json.status ? previous : { ...previous, [sourceId]: json.status! },
+                JSON.stringify(previous[sourceId]) === JSON.stringify(next) ? previous : { ...previous, [sourceId]: next },
               );
             }
           } catch {
@@ -1310,10 +1338,22 @@ export default function WizardStep2({ data, platforms, onChange, dashboardId }: 
               {Number.isFinite(Number(source.source_config?.import_request_id)) ? (() => {
                 const sourceId = Number(source.id);
                 const configuredStatus = asImportPublicationStatus(source.source_config?.import_status);
-                const status = importStatusBySource[sourceId] ?? configuredStatus;
+                const requestState = importStatusBySource[sourceId] ?? {
+                  status: configuredStatus,
+                  error_summary: null,
+                  attempt_count: 0,
+                  max_attempts: 3,
+                  next_attempt_at: null,
+                };
+                const status = requestState.status;
                 return (
                   <div className={`mt-3 flex flex-wrap items-center justify-between gap-2 rounded-lg border px-3 py-2 text-xs ${importStatusClass(status)}`}>
-                    <span>{IMPORT_STATUS_LABEL[status]}</span>
+                    <div>
+                      <p>{IMPORT_STATUS_LABEL[status]}</p>
+                      {status === "retryable" ? <p>Attempt {requestState.attempt_count} of {requestState.max_attempts}{requestState.next_attempt_at ? `; retry scheduled ${requestState.next_attempt_at}` : ""}.</p> : null}
+                      {(status === "rejected" || status === "failed") && requestState.error_summary ? <p>{requestState.error_summary}</p> : null}
+                      {status !== "published" ? <p>Dashboard data remains unchanged until publication.</p> : null}
+                    </div>
                     <button
                       type="button"
                       onClick={() => void unlinkCanonicalImportSource(index)}
@@ -2316,12 +2356,11 @@ export default function WizardStep2({ data, platforms, onChange, dashboardId }: 
                     onClick={() => previewManualDataSource(index)}
                     disabled={
                       (!String(source.source_config?.sheet_url ?? "").trim() &&
-                        !(typeof source.source_config?.upload_file === "object" && source.source_config?.upload_file)) ||
-                      manualDataPreviewLoading[index]
+                        !(typeof source.source_config?.upload_file === "object" && source.source_config?.upload_file))
                     }
                     className="rounded-lg border border-slate-300 px-3 py-2 text-sm hover:bg-slate-50 disabled:opacity-50"
                   >
-                    {manualDataPreviewLoading[index] ? "..." : "🔍 Preview"}
+                    Preview policy
                   </button>
                   <button
                     type="button"

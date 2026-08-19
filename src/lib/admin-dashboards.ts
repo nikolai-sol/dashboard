@@ -223,20 +223,14 @@ export function resolveReviewedAdvertisingSource(sourceConfig: Record<string, un
   );
   if (!schema) throw new Error("source_key must identify a real advertising platform");
 
-  const configuredAdapter =
-    sourceConfig.adapter_config && typeof sourceConfig.adapter_config === "object"
-      ? (sourceConfig.adapter_config as Record<string, unknown>)
-      : {};
-  const configuredColumnMap =
-    configuredAdapter.column_map && typeof configuredAdapter.column_map === "object"
-      ? configuredAdapter.column_map
-      : DEFAULT_IMPORT_COLUMN_MAP;
+  if (Object.prototype.hasOwnProperty.call(sourceConfig, "adapter_config")) {
+    throw new Error("adapter_config is derived from the reviewed source and cannot be supplied by the browser");
+  }
   const adapterConfig = {
-    ...configuredAdapter,
-    adapter_config_version: String(configuredAdapter.adapter_config_version ?? "file-v1").trim() || "file-v1",
+    adapter_config_version: "file-v1",
     source_key: schema.source_key,
     platform_account_id: platformAccountId,
-    column_map: configuredColumnMap,
+    column_map: { ...DEFAULT_IMPORT_COLUMN_MAP },
   };
 
   return {
