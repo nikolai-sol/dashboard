@@ -445,3 +445,14 @@ After any meaningful operational change, update:
 2. the specific detailed doc (`OPS.md`, onboarding doc, tracker, etc.)
 
 Do not leave hidden operational knowledge only in chat history.
+
+## Advertising collection operations rollout
+
+- Advertising actuals remain canonical-MySQL-only for request, render, filter, export, and bindings.
+- New advertising accounts discovered by supported collectors default to active and cron-enabled; an existing manual disable in Collection is authoritative and must not be overwritten.
+- Collection health is account/day SLA health. A successful collector process without accepted due coverage is `CRITICAL`; proven `complete_empty` is healthy.
+- Apply advertising migrations `056` through `059` before enabling the new publisher, Collection health, or Telegram delivery audit.
+- Roll out in the reviewed order: Between, uploaded/Google Sheet sources, Hybrid, VK, GetIntent, LinkedIn, Reddit, Yandex Direct, Google Ads.
+- Enable `AD_CANONICAL_READ_V2=1` for one source only after publication parity, binding diagnostics, dashboard parity, due coverage, and audited Telegram delivery all pass the root `verify_advertising_rollout.py` gate.
+- Abbott, Zaruku, SEO, their health semantics, and their cron remain outside this rollout.
+- The commits recording this procedure did not apply migrations, call source APIs, edit cron, send Telegram, backfill production, or deploy.

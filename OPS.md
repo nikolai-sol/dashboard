@@ -219,6 +219,34 @@ Cutover checklist:
 4. Enable `AD_CANONICAL_READ_V2=1`, restart the app, and smoke-check screen plus Excel export.
 5. Roll back by restoring the prior environment value and restarting the app if smoke differs.
 
+## Advertising source cutover order
+
+The app comparison is one input to the root collector's final gate. For every
+source, save a sanitized comparison evidence file containing the publication
+parity mismatch count and this dashboard comparison mismatch count, then run:
+
+```bash
+cd /root/reportingdash-canonical
+python3 verify_advertising_rollout.py \
+  --source <source-key> \
+  --comparison-evidence /protected/advertising-rollout/<timestamp>/comparison-evidence.json \
+  --json
+```
+
+The fixed order is Between, uploaded/Google Sheet sources, Hybrid, VK,
+GetIntent, LinkedIn, Reddit, Yandex Direct, and Google Ads. Do not batch-enable
+multiple source cutovers. A source is blocked by missing or failed due
+coverage, parity mismatch, duplicate identity, unresolved or unbound campaign,
+dashboard mismatch, missing comparison evidence, or a daily advertising
+Telegram delivery not audited as `sent`.
+
+For each ready source: enable only that source's publication cutover, enable
+its V2 dashboard read, smoke Collection, Bindings, dashboard, and Excel/PDF
+exports, then verify the next scheduled collector and next Telegram summary.
+Only after those checks may its legacy writer/read path be disabled. The root
+runbook is `docs/ADVERTISING-CANONICAL-INGESTION-RUNBOOK.md` in the collector
+repository.
+
 ## SSL
 
 Домен:
