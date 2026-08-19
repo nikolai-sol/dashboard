@@ -76,13 +76,15 @@ function normalizeGoogleSheetUrl(value: string): string {
     const source = value.match(/^[a-zA-Z][a-zA-Z\d+.-]*:\/\/([^/?#]*)([^?#]*)(?:\?([^#]*))?(?:#(.*))?$/);
     if (!source) throw new Error("source_url must be a Google Sheets URL");
     const [, authority, rawPath, query = "", fragment = ""] = source;
-    const sheet = rawPath.match(/^\/spreadsheets\/d\/([A-Za-z0-9_-]+)(?:\/.*)?/);
+    const rawHostname = authority.endsWith(":") ? authority.slice(0, -1) : authority;
+    const sheet = rawPath.match(/^\/spreadsheets\/d\/([A-Za-z0-9_-]+)(?:\/.*)?$/);
     const gid = [...new URLSearchParams(query), ...new URLSearchParams(fragment)]
       .filter(([key]) => key === "gid")
       .map(([, parameterValue]) => parameterValue);
     if (
       url.protocol !== "https:"
       || url.hostname !== "docs.google.com"
+      || rawHostname.toLowerCase() !== "docs.google.com"
       || url.username
       || url.password
       || authority.includes("@")
@@ -108,6 +110,11 @@ const FILE_CREATE_FLAGS = constants.O_WRONLY | constants.O_CREAT | constants.O_E
 
 type ProtectedDirectory = {
   handle: FileHandle;
+};
+
+type DirectoryIdentity = {
+  dev: number;
+  ino: number;
 };
 
 type CreatedArtifact = {
@@ -195,11 +202,22 @@ async function protectedDirectory(directory: string, create: boolean): Promise<P
   }
 }
 
-async function removeProtectedArtifact(spoolDir: string, filename: string): Promise<void> {
+function directoryIdentityMatches(metadata: DirectoryIdentity, expected: DirectoryIdentity): boolean {
+  return metadata.dev === expected.dev && metadata.ino === expected.ino;
+}
+
+async function removeProtectedArtifact(
+  spoolDir: string,
+  filename: string,
+  expectedUploadsDirectory: DirectoryIdentity,
+): Promise<void> {
   const root = await protectedDirectory(spoolDir, false);
   let uploads: ProtectedDirectory | null = null;
   try {
     uploads = await openProtectedChild(root, "uploads", false);
+    if (!directoryIdentityMatches(await uploads.handle.stat(), expectedUploadsDirectory)) {
+      throw new Error("Protected spool uploads directory changed before artifact cleanup");
+    }
     await rm(path.join(descriptorPath(uploads.handle), filename), { force: true });
   } finally {
     if (uploads) await uploads.handle.close();
@@ -231,10 +249,11 @@ async function writeProtectedArtifact(spoolDir: string, data: Buffer): Promise<C
     }
     await rename(temporary, target);
     await uploads.handle.sync();
+    const uploadsDirectory = await uploads.handle.stat();
     const protectedRef = path.join(absolute, "uploads", filename);
     return {
       protectedRef,
-      discard: () => removeProtectedArtifact(spoolDir, filename!),
+      discard: () => removeProtectedArtifact(spoolDir, filename!, uploadsDirectory),
     };
   } catch (error) {
     if (temporary) await rm(temporary, { force: true });

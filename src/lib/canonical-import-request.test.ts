@@ -295,6 +295,10 @@ test("Google Sheet confirmation matches the collector reviewed-reference contrac
     { sourceUrl: "https://docs.google.com/spreadsheets/d/sheet-id?gid=1&gid=2" },
     { sourceUrl: "https://docs.google.com/spreadsheets/d/sheet-id#gid=1&gid=2" },
     { sourceUrl: "https://docs.google.com/spreadsheets/d/sheet-id?g%69d=1#gid=2" },
+    { sourceUrl: "https://docs.google.com/spreadsheets/d/sheet-id%2Ftrailer#gid=1" },
+    { sourceUrl: "https://docs.google.com/spreadsheets/d/sheet-id.any#gid=1" },
+    { sourceUrl: "https://docs.google.com/spreadsheets/d/sheet-id;foo#gid=1" },
+    { sourceUrl: "https://docs%2egoogle.com/spreadsheets/d/sheet-id#gid=1" },
   ];
 
   for (const { sourceUrl, reviewedReference } of cases) {
@@ -399,6 +403,45 @@ test("duplicate uploads remove their newly spooled artifact and return the persi
   }
 });
 
+test("upload insert errors remove their newly spooled artifact", { skip: process.platform !== "linux" }, async () => {
+  const spoolDir = await mkdtemp(path.join(os.tmpdir(), "canonical-import-"));
+  let protectedRef = "";
+  try {
+    const connection = new FakeConnection();
+    connection.onInsert = async (params) => {
+      protectedRef = String(params[4]);
+      throw new Error("database unavailable");
+    };
+
+    await assert.rejects(
+      enqueueCanonicalImport(
+        connection,
+        {
+          advertiserKey: "gidrofuril",
+          sourceKey: "yandex_direct",
+          platformAccountId: "gidrofuril-search",
+          transport: "upload",
+          upload: {
+            filename: "report.csv",
+            contentBase64: Buffer.from("date,campaign\n2026-08-18,Search\n").toString("base64"),
+          },
+          adapterConfig: {
+            adapter_config_version: "file-v1",
+            source_key: "yandex_direct",
+            platform_account_id: "gidrofuril-search",
+          },
+        },
+        { spoolDir },
+      ),
+      /database unavailable/,
+    );
+    assert.match(protectedRef, /\/uploads\/[0-9a-f-]+\.bin$/);
+    assert.equal(existsSync(protectedRef), false);
+  } finally {
+    await rm(spoolDir, { recursive: true, force: true });
+  }
+});
+
 test("duplicate cleanup remains descriptor-anchored after the spool path is replaced", { skip: process.platform !== "linux" }, async () => {
   const spoolDir = await mkdtemp(path.join(os.tmpdir(), "canonical-import-"));
   const movedSpoolDir = `${spoolDir}-moved`;
@@ -444,6 +487,51 @@ test("duplicate cleanup remains descriptor-anchored after the spool path is repl
     await rm(spoolDir, { recursive: true, force: true });
     await rm(movedSpoolDir, { recursive: true, force: true });
     await rm(external, { recursive: true, force: true });
+  }
+});
+
+test("duplicate cleanup leaves a same-named artifact in an ordinary replacement spool directory", { skip: process.platform !== "linux" }, async () => {
+  const spoolDir = await mkdtemp(path.join(os.tmpdir(), "canonical-import-"));
+  const movedSpoolDir = `${spoolDir}-moved`;
+  let sentinel = "";
+  try {
+    const connection = new FakeConnection();
+    connection.persisted.status = "retryable";
+    connection.persisted.protected_ref = "/private/existing-report.csv";
+    connection.persisted.content_sha256 = "b".repeat(64);
+    connection.onInsert = async (params) => {
+      await rename(spoolDir, movedSpoolDir);
+      await mkdir(path.join(spoolDir, "uploads"), { recursive: true });
+      sentinel = path.join(spoolDir, "uploads", path.basename(String(params[4])));
+      await writeFile(sentinel, "do-not-remove");
+    };
+
+    await assert.rejects(
+      enqueueCanonicalImport(
+        connection,
+        {
+          advertiserKey: "gidrofuril",
+          sourceKey: "yandex_direct",
+          platformAccountId: "gidrofuril-search",
+          transport: "upload",
+          upload: {
+            filename: "report.csv",
+            contentBase64: Buffer.from("date,campaign\n2026-08-18,Search\n").toString("base64"),
+          },
+          adapterConfig: {
+            adapter_config_version: "file-v1",
+            source_key: "yandex_direct",
+            platform_account_id: "gidrofuril-search",
+          },
+        },
+        { spoolDir },
+      ),
+      /Protected spool uploads directory changed/,
+    );
+    assert.equal(await readFile(sentinel, "utf8"), "do-not-remove");
+  } finally {
+    await rm(spoolDir, { recursive: true, force: true });
+    await rm(movedSpoolDir, { recursive: true, force: true });
   }
 });
 
