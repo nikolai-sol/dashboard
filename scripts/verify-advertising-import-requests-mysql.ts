@@ -10,37 +10,33 @@ async function expectReject(operation: () => Promise<unknown>) {
   await assert.rejects(operation);
 }
 
-async function configIdentity(
+async function config(
   connection: mysql.Connection,
   version: string,
 ) {
   const [rows] = await connection.query<mysql.RowDataPacket[]>(`
-    SELECT
-      CAST(JSON_OBJECT('adapter_config_version', ?, 'identity_rule', 'sheet_name_v1') AS CHAR) AS config,
-      SHA2(CAST(JSON_OBJECT('adapter_config_version', ?, 'identity_rule', 'sheet_name_v1') AS CHAR), 256) AS digest
-  `, [version, version]);
-  return {
-    config: String(rows[0].config),
-    digest: String(rows[0].digest),
-  };
+    SELECT CAST(JSON_OBJECT('adapter_config_version', ?, 'identity_rule', 'sheet_name_v1') AS CHAR) AS config
+  `, [version]);
+  return String(rows[0].config);
 }
 
 async function insertRequest(
   connection: mysql.Connection,
   version: string,
   maxAttempts = 2,
+  contentDigest = contentSha256,
 ) {
-  const config = await configIdentity(connection, version);
+  const adapterConfig = await config(connection, version);
   const [result] = await connection.execute<mysql.ResultSetHeader>(`
     INSERT INTO canonical_ad_import_requests (
       advertiser_key, source_key, platform_account_id, transport, protected_ref,
-      content_sha256, adapter_config, adapter_config_sha256, adapter_config_version,
+      content_sha256, adapter_config, adapter_config_version,
       max_attempts, requested_at, next_attempt_at
     ) VALUES (
       'advertiser_a', 'test_source', 'account_a', 'upload', '/protected/import.csv',
-      ?, ?, ?, ?, ?, UTC_TIMESTAMP() - INTERVAL 5 MINUTE, UTC_TIMESTAMP() - INTERVAL 5 MINUTE
+      ?, ?, ?, ?, UTC_TIMESTAMP() - INTERVAL 5 MINUTE, UTC_TIMESTAMP() - INTERVAL 5 MINUTE
     )
-  `, [contentSha256, config.config, config.digest, version, maxAttempts]);
+  `, [contentDigest, adapterConfig, version, maxAttempts]);
   return Number(result.insertId);
 }
 
@@ -105,26 +101,36 @@ async function main() {
     const correctedConfigRequestId = await insertRequest(connection, "v2");
     assert.notEqual(correctedConfigRequestId, requestId);
 
-    const identity = await configIdentity(connection, "v1");
+    const [digestRows] = await connection.query<mysql.RowDataPacket[]>(`
+      SELECT
+        adapter_config_sha256 AS generated_digest,
+        SHA2(CAST(adapter_config AS CHAR), 256) AS mysql_digest
+      FROM canonical_ad_import_requests
+      WHERE id = ?
+    `, [requestId]);
+    assert.equal(digestRows[0].generated_digest, digestRows[0].mysql_digest);
+    await expectReject(() => insertRequest(connection, "v3", 2, "malformed-content"));
     await expectReject(() => connection.execute(`
-      INSERT INTO canonical_ad_import_requests (
-        advertiser_key, source_key, platform_account_id, transport, protected_ref,
-        content_sha256, adapter_config, adapter_config_sha256, adapter_config_version
-      ) VALUES (
-        'advertiser_a', 'test_source', 'account_a', 'upload', '/protected/bad-config.csv',
-        ?, ?, ?, 'v1'
-      )
-    `, [contentSha256.replace(/^a/, "b"), identity.config, "b".repeat(64)]));
+      UPDATE canonical_ad_import_requests
+      SET adapter_config = JSON_OBJECT('adapter_config_version', 'v3', 'identity_rule', 'sheet_name_v2')
+      WHERE id = ?
+    `, [requestId]));
 
-    await connection.query(`
+    const attempt1LeaseToken = "11111111-1111-4111-8111-111111111111";
+    const attempt2LeaseToken = "22222222-2222-4222-8222-222222222222";
+    const [attempt1Claim] = await connection.query<mysql.ResultSetHeader>(`
       UPDATE canonical_ad_import_requests
       SET status = 'processing',
           attempt_count = 1,
           started_at = UTC_TIMESTAMP() - INTERVAL 3 MINUTE,
           lease_expires_at = UTC_TIMESTAMP() - INTERVAL 2 MINUTE,
+          lease_token = ?,
           next_attempt_at = NULL
       WHERE id = ?
-    `, [requestId]);
+        AND status = 'pending'
+        AND next_attempt_at <= UTC_TIMESTAMP()
+    `, [attempt1LeaseToken, requestId]);
+    assert.equal(attempt1Claim.affectedRows, 1);
     const [recovery] = await connection.query<mysql.ResultSetHeader>(`
       UPDATE canonical_ad_import_requests
       SET status = 'retryable',
@@ -137,17 +143,83 @@ async function main() {
     `, [requestId]);
     assert.equal(recovery.affectedRows, 1, "an expired lease must become retryable");
 
-    await connection.query(`
+    const [attempt2Claim] = await connection.query<mysql.ResultSetHeader>(`
       UPDATE canonical_ad_import_requests
       SET status = 'processing',
-          attempt_count = 2,
+          attempt_count = attempt_count + 1,
           started_at = UTC_TIMESTAMP(),
           lease_expires_at = UTC_TIMESTAMP() + INTERVAL 5 MINUTE,
+          lease_token = ?,
           next_attempt_at = NULL,
           error_summary = NULL
       WHERE id = ?
+        AND status = 'retryable'
+        AND next_attempt_at <= UTC_TIMESTAMP()
+    `, [attempt2LeaseToken, requestId]);
+    assert.equal(attempt2Claim.affectedRows, 1);
+
+    const [attempt1Renew] = await connection.query<mysql.ResultSetHeader>(`
+      UPDATE canonical_ad_import_requests
+      SET lease_expires_at = UTC_TIMESTAMP() + INTERVAL 10 MINUTE
+      WHERE id = ?
+        AND status = 'processing'
+        AND lease_token = ?
+        AND lease_expires_at > UTC_TIMESTAMP()
+    `, [requestId, attempt1LeaseToken]);
+    assert.equal(attempt1Renew.affectedRows, 0, "expired claim cannot renew a newer lease");
+
+    const [attempt1Retry] = await connection.query<mysql.ResultSetHeader>(`
+      UPDATE canonical_ad_import_requests
+      SET status = 'retryable',
+          lease_expires_at = NULL,
+          next_attempt_at = UTC_TIMESTAMP(),
+          error_summary = 'stale transient failure'
+      WHERE id = ?
+        AND status = 'processing'
+        AND lease_token = ?
+        AND lease_expires_at > UTC_TIMESTAMP()
+    `, [requestId, attempt1LeaseToken]);
+    assert.equal(attempt1Retry.affectedRows, 0, "expired claim cannot schedule a retry");
+
+    const [attempt1Failed] = await connection.query<mysql.ResultSetHeader>(`
+      UPDATE canonical_ad_import_requests
+      SET status = 'failed',
+          lease_expires_at = NULL,
+          next_attempt_at = NULL,
+          finished_at = UTC_TIMESTAMP(),
+          error_summary = 'stale terminal failure'
+      WHERE id = ?
+        AND status = 'processing'
+        AND lease_token = ?
+        AND lease_expires_at > UTC_TIMESTAMP()
+    `, [requestId, attempt1LeaseToken]);
+    assert.equal(attempt1Failed.affectedRows, 0, "expired claim cannot fail a newer lease");
+
+    const [attempt1Published] = await connection.query<mysql.ResultSetHeader>(`
+      UPDATE canonical_ad_import_requests
+      SET status = 'published',
+          ingestion_run_id = 1,
+          lease_expires_at = NULL,
+          next_attempt_at = NULL,
+          finished_at = UTC_TIMESTAMP(),
+          error_summary = NULL
+      WHERE id = ?
+        AND status = 'processing'
+        AND lease_token = ?
+        AND lease_expires_at > UTC_TIMESTAMP()
+    `, [requestId, attempt1LeaseToken]);
+    assert.equal(attempt1Published.affectedRows, 0, "expired claim cannot publish a newer lease");
+
+    const [activeRows] = await connection.query<mysql.RowDataPacket[]>(`
+      SELECT status, attempt_count, lease_token
+      FROM canonical_ad_import_requests
+      WHERE id = ?
     `, [requestId]);
-    await connection.query(`
+    assert.equal(activeRows[0].status, "processing");
+    assert.equal(activeRows[0].attempt_count, 2);
+    assert.equal(activeRows[0].lease_token, attempt2LeaseToken);
+
+    const [attempt2Failed] = await connection.query<mysql.ResultSetHeader>(`
       UPDATE canonical_ad_import_requests
       SET status = 'failed',
           lease_expires_at = NULL,
@@ -155,7 +227,11 @@ async function main() {
           finished_at = UTC_TIMESTAMP(),
           error_summary = 'transient retry budget exhausted'
       WHERE id = ?
-    `, [requestId]);
+        AND status = 'processing'
+        AND lease_token = ?
+        AND lease_expires_at > UTC_TIMESTAMP()
+    `, [requestId, attempt2LeaseToken]);
+    assert.equal(attempt2Failed.affectedRows, 1, "current claim may record a terminal result");
     await expectReject(() => connection.query(`
       UPDATE canonical_ad_import_requests
       SET status = 'retryable', next_attempt_at = UTC_TIMESTAMP()

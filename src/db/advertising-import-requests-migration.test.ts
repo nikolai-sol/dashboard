@@ -49,19 +49,27 @@ test("import requests identify advertiser, source account, and protected artifac
 
 test("import request identity binds advertiser scope to a canonical adapter configuration", () => {
   const request = tableDefinition("canonical_ad_import_requests");
-  assert.match(request, /adapter_config_sha256 CHAR\(64\) NOT NULL/);
+  assert.match(
+    request,
+    /adapter_config_sha256 CHAR\(64\)\s+GENERATED ALWAYS AS \(SHA2\(CAST\(adapter_config AS CHAR\), 256\)\) STORED/,
+  );
   assert.match(request, /adapter_config_version VARCHAR\(64\) NOT NULL/);
   assert.match(
     request,
     /UNIQUE KEY uniq_ad_import_request \(advertiser_key, source_key, platform_account_id, transport, content_sha256, adapter_config_sha256\)/,
   );
-  assert.match(
-    request,
-    /CONSTRAINT chk_ad_import_request_config_digest CHECK \(adapter_config_sha256 REGEXP '\^\[0-9a-f\]\{64\}\$'\)/,
-  );
+  assert.doesNotMatch(request, /adapter_config_sha256 CHAR\(64\) NOT NULL/);
   assert.match(
     request,
     /CONSTRAINT chk_ad_import_request_config_version CHECK \(CHAR_LENGTH\(TRIM\(adapter_config_version\)\) > 0\)/,
+  );
+});
+
+test("import request artifact hash is canonical lowercase SHA-256", () => {
+  const request = tableDefinition("canonical_ad_import_requests");
+  assert.match(
+    request,
+    /CONSTRAINT chk_ad_import_request_content_digest CHECK \(content_sha256 REGEXP '\^\[0-9a-f\]\{64\}\$'\)/,
   );
 });
 
@@ -101,6 +109,7 @@ test("import request lifecycle supports FIFO lease recovery and bounded retries"
   assert.match(request, /attempt_count INT UNSIGNED NOT NULL DEFAULT 0/);
   assert.match(request, /max_attempts INT UNSIGNED NOT NULL DEFAULT 3/);
   assert.match(request, /lease_expires_at DATETIME NULL/);
+  assert.match(request, /lease_token CHAR\(36\) NULL/);
   assert.match(request, /next_attempt_at DATETIME NULL DEFAULT CURRENT_TIMESTAMP/);
   assert.match(request, /requested_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP/);
   assert.match(request, /started_at DATETIME NULL/);
@@ -115,7 +124,11 @@ test("import request lifecycle supports FIFO lease recovery and bounded retries"
   );
   assert.match(
     request,
-    /CONSTRAINT chk_ad_import_request_status_timestamps CHECK \([\s\S]*?status = 'pending'[\s\S]*?status = 'processing'[\s\S]*?status = 'retryable'[\s\S]*?status IN \('published','rejected','failed'\)[\s\S]*?\)/,
+    /CONSTRAINT chk_ad_import_request_lease_token CHECK \(\s*lease_token IS NULL\s+OR lease_token REGEXP '\^\[0-9a-f\]\{8\}-\[0-9a-f\]\{4\}-\[0-9a-f\]\{4\}-\[0-9a-f\]\{4\}-\[0-9a-f\]\{12\}\$'\s*\)/,
+  );
+  assert.match(
+    request,
+    /CONSTRAINT chk_ad_import_request_status_timestamps CHECK \([\s\S]*?status = 'pending'[\s\S]*?lease_token IS NULL[\s\S]*?status = 'processing'[\s\S]*?lease_token IS NOT NULL[\s\S]*?status = 'retryable'[\s\S]*?lease_token IS NOT NULL[\s\S]*?status IN \('published','rejected','failed'\)[\s\S]*?lease_token IS NOT NULL[\s\S]*?\)/,
   );
   assert.match(
     request,
@@ -126,11 +139,11 @@ test("import request lifecycle supports FIFO lease recovery and bounded retries"
 
 test("import request identity is immutable and status only moves through its lifecycle", () => {
   assert.match(sql, /DROP TRIGGER IF EXISTS trg_ad_import_request_intake_insert/);
-  assert.match(sql, /CREATE TRIGGER trg_ad_import_request_intake_insert[\s\S]*?BEFORE INSERT ON canonical_ad_import_requests[\s\S]*?NEW\.status <> 'pending'[\s\S]*?NEW\.adapter_config_sha256 <> SHA2\(CAST\(NEW\.adapter_config AS CHAR\), 256\)[\s\S]*?JSON_UNQUOTE\(JSON_EXTRACT\(NEW\.adapter_config, '\$\.adapter_config_version'\)\) <=> NEW\.adapter_config_version[\s\S]*?SIGNAL SQLSTATE '45000'/);
+  assert.match(sql, /CREATE TRIGGER trg_ad_import_request_intake_insert[\s\S]*?BEFORE INSERT ON canonical_ad_import_requests[\s\S]*?NEW\.status <> 'pending'[\s\S]*?JSON_UNQUOTE\(JSON_EXTRACT\(NEW\.adapter_config, '\$\.adapter_config_version'\)\) <=> NEW\.adapter_config_version[\s\S]*?SIGNAL SQLSTATE '45000'/);
   assert.match(sql, /DROP TRIGGER IF EXISTS trg_ad_import_request_identity_immutable_update/);
-  assert.match(sql, /CREATE TRIGGER trg_ad_import_request_identity_immutable_update[\s\S]*?BEFORE UPDATE ON canonical_ad_import_requests[\s\S]*?NEW\.advertiser_key <=> OLD\.advertiser_key[\s\S]*?NEW\.content_sha256 <=> OLD\.content_sha256[\s\S]*?NEW\.adapter_config <=> OLD\.adapter_config[\s\S]*?NEW\.adapter_config_sha256 <=> OLD\.adapter_config_sha256[\s\S]*?NEW\.adapter_config_version <=> OLD\.adapter_config_version[\s\S]*?SIGNAL SQLSTATE '45000'/);
+  assert.match(sql, /CREATE TRIGGER trg_ad_import_request_identity_immutable_update[\s\S]*?BEFORE UPDATE ON canonical_ad_import_requests[\s\S]*?NEW\.advertiser_key <=> OLD\.advertiser_key[\s\S]*?NEW\.content_sha256 <=> OLD\.content_sha256[\s\S]*?NEW\.adapter_config <=> OLD\.adapter_config[\s\S]*?NEW\.adapter_config_version <=> OLD\.adapter_config_version[\s\S]*?SIGNAL SQLSTATE '45000'/);
   assert.match(sql, /DROP TRIGGER IF EXISTS trg_ad_import_request_lifecycle_update/);
-  assert.match(sql, /CREATE TRIGGER trg_ad_import_request_lifecycle_update[\s\S]*?OLD\.status = 'pending'[\s\S]*?NEW\.status = 'processing'[\s\S]*?OLD\.status = 'retryable'[\s\S]*?NEW\.status = 'processing'[\s\S]*?OLD\.status = 'processing'[\s\S]*?NEW\.status = 'retryable'[\s\S]*?OLD\.status = 'processing'[\s\S]*?NEW\.status IN \('published','rejected','failed'\)[\s\S]*?SIGNAL SQLSTATE '45000'/);
+  assert.match(sql, /CREATE TRIGGER trg_ad_import_request_lifecycle_update[\s\S]*?OLD\.status = 'pending'[\s\S]*?NEW\.status = 'processing'[\s\S]*?NEW\.lease_token IS NOT NULL[\s\S]*?OLD\.status = 'retryable'[\s\S]*?NEW\.status = 'processing'[\s\S]*?NOT \(NEW\.lease_token <=> OLD\.lease_token\)[\s\S]*?OLD\.status = 'processing'[\s\S]*?NEW\.status = 'processing'[\s\S]*?NEW\.lease_token <=> OLD\.lease_token[\s\S]*?SIGNAL SQLSTATE '45000'/);
   assert.match(sql, /DROP TRIGGER IF EXISTS trg_ad_import_request_immutable_delete/);
   assert.match(sql, /CREATE TRIGGER trg_ad_import_request_immutable_delete[\s\S]*?BEFORE DELETE ON canonical_ad_import_requests[\s\S]*?SIGNAL SQLSTATE '45000'/);
 });
@@ -141,14 +154,24 @@ test("import request migration can replay its trigger definitions", () => {
   assert.doesNotMatch(sql, /DELIMITER/i);
 });
 
-test("MySQL verifier exercises duplicate, retry, stale-lease, and deletion contracts", () => {
+test("MySQL verifier exercises generated identity, fenced lease races, and digest rejection", () => {
   assert.equal(existsSync(mysqlVerifierPath), true, "import-request MySQL verifier must exist");
   const verifier = readFileSync(mysqlVerifierPath, "utf8");
   assert.match(verifier, /for \(let replay = 0; replay < 2; replay \+= 1\)/);
   assert.match(verifier, /canonical_ad_import_requests/);
   assert.match(verifier, /expectReject\(\(\) => insertRequest\(connection, "v1"\)\)/);
-  assert.match(verifier, /expectReject\(\(\) => connection\.execute\([\s\S]*?INSERT INTO canonical_ad_import_requests/);
+  assert.doesNotMatch(verifier, /adapter_config_sha256, adapter_config_version/);
+  assert.match(verifier, /content_sha256, adapter_config, adapter_config_version/);
   assert.match(verifier, /status = 'retryable'/);
   assert.match(verifier, /lease_expires_at <= UTC_TIMESTAMP\(\)/);
+  assert.match(verifier, /WHERE id = \?\s+AND status = 'processing'\s+AND lease_token = \?\s+AND lease_expires_at > UTC_TIMESTAMP\(\)/);
+  assert.match(verifier, /assert\.equal\([^\n]*affectedRows, 0/);
+  for (const mutation of ["attempt1Renew", "attempt1Retry", "attempt1Failed", "attempt1Published"]) {
+    assert.match(
+      verifier,
+      new RegExp(`const \\[(?:${mutation})\\][\\s\\S]*?WHERE id = \\?\\s+AND status = 'processing'\\s+AND lease_token = \\?\\s+AND lease_expires_at > UTC_TIMESTAMP\\(\\)`),
+    );
+  }
+  assert.match(verifier, /malformed-content/);
   assert.match(verifier, /DELETE FROM canonical_ad_import_requests/);
 });

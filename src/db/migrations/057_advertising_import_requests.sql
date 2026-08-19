@@ -2,6 +2,11 @@
 --
 -- Intake identity is immutable after creation. Workers claim eligible rows
 -- with a lease and may recover stale or transient work without changing it.
+--
+-- A worker-owned processing mutation (renew, retry, or terminal result) must
+-- compare-and-swap on id, status, lease_token, and an unexpired lease. A stale
+-- lease reclaimer is the exception: it moves an expired processing row to
+-- retryable while retaining its token; the next claim must replace that token.
 
 CREATE TABLE IF NOT EXISTS canonical_ad_import_requests (
     id BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
@@ -14,7 +19,8 @@ CREATE TABLE IF NOT EXISTS canonical_ad_import_requests (
     original_name VARCHAR(255) NULL,
     content_sha256 CHAR(64) NOT NULL,
     adapter_config JSON NOT NULL,
-    adapter_config_sha256 CHAR(64) NOT NULL,
+    adapter_config_sha256 CHAR(64)
+        GENERATED ALWAYS AS (SHA2(CAST(adapter_config AS CHAR), 256)) STORED,
     adapter_config_version VARCHAR(64) NOT NULL,
     requested_by VARCHAR(255) NULL,
     status ENUM('pending','processing','retryable','published','rejected','failed') NOT NULL DEFAULT 'pending',
@@ -25,6 +31,7 @@ CREATE TABLE IF NOT EXISTS canonical_ad_import_requests (
     requested_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
     started_at DATETIME NULL,
     lease_expires_at DATETIME NULL,
+    lease_token CHAR(36) NULL,
     next_attempt_at DATETIME NULL DEFAULT CURRENT_TIMESTAMP,
     finished_at DATETIME NULL,
     UNIQUE KEY uniq_ad_import_request (advertiser_key, source_key, platform_account_id, transport, content_sha256, adapter_config_sha256),
@@ -51,14 +58,19 @@ CREATE TABLE IF NOT EXISTS canonical_ad_import_requests (
         AND (finished_at IS NULL OR (started_at IS NOT NULL AND started_at <= finished_at))
         AND (next_attempt_at IS NULL OR requested_at <= next_attempt_at)
     ),
-    CONSTRAINT chk_ad_import_request_config_digest CHECK (adapter_config_sha256 REGEXP '^[0-9a-f]{64}$'),
+    CONSTRAINT chk_ad_import_request_content_digest CHECK (content_sha256 REGEXP '^[0-9a-f]{64}$'),
     CONSTRAINT chk_ad_import_request_config_version CHECK (CHAR_LENGTH(TRIM(adapter_config_version)) > 0),
     CONSTRAINT chk_ad_import_request_attempts CHECK (max_attempts >= 1 AND attempt_count <= max_attempts),
+    CONSTRAINT chk_ad_import_request_lease_token CHECK (
+        lease_token IS NULL
+        OR lease_token REGEXP '^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$'
+    ),
     CONSTRAINT chk_ad_import_request_status_timestamps CHECK (
         (status = 'pending'
             AND attempt_count = 0
             AND started_at IS NULL
             AND lease_expires_at IS NULL
+            AND lease_token IS NULL
             AND next_attempt_at IS NOT NULL
             AND finished_at IS NULL
             AND ingestion_run_id IS NULL
@@ -68,6 +80,7 @@ CREATE TABLE IF NOT EXISTS canonical_ad_import_requests (
             AND attempt_count >= 1
             AND started_at IS NOT NULL
             AND lease_expires_at IS NOT NULL
+            AND lease_token IS NOT NULL
             AND next_attempt_at IS NULL
             AND finished_at IS NULL
             AND error_summary IS NULL)
@@ -77,6 +90,7 @@ CREATE TABLE IF NOT EXISTS canonical_ad_import_requests (
             AND attempt_count < max_attempts
             AND started_at IS NOT NULL
             AND lease_expires_at IS NULL
+            AND lease_token IS NOT NULL
             AND next_attempt_at IS NOT NULL
             AND finished_at IS NULL
             AND error_summary IS NOT NULL
@@ -86,6 +100,7 @@ CREATE TABLE IF NOT EXISTS canonical_ad_import_requests (
             AND attempt_count >= 1
             AND started_at IS NOT NULL
             AND lease_expires_at IS NULL
+            AND lease_token IS NOT NULL
             AND next_attempt_at IS NULL
             AND finished_at IS NOT NULL
             AND (
@@ -127,11 +142,6 @@ BEGIN
             SET MESSAGE_TEXT = 'Advertising import requests must begin pending';
     END IF;
 
-    IF NEW.adapter_config_sha256 <> SHA2(CAST(NEW.adapter_config AS CHAR), 256) THEN
-        SIGNAL SQLSTATE '45000'
-            SET MESSAGE_TEXT = 'Advertising import request adapter config digest is invalid';
-    END IF;
-
     IF NOT (
         JSON_UNQUOTE(JSON_EXTRACT(NEW.adapter_config, '$.adapter_config_version')) <=> NEW.adapter_config_version
     ) THEN
@@ -160,7 +170,6 @@ BEGIN
         AND NEW.original_name <=> OLD.original_name
         AND NEW.content_sha256 <=> OLD.content_sha256
         AND NEW.adapter_config <=> OLD.adapter_config
-        AND NEW.adapter_config_sha256 <=> OLD.adapter_config_sha256
         AND NEW.adapter_config_version <=> OLD.adapter_config_version
         AND NEW.requested_by <=> OLD.requested_by
         AND NEW.requested_at <=> OLD.requested_at
@@ -185,27 +194,33 @@ BEGIN
         (OLD.status = 'pending'
             AND NEW.status = 'processing'
             AND NEW.attempt_count = 1
-            AND NEW.started_at >= OLD.next_attempt_at)
+            AND NEW.started_at >= OLD.next_attempt_at
+            AND NEW.lease_token IS NOT NULL)
         OR
         (OLD.status = 'retryable'
             AND NEW.status = 'processing'
             AND NEW.attempt_count = OLD.attempt_count + 1
-            AND NEW.started_at >= OLD.next_attempt_at)
+            AND NEW.started_at >= OLD.next_attempt_at
+            AND NOT (NEW.lease_token <=> OLD.lease_token))
         OR
         (OLD.status = 'processing'
             AND NEW.status = 'processing'
             AND NEW.attempt_count = OLD.attempt_count
             AND NEW.started_at <=> OLD.started_at
+            AND NEW.lease_token <=> OLD.lease_token
+            AND OLD.lease_expires_at > UTC_TIMESTAMP()
             AND NEW.lease_expires_at > OLD.lease_expires_at)
         OR
         (OLD.status = 'processing'
             AND NEW.status = 'retryable'
             AND NEW.attempt_count = OLD.attempt_count
+            AND NEW.lease_token <=> OLD.lease_token
             AND NEW.next_attempt_at >= OLD.started_at)
         OR
         (OLD.status = 'processing'
             AND NEW.status IN ('published','rejected','failed')
-            AND NEW.attempt_count = OLD.attempt_count)
+            AND NEW.attempt_count = OLD.attempt_count
+            AND NEW.lease_token <=> OLD.lease_token)
     ) THEN
         SIGNAL SQLSTATE '45000'
             SET MESSAGE_TEXT = 'Advertising import request lifecycle transition is invalid';
