@@ -1,7 +1,7 @@
 -- Durable, idempotent queue for protected advertising file and sheet imports.
 --
--- Intake identity is immutable after creation. Workers may only move rows from
--- pending to processing and then to one terminal state.
+-- Intake identity is immutable after creation. Workers claim eligible rows
+-- with a lease and may recover stale or transient work without changing it.
 
 CREATE TABLE IF NOT EXISTS canonical_ad_import_requests (
     id BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
@@ -14,17 +14,23 @@ CREATE TABLE IF NOT EXISTS canonical_ad_import_requests (
     original_name VARCHAR(255) NULL,
     content_sha256 CHAR(64) NOT NULL,
     adapter_config JSON NOT NULL,
+    adapter_config_sha256 CHAR(64) NOT NULL,
+    adapter_config_version VARCHAR(64) NOT NULL,
     requested_by VARCHAR(255) NULL,
-    status ENUM('pending','processing','published','rejected','failed') NOT NULL DEFAULT 'pending',
+    status ENUM('pending','processing','retryable','published','rejected','failed') NOT NULL DEFAULT 'pending',
+    attempt_count INT UNSIGNED NOT NULL DEFAULT 0,
+    max_attempts INT UNSIGNED NOT NULL DEFAULT 3,
     ingestion_run_id BIGINT NULL,
     error_summary VARCHAR(500) NULL,
     requested_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
     started_at DATETIME NULL,
+    lease_expires_at DATETIME NULL,
+    next_attempt_at DATETIME NULL DEFAULT CURRENT_TIMESTAMP,
     finished_at DATETIME NULL,
-    UNIQUE KEY uniq_ad_import_request (source_key, platform_account_id, transport, content_sha256),
-    KEY idx_ad_import_queue (status, requested_at, id),
-    KEY idx_ad_import_processing (status, started_at, id),
-    KEY idx_ad_import_source_account_status (source_key, platform_account_id, status, requested_at, id),
+    UNIQUE KEY uniq_ad_import_request (advertiser_key, source_key, platform_account_id, transport, content_sha256, adapter_config_sha256),
+    KEY idx_ad_import_queue (status, next_attempt_at, requested_at, id),
+    KEY idx_ad_import_processing (status, lease_expires_at, id),
+    KEY idx_ad_import_source_account_status (source_key, platform_account_id, status, next_attempt_at, id),
     KEY idx_ad_import_advertiser_source_account (advertiser_key, source_key, platform_account_id),
     KEY idx_ad_import_run (ingestion_run_id),
     CONSTRAINT chk_ad_import_request_transport_locator CHECK (
@@ -41,25 +47,56 @@ CREATE TABLE IF NOT EXISTS canonical_ad_import_requests (
     ),
     CONSTRAINT chk_ad_import_request_timestamps CHECK (
         (started_at IS NULL OR requested_at <= started_at)
+        AND (lease_expires_at IS NULL OR (started_at IS NOT NULL AND started_at < lease_expires_at))
         AND (finished_at IS NULL OR (started_at IS NOT NULL AND started_at <= finished_at))
+        AND (next_attempt_at IS NULL OR requested_at <= next_attempt_at)
     ),
+    CONSTRAINT chk_ad_import_request_config_digest CHECK (adapter_config_sha256 REGEXP '^[0-9a-f]{64}$'),
+    CONSTRAINT chk_ad_import_request_config_version CHECK (CHAR_LENGTH(TRIM(adapter_config_version)) > 0),
+    CONSTRAINT chk_ad_import_request_attempts CHECK (max_attempts >= 1 AND attempt_count <= max_attempts),
     CONSTRAINT chk_ad_import_request_status_timestamps CHECK (
         (status = 'pending'
+            AND attempt_count = 0
             AND started_at IS NULL
+            AND lease_expires_at IS NULL
+            AND next_attempt_at IS NOT NULL
             AND finished_at IS NULL
             AND ingestion_run_id IS NULL
             AND error_summary IS NULL)
         OR
         (status = 'processing'
+            AND attempt_count >= 1
             AND started_at IS NOT NULL
-            AND finished_at IS NULL)
+            AND lease_expires_at IS NOT NULL
+            AND next_attempt_at IS NULL
+            AND finished_at IS NULL
+            AND error_summary IS NULL)
+        OR
+        (status = 'retryable'
+            AND attempt_count >= 1
+            AND attempt_count < max_attempts
+            AND started_at IS NOT NULL
+            AND lease_expires_at IS NULL
+            AND next_attempt_at IS NOT NULL
+            AND finished_at IS NULL
+            AND error_summary IS NOT NULL
+            AND CHAR_LENGTH(TRIM(error_summary)) > 0)
         OR
         (status IN ('published','rejected','failed')
+            AND attempt_count >= 1
             AND started_at IS NOT NULL
-            AND finished_at IS NOT NULL)
-    ),
-    CONSTRAINT chk_ad_import_request_published_run CHECK (
-        status <> 'published' OR (ingestion_run_id IS NOT NULL AND error_summary IS NULL)
+            AND lease_expires_at IS NULL
+            AND next_attempt_at IS NULL
+            AND finished_at IS NOT NULL
+            AND (
+                (status = 'published'
+                    AND ingestion_run_id IS NOT NULL
+                    AND error_summary IS NULL)
+                OR
+                (status IN ('rejected','failed')
+                    AND error_summary IS NOT NULL
+                    AND CHAR_LENGTH(TRIM(error_summary)) > 0)
+            ))
     ),
     CONSTRAINT fk_ad_import_request_source_account
         FOREIGN KEY (source_key, platform_account_id)
@@ -77,17 +114,29 @@ CREATE TABLE IF NOT EXISTS canonical_ad_import_requests (
 
 -- @migration-statement-break
 
-DROP TRIGGER IF EXISTS trg_ad_import_request_lifecycle_insert;
+DROP TRIGGER IF EXISTS trg_ad_import_request_intake_insert;
 
 -- @migration-statement-break
 
-CREATE TRIGGER trg_ad_import_request_lifecycle_insert
+CREATE TRIGGER trg_ad_import_request_intake_insert
 BEFORE INSERT ON canonical_ad_import_requests
 FOR EACH ROW
 BEGIN
     IF NEW.status <> 'pending' THEN
         SIGNAL SQLSTATE '45000'
             SET MESSAGE_TEXT = 'Advertising import requests must begin pending';
+    END IF;
+
+    IF NEW.adapter_config_sha256 <> SHA2(CAST(NEW.adapter_config AS CHAR), 256) THEN
+        SIGNAL SQLSTATE '45000'
+            SET MESSAGE_TEXT = 'Advertising import request adapter config digest is invalid';
+    END IF;
+
+    IF NOT (
+        JSON_UNQUOTE(JSON_EXTRACT(NEW.adapter_config, '$.adapter_config_version')) <=> NEW.adapter_config_version
+    ) THEN
+        SIGNAL SQLSTATE '45000'
+            SET MESSAGE_TEXT = 'Advertising import request adapter config version is invalid';
     END IF;
 END;
 
@@ -111,8 +160,11 @@ BEGIN
         AND NEW.original_name <=> OLD.original_name
         AND NEW.content_sha256 <=> OLD.content_sha256
         AND NEW.adapter_config <=> OLD.adapter_config
+        AND NEW.adapter_config_sha256 <=> OLD.adapter_config_sha256
+        AND NEW.adapter_config_version <=> OLD.adapter_config_version
         AND NEW.requested_by <=> OLD.requested_by
         AND NEW.requested_at <=> OLD.requested_at
+        AND NEW.max_attempts <=> OLD.max_attempts
     ) THEN
         SIGNAL SQLSTATE '45000'
             SET MESSAGE_TEXT = 'Advertising import request identity is immutable';
@@ -130,10 +182,46 @@ BEFORE UPDATE ON canonical_ad_import_requests
 FOR EACH ROW
 BEGIN
     IF NOT (
-        (OLD.status = 'pending' AND NEW.status = 'processing')
-        OR (OLD.status = 'processing' AND NEW.status IN ('published','rejected','failed'))
+        (OLD.status = 'pending'
+            AND NEW.status = 'processing'
+            AND NEW.attempt_count = 1
+            AND NEW.started_at >= OLD.next_attempt_at)
+        OR
+        (OLD.status = 'retryable'
+            AND NEW.status = 'processing'
+            AND NEW.attempt_count = OLD.attempt_count + 1
+            AND NEW.started_at >= OLD.next_attempt_at)
+        OR
+        (OLD.status = 'processing'
+            AND NEW.status = 'processing'
+            AND NEW.attempt_count = OLD.attempt_count
+            AND NEW.started_at <=> OLD.started_at
+            AND NEW.lease_expires_at > OLD.lease_expires_at)
+        OR
+        (OLD.status = 'processing'
+            AND NEW.status = 'retryable'
+            AND NEW.attempt_count = OLD.attempt_count
+            AND NEW.next_attempt_at >= OLD.started_at)
+        OR
+        (OLD.status = 'processing'
+            AND NEW.status IN ('published','rejected','failed')
+            AND NEW.attempt_count = OLD.attempt_count)
     ) THEN
         SIGNAL SQLSTATE '45000'
             SET MESSAGE_TEXT = 'Advertising import request lifecycle transition is invalid';
     END IF;
+END;
+
+-- @migration-statement-break
+
+DROP TRIGGER IF EXISTS trg_ad_import_request_immutable_delete;
+
+-- @migration-statement-break
+
+CREATE TRIGGER trg_ad_import_request_immutable_delete
+BEFORE DELETE ON canonical_ad_import_requests
+FOR EACH ROW
+BEGIN
+    SIGNAL SQLSTATE '45000'
+        SET MESSAGE_TEXT = 'Advertising import requests are immutable';
 END;

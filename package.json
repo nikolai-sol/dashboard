@@ -11,6 +11,7 @@
     "test:python": "node scripts/run-python-tests.mjs",
     "test:migration:abbott-integrity": "bash scripts/run-abbott-release-source-integrity-mysql-test.sh",
     "test:migration:advertising-ingestion": "bash scripts/run-advertising-ingestion-foundation-mysql-test.sh",
+    "test:migration:advertising-import-requests": "bash scripts/run-advertising-import-requests-mysql-test.sh",
     "lint": "eslint .",
     "typecheck": "tsc --noEmit",
     "security:public-assets": "tsx scripts/assert-no-private-public-assets.ts",
