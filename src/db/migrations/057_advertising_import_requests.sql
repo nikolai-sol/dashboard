@@ -5,8 +5,8 @@
 --
 -- A worker-owned processing mutation (renew, retry, or terminal result) must
 -- compare-and-swap on id, status, lease_token, and an unexpired lease. A stale
--- lease reclaimer is the exception: it moves an expired processing row to
--- retryable while retaining its token; the next claim must replace that token.
+-- lease reclaimer is the exception: it reclaims an expired processing row as
+-- a new processing claim with a rotated token and a fresh lease.
 
 CREATE TABLE IF NOT EXISTS canonical_ad_import_requests (
     id BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
@@ -58,7 +58,7 @@ CREATE TABLE IF NOT EXISTS canonical_ad_import_requests (
         AND (finished_at IS NULL OR (started_at IS NOT NULL AND started_at <= finished_at))
         AND (next_attempt_at IS NULL OR requested_at <= next_attempt_at)
     ),
-    CONSTRAINT chk_ad_import_request_content_digest CHECK (content_sha256 REGEXP '^[0-9a-f]{64}$'),
+    CONSTRAINT chk_ad_import_request_content_digest CHECK (BINARY content_sha256 REGEXP '^[0-9a-f]{64}$'),
     CONSTRAINT chk_ad_import_request_config_version CHECK (CHAR_LENGTH(TRIM(adapter_config_version)) > 0),
     CONSTRAINT chk_ad_import_request_attempts CHECK (max_attempts >= 1 AND attempt_count <= max_attempts),
     CONSTRAINT chk_ad_import_request_lease_token CHECK (
@@ -212,15 +212,30 @@ BEGIN
             AND NEW.lease_expires_at > OLD.lease_expires_at)
         OR
         (OLD.status = 'processing'
+            AND NEW.status = 'processing'
+            AND OLD.lease_expires_at <= UTC_TIMESTAMP()
+            AND (
+                (OLD.attempt_count < OLD.max_attempts
+                    AND NEW.attempt_count = OLD.attempt_count + 1)
+                OR (OLD.attempt_count = OLD.max_attempts
+                    AND NEW.attempt_count = OLD.attempt_count)
+            )
+            AND NEW.started_at >= OLD.started_at
+            AND NOT (NEW.lease_token <=> OLD.lease_token)
+            AND NEW.lease_expires_at > UTC_TIMESTAMP())
+        OR
+        (OLD.status = 'processing'
             AND NEW.status = 'retryable'
             AND NEW.attempt_count = OLD.attempt_count
             AND NEW.lease_token <=> OLD.lease_token
+            AND OLD.lease_expires_at > UTC_TIMESTAMP()
             AND NEW.next_attempt_at >= OLD.started_at)
         OR
         (OLD.status = 'processing'
             AND NEW.status IN ('published','rejected','failed')
             AND NEW.attempt_count = OLD.attempt_count
-            AND NEW.lease_token <=> OLD.lease_token)
+            AND NEW.lease_token <=> OLD.lease_token
+            AND OLD.lease_expires_at > UTC_TIMESTAMP())
     ) THEN
         SIGNAL SQLSTATE '45000'
             SET MESSAGE_TEXT = 'Advertising import request lifecycle transition is invalid';

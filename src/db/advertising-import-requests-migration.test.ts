@@ -69,7 +69,7 @@ test("import request artifact hash is canonical lowercase SHA-256", () => {
   const request = tableDefinition("canonical_ad_import_requests");
   assert.match(
     request,
-    /CONSTRAINT chk_ad_import_request_content_digest CHECK \(content_sha256 REGEXP '\^\[0-9a-f\]\{64\}\$'\)/,
+    /CONSTRAINT chk_ad_import_request_content_digest CHECK \(BINARY content_sha256 REGEXP '\^\[0-9a-f\]\{64\}\$'\)/,
   );
 });
 
@@ -148,6 +148,24 @@ test("import request identity is immutable and status only moves through its lif
   assert.match(sql, /CREATE TRIGGER trg_ad_import_request_immutable_delete[\s\S]*?BEFORE DELETE ON canonical_ad_import_requests[\s\S]*?SIGNAL SQLSTATE '45000'/);
 });
 
+test("processing exits require an active lease", () => {
+  assert.match(
+    sql,
+    /OLD\.status = 'processing'[\s\S]*?NEW\.status = 'retryable'[\s\S]*?NEW\.lease_token <=> OLD\.lease_token[\s\S]*?OLD\.lease_expires_at > UTC_TIMESTAMP\(\)/,
+  );
+  assert.match(
+    sql,
+    /OLD\.status = 'processing'[\s\S]*?NEW\.status IN \('published','rejected','failed'\)[\s\S]*?NEW\.lease_token <=> OLD\.lease_token[\s\S]*?OLD\.lease_expires_at > UTC_TIMESTAMP\(\)/,
+  );
+});
+
+test("expired processing claims can be handed off at the retry budget", () => {
+  assert.match(
+    sql,
+    /OLD\.status = 'processing'[\s\S]*?OLD\.lease_expires_at <= UTC_TIMESTAMP\(\)[\s\S]*?OLD\.attempt_count < OLD\.max_attempts[\s\S]*?NEW\.attempt_count = OLD\.attempt_count \+ 1[\s\S]*?OLD\.attempt_count = OLD\.max_attempts[\s\S]*?NEW\.attempt_count = OLD\.attempt_count[\s\S]*?NOT \(NEW\.lease_token <=> OLD\.lease_token\)/,
+  );
+});
+
 test("import request migration can replay its trigger definitions", () => {
   assert.equal((sql.match(/DROP TRIGGER IF EXISTS trg_ad_import_request_/g) ?? []).length, 4);
   assert.equal((sql.match(/CREATE TRIGGER trg_ad_import_request_/g) ?? []).length, 4);
@@ -173,5 +191,9 @@ test("MySQL verifier exercises generated identity, fenced lease races, and diges
     );
   }
   assert.match(verifier, /malformed-content/);
+  assert.match(verifier, /contentSha256\.toUpperCase\(\)/);
+  assert.match(verifier, /expiredRetry/);
+  assert.match(verifier, /expiredFailed/);
+  assert.match(verifier, /expiredPublished/);
   assert.match(verifier, /DELETE FROM canonical_ad_import_requests/);
 });

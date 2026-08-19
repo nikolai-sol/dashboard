@@ -110,6 +110,7 @@ async function main() {
     `, [requestId]);
     assert.equal(digestRows[0].generated_digest, digestRows[0].mysql_digest);
     await expectReject(() => insertRequest(connection, "v3", 2, "malformed-content"));
+    await expectReject(() => insertRequest(connection, "v3", 2, contentSha256.toUpperCase()));
     await expectReject(() => connection.execute(`
       UPDATE canonical_ad_import_requests
       SET adapter_config = JSON_OBJECT('adapter_config_version', 'v3', 'identity_rule', 'sheet_name_v2')
@@ -131,17 +132,39 @@ async function main() {
         AND next_attempt_at <= UTC_TIMESTAMP()
     `, [attempt1LeaseToken, requestId]);
     assert.equal(attempt1Claim.affectedRows, 1);
-    const [recovery] = await connection.query<mysql.ResultSetHeader>(`
+
+    const expiredRetry = () => connection.query(`
       UPDATE canonical_ad_import_requests
       SET status = 'retryable',
           lease_expires_at = NULL,
           next_attempt_at = UTC_TIMESTAMP(),
           error_summary = 'lease expired'
       WHERE id = ?
-        AND status = 'processing'
-        AND lease_expires_at <= UTC_TIMESTAMP()
     `, [requestId]);
-    assert.equal(recovery.affectedRows, 1, "an expired lease must become retryable");
+    await expectReject(expiredRetry);
+
+    const expiredFailed = () => connection.query(`
+      UPDATE canonical_ad_import_requests
+      SET status = 'failed',
+          lease_expires_at = NULL,
+          next_attempt_at = NULL,
+          finished_at = UTC_TIMESTAMP(),
+          error_summary = 'expired lease failure'
+      WHERE id = ?
+    `, [requestId]);
+    await expectReject(expiredFailed);
+
+    const expiredPublished = () => connection.query(`
+      UPDATE canonical_ad_import_requests
+      SET status = 'published',
+          ingestion_run_id = 1,
+          lease_expires_at = NULL,
+          next_attempt_at = NULL,
+          finished_at = UTC_TIMESTAMP(),
+          error_summary = NULL
+      WHERE id = ?
+    `, [requestId]);
+    await expectReject(expiredPublished);
 
     const [attempt2Claim] = await connection.query<mysql.ResultSetHeader>(`
       UPDATE canonical_ad_import_requests
@@ -153,10 +176,10 @@ async function main() {
           next_attempt_at = NULL,
           error_summary = NULL
       WHERE id = ?
-        AND status = 'retryable'
-        AND next_attempt_at <= UTC_TIMESTAMP()
+        AND status = 'processing'
+        AND lease_expires_at <= UTC_TIMESTAMP()
     `, [attempt2LeaseToken, requestId]);
-    assert.equal(attempt2Claim.affectedRows, 1);
+    assert.equal(attempt2Claim.affectedRows, 1, "an expired lease can be reclaimed with a fresh token");
 
     const [attempt1Renew] = await connection.query<mysql.ResultSetHeader>(`
       UPDATE canonical_ad_import_requests
