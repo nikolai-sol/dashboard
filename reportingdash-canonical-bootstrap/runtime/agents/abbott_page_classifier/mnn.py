@@ -159,7 +159,11 @@ def _split_mnn_values(
         if normalized.key in _PLACEHOLDER_KEYS:
             rejected.append((normalized.label, "MNN_PLACEHOLDER"))
             continue
-        if len(normalized.label) > 500 or not _header_key(normalized.label):
+        if (
+            len(normalized.label) > 500
+            or len(normalized.key) > 255
+            or not _header_key(normalized.label)
+        ):
             rejected.append((normalized.label, "MNN_INVALID"))
             continue
         labels.append(normalized.label)
