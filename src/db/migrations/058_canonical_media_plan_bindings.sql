@@ -86,6 +86,28 @@ SET @sql := IF(
 );
 PREPARE stmt FROM @sql; EXECUTE stmt; DEALLOCATE PREPARE stmt;
 
+SET @has_binding_unique := (
+  SELECT COUNT(*) FROM information_schema.STATISTICS
+  WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'media_plan_bindings'
+    AND INDEX_NAME = 'unique_binding'
+);
+SET @binding_unique_period_columns := (
+  SELECT COUNT(*) FROM information_schema.STATISTICS
+  WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'media_plan_bindings'
+    AND INDEX_NAME = 'unique_binding'
+    AND COLUMN_NAME IN ('canonical_campaign_id', 'effective_from', 'effective_to')
+);
+SET @sql := IF(
+  @has_binding_unique = 0,
+  'ALTER TABLE media_plan_bindings ADD UNIQUE KEY unique_binding (dashboard_id, line_key(191), canonical_campaign_id, effective_from, effective_to)',
+  IF(
+    @binding_unique_period_columns <> 3,
+    'ALTER TABLE media_plan_bindings DROP INDEX unique_binding, ADD UNIQUE KEY unique_binding (dashboard_id, line_key(191), canonical_campaign_id, effective_from, effective_to)',
+    'SELECT ''media_plan_bindings.unique_binding already effective-dated'' AS info'
+  )
+);
+PREPARE stmt FROM @sql; EXECUTE stmt; DEALLOCATE PREPARE stmt;
+
 SET @has_binding_canonical_campaign_fk := (
   SELECT COUNT(*) FROM information_schema.REFERENTIAL_CONSTRAINTS
   WHERE CONSTRAINT_SCHEMA = DATABASE()

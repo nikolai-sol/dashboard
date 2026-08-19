@@ -26,8 +26,13 @@ export type DashboardSourceInput = {
 export type MediaPlanBindingInput = {
   line_key?: string;
   channel: string;
-  source_key: string;
-  platform_campaign_id: string;
+  source_key?: string;
+  platform_campaign_id?: string;
+  canonical_campaign_id?: number | null;
+  platform_account_id?: string | null;
+  effective_from?: string | null;
+  effective_to?: string | null;
+  created_by?: string | null;
 };
 
 export type DashboardUpsertPayload = {
@@ -247,11 +252,26 @@ function normalizeMediaPlanBinding(raw: unknown): MediaPlanBindingInput | null {
   const input = (raw ?? {}) as Partial<MediaPlanBindingInput>;
   const channel = String(input.channel ?? "").trim();
   const lineKey = String(input.line_key ?? channel).trim();
+  if (!channel || !lineKey) return null;
+
+  const canonicalCampaignId = Number(input.canonical_campaign_id);
+  if (Number.isSafeInteger(canonicalCampaignId) && canonicalCampaignId > 0) {
+    return {
+      line_key: lineKey,
+      channel,
+      canonical_campaign_id: canonicalCampaignId,
+      effective_from: input.effective_from === null
+        ? null
+        : String(input.effective_from ?? "").trim() || null,
+      effective_to: input.effective_to === null
+        ? null
+        : String(input.effective_to ?? "").trim() || null,
+    };
+  }
+
   const sourceKey = String(input.source_key ?? "").trim().toLowerCase();
   const campaignId = String(input.platform_campaign_id ?? "").trim();
-  if (!channel || !lineKey || !sourceKey || !campaignId) {
-    return null;
-  }
+  if (!sourceKey || !campaignId) return null;
   return {
     line_key: lineKey,
     channel,
@@ -553,25 +573,6 @@ export async function insertSourcesWithFilters(
   }
 }
 
-export async function replaceMediaPlanBindings(
-  conn: PoolConnection,
-  dashboardId: number,
-  bindings: MediaPlanBindingInput[],
-): Promise<void> {
-  await conn.execute("DELETE FROM media_plan_bindings WHERE dashboard_id = ?", [dashboardId]);
-  if (!bindings.length) {
-    return;
-  }
-
-  for (const binding of bindings) {
-    await conn.execute(
-      `INSERT INTO media_plan_bindings (dashboard_id, line_key, channel, source_key, platform_campaign_id)
-       VALUES (?, ?, ?, ?, ?)`,
-      [dashboardId, binding.line_key ?? binding.channel, binding.channel, binding.source_key, binding.platform_campaign_id],
-    );
-  }
-}
-
 export async function syncDashboardMediaPlanStorage(
   conn: PoolConnection,
   dashboardId: number,
@@ -614,7 +615,9 @@ export async function loadDashboardWithSources(
     [dashboardId],
   );
   const [bindingRows] = await conn.execute<RowDataPacket[]>(
-    `SELECT line_key, channel, source_key, platform_campaign_id
+    `SELECT line_key, channel, source_key, canonical_campaign_id,
+            platform_account_id, platform_campaign_id,
+            effective_from, effective_to, created_by
      FROM media_plan_bindings
      WHERE dashboard_id = ?
      ORDER BY COALESCE(line_key, channel), source_key, platform_campaign_id`,
@@ -689,6 +692,15 @@ export async function loadDashboardWithSources(
       channel: String(row.channel ?? ""),
       source_key: String(row.source_key ?? ""),
       platform_campaign_id: String(row.platform_campaign_id ?? ""),
+      canonical_campaign_id: row.canonical_campaign_id === null
+        ? null
+        : Number(row.canonical_campaign_id),
+      platform_account_id: row.platform_account_id === null
+        ? null
+        : String(row.platform_account_id),
+      effective_from: row.effective_from === null ? null : String(row.effective_from).slice(0, 10),
+      effective_to: row.effective_to === null ? null : String(row.effective_to).slice(0, 10),
+      created_by: row.created_by === null ? null : String(row.created_by),
     })),
   };
 }

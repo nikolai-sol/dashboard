@@ -44,6 +44,14 @@ test("every additive column, index, and foreign key is replay guarded", () => {
     );
   }
   assert.match(sql, /information_schema\.STATISTICS[\s\S]*?idx_media_plan_binding_canonical_period/i);
+  assert.match(
+    sql,
+    /information_schema\.STATISTICS[\s\S]*?INDEX_NAME = 'unique_binding'[\s\S]*?COLUMN_NAME IN \('canonical_campaign_id', 'effective_from', 'effective_to'\)/i,
+  );
+  assert.match(
+    sql,
+    /ADD UNIQUE KEY unique_binding \(dashboard_id, line_key\(191\), canonical_campaign_id, effective_from, effective_to\)/i,
+  );
   assert.match(sql, /information_schema\.REFERENTIAL_CONSTRAINTS[\s\S]*?fk_media_plan_binding_canonical_campaign/i);
   assert.doesNotMatch(sql, /ALTER TABLE media_plan_bindings ADD COLUMN(?![\s\S]*?PREPARE)/i);
 });

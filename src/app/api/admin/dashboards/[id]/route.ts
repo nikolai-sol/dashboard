@@ -1,16 +1,17 @@
 import { NextResponse } from "next/server";
 import type { ResultSetHeader, RowDataPacket } from "mysql2/promise";
 import pool from "@/lib/db";
+import { ADMIN_SESSION_COOKIE, parseCookieValue, verifyAdminSession } from "@/lib/access-auth";
 import {
   insertSourcesWithFilters,
   loadDashboardWithSources,
   normalizeDashboardPayload,
-  replaceMediaPlanBindings,
   summarizeDashboardPayloadForLog,
   syncDashboardMediaPlanStorage,
   validateDashboardPayload,
 } from "@/lib/admin-dashboards";
 import { getDefaultKpiCards, getDefaultSectionOrder } from "@/lib/dashboard-presets";
+import { BindingValidationError, replaceEffectiveBindings } from "@/lib/media-plan-binding-store";
 
 function parseConfig(value: unknown): Record<string, unknown> {
   if (!value) return {};
@@ -62,6 +63,11 @@ export async function PUT(
   request: Request,
   context: { params: Promise<{ id: string }> | { id: string } },
 ) {
+  const actor = verifyAdminSession(
+    parseCookieValue(request.headers.get("cookie"), ADMIN_SESSION_COOKIE),
+  )?.email ?? null;
+  if (!actor) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+
   const { id } = await Promise.resolve(context.params);
   const dashboardId = Number(id);
   if (!Number.isFinite(dashboardId)) {
@@ -144,7 +150,24 @@ export async function PUT(
 
     await conn.execute("DELETE FROM dashboard_sources WHERE dashboard_id = ?", [dashboardId]);
     await insertSourcesWithFilters(conn, dashboardId, payload.sources);
-    await replaceMediaPlanBindings(conn, dashboardId, payload.media_plan_bindings);
+    if (["abbott_bi", "zaruku_bi"].includes(payload.dashboard_type)) {
+      if (payload.media_plan_bindings.length) {
+        throw new BindingValidationError("advertising bindings are not supported for this dashboard");
+      }
+    } else {
+      await replaceEffectiveBindings(
+        conn,
+        dashboardId,
+        actor,
+        payload.media_plan_bindings.map((binding) => ({
+          line_key: String(binding.line_key ?? binding.channel),
+          channel: binding.channel,
+          canonical_campaign_id: Number(binding.canonical_campaign_id),
+          effective_from: binding.effective_from ?? null,
+          effective_to: binding.effective_to ?? null,
+        })),
+      );
+    }
     await syncDashboardMediaPlanStorage(conn, dashboardId, payload.sources);
     await conn.commit();
     return NextResponse.json({
@@ -170,7 +193,7 @@ export async function PUT(
         error: "Failed to update dashboard",
         details: parts.join(" · "),
       },
-      { status: 500 },
+      { status: error instanceof BindingValidationError ? 400 : 500 },
     );
   } finally {
     conn.release();

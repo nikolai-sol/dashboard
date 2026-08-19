@@ -1,17 +1,23 @@
 import { NextResponse } from "next/server";
 import type { ResultSetHeader } from "mysql2/promise";
 import pool from "@/lib/db";
+import { ADMIN_SESSION_COOKIE, parseCookieValue, verifyAdminSession } from "@/lib/access-auth";
 import {
   insertSourcesWithFilters,
   loadDashboardWithSources,
-  replaceMediaPlanBindings,
   syncDashboardMediaPlanStorage,
 } from "@/lib/admin-dashboards";
+import { BindingValidationError, replaceEffectiveBindings } from "@/lib/media-plan-binding-store";
 
 export async function POST(
   request: Request,
   context: { params: Promise<{ id: string }> | { id: string } },
 ) {
+  const actor = verifyAdminSession(
+    parseCookieValue(request.headers.get("cookie"), ADMIN_SESSION_COOKIE),
+  )?.email ?? null;
+  if (!actor) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+
   const { id } = await Promise.resolve(context.params);
   const sourceDashboardId = Number(id);
   if (!Number.isFinite(sourceDashboardId)) {
@@ -60,7 +66,24 @@ export async function POST(
         filters: source.filters,
       })),
     );
-    await replaceMediaPlanBindings(conn, insertResult.insertId, original.media_plan_bindings);
+    if (["abbott_bi", "zaruku_bi"].includes(original.dashboard_type)) {
+      if (original.media_plan_bindings.length) {
+        throw new BindingValidationError("advertising bindings are not supported for this dashboard");
+      }
+    } else {
+      await replaceEffectiveBindings(
+        conn,
+        insertResult.insertId,
+        actor,
+        original.media_plan_bindings.map((binding) => ({
+          line_key: String(binding.line_key ?? binding.channel),
+          channel: binding.channel,
+          canonical_campaign_id: Number(binding.canonical_campaign_id),
+          effective_from: binding.effective_from ?? null,
+          effective_to: binding.effective_to ?? null,
+        })),
+      );
+    }
     await syncDashboardMediaPlanStorage(
       conn,
       insertResult.insertId,
@@ -84,7 +107,7 @@ export async function POST(
     await conn.rollback();
     return NextResponse.json(
       { error: "Failed to clone dashboard", details: String(error) },
-      { status: 500 },
+      { status: error instanceof BindingValidationError ? 400 : 500 },
     );
   } finally {
     conn.release();
