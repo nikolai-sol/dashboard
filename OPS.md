@@ -189,6 +189,36 @@ cd dashboard-next
 bash scripts/rollback-release.sh /var/www/dashboard-backups/<release-id>-previous
 ```
 
+## Advertising canonical read-model gate
+
+The advertising dashboard runtime must read actuals from canonical MySQL only. Before enabling
+`AD_CANONICAL_READ_V2=1`, run the read-only comparison after migrations, import publication, and
+binding preflight are complete:
+
+```bash
+cd /var/www/dashboard
+npm run compare:advertising-read-model -- --from 2026-07-01 --to 2026-09-15
+```
+
+The default run checks Gidrofuril first and then every active advertising dashboard. A focused run is:
+
+```bash
+npm run compare:advertising-read-model -- --dashboard gidrofuril --from 2026-07-01 --to 2026-09-15
+```
+
+The JSON result is `ready` only when all plan, period fact, line/day fact, and dashboard/day metrics
+match and no canonical campaign with facts is unbound. Each mismatch includes dashboard, line key,
+date, metric, old/new values, and delta. Unbound campaign identity and account are reported separately.
+The command performs no source API call, migration, write, feature-flag change, or deployment.
+
+Cutover checklist:
+
+1. Confirm import requests and canonical publications are successful for the requested dates.
+2. Resolve binding diagnostics: no legacy binding, unbound campaign, or missing due coverage.
+3. Archive the comparison JSON with `status: ready`.
+4. Enable `AD_CANONICAL_READ_V2=1`, restart the app, and smoke-check screen plus Excel export.
+5. Roll back by restoring the prior environment value and restarting the app if smoke differs.
+
 ## SSL
 
 Домен:

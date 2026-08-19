@@ -1380,6 +1380,7 @@ async function buildPlanVsFactRowsByChannel(
     const cpaFact = totalConversions > 0 ? totalSpend / totalConversions : 0;
 
     return {
+      line_key: group.line_key || group.channel,
       channel: group.channel,
       instrument: group.instrument,
       format: group.format,
@@ -1522,6 +1523,7 @@ async function buildChannelTimeseries(
       });
 
       return Array.from(byDate.entries()).map(([date, item]) => ({
+        line_key: group.line_key || group.channel,
         date,
         channel: group.channel,
         instrument: group.instrument,
@@ -2742,6 +2744,7 @@ function buildCanonicalPlanVsFactRows(
     const conversionsPlan = asNumber(group.conversions_plan);
 
     return {
+      line_key: group.line_key || group.channel,
       channel: group.channel,
       instrument: group.instrument,
       format: group.format,
@@ -2786,6 +2789,7 @@ function buildCanonicalChannelTimeseries(
     const group = groups.get(row.lineKey);
     if (!group) return [];
     return [{
+      line_key: group.line_key || group.channel,
       date: row.date,
       channel: group.channel,
       instrument: group.instrument,

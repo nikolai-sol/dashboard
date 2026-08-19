@@ -166,6 +166,7 @@ export interface TimeSeriesPoint {
 }
 
 export interface PlanVsFactItem {
+  line_key?: string;
   channel: string;
   instrument: string;
   format: string;
@@ -1435,6 +1436,7 @@ export interface DashboardData {
   };
   // optional channel timeseries for future "by channel" view
   channel_timeseries?: Array<{
+    line_key?: string;
     date: string;
     channel: string;
     instrument?: string;
