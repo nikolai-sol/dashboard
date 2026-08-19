@@ -28,6 +28,14 @@ test("bindings use canonical campaign identity and effective periods", () => {
     sql,
     /FOREIGN KEY \(canonical_campaign_id\)\s+REFERENCES canonical_source_campaigns \(id\)/,
   );
+  assert.match(
+    sql,
+    /SELECT COLUMN_TYPE FROM information_schema\.COLUMNS[\s\S]*?TABLE_NAME = 'canonical_source_campaigns'[\s\S]*?COLUMN_NAME = 'id'/,
+  );
+  assert.match(
+    sql,
+    /ALTER TABLE media_plan_bindings MODIFY COLUMN canonical_campaign_id[\s\S]*?@canonical_campaign_id_type/,
+  );
 });
 
 test("every additive column, index, and foreign key is replay guarded", () => {

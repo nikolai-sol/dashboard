@@ -6,10 +6,32 @@ SET @has_binding_canonical_campaign := (
   WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'media_plan_bindings'
     AND COLUMN_NAME = 'canonical_campaign_id'
 );
+SET @canonical_campaign_id_type := (
+  SELECT COLUMN_TYPE FROM information_schema.COLUMNS
+  WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'canonical_source_campaigns'
+    AND COLUMN_NAME = 'id'
+);
+SET @binding_canonical_campaign_id_type := (
+  SELECT COLUMN_TYPE FROM information_schema.COLUMNS
+  WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'media_plan_bindings'
+    AND COLUMN_NAME = 'canonical_campaign_id'
+);
 SET @sql := IF(
   @has_binding_canonical_campaign = 0,
-  'ALTER TABLE media_plan_bindings ADD COLUMN canonical_campaign_id BIGINT UNSIGNED NULL AFTER source_key',
-  'SELECT ''media_plan_bindings.canonical_campaign_id already present'' AS info'
+  CONCAT(
+    'ALTER TABLE media_plan_bindings ADD COLUMN canonical_campaign_id ',
+    @canonical_campaign_id_type,
+    ' NULL AFTER source_key'
+  ),
+  IF(
+    @binding_canonical_campaign_id_type <> @canonical_campaign_id_type,
+    CONCAT(
+      'ALTER TABLE media_plan_bindings MODIFY COLUMN canonical_campaign_id ',
+      @canonical_campaign_id_type,
+      ' NULL'
+    ),
+    'SELECT ''media_plan_bindings.canonical_campaign_id already matches canonical_source_campaigns.id'' AS info'
+  )
 );
 PREPARE stmt FROM @sql; EXECUTE stmt; DEALLOCATE PREPARE stmt;
 
