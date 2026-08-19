@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
+import { Save } from "lucide-react";
 import type {
   SourceAccountCollectionRow,
   SourceAccountCollectionSettingInput,
@@ -52,6 +53,18 @@ function formatDateTime(value: string | null): string {
     return value;
   }
   return date.toLocaleString();
+}
+
+function healthTone(status: SourceAccountCollectionRow["health_status"]): string {
+  if (status === "OK") return "bg-emerald-100 text-emerald-800";
+  if (status === "WARN") return "bg-amber-100 text-amber-800";
+  if (status === "CRITICAL") return "bg-rose-100 text-rose-800";
+  if (status === "DISABLED") return "bg-slate-200 text-slate-700";
+  return "bg-slate-100 text-slate-500";
+}
+
+function discoveryLabel(value: string): string {
+  return value.replaceAll("_", " ");
 }
 
 type EditableRow = SourceAccountCollectionRow;
@@ -175,9 +188,8 @@ export default function SourceAccountCollectionSettings() {
         <div>
           <h1 className="text-xl font-semibold text-slate-900">Collection</h1>
           <p className="mt-2 max-w-3xl text-sm text-slate-600">
-            Manage per-account collection behavior. Cron enabled only affects scheduled runs; nothing is enabled
-            automatically. Yandex Metrika currently uses collection mode, while other sources only use active and cron
-            toggles.
+            Manage per-account collection behavior. Newly discovered advertising accounts start active and can be
+            disabled here. Yandex Metrika keeps its separate collection modes.
           </p>
           <p className="mt-2 max-w-3xl text-sm text-slate-600">
             For Yandex Metrika we mark three levels: 1) Ads only, 2) Abbott-level SEO, 3) Full SEO (large
@@ -188,8 +200,9 @@ export default function SourceAccountCollectionSettings() {
           type="button"
           onClick={saveRows}
           disabled={saving}
-          className="rounded-lg bg-slate-900 px-4 py-2 text-sm font-medium text-white disabled:cursor-not-allowed disabled:opacity-60"
+          className="inline-flex items-center gap-2 rounded-lg bg-slate-900 px-4 py-2 text-sm font-medium text-white disabled:cursor-not-allowed disabled:opacity-60"
         >
+          <Save aria-hidden="true" className="h-4 w-4" />
           {saving ? "Saving..." : "Save changes"}
         </button>
       </div>
@@ -233,6 +246,9 @@ export default function SourceAccountCollectionSettings() {
               <th className="px-3 py-3 font-medium">Active</th>
               <th className="px-3 py-3 font-medium">Cron enabled</th>
               <th className="px-3 py-3 font-medium">Collection mode</th>
+              <th className="px-3 py-3 font-medium">Discovery</th>
+              <th className="px-3 py-3 font-medium">Health</th>
+              <th className="px-3 py-3 font-medium">Coverage</th>
               <th className="px-3 py-3 font-medium">Last run</th>
               <th className="px-3 py-3 font-medium">Latest data date</th>
             </tr>
@@ -310,6 +326,43 @@ export default function SourceAccountCollectionSettings() {
                         </p>
                       ) : null}
                     </div>
+                  ) : (
+                    <span className="text-slate-400">—</span>
+                  )}
+                </td>
+                <td className="px-3 py-3 text-xs text-slate-700">
+                  {discoveryLabel(row.discovery_mode)}
+                </td>
+                <td className="px-3 py-3">
+                  <span
+                    className={`inline-flex rounded-full px-2 py-0.5 text-xs font-semibold ${healthTone(row.health_status)}`}
+                  >
+                    {row.health_status ?? "N/A"}
+                  </span>
+                  {row.health_reason ? <div className="mt-1 text-xs text-slate-500">{row.health_reason}</div> : null}
+                </td>
+                <td className="min-w-[230px] px-3 py-3">
+                  {row.latest_due_date ? (
+                    <>
+                      <div className="text-xs text-slate-700">
+                        Due <span className="font-medium text-slate-900">{row.latest_due_date}</span>
+                      </div>
+                      <div className="text-xs text-slate-700">
+                        Published <span className="font-medium text-slate-900">{row.latest_published_date ?? "—"}</span>
+                      </div>
+                      <details className="mt-1 text-xs text-slate-600">
+                        <summary className="cursor-pointer select-none font-medium text-slate-700">Details</summary>
+                        <div className="mt-1 space-y-1">
+                          <div>State: {row.coverage_state ?? "missing"}</div>
+                          <div>
+                            Rows: {row.rows_received} received, {row.rows_rejected} rejected, {row.rows_published} published
+                          </div>
+                          <div>Validation errors: {row.validation_error_count}</div>
+                          <div>Unbound campaigns: {row.unbound_campaign_count}</div>
+                          {row.missing_dates.length > 0 ? <div>Missing: {row.missing_dates.join(", ")}</div> : null}
+                        </div>
+                      </details>
+                    </>
                   ) : (
                     <span className="text-slate-400">—</span>
                   )}
