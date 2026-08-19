@@ -59,7 +59,8 @@ async function main() {
   try {
     await connection.query(`
       CREATE TABLE canonical_collector_runs (
-        id BIGINT NOT NULL PRIMARY KEY
+        id BIGINT NOT NULL PRIMARY KEY,
+        status ENUM('running', 'success', 'partial', 'failed') NOT NULL DEFAULT 'running'
       ) ENGINE=InnoDB
     `);
     await connection.query(`
@@ -79,7 +80,10 @@ async function main() {
         UNIQUE KEY uniq_advertiser_source_account (advertiser_key, source_key, platform_account_id)
       ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
     `);
-    await connection.query("INSERT INTO canonical_collector_runs (id) VALUES (1)");
+    await connection.query(`
+      INSERT INTO canonical_collector_runs (id, status)
+      VALUES (1, 'success'), (2, 'running'), (3, 'failed')
+    `);
     await connection.query(`
       INSERT INTO canonical_source_accounts (source_key, platform_account_id)
       VALUES ('test_source', 'account_a')
@@ -321,6 +325,81 @@ async function main() {
       WHERE id = ?
     `, [maxBudgetRequestId]);
     await expectReject(maxBudgetRetry);
+
+    async function claimExpiredFinalAttempt(version: string, ingestionRunId: number) {
+      const requestId = await insertRequest(connection, version, 1);
+      if (ingestionRunId === 4) {
+        await connection.query("SET FOREIGN_KEY_CHECKS = 0");
+      }
+      try {
+        const [claim] = await connection.query<mysql.ResultSetHeader>(`
+          UPDATE canonical_ad_import_requests
+          SET status = 'processing',
+              attempt_count = 1,
+              ingestion_run_id = ?,
+              started_at = UTC_TIMESTAMP() - INTERVAL 3 MINUTE,
+              lease_expires_at = UTC_TIMESTAMP() - INTERVAL 2 MINUTE,
+              lease_token = '55555555-5555-4555-8555-555555555555',
+              next_attempt_at = NULL
+          WHERE id = ?
+            AND status = 'pending'
+            AND next_attempt_at <= UTC_TIMESTAMP()
+        `, [ingestionRunId, requestId]);
+        assert.equal(claim.affectedRows, 1);
+      } finally {
+        if (ingestionRunId === 4) {
+          await connection.query("SET FOREIGN_KEY_CHECKS = 1");
+        }
+      }
+      return requestId;
+    }
+
+    async function reconcileExpiredFinalAttempt(requestId: number) {
+      return connection.query<mysql.ResultSetHeader>(`
+        UPDATE canonical_ad_import_requests
+        SET status = 'published',
+            lease_expires_at = NULL,
+            lease_token = NULL,
+            next_attempt_at = NULL,
+            finished_at = UTC_TIMESTAMP(),
+            error_summary = NULL
+        WHERE id = ?
+          AND status = 'processing'
+          AND attempt_count = max_attempts
+          AND lease_expires_at <= UTC_TIMESTAMP()
+      `, [requestId]);
+    }
+
+    const finalAttemptSuccessRequestId = await claimExpiredFinalAttempt("v5", 1);
+    const [finalAttemptSuccessPublished] = await reconcileExpiredFinalAttempt(finalAttemptSuccessRequestId);
+    assert.equal(finalAttemptSuccessPublished.affectedRows, 1, "a successful final-attempt run may reconcile after its lease expires");
+    const [finalAttemptSuccessRows] = await connection.query<mysql.RowDataPacket[]>(`
+      SELECT status, ingestion_run_id, lease_expires_at, lease_token, finished_at, error_summary
+      FROM canonical_ad_import_requests
+      WHERE id = ?
+    `, [finalAttemptSuccessRequestId]);
+    assert.deepEqual(finalAttemptSuccessRows[0], {
+      status: "published",
+      ingestion_run_id: 1,
+      lease_expires_at: null,
+      lease_token: null,
+      finished_at: finalAttemptSuccessRows[0].finished_at,
+      error_summary: null,
+    });
+    assert.notEqual(finalAttemptSuccessRows[0].finished_at, null);
+
+    const finalAttemptRunningRequestId = await claimExpiredFinalAttempt("v6", 2);
+    const finalAttemptRunningRejected = () => reconcileExpiredFinalAttempt(finalAttemptRunningRequestId);
+    await expectReject(finalAttemptRunningRejected);
+
+    const finalAttemptFailedRequestId = await claimExpiredFinalAttempt("v7", 3);
+    const finalAttemptFailedRejected = () => reconcileExpiredFinalAttempt(finalAttemptFailedRequestId);
+    await expectReject(finalAttemptFailedRejected);
+
+    const finalAttemptMissingRequestId = await claimExpiredFinalAttempt("v8", 4);
+    const finalAttemptMissingRejected = () => reconcileExpiredFinalAttempt(finalAttemptMissingRequestId);
+    await expectReject(finalAttemptMissingRejected);
+
     await expectReject(() => connection.query(`
       DELETE FROM canonical_ad_import_requests WHERE id = ${requestId}
     `));

@@ -100,7 +100,7 @@ CREATE TABLE IF NOT EXISTS canonical_ad_import_requests (
             AND attempt_count >= 1
             AND started_at IS NOT NULL
             AND lease_expires_at IS NULL
-            AND lease_token IS NOT NULL
+            AND lease_token IS NULL
             AND next_attempt_at IS NULL
             AND finished_at IS NOT NULL
             AND ingestion_run_id IS NOT NULL
@@ -242,10 +242,39 @@ BEGIN
             AND NEW.next_attempt_at >= OLD.started_at)
         OR
         (OLD.status = 'processing'
-            AND NEW.status IN ('published','rejected')
+            AND NEW.status = 'rejected'
             AND NEW.attempt_count = OLD.attempt_count
             AND NEW.lease_token <=> OLD.lease_token
             AND OLD.lease_expires_at > UTC_TIMESTAMP())
+        OR
+        (OLD.status = 'processing'
+            AND NEW.status = 'published'
+            AND NEW.attempt_count = OLD.attempt_count
+            AND NEW.lease_expires_at IS NULL
+            AND NEW.lease_token IS NULL
+            AND NEW.next_attempt_at IS NULL
+            AND NEW.finished_at IS NOT NULL
+            AND NEW.ingestion_run_id IS NOT NULL
+            AND NEW.error_summary IS NULL
+            AND OLD.lease_expires_at > UTC_TIMESTAMP())
+        OR
+        (OLD.status = 'processing'
+            AND NEW.status = 'published'
+            AND NEW.attempt_count = OLD.attempt_count
+            AND OLD.lease_expires_at <= UTC_TIMESTAMP()
+            AND OLD.attempt_count = OLD.max_attempts
+            AND NEW.lease_expires_at IS NULL
+            AND NEW.lease_token IS NULL
+            AND NEW.next_attempt_at IS NULL
+            AND NEW.finished_at IS NOT NULL
+            AND NEW.ingestion_run_id IS NOT NULL
+            AND NEW.error_summary IS NULL
+            AND EXISTS (
+                SELECT 1
+                FROM canonical_collector_runs
+                WHERE id = NEW.ingestion_run_id
+                  AND status = 'success'
+            ))
         OR
         (OLD.status = 'processing'
             AND NEW.status = 'failed'

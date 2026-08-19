@@ -128,7 +128,7 @@ test("import request lifecycle supports FIFO lease recovery and bounded retries"
   );
   assert.match(
     request,
-    /CONSTRAINT chk_ad_import_request_status_timestamps CHECK \([\s\S]*?status = 'pending'[\s\S]*?lease_token IS NULL[\s\S]*?status = 'processing'[\s\S]*?lease_token IS NOT NULL[\s\S]*?status = 'retryable'[\s\S]*?lease_token IS NOT NULL[\s\S]*?status = 'published'[\s\S]*?lease_token IS NOT NULL[\s\S]*?status = 'rejected'[\s\S]*?lease_token IS NOT NULL[\s\S]*?status = 'failed'[\s\S]*?lease_token IS NULL[\s\S]*?\)/,
+    /CONSTRAINT chk_ad_import_request_status_timestamps CHECK \([\s\S]*?status = 'pending'[\s\S]*?lease_token IS NULL[\s\S]*?status = 'processing'[\s\S]*?lease_token IS NOT NULL[\s\S]*?status = 'retryable'[\s\S]*?lease_token IS NOT NULL[\s\S]*?status = 'published'[\s\S]*?lease_token IS NULL[\s\S]*?status = 'rejected'[\s\S]*?lease_token IS NOT NULL[\s\S]*?status = 'failed'[\s\S]*?lease_token IS NULL[\s\S]*?\)/,
   );
   assert.match(
     request,
@@ -155,7 +155,11 @@ test("processing exits require an active lease", () => {
   );
   assert.match(
     sql,
-    /OLD\.status = 'processing'[\s\S]*?NEW\.status IN \('published','rejected'\)[\s\S]*?NEW\.lease_token <=> OLD\.lease_token[\s\S]*?OLD\.lease_expires_at > UTC_TIMESTAMP\(\)/,
+    /OLD\.status = 'processing'[\s\S]*?NEW\.status = 'rejected'[\s\S]*?NEW\.lease_token <=> OLD\.lease_token[\s\S]*?OLD\.lease_expires_at > UTC_TIMESTAMP\(\)/,
+  );
+  assert.match(
+    sql,
+    /OLD\.status = 'processing'[\s\S]*?NEW\.status = 'published'[\s\S]*?NEW\.lease_expires_at IS NULL[\s\S]*?NEW\.lease_token IS NULL[\s\S]*?NEW\.finished_at IS NOT NULL[\s\S]*?OLD\.lease_expires_at > UTC_TIMESTAMP\(\)/,
   );
   assert.match(
     sql,
@@ -171,6 +175,18 @@ test("expired processing claims exhaust the retry budget into one terminal failu
   assert.match(
     sql,
     /OLD\.status = 'processing'[\s\S]*?NEW\.status = 'failed'[\s\S]*?NEW\.lease_expires_at IS NULL[\s\S]*?NEW\.lease_token IS NULL[\s\S]*?NEW\.finished_at IS NOT NULL[\s\S]*?NEW\.error_summary IS NOT NULL[\s\S]*?OLD\.lease_expires_at <= UTC_TIMESTAMP\(\)[\s\S]*?OLD\.attempt_count = OLD\.max_attempts/,
+  );
+});
+
+test("an expired final attempt may reconcile only an already-successful collector run", () => {
+  const request = tableDefinition("canonical_ad_import_requests");
+  assert.match(
+    request,
+    /status = 'published'[\s\S]*?lease_expires_at IS NULL[\s\S]*?lease_token IS NULL[\s\S]*?finished_at IS NOT NULL[\s\S]*?ingestion_run_id IS NOT NULL[\s\S]*?error_summary IS NULL/,
+  );
+  assert.match(
+    sql,
+    /OLD\.status = 'processing'[\s\S]*?NEW\.status = 'published'[\s\S]*?OLD\.lease_expires_at <= UTC_TIMESTAMP\(\)[\s\S]*?OLD\.attempt_count = OLD\.max_attempts[\s\S]*?NEW\.lease_expires_at IS NULL[\s\S]*?NEW\.lease_token IS NULL[\s\S]*?NEW\.finished_at IS NOT NULL[\s\S]*?NEW\.ingestion_run_id IS NOT NULL[\s\S]*?NEW\.error_summary IS NULL[\s\S]*?EXISTS \([\s\S]*?FROM canonical_collector_runs[\s\S]*?id = NEW\.ingestion_run_id[\s\S]*?status = 'success'/,
   );
 });
 
@@ -207,5 +223,9 @@ test("MySQL verifier exercises generated identity, fenced lease races, and diges
   assert.match(verifier, /maxBudgetFailed/);
   assert.match(verifier, /maxBudgetFailedAgain/);
   assert.match(verifier, /maxBudgetRetry/);
+  assert.match(verifier, /finalAttemptSuccessPublished/);
+  assert.match(verifier, /finalAttemptRunningRejected/);
+  assert.match(verifier, /finalAttemptFailedRejected/);
+  assert.match(verifier, /finalAttemptMissingRejected/);
   assert.match(verifier, /DELETE FROM canonical_ad_import_requests/);
 });
