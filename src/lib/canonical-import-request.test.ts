@@ -73,6 +73,8 @@ test("confirmed upload writes a protected artifact and queues a canonical import
     assert.match(result.protectedRef ?? "", /\/uploads\/[0-9a-f-]+\.bin$/);
     assert.equal(await readFile(result.protectedRef!, "utf8"), "date,campaign\n2026-08-18,Search\n");
     assert.equal((await stat(result.protectedRef!)).mode & 0o777, 0o640);
+    await result.releaseCreatedArtifact();
+    assert.equal(await readFile(result.protectedRef!, "utf8"), "date,campaign\n2026-08-18,Search\n");
 
     const sql = connection.statements.map((statement) => statement.sql).join("\n");
     assert.doesNotMatch(sql, /INSERT INTO canonical_advertiser_source_accounts/);
@@ -285,6 +287,8 @@ test("Google Sheet confirmation matches the collector reviewed-reference contrac
       sourceUrl: "https://docs.google.com/spreadsheets/d/sheet-id/../../another-path#gid=7",
       reviewedReference: "https://docs.google.com/spreadsheets/d/sheet-id#gid=7",
     },
+    { sourceUrl: " https://docs.google.com/spreadsheets/d/sheet-id#gid=1" },
+    { sourceUrl: "https://docs.google.com/spreadsheets/d/sheet-id#gid=1 " },
     { sourceUrl: "http://docs.google.com/spreadsheets/d/sheet-id#gid=1" },
     { sourceUrl: "https://docs.google.com:443/spreadsheets/d/sheet-id#gid=1" },
     { sourceUrl: "https://reader@docs.google.com/spreadsheets/d/sheet-id#gid=1" },
@@ -490,7 +494,7 @@ test("duplicate cleanup remains descriptor-anchored after the spool path is repl
   }
 });
 
-test("duplicate cleanup leaves a same-named artifact in an ordinary replacement spool directory", { skip: process.platform !== "linux" }, async () => {
+test("duplicate cleanup removes the original artifact through its retained descriptor after spool replacement", { skip: process.platform !== "linux" }, async () => {
   const spoolDir = await mkdtemp(path.join(os.tmpdir(), "canonical-import-"));
   const movedSpoolDir = `${spoolDir}-moved`;
   let sentinel = "";
@@ -504,6 +508,51 @@ test("duplicate cleanup leaves a same-named artifact in an ordinary replacement 
       await mkdir(path.join(spoolDir, "uploads"), { recursive: true });
       sentinel = path.join(spoolDir, "uploads", path.basename(String(params[4])));
       await writeFile(sentinel, "do-not-remove");
+    };
+
+    const result = await enqueueCanonicalImport(
+      connection,
+      {
+        advertiserKey: "gidrofuril",
+        sourceKey: "yandex_direct",
+        platformAccountId: "gidrofuril-search",
+        transport: "upload",
+        upload: {
+          filename: "report.csv",
+          contentBase64: Buffer.from("date,campaign\n2026-08-18,Search\n").toString("base64"),
+        },
+        adapterConfig: {
+          adapter_config_version: "file-v1",
+          source_key: "yandex_direct",
+          platform_account_id: "gidrofuril-search",
+        },
+      },
+      { spoolDir },
+    );
+    const originalArtifact = path.join(movedSpoolDir, "uploads", path.basename(sentinel));
+    assert.equal(result.status, "retryable");
+    assert.equal(await readFile(sentinel, "utf8"), "do-not-remove");
+    assert.equal(existsSync(originalArtifact), false);
+  } finally {
+    await rm(spoolDir, { recursive: true, force: true });
+    await rm(movedSpoolDir, { recursive: true, force: true });
+  }
+});
+
+test("upload insert errors remove the original artifact through its retained descriptor after spool replacement", { skip: process.platform !== "linux" }, async () => {
+  const spoolDir = await mkdtemp(path.join(os.tmpdir(), "canonical-import-"));
+  const movedSpoolDir = `${spoolDir}-moved`;
+  let sentinel = "";
+  let originalArtifact = "";
+  try {
+    const connection = new FakeConnection();
+    connection.onInsert = async (params) => {
+      await rename(spoolDir, movedSpoolDir);
+      await mkdir(path.join(spoolDir, "uploads"), { recursive: true });
+      sentinel = path.join(spoolDir, "uploads", path.basename(String(params[4])));
+      originalArtifact = path.join(movedSpoolDir, "uploads", path.basename(String(params[4])));
+      await writeFile(sentinel, "do-not-remove");
+      throw new Error("database unavailable");
     };
 
     await assert.rejects(
@@ -526,9 +575,10 @@ test("duplicate cleanup leaves a same-named artifact in an ordinary replacement 
         },
         { spoolDir },
       ),
-      /Protected spool uploads directory changed/,
+      /database unavailable/,
     );
     assert.equal(await readFile(sentinel, "utf8"), "do-not-remove");
+    assert.equal(existsSync(originalArtifact), false);
   } finally {
     await rm(spoolDir, { recursive: true, force: true });
     await rm(movedSpoolDir, { recursive: true, force: true });

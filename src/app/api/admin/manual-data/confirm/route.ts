@@ -70,17 +70,47 @@ function safeErrorSummary(value: unknown): string | null {
   return text ? text.slice(0, 500) : null;
 }
 
-export async function POST(request: Request) {
+type ManualDataConfirmDependencies = {
+  pool: Pick<typeof pool, "getConnection">;
+  adminEmail: typeof adminEmail;
+  enqueueCanonicalImport: typeof enqueueCanonicalImport;
+  resolveReviewedAdvertisingSource: typeof resolveReviewedAdvertisingSource;
+  createSnapshotKey: () => string;
+};
+
+async function ignoreCleanupFailure(action: () => Promise<void>): Promise<void> {
+  try {
+    await action();
+  } catch {
+    // The request error is more useful than a cleanup failure after it.
+  }
+}
+
+export function createManualDataConfirmPostHandler(
+  overrides: Partial<ManualDataConfirmDependencies> = {},
+) {
+  const dependencies: ManualDataConfirmDependencies = {
+    pool,
+    adminEmail,
+    enqueueCanonicalImport,
+    resolveReviewedAdvertisingSource,
+    createSnapshotKey: randomUUID,
+    ...overrides,
+  };
+
+  return async function POST(request: Request) {
   const body = (await request.json().catch(() => ({}))) as ConfirmRequestBody;
   const requestIds = ids(body);
   if (!requestIds) {
     return NextResponse.json({ error: "dashboard_id and source_id are required" }, { status: 400 });
   }
-  const requestedBy = adminEmail(request);
+  const requestedBy = dependencies.adminEmail(request);
   if (!requestedBy) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
 
-  const conn = await pool.getConnection();
+  const conn = await dependencies.pool.getConnection();
   let queued: EnqueuedCanonicalImport | null = null;
+  let commitAttempted = false;
+  let committed = false;
   try {
     await conn.beginTransaction();
     const [rows] = await conn.execute<SourceRow[]>(
@@ -105,9 +135,9 @@ export async function POST(request: Request) {
       throw new ConfirmError(400, "adapter_config is derived from the reviewed source");
     }
     const sourceConfig = { ...existingSourceConfig, ...incomingSourceConfig };
-    const reviewed = resolveReviewedAdvertisingSource(sourceConfig);
+    const reviewed = dependencies.resolveReviewedAdvertisingSource(sourceConfig);
     const upload = sourceConfig.upload_file;
-    const sheetUrl = String(sourceConfig.sheet_url ?? "").trim();
+    const sheetUrl = String(sourceConfig.sheet_url ?? "");
     const hasUpload = upload && typeof upload === "object";
     if (hasUpload === Boolean(sheetUrl)) {
       throw new ConfirmError(400, "Provide exactly one upload or Google Sheet URL");
@@ -125,7 +155,7 @@ export async function POST(request: Request) {
     if (!binding) {
       throw new ConfirmError(403, "The reviewed advertiser source account is not authorized for import");
     }
-    queued = await enqueueCanonicalImport(
+    queued = await dependencies.enqueueCanonicalImport(
       conn,
       {
         advertiserKey: binding.advertiser_key,
@@ -139,7 +169,7 @@ export async function POST(request: Request) {
             }
           : undefined,
         sourceUrl: sheetUrl || undefined,
-        sheetSnapshotKey: transport === "google_sheet" ? randomUUID() : undefined,
+        sheetSnapshotKey: transport === "google_sheet" ? dependencies.createSnapshotKey() : undefined,
         adapterConfig: reviewed.adapterConfig,
       },
       { requestedBy },
@@ -170,7 +200,10 @@ export async function POST(request: Request) {
     if (updated.affectedRows !== 1) {
       throw new ConfirmError(409, "The source was updated by another confirmation request");
     }
+    commitAttempted = true;
     await conn.commit();
+    committed = true;
+    await queued.releaseCreatedArtifact();
 
     return NextResponse.json({
       status: queued.status,
@@ -183,8 +216,14 @@ export async function POST(request: Request) {
       },
     });
   } catch (error) {
-    await conn.rollback();
-    await queued?.discardCreatedArtifact();
+    if (!committed) {
+      await ignoreCleanupFailure(() => conn.rollback());
+      await ignoreCleanupFailure(() => (
+        commitAttempted
+          ? queued?.releaseCreatedArtifact() ?? Promise.resolve()
+          : queued?.discardCreatedArtifact() ?? Promise.resolve()
+      ));
+    }
     return NextResponse.json(
       { error: error instanceof ConfirmError ? error.message : "Failed to queue canonical advertising import" },
       { status: error instanceof ConfirmError ? error.status : 500 },
@@ -192,7 +231,10 @@ export async function POST(request: Request) {
   } finally {
     conn.release();
   }
+  };
 }
+
+export const POST = createManualDataConfirmPostHandler();
 
 export async function GET(request: Request) {
   const url = new URL(request.url);

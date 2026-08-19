@@ -37,6 +37,7 @@ export type EnqueuedCanonicalImport = {
   contentSha256: string | null;
   protectedRef: string | null;
   discardCreatedArtifact: () => Promise<void>;
+  releaseCreatedArtifact: () => Promise<void>;
 };
 
 type PersistedRequest = {
@@ -112,14 +113,10 @@ type ProtectedDirectory = {
   handle: FileHandle;
 };
 
-type DirectoryIdentity = {
-  dev: number;
-  ino: number;
-};
-
 type CreatedArtifact = {
   protectedRef: string;
   discard: () => Promise<void>;
+  release: () => Promise<void>;
 };
 
 function requireDescriptorAnchoredWrites(): void {
@@ -202,27 +199,22 @@ async function protectedDirectory(directory: string, create: boolean): Promise<P
   }
 }
 
-function directoryIdentityMatches(metadata: DirectoryIdentity, expected: DirectoryIdentity): boolean {
-  return metadata.dev === expected.dev && metadata.ino === expected.ino;
-}
-
-async function removeProtectedArtifact(
-  spoolDir: string,
-  filename: string,
-  expectedUploadsDirectory: DirectoryIdentity,
-): Promise<void> {
-  const root = await protectedDirectory(spoolDir, false);
-  let uploads: ProtectedDirectory | null = null;
+async function removeProtectedArtifact(uploads: FileHandle, filename: string): Promise<void> {
+  let removalError: unknown;
+  let removalFailed = false;
   try {
-    uploads = await openProtectedChild(root, "uploads", false);
-    if (!directoryIdentityMatches(await uploads.handle.stat(), expectedUploadsDirectory)) {
-      throw new Error("Protected spool uploads directory changed before artifact cleanup");
-    }
-    await rm(path.join(descriptorPath(uploads.handle), filename), { force: true });
+    await rm(path.join(descriptorPath(uploads), filename), { force: true });
+  } catch (error) {
+    removalFailed = true;
+    removalError = error;
   } finally {
-    if (uploads) await uploads.handle.close();
-    await root.handle.close();
+    try {
+      await uploads.close();
+    } catch (closeError) {
+      if (!removalFailed) throw closeError;
+    }
   }
+  if (removalFailed) throw removalError;
 }
 
 async function writeProtectedArtifact(spoolDir: string, data: Buffer): Promise<CreatedArtifact> {
@@ -249,11 +241,13 @@ async function writeProtectedArtifact(spoolDir: string, data: Buffer): Promise<C
     }
     await rename(temporary, target);
     await uploads.handle.sync();
-    const uploadsDirectory = await uploads.handle.stat();
     const protectedRef = path.join(absolute, "uploads", filename);
+    const retainedUploads = uploads.handle;
+    uploads = null;
     return {
       protectedRef,
-      discard: () => removeProtectedArtifact(spoolDir, filename!, uploadsDirectory),
+      discard: () => removeProtectedArtifact(retainedUploads, filename!),
+      release: () => retainedUploads.close(),
     };
   } catch (error) {
     if (temporary) await rm(temporary, { force: true });
@@ -289,8 +283,20 @@ export async function enqueueCanonicalImport(
   const discardCreatedArtifact = async () => {
     if (!createdArtifact) return;
     const artifact = createdArtifact;
-    createdArtifact = null;
-    await artifact.discard();
+    try {
+      await artifact.discard();
+    } finally {
+      createdArtifact = null;
+    }
+  };
+  const releaseCreatedArtifact = async () => {
+    if (!createdArtifact) return;
+    const artifact = createdArtifact;
+    try {
+      await artifact.release();
+    } finally {
+      createdArtifact = null;
+    }
   };
 
   let protectedRef: string | null = null;
@@ -309,7 +315,9 @@ export async function enqueueCanonicalImport(
       originalName = requiredText(input.upload.filename, "upload filename").slice(0, 255);
       contentSha256 = createHash("sha256").update(content).digest("hex");
     } else {
-      sourceUrl = normalizeGoogleSheetUrl(requiredText(input.sourceUrl, "source_url"));
+      const rawSourceUrl = String(input.sourceUrl ?? "");
+      if (!rawSourceUrl) throw new Error("source_url is required");
+      sourceUrl = normalizeGoogleSheetUrl(rawSourceUrl);
       sheetSnapshotKey = requiredText(input.sheetSnapshotKey, "sheet_snapshot_key").toLowerCase();
       if (!isUuid(sheetSnapshotKey)) throw new Error("sheet_snapshot_key must be a UUID");
     }
@@ -349,9 +357,14 @@ export async function enqueueCanonicalImport(
       contentSha256: persisted.content_sha256,
       protectedRef: persisted.protected_ref,
       discardCreatedArtifact,
+      releaseCreatedArtifact,
     };
   } catch (error) {
-    await discardCreatedArtifact();
+    try {
+      await discardCreatedArtifact();
+    } catch {
+      // Preserve the enqueue failure after the descriptor-bound cleanup attempt.
+    }
     throw error;
   }
 }
