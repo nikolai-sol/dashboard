@@ -489,7 +489,6 @@ function directionBySectionId(
   if (cached) return cached;
   const result = new Map<string, string>();
   for (const source of [
-    workbook.contentByUrl,
     workbook.contentByTitle,
     workbook.contentBySlug,
     workbook.urlReturnDirections,
@@ -603,7 +602,7 @@ function buildPageStats(
   const result = new Map<string, AbbottBiPageStatRow & { hidden: boolean }>();
   rows.filter((row) => row.analytics_scope === "page").forEach((row) => {
     const url = normalizePage(row.page_url);
-    const metadata = metadataForPage(url, row.page_title, workbook);
+    const metadata = metadataForPage(row.page_url, row.page_title, workbook);
     const title = metadata.page_title;
     const key = `${title}\n${url}`;
     const current = result.get(key) ?? {
@@ -661,7 +660,7 @@ function mapBitrixPages(
   const byUrl = new Map<string, AggregatedBitrixRow>();
   data.rows.forEach((row) => {
     const url = normalizePage(row.url);
-    const metadata = metadataForPage(url, "", workbook);
+    const metadata = metadataForPage(row.url, "", workbook);
     const current = byUrl.get(url) ?? {
       url,
       path: normalizePage(row.path),

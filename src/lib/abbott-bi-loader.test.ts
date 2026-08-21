@@ -1107,9 +1107,7 @@ function hubDeps(pageUrl: string, catalogDirection: string | null) {
     audience: "embed" as const,
     workbook: {
       ...aggregateWorkbook,
-      contentByUrl: new Map([
-        [lookupHash("https://abbottpro.ru/academy/articles/known"), known],
-      ]),
+      contentBySlug: new Map([[lookupHash("known"), known]]),
       urlReturnDirections: new Map([[lookupHash("/preparation"), hubMetadata]]),
     },
     bitrixPages: missingBitrix,
