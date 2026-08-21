@@ -12,6 +12,18 @@ Key production behaviors currently covered there:
 - spend source selection and platform visibility rules
 - dedicated future leads-binding flow; `custom_table` stays display-only
 
+Abbott direction coverage is documented in
+[docs/2026-08-13-abbott-directions-and-disk-cleanup.md](docs/2026-08-13-abbott-directions-and-disk-cleanup.md):
+canonical release `37`, the classifier runtime fixes behind it, how service pages are
+labelled, and the hub-filter rule. Two facts save the most time when debugging an empty
+`Направление` cell:
+
+- tab 2 shows the **user's** direction (`portal_user_directions_private`); tabs 3/3.1/returning
+  show the **page's** direction (`portal_content_catalog`). Classifying materials never changes
+  tab 2 — that dictionary is a stale Bitrix export capped at `USER_ID 81311`.
+- `reconcile --dry-run` is not a preview of a real run: it reports `ready 979` where an executed
+  run reports `111`, because it never loads the canonical context. Measure with `--execute` only.
+
 The rest of this README is still the default Next.js scaffold and should be treated as secondary.
 
 ## Zaruku SEO Tab: AI Visibility Source
