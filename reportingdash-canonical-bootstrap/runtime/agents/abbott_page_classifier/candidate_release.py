@@ -5650,7 +5650,7 @@ def validate_content_candidate(
                 preserved_entity_ids=(
                     _mnn_only_predecessor_entity_ids(
                         cursor,
-                        predecessor_release_id,
+                        predecessor_id,
                         validation_predecessor_rows,
                     )
                     if expected_mnn_snapshot_id > 0
