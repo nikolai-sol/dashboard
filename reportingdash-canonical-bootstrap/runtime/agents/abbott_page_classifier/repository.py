@@ -1396,6 +1396,18 @@ class ContentRegistryRepository:
                 )
                 if predecessor_values is not None and predecessor_values == event_values:
                     continue
+                reviewed_active_catalog_correction = (
+                    local_projection
+                    and current_canonical is None
+                    and item.readiness_state == "ready"
+                    and item.url_alias_decision is None
+                    and item.content_entity_id is not None
+                    and classification_entity_id == item.content_entity_id
+                    and active_classification is not None
+                    and item.decision_reason is not None
+                    and bool(item.decision_reason.strip())
+                    and all(value is not None for value in event_values)
+                )
                 if active_classification is not None:
                     if active_classification.effective_at is None:
                         raise RepositoryError("SUCCESSOR_EFFECTIVE_AT_INVALID")
@@ -1436,6 +1448,11 @@ class ContentRegistryRepository:
                 elif reviewed_selected_attach:
                     if predecessor_event_id is not None:
                         raise RepositoryError("CORRECTION_AUDIT_REQUIRED")
+                elif reviewed_active_catalog_correction:
+                    # Historical local projections did not persist current_canonical.
+                    # The immutable published entity id and the locked active-release
+                    # catalog row provide the predecessor authority for replay.
+                    pass
                 else:
                     self._attest_reviewed_predecessor(
                         proposal_evidence,
