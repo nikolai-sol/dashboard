@@ -547,9 +547,14 @@ class MySqlWorkflowStore:
             cursor = connection.cursor()
             cursor.execute(
                 """
-                SELECT run.predecessor_release_id
+                SELECT run.predecessor_release_id, batch.reconciliation_run_id,
+                       batch.projection_kind, batch.batch_status,
+                       batch.published_input_hash, batch.accepted_decision_hash,
+                       batch.taxonomy_version_id, batch.taxonomy_digest,
+                       batch.source_snapshot_ids, batch.source_snapshot_digests,
+                       batch.prompt_version, batch.model_routing_version
                 FROM portal_content_approval_batches AS batch
-                INNER JOIN portal_content_reconciliation_runs AS run
+                LEFT JOIN portal_content_reconciliation_runs AS run
                   ON run.id = batch.reconciliation_run_id
                  AND run.dataset_key = batch.dataset_key
                 WHERE batch.id = %s
@@ -558,9 +563,67 @@ class MySqlWorkflowStore:
                 (int(batch_id), DATASET_KEY),
             )
             row = cursor.fetchone()
-            if row is None or int(row[0]) <= 0:
+            if row is None:
                 raise RepositoryError("PREDECESSOR_BINDING_INVALID")
-            return int(row[0])
+            if row[0] is not None and int(row[0]) > 0:
+                return int(row[0])
+            if (
+                row[1] is not None
+                or str(row[2] or "") != "local"
+                or str(row[3] or "") != "ingested"
+                or not row[4]
+                or not row[5]
+            ):
+                raise RepositoryError("PREDECESSOR_BINDING_INVALID")
+            cursor.execute(
+                """
+                SELECT run.predecessor_release_id, active.canonical_release_id
+                FROM portal_content_approval_batches AS historical
+                INNER JOIN portal_content_reconciliation_runs AS run
+                  ON run.id = historical.reconciliation_run_id
+                 AND run.dataset_key = historical.dataset_key
+                INNER JOIN portal_active_data_releases AS active
+                  ON active.dataset_key = historical.dataset_key
+                 AND active.canonical_release_id = run.predecessor_release_id
+                INNER JOIN portal_data_releases AS active_release
+                  ON active_release.id = active.canonical_release_id
+                 AND active_release.dataset_key = active.dataset_key
+                 AND active_release.release_status = 'active'
+                WHERE historical.id <> %s
+                  AND historical.dataset_key = %s
+                  AND historical.projection_kind = 'local'
+                  AND historical.batch_status IN ('accepted', 'ingested', 'candidate_materialized')
+                  AND historical.published_input_hash = %s
+                  AND historical.accepted_decision_hash = %s
+                  AND historical.taxonomy_version_id = %s
+                  AND historical.taxonomy_digest = %s
+                  AND historical.source_snapshot_ids = %s
+                  AND historical.source_snapshot_digests = %s
+                  AND historical.prompt_version = %s
+                  AND historical.model_routing_version = %s
+                ORDER BY historical.id
+                """,
+                (
+                    int(batch_id), DATASET_KEY, str(row[4]), str(row[5]),
+                    int(row[6]), str(row[7]), row[8], row[9],
+                    str(row[10]), str(row[11]),
+                ),
+            )
+            replay_rows = tuple(cursor.fetchall())
+            valid_rows = tuple(
+                candidate for candidate in replay_rows
+                if candidate[0] is not None
+                and candidate[1] is not None
+                and int(candidate[0]) == int(candidate[1])
+                and int(candidate[0]) > 0
+            )
+            predecessors = {
+                int(candidate[0])
+                for candidate in valid_rows
+            }
+            if len(predecessors) != 1 or len(replay_rows) != len(valid_rows):
+                raise RepositoryError("PREDECESSOR_BINDING_INVALID")
+            return predecessors.pop()
         except RepositoryError:
             raise
         except Exception:
