@@ -2128,7 +2128,13 @@ def _classification_delta_receipt(
     for item_id, item in sorted(approval_rows_by_id.items()):
         if str(item.get("readiness_state") or "") != "ready":
             continue
-        entity_id = int(item.get("content_entity_id") or 0)
+        decision = str(item.get("url_alias_decision") or "")
+        selected_entity_id = int(item.get("selected_content_entity_id") or 0)
+        entity_id = (
+            selected_entity_id
+            if decision in {"attach", "create"} and selected_entity_id > 0
+            else int(item.get("content_entity_id") or 0)
+        )
         final_values = tuple(
             str(item.get(name) or "")
             for name in (
@@ -2166,7 +2172,16 @@ def _classification_delta_receipt(
             if current is not None
             else None
         )
-        if current is None or current_values != final_values:
+        if (
+            current is None
+            or current_values != final_values
+            or int(current.classification_event_id or 0) <= 0
+            or re.fullmatch(
+                r"[0-9a-f]{64}",
+                str(current.classification_event_fingerprint or ""),
+            )
+            is None
+        ):
             raise CandidateMaterializationError(
                 "ACCEPTED_CLASSIFICATION_DELTA_MISMATCH"
             )
