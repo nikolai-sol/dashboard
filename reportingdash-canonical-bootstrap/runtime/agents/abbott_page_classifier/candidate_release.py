@@ -5574,7 +5574,9 @@ def validate_content_candidate(
         cursor.execute(
             """
             SELECT entity.id AS authorized_entity_id,
-                   event.content_entity_id, event.id AS classification_event_id,
+                   event.content_entity_id, entity.material_id,
+                   entity.title, entity.canonical_url, entity.source_evidence,
+                   event.id AS classification_event_id,
                    event.direction_code, event.material_type_code,
                    event.access_code, event.lifecycle_code, event.event_kind,
                    event.event_fingerprint, event.approval_batch_id,
