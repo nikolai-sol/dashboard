@@ -578,7 +578,20 @@ class MySqlWorkflowStore:
             cursor.execute(
                 """
                 SELECT run.predecessor_release_id, active.canonical_release_id
-                FROM portal_content_approval_batches AS historical
+                FROM portal_content_approval_batches AS replay
+                INNER JOIN portal_content_approval_batches AS historical
+                  ON historical.id <> replay.id
+                 AND historical.dataset_key = replay.dataset_key
+                 AND historical.projection_kind = 'local'
+                 AND historical.batch_status IN ('accepted', 'ingested', 'candidate_materialized')
+                 AND historical.published_input_hash = replay.published_input_hash
+                 AND historical.accepted_decision_hash = replay.accepted_decision_hash
+                 AND historical.taxonomy_version_id = replay.taxonomy_version_id
+                 AND historical.taxonomy_digest = replay.taxonomy_digest
+                 AND historical.source_snapshot_ids = replay.source_snapshot_ids
+                 AND historical.source_snapshot_digests = replay.source_snapshot_digests
+                 AND historical.prompt_version = replay.prompt_version
+                 AND historical.model_routing_version = replay.model_routing_version
                 INNER JOIN portal_content_reconciliation_runs AS run
                   ON run.id = historical.reconciliation_run_id
                  AND run.dataset_key = historical.dataset_key
@@ -589,25 +602,14 @@ class MySqlWorkflowStore:
                   ON active_release.id = active.canonical_release_id
                  AND active_release.dataset_key = active.dataset_key
                  AND active_release.release_status = 'active'
-                WHERE historical.id <> %s
-                  AND historical.dataset_key = %s
-                  AND historical.projection_kind = 'local'
-                  AND historical.batch_status IN ('accepted', 'ingested', 'candidate_materialized')
-                  AND historical.published_input_hash = %s
-                  AND historical.accepted_decision_hash = %s
-                  AND historical.taxonomy_version_id = %s
-                  AND historical.taxonomy_digest = %s
-                  AND historical.source_snapshot_ids = %s
-                  AND historical.source_snapshot_digests = %s
-                  AND historical.prompt_version = %s
-                  AND historical.model_routing_version = %s
+                WHERE replay.id = %s
+                  AND replay.dataset_key = %s
+                  AND replay.reconciliation_run_id IS NULL
+                  AND replay.projection_kind = 'local'
+                  AND replay.batch_status = 'ingested'
                 ORDER BY historical.id
                 """,
-                (
-                    int(batch_id), DATASET_KEY, str(row[4]), str(row[5]),
-                    int(row[6]), str(row[7]), row[8], row[9],
-                    str(row[10]), str(row[11]),
-                ),
+                (int(batch_id), DATASET_KEY),
             )
             replay_rows = tuple(cursor.fetchall())
             valid_rows = tuple(
