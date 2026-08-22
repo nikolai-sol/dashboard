@@ -2934,7 +2934,11 @@ def _current_batch_entity_continuity(
         selected = int(item.get("selected_content_entity_id") or 0)
         if decision == "attach" and old_id > 0 and selected > 0 and old_id != selected:
             decisions.append(EntityContinuity(old_id, selected, "reviewed_attach"))
-        elif decision in {"retire", "reject"} and old_id > 0:
+        elif (
+            decision in {"retire", "reject"}
+            and old_id > 0
+            and old_id in predecessor_ids
+        ):
             decisions.append(
                 EntityContinuity(old_id, None, f"reviewed_{decision}")
             )
