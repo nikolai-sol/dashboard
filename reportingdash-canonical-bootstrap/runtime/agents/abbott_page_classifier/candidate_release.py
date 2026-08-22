@@ -2945,6 +2945,10 @@ def _current_batch_entity_continuity(
         selected = int(item.get("selected_content_entity_id") or 0)
         if decision == "attach" and old_id > 0 and selected > 0 and old_id != selected:
             decisions.append(EntityContinuity(old_id, selected, "reviewed_attach"))
+        elif decision == "reject" and old_id in mnn_only_ids:
+            # Rejecting an observed URL is not authority to delete an existing
+            # MNN-only registry entity or its accepted drug-name mappings.
+            continue
         elif (
             decision in {"retire", "reject"}
             and old_id > 0
