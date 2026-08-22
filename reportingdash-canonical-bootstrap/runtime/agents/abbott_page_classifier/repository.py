@@ -1398,7 +1398,6 @@ class ContentRegistryRepository:
                     continue
                 reviewed_active_catalog_correction = (
                     local_projection
-                    and current_canonical is None
                     and item.readiness_state == "ready"
                     and item.url_alias_decision is None
                     and item.content_entity_id is not None
@@ -1449,7 +1448,8 @@ class ContentRegistryRepository:
                     if predecessor_event_id is not None:
                         raise RepositoryError("CORRECTION_AUDIT_REQUIRED")
                 elif reviewed_active_catalog_correction:
-                    # Historical local projections did not persist current_canonical.
+                    # Historical local projections may omit or retain a stale
+                    # current_canonical predecessor.
                     # The immutable published entity id and the locked active-release
                     # catalog row provide the predecessor authority for replay.
                     pass
