@@ -724,7 +724,7 @@ def _compare_and_swap_pointer(
 def fail_staging_release(
     release_id: int, *, expected_active_release_id: int
 ) -> str:
-    """Audit a superseded staging candidate without changing the active pointer."""
+    """Audit a superseded non-active candidate without moving the pointer."""
 
     dataset_key = ABBOTT_DATASET_KEY
     conn = None
@@ -757,7 +757,7 @@ def fail_staging_release(
         if release.get("release_status") == "failed":
             conn.commit()
             return "noop"
-        if release.get("release_status") != "staging":
+        if release.get("release_status") not in {"staging", "validated"}:
             raise ImmutableReleaseError("Canonical staging release cannot be failed")
 
         cur.execute(
@@ -765,7 +765,8 @@ def fail_staging_release(
             UPDATE portal_data_releases
             SET release_status = 'failed',
                 rollback_reason = %s
-            WHERE dataset_key = %s AND id = %s AND release_status = 'staging'
+            WHERE dataset_key = %s AND id = %s
+              AND release_status IN ('staging', 'validated')
             """,
             (
                 "superseded after failed content validation",
