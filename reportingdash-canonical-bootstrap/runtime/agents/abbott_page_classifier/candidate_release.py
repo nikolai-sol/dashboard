@@ -2920,11 +2920,22 @@ def _current_batch_entity_continuity(
     candidate_rows: Sequence[CandidateCatalogRow],
     event_rows: Sequence[Mapping[str, object]],
     approval_rows_by_id: Mapping[int, Mapping[str, object]],
+    *,
+    preserved_entity_ids: Iterable[int] = (),
 ) -> tuple[EntityContinuity, ...]:
     predecessor_ids = {
         int(row.get("content_entity_id") or 0) for row in predecessor_rows
     }
     candidate_ids = {row.content_entity_id for row in candidate_rows}
+    try:
+        preserved_ids = {int(value) for value in preserved_entity_ids}
+    except (TypeError, ValueError):
+        raise CandidateMaterializationError("ENTITY_CONTINUITY_INVALID") from None
+    if any(value <= 0 for value in preserved_ids):
+        raise CandidateMaterializationError("ENTITY_CONTINUITY_INVALID")
+    mnn_only_ids = preserved_ids - predecessor_ids
+    predecessor_ids.update(mnn_only_ids)
+    candidate_ids.update(mnn_only_ids)
     if 0 in predecessor_ids or 0 in candidate_ids:
         raise CandidateMaterializationError("ENTITY_CONTINUITY_INVALID")
     decisions: list[EntityContinuity] = []
@@ -3001,6 +3012,36 @@ def _current_batch_entity_continuity(
         )
     except ContinuityError as error:
         raise CandidateMaterializationError(str(error)) from None
+
+
+def _mnn_only_predecessor_entity_ids(
+    cursor,
+    predecessor_release_id: int,
+    predecessor_rows: Sequence[Mapping[str, object]],
+) -> frozenset[int]:
+    cursor.execute(
+        """
+        SELECT DISTINCT content_entity_id
+        FROM portal_content_catalog_mnn
+        WHERE canonical_release_id = %s
+        ORDER BY content_entity_id
+        """,
+        (predecessor_release_id,),
+    )
+    try:
+        mnn_entity_ids = {
+            int(_row_value(row, "content_entity_id", 0))
+            for row in cursor.fetchall()
+        }
+        catalog_entity_ids = {
+            int(row.get("content_entity_id") or 0)
+            for row in predecessor_rows
+        }
+    except (TypeError, ValueError):
+        raise CandidateMaterializationError("MNN_ENTITY_CONTINUITY_INVALID") from None
+    if 0 in mnn_entity_ids or 0 in catalog_entity_ids:
+        raise CandidateMaterializationError("MNN_ENTITY_CONTINUITY_INVALID")
+    return frozenset(mnn_entity_ids - catalog_entity_ids)
 
 
 def _catalog_entity_authorities(
@@ -4372,11 +4413,21 @@ def materialize_content_candidate(
         )
         if not catalog_rows:
             raise CandidateMaterializationError("EMPTY_CONTENT_CANDIDATE")
+        preserved_mnn_entity_ids = (
+            _mnn_only_predecessor_entity_ids(
+                cursor,
+                predecessor_release_id,
+                predecessor_catalog_rows,
+            )
+            if old_mnn_ids
+            else frozenset()
+        )
         continuity_rows = _current_batch_entity_continuity(
             predecessor_catalog_rows,
             catalog_rows,
             event_rows,
             approval_bundle["approval_rows_by_id"],
+            preserved_entity_ids=preserved_mnn_entity_ids,
         )
         continuity_records = [
             {
@@ -5583,14 +5634,24 @@ def validate_content_candidate(
                 ),
                 created_url_event_fingerprints,
             )
+            validation_predecessor_rows = tuple(
+                dict(zip(_PREDECESSOR_CATALOG_COLUMNS, row))
+                for row in predecessor_catalog_rows
+            )
             validation_continuity = _current_batch_entity_continuity(
-                tuple(
-                    dict(zip(_PREDECESSOR_CATALOG_COLUMNS, row))
-                    for row in predecessor_catalog_rows
-                ),
+                validation_predecessor_rows,
                 candidate_catalog_entities,
                 validation_event_rows,
                 approval["approval_rows_by_id"],
+                preserved_entity_ids=(
+                    _mnn_only_predecessor_entity_ids(
+                        cursor,
+                        predecessor_release_id,
+                        validation_predecessor_rows,
+                    )
+                    if expected_mnn_snapshot_id > 0
+                    else ()
+                ),
             )
             validation_continuity_records = [
                 {
