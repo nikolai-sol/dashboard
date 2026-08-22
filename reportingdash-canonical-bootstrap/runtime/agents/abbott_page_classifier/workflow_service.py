@@ -146,6 +146,7 @@ class PersistedReconciliationItem:
 class PersistedReconciliationRun:
     run_id: int
     run_key: str
+    observed_pages_hash: str | None
     status: str
     configuration: WorkflowConfiguration
     context: ReconciliationContext
@@ -255,11 +256,28 @@ class CanonicalWeeklyProposalService:
         ):
             raise ValueError("TAXONOMY_CONTRACT_MISMATCH")
         items = self._build_items(context, registry1, registry2)
+        observed_pages = collapse_observed_pages(context.observed_pages)
+        observed_pages_hash = sha256_text(
+            _canonical_json(
+                [
+                    {
+                        "exact_url_hashes": page.exact_url_hashes,
+                        "first_seen": page.first_seen.isoformat(),
+                        "last_seen": page.last_seen.isoformat(),
+                        "normalized_url": page.normalized_url,
+                        "page_title": page.page_title,
+                        "pageviews": page.pageviews,
+                    }
+                    for page in observed_pages
+                ]
+            )
+        )
         run_key = sha256_text(
             _canonical_json(
                 {
                     "code_revision": self._configuration.code_revision,
                     "model_routing_version": self._configuration.model_routing_version,
+                    "observed_pages_hash": observed_pages_hash,
                     "predecessor_release_id": context.predecessor_release_id,
                     "predecessor_snapshot_digests": context.predecessor_snapshot_digests,
                     "predecessor_snapshot_ids": context.predecessor_snapshot_ids,
@@ -275,6 +293,7 @@ class CanonicalWeeklyProposalService:
             PersistedReconciliationRun(
                 run_id=0,
                 run_key=run_key,
+                observed_pages_hash=observed_pages_hash,
                 status="reconciled",
                 configuration=self._configuration,
                 context=context,
@@ -524,25 +543,42 @@ class CanonicalWeeklyProposalService:
         return {"material_id": material_ids, "url": urls}
 
     @staticmethod
-    def _has_active_strong_url_identity(
-        normalized_url: str,
+    def _strong_url_target_indexes(
         entities: Sequence[CanonicalClassification],
         aliases: Sequence[IdentityAlias],
-    ) -> bool:
-        """Only exact reviewed URL identity suppresses an observed review gap."""
-        targets = {
-            entity.content_entity_id
-            for entity in entities
-            if normalize_url(entity.url).value == normalized_url
-        }
-        targets.update(
-            alias.content_entity_id
-            for alias in aliases
-            if alias.strength == "strong"
-            and alias.alias_kind in {"canonical_url", "url"}
-            and normalize_url(alias.alias_value).value == normalized_url
+    ) -> tuple[dict[str, frozenset[int]], dict[str, frozenset[int]]]:
+        """Index exact reviewed URLs once for bounded observed-page lookups."""
+        entity_ids = {entity.content_entity_id for entity in entities}
+        all_targets: dict[str, set[int]] = {}
+        usable_targets: dict[str, set[int]] = {}
+
+        def add(targets: dict[str, set[int]], url: str, entity_id: int) -> None:
+            normalized = normalize_url(url).value
+            if normalized:
+                targets.setdefault(sha256_text(normalized), set()).add(entity_id)
+
+        for entity in entities:
+            add(all_targets, entity.url, entity.content_entity_id)
+            add(usable_targets, entity.url, entity.content_entity_id)
+        for alias in aliases:
+            if alias.strength != "strong" or alias.alias_kind not in {
+                "canonical_url", "url"
+            }:
+                continue
+            add(all_targets, alias.alias_value, alias.content_entity_id)
+            if alias.content_entity_id in entity_ids:
+                add(usable_targets, alias.alias_value, alias.content_entity_id)
+
+        return (
+            {
+                url_hash: frozenset(targets)
+                for url_hash, targets in all_targets.items()
+            },
+            {
+                url_hash: frozenset(targets)
+                for url_hash, targets in usable_targets.items()
+            },
         )
-        return len(targets) == 1
 
     @staticmethod
     def _build_items(
@@ -550,12 +586,12 @@ class CanonicalWeeklyProposalService:
         registry1: SourceSnapshot,
         registry2: SourceSnapshot,
     ) -> tuple[PersistedReconciliationItem, ...]:
-        resolver = IdentityResolver()
+        resolver = IdentityResolver.prepare(context.entities, context.aliases)
         entity_by_id = {entity.content_entity_id: entity for entity in context.entities}
         entries: list[tuple[str, SourceCandidate, object]] = []
         for source_name, snapshot in (("registry1", registry1), ("registry2", registry2)):
             for candidate in snapshot.candidates:
-                resolution = resolver.resolve(candidate, context.entities, context.aliases)
+                resolution = resolver.resolve(candidate)
                 entries.append((source_name, candidate, resolution))
 
         parents = list(range(len(entries)))
@@ -745,6 +781,14 @@ class CanonicalWeeklyProposalService:
                     reconciliation_input=reconciliation_input,
                 )
             )
+        strong_url_targets, usable_strong_url_targets = (
+            CanonicalWeeklyProposalService._strong_url_target_indexes(
+                context.entities, context.aliases
+            )
+        )
+        entities_by_id = {
+            entity.content_entity_id: entity for entity in context.entities
+        }
         for observed in collapse_observed_pages(context.observed_pages):
             candidate = MaterialCandidate(
                 source_name="observed_page",
@@ -760,26 +804,88 @@ class CanonicalWeeklyProposalService:
                     "url": observed.normalized_url, "title": observed.page_title,
                     "pageviews": observed.pageviews, "first_seen": observed.first_seen.isoformat(),
                     "last_seen": observed.last_seen.isoformat(),
+                    "exact_url_hashes": observed.exact_url_hashes,
                 })),
             )
-            resolution = resolver.resolve(candidate, context.entities, context.aliases)
-            if CanonicalWeeklyProposalService._has_active_strong_url_identity(
-                observed.normalized_url, context.entities, context.aliases
-            ):
-                continue
+            exact_target_sets = tuple(
+                strong_url_targets.get(url_hash, frozenset())
+                for url_hash in observed.exact_url_hashes
+            )
+            exact_targets = (
+                set().union(*exact_target_sets) if exact_target_sets else set()
+            )
             service_route = normalize_url(observed.normalized_url).path in {
                 "/auth", "/registration.php", "/personal", "/rules", "/privacy", "/cookies", "/sitemap.php",
             } or normalize_url(observed.normalized_url).path.startswith("/personal/")
             deterministic = Proposal(
                 direction_code="not_applicable",
-                material_type_code="service_page",
+                # The active reviewed taxonomy does not publish a service-page
+                # material type.  Keep the route unresolved so local review can
+                # explicitly reject it as non-content instead of persisting an
+                # out-of-taxonomy classification.
+                material_type_code=None,
                 access_code="unspecified",
                 lifecycle_code="active",
                 rule_code="SERVICE_ROUTE",
-                confidence=Decimal("1.0"),
+                confidence=1.0,
                 evidence=("reviewed service route",),
             ) if service_route else None
-            conflict = resolution.status == "collision"
+            if (
+                exact_target_sets
+                and all(len(targets) == 1 for targets in exact_target_sets)
+                and len(exact_targets) == 1
+            ):
+                target_id = next(iter(exact_targets))
+                canonical = entities_by_id.get(target_id)
+                if canonical is None:
+                    raise ValueError("STRONG_URL_TARGET_MISSING")
+                if (
+                    canonical.direction_code not in (None, "undetermined")
+                    and canonical.material_type_code not in (None, "undetermined")
+                ):
+                    continue
+                reconciliation_input = ReconciliationInput(
+                    content_entity_id=target_id,
+                    active_canonical=canonical,
+                    registry1=candidate,
+                    deterministic_proposal=(
+                        deterministic
+                        or Proposal(
+                            direction_code=None,
+                            material_type_code=None,
+                            access_code="unspecified",
+                            lifecycle_code="active",
+                            rule_code="OBSERVED_METADATA_GAP",
+                            confidence=1.0,
+                            evidence=("reviewed URL owner lacks published metadata",),
+                        )
+                    ),
+                )
+                reconciled = reconcile_entity(reconciliation_input)
+                grouping_key = f"observed:{observed.normalized_url}"
+                items.append(PersistedReconciliationItem(
+                    grouping_key=grouping_key,
+                    item_key=sha256_text(_canonical_json({
+                        "grouping_key": grouping_key,
+                        "identity_status": "matched",
+                        "input_hash": reconciled.input_hash,
+                    })),
+                    input_hash=reconciled.input_hash,
+                    identity_status="matched",
+                    content_entity_id=target_id,
+                    reconciliation_input=reconciliation_input,
+                ))
+                continue
+            usable_target_sets = tuple(
+                usable_strong_url_targets.get(url_hash, frozenset())
+                for url_hash in observed.exact_url_hashes
+            )
+            usable_targets = (
+                set().union(*usable_target_sets) if usable_target_sets else set()
+            )
+            conflict = any(len(targets) > 1 for targets in usable_target_sets) or len(
+                usable_targets
+            ) > 1
             reconciliation_input = ReconciliationInput(
                 registry1=candidate,
                 identity_conflict=conflict,

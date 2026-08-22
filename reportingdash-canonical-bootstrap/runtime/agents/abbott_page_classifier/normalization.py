@@ -252,3 +252,33 @@ def normalize_url(raw: str) -> NormalizedUrl:
         sha256=sha256_text(normalized),
         path_sha256=sha256_text(path),
     )
+
+
+def normalize_observed_page_grouping_url(raw: str) -> NormalizedUrl:
+    """Return the query-free page identity used only for observations.
+
+    Registry and alias identity continues to use :func:`normalize_url`, which
+    deliberately retains semantic query parameters. Metrika page analytics is
+    displayed and resolved by page path, so query variants must not become
+    separate review rows or be copied into review projections.
+    """
+
+    normalized = normalize_url(raw)
+    if not normalized.value:
+        return normalized
+    path_lower = normalized.path.casefold()
+    if (
+        re.search(r"(^|/)blob:", path_lower)
+        or re.search(r"(^|/)[a-z][a-z0-9+.-]*:/{1,2}", path_lower)
+        or "…" in normalized.path
+        or "%e2%80%a6" in path_lower
+    ):
+        return _empty_normalized_url()
+    parts = urlsplit(normalized.value)
+    value = urlunsplit((parts.scheme, parts.netloc, normalized.path, "", ""))
+    return NormalizedUrl(
+        value=value,
+        path=normalized.path,
+        sha256=sha256_text(value),
+        path_sha256=normalized.path_sha256,
+    )

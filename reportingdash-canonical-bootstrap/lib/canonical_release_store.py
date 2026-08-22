@@ -814,11 +814,13 @@ def activate_release(release_id: int, *, expected_active_release_id: int) -> Non
         release = cur.fetchone()
         if not isinstance(release, dict):
             raise ImmutableReleaseError("Canonical release is not validated for activation")
-        # A disposable preview may create a validated-looking successor in its
-        # own MySQL instance.  Its explicit provenance must never be accepted
-        # by this production activation authority, even if its rows are copied.
-        if str(release.get("code_revision") or "").startswith(PREVIEW_ONLY_REVISION_PREFIX):
-            raise ImmutableReleaseError("Preview-only canonical release cannot be activated")
+        # Disposable-preview provenance is never valid production authority.
+        if str(release.get("code_revision") or "").startswith(
+            PREVIEW_ONLY_REVISION_PREFIX
+        ):
+            raise ImmutableReleaseError(
+                "Preview-only canonical release cannot be activated"
+            )
         cur.execute(
             """
             SELECT source_snapshot_id, source_kind, code_revision,

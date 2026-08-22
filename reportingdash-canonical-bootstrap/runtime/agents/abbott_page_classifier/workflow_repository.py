@@ -73,13 +73,19 @@ def _load_active_strong_url_aliases(cursor) -> tuple[StrongUrlAlias, ...]:
     try:
         return tuple(
             StrongUrlAlias(
-                content_entity_id=int(row[0]),
-                alias_type=str(row[1]),
-                alias_value=str(row[2]),
+                content_entity_id=int(
+                    row["content_entity_id"] if isinstance(row, Mapping) else row[0]
+                ),
+                alias_type=str(
+                    row["alias_type"] if isinstance(row, Mapping) else row[1]
+                ),
+                alias_value=str(
+                    row["alias_value"] if isinstance(row, Mapping) else row[2]
+                ),
             )
             for row in cursor.fetchall()
         )
-    except (IndexError, TypeError, ValueError):
+    except (IndexError, KeyError, TypeError, ValueError):
         raise RepositoryError("STRONG_URL_ALIAS_INVALID") from None
 
 
@@ -103,17 +109,23 @@ def _is_duplicate_key_error(error: Exception) -> bool:
         return False
 
 
-def _candidate_payload(value: SourceCandidate | None) -> object | None:
+def _candidate_payload(
+    value: SourceCandidate | MaterialCandidate | None,
+) -> object | None:
     return asdict(value) if value is not None else None
 
 
-def _candidate_from_payload(value: object | None) -> SourceCandidate | None:
+def _candidate_from_payload(
+    value: object | None,
+) -> SourceCandidate | MaterialCandidate | None:
     value = _json_value(value)
     if value is None:
         return None
     if not isinstance(value, Mapping):
         raise RepositoryError("RECONCILIATION_ITEM_INVALID")
     try:
+        if "candidate" not in value:
+            return MaterialCandidate(**dict(value))
         candidate = MaterialCandidate(**dict(value["candidate"]))
         provenance = tuple(SourceProvenance(**dict(item)) for item in value["provenance"])
         variants = tuple(SourceIdentityVariant(**dict(item)) for item in value["identity_variants"])
@@ -265,7 +277,7 @@ def _input_payload(value: ReconciliationInput) -> dict[str, object]:
         "content_entity_id": value.content_entity_id,
         "active_canonical": _canonical_payload(value.active_canonical),
         "reviewed_correction": _proposal_payload(value.reviewed_correction),
-        "registry1": _candidate_payload(value.registry1 if isinstance(value.registry1, SourceCandidate) else None),
+        "registry1": _candidate_payload(value.registry1),
         "registry2": _candidate_payload(value.registry2),
         "deterministic_proposal": _proposal_payload(value.deterministic_proposal),
         "llm_proposal": _proposal_payload(value.llm_proposal),
@@ -313,22 +325,30 @@ def _run_key(
     context: ReconciliationContext,
     registry1_hash: str,
     registry2_hash: str,
+    *,
+    observed_pages_hash: str | None = None,
 ) -> str:
+    if observed_pages_hash is not None and (
+        len(observed_pages_hash) != 64
+        or any(character not in "0123456789abcdef" for character in observed_pages_hash)
+    ):
+        raise RepositoryError("OBSERVED_PAGES_HASH_INVALID")
+    payload = {
+        "code_revision": configuration.code_revision,
+        "model_routing_version": configuration.model_routing_version,
+        "predecessor_release_id": context.predecessor_release_id,
+        "predecessor_snapshot_digests": context.predecessor_snapshot_digests,
+        "predecessor_snapshot_ids": context.predecessor_snapshot_ids,
+        "prompt_version": configuration.prompt_version,
+        "registry1_hash": registry1_hash,
+        "registry2_hash": registry2_hash,
+        "taxonomy_digest": context.taxonomy.digest,
+        "taxonomy_version": context.taxonomy.version,
+    }
+    if observed_pages_hash is not None:
+        payload["observed_pages_hash"] = observed_pages_hash
     return sha256_text(
-        _canonical_json(
-            {
-                "code_revision": configuration.code_revision,
-                "model_routing_version": configuration.model_routing_version,
-                "predecessor_release_id": context.predecessor_release_id,
-                "predecessor_snapshot_digests": context.predecessor_snapshot_digests,
-                "predecessor_snapshot_ids": context.predecessor_snapshot_ids,
-                "prompt_version": configuration.prompt_version,
-                "registry1_hash": registry1_hash,
-                "registry2_hash": registry2_hash,
-                "taxonomy_digest": context.taxonomy.digest,
-                "taxonomy_version": context.taxonomy.version,
-            }
-        )
+        _canonical_json(payload)
     )
 
 
@@ -483,11 +503,21 @@ class MySqlWorkflowStore:
     def attest_batch_for_publication(self, batch_id: int, batch) -> None:
         self._registry.attest_batch_for_publication(int(batch_id), batch)
 
+    def attest_batch_for_acceptance(self, batch_id: int, batch) -> None:
+        self._registry.attest_batch_for_acceptance(int(batch_id), batch)
+
     def mark_batch_published(
         self, batch_id: int, spreadsheet_id: str, projection_hash: str
     ) -> None:
         self._registry.mark_batch_published(
             int(batch_id), spreadsheet_id, projection_hash
+        )
+
+    def mark_local_batch_published(
+        self, batch_id: int, locator: str, content_hash: str
+    ) -> None:
+        self._registry.mark_local_batch_published(
+            int(batch_id), locator, content_hash
         )
 
     def mark_batch_projection_failed(self, batch_id: int, failure_code: str) -> None:
@@ -498,6 +528,13 @@ class MySqlWorkflowStore:
     ) -> None:
         self._registry.record_batch_acceptance(
             int(batch_id), snapshot, spreadsheet_id
+        )
+
+    def record_local_batch_acceptance(
+        self, batch_id: int, intent, locator: str, content_hash: str
+    ):
+        return self._registry.record_local_batch_acceptance(
+            int(batch_id), intent, locator, content_hash
         )
 
     def ingest_accepted_snapshot(self, snapshot):
@@ -1111,6 +1148,10 @@ class MySqlWorkflowStore:
                    event.access_code, event.lifecycle_code,
                    event.event_fingerprint
             FROM portal_content_classification_events AS event
+            INNER JOIN portal_content_taxonomy_versions AS source_taxonomy
+              ON source_taxonomy.id = event.taxonomy_version_id
+             AND source_taxonomy.dataset_key = 'abbott'
+             AND source_taxonomy.taxonomy_status = 'active'
             WHERE event.id IN ({event_placeholders})
             ORDER BY event.id
             FOR UPDATE
@@ -1120,6 +1161,19 @@ class MySqlWorkflowStore:
         stored_events = tuple(cursor.fetchall())
         if tuple(int(row[0]) for row in stored_events) != event_ids:
             raise RepositoryError("BASELINE_PROVENANCE_EVENT_MISMATCH")
+        cursor.execute(
+            """
+            SELECT taxonomy_kind, term_code
+            FROM portal_content_taxonomy_terms
+            WHERE taxonomy_version_id = %s
+              AND term_status = 'active'
+            ORDER BY taxonomy_kind, term_code
+            """,
+            (int(taxonomy_id),),
+        )
+        compatible_terms = {
+            (str(row[0]), str(row[1])) for row in cursor.fetchall()
+        }
         for event in stored_events:
             expected_entity, expected_fingerprint, expected_classification = attached_events[
                 int(event[0])
@@ -1131,9 +1185,19 @@ class MySqlWorkflowStore:
                 str(event[5]) if event[5] is not None else "unspecified",
                 stored_lifecycle != "archived",
             )
+            event_terms = (
+                ("direction", event[3]),
+                ("material_type", event[4]),
+                ("access", event[5] or "unspecified"),
+                ("lifecycle", event[6] or "unknown"),
+            )
             if (
                 int(event[1]) != expected_entity
-                or int(event[2]) != taxonomy_id
+                or int(event[2]) <= 0
+                or any(
+                    code is not None and (kind, str(code)) not in compatible_terms
+                    for kind, code in event_terms
+                )
                 or stored_classification != expected_classification
                 or str(event[7]).lower() != expected_fingerprint
             ):
@@ -1337,6 +1401,7 @@ class MySqlWorkflowStore:
             if draft.run_id not in (0, None) or draft.run_key != _run_key(
                 draft.configuration, draft.context,
                 draft.registry1.source_hash, draft.registry2.source_hash,
+                observed_pages_hash=draft.observed_pages_hash,
             ):
                 raise RepositoryError("RECONCILIATION_HASH_MISMATCH")
             connection = self._connection_factory()
@@ -1389,11 +1454,11 @@ class MySqlWorkflowStore:
                   predecessor_release_id, predecessor_snapshot_ids,
                   predecessor_snapshot_digests, taxonomy_version_id,
                   taxonomy_digest, prompt_version, model_routing_version,
-                  code_revision
+                  code_revision, observed_pages_hash
                 ) VALUES (
                   %s, %s, 'reconciled', %s, %s, %s, %s, %s, %s, %s, %s,
                   %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s,
-                  %s, %s, %s
+                  %s, %s, %s, %s
                 )
                 """,
                 (
@@ -1409,6 +1474,7 @@ class MySqlWorkflowStore:
                     predecessor_id, _canonical_json(snapshot_ids), _canonical_json(digests),
                     taxonomy_id, taxonomy.digest, draft.configuration.prompt_version,
                     draft.configuration.model_routing_version, draft.configuration.code_revision,
+                    draft.observed_pages_hash,
                 ),
             )
             run_id = int(cursor.lastrowid)
@@ -1514,7 +1580,7 @@ class MySqlWorkflowStore:
                        predecessor_release_id, predecessor_snapshot_ids,
                        predecessor_snapshot_digests, run.taxonomy_version_id,
                        taxonomy.version, run.taxonomy_digest, prompt_version,
-                       model_routing_version, code_revision
+                       model_routing_version, code_revision, observed_pages_hash
                 FROM portal_content_reconciliation_runs AS run
                 INNER JOIN portal_content_taxonomy_versions AS taxonomy
                   ON taxonomy.id = run.taxonomy_version_id
@@ -1588,10 +1654,20 @@ class MySqlWorkflowStore:
                 "registry2", str(row[9]), int(row[10]), int(row[11]), int(row[12]),
                 int(row[13]), int(row[8]),
             )
-            if str(row[0]) != _run_key(configuration, context, registry1.source_hash, registry2.source_hash):
+            observed_pages_hash = (
+                str(row[23]).lower() if row[23] is not None else None
+            )
+            if str(row[0]) != _run_key(
+                configuration,
+                context,
+                registry1.source_hash,
+                registry2.source_hash,
+                observed_pages_hash=observed_pages_hash,
+            ):
                 raise RepositoryError("RECONCILIATION_HASH_MISMATCH")
             return PersistedReconciliationRun(
-                run_id=int(run_id), run_key=str(row[0]), status=str(row[1]),
+                run_id=int(run_id), run_key=str(row[0]),
+                observed_pages_hash=observed_pages_hash, status=str(row[1]),
                 configuration=configuration, context=context,
                 registry1=registry1, registry2=registry2, items=tuple(items),
             )
