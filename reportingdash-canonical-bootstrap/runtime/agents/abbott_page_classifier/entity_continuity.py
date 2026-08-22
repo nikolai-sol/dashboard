@@ -25,6 +25,7 @@ _AUTHORITIES = frozenset(
         "reviewed_retire",
         "reviewed_reject",
         "current_batch_approve",
+        "current_batch_rebind",
         "current_batch_revoke",
     }
 )

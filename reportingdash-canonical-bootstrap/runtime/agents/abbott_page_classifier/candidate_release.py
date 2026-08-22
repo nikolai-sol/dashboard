@@ -2944,7 +2944,32 @@ def _current_batch_entity_continuity(
             )
     new_ids = candidate_ids - predecessor_ids
     removed_ids = predecessor_ids - candidate_ids
+    rebound_new_ids: set[int] = set()
+    predecessor_catalog = tuple(
+        _predecessor_catalog_row(row) for row in predecessor_rows
+    )
     for entity_id in sorted(new_ids):
+        matching_events = [
+            row for row in event_rows
+            if int(row.get("content_entity_id") or 0) == entity_id
+            and str(row.get("event_kind") or "") in {"approve", "correct"}
+        ]
+        if len(matching_events) != 1:
+            continue
+        predecessor_matches = {
+            row.content_entity_id
+            for row in predecessor_catalog
+            if row.content_entity_id in removed_ids
+            and _event_matches_predecessor(matching_events[0], row)
+        }
+        if len(predecessor_matches) == 1:
+            decisions.append(EntityContinuity(
+                predecessor_matches.pop(), entity_id, "current_batch_rebind"
+            ))
+            rebound_new_ids.add(entity_id)
+    for entity_id in sorted(new_ids):
+        if entity_id in rebound_new_ids:
+            continue
         matching = [
             row for row in event_rows
             if int(row.get("content_entity_id") or 0) == entity_id
@@ -2955,6 +2980,12 @@ def _current_batch_entity_continuity(
                 EntityContinuity(None, entity_id, "current_batch_approve")
             )
     for entity_id in sorted(removed_ids):
+        if any(
+            row.predecessor_id == entity_id
+            and row.authority == "current_batch_rebind"
+            for row in decisions
+        ):
+            continue
         matching = [
             row for row in event_rows
             if int(row.get("content_entity_id") or 0) == entity_id
