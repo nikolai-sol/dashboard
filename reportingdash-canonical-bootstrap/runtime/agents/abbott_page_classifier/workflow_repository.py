@@ -544,7 +544,12 @@ class MySqlWorkflowStore:
             if taxonomy_id <= 0:
                 raise RepositoryError("TAXONOMY_VERSION_NOT_ACTIVE")
             self._bootstrap_registry_cursor(cursor, predecessor_id, taxonomy_id)
-            entities = self._load_entities(cursor)
+            predecessor_catalog_entities = self._load_predecessor_catalog_entities(
+                cursor, predecessor_id
+            )
+            entities = self._load_entities(
+                cursor, predecessor_catalog_entities
+            )
             aliases = self._load_aliases(cursor)
             observed_pages = self._load_observed_pages(cursor, predecessor_id)
             predecessor_content_entity_ids = (
@@ -552,9 +557,7 @@ class MySqlWorkflowStore:
                     cursor, predecessor_id
                 )
             )
-            predecessor_catalog_entities = self._load_predecessor_catalog_entities(
-                cursor, predecessor_id
-            )
+            mnn_by_entity = self._load_mnn_by_entity(cursor, predecessor_id)
             connection.commit()
             return ReconciliationContext(
                 predecessor_release_id=predecessor_id,
@@ -568,6 +571,7 @@ class MySqlWorkflowStore:
                 ),
                 predecessor_catalog_entities=predecessor_catalog_entities,
                 observed_pages=observed_pages,
+                mnn_by_entity=mnn_by_entity,
             )
         except RepositoryError:
             ContentRegistryRepository._rollback(connection)
@@ -577,6 +581,28 @@ class MySqlWorkflowStore:
             raise RepositoryError("DB_READ_FAILED") from None
         finally:
             ContentRegistryRepository._close(cursor, connection)
+
+    @staticmethod
+    def _load_mnn_by_entity(cursor, release_id: int) -> Mapping[int, tuple[str, ...]]:
+        cursor.execute(
+            """
+            SELECT content_entity_id, mnn_label
+            FROM portal_content_catalog_mnn
+            WHERE canonical_release_id = %s
+            ORDER BY content_entity_id, mnn_key, mnn_label
+            """,
+            (release_id,),
+        )
+        result: dict[int, list[str]] = {}
+        for raw_entity_id, raw_label in cursor.fetchall():
+            entity_id = int(raw_entity_id)
+            label = str(raw_label or "").strip()
+            if entity_id <= 0 or not label:
+                raise RepositoryError("MNN_CONTEXT_INVALID")
+            values = result.setdefault(entity_id, [])
+            if label not in values:
+                values.append(label)
+        return {entity_id: tuple(values) for entity_id, values in result.items()}
 
     @staticmethod
     def _lock_active_release(cursor):
@@ -626,41 +652,54 @@ class MySqlWorkflowStore:
         return digests
 
     @staticmethod
-    def _load_entities(cursor) -> tuple[CanonicalClassification, ...]:
+    def _load_entities(
+        cursor,
+        predecessor_catalog_entities: Sequence[CanonicalClassification] = (),
+    ) -> tuple[CanonicalClassification, ...]:
         cursor.execute(
             """
-            WITH latest_events AS (
-              SELECT event.*,
-                     ROW_NUMBER() OVER (
-                       PARTITION BY event.content_entity_id
-                       ORDER BY event.effective_at DESC, event.id DESC
-                     ) AS row_rank
-              FROM portal_content_classification_events AS event
-              WHERE event.effective_at <= CURRENT_TIMESTAMP(6)
-            )
-            SELECT entity.id, entity.title, entity.canonical_url,
-                   event.direction_code, event.material_type_code,
-                   event.access_code, event.lifecycle_code, event.id
+            SELECT entity.id, entity.title, entity.canonical_url
             FROM portal_content_registry_entities AS entity
-            LEFT JOIN latest_events AS event
-              ON event.content_entity_id = entity.id
-             AND event.row_rank = 1
             WHERE entity.dataset_key = %s
               AND entity.registry_status = 'active'
             ORDER BY entity.id
             """,
             (DATASET_KEY,),
         )
+        active_by_entity = {
+            entity.content_entity_id: entity
+            for entity in predecessor_catalog_entities
+        }
         return tuple(
             CanonicalClassification(
                 content_entity_id=int(row[0]),
                 title=str(row[1]),
                 url=str(row[2]),
-                direction_code=(str(row[3]) if row[3] is not None else None),
-                material_type_code=(str(row[4]) if row[4] is not None else None),
-                access_code=(str(row[5]) if row[5] is not None else None),
-                lifecycle_code=(str(row[6]) if row[6] is not None else "unknown"),
-                event_id=(int(row[7]) if row[7] is not None else None),
+                direction_code=(
+                    active_by_entity[int(row[0])].direction_code
+                    if int(row[0]) in active_by_entity
+                    else None
+                ),
+                material_type_code=(
+                    active_by_entity[int(row[0])].material_type_code
+                    if int(row[0]) in active_by_entity
+                    else None
+                ),
+                access_code=(
+                    active_by_entity[int(row[0])].access_code
+                    if int(row[0]) in active_by_entity
+                    else None
+                ),
+                lifecycle_code=(
+                    active_by_entity[int(row[0])].lifecycle_code
+                    if int(row[0]) in active_by_entity
+                    else "unknown"
+                ),
+                event_id=(
+                    active_by_entity[int(row[0])].event_id
+                    if int(row[0]) in active_by_entity
+                    else None
+                ),
             )
             for row in cursor.fetchall()
         )
@@ -752,6 +791,7 @@ class MySqlWorkflowStore:
             WITH ranked_catalog AS (
               SELECT content_entity_id, page_title, normalized_url,
                      direction_key, material_type, access_label, is_active,
+                     classification_event_id,
                      ROW_NUMBER() OVER (
                        PARTITION BY content_entity_id
                        ORDER BY
@@ -765,7 +805,8 @@ class MySqlWorkflowStore:
                 AND content_entity_id IS NOT NULL
             )
             SELECT content_entity_id, page_title, normalized_url,
-                   direction_key, material_type, access_label, is_active
+                   direction_key, material_type, access_label, is_active,
+                   classification_event_id
             FROM ranked_catalog
             WHERE row_rank = 1
             ORDER BY content_entity_id
@@ -781,6 +822,7 @@ class MySqlWorkflowStore:
                 material_type_code=self._taxonomy_code("material_type", row[4]),
                 access_code=self._taxonomy_code("access", row[5]) or "unspecified",
                 lifecycle_code="active" if bool(row[6]) else "archive_candidate",
+                event_id=(int(row[7]) if row[7] is not None else None),
             )
             for row in cursor.fetchall()
         )

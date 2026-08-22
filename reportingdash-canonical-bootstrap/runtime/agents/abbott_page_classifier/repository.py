@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from datetime import datetime, timezone
 from dataclasses import dataclass, replace
+import hashlib
 import json
 from enum import Enum
 from typing import Any, Callable, Mapping, Protocol, Sequence
@@ -85,6 +86,16 @@ class BatchHistoryRecord:
     spreadsheet_projection_hash: str | None
     candidate_release_id: int | None
     activation_status: str
+
+
+@dataclass(frozen=True)
+class ActiveCatalogClassification:
+    release_id: int
+    content_entity_id: int
+    event_id: int | None
+    event_fingerprint: str | None
+    values: tuple[str | None, str | None, str | None, str | None]
+    effective_at: object | None = None
 
 
 class ContentRegistryRepository:
@@ -1078,30 +1089,17 @@ class ContentRegistryRepository:
                     or int(entity_row[0]) != item.content_entity_id
                 ):
                     raise RepositoryError("CONTENT_ENTITY_NOT_ABBOTT")
-                cursor.execute(
-                    """
-                    SELECT
-                      id,
-                      direction_code,
-                      material_type_code,
-                      access_code,
-                      lifecycle_code,
-                      effective_at
-                    FROM portal_content_classification_events
-                    WHERE content_entity_id = %s
-                    ORDER BY effective_at DESC, id DESC
-                    LIMIT 1
-                    FOR UPDATE
-                    """,
-                    (item.content_entity_id,),
+                active_classification = self._load_active_catalog_classification(
+                    cursor, item.content_entity_id
                 )
-                predecessor_row = cursor.fetchone()
                 predecessor_event_id = (
-                    int(predecessor_row[0]) if predecessor_row is not None else None
+                    active_classification.event_id
+                    if active_classification is not None
+                    else None
                 )
                 predecessor_values = (
-                    tuple(predecessor_row[1:5])
-                    if predecessor_row is not None and len(predecessor_row) >= 5
+                    active_classification.values
+                    if active_classification is not None
                     else None
                 )
                 event_values = (
@@ -1112,11 +1110,11 @@ class ContentRegistryRepository:
                 )
                 if predecessor_values == event_values:
                     continue
-                if predecessor_row is not None:
-                    if len(predecessor_row) < 6:
+                if active_classification is not None:
+                    if active_classification.effective_at is None:
                         raise RepositoryError("SUCCESSOR_EFFECTIVE_AT_INVALID")
                     predecessor_effective_at = self._canonical_event_timestamp(
-                        predecessor_row[5]
+                        active_classification.effective_at
                     )
                     if accepted_at < predecessor_effective_at:
                         raise RepositoryError("SUCCESSOR_EFFECTIVE_AT_INVALID")
@@ -1248,6 +1246,126 @@ class ContentRegistryRepository:
             raise RepositoryError("DB_TRANSACTION_FAILED") from None
         finally:
             self._close(cursor, connection)
+
+    @staticmethod
+    def _load_active_catalog_classification(
+        cursor: Cursor,
+        content_entity_id: int,
+    ) -> ActiveCatalogClassification | None:
+        cursor.execute(
+            """
+            SELECT active.canonical_release_id
+            FROM portal_active_data_releases AS active
+            INNER JOIN portal_data_releases AS release_row
+              ON release_row.id = active.canonical_release_id
+             AND release_row.dataset_key = active.dataset_key
+             AND release_row.release_status = 'active'
+            WHERE active.dataset_key = %s
+            FOR UPDATE
+            """,
+            (DATASET_KEY,),
+        )
+        active_row = cursor.fetchone()
+        if active_row is None or int(active_row[0] or 0) <= 0:
+            raise RepositoryError("ACTIVE_PREDECESSOR_NOT_FOUND")
+        release_id = int(active_row[0])
+        cursor.execute(
+            """
+            SELECT content_entity_id, classification_event_id,
+                   classification_event_fingerprint,
+                   projection_provenance_json
+            FROM portal_content_catalog
+            WHERE canonical_release_id = %s
+              AND content_entity_id = %s
+            ORDER BY id
+            FOR UPDATE
+            """,
+            (release_id, int(content_entity_id)),
+        )
+        rows = tuple(cursor.fetchall())
+        if not rows:
+            return None
+        authorities: set[
+            tuple[int, int | None, str | None, tuple[str | None, ...]]
+        ] = set()
+        for row in rows:
+            try:
+                entity_id = int(row[0])
+                event_id = int(row[1]) if row[1] is not None else None
+                event_fingerprint = (
+                    str(row[2]).lower() if row[2] is not None else None
+                )
+                provenance = (
+                    json.loads(row[3]) if isinstance(row[3], str) else row[3]
+                )
+                codes = provenance["canonical_codes"]
+                values = tuple(
+                    str(codes[name]) if codes.get(name) is not None else None
+                    for name in (
+                        "direction", "material_type", "access", "lifecycle"
+                    )
+                )
+            except (AttributeError, KeyError, TypeError, ValueError):
+                raise RepositoryError("ACTIVE_CATALOG_AUTHORITY_MISMATCH") from None
+            if (
+                entity_id != int(content_entity_id)
+                or bool(event_id) != bool(event_fingerprint)
+                or (
+                    event_fingerprint is not None
+                    and (
+                        len(event_fingerprint) != 64
+                        or any(
+                            character not in "0123456789abcdef"
+                            for character in event_fingerprint
+                        )
+                    )
+                )
+                or any(value is None or not value.strip() for value in values)
+            ):
+                raise RepositoryError("ACTIVE_CATALOG_AUTHORITY_MISMATCH")
+            authorities.add((entity_id, event_id, event_fingerprint, values))
+        if len(authorities) != 1:
+            raise RepositoryError("ACTIVE_CATALOG_AUTHORITY_MISMATCH")
+        entity_id, event_id, event_fingerprint, values = next(iter(authorities))
+        if event_id is None:
+            return ActiveCatalogClassification(
+                release_id=release_id,
+                content_entity_id=entity_id,
+                event_id=None,
+                event_fingerprint=None,
+                values=values,
+            )
+        cursor.execute(
+            """
+            SELECT id, content_entity_id, direction_code, material_type_code,
+                   access_code, lifecycle_code, event_fingerprint, effective_at
+            FROM portal_content_classification_events
+            WHERE id = %s
+            FOR UPDATE
+            """,
+            (event_id,),
+        )
+        event_row = cursor.fetchone()
+        if event_row is None:
+            raise RepositoryError("ACTIVE_CATALOG_AUTHORITY_MISMATCH")
+        stored_values = tuple(
+            str(value) if value is not None else None for value in event_row[2:6]
+        )
+        if (
+            int(event_row[0]) != event_id
+            or int(event_row[1]) != entity_id
+            or stored_values != values
+            or str(event_row[6]).lower() != event_fingerprint
+        ):
+            raise RepositoryError("ACTIVE_CATALOG_AUTHORITY_MISMATCH")
+        return ActiveCatalogClassification(
+            release_id=release_id,
+            content_entity_id=entity_id,
+            event_id=event_id,
+            event_fingerprint=event_fingerprint,
+            values=values,
+            effective_at=event_row[7],
+        )
 
     @staticmethod
     def _apply_url_alias_decision(
@@ -1389,54 +1507,128 @@ class ContentRegistryRepository:
 
     def load_effective_classifications(self) -> dict[int, ClassificationEvent]:
         sql = """
-            WITH latest_events AS (
-              SELECT
-                event.*,
-                ROW_NUMBER() OVER (
-                  PARTITION BY event.content_entity_id
-                  ORDER BY event.effective_at DESC, event.id DESC
-                ) AS row_rank
-              FROM portal_content_classification_events AS event
-              WHERE event.effective_at <= CURRENT_TIMESTAMP(6)
-            )
             SELECT
-              content_entity_id,
-              direction_code,
-              material_type_code,
-              access_code,
-              lifecycle_code,
+              active.canonical_release_id,
+              catalog.content_entity_id,
+              catalog.classification_event_id,
+              catalog.classification_event_fingerprint,
+              catalog.projection_provenance_json,
               event_kind,
-              event_fingerprint,
               predecessor_event_id,
               approval_batch_id,
               approval_item_id,
               actor,
               reason,
-              effective_at
-            FROM latest_events
-            WHERE row_rank = 1
-            ORDER BY content_entity_id
+              effective_at,
+              event.content_entity_id,
+              event.direction_code,
+              event.material_type_code,
+              event.access_code,
+              event.lifecycle_code,
+              event.event_fingerprint
+            FROM portal_active_data_releases AS active
+            INNER JOIN portal_data_releases AS release_row
+              ON release_row.id = active.canonical_release_id
+             AND release_row.dataset_key = active.dataset_key
+             AND release_row.release_status = 'active'
+            INNER JOIN portal_content_catalog AS catalog
+              ON catalog.canonical_release_id = active.canonical_release_id
+             AND catalog.content_entity_id IS NOT NULL
+            LEFT JOIN portal_content_classification_events AS event
+              ON event.id = catalog.classification_event_id
+            WHERE active.dataset_key = %s
+            ORDER BY catalog.content_entity_id, catalog.id
         """
-        rows = self._fetchall(sql, ())
-        events = (
-            ClassificationEvent(
-                content_entity_id=int(row[0]),
-                direction_code=row[1],
-                material_type_code=row[2],
-                access_code=row[3],
-                lifecycle_code=str(row[4]),
-                event_kind=row[5],
-                event_fingerprint=str(row[6]),
-                predecessor_event_id=(int(row[7]) if row[7] is not None else None),
-                approval_batch_id=(int(row[8]) if row[8] is not None else None),
-                approval_item_id=(int(row[9]) if row[9] is not None else None),
-                actor=row[10],
-                reason=row[11],
-                effective_at=(str(row[12]) if row[12] is not None else None),
-            )
-            for row in rows
-        )
-        return {event.content_entity_id: event for event in events}
+        rows = self._fetchall(sql, (DATASET_KEY,))
+        events: dict[int, ClassificationEvent] = {}
+        for row in rows:
+            try:
+                entity_id = int(row[1])
+                event_id = int(row[2]) if row[2] is not None else None
+                catalog_fingerprint = (
+                    str(row[3]).lower() if row[3] is not None else None
+                )
+                provenance = (
+                    json.loads(row[4]) if isinstance(row[4], str) else row[4]
+                )
+                codes = provenance["canonical_codes"]
+                values = tuple(
+                    str(codes[name]) if codes.get(name) is not None else None
+                    for name in (
+                        "direction", "material_type", "access", "lifecycle"
+                    )
+                )
+            except (AttributeError, KeyError, TypeError, ValueError):
+                raise RepositoryError("ACTIVE_CATALOG_AUTHORITY_MISMATCH") from None
+            if any(value is None or not value.strip() for value in values):
+                raise RepositoryError("ACTIVE_CATALOG_AUTHORITY_MISMATCH")
+            if event_id is None:
+                if catalog_fingerprint is not None or any(
+                    value is not None for value in row[5:18]
+                ):
+                    raise RepositoryError("ACTIVE_CATALOG_AUTHORITY_MISMATCH")
+                baseline_fingerprint = str(
+                    provenance.get("baseline_provenance_fingerprint") or ""
+                ).lower()
+                if len(baseline_fingerprint) != 64:
+                    baseline_fingerprint = hashlib.sha256(
+                        json.dumps(
+                            {
+                                "content_entity_id": entity_id,
+                                "values": values,
+                            },
+                            ensure_ascii=False,
+                            sort_keys=True,
+                            separators=(",", ":"),
+                        ).encode("utf-8")
+                    ).hexdigest()
+                event = ClassificationEvent(
+                    content_entity_id=entity_id,
+                    direction_code=values[0],
+                    material_type_code=values[1],
+                    access_code=values[2],
+                    lifecycle_code=str(values[3]),
+                    event_kind="baseline",
+                    event_fingerprint=baseline_fingerprint,
+                )
+            else:
+                event_values = tuple(
+                    str(value) if value is not None else None
+                    for value in row[13:17]
+                )
+                if (
+                    int(row[12] or 0) != entity_id
+                    or event_values != values
+                    or str(row[17] or "").lower() != catalog_fingerprint
+                ):
+                    raise RepositoryError("ACTIVE_CATALOG_AUTHORITY_MISMATCH")
+                event = ClassificationEvent(
+                    content_entity_id=entity_id,
+                    direction_code=values[0],
+                    material_type_code=values[1],
+                    access_code=values[2],
+                    lifecycle_code=str(values[3]),
+                    event_kind=str(row[5]),
+                    event_fingerprint=str(catalog_fingerprint),
+                    predecessor_event_id=(
+                        int(row[6]) if row[6] is not None else None
+                    ),
+                    approval_batch_id=(
+                        int(row[7]) if row[7] is not None else None
+                    ),
+                    approval_item_id=(
+                        int(row[8]) if row[8] is not None else None
+                    ),
+                    actor=(str(row[9]) if row[9] is not None else None),
+                    reason=(str(row[10]) if row[10] is not None else None),
+                    effective_at=(
+                        str(row[11]) if row[11] is not None else None
+                    ),
+                )
+            prior = events.setdefault(entity_id, event)
+            if prior != event:
+                raise RepositoryError("ACTIVE_CATALOG_AUTHORITY_MISMATCH")
+        return events
 
     @staticmethod
     def _require_audited_batch(batch: ApprovalBatch) -> BuiltApprovalBatch:
@@ -1939,7 +2131,10 @@ class ContentRegistryRepository:
                 )
                 if (
                     not isinstance(evidence, Mapping)
-                    or set(evidence) != expected_evidence_keys
+                    or set(evidence) not in (
+                        expected_evidence_keys,
+                        expected_evidence_keys | {"mnn"},
+                    )
                     or not isinstance(conflict_codes, (tuple, list))
                     or any(not isinstance(code, str) for code in conflict_codes)
                 ):
@@ -1965,6 +2160,13 @@ class ContentRegistryRepository:
                 concise_evidence = evidence["concise_evidence"]
                 if not isinstance(concise_evidence, (tuple, list)) or any(
                     not isinstance(value, str) for value in concise_evidence
+                ):
+                    raise RepositoryError("BATCH_ITEMS_MISMATCH")
+                mnn = evidence.get("mnn", ())
+                if (
+                    not isinstance(mnn, (tuple, list))
+                    or any(not isinstance(value, str) or not value.strip() for value in mnn)
+                    or tuple(mnn) != tuple(sorted(set(mnn)))
                 ):
                     raise RepositoryError("BATCH_ITEMS_MISMATCH")
                 published_decision = evidence["published_decision"]
@@ -2024,6 +2226,7 @@ class ContentRegistryRepository:
                     ),
                     model_routing_version=model_routing_version,
                     prompt_version=prompt_version,
+                    mnn=tuple(mnn),
                 )
             except RepositoryError:
                 raise

@@ -84,6 +84,7 @@ class ApprovalBatchItem(ApprovalItem):
     source_snapshot_digests: tuple[str, ...] = ()
     model_routing_version: str = ""
     prompt_version: str = ""
+    mnn: tuple[str, ...] = ()
 
     def __post_init__(self) -> None:
         for field_name in (
@@ -110,10 +111,15 @@ class ApprovalBatchItem(ApprovalItem):
         object.__setattr__(
             self, "source_snapshot_digests", tuple(self.source_snapshot_digests)
         )
+        object.__setattr__(
+            self,
+            "mnn",
+            tuple(sorted({str(value).strip() for value in self.mnn if str(value).strip()})),
+        )
 
     @property
     def proposal_evidence(self) -> Mapping[str, object]:
-        return MappingProxyType({
+        evidence = {
             "current_canonical": self.current_canonical,
             "registry1": self.registry1_values,
             "registry2": self.registry2_values,
@@ -129,7 +135,10 @@ class ApprovalBatchItem(ApprovalItem):
                 "final_lifecycle_code": self.final_lifecycle_code,
                 "final_material_type_code": self.final_material_type_code,
             },
-        })
+        }
+        if self.mnn:
+            evidence["mnn"] = self.mnn
+        return MappingProxyType(evidence)
 
 
 def _item_sort_key(item: ApprovalItem) -> tuple[int, int, str]:
@@ -171,6 +180,8 @@ def _item_payload(item: ApprovalItem, *, include_row_hash: bool) -> dict[str, ob
             "model_routing_version": item.model_routing_version,
             "prompt_version": item.prompt_version,
         })
+        if item.mnn:
+            payload["mnn"] = item.mnn
     if include_row_hash:
         payload["row_hash"] = item.row_hash
     return payload

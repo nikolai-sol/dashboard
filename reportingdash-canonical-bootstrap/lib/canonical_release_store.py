@@ -27,6 +27,7 @@ ABBOTT_REQUIRED_SOURCE_KINDS = (
 ABBOTT_OPTIONAL_SOURCE_KINDS = (
     "abbott_bitrix_pages",
     "abbott_bitrix_journeys",
+    "abbott_mnn_workbook",
 )
 ABBOTT_ALLOWED_SOURCE_KINDS = frozenset(
     ABBOTT_REQUIRED_SOURCE_KINDS + ABBOTT_OPTIONAL_SOURCE_KINDS
@@ -136,7 +137,11 @@ def _validate_release_source_receipts(*, release: dict, execution_rows: list[dic
         or set(receipt_ids) != set(source_ids)
         or any(
             row.get("import_status") != "imported"
-            or int(row.get("rejected_row_count") or 0) != 0
+            or int(row.get("rejected_row_count") or 0) < 0
+            or (
+                row.get("source_kind") != "abbott_mnn_workbook"
+                and int(row.get("rejected_row_count") or 0) != 0
+            )
             for row in execution_rows
         )
     ):
@@ -257,12 +262,25 @@ def _validate_imported_sources(
             imported_row_count=snapshot.get("imported_row_count"),
         )
         fingerprint_fields = ("content_sha256", "content_bytes", "parser_version")
+        snapshot_rejected = int(snapshot.get("rejected_row_count") or 0)
+        if kind == "abbott_mnn_workbook":
+            rejection_evidence_valid = (
+                snapshot_rejected
+                == int(source_manifest.get("rejected_placeholder_count") or 0)
+                and int(source_manifest.get("unknown_malformed_count") or 0) == 0
+                and int(source_manifest.get("rejected_count") or 0)
+                == snapshot_rejected
+            )
+        else:
+            rejection_evidence_valid = (
+                snapshot_rejected == 0
+                and int(source_manifest.get("rejected_count") or 0) == 0
+            )
         if (
             snapshot.get("import_status") != "imported"
             or int(snapshot.get("imported_row_count") or 0) <= 0
-            or int(snapshot.get("rejected_row_count") or 0) != 0
+            or not rejection_evidence_valid
             or source_manifest.get("source_kind") != kind
-            or int(source_manifest.get("rejected_count") or 0) != 0
             or any(snapshot.get(field) != frozen.get(field) for field in fingerprint_fields)
             or any(source_manifest.get(field) != frozen.get(field) for field in fingerprint_fields)
         ):
@@ -273,7 +291,7 @@ def _validate_imported_sources(
             or execution.get("code_revision") != release.get("code_revision")
             or int(execution.get("imported_row_count") or 0)
             != int(snapshot.get("imported_row_count") or 0)
-            or int(execution.get("rejected_row_count") or 0) != 0
+            or int(execution.get("rejected_row_count") or 0) != snapshot_rejected
         ):
             raise ValidationGateError("Release import execution does not match the candidate")
 
