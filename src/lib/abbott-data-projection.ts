@@ -126,7 +126,12 @@ export function projectAbbottDashboardData(
   }
 
   const aggregateAbbott = Object.fromEntries(
-    Object.entries(sanitizedAbbott).filter(([key]) => key !== "users_summary"),
+    Object.entries(sanitizedAbbott).filter(([key]) => ![
+      "users_summary",
+      "users_summary_without_admins",
+      "user_actions",
+      "admin_user_filter",
+    ].includes(key)),
   ) as unknown as NonNullable<DashboardData["abbott_bi"]>;
   aggregateAbbott.session_journeys = {
     ...aggregateAbbott.session_journeys,

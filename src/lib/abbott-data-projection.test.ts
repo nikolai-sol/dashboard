@@ -52,6 +52,8 @@ function fixture(): DashboardData {
           bounce_rate: 0,
         },
       ],
+      users_summary_without_admins: [],
+      admin_user_filter: { available: true },
       traffic_summary: [
         {
           user_id: "",
@@ -79,6 +81,7 @@ function fixture(): DashboardData {
           visits: 1,
           page_depth: 2,
           avg_duration: 90,
+          is_admin_user: true,
         },
       ],
       page_stats: [
@@ -259,6 +262,8 @@ test("manager projection retains raw user IDs and journey rows while stripping U
   const abbott = projected.abbott_bi!;
 
   assert.equal(abbott.users_summary[0]?.user_id, "raw-user-42");
+  assert.deepEqual(abbott.admin_user_filter, { available: true });
+  assert.equal(abbott.user_actions[0]?.is_admin_user, true);
   assert.equal(abbott.user_actions[0]?.user_id, "raw-user-42");
   assert.equal(abbott.session_journeys.rows[0]?.user_id, "raw-user-42");
   assert.equal(abbott.session_journeys.rows[0]?.session_id, 777);
@@ -308,6 +313,8 @@ test("embed projection exposes aggregates without user, action, session, or jour
     ]),
   );
   assert.equal("users_summary" in abbott, false);
+  assert.equal("users_summary_without_admins" in abbott, false);
+  assert.equal("admin_user_filter" in abbott, false);
   assert.deepEqual(abbott.session_journeys.rows, []);
   assert.deepEqual(abbott.traffic_summary?.map((row) => row.visits), [50]);
   assert.deepEqual(abbott.page_stats.map((row) => row.pageviews), [10]);

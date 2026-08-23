@@ -95,6 +95,12 @@ test("release scans reject private data outside public while allowing Abbott sch
     await writeFile(path.join(releaseRoot, "src", "db", "migrations", "041_abbott_private_visit_user_ids.sql"), "DDL");
     await writeFile(path.join(releaseRoot, "src", "db", "migrations", "044_abbott_private_visit_utm_source.sql"), "DDL");
     await writeFile(path.join(releaseRoot, "src", "db", "migrations", "046_abbott_release_source_integrity.sql"), "DDL");
+    await writeFile(path.join(releaseRoot, "src", "db", "migrations", "062_abbott_admin_user_exclusions.sql"), "DDL");
+    await mkdir(path.join(releaseRoot, "reportingdash-canonical-bootstrap", "src", "db", "migrations"), { recursive: true });
+    await writeFile(
+      path.join(releaseRoot, "reportingdash-canonical-bootstrap", "src", "db", "migrations", "062_abbott_admin_user_exclusions.sql"),
+      "DDL",
+    );
     await writeFile(path.join(releaseRoot, "src", "db", "migrations", "034_abbott_unreviewed.sql"), "DDL");
     await writeFile(path.join(releaseRoot, "public", "abbott", "source.json"), "fixture");
 

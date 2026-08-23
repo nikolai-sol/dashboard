@@ -1,6 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { selectAbbottSummaryRows } from "./abbott-summary";
+import { ABBOTT_WITHOUT_ADMINS } from "./abbott/abbott-admin-user-filter";
 import type { AbbottBiUserSummaryRow } from "@/lib/types";
 
 function summaryRow(overrides: Partial<AbbottBiUserSummaryRow>): AbbottBiUserSummaryRow {
@@ -132,5 +133,22 @@ test("presence partition selection never falls back to private behavior", () => 
       showUserIdAnalytics: true,
     }),
     [],
+  );
+});
+
+test("admin-free selection uses its independently recomputed behavior rows", () => {
+  const trafficRows = [summaryRow({ traffic_segment: "all", visits: 100 })];
+  const behaviorRows = [summaryRow({ traffic_segment: null, user_id: "900001", has_user_id: true, visits: 5 })];
+  const behaviorRowsWithoutAdmins = [summaryRow({ traffic_segment: null, user_id: "doctor-1", has_user_id: true, visits: 3 })];
+
+  assert.deepEqual(
+    selectAbbottSummaryRows({
+      trafficRows,
+      behaviorRows,
+      behaviorRowsWithoutAdmins,
+      filters: { user_id: ABBOTT_WITHOUT_ADMINS, user_id_traffic: "", direction: "" },
+      showUserIdAnalytics: true,
+    }),
+    behaviorRowsWithoutAdmins,
   );
 });

@@ -40,6 +40,7 @@ every runbook entrypoint and each repository-local Python dependency.
 | `runtime/abbott_health_probe.py` | `abbott_health_probe.py` | `6ed7a6c2af250c40ac23bca702a15c2cd60dac5331a392e7e3ac45cc091011ef` | Deterministic Abbott health CLI |
 | `runtime/send_canonical_telegram_report.py` | `send_canonical_telegram_report.py` | `8ae155f4f1a81a50fa29730bfe1f7e19e1c01d0ab56719a60327c59b37e22da3` | Summary entrypoint |
 | `runtime/sources_health_dashboard.py` | `sources_health_dashboard.py` | `072a3270fa0cac9c7b7384f19aba636485dc89b8c03da2eb80bbde1c50c71116` | Summary health dependency |
+| `src/db/migrations/062_abbott_admin_user_exclusions.sql` | `dashboard-next/src/db/migrations/062_abbott_admin_user_exclusions.sql` | `d6e4c64eb2aca0c1198f640d135c2c95b648f3bebadf82015823c4c25f491ab1` | Private dashboard-scoped administrator User ID settings; package only, never copied to public facts |
 
 ## collectors/
 

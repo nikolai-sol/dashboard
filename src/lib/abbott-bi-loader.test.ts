@@ -828,6 +828,10 @@ test("loader aggregates multi-day Bitrix rows without last-row overwrite", async
 test("manager summarizes exact private visits by raw user and source", async () => {
   const aggregate = executor(aggregateRows);
   const privateDb = executor((sql, params) => {
+    if (sql.includes("portal_abbott_admin_user_exclusions")) {
+      assert.deepEqual(params, [7]);
+      return [];
+    }
     assert.match(sql, /`report_bd_private`\.`canonical_fact_metrika_visits`/);
     assert.doesNotMatch(sql, /canonical_fact_metrika_user_behavior_daily/);
     assert.match(sql, /SELECT visit_id_hash, session_started_at, utm_source,/);
@@ -906,6 +910,7 @@ test("manager summarizes exact private visits by raw user and source", async () 
     visits: 1,
     page_depth: 3,
     avg_duration: 10,
+    is_admin_user: false,
   });
   assert.deepEqual(result.user_actions[3], {
     user_id: "",
@@ -918,6 +923,7 @@ test("manager summarizes exact private visits by raw user and source", async () 
     visits: 1,
     page_depth: 1,
     avg_duration: 5,
+    is_admin_user: false,
   });
   assert.equal(result.user_actions.length, 5);
   assert.deepEqual(result.return_frequency, {
@@ -944,7 +950,120 @@ test("manager summarizes exact private visits by raw user and source", async () 
       repeat_visits: 1,
     }],
   });
-  assert.equal(privateDb.queries.length, 1);
+  assert.equal(privateDb.queries.length, 2);
+});
+
+test("manager classifies single and multi-ID admin visits before building no-admin aggregates", async () => {
+  const aggregate = executor(aggregateRows);
+  const privateDb = executor((sql) => {
+    if (sql.includes("portal_abbott_admin_user_exclusions")) {
+      return [{ raw_user_id: "000123" }, { raw_user_id: "000456" }];
+    }
+    if (!sql.includes("canonical_fact_metrika_visits")) return [];
+    return [
+      privateVisit({
+        visit_id_hash: "admin-single",
+        client_id_hash: "client-admin-single",
+        pageviews: "3",
+        duration_seconds: "10",
+        is_bounce: "1",
+      }),
+      privateVisit({
+        visit_id_hash: "admin-multi",
+        session_started_at: "2026-01-01 11:00:00",
+        raw_user_id: null,
+        raw_user_ids_json: '["doctor-x","000456"]',
+        client_id_hash: "client-admin-multi",
+        pageviews: "5",
+        duration_seconds: "30",
+      }),
+      privateVisit({
+        visit_id_hash: "doctor",
+        session_started_at: "2026-01-01 12:00:00",
+        raw_user_id: "doctor-y",
+        raw_user_ids_json: '["doctor-y"]',
+        client_id_hash: "client-doctor",
+        pageviews: "2",
+        duration_seconds: "20",
+      }),
+      privateVisit({
+        visit_id_hash: "anonymous",
+        session_started_at: "2026-01-01 13:00:00",
+        raw_user_id: null,
+        raw_user_ids_json: "[]",
+        client_id_hash: "client-anonymous",
+        pageviews: "4",
+        duration_seconds: "40",
+        is_bounce: "1",
+      }),
+    ];
+  });
+
+  const result = await loadAbbottBiDataWithDependencies(
+    7,
+    ["90602537"],
+    "2026-01-01",
+    "2026-01-01",
+    "manager",
+    dependencies(aggregate, privateDb),
+  );
+
+  assert.deepEqual(result.admin_user_filter, { available: true });
+  assert.deepEqual(result.user_actions.map((row) => row.is_admin_user), [true, true, false, false]);
+  assert.equal(result.users_summary.reduce((sum, row) => sum + row.visits, 0), 4);
+  assert.deepEqual(result.users_summary_without_admins, [
+    {
+      user_id: "",
+      has_user_id: false,
+      traffic_segment: null,
+      traffic_source: "Direct",
+      direction: null,
+      visits: 1,
+      users: 1,
+      new_users: 0,
+      page_depth: 4,
+      avg_duration: 40,
+      bounce_rate: 100,
+    },
+    {
+      user_id: "doctor-y",
+      has_user_id: true,
+      traffic_segment: null,
+      traffic_source: "Direct",
+      direction: null,
+      visits: 1,
+      users: 1,
+      new_users: 0,
+      page_depth: 2,
+      avg_duration: 20,
+      bounce_rate: 0,
+    },
+  ]);
+});
+
+test("admin settings read failure keeps current all-visits data but disables exclusion mode", async () => {
+  const privateDb = executor((sql) => {
+    if (sql.includes("portal_abbott_admin_user_exclusions")) {
+      throw new Error("private settings unavailable");
+    }
+    if (sql.includes("canonical_fact_metrika_visits")) return [privateVisit()];
+    return [];
+  });
+
+  const result = await loadAbbottBiDataWithDependencies(
+    7,
+    ["90602537"],
+    "2026-01-01",
+    "2026-01-01",
+    "manager",
+    dependencies(executor(aggregateRows), privateDb),
+  );
+
+  assert.equal(result.data_quality.status, "complete");
+  assert.deepEqual(result.admin_user_filter, { available: false });
+  assert.equal(result.users_summary.reduce((sum, row) => sum + row.visits, 0), 1);
+  assert.deepEqual(result.users_summary_without_admins, result.users_summary);
+  assert.equal(result.user_actions[0]?.is_admin_user, false);
 });
 
 test("manager keeps one ambiguous visit without attributing it to an arbitrary User ID", async () => {

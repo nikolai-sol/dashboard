@@ -27,6 +27,8 @@ const SAFE_ABBOTT_MIGRATIONS = new Set([
   "src/db/migrations/041_abbott_private_visit_user_ids.sql",
   "src/db/migrations/044_abbott_private_visit_utm_source.sql",
   "src/db/migrations/046_abbott_release_source_integrity.sql",
+  "src/db/migrations/062_abbott_admin_user_exclusions.sql",
+  "reportingdash-canonical-bootstrap/src/db/migrations/062_abbott_admin_user_exclusions.sql",
 ]);
 
 const INSPECTED_DATA_SUFFIXES = [".json", ".jsonl", ".csv", ".tsv", ".xlsx", ".xls"] as const;

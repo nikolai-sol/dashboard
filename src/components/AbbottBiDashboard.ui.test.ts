@@ -3,6 +3,11 @@ import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 
 const source = readFileSync(new URL("./AbbottBiDashboard.tsx", import.meta.url), "utf8");
+
+test("admin user editor is rendered only at the bottom of the actions tab", () => {
+  assert.match(source, /activeTab === "user_actions"[\s\S]*?<AbbottAdminUsersPanel/);
+  assert.doesNotMatch(source, /users_summary:\s*\([\s\S]{0,1200}<AbbottAdminUsersPanel/);
+});
 const userActionFilterSource = readFileSync(
   new URL("./abbott/abbott-user-action-filters.ts", import.meta.url),
   "utf8",

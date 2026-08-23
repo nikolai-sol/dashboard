@@ -1918,6 +1918,8 @@ export default function DashboardByIdPage() {
             portalName="ABBOTT"
             periodFrom={dashboard.dashboard.period.from}
             periodTo={dashboard.dashboard.period.to}
+            dashboardId={dashboardId}
+            onAdminUsersChanged={() => setReloadKey((value) => value + 1)}
           />
         )}
       </main>

@@ -299,6 +299,8 @@ function emptyAbbottData(
     },
     counters,
     users_summary: [],
+    users_summary_without_admins: [],
+    admin_user_filter: { available: false },
     traffic_summary: [],
     user_actions: [],
     page_stats: [],
@@ -465,6 +467,28 @@ async function queryManagerBehavior(
      ORDER BY report_date, session_started_at, visit_id_hash`,
     [releaseId, ...counterIds, from, to],
   )) as readonly PrivateBehaviorRow[];
+}
+
+async function queryManagerAdminUserIds(
+  executor: AbbottBiQueryExecutor,
+  dashboardId: number,
+): Promise<Set<string>> {
+  const rows = await executor.query(
+    `SELECT raw_user_id
+     FROM \`report_bd_private\`.\`portal_abbott_admin_user_exclusions\`
+     WHERE dashboard_id = ?
+     ORDER BY raw_user_id`,
+    [dashboardId],
+  );
+  const userIds = new Set<string>();
+  for (const row of rows) {
+    const userId = row.raw_user_id;
+    if (typeof userId !== "string" || !/^[0-9]{1,32}$/.test(userId) || userIds.has(userId)) {
+      throw new Error("Abbott admin user settings are invalid");
+    }
+    userIds.add(userId);
+  }
+  return userIds;
 }
 
 /**
@@ -860,8 +884,10 @@ function buildReturning(
 function buildManagerBehavior(
   rows: readonly PrivateBehaviorRow[],
   workbook: ParsedAbbottWorkbook,
+  adminUserIds: ReadonlySet<string>,
 ): {
   summaries: AbbottBiUserSummaryRow[];
+  summariesWithoutAdmins: AbbottBiUserSummaryRow[];
   actions: AbbottBiUserActionRow[];
   frequencyVisits: AbbottFrequencyVisit[];
 } {
@@ -872,7 +898,61 @@ function buildManagerBehavior(
     bouncedVisits: number;
   };
   const summaries = new Map<string, ManagerSummary>();
+  const summariesWithoutAdmins = new Map<string, ManagerSummary>();
   const frequencyVisits: AbbottFrequencyVisit[] = [];
+  const addSummary = (
+    target: Map<string, ManagerSummary>,
+    input: {
+      userId: string;
+      hasUserId: boolean;
+      trafficSource: string;
+      clientHash: string | null;
+      pageviews: number;
+      duration: number;
+      isBounce: boolean;
+    },
+  ) => {
+    const key = `${input.hasUserId ? "1" : "0"}\n${input.userId}\n${input.trafficSource}`;
+    const summary = target.get(key) ?? {
+      user_id: input.userId,
+      has_user_id: input.hasUserId,
+      traffic_segment: null,
+      traffic_source: input.trafficSource,
+      direction: input.hasUserId ? workbook.userDirections.get(input.userId) ?? null : null,
+      visits: 0,
+      users: 0,
+      new_users: 0,
+      page_depth: 0,
+      avg_duration: 0,
+      bounce_rate: 0,
+      clientHashes: new Set<string>(),
+      pageviewsTotal: 0,
+      durationTotal: 0,
+      bouncedVisits: 0,
+    };
+    summary.visits += 1;
+    summary.pageviewsTotal += input.pageviews;
+    summary.durationTotal += input.duration;
+    summary.bouncedVisits += input.isBounce ? 1 : 0;
+    if (input.clientHash !== null) summary.clientHashes.add(input.clientHash);
+    target.set(key, summary);
+  };
+  const finalizeSummaries = (target: Map<string, ManagerSummary>) =>
+    [...target.values()].map(({
+      clientHashes,
+      pageviewsTotal,
+      durationTotal,
+      bouncedVisits,
+      ...row
+    }) => ({
+      ...row,
+      users: clientHashes.size,
+      page_depth: row.visits > 0 ? Number((pageviewsTotal / row.visits).toFixed(2)) : 0,
+      avg_duration: row.visits > 0 ? Number((durationTotal / row.visits).toFixed(2)) : 0,
+      bounce_rate: row.visits > 0 ? Number(((bouncedVisits / row.visits) * 100).toFixed(2)) : 0,
+    })).sort((left, right) =>
+      left.user_id.localeCompare(right.user_id) || left.traffic_source.localeCompare(right.traffic_source)
+    );
   const actions = rows.map((row) => {
     const singularUserId = nullableText(row.raw_user_id);
     let parsedUserIds: unknown = row.raw_user_ids_json;
@@ -922,30 +1002,19 @@ function buildManagerBehavior(
     const trafficSource = text(row.traffic_source);
     const pageviews = integerMetric(row.pageviews);
     const duration = integerMetric(row.duration_seconds);
-    const key = `${hasUserId ? "1" : "0"}\n${userId}\n${trafficSource}`;
-    const summary = summaries.get(key) ?? {
-      user_id: userId,
-      has_user_id: hasUserId,
-      traffic_segment: null,
-      traffic_source: trafficSource,
-      direction: hasUserId ? workbook.userDirections.get(userId) ?? null : null,
-      visits: 0,
-      users: 0,
-      new_users: 0,
-      page_depth: 0,
-      avg_duration: 0,
-      bounce_rate: 0,
-      clientHashes: new Set<string>(),
-      pageviewsTotal: 0,
-      durationTotal: 0,
-      bouncedVisits: 0,
+    const isBounce = booleanMetric(row.is_bounce);
+    const isAdminUser = (parsedUserIds as string[]).some((id) => adminUserIds.has(id));
+    const summaryInput = {
+      userId,
+      hasUserId,
+      trafficSource,
+      clientHash,
+      pageviews,
+      duration,
+      isBounce,
     };
-    summary.visits += 1;
-    summary.pageviewsTotal += pageviews;
-    summary.durationTotal += duration;
-    summary.bouncedVisits += booleanMetric(row.is_bounce) ? 1 : 0;
-    if (clientHash !== null) summary.clientHashes.add(clientHash);
-    summaries.set(key, summary);
+    addSummary(summaries, summaryInput);
+    if (!isAdminUser) addSummary(summariesWithoutAdmins, summaryInput);
     frequencyVisits.push({
       client_id_hash: clientHash,
       raw_user_ids: parsedUserIds as string[],
@@ -964,24 +1033,12 @@ function buildManagerBehavior(
       visits: 1,
       page_depth: pageviews,
       avg_duration: duration,
+      is_admin_user: isAdminUser,
     };
   });
   return {
-    summaries: [...summaries.values()].map(({
-      clientHashes,
-      pageviewsTotal,
-      durationTotal,
-      bouncedVisits,
-      ...row
-    }) => ({
-      ...row,
-      users: clientHashes.size,
-      page_depth: row.visits > 0 ? Number((pageviewsTotal / row.visits).toFixed(2)) : 0,
-      avg_duration: row.visits > 0 ? Number((durationTotal / row.visits).toFixed(2)) : 0,
-      bounce_rate: row.visits > 0 ? Number(((bouncedVisits / row.visits) * 100).toFixed(2)) : 0,
-    })).sort((left, right) =>
-      left.user_id.localeCompare(right.user_id) || left.traffic_source.localeCompare(right.traffic_source)
-    ),
+    summaries: finalizeSummaries(summaries),
+    summariesWithoutAdmins: finalizeSummaries(summariesWithoutAdmins),
     actions,
     frequencyVisits,
   };
@@ -1107,13 +1164,18 @@ export async function loadAbbottBiDataWithDependencies(
       return emptyAbbottData(counters, audience, from, to, releaseId, gaps, releaseBundle.workbook.lookupQuality);
     }
 
-    const [siteFacts, returningFacts, externalFacts, behaviorFacts] = await Promise.all([
+    const [siteFacts, returningFacts, externalFacts, behaviorFacts, adminSettings] = await Promise.all([
       querySiteFacts(dependencies.aggregateExecutor, releaseId, counters, from, to),
       queryReturningFacts(dependencies.aggregateExecutor, releaseId, counters, from, to),
       queryExternalClicks(dependencies.aggregateExecutor, releaseId, counters, from, to),
       audience === "manager"
         ? queryManagerBehavior(dependencies.privateExecutor, releaseId, counters, from, to)
         : Promise.resolve([]),
+      audience === "manager"
+        ? queryManagerAdminUserIds(dependencies.privateExecutor, dashboardId)
+            .then((ids) => ({ available: true, ids }))
+            .catch(() => ({ available: false, ids: new Set<string>() }))
+        : Promise.resolve({ available: false, ids: new Set<string>() }),
     ]);
     const trafficSummary = buildTrafficSummary(siteFacts);
     const bitrixPages = mapBitrixPages(releaseBundle.bitrixPages, releaseBundle.workbook);
@@ -1122,12 +1184,20 @@ export async function loadAbbottBiDataWithDependencies(
     const pageStats = buildPageStats(siteFacts, releaseBundle.workbook);
     const enrichedPageStats = periodActive ? enrichWithBitrix(pageStats, bitrixPages) : pageStats;
     const managerBehavior = audience === "manager"
-      ? buildManagerBehavior(behaviorFacts, releaseBundle.workbook as ParsedAbbottWorkbook)
-      : { summaries: [], actions: [], frequencyVisits: [] };
+      ? buildManagerBehavior(
+          behaviorFacts,
+          releaseBundle.workbook as ParsedAbbottWorkbook,
+          adminSettings.ids,
+        )
+      : { summaries: [], summariesWithoutAdmins: [], actions: [], frequencyVisits: [] };
 
     return {
       ...emptyAbbottData(counters, audience, from, to, releaseId, [], releaseBundle.workbook.lookupQuality),
       users_summary: managerBehavior.summaries,
+      users_summary_without_admins: adminSettings.available
+        ? managerBehavior.summariesWithoutAdmins
+        : managerBehavior.summaries,
+      admin_user_filter: { available: adminSettings.available },
       traffic_summary: trafficSummary,
       user_actions: managerBehavior.actions,
       page_stats: enrichedPageStats,
