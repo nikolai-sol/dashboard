@@ -537,7 +537,7 @@ function metadataForPage(
   rawUrl: string,
   rawPageTitle: unknown,
   workbook: AbbottAggregatePrivateData["workbook"],
-): { page_title: string; direction: string | null; material_type: string | null; access: string | null; hidden: boolean } {
+): { page_title: string; direction: string | null; mnn: string[]; material_type: string | null; access: string | null; hidden: boolean } {
   const identityUrl = normalizeAbbottContentIdentityUrl(rawUrl);
   const normalized = normalizePage(rawUrl);
   const path = normalizedPagePath(identityUrl || normalized);
@@ -554,6 +554,7 @@ function metadataForPage(
   return {
     page_title: rawTitle ?? metadata?.page_title ?? "",
     direction,
+    mnn: [...(metadata?.mnn ?? [])],
     material_type: metadata?.material_type ?? null,
     access: metadata?.access ?? null,
     hidden: metadata?.is_active === false,
@@ -617,6 +618,7 @@ function buildPageStats(
       page_title: title,
       url,
       direction: metadata.direction,
+      ...(metadata.mnn.length > 0 ? { mnn: metadata.mnn } : {}),
       material_type: metadata.material_type,
       access: metadata.access,
       pageviews: 0,
@@ -640,6 +642,7 @@ function buildPageStats(
       page_title: row.page_title,
       url: row.url,
       direction: row.direction,
+      ...(row.mnn && row.mnn.length > 0 ? { mnn: row.mnn } : {}),
       material_type: row.material_type,
       access: row.access,
       pageviews: row.pageviews,
