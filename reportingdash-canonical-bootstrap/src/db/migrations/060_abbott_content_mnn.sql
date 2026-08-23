@@ -1,4 +1,4 @@
--- Migration 056: release-scoped multi-value Abbott MNN metadata.
+-- Migration 060: release-scoped multi-value Abbott MNN metadata.
 CREATE TABLE IF NOT EXISTS portal_content_mnn_source_claims (
   id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
   source_snapshot_id BIGINT UNSIGNED NOT NULL,

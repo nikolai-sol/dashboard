@@ -78,7 +78,7 @@ every runbook entrypoint and each repository-local Python dependency.
 | `src/db/migrations/053_abbott_observed_pages_hash.sql` | `dashboard-next/src/db/migrations/053_abbott_observed_pages_hash.sql` | `e81aee4cd8395760622a0e5e9a65817769c14b533c9cc90427adc67a508c2dad` | Immutable observed-page aggregate hash; package only, never applied by runtime |
 | `src/db/migrations/054_abbott_observed_page_creation.sql` | `dashboard-next/src/db/migrations/054_abbott_observed_page_creation.sql` | `5caff3d07c991e6365e7a26e0af1981fc8bb9bc74c76b70b9b3d58b1b698d409` | Reviewed local observed-page creation decision; package only, never applied by runtime |
 | `src/db/migrations/055_abbott_projection_modality.sql` | `dashboard-next/src/db/migrations/055_abbott_projection_modality.sql` | `912e96c30eac08fdf352699d93173ac2420298c070db9ade95e37a298434eb87` | Disjoint local and Google projection receipts; package only, never applied by runtime |
-| `src/db/migrations/056_abbott_content_mnn.sql` | `dashboard-next/src/db/migrations/056_abbott_content_mnn.sql` | `f88b01b524f4a97ad537587b906ffd574dc4c035cfd08da0fc6a0a6a90a19d82` | Release-scoped multi-value MNN metadata; package only, never applied by runtime |
+| `src/db/migrations/060_abbott_content_mnn.sql` | `dashboard-next/src/db/migrations/060_abbott_content_mnn.sql` | `02f860151017f4431fe73e6aafee845fe9fd1aed57a2ead57bad441e63a455c4` | Release-scoped multi-value MNN metadata; package only, never applied by runtime |
 
 ## collectors/
 
