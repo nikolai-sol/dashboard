@@ -38,6 +38,7 @@ const SAFE_ABBOTT_MIGRATIONS = new Set([
   "src/db/migrations/055_abbott_projection_modality.sql",
   "src/db/migrations/060_abbott_content_mnn.sql",
   "src/db/migrations/061_abbott_optional_mnn_decisions.sql",
+  "src/db/migrations/062_abbott_admin_user_exclusions.sql",
   "reportingdash-canonical-bootstrap/src/db/migrations/049_abbott_content_reconciliation_staging.sql",
   "reportingdash-canonical-bootstrap/src/db/migrations/050_abbott_content_url_identity.sql",
   "reportingdash-canonical-bootstrap/src/db/migrations/051_abbott_content_url_alias_decisions.sql",
@@ -47,6 +48,7 @@ const SAFE_ABBOTT_MIGRATIONS = new Set([
   "reportingdash-canonical-bootstrap/src/db/migrations/055_abbott_projection_modality.sql",
   "reportingdash-canonical-bootstrap/src/db/migrations/060_abbott_content_mnn.sql",
   "reportingdash-canonical-bootstrap/src/db/migrations/061_abbott_optional_mnn_decisions.sql",
+  "reportingdash-canonical-bootstrap/src/db/migrations/062_abbott_admin_user_exclusions.sql",
 ]);
 
 const INSPECTED_DATA_SUFFIXES = [".json", ".jsonl", ".csv", ".tsv", ".xlsx", ".xls"] as const;

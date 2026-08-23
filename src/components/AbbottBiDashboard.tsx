@@ -38,6 +38,11 @@ import {
   selectAbbottUserActions,
 } from "./abbott/abbott-user-action-filters";
 import { buildAbbottReturnFrequencyUi } from "./abbott/abbott-return-frequency-ui";
+import AbbottAdminUsersPanel from "./abbott/AbbottAdminUsersPanel";
+import {
+  ABBOTT_WITHOUT_ADMINS,
+  buildAbbottAdminUserOptions,
+} from "./abbott/abbott-admin-user-filter";
 
 type AbbottBiDashboardProps = {
   data: AbbottBiData;
@@ -46,6 +51,8 @@ type AbbottBiDashboardProps = {
   showUserIdAnalytics?: boolean;
   periodFrom?: string;
   periodTo?: string;
+  dashboardId?: string;
+  onAdminUsersChanged?: () => void;
 };
 
 type TabId =
@@ -328,12 +335,14 @@ function SelectField({
   options,
   onChange,
   theme,
+  allLabel = "Все",
 }: {
   label: string;
   value: string;
   options: SelectOption[];
   onChange: (value: string) => void;
   theme: ThemeConfig;
+  allLabel?: string;
 }) {
   return (
     <label className={`card-surface block p-4 ${theme.borderClass}`}>
@@ -343,7 +352,7 @@ function SelectField({
         onChange={(event) => onChange(event.target.value)}
         className="w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm text-slate-700 outline-none transition focus:border-slate-400"
       >
-        <option value="">Все</option>
+        <option value="">{allLabel}</option>
         {options.map((option) => (
           <option key={option.value} value={option.value}>
             {option.label}
@@ -849,6 +858,8 @@ export default function AbbottBiDashboard({
   showUserIdAnalytics = true,
   periodFrom,
   periodTo,
+  dashboardId = "abbott",
+  onAdminUsersChanged = () => undefined,
 }: AbbottBiDashboardProps) {
   const [activeTab, setActiveTab] = useState<TabId>("users_summary");
   const [selectedSessionJourneyId, setSelectedSessionJourneyId] = useState<number | null>(null);
@@ -896,6 +907,16 @@ export default function AbbottBiDashboard({
   const [selectedPageMnn, setSelectedPageMnn] = useState<string[]>([]);
   const [timeBucketPageSearch, setTimeBucketPageSearch] = useState("");
 
+  const adminUserFilterAvailable = data.admin_user_filter?.available === true;
+  const usersSummaryUserIdFilter = !adminUserFilterAvailable
+    && filtersByTab.users_summary.user_id === ABBOTT_WITHOUT_ADMINS
+    ? ""
+    : filtersByTab.users_summary.user_id;
+  const userActionsUserIdFilter = !adminUserFilterAvailable
+    && filtersByTab.user_actions.user_id === ABBOTT_WITHOUT_ADMINS
+    ? ""
+    : filtersByTab.user_actions.user_id;
+
   const tabs = useMemo(
     () =>
       buildTabs(portalName, showUserIdAnalytics).filter((tab) => {
@@ -939,7 +960,10 @@ export default function AbbottBiDashboard({
     () => {
       const trafficRows = data.traffic_summary ?? [];
       return {
-        user_id: uniqOptions(data.users_summary.filter((row) => row.has_user_id).map((row) => row.user_id)),
+        user_id: buildAbbottAdminUserOptions(
+          data.users_summary.filter((row) => row.has_user_id).map((row) => row.user_id),
+          adminUserFilterAvailable,
+        ),
         traffic_source: uniqOptions([
           ...data.users_summary.map((row) => row.traffic_source),
           ...trafficRows.map((row) => row.traffic_source),
@@ -947,17 +971,20 @@ export default function AbbottBiDashboard({
         direction: uniqOptions(data.users_summary.map((row) => row.direction)),
       };
     },
-    [data.traffic_summary, data.users_summary],
+    [adminUserFilterAvailable, data.traffic_summary, data.users_summary],
   );
 
   const userActionsOptions = useMemo(
     () => ({
-      user_id: uniqOptions(data.user_actions.filter((row) => row.has_user_id).map((row) => row.user_id)),
+      user_id: buildAbbottAdminUserOptions(
+        data.user_actions.filter((row) => row.has_user_id).map((row) => row.user_id),
+        adminUserFilterAvailable,
+      ),
       traffic_source: uniqOptions(data.user_actions.map((row) => row.traffic_source)).map((option) => abbottTrafficSourceOption(option.value)),
       utm_source: buildAbbottUtmSourceOptions(data.user_actions),
       direction: uniqOptions(data.user_actions.map((row) => row.direction)),
     }),
-    [data.user_actions],
+    [adminUserFilterAvailable, data.user_actions],
   );
 
   const pageStatsOptions = useMemo(
@@ -1019,18 +1046,28 @@ export default function AbbottBiDashboard({
       selectAbbottSummaryRows({
         trafficRows: data.traffic_summary ?? [],
         behaviorRows: data.users_summary,
+        behaviorRowsWithoutAdmins: data.users_summary_without_admins ?? data.users_summary,
         filters: {
-          user_id: filtersByTab.users_summary.user_id,
+          user_id: usersSummaryUserIdFilter,
           user_id_traffic: filtersByTab.users_summary.user_id_traffic,
           direction: filtersByTab.users_summary.direction,
         },
         showUserIdAnalytics,
       }),
-    [data.traffic_summary, data.users_summary, filtersByTab.users_summary, showUserIdAnalytics],
+    [
+      data.traffic_summary,
+      data.users_summary,
+      data.users_summary_without_admins,
+      filtersByTab.users_summary,
+      showUserIdAnalytics,
+      usersSummaryUserIdFilter,
+    ],
   );
 
   const userBehaviorSummaryActive =
-    usersSummarySourceRows.length === 0 || usersSummarySourceRows === data.users_summary;
+    usersSummaryUserIdFilter === ABBOTT_WITHOUT_ADMINS
+    || usersSummarySourceRows.length === 0
+    || usersSummarySourceRows === data.users_summary;
 
   const usersSummaryRows = useMemo(() => {
     const query = queryByTab.users_summary;
@@ -1041,7 +1078,11 @@ export default function AbbottBiDashboard({
         : [abbottTrafficSourceLabel(row.traffic_source), row.visits, row.bounce_rate];
       if (!matchesQuery(searchableValues, query)) return false;
       if (showUserIdAnalytics) {
-        if (filters.user_id && row.user_id !== filters.user_id) return false;
+        if (
+          usersSummaryUserIdFilter
+          && usersSummaryUserIdFilter !== ABBOTT_WITHOUT_ADMINS
+          && row.user_id !== usersSummaryUserIdFilter
+        ) return false;
         if (filters.user_id_traffic === "with_user_id" && !row.has_user_id) return false;
         if (filters.user_id_traffic === "without_user_id" && row.has_user_id) return false;
       }
@@ -1049,7 +1090,13 @@ export default function AbbottBiDashboard({
       if (filters.direction && (row.direction ?? "") !== filters.direction) return false;
       return true;
     });
-  }, [filtersByTab.users_summary, queryByTab.users_summary, showUserIdAnalytics, usersSummarySourceRows]);
+  }, [
+    filtersByTab.users_summary,
+    queryByTab.users_summary,
+    showUserIdAnalytics,
+    usersSummarySourceRows,
+    usersSummaryUserIdFilter,
+  ]);
 
   const userActionsSelection = useMemo(
     () =>
@@ -1058,12 +1105,19 @@ export default function AbbottBiDashboard({
         {
           query: queryByTab.user_actions,
           ...filtersByTab.user_actions,
+          user_id: userActionsUserIdFilter,
           traffic_source_label: abbottTrafficSourceLabel,
         },
         pageByTab.user_actions,
         PAGE_SIZE,
       ),
-    [data.user_actions, filtersByTab.user_actions, pageByTab.user_actions, queryByTab.user_actions],
+    [
+      data.user_actions,
+      filtersByTab.user_actions,
+      pageByTab.user_actions,
+      queryByTab.user_actions,
+      userActionsUserIdFilter,
+    ],
   );
   const userActionRows = userActionsSelection.filteredRows;
 
@@ -1608,10 +1662,11 @@ export default function AbbottBiDashboard({
             />
             <SelectField
               label="User ID"
-              value={filtersByTab.users_summary.user_id}
+              value={usersSummaryUserIdFilter}
               options={usersSummaryOptions.user_id}
               onChange={(value) => setSelectFilter("users_summary", "user_id", value)}
               theme={theme}
+              allLabel="ВСЕ"
             />
           </>
         ) : null}
@@ -1637,10 +1692,11 @@ export default function AbbottBiDashboard({
       <>
         <SelectField
           label="UserID"
-          value={filtersByTab.user_actions.user_id}
+          value={userActionsUserIdFilter}
           options={userActionsOptions.user_id}
           onChange={(value) => setSelectFilter("user_actions", "user_id", value)}
           theme={theme}
+          allLabel="ВСЕ"
         />
         <SelectField
           label="Трафик"
@@ -2531,6 +2587,12 @@ export default function AbbottBiDashboard({
             onChange={(page) => setPageByTab((prev) => ({ ...prev, [activeTab]: page }))}
           />
         )}
+        {activeTab === "user_actions" && data.admin_user_filter !== undefined ? (
+          <AbbottAdminUsersPanel
+            dashboardId={dashboardId}
+            onChanged={onAdminUsersChanged}
+          />
+        ) : null}
       </div>
     </section>
   );

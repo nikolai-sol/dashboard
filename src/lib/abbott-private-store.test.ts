@@ -568,3 +568,13 @@ test("every dashboard content read is active-release MySQL only", () => {
     /METRIKA_TOKEN|OAUTH|GOOGLE.*TOKEN|OPENAI_API_KEY/i,
   );
 });
+
+test("private store exposes a transaction-scoped manager settings mutation boundary", () => {
+  const source = fs.readFileSync(path.join(process.cwd(), "src/lib/abbott-private-store.ts"), "utf8");
+
+  assert.match(source, /export async function withAbbottPrivateMutationExecutor/);
+  assert.match(source, /await connection\.beginTransaction\(\)/);
+  assert.match(source, /await connection\.commit\(\)/);
+  assert.match(source, /await connection\.rollback\(\)/);
+  assert.doesNotMatch(source, /multipleStatements:\s*true/);
+});

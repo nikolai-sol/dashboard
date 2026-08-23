@@ -40,6 +40,10 @@ export interface AbbottPrivateQueryExecutor {
   query(sql: string, params: readonly unknown[]): Promise<readonly Record<string, unknown>[]>;
 }
 
+export interface AbbottPrivateMutationExecutor extends AbbottPrivateQueryExecutor {
+  execute(sql: string, params: readonly unknown[]): Promise<void>;
+}
+
 type SnapshotRow = Record<string, unknown> & {
   id?: unknown;
   source_kind?: unknown;
@@ -777,6 +781,15 @@ function connectionExecutor(connection: PoolConnection): AbbottPrivateQueryExecu
   };
 }
 
+function mutationExecutor(connection: PoolConnection): AbbottPrivateMutationExecutor {
+  return {
+    ...connectionExecutor(connection),
+    async execute(sql, params) {
+      await connection.execute(sql, params as never[]);
+    },
+  };
+}
+
 export async function withReadOnlyAbbottExecutor<T>(
   audience: AbbottPrivateAudience,
   work: (executor: AbbottPrivateQueryExecutor) => Promise<T>,
@@ -787,6 +800,30 @@ export async function withReadOnlyAbbottExecutor<T>(
     await connection.query("SET TRANSACTION READ ONLY");
     await connection.beginTransaction();
     const result = await work(connectionExecutor(connection));
+    await connection.commit();
+    return result;
+  } catch (error) {
+    if (connection) {
+      try {
+        await connection.rollback();
+      } catch {
+        // The sanitized store error below deliberately hides connection details.
+      }
+    }
+    throw sanitizeFailure(error);
+  } finally {
+    connection?.release();
+  }
+}
+
+export async function withAbbottPrivateMutationExecutor<T>(
+  work: (executor: AbbottPrivateMutationExecutor) => Promise<T>,
+): Promise<T> {
+  let connection: PoolConnection | undefined;
+  try {
+    connection = await (await getAbbottPool("manager")).getConnection();
+    await connection.beginTransaction();
+    const result = await work(mutationExecutor(connection));
     await connection.commit();
     return result;
   } catch (error) {

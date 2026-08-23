@@ -1,4 +1,5 @@
 import type { AbbottBiUserSummaryRow } from "@/lib/types";
+import { ABBOTT_WITHOUT_ADMINS } from "./abbott/abbott-admin-user-filter";
 
 export type AbbottSummaryFilters = {
   user_id: string;
@@ -9,14 +10,17 @@ export type AbbottSummaryFilters = {
 export function selectAbbottSummaryRows({
   trafficRows,
   behaviorRows,
+  behaviorRowsWithoutAdmins = behaviorRows,
   filters,
   showUserIdAnalytics: _showUserIdAnalytics,
 }: {
   trafficRows: AbbottBiUserSummaryRow[];
   behaviorRows: AbbottBiUserSummaryRow[];
+  behaviorRowsWithoutAdmins?: AbbottBiUserSummaryRow[];
   filters: AbbottSummaryFilters;
   showUserIdAnalytics: boolean;
 }) {
+  if (filters.user_id === ABBOTT_WITHOUT_ADMINS) return behaviorRowsWithoutAdmins;
   if (filters.user_id || filters.direction) return behaviorRows;
   if (filters.user_id_traffic === "with_user_id" || filters.user_id_traffic === "without_user_id") {
     return trafficRows.filter((row) => row.traffic_segment === filters.user_id_traffic);

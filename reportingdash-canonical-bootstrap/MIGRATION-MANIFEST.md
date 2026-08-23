@@ -81,6 +81,7 @@ every runbook entrypoint and each repository-local Python dependency.
 | `src/db/migrations/055_abbott_projection_modality.sql` | `dashboard-next/src/db/migrations/055_abbott_projection_modality.sql` | `912e96c30eac08fdf352699d93173ac2420298c070db9ade95e37a298434eb87` | Disjoint local and Google projection receipts; package only, never applied by runtime |
 | `src/db/migrations/060_abbott_content_mnn.sql` | `dashboard-next/src/db/migrations/060_abbott_content_mnn.sql` | `02f860151017f4431fe73e6aafee845fe9fd1aed57a2ead57bad441e63a455c4` | Release-scoped multi-value MNN metadata; package only, never applied by runtime |
 | `src/db/migrations/061_abbott_optional_mnn_decisions.sql` | `dashboard-next/src/db/migrations/061_abbott_optional_mnn_decisions.sql` | `053048d6f0266d38e63d449f8571d25b1938d8e764950a8d9d5a2755c875f41d` | Optional primary/additional MNN approval and immutable event authority; package only, never applied by runtime |
+| `src/db/migrations/062_abbott_admin_user_exclusions.sql` | `dashboard-next/src/db/migrations/062_abbott_admin_user_exclusions.sql` | `d6e4c64eb2aca0c1198f640d135c2c95b648f3bebadf82015823c4c25f491ab1` | Private dashboard-scoped administrator User ID settings; package only, never copied to public facts |
 
 ## collectors/
 

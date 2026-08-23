@@ -405,6 +405,7 @@ export interface AbbottBiUserActionRow {
   visits: number;
   page_depth: number;
   avg_duration: number;
+  is_admin_user?: boolean;
 }
 
 export interface AbbottBiPageStatRow {
@@ -604,6 +605,10 @@ export interface AbbottBiData {
   };
   counters: string[];
   users_summary: AbbottBiUserSummaryRow[];
+  users_summary_without_admins?: AbbottBiUserSummaryRow[];
+  admin_user_filter?: {
+    available: boolean;
+  };
   traffic_summary?: AbbottBiUserSummaryRow[];
   user_actions: AbbottBiUserActionRow[];
   page_stats: AbbottBiPageStatRow[];

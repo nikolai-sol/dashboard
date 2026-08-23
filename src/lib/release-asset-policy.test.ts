@@ -107,6 +107,7 @@ test("release scans reject private data outside public while allowing Abbott sch
       "055_abbott_projection_modality.sql",
       "060_abbott_content_mnn.sql",
       "061_abbott_optional_mnn_decisions.sql",
+      "062_abbott_admin_user_exclusions.sql",
     ]) {
       await writeFile(path.join(releaseRoot, "src", "db", "migrations", fileName), "DDL");
     }
@@ -124,6 +125,7 @@ test("release scans reject private data outside public while allowing Abbott sch
       "055_abbott_projection_modality.sql",
       "060_abbott_content_mnn.sql",
       "061_abbott_optional_mnn_decisions.sql",
+      "062_abbott_admin_user_exclusions.sql",
     ]) {
       await writeFile(
         path.join(releaseRoot, "reportingdash-canonical-bootstrap", "src", "db", "migrations", fileName),
