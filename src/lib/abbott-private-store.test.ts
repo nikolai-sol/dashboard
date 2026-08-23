@@ -382,10 +382,10 @@ test("workbook loading uses normalized general-material URLs", async () => {
 test("workbook loading uses only resolved hashed projections and reports aggregate ambiguity", async () => {
   const hash = (value: string) => createHash("sha256").update(value).digest("hex");
   const resolvedRows = [
-    { lookup_kind: "title", lookup_key_hash: hash("Shared"), resolution_status: "identical_collapsed", page_title: "Shared", direction_key: "Cardiology", material_type: "article", access_label: "Врачи", is_active: 1 },
-    { lookup_kind: "slug", lookup_key_hash: hash("shared"), resolution_status: "unique", page_title: "Shared", direction_key: "Cardiology", material_type: "article", access_label: "Врачи", is_active: 1 },
-    { lookup_kind: "path", lookup_key_hash: hash("/shared"), resolution_status: "unique", page_title: "Shared", direction_key: "Cardiology", material_type: "article", access_label: "Врачи", is_active: 1 },
-    { lookup_kind: "url", lookup_key_hash: hash("https://abbottpro.ru/shared"), resolution_status: "unique", page_title: "Shared", direction_key: "Cardiology", material_type: "article", access_label: "Врачи", is_active: 1 },
+    { lookup_kind: "title", lookup_key_hash: hash("Shared"), resolution_status: "identical_collapsed", content_entity_id: 41, page_title: "Shared", direction_key: "Cardiology", material_type: "article", access_label: "Врачи", is_active: 1 },
+    { lookup_kind: "slug", lookup_key_hash: hash("shared"), resolution_status: "unique", content_entity_id: 41, page_title: "Shared", direction_key: "Cardiology", material_type: "article", access_label: "Врачи", is_active: 1 },
+    { lookup_kind: "path", lookup_key_hash: hash("/shared"), resolution_status: "unique", content_entity_id: 41, page_title: "Shared", direction_key: "Cardiology", material_type: "article", access_label: "Врачи", is_active: 1 },
+    { lookup_kind: "url", lookup_key_hash: hash("https://abbottpro.ru/shared"), resolution_status: "unique", content_entity_id: 41, page_title: "Shared", direction_key: "Cardiology", material_type: "article", access_label: "Врачи", is_active: 1 },
   ];
   const ambiguousPathRow = { lookup_kind: "path", lookup_key_hash: hash("/conflicted"), resolution_status: "ambiguous", direction_key: "Neurology", material_type: "article", access_label: "Врачи", is_active: 1 };
   const ambiguousUrlRow = { lookup_kind: "url", lookup_key_hash: hash("https://abbottpro.ru/conflicted"), resolution_status: "ambiguous", direction_key: "Neurology", material_type: "article", access_label: "Врачи", is_active: 1 };
@@ -401,6 +401,13 @@ test("workbook loading uses only resolved hashed projections and reports aggrega
         ? resolvedRows
         : [...resolvedRows, ambiguousPathRow, ambiguousUrlRow];
     }
+    if (sql.includes("portal_content_catalog_mnn")) {
+      return [
+        { content_entity_id: "41", mnn_key: "трайкор", mnn_label: "Трайкор", mnn_role: "primary", display_order: "0" },
+        { content_entity_id: "41", mnn_key: "омакор", mnn_label: "Омакор", mnn_role: "additional", display_order: "1" },
+        { content_entity_id: "41", mnn_key: "омакор", mnn_label: "Омакор", mnn_role: "additional", display_order: "1" },
+      ];
+    }
     return [];
   });
 
@@ -412,6 +419,7 @@ test("workbook loading uses only resolved hashed projections and reports aggrega
     material_type: "article",
     access: "Врачи",
     is_active: true,
+    mnn: ["Трайкор", "Омакор"],
   });
   assert.equal(result.contentBySlug.has("shared"), false);
   assert.equal(result.contentBySlug.has(hash("shared")), true);
@@ -421,6 +429,7 @@ test("workbook loading uses only resolved hashed projections and reports aggrega
     material_type: "article",
     access: "Врачи",
     is_active: true,
+    mnn: ["Трайкор", "Омакор"],
   });
   assert.deepEqual(result.urlReturnDirections.get(hash("/shared")), {
     page_title: "Shared",
@@ -428,6 +437,7 @@ test("workbook loading uses only resolved hashed projections and reports aggrega
     material_type: "article",
     access: "Врачи",
     is_active: true,
+    mnn: ["Трайкор", "Омакор"],
   });
   assert.equal(result.urlReturnDirections.has(hash("/conflicted")), false);
   assert.deepEqual(result.contentByUrl.get(hash("https://abbottpro.ru/shared")), {
@@ -436,6 +446,7 @@ test("workbook loading uses only resolved hashed projections and reports aggrega
     material_type: "article",
     access: "Врачи",
     is_active: true,
+    mnn: ["Трайкор", "Омакор"],
   });
   assert.equal(result.contentByUrl.has(hash("https://abbottpro.ru/conflicted")), false);
   assert.deepEqual(result.lookupQuality, { ambiguousGroups: 2, collapsedGroups: 1 });
@@ -445,6 +456,11 @@ test("workbook loading uses only resolved hashed projections and reports aggrega
     .join("\n");
   assert.match(projectionSql, /resolution_status IN \('unique', 'identical_collapsed'\)/);
   assert.match(projectionSql, /catalog\.page_title/);
+  assert.match(projectionSql, /catalog\.content_entity_id/);
+  const mnnQuery = executor.queries.find(({ sql }) => sql.includes("portal_content_catalog_mnn"));
+  assert.deepEqual(mnnQuery?.params, [41]);
+  assert.match(mnnQuery?.sql ?? "", /mnn_role, display_order/);
+  assert.match(mnnQuery?.sql ?? "", /ORDER BY content_entity_id, display_order, mnn_key/);
   assert.doesNotMatch(projectionSql, /page_title\s*=\s*\?|source_slug\s*=\s*\?|normalized_path\s*=\s*\?/);
 });
 

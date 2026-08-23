@@ -13,6 +13,7 @@ from typing import Any, Mapping, Optional, Sequence
 
 from .approval_hashes import compute_batch_hash
 from .batch_service import PersistedApprovalBatch
+from .mnn_decisions import normalize_reviewed_mnn
 
 
 class LocalAcceptanceError(ValueError):
@@ -30,6 +31,9 @@ class LocalDecision:
     selected_content_entity_id: Optional[int]
     url_alias_decision: Optional[str]
     decision_reason: Optional[str]
+    final_primary_mnn: Optional[str] = None
+    final_additional_mnn: tuple[str, ...] = ()
+    mnn_decision_reason: Optional[str] = None
 
 
 @dataclass(frozen=True)
@@ -56,10 +60,13 @@ _TOP_LEVEL_FIELDS = frozenset((
     "schema_version", "dataset_key", "batch_id", "batch_key",
     "published_input_hash", "accepted_by", "accepted_at", "decisions",
 ))
-_DECISION_FIELDS = frozenset((
+_DECISION_FIELDS_V1 = frozenset((
     "input_hash", "row_hash", "final_direction_code",
     "final_material_type_code", "final_access_code", "final_lifecycle_code",
     "selected_content_entity_id", "url_alias_decision", "decision_reason",
+))
+_DECISION_FIELDS_V2 = _DECISION_FIELDS_V1 | frozenset((
+    "final_primary_mnn", "final_additional_mnn", "mnn_decision_reason",
 ))
 _TAXONOMY_FIELDS = (
     ("final_direction_code", "direction"),
@@ -174,9 +181,14 @@ def _timestamp(value: object) -> datetime:
     return parsed
 
 
-def _decision(value: object, taxonomy_terms: Mapping[str, Sequence[str]]) -> LocalDecision:
+def _decision(
+    value: object,
+    taxonomy_terms: Mapping[str, Sequence[str]],
+    *,
+    schema_version: int,
+) -> LocalDecision:
     payload = _object(value)
-    _exact_fields(payload, _DECISION_FIELDS)
+    _exact_fields(payload, _DECISION_FIELDS_V2 if schema_version == 2 else _DECISION_FIELDS_V1)
     input_hash = payload["input_hash"]
     row_hash = payload["row_hash"]
     if not isinstance(input_hash, str) or not isinstance(row_hash, str):
@@ -191,6 +203,21 @@ def _decision(value: object, taxonomy_terms: Mapping[str, Sequence[str]]) -> Loc
     selected = payload["selected_content_entity_id"]
     if selected is not None and (type(selected) is not int or selected <= 0):
         _invalid()
+    if schema_version == 2:
+        additional = payload["final_additional_mnn"]
+        if not isinstance(additional, list):
+            _invalid()
+        try:
+            reviewed = normalize_reviewed_mnn(payload["final_primary_mnn"], additional)
+        except ValueError:
+            _invalid()
+        primary_mnn = reviewed.primary.label if reviewed.primary is not None else None
+        additional_mnn = tuple(item.label for item in reviewed.additional)
+        mnn_reason = _optional_text(payload["mnn_decision_reason"])
+    else:
+        primary_mnn = None
+        additional_mnn = ()
+        mnn_reason = None
     return LocalDecision(
         input_hash=input_hash,
         row_hash=row_hash,
@@ -201,6 +228,9 @@ def _decision(value: object, taxonomy_terms: Mapping[str, Sequence[str]]) -> Loc
         selected_content_entity_id=selected,
         url_alias_decision=_optional_text(payload["url_alias_decision"]),
         decision_reason=_optional_text(payload["decision_reason"]),
+        final_primary_mnn=primary_mnn,
+        final_additional_mnn=additional_mnn,
+        mnn_decision_reason=mnn_reason,
     )
 
 
@@ -219,8 +249,9 @@ def _validate_intent_against_batch(
         or compute_batch_hash(approval_batch.items) != approval_batch.published_input_hash
     ):
         _invalid()
+    schema_version = document["schema_version"]
     if (
-        document["schema_version"] != 1
+        schema_version not in {1, 2}
         or document["dataset_key"] != "abbott"
         or type(document["batch_id"]) is not int
         or document["batch_id"] != batch.database_batch_id
@@ -234,11 +265,33 @@ def _validate_intent_against_batch(
     decisions_value = document["decisions"]
     if not isinstance(decisions_value, list):
         _invalid()
-    decisions = tuple(_decision(value, taxonomy_terms) for value in decisions_value)
+    decisions = tuple(
+        _decision(value, taxonomy_terms, schema_version=schema_version)
+        for value in decisions_value
+    )
     expected_identity = tuple((item.input_hash, item.row_hash) for item in approval_batch.items)
     actual_identity = tuple((item.input_hash, item.row_hash) for item in decisions)
     if actual_identity != expected_identity:
         _invalid()
+    if schema_version == 2:
+        for decision, expected in zip(decisions, approval_batch.items):
+            try:
+                reviewed = normalize_reviewed_mnn(
+                    decision.final_primary_mnn,
+                    decision.final_additional_mnn,
+                )
+                proposed = normalize_reviewed_mnn(
+                    getattr(expected, "proposed_primary_mnn", None),
+                    getattr(expected, "proposed_additional_mnn", ()),
+                )
+            except ValueError:
+                _invalid()
+            if (
+                {item.key for item in reviewed.values}
+                - {item.key for item in proposed.values}
+                and not decision.mnn_decision_reason
+            ):
+                _invalid()
     return LocalAcceptanceIntent(
         batch_id=batch.database_batch_id,
         batch_key=approval_batch.batch_key,

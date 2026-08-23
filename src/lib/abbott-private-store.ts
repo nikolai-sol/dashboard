@@ -249,13 +249,18 @@ async function requireActiveAbbottDashboard(executor: AbbottPrivateQueryExecutor
   }
 }
 
-function contentMetadata(row: Record<string, unknown>): AbbottContentMetadata {
+function contentMetadata(
+  row: Record<string, unknown>,
+  mnnByEntity: ReadonlyMap<number, readonly string[]>,
+): AbbottContentMetadata {
+  const contentEntityId = integerId(row.content_entity_id);
   return {
     page_title: nullableText(row.page_title),
     direction: nullableText(row.direction_key),
     material_type: nullableText(row.material_type),
     access: nullableText(row.access_label),
     is_active: booleanOrNull(row.is_active),
+    mnn: [...(contentEntityId === null ? [] : (mnnByEntity.get(contentEntityId) ?? []))],
   };
 }
 
@@ -272,7 +277,8 @@ async function loadAggregateWorkbook(
   const catalogRows = await queryRows(
     executor,
     `SELECT projection.lookup_kind, projection.lookup_key_hash, projection.resolution_status,
-            catalog.page_title, catalog.material_type, catalog.direction_key, catalog.access_label, catalog.is_active
+            catalog.content_entity_id, catalog.page_title, catalog.material_type,
+            catalog.direction_key, catalog.access_label, catalog.is_active
      FROM \`report_bd\`.\`portal_content_lookup_projection\` AS projection
      INNER JOIN \`report_bd\`.\`portal_content_catalog\` AS catalog
        ON catalog.canonical_release_id = projection.canonical_release_id
@@ -282,6 +288,14 @@ async function loadAggregateWorkbook(
        AND projection.resolution_status IN ('unique', 'identical_collapsed')
      ORDER BY projection.lookup_kind, projection.lookup_key_hash`,
     [release.id, release.snapshots.workbookCatalog.id],
+  );
+  const mnnRows = await queryRows(
+    executor,
+    `SELECT content_entity_id, mnn_key, mnn_label, mnn_role, display_order
+     FROM \`report_bd\`.\`portal_content_catalog_mnn\`
+     WHERE canonical_release_id = ?
+     ORDER BY content_entity_id, display_order, mnn_key`,
+    [release.id],
   );
   const qualityRows = await queryRows(
     executor,
@@ -313,13 +327,57 @@ async function loadAggregateWorkbook(
   const contentByTitle = new Map<string, AbbottContentMetadata>();
   const contentBySlug = new Map<string, AbbottContentMetadata>();
   const urlReturnDirections = new Map<string, AbbottContentMetadata>();
+  const mnnLabelsByEntity = new Map<
+    number,
+    Map<string, { label: string; roleRank: number; displayOrder: number }>
+  >();
+  mnnRows.forEach((row) => {
+    const contentEntityId = integerId(row.content_entity_id);
+    const key = text(row.mnn_key);
+    const label = text(row.mnn_label);
+    const role = text(row.mnn_role) || "unranked";
+    const displayOrder = integerId(row.display_order) ?? 0;
+    if (contentEntityId === null || !key || !label) {
+      throw storeError("PRIVATE_DATA_UNAVAILABLE", PRIVATE_UNAVAILABLE_MESSAGE);
+    }
+    if (!new Set(["primary", "additional", "unranked"]).has(role)) {
+      throw storeError("PRIVATE_DATA_UNAVAILABLE", PRIVATE_UNAVAILABLE_MESSAGE);
+    }
+    const roleRank = role === "primary" ? 0 : role === "additional" ? 1 : 2;
+    const values = mnnLabelsByEntity.get(contentEntityId) ?? new Map();
+    const existing = values.get(key);
+    if (existing !== undefined && existing.label !== label) {
+      throw storeError("PRIVATE_DATA_UNAVAILABLE", PRIVATE_UNAVAILABLE_MESSAGE);
+    }
+    if (
+      existing === undefined ||
+      roleRank < existing.roleRank ||
+      (roleRank === existing.roleRank && displayOrder < existing.displayOrder)
+    ) {
+      values.set(key, { label, roleRank, displayOrder });
+    }
+    mnnLabelsByEntity.set(contentEntityId, values);
+  });
+  const mnnByEntity = new Map<number, readonly string[]>(
+    Array.from(mnnLabelsByEntity, ([entityId, values]) => [
+      entityId,
+      Array.from(values.values())
+        .sort(
+          (left, right) =>
+            left.roleRank - right.roleRank ||
+            left.displayOrder - right.displayOrder ||
+            left.label.localeCompare(right.label, "ru"),
+        )
+        .map(({ label }) => label),
+    ]),
+  );
   catalogRows.forEach((row) => {
     const lookupKind = text(row.lookup_kind);
     const lookupKeyHash = text(row.lookup_key_hash);
     if (!/^[a-f0-9]{64}$/.test(lookupKeyHash)) {
       throw storeError("PRIVATE_DATA_UNAVAILABLE", PRIVATE_UNAVAILABLE_MESSAGE);
     }
-    const metadata = contentMetadata(row);
+    const metadata = contentMetadata(row, mnnByEntity);
     if (lookupKind === "url") addUniqueLookup(contentByUrl, lookupKeyHash, metadata);
     else if (lookupKind === "title") addUniqueLookup(contentByTitle, lookupKeyHash, metadata);
     else if (lookupKind === "slug") addUniqueLookup(contentBySlug, lookupKeyHash, metadata);

@@ -27,12 +27,14 @@ ABBOTT_REQUIRED_SOURCE_KINDS = (
 ABBOTT_OPTIONAL_SOURCE_KINDS = (
     "abbott_bitrix_pages",
     "abbott_bitrix_journeys",
+    "abbott_mnn_workbook",
 )
 ABBOTT_ALLOWED_SOURCE_KINDS = frozenset(
     ABBOTT_REQUIRED_SOURCE_KINDS + ABBOTT_OPTIONAL_SOURCE_KINDS
 )
 ABBOTT_COVERAGE_ONLY_BOOTSTRAP_BASELINE_ID = 13
 ABBOTT_COVERAGE_ONLY_BOOTSTRAP_PREDECESSOR_ID = 1
+PREVIEW_ONLY_REVISION_PREFIX = "preview_only:"
 _METADATA_ONLY_PERIODS = (
     ("2026-06-01", "2026-06-30"),
     ("2026-07-01", "2026-07-31"),
@@ -135,7 +137,11 @@ def _validate_release_source_receipts(*, release: dict, execution_rows: list[dic
         or set(receipt_ids) != set(source_ids)
         or any(
             row.get("import_status") != "imported"
-            or int(row.get("rejected_row_count") or 0) != 0
+            or int(row.get("rejected_row_count") or 0) < 0
+            or (
+                row.get("source_kind") != "abbott_mnn_workbook"
+                and int(row.get("rejected_row_count") or 0) != 0
+            )
             for row in execution_rows
         )
     ):
@@ -256,12 +262,25 @@ def _validate_imported_sources(
             imported_row_count=snapshot.get("imported_row_count"),
         )
         fingerprint_fields = ("content_sha256", "content_bytes", "parser_version")
+        snapshot_rejected = int(snapshot.get("rejected_row_count") or 0)
+        if kind == "abbott_mnn_workbook":
+            rejection_evidence_valid = (
+                snapshot_rejected
+                == int(source_manifest.get("rejected_placeholder_count") or 0)
+                and int(source_manifest.get("unknown_malformed_count") or 0) == 0
+                and int(source_manifest.get("rejected_count") or 0)
+                == snapshot_rejected
+            )
+        else:
+            rejection_evidence_valid = (
+                snapshot_rejected == 0
+                and int(source_manifest.get("rejected_count") or 0) == 0
+            )
         if (
             snapshot.get("import_status") != "imported"
             or int(snapshot.get("imported_row_count") or 0) <= 0
-            or int(snapshot.get("rejected_row_count") or 0) != 0
+            or not rejection_evidence_valid
             or source_manifest.get("source_kind") != kind
-            or int(source_manifest.get("rejected_count") or 0) != 0
             or any(snapshot.get(field) != frozen.get(field) for field in fingerprint_fields)
             or any(source_manifest.get(field) != frozen.get(field) for field in fingerprint_fields)
         ):
@@ -272,7 +291,7 @@ def _validate_imported_sources(
             or execution.get("code_revision") != release.get("code_revision")
             or int(execution.get("imported_row_count") or 0)
             != int(snapshot.get("imported_row_count") or 0)
-            or int(execution.get("rejected_row_count") or 0) != 0
+            or int(execution.get("rejected_row_count") or 0) != snapshot_rejected
         ):
             raise ValidationGateError("Release import execution does not match the candidate")
 
@@ -705,7 +724,7 @@ def _compare_and_swap_pointer(
 def fail_staging_release(
     release_id: int, *, expected_active_release_id: int
 ) -> str:
-    """Audit a superseded staging candidate without changing the active pointer."""
+    """Audit a superseded non-active candidate without moving the pointer."""
 
     dataset_key = ABBOTT_DATASET_KEY
     conn = None
@@ -738,7 +757,7 @@ def fail_staging_release(
         if release.get("release_status") == "failed":
             conn.commit()
             return "noop"
-        if release.get("release_status") != "staging":
+        if release.get("release_status") not in {"staging", "validated"}:
             raise ImmutableReleaseError("Canonical staging release cannot be failed")
 
         cur.execute(
@@ -746,7 +765,8 @@ def fail_staging_release(
             UPDATE portal_data_releases
             SET release_status = 'failed',
                 rollback_reason = %s
-            WHERE dataset_key = %s AND id = %s AND release_status = 'staging'
+            WHERE dataset_key = %s AND id = %s
+              AND release_status IN ('staging', 'validated')
             """,
             (
                 "superseded after failed content validation",
@@ -795,6 +815,13 @@ def activate_release(release_id: int, *, expected_active_release_id: int) -> Non
         release = cur.fetchone()
         if not isinstance(release, dict):
             raise ImmutableReleaseError("Canonical release is not validated for activation")
+        # Disposable-preview provenance is never valid production authority.
+        if str(release.get("code_revision") or "").startswith(
+            PREVIEW_ONLY_REVISION_PREFIX
+        ):
+            raise ImmutableReleaseError(
+                "Preview-only canonical release cannot be activated"
+            )
         cur.execute(
             """
             SELECT source_snapshot_id, source_kind, code_revision,

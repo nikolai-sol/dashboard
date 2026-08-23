@@ -34,6 +34,8 @@ from .domain import (
     TaxonomyVersion,
 )
 from .reconcile import ReconciliationInput, reconcile_entity
+from .mnn_decisions import MnnProposal
+from .normalization import normalize_observed_page_grouping_url, normalize_url
 
 
 class BatchRepository(Protocol):
@@ -141,6 +143,9 @@ def _enrich(
     source_snapshot_digests: tuple[str, ...],
     model_routing_version: str,
     prompt_version: str,
+    mnn: tuple[str, ...],
+    mnn_contract_version: int,
+    mnn_proposal: MnnProposal | None,
 ) -> ApprovalBatchItem:
     if isinstance(value, ReconciliationInput):
         item = reconcile_entity(value)
@@ -198,6 +203,29 @@ def _enrich(
         source_snapshot_digests=source_snapshot_digests,
         model_routing_version=model_routing_version,
         prompt_version=prompt_version,
+        mnn=mnn,
+        mnn_contract_version=mnn_contract_version,
+        proposed_primary_mnn=(mnn_proposal.primary.label if mnn_proposal else None),
+        proposed_additional_mnn=(
+            tuple(value.label for value in mnn_proposal.additional)
+            if mnn_proposal else ()
+        ),
+        mnn_proposal_evidence=(
+            {
+                "authority_kind": mnn_proposal.authority_kind,
+                "normalized_url": mnn_proposal.normalized_url,
+                "owner_entity_id": mnn_proposal.owner_entity_id,
+                "snapshot_id": mnn_proposal.snapshot_id,
+                "snapshot_digest": mnn_proposal.snapshot_digest,
+                "claims": tuple({
+                    "claim_id": value.claim_id,
+                    "claim_fingerprint": value.claim_fingerprint,
+                    "key": value.key,
+                    "label": value.label,
+                } for value in mnn_proposal.values),
+            }
+            if mnn_proposal else None
+        ),
     )
     return replace(
         enriched,
@@ -223,6 +251,9 @@ def build_batch(
     source_snapshot_ids: Sequence[int],
     source_snapshot_digests: Sequence[str],
     model_routing_version: str,
+    mnn_by_entity: Mapping[int, Sequence[str]] | None = None,
+    mnn_proposals_by_url: Mapping[str, MnnProposal] | None = None,
+    mnn_contract_version: int = 1,
 ) -> BuiltApprovalBatch:
     """Build one immutable, deterministic batch from canonical reconciliation data."""
 
@@ -257,6 +288,34 @@ def build_batch(
         raise ValueError("SOURCE_SNAPSHOTS_REQUIRED")
     if not isinstance(model_routing_version, str) or not model_routing_version.strip():
         raise ValueError("MODEL_ROUTING_VERSION_REQUIRED")
+    mnn_context = mnn_by_entity or {}
+    if any(int(entity_id) <= 0 for entity_id in mnn_context):
+        raise ValueError("MNN_CONTEXT_INVALID")
+    if mnn_contract_version not in {1, 2}:
+        raise ValueError("MNN_CONTRACT_VERSION_INVALID")
+    proposals = mnn_proposals_by_url or {}
+    if mnn_contract_version == 1 and proposals:
+        raise ValueError("MNN_CONTRACT_VERSION_INVALID")
+
+    def proposal_for(value: ReconciliationInput | ApprovalItem) -> MnnProposal | None:
+        if mnn_contract_version < 2:
+            return None
+        raw_url = (
+            value.registry1.url
+            if isinstance(value, ReconciliationInput) and value.registry1 is not None
+            else value.registry2.url
+            if isinstance(value, ReconciliationInput) and value.registry2 is not None
+            else value.active_canonical.url
+            if isinstance(value, ReconciliationInput) and value.active_canonical is not None
+            else value.url
+            if isinstance(value, ApprovalItem)
+            else ""
+        )
+        semantic = normalize_url(raw_url)
+        grouping = normalize_observed_page_grouping_url(raw_url)
+        if not semantic.value or semantic.value != grouping.value:
+            return None
+        return proposals.get(grouping.value)
     items = tuple(
         sorted(
             (
@@ -268,6 +327,14 @@ def build_batch(
                     source_snapshot_digests=snapshot_digests,
                     model_routing_version=model_routing_version,
                     prompt_version=prompt_version,
+                    mnn=tuple(
+                        mnn_context.get(
+                            int(getattr(value, "content_entity_id", 0) or 0),
+                            (),
+                        )
+                    ),
+                    mnn_contract_version=mnn_contract_version,
+                    mnn_proposal=proposal_for(value),
                 )
                 for value in inputs
             ),

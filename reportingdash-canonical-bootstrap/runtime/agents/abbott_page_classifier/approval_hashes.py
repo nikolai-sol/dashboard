@@ -84,12 +84,17 @@ class ApprovalBatchItem(ApprovalItem):
     source_snapshot_digests: tuple[str, ...] = ()
     model_routing_version: str = ""
     prompt_version: str = ""
+    mnn: tuple[str, ...] = ()
+    mnn_contract_version: int = 1
+    proposed_primary_mnn: str | None = None
+    proposed_additional_mnn: tuple[str, ...] = ()
+    mnn_proposal_evidence: Mapping[str, object] | None = None
 
     def __post_init__(self) -> None:
         for field_name in (
             "current_canonical", "registry1_values", "registry2_values",
             "deterministic_result", "terra_result", "sol_result",
-            "archive_attestation",
+            "archive_attestation", "mnn_proposal_evidence",
         ):
             value = getattr(self, field_name)
             object.__setattr__(self, field_name, None if value is None else _freeze(value))
@@ -110,10 +115,22 @@ class ApprovalBatchItem(ApprovalItem):
         object.__setattr__(
             self, "source_snapshot_digests", tuple(self.source_snapshot_digests)
         )
+        object.__setattr__(
+            self,
+            "mnn",
+            tuple(sorted({str(value).strip() for value in self.mnn if str(value).strip()})),
+        )
+        object.__setattr__(
+            self,
+            "proposed_additional_mnn",
+            tuple(str(value).strip() for value in self.proposed_additional_mnn if str(value).strip()),
+        )
+        if self.mnn_contract_version not in {1, 2}:
+            raise ValueError("MNN_CONTRACT_VERSION_INVALID")
 
     @property
     def proposal_evidence(self) -> Mapping[str, object]:
-        return MappingProxyType({
+        evidence = {
             "current_canonical": self.current_canonical,
             "registry1": self.registry1_values,
             "registry2": self.registry2_values,
@@ -129,7 +146,15 @@ class ApprovalBatchItem(ApprovalItem):
                 "final_lifecycle_code": self.final_lifecycle_code,
                 "final_material_type_code": self.final_material_type_code,
             },
-        })
+        }
+        if self.mnn:
+            evidence["mnn"] = self.mnn
+        if self.mnn_contract_version >= 2:
+            evidence["mnn_contract_version"] = self.mnn_contract_version
+            evidence["mnn_proposal"] = self.mnn_proposal_evidence
+            evidence["proposed_primary_mnn"] = self.proposed_primary_mnn
+            evidence["proposed_additional_mnn"] = self.proposed_additional_mnn
+        return MappingProxyType(evidence)
 
 
 def _item_sort_key(item: ApprovalItem) -> tuple[int, int, str]:
@@ -171,6 +196,15 @@ def _item_payload(item: ApprovalItem, *, include_row_hash: bool) -> dict[str, ob
             "model_routing_version": item.model_routing_version,
             "prompt_version": item.prompt_version,
         })
+        if item.mnn:
+            payload["mnn"] = item.mnn
+        if item.mnn_contract_version >= 2:
+            payload.update({
+                "mnn_contract_version": item.mnn_contract_version,
+                "mnn_proposal_evidence": item.mnn_proposal_evidence,
+                "proposed_primary_mnn": item.proposed_primary_mnn,
+                "proposed_additional_mnn": item.proposed_additional_mnn,
+            })
     if include_row_hash:
         payload["row_hash"] = item.row_hash
     return payload
@@ -187,19 +221,29 @@ def compute_item_hash(item: ApprovalItem) -> str:
 
 def compute_accepted_decision_hash(items: Iterable[ApprovalItem]) -> str:
     ordered = sorted(tuple(items), key=_item_sort_key)
-    return _sha256_json([{
-        "content_entity_id": item.content_entity_id,
-        "decision_reason": item.decision_reason,
-        "final_access_code": item.final_access_code,
-        "final_direction_code": item.final_direction_code,
-        "final_lifecycle_code": item.final_lifecycle_code,
-        "final_material_type_code": item.final_material_type_code,
-        "input_hash": item.input_hash,
-        "readiness_state": item.readiness_state,
-        "row_hash": item.row_hash,
-        "selected_content_entity_id": item.selected_content_entity_id,
-        "url_alias_decision": item.url_alias_decision,
-    } for item in ordered])
+    payloads: list[dict[str, object]] = []
+    for item in ordered:
+        payload = {
+            "content_entity_id": item.content_entity_id,
+            "decision_reason": item.decision_reason,
+            "final_access_code": item.final_access_code,
+            "final_direction_code": item.final_direction_code,
+            "final_lifecycle_code": item.final_lifecycle_code,
+            "final_material_type_code": item.final_material_type_code,
+            "input_hash": item.input_hash,
+            "readiness_state": item.readiness_state,
+            "row_hash": item.row_hash,
+            "selected_content_entity_id": item.selected_content_entity_id,
+            "url_alias_decision": item.url_alias_decision,
+        }
+        if isinstance(item, ApprovalBatchItem) and item.mnn_contract_version >= 2:
+            payload.update({
+                "final_primary_mnn": item.final_primary_mnn,
+                "final_additional_mnn": item.final_additional_mnn,
+                "mnn_decision_reason": item.mnn_decision_reason,
+            })
+        payloads.append(payload)
+    return _sha256_json(payloads)
 
 
 def compute_classification_event_fingerprint(payload: Mapping[str, object]) -> str:

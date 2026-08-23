@@ -257,6 +257,9 @@ class ApprovalItem:
     decision_reason: str | None = None
     selected_content_entity_id: int | None = None
     url_alias_decision: str | None = None
+    final_primary_mnn: str | None = None
+    final_additional_mnn: tuple[str, ...] = ()
+    mnn_decision_reason: str | None = None
 
 
 @dataclass(frozen=True)

@@ -20,6 +20,7 @@ from .normalization import (
     normalize_url,
     sha256_text,
 )
+from .mnn import MnnSnapshot, read_mnn_workbook
 
 
 def _canonical_json(value: object) -> str:

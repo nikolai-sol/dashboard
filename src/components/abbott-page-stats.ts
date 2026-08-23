@@ -19,6 +19,7 @@ type AbbottPageStatsFilters = {
   query: string;
   pageTitleQuery: string;
   direction: string;
+  mnn: string[];
   materialTypes: string[];
   access: string;
 };
@@ -26,6 +27,13 @@ type AbbottPageStatsFilters = {
 export function matchesSelectedMaterialType(materialType: string | null, selectedTypes: string[]) {
   if (selectedTypes.length === 0) return true;
   return selectedTypes.includes(labelAbbottPageDimension(materialType));
+}
+
+export function matchesSelectedMnn(mnn: string[] | null | undefined, selectedMnn: string[]) {
+  if (selectedMnn.length === 0) return true;
+  const values = (mnn ?? []).map((value) => String(value).trim()).filter(Boolean);
+  if (values.length === 0) return selectedMnn.includes(ABBOTT_UNMAPPED_LABEL);
+  return values.some((value) => selectedMnn.includes(value));
 }
 
 export function buildAbbottPageDimensionOptions<T>(
@@ -78,6 +86,7 @@ export function filterAbbottPageStatsRows(rows: AbbottBiPageStatRow[], filters: 
         row.page_title,
         row.url,
         row.direction,
+        ...(row.mnn ?? []),
         row.material_type,
         row.access,
         row.pageviews,
@@ -91,6 +100,7 @@ export function filterAbbottPageStatsRows(rows: AbbottBiPageStatRow[], filters: 
     }
     if (!matchesPageStatsSearch(row.page_title, row.url, filters.pageTitleQuery)) return false;
     if (filters.direction && (row.direction ?? "") !== filters.direction) return false;
+    if (!matchesSelectedMnn(row.mnn, filters.mnn)) return false;
     if (!matchesSelectedMaterialType(row.material_type, filters.materialTypes)) return false;
     if (filters.access && (row.access ?? "") !== filters.access) return false;
     return true;
@@ -134,6 +144,7 @@ export function buildAbbottPageStatsExportRows(rows: AbbottBiPageStatRow[]): Arr
     "Заголовок страницы": row.page_title || "—",
     URL: row.url || "—",
     Направление: labelAbbottPageDimension(row.direction),
+    МНН: row.mnn?.length ? row.mnn.join("; ") : ABBOTT_UNMAPPED_LABEL,
     "Тип материала": labelAbbottPageDimension(row.material_type),
     Доступ: labelAbbottPageDimension(row.access),
     "Просмотры Метрики": row.pageviews,

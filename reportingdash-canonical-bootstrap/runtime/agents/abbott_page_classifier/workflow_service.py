@@ -8,7 +8,8 @@ separate stages.
 
 from __future__ import annotations
 
-from dataclasses import dataclass, replace
+from dataclasses import dataclass, field, replace
+from decimal import Decimal
 import json
 from pathlib import Path
 from typing import Callable, Mapping, Protocol, Sequence
@@ -26,6 +27,7 @@ from .llm_classifier import (
     route_llm,
 )
 from .normalization import normalize_url, sha256_text
+from .mnn_decisions import MnnProposal
 from .reconcile import ReconciliationInput, reconcile_entity
 from .sources import (
     SourceCandidate,
@@ -78,6 +80,8 @@ class ReconciliationContext:
     predecessor_content_entity_ids: tuple[int, ...] = ()
     predecessor_catalog_entities: tuple[CanonicalClassification, ...] = ()
     observed_pages: tuple[ObservedPage, ...] = ()
+    mnn_by_entity: Mapping[int, tuple[str, ...]] = field(default_factory=dict)
+    mnn_proposals_by_url: Mapping[str, MnnProposal] = field(default_factory=dict)
 
     def __post_init__(self) -> None:
         object.__setattr__(self, "predecessor_snapshot_ids", tuple(self.predecessor_snapshot_ids))
@@ -95,6 +99,14 @@ class ReconciliationContext:
             tuple(self.predecessor_catalog_entities),
         )
         object.__setattr__(self, "observed_pages", tuple(self.observed_pages))
+        normalized_mnn = {
+            int(entity_id): tuple(sorted({str(label).strip() for label in labels if str(label).strip()}))
+            for entity_id, labels in self.mnn_by_entity.items()
+        }
+        if any(entity_id <= 0 for entity_id in normalized_mnn):
+            raise ValueError("MNN_CONTEXT_INVALID")
+        object.__setattr__(self, "mnn_by_entity", normalized_mnn)
+        object.__setattr__(self, "mnn_proposals_by_url", dict(self.mnn_proposals_by_url))
         if (
             self.predecessor_release_id <= 0
             or not self.predecessor_snapshot_ids
@@ -460,6 +472,9 @@ class CanonicalWeeklyProposalService:
             source_snapshot_ids=run.context.predecessor_snapshot_ids,
             source_snapshot_digests=run.context.predecessor_snapshot_digests,
             model_routing_version=run.configuration.model_routing_version,
+            mnn_by_entity=run.context.mnn_by_entity,
+            mnn_proposals_by_url=run.context.mnn_proposals_by_url,
+            mnn_contract_version=2,
         )
         persisted_batch = self._store.finalize_reconciliation_run(run.run_id, batch)
         return self._classification_receipt(

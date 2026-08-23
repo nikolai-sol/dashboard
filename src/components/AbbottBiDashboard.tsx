@@ -17,6 +17,7 @@ import {
 } from "recharts";
 import type { AbbottBiData } from "@/lib/types";
 import {
+  ABBOTT_UNMAPPED_LABEL,
   buildAbbottPageStatsExportRows,
   buildAbbottPageviewsByDirection,
   filterAbbottPageStatsRows,
@@ -892,6 +893,7 @@ export default function AbbottBiDashboard({
     general_materials: { material_name: "" },
   });
   const [selectedPageMaterialTypes, setSelectedPageMaterialTypes] = useState<string[]>([]);
+  const [selectedPageMnn, setSelectedPageMnn] = useState<string[]>([]);
   const [timeBucketPageSearch, setTimeBucketPageSearch] = useState("");
 
   const tabs = useMemo(
@@ -961,6 +963,11 @@ export default function AbbottBiDashboard({
   const pageStatsOptions = useMemo(
     () => ({
       direction: buildAbbottPageDimensionOptions(data.page_stats, (row) => row.direction),
+      mnn: uniqOptions(
+        data.page_stats.flatMap((row) =>
+          row.mnn?.length ? row.mnn : [ABBOTT_UNMAPPED_LABEL],
+        ),
+      ),
       material_type: buildAbbottPageDimensionOptions(data.page_stats, (row) => row.material_type),
       access: buildAbbottPageDimensionOptions(data.page_stats, (row) => row.access),
     }),
@@ -1077,10 +1084,11 @@ export default function AbbottBiDashboard({
       query: queryByTab.page_stats,
       pageTitleQuery: filters.page_title_query,
       direction: filters.direction,
+      mnn: selectedPageMnn,
       materialTypes: selectedPageMaterialTypes,
       access: filters.access,
     });
-  }, [data.page_stats, filtersByTab.page_stats, queryByTab.page_stats, selectedPageMaterialTypes]);
+  }, [data.page_stats, filtersByTab.page_stats, queryByTab.page_stats, selectedPageMaterialTypes, selectedPageMnn]);
 
   const bitrixPageRows = useMemo(() => {
     const query = queryByTab.bitrix_pages;
@@ -1451,6 +1459,7 @@ export default function AbbottBiDashboard({
       { key: "page_title", label: "Заголовок страниц", className: "min-w-[220px]" },
       { key: "url", label: "URL", className: "min-w-[280px] break-all" },
       { key: "direction", label: "Направление" },
+      { key: "mnn", label: "МНН" },
       { key: "material_type", label: "Тип материала" },
       { key: "access", label: "Доступ" },
       { key: "pageviews", label: "Просмотры", className: "text-right" },
@@ -1467,6 +1476,7 @@ export default function AbbottBiDashboard({
       page_title: row.page_title || "—",
       url: row.url || "—",
       direction: labelAbbottPageDimension(row.direction),
+      mnn: row.mnn?.join("; ") || "—",
       material_type: labelAbbottPageDimension(row.material_type),
       access: labelAbbottPageDimension(row.access),
       pageviews: formatNumber(row.pageviews, locale),
@@ -1686,6 +1696,16 @@ export default function AbbottBiDashboard({
           value={filtersByTab.page_stats.direction}
           options={pageStatsOptions.direction}
           onChange={(value) => setSelectFilter("page_stats", "direction", value)}
+          theme={theme}
+        />
+        <MultiSelectField
+          label="МНН"
+          values={selectedPageMnn}
+          options={pageStatsOptions.mnn}
+          onChange={(values) => {
+            setSelectedPageMnn(values);
+            setPageByTab((prev) => ({ ...prev, page_stats: 1 }));
+          }}
           theme={theme}
         />
         <SelectField

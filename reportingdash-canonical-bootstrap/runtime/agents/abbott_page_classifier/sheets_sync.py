@@ -41,6 +41,7 @@ from agents.abbott_page_classifier.domain import (
     ApprovalBatch,
     ApprovalItem,
 )
+from agents.abbott_page_classifier.mnn_decisions import normalize_reviewed_mnn
 
 HERMES_HOME = Path.home() / ".hermes"
 TOKEN_PATH = HERMES_HOME / "google_token.json"
@@ -1111,6 +1112,12 @@ ITEM_HEADERS = (
     "title",
     "url",
     "current_direction_code",
+    "Текущее МНН",
+    "Предложение МНН",
+    "МНН — основное",
+    "Дополнительные МНН",
+    "Основание МНН",
+    "Причина МНН",
     "current_material_type_code",
     "current_access_code",
     "current_lifecycle_code",
@@ -1165,6 +1172,9 @@ _CURRENT_ENTITY_COLUMN = ITEM_HEADERS.index("Текущий entity ID")
 _SELECTED_ENTITY_COLUMN = ITEM_HEADERS.index("Кандидат entity ID")
 _URL_ALIAS_DECISION_COLUMN = ITEM_HEADERS.index("Решение по URL")
 _REASON_COLUMN = ITEM_HEADERS.index("Причина решения")
+_MNN_PRIMARY_COLUMN = ITEM_HEADERS.index("МНН — основное")
+_MNN_ADDITIONAL_COLUMN = ITEM_HEADERS.index("Дополнительные МНН")
+_MNN_REASON_COLUMN = ITEM_HEADERS.index("Причина МНН")
 _HASH_COLUMN = ITEM_HEADERS.index("input_hash")
 _STATE_TABS = {
     "ready": TAB_PROPOSALS,
@@ -1262,11 +1272,28 @@ def _current_code(item: ApprovalItem, name: str) -> object | None:
 
 
 def _item_row(item: ApprovalItem) -> list[object]:
+    proposed_primary = _item_extra(item, "proposed_primary_mnn") or ""
+    proposed_additional = tuple(_item_extra(item, "proposed_additional_mnn") or ())
+    proposal_evidence = _item_extra(item, "mnn_proposal_evidence")
+    evidence_display = ""
+    if isinstance(proposal_evidence, Mapping):
+        evidence_display = "; ".join((
+            str(proposal_evidence.get("authority_kind") or ""),
+            f"snapshot:{proposal_evidence.get('snapshot_id')}",
+            f"owner:{proposal_evidence.get('owner_entity_id')}",
+            f"claims:{len(proposal_evidence.get('claims') or ())}",
+        ))
     return [
         "" if item.content_entity_id is None else item.content_entity_id,
         _safe_display(item.title),
         _safe_display(item.url),
         _current_code(item, "direction_code") or "",
+        "; ".join(_item_extra(item, "mnn") or ()),
+        "; ".join((proposed_primary, *proposed_additional)).strip("; "),
+        item.final_primary_mnn or "",
+        "; ".join(item.final_additional_mnn),
+        evidence_display,
+        _safe_display(item.mnn_decision_reason),
         _current_code(item, "material_type_code") or "",
         _current_code(item, "access_code") or "",
         _current_code(item, "lifecycle_code") or "",
@@ -1454,10 +1481,55 @@ def _projection_requests(
                                 "sheetId": sheet_id,
                                 "startRowIndex": 0,
                                 "endRowIndex": row_count,
+                                "startColumnIndex": _MNN_ADDITIONAL_COLUMN + 1,
+                                "endColumnIndex": _MNN_REASON_COLUMN,
+                            },
+                            "description": "mnn-evidence-read-only",
+                            "warningOnly": False,
+                        }
+                    }
+                },
+                {
+                    "addProtectedRange": {
+                        "protectedRange": {
+                            "range": {
+                                "sheetId": sheet_id,
+                                "startRowIndex": 0,
+                                "endRowIndex": row_count,
                                 "startColumnIndex": 0,
-                                "endColumnIndex": min(_FINAL_COLUMNS.values()),
+                                "endColumnIndex": _MNN_PRIMARY_COLUMN,
                             },
                             "description": "identity-and-proposals-read-only",
+                            "warningOnly": False,
+                        }
+                    }
+                },
+                {
+                    "addProtectedRange": {
+                        "protectedRange": {
+                            "range": {
+                                "sheetId": sheet_id,
+                                "startRowIndex": 0,
+                                "endRowIndex": row_count,
+                                "startColumnIndex": _MNN_REASON_COLUMN + 1,
+                                "endColumnIndex": min(_FINAL_COLUMNS.values()),
+                            },
+                            "description": "current-classification-read-only",
+                            "warningOnly": False,
+                        }
+                    }
+                },
+                {
+                    "addProtectedRange": {
+                        "protectedRange": {
+                            "range": {
+                                "sheetId": sheet_id,
+                                "startRowIndex": 0,
+                                "endRowIndex": row_count,
+                                "startColumnIndex": _NORMALIZED_URL_COLUMN,
+                                "endColumnIndex": _SELECTED_ENTITY_COLUMN,
+                            },
+                            "description": "normalized-identity-read-only",
                             "warningOnly": False,
                         }
                     }
@@ -1510,6 +1582,33 @@ def _projection_requests(
                     }
                 }
             )
+        primary_column = _column_name(_MNN_PRIMARY_COLUMN)
+        additional_column = _column_name(_MNN_ADDITIONAL_COLUMN)
+        requests.append(
+            {
+                "setDataValidation": {
+                    "range": {
+                        "sheetId": sheet_id,
+                        "startRowIndex": 1,
+                        "endRowIndex": max(row_count, 2),
+                        "startColumnIndex": _MNN_ADDITIONAL_COLUMN,
+                        "endColumnIndex": _MNN_ADDITIONAL_COLUMN + 1,
+                    },
+                    "rule": {
+                        "condition": {
+                            "type": "CUSTOM_FORMULA",
+                            "values": [{
+                                "userEnteredValue": (
+                                    f'=OR(${additional_column}2="",LEN(TRIM(${primary_column}2))>0)'
+                                )
+                            }],
+                        },
+                        "inputMessage": "Additional MNN requires a primary MNN",
+                        "strict": True,
+                    },
+                }
+            }
+        )
     conflict_rows = 1 + sum(
         1 for item in batch.items if item.readiness_state == "conflict"
     )
@@ -1526,7 +1625,11 @@ def _projection_requests(
                 "rule": {
                     "condition": {
                         "type": "CUSTOM_FORMULA",
-                        "values": [{"userEnteredValue": "=LEN(TRIM($Y2))>0"}],
+                        "values": [{
+                            "userEnteredValue": (
+                                f'=LEN(TRIM(${_column_name(_REASON_COLUMN)}2))>0'
+                            )
+                        }],
                     },
                     "inputMessage": "Причина решения is mandatory for an edited conflict",
                     "strict": True,
@@ -1573,7 +1676,11 @@ def _projection_requests(
                             "values": [
                                 {
                                     "userEnteredValue": (
-                                        "=OR($V2=\"\",AND(ISNUMBER($V2),$V2=INT($V2),$V2>0))"
+                                        f'=OR(${_column_name(_SELECTED_ENTITY_COLUMN)}2="",'
+                                        f'AND(ISNUMBER(${_column_name(_SELECTED_ENTITY_COLUMN)}2),'
+                                        f'${_column_name(_SELECTED_ENTITY_COLUMN)}2='
+                                        f'INT(${_column_name(_SELECTED_ENTITY_COLUMN)}2),'
+                                        f'${_column_name(_SELECTED_ENTITY_COLUMN)}2>0))'
                                     )
                                 }
                             ],
@@ -1773,7 +1880,10 @@ def _accepted_decision(value: object) -> bool:
 def _table_rows(
     gateway: SheetsGateway, spreadsheet_id: str, title: str
 ) -> list[list[object]]:
-    values = gateway.read_values(spreadsheet_id, a1_range(title, "A:V"))
+    values = gateway.read_values(
+        spreadsheet_id,
+        a1_range(title, f"A:{_column_name(len(ITEM_HEADERS) - 1)}"),
+    )
     if not values or tuple(str(value) for value in values[0]) != ITEM_HEADERS:
         raise ProjectionValidationError("SHEET_HEADER_MISMATCH")
     rows: list[list[object]] = []
@@ -1803,6 +1913,39 @@ def _optional_positive_int(value: object) -> int | None:
     if str(parsed) != normalized or parsed <= 0:
         raise ProjectionValidationError("URL_ENTITY_ID_INVALID")
     return parsed
+
+
+def _column_name(index: int) -> str:
+    value = index + 1
+    result = ""
+    while value:
+        value, remainder = divmod(value - 1, 26)
+        result = chr(ord("A") + remainder) + result
+    return result
+
+
+def _accepted_mnn(row: Sequence[object], expected: ApprovalItem):
+    try:
+        decision = normalize_reviewed_mnn(
+            _optional_cell(row[_MNN_PRIMARY_COLUMN]),
+            _optional_cell(row[_MNN_ADDITIONAL_COLUMN]),
+        )
+    except ValueError as error:
+        raise ProjectionValidationError(str(error)) from None
+    reason = _optional_cell(row[_MNN_REASON_COLUMN])
+    if int(_item_extra(expected, "mnn_contract_version") or 1) < 2:
+        if decision.values or reason:
+            raise ProjectionValidationError("MNN_CONTRACT_VERSION_INVALID")
+        return decision, reason
+    proposed = normalize_reviewed_mnn(
+        _item_extra(expected, "proposed_primary_mnn"),
+        tuple(_item_extra(expected, "proposed_additional_mnn") or ()),
+    )
+    proposed_keys = {value.key for value in proposed.values}
+    final_keys = {value.key for value in decision.values}
+    if final_keys - proposed_keys and not reason:
+        raise ProjectionValidationError("MNN_DECISION_REASON_REQUIRED")
+    return decision, reason
 
 
 def _validate_url_alias_decision(item: ApprovalItem) -> None:
@@ -1904,9 +2047,18 @@ def read_accepted_projection(
 
     if set(row_hashes) != set(expected_by_hash):
         raise ProjectionValidationError("SHEET_IDENTITY_MISMATCH")
-    immutable_indexes = tuple(range(0, min(_FINAL_COLUMNS.values()))) + (
-        _NORMALIZED_URL_COLUMN, _CURRENT_ENTITY_COLUMN,
-    ) + tuple(range(_HASH_COLUMN, len(ITEM_HEADERS)))
+    mutable_indexes = {
+        *_FINAL_COLUMNS.values(),
+        _MNN_PRIMARY_COLUMN,
+        _MNN_ADDITIONAL_COLUMN,
+        _MNN_REASON_COLUMN,
+        _SELECTED_ENTITY_COLUMN,
+        _URL_ALIAS_DECISION_COLUMN,
+        _REASON_COLUMN,
+    }
+    immutable_indexes = tuple(
+        index for index in range(len(ITEM_HEADERS)) if index not in mutable_indexes
+    )
     terms = _taxonomy_terms(approval_batch)
     accepted_items: list[ApprovalItem] = []
     seen_identities: set[tuple[int | None, str]] = set()
@@ -1920,6 +2072,7 @@ def read_accepted_projection(
             raise ProjectionValidationError("DUPLICATE_ROW_IDENTITY")
         seen_identities.add(identity)
 
+        mnn_decision, mnn_reason = _accepted_mnn(row, expected)
         accepted = replace(
             expected,
             final_direction_code=_optional_cell(row[_FINAL_COLUMNS["direction"]]),
@@ -1929,6 +2082,13 @@ def read_accepted_projection(
             selected_content_entity_id=_optional_positive_int(row[_SELECTED_ENTITY_COLUMN]),
             url_alias_decision=_optional_cell(row[_URL_ALIAS_DECISION_COLUMN]),
             decision_reason=_optional_cell(row[_REASON_COLUMN]),
+            final_primary_mnn=(
+                mnn_decision.primary.label if mnn_decision.primary is not None else None
+            ),
+            final_additional_mnn=tuple(
+                value.label for value in mnn_decision.additional
+            ),
+            mnn_decision_reason=mnn_reason,
         )
         _validate_taxonomy(accepted, terms)
         _validate_url_alias_decision(accepted)
