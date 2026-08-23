@@ -12,6 +12,7 @@ import {
   matchesPageStatsSearch,
   matchesSelectedPageDimension,
   matchesSelectedMaterialType,
+  matchesSelectedMnn,
   summarizeAbbottPageMetadataCoverage,
   summarizeAbbottPageStats,
 } from "./abbott-page-stats";
@@ -21,6 +22,7 @@ const sampleRow: AbbottBiPageStatRow = {
   page_title: "Видеолекция о головокружении",
   url: "https://abbottpro.ru/video/262339",
   direction: "Неврология и психиатрия",
+  mnn: ["Омакор", "Трайкор"],
   material_type: "Видео",
   access: "Врачи",
   pageviews: 157,
@@ -42,6 +44,27 @@ test("material selection matches any selected type", () => {
   assert.equal(matchesSelectedMaterialType("Видео", ["Статьи", "Видео"]), true);
   assert.equal(matchesSelectedMaterialType("Калькуляторы", ["Статьи", "Видео"]), false);
   assert.equal(matchesSelectedMaterialType(null, [ABBOTT_UNMAPPED_LABEL]), true);
+});
+
+test("MNN selection uses OR within the filter and keeps unmapped rows explicit", () => {
+  assert.equal(matchesSelectedMnn(["Омакор", "Трайкор"], ["Трайкор", "Клацид"]), true);
+  assert.equal(matchesSelectedMnn(["Омакор"], ["Трайкор", "Клацид"]), false);
+  assert.equal(matchesSelectedMnn([], []), true);
+  assert.equal(matchesSelectedMnn([], [ABBOTT_UNMAPPED_LABEL]), true);
+});
+
+test("global page search includes every MNN label", () => {
+  assert.equal(
+    filterAbbottPageStatsRows([sampleRow], {
+      query: "трайкор",
+      pageTitleQuery: "",
+      direction: "",
+      mnn: [],
+      materialTypes: [],
+      access: "",
+    }).length,
+    1,
+  );
 });
 
 test("page dimension labels normalize null and blank values to the unmapped label", () => {
@@ -73,6 +96,7 @@ test("page stats selector applies direction, material type, access, and both sea
       query: "головокружении",
       pageTitleQuery: "262339",
       direction: "Неврология и психиатрия",
+      mnn: ["Омакор"],
       materialTypes: ["Видео"],
       access: "Врачи",
     }),
@@ -217,6 +241,7 @@ test("export rows keep page identity and raw numeric metrics", () => {
       "Заголовок страницы": "Видеолекция о головокружении",
       URL: "https://abbottpro.ru/video/262339",
       Направление: "Неврология и психиатрия",
+      МНН: "Омакор; Трайкор",
       "Тип материала": "Видео",
       Доступ: "Врачи",
       "Просмотры Метрики": 157,
@@ -236,6 +261,7 @@ test("export rows label unmapped page metadata without changing metrics", () => 
     "Заголовок страницы": "Видеолекция о головокружении",
     URL: "https://abbottpro.ru/video/262339",
     Направление: ABBOTT_UNMAPPED_LABEL,
+    МНН: "Омакор; Трайкор",
     "Тип материала": ABBOTT_UNMAPPED_LABEL,
     Доступ: ABBOTT_UNMAPPED_LABEL,
     "Просмотры Метрики": 157,

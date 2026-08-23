@@ -249,13 +249,18 @@ async function requireActiveAbbottDashboard(executor: AbbottPrivateQueryExecutor
   }
 }
 
-function contentMetadata(row: Record<string, unknown>): AbbottContentMetadata {
+function contentMetadata(
+  row: Record<string, unknown>,
+  mnnByEntity: ReadonlyMap<number, readonly string[]>,
+): AbbottContentMetadata {
+  const contentEntityId = integerId(row.content_entity_id);
   return {
     page_title: nullableText(row.page_title),
     direction: nullableText(row.direction_key),
     material_type: nullableText(row.material_type),
     access: nullableText(row.access_label),
     is_active: booleanOrNull(row.is_active),
+    mnn: [...(contentEntityId === null ? [] : (mnnByEntity.get(contentEntityId) ?? []))],
   };
 }
 
@@ -272,7 +277,8 @@ async function loadAggregateWorkbook(
   const catalogRows = await queryRows(
     executor,
     `SELECT projection.lookup_kind, projection.lookup_key_hash, projection.resolution_status,
-            catalog.page_title, catalog.material_type, catalog.direction_key, catalog.access_label, catalog.is_active
+            catalog.content_entity_id, catalog.page_title, catalog.material_type,
+            catalog.direction_key, catalog.access_label, catalog.is_active
      FROM \`report_bd\`.\`portal_content_lookup_projection\` AS projection
      INNER JOIN \`report_bd\`.\`portal_content_catalog\` AS catalog
        ON catalog.canonical_release_id = projection.canonical_release_id
@@ -282,6 +288,14 @@ async function loadAggregateWorkbook(
        AND projection.resolution_status IN ('unique', 'identical_collapsed')
      ORDER BY projection.lookup_kind, projection.lookup_key_hash`,
     [release.id, release.snapshots.workbookCatalog.id],
+  );
+  const mnnRows = await queryRows(
+    executor,
+    `SELECT content_entity_id, mnn_key, mnn_label
+     FROM \`report_bd\`.\`portal_content_catalog_mnn\`
+     WHERE canonical_release_id = ?
+     ORDER BY content_entity_id, mnn_key`,
+    [release.id],
   );
   const qualityRows = await queryRows(
     executor,
@@ -313,13 +327,35 @@ async function loadAggregateWorkbook(
   const contentByTitle = new Map<string, AbbottContentMetadata>();
   const contentBySlug = new Map<string, AbbottContentMetadata>();
   const urlReturnDirections = new Map<string, AbbottContentMetadata>();
+  const mnnLabelsByEntity = new Map<number, Map<string, string>>();
+  mnnRows.forEach((row) => {
+    const contentEntityId = integerId(row.content_entity_id);
+    const key = text(row.mnn_key);
+    const label = text(row.mnn_label);
+    if (contentEntityId === null || !key || !label) {
+      throw storeError("PRIVATE_DATA_UNAVAILABLE", PRIVATE_UNAVAILABLE_MESSAGE);
+    }
+    const values = mnnLabelsByEntity.get(contentEntityId) ?? new Map<string, string>();
+    const existing = values.get(key);
+    if (existing !== undefined && existing !== label) {
+      throw storeError("PRIVATE_DATA_UNAVAILABLE", PRIVATE_UNAVAILABLE_MESSAGE);
+    }
+    values.set(key, label);
+    mnnLabelsByEntity.set(contentEntityId, values);
+  });
+  const mnnByEntity = new Map<number, readonly string[]>(
+    Array.from(mnnLabelsByEntity, ([entityId, values]) => [
+      entityId,
+      Array.from(values.values()).sort((left, right) => left.localeCompare(right, "ru")),
+    ]),
+  );
   catalogRows.forEach((row) => {
     const lookupKind = text(row.lookup_kind);
     const lookupKeyHash = text(row.lookup_key_hash);
     if (!/^[a-f0-9]{64}$/.test(lookupKeyHash)) {
       throw storeError("PRIVATE_DATA_UNAVAILABLE", PRIVATE_UNAVAILABLE_MESSAGE);
     }
-    const metadata = contentMetadata(row);
+    const metadata = contentMetadata(row, mnnByEntity);
     if (lookupKind === "url") addUniqueLookup(contentByUrl, lookupKeyHash, metadata);
     else if (lookupKind === "title") addUniqueLookup(contentByTitle, lookupKeyHash, metadata);
     else if (lookupKind === "slug") addUniqueLookup(contentBySlug, lookupKeyHash, metadata);

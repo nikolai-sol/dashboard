@@ -675,6 +675,7 @@ test("exact Abbott URL metadata wins over conflicting path, title, and slug proj
     material_type: "article",
     access: "Врачи",
     is_active: true,
+    mnn: ["Омакор", "Трайкор"],
   };
   const cardioArticle = {
     page_title: "Cardio article",
@@ -682,6 +683,7 @@ test("exact Abbott URL metadata wins over conflicting path, title, and slug proj
     material_type: "guide",
     access: "Гости",
     is_active: false,
+    mnn: [],
   };
   const aggregate = executor((sql) => {
     if (sql.includes("canonical_fact_metrika_site_analytics_daily")) {
@@ -720,6 +722,7 @@ test("exact Abbott URL metadata wins over conflicting path, title, and slug proj
     direction: "Gastroenterology",
     material_type: "article",
     access: "Врачи",
+    mnn: ["Омакор", "Трайкор"],
     pageviews: 4,
     users: 2,
     bitrix_pageviews: 0,
