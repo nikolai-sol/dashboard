@@ -352,6 +352,17 @@ def _candidate_from_evidence(
     )
 
 
+# "undetermined" (direction) and "unspecified" (access) record the absence of a
+# reviewed decision, never a decision itself.
+_ABSENT_MARKERS = {"direction": "undetermined", "access": "unspecified"}
+
+
+def _decided(kind: str, value: str | None) -> str | None:
+    """Return the value only when it carries an actual reviewed decision."""
+
+    return None if not value or value == _ABSENT_MARKERS.get(kind) else value
+
+
 def _record_occurrence_conflicts(
     evidence: _ClassificationEvidence,
     active: CanonicalClassification | None,
@@ -360,7 +371,7 @@ def _record_occurrence_conflicts(
     for values, active_value, code in (
         (
             evidence.directions,
-            active.direction_code if active else None,
+            _decided("direction", active.direction_code) if active else None,
             ConflictCode.DIRECTION_CONFLICT,
         ),
         (
@@ -370,7 +381,7 @@ def _record_occurrence_conflicts(
         ),
         (
             evidence.access_codes,
-            active.access_code if active else None,
+            _decided("access", active.access_code) if active else None,
             ConflictCode.ACCESS_CONFLICT,
         ),
     ):
@@ -479,9 +490,12 @@ def reconcile_entity(value: ReconciliationInput) -> ApprovalItem:
     )
     title = normalize_title(active.title if active is not None else "")
     url = normalize_url(active.url if active is not None else "").value
-    final_direction = active.direction_code if active is not None else None
+    # "undetermined" and "unspecified" record the absence of a reviewed decision,
+    # never a decision itself, so they must neither lock the entity nor be
+    # reported as contradicting a registry that does carry one.
+    final_direction = _decided("direction", active.direction_code) if active is not None else None
     final_material_type = active.material_type_code if active is not None else None
-    final_access = active.access_code if active is not None else None
+    final_access = _decided("access", active.access_code) if active is not None else None
     final_lifecycle = active.lifecycle_code if active is not None else None
     conflicts: list[ConflictCode] = []
     changed = False
@@ -524,6 +538,21 @@ def reconcile_entity(value: ReconciliationInput) -> ApprovalItem:
         final_material_type = correction.material_type_code or final_material_type
         final_access = correction.access_code or final_access
         final_lifecycle = correction.lifecycle_code or final_lifecycle
+
+    if (
+        value.deterministic_proposal is not None
+        and value.deterministic_proposal.rule_code in {
+            "SERVICE_ROUTE",
+            "OBSERVED_METADATA_GAP",
+        }
+        and final_material_type == "service_page"
+    ):
+        # `service_page` existed in an older application taxonomy but is not
+        # part of every reviewed DB taxonomy.  Preserve the original value in
+        # active_canonical evidence while keeping the observed metadata gap
+        # unresolved for an explicit reviewed decision.
+        final_material_type = None
+        changed = True
 
     locked_direction = final_direction
     locked_material_type = final_material_type
@@ -668,12 +697,19 @@ def reconcile_entity(value: ReconciliationInput) -> ApprovalItem:
     classification_incomplete = (
         final_direction in {None, "undetermined"} or not final_material_type
     )
+    observed_identity_pending = (
+        content_entity_id is None
+        and isinstance(value.registry1, MaterialCandidate)
+        and value.registry1.source_name == "observed_page"
+    )
     if value.rejection_code:
         readiness_state = "rejected"
     elif registry2_evidence_missing or registry2_direction_missing:
         readiness_state = "unresolved"
     elif hard_conflicts:
         readiness_state = "conflict"
+    elif observed_identity_pending:
+        readiness_state = "unresolved"
     elif not value.content_available or classification_incomplete:
         readiness_state = "unresolved"
     elif active is not None and not changed:

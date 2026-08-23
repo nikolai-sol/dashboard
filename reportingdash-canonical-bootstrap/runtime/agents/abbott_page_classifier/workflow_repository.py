@@ -73,13 +73,19 @@ def _load_active_strong_url_aliases(cursor) -> tuple[StrongUrlAlias, ...]:
     try:
         return tuple(
             StrongUrlAlias(
-                content_entity_id=int(row[0]),
-                alias_type=str(row[1]),
-                alias_value=str(row[2]),
+                content_entity_id=int(
+                    row["content_entity_id"] if isinstance(row, Mapping) else row[0]
+                ),
+                alias_type=str(
+                    row["alias_type"] if isinstance(row, Mapping) else row[1]
+                ),
+                alias_value=str(
+                    row["alias_value"] if isinstance(row, Mapping) else row[2]
+                ),
             )
             for row in cursor.fetchall()
         )
-    except (IndexError, TypeError, ValueError):
+    except (IndexError, KeyError, TypeError, ValueError):
         raise RepositoryError("STRONG_URL_ALIAS_INVALID") from None
 
 
@@ -103,17 +109,23 @@ def _is_duplicate_key_error(error: Exception) -> bool:
         return False
 
 
-def _candidate_payload(value: SourceCandidate | None) -> object | None:
+def _candidate_payload(
+    value: SourceCandidate | MaterialCandidate | None,
+) -> object | None:
     return asdict(value) if value is not None else None
 
 
-def _candidate_from_payload(value: object | None) -> SourceCandidate | None:
+def _candidate_from_payload(
+    value: object | None,
+) -> SourceCandidate | MaterialCandidate | None:
     value = _json_value(value)
     if value is None:
         return None
     if not isinstance(value, Mapping):
         raise RepositoryError("RECONCILIATION_ITEM_INVALID")
     try:
+        if "candidate" not in value:
+            return MaterialCandidate(**dict(value))
         candidate = MaterialCandidate(**dict(value["candidate"]))
         provenance = tuple(SourceProvenance(**dict(item)) for item in value["provenance"])
         variants = tuple(SourceIdentityVariant(**dict(item)) for item in value["identity_variants"])
@@ -265,7 +277,7 @@ def _input_payload(value: ReconciliationInput) -> dict[str, object]:
         "content_entity_id": value.content_entity_id,
         "active_canonical": _canonical_payload(value.active_canonical),
         "reviewed_correction": _proposal_payload(value.reviewed_correction),
-        "registry1": _candidate_payload(value.registry1 if isinstance(value.registry1, SourceCandidate) else None),
+        "registry1": _candidate_payload(value.registry1),
         "registry2": _candidate_payload(value.registry2),
         "deterministic_proposal": _proposal_payload(value.deterministic_proposal),
         "llm_proposal": _proposal_payload(value.llm_proposal),
@@ -313,22 +325,30 @@ def _run_key(
     context: ReconciliationContext,
     registry1_hash: str,
     registry2_hash: str,
+    *,
+    observed_pages_hash: str | None = None,
 ) -> str:
+    if observed_pages_hash is not None and (
+        len(observed_pages_hash) != 64
+        or any(character not in "0123456789abcdef" for character in observed_pages_hash)
+    ):
+        raise RepositoryError("OBSERVED_PAGES_HASH_INVALID")
+    payload = {
+        "code_revision": configuration.code_revision,
+        "model_routing_version": configuration.model_routing_version,
+        "predecessor_release_id": context.predecessor_release_id,
+        "predecessor_snapshot_digests": context.predecessor_snapshot_digests,
+        "predecessor_snapshot_ids": context.predecessor_snapshot_ids,
+        "prompt_version": configuration.prompt_version,
+        "registry1_hash": registry1_hash,
+        "registry2_hash": registry2_hash,
+        "taxonomy_digest": context.taxonomy.digest,
+        "taxonomy_version": context.taxonomy.version,
+    }
+    if observed_pages_hash is not None:
+        payload["observed_pages_hash"] = observed_pages_hash
     return sha256_text(
-        _canonical_json(
-            {
-                "code_revision": configuration.code_revision,
-                "model_routing_version": configuration.model_routing_version,
-                "predecessor_release_id": context.predecessor_release_id,
-                "predecessor_snapshot_digests": context.predecessor_snapshot_digests,
-                "predecessor_snapshot_ids": context.predecessor_snapshot_ids,
-                "prompt_version": configuration.prompt_version,
-                "registry1_hash": registry1_hash,
-                "registry2_hash": registry2_hash,
-                "taxonomy_digest": context.taxonomy.digest,
-                "taxonomy_version": context.taxonomy.version,
-            }
-        )
+        _canonical_json(payload)
     )
 
 
@@ -483,11 +503,21 @@ class MySqlWorkflowStore:
     def attest_batch_for_publication(self, batch_id: int, batch) -> None:
         self._registry.attest_batch_for_publication(int(batch_id), batch)
 
+    def attest_batch_for_acceptance(self, batch_id: int, batch) -> None:
+        self._registry.attest_batch_for_acceptance(int(batch_id), batch)
+
     def mark_batch_published(
         self, batch_id: int, spreadsheet_id: str, projection_hash: str
     ) -> None:
         self._registry.mark_batch_published(
             int(batch_id), spreadsheet_id, projection_hash
+        )
+
+    def mark_local_batch_published(
+        self, batch_id: int, locator: str, content_hash: str
+    ) -> None:
+        self._registry.mark_local_batch_published(
+            int(batch_id), locator, content_hash
         )
 
     def mark_batch_projection_failed(self, batch_id: int, failure_code: str) -> None:
@@ -500,6 +530,13 @@ class MySqlWorkflowStore:
             int(batch_id), snapshot, spreadsheet_id
         )
 
+    def record_local_batch_acceptance(
+        self, batch_id: int, intent, locator: str, content_hash: str
+    ):
+        return self._registry.record_local_batch_acceptance(
+            int(batch_id), intent, locator, content_hash
+        )
+
     def ingest_accepted_snapshot(self, snapshot):
         return self._registry.ingest_accepted_snapshot(snapshot)
 
@@ -510,9 +547,14 @@ class MySqlWorkflowStore:
             cursor = connection.cursor()
             cursor.execute(
                 """
-                SELECT run.predecessor_release_id
+                SELECT run.predecessor_release_id, batch.reconciliation_run_id,
+                       batch.projection_kind, batch.batch_status,
+                       batch.published_input_hash, batch.accepted_decision_hash,
+                       batch.taxonomy_version_id, batch.taxonomy_digest,
+                       batch.source_snapshot_ids, batch.source_snapshot_digests,
+                       batch.prompt_version, batch.model_routing_version
                 FROM portal_content_approval_batches AS batch
-                INNER JOIN portal_content_reconciliation_runs AS run
+                LEFT JOIN portal_content_reconciliation_runs AS run
                   ON run.id = batch.reconciliation_run_id
                  AND run.dataset_key = batch.dataset_key
                 WHERE batch.id = %s
@@ -521,9 +563,69 @@ class MySqlWorkflowStore:
                 (int(batch_id), DATASET_KEY),
             )
             row = cursor.fetchone()
-            if row is None or int(row[0]) <= 0:
+            if row is None:
                 raise RepositoryError("PREDECESSOR_BINDING_INVALID")
-            return int(row[0])
+            if row[0] is not None and int(row[0]) > 0:
+                return int(row[0])
+            if (
+                row[1] is not None
+                or str(row[2] or "") != "local"
+                or str(row[3] or "") != "ingested"
+                or not row[4]
+                or not row[5]
+            ):
+                raise RepositoryError("PREDECESSOR_BINDING_INVALID")
+            cursor.execute(
+                """
+                SELECT run.predecessor_release_id, active.canonical_release_id
+                FROM portal_content_approval_batches AS replay
+                INNER JOIN portal_content_approval_batches AS historical
+                  ON historical.id <> replay.id
+                 AND historical.dataset_key = replay.dataset_key
+                 AND historical.projection_kind = 'local'
+                 AND historical.batch_status IN ('accepted', 'ingested', 'candidate_materialized')
+                 AND historical.published_input_hash = replay.published_input_hash
+                 AND historical.accepted_decision_hash = replay.accepted_decision_hash
+                 AND historical.taxonomy_version_id = replay.taxonomy_version_id
+                 AND historical.taxonomy_digest = replay.taxonomy_digest
+                 AND historical.source_snapshot_ids = replay.source_snapshot_ids
+                 AND historical.source_snapshot_digests = replay.source_snapshot_digests
+                 AND historical.prompt_version = replay.prompt_version
+                 AND historical.model_routing_version = replay.model_routing_version
+                INNER JOIN portal_content_reconciliation_runs AS run
+                  ON run.id = historical.reconciliation_run_id
+                 AND run.dataset_key = historical.dataset_key
+                INNER JOIN portal_active_data_releases AS active
+                  ON active.dataset_key = historical.dataset_key
+                 AND active.canonical_release_id = run.predecessor_release_id
+                INNER JOIN portal_data_releases AS active_release
+                  ON active_release.id = active.canonical_release_id
+                 AND active_release.dataset_key = active.dataset_key
+                 AND active_release.release_status = 'active'
+                WHERE replay.id = %s
+                  AND replay.dataset_key = %s
+                  AND replay.reconciliation_run_id IS NULL
+                  AND replay.projection_kind = 'local'
+                  AND replay.batch_status = 'ingested'
+                ORDER BY historical.id
+                """,
+                (int(batch_id), DATASET_KEY),
+            )
+            replay_rows = tuple(cursor.fetchall())
+            valid_rows = tuple(
+                candidate for candidate in replay_rows
+                if candidate[0] is not None
+                and candidate[1] is not None
+                and int(candidate[0]) == int(candidate[1])
+                and int(candidate[0]) > 0
+            )
+            predecessors = {
+                int(candidate[0])
+                for candidate in valid_rows
+            }
+            if len(predecessors) != 1 or len(replay_rows) != len(valid_rows):
+                raise RepositoryError("PREDECESSOR_BINDING_INVALID")
+            return predecessors.pop()
         except RepositoryError:
             raise
         except Exception:
@@ -544,16 +646,18 @@ class MySqlWorkflowStore:
             if taxonomy_id <= 0:
                 raise RepositoryError("TAXONOMY_VERSION_NOT_ACTIVE")
             self._bootstrap_registry_cursor(cursor, predecessor_id, taxonomy_id)
-            entities = self._load_entities(cursor)
+            predecessor_catalog_entities = self._load_predecessor_catalog_entities(
+                cursor, predecessor_id
+            )
+            entities = self._load_entities(
+                cursor, predecessor_catalog_entities
+            )
             aliases = self._load_aliases(cursor)
             observed_pages = self._load_observed_pages(cursor, predecessor_id)
             predecessor_content_entity_ids = (
                 self._load_predecessor_content_entity_ids(
                     cursor, predecessor_id
                 )
-            )
-            predecessor_catalog_entities = self._load_predecessor_catalog_entities(
-                cursor, predecessor_id
             )
             mnn_by_entity = self._load_mnn_by_entity(cursor, predecessor_id)
             connection.commit()
@@ -650,41 +754,54 @@ class MySqlWorkflowStore:
         return digests
 
     @staticmethod
-    def _load_entities(cursor) -> tuple[CanonicalClassification, ...]:
+    def _load_entities(
+        cursor,
+        predecessor_catalog_entities: Sequence[CanonicalClassification] = (),
+    ) -> tuple[CanonicalClassification, ...]:
         cursor.execute(
             """
-            WITH latest_events AS (
-              SELECT event.*,
-                     ROW_NUMBER() OVER (
-                       PARTITION BY event.content_entity_id
-                       ORDER BY event.effective_at DESC, event.id DESC
-                     ) AS row_rank
-              FROM portal_content_classification_events AS event
-              WHERE event.effective_at <= CURRENT_TIMESTAMP(6)
-            )
-            SELECT entity.id, entity.title, entity.canonical_url,
-                   event.direction_code, event.material_type_code,
-                   event.access_code, event.lifecycle_code, event.id
+            SELECT entity.id, entity.title, entity.canonical_url
             FROM portal_content_registry_entities AS entity
-            LEFT JOIN latest_events AS event
-              ON event.content_entity_id = entity.id
-             AND event.row_rank = 1
             WHERE entity.dataset_key = %s
               AND entity.registry_status = 'active'
             ORDER BY entity.id
             """,
             (DATASET_KEY,),
         )
+        active_by_entity = {
+            entity.content_entity_id: entity
+            for entity in predecessor_catalog_entities
+        }
         return tuple(
             CanonicalClassification(
                 content_entity_id=int(row[0]),
                 title=str(row[1]),
                 url=str(row[2]),
-                direction_code=(str(row[3]) if row[3] is not None else None),
-                material_type_code=(str(row[4]) if row[4] is not None else None),
-                access_code=(str(row[5]) if row[5] is not None else None),
-                lifecycle_code=(str(row[6]) if row[6] is not None else "unknown"),
-                event_id=(int(row[7]) if row[7] is not None else None),
+                direction_code=(
+                    active_by_entity[int(row[0])].direction_code
+                    if int(row[0]) in active_by_entity
+                    else None
+                ),
+                material_type_code=(
+                    active_by_entity[int(row[0])].material_type_code
+                    if int(row[0]) in active_by_entity
+                    else None
+                ),
+                access_code=(
+                    active_by_entity[int(row[0])].access_code
+                    if int(row[0]) in active_by_entity
+                    else None
+                ),
+                lifecycle_code=(
+                    active_by_entity[int(row[0])].lifecycle_code
+                    if int(row[0]) in active_by_entity
+                    else "unknown"
+                ),
+                event_id=(
+                    active_by_entity[int(row[0])].event_id
+                    if int(row[0]) in active_by_entity
+                    else None
+                ),
             )
             for row in cursor.fetchall()
         )
@@ -776,6 +893,7 @@ class MySqlWorkflowStore:
             WITH ranked_catalog AS (
               SELECT content_entity_id, page_title, normalized_url,
                      direction_key, material_type, access_label, is_active,
+                     classification_event_id,
                      ROW_NUMBER() OVER (
                        PARTITION BY content_entity_id
                        ORDER BY
@@ -789,7 +907,8 @@ class MySqlWorkflowStore:
                 AND content_entity_id IS NOT NULL
             )
             SELECT content_entity_id, page_title, normalized_url,
-                   direction_key, material_type, access_label, is_active
+                   direction_key, material_type, access_label, is_active,
+                   classification_event_id
             FROM ranked_catalog
             WHERE row_rank = 1
             ORDER BY content_entity_id
@@ -805,6 +924,7 @@ class MySqlWorkflowStore:
                 material_type_code=self._taxonomy_code("material_type", row[4]),
                 access_code=self._taxonomy_code("access", row[5]) or "unspecified",
                 lifecycle_code="active" if bool(row[6]) else "archive_candidate",
+                event_id=(int(row[7]) if row[7] is not None else None),
             )
             for row in cursor.fetchall()
         )
@@ -1093,6 +1213,10 @@ class MySqlWorkflowStore:
                    event.access_code, event.lifecycle_code,
                    event.event_fingerprint
             FROM portal_content_classification_events AS event
+            INNER JOIN portal_content_taxonomy_versions AS source_taxonomy
+              ON source_taxonomy.id = event.taxonomy_version_id
+             AND source_taxonomy.dataset_key = 'abbott'
+             AND source_taxonomy.taxonomy_status = 'active'
             WHERE event.id IN ({event_placeholders})
             ORDER BY event.id
             FOR UPDATE
@@ -1102,6 +1226,19 @@ class MySqlWorkflowStore:
         stored_events = tuple(cursor.fetchall())
         if tuple(int(row[0]) for row in stored_events) != event_ids:
             raise RepositoryError("BASELINE_PROVENANCE_EVENT_MISMATCH")
+        cursor.execute(
+            """
+            SELECT taxonomy_kind, term_code
+            FROM portal_content_taxonomy_terms
+            WHERE taxonomy_version_id = %s
+              AND term_status = 'active'
+            ORDER BY taxonomy_kind, term_code
+            """,
+            (int(taxonomy_id),),
+        )
+        compatible_terms = {
+            (str(row[0]), str(row[1])) for row in cursor.fetchall()
+        }
         for event in stored_events:
             expected_entity, expected_fingerprint, expected_classification = attached_events[
                 int(event[0])
@@ -1113,9 +1250,19 @@ class MySqlWorkflowStore:
                 str(event[5]) if event[5] is not None else "unspecified",
                 stored_lifecycle != "archived",
             )
+            event_terms = (
+                ("direction", event[3]),
+                ("material_type", event[4]),
+                ("access", event[5] or "unspecified"),
+                ("lifecycle", event[6] or "unknown"),
+            )
             if (
                 int(event[1]) != expected_entity
-                or int(event[2]) != taxonomy_id
+                or int(event[2]) <= 0
+                or any(
+                    code is not None and (kind, str(code)) not in compatible_terms
+                    for kind, code in event_terms
+                )
                 or stored_classification != expected_classification
                 or str(event[7]).lower() != expected_fingerprint
             ):
@@ -1319,6 +1466,7 @@ class MySqlWorkflowStore:
             if draft.run_id not in (0, None) or draft.run_key != _run_key(
                 draft.configuration, draft.context,
                 draft.registry1.source_hash, draft.registry2.source_hash,
+                observed_pages_hash=draft.observed_pages_hash,
             ):
                 raise RepositoryError("RECONCILIATION_HASH_MISMATCH")
             connection = self._connection_factory()
@@ -1371,11 +1519,11 @@ class MySqlWorkflowStore:
                   predecessor_release_id, predecessor_snapshot_ids,
                   predecessor_snapshot_digests, taxonomy_version_id,
                   taxonomy_digest, prompt_version, model_routing_version,
-                  code_revision
+                  code_revision, observed_pages_hash
                 ) VALUES (
                   %s, %s, 'reconciled', %s, %s, %s, %s, %s, %s, %s, %s,
                   %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s,
-                  %s, %s, %s
+                  %s, %s, %s, %s
                 )
                 """,
                 (
@@ -1391,6 +1539,7 @@ class MySqlWorkflowStore:
                     predecessor_id, _canonical_json(snapshot_ids), _canonical_json(digests),
                     taxonomy_id, taxonomy.digest, draft.configuration.prompt_version,
                     draft.configuration.model_routing_version, draft.configuration.code_revision,
+                    draft.observed_pages_hash,
                 ),
             )
             run_id = int(cursor.lastrowid)
@@ -1496,7 +1645,7 @@ class MySqlWorkflowStore:
                        predecessor_release_id, predecessor_snapshot_ids,
                        predecessor_snapshot_digests, run.taxonomy_version_id,
                        taxonomy.version, run.taxonomy_digest, prompt_version,
-                       model_routing_version, code_revision
+                       model_routing_version, code_revision, observed_pages_hash
                 FROM portal_content_reconciliation_runs AS run
                 INNER JOIN portal_content_taxonomy_versions AS taxonomy
                   ON taxonomy.id = run.taxonomy_version_id
@@ -1570,10 +1719,20 @@ class MySqlWorkflowStore:
                 "registry2", str(row[9]), int(row[10]), int(row[11]), int(row[12]),
                 int(row[13]), int(row[8]),
             )
-            if str(row[0]) != _run_key(configuration, context, registry1.source_hash, registry2.source_hash):
+            observed_pages_hash = (
+                str(row[23]).lower() if row[23] is not None else None
+            )
+            if str(row[0]) != _run_key(
+                configuration,
+                context,
+                registry1.source_hash,
+                registry2.source_hash,
+                observed_pages_hash=observed_pages_hash,
+            ):
                 raise RepositoryError("RECONCILIATION_HASH_MISMATCH")
             return PersistedReconciliationRun(
-                run_id=int(run_id), run_key=str(row[0]), status=str(row[1]),
+                run_id=int(run_id), run_key=str(row[0]),
+                observed_pages_hash=observed_pages_hash, status=str(row[1]),
                 configuration=configuration, context=context,
                 registry1=registry1, registry2=registry2, items=tuple(items),
             )

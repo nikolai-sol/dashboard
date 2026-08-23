@@ -653,6 +653,12 @@ def compare_release_control_pack(
                     "content.non_content_unresolved": content_report.non_content_unresolved,
                 }
             )
+            candidate_values.update(
+                {
+                    str(name): actual
+                    for name, _expected, actual in content_report.successor_controls
+                }
+            )
         results = []
         results.extend(metadata_fact_results)
         for control_name, expected in sorted(manifest["control_values"].items()):
