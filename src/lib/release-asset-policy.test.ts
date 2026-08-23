@@ -100,7 +100,15 @@ test("release scans reject private data outside public while allowing Abbott sch
     await writeFile(path.join(releaseRoot, "src", "db", "migrations", "049_abbott_content_reconciliation_staging.sql"), "DDL");
     await writeFile(path.join(releaseRoot, "src", "db", "migrations", "050_abbott_content_url_identity.sql"), "DDL");
     await writeFile(path.join(releaseRoot, "src", "db", "migrations", "051_abbott_content_url_alias_decisions.sql"), "DDL");
-    await writeFile(path.join(releaseRoot, "src", "db", "migrations", "052_abbott_content_mnn.sql"), "DDL");
+    for (const fileName of [
+      "052_abbott_content_taxonomy_v2.sql",
+      "053_abbott_observed_pages_hash.sql",
+      "054_abbott_observed_page_creation.sql",
+      "055_abbott_projection_modality.sql",
+      "060_abbott_content_mnn.sql",
+    ]) {
+      await writeFile(path.join(releaseRoot, "src", "db", "migrations", fileName), "DDL");
+    }
     await mkdir(path.join(releaseRoot, "reportingdash-canonical-bootstrap", "src", "db", "migrations"), { recursive: true });
     await writeFile(
       path.join(releaseRoot, "reportingdash-canonical-bootstrap", "src", "db", "migrations", "049_abbott_content_reconciliation_staging.sql"),
@@ -109,20 +117,31 @@ test("release scans reject private data outside public while allowing Abbott sch
     for (const fileName of [
       "050_abbott_content_url_identity.sql",
       "051_abbott_content_url_alias_decisions.sql",
-      "052_abbott_content_mnn.sql",
+      "052_abbott_content_taxonomy_v2.sql",
+      "053_abbott_observed_pages_hash.sql",
+      "054_abbott_observed_page_creation.sql",
+      "055_abbott_projection_modality.sql",
+      "060_abbott_content_mnn.sql",
     ]) {
       await writeFile(
         path.join(releaseRoot, "reportingdash-canonical-bootstrap", "src", "db", "migrations", fileName),
         "DDL",
       );
     }
+    await writeFile(path.join(releaseRoot, "src", "db", "migrations", "052_abbott_content_mnn.sql"), "DDL");
+    await writeFile(
+      path.join(releaseRoot, "reportingdash-canonical-bootstrap", "src", "db", "migrations", "052_abbott_content_mnn.sql"),
+      "DDL",
+    );
     await writeFile(path.join(releaseRoot, "src", "db", "migrations", "034_abbott_unreviewed.sql"), "DDL");
     await writeFile(path.join(releaseRoot, "public", "abbott", "source.json"), "fixture");
 
     assert.deepEqual(findPrivateReleaseAssets(releaseRoot), [
       "ABBOTT-UNRESOLVED.csv",
       "public/abbott/source.json",
+      "reportingdash-canonical-bootstrap/src/db/migrations/052_abbott_content_mnn.sql",
       "src/db/migrations/034_abbott_unreviewed.sql",
+      "src/db/migrations/052_abbott_content_mnn.sql",
     ]);
   } finally {
     await rm(releaseRoot, { force: true, recursive: true });
