@@ -51,6 +51,13 @@ const SAFE_ABBOTT_MIGRATIONS = new Set([
   "reportingdash-canonical-bootstrap/src/db/migrations/062_abbott_admin_user_exclusions.sql",
 ]);
 
+const SAFE_ABBOTT_GENERATED_METADATA = new Set([
+  ".next/server/app/api/dashboard/[id]/abbott-admin-users/route.js.nft.json",
+  ".next/server/app/api/dashboard/[id]/abbott-admin-users/route/app-paths-manifest.json",
+  ".next/server/app/api/dashboard/[id]/abbott-admin-users/route/build-manifest.json",
+  ".next/server/app/api/dashboard/[id]/abbott-admin-users/route/server-reference-manifest.json",
+]);
+
 const INSPECTED_DATA_SUFFIXES = [".json", ".jsonl", ".csv", ".tsv", ".xlsx", ".xls"] as const;
 const MAX_INSPECTED_DATA_BYTES = 8 * 1024 * 1024;
 const PRIVATE_KEYS = new Set([
@@ -227,6 +234,9 @@ export function findPrivateReleaseAssets(releaseRoot: string): string[] {
     releaseRoot,
     (absolutePath, relativePath) => {
       if (SAFE_ABBOTT_MIGRATIONS.has(relativePath)) return false;
+      if (SAFE_ABBOTT_GENERATED_METADATA.has(relativePath)) {
+        return hasPrivateDataSignature(absolutePath, relativePath);
+      }
       return isProhibitedAbbottAsset(relativePath) || hasPrivateDataSignature(absolutePath, relativePath);
     },
     (absolutePath, relativePath) => isAllowedGeneratedReleaseSymlink(releaseRoot, absolutePath, relativePath),

@@ -166,6 +166,41 @@ test("release scans detect private signatures under neutral JSON and CSV names",
   }
 });
 
+test("release scans allow only safe generated metadata for the Abbott admin-user API route", async () => {
+  const releaseRoot = await mkdtemp(path.join(tmpdir(), "release-asset-policy-route-metadata-"));
+  try {
+    const routeRoot = path.join(
+      releaseRoot,
+      ".next",
+      "server",
+      "app",
+      "api",
+      "dashboard",
+      "[id]",
+      "abbott-admin-users",
+    );
+    await mkdir(path.join(routeRoot, "route"), { recursive: true });
+    await writeFile(
+      path.join(routeRoot, "route.js.nft.json"),
+      JSON.stringify({ version: 1, files: ["../../../../../../chunks/route.js"] }),
+    );
+    await writeFile(
+      path.join(routeRoot, "route", "app-paths-manifest.json"),
+      JSON.stringify({ "/api/dashboard/[id]/abbott-admin-users/route": "app/api/dashboard/[id]/abbott-admin-users/route.js" }),
+    );
+    await writeFile(
+      path.join(routeRoot, "route", "private.json"),
+      JSON.stringify({ raw_user_id: "must-stay-private" }),
+    );
+
+    assert.deepEqual(findPrivateReleaseAssets(releaseRoot), [
+      ".next/server/app/api/dashboard/[id]/abbott-admin-users/route/private.json",
+    ]);
+  } finally {
+    await rm(releaseRoot, { force: true, recursive: true });
+  }
+});
+
 test("release scans reject a neutral JSON file containing plural raw User IDs", async () => {
   const releaseRoot = await mkdtemp(path.join(tmpdir(), "release-asset-policy-plural-users-"));
   try {
