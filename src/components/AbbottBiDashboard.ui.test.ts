@@ -12,11 +12,20 @@ const userActionFilterSource = readFileSync(
   new URL("./abbott/abbott-user-action-filters.ts", import.meta.url),
   "utf8",
 );
+const adminUserFilterSource = readFileSync(
+  new URL("./abbott/abbott-admin-user-filter.ts", import.meta.url),
+  "utf8",
+);
 
-test("uses the approved Russian manager description", () => {
+test("orders aggregate User ID filters and treats sentinels as aggregate populations", () => {
+  assert.match(adminUserFilterSource, /ВСЕ с User ID[\s\S]*ВСЕ без админов/);
+  assert.match(source, /isAbbottAggregateUserFilter\(usersSummaryUserIdFilter\)/);
+});
+
+test("uses the approved Logs-based Russian manager description", () => {
   assert.ok(
     source.includes(
-      "По умолчанию сессии и источники берутся из Метрики, Источники трафика. При выборе User ID, типа трафика или направления включается User ID-детализация.",
+      "Сессии и общие варианты User ID рассчитаны по каноническим визитам Logs API за выбранный период.",
     ),
   );
 });

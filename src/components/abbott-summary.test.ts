@@ -1,7 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { selectAbbottSummaryRows } from "./abbott-summary";
-import { ABBOTT_WITHOUT_ADMINS } from "./abbott/abbott-admin-user-filter";
+import { ABBOTT_WITH_USER_ID, ABBOTT_WITHOUT_ADMINS } from "./abbott/abbott-admin-user-filter";
 import type { AbbottBiUserSummaryRow } from "@/lib/types";
 
 function summaryRow(overrides: Partial<AbbottBiUserSummaryRow>): AbbottBiUserSummaryRow {
@@ -21,22 +21,54 @@ function summaryRow(overrides: Partial<AbbottBiUserSummaryRow>): AbbottBiUserSum
   };
 }
 
-test("default summary uses authoritative traffic sessions", () => {
-  const trafficRows = [
-    summaryRow({ traffic_segment: "all", traffic_source: "Direct", visits: 11650 }),
-    summaryRow({ traffic_segment: "with_user_id", traffic_source: "Direct", visits: 4000 }),
-    summaryRow({ traffic_segment: "all", traffic_source: "Organic", visits: 3000 }),
+test("manager default summary uses canonical Logs visit rows", () => {
+  const trafficRows = [summaryRow({ traffic_segment: "all", visits: 7863 })];
+  const behaviorRows = [
+    summaryRow({ traffic_segment: null, user_id: "900001", has_user_id: true, visits: 47 }),
+    summaryRow({ traffic_segment: null, user_id: "", has_user_id: false, visits: 6785 }),
   ];
-  const behaviorRows = [summaryRow({ traffic_segment: null, user_id: "60", has_user_id: true, visits: 52633 })];
 
-  assert.deepEqual(
+  assert.equal(
     selectAbbottSummaryRows({
       trafficRows,
       behaviorRows,
       filters: { user_id: "", user_id_traffic: "", direction: "" },
       showUserIdAnalytics: true,
     }),
-    [trafficRows[0], trafficRows[2]],
+    behaviorRows,
+  );
+});
+
+test("non-manager summary keeps the aggregate Reports traffic rows", () => {
+  const trafficRows = [
+    summaryRow({ traffic_segment: "all", traffic_source: "Direct", visits: 7863 }),
+    summaryRow({ traffic_segment: "with_user_id", traffic_source: "Direct", visits: 1189 }),
+  ];
+
+  assert.deepEqual(
+    selectAbbottSummaryRows({
+      trafficRows,
+      behaviorRows: [],
+      filters: { user_id: "", user_id_traffic: "", direction: "" },
+      showUserIdAnalytics: false,
+    }),
+    [trafficRows[0]],
+  );
+});
+
+test("all-with-User-ID keeps identified admin and non-admin summary rows", () => {
+  const admin = summaryRow({ traffic_segment: null, user_id: "900001", has_user_id: true, visits: 47 });
+  const doctor = summaryRow({ traffic_segment: null, user_id: "doctor-1", has_user_id: true, visits: 3 });
+  const anonymous = summaryRow({ traffic_segment: null, user_id: "", has_user_id: false, visits: 10 });
+
+  assert.deepEqual(
+    selectAbbottSummaryRows({
+      trafficRows: [summaryRow({ traffic_segment: "all", visits: 7863 })],
+      behaviorRows: [admin, doctor, anonymous],
+      filters: { user_id: ABBOTT_WITH_USER_ID, user_id_traffic: "", direction: "" },
+      showUserIdAnalytics: true,
+    }),
+    [admin, doctor],
   );
 });
 
@@ -95,7 +127,7 @@ test("falls back to behavior rows when traffic summary is unavailable", () => {
   );
 });
 
-test("User ID traffic filters select only the exact aggregate partition", () => {
+test("non-manager User ID traffic filters select only the exact aggregate partition", () => {
   const all = summaryRow({ traffic_segment: "all", visits: 100 });
   const withUserId = summaryRow({ traffic_segment: "with_user_id", has_user_id: true, visits: 40 });
   const withoutUserId = summaryRow({ traffic_segment: "without_user_id", visits: 60 });
@@ -107,7 +139,7 @@ test("User ID traffic filters select only the exact aggregate partition", () => 
       trafficRows,
       behaviorRows,
       filters: { user_id: "", user_id_traffic: "with_user_id", direction: "" },
-      showUserIdAnalytics: true,
+      showUserIdAnalytics: false,
     }),
     [withUserId],
   );
@@ -116,23 +148,23 @@ test("User ID traffic filters select only the exact aggregate partition", () => 
       trafficRows,
       behaviorRows,
       filters: { user_id: "", user_id_traffic: "without_user_id", direction: "" },
-      showUserIdAnalytics: true,
+      showUserIdAnalytics: false,
     }),
     [withoutUserId],
   );
 });
 
-test("presence partition selection never falls back to private behavior", () => {
+test("manager presence selection keeps the Logs population for downstream filtering", () => {
   const behaviorRows = [summaryRow({ traffic_segment: null, user_id: "60", has_user_id: true })];
 
-  assert.deepEqual(
+  assert.equal(
     selectAbbottSummaryRows({
       trafficRows: [summaryRow({ traffic_segment: "all" })],
       behaviorRows,
       filters: { user_id: "", user_id_traffic: "with_user_id", direction: "" },
       showUserIdAnalytics: true,
     }),
-    [],
+    behaviorRows,
   );
 });
 
