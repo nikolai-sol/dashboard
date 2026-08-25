@@ -1,5 +1,9 @@
 import type { AbbottBiUserActionRow } from "@/lib/types";
-import { ABBOTT_WITHOUT_ADMINS } from "./abbott-admin-user-filter";
+import {
+  ABBOTT_WITH_USER_ID,
+  ABBOTT_WITHOUT_ADMINS,
+  isAbbottAggregateUserFilter,
+} from "./abbott-admin-user-filter";
 
 export const ABBOTT_WITHOUT_UTM = "__without_utm__";
 
@@ -116,10 +120,11 @@ export function selectAbbottUserActions(
   const query = filters.query?.trim().toLowerCase() ?? "";
   const structurallyFilteredRows = rows.filter((row) => {
     const utmSource = normalizedUtmSource(row.utm_source);
+    if (filters.user_id === ABBOTT_WITH_USER_ID && !row.has_user_id) return false;
     if (filters.user_id === ABBOTT_WITHOUT_ADMINS && row.is_admin_user) return false;
     if (
       filters.user_id
-      && filters.user_id !== ABBOTT_WITHOUT_ADMINS
+      && !isAbbottAggregateUserFilter(filters.user_id)
       && row.user_id !== filters.user_id
     ) return false;
     if (filters.user_id_traffic === "with_user_id" && !row.has_user_id) return false;

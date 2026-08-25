@@ -6,7 +6,7 @@ import {
   buildAbbottUtmSourceOptions,
   selectAbbottUserActions,
 } from "./abbott-user-action-filters";
-import { ABBOTT_WITHOUT_ADMINS } from "./abbott-admin-user-filter";
+import { ABBOTT_WITH_USER_ID, ABBOTT_WITHOUT_ADMINS } from "./abbott-admin-user-filter";
 import type { AbbottBiUserActionRow } from "@/lib/types";
 
 const action = (
@@ -173,6 +173,21 @@ test("admin-free selection removes admin visits before aggregation", () => {
 
   assert.deepEqual(selected.filteredRows.map((row) => row.user_id), ["doctor-1"]);
   assert.equal(selected.filteredRows[0]?.avg_duration, 30);
+});
+
+test("all-with-User-ID keeps identified admin and non-admin visits", () => {
+  const selected = selectAbbottUserActions([
+    action("900001", null, { is_admin_user: true }),
+    action("doctor-1", null, { is_admin_user: false }),
+    action("", null, { has_user_id: false, is_admin_user: false }),
+  ], {
+    user_id: ABBOTT_WITH_USER_ID,
+  }, 1, 100);
+
+  assert.deepEqual(
+    selected.filteredRows.map((row) => row.user_id).sort(),
+    ["900001", "doctor-1"],
+  );
 });
 
 test("explicit User ID selection still shows an admin visit", () => {

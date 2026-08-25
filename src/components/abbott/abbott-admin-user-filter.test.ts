@@ -2,19 +2,22 @@ import assert from "node:assert/strict";
 import test from "node:test";
 
 import {
+  ABBOTT_WITH_USER_ID,
   ABBOTT_WITHOUT_ADMINS,
   abbottAdminUsersApiPath,
   buildAbbottAdminUserOptions,
   normalizeAbbottAdminUserInput,
 } from "./abbott-admin-user-filter";
 
-test("admin-free option precedes exact User IDs only when settings are available", () => {
+test("aggregate options precede exact User IDs in the approved order", () => {
   assert.deepEqual(buildAbbottAdminUserOptions(["900001", "000001"], true), [
+    { value: ABBOTT_WITH_USER_ID, label: "ВСЕ с User ID" },
     { value: ABBOTT_WITHOUT_ADMINS, label: "ВСЕ без админов" },
     { value: "000001", label: "000001" },
     { value: "900001", label: "900001" },
   ]);
   assert.deepEqual(buildAbbottAdminUserOptions(["900001"], false), [
+    { value: ABBOTT_WITH_USER_ID, label: "ВСЕ с User ID" },
     { value: "900001", label: "900001" },
   ]);
 });
