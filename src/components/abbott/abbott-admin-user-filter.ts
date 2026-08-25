@@ -1,15 +1,21 @@
+export const ABBOTT_WITH_USER_ID = "__abbott_with_user_id__";
 export const ABBOTT_WITHOUT_ADMINS = "__abbott_without_admins__";
 
 export type AbbottAdminUserOption = { value: string; label: string };
+
+export function isAbbottAggregateUserFilter(value: string): boolean {
+  return value === ABBOTT_WITH_USER_ID || value === ABBOTT_WITHOUT_ADMINS;
+}
 
 export function buildAbbottAdminUserOptions(
   exactUserIds: readonly string[],
   adminFilterAvailable: boolean,
 ): AbbottAdminUserOption[] {
   const exact = [...new Set(exactUserIds)]
-    .filter((userId) => userId !== ABBOTT_WITHOUT_ADMINS)
+    .filter((userId) => !isAbbottAggregateUserFilter(userId))
     .sort((left, right) => left.localeCompare(right));
   return [
+    { value: ABBOTT_WITH_USER_ID, label: "ВСЕ с User ID" },
     ...(adminFilterAvailable
       ? [{ value: ABBOTT_WITHOUT_ADMINS, label: "ВСЕ без админов" }]
       : []),
