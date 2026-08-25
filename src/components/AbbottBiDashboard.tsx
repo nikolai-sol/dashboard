@@ -42,6 +42,7 @@ import AbbottAdminUsersPanel from "./abbott/AbbottAdminUsersPanel";
 import {
   ABBOTT_WITHOUT_ADMINS,
   buildAbbottAdminUserOptions,
+  isAbbottAggregateUserFilter,
 } from "./abbott/abbott-admin-user-filter";
 
 type AbbottBiDashboardProps = {
@@ -106,7 +107,7 @@ function buildTabs(portalName: string, showUserIdAnalytics: boolean): TabConfig[
     id: "users_summary",
     label: showUserIdAnalytics ? "1. Общая таблица по пользователям" : "1. Источники трафика",
     description: showUserIdAnalytics
-      ? "По умолчанию сессии и источники берутся из Метрики, Источники трафика. При выборе User ID, типа трафика или направления включается User ID-детализация."
+      ? "Сессии и общие варианты User ID рассчитаны по каноническим визитам Logs API за выбранный период."
       : "Источник: сводка «Источники трафика» из Яндекс Метрики.",
   },
   {
@@ -1065,7 +1066,7 @@ export default function AbbottBiDashboard({
   );
 
   const userBehaviorSummaryActive =
-    usersSummaryUserIdFilter === ABBOTT_WITHOUT_ADMINS
+    isAbbottAggregateUserFilter(usersSummaryUserIdFilter)
     || usersSummarySourceRows.length === 0
     || usersSummarySourceRows === data.users_summary;
 
@@ -1080,7 +1081,7 @@ export default function AbbottBiDashboard({
       if (showUserIdAnalytics) {
         if (
           usersSummaryUserIdFilter
-          && usersSummaryUserIdFilter !== ABBOTT_WITHOUT_ADMINS
+          && !isAbbottAggregateUserFilter(usersSummaryUserIdFilter)
           && row.user_id !== usersSummaryUserIdFilter
         ) return false;
         if (filters.user_id_traffic === "with_user_id" && !row.has_user_id) return false;
