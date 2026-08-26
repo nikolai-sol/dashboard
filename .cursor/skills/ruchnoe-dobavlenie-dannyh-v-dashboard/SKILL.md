@@ -5,11 +5,19 @@ description: Ручное добавление или корректировка
 
 # Ручное добавление данных в дашборд
 
-## Когда применять
+## Trigger
 
 Используй этот skill, когда пользователь просит вручную добавить или скорректировать метрики кампании в ReportingDash: показы, просмотры, клики, расход, конверсии, охват или сессии.
 
 Типичный запрос: "добавь к вчерашним данным кампании хзн леовит платформа гибрид 38546 просмотров и показов".
+
+## Preconditions
+
+1. Переведи дату в ISO; различи `добавь` и `замени`.
+2. Проверь доступность `.env`; не печатай пароль или строку подключения.
+3. Разреши платформу, аккаунт и кампанию; совпадение должно быть единственным.
+4. Прочитай существующие collector facts и ручную корректировку за эту дату.
+5. Используй только canonical MySQL. Не вызывай API рекламной платформы.
 
 ## База и CLI
 
@@ -33,7 +41,7 @@ mysql -h"$MYSQL_HOST" -P"${MYSQL_PORT:-3306}" -u"$MYSQL_USER" -p"$MYSQL_PASSWORD
 export PATH="/opt/homebrew/opt/mysql-client/bin:$PATH"
 ```
 
-## Обязательный workflow
+## Ordered steps
 
 1. Определи дату.
    - "вчера" означает предыдущий календарный день относительно даты текущего сообщения пользователя.
@@ -78,6 +86,22 @@ export PATH="/opt/homebrew/opt/mysql-client/bin:$PATH"
 7. Проверь результат.
    - После commit выполни агрегирующий SELECT по кампании и дате.
    - Финально сообщи: дату, кампанию/id, добавленную корректировку и итоговые `impressions` / `views`.
+
+## Checks
+
+- До записи зафиксируй account/campaign ID, collector totals и manual-adjustment строку.
+- Проверь, что adjustment ID детерминирован из кампании и даты.
+- Выполняй все INSERT/UPSERT в одной транзакции.
+- После `COMMIT` перечитай adjustment row и итоговый агрегат теми же ключами.
+
+## Failure handling
+
+- `mysql` недоступен → добавь документированный Homebrew PATH и повтори один раз; затем остановись без записи.
+- Нет credentials или получена auth error → остановись и не выводи секреты.
+- Найдено несколько кампаний → ничего не записывай; покажи варианты пользователю.
+- Любая ошибка до `COMMIT` → выполни `ROLLBACK` и проверь, что корректировочная строка не изменилась.
+- `aggregate mismatch` после `COMMIT` → не создавай вторую корректировку. Перечитай точные ключи и manual row, сообщи, что задача не завершена, и расследуй расхождение.
+- Повтор того же запроса → используй тот же adjustment ID и `ON DUPLICATE KEY UPDATE`; не добавляй новую строку.
 
 ## SQL-паттерн для ручной корректировки
 
@@ -150,6 +174,22 @@ For "хзн леовит платформа гибрид 38546 просмотр�
   - `impressions=38546`
   - `views=38546`
 - Verified total became `139386` impressions and `139386` views.
+
+## Final verification
+
+Сообщи результат только после свежего агрегирующего SELECT:
+
+```text
+Done: yes|no
+Date: YYYY-MM-DD
+Campaign: <name> (<platform_campaign_id>)
+Collector before: impressions=<n>, views=<n>
+Manual adjustment: impressions=<n>, views=<n>
+Final total: impressions=<n>, views=<n>
+Evidence: adjustment row and aggregate SELECT matched
+```
+
+`Done: yes` допустим только при совпадении adjustment row и итогового агрегата. Для DB-only корректировки deploy не требуется.
 
 ## Deployment rule
 
