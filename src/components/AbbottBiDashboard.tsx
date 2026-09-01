@@ -18,9 +18,11 @@ import {
 import type { AbbottBiData } from "@/lib/types";
 import {
   ABBOTT_UNMAPPED_LABEL,
+  buildAbbottMnnOptions,
   buildAbbottPageStatsExportRows,
   buildAbbottPageviewsByDirection,
   filterAbbottPageStatsRows,
+  formatAbbottMnnValues,
   buildAbbottPageDimensionOptions,
   groupAbbottPageStatsByDimension,
   labelAbbottPageDimension,
@@ -991,11 +993,7 @@ export default function AbbottBiDashboard({
   const pageStatsOptions = useMemo(
     () => ({
       direction: buildAbbottPageDimensionOptions(data.page_stats, (row) => row.direction),
-      mnn: uniqOptions(
-        data.page_stats.flatMap((row) =>
-          row.mnn?.length ? row.mnn : [ABBOTT_UNMAPPED_LABEL],
-        ),
-      ),
+      mnn: buildAbbottMnnOptions(data.page_stats),
       material_type: buildAbbottPageDimensionOptions(data.page_stats, (row) => row.material_type),
       access: buildAbbottPageDimensionOptions(data.page_stats, (row) => row.access),
     }),
@@ -1531,7 +1529,7 @@ export default function AbbottBiDashboard({
       page_title: row.page_title || "—",
       url: row.url || "—",
       direction: labelAbbottPageDimension(row.direction),
-      mnn: row.mnn?.join("; ") || "—",
+      mnn: formatAbbottMnnValues(row.mnn, pageStatsOptions.mnn),
       material_type: labelAbbottPageDimension(row.material_type),
       access: labelAbbottPageDimension(row.access),
       pageviews: formatNumber(row.pageviews, locale),

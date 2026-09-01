@@ -419,7 +419,7 @@ test("workbook loading uses only resolved hashed projections and reports aggrega
     material_type: "article",
     access: "Врачи",
     is_active: true,
-    mnn: ["Трайкор", "Омакор"],
+    mnn: [{ key: "трайкор", label: "Трайкор" }, { key: "омакор", label: "Омакор" }],
   });
   assert.equal(result.contentBySlug.has("shared"), false);
   assert.equal(result.contentBySlug.has(hash("shared")), true);
@@ -429,7 +429,7 @@ test("workbook loading uses only resolved hashed projections and reports aggrega
     material_type: "article",
     access: "Врачи",
     is_active: true,
-    mnn: ["Трайкор", "Омакор"],
+    mnn: [{ key: "трайкор", label: "Трайкор" }, { key: "омакор", label: "Омакор" }],
   });
   assert.deepEqual(result.urlReturnDirections.get(hash("/shared")), {
     page_title: "Shared",
@@ -437,7 +437,7 @@ test("workbook loading uses only resolved hashed projections and reports aggrega
     material_type: "article",
     access: "Врачи",
     is_active: true,
-    mnn: ["Трайкор", "Омакор"],
+    mnn: [{ key: "трайкор", label: "Трайкор" }, { key: "омакор", label: "Омакор" }],
   });
   assert.equal(result.urlReturnDirections.has(hash("/conflicted")), false);
   assert.deepEqual(result.contentByUrl.get(hash("https://abbottpro.ru/shared")), {
@@ -446,7 +446,7 @@ test("workbook loading uses only resolved hashed projections and reports aggrega
     material_type: "article",
     access: "Врачи",
     is_active: true,
-    mnn: ["Трайкор", "Омакор"],
+    mnn: [{ key: "трайкор", label: "Трайкор" }, { key: "омакор", label: "Омакор" }],
   });
   assert.equal(result.contentByUrl.has(hash("https://abbottpro.ru/conflicted")), false);
   assert.deepEqual(result.lookupQuality, { ambiguousGroups: 2, collapsedGroups: 1 });

@@ -413,7 +413,7 @@ export interface AbbottBiPageStatRow {
   page_title: string;
   url: string;
   direction: string | null;
-  mnn?: string[];
+  mnn?: AbbottMnnValue[];
   material_type: string | null;
   access: string | null;
   pageviews: number;
@@ -424,6 +424,11 @@ export interface AbbottBiPageStatRow {
   bitrix_logged_in_sessions: number;
   bitrix_anonymous_sessions: number;
   bitrix_avg_session_duration: number;
+}
+
+export interface AbbottMnnValue {
+  key: string;
+  label: string;
 }
 
 export interface AbbottBiBitrixPageRow {

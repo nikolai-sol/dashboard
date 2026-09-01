@@ -1,4 +1,4 @@
-import type { AbbottBiPageStatRow } from "@/lib/types";
+import type { AbbottBiPageStatRow, AbbottMnnValue } from "@/lib/types";
 
 export const ABBOTT_UNMAPPED_LABEL = "Не определено";
 
@@ -29,11 +29,58 @@ export function matchesSelectedMaterialType(materialType: string | null, selecte
   return selectedTypes.includes(labelAbbottPageDimension(materialType));
 }
 
-export function matchesSelectedMnn(mnn: string[] | null | undefined, selectedMnn: string[]) {
+export function matchesSelectedMnn(mnn: AbbottMnnValue[] | null | undefined, selectedMnn: string[]) {
   if (selectedMnn.length === 0) return true;
-  const values = (mnn ?? []).map((value) => String(value).trim()).filter(Boolean);
+  const values = (mnn ?? []).map((value) => value.key.trim()).filter(Boolean);
   if (values.length === 0) return selectedMnn.includes(ABBOTT_UNMAPPED_LABEL);
   return values.some((value) => selectedMnn.includes(value));
+}
+
+function canonicalAbbottMnnLabel(labels: readonly string[]) {
+  const counts = new Map<string, number>();
+  labels.forEach((label) => {
+    const clean = label.replace(/[®™]/g, "").trim();
+    if (clean) counts.set(clean, (counts.get(clean) ?? 0) + 1);
+  });
+  return [...counts]
+    .sort(([left, leftCount], [right, rightCount]) => {
+      const leftCapitalized = left[0] !== left[0]?.toLocaleLowerCase("ru");
+      const rightCapitalized = right[0] !== right[0]?.toLocaleLowerCase("ru");
+      return Number(rightCapitalized) - Number(leftCapitalized)
+        || rightCount - leftCount
+        || left.localeCompare(right, "ru");
+    })[0]?.[0] ?? "";
+}
+
+export function buildAbbottMnnOptions(rows: readonly AbbottBiPageStatRow[]) {
+  const labelsByKey = new Map<string, string[]>();
+  let hasUnmapped = false;
+  rows.forEach((row) => {
+    if (!row.mnn?.length) hasUnmapped = true;
+    row.mnn?.forEach(({ key, label }) => {
+      const normalizedKey = key.trim();
+      const normalizedLabel = label.trim();
+      if (!normalizedKey || !normalizedLabel) return;
+      labelsByKey.set(normalizedKey, [...(labelsByKey.get(normalizedKey) ?? []), normalizedLabel]);
+    });
+  });
+  const options = [...labelsByKey].map(([value, labels]) => ({
+    value,
+    label: canonicalAbbottMnnLabel(labels),
+  }));
+  if (hasUnmapped) options.push({ value: ABBOTT_UNMAPPED_LABEL, label: ABBOTT_UNMAPPED_LABEL });
+  return options.sort((left, right) => left.label.localeCompare(right.label, "ru"));
+}
+
+export function formatAbbottMnnValues(
+  mnn: readonly AbbottMnnValue[] | null | undefined,
+  options: readonly { value: string; label: string }[],
+) {
+  if (!mnn?.length) return ABBOTT_UNMAPPED_LABEL;
+  const labels = new Map(options.map((option) => [option.value, option.label]));
+  return mnn.map((value) => labels.get(value.key) ?? value.label.replace(/[®™]/g, "").trim())
+    .filter(Boolean)
+    .join("; ") || ABBOTT_UNMAPPED_LABEL;
 }
 
 export function buildAbbottPageDimensionOptions<T>(
@@ -86,7 +133,7 @@ export function filterAbbottPageStatsRows(rows: AbbottBiPageStatRow[], filters: 
         row.page_title,
         row.url,
         row.direction,
-        ...(row.mnn ?? []),
+        ...(row.mnn ?? []).map((value) => value.label),
         row.material_type,
         row.access,
         row.pageviews,
@@ -140,11 +187,12 @@ export function summarizeAbbottPageMetadataCoverage(rows: AbbottBiPageStatRow[])
 }
 
 export function buildAbbottPageStatsExportRows(rows: AbbottBiPageStatRow[]): Array<Record<string, string | number>> {
+  const mnnOptions = buildAbbottMnnOptions(rows);
   return rows.map((row) => ({
     "Заголовок страницы": row.page_title || "—",
     URL: row.url || "—",
     Направление: labelAbbottPageDimension(row.direction),
-    МНН: row.mnn?.length ? row.mnn.join("; ") : ABBOTT_UNMAPPED_LABEL,
+    МНН: formatAbbottMnnValues(row.mnn, mnnOptions),
     "Тип материала": labelAbbottPageDimension(row.material_type),
     Доступ: labelAbbottPageDimension(row.access),
     "Просмотры Метрики": row.pageviews,

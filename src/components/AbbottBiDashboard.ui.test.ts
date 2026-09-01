@@ -140,7 +140,8 @@ test("labels unmapped page metadata in the page table and exports", () => {
 test("places the multi-value MNN filter and column immediately after direction", () => {
   assert.match(source, /label="Направление"[\s\S]*?label="МНН"/);
   assert.match(source, /key: "direction", label: "Направление"[\s\S]*?key: "mnn", label: "МНН"/);
-  assert.match(source, /row\.mnn\?\.join\("; "\)/);
+  assert.match(source, /formatAbbottMnnValues\(row\.mnn, pageStatsOptions\.mnn\)/);
+  assert.match(source, /buildAbbottMnnOptions\(data\.page_stats\)/);
 });
 
 test("uses page-only metadata grouping that retains the unmapped bucket", () => {

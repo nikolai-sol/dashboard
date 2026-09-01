@@ -31,6 +31,7 @@ import type {
   AbbottBiTimeBuckets,
   AbbottBiUserActionRow,
   AbbottBiUserSummaryRow,
+  AbbottMnnValue,
 } from "@/lib/types";
 
 export type AbbottDashboardAudience = "manager" | "embed";
@@ -561,7 +562,7 @@ function metadataForPage(
   rawUrl: unknown,
   rawPageTitle: unknown,
   workbook: AbbottAggregatePrivateData["workbook"],
-): { page_title: string; direction: string | null; mnn: string[]; material_type: string | null; access: string | null; hidden: boolean } {
+): { page_title: string; direction: string | null; mnn: AbbottMnnValue[]; material_type: string | null; access: string | null; hidden: boolean } {
   const identityUrl = normalizeAbbottContentIdentityUrl(rawUrl);
   const normalized = normalizePage(rawUrl);
   const path = normalizedPagePath(identityUrl || normalized);

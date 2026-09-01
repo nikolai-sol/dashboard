@@ -19,6 +19,7 @@ import {
   type ParsedAbbottWorkbook,
   type ParsedBitrixAnalytics,
 } from "./abbott-private-types";
+import type { AbbottMnnValue } from "./types";
 
 export type AbbottPrivateStoreErrorCode =
   | "INVALID_CONFIGURATION"
@@ -255,7 +256,7 @@ async function requireActiveAbbottDashboard(executor: AbbottPrivateQueryExecutor
 
 function contentMetadata(
   row: Record<string, unknown>,
-  mnnByEntity: ReadonlyMap<number, readonly string[]>,
+  mnnByEntity: ReadonlyMap<number, readonly AbbottMnnValue[]>,
 ): AbbottContentMetadata {
   const contentEntityId = integerId(row.content_entity_id);
   return {
@@ -362,17 +363,17 @@ async function loadAggregateWorkbook(
     }
     mnnLabelsByEntity.set(contentEntityId, values);
   });
-  const mnnByEntity = new Map<number, readonly string[]>(
+  const mnnByEntity = new Map<number, readonly AbbottMnnValue[]>(
     Array.from(mnnLabelsByEntity, ([entityId, values]) => [
       entityId,
-      Array.from(values.values())
+      Array.from(values, ([key, value]) => ({ key, ...value }))
         .sort(
           (left, right) =>
             left.roleRank - right.roleRank ||
             left.displayOrder - right.displayOrder ||
             left.label.localeCompare(right.label, "ru"),
         )
-        .map(({ label }) => label),
+        .map(({ key, label }) => ({ key, label })),
     ]),
   );
   catalogRows.forEach((row) => {
@@ -405,7 +406,6 @@ async function loadAggregateWorkbook(
     contentByUrl,
     contentByTitle,
     contentBySlug,
-    contentByUrl,
     urlReturnDirections,
     lookupQuality: {
       ambiguousGroups: metric(quality.ambiguous_groups),

@@ -32,7 +32,6 @@ const aggregateWorkbook: AbbottAggregatePrivateData["workbook"] = {
   contentByUrl: new Map(),
   contentByTitle: new Map(),
   contentBySlug: new Map(),
-  contentByUrl: new Map(),
   urlReturnDirections: new Map([[lookupHash("/page"), {
     page_title: "Page",
     direction: "Cardiology",
@@ -676,7 +675,7 @@ test("exact Abbott URL metadata wins over conflicting path, title, and slug proj
     material_type: "article",
     access: "Врачи",
     is_active: true,
-    mnn: ["Омакор", "Трайкор"],
+    mnn: [{ key: "омакор", label: "Омакор" }, { key: "трайкор", label: "Трайкор" }],
   };
   const cardioArticle = {
     page_title: "Cardio article",
@@ -721,7 +720,7 @@ test("exact Abbott URL metadata wins over conflicting path, title, and slug proj
     page_title: "Одинаковый заголовок",
     url: "https://abbottpro.ru/academy/articles/a",
     direction: "Gastroenterology",
-    mnn: ["Омакор", "Трайкор"],
+    mnn: [{ key: "омакор", label: "Омакор" }, { key: "трайкор", label: "Трайкор" }],
     material_type: "article",
     access: "Врачи",
     pageviews: 4,

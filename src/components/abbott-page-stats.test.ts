@@ -22,7 +22,10 @@ const sampleRow: AbbottBiPageStatRow = {
   page_title: "Видеолекция о головокружении",
   url: "https://abbottpro.ru/video/262339",
   direction: "Неврология и психиатрия",
-  mnn: ["Омакор", "Трайкор"],
+  mnn: [
+    { key: "омакор", label: "Омакор" },
+    { key: "трайкор", label: "Трайкор" },
+  ],
   material_type: "Видео",
   access: "Врачи",
   pageviews: 157,
@@ -47,8 +50,11 @@ test("material selection matches any selected type", () => {
 });
 
 test("MNN selection uses OR within the filter and keeps unmapped rows explicit", () => {
-  assert.equal(matchesSelectedMnn(["Омакор", "Трайкор"], ["Трайкор", "Клацид"]), true);
-  assert.equal(matchesSelectedMnn(["Омакор"], ["Трайкор", "Клацид"]), false);
+  assert.equal(matchesSelectedMnn(
+    [{ key: "омакор", label: "Омакор" }, { key: "трайкор", label: "Трайкор" }],
+    ["трайкор", "клацид"],
+  ), true);
+  assert.equal(matchesSelectedMnn([{ key: "омакор", label: "Омакор" }], ["трайкор", "клацид"]), false);
   assert.equal(matchesSelectedMnn([], []), true);
   assert.equal(matchesSelectedMnn([], [ABBOTT_UNMAPPED_LABEL]), true);
 });
@@ -64,6 +70,19 @@ test("global page search includes every MNN label", () => {
       access: "",
     }).length,
     1,
+  );
+});
+
+test("MNN display variants with the same semantic key collapse to one canonical label", () => {
+  const rows = [
+    { ...sampleRow, mnn: [{ key: "физиотенз", label: "физиотенз" }] },
+    { ...sampleRow, url: `${sampleRow.url}/2`, mnn: [{ key: "физиотенз", label: "Физиотенз®" }] },
+    { ...sampleRow, url: `${sampleRow.url}/3`, mnn: [{ key: "физиотенз", label: "Физиотенз" }] },
+  ];
+
+  assert.deepEqual(
+    buildAbbottPageStatsExportRows(rows).map((row) => row.МНН),
+    ["Физиотенз", "Физиотенз", "Физиотенз"],
   );
 });
 
@@ -96,7 +115,7 @@ test("page stats selector applies direction, material type, access, and both sea
       query: "головокружении",
       pageTitleQuery: "262339",
       direction: "Неврология и психиатрия",
-      mnn: ["Омакор"],
+      mnn: ["омакор"],
       materialTypes: ["Видео"],
       access: "Врачи",
     }),
