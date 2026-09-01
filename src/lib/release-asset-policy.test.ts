@@ -114,6 +114,39 @@ test("release scans reject private data outside public while allowing Abbott sch
   }
 });
 
+test("release scans allow generated Next manifests for Abbott routes while still inspecting their content", async () => {
+  const releaseRoot = await mkdtemp(path.join(tmpdir(), "release-asset-policy-next-manifests-"));
+  try {
+    const routeRoot = path.join(
+      releaseRoot,
+      ".next",
+      "server",
+      "app",
+      "api",
+      "dashboard",
+      "[id]",
+      "abbott-admin-users",
+    );
+    await mkdir(path.join(routeRoot, "route"), { recursive: true });
+    await writeFile(path.join(routeRoot, "route.js.nft.json"), JSON.stringify({ version: 1, files: ["route.js"] }));
+    await writeFile(path.join(routeRoot, "route", "app-paths-manifest.json"), JSON.stringify({ route: "route.js" }));
+    await writeFile(path.join(routeRoot, "route", "build-manifest.json"), JSON.stringify({ pages: {} }));
+    await writeFile(path.join(routeRoot, "route", "server-reference-manifest.json"), JSON.stringify({ node: {} }));
+
+    assert.deepEqual(findPrivateReleaseAssets(releaseRoot), []);
+
+    await writeFile(
+      path.join(routeRoot, "route", "build-manifest.json"),
+      JSON.stringify({ rows: [{ raw_user_id: "doctor-secret" }] }),
+    );
+    assert.deepEqual(findPrivateReleaseAssets(releaseRoot), [
+      ".next/server/app/api/dashboard/[id]/abbott-admin-users/route/build-manifest.json",
+    ]);
+  } finally {
+    await rm(releaseRoot, { force: true, recursive: true });
+  }
+});
+
 test("release scans detect private signatures under neutral JSON and CSV names", async () => {
   const releaseRoot = await mkdtemp(path.join(tmpdir(), "release-asset-policy-content-"));
   try {

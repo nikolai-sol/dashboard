@@ -45,10 +45,22 @@ const BITRIX_EXPORT_KEY_SETS = [
   ["protected_visit_id", "event_sequence", "normalized_path"],
 ] as const;
 const METRIKA_LOGS_VISIT_KEYS = ["visit_id", "client_id", "start_url", "end_url"] as const;
+const NEXT_SERVER_MANIFEST_NAMES = new Set([
+  "app-paths-manifest.json",
+  "build-manifest.json",
+  "server-reference-manifest.json",
+]);
 
 function isProhibitedAbbottAsset(relativePath: string) {
   const normalized = relativePath.split(path.sep).join("/").toLowerCase();
   return normalized.includes("abbott") && PROHIBITED_SOURCE_SUFFIXES.some((suffix) => normalized.endsWith(suffix));
+}
+
+function isGeneratedNextServerManifest(relativePath: string) {
+  const normalized = relativePath.split(path.sep).join("/");
+  if (!normalized.startsWith(".next/server/")) return false;
+  const filename = path.posix.basename(normalized);
+  return filename.endsWith(".nft.json") || NEXT_SERVER_MANIFEST_NAMES.has(filename);
 }
 
 function normalizedRelativePath(root: string, absolutePath: string) {
@@ -207,7 +219,10 @@ export function findPrivateReleaseAssets(releaseRoot: string): string[] {
     releaseRoot,
     (absolutePath, relativePath) => {
       if (SAFE_ABBOTT_MIGRATIONS.has(relativePath)) return false;
-      return isProhibitedAbbottAsset(relativePath) || hasPrivateDataSignature(absolutePath, relativePath);
+      return (
+        (isProhibitedAbbottAsset(relativePath) && !isGeneratedNextServerManifest(relativePath)) ||
+        hasPrivateDataSignature(absolutePath, relativePath)
+      );
     },
     (absolutePath, relativePath) => isAllowedGeneratedReleaseSymlink(releaseRoot, absolutePath, relativePath),
   );
