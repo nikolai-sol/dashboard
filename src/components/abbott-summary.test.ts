@@ -39,6 +39,23 @@ test("default summary uses authoritative traffic sessions", () => {
   );
 });
 
+test("manager aggregate all stays on the Logs visit population", () => {
+  const trafficRows = [summaryRow({ traffic_segment: "all", visits: 12032 })];
+  const behaviorRows = [
+    summaryRow({ traffic_segment: null, user_id: "", has_user_id: false, visits: 12168 }),
+  ];
+
+  assert.equal(
+    selectAbbottSummaryRows({
+      trafficRows,
+      behaviorRows,
+      filters: { user_id: "", user_id_traffic: "", direction: "" },
+      showUserIdAnalytics: true,
+    }),
+    behaviorRows,
+  );
+});
+
 test("user behavior summary is used for User ID and direction filters", () => {
   const trafficRows = [summaryRow({ visits: 11650 })];
   const behaviorRows = [summaryRow({ traffic_segment: null, user_id: "60", has_user_id: true, direction: "Гастро", visits: 42 })];
