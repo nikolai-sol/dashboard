@@ -1,6 +1,7 @@
 [
   {"raw":"HTTP://WWW.ABBOTTPRO.RU/academy/articles/test/?utm_source=x#part","value":"https://abbottpro.ru/academy/articles/test","path":"/academy/articles/test"},
   {"raw":"https://abbottpro.ru/search/?q=heart&utm_campaign=x","value":"https://abbottpro.ru/search?q=heart","path":"/search"},
+  {"raw":"https://abbottpro.ru/academy/articles/test?access_code=temporary&q=heart","value":"https://abbottpro.ru/academy/articles/test?q=heart","path":"/academy/articles/test"},
   {"raw":"/auth/","value":"https://abbottpro.ru/auth","path":"/auth"},
   {"raw":"//evil.example/articles/x","value":"","path":""},
   {"raw":"//abbottpro.ru/articles/x","value":"","path":""},

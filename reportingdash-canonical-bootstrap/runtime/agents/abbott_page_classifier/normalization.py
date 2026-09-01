@@ -23,6 +23,7 @@ _PATH_SAFE = "/:@!$&'()*+,;=-._~"
 _RESERVED_PATH_CHARACTERS = frozenset(":/?#[]@!$&'()*+,;=%")
 _TRACKING_QUERY_KEYS = frozenset(
     {
+        "access_code",
         "dclid",
         "fbclid",
         "gclid",

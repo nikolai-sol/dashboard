@@ -10,6 +10,7 @@ export function isAbbottWebPageUrl(rawValue: unknown): boolean {
 }
 
 const TRACKING_QUERY_KEYS = new Set([
+  "access_code",
   "dclid",
   "fbclid",
   "gclid",

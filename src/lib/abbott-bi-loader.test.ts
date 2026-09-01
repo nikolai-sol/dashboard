@@ -689,7 +689,7 @@ test("exact Abbott URL metadata wins over conflicting path, title, and slug proj
     if (sql.includes("canonical_fact_metrika_site_analytics_daily")) {
       return [{
         analytics_scope: "page",
-        page_url: "https://abbottpro.ru/academy/articles/a?utm_source=test",
+        page_url: "https://abbottpro.ru/academy/articles/a?preview=temporary",
         page_title: "Одинаковый заголовок",
         pageviews: "4",
         users: "2",
@@ -704,7 +704,7 @@ test("exact Abbott URL metadata wins over conflicting path, title, and slug proj
     workbook: {
       ...aggregateWorkbook,
       contentByUrl: new Map([[lookupHash("https://abbottpro.ru/academy/articles/a"), gastroArticle]]),
-      urlReturnDirections: new Map([[lookupHash("/academy/articles/a"), gastroArticle]]),
+      urlReturnDirections: new Map([[lookupHash("/academy/articles/a"), cardioArticle]]),
       contentByTitle: new Map([[lookupHash("Одинаковый заголовок"), cardioArticle]]),
       contentBySlug: new Map([[lookupHash("a"), cardioArticle]]),
     },

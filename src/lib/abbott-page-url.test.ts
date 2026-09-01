@@ -21,6 +21,15 @@ test("normalizes Abbott content identities from shared parity fixtures", () => {
   }
 });
 
+test("removes ephemeral Abbott access codes but preserves semantic query identity", () => {
+  assert.equal(
+    normalizeAbbottContentIdentityUrl(
+      "https://abbottpro.ru/academy/articles/test?access_code=temporary&section_id=262338",
+    ),
+    "https://abbottpro.ru/academy/articles/test?section_id=262338",
+  );
+});
+
 test("normalizes absolute Abbott page URLs without tracking identity", () => {
   assert.equal(
     normalizeAbbottPageUrl("HTTPS://ABBOTT.EXAMPLE//gastro/?utm_source=email#part"),

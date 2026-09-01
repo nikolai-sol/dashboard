@@ -565,10 +565,14 @@ function metadataForPage(
 ): { page_title: string; direction: string | null; mnn: AbbottMnnValue[]; material_type: string | null; access: string | null; hidden: boolean } {
   const identityUrl = normalizeAbbottContentIdentityUrl(rawUrl);
   const normalized = normalizePage(rawUrl);
+  const baseIdentityUrl = normalizeAbbottContentIdentityUrl(normalized);
   const path = normalizedPagePath(identityUrl || normalized);
   const slug = path.split("/").filter(Boolean).at(-1) ?? "";
   const rawTitle = validRawPageTitle(rawPageTitle);
   const metadata = (identityUrl ? workbook.contentByUrl.get(lookupHash(identityUrl)) : undefined)
+    ?? (baseIdentityUrl && baseIdentityUrl !== identityUrl
+      ? workbook.contentByUrl.get(lookupHash(baseIdentityUrl))
+      : undefined)
     ?? workbook.urlReturnDirections.get(lookupHash(path))
     ?? (rawTitle ? workbook.contentByTitle.get(abbottTitleLookupHash(rawTitle)) : undefined)
     ?? workbook.contentBySlug.get(lookupHash(slug));
