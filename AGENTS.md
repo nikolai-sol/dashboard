@@ -343,6 +343,11 @@ npm run deploy
 ```
 
 What deploy does:
+- refuses a dirty dashboard source tree or a commit that does not contain the current
+  `origin/main`, preventing a parallel dashboard lineage from silently replacing accepted features
+- runs the Abbott dashboard contract after dependency installation; deployment stops if MNN,
+  direction/material metadata, URL identity, Logs summaries, or administrator-filter behavior is
+  missing
 - builds locally
 - packages `.next/standalone`
 - renders `.env` from `/var/www/www-root/data/.production.env`
@@ -369,6 +374,9 @@ ssh beget 'curl -s http://127.0.0.1:3001/api/health'
 ssh beget 'cd /root/reportingdash-rollout/dashboard-next && PUBLIC_APP_HOST=5.35.85.218 APP_PORT=3001 bash scripts/verify-loopback-listener.sh'
 curl -s https://dashboards.adreports.ru/api/health
 ```
+
+The source-lineage and Abbott-contract checks are mandatory release gates. Do not bypass them and do
+not deploy a dashboard gitlink from a parallel history that omits either gate.
 
 Bootstrap assumptions:
 - nginx should render `dashboards.adreports.ru`

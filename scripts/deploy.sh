@@ -47,8 +47,11 @@ copy_canonical_file() {
 
 cd "$APP_SOURCE_DIR"
 
+bash scripts/verify-deploy-source.sh "$APP_SOURCE_DIR"
+
 echo "Building standalone bundle for release $RELEASE_ID..."
 npm ci
+npm run test:abbott-contract
 npm run security:public-assets
 npm run build
 

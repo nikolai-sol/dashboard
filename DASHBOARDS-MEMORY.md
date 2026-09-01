@@ -58,6 +58,14 @@ ssh beget 'cd /root/reportingdash-rollout/dashboard-next && PUBLIC_APP_HOST=5.35
   their distinct account-scoped `canonical_fact_metrika_returning_pages_daily` authority.
 - The synchronized canonical bootstrap manifest records SHA-256 and runtime roles for the Metrika
   collector, canonical writer, and release store; copied files must remain byte-identical to root.
+- Abbott MNN is an active-release MySQL dimension on tab 3. The read model preserves both `mnn_key`
+  and reviewed `mnn_label`; filtering uses `mnn_key`, so casing and registered-mark variants collapse
+  into one option without changing or multiplying statistical facts.
+- The 2026-09-01 MNN disappearance was a dashboard source-lineage regression, not a collector or data
+  release failure: root commit `c9ec943` moved the dashboard gitlink from MNN-capable app commit
+  `d253f21` to divergent app commit `a100fcb`. The omission remained latent until a later deploy.
+  Repair requires merging both accepted histories. CI and production deploy now fail closed on the
+  current `origin/main` ancestry and the Abbott dashboard contract.
 
 ## Abbott visit-level operational truth
 
