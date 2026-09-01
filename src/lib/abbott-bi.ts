@@ -529,7 +529,7 @@ function directionBySectionId(
 }
 
 function directionFromFilter(
-  rawUrl: string,
+  rawUrl: unknown,
   workbook: AbbottAggregatePrivateData["workbook"],
 ): string | null {
   const query = String(rawUrl ?? "").replaceAll("&amp;", "&").split("#", 1)[0]?.split("?").slice(1).join("?");
@@ -553,7 +553,7 @@ function directionFromFilter(
 }
 
 function metadataForPage(
-  rawUrl: string,
+  rawUrl: unknown,
   rawPageTitle: unknown,
   workbook: AbbottAggregatePrivateData["workbook"],
 ): { page_title: string; direction: string | null; material_type: string | null; access: string | null; hidden: boolean } {
