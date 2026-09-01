@@ -131,6 +131,24 @@ test("adds Abbott UTM and count-first return UI while hiding external transition
   assert.match(source, /return_frequency/);
 });
 
+test("separates period-wide return frequency from the Metrika interval controls", () => {
+  assert.ok(source.includes("Общая частота визитов за выбранный период"));
+  assert.ok(
+    source.includes(
+      "Показатели рассчитаны по всему сайту и не зависят от фильтров контрольного слоя ниже.",
+    ),
+  );
+  assert.match(source, /returning:\s*null,/);
+
+  const returningChartBranch = source.slice(source.indexOf('activeTab === "returning"'));
+  const intervalHeadingIndex = returningChartBranch.indexOf("Интервалы возврата по Метрике");
+  assert.ok(intervalHeadingIndex >= 0);
+
+  const intervalSection = returningChartBranch.slice(intervalHeadingIndex);
+  assert.ok(intervalSection.indexOf('label="URL"') >= 0);
+  assert.ok(intervalSection.indexOf('label="Направление"') >= 0);
+});
+
 test("labels unmapped page metadata in the page table and exports", () => {
   assert.match(source, /labelAbbottPageDimension\(row\.direction\)/);
   assert.match(source, /labelAbbottPageDimension\(row\.material_type\)/);

@@ -40,6 +40,7 @@ import {
   selectAbbottUserActions,
 } from "./abbott/abbott-user-action-filters";
 import { buildAbbottReturnFrequencyUi } from "./abbott/abbott-return-frequency-ui";
+import { returningControlEmptyMessage } from "./abbott/abbott-returning-control-ui";
 import AbbottAdminUsersPanel from "./abbott/AbbottAdminUsersPanel";
 import {
   ABBOTT_WITHOUT_ADMINS,
@@ -1231,6 +1232,10 @@ export default function AbbottBiDashboard({
       return true;
     });
   }, [data.returning, filtersByTab.returning, queryByTab.returning]);
+  const returningControlMessage = returningControlEmptyMessage(returningRows.length, {
+    url: filtersByTab.returning.url,
+    direction: filtersByTab.returning.direction,
+  });
 
   const generalMaterialRows = useMemo(() => {
     const query = queryByTab.general_materials;
@@ -1815,24 +1820,7 @@ export default function AbbottBiDashboard({
         theme={theme}
       />
     ),
-    returning: (
-      <>
-        <SelectField
-          label="URL"
-          value={filtersByTab.returning.url}
-          options={returningOptions.url}
-          onChange={(value) => setSelectFilter("returning", "url", value)}
-          theme={theme}
-        />
-        <SelectField
-          label="Направление"
-          value={filtersByTab.returning.direction}
-          options={returningOptions.direction}
-          onChange={(value) => setSelectFilter("returning", "direction", value)}
-          theme={theme}
-        />
-      </>
-    ),
+    returning: null,
     general_materials: (
       <SelectField
         label="Материал"
@@ -2099,6 +2087,14 @@ export default function AbbottBiDashboard({
   } else if (activeTab === "returning") {
     chartContent = (
       <div className="space-y-6">
+        <div>
+          <h3 className="text-lg font-semibold text-slate-900">
+            Общая частота визитов за выбранный период
+          </h3>
+          <p className="text-sm text-slate-600">
+            Показатели рассчитаны по всему сайту и не зависят от фильтров контрольного слоя ниже.
+          </p>
+        </div>
         {returnFrequencyUi.available ? (
           <>
             <div className="grid gap-4 xl:grid-cols-[minmax(0,1.2fr)_minmax(0,0.8fr)]">
@@ -2127,6 +2123,9 @@ export default function AbbottBiDashboard({
             </div>
 
             <div className="card-surface space-y-4 p-5">
+              <p className="text-sm text-slate-600">
+                Фильтры детализации ниже изменяют только две таблицы: направления пользователей и страницы возврата.
+              </p>
               <div className="grid gap-4 xl:grid-cols-4">
                 <SelectField
                   label="Частота визитов"
@@ -2223,6 +2222,29 @@ export default function AbbottBiDashboard({
             <p className="text-sm text-slate-600">
               Контрольный слой Метрики показывает долю возвратов по временным интервалам отдельно от частоты визитов.
             </p>
+          </div>
+          <div className="card-surface space-y-4 p-5">
+            <div className="grid gap-4 xl:grid-cols-2">
+              <SelectField
+                label="URL"
+                value={filtersByTab.returning.url}
+                options={returningOptions.url}
+                onChange={(value) => setSelectFilter("returning", "url", value)}
+                theme={theme}
+              />
+              <SelectField
+                label="Направление"
+                value={filtersByTab.returning.direction}
+                options={returningOptions.direction}
+                onChange={(value) => setSelectFilter("returning", "direction", value)}
+                theme={theme}
+              />
+            </div>
+            {returningControlMessage ? (
+              <p className="rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-900">
+                {returningControlMessage}
+              </p>
+            ) : null}
           </div>
           <div className="grid gap-4 xl:grid-cols-3">
             <ChartCard title="Вернувшиеся в 1 день">
