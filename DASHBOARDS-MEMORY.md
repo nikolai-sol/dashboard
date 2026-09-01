@@ -66,6 +66,10 @@ ssh beget 'cd /root/reportingdash-rollout/dashboard-next && PUBLIC_APP_HOST=5.35
   `d253f21` to divergent app commit `a100fcb`. The omission remained latent until a later deploy.
   Repair requires merging both accepted histories. CI and production deploy now fail closed on the
   current `origin/main` ancestry and the Abbott dashboard contract.
+- Post-deploy July/August parity also exposed transient Bitrix `access_code` query values in Metrika
+  page URLs. They are not content identity. The reader removes `access_code`, tries an exact semantic
+  URL first and then the queryless canonical URL before path/title fallbacks; meaningful query keys
+  remain preserved. This restores reviewed metadata without changing any session or pageview fact.
 
 ## Abbott visit-level operational truth
 
