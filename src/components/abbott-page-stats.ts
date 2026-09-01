@@ -24,6 +24,18 @@ type AbbottPageStatsFilters = {
   access: string;
 };
 
+const ABBOTT_MNN_KEY_ALIASES = new Map([
+  ["физотенз", "физиотенз"],
+]);
+
+function canonicalAbbottMnnKey(value: string | null | undefined) {
+  const normalized = String(value ?? "")
+    .replace(/[®™]/g, "")
+    .trim()
+    .toLocaleLowerCase("ru");
+  return ABBOTT_MNN_KEY_ALIASES.get(normalized) ?? normalized;
+}
+
 export function matchesSelectedMaterialType(materialType: string | null, selectedTypes: string[]) {
   if (selectedTypes.length === 0) return true;
   return selectedTypes.includes(labelAbbottPageDimension(materialType));
@@ -31,9 +43,10 @@ export function matchesSelectedMaterialType(materialType: string | null, selecte
 
 export function matchesSelectedMnn(mnn: AbbottMnnValue[] | null | undefined, selectedMnn: string[]) {
   if (selectedMnn.length === 0) return true;
-  const values = (mnn ?? []).map((value) => value.key.trim()).filter(Boolean);
+  const values = (mnn ?? []).map((value) => canonicalAbbottMnnKey(value.key)).filter(Boolean);
   if (values.length === 0) return selectedMnn.includes(ABBOTT_UNMAPPED_LABEL);
-  return values.some((value) => selectedMnn.includes(value));
+  const selected = selectedMnn.map(canonicalAbbottMnnKey);
+  return values.some((value) => selected.includes(value));
 }
 
 function canonicalAbbottMnnLabel(labels: readonly string[]) {
@@ -58,7 +71,7 @@ export function buildAbbottMnnOptions(rows: readonly AbbottBiPageStatRow[]) {
   rows.forEach((row) => {
     if (!row.mnn?.length) hasUnmapped = true;
     row.mnn?.forEach(({ key, label }) => {
-      const normalizedKey = key.trim();
+      const normalizedKey = canonicalAbbottMnnKey(key);
       const normalizedLabel = label.trim();
       if (!normalizedKey || !normalizedLabel) return;
       labelsByKey.set(normalizedKey, [...(labelsByKey.get(normalizedKey) ?? []), normalizedLabel]);
@@ -78,7 +91,7 @@ export function formatAbbottMnnValues(
 ) {
   if (!mnn?.length) return ABBOTT_UNMAPPED_LABEL;
   const labels = new Map(options.map((option) => [option.value, option.label]));
-  return mnn.map((value) => labels.get(value.key) ?? value.label.replace(/[®™]/g, "").trim())
+  return mnn.map((value) => labels.get(canonicalAbbottMnnKey(value.key)) ?? value.label.replace(/[®™]/g, "").trim())
     .filter(Boolean)
     .join("; ") || ABBOTT_UNMAPPED_LABEL;
 }

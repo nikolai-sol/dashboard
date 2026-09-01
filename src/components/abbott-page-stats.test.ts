@@ -78,11 +78,12 @@ test("MNN display variants with the same semantic key collapse to one canonical 
     { ...sampleRow, mnn: [{ key: "физиотенз", label: "физиотенз" }] },
     { ...sampleRow, url: `${sampleRow.url}/2`, mnn: [{ key: "физиотенз", label: "Физиотенз®" }] },
     { ...sampleRow, url: `${sampleRow.url}/3`, mnn: [{ key: "физиотенз", label: "Физиотенз" }] },
+    { ...sampleRow, url: `${sampleRow.url}/4`, mnn: [{ key: "физотенз", label: "физотенз" }] },
   ];
 
   assert.deepEqual(
     buildAbbottPageStatsExportRows(rows).map((row) => row.МНН),
-    ["Физиотенз", "Физиотенз", "Физиотенз"],
+    ["Физиотенз", "Физиотенз", "Физиотенз", "Физиотенз"],
   );
 });
 
