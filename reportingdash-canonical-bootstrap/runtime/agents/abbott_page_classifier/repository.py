@@ -1,0 +1,3203 @@
+"""Canonical MySQL repository for the Abbott content-registry workflow."""
+
+from __future__ import annotations
+
+from datetime import datetime, timezone
+from dataclasses import dataclass, replace
+import hashlib
+import json
+from enum import Enum
+from typing import Any, Callable, Mapping, Protocol, Sequence
+from urllib.parse import urlsplit
+
+from .domain import (
+    AcceptedBatchSnapshot,
+    ApprovalBatch,
+    ApprovalItem,
+    CanonicalClassification,
+    ClassificationEvent,
+    ConflictCode,
+    IngestResult,
+    TaxonomyVersion,
+)
+from .batch_service import (
+    ApprovalBatchItem,
+    BuiltApprovalBatch,
+    PersistedApprovalBatch,
+    compute_classification_event_fingerprint,
+    compute_accepted_decision_hash,
+    compute_batch_hash,
+    compute_item_hash,
+    compute_taxonomy_digest,
+)
+from .approval_hashes import compute_url_alias_decision_event_fingerprint
+from .normalization import normalize_url
+from .normalization import normalize_observed_page_grouping_url
+from .local_acceptance import LocalAcceptanceIntent
+from .mnn_decisions import (
+    compute_mnn_decision_event_fingerprint,
+    normalize_reviewed_mnn,
+)
+
+
+DATASET_KEY = "abbott"
+
+
+class Cursor(Protocol):
+    lastrowid: int
+    rowcount: int
+
+    def execute(self, sql: str, params: tuple[object, ...] = ()) -> None: ...
+
+    def fetchone(self) -> Any: ...
+
+    def fetchall(self) -> Sequence[Any]: ...
+
+    def close(self) -> None: ...
+
+
+class Connection(Protocol):
+    def cursor(self) -> Cursor: ...
+
+    def commit(self) -> None: ...
+
+    def rollback(self) -> None: ...
+
+    def close(self) -> None: ...
+
+
+class RepositoryError(RuntimeError):
+    """Sanitized repository failure with a stable machine-readable code."""
+
+    def __init__(self, code: str):
+        self.code = code
+        super().__init__(code)
+
+
+@dataclass(frozen=True)
+class BatchHistoryRecord:
+    batch_key: str
+    published_input_hash: str
+    accepted_decision_hash: str | None
+    approver: str | None
+    accepted_at: object | None
+    ready_count: int
+    conflict_count: int
+    unresolved_count: int
+    rejected_count: int
+    no_change_count: int
+    accepted_count: int
+    skipped_count: int
+    batch_status: str
+    spreadsheet_file_id: str | None
+    spreadsheet_projection_hash: str | None
+    projection_kind: str | None
+    local_projection_locator: str | None
+    local_projection_content_hash: str | None
+    candidate_release_id: int | None
+    activation_status: str
+
+
+@dataclass(frozen=True)
+class ActiveCatalogClassification:
+    release_id: int
+    content_entity_id: int
+    event_id: int | None
+    event_fingerprint: str | None
+    values: tuple[str | None, str | None, str | None, str | None]
+    effective_at: object | None = None
+
+
+class ContentRegistryRepository:
+    def __init__(self, connection_factory: Callable[[], Connection]):
+        self._connection_factory = connection_factory
+
+    @staticmethod
+    def _decoded_json_mapping(value: object) -> Mapping[str, object]:
+        decoded = json.loads(value) if isinstance(value, str) else value
+        if not isinstance(decoded, Mapping):
+            raise RepositoryError("BATCH_ITEMS_MISMATCH")
+        return decoded
+
+    def load_active_catalog(self) -> tuple[CanonicalClassification, ...]:
+        sql = """
+            WITH latest_events AS (
+              SELECT
+                event.*,
+                ROW_NUMBER() OVER (
+                  PARTITION BY event.content_entity_id
+                  ORDER BY event.effective_at DESC, event.id DESC
+                ) AS row_rank
+              FROM portal_content_classification_events AS event
+              WHERE event.effective_at <= CURRENT_TIMESTAMP(6)
+            )
+            SELECT
+              entity.id,
+              entity.title,
+              entity.canonical_url,
+              event.direction_code,
+              event.material_type_code,
+              event.access_code,
+              event.lifecycle_code,
+              event.id
+            FROM portal_content_registry_entities AS entity
+            JOIN latest_events AS event
+              ON event.content_entity_id = entity.id
+             AND event.row_rank = 1
+            WHERE entity.dataset_key = %s
+              AND entity.registry_status = 'active'
+            ORDER BY entity.id
+        """
+        rows = self._fetchall(sql, (DATASET_KEY,))
+        return tuple(
+            CanonicalClassification(
+                content_entity_id=int(row[0]),
+                title=str(row[1]),
+                url=str(row[2]),
+                direction_code=row[3],
+                material_type_code=row[4],
+                access_code=row[5],
+                lifecycle_code=str(row[6]),
+                event_id=int(row[7]),
+            )
+            for row in rows
+        )
+
+    def load_active_taxonomy(self, version: str) -> TaxonomyVersion:
+        connection: Connection | None = None
+        cursor: Cursor | None = None
+        try:
+            connection = self._connection_factory()
+            cursor = connection.cursor()
+            _taxonomy_id, taxonomy = self._load_taxonomy(cursor, version)
+            return taxonomy
+        except RepositoryError:
+            raise
+        except Exception:
+            raise RepositoryError("DB_READ_FAILED") from None
+        finally:
+            self._close(cursor, connection)
+
+    def load_persisted_batch(self, batch_id: int) -> PersistedApprovalBatch:
+        """Rehydrate one canonical batch and re-attest every immutable hash."""
+
+        connection: Connection | None = None
+        cursor: Cursor | None = None
+        try:
+            connection = self._connection_factory()
+            cursor = connection.cursor()
+            cursor.execute(
+                """
+                SELECT
+                  id,
+                  taxonomy_version_id,
+                  batch_key,
+                  taxonomy_digest,
+                  source_snapshot_ids,
+                  source_snapshot_digests,
+                  published_input_hash,
+                  batch_status,
+                  prompt_version,
+                  model_routing_version,
+                  ready_count,
+                  conflict_count,
+                  unresolved_count,
+                  rejected_count,
+                  no_change_count
+                FROM portal_content_approval_batches
+                WHERE id = %s
+                  AND dataset_key = %s
+                """,
+                (int(batch_id), DATASET_KEY),
+            )
+            row = cursor.fetchone()
+            if row is None or int(row[0]) != int(batch_id):
+                raise RepositoryError("BATCH_NOT_PERSISTED")
+            taxonomy_id = int(row[1])
+            cursor.execute(
+                """
+                SELECT version, taxonomy_digest
+                FROM portal_content_taxonomy_versions
+                WHERE id = %s
+                  AND dataset_key = %s
+                """,
+                (taxonomy_id, DATASET_KEY),
+            )
+            taxonomy_row = cursor.fetchone()
+            if taxonomy_row is None or str(taxonomy_row[1]) != str(row[3]):
+                raise RepositoryError("TAXONOMY_CONTRACT_MISMATCH")
+            taxonomy = self._load_taxonomy_terms(
+                cursor,
+                taxonomy_id,
+                str(taxonomy_row[0]),
+                str(taxonomy_row[1]),
+                include_retired=True,
+            )
+            cursor.execute(
+                """
+                SELECT
+                  id,
+                  content_entity_id,
+                  input_hash,
+                  title,
+                  url,
+                  final_direction_code,
+                  final_material_type_code,
+                  final_access_code,
+                  final_lifecycle_code,
+                  readiness_state,
+                  row_hash,
+                  decision_reason,
+                  proposal_evidence,
+                  conflict_codes,
+                  conflict_code,
+                  selected_content_entity_id,
+                  url_alias_decision,
+                  mnn_decision_version, final_primary_mnn_key,
+                  final_primary_mnn_label, final_additional_mnn_json,
+                  mnn_decision_reason
+                FROM portal_content_approval_items
+                WHERE approval_batch_id = %s
+                ORDER BY content_entity_id, input_hash
+                """,
+                (int(batch_id),),
+            )
+            stored_rows = tuple(cursor.fetchall())
+            _evidence, items = self._attest_published_items(
+                stored_rows,
+                taxonomy=taxonomy,
+                taxonomy_digest=str(row[3]),
+                source_snapshot_ids=self._decoded_json_tuple(row[4]),
+                source_snapshot_digests=self._decoded_json_tuple(row[5]),
+                prompt_version=str(row[8]),
+                model_routing_version=str(row[9]),
+            )
+            batch = BuiltApprovalBatch(
+                batch_key=str(row[2]),
+                taxonomy_version=taxonomy.version,
+                published_input_hash=str(row[6]),
+                items=items,
+                prompt_version=str(row[8]),
+                taxonomy_terms=taxonomy.terms,
+                taxonomy_digest=str(row[3]),
+                source_snapshot_ids=tuple(int(value) for value in self._decoded_json_tuple(row[4])),
+                source_snapshot_digests=tuple(str(value) for value in self._decoded_json_tuple(row[5])),
+                model_routing_version=str(row[9]),
+            )
+            counts = self._batch_counts(batch.items)
+            self._attest_batch_row(
+                row,
+                batch,
+                taxonomy_id,
+                counts,
+                allowed_statuses=(
+                    "draft", "published", "accepted", "ingested",
+                    "candidate_materialized", "rejected", "failed",
+                ),
+            )
+            if compute_batch_hash(batch.items) != batch.published_input_hash:
+                raise RepositoryError("BATCH_HASH_MISMATCH")
+            return PersistedApprovalBatch(batch=batch, database_batch_id=int(batch_id))
+        except RepositoryError:
+            raise
+        except Exception:
+            raise RepositoryError("DB_READ_FAILED") from None
+        finally:
+            self._close(cursor, connection)
+
+    def load_accepted_snapshot(self, batch_id: int) -> AcceptedBatchSnapshot:
+        """Reconstruct reviewed decisions while separately attesting publication.
+
+        ``load_persisted_batch`` deliberately rehydrates the immutable values under
+        ``proposal_evidence.published_decision``.  Those are the publication audit
+        authority, not the manager's accepted decision.  The editable ``final_*``
+        columns are therefore loaded independently after the published batch has
+        been attested and are the only values used for the accepted hash.
+        """
+
+        persisted = self.load_persisted_batch(int(batch_id))
+        history = self.load_batch_history(int(batch_id))
+        if history.batch_status not in ("accepted", "ingested", "candidate_materialized"):
+            raise RepositoryError("BATCH_NOT_ACCEPTED")
+        if (
+            not history.accepted_decision_hash
+            or not history.approver
+            or history.accepted_at is None
+        ):
+            raise RepositoryError("BATCH_NOT_ACCEPTED")
+        stored_rows = self._fetchall(
+            """
+            SELECT
+              id,
+              content_entity_id,
+              input_hash,
+              title,
+              url,
+              final_direction_code,
+              final_material_type_code,
+              final_access_code,
+              final_lifecycle_code,
+              readiness_state,
+              row_hash,
+              decision_reason,
+              proposal_evidence,
+              conflict_codes,
+              conflict_code,
+              selected_content_entity_id,
+              url_alias_decision,
+              mnn_decision_version, final_primary_mnn_key,
+              final_primary_mnn_label, final_additional_mnn_json,
+              mnn_decision_reason
+            FROM portal_content_approval_items
+            WHERE approval_batch_id = %s
+            ORDER BY content_entity_id, input_hash
+            """,
+            (int(batch_id),),
+        )
+        taxonomy = TaxonomyVersion(
+            version=persisted.batch.taxonomy_version,
+            terms=persisted.batch.taxonomy_terms,
+            digest=persisted.batch.taxonomy_digest,
+        )
+        stored_items, counts = self._stored_acceptance_items(stored_rows, taxonomy)
+        items = tuple(item for _approval_item_id, item in stored_items)
+        published_keys = {
+            (item.content_entity_id, item.input_hash, item.row_hash)
+            for item in persisted.batch.items
+        }
+        accepted_keys = {
+            (item.content_entity_id, item.input_hash, item.row_hash)
+            for item in items
+        }
+        if published_keys != accepted_keys:
+            raise RepositoryError("BATCH_ITEMS_MISMATCH")
+        accepted_hash = compute_accepted_decision_hash(items)
+        accepted_count = self._accepted_item_count(items)
+        skipped_count = len(items) - accepted_count
+        if (
+            accepted_hash != history.accepted_decision_hash
+            or history.accepted_count != accepted_count
+            or history.skipped_count != skipped_count
+        ):
+            raise RepositoryError("BATCH_HASH_MISMATCH")
+        return AcceptedBatchSnapshot(
+            batch_key=persisted.batch.batch_key,
+            published_input_hash=persisted.batch.published_input_hash,
+            accepted_decision_hash=accepted_hash,
+            items=items,
+            accepted_by=history.approver,
+            accepted_at=self._canonical_acceptance_timestamp(history.accepted_at).isoformat(
+                timespec="microseconds"
+            ),
+            accepted_count=accepted_count,
+            skipped_count=skipped_count,
+        )
+
+    def persist_draft_batch(self, batch: ApprovalBatch) -> int:
+        """Atomically persist or attest a retryable draft and all of its items."""
+
+        connection: Connection | None = None
+        cursor: Cursor | None = None
+        try:
+            audited = self._require_audited_batch(batch)
+            connection = self._connection_factory()
+            cursor = connection.cursor()
+            taxonomy_id, taxonomy = self._load_taxonomy(cursor, batch.taxonomy_version)
+            self._attest_taxonomy(audited, taxonomy)
+            counts = self._batch_counts(batch.items)
+            cursor.execute(
+                """
+                SELECT
+                  id,
+                  taxonomy_version_id,
+                  batch_key,
+                  taxonomy_digest,
+                  source_snapshot_ids,
+                  source_snapshot_digests,
+                  published_input_hash,
+                  batch_status,
+                  prompt_version,
+                  model_routing_version,
+                  ready_count,
+                  conflict_count,
+                  unresolved_count,
+                  rejected_count,
+                  no_change_count
+                FROM portal_content_approval_batches
+                WHERE dataset_key = %s
+                  AND batch_key = %s
+                FOR UPDATE
+                """,
+                (DATASET_KEY, batch.batch_key),
+            )
+            existing = cursor.fetchone()
+            if existing is not None:
+                batch_id = self._attest_batch_row(
+                    existing,
+                    audited,
+                    taxonomy_id,
+                    counts,
+                    allowed_statuses=("draft", "failed", "published"),
+                )
+                self._attest_item_rows(cursor, batch_id, audited)
+                connection.commit()
+                return batch_id
+
+            cursor.execute(
+                """
+                INSERT INTO portal_content_approval_batches (
+                  dataset_key,
+                  batch_key,
+                  taxonomy_version_id,
+                  taxonomy_digest,
+                  source_snapshot_ids,
+                  source_snapshot_digests,
+                  published_input_hash,
+                  batch_status,
+                  prompt_version,
+                  model_routing_version,
+                  ready_count,
+                  conflict_count,
+                  unresolved_count,
+                  rejected_count,
+                  no_change_count
+                ) VALUES (
+                  %s, %s, %s, %s, %s,
+                  %s, %s, %s, %s, %s,
+                  %s, %s, %s, %s, %s
+                )
+                """,
+                (
+                    DATASET_KEY,
+                    batch.batch_key,
+                    taxonomy_id,
+                    audited.taxonomy_digest,
+                    self._json(audited.source_snapshot_ids),
+                    self._json(audited.source_snapshot_digests),
+                    batch.published_input_hash,
+                    "draft",
+                    batch.prompt_version,
+                    audited.model_routing_version,
+                    counts["ready"],
+                    counts["conflict"],
+                    counts["unresolved"],
+                    counts["rejected"],
+                    counts["no_change"],
+                ),
+            )
+            batch_id = int(cursor.lastrowid)
+            for item in batch.items:
+                self._ensure_item(cursor, batch_id, item)
+            connection.commit()
+            return batch_id
+        except RepositoryError:
+            self._rollback(connection)
+            raise
+        except Exception:
+            self._rollback(connection)
+            raise RepositoryError("DB_TRANSACTION_FAILED") from None
+        finally:
+            self._close(cursor, connection)
+
+    def attest_batch_for_publication(
+        self,
+        batch_id: int,
+        batch: ApprovalBatch,
+        *,
+        _allowed_statuses: Sequence[str] = ("draft", "failed", "published"),
+    ) -> None:
+        """Re-read and attest the exact retryable canonical draft."""
+
+        connection: Connection | None = None
+        cursor: Cursor | None = None
+        try:
+            audited = self._require_audited_batch(batch)
+            connection = self._connection_factory()
+            cursor = connection.cursor()
+            taxonomy_id, taxonomy = self._load_taxonomy(cursor, batch.taxonomy_version)
+            self._attest_taxonomy(audited, taxonomy)
+            cursor.execute(
+                """
+                SELECT
+                  id,
+                  taxonomy_version_id,
+                  batch_key,
+                  taxonomy_digest,
+                  source_snapshot_ids,
+                  source_snapshot_digests,
+                  published_input_hash,
+                  batch_status,
+                  prompt_version,
+                  model_routing_version,
+                  ready_count,
+                  conflict_count,
+                  unresolved_count,
+                  rejected_count,
+                  no_change_count
+                FROM portal_content_approval_batches
+                WHERE id = %s
+                  AND dataset_key = %s
+                FOR UPDATE
+                """,
+                (int(batch_id), DATASET_KEY),
+            )
+            row = cursor.fetchone()
+            if row is None:
+                raise RepositoryError("BATCH_NOT_PERSISTED")
+            stored_id = self._attest_batch_row(
+                row,
+                audited,
+                taxonomy_id,
+                self._batch_counts(batch.items),
+                allowed_statuses=_allowed_statuses,
+            )
+            if stored_id != int(batch_id):
+                raise RepositoryError("BATCH_NOT_PERSISTED")
+            self._attest_item_rows(cursor, stored_id, audited)
+            connection.commit()
+        except RepositoryError:
+            self._rollback(connection)
+            raise
+        except Exception:
+            self._rollback(connection)
+            raise RepositoryError("DB_TRANSACTION_FAILED") from None
+        finally:
+            self._close(cursor, connection)
+
+    def attest_batch_for_acceptance(
+        self, batch_id: int, batch: ApprovalBatch
+    ) -> None:
+        self.attest_batch_for_publication(
+            batch_id,
+            batch,
+            _allowed_statuses=("published", "accepted"),
+        )
+
+    def mark_batch_published(
+        self,
+        batch_id: int,
+        spreadsheet_id: str,
+        projection_hash: str,
+    ) -> None:
+        self._update_projection_status(
+            """
+            UPDATE portal_content_approval_batches
+            SET batch_status = %s,
+                spreadsheet_file_id = %s,
+                spreadsheet_projection_hash = %s,
+                projection_kind = 'google',
+                local_projection_locator = NULL,
+                local_projection_content_hash = NULL,
+                published_at = CURRENT_TIMESTAMP(6),
+                failed_at = NULL,
+                failure_code = NULL
+            WHERE id = %s
+              AND dataset_key = %s
+              AND batch_status IN ('draft', 'failed', 'published')
+            """,
+            ("published", spreadsheet_id, projection_hash, int(batch_id), DATASET_KEY),
+        )
+
+    def mark_local_batch_published(
+        self, batch_id: int, locator: str, content_hash: str
+    ) -> None:
+        """Persist a local receipt only for the one allowed draft transition."""
+
+        self._update_projection_status(
+            """
+            UPDATE portal_content_approval_batches
+            SET batch_status = %s,
+                spreadsheet_file_id = NULL,
+                spreadsheet_projection_hash = NULL,
+                projection_kind = 'local',
+                local_projection_locator = %s,
+                local_projection_content_hash = %s,
+                published_at = CURRENT_TIMESTAMP(6),
+                failed_at = NULL,
+                failure_code = NULL
+            WHERE id = %s
+              AND dataset_key = %s
+              AND batch_status = 'draft'
+            """,
+            ("published", locator, content_hash, int(batch_id), DATASET_KEY),
+        )
+
+    def mark_batch_projection_failed(self, batch_id: int, failure_code: str) -> None:
+        self._update_projection_status(
+            """
+            UPDATE portal_content_approval_batches
+            SET batch_status = %s,
+                failed_at = CURRENT_TIMESTAMP(6),
+                failure_code = %s
+            WHERE id = %s
+              AND dataset_key = %s
+              AND batch_status IN ('draft', 'failed', 'published')
+            """,
+            ("failed", failure_code[:64], int(batch_id), DATASET_KEY),
+        )
+
+    def record_local_batch_acceptance(
+        self, batch_id: int, intent: LocalAcceptanceIntent, projection_locator: str,
+        projection_content_hash: str,
+    ) -> AcceptedBatchSnapshot:
+        """Accept a descriptor-validated owner decision without a Sheets round-trip.
+
+        Creation is intentionally performed before the accepted decision hash is
+        calculated: the derived entity id is itself part of that immutable hash.
+        """
+        connection: Connection | None = None
+        cursor: Cursor | None = None
+        try:
+            if (
+                int(batch_id) != intent.batch_id
+                or not str(projection_locator).strip()
+                or len(str(projection_content_hash)) != 64
+            ):
+                raise RepositoryError("BATCH_ACCEPTANCE_METADATA_MISMATCH")
+            connection = self._connection_factory()
+            cursor = connection.cursor()
+            cursor.execute("""
+                SELECT batch.batch_key, batch.taxonomy_version_id, batch.taxonomy_digest,
+                  taxonomy.version, taxonomy.taxonomy_digest, batch.published_input_hash,
+                  batch.batch_status, batch.spreadsheet_file_id, batch.accepted_decision_hash,
+                  batch.accepted_by, batch.accepted_at, batch.ready_count, batch.conflict_count,
+                  batch.unresolved_count, batch.rejected_count, batch.no_change_count,
+                  batch.projection_kind, batch.local_projection_locator,
+                  batch.local_projection_content_hash
+                FROM portal_content_approval_batches AS batch
+                JOIN portal_content_taxonomy_versions AS taxonomy
+                  ON taxonomy.id = batch.taxonomy_version_id AND taxonomy.dataset_key = batch.dataset_key
+                 AND taxonomy.taxonomy_status = 'active'
+                WHERE batch.id = %s AND batch.dataset_key = %s FOR UPDATE
+            """, (int(batch_id), DATASET_KEY))
+            row = cursor.fetchone()
+            if row is None or str(row[0]) != intent.batch_key or str(row[5]) != intent.published_input_hash:
+                raise RepositoryError("BATCH_NOT_PERSISTED")
+            if (
+                str(row[2]) != str(row[4])
+                or str(row[16] or "") != "local"
+                or str(row[17] or "") != str(projection_locator).strip()
+                or str(row[18] or "") != str(projection_content_hash)
+            ):
+                raise RepositoryError("LOCAL_PROJECTION_RECEIPT_MISMATCH")
+            if str(row[6]) != "published":
+                raise RepositoryError("BATCH_NOT_PUBLISHED")
+            taxonomy = self._load_taxonomy_terms(cursor, int(row[1]), str(row[3]), str(row[4]), lock=True)
+            cursor.execute("""
+                SELECT id, content_entity_id, input_hash, title, url, final_direction_code,
+                  final_material_type_code, final_access_code, final_lifecycle_code,
+                  readiness_state, row_hash, decision_reason, proposal_evidence,
+                  conflict_codes, conflict_code, selected_content_entity_id, url_alias_decision,
+                  mnn_decision_version, final_primary_mnn_key, final_primary_mnn_label,
+                  final_additional_mnn_json, mnn_decision_reason
+                FROM portal_content_approval_items WHERE approval_batch_id = %s
+                ORDER BY content_entity_id, input_hash FOR UPDATE
+            """, (int(batch_id),))
+            stored_rows = tuple(cursor.fetchall())
+            stored, counts = self._stored_acceptance_items(stored_rows, taxonomy)
+            if tuple(counts[state] for state in ("ready", "conflict", "unresolved", "rejected", "no_change")) != tuple(int(x) for x in row[11:16]):
+                raise RepositoryError("BATCH_ITEMS_MISMATCH")
+            decisions = {(d.input_hash, d.row_hash): d for d in intent.decisions}
+            if len(decisions) != len(intent.decisions) or set(decisions) != {(i.input_hash, i.row_hash) for _, i in stored}:
+                raise RepositoryError("BATCH_ITEMS_MISMATCH")
+            accepted: list[tuple[int, ApprovalItem, ApprovalItem]] = []
+            evidence_by_item_id = {
+                int(row[0]): self._decoded_json_mapping(row[12]) for row in stored_rows
+            }
+            for item_id, published in stored:
+                decision = decisions[(published.input_hash, published.row_hash)]
+                item = replace(published,
+                    final_direction_code=decision.final_direction_code,
+                    final_material_type_code=decision.final_material_type_code,
+                    final_access_code=decision.final_access_code,
+                    final_lifecycle_code=decision.final_lifecycle_code,
+                    selected_content_entity_id=decision.selected_content_entity_id,
+                    url_alias_decision=decision.url_alias_decision,
+                    decision_reason=decision.decision_reason,
+                    final_primary_mnn=decision.final_primary_mnn,
+                    final_additional_mnn=decision.final_additional_mnn,
+                    mnn_decision_reason=decision.mnn_decision_reason,
+                )
+                self._validate_local_item(
+                    item, taxonomy, evidence_by_item_id[item_id]
+                )
+                self._validate_mnn_decision(item)
+                if item.url_alias_decision == "create":
+                    entity_id = self._create_observed_entity(cursor, item, int(batch_id), item_id, intent.accepted_by)
+                    item = replace(item, selected_content_entity_id=entity_id)
+                accepted.append((item_id, published, item))
+            accepted_items = tuple(item for _, _, item in accepted)
+            accepted_hash = compute_accepted_decision_hash(accepted_items)
+            accepted_at = self._canonical_acceptance_timestamp(intent.accepted_at)
+            for item_id, published, item in accepted:
+                url_decision_fingerprint = None
+                if item.url_alias_decision is not None:
+                    url_decision_fingerprint = self._apply_url_alias_decision(
+                        cursor, item, int(batch_id), item_id, accepted_hash,
+                        intent.accepted_by,
+                        allow_local_observed=True,
+                    )
+                if item.url_alias_decision == "create":
+                    self._insert_created_classification_event(
+                        cursor, item, int(row[1]), int(batch_id), item_id,
+                        accepted_hash, intent.accepted_by, accepted_at,
+                        evidence_by_item_id[item_id],
+                        str(url_decision_fingerprint or ""),
+                    )
+                self._insert_mnn_decision_event(
+                    cursor, item, int(batch_id), item_id, accepted_hash,
+                    intent.accepted_by,
+                )
+                mutable_fields = (
+                    "final_direction_code", "final_material_type_code",
+                    "final_access_code", "final_lifecycle_code",
+                    "decision_reason", "selected_content_entity_id",
+                    "url_alias_decision",
+                    "final_primary_mnn", "final_additional_mnn",
+                    "mnn_decision_reason",
+                )
+                if all(
+                    getattr(item, field) == getattr(published, field)
+                    for field in mutable_fields
+                ):
+                    continue
+                cursor.execute("""UPDATE portal_content_approval_items SET
+                    final_direction_code=%s, final_material_type_code=%s, final_access_code=%s,
+                    final_lifecycle_code=%s, decision_reason=%s, selected_content_entity_id=%s,
+                    url_alias_decision=%s, final_primary_mnn_key=%s,
+                    final_primary_mnn_label=%s, final_additional_mnn_json=%s,
+                    mnn_decision_reason=%s
+                    WHERE id=%s AND approval_batch_id=%s AND row_hash=%s""",
+                    (item.final_direction_code, item.final_material_type_code, item.final_access_code,
+                     item.final_lifecycle_code, item.decision_reason, item.selected_content_entity_id,
+                     item.url_alias_decision, *self._mnn_db_payload(item),
+                     item_id, int(batch_id), item.row_hash))
+                if getattr(cursor, "rowcount", 1) != 1:
+                    raise RepositoryError("BATCH_ITEMS_MISMATCH")
+            accepted_count = self._accepted_item_count(accepted_items)
+            cursor.execute("""UPDATE portal_content_approval_batches SET batch_status=%s,
+                accepted_decision_hash=%s, accepted_by=%s, accepted_at=%s, accepted_count=%s,
+                skipped_count=%s WHERE id=%s AND batch_status='published'""",
+                ("accepted", accepted_hash, intent.accepted_by, accepted_at, accepted_count,
+                 len(accepted_items) - accepted_count, int(batch_id)))
+            if getattr(cursor, "rowcount", 1) != 1:
+                raise RepositoryError("BATCH_STATUS_TRANSITION_INVALID")
+            snapshot = AcceptedBatchSnapshot(intent.batch_key, intent.published_input_hash,
+                accepted_hash, accepted_items, intent.accepted_by,
+                accepted_at.isoformat(timespec="microseconds"), accepted_count,
+                len(accepted_items) - accepted_count)
+            connection.commit()
+            return snapshot
+        except RepositoryError:
+            self._rollback(connection)
+            raise
+        except Exception:
+            self._rollback(connection)
+            raise RepositoryError("DB_TRANSACTION_FAILED") from None
+        finally:
+            self._close(cursor, connection)
+
+    def record_batch_acceptance(
+        self,
+        batch_id: int,
+        snapshot: AcceptedBatchSnapshot,
+        spreadsheet_id: str,
+    ) -> None:
+        connection: Connection | None = None
+        cursor: Cursor | None = None
+        try:
+            connection = self._connection_factory()
+            cursor = connection.cursor()
+            cursor.execute(
+                """
+                SELECT
+                  batch.batch_key,
+                  batch.taxonomy_version_id,
+                  batch.taxonomy_digest,
+                  taxonomy.version,
+                  taxonomy.taxonomy_digest,
+                  batch.published_input_hash,
+                  batch.batch_status,
+                  batch.spreadsheet_file_id,
+                  batch.accepted_decision_hash,
+                  batch.accepted_by,
+                  batch.accepted_at,
+                  batch.ready_count,
+                  batch.conflict_count,
+                  batch.unresolved_count,
+                  batch.rejected_count,
+                  batch.no_change_count,
+                  batch.accepted_count,
+                  batch.skipped_count,
+                  batch.projection_kind
+                FROM portal_content_approval_batches AS batch
+                INNER JOIN portal_content_taxonomy_versions AS taxonomy
+                  ON taxonomy.id = batch.taxonomy_version_id
+                 AND taxonomy.dataset_key = batch.dataset_key
+                 AND taxonomy.taxonomy_status = %s
+                WHERE batch.id = %s
+                  AND batch.dataset_key = %s
+                FOR UPDATE
+                """,
+                ("active", int(batch_id), DATASET_KEY),
+            )
+            row = cursor.fetchone()
+            if row is None or str(row[0]) != snapshot.batch_key:
+                raise RepositoryError("BATCH_NOT_PERSISTED")
+            taxonomy_id = int(row[1])
+            batch_taxonomy_digest = str(row[2])
+            taxonomy_version = str(row[3])
+            stored_taxonomy_digest = str(row[4])
+            if batch_taxonomy_digest != stored_taxonomy_digest:
+                raise RepositoryError("TAXONOMY_CONTRACT_MISMATCH")
+            taxonomy = self._load_taxonomy_terms(
+                cursor,
+                taxonomy_id,
+                taxonomy_version,
+                stored_taxonomy_digest,
+                lock=True,
+            )
+            if str(row[5]) != snapshot.published_input_hash:
+                raise RepositoryError("BATCH_HASH_MISMATCH")
+            status = str(row[6])
+            if (
+                str(row[7]) != spreadsheet_id
+                or status not in ("published", "accepted")
+            ):
+                raise RepositoryError("BATCH_NOT_PUBLISHED")
+
+            cursor.execute(
+                """
+                SELECT
+                  id,
+                  content_entity_id,
+                  input_hash,
+                  title,
+                  url,
+                  final_direction_code,
+                  final_material_type_code,
+                  final_access_code,
+                  final_lifecycle_code,
+                  readiness_state,
+                  row_hash,
+                  decision_reason,
+                  proposal_evidence,
+                  conflict_codes,
+                  conflict_code,
+                  selected_content_entity_id,
+                  url_alias_decision,
+                  mnn_decision_version, final_primary_mnn_key,
+                  final_primary_mnn_label, final_additional_mnn_json,
+                  mnn_decision_reason
+                FROM portal_content_approval_items
+                WHERE approval_batch_id = %s
+                ORDER BY content_entity_id, input_hash
+                FOR UPDATE
+                """,
+                (int(batch_id),),
+            )
+            stored_rows = tuple(cursor.fetchall())
+            accepted_items, counts = self._validate_acceptance_snapshot(
+                snapshot,
+                stored_rows,
+                taxonomy,
+            )
+            expected_input_counts = tuple(
+                counts[state]
+                for state in ("ready", "conflict", "unresolved", "rejected", "no_change")
+            )
+            if tuple(int(value) for value in row[11:16]) != expected_input_counts:
+                raise RepositoryError("BATCH_ITEMS_MISMATCH")
+            accepted_hash = compute_accepted_decision_hash(
+                item for _approval_item_id, item in accepted_items
+            )
+            if snapshot.accepted_decision_hash != accepted_hash:
+                raise RepositoryError("ACCEPTED_HASH_MISMATCH")
+            accepted_count = counts["ready"]
+            skipped_count = len(accepted_items) - accepted_count
+            for name, expected in (
+                ("accepted_count", accepted_count),
+                ("skipped_count", skipped_count),
+            ):
+                supplied = getattr(snapshot, name, None)
+                if supplied is not None and int(supplied) != expected:
+                    raise RepositoryError("BATCH_COUNT_MISMATCH")
+            accepted_at = self._canonical_acceptance_timestamp(snapshot.accepted_at)
+            if not snapshot.accepted_by.strip():
+                raise RepositoryError("BATCH_ACCEPTANCE_METADATA_MISMATCH")
+            if status == "accepted":
+                if (
+                    str(row[8]) != accepted_hash
+                    or str(row[9]) != snapshot.accepted_by
+                    or self._canonical_acceptance_timestamp(row[10])
+                    != accepted_at
+                    or int(row[16]) != accepted_count
+                    or int(row[17]) != skipped_count
+                ):
+                    raise RepositoryError("BATCH_ACCEPTANCE_METADATA_MISMATCH")
+                connection.commit()
+                return
+            for approval_item_id, item in accepted_items:
+                if item.url_alias_decision is not None:
+                    self._apply_url_alias_decision(
+                        cursor, item, int(batch_id), approval_item_id, accepted_hash,
+                        snapshot.accepted_by,
+                    )
+                self._insert_mnn_decision_event(
+                    cursor, item, int(batch_id), approval_item_id, accepted_hash,
+                    snapshot.accepted_by,
+                )
+            for approval_item_id, item in accepted_items:
+                cursor.execute(
+                    """
+                    UPDATE portal_content_approval_items
+                    SET final_direction_code = %s,
+                        final_material_type_code = %s,
+                        final_access_code = %s,
+                        final_lifecycle_code = %s,
+                        decision_reason = %s,
+                        selected_content_entity_id = %s,
+                        url_alias_decision = %s,
+                        final_primary_mnn_key = %s,
+                        final_primary_mnn_label = %s,
+                        final_additional_mnn_json = %s,
+                        mnn_decision_reason = %s
+                    WHERE id = %s
+                      AND approval_batch_id = %s
+                      AND row_hash = %s
+                    """,
+                    (
+                        item.final_direction_code,
+                        item.final_material_type_code,
+                        item.final_access_code,
+                        item.final_lifecycle_code,
+                        item.decision_reason,
+                        item.selected_content_entity_id,
+                        item.url_alias_decision,
+                        *self._mnn_db_payload(item),
+                        approval_item_id,
+                        int(batch_id),
+                        item.row_hash,
+                    ),
+                )
+                if getattr(cursor, "rowcount", 1) not in (0, 1):
+                    raise RepositoryError("BATCH_ITEMS_MISMATCH")
+            cursor.execute(
+                """
+                UPDATE portal_content_approval_batches
+                SET batch_status = %s,
+                    accepted_decision_hash = %s,
+                    accepted_by = %s,
+                    accepted_at = %s,
+                    accepted_count = %s,
+                    skipped_count = %s
+                WHERE id = %s
+                  AND batch_status = %s
+                """,
+                (
+                    "accepted",
+                    accepted_hash,
+                    snapshot.accepted_by,
+                    accepted_at,
+                    accepted_count,
+                    skipped_count,
+                    int(batch_id),
+                    "published",
+                ),
+            )
+            if getattr(cursor, "rowcount", 1) != 1:
+                raise RepositoryError("BATCH_STATUS_TRANSITION_INVALID")
+            connection.commit()
+        except RepositoryError:
+            self._rollback(connection)
+            raise
+        except Exception:
+            self._rollback(connection)
+            raise RepositoryError("DB_TRANSACTION_FAILED") from None
+        finally:
+            self._close(cursor, connection)
+
+    def load_batch_history(self, batch_id: int) -> BatchHistoryRecord:
+        sql = """
+            SELECT
+              batch_key,
+              published_input_hash,
+              accepted_decision_hash,
+              accepted_by,
+              accepted_at,
+              ready_count,
+              conflict_count,
+              unresolved_count,
+              rejected_count,
+              no_change_count,
+              accepted_count,
+              skipped_count,
+              batch_status,
+              spreadsheet_file_id,
+              spreadsheet_projection_hash,
+              projection_kind,
+              local_projection_locator,
+              local_projection_content_hash,
+              candidate_release_id,
+              activation_status
+            FROM portal_content_approval_batches
+            WHERE id = %s
+              AND dataset_key = %s
+        """
+        rows = self._fetchall(sql, (int(batch_id), DATASET_KEY))
+        if len(rows) != 1:
+            raise RepositoryError("BATCH_NOT_PERSISTED")
+        row = rows[0]
+        return BatchHistoryRecord(
+            batch_key=str(row[0]),
+            published_input_hash=str(row[1]),
+            accepted_decision_hash=(str(row[2]) if row[2] is not None else None),
+            approver=(str(row[3]) if row[3] is not None else None),
+            accepted_at=row[4],
+            ready_count=int(row[5]),
+            conflict_count=int(row[6]),
+            unresolved_count=int(row[7]),
+            rejected_count=int(row[8]),
+            no_change_count=int(row[9]),
+            accepted_count=int(row[10]),
+            skipped_count=int(row[11]),
+            batch_status=str(row[12]),
+            spreadsheet_file_id=(str(row[13]) if row[13] is not None else None),
+            spreadsheet_projection_hash=(str(row[14]) if row[14] is not None else None),
+            projection_kind=(str(row[15]) if len(row) > 15 and row[15] is not None else None),
+            local_projection_locator=(str(row[16]) if len(row) > 16 and row[16] is not None else None),
+            local_projection_content_hash=(str(row[17]) if len(row) > 17 and row[17] is not None else None),
+            candidate_release_id=(
+                int(row[18])
+                if len(row) > 18 and row[18] is not None
+                else (
+                    int(row[15])
+                    if len(row) <= 18 and row[15] is not None
+                    else None
+                )
+            ),
+            activation_status=(str(row[19]) if len(row) > 19 else str(row[16])),
+        )
+
+    def _update_projection_status(self, sql: str, params: tuple[object, ...]) -> None:
+        connection: Connection | None = None
+        cursor: Cursor | None = None
+        try:
+            connection = self._connection_factory()
+            cursor = connection.cursor()
+            cursor.execute(sql, params)
+            rowcount = getattr(cursor, "rowcount", 1)
+            if rowcount != 1:
+                raise RepositoryError("BATCH_STATUS_TRANSITION_INVALID")
+            connection.commit()
+        except RepositoryError:
+            self._rollback(connection)
+            raise
+        except Exception:
+            self._rollback(connection)
+            raise RepositoryError("DB_TRANSACTION_FAILED") from None
+        finally:
+            self._close(cursor, connection)
+
+    def create_batch(self, batch: ApprovalBatch) -> int:
+        """Compatibility alias for the atomic draft persistence boundary."""
+
+        return self.persist_draft_batch(batch)
+
+    def insert_items(
+        self,
+        batch_id: int,
+        items: Sequence[ApprovalItem],
+    ) -> None:
+        connection: Connection | None = None
+        cursor: Cursor | None = None
+        try:
+            connection = self._connection_factory()
+            cursor = connection.cursor()
+            for item in items:
+                self._ensure_item(cursor, batch_id, item)
+            connection.commit()
+        except RepositoryError:
+            self._rollback(connection)
+            raise
+        except Exception:
+            self._rollback(connection)
+            raise RepositoryError("DB_TRANSACTION_FAILED") from None
+        finally:
+            self._close(cursor, connection)
+
+    def ingest_accepted_snapshot(
+        self,
+        snapshot: AcceptedBatchSnapshot,
+    ) -> IngestResult:
+        connection: Connection | None = None
+        cursor: Cursor | None = None
+        try:
+            connection = self._connection_factory()
+            cursor = connection.cursor()
+            cursor.execute(
+                """
+                SELECT
+                  batch.id,
+                  batch.batch_key,
+                  batch.taxonomy_version_id,
+                  batch.taxonomy_digest,
+                  taxonomy.version,
+                  taxonomy.taxonomy_digest,
+                  batch.published_input_hash,
+                  batch.accepted_decision_hash,
+                  batch.batch_status,
+                  batch.accepted_by,
+                  batch.accepted_at,
+                  batch.ready_count,
+                  batch.conflict_count,
+                  batch.unresolved_count,
+                  batch.rejected_count,
+                  batch.no_change_count,
+                  batch.accepted_count,
+                  batch.skipped_count,
+                  batch.source_snapshot_ids,
+                  batch.source_snapshot_digests,
+                  batch.prompt_version,
+                  batch.model_routing_version,
+                  batch.projection_kind
+                FROM portal_content_approval_batches AS batch
+                INNER JOIN portal_content_taxonomy_versions AS taxonomy
+                  ON taxonomy.id = batch.taxonomy_version_id
+                 AND taxonomy.dataset_key = batch.dataset_key
+                 AND (
+                   taxonomy.taxonomy_status = %s
+                   OR batch.batch_status = 'ingested'
+                 )
+                WHERE batch.dataset_key = %s
+                  AND batch.batch_key = %s
+                FOR UPDATE
+                """,
+                ("active", DATASET_KEY, snapshot.batch_key),
+            )
+            batch_row = cursor.fetchone()
+            if batch_row is None:
+                raise RepositoryError("BATCH_NOT_ACCEPTED")
+
+            batch_id = int(batch_row[0])
+            if str(batch_row[1]) != snapshot.batch_key:
+                raise RepositoryError("BATCH_NOT_ACCEPTED")
+            taxonomy_version_id = int(batch_row[2])
+            if str(batch_row[3]) != str(batch_row[5]):
+                raise RepositoryError("TAXONOMY_CONTRACT_MISMATCH")
+            published_input_hash = str(batch_row[6])
+            stored_accepted_hash = str(batch_row[7] or "")
+            batch_status = str(batch_row[8])
+            stored_accepted_by = str(batch_row[9] or "")
+            stored_accepted_at = batch_row[10]
+            taxonomy = self._load_taxonomy_terms(
+                cursor,
+                taxonomy_version_id,
+                str(batch_row[4]),
+                str(batch_row[5]),
+                lock=True,
+                include_retired=batch_status == "ingested",
+            )
+
+            if (
+                not snapshot.accepted_decision_hash
+                or not snapshot.accepted_by.strip()
+                or not snapshot.accepted_at
+                or not stored_accepted_by.strip()
+            ):
+                raise RepositoryError("BATCH_NOT_ACCEPTED")
+            if published_input_hash != snapshot.published_input_hash:
+                raise RepositoryError("BATCH_HASH_MISMATCH")
+            if batch_status not in ("accepted", "ingested"):
+                raise RepositoryError("BATCH_NOT_ACCEPTED")
+            if stored_accepted_by != snapshot.accepted_by:
+                raise RepositoryError("BATCH_ACCEPTANCE_METADATA_MISMATCH")
+            accepted_at = self._canonical_acceptance_timestamp(stored_accepted_at)
+            if accepted_at != self._canonical_acceptance_timestamp(snapshot.accepted_at):
+                raise RepositoryError("BATCH_ACCEPTANCE_METADATA_MISMATCH")
+
+            cursor.execute(
+                """
+                SELECT
+                  id,
+                  content_entity_id,
+                  input_hash,
+                  title,
+                  url,
+                  final_direction_code,
+                  final_material_type_code,
+                  final_access_code,
+                  final_lifecycle_code,
+                  readiness_state,
+                  row_hash,
+                  decision_reason,
+                  proposal_evidence,
+                  conflict_codes,
+                  conflict_code,
+                  selected_content_entity_id,
+                  url_alias_decision,
+                  mnn_decision_version, final_primary_mnn_key,
+                  final_primary_mnn_label, final_additional_mnn_json,
+                  mnn_decision_reason
+                FROM portal_content_approval_items
+                WHERE approval_batch_id = %s
+                ORDER BY content_entity_id, input_hash
+                FOR UPDATE
+                """,
+                (batch_id,),
+            )
+            stored_rows = tuple(cursor.fetchall())
+            evidence_by_item_id, published_items = self._attest_published_items(
+                stored_rows,
+                taxonomy=taxonomy,
+                taxonomy_digest=str(batch_row[5]),
+                source_snapshot_ids=self._decoded_json_tuple(batch_row[18]),
+                source_snapshot_digests=self._decoded_json_tuple(batch_row[19]),
+                prompt_version=str(batch_row[20]),
+                model_routing_version=str(batch_row[21]),
+            )
+            if compute_batch_hash(published_items) != published_input_hash:
+                raise RepositoryError("BATCH_HASH_MISMATCH")
+            stored_items, counts = self._stored_acceptance_items(
+                stored_rows,
+                taxonomy,
+            )
+            expected_input_counts = tuple(
+                counts[state]
+                for state in ("ready", "conflict", "unresolved", "rejected", "no_change")
+            )
+            if tuple(int(value) for value in batch_row[11:16]) != expected_input_counts:
+                raise RepositoryError("BATCH_ITEMS_MISMATCH")
+            accepted_count = self._accepted_item_count(
+                tuple(item for _approval_item_id, item in stored_items)
+            )
+            skipped_count = len(stored_items) - accepted_count
+            if (
+                int(batch_row[16]) != accepted_count
+                or int(batch_row[17]) != skipped_count
+            ):
+                raise RepositoryError("BATCH_COUNT_MISMATCH")
+            canonical_items = tuple(item for _approval_item_id, item in stored_items)
+            recomputed_hash = compute_accepted_decision_hash(canonical_items)
+            if stored_accepted_hash != recomputed_hash:
+                raise RepositoryError("BATCH_HASH_MISMATCH")
+            supplied_items, _supplied_counts = self._validate_acceptance_snapshot(
+                snapshot,
+                stored_rows,
+                taxonomy,
+                allow_local_observed=(
+                    len(batch_row) > 22 and str(batch_row[22] or "") == "local"
+                ),
+            )
+            supplied_hash = compute_accepted_decision_hash(
+                item for _approval_item_id, item in supplied_items
+            )
+            if (
+                snapshot.accepted_decision_hash != stored_accepted_hash
+                or supplied_hash != stored_accepted_hash
+            ):
+                raise RepositoryError("BATCH_HASH_MISMATCH")
+            for name, expected in (
+                ("accepted_count", accepted_count),
+                ("skipped_count", skipped_count),
+            ):
+                supplied = getattr(snapshot, name, None)
+                if supplied is not None and int(supplied) != expected:
+                    raise RepositoryError("BATCH_COUNT_MISMATCH")
+            already_ingested = batch_status == "ingested"
+            local_projection = (
+                len(batch_row) > 22 and str(batch_row[22] or "") == "local"
+            )
+
+            for approval_item_id, item in stored_items:
+                proposal_evidence = evidence_by_item_id[approval_item_id]
+                current_canonical = (
+                    proposal_evidence.get("current_canonical")
+                    if isinstance(proposal_evidence, Mapping)
+                    else None
+                )
+                try:
+                    current_entity_id = int(
+                        current_canonical.get("content_entity_id") or 0
+                    ) if isinstance(current_canonical, Mapping) else 0
+                except (TypeError, ValueError):
+                    current_entity_id = 0
+                current_values = tuple(
+                    current_canonical.get(key)
+                    for key in (
+                        "direction_code",
+                        "material_type_code",
+                        "access_code",
+                        "lifecycle_code",
+                    )
+                ) if isinstance(current_canonical, Mapping) else None
+                final_values = (
+                    item.final_direction_code,
+                    item.final_material_type_code,
+                    item.final_access_code,
+                    item.final_lifecycle_code,
+                )
+                reviewed_baseline_attach = (
+                    local_projection
+                    and item.decision_reason is not None
+                    and bool(item.decision_reason.strip())
+                    and item.url_alias_decision == "attach"
+                    and item.content_entity_id is not None
+                    and item.selected_content_entity_id == item.content_entity_id
+                    and isinstance(current_canonical, Mapping)
+                    and current_entity_id == item.content_entity_id
+                    and current_canonical.get("event_id") in (None, 0)
+                )
+                registry1_evidence = (
+                    proposal_evidence.get("registry1")
+                    if isinstance(proposal_evidence, Mapping)
+                    else None
+                )
+                reviewed_selected_attach = (
+                    local_projection
+                    and item.content_entity_id is None
+                    and item.selected_content_entity_id is not None
+                    and int(item.selected_content_entity_id) > 0
+                    and item.url_alias_decision == "attach"
+                    and item.decision_reason is not None
+                    and bool(item.decision_reason.strip())
+                    and all(value is not None for value in final_values)
+                    and isinstance(registry1_evidence, Mapping)
+                    and registry1_evidence.get("source_name") == "observed_page"
+                )
+                classification_entity_id = (
+                    int(item.selected_content_entity_id)
+                    if reviewed_selected_attach
+                    else item.content_entity_id
+                )
+                reviewed_local_classification = (
+                    local_projection
+                    and item.content_entity_id is not None
+                    and current_entity_id == item.content_entity_id
+                    and item.decision_reason is not None
+                    and bool(item.decision_reason.strip())
+                    and all(value is not None for value in final_values)
+                    and current_values != final_values
+                )
+                if (
+                    already_ingested
+                    and not reviewed_baseline_attach
+                    and not reviewed_selected_attach
+                ):
+                    continue
+                if (
+                    item.readiness_state != "ready"
+                    and not reviewed_baseline_attach
+                    and not reviewed_selected_attach
+                    and not reviewed_local_classification
+                ):
+                    continue
+                if (
+                    classification_entity_id is None
+                    or item.final_lifecycle_code is None
+                ):
+                    raise RepositoryError("BATCH_NOT_ACCEPTED")
+
+                # Serialize successor derivation across different approval batches.
+                # The approval-item foreign key already guarantees this row exists.
+                cursor.execute(
+                    """
+                    SELECT id
+                    FROM portal_content_registry_entities
+                    WHERE id = %s
+                      AND dataset_key = %s
+                    FOR UPDATE
+                    """,
+                    (classification_entity_id, DATASET_KEY),
+                )
+                entity_row = cursor.fetchone()
+                if (
+                    entity_row is None
+                    or int(entity_row[0]) != classification_entity_id
+                ):
+                    raise RepositoryError("CONTENT_ENTITY_NOT_ABBOTT")
+                active_classification = self._load_active_catalog_classification(
+                    cursor, classification_entity_id
+                )
+                predecessor_event_id = (
+                    active_classification.event_id
+                    if active_classification is not None
+                    else None
+                )
+                predecessor_values = (
+                    active_classification.values
+                    if active_classification is not None
+                    else None
+                )
+                event_values = (
+                    item.final_direction_code,
+                    item.final_material_type_code,
+                    item.final_access_code,
+                    item.final_lifecycle_code,
+                )
+                if predecessor_values is not None and predecessor_values == event_values:
+                    continue
+                reviewed_active_catalog_correction = (
+                    local_projection
+                    and item.readiness_state == "ready"
+                    and item.url_alias_decision is None
+                    and item.content_entity_id is not None
+                    and classification_entity_id == item.content_entity_id
+                    and active_classification is not None
+                    and item.decision_reason is not None
+                    and bool(item.decision_reason.strip())
+                    and all(value is not None for value in event_values)
+                )
+                if active_classification is not None:
+                    if active_classification.effective_at is None:
+                        raise RepositoryError("SUCCESSOR_EFFECTIVE_AT_INVALID")
+                    predecessor_effective_at = self._canonical_event_timestamp(
+                        active_classification.effective_at
+                    )
+                    if accepted_at < predecessor_effective_at:
+                        raise RepositoryError("SUCCESSOR_EFFECTIVE_AT_INVALID")
+
+                event_kind = "approve"
+                reason = item.decision_reason.strip() if item.decision_reason else None
+                actor = stored_accepted_by.strip()
+                if reviewed_baseline_attach and predecessor_event_id is None:
+                    current = (
+                        proposal_evidence.get("current_canonical")
+                        if isinstance(proposal_evidence, Mapping)
+                        else None
+                    )
+                    try:
+                        baseline_values = tuple(
+                            current[key]
+                            for key in (
+                                "direction_code",
+                                "material_type_code",
+                                "access_code",
+                                "lifecycle_code",
+                            )
+                        )
+                        baseline_entity_id = int(current["content_entity_id"])
+                        baseline_event_id = current.get("event_id")
+                    except (KeyError, TypeError, ValueError):
+                        raise RepositoryError("CORRECTION_AUDIT_REQUIRED") from None
+                    if (
+                        baseline_entity_id != item.content_entity_id
+                        or baseline_event_id not in (None, 0)
+                    ):
+                        raise RepositoryError("CORRECTION_PREDECESSOR_MISMATCH")
+                elif reviewed_selected_attach:
+                    if predecessor_event_id is not None:
+                        raise RepositoryError("CORRECTION_AUDIT_REQUIRED")
+                elif reviewed_active_catalog_correction:
+                    # Historical local projections may omit or retain a stale
+                    # current_canonical predecessor.
+                    # The immutable published entity id and the locked active-release
+                    # catalog row provide the predecessor authority for replay.
+                    pass
+                else:
+                    self._attest_reviewed_predecessor(
+                        proposal_evidence,
+                        classification_entity_id,
+                        predecessor_event_id,
+                        predecessor_values,
+                    )
+                if (
+                    predecessor_values is not None
+                    and predecessor_values[0]
+                    and predecessor_values[0] != item.final_direction_code
+                ):
+                    if not reason:
+                        raise RepositoryError("CORRECTION_REASON_REQUIRED")
+                    if not actor or predecessor_event_id is None:
+                        raise RepositoryError("CORRECTION_AUDIT_REQUIRED")
+                    event_kind = "correct"
+
+                if (
+                    item.final_lifecycle_code == "archive_candidate"
+                    and (
+                        predecessor_values is None
+                        or predecessor_values[3] != "archive_candidate"
+                    )
+                    and not self._archive_evidence_authorized(proposal_evidence)
+                ):
+                    raise RepositoryError("ARCHIVE_EVIDENCE_REQUIRED")
+
+                event_evidence = {
+                    "accepted_decision_hash": stored_accepted_hash,
+                    "approval_item_evidence": proposal_evidence,
+                    "row_hash": item.row_hash,
+                }
+                event_fingerprint = compute_classification_event_fingerprint(
+                    {
+                        "access_code": item.final_access_code,
+                        "actor": actor,
+                        "approval_batch_id": batch_id,
+                        "approval_item_id": approval_item_id,
+                        "content_entity_id": classification_entity_id,
+                        "direction_code": item.final_direction_code,
+                        "effective_at": accepted_at.isoformat(timespec="microseconds"),
+                        "event_kind": event_kind,
+                        "lifecycle_code": item.final_lifecycle_code,
+                        "material_type_code": item.final_material_type_code,
+                        "predecessor_event_id": predecessor_event_id,
+                        "proposal_evidence": event_evidence,
+                        "reason": reason,
+                        "taxonomy_version_id": taxonomy_version_id,
+                    }
+                )
+                cursor.execute(
+                    """
+                    INSERT INTO portal_content_classification_events (
+                      content_entity_id,
+                      taxonomy_version_id,
+                      approval_batch_id,
+                      approval_item_id,
+                      predecessor_event_id,
+                      direction_code,
+                      material_type_code,
+                      access_code,
+                      lifecycle_code,
+                      event_kind,
+                      event_fingerprint,
+                      proposal_evidence,
+                      actor,
+                      reason,
+                      effective_at
+                    ) VALUES (
+                      %s, %s, %s, %s, %s,
+                      %s, %s, %s, %s, %s,
+                      %s, %s, %s, %s, %s
+                    )
+                    """,
+                    (
+                        classification_entity_id,
+                        taxonomy_version_id,
+                        batch_id,
+                        approval_item_id,
+                        predecessor_event_id,
+                        item.final_direction_code,
+                        item.final_material_type_code,
+                        item.final_access_code,
+                        item.final_lifecycle_code,
+                        event_kind,
+                        event_fingerprint,
+                        self._json(event_evidence),
+                        actor,
+                        reason,
+                        accepted_at,
+                    ),
+                )
+
+            if already_ingested:
+                connection.commit()
+                return IngestResult(
+                    status="noop",
+                    accepted_count=accepted_count,
+                    conflict_count=counts["conflict"],
+                    unresolved_count=counts["unresolved"],
+                    rejected_count=counts["rejected"],
+                )
+
+            cursor.execute(
+                """
+                UPDATE portal_content_approval_batches
+                SET batch_status = %s,
+                    ingested_at = CURRENT_TIMESTAMP(6)
+                WHERE id = %s
+                """,
+                (
+                    "ingested",
+                    batch_id,
+                ),
+            )
+            if getattr(cursor, "rowcount", 1) != 1:
+                raise RepositoryError("BATCH_STATUS_TRANSITION_INVALID")
+            connection.commit()
+            return IngestResult(
+                status="ingested",
+                accepted_count=accepted_count,
+                conflict_count=counts["conflict"],
+                unresolved_count=counts["unresolved"],
+                rejected_count=counts["rejected"],
+            )
+        except RepositoryError:
+            self._rollback(connection)
+            raise
+        except Exception:
+            self._rollback(connection)
+            raise RepositoryError("DB_TRANSACTION_FAILED") from None
+        finally:
+            self._close(cursor, connection)
+
+    @staticmethod
+    def _load_active_catalog_classification(
+        cursor: Cursor,
+        content_entity_id: int,
+    ) -> ActiveCatalogClassification | None:
+        cursor.execute(
+            """
+            SELECT active.canonical_release_id
+            FROM portal_active_data_releases AS active
+            INNER JOIN portal_data_releases AS release_row
+              ON release_row.id = active.canonical_release_id
+             AND release_row.dataset_key = active.dataset_key
+             AND release_row.release_status = 'active'
+            WHERE active.dataset_key = %s
+            FOR UPDATE
+            """,
+            (DATASET_KEY,),
+        )
+        active_row = cursor.fetchone()
+        if active_row is None or int(active_row[0] or 0) <= 0:
+            raise RepositoryError("ACTIVE_PREDECESSOR_NOT_FOUND")
+        release_id = int(active_row[0])
+        cursor.execute(
+            """
+            SELECT content_entity_id, classification_event_id,
+                   classification_event_fingerprint,
+                   projection_provenance_json
+            FROM portal_content_catalog
+            WHERE canonical_release_id = %s
+              AND content_entity_id = %s
+            ORDER BY id
+            FOR UPDATE
+            """,
+            (release_id, int(content_entity_id)),
+        )
+        rows = tuple(cursor.fetchall())
+        if not rows:
+            return None
+        authorities: set[
+            tuple[int, int | None, str | None, tuple[str | None, ...]]
+        ] = set()
+        for row in rows:
+            try:
+                entity_id = int(row[0])
+                event_id = int(row[1]) if row[1] is not None else None
+                event_fingerprint = (
+                    str(row[2]).lower() if row[2] is not None else None
+                )
+                provenance = (
+                    json.loads(row[3]) if isinstance(row[3], str) else row[3]
+                )
+                codes = provenance["canonical_codes"]
+                values = tuple(
+                    str(codes[name]) if codes.get(name) is not None else None
+                    for name in (
+                        "direction", "material_type", "access", "lifecycle"
+                    )
+                )
+            except (AttributeError, KeyError, TypeError, ValueError):
+                raise RepositoryError("ACTIVE_CATALOG_AUTHORITY_MISMATCH") from None
+            if (
+                entity_id != int(content_entity_id)
+                or bool(event_id) != bool(event_fingerprint)
+                or (
+                    event_fingerprint is not None
+                    and (
+                        len(event_fingerprint) != 64
+                        or any(
+                            character not in "0123456789abcdef"
+                            for character in event_fingerprint
+                        )
+                    )
+                )
+                or any(value is None or not value.strip() for value in values)
+            ):
+                raise RepositoryError("ACTIVE_CATALOG_AUTHORITY_MISMATCH")
+            authorities.add((entity_id, event_id, event_fingerprint, values))
+        if len(authorities) != 1:
+            raise RepositoryError("ACTIVE_CATALOG_AUTHORITY_MISMATCH")
+        entity_id, event_id, event_fingerprint, values = next(iter(authorities))
+        if event_id is None:
+            return ActiveCatalogClassification(
+                release_id=release_id,
+                content_entity_id=entity_id,
+                event_id=None,
+                event_fingerprint=None,
+                values=values,
+            )
+        cursor.execute(
+            """
+            SELECT id, content_entity_id, direction_code, material_type_code,
+                   access_code, lifecycle_code, event_fingerprint, effective_at
+            FROM portal_content_classification_events
+            WHERE id = %s
+            FOR UPDATE
+            """,
+            (event_id,),
+        )
+        event_row = cursor.fetchone()
+        if event_row is None:
+            raise RepositoryError("ACTIVE_CATALOG_AUTHORITY_MISMATCH")
+        stored_values = tuple(
+            str(value) if value is not None else None for value in event_row[2:6]
+        )
+        if (
+            int(event_row[0]) != event_id
+            or int(event_row[1]) != entity_id
+            or stored_values != values
+            or str(event_row[6]).lower() != event_fingerprint
+        ):
+            raise RepositoryError("ACTIVE_CATALOG_AUTHORITY_MISMATCH")
+        return ActiveCatalogClassification(
+            release_id=release_id,
+            content_entity_id=entity_id,
+            event_id=event_id,
+            event_fingerprint=event_fingerprint,
+            values=values,
+            effective_at=event_row[7],
+        )
+
+    @staticmethod
+    def _validate_local_item(
+        item: ApprovalItem,
+        taxonomy: TaxonomyVersion,
+        evidence: Mapping[str, object],
+        *,
+        accepted_create: bool = False,
+    ) -> None:
+        """Validate only mutable local decisions; published identity is immutable."""
+        for kind, field in (
+            ("direction", "final_direction_code"), ("material_type", "final_material_type_code"),
+            ("access", "final_access_code"), ("lifecycle", "final_lifecycle_code"),
+        ):
+            value = getattr(item, field)
+            if value is not None and value not in taxonomy.terms[kind]:
+                raise RepositoryError("TAXONOMY_CONTRACT_MISMATCH")
+        if item.readiness_state == "ready" and (not item.final_direction_code or not item.final_material_type_code):
+            raise RepositoryError("READY_CLASSIFICATION_INCOMPLETE")
+        if item.url_alias_decision == "create":
+            if (
+                item.content_entity_id is not None
+                or (
+                    accepted_create
+                    and (
+                        item.selected_content_entity_id is None
+                        or item.selected_content_entity_id <= 0
+                    )
+                )
+                or (
+                    not accepted_create
+                    and item.selected_content_entity_id is not None
+                )
+            ):
+                raise RepositoryError("URL_ALIAS_DECISION_INVALID")
+            if (not str(item.decision_reason or "").strip()
+                    or any(not getattr(item, field) for field in (
+                        "final_direction_code", "final_material_type_code",
+                        "final_access_code", "final_lifecycle_code",
+                    ))):
+                raise RepositoryError("IDENTITY_COLLISION_DECISION_REQUIRED")
+            ContentRegistryRepository._validate_local_create_evidence(
+                item,
+                evidence,
+                allow_current=item.url_alias_decision == "reject",
+            )
+            return
+        if (
+            item.url_alias_decision is None
+            and item.selected_content_entity_id is None
+        ):
+            return
+        collision = any(
+            getattr(code, "value", str(code)) == "IDENTITY_COLLISION"
+            for code in item.conflict_codes
+        )
+        if (
+            not collision
+            and item.url_alias_decision in {"attach", "reject"}
+        ):
+            same_entity_attach = (
+                item.url_alias_decision == "attach"
+                and item.content_entity_id is not None
+                and item.selected_content_entity_id == item.content_entity_id
+            )
+            ContentRegistryRepository._validate_local_create_evidence(
+                item,
+                evidence,
+                allow_current=(
+                    item.url_alias_decision == "reject" or same_entity_attach
+                ),
+            )
+            if (
+                not str(item.decision_reason or "").strip()
+                or (
+                    item.url_alias_decision == "attach"
+                    and (
+                        item.selected_content_entity_id is None
+                        or item.selected_content_entity_id <= 0
+                    )
+                )
+                or (
+                    item.url_alias_decision == "reject"
+                    and item.selected_content_entity_id is not None
+                )
+            ):
+                raise RepositoryError("IDENTITY_COLLISION_DECISION_REQUIRED")
+            return
+        ContentRegistryRepository._validate_url_alias_decision(item)
+
+    @staticmethod
+    def _validate_local_create_evidence(
+        item: ApprovalItem,
+        evidence: Mapping[str, object],
+        *,
+        allow_current: bool = False,
+    ) -> None:
+        registry1 = evidence.get("registry1") if isinstance(evidence, Mapping) else None
+        if (
+            (
+                not allow_current
+                and (
+                    item.content_entity_id is not None
+                    or evidence.get("current_canonical") is not None
+                )
+            )
+            or not isinstance(registry1, Mapping)
+            or registry1.get("source_name") != "observed_page"
+        ):
+            raise RepositoryError("CREATE_SOURCE_NOT_OBSERVED")
+
+    @staticmethod
+    def _require_query_free_abbott_url(raw_url: str, normalized: object) -> None:
+        raw = urlsplit(raw_url)
+        value = getattr(normalized, "value", "")
+        parsed = urlsplit(value)
+        if (raw.query or raw.fragment or raw.scheme.casefold() not in {"http", "https"} or
+                (raw.hostname or "").casefold() not in {"abbottpro.ru", "www.abbottpro.ru"} or
+                not value or parsed.query or parsed.fragment):
+            raise RepositoryError("IDENTITY_COLLISION")
+
+    @staticmethod
+    def _create_observed_entity(
+        cursor: Cursor, item: ApprovalItem, batch_id: int, approval_item_id: int, actor: str,
+    ) -> int:
+        normalized = normalize_observed_page_grouping_url(item.url)
+        ContentRegistryRepository._require_query_free_abbott_url(item.url, normalized)
+        # Gap locks make the absence check race-safe under InnoDB's normal isolation.
+        cursor.execute("""SELECT id FROM portal_content_registry_entities
+            WHERE dataset_key=%s AND canonical_url=%s FOR UPDATE""", (DATASET_KEY, normalized.value))
+        if cursor.fetchone() is not None:
+            raise RepositoryError("IDENTITY_COLLISION")
+        cursor.execute("""SELECT id, content_entity_id, alias_type, alias_status
+            FROM portal_content_registry_aliases WHERE dataset_key=%s
+              AND alias_hash=%s AND alias_type IN ('canonical_url','url')
+              AND uniqueness_scope='strong' FOR UPDATE""", (DATASET_KEY, normalized.sha256))
+        if any(str(row[3]) == "active" for row in cursor.fetchall()):
+            raise RepositoryError("IDENTITY_COLLISION")
+        evidence = ContentRegistryRepository._json({
+            "authority": "local_observed_page_acceptance", "approval_batch_id": batch_id,
+            "approval_item_id": approval_item_id, "actor": actor, "row_hash": item.row_hash,
+            "provenance": [{"source_sheet": "local_observed_page",
+                "source_row_ordinal": approval_item_id,
+                "source_row_fingerprint": item.row_hash,
+                "canonical_url": normalized.value, "page_title": item.title}],
+        })
+        cursor.execute("""INSERT INTO portal_content_registry_entities
+            (dataset_key, material_id, title, canonical_url, registry_status, source_evidence)
+            VALUES (%s, NULL, %s, %s, 'active', %s)""",
+            (DATASET_KEY, item.title, normalized.value, evidence))
+        entity_id = int(cursor.lastrowid)
+        if entity_id <= 0:
+            raise RepositoryError("IDENTITY_COLLISION")
+        for alias_type in ("canonical_url", "url"):
+            cursor.execute("""INSERT INTO portal_content_registry_aliases
+                (dataset_key, content_entity_id, alias_type, alias_value, alias_hash,
+                 uniqueness_scope, alias_status, source_evidence)
+                VALUES (%s,%s,%s,%s,%s,'strong','active',%s)""",
+                (DATASET_KEY, entity_id, alias_type, normalized.value, normalized.sha256, evidence))
+        return entity_id
+
+    @staticmethod
+    def _insert_created_classification_event(
+        cursor: Cursor, item: ApprovalItem, taxonomy_id: int, batch_id: int,
+        item_id: int, accepted_hash: str, actor: str, accepted_at: datetime,
+        approval_item_evidence: Mapping[str, object],
+        url_decision_event_fingerprint: str,
+    ) -> None:
+        normalized = normalize_observed_page_grouping_url(item.url)
+        evidence = {
+            "accepted_decision_hash": accepted_hash,
+            "approval_item_evidence": approval_item_evidence,
+            "canonical_classification": {
+                "access_code": item.final_access_code,
+                "direction_code": item.final_direction_code,
+                "lifecycle_code": item.final_lifecycle_code,
+                "material_type_code": item.final_material_type_code,
+            },
+            "created_identity": {
+                "alias_hash": normalized.sha256,
+                "normalized_url": normalized.value,
+                "selected_content_entity_id": item.selected_content_entity_id,
+                "url_alias_decision": "create",
+                "url_decision_event_fingerprint": url_decision_event_fingerprint,
+            },
+            "row_hash": item.row_hash,
+        }
+        payload = {"content_entity_id": item.selected_content_entity_id, "taxonomy_version_id": taxonomy_id,
+            "approval_batch_id": batch_id, "approval_item_id": item_id, "predecessor_event_id": None,
+            "direction_code": item.final_direction_code, "material_type_code": item.final_material_type_code,
+            "access_code": item.final_access_code, "lifecycle_code": item.final_lifecycle_code,
+            "event_kind": "approve", "actor": actor, "reason": item.decision_reason,
+            "effective_at": accepted_at.isoformat(timespec="microseconds"), "proposal_evidence": evidence}
+        cursor.execute("""INSERT INTO portal_content_classification_events
+            (content_entity_id,taxonomy_version_id,approval_batch_id,approval_item_id,
+             predecessor_event_id,direction_code,material_type_code,access_code,lifecycle_code,
+             event_kind,event_fingerprint,proposal_evidence,actor,reason,effective_at)
+            VALUES (%s,%s,%s,%s,NULL,%s,%s,%s,%s,'approve',%s,%s,%s,%s,%s)""",
+            (item.selected_content_entity_id, taxonomy_id, batch_id, item_id,
+             item.final_direction_code, item.final_material_type_code, item.final_access_code,
+             item.final_lifecycle_code, compute_classification_event_fingerprint(payload),
+             ContentRegistryRepository._json(evidence), actor, item.decision_reason, accepted_at))
+
+    @staticmethod
+    def _apply_url_alias_decision(
+        cursor: Cursor,
+        item: ApprovalItem,
+        batch_id: int,
+        approval_item_id: int,
+        accepted_hash: str,
+        actor: str,
+        *,
+        allow_local_observed: bool = False,
+    ) -> str:
+        """Lock and mutate one reviewed strong URL identity, fail-closed on races."""
+        if (
+            allow_local_observed
+            and item.url_alias_decision in {"attach", "reject", "create"}
+        ):
+            if (
+                not str(item.decision_reason or "").strip()
+                or (
+                    item.url_alias_decision in {"attach", "create"}
+                    and (
+                        item.selected_content_entity_id is None
+                        or item.selected_content_entity_id <= 0
+                    )
+                )
+                or (
+                    item.url_alias_decision == "reject"
+                    and item.selected_content_entity_id is not None
+                )
+            ):
+                raise RepositoryError("IDENTITY_COLLISION_DECISION_REQUIRED")
+        else:
+            ContentRegistryRepository._validate_url_alias_decision(item)
+        decision = item.url_alias_decision
+        normalized_url = (
+            normalize_observed_page_grouping_url(item.url)
+            if decision == "create"
+            else normalize_url(item.url)
+        )
+        if not normalized_url.value:
+            raise RepositoryError("IDENTITY_COLLISION")
+        alias_hash = normalized_url.sha256
+        predecessor = (None, None)
+        if decision == "attach":
+            cursor.execute(
+                """SELECT id FROM portal_content_registry_entities
+                   WHERE id = %s AND dataset_key = %s AND registry_status = 'active'
+                   FOR UPDATE""",
+                (item.selected_content_entity_id, DATASET_KEY),
+            )
+            entity = cursor.fetchone()
+            if entity is None or int(entity[0]) != item.selected_content_entity_id:
+                raise RepositoryError("IDENTITY_COLLISION")
+            cursor.execute(
+                """SELECT id, event_fingerprint
+                   FROM portal_content_classification_events
+                   WHERE content_entity_id = %s
+                   ORDER BY effective_at DESC, id DESC LIMIT 1 FOR UPDATE""",
+                (item.selected_content_entity_id,),
+            )
+            locked_event = cursor.fetchone()
+            predecessor = (
+                int(locked_event[0]) if locked_event is not None else None,
+                str(locked_event[1]) if locked_event is not None else None,
+            )
+        rows: tuple[Sequence[object], ...] = ()
+        url_active: list[Sequence[object]] = []
+        if decision != "reject":
+            cursor.execute(
+                """SELECT id, content_entity_id, alias_type, alias_status
+                   FROM portal_content_registry_aliases
+                   WHERE dataset_key = %s AND alias_type IN ('canonical_url', 'url')
+                     AND alias_hash = %s AND uniqueness_scope = 'strong'
+                   FOR UPDATE""",
+                (DATASET_KEY, alias_hash),
+            )
+            rows = tuple(cursor.fetchall())
+            active = [row for row in rows if str(row[3]) == "active"]
+            if any(
+                decision == "attach" and int(row[1]) != item.selected_content_entity_id
+                for row in active
+            ):
+                raise RepositoryError("IDENTITY_COLLISION")
+            url_active = [row for row in active if str(row[2]) == "url"]
+            if len(url_active) > 1:
+                raise RepositoryError("IDENTITY_COLLISION")
+            if decision == "retire" and len(url_active) != 1:
+                raise RepositoryError("IDENTITY_COLLISION")
+            if decision == "retire":
+                cursor.execute(
+                    """SELECT id, event_fingerprint
+                       FROM portal_content_classification_events
+                       WHERE content_entity_id = %s
+                       ORDER BY effective_at DESC, id DESC LIMIT 1 FOR UPDATE""",
+                    (int(url_active[0][1]),),
+                )
+                locked_event = cursor.fetchone()
+                predecessor = (
+                    int(locked_event[0]) if locked_event is not None else None,
+                    str(locked_event[1]) if locked_event is not None else None,
+                )
+        evidence = ContentRegistryRepository._json(
+            {
+                "accepted_decision_hash": accepted_hash,
+                "approval_batch_id": batch_id,
+                "approval_item_id": approval_item_id,
+                "decision_reason": item.decision_reason,
+                "row_hash": item.row_hash,
+                "selected_content_entity_id": item.selected_content_entity_id,
+                "url_alias_decision": decision,
+                "url": normalized_url.value,
+            }
+        )
+        event_fingerprint = compute_url_alias_decision_event_fingerprint(
+            accepted_decision_hash=accepted_hash,
+            actor=actor,
+            approval_batch_id=batch_id,
+            approval_item_id=approval_item_id,
+            decision_reason=item.decision_reason,
+            normalized_url=normalized_url.value,
+            selected_content_entity_id=item.selected_content_entity_id,
+            selected_predecessor_event_fingerprint=predecessor[1],
+            selected_predecessor_event_id=predecessor[0],
+            url_alias_decision=decision,
+        )
+        cursor.execute(
+            """INSERT INTO portal_content_url_alias_decision_events (
+                 approval_batch_id, approval_item_id, accepted_decision_hash, actor,
+                 decision_reason, normalized_url, url_alias_decision,
+                 selected_content_entity_id, selected_predecessor_event_id,
+                 selected_predecessor_event_fingerprint, event_fingerprint
+               ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)""",
+            (batch_id, approval_item_id, accepted_hash, actor, item.decision_reason,
+             normalized_url.value, decision, item.selected_content_entity_id,
+             predecessor[0], predecessor[1], event_fingerprint),
+        )
+        if decision == "reject":
+            return event_fingerprint
+        if decision == "retire":
+            cursor.execute(
+                """UPDATE portal_content_registry_aliases
+                   SET alias_status = 'retired'
+                   WHERE id = %s AND alias_status = 'active'""",
+                (int(url_active[0][0]),),
+            )
+            if getattr(cursor, "rowcount", 1) != 1:
+                raise RepositoryError("IDENTITY_COLLISION")
+            return event_fingerprint
+        if url_active:
+            return event_fingerprint
+        cursor.execute(
+            """INSERT INTO portal_content_registry_aliases (
+                 dataset_key, content_entity_id, alias_type, alias_value, alias_hash,
+                 uniqueness_scope, alias_status, source_evidence
+               ) VALUES (%s, %s, 'url', %s, %s, 'strong', 'active', %s)""",
+            (
+                DATASET_KEY,
+                item.selected_content_entity_id,
+                normalized_url.value,
+                alias_hash,
+                evidence,
+            ),
+        )
+        return event_fingerprint
+
+    def load_effective_classifications(self) -> dict[int, ClassificationEvent]:
+        sql = """
+            SELECT
+              active.canonical_release_id,
+              catalog.content_entity_id,
+              catalog.classification_event_id,
+              catalog.classification_event_fingerprint,
+              catalog.projection_provenance_json,
+              event_kind,
+              predecessor_event_id,
+              approval_batch_id,
+              approval_item_id,
+              actor,
+              reason,
+              effective_at,
+              event.content_entity_id,
+              event.direction_code,
+              event.material_type_code,
+              event.access_code,
+              event.lifecycle_code,
+              event.event_fingerprint
+            FROM portal_active_data_releases AS active
+            INNER JOIN portal_data_releases AS release_row
+              ON release_row.id = active.canonical_release_id
+             AND release_row.dataset_key = active.dataset_key
+             AND release_row.release_status = 'active'
+            INNER JOIN portal_content_catalog AS catalog
+              ON catalog.canonical_release_id = active.canonical_release_id
+             AND catalog.content_entity_id IS NOT NULL
+            LEFT JOIN portal_content_classification_events AS event
+              ON event.id = catalog.classification_event_id
+            WHERE active.dataset_key = %s
+            ORDER BY catalog.content_entity_id, catalog.id
+        """
+        rows = self._fetchall(sql, (DATASET_KEY,))
+        events: dict[int, ClassificationEvent] = {}
+        for row in rows:
+            try:
+                entity_id = int(row[1])
+                event_id = int(row[2]) if row[2] is not None else None
+                catalog_fingerprint = (
+                    str(row[3]).lower() if row[3] is not None else None
+                )
+                provenance = (
+                    json.loads(row[4]) if isinstance(row[4], str) else row[4]
+                )
+                codes = provenance["canonical_codes"]
+                values = tuple(
+                    str(codes[name]) if codes.get(name) is not None else None
+                    for name in (
+                        "direction", "material_type", "access", "lifecycle"
+                    )
+                )
+            except (AttributeError, KeyError, TypeError, ValueError):
+                raise RepositoryError("ACTIVE_CATALOG_AUTHORITY_MISMATCH") from None
+            if any(value is None or not value.strip() for value in values):
+                raise RepositoryError("ACTIVE_CATALOG_AUTHORITY_MISMATCH")
+            if event_id is None:
+                if catalog_fingerprint is not None or any(
+                    value is not None for value in row[5:18]
+                ):
+                    raise RepositoryError("ACTIVE_CATALOG_AUTHORITY_MISMATCH")
+                baseline_fingerprint = str(
+                    provenance.get("baseline_provenance_fingerprint") or ""
+                ).lower()
+                if len(baseline_fingerprint) != 64:
+                    baseline_fingerprint = hashlib.sha256(
+                        json.dumps(
+                            {
+                                "content_entity_id": entity_id,
+                                "values": values,
+                            },
+                            ensure_ascii=False,
+                            sort_keys=True,
+                            separators=(",", ":"),
+                        ).encode("utf-8")
+                    ).hexdigest()
+                event = ClassificationEvent(
+                    content_entity_id=entity_id,
+                    direction_code=values[0],
+                    material_type_code=values[1],
+                    access_code=values[2],
+                    lifecycle_code=str(values[3]),
+                    event_kind="baseline",
+                    event_fingerprint=baseline_fingerprint,
+                )
+            else:
+                event_values = tuple(
+                    str(value) if value is not None else None
+                    for value in row[13:17]
+                )
+                if (
+                    int(row[12] or 0) != entity_id
+                    or event_values != values
+                    or str(row[17] or "").lower() != catalog_fingerprint
+                ):
+                    raise RepositoryError("ACTIVE_CATALOG_AUTHORITY_MISMATCH")
+                event = ClassificationEvent(
+                    content_entity_id=entity_id,
+                    direction_code=values[0],
+                    material_type_code=values[1],
+                    access_code=values[2],
+                    lifecycle_code=str(values[3]),
+                    event_kind=str(row[5]),
+                    event_fingerprint=str(catalog_fingerprint),
+                    predecessor_event_id=(
+                        int(row[6]) if row[6] is not None else None
+                    ),
+                    approval_batch_id=(
+                        int(row[7]) if row[7] is not None else None
+                    ),
+                    approval_item_id=(
+                        int(row[8]) if row[8] is not None else None
+                    ),
+                    actor=(str(row[9]) if row[9] is not None else None),
+                    reason=(str(row[10]) if row[10] is not None else None),
+                    effective_at=(
+                        str(row[11]) if row[11] is not None else None
+                    ),
+                )
+            prior = events.setdefault(entity_id, event)
+            if prior != event:
+                raise RepositoryError("ACTIVE_CATALOG_AUTHORITY_MISMATCH")
+        return events
+
+    @staticmethod
+    def _require_audited_batch(batch: ApprovalBatch) -> BuiltApprovalBatch:
+        if not isinstance(batch, BuiltApprovalBatch):
+            raise RepositoryError("BATCH_AUDIT_INCOMPLETE")
+        if compute_batch_hash(batch.items) != batch.published_input_hash:
+            raise RepositoryError("BATCH_HASH_MISMATCH")
+        if (
+            compute_taxonomy_digest(batch.taxonomy_version, batch.taxonomy_terms)
+            != batch.taxonomy_digest
+        ):
+            raise RepositoryError("TAXONOMY_CONTRACT_MISMATCH")
+        taxonomy_fields = {
+            "direction": "final_direction_code",
+            "material_type": "final_material_type_code",
+            "access": "final_access_code",
+            "lifecycle": "final_lifecycle_code",
+        }
+        for item in batch.items:
+            if not isinstance(item, ApprovalBatchItem):
+                raise RepositoryError("BATCH_AUDIT_INCOMPLETE")
+            if item.row_hash != compute_item_hash(item):
+                raise RepositoryError("BATCH_HASH_MISMATCH")
+            if (
+                item.taxonomy_digest != batch.taxonomy_digest
+                or dict(item.taxonomy_terms) != dict(batch.taxonomy_terms)
+                or item.source_snapshot_ids != batch.source_snapshot_ids
+                or item.source_snapshot_digests != batch.source_snapshot_digests
+                or item.model_routing_version != batch.model_routing_version
+                or item.prompt_version != batch.prompt_version
+            ):
+                raise RepositoryError("BATCH_AUDIT_INCOMPLETE")
+            for kind, field_name in taxonomy_fields.items():
+                value = getattr(item, field_name)
+                if value is not None and value not in batch.taxonomy_terms[kind]:
+                    raise RepositoryError("TAXONOMY_CONTRACT_MISMATCH")
+        return batch
+
+    @staticmethod
+    def _batch_counts(items: Sequence[ApprovalItem]) -> dict[str, int]:
+        counts = {
+            "ready": 0,
+            "conflict": 0,
+            "unresolved": 0,
+            "rejected": 0,
+            "no_change": 0,
+        }
+        for item in items:
+            if item.readiness_state not in counts:
+                raise RepositoryError("BATCH_HASH_MISMATCH")
+            if item.readiness_state == "ready" and (
+                item.content_entity_id is None
+                or not item.final_direction_code
+                or not item.final_material_type_code
+                or not item.final_lifecycle_code
+            ):
+                raise RepositoryError("BATCH_ITEM_INCOMPLETE")
+            if len(item.input_hash) != 64 or len(item.row_hash) != 64:
+                raise RepositoryError("BATCH_ITEM_INCOMPLETE")
+            counts[item.readiness_state] += 1
+        return counts
+
+    @staticmethod
+    def _accepted_item_count(items: Sequence[ApprovalItem]) -> int:
+        return sum(
+            item.readiness_state == "ready"
+            or item.url_alias_decision == "create"
+            for item in items
+        )
+
+    @staticmethod
+    def _load_taxonomy(cursor: Cursor, version: str) -> tuple[int, TaxonomyVersion]:
+        cursor.execute(
+            """
+            SELECT id, taxonomy_digest
+            FROM portal_content_taxonomy_versions
+            WHERE dataset_key = %s
+              AND version = %s
+              AND taxonomy_status = %s
+            """,
+            (DATASET_KEY, version, "active"),
+        )
+        row = cursor.fetchone()
+        if row is None:
+            raise RepositoryError("TAXONOMY_VERSION_NOT_ACTIVE")
+        taxonomy_id = int(row[0])
+        stored_digest = str(row[1])
+        return taxonomy_id, ContentRegistryRepository._load_taxonomy_terms(
+            cursor,
+            taxonomy_id,
+            version,
+            stored_digest,
+        )
+
+    @staticmethod
+    def _load_taxonomy_terms(
+        cursor: Cursor,
+        taxonomy_id: int,
+        version: str,
+        stored_digest: str,
+        *,
+        lock: bool = False,
+        include_retired: bool = False,
+    ) -> TaxonomyVersion:
+        cursor.execute(
+            f"""
+            SELECT taxonomy_kind, term_code
+            FROM portal_content_taxonomy_terms
+            WHERE taxonomy_version_id = %s
+              {"" if include_retired else "AND term_status = %s"}
+            ORDER BY taxonomy_kind, term_code
+            {"FOR UPDATE" if lock else ""}
+            """,
+            (taxonomy_id,) if include_retired else (taxonomy_id, "active"),
+        )
+        terms: dict[str, list[str]] = {
+            "direction": [],
+            "material_type": [],
+            "access": [],
+            "lifecycle": [],
+        }
+        for kind, code in cursor.fetchall():
+            if str(kind) not in terms:
+                raise RepositoryError("TAXONOMY_CONTRACT_MISMATCH")
+            terms[str(kind)].append(str(code))
+        if any(not values for values in terms.values()):
+            raise RepositoryError("TAXONOMY_CONTRACT_MISMATCH")
+        frozen_terms = {kind: tuple(values) for kind, values in terms.items()}
+        computed_digest = compute_taxonomy_digest(version, frozen_terms)
+        if stored_digest != computed_digest:
+            raise RepositoryError("TAXONOMY_CONTRACT_MISMATCH")
+        return TaxonomyVersion(
+            version=version,
+            terms=frozen_terms,
+            digest=computed_digest,
+        )
+
+    @staticmethod
+    def _stored_acceptance_items(
+        stored_rows: Sequence[Sequence[object]],
+        taxonomy: TaxonomyVersion,
+    ) -> tuple[tuple[tuple[int, ApprovalItem], ...], dict[str, int]]:
+        stored_by_key: dict[tuple[int | None, str, str], tuple[int, ApprovalItem]] = {}
+        stored_identities: set[tuple[int | None, str]] = set()
+        stored_hashes: set[str] = set()
+        try:
+            for row in stored_rows:
+                raw_evidence = row[12] if len(row) >= 13 else {}
+                evidence = (
+                    json.loads(raw_evidence)
+                    if isinstance(raw_evidence, str) else raw_evidence
+                )
+                if not isinstance(evidence, Mapping):
+                    evidence = {}
+                mnn_version = int(
+                    row[17] if len(row) >= 22 and row[17] is not None
+                    else evidence.get("mnn_contract_version", 1)
+                )
+                additional_payload = (
+                    json.loads(row[20]) if len(row) >= 22 and isinstance(row[20], str)
+                    else row[20] if len(row) >= 22 and row[20] is not None
+                    else ()
+                )
+                if not isinstance(additional_payload, (tuple, list)):
+                    raise RepositoryError("BATCH_ITEMS_MISMATCH")
+                additional_labels = tuple(
+                    str(value.get("label")) if isinstance(value, Mapping) else str(value)
+                    for value in additional_payload
+                )
+                item = ApprovalBatchItem(
+                    content_entity_id=(int(row[1]) if row[1] is not None else None),
+                    input_hash=str(row[2]),
+                    title=str(row[3]),
+                    url=str(row[4]),
+                    final_direction_code=(str(row[5]) if row[5] is not None else None),
+                    final_material_type_code=(str(row[6]) if row[6] is not None else None),
+                    final_access_code=(str(row[7]) if row[7] is not None else None),
+                    final_lifecycle_code=(str(row[8]) if row[8] is not None else None),
+                    readiness_state=str(row[9]),
+                    conflict_codes=tuple(
+                        ConflictCode(str(code))
+                        for code in (json.loads(row[13]) if isinstance(row[13], str) else row[13])
+                    ) if len(row) >= 15 else (),
+                    row_hash=str(row[10]),
+                    decision_reason=(str(row[11]) if row[11] is not None else None),
+                    selected_content_entity_id=(
+                        int(row[15]) if len(row) >= 17 and row[15] is not None else None
+                    ),
+                    url_alias_decision=(
+                        str(row[16]) if len(row) >= 17 and row[16] is not None else None
+                    ),
+                    final_primary_mnn=(
+                        str(row[19]) if len(row) >= 22 and row[19] is not None else None
+                    ),
+                    final_additional_mnn=additional_labels,
+                    mnn_decision_reason=(
+                        str(row[21]) if len(row) >= 22 and row[21] is not None else None
+                    ),
+                    mnn=tuple(evidence.get("mnn", ())),
+                    mnn_contract_version=mnn_version,
+                    proposed_primary_mnn=(
+                        str(evidence["proposed_primary_mnn"])
+                        if evidence.get("proposed_primary_mnn") is not None else None
+                    ),
+                    proposed_additional_mnn=tuple(
+                        str(value) for value in evidence.get("proposed_additional_mnn", ())
+                    ),
+                    mnn_proposal_evidence=(
+                        evidence.get("mnn_proposal")
+                        if isinstance(evidence.get("mnn_proposal"), Mapping) else None
+                    ),
+                )
+                identity = (item.content_entity_id, item.input_hash)
+                key = (*identity, item.row_hash)
+                if (
+                    identity in stored_identities
+                    or item.row_hash in stored_hashes
+                    or key in stored_by_key
+                ):
+                    raise RepositoryError("BATCH_ITEMS_MISMATCH")
+                stored_identities.add(identity)
+                stored_hashes.add(item.row_hash)
+                stored_by_key[key] = (int(row[0]), item)
+        except RepositoryError:
+            raise
+        except (IndexError, TypeError, ValueError):
+            raise RepositoryError("BATCH_ITEMS_MISMATCH") from None
+
+        taxonomy_fields = (
+            ("direction", "final_direction_code"),
+            ("material_type", "final_material_type_code"),
+            ("access", "final_access_code"),
+            ("lifecycle", "final_lifecycle_code"),
+        )
+        stored_items = tuple(stored_by_key.values())
+        for _approval_item_id, item in stored_items:
+            if (
+                item.final_material_type_code is not None
+                and item.final_material_type_code.strip().casefold()
+                in {"архив", "archive"}
+            ):
+                raise RepositoryError("ARCHIVE_TYPE_INVALID")
+            for kind, field_name in taxonomy_fields:
+                value = getattr(item, field_name)
+                if value is not None and value not in taxonomy.terms[kind]:
+                    raise RepositoryError("TAXONOMY_CONTRACT_MISMATCH")
+        counts = ContentRegistryRepository._batch_counts(
+            tuple(item for _approval_item_id, item in stored_items)
+        )
+        return stored_items, counts
+
+    @staticmethod
+    def _validate_url_alias_decision(item: ApprovalItem) -> None:
+        collision = any(getattr(code, "value", str(code)) == "IDENTITY_COLLISION" for code in item.conflict_codes)
+        decision = item.url_alias_decision
+        selected = item.selected_content_entity_id
+        if decision is not None and decision not in {"attach", "retire", "reject", "create"}:
+            raise RepositoryError("URL_ALIAS_DECISION_INVALID")
+        if not collision:
+            if decision is not None or selected is not None:
+                raise RepositoryError("URL_ALIAS_DECISION_UNEXPECTED")
+            return
+        if not item.decision_reason or decision is None:
+            raise RepositoryError("IDENTITY_COLLISION_DECISION_REQUIRED")
+        if decision in {"attach", "create"} and (selected is None or selected <= 0):
+            raise RepositoryError("IDENTITY_COLLISION_DECISION_REQUIRED")
+        if decision in {"retire", "reject"} and selected is not None:
+            raise RepositoryError("URL_ALIAS_DECISION_INVALID")
+
+    @staticmethod
+    def _validate_mnn_decision(item: ApprovalItem) -> None:
+        contract_version = int(getattr(item, "mnn_contract_version", 1))
+        if contract_version < 2 and (
+            item.final_primary_mnn
+            or item.final_additional_mnn
+            or (item.mnn_decision_reason or "").strip()
+        ):
+            raise RepositoryError("MNN_CONTRACT_VERSION_INVALID")
+        try:
+            reviewed = normalize_reviewed_mnn(
+                item.final_primary_mnn, item.final_additional_mnn
+            )
+            proposed = normalize_reviewed_mnn(
+                getattr(item, "proposed_primary_mnn", None),
+                getattr(item, "proposed_additional_mnn", ()),
+            )
+        except ValueError as error:
+            raise RepositoryError(str(error)) from None
+        if (
+            {value.key for value in reviewed.values}
+            - {value.key for value in proposed.values}
+            and not (item.mnn_decision_reason or "").strip()
+        ):
+            raise RepositoryError("MNN_DECISION_REASON_REQUIRED")
+
+    @staticmethod
+    def _mnn_db_payload(item: ApprovalItem) -> tuple[object, object, object, object]:
+        try:
+            decision = normalize_reviewed_mnn(
+                item.final_primary_mnn, item.final_additional_mnn
+            )
+        except ValueError as error:
+            raise RepositoryError(str(error)) from None
+        if decision.primary is None:
+            return None, None, None, item.mnn_decision_reason
+        additional = [
+            {"display_order": index + 1, "key": value.key, "label": value.label}
+            for index, value in enumerate(decision.additional)
+        ]
+        return (
+            decision.primary.key,
+            decision.primary.label,
+            ContentRegistryRepository._json(additional),
+            item.mnn_decision_reason,
+        )
+
+    @staticmethod
+    def _insert_mnn_decision_event(
+        cursor: Cursor,
+        item: ApprovalItem,
+        batch_id: int,
+        approval_item_id: int,
+        accepted_decision_hash: str,
+        actor: str,
+    ) -> int | None:
+        try:
+            decision = normalize_reviewed_mnn(
+                item.final_primary_mnn, item.final_additional_mnn
+            )
+        except ValueError as error:
+            raise RepositoryError(str(error)) from None
+        if decision.primary is None:
+            return None
+        entity_id = item.selected_content_entity_id or item.content_entity_id
+        if entity_id is None or int(entity_id) <= 0:
+            raise RepositoryError("MNN_DECISION_ENTITY_REQUIRED")
+        proposal = getattr(item, "mnn_proposal_evidence", None)
+        snapshot_id = None
+        if isinstance(proposal, Mapping) and proposal.get("snapshot_id") is not None:
+            try:
+                snapshot_id = int(proposal["snapshot_id"])
+            except (TypeError, ValueError):
+                raise RepositoryError("MNN_PROPOSAL_AUTHORITY_INVALID") from None
+            if snapshot_id <= 0:
+                raise RepositoryError("MNN_PROPOSAL_AUTHORITY_INVALID")
+        additional = [
+            {"display_order": index + 1, "key": value.key, "label": value.label}
+            for index, value in enumerate(decision.additional)
+        ]
+        fingerprint = compute_mnn_decision_event_fingerprint({
+            "accepted_decision_hash": accepted_decision_hash,
+            "actor": actor,
+            "approval_batch_id": int(batch_id),
+            "approval_item_id": int(approval_item_id),
+            "content_entity_id": int(entity_id),
+            "decision_reason": item.mnn_decision_reason,
+            "mnn_source_snapshot_id": snapshot_id,
+            "primary_mnn_key": decision.primary.key,
+            "additional_mnn_keys": tuple(value.key for value in decision.additional),
+        })
+        cursor.execute(
+            """
+            INSERT INTO portal_content_mnn_decision_events (
+              dataset_key, approval_batch_id, approval_item_id, content_entity_id,
+              accepted_decision_hash, actor, decision_reason,
+              mnn_source_snapshot_id, primary_mnn_key, primary_mnn_label,
+              additional_mnn_json, proposal_evidence_json, event_fingerprint
+            ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+            """,
+            (
+                DATASET_KEY, int(batch_id), int(approval_item_id), int(entity_id),
+                accepted_decision_hash, actor, item.mnn_decision_reason,
+                snapshot_id, decision.primary.key, decision.primary.label,
+                ContentRegistryRepository._json(additional),
+                ContentRegistryRepository._json(proposal) if proposal is not None else None,
+                fingerprint,
+            ),
+        )
+        if getattr(cursor, "rowcount", 1) != 1:
+            raise RepositoryError("MNN_DECISION_EVENT_INSERT_FAILED")
+        return int(cursor.lastrowid)
+
+    @staticmethod
+    def _validate_acceptance_snapshot(
+        snapshot: AcceptedBatchSnapshot,
+        stored_rows: Sequence[Sequence[object]],
+        taxonomy: TaxonomyVersion,
+        *,
+        allow_local_observed: bool = False,
+    ) -> tuple[tuple[tuple[int, ApprovalItem], ...], dict[str, int]]:
+        stored_items, counts = ContentRegistryRepository._stored_acceptance_items(
+            stored_rows,
+            taxonomy,
+        )
+        evidence_by_item_id = (
+            {
+                int(row[0]): ContentRegistryRepository._decoded_json_mapping(
+                    row[12]
+                )
+                for row in stored_rows
+            }
+            if allow_local_observed
+            else {}
+        )
+        stored_by_key = {
+            (item.content_entity_id, item.input_hash, item.row_hash): (
+                approval_item_id,
+                item,
+            )
+            for approval_item_id, item in stored_items
+        }
+
+        supplied_by_key: dict[tuple[int | None, str, str], ApprovalItem] = {}
+        supplied_identities: set[tuple[int | None, str]] = set()
+        supplied_hashes: set[str] = set()
+        for item in snapshot.items:
+            identity = (item.content_entity_id, item.input_hash)
+            key = (*identity, item.row_hash)
+            if (
+                identity in supplied_identities
+                or item.row_hash in supplied_hashes
+                or key in supplied_by_key
+            ):
+                raise RepositoryError("BATCH_ITEMS_MISMATCH")
+            supplied_identities.add(identity)
+            supplied_hashes.add(item.row_hash)
+            supplied_by_key[key] = item
+        if set(supplied_by_key) != set(stored_by_key):
+            raise RepositoryError("BATCH_ITEMS_MISMATCH")
+
+        taxonomy_fields = (
+            ("direction", "final_direction_code"),
+            ("material_type", "final_material_type_code"),
+            ("access", "final_access_code"),
+            ("lifecycle", "final_lifecycle_code"),
+        )
+        accepted: list[tuple[int, ApprovalItem]] = []
+        for key, (approval_item_id, canonical) in stored_by_key.items():
+            supplied = supplied_by_key[key]
+            if (
+                supplied.title != canonical.title
+                or supplied.url != canonical.url
+                or supplied.readiness_state != canonical.readiness_state
+            ):
+                raise RepositoryError("BATCH_ITEMS_MISMATCH")
+            for kind, field_name in taxonomy_fields:
+                value = getattr(supplied, field_name)
+                if value is not None and value not in taxonomy.terms[kind]:
+                    raise RepositoryError("TAXONOMY_CONTRACT_MISMATCH")
+            editable = replace(
+                canonical,
+                final_direction_code=supplied.final_direction_code,
+                final_material_type_code=supplied.final_material_type_code,
+                final_access_code=supplied.final_access_code,
+                final_lifecycle_code=supplied.final_lifecycle_code,
+                decision_reason=supplied.decision_reason,
+                selected_content_entity_id=supplied.selected_content_entity_id,
+                url_alias_decision=supplied.url_alias_decision,
+                final_primary_mnn=supplied.final_primary_mnn,
+                final_additional_mnn=supplied.final_additional_mnn,
+                mnn_decision_reason=supplied.mnn_decision_reason,
+            )
+            if allow_local_observed:
+                ContentRegistryRepository._validate_local_item(
+                    editable,
+                    taxonomy,
+                    evidence_by_item_id[approval_item_id],
+                    accepted_create=True,
+                )
+            else:
+                ContentRegistryRepository._validate_url_alias_decision(editable)
+            ContentRegistryRepository._validate_mnn_decision(editable)
+            if editable.readiness_state == "conflict":
+                old_values = (
+                    canonical.final_direction_code,
+                    canonical.final_material_type_code,
+                    canonical.final_access_code,
+                    canonical.final_lifecycle_code,
+                )
+                new_values = (
+                    editable.final_direction_code,
+                    editable.final_material_type_code,
+                    editable.final_access_code,
+                    editable.final_lifecycle_code,
+                )
+                if old_values != new_values and not editable.decision_reason:
+                    raise RepositoryError("CONFLICT_REASON_REQUIRED")
+            accepted.append((approval_item_id, editable))
+        ContentRegistryRepository._batch_counts(
+            tuple(item for _approval_item_id, item in accepted)
+        )
+        return tuple(accepted), counts
+
+    @staticmethod
+    def _attest_taxonomy(
+        batch: BuiltApprovalBatch, taxonomy: TaxonomyVersion
+    ) -> None:
+        if (
+            batch.taxonomy_digest != taxonomy.digest
+            or dict(batch.taxonomy_terms) != dict(taxonomy.terms)
+        ):
+            raise RepositoryError("TAXONOMY_CONTRACT_MISMATCH")
+
+    @staticmethod
+    def _decoded_json_tuple(value: object) -> tuple[object, ...]:
+        decoded = json.loads(value) if isinstance(value, str) else value
+        if not isinstance(decoded, (tuple, list)):
+            raise RepositoryError("BATCH_HASH_MISMATCH")
+        return tuple(decoded)
+
+    @staticmethod
+    def _attest_batch_row(
+        row: Sequence[object],
+        batch: BuiltApprovalBatch,
+        taxonomy_id: int,
+        counts: Mapping[str, int],
+        *,
+        allowed_statuses: Sequence[str],
+    ) -> int:
+        try:
+            matches = (
+                int(row[1]) == taxonomy_id
+                and str(row[2]) == batch.batch_key
+                and str(row[3]) == batch.taxonomy_digest
+                and ContentRegistryRepository._decoded_json_tuple(row[4])
+                == batch.source_snapshot_ids
+                and ContentRegistryRepository._decoded_json_tuple(row[5])
+                == batch.source_snapshot_digests
+                and str(row[6]) == batch.published_input_hash
+                and str(row[7]) in allowed_statuses
+                and str(row[8]) == batch.prompt_version
+                and str(row[9]) == batch.model_routing_version
+                and tuple(int(value) for value in row[10:15])
+                == tuple(counts[state] for state in ("ready", "conflict", "unresolved", "rejected", "no_change"))
+            )
+        except (IndexError, TypeError, ValueError):
+            matches = False
+        if not matches:
+            raise RepositoryError("BATCH_HASH_MISMATCH")
+        return int(row[0])
+
+    @staticmethod
+    def _attest_item_rows(
+        cursor: Cursor, batch_id: int, batch: BuiltApprovalBatch
+    ) -> None:
+        cursor.execute(
+            """
+            SELECT
+              content_entity_id,
+              input_hash,
+              row_hash,
+              readiness_state
+            FROM portal_content_approval_items
+            WHERE approval_batch_id = %s
+            ORDER BY content_entity_id, input_hash
+            FOR UPDATE
+            """,
+            (batch_id,),
+        )
+        stored = tuple(
+            (
+                int(row[0]) if row[0] is not None else None,
+                str(row[1]),
+                str(row[2]),
+                str(row[3]),
+            )
+            for row in cursor.fetchall()
+        )
+        expected = tuple(
+            (
+                item.content_entity_id,
+                item.input_hash,
+                item.row_hash,
+                item.readiness_state,
+            )
+            for item in batch.items
+        )
+        if stored != expected:
+            raise RepositoryError("BATCH_ITEMS_MISMATCH")
+
+    @staticmethod
+    def _ensure_item(
+        cursor: Cursor,
+        batch_id: int,
+        item: ApprovalItem,
+    ) -> int:
+        cursor.execute(
+            """
+            SELECT id, title, url, row_hash
+            FROM portal_content_approval_items
+            WHERE approval_batch_id = %s
+              AND content_entity_id <=> %s
+              AND input_hash = %s
+            FOR UPDATE
+            """,
+            (batch_id, item.content_entity_id, item.input_hash),
+        )
+        existing = cursor.fetchone()
+        if existing is not None:
+            immutable_values = (item.title, item.url, item.row_hash)
+            if tuple(existing[1:4]) != immutable_values:
+                raise RepositoryError("BATCH_HASH_MISMATCH")
+            return int(existing[0])
+
+        conflict_codes = [
+            code.value if hasattr(code, "value") else str(code)
+            for code in item.conflict_codes
+        ]
+        cursor.execute(
+            """
+            INSERT INTO portal_content_approval_items (
+              approval_batch_id,
+              content_entity_id,
+              input_hash,
+              title,
+              url,
+              final_direction_code,
+              final_material_type_code,
+              final_access_code,
+              final_lifecycle_code,
+              readiness_state,
+              conflict_code,
+              conflict_codes,
+              row_hash,
+              decision_reason,
+              proposal_evidence,
+              mnn_decision_version
+            ) VALUES (
+              %s, %s, %s, %s, %s,
+              %s, %s, %s, %s, %s,
+              %s, %s, %s, %s, %s, %s
+            )
+            """,
+            (
+                batch_id,
+                item.content_entity_id,
+                item.input_hash,
+                item.title,
+                item.url,
+                item.final_direction_code,
+                item.final_material_type_code,
+                item.final_access_code,
+                item.final_lifecycle_code,
+                item.readiness_state,
+                conflict_codes[0] if conflict_codes else None,
+                ContentRegistryRepository._json(conflict_codes),
+                item.row_hash,
+                item.decision_reason,
+                ContentRegistryRepository._json(
+                    getattr(item, "proposal_evidence", ())
+                ),
+                int(getattr(item, "mnn_contract_version", 1)),
+            ),
+        )
+        return int(cursor.lastrowid)
+
+    @staticmethod
+    def _attest_published_items(
+        stored_rows: Sequence[Sequence[object]],
+        *,
+        taxonomy: TaxonomyVersion,
+        taxonomy_digest: str,
+        source_snapshot_ids: tuple[object, ...],
+        source_snapshot_digests: tuple[object, ...],
+        prompt_version: str,
+        model_routing_version: str,
+    ) -> tuple[dict[int, Mapping[str, object]], tuple[ApprovalBatchItem, ...]]:
+        evidence_by_id: dict[int, Mapping[str, object]] = {}
+        published_items: list[ApprovalBatchItem] = []
+        expected_evidence_keys = {
+            "archive_attestation",
+            "concise_evidence",
+            "current_canonical",
+            "deterministic",
+            "published_decision",
+            "registry1",
+            "registry2",
+            "sol",
+            "terra",
+        }
+        for row in stored_rows:
+            try:
+                approval_item_id = int(row[0])
+                if approval_item_id in evidence_by_id or len(row) < 15:
+                    raise RepositoryError("BATCH_ITEMS_MISMATCH")
+                evidence = json.loads(row[12]) if isinstance(row[12], str) else row[12]
+                conflict_codes = (
+                    json.loads(row[13]) if isinstance(row[13], str) else row[13]
+                )
+                if (
+                    not isinstance(evidence, Mapping)
+                    or set(evidence) not in (
+                        expected_evidence_keys,
+                        expected_evidence_keys | {"mnn"},
+                        expected_evidence_keys | {
+                            "mnn_contract_version", "mnn_proposal",
+                            "proposed_primary_mnn", "proposed_additional_mnn",
+                        },
+                        expected_evidence_keys | {
+                            "mnn", "mnn_contract_version", "mnn_proposal",
+                            "proposed_primary_mnn", "proposed_additional_mnn",
+                        },
+                    )
+                    or not isinstance(conflict_codes, (tuple, list))
+                    or any(not isinstance(code, str) for code in conflict_codes)
+                ):
+                    raise RepositoryError("BATCH_ITEMS_MISMATCH")
+                expected_conflict_code = conflict_codes[0] if conflict_codes else None
+                stored_conflict_code = (
+                    str(row[14]) if row[14] is not None else None
+                )
+                if stored_conflict_code != expected_conflict_code:
+                    raise RepositoryError("BATCH_ITEMS_MISMATCH")
+                for evidence_key in (
+                    "archive_attestation",
+                    "current_canonical",
+                    "deterministic",
+                    "registry1",
+                    "registry2",
+                    "sol",
+                    "terra",
+                ):
+                    value = evidence[evidence_key]
+                    if value is not None and not isinstance(value, Mapping):
+                        raise RepositoryError("BATCH_ITEMS_MISMATCH")
+                concise_evidence = evidence["concise_evidence"]
+                if not isinstance(concise_evidence, (tuple, list)) or any(
+                    not isinstance(value, str) for value in concise_evidence
+                ):
+                    raise RepositoryError("BATCH_ITEMS_MISMATCH")
+                mnn = evidence.get("mnn", ())
+                if (
+                    not isinstance(mnn, (tuple, list))
+                    or any(not isinstance(value, str) or not value.strip() for value in mnn)
+                    or tuple(mnn) != tuple(sorted(set(mnn)))
+                ):
+                    raise RepositoryError("BATCH_ITEMS_MISMATCH")
+                mnn_contract_version = int(evidence.get("mnn_contract_version", 1))
+                proposed_primary_mnn = evidence.get("proposed_primary_mnn")
+                proposed_additional_mnn = evidence.get("proposed_additional_mnn", ())
+                mnn_proposal = evidence.get("mnn_proposal")
+                if (
+                    mnn_contract_version not in {1, 2}
+                    or proposed_primary_mnn is not None and not isinstance(proposed_primary_mnn, str)
+                    or not isinstance(proposed_additional_mnn, (tuple, list))
+                    or any(not isinstance(value, str) for value in proposed_additional_mnn)
+                    or mnn_proposal is not None and not isinstance(mnn_proposal, Mapping)
+                ):
+                    raise RepositoryError("BATCH_ITEMS_MISMATCH")
+                published_decision = evidence["published_decision"]
+                if not isinstance(published_decision, Mapping) or set(
+                    published_decision
+                ) != {
+                    "decision_reason",
+                    "final_access_code",
+                    "final_direction_code",
+                    "final_lifecycle_code",
+                    "final_material_type_code",
+                }:
+                    raise RepositoryError("BATCH_ITEMS_MISMATCH")
+                if any(
+                    value is not None and not isinstance(value, str)
+                    for value in published_decision.values()
+                ):
+                    raise RepositoryError("BATCH_ITEMS_MISMATCH")
+                item = ApprovalBatchItem(
+                    content_entity_id=(
+                        int(row[1]) if row[1] is not None else None
+                    ),
+                    input_hash=str(row[2]),
+                    title=str(row[3]),
+                    url=str(row[4]),
+                    final_direction_code=published_decision["final_direction_code"],
+                    final_material_type_code=published_decision[
+                        "final_material_type_code"
+                    ],
+                    final_access_code=published_decision["final_access_code"],
+                    final_lifecycle_code=published_decision[
+                        "final_lifecycle_code"
+                    ],
+                    readiness_state=str(row[9]),
+                    conflict_codes=tuple(ConflictCode(str(code)) for code in conflict_codes),
+                    row_hash=str(row[10]),
+                    decision_reason=published_decision["decision_reason"],
+                    selected_content_entity_id=(
+                        int(row[15]) if row[15] is not None else None
+                    ),
+                    url_alias_decision=(
+                        str(row[16]) if row[16] is not None else None
+                    ),
+                    current_canonical=evidence["current_canonical"],
+                    registry1_values=evidence["registry1"],
+                    registry2_values=evidence["registry2"],
+                    deterministic_result=evidence["deterministic"],
+                    terra_result=evidence["terra"],
+                    sol_result=evidence["sol"],
+                    archive_attestation=evidence["archive_attestation"],
+                    concise_evidence=tuple(concise_evidence),
+                    taxonomy_digest=taxonomy_digest,
+                    taxonomy_terms=taxonomy.terms,
+                    source_snapshot_ids=tuple(int(value) for value in source_snapshot_ids),
+                    source_snapshot_digests=tuple(
+                        str(value) for value in source_snapshot_digests
+                    ),
+                    model_routing_version=model_routing_version,
+                    prompt_version=prompt_version,
+                    mnn=tuple(mnn),
+                    mnn_contract_version=mnn_contract_version,
+                    proposed_primary_mnn=proposed_primary_mnn,
+                    proposed_additional_mnn=tuple(proposed_additional_mnn),
+                    mnn_proposal_evidence=mnn_proposal,
+                )
+            except RepositoryError:
+                raise
+            except (IndexError, KeyError, TypeError, ValueError):
+                raise RepositoryError("BATCH_ITEMS_MISMATCH") from None
+            if compute_item_hash(item) != item.row_hash:
+                raise RepositoryError("BATCH_HASH_MISMATCH")
+            evidence_by_id[approval_item_id] = evidence
+            published_items.append(item)
+        return evidence_by_id, tuple(published_items)
+
+    @staticmethod
+    def _archive_evidence_authorized(evidence: object) -> bool:
+        if not isinstance(evidence, Mapping):
+            return False
+        attestation = evidence.get("archive_attestation")
+        if not isinstance(attestation, Mapping):
+            return False
+        return attestation.get("explicit_archive_override") is True or (
+            attestation.get("evidence_code") in {"HTTP_404", "HTTP_410"}
+        )
+
+    @staticmethod
+    def _attest_reviewed_predecessor(
+        evidence: object,
+        content_entity_id: int,
+        predecessor_event_id: int | None,
+        predecessor_values: tuple[object, ...] | None,
+    ) -> None:
+        if not isinstance(evidence, Mapping):
+            raise RepositoryError("CORRECTION_AUDIT_REQUIRED")
+        current = evidence.get("current_canonical")
+        if predecessor_event_id is None:
+            if current is not None:
+                raise RepositoryError("CORRECTION_PREDECESSOR_MISMATCH")
+            return
+        if not isinstance(current, Mapping) or predecessor_values is None:
+            raise RepositoryError("CORRECTION_AUDIT_REQUIRED")
+        try:
+            expected_event_id = int(current["event_id"])
+            expected_entity_id = int(current["content_entity_id"])
+            expected_values = tuple(
+                current[key]
+                for key in (
+                    "direction_code",
+                    "material_type_code",
+                    "access_code",
+                    "lifecycle_code",
+                )
+            )
+        except (KeyError, TypeError, ValueError):
+            raise RepositoryError("CORRECTION_AUDIT_REQUIRED") from None
+        if (
+            expected_event_id != predecessor_event_id
+            or expected_entity_id != content_entity_id
+            or expected_values != predecessor_values
+        ):
+            raise RepositoryError("CORRECTION_PREDECESSOR_MISMATCH")
+
+    @staticmethod
+    def _canonical_acceptance_timestamp(value: object) -> datetime:
+        try:
+            if isinstance(value, datetime):
+                parsed = value
+            elif isinstance(value, str) and ":" in value:
+                iso_value = f"{value[:-1]}+00:00" if value.endswith("Z") else value
+                parsed = datetime.fromisoformat(iso_value)
+            else:
+                raise ValueError
+
+            if parsed.tzinfo is None or parsed.utcoffset() is None:
+                parsed = parsed.replace(tzinfo=timezone.utc)
+            else:
+                parsed = parsed.astimezone(timezone.utc)
+            return parsed.replace(tzinfo=None)
+        except (OverflowError, TypeError, ValueError):
+            raise RepositoryError("BATCH_ACCEPTANCE_METADATA_MISMATCH") from None
+
+    @staticmethod
+    def _canonical_event_timestamp(value: object) -> datetime:
+        try:
+            return ContentRegistryRepository._canonical_acceptance_timestamp(value)
+        except RepositoryError:
+            raise RepositoryError("SUCCESSOR_EFFECTIVE_AT_INVALID") from None
+
+    @staticmethod
+    def _json(value: object) -> str:
+        return json.dumps(
+            ContentRegistryRepository._json_value(value),
+            ensure_ascii=False,
+            sort_keys=True,
+            separators=(",", ":"),
+        )
+
+    @staticmethod
+    def _json_value(value: object) -> object:
+        if isinstance(value, Enum):
+            return value.value
+        if isinstance(value, Mapping):
+            return {
+                str(key): ContentRegistryRepository._json_value(item)
+                for key, item in value.items()
+            }
+        if isinstance(value, (tuple, list)):
+            return [ContentRegistryRepository._json_value(item) for item in value]
+        if value is None or isinstance(value, (str, int, float, bool)):
+            return value
+        raise TypeError("unsupported JSON value")
+
+    def _fetchall(
+        self,
+        sql: str,
+        params: tuple[object, ...],
+    ) -> Sequence[Any]:
+        connection: Connection | None = None
+        cursor: Cursor | None = None
+        try:
+            connection = self._connection_factory()
+            cursor = connection.cursor()
+            cursor.execute(sql, params)
+            return tuple(cursor.fetchall())
+        except Exception:
+            raise RepositoryError("DB_READ_FAILED") from None
+        finally:
+            self._close(cursor, connection)
+
+    @staticmethod
+    def _rollback(connection: Connection | None) -> None:
+        if connection is None:
+            return
+        try:
+            connection.rollback()
+        except Exception:
+            pass
+
+    @staticmethod
+    def _close(
+        cursor: Cursor | None,
+        connection: Connection | None,
+    ) -> None:
+        if cursor is not None:
+            try:
+                cursor.close()
+            except Exception:
+                pass
+        if connection is not None:
+            try:
+                connection.close()
+            except Exception:
+                pass

@@ -45,6 +45,7 @@ export interface AbbottContentMetadata {
   material_type: string | null;
   access: string | null;
   is_active: boolean | null;
+  mnn?: string[];
 }
 
 export interface AbbottAggregateWorkbookData {
@@ -55,6 +56,7 @@ export interface AbbottAggregateWorkbookData {
     registration_url: string;
     access: string | null;
   }>;
+  contentByUrl: Map<string, AbbottContentMetadata>;
   contentByTitle: Map<string, AbbottContentMetadata>;
   contentBySlug: Map<string, AbbottContentMetadata>;
   contentByUrl: Map<string, AbbottContentMetadata>;

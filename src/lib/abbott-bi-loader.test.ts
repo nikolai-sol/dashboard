@@ -29,6 +29,7 @@ const lookupHash = (value: string) => createHash("sha256").update(value).digest(
 const aggregateWorkbook: AbbottAggregatePrivateData["workbook"] = {
   generalMaterials: [],
   externalEvents: [],
+  contentByUrl: new Map(),
   contentByTitle: new Map(),
   contentBySlug: new Map(),
   contentByUrl: new Map(),
@@ -275,6 +276,125 @@ test("embed uses aggregate store only and derives returning counts with decimal 
   });
 });
 
+test("returning control rows ignore non-web page identities without failing the period", async () => {
+  const aggregate = executor((sql) => {
+    if (sql.includes("canonical_fact_metrika_returning_pages_release_daily")) {
+      return [
+        { report_date: "2026-01-01", raw_page_value: "raw-file", normalized_page: "file:///C:/Users/user/Downloads/page.html", return_bucket_code: "next_day", source_percentage: "100.0000000000", source_denominator: "7" },
+        { report_date: "2026-01-01", raw_page_value: "raw-web", normalized_page: "https://example.test/page?utm_source=test", return_bucket_code: "next_day", source_percentage: "50.0000000000", source_denominator: "2" },
+      ];
+    }
+    return aggregateRows(sql);
+  });
+
+  const result = await loadAbbottBiDataWithDependencies(
+    7, ["90602537"], "2026-01-01", "2026-01-01", "embed",
+    dependencies(aggregate, executor(() => [])),
+  );
+
+  assert.equal(result.data_quality.status, "complete");
+  assert.deepEqual(result.returning, [{
+    url: "https://example.test/page",
+    direction: "Cardiology",
+    visits: 2,
+    returning_1_day: 1,
+    returning_2_7_days: 0,
+    returning_8_31_days: 0,
+    is_derived: true,
+    normalization_collision: false,
+  }]);
+});
+
+test("returning pages resolve semantic-query URL metadata while retaining normalized display grouping", async () => {
+  const urlMetadata = { page_title: "Query article", direction: "Gastroenterology", material_type: "article", access: "Врачи", is_active: true };
+  const pathMetadata = { page_title: "Path article", direction: "Cardiology", material_type: "guide", access: "Гости", is_active: true };
+  const aggregate = executor((sql) => {
+    if (sql.includes("canonical_fact_metrika_returning_pages_release_daily")) {
+      return [{
+        report_date: "2026-01-01",
+        raw_page_value: "https://abbottpro.ru/academy/articles/a?topic=gastro&utm_source=test",
+        normalized_page: "https://abbottpro.ru/academy/articles/a",
+        return_bucket_code: "next_day",
+        source_percentage: "100.0000000000",
+        source_denominator: "3",
+      }];
+    }
+    return aggregateRows(sql);
+  });
+  const deps = dependencies(aggregate, executor(() => []));
+  deps.loadReleaseBundle = async () => ({
+    releaseId: 41,
+    audience: "embed" as const,
+    workbook: {
+      ...aggregateWorkbook,
+      contentByUrl: new Map([[lookupHash("https://abbottpro.ru/academy/articles/a?topic=gastro"), urlMetadata]]),
+      urlReturnDirections: new Map([[lookupHash("/academy/articles/a"), pathMetadata]]),
+    },
+    bitrixPages: missingBitrix,
+    journeyTransitions: { source: missingBitrix.source, rows: [] },
+  });
+
+  const result = await loadAbbottBiDataWithDependencies(
+    7, ["90602537"], "2026-01-01", "2026-01-01", "embed", deps,
+  );
+
+  assert.deepEqual(result.returning, [{
+    url: "https://abbottpro.ru/academy/articles/a",
+    direction: "Gastroenterology",
+    visits: 3,
+    returning_1_day: 3,
+    returning_2_7_days: 0,
+    returning_8_31_days: 0,
+    is_derived: true,
+    normalization_collision: false,
+  }]);
+});
+
+test("returning pages resolve relative semantic-query URL metadata without changing display grouping", async () => {
+  const urlMetadata = { page_title: "Relative query article", direction: "Gastroenterology", material_type: "article", access: "Врачи", is_active: true };
+  const pathMetadata = { page_title: "Path article", direction: "Cardiology", material_type: "guide", access: "Гости", is_active: true };
+  const aggregate = executor((sql) => {
+    if (sql.includes("canonical_fact_metrika_returning_pages_release_daily")) {
+      return [{
+        report_date: "2026-01-01",
+        raw_page_value: "academy/articles/a?topic=gastro&utm_source=test",
+        normalized_page: "https://abbottpro.ru/academy/articles/a",
+        return_bucket_code: "next_day",
+        source_percentage: "100.0000000000",
+        source_denominator: "3",
+      }];
+    }
+    return aggregateRows(sql);
+  });
+  const deps = dependencies(aggregate, executor(() => []));
+  deps.loadReleaseBundle = async () => ({
+    releaseId: 41,
+    audience: "embed" as const,
+    workbook: {
+      ...aggregateWorkbook,
+      contentByUrl: new Map([[lookupHash("https://abbottpro.ru/academy/articles/a?topic=gastro"), urlMetadata]]),
+      urlReturnDirections: new Map([[lookupHash("/academy/articles/a"), pathMetadata]]),
+    },
+    bitrixPages: missingBitrix,
+    journeyTransitions: { source: missingBitrix.source, rows: [] },
+  });
+
+  const result = await loadAbbottBiDataWithDependencies(
+    7, ["90602537"], "2026-01-01", "2026-01-01", "embed", deps,
+  );
+
+  assert.deepEqual(result.returning, [{
+    url: "https://abbottpro.ru/academy/articles/a",
+    direction: "Gastroenterology",
+    visits: 3,
+    returning_1_day: 3,
+    returning_2_7_days: 0,
+    returning_8_31_days: 0,
+    is_derived: true,
+    normalization_collision: false,
+  }]);
+});
+
 test("aggregate traffic keeps exact User ID partitions with weighted metrics", async () => {
   const siteRows = [
     { analytics_scope: "other", user_id_presence: "all", traffic_source: "Direct", sessions: "10", users: "8", pageviews: "20", bounce_rate: "10", average_session_seconds: "100" },
@@ -508,7 +628,7 @@ test("missing Metrika titles use path metadata, catalog titles, and hide inactiv
   ]);
 });
 
-test("valid Metrika title remains authoritative over conflicting path metadata", async () => {
+test("path metadata precedes a conflicting valid Metrika title when URL identity is unavailable", async () => {
   const aggregate = executor((sql) => {
     if (sql.includes("canonical_fact_metrika_site_analytics_daily")) {
       return [{ analytics_scope: "page", page_url: "https://example.test/raw-title", page_title: "Raw Metrika title", pageviews: "4", users: "2" }];
@@ -522,7 +642,7 @@ test("valid Metrika title remains authoritative over conflicting path metadata",
     workbook: {
       ...aggregateWorkbook,
       contentByTitle: new Map([[lookupHash("Raw Metrika title"), { page_title: "Catalog title", direction: "Cardiology", material_type: "article", access: "Врачи", is_active: true }]]),
-      urlReturnDirections: new Map([[lookupHash("/raw-title"), { page_title: "Wrong path", direction: "Neurology", material_type: "guide", access: "Гости", is_active: false }]]),
+      urlReturnDirections: new Map([[lookupHash("/raw-title"), { page_title: "Path metadata", direction: "Neurology", material_type: "guide", access: "Гости", is_active: true }]]),
     },
     bitrixPages: missingBitrix,
     journeyTransitions: { source: missingBitrix.source, rows: [] },
@@ -535,7 +655,73 @@ test("valid Metrika title remains authoritative over conflicting path metadata",
   assert.deepEqual(result.page_stats, [{
     page_title: "Raw Metrika title",
     url: "https://example.test/raw-title",
+    direction: "Neurology",
+    material_type: "guide",
+    access: "Гости",
+    pageviews: 4,
+    users: 2,
+    bitrix_pageviews: 0,
+    bitrix_sessions: 0,
+    bitrix_users: 0,
+    bitrix_logged_in_sessions: 0,
+    bitrix_anonymous_sessions: 0,
+    bitrix_avg_session_duration: 0,
+  }]);
+});
+
+test("exact Abbott URL metadata wins over conflicting path, title, and slug projections", async () => {
+  const gastroArticle = {
+    page_title: "Gastro article",
+    direction: "Gastroenterology",
+    material_type: "article",
+    access: "Врачи",
+    is_active: true,
+    mnn: ["Омакор", "Трайкор"],
+  };
+  const cardioArticle = {
+    page_title: "Cardio article",
     direction: "Cardiology",
+    material_type: "guide",
+    access: "Гости",
+    is_active: false,
+    mnn: [],
+  };
+  const aggregate = executor((sql) => {
+    if (sql.includes("canonical_fact_metrika_site_analytics_daily")) {
+      return [{
+        analytics_scope: "page",
+        page_url: "https://abbottpro.ru/academy/articles/a?utm_source=test",
+        page_title: "Одинаковый заголовок",
+        pageviews: "4",
+        users: "2",
+      }];
+    }
+    return aggregateRows(sql);
+  });
+  const deps = dependencies(aggregate, executor(() => []));
+  deps.loadReleaseBundle = async () => ({
+    releaseId: 41,
+    audience: "embed" as const,
+    workbook: {
+      ...aggregateWorkbook,
+      contentByUrl: new Map([[lookupHash("https://abbottpro.ru/academy/articles/a"), gastroArticle]]),
+      urlReturnDirections: new Map([[lookupHash("/academy/articles/a"), gastroArticle]]),
+      contentByTitle: new Map([[lookupHash("Одинаковый заголовок"), cardioArticle]]),
+      contentBySlug: new Map([[lookupHash("a"), cardioArticle]]),
+    },
+    bitrixPages: missingBitrix,
+    journeyTransitions: { source: missingBitrix.source, rows: [] },
+  });
+
+  const result = await loadAbbottBiDataWithDependencies(
+    7, ["90602537"], "2026-01-01", "2026-01-01", "embed", deps,
+  );
+
+  assert.deepEqual(result.page_stats, [{
+    page_title: "Одинаковый заголовок",
+    url: "https://abbottpro.ru/academy/articles/a",
+    direction: "Gastroenterology",
+    mnn: ["Омакор", "Трайкор"],
     material_type: "article",
     access: "Врачи",
     pageviews: 4,
@@ -714,6 +900,74 @@ test("loader maps every Bitrix metric and exposes snapshot metadata", async () =
   });
   assert.deepEqual(result.bitrix_sources?.pages, source);
   assert.deepEqual(result.bitrix_sources?.journeys, source);
+});
+
+test("Bitrix pages resolve semantic-query URL metadata without changing page grouping or metrics", async () => {
+  const urlMetadata = { page_title: "Query article", direction: "Gastroenterology", material_type: "article", access: "Врачи", is_active: true };
+  const pathMetadata = { page_title: "Path article", direction: "Cardiology", material_type: "guide", access: "Гости", is_active: true };
+  const aggregate = executor(aggregateRows);
+  const deps = dependencies(aggregate, executor(() => []));
+  deps.loadReleaseBundle = async () => ({
+    releaseId: 41,
+    audience: "embed" as const,
+    workbook: {
+      ...aggregateWorkbook,
+      contentByUrl: new Map([[lookupHash("https://abbottpro.ru/academy/articles/a?topic=gastro"), urlMetadata]]),
+      urlReturnDirections: new Map([[lookupHash("/academy/articles/a"), pathMetadata]]),
+    },
+    bitrixPages: {
+      source: { ...missingBitrix.source, source_status: "test_dump", snapshot_id: 13 },
+      summary: { date_from: "2026-01-01", date_to: "2026-01-01", page_rows: 1 },
+      rows: [{
+        report_date: "2026-01-01",
+        url: "https://abbottpro.ru/academy/articles/a?topic=gastro&utm_source=test",
+        path: "/academy/articles/a",
+        material_id: "m-1",
+        material_type_hint: null,
+        pageviews: 11,
+        sessions: 10,
+        users: 9,
+        guests: 8,
+        logged_in_hits: 7,
+        anonymous_hits: 6,
+        logged_in_sessions: 5,
+        anonymous_sessions: 4,
+        entry_sessions: 3,
+        exit_sessions: 2,
+        avg_session_duration_seconds: 42.75,
+        top_utm_source: null,
+        top_utm_medium: null,
+        top_utm_campaign: null,
+      }],
+    },
+    journeyTransitions: { source: missingBitrix.source, rows: [] },
+  });
+
+  const result = await loadAbbottBiDataWithDependencies(
+    7, ["90602537"], "2026-01-01", "2026-01-01", "embed", deps,
+  );
+
+  assert.deepEqual(result.bitrix_pages, [{
+    url: "https://abbottpro.ru/academy/articles/a",
+    path: "/academy/articles/a",
+    direction: "Gastroenterology",
+    material_type: "article",
+    access: "Врачи",
+    pageviews: 11,
+    sessions: 10,
+    users: 9,
+    guests: 8,
+    logged_in_hits: 7,
+    anonymous_hits: 6,
+    logged_in_sessions: 5,
+    anonymous_sessions: 4,
+    entry_sessions: 3,
+    exit_sessions: 2,
+    avg_session_duration: 42.75,
+    top_utm_source: "",
+    top_utm_medium: "",
+    top_utm_campaign: "",
+  }]);
 });
 
 test("loader aggregates multi-day Bitrix rows without last-row overwrite", async () => {
@@ -1228,6 +1482,9 @@ function hubDeps(pageUrl: string, catalogDirection: string | null) {
     workbook: {
       ...aggregateWorkbook,
       contentBySlug: new Map([[lookupHash("known"), known]]),
+      contentByUrl: new Map([
+        [lookupHash("https://abbottpro.ru/academy/articles/known"), known],
+      ]),
       urlReturnDirections: new Map([[lookupHash("/preparation"), hubMetadata]]),
     },
     bitrixPages: missingBitrix,

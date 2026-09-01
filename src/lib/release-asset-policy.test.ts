@@ -95,10 +95,46 @@ test("release scans reject private data outside public while allowing Abbott sch
     await writeFile(path.join(releaseRoot, "src", "db", "migrations", "041_abbott_private_visit_user_ids.sql"), "DDL");
     await writeFile(path.join(releaseRoot, "src", "db", "migrations", "044_abbott_private_visit_utm_source.sql"), "DDL");
     await writeFile(path.join(releaseRoot, "src", "db", "migrations", "046_abbott_release_source_integrity.sql"), "DDL");
-    await writeFile(path.join(releaseRoot, "src", "db", "migrations", "062_abbott_admin_user_exclusions.sql"), "DDL");
+    await writeFile(path.join(releaseRoot, "src", "db", "migrations", "047_abbott_content_registry_workflow.sql"), "DDL");
+    await writeFile(path.join(releaseRoot, "src", "db", "migrations", "048_abbott_content_candidate_provenance.sql"), "DDL");
+    await writeFile(path.join(releaseRoot, "src", "db", "migrations", "049_abbott_content_reconciliation_staging.sql"), "DDL");
+    await writeFile(path.join(releaseRoot, "src", "db", "migrations", "050_abbott_content_url_identity.sql"), "DDL");
+    await writeFile(path.join(releaseRoot, "src", "db", "migrations", "051_abbott_content_url_alias_decisions.sql"), "DDL");
+    for (const fileName of [
+      "052_abbott_content_taxonomy_v2.sql",
+      "053_abbott_observed_pages_hash.sql",
+      "054_abbott_observed_page_creation.sql",
+      "055_abbott_projection_modality.sql",
+      "060_abbott_content_mnn.sql",
+      "061_abbott_optional_mnn_decisions.sql",
+      "062_abbott_admin_user_exclusions.sql",
+    ]) {
+      await writeFile(path.join(releaseRoot, "src", "db", "migrations", fileName), "DDL");
+    }
     await mkdir(path.join(releaseRoot, "reportingdash-canonical-bootstrap", "src", "db", "migrations"), { recursive: true });
     await writeFile(
-      path.join(releaseRoot, "reportingdash-canonical-bootstrap", "src", "db", "migrations", "062_abbott_admin_user_exclusions.sql"),
+      path.join(releaseRoot, "reportingdash-canonical-bootstrap", "src", "db", "migrations", "049_abbott_content_reconciliation_staging.sql"),
+      "DDL",
+    );
+    for (const fileName of [
+      "050_abbott_content_url_identity.sql",
+      "051_abbott_content_url_alias_decisions.sql",
+      "052_abbott_content_taxonomy_v2.sql",
+      "053_abbott_observed_pages_hash.sql",
+      "054_abbott_observed_page_creation.sql",
+      "055_abbott_projection_modality.sql",
+      "060_abbott_content_mnn.sql",
+      "061_abbott_optional_mnn_decisions.sql",
+      "062_abbott_admin_user_exclusions.sql",
+    ]) {
+      await writeFile(
+        path.join(releaseRoot, "reportingdash-canonical-bootstrap", "src", "db", "migrations", fileName),
+        "DDL",
+      );
+    }
+    await writeFile(path.join(releaseRoot, "src", "db", "migrations", "052_abbott_content_mnn.sql"), "DDL");
+    await writeFile(
+      path.join(releaseRoot, "reportingdash-canonical-bootstrap", "src", "db", "migrations", "052_abbott_content_mnn.sql"),
       "DDL",
     );
     await writeFile(path.join(releaseRoot, "src", "db", "migrations", "034_abbott_unreviewed.sql"), "DDL");
@@ -107,7 +143,9 @@ test("release scans reject private data outside public while allowing Abbott sch
     assert.deepEqual(findPrivateReleaseAssets(releaseRoot), [
       "ABBOTT-UNRESOLVED.csv",
       "public/abbott/source.json",
+      "reportingdash-canonical-bootstrap/src/db/migrations/052_abbott_content_mnn.sql",
       "src/db/migrations/034_abbott_unreviewed.sql",
+      "src/db/migrations/052_abbott_content_mnn.sql",
     ]);
   } finally {
     await rm(releaseRoot, { force: true, recursive: true });
@@ -156,6 +194,41 @@ test("release scans detect private signatures under neutral JSON and CSV names",
     await writeFile(path.join(releaseRoot, "totals.csv"), "date,sessions,users\n2026-07-01,12,9\n");
 
     assert.deepEqual(findPrivateReleaseAssets(releaseRoot), ["events.csv", "users.json"]);
+  } finally {
+    await rm(releaseRoot, { force: true, recursive: true });
+  }
+});
+
+test("release scans allow only safe generated metadata for the Abbott admin-user API route", async () => {
+  const releaseRoot = await mkdtemp(path.join(tmpdir(), "release-asset-policy-route-metadata-"));
+  try {
+    const routeRoot = path.join(
+      releaseRoot,
+      ".next",
+      "server",
+      "app",
+      "api",
+      "dashboard",
+      "[id]",
+      "abbott-admin-users",
+    );
+    await mkdir(path.join(routeRoot, "route"), { recursive: true });
+    await writeFile(
+      path.join(routeRoot, "route.js.nft.json"),
+      JSON.stringify({ version: 1, files: ["../../../../../../chunks/route.js"] }),
+    );
+    await writeFile(
+      path.join(routeRoot, "route", "app-paths-manifest.json"),
+      JSON.stringify({ "/api/dashboard/[id]/abbott-admin-users/route": "app/api/dashboard/[id]/abbott-admin-users/route.js" }),
+    );
+    await writeFile(
+      path.join(routeRoot, "route", "private.json"),
+      JSON.stringify({ raw_user_id: "must-stay-private" }),
+    );
+
+    assert.deepEqual(findPrivateReleaseAssets(releaseRoot), [
+      ".next/server/app/api/dashboard/[id]/abbott-admin-users/route/private.json",
+    ]);
   } finally {
     await rm(releaseRoot, { force: true, recursive: true });
   }

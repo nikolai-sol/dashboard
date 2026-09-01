@@ -9,6 +9,7 @@ import re
 import subprocess
 import sys
 import uuid
+from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
@@ -27,6 +28,14 @@ GOOD_COVERAGE_STATUSES = {"success", "success_empty"}
 
 class ActiveReleaseLaunchError(RuntimeError):
     """Sanitized launcher failure that never includes environment values."""
+
+
+@dataclass(frozen=True)
+class ActiveReleaseContext:
+    """Immutable collector identity read from one active-pointer query."""
+
+    release_id: int
+    code_revision: str
 
 
 def _inside(root: Path, path: Path) -> bool:
@@ -151,7 +160,7 @@ def attest_runtime(root: Path, expected_revision: str, manifest_path: Path) -> N
             raise ActiveReleaseLaunchError("Canonical runtime file hash does not match")
 
 
-def resolve_active_release(expected_revision: str) -> int:
+def resolve_active_release() -> ActiveReleaseContext:
     conn = None
     cur = None
     try:
@@ -170,13 +179,22 @@ def resolve_active_release(expected_revision: str) -> int:
             ("abbott",),
         )
         row = cur.fetchone()
+        release_id = row.get("canonical_release_id") if isinstance(row, dict) else None
+        code_revision = row.get("code_revision") if isinstance(row, dict) else None
         if (
             not isinstance(row, dict)
             or row.get("release_status") != "active"
-            or row.get("code_revision") != expected_revision
+            or isinstance(release_id, bool)
+            or not isinstance(release_id, int)
+            or release_id <= 0
+            or not isinstance(code_revision, str)
+            or re.fullmatch(r"[0-9a-f]{7,64}", code_revision) is None
         ):
             raise ActiveReleaseLaunchError("Abbott active release attestation failed")
-        return int(row["canonical_release_id"])
+        return ActiveReleaseContext(
+            release_id=release_id,
+            code_revision=code_revision,
+        )
     except ActiveReleaseLaunchError:
         raise
     except Exception:
@@ -328,8 +346,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--canonical-root", type=Path, required=True)
     parser.add_argument("--manifest", type=Path, required=True)
     parser.add_argument("--collector", type=Path, required=True)
-    parser.add_argument("--runtime-revision")
-    parser.add_argument("--code-revision", required=True)
+    parser.add_argument("--runtime-revision", required=True)
     parser.add_argument("--parser-version", required=True)
     return parser
 
@@ -339,19 +356,18 @@ def run(args: argparse.Namespace) -> None:
     collector = args.collector.resolve(strict=True)
     if root not in collector.parents:
         raise ActiveReleaseLaunchError("Collector is outside the canonical runtime root")
-    runtime_revision = getattr(args, "runtime_revision", None) or args.code_revision
-    attest_runtime(root, runtime_revision, args.manifest)
-    release_id = resolve_active_release(args.code_revision)
+    attest_runtime(root, args.runtime_revision, args.manifest)
+    active_release = resolve_active_release()
     day = completed_utc_day()
-    if active_day_is_reconciled(release_id, day):
-        record_reconciled_noop(release_id, day)
+    if active_day_is_reconciled(active_release.release_id, day):
+        record_reconciled_noop(active_release.release_id, day)
         return
     try:
         subprocess.run(
             build_collector_command(
                 collector=collector,
-                release_id=release_id,
-                code_revision=args.code_revision,
+                release_id=active_release.release_id,
+                code_revision=active_release.code_revision,
                 parser_version=args.parser_version,
             ),
             cwd=root,

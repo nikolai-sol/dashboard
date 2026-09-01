@@ -15,9 +15,25 @@ function normalizeSearchValue(value: string | null | undefined) {
   return String(value ?? "").trim().toLocaleLowerCase("ru");
 }
 
+type AbbottPageStatsFilters = {
+  query: string;
+  pageTitleQuery: string;
+  direction: string;
+  mnn: string[];
+  materialTypes: string[];
+  access: string;
+};
+
 export function matchesSelectedMaterialType(materialType: string | null, selectedTypes: string[]) {
   if (selectedTypes.length === 0) return true;
   return selectedTypes.includes(labelAbbottPageDimension(materialType));
+}
+
+export function matchesSelectedMnn(mnn: string[] | null | undefined, selectedMnn: string[]) {
+  if (selectedMnn.length === 0) return true;
+  const values = (mnn ?? []).map((value) => String(value).trim()).filter(Boolean);
+  if (values.length === 0) return selectedMnn.includes(ABBOTT_UNMAPPED_LABEL);
+  return values.some((value) => selectedMnn.includes(value));
 }
 
 export function buildAbbottPageDimensionOptions<T>(
@@ -61,6 +77,36 @@ export function matchesPageStatsSearch(pageTitle: string, url: string, query: st
   return [pageTitle, url].some((value) => normalizeSearchValue(value).includes(normalizedQuery));
 }
 
+export function filterAbbottPageStatsRows(rows: AbbottBiPageStatRow[], filters: AbbottPageStatsFilters) {
+  const normalizedQuery = normalizeSearchValue(filters.query);
+  return rows.filter((row) => {
+    if (
+      normalizedQuery &&
+      ![
+        row.page_title,
+        row.url,
+        row.direction,
+        ...(row.mnn ?? []),
+        row.material_type,
+        row.access,
+        row.pageviews,
+        row.users,
+        row.bitrix_pageviews,
+        row.bitrix_sessions,
+        row.bitrix_users,
+      ].some((value) => normalizeSearchValue(String(value ?? "")).includes(normalizedQuery))
+    ) {
+      return false;
+    }
+    if (!matchesPageStatsSearch(row.page_title, row.url, filters.pageTitleQuery)) return false;
+    if (filters.direction && (row.direction ?? "") !== filters.direction) return false;
+    if (!matchesSelectedMnn(row.mnn, filters.mnn)) return false;
+    if (!matchesSelectedMaterialType(row.material_type, filters.materialTypes)) return false;
+    if (filters.access && (row.access ?? "") !== filters.access) return false;
+    return true;
+  });
+}
+
 export function summarizeAbbottPageStats(rows: AbbottBiPageStatRow[]) {
   return rows.reduce(
     (totals, row) => ({
@@ -98,6 +144,7 @@ export function buildAbbottPageStatsExportRows(rows: AbbottBiPageStatRow[]): Arr
     "Заголовок страницы": row.page_title || "—",
     URL: row.url || "—",
     Направление: labelAbbottPageDimension(row.direction),
+    МНН: row.mnn?.length ? row.mnn.join("; ") : ABBOTT_UNMAPPED_LABEL,
     "Тип материала": labelAbbottPageDimension(row.material_type),
     Доступ: labelAbbottPageDimension(row.access),
     "Просмотры Метрики": row.pageviews,

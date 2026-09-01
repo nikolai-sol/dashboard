@@ -43,6 +43,7 @@ type DashboardHeaderProps = {
   language?: DashboardLanguage;
   dateFrom?: string;
   dateTo?: string;
+  maxDate?: string;
   onDateFromChange?: (value: string) => void;
   onDateToChange?: (value: string) => void;
   onApplyDateRange?: () => void;
@@ -87,6 +88,7 @@ export default function DashboardHeader({
   language = "en",
   dateFrom,
   dateTo,
+  maxDate,
   onDateFromChange,
   onDateToChange,
   onApplyDateRange,
@@ -214,6 +216,7 @@ export default function DashboardHeader({
               <input
                 type="date"
                 value={dateFrom ?? ""}
+                max={maxDate}
                 disabled={dateControlsDisabled}
                 onChange={(e) => onDateFromChange?.(e.target.value)}
                 className="bg-transparent outline-none"
@@ -224,6 +227,7 @@ export default function DashboardHeader({
               <input
                 type="date"
                 value={dateTo ?? ""}
+                max={maxDate}
                 disabled={dateControlsDisabled}
                 onChange={(e) => onDateToChange?.(e.target.value)}
                 className="bg-transparent outline-none"

@@ -67,6 +67,10 @@ def build_parser() -> argparse.ArgumentParser:
     activate.add_argument("--release-id", type=int, required=True)
     activate.add_argument("--expected-active-release-id", type=int, required=True)
 
+    fail_staging = commands.add_parser("fail-staging")
+    fail_staging.add_argument("--release-id", type=int, required=True)
+    fail_staging.add_argument("--expected-active-release-id", type=int, required=True)
+
     rollback = commands.add_parser("rollback")
     rollback.add_argument("--from-release-id", type=int, required=True)
     rollback.add_argument("--to-release-id", type=int, required=True)
@@ -98,6 +102,12 @@ def run(args: argparse.Namespace) -> str:
             expected_active_release_id=args.expected_active_release_id,
         )
         return f"release_id={args.release_id} status=active"
+    if args.command == "fail-staging":
+        status = release_store.fail_staging_release(
+            args.release_id,
+            expected_active_release_id=args.expected_active_release_id,
+        )
+        return f"release_id={args.release_id} status={'failed' if status == 'failed' else 'failed_noop'}"
     release_store.rollback_release(
         from_release_id=args.from_release_id,
         to_release_id=args.to_release_id,

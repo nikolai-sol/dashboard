@@ -1,6 +1,10 @@
 import { createHash } from "node:crypto";
 
-import { normalizeAbbottPageUrl as normalizePage } from "@/lib/abbott-page-url";
+import {
+  isAbbottWebPageUrl,
+  normalizeAbbottContentIdentityUrl,
+  normalizeAbbottPageUrl as normalizePage,
+} from "@/lib/abbott-page-url";
 import { abbottTitleLookupHash } from "@/lib/abbott-content-lookup";
 import { buildAbbottReturnFrequency, type AbbottFrequencyVisit } from "@/lib/abbott-return-frequency";
 import {
@@ -513,6 +517,7 @@ function directionBySectionId(
   if (cached) return cached;
   const result = new Map<string, string>();
   for (const source of [
+    workbook.contentByUrl,
     workbook.contentByTitle,
     workbook.contentBySlug,
     workbook.urlReturnDirections,
@@ -556,14 +561,15 @@ function metadataForPage(
   rawUrl: unknown,
   rawPageTitle: unknown,
   workbook: AbbottAggregatePrivateData["workbook"],
-): { page_title: string; direction: string | null; material_type: string | null; access: string | null; hidden: boolean } {
+): { page_title: string; direction: string | null; mnn: string[]; material_type: string | null; access: string | null; hidden: boolean } {
+  const identityUrl = normalizeAbbottContentIdentityUrl(rawUrl);
   const normalized = normalizePage(rawUrl);
-  const path = normalizedPagePath(normalized);
+  const path = normalizedPagePath(identityUrl || normalized);
   const slug = path.split("/").filter(Boolean).at(-1) ?? "";
   const rawTitle = validRawPageTitle(rawPageTitle);
-  const metadata = (rawTitle ? workbook.contentByTitle.get(abbottTitleLookupHash(rawTitle)) : undefined)
-    ?? workbook.contentByUrl.get(lookupHash(normalized))
+  const metadata = (identityUrl ? workbook.contentByUrl.get(lookupHash(identityUrl)) : undefined)
     ?? workbook.urlReturnDirections.get(lookupHash(path))
+    ?? (rawTitle ? workbook.contentByTitle.get(abbottTitleLookupHash(rawTitle)) : undefined)
     ?? workbook.contentBySlug.get(lookupHash(slug));
   const catalogDirection = metadata?.direction ?? null;
   const direction = !catalogDirection || catalogDirection === ABBOTT_UNDETERMINED_DIRECTION
@@ -572,6 +578,7 @@ function metadataForPage(
   return {
     page_title: rawTitle ?? metadata?.page_title ?? "",
     direction,
+    mnn: [...(metadata?.mnn ?? [])],
     material_type: metadata?.material_type ?? null,
     access: metadata?.access ?? null,
     hidden: metadata?.is_active === false,
@@ -626,14 +633,16 @@ function buildPageStats(
 ): AbbottBiPageStatRow[] {
   const result = new Map<string, AbbottBiPageStatRow & { hidden: boolean }>();
   rows.filter((row) => row.analytics_scope === "page").forEach((row) => {
-    const url = normalizePage(row.page_url);
-    const metadata = metadataForPage(row.page_url, row.page_title, workbook);
+    const rawUrl = text(row.page_url);
+    const url = normalizePage(rawUrl);
+    const metadata = metadataForPage(rawUrl, row.page_title, workbook);
     const title = metadata.page_title;
     const key = `${title}\n${url}`;
     const current = result.get(key) ?? {
       page_title: title,
       url,
       direction: metadata.direction,
+      ...(metadata.mnn.length > 0 ? { mnn: metadata.mnn } : {}),
       material_type: metadata.material_type,
       access: metadata.access,
       pageviews: 0,
@@ -657,6 +666,7 @@ function buildPageStats(
       page_title: row.page_title,
       url: row.url,
       direction: row.direction,
+      ...(row.mnn && row.mnn.length > 0 ? { mnn: row.mnn } : {}),
       material_type: row.material_type,
       access: row.access,
       pageviews: row.pageviews,
@@ -837,6 +847,7 @@ function buildReturning(
 ): AbbottReturningOutput[] {
   const totals = new Map<string, AbbottReturningOutput & { rawPages: Set<string>; denominatorKeys: Set<string> }>();
   rows.forEach((row) => {
+    if (!isAbbottWebPageUrl(row.normalized_page)) return;
     const url = normalizePage(row.normalized_page);
     const rawPage = rawIdentifier(row.raw_page_value);
     const reportDate = text(row.report_date).slice(0, 10);
@@ -845,11 +856,15 @@ function buildReturning(
       throw new Error("Abbott canonical data is unavailable");
     }
     const count = deriveReturningCount(row.source_denominator, row.source_percentage);
+    const rawIdentityUrl = normalizeAbbottContentIdentityUrl(rawPage);
+    const displayIdentityUrl = normalizeAbbottContentIdentityUrl(row.normalized_page);
+    const metadataUrl = rawIdentityUrl && displayIdentityUrl
+      && normalizedPagePath(rawIdentityUrl) === normalizedPagePath(displayIdentityUrl)
+      ? rawPage
+      : text(row.normalized_page);
     const current = totals.get(url) ?? {
       url,
-      direction: workbook.contentByUrl?.get(lookupHash(url))?.direction
-        ?? workbook.urlReturnDirections.get(lookupHash(normalizedPagePath(url)))?.direction
-        ?? null,
+      direction: metadataForPage(metadataUrl, "", workbook).direction,
       visits: 0,
       returning_1_day: 0,
       returning_2_7_days: 0,
@@ -1223,11 +1238,7 @@ export async function loadAbbottBiDataWithDependencies(
         ? buildAbbottReturnFrequency(
             managerBehavior.frequencyVisits,
             releaseBundle.workbook.userDirections,
-            (url) => releaseBundle.workbook.contentByUrl?.get(lookupHash(url))?.direction
-              ?? releaseBundle.workbook.urlReturnDirections.get(
-                lookupHash(normalizedPagePath(url)),
-              )?.direction
-              ?? null,
+            (url) => metadataForPage(url, "", releaseBundle.workbook).direction,
           )
         : {
             available: false,

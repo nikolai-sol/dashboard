@@ -27,8 +27,35 @@ const SAFE_ABBOTT_MIGRATIONS = new Set([
   "src/db/migrations/041_abbott_private_visit_user_ids.sql",
   "src/db/migrations/044_abbott_private_visit_utm_source.sql",
   "src/db/migrations/046_abbott_release_source_integrity.sql",
+  "src/db/migrations/047_abbott_content_registry_workflow.sql",
+  "src/db/migrations/048_abbott_content_candidate_provenance.sql",
+  "src/db/migrations/049_abbott_content_reconciliation_staging.sql",
+  "src/db/migrations/050_abbott_content_url_identity.sql",
+  "src/db/migrations/051_abbott_content_url_alias_decisions.sql",
+  "src/db/migrations/052_abbott_content_taxonomy_v2.sql",
+  "src/db/migrations/053_abbott_observed_pages_hash.sql",
+  "src/db/migrations/054_abbott_observed_page_creation.sql",
+  "src/db/migrations/055_abbott_projection_modality.sql",
+  "src/db/migrations/060_abbott_content_mnn.sql",
+  "src/db/migrations/061_abbott_optional_mnn_decisions.sql",
   "src/db/migrations/062_abbott_admin_user_exclusions.sql",
+  "reportingdash-canonical-bootstrap/src/db/migrations/049_abbott_content_reconciliation_staging.sql",
+  "reportingdash-canonical-bootstrap/src/db/migrations/050_abbott_content_url_identity.sql",
+  "reportingdash-canonical-bootstrap/src/db/migrations/051_abbott_content_url_alias_decisions.sql",
+  "reportingdash-canonical-bootstrap/src/db/migrations/052_abbott_content_taxonomy_v2.sql",
+  "reportingdash-canonical-bootstrap/src/db/migrations/053_abbott_observed_pages_hash.sql",
+  "reportingdash-canonical-bootstrap/src/db/migrations/054_abbott_observed_page_creation.sql",
+  "reportingdash-canonical-bootstrap/src/db/migrations/055_abbott_projection_modality.sql",
+  "reportingdash-canonical-bootstrap/src/db/migrations/060_abbott_content_mnn.sql",
+  "reportingdash-canonical-bootstrap/src/db/migrations/061_abbott_optional_mnn_decisions.sql",
   "reportingdash-canonical-bootstrap/src/db/migrations/062_abbott_admin_user_exclusions.sql",
+]);
+
+const SAFE_ABBOTT_GENERATED_METADATA = new Set([
+  ".next/server/app/api/dashboard/[id]/abbott-admin-users/route.js.nft.json",
+  ".next/server/app/api/dashboard/[id]/abbott-admin-users/route/app-paths-manifest.json",
+  ".next/server/app/api/dashboard/[id]/abbott-admin-users/route/build-manifest.json",
+  ".next/server/app/api/dashboard/[id]/abbott-admin-users/route/server-reference-manifest.json",
 ]);
 
 const INSPECTED_DATA_SUFFIXES = [".json", ".jsonl", ".csv", ".tsv", ".xlsx", ".xls"] as const;
@@ -219,6 +246,9 @@ export function findPrivateReleaseAssets(releaseRoot: string): string[] {
     releaseRoot,
     (absolutePath, relativePath) => {
       if (SAFE_ABBOTT_MIGRATIONS.has(relativePath)) return false;
+      if (SAFE_ABBOTT_GENERATED_METADATA.has(relativePath)) {
+        return hasPrivateDataSignature(absolutePath, relativePath);
+      }
       return (
         (isProhibitedAbbottAsset(relativePath) && !isGeneratedNextServerManifest(relativePath)) ||
         hasPrivateDataSignature(absolutePath, relativePath)

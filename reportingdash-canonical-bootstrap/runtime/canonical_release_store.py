@@ -27,12 +27,20 @@ ABBOTT_REQUIRED_SOURCE_KINDS = (
 ABBOTT_OPTIONAL_SOURCE_KINDS = (
     "abbott_bitrix_pages",
     "abbott_bitrix_journeys",
+    "abbott_mnn_workbook",
 )
 ABBOTT_ALLOWED_SOURCE_KINDS = frozenset(
     ABBOTT_REQUIRED_SOURCE_KINDS + ABBOTT_OPTIONAL_SOURCE_KINDS
 )
 ABBOTT_COVERAGE_ONLY_BOOTSTRAP_BASELINE_ID = 13
 ABBOTT_COVERAGE_ONLY_BOOTSTRAP_PREDECESSOR_ID = 1
+PREVIEW_ONLY_REVISION_PREFIX = "preview_only:"
+_METADATA_ONLY_PERIODS = (
+    ("2026-06-01", "2026-06-30"),
+    ("2026-07-01", "2026-07-31"),
+    ("2026-08-01", "2026-08-09"),
+)
+_METADATA_ONLY_METRICS = ("sessions", "users", "pageviews", "goal_conversions")
 
 
 class ReleaseStoreError(RuntimeError):
@@ -129,7 +137,11 @@ def _validate_release_source_receipts(*, release: dict, execution_rows: list[dic
         or set(receipt_ids) != set(source_ids)
         or any(
             row.get("import_status") != "imported"
-            or int(row.get("rejected_row_count") or 0) != 0
+            or int(row.get("rejected_row_count") or 0) < 0
+            or (
+                row.get("source_kind") != "abbott_mnn_workbook"
+                and int(row.get("rejected_row_count") or 0) != 0
+            )
             for row in execution_rows
         )
     ):
@@ -154,6 +166,12 @@ def _required_control_names(
         f"coverage.{scope}.reconciled_days"
         for scope in ABBOTT_REQUIRED_METRIKA_SCOPES
     )
+    if any(name.startswith("content.") for name in names):
+        names.update(
+            f"fact_totals.{start}.{end}.{metric}"
+            for start, end in _METADATA_ONLY_PERIODS
+            for metric in _METADATA_ONLY_METRICS
+        )
     return names
 
 
@@ -244,12 +262,25 @@ def _validate_imported_sources(
             imported_row_count=snapshot.get("imported_row_count"),
         )
         fingerprint_fields = ("content_sha256", "content_bytes", "parser_version")
+        snapshot_rejected = int(snapshot.get("rejected_row_count") or 0)
+        if kind == "abbott_mnn_workbook":
+            rejection_evidence_valid = (
+                snapshot_rejected
+                == int(source_manifest.get("rejected_placeholder_count") or 0)
+                and int(source_manifest.get("unknown_malformed_count") or 0) == 0
+                and int(source_manifest.get("rejected_count") or 0)
+                == snapshot_rejected
+            )
+        else:
+            rejection_evidence_valid = (
+                snapshot_rejected == 0
+                and int(source_manifest.get("rejected_count") or 0) == 0
+            )
         if (
             snapshot.get("import_status") != "imported"
             or int(snapshot.get("imported_row_count") or 0) <= 0
-            or int(snapshot.get("rejected_row_count") or 0) != 0
+            or not rejection_evidence_valid
             or source_manifest.get("source_kind") != kind
-            or int(source_manifest.get("rejected_count") or 0) != 0
             or any(snapshot.get(field) != frozen.get(field) for field in fingerprint_fields)
             or any(source_manifest.get(field) != frozen.get(field) for field in fingerprint_fields)
         ):
@@ -260,7 +291,7 @@ def _validate_imported_sources(
             or execution.get("code_revision") != release.get("code_revision")
             or int(execution.get("imported_row_count") or 0)
             != int(snapshot.get("imported_row_count") or 0)
-            or int(execution.get("rejected_row_count") or 0) != 0
+            or int(execution.get("rejected_row_count") or 0) != snapshot_rejected
         ):
             raise ValidationGateError("Release import execution does not match the candidate")
 
@@ -307,11 +338,18 @@ def _close(cur, conn) -> None:
             pass
 
 
-def get_release(release_id: int, *, portal_key: str = ABBOTT_DATASET_KEY) -> dict:
-    conn = None
+def get_release(
+    release_id: int,
+    *,
+    portal_key: str = ABBOTT_DATASET_KEY,
+    connection=None,
+) -> dict:
+    conn = connection
     cur = None
+    owns_connection = connection is None
     try:
-        conn = get_db_connection()
+        if conn is None:
+            conn = get_db_connection()
         cur = conn.cursor(dictionary=True)
         cur.execute(
             """
@@ -325,7 +363,7 @@ def get_release(release_id: int, *, portal_key: str = ABBOTT_DATASET_KEY) -> dic
     except Exception:
         raise ReleaseStoreError("Unable to read canonical release") from None
     finally:
-        _close(cur, conn)
+        _close(cur, conn if owns_connection else None)
 
     if release is None:
         raise ReleaseNotFoundError("Canonical release was not found for dataset")
@@ -333,9 +371,16 @@ def get_release(release_id: int, *, portal_key: str = ABBOTT_DATASET_KEY) -> dic
 
 
 def require_mutable_candidate_release(
-    release_id: int, *, portal_key: str = ABBOTT_DATASET_KEY
+    release_id: int,
+    *,
+    portal_key: str = ABBOTT_DATASET_KEY,
+    connection=None,
 ) -> dict:
-    release = get_release(release_id, portal_key=portal_key)
+    release = get_release(
+        release_id,
+        portal_key=portal_key,
+        connection=connection,
+    )
     if release.get("release_status") != MUTABLE_RELEASE_STATUS:
         raise ImmutableReleaseError("Canonical release is immutable")
     return release
@@ -347,14 +392,18 @@ def create_candidate_release(
     predecessor_release_id: int,
     baseline_validation_run_id: int,
     code_revision: str,
+    connection=None,
 ) -> int:
-    conn = None
+    conn = connection
     cur = None
+    owns_connection = connection is None
     release_key = f"{portal_key}-{uuid.uuid4().hex}"
     try:
-        conn = get_db_connection()
+        if conn is None:
+            conn = get_db_connection()
         cur = conn.cursor(dictionary=True)
-        conn.start_transaction()
+        if owns_connection:
+            conn.start_transaction()
         current_release_id = _lock_active_pointer(cur, portal_key)
         if current_release_id != predecessor_release_id:
             raise ReleasePointerConflictError("Active canonical release pointer changed")
@@ -377,18 +426,19 @@ def create_candidate_release(
             ),
         )
         release_id = int(cur.lastrowid)
-        conn.commit()
+        if owns_connection:
+            conn.commit()
         return release_id
     except ReleaseStoreError:
-        if conn is not None:
+        if owns_connection and conn is not None:
             conn.rollback()
         raise
     except Exception:
-        if conn is not None:
+        if owns_connection and conn is not None:
             conn.rollback()
         raise ReleaseStoreError("Unable to create canonical release") from None
     finally:
-        _close(cur, conn)
+        _close(cur, conn if owns_connection else None)
 
 
 def validate_release(
@@ -671,6 +721,75 @@ def _compare_and_swap_pointer(
         raise ReleasePointerConflictError("Active canonical release pointer changed")
 
 
+def fail_staging_release(
+    release_id: int, *, expected_active_release_id: int
+) -> str:
+    """Audit a superseded non-active candidate without moving the pointer."""
+
+    dataset_key = ABBOTT_DATASET_KEY
+    conn = None
+    cur = None
+    try:
+        conn = get_db_connection()
+        cur = conn.cursor(dictionary=True)
+        conn.start_transaction()
+        current_release_id = _lock_active_pointer(cur, dataset_key)
+        if current_release_id != expected_active_release_id:
+            raise ReleasePointerConflictError("Active canonical release pointer changed")
+
+        cur.execute(
+            """
+            SELECT id, release_status, rollback_from_release_id
+            FROM portal_data_releases
+            WHERE dataset_key = %s AND id = %s
+            FOR UPDATE
+            """,
+            (dataset_key, release_id),
+        )
+        release = cur.fetchone()
+        if (
+            not isinstance(release, dict)
+            or int(release.get("id") or 0) != release_id
+            or int(release.get("rollback_from_release_id") or 0)
+            != expected_active_release_id
+        ):
+            raise ImmutableReleaseError("Canonical staging release cannot be failed")
+        if release.get("release_status") == "failed":
+            conn.commit()
+            return "noop"
+        if release.get("release_status") not in {"staging", "validated"}:
+            raise ImmutableReleaseError("Canonical staging release cannot be failed")
+
+        cur.execute(
+            """
+            UPDATE portal_data_releases
+            SET release_status = 'failed',
+                rollback_reason = %s
+            WHERE dataset_key = %s AND id = %s
+              AND release_status IN ('staging', 'validated')
+            """,
+            (
+                "superseded after failed content validation",
+                dataset_key,
+                release_id,
+            ),
+        )
+        if cur.rowcount != 1:
+            raise ImmutableReleaseError("Canonical staging release cannot be failed")
+        conn.commit()
+        return "failed"
+    except ReleaseStoreError:
+        if conn is not None:
+            conn.rollback()
+        raise
+    except Exception:
+        if conn is not None:
+            conn.rollback()
+        raise ReleaseStoreError("Unable to fail canonical staging release") from None
+    finally:
+        _close(cur, conn)
+
+
 def activate_release(release_id: int, *, expected_active_release_id: int) -> None:
     dataset_key = ABBOTT_DATASET_KEY
     conn = None
@@ -696,13 +815,19 @@ def activate_release(release_id: int, *, expected_active_release_id: int) -> Non
         release = cur.fetchone()
         if not isinstance(release, dict):
             raise ImmutableReleaseError("Canonical release is not validated for activation")
+        # Disposable-preview provenance is never valid production authority.
+        if str(release.get("code_revision") or "").startswith(
+            PREVIEW_ONLY_REVISION_PREFIX
+        ):
+            raise ImmutableReleaseError(
+                "Preview-only canonical release cannot be activated"
+            )
         cur.execute(
             """
             SELECT source_snapshot_id, source_kind, code_revision,
                    import_status, imported_row_count, rejected_row_count
             FROM portal_release_source_imports
             WHERE canonical_release_id = %s
-            FOR UPDATE
             """,
             (release_id,),
         )
@@ -720,7 +845,6 @@ def activate_release(release_id: int, *, expected_active_release_id: int) -> Non
             FROM portal_dataset_snapshots
             WHERE id = %s AND dataset_key = %s
               AND source_kind = 'abbott_canonical_control_pack'
-            FOR UPDATE
             """,
             (baseline_snapshot_id, dataset_key),
         )
@@ -751,7 +875,6 @@ def activate_release(release_id: int, *, expected_active_release_id: int) -> Non
             FROM portal_dataset_snapshots
             WHERE dataset_key = %s AND id IN ({placeholders})
             ORDER BY id
-            FOR UPDATE
             """,
             (dataset_key, *source_snapshot_ids),
         )

@@ -22,6 +22,12 @@ CONTROL_PACK_SOURCE_KIND = "abbott_canonical_control_pack"
 CONTROL_PACK_PARSER_VERSION = "abbott-controls-v1"
 API_RELATIVE_DELTA_THRESHOLD = Decimal("0.01")
 ABBOTT_REQUIRED_SCOPES = ("other", "traffic", "page", "user_behavior", "returning")
+METRIC_COLUMNS = ("sessions", "users", "pageviews", "goal_conversions")
+METADATA_ONLY_PERIODS = (
+    ("2026-06-01", "2026-06-30"),
+    ("2026-07-01", "2026-07-31"),
+    ("2026-08-01", "2026-08-09"),
+)
 
 
 class AbbottControlError(RuntimeError):
@@ -225,6 +231,69 @@ def compare_numeric_control(
             "reason_code": "relative_delta_exceeded" if failed else "within_threshold"
         },
     )
+
+
+def compare_metadata_only_fact_totals(
+    predecessor_totals: Mapping[tuple[str, str], Mapping[str, Any]],
+    candidate_totals: Mapping[tuple[str, str], Mapping[str, Any]],
+    *,
+    predecessor_metadata: Mapping[str, Any] | None = None,
+    candidate_metadata: Mapping[str, Any] | None = None,
+) -> list[ControlResult]:
+    """Require exact historic fact totals while allowing metadata-only changes.
+
+    Metadata arguments document the boundary and are intentionally not read: a
+    successor may alter identity/direction/type but never Metrika facts.
+    """
+
+    del predecessor_metadata, candidate_metadata
+    results: list[ControlResult] = []
+    for period in METADATA_ONLY_PERIODS:
+        predecessor = predecessor_totals.get(period, {})
+        candidate = candidate_totals.get(period, {})
+        for metric in METRIC_COLUMNS:
+            expected = _numeric(predecessor.get(metric))
+            actual = _numeric(candidate.get(metric))
+            matches = expected == actual
+            results.append(
+                ControlResult(
+                    control_name=f"fact_totals.{period[0]}.{period[1]}.{metric}",
+                    expected_value=expected,
+                    actual_value=actual,
+                    absolute_delta=abs(_decimal(expected) - _decimal(actual)),
+                    relative_delta=Decimal("0") if matches else Decimal("1"),
+                    threshold_value=Decimal("0"),
+                    result_status="pass" if matches else "fail",
+                    diagnostic={
+                        "reason_code": "FACT_TOTAL_MATCH" if matches else "FACT_TOTAL_MISMATCH"
+                    },
+                )
+            )
+    return results
+
+
+def _release_metadata_only_fact_totals(conn, release_id: int) -> dict[tuple[str, str], dict[str, int | float]]:
+    cursor = conn.cursor(dictionary=True)
+    try:
+        totals: dict[tuple[str, str], dict[str, int | float]] = {}
+        for period in METADATA_ONLY_PERIODS:
+            cursor.execute(
+                """
+                SELECT COALESCE(SUM(sessions), 0) AS sessions,
+                       COALESCE(SUM(users), 0) AS users,
+                       COALESCE(SUM(pageviews), 0) AS pageviews,
+                       COALESCE(SUM(goal_conversions), 0) AS goal_conversions
+                FROM canonical_fact_metrika_site_analytics_daily
+                WHERE canonical_release_id = %s AND counter_id = %s
+                  AND report_date BETWEEN %s AND %s
+                """,
+                (release_id, ABBOTT_COUNTER_ID, *period),
+            )
+            row = cursor.fetchone() or {}
+            totals[period] = {metric: _numeric(row.get(metric)) for metric in METRIC_COLUMNS}
+        return totals
+    finally:
+        cursor.close()
 
 
 def cutover_allowed(results: Sequence[ControlResult]) -> bool:
@@ -462,7 +531,7 @@ def compare_release_control_pack(
         manifest = _manifest_from_row(cursor.fetchone())
         cursor.execute(
             """
-            SELECT code_revision, baseline_validation_run_id
+            SELECT code_revision, baseline_validation_run_id, rollback_from_release_id
             FROM portal_data_releases
             WHERE id = %s AND dataset_key = %s
             """,
@@ -536,7 +605,62 @@ def compare_release_control_pack(
         )
         coverage_rows = cursor.fetchall()
         candidate_values = _control_values(site_rows, coverage_rows)
+        predecessor_release_id = int(release.get("rollback_from_release_id") or 0)
+        metadata_fact_results = []
+        # Coverage-only bootstrap packs predate successor provenance. A true
+        # successor carries an immutable rollback predecessor and is compared.
+        if predecessor_release_id > 0:
+            metadata_fact_results = compare_metadata_only_fact_totals(
+                _release_metadata_only_fact_totals(conn, predecessor_release_id),
+                _release_metadata_only_fact_totals(conn, candidate_release_id),
+            )
+        baseline_control_names = set(manifest["control_values"])
+        if any(name.startswith("content.") for name in baseline_control_names):
+            content_bundle = manifest.get("content_candidate_bundle")
+            if not isinstance(content_bundle, Mapping):
+                raise AbbottControlError("Frozen content candidate evidence is invalid")
+            expected_counts = content_bundle.get("expected_counts")
+            accepted_hash = content_bundle.get("accepted_decision_hash")
+            if not isinstance(expected_counts, Mapping) or not isinstance(accepted_hash, str):
+                raise AbbottControlError("Frozen content candidate evidence is invalid")
+            from agents.abbott_page_classifier.candidate_release import (
+                validate_content_candidate,
+            )
+
+            content_report = validate_content_candidate(
+                candidate_release_id,
+                expected_counts={
+                    str(name): int(value) for name, value in expected_counts.items()
+                },
+                accepted_hash=accepted_hash,
+                connection=conn,
+            )
+            candidate_values.update(
+                {
+                    "content.source_reconciliation_pct": content_report.source_reconciliation_pct,
+                    "content.count_reconciliation_pct": content_report.count_reconciliation_pct,
+                    "content.hash_reconciliation_pct": content_report.hash_reconciliation_pct,
+                    "content.schema_compliance_pct": content_report.schema_compliance_pct,
+                    "content.anti_flip_violations": content_report.anti_flip_violations,
+                    "content.strong_identity_collisions": content_report.strong_identity_collisions,
+                    "content.out_of_taxonomy_values": content_report.out_of_taxonomy_values,
+                    "content.archive_material_types": content_report.archive_material_types,
+                    "content.unresolved_accepted_conflicts": content_report.unresolved_accepted_conflicts,
+                    "content.active_release_mutations": content_report.active_release_mutations,
+                    "content.dashboard_smoke_failures": content_report.dashboard_smoke_failures,
+                    "content.fact_total_mismatches": content_report.fact_total_mismatches,
+                    "content.content_unresolved": content_report.content_unresolved,
+                    "content.non_content_unresolved": content_report.non_content_unresolved,
+                }
+            )
+            candidate_values.update(
+                {
+                    str(name): actual
+                    for name, _expected, actual in content_report.successor_controls
+                }
+            )
         results = []
+        results.extend(metadata_fact_results)
         for control_name, expected in sorted(manifest["control_values"].items()):
             if control_name not in candidate_values:
                 result = ControlResult(
@@ -554,7 +678,11 @@ def compare_release_control_pack(
                     control_name,
                     expected=expected,
                     actual=candidate_values[control_name],
-                    threshold=API_RELATIVE_DELTA_THRESHOLD,
+                    threshold=(
+                        0
+                        if control_name.startswith("content.")
+                        else API_RELATIVE_DELTA_THRESHOLD
+                    ),
                 )
             results.append(result)
         expected_coverage_days = (

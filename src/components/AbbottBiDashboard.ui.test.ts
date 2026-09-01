@@ -137,6 +137,12 @@ test("labels unmapped page metadata in the page table and exports", () => {
   assert.match(source, /labelAbbottPageDimension\(row\.access\)/);
 });
 
+test("places the multi-value MNN filter and column immediately after direction", () => {
+  assert.match(source, /label="Направление"[\s\S]*?label="МНН"/);
+  assert.match(source, /key: "direction", label: "Направление"[\s\S]*?key: "mnn", label: "МНН"/);
+  assert.match(source, /row\.mnn\?\.join\("; "\)/);
+});
+
 test("uses page-only metadata grouping that retains the unmapped bucket", () => {
   const pageChartSource = source.slice(source.indexOf("const pageDirectionData"), source.indexOf("const bitrixDirectionData"));
   assert.match(pageChartSource, /groupAbbottPageStatsByDimension/);

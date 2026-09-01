@@ -55,6 +55,32 @@ test("builds sorted filter options and filters aggregate tables", () => {
   assert.deepEqual(ui.returnPages.map((row) => row.url), ["/gastro"]);
 });
 
+test("collapses return pages to the visible URL and direction grain after frequency filtering", () => {
+  const duplicateGroups: AbbottBiReturnFrequency = {
+    ...frequency,
+    return_pages: [
+      { url: "/cardio", direction: "Кардиология", frequency_group: "two_to_three", returning_visitors: 3, repeat_visits: 5 },
+      { url: "/cardio", direction: "Кардиология", frequency_group: "four_plus", returning_visitors: 2, repeat_visits: 8 },
+    ],
+  };
+
+  const all = buildAbbottReturnFrequencyUi(duplicateGroups, {});
+  assert.deepEqual(all.returnPages, [{
+    url: "/cardio",
+    direction: "Кардиология",
+    returning_visitors: 5,
+    repeat_visits: 13,
+  }]);
+
+  const filtered = buildAbbottReturnFrequencyUi(duplicateGroups, { frequency_group: "four_plus" });
+  assert.deepEqual(filtered.returnPages, [{
+    url: "/cardio",
+    direction: "Кардиология",
+    returning_visitors: 2,
+    repeat_visits: 8,
+  }]);
+});
+
 test("unavailable frequency never creates zero-filled cards", () => {
   const ui = buildAbbottReturnFrequencyUi({ ...frequency, available: false }, {});
   assert.equal(ui.available, false);

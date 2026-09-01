@@ -413,6 +413,7 @@ export interface AbbottBiPageStatRow {
   page_title: string;
   url: string;
   direction: string | null;
+  mnn?: string[];
   material_type: string | null;
   access: string | null;
   pageviews: number;
@@ -599,6 +600,10 @@ export interface AbbottBiSessionJourneysData {
 }
 
 export interface AbbottBiData {
+  data_quality?: {
+    status: "complete" | "incomplete";
+    blocking_gaps: Array<{ report_date: string }>;
+  };
   counters: string[];
   users_summary: AbbottBiUserSummaryRow[];
   users_summary_without_admins?: AbbottBiUserSummaryRow[];

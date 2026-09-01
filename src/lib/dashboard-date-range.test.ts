@@ -27,6 +27,26 @@ test("explicit Zaruku from and to override the rolling default", () => {
   }), { from: "2026-07-01", to: "2026-07-14" });
 });
 
+test("explicit Zaruku dates after the reporting cutoff clamp to the latest available day", () => {
+  assert.deepEqual(resolveDashboardDateRange({
+    requestUrl: "https://dash.test/zaruku?from=2026-08-24&to=2026-08-25",
+    configFrom: "2026-03-03",
+    configTo: "2026-03-26",
+    dashboardType: "zaruku_bi",
+    now: new Date("2026-08-25T12:00:00Z"),
+  }), { from: "2026-08-23", to: "2026-08-23" });
+});
+
+test("explicit Zaruku ranges keep their start and clamp only a late end", () => {
+  assert.deepEqual(resolveDashboardDateRange({
+    requestUrl: "https://dash.test/zaruku?from=2026-08-01&to=2026-08-25",
+    configFrom: null,
+    configTo: null,
+    dashboardType: "zaruku_bi",
+    now: new Date("2026-08-25T12:00:00Z"),
+  }), { from: "2026-08-01", to: "2026-08-23" });
+});
+
 test("Zaruku days selection ends on the last complete day", () => {
   assert.deepEqual(resolveDashboardDateRange({
     requestUrl: "https://dash.test/zaruku?days=7",
