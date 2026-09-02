@@ -3,6 +3,10 @@ import { readFileSync } from "node:fs";
 import test from "node:test";
 
 const sql = readFileSync(new URL("./migrations/045_zaruku_wordstat_demand.sql", import.meta.url), "utf8");
+const collectorBaseSql = readFileSync(
+  new URL("./migrations/003_collector_canonical.sql", import.meta.url),
+  "utf8",
+);
 
 function tableBody(tableName: string) {
   const match = sql.match(
@@ -55,7 +59,11 @@ test("Wordstat classifications use the fixed review taxonomy", () => {
   }
 });
 
-test("Wordstat collector lineage keys match the unsigned canonical run id", () => {
+test("Wordstat collector lineage keys match the signed canonical run id created by migration 003", () => {
+  assert.match(
+    collectorBaseSql,
+    /CREATE TABLE IF NOT EXISTS canonical_collector_runs \(\s*id BIGINT AUTO_INCREMENT PRIMARY KEY/,
+  );
   for (const table of [
     "canonical_dim_wordstat_regions",
     "canonical_fact_wordstat_dynamics_daily",
@@ -65,7 +73,8 @@ test("Wordstat collector lineage keys match the unsigned canonical run id", () =
   ]) {
     assert.match(
       tableBody(table),
-      /^\s*ingestion_run_id BIGINT UNSIGNED DEFAULT NULL/m,
+      /^\s*ingestion_run_id BIGINT DEFAULT NULL/m,
     );
+    assert.doesNotMatch(tableBody(table), /^\s*ingestion_run_id BIGINT UNSIGNED/m);
   }
 });
