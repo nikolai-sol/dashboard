@@ -188,7 +188,7 @@ test("Wordstat SEO actions and opportunities require an active reviewed medical 
   assert.equal(actionsByClassification.get("irrelevant"), null);
   assert.equal(actionsByClassification.get("unreviewed"), null);
   assert.equal(data.indicators.review_queue_count, 1);
-  assert.equal(data.indicators.irrelevant_demand_share, 45 / 100 * 100);
+  assert.equal(data.indicators.irrelevant_demand_share, 100);
 });
 
 test("Wordstat loader distinguishes successful-empty coverage from a failed run with no coverage", async () => {
@@ -237,6 +237,23 @@ test("Wordstat loader distinguishes successful-empty coverage from a failed run 
   assert.equal(missingRegionCoverage.status, "partial");
 });
 
+test("Wordstat exposes endpoint-specific periods and never labels a regional snapshot with the query window", async () => {
+  const { loadZarukuWordstatData } = await wordstatModule();
+  const data = await loadZarukuWordstatData("66624469", fakeQuery({
+    metadata: [{
+      ...availableMetadata(),
+      region_from: "2026-08-10",
+      region_to: "2026-09-08",
+    }],
+  }).run);
+
+  assert.deepEqual(data.current.query_period, { from: "2026-08-03", to: "2026-09-01" });
+  assert.deepEqual(data.current.region_period, { from: "2026-08-10", to: "2026-09-08" });
+  assert.equal(data.current.period, null);
+  assert.equal(data.status, "partial");
+  assert.match(data.messages.join(" "), /разные.*период/i);
+});
+
 test("Wordstat loader rejects an empty account scope and clips historical rows to confirmed common dates", async () => {
   const { loadZarukuWordstatData } = await wordstatModule();
   await assert.rejects(() => loadZarukuWordstatData("   ", async () => []), /accountId is required/);
@@ -266,17 +283,115 @@ test("Wordstat loader rejects an empty account scope and clips historical rows t
   assert.match(historicalQuery?.sql ?? "", /common_dates/i);
 });
 
+test("Wordstat historical rows omit unexpected classifications instead of rewriting them as reviewed medical", async () => {
+  const { loadZarukuWordstatData } = await wordstatModule();
+  const data = await loadZarukuWordstatData("66624469", fakeQuery({
+    metadata: [availableMetadata()],
+    "historical-period": [{ period_from: "2026-07-10", period_to: "2026-07-31" }],
+    "historical-rows": [
+      {
+        seed_hash: "medical-seed",
+        phrase: "медицинская тема",
+        topic: "Онкология",
+        cluster: null,
+        classification: "medical",
+        review_status: "reviewed",
+        wordstat_count: 20,
+        previous_wordstat_count: null,
+        webmaster_impressions: 3,
+        webmaster_clicks: 1,
+        webmaster_average_position: 4,
+      },
+      {
+        seed_hash: "unexpected-seed",
+        phrase: "нерелевантная тема",
+        topic: null,
+        cluster: null,
+        classification: "irrelevant",
+        review_status: "pending",
+        wordstat_count: 900,
+        previous_wordstat_count: 800,
+        webmaster_impressions: 0,
+        webmaster_clicks: 0,
+        webmaster_average_position: null,
+      },
+    ],
+  }).run);
+
+  assert.deepEqual(data.historical.rows.map((row) => row.seed_hash), ["medical-seed"]);
+  assert.equal(data.historical.rows[0].classification, "medical");
+  assert.equal(data.historical.rows[0].review_status, "reviewed");
+});
+
+test("Wordstat irrelevant-demand share uses only the non-overlapping popular all-device universe", async () => {
+  const { loadZarukuWordstatData } = await wordstatModule();
+  const data = await loadZarukuWordstatData("66624469", fakeQuery({
+    metadata: [availableMetadata()],
+    "current-queries": [
+      {
+        normalized_query: "медицинский запрос",
+        query: "медицинский запрос",
+        request_kind: "popular",
+        device: "all",
+        count: 100,
+        share: null,
+        classification: "medical",
+        review_status: "reviewed",
+      },
+      {
+        normalized_query: "нерелевантный запрос",
+        query: "нерелевантный запрос",
+        request_kind: "popular",
+        device: "all",
+        count: 25,
+        share: null,
+        classification: "irrelevant",
+        review_status: "reviewed",
+      },
+      {
+        normalized_query: "нерелевантный запрос",
+        query: "нерелевантный запрос",
+        request_kind: "similar",
+        device: "all",
+        count: 900,
+        share: null,
+        classification: "irrelevant",
+        review_status: "reviewed",
+      },
+      {
+        normalized_query: "нерелевантный запрос",
+        query: "нерелевантный запрос",
+        request_kind: "popular",
+        device: "desktop",
+        count: 800,
+        share: null,
+        classification: "irrelevant",
+        review_status: "reviewed",
+      },
+    ],
+  }).run);
+
+  assert.equal(data.indicators.irrelevant_demand_share, 20);
+});
+
 test("Wordstat SQL binds facts and run lineage to account-scoped confirmed coverage", async () => {
   const { buildZarukuWordstatQueries } = await wordstatModule();
   const queries = buildZarukuWordstatQueries("66624469");
 
-  assert.match(queries.metadata.sql, /account_coverage_runs/i);
-  assert.match(queries.metadata.sql, /JOIN account_coverage_runs/i);
-  assert.match(queries.historicalRows.sql, /dynamics\.registry_version\s*=\s*seed\.registry_version/i);
+  assert.match(queries.metadata.sql, /runs\.job_key\s+LIKE\s+CONCAT\('yandex_wordstat:',\s*\?,\s*':%'/i);
+  assert.doesNotMatch(queries.metadata.sql, /account_coverage_runs/i);
+  assert.match(queries.historicalRows.sql, /seed\.registry_version\s*=\s*dynamics\.registry_version/i);
+  assert.match(queries.historicalRows.sql, /coverage\.ingestion_run_id\s*=\s*dynamics\.ingestion_run_id/i);
+  assert.match(queries.historicalRows.sql, /dynamics\.report_date\s+BETWEEN\s+coverage\.requested_from\s+AND\s+coverage\.requested_to/i);
+  assert.match(queries.historicalRows.sql, /'2026-07-10'/i);
+  assert.match(queries.historicalRows.sql, /'2026-07-31'/i);
+  assert.doesNotMatch(queries.historicalRows.sql, /previous_demand/i);
   assert.match(queries.currentQueries.sql, /facts\.ingestion_run_id\s*=\s*coverage\.ingestion_run_id/i);
   assert.match(queries.currentRegions.sql, /facts\.ingestion_run_id\s*=\s*coverage\.ingestion_run_id/i);
-  assert.doesNotMatch(queries.currentQueries.sql, /facts\.snapshot_date\s*=/i);
-  assert.doesNotMatch(queries.currentRegions.sql, /facts\.snapshot_date\s*=/i);
+  assert.match(queries.currentQueries.sql, /facts\.registry_version\s*=\s*coverage\.registry_version/i);
+  assert.match(queries.currentRegions.sql, /facts\.registry_version\s*=\s*coverage\.registry_version/i);
+  assert.doesNotMatch(queries.currentQueries.sql, /MAX\(requested_to\)/i);
+  assert.doesNotMatch(queries.currentRegions.sql, /MAX\(requested_to\)/i);
   assert.match(queries.currentRegions.sql, /classification\s*=\s*'medical'/i);
   assert.match(queries.currentRegions.sql, /review_status\s*=\s*'reviewed'/i);
 });

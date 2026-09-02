@@ -15,6 +15,9 @@ import type {
 export type WordstatSqlQuery = { sql: string; params: Array<string | number> };
 export type WordstatQueryRunner = (query: WordstatSqlQuery) => Promise<unknown[]>;
 
+const HISTORICAL_WINDOW_FROM = "2026-07-10";
+const HISTORICAL_WINDOW_TO = "2026-07-31";
+
 type WordstatMetadataDbRow = {
   query_from: string | Date | null;
   query_to: string | Date | null;
@@ -161,12 +164,15 @@ export function buildZarukuWordstatQueries(accountId: string): Record<
       sql: `
         /* wordstat:metadata */
         WITH latest_query_snapshot AS (
-          SELECT MAX(requested_to) AS snapshot_date
-          FROM canonical_wordstat_coverage
-          WHERE source_key = 'yandex_wordstat'
-            AND analytics_account_id = ?
-            AND endpoint = 'top_requests'
-            AND status IN ('success', 'success_empty')
+          SELECT coverage.requested_from, coverage.requested_to, coverage.registry_version, coverage.ingestion_run_id
+          FROM canonical_wordstat_coverage coverage
+          WHERE coverage.source_key = 'yandex_wordstat'
+            AND coverage.analytics_account_id = ?
+            AND coverage.endpoint = 'top_requests'
+            AND coverage.status IN ('success', 'success_empty')
+            AND coverage.ingestion_run_id IS NOT NULL
+          ORDER BY coverage.ingestion_run_id DESC, coverage.updated_at DESC, coverage.id DESC
+          LIMIT 1
         ),
         query_coverage AS (
           SELECT
@@ -175,19 +181,26 @@ export function buildZarukuWordstatQueries(accountId: string): Record<
             COUNT(*) AS query_scope_count,
             SUM(c.status = 'success_empty') AS query_empty_scope_count
           FROM canonical_wordstat_coverage c
-          JOIN latest_query_snapshot latest ON latest.snapshot_date = c.requested_to
+          JOIN latest_query_snapshot latest
+            ON latest.requested_from = c.requested_from
+            AND latest.requested_to = c.requested_to
+            AND latest.registry_version = c.registry_version
+            AND latest.ingestion_run_id = c.ingestion_run_id
           WHERE c.source_key = 'yandex_wordstat'
             AND c.analytics_account_id = ?
             AND c.endpoint = 'top_requests'
             AND c.status IN ('success', 'success_empty')
         ),
         latest_region_snapshot AS (
-          SELECT MAX(requested_to) AS snapshot_date
-          FROM canonical_wordstat_coverage
-          WHERE source_key = 'yandex_wordstat'
-            AND analytics_account_id = ?
-            AND endpoint = 'regions'
-            AND status IN ('success', 'success_empty')
+          SELECT coverage.requested_from, coverage.requested_to, coverage.registry_version, coverage.ingestion_run_id
+          FROM canonical_wordstat_coverage coverage
+          WHERE coverage.source_key = 'yandex_wordstat'
+            AND coverage.analytics_account_id = ?
+            AND coverage.endpoint = 'regions'
+            AND coverage.status IN ('success', 'success_empty')
+            AND coverage.ingestion_run_id IS NOT NULL
+          ORDER BY coverage.ingestion_run_id DESC, coverage.updated_at DESC, coverage.id DESC
+          LIMIT 1
         ),
         region_coverage AS (
           SELECT
@@ -196,34 +209,30 @@ export function buildZarukuWordstatQueries(accountId: string): Record<
             COUNT(*) AS region_scope_count,
             SUM(c.status = 'success_empty') AS region_empty_scope_count
           FROM canonical_wordstat_coverage c
-          JOIN latest_region_snapshot latest ON latest.snapshot_date = c.requested_to
+          JOIN latest_region_snapshot latest
+            ON latest.requested_from = c.requested_from
+            AND latest.requested_to = c.requested_to
+            AND latest.registry_version = c.registry_version
+            AND latest.ingestion_run_id = c.ingestion_run_id
           WHERE c.source_key = 'yandex_wordstat'
             AND c.analytics_account_id = ?
             AND c.endpoint = 'regions'
             AND c.status IN ('success', 'success_empty')
         ),
-        account_coverage_runs AS (
-          SELECT DISTINCT coverage.ingestion_run_id
-          FROM canonical_wordstat_coverage coverage
-          WHERE coverage.source_key = 'yandex_wordstat'
-            AND coverage.analytics_account_id = ?
-            AND coverage.endpoint IN ('top_requests', 'regions')
-            AND coverage.ingestion_run_id IS NOT NULL
-        ),
         latest_run AS (
           SELECT runs.status, runs.finished_at, runs.started_at, runs.error_summary, runs.rows_read, runs.rows_written
           FROM canonical_collector_runs runs
-          JOIN account_coverage_runs coverage ON coverage.ingestion_run_id = runs.id
           WHERE runs.source_key = 'yandex_wordstat'
+            AND runs.job_key LIKE CONCAT('yandex_wordstat:', ?, ':%')
           ORDER BY runs.id DESC
           LIMIT 1
         ),
         latest_success AS (
           SELECT runs.finished_at, runs.started_at
           FROM canonical_collector_runs runs
-          JOIN account_coverage_runs coverage ON coverage.ingestion_run_id = runs.id
           WHERE runs.source_key = 'yandex_wordstat'
             AND runs.status = 'success'
+            AND runs.job_key LIKE CONCAT('yandex_wordstat:', ?, ':%')
           ORDER BY runs.id DESC
           LIMIT 1
         )
@@ -248,52 +257,51 @@ export function buildZarukuWordstatQueries(accountId: string): Record<
         LEFT JOIN latest_run ON TRUE
         LEFT JOIN latest_success ON TRUE
       `,
-      params: [normalizedAccountId, normalizedAccountId, normalizedAccountId, normalizedAccountId, normalizedAccountId],
+      params: [normalizedAccountId, normalizedAccountId, normalizedAccountId, normalizedAccountId, normalizedAccountId, normalizedAccountId],
     },
     historicalPeriod: {
       sql: `
         /* wordstat:historical-period */
-        WITH common_dates AS (
+        WITH approved_registry_versions AS (
+          SELECT DISTINCT registry_version
+          FROM canonical_wordstat_seed_registry
+          WHERE analytics_account_id = ?
+            AND is_active = 1
+            AND classification = 'medical'
+            AND review_status = 'reviewed'
+        ),
+        confirmed_dynamics_coverage AS (
+          SELECT DISTINCT coverage.analytics_account_id, coverage.registry_version, coverage.ingestion_run_id,
+            coverage.requested_from, coverage.requested_to
+          FROM canonical_wordstat_coverage coverage
+          JOIN approved_registry_versions approved
+            ON approved.registry_version = coverage.registry_version
+          WHERE coverage.source_key = 'yandex_wordstat'
+            AND coverage.analytics_account_id = ?
+            AND coverage.endpoint = 'dynamics'
+            AND coverage.status IN ('success', 'success_empty')
+            AND coverage.ingestion_run_id IS NOT NULL
+            AND coverage.requested_from <= '${HISTORICAL_WINDOW_TO}'
+            AND coverage.requested_to >= '${HISTORICAL_WINDOW_FROM}'
+        ),
+        common_dates AS (
           SELECT DISTINCT webmaster.report_date
           FROM canonical_fact_webmaster_queries_daily webmaster
+          JOIN confirmed_dynamics_coverage coverage
+            ON coverage.analytics_account_id = webmaster.analytics_account_id
+            AND webmaster.report_date BETWEEN coverage.requested_from AND coverage.requested_to
           WHERE webmaster.analytics_account_id = ?
-            AND EXISTS (
-              SELECT 1
-              FROM canonical_wordstat_coverage coverage
-              WHERE coverage.source_key = 'yandex_wordstat'
-                AND coverage.analytics_account_id = ?
-                AND coverage.endpoint = 'dynamics'
-                AND coverage.status IN ('success', 'success_empty')
-                AND webmaster.report_date BETWEEN coverage.requested_from AND coverage.requested_to
-            )
+            AND webmaster.report_date BETWEEN '${HISTORICAL_WINDOW_FROM}' AND '${HISTORICAL_WINDOW_TO}'
         )
         SELECT MIN(report_date) AS period_from, MAX(report_date) AS period_to
         FROM common_dates
       `,
-      params: [normalizedAccountId, normalizedAccountId],
+      params: [normalizedAccountId, normalizedAccountId, normalizedAccountId],
     },
     historicalRows: {
       sql: `
         /* wordstat:historical-rows */
-        WITH common_dates AS (
-          SELECT DISTINCT webmaster.report_date
-          FROM canonical_fact_webmaster_queries_daily webmaster
-          WHERE webmaster.analytics_account_id = ?
-            AND EXISTS (
-              SELECT 1
-              FROM canonical_wordstat_coverage coverage
-              WHERE coverage.source_key = 'yandex_wordstat'
-                AND coverage.analytics_account_id = ?
-                AND coverage.endpoint = 'dynamics'
-                AND coverage.status IN ('success', 'success_empty')
-                AND webmaster.report_date BETWEEN coverage.requested_from AND coverage.requested_to
-            )
-        ),
-        common_bounds AS (
-          SELECT MIN(report_date) AS period_from, MAX(report_date) AS period_to
-          FROM common_dates
-        ),
-        ranked_approved_seeds AS (
+        WITH ranked_approved_seeds AS (
           SELECT seed_hash, registry_version, normalized_phrase, phrase_text, topic, cluster, classification, review_status,
             ROW_NUMBER() OVER (
               PARTITION BY seed_hash
@@ -310,31 +318,49 @@ export function buildZarukuWordstatQueries(accountId: string): Record<
           FROM ranked_approved_seeds
           WHERE registry_rank = 1
         ),
+        confirmed_dynamics_coverage AS (
+          SELECT DISTINCT coverage.analytics_account_id, coverage.registry_version, coverage.ingestion_run_id,
+            coverage.requested_from, coverage.requested_to
+          FROM canonical_wordstat_coverage coverage
+          JOIN (SELECT DISTINCT registry_version FROM approved_seeds) approved
+            ON approved.registry_version = coverage.registry_version
+          WHERE coverage.source_key = 'yandex_wordstat'
+            AND coverage.analytics_account_id = ?
+            AND coverage.endpoint = 'dynamics'
+            AND coverage.status IN ('success', 'success_empty')
+            AND coverage.ingestion_run_id IS NOT NULL
+            AND coverage.requested_from <= '${HISTORICAL_WINDOW_TO}'
+            AND coverage.requested_to >= '${HISTORICAL_WINDOW_FROM}'
+        ),
+        confirmed_dynamics AS (
+          SELECT dynamics.registry_version, dynamics.seed_hash, dynamics.report_date, dynamics.count
+          FROM canonical_fact_wordstat_dynamics_daily dynamics
+          JOIN approved_seeds seed ON seed.seed_hash = dynamics.seed_hash
+            AND seed.registry_version = dynamics.registry_version
+          JOIN confirmed_dynamics_coverage coverage
+            ON coverage.analytics_account_id = dynamics.analytics_account_id
+            AND coverage.registry_version = dynamics.registry_version
+            AND coverage.ingestion_run_id = dynamics.ingestion_run_id
+            AND dynamics.report_date BETWEEN coverage.requested_from AND coverage.requested_to
+          WHERE dynamics.source_key = 'yandex_wordstat'
+            AND dynamics.analytics_account_id = ?
+            AND dynamics.device_type = 'all'
+            AND dynamics.region_scope = 'all'
+            AND dynamics.report_date BETWEEN '${HISTORICAL_WINDOW_FROM}' AND '${HISTORICAL_WINDOW_TO}'
+        ),
+        common_dates AS (
+          SELECT DISTINCT webmaster.report_date
+          FROM canonical_fact_webmaster_queries_daily webmaster
+          JOIN confirmed_dynamics_coverage coverage
+            ON coverage.analytics_account_id = webmaster.analytics_account_id
+            AND webmaster.report_date BETWEEN coverage.requested_from AND coverage.requested_to
+          WHERE webmaster.analytics_account_id = ?
+            AND webmaster.report_date BETWEEN '${HISTORICAL_WINDOW_FROM}' AND '${HISTORICAL_WINDOW_TO}'
+        ),
         current_demand AS (
           SELECT dynamics.registry_version, dynamics.seed_hash, SUM(dynamics.count) AS wordstat_count
-          FROM canonical_fact_wordstat_dynamics_daily dynamics
-          JOIN approved_seeds seed ON seed.seed_hash = dynamics.seed_hash
-            AND dynamics.registry_version = seed.registry_version
+          FROM confirmed_dynamics dynamics
           JOIN common_dates dates ON dates.report_date = dynamics.report_date
-          WHERE dynamics.source_key = 'yandex_wordstat'
-            AND dynamics.analytics_account_id = ?
-            AND dynamics.device_type = 'all'
-            AND dynamics.region_scope = 'all'
-          GROUP BY dynamics.registry_version, dynamics.seed_hash
-        ),
-        previous_demand AS (
-          SELECT dynamics.registry_version, dynamics.seed_hash, SUM(dynamics.count) AS previous_wordstat_count
-          FROM canonical_fact_wordstat_dynamics_daily dynamics
-          JOIN approved_seeds seed ON seed.seed_hash = dynamics.seed_hash
-            AND dynamics.registry_version = seed.registry_version
-          CROSS JOIN common_bounds bounds
-          WHERE dynamics.source_key = 'yandex_wordstat'
-            AND dynamics.analytics_account_id = ?
-            AND dynamics.device_type = 'all'
-            AND dynamics.region_scope = 'all'
-            AND bounds.period_from IS NOT NULL
-            AND dynamics.report_date BETWEEN DATE_SUB(bounds.period_from, INTERVAL (DATEDIFF(bounds.period_to, bounds.period_from) + 1) DAY)
-              AND DATE_SUB(bounds.period_from, INTERVAL 1 DAY)
           GROUP BY dynamics.registry_version, dynamics.seed_hash
         ),
         webmaster_daily AS (
@@ -370,15 +396,13 @@ export function buildZarukuWordstatQueries(accountId: string): Record<
           seed.classification,
           seed.review_status,
           current_demand.wordstat_count,
-          previous_demand.previous_wordstat_count,
+          NULL AS previous_wordstat_count,
           COALESCE(webmaster_demand.webmaster_impressions, 0) AS webmaster_impressions,
           COALESCE(webmaster_demand.webmaster_clicks, 0) AS webmaster_clicks,
           webmaster_demand.webmaster_average_position
         FROM approved_seeds seed
         JOIN current_demand ON current_demand.seed_hash = seed.seed_hash
           AND current_demand.registry_version = seed.registry_version
-        LEFT JOIN previous_demand ON previous_demand.seed_hash = seed.seed_hash
-          AND previous_demand.registry_version = seed.registry_version
         LEFT JOIN webmaster_demand ON webmaster_demand.seed_hash = seed.seed_hash
           AND webmaster_demand.registry_version = seed.registry_version
         ORDER BY current_demand.wordstat_count DESC, seed.phrase_text ASC
@@ -389,24 +413,33 @@ export function buildZarukuWordstatQueries(accountId: string): Record<
         normalizedAccountId,
         normalizedAccountId,
         normalizedAccountId,
-        normalizedAccountId,
       ],
     },
     currentQueries: {
       sql: `
         /* wordstat:current-queries */
-        WITH latest_snapshot_window AS (
-          SELECT MAX(requested_to) AS window_to
-          FROM canonical_wordstat_coverage
-          WHERE source_key = 'yandex_wordstat'
-            AND analytics_account_id = ?
-            AND endpoint = 'top_requests'
-            AND status IN ('success', 'success_empty')
+        WITH latest_snapshot AS (
+          SELECT coverage.analytics_account_id, coverage.registry_version, coverage.ingestion_run_id,
+            coverage.requested_from, coverage.requested_to
+          FROM canonical_wordstat_coverage coverage
+          WHERE coverage.source_key = 'yandex_wordstat'
+            AND coverage.analytics_account_id = ?
+            AND coverage.endpoint = 'top_requests'
+            AND coverage.status IN ('success', 'success_empty')
+            AND coverage.ingestion_run_id IS NOT NULL
+          ORDER BY coverage.ingestion_run_id DESC, coverage.updated_at DESC, coverage.id DESC
+          LIMIT 1
         ),
         confirmed_coverage AS (
-          SELECT DISTINCT coverage.ingestion_run_id, coverage.requested_from AS window_from, coverage.requested_to AS window_to
+          SELECT DISTINCT coverage.analytics_account_id, coverage.registry_version, coverage.ingestion_run_id,
+            coverage.requested_from AS window_from, coverage.requested_to AS window_to
           FROM canonical_wordstat_coverage coverage
-          JOIN latest_snapshot_window latest ON latest.window_to = coverage.requested_to
+          JOIN latest_snapshot latest
+            ON latest.analytics_account_id = coverage.analytics_account_id
+            AND latest.registry_version = coverage.registry_version
+            AND latest.ingestion_run_id = coverage.ingestion_run_id
+            AND latest.requested_from = coverage.requested_from
+            AND latest.requested_to = coverage.requested_to
           WHERE coverage.source_key = 'yandex_wordstat'
             AND coverage.analytics_account_id = ?
             AND coverage.endpoint = 'top_requests'
@@ -473,7 +506,9 @@ export function buildZarukuWordstatQueries(accountId: string): Record<
               ORDER BY facts.count DESC, facts.seed_hash ASC
             ) AS duplicate_rank
           FROM canonical_fact_wordstat_requests_snapshot facts
-          JOIN confirmed_coverage coverage ON facts.ingestion_run_id = coverage.ingestion_run_id
+          JOIN confirmed_coverage coverage ON facts.analytics_account_id = coverage.analytics_account_id
+            AND facts.registry_version = coverage.registry_version
+            AND facts.ingestion_run_id = coverage.ingestion_run_id
             AND facts.window_from = coverage.window_from
             AND facts.window_to = coverage.window_to
           LEFT JOIN canonical_wordstat_query_classifications classifications
@@ -497,18 +532,28 @@ export function buildZarukuWordstatQueries(accountId: string): Record<
     currentRegions: {
       sql: `
         /* wordstat:current-regions */
-        WITH latest_snapshot_window AS (
-          SELECT MAX(requested_to) AS window_to
-          FROM canonical_wordstat_coverage
-          WHERE source_key = 'yandex_wordstat'
-            AND analytics_account_id = ?
-            AND endpoint = 'regions'
-            AND status IN ('success', 'success_empty')
+        WITH latest_snapshot AS (
+          SELECT coverage.analytics_account_id, coverage.registry_version, coverage.ingestion_run_id,
+            coverage.requested_from, coverage.requested_to
+          FROM canonical_wordstat_coverage coverage
+          WHERE coverage.source_key = 'yandex_wordstat'
+            AND coverage.analytics_account_id = ?
+            AND coverage.endpoint = 'regions'
+            AND coverage.status IN ('success', 'success_empty')
+            AND coverage.ingestion_run_id IS NOT NULL
+          ORDER BY coverage.ingestion_run_id DESC, coverage.updated_at DESC, coverage.id DESC
+          LIMIT 1
         ),
         confirmed_coverage AS (
-          SELECT DISTINCT coverage.ingestion_run_id, coverage.requested_from AS window_from, coverage.requested_to AS window_to
+          SELECT DISTINCT coverage.analytics_account_id, coverage.registry_version, coverage.ingestion_run_id,
+            coverage.requested_from AS window_from, coverage.requested_to AS window_to
           FROM canonical_wordstat_coverage coverage
-          JOIN latest_snapshot_window latest ON latest.window_to = coverage.requested_to
+          JOIN latest_snapshot latest
+            ON latest.analytics_account_id = coverage.analytics_account_id
+            AND latest.registry_version = coverage.registry_version
+            AND latest.ingestion_run_id = coverage.ingestion_run_id
+            AND latest.requested_from = coverage.requested_from
+            AND latest.requested_to = coverage.requested_to
           WHERE coverage.source_key = 'yandex_wordstat'
             AND coverage.analytics_account_id = ?
             AND coverage.endpoint = 'regions'
@@ -516,8 +561,8 @@ export function buildZarukuWordstatQueries(accountId: string): Record<
             AND coverage.ingestion_run_id IS NOT NULL
         ),
         snapshot_period AS (
-          SELECT MIN(requested_from) AS window_from, MAX(requested_to) AS window_to
-          FROM confirmed_coverage
+          SELECT requested_from AS window_from, requested_to AS window_to
+          FROM latest_snapshot
         ),
         metrika_city_visits AS (
           SELECT LOWER(TRIM(dimension_1_value)) AS region_key, SUM(COALESCE(visits, 0)) AS metrika_visits
@@ -563,7 +608,9 @@ export function buildZarukuWordstatQueries(accountId: string): Record<
               ORDER BY facts.count DESC, facts.seed_hash ASC
             ) AS duplicate_rank
           FROM canonical_fact_wordstat_regions_snapshot facts
-          JOIN confirmed_coverage coverage ON facts.ingestion_run_id = coverage.ingestion_run_id
+          JOIN confirmed_coverage coverage ON facts.analytics_account_id = coverage.analytics_account_id
+            AND facts.registry_version = coverage.registry_version
+            AND facts.ingestion_run_id = coverage.ingestion_run_id
             AND facts.window_from = coverage.window_from
             AND facts.window_to = coverage.window_to
           JOIN approved_seeds seed ON seed.seed_hash = facts.seed_hash
@@ -596,21 +643,25 @@ function periodFromValues(from: string | Date | null | undefined, to: string | D
 
 function normalizeHistoricalRows(rows: unknown[]): ZarukuWordstatHistoricalRow[] {
   const rawRows = rows.map((row) => row as HistoricalDbRow);
-  const demandMedian = median(rawRows.map((row) => asNumber(row.wordstat_count)));
-  const impressionMedian = median(rawRows.map((row) => asNumber(row.webmaster_impressions)));
-  const positionMedian = median(rawRows.map((row) => asNullableNumber(row.webmaster_average_position)).filter((value): value is number => value != null));
-  return rawRows.map((row) => {
+  const eligibleRows = rawRows.filter(
+    (row) => normalizeClassification(row.classification) === "medical" && normalizeReviewStatus(row.review_status) === "reviewed",
+  );
+  const demandMedian = median(eligibleRows.map((row) => asNumber(row.wordstat_count)));
+  const impressionMedian = median(eligibleRows.map((row) => asNumber(row.webmaster_impressions)));
+  const positionMedian = median(eligibleRows.map((row) => asNullableNumber(row.webmaster_average_position)).filter((value): value is number => value != null));
+  return eligibleRows.map((row) => {
     const wordstatCount = Math.round(asNumber(row.wordstat_count));
     const previous = asNullableNumber(row.previous_wordstat_count);
     const classification = normalizeClassification(row.classification);
     const reviewStatus = normalizeReviewStatus(row.review_status);
+    if (classification !== "medical" || reviewStatus !== "reviewed") return null;
     const historical = {
       seed_hash: asString(row.seed_hash),
       phrase: asString(row.phrase),
       topic: asString(row.topic) || null,
       cluster: asString(row.cluster) || null,
-      classification: classification === "medical" ? classification : "medical",
-      review_status: reviewStatus === "reviewed" ? reviewStatus : "reviewed",
+      classification,
+      review_status: reviewStatus,
       wordstat_count: wordstatCount,
       previous_wordstat_count: previous == null ? null : Math.round(previous),
       demand_change: previous == null ? null : wordstatCount - Math.round(previous),
@@ -631,7 +682,8 @@ function normalizeHistoricalRows(rows: unknown[]): ZarukuWordstatHistoricalRow[]
         visibility_position_median: positionMedian || null,
       }),
     };
-  }).sort((left, right) => right.wordstat_count - left.wordstat_count || left.phrase.localeCompare(right.phrase));
+  }).filter((row): row is ZarukuWordstatHistoricalRow => row != null)
+    .sort((left, right) => right.wordstat_count - left.wordstat_count || left.phrase.localeCompare(right.phrase));
 }
 
 function actionForQuery(row: Omit<ZarukuWordstatQueryRow, "action">): ZarukuWordstatAction | null {
@@ -700,8 +752,9 @@ function makeIndicators(historical: ZarukuWordstatHistoricalRow[], queries: Zaru
   const highest = historical
     .filter((row) => row.opportunity === "high" || row.opportunity === "medium")
     .sort((left, right) => right.wordstat_count - left.wordstat_count)[0]?.opportunity ?? null;
-  const totalCurrentDemand = queries.reduce((sum, row) => sum + row.count, 0);
-  const irrelevantDemand = queries
+  const nonOverlappingDiscovery = queries.filter((row) => row.request_kind === "popular" && row.device === "all");
+  const totalCurrentDemand = nonOverlappingDiscovery.reduce((sum, row) => sum + row.count, 0);
+  const irrelevantDemand = nonOverlappingDiscovery
     .filter((row) => row.classification === "irrelevant" && row.review_status === "reviewed")
     .reduce((sum, row) => sum + row.count, 0);
   return {
@@ -713,12 +766,20 @@ function makeIndicators(historical: ZarukuWordstatHistoricalRow[], queries: Zaru
   };
 }
 
-function makeFreshness(metadata: WordstatMetadataDbRow | null): ZarukuSourceFreshnessRow | null {
+function makeFreshness(
+  metadata: WordstatMetadataDbRow | null,
+  period: { from: string; to: string } | null,
+  periodsDiffer: boolean,
+): ZarukuSourceFreshnessRow | null {
   if (!metadata) return null;
-  const period = periodFromValues(metadata.query_from, metadata.query_to)
-    ?? periodFromValues(metadata.region_from, metadata.region_to);
   const status = asString(metadata.last_status) || null;
-  const freshnessStatus = status === "failed" ? "failed" : period == null ? "disabled" : status === "partial" ? "delayed" : "healthy";
+  const freshnessStatus = status === "failed"
+    ? "failed"
+    : periodsDiffer || status === "partial"
+      ? "delayed"
+      : period == null
+        ? "disabled"
+        : "healthy";
   return {
     source_key: "yandex_wordstat",
     label: "Яндекс Wordstat",
@@ -735,9 +796,11 @@ function makeFreshness(metadata: WordstatMetadataDbRow | null): ZarukuSourceFres
     rows_written: Math.round(asNumber(metadata.rows_written)),
     last_error_at: formatDateTime(metadata.last_error_at),
     last_error_summary: status === "failed" || status === "partial" ? "Последний сбор Wordstat завершился с ошибкой." : null,
-    note: period == null
-      ? "Подтверждённый снимок Wordstat пока отсутствует."
-      : "Период Wordstat отражает подтверждённый rolling snapshot, а не период трафика сайта.",
+    note: periodsDiffer
+      ? "Подтверждённые снимки запросов и регионов Wordstat имеют разные периоды."
+      : period == null
+        ? "Подтверждённый снимок Wordstat пока отсутствует."
+        : "Период Wordstat отражает подтверждённый rolling snapshot, а не период трафика сайта.",
   };
 }
 
@@ -764,10 +827,12 @@ export async function loadZarukuWordstatData(
   const historical = normalizeHistoricalRows(valueOrEmpty<HistoricalDbRow>(settled[2]));
   const currentQueries = normalizeCurrentQueries(valueOrEmpty<CurrentQueryDbRow>(settled[3]));
   const currentRegions = normalizeCurrentRegions(valueOrEmpty<CurrentRegionDbRow>(settled[4]));
-  const currentPeriod = metadata
-    ? periodFromValues(metadata.query_from, metadata.query_to)
-      ?? periodFromValues(metadata.region_from, metadata.region_to)
-    : null;
+  const queryPeriod = metadata ? periodFromValues(metadata.query_from, metadata.query_to) : null;
+  const regionPeriod = metadata ? periodFromValues(metadata.region_from, metadata.region_to) : null;
+  const periodsDiffer = queryPeriod != null
+    && regionPeriod != null
+    && (queryPeriod.from !== regionPeriod.from || queryPeriod.to !== regionPeriod.to);
+  const currentPeriod = periodsDiffer ? null : queryPeriod ?? regionPeriod;
   const queryScopes = metadata ? asNumber(metadata.query_scope_count) : 0;
   const regionScopes = metadata ? asNumber(metadata.region_scope_count) : 0;
   const allCurrentScopesEmpty = metadata != null
@@ -787,6 +852,9 @@ export async function loadZarukuWordstatData(
   } else if (latestStatus === "partial") {
     messages.push("Последний сбор Wordstat выполнен частично; показаны только подтверждённые области.");
   }
+  if (periodsDiffer) {
+    messages.push("Подтверждённые снимки запросов и регионов Wordstat имеют разные периоды.");
+  }
   if (allCurrentScopesEmpty) messages.push("Нет запросов по выбранным темам в подтверждённом снимке Wordstat.");
 
   let status: ZarukuWordstatData["status"];
@@ -794,7 +862,7 @@ export async function loadZarukuWordstatData(
     status = "unavailable";
   } else if (allCurrentScopesEmpty && failedQueries === 0 && latestStatus !== "failed" && latestStatus !== "partial") {
     status = "empty";
-  } else if (failedQueries > 0 || latestStatus === "failed" || latestStatus === "partial" || queryScopes === 0 || regionScopes === 0) {
+  } else if (failedQueries > 0 || latestStatus === "failed" || latestStatus === "partial" || periodsDiffer || queryScopes === 0 || regionScopes === 0) {
     status = "partial";
   } else {
     status = "available";
@@ -803,9 +871,15 @@ export async function loadZarukuWordstatData(
   return {
     status,
     historical: { period: historicalPeriod, rows: historical },
-    current: { period: currentPeriod, queries: currentQueries, regions: currentRegions },
+    current: {
+      period: currentPeriod,
+      query_period: queryPeriod,
+      region_period: regionPeriod,
+      queries: currentQueries,
+      regions: currentRegions,
+    },
     indicators: makeIndicators(historical, currentQueries, currentRegions),
-    source_freshness: makeFreshness(metadata),
+    source_freshness: makeFreshness(metadata, currentPeriod, periodsDiffer),
     messages,
   };
 }

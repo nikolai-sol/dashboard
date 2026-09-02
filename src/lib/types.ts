@@ -835,6 +835,8 @@ export interface ZarukuWordstatData {
   };
   current: {
     period: { from: string; to: string } | null;
+    query_period: { from: string; to: string } | null;
+    region_period: { from: string; to: string } | null;
     queries: ZarukuWordstatQueryRow[];
     regions: ZarukuWordstatRegionRow[];
   };
