@@ -54,3 +54,18 @@ test("Wordstat classifications use the fixed review taxonomy", () => {
     );
   }
 });
+
+test("Wordstat collector lineage keys match the unsigned canonical run id", () => {
+  for (const table of [
+    "canonical_dim_wordstat_regions",
+    "canonical_fact_wordstat_dynamics_daily",
+    "canonical_fact_wordstat_requests_snapshot",
+    "canonical_fact_wordstat_regions_snapshot",
+    "canonical_wordstat_coverage",
+  ]) {
+    assert.match(
+      tableBody(table),
+      /^\s*ingestion_run_id BIGINT UNSIGNED DEFAULT NULL/m,
+    );
+  }
+});
