@@ -18,31 +18,22 @@ export type WordstatQueryRunner = (query: WordstatSqlQuery) => Promise<unknown[]
 const HISTORICAL_WINDOW_FROM = "2026-07-10";
 const HISTORICAL_WINDOW_TO = "2026-07-31";
 
-type WordstatMetadataDbRow = {
-  query_from: string | Date | null;
-  query_to: string | Date | null;
-  query_scope_count: number | string | null;
-  query_empty_scope_count: number | string | null;
-  region_from: string | Date | null;
-  region_to: string | Date | null;
-  region_scope_count: number | string | null;
-  region_empty_scope_count: number | string | null;
-  last_status: string | null;
-  last_finished_at: string | Date | null;
-  last_success_at: string | Date | null;
-  last_error_at: string | Date | null;
-  last_error_summary: string | null;
-  rows_read: number | string | null;
-  rows_written: number | string | null;
+type EndpointStateDbRow = {
+  endpoint_from: string | Date | null;
+  endpoint_to: string | Date | null;
+  endpoint_scope_count: number | string | null;
+  endpoint_empty_scope_count: number | string | null;
+  endpoint_last_status: string | null;
+  endpoint_last_finished_at: string | Date | null;
+  endpoint_last_success_at: string | Date | null;
+  endpoint_last_error_at: string | Date | null;
+  endpoint_last_error_summary: string | null;
+  endpoint_rows_read: number | string | null;
+  endpoint_rows_written: number | string | null;
 };
 
-type HistoricalPeriodDbRow = {
-  period_from: string | Date | null;
-  period_to: string | Date | null;
-};
-
-type HistoricalDbRow = {
-  seed_hash: string;
+type HistoricalDbRow = EndpointStateDbRow & {
+  seed_hash: string | null;
   phrase: string | null;
   topic: string | null;
   cluster: string | null;
@@ -55,8 +46,8 @@ type HistoricalDbRow = {
   webmaster_average_position: number | string | null;
 };
 
-type CurrentQueryDbRow = {
-  normalized_query: string;
+type CurrentQueryDbRow = EndpointStateDbRow & {
+  normalized_query: string | null;
   query: string | null;
   request_kind: string | null;
   device: string | null;
@@ -71,7 +62,7 @@ type CurrentQueryDbRow = {
   confirmed_url: string | null;
 };
 
-type CurrentRegionDbRow = {
+type CurrentRegionDbRow = EndpointStateDbRow & {
   region_id: number | string | null;
   region_name: string | null;
   region_type: string | null;
@@ -155,149 +146,11 @@ export function classifyWordstatOpportunity(row: WordstatOpportunityInput): Zaru
 }
 
 export function buildZarukuWordstatQueries(accountId: string): Record<
-  "metadata" | "historicalPeriod" | "historicalRows" | "currentQueries" | "currentRegions",
+  "historicalRows" | "currentQueries" | "currentRegions",
   WordstatSqlQuery
 > {
   const normalizedAccountId = requireAccountId(accountId);
   return {
-    metadata: {
-      sql: `
-        /* wordstat:metadata */
-        WITH latest_query_snapshot AS (
-          SELECT coverage.requested_from, coverage.requested_to, coverage.registry_version, coverage.ingestion_run_id
-          FROM canonical_wordstat_coverage coverage
-          WHERE coverage.source_key = 'yandex_wordstat'
-            AND coverage.analytics_account_id = ?
-            AND coverage.endpoint = 'top_requests'
-            AND coverage.status IN ('success', 'success_empty')
-            AND coverage.ingestion_run_id IS NOT NULL
-          ORDER BY coverage.ingestion_run_id DESC, coverage.updated_at DESC, coverage.id DESC
-          LIMIT 1
-        ),
-        query_coverage AS (
-          SELECT
-            MIN(c.requested_from) AS query_from,
-            MAX(c.requested_to) AS query_to,
-            COUNT(*) AS query_scope_count,
-            SUM(c.status = 'success_empty') AS query_empty_scope_count
-          FROM canonical_wordstat_coverage c
-          JOIN latest_query_snapshot latest
-            ON latest.requested_from = c.requested_from
-            AND latest.requested_to = c.requested_to
-            AND latest.registry_version = c.registry_version
-            AND latest.ingestion_run_id = c.ingestion_run_id
-          WHERE c.source_key = 'yandex_wordstat'
-            AND c.analytics_account_id = ?
-            AND c.endpoint = 'top_requests'
-            AND c.status IN ('success', 'success_empty')
-        ),
-        latest_region_snapshot AS (
-          SELECT coverage.requested_from, coverage.requested_to, coverage.registry_version, coverage.ingestion_run_id
-          FROM canonical_wordstat_coverage coverage
-          WHERE coverage.source_key = 'yandex_wordstat'
-            AND coverage.analytics_account_id = ?
-            AND coverage.endpoint = 'regions'
-            AND coverage.status IN ('success', 'success_empty')
-            AND coverage.ingestion_run_id IS NOT NULL
-          ORDER BY coverage.ingestion_run_id DESC, coverage.updated_at DESC, coverage.id DESC
-          LIMIT 1
-        ),
-        region_coverage AS (
-          SELECT
-            MIN(c.requested_from) AS region_from,
-            MAX(c.requested_to) AS region_to,
-            COUNT(*) AS region_scope_count,
-            SUM(c.status = 'success_empty') AS region_empty_scope_count
-          FROM canonical_wordstat_coverage c
-          JOIN latest_region_snapshot latest
-            ON latest.requested_from = c.requested_from
-            AND latest.requested_to = c.requested_to
-            AND latest.registry_version = c.registry_version
-            AND latest.ingestion_run_id = c.ingestion_run_id
-          WHERE c.source_key = 'yandex_wordstat'
-            AND c.analytics_account_id = ?
-            AND c.endpoint = 'regions'
-            AND c.status IN ('success', 'success_empty')
-        ),
-        latest_run AS (
-          SELECT runs.status, runs.finished_at, runs.started_at, runs.error_summary, runs.rows_read, runs.rows_written
-          FROM canonical_collector_runs runs
-          WHERE runs.source_key = 'yandex_wordstat'
-            AND runs.job_key LIKE CONCAT('yandex_wordstat:', ?, ':%')
-          ORDER BY runs.id DESC
-          LIMIT 1
-        ),
-        latest_success AS (
-          SELECT runs.finished_at, runs.started_at
-          FROM canonical_collector_runs runs
-          WHERE runs.source_key = 'yandex_wordstat'
-            AND runs.status = 'success'
-            AND runs.job_key LIKE CONCAT('yandex_wordstat:', ?, ':%')
-          ORDER BY runs.id DESC
-          LIMIT 1
-        )
-        SELECT
-          query_coverage.query_from,
-          query_coverage.query_to,
-          COALESCE(query_coverage.query_scope_count, 0) AS query_scope_count,
-          COALESCE(query_coverage.query_empty_scope_count, 0) AS query_empty_scope_count,
-          region_coverage.region_from,
-          region_coverage.region_to,
-          COALESCE(region_coverage.region_scope_count, 0) AS region_scope_count,
-          COALESCE(region_coverage.region_empty_scope_count, 0) AS region_empty_scope_count,
-          latest_run.status AS last_status,
-          COALESCE(latest_run.finished_at, latest_run.started_at) AS last_finished_at,
-          COALESCE(latest_success.finished_at, latest_success.started_at) AS last_success_at,
-          CASE WHEN latest_run.status IN ('failed', 'partial') THEN COALESCE(latest_run.finished_at, latest_run.started_at) ELSE NULL END AS last_error_at,
-          CASE WHEN latest_run.status IN ('failed', 'partial') THEN latest_run.error_summary ELSE NULL END AS last_error_summary,
-          COALESCE(latest_run.rows_read, 0) AS rows_read,
-          COALESCE(latest_run.rows_written, 0) AS rows_written
-        FROM query_coverage
-        CROSS JOIN region_coverage
-        LEFT JOIN latest_run ON TRUE
-        LEFT JOIN latest_success ON TRUE
-      `,
-      params: [normalizedAccountId, normalizedAccountId, normalizedAccountId, normalizedAccountId, normalizedAccountId, normalizedAccountId],
-    },
-    historicalPeriod: {
-      sql: `
-        /* wordstat:historical-period */
-        WITH approved_registry_versions AS (
-          SELECT DISTINCT registry_version
-          FROM canonical_wordstat_seed_registry
-          WHERE analytics_account_id = ?
-            AND is_active = 1
-            AND classification = 'medical'
-            AND review_status = 'reviewed'
-        ),
-        confirmed_dynamics_coverage AS (
-          SELECT DISTINCT coverage.analytics_account_id, coverage.registry_version, coverage.ingestion_run_id,
-            coverage.requested_from, coverage.requested_to
-          FROM canonical_wordstat_coverage coverage
-          JOIN approved_registry_versions approved
-            ON approved.registry_version = coverage.registry_version
-          WHERE coverage.source_key = 'yandex_wordstat'
-            AND coverage.analytics_account_id = ?
-            AND coverage.endpoint = 'dynamics'
-            AND coverage.status IN ('success', 'success_empty')
-            AND coverage.ingestion_run_id IS NOT NULL
-            AND coverage.requested_from <= '${HISTORICAL_WINDOW_TO}'
-            AND coverage.requested_to >= '${HISTORICAL_WINDOW_FROM}'
-        ),
-        common_dates AS (
-          SELECT DISTINCT webmaster.report_date
-          FROM canonical_fact_webmaster_queries_daily webmaster
-          JOIN confirmed_dynamics_coverage coverage
-            ON coverage.analytics_account_id = webmaster.analytics_account_id
-            AND webmaster.report_date BETWEEN coverage.requested_from AND coverage.requested_to
-          WHERE webmaster.analytics_account_id = ?
-            AND webmaster.report_date BETWEEN '${HISTORICAL_WINDOW_FROM}' AND '${HISTORICAL_WINDOW_TO}'
-        )
-        SELECT MIN(report_date) AS period_from, MAX(report_date) AS period_to
-        FROM common_dates
-      `,
-      params: [normalizedAccountId, normalizedAccountId, normalizedAccountId],
-    },
     historicalRows: {
       sql: `
         /* wordstat:historical-rows */
@@ -322,6 +175,13 @@ export function buildZarukuWordstatQueries(accountId: string): Record<
           SELECT DISTINCT coverage.analytics_account_id, coverage.registry_version, coverage.ingestion_run_id,
             coverage.requested_from, coverage.requested_to
           FROM canonical_wordstat_coverage coverage
+          JOIN canonical_collector_runs coverage_run
+            ON coverage_run.id = coverage.ingestion_run_id
+            AND coverage_run.source_key = coverage.source_key
+            AND coverage_run.job_key IN (
+              CONCAT('yandex_wordstat:', ?, ':historical'),
+              CONCAT('yandex_wordstat:', ?, ':all')
+            )
           JOIN (SELECT DISTINCT registry_version FROM approved_seeds) approved
             ON approved.registry_version = coverage.registry_version
           WHERE coverage.source_key = 'yandex_wordstat'
@@ -357,6 +217,10 @@ export function buildZarukuWordstatQueries(accountId: string): Record<
           WHERE webmaster.analytics_account_id = ?
             AND webmaster.report_date BETWEEN '${HISTORICAL_WINDOW_FROM}' AND '${HISTORICAL_WINDOW_TO}'
         ),
+        common_bounds AS (
+          SELECT MIN(report_date) AS endpoint_from, MAX(report_date) AS endpoint_to
+          FROM common_dates
+        ),
         current_demand AS (
           SELECT dynamics.registry_version, dynamics.seed_hash, SUM(dynamics.count) AS wordstat_count
           FROM confirmed_dynamics dynamics
@@ -387,27 +251,108 @@ export function buildZarukuWordstatQueries(accountId: string): Record<
           JOIN webmaster_daily webmaster ON webmaster.query_hash = SHA2(seed.normalized_phrase, 256)
           JOIN common_dates dates ON dates.report_date = webmaster.report_date
           GROUP BY seed.registry_version, seed.seed_hash
+        ),
+        coverage_state AS (
+          SELECT COUNT(*) AS endpoint_scope_count, 0 AS endpoint_empty_scope_count
+          FROM confirmed_dynamics_coverage
+        ),
+        latest_endpoint_run AS (
+          SELECT runs.status, runs.finished_at, runs.started_at, runs.error_summary, runs.rows_read, runs.rows_written
+          FROM canonical_collector_runs runs
+          WHERE runs.source_key = 'yandex_wordstat'
+            AND runs.job_key IN (
+              CONCAT('yandex_wordstat:', ?, ':historical'),
+              CONCAT('yandex_wordstat:', ?, ':all')
+            )
+          ORDER BY runs.id DESC
+          LIMIT 1
+        ),
+        latest_endpoint_success AS (
+          SELECT runs.finished_at, runs.started_at
+          FROM canonical_collector_runs runs
+          WHERE runs.source_key = 'yandex_wordstat'
+            AND runs.status = 'success'
+            AND runs.job_key IN (
+              CONCAT('yandex_wordstat:', ?, ':historical'),
+              CONCAT('yandex_wordstat:', ?, ':all')
+            )
+          ORDER BY runs.id DESC
+          LIMIT 1
+        ),
+        endpoint_state AS (
+          SELECT
+            common_bounds.endpoint_from,
+            common_bounds.endpoint_to,
+            COALESCE(coverage_state.endpoint_scope_count, 0) AS endpoint_scope_count,
+            COALESCE(coverage_state.endpoint_empty_scope_count, 0) AS endpoint_empty_scope_count,
+            latest_endpoint_run.status AS endpoint_last_status,
+            COALESCE(latest_endpoint_run.finished_at, latest_endpoint_run.started_at) AS endpoint_last_finished_at,
+            COALESCE(latest_endpoint_success.finished_at, latest_endpoint_success.started_at) AS endpoint_last_success_at,
+            CASE WHEN latest_endpoint_run.status IN ('failed', 'partial')
+              THEN COALESCE(latest_endpoint_run.finished_at, latest_endpoint_run.started_at) ELSE NULL END AS endpoint_last_error_at,
+            CASE WHEN latest_endpoint_run.status IN ('failed', 'partial')
+              THEN latest_endpoint_run.error_summary ELSE NULL END AS endpoint_last_error_summary,
+            COALESCE(latest_endpoint_run.rows_read, 0) AS endpoint_rows_read,
+            COALESCE(latest_endpoint_run.rows_written, 0) AS endpoint_rows_written
+          FROM (SELECT 1 AS anchor) anchor
+          LEFT JOIN common_bounds ON TRUE
+          LEFT JOIN coverage_state ON TRUE
+          LEFT JOIN latest_endpoint_run ON TRUE
+          LEFT JOIN latest_endpoint_success ON TRUE
+        ),
+        historical_results AS (
+          SELECT
+            seed.seed_hash,
+            seed.phrase_text AS phrase,
+            seed.topic,
+            seed.cluster,
+            seed.classification,
+            seed.review_status,
+            current_demand.wordstat_count,
+            NULL AS previous_wordstat_count,
+            COALESCE(webmaster_demand.webmaster_impressions, 0) AS webmaster_impressions,
+            COALESCE(webmaster_demand.webmaster_clicks, 0) AS webmaster_clicks,
+            webmaster_demand.webmaster_average_position
+          FROM approved_seeds seed
+          JOIN current_demand ON current_demand.seed_hash = seed.seed_hash
+            AND current_demand.registry_version = seed.registry_version
+          LEFT JOIN webmaster_demand ON webmaster_demand.seed_hash = seed.seed_hash
+            AND webmaster_demand.registry_version = seed.registry_version
         )
         SELECT
-          seed.seed_hash,
-          seed.phrase_text AS phrase,
-          seed.topic,
-          seed.cluster,
-          seed.classification,
-          seed.review_status,
-          current_demand.wordstat_count,
-          NULL AS previous_wordstat_count,
-          COALESCE(webmaster_demand.webmaster_impressions, 0) AS webmaster_impressions,
-          COALESCE(webmaster_demand.webmaster_clicks, 0) AS webmaster_clicks,
-          webmaster_demand.webmaster_average_position
-        FROM approved_seeds seed
-        JOIN current_demand ON current_demand.seed_hash = seed.seed_hash
-          AND current_demand.registry_version = seed.registry_version
-        LEFT JOIN webmaster_demand ON webmaster_demand.seed_hash = seed.seed_hash
-          AND webmaster_demand.registry_version = seed.registry_version
-        ORDER BY current_demand.wordstat_count DESC, seed.phrase_text ASC
+          endpoint_state.endpoint_from,
+          endpoint_state.endpoint_to,
+          endpoint_state.endpoint_scope_count,
+          endpoint_state.endpoint_empty_scope_count,
+          endpoint_state.endpoint_last_status,
+          endpoint_state.endpoint_last_finished_at,
+          endpoint_state.endpoint_last_success_at,
+          endpoint_state.endpoint_last_error_at,
+          endpoint_state.endpoint_last_error_summary,
+          endpoint_state.endpoint_rows_read,
+          endpoint_state.endpoint_rows_written,
+          historical_results.seed_hash,
+          historical_results.phrase,
+          historical_results.topic,
+          historical_results.cluster,
+          historical_results.classification,
+          historical_results.review_status,
+          historical_results.wordstat_count,
+          historical_results.previous_wordstat_count,
+          historical_results.webmaster_impressions,
+          historical_results.webmaster_clicks,
+          historical_results.webmaster_average_position
+        FROM endpoint_state
+        LEFT JOIN historical_results ON TRUE
+        ORDER BY historical_results.wordstat_count DESC, historical_results.phrase ASC
       `,
       params: [
+        normalizedAccountId,
+        normalizedAccountId,
+        normalizedAccountId,
+        normalizedAccountId,
+        normalizedAccountId,
+        normalizedAccountId,
         normalizedAccountId,
         normalizedAccountId,
         normalizedAccountId,
@@ -422,12 +367,20 @@ export function buildZarukuWordstatQueries(accountId: string): Record<
           SELECT coverage.analytics_account_id, coverage.registry_version, coverage.ingestion_run_id,
             coverage.requested_from, coverage.requested_to
           FROM canonical_wordstat_coverage coverage
+          JOIN canonical_collector_runs coverage_run
+            ON coverage_run.id = coverage.ingestion_run_id
+            AND coverage_run.source_key = coverage.source_key
+            AND coverage_run.job_key IN (
+              CONCAT('yandex_wordstat:', ?, ':current'),
+              CONCAT('yandex_wordstat:', ?, ':all')
+            )
           WHERE coverage.source_key = 'yandex_wordstat'
             AND coverage.analytics_account_id = ?
             AND coverage.endpoint = 'top_requests'
             AND coverage.status IN ('success', 'success_empty')
             AND coverage.ingestion_run_id IS NOT NULL
-          ORDER BY coverage.ingestion_run_id DESC, coverage.updated_at DESC, coverage.id DESC
+          ORDER BY coverage.requested_to DESC, coverage.requested_from DESC,
+            coverage.updated_at DESC, coverage.id DESC, coverage.ingestion_run_id DESC
           LIMIT 1
         ),
         confirmed_coverage AS (
@@ -445,6 +398,67 @@ export function buildZarukuWordstatQueries(accountId: string): Record<
             AND coverage.endpoint = 'top_requests'
             AND coverage.status IN ('success', 'success_empty')
             AND coverage.ingestion_run_id IS NOT NULL
+        ),
+        coverage_state AS (
+          SELECT
+            MIN(coverage.requested_from) AS endpoint_from,
+            MAX(coverage.requested_to) AS endpoint_to,
+            COUNT(*) AS endpoint_scope_count,
+            SUM(coverage.status = 'success_empty') AS endpoint_empty_scope_count
+          FROM canonical_wordstat_coverage coverage
+          JOIN latest_snapshot latest
+            ON latest.analytics_account_id = coverage.analytics_account_id
+            AND latest.registry_version = coverage.registry_version
+            AND latest.ingestion_run_id = coverage.ingestion_run_id
+            AND latest.requested_from = coverage.requested_from
+            AND latest.requested_to = coverage.requested_to
+          WHERE coverage.source_key = 'yandex_wordstat'
+            AND coverage.analytics_account_id = ?
+            AND coverage.endpoint = 'top_requests'
+            AND coverage.status IN ('success', 'success_empty')
+        ),
+        latest_endpoint_run AS (
+          SELECT runs.status, runs.finished_at, runs.started_at, runs.error_summary, runs.rows_read, runs.rows_written
+          FROM canonical_collector_runs runs
+          WHERE runs.source_key = 'yandex_wordstat'
+            AND runs.job_key IN (
+              CONCAT('yandex_wordstat:', ?, ':current'),
+              CONCAT('yandex_wordstat:', ?, ':all')
+            )
+          ORDER BY runs.id DESC
+          LIMIT 1
+        ),
+        latest_endpoint_success AS (
+          SELECT runs.finished_at, runs.started_at
+          FROM canonical_collector_runs runs
+          WHERE runs.source_key = 'yandex_wordstat'
+            AND runs.status = 'success'
+            AND runs.job_key IN (
+              CONCAT('yandex_wordstat:', ?, ':current'),
+              CONCAT('yandex_wordstat:', ?, ':all')
+            )
+          ORDER BY runs.id DESC
+          LIMIT 1
+        ),
+        endpoint_state AS (
+          SELECT
+            coverage_state.endpoint_from,
+            coverage_state.endpoint_to,
+            COALESCE(coverage_state.endpoint_scope_count, 0) AS endpoint_scope_count,
+            COALESCE(coverage_state.endpoint_empty_scope_count, 0) AS endpoint_empty_scope_count,
+            latest_endpoint_run.status AS endpoint_last_status,
+            COALESCE(latest_endpoint_run.finished_at, latest_endpoint_run.started_at) AS endpoint_last_finished_at,
+            COALESCE(latest_endpoint_success.finished_at, latest_endpoint_success.started_at) AS endpoint_last_success_at,
+            CASE WHEN latest_endpoint_run.status IN ('failed', 'partial')
+              THEN COALESCE(latest_endpoint_run.finished_at, latest_endpoint_run.started_at) ELSE NULL END AS endpoint_last_error_at,
+            CASE WHEN latest_endpoint_run.status IN ('failed', 'partial')
+              THEN latest_endpoint_run.error_summary ELSE NULL END AS endpoint_last_error_summary,
+            COALESCE(latest_endpoint_run.rows_read, 0) AS endpoint_rows_read,
+            COALESCE(latest_endpoint_run.rows_written, 0) AS endpoint_rows_written
+          FROM (SELECT 1 AS anchor) anchor
+          LEFT JOIN coverage_state ON TRUE
+          LEFT JOIN latest_endpoint_run ON TRUE
+          LEFT JOIN latest_endpoint_success ON TRUE
         ),
         latest_positions AS (
           SELECT normalized_query, week_key, serp_position, matched_url
@@ -520,14 +534,57 @@ export function buildZarukuWordstatQueries(accountId: string): Record<
           LEFT JOIN confirmed_urls urls ON urls.normalized_query = facts.normalized_query
           WHERE facts.source_key = 'yandex_wordstat'
             AND facts.analytics_account_id = ?
+        ),
+        selected_requests AS (
+          SELECT normalized_query, query, request_kind, device, count, share, classification, review_status,
+            topic, cluster, seo_os_position, seo_os_week, confirmed_url
+          FROM ranked_requests
+          WHERE duplicate_rank = 1
         )
-        SELECT normalized_query, query, request_kind, device, count, share, classification, review_status,
-          topic, cluster, seo_os_position, seo_os_week, confirmed_url
-        FROM ranked_requests
-        WHERE duplicate_rank = 1
-        ORDER BY count DESC, query ASC, request_kind ASC, device ASC
+        SELECT
+          endpoint_state.endpoint_from,
+          endpoint_state.endpoint_to,
+          endpoint_state.endpoint_scope_count,
+          endpoint_state.endpoint_empty_scope_count,
+          endpoint_state.endpoint_last_status,
+          endpoint_state.endpoint_last_finished_at,
+          endpoint_state.endpoint_last_success_at,
+          endpoint_state.endpoint_last_error_at,
+          endpoint_state.endpoint_last_error_summary,
+          endpoint_state.endpoint_rows_read,
+          endpoint_state.endpoint_rows_written,
+          selected_requests.normalized_query,
+          selected_requests.query,
+          selected_requests.request_kind,
+          selected_requests.device,
+          selected_requests.count,
+          selected_requests.share,
+          selected_requests.classification,
+          selected_requests.review_status,
+          selected_requests.topic,
+          selected_requests.cluster,
+          selected_requests.seo_os_position,
+          selected_requests.seo_os_week,
+          selected_requests.confirmed_url
+        FROM endpoint_state
+        LEFT JOIN selected_requests ON TRUE
+        ORDER BY selected_requests.count DESC, selected_requests.query ASC,
+          selected_requests.request_kind ASC, selected_requests.device ASC
       `,
-      params: [normalizedAccountId, normalizedAccountId, normalizedAccountId, normalizedAccountId, normalizedAccountId],
+      params: [
+        normalizedAccountId,
+        normalizedAccountId,
+        normalizedAccountId,
+        normalizedAccountId,
+        normalizedAccountId,
+        normalizedAccountId,
+        normalizedAccountId,
+        normalizedAccountId,
+        normalizedAccountId,
+        normalizedAccountId,
+        normalizedAccountId,
+        normalizedAccountId,
+      ],
     },
     currentRegions: {
       sql: `
@@ -536,12 +593,20 @@ export function buildZarukuWordstatQueries(accountId: string): Record<
           SELECT coverage.analytics_account_id, coverage.registry_version, coverage.ingestion_run_id,
             coverage.requested_from, coverage.requested_to
           FROM canonical_wordstat_coverage coverage
+          JOIN canonical_collector_runs coverage_run
+            ON coverage_run.id = coverage.ingestion_run_id
+            AND coverage_run.source_key = coverage.source_key
+            AND coverage_run.job_key IN (
+              CONCAT('yandex_wordstat:', ?, ':regions'),
+              CONCAT('yandex_wordstat:', ?, ':all')
+            )
           WHERE coverage.source_key = 'yandex_wordstat'
             AND coverage.analytics_account_id = ?
             AND coverage.endpoint = 'regions'
             AND coverage.status IN ('success', 'success_empty')
             AND coverage.ingestion_run_id IS NOT NULL
-          ORDER BY coverage.ingestion_run_id DESC, coverage.updated_at DESC, coverage.id DESC
+          ORDER BY coverage.requested_to DESC, coverage.requested_from DESC,
+            coverage.updated_at DESC, coverage.id DESC, coverage.ingestion_run_id DESC
           LIMIT 1
         ),
         confirmed_coverage AS (
@@ -559,6 +624,67 @@ export function buildZarukuWordstatQueries(accountId: string): Record<
             AND coverage.endpoint = 'regions'
             AND coverage.status IN ('success', 'success_empty')
             AND coverage.ingestion_run_id IS NOT NULL
+        ),
+        coverage_state AS (
+          SELECT
+            MIN(coverage.requested_from) AS endpoint_from,
+            MAX(coverage.requested_to) AS endpoint_to,
+            COUNT(*) AS endpoint_scope_count,
+            SUM(coverage.status = 'success_empty') AS endpoint_empty_scope_count
+          FROM canonical_wordstat_coverage coverage
+          JOIN latest_snapshot latest
+            ON latest.analytics_account_id = coverage.analytics_account_id
+            AND latest.registry_version = coverage.registry_version
+            AND latest.ingestion_run_id = coverage.ingestion_run_id
+            AND latest.requested_from = coverage.requested_from
+            AND latest.requested_to = coverage.requested_to
+          WHERE coverage.source_key = 'yandex_wordstat'
+            AND coverage.analytics_account_id = ?
+            AND coverage.endpoint = 'regions'
+            AND coverage.status IN ('success', 'success_empty')
+        ),
+        latest_endpoint_run AS (
+          SELECT runs.status, runs.finished_at, runs.started_at, runs.error_summary, runs.rows_read, runs.rows_written
+          FROM canonical_collector_runs runs
+          WHERE runs.source_key = 'yandex_wordstat'
+            AND runs.job_key IN (
+              CONCAT('yandex_wordstat:', ?, ':regions'),
+              CONCAT('yandex_wordstat:', ?, ':all')
+            )
+          ORDER BY runs.id DESC
+          LIMIT 1
+        ),
+        latest_endpoint_success AS (
+          SELECT runs.finished_at, runs.started_at
+          FROM canonical_collector_runs runs
+          WHERE runs.source_key = 'yandex_wordstat'
+            AND runs.status = 'success'
+            AND runs.job_key IN (
+              CONCAT('yandex_wordstat:', ?, ':regions'),
+              CONCAT('yandex_wordstat:', ?, ':all')
+            )
+          ORDER BY runs.id DESC
+          LIMIT 1
+        ),
+        endpoint_state AS (
+          SELECT
+            coverage_state.endpoint_from,
+            coverage_state.endpoint_to,
+            COALESCE(coverage_state.endpoint_scope_count, 0) AS endpoint_scope_count,
+            COALESCE(coverage_state.endpoint_empty_scope_count, 0) AS endpoint_empty_scope_count,
+            latest_endpoint_run.status AS endpoint_last_status,
+            COALESCE(latest_endpoint_run.finished_at, latest_endpoint_run.started_at) AS endpoint_last_finished_at,
+            COALESCE(latest_endpoint_success.finished_at, latest_endpoint_success.started_at) AS endpoint_last_success_at,
+            CASE WHEN latest_endpoint_run.status IN ('failed', 'partial')
+              THEN COALESCE(latest_endpoint_run.finished_at, latest_endpoint_run.started_at) ELSE NULL END AS endpoint_last_error_at,
+            CASE WHEN latest_endpoint_run.status IN ('failed', 'partial')
+              THEN latest_endpoint_run.error_summary ELSE NULL END AS endpoint_last_error_summary,
+            COALESCE(latest_endpoint_run.rows_read, 0) AS endpoint_rows_read,
+            COALESCE(latest_endpoint_run.rows_written, 0) AS endpoint_rows_written
+          FROM (SELECT 1 AS anchor) anchor
+          LEFT JOIN coverage_state ON TRUE
+          LEFT JOIN latest_endpoint_run ON TRUE
+          LEFT JOIN latest_endpoint_success ON TRUE
         ),
         snapshot_period AS (
           SELECT requested_from AS window_from, requested_to AS window_to
@@ -619,13 +745,50 @@ export function buildZarukuWordstatQueries(accountId: string): Record<
           LEFT JOIN metrika_city_visits ON metrika_city_visits.region_key = LOWER(TRIM(regions.region_name))
           WHERE facts.source_key = 'yandex_wordstat'
             AND facts.analytics_account_id = ?
+        ),
+        selected_regions AS (
+          SELECT region_id, region_name, region_type, device, count, share, affinity_index, metrika_visits
+          FROM ranked_regions
+          WHERE duplicate_rank = 1
         )
-        SELECT region_id, region_name, region_type, device, count, share, affinity_index, metrika_visits
-        FROM ranked_regions
-        WHERE duplicate_rank = 1
-        ORDER BY count DESC, region_name ASC, device ASC
+        SELECT
+          endpoint_state.endpoint_from,
+          endpoint_state.endpoint_to,
+          endpoint_state.endpoint_scope_count,
+          endpoint_state.endpoint_empty_scope_count,
+          endpoint_state.endpoint_last_status,
+          endpoint_state.endpoint_last_finished_at,
+          endpoint_state.endpoint_last_success_at,
+          endpoint_state.endpoint_last_error_at,
+          endpoint_state.endpoint_last_error_summary,
+          endpoint_state.endpoint_rows_read,
+          endpoint_state.endpoint_rows_written,
+          selected_regions.region_id,
+          selected_regions.region_name,
+          selected_regions.region_type,
+          selected_regions.device,
+          selected_regions.count,
+          selected_regions.share,
+          selected_regions.affinity_index,
+          selected_regions.metrika_visits
+        FROM endpoint_state
+        LEFT JOIN selected_regions ON TRUE
+        ORDER BY selected_regions.count DESC, selected_regions.region_name ASC, selected_regions.device ASC
       `,
-      params: [normalizedAccountId, normalizedAccountId, normalizedAccountId, normalizedAccountId, normalizedAccountId],
+      params: [
+        normalizedAccountId,
+        normalizedAccountId,
+        normalizedAccountId,
+        normalizedAccountId,
+        normalizedAccountId,
+        normalizedAccountId,
+        normalizedAccountId,
+        normalizedAccountId,
+        normalizedAccountId,
+        normalizedAccountId,
+        normalizedAccountId,
+        normalizedAccountId,
+      ],
     },
   };
 }
@@ -728,6 +891,7 @@ function normalizeCurrentQueries(rows: unknown[]): ZarukuWordstatQueryRow[] {
 function normalizeCurrentRegions(rows: unknown[]): ZarukuWordstatRegionRow[] {
   const selected = new Map<string, ZarukuWordstatRegionRow>();
   for (const raw of rows as CurrentRegionDbRow[]) {
+    if (raw.region_id == null) continue;
     const row = {
       region_id: Math.round(asNumber(raw.region_id)),
       region_name: asString(raw.region_name) || "Не указан",
@@ -766,16 +930,62 @@ function makeIndicators(historical: ZarukuWordstatHistoricalRow[], queries: Zaru
   };
 }
 
+type EndpointState = {
+  period: { from: string; to: string } | null;
+  scopeCount: number;
+  emptyScopeCount: number;
+  lastStatus: string | null;
+  lastFinishedAt: string | null;
+  lastSuccessAt: string | null;
+  lastErrorAt: string | null;
+  lastErrorSummary: string | null;
+  rowsRead: number;
+  rowsWritten: number;
+};
+
+function endpointStateFromRows(rows: unknown[]): EndpointState | null {
+  const raw = rows[0] as Partial<EndpointStateDbRow> | undefined;
+  if (!raw) return null;
+  return {
+    period: periodFromValues(raw.endpoint_from, raw.endpoint_to),
+    scopeCount: Math.round(asNumber(raw.endpoint_scope_count)),
+    emptyScopeCount: Math.round(asNumber(raw.endpoint_empty_scope_count)),
+    lastStatus: asString(raw.endpoint_last_status) || null,
+    lastFinishedAt: formatDateTime(raw.endpoint_last_finished_at),
+    lastSuccessAt: formatDateTime(raw.endpoint_last_success_at),
+    lastErrorAt: formatDateTime(raw.endpoint_last_error_at),
+    lastErrorSummary: asString(raw.endpoint_last_error_summary) || null,
+    rowsRead: Math.round(asNumber(raw.endpoint_rows_read)),
+    rowsWritten: Math.round(asNumber(raw.endpoint_rows_written)),
+  };
+}
+
+function endpointRunIsProblem(state: EndpointState | null) {
+  return state != null
+    && state.lastStatus !== "success"
+    && (state.scopeCount > 0 || state.lastStatus != null);
+}
+
+function latestEndpointValue(states: Array<EndpointState | null>, key: "lastFinishedAt" | "lastSuccessAt" | "lastErrorAt") {
+  return states.map((state) => state?.[key] ?? null).filter((value): value is string => value != null).sort().at(-1) ?? null;
+}
+
 function makeFreshness(
-  metadata: WordstatMetadataDbRow | null,
+  states: Array<EndpointState | null>,
   period: { from: string; to: string } | null,
   periodsDiffer: boolean,
+  coverageMissing: boolean,
+  endpointRunProblem: boolean,
+  failedQueries: number,
 ): ZarukuSourceFreshnessRow | null {
-  if (!metadata) return null;
-  const status = asString(metadata.last_status) || null;
-  const freshnessStatus = status === "failed"
+  const knownStates = states.filter((state): state is EndpointState => state != null);
+  if (knownStates.length === 0) return null;
+  const hasFailedRun = knownStates.some((state) => state.lastStatus === "failed");
+  const hasPartialRun = knownStates.some((state) => state.lastStatus === "partial" || state.lastStatus === "running");
+  const status = hasFailedRun ? "failed" : hasPartialRun || coverageMissing || endpointRunProblem ? "partial" : "success";
+  const freshnessStatus = hasFailedRun
     ? "failed"
-    : periodsDiffer || status === "partial"
+    : periodsDiffer || coverageMissing || endpointRunProblem || failedQueries > 0 || hasPartialRun
       ? "delayed"
       : period == null
         ? "disabled"
@@ -788,16 +998,22 @@ function makeFreshness(
     freshness_status: freshnessStatus,
     freshness_label: freshnessStatus,
     last_status: status,
-    last_finished_at: formatDateTime(metadata.last_finished_at),
-    last_success_at: formatDateTime(metadata.last_success_at),
+    last_finished_at: latestEndpointValue(knownStates, "lastFinishedAt"),
+    last_success_at: latestEndpointValue(knownStates, "lastSuccessAt"),
     date_from: period?.from ?? null,
     date_to: period?.to ?? null,
-    rows_read: Math.round(asNumber(metadata.rows_read)),
-    rows_written: Math.round(asNumber(metadata.rows_written)),
-    last_error_at: formatDateTime(metadata.last_error_at),
-    last_error_summary: status === "failed" || status === "partial" ? "Последний сбор Wordstat завершился с ошибкой." : null,
+    rows_read: Math.max(...knownStates.map((state) => state.rowsRead)),
+    rows_written: Math.max(...knownStates.map((state) => state.rowsWritten)),
+    last_error_at: latestEndpointValue(knownStates, "lastErrorAt"),
+    last_error_summary: hasFailedRun || hasPartialRun || endpointRunProblem
+      ? "Последний релевантный сбор Wordstat завершился с ошибкой или частично."
+      : null,
     note: periodsDiffer
       ? "Подтверждённые снимки запросов и регионов Wordstat имеют разные периоды."
+      : coverageMissing
+        ? "Для одной из подтверждённых областей Wordstat пока нет покрытия."
+        : endpointRunProblem
+          ? "Подтверждённое покрытие Wordstat не имеет успешного account-scoped статуса сбора."
       : period == null
         ? "Подтверждённый снимок Wordstat пока отсутствует."
         : "Период Wordstat отражает подтверждённый rolling snapshot, а не период трафика сайта.",
@@ -815,41 +1031,53 @@ export async function loadZarukuWordstatData(
   const normalizedAccountId = requireAccountId(accountId);
   const queries = buildZarukuWordstatQueries(normalizedAccountId);
   const settled = await Promise.allSettled([
-    query(queries.metadata),
-    query(queries.historicalPeriod),
     query(queries.historicalRows),
     query(queries.currentQueries),
     query(queries.currentRegions),
   ]);
-  const metadata = valueOrEmpty<WordstatMetadataDbRow>(settled[0])[0] ?? null;
-  const historicalPeriodRow = valueOrEmpty<HistoricalPeriodDbRow>(settled[1])[0] ?? { period_from: null, period_to: null };
-  const historicalPeriod = periodFromValues(historicalPeriodRow.period_from, historicalPeriodRow.period_to);
-  const historical = normalizeHistoricalRows(valueOrEmpty<HistoricalDbRow>(settled[2]));
-  const currentQueries = normalizeCurrentQueries(valueOrEmpty<CurrentQueryDbRow>(settled[3]));
-  const currentRegions = normalizeCurrentRegions(valueOrEmpty<CurrentRegionDbRow>(settled[4]));
-  const queryPeriod = metadata ? periodFromValues(metadata.query_from, metadata.query_to) : null;
-  const regionPeriod = metadata ? periodFromValues(metadata.region_from, metadata.region_to) : null;
+  const historicalRows = valueOrEmpty<HistoricalDbRow>(settled[0]);
+  const queryRows = valueOrEmpty<CurrentQueryDbRow>(settled[1]);
+  const regionRows = valueOrEmpty<CurrentRegionDbRow>(settled[2]);
+  const historicalState = endpointStateFromRows(historicalRows);
+  const queryState = endpointStateFromRows(queryRows);
+  const regionState = endpointStateFromRows(regionRows);
+  const historicalPeriod = historicalState?.period ?? null;
+  const historical = normalizeHistoricalRows(historicalRows);
+  const currentQueries = normalizeCurrentQueries(queryRows);
+  const currentRegions = normalizeCurrentRegions(regionRows);
+  const queryPeriod = queryState?.period ?? null;
+  const regionPeriod = regionState?.period ?? null;
   const periodsDiffer = queryPeriod != null
     && regionPeriod != null
     && (queryPeriod.from !== regionPeriod.from || queryPeriod.to !== regionPeriod.to);
   const currentPeriod = periodsDiffer ? null : queryPeriod ?? regionPeriod;
-  const queryScopes = metadata ? asNumber(metadata.query_scope_count) : 0;
-  const regionScopes = metadata ? asNumber(metadata.region_scope_count) : 0;
-  const allCurrentScopesEmpty = metadata != null
+  const queryScopes = queryState?.scopeCount ?? 0;
+  const regionScopes = regionState?.scopeCount ?? 0;
+  const historicalScopes = historicalState?.scopeCount ?? 0;
+  const allCurrentScopesEmpty = queryState != null
+    && regionState != null
     && queryScopes > 0
     && regionScopes > 0
-    && queryScopes === asNumber(metadata.query_empty_scope_count)
-    && regionScopes === asNumber(metadata.region_empty_scope_count);
+    && queryScopes === queryState.emptyScopeCount
+    && regionScopes === regionState.emptyScopeCount;
   const failedQueries = settled.filter((result) => result.status === "rejected").length;
-  const latestStatus = asString(metadata?.last_status);
+  const endpointRunProblem = [historicalState, queryState, regionState].some(endpointRunIsProblem);
+  const hasFailedEndpointRun = [historicalState, queryState, regionState].some((state) => state?.lastStatus === "failed");
+  const hasPartialEndpointRun = [historicalState, queryState, regionState].some((state) => state?.lastStatus === "partial" || state?.lastStatus === "running");
+  const coverageMissing = historicalState == null
+    || queryState == null
+    || regionState == null
+    || historicalScopes === 0
+    || queryScopes === 0
+    || regionScopes === 0;
   const confirmedCurrent = queryScopes > 0 || regionScopes > 0;
   const messages: string[] = [];
   if (failedQueries > 0) messages.push("Часть канонических таблиц Wordstat сейчас недоступна.");
-  if (latestStatus === "failed") {
+  if (hasFailedEndpointRun) {
     messages.push(confirmedCurrent
       ? "Зафиксирован сбой последнего сбора Wordstat; показан только подтверждённый снимок с его точными датами."
       : "Зафиксирован сбой последнего сбора Wordstat; подтверждённого снимка для показа нет.");
-  } else if (latestStatus === "partial") {
+  } else if (hasPartialEndpointRun) {
     messages.push("Последний сбор Wordstat выполнен частично; показаны только подтверждённые области.");
   }
   if (periodsDiffer) {
@@ -858,12 +1086,12 @@ export async function loadZarukuWordstatData(
   if (allCurrentScopesEmpty) messages.push("Нет запросов по выбранным темам в подтверждённом снимке Wordstat.");
 
   let status: ZarukuWordstatData["status"];
-  if (!metadata || (!confirmedCurrent && !historicalPeriod)) {
+  if (!queryState && !regionState && !historicalState || (!confirmedCurrent && !historicalPeriod)) {
     status = "unavailable";
-  } else if (allCurrentScopesEmpty && failedQueries === 0 && latestStatus !== "failed" && latestStatus !== "partial") {
-    status = "empty";
-  } else if (failedQueries > 0 || latestStatus === "failed" || latestStatus === "partial" || periodsDiffer || queryScopes === 0 || regionScopes === 0) {
+  } else if (failedQueries > 0 || periodsDiffer || coverageMissing || endpointRunProblem) {
     status = "partial";
+  } else if (allCurrentScopesEmpty) {
+    status = "empty";
   } else {
     status = "available";
   }
@@ -879,7 +1107,14 @@ export async function loadZarukuWordstatData(
       regions: currentRegions,
     },
     indicators: makeIndicators(historical, currentQueries, currentRegions),
-    source_freshness: makeFreshness(metadata, currentPeriod, periodsDiffer),
+    source_freshness: makeFreshness(
+      [historicalState, queryState, regionState],
+      currentPeriod,
+      periodsDiffer,
+      coverageMissing,
+      endpointRunProblem,
+      failedQueries,
+    ),
     messages,
   };
 }
