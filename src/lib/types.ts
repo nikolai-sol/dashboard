@@ -774,6 +774,7 @@ export interface ZarukuSourceFreshnessRow {
 export type ZarukuWordstatClassification = "medical" | "adjacent" | "irrelevant" | "unreviewed";
 export type ZarukuWordstatOpportunity = "high" | "medium" | "covered" | "watch";
 export type ZarukuWordstatAction = "strengthen_page" | "create_material" | "clarify_wording";
+export type ZarukuWordstatScopeStatus = "available" | "partial" | "empty" | "unavailable";
 
 export interface ZarukuWordstatHistoricalRow {
   seed_hash: string;
@@ -805,6 +806,8 @@ export interface ZarukuWordstatQueryRow {
   seo_os_position: number | null;
   seo_os_week: string | null;
   confirmed_url: string | null;
+  /** Explicit read-model gate: active, reviewed and medical in the Zaruku registry. */
+  seo_os_eligible: boolean;
   action: ZarukuWordstatAction | null;
 }
 
@@ -830,11 +833,14 @@ export interface ZarukuWordstatIndicators {
 export interface ZarukuWordstatData {
   status: "available" | "partial" | "empty" | "unavailable";
   historical: {
+    status: ZarukuWordstatScopeStatus;
     period: { from: string; to: string } | null;
     rows: ZarukuWordstatHistoricalRow[];
   };
   current: {
     period: { from: string; to: string } | null;
+    query_status: ZarukuWordstatScopeStatus;
+    region_status: ZarukuWordstatScopeStatus;
     query_period: { from: string; to: string } | null;
     region_period: { from: string; to: string } | null;
     queries: ZarukuWordstatQueryRow[];

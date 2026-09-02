@@ -61,6 +61,7 @@ type CurrentQueryDbRow = EndpointStateDbRow & {
   seo_os_position: number | string | null;
   seo_os_week: string | null;
   confirmed_url: string | null;
+  seo_os_eligible: number | string | boolean | null;
 };
 
 type CurrentRegionDbRow = EndpointStateDbRow & {
@@ -94,6 +95,10 @@ function asNullableNumber(value: unknown) {
   if (value == null || value === "") return null;
   const number = Number(value);
   return Number.isFinite(number) ? number : null;
+}
+
+function asBoolean(value: unknown) {
+  return value === true || value === 1 || value === "1";
 }
 
 function asString(value: unknown) {
@@ -514,6 +519,12 @@ export function buildZarukuWordstatQueries(accountId: string): Record<
               ELSE 'unreviewed'
             END AS classification,
             CASE WHEN classifications.review_status = 'reviewed' THEN 'reviewed' ELSE 'pending' END AS review_status,
+            CASE
+              WHEN classifications.is_active = 1
+                AND classifications.review_status = 'reviewed'
+                AND classifications.classification = 'medical'
+              THEN 1 ELSE 0
+            END AS seo_os_eligible,
             COALESCE(classifications.topic, facts.topic) AS topic,
             COALESCE(classifications.cluster, facts.cluster) AS cluster,
             positions.serp_position AS seo_os_position,
@@ -533,14 +544,13 @@ export function buildZarukuWordstatQueries(accountId: string): Record<
             ON classifications.analytics_account_id = facts.analytics_account_id
             AND classifications.registry_version = facts.registry_version
             AND classifications.query_hash = facts.query_hash
-            AND classifications.is_active = 1
           LEFT JOIN latest_positions positions ON positions.normalized_query = facts.normalized_query
           LEFT JOIN confirmed_urls urls ON urls.normalized_query = facts.normalized_query
           WHERE facts.source_key = 'yandex_wordstat'
             AND facts.analytics_account_id = ?
         ),
         selected_requests AS (
-          SELECT normalized_query, query, request_kind, device, count, share, classification, review_status,
+          SELECT normalized_query, query, request_kind, device, count, share, classification, review_status, seo_os_eligible,
             topic, cluster, seo_os_position, seo_os_week, confirmed_url
           FROM ranked_requests
           WHERE duplicate_rank = 1
@@ -566,6 +576,7 @@ export function buildZarukuWordstatQueries(accountId: string): Record<
           selected_requests.share,
           selected_requests.classification,
           selected_requests.review_status,
+          selected_requests.seo_os_eligible,
           selected_requests.topic,
           selected_requests.cluster,
           selected_requests.seo_os_position,
@@ -859,10 +870,10 @@ function normalizeHistoricalRows(rows: unknown[]): ZarukuWordstatHistoricalRow[]
 }
 
 function actionForQuery(row: Omit<ZarukuWordstatQueryRow, "action">): ZarukuWordstatAction | null {
-  if (row.classification !== "medical" || row.review_status !== "reviewed") return null;
+  if (!row.seo_os_eligible) return null;
   if (row.confirmed_url && row.seo_os_position != null && row.seo_os_position > 10) return "strengthen_page";
   if (row.confirmed_url) return "clarify_wording";
-  return "create_material";
+  return null;
 }
 
 function normalizeCurrentQueries(rows: unknown[]): ZarukuWordstatQueryRow[] {
@@ -884,6 +895,7 @@ function normalizeCurrentQueries(rows: unknown[]): ZarukuWordstatQueryRow[] {
       seo_os_position: asNullableNumber(raw.seo_os_position),
       seo_os_week: asString(raw.seo_os_week) || null,
       confirmed_url: asString(raw.confirmed_url) || null,
+      seo_os_eligible: asBoolean(raw.seo_os_eligible) && classification === "medical" && reviewStatus === "reviewed",
     } satisfies Omit<ZarukuWordstatQueryRow, "action">;
     if (!row.normalized_query) continue;
     const key = `${row.request_kind}\u0000${row.device}\u0000${row.normalized_query}`;
@@ -935,7 +947,7 @@ function makeIndicators(historical: ZarukuWordstatHistoricalRow[], queries: Zaru
     largest_opportunity: highest,
     irrelevant_demand_share: totalCurrentDemand > 0 ? irrelevantDemand / totalCurrentDemand * 100 : null,
     review_queue_count: queries.filter((row) => row.classification === "unreviewed" || row.classification === "adjacent").length,
-    region_opportunity_count: regions.filter((row) => (row.affinity_index ?? 0) > 1 && (row.metrika_visits == null || row.metrika_visits <= 0)).length,
+    region_opportunity_count: regions.filter((row) => (row.affinity_index ?? 0) > 1 && row.metrika_visits != null && row.metrika_visits <= 0).length,
   };
 }
 
@@ -985,6 +997,16 @@ function selectedCoverageRunIsProblem(state: EndpointState | null) {
     && state.selectedCoverageRunStatus !== undefined
     && state.scopeCount > 0
     && state.selectedCoverageRunStatus !== "success";
+}
+
+function scopeStatus(
+  state: EndpointState | null,
+  queryFailed: boolean,
+): ZarukuWordstatData["historical"]["status"] {
+  if (queryFailed || state == null || state.scopeCount === 0 || state.period == null) return "unavailable";
+  if (endpointRunIsProblem(state) || selectedCoverageRunIsProblem(state)) return "partial";
+  if (state.emptyScopeCount === state.scopeCount) return "empty";
+  return "available";
 }
 
 function stateHasRunStatus(state: EndpointState, status: "failed" | "partial" | "running") {
@@ -1088,6 +1110,9 @@ export async function loadZarukuWordstatData(
     && queryScopes === queryState.emptyScopeCount
     && regionScopes === regionState.emptyScopeCount;
   const failedQueries = settled.filter((result) => result.status === "rejected").length;
+  const historicalStatus = scopeStatus(historicalState, settled[0].status === "rejected");
+  const queryStatus = scopeStatus(queryState, settled[1].status === "rejected");
+  const regionStatus = scopeStatus(regionState, settled[2].status === "rejected");
   const endpointRunProblem = [historicalState, queryState, regionState].some(
     (state) => endpointRunIsProblem(state) || selectedCoverageRunIsProblem(state),
   );
@@ -1119,11 +1144,11 @@ export async function loadZarukuWordstatData(
   if (allCurrentScopesEmpty) messages.push("Нет запросов по выбранным темам в подтверждённом снимке Wordstat.");
 
   let status: ZarukuWordstatData["status"];
-  if (!queryState && !regionState && !historicalState || (!confirmedCurrent && !historicalPeriod)) {
+  if (historicalStatus === "unavailable" && queryStatus === "unavailable" && regionStatus === "unavailable") {
     status = "unavailable";
-  } else if (failedQueries > 0 || periodsDiffer || coverageMissing || endpointRunProblem) {
+  } else if (failedQueries > 0 || periodsDiffer || [historicalStatus, queryStatus, regionStatus].some((value) => value === "partial" || value === "unavailable")) {
     status = "partial";
-  } else if (allCurrentScopesEmpty) {
+  } else if (queryStatus === "empty" && regionStatus === "empty") {
     status = "empty";
   } else {
     status = "available";
@@ -1131,9 +1156,11 @@ export async function loadZarukuWordstatData(
 
   return {
     status,
-    historical: { period: historicalPeriod, rows: historical },
+    historical: { status: historicalStatus, period: historicalPeriod, rows: historical },
     current: {
       period: currentPeriod,
+      query_status: queryStatus,
+      region_status: regionStatus,
       query_period: queryPeriod,
       region_period: regionPeriod,
       queries: currentQueries,

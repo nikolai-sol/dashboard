@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
 import test from "node:test";
 import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
@@ -8,6 +9,7 @@ import type { ZarukuWordstatData } from "@/lib/types";
 const fixture: ZarukuWordstatData = {
   status: "available",
   historical: {
+    status: "available",
     period: { from: "2026-07-10", to: "2026-07-31" },
     rows: [{
       seed_hash: "seed-1",
@@ -27,6 +29,8 @@ const fixture: ZarukuWordstatData = {
   },
   current: {
     period: { from: "2026-08-03", to: "2026-09-01" },
+    query_status: "available",
+    region_status: "available",
     query_period: { from: "2026-08-03", to: "2026-09-01" },
     region_period: { from: "2026-08-03", to: "2026-09-01" },
     queries: [{
@@ -43,6 +47,7 @@ const fixture: ZarukuWordstatData = {
       seo_os_position: 12,
       seo_os_week: "2026-W35",
       confirmed_url: "/treatment/",
+      seo_os_eligible: true,
       action: "strengthen_page",
     }],
     regions: [{
@@ -51,8 +56,8 @@ const fixture: ZarukuWordstatData = {
       region_type: "город",
       device: "all",
       count: 600,
-      share: 12.4,
-      affinity_index: 132,
+      share: 0.25,
+      affinity_index: 1.2,
       metrika_visits: 15,
     }],
   },
@@ -120,7 +125,7 @@ test("Wordstat tab renders all required management sections with its independent
     "Нерелевантный спрос сейчас",
     "Новые темы для проверки",
     "Регионы возможностей",
-    "10–31 июля: спрос и присутствие Zaruku",
+    "10–31 июля 2026: спрос и присутствие Zaruku",
     "Текущие запросы Wordstat",
     "Региональные возможности",
     "Wordstat → проверка → SEO OS",
@@ -161,6 +166,34 @@ test("non-medical rows do not expose approved SEO OS actions", () => {
   }
 });
 
+test("SEO OS action fails closed without an explicit active reviewed medical eligibility signal", () => {
+  const queries = [
+    { classification: "medical", review_status: "pending", seo_os_eligible: false, action: "strengthen_page" },
+    { classification: "medical", review_status: "reviewed", seo_os_eligible: false, action: "strengthen_page" },
+    { classification: "medical", review_status: "reviewed", seo_os_eligible: true, action: null },
+    { classification: "adjacent", review_status: "reviewed", seo_os_eligible: false, action: "strengthen_page" },
+    { classification: "irrelevant", review_status: "reviewed", seo_os_eligible: false, action: "strengthen_page" },
+    { classification: "unreviewed", review_status: "pending", seo_os_eligible: false, action: "strengthen_page" },
+  ] as const satisfies Array<Pick<ZarukuWordstatData["current"]["queries"][number], "classification" | "review_status" | "seo_os_eligible" | "action">>;
+  const rows = queries.map((row, index) => ({
+    ...fixture.current.queries[0],
+    ...row,
+    normalized_query: `fail-closed-${index}`,
+    query: `закрытый запрос ${index}`,
+  }));
+  const markup = renderToStaticMarkup(createElement(ZarukuWordstatTab, {
+    data: { ...fixture, current: { ...fixture.current, queries: rows } },
+  }));
+
+  for (const row of rows) {
+    const rowStart = markup.indexOf(row.query);
+    const rowMarkup = markup.slice(rowStart, markup.indexOf("</tr>", rowStart));
+    assert.match(rowMarkup, /Не создаёт задачу SEO OS|Нет подготовленного действия для SEO OS/);
+    assert.doesNotMatch(rowMarkup, /Можно передать на одобрение в SEO OS/);
+    assert.doesNotMatch(rowMarkup, /Усилить страницу|Создать материал|Уточнить формулировку/);
+  }
+});
+
 test("query chip keeps the confirmed query window when regional coverage differs", () => {
   const markup = renderToStaticMarkup(createElement(ZarukuWordstatTab, {
     data: {
@@ -190,6 +223,77 @@ test("regional opportunity labels use the canonical affinity threshold", () => {
 
   assert.match(markup, /1,2 · выше/);
   assert.match(markup, /Высокая возможность/);
+  assert.match(markup, /25%/);
+});
+
+test("regional opportunity stays at watch when comparable Metrika evidence is absent", () => {
+  const markup = renderToStaticMarkup(createElement(ZarukuWordstatTab, {
+    data: {
+      ...fixture,
+      indicators: { ...fixture.indicators, region_opportunity_count: 0 },
+      current: {
+        ...fixture.current,
+        regions: [{ ...fixture.current.regions[0], affinity_index: 1, metrika_visits: null }],
+      },
+    },
+  }));
+
+  assert.match(markup, /1 · на уровне среднего/);
+  assert.match(markup, /Нет сопоставимых данных/);
+  const rowStart = markup.indexOf("Москва");
+  const rowMarkup = markup.slice(rowStart, markup.indexOf("</tr>", rowStart));
+  assert.doesNotMatch(rowMarkup, /Высокая возможность|Средняя возможность/);
+  assert.match(markup, /Как ранжируются региональные возможности/);
+});
+
+test("scope states keep valid historical rows visible while current query and region areas are independently unavailable", () => {
+  const markup = renderToStaticMarkup(createElement(ZarukuWordstatTab, {
+    data: {
+      ...fixture,
+      status: "partial",
+      current: {
+        ...fixture.current,
+        period: null,
+        query_status: "empty",
+        region_status: "unavailable",
+        region_period: null,
+        queries: [],
+        regions: [],
+      },
+      indicators: {
+        growing_medical_topics: 1,
+        largest_opportunity: "high",
+        irrelevant_demand_share: 0,
+        review_queue_count: 0,
+        region_opportunity_count: 0,
+      },
+    },
+  }));
+
+  assert.match(markup, /лечение рака/);
+  assert.match(markup, /Сбор запросов завершился успешно, но строк нет/);
+  assert.match(markup, /Региональная разбивка Wordstat пока недоступна/);
+  assert.match(markup, /Темы с растущим спросом[\s\S]*?>1</);
+  assert.match(markup, /Нерелевантный спрос сейчас[\s\S]*?>—</);
+  assert.match(markup, /Регионы возможностей[\s\S]*?>—</);
+});
+
+test("partial scope retains rows but does not publish its KPI as a confirmed zero", () => {
+  const markup = renderToStaticMarkup(createElement(ZarukuWordstatTab, {
+    data: {
+      ...fixture,
+      status: "partial",
+      historical: { ...fixture.historical, status: "partial" },
+      current: { ...fixture.current, query_status: "partial" },
+      indicators: { ...fixture.indicators, growing_medical_topics: 0, irrelevant_demand_share: 0 },
+    },
+  }));
+
+  assert.match(markup, /лечение рака/);
+  assert.match(markup, /Данные по темам доступны частично/);
+  assert.match(markup, /Данные по запросам доступны частично/);
+  assert.match(markup, /Темы с растущим спросом[\s\S]*?>—</);
+  assert.match(markup, /Нерелевантный спрос сейчас[\s\S]*?>—</);
 });
 
 test("unavailable Wordstat does not invent period or indicator values", () => {
@@ -197,8 +301,8 @@ test("unavailable Wordstat does not invent period or indicator values", () => {
     data: {
       ...fixture,
       status: "unavailable",
-      historical: { period: null, rows: [] },
-      current: { period: null, query_period: null, region_period: null, queries: [], regions: [] },
+      historical: { status: "unavailable", period: null, rows: [] },
+      current: { period: null, query_status: "unavailable", region_status: "unavailable", query_period: null, region_period: null, queries: [], regions: [] },
       source_freshness: null,
       messages: ["Доступ к Wordstat пока не установлен."],
     },
@@ -207,4 +311,9 @@ test("unavailable Wordstat does not invent period or indicator values", () => {
   assert.match(markup, /Нет данных/);
   assert.match(markup, /Период пока не подтверждён/);
   assert.doesNotMatch(markup, />1,240</);
+});
+
+test("query row key keeps the request kind and device grain", () => {
+  const source = readFileSync(new URL("./ZarukuWordstatTab.tsx", import.meta.url), "utf8");
+  assert.match(source, /key=\{`\$\{row\.normalized_query\}\\u0000\$\{row\.request_kind\}\\u0000\$\{row\.device\}`\}/);
 });

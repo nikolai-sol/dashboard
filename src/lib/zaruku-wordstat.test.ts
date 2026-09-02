@@ -111,6 +111,7 @@ test("Wordstat loader reads canonical data and keeps periods separate", async ()
         share: 0.2,
         classification: "medical",
         review_status: "reviewed",
+        seo_os_eligible: 1,
         topic: "Онкология",
         cluster: "рак",
         seo_os_position: 18,
@@ -126,6 +127,7 @@ test("Wordstat loader reads canonical data and keeps periods separate", async ()
         share: 0.25,
         classification: "medical",
         review_status: "reviewed",
+        seo_os_eligible: 1,
         topic: "Онкология",
         cluster: "рак",
         seo_os_position: 18,
@@ -148,7 +150,10 @@ test("Wordstat loader reads canonical data and keeps periods separate", async ()
   const data = await loadZarukuWordstatData("66624469", fixture.run);
 
   assert.deepEqual(data.historical.period, { from: "2026-07-10", to: "2026-07-31" });
+  assert.equal(data.historical.status, "available");
   assert.deepEqual(data.current.period, { from: "2026-08-03", to: "2026-09-01" });
+  assert.equal(data.current.query_status, "available");
+  assert.equal(data.current.region_status, "available");
   assert.equal(data.current.queries.length, 1);
   assert.equal(data.current.queries[0].count, 120);
   assert.equal(data.current.queries[0].action, "strengthen_page");
@@ -259,8 +264,14 @@ test("Wordstat loader distinguishes successful-empty coverage from a failed run 
   }).run);
 
   assert.equal(empty.status, "empty");
+  assert.equal(empty.historical.status, "available");
+  assert.equal(empty.current.query_status, "empty");
+  assert.equal(empty.current.region_status, "empty");
   assert.deepEqual(empty.current.period, { from: "2026-08-03", to: "2026-09-01" });
   assert.equal(failed.status, "unavailable");
+  assert.equal(failed.historical.status, "unavailable");
+  assert.equal(failed.current.query_status, "unavailable");
+  assert.equal(failed.current.region_status, "unavailable");
   assert.equal(failed.current.period, null);
   assert.match(failed.messages.join(" "), /сбой|ошибк/i);
 
@@ -274,6 +285,84 @@ test("Wordstat loader distinguishes successful-empty coverage from a failed run 
     }],
   }).run);
   assert.equal(missingRegionCoverage.status, "partial");
+  assert.equal(missingRegionCoverage.current.query_status, "empty");
+  assert.equal(missingRegionCoverage.current.region_status, "unavailable");
+});
+
+test("Wordstat scopes retain confirmed facts independently when another endpoint is partial or unavailable", async () => {
+  const { loadZarukuWordstatData } = await wordstatModule();
+  const retained = await loadZarukuWordstatData("66624469", fakeQuery({
+    metadata: [{ ...availableMetadata(), query_last_status: "failed" }],
+    "historical-period": [{ period_from: "2026-07-10", period_to: "2026-07-31" }],
+    "historical-rows": [{
+      seed_hash: "seed-a", phrase: "рак груди", topic: "Онкология", cluster: null,
+      classification: "medical", review_status: "reviewed", wordstat_count: 20,
+      previous_wordstat_count: 10, webmaster_impressions: 2, webmaster_clicks: 1,
+      webmaster_average_position: 4,
+    }],
+    "current-queries": [{
+      normalized_query: "рак груди", query: "рак груди", request_kind: "popular", device: "all",
+      count: 20, classification: "medical", review_status: "reviewed", seo_os_eligible: 1,
+      confirmed_url: "/rak-grudi", seo_os_position: 12,
+    }],
+  }).run);
+
+  assert.equal(retained.status, "partial");
+  assert.equal(retained.historical.status, "available");
+  assert.equal(retained.historical.rows.length, 1);
+  assert.equal(retained.current.query_status, "partial");
+  assert.equal(retained.current.queries.length, 1);
+  assert.equal(retained.current.region_status, "available");
+
+  const rejectedRegion = await loadZarukuWordstatData("66624469", async (query) => {
+    if (query.sql.includes("wordstat:current-regions")) throw new Error("regional read unavailable");
+    return fakeQuery({
+      metadata: [availableMetadata()],
+      "historical-period": [{ period_from: "2026-07-10", period_to: "2026-07-31" }],
+    }).run(query);
+  });
+  assert.equal(rejectedRegion.current.query_status, "available");
+  assert.equal(rejectedRegion.current.region_status, "unavailable");
+  assert.equal(rejectedRegion.historical.status, "available");
+});
+
+test("Wordstat regional opportunity requires comparable Metrika evidence and uses affinity relative to one", async () => {
+  const { loadZarukuWordstatData } = await wordstatModule();
+  const data = await loadZarukuWordstatData("66624469", fakeQuery({
+    metadata: [availableMetadata()],
+    "current-regions": [
+      { region_id: 213, region_name: "Москва", region_type: "city", device: "all", count: 20, share: 0.25, affinity_index: 1.2, metrika_visits: null },
+      { region_id: 2, region_name: "Санкт-Петербург", region_type: "city", device: "all", count: 19, share: 0.2, affinity_index: 1, metrika_visits: 0 },
+      { region_id: 3, region_name: "Казань", region_type: "city", device: "all", count: 18, share: 0.1, affinity_index: 1.2, metrika_visits: 0 },
+    ],
+  }).run);
+
+  assert.equal(data.current.regions[0].share, 0.25);
+  assert.equal(data.indicators.region_opportunity_count, 1);
+  assert.equal(data.current.regions.find((row) => row.region_name === "Москва")?.metrika_visits, null);
+});
+
+test("Wordstat SEO eligibility is explicit and fails closed for inactive, pending, and missing actions", async () => {
+  const { loadZarukuWordstatData } = await wordstatModule();
+  const data = await loadZarukuWordstatData("66624469", fakeQuery({
+    metadata: [availableMetadata()],
+    "current-queries": [
+      { normalized_query: "активный", query: "активный", request_kind: "popular", device: "all", count: 20, classification: "medical", review_status: "reviewed", seo_os_eligible: 1, confirmed_url: "/active", seo_os_position: 12 },
+      { normalized_query: "неактивный", query: "неактивный", request_kind: "popular", device: "all", count: 19, classification: "medical", review_status: "reviewed", seo_os_eligible: 0, confirmed_url: "/inactive", seo_os_position: 12 },
+      { normalized_query: "ожидает", query: "ожидает", request_kind: "popular", device: "all", count: 18, classification: "medical", review_status: "pending", seo_os_eligible: 0, confirmed_url: "/pending", seo_os_position: 12 },
+      { normalized_query: "без действия", query: "без действия", request_kind: "popular", device: "all", count: 17, classification: "medical", review_status: "reviewed", seo_os_eligible: 1, confirmed_url: null, seo_os_position: null },
+    ],
+  }).run);
+  const rows = new Map(data.current.queries.map((row) => [row.query, row]));
+
+  assert.equal(rows.get("активный")?.seo_os_eligible, true);
+  assert.equal(rows.get("активный")?.action, "strengthen_page");
+  assert.equal(rows.get("неактивный")?.seo_os_eligible, false);
+  assert.equal(rows.get("неактивный")?.action, null);
+  assert.equal(rows.get("ожидает")?.seo_os_eligible, false);
+  assert.equal(rows.get("ожидает")?.action, null);
+  assert.equal(rows.get("без действия")?.seo_os_eligible, true);
+  assert.equal(rows.get("без действия")?.action, null);
 });
 
 test("Wordstat fails closed when historical coverage is missing despite healthy current endpoints", async () => {
@@ -551,6 +640,9 @@ test("Wordstat SQL binds facts and run lineage to account-scoped confirmed cover
   assert.doesNotMatch(queries.currentRegions.sql, /MAX\(requested_to\)/i);
   assert.match(queries.currentRegions.sql, /classification\s*=\s*'medical'/i);
   assert.match(queries.currentRegions.sql, /review_status\s*=\s*'reviewed'/i);
+  assert.match(queries.currentQueries.sql, /AS seo_os_eligible/i);
+  assert.match(queries.currentQueries.sql, /classifications\.is_active\s*=\s*1/i);
+  assert.doesNotMatch(queries.currentQueries.sql, /query_hash\s*=\s*facts\.query_hash\s+AND\s+classifications\.is_active\s*=\s*1/i);
 });
 
 test("Wordstat SQL scopes run state by endpoint family and selects the latest requested snapshot", async () => {
