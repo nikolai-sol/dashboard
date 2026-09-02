@@ -364,13 +364,14 @@ test("asset CLI is silent on success and prints only violating paths on failure"
 
 test("deploy inventory packages all Wordstat runtime modules without a credential artifact", async () => {
   const deployScript = await readFile(new URL("../../scripts/deploy.sh", import.meta.url), "utf8");
+  const wordstatRuntimeFiles = [...deployScript.matchAll(/^copy_canonical_file (\S*wordstat\S*)$/gim)]
+    .map((match) => match[1]);
 
-  for (const runtimeFile of [
+  assert.deepEqual(wordstatRuntimeFiles, [
     "wordstat_api.py",
     "probe_yandex_wordstat_access.py",
     "fetch_yandex_wordstat_canonical.py",
-  ]) {
-    assert.match(deployScript, new RegExp(`copy_canonical_file ${runtimeFile.replace(".", "\\.")}`));
-  }
+  ]);
   assert.doesNotMatch(deployScript, /WORDSTAT_TOKEN_FILE|wordstat.*token/i);
+  assert.doesNotMatch(deployScript, /^copy_canonical_file .*?(token|credential|secret)/im);
 });
