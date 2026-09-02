@@ -773,7 +773,7 @@ export interface ZarukuSourceFreshnessRow {
 
 export type ZarukuWordstatClassification = "medical" | "adjacent" | "irrelevant" | "unreviewed";
 export type ZarukuWordstatOpportunity = "high" | "medium" | "covered" | "watch";
-export type ZarukuWordstatAction = "strengthen_page" | "create_material" | "clarify_wording";
+export type ZarukuWordstatAction = "strengthen_page" | "create_material";
 export type ZarukuWordstatScopeStatus = "available" | "partial" | "empty" | "unavailable";
 
 export interface ZarukuWordstatHistoricalRow {
@@ -801,6 +801,7 @@ export interface ZarukuWordstatQueryRow {
   share: number | null;
   classification: ZarukuWordstatClassification;
   review_status: "reviewed" | "pending";
+  classification_active: boolean;
   topic: string | null;
   cluster: string | null;
   seo_os_position: number | null;
@@ -819,15 +820,16 @@ export interface ZarukuWordstatRegionRow {
   count: number;
   share: number | null;
   affinity_index: number | null;
-  metrika_visits: number | null;
 }
 
 export interface ZarukuWordstatIndicators {
-  growing_medical_topics: number;
+  growing_medical_topics: number | null;
+  growing_medical_topics_reason: string;
   largest_opportunity: ZarukuWordstatOpportunity | null;
   irrelevant_demand_share: number | null;
   review_queue_count: number;
-  region_opportunity_count: number;
+  region_opportunity_count: number | null;
+  region_opportunity_reason: string;
 }
 
 export interface ZarukuWordstatData {
@@ -835,6 +837,9 @@ export interface ZarukuWordstatData {
   historical: {
     status: ZarukuWordstatScopeStatus;
     period: { from: string; to: string } | null;
+    confirmed_dates: string[];
+    confirmed_day_count: number;
+    confirmed_dates_contiguous: boolean;
     rows: ZarukuWordstatHistoricalRow[];
   };
   current: {
@@ -843,6 +848,10 @@ export interface ZarukuWordstatData {
     region_status: ZarukuWordstatScopeStatus;
     query_period: { from: string; to: string } | null;
     region_period: { from: string; to: string } | null;
+    regional_traffic_comparison: {
+      status: "unavailable";
+      reason: string;
+    };
     queries: ZarukuWordstatQueryRow[];
     regions: ZarukuWordstatRegionRow[];
   };

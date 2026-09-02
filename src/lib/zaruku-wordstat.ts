@@ -17,6 +17,9 @@ export type WordstatQueryRunner = (query: WordstatSqlQuery) => Promise<unknown[]
 
 const HISTORICAL_WINDOW_FROM = "2026-07-10";
 const HISTORICAL_WINDOW_TO = "2026-07-31";
+const WORDSTAT_FRESHNESS_HOURS = 168;
+const GROWTH_UNAVAILABLE_REASON = "Предыдущий сопоставимый период Wordstat не собирался, поэтому показатель роста недоступен.";
+const REGION_TRAFFIC_UNAVAILABLE_REASON = "Сопоставимый региональный срез Яндекс-органики в Метрике пока не подключён.";
 
 type EndpointStateDbRow = {
   endpoint_from: string | Date | null;
@@ -31,6 +34,9 @@ type EndpointStateDbRow = {
   endpoint_last_error_summary: string | null;
   endpoint_rows_read: number | string | null;
   endpoint_rows_written: number | string | null;
+  endpoint_confirmed_dates?: string | string[] | null;
+  endpoint_confirmed_day_count?: number | string | null;
+  endpoint_confirmed_dates_contiguous?: number | string | boolean | null;
 };
 
 type HistoricalDbRow = EndpointStateDbRow & {
@@ -56,6 +62,7 @@ type CurrentQueryDbRow = EndpointStateDbRow & {
   share: number | string | null;
   classification: string | null;
   review_status: string | null;
+  classification_active: number | string | boolean | null;
   topic: string | null;
   cluster: string | null;
   seo_os_position: number | string | null;
@@ -72,7 +79,6 @@ type CurrentRegionDbRow = EndpointStateDbRow & {
   count: number | string | null;
   share: number | string | null;
   affinity_index: number | string | null;
-  metrika_visits: number | string | null;
 };
 
 type WordstatOpportunityInput = {
@@ -115,6 +121,12 @@ function formatDateTime(value: string | Date | null | undefined) {
   return value instanceof Date ? value.toISOString().slice(0, 19).replace("T", " ") : asString(value) || null;
 }
 
+function requireUtcDate(value: string | Date) {
+  const parsed = value instanceof Date ? value : new Date(value);
+  if (Number.isNaN(parsed.getTime())) throw new Error("nowUtc must be a valid date");
+  return parsed.toISOString().slice(0, 10);
+}
+
 function requireAccountId(accountId: string) {
   const normalized = accountId.trim();
   if (!normalized) throw new Error("accountId is required");
@@ -151,11 +163,12 @@ export function classifyWordstatOpportunity(row: WordstatOpportunityInput): Zaru
   return row.webmaster_impressions === 0 && row.webmaster_average_position == null ? "high" : "medium";
 }
 
-export function buildZarukuWordstatQueries(accountId: string): Record<
+export function buildZarukuWordstatQueries(accountId: string, nowUtc: string | Date = new Date()): Record<
   "historicalRows" | "currentQueries" | "currentRegions",
   WordstatSqlQuery
 > {
   const normalizedAccountId = requireAccountId(accountId);
+  const currentUtcDate = requireUtcDate(nowUtc);
   return {
     historicalRows: {
       sql: `
@@ -179,7 +192,7 @@ export function buildZarukuWordstatQueries(accountId: string): Record<
         ),
         confirmed_dynamics_coverage AS (
           SELECT DISTINCT coverage.analytics_account_id, coverage.registry_version, coverage.ingestion_run_id,
-            coverage.requested_from, coverage.requested_to
+            coverage.requested_from, coverage.requested_to, coverage_run.status AS coverage_run_status
           FROM canonical_wordstat_coverage coverage
           JOIN canonical_collector_runs coverage_run
             ON coverage_run.id = coverage.ingestion_run_id
@@ -214,17 +227,44 @@ export function buildZarukuWordstatQueries(accountId: string): Record<
             AND dynamics.region_scope = 'all'
             AND dynamics.report_date BETWEEN '${HISTORICAL_WINDOW_FROM}' AND '${HISTORICAL_WINDOW_TO}'
         ),
+        confirmed_webmaster_snapshots AS (
+          SELECT summary.source_key, summary.analytics_account_id, summary.host_id, summary.report_date,
+            summary.device_type, summary.ingestion_run_id
+          FROM canonical_fact_webmaster_summary_daily summary
+          JOIN canonical_collector_runs webmaster_run
+            ON webmaster_run.id = summary.ingestion_run_id
+            AND webmaster_run.source_key = summary.source_key
+            AND webmaster_run.status = 'success'
+          WHERE summary.source_key = 'yandex_webmaster'
+            AND summary.analytics_account_id = ?
+            AND summary.device_type = 'ALL'
+            AND summary.report_date BETWEEN '${HISTORICAL_WINDOW_FROM}' AND '${HISTORICAL_WINDOW_TO}'
+            AND (
+              summary.impressions = 0
+              OR EXISTS (
+                SELECT 1
+                FROM canonical_fact_webmaster_queries_daily queries
+                WHERE queries.source_key = summary.source_key
+                  AND queries.analytics_account_id = summary.analytics_account_id
+                  AND queries.host_id = summary.host_id
+                  AND queries.report_date = summary.report_date
+                  AND queries.device_type = summary.device_type
+                  AND queries.ingestion_run_id = summary.ingestion_run_id
+              )
+            )
+        ),
         common_dates AS (
-          SELECT DISTINCT webmaster.report_date
-          FROM canonical_fact_webmaster_queries_daily webmaster
-          JOIN confirmed_dynamics_coverage coverage
-            ON coverage.analytics_account_id = webmaster.analytics_account_id
-            AND webmaster.report_date BETWEEN coverage.requested_from AND coverage.requested_to
-          WHERE webmaster.analytics_account_id = ?
-            AND webmaster.report_date BETWEEN '${HISTORICAL_WINDOW_FROM}' AND '${HISTORICAL_WINDOW_TO}'
+          SELECT DISTINCT dynamics.report_date
+          FROM confirmed_dynamics dynamics
+          JOIN confirmed_webmaster_snapshots webmaster
+            ON webmaster.report_date = dynamics.report_date
         ),
         common_bounds AS (
-          SELECT MIN(report_date) AS endpoint_from, MAX(report_date) AS endpoint_to
+          SELECT MIN(report_date) AS endpoint_from, MAX(report_date) AS endpoint_to,
+            GROUP_CONCAT(DATE_FORMAT(report_date, '%Y-%m-%d') ORDER BY report_date SEPARATOR ',') AS endpoint_confirmed_dates,
+            COUNT(*) AS endpoint_confirmed_day_count,
+            CASE WHEN COUNT(*) > 0 AND DATEDIFF(MAX(report_date), MIN(report_date)) + 1 = COUNT(*)
+              THEN 1 ELSE 0 END AS endpoint_confirmed_dates_contiguous
           FROM common_dates
         ),
         current_demand AS (
@@ -234,16 +274,24 @@ export function buildZarukuWordstatQueries(accountId: string): Record<
           GROUP BY dynamics.registry_version, dynamics.seed_hash
         ),
         webmaster_daily AS (
-          SELECT query_hash, report_date,
-            SUM(impressions) AS impressions,
-            SUM(clicks) AS clicks,
-            CASE WHEN SUM(impressions) > 0
-              THEN SUM(CASE WHEN average_position IS NULL THEN 0 ELSE average_position * impressions END)
-                / NULLIF(SUM(CASE WHEN average_position IS NULL THEN 0 ELSE impressions END), 0)
+          SELECT queries.query_hash, queries.report_date,
+            SUM(queries.impressions) AS impressions,
+            SUM(queries.clicks) AS clicks,
+            CASE WHEN SUM(queries.impressions) > 0
+              THEN SUM(CASE WHEN queries.average_position IS NULL THEN 0 ELSE queries.average_position * queries.impressions END)
+                / NULLIF(SUM(CASE WHEN queries.average_position IS NULL THEN 0 ELSE queries.impressions END), 0)
               ELSE NULL END AS average_position
-          FROM canonical_fact_webmaster_queries_daily
-          WHERE analytics_account_id = ?
-          GROUP BY query_hash, report_date
+          FROM canonical_fact_webmaster_queries_daily queries
+          JOIN confirmed_webmaster_snapshots summary
+            ON summary.source_key = queries.source_key
+            AND summary.analytics_account_id = queries.analytics_account_id
+            AND summary.host_id = queries.host_id
+            AND summary.report_date = queries.report_date
+            AND summary.device_type = queries.device_type
+            AND summary.ingestion_run_id = queries.ingestion_run_id
+          JOIN common_dates dates ON dates.report_date = queries.report_date
+          WHERE queries.analytics_account_id = ?
+          GROUP BY queries.query_hash, queries.report_date
         ),
         webmaster_demand AS (
           SELECT seed.registry_version, seed.seed_hash,
@@ -259,7 +307,10 @@ export function buildZarukuWordstatQueries(accountId: string): Record<
           GROUP BY seed.registry_version, seed.seed_hash
         ),
         coverage_state AS (
-          SELECT COUNT(*) AS endpoint_scope_count, 0 AS endpoint_empty_scope_count
+          SELECT COUNT(*) AS endpoint_scope_count, 0 AS endpoint_empty_scope_count,
+            CASE WHEN COUNT(*) = 0 THEN NULL
+              WHEN SUM(coverage_run_status <> 'success') > 0 THEN 'partial'
+              ELSE 'success' END AS endpoint_coverage_run_status
           FROM confirmed_dynamics_coverage
         ),
         latest_endpoint_run AS (
@@ -289,8 +340,12 @@ export function buildZarukuWordstatQueries(accountId: string): Record<
           SELECT
             common_bounds.endpoint_from,
             common_bounds.endpoint_to,
+            common_bounds.endpoint_confirmed_dates,
+            COALESCE(common_bounds.endpoint_confirmed_day_count, 0) AS endpoint_confirmed_day_count,
+            COALESCE(common_bounds.endpoint_confirmed_dates_contiguous, 0) AS endpoint_confirmed_dates_contiguous,
             COALESCE(coverage_state.endpoint_scope_count, 0) AS endpoint_scope_count,
             COALESCE(coverage_state.endpoint_empty_scope_count, 0) AS endpoint_empty_scope_count,
+            coverage_state.endpoint_coverage_run_status,
             latest_endpoint_run.status AS endpoint_last_status,
             COALESCE(latest_endpoint_run.finished_at, latest_endpoint_run.started_at) AS endpoint_last_finished_at,
             COALESCE(latest_endpoint_success.finished_at, latest_endpoint_success.started_at) AS endpoint_last_success_at,
@@ -328,8 +383,12 @@ export function buildZarukuWordstatQueries(accountId: string): Record<
         SELECT
           endpoint_state.endpoint_from,
           endpoint_state.endpoint_to,
+          endpoint_state.endpoint_confirmed_dates,
+          endpoint_state.endpoint_confirmed_day_count,
+          endpoint_state.endpoint_confirmed_dates_contiguous,
           endpoint_state.endpoint_scope_count,
           endpoint_state.endpoint_empty_scope_count,
+          endpoint_state.endpoint_coverage_run_status,
           endpoint_state.endpoint_last_status,
           endpoint_state.endpoint_last_finished_at,
           endpoint_state.endpoint_last_success_at,
@@ -386,6 +445,7 @@ export function buildZarukuWordstatQueries(accountId: string): Record<
             AND coverage.endpoint = 'top_requests'
             AND coverage.status IN ('success', 'success_empty')
             AND coverage.ingestion_run_id IS NOT NULL
+            AND coverage.requested_to <= ?
           ORDER BY coverage.requested_to DESC, coverage.requested_from DESC,
             coverage.updated_at DESC, coverage.id DESC, coverage.ingestion_run_id DESC
           LIMIT 1
@@ -513,12 +573,15 @@ export function buildZarukuWordstatQueries(accountId: string): Record<
             facts.count,
             facts.share,
             CASE
-              WHEN classifications.review_status = 'reviewed'
+              WHEN classifications.is_active = 1
+                AND classifications.review_status = 'reviewed'
                 AND classifications.classification IN ('medical', 'adjacent', 'irrelevant', 'unreviewed')
               THEN classifications.classification
               ELSE 'unreviewed'
             END AS classification,
-            CASE WHEN classifications.review_status = 'reviewed' THEN 'reviewed' ELSE 'pending' END AS review_status,
+            CASE WHEN classifications.is_active = 1 AND classifications.review_status = 'reviewed'
+              THEN 'reviewed' ELSE 'pending' END AS review_status,
+            CASE WHEN classifications.is_active = 1 THEN 1 ELSE 0 END AS classification_active,
             CASE
               WHEN classifications.is_active = 1
                 AND classifications.review_status = 'reviewed'
@@ -531,8 +594,9 @@ export function buildZarukuWordstatQueries(accountId: string): Record<
             positions.week_key AS seo_os_week,
             COALESCE(urls.page, positions.matched_url) AS confirmed_url,
             ROW_NUMBER() OVER (
-              PARTITION BY facts.request_kind, facts.device_type, facts.normalized_query
-              ORDER BY facts.count DESC, facts.seed_hash ASC
+              PARTITION BY facts.device_type, facts.normalized_query
+              ORDER BY CASE WHEN facts.request_kind = 'popular' THEN 0 ELSE 1 END,
+                facts.count DESC, facts.seed_hash ASC
             ) AS duplicate_rank
           FROM canonical_fact_wordstat_requests_snapshot facts
           JOIN confirmed_coverage coverage ON facts.analytics_account_id = coverage.analytics_account_id
@@ -548,9 +612,11 @@ export function buildZarukuWordstatQueries(accountId: string): Record<
           LEFT JOIN confirmed_urls urls ON urls.normalized_query = facts.normalized_query
           WHERE facts.source_key = 'yandex_wordstat'
             AND facts.analytics_account_id = ?
+            AND facts.device_type = 'all'
         ),
         selected_requests AS (
-          SELECT normalized_query, query, request_kind, device, count, share, classification, review_status, seo_os_eligible,
+          SELECT normalized_query, query, request_kind, device, count, share, classification, review_status,
+            classification_active, seo_os_eligible,
             topic, cluster, seo_os_position, seo_os_week, confirmed_url
           FROM ranked_requests
           WHERE duplicate_rank = 1
@@ -576,6 +642,7 @@ export function buildZarukuWordstatQueries(accountId: string): Record<
           selected_requests.share,
           selected_requests.classification,
           selected_requests.review_status,
+          selected_requests.classification_active,
           selected_requests.seo_os_eligible,
           selected_requests.topic,
           selected_requests.cluster,
@@ -591,6 +658,7 @@ export function buildZarukuWordstatQueries(accountId: string): Record<
         normalizedAccountId,
         normalizedAccountId,
         normalizedAccountId,
+        currentUtcDate,
         normalizedAccountId,
         normalizedAccountId,
         normalizedAccountId,
@@ -622,6 +690,7 @@ export function buildZarukuWordstatQueries(accountId: string): Record<
             AND coverage.endpoint = 'regions'
             AND coverage.status IN ('success', 'success_empty')
             AND coverage.ingestion_run_id IS NOT NULL
+            AND coverage.requested_to <= ?
           ORDER BY coverage.requested_to DESC, coverage.requested_from DESC,
             coverage.updated_at DESC, coverage.id DESC, coverage.ingestion_run_id DESC
           LIMIT 1
@@ -705,22 +774,6 @@ export function buildZarukuWordstatQueries(accountId: string): Record<
           LEFT JOIN latest_endpoint_run ON TRUE
           LEFT JOIN latest_endpoint_success ON TRUE
         ),
-        snapshot_period AS (
-          SELECT requested_from AS window_from, requested_to AS window_to
-          FROM latest_snapshot
-        ),
-        metrika_city_visits AS (
-          SELECT LOWER(TRIM(dimension_1_value)) AS region_key, SUM(COALESCE(visits, 0)) AS metrika_visits
-          FROM canonical_fact_metrika_breakdowns_daily
-          CROSS JOIN snapshot_period period
-          WHERE source_key = 'yandex_metrika'
-            AND analytics_account_id = ?
-            AND report_key = 'map_city_demand'
-            AND segment_key = 'russia'
-            AND row_kind = 'detail'
-            AND report_date BETWEEN period.window_from AND period.window_to
-          GROUP BY LOWER(TRIM(dimension_1_value))
-        ),
         ranked_approved_seeds AS (
           SELECT seed_hash, registry_version,
             ROW_NUMBER() OVER (
@@ -747,9 +800,8 @@ export function buildZarukuWordstatQueries(accountId: string): Record<
             facts.count,
             facts.share,
             facts.affinity_index,
-            metrika_city_visits.metrika_visits,
             ROW_NUMBER() OVER (
-              PARTITION BY facts.region_id, facts.device_type
+              PARTITION BY facts.region_id
               ORDER BY facts.count DESC, facts.seed_hash ASC
             ) AS duplicate_rank
           FROM canonical_fact_wordstat_regions_snapshot facts
@@ -761,12 +813,12 @@ export function buildZarukuWordstatQueries(accountId: string): Record<
           JOIN approved_seeds seed ON seed.seed_hash = facts.seed_hash
             AND seed.registry_version = facts.registry_version
           LEFT JOIN canonical_dim_wordstat_regions regions ON regions.region_id = facts.region_id
-          LEFT JOIN metrika_city_visits ON metrika_city_visits.region_key = LOWER(TRIM(regions.region_name))
           WHERE facts.source_key = 'yandex_wordstat'
             AND facts.analytics_account_id = ?
+            AND facts.device_type = 'all'
         ),
         selected_regions AS (
-          SELECT region_id, region_name, region_type, device, count, share, affinity_index, metrika_visits
+          SELECT region_id, region_name, region_type, device, count, share, affinity_index
           FROM ranked_regions
           WHERE duplicate_rank = 1
         )
@@ -789,8 +841,7 @@ export function buildZarukuWordstatQueries(accountId: string): Record<
           selected_regions.device,
           selected_regions.count,
           selected_regions.share,
-          selected_regions.affinity_index,
-          selected_regions.metrika_visits
+          selected_regions.affinity_index
         FROM endpoint_state
         LEFT JOIN selected_regions ON TRUE
         ORDER BY selected_regions.count DESC, selected_regions.region_name ASC, selected_regions.device ASC
@@ -799,7 +850,7 @@ export function buildZarukuWordstatQueries(accountId: string): Record<
         normalizedAccountId,
         normalizedAccountId,
         normalizedAccountId,
-        normalizedAccountId,
+        currentUtcDate,
         normalizedAccountId,
         normalizedAccountId,
         normalizedAccountId,
@@ -824,6 +875,13 @@ function periodFromValues(from: string | Date | null | undefined, to: string | D
   return start && end ? { from: start, to: end } : null;
 }
 
+function confirmedDatesFromValue(value: string | string[] | null | undefined) {
+  const values = Array.isArray(value) ? value : asString(value).split(",");
+  return Array.from(new Set(values.map((item) => formatDate(item)).filter((item): item is string => item != null)))
+    .filter((item) => item >= HISTORICAL_WINDOW_FROM && item <= HISTORICAL_WINDOW_TO)
+    .sort();
+}
+
 function normalizeHistoricalRows(rows: unknown[]): ZarukuWordstatHistoricalRow[] {
   const rawRows = rows.map((row) => row as HistoricalDbRow);
   const eligibleRows = rawRows.filter(
@@ -832,9 +890,8 @@ function normalizeHistoricalRows(rows: unknown[]): ZarukuWordstatHistoricalRow[]
   const demandMedian = median(eligibleRows.map((row) => asNumber(row.wordstat_count)));
   const impressionMedian = median(eligibleRows.map((row) => asNumber(row.webmaster_impressions)));
   const positionMedian = median(eligibleRows.map((row) => asNullableNumber(row.webmaster_average_position)).filter((value): value is number => value != null));
-  return eligibleRows.map((row) => {
+  return eligibleRows.map((row): ZarukuWordstatHistoricalRow | null => {
     const wordstatCount = Math.round(asNumber(row.wordstat_count));
-    const previous = asNullableNumber(row.previous_wordstat_count);
     const classification = normalizeClassification(row.classification);
     const reviewStatus = normalizeReviewStatus(row.review_status);
     if (classification !== "medical" || reviewStatus !== "reviewed") return null;
@@ -846,8 +903,8 @@ function normalizeHistoricalRows(rows: unknown[]): ZarukuWordstatHistoricalRow[]
       classification,
       review_status: reviewStatus,
       wordstat_count: wordstatCount,
-      previous_wordstat_count: previous == null ? null : Math.round(previous),
-      demand_change: previous == null ? null : wordstatCount - Math.round(previous),
+      previous_wordstat_count: null,
+      demand_change: null,
       webmaster_impressions: Math.round(asNumber(row.webmaster_impressions)),
       webmaster_clicks: Math.round(asNumber(row.webmaster_clicks)),
       webmaster_average_position: asNullableNumber(row.webmaster_average_position),
@@ -871,36 +928,44 @@ function normalizeHistoricalRows(rows: unknown[]): ZarukuWordstatHistoricalRow[]
 
 function actionForQuery(row: Omit<ZarukuWordstatQueryRow, "action">): ZarukuWordstatAction | null {
   if (!row.seo_os_eligible) return null;
-  if (row.confirmed_url && row.seo_os_position != null && row.seo_os_position > 10) return "strengthen_page";
-  if (row.confirmed_url) return "clarify_wording";
-  return null;
+  return row.confirmed_url ? "strengthen_page" : "create_material";
 }
 
 function normalizeCurrentQueries(rows: unknown[]): ZarukuWordstatQueryRow[] {
   const selected = new Map<string, Omit<ZarukuWordstatQueryRow, "action">>();
   for (const raw of rows as CurrentQueryDbRow[]) {
-    const classification = normalizeClassification(raw.classification);
-    const reviewStatus = normalizeReviewStatus(raw.review_status);
+    const device = asString(raw.device) || "all";
+    if (device !== "all") continue;
+    const classificationActive = asBoolean(raw.classification_active);
+    const rawClassification = normalizeClassification(raw.classification);
+    const rawReviewStatus = normalizeReviewStatus(raw.review_status);
+    const reviewStatus = classificationActive ? rawReviewStatus : "pending";
+    const classification = classificationActive && reviewStatus === "reviewed" ? rawClassification : "unreviewed";
     const row = {
       normalized_query: asString(raw.normalized_query),
       query: asString(raw.query),
       request_kind: asString(raw.request_kind) === "similar" ? "similar" : "popular",
-      device: asString(raw.device) || "all",
+      device,
       count: Math.round(asNumber(raw.count)),
       share: asNullableNumber(raw.share),
-      classification: reviewStatus === "reviewed" ? classification : "unreviewed",
+      classification,
       review_status: reviewStatus,
+      classification_active: classificationActive,
       topic: asString(raw.topic) || null,
       cluster: asString(raw.cluster) || null,
       seo_os_position: asNullableNumber(raw.seo_os_position),
       seo_os_week: asString(raw.seo_os_week) || null,
       confirmed_url: asString(raw.confirmed_url) || null,
-      seo_os_eligible: asBoolean(raw.seo_os_eligible) && classification === "medical" && reviewStatus === "reviewed",
+      seo_os_eligible: asBoolean(raw.seo_os_eligible)
+        && classificationActive && classification === "medical" && reviewStatus === "reviewed",
     } satisfies Omit<ZarukuWordstatQueryRow, "action">;
     if (!row.normalized_query) continue;
-    const key = `${row.request_kind}\u0000${row.device}\u0000${row.normalized_query}`;
+    const key = row.normalized_query;
     const existing = selected.get(key);
-    if (!existing || row.count > existing.count || (row.count === existing.count && row.query.localeCompare(existing.query) < 0)) {
+    const rowIsPreferredKind = row.request_kind === "popular" && existing?.request_kind === "similar";
+    const sameKindIsBetter = existing?.request_kind === row.request_kind
+      && (row.count > existing.count || (row.count === existing.count && row.query.localeCompare(existing.query) < 0));
+    if (!existing || rowIsPreferredKind || sameKindIsBetter) {
       selected.set(key, row);
     }
   }
@@ -913,46 +978,53 @@ function normalizeCurrentRegions(rows: unknown[]): ZarukuWordstatRegionRow[] {
   const selected = new Map<string, ZarukuWordstatRegionRow>();
   for (const raw of rows as CurrentRegionDbRow[]) {
     if (raw.region_id == null) continue;
+    const device = asString(raw.device) || "all";
+    if (device !== "all") continue;
     const row = {
       region_id: Math.round(asNumber(raw.region_id)),
       region_name: asString(raw.region_name) || "Не указан",
       region_type: asString(raw.region_type) || "unknown",
-      device: asString(raw.device) || "all",
+      device,
       count: Math.round(asNumber(raw.count)),
       share: asNullableNumber(raw.share),
       affinity_index: asNullableNumber(raw.affinity_index),
-      metrika_visits: asNullableNumber(raw.metrika_visits),
     } satisfies ZarukuWordstatRegionRow;
-    const key = `${row.region_id}\u0000${row.device}`;
+    const key = String(row.region_id);
     const existing = selected.get(key);
     if (!existing || row.count > existing.count) selected.set(key, row);
   }
   return Array.from(selected.values()).sort((left, right) => right.count - left.count || left.region_name.localeCompare(right.region_name));
 }
 
-function makeIndicators(historical: ZarukuWordstatHistoricalRow[], queries: ZarukuWordstatQueryRow[], regions: ZarukuWordstatRegionRow[]): ZarukuWordstatIndicators {
-  const growingTopics = new Set(
-    historical.filter((row) => row.demand_change != null && row.demand_change > 0).map((row) => row.topic ?? row.phrase),
-  );
+function makeIndicators(historical: ZarukuWordstatHistoricalRow[], queries: ZarukuWordstatQueryRow[]): ZarukuWordstatIndicators {
   const highest = historical
     .filter((row) => row.opportunity === "high" || row.opportunity === "medium")
     .sort((left, right) => right.wordstat_count - left.wordstat_count)[0]?.opportunity ?? null;
-  const nonOverlappingDiscovery = queries.filter((row) => row.request_kind === "popular" && row.device === "all");
-  const totalCurrentDemand = nonOverlappingDiscovery.reduce((sum, row) => sum + row.count, 0);
-  const irrelevantDemand = nonOverlappingDiscovery
-    .filter((row) => row.classification === "irrelevant" && row.review_status === "reviewed")
+  const activeReviewedDemand = queries.filter(
+    (row) => row.classification_active && row.review_status === "reviewed" && row.classification !== "unreviewed",
+  );
+  const totalCurrentDemand = activeReviewedDemand.reduce((sum, row) => sum + row.count, 0);
+  const irrelevantDemand = activeReviewedDemand
+    .filter((row) => row.classification === "irrelevant")
     .reduce((sum, row) => sum + row.count, 0);
   return {
-    growing_medical_topics: growingTopics.size,
+    growing_medical_topics: null,
+    growing_medical_topics_reason: GROWTH_UNAVAILABLE_REASON,
     largest_opportunity: highest,
     irrelevant_demand_share: totalCurrentDemand > 0 ? irrelevantDemand / totalCurrentDemand * 100 : null,
-    review_queue_count: queries.filter((row) => row.classification === "unreviewed" || row.classification === "adjacent").length,
-    region_opportunity_count: regions.filter((row) => (row.affinity_index ?? 0) > 1 && row.metrika_visits != null && row.metrika_visits <= 0).length,
+    review_queue_count: queries.filter(
+      (row) => row.classification_active && row.classification === "unreviewed" && row.review_status === "pending",
+    ).length,
+    region_opportunity_count: null,
+    region_opportunity_reason: REGION_TRAFFIC_UNAVAILABLE_REASON,
   };
 }
 
 type EndpointState = {
   period: { from: string; to: string } | null;
+  confirmedDates: string[];
+  confirmedDayCount: number;
+  confirmedDatesContiguous: boolean;
   scopeCount: number;
   emptyScopeCount: number;
   selectedCoverageRunStatus?: string | null;
@@ -971,6 +1043,9 @@ function endpointStateFromRows(rows: unknown[]): EndpointState | null {
   const hasSelectedCoverageRunStatus = Object.prototype.hasOwnProperty.call(raw, "endpoint_coverage_run_status");
   return {
     period: periodFromValues(raw.endpoint_from, raw.endpoint_to),
+    confirmedDates: confirmedDatesFromValue(raw.endpoint_confirmed_dates),
+    confirmedDayCount: Math.round(asNumber(raw.endpoint_confirmed_day_count)),
+    confirmedDatesContiguous: asBoolean(raw.endpoint_confirmed_dates_contiguous),
     scopeCount: Math.round(asNumber(raw.endpoint_scope_count)),
     emptyScopeCount: Math.round(asNumber(raw.endpoint_empty_scope_count)),
     selectedCoverageRunStatus: hasSelectedCoverageRunStatus
@@ -994,7 +1069,6 @@ function endpointRunIsProblem(state: EndpointState | null) {
 
 function selectedCoverageRunIsProblem(state: EndpointState | null) {
   return state != null
-    && state.selectedCoverageRunStatus !== undefined
     && state.scopeCount > 0
     && state.selectedCoverageRunStatus !== "success";
 }
@@ -1017,6 +1091,16 @@ function latestEndpointValue(states: Array<EndpointState | null>, key: "lastFini
   return states.map((state) => state?.[key] ?? null).filter((value): value is string => value != null).sort().at(-1) ?? null;
 }
 
+function utcAgeHours(value: string | null, nowUtc: Date, dateOnly = false) {
+  if (!value) return null;
+  const normalized = dateOnly
+    ? `${value.slice(0, 10)}T00:00:00Z`
+    : /(?:Z|[+-]\d\d:\d\d)$/.test(value) ? value : `${value.replace(" ", "T")}Z`;
+  const timestamp = Date.parse(normalized);
+  if (!Number.isFinite(timestamp)) return null;
+  return (nowUtc.getTime() - timestamp) / 3_600_000;
+}
+
 function makeFreshness(
   states: Array<EndpointState | null>,
   period: { from: string; to: string } | null,
@@ -1024,6 +1108,7 @@ function makeFreshness(
   coverageMissing: boolean,
   endpointRunProblem: boolean,
   failedQueries: number,
+  nowUtc: Date,
 ): ZarukuSourceFreshnessRow | null {
   const knownStates = states.filter((state): state is EndpointState => state != null);
   if (knownStates.length === 0) return null;
@@ -1031,10 +1116,16 @@ function makeFreshness(
   const hasPartialRun = knownStates.some(
     (state) => stateHasRunStatus(state, "partial") || stateHasRunStatus(state, "running"),
   );
+  const snapshotOrRunStale = knownStates.some((state) => {
+    const coverageAge = utcAgeHours(state.period?.to ?? null, nowUtc, true);
+    const successfulRunAge = utcAgeHours(state.lastSuccessAt, nowUtc);
+    return coverageAge == null || successfulRunAge == null
+      || coverageAge > WORDSTAT_FRESHNESS_HOURS || successfulRunAge > WORDSTAT_FRESHNESS_HOURS;
+  });
   const status = hasFailedRun ? "failed" : hasPartialRun || coverageMissing || endpointRunProblem ? "partial" : "success";
   const freshnessStatus = hasFailedRun
     ? "failed"
-    : periodsDiffer || coverageMissing || endpointRunProblem || failedQueries > 0 || hasPartialRun
+    : periodsDiffer || coverageMissing || endpointRunProblem || failedQueries > 0 || hasPartialRun || snapshotOrRunStale
       ? "delayed"
       : period == null
         ? "disabled"
@@ -1045,7 +1136,11 @@ function makeFreshness(
     collector: "fetch_yandex_wordstat_canonical.py",
     expected_frequency_hours: 168,
     freshness_status: freshnessStatus,
-    freshness_label: freshnessStatus,
+    freshness_label: freshnessStatus === "healthy"
+      ? "актуально"
+      : freshnessStatus === "delayed"
+        ? "задерживается"
+        : freshnessStatus === "failed" ? "ошибка обновления" : "нет данных",
     last_status: status,
     last_finished_at: latestEndpointValue(knownStates, "lastFinishedAt"),
     last_success_at: latestEndpointValue(knownStates, "lastSuccessAt"),
@@ -1057,7 +1152,9 @@ function makeFreshness(
     last_error_summary: hasFailedRun || hasPartialRun || endpointRunProblem
       ? "Последний релевантный сбор Wordstat завершился с ошибкой или частично."
       : null,
-    note: periodsDiffer
+    note: snapshotOrRunStale
+      ? `Подтверждённый текущий снимок или его успешный сбор старше ${WORDSTAT_FRESHNESS_HOURS} часов.`
+      : periodsDiffer
       ? "Подтверждённые снимки запросов и регионов Wordstat имеют разные периоды."
       : coverageMissing
         ? "Для одной из подтверждённых областей Wordstat пока нет покрытия."
@@ -1076,9 +1173,11 @@ function valueOrEmpty<T>(result: PromiseSettledResult<unknown[]>) {
 export async function loadZarukuWordstatData(
   accountId: string,
   query: WordstatQueryRunner = executeWordstatQuery,
+  nowUtc: Date = new Date(),
 ): Promise<ZarukuWordstatData> {
   const normalizedAccountId = requireAccountId(accountId);
-  const queries = buildZarukuWordstatQueries(normalizedAccountId);
+  if (Number.isNaN(nowUtc.getTime())) throw new Error("nowUtc must be a valid date");
+  const queries = buildZarukuWordstatQueries(normalizedAccountId, nowUtc);
   const settled = await Promise.allSettled([
     query(queries.historicalRows),
     query(queries.currentQueries),
@@ -1091,6 +1190,7 @@ export async function loadZarukuWordstatData(
   const queryState = endpointStateFromRows(queryRows);
   const regionState = endpointStateFromRows(regionRows);
   const historicalPeriod = historicalState?.period ?? null;
+  const historicalConfirmedDates = historicalState?.confirmedDates ?? [];
   const historical = normalizeHistoricalRows(historicalRows);
   const currentQueries = normalizeCurrentQueries(queryRows);
   const currentRegions = normalizeCurrentRegions(regionRows);
@@ -1102,7 +1202,6 @@ export async function loadZarukuWordstatData(
   const currentPeriod = periodsDiffer ? null : queryPeriod ?? regionPeriod;
   const queryScopes = queryState?.scopeCount ?? 0;
   const regionScopes = regionState?.scopeCount ?? 0;
-  const historicalScopes = historicalState?.scopeCount ?? 0;
   const allCurrentScopesEmpty = queryState != null
     && regionState != null
     && queryScopes > 0
@@ -1113,7 +1212,7 @@ export async function loadZarukuWordstatData(
   const historicalStatus = scopeStatus(historicalState, settled[0].status === "rejected");
   const queryStatus = scopeStatus(queryState, settled[1].status === "rejected");
   const regionStatus = scopeStatus(regionState, settled[2].status === "rejected");
-  const endpointRunProblem = [historicalState, queryState, regionState].some(
+  const currentEndpointRunProblem = [queryState, regionState].some(
     (state) => endpointRunIsProblem(state) || selectedCoverageRunIsProblem(state),
   );
   const hasFailedEndpointRun = [historicalState, queryState, regionState]
@@ -1122,10 +1221,8 @@ export async function loadZarukuWordstatData(
   const hasPartialEndpointRun = [historicalState, queryState, regionState]
     .filter((state): state is EndpointState => state != null)
     .some((state) => stateHasRunStatus(state, "partial") || stateHasRunStatus(state, "running"));
-  const coverageMissing = historicalState == null
-    || queryState == null
+  const currentCoverageMissing = queryState == null
     || regionState == null
-    || historicalScopes === 0
     || queryScopes === 0
     || regionScopes === 0;
   const confirmedCurrent = queryScopes > 0 || regionScopes > 0;
@@ -1156,24 +1253,38 @@ export async function loadZarukuWordstatData(
 
   return {
     status,
-    historical: { status: historicalStatus, period: historicalPeriod, rows: historical },
+    historical: {
+      status: historicalStatus,
+      period: historicalPeriod,
+      confirmed_dates: historicalConfirmedDates,
+      confirmed_day_count: historicalConfirmedDates.length,
+      confirmed_dates_contiguous: historicalConfirmedDates.length > 0
+        && historicalState?.confirmedDatesContiguous === true
+        && historicalState.confirmedDayCount === historicalConfirmedDates.length,
+      rows: historical,
+    },
     current: {
       period: currentPeriod,
       query_status: queryStatus,
       region_status: regionStatus,
       query_period: queryPeriod,
       region_period: regionPeriod,
+      regional_traffic_comparison: {
+        status: "unavailable",
+        reason: REGION_TRAFFIC_UNAVAILABLE_REASON,
+      },
       queries: currentQueries,
       regions: currentRegions,
     },
-    indicators: makeIndicators(historical, currentQueries, currentRegions),
+    indicators: makeIndicators(historical, currentQueries),
     source_freshness: makeFreshness(
-      [historicalState, queryState, regionState],
+      [queryState, regionState],
       currentPeriod,
       periodsDiffer,
-      coverageMissing,
-      endpointRunProblem,
-      failedQueries,
+      currentCoverageMissing,
+      currentEndpointRunProblem,
+      settled.slice(1).filter((result) => result.status === "rejected").length,
+      nowUtc,
     ),
     messages,
   };

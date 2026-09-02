@@ -4,6 +4,7 @@ import test from "node:test";
 
 type SqlQuery = { sql: string; params: Array<string | number> };
 type DbRow = Record<string, unknown>;
+const JULY_DATES = Array.from({ length: 22 }, (_, index) => `2026-07-${String(index + 10).padStart(2, "0")}`);
 
 async function wordstatModule() {
   return import("./zaruku-wordstat");
@@ -13,13 +14,14 @@ function fakeQuery(rows: Partial<Record<"metadata" | "historical-period" | "hist
   const queries: SqlQuery[] = [];
   const metadata = rows.metadata?.[0] ?? null;
   const endpointRows = (facts: DbRow[] | undefined, endpoint: "query" | "region" | "historical") => {
+    const historicalPeriod = rows["historical-period"]?.[0];
     const period = endpoint === "query"
       ? { from: metadata?.query_from, to: metadata?.query_to }
       : endpoint === "region"
         ? { from: metadata?.region_from, to: metadata?.region_to }
         : {
-            from: rows["historical-period"]?.[0]?.period_from,
-            to: rows["historical-period"]?.[0]?.period_to,
+            from: historicalPeriod?.period_from,
+            to: historicalPeriod?.period_to,
           };
     const scopeCount = endpoint === "query"
       ? metadata?.query_scope_count
@@ -46,8 +48,17 @@ function fakeQuery(rows: Partial<Record<"metadata" | "historical-period" | "hist
       endpoint_last_error_summary: metadata?.[`${endpoint}_last_error_summary`] ?? metadata?.last_error_summary ?? null,
       endpoint_rows_read: metadata?.rows_read ?? 0,
       endpoint_rows_written: metadata?.rows_written ?? 0,
+      ...(endpoint === "historical" ? {
+        endpoint_confirmed_dates: (historicalPeriod?.confirmed_dates as string[] | undefined ?? JULY_DATES).join(","),
+        endpoint_confirmed_day_count: historicalPeriod?.confirmed_day_count ?? (historicalPeriod ? JULY_DATES.length : 0),
+        endpoint_confirmed_dates_contiguous: historicalPeriod?.confirmed_dates_contiguous ?? (historicalPeriod ? 1 : 0),
+      } : {}),
     };
-    return (facts?.length ? facts : [{}]).map((fact) => ({ ...state, ...fact }));
+    return (facts?.length ? facts : [{}]).map((fact) => ({
+      ...state,
+      ...(endpoint === "query" ? { classification_active: fact.classification_active ?? 1 } : {}),
+      ...fact,
+    }));
   };
   return {
     queries,
@@ -111,6 +122,7 @@ test("Wordstat loader reads canonical data and keeps periods separate", async ()
         share: 0.2,
         classification: "medical",
         review_status: "reviewed",
+        classification_active: 1,
         seo_os_eligible: 1,
         topic: "Онкология",
         cluster: "рак",
@@ -142,8 +154,7 @@ test("Wordstat loader reads canonical data and keeps periods separate", async ()
       device: "all",
       count: 33,
       share: 0.1,
-      affinity_index: 1.2,
-      metrika_visits: 4,
+      affinity_index: 120,
     }],
   });
 
@@ -157,7 +168,14 @@ test("Wordstat loader reads canonical data and keeps periods separate", async ()
   assert.equal(data.current.queries.length, 1);
   assert.equal(data.current.queries[0].count, 120);
   assert.equal(data.current.queries[0].action, "strengthen_page");
-  assert.equal(data.current.regions[0].metrika_visits, 4);
+  assert.equal(data.historical.rows[0].previous_wordstat_count, null);
+  assert.equal(data.historical.rows[0].demand_change, null);
+  assert.equal(data.indicators.growing_medical_topics, null);
+  assert.match(data.indicators.growing_medical_topics_reason, /предыдущ.*сопоставим.*период/i);
+  assert.deepEqual(data.historical.confirmed_dates, JULY_DATES);
+  assert.equal(data.historical.confirmed_day_count, 22);
+  assert.equal(data.historical.confirmed_dates_contiguous, true);
+  assert.equal(data.current.regional_traffic_comparison.status, "unavailable");
   assert.equal(data.status, "available");
   assert.ok(fixture.queries.length >= 3);
   for (const query of fixture.queries) {
@@ -326,20 +344,23 @@ test("Wordstat scopes retain confirmed facts independently when another endpoint
   assert.equal(rejectedRegion.historical.status, "available");
 });
 
-test("Wordstat regional opportunity requires comparable Metrika evidence and uses affinity relative to one", async () => {
+test("Wordstat keeps the provider affinity scale around 100 and disables the incomparable Metrika region KPI", async () => {
   const { loadZarukuWordstatData } = await wordstatModule();
   const data = await loadZarukuWordstatData("66624469", fakeQuery({
     metadata: [availableMetadata()],
     "current-regions": [
-      { region_id: 213, region_name: "Москва", region_type: "city", device: "all", count: 20, share: 0.25, affinity_index: 1.2, metrika_visits: null },
-      { region_id: 2, region_name: "Санкт-Петербург", region_type: "city", device: "all", count: 19, share: 0.2, affinity_index: 1, metrika_visits: 0 },
-      { region_id: 3, region_name: "Казань", region_type: "city", device: "all", count: 18, share: 0.1, affinity_index: 1.2, metrika_visits: 0 },
+      { region_id: 213, region_name: "Москва", region_type: "city", device: "all", count: 20, share: 0.25, affinity_index: 120 },
+      { region_id: 2, region_name: "Санкт-Петербург", region_type: "city", device: "all", count: 19, share: 0.2, affinity_index: 100 },
+      { region_id: 3, region_name: "Казань", region_type: "city", device: "all", count: 18, share: 0.1, affinity_index: 52 },
     ],
   }).run);
 
   assert.equal(data.current.regions[0].share, 0.25);
-  assert.equal(data.indicators.region_opportunity_count, 1);
-  assert.equal(data.current.regions.find((row) => row.region_name === "Москва")?.metrika_visits, null);
+  assert.deepEqual(data.current.regions.map((row) => row.affinity_index), [120, 100, 52]);
+  assert.equal(data.indicators.region_opportunity_count, null);
+  assert.match(data.indicators.region_opportunity_reason, /Яндекс-органик/i);
+  assert.equal(data.current.regional_traffic_comparison.status, "unavailable");
+  assert.match(data.current.regional_traffic_comparison.reason, /Яндекс-органик/i);
 });
 
 test("Wordstat SEO eligibility is explicit and fails closed for inactive, pending, and missing actions", async () => {
@@ -347,7 +368,7 @@ test("Wordstat SEO eligibility is explicit and fails closed for inactive, pendin
   const data = await loadZarukuWordstatData("66624469", fakeQuery({
     metadata: [availableMetadata()],
     "current-queries": [
-      { normalized_query: "активный", query: "активный", request_kind: "popular", device: "all", count: 20, classification: "medical", review_status: "reviewed", seo_os_eligible: 1, confirmed_url: "/active", seo_os_position: 12 },
+      { normalized_query: "активный", query: "активный", request_kind: "popular", device: "all", count: 20, classification: "medical", review_status: "reviewed", seo_os_eligible: 1, confirmed_url: "/active", seo_os_position: 5 },
       { normalized_query: "неактивный", query: "неактивный", request_kind: "popular", device: "all", count: 19, classification: "medical", review_status: "reviewed", seo_os_eligible: 0, confirmed_url: "/inactive", seo_os_position: 12 },
       { normalized_query: "ожидает", query: "ожидает", request_kind: "popular", device: "all", count: 18, classification: "medical", review_status: "pending", seo_os_eligible: 0, confirmed_url: "/pending", seo_os_position: 12 },
       { normalized_query: "без действия", query: "без действия", request_kind: "popular", device: "all", count: 17, classification: "medical", review_status: "reviewed", seo_os_eligible: 1, confirmed_url: null, seo_os_position: null },
@@ -362,17 +383,17 @@ test("Wordstat SEO eligibility is explicit and fails closed for inactive, pendin
   assert.equal(rows.get("ожидает")?.seo_os_eligible, false);
   assert.equal(rows.get("ожидает")?.action, null);
   assert.equal(rows.get("без действия")?.seo_os_eligible, true);
-  assert.equal(rows.get("без действия")?.action, null);
+  assert.equal(rows.get("без действия")?.action, "create_material");
 });
 
-test("Wordstat fails closed when historical coverage is missing despite healthy current endpoints", async () => {
+test("Wordstat historical availability is separate from weekly current freshness", async () => {
   const { loadZarukuWordstatData } = await wordstatModule();
   const data = await loadZarukuWordstatData("66624469", fakeQuery({
     metadata: [availableMetadata()],
   }).run);
 
   assert.equal(data.status, "partial");
-  assert.equal(data.source_freshness?.freshness_status, "delayed");
+  assert.equal(data.source_freshness?.freshness_status, "healthy");
   assert.equal(data.historical.period, null);
 });
 
@@ -524,7 +545,35 @@ test("Wordstat loader rejects an empty account scope and clips historical rows t
   const historicalQuery = fixture.queries.find((query) => query.sql.includes("wordstat:historical-rows"));
   assert.match(historicalQuery?.sql ?? "", /canonical_wordstat_coverage/i);
   assert.match(historicalQuery?.sql ?? "", /canonical_fact_webmaster_queries_daily/i);
+  assert.match(historicalQuery?.sql ?? "", /canonical_fact_webmaster_summary_daily/i);
+  assert.match(historicalQuery?.sql ?? "", /JOIN\s+canonical_collector_runs\s+webmaster_run/i);
+  assert.match(historicalQuery?.sql ?? "", /webmaster_run\.status\s*=\s*'success'/i);
+  assert.doesNotMatch(historicalQuery?.sql ?? "", /coverage_run\.status\s*=\s*'success'/i);
+  assert.match(historicalQuery?.sql ?? "", /SUM\(coverage_run_status\s*<>\s*'success'\)\s*>\s*0\s+THEN\s+'partial'/i);
+  assert.match(historicalQuery?.sql ?? "", /summary\.impressions\s*=\s*0/i);
+  assert.match(historicalQuery?.sql ?? "", /queries\.ingestion_run_id\s*=\s*summary\.ingestion_run_id/i);
+  assert.match(historicalQuery?.sql ?? "", /queries\.device_type\s*=\s*summary\.device_type/i);
+  assert.match(historicalQuery?.sql ?? "", /queries\.host_id\s*=\s*summary\.host_id/i);
   assert.match(historicalQuery?.sql ?? "", /common_dates/i);
+});
+
+test("Wordstat historical payload preserves an exact sparse lineage-confirmed date set", async () => {
+  const { loadZarukuWordstatData } = await wordstatModule();
+  const dates = ["2026-07-10", "2026-07-12", "2026-07-31"];
+  const data = await loadZarukuWordstatData("66624469", fakeQuery({
+    metadata: [availableMetadata()],
+    "historical-period": [{
+      period_from: "2026-07-10",
+      period_to: "2026-07-31",
+      confirmed_dates: dates,
+      confirmed_day_count: dates.length,
+      confirmed_dates_contiguous: 0,
+    }],
+  }).run);
+
+  assert.deepEqual(data.historical.confirmed_dates, dates);
+  assert.equal(data.historical.confirmed_day_count, 3);
+  assert.equal(data.historical.confirmed_dates_contiguous, false);
 });
 
 test("Wordstat historical rows omit unexpected classifications instead of rewriting them as reviewed medical", async () => {
@@ -618,9 +667,41 @@ test("Wordstat irrelevant-demand share uses only the non-overlapping popular all
   assert.equal(data.indicators.irrelevant_demand_share, 20);
 });
 
+test("Wordstat current grain prefers popular, excludes non-all devices, and counts only active reviewed demand", async () => {
+  const { loadZarukuWordstatData } = await wordstatModule();
+  const data = await loadZarukuWordstatData("66624469", fakeQuery({
+    metadata: [availableMetadata()],
+    "current-queries": [
+      { normalized_query: "один запрос", query: "Один запрос", request_kind: "similar", device: "all", count: 900, classification: "irrelevant", review_status: "reviewed", classification_active: 1 },
+      { normalized_query: "один запрос", query: "один запрос", request_kind: "popular", device: "all", count: 25, classification: "irrelevant", review_status: "reviewed", classification_active: 1 },
+      { normalized_query: "медицинский", query: "медицинский", request_kind: "popular", device: "all", count: 100, classification: "medical", review_status: "reviewed", classification_active: 1 },
+      { normalized_query: "неактивный", query: "неактивный", request_kind: "popular", device: "all", count: 500, classification: "irrelevant", review_status: "reviewed", classification_active: 0 },
+      { normalized_query: "проверить", query: "проверить", request_kind: "popular", device: "all", count: 75, classification: "unreviewed", review_status: "pending", classification_active: 1 },
+      { normalized_query: "desktop", query: "desktop", request_kind: "popular", device: "desktop", count: 800, classification: "irrelevant", review_status: "reviewed", classification_active: 1 },
+    ],
+    "current-regions": [
+      { region_id: 213, region_name: "Москва", region_type: "city", device: "desktop", count: 999, affinity_index: 150 },
+      { region_id: 213, region_name: "Москва", region_type: "city", device: "all", count: 20, affinity_index: 120 },
+      { region_id: 213, region_name: "Москва", region_type: "city", device: "all", count: 25, affinity_index: 121 },
+    ],
+  }).run);
+
+  assert.deepEqual(data.current.queries.map((row) => [row.normalized_query, row.request_kind, row.count]), [
+    ["неактивный", "popular", 500],
+    ["медицинский", "popular", 100],
+    ["проверить", "popular", 75],
+    ["один запрос", "popular", 25],
+  ]);
+  assert.equal(data.current.queries.find((row) => row.query === "неактивный")?.classification, "unreviewed");
+  assert.equal(data.current.queries.find((row) => row.query === "неактивный")?.review_status, "pending");
+  assert.equal(data.indicators.irrelevant_demand_share, 20);
+  assert.equal(data.indicators.review_queue_count, 1);
+  assert.deepEqual(data.current.regions.map((row) => [row.region_id, row.device, row.count]), [[213, "all", 25]]);
+});
+
 test("Wordstat SQL binds facts and run lineage to account-scoped confirmed coverage", async () => {
   const { buildZarukuWordstatQueries } = await wordstatModule();
-  const queries = buildZarukuWordstatQueries("66624469");
+  const queries = buildZarukuWordstatQueries("66624469", new Date("2026-09-02T12:00:00Z"));
 
   assert.match(queries.currentQueries.sql, /endpoint_state/i);
   assert.match(queries.currentRegions.sql, /endpoint_state/i);
@@ -643,6 +724,17 @@ test("Wordstat SQL binds facts and run lineage to account-scoped confirmed cover
   assert.match(queries.currentQueries.sql, /AS seo_os_eligible/i);
   assert.match(queries.currentQueries.sql, /classifications\.is_active\s*=\s*1/i);
   assert.doesNotMatch(queries.currentQueries.sql, /query_hash\s*=\s*facts\.query_hash\s+AND\s+classifications\.is_active\s*=\s*1/i);
+  assert.match(queries.currentQueries.sql, /facts\.device_type\s*=\s*'all'/i);
+  assert.match(queries.currentRegions.sql, /facts\.device_type\s*=\s*'all'/i);
+  assert.doesNotMatch(queries.currentRegions.sql, /canonical_fact_metrika_breakdowns_daily|map_city_demand|metrika_visits/i);
+  assert.match(queries.currentQueries.sql, /PARTITION BY facts\.device_type, facts\.normalized_query/i);
+  assert.doesNotMatch(queries.currentQueries.sql, /PARTITION BY facts\.request_kind/i);
+  assert.match(queries.currentQueries.sql, /CASE\s+WHEN facts\.request_kind = 'popular' THEN 0 ELSE 1 END/i);
+  assert.match(queries.currentRegions.sql, /PARTITION BY facts\.region_id/i);
+  for (const query of [queries.currentQueries, queries.currentRegions]) {
+    assert.match(query.sql, /coverage\.requested_to\s*<=\s*\?/i);
+    assert.equal(query.params.includes("2026-09-02"), true);
+  }
 });
 
 test("Wordstat SQL scopes run state by endpoint family and selects the latest requested snapshot", async () => {
@@ -684,6 +776,54 @@ test("Wordstat endpoint SQL carries selected coverage-run status separately from
     assert.match(query.sql, /latest_snapshot\.selected_coverage_run_status\s+AS\s+endpoint_coverage_run_status/i);
     assert.match(query.sql, /latest_endpoint_run\.status\s+AS\s+endpoint_last_status/i);
   }
+});
+
+test("Wordstat old successful current snapshots are delayed against the injected UTC clock", async () => {
+  const { loadZarukuWordstatData } = await wordstatModule();
+  const data = await loadZarukuWordstatData("66624469", fakeQuery({
+    metadata: [{
+      ...availableMetadata(),
+      query_from: "2026-07-27",
+      query_to: "2026-08-25",
+      region_from: "2026-07-27",
+      region_to: "2026-08-25",
+      last_finished_at: "2026-08-26 06:00:00",
+      last_success_at: "2026-08-26 06:00:00",
+    }],
+    "historical-period": [{ period_from: "2026-07-10", period_to: "2026-07-31" }],
+  }).run, new Date("2026-09-02T12:00:00Z"));
+
+  assert.equal(data.source_freshness?.expected_frequency_hours, 168);
+  assert.equal(data.source_freshness?.freshness_status, "delayed");
+  assert.match(data.source_freshness?.note ?? "", /168|устар/i);
+});
+
+test("Wordstat legacy coverage with unknown selected-run lineage is never healthy", async () => {
+  const { loadZarukuWordstatData } = await wordstatModule();
+  const endpoint = {
+    endpoint_from: "2026-08-03",
+    endpoint_to: "2026-09-01",
+    endpoint_scope_count: 1,
+    endpoint_empty_scope_count: 0,
+    endpoint_last_status: "success",
+    endpoint_last_finished_at: "2026-09-02 06:00:00",
+    endpoint_last_success_at: "2026-09-02 06:00:00",
+    endpoint_rows_read: 1,
+    endpoint_rows_written: 1,
+  };
+  const data = await loadZarukuWordstatData("66624469", async (query) => {
+    if (query.sql.includes("wordstat:historical")) return [{
+      ...endpoint,
+      endpoint_from: "2026-07-10",
+      endpoint_to: "2026-07-31",
+      endpoint_confirmed_dates: JULY_DATES.join(","),
+      endpoint_confirmed_day_count: 22,
+      endpoint_confirmed_dates_contiguous: 1,
+    }];
+    return [endpoint];
+  }, new Date("2026-09-02T12:00:00Z"));
+
+  assert.notEqual(data.source_freshness?.freshness_status, "healthy");
 });
 
 test("Wordstat read model never imports providers, credentials, or capture-share arithmetic", async () => {
