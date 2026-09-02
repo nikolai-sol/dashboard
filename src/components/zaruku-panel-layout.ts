@@ -1,6 +1,6 @@
 export type ZarukuPanelSize = "compact" | "half" | "wide" | "full";
 export type ZarukuPanelHeight = "compact" | "standard" | "tall" | "auto";
-export type ZarukuPanelTab = "overview" | "seo" | "content" | "audience" | "work" | "quality";
+export type ZarukuPanelTab = "overview" | "seo" | "wordstat" | "content" | "audience" | "work" | "quality";
 
 export type ZarukuPanelDefinition = {
   panelId: string;
@@ -52,6 +52,12 @@ export const ZARUKU_PANEL_REGISTRY: readonly ZarukuPanelDefinition[] = [
   panel("seo", "query_comparison", 60, "full", "tall", ["full"]),
   panel("seo", "page_comparison", 70, "full", "tall", ["full"]),
   panel("seo", "diagnostics", 80, "full", "standard", WIDE_SIZES),
+
+  panel("wordstat", "summary", 10, "full", "standard", WIDE_SIZES),
+  panel("wordstat", "historical", 20, "full", "tall", ["full"]),
+  panel("wordstat", "queries", 30, "full", "tall", ["full"]),
+  panel("wordstat", "regions", 40, "full", "tall", ["full"]),
+  panel("wordstat", "review_flow", 50, "full", "standard", WIDE_SIZES),
 
   panel("content", "status", 10, "full", "compact", WIDE_SIZES),
   panel("content", "popular_pages", 20, "half", "standard", CONTENT_SIZES),

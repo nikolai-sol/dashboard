@@ -82,6 +82,7 @@ test("each Zaruku tab has one explicit time owner", () => {
   assert.equal(zarukuTimeOwner("overview"), "url");
   assert.equal(zarukuTimeOwner("audience"), "url");
   assert.equal(zarukuTimeOwner("seo"), "week");
+  assert.equal(zarukuTimeOwner("wordstat"), "none");
   assert.equal(zarukuTimeOwner("content"), "week");
   assert.equal(zarukuTimeOwner("work"), "week");
   assert.equal(zarukuTimeOwner("quality"), "none");

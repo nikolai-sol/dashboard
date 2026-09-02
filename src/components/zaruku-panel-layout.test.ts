@@ -26,6 +26,16 @@ test("panel order is deterministic", () => {
   ]);
 });
 
+test("Wordstat panels keep the approved management-to-detail order", () => {
+  assert.deepEqual(resolveZarukuPanels("wordstat").map((panel) => panel.panelId), [
+    "wordstat.summary",
+    "wordstat.historical",
+    "wordstat.queries",
+    "wordstat.regions",
+    "wordstat.review_flow",
+  ]);
+});
+
 test("panel size classes keep narrow layouts fluid", () => {
   assert.equal(panelGridClass("compact"), "min-w-0 xl:col-span-3");
   assert.equal(panelGridClass("half"), "min-w-0 xl:col-span-6");

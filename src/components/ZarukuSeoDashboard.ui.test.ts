@@ -39,8 +39,8 @@ test("SEO week toolbar names its reporting period", () => {
   assert.match(toolbarSource, /Отчётная SEO-неделя/);
 });
 
-test("client navigation contains exactly six tabs in executive order", () => {
-  const labels = ["Обзор", "SEO", "Контент", "Аудитория", "Работы и задачи", "Качество"];
+test("client navigation contains exactly seven tabs in executive order", () => {
+  const labels = ["Обзор", "SEO", "Спрос Wordstat", "Контент", "Аудитория", "Работы и задачи", "Качество"];
   let lastIndex = -1;
   for (const label of labels) {
     const index = source.indexOf(`label: "${label}"`);
