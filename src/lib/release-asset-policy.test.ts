@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { mkdir, mkdtemp, rm, symlink, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, rm, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { spawnSync } from "node:child_process";
@@ -360,4 +360,18 @@ test("asset CLI is silent on success and prints only violating paths on failure"
     assert.equal(failure.stdout, "");
     assert.equal(failure.stderr, "ABBOTT/source.JSON\n");
   });
+});
+
+test("deploy inventory packages all Wordstat runtime modules without a credential artifact", async () => {
+  const deployScript = await readFile(new URL("../../scripts/deploy.sh", import.meta.url), "utf8");
+  const wordstatRuntimeFiles = [...deployScript.matchAll(/^copy_canonical_file (\S*wordstat\S*)$/gim)]
+    .map((match) => match[1]);
+
+  assert.deepEqual(wordstatRuntimeFiles, [
+    "wordstat_api.py",
+    "probe_yandex_wordstat_access.py",
+    "fetch_yandex_wordstat_canonical.py",
+  ]);
+  assert.doesNotMatch(deployScript, /WORDSTAT_TOKEN_FILE|wordstat.*token/i);
+  assert.doesNotMatch(deployScript, /^copy_canonical_file .*?(token|credential|secret)/im);
 });

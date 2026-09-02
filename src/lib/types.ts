@@ -619,7 +619,7 @@ export interface AbbottBiData {
 }
 
 export type ZarukuSeoLayerId = "onsite" | "serp" | "ai";
-export type ZarukuSeoSourceId = "metrika" | "gsc" | "webmaster" | "seo_os" | "yandex_gen_search";
+export type ZarukuSeoSourceId = "metrika" | "gsc" | "webmaster" | "seo_os" | "wordstat" | "yandex_gen_search";
 export type ZarukuSeoSourceStatus = "connected" | "pending" | "partial" | "unavailable";
 export type ZarukuDatasetState = "ready" | "empty" | "unavailable" | "partial" | "hidden";
 export type ZarukuGeographyScope = "russia" | "host" | "unsegmented" | "mixed";
@@ -769,6 +769,95 @@ export interface ZarukuSourceFreshnessRow {
   last_error_at: string | null;
   last_error_summary: string | null;
   note: string;
+}
+
+export type ZarukuWordstatClassification = "medical" | "adjacent" | "irrelevant" | "unreviewed";
+export type ZarukuWordstatOpportunity = "high" | "medium" | "covered" | "watch";
+export type ZarukuWordstatAction = "strengthen_page" | "create_material";
+export type ZarukuWordstatScopeStatus = "available" | "partial" | "empty" | "unavailable";
+
+export interface ZarukuWordstatHistoricalRow {
+  seed_hash: string;
+  phrase: string;
+  topic: string | null;
+  cluster: string | null;
+  classification: "medical";
+  review_status: "reviewed";
+  wordstat_count: number;
+  previous_wordstat_count: number | null;
+  demand_change: number | null;
+  webmaster_impressions: number;
+  webmaster_clicks: number;
+  webmaster_average_position: number | null;
+  opportunity: ZarukuWordstatOpportunity | null;
+}
+
+export interface ZarukuWordstatQueryRow {
+  normalized_query: string;
+  query: string;
+  request_kind: "popular" | "similar";
+  device: string;
+  count: number;
+  share: number | null;
+  classification: ZarukuWordstatClassification;
+  review_status: "reviewed" | "pending";
+  classification_active: boolean;
+  topic: string | null;
+  cluster: string | null;
+  seo_os_position: number | null;
+  seo_os_week: string | null;
+  confirmed_url: string | null;
+  /** Explicit read-model gate: active, reviewed and medical in the Zaruku registry. */
+  seo_os_eligible: boolean;
+  action: ZarukuWordstatAction | null;
+}
+
+export interface ZarukuWordstatRegionRow {
+  region_id: number;
+  region_name: string;
+  region_type: string;
+  device: string;
+  count: number;
+  share: number | null;
+  affinity_index: number | null;
+}
+
+export interface ZarukuWordstatIndicators {
+  growing_medical_topics: number | null;
+  growing_medical_topics_reason: string;
+  largest_opportunity: ZarukuWordstatOpportunity | null;
+  irrelevant_demand_share: number | null;
+  review_queue_count: number;
+  region_opportunity_count: number | null;
+  region_opportunity_reason: string;
+}
+
+export interface ZarukuWordstatData {
+  status: "available" | "partial" | "empty" | "unavailable";
+  historical: {
+    status: ZarukuWordstatScopeStatus;
+    period: { from: string; to: string } | null;
+    confirmed_dates: string[];
+    confirmed_day_count: number;
+    confirmed_dates_contiguous: boolean;
+    rows: ZarukuWordstatHistoricalRow[];
+  };
+  current: {
+    period: { from: string; to: string } | null;
+    query_status: ZarukuWordstatScopeStatus;
+    region_status: ZarukuWordstatScopeStatus;
+    query_period: { from: string; to: string } | null;
+    region_period: { from: string; to: string } | null;
+    regional_traffic_comparison: {
+      status: "unavailable";
+      reason: string;
+    };
+    queries: ZarukuWordstatQueryRow[];
+    regions: ZarukuWordstatRegionRow[];
+  };
+  indicators: ZarukuWordstatIndicators;
+  source_freshness: ZarukuSourceFreshnessRow | null;
+  messages: string[];
 }
 
 export interface ZarukuSeoSectionPattern {
@@ -1239,6 +1328,7 @@ export interface ZarukuSeoData {
   source_freshness: ZarukuSourceFreshnessRow[];
   data_quality: ZarukuSeoDataQualityItem[];
   seo_os: ZarukuSeoOsData;
+  wordstat: ZarukuWordstatData;
   webmaster: ZarukuYandexWebmasterData;
   gsc: ZarukuGscData;
   ai_visibility: ZarukuAiVisibilityData;

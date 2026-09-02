@@ -105,6 +105,9 @@ copy_canonical_file fetch_yandex_webmaster_canonical.py
 copy_canonical_file fetch_gsc_canonical.py
 copy_canonical_file fetch_yandex_direct_canonical_api.py
 copy_canonical_file yandex_direct_shared.py
+copy_canonical_file wordstat_api.py
+copy_canonical_file probe_yandex_wordstat_access.py
+copy_canonical_file fetch_yandex_wordstat_canonical.py
 
 npm run security:public-assets -- --release "$PACKAGE_DIR"
 bash scripts/validate-production-release.sh "$PACKAGE_DIR" "$PACKAGE_DIR/.env"

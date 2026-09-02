@@ -46,6 +46,13 @@ test("account read model implementation does not depend on client-named loader i
   assert.doesNotMatch(source, /loadZaruku/);
 });
 
+test("account facts load the account-scoped Wordstat read model without a provider dependency", () => {
+  const source = readFileSync(join(repoRoot, "src/lib/account-read-models.ts"), "utf8");
+
+  assert.match(source, /loadWordstatFacts\(normalizedAccountId\)/);
+  assert.doesNotMatch(source, /WORDSTAT_TOKEN|oauth|wordstat_api/i);
+});
+
 test("runtime read layer does not reference dead weekly AI or deprecated Webmaster contracts", () => {
   const killList = [
     "zaruku-ai-visibility",

@@ -14,6 +14,7 @@ import {
   YAxis,
 } from "recharts";
 import {
+  ChartNoAxesColumnIncreasing,
   Database,
   FileText,
   LayoutGrid,
@@ -56,6 +57,7 @@ import ZarukuContentTab from "@/components/ZarukuContentTab";
 import ZarukuAudienceTab, { isZarukuAudienceVisible } from "@/components/ZarukuAudienceTab";
 import ZarukuWorkTab from "@/components/ZarukuWorkTab";
 import ZarukuQualityTab from "@/components/ZarukuQualityTab";
+import ZarukuWordstatTab from "@/components/ZarukuWordstatTab";
 import {
   buildNorthStarKpis,
   buildSemanticHealthRows,
@@ -90,6 +92,7 @@ export type { ZarukuTabId } from "@/components/zaruku-seo-week-selection";
 const NAV: Array<{ id: ZarukuTabId; label: string; icon: typeof LayoutGrid }> = [
   { id: "overview", label: "Обзор", icon: LayoutGrid },
   { id: "seo", label: "SEO", icon: Search },
+  { id: "wordstat", label: "Спрос Wordstat", icon: ChartNoAxesColumnIncreasing },
   { id: "content", label: "Контент", icon: FileText },
   { id: "audience", label: "Аудитория", icon: Users },
   { id: "work", label: "Работы и задачи", icon: Workflow },
@@ -824,6 +827,8 @@ export default function ZarukuSeoDashboard({ data, locale = "ru-RU", onActiveTab
     switch (activeTab) {
       case "seo":
         return <SeoTab data={data} locale={locale} primaryWeek={selectedWeeks.primaryWeek} comparisonWeek={selectedWeeks.comparisonWeek} />;
+      case "wordstat":
+        return <ZarukuWordstatTab data={data.wordstat} locale={locale} />;
       case "work":
         return (
           <ZarukuWorkTab data={data} primaryWeek={selectedWeeks.primaryWeek} comparisonWeek={selectedWeeks.comparisonWeek}>

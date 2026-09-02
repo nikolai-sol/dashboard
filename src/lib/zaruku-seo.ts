@@ -20,6 +20,7 @@ import type {
   ZarukuSourceFreshnessRow,
   ZarukuGscData,
   ZarukuYandexWebmasterData,
+  ZarukuWordstatData,
   ZarukuDatasetKey,
   ZarukuDatasetMeta,
   ZarukuMetricAvailability,
@@ -58,6 +59,16 @@ const SOURCES: ZarukuSeoSource[] = [
     collection_mode: "automated",
     data_through: null,
     note: "Показы, позиции и CTR в Яндекс Поиске.",
+  },
+  {
+    id: "wordstat",
+    label: "Яндекс Wordstat",
+    layer: "serp",
+    color: "#ea580c",
+    status: "unavailable",
+    collection_mode: "automated",
+    data_through: null,
+    note: "Спрос в Яндекс Wordstat; не является трафиком или долей рынка Zaruku.",
   },
   {
     id: "yandex_gen_search",
@@ -1205,7 +1216,9 @@ function sourceStatusFromData(status: "available" | "partial" | "unavailable"): 
   return status;
 }
 
-type SourceDataThrough = Record<ZarukuSeoSource["id"], string | null>;
+type SourceDataThrough = Record<Exclude<ZarukuSeoSource["id"], "wordstat">, string | null> & {
+  wordstat?: string | null;
+};
 
 export type ZarukuLoadTimingName = "metrika-db" | "gsc-db" | "webmaster-db" | "seo-db" | "total";
 
@@ -1233,12 +1246,14 @@ export function deriveSourceDataThrough({
   seoOsLatestWeek,
   aiLatestPeriod,
   aiRows,
+  wordstat,
 }: {
   gscSummary: Array<{ week_to: string }>;
   webmasterSummary: Array<{ week_to: string }>;
   seoOsLatestWeek: string | null;
   aiLatestPeriod: string | null;
   aiRows: Array<{ period: string; captured_at: string | null }>;
+  wordstat?: Pick<ZarukuWordstatData, "current">;
 }): SourceDataThrough {
   const latestGscDate = gscSummary.map((row) => row.week_to).filter(Boolean).sort().at(-1) ?? null;
   const latestWebmasterDate = webmasterSummary.map((row) => row.week_to).filter(Boolean).sort().at(-1) ?? null;
@@ -1254,6 +1269,7 @@ export function deriveSourceDataThrough({
     gsc: latestGscDate,
     webmaster: latestWebmasterDate,
     seo_os: seoOsLatestWeek,
+    ...(wordstat ? { wordstat: wordstat.current.period?.to ?? null } : {}),
     yandex_gen_search: latestAiCapture ?? aiLatestPeriod,
   };
 }
@@ -1263,19 +1279,25 @@ export function buildSources({
   webmaster,
   gsc,
   seoIntelligence,
+  wordstat,
   dataThrough,
 }: {
   seoOsStatus: "available" | "partial" | "unavailable";
   webmaster: ZarukuYandexWebmasterData;
   gsc: ZarukuGscData;
   seoIntelligence: ZarukuSeoIntelligenceData;
+  wordstat?: ZarukuWordstatData;
   dataThrough: SourceDataThrough;
 }): ZarukuSeoSource[] {
   const webmasterStatus = sourceStatusFromData(webmaster.status);
   const gscStatus = sourceStatusFromData(gsc.status);
   const aiStatus = seoIntelligence.ai.rows.length > 0 ? sourceStatusFromData(seoIntelligence.status) : "pending";
-  return [
-    ...SOURCES.map((source) => {
+  const wordstatStatus: ZarukuSeoSourceStatus = !wordstat || wordstat.status === "unavailable"
+      ? "unavailable"
+      : wordstat.status === "partial"
+        ? "partial"
+        : "connected";
+  const sourceRows: ZarukuSeoSource[] = SOURCES.map((source): ZarukuSeoSource => {
       if (source.id === "webmaster") {
         return {
           ...source,
@@ -1314,17 +1336,32 @@ export function buildSources({
               : "Ожидаем снимки AI-видимости из SEO OS / внешнего источника.",
         };
       }
+      if (source.id === "wordstat") {
+        return {
+          ...source,
+          status: wordstatStatus,
+          collection_mode: wordstatStatus === "unavailable" ? "not_connected" as const : "automated" as const,
+          data_through: dataThrough.wordstat ?? null,
+          note: wordstatStatus === "connected"
+            ? "Подтверждённый спрос Wordstat; период снимка независим от календаря трафика Zaruku."
+            : wordstatStatus === "partial"
+              ? "Доступна только часть подтверждённых областей Wordstat; точные периоды сохранены в источнике."
+              : "Канонические факты Wordstat пока недоступны.",
+        };
+      }
       return {
         ...source,
-        data_through: dataThrough[source.id],
+        data_through: dataThrough[source.id] ?? null,
       };
-    }),
+    });
+  return [
+    ...sourceRows,
     {
       id: "seo_os",
       label: "SEO OS",
       layer: "serp",
       color: "#16a34a",
-      status: seoOsStatus === "available" ? "connected" : seoOsStatus,
+      status: sourceStatusFromData(seoOsStatus),
       collection_mode: "external",
       data_through: dataThrough.seo_os,
       note: seoOsStatus === "available"
@@ -1474,6 +1511,7 @@ export async function loadZarukuSeoData(
   const contentSectionsSummary = buildContentSectionsSummary(pageRows, seoOs.section_patterns, seoOs.section_pattern_summary);
   const webmaster = facts.webmaster;
   const gsc = facts.gsc;
+  const wordstat = facts.wordstat;
   const requestedPeriod = dailyPeriod.requested;
   const trafficActualTo = sourceFreshness.find((row) => row.source_key === "yandex_metrika")?.date_to ?? null;
   const returningActualTo = sourceFreshness.find((row) => row.source_key === "yandex_metrika_returning")?.date_to ?? null;
@@ -1611,7 +1649,9 @@ export async function loadZarukuSeoData(
         seoOsLatestWeek: seoOs.latest_week,
         aiLatestPeriod: seoIntelligence.ai.latest_period,
         aiRows: seoIntelligence.ai.rows,
+        wordstat,
       }),
+      wordstat,
     }),
     pending_requirements: buildPendingRequirements(webmaster, gsc),
     kpis: buildKpis({
@@ -1645,6 +1685,7 @@ export async function loadZarukuSeoData(
     returning_pages: returningPages,
     source_freshness: sourceFreshness,
     seo_os: seoOs,
+    wordstat: wordstat,
     webmaster,
     gsc,
     ai_visibility: DEPRECATED_EMPTY_WEEKLY_AI_VISIBILITY,
