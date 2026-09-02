@@ -287,6 +287,7 @@ test("buildSources exposes collection provenance and preserves explicit data-thr
     gsc: "2026-07-12",
     webmaster: "2026-07-12",
     seo_os: "2026-W28",
+    wordstat: null,
     yandex_gen_search: "2026-07-13 14:30:00",
   } as const;
 
@@ -302,6 +303,7 @@ test("buildSources exposes collection provenance and preserves explicit data-thr
   assert.equal(source("metrika").collection_mode, "automated");
   assert.equal(source("gsc").collection_mode, "automated");
   assert.equal(source("webmaster").collection_mode, "automated");
+  assert.equal(source("wordstat").collection_mode, "not_connected");
   assert.equal(source("seo_os").collection_mode, "external");
   assert.equal(source("yandex_gen_search").collection_mode, "manual");
   assert.equal(source("gsc").status, "connected");
@@ -403,6 +405,38 @@ test("Zaruku applies one effective daily period to every daily loader while SEO 
   ]) {
     assert.ok(parallelPhase.includes(loader), `${loader} must start in the common parallel phase`);
   }
+});
+
+test("Zaruku keeps the Wordstat rolling snapshot outside the traffic and SEO control periods", () => {
+  assert.match(loaderSource, /const wordstat = facts\.wordstat;/);
+  assert.match(loaderSource, /wordstat:\s*wordstat,/);
+  assert.doesNotMatch(loaderSource, /loadWordstatFacts\([^)]*dailyPeriod\.effective/);
+  assert.doesNotMatch(loaderSource, /loadWordstatFacts\([^)]*seoOs\.weeks/);
+});
+
+test("a missing Wordstat schema leaves the rest of the Zaruku read model available", async (t) => {
+  t.mock.method(
+    pool as unknown as {
+      execute: (sql: string, params?: unknown[]) => Promise<[unknown[], unknown[]]>;
+    },
+    "execute",
+    async (sql: string) => {
+      if (sql.includes("canonical_wordstat_")) throw new Error("table does not exist");
+      return [[], []];
+    },
+  );
+
+  const data = await loadZarukuSeoData(
+    ["66624469"],
+    "2026-07-10",
+    "2026-07-31",
+    { today: "2026-08-03" },
+  );
+
+  assert.equal(data.wordstat.status, "unavailable");
+  assert.equal(data.sources.find((source) => source.id === "wordstat")?.status, "unavailable");
+  assert.ok(Array.isArray(data.traffic_channels));
+  assert.ok(Array.isArray(data.organic_trend));
 });
 
 test("Zaruku daily cutoff accepts injected business today and production wires the configured timezone", async (t) => {
