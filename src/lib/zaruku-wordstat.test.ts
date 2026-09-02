@@ -32,11 +32,13 @@ function fakeQuery(rows: Partial<Record<"metadata" | "historical-period" | "hist
         ? metadata?.region_empty_scope_count
         : 0;
     const endpointStatus = metadata?.[`${endpoint}_last_status`] ?? metadata?.last_status ?? null;
+    const coverageRunStatus = metadata?.[`${endpoint}_coverage_run_status`] ?? endpointStatus;
     const state = {
       endpoint_from: period.from ?? null,
       endpoint_to: period.to ?? null,
       endpoint_scope_count: scopeCount ?? 0,
       endpoint_empty_scope_count: emptyScopeCount ?? 0,
+      endpoint_coverage_run_status: coverageRunStatus,
       endpoint_last_status: endpointStatus,
       endpoint_last_finished_at: metadata?.[`${endpoint}_last_finished_at`] ?? metadata?.last_finished_at ?? null,
       endpoint_last_success_at: metadata?.[`${endpoint}_last_success_at`] ?? metadata?.last_success_at ?? null,
@@ -318,6 +320,27 @@ test("Wordstat gives a mismatched successful-empty snapshot partial precedence o
   assert.equal(data.source_freshness?.freshness_status, "delayed");
 });
 
+test("Wordstat keeps selected newer endpoint coverage problems visible after an older replay succeeds", async () => {
+  const { loadZarukuWordstatData } = await wordstatModule();
+  const data = await loadZarukuWordstatData("66624469", fakeQuery({
+    metadata: [{
+      ...availableMetadata(),
+      query_empty_scope_count: 28,
+      region_empty_scope_count: 28,
+      query_coverage_run_status: "partial",
+      region_coverage_run_status: "partial",
+      query_last_status: "success",
+      region_last_status: "success",
+    }],
+    "historical-period": [{ period_from: "2026-07-10", period_to: "2026-07-31" }],
+  }).run);
+
+  assert.deepEqual(data.current.period, { from: "2026-08-03", to: "2026-09-01" });
+  assert.equal(data.status, "partial");
+  assert.equal(data.source_freshness?.last_status, "partial");
+  assert.equal(data.source_freshness?.freshness_status, "delayed");
+});
+
 test("Wordstat binds query rows and their snapshot period in one statement", async () => {
   const { loadZarukuWordstatData } = await wordstatModule();
   const seen: string[] = [];
@@ -558,6 +581,17 @@ test("Wordstat accepts coverage only when its exact run has the matching account
   assert.match(queries.currentQueries.sql, /:current'/i);
   assert.match(queries.currentRegions.sql, /:regions'/i);
   assert.match(queries.historicalRows.sql, /:historical'/i);
+});
+
+test("Wordstat endpoint SQL carries selected coverage-run status separately from latest family-run status", async () => {
+  const { buildZarukuWordstatQueries } = await wordstatModule();
+  const queries = buildZarukuWordstatQueries("66624469");
+
+  for (const query of [queries.currentQueries, queries.currentRegions]) {
+    assert.match(query.sql, /coverage_run\.status\s+AS\s+selected_coverage_run_status/i);
+    assert.match(query.sql, /latest_snapshot\.selected_coverage_run_status\s+AS\s+endpoint_coverage_run_status/i);
+    assert.match(query.sql, /latest_endpoint_run\.status\s+AS\s+endpoint_last_status/i);
+  }
 });
 
 test("Wordstat read model never imports providers, credentials, or capture-share arithmetic", async () => {

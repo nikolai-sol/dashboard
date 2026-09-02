@@ -23,6 +23,7 @@ type EndpointStateDbRow = {
   endpoint_to: string | Date | null;
   endpoint_scope_count: number | string | null;
   endpoint_empty_scope_count: number | string | null;
+  endpoint_coverage_run_status?: string | null;
   endpoint_last_status: string | null;
   endpoint_last_finished_at: string | Date | null;
   endpoint_last_success_at: string | Date | null;
@@ -365,7 +366,8 @@ export function buildZarukuWordstatQueries(accountId: string): Record<
         /* wordstat:current-queries */
         WITH latest_snapshot AS (
           SELECT coverage.analytics_account_id, coverage.registry_version, coverage.ingestion_run_id,
-            coverage.requested_from, coverage.requested_to
+            coverage.requested_from, coverage.requested_to,
+            coverage_run.status AS selected_coverage_run_status
           FROM canonical_wordstat_coverage coverage
           JOIN canonical_collector_runs coverage_run
             ON coverage_run.id = coverage.ingestion_run_id
@@ -446,6 +448,7 @@ export function buildZarukuWordstatQueries(accountId: string): Record<
             coverage_state.endpoint_to,
             COALESCE(coverage_state.endpoint_scope_count, 0) AS endpoint_scope_count,
             COALESCE(coverage_state.endpoint_empty_scope_count, 0) AS endpoint_empty_scope_count,
+            latest_snapshot.selected_coverage_run_status AS endpoint_coverage_run_status,
             latest_endpoint_run.status AS endpoint_last_status,
             COALESCE(latest_endpoint_run.finished_at, latest_endpoint_run.started_at) AS endpoint_last_finished_at,
             COALESCE(latest_endpoint_success.finished_at, latest_endpoint_success.started_at) AS endpoint_last_success_at,
@@ -457,6 +460,7 @@ export function buildZarukuWordstatQueries(accountId: string): Record<
             COALESCE(latest_endpoint_run.rows_written, 0) AS endpoint_rows_written
           FROM (SELECT 1 AS anchor) anchor
           LEFT JOIN coverage_state ON TRUE
+          LEFT JOIN latest_snapshot ON TRUE
           LEFT JOIN latest_endpoint_run ON TRUE
           LEFT JOIN latest_endpoint_success ON TRUE
         ),
@@ -546,6 +550,7 @@ export function buildZarukuWordstatQueries(accountId: string): Record<
           endpoint_state.endpoint_to,
           endpoint_state.endpoint_scope_count,
           endpoint_state.endpoint_empty_scope_count,
+          endpoint_state.endpoint_coverage_run_status,
           endpoint_state.endpoint_last_status,
           endpoint_state.endpoint_last_finished_at,
           endpoint_state.endpoint_last_success_at,
@@ -591,7 +596,8 @@ export function buildZarukuWordstatQueries(accountId: string): Record<
         /* wordstat:current-regions */
         WITH latest_snapshot AS (
           SELECT coverage.analytics_account_id, coverage.registry_version, coverage.ingestion_run_id,
-            coverage.requested_from, coverage.requested_to
+            coverage.requested_from, coverage.requested_to,
+            coverage_run.status AS selected_coverage_run_status
           FROM canonical_wordstat_coverage coverage
           JOIN canonical_collector_runs coverage_run
             ON coverage_run.id = coverage.ingestion_run_id
@@ -672,6 +678,7 @@ export function buildZarukuWordstatQueries(accountId: string): Record<
             coverage_state.endpoint_to,
             COALESCE(coverage_state.endpoint_scope_count, 0) AS endpoint_scope_count,
             COALESCE(coverage_state.endpoint_empty_scope_count, 0) AS endpoint_empty_scope_count,
+            latest_snapshot.selected_coverage_run_status AS endpoint_coverage_run_status,
             latest_endpoint_run.status AS endpoint_last_status,
             COALESCE(latest_endpoint_run.finished_at, latest_endpoint_run.started_at) AS endpoint_last_finished_at,
             COALESCE(latest_endpoint_success.finished_at, latest_endpoint_success.started_at) AS endpoint_last_success_at,
@@ -683,6 +690,7 @@ export function buildZarukuWordstatQueries(accountId: string): Record<
             COALESCE(latest_endpoint_run.rows_written, 0) AS endpoint_rows_written
           FROM (SELECT 1 AS anchor) anchor
           LEFT JOIN coverage_state ON TRUE
+          LEFT JOIN latest_snapshot ON TRUE
           LEFT JOIN latest_endpoint_run ON TRUE
           LEFT JOIN latest_endpoint_success ON TRUE
         ),
@@ -756,6 +764,7 @@ export function buildZarukuWordstatQueries(accountId: string): Record<
           endpoint_state.endpoint_to,
           endpoint_state.endpoint_scope_count,
           endpoint_state.endpoint_empty_scope_count,
+          endpoint_state.endpoint_coverage_run_status,
           endpoint_state.endpoint_last_status,
           endpoint_state.endpoint_last_finished_at,
           endpoint_state.endpoint_last_success_at,
@@ -934,6 +943,7 @@ type EndpointState = {
   period: { from: string; to: string } | null;
   scopeCount: number;
   emptyScopeCount: number;
+  selectedCoverageRunStatus?: string | null;
   lastStatus: string | null;
   lastFinishedAt: string | null;
   lastSuccessAt: string | null;
@@ -946,10 +956,14 @@ type EndpointState = {
 function endpointStateFromRows(rows: unknown[]): EndpointState | null {
   const raw = rows[0] as Partial<EndpointStateDbRow> | undefined;
   if (!raw) return null;
+  const hasSelectedCoverageRunStatus = Object.prototype.hasOwnProperty.call(raw, "endpoint_coverage_run_status");
   return {
     period: periodFromValues(raw.endpoint_from, raw.endpoint_to),
     scopeCount: Math.round(asNumber(raw.endpoint_scope_count)),
     emptyScopeCount: Math.round(asNumber(raw.endpoint_empty_scope_count)),
+    selectedCoverageRunStatus: hasSelectedCoverageRunStatus
+      ? asString(raw.endpoint_coverage_run_status) || null
+      : undefined,
     lastStatus: asString(raw.endpoint_last_status) || null,
     lastFinishedAt: formatDateTime(raw.endpoint_last_finished_at),
     lastSuccessAt: formatDateTime(raw.endpoint_last_success_at),
@@ -966,6 +980,17 @@ function endpointRunIsProblem(state: EndpointState | null) {
     && (state.scopeCount > 0 || state.lastStatus != null);
 }
 
+function selectedCoverageRunIsProblem(state: EndpointState | null) {
+  return state != null
+    && state.selectedCoverageRunStatus !== undefined
+    && state.scopeCount > 0
+    && state.selectedCoverageRunStatus !== "success";
+}
+
+function stateHasRunStatus(state: EndpointState, status: "failed" | "partial" | "running") {
+  return state.lastStatus === status || state.selectedCoverageRunStatus === status;
+}
+
 function latestEndpointValue(states: Array<EndpointState | null>, key: "lastFinishedAt" | "lastSuccessAt" | "lastErrorAt") {
   return states.map((state) => state?.[key] ?? null).filter((value): value is string => value != null).sort().at(-1) ?? null;
 }
@@ -980,8 +1005,10 @@ function makeFreshness(
 ): ZarukuSourceFreshnessRow | null {
   const knownStates = states.filter((state): state is EndpointState => state != null);
   if (knownStates.length === 0) return null;
-  const hasFailedRun = knownStates.some((state) => state.lastStatus === "failed");
-  const hasPartialRun = knownStates.some((state) => state.lastStatus === "partial" || state.lastStatus === "running");
+  const hasFailedRun = knownStates.some((state) => stateHasRunStatus(state, "failed"));
+  const hasPartialRun = knownStates.some(
+    (state) => stateHasRunStatus(state, "partial") || stateHasRunStatus(state, "running"),
+  );
   const status = hasFailedRun ? "failed" : hasPartialRun || coverageMissing || endpointRunProblem ? "partial" : "success";
   const freshnessStatus = hasFailedRun
     ? "failed"
@@ -1061,9 +1088,15 @@ export async function loadZarukuWordstatData(
     && queryScopes === queryState.emptyScopeCount
     && regionScopes === regionState.emptyScopeCount;
   const failedQueries = settled.filter((result) => result.status === "rejected").length;
-  const endpointRunProblem = [historicalState, queryState, regionState].some(endpointRunIsProblem);
-  const hasFailedEndpointRun = [historicalState, queryState, regionState].some((state) => state?.lastStatus === "failed");
-  const hasPartialEndpointRun = [historicalState, queryState, regionState].some((state) => state?.lastStatus === "partial" || state?.lastStatus === "running");
+  const endpointRunProblem = [historicalState, queryState, regionState].some(
+    (state) => endpointRunIsProblem(state) || selectedCoverageRunIsProblem(state),
+  );
+  const hasFailedEndpointRun = [historicalState, queryState, regionState]
+    .filter((state): state is EndpointState => state != null)
+    .some((state) => stateHasRunStatus(state, "failed"));
+  const hasPartialEndpointRun = [historicalState, queryState, regionState]
+    .filter((state): state is EndpointState => state != null)
+    .some((state) => stateHasRunStatus(state, "partial") || stateHasRunStatus(state, "running"));
   const coverageMissing = historicalState == null
     || queryState == null
     || regionState == null
