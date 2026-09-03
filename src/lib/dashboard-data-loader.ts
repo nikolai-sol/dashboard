@@ -106,6 +106,40 @@ import type {
 
 type JsonRecord = Record<string, unknown>;
 
+function advertisingFactsReadModelSql(alias: string): string {
+  if (!/^[A-Za-z][A-Za-z0-9_]*$/.test(alias)) {
+    throw new Error("Invalid advertising facts SQL alias");
+  }
+
+  const columns = `
+    source_key,
+    platform_account_id,
+    platform_campaign_id,
+    platform_delivery_entity_id,
+    platform_creative_id,
+    report_date,
+    impressions,
+    clicks,
+    views,
+    reach,
+    spend,
+    video_views_25,
+    video_views_50,
+    video_views_75,
+    video_views_100
+  `;
+
+  return `(
+    SELECT ${columns}
+    FROM canonical_advertising_facts_current
+    WHERE source_key = 'between'
+    UNION ALL
+    SELECT ${columns}
+    FROM canonical_fact_ads_daily
+    WHERE source_key <> 'between'
+  ) ${alias}`;
+}
+
 export type LoadedDashboardData = {
   dashboard_id: number;
   data: DashboardData;
@@ -1814,7 +1848,7 @@ async function buildPostClickAnalytics(
         COALESCE(SUM(f.video_views_75), 0) AS video_views_75,
         COALESCE(SUM(f.video_views_100), 0) AS video_views_100
       FROM media_plan_bindings b
-      JOIN canonical_fact_ads_daily f
+      JOIN ${advertisingFactsReadModelSql("f")}
         ON f.source_key COLLATE utf8mb4_unicode_ci = b.source_key
        AND f.platform_campaign_id COLLATE utf8mb4_unicode_ci = b.platform_campaign_id
       WHERE b.dashboard_id = ?
@@ -1981,7 +2015,7 @@ async function buildPostClickAnalytics(
       JOIN media_plan_bindings mp
         ON mp.dashboard_id = b.dashboard_id
        AND mp.line_key COLLATE utf8mb4_unicode_ci = b.line_key COLLATE utf8mb4_unicode_ci
-      JOIN canonical_fact_ads_daily f
+      JOIN ${advertisingFactsReadModelSql("f")}
         ON f.source_key COLLATE utf8mb4_unicode_ci = mp.source_key
        AND f.report_date = m.report_date
        AND (

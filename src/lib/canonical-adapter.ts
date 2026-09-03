@@ -265,6 +265,12 @@ function authorityFactScope(sourceKey: string): 'campaign' | 'delivery_entity' {
   return ADS_AUTHORITY_FACT_SCOPE[sourceKey] ?? 'delivery_entity';
 }
 
+function advertisingFactTable(sourceKey: string): string {
+  return sourceKey === 'between'
+    ? 'canonical_advertising_facts_current'
+    : 'canonical_fact_ads_daily';
+}
+
 export async function getAdsAggregate(filter: CanonicalFilter) {
   const params: SqlParam[] = [filter.source_key, authorityFactScope(filter.source_key), filter.date_from, filter.date_to];
   const accountWhere = buildAccountWhereAds(filter, params);
@@ -288,7 +294,7 @@ export async function getAdsAggregate(filter: CanonicalFilter) {
         THEN COALESCE(SUM(f.spend), 0) / SUM(f.impressions) * 1000 ELSE 0 END as avg_cpm,
       CASE WHEN COALESCE(SUM(f.clicks), 0) > 0
         THEN COALESCE(SUM(f.spend), 0) / SUM(f.clicks) ELSE 0 END as avg_cpc
-    FROM canonical_fact_ads_daily f
+    FROM ${advertisingFactTable(filter.source_key)} f
     WHERE f.source_key = ?
       AND f.fact_scope = ?
       AND f.report_date >= ?
@@ -415,7 +421,7 @@ export async function getFactByCampaignIds(
         THEN COALESCE(SUM(f.spend), 0) / SUM(f.impressions) * 1000 ELSE 0 END as avg_cpm,
       CASE WHEN COALESCE(SUM(f.clicks), 0) > 0 
         THEN COALESCE(SUM(f.spend), 0) / SUM(f.clicks) ELSE 0 END as avg_cpc
-    FROM canonical_fact_ads_daily f
+    FROM ${advertisingFactTable(sourceKey)} f
     WHERE f.source_key = ?
       AND f.fact_scope = ?
       AND f.report_date >= ?
@@ -441,7 +447,7 @@ export async function getAdsTimeseries(filter: CanonicalFilter) {
       COALESCE(SUM(f.spend), 0) as spend,
       COALESCE(SUM(f.views), 0) as views,
       COALESCE(SUM(f.conversions), 0) as conversions
-    FROM canonical_fact_ads_daily f
+    FROM ${advertisingFactTable(filter.source_key)} f
     WHERE f.source_key = ?
       AND f.fact_scope = ?
       AND f.report_date >= ?
@@ -655,7 +661,7 @@ export async function getTimeseriesByCampaignIds(
       COALESCE(SUM(f.spend), 0) as spend,
       COALESCE(SUM(f.views), 0) as views,
       COALESCE(SUM(f.conversions), 0) as conversions
-    FROM canonical_fact_ads_daily f
+    FROM ${advertisingFactTable(sourceKey)} f
     WHERE f.source_key = ?
       AND f.fact_scope = ?
       AND f.report_date >= ?
@@ -696,7 +702,7 @@ export async function getCampaignDailyFactsByIds(
       COALESCE(SUM(f.spend), 0) as spend,
       COALESCE(SUM(f.views), 0) as views,
       COALESCE(SUM(f.conversions), 0) as conversions
-    FROM canonical_fact_ads_daily f
+    FROM ${advertisingFactTable(sourceKey)} f
     WHERE f.source_key = ?
       AND f.fact_scope = ?
       AND f.report_date >= ?
@@ -739,7 +745,7 @@ export async function getCampaignBreakdown(filter: CanonicalFilter) {
           THEN COALESCE(SUM(f.clicks), 0) / SUM(f.impressions) * 100
         ELSE 0
       END as ctr
-    FROM canonical_fact_ads_daily f
+    FROM ${advertisingFactTable(filter.source_key)} f
     LEFT JOIN canonical_source_campaigns c
       ON c.source_key = f.source_key
      AND c.platform_campaign_id = f.platform_campaign_id
@@ -940,7 +946,7 @@ export async function countAdsCampaigns(filter: CanonicalFilter): Promise<number
   const campaignWhere = buildCampaignWhere(filter, params);
   const sql = `
     SELECT COUNT(DISTINCT f.platform_campaign_id) AS total
-    FROM canonical_fact_ads_daily f
+    FROM ${advertisingFactTable(filter.source_key)} f
     WHERE f.source_key = ?
       AND f.fact_scope = ?
       AND f.report_date >= ?
