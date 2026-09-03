@@ -266,9 +266,42 @@ function authorityFactScope(sourceKey: string): 'campaign' | 'delivery_entity' {
 }
 
 function advertisingFactTable(sourceKey: string): string {
-  return sourceKey === 'between'
-    ? 'canonical_advertising_facts_current'
-    : 'canonical_fact_ads_daily';
+  if (sourceKey !== 'between') {
+    return 'canonical_fact_ads_daily';
+  }
+
+  return `(
+    SELECT
+      source_key, platform_account_id, platform_campaign_id, fact_scope, report_date,
+      spend, impressions, clicks, views, conversions, reach,
+      video_views_25, video_views_50, video_views_75, video_views_100
+    FROM canonical_advertising_facts_current
+    WHERE source_key = 'between'
+    UNION ALL
+    SELECT
+      legacy.source_key, legacy.platform_account_id, legacy.platform_campaign_id,
+      legacy.fact_scope, legacy.report_date, legacy.spend, legacy.impressions,
+      legacy.clicks, legacy.views, legacy.conversions, legacy.reach,
+      legacy.video_views_25, legacy.video_views_50, legacy.video_views_75,
+      legacy.video_views_100
+    FROM canonical_fact_ads_daily legacy
+    WHERE legacy.source_key = 'between'
+      AND NOT EXISTS (
+        SELECT 1
+        FROM canonical_ad_publications publication
+        WHERE publication.source_key COLLATE utf8mb4_unicode_ci = legacy.source_key
+          AND publication.platform_account_id COLLATE utf8mb4_unicode_ci = legacy.platform_account_id
+          AND publication.report_date = legacy.report_date
+          AND publication.is_active = 1
+      )
+      AND NOT EXISTS (
+        SELECT 1
+        FROM canonical_ad_coverage_daily coverage
+        WHERE coverage.source_key COLLATE utf8mb4_unicode_ci = legacy.source_key
+          AND coverage.platform_account_id COLLATE utf8mb4_unicode_ci = legacy.platform_account_id
+          AND coverage.report_date <= legacy.report_date
+      )
+  )`;
 }
 
 export async function getAdsAggregate(filter: CanonicalFilter) {
