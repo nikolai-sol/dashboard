@@ -1745,6 +1745,7 @@ function buildChannelPerformance(
 async function buildPostClickAnalytics(
   dashboardId: number,
   channelGroups: ChannelGroup[],
+  hasBetweenBindings: boolean,
   metrikaAccountIds: string[],
   dateFrom: string,
   dateTo: string,
@@ -1776,6 +1777,13 @@ async function buildPostClickAnalytics(
   if (!normalizedBindings.length) {
     return undefined;
   }
+
+  const advertisingFactsSql = hasBetweenBindings
+    ? advertisingFactsReadModelSql("f")
+    : "canonical_fact_ads_daily f";
+  const advertisingFactsParams = hasBetweenBindings
+    ? advertisingFactsReadModelParams(dateFrom, dateTo)
+    : [];
 
   const utmSourcesByLineKey = normalizedBindings.reduce((acc, row) => {
     if (!acc.has(row.line_key)) acc.set(row.line_key, new Set<string>());
@@ -1876,7 +1884,7 @@ async function buildPostClickAnalytics(
         COALESCE(SUM(f.video_views_75), 0) AS video_views_75,
         COALESCE(SUM(f.video_views_100), 0) AS video_views_100
       FROM media_plan_bindings b
-      JOIN ${advertisingFactsReadModelSql("f")}
+      JOIN ${advertisingFactsSql}
         ON f.source_key COLLATE utf8mb4_unicode_ci = b.source_key
        AND f.platform_campaign_id COLLATE utf8mb4_unicode_ci = b.platform_campaign_id
       WHERE b.dashboard_id = ?
@@ -1885,7 +1893,7 @@ async function buildPostClickAnalytics(
       GROUP BY b.line_key, f.report_date
       ORDER BY f.report_date, b.line_key
     `,
-    [...advertisingFactsReadModelParams(dateFrom, dateTo), dashboardId, dateFrom, dateTo],
+    [...advertisingFactsParams, dashboardId, dateFrom, dateTo],
   );
 
   const [campaignTrafficRows] = await pool.execute<PostClickCampaignTrafficFactRow[]>(
@@ -2043,7 +2051,7 @@ async function buildPostClickAnalytics(
       JOIN media_plan_bindings mp
         ON mp.dashboard_id = b.dashboard_id
        AND mp.line_key COLLATE utf8mb4_unicode_ci = b.line_key COLLATE utf8mb4_unicode_ci
-      JOIN ${advertisingFactsReadModelSql("f")}
+      JOIN ${advertisingFactsSql}
         ON f.source_key COLLATE utf8mb4_unicode_ci = mp.source_key
        AND f.report_date = m.report_date
        AND (
@@ -2059,7 +2067,7 @@ async function buildPostClickAnalytics(
       dateFrom,
       dateTo,
       ...metrikaAccountIds,
-      ...advertisingFactsReadModelParams(dateFrom, dateTo),
+      ...advertisingFactsParams,
     ],
   );
 
@@ -3481,6 +3489,7 @@ export async function loadDashboardData(
     const postclickAnalytics = await buildPostClickAnalytics(
       dashboard.id,
       planByChannel,
+      bindingRows.some((row) => row.source_key === "between"),
       metrikaAccountIds,
       range.from,
       range.to,

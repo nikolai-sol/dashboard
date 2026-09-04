@@ -45,10 +45,23 @@ test("between dashboard reads active publications without switching other ad sou
   assert.equal((loaderReadModel.match(/report_date <= \?/g) ?? []).length, 3);
   assert.match(
     loader,
-    /\[\.\.\.advertisingFactsReadModelParams\(dateFrom, dateTo\), dashboardId, dateFrom, dateTo\]/,
+    /\[\.\.\.advertisingFactsParams, dashboardId, dateFrom, dateTo\]/,
   );
   assert.match(
     loader,
-    /\.\.\.metrikaAccountIds,\s+\.\.\.advertisingFactsReadModelParams\(dateFrom, dateTo\)/,
+    /\.\.\.metrikaAccountIds,\s+\.\.\.advertisingFactsParams/,
+  );
+  assert.match(loader, /hasBetweenBindings: boolean/);
+  assert.match(
+    loader,
+    /hasBetweenBindings\s+\?\s+advertisingFactsReadModelSql\("f"\)\s+:\s+"canonical_fact_ads_daily f"/,
+  );
+  assert.match(
+    loader,
+    /const advertisingFactsParams = hasBetweenBindings\s+\? advertisingFactsReadModelParams\(dateFrom, dateTo\)\s+: \[\]/,
+  );
+  assert.match(
+    loader,
+    /bindingRows\.some\(\(row\) => row\.source_key === "between"\)/,
   );
 });
