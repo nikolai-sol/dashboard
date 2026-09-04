@@ -19,7 +19,8 @@
       }
     ],
     "paths": {
-      "@/*": ["./src/*"]
+      "@/*": ["./src/*"],
+      "@reportingdash/runtime-contract": ["./packages/runtime-contract/src/index.ts"]
     }
   },
   "include": [
