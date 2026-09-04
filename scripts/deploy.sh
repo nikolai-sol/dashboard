@@ -12,14 +12,16 @@ if [[ "$APP_SOURCE_DIR" == *"/dashboard-next/.worktrees/"* ]]; then
 fi
 
 if [[ -n "${DEPLOY_REMOTE+x}" || -n "${DEPLOY_BASE_BRANCH+x}" || \
-  -n "${DEPLOY_ACTIVE_RELEASE_READER+x}" || -n "${DEPLOY_LOCK_DIR+x}" || \
-  -n "${DASHBOARD_DEPLOY_LOCK_DIR+x}" ]]; then
+      -n "${DEPLOY_ACTIVE_RELEASE_READER+x}" || -n "${DEPLOY_LOCK_DIR+x}" || \
+      -n "${DASHBOARD_DEPLOY_LOCK_DIR+x}" || -n "${SSH_BIN+x}" || \
+      -n "${DEPLOY_SSH_BIN+x}" || -n "${GIT_SSH+x}" || \
+      -n "${GIT_SSH_COMMAND+x}" || -n "${RSYNC_RSH+x}" ]]; then
   echo "Refusing deploy: mandatory deploy authority override variables are not accepted by scripts/deploy.sh." >&2
   exit 1
 fi
 
 VPS="${VPS:-beget}"
-SSH_BIN="${SSH_BIN:-ssh}"
+SSH_BIN="/usr/bin/ssh"
 APP_DIR="${APP_DIR:-/var/www/dashboard}"
 APP_NAME="${APP_NAME:-dashboard-next}"
 APP_PORT="${APP_PORT:-3001}"

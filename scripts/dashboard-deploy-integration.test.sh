@@ -28,6 +28,12 @@ cp "$SOURCE_SCRIPT_DIR/deploy.sh" "$FIXTURE_APP/scripts/"
 cp "$SOURCE_SCRIPT_DIR/verify-deploy-source.sh" "$FIXTURE_APP/scripts/"
 cp "$SOURCE_SCRIPT_DIR/dashboard-deploy-lock.sh" "$FIXTURE_APP/scripts/"
 cp "$SOURCE_SCRIPT_DIR/activate-release.sh" "$FIXTURE_APP/scripts/"
+# The production script pins /usr/bin/ssh. This temporary copy alone is rewritten to the local fake
+# transport so the behavioral test cannot introduce an executable override into production's API.
+sed -i.bak "s|SSH_BIN=\"/usr/bin/ssh\"|SSH_BIN=\"$FAKE_BIN/ssh\"|" "$FIXTURE_APP/scripts/deploy.sh"
+rm "$FIXTURE_APP/scripts/deploy.sh.bak"
+grep -Fq "SSH_BIN=\"$FAKE_BIN/ssh\"" "$FIXTURE_APP/scripts/deploy.sh" \
+  || fail "test fixture could not replace the pinned production SSH executable"
 for script_name in rollback-release.sh rollback-release-remote.sh verify-loopback-listener.sh \
   collect-yandex-webmaster.js collect-yandex-webmaster-canonical.sh; do
   printf '%s\n' '#!/bin/bash' 'exit 0' > "$FIXTURE_APP/scripts/$script_name"
@@ -210,7 +216,6 @@ chmod +x "$FAKE_BIN/npm" "$FAKE_BIN/node" "$FAKE_BIN/rsync" "$FAKE_BIN/ssh"
 run_deploy() {
   PATH="$FAKE_BIN:$PATH" \
     VPS=fake \
-    SSH_BIN="$FAKE_BIN/ssh" \
     APP_DIR="$REMOTE_ROOT/app" \
     RELEASES_DIR="$REMOTE_ROOT/releases" \
     BACKUPS_DIR="$REMOTE_ROOT/backups" \
@@ -262,7 +267,7 @@ assert_rejected_before_ssh() {
   local label="$1"
   shift
   : > "$SSH_LOG"
-  if env PATH="$FAKE_BIN:$PATH" VPS=fake SSH_BIN="$FAKE_BIN/ssh" \
+  if env PATH="$FAKE_BIN:$PATH" VPS=fake \
     APP_DIR="$REMOTE_ROOT/app" RELEASES_DIR="$REMOTE_ROOT/releases" \
     BACKUPS_DIR="$REMOTE_ROOT/backups" RELEASE_ID=20260904010104-validation \
     "$@" bash "$FIXTURE_APP/scripts/deploy.sh" > "$TMP_DIR/$label.log" 2>&1; then
@@ -271,11 +276,24 @@ assert_rejected_before_ssh() {
   [[ ! -s "$SSH_LOG" ]] || fail "$label reached SSH before rejection"
 }
 
-assert_rejected_before_ssh authority-overrides \
-  DEPLOY_REMOTE=evil DEPLOY_BASE_BRANCH=evil DEPLOY_ACTIVE_RELEASE_READER="$TMP_DIR/evil-reader" \
-  DEPLOY_LOCK_DIR="$TMP_DIR/evil-lock" DASHBOARD_DEPLOY_LOCK_DIR="$TMP_DIR/evil-helper-lock"
-grep -Fq 'mandatory deploy authority override' "$TMP_DIR/authority-overrides.log" \
-  || fail "authority override rejection was unclear"
+assert_authority_rejected() {
+  local label="$1"
+  local assignment="$2"
+  assert_rejected_before_ssh "$label" "$assignment"
+  grep -Fq 'mandatory deploy authority override' "$TMP_DIR/$label.log" \
+    || fail "$label rejection was unclear"
+}
+
+assert_authority_rejected authority-deploy-remote DEPLOY_REMOTE=evil
+assert_authority_rejected authority-deploy-base DEPLOY_BASE_BRANCH=evil
+assert_authority_rejected authority-active-reader DEPLOY_ACTIVE_RELEASE_READER="$TMP_DIR/evil-reader"
+assert_authority_rejected authority-deploy-lock DEPLOY_LOCK_DIR="$TMP_DIR/evil-lock"
+assert_authority_rejected authority-helper-lock DASHBOARD_DEPLOY_LOCK_DIR="$TMP_DIR/evil-helper-lock"
+assert_authority_rejected authority-ssh-bin SSH_BIN="$FAKE_BIN/ssh"
+assert_authority_rejected authority-deploy-ssh-bin DEPLOY_SSH_BIN="$FAKE_BIN/ssh"
+assert_authority_rejected authority-git-ssh GIT_SSH="$FAKE_BIN/ssh"
+assert_authority_rejected authority-git-ssh-command GIT_SSH_COMMAND="$FAKE_BIN/ssh"
+assert_authority_rejected authority-rsync-rsh RSYNC_RSH="$FAKE_BIN/ssh"
 
 assert_rejected_before_ssh malicious-release-id RELEASE_ID='../escape'
 grep -Fq 'Invalid RELEASE_ID' "$TMP_DIR/malicious-release-id.log" \

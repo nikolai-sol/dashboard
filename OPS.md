@@ -165,9 +165,10 @@ npm run deploy
 - валидирует обязательные env до upload
 - атомарно получает dashboard-specific lock `/var/www/.dashboard-next-deploy.lock`, повторно читает
   активный production commit и ещё раз проверяет его происхождение
-- всегда использует именно `origin/main`, реальный SSH-reader активного релиза и фиксированный lock;
-  `DEPLOY_REMOTE`, `DEPLOY_BASE_BRANCH`, `DEPLOY_ACTIVE_RELEASE_READER`, `DEPLOY_LOCK_DIR` и
-  `DASHBOARD_DEPLOY_LOCK_DIR` запрещены для production-команды
+- всегда использует именно `origin/main`, `/usr/bin/ssh` для реального SSH-reader активного релиза и
+  фиксированный lock; `DEPLOY_REMOTE`, `DEPLOY_BASE_BRANCH`, `DEPLOY_ACTIVE_RELEASE_READER`,
+  `DEPLOY_LOCK_DIR`, `DASHBOARD_DEPLOY_LOCK_DIR`, `SSH_BIN`, `DEPLOY_SSH_BIN`, `GIT_SSH`,
+  `GIT_SSH_COMMAND` и `RSYNC_RSH` запрещены для production-команды
 - до построения remote paths проверяет `RELEASE_ID` и все передаваемые SSH параметры по ограниченным
   allowlist-контрактам; SSH shell получает значения как экранированные позиционные аргументы
 - записывает полный Git SHA в `.release-source-sha`
