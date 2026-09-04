@@ -77,57 +77,99 @@ test("the direct Next route has no compatibility-only PageProps", () => {
     /ZarukuDashboardPageContent as ZarukuDashboardPage/);
 });
 
-test("an unsupported isolated payload uses the existing error state and the combined fallback renders once", () => {
+test("the malformed-payload render path uses technical-unavailable UI and selects a combined fallback once", () => {
   const source = sourceAt(componentPath);
-  const start = source.indexOf('  if (!isLoading && dashboard && (dashboard.dashboard.type !== "zaruku_bi" || !dashboard.zaruku_seo))');
-  assert.ok(start >= 0, "Missing isolated payload ownership boundary");
-  const ast = ts.createSourceFile("page.tsx", source, ts.ScriptTarget.Latest, true, ts.ScriptKind.TSX);
-  let boundary: ts.IfStatement | undefined;
-  function visit(node: ts.Node) {
-    if (ts.isIfStatement(node) && node.getStart(ast) === start + 2) boundary = node;
-    ts.forEachChild(node, visit);
-  }
-  visit(ast);
-  assert.ok(boundary);
-  const compiled = ts.transpileModule(`export function renderBoundary() { ${boundary.getText(ast)} }`, {
+  const unavailable = functionSource(source, "DashboardPayloadUnavailable");
+  const compiled = ts.transpileModule(`${unavailable}\nmodule.exports = DashboardPayloadUnavailable;`, {
     compilerOptions: { module: ts.ModuleKind.CommonJS, jsx: ts.JsxEmit.ReactJSX },
   }).outputText;
-  function render(dashboard: object, unsupportedDashboardFallback?: ReturnType<typeof createElement>) {
-    const exports: Record<string, unknown> = {};
-    return runInNewContext(compiled + "\nexports.renderBoundary()", {
-      exports,
-      require: createRequire(import.meta.url),
-      dashboard,
-      unsupportedDashboardFallback,
-      isLoading: false,
-      isPdfMode: false,
-      isMobileMode: false,
-      TECH_ISSUES_MESSAGE: "Извините тех проблемы. мы скоро вернем все на место!",
-    });
+  const renderExports: Record<string, unknown> = {};
+  const renderModule = { exports: renderExports as unknown };
+  runInNewContext(compiled, {
+    module: renderModule,
+    exports: renderExports,
+    require: createRequire(import.meta.url),
+    TECH_ISSUES_MESSAGE: "Извините тех проблемы. мы скоро вернем все на место!",
+  });
+  const render = renderModule.exports as (props: { fallback?: ReturnType<typeof createElement> }) => ReturnType<typeof createElement>;
+  const isolated = renderToStaticMarkup(createElement(render, {}));
+  assert.match(isolated, /data-dashboard-ready="false"/);
+  assert.match(isolated, /Извините тех проблемы\. мы скоро вернем все на место!/);
+  let fallbackRenders = 0;
+  function LegacyFallback() {
+    fallbackRenders += 1;
+    return createElement("p", null, "Legacy fallback");
   }
-  for (const dashboard of [
+  assert.equal(renderToStaticMarkup(createElement(render, { fallback: createElement(LegacyFallback) })), "<p>Legacy fallback</p>");
+  assert.equal(fallbackRenders, 1);
+});
+
+test("200 malformed payloads are classified before the page can dereference their dashboard fields", async () => {
+  const source = sourceAt(componentPath);
+  const isRecord = functionSource(source, "isRecord");
+  const isZarukuDashboardPayload = functionSource(source, "isZarukuDashboardPayload");
+  const getDashboardData = functionSource(source, "getDashboardData");
+  const compiled = ts.transpileModule(`${isRecord}\n${isZarukuDashboardPayload}\n${getDashboardData}\nmodule.exports = getDashboardData;`, {
+    compilerOptions: { module: ts.ModuleKind.CommonJS },
+  }).outputText;
+
+  for (const payload of [
+    null,
+    {},
     { dashboard: { type: "awareness" } },
-    { dashboard: { type: "zaruku_bi" }, zaruku_seo: null },
+    { dashboard: { type: "zaruku_bi", language: "ru" }, zaruku_seo: {} },
+    { dashboard: { type: "zaruku_bi", period: { from: "2026-01-01", to: "2026-01-31" } }, zaruku_seo: {} },
   ]) {
-    const isolated = renderToStaticMarkup(render(dashboard));
-    assert.match(isolated, /data-dashboard-ready="false"/);
-    assert.match(isolated, /Извините тех проблемы\. мы скоро вернем все на место!/);
-    let fallbackRenders = 0;
-    function LegacyFallback() {
-      fallbackRenders += 1;
-      return createElement("p", null, "Legacy fallback");
-    }
-    assert.equal(renderToStaticMarkup(render(dashboard, createElement(LegacyFallback))), "<p>Legacy fallback</p>");
-    assert.equal(fallbackRenders, 1);
+    const fetchCalls: string[] = [];
+    const loadModule = { exports: undefined as unknown };
+    runInNewContext(compiled, {
+      console: { warn() {} },
+      fetch: async (url: string) => {
+        fetchCalls.push(url);
+        return { status: 200, ok: true, json: async () => payload };
+      },
+      URLSearchParams,
+      module: loadModule,
+      exports: loadModule.exports,
+    });
+    const load = loadModule.exports as (id: string) => Promise<{
+      data: unknown;
+      errorMessage: string | null;
+      unsupportedPayload?: boolean;
+    }>;
+    const result = await load("zaruku");
+    assert.deepEqual(fetchCalls, ["/api/dashboard/zaruku"]);
+    assert.equal(result.data, null);
+    assert.equal(result.errorMessage, "Unexpected dashboard payload");
+    assert.equal(result.unsupportedPayload, true);
   }
-  assert.equal(render({ dashboard: { type: "zaruku_bi" }, zaruku_seo: {} }), undefined);
+});
+
+test("an unsupported successful payload selects the combined fallback before generic API-error rendering", () => {
+  const source = sourceAt(componentPath);
+  const selectRenderState = functionSource(source, "selectDashboardRenderState");
+  const compiled = ts.transpileModule(`${selectRenderState}\nmodule.exports = selectDashboardRenderState;`, {
+    compilerOptions: { module: ts.ModuleKind.CommonJS },
+  }).outputText;
+  const module = { exports: undefined as unknown };
+  runInNewContext(compiled, { module, exports: module.exports });
+  const select = module.exports as (state: Record<string, unknown>) => string;
+  assert.equal(select({
+    isLoading: false,
+    authRequired: false,
+    authMeta: null,
+    notFound: false,
+    dashboard: null,
+    apiError: "Извините тех проблемы. мы скоро вернем все на место!",
+    unsupportedPayload: true,
+  }), "unsupported");
 });
 
 test("the extraction preserves fetch statuses, query encoding, date calculations, and export parameters verbatim", () => {
   const extracted = sourceAt(componentPath);
   const combined = sourceAt(combinedPath);
   for (const name of [
-    "getDashboardData", "formatPeriodDate", "shiftDate", "isoToday", "startOfCurrentMonth",
+    "formatPeriodDate", "shiftDate", "isoToday", "startOfCurrentMonth",
     "startOfCurrentWeek", "buildQuickRange", "detectQuickRangePreset", "exportPdf", "exportExcel",
     "applyImmediateDateRange", "applyDateRange", "handleQuickRangePresetChange",
     "handleDraftDateFromChange", "handleDraftDateToChange",

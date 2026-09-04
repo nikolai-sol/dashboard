@@ -28,6 +28,78 @@ type DashboardAuthMeta = {
 
 const TECH_ISSUES_MESSAGE = "Извините тех проблемы. мы скоро вернем все на место!";
 
+type DashboardLoadResult = {
+  data: DashboardData | null;
+  demoMode: boolean;
+  errorMessage: string | null;
+  authRequired: boolean;
+  authMeta: DashboardAuthMeta | null;
+  notFound: boolean;
+  unsupportedPayload: boolean;
+};
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+function isZarukuDashboardPayload(value: unknown): value is DashboardData {
+  if (!isRecord(value) || !isRecord(value.dashboard) || !isRecord(value.zaruku_seo)) return false;
+  const { dashboard } = value;
+  return dashboard.type === "zaruku_bi"
+    && isRecord(dashboard.period)
+    && typeof dashboard.period.from === "string"
+    && typeof dashboard.period.to === "string"
+    && typeof dashboard.language === "string";
+}
+
+function DashboardPayloadUnavailable({
+  fallback,
+  isPdfMode = false,
+  isMobileMode = false,
+}: {
+  fallback?: ReactNode;
+  isPdfMode?: boolean;
+  isMobileMode?: boolean;
+}) {
+  if (fallback) return fallback;
+  return (
+    <main
+      data-dashboard-ready="false"
+      className={`mx-auto min-h-screen w-full max-w-[1000px] px-4 py-12 sm:px-6 lg:px-8 ${isPdfMode ? "pdf-mode" : ""}`}
+      style={isMobileMode ? ({ maxWidth: "430px" } as CSSProperties) : undefined}
+    >
+      <section className="mx-auto max-w-xl rounded-2xl border border-slate-200 bg-white p-6 text-center shadow-sm">
+        <p className="text-sm font-medium uppercase tracking-[0.2em] text-slate-500">Dashboard Portal</p>
+        <h1 className="mt-3 text-2xl font-semibold text-slate-900">{TECH_ISSUES_MESSAGE}</h1>
+      </section>
+    </main>
+  );
+}
+
+function selectDashboardRenderState({
+  isLoading,
+  authRequired,
+  authMeta,
+  notFound,
+  dashboard,
+  apiError,
+  unsupportedPayload,
+}: {
+  isLoading: boolean;
+  authRequired: boolean;
+  authMeta: DashboardAuthMeta | null;
+  notFound: boolean;
+  dashboard: DashboardData | null;
+  apiError: string | null;
+  unsupportedPayload: boolean;
+}) {
+  if (!isLoading && authRequired && authMeta) return "auth";
+  if (!isLoading && notFound) return "notFound";
+  if (!isLoading && unsupportedPayload) return "unsupported";
+  if (!isLoading && !dashboard && apiError) return "error";
+  return isLoading || !dashboard ? "loading" : "dashboard";
+}
+
 function formatPeriodDate(isoDate: string, locale = "en-GB") {
   if (!/^\d{4}-\d{2}-\d{2}$/.test(isoDate)) return isoDate || "—";
   const d = new Date(`${isoDate}T00:00:00Z`);
@@ -42,14 +114,7 @@ async function getDashboardData(
   accessToken?: string,
   embedKey?: string,
   brandId?: string | null,
-): Promise<{
-  data: DashboardData | null;
-  demoMode: boolean;
-  errorMessage: string | null;
-  authRequired: boolean;
-  authMeta: DashboardAuthMeta | null;
-  notFound: boolean;
-}> {
+): Promise<DashboardLoadResult> {
   try {
     const params = new URLSearchParams();
     if (range?.from && range?.to) {
@@ -82,6 +147,7 @@ async function getDashboardData(
         authRequired: true,
         authMeta: json?.dashboard ?? null,
         notFound: false,
+        unsupportedPayload: false,
       };
     }
     if (response.status === 404) {
@@ -92,14 +158,34 @@ async function getDashboardData(
         authRequired: false,
         authMeta: null,
         notFound: true,
+        unsupportedPayload: false,
       };
     }
     if (!response.ok) {
       throw new Error(`API returned ${response.status}`);
     }
 
-    const data = (await response.json()) as DashboardData;
-    return { data, demoMode: false, errorMessage: null, authRequired: false, authMeta: null, notFound: false };
+    const payload: unknown = await response.json();
+    if (!isZarukuDashboardPayload(payload)) {
+      return {
+        data: null,
+        demoMode: false,
+        errorMessage: "Unexpected dashboard payload",
+        authRequired: false,
+        authMeta: null,
+        notFound: false,
+        unsupportedPayload: true,
+      };
+    }
+    return {
+      data: payload,
+      demoMode: false,
+      errorMessage: null,
+      authRequired: false,
+      authMeta: null,
+      notFound: false,
+      unsupportedPayload: false,
+    };
   } catch (error) {
     console.warn("API unavailable, showing unavailable state:", error);
     const message = error instanceof Error ? error.message : "Unknown API error";
@@ -110,6 +196,7 @@ async function getDashboardData(
       authRequired: false,
       authMeta: null,
       notFound: false,
+      unsupportedPayload: false,
     };
   }
 }
@@ -201,6 +288,7 @@ export function ZarukuDashboardPageContent({
   const [authRequired, setAuthRequired] = useState(false);
   const [authMeta, setAuthMeta] = useState<DashboardAuthMeta | null>(null);
   const [notFound, setNotFound] = useState(false);
+  const [unsupportedPayload, setUnsupportedPayload] = useState(false);
   const [viewerAccessToken, setViewerAccessToken] = useState(initialAccessToken);
   const [viewerEmbedKey] = useState(initialEmbedKey);
   const [selectedBrandId, setSelectedBrandId] = useState(initialBrandId);
@@ -239,6 +327,7 @@ export function ZarukuDashboardPageContent({
         setAuthRequired(false);
         setAuthMeta(null);
         setNotFound(true);
+        setUnsupportedPayload(false);
         setIsLoading(false);
         return;
       }
@@ -263,6 +352,7 @@ export function ZarukuDashboardPageContent({
         setAuthRequired(true);
         setAuthMeta(result.authMeta);
         setNotFound(false);
+        setUnsupportedPayload(false);
         setIsLoading(false);
         return;
       }
@@ -273,6 +363,18 @@ export function ZarukuDashboardPageContent({
         setAuthRequired(false);
         setAuthMeta(null);
         setNotFound(true);
+        setUnsupportedPayload(false);
+        setIsLoading(false);
+        return;
+      }
+      if (result.unsupportedPayload) {
+        setDashboard(null);
+        setIsDemoMode(false);
+        setApiError(TECH_ISSUES_MESSAGE);
+        setAuthRequired(false);
+        setAuthMeta(null);
+        setNotFound(false);
+        setUnsupportedPayload(true);
         setIsLoading(false);
         return;
       }
@@ -283,6 +385,7 @@ export function ZarukuDashboardPageContent({
       setAuthRequired(false);
       setAuthMeta(null);
       setNotFound(false);
+      setUnsupportedPayload(false);
 
       const resolvedPeriod = {
         from: result.data?.dashboard.period.from || "",
@@ -436,7 +539,17 @@ export function ZarukuDashboardPageContent({
     setDraftDateRange((prev) => ({ ...prev, to: safeValue }));
   };
 
-  if (!isLoading && authRequired && authMeta) {
+  const dashboardRenderState = selectDashboardRenderState({
+    isLoading,
+    authRequired,
+    authMeta,
+    notFound,
+    dashboard,
+    apiError,
+    unsupportedPayload,
+  });
+
+  if (dashboardRenderState === "auth" && authMeta) {
     return (
       <main
         data-dashboard-ready="false"
@@ -465,7 +578,7 @@ export function ZarukuDashboardPageContent({
     );
   }
 
-  if (!isLoading && notFound) {
+  if (dashboardRenderState === "notFound") {
     return (
       <main
         data-dashboard-ready="false"
@@ -489,7 +602,17 @@ export function ZarukuDashboardPageContent({
     );
   }
 
-  if (!isLoading && !dashboard && apiError) {
+  if (dashboardRenderState === "unsupported") {
+    return (
+      <DashboardPayloadUnavailable
+        fallback={unsupportedDashboardFallback}
+        isPdfMode={isPdfMode}
+        isMobileMode={isMobileMode}
+      />
+    );
+  }
+
+  if (dashboardRenderState === "error") {
     return (
       <main
         data-dashboard-ready="false"
@@ -504,23 +627,7 @@ export function ZarukuDashboardPageContent({
     );
   }
 
-  if (!isLoading && dashboard && (dashboard.dashboard.type !== "zaruku_bi" || !dashboard.zaruku_seo)) {
-    if (unsupportedDashboardFallback) return unsupportedDashboardFallback;
-    return (
-      <main
-        data-dashboard-ready="false"
-        className={`mx-auto min-h-screen w-full max-w-[1000px] px-4 py-12 sm:px-6 lg:px-8 ${isPdfMode ? "pdf-mode" : ""}`}
-        style={isMobileMode ? ({ maxWidth: "430px" } as CSSProperties) : undefined}
-      >
-        <section className="mx-auto max-w-xl rounded-2xl border border-slate-200 bg-white p-6 text-center shadow-sm">
-          <p className="text-sm font-medium uppercase tracking-[0.2em] text-slate-500">Dashboard Portal</p>
-          <h1 className="mt-3 text-2xl font-semibold text-slate-900">{TECH_ISSUES_MESSAGE}</h1>
-        </section>
-      </main>
-    );
-  }
-
-  if (isLoading || !dashboard) {
+  if (dashboardRenderState === "loading" || !dashboard) {
     return (
       <main
         data-dashboard-ready="false"
