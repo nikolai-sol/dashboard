@@ -175,7 +175,7 @@ function totalsFromPlatforms(rows: PlatformStats[]) {
   const clicks = rows.reduce((sum, row) => sum + row.clicks, 0);
   const spend = rows.reduce((sum, row) => sum + row.spend, 0);
   const conversions = rows.reduce((sum, row) => sum + row.conversions, 0);
-  const views = rows.reduce((sum, row) => sum + row.views, 0);
+  const views = Math.round(rows.reduce((sum, row) => sum + row.views, 0));
   const reach = rows.reduce((sum, row) => sum + row.reach, 0);
   return {
     impressions,
@@ -234,7 +234,13 @@ function aggregatePlanByPlatform(rows: PlanVsFactItem[]): PlatformPlanAggregate[
     }
   }
 
-  return Array.from(grouped.values()).sort((a, b) => b.spend_fact - a.spend_fact || b.clicks_fact - a.clicks_fact);
+  return Array.from(grouped.values())
+    .map((row) => ({
+      ...row,
+      views_plan: Math.round(row.views_plan),
+      views_fact: Math.round(row.views_fact),
+    }))
+    .sort((a, b) => b.spend_fact - a.spend_fact || b.clicks_fact - a.clicks_fact);
 }
 
 function worksheetHasSection(data: DashboardData, sectionId: DashboardData["dashboard"]["section_order"][number]) {
@@ -294,7 +300,7 @@ function buildDailyExport(data: DashboardData):
           impressions: row.impressions,
           clicks: row.clicks,
           spend: row.spend,
-          views: row.views,
+          views: Math.round(row.views),
           conversions: row.conversions,
         })),
     };
@@ -311,7 +317,7 @@ function buildDailyExport(data: DashboardData):
           impressions: row.impressions,
           clicks: row.clicks,
           spend: row.spend,
-          views: row.views ?? 0,
+          views: Math.round(row.views ?? 0),
           conversions: row.conversions ?? 0,
         })),
     };
@@ -329,7 +335,7 @@ function buildDailyExport(data: DashboardData):
           impressions: row.impressions,
           clicks: row.clicks,
           spend: row.spend,
-          views: row.views,
+          views: Math.round(row.views),
           conversions: row.conversions,
         })),
     };
@@ -420,8 +426,8 @@ export async function GET(
             row.metrics.clicks?.plan ?? 0,
             row.metrics.clicks?.fact ?? 0,
             (row.metrics.clicks?.completion_pct ?? 0) / 100,
-            row.metrics.views?.plan ?? 0,
-            row.metrics.views?.fact ?? 0,
+            Math.round(row.metrics.views?.plan ?? 0),
+            Math.round(row.metrics.views?.fact ?? 0),
             (row.metrics.views?.completion_pct ?? 0) / 100,
             ...(data.dashboard.show_spend ? [spendMetric?.plan ?? 0, spendMetric?.fact ?? 0, ((spendMetric?.completion_pct ?? 0) / 100)] : []),
             row.metrics.conversions?.plan ?? 0,
@@ -467,8 +473,8 @@ export async function GET(
           totals.clicksPlan,
           totals.clicksFact,
           (percentFromPlanFact(totals.clicksFact, totals.clicksPlan) ?? 0) / 100,
-          totals.viewsPlan,
-          totals.viewsFact,
+          Math.round(totals.viewsPlan),
+          Math.round(totals.viewsFact),
           (percentFromPlanFact(totals.viewsFact, totals.viewsPlan) ?? 0) / 100,
           ...(data.dashboard.show_spend ? [totals.spendPlan, totals.spendFact, (percentFromPlanFact(totals.spendFact, totals.spendPlan) ?? 0) / 100] : []),
           totals.conversionsPlan,
@@ -497,7 +503,7 @@ export async function GET(
             platform.clicks,
             platform.ctr / 100,
             ...(data.dashboard.show_spend ? [platform.cpm, platform.spend] : []),
-            platform.views,
+            Math.round(platform.views),
             platform.conversions,
           ];
           const row = summary.getRow(summaryRow);
@@ -526,7 +532,7 @@ export async function GET(
           totals.clicks,
           totals.ctr / 100,
           ...(data.dashboard.show_spend ? [totals.cpm, totals.spend] : []),
-          totals.views,
+          Math.round(totals.views),
           totals.conversions,
         ];
         styleTotalRow(totalRow);
@@ -588,8 +594,8 @@ export async function GET(
           row.metrics.clicks?.plan ?? 0,
           row.metrics.clicks?.fact ?? 0,
           (row.metrics.clicks?.completion_pct ?? 0) / 100,
-          row.metrics.views?.plan ?? 0,
-          row.metrics.views?.fact ?? 0,
+          Math.round(row.metrics.views?.plan ?? 0),
+          Math.round(row.metrics.views?.fact ?? 0),
           (row.metrics.views?.completion_pct ?? 0) / 100,
           ...(data.dashboard.show_spend ? [spendMetric?.plan ?? 0, spendMetric?.fact ?? 0, ((spendMetric?.completion_pct ?? 0) / 100)] : []),
           row.metrics.conversions?.plan ?? 0,
@@ -621,7 +627,7 @@ export async function GET(
             daily.clicks,
             "",
             "",
-            daily.views,
+            Math.round(daily.views),
             "",
             ...(data.dashboard.show_spend ? ["", daily.spend, ""] : []),
             "",
@@ -672,8 +678,8 @@ export async function GET(
         totals.clicksPlan,
         totals.clicksFact,
         (percentFromPlanFact(totals.clicksFact, totals.clicksPlan) ?? 0) / 100,
-        totals.viewsPlan,
-        totals.viewsFact,
+        Math.round(totals.viewsPlan),
+        Math.round(totals.viewsFact),
         (percentFromPlanFact(totals.viewsFact, totals.viewsPlan) ?? 0) / 100,
         ...(data.dashboard.show_spend ? [totals.spendPlan, totals.spendFact, (percentFromPlanFact(totals.spendFact, totals.spendPlan) ?? 0) / 100] : []),
         totals.conversionsPlan,
@@ -719,8 +725,8 @@ export async function GET(
           row.clicks_plan,
           row.clicks_fact,
           (percentFromPlanFact(row.clicks_fact, row.clicks_plan) ?? 0) / 100,
-          row.views_plan,
-          row.views_fact,
+          Math.round(row.views_plan),
+          Math.round(row.views_fact),
           (percentFromPlanFact(row.views_fact, row.views_plan) ?? 0) / 100,
           ...(data.dashboard.show_spend ? [row.spend_plan, row.spend_fact, (percentFromPlanFact(row.spend_fact, row.spend_plan) ?? 0) / 100] : []),
           row.conversions_plan,
@@ -756,7 +762,7 @@ export async function GET(
           dailyExport.mode === "channel"
             ? [row.date, row.primary, row.secondary ?? ""]
             : [row.date, row.primary];
-        excelRow.values = [...prefix, row.impressions, row.clicks, ...(data.dashboard.show_spend ? [row.spend] : []), row.views, row.conversions];
+        excelRow.values = [...prefix, row.impressions, row.clicks, ...(data.dashboard.show_spend ? [row.spend] : []), Math.round(row.views), row.conversions];
         styleBodyRow(excelRow, rowIndex % 2 === 0);
         excelRow.getCell(1).numFmt = "yyyy-mm-dd";
         if (data.dashboard.show_spend) {
