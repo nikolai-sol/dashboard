@@ -1,7 +1,7 @@
 import type { PoolConnection, RowDataPacket } from "mysql2/promise";
 import pool from "./db";
 import { loadDashboardMediaPlanRows, type StoredMediaPlanRow } from "./media-plan-store";
-import { resolveSourceKey } from "./source-mapping";
+import { resolveDashboardViews, resolveSourceKey } from "./source-mapping";
 
 type SqlExecutor = Pick<PoolConnection, "execute">;
 
@@ -156,11 +156,12 @@ function numberValue(value: unknown): number {
 }
 
 function metrics(row: BoundFactRow | UnboundFactRow): MetricValues {
+  const impressions = numberValue(row.impressions);
   return {
-    impressions: numberValue(row.impressions),
+    impressions,
     clicks: numberValue(row.clicks),
     spend: numberValue(row.spend),
-    views: numberValue(row.views),
+    views: resolveDashboardViews(String(row.source_key), impressions, numberValue(row.views)),
     conversions: numberValue(row.conversions),
     reach: numberValue(row.reach),
   };

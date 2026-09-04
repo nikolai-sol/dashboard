@@ -4,7 +4,8 @@ import path from "node:path";
 import test from "node:test";
 import { loadBoundAdvertisingFacts } from "./advertising-binding-read-model";
 
-function fakeExecutor(options: { emptyBoundFacts?: boolean } = {}) {
+function fakeExecutor(options: { emptyBoundFacts?: boolean; sourceKey?: string } = {}) {
+  const sourceKey = options.sourceKey ?? "between";
   const statements: Array<{ sql: string; params: unknown[] }> = [];
   const executor = {
     async execute(sql: string, params: unknown[] = []) {
@@ -50,8 +51,8 @@ function fakeExecutor(options: { emptyBoundFacts?: boolean } = {}) {
       }
       if (sql.includes("FROM dashboard_sources")) {
         return [[{
-          platform: "between",
-          source_config: JSON.stringify({ source_key: "between", account_ids: ["1113"] }),
+          platform: sourceKey === "vk_ads_v2" ? "vk" : "between",
+          source_config: JSON.stringify({ source_key: sourceKey, account_ids: ["1113"] }),
         }], []];
       }
       if (sql.includes("binding_catalog")) {
@@ -59,7 +60,7 @@ function fakeExecutor(options: { emptyBoundFacts?: boolean } = {}) {
           line_key: "olv-serials",
           channel: "OLV Serials",
           canonical_campaign_id: 501,
-          source_key: "between",
+          source_key: sourceKey,
           platform_account_id: "1113",
           platform_campaign_id: "24932",
           campaign_name: "OLV Serials",
@@ -72,7 +73,7 @@ function fakeExecutor(options: { emptyBoundFacts?: boolean } = {}) {
           line_key: "olv-serials",
           channel: "OLV Serials",
           canonical_campaign_id: 501,
-          source_key: "between",
+          source_key: sourceKey,
           platform_account_id: "1113",
           platform_campaign_id: "24932",
           campaign_name: "OLV Serials",
@@ -112,6 +113,7 @@ test("facts join by canonical account and effective date", async () => {
   const result = await loadBoundAdvertisingFacts(29, "2026-08-01", "2026-08-31", executor as never);
 
   assert.equal(result.lines.get("olv-serials")?.impressions, 40430);
+  assert.equal(result.lines.get("olv-serials")?.views, 20000);
   assert.equal(result.lines.get("olv-serials")?.reach, 20215);
   assert.equal(result.unboundFacts.length, 1);
   const sql = statements.find((item) => item.sql.includes("bound_advertising_fact"))?.sql ?? "";
@@ -137,6 +139,13 @@ test("stored monthly units remain exact instead of being averaged across months"
   const result = await loadBoundAdvertisingFacts(29, "2026-08-01", "2026-08-31", executor as never);
 
   assert.deepEqual(result.lines.get("olv-serials")?.monthlyPlan, { "2026-08": 40430 });
+});
+
+test("VK dashboard views use 89 percent of impressions", async () => {
+  const { executor } = fakeExecutor({ sourceKey: "vk_ads_v2" });
+  const result = await loadBoundAdvertisingFacts(29, "2026-08-01", "2026-08-31", executor as never);
+
+  assert.equal(Math.round(result.lines.get("olv-serials")?.views ?? 0), Math.round(40430 * 0.89));
 });
 
 test("validated zero-activity binding retains campaign lineage", async () => {
