@@ -344,20 +344,23 @@ npm run deploy
 
 What deploy does:
 - refuses a dirty dashboard source tree or a commit that does not contain the current
-  `origin/main`, preventing a parallel dashboard lineage from silently replacing accepted features
-- runs the Abbott dashboard contract after dependency installation; deployment stops if MNN,
-  direction/material metadata, URL identity, Logs summaries, or administrator-filter behavior is
-  missing
-- builds locally
+  `origin/main` or the active production commit, preventing a parallel dashboard lineage from
+  silently replacing accepted features
+- runs recursive tests, typecheck, lint, public-asset validation, and the production build locally
 - packages `.next/standalone`
 - renders `.env` from `/var/www/www-root/data/.production.env`
 - validates required runtime secrets before upload
+- acquires the atomic `/var/www/.dashboard-next-deploy.lock`, re-reads active production, and repeats
+  the production ancestry check while holding the lock; unknown lock ownership is never auto-cleared
+- stores the full candidate Git commit in `.release-source-sha`
 - uploads the build into a staged release dir
 - swaps the staged release into `/var/www/dashboard`
 - restarts PM2 app `dashboard-next`
 - verifies PM2 listens only on `127.0.0.1:3001` and that the public host cannot reach port `3001` directly
-- rolls back automatically if PM2 restart, local health, or listener isolation fails; an unmarked
-  predecessor is never restarted and PM2 remains stopped fail-closed
+- attests the active `.release-source-sha` after activation and releases the lock through the local
+  cleanup trap on normal or error exit
+- rolls back automatically if PM2 restart, local health, listener isolation, or source-SHA attestation
+  fails; an unmarked predecessor is never restarted and PM2 remains stopped fail-closed
 
 Manual rollback:
 

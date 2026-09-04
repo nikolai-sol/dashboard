@@ -28,6 +28,9 @@ printf '%s|%s|%s\n' "$(pwd -P)" "$release_label" "$*" >> "$PM2_LOG"
 case "${1:-}" in
   describe) exit "${PM2_DESCRIBE_EXIT:-0}" ;;
   restart|start|startOrReload)
+    if [[ "$release_label" == "${PM2_MUTATE_SOURCE_SHA_LABEL:-never-match}" ]]; then
+      printf '%s\n' 'eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee' > .release-source-sha
+    fi
     if [[ "$release_label" == "${PM2_FAIL_LABEL:-never-match}" ]]; then
       exit 1
     fi
@@ -74,6 +77,7 @@ write_release() {
   local target="$1"
   local label="$2"
   local compatibility="${3:-compatible}"
+  local source_sha="${4:-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa}"
   mkdir -p "$target"
   printf '%s\n' "$label" > "$target/release-label"
   cat > "$target/ecosystem.config.js" <<'JS'
@@ -85,6 +89,7 @@ module.exports = {
 };
 JS
   printf '%s\n' 'server fixture' > "$target/server.js"
+  printf '%s\n' "$source_sha" > "$target/.release-source-sha"
   mkdir -p "$target/scripts"
   cp "$SCRIPT_DIR/verify-loopback-listener.sh" "$target/scripts/"
   if [[ "$compatibility" == "compatible" ]]; then
@@ -114,6 +119,7 @@ assert_no_legacy_pm2_start() {
 }
 
 run_activation() {
+  local expected_sha="${5:-$(cat "$3/.release-source-sha")}"
   APP_DIR="$1" \
   BACKUPS_DIR="$2" \
   STAGE_DIR="$3" \
@@ -121,8 +127,21 @@ run_activation() {
   APP_PORT="3001" \
   KEEP_BACKUPS="5" \
   RELEASE_ID="$4" \
+  RELEASE_SHA="$expected_sha" \
   bash "$SCRIPT_DIR/activate-release.sh"
 }
+
+MISMATCH_ROOT="$TMP_DIR/mismatched-source-sha"
+write_release "$MISMATCH_ROOT/app" "mismatch-previous" compatible
+write_release "$MISMATCH_ROOT/stage" "mismatch-stage" compatible bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb
+if run_activation "$MISMATCH_ROOT/app" "$MISMATCH_ROOT/backups" "$MISMATCH_ROOT/stage" \
+  "mismatched-source-sha" cccccccccccccccccccccccccccccccccccccccc >"$MISMATCH_ROOT.log" 2>&1; then
+  fail "activation accepted release metadata that did not match the expected SHA"
+fi
+grep -Fq 'does not match expected source SHA' "$MISMATCH_ROOT.log" \
+  || fail "mismatched source SHA failure was unclear"
+grep -Fqx 'mismatch-previous' "$MISMATCH_ROOT/app/release-label"
+grep -Fqx 'mismatch-stage' "$MISMATCH_ROOT/stage/release-label"
 
 NORMAL_ROOT="$TMP_DIR/normal-activation"
 write_release "$NORMAL_ROOT/app" "normal-previous" compatible
@@ -132,6 +151,25 @@ export PUBLIC_CURL_RESULT=failure
 run_activation "$NORMAL_ROOT/app" "$NORMAL_ROOT/backups" "$NORMAL_ROOT/stage" "normal" >"$NORMAL_ROOT.log" 2>&1
 grep -Fqx 'normal-active' "$NORMAL_ROOT/app/release-label"
 assert_release_start "$NORMAL_ROOT/app" "normal-active"
+assert_no_legacy_pm2_start
+
+ATTEST_ROOT="$TMP_DIR/attestation-failure"
+: > "$PM2_LOG"
+write_release "$ATTEST_ROOT/app" "attest-previous" compatible
+write_release "$ATTEST_ROOT/stage" "attest-new" compatible bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb
+export PM2_MUTATE_SOURCE_SHA_LABEL=attest-new
+if run_activation "$ATTEST_ROOT/app" "$ATTEST_ROOT/backups" "$ATTEST_ROOT/stage" \
+  "attestation-failure" >"$ATTEST_ROOT.log" 2>&1; then
+  fail "activation succeeded after active release SHA metadata changed"
+fi
+unset PM2_MUTATE_SOURCE_SHA_LABEL
+grep -Fq 'source SHA attestation failed' "$ATTEST_ROOT.log" \
+  || fail "source SHA attestation failure was unclear"
+grep -Fqx 'attest-previous' "$ATTEST_ROOT/app/release-label"
+grep -Fqx 'eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee' \
+  "$ATTEST_ROOT/backups/attestation-failure-failed/.release-source-sha"
+assert_release_start "$ATTEST_ROOT/app" "attest-new"
+assert_release_start "$ATTEST_ROOT/app" "attest-previous"
 assert_no_legacy_pm2_start
 
 AUTO_ROOT="$TMP_DIR/auto-incompatible"

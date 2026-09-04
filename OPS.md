@@ -158,12 +158,34 @@ npm run deploy
 
 Что делает deploy теперь:
 
-- локально выполняет `npm ci` и `npm run build`
+- обновляет `origin/main` и отклоняет dirty worktree, commit без актуального `origin/main` или
+  commit без полного активного production-релиза в своей истории
+- локально выполняет `npm ci`, рекурсивные тесты, typecheck, lint, public-asset check и production build
 - тянет production secrets из `/var/www/www-root/data/.production.env`
 - валидирует обязательные env до upload
+- атомарно получает dashboard-specific lock `/var/www/.dashboard-next-deploy.lock`, повторно читает
+  активный production commit и ещё раз проверяет его происхождение
+- записывает полный Git SHA в `.release-source-sha`
 - загружает сборку в staging release dir на VPS
 - атомарно меняет `/var/www/dashboard` на новую release-папку
-- автоматически откатывает релиз, если `pm2 restart` или local health check не проходят
+- автоматически откатывает релиз, если PM2 reload, local health, listener isolation или SHA attestation
+  не проходят
+- после активации сверяет `.release-source-sha` и снимает lock через cleanup trap при любом исходе
+
+Нормальные защитные остановки и восстановление:
+
+- `HEAD does not contain current origin/main` — объединить актуальный `origin/main` с release-веткой,
+  заново пройти проверки и повторить deploy.
+- `HEAD does not contain active production commit <sha>` — остановиться, получить названный commit,
+  объединить его с release-веткой и пересобрать кандидат. Не использовать force/bypass.
+- `legacy release SHA ... is ambiguous` — определить точный активный commit по проверенному артефакту
+  релиза и записать его полный 40-символьный SHA в `/var/www/dashboard/.release-source-sha`;
+  не выбирать совпадение по догадке.
+- `Deployment lock is already held` — дождаться владельца из owner metadata. Если процесса deploy уже
+  точно нет, оператор вручную проверяет lock и только после этого удаляет его; скрипт неизвестный lock
+  автоматически не удаляет.
+- `Failed to release deployment lock` — активный релиз уже мог быть успешно включён; до следующего
+  deploy вручную сверить owner metadata, активный `.release-source-sha` и отсутствие процесса-владельца.
 
 После deploy проверить:
 
@@ -171,6 +193,12 @@ npm run deploy
 ssh beget 'pm2 status'
 ssh beget 'curl -s http://127.0.0.1:3001/api/health'
 curl -s https://dashboards.adreports.ru/api/health
+```
+
+Полный SHA активного приложения:
+
+```bash
+ssh beget 'cat /var/www/dashboard/.release-source-sha'
 ```
 
 ## Rollback

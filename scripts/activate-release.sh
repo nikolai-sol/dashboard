@@ -8,14 +8,30 @@ APP_NAME="${APP_NAME:?}"
 APP_PORT="${APP_PORT:?}"
 KEEP_BACKUPS="${KEEP_BACKUPS:-5}"
 RELEASE_ID="${RELEASE_ID:?}"
+RELEASE_SHA="${RELEASE_SHA:?}"
 PUBLIC_APP_HOST="${PUBLIC_APP_HOST:-}"
 COMPATIBILITY_MARKER=".shared-password-db-auth-v1"
+SOURCE_SHA_FILE=".release-source-sha"
 PREVIOUS_DIR="$BACKUPS_DIR/${RELEASE_ID}-previous"
 FAILED_DIR="$BACKUPS_DIR/${RELEASE_ID}-failed"
 
 is_compatible_release() {
   local release_dir="$1"
   [[ -f "$release_dir/$COMPATIBILITY_MARKER" && ! -L "$release_dir/$COMPATIBILITY_MARKER" ]]
+}
+
+read_release_sha() {
+  local release_dir="$1"
+  local metadata_file="$release_dir/$SOURCE_SHA_FILE"
+  local source_sha
+  if [[ ! -f "$metadata_file" || -L "$metadata_file" ]]; then
+    return 1
+  fi
+  source_sha="$(cat "$metadata_file")"
+  if [[ ! "$source_sha" =~ ^[0-9a-f]{40}$ ]]; then
+    return 1
+  fi
+  printf '%s\n' "$source_sha"
 }
 
 start_release() {
@@ -63,6 +79,20 @@ if ! is_compatible_release "$STAGE_DIR"; then
   exit 1
 fi
 
+if [[ ! "$RELEASE_SHA" =~ ^[0-9a-f]{40}$ ]]; then
+  echo "Expected release source SHA is not a full Git SHA" >&2
+  exit 1
+fi
+
+if ! STAGED_RELEASE_SHA="$(read_release_sha "$STAGE_DIR")"; then
+  echo "Staged release source SHA metadata is missing or invalid" >&2
+  exit 1
+fi
+if [[ "$STAGED_RELEASE_SHA" != "$RELEASE_SHA" ]]; then
+  echo "Staged release source SHA $STAGED_RELEASE_SHA does not match expected source SHA $RELEASE_SHA" >&2
+  exit 1
+fi
+
 mkdir -p "$BACKUPS_DIR"
 rm -rf "$PREVIOUS_DIR" "$FAILED_DIR"
 
@@ -103,6 +133,10 @@ fi
 
 PUBLIC_APP_HOST="$PUBLIC_APP_HOST" APP_PORT="$APP_PORT" \
   bash "$APP_DIR/scripts/verify-loopback-listener.sh" || rollback "listener isolation check failed"
+
+if ! ACTIVE_RELEASE_SHA="$(read_release_sha "$APP_DIR")" || [[ "$ACTIVE_RELEASE_SHA" != "$RELEASE_SHA" ]]; then
+  rollback "source SHA attestation failed"
+fi
 
 find "$BACKUPS_DIR" -mindepth 1 -maxdepth 1 -type d | sort -r | awk "NR>$KEEP_BACKUPS" | while IFS= read -r stale_backup; do
   rm -rf "$stale_backup"
