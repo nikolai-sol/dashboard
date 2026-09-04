@@ -16,6 +16,7 @@
 # next.js
 /.next/
 /out/
+/apps/zaruku/.next-zaruku/
 
 # production
 /build

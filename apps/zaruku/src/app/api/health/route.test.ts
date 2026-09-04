@@ -7,6 +7,7 @@ test("Zaruku health identifies only its isolated runtime", async () => {
   const response = await GET();
   assert.equal(response.status, 200);
   assert.deepEqual(await response.json(), { ok: true, scope: "zaruku" });
+  assert.equal(response.headers.get("Cache-Control"), "private, no-store");
 });
 
 test("Zaruku config isolates its standalone assets and output", () => {
