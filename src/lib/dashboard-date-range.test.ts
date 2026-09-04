@@ -14,7 +14,7 @@ test("Zaruku defaults to the latest 28 complete UTC days", () => {
     configTo: "2026-03-26",
     dashboardType: "zaruku_bi",
     now,
-  }), { from: "2026-06-22", to: "2026-07-19" });
+  }), { from: "2026-06-24", to: "2026-07-21" });
 });
 
 test("explicit Zaruku from and to override the rolling default", () => {
@@ -54,7 +54,7 @@ test("Zaruku days selection ends on the last complete day", () => {
     configTo: null,
     dashboardType: "zaruku_bi",
     now,
-  }), { from: "2026-07-13", to: "2026-07-19" });
+  }), { from: "2026-07-15", to: "2026-07-21" });
 });
 
 test("non-Zaruku dashboards preserve configured periods", () => {

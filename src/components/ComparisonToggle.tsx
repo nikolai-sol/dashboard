@@ -31,7 +31,6 @@ type ComparisonToggleProps = {
   onPresetChange: (preset: ComparisonPreset) => void;
   onCompareFromChange: (value: string) => void;
   onCompareToChange: (value: string) => void;
-  maxDate?: string;
   onApply: () => void;
   onClear: () => void;
 };
@@ -60,7 +59,6 @@ export default function ComparisonToggle({
   onPresetChange,
   onCompareFromChange,
   onCompareToChange,
-  maxDate = new Date().toISOString().slice(0, 10),
   onApply,
   onClear,
 }: ComparisonToggleProps) {
@@ -141,7 +139,6 @@ export default function ComparisonToggle({
                   <input
                     type="date"
                     value={compareFrom}
-                    max={maxDate}
                     onChange={(event) => onCompareFromChange(event.target.value)}
                     className="w-full bg-transparent outline-none"
                   />
@@ -151,7 +148,6 @@ export default function ComparisonToggle({
                   <input
                     type="date"
                     value={compareTo}
-                    max={maxDate}
                     onChange={(event) => onCompareToChange(event.target.value)}
                     className="w-full bg-transparent outline-none"
                   />
