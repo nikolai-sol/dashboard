@@ -165,6 +165,11 @@ npm run deploy
 - валидирует обязательные env до upload
 - атомарно получает dashboard-specific lock `/var/www/.dashboard-next-deploy.lock`, повторно читает
   активный production commit и ещё раз проверяет его происхождение
+- всегда использует именно `origin/main`, реальный SSH-reader активного релиза и фиксированный lock;
+  `DEPLOY_REMOTE`, `DEPLOY_BASE_BRANCH`, `DEPLOY_ACTIVE_RELEASE_READER`, `DEPLOY_LOCK_DIR` и
+  `DASHBOARD_DEPLOY_LOCK_DIR` запрещены для production-команды
+- до построения remote paths проверяет `RELEASE_ID` и все передаваемые SSH параметры по ограниченным
+  allowlist-контрактам; SSH shell получает значения как экранированные позиционные аргументы
 - записывает полный Git SHA в `.release-source-sha`
 - загружает сборку в staging release dir на VPS
 - атомарно меняет `/var/www/dashboard` на новую release-папку
@@ -184,6 +189,10 @@ npm run deploy
 - `Deployment lock is already held` — дождаться владельца из owner metadata. Если процесса deploy уже
   точно нет, оператор вручную проверяет lock и только после этого удаляет его; скрипт неизвестный lock
   автоматически не удаляет.
+- Ошибка SSH во время acquire считается неоднозначной: cleanup всегда пытается снять только lock с
+  token текущего запуска. Lock другого или неизвестного владельца остаётся нетронутым.
+- `mandatory deploy authority override` или `Invalid RELEASE_ID`/`Invalid *_DIR` — убрать запрещённую
+  переменную или исправить значение. Проверка срабатывает до первого remote action.
 - `Failed to release deployment lock` — активный релиз уже мог быть успешно включён; до следующего
   deploy вручную сверить owner metadata, активный `.release-source-sha` и отсутствие процесса-владельца.
 

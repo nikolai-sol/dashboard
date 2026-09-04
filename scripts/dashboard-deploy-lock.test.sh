@@ -103,8 +103,8 @@ NODE
 
 node - "$SCRIPT_DIR/../package.json" <<'NODE'
 const pkg = require(process.argv[2]);
-if (pkg.scripts["test:deploy-source"] !== "bash scripts/verify-deploy-source.test.sh && bash scripts/dashboard-deploy-lock.test.sh") {
-  throw new Error("test:deploy-source does not run both deploy-isolation focused suites");
+if (pkg.scripts["test:deploy-source"] !== "bash scripts/verify-deploy-source.test.sh && bash scripts/dashboard-deploy-lock.test.sh && bash scripts/dashboard-deploy-integration.test.sh") {
+  throw new Error("test:deploy-source does not run all deploy-isolation focused suites");
 }
 if (!pkg.scripts["test:release-runtime"].includes("bash scripts/release-rollback.test.sh")) {
   throw new Error("test:release-runtime does not retain release activation/rollback coverage");

@@ -352,6 +352,13 @@ What deploy does:
 - validates required runtime secrets before upload
 - acquires the atomic `/var/www/.dashboard-next-deploy.lock`, re-reads active production, and repeats
   the production ancestry check while holding the lock; unknown lock ownership is never auto-cleared
+- pins production authority to `origin/main`, the real SSH active-release reader, and the fixed
+  dashboard-next lock; helper injection remains test-only and production deploy rejects inherited
+  `DEPLOY_*`/helper lock authority overrides
+- validates release IDs and remote arguments before path derivation or SSH, then passes remote values
+  as escaped positional Bash arguments rather than interpolated shell snippets
+- treats a failed SSH acquire as ambiguous and runs token-aware cleanup; it can remove only a lock
+  carrying the exact token from that deploy attempt
 - stores the full candidate Git commit in `.release-source-sha`
 - uploads the build into a staged release dir
 - swaps the staged release into `/var/www/dashboard`

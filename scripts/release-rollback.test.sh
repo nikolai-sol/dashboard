@@ -131,6 +131,19 @@ run_activation() {
   bash "$SCRIPT_DIR/activate-release.sh"
 }
 
+MALICIOUS_ID_ROOT="$TMP_DIR/malicious-release-id"
+write_release "$MALICIOUS_ID_ROOT/app" "malicious-id-previous" compatible
+write_release "$MALICIOUS_ID_ROOT/stage" "malicious-id-stage" compatible
+if run_activation "$MALICIOUS_ID_ROOT/app" "$MALICIOUS_ID_ROOT/backups" \
+  "$MALICIOUS_ID_ROOT/stage" "../escape" >"$MALICIOUS_ID_ROOT.log" 2>&1; then
+  fail "activation accepted a path-traversing release ID"
+fi
+grep -Fq 'Invalid release ID' "$MALICIOUS_ID_ROOT.log" \
+  || fail "malicious release ID failure was unclear"
+grep -Fqx 'malicious-id-previous' "$MALICIOUS_ID_ROOT/app/release-label"
+grep -Fqx 'malicious-id-stage' "$MALICIOUS_ID_ROOT/stage/release-label"
+[[ ! -e "$MALICIOUS_ID_ROOT/escape-previous" ]] || fail "malicious release ID escaped the backup directory"
+
 MISMATCH_ROOT="$TMP_DIR/mismatched-source-sha"
 write_release "$MISMATCH_ROOT/app" "mismatch-previous" compatible
 write_release "$MISMATCH_ROOT/stage" "mismatch-stage" compatible bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb

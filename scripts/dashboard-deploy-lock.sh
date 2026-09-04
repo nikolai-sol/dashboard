@@ -1,7 +1,16 @@
 #!/bin/bash
 set -euo pipefail
 
-DASHBOARD_DEPLOY_LOCK_DIR="${DASHBOARD_DEPLOY_LOCK_DIR:-/var/www/.dashboard-next-deploy.lock}"
+if [[ "${1:-}" == "--lock-dir" ]]; then
+  [[ "$#" -ge 3 ]] || {
+    echo "Usage: $0 [--lock-dir DIR] {acquire OWNER_TOKEN RELEASE_ID FULL_SOURCE_SHA|release OWNER_TOKEN}" >&2
+    exit 1
+  }
+  DASHBOARD_DEPLOY_LOCK_DIR="$2"
+  shift 2
+else
+  DASHBOARD_DEPLOY_LOCK_DIR="${DASHBOARD_DEPLOY_LOCK_DIR:-/var/www/.dashboard-next-deploy.lock}"
+fi
 OWNER_FILE="$DASHBOARD_DEPLOY_LOCK_DIR/owner"
 
 fail() {
@@ -87,6 +96,6 @@ case "$ACTION" in
     release_lock "$2"
     ;;
   *)
-    fail "Usage: $0 {acquire OWNER_TOKEN RELEASE_ID FULL_SOURCE_SHA|release OWNER_TOKEN}"
+    fail "Usage: $0 [--lock-dir DIR] {acquire OWNER_TOKEN RELEASE_ID FULL_SOURCE_SHA|release OWNER_TOKEN}"
     ;;
 esac

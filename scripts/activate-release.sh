@@ -1,15 +1,66 @@
 #!/bin/bash
 set -euo pipefail
 
-APP_DIR="${APP_DIR:?}"
-BACKUPS_DIR="${BACKUPS_DIR:?}"
-STAGE_DIR="${STAGE_DIR:?}"
-APP_NAME="${APP_NAME:?}"
-APP_PORT="${APP_PORT:?}"
-KEEP_BACKUPS="${KEEP_BACKUPS:-5}"
-RELEASE_ID="${RELEASE_ID:?}"
-RELEASE_SHA="${RELEASE_SHA:?}"
-PUBLIC_APP_HOST="${PUBLIC_APP_HOST:-}"
+if [[ "$#" -gt 0 ]]; then
+  [[ "$#" -eq 9 ]] || {
+    echo "Expected 9 positional activation arguments" >&2
+    exit 1
+  }
+  APP_DIR="$1"
+  BACKUPS_DIR="$2"
+  STAGE_DIR="$3"
+  APP_NAME="$4"
+  APP_PORT="$5"
+  KEEP_BACKUPS="$6"
+  RELEASE_ID="$7"
+  PUBLIC_APP_HOST="$8"
+  RELEASE_SHA="$9"
+else
+  APP_DIR="${APP_DIR:?}"
+  BACKUPS_DIR="${BACKUPS_DIR:?}"
+  STAGE_DIR="${STAGE_DIR:?}"
+  APP_NAME="${APP_NAME:?}"
+  APP_PORT="${APP_PORT:?}"
+  KEEP_BACKUPS="${KEEP_BACKUPS:-5}"
+  RELEASE_ID="${RELEASE_ID:?}"
+  RELEASE_SHA="${RELEASE_SHA:?}"
+  PUBLIC_APP_HOST="${PUBLIC_APP_HOST:-}"
+fi
+
+fail_validation() {
+  echo "$1" >&2
+  exit 1
+}
+
+validate_release_id() {
+  [[ -n "$RELEASE_ID" && "${#RELEASE_ID}" -le 128 && "$RELEASE_ID" =~ ^[A-Za-z0-9][A-Za-z0-9._-]*$ ]] \
+    || fail_validation "Invalid release ID"
+}
+
+validate_remote_path() {
+  local label="$1"
+  local value="$2"
+  [[ -n "$value" && "${#value}" -le 512 && "$value" =~ ^/[A-Za-z0-9._/-]+$ && "$value" != "/" ]] \
+    || fail_validation "Invalid $label"
+  case "/${value#/}/" in
+    *//*|*/./*|*/../*) fail_validation "Invalid $label" ;;
+  esac
+}
+
+validate_release_id
+validate_remote_path "APP_DIR" "$APP_DIR"
+validate_remote_path "BACKUPS_DIR" "$BACKUPS_DIR"
+validate_remote_path "STAGE_DIR" "$STAGE_DIR"
+[[ -n "$APP_NAME" && "${#APP_NAME}" -le 64 && "$APP_NAME" =~ ^[A-Za-z0-9][A-Za-z0-9._-]*$ ]] \
+  || fail_validation "Invalid APP_NAME"
+[[ "$APP_PORT" =~ ^[0-9]+$ && "$APP_PORT" -ge 1 && "$APP_PORT" -le 65535 ]] \
+  || fail_validation "Invalid APP_PORT"
+[[ "$KEEP_BACKUPS" =~ ^[0-9]+$ && "$KEEP_BACKUPS" -le 100 ]] \
+  || fail_validation "Invalid KEEP_BACKUPS"
+[[ -z "$PUBLIC_APP_HOST" || ( "${#PUBLIC_APP_HOST}" -le 255 && "$PUBLIC_APP_HOST" =~ ^[A-Za-z0-9][A-Za-z0-9.:-]*$ ) ]] \
+  || fail_validation "Invalid PUBLIC_APP_HOST"
+[[ "$RELEASE_SHA" =~ ^[0-9a-f]{40}$ ]] || fail_validation "Expected release source SHA is not a full Git SHA"
+
 COMPATIBILITY_MARKER=".shared-password-db-auth-v1"
 SOURCE_SHA_FILE=".release-source-sha"
 PREVIOUS_DIR="$BACKUPS_DIR/${RELEASE_ID}-previous"
@@ -76,11 +127,6 @@ fi
 
 if ! is_compatible_release "$STAGE_DIR"; then
   echo "Staged release is missing the shared-password compatibility marker" >&2
-  exit 1
-fi
-
-if [[ ! "$RELEASE_SHA" =~ ^[0-9a-f]{40}$ ]]; then
-  echo "Expected release source SHA is not a full Git SHA" >&2
   exit 1
 fi
 

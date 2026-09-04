@@ -21,10 +21,12 @@ read_active_release_identity() {
     return
   fi
 
-  local quoted_app_dir
+  local quoted_app_dir remote_command
   printf -v quoted_app_dir '%q' "$DEPLOY_APP_DIR"
-  "$DEPLOY_SSH_BIN" "$DEPLOY_VPS" "DEPLOY_APP_DIR=$quoted_app_dir bash -s" <<'REMOTE'
+  remote_command="bash -s -- $quoted_app_dir"
+  "$DEPLOY_SSH_BIN" "$DEPLOY_VPS" "$remote_command" <<'REMOTE'
 set -euo pipefail
+DEPLOY_APP_DIR="$1"
 metadata_file="$DEPLOY_APP_DIR/.release-source-sha"
 if [[ -e "$metadata_file" || -L "$metadata_file" ]]; then
   if [[ ! -f "$metadata_file" || -L "$metadata_file" ]]; then
@@ -61,10 +63,10 @@ resolve_legacy_sha() {
   if [[ "${#matches[@]}" -ne 1 ]]; then
     fail "legacy release SHA '$legacy_sha' is ambiguous in local Git"
   fi
-  if ! git -C "$APP_SOURCE_DIR" cat-file -e "${matches[0]}^{commit}" 2>/dev/null; then
-    fail "legacy release SHA '$legacy_sha' does not identify a commit"
+  if [[ "$(git -C "$APP_SOURCE_DIR" cat-file -t "${matches[0]}" 2>/dev/null || true)" != "commit" ]]; then
+    fail "legacy release SHA '$legacy_sha' does not identify a commit object"
   fi
-  printf '%s\n' "${matches[0]}"
+  git -C "$APP_SOURCE_DIR" rev-parse "${matches[0]}"
 }
 
 resolve_active_production_sha() {
@@ -80,8 +82,8 @@ resolve_active_production_sha() {
       if [[ ! "$sha" =~ ^[0-9a-f]{40}$ ]]; then
         fail "active release metadata does not contain one full Git SHA"
       fi
-      if ! git -C "$APP_SOURCE_DIR" cat-file -e "$sha^{commit}" 2>/dev/null; then
-        fail "active production commit $sha is not present in local Git"
+      if [[ "$(git -C "$APP_SOURCE_DIR" cat-file -t "$sha" 2>/dev/null || true)" != "commit" ]]; then
+        fail "active production SHA $sha is not present as a commit object in local Git or does not identify a commit object"
       fi
       printf '%s\n' "$sha"
       ;;

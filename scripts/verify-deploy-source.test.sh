@@ -132,6 +132,34 @@ fi
 grep -Fq "working tree is not clean" "$TMP_DIR/dirty.log" || fail "dirty-tree failure was unclear"
 
 git -C "$TMP_DIR/release" reset --quiet --hard
+printf 'untracked\n' > "$TMP_DIR/release/untracked.txt"
+if run_guard > "$TMP_DIR/untracked.log" 2>&1; then
+  fail "untracked dirty worktree was accepted"
+fi
+grep -Fq "working tree is not clean" "$TMP_DIR/untracked.log" \
+  || fail "untracked dirty-tree failure was unclear"
+rm "$TMP_DIR/release/untracked.txt"
+
+git -C "$TMP_DIR/release" tag -a legacy-annotated -m legacy-annotated
+ANNOTATED_TAG_FULL_SHA="$(git -C "$TMP_DIR/release" rev-parse refs/tags/legacy-annotated)"
+ANNOTATED_TAG_SHA="$(git -C "$TMP_DIR/release" rev-parse --short=12 refs/tags/legacy-annotated)"
+set_active_path "$TMP_DIR/releases/20260904-$ANNOTATED_TAG_SHA"
+if run_guard > "$TMP_DIR/annotated-tag.log" 2>&1; then
+  fail "annotated tag object was accepted as a legacy commit SHA"
+fi
+grep -Fq "does not identify a commit object" "$TMP_DIR/annotated-tag.log" \
+  || {
+    cat "$TMP_DIR/annotated-tag.log" >&2
+    fail "annotated-tag failure was unclear"
+  }
+
+set_active_sha "$ANNOTATED_TAG_FULL_SHA"
+if run_guard > "$TMP_DIR/annotated-tag-metadata.log" 2>&1; then
+  fail "annotated tag object was accepted as full release metadata"
+fi
+grep -Fq "does not identify a commit object" "$TMP_DIR/annotated-tag-metadata.log" \
+  || fail "annotated-tag metadata failure was unclear"
+
 : > "$ACTIVE_RELEASE_STATE"
 if run_guard > "$TMP_DIR/missing-active.log" 2>&1; then
   fail "missing active production identity was accepted"

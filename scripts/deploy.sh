@@ -11,6 +11,13 @@ if [[ "$APP_SOURCE_DIR" == *"/dashboard-next/.worktrees/"* ]]; then
   CANONICAL_SOURCE_DIRS+=("$WORKSPACE_ROOT_DIR/.worktrees/$APP_WORKTREE_NAME" "$WORKSPACE_ROOT_DIR")
 fi
 
+if [[ -n "${DEPLOY_REMOTE+x}" || -n "${DEPLOY_BASE_BRANCH+x}" || \
+  -n "${DEPLOY_ACTIVE_RELEASE_READER+x}" || -n "${DEPLOY_LOCK_DIR+x}" || \
+  -n "${DASHBOARD_DEPLOY_LOCK_DIR+x}" ]]; then
+  echo "Refusing deploy: mandatory deploy authority override variables are not accepted by scripts/deploy.sh." >&2
+  exit 1
+fi
+
 VPS="${VPS:-beget}"
 SSH_BIN="${SSH_BIN:-ssh}"
 APP_DIR="${APP_DIR:-/var/www/dashboard}"
@@ -21,39 +28,89 @@ KEEP_BACKUPS="${KEEP_BACKUPS:-5}"
 TIMESTAMP="$(date -u +%Y%m%d%H%M%S)"
 GIT_REVISION_SHORT="$(git -C "$APP_SOURCE_DIR" rev-parse --short HEAD 2>/dev/null || echo local)"
 RELEASE_ID="${RELEASE_ID:-${TIMESTAMP}-${GIT_REVISION_SHORT}}"
+
+fail_validation() {
+  echo "Refusing deploy: $1" >&2
+  exit 1
+}
+
+validate_release_id() {
+  [[ -n "$RELEASE_ID" && "${#RELEASE_ID}" -le 128 && "$RELEASE_ID" =~ ^[A-Za-z0-9][A-Za-z0-9._-]*$ ]] \
+    || fail_validation "Invalid RELEASE_ID"
+}
+
+validate_remote_path() {
+  local label="$1"
+  local value="$2"
+  [[ -n "$value" && "${#value}" -le 512 && "$value" =~ ^/[A-Za-z0-9._/-]+$ && "$value" != "/" ]] \
+    || fail_validation "Invalid $label"
+  case "/${value#/}/" in
+    *//*|*/./*|*/../*) fail_validation "Invalid $label" ;;
+  esac
+}
+
+validate_release_id
+validate_remote_path "APP_DIR" "$APP_DIR"
+[[ -n "$VPS" && "${#VPS}" -le 255 && "$VPS" =~ ^[A-Za-z0-9][A-Za-z0-9._@:-]*$ ]] \
+  || fail_validation "Invalid VPS"
+[[ -n "$SSH_BIN" && "$SSH_BIN" != *$'\n'* ]] || fail_validation "Invalid SSH_BIN"
+[[ -n "$APP_NAME" && "${#APP_NAME}" -le 64 && "$APP_NAME" =~ ^[A-Za-z0-9][A-Za-z0-9._-]*$ ]] \
+  || fail_validation "Invalid APP_NAME"
+[[ "$APP_PORT" =~ ^[0-9]+$ && "$APP_PORT" -ge 1 && "$APP_PORT" -le 65535 ]] \
+  || fail_validation "Invalid APP_PORT"
+[[ "$KEEP_BACKUPS" =~ ^[0-9]+$ && "$KEEP_BACKUPS" -le 100 ]] \
+  || fail_validation "Invalid KEEP_BACKUPS"
+[[ -z "$PUBLIC_APP_HOST" || ( "${#PUBLIC_APP_HOST}" -le 255 && "$PUBLIC_APP_HOST" =~ ^[A-Za-z0-9][A-Za-z0-9.:-]*$ ) ]] \
+  || fail_validation "Invalid PUBLIC_APP_HOST"
+
 APP_PARENT_DIR="$(dirname "$APP_DIR")"
 APP_BASENAME="$(basename "$APP_DIR")"
 RELEASES_DIR="${RELEASES_DIR:-$APP_PARENT_DIR/${APP_BASENAME}-releases}"
 BACKUPS_DIR="${BACKUPS_DIR:-$APP_PARENT_DIR/${APP_BASENAME}-backups}"
-DEPLOY_LOCK_DIR="${DEPLOY_LOCK_DIR:-$APP_PARENT_DIR/.${APP_NAME}-deploy.lock}"
+DEPLOY_LOCK_DIR="/var/www/.dashboard-next-deploy.lock"
+validate_remote_path "RELEASES_DIR" "$RELEASES_DIR"
+validate_remote_path "BACKUPS_DIR" "$BACKUPS_DIR"
 REMOTE_STAGE_DIR="$RELEASES_DIR/$RELEASE_ID"
+validate_remote_path "REMOTE_STAGE_DIR" "$REMOTE_STAGE_DIR"
 TMP_ENV="$(mktemp)"
 LOCK_OWNER_TOKEN="${TIMESTAMP}-$$-${RANDOM}"
-LOCK_HELD=0
+LOCK_RELEASE_REQUIRED=0
 DEPLOY_SUCCEEDED=0
+
+build_remote_bash_command() {
+  local command="bash -s --"
+  local argument escaped
+  for argument in "$@"; do
+    printf -v escaped '%q' "$argument"
+    command="$command $escaped"
+  done
+  printf '%s\n' "$command"
+}
 
 run_lock_command() {
   local action="$1"
   local remote_command
   if [[ "$action" == "acquire" ]]; then
-    printf -v remote_command 'DASHBOARD_DEPLOY_LOCK_DIR=%q bash -s -- acquire %q %q %q' \
-      "$DEPLOY_LOCK_DIR" "$LOCK_OWNER_TOKEN" "$RELEASE_ID" "$BUILD_SOURCE_SHA"
+    remote_command="$(build_remote_bash_command --lock-dir "$DEPLOY_LOCK_DIR" acquire \
+      "$LOCK_OWNER_TOKEN" "$RELEASE_ID" "$BUILD_SOURCE_SHA")"
   else
-    printf -v remote_command 'DASHBOARD_DEPLOY_LOCK_DIR=%q bash -s -- release %q' \
-      "$DEPLOY_LOCK_DIR" "$LOCK_OWNER_TOKEN"
+    remote_command="$(build_remote_bash_command --lock-dir "$DEPLOY_LOCK_DIR" release "$LOCK_OWNER_TOKEN")"
   fi
   "$SSH_BIN" "$VPS" "$remote_command" < "$SCRIPT_DIR/dashboard-deploy-lock.sh"
 }
 
 acquire_deploy_lock() {
   echo "Acquiring dashboard-next activation lock..."
-  run_lock_command acquire
-  LOCK_HELD=1
+  LOCK_RELEASE_REQUIRED=1
+  if run_lock_command acquire; then
+    return 0
+  fi
+  return 1
 }
 
 release_deploy_lock() {
   if run_lock_command release; then
-    LOCK_HELD=0
+    LOCK_RELEASE_REQUIRED=0
     return 0
   fi
   return 1
@@ -64,7 +121,7 @@ cleanup() {
   trap - EXIT
   set +e
   rm -f "$TMP_ENV"
-  if [[ "$LOCK_HELD" -eq 1 ]]; then
+  if [[ "$LOCK_RELEASE_REQUIRED" -eq 1 ]]; then
     if ! release_deploy_lock; then
       echo "Failed to release deployment lock $DEPLOY_LOCK_DIR; inspect owner metadata before manual recovery." >&2
       if [[ "$status" -eq 0 ]]; then
@@ -79,10 +136,16 @@ cleanup() {
 }
 trap cleanup EXIT
 
+verify_production_deploy_source() {
+  env -u DEPLOY_ACTIVE_RELEASE_READER -u DEPLOY_REMOTE -u DEPLOY_BASE_BRANCH \
+    DEPLOY_REMOTE=origin DEPLOY_BASE_BRANCH=main DEPLOY_VPS="$VPS" \
+    DEPLOY_APP_DIR="$APP_DIR" DEPLOY_SSH_BIN="$SSH_BIN" \
+    bash scripts/verify-deploy-source.sh "$APP_SOURCE_DIR"
+}
+
 verify_deploy_source_under_lock() {
   echo "Rechecking origin/main and active production under the deployment lock..."
-  DEPLOY_VPS="$VPS" DEPLOY_APP_DIR="$APP_DIR" DEPLOY_SSH_BIN="$SSH_BIN" \
-    bash scripts/verify-deploy-source.sh "$APP_SOURCE_DIR"
+  verify_production_deploy_source
   local checked_sha
   checked_sha="$(git -C "$APP_SOURCE_DIR" rev-parse HEAD)"
   if [[ "$checked_sha" != "$BUILD_SOURCE_SHA" ]]; then
@@ -92,11 +155,11 @@ verify_deploy_source_under_lock() {
 }
 
 attest_active_release() {
-  local quoted_app_dir remote_command active_sha
-  printf -v quoted_app_dir '%q' "$APP_DIR"
-  remote_command="APP_DIR=$quoted_app_dir bash -s"
+  local remote_command active_sha
+  remote_command="$(build_remote_bash_command "$APP_DIR")"
   active_sha="$("$SSH_BIN" "$VPS" "$remote_command" <<'REMOTE'
 set -euo pipefail
+APP_DIR="$1"
 metadata_file="$APP_DIR/.release-source-sha"
 [[ -f "$metadata_file" && ! -L "$metadata_file" ]]
 cat "$metadata_file"
@@ -124,8 +187,7 @@ copy_canonical_file() {
 
 cd "$APP_SOURCE_DIR"
 
-DEPLOY_VPS="$VPS" DEPLOY_APP_DIR="$APP_DIR" DEPLOY_SSH_BIN="$SSH_BIN" \
-  bash scripts/verify-deploy-source.sh "$APP_SOURCE_DIR"
+verify_production_deploy_source
 BUILD_SOURCE_SHA="$(git -C "$APP_SOURCE_DIR" rev-parse HEAD)"
 
 echo "Building standalone bundle for release $RELEASE_ID..."
@@ -206,11 +268,19 @@ npm run security:public-assets -- --release "$PACKAGE_DIR"
 bash scripts/validate-production-release.sh "$PACKAGE_DIR" "$PACKAGE_DIR/.env"
 
 echo "Uploading staged release to VPS..."
-"$SSH_BIN" "$VPS" "mkdir -p '$RELEASES_DIR' '$BACKUPS_DIR' /var/log"
+PREPARE_REMOTE_COMMAND="$(build_remote_bash_command "$RELEASES_DIR" "$BACKUPS_DIR")"
+"$SSH_BIN" "$VPS" "$PREPARE_REMOTE_COMMAND" <<'REMOTE'
+set -euo pipefail
+RELEASES_DIR="$1"
+BACKUPS_DIR="$2"
+mkdir -p "$RELEASES_DIR" "$BACKUPS_DIR" /var/log
+REMOTE
 rsync -avz --delete "$PACKAGE_DIR/" "$VPS:$REMOTE_STAGE_DIR/"
 
 echo "Activating staged release with automatic rollback on failure..."
-"$SSH_BIN" "$VPS" "APP_DIR='$APP_DIR' BACKUPS_DIR='$BACKUPS_DIR' STAGE_DIR='$REMOTE_STAGE_DIR' APP_NAME='$APP_NAME' APP_PORT='$APP_PORT' PUBLIC_APP_HOST='$PUBLIC_APP_HOST' KEEP_BACKUPS='$KEEP_BACKUPS' RELEASE_ID='$RELEASE_ID' RELEASE_SHA='$BUILD_SOURCE_SHA' bash -s" \
+ACTIVATE_REMOTE_COMMAND="$(build_remote_bash_command "$APP_DIR" "$BACKUPS_DIR" "$REMOTE_STAGE_DIR" \
+  "$APP_NAME" "$APP_PORT" "$KEEP_BACKUPS" "$RELEASE_ID" "$PUBLIC_APP_HOST" "$BUILD_SOURCE_SHA")"
+"$SSH_BIN" "$VPS" "$ACTIVATE_REMOTE_COMMAND" \
   < "$SCRIPT_DIR/activate-release.sh"
 
 attest_active_release
