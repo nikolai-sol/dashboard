@@ -362,3 +362,19 @@ test("executive snapshot marks multi-day post-click users unavailable", () => {
 
   assert.deepEqual(snapshot.post_click, { visits: 50, users: 0, users_available: false });
 });
+
+test("legacy executive snapshot keeps Alice SoV but withholds ambiguous counts", () => {
+  const snapshot = buildSeoExecutiveSnapshot({
+    gscRows: [],
+    webmasterRows: [],
+    positionTrend: [],
+    aiRows: [{
+      engine: "alisa_ai", period: "2026-07", presence_rate: 44, mentions: 89, citations: 155,
+      provenance: "wm_alisa_manual", captured_at: "2026-07-13T14:30:00.000Z", ingestion_run_id: "ai-1",
+    }],
+    aliceSnapshots: [],
+    postClickRows: [],
+  });
+
+  assert.deepEqual(snapshot.ai, { presence_rate: 44, mentions: null, citations: null });
+});

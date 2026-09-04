@@ -134,3 +134,14 @@ test("buildWeeklyFocus describes the latest official Alice SoV without legacy co
   assert.equal(focus.ai, "ИИ: официальная видимость в Алисе AI — 43,91% за 2026-08 · ручная выгрузка");
   assert.equal(focus.pipeline, "Конвейер: 2026-W29 завершён, дайджест 6, Медицинская проверка: 3");
 });
+
+test("legacy Alice fallback keeps only visibility and Russian manual provenance", () => {
+  const kpis = buildNorthStarKpis({ sovRows, aiRows, aliceSnapshots: [], opportunities });
+  const focus = buildWeeklyFocus({ opportunities, aiRows, aliceSnapshots: [], tasks, runs, week: "2026-W29" });
+
+  assert.equal(kpis.aiVisibility.value, 44);
+  assert.equal(kpis.aiVisibility.note, "Видимость в Алисе AI, ручная выгрузка, ежемесячно");
+  assert.equal(kpis.aiVisibility.provenance, "Ручная выгрузка");
+  assert.equal(focus.ai, "ИИ: видимость в Алисе AI — 44,00% за 2026-07 · ручная выгрузка");
+  assert.doesNotMatch(`${kpis.aiVisibility.provenance} ${focus.ai}`, /89|155|упоминани|цитировани|wm_alisa_manual/i);
+});

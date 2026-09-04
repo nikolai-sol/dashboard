@@ -172,8 +172,12 @@ export function buildNorthStarKpis({
       delta: delta(officialAlice?.officialSovPct ?? ai?.presence_rate ?? null, BASELINES.aiVisibility),
       goal: "up",
       period: officialAlice?.month ?? ai?.period ?? null,
-      note: "Официальная SoV, Яндекс Вебмастер, ручная выгрузка, ежемесячно",
-      provenance: officialAlice ? "Ручная выгрузка" : ai?.provenance ?? null,
+      note: officialAlice
+        ? "Официальная SoV, Яндекс Вебмастер, ручная выгрузка, ежемесячно"
+        : ai
+          ? "Видимость в Алисе AI, ручная выгрузка, ежемесячно"
+          : undefined,
+      provenance: officialAlice || ai ? "Ручная выгрузка" : null,
       series: aiSeries(aliceSnapshots, aiRows),
     },
     approveRate: {
@@ -278,7 +282,7 @@ export function buildWeeklyFocus({
     ai: officialAlice
       ? `ИИ: официальная видимость в Алисе AI — ${officialAlice.officialSovPct.toLocaleString("ru-RU", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}% за ${officialAlice.month} · ручная выгрузка`
       : ai
-      ? `ИИ: ${ai.mentions.toLocaleString("ru-RU")} упоминаний и ${ai.citations.toLocaleString("ru-RU")} цитирований за ${ai.period}${ai.provenance ? ` · контрольная точка загружена вручную, источник ${ai.provenance}` : ""}`
+      ? `ИИ: видимость в Алисе AI — ${ai.presence_rate.toLocaleString("ru-RU", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}% за ${ai.period} · ручная выгрузка`
       : "ИИ: для выбранной недели нет связанного месячного среза",
     pipeline: run
       ? `Конвейер: ${run.week} ${readableRunStatus(run.status)}, дайджест ${run.digest_count ?? "—"}, ${taskStatusSummary(weekTasks) || "задач нет"}`

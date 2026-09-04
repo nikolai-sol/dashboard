@@ -29,3 +29,14 @@ test("SEO keeps only the current official Alice SoV summary with a path to detai
   assert.doesNotMatch(seoSource, /AiAggregateVisibilityPanel/);
   assert.doesNotMatch(seoSource, /Упоминания|Цитаты/);
 });
+
+test("overview keeps Alice SoV and its percentage-point delta at two decimals", () => {
+  const northStarStart = source.indexOf("function NorthStarBlock");
+  const northStarEnd = source.indexOf("function TrafficHealthStrip");
+  const northStarSource = source.slice(northStarStart, northStarEnd);
+
+  assert.match(northStarSource, /formatNorthStarValue\(item\.value, item\.key, locale\)/);
+  assert.match(northStarSource, /formatNorthStarDelta\(item\.delta, item\.key, locale\)/);
+  assert.doesNotMatch(northStarSource, /formatPercent\(item\.value, locale, 1\)/);
+  assert.doesNotMatch(northStarSource, /formatSignedPercent\(item\.delta, locale, 1\)/);
+});

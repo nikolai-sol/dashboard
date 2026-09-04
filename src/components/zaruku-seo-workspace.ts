@@ -568,8 +568,8 @@ export function buildSeoExecutiveSnapshot({
       presence_rate: aiPresenceValues.length > 0
         ? aiPresenceValues.reduce((sum, value) => sum + value, 0) / aiPresenceValues.length
         : null,
-      mentions: aiRows.reduce((sum, row) => sum + row.mentions, 0),
-      citations: aiRows.reduce((sum, row) => sum + row.citations, 0),
+      mentions: null,
+      citations: null,
     } : null,
     post_click: postClickRows.length > 0
       ? {

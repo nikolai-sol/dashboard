@@ -120,6 +120,17 @@ function formatSignedPercent(value: number | null | undefined, locale = "ru-RU",
   return `Δ ${sign}${formatPercent(value, locale, digits)}`;
 }
 
+function formatNorthStarValue(value: number | null | undefined, key: string, locale = "ru-RU") {
+  return formatPercent(value, locale, key === "aiVisibility" ? 2 : 1);
+}
+
+function formatNorthStarDelta(value: number | null | undefined, key: string, locale = "ru-RU") {
+  if (key !== "aiVisibility") return formatSignedPercent(value, locale, 1);
+  if (value == null || !Number.isFinite(value)) return "—";
+  const sign = value < 0 ? "−" : value > 0 ? "+" : "";
+  return `${sign}${Math.abs(value).toLocaleString(locale, { minimumFractionDigits: 2, maximumFractionDigits: 2 })} п. п.`;
+}
+
 function readableAudienceLabel(label: string) {
   const normalized = label.trim().toLowerCase();
   const labels: Record<string, string> = {
@@ -446,11 +457,11 @@ function NorthStarBlock({ data, locale }: Props) {
                 </ZarukuInfoPopover>
               </div>
               <div data-zaruku-kpi-value-row className="mt-1 flex min-w-0 flex-wrap items-baseline gap-x-1.5 gap-y-1">
-                <span className="zaruku-kpi-value min-w-0 text-3xl font-semibold leading-none text-slate-950">{formatPercent(item.value, locale, 1)}</span>
+                <span className="zaruku-kpi-value min-w-0 text-3xl font-semibold leading-none text-slate-950">{formatNorthStarValue(item.value, item.key, locale)}</span>
                 <span className="shrink-0 text-sm font-medium text-slate-400">{item.arrow}</span>
                 {item.showDelta ? (
                   <span className={item.deltaTone === "good" ? "shrink-0 text-xs font-medium text-teal-700" : "shrink-0 text-xs font-medium text-red-700"}>
-                    {formatSignedPercent(item.delta, locale, 1)}
+                    {formatNorthStarDelta(item.delta, item.key, locale)}
                   </span>
                 ) : null}
               </div>
