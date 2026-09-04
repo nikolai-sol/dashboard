@@ -66,7 +66,8 @@ export function parseAliceVisibilityWorkbook(
   if (!sheet) throw new Error("Рабочий лист отсутствует");
   const rows = XLSX.utils.sheet_to_json<unknown[]>(sheet, { header: 1, defval: null, raw: false });
   const expected = ["Запрос", "Присутствует сайт", "Ответ в Алисе AI", ...Array.from({ length: 10 }, (_, i) => `Сайт ${i + 1}`)];
-  if (rows.length === 0 || JSON.stringify(rows[0]?.slice(0, expected.length)) !== JSON.stringify(expected)) {
+  const headerRow = rows[0] ?? [];
+  if (JSON.stringify(headerRow.slice(0, expected.length)) !== JSON.stringify(expected) || headerRow.slice(expected.length).some((value) => String(value ?? "").trim())) {
     throw new Error("Заголовки workbook не соответствуют ожидаемому формату");
   }
 
@@ -75,6 +76,9 @@ export function parseAliceVisibilityWorkbook(
   const sources: ParsedAliceVisibilitySource[] = [];
   for (const [offset, row] of rows.slice(1).entries()) {
     const rowNumber = offset + 2;
+    if (row.slice(expected.length).some((value) => String(value ?? "").trim())) {
+      throw new Error(`Строка ${rowNumber}: лишние ячейки после сайта 10`);
+    }
     const queryText = String(row[0] ?? "").trim();
     if (!queryText) throw new Error(`Строка ${rowNumber}: запрос отсутствует`);
     const queryHash = createHash("sha256").update(queryText.toLowerCase()).digest("hex");

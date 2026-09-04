@@ -37,6 +37,8 @@ test("parser keeps official SoV separate from exported example coverage", () => 
 });
 
 test("parser rejects malformed headers", () => assert.throws(() => parseAliceVisibilityWorkbook(workbookBuffer([["Запрос"], ["q"]]), input), /Заголовки/));
+test("parser rejects non-empty extra header columns", () => assert.throws(() => parseAliceVisibilityWorkbook(workbookBuffer([[...header, "Сайт 11"], ["q", "false", "https://a.test", "https://example.org"]]), input), /Заголовки/));
+test("parser rejects non-empty cells beyond the tenth source", () => assert.throws(() => parseAliceVisibilityWorkbook(workbookBuffer([[...header], ["q", "false", "https://a.test", "https://example.org", ...Array(9).fill(null), "https://extra.example"]]), input), /лишн/));
 test("parser rejects duplicate queries", () => assert.throws(() => parseAliceVisibilityWorkbook(workbookBuffer([header, ["q", "false", "https://a.test", "https://example.org"], [" Q ", "false", "https://a.test", "https://example.org"]]), input), /повторяется/));
 test("parser rejects invalid presence flags", () => assert.throws(() => parseAliceVisibilityWorkbook(workbookBuffer([header, ["q", "yes", "https://a.test", "https://example.org"]]), input), /true или false/));
 test("parser rejects invalid URLs", () => assert.throws(() => parseAliceVisibilityWorkbook(workbookBuffer([header, ["q", "false", "not-a-url", "https://example.org"]]), input), /ссылка отсутствует|Invalid URL/));
