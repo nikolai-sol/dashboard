@@ -3,11 +3,13 @@ import pool from "@/lib/db";
 import { businessCalendarIsoDate } from "@/lib/abbott-date-range";
 import { loadAccountFacts, loadSeoIntelligence, loadSeoProcess } from "@/lib/account-read-models";
 import { loadZarukuMetrikaBreakdowns } from "@/lib/zaruku-metrika";
+import { loadZarukuAliceVisibility } from "@/lib/zaruku-alice-visibility";
 import { matchSectionPattern } from "@/lib/zaruku-seo-os";
 import { makeZarukuDatasetMeta } from "@/lib/zaruku-dataset-meta";
 import { resolveZarukuDailyPeriod } from "@/lib/zaruku-daily-period";
 import type {
   ZarukuAiVisibilityData,
+  ZarukuAliceVisibilityData,
   ZarukuSeoData,
   ZarukuSeoDataQualityItem,
   ZarukuSeoKpi,
@@ -1246,6 +1248,7 @@ export function deriveSourceDataThrough({
   seoOsLatestWeek,
   aiLatestPeriod,
   aiRows,
+  aliceLatestMonth,
   wordstat,
 }: {
   gscSummary: Array<{ week_to: string }>;
@@ -1253,6 +1256,7 @@ export function deriveSourceDataThrough({
   seoOsLatestWeek: string | null;
   aiLatestPeriod: string | null;
   aiRows: Array<{ period: string; captured_at: string | null }>;
+  aliceLatestMonth?: string | null;
   wordstat?: Pick<ZarukuWordstatData, "current">;
 }): SourceDataThrough {
   const latestGscDate = gscSummary.map((row) => row.week_to).filter(Boolean).sort().at(-1) ?? null;
@@ -1270,7 +1274,7 @@ export function deriveSourceDataThrough({
     webmaster: latestWebmasterDate,
     seo_os: seoOsLatestWeek,
     ...(wordstat ? { wordstat: wordstat.current.period?.to ?? null } : {}),
-    yandex_gen_search: latestAiCapture ?? aiLatestPeriod,
+    yandex_gen_search: aliceLatestMonth === undefined ? latestAiCapture ?? aiLatestPeriod : aliceLatestMonth,
   };
 }
 
@@ -1279,6 +1283,7 @@ export function buildSources({
   webmaster,
   gsc,
   seoIntelligence,
+  aliceVisibility,
   wordstat,
   dataThrough,
 }: {
@@ -1286,12 +1291,15 @@ export function buildSources({
   webmaster: ZarukuYandexWebmasterData;
   gsc: ZarukuGscData;
   seoIntelligence: ZarukuSeoIntelligenceData;
+  aliceVisibility?: ZarukuAliceVisibilityData;
   wordstat?: ZarukuWordstatData;
   dataThrough: SourceDataThrough;
 }): ZarukuSeoSource[] {
   const webmasterStatus = sourceStatusFromData(webmaster.status);
   const gscStatus = sourceStatusFromData(gsc.status);
-  const aiStatus = seoIntelligence.ai.rows.length > 0 ? sourceStatusFromData(seoIntelligence.status) : "pending";
+  const aiStatus = aliceVisibility
+    ? sourceStatusFromData(aliceVisibility.status)
+    : seoIntelligence.ai.rows.length > 0 ? sourceStatusFromData(seoIntelligence.status) : "pending";
   const wordstatStatus: ZarukuSeoSourceStatus = !wordstat || wordstat.status === "unavailable"
       ? "unavailable"
       : wordstat.status === "partial"
@@ -1332,8 +1340,10 @@ export function buildSources({
           data_through: dataThrough.yandex_gen_search,
           note:
             aiStatus === "connected"
-              ? "AI-видимость из seo_ai_visibility: присутствие, упоминания и цитаты."
-              : "Ожидаем снимки AI-видимости из SEO OS / внешнего источника.",
+              ? "AI-видимость из канонических ежемесячных снимков Алисы."
+              : aiStatus === "partial"
+                ? "Доступна сводка канонического снимка Алисы, но часть деталей временно недоступна."
+                : "Канонические снимки AI-видимости пока недоступны.",
         };
       }
       if (source.id === "wordstat") {
@@ -1446,6 +1456,7 @@ export async function loadZarukuSeoData(
     measureLoadPhase("seo-db", options.recordTiming, () => Promise.all([
       loadSeoProcess(accountId),
       loadSeoIntelligence(accountId),
+      loadZarukuAliceVisibility(normalizedCounterIds),
     ])),
   ]);
   const [
@@ -1456,7 +1467,7 @@ export async function loadZarukuSeoData(
     metrikaBreakdowns,
     sourceFreshness,
   ] = metrika;
-  const [seoOs, seoIntelligence] = seo;
+  const [seoOs, seoIntelligence, aliceVisibility] = seo;
   const { trafficChannels, technicalTail } = splitTrafficRows(trafficRowsRaw);
 
   const searchEnginesReport = metrikaBreakdowns.reports.search_engines;
@@ -1643,12 +1654,14 @@ export async function loadZarukuSeoData(
       gsc,
       webmaster,
       seoIntelligence,
+      aliceVisibility,
       dataThrough: deriveSourceDataThrough({
         gscSummary: gsc.summary,
         webmasterSummary: webmaster.summary,
         seoOsLatestWeek: seoOs.latest_week,
         aiLatestPeriod: seoIntelligence.ai.latest_period,
         aiRows: seoIntelligence.ai.rows,
+        aliceLatestMonth: aliceVisibility.latestMonth,
         wordstat,
       }),
       wordstat,
@@ -1689,6 +1702,7 @@ export async function loadZarukuSeoData(
     webmaster,
     gsc,
     ai_visibility: DEPRECATED_EMPTY_WEEKLY_AI_VISIBILITY,
+    alice_visibility: aliceVisibility,
     seo_intelligence: seoIntelligence,
     data_quality: buildDataQuality({
       technicalTail,

@@ -1217,6 +1217,82 @@ export interface ZarukuAiVisibilityData {
   rows: ZarukuAiVisibilityRow[];
 }
 
+export interface ZarukuAliceVisibilitySource {
+  id: string;
+  sourceRank: number;
+  sourceUrl: string;
+  sourceDomain: string;
+  isPortal: boolean;
+}
+
+export interface ZarukuAliceVisibilityQuery {
+  id: string;
+  queryHash: string;
+  queryText: string;
+  portalPresent: boolean;
+  portalPosition: number | null;
+  portalUrl: string | null;
+  aliceAnswerUrl: string;
+  sourceCount: number;
+  rawPresentValue: string;
+  sources: ZarukuAliceVisibilitySource[];
+}
+
+export interface ZarukuAliceVisibilityCompetitor {
+  domain: string;
+  queryCount: number;
+  sharePct: number;
+}
+
+export interface ZarukuAliceVisibilityFeaturedSite {
+  id: string;
+  displayOrder: number;
+  siteUrl: string;
+  siteDomain: string;
+  listKind: string;
+}
+
+export interface ZarukuAliceVisibilityProvenance {
+  sourceKey: string;
+  sourceFilename: string | null;
+  sourceSha256: string;
+  ingestionRunId: string;
+}
+
+export interface ZarukuAliceVisibilityVersion {
+  id: string;
+  analyticsAccountId: string;
+  capturedAt: string | null;
+  publicationStatus: string;
+  supersedesSnapshotId: string | null;
+  officialSovPct: number;
+  provenance: ZarukuAliceVisibilityProvenance;
+}
+
+export interface ZarukuAliceVisibilitySnapshot {
+  id: string;
+  analyticsAccountId: string;
+  month: string;
+  domain: string;
+  officialSovPct: number;
+  exportedQueryCount: number | null;
+  portalPresentQueryCount: number | null;
+  samplePresencePct: number | null;
+  provenance: ZarukuAliceVisibilityProvenance;
+  queries: ZarukuAliceVisibilityQuery[];
+  competitors: ZarukuAliceVisibilityCompetitor[];
+  featuredSites: ZarukuAliceVisibilityFeaturedSite[];
+  versions: ZarukuAliceVisibilityVersion[];
+}
+
+export interface ZarukuAliceVisibilityData {
+  status: "available" | "partial" | "unavailable";
+  error: string | null;
+  months: string[];
+  latestMonth: string | null;
+  snapshots: ZarukuAliceVisibilitySnapshot[];
+}
+
 export interface ZarukuSeoSovWeeklyRow {
   week: string;
   period_label: string;
@@ -1332,6 +1408,7 @@ export interface ZarukuSeoData {
   webmaster: ZarukuYandexWebmasterData;
   gsc: ZarukuGscData;
   ai_visibility: ZarukuAiVisibilityData;
+  alice_visibility: ZarukuAliceVisibilityData;
   seo_intelligence: ZarukuSeoIntelligenceData;
 }
 

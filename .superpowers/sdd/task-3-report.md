@@ -164,3 +164,38 @@
    ```
 
    Result: exit 0; 0 errors and the same 2 pre-existing `react-hooks/exhaustive-deps` warnings in `src/components/admin/DashboardUtmSourceMatching.tsx` at lines 66 and 152.
+
+## Canonical Alice Visibility Read Model (2026-09-04)
+
+### Changes
+
+- Added `loadZarukuAliceVisibility(accountIds)`: a MySQL-only, four-query read model over the canonical Alice snapshot, query, source, and featured-site tables.
+- Returned published monthly summaries with typed query/source details, de-duplicated competitor frequency, featured sites, provenance, and superseded-version metadata.
+- Added `alice_visibility` to `ZarukuSeoData` and loaded it in the existing `seo-db` phase. The AI source status and `data_through` now follow the canonical Alice result; legacy `seo_intelligence` remains intact for compatibility.
+- Missing migration/table or child detail reads fail closed independently: no snapshot table is `unavailable`; failed child reads preserve published summaries as `partial`.
+
+### Files
+
+- `src/lib/zaruku-alice-visibility.ts`
+- `src/lib/zaruku-alice-visibility.test.ts`
+- `src/lib/types.ts`
+- `src/lib/zaruku-seo.ts`
+- `src/lib/zaruku-seo.test.ts`
+
+### TDD Evidence
+
+1. **RED:** `node --import tsx --test src/lib/zaruku-alice-visibility.test.ts` failed with `Cannot find module '@/lib/zaruku-alice-visibility'` after the query/normalization contract was written.
+2. **GREEN:** the same focused test passed after the four-query normalization read model was added.
+3. **RED:** the Zaruku integration regression failed because `data.alice_visibility` was undefined.
+4. **GREEN:** `node --import tsx --test src/lib/zaruku-alice-visibility.test.ts src/lib/zaruku-seo.test.ts` passed 54/54, including the July snapshot retained as `partial` when query detail is unavailable.
+
+### Verification
+
+- Focused tests: 54/54 passed.
+- `npm run typecheck`: passed.
+- `npm run lint`: passed with 4 pre-existing warnings outside these files.
+- `npm test`: 587/588 passed. The sole unrelated failure is the known `tsx` IPC `EPERM` in `scripts/set-dashboard-shared-password.test.ts`; this task did not modify that test.
+
+### Concerns
+
+- The public read model deliberately does not read XLSX files or external APIs. It exposes only canonical, published snapshot data; superseded rows are retained solely as version metadata.

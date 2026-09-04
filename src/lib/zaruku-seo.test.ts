@@ -121,6 +121,52 @@ test("Zaruku runtime hard-scopes every account read model to the active Metrika 
   }
 });
 
+test("July Alice snapshot remains visible when query detail is unavailable", async (t) => {
+  t.mock.method(
+    pool as unknown as {
+      execute: (sql: string, params?: unknown[]) => Promise<[unknown[], unknown[]]>;
+    },
+    "execute",
+    async (sql: string) => {
+      if (sql.includes("canonical_alice_visibility_queries")) throw new Error("query table unavailable");
+      if (sql.includes("canonical_alice_visibility_snapshots")) {
+        return [[{
+          id: 11,
+          source_key: "yandex_webmaster_alice_manual",
+          analytics_account_id: "66624469",
+          domain: "zaruku.ru",
+          period_month: "2026-07-01",
+          captured_at: "2026-08-01 12:00:00",
+          official_sov_pct: "43.91",
+          exported_query_count: 155,
+          portal_present_query_count: 68,
+          sample_presence_pct: "43.87",
+          source_filename: "alice.xlsx",
+          source_sha256: "a".repeat(64),
+          publication_status: "published",
+          supersedes_snapshot_id: null,
+          ingestion_run_id: "alice-2026-07",
+        }], []];
+      }
+      return [[], []];
+    },
+  );
+
+  const data = await loadZarukuSeoData(
+    ["66624469"],
+    "2026-07-01",
+    "2026-07-31",
+    { today: "2026-08-03" },
+  );
+
+  assert.equal(data.alice_visibility.status, "partial");
+  assert.equal(data.alice_visibility.latestMonth, "2026-07");
+  assert.equal(data.alice_visibility.snapshots[0]?.officialSovPct, 43.91);
+  const aliceSource = data.sources.find((source) => source.id === "yandex_gen_search");
+  assert.equal(aliceSource?.status, "partial");
+  assert.equal(aliceSource?.data_through, "2026-07");
+});
+
 test("organic landing read model joins canonical titles and collapses search engines by normalized URL", async (t) => {
   const canonicalUrl = "https://zaruku.ru/rak-molochnoj-zhelezy/invalidnost-pri-rake-molochnoj-zhelezy-kak-poluchit-i-kakie-preimushestva-ona-daet/";
   const pageTitle = "Инвалидность при раке молочной железы. Как получить и какие преимущества она дает";
