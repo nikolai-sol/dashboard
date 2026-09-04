@@ -86,6 +86,16 @@ test("empty data explains what is needed for the first snapshot", () => {
   assert.match(markup, /Передайте месячную выгрузку/);
 });
 
+test("unavailable snapshots show an honest retry-later state instead of an import request", () => {
+  const unavailable = { ...data([], "unavailable"), error: "Канонические снимки AI-видимости недоступны." };
+  const markup = renderToStaticMarkup(createElement(ZarukuAliceVisibilityTab, { data: unavailable, locale: "ru-RU" }));
+  assert.match(markup, /Данные ИИ-видимости сейчас недоступны/);
+  assert.match(markup, /Попробуйте открыть вкладку позже/);
+  assert.doesNotMatch(markup, /Пока нет опубликованных снимков/);
+  assert.doesNotMatch(markup, /Передайте месячную выгрузку/);
+  assert.doesNotMatch(markup, /Канонические снимки/);
+});
+
 test("partial data preserves the visible monthly result", () => {
   const markup = renderToStaticMarkup(createElement(ZarukuAliceVisibilityTab, { data: data([julySnapshot], "partial"), locale: "ru-RU" }));
   assert.match(markup, /44%/);
@@ -101,4 +111,21 @@ test("a later partial snapshot does not claim its detail was lost in July", () =
   assert.match(markup, /155/);
   assert.match(markup, /89/);
   assert.match(markup, /57,42%/);
+});
+
+test("partial source and featured reads do not turn empty arrays into factual empty claims", () => {
+  const partialAugust = {
+    ...augustSnapshot,
+    queries: augustSnapshot.queries.map((query) => ({ ...query, sources: [] })),
+    competitors: [],
+    featuredSites: [],
+  };
+  const markup = renderToStaticMarkup(createElement(ZarukuAliceVisibilityTab, { data: data([partialAugust], "partial"), locale: "ru-RU" }));
+  assert.match(markup, /инвалидность после мастэктомии/);
+  assert.match(markup, /Часть детализации по источникам и примерам временно недоступна/);
+  assert.match(markup, /Источники временно недоступны/);
+  assert.match(markup, /Данные об источниках для конкурентов временно недоступны/);
+  assert.match(markup, /Примеры заметных сайтов временно недоступны/);
+  assert.doesNotMatch(markup, /В выгрузке нет внешних источников для подсчёта/);
+  assert.doesNotMatch(markup, /Яндекс не передал примеры заметных сайтов/);
 });
