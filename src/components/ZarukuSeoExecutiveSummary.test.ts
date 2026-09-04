@@ -70,3 +70,21 @@ test("does not render unavailable multi-day users as zero", () => {
   assert.match(markup, /320 визитов · — пользователей/);
   assert.doesNotMatch(markup, /0 пользователей/);
 });
+
+test("does not turn unavailable legacy AI counts into zero for an official SoV", () => {
+  const markup = renderToStaticMarkup(
+    createElement(ZarukuSeoExecutiveSummary, {
+      snapshot: {
+        ...snapshot,
+        ai: { presence_rate: 43.91, mentions: null, citations: null },
+      },
+      trafficPeriod: { from: "2026-07-01", to: "2026-07-21" },
+      primaryWeek: "2026-W29",
+      comparisonWeek: "2026-W28",
+      sourcePeriods: { google: "2026-W29", webmaster: "2026-W29", seoOs: "2026-W29", ai: "2026-08" },
+    }),
+  );
+
+  assert.match(markup, /Упоминания<\/div><div[^>]*>—<\/div>/);
+  assert.match(markup, /Цитирования<\/div><div[^>]*>—<\/div>/);
+});

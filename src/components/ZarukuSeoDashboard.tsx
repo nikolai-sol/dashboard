@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import {
   Bar,
   BarChart,
@@ -58,6 +58,7 @@ import ZarukuAudienceTab, { isZarukuAudienceVisible } from "@/components/ZarukuA
 import ZarukuWorkTab from "@/components/ZarukuWorkTab";
 import ZarukuQualityTab from "@/components/ZarukuQualityTab";
 import ZarukuWordstatTab from "@/components/ZarukuWordstatTab";
+import ZarukuAliceVisibilityTab from "@/components/ZarukuAliceVisibilityTab";
 import {
   buildNorthStarKpis,
   buildSemanticHealthRows,
@@ -92,6 +93,7 @@ export type { ZarukuTabId } from "@/components/zaruku-seo-week-selection";
 const NAV: Array<{ id: ZarukuTabId; label: string; icon: typeof LayoutGrid }> = [
   { id: "overview", label: "Обзор", icon: LayoutGrid },
   { id: "seo", label: "SEO", icon: Search },
+  { id: "alice", label: "ИИ-видимость и конкуренты", icon: ChartNoAxesColumnIncreasing },
   { id: "wordstat", label: "Спрос Wordstat", icon: ChartNoAxesColumnIncreasing },
   { id: "content", label: "Контент", icon: FileText },
   { id: "audience", label: "Аудитория", icon: Users },
@@ -422,6 +424,7 @@ function NorthStarBlock({ data, locale }: Props) {
   const items = buildNorthStarStripItems(buildNorthStarKpis({
     sovRows: data.seo_intelligence.sov.rows,
     aiRows: data.seo_intelligence.ai.rows,
+    aliceSnapshots: data.alice_visibility.snapshots,
     opportunities: data.seo_os.opportunities,
   }));
   return (
@@ -492,44 +495,44 @@ function TrafficHealthStrip({ data }: { data: ZarukuSeoData }) {
   );
 }
 
-function AiAggregateVisibilityPanel({ data, locale }: Props) {
-  const rows = data.seo_intelligence.ai.rows;
-  const chartRows = rows.map((row) => ({ ...row, label: row.period }));
-  const latest = [...rows].sort((left, right) => left.period.localeCompare(right.period)).at(-1) ?? null;
+function formatAliceMonth(month: string, locale: string) {
+  const formatted = new Intl.DateTimeFormat(locale, { month: "long", year: "numeric", timeZone: "UTC" }).format(new Date(`${month}-01T12:00:00Z`)).replace(/ г\.$/u, "");
+  return formatted ? `${formatted.slice(0, 1).toLocaleUpperCase(locale)}${formatted.slice(1)}` : month;
+}
+
+function formatAliceCaptureDate(value: string | null) {
+  const date = value?.slice(0, 10);
+  return date && /^\d{4}-\d{2}-\d{2}$/u.test(date) ? `${date.slice(8, 10)}.${date.slice(5, 7)}.${date.slice(0, 4)}` : null;
+}
+
+function formatAliceComparisonMonth(month: string) {
+  const labels: Record<string, string> = {
+    "01": "январю", "02": "февралю", "03": "марту", "04": "апрелю", "05": "маю", "06": "июню",
+    "07": "июлю", "08": "августу", "09": "сентябрю", "10": "октябрю", "11": "ноябрю", "12": "декабрю",
+  };
+  return labels[month.slice(5, 7)] ?? month;
+}
+
+function AliceVisibilitySummaryCard({ data, locale, onOpenAlice }: Props & { onOpenAlice: () => void }) {
+  const snapshots = [...data.alice_visibility.snapshots].sort((left, right) => left.month.localeCompare(right.month));
+  const latest = snapshots.at(-1) ?? null;
+  const previous = latest ? snapshots.filter((snapshot) => snapshot.month < latest.month).at(-1) ?? null : null;
+  const delta = latest && previous ? latest.officialSovPct - previous.officialSovPct : null;
+  const capturedAt = latest?.versions.find((version) => version.id === latest.id)?.capturedAt ?? null;
+
   return (
-    <Panel
-      data={data}
-      title="AI-видимость (Яндекс Вебмастер / внешний источник)"
-      source="yandex_gen_search"
-      layer="ai"
-      pending={rows.length === 0}
-      right={<span className="text-xs text-slate-400">{latest?.period ?? "период —"}</span>}
-    >
-      {rows.length ? (
-        <div className="space-y-3">
-          <ResponsiveContainer width="100%" height={220}>
-            <BarChart data={chartRows} margin={{ top: 8, right: 8, left: -20, bottom: 0 }}>
-              <CartesianGrid stroke={ZARUKU_CHART_PALETTE.grid} strokeDasharray="3 3" vertical={false} />
-              <XAxis dataKey="label" tick={{ fontSize: 12, fill: ZARUKU_CHART_PALETTE.axis }} axisLine={false} tickLine={false} />
-              <YAxis tick={{ fontSize: 12, fill: ZARUKU_CHART_PALETTE.axis }} axisLine={false} tickLine={false} />
-              <Tooltip />
-              <Bar dataKey="presence_rate" name="Доля присутствия" fill={ZARUKU_CHART_PALETTE.position} radius={[6, 6, 0, 0]} />
-            </BarChart>
-          </ResponsiveContainer>
-          <div className="grid gap-3 md:grid-cols-3">
-            <div className="rounded-lg border border-slate-200 bg-slate-50 px-3 py-3"><div className="text-xs uppercase text-slate-400">Присутствие</div><div className="zaruku-kpi-value mt-1 text-xl font-semibold text-slate-900">{formatPercent(latest?.presence_rate, locale, 1)}</div></div>
-            <div className="rounded-lg border border-slate-200 bg-slate-50 px-3 py-3"><div className="text-xs uppercase text-slate-400">Упоминания</div><div className="zaruku-kpi-value mt-1 text-xl font-semibold text-slate-900">{formatNumber(latest?.mentions ?? 0, locale)}</div></div>
-            <div className="rounded-lg border border-slate-200 bg-slate-50 px-3 py-3"><div className="text-xs uppercase text-slate-400">Цитаты</div><div className="zaruku-kpi-value mt-1 text-xl font-semibold text-slate-900">{formatNumber(latest?.citations ?? 0, locale)}</div></div>
-          </div>
-          <p className="text-xs leading-relaxed text-slate-500">
-            {latest ? `${formatNumber(latest.mentions, locale)} упоминаний и ${formatNumber(latest.citations, locale)} цитирований за ${latest.period}.` : ""}
-            {latest?.provenance ? ` Контрольная точка загружена вручную; источник: ${latest.provenance}.` : ""}
-          </p>
-        </div>
-      ) : (
-        <div className="rounded-md bg-slate-50 px-3 py-8 text-center text-sm text-slate-500">{ZARUKU_CLIENT_COPY.emptyAiVisibility}</div>
-      )}
-    </Panel>
+    <section className="card-surface zaruku-panel">
+      <div className="zaruku-panel-body">
+        <h3 className="text-base font-semibold text-slate-900">ИИ-видимость в Алисе AI</h3>
+        {latest ? <>
+          <p className="mt-2 text-sm text-slate-500">{formatAliceMonth(latest.month, locale ?? "ru-RU")}</p>
+          <div className="zaruku-kpi-value mt-1 text-3xl font-semibold text-slate-900">{formatPercent(latest.officialSovPct, locale, 2)}</div>
+          {delta != null && previous ? <p className="mt-1 text-sm text-slate-600">{delta < 0 ? "−" : "+"}{Math.abs(delta).toLocaleString(locale, { minimumFractionDigits: 2, maximumFractionDigits: 2 })} п. п. к {formatAliceComparisonMonth(previous.month)}</p> : null}
+          <p className="mt-3 text-xs text-slate-500">Ручная выгрузка{formatAliceCaptureDate(capturedAt) ? ` · ${formatAliceCaptureDate(capturedAt)}` : ""}</p>
+          <button type="button" onClick={onOpenAlice} className="mt-4 text-sm font-medium text-teal-700 hover:text-teal-900 hover:underline">Открыть запросы и конкурентов</button>
+        </> : <p className="mt-2 text-sm text-slate-500">Пока нет опубликованных снимков ИИ-видимости.</p>}
+      </div>
+    </section>
   );
 }
 
@@ -580,6 +583,7 @@ function WeeklyFocusPanel({ data, primaryWeek }: Props & { primaryWeek: string |
   const focus = buildWeeklyFocus({
     opportunities: data.seo_os.opportunities,
     aiRows: data.seo_intelligence.ai.rows,
+    aliceSnapshots: data.alice_visibility.snapshots,
     tasks: data.seo_os.tasks,
     runs: data.seo_os.runs,
     week: primaryWeek ?? data.seo_os.latest_week,
@@ -653,7 +657,7 @@ function OverviewTab({ data, locale }: Props) {
   );
 }
 
-function SeoTab({ data, locale, primaryWeek, comparisonWeek }: Props & { primaryWeek: string | null; comparisonWeek: string | null }) {
+function SeoTab({ data, locale, primaryWeek, comparisonWeek, onOpenAlice }: Props & { primaryWeek: string | null; comparisonWeek: string | null; onOpenAlice: () => void }) {
   const currentLocale = locale ?? "ru-RU";
   const webmasterWeek = data.webmaster.latest_week;
   const webmasterQuerySelection = resolveRowsForWeek(data.webmaster.queries, webmasterWeek, null);
@@ -695,7 +699,7 @@ function SeoTab({ data, locale, primaryWeek, comparisonWeek }: Props & { primary
   return (
     <div className="space-y-5">
       <div className="grid gap-5 xl:grid-cols-2">
-        <AiAggregateVisibilityPanel data={data} locale={currentLocale} />
+        <AliceVisibilitySummaryCard data={data} locale={currentLocale} onOpenAlice={onOpenAlice} />
         <ZarukuSeoAnalytics
           seoOs={data.seo_os}
           primaryWeek={primaryWeek}
@@ -816,17 +820,19 @@ export default function ZarukuSeoDashboard({ data, locale = "ru-RU", onActiveTab
       },
     }));
   };
-  const selectTab = (tab: ZarukuTabId) => {
+  const selectTab = useCallback((tab: ZarukuTabId) => {
     setActiveTab(tab);
     onActiveTabChange?.(tab);
     window.requestAnimationFrame(() => {
       document.getElementById("zaruku-tab-content")?.scrollIntoView({ block: "start" });
     });
-  };
+  }, [onActiveTabChange]);
   const content = useMemo(() => {
     switch (activeTab) {
       case "seo":
-        return <SeoTab data={data} locale={locale} primaryWeek={selectedWeeks.primaryWeek} comparisonWeek={selectedWeeks.comparisonWeek} />;
+        return <SeoTab data={data} locale={locale} primaryWeek={selectedWeeks.primaryWeek} comparisonWeek={selectedWeeks.comparisonWeek} onOpenAlice={() => selectTab("alice")} />;
+      case "alice":
+        return <ZarukuAliceVisibilityTab data={data.alice_visibility} locale={locale} />;
       case "wordstat":
         return <ZarukuWordstatTab data={data.wordstat} locale={locale} />;
       case "work":
@@ -850,7 +856,7 @@ export default function ZarukuSeoDashboard({ data, locale = "ru-RU", onActiveTab
       default:
         return <OverviewTab data={data} locale={locale} />;
     }
-  }, [activeTab, data, locale, selectedWeeks.comparisonWeek, selectedWeeks.primaryWeek]);
+  }, [activeTab, data, locale, selectTab, selectedWeeks.comparisonWeek, selectedWeeks.primaryWeek]);
 
   return (
     <div className="zaruku-dashboard min-h-[calc(100vh-194px)] rounded-lg border border-slate-200 bg-slate-50 text-slate-900">

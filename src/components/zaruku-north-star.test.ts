@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import type {
   ZarukuSeoAiVisibilityAggregateRow,
+  ZarukuAliceVisibilitySnapshot,
   ZarukuSeoOpportunityRow,
   ZarukuSeoRunRow,
   ZarukuSeoSovWeeklyRow,
@@ -65,6 +66,21 @@ const aiRows: ZarukuSeoAiVisibilityAggregateRow[] = [
   },
 ];
 
+const aliceSnapshots: ZarukuAliceVisibilitySnapshot[] = [
+  {
+    id: "july", analyticsAccountId: "1", month: "2026-07", domain: "zaruku.ru", officialSovPct: 44,
+    exportedQueryCount: null, portalPresentQueryCount: null, samplePresencePct: null,
+    provenance: { sourceKey: "alice_ai", sourceFilename: "july.xlsx", sourceSha256: "july", ingestionRunId: "july" },
+    queries: [], competitors: [], featuredSites: [], versions: [],
+  },
+  {
+    id: "august", analyticsAccountId: "1", month: "2026-08", domain: "zaruku.ru", officialSovPct: 43.91,
+    exportedQueryCount: null, portalPresentQueryCount: null, samplePresencePct: null,
+    provenance: { sourceKey: "alice_ai", sourceFilename: "august.xlsx", sourceSha256: "august", ingestionRunId: "august" },
+    queries: [], competitors: [], featuredSites: [], versions: [],
+  },
+];
+
 const opportunities: ZarukuSeoOpportunityRow[] = [
   { week: "2026-W29", opportunity_id: "approved-1", section: "/rak-molochnoj-zhelezy/", opportunity_type: "section_ranking_gap", title: "one", target_url: "https://zaruku.ru/a", decision: "approved", reject_reason: null, confidence: 60, priority: "high" },
   { week: "2026-W29", opportunity_id: "approved-2", section: "/melanoma/", opportunity_type: "section_ranking_gap", title: "two", target_url: "https://zaruku.ru/b", decision: "approved", reject_reason: null, confidence: 60, priority: "high" },
@@ -85,13 +101,18 @@ const runs: ZarukuSeoRunRow[] = [
   { week: "2026-W29", status: "completed", serp_requests: 0, llm_tokens: 0, digest_count: 6 },
 ];
 
-test("buildNorthStarKpis derives the requested baseline KPI values", () => {
-  const kpis = buildNorthStarKpis({ sovRows, aiRows, opportunities });
+test("buildNorthStarKpis uses the latest published official Alice SoV", () => {
+  const kpis = buildNorthStarKpis({ sovRows, aiRows, aliceSnapshots, opportunities });
 
   assert.equal(kpis.noise.value, 63.74);
   assert.equal(kpis.medicalIntent.value, 24.81);
   assert.equal(kpis.medicalIntent.guardValue, 72.79);
-  assert.equal(kpis.aiVisibility.value, 44);
+  assert.equal(kpis.aiVisibility.value, 43.91);
+  assert.equal(kpis.aiVisibility.delta, -0.09000000000000341);
+  assert.deepEqual(kpis.aiVisibility.series, [
+    { label: "2026-07", value: 44 },
+    { label: "2026-08", value: 43.91 },
+  ]);
   assert.equal(kpis.approveRate.value, 66.66666666666666);
   assert.equal(kpis.noise.goal, "down");
   assert.equal(kpis.medicalIntent.goal, "up");
@@ -105,11 +126,11 @@ test("buildSemanticHealthRows keeps all latest-week SOV clusters and highlights 
   assert.equal(rows[1].isBaselineCluster, true);
 });
 
-test("buildWeeklyFocus combines SEO, AI, run, and task facts", () => {
-  const focus = buildWeeklyFocus({ opportunities, aiRows, tasks, runs, week: "2026-W29" });
+test("buildWeeklyFocus describes the latest official Alice SoV without legacy counts", () => {
+  const focus = buildWeeklyFocus({ opportunities, aiRows, aliceSnapshots, tasks, runs, week: "2026-W29" });
 
   assert.equal(focus.seo, "Фокус SEO: /rak-molochnoj-zhelezy/ — разрыв позиций раздела");
-  assert.doesNotMatch(focus.ai, /67%|источник №1|во всех случаях/i);
-  assert.equal(focus.ai, "ИИ: 89 упоминаний и 155 цитирований за 2026-07 · контрольная точка загружена вручную, источник wm_alisa_manual");
+  assert.doesNotMatch(focus.ai, /89|155|упоминани|цитировани/i);
+  assert.equal(focus.ai, "ИИ: официальная видимость в Алисе AI — 43,91% за 2026-08 · ручная выгрузка");
   assert.equal(focus.pipeline, "Конвейер: 2026-W29 завершён, дайджест 6, Медицинская проверка: 3");
 });

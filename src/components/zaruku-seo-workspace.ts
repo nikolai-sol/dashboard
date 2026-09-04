@@ -1,4 +1,5 @@
 import type {
+  ZarukuAliceVisibilitySnapshot,
   ZarukuGscLandingPageRow,
   ZarukuGscQueryRow,
   ZarukuSeoAiVisibilityAggregateRow,
@@ -95,7 +96,7 @@ export type SeoExecutiveSnapshot = {
   google: SeoSourceMetrics | null;
   webmaster: SeoSourceMetrics | null;
   seo_os: { average_position: number | null; coverage: number | null } | null;
-  ai: { presence_rate: number | null; mentions: number; citations: number } | null;
+  ai: { presence_rate: number | null; mentions: number | null; citations: number | null } | null;
   post_click: { visits: number; users: number; users_available: boolean } | null;
 };
 
@@ -527,12 +528,14 @@ export function buildSeoExecutiveSnapshot({
   webmasterRows,
   positionTrend,
   aiRows,
+  aliceSnapshots = [],
   postClickRows,
 }: {
   gscRows: ZarukuGscQueryRow[];
   webmasterRows: ZarukuYandexWebmasterQueryRow[];
   positionTrend: ZarukuSeoPositionTrendPoint[];
   aiRows: ZarukuSeoAiVisibilityAggregateRow[];
+  aliceSnapshots?: ZarukuAliceVisibilitySnapshot[];
   postClickRows: ZarukuSeoMetricRow[];
 }): SeoExecutiveSnapshot {
   let positionTotal = 0;
@@ -548,6 +551,7 @@ export function buildSeoExecutiveSnapshot({
     }
   }
 
+  const latestOfficialAlice = [...aliceSnapshots].sort((left, right) => left.month.localeCompare(right.month)).at(-1) ?? null;
   const aiPresenceValues = aiRows.map((row) => row.presence_rate).filter((value) => Number.isFinite(value));
   return {
     google: aggregateQueryMetrics(gscRows),
@@ -556,7 +560,11 @@ export function buildSeoExecutiveSnapshot({
       average_position: positionWeight > 0 ? positionTotal / positionWeight : null,
       coverage: trackedRows > 0 ? foundRows / trackedRows : null,
     } : null,
-    ai: aiRows.length > 0 ? {
+    ai: latestOfficialAlice ? {
+      presence_rate: latestOfficialAlice.officialSovPct,
+      mentions: null,
+      citations: null,
+    } : aiRows.length > 0 ? {
       presence_rate: aiPresenceValues.length > 0
         ? aiPresenceValues.reduce((sum, value) => sum + value, 0) / aiPresenceValues.length
         : null,

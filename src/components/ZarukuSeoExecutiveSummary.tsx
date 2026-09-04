@@ -151,8 +151,8 @@ export default function ZarukuSeoExecutiveSummary({
           note="Зафиксированные упоминания и цитирования из подключённого источника AI-видимости."
         >
           <Metric label="Присутствие" value={snapshot.ai ? formatPercent(snapshot.ai.presence_rate, locale) : "—"} />
-          <Metric label="Упоминания" value={snapshot.ai ? formatNumber(snapshot.ai.mentions, locale) : "—"} />
-          <Metric label="Цитирования" value={snapshot.ai ? formatNumber(snapshot.ai.citations, locale) : "—"} />
+          <Metric label="Упоминания" value={snapshot.ai?.mentions == null ? "—" : formatNumber(snapshot.ai.mentions, locale)} />
+          <Metric label="Цитирования" value={snapshot.ai?.citations == null ? "—" : formatNumber(snapshot.ai.citations, locale)} />
         </ExecutiveCard>
       </div>
     </section>

@@ -15,9 +15,25 @@ import type {
   ZarukuSeoClusterRow,
   ZarukuSeoMetricRow,
   ZarukuSeoPositionTrendPoint,
+  ZarukuAliceVisibilitySnapshot,
   ZarukuYandexWebmasterPageRow,
   ZarukuYandexWebmasterQueryRow,
 } from "@/lib/types";
+
+const aliceSnapshots: ZarukuAliceVisibilitySnapshot[] = [
+  {
+    id: "july", analyticsAccountId: "1", month: "2026-07", domain: "zaruku.ru", officialSovPct: 44,
+    exportedQueryCount: null, portalPresentQueryCount: null, samplePresencePct: null,
+    provenance: { sourceKey: "alice_ai", sourceFilename: "july.xlsx", sourceSha256: "july", ingestionRunId: "july" },
+    queries: [], competitors: [], featuredSites: [], versions: [],
+  },
+  {
+    id: "august", analyticsAccountId: "1", month: "2026-08", domain: "zaruku.ru", officialSovPct: 43.91,
+    exportedQueryCount: null, portalPresentQueryCount: null, samplePresencePct: null,
+    provenance: { sourceKey: "alice_ai", sourceFilename: "august.xlsx", sourceSha256: "august", ingestionRunId: "august" },
+    queries: [], competitors: [], featuredSites: [], versions: [],
+  },
+];
 
 function gscQuery(overrides: Partial<ZarukuGscQueryRow> = {}): ZarukuGscQueryRow {
   return {
@@ -324,13 +340,14 @@ test("builds an executive snapshot without mixing tracked and average positions"
       captured_at: "2026-07-13T14:30:00.000Z",
       ingestion_run_id: "ai-1",
     }],
+    aliceSnapshots,
     postClickRows: [metrikaPage()],
   });
 
   assert.equal(snapshot.google?.average_position, 2);
   assert.equal(snapshot.webmaster?.average_position, 8);
   assert.deepEqual(snapshot.seo_os, { average_position: 4, coverage: 0.5 });
-  assert.deepEqual(snapshot.ai, { presence_rate: 44, mentions: 89, citations: 155 });
+  assert.deepEqual(snapshot.ai, { presence_rate: 43.91, mentions: null, citations: null });
   assert.deepEqual(snapshot.post_click, { visits: 50, users: 40, users_available: true });
 });
 

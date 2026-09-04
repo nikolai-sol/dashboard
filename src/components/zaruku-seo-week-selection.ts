@@ -1,4 +1,4 @@
-export type ZarukuTabId = "overview" | "seo" | "wordstat" | "content" | "audience" | "work" | "quality";
+export type ZarukuTabId = "overview" | "seo" | "alice" | "wordstat" | "content" | "audience" | "work" | "quality";
 
 export type WeekSelection = {
   primaryWeek: string | null;
@@ -40,7 +40,7 @@ export function shouldShowSeoWeekToolbar(activeTab: string) {
 
 export function zarukuTimeOwner(tab: ZarukuTabId): "url" | "week" | "none" {
   if (tab === "overview" || tab === "audience") return "url";
-  if (tab === "wordstat" || tab === "quality") return "none";
+  if (tab === "alice" || tab === "wordstat" || tab === "quality") return "none";
   return "week";
 }
 

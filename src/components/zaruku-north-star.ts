@@ -1,4 +1,5 @@
 import type {
+  ZarukuAliceVisibilitySnapshot,
   ZarukuSeoAiVisibilityAggregateRow,
   ZarukuSeoOpportunityRow,
   ZarukuSeoRunRow,
@@ -82,6 +83,10 @@ function latestAiRow(rows: ZarukuSeoAiVisibilityAggregateRow[]) {
     .at(-1) ?? null;
 }
 
+function latestOfficialAliceSnapshot(rows: ZarukuAliceVisibilitySnapshot[]) {
+  return [...rows].sort((left, right) => sortText(left.month, right.month)).at(-1) ?? null;
+}
+
 function metricSeries(rows: ZarukuSeoSovWeeklyRow[], cluster: string, valueKey: "impressions_share" | "clicks_share") {
   return rows
     .filter((row) => row.cluster === cluster)
@@ -89,8 +94,13 @@ function metricSeries(rows: ZarukuSeoSovWeeklyRow[], cluster: string, valueKey: 
     .map((row) => ({ label: row.week, value: row[valueKey] }));
 }
 
-function aiSeries(rows: ZarukuSeoAiVisibilityAggregateRow[]) {
-  return rows
+function aiSeries(aliceSnapshots: ZarukuAliceVisibilitySnapshot[], legacyRows: ZarukuSeoAiVisibilityAggregateRow[]) {
+  if (aliceSnapshots.length > 0) {
+    return [...aliceSnapshots]
+      .sort((left, right) => sortText(left.month, right.month))
+      .map((row) => ({ label: row.month, value: row.officialSovPct }));
+  }
+  return legacyRows
     .filter((row) => row.engine === "alisa_ai")
     .sort((left, right) => sortText(left.period, right.period))
     .map((row) => ({ label: row.period, value: row.presence_rate }));
@@ -115,15 +125,18 @@ function delta(value: number | null, baseline: number) {
 export function buildNorthStarKpis({
   sovRows,
   aiRows,
+  aliceSnapshots = [],
   opportunities,
 }: {
   sovRows: ZarukuSeoSovWeeklyRow[];
   aiRows: ZarukuSeoAiVisibilityAggregateRow[];
+  aliceSnapshots?: ZarukuAliceVisibilitySnapshot[];
   opportunities: ZarukuSeoOpportunityRow[];
 }): NorthStarKpis {
   const latestSovRows = latestValue(sovRows);
   const noise = latestSovRows.find((row) => row.cluster === CLUSTERS.noise) ?? null;
   const medicalIntent = latestSovRows.find((row) => row.cluster === CLUSTERS.medicalIntent) ?? null;
+  const officialAlice = latestOfficialAliceSnapshot(aliceSnapshots);
   const ai = latestAiRow(aiRows);
   const approveRate = approveRateForLatestDecisionWeek(opportunities);
 
@@ -154,14 +167,14 @@ export function buildNorthStarKpis({
     aiVisibility: {
       key: "aiVisibility",
       label: "Видимость в Алисе AI",
-      value: ai?.presence_rate ?? null,
+      value: officialAlice?.officialSovPct ?? ai?.presence_rate ?? null,
       baseline: BASELINES.aiVisibility,
-      delta: delta(ai?.presence_rate ?? null, BASELINES.aiVisibility),
+      delta: delta(officialAlice?.officialSovPct ?? ai?.presence_rate ?? null, BASELINES.aiVisibility),
       goal: "up",
-      period: ai?.period ?? null,
-      note: "SoV, Яндекс Вебмастер, ручной снимок, ежемесячно",
-      provenance: ai?.provenance ?? null,
-      series: aiSeries(aiRows),
+      period: officialAlice?.month ?? ai?.period ?? null,
+      note: "Официальная SoV, Яндекс Вебмастер, ручная выгрузка, ежемесячно",
+      provenance: officialAlice ? "Ручная выгрузка" : ai?.provenance ?? null,
+      series: aiSeries(aliceSnapshots, aiRows),
     },
     approveRate: {
       key: "approveRate",
@@ -239,12 +252,14 @@ function readableRunStatus(value: ZarukuSeoRunRow["status"]) {
 export function buildWeeklyFocus({
   opportunities,
   aiRows,
+  aliceSnapshots = [],
   tasks,
   runs,
   week,
 }: {
   opportunities: ZarukuSeoOpportunityRow[];
   aiRows: ZarukuSeoAiVisibilityAggregateRow[];
+  aliceSnapshots?: ZarukuAliceVisibilitySnapshot[];
   tasks: ZarukuSeoTaskRow[];
   runs: ZarukuSeoRunRow[];
   week: string | null;
@@ -253,13 +268,16 @@ export function buildWeeklyFocus({
   const opportunity = topOpportunity(opportunities, effectiveWeek);
   const weekTasks = tasks.filter((task) => task.week === effectiveWeek);
   const run = runs.find((item) => item.week === effectiveWeek) ?? null;
+  const officialAlice = latestOfficialAliceSnapshot(aliceSnapshots);
   const ai = latestAiRow(aiRows);
 
   return {
     seo: opportunity
       ? `Фокус SEO: ${opportunity.section ?? opportunity.target_url ?? "раздел не задан"} — ${readableOpportunityType(opportunity.opportunity_type)}`
       : "Фокус SEO: нет ожидающих или принятых возможностей на выбранной неделе",
-    ai: ai
+    ai: officialAlice
+      ? `ИИ: официальная видимость в Алисе AI — ${officialAlice.officialSovPct.toLocaleString("ru-RU", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}% за ${officialAlice.month} · ручная выгрузка`
+      : ai
       ? `ИИ: ${ai.mentions.toLocaleString("ru-RU")} упоминаний и ${ai.citations.toLocaleString("ru-RU")} цитирований за ${ai.period}${ai.provenance ? ` · контрольная точка загружена вручную, источник ${ai.provenance}` : ""}`
       : "ИИ: для выбранной недели нет связанного месячного среза",
     pipeline: run

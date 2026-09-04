@@ -39,8 +39,8 @@ test("SEO week toolbar names its reporting period", () => {
   assert.match(toolbarSource, /Отчётная SEO-неделя/);
 });
 
-test("client navigation contains exactly seven tabs in executive order", () => {
-  const labels = ["Обзор", "SEO", "Спрос Wordstat", "Контент", "Аудитория", "Работы и задачи", "Качество"];
+test("client navigation contains exactly eight tabs in executive order", () => {
+  const labels = ["Обзор", "SEO", "ИИ-видимость и конкуренты", "Спрос Wordstat", "Контент", "Аудитория", "Работы и задачи", "Качество"];
   let lastIndex = -1;
   for (const label of labels) {
     const index = source.indexOf(`label: "${label}"`);
@@ -50,7 +50,7 @@ test("client navigation contains exactly seven tabs in executive order", () => {
   const navStart = source.indexOf("const NAV");
   const navEnd = source.indexOf("];", navStart);
   const ids = Array.from(source.slice(navStart, navEnd).matchAll(/id: "([^"]+)"/g), (match) => match[1]);
-  assert.deepEqual(ids, ["overview", "seo", "wordstat", "content", "audience", "work", "quality"]);
+  assert.deepEqual(ids, ["overview", "seo", "alice", "wordstat", "content", "audience", "work", "quality"]);
   assert.doesNotMatch(source, /label: "SEO-операции"|label: "Гео"|label: "Устройства"|label: "Поведение"/);
 });
 
@@ -74,18 +74,18 @@ test("SEO comparison tables share one filter contract", () => {
   assert.doesNotMatch(pageSource, /const FILTERS/);
 });
 
-test("SEO tab puts AI visibility and section positions before detail tables", () => {
+test("SEO tab puts the Alice visibility summary and section positions before detail tables", () => {
   const seoStart = source.indexOf("function SeoTab");
   const seoEnd = source.indexOf("export default function ZarukuSeoDashboard");
   const seoSource = source.slice(seoStart, seoEnd);
-  const aiIndex = seoSource.indexOf("<AiAggregateVisibilityPanel");
+  const aiIndex = seoSource.indexOf("<AliceVisibilitySummaryCard");
   const sectionIndex = seoSource.indexOf("<ZarukuSeoAnalytics");
   const queryTableIndex = seoSource.indexOf("<ZarukuSeoQueryComparison");
   const pageTableIndex = seoSource.indexOf("<ZarukuSeoPageComparison");
 
-  assert.ok(aiIndex >= 0, "AI visibility panel must render on SEO");
+  assert.ok(aiIndex >= 0, "Alice visibility summary must render on SEO");
   assert.ok(sectionIndex >= 0, "section positions chart must render on SEO");
-  assert.ok(aiIndex < queryTableIndex, "AI visibility should come before query table");
+  assert.ok(aiIndex < queryTableIndex, "Alice visibility should come before query table");
   assert.ok(sectionIndex < queryTableIndex, "section positions should come before query table");
   assert.ok(queryTableIndex < pageTableIndex, "query table should still precede landing page table");
   assert.doesNotMatch(seoSource, /<ZarukuTrafficVisibility/);
@@ -141,7 +141,7 @@ test("Overview keeps KPI and chart content inside its desktop bounds", () => {
 
 test("Traffic health shows secondary facts without a reveal button", () => {
   const start = source.indexOf("function TrafficHealthStrip");
-  const end = source.indexOf("function AiAggregateVisibilityPanel");
+  const end = source.indexOf("function AliceVisibilitySummaryCard");
   const trafficHealthSource = source.slice(start, end);
 
   assert.match(trafficHealthSource, /rows\.secondary\.length/);
@@ -156,9 +156,10 @@ test("Audience device panels shrink before their tables start scrolling", () => 
 });
 
 test("SEO tab follows the executive-to-detail hierarchy without duplicate source tables", () => {
-  const aiPanelMatches = source.match(/<AiAggregateVisibilityPanel/g) ?? [];
+  const aiPanelMatches = source.match(/<AliceVisibilitySummaryCard/g) ?? [];
 
   assert.equal(aiPanelMatches.length, 1);
+  assert.doesNotMatch(source, /AiAggregateVisibilityPanel/);
   assert.match(source, /<ZarukuSeoQueryComparison/);
   assert.match(source, /<ZarukuSeoPageComparison/);
   assert.match(source, /<ZarukuSeoDiagnostics/);

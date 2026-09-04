@@ -76,6 +76,7 @@ test("SEO week toolbar is scoped to SEO, Work, and Content tabs", () => {
   assert.equal(shouldShowSeoWeekToolbar("overview"), false);
   assert.equal(shouldShowSeoWeekToolbar("audience"), false);
   assert.equal(shouldShowSeoWeekToolbar("quality"), false);
+  assert.equal(shouldShowSeoWeekToolbar("alice"), false);
 });
 
 test("each Zaruku tab has one explicit time owner", () => {
@@ -86,4 +87,5 @@ test("each Zaruku tab has one explicit time owner", () => {
   assert.equal(zarukuTimeOwner("content"), "week");
   assert.equal(zarukuTimeOwner("work"), "week");
   assert.equal(zarukuTimeOwner("quality"), "none");
+  assert.equal(zarukuTimeOwner("alice"), "none");
 });
