@@ -487,7 +487,7 @@ test("deriveSourceDataThrough falls back to AI period when capture time is absen
   assert.equal(dataThrough.yandex_gen_search, "2026-07");
 });
 
-const loaderSource = readFileSync(new URL("./zaruku-seo.ts", import.meta.url), "utf8");
+const loaderSource = readFileSync(new URL("../../apps/zaruku/src/lib/zaruku-seo.ts", import.meta.url), "utf8");
 const accountReadModelsSource = readFileSync(new URL("./account-read-models.ts", import.meta.url), "utf8");
 const dashboardLoaderSource = readFileSync(new URL("./dashboard-data-loader.ts", import.meta.url), "utf8");
 

@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import puppeteer from "puppeteer";
 import { createViewerExportToken } from "@/lib/access-auth";
 import { isDashboardAccessAuthorized } from "@/lib/dashboard-access";
+import { createZarukuPdfGetHandler, isZarukuDashboardIdentity } from "@zaruku/compat/api";
 
 export const dynamic = "force-dynamic";
 
@@ -51,7 +52,18 @@ export function createAuthorizedViewerExportToken(access: {
       );
 }
 
-export async function GET(
+export function createDashboardPdfGetHandler(dependencies: {
+  isDashboardAccessAuthorized?: typeof isDashboardAccessAuthorized;
+  launch?: typeof puppeteer.launch;
+  wait?: (milliseconds: number) => Promise<void>;
+  now?: () => Date;
+} = {}) {
+  const authorize = dependencies.isDashboardAccessAuthorized ?? isDashboardAccessAuthorized;
+  const launch = dependencies.launch ?? puppeteer.launch.bind(puppeteer);
+  const wait = dependencies.wait ?? ((milliseconds: number) => new Promise<void>((resolve) => setTimeout(resolve, milliseconds)));
+  const now = dependencies.now ?? (() => new Date());
+
+  return async function GET(
   request: Request,
   context: { params: Promise<{ id: string }> | { id: string } },
 ) {
@@ -59,9 +71,16 @@ export async function GET(
 
   try {
     const { id } = await Promise.resolve(context.params);
-    const access = await isDashboardAccessAuthorized(request, id);
+    const access = await authorize(request, id);
     if (!access.context) {
       return privateJson({ error: "Dashboard not found" }, { status: 404 });
+    }
+    if (isZarukuDashboardIdentity(access.context)) {
+      return createZarukuPdfGetHandler({
+        authorize: async () => access,
+        launch, wait, now,
+        baseUrl: process.env.INTERNAL_BASE_URL || "http://127.0.0.1:3001",
+      })(request);
     }
     if (!access.authorized) {
       return privateJson({ error: "Authentication required" }, { status: 401 });
@@ -71,9 +90,9 @@ export async function GET(
       id,
       createAuthorizedViewerExportToken(access),
     );
-    const filenameDate = new Date().toISOString().slice(0, 10);
+    const filenameDate = now().toISOString().slice(0, 10);
 
-    browser = await puppeteer.launch({
+    browser = await launch({
       headless: true,
       args: [
         "--no-sandbox",
@@ -96,9 +115,9 @@ export async function GET(
         await document.fonts.ready;
       }
     });
-    await new Promise((resolve) => setTimeout(resolve, 1200));
+    await wait(1200);
 
-    const generatedLabel = new Intl.DateTimeFormat("ru-RU").format(new Date());
+    const generatedLabel = new Intl.DateTimeFormat("ru-RU").format(now());
     const pdfBuffer = await page.pdf({
       format: "A4",
       landscape: true,
@@ -141,4 +160,7 @@ export async function GET(
       await browser.close();
     }
   }
+  };
 }
+
+export const GET = createDashboardPdfGetHandler();

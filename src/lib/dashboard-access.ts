@@ -24,6 +24,7 @@ export type { DashboardAuthMode } from "@/lib/dashboard-access-policy";
 type DashboardAccessContextRow = RowDataPacket & {
   id: number;
   client_id: string;
+  dashboard_type?: string;
   client_name: string;
   dashboard_name: string;
   is_active: number | boolean;
@@ -43,6 +44,7 @@ type DashboardAccessUserRow = RowDataPacket & {
 export type DashboardAccessContext = {
   id: number;
   client_id: string;
+  dashboard_type?: string;
   client_name: string;
   dashboard_name: string;
   is_active: boolean;
@@ -113,6 +115,7 @@ function rowToContext(row: DashboardAccessContextRow): DashboardAccessContext {
   return {
     id: Number(row.id),
     client_id: clientId,
+    dashboard_type: row.dashboard_type,
     client_name: String(row.client_name),
     dashboard_name: String(row.dashboard_name),
     is_active: Boolean(row.is_active),
@@ -137,6 +140,7 @@ export async function getDashboardAccessContext(identifier: string | number) {
     `SELECT
        d.id,
        d.client_id,
+       d.dashboard_type,
        d.client_name,
        d.dashboard_name,
        d.is_active,

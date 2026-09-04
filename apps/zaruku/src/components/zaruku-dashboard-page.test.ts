@@ -151,9 +151,9 @@ test("an unsupported successful payload selects the combined fallback before gen
   const compiled = ts.transpileModule(`${selectRenderState}\nmodule.exports = selectDashboardRenderState;`, {
     compilerOptions: { module: ts.ModuleKind.CommonJS },
   }).outputText;
-  const module = { exports: undefined as unknown };
-  runInNewContext(compiled, { module, exports: module.exports });
-  const select = module.exports as (state: Record<string, unknown>) => string;
+  const selectionModule = { exports: undefined as unknown };
+  runInNewContext(compiled, { module: selectionModule, exports: selectionModule.exports });
+  const select = selectionModule.exports as (state: Record<string, unknown>) => string;
   assert.equal(select({
     isLoading: false,
     authRequired: false,

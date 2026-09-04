@@ -3,6 +3,7 @@ import { projectAbbottDashboardData } from "@/lib/abbott-data-projection";
 import { isDashboardAccessAuthorized } from "@/lib/dashboard-access";
 import { formatPrivateServerTiming, loadDashboardData as defaultLoadDashboardData } from "@/lib/dashboard-data-loader";
 import { InvalidDashboardDateRangeError } from "@/lib/dashboard-date-range";
+import { createZarukuDashboardGetHandler, isZarukuDashboardIdentity } from "@zaruku/compat/api";
 
 export const dynamic = "force-dynamic";
 
@@ -35,6 +36,12 @@ export function createDashboardGetHandler(
       const access = await authorize(request, id);
       if (!access.context) {
         return privateJson({ error: "Dashboard not found" }, { status: 404 });
+      }
+      if (isZarukuDashboardIdentity(access.context)) {
+        return createZarukuDashboardGetHandler({
+          authorize: async () => access,
+          ...(dependencies.loadDashboardData ? { load: dependencies.loadDashboardData } : {}),
+        })(request);
       }
       if (!access.authorized) {
         return privateJson(

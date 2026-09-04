@@ -3,6 +3,7 @@ import ExcelJS from "exceljs";
 import { projectAbbottDashboardData } from "@/lib/abbott-data-projection";
 import { isDashboardAccessAuthorized } from "@/lib/dashboard-access";
 import { loadDashboardData } from "@/lib/dashboard-data-loader";
+import { createZarukuExcelGetHandler, isZarukuDashboardIdentity } from "@zaruku/compat/api";
 import { getDashboardI18n } from "@/lib/dashboard-i18n";
 import { PLATFORM_COLORS } from "@/lib/platform-colors";
 import { resolvePlatformIdFromSourceKey } from "@/lib/source-mapping";
@@ -353,6 +354,9 @@ export async function GET(
   try {
     const { id } = await Promise.resolve(context.params);
     const access = await isDashboardAccessAuthorized(request, id);
+    if (isZarukuDashboardIdentity(access.context)) {
+      return createZarukuExcelGetHandler({ authorize: async () => access })(request);
+    }
     if (!access.context) {
       return privateJson({ error: "Dashboard not found" }, { status: 404 });
     }
