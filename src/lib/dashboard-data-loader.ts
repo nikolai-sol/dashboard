@@ -1594,7 +1594,7 @@ async function buildChannelTimeseries(
         reach: item.reach,
         clicks: item.clicks,
         spend: Number(item.spend.toFixed(2)),
-        views: item.views,
+        views: Math.round(item.views),
         conversions: item.conversions,
       }));
     }),
