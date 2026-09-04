@@ -55,3 +55,10 @@ test("deploy inventory packages the Metrika Logs visit parser", () => {
 
   assert.match(deploy, /copy_canonical_file metrika_logs_api\.py/);
 });
+
+test("deploy inventory packages the Alice importer without its source workbook", () => {
+  const deploy = readFileSync(join(repoRoot, "scripts/deploy.sh"), "utf8");
+
+  assert.match(deploy, /cp scripts\/import-zaruku-alice-visibility\.ts "\$PACKAGE_DIR\/scripts\/"/);
+  assert.doesNotMatch(deploy, /neurostatistics-zaruku|\/Downloads\/|\.xlsx/);
+});
