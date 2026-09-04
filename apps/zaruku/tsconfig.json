@@ -1,0 +1,18 @@
+{
+  "extends": "../../tsconfig.json",
+  "compilerOptions": {
+    "baseUrl": ".",
+    "paths": {
+      "@/*": ["./src/*"],
+      "@reportingdash/runtime-contract": ["../../packages/runtime-contract/src/index.ts"]
+    }
+  },
+  "include": [
+    "next-env.d.ts",
+    "**/*.ts",
+    "**/*.tsx",
+    ".next-zaruku/types/**/*.ts",
+    ".next-zaruku/dev/types/**/*.ts"
+  ],
+  "exclude": ["node_modules"]
+}

@@ -2,6 +2,7 @@
 const nextConfig = {
   reactStrictMode: true,
   output: "standalone",
+  transpilePackages: ["@reportingdash/runtime-contract"],
   poweredByHeader: false,
   async headers() {
     return [
