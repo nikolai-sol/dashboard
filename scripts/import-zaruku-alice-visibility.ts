@@ -48,6 +48,20 @@ function insertId(result: QueryResult): number {
 }
 
 function mysqlDate(isoTimestamp: string): string {
+  const match = isoTimestamp.match(/^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2}):(\d{2})(?:\.(\d{1,3}))?(Z|[+-]\d{2}:\d{2})$/);
+  if (!match) throw new Error("captured-at должен быть ISO timestamp с датой, временем и timezone");
+  const [, yearText, monthText, dayText, hourText, minuteText, secondText, , timezone] = match;
+  const year = Number(yearText);
+  const month = Number(monthText);
+  const day = Number(dayText);
+  const hour = Number(hourText);
+  const minute = Number(minuteText);
+  const second = Number(secondText);
+  const offset = timezone === "Z" ? null : timezone!.slice(1).split(":").map(Number);
+  const calendarDate = new Date(Date.UTC(year, month - 1, day));
+  if (month < 1 || month > 12 || hour > 23 || minute > 59 || second > 59 || calendarDate.getUTCFullYear() !== year || calendarDate.getUTCMonth() !== month - 1 || calendarDate.getUTCDate() !== day || (offset && (offset[0]! > 23 || offset[1]! > 59))) {
+    throw new Error("captured-at должен быть корректным ISO timestamp");
+  }
   const date = new Date(isoTimestamp);
   if (!Number.isFinite(date.getTime())) throw new Error("captured-at должен быть ISO timestamp");
   return date.toISOString().slice(0, 19).replace("T", " ");
@@ -71,10 +85,30 @@ function validateSnapshot(snapshot: AliceVisibilityPersistableSnapshot): void {
   if (snapshot.portalPresentQueryCount !== null && snapshot.portalPresentQueryCount !== snapshot.queries.filter((query) => query.portalPresent).length) {
     throw new Error("Количество присутствующих queries не совпадает с snapshot");
   }
+  if (snapshot.samplePresencePct !== null && (!Number.isFinite(snapshot.samplePresencePct) || snapshot.samplePresencePct < 0 || snapshot.samplePresencePct > 100)) {
+    throw new Error("sample presence должен быть конечным числом от 0 до 100");
+  }
+  if (snapshot.queries.length > 0) {
+    if (snapshot.exportedQueryCount === null || snapshot.portalPresentQueryCount === null || snapshot.samplePresencePct === null) {
+      throw new Error("Детальный snapshot требует sample presence coverage");
+    }
+    const expectedSamplePresencePct = snapshot.portalPresentQueryCount / snapshot.exportedQueryCount * 100;
+    if (Math.abs(snapshot.samplePresencePct - expectedSamplePresencePct) > 1e-9 * Math.max(1, Math.abs(expectedSamplePresencePct))) {
+      throw new Error("sample presence не совпадает с query coverage");
+    }
+  }
   if (snapshot.queries.some((query) => !Number.isSafeInteger(query.sourceCount) || query.sourceCount < 0)) throw new Error("Некорректное количество источников query");
   if (snapshot.sources.some((source) => !queryHashes.has(source.queryHash))) throw new Error("Источник ссылается на отсутствующий query");
   const sourceCounts = new Map<string, number>();
-  for (const source of snapshot.sources) sourceCounts.set(source.queryHash, (sourceCounts.get(source.queryHash) ?? 0) + 1);
+  const sourceRanks = new Map<string, Set<number>>();
+  for (const source of snapshot.sources) {
+    if (!Number.isSafeInteger(source.sourceRank) || source.sourceRank < 1 || source.sourceRank > 10) throw new Error("source rank должен быть целым числом от 1 до 10");
+    const ranks = sourceRanks.get(source.queryHash) ?? new Set<number>();
+    if (ranks.has(source.sourceRank)) throw new Error("source rank повторяется в одном query");
+    ranks.add(source.sourceRank);
+    sourceRanks.set(source.queryHash, ranks);
+    sourceCounts.set(source.queryHash, (sourceCounts.get(source.queryHash) ?? 0) + 1);
+  }
   if (snapshot.queries.some((query) => (sourceCounts.get(query.queryHash) ?? 0) !== query.sourceCount)) throw new Error("Количество источников query не совпадает с snapshot");
   if (snapshot.featured.some((site, index) => site.displayOrder !== index + 1)) throw new Error("Порядок featured sites не является последовательным");
 }

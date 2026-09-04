@@ -28,6 +28,12 @@ test("dry-run refuses an invalid summary-only period and timestamp", () => {
   assert.match(result.stderr, /period должен иметь формат|captured-at должен быть ISO/);
 });
 
+test("dry-run refuses a date-only captured-at value", () => {
+  const result = spawnSync(process.execPath, ["--import", "tsx", "scripts/import-zaruku-alice-visibility.ts", "--summary-only", "--period", "2026-07", "--official-sov", "44", "--captured-at", "2026-07-13", "--legacy-source", "wm_alisa_manual_legacy", "--legacy-mentions", "89", "--legacy-citations", "155", "--dry-run"], { encoding: "utf8" });
+  assert.notEqual(result.status, 0);
+  assert.match(result.stderr, /captured-at должен быть ISO timestamp/);
+});
+
 function parsedSnapshot(): ParsedAliceVisibilitySnapshot {
   const queries = Array.from({ length: 155 }, (_, index) => {
     const sourceCount = index < 73 ? 9 : 8;
@@ -143,8 +149,33 @@ test("persists an absent portal query with no source rows", async () => {
   query.portalUrl = null;
   query.rawPresentValue = "false";
   snapshot.portalPresentQueryCount = 88;
+  snapshot.samplePresencePct = 88 / 155 * 100;
   snapshot.sources = snapshot.sources.filter((source) => source.queryHash !== query.queryHash);
   assert.equal(await persistAliceVisibilitySnapshot(new FakeConnection("new"), snapshot, {}), "inserted");
+});
+
+test("rejects contradictory detailed sample coverage before opening a transaction", async () => {
+  const snapshot = parsedSnapshot();
+  snapshot.samplePresencePct = 50;
+  await assert.rejects(() => persistAliceVisibilitySnapshot(new FakeConnection("new"), snapshot, {}), /sample presence/);
+});
+
+test("rejects out-of-range detailed sample coverage", async () => {
+  const snapshot = parsedSnapshot();
+  snapshot.samplePresencePct = 100.1;
+  await assert.rejects(() => persistAliceVisibilitySnapshot(new FakeConnection("new"), snapshot, {}), /sample presence/);
+});
+
+test("rejects source ranks outside the ten exported positions", async () => {
+  const snapshot = parsedSnapshot();
+  snapshot.sources[0]!.sourceRank = 11;
+  await assert.rejects(() => persistAliceVisibilitySnapshot(new FakeConnection("new"), snapshot, {}), /source rank/);
+});
+
+test("rejects duplicate source ranks within one query", async () => {
+  const snapshot = parsedSnapshot();
+  snapshot.sources[1]!.sourceRank = snapshot.sources[0]!.sourceRank;
+  await assert.rejects(() => persistAliceVisibilitySnapshot(new FakeConnection("new"), snapshot, {}), /source rank/);
 });
 
 test("builds the July legacy summary with deterministic provenance-only checksum", async () => {
