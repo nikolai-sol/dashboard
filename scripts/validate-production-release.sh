@@ -88,7 +88,7 @@ fi
 
 ALICE_IMPORTER="$RELEASE_DIR/scripts/import-zaruku-alice-visibility.cjs"
 RELEASE_PACKAGE_JSON="$RELEASE_DIR/package.json"
-EXPECTED_ALICE_COMMAND="node --env-file=.env scripts/import-zaruku-alice-visibility.cjs"
+EXPECTED_ALICE_COMMAND="node scripts/import-zaruku-alice-visibility.cjs"
 if [[ -L "$RELEASE_DIR/scripts" || -L "$ALICE_IMPORTER" || ! -f "$ALICE_IMPORTER" ]]; then
   echo "Production release is missing a regular Alice importer bundle" >&2
   exit 1
@@ -116,21 +116,38 @@ if find "$RELEASE_DIR" \( -type f -o -type l \) \( -iname '*.xlsx' -o -iname '*.
   echo "Production release must not contain an Alice source workbook" >&2
   exit 1
 fi
+ALICE_VALIDATION_DIR="$(mktemp -d "${TMPDIR:-/tmp}/alice-release-validation.XXXXXX")"
+cleanup_alice_validation() {
+  if [[ -n "${ALICE_VALIDATION_DIR:-}" && -d "$ALICE_VALIDATION_DIR" ]]; then
+    rm -rf -- "$ALICE_VALIDATION_DIR"
+  fi
+}
+trap cleanup_alice_validation EXIT
+ALICE_SMOKE_WORKBOOK="$ALICE_VALIDATION_DIR/input.xlsx"
+if ! "$NODE_BIN" "$SCRIPT_DIR/create-zaruku-alice-validation-workbook.mjs" "$ALICE_SMOKE_WORKBOOK" >/dev/null 2>&1; then
+  echo "Production release Alice importer validation input could not be created" >&2
+  exit 1
+fi
+ALICE_SMOKE_CHECKSUM="$("$NODE_BIN" - "$ALICE_SMOKE_WORKBOOK" <<'JS'
+const { createHash } = require("node:crypto");
+const { readFileSync } = require("node:fs");
+const workbookPath = process.argv[2];
+process.stdout.write(createHash("sha256").update(readFileSync(workbookPath)).digest("hex"));
+JS
+)"
 ALICE_SMOKE_OUTPUT=""
-if ! ALICE_SMOKE_OUTPUT="$(NODE_OPTIONS= "$NODE_BIN" --env-file="$ENV_FILE" "$ALICE_IMPORTER" \
-  --summary-only \
-  --period 2026-07 \
-  --official-sov 44 \
-  --captured-at 2026-07-13T14:30:00.000Z \
-  --legacy-source release_validation \
-  --legacy-mentions 0 \
-  --legacy-citations 0 \
+if ! ALICE_SMOKE_OUTPUT="$(env -i "$NODE_BIN" "$ALICE_IMPORTER" \
+  --xlsx "$ALICE_SMOKE_WORKBOOK" \
+  --period 2026-09 \
+  --official-sov 43.91 \
+  --captured-at 2026-09-04T13:28:14.000Z \
+  --featured-site "https://featured.example/release-validation" \
   --dry-run 2>/dev/null)"; then
   echo "Production release Alice importer bundle is not runnable" >&2
   exit 1
 fi
-ALICE_SMOKE_PATTERN='^Alice visibility dry-run mode=summary_only queries=0 portal_present=null sample_presence_pct=null sources=0 featured_sites=0 validation_mismatches=0 checksum=[a-f0-9]{64}$'
-if [[ ! "$ALICE_SMOKE_OUTPUT" =~ $ALICE_SMOKE_PATTERN ]]; then
+EXPECTED_ALICE_SMOKE_OUTPUT="Alice visibility dry-run mode=xlsx queries=2 portal_present=1 sample_presence_pct=50.00 sources=3 featured_sites=1 validation_mismatches=0 checksum=$ALICE_SMOKE_CHECKSUM"
+if [[ "$ALICE_SMOKE_OUTPUT" != "$EXPECTED_ALICE_SMOKE_OUTPUT" ]]; then
   echo "Production release Alice importer bundle returned an invalid dry-run summary" >&2
   exit 1
 fi

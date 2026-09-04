@@ -103,6 +103,35 @@ The importer validates before connecting, writes the snapshot and child rows in 
 
 The official Share of Voice is an externally supplied metric. Do not calculate or replace it from the Excel row count or the workbook sample-presence percentage.
 
+#### Active release Alice import
+
+The packaged importer does not load the application .env file. A dry-run needs no
+credentials. For `--execute`, obtain the dedicated database values through the
+approved secret channel and export only these five variables in the protected
+operator shell:
+
+```bash
+export DB_HOST='<database host>'
+export DB_PORT='<database port>'
+export DB_USER='<database user>'
+export DB_PASSWORD='<database password>'
+export DB_NAME='<database name>'
+
+cd /var/www/dashboard
+npm run import:zaruku-alice -- \
+  --xlsx "/absolute/path/outside-the-release/export.xlsx" \
+  --period YYYY-MM \
+  --official-sov 43.91 \
+  --captured-at 2026-09-04T13:28:14.000Z \
+  --execute
+
+unset DB_HOST DB_PORT DB_USER DB_PASSWORD DB_NAME
+```
+
+The release command accepts only the `DB_*` names above; it does not use the
+legacy `MYSQL_*` aliases. Never put the source workbook in the release tree,
+and never paste credential values into command arguments or logs.
+
 ---
 
 This is a [Next.js](https://nextjs.org) project bootstrapped with [`create-next-app`](https://nextjs.org/docs/app/api-reference/cli/create-next-app).

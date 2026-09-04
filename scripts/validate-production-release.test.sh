@@ -22,6 +22,9 @@ SH
 chmod +x "$TMP_DIR/bin/node"
 export PATH="$TMP_DIR/bin:$PATH"
 
+REAL_ALICE_IMPORTER="$TMP_DIR/import-zaruku-alice-visibility.cjs"
+"$REAL_NODE" "$SCRIPT_DIR/build-zaruku-alice-importer.mjs" --outfile "$REAL_ALICE_IMPORTER"
+
 write_valid_env() {
   local target="$1"
   cat > "$target" <<'ENV'
@@ -53,17 +56,11 @@ module.exports = {
   }],
 };
 JS
-  cat > "$target/scripts/import-zaruku-alice-visibility.cjs" <<'JS'
-if (process.argv.includes('--help') || process.argv.includes('--dry-run')) {
-  process.stdout.write('Alice visibility dry-run mode=summary_only queries=0 portal_present=null sample_presence_pct=null sources=0 featured_sites=0 validation_mismatches=0 checksum=aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\n');
-} else {
-  process.exitCode = 2;
-}
-JS
+  cp "$REAL_ALICE_IMPORTER" "$target/scripts/import-zaruku-alice-visibility.cjs"
   cat > "$target/package.json" <<'JSON'
 {
   "scripts": {
-    "import:zaruku-alice": "node --env-file=.env scripts/import-zaruku-alice-visibility.cjs"
+    "import:zaruku-alice": "node scripts/import-zaruku-alice-visibility.cjs"
   }
 }
 JSON
@@ -115,6 +112,19 @@ if bash "$SCRIPT_DIR/validate-production-release.sh" "$NOOP_ALICE_IMPORTER_RELEA
   exit 1
 fi
 grep -Fqi 'Alice importer bundle' "$TMP_DIR/noop-alice-importer.log"
+
+STATIC_ALICE_IMPORTER_RELEASE="$TMP_DIR/static-alice-importer-release"
+mkdir -p "$STATIC_ALICE_IMPORTER_RELEASE/public"
+write_valid_env "$STATIC_ALICE_IMPORTER_RELEASE/.env"
+write_release_contract "$STATIC_ALICE_IMPORTER_RELEASE"
+cat > "$STATIC_ALICE_IMPORTER_RELEASE/scripts/import-zaruku-alice-visibility.cjs" <<'JS'
+process.stdout.write('Alice visibility dry-run mode=summary_only queries=0 portal_present=null sample_presence_pct=null sources=0 featured_sites=0 validation_mismatches=0 checksum=aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\n');
+JS
+if bash "$SCRIPT_DIR/validate-production-release.sh" "$STATIC_ALICE_IMPORTER_RELEASE" "$STATIC_ALICE_IMPORTER_RELEASE/.env" >"$TMP_DIR/static-alice-importer.log" 2>&1; then
+  echo "validate-production-release.sh accepted a static-output Alice importer spoof" >&2
+  exit 1
+fi
+grep -Fqi 'Alice importer bundle' "$TMP_DIR/static-alice-importer.log"
 
 WORKBOOK_RELEASE="$TMP_DIR/workbook-release"
 mkdir -p "$WORKBOOK_RELEASE/public"

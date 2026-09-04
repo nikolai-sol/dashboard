@@ -116,7 +116,7 @@ async function main(): Promise<void> {
     const sourceStat = await stat(options.workbookXlsxPath);
     if (!sourceStat.isFile()) throw new Error("Workbook source must be a file");
     const workbook = await readFile(options.workbookXlsxPath);
-    const parsed = parseAbbottWorkbookCatalog(workbook);
+    const parsed = await parseAbbottWorkbookCatalog(workbook);
     await writeAuditAtomically(options.outputPath, buildAbbottCatalogAudit(parsed.rows));
     process.stdout.write("Abbott workbook audit complete\n");
   } catch {

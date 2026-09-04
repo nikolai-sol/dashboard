@@ -1,11 +1,10 @@
 #!/usr/bin/env node
 import { createHash } from "node:crypto";
-import { readFileSync } from "node:fs";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
 import mysql from "mysql2/promise";
 import {
-  parseAliceVisibilityWorkbook,
+  parseAliceVisibilityWorkbookFile,
   type ParsedAliceVisibilitySnapshot,
 } from "../src/lib/zaruku-alice-visibility-import";
 
@@ -324,13 +323,36 @@ export function createSummaryOnlySnapshot(options: CliOptions): { snapshot: Alic
   };
 }
 
+export function resolveAliceVisibilityDbConfig(
+  environment: Readonly<Record<string, string | undefined>>,
+): {
+  host: string;
+  port: number;
+  user: string;
+  password: string;
+  database: string;
+} {
+  const host = environment.DB_HOST?.trim();
+  const port = Number(environment.DB_PORT);
+  const user = environment.DB_USER?.trim();
+  const password = environment.DB_PASSWORD;
+  const database = environment.DB_NAME?.trim();
+  if (
+    !host ||
+    !Number.isSafeInteger(port) ||
+    port < 1 ||
+    port > 65_535 ||
+    !user ||
+    !password ||
+    !database
+  ) {
+    throw new Error("Missing DB connection env values");
+  }
+  return { host, port, user, password, database };
+}
+
 function configuredConnection() {
-  const host = process.env.DB_HOST ?? process.env.MYSQL_HOST;
-  const port = Number(process.env.DB_PORT ?? process.env.MYSQL_PORT ?? 3306);
-  const user = process.env.DB_USER ?? process.env.MYSQL_USER;
-  const password = process.env.DB_PASSWORD ?? process.env.MYSQL_PASSWORD;
-  const database = process.env.DB_NAME ?? process.env.MYSQL_DB ?? "report_bd";
-  if (!host || !user || !password || !database) throw new Error("Missing DB connection env values");
+  const { host, port, user, password, database } = resolveAliceVisibilityDbConfig(process.env);
   return mysql.createConnection({ host, port, user, password, database, charset: "utf8mb4", dateStrings: true, multipleStatements: false });
 }
 
@@ -345,7 +367,7 @@ export async function runAliceVisibilityImportCli(args: string[] = process.argv.
     : {
       sourceKey: "yandex_webmaster_alice_manual",
       sourcePayloadJson: undefined,
-      snapshot: parseAliceVisibilityWorkbook(readFileSync(options.xlsxPath!), {
+      snapshot: await parseAliceVisibilityWorkbookFile(options.xlsxPath!, {
         accountId: options.accountId,
         portalDomain: options.domain,
         period: options.period,

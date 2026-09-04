@@ -12,7 +12,7 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import test from "node:test";
-import * as XLSX from "xlsx";
+import ExcelJS from "exceljs";
 
 const projectRoot = path.resolve(fileURLToPath(new URL("..", import.meta.url)));
 
@@ -32,7 +32,7 @@ function sanitizedEnvironment(): NodeJS.ProcessEnv {
   return environment;
 }
 
-test("packaged Alice importer runs an external workbook dry-run without source or runtime dependencies", () => {
+test("packaged Alice importer runs an external workbook dry-run without source or runtime dependencies", async () => {
   const temporaryRoot = mkdtempSync(path.join(tmpdir(), "alice-release-"));
   try {
     const releaseRoot = path.join(temporaryRoot, "release");
@@ -47,13 +47,12 @@ test("packaged Alice importer runs an external workbook dry-run without source o
       scripts: { "import:zaruku-alice": "tsx scripts/import-zaruku-alice-visibility.ts" },
     }), "utf8");
 
-    const sheet = XLSX.utils.aoa_to_sheet([
+    const workbook = new ExcelJS.Workbook();
+    workbook.addWorksheet("sheet1").addRows([
       ["Запрос", "Присутствует сайт", "Ответ в Алисе AI", ...Array.from({ length: 10 }, (_, index) => `Сайт ${index + 1}`)],
       ["тестовый запрос", "true", "https://yandex.ru/search/?text=test", "https://zaruku.ru/article/"],
     ]);
-    const workbook = XLSX.utils.book_new();
-    XLSX.utils.book_append_sheet(workbook, sheet, "sheet1");
-    XLSX.writeFile(workbook, workbookPath);
+    await workbook.xlsx.writeFile(workbookPath);
 
     const build = spawnSync(process.execPath, [
       "scripts/build-zaruku-alice-importer.mjs",
@@ -65,7 +64,7 @@ test("packaged Alice importer runs an external workbook dry-run without source o
     const packagedManifest = JSON.parse(readFileSync(path.join(releaseRoot, "package.json"), "utf8"));
     assert.equal(
       packagedManifest.scripts["import:zaruku-alice"],
-      "node --env-file=.env scripts/import-zaruku-alice-visibility.cjs",
+      "node scripts/import-zaruku-alice-visibility.cjs",
     );
     assert.deepEqual(readdirSync(scriptsDirectory), ["import-zaruku-alice-visibility.cjs"]);
     assert.equal(filesBelow(releaseRoot).some((file) => /\.(xlsx|xls)$/i.test(file)), false);
@@ -93,6 +92,7 @@ test("packaged Alice importer runs an external workbook dry-run without source o
 test("release packaging builds only the bundled importer while local development keeps tsx", () => {
   const manifest = JSON.parse(readFileSync(path.join(projectRoot, "package.json"), "utf8"));
   const deploy = readFileSync(path.join(projectRoot, "scripts/deploy.sh"), "utf8");
+  const readme = readFileSync(path.join(projectRoot, "README.md"), "utf8");
 
   assert.equal(manifest.scripts["import:zaruku-alice"], "tsx scripts/import-zaruku-alice-visibility.ts");
   assert.equal(manifest.devDependencies.esbuild, "0.27.3");
@@ -100,4 +100,9 @@ test("release packaging builds only the bundled importer while local development
   assert.match(deploy, /import-zaruku-alice-visibility\.cjs/);
   assert.doesNotMatch(deploy, /cp scripts\/import-zaruku-alice-visibility\.ts/);
   assert.doesNotMatch(deploy, /cp .*\.(?:xlsx|xls)(?:["' ]|$)/i);
+  assert.match(readme, /Active release Alice import/);
+  for (const key of ["DB_HOST", "DB_PORT", "DB_USER", "DB_PASSWORD", "DB_NAME"]) {
+    assert.match(readme, new RegExp(`export ${key}=`));
+  }
+  assert.match(readme, /does not load the application \.env/i);
 });

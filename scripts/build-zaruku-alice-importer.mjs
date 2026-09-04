@@ -5,7 +5,7 @@ import path from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 
 const projectRoot = path.resolve(fileURLToPath(new URL("..", import.meta.url)));
-const releaseImportCommand = "node --env-file=.env scripts/import-zaruku-alice-visibility.cjs";
+const releaseImportCommand = "node scripts/import-zaruku-alice-visibility.cjs";
 
 function parseArguments(args) {
   const options = {};

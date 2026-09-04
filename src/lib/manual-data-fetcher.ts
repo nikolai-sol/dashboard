@@ -1,5 +1,6 @@
 import Papa from "papaparse";
-import * as XLSX from "xlsx";
+import type ExcelJS from "exceljs";
+import { loadExcelWorkbook, worksheetToObjects } from "@/lib/exceljs-tabular";
 
 export interface ManualDataRow {
   date: string;
@@ -254,16 +255,9 @@ function normalizeManualDataRow(
   };
 }
 
-function toObjectsFromWorksheet(worksheet: XLSX.WorkSheet): Record<string, unknown>[] {
-  return XLSX.utils.sheet_to_json<Record<string, unknown>>(worksheet, {
-    defval: "",
-    raw: true,
-  }).map((row) => {
-    const normalized: Record<string, unknown> = {};
-    for (const [key, value] of Object.entries(row)) {
-      normalized[key.trim().toLowerCase().replace(/\s+/g, "_")] = value;
-    }
-    return normalized;
+function toObjectsFromWorksheet(worksheet: ExcelJS.Worksheet): Record<string, unknown>[] {
+  return worksheetToObjects(worksheet, {
+    normalizeHeader: (key) => key.trim().toLowerCase().replace(/\s+/g, "_"),
   });
 }
 
@@ -271,7 +265,7 @@ function parseRows(rows: Record<string, unknown>[], options: ManualDataFetchOpti
   return rows.map((row) => normalizeManualDataRow(row, options)).filter((row): row is ManualDataRow => Boolean(row));
 }
 
-function parseUploadFile(upload: ManualDataUploadPayload, options: ManualDataFetchOptions = {}): ManualDataRow[] {
+async function parseUploadFile(upload: ManualDataUploadPayload, options: ManualDataFetchOptions = {}): Promise<ManualDataRow[]> {
   const filename = upload.filename.toLowerCase();
   const mimeType = String(upload.mime_type ?? "").toLowerCase();
   const buffer = Buffer.from(upload.content_base64, "base64");
@@ -282,10 +276,10 @@ function parseUploadFile(upload: ManualDataUploadPayload, options: ManualDataFet
     mimeType.includes("spreadsheet") ||
     mimeType.includes("excel")
   ) {
-    const workbook = XLSX.read(buffer, { type: "buffer" });
-    const firstSheetName = workbook.SheetNames[0];
-    if (!firstSheetName) return [];
-    return parseRows(toObjectsFromWorksheet(workbook.Sheets[firstSheetName]), options);
+    const workbook = await loadExcelWorkbook(buffer);
+    const worksheet = workbook.worksheets[0];
+    if (!worksheet) return [];
+    return parseRows(toObjectsFromWorksheet(worksheet), options);
   }
 
   const parsed = Papa.parse<Record<string, unknown>>(buffer.toString("utf8"), {

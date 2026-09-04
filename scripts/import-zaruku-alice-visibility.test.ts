@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
 import { readFileSync } from "node:fs";
 import test from "node:test";
+import * as importerModule from "./import-zaruku-alice-visibility";
 import {
   createSummaryOnlySnapshot,
   parseCliArgs,
@@ -32,6 +33,41 @@ test("dry-run refuses a date-only captured-at value", () => {
   const result = spawnSync(process.execPath, ["--import", "tsx", "scripts/import-zaruku-alice-visibility.ts", "--summary-only", "--period", "2026-07", "--official-sov", "44", "--captured-at", "2026-07-13", "--legacy-source", "wm_alisa_manual_legacy", "--legacy-mentions", "89", "--legacy-citations", "155", "--dry-run"], { encoding: "utf8" });
   assert.notEqual(result.status, 0);
   assert.match(result.stderr, /captured-at должен быть ISO timestamp/);
+});
+
+test("execute configuration accepts only explicitly supplied DB_* variables", () => {
+  const resolveConfig = (importerModule as unknown as {
+    resolveAliceVisibilityDbConfig?: (
+      environment: Readonly<Record<string, string | undefined>>,
+    ) => {
+      host: string;
+      port: number;
+      user: string;
+      password: string;
+      database: string;
+    };
+  }).resolveAliceVisibilityDbConfig;
+  assert.equal(typeof resolveConfig, "function");
+  assert.deepEqual(resolveConfig!({
+    DB_HOST: "db.example.test",
+    DB_PORT: "3307",
+    DB_USER: "alice_writer",
+    DB_PASSWORD: "test-password",
+    DB_NAME: "report_bd",
+    MYSQL_HOST: "must-not-win.example.test",
+  }), {
+    host: "db.example.test",
+    port: 3307,
+    user: "alice_writer",
+    password: "test-password",
+    database: "report_bd",
+  });
+  assert.throws(() => resolveConfig!({
+    MYSQL_HOST: "legacy.example.test",
+    MYSQL_USER: "legacy",
+    MYSQL_PASSWORD: "test-password",
+    MYSQL_DB: "report_bd",
+  }), /Missing DB connection env values/);
 });
 
 function parsedSnapshot(): ParsedAliceVisibilitySnapshot {

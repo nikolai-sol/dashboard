@@ -1,5 +1,5 @@
 import { createHash } from "node:crypto";
-import * as XLSX from "xlsx";
+import { loadExcelWorkbook, worksheetToObjects } from "@/lib/exceljs-tabular";
 
 interface AbbottWorkbookSheetConfig {
   name: string;
@@ -72,14 +72,14 @@ function fingerprint(fields: readonly unknown[]): string {
   return hash.digest("hex");
 }
 
-export function parseAbbottWorkbookCatalog(buffer: Buffer): AbbottWorkbookCatalogParseResult {
-  const workbook = XLSX.read(buffer, { type: "buffer", raw: true });
+export async function parseAbbottWorkbookCatalog(buffer: Buffer): Promise<AbbottWorkbookCatalogParseResult> {
+  const workbook = await loadExcelWorkbook(buffer);
   const rows: AbbottWorkbookCatalogRow[] = [];
 
   for (const config of CONTENT_SHEETS) {
-    const worksheet = workbook.Sheets[config.name];
+    const worksheet = workbook.getWorksheet(config.name);
     if (!worksheet) continue;
-    const sourceRows = XLSX.utils.sheet_to_json<Record<string, unknown>>(worksheet, { defval: "", raw: true });
+    const sourceRows = worksheetToObjects(worksheet);
     sourceRows.forEach((row, index) => {
       const sourceRowOrdinal = index + 1;
       const pageTitle = text(row["Название"]);

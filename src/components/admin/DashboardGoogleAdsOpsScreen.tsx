@@ -3,7 +3,7 @@
 import { useEffect, useMemo, useState } from "react";
 import Link from "next/link";
 import { Check, ClipboardCopy, Download, FileSpreadsheet } from "lucide-react";
-import * as XLSX from "xlsx";
+import { createExcelRecordsBlob } from "@/lib/excel-export";
 
 type CampaignOption = {
   customer_id: string;
@@ -437,7 +437,7 @@ export default function DashboardGoogleAdsOpsScreen({ dashboardId }: Props) {
     window.setTimeout(() => setSearchTermsCopied(false), 1600);
   }
 
-  function exportSearchTerms() {
+  async function exportSearchTerms() {
     if (!searchTermExportRows.length) return;
     const safeCampaign = (selectedCampaign?.campaign_name || campaignId || "campaign")
       .replace(/[^a-z0-9а-яё_-]+/gi, "_")
@@ -457,21 +457,12 @@ export default function DashboardGoogleAdsOpsScreen({ dashboardId }: Props) {
       );
       return;
     }
-    const worksheet = XLSX.utils.json_to_sheet(searchTermExportRows, { header: SEARCH_TERM_EXPORT_HEADERS });
-    worksheet["!cols"] = [
-      { wch: 48 },
-      { wch: 12 },
-      { wch: 10 },
-      { wch: 12 },
-      { wch: 12 },
-      { wch: 16 },
-      { wch: 10 },
-      { wch: 12 },
-      { wch: 12 },
-    ];
-    const workbook = XLSX.utils.book_new();
-    XLSX.utils.book_append_sheet(workbook, worksheet, "Search terms");
-    XLSX.writeFile(workbook, `google_ads_search_terms_${safeCampaign}_${dateSuffix}.xlsx`);
+    const widths = [48, 12, 10, 12, 12, 16, 10, 12, 12];
+    const blob = await createExcelRecordsBlob(searchTermExportRows, {
+      sheetName: "Search terms",
+      columns: SEARCH_TERM_EXPORT_HEADERS.map((header, index) => ({ header, width: widths[index] })),
+    });
+    downloadBlob(blob, `google_ads_search_terms_${safeCampaign}_${dateSuffix}.xlsx`);
   }
 
   async function applySearchTermDatePreset(preset: "yesterday" | "this_week" | "since_campaign_start") {
