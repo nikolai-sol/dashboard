@@ -3,6 +3,8 @@ import {
   defaultAbbottRange,
   normalizeAbbottRequestedRange,
 } from "./abbott-date-range";
+import { clampZarukuDateRange } from "./zaruku-date-range";
+export { clampZarukuDateRange, latestZarukuReportingDate } from "./zaruku-date-range";
 
 export type DashboardDateRange = { from: string; to: string };
 
@@ -39,21 +41,6 @@ function currentMonth(now: Date): DashboardDateRange {
   const from = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), 1)).toISOString().slice(0, 10);
   const to = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth() + 1, 0)).toISOString().slice(0, 10);
   return { from, to };
-}
-
-export function latestZarukuReportingDate(now = new Date()): string {
-  return shift(now.toISOString().slice(0, 10), -2);
-}
-
-export function clampZarukuDateRange(
-  range: DashboardDateRange,
-  now = new Date(),
-): DashboardDateRange {
-  const latest = latestZarukuReportingDate(now);
-  return {
-    from: range.from > latest ? latest : range.from,
-    to: range.to > latest ? latest : range.to,
-  };
 }
 
 export function resolveDashboardDateRange(input: DashboardDateRangeInput): DashboardDateRange {

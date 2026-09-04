@@ -3,7 +3,8 @@
   "compilerOptions": {
     "baseUrl": ".",
     "paths": {
-      "@/*": ["./src/*"],
+      "@/*": ["../../src/*"],
+      "@zaruku/*": ["./src/*"],
       "@reportingdash/runtime-contract": ["../../packages/runtime-contract/src/index.ts"]
     }
   },

@@ -4,6 +4,7 @@ import type { CSSProperties } from "react";
 import { useEffect, useMemo, useState } from "react";
 import Link from "next/link";
 import { useParams, useRouter, useSearchParams } from "next/navigation";
+import { ZarukuDashboardPage } from "@zaruku/compat/combined";
 import ChannelMix from "@/components/ChannelMix";
 import CampaignPerformanceTable from "@/components/CampaignPerformanceTable";
 import DashboardAccessGate from "@/components/DashboardAccessGate";
@@ -334,6 +335,14 @@ function buildCompareRange(
 }
 
 export default function DashboardByIdPage() {
+  const params = useParams<{ id: string }>();
+  const dashboardId = params?.id ? String(params.id).toLowerCase() : "";
+  return dashboardId === "zaruku"
+    ? <ZarukuDashboardPage unsupportedDashboardFallback={<CombinedDashboardByIdPage />} />
+    : <CombinedDashboardByIdPage />;
+}
+
+function CombinedDashboardByIdPage() {
   const params = useParams<{ id: string }>();
   const router = useRouter();
   const searchParams = useSearchParams();
