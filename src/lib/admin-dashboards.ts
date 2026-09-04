@@ -1,6 +1,6 @@
 import type { PoolConnection, ResultSetHeader, RowDataPacket } from "mysql2/promise";
 import { normalizeMultibrandConfig } from "@/lib/multibrand";
-import { buildManualSourceKey, deleteDashboardManualFactsExceptKeys } from "@/lib/manual-data-store";
+import { listSchemaMetas } from "@/lib/schema-registry";
 import {
   buildAliasMemoryFromRows,
   loadDashboardMediaPlanAliases,
@@ -26,8 +26,13 @@ export type DashboardSourceInput = {
 export type MediaPlanBindingInput = {
   line_key?: string;
   channel: string;
-  source_key: string;
-  platform_campaign_id: string;
+  source_key?: string;
+  platform_campaign_id?: string;
+  canonical_campaign_id?: number | null;
+  platform_account_id?: string | null;
+  effective_from?: string | null;
+  effective_to?: string | null;
+  created_by?: string | null;
 };
 
 export type DashboardUpsertPayload = {
@@ -176,13 +181,6 @@ function normalizeSource(raw: unknown): DashboardSourceInput {
     sourceConfig.stored_aliases_count = aliasEntriesCount;
   }
 
-  if (platform === "manual_data") {
-    const sourceKey = String(sourceConfig?.manual_source_key ?? "").trim();
-    if (!sourceKey) {
-      sourceConfig.manual_source_key = buildManualSourceKey();
-    }
-  }
-
   return {
     id: input.id,
     platform,
@@ -193,15 +191,87 @@ function normalizeSource(raw: unknown): DashboardSourceInput {
   };
 }
 
+const DEFAULT_IMPORT_COLUMN_MAP = {
+  date: "date",
+  campaign_id: "campaign_id",
+  campaign_name: "campaign",
+  impressions: "impressions",
+  clicks: "clicks",
+  spend: "spend",
+  views: "views",
+  conversions: "conversions",
+  reach: "reach",
+};
+
+export type ReviewedAdvertisingSource = {
+  advertiserKey: string;
+  sourceKey: string;
+  platformAccountId: string;
+  platform: string;
+  schemaFile: string;
+  adapterConfig: Record<string, unknown>;
+};
+
+export function resolveReviewedAdvertisingSource(sourceConfig: Record<string, unknown>): ReviewedAdvertisingSource {
+  const advertiserKey = String(sourceConfig.advertiser_key ?? "").trim();
+  const requestedSource = String(sourceConfig.source_key ?? sourceConfig.platform ?? "").trim().toLowerCase();
+  const platformAccountId = String(sourceConfig.platform_account_id ?? "").trim();
+  if (!advertiserKey) throw new Error("advertiser_key is required");
+  if (!requestedSource) throw new Error("source_key is required");
+  if (!platformAccountId) throw new Error("platform_account_id is required");
+
+  const schema = listSchemaMetas().find(
+    (candidate) =>
+      (candidate.source_key === requestedSource || candidate.id === requestedSource) &&
+      !["manual_data", "media_plan", "leads"].includes(candidate.id) &&
+      candidate.source_type === "ads",
+  );
+  if (!schema) throw new Error("source_key must identify a real advertising platform");
+
+  if (Object.prototype.hasOwnProperty.call(sourceConfig, "adapter_config")) {
+    throw new Error("adapter_config is derived from the reviewed source and cannot be supplied by the browser");
+  }
+  const adapterConfig = {
+    adapter_config_version: "file-v1",
+    source_key: schema.source_key,
+    platform_account_id: platformAccountId,
+    column_map: { ...DEFAULT_IMPORT_COLUMN_MAP },
+  };
+
+  return {
+    advertiserKey,
+    sourceKey: schema.source_key,
+    platformAccountId,
+    platform: schema.id,
+    schemaFile: schema.schema_file,
+    adapterConfig,
+  };
+}
+
 function normalizeMediaPlanBinding(raw: unknown): MediaPlanBindingInput | null {
   const input = (raw ?? {}) as Partial<MediaPlanBindingInput>;
   const channel = String(input.channel ?? "").trim();
   const lineKey = String(input.line_key ?? channel).trim();
+  if (!channel || !lineKey) return null;
+
+  const canonicalCampaignId = Number(input.canonical_campaign_id);
+  if (Number.isSafeInteger(canonicalCampaignId) && canonicalCampaignId > 0) {
+    return {
+      line_key: lineKey,
+      channel,
+      canonical_campaign_id: canonicalCampaignId,
+      effective_from: input.effective_from === null
+        ? null
+        : String(input.effective_from ?? "").trim() || null,
+      effective_to: input.effective_to === null
+        ? null
+        : String(input.effective_to ?? "").trim() || null,
+    };
+  }
+
   const sourceKey = String(input.source_key ?? "").trim().toLowerCase();
   const campaignId = String(input.platform_campaign_id ?? "").trim();
-  if (!channel || !lineKey || !sourceKey || !campaignId) {
-    return null;
-  }
+  if (!sourceKey || !campaignId) return null;
   return {
     line_key: lineKey,
     channel,
@@ -373,8 +443,13 @@ export function validateDashboardPayload(payload: DashboardUpsertPayload): strin
   }
 
   for (const binding of payload.media_plan_bindings) {
-    if (!binding.channel || !(binding.line_key ?? binding.channel) || !binding.source_key || !binding.platform_campaign_id) {
-      return "Each media plan binding must include line_key, channel, source_key and platform_campaign_id";
+    if (
+      !binding.channel ||
+      !(binding.line_key ?? binding.channel) ||
+      !Number.isSafeInteger(Number(binding.canonical_campaign_id)) ||
+      Number(binding.canonical_campaign_id) <= 0
+    ) {
+      return "Each advertising media plan binding must include line_key, channel and canonical_campaign_id";
     }
   }
 
@@ -503,25 +578,6 @@ export async function insertSourcesWithFilters(
   }
 }
 
-export async function replaceMediaPlanBindings(
-  conn: PoolConnection,
-  dashboardId: number,
-  bindings: MediaPlanBindingInput[],
-): Promise<void> {
-  await conn.execute("DELETE FROM media_plan_bindings WHERE dashboard_id = ?", [dashboardId]);
-  if (!bindings.length) {
-    return;
-  }
-
-  for (const binding of bindings) {
-    await conn.execute(
-      `INSERT INTO media_plan_bindings (dashboard_id, line_key, channel, source_key, platform_campaign_id)
-       VALUES (?, ?, ?, ?, ?)`,
-      [dashboardId, binding.line_key ?? binding.channel, binding.channel, binding.source_key, binding.platform_campaign_id],
-    );
-  }
-}
-
 export async function syncDashboardMediaPlanStorage(
   conn: PoolConnection,
   dashboardId: number,
@@ -544,19 +600,6 @@ export async function syncDashboardMediaPlanStorage(
   await replaceDashboardMediaPlanAliases(conn, dashboardId, review.alias_memory);
 }
 
-export async function cleanupRemovedManualDataSources(
-  conn: PoolConnection,
-  dashboardId: number,
-  sources: DashboardSourceInput[],
-): Promise<void> {
-  const retainedKeys = sources
-    .filter((source) => source.platform === "manual_data")
-    .map((source) => String(source.source_config?.manual_source_key ?? "").trim())
-    .filter(Boolean);
-
-  await deleteDashboardManualFactsExceptKeys(conn, dashboardId, retainedKeys);
-}
-
 export async function loadDashboardWithSources(
   conn: PoolConnection,
   dashboardId: number,
@@ -577,7 +620,9 @@ export async function loadDashboardWithSources(
     [dashboardId],
   );
   const [bindingRows] = await conn.execute<RowDataPacket[]>(
-    `SELECT line_key, channel, source_key, platform_campaign_id
+    `SELECT line_key, channel, source_key, canonical_campaign_id,
+            platform_account_id, platform_campaign_id,
+            effective_from, effective_to, created_by
      FROM media_plan_bindings
      WHERE dashboard_id = ?
      ORDER BY COALESCE(line_key, channel), source_key, platform_campaign_id`,
@@ -652,6 +697,15 @@ export async function loadDashboardWithSources(
       channel: String(row.channel ?? ""),
       source_key: String(row.source_key ?? ""),
       platform_campaign_id: String(row.platform_campaign_id ?? ""),
+      canonical_campaign_id: row.canonical_campaign_id === null
+        ? null
+        : Number(row.canonical_campaign_id),
+      platform_account_id: row.platform_account_id === null
+        ? null
+        : String(row.platform_account_id),
+      effective_from: row.effective_from === null ? null : String(row.effective_from).slice(0, 10),
+      effective_to: row.effective_to === null ? null : String(row.effective_to).slice(0, 10),
+      created_by: row.created_by === null ? null : String(row.created_by),
     })),
   };
 }

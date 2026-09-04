@@ -30,27 +30,24 @@ import {
   type CanonicalFilter,
   type PromopagesFilter,
 } from "@/lib/canonical-adapter";
-import { fetchCustomTable, fetchMediaPlanFromSourceConfig, groupByChannel, type ChannelGroup, type MediaPlanRow } from "@/lib/gsheet-fetcher";
-import {
-  aggregateByChannel,
-  aggregateByPlatform,
-  fetchManualDataFromSourceConfig,
-  filterByDateRange,
-  getTimeseriesByPlatform,
-  type ManualDataRow,
-  normalizeManualPlatformId,
-} from "@/lib/manual-data-fetcher";
+import { fetchCustomTable, groupByChannel, type ChannelGroup, type MediaPlanRow } from "@/lib/gsheet-fetcher";
+import { normalizeManualPlatformId } from "@/lib/manual-data-fetcher";
 import {
   aggregateConfirmedLeadsByCanonicalChannel,
   aggregateConfirmedLeadsByPlatform,
-  fetchLeadsFromSourceConfig,
+  getConfirmedLeadRowsFromStoredSnapshot,
   type ConfirmedLeadChannelRow,
   type LeadRow,
 } from "@/lib/leads-fetcher";
-import { loadDashboardManualFacts } from "@/lib/manual-data-store";
 import { loadDashboardMediaPlanRows } from "@/lib/media-plan-store";
+import {
+  loadBoundAdvertisingFacts,
+  type AdvertisingBindingReadModel,
+  type BoundAdvertisingLine,
+} from "@/lib/advertising-binding-read-model";
 import { PLATFORM_COLORS } from "@/lib/platform-colors";
 import {
+  resolveDashboardViews,
   resolvePlatformIdFromSourceKey,
   resolveSourceKey,
   resolveSourceType,
@@ -109,6 +106,68 @@ import type {
 } from "@/lib/types";
 
 type JsonRecord = Record<string, unknown>;
+
+function advertisingFactsReadModelSql(alias: string): string {
+  if (!/^[A-Za-z][A-Za-z0-9_]*$/.test(alias)) {
+    throw new Error("Invalid advertising facts SQL alias");
+  }
+
+  const columns = [
+    "source_key",
+    "platform_account_id",
+    "platform_campaign_id",
+    "platform_delivery_entity_id",
+    "platform_creative_id",
+    "report_date",
+    "impressions",
+    "clicks",
+    "views",
+    "reach",
+    "spend",
+    "video_views_25",
+    "video_views_50",
+    "video_views_75",
+    "video_views_100",
+  ];
+  const selectColumns = (tableAlias?: string) =>
+    columns.map((column) => tableAlias ? `${tableAlias}.${column}` : column).join(",\n    ");
+
+  return `(
+    SELECT ${selectColumns()}
+    FROM canonical_advertising_facts_current
+    WHERE source_key = 'between'
+      AND report_date >= ?
+      AND report_date <= ?
+    UNION ALL
+    SELECT ${selectColumns()}
+    FROM canonical_fact_ads_daily legacy
+    WHERE legacy.source_key <> 'between'
+      AND legacy.report_date >= ?
+      AND legacy.report_date <= ?
+    UNION ALL
+    SELECT ${selectColumns("legacy")}
+    FROM canonical_fact_ads_daily legacy
+    LEFT JOIN (
+      SELECT source_key, platform_account_id, MIN(report_date) AS first_covered_date
+      FROM canonical_ad_coverage_daily
+      WHERE source_key = 'between'
+      GROUP BY source_key, platform_account_id
+    ) coverage_start
+      ON coverage_start.source_key = legacy.source_key
+     AND coverage_start.platform_account_id = legacy.platform_account_id
+    WHERE legacy.source_key = 'between'
+      AND legacy.report_date >= ?
+      AND legacy.report_date <= ?
+      AND (
+        coverage_start.first_covered_date IS NULL
+        OR legacy.report_date < coverage_start.first_covered_date
+      )
+  ) ${alias}`;
+}
+
+function advertisingFactsReadModelParams(dateFrom: string, dateTo: string): string[] {
+  return [dateFrom, dateTo, dateFrom, dateTo, dateFrom, dateTo];
+}
 
 export type LoadedDashboardData = {
   dashboard_id: number;
@@ -342,31 +401,6 @@ function resolveDashboardMetrikaAccountIds(sourceRows: SourceRow[]): string[] {
   });
 
   return Array.from(new Set(ids)).filter(Boolean);
-}
-
-function filterManualRowsByBrand(rows: ManualDataRow[], patterns: string[]): ManualDataRow[] {
-  if (!patterns.length) return rows;
-  return rows.filter((row) => matchesAnyMultibrandPattern(row.channel, patterns));
-}
-
-function adaptStoredManualFacts(rows: Awaited<ReturnType<typeof loadDashboardManualFacts>>): ManualDataRow[] {
-  return rows.map((row) => ({
-    date: row.date,
-    platform: row.platform,
-    channel: row.channel,
-    impressions: row.impressions,
-    clicks: row.clicks,
-    spend: row.spend,
-    views: row.views,
-    conversions: row.conversions,
-    reach: row.reach,
-    sessions: row.sessions,
-    cr: null,
-    ctr: null,
-    cpc: null,
-    cpm: null,
-    cpv: null,
-  }));
 }
 
 function shiftDate(dateIso: string, days: number): string {
@@ -1101,19 +1135,11 @@ async function loadAdjustedCampaignDailyFacts(
   dateFrom: string,
   dateTo: string,
   overrideMap: Map<string, number>,
-  isGidrofuril = false,
 ): Promise<CampaignDailyFactRow[]> {
   const rows = await getCampaignDailyFactsByIds(sourceKey, campaignIds, dateFrom, dateTo);
   return rows.map((row) => {
     const impressions = asNumber(row.impressions);
-    let views = asNumber(row.views);
-
-    // TEMPORARY: Gidrofuril VK "views started" approximation
-    // views = impressions * 0.89 (until real video.started / views_started
-    // is collected from VK Ads API into canonical_fact_ads_daily)
-    if (isGidrofuril && sourceKey === "vk_ads_v2") {
-      views = Math.round(impressions * 0.89);
-    }
+    const views = resolveDashboardViews(sourceKey, impressions, asNumber(row.views));
 
     return applyFrequencyOverride(
       sourceKey,
@@ -1262,7 +1288,6 @@ async function buildPlanVsFactRowsByChannel(
   dateTo: string,
   overrideMap: Map<string, number>,
   manualChannels: ManualChannelData[],
-  isGidrofuril = false,
 ): Promise<PlanVsFactItem[]> {
   const resolveBindingPlatform = (binding: { source_key: string; platform_campaign_id: string }) => {
     if (binding.source_key === "manual_data" && binding.platform_campaign_id.startsWith("manual:")) {
@@ -1296,7 +1321,16 @@ async function buildPlanVsFactRowsByChannel(
       if (!actualAdsSourceKeys.has(fallbackSourceKey)) {
         return null;
       }
-      return getFactByCampaignIds(fallbackSourceKey, [], dateFrom, dateTo);
+      const fact = await getFactByCampaignIds(fallbackSourceKey, [], dateFrom, dateTo);
+      if (!fact) return fact;
+      return {
+        ...fact,
+        total_views: resolveDashboardViews(
+          fallbackSourceKey,
+          asNumber(fact.total_impressions),
+          asNumber(fact.total_views),
+        ),
+      };
     }
 
     const canonicalBindings = bindings.filter((b) => b.source_key !== "manual_data" && b.source_key !== "yandex_promopages");
@@ -1312,7 +1346,7 @@ async function buildPlanVsFactRowsByChannel(
       });
       const results = await Promise.all(
         Array.from(bySource.entries()).map(([sourceKey, ids]) =>
-          loadAdjustedCampaignDailyFacts(sourceKey, ids, dateFrom, dateTo, overrideMap, isGidrofuril),
+          loadAdjustedCampaignDailyFacts(sourceKey, ids, dateFrom, dateTo, overrideMap),
         ),
       );
       canonicalTotals = sumCampaignDailyFacts(results.flat());
@@ -1409,6 +1443,7 @@ async function buildPlanVsFactRowsByChannel(
     const cpaFact = totalConversions > 0 ? totalSpend / totalConversions : 0;
 
     return {
+      line_key: group.line_key || group.channel,
       channel: group.channel,
       instrument: group.instrument,
       format: group.format,
@@ -1502,7 +1537,7 @@ async function buildChannelTimeseries(
       const sourceResults = await Promise.all(
         Array.from(bySource.entries()).map(([sourceKey, ids]) =>
           ids.length
-            ? loadAdjustedCampaignDailyFacts(sourceKey, ids, dateFrom, dateTo, overrideMap, false)
+            ? loadAdjustedCampaignDailyFacts(sourceKey, ids, dateFrom, dateTo, overrideMap)
             : getTimeseriesByCampaignIds(sourceKey, ids, dateFrom, dateTo).then((rows) =>
                 rows.map((row) => ({
                   date: toIsoDate(row.date),
@@ -1511,7 +1546,7 @@ async function buildChannelTimeseries(
                   reach: asNumber(row.reach),
                   clicks: asNumber(row.clicks),
                   spend: Number(asNumber(row.spend).toFixed(2)),
-                  views: asNumber(row.views),
+                  views: resolveDashboardViews(sourceKey, asNumber(row.impressions), asNumber(row.views)),
                   conversions: asNumber(row.conversions),
                 })),
               ),
@@ -1551,6 +1586,7 @@ async function buildChannelTimeseries(
       });
 
       return Array.from(byDate.entries()).map(([date, item]) => ({
+        line_key: group.line_key || group.channel,
         date,
         channel: group.channel,
         instrument: group.instrument,
@@ -1710,6 +1746,7 @@ function buildChannelPerformance(
 async function buildPostClickAnalytics(
   dashboardId: number,
   channelGroups: ChannelGroup[],
+  hasBetweenBindings: boolean,
   metrikaAccountIds: string[],
   dateFrom: string,
   dateTo: string,
@@ -1741,6 +1778,13 @@ async function buildPostClickAnalytics(
   if (!normalizedBindings.length) {
     return undefined;
   }
+
+  const advertisingFactsSql = hasBetweenBindings
+    ? advertisingFactsReadModelSql("f")
+    : "canonical_fact_ads_daily f";
+  const advertisingFactsParams = hasBetweenBindings
+    ? advertisingFactsReadModelParams(dateFrom, dateTo)
+    : [];
 
   const utmSourcesByLineKey = normalizedBindings.reduce((acc, row) => {
     if (!acc.has(row.line_key)) acc.set(row.line_key, new Set<string>());
@@ -1841,7 +1885,7 @@ async function buildPostClickAnalytics(
         COALESCE(SUM(f.video_views_75), 0) AS video_views_75,
         COALESCE(SUM(f.video_views_100), 0) AS video_views_100
       FROM media_plan_bindings b
-      JOIN canonical_fact_ads_daily f
+      JOIN ${advertisingFactsSql}
         ON f.source_key COLLATE utf8mb4_unicode_ci = b.source_key
        AND f.platform_campaign_id COLLATE utf8mb4_unicode_ci = b.platform_campaign_id
       WHERE b.dashboard_id = ?
@@ -1850,7 +1894,7 @@ async function buildPostClickAnalytics(
       GROUP BY b.line_key, f.report_date
       ORDER BY f.report_date, b.line_key
     `,
-    [dashboardId, dateFrom, dateTo],
+    [...advertisingFactsParams, dashboardId, dateFrom, dateTo],
   );
 
   const [campaignTrafficRows] = await pool.execute<PostClickCampaignTrafficFactRow[]>(
@@ -2008,7 +2052,7 @@ async function buildPostClickAnalytics(
       JOIN media_plan_bindings mp
         ON mp.dashboard_id = b.dashboard_id
        AND mp.line_key COLLATE utf8mb4_unicode_ci = b.line_key COLLATE utf8mb4_unicode_ci
-      JOIN canonical_fact_ads_daily f
+      JOIN ${advertisingFactsSql}
         ON f.source_key COLLATE utf8mb4_unicode_ci = mp.source_key
        AND f.report_date = m.report_date
        AND (
@@ -2019,7 +2063,13 @@ async function buildPostClickAnalytics(
       GROUP BY b.line_key, m.report_date, NULLIF(TRIM(m.utm_campaign), '')
       ORDER BY m.report_date, b.line_key
     `,
-    [dashboardId, dateFrom, dateTo, ...metrikaAccountIds],
+    [
+      dashboardId,
+      dateFrom,
+      dateTo,
+      ...metrikaAccountIds,
+      ...advertisingFactsParams,
+    ],
   );
 
   const goalsByLineDate = new Map(
@@ -2716,6 +2766,120 @@ function applyChannelLeadConversions(
   channelTimeseries.sort((a, b) => a.date.localeCompare(b.date) || a.channel.localeCompare(b.channel));
 }
 
+function buildDirectMonthlyBreakdown(
+  group: ChannelGroup,
+  line: BoundAdvertisingLine | undefined,
+): PlanVsFactItem["monthly_breakdown"] {
+  const monthly = line?.monthlyPlan ?? group.monthly;
+  const buyType = String(line?.plan?.buy_type ?? group.buy_type).toUpperCase();
+  const unitPrice = asNumber(line?.plan?.unit_price);
+  const frequency = asNumber(line?.plan?.frequency_plan ?? group.frequency_plan);
+
+  return Object.fromEntries(Object.entries(monthly).map(([month, rawUnits]) => {
+    const units = asNumber(rawUnits);
+    const impressions = buyType === "CPM" ? units : 0;
+    const clicks = buyType === "CPC" ? units : 0;
+    const views = buyType === "CPV" ? units : 0;
+    const conversions = buyType === "CPA" ? units : 0;
+    const budget = buyType === "CPM" ? (units / 1000) * unitPrice : units * unitPrice;
+    return [month, {
+      units,
+      budget: Number(budget.toFixed(2)),
+      impressions,
+      clicks,
+      views,
+      conversions,
+      reach: impressions > 0 && frequency > 0 ? impressions / frequency : 0,
+      ctr: impressions > 0 ? (clicks / impressions) * 100 : 0,
+    }];
+  }));
+}
+
+function buildCanonicalPlanVsFactRows(
+  channelGroups: ChannelGroup[],
+  readModel: AdvertisingBindingReadModel,
+): PlanVsFactItem[] {
+  return channelGroups.map((group) => {
+    const line = readModel.lines.get(group.line_key || group.channel);
+    const platforms = Array.from(new Set(line?.campaigns.map((campaign) => campaign.sourceKey) ?? []))
+      .map((sourceKey) => {
+        const platformId = resolvePlatformIdFromSourceKey(sourceKey);
+        const meta = PLATFORM_COLORS[platformId];
+        return { source_key: sourceKey, label: meta?.label ?? sourceKey, color: meta?.hex ?? "#94a3b8" };
+      });
+    const totalImpressions = asNumber(line?.impressions);
+    const totalReach = asNumber(line?.reach);
+    const totalClicks = asNumber(line?.clicks);
+    const totalViews = asNumber(line?.views);
+    const totalConversions = asNumber(line?.conversions);
+    const totalSpend = asNumber(line?.spend);
+    const budgetPlan = asNumber(group.budget_plan);
+    const impressionsPlan = asNumber(group.impressions_plan);
+    const reachPlan = asNumber(group.reach_plan);
+    const clicksPlan = asNumber(group.clicks_plan);
+    const viewsPlan = asNumber(group.views_plan);
+    const conversionsPlan = asNumber(group.conversions_plan);
+
+    return {
+      line_key: group.line_key || group.channel,
+      channel: group.channel,
+      instrument: group.instrument,
+      format: group.format,
+      buy_type: group.buy_type,
+      platforms,
+      campaign_count: line?.campaignIds.length ?? 0,
+      budget_plan: Number(budgetPlan.toFixed(2)),
+      impressions_plan: impressionsPlan,
+      reach_plan: Math.round(reachPlan),
+      clicks_plan: clicksPlan,
+      views_plan: viewsPlan,
+      conversions_plan: conversionsPlan,
+      monthly_plan: { ...(line?.monthlyPlan ?? group.monthly) },
+      monthly_breakdown: buildDirectMonthlyBreakdown(group, line),
+      budget_fact: Number(totalSpend.toFixed(2)),
+      impressions_fact: Math.round(totalImpressions),
+      reach_fact: Math.round(totalReach),
+      clicks_fact: Math.round(totalClicks),
+      views_fact: Math.round(totalViews),
+      conversions_fact: Math.round(totalConversions),
+      pacing: budgetPlan > 0 ? totalSpend / budgetPlan : 0,
+      frequency_plan: Number((reachPlan > 0 ? impressionsPlan / reachPlan : 0).toFixed(4)),
+      frequency_fact: Number((totalReach > 0 ? totalImpressions / totalReach : 0).toFixed(4)),
+      cpm_plan: Number((impressionsPlan > 0 ? (budgetPlan / impressionsPlan) * 1000 : 0).toFixed(4)),
+      cpm_fact: Number((totalImpressions > 0 ? (totalSpend / totalImpressions) * 1000 : 0).toFixed(4)),
+      cpc_plan: Number((clicksPlan > 0 ? budgetPlan / clicksPlan : 0).toFixed(4)),
+      cpc_fact: Number((totalClicks > 0 ? totalSpend / totalClicks : 0).toFixed(4)),
+      cpv_plan: Number((viewsPlan > 0 ? budgetPlan / viewsPlan : 0).toFixed(4)),
+      cpv_fact: Number((totalViews > 0 ? totalSpend / totalViews : 0).toFixed(4)),
+      cpa_plan: Number((conversionsPlan > 0 ? budgetPlan / conversionsPlan : 0).toFixed(4)),
+      cpa_fact: Number((totalConversions > 0 ? totalSpend / totalConversions : 0).toFixed(4)),
+    };
+  });
+}
+
+function buildCanonicalChannelTimeseries(
+  channelGroups: ChannelGroup[],
+  readModel: AdvertisingBindingReadModel,
+): NonNullable<DashboardData["channel_timeseries"]> {
+  const groups = new Map(channelGroups.map((group) => [group.line_key || group.channel, group]));
+  return readModel.lineDaily.flatMap((row) => {
+    const group = groups.get(row.lineKey);
+    if (!group) return [];
+    return [{
+      line_key: group.line_key || group.channel,
+      date: row.date,
+      channel: group.channel,
+      instrument: group.instrument,
+      impressions: Math.round(row.impressions),
+      reach: Math.round(row.reach),
+      clicks: Math.round(row.clicks),
+      spend: Number(row.spend.toFixed(2)),
+      views: Math.round(row.views),
+      conversions: Math.round(row.conversions),
+    }];
+  });
+}
+
 export async function invokeDashboardLoaderWithAudience<T>(
   request: Request,
   requestedId: string,
@@ -2767,13 +2931,6 @@ export async function loadDashboardData(
   const range = resolveDateRange(request, config, dashboardType);
   const compareRange = getCompareRange(request);
   const previousRange = buildPreviousPeriod(range.from, range.to);
-
-  // TEMPORARY GIDROFURIL VK STUB
-  // For VK (vk_ads_v2) on this dashboard we approximate "views started"
-  // as impressions * 0.89 because the real metric is not yet collected
-  // in canonical_fact_ads_daily (see loadAdjustedCampaignDailyFacts).
-  const isGidrofuril = dashboard.client_id === 'gidrofuril';
-
 
   const [sourceRows] = await pool.execute<SourceRow[]>(
     `SELECT ds.*, dcf.filter_type, dcf.filter_value
@@ -2872,7 +3029,7 @@ export async function loadDashboardData(
   const timeseriesRaw: TimeSeriesPoint[] = [];
   const prevStatsRaw: PlatformStats[] = [];
   const campaignBreakdownRaw: CampaignBreakdownItem[] = [];
-  const planRows: MediaPlanRow[] = [];
+  const planRows: MediaPlanRow[] = storedMediaPlanRows.map((row) => ({ ...row })) as MediaPlanRow[];
   const analyticsKpiRaw: AnalyticsKPI[] = [];
   const analyticsTimeseriesRaw: AnalyticsTimeSeriesPoint[] = [];
   const trafficSourcesRaw: TrafficSourceRow[] = [];
@@ -2894,98 +3051,12 @@ export async function loadDashboardData(
   const customTables: CustomTableData[] = [];
   const leadsRows: LeadRow[] = [];
   const manualChannels: ManualChannelData[] = [];
-  let manualTableTitle = "";
-  const manualTableTitleBySourceIndex: Array<{ index: number; title: string }> = [];
+  const manualTableTitle = "";
 
-    await Promise.all(sourceRows.map(async (source, sourceIndex) => {
+    for (const source of sourceRows) {
       try {
         if (source.platform === "manual_data" && source.role === "actual") {
-          const sourceConfig = parseJson(source.source_config);
-          const manualSourceKey = String(sourceConfig?.manual_source_key ?? "").trim();
-          const hasConfirmedManualData =
-            Boolean(manualSourceKey) &&
-            Boolean(sourceConfig?.confirmed_manual_data && typeof sourceConfig.confirmed_manual_data === "object");
-          const hasManualInput =
-            Boolean(String(sourceConfig?.sheet_url ?? "").trim()) ||
-            (typeof sourceConfig?.upload_file === "object" && sourceConfig?.upload_file);
-          if (hasConfirmedManualData || hasManualInput) {
-            try {
-              const allRows = hasConfirmedManualData
-                ? adaptStoredManualFacts(await loadDashboardManualFacts(dashboard.id, manualSourceKey, previousRange.from, range.to))
-                : await fetchManualDataFromSourceConfig(sourceConfig);
-              const filtered = filterManualRowsByBrand(
-                filterByDateRange(allRows, range.from, range.to),
-                activeBrand?.channel_patterns ?? [],
-              );
-
-              const byPlatform = aggregateByPlatform(filtered);
-              for (const p of byPlatform) {
-                const platformId = p.platform;
-                const meta = PLATFORM_COLORS[platformId];
-                platformStatsRaw.push({
-                  id: platformId,
-                  name: meta?.label ?? p.platform.charAt(0).toUpperCase() + p.platform.slice(1),
-                  color: meta?.hex ?? "#94a3b8",
-                  impressions: p.impressions,
-                  clicks: p.clicks,
-                  spend: p.spend,
-                  conversions: p.conversions,
-                  views: p.views,
-                  reach: p.reach,
-                  frequency: p.reach > 0 ? p.impressions / p.reach : 0,
-                  ctr: p.impressions > 0 ? Number(((p.clicks / p.impressions) * 100).toFixed(2)) : 0,
-                  cpm: p.impressions > 0 ? Number(((p.spend / p.impressions) * 1000).toFixed(2)) : 0,
-                });
-              }
-
-              const prevFiltered = filterManualRowsByBrand(
-                filterByDateRange(allRows, previousRange.from, previousRange.to),
-                activeBrand?.channel_patterns ?? [],
-              );
-              const prevByPlatform = aggregateByPlatform(prevFiltered);
-              for (const p of prevByPlatform) {
-                const platformId = p.platform;
-                const meta = PLATFORM_COLORS[platformId];
-                prevStatsRaw.push({
-                  id: platformId,
-                  name: meta?.label ?? p.platform.charAt(0).toUpperCase() + p.platform.slice(1),
-                  color: meta?.hex ?? "#94a3b8",
-                  impressions: p.impressions,
-                  clicks: p.clicks,
-                  spend: p.spend,
-                  conversions: p.conversions,
-                  views: p.views,
-                  reach: p.reach,
-                  frequency: p.reach > 0 ? p.impressions / p.reach : 0,
-                  ctr: p.impressions > 0 ? Number(((p.clicks / p.impressions) * 100).toFixed(2)) : 0,
-                  cpm: p.impressions > 0 ? Number(((p.spend / p.impressions) * 1000).toFixed(2)) : 0,
-                });
-              }
-
-              const ts = getTimeseriesByPlatform(filtered);
-              for (const t of ts) {
-                timeseriesRaw.push({
-                  date: t.date,
-                  platform: t.platform,
-                  impressions: t.impressions,
-                  clicks: t.clicks,
-                  spend: t.spend,
-                  views: t.views,
-                  conversions: t.conversions,
-                });
-              }
-
-              const byChannel = aggregateByChannel(filtered);
-              manualChannels.push(...byChannel);
-              const candidateTitle = String(sourceConfig?.title ?? "").trim();
-              if (candidateTitle) {
-                manualTableTitleBySourceIndex.push({ index: sourceIndex, title: candidateTitle });
-              }
-            } catch (e) {
-              console.warn("Manual data fetch failed:", e);
-            }
-          }
-          return;
+          continue;
         }
 
         if (source.role === "custom_table") {
@@ -3003,33 +3074,27 @@ export async function loadDashboardData(
               console.warn("Custom table fetch failed:", e);
             }
           }
-          return;
+          continue;
         }
 
         if (source.platform === "leads" && source.role === "actual") {
-          return;
+          continue;
         }
 
         const schema = loadSchema(source.schema_file);
         const sourceKey = schema.source_key ?? resolveSourceKey(source.platform);
         const sourceType = schema.source_type ?? resolveSourceType(sourceKey);
         const sourceConfig = parseJson(source.source_config);
-        if (source.role === "plan" && storedMediaPlanRows.length) {
-          sourceConfig.inline_rows = storedMediaPlanRows.map((row) => ({ ...row }));
-        }
-
         if (sourceType === "leads") {
-          return;
+          continue;
         }
 
         if (source.role === "plan" && (schema.source === "gsheet" || sourceType === "gsheet")) {
-          const rows = await fetchMediaPlanFromSourceConfig(sourceConfig);
-          planRows.push(...rows);
-          return;
+          continue;
         }
 
         if (schema.source !== "mysql") {
-          return;
+          continue;
         }
 
         const brandSourceFilter = activeBrand?.source_filters.find((item) => item.platform === source.platform);
@@ -3046,20 +3111,9 @@ export async function loadDashboardData(
 
         if (sourceType === "ads") {
           actualAdsSourceKeys.add(sourceKey);
-          const [aggregateRow, prevAggregateRow, timeseriesRows, campaignRows] = await Promise.all([
-            getAdsAggregate(filter),
-            getAdsAggregate({
-              ...filter,
-              date_from: previousRange.from,
-              date_to: previousRange.to,
-            }),
-            getAdsTimeseries(filter),
-            dashboardType === "performance" ? getCampaignBreakdown(filter) : Promise.resolve([] as CampaignBreakdownItem[]),
-          ]);
-
           const aggregate = await applyAggregateReachOverrides(
             sourceKey,
-            aggregateRow,
+            await getAdsAggregate(filter),
             range.from,
             range.to,
             frequencyOverrideMap,
@@ -3071,10 +3125,11 @@ export async function loadDashboardData(
           const spend = Number(asNumber(aggregate?.total_spend).toFixed(2));
           const reach = Math.round(asNumber(aggregate?.total_reach));
 
-          let views = Math.round(asNumber(aggregate?.total_views));
-          if (isGidrofuril && sourceKey === "vk_ads_v2") {
-            views = Math.round(impressions * 0.89);
-          }
+          const views = Math.round(resolveDashboardViews(
+            sourceKey,
+            impressions,
+            asNumber(aggregate?.total_views),
+          ));
 
           platformStatsRaw.push({
             id: source.platform,
@@ -3093,7 +3148,11 @@ export async function loadDashboardData(
 
           const prevAggregate = await applyAggregateReachOverrides(
             sourceKey,
-            prevAggregateRow,
+            await getAdsAggregate({
+              ...filter,
+              date_from: previousRange.from,
+              date_to: previousRange.to,
+            }),
             previousRange.from,
             previousRange.to,
             frequencyOverrideMap,
@@ -3102,10 +3161,11 @@ export async function loadDashboardData(
           const prevClicksRaw = asNumber(prevAggregate?.total_clicks);
           const prevSpendRaw = Number(asNumber(prevAggregate?.total_spend).toFixed(2));
           const prevReach = Math.round(asNumber(prevAggregate?.total_reach));
-          let prevViews = Math.round(asNumber(prevAggregate?.total_views));
-          if (isGidrofuril && sourceKey === "vk_ads_v2") {
-            prevViews = Math.round(prevImpressionsRaw * 0.89);
-          }
+          const prevViews = Math.round(resolveDashboardViews(
+            sourceKey,
+            prevImpressionsRaw,
+            asNumber(prevAggregate?.total_views),
+          ));
           prevStatsRaw.push({
             id: source.platform,
             name: platformMeta?.label ?? schema.display_name,
@@ -3121,11 +3181,13 @@ export async function loadDashboardData(
             cpm: Number(asNumber(prevAggregate?.avg_cpm).toFixed(2)),
           });
 
+          const timeseriesRows = await getAdsTimeseries(filter);
           for (const row of timeseriesRows) {
-            let tsViews = Math.round(asNumber(row.views));
-            if (isGidrofuril && sourceKey === "vk_ads_v2") {
-              tsViews = Math.round(asNumber(row.impressions) * 0.89);
-            }
+            const tsViews = Math.round(resolveDashboardViews(
+              sourceKey,
+              asNumber(row.impressions),
+              asNumber(row.views),
+            ));
             timeseriesRaw.push({
               date: toIsoDate(row.date),
               platform: source.platform,
@@ -3138,6 +3200,7 @@ export async function loadDashboardData(
           }
 
           if (dashboardType === "performance") {
+            const campaignRows = await getCampaignBreakdown(filter);
             const platformMeta = PLATFORM_COLORS[source.platform];
             for (const row of campaignRows) {
               campaignBreakdownRaw.push({
@@ -3156,7 +3219,7 @@ export async function loadDashboardData(
               });
             }
           }
-          return;
+          continue;
         }
 
         if (sourceType === "promopages") {
@@ -3167,11 +3230,7 @@ export async function loadDashboardData(
             account_ids: parseAccountIds(sourceConfig.account_ids),
           };
 
-          const [aggregate, timeseriesRows, campaignRows] = await Promise.all([
-            getPromopagesAggregate(promoFilter),
-            getPromopagesTimeseries(promoFilter),
-            getPromopagesCampaignBreakdown(promoFilter),
-          ]);
+          const aggregate = await getPromopagesAggregate(promoFilter);
           promopagesKpiRaw.push({
             total_impressions: Math.round(asNumber(aggregate?.total_impressions)),
             total_reach: Math.round(asNumber(aggregate?.total_reach)),
@@ -3185,17 +3244,13 @@ export async function loadDashboardData(
             total_metrica_visits: Math.round(asNumber(aggregate?.total_metrica_visits)),
           });
 
-          promopagesTimeseriesRaw.push(...timeseriesRows);
-          promopagesCampaignsRaw.push(...campaignRows);
-          return;
+          promopagesTimeseriesRaw.push(...(await getPromopagesTimeseries(promoFilter)));
+          promopagesCampaignsRaw.push(...(await getPromopagesCampaignBreakdown(promoFilter)));
+          continue;
         }
 
         if (sourceType === "analytics") {
-          const [aggregate, timeseriesRows, trafficSourceRows] = await Promise.all([
-            getAnalyticsAggregate(filter),
-            getAnalyticsTimeseries(filter),
-            getAnalyticsTrafficSources(filter),
-          ]);
+          const aggregate = await getAnalyticsAggregate(filter);
           analyticsKpiRaw.push({
             total_visits: Math.round(asNumber(aggregate?.total_visits)),
             total_users: Math.round(asNumber(aggregate?.total_users)),
@@ -3204,6 +3259,7 @@ export async function loadDashboardData(
             avg_visit_duration: Number(asNumber(aggregate?.avg_visit_duration).toFixed(2)),
           });
 
+          const timeseriesRows = await getAnalyticsTimeseries(filter);
           for (const row of timeseriesRows) {
             analyticsTimeseriesRaw.push({
               date: toIsoDate(row.date),
@@ -3213,6 +3269,7 @@ export async function loadDashboardData(
               bounce_rate: Number(asNumber(row.bounce_rate).toFixed(2)),
             });
           }
+          const trafficSourceRows = await getAnalyticsTrafficSources(filter);
           for (const row of trafficSourceRows) {
             const trafficSource = String(row.traffic_source ?? "").trim();
             if (!trafficSource) continue;
@@ -3231,12 +3288,6 @@ export async function loadDashboardData(
       } catch (sourceError) {
         console.warn(`Skipping source ${source.platform}:`, sourceError);
       }
-    }));
-
-    if (manualTableTitleBySourceIndex.length > 0) {
-      manualTableTitle = manualTableTitleBySourceIndex
-        .sort((a, b) => a.index - b.index)
-        .map((row) => row.title)[0] ?? "";
     }
 
     const platformResults = mergePlatformStats(platformStatsRaw);
@@ -3249,36 +3300,37 @@ export async function loadDashboardData(
     const availablePlatformIds = Array.from(new Set(platformResults.map((row) => row.id)));
     const availablePrevPlatformIds = Array.from(new Set(prevPlatformResults.map((row) => row.id)));
 
-    await Promise.all(
-      sourceRows
-        .filter((source) => source.platform === "leads" && source.role === "actual")
-        .map(async (source) => {
-          try {
-            const sourceConfig = parseJson(source.source_config);
-            const parsedLeads = await fetchLeadsFromSourceConfig(sourceConfig);
-            leadsRows.push(
-              ...parsedLeads.rows.filter((row) => !row.date || (row.date >= range.from && row.date <= range.to)),
-            );
-            const currentConversions = await aggregateConfirmedLeadsByPlatform(
-              sourceConfig,
-              availablePlatformIds,
-              range.from,
-              range.to,
-            );
-            applyPlatformConversions(platformResults, currentConversions);
+    for (const source of sourceRows) {
+      if (source.platform !== "leads" || source.role !== "actual") {
+        continue;
+      }
 
-            const previousConversions = await aggregateConfirmedLeadsByPlatform(
-              sourceConfig,
-              availablePrevPlatformIds,
-              previousRange.from,
-              previousRange.to,
-            );
-            applyPlatformConversions(prevPlatformResults, previousConversions);
-          } catch (leadsError) {
-            console.warn("Confirmed leads merge failed:", leadsError);
-          }
-        }),
-    );
+      try {
+        const sourceConfig = parseJson(source.source_config);
+        leadsRows.push(
+          ...getConfirmedLeadRowsFromStoredSnapshot(sourceConfig).filter(
+            (row) => !row.date || (row.date >= range.from && row.date <= range.to),
+          ),
+        );
+        const currentConversions = await aggregateConfirmedLeadsByPlatform(
+          sourceConfig,
+          availablePlatformIds,
+          range.from,
+          range.to,
+        );
+        applyPlatformConversions(platformResults, currentConversions);
+
+        const previousConversions = await aggregateConfirmedLeadsByPlatform(
+          sourceConfig,
+          availablePrevPlatformIds,
+          previousRange.from,
+          previousRange.to,
+        );
+        applyPlatformConversions(prevPlatformResults, previousConversions);
+      } catch (leadsError) {
+        console.warn("Confirmed leads merge failed:", leadsError);
+      }
+    }
 
     if (spendSource === "media_plan_derived") {
       buildPlanBasedTimeseriesSpend(timeseriesResults, planRows);
@@ -3348,27 +3400,34 @@ export async function loadDashboardData(
       acc.get(row.channel)!.push(row);
       return acc;
     }, new Map<string, BoundPromopagesTimeSeriesOverlay[]>());
-    const planVsFactBase = await buildPlanVsFactRowsByChannel(
-      planByChannel,
-      bindingsByLineKey,
-      hasExplicitBindings,
-      actualAdsSourceKeys,
-      range.from,
-      range.to,
-      frequencyOverrideMap,
-      manualChannels,
-      isGidrofuril,
-    );
-    const channelTimeseries = await buildChannelTimeseries(
-      planByChannel,
-      bindingsByLineKey,
-      hasExplicitBindings,
-      actualAdsSourceKeys,
-      range.from,
-      range.to,
-      frequencyOverrideMap,
-      boundPromopagesTimeseriesByChannel,
-    );
+    const useCanonicalBindingRead = process.env.AD_CANONICAL_READ_V2 === "1";
+    const canonicalBindingRead = useCanonicalBindingRead
+      ? await loadBoundAdvertisingFacts(dashboard.id, range.from, range.to)
+      : null;
+    const planVsFactBase = canonicalBindingRead
+      ? buildCanonicalPlanVsFactRows(planByChannel, canonicalBindingRead)
+      : await buildPlanVsFactRowsByChannel(
+          planByChannel,
+          bindingsByLineKey,
+          hasExplicitBindings,
+          actualAdsSourceKeys,
+          range.from,
+          range.to,
+          frequencyOverrideMap,
+          manualChannels,
+        );
+    const channelTimeseries = canonicalBindingRead
+      ? buildCanonicalChannelTimeseries(planByChannel, canonicalBindingRead)
+      : await buildChannelTimeseries(
+          planByChannel,
+          bindingsByLineKey,
+          hasExplicitBindings,
+          actualAdsSourceKeys,
+          range.from,
+          range.to,
+          frequencyOverrideMap,
+          boundPromopagesTimeseriesByChannel,
+        );
 
     for (const source of sourceRows) {
       if (source.platform !== "leads" || source.role !== "actual") {
@@ -3409,20 +3468,24 @@ export async function loadDashboardData(
       });
     }
 
-    const channelPerformance = mergeManualChannelPerformance(buildChannelPerformance(
+    const channelPerformanceBase = buildChannelPerformance(
       planVsFact,
       channelTimeseries,
       range.from,
       range.to,
       String(config.period_from ?? range.from),
       String(config.period_to ?? range.to),
-    ), manualChannels, boundManualChannelKeys);
+    );
+    const channelPerformance = canonicalBindingRead
+      ? channelPerformanceBase
+      : mergeManualChannelPerformance(channelPerformanceBase, manualChannels, boundManualChannelKeys);
     const analyticsKpi = mergeAnalyticsKpi(analyticsKpiRaw);
     const analyticsTimeseries = mergeAnalyticsTimeseries(analyticsTimeseriesRaw);
     const trafficSources = mergeTrafficSources(trafficSourcesRaw);
     const postclickAnalytics = await buildPostClickAnalytics(
       dashboard.id,
       planByChannel,
+      bindingRows.some((row) => row.source_key === "between"),
       metrikaAccountIds,
       range.from,
       range.to,

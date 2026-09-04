@@ -6,6 +6,11 @@ import { filterAndPaginate } from "@/components/zaruku-table-pagination";
 import { resolveZarukuContentUrl } from "@/lib/zaruku-url";
 import ZarukuTableFrame from "@/components/ZarukuTableFrame";
 import { ZARUKU_CLIENT_COPY } from "@/components/zaruku-client-copy";
+import {
+  formatSourceWeekFallback,
+  hasSourceWeekFallback,
+  type SourceWeekDisplay,
+} from "@/components/zaruku-seo-source-week";
 
 const PAGE_SIZE = 50;
 type SeoPageSortKey =
@@ -28,14 +33,13 @@ type SeoPageFilter = SeoComparisonFilter;
 
 type Props = {
   rows: UnifiedSeoPageRow[];
-  seoWeek: string | null;
-  sourceWeeks: {
-    google: string | null;
-    webmaster: string | null;
-    seoOs: string | null;
+  sourceWeekSelections: {
+    google: SourceWeekDisplay;
+    webmaster: SourceWeekDisplay;
+    metrika: SourceWeekDisplay;
+    seoOs: SourceWeekDisplay;
   };
-  sourceAvailability?: { google: boolean; webmaster: boolean; seoOs: boolean };
-  trafficPeriod: { from: string; to: string };
+  sourceAvailability?: { google: boolean; webmaster: boolean; metrika: boolean; seoOs: boolean };
   defaultFilter?: SeoPageFilter;
   locale?: string;
 };
@@ -97,12 +101,14 @@ function filterPageRows(rows: UnifiedSeoPageRow[], filter: SeoPageFilter): Unifi
   return rows.filter((row) => pagePositions(row).some((position) => position !== null && position <= limit));
 }
 
-function SourceHeading({ label, period, dot }: { label: string; period: string | null; dot: string }) {
+function SourceHeading({ label, selection, dot }: { label: string; selection: SourceWeekDisplay; dot: string }) {
+  const fallbackNote = formatSourceWeekFallback(selection);
   return (
     <div className="flex flex-wrap items-center justify-center gap-2">
       <span className={`h-2 w-2 rounded-full ${dot}`} />
       <span>{label}</span>
-      <span className="hidden font-normal normal-case text-slate-400 2xl:inline">{period ?? "нет данных"}</span>
+      <span className="hidden font-normal normal-case text-slate-400 2xl:inline">{selection.actualWeek ?? "нет данных"}</span>
+      {fallbackNote ? <span className="w-full font-normal normal-case text-amber-700">{fallbackNote}</span> : null}
     </div>
   );
 }
@@ -126,7 +132,7 @@ function PageSortButton({ label, sortKey, sort, onChange }: { label: string; sor
   );
 }
 
-export default function ZarukuSeoPageComparison({ rows, sourceWeeks, sourceAvailability = { google: true, webmaster: true, seoOs: true }, trafficPeriod, defaultFilter = "all", locale = "ru-RU" }: Props) {
+export default function ZarukuSeoPageComparison({ rows, sourceWeekSelections, sourceAvailability = { google: true, webmaster: true, metrika: true, seoOs: true }, defaultFilter = "all", locale = "ru-RU" }: Props) {
   const [query, setQuery] = useState("");
   const [page, setPage] = useState(1);
   const [sort, setSort] = useState<SeoPageSort>({ key: "visits", direction: "desc" });
@@ -172,9 +178,11 @@ export default function ZarukuSeoPageComparison({ rows, sourceWeeks, sourceAvail
   const unavailableSources = [
     !sourceAvailability.google ? "Google" : null,
     !sourceAvailability.webmaster ? "Яндекс Вебмастер" : null,
+    !sourceAvailability.metrika ? "Яндекс Метрика" : null,
     !sourceAvailability.seoOs ? "SEO OS" : null,
   ].filter((value): value is string => Boolean(value));
-  const allSourcesUnavailable = unavailableSources.length === 3;
+  const allSourcesUnavailable = unavailableSources.length === 4;
+  const hasPeriodMismatch = hasSourceWeekFallback(Object.values(sourceWeekSelections));
 
   return (
     <section className="min-w-0 rounded-xl border border-slate-200 bg-white shadow-sm shadow-slate-100/60" aria-labelledby="seo-page-comparison-title">
@@ -215,6 +223,11 @@ export default function ZarukuSeoPageComparison({ rows, sourceWeeks, sourceAvail
           Поиск по странице или URL
           <input type="search" value={query} onChange={(event) => changeQuery(event.target.value)} placeholder="Название или /path/" className="mt-1.5 w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm font-normal text-slate-800 outline-none focus:border-slate-400" />
         </label>
+        {hasPeriodMismatch ? (
+          <div className="mt-3 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-xs leading-relaxed text-amber-800">
+            Периоды источников различаются: сравнивайте показатели внутри каждого источника, а не как одну синхронную выборку.
+          </div>
+        ) : null}
         {unavailableSources.length > 0 && !allSourcesUnavailable ? <div className="mt-3 rounded-lg border border-blue-200 bg-blue-50 px-3 py-2 text-xs text-blue-900">Частичные данные: недоступны {unavailableSources.join(", ")}.</div> : null}
       </header>
 
@@ -226,17 +239,20 @@ export default function ZarukuSeoPageComparison({ rows, sourceWeeks, sourceAvail
                 <PageSortButton label="Страница" sortKey="label" sort={sort} onChange={changeSort} />
               </th>
               <th colSpan={4} className="w-[21%] border-r border-slate-100 bg-blue-50/70 px-2 py-2 text-center">
-                <SourceHeading label="Google RF" period={sourceWeeks.google} dot="bg-blue-500" />
+                <SourceHeading label="Google RF" selection={sourceWeekSelections.google} dot="bg-blue-500" />
               </th>
               <th colSpan={4} className="w-[21%] border-r border-slate-100 bg-amber-50/70 px-2 py-2 text-center">
-                <SourceHeading label="Яндекс Вебмастер" period={sourceWeeks.webmaster} dot="bg-amber-400" />
+                <SourceHeading label="Яндекс Вебмастер" selection={sourceWeekSelections.webmaster} dot="bg-amber-400" />
               </th>
               <th colSpan={4} className="w-[25%] border-r border-slate-100 bg-violet-50/70 px-2 py-2 text-center">
-                <SourceHeading label="Метрика" period={`${trafficPeriod.from} — ${trafficPeriod.to}`} dot="bg-violet-500" />
+                <SourceHeading label="Метрика" selection={sourceWeekSelections.metrika} dot="bg-violet-500" />
               </th>
               <th rowSpan={2} className="w-[10%] bg-teal-50/70 px-2 py-3 text-center align-bottom">
                 <PageSortButton label="Запросы SEO OS" sortKey="seo_os_tracked_queries" sort={sort} onChange={changeSort} />
-                <div className="mt-1 hidden font-normal text-slate-400 2xl:block">{sourceWeeks.seoOs ?? "нет данных"}</div>
+                <div className="mt-1 hidden font-normal text-slate-400 2xl:block">{sourceWeekSelections.seoOs.actualWeek ?? "нет данных"}</div>
+                {formatSourceWeekFallback(sourceWeekSelections.seoOs) ? (
+                  <div className="mt-1 font-normal text-amber-700">{formatSourceWeekFallback(sourceWeekSelections.seoOs)}</div>
+                ) : null}
               </th>
             </tr>
             <tr className="text-[11px] text-slate-500">
@@ -304,7 +320,7 @@ export default function ZarukuSeoPageComparison({ rows, sourceWeeks, sourceAvail
               );
             })}
             {paginated.totalRows === 0 ? (
-              <tr><td colSpan={14} className="px-4 py-12 text-center text-sm text-slate-500">{allSourcesUnavailable ? "Источник недоступен: Google, Яндекс Вебмастер и SEO OS." : ZARUKU_CLIENT_COPY.emptyPages}</td></tr>
+              <tr><td colSpan={14} className="px-4 py-12 text-center text-sm text-slate-500">{allSourcesUnavailable ? "Источник недоступен: Google, Яндекс Вебмастер, Яндекс Метрика и SEO OS." : ZARUKU_CLIENT_COPY.emptyPages}</td></tr>
             ) : null}
           </tbody>
         </table>

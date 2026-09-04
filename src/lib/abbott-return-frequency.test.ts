@@ -129,3 +129,36 @@ test("returns stable empty aggregates without dividing by zero", () => {
     return_pages: [],
   });
 });
+
+test("resolves a raw root start URL by its root path while retaining the root display URL", () => {
+  const result = buildAbbottReturnFrequency([
+    visit("client", "one", "2026-06-01T08:00:00Z", "/"),
+    visit("client", "two", "2026-06-02T08:00:00Z", "/"),
+  ], new Map(), (path) => path === "/" ? "Кардиология" : null);
+  assert.equal(result.return_pages[0]?.url, "/");
+  assert.equal(result.return_pages[0]?.direction, "Кардиология");
+});
+
+test("excludes local-file visits from frequency and return-page aggregates", () => {
+  const result = buildAbbottReturnFrequency([
+    visit("client", "one", "2026-06-01T08:00:00Z", "/initial"),
+    visit("client", "local", "2026-06-02T08:00:00Z", "file:///C:/Users/user/Downloads/page.html"),
+    visit("client", "two", "2026-06-03T08:00:00Z", "https://abbottpro.ru/gastro/?utm_source=test"),
+    visit(null, "anonymous-local", "2026-06-04T08:00:00Z", "FILE:///tmp/page.html"),
+  ], new Map(), (path) => path === "/gastro" ? "Гастроэнтерология" : null);
+
+  assert.equal(result.identified_visitors, 1);
+  assert.equal(result.unidentified_visits, 0);
+  assert.deepEqual(result.groups, [
+    { group_id: "one", label: "1 раз", visitors: 0, share: 0, visits: 0 },
+    { group_id: "two_to_three", label: "2–3 раза", visitors: 1, share: 100, visits: 2 },
+    { group_id: "four_plus", label: "4+ раза", visitors: 0, share: 0, visits: 0 },
+  ]);
+  assert.deepEqual(result.return_pages, [{
+    url: "https://abbottpro.ru/gastro",
+    direction: "Гастроэнтерология",
+    frequency_group: "two_to_three",
+    returning_visitors: 1,
+    repeat_visits: 1,
+  }]);
+});

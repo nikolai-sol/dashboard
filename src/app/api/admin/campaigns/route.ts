@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 import { getSchemaMetaByPlatform } from "@/lib/schema-registry";
-import { getCampaignNames } from "@/lib/canonical-adapter";
+import { getCampaignCatalog } from "@/lib/canonical-adapter";
 import { resolveSourceKey, resolveSourceType } from "@/lib/source-mapping";
 
 function parseAccountIds(value: string): string[] {
@@ -19,9 +19,6 @@ export async function GET(request: Request) {
     const sourcePlatform = resolveSourceKey(platform);
     const search = String(url.searchParams.get("search") ?? "").trim();
     const accountIds = parseAccountIds(String(url.searchParams.get("account_ids") ?? ""));
-    const dateFrom = String(url.searchParams.get("date_from") ?? "").trim();
-    const dateTo = String(url.searchParams.get("date_to") ?? "").trim();
-
     if (!platform) {
       return NextResponse.json({ error: "platform query param is required" }, { status: 400 });
     }
@@ -39,18 +36,21 @@ export async function GET(request: Request) {
         message: "Platform does not use campaign dictionary",
       });
     }
-    const campaigns = await getCampaignNames(schemaMeta.source_key, search, accountIds, {
-      dateFrom,
-      dateTo,
-      requireFactInRange: schemaMeta.source_key === "yandex_direct" && Boolean(dateFrom && dateTo),
-    });
+    const campaigns = await getCampaignCatalog(schemaMeta.source_key, { search, accountIds });
     const result = campaigns.map((row) => {
-      const id = String(row.id);
+      const id = row.platformCampaignId;
       return {
-        id,
-        name: String(row.name),
+        canonical_campaign_id: row.canonicalCampaignId,
+        source_key: row.sourceKey,
+        platform_account_id: row.platformAccountId,
+        account_name: row.accountName,
+        platform_campaign_id: row.platformCampaignId,
+        campaign_name: row.campaignName,
+         display_label: `${row.campaignName} \u00b7 ${row.platformCampaignId} \u00b7 ${row.accountName}`,
+         id,
+        name: row.campaignName,
         platform: sourcePlatform,
-        copyable_id: id,
+         copyable_id: id,
       };
     });
 

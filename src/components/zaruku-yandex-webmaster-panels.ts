@@ -8,6 +8,11 @@ import type {
   ZarukuYandexWebmasterQueryRow,
   ZarukuYandexWebmasterSummaryRow,
 } from "@/lib/types";
+import {
+  formatSourceWeekFallback,
+  selectSourceWeekRows,
+  type SourceWeekSelection,
+} from "@/components/zaruku-seo-source-week";
 
 export type SearchConsoleKpiRow =
   | ZarukuGoogleSearchConsoleQueryRow
@@ -96,17 +101,12 @@ export function topGscCountries(rows: ZarukuGoogleSearchConsoleCountryRow[], lim
 }
 
 export function resolveRowsForWeek<T extends { week: string }>(rows: T[], selectedWeek: string | null, fallbackWeek: string | null) {
-  if (selectedWeek) {
-    const selectedRows = rows.filter((row) => row.week === selectedWeek);
-    return { week: selectedWeek, rows: selectedRows };
-  }
-  if (fallbackWeek) {
-    const fallbackRows = rows.filter((row) => row.week === fallbackWeek);
-    if (fallbackRows.length > 0) return { week: fallbackWeek, rows: fallbackRows };
-  }
-
-  const latestWeek = [...new Set(rows.map((row) => row.week))].sort().at(-1) ?? null;
-  return latestWeek ? { week: latestWeek, rows: rows.filter((row) => row.week === latestWeek) } : { week: null, rows };
+  const availableWeeks = [
+    ...rows.map((row) => row.week),
+    ...(fallbackWeek ? [fallbackWeek] : []),
+  ];
+  const selection = selectSourceWeekRows(rows, selectedWeek, availableWeeks);
+  return { ...selection, week: selection.actualWeek };
 }
 
 export function buildWebmasterFactsPanelChrome() {
@@ -122,19 +122,17 @@ function formatShortDate(value: string) {
 }
 
 export function buildWebmasterSelectionMeta<T extends { week: string; week_from: string; week_to: string; is_partial_week?: boolean }>(
-  selection: { week: string | null; rows: T[] },
+  selection: Pick<SourceWeekSelection<T>, "requestedWeek" | "actualWeek" | "rows" | "fallback"> & { week?: string | null },
   selectedWeek: string | null,
 ) {
   const firstRow = selection.rows[0];
-  const weekLabel = selection.week ?? firstRow?.week ?? selectedWeek ?? "неделя —";
+  const weekLabel = selection.actualWeek ?? selection.week ?? firstRow?.week ?? selectedWeek ?? "неделя —";
   const periodLabel = firstRow?.is_partial_week
     ? `${weekLabel} · частично, по ${formatShortDate(firstRow.week_to)}`
     : firstRow
       ? `${weekLabel} · ${firstRow.week_from} — ${firstRow.week_to}`
       : weekLabel;
-  const fallbackNote = selectedWeek && selection.rows.length === 0
-    ? "За текущий ежедневный период данных Яндекс Вебмастера пока нет."
-    : null;
+  const fallbackNote = formatSourceWeekFallback(selection);
 
   return {
     periodLabel,

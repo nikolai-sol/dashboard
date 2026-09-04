@@ -96,4 +96,16 @@ if [[ -d "$RELEASE_DIR/public" ]] && find "$RELEASE_DIR/public" -mindepth 1 -max
   exit 1
 fi
 
+RUNTIME_LINK_DIR="$RELEASE_DIR/.next/node_modules"
+if [[ -d "$RUNTIME_LINK_DIR" ]]; then
+  for runtime_link in "$RUNTIME_LINK_DIR"/*; do
+    [[ -L "$runtime_link" ]] || continue
+    runtime_target="$(readlink "$runtime_link")"
+    if [[ "$runtime_target" != ../../node_modules/* || ! -f "$runtime_link/package.json" ]]; then
+      echo "Production release has a broken runtime dependency link: $(basename "$runtime_link")" >&2
+      exit 1
+    fi
+  done
+fi
+
 echo "Production release validation passed"

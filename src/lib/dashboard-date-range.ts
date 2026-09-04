@@ -1,3 +1,9 @@
+import {
+  AbbottDateRangeError,
+  defaultAbbottRange,
+  normalizeAbbottRequestedRange,
+} from "./abbott-date-range";
+
 export type DashboardDateRange = { from: string; to: string };
 
 export type DashboardDateRangeInput = {
@@ -9,6 +15,13 @@ export type DashboardDateRangeInput = {
 };
 
 const ISO_DATE = /^\d{4}-\d{2}-\d{2}$/;
+
+export class InvalidDashboardDateRangeError extends Error {
+  constructor() {
+    super("Invalid Abbott date range");
+    this.name = "InvalidDashboardDateRangeError";
+  }
+}
 
 function valid(value: string | null): value is string {
   if (!value || !ISO_DATE.test(value)) return false;
@@ -28,19 +41,58 @@ function currentMonth(now: Date): DashboardDateRange {
   return { from, to };
 }
 
+export function latestZarukuReportingDate(now = new Date()): string {
+  return shift(now.toISOString().slice(0, 10), -2);
+}
+
+export function clampZarukuDateRange(
+  range: DashboardDateRange,
+  now = new Date(),
+): DashboardDateRange {
+  const latest = latestZarukuReportingDate(now);
+  return {
+    from: range.from > latest ? latest : range.from,
+    to: range.to > latest ? latest : range.to,
+  };
+}
+
 export function resolveDashboardDateRange(input: DashboardDateRangeInput): DashboardDateRange {
   const now = input.now ?? new Date();
   const params = new URL(input.requestUrl).searchParams;
   const from = params.get("from");
   const to = params.get("to");
   const daysRaw = params.get("days");
+  const isZaruku = input.dashboardType === "zaruku_bi";
 
-  if (valid(from) && valid(to)) return { from, to };
+  if (input.dashboardType === "abbott_bi") {
+    if (from !== null || to !== null) {
+      if (from === null || to === null) {
+        throw new InvalidDashboardDateRangeError();
+      }
+      try {
+        return normalizeAbbottRequestedRange({ from, to }, now);
+      } catch (error) {
+        if (error instanceof AbbottDateRangeError) {
+          throw new InvalidDashboardDateRangeError();
+        }
+        throw error;
+      }
+    }
+
+    const defaultRange = defaultAbbottRange(now);
+    if (!defaultRange) {
+      throw new InvalidDashboardDateRangeError();
+    }
+    return defaultRange;
+  }
+
+  if (valid(from) && valid(to)) {
+    return isZaruku ? clampZarukuDateRange({ from, to }, now) : { from, to };
+  }
 
   const fallback = currentMonth(now);
   if (input.dashboardType === "multibrand" && !valid(from) && !valid(to) && !daysRaw) return fallback;
 
-  const isZaruku = input.dashboardType === "zaruku_bi";
   const today = now.toISOString().slice(0, 10);
   const completeTo = shift(today, isZaruku ? -3 : -1);
   const days = Number(daysRaw);

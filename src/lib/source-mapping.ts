@@ -93,3 +93,13 @@ export function resolvePlatformIdFromSourceKey(sourceKey: string): string {
   const normalized = String(sourceKey ?? '').trim().toLowerCase();
   return SOURCE_KEY_TO_PLATFORM[normalized] ?? normalized;
 }
+
+export function resolveDashboardViews(
+  sourceKey: string,
+  impressions: number,
+  canonicalViews: number,
+): number {
+  return String(sourceKey).trim().toLowerCase() === "vk_ads_v2"
+    ? impressions * 0.89
+    : canonicalViews;
+}

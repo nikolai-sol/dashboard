@@ -22,6 +22,7 @@ import {
   normalizeSourceFreshnessRow,
   readableTrafficSource,
   loadZarukuSeoData,
+  resolveSeoWeekRange,
 } from "@/lib/zaruku-seo";
 import type {
   ZarukuGscData,
@@ -335,12 +336,13 @@ test("buildSources exposes collection provenance and preserves explicit data-thr
     available: true,
     status: "available",
     error: null,
-    data_availability: { queries: true, pages: false },
+    data_availability: { queries: true, pages: false, query_pages: false },
     weeks: ["2026-W28"],
     latest_week: "2026-W28",
     summary: [],
     queries: [],
     pages: [],
+    query_pages: [],
   };
   const seoIntelligence: ZarukuSeoIntelligenceData = {
     available: true,
@@ -455,7 +457,21 @@ test("Zaruku runtime contains no live Metrika API or token path", () => {
   }
 });
 
-test("Zaruku applies one effective daily period to every daily loader while SEO OS and AI remain independent", () => {
+test("resolveSeoWeekRange spans selectable ISO weeks and falls back to the daily period", () => {
+  assert.deepEqual(
+    resolveSeoWeekRange(
+      ["2026-W31", "2026-W30"],
+      { from: "2026-07-01", to: "2026-07-27" },
+    ),
+    { from: "2026-07-20", to: "2026-08-02" },
+  );
+  assert.deepEqual(
+    resolveSeoWeekRange([], { from: "2026-07-01", to: "2026-07-27" }),
+    { from: "2026-07-01", to: "2026-07-27" },
+  );
+});
+
+test("Zaruku keeps daily Metrika loaders on the daily period and loads comparison facts by SEO week", () => {
   assert.match(
     loaderSource,
     /const dailyPeriod = resolveZarukuDailyPeriod\([\s\S]*?const \{ from: effectiveFrom, to: effectiveTo \} = dailyPeriod\.effective;/,
@@ -472,22 +488,11 @@ test("Zaruku applies one effective daily period to every daily loader while SEO 
     loaderSource,
     /loadZarukuMetrikaBreakdowns\(normalizedCounterIds, dailyPeriod\.effective\)/,
   );
-  assert.match(loaderSource, /loadAccountFacts\(accountId, dailyPeriod\.effective,\s*\{\s*recordTiming:/);
-  assert.doesNotMatch(loaderSource, /loadAccountFacts\([^)]*seoOs\.weeks/);
+  assert.match(loaderSource, /const seoWeekRange = resolveSeoWeekRange\(seoOs\.weeks, dailyPeriod\.effective\)/);
+  assert.match(loaderSource, /loadAccountFacts\(accountId, seoWeekRange,\s*\{\s*recordTiming:/);
+  assert.match(loaderSource, /loadZarukuMetrikaOrganicLandingWeeks\(normalizedCounterIds, seoOs\.weeks\)/);
   assert.match(loaderSource, /loadSeoProcess\(accountId\)/);
   assert.match(loaderSource, /loadSeoIntelligence\(accountId\)/);
-  const parallelPhase = loaderSource.match(
-    /const \[[\s\S]*?\]\s*=\s*await Promise\.all\(\[([\s\S]*?)\]\);/,
-  )?.[1] ?? "";
-  for (const loader of [
-    "loadZarukuMetrikaBreakdowns",
-    "loadAccountFacts",
-    "loadSeoProcess",
-    "loadSeoIntelligence",
-    "querySourceFreshnessRows",
-  ]) {
-    assert.ok(parallelPhase.includes(loader), `${loader} must start in the common parallel phase`);
-  }
 });
 
 test("Zaruku keeps the Wordstat rolling snapshot outside the traffic and SEO control periods", () => {

@@ -47,8 +47,11 @@ copy_canonical_file() {
 
 cd "$APP_SOURCE_DIR"
 
+bash scripts/verify-deploy-source.sh "$APP_SOURCE_DIR"
+
 echo "Building standalone bundle for release $RELEASE_ID..."
 npm ci
+npm run test:abbott-contract
 npm run security:public-assets
 npm run build
 
@@ -67,6 +70,7 @@ if [ ! -f "$PACKAGE_DIR/server.js" ]; then
   PACKAGE_DIR="$(dirname "${SERVER_CANDIDATES[0]}")"
 fi
 echo "Using standalone package root $PACKAGE_DIR..."
+bash scripts/normalize-standalone-runtime-links.sh "$PACKAGE_DIR"
 
 echo "Rendering production env from VPS secrets..."
 bash scripts/render-production-env.sh "$TMP_ENV"

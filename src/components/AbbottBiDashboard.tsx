@@ -17,10 +17,20 @@ import {
 } from "recharts";
 import type { AbbottBiData } from "@/lib/types";
 import {
+  ABBOTT_UNMAPPED_LABEL,
+  buildAbbottMnnOptions,
   buildAbbottPageStatsExportRows,
   buildAbbottPageviewsByDirection,
+  filterAbbottPageStatsRows,
+  formatAbbottMnnValues,
+  buildAbbottPageDimensionOptions,
+  groupAbbottPageStatsByDimension,
+  labelAbbottPageDimension,
+  limitAbbottPageDimensionGroups,
   matchesPageStatsSearch,
+  matchesSelectedPageDimension,
   matchesSelectedMaterialType,
+  summarizeAbbottPageMetadataCoverage,
   summarizeAbbottPageStats,
 } from "./abbott-page-stats";
 import { abbottTrafficSourceLabel, abbottTrafficSourceOption } from "./abbott-localization";
@@ -30,6 +40,13 @@ import {
   selectAbbottUserActions,
 } from "./abbott/abbott-user-action-filters";
 import { buildAbbottReturnFrequencyUi } from "./abbott/abbott-return-frequency-ui";
+import { returningControlEmptyMessage } from "./abbott/abbott-returning-control-ui";
+import AbbottAdminUsersPanel from "./abbott/AbbottAdminUsersPanel";
+import {
+  ABBOTT_WITHOUT_ADMINS,
+  buildAbbottAdminUserOptions,
+  isAbbottAggregateUserFilter,
+} from "./abbott/abbott-admin-user-filter";
 
 type AbbottBiDashboardProps = {
   data: AbbottBiData;
@@ -38,6 +55,8 @@ type AbbottBiDashboardProps = {
   showUserIdAnalytics?: boolean;
   periodFrom?: string;
   periodTo?: string;
+  dashboardId?: string;
+  onAdminUsersChanged?: () => void;
 };
 
 type TabId =
@@ -91,13 +110,13 @@ function buildTabs(portalName: string, showUserIdAnalytics: boolean): TabConfig[
     id: "users_summary",
     label: showUserIdAnalytics ? "1. Общая таблица по пользователям" : "1. Источники трафика",
     description: showUserIdAnalytics
-      ? "По умолчанию сессии и источники берутся из Метрики, Источники трафика. При выборе User ID, типа трафика или направления включается User ID-детализация."
+      ? "Сессии и общие варианты User ID рассчитаны по каноническим визитам Logs API за выбранный период."
       : "Источник: сводка «Источники трафика» из Яндекс Метрики.",
   },
   {
     id: "user_actions",
     label: `2. Действия пользователя на сайте ${portalName}`,
-    description: "Одна строка — один визит Метрики. User ID, источник, UTM Source, начальный и конечный URL относятся к одному и тому же визиту.",
+    description: "Одна строка — одно уникальное сочетание User ID, источника, UTM Source, направления и последней страницы за выбранный период. Продолжительность и глубина рассчитаны как средние по сессиям.",
   },
   {
     id: "page_stats",
@@ -320,12 +339,14 @@ function SelectField({
   options,
   onChange,
   theme,
+  allLabel = "Все",
 }: {
   label: string;
   value: string;
   options: SelectOption[];
   onChange: (value: string) => void;
   theme: ThemeConfig;
+  allLabel?: string;
 }) {
   return (
     <label className={`card-surface block p-4 ${theme.borderClass}`}>
@@ -335,7 +356,7 @@ function SelectField({
         onChange={(event) => onChange(event.target.value)}
         className="w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm text-slate-700 outline-none transition focus:border-slate-400"
       >
-        <option value="">Все</option>
+        <option value="">{allLabel}</option>
         {options.map((option) => (
           <option key={option.value} value={option.value}>
             {option.label}
@@ -841,6 +862,8 @@ export default function AbbottBiDashboard({
   showUserIdAnalytics = true,
   periodFrom,
   periodTo,
+  dashboardId = "abbott",
+  onAdminUsersChanged = () => undefined,
 }: AbbottBiDashboardProps) {
   const [activeTab, setActiveTab] = useState<TabId>("users_summary");
   const [selectedSessionJourneyId, setSelectedSessionJourneyId] = useState<number | null>(null);
@@ -885,7 +908,18 @@ export default function AbbottBiDashboard({
     general_materials: { material_name: "" },
   });
   const [selectedPageMaterialTypes, setSelectedPageMaterialTypes] = useState<string[]>([]);
+  const [selectedPageMnn, setSelectedPageMnn] = useState<string[]>([]);
   const [timeBucketPageSearch, setTimeBucketPageSearch] = useState("");
+
+  const adminUserFilterAvailable = data.admin_user_filter?.available === true;
+  const usersSummaryUserIdFilter = !adminUserFilterAvailable
+    && filtersByTab.users_summary.user_id === ABBOTT_WITHOUT_ADMINS
+    ? ""
+    : filtersByTab.users_summary.user_id;
+  const userActionsUserIdFilter = !adminUserFilterAvailable
+    && filtersByTab.user_actions.user_id === ABBOTT_WITHOUT_ADMINS
+    ? ""
+    : filtersByTab.user_actions.user_id;
 
   const tabs = useMemo(
     () =>
@@ -930,7 +964,10 @@ export default function AbbottBiDashboard({
     () => {
       const trafficRows = data.traffic_summary ?? [];
       return {
-        user_id: uniqOptions(data.users_summary.filter((row) => row.has_user_id).map((row) => row.user_id)),
+        user_id: buildAbbottAdminUserOptions(
+          data.users_summary.filter((row) => row.has_user_id).map((row) => row.user_id),
+          adminUserFilterAvailable,
+        ),
         traffic_source: uniqOptions([
           ...data.users_summary.map((row) => row.traffic_source),
           ...trafficRows.map((row) => row.traffic_source),
@@ -938,24 +975,28 @@ export default function AbbottBiDashboard({
         direction: uniqOptions(data.users_summary.map((row) => row.direction)),
       };
     },
-    [data.traffic_summary, data.users_summary],
+    [adminUserFilterAvailable, data.traffic_summary, data.users_summary],
   );
 
   const userActionsOptions = useMemo(
     () => ({
-      user_id: uniqOptions(data.user_actions.filter((row) => row.has_user_id).map((row) => row.user_id)),
+      user_id: buildAbbottAdminUserOptions(
+        data.user_actions.filter((row) => row.has_user_id).map((row) => row.user_id),
+        adminUserFilterAvailable,
+      ),
       traffic_source: uniqOptions(data.user_actions.map((row) => row.traffic_source)).map((option) => abbottTrafficSourceOption(option.value)),
       utm_source: buildAbbottUtmSourceOptions(data.user_actions),
       direction: uniqOptions(data.user_actions.map((row) => row.direction)),
     }),
-    [data.user_actions],
+    [adminUserFilterAvailable, data.user_actions],
   );
 
   const pageStatsOptions = useMemo(
     () => ({
-      direction: uniqOptions(data.page_stats.map((row) => row.direction)),
-      material_type: uniqOptions(data.page_stats.map((row) => row.material_type)),
-      access: uniqOptions(data.page_stats.map((row) => row.access)),
+      direction: buildAbbottPageDimensionOptions(data.page_stats, (row) => row.direction),
+      mnn: buildAbbottMnnOptions(data.page_stats),
+      material_type: buildAbbottPageDimensionOptions(data.page_stats, (row) => row.material_type),
+      access: buildAbbottPageDimensionOptions(data.page_stats, (row) => row.access),
     }),
     [data.page_stats],
   );
@@ -1005,18 +1046,28 @@ export default function AbbottBiDashboard({
       selectAbbottSummaryRows({
         trafficRows: data.traffic_summary ?? [],
         behaviorRows: data.users_summary,
+        behaviorRowsWithoutAdmins: data.users_summary_without_admins ?? data.users_summary,
         filters: {
-          user_id: filtersByTab.users_summary.user_id,
+          user_id: usersSummaryUserIdFilter,
           user_id_traffic: filtersByTab.users_summary.user_id_traffic,
           direction: filtersByTab.users_summary.direction,
         },
         showUserIdAnalytics,
       }),
-    [data.traffic_summary, data.users_summary, filtersByTab.users_summary, showUserIdAnalytics],
+    [
+      data.traffic_summary,
+      data.users_summary,
+      data.users_summary_without_admins,
+      filtersByTab.users_summary,
+      showUserIdAnalytics,
+      usersSummaryUserIdFilter,
+    ],
   );
 
   const userBehaviorSummaryActive =
-    usersSummarySourceRows.length === 0 || usersSummarySourceRows === data.users_summary;
+    isAbbottAggregateUserFilter(usersSummaryUserIdFilter)
+    || usersSummarySourceRows.length === 0
+    || usersSummarySourceRows === data.users_summary;
 
   const usersSummaryRows = useMemo(() => {
     const query = queryByTab.users_summary;
@@ -1027,7 +1078,11 @@ export default function AbbottBiDashboard({
         : [abbottTrafficSourceLabel(row.traffic_source), row.visits, row.bounce_rate];
       if (!matchesQuery(searchableValues, query)) return false;
       if (showUserIdAnalytics) {
-        if (filters.user_id && row.user_id !== filters.user_id) return false;
+        if (
+          usersSummaryUserIdFilter
+          && !isAbbottAggregateUserFilter(usersSummaryUserIdFilter)
+          && row.user_id !== usersSummaryUserIdFilter
+        ) return false;
         if (filters.user_id_traffic === "with_user_id" && !row.has_user_id) return false;
         if (filters.user_id_traffic === "without_user_id" && row.has_user_id) return false;
       }
@@ -1035,7 +1090,13 @@ export default function AbbottBiDashboard({
       if (filters.direction && (row.direction ?? "") !== filters.direction) return false;
       return true;
     });
-  }, [filtersByTab.users_summary, queryByTab.users_summary, showUserIdAnalytics, usersSummarySourceRows]);
+  }, [
+    filtersByTab.users_summary,
+    queryByTab.users_summary,
+    showUserIdAnalytics,
+    usersSummarySourceRows,
+    usersSummaryUserIdFilter,
+  ]);
 
   const userActionsSelection = useMemo(
     () =>
@@ -1044,12 +1105,19 @@ export default function AbbottBiDashboard({
         {
           query: queryByTab.user_actions,
           ...filtersByTab.user_actions,
+          user_id: userActionsUserIdFilter,
           traffic_source_label: abbottTrafficSourceLabel,
         },
         pageByTab.user_actions,
         PAGE_SIZE,
       ),
-    [data.user_actions, filtersByTab.user_actions, pageByTab.user_actions, queryByTab.user_actions],
+    [
+      data.user_actions,
+      filtersByTab.user_actions,
+      pageByTab.user_actions,
+      queryByTab.user_actions,
+      userActionsUserIdFilter,
+    ],
   );
   const userActionRows = userActionsSelection.filteredRows;
 
@@ -1065,34 +1133,16 @@ export default function AbbottBiDashboard({
   );
 
   const pageStatRows = useMemo(() => {
-    const query = queryByTab.page_stats;
     const filters = filtersByTab.page_stats;
-    return data.page_stats.filter((row) => {
-      if (
-        !matchesQuery(
-          [
-            row.page_title,
-            row.url,
-            row.direction,
-            row.material_type,
-            row.access,
-            row.pageviews,
-            row.users,
-            row.bitrix_pageviews,
-            row.bitrix_sessions,
-            row.bitrix_users,
-          ],
-          query,
-        )
-      )
-        return false;
-      if (!matchesPageStatsSearch(row.page_title, row.url, filters.page_title_query)) return false;
-      if (filters.direction && (row.direction ?? "") !== filters.direction) return false;
-      if (!matchesSelectedMaterialType(row.material_type, selectedPageMaterialTypes)) return false;
-      if (filters.access && (row.access ?? "") !== filters.access) return false;
-      return true;
+    return filterAbbottPageStatsRows(data.page_stats, {
+      query: queryByTab.page_stats,
+      pageTitleQuery: filters.page_title_query,
+      direction: filters.direction,
+      mnn: selectedPageMnn,
+      materialTypes: selectedPageMaterialTypes,
+      access: filters.access,
     });
-  }, [data.page_stats, filtersByTab.page_stats, queryByTab.page_stats, selectedPageMaterialTypes]);
+  }, [data.page_stats, filtersByTab.page_stats, queryByTab.page_stats, selectedPageMaterialTypes, selectedPageMnn]);
 
   const bitrixPageRows = useMemo(() => {
     const query = queryByTab.bitrix_pages;
@@ -1182,6 +1232,10 @@ export default function AbbottBiDashboard({
       return true;
     });
   }, [data.returning, filtersByTab.returning, queryByTab.returning]);
+  const returningControlMessage = returningControlEmptyMessage(returningRows.length, {
+    url: filtersByTab.returning.url,
+    direction: filtersByTab.returning.direction,
+  });
 
   const generalMaterialRows = useMemo(() => {
     const query = queryByTab.general_materials;
@@ -1246,19 +1300,28 @@ export default function AbbottBiDashboard({
   );
 
   const pageDirectionData = useMemo(
-    () => excludeUnnamedChartGroups(groupNumberRows(pageStatRows, (row) => row.direction, (row) => row.users)).slice(0, 8),
+    () =>
+      limitAbbottPageDimensionGroups(
+        groupAbbottPageStatsByDimension(pageStatRows, (row) => row.direction, (row) => row.users),
+      ),
     [pageStatRows],
   );
   const pageViewsDirectionData = useMemo(
-    () => buildAbbottPageviewsByDirection(pageStatRows),
+    () =>
+      limitAbbottPageDimensionGroups(
+        groupAbbottPageStatsByDimension(pageStatRows, (row) => row.direction, (row) => row.pageviews),
+      ),
     [pageStatRows],
   );
   const pageMaterialData = useMemo(
-    () => excludeUnnamedChartGroups(groupNumberRows(pageStatRows, (row) => row.material_type, (row) => row.users)).slice(0, 8),
+    () =>
+      limitAbbottPageDimensionGroups(
+        groupAbbottPageStatsByDimension(pageStatRows, (row) => row.material_type, (row) => row.users),
+      ),
     [pageStatRows],
   );
   const pageAccessData = useMemo(
-    () => excludeUnnamedChartGroups(groupNumberRows(pageStatRows, (row) => row.access, (row) => row.users)),
+    () => groupAbbottPageStatsByDimension(pageStatRows, (row) => row.access, (row) => row.users),
     [pageStatRows],
   );
   const bitrixDirectionData = useMemo(
@@ -1384,6 +1447,7 @@ export default function AbbottBiDashboard({
   const returningPage = sliceRows(returningRows, pageByTab.returning);
   const generalMaterialsPage = sliceRows(generalMaterialRows, pageByTab.general_materials);
   const pageStatsTotals = summarizeAbbottPageStats(pageStatRows);
+  const pageMetadataCoverage = summarizeAbbottPageMetadataCoverage(pageStatRows);
   const pageStatsSummaryRow =
     pageStatRows.length > 0
       ? {
@@ -1432,6 +1496,7 @@ export default function AbbottBiDashboard({
       { key: "utm_source", label: "UTM Source" },
       { key: "direction", label: "Направление" },
       { key: "end_url", label: "Последняя страница", className: "min-w-[320px] break-all" },
+      { key: "visits", label: "Сессии", className: "text-right" },
       { key: "avg_duration", label: "Продолжительность визита, мин", className: "text-right" },
       { key: "page_depth", label: "Глубина просмотра", className: "text-right" },
     ];
@@ -1441,6 +1506,7 @@ export default function AbbottBiDashboard({
       utm_source: row.utm_source?.trim() || "Без UTM",
       direction: row.direction ?? "—",
       end_url: row.end_url || "—",
+      visits: formatNumber(row.visits, locale),
       avg_duration: formatDurationMinutes(row.avg_duration, locale),
       page_depth: formatDecimal(row.page_depth, locale),
     }));
@@ -1451,6 +1517,7 @@ export default function AbbottBiDashboard({
       { key: "page_title", label: "Заголовок страниц", className: "min-w-[220px]" },
       { key: "url", label: "URL", className: "min-w-[280px] break-all" },
       { key: "direction", label: "Направление" },
+      { key: "mnn", label: "МНН" },
       { key: "material_type", label: "Тип материала" },
       { key: "access", label: "Доступ" },
       { key: "pageviews", label: "Просмотры", className: "text-right" },
@@ -1466,9 +1533,10 @@ export default function AbbottBiDashboard({
     tableRows = pageStatsPage.pageRows.map((row) => ({
       page_title: row.page_title || "—",
       url: row.url || "—",
-      direction: row.direction ?? "—",
-      material_type: row.material_type ?? "—",
-      access: row.access ?? "—",
+      direction: labelAbbottPageDimension(row.direction),
+      mnn: formatAbbottMnnValues(row.mnn, pageStatsOptions.mnn),
+      material_type: labelAbbottPageDimension(row.material_type),
+      access: labelAbbottPageDimension(row.access),
       pageviews: formatNumber(row.pageviews, locale),
       users: formatNumber(row.users, locale),
       ...(data.bitrix_period_active
@@ -1598,10 +1666,11 @@ export default function AbbottBiDashboard({
             />
             <SelectField
               label="User ID"
-              value={filtersByTab.users_summary.user_id}
+              value={usersSummaryUserIdFilter}
               options={usersSummaryOptions.user_id}
               onChange={(value) => setSelectFilter("users_summary", "user_id", value)}
               theme={theme}
+              allLabel="ВСЕ"
             />
           </>
         ) : null}
@@ -1627,10 +1696,11 @@ export default function AbbottBiDashboard({
       <>
         <SelectField
           label="UserID"
-          value={filtersByTab.user_actions.user_id}
+          value={userActionsUserIdFilter}
           options={userActionsOptions.user_id}
           onChange={(value) => setSelectFilter("user_actions", "user_id", value)}
           theme={theme}
+          allLabel="ВСЕ"
         />
         <SelectField
           label="Трафик"
@@ -1688,6 +1758,16 @@ export default function AbbottBiDashboard({
           onChange={(value) => setSelectFilter("page_stats", "direction", value)}
           theme={theme}
         />
+        <MultiSelectField
+          label="МНН"
+          values={selectedPageMnn}
+          options={pageStatsOptions.mnn}
+          onChange={(values) => {
+            setSelectedPageMnn(values);
+            setPageByTab((prev) => ({ ...prev, page_stats: 1 }));
+          }}
+          theme={theme}
+        />
         <SelectField
           label="Доступ"
           value={filtersByTab.page_stats.access}
@@ -1740,24 +1820,7 @@ export default function AbbottBiDashboard({
         theme={theme}
       />
     ),
-    returning: (
-      <>
-        <SelectField
-          label="URL"
-          value={filtersByTab.returning.url}
-          options={returningOptions.url}
-          onChange={(value) => setSelectFilter("returning", "url", value)}
-          theme={theme}
-        />
-        <SelectField
-          label="Направление"
-          value={filtersByTab.returning.direction}
-          options={returningOptions.direction}
-          onChange={(value) => setSelectFilter("returning", "direction", value)}
-          theme={theme}
-        />
-      </>
-    ),
+    returning: null,
     general_materials: (
       <SelectField
         label="Материал"
@@ -2024,6 +2087,14 @@ export default function AbbottBiDashboard({
   } else if (activeTab === "returning") {
     chartContent = (
       <div className="space-y-6">
+        <div>
+          <h3 className="text-lg font-semibold text-slate-900">
+            Общая частота визитов за выбранный период
+          </h3>
+          <p className="text-sm text-slate-600">
+            Показатели рассчитаны по всему сайту и не зависят от фильтров контрольного слоя ниже.
+          </p>
+        </div>
         {returnFrequencyUi.available ? (
           <>
             <div className="grid gap-4 xl:grid-cols-[minmax(0,1.2fr)_minmax(0,0.8fr)]">
@@ -2052,6 +2123,9 @@ export default function AbbottBiDashboard({
             </div>
 
             <div className="card-surface space-y-4 p-5">
+              <p className="text-sm text-slate-600">
+                Фильтры детализации ниже изменяют только две таблицы: направления пользователей и страницы возврата.
+              </p>
               <div className="grid gap-4 xl:grid-cols-4">
                 <SelectField
                   label="Частота визитов"
@@ -2148,6 +2222,29 @@ export default function AbbottBiDashboard({
             <p className="text-sm text-slate-600">
               Контрольный слой Метрики показывает долю возвратов по временным интервалам отдельно от частоты визитов.
             </p>
+          </div>
+          <div className="card-surface space-y-4 p-5">
+            <div className="grid gap-4 xl:grid-cols-2">
+              <SelectField
+                label="URL"
+                value={filtersByTab.returning.url}
+                options={returningOptions.url}
+                onChange={(value) => setSelectFilter("returning", "url", value)}
+                theme={theme}
+              />
+              <SelectField
+                label="Направление"
+                value={filtersByTab.returning.direction}
+                options={returningOptions.direction}
+                onChange={(value) => setSelectFilter("returning", "direction", value)}
+                theme={theme}
+              />
+            </div>
+            {returningControlMessage ? (
+              <p className="rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-900">
+                {returningControlMessage}
+              </p>
+            ) : null}
           </div>
           <div className="grid gap-4 xl:grid-cols-3">
             <ChartCard title="Вернувшиеся в 1 день">
@@ -2394,6 +2491,12 @@ export default function AbbottBiDashboard({
           </div>
         ) : null}
 
+        {activeTab === "page_stats" ? (
+          <p className="text-sm text-slate-600">
+            Справочник: тип определён для {formatNumber(pageMetadataCoverage.mappedRows, locale)} из {formatNumber(pageMetadataCoverage.totalRows, locale)} страниц; просмотры — {formatNumber(pageMetadataCoverage.mappedPageviews, locale)} из {formatNumber(pageMetadataCoverage.totalPageviews, locale)}.
+          </p>
+        ) : null}
+
         {chartContent}
 
         {activeTab === "time_buckets" ? null : (
@@ -2505,6 +2608,12 @@ export default function AbbottBiDashboard({
             onChange={(page) => setPageByTab((prev) => ({ ...prev, [activeTab]: page }))}
           />
         )}
+        {activeTab === "user_actions" && data.admin_user_filter !== undefined ? (
+          <AbbottAdminUsersPanel
+            dashboardId={dashboardId}
+            onChanged={onAdminUsersChanged}
+          />
+        ) : null}
       </div>
     </section>
   );

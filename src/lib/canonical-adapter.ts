@@ -25,9 +25,15 @@ type SqlParam = string | number | boolean | Date | null;
 type CampaignCatalogOptions = {
   search?: string;
   accountIds?: string[];
-  dateFrom?: string;
-  dateTo?: string;
-  requireFactInRange?: boolean;
+};
+
+export type CanonicalCampaignCatalogItem = {
+  canonicalCampaignId: number;
+  sourceKey: string;
+  platformAccountId: string;
+  accountName: string;
+  platformCampaignId: string;
+  campaignName: string;
 };
 
 type AggregateRow = RowDataPacket & {
@@ -259,6 +265,42 @@ function authorityFactScope(sourceKey: string): 'campaign' | 'delivery_entity' {
   return ADS_AUTHORITY_FACT_SCOPE[sourceKey] ?? 'delivery_entity';
 }
 
+function advertisingFactTable(sourceKey: string): string {
+  if (sourceKey !== 'between') {
+    return 'canonical_fact_ads_daily';
+  }
+
+  return `(
+    SELECT
+      source_key, platform_account_id, platform_campaign_id, fact_scope, report_date,
+      spend, impressions, clicks, views, conversions, reach,
+      video_views_25, video_views_50, video_views_75, video_views_100
+    FROM canonical_advertising_facts_current
+    WHERE source_key = 'between'
+    UNION ALL
+    SELECT
+      legacy.source_key, legacy.platform_account_id, legacy.platform_campaign_id,
+      legacy.fact_scope, legacy.report_date, legacy.spend, legacy.impressions,
+      legacy.clicks, legacy.views, legacy.conversions, legacy.reach,
+      legacy.video_views_25, legacy.video_views_50, legacy.video_views_75,
+      legacy.video_views_100
+    FROM canonical_fact_ads_daily legacy
+    LEFT JOIN (
+      SELECT source_key, platform_account_id, MIN(report_date) AS first_covered_date
+      FROM canonical_ad_coverage_daily
+      WHERE source_key = 'between'
+      GROUP BY source_key, platform_account_id
+    ) coverage_start
+      ON coverage_start.source_key = legacy.source_key
+     AND coverage_start.platform_account_id = legacy.platform_account_id
+    WHERE legacy.source_key = 'between'
+      AND (
+        coverage_start.first_covered_date IS NULL
+        OR legacy.report_date < coverage_start.first_covered_date
+      )
+  )`;
+}
+
 export async function getAdsAggregate(filter: CanonicalFilter) {
   const params: SqlParam[] = [filter.source_key, authorityFactScope(filter.source_key), filter.date_from, filter.date_to];
   const accountWhere = buildAccountWhereAds(filter, params);
@@ -282,7 +324,7 @@ export async function getAdsAggregate(filter: CanonicalFilter) {
         THEN COALESCE(SUM(f.spend), 0) / SUM(f.impressions) * 1000 ELSE 0 END as avg_cpm,
       CASE WHEN COALESCE(SUM(f.clicks), 0) > 0
         THEN COALESCE(SUM(f.spend), 0) / SUM(f.clicks) ELSE 0 END as avg_cpc
-    FROM canonical_fact_ads_daily f
+    FROM ${advertisingFactTable(filter.source_key)} f
     WHERE f.source_key = ?
       AND f.fact_scope = ?
       AND f.report_date >= ?
@@ -409,7 +451,7 @@ export async function getFactByCampaignIds(
         THEN COALESCE(SUM(f.spend), 0) / SUM(f.impressions) * 1000 ELSE 0 END as avg_cpm,
       CASE WHEN COALESCE(SUM(f.clicks), 0) > 0 
         THEN COALESCE(SUM(f.spend), 0) / SUM(f.clicks) ELSE 0 END as avg_cpc
-    FROM canonical_fact_ads_daily f
+    FROM ${advertisingFactTable(sourceKey)} f
     WHERE f.source_key = ?
       AND f.fact_scope = ?
       AND f.report_date >= ?
@@ -435,7 +477,7 @@ export async function getAdsTimeseries(filter: CanonicalFilter) {
       COALESCE(SUM(f.spend), 0) as spend,
       COALESCE(SUM(f.views), 0) as views,
       COALESCE(SUM(f.conversions), 0) as conversions
-    FROM canonical_fact_ads_daily f
+    FROM ${advertisingFactTable(filter.source_key)} f
     WHERE f.source_key = ?
       AND f.fact_scope = ?
       AND f.report_date >= ?
@@ -649,7 +691,7 @@ export async function getTimeseriesByCampaignIds(
       COALESCE(SUM(f.spend), 0) as spend,
       COALESCE(SUM(f.views), 0) as views,
       COALESCE(SUM(f.conversions), 0) as conversions
-    FROM canonical_fact_ads_daily f
+    FROM ${advertisingFactTable(sourceKey)} f
     WHERE f.source_key = ?
       AND f.fact_scope = ?
       AND f.report_date >= ?
@@ -690,7 +732,7 @@ export async function getCampaignDailyFactsByIds(
       COALESCE(SUM(f.spend), 0) as spend,
       COALESCE(SUM(f.views), 0) as views,
       COALESCE(SUM(f.conversions), 0) as conversions
-    FROM canonical_fact_ads_daily f
+    FROM ${advertisingFactTable(sourceKey)} f
     WHERE f.source_key = ?
       AND f.fact_scope = ?
       AND f.report_date >= ?
@@ -733,7 +775,7 @@ export async function getCampaignBreakdown(filter: CanonicalFilter) {
           THEN COALESCE(SUM(f.clicks), 0) / SUM(f.impressions) * 100
         ELSE 0
       END as ctr
-    FROM canonical_fact_ads_daily f
+    FROM ${advertisingFactTable(filter.source_key)} f
     LEFT JOIN canonical_source_campaigns c
       ON c.source_key = f.source_key
      AND c.platform_campaign_id = f.platform_campaign_id
@@ -864,68 +906,68 @@ export async function getCampaignNames(
   sourceKey: string,
   search?: string,
   accountIds?: string[],
-  options?: Omit<CampaignCatalogOptions, 'search' | 'accountIds'>,
 ) {
   return getCampaignCatalog(sourceKey, {
     search,
     accountIds,
-    ...options,
-  }).then((rows) => rows.map((row) => ({ id: row.id, name: row.name })));
+  }).then((rows) => rows.map((row) => ({
+    id: row.platformCampaignId,
+    name: row.campaignName,
+  })));
 }
 
-export async function getCampaignCatalog(sourceKey: string, accountIdsOrOptions?: string[] | CampaignCatalogOptions) {
+export async function getCampaignCatalog(
+  sourceKey: string,
+  accountIdsOrOptions?: string[] | CampaignCatalogOptions,
+): Promise<CanonicalCampaignCatalogItem[]> {
   const options: CampaignCatalogOptions = Array.isArray(accountIdsOrOptions)
     ? { accountIds: accountIdsOrOptions }
     : (accountIdsOrOptions ?? {});
   let sql = `
-    SELECT DISTINCT
-      c.platform_campaign_id AS id,
-      c.campaign_name AS name
+    SELECT
+      c.id AS canonical_campaign_id,
+      c.source_key,
+      c.platform_account_id,
+      COALESCE(NULLIF(TRIM(a.account_name), ''), a.platform_account_id) AS account_name,
+      c.platform_campaign_id,
+      COALESCE(NULLIF(TRIM(c.campaign_name), ''), c.platform_campaign_id) AS campaign_name
     FROM canonical_source_campaigns c
+    JOIN canonical_source_accounts a
+      ON a.source_key = c.source_key
+     AND a.platform_account_id = c.platform_account_id
     WHERE c.source_key = ?
   `;
   const params: SqlParam[] = [sourceKey];
 
   const normalizedAccountIds = Array.isArray(options.accountIds)
-    ? options.accountIds.map((item) => String(item).trim()).filter(Boolean)
+    ? Array.from(new Set(options.accountIds.map((item) => String(item).trim()).filter(Boolean)))
     : [];
   if (normalizedAccountIds.length) {
     sql += ` AND c.platform_account_id IN (${normalizedAccountIds.map(() => '?').join(',')})`;
     params.push(...normalizedAccountIds);
   }
 
-  if (options.search) {
-    sql += ` AND c.campaign_name LIKE ?`;
-    params.push(`%${options.search}%`);
+  const search = String(options.search ?? '').trim();
+  if (search) {
+    const pattern = `%${search}%`;
+    sql += ` AND (
+      c.campaign_name LIKE ?
+      OR c.platform_campaign_id LIKE ?
+      OR a.account_name LIKE ?
+    )`;
+    params.push(pattern, pattern, pattern);
   }
 
-  if (options.requireFactInRange && options.dateFrom && options.dateTo) {
-    sql += `
-      AND EXISTS (
-        SELECT 1
-        FROM canonical_fact_ads_daily f
-        WHERE f.source_key = ?
-          AND f.platform_account_id = c.platform_account_id
-          AND f.platform_campaign_id = c.platform_campaign_id
-          AND f.fact_scope = ?
-          AND f.report_date >= ?
-          AND f.report_date <= ?
-          AND (
-            COALESCE(f.spend, 0) <> 0
-            OR COALESCE(f.impressions, 0) <> 0
-            OR COALESCE(f.clicks, 0) <> 0
-            OR COALESCE(f.conversions, 0) <> 0
-            OR COALESCE(f.views, 0) <> 0
-            OR COALESCE(f.reach, 0) <> 0
-          )
-      )
-    `;
-    params.push(sourceKey, authorityFactScope(sourceKey), options.dateFrom, options.dateTo);
-  }
-
-  sql += ` ORDER BY c.campaign_name LIMIT 5000`;
+  sql += ` ORDER BY account_name, campaign_name, c.platform_campaign_id, c.id LIMIT 5000`;
   const [rows] = await pool.query<RowDataPacket[]>(sql, params);
-  return rows as Array<{ id: string; name: string }>;
+  return rows.map((row) => ({
+    canonicalCampaignId: Number(row.canonical_campaign_id),
+    sourceKey: String(row.source_key),
+    platformAccountId: String(row.platform_account_id),
+    accountName: String(row.account_name),
+    platformCampaignId: String(row.platform_campaign_id),
+    campaignName: String(row.campaign_name),
+  }));
 }
 
 export async function countAdsCampaigns(filter: CanonicalFilter): Promise<number> {
@@ -934,7 +976,7 @@ export async function countAdsCampaigns(filter: CanonicalFilter): Promise<number
   const campaignWhere = buildCampaignWhere(filter, params);
   const sql = `
     SELECT COUNT(DISTINCT f.platform_campaign_id) AS total
-    FROM canonical_fact_ads_daily f
+    FROM ${advertisingFactTable(filter.source_key)} f
     WHERE f.source_key = ?
       AND f.fact_scope = ?
       AND f.report_date >= ?
@@ -1100,15 +1142,17 @@ export async function getActiveAccounts(
   }
 
   const factScope = authorityFactScope(sourceKey);
-  const dateClause =
-    usePeriodFilter
-      ? `AND f.report_date >= ? AND f.report_date <= ?`
-      : `AND f.report_date >= DATE_SUB(
-        (SELECT MAX(report_date)
-           FROM canonical_fact_ads_daily
-          WHERE source_key = ?
-            AND fact_scope = ?),
-        INTERVAL 60 DAY
+  const factDateClause = usePeriodFilter
+    ? `AND facts.report_date >= ? AND facts.report_date <= ?`
+    : `AND facts.report_date >= DATE_SUB(
+        (SELECT MAX(report_date) FROM canonical_advertising_facts_current
+         WHERE source_key = ? AND fact_scope = ?), INTERVAL 60 DAY
+      )`;
+  const coverageDateClause = usePeriodFilter
+    ? `AND coverage.report_date >= ? AND coverage.report_date <= ?`
+    : `AND coverage.report_date >= DATE_SUB(
+        (SELECT MAX(report_date) FROM canonical_ad_coverage_daily
+         WHERE source_key = ?), INTERVAL 60 DAY
       )`;
   const isYandex = sourceKey === 'yandex_direct';
   const nameExpr = isYandex
@@ -1127,20 +1171,50 @@ export async function getActiveAccounts(
     SELECT
       a.platform_account_id AS id,
       ${nameExpr} AS name,
-      MAX(f.report_date) AS latest_report_date,
-      COUNT(*) AS fact_rows,
-      COALESCE(SUM(f.spend), 0) AS total_spend
+      CASE
+        WHEN facts.latest_report_date IS NULL THEN coverage.latest_report_date
+        WHEN coverage.latest_report_date IS NULL THEN facts.latest_report_date
+        ELSE GREATEST(facts.latest_report_date, coverage.latest_report_date)
+      END AS latest_report_date,
+      COALESCE(facts.fact_rows, 0) AS fact_rows,
+      COALESCE(facts.total_spend, 0) AS total_spend
     FROM canonical_source_accounts a
-    JOIN canonical_fact_ads_daily f
-      ON f.source_key = a.source_key
-     AND f.platform_account_id = a.platform_account_id
-     AND f.fact_scope = ?
+    LEFT JOIN canonical_source_account_collection_settings settings
+      ON settings.source_key = a.source_key
+     AND settings.platform_account_id = a.platform_account_id
+    LEFT JOIN (
+      SELECT facts.source_key, facts.platform_account_id,
+             MAX(facts.report_date) AS latest_report_date,
+             COUNT(*) AS fact_rows,
+             COALESCE(SUM(facts.spend), 0) AS total_spend
+      FROM canonical_advertising_facts_current facts
+      WHERE facts.source_key = ? AND facts.fact_scope = ?
+        ${factDateClause}
+      GROUP BY facts.source_key, facts.platform_account_id
+    ) facts
+      ON facts.source_key = a.source_key
+     AND facts.platform_account_id = a.platform_account_id
+    LEFT JOIN (
+      SELECT coverage.source_key, coverage.platform_account_id,
+             MAX(coverage.report_date) AS latest_report_date
+      FROM canonical_ad_coverage_daily coverage
+      WHERE coverage.source_key = ?
+        AND coverage.coverage_state IN ('complete_with_data', 'complete_empty')
+        ${coverageDateClause}
+      GROUP BY coverage.source_key, coverage.platform_account_id
+    ) coverage
+      ON coverage.source_key = a.source_key
+     AND coverage.platform_account_id = a.platform_account_id
     WHERE a.source_key = ?
-      ${dateClause}
+      AND COALESCE(
+        settings.is_active,
+        CASE WHEN LOWER(COALESCE(a.account_status, '')) IN ('inactive', 'disabled', 'archived', 'deleted')
+          THEN 0 ELSE 1 END
+      ) = 1
   `;
   const params: SqlParam[] = usePeriodFilter
-    ? [factScope, sourceKey, dateFrom, dateTo]
-    : [factScope, sourceKey, sourceKey, factScope];
+    ? [sourceKey, factScope, dateFrom, dateTo, sourceKey, dateFrom, dateTo, sourceKey]
+    : [sourceKey, factScope, sourceKey, factScope, sourceKey, sourceKey, sourceKey];
 
   if (search) {
     const searchPattern = `%${search}%`;
@@ -1156,9 +1230,7 @@ export async function getActiveAccounts(
     }
   }
 
-  sql += `
-    GROUP BY a.source_key, a.platform_account_id, a.account_name
-  `;
+  sql += ` ORDER BY a.account_name, a.platform_account_id`;
 
   const [rows] = await pool.execute<ActiveAccountRow[]>(sql, params);
   return rows

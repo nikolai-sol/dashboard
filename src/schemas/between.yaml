@@ -3,7 +3,7 @@ display_name: Between
 source: mysql
 source_key: between
 source_type: ads
-canonical_table: canonical_fact_ads_daily
+canonical_table: canonical_advertising_facts_current
 
 tables:
   campaigns:
@@ -11,7 +11,7 @@ tables:
     id_col: platform_campaign_id
     name_col: campaign_name
   stats:
-    table: canonical_fact_ads_daily
+    table: canonical_advertising_facts_current
     date_col: report_date
     metrics:
       - { col: impressions, label: Impressions, type: int }

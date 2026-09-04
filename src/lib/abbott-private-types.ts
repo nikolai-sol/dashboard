@@ -1,3 +1,5 @@
+import type { AbbottMnnValue } from "./types";
+
 export const ABBOTT_DATASET_KEY = "abbott" as const;
 
 export const ABBOTT_PRIVATE_SOURCE_KINDS = {
@@ -40,10 +42,12 @@ export interface AbbottActiveRelease {
 }
 
 export interface AbbottContentMetadata {
+  page_title: string | null;
   direction: string | null;
   material_type: string | null;
   access: string | null;
   is_active: boolean | null;
+  mnn?: AbbottMnnValue[];
 }
 
 export interface AbbottAggregateWorkbookData {
@@ -54,6 +58,7 @@ export interface AbbottAggregateWorkbookData {
     registration_url: string;
     access: string | null;
   }>;
+  contentByUrl: Map<string, AbbottContentMetadata>;
   contentByTitle: Map<string, AbbottContentMetadata>;
   contentBySlug: Map<string, AbbottContentMetadata>;
   urlReturnDirections: Map<string, AbbottContentMetadata>;

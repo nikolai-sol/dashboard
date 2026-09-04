@@ -6,6 +6,7 @@ import {
   buildAbbottUtmSourceOptions,
   selectAbbottUserActions,
 } from "./abbott-user-action-filters";
+import { ABBOTT_WITH_USER_ID, ABBOTT_WITHOUT_ADMINS } from "./abbott-admin-user-filter";
 import type { AbbottBiUserActionRow } from "@/lib/types";
 
 const action = (
@@ -73,4 +74,129 @@ test("empty UTM selection preserves all rows and exact values do not match missi
     selectAbbottUserActions(rows, { utm_source: "email" }, 1, 100).filteredRows.map((row) => row.user_id),
     ["2"],
   );
+});
+
+test("groups visits by the five displayed dimensions and preserves weighted totals", () => {
+  const rows = [
+    action("", null, {
+      has_user_id: false,
+      start_url: "/first-entry",
+      end_url: "/same-exit",
+      visits: 1,
+      avg_duration: 30,
+      page_depth: 2,
+    }),
+    action("", "   ", {
+      has_user_id: false,
+      start_url: "/different-entry",
+      end_url: "/same-exit",
+      visits: 2,
+      avg_duration: 60,
+      page_depth: 4,
+    }),
+    action("", "email", {
+      has_user_id: false,
+      end_url: "/same-exit",
+      visits: 4,
+      avg_duration: 90,
+      page_depth: 5,
+    }),
+  ];
+
+  const selected = selectAbbottUserActions(rows, {}, 1, 100);
+
+  assert.equal(selected.filteredRows.length, 2);
+  assert.deepEqual(
+    selected.filteredRows.map((row) => ({
+      utm_source: row.utm_source,
+      visits: row.visits,
+    })),
+    [
+      { utm_source: "email", visits: 4 },
+      { utm_source: null, visits: 3 },
+    ],
+  );
+  assert.equal(selected.filteredRows[0]?.avg_duration, 90);
+  assert.equal(selected.filteredRows[0]?.page_depth, 5);
+  assert.equal(selected.filteredRows[1]?.avg_duration, 50);
+  assert.ok(Math.abs((selected.filteredRows[1]?.page_depth ?? 0) - (10 / 3)) < 1e-12);
+
+  assert.equal(
+    selected.filteredRows.reduce((sum, row) => sum + row.visits, 0),
+    rows.reduce((sum, row) => sum + row.visits, 0),
+  );
+  assert.equal(
+    selected.filteredRows.reduce((sum, row) => sum + row.avg_duration * row.visits, 0),
+    rows.reduce((sum, row) => sum + row.avg_duration * row.visits, 0),
+  );
+  assert.equal(
+    Math.round(selected.filteredRows.reduce((sum, row) => sum + row.page_depth * row.visits, 0)),
+    rows.reduce((sum, row) => sum + row.page_depth * row.visits, 0),
+  );
+});
+
+test("groups raw traffic sources that have the same displayed source label", () => {
+  const rows = [
+    action("", null, { has_user_id: false, traffic_source: "" }),
+    action("", null, { has_user_id: false, traffic_source: "Unknown traffic" }),
+  ];
+
+  const selected = selectAbbottUserActions(rows, {
+    traffic_source_label: () => "Неизвестный источник",
+  }, 1, 100);
+
+  assert.equal(selected.filteredRows.length, 1);
+  assert.equal(selected.filteredRows[0]?.visits, 2);
+});
+
+test("matches source and direction filters against the displayed trimmed values", () => {
+  const selected = selectAbbottUserActions([
+    action("doctor-a", null, {
+      traffic_source: " Direct traffic ",
+      direction: " Кардиология ",
+    }),
+  ], {
+    traffic_source: "Direct traffic",
+    direction: "Кардиология",
+  }, 1, 100);
+
+  assert.equal(selected.filteredRows.length, 1);
+});
+
+test("admin-free selection removes admin visits before aggregation", () => {
+  const selected = selectAbbottUserActions([
+    action("900001", null, { is_admin_user: true, visits: 2, avg_duration: 120 }),
+    action("doctor-1", null, { is_admin_user: false, visits: 1, avg_duration: 30 }),
+  ], {
+    user_id: ABBOTT_WITHOUT_ADMINS,
+  }, 1, 100);
+
+  assert.deepEqual(selected.filteredRows.map((row) => row.user_id), ["doctor-1"]);
+  assert.equal(selected.filteredRows[0]?.avg_duration, 30);
+});
+
+test("all-with-User-ID keeps identified admin and non-admin visits", () => {
+  const selected = selectAbbottUserActions([
+    action("900001", null, { is_admin_user: true }),
+    action("doctor-1", null, { is_admin_user: false }),
+    action("", null, { has_user_id: false, is_admin_user: false }),
+  ], {
+    user_id: ABBOTT_WITH_USER_ID,
+  }, 1, 100);
+
+  assert.deepEqual(
+    selected.filteredRows.map((row) => row.user_id).sort(),
+    ["900001", "doctor-1"],
+  );
+});
+
+test("explicit User ID selection still shows an admin visit", () => {
+  const selected = selectAbbottUserActions([
+    action("900001", null, { is_admin_user: true }),
+    action("doctor-1", null, { is_admin_user: false }),
+  ], {
+    user_id: "900001",
+  }, 1, 100);
+
+  assert.deepEqual(selected.filteredRows.map((row) => row.user_id), ["900001"]);
 });

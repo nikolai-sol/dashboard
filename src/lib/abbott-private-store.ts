@@ -19,6 +19,7 @@ import {
   type ParsedAbbottWorkbook,
   type ParsedBitrixAnalytics,
 } from "./abbott-private-types";
+import type { AbbottMnnValue } from "./types";
 
 export type AbbottPrivateStoreErrorCode =
   | "INVALID_CONFIGURATION"
@@ -38,6 +39,10 @@ export class AbbottPrivateStoreError extends Error {
 
 export interface AbbottPrivateQueryExecutor {
   query(sql: string, params: readonly unknown[]): Promise<readonly Record<string, unknown>[]>;
+}
+
+export interface AbbottPrivateMutationExecutor extends AbbottPrivateQueryExecutor {
+  execute(sql: string, params: readonly unknown[]): Promise<void>;
 }
 
 type SnapshotRow = Record<string, unknown> & {
@@ -249,12 +254,18 @@ async function requireActiveAbbottDashboard(executor: AbbottPrivateQueryExecutor
   }
 }
 
-function contentMetadata(row: Record<string, unknown>): AbbottContentMetadata {
+function contentMetadata(
+  row: Record<string, unknown>,
+  mnnByEntity: ReadonlyMap<number, readonly AbbottMnnValue[]>,
+): AbbottContentMetadata {
+  const contentEntityId = integerId(row.content_entity_id);
   return {
+    page_title: nullableText(row.page_title),
     direction: nullableText(row.direction_key),
     material_type: nullableText(row.material_type),
     access: nullableText(row.access_label),
     is_active: booleanOrNull(row.is_active),
+    mnn: [...(contentEntityId === null ? [] : (mnnByEntity.get(contentEntityId) ?? []))],
   };
 }
 
@@ -271,7 +282,8 @@ async function loadAggregateWorkbook(
   const catalogRows = await queryRows(
     executor,
     `SELECT projection.lookup_kind, projection.lookup_key_hash, projection.resolution_status,
-            catalog.material_type, catalog.direction_key, catalog.access_label, catalog.is_active
+            catalog.content_entity_id, catalog.page_title, catalog.material_type,
+            catalog.direction_key, catalog.access_label, catalog.is_active
      FROM \`report_bd\`.\`portal_content_lookup_projection\` AS projection
      INNER JOIN \`report_bd\`.\`portal_content_catalog\` AS catalog
        ON catalog.canonical_release_id = projection.canonical_release_id
@@ -281,6 +293,14 @@ async function loadAggregateWorkbook(
        AND projection.resolution_status IN ('unique', 'identical_collapsed')
      ORDER BY projection.lookup_kind, projection.lookup_key_hash`,
     [release.id, release.snapshots.workbookCatalog.id],
+  );
+  const mnnRows = await queryRows(
+    executor,
+    `SELECT content_entity_id, mnn_key, mnn_label, mnn_role, display_order
+     FROM \`report_bd\`.\`portal_content_catalog_mnn\`
+     WHERE canonical_release_id = ?
+     ORDER BY content_entity_id, display_order, mnn_key`,
+    [release.id],
   );
   const qualityRows = await queryRows(
     executor,
@@ -308,17 +328,63 @@ async function loadAggregateWorkbook(
     [release.id, release.snapshots.workbookJson.id],
   );
 
+  const contentByUrl = new Map<string, AbbottContentMetadata>();
   const contentByTitle = new Map<string, AbbottContentMetadata>();
   const contentBySlug = new Map<string, AbbottContentMetadata>();
   const urlReturnDirections = new Map<string, AbbottContentMetadata>();
+  const mnnLabelsByEntity = new Map<
+    number,
+    Map<string, { label: string; roleRank: number; displayOrder: number }>
+  >();
+  mnnRows.forEach((row) => {
+    const contentEntityId = integerId(row.content_entity_id);
+    const key = text(row.mnn_key);
+    const label = text(row.mnn_label);
+    const role = text(row.mnn_role) || "unranked";
+    const displayOrder = integerId(row.display_order) ?? 0;
+    if (contentEntityId === null || !key || !label) {
+      throw storeError("PRIVATE_DATA_UNAVAILABLE", PRIVATE_UNAVAILABLE_MESSAGE);
+    }
+    if (!new Set(["primary", "additional", "unranked"]).has(role)) {
+      throw storeError("PRIVATE_DATA_UNAVAILABLE", PRIVATE_UNAVAILABLE_MESSAGE);
+    }
+    const roleRank = role === "primary" ? 0 : role === "additional" ? 1 : 2;
+    const values = mnnLabelsByEntity.get(contentEntityId) ?? new Map();
+    const existing = values.get(key);
+    if (existing !== undefined && existing.label !== label) {
+      throw storeError("PRIVATE_DATA_UNAVAILABLE", PRIVATE_UNAVAILABLE_MESSAGE);
+    }
+    if (
+      existing === undefined ||
+      roleRank < existing.roleRank ||
+      (roleRank === existing.roleRank && displayOrder < existing.displayOrder)
+    ) {
+      values.set(key, { label, roleRank, displayOrder });
+    }
+    mnnLabelsByEntity.set(contentEntityId, values);
+  });
+  const mnnByEntity = new Map<number, readonly AbbottMnnValue[]>(
+    Array.from(mnnLabelsByEntity, ([entityId, values]) => [
+      entityId,
+      Array.from(values, ([key, value]) => ({ key, ...value }))
+        .sort(
+          (left, right) =>
+            left.roleRank - right.roleRank ||
+            left.displayOrder - right.displayOrder ||
+            left.label.localeCompare(right.label, "ru"),
+        )
+        .map(({ key, label }) => ({ key, label })),
+    ]),
+  );
   catalogRows.forEach((row) => {
     const lookupKind = text(row.lookup_kind);
     const lookupKeyHash = text(row.lookup_key_hash);
     if (!/^[a-f0-9]{64}$/.test(lookupKeyHash)) {
       throw storeError("PRIVATE_DATA_UNAVAILABLE", PRIVATE_UNAVAILABLE_MESSAGE);
     }
-    const metadata = contentMetadata(row);
-    if (lookupKind === "title") addUniqueLookup(contentByTitle, lookupKeyHash, metadata);
+    const metadata = contentMetadata(row, mnnByEntity);
+    if (lookupKind === "url") addUniqueLookup(contentByUrl, lookupKeyHash, metadata);
+    else if (lookupKind === "title") addUniqueLookup(contentByTitle, lookupKeyHash, metadata);
     else if (lookupKind === "slug") addUniqueLookup(contentBySlug, lookupKeyHash, metadata);
     else if (lookupKind === "path") addUniqueLookup(urlReturnDirections, lookupKeyHash, metadata);
     else throw storeError("PRIVATE_DATA_UNAVAILABLE", PRIVATE_UNAVAILABLE_MESSAGE);
@@ -337,6 +403,7 @@ async function loadAggregateWorkbook(
         access: nullableText(row.access_label),
       }))
       .filter((row) => row.title && row.registration_url),
+    contentByUrl,
     contentByTitle,
     contentBySlug,
     urlReturnDirections,
@@ -715,6 +782,15 @@ function connectionExecutor(connection: PoolConnection): AbbottPrivateQueryExecu
   };
 }
 
+function mutationExecutor(connection: PoolConnection): AbbottPrivateMutationExecutor {
+  return {
+    ...connectionExecutor(connection),
+    async execute(sql, params) {
+      await connection.execute(sql, params as never[]);
+    },
+  };
+}
+
 export async function withReadOnlyAbbottExecutor<T>(
   audience: AbbottPrivateAudience,
   work: (executor: AbbottPrivateQueryExecutor) => Promise<T>,
@@ -725,6 +801,30 @@ export async function withReadOnlyAbbottExecutor<T>(
     await connection.query("SET TRANSACTION READ ONLY");
     await connection.beginTransaction();
     const result = await work(connectionExecutor(connection));
+    await connection.commit();
+    return result;
+  } catch (error) {
+    if (connection) {
+      try {
+        await connection.rollback();
+      } catch {
+        // The sanitized store error below deliberately hides connection details.
+      }
+    }
+    throw sanitizeFailure(error);
+  } finally {
+    connection?.release();
+  }
+}
+
+export async function withAbbottPrivateMutationExecutor<T>(
+  work: (executor: AbbottPrivateMutationExecutor) => Promise<T>,
+): Promise<T> {
+  let connection: PoolConnection | undefined;
+  try {
+    connection = await (await getAbbottPool("manager")).getConnection();
+    await connection.beginTransaction();
+    const result = await work(mutationExecutor(connection));
     await connection.commit();
     return result;
   } catch (error) {

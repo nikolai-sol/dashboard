@@ -1,4 +1,8 @@
-import { normalizeAbbottPageUrl } from "@/lib/abbott-page-url";
+import {
+  isAbbottWebPageUrl,
+  normalizeAbbottPagePath,
+  normalizeAbbottPageUrl,
+} from "@/lib/abbott-page-url";
 import type {
   AbbottBiReturnFrequency,
   AbbottVisitFrequencyGroupId,
@@ -51,9 +55,10 @@ export function buildAbbottReturnFrequency(
   directionByUserId: ReadonlyMap<string, string | null>,
   resolvePageDirection: (normalizedUrl: string) => string | null,
 ): AbbottBiReturnFrequency {
-  const unidentifiedVisits = visits.filter((visit) => !visit.client_id_hash).length;
+  const siteVisits = visits.filter((visit) => isAbbottWebPageUrl(visit.start_url));
+  const unidentifiedVisits = siteVisits.filter((visit) => !visit.client_id_hash).length;
   const byClient = new Map<string, AbbottFrequencyVisit[]>();
-  visits.forEach((visit) => {
+  siteVisits.forEach((visit) => {
     if (!visit.client_id_hash) return;
     const rows = byClient.get(visit.client_id_hash) ?? [];
     rows.push(visit);
@@ -104,7 +109,7 @@ export function buildAbbottReturnFrequency(
 
     clientVisits.slice(1).forEach((repeatVisit) => {
       const url = normalizeAbbottPageUrl(repeatVisit.start_url);
-      const direction = resolvePageDirection(url)?.trim() || UNKNOWN_DIRECTION;
+      const direction = resolvePageDirection(normalizeAbbottPagePath(url))?.trim() || UNKNOWN_DIRECTION;
       const pageKey = `${group}\n${direction}\n${url}`;
       const pageRow = pageTotals.get(pageKey) ?? {
         url,

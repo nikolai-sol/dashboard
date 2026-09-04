@@ -1,33 +1,34 @@
 import { NextResponse } from "next/server";
 import pool from "@/lib/db";
 import { loadDashboardWithSources } from "@/lib/admin-dashboards";
-import { getCampaignCatalog } from "@/lib/canonical-adapter";
-import { fetchManualDataFromSourceConfig, aggregateByChannel } from "@/lib/manual-data-fetcher";
+import { getCampaignCatalog, type CanonicalCampaignCatalogItem } from "@/lib/canonical-adapter";
 import { resolveSourceKey } from "@/lib/source-mapping";
 
 type SourceSpec = {
   platform?: string;
   source_key?: string;
   account_ids?: string[];
-  sheet_url?: string;
-  upload_file?: unknown;
-  default_platform?: string;
-  default_channel?: string;
 };
 
-async function loadCampaigns(
+type CampaignLoaderDependencies = {
+  getCampaignCatalog: (
+    sourceKey: string,
+    options: { accountIds: string[] },
+  ) => Promise<CanonicalCampaignCatalogItem[]>;
+};
+
+const defaultDependencies: CampaignLoaderDependencies = { getCampaignCatalog };
+
+export async function loadCampaigns(
   dashboardId: number,
-  dateFrom: string,
-  dateTo: string,
+  _dateFrom: string,
+  _dateTo: string,
   sourceSpecs: SourceSpec[],
+  dependencies: CampaignLoaderDependencies = defaultDependencies,
 ) {
   const resolvedSources: Array<{
     source_key: string;
     account_ids?: string[];
-    sheet_url?: string;
-    upload_file?: unknown;
-    default_platform?: string;
-    default_channel?: string;
   }> = [];
 
   if (Number.isFinite(dashboardId) && dashboardId > 0) {
@@ -40,27 +41,18 @@ async function loadCampaigns(
       dashboard.sources
         .filter((source) => source.role === "actual" && source.platform !== "leads")
         .forEach((source) => {
-          const sourceKey = resolveSourceKey(source.platform);
-          if (source.platform === "manual_data") {
-            const sheetUrl = String(source.source_config?.sheet_url ?? "").trim();
-            resolvedSources.push({
-              source_key: "manual_data",
-              account_ids: [],
-              sheet_url: sheetUrl,
-              upload_file: source.source_config?.upload_file,
-              default_platform: String(source.source_config?.platform ?? "").trim(),
-              default_channel: String(source.source_config?.channel ?? "").trim(),
-            });
-          } else {
-            const accountIds = Array.isArray(source.source_config?.account_ids)
-              ? source.source_config.account_ids.map((item) => String(item).trim()).filter(Boolean)
-              : [];
-            resolvedSources.push({ source_key: sourceKey, account_ids: accountIds });
-          }
+          const sourceKey = String(
+            source.source_config?.source_key ?? resolveSourceKey(source.platform),
+          ).trim();
+          if (!sourceKey || sourceKey === "manual_data") return;
+          const configuredAccounts = Array.isArray(source.source_config?.account_ids)
+            ? source.source_config.account_ids
+            : [source.source_config?.platform_account_id];
+          const accountIds = configuredAccounts
+            .map((item) => String(item ?? "").trim())
+            .filter(Boolean);
+          resolvedSources.push({ source_key: sourceKey, account_ids: accountIds });
         });
-      const config = (dashboard.config ?? {}) as Record<string, unknown>;
-      dateFrom = dateFrom || String(config.period_from ?? "").trim();
-      dateTo = dateTo || String(config.period_to ?? "").trim();
     } finally {
       conn.release();
     }
@@ -72,14 +64,7 @@ async function loadCampaigns(
         return;
       }
       if (sourceKey === "manual_data" || source.platform === "manual_data") {
-        resolvedSources.push({
-          source_key: "manual_data",
-          account_ids: [],
-          sheet_url: String(source.sheet_url ?? "").trim(),
-          upload_file: source.upload_file,
-          default_platform: String(source.default_platform ?? "").trim(),
-          default_channel: String(source.default_channel ?? "").trim(),
-        });
+        return;
       } else {
         const accountIds = Array.isArray(source.account_ids)
           ? source.account_ids.map((item) => String(item).trim()).filter(Boolean)
@@ -89,16 +74,12 @@ async function loadCampaigns(
     });
   }
 
-  const manualSources = resolvedSources.filter(
-    (s) => s.source_key === "manual_data" && (s.sheet_url || s.upload_file),
-  );
-  const canonicalSources = resolvedSources.filter((s) => s.source_key !== "manual_data");
-
   const dedupedSources = new Map<string, string[]>();
-  for (const source of canonicalSources) {
+  for (const source of resolvedSources) {
     const accountIds = Array.isArray(source.account_ids)
       ? source.account_ids.map((item) => String(item).trim()).filter(Boolean)
       : [];
+    if (accountIds.length === 0) continue;
     const existing = dedupedSources.get(source.source_key) ?? [];
     const merged = [...existing, ...accountIds];
     dedupedSources.set(source.source_key, Array.from(new Set(merged)));
@@ -107,46 +88,20 @@ async function loadCampaigns(
   const canonicalCampaigns = (
     await Promise.all(
       Array.from(dedupedSources.entries()).map(async ([sourceKey, accountIds]) => {
-        const items = await getCampaignCatalog(sourceKey, {
-          accountIds,
-          dateFrom,
-          dateTo,
-          requireFactInRange: sourceKey === "yandex_direct" && Boolean(dateFrom && dateTo),
-        });
+        const items = await dependencies.getCampaignCatalog(sourceKey, { accountIds });
         return items.map((item) => ({
-          source_key: sourceKey,
-          platform_campaign_id: String(item.id),
-          campaign_name: String(item.name),
+          canonical_campaign_id: item.canonicalCampaignId,
+          source_key: item.sourceKey,
+          platform_account_id: item.platformAccountId,
+          account_name: item.accountName,
+          platform_campaign_id: item.platformCampaignId,
+          campaign_name: item.campaignName,
+          display_label: `${item.campaignName} \u00b7 ${item.platformCampaignId} \u00b7 ${item.accountName}`,
         }));
       }),
     )
   ).flat();
-
-  const manualCampaigns: Array<{ source_key: string; platform_campaign_id: string; campaign_name: string }> = [];
-  for (const source of manualSources) {
-    try {
-      const rows = await fetchManualDataFromSourceConfig({
-        sheet_url: source.sheet_url,
-        upload_file: source.upload_file,
-        platform: source.default_platform,
-        channel: source.default_channel,
-      });
-      const byChannel = aggregateByChannel(rows);
-      for (const ch of byChannel) {
-        manualCampaigns.push({
-          source_key: "manual_data",
-          platform_campaign_id: `manual:${ch.platform}|${ch.channel}`,
-          campaign_name: `${ch.platform} / ${ch.channel}`,
-        });
-      }
-    } catch {
-      // skip failed fetch
-    }
-  }
-
-  const campaigns = [...canonicalCampaigns, ...manualCampaigns];
-
-  return { campaigns, total: campaigns.length };
+  return { campaigns: canonicalCampaigns, total: canonicalCampaigns.length };
 }
 
 export async function GET(request: Request) {

@@ -1,15 +1,16 @@
 import { NextResponse } from "next/server";
 import type { ResultSetHeader, RowDataPacket } from "mysql2/promise";
 import pool from "@/lib/db";
+import { ADMIN_SESSION_COOKIE, parseCookieValue, verifyAdminSession } from "@/lib/access-auth";
 import {
   insertSourcesWithFilters,
   normalizeDashboardPayload,
-  replaceMediaPlanBindings,
   summarizeDashboardPayloadForLog,
   syncDashboardMediaPlanStorage,
   validateDashboardPayload,
 } from "@/lib/admin-dashboards";
 import { getDefaultKpiCards, getDefaultSectionOrder } from "@/lib/dashboard-presets";
+import { BindingValidationError, replaceEffectiveBindings } from "@/lib/media-plan-binding-store";
 
 export async function GET() {
   try {
@@ -44,6 +45,11 @@ export async function GET() {
 }
 
 export async function POST(request: Request) {
+  const actor = verifyAdminSession(
+    parseCookieValue(request.headers.get("cookie"), ADMIN_SESSION_COOKIE),
+  )?.email ?? null;
+  if (!actor) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+
   const body = await request.json().catch(() => null);
   const payload = normalizeDashboardPayload(body);
   const payloadSummary = summarizeDashboardPayloadForLog(payload);
@@ -87,7 +93,24 @@ export async function POST(request: Request) {
     );
 
     await insertSourcesWithFilters(conn, dashResult.insertId, payload.sources);
-    await replaceMediaPlanBindings(conn, dashResult.insertId, payload.media_plan_bindings);
+    if (["abbott_bi", "zaruku_bi"].includes(payload.dashboard_type)) {
+      if (payload.media_plan_bindings.length) {
+        throw new BindingValidationError("advertising bindings are not supported for this dashboard");
+      }
+    } else {
+      await replaceEffectiveBindings(
+        conn,
+        dashResult.insertId,
+        actor,
+        payload.media_plan_bindings.map((binding) => ({
+          line_key: String(binding.line_key ?? binding.channel),
+          channel: binding.channel,
+          canonical_campaign_id: Number(binding.canonical_campaign_id),
+          effective_from: binding.effective_from ?? null,
+          effective_to: binding.effective_to ?? null,
+        })),
+      );
+    }
     await syncDashboardMediaPlanStorage(conn, dashResult.insertId, payload.sources);
 
     await conn.commit();
@@ -113,7 +136,7 @@ export async function POST(request: Request) {
         error: "Failed to create dashboard",
         details: parts.join(" · "),
       },
-      { status: 500 },
+      { status: error instanceof BindingValidationError ? 400 : 500 },
     );
   } finally {
     conn.release();

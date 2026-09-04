@@ -7,6 +7,7 @@ import type {
   ZarukuSeoMetricRow,
   ZarukuSeoPositionTrendPoint,
   ZarukuYandexWebmasterPageRow,
+  ZarukuYandexWebmasterQueryPageRow,
   ZarukuYandexWebmasterQueryRow,
 } from "@/lib/types";
 
@@ -30,6 +31,7 @@ export type UnifiedSeoQueryRow = {
     matched_url: string | null;
   } | null;
   google_pages: string[];
+  webmaster_pages: string[];
 };
 
 export type SeoQuerySortKey =
@@ -123,6 +125,7 @@ type MutableQueryRow = {
   webmaster: MetricsAccumulator | null;
   seo_os: UnifiedSeoQueryRow["seo_os"];
   google_pages: string[];
+  webmaster_pages: string[];
 };
 
 type PostClickAccumulator = {
@@ -151,7 +154,7 @@ type MutablePageRow = {
   seo_os_has_declined: boolean;
 };
 
-const MAX_GOOGLE_PAGES = 5;
+const MAX_CONFIRMED_PAGES_PER_SOURCE = 5;
 
 function cleanText(value: string): string {
   return value.trim().replace(/\s+/gu, " ");
@@ -256,6 +259,7 @@ function getOrCreateQueryRow(rows: Map<string, MutableQueryRow>, rawQuery: strin
     webmaster: null,
     seo_os: null,
     google_pages: [],
+    webmaster_pages: [],
   };
   rows.set(key, row);
   return row;
@@ -264,10 +268,12 @@ function getOrCreateQueryRow(rows: Map<string, MutableQueryRow>, rawQuery: strin
 export function buildUnifiedSeoQueryRows({
   gscRows,
   webmasterRows,
+  webmasterQueryPageRows,
   seoOsRows,
 }: {
   gscRows: ZarukuGscQueryRow[];
   webmasterRows: ZarukuYandexWebmasterQueryRow[];
+  webmasterQueryPageRows: ZarukuYandexWebmasterQueryPageRow[];
   seoOsRows: ZarukuSeoClusterRow[];
 }): UnifiedSeoQueryRow[] {
   const rows = new Map<string, MutableQueryRow>();
@@ -277,7 +283,7 @@ export function buildUnifiedSeoQueryRows({
     if (!row) continue;
     row.google ??= createMetricsAccumulator();
     addMetrics(row.google, sourceRow);
-    if (sourceRow.page && !row.google_pages.includes(sourceRow.page) && row.google_pages.length < MAX_GOOGLE_PAGES) {
+    if (sourceRow.page && !row.google_pages.includes(sourceRow.page) && row.google_pages.length < MAX_CONFIRMED_PAGES_PER_SOURCE) {
       row.google_pages.push(sourceRow.page);
     }
   }
@@ -287,6 +293,14 @@ export function buildUnifiedSeoQueryRows({
     if (!row) continue;
     row.webmaster ??= createMetricsAccumulator();
     addMetrics(row.webmaster, sourceRow);
+  }
+
+  for (const sourceRow of webmasterQueryPageRows) {
+    const row = getOrCreateQueryRow(rows, sourceRow.query);
+    if (!row || !sourceRow.url || row.webmaster_pages.length >= MAX_CONFIRMED_PAGES_PER_SOURCE) continue;
+    const pageKey = normalizeSeoUrlKey(sourceRow.url);
+    if (!pageKey || row.webmaster_pages.some((page) => normalizeSeoUrlKey(page) === pageKey)) continue;
+    row.webmaster_pages.push(sourceRow.url);
   }
 
   for (const sourceRow of seoOsRows) {
@@ -311,6 +325,7 @@ export function buildUnifiedSeoQueryRows({
     webmaster: finishMetrics(row.webmaster),
     seo_os: row.seo_os,
     google_pages: row.google_pages,
+    webmaster_pages: row.webmaster_pages,
   }));
 }
 
@@ -353,7 +368,9 @@ export function sortUnifiedSeoQueryRows(rows: UnifiedSeoQueryRow[], sort: SeoQue
 
 export function filterUnifiedSeoQueryRows(rows: UnifiedSeoQueryRow[], filter: SeoQueryFilter): UnifiedSeoQueryRow[] {
   if (filter === "all") return rows;
-  if (filter === "confirmed_landing") return rows.filter((row) => row.google_pages.length > 0);
+  if (filter === "confirmed_landing") {
+    return rows.filter((row) => row.google_pages.length > 0 || row.webmaster_pages.length > 0);
+  }
   if (filter === "improved") return rows.filter((row) => (row.seo_os?.delta_prev ?? 0) < 0);
   if (filter === "declined") return rows.filter((row) => (row.seo_os?.delta_prev ?? 0) > 0);
   if (filter === "not_found") {

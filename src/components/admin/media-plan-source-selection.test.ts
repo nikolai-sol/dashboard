@@ -42,3 +42,10 @@ test("toggleMediaPlanRowSourceKey adds and removes source keys without duplicate
   assert.deepEqual(toggleMediaPlanRowSourceKey(["hybrid"], "hybrid", true, available), ["hybrid"]);
   assert.deepEqual(toggleMediaPlanRowSourceKey(["hybrid"], "meta", true, available), ["hybrid"]);
 });
+
+test("row platform filter allows several selected source keys", () => {
+  assert.deepEqual(
+    toggleMediaPlanRowSourceKey(["between"], "hybrid", true, ["between", "hybrid"]),
+    ["between", "hybrid"],
+  );
+});

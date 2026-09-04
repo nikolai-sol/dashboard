@@ -64,6 +64,23 @@ Current auth note:
   predecessor, it stops PM2 and leaves the app fail-closed until a corrected compatible release is
   deployed. Zaruku must never become public during rollback.
 
+### Advertising canonical authority
+
+- This rule covers versioned advertising ingestion only. Abbott, Zaruku, and SEO operational rules,
+  collectors, releases, health checks, cron entries, and dashboard behavior remain separately scoped
+  and unchanged.
+- External advertising APIs, email, files, and sheets are collector-only inputs. Dashboard and admin
+  request, render, filter, export, binding, and read-model code must read canonical MySQL only; it
+  must not call source APIs, use source OAuth tokens, or read source artifacts.
+- Staged and rejected advertising data is not visible to dashboards or admin reads. Advertising facts
+  resolve through the active published version only; there is no legacy or unpublished fallback.
+- Canonical coverage distinguishes successful complete-empty from failed or missing collection.
+  Absence of facts is not complete-empty evidence and must not be presented as an empty result.
+- Dashboard source bindings use canonical campaigns, not source-specific campaign artifacts or
+  identifiers outside the canonical campaign model.
+- Merging code does not run a migration, backfill, deployment, cron edit, or Telegram send. Those are
+  separate reviewed operational actions.
+
 ### Zaruku source matrix (branch target)
 
 | Source | Collection | Branch-target dashboard role |
@@ -76,6 +93,13 @@ Current auth note:
 
 This MySQL-only Metrika breakdown path is a branch target. It is not production
 state until the migration, deploy, and backfill are accepted.
+
+### Webmaster query→page rollout status 2026-07-29
+
+- Dashboard `main` commit `833db89` reads exact pairs only from `canonical_fact_webmaster_query_pages_daily`; the confirmed filter accepts a GSC pair or an exact Webmaster pair and rejects SEO OS and `popular_complementary_indicator` URLs.
+- Migration `045` is applied and manual collector run `1715` succeeded for 15 priority pages over `2026-07-21..2026-07-27`, producing 105 coverage rows and 67 pair facts with zero bad rows.
+- Application commit `833db89` is not deployed while Abbott successor release `10` remains staging and release `8` remains active. The production UI therefore does not yet show the new `Яндекс:` links.
+- The proposed weekly `20 3 * * 1` UTC cron with priority limit 15 is not installed. Deployment, SEO smoke, and first scheduled-run verification remain required before cron activation or expansion toward 30 pages.
 
 `Geography` means visitor countries/cities from Metrika. It is not `GEO`: in `AI/GEO visibility`, GEO means Generative Engine Optimization.
 
@@ -155,6 +179,20 @@ Dashboard AI summary (`/api/dashboard/[id]/ai-summary/generate`):
 Do not assume `systemd` or port `3002` for `dashboard-next`.
 Current truth is `PM2 + 3001`.
 
+### VPS resource profile
+
+Measured on 2026-08-11: 4 vCPU, 5.8 GiB RAM with no swap, and a 78 GiB root
+filesystem with about 49 GiB available. The open-file limit is 1024.
+
+- Pure local computations may use up to 3 CPU workers.
+- Reserve one vCPU and memory headroom for MySQL, `dashboard-next`, nginx, and
+  monitoring.
+- Prefer indexed/bounded algorithms to multiplying workers.
+- Keep collectors, external APIs, migrations, canonical publication, release
+  validation, and activation single-writer.
+- With no swap, do not start concurrent memory-heavy builds or data jobs unless
+  current available memory has been checked.
+
 ### Agent model guidance
 
 - Agent model versions are selected in Codex configuration.
@@ -217,6 +255,7 @@ Current Zaruku source truth:
 - No Webmaster backfill is allowed before the deployed active cron completes successfully on 2026-07-29 at 06:50, both query/page maxima advance, and the SELECT-only gap/lineage snapshot is refreshed. GSC `--layers optional` remains separately blocked until the scheduled 06:55 cron has `status=success` and `error_count=0`.
 - The JavaScript Webmaster weekly collector is a fail-closed tombstone. `fetch_yandex_webmaster_canonical.py` is the only fact writer. Tables `seo_webmaster_queries_weekly` and `seo_webmaster_pages_weekly` are deprecated, have no writer, and must not be read.
 - Google Search Console: Zaruku property `https://zaruku.ru/` is connected through root collector `fetch_gsc_canonical.py`, not the old temporary / teletask path. Daily query/page/country/device rows live in `canonical_fact_gsc_queries_daily`; optional Search appearance rows live in `canonical_fact_gsc_search_appearance_daily`; result/search type rows live in `canonical_fact_gsc_search_type_daily`. Canonical lineage is `source_key=google_search_console`; legacy compatibility columns are not contract fields. Optional-layer HTTP 400/403 makes the collector run `partial` while preserving successful core facts. The dashboard read model should expose `zaruku_seo.gsc.status = available` when rows exist and surface recent partial freshness.
+- Zaruku GSC landing-page reads order weekly aggregates newest-first before the display `LIMIT 200`; otherwise an older week can consume the limit while the SEO UI selects the current GSC week. App release `20260729155705-1b2cd27` deployed this correction on 2026-07-29 from the isolated `codex/fix-gsc-latest-week-pages` branch. Local/public health, loopback isolation, active-bundle SQL presence, and a canonical W30 read passed. The deployment did not run or alter collectors, backfills, migrations, cron, or secrets.
 - On 2026-07-28, GSC `3/3`, returning-content `1/3`, Webmaster `2/3`, and the RD-11 source-specific health/Telegram renderer were deployed with dated backups. All deployed SHA-256 values, modes, and imports were verified; the read-only health snapshot returned four sources, four partial dates, and zero lineage defects. No collector, backfill, Telegram send, cron edit, schema change, or secret change occurred during deployment.
 - `seo_ai_visibility_weekly` is deprecated, has no writer, and must not be read; use `seo_ai_visibility` and canonical AI-visibility facts.
 
@@ -304,6 +343,11 @@ npm run deploy
 ```
 
 What deploy does:
+- refuses a dirty dashboard source tree or a commit that does not contain the current
+  `origin/main`, preventing a parallel dashboard lineage from silently replacing accepted features
+- runs the Abbott dashboard contract after dependency installation; deployment stops if MNN,
+  direction/material metadata, URL identity, Logs summaries, or administrator-filter behavior is
+  missing
 - builds locally
 - packages `.next/standalone`
 - renders `.env` from `/var/www/www-root/data/.production.env`
@@ -330,6 +374,9 @@ ssh beget 'curl -s http://127.0.0.1:3001/api/health'
 ssh beget 'cd /root/reportingdash-rollout/dashboard-next && PUBLIC_APP_HOST=5.35.85.218 APP_PORT=3001 bash scripts/verify-loopback-listener.sh'
 curl -s https://dashboards.adreports.ru/api/health
 ```
+
+The source-lineage and Abbott-contract checks are mandatory release gates. Do not bypass them and do
+not deploy a dashboard gitlink from a parallel history that omits either gate.
 
 Bootstrap assumptions:
 - nginx should render `dashboards.adreports.ru`
@@ -431,3 +478,14 @@ After any meaningful operational change, update:
 2. the specific detailed doc (`OPS.md`, onboarding doc, tracker, etc.)
 
 Do not leave hidden operational knowledge only in chat history.
+
+## Advertising collection operations rollout
+
+- Advertising actuals remain canonical-MySQL-only for request, render, filter, export, and bindings.
+- New advertising accounts discovered by supported collectors default to active and cron-enabled; an existing manual disable in Collection is authoritative and must not be overwritten.
+- Collection health is account/day SLA health. A successful collector process without accepted due coverage is `CRITICAL`; proven `complete_empty` is healthy.
+- Apply advertising migrations `056` through `059` before enabling the new publisher, Collection health, or Telegram delivery audit.
+- Roll out in the reviewed order: Between, uploaded/Google Sheet sources, Hybrid, VK, GetIntent, LinkedIn, Reddit, Yandex Direct, Google Ads.
+- Enable `AD_CANONICAL_READ_V2=1` for one source only after publication parity, binding diagnostics, dashboard parity, due coverage, and audited Telegram delivery all pass the root `verify_advertising_rollout.py` gate.
+- Abbott, Zaruku, SEO, their health semantics, and their cron remain outside this rollout.
+- The commits recording this procedure did not apply migrations, call source APIs, edit cron, send Telegram, backfill production, or deploy.

@@ -46,7 +46,11 @@ export type MediaPlanBindingForm = {
   line_key?: string;
   channel: string;
   source_key: string;
+  canonical_campaign_id: number | null;
+  platform_account_id: string;
   platform_campaign_id: string;
+  effective_from: string | null;
+  effective_to: string | null;
 };
 
 export type DashboardUtmSourceBindingForm = {
@@ -271,6 +275,18 @@ export type SourceAccountCollectionRow = {
   last_run_at: string | null;
   last_run_status: "running" | "success" | "partial" | "failed" | null;
   latest_data_date: string | null;
+  discovery_mode: string;
+  health_status: "OK" | "WARN" | "CRITICAL" | "DISABLED" | null;
+  health_reason: string | null;
+  latest_due_date: string | null;
+  latest_published_date: string | null;
+  coverage_state: "complete_with_data" | "complete_empty" | "not_due" | "failed" | "missing" | null;
+  missing_dates: string[];
+  rows_received: number;
+  rows_rejected: number;
+  rows_published: number;
+  validation_error_count: number;
+  unbound_campaign_count: number;
 };
 
 export type SourceAccountCollectionSettingInput = {

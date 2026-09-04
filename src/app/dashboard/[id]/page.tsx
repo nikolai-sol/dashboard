@@ -31,13 +31,27 @@ import TrendChart from "@/components/TrendChart";
 import MultibrandPanel from "@/components/MultibrandPanel";
 import MultibrandExecutivePage from "@/components/MultibrandExecutivePage";
 import AbbottBiDashboard from "@/components/AbbottBiDashboard";
+import AbbottDatePicker from "@/components/abbott/AbbottDatePicker";
 import ZarukuSeoDashboard, { type ZarukuTabId } from "@/components/ZarukuSeoDashboard";
 import { zarukuTimeOwner } from "@/components/zaruku-seo-week-selection";
 import type { MultibrandBrandSummary } from "@/components/MultibrandExecutivePage";
 import { getDashboardI18n } from "@/lib/dashboard-i18n";
 import type { DashboardData } from "@/lib/types";
 import { resolvePlatformIdFromSourceKey } from "@/lib/source-mapping";
-import { defaultAbbottRange } from "@/lib/abbott-date-range";
+import {
+  ABBOTT_NO_COMPLETED_DAYS,
+  clampAbbottCurrentPresetToCoverage,
+  defaultAbbottRange,
+  detectAbbottPreset,
+  latestCompletedAbbottDate,
+  normalizeAbbottRequestedRange,
+  resolveAbbottPreset,
+  type AbbottDatePreset,
+} from "@/lib/abbott-date-range";
+import {
+  clampZarukuDateRange,
+  latestZarukuReportingDate,
+} from "@/lib/dashboard-date-range";
 
 const SPEND_RELATED_KPIS = new Set(["spend", "cpm", "cpc", "cpv", "cpa", "roas"]);
 
@@ -225,14 +239,6 @@ function isoToday() {
   return new Date().toISOString().slice(0, 10);
 }
 
-function isoYesterday() {
-  return shiftDate(isoToday(), -1);
-}
-
-function maxDateForCurrentDashboard(isZarukuDashboard: boolean) {
-  return shiftDate(isoToday(), isZarukuDashboard ? -3 : -1);
-}
-
 function startOfCurrentMonth() {
   const now = new Date();
   return new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), 1)).toISOString().slice(0, 10);
@@ -245,35 +251,37 @@ function startOfCurrentWeek() {
   return shiftDate(now.toISOString().slice(0, 10), diffToMonday);
 }
 
-function buildQuickRange(
-  preset: Exclude<DashboardQuickRangePreset, "custom">,
-  completeTo = isoYesterday(),
-) {
-  const completeDay = completeTo;
+function buildQuickRange(preset: Exclude<DashboardQuickRangePreset, "custom">) {
+  const today = isoToday();
   if (preset === "this_month") {
-    const monthStart = startOfCurrentMonth();
-    return { from: completeDay < monthStart ? completeDay : monthStart, to: completeDay };
+    return { from: startOfCurrentMonth(), to: today };
   }
   if (preset === "this_week") {
-    const weekStart = startOfCurrentWeek();
-    return { from: completeDay < weekStart ? completeDay : weekStart, to: completeDay };
+    return { from: startOfCurrentWeek(), to: today };
   }
-  return { from: completeDay, to: completeDay };
+  return { from: shiftDate(today, -1), to: shiftDate(today, -1) };
 }
 
-function detectQuickRangePreset(
-  from: string,
-  to: string,
-  completeTo = isoYesterday(),
-): DashboardQuickRangePreset {
+function detectQuickRangePreset(from: string, to: string): DashboardQuickRangePreset {
   if (!from || !to) return "custom";
-  const thisMonth = buildQuickRange("this_month", completeTo);
+  const thisMonth = buildQuickRange("this_month");
   if (from === thisMonth.from && to === thisMonth.to) return "this_month";
-  const thisWeek = buildQuickRange("this_week", completeTo);
+  const thisWeek = buildQuickRange("this_week");
   if (from === thisWeek.from && to === thisWeek.to) return "this_week";
-  const yesterday = buildQuickRange("yesterday", completeTo);
+  const yesterday = buildQuickRange("yesterday");
   if (from === yesterday.from && to === yesterday.to) return "yesterday";
   return "custom";
+}
+
+function resolveInitialAbbottRange(from: string, to: string) {
+  if (from && to) {
+    try {
+      return normalizeAbbottRequestedRange({ from, to });
+    } catch {
+      return { from, to };
+    }
+  }
+  return !from && !to ? defaultAbbottRange() : { from, to };
 }
 
 function shiftMonth(isoDate: string, months: number) {
@@ -332,17 +340,27 @@ export default function DashboardByIdPage() {
   const dashboardId = params?.id ? String(params.id).toLowerCase() : "";
   const queryFrom = searchParams.get("from") ?? "";
   const queryTo = searchParams.get("to") ?? "";
-  const abbottDefaultRange = dashboardId === "abbott" && !queryFrom && !queryTo ? defaultAbbottRange() : null;
+  const isAbbottDashboard = dashboardId === "abbott";
   const isZarukuDashboard = dashboardId === "zaruku";
-  const maxDate = maxDateForCurrentDashboard(isZarukuDashboard);
-  const rawInitialFrom = abbottDefaultRange?.from ?? queryFrom;
-  const rawInitialTo = abbottDefaultRange?.to ?? queryTo;
-  const initialFrom = rawInitialFrom > maxDate ? maxDate : rawInitialFrom;
-  const initialTo = rawInitialTo > maxDate ? maxDate : rawInitialTo;
-  const initialCompareFrom = searchParams.get("compare_from") ?? "";
-  const initialCompareTo = searchParams.get("compare_to") ?? "";
-  const safeInitialCompareFrom = initialCompareFrom > maxDate ? maxDate : initialCompareFrom;
-  const safeInitialCompareTo = initialCompareTo > maxDate ? maxDate : initialCompareTo;
+  const initialAbbottRange = isAbbottDashboard ? resolveInitialAbbottRange(queryFrom, queryTo) : null;
+  const rawInitialRange = {
+    from: initialAbbottRange?.from ?? queryFrom,
+    to: initialAbbottRange?.to ?? queryTo,
+  };
+  const initialRange = isZarukuDashboard ? clampZarukuDateRange(rawInitialRange) : rawInitialRange;
+  const initialFrom = initialRange.from;
+  const initialTo = initialRange.to;
+  const abbottMaxDate = latestCompletedAbbottDate();
+  const zarukuMaxDate = latestZarukuReportingDate();
+  const rawInitialCompareRange = {
+    from: searchParams.get("compare_from") ?? "",
+    to: searchParams.get("compare_to") ?? "",
+  };
+  const initialCompareRange = isZarukuDashboard
+    ? clampZarukuDateRange(rawInitialCompareRange)
+    : rawInitialCompareRange;
+  const initialCompareFrom = initialCompareRange.from;
+  const initialCompareTo = initialCompareRange.to;
   const initialAccessToken = searchParams.get("access_token") ?? "";
   const initialEmbedKey = searchParams.get("embed_key") ?? "";
   const initialBrandId = searchParams.get("brand") ?? "";
@@ -373,23 +391,53 @@ export default function DashboardByIdPage() {
     to: initialTo,
   });
   const [quickRangePreset, setQuickRangePreset] = useState<DashboardQuickRangePreset>(
-    detectQuickRangePreset(initialFrom, initialTo, maxDate),
+    detectQuickRangePreset(initialFrom, initialTo),
   );
-  const [compareOpen, setCompareOpen] = useState(Boolean(safeInitialCompareFrom && safeInitialCompareTo));
+  const [abbottPreset, setAbbottPreset] = useState<AbbottDatePreset>(() =>
+    initialAbbottRange?.from && initialAbbottRange?.to
+      ? detectAbbottPreset(initialAbbottRange)
+      : "this_month",
+  );
+  const [abbottEmptyMessage, setAbbottEmptyMessage] = useState<string | null>(() =>
+    isAbbottDashboard && !initialAbbottRange ? ABBOTT_NO_COMPLETED_DAYS : null,
+  );
+  const [compareOpen, setCompareOpen] = useState(Boolean(initialCompareFrom && initialCompareTo));
   const [comparePreset, setComparePreset] = useState<"previous" | "month" | "week" | "year" | "custom">("month");
   const [compareRange, setCompareRange] = useState<{ from: string; to: string }>({
-    from: safeInitialCompareFrom,
-    to: safeInitialCompareTo,
+    from: initialCompareFrom,
+    to: initialCompareTo,
   });
   const [draftCompareRange, setDraftCompareRange] = useState<{ from: string; to: string }>({
-    from: safeInitialCompareFrom,
-    to: safeInitialCompareTo,
+    from: initialCompareFrom,
+    to: initialCompareTo,
   });
+
+  useEffect(() => {
+    if (!isAbbottDashboard || !queryFrom || !queryTo || !initialAbbottRange) return;
+    if (queryFrom === initialAbbottRange.from && queryTo === initialAbbottRange.to) return;
+    const params = new URLSearchParams(searchParams.toString());
+    params.set("from", initialAbbottRange.from);
+    params.set("to", initialAbbottRange.to);
+    router.replace(`/dashboard/${dashboardId}?${params.toString()}`, { scroll: false });
+  }, [dashboardId, initialAbbottRange, isAbbottDashboard, queryFrom, queryTo, router, searchParams]);
+
+  useEffect(() => {
+    if (!isZarukuDashboard || !queryFrom || !queryTo) return;
+    if (queryFrom === initialFrom && queryTo === initialTo) return;
+    const params = new URLSearchParams(searchParams.toString());
+    params.set("from", initialFrom);
+    params.set("to", initialTo);
+    router.replace(`/dashboard/${dashboardId}?${params.toString()}`, { scroll: false });
+  }, [dashboardId, initialFrom, initialTo, isZarukuDashboard, queryFrom, queryTo, router, searchParams]);
 
   useEffect(() => {
     let cancelled = false;
 
     async function load() {
+      if (isAbbottDashboard && abbottEmptyMessage) {
+        setIsLoading(false);
+        return;
+      }
       if (!dashboardId) {
         setDashboard(null);
         setIsDemoMode(false);
@@ -435,6 +483,24 @@ export default function DashboardByIdPage() {
         return;
       }
 
+      const abbottQuality = result.data?.abbott_bi?.data_quality;
+      const coveredRange = isAbbottDashboard && abbottQuality?.status === "incomplete"
+        ? clampAbbottCurrentPresetToCoverage(
+            dateRange,
+            abbottPreset,
+            abbottQuality.blocking_gaps,
+          )
+        : null;
+      if (coveredRange) {
+        setDraftDateRange(coveredRange);
+        setDateRange(coveredRange);
+        const params = new URLSearchParams(searchParams.toString());
+        params.set("from", coveredRange.from);
+        params.set("to", coveredRange.to);
+        router.replace(`/dashboard/${dashboardId}?${params.toString()}`, { scroll: false });
+        return;
+      }
+
       setDashboard(result.data);
       setIsDemoMode(result.demoMode);
       setApiError(result.errorMessage ? TECH_ISSUES_MESSAGE : null);
@@ -452,26 +518,18 @@ export default function DashboardByIdPage() {
         from: result.data?.dashboard.period.from || "",
         to: result.data?.dashboard.period.to || "",
       };
-      const normalizedResolvedPeriod = {
-        from: resolvedPeriod.from && resolvedPeriod.from > maxDate ? maxDate : resolvedPeriod.from,
-        to: resolvedPeriod.to && resolvedPeriod.to > maxDate ? maxDate : resolvedPeriod.to,
-      };
-      const effectivePreset = detectQuickRangePreset(
-        normalizedResolvedPeriod.from,
-        normalizedResolvedPeriod.to,
-        maxDate,
-      );
+      const effectivePreset = detectQuickRangePreset(resolvedPeriod.from, resolvedPeriod.to);
       setDateRange((prev) => {
         const next = {
-          from: prev.from || normalizedResolvedPeriod.from,
-          to: prev.to || normalizedResolvedPeriod.to,
+          from: prev.from || resolvedPeriod.from,
+          to: prev.to || resolvedPeriod.to,
         };
         return prev.from === next.from && prev.to === next.to ? prev : next;
       });
       setDraftDateRange((prev) => {
         const next = {
-          from: prev.from || normalizedResolvedPeriod.from,
-          to: prev.to || normalizedResolvedPeriod.to,
+          from: prev.from || resolvedPeriod.from,
+          to: prev.to || resolvedPeriod.to,
         };
         return prev.from === next.from && prev.to === next.to ? prev : next;
       });
@@ -484,7 +542,7 @@ export default function DashboardByIdPage() {
     return () => {
       cancelled = true;
     };
-  }, [compareRange, dashboardId, dateRange, maxDate, reloadKey, selectedBrandId, viewerAccessToken, viewerEmbedKey]);
+  }, [abbottEmptyMessage, abbottPreset, compareRange, dashboardId, dateRange, isAbbottDashboard, reloadKey, router, searchParams, selectedBrandId, viewerAccessToken, viewerEmbedKey]);
 
   async function generateAiSummary() {
     if (!dashboard?.ai_summary_enabled || isGeneratingAiSummary) {
@@ -1552,7 +1610,31 @@ export default function DashboardByIdPage() {
   };
 
   const applyImmediateDateRange = (range: { from: string; to: string }, preset: DashboardQuickRangePreset) => {
+    const resolvedRange = isZarukuDashboard ? clampZarukuDateRange(range) : range;
     setQuickRangePreset(preset);
+    setDraftDateRange(resolvedRange);
+    setDateRange(resolvedRange);
+    const params = new URLSearchParams(searchParams.toString());
+    params.set("from", resolvedRange.from);
+    params.set("to", resolvedRange.to);
+    if (compareRange.from && compareRange.to) {
+      params.set("compare_from", compareRange.from);
+      params.set("compare_to", compareRange.to);
+    } else {
+      params.delete("compare_from");
+      params.delete("compare_to");
+    }
+    if (selectedBrandId) {
+      params.set("brand", selectedBrandId);
+    } else {
+      params.delete("brand");
+    }
+    router.replace(`/dashboard/${dashboardId}?${params.toString()}`, { scroll: false });
+  };
+
+  const applyAbbottDateRange = (range: { from: string; to: string }, preset: AbbottDatePreset) => {
+    setAbbottPreset(preset);
+    setAbbottEmptyMessage(null);
     setDraftDateRange(range);
     setDateRange(range);
     const params = new URLSearchParams(searchParams.toString());
@@ -1573,17 +1655,36 @@ export default function DashboardByIdPage() {
     router.replace(`/dashboard/${dashboardId}?${params.toString()}`, { scroll: false });
   };
 
+  const handleAbbottPresetChange = (preset: AbbottDatePreset) => {
+    setAbbottPreset(preset);
+    if (preset === "custom") return;
+    const resolved = resolveAbbottPreset(preset);
+    if (resolved.kind === "empty") {
+      setAbbottEmptyMessage(resolved.message);
+      return;
+    }
+    applyAbbottDateRange({ from: resolved.from, to: resolved.to }, preset);
+  };
+
+  const applyAbbottCustomRange = () => {
+    try {
+      const range = normalizeAbbottRequestedRange(draftDateRange);
+      applyAbbottDateRange(range, detectAbbottPreset(range));
+    } catch {
+      // The picker prevents ordinary invalid input; preserve the current data
+      // if a malformed value still reaches this client boundary.
+    }
+  };
+
   const applyDateRange = () => {
-    const resolvedFrom = draftDateRange.from && draftDateRange.from > maxDate ? maxDate : draftDateRange.from;
-    const resolvedTo = draftDateRange.to && draftDateRange.to > maxDate ? maxDate : draftDateRange.to;
-    if (!resolvedFrom || !resolvedTo) return;
-    setQuickRangePreset(detectQuickRangePreset(resolvedFrom, resolvedTo, maxDate));
-    const resolvedRange = { from: resolvedFrom, to: resolvedTo };
+    if (!draftDateRange.from || !draftDateRange.to) return;
+    const resolvedRange = isZarukuDashboard ? clampZarukuDateRange(draftDateRange) : draftDateRange;
+    setQuickRangePreset(detectQuickRangePreset(resolvedRange.from, resolvedRange.to));
     setDateRange(resolvedRange);
     setDraftDateRange(resolvedRange);
     const params = new URLSearchParams(searchParams.toString());
-    params.set("from", resolvedFrom);
-    params.set("to", resolvedTo);
+    params.set("from", resolvedRange.from);
+    params.set("to", resolvedRange.to);
     if (compareRange.from && compareRange.to) {
       params.set("compare_from", compareRange.from);
       params.set("compare_to", compareRange.to);
@@ -1604,7 +1705,7 @@ export default function DashboardByIdPage() {
       setQuickRangePreset("custom");
       return;
     }
-    applyImmediateDateRange(buildQuickRange(preset, maxDate), preset);
+    applyImmediateDateRange(buildQuickRange(preset), preset);
   };
 
   const applyCompareRange = () => {
@@ -1663,15 +1764,25 @@ export default function DashboardByIdPage() {
   };
 
   const handleDraftDateFromChange = (value: string) => {
-    const safeValue = value > maxDate ? maxDate : value;
+    const safeValue = isZarukuDashboard && value > zarukuMaxDate ? zarukuMaxDate : value;
     setQuickRangePreset("custom");
     setDraftDateRange((prev) => ({ ...prev, from: safeValue }));
   };
 
   const handleDraftDateToChange = (value: string) => {
-    const safeValue = value > maxDate ? maxDate : value;
+    const safeValue = isZarukuDashboard && value > zarukuMaxDate ? zarukuMaxDate : value;
     setQuickRangePreset("custom");
     setDraftDateRange((prev) => ({ ...prev, to: safeValue }));
+  };
+
+  const handleAbbottDraftFromChange = (value: string) => {
+    setAbbottPreset("custom");
+    setDraftDateRange((prev) => ({ ...prev, from: value }));
+  };
+
+  const handleAbbottDraftToChange = (value: string) => {
+    setAbbottPreset("custom");
+    setDraftDateRange((prev) => ({ ...prev, to: value }));
   };
 
   if (!isLoading && authRequired && authMeta) {
@@ -1742,6 +1853,39 @@ export default function DashboardByIdPage() {
     );
   }
 
+  if (!isLoading && isAbbottDashboard && abbottEmptyMessage && !dashboard) {
+    return (
+      <main
+        data-dashboard-ready="true"
+        className={`mx-auto min-h-screen w-full max-w-[1600px] px-4 py-6 sm:px-6 lg:px-8 ${isPdfMode ? "pdf-mode" : ""}`}
+        style={isMobileMode ? ({ maxWidth: "430px" } as CSSProperties) : undefined}
+      >
+        <DashboardHeader
+          clientName="Abbott"
+          title="Аналитика трафика"
+          periodLabel="Нет завершённых дней"
+          pdfMode={isPdfMode}
+          dateControlsSlot={
+            <AbbottDatePicker
+              preset={abbottPreset}
+              appliedRange={dateRange}
+              draftRange={draftDateRange}
+              maxDate={abbottMaxDate}
+              isLoading={isLoading}
+              onPresetChange={handleAbbottPresetChange}
+              onDraftFromChange={handleAbbottDraftFromChange}
+              onDraftToChange={handleAbbottDraftToChange}
+              onApplyCustom={applyAbbottCustomRange}
+            />
+          }
+        />
+        <section role="status" aria-live="polite" className="rounded-2xl border border-amber-200 bg-amber-50 px-5 py-6 text-sm text-amber-900">
+          {abbottEmptyMessage}
+        </section>
+      </main>
+    );
+  }
+
   if (isLoading || !dashboard) {
     return (
       <main
@@ -1792,7 +1936,19 @@ export default function DashboardByIdPage() {
           quickRangePreset={quickRangePreset}
           onQuickRangePresetChange={handleQuickRangePresetChange}
           isUpdatingRange={isLoading}
-          maxDate={maxDate}
+          dateControlsSlot={
+            <AbbottDatePicker
+              preset={abbottPreset}
+              appliedRange={dateRange}
+              draftRange={draftDateRange}
+              maxDate={abbottMaxDate}
+              isLoading={isLoading}
+              onPresetChange={handleAbbottPresetChange}
+              onDraftFromChange={handleAbbottDraftFromChange}
+              onDraftToChange={handleAbbottDraftToChange}
+              onApplyCustom={applyAbbottCustomRange}
+            />
+          }
         />
 
         {isDemoMode ? (
@@ -1802,13 +1958,21 @@ export default function DashboardByIdPage() {
           </div>
         ) : null}
 
-        <AbbottBiDashboard
-          data={abbottBiData}
-          locale={locale}
-          portalName="ABBOTT"
-          periodFrom={dashboard.dashboard.period.from}
-          periodTo={dashboard.dashboard.period.to}
-        />
+        {abbottEmptyMessage ? (
+          <section role="status" aria-live="polite" className="rounded-2xl border border-amber-200 bg-amber-50 px-5 py-6 text-sm text-amber-900">
+            {abbottEmptyMessage}
+          </section>
+        ) : (
+          <AbbottBiDashboard
+            data={abbottBiData}
+            locale={locale}
+            portalName="ABBOTT"
+            periodFrom={dashboard.dashboard.period.from}
+            periodTo={dashboard.dashboard.period.to}
+            dashboardId={dashboardId}
+            onAdminUsersChanged={() => setReloadKey((value) => value + 1)}
+          />
+        )}
       </main>
     );
   }
@@ -1832,13 +1996,13 @@ export default function DashboardByIdPage() {
           labels={i18n.header}
           dateFrom={draftDateRange.from}
           dateTo={draftDateRange.to}
+          maxDate={zarukuMaxDate}
           onDateFromChange={handleDraftDateFromChange}
           onDateToChange={handleDraftDateToChange}
           onApplyDateRange={applyDateRange}
           quickRangePreset={quickRangePreset}
           onQuickRangePresetChange={handleQuickRangePresetChange}
           isUpdatingRange={isLoading}
-          maxDate={maxDate}
         />
 
         {isDemoMode ? (
@@ -1899,7 +2063,6 @@ export default function DashboardByIdPage() {
           quickRangePreset={quickRangePreset}
           onQuickRangePresetChange={handleQuickRangePresetChange}
           isUpdatingRange={isLoading}
-          maxDate={maxDate}
           compareOpen={false}
           comparePreset={comparePreset}
           compareFrom=""
@@ -1955,19 +2118,14 @@ export default function DashboardByIdPage() {
         quickRangePreset={quickRangePreset}
         onQuickRangePresetChange={handleQuickRangePresetChange}
         isUpdatingRange={isLoading}
-        maxDate={maxDate}
         compareOpen={compareOpen}
         comparePreset={comparePreset}
         compareFrom={effectiveDraftCompareRange.from}
         compareTo={effectiveDraftCompareRange.to}
         onToggleCompare={() => setCompareOpen((prev) => !prev)}
         onComparePresetChange={setComparePreset}
-        onCompareFromChange={(value) =>
-          setDraftCompareRange((prev) => ({ ...prev, from: value > maxDate ? maxDate : value }))
-        }
-        onCompareToChange={(value) =>
-          setDraftCompareRange((prev) => ({ ...prev, to: value > maxDate ? maxDate : value }))
-        }
+        onCompareFromChange={(value) => setDraftCompareRange((prev) => ({ ...prev, from: value }))}
+        onCompareToChange={(value) => setDraftCompareRange((prev) => ({ ...prev, to: value }))}
         onApplyCompare={applyCompareRange}
         onClearCompare={clearCompareRange}
         onExportExcel={exportExcel}

@@ -166,6 +166,7 @@ export interface TimeSeriesPoint {
 }
 
 export interface PlanVsFactItem {
+  line_key?: string;
   channel: string;
   instrument: string;
   format: string;
@@ -405,12 +406,14 @@ export interface AbbottBiUserActionRow {
   visits: number;
   page_depth: number;
   avg_duration: number;
+  is_admin_user?: boolean;
 }
 
 export interface AbbottBiPageStatRow {
   page_title: string;
   url: string;
   direction: string | null;
+  mnn?: AbbottMnnValue[];
   material_type: string | null;
   access: string | null;
   pageviews: number;
@@ -421,6 +424,11 @@ export interface AbbottBiPageStatRow {
   bitrix_logged_in_sessions: number;
   bitrix_anonymous_sessions: number;
   bitrix_avg_session_duration: number;
+}
+
+export interface AbbottMnnValue {
+  key: string;
+  label: string;
 }
 
 export interface AbbottBiBitrixPageRow {
@@ -597,8 +605,16 @@ export interface AbbottBiSessionJourneysData {
 }
 
 export interface AbbottBiData {
+  data_quality?: {
+    status: "complete" | "incomplete";
+    blocking_gaps: Array<{ report_date: string }>;
+  };
   counters: string[];
   users_summary: AbbottBiUserSummaryRow[];
+  users_summary_without_admins?: AbbottBiUserSummaryRow[];
+  admin_user_filter?: {
+    available: boolean;
+  };
   traffic_summary?: AbbottBiUserSummaryRow[];
   user_actions: AbbottBiUserActionRow[];
   page_stats: AbbottBiPageStatRow[];
@@ -704,6 +720,15 @@ export interface ZarukuSeoMetricRow {
   share?: number | null;
   source?: ZarukuSeoSourceId;
   layer?: ZarukuSeoLayerId;
+}
+
+export interface ZarukuSeoWeeklyMetricRow extends ZarukuSeoMetricRow {
+  week: string;
+}
+
+export interface ZarukuMetrikaWeeklyOrganicLandingData {
+  weeks: string[];
+  rows: ZarukuSeoWeeklyMetricRow[];
 }
 
 export type ZarukuMetrikaBreakdownReportKey =
@@ -980,6 +1005,22 @@ export interface ZarukuYandexWebmasterPageRow {
   is_partial_week: boolean;
 }
 
+export interface ZarukuYandexWebmasterQueryPageRow {
+  week: string;
+  query_id: string;
+  query: string;
+  page_id: string;
+  url: string;
+  device: string;
+  impressions: number;
+  clicks: number;
+  ctr: number | null;
+  average_position: number | null;
+  week_from: string;
+  week_to: string;
+  is_partial_week: boolean;
+}
+
 export interface ZarukuYandexWebmasterSummaryRow {
   week: string;
   device: string;
@@ -999,12 +1040,14 @@ export interface ZarukuYandexWebmasterData {
   data_availability: {
     queries: boolean;
     pages: boolean;
+    query_pages: boolean;
   };
   weeks: string[];
   latest_week: string | null;
   summary: ZarukuYandexWebmasterSummaryRow[];
   queries: ZarukuYandexWebmasterQueryRow[];
   pages: ZarukuYandexWebmasterPageRow[];
+  query_pages: ZarukuYandexWebmasterQueryPageRow[];
 }
 
 // Compatibility contract for the earlier property-scoped GSC reader. The
@@ -1386,6 +1429,7 @@ export interface ZarukuSeoData {
   search_engines: ZarukuSeoMetricRow[];
   search_phrases: ZarukuSeoMetricRow[];
   organic_landing_pages: ZarukuSeoMetricRow[];
+  organic_landing_pages_weekly: ZarukuMetrikaWeeklyOrganicLandingData;
   top_pages: ZarukuSeoMetricRow[];
   content_sections: ZarukuSeoMetricRow[];
   high_bounce_pages: ZarukuSeoMetricRow[];
@@ -1574,6 +1618,7 @@ export interface DashboardData {
   };
   // optional channel timeseries for future "by channel" view
   channel_timeseries?: Array<{
+    line_key?: string;
     date: string;
     channel: string;
     instrument?: string;

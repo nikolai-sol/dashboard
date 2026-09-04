@@ -1,6 +1,11 @@
 import { createHash } from "node:crypto";
 
-import { normalizeAbbottPageUrl as normalizePage } from "@/lib/abbott-page-url";
+import {
+  isAbbottWebPageUrl,
+  normalizeAbbottContentIdentityUrl,
+  normalizeAbbottPageUrl as normalizePage,
+} from "@/lib/abbott-page-url";
+import { abbottTitleLookupHash } from "@/lib/abbott-content-lookup";
 import { buildAbbottReturnFrequency, type AbbottFrequencyVisit } from "@/lib/abbott-return-frequency";
 import {
   loadActiveAbbottReleaseBundleWithExecutor,
@@ -26,6 +31,7 @@ import type {
   AbbottBiTimeBuckets,
   AbbottBiUserActionRow,
   AbbottBiUserSummaryRow,
+  AbbottMnnValue,
 } from "@/lib/types";
 
 export type AbbottDashboardAudience = "manager" | "embed";
@@ -218,6 +224,12 @@ function normalizedPagePath(normalized: string): string {
   }
 }
 
+function validRawPageTitle(value: unknown): string | null {
+  if (typeof value !== "string") return null;
+  const normalized = value.trim();
+  return normalized && normalized.toLowerCase() !== "null" ? value : null;
+}
+
 export function toAbbottDateOnly(value: string | null | undefined): string {
   return text(value).slice(0, 10);
 }
@@ -292,6 +304,8 @@ function emptyAbbottData(
     },
     counters,
     users_summary: [],
+    users_summary_without_admins: [],
+    admin_user_filter: { available: false },
     traffic_summary: [],
     user_actions: [],
     page_stats: [],
@@ -460,19 +474,116 @@ async function queryManagerBehavior(
   )) as readonly PrivateBehaviorRow[];
 }
 
-function metadataForPage(
-  rawUrl: string,
-  pageTitle: string,
+async function queryManagerAdminUserIds(
+  executor: AbbottBiQueryExecutor,
+  dashboardId: number,
+): Promise<Set<string>> {
+  const rows = await executor.query(
+    `SELECT raw_user_id
+     FROM \`report_bd_private\`.\`portal_abbott_admin_user_exclusions\`
+     WHERE dashboard_id = ?
+     ORDER BY raw_user_id`,
+    [dashboardId],
+  );
+  const userIds = new Set<string>();
+  for (const row of rows) {
+    const userId = row.raw_user_id;
+    if (typeof userId !== "string" || !/^[0-9]{1,32}$/.test(userId) || userIds.has(userId)) {
+      throw new Error("Abbott admin user settings are invalid");
+    }
+    userIds.add(userId);
+  }
+  return userIds;
+}
+
+/**
+ * Hub pages such as `/preparation/` carry the reviewed direction in the query
+ * filter rather than in the catalog: one page serves every direction the
+ * visitor selects. The canonical catalog therefore records "Не определено",
+ * which is correct for the page but hides an unambiguous single-filter view.
+ *
+ * Only an unambiguous filter is honoured. A visitor who selected several
+ * directions, or none at all, keeps the catalog value untouched.
+ */
+const ABBOTT_UNDETERMINED_DIRECTION = "Не определено";
+const DIRECTION_FILTER_KEY = /^direction(\[\d*\])?$/i;
+const DIRECTION_SECTION_ID = /\[(\d+)\]\s*$/;
+
+const directionBySectionIdCache = new WeakMap<object, Map<string, string>>();
+
+function directionBySectionId(
   workbook: AbbottAggregatePrivateData["workbook"],
-): { direction: string | null; material_type: string | null; access: string | null; hidden: boolean } {
+): Map<string, string> {
+  const cached = directionBySectionIdCache.get(workbook);
+  if (cached) return cached;
+  const result = new Map<string, string>();
+  for (const source of [
+    workbook.contentByUrl,
+    workbook.contentByTitle,
+    workbook.contentBySlug,
+    workbook.urlReturnDirections,
+  ]) {
+    for (const metadata of source.values()) {
+      const label = metadata.direction;
+      if (!label) continue;
+      const sectionId = DIRECTION_SECTION_ID.exec(label)?.[1];
+      if (sectionId) result.set(sectionId, label);
+    }
+  }
+  directionBySectionIdCache.set(workbook, result);
+  return result;
+}
+
+function directionFromFilter(
+  rawUrl: unknown,
+  workbook: AbbottAggregatePrivateData["workbook"],
+): string | null {
+  const query = String(rawUrl ?? "").replaceAll("&amp;", "&").split("#", 1)[0]?.split("?").slice(1).join("?");
+  if (!query) return null;
+  const sectionIds = new Set<string>();
+  for (const pair of query.split("&")) {
+    const [rawKey, rawValue = ""] = pair.split("=", 2);
+    let key: string;
+    let value: string;
+    try {
+      key = decodeURIComponent(rawKey.replaceAll("+", " "));
+      value = decodeURIComponent(rawValue.replaceAll("+", " ")).trim();
+    } catch {
+      continue;
+    }
+    if (!value || !DIRECTION_FILTER_KEY.test(key)) continue;
+    sectionIds.add(value);
+  }
+  if (sectionIds.size !== 1) return null;
+  return directionBySectionId(workbook).get([...sectionIds][0]) ?? null;
+}
+
+function metadataForPage(
+  rawUrl: unknown,
+  rawPageTitle: unknown,
+  workbook: AbbottAggregatePrivateData["workbook"],
+): { page_title: string; direction: string | null; mnn: AbbottMnnValue[]; material_type: string | null; access: string | null; hidden: boolean } {
+  const identityUrl = normalizeAbbottContentIdentityUrl(rawUrl);
   const normalized = normalizePage(rawUrl);
-  const path = normalizedPagePath(normalized);
+  const baseIdentityUrl = normalizeAbbottContentIdentityUrl(normalized);
+  const path = normalizedPagePath(identityUrl || normalized);
   const slug = path.split("/").filter(Boolean).at(-1) ?? "";
-  const metadata = workbook.contentByTitle.get(lookupHash(pageTitle))
-    ?? workbook.contentBySlug.get(lookupHash(slug))
-    ?? workbook.urlReturnDirections.get(lookupHash(path));
+  const rawTitle = validRawPageTitle(rawPageTitle);
+  const metadata = (identityUrl ? workbook.contentByUrl.get(lookupHash(identityUrl)) : undefined)
+    ?? (baseIdentityUrl && baseIdentityUrl !== identityUrl
+      ? workbook.contentByUrl.get(lookupHash(baseIdentityUrl))
+      : undefined)
+    ?? workbook.urlReturnDirections.get(lookupHash(path))
+    ?? (rawTitle ? workbook.contentByTitle.get(abbottTitleLookupHash(rawTitle)) : undefined)
+    ?? workbook.contentBySlug.get(lookupHash(slug));
+  const catalogDirection = metadata?.direction ?? null;
+  const direction = !catalogDirection || catalogDirection === ABBOTT_UNDETERMINED_DIRECTION
+    ? directionFromFilter(rawUrl, workbook) ?? catalogDirection
+    : catalogDirection;
   return {
-    direction: metadata?.direction ?? null,
+    page_title: rawTitle ?? metadata?.page_title ?? "",
+    direction,
+    mnn: [...(metadata?.mnn ?? [])],
     material_type: metadata?.material_type ?? null,
     access: metadata?.access ?? null,
     hidden: metadata?.is_active === false,
@@ -527,14 +638,16 @@ function buildPageStats(
 ): AbbottBiPageStatRow[] {
   const result = new Map<string, AbbottBiPageStatRow & { hidden: boolean }>();
   rows.filter((row) => row.analytics_scope === "page").forEach((row) => {
-    const url = normalizePage(row.page_url);
-    const title = text(row.page_title);
-    const metadata = metadataForPage(url, title, workbook);
+    const rawUrl = text(row.page_url);
+    const url = normalizePage(rawUrl);
+    const metadata = metadataForPage(rawUrl, row.page_title, workbook);
+    const title = metadata.page_title;
     const key = `${title}\n${url}`;
     const current = result.get(key) ?? {
       page_title: title,
       url,
       direction: metadata.direction,
+      ...(metadata.mnn.length > 0 ? { mnn: metadata.mnn } : {}),
       material_type: metadata.material_type,
       access: metadata.access,
       pageviews: 0,
@@ -558,6 +671,7 @@ function buildPageStats(
       page_title: row.page_title,
       url: row.url,
       direction: row.direction,
+      ...(row.mnn && row.mnn.length > 0 ? { mnn: row.mnn } : {}),
       material_type: row.material_type,
       access: row.access,
       pageviews: row.pageviews,
@@ -586,7 +700,7 @@ function mapBitrixPages(
   const byUrl = new Map<string, AggregatedBitrixRow>();
   data.rows.forEach((row) => {
     const url = normalizePage(row.url);
-    const metadata = metadataForPage(url, "", workbook);
+    const metadata = metadataForPage(row.url, "", workbook);
     const current = byUrl.get(url) ?? {
       url,
       path: normalizePage(row.path),
@@ -738,6 +852,7 @@ function buildReturning(
 ): AbbottReturningOutput[] {
   const totals = new Map<string, AbbottReturningOutput & { rawPages: Set<string>; denominatorKeys: Set<string> }>();
   rows.forEach((row) => {
+    if (!isAbbottWebPageUrl(row.normalized_page)) return;
     const url = normalizePage(row.normalized_page);
     const rawPage = rawIdentifier(row.raw_page_value);
     const reportDate = text(row.report_date).slice(0, 10);
@@ -746,9 +861,15 @@ function buildReturning(
       throw new Error("Abbott canonical data is unavailable");
     }
     const count = deriveReturningCount(row.source_denominator, row.source_percentage);
+    const rawIdentityUrl = normalizeAbbottContentIdentityUrl(rawPage);
+    const displayIdentityUrl = normalizeAbbottContentIdentityUrl(row.normalized_page);
+    const metadataUrl = rawIdentityUrl && displayIdentityUrl
+      && normalizedPagePath(rawIdentityUrl) === normalizedPagePath(displayIdentityUrl)
+      ? rawPage
+      : text(row.normalized_page);
     const current = totals.get(url) ?? {
       url,
-      direction: workbook.urlReturnDirections.get(lookupHash(normalizedPagePath(url)))?.direction ?? null,
+      direction: metadataForPage(metadataUrl, "", workbook).direction,
       visits: 0,
       returning_1_day: 0,
       returning_2_7_days: 0,
@@ -786,8 +907,10 @@ function buildReturning(
 function buildManagerBehavior(
   rows: readonly PrivateBehaviorRow[],
   workbook: ParsedAbbottWorkbook,
+  adminUserIds: ReadonlySet<string>,
 ): {
   summaries: AbbottBiUserSummaryRow[];
+  summariesWithoutAdmins: AbbottBiUserSummaryRow[];
   actions: AbbottBiUserActionRow[];
   frequencyVisits: AbbottFrequencyVisit[];
 } {
@@ -798,7 +921,61 @@ function buildManagerBehavior(
     bouncedVisits: number;
   };
   const summaries = new Map<string, ManagerSummary>();
+  const summariesWithoutAdmins = new Map<string, ManagerSummary>();
   const frequencyVisits: AbbottFrequencyVisit[] = [];
+  const addSummary = (
+    target: Map<string, ManagerSummary>,
+    input: {
+      userId: string;
+      hasUserId: boolean;
+      trafficSource: string;
+      clientHash: string | null;
+      pageviews: number;
+      duration: number;
+      isBounce: boolean;
+    },
+  ) => {
+    const key = `${input.hasUserId ? "1" : "0"}\n${input.userId}\n${input.trafficSource}`;
+    const summary = target.get(key) ?? {
+      user_id: input.userId,
+      has_user_id: input.hasUserId,
+      traffic_segment: null,
+      traffic_source: input.trafficSource,
+      direction: input.hasUserId ? workbook.userDirections.get(input.userId) ?? null : null,
+      visits: 0,
+      users: 0,
+      new_users: 0,
+      page_depth: 0,
+      avg_duration: 0,
+      bounce_rate: 0,
+      clientHashes: new Set<string>(),
+      pageviewsTotal: 0,
+      durationTotal: 0,
+      bouncedVisits: 0,
+    };
+    summary.visits += 1;
+    summary.pageviewsTotal += input.pageviews;
+    summary.durationTotal += input.duration;
+    summary.bouncedVisits += input.isBounce ? 1 : 0;
+    if (input.clientHash !== null) summary.clientHashes.add(input.clientHash);
+    target.set(key, summary);
+  };
+  const finalizeSummaries = (target: Map<string, ManagerSummary>) =>
+    [...target.values()].map(({
+      clientHashes,
+      pageviewsTotal,
+      durationTotal,
+      bouncedVisits,
+      ...row
+    }) => ({
+      ...row,
+      users: clientHashes.size,
+      page_depth: row.visits > 0 ? Number((pageviewsTotal / row.visits).toFixed(2)) : 0,
+      avg_duration: row.visits > 0 ? Number((durationTotal / row.visits).toFixed(2)) : 0,
+      bounce_rate: row.visits > 0 ? Number(((bouncedVisits / row.visits) * 100).toFixed(2)) : 0,
+    })).sort((left, right) =>
+      left.user_id.localeCompare(right.user_id) || left.traffic_source.localeCompare(right.traffic_source)
+    );
   const actions = rows.map((row) => {
     const singularUserId = nullableText(row.raw_user_id);
     let parsedUserIds: unknown = row.raw_user_ids_json;
@@ -848,30 +1025,19 @@ function buildManagerBehavior(
     const trafficSource = text(row.traffic_source);
     const pageviews = integerMetric(row.pageviews);
     const duration = integerMetric(row.duration_seconds);
-    const key = `${hasUserId ? "1" : "0"}\n${userId}\n${trafficSource}`;
-    const summary = summaries.get(key) ?? {
-      user_id: userId,
-      has_user_id: hasUserId,
-      traffic_segment: null,
-      traffic_source: trafficSource,
-      direction: hasUserId ? workbook.userDirections.get(userId) ?? null : null,
-      visits: 0,
-      users: 0,
-      new_users: 0,
-      page_depth: 0,
-      avg_duration: 0,
-      bounce_rate: 0,
-      clientHashes: new Set<string>(),
-      pageviewsTotal: 0,
-      durationTotal: 0,
-      bouncedVisits: 0,
+    const isBounce = booleanMetric(row.is_bounce);
+    const isAdminUser = (parsedUserIds as string[]).some((id) => adminUserIds.has(id));
+    const summaryInput = {
+      userId,
+      hasUserId,
+      trafficSource,
+      clientHash,
+      pageviews,
+      duration,
+      isBounce,
     };
-    summary.visits += 1;
-    summary.pageviewsTotal += pageviews;
-    summary.durationTotal += duration;
-    summary.bouncedVisits += booleanMetric(row.is_bounce) ? 1 : 0;
-    if (clientHash !== null) summary.clientHashes.add(clientHash);
-    summaries.set(key, summary);
+    addSummary(summaries, summaryInput);
+    if (!isAdminUser) addSummary(summariesWithoutAdmins, summaryInput);
     frequencyVisits.push({
       client_id_hash: clientHash,
       raw_user_ids: parsedUserIds as string[],
@@ -890,24 +1056,12 @@ function buildManagerBehavior(
       visits: 1,
       page_depth: pageviews,
       avg_duration: duration,
+      is_admin_user: isAdminUser,
     };
   });
   return {
-    summaries: [...summaries.values()].map(({
-      clientHashes,
-      pageviewsTotal,
-      durationTotal,
-      bouncedVisits,
-      ...row
-    }) => ({
-      ...row,
-      users: clientHashes.size,
-      page_depth: row.visits > 0 ? Number((pageviewsTotal / row.visits).toFixed(2)) : 0,
-      avg_duration: row.visits > 0 ? Number((durationTotal / row.visits).toFixed(2)) : 0,
-      bounce_rate: row.visits > 0 ? Number(((bouncedVisits / row.visits) * 100).toFixed(2)) : 0,
-    })).sort((left, right) =>
-      left.user_id.localeCompare(right.user_id) || left.traffic_source.localeCompare(right.traffic_source)
-    ),
+    summaries: finalizeSummaries(summaries),
+    summariesWithoutAdmins: finalizeSummaries(summariesWithoutAdmins),
     actions,
     frequencyVisits,
   };
@@ -1033,13 +1187,18 @@ export async function loadAbbottBiDataWithDependencies(
       return emptyAbbottData(counters, audience, from, to, releaseId, gaps, releaseBundle.workbook.lookupQuality);
     }
 
-    const [siteFacts, returningFacts, externalFacts, behaviorFacts] = await Promise.all([
+    const [siteFacts, returningFacts, externalFacts, behaviorFacts, adminSettings] = await Promise.all([
       querySiteFacts(dependencies.aggregateExecutor, releaseId, counters, from, to),
       queryReturningFacts(dependencies.aggregateExecutor, releaseId, counters, from, to),
       queryExternalClicks(dependencies.aggregateExecutor, releaseId, counters, from, to),
       audience === "manager"
         ? queryManagerBehavior(dependencies.privateExecutor, releaseId, counters, from, to)
         : Promise.resolve([]),
+      audience === "manager"
+        ? queryManagerAdminUserIds(dependencies.privateExecutor, dashboardId)
+            .then((ids) => ({ available: true, ids }))
+            .catch(() => ({ available: false, ids: new Set<string>() }))
+        : Promise.resolve({ available: false, ids: new Set<string>() }),
     ]);
     const trafficSummary = buildTrafficSummary(siteFacts);
     const bitrixPages = mapBitrixPages(releaseBundle.bitrixPages, releaseBundle.workbook);
@@ -1048,12 +1207,20 @@ export async function loadAbbottBiDataWithDependencies(
     const pageStats = buildPageStats(siteFacts, releaseBundle.workbook);
     const enrichedPageStats = periodActive ? enrichWithBitrix(pageStats, bitrixPages) : pageStats;
     const managerBehavior = audience === "manager"
-      ? buildManagerBehavior(behaviorFacts, releaseBundle.workbook as ParsedAbbottWorkbook)
-      : { summaries: [], actions: [], frequencyVisits: [] };
+      ? buildManagerBehavior(
+          behaviorFacts,
+          releaseBundle.workbook as ParsedAbbottWorkbook,
+          adminSettings.ids,
+        )
+      : { summaries: [], summariesWithoutAdmins: [], actions: [], frequencyVisits: [] };
 
     return {
       ...emptyAbbottData(counters, audience, from, to, releaseId, [], releaseBundle.workbook.lookupQuality),
       users_summary: managerBehavior.summaries,
+      users_summary_without_admins: adminSettings.available
+        ? managerBehavior.summariesWithoutAdmins
+        : managerBehavior.summaries,
+      admin_user_filter: { available: adminSettings.available },
       traffic_summary: trafficSummary,
       user_actions: managerBehavior.actions,
       page_stats: enrichedPageStats,
@@ -1076,9 +1243,7 @@ export async function loadAbbottBiDataWithDependencies(
         ? buildAbbottReturnFrequency(
             managerBehavior.frequencyVisits,
             releaseBundle.workbook.userDirections,
-            (url) => releaseBundle.workbook.urlReturnDirections.get(
-              lookupHash(normalizedPagePath(url)),
-            )?.direction ?? null,
+            (url) => metadataForPage(url, "", releaseBundle.workbook).direction,
           )
         : {
             available: false,

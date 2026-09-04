@@ -331,17 +331,11 @@ async function buildRowBindings(
 
     if (sourceType !== 'ads') continue;
     const accountIds = parseAccountIds(source.source_config?.account_ids);
-    const isYandex = sourceKey === 'yandex_direct';
-    const opts =
-      isYandex && periodFrom && periodTo
-        ? {
-            accountIds,
-            dateFrom: periodFrom,
-            dateTo: periodTo,
-            requireFactInRange: true,
-          }
-        : accountIds;
-    catalogByPlatform.set(source.platform, await getCampaignCatalog(sourceKey, opts));
+    const catalog = await getCampaignCatalog(sourceKey, { accountIds });
+    catalogByPlatform.set(source.platform, catalog.map((item) => ({
+      id: item.platformCampaignId,
+      name: item.campaignName,
+    })));
   }
 
   return rows.map((row, index) => {
