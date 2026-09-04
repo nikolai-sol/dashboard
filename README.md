@@ -71,6 +71,38 @@ SEO_MYSQL_DASHBOARD_EXPORT=1 npx ts-node --transpile-only scripts/runSeoAiVisibi
 
 Use `mentions = rows where Zaruku is present`, `citations = checked queries`, and `presence_rate = mentions / citations` as a 0..1 value. The dashboard converts this to a percentage for display. Re-imports are idempotent by `(analytics_account_id, engine, period, provenance)`.
 
+### Zaruku Alice monthly snapshot handoff
+
+Each detailed monthly handoff requires the absolute path to the reviewed `.xlsx`, the `YYYY-MM` period, the official Alice Share of Voice percentage, the source capture timestamp with timezone, and the approved featured-site URLs. The workbook must stay outside the repository and release bundle.
+
+Run validation first; dry-run is also the default:
+
+```bash
+npm run import:zaruku-alice -- \
+  --xlsx "/absolute/path/to/neurostatistics-zaruku.ru-YYYYMMDD-HHMMSS.xlsx" \
+  --period YYYY-MM \
+  --official-sov 43.91 \
+  --captured-at 2026-09-04T13:28:14.000Z \
+  --featured-site https://example.org \
+  --dry-run
+```
+
+Only after the reported query, presence, source, featured-site, and validation totals reconcile, publish the same payload by changing the final flag:
+
+```bash
+npm run import:zaruku-alice -- \
+  --xlsx "/absolute/path/to/neurostatistics-zaruku.ru-YYYYMMDD-HHMMSS.xlsx" \
+  --period YYYY-MM \
+  --official-sov 43.91 \
+  --captured-at 2026-09-04T13:28:14.000Z \
+  --featured-site https://example.org \
+  --execute
+```
+
+The importer validates before connecting, writes the snapshot and child rows in one transaction, and reconciles the stored child counts before commit. Re-running the exact same source checksum is idempotent and returns `already_exists`. A different file for an already published month is rejected unless the operator explicitly supplies `--supersede-snapshot-id <current-published-id>`; that correction preserves the earlier snapshot as `superseded` instead of overwriting it.
+
+The official Share of Voice is an externally supplied metric. Do not calculate or replace it from the Excel row count or the workbook sample-presence percentage.
+
 ---
 
 This is a [Next.js](https://nextjs.org) project bootstrapped with [`create-next-app`](https://nextjs.org/docs/app/api-reference/cli/create-next-app).
