@@ -355,7 +355,7 @@ test("package exposes the reviewed shared-password seed command", () => {
   );
   assert.equal(
     packageJson.scripts["test:node"],
-    "node --import tsx --test src/**/*.test.ts scripts/set-dashboard-shared-password.test.ts",
+    "node scripts/run-node-tests.mjs",
   );
   assert.equal(
     packageJson.scripts["test:python"],

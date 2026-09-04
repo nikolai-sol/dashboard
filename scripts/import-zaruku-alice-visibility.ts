@@ -233,6 +233,13 @@ type CliOptions = {
   legacyCitations?: number;
 };
 
+export const ALICE_VISIBILITY_IMPORT_USAGE = `Usage:
+  npm run import:zaruku-alice -- --xlsx /absolute/path/export.xlsx --period YYYY-MM --official-sov PERCENT --captured-at ISO_TIMESTAMP --dry-run
+  npm run import:zaruku-alice -- --summary-only --period YYYY-MM --official-sov PERCENT --captured-at ISO_TIMESTAMP --legacy-source SOURCE --legacy-mentions COUNT --legacy-citations COUNT --dry-run
+
+Use --execute only after a successful dry-run. The workbook path must be absolute.
+`;
+
 function requiredValue(args: string[], index: number, flag: string): string {
   const value = args[index + 1];
   if (!value || value.startsWith("--")) throw new Error(`${flag} требует значение`);
@@ -327,8 +334,12 @@ function configuredConnection() {
   return mysql.createConnection({ host, port, user, password, database, charset: "utf8mb4", dateStrings: true, multipleStatements: false });
 }
 
-async function main(): Promise<void> {
-  const options = parseCliArgs(process.argv.slice(2));
+export async function runAliceVisibilityImportCli(args: string[] = process.argv.slice(2)): Promise<void> {
+  if (args.includes("--help") || args.includes("-h")) {
+    process.stdout.write(ALICE_VISIBILITY_IMPORT_USAGE);
+    return;
+  }
+  const options = parseCliArgs(args);
   const prepared = options.summaryOnly
     ? createSummaryOnlySnapshot(options)
     : {
@@ -366,7 +377,7 @@ async function main(): Promise<void> {
 
 const entrypoint = process.argv[1] ? pathToFileURL(path.resolve(process.argv[1])).href : "";
 if (import.meta.url === entrypoint) {
-  main().catch((error) => {
+  runAliceVisibilityImportCli().catch((error) => {
     process.stderr.write(`Alice visibility import failed: ${error instanceof Error ? error.message : "unknown error"}\n`);
     process.exitCode = 1;
   });

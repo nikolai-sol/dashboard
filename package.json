@@ -7,7 +7,7 @@
     "build": "next build",
     "start": "next start -p 3001",
     "test": "npm run test:node && npm run test:python",
-    "test:node": "node --import tsx --test src/**/*.test.ts scripts/set-dashboard-shared-password.test.ts",
+    "test:node": "node scripts/run-node-tests.mjs",
     "test:advertising-read-model": "node --import tsx --test scripts/compare-advertising-dashboard-read-model.test.ts",
     "test:python": "node scripts/run-python-tests.mjs",
     "test:migration:abbott-integrity": "bash scripts/run-abbott-release-source-integrity-mysql-test.sh",
@@ -70,6 +70,7 @@
     "@types/topojson-client": "^3.1.5",
     "eslint": "^9",
     "eslint-config-next": "16.1.6",
+    "esbuild": "0.27.3",
     "tailwindcss": "^4",
     "tsx": "^4.21.0",
     "typescript": "^5"

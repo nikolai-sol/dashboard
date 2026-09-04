@@ -59,6 +59,8 @@ test("deploy inventory packages the Metrika Logs visit parser", () => {
 test("deploy inventory packages the Alice importer without its source workbook", () => {
   const deploy = readFileSync(join(repoRoot, "scripts/deploy.sh"), "utf8");
 
-  assert.match(deploy, /cp scripts\/import-zaruku-alice-visibility\.ts "\$PACKAGE_DIR\/scripts\/"/);
+  assert.match(deploy, /node scripts\/build-zaruku-alice-importer\.mjs/);
+  assert.match(deploy, /import-zaruku-alice-visibility\.cjs/);
+  assert.doesNotMatch(deploy, /cp scripts\/import-zaruku-alice-visibility\.ts/);
   assert.doesNotMatch(deploy, /neurostatistics-zaruku|\/Downloads\/|\.xlsx/);
 });

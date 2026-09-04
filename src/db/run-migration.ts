@@ -12,6 +12,13 @@ export function splitMigrationStatements(sql: string): string[] {
     .filter(Boolean);
 }
 
+export function listMigrationFiles(migrationsDir: string): string[] {
+  return fs
+    .readdirSync(migrationsDir)
+    .filter((file) => file.endsWith(".sql"))
+    .sort((a, b) => a.localeCompare(b, "en"));
+}
+
 function loadEnvFile(filePath: string) {
   if (!fs.existsSync(filePath)) return;
   const content = fs.readFileSync(filePath, "utf-8");
@@ -45,10 +52,7 @@ export async function run() {
   }
 
   const migrationsDir = path.join(process.cwd(), "src", "db", "migrations");
-  const migrationFiles = fs
-    .readdirSync(migrationsDir)
-    .filter((file) => file.endsWith(".sql"))
-    .sort((a, b) => a.localeCompare(b, "en"));
+  const migrationFiles = listMigrationFiles(migrationsDir);
 
   const connection = await mysql.createConnection({
     host,

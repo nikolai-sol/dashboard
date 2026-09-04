@@ -42,6 +42,7 @@ ENV
 
 write_release_contract() {
   local target="$1"
+  mkdir -p "$target/scripts"
   printf '%s\n' 'shared-password-db-auth-v1' > "$target/.shared-password-db-auth-v1"
   cat > "$target/ecosystem.config.js" <<'JS'
 module.exports = {
@@ -52,6 +53,20 @@ module.exports = {
   }],
 };
 JS
+  cat > "$target/scripts/import-zaruku-alice-visibility.cjs" <<'JS'
+if (process.argv.includes('--help') || process.argv.includes('--dry-run')) {
+  process.stdout.write('Alice visibility dry-run mode=summary_only queries=0 portal_present=null sample_presence_pct=null sources=0 featured_sites=0 validation_mismatches=0 checksum=aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\n');
+} else {
+  process.exitCode = 2;
+}
+JS
+  cat > "$target/package.json" <<'JSON'
+{
+  "scripts": {
+    "import:zaruku-alice": "node --env-file=.env scripts/import-zaruku-alice-visibility.cjs"
+  }
+}
+JSON
 }
 
 VALID_RELEASE="$TMP_DIR/valid-release"
@@ -67,6 +82,50 @@ write_release_contract "$VALID_RELEASE"
 grep -q 'ABBOTT_DASHBOARD_PASSWORD' "$SCRIPT_DIR/validate-production-release.sh"
 ! grep -q 'ZARUKU_DASHBOARD_PASSWORD' "$SCRIPT_DIR/validate-production-release.sh"
 ! grep -q 'METRIKA_TOKEN' "$SCRIPT_DIR/validate-production-release.sh"
+
+MISSING_ALICE_IMPORTER_RELEASE="$TMP_DIR/missing-alice-importer-release"
+mkdir -p "$MISSING_ALICE_IMPORTER_RELEASE/public"
+write_valid_env "$MISSING_ALICE_IMPORTER_RELEASE/.env"
+write_release_contract "$MISSING_ALICE_IMPORTER_RELEASE"
+rm "$MISSING_ALICE_IMPORTER_RELEASE/scripts/import-zaruku-alice-visibility.cjs"
+if bash "$SCRIPT_DIR/validate-production-release.sh" "$MISSING_ALICE_IMPORTER_RELEASE" "$MISSING_ALICE_IMPORTER_RELEASE/.env" >"$TMP_DIR/missing-alice-importer.log" 2>&1; then
+  echo "validate-production-release.sh accepted a missing Alice importer bundle" >&2
+  exit 1
+fi
+grep -Fqi 'Alice importer bundle' "$TMP_DIR/missing-alice-importer.log"
+
+BROKEN_ALICE_IMPORTER_RELEASE="$TMP_DIR/broken-alice-importer-release"
+mkdir -p "$BROKEN_ALICE_IMPORTER_RELEASE/public"
+write_valid_env "$BROKEN_ALICE_IMPORTER_RELEASE/.env"
+write_release_contract "$BROKEN_ALICE_IMPORTER_RELEASE"
+printf '%s\n' 'process.exitCode = 1;' > "$BROKEN_ALICE_IMPORTER_RELEASE/scripts/import-zaruku-alice-visibility.cjs"
+if bash "$SCRIPT_DIR/validate-production-release.sh" "$BROKEN_ALICE_IMPORTER_RELEASE" "$BROKEN_ALICE_IMPORTER_RELEASE/.env" >"$TMP_DIR/broken-alice-importer.log" 2>&1; then
+  echo "validate-production-release.sh accepted a non-runnable Alice importer bundle" >&2
+  exit 1
+fi
+grep -Fqi 'Alice importer bundle' "$TMP_DIR/broken-alice-importer.log"
+
+NOOP_ALICE_IMPORTER_RELEASE="$TMP_DIR/noop-alice-importer-release"
+mkdir -p "$NOOP_ALICE_IMPORTER_RELEASE/public"
+write_valid_env "$NOOP_ALICE_IMPORTER_RELEASE/.env"
+write_release_contract "$NOOP_ALICE_IMPORTER_RELEASE"
+printf '%s\n' 'process.exit(0);' > "$NOOP_ALICE_IMPORTER_RELEASE/scripts/import-zaruku-alice-visibility.cjs"
+if bash "$SCRIPT_DIR/validate-production-release.sh" "$NOOP_ALICE_IMPORTER_RELEASE" "$NOOP_ALICE_IMPORTER_RELEASE/.env" >"$TMP_DIR/noop-alice-importer.log" 2>&1; then
+  echo "validate-production-release.sh accepted a no-op Alice importer bundle" >&2
+  exit 1
+fi
+grep -Fqi 'Alice importer bundle' "$TMP_DIR/noop-alice-importer.log"
+
+WORKBOOK_RELEASE="$TMP_DIR/workbook-release"
+mkdir -p "$WORKBOOK_RELEASE/public"
+write_valid_env "$WORKBOOK_RELEASE/.env"
+write_release_contract "$WORKBOOK_RELEASE"
+printf 'private workbook' > "$WORKBOOK_RELEASE/alice-source.xlsx"
+if bash "$SCRIPT_DIR/validate-production-release.sh" "$WORKBOOK_RELEASE" "$WORKBOOK_RELEASE/.env" >"$TMP_DIR/workbook.log" 2>&1; then
+  echo "validate-production-release.sh accepted a packaged Alice workbook" >&2
+  exit 1
+fi
+grep -Fqi 'workbook' "$TMP_DIR/workbook.log"
 
 NODE_OPTIONS_MARKER="$TMP_DIR/node-options-executed"
 cat > "$TMP_DIR/node-options-payload.cjs" <<JS

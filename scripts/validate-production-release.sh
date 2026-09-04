@@ -86,6 +86,55 @@ if ! missing_keys="$(find_missing_dotenv_keys "$ENV_FILE" "${required_keys[@]}")
   exit 1
 fi
 
+ALICE_IMPORTER="$RELEASE_DIR/scripts/import-zaruku-alice-visibility.cjs"
+RELEASE_PACKAGE_JSON="$RELEASE_DIR/package.json"
+EXPECTED_ALICE_COMMAND="node --env-file=.env scripts/import-zaruku-alice-visibility.cjs"
+if [[ -L "$RELEASE_DIR/scripts" || -L "$ALICE_IMPORTER" || ! -f "$ALICE_IMPORTER" ]]; then
+  echo "Production release is missing a regular Alice importer bundle" >&2
+  exit 1
+fi
+if [[ -L "$RELEASE_PACKAGE_JSON" || ! -f "$RELEASE_PACKAGE_JSON" ]]; then
+  echo "Production release is missing the Alice importer package command" >&2
+  exit 1
+fi
+NODE_BIN="$(command -v node || true)"
+if [[ -z "$NODE_BIN" ]] || ! "$NODE_BIN" - "$RELEASE_PACKAGE_JSON" "$EXPECTED_ALICE_COMMAND" <<'JS'
+const fs = require("node:fs");
+const [manifestPath, expectedCommand] = process.argv.slice(2);
+try {
+  const manifest = JSON.parse(fs.readFileSync(manifestPath, "utf8"));
+  process.exit(manifest?.scripts?.["import:zaruku-alice"] === expectedCommand ? 0 : 1);
+} catch {
+  process.exit(1);
+}
+JS
+then
+  echo "Production release has an invalid Alice importer package command" >&2
+  exit 1
+fi
+if find "$RELEASE_DIR" \( -type f -o -type l \) \( -iname '*.xlsx' -o -iname '*.xls' -o -iname '*.xlsm' -o -iname '*.xlsb' \) -print -quit | grep -q .; then
+  echo "Production release must not contain an Alice source workbook" >&2
+  exit 1
+fi
+ALICE_SMOKE_OUTPUT=""
+if ! ALICE_SMOKE_OUTPUT="$(NODE_OPTIONS= "$NODE_BIN" --env-file="$ENV_FILE" "$ALICE_IMPORTER" \
+  --summary-only \
+  --period 2026-07 \
+  --official-sov 44 \
+  --captured-at 2026-07-13T14:30:00.000Z \
+  --legacy-source release_validation \
+  --legacy-mentions 0 \
+  --legacy-citations 0 \
+  --dry-run 2>/dev/null)"; then
+  echo "Production release Alice importer bundle is not runnable" >&2
+  exit 1
+fi
+ALICE_SMOKE_PATTERN='^Alice visibility dry-run mode=summary_only queries=0 portal_present=null sample_presence_pct=null sources=0 featured_sites=0 validation_mismatches=0 checksum=[a-f0-9]{64}$'
+if [[ ! "$ALICE_SMOKE_OUTPUT" =~ $ALICE_SMOKE_PATTERN ]]; then
+  echo "Production release Alice importer bundle returned an invalid dry-run summary" >&2
+  exit 1
+fi
+
 if [[ -L "$RELEASE_DIR/public" ]]; then
   echo "Production release must not contain a symlinked public directory" >&2
   exit 1

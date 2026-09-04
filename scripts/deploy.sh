@@ -91,9 +91,11 @@ cp scripts/rollback-release-remote.sh "$PACKAGE_DIR/scripts/"
 cp scripts/verify-loopback-listener.sh "$PACKAGE_DIR/scripts/"
 cp scripts/collect-yandex-webmaster.js "$PACKAGE_DIR/scripts/"
 cp scripts/collect-yandex-webmaster-canonical.sh "$PACKAGE_DIR/scripts/"
-cp scripts/import-zaruku-alice-visibility.ts "$PACKAGE_DIR/scripts/"
 cp src/schemas/*.yaml "$PACKAGE_DIR/src/schemas/"
 cp -R src/db/migrations "$PACKAGE_DIR/src/db/migrations"
+node scripts/build-zaruku-alice-importer.mjs \
+  --outfile "$PACKAGE_DIR/scripts/import-zaruku-alice-visibility.cjs" \
+  --package-json "$PACKAGE_DIR/package.json"
 for runtime_package in mysql2 aws-ssl-profiles denque generate-function is-property iconv-lite safer-buffer long lru.min named-placeholders sql-escaper; do
   if [ -d "node_modules/$runtime_package" ]; then
     mkdir -p "$PACKAGE_DIR/node_modules/$(dirname "$runtime_package")"

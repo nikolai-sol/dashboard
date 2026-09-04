@@ -76,6 +76,7 @@ import { resolveRowsForWeek } from "@/components/zaruku-yandex-webmaster-panels"
 import { selectSourceWeekRows } from "@/components/zaruku-seo-source-week";
 import { ZARUKU_CHART_PALETTE } from "@/lib/chart-palette";
 import { ZARUKU_CLIENT_COPY } from "@/components/zaruku-client-copy";
+import { getZarukuSourceRowsLabel } from "@/components/zaruku-source-rows-label";
 
 type Props = {
   data: ZarukuSeoData;
@@ -164,56 +165,6 @@ const SOURCE_COLLECTION_MODE_LABELS: Record<ZarukuSeoSource["collection_mode"], 
   manual: "вручную",
   not_connected: "не подключено",
 };
-
-function formatSidebarDate(dateText: string): string {
-  const normalized = String(dateText).slice(0, 10);
-  if (/^\d{4}-\d{2}-\d{2}$/.test(normalized)) {
-    return `${normalized.slice(8, 10)}.${normalized.slice(5, 7)}.${normalized.slice(0, 4)}`;
-  }
-  return normalized;
-}
-
-function formatSidebarMonthDate(dateText: string): string {
-  const normalized = String(dateText).slice(0, 7);
-  if (/^\d{4}-\d{2}$/.test(normalized)) {
-    return `01.${normalized.slice(5, 7)}.${normalized.slice(0, 4)}`;
-  }
-  return normalized;
-}
-
-const SOURCE_FRESHNESS_SOURCE_KEYS: Partial<Record<ZarukuSeoSourceId, string>> = {
-  metrika: "yandex_metrika",
-  gsc: "google_search_console",
-  webmaster: "yandex_webmaster",
-};
-
-function getSourceRowsLabel(data: ZarukuSeoData, sourceId: ZarukuSeoSourceId) {
-  const sourceFreshnessKey = SOURCE_FRESHNESS_SOURCE_KEYS[sourceId];
-  if (sourceFreshnessKey) {
-    const row = data.source_freshness.find((item) => item.source_key === sourceFreshnessKey);
-    if (row?.date_to) return `посл. дата: ${formatSidebarDate(row.date_to)}`;
-    return row?.last_success_at ? `посл. дата: ${formatSidebarDate(row.last_success_at)}` : null;
-  }
-  if (sourceId === "yandex_gen_search") {
-    return seoIntelligenceRowsLabel(data);
-  }
-  if (sourceId === "seo_os") {
-    return data.seo_os.latest_week ? `посл. неделя: ${data.seo_os.latest_week}` : null;
-  }
-  return null;
-}
-
-function seoIntelligenceRowsLabel(data: ZarukuSeoData) {
-  const latestCapturedAt = data.seo_intelligence.ai.rows
-    .map((row) => row.captured_at)
-    .filter((value): value is string => Boolean(value))
-    .map((value) => value.slice(0, 10))
-    .sort()
-    .at(-1);
-  if (latestCapturedAt) return `посл. дата: ${formatSidebarDate(latestCapturedAt)}`;
-  if (!data.seo_intelligence.ai.latest_period) return null;
-  return `посл. дата: ${formatSidebarMonthDate(data.seo_intelligence.ai.latest_period)}`;
-}
 
 function SourceBadge({ data, id }: { data: ZarukuSeoData; id: ZarukuSeoSourceId }) {
   const source = data.sources.find((item) => item.id === id);
@@ -919,7 +870,7 @@ export default function ZarukuSeoDashboard({ data, locale = "ru-RU", onActiveTab
             </div>
             <div className="space-y-1.5">
               {data.sources.map((source) => {
-                const rowsLabel = getSourceRowsLabel(data, source.id);
+                const rowsLabel = getZarukuSourceRowsLabel(data, source.id);
                 return (
                   <div key={source.id} className="min-w-0 text-xs">
                     <div data-source-main-row className="flex min-w-0 items-start justify-between gap-2">
