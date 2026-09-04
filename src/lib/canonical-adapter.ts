@@ -285,21 +285,18 @@ function advertisingFactTable(sourceKey: string): string {
       legacy.video_views_25, legacy.video_views_50, legacy.video_views_75,
       legacy.video_views_100
     FROM canonical_fact_ads_daily legacy
+    LEFT JOIN (
+      SELECT source_key, platform_account_id, MIN(report_date) AS first_covered_date
+      FROM canonical_ad_coverage_daily
+      WHERE source_key = 'between'
+      GROUP BY source_key, platform_account_id
+    ) coverage_start
+      ON coverage_start.source_key = legacy.source_key
+     AND coverage_start.platform_account_id = legacy.platform_account_id
     WHERE legacy.source_key = 'between'
-      AND NOT EXISTS (
-        SELECT 1
-        FROM canonical_ad_publications publication
-        WHERE publication.source_key COLLATE utf8mb4_unicode_ci = legacy.source_key
-          AND publication.platform_account_id COLLATE utf8mb4_unicode_ci = legacy.platform_account_id
-          AND publication.report_date = legacy.report_date
-          AND publication.is_active = 1
-      )
-      AND NOT EXISTS (
-        SELECT 1
-        FROM canonical_ad_coverage_daily coverage
-        WHERE coverage.source_key COLLATE utf8mb4_unicode_ci = legacy.source_key
-          AND coverage.platform_account_id COLLATE utf8mb4_unicode_ci = legacy.platform_account_id
-          AND coverage.report_date <= legacy.report_date
+      AND (
+        coverage_start.first_covered_date IS NULL
+        OR legacy.report_date < coverage_start.first_covered_date
       )
   )`;
 }
