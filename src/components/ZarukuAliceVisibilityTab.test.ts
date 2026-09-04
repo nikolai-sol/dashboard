@@ -1,0 +1,104 @@
+import assert from "node:assert/strict";
+import test from "node:test";
+import { createElement } from "react";
+import { renderToStaticMarkup } from "react-dom/server";
+import ZarukuAliceVisibilityTab from "@/components/ZarukuAliceVisibilityTab";
+import type { ZarukuAliceVisibilityData, ZarukuAliceVisibilitySnapshot } from "@/lib/types";
+
+const augustSnapshot: ZarukuAliceVisibilitySnapshot = {
+  id: "august",
+  analyticsAccountId: "1",
+  month: "2026-08",
+  domain: "zaruku.ru",
+  officialSovPct: 43.91,
+  exportedQueryCount: 155,
+  portalPresentQueryCount: 89,
+  samplePresencePct: 57.42,
+  provenance: { sourceKey: "alice_ai", sourceFilename: "august.xlsx", sourceSha256: "hash", ingestionRunId: "run" },
+  queries: [{
+    id: "query-1",
+    queryHash: "query-1",
+    queryText: "инвалидность после мастэктомии",
+    portalPresent: true,
+    portalPosition: 2,
+    portalUrl: "https://zaruku.ru/reabilitaciya",
+    aliceAnswerUrl: "https://alice.yandex.ru/answer/1",
+    sourceCount: 4,
+    rawPresentValue: "true",
+    sources: [
+      { id: "portal", sourceRank: 2, sourceUrl: "https://zaruku.ru/reabilitaciya", sourceDomain: "zaruku.ru", isPortal: true },
+      { id: "competitor-1", sourceRank: 1, sourceUrl: "https://onco-life.ru/article", sourceDomain: "onco-life.ru", isPortal: false },
+      { id: "competitor-2", sourceRank: 3, sourceUrl: "https://doctu.ru/article", sourceDomain: "doctu.ru", isPortal: false },
+      { id: "unsafe", sourceRank: 4, sourceUrl: "javascript:alert(1)", sourceDomain: "unsafe.example", isPortal: false },
+    ],
+  }],
+  competitors: [{ domain: "onco-life.ru", queryCount: 1, sharePct: 100 }],
+  featuredSites: [{ id: "featured-1", displayOrder: 1, siteUrl: "https://onco-life.ru", siteDomain: "onco-life.ru", listKind: "featured" }],
+  versions: [],
+};
+
+const julySnapshot: ZarukuAliceVisibilitySnapshot = {
+  ...augustSnapshot,
+  id: "july",
+  month: "2026-07",
+  officialSovPct: 44,
+  exportedQueryCount: null,
+  portalPresentQueryCount: null,
+  samplePresencePct: null,
+  queries: [],
+  competitors: [],
+  featuredSites: [],
+};
+
+const data = (snapshots: ZarukuAliceVisibilitySnapshot[], status: ZarukuAliceVisibilityData["status"] = "available"): ZarukuAliceVisibilityData => ({
+  status,
+  error: status === "partial" ? "Детальные строки недоступны" : null,
+  months: snapshots.map((snapshot) => snapshot.month),
+  latestMonth: snapshots.at(-1)?.month ?? null,
+  snapshots,
+});
+
+test("renders the August official SoV separately from export coverage", () => {
+  const markup = renderToStaticMarkup(createElement(ZarukuAliceVisibilityTab, { data: data([julySnapshot, augustSnapshot]), locale: "ru-RU" }));
+  for (const label of ["ИИ-видимость и конкуренты", "43,91%", "155", "89", "57,42%", "Запросы и позиция Zaruku", "Конкуренты в выгрузке", "Примеры заметных сайтов по данным Яндекса"]) {
+    assert.match(markup, new RegExp(label));
+  }
+  assert.match(markup, /Официальная доля рассчитана Яндексом/);
+  assert.match(markup, /Доля в примерах рассчитана только по выгруженным строкам/);
+  assert.match(markup, /Все источники в ответе/);
+  assert.match(markup, /Порядок показа не является рейтингом/);
+  assert.match(markup, /target="_blank" rel="noreferrer"/);
+  assert.doesNotMatch(markup, /javascript:alert/);
+});
+
+test("July summary-only view keeps its official SoV and withholds query detail", () => {
+  const markup = renderToStaticMarkup(createElement(ZarukuAliceVisibilityTab, { data: data([julySnapshot]), locale: "ru-RU" }));
+  assert.match(markup, /44%/);
+  assert.match(markup, /Детализация запросов за июль не была сохранена\./);
+  assert.doesNotMatch(markup, /Запросов в выгрузке/);
+  assert.doesNotMatch(markup, /89/);
+  assert.doesNotMatch(markup, /155/);
+});
+
+test("empty data explains what is needed for the first snapshot", () => {
+  const markup = renderToStaticMarkup(createElement(ZarukuAliceVisibilityTab, { data: data([]), locale: "ru-RU" }));
+  assert.match(markup, /Пока нет опубликованных снимков ИИ-видимости/);
+  assert.match(markup, /Передайте месячную выгрузку/);
+});
+
+test("partial data preserves the visible monthly result", () => {
+  const markup = renderToStaticMarkup(createElement(ZarukuAliceVisibilityTab, { data: data([julySnapshot], "partial"), locale: "ru-RU" }));
+  assert.match(markup, /44%/);
+  assert.match(markup, /Детализация запросов за июль не была сохранена\./);
+});
+
+test("a later partial snapshot does not claim its detail was lost in July", () => {
+  const partialAugust = { ...augustSnapshot, queries: [], competitors: [], featuredSites: [] };
+  const markup = renderToStaticMarkup(createElement(ZarukuAliceVisibilityTab, { data: data([julySnapshot, partialAugust], "partial"), locale: "ru-RU" }));
+  assert.match(markup, /43,91%/);
+  assert.match(markup, /Детализация запросов за август 2026 г\. пока недоступна\./);
+  assert.doesNotMatch(markup, /Детализация запросов за июль не была сохранена\./);
+  assert.match(markup, /155/);
+  assert.match(markup, /89/);
+  assert.match(markup, /57,42%/);
+});
