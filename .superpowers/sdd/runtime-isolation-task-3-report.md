@@ -183,3 +183,63 @@ Complete emitted application input inventory:
 - The combined build retains its existing multiple-lockfile/workspace-root warning. No global bundler configuration was changed.
 - This task extracts client orchestration only. Isolated API/auth/export route implementation and end-to-end live canonical-data/browser validation remain later runtime-isolation work; this report does not claim deployment readiness.
 - No production deployment, reverse-proxy edit, database connection/write/migration, source API call, cron edit, secret change, Telegram send, or external operational action was performed.
+
+## Task 3 review fix
+
+### Status, files, and commit
+
+Fixed the review finding in `af81f96d003be49abc291e2c1bf138f9152bc5e3` (`fix(zaruku): reject malformed dashboard payloads`).
+
+- `apps/zaruku/src/components/ZarukuDashboardPage.tsx`: successful 200 bodies are structurally classified before any `period`, `language`, or Zaruku data dereference. `null`, `{}`, a non-Zaruku type, missing period/language, and missing Zaruku data now resolve to the existing technical-unavailable UI; the combined adapter receives its existing non-dispatch fallback once.
+- `apps/zaruku/src/components/zaruku-dashboard-page.test.ts`: replaces the JSX-extraction boundary test with real execution of the response processor for `null`, `{}`, and a wrong-type payload missing period, plus direct rendering of the actual unavailable render path and its one-time fallback selection.
+
+### RED
+
+Before production changes, the focused page test failed as expected:
+
+```text
+node --import tsx --test apps/zaruku/src/components/zaruku-dashboard-page.test.ts
+pass 7; fail 2; exit 1
+Missing DashboardPayloadUnavailable
+actual null; expected "Unexpected dashboard payload"
+```
+
+The second failure was the real existing response processor accepting a successful `null` body without an error classification. The old guard-only test was removed because it did not execute this path.
+
+An independent review then found that the generic API-error branch preceded the fallback branch. The added render-state ordering regression was also RED before its production change:
+
+```text
+node --import tsx --test apps/zaruku/src/components/zaruku-dashboard-page.test.ts
+pass 9; fail 1; exit 1
+Missing selectDashboardRenderState
+```
+
+### GREEN and verification
+
+```text
+node --import tsx --test [page, Zaruku UI, date wiring, date range, health, middleware tests]
+58 passed; 0 failed
+npm run typecheck
+exit 0
+./node_modules/.bin/tsc --project apps/zaruku/tsconfig.json --noEmit
+exit 0
+npm run build
+exit 0
+npm --workspace apps/zaruku run build
+exit 0
+node --import tsx --test apps/zaruku/src/components/zaruku-dashboard-page.test.ts --test-name-pattern 'emitted dependency trace'
+9 passed; 0 failed (includes the real esbuild dependency trace)
+npm test
+944 Node passed; 10 skipped; 13 Python passed; exit 0
+git diff --check
+exit 0
+```
+
+The first sandboxed full-suite attempt hit the pre-existing local `tsx` IPC `listen EPERM` restriction in the unrelated shared-password test; the authorized rerun above passed without code or test changes.
+
+### Self-review
+
+- The effect returns immediately on an unsupported successful payload, so no period hydration or later dashboard dereference runs; loading is cleared first.
+- Auth, 404, network/error, loading, valid Zaruku date/query/export behavior, and the combined non-dispatch fallback remain separate paths.
+- The fallback regression verifies both the actual unavailable component's one-time legacy-element selection and the page render-state ordering that prioritizes an unsupported successful payload above generic API-error rendering. The dispatcher characterization continues to verify that the supplied element is `CombinedDashboardByIdPage`, not the dispatcher itself.
+- No production, proxy, database, cron, secret, Abbott/ad worktree, or unrelated files were touched.
