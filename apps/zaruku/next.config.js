@@ -7,8 +7,5 @@ module.exports = {
   distDir: ".next-zaruku",
   assetPrefix: "/_next-zaruku",
   outputFileTracingRoot: path.join(__dirname, "../.."),
-  turbopack: {
-    root: path.join(__dirname, "../.."),
-  },
   poweredByHeader: false,
 };

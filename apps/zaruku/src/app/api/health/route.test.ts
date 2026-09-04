@@ -16,5 +16,6 @@ test("Zaruku config isolates its standalone assets and output", () => {
   assert.match(source, /output:\s*["']standalone["']/);
   assert.match(source, /assetPrefix:\s*["']\/_next-zaruku["']/);
   assert.match(source, /distDir:\s*["']\.next-zaruku["']/);
-  assert.match(source, /turbopack:\s*\{\s*root:\s*path\.join\(__dirname,\s*["']\.\.\/\.\.["']\)/);
+  assert.match(source, /outputFileTracingRoot:\s*path\.join\(__dirname,\s*["']\.\.\/\.\.["']\)/);
+  assert.doesNotMatch(source, /turbopack\s*:/);
 });
