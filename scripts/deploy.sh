@@ -70,6 +70,7 @@ if [ ! -f "$PACKAGE_DIR/server.js" ]; then
   PACKAGE_DIR="$(dirname "${SERVER_CANDIDATES[0]}")"
 fi
 echo "Using standalone package root $PACKAGE_DIR..."
+bash scripts/normalize-standalone-runtime-links.sh "$PACKAGE_DIR"
 
 echo "Rendering production env from VPS secrets..."
 bash scripts/render-production-env.sh "$TMP_ENV"

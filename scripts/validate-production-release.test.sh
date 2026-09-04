@@ -170,4 +170,16 @@ if bash "$SCRIPT_DIR/validate-production-release.sh" "$PUBLIC_BIND_RELEASE" "$PU
 fi
 grep -Fqi 'loopback' "$TMP_DIR/public-bind.log"
 
+BROKEN_RUNTIME_RELEASE="$TMP_DIR/broken-runtime-release"
+mkdir -p "$BROKEN_RUNTIME_RELEASE/public" "$BROKEN_RUNTIME_RELEASE/.next/node_modules"
+write_valid_env "$BROKEN_RUNTIME_RELEASE/.env"
+write_release_contract "$BROKEN_RUNTIME_RELEASE"
+ln -s '../../../../.worktrees/export/node_modules/rimraf' \
+  "$BROKEN_RUNTIME_RELEASE/.next/node_modules/rimraf-deadbeef"
+if bash "$SCRIPT_DIR/validate-production-release.sh" "$BROKEN_RUNTIME_RELEASE" "$BROKEN_RUNTIME_RELEASE/.env" >"$TMP_DIR/broken-runtime.log" 2>&1; then
+  echo "validate-production-release.sh accepted a broken runtime dependency link" >&2
+  exit 1
+fi
+grep -Fqi 'broken runtime dependency link' "$TMP_DIR/broken-runtime.log"
+
 echo "validate-production-release tests passed"
