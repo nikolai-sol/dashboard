@@ -83,3 +83,20 @@ test("competitor frequency counts a domain once per query", () => {
 
   assert.deepEqual(data.snapshots[0].competitors[0], { domain: "example.org", queryCount: 2, sharePct: 100 });
 });
+
+test("read model exposes a summary-only legacy source key without assigning query meanings", () => {
+  const legacyRows = [{
+    ...snapshotRows[0],
+    source_key: "wm_alisa_manual_legacy",
+    exported_query_count: null,
+    portal_present_query_count: null,
+    sample_presence_pct: null,
+    source_filename: null,
+  }];
+  const data = normalizeAliceVisibilityRows(legacyRows, [], [], []);
+
+  assert.equal(data.snapshots[0]?.provenance.sourceKey, "wm_alisa_manual_legacy");
+  assert.equal(data.snapshots[0]?.exportedQueryCount, null);
+  assert.equal(data.snapshots[0]?.portalPresentQueryCount, null);
+  assert.deepEqual(data.snapshots[0]?.queries, []);
+});

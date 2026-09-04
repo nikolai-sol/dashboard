@@ -194,12 +194,7 @@ BUILD_SOURCE_SHA="$(git -C "$APP_SOURCE_DIR" rev-parse HEAD)"
 
 echo "Building standalone bundle for release $RELEASE_ID..."
 npm ci
-npm test
-npm run test:abbott-contract
-npm run typecheck
-npm run lint
-npm run security:public-assets
-npm run build
+npm run predeploy:verify
 
 STANDALONE_DIR=".next/standalone"
 PACKAGE_DIR="$STANDALONE_DIR"
@@ -234,6 +229,7 @@ cp ecosystem.config.js "$PACKAGE_DIR/"
 cp package.json "$PACKAGE_DIR/"
 cp scripts/rollback-release.sh "$PACKAGE_DIR/scripts/"
 cp scripts/rollback-release-remote.sh "$PACKAGE_DIR/scripts/"
+cp scripts/dashboard-deploy-lock.sh "$PACKAGE_DIR/scripts/"
 cp scripts/verify-loopback-listener.sh "$PACKAGE_DIR/scripts/"
 cp scripts/collect-yandex-webmaster.js "$PACKAGE_DIR/scripts/"
 cp scripts/collect-yandex-webmaster-canonical.sh "$PACKAGE_DIR/scripts/"

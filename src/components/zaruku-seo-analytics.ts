@@ -1,4 +1,5 @@
 import type { ZarukuSeoClusterRow, ZarukuSeoPositionTrendPoint } from "@/lib/types";
+import { resolveAbsoluteHttpUrl } from "@/lib/zaruku-url";
 
 export type ClusterFilter = {
   week: string | null;
@@ -99,11 +100,5 @@ export function formatPositionDelta(value: number | null): PositionDeltaPresenta
 }
 
 export function resolveSafeExternalUrl(value: string | null): string | null {
-  if (!value) return null;
-  try {
-    const url = new URL(value);
-    return url.protocol === "https:" || url.protocol === "http:" ? url.toString() : null;
-  } catch {
-    return null;
-  }
+  return resolveAbsoluteHttpUrl(value);
 }

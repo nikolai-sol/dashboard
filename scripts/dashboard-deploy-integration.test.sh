@@ -84,7 +84,7 @@ export ACTIVE_SHA_INITIAL="$BASE_SHA" ACTIVE_SHA_AFTER_LOCK="$CANDIDATE_SHA"
 cat > "$FAKE_BIN/npm" <<'SH'
 #!/bin/bash
 printf 'npm:%s\n' "$*" >> "$EVENT_LOG"
-if [[ "$*" == "run build" ]]; then
+if [[ "$*" == "run predeploy:verify" ]]; then
   mkdir -p .next/standalone .next/static
   printf '%s\n' 'server fixture' > .next/standalone/server.js
 fi
@@ -242,6 +242,8 @@ grep -Fq '/var/www/.dashboard-next-deploy.lock' "$SSH_LOG" \
 [[ ! -e "$SIMULATED_LOCK_DIR" ]] || fail "successful deploy did not release its lock"
 grep -Fqx "$CANDIDATE_SHA" "$REMOTE_ROOT/app/.release-source-sha" \
   || fail "successful deploy did not activate the rechecked candidate SHA"
+[[ -f "$REMOTE_ROOT/app/scripts/dashboard-deploy-lock.sh" ]] \
+  || fail "successful deploy did not package the shared rollback lock authority"
 
 rm -f "$READ_COUNT_FILE"
 : > "$EVENT_LOG"

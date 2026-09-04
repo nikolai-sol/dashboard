@@ -3,6 +3,7 @@ import { readFile, stat } from "node:fs/promises";
 import type ExcelJS from "exceljs";
 import ExcelJSWorkbook from "exceljs/lib/doc/workbook";
 import { assertBoundedXlsxZip } from "./xlsx-zip-preflight";
+import { isHostnameWithinDomain, parseAbsoluteHttpUrl } from "./zaruku-url";
 
 export const MAX_ALICE_WORKBOOK_BYTES = 5 * 1024 * 1024;
 export const MAX_ALICE_QUERY_ROWS = 5_000;
@@ -66,15 +67,15 @@ export type ParsedAliceVisibilitySnapshot = AliceVisibilityImportInput & {
 };
 
 export function isPortalHostname(hostname: string, portalDomain: string): boolean {
-  const normalized = hostname.toLowerCase().replace(/^www\./, "");
-  const portal = portalDomain.toLowerCase().replace(/^www\./, "");
-  return normalized === portal || normalized.endsWith(`.${portal}`);
+  return isHostnameWithinDomain(hostname, portalDomain);
 }
 
 function requiredUrl(value: unknown, label: string): URL {
   const text = String(value ?? "").trim();
   if (!text) throw new Error(`${label}: ссылка отсутствует`);
-  return new URL(text);
+  const url = parseAbsoluteHttpUrl(text);
+  if (!url) throw new Error(`${label}: требуется абсолютная HTTP(S) ссылка с доменом`);
+  return url;
 }
 
 function assertWorkbookSize(size: number): void {

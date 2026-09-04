@@ -11,6 +11,21 @@ export type AliceQueryFilter = {
 
 export type AliceDetailState = "ready" | "summary-only" | "empty";
 
+const RUSSIAN_MONTHS = [
+  "январь", "февраль", "март", "апрель", "май", "июнь",
+  "июль", "август", "сентябрь", "октябрь", "ноябрь", "декабрь",
+] as const;
+
+export function formatAliceMonthLabel(month: string, locale: string): string {
+  const match = /^(\d{4})-(0[1-9]|1[0-2])$/.exec(month);
+  if (!match) return month;
+  const [, year, monthNumber] = match;
+  if (locale.toLowerCase().startsWith("ru")) {
+    return `${RUSSIAN_MONTHS[Number(monthNumber) - 1]} ${year} г.`;
+  }
+  return month;
+}
+
 export function selectAliceSnapshot(
   snapshots: ZarukuAliceVisibilitySnapshot[],
   month: string | null,

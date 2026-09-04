@@ -146,7 +146,7 @@ if ! ALICE_SMOKE_OUTPUT="$(env -i "$NODE_BIN" "$ALICE_IMPORTER" \
   echo "Production release Alice importer bundle is not runnable" >&2
   exit 1
 fi
-EXPECTED_ALICE_SMOKE_OUTPUT="Alice visibility dry-run mode=xlsx queries=2 portal_present=1 sample_presence_pct=50.00 sources=3 featured_sites=1 validation_mismatches=0 checksum=$ALICE_SMOKE_CHECKSUM"
+EXPECTED_ALICE_SMOKE_OUTPUT="Alice visibility dry-run mode=xlsx queries=2 portal_present=1 sample_presence_pct=50.00 sources=3 featured_sites=1 validation_mismatches=0 checksum=$ALICE_SMOKE_CHECKSUM source_key=yandex_webmaster_alice_manual"
 if [[ "$ALICE_SMOKE_OUTPUT" != "$EXPECTED_ALICE_SMOKE_OUTPUT" ]]; then
   echo "Production release Alice importer bundle returned an invalid dry-run summary" >&2
   exit 1

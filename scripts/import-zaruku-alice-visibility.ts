@@ -7,6 +7,7 @@ import {
   parseAliceVisibilityWorkbookFile,
   type ParsedAliceVisibilitySnapshot,
 } from "../src/lib/zaruku-alice-visibility-import";
+import { isHostnameWithinDomain, parseAbsoluteHttpUrl } from "../src/lib/zaruku-url";
 
 type QueryResult = readonly [unknown, unknown];
 
@@ -35,6 +36,9 @@ export type AliceVisibilityPersistOptions = {
 };
 
 export type AliceVisibilityPersistResult = "inserted" | "already_exists" | "superseded";
+
+const SOURCE_KEY_PATTERN = /^[a-z0-9][a-z0-9_]{0,63}$/;
+const FEATURED_LIST_KIND = "yandex_random_high_mentions";
 
 function rows(result: QueryResult): Array<Record<string, unknown>> {
   return Array.isArray(result[0]) ? result[0] as Array<Record<string, unknown>> : [];
@@ -69,6 +73,91 @@ function mysqlDate(isoTimestamp: string): string {
 function periodMonth(period: string): string {
   if (!/^\d{4}-(0[1-9]|1[0-2])$/.test(period)) throw new Error("period должен иметь формат YYYY-MM");
   return `${period}-01`;
+}
+
+function validateSourceKey(sourceKey: string, label = "source key"): string {
+  if (!SOURCE_KEY_PATTERN.test(sourceKey)) {
+    throw new Error(`${label} должен содержать только строчные латинские буквы, цифры и underscore (до 64 символов)`);
+  }
+  return sourceKey;
+}
+
+function decimalKey(value: unknown): string | null {
+  if (value == null || value === "") return null;
+  const number = Number(value);
+  return Number.isFinite(number) ? number.toFixed(4) : String(value);
+}
+
+function normalizeStoredJson(value: unknown): unknown {
+  if (typeof value !== "string") return value ?? null;
+  try {
+    return JSON.parse(value) as unknown;
+  } catch {
+    return value;
+  }
+}
+
+function authoritativeSnapshotPayload(
+  snapshot: AliceVisibilityPersistableSnapshot,
+  sourceKey: string,
+  sourcePayloadJson: Record<string, unknown> | undefined,
+) {
+  return {
+    source_key: sourceKey,
+    analytics_account_id: snapshot.accountId,
+    domain: snapshot.portalDomain,
+    period_month: periodMonth(snapshot.period),
+    captured_at: mysqlDate(snapshot.capturedAt),
+    official_sov_pct: decimalKey(snapshot.officialSovPct),
+    exported_query_count: snapshot.exportedQueryCount,
+    portal_present_query_count: snapshot.portalPresentQueryCount,
+    sample_presence_pct: decimalKey(snapshot.samplePresencePct),
+    source_filename: snapshot.sourceFilename,
+    source_sha256: snapshot.sourceSha256,
+    source_payload_json: sourcePayloadJson ?? null,
+    featured_sites: snapshot.featured.map((site) => ({
+      display_order: site.displayOrder,
+      site_url: site.siteUrl,
+      site_domain: site.siteDomain,
+      list_kind: FEATURED_LIST_KIND,
+    })),
+  };
+}
+
+function storedAuthoritativeSnapshotPayload(
+  row: Record<string, unknown>,
+  sourceKey: string,
+  accountId: string,
+  featuredSites: Array<Record<string, unknown>>,
+) {
+  return {
+    source_key: sourceKey,
+    analytics_account_id: accountId,
+    domain: row.domain == null ? "" : String(row.domain),
+    period_month: row.period_month instanceof Date
+      ? row.period_month.toISOString().slice(0, 10)
+      : String(row.period_month ?? "").slice(0, 10),
+    captured_at: row.captured_at instanceof Date
+      ? row.captured_at.toISOString().slice(0, 19).replace("T", " ")
+      : String(row.captured_at ?? "").slice(0, 19).replace("T", " "),
+    official_sov_pct: decimalKey(row.official_sov_pct),
+    exported_query_count: row.exported_query_count == null ? null : Number(row.exported_query_count),
+    portal_present_query_count: row.portal_present_query_count == null ? null : Number(row.portal_present_query_count),
+    sample_presence_pct: decimalKey(row.sample_presence_pct),
+    source_filename: row.source_filename == null ? null : String(row.source_filename),
+    source_sha256: String(row.source_sha256 ?? ""),
+    source_payload_json: normalizeStoredJson(row.source_payload_json),
+    featured_sites: featuredSites.map((site) => ({
+      display_order: Number(site.display_order),
+      site_url: String(site.site_url ?? ""),
+      site_domain: String(site.site_domain ?? ""),
+      list_kind: String(site.list_kind ?? ""),
+    })),
+  };
+}
+
+function sha256Stable(value: unknown): string {
+  return createHash("sha256").update(stableJson(value)).digest("hex");
 }
 
 function validateSnapshot(snapshot: AliceVisibilityPersistableSnapshot): void {
@@ -110,6 +199,30 @@ function validateSnapshot(snapshot: AliceVisibilityPersistableSnapshot): void {
   }
   if (snapshot.queries.some((query) => (sourceCounts.get(query.queryHash) ?? 0) !== query.sourceCount)) throw new Error("Количество источников query не совпадает с snapshot");
   if (snapshot.featured.some((site, index) => site.displayOrder !== index + 1)) throw new Error("Порядок featured sites не является последовательным");
+  for (const query of snapshot.queries) {
+    if (!parseAbsoluteHttpUrl(query.aliceAnswerUrl)) {
+      throw new Error("Ссылка на ответ Алисы должна быть абсолютной HTTP(S) ссылкой с доменом");
+    }
+    const portalUrl = parseAbsoluteHttpUrl(query.portalUrl);
+    if (query.portalPresent && (!portalUrl || !isHostnameWithinDomain(portalUrl.hostname, snapshot.portalDomain))) {
+      throw new Error("Ссылка портала должна использовать точный домен портала или его поддомен");
+    }
+    if (!query.portalPresent && query.portalUrl !== null) {
+      throw new Error("Отсутствующий портал не должен содержать ссылку портала");
+    }
+  }
+  for (const source of snapshot.sources) {
+    const sourceUrl = parseAbsoluteHttpUrl(source.sourceUrl);
+    if (!sourceUrl) throw new Error("Источник должен быть абсолютной HTTP(S) ссылкой с доменом");
+    if (source.isPortal !== isHostnameWithinDomain(sourceUrl.hostname, snapshot.portalDomain)) {
+      throw new Error("Признак источника портала не совпадает с точным доменом или поддоменом");
+    }
+  }
+  for (const site of snapshot.featured) {
+    if (!parseAbsoluteHttpUrl(site.siteUrl)) {
+      throw new Error("Отмеченный сайт должен быть абсолютной HTTP(S) ссылкой с доменом");
+    }
+  }
 }
 
 export async function persistAliceVisibilitySnapshot(
@@ -118,9 +231,13 @@ export async function persistAliceVisibilitySnapshot(
   options: AliceVisibilityPersistOptions,
 ): Promise<AliceVisibilityPersistResult> {
   validateSnapshot(snapshot);
-  const sourceKey = options.sourceKey ?? "yandex_webmaster_alice_manual";
-  const ingestionRunId = options.ingestionRunId ?? `alice-${snapshot.accountId}-${sourceKey}-${snapshot.sourceSha256}`;
-  if (!sourceKey || sourceKey.length > 64 || ingestionRunId.length > 128) throw new Error("Некорректный идентификатор импорта");
+  const sourceKey = validateSourceKey(options.sourceKey ?? "yandex_webmaster_alice_manual");
+  const authoritativePayload = authoritativeSnapshotPayload(snapshot, sourceKey, options.sourcePayloadJson);
+  const snapshotFingerprint = sha256Stable(authoritativePayload);
+  const ingestionRunId = options.ingestionRunId ?? `alice-${snapshot.accountId}-${sourceKey}-${
+    options.supersedeSnapshotId === undefined ? snapshot.sourceSha256 : snapshotFingerprint
+  }`;
+  if (ingestionRunId.length > 128) throw new Error("Некорректный идентификатор импорта");
   if (options.supersedeSnapshotId !== undefined && (!Number.isSafeInteger(options.supersedeSnapshotId) || options.supersedeSnapshotId <= 0)) {
     throw new Error("supersede-snapshot-id должен быть положительным целым числом");
   }
@@ -128,14 +245,32 @@ export async function persistAliceVisibilitySnapshot(
   await connection.beginTransaction();
   try {
     const sameChecksum = rows(await connection.execute(
-      `SELECT id FROM canonical_alice_visibility_snapshots
+      `SELECT id, domain, period_month, captured_at, official_sov_pct,
+         exported_query_count, portal_present_query_count, sample_presence_pct,
+         source_filename, source_sha256, snapshot_fingerprint_sha256,
+         ingestion_run_id, source_payload_json
+       FROM canonical_alice_visibility_snapshots
        WHERE analytics_account_id = ? AND source_key = ? AND source_sha256 = ? FOR UPDATE`,
       [snapshot.accountId, sourceKey, snapshot.sourceSha256],
     ));
-    if (sameChecksum.length > 1) throw new Error("Найдены конфликтующие snapshots с одинаковым checksum");
-    if (sameChecksum.length === 1) {
-      await connection.commit();
-      return "already_exists";
+    for (const candidate of sameChecksum) {
+      const featuredSites = rows(await connection.execute(
+        `SELECT display_order, site_url, site_domain, list_kind
+         FROM canonical_alice_visibility_featured_sites
+         WHERE snapshot_id = ?
+         ORDER BY list_kind, display_order`,
+        [candidate.id],
+      ));
+      const storedPayload = storedAuthoritativeSnapshotPayload(
+        candidate,
+        sourceKey,
+        snapshot.accountId,
+        featuredSites,
+      );
+      if (stableJson(storedPayload) === stableJson(authoritativePayload)) {
+        await connection.commit();
+        return "already_exists";
+      }
     }
 
     const publishedForMonth = rows(await connection.execute(
@@ -159,12 +294,14 @@ export async function persistAliceVisibilitySnapshot(
       `INSERT INTO canonical_alice_visibility_snapshots
        (source_key, analytics_account_id, domain, period_month, captured_at, official_sov_pct,
         exported_query_count, portal_present_query_count, sample_presence_pct, source_filename,
-        source_sha256, publication_status, supersedes_snapshot_id, ingestion_run_id, source_payload_json)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'published', ?, ?, ?)`,
+        source_sha256, snapshot_fingerprint_sha256, publication_status, supersedes_snapshot_id,
+        ingestion_run_id, source_payload_json)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'published', ?, ?, ?)`,
       [
         sourceKey, snapshot.accountId, snapshot.portalDomain, periodMonth(snapshot.period), mysqlDate(snapshot.capturedAt), snapshot.officialSovPct,
         snapshot.exportedQueryCount, snapshot.portalPresentQueryCount, snapshot.samplePresencePct, snapshot.sourceFilename,
-        snapshot.sourceSha256, options.supersedeSnapshotId ?? null, ingestionRunId, options.sourcePayloadJson ? JSON.stringify(options.sourcePayloadJson) : null,
+        snapshot.sourceSha256, snapshotFingerprint, options.supersedeSnapshotId ?? null, ingestionRunId,
+        options.sourcePayloadJson ? JSON.stringify(options.sourcePayloadJson) : null,
       ],
     );
     const snapshotId = insertId(snapshotResult);
@@ -272,6 +409,7 @@ export function parseCliArgs(args: string[]): CliOptions {
     if (result.xlsxPath || result.featuredSites.length > 0 || !result.legacySource || typeof legacyMentions !== "number" || typeof legacyCitations !== "number" || !Number.isSafeInteger(legacyMentions) || !Number.isSafeInteger(legacyCitations) || legacyMentions < 0 || legacyCitations < 0) {
       throw new Error("summary-only требует legacy-source, legacy-mentions и legacy-citations без XLSX или featured sites");
     }
+    validateSourceKey(result.legacySource, "legacy-source");
   } else if (!result.xlsxPath || !path.isAbsolute(result.xlsxPath)) {
     throw new Error("--xlsx должен быть абсолютным путем");
   }
@@ -299,11 +437,12 @@ export function createSummaryOnlySnapshot(options: CliOptions): { snapshot: Alic
     portal: options.domain,
     period: options.period,
     official_sov: options.officialSovPct,
+    captured_at: options.capturedAt,
     provenance: options.legacySource!,
     metadata: sourcePayloadJson,
   };
   return {
-    sourceKey: "yandex_webmaster_alice_manual",
+    sourceKey: options.legacySource!,
     sourcePayloadJson,
     snapshot: {
       accountId: options.accountId,
@@ -381,7 +520,7 @@ export async function runAliceVisibilityImportCli(args: string[] = process.argv.
   const label = options.summaryOnly ? "summary_only" : "xlsx";
   validateSnapshot(snapshot);
   if (!options.execute) {
-    process.stdout.write(`Alice visibility dry-run mode=${label} queries=${snapshot.queries.length} portal_present=${snapshot.portalPresentQueryCount ?? "null"} sample_presence_pct=${snapshot.samplePresencePct === null ? "null" : snapshot.samplePresencePct.toFixed(2)} sources=${snapshot.sources.length} featured_sites=${snapshot.featured.length} validation_mismatches=0 checksum=${snapshot.sourceSha256}\n`);
+    process.stdout.write(`Alice visibility dry-run mode=${label} queries=${snapshot.queries.length} portal_present=${snapshot.portalPresentQueryCount ?? "null"} sample_presence_pct=${snapshot.samplePresencePct === null ? "null" : snapshot.samplePresencePct.toFixed(2)} sources=${snapshot.sources.length} featured_sites=${snapshot.featured.length} validation_mismatches=0 checksum=${snapshot.sourceSha256} source_key=${prepared.sourceKey}\n`);
     return;
   }
   const connection = await configuredConnection();

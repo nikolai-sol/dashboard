@@ -5,6 +5,7 @@ import {
   aliceDetailState,
   filterAliceQueries,
   monthlySovDelta,
+  formatAliceMonthLabel,
   paginateAliceQueries,
   selectAliceSnapshot,
 } from "@/components/zaruku-alice-visibility-view";
@@ -46,6 +47,11 @@ const rows = [
 
 test("monthly delta is expressed in percentage points", () => {
   assert.equal(monthlySovDelta([{ month: "2026-07", officialSovPct: 44 }, { month: "2026-08", officialSovPct: 43.91 }], "2026-08"), -0.09);
+});
+
+test("month labels are derived from YYYY-MM fields without parsing the period as a timestamp", () => {
+  assert.equal(formatAliceMonthLabel("2026-08", "ru-RU"), "август 2026 г.");
+  assert.equal(formatAliceMonthLabel("not-a-month", "ru-RU"), "not-a-month");
 });
 
 test("query table supports text and presence filters", () => {

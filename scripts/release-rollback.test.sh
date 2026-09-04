@@ -73,6 +73,20 @@ SH
 chmod +x "$TMP_DIR/bin/pm2" "$TMP_DIR/bin/curl" "$TMP_DIR/bin/sleep" "$TMP_DIR/bin/ss" "$TMP_DIR/bin/ssh"
 export PATH="$TMP_DIR/bin:$PATH"
 
+ROLLBACK_FIXTURE="$TMP_DIR/rollback-fixture"
+ROLLBACK_LOCK_DIR="$TMP_DIR/dashboard-next-deploy.lock"
+mkdir -p "$ROLLBACK_FIXTURE"
+cp "$SCRIPT_DIR/rollback-release.sh" "$ROLLBACK_FIXTURE/"
+cp "$SCRIPT_DIR/rollback-release-remote.sh" "$ROLLBACK_FIXTURE/"
+cp "$SCRIPT_DIR/dashboard-deploy-lock.sh" "$ROLLBACK_FIXTURE/"
+sed -i.bak "s|SSH_BIN=\"/usr/bin/ssh\"|SSH_BIN=\"$TMP_DIR/bin/ssh\"|" "$ROLLBACK_FIXTURE/rollback-release.sh"
+sed -i.bak "s|DEPLOY_LOCK_DIR=\"/var/www/.dashboard-next-deploy.lock\"|DEPLOY_LOCK_DIR=\"$ROLLBACK_LOCK_DIR\"|" \
+  "$ROLLBACK_FIXTURE/rollback-release.sh"
+sed -i.bak "s|FIXED_DEPLOY_LOCK_DIR=\"/var/www/.dashboard-next-deploy.lock\"|FIXED_DEPLOY_LOCK_DIR=\"$ROLLBACK_LOCK_DIR\"|" \
+  "$ROLLBACK_FIXTURE/rollback-release-remote.sh"
+rm -f "$ROLLBACK_FIXTURE/"*.bak
+ROLLBACK_SCRIPT="$ROLLBACK_FIXTURE/rollback-release.sh"
+
 write_release() {
   local target="$1"
   local label="$2"
@@ -130,6 +144,41 @@ run_activation() {
   RELEASE_SHA="$expected_sha" \
   bash "$SCRIPT_DIR/activate-release.sh"
 }
+
+UNATTESTED_PREDECESSOR_ROOT="$TMP_DIR/unattested-predecessor"
+: > "$PM2_LOG"
+write_release "$UNATTESTED_PREDECESSOR_ROOT/app" "unattested-predecessor" compatible
+rm "$UNATTESTED_PREDECESSOR_ROOT/app/.release-source-sha"
+write_release "$UNATTESTED_PREDECESSOR_ROOT/stage" "attested-candidate" compatible
+export CURL_HEALTH_RESULT=success
+if run_activation "$UNATTESTED_PREDECESSOR_ROOT/app" "$UNATTESTED_PREDECESSOR_ROOT/backups" \
+  "$UNATTESTED_PREDECESSOR_ROOT/stage" "unattested-predecessor" \
+  >"$UNATTESTED_PREDECESSOR_ROOT.log" 2>&1; then
+  fail "activation accepted a metadata-less automatic rollback target"
+fi
+grep -Fq 'bootstrap-release-source-metadata.sh' "$UNATTESTED_PREDECESSOR_ROOT.log" \
+  || fail "metadata-less predecessor failure omitted bootstrap recovery guidance"
+grep -Fqx 'unattested-predecessor' "$UNATTESTED_PREDECESSOR_ROOT/app/release-label" \
+  || fail "metadata-less predecessor was moved before rejection"
+grep -Fqx 'attested-candidate' "$UNATTESTED_PREDECESSOR_ROOT/stage/release-label" \
+  || fail "candidate was moved before predecessor attestation"
+[[ ! -s "$PM2_LOG" ]] || fail "metadata-less predecessor rejection touched PM2"
+
+NONEXACT_PREDECESSOR_ROOT="$TMP_DIR/nonexact-predecessor"
+: > "$PM2_LOG"
+write_release "$NONEXACT_PREDECESSOR_ROOT/app" "nonexact-predecessor" compatible
+printf '\n' >> "$NONEXACT_PREDECESSOR_ROOT/app/.release-source-sha"
+write_release "$NONEXACT_PREDECESSOR_ROOT/stage" "nonexact-candidate" compatible
+if run_activation "$NONEXACT_PREDECESSOR_ROOT/app" "$NONEXACT_PREDECESSOR_ROOT/backups" \
+  "$NONEXACT_PREDECESSOR_ROOT/stage" "nonexact-predecessor" \
+  >"$NONEXACT_PREDECESSOR_ROOT.log" 2>&1; then
+  fail "activation accepted predecessor metadata with extra content"
+fi
+grep -Fq 'trusted full-SHA metadata' "$NONEXACT_PREDECESSOR_ROOT.log" \
+  || fail "non-exact predecessor failure was unclear"
+grep -Fqx 'nonexact-predecessor' "$NONEXACT_PREDECESSOR_ROOT/app/release-label" \
+  || fail "non-exact predecessor was moved before rejection"
+[[ ! -s "$PM2_LOG" ]] || fail "non-exact predecessor rejection touched PM2"
 
 MALICIOUS_ID_ROOT="$TMP_DIR/malicious-release-id"
 write_release "$MALICIOUS_ID_ROOT/app" "malicious-id-previous" compatible
@@ -224,7 +273,7 @@ write_release "$MANUAL_ROOT/app" "current-compatible" compatible
 write_release "$MANUAL_ROOT/backups/unmarked-target" "base-0c9e046" incompatible
 export CURL_HEALTH_RESULT=success
 if VPS=fake APP_DIR="$MANUAL_ROOT/app" BACKUPS_DIR="$MANUAL_ROOT/backups" \
-  bash "$SCRIPT_DIR/rollback-release.sh" "$MANUAL_ROOT/backups/unmarked-target" >"$MANUAL_ROOT.log" 2>&1; then
+  bash "$ROLLBACK_SCRIPT" "$MANUAL_ROOT/backups/unmarked-target" >"$MANUAL_ROOT.log" 2>&1; then
   fail "manual rollback accepted an incompatible target"
 fi
 grep -Fqx 'current-compatible' "$MANUAL_ROOT/app/release-label"
@@ -236,7 +285,7 @@ MANUAL_COMPAT_ROOT="$TMP_DIR/manual-compatible"
 write_release "$MANUAL_COMPAT_ROOT/app" "current-compatible" compatible
 write_release "$MANUAL_COMPAT_ROOT/backups/compatible-target" "compatible-target" compatible
 if ! VPS=fake APP_DIR="$MANUAL_COMPAT_ROOT/app" BACKUPS_DIR="$MANUAL_COMPAT_ROOT/backups" \
-  bash "$SCRIPT_DIR/rollback-release.sh" "$MANUAL_COMPAT_ROOT/backups/compatible-target" >"$MANUAL_COMPAT_ROOT.log" 2>&1; then
+  bash "$ROLLBACK_SCRIPT" "$MANUAL_COMPAT_ROOT/backups/compatible-target" >"$MANUAL_COMPAT_ROOT.log" 2>&1; then
   cat "$MANUAL_COMPAT_ROOT.log" >&2
   fail "manual compatible rollback failed"
 fi
@@ -251,7 +300,7 @@ write_release "$MANUAL_RESTORE_ROOT/app" "current-after-failure" compatible
 write_release "$MANUAL_RESTORE_ROOT/backups/failing-target" "failing-target" compatible
 export PM2_FAIL_LABEL=failing-target
 if VPS=fake APP_DIR="$MANUAL_RESTORE_ROOT/app" BACKUPS_DIR="$MANUAL_RESTORE_ROOT/backups" \
-  bash "$SCRIPT_DIR/rollback-release.sh" "$MANUAL_RESTORE_ROOT/backups/failing-target" >"$MANUAL_RESTORE_ROOT.log" 2>&1; then
+  bash "$ROLLBACK_SCRIPT" "$MANUAL_RESTORE_ROOT/backups/failing-target" >"$MANUAL_RESTORE_ROOT.log" 2>&1; then
   fail "manual rollback unexpectedly succeeded after target PM2 failure"
 fi
 unset PM2_FAIL_LABEL

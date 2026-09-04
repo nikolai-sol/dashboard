@@ -17,10 +17,41 @@ test("Alice visibility migration creates normalized immutable snapshot tables", 
     assert.match(sql, new RegExp(`CREATE TABLE IF NOT EXISTS ${table}`));
   }
   assert.match(sql, /source_sha256 CHAR\(64\) NOT NULL/);
-  assert.match(sql, /UNIQUE KEY uniq_alice_snapshot_checksum/);
+  assert.match(sql, /snapshot_fingerprint_sha256 CHAR\(64\)/);
+  assert.match(sql, /UNIQUE KEY uniq_alice_snapshot_fingerprint/);
+  assert.doesNotMatch(sql, /UNIQUE KEY uniq_alice_snapshot_checksum/);
   assert.match(sql, /UNIQUE KEY uniq_alice_query/);
   assert.match(sql, /UNIQUE KEY uniq_alice_source_rank/);
   assert.match(sql, /UNIQUE KEY uniq_alice_snapshot_published_month/);
+});
+
+test("Alice visibility fingerprint upgrade preserves existing snapshots and replaces checksum uniqueness idempotently", () => {
+  const sql = readFileSync("src/db/migrations/063_zaruku_alice_snapshot_fingerprint.sql", "utf8");
+  assert.match(sql, /information_schema\.COLUMNS/);
+  assert.match(sql, /ADD COLUMN snapshot_fingerprint_sha256 CHAR\(64\) DEFAULT NULL/);
+  assert.match(sql, /information_schema\.STATISTICS/);
+  assert.match(sql, /NON_UNIQUE/);
+  assert.match(sql, /DROP INDEX uniq_alice_snapshot_fingerprint/);
+  assert.match(sql, /DROP INDEX uniq_alice_snapshot_checksum/);
+  assert.match(sql, /ADD UNIQUE (?:KEY|INDEX) uniq_alice_snapshot_fingerprint \(analytics_account_id, source_key, snapshot_fingerprint_sha256\)/);
+  assert.ok(
+    sql.indexOf("ADD UNIQUE KEY uniq_alice_snapshot_fingerprint") < sql.indexOf("DROP INDEX uniq_alice_snapshot_checksum"),
+    "replacement fingerprint uniqueness must be installed before checksum uniqueness is removed",
+  );
+  assert.doesNotMatch(sql, /DELETE FROM canonical_alice_visibility_snapshots/);
+  assert.doesNotMatch(sql, /UPDATE canonical_alice_visibility_snapshots/);
+});
+
+test("README deprecates the historical Alice aggregate path without assigning meanings to July 89/155", () => {
+  const readme = readFileSync("README.md", "utf8");
+  const historical = readme.slice(
+    readme.indexOf("### Historical Alice aggregate path"),
+    readme.indexOf("### Zaruku Alice monthly snapshot handoff"),
+  );
+  assert.match(historical, /deprecated/i);
+  assert.match(historical, /89\/155[\s\S]*unconfirmed|unconfirmed[\s\S]*89\/155/i);
+  assert.doesNotMatch(historical, /Use `mentions = rows where Zaruku is present`/);
+  assert.doesNotMatch(historical, /runSeoAiVisibilityImport/);
 });
 
 test("dry-run refuses an invalid summary-only period and timestamp", () => {
@@ -125,9 +156,32 @@ class FakeConnection implements AliceVisibilityImportConnection {
   async execute(sql: string, params: readonly unknown[] = []) {
     this.calls.push({ sql, params });
     if (sql.includes("WHERE analytics_account_id = ? AND source_key = ? AND source_sha256 = ?")) {
-      return [this.mode === "same" ? [{ id: 9 }] : [], undefined] as const;
+      const snapshot = parsedSnapshot();
+      return [this.mode === "same" ? [{
+        id: 9,
+        domain: snapshot.portalDomain,
+        period_month: `${snapshot.period}-01`,
+        captured_at: "2026-09-04 13:28:14",
+        official_sov_pct: "43.9100",
+        exported_query_count: snapshot.exportedQueryCount,
+        portal_present_query_count: snapshot.portalPresentQueryCount,
+        sample_presence_pct: "57.4194",
+        source_filename: snapshot.sourceFilename,
+        source_sha256: snapshot.sourceSha256,
+        ingestion_run_id: `alice-${snapshot.accountId}-yandex_webmaster_alice_manual-${snapshot.sourceSha256}`,
+        source_payload_json: null,
+      }] : [], undefined] as const;
+    }
+    if (sql.trimStart().startsWith("SELECT display_order") && sql.includes("FROM canonical_alice_visibility_featured_sites")) {
+      return [this.mode === "same" ? parsedSnapshot().featured.map((site) => ({
+        display_order: site.displayOrder,
+        site_url: site.siteUrl,
+        site_domain: site.siteDomain,
+        list_kind: "yandex_random_high_mentions",
+      })) : [], undefined] as const;
     }
     if (sql.includes("WHERE analytics_account_id = ? AND period_month = ? AND publication_status = 'published'")) {
+      if (this.mode === "same") return [[{ id: 9, source_sha256: "a".repeat(64) }], undefined] as const;
       return [this.mode === "other" ? [{ id: 7, source_sha256: "b".repeat(64) }] : [], undefined] as const;
     }
     if (sql.includes("AS query_count")) {
@@ -155,6 +209,45 @@ test("persists a complete Alice snapshot transactionally and reconciles its chil
 
 test("returns already_exists for the same source checksum", async () => {
   assert.equal(await persistAliceVisibilitySnapshot(new FakeConnection("same"), parsedSnapshot(), {}), "already_exists");
+});
+
+test("same workbook checksum is idempotent only when authoritative metadata is identical", async () => {
+  const corrections: Array<{
+    label: string;
+    update: (snapshot: ParsedAliceVisibilitySnapshot) => void;
+    options?: Parameters<typeof persistAliceVisibilitySnapshot>[2];
+  }> = [
+    { label: "official SoV", update: (snapshot) => { snapshot.officialSovPct = 43.92; } },
+    { label: "capture time", update: (snapshot) => { snapshot.capturedAt = "2026-09-04T13:29:14.000Z"; } },
+    { label: "featured sites", update: (snapshot) => { snapshot.featured[0]!.siteUrl = "https://corrected-featured.test/"; } },
+    { label: "source payload", update: () => {}, options: { sourcePayloadJson: { correction: true } } },
+  ];
+
+  for (const correction of corrections) {
+    const snapshot = parsedSnapshot();
+    correction.update(snapshot);
+    await assert.rejects(
+      () => persistAliceVisibilitySnapshot(new FakeConnection("same"), snapshot, correction.options ?? {}),
+      /supersede-snapshot-id/,
+      correction.label,
+    );
+  }
+});
+
+test("metadata-only same-workbook correction requires explicit supersession and keeps the old snapshot", async () => {
+  const snapshot = parsedSnapshot();
+  snapshot.officialSovPct = 43.92;
+  const connection = new FakeConnection("same");
+
+  assert.equal(
+    await persistAliceVisibilitySnapshot(connection, snapshot, { supersedeSnapshotId: 9 }),
+    "superseded",
+  );
+  assert.ok(connection.calls.some(({ sql, params }) =>
+    sql.startsWith("UPDATE canonical_alice_visibility_snapshots") && params[0] === 9));
+  const insert = connection.calls.find(({ sql }) => sql.startsWith("INSERT INTO canonical_alice_visibility_snapshots"));
+  assert.ok(insert);
+  assert.match(insert.sql, /snapshot_fingerprint_sha256/);
 });
 
 test("requires an explicit predecessor before replacing a published month", async () => {
@@ -214,6 +307,39 @@ test("rejects duplicate source ranks within one query", async () => {
   await assert.rejects(() => persistAliceVisibilitySnapshot(new FakeConnection("new"), snapshot, {}), /source rank/);
 });
 
+test("persistence rejects non-HTTP and spoofed portal URLs before opening a transaction", async () => {
+  const cases: Array<{ label: string; update: (snapshot: ParsedAliceVisibilitySnapshot) => void }> = [
+    {
+      label: "answer",
+      update: (snapshot) => { snapshot.queries[0]!.aliceAnswerUrl = "javascript://zaruku.ru/answer"; },
+    },
+    {
+      label: "source",
+      update: (snapshot) => { snapshot.sources[0]!.sourceUrl = "data://zaruku.ru/source"; },
+    },
+    {
+      label: "portal",
+      update: (snapshot) => { snapshot.queries[0]!.portalUrl = "https://example.test/path/zaruku.ru"; },
+    },
+    {
+      label: "featured",
+      update: (snapshot) => { snapshot.featured[0]!.siteUrl = "file://zaruku.ru/featured"; },
+    },
+  ];
+
+  for (const item of cases) {
+    const snapshot = parsedSnapshot();
+    item.update(snapshot);
+    const connection = new FakeConnection("new");
+    await assert.rejects(
+      () => persistAliceVisibilitySnapshot(connection, snapshot, {}),
+      /HTTP\(S\)|домен|портал/i,
+      item.label,
+    );
+    assert.deepEqual(connection.lifecycle, [], item.label);
+  }
+});
+
 test("builds the July legacy summary with deterministic provenance-only checksum", async () => {
   const options = parseCliArgs([
     "--summary-only", "--period", "2026-07", "--official-sov", "44", "--captured-at", "2026-07-13T14:30:00.000Z",
@@ -222,10 +348,43 @@ test("builds the July legacy summary with deterministic provenance-only checksum
   const first = createSummaryOnlySnapshot(options);
   const second = createSummaryOnlySnapshot(options);
   assert.equal(first.snapshot.sourceSha256, second.snapshot.sourceSha256);
+  assert.equal(first.sourceKey, "wm_alisa_manual_legacy");
   assert.equal(first.snapshot.exportedQueryCount, null);
   assert.equal(first.snapshot.queries.length, 0);
   assert.deepEqual(first.sourcePayloadJson.legacy_unconfirmed, { definition: "unconfirmed", legacy_mentions: 89, legacy_citations: 155 });
   const connection = new FakeConnection("new");
   assert.equal(await persistAliceVisibilitySnapshot(connection, first.snapshot, { sourceKey: first.sourceKey, sourcePayloadJson: first.sourcePayloadJson }), "inserted");
+  const insertedSnapshot = connection.calls.find(({ sql }) => sql.startsWith("INSERT INTO canonical_alice_visibility_snapshots"));
+  assert.equal(insertedSnapshot?.params[0], "wm_alisa_manual_legacy");
   assert.equal(connection.calls.filter(({ sql }) => /canonical_alice_visibility_(queries|sources|featured_sites)/.test(sql) && sql.startsWith("INSERT")).length, 0);
+});
+
+test("summary-only checksum includes capture time and rejects invalid legacy source keys", () => {
+  const baseArgs = [
+    "--summary-only", "--period", "2026-07", "--official-sov", "44",
+    "--legacy-source", "wm_alisa_manual_legacy", "--legacy-mentions", "89", "--legacy-citations", "155",
+  ];
+  const first = createSummaryOnlySnapshot(parseCliArgs([
+    ...baseArgs, "--captured-at", "2026-07-13T14:30:00.000Z",
+  ]));
+  const corrected = createSummaryOnlySnapshot(parseCliArgs([
+    ...baseArgs, "--captured-at", "2026-07-13T15:30:00.000Z",
+  ]));
+  assert.notEqual(first.snapshot.sourceSha256, corrected.snapshot.sourceSha256);
+  assert.throws(() => parseCliArgs([
+    "--summary-only", "--period", "2026-07", "--official-sov", "44", "--captured-at", "2026-07-13T14:30:00.000Z",
+    "--legacy-source", "wm alisa/../../spoof", "--legacy-mentions", "89", "--legacy-citations", "155",
+  ]), /legacy-source/);
+});
+
+test("summary-only CLI dry-run reports the canonical legacy source key", () => {
+  const result = spawnSync(process.execPath, [
+    "--import", "tsx", "scripts/import-zaruku-alice-visibility.ts",
+    "--summary-only", "--period", "2026-07", "--official-sov", "44",
+    "--captured-at", "2026-07-13T14:30:00.000Z",
+    "--legacy-source", "wm_alisa_manual_legacy", "--legacy-mentions", "89", "--legacy-citations", "155",
+    "--dry-run",
+  ], { encoding: "utf8" });
+  assert.equal(result.status, 0, result.stderr);
+  assert.match(result.stdout, /source_key=wm_alisa_manual_legacy/);
 });

@@ -1301,8 +1301,11 @@ export function buildSources({
   const webmasterStatus = sourceStatusFromData(webmaster.status);
   const gscStatus = sourceStatusFromData(gsc.status);
   const canonicalAliceAvailable = aliceVisibility != null && aliceVisibility.status !== "unavailable";
-  const aiStatus = canonicalAliceAvailable
+  const canonicalAliceHasSnapshots = canonicalAliceAvailable && aliceVisibility.snapshots.length > 0;
+  const aiStatus = canonicalAliceHasSnapshots
     ? sourceStatusFromData(aliceVisibility.status)
+    : canonicalAliceAvailable
+      ? "pending"
     : seoIntelligence.ai.rows.length > 0 ? sourceStatusFromData(seoIntelligence.status) : "pending";
   const wordstatStatus: ZarukuSeoSourceStatus = !wordstat || wordstat.status === "unavailable"
       ? "unavailable"
@@ -1345,13 +1348,15 @@ export function buildSources({
           note:
             aiStatus === "connected"
               ? canonicalAliceAvailable
-                ? "AI-видимость из канонических ежемесячных снимков Алисы."
+                ? "AI-видимость из опубликованных ежемесячных снимков Алисы."
                 : "AI-видимость из прежних ежемесячных снимков: присутствие, упоминания и цитаты."
               : aiStatus === "partial"
                 ? canonicalAliceAvailable
-                  ? "Доступна сводка канонического снимка Алисы, но часть деталей временно недоступна."
+                  ? "Доступна сводка опубликованного ежемесячного снимка Алисы, но часть деталей временно недоступна."
                   : "Часть прежних данных AI-видимости временно недоступна."
-                : "Канонические снимки AI-видимости пока недоступны.",
+                : canonicalAliceAvailable
+                  ? "Опубликованных ежемесячных снимков AI-видимости пока нет."
+                  : "Опубликованные ежемесячные снимки AI-видимости пока недоступны.",
         };
       }
       if (source.id === "wordstat") {

@@ -3,6 +3,7 @@ import test from "node:test";
 import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import ZarukuAliceVisibilityTab from "@/components/ZarukuAliceVisibilityTab";
+import { loadZarukuAliceVisibility } from "@/lib/zaruku-alice-visibility";
 import type { ZarukuAliceVisibilityData, ZarukuAliceVisibilitySnapshot } from "@/lib/types";
 
 const augustSnapshot: ZarukuAliceVisibilitySnapshot = {
@@ -73,7 +74,7 @@ test("renders the August official SoV separately from export coverage", () => {
 
 test("July summary-only view keeps its official SoV and withholds query detail", () => {
   const markup = renderToStaticMarkup(createElement(ZarukuAliceVisibilityTab, { data: data([julySnapshot]), locale: "ru-RU" }));
-  assert.match(markup, /44%/);
+  assert.match(markup, /44,00%/);
   assert.match(markup, /Детализация запросов за июль не была сохранена\./);
   assert.doesNotMatch(markup, /Запросов в выгрузке/);
   assert.doesNotMatch(markup, /89/);
@@ -86,8 +87,29 @@ test("empty data explains what is needed for the first snapshot", () => {
   assert.match(markup, /Передайте месячную выгрузку/);
 });
 
+test("a successful zero-row canonical load reaches the first-upload component guidance", async () => {
+  const loaded = await loadZarukuAliceVisibility(["66624469"], async () => []);
+  assert.equal(loaded.status, "available");
+  assert.equal(loaded.latestMonth, null);
+  const markup = renderToStaticMarkup(createElement(ZarukuAliceVisibilityTab, { data: loaded, locale: "ru-RU" }));
+  assert.match(markup, /Пока нет опубликованных снимков ИИ-видимости/);
+  assert.match(markup, /Передайте месячную выгрузку/);
+  assert.doesNotMatch(markup, /Попробуйте открыть вкладку позже/);
+});
+
+test("a failed canonical snapshot read remains unavailable", async () => {
+  const loaded = await loadZarukuAliceVisibility(["66624469"], async (query) => {
+    if (query.sql.includes("alice-visibility:snapshots")) throw new Error("snapshot read failed");
+    return [];
+  });
+  assert.equal(loaded.status, "unavailable");
+  const markup = renderToStaticMarkup(createElement(ZarukuAliceVisibilityTab, { data: loaded, locale: "ru-RU" }));
+  assert.match(markup, /Попробуйте открыть вкладку позже/);
+  assert.doesNotMatch(markup, /Передайте месячную выгрузку/);
+});
+
 test("unavailable snapshots show an honest retry-later state instead of an import request", () => {
-  const unavailable = { ...data([], "unavailable"), error: "Канонические снимки AI-видимости недоступны." };
+  const unavailable = { ...data([], "unavailable"), error: "Опубликованные ежемесячные снимки AI-видимости недоступны." };
   const markup = renderToStaticMarkup(createElement(ZarukuAliceVisibilityTab, { data: unavailable, locale: "ru-RU" }));
   assert.match(markup, /Данные ИИ-видимости сейчас недоступны/);
   assert.match(markup, /Попробуйте открыть вкладку позже/);
@@ -98,7 +120,7 @@ test("unavailable snapshots show an honest retry-later state instead of an impor
 
 test("partial data preserves the visible monthly result", () => {
   const markup = renderToStaticMarkup(createElement(ZarukuAliceVisibilityTab, { data: data([julySnapshot], "partial"), locale: "ru-RU" }));
-  assert.match(markup, /44%/);
+  assert.match(markup, /44,00%/);
   assert.match(markup, /Детализация запросов за июль не была сохранена\./);
 });
 
@@ -128,4 +150,36 @@ test("partial source and featured reads do not turn empty arrays into factual em
   assert.match(markup, /Примеры заметных сайтов временно недоступны/);
   assert.doesNotMatch(markup, /В выгрузке нет внешних источников для подсчёта/);
   assert.doesNotMatch(markup, /Яндекс не передал примеры заметных сайтов/);
+});
+
+test("detailed view renders safe Zaruku subdomains and suppresses a foreign path spoof", () => {
+  const safeSubdomain = {
+    ...augustSnapshot,
+    queries: [{
+      ...augustSnapshot.queries[0]!,
+      portalUrl: "https://www.zaruku.ru/reabilitaciya",
+      sources: augustSnapshot.queries[0]!.sources.map((source) => source.isPortal
+        ? { ...source, sourceUrl: "https://guides.zaruku.ru/reabilitaciya", sourceDomain: "guides.zaruku.ru" }
+        : source),
+    }],
+  };
+  const safeMarkup = renderToStaticMarkup(createElement(ZarukuAliceVisibilityTab, { data: data([safeSubdomain]), locale: "ru-RU" }));
+  assert.match(safeMarkup, /href="https:\/\/www\.zaruku\.ru\/reabilitaciya"/);
+  assert.match(safeMarkup, /href="https:\/\/guides\.zaruku\.ru\/reabilitaciya"/);
+
+  const spoofed = {
+    ...safeSubdomain,
+    queries: [{ ...safeSubdomain.queries[0]!, portalUrl: "https://example.test/path/zaruku.ru" }],
+  };
+  const spoofedMarkup = renderToStaticMarkup(createElement(ZarukuAliceVisibilityTab, { data: data([spoofed]), locale: "ru-RU" }));
+  assert.doesNotMatch(spoofedMarkup, /href="https:\/\/example\.test\/path\/zaruku\.ru"/);
+});
+
+test("detailed UI formats official SoV and percentage-point delta without a percent-point hybrid", () => {
+  const markup = renderToStaticMarkup(createElement(ZarukuAliceVisibilityTab, { data: data([julySnapshot, augustSnapshot]), locale: "ru-RU" }));
+  assert.match(markup, /43,91%/);
+  assert.match(markup, /Δ −0,09 п\. п\./);
+  assert.doesNotMatch(markup, /% п\.?п\.?/);
+  const julyMarkup = renderToStaticMarkup(createElement(ZarukuAliceVisibilityTab, { data: data([julySnapshot]), locale: "ru-RU" }));
+  assert.match(julyMarkup, /44,00%/);
 });

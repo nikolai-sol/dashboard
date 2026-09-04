@@ -290,7 +290,7 @@ export function normalizeAliceVisibilityRows(
   normalizedSnapshots.sort((left, right) => right.month.localeCompare(left.month));
 
   return {
-    status: normalizedSnapshots.length > 0 ? "available" : "unavailable",
+    status: "available",
     error: null,
     months: [...new Set(normalizedSnapshots.map((snapshot) => snapshot.month))],
     latestMonth: normalizedSnapshots[0]?.month ?? null,
@@ -311,7 +311,7 @@ export async function loadZarukuAliceVisibility(
   const settled = await Promise.allSettled(queries.map((query) => queryRunner(query)));
   const snapshotResult = settled[0];
   if (snapshotResult.status === "rejected") {
-    return { status: "unavailable", error: "Канонические снимки AI-видимости недоступны.", months: [], latestMonth: null, snapshots: [] };
+    return { status: "unavailable", error: "Опубликованные ежемесячные снимки AI-видимости недоступны.", months: [], latestMonth: null, snapshots: [] };
   }
 
   const readRows = <T>(result: PromiseSettledResult<unknown[]>) =>
@@ -323,7 +323,7 @@ export async function loadZarukuAliceVisibility(
     readRows<FeaturedDbRow>(settled[3]),
   );
   if (settled.slice(1).some((result) => result.status === "rejected") && data.status === "available") {
-    return { ...data, status: "partial", error: "Часть канонических деталей AI-видимости недоступна." };
+    return { ...data, status: "partial", error: "Часть деталей опубликованных ежемесячных снимков AI-видимости недоступна." };
   }
   return data;
 }

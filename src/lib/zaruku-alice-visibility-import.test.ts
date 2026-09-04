@@ -108,5 +108,51 @@ test("parser rejects non-empty extra header columns", async () => assert.rejects
 test("parser rejects non-empty cells beyond the tenth source", async () => assert.rejects(async () => parseAliceVisibilityWorkbook(await workbookBuffer([[...header], ["q", "false", "https://a.test", "https://example.org", ...Array(9).fill(null), "https://extra.example"]]), input), /лишн/));
 test("parser rejects duplicate queries", async () => assert.rejects(async () => parseAliceVisibilityWorkbook(await workbookBuffer([header, ["q", "false", "https://a.test", "https://example.org"], [" Q ", "false", "https://a.test", "https://example.org"]]), input), /повторяется/));
 test("parser rejects invalid presence flags", async () => assert.rejects(async () => parseAliceVisibilityWorkbook(await workbookBuffer([header, ["q", "yes", "https://a.test", "https://example.org"]]), input), /true или false/));
-test("parser rejects invalid URLs", async () => assert.rejects(async () => parseAliceVisibilityWorkbook(await workbookBuffer([header, ["q", "false", "not-a-url", "https://example.org"]]), input), /ссылка отсутствует|Invalid URL/));
+test("parser rejects invalid URLs", async () => assert.rejects(async () => parseAliceVisibilityWorkbook(await workbookBuffer([header, ["q", "false", "not-a-url", "https://example.org"]]), input), /ссылка отсутствует|Invalid URL|HTTP\(S\)/));
 test("parser rejects presence/source mismatches", async () => assert.rejects(async () => parseAliceVisibilityWorkbook(await workbookBuffer([header, ["q", "true", "https://a.test", "https://example.org"]]), input), /не совпадает/));
+
+test("parser rejects non-HTTP answer, source, and featured URLs before persistence", async () => {
+  const cases = [
+    {
+      label: "answer",
+      rows: [header, ["q", "false", "javascript://zaruku.ru/alert(1)"]],
+      featuredSites: [] as string[],
+    },
+    {
+      label: "source",
+      rows: [header, ["q", "true", "https://alice.example/answer", "data://zaruku.ru/spoof"]],
+      featuredSites: [] as string[],
+    },
+    {
+      label: "featured",
+      rows: [header, ["q", "false", "https://alice.example/answer"]],
+      featuredSites: ["file://zaruku.ru/featured"],
+    },
+  ];
+  for (const item of cases) {
+    await assert.rejects(
+      async () => parseAliceVisibilityWorkbook(
+        await workbookBuffer(item.rows),
+        { ...input, featuredSites: item.featuredSites },
+      ),
+      /http|https|URL|ссыл/i,
+      item.label,
+    );
+  }
+});
+
+test("parser classifies safe www and nested Zaruku hosts as portal sources", async () => {
+  const parsed = await parseAliceVisibilityWorkbook(await workbookBuffer([
+    header,
+    ["www", "true", "https://alice.example/answer/1", "https://www.zaruku.ru/article"],
+    ["nested", "true", "https://alice.example/answer/2", "http://guides.zaruku.ru/article"],
+    ["spoof", "false", "https://alice.example/answer/3", "https://example.test/path/zaruku.ru"],
+  ]), { ...input, featuredSites: [] });
+
+  assert.deepEqual(parsed.queries.map((query) => query.portalPresent), [true, true, false]);
+  assert.deepEqual(parsed.queries.map((query) => query.portalUrl), [
+    "https://www.zaruku.ru/article",
+    "http://guides.zaruku.ru/article",
+    null,
+  ]);
+});

@@ -71,10 +71,14 @@ mkdir -p "$VALID_RELEASE/public/images"
 printf 'image' > "$VALID_RELEASE/public/images/abbott-logo.png"
 write_valid_env "$VALID_RELEASE/.env"
 write_release_contract "$VALID_RELEASE"
-(
+if ! (
   cd "$TMP_DIR"
   bash "$SCRIPT_DIR/validate-production-release.sh" "$VALID_RELEASE" "$VALID_RELEASE/.env"
-) >"$TMP_DIR/valid.log" 2>&1
+) >"$TMP_DIR/valid.log" 2>&1; then
+  cat "$TMP_DIR/valid.log" >&2
+  echo "validate-production-release.sh rejected the valid release fixture" >&2
+  exit 1
+fi
 
 grep -q 'ABBOTT_DASHBOARD_PASSWORD' "$SCRIPT_DIR/validate-production-release.sh"
 ! grep -q 'ZARUKU_DASHBOARD_PASSWORD' "$SCRIPT_DIR/validate-production-release.sh"

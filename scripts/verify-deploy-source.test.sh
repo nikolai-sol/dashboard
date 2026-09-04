@@ -39,10 +39,6 @@ set_active_sha() {
   printf 'sha:%s\n' "$1" > "$ACTIVE_RELEASE_STATE"
 }
 
-set_active_path() {
-  printf 'path:%s\n' "$1" > "$ACTIVE_RELEASE_STATE"
-}
-
 git init --bare --quiet "$TMP_DIR/remote.git"
 git clone --quiet "$TMP_DIR/remote.git" "$TMP_DIR/upstream"
 git -C "$TMP_DIR/upstream" config user.email test@example.com
@@ -67,9 +63,12 @@ grep -Fq "$BASE_SHA" "$TMP_DIR/current.log" || fail "full production SHA was not
 printf 'release\n' >> "$TMP_DIR/release/app.txt"
 git -C "$TMP_DIR/release" commit --quiet -am release
 DESCENDANT_SHA="$(git -C "$TMP_DIR/release" rev-parse HEAD)"
-set_active_path "$TMP_DIR/releases/20260904-$(git -C "$TMP_DIR/release" rev-parse --short=7 "$BASE_SHA")"
-run_guard > "$TMP_DIR/legacy.log"
-grep -Fq "$BASE_SHA" "$TMP_DIR/legacy.log" || fail "unambiguous legacy release SHA was not expanded"
+printf 'missing-metadata:/var/www/dashboard\n' > "$ACTIVE_RELEASE_STATE"
+if run_guard > "$TMP_DIR/fixed-path-missing-metadata.log" 2>&1; then
+  fail "fixed APP_DIR without source metadata was accepted"
+fi
+grep -Fq 'run scripts/bootstrap-release-source-metadata.sh' "$TMP_DIR/fixed-path-missing-metadata.log" \
+  || fail "fixed-path metadata failure did not name the audited bootstrap command"
 
 printf 'upstream\n' >> "$TMP_DIR/upstream/app.txt"
 git -C "$TMP_DIR/upstream" commit --quiet -am upstream
@@ -94,36 +93,6 @@ fi
 grep -Fq "does not contain active production commit $PRODUCTION_SHA" "$TMP_DIR/production-ancestor.log" \
   || fail "missing-production-ancestor failure was unclear"
 
-COLLISION_VALUES="$TMP_DIR/collision-values"
-node - "$COLLISION_VALUES" <<'NODE'
-const crypto = require("node:crypto");
-const fs = require("node:fs");
-const output = process.argv[2];
-const seen = new Map();
-for (let index = 0; ; index += 1) {
-  const value = `legacy-collision-${index}\n`;
-  const body = Buffer.from(value);
-  const object = Buffer.concat([Buffer.from(`blob ${body.length}\0`), body]);
-  const sha = crypto.createHash("sha1").update(object).digest("hex");
-  const prefix = sha.slice(0, 7);
-  const prior = seen.get(prefix);
-  if (prior !== undefined) {
-    fs.writeFileSync(output, `${prefix}\n${prior}${value}`);
-    break;
-  }
-  seen.set(prefix, value);
-}
-NODE
-COLLISION_PREFIX="$(sed -n '1p' "$COLLISION_VALUES")"
-sed -n '2p' "$COLLISION_VALUES" | git -C "$TMP_DIR/release" hash-object -w --stdin >/dev/null
-sed -n '3p' "$COLLISION_VALUES" | git -C "$TMP_DIR/release" hash-object -w --stdin >/dev/null
-set_active_path "$TMP_DIR/releases/20260904-$COLLISION_PREFIX"
-if run_guard > "$TMP_DIR/ambiguous.log" 2>&1; then
-  fail "ambiguous legacy release SHA was accepted"
-fi
-grep -Fq "legacy release SHA '$COLLISION_PREFIX' is ambiguous" "$TMP_DIR/ambiguous.log" \
-  || fail "ambiguous-legacy failure was unclear"
-
 set_active_sha "$(git -C "$TMP_DIR/release" rev-parse HEAD)"
 printf 'dirty\n' >> "$TMP_DIR/release/app.txt"
 if run_guard > "$TMP_DIR/dirty.log" 2>&1; then
@@ -142,17 +111,6 @@ rm "$TMP_DIR/release/untracked.txt"
 
 git -C "$TMP_DIR/release" tag -a legacy-annotated -m legacy-annotated
 ANNOTATED_TAG_FULL_SHA="$(git -C "$TMP_DIR/release" rev-parse refs/tags/legacy-annotated)"
-ANNOTATED_TAG_SHA="$(git -C "$TMP_DIR/release" rev-parse --short=12 refs/tags/legacy-annotated)"
-set_active_path "$TMP_DIR/releases/20260904-$ANNOTATED_TAG_SHA"
-if run_guard > "$TMP_DIR/annotated-tag.log" 2>&1; then
-  fail "annotated tag object was accepted as a legacy commit SHA"
-fi
-grep -Fq "does not identify a commit object" "$TMP_DIR/annotated-tag.log" \
-  || {
-    cat "$TMP_DIR/annotated-tag.log" >&2
-    fail "annotated-tag failure was unclear"
-  }
-
 set_active_sha "$ANNOTATED_TAG_FULL_SHA"
 if run_guard > "$TMP_DIR/annotated-tag-metadata.log" 2>&1; then
   fail "annotated tag object was accepted as full release metadata"
@@ -184,6 +142,20 @@ if DEPLOY_ACTIVE_RELEASE_READER= DEPLOY_SSH_BIN="$TMP_DIR/bin/ssh" DEPLOY_VPS=fa
 fi
 grep -Fq "active release metadata is not a regular file" "$TMP_DIR/symlink-metadata.log" \
   || fail "unsafe active metadata failure was unclear"
+
+rm "$ACTIVE_DIR/.release-source-sha"
+printf '%s\n\n' "$(git -C "$TMP_DIR/release" rev-parse HEAD)" > "$ACTIVE_DIR/.release-source-sha"
+if DEPLOY_ACTIVE_RELEASE_READER= DEPLOY_SSH_BIN="$TMP_DIR/bin/ssh" DEPLOY_VPS=fake \
+  DEPLOY_APP_DIR="$ACTIVE_DIR" bash "$VERIFY_SCRIPT" "$TMP_DIR/release" \
+  > "$TMP_DIR/non-exact-metadata.log" 2>&1; then
+  fail "active release metadata containing more than one exact SHA line was accepted"
+fi
+grep -Fq "active release metadata does not contain exactly one full Git SHA" \
+  "$TMP_DIR/non-exact-metadata.log" || fail "non-exact metadata failure was unclear"
+
+if grep -Fq 'resolve_legacy_sha' "$VERIFY_SCRIPT" || grep -Fq 'path:*)' "$VERIFY_SCRIPT"; then
+  fail "deploy source guard retains a legacy basename inference path"
+fi
 
 [[ "$DESCENDANT_SHA" =~ ^[0-9a-f]{40}$ ]] || fail "test fixture did not create a full SHA"
 echo "deploy source guard tests passed"

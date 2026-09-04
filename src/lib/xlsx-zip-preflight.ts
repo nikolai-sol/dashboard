@@ -140,20 +140,26 @@ function validateLocalHeader(
     ) {
       malformed("data descriptor and local entry sizes disagree");
     }
-    requireRange(bytes, dataEnd, 12, "data descriptor");
-    const hasSignature = bytes.readUInt32LE(dataEnd) === DATA_DESCRIPTOR_SIGNATURE;
-    const valuesOffset = dataEnd + (hasSignature ? 4 : 0);
-    const descriptorBytes = hasSignature ? 16 : 12;
-    requireRange(bytes, dataEnd, descriptorBytes, "data descriptor");
-    end = dataEnd + descriptorBytes;
-    if (end > centralDirectoryOffset) malformed("data descriptor overlaps the central directory");
-    if (
-      bytes.readUInt32LE(valuesOffset) !== entry.crc ||
-      bytes.readUInt32LE(valuesOffset + 4) !== entry.compressedBytes ||
-      bytes.readUInt32LE(valuesOffset + 8) !== entry.uncompressedBytes
-    ) {
-      malformed("data descriptor disagrees with central entry metadata");
+    const descriptorMatches = (valuesOffset: number, descriptorEnd: number) =>
+      descriptorEnd <= centralDirectoryOffset &&
+      descriptorEnd <= bytes.length &&
+      bytes.readUInt32LE(valuesOffset) === entry.crc &&
+      bytes.readUInt32LE(valuesOffset + 4) === entry.compressedBytes &&
+      bytes.readUInt32LE(valuesOffset + 8) === entry.uncompressedBytes;
+    const descriptorEnds: number[] = [];
+    if (dataEnd + 12 <= bytes.length && descriptorMatches(dataEnd, dataEnd + 12)) {
+      descriptorEnds.push(dataEnd + 12);
     }
+    if (
+      dataEnd + 16 <= bytes.length &&
+      bytes.readUInt32LE(dataEnd) === DATA_DESCRIPTOR_SIGNATURE &&
+      descriptorMatches(dataEnd + 4, dataEnd + 16)
+    ) {
+      descriptorEnds.push(dataEnd + 16);
+    }
+    if (descriptorEnds.length === 0) malformed("data descriptor disagrees with central entry metadata");
+    if (descriptorEnds.length > 1) malformed("data descriptor layout is ambiguous");
+    end = descriptorEnds[0]!;
   } else if (
     localCrc !== entry.crc ||
     localCompressedBytes !== entry.compressedBytes ||

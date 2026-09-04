@@ -65,6 +65,7 @@ COMPATIBILITY_MARKER=".shared-password-db-auth-v1"
 SOURCE_SHA_FILE=".release-source-sha"
 PREVIOUS_DIR="$BACKUPS_DIR/${RELEASE_ID}-previous"
 FAILED_DIR="$BACKUPS_DIR/${RELEASE_ID}-failed"
+PREVIOUS_RELEASE_SHA=""
 
 is_compatible_release() {
   local release_dir="$1"
@@ -79,7 +80,8 @@ read_release_sha() {
     return 1
   fi
   source_sha="$(cat "$metadata_file")"
-  if [[ ! "$source_sha" =~ ^[0-9a-f]{40}$ ]]; then
+  if [[ ! "$source_sha" =~ ^[0-9a-f]{40}$ ]] || \
+     ! cmp -s "$metadata_file" <(printf '%s\n' "$source_sha"); then
     return 1
   fi
   printf '%s\n' "$source_sha"
@@ -102,9 +104,13 @@ rollback() {
     mv "$APP_DIR" "$FAILED_DIR"
   fi
 
-  if [[ -d "$PREVIOUS_DIR" ]] && is_compatible_release "$PREVIOUS_DIR"; then
+  local rollback_source_sha=""
+  if [[ -d "$PREVIOUS_DIR" ]] && is_compatible_release "$PREVIOUS_DIR" && \
+     rollback_source_sha="$(read_release_sha "$PREVIOUS_DIR")" && \
+     [[ -n "$PREVIOUS_RELEASE_SHA" && "$rollback_source_sha" == "$PREVIOUS_RELEASE_SHA" ]]; then
     mv "$PREVIOUS_DIR" "$APP_DIR"
-    if start_release "$APP_DIR"; then
+    if start_release "$APP_DIR" && \
+       [[ "$(read_release_sha "$APP_DIR" 2>/dev/null || true)" == "$PREVIOUS_RELEASE_SHA" ]]; then
       pm2 save || true
     else
       pm2 stop "$APP_NAME" >/dev/null 2>&1 || true
@@ -137,6 +143,17 @@ fi
 if [[ "$STAGED_RELEASE_SHA" != "$RELEASE_SHA" ]]; then
   echo "Staged release source SHA $STAGED_RELEASE_SHA does not match expected source SHA $RELEASE_SHA" >&2
   exit 1
+fi
+
+if [[ -e "$APP_DIR" ]]; then
+  if [[ ! -d "$APP_DIR" || -L "$APP_DIR" ]]; then
+    echo "Active release directory is unavailable or unsafe: $APP_DIR" >&2
+    exit 1
+  fi
+  if ! PREVIOUS_RELEASE_SHA="$(read_release_sha "$APP_DIR")"; then
+    echo "Active release is missing trusted full-SHA metadata; run scripts/bootstrap-release-source-metadata.sh before the first guarded rollout" >&2
+    exit 1
+  fi
 fi
 
 mkdir -p "$BACKUPS_DIR"

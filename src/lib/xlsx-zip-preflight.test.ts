@@ -228,6 +228,22 @@ test("XLSX ZIP preflight validates signed and unsigned data descriptors", async 
   }
 });
 
+test("XLSX ZIP preflight accepts an unsigned descriptor whose CRC equals the optional signature", async () => {
+  const preflight = await loadPreflight();
+  const payloadWithSignatureCrc = Buffer.from("ac0a7ad5", "hex");
+  assert.equal(crc32(payloadWithSignatureCrc), 0x08074b50);
+  const archive = zipFixture([{
+    name: "xl/worksheets/crc-signature.xml",
+    data: payloadWithSignatureCrc,
+    compression: "store",
+    flags: 0x0008,
+    zeroLocalMetadata: true,
+    dataDescriptor: "unsigned",
+  }]);
+
+  assert.doesNotThrow(() => preflight.assertBoundedXlsxZip(archive));
+});
+
 test("XLSX ZIP preflight rejects unsupported general-purpose flags", async () => {
   const preflight = await loadPreflight();
   const reservedFlag = zipFixture([{

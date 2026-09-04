@@ -149,6 +149,36 @@ systemctl reload nginx
 
 ## Deploy
 
+### Одноразовый bootstrap метаданных для первого guarded rollout
+
+Эта процедура нужна только для перехода уже активного fixed-path приложения
+`/var/www/dashboard`, созданного до появления `.release-source-sha`. Скрипт не определяет commit из имени `/var/www/dashboard`.
+Сначала оператор независимо устанавливает точный полный SHA по
+проверенному deployment record/release-артефакту и сохраняет это доказательство в журнале изменения.
+Отдельно, read-only, оператор фиксирует точный Next.js build identity активного приложения:
+
+```bash
+ssh beget 'cat /var/www/dashboard/.next/BUILD_ID'
+```
+
+Из clean candidate checkout, история которого должна содержать установленный активный commit,
+выполнить:
+
+```bash
+bash scripts/bootstrap-release-source-metadata.sh <full-source-sha> <exact-active-build-id>
+```
+
+Команда принимает только 40-символьный lowercase SHA и проверяет, что он является прямым локальным commit-объектом и предком candidate `HEAD`.
+Затем она получает общий lock
+`/var/www/.dashboard-next-deploy.lock`, затем повторно сверяет переданный build ID с активным
+`/var/www/dashboard/.next/BUILD_ID`. Только после этих проверок она атомарно публикует ровно
+переданный SHA, читает его обратно и оставляет `.release-source-sha` с mode `0600`. Существующие
+конфликтующие или symlink-метаданные сохраняются, а команда останавливается. У команды нет режима
+обхода или замены существующей аттестации.
+
+Зафиксировать в audit log полный SHA, build ID и успешную строку команды. После перехода обычный
+deploy остаётся fail-closed и повторный bootstrap не заменяет метаданные.
+
 Локальный deploy с Mac:
 
 ```bash
@@ -184,9 +214,9 @@ npm run deploy
   заново пройти проверки и повторить deploy.
 - `HEAD does not contain active production commit <sha>` — остановиться, получить названный commit,
   объединить его с release-веткой и пересобрать кандидат. Не использовать force/bypass.
-- `legacy release SHA ... is ambiguous` — определить точный активный commit по проверенному артефакту
-  релиза и записать его полный 40-символьный SHA в `/var/www/dashboard/.release-source-sha`;
-  не выбирать совпадение по догадке.
+- `active fixed release ... has no trusted full-SHA metadata` — выполнить описанную выше одноразовую
+  audited bootstrap-процедуру с двумя независимыми доказательствами; не записывать metadata вручную
+  и не выводить commit из fixed-path имени.
 - `Deployment lock is already held` — дождаться владельца из owner metadata. Если процесса deploy уже
   точно нет, оператор вручную проверяет lock и только после этого удаляет его; скрипт неизвестный lock
   автоматически не удаляет.
@@ -212,6 +242,13 @@ ssh beget 'cat /var/www/dashboard/.release-source-sha'
 ```
 
 ## Rollback
+
+Обе части manual rollback используют тот же фиксированный lock
+`/var/www/.dashboard-next-deploy.lock`, что и deploy. При неоднозначном результате SSH acquire cleanup
+пытается снять только lock с token текущего запуска; чужой или неизвестный lock сохраняется. Target и
+текущий release должны иметь regular `.release-source-sha` ровно с одним полным lowercase SHA.
+Metadata-less legacy backup не активируется: его нужно пересобрать как проверенный release с доверенной
+full-SHA metadata, а не восстанавливать SHA из имени каталога.
 
 Откатить на последний backup-релиз:
 

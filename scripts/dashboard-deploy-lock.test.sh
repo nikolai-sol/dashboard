@@ -73,11 +73,7 @@ const source = fs.readFileSync(process.argv[2], "utf8");
 const steps = [
   ['bash scripts/verify-deploy-source.sh "$APP_SOURCE_DIR"', "initial source check"],
   ["npm ci", "dependency installation"],
-  ["npm test", "recursive tests"],
-  ["npm run typecheck", "typecheck"],
-  ["npm run lint", "lint"],
-  ["npm run security:public-assets", "public-asset check"],
-  ["npm run build", "production build"],
+  ["npm run predeploy:verify", "complete predeploy verification"],
   ["acquire_deploy_lock", "lock acquisition"],
   ["verify_deploy_source_under_lock", "production recheck under lock"],
   [".release-source-sha", "release SHA packaging"],
@@ -103,11 +99,12 @@ NODE
 
 node - "$SCRIPT_DIR/../package.json" <<'NODE'
 const pkg = require(process.argv[2]);
-if (pkg.scripts["test:deploy-source"] !== "bash scripts/verify-deploy-source.test.sh && bash scripts/dashboard-deploy-lock.test.sh && bash scripts/dashboard-deploy-integration.test.sh") {
+if (pkg.scripts["test:deploy-source"] !== "bash scripts/verify-deploy-source.test.sh && bash scripts/dashboard-deploy-lock.test.sh && bash scripts/dashboard-deploy-integration.test.sh && bash scripts/bootstrap-release-source-metadata.test.sh && bash scripts/predeploy-verify.test.sh") {
   throw new Error("test:deploy-source does not run all deploy-isolation focused suites");
 }
-if (!pkg.scripts["test:release-runtime"].includes("bash scripts/release-rollback.test.sh")) {
-  throw new Error("test:release-runtime does not retain release activation/rollback coverage");
+if (!pkg.scripts["test:release-runtime"].includes("bash scripts/release-rollback.test.sh") ||
+    !pkg.scripts["test:release-runtime"].includes("bash scripts/rollback-authority.test.sh")) {
+  throw new Error("test:release-runtime does not retain release activation and shared-authority rollback coverage");
 }
 NODE
 

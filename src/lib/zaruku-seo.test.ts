@@ -205,6 +205,44 @@ test("legacy AI source metadata remains available when canonical Alice tables ar
   assert.equal(aliceSource?.data_through, "2026-07-13 14:30:00");
 });
 
+test("successful empty Alice snapshot reads stay pending with no data-through and do not reuse legacy facts", async (t) => {
+  t.mock.method(
+    pool as unknown as {
+      execute: (sql: string, params?: unknown[]) => Promise<[unknown[], unknown[]]>;
+    },
+    "execute",
+    async (sql: string) => {
+      if (sql.includes("FROM seo_ai_visibility")) {
+        return [[{
+          engine: "alisa_ai",
+          period: "2026-07",
+          mentions: 89,
+          citations: 155,
+          presence_rate: 44,
+          provenance: "wm_alisa_manual",
+          captured_at: "2026-07-13 14:30:00",
+          ingestion_run_id: "seo_os_ai_visibility_2026-07_alisa_ai",
+        }], []];
+      }
+      return [[], []];
+    },
+  );
+
+  const data = await loadZarukuSeoData(
+    ["66624469"],
+    "2026-07-01",
+    "2026-07-31",
+    { today: "2026-08-03" },
+  );
+
+  assert.equal(data.alice_visibility.status, "available");
+  assert.deepEqual(data.alice_visibility.snapshots, []);
+  const aliceSource = data.sources.find((source) => source.id === "yandex_gen_search");
+  assert.equal(aliceSource?.status, "pending");
+  assert.equal(aliceSource?.data_through, null);
+  assert.match(aliceSource?.note ?? "", /Опубликованных ежемесячных снимков/);
+});
+
 test("organic landing read model joins canonical titles and collapses search engines by normalized URL", async (t) => {
   const canonicalUrl = "https://zaruku.ru/rak-molochnoj-zhelezy/invalidnost-pri-rake-molochnoj-zhelezy-kak-poluchit-i-kakie-preimushestva-ona-daet/";
   const pageTitle = "Инвалидность при раке молочной железы. Как получить и какие преимущества она дает";
@@ -397,6 +435,18 @@ test("buildSources exposes collection provenance and preserves explicit data-thr
     Object.fromEntries(sources.map((item) => [item.id, item.data_through])),
     dataThrough,
   );
+
+  const emptyAliceSources = buildSources({
+    seoOsStatus: "available",
+    gsc,
+    webmaster,
+    seoIntelligence,
+    aliceVisibility: { status: "available", error: null, months: [], latestMonth: null, snapshots: [] },
+    dataThrough: { ...dataThrough, yandex_gen_search: null },
+  });
+  const emptyAliceSource = emptyAliceSources.find((item) => item.id === "yandex_gen_search");
+  assert.equal(emptyAliceSource?.status, "pending");
+  assert.equal(emptyAliceSource?.data_through, null);
 });
 
 test("deriveSourceDataThrough uses only loaded Webmaster, SEO OS, and AI freshness facts", () => {
