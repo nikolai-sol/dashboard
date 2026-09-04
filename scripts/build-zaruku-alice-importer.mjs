@@ -7,6 +7,16 @@ import { fileURLToPath, pathToFileURL } from "node:url";
 const projectRoot = path.resolve(fileURLToPath(new URL("..", import.meta.url)));
 const releaseImportCommand = "node scripts/import-zaruku-alice-visibility.cjs";
 
+export function assertAliceBundleIsolation(artifact, inputPaths) {
+  const hasSheetJsInput = inputPaths.some((inputPath) =>
+    /(^|[\\/])node_modules[\\/]xlsx(?:[\\/]|$)/i.test(inputPath),
+  );
+  const hasSheetJsSpecifier = /(?:\brequire(?:\.resolve)?\s*\(\s*|\bfrom\s+|\bimport\s*(?:\(\s*)?)["']xlsx(?:["'/])/i.test(artifact);
+  if (hasSheetJsInput || hasSheetJsSpecifier || /SheetJS|sheetjs\.com|js-xlsx/i.test(artifact)) {
+    throw new Error("Alice importer bundle violates SheetJS isolation");
+  }
+}
+
 function parseArguments(args) {
   const options = {};
   for (let index = 0; index < args.length; index += 1) {
@@ -26,7 +36,7 @@ function parseArguments(args) {
 
 export async function buildZarukuAliceImporter({ outfile, packageJsonPath }) {
   mkdirSync(path.dirname(outfile), { recursive: true });
-  await build({
+  const result = await build({
     absWorkingDir: projectRoot,
     entryPoints: ["scripts/import-zaruku-alice-visibility-release.ts"],
     outfile,
@@ -37,9 +47,11 @@ export async function buildZarukuAliceImporter({ outfile, packageJsonPath }) {
     legalComments: "eof",
     logLevel: "silent",
     sourcemap: false,
+    metafile: true,
   });
 
   const artifact = readFileSync(outfile, "utf8");
+  assertAliceBundleIsolation(artifact, Object.keys(result.metafile.inputs));
   if (/\/Users\/|@esbuild\/darwin-arm64|node_modules\/tsx|get-tsconfig/.test(artifact)) {
     throw new Error("Alice importer bundle contains a build-host runtime reference");
   }

@@ -1,6 +1,5 @@
 import Papa from "papaparse";
-import type ExcelJS from "exceljs";
-import { loadExcelWorkbook, worksheetToObjects } from "@/lib/exceljs-tabular";
+import * as XLSX from "xlsx";
 
 export interface MediaPlanRow {
   platform: string; // instrument/channel from the media plan, not necessarily a DSP source
@@ -196,10 +195,17 @@ function normalizeHeader(header: string): string {
   return header.trim().toLowerCase().replace(/\s+/g, "_");
 }
 
-function toObjectsFromWorksheet(worksheet: ExcelJS.Worksheet): Record<string, unknown>[] {
-  return worksheetToObjects(worksheet, {
-    normalizeHeader,
-    includeRowIndex: true,
+function toObjectsFromWorksheet(worksheet: XLSX.WorkSheet): Record<string, unknown>[] {
+  return XLSX.utils.sheet_to_json<Record<string, unknown>>(worksheet, {
+    defval: "",
+    raw: true,
+  }).map((row, index) => {
+    const normalized: Record<string, unknown> = {};
+    for (const [key, value] of Object.entries(row)) {
+      normalized[normalizeHeader(key)] = value;
+    }
+    normalized.__row_index = index + 2;
+    return normalized;
   });
 }
 
@@ -524,17 +530,18 @@ function parseCsvText(csvText: string): {
   };
 }
 
-async function parseXlsxBuffer(buffer: Buffer): Promise<{
+function parseXlsxBuffer(buffer: Buffer): {
   headers: string[];
   raw_rows: number;
   rows: MediaPlanRow[];
-}> {
-  const workbook = await loadExcelWorkbook(buffer);
-  const worksheet = workbook.worksheets[0];
-  if (!worksheet) {
+} {
+  const workbook = XLSX.read(buffer, { type: "buffer" });
+  const firstSheetName = workbook.SheetNames[0];
+  if (!firstSheetName) {
     return { headers: [], raw_rows: 0, rows: [] };
   }
 
+  const worksheet = workbook.Sheets[firstSheetName];
   const objects = toObjectsFromWorksheet(worksheet);
   const headers = objects[0] ? Object.keys(objects[0]) : [];
   const rows = objects
@@ -548,11 +555,11 @@ async function parseXlsxBuffer(buffer: Buffer): Promise<{
   };
 }
 
-async function parseUploadFile(upload: MediaPlanUploadPayload): Promise<{
+function parseUploadFile(upload: MediaPlanUploadPayload): {
   headers: string[];
   raw_rows: number;
   rows: MediaPlanRow[];
-}> {
+} {
   const filename = upload.filename.toLowerCase();
   const mimeType = String(upload.mime_type ?? "").toLowerCase();
   const buffer = Buffer.from(upload.content_base64, "base64");
@@ -620,7 +627,7 @@ export async function parseMediaPlanSource(
 
   const upload = parseUploadPayload(config.upload_file);
   if (upload) {
-    const parsed = await parseUploadFile(upload);
+    const parsed = parseUploadFile(upload);
     return {
       input_url: upload.filename,
       fetch_url: `upload:${upload.filename}`,

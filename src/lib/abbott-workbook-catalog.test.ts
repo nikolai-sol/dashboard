@@ -4,22 +4,19 @@ import { mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, statSync, sy
 import { tmpdir } from "node:os";
 import path from "node:path";
 import test from "node:test";
-import ExcelJS from "exceljs";
+import * as XLSX from "xlsx";
 import { buildAbbottCatalogAudit, parseAbbottWorkbookCatalog } from "./abbott-workbook-catalog";
 
-async function workbookBuffer(sheets: Record<string, Array<Record<string, unknown>>>): Promise<Buffer> {
-  const workbook = new ExcelJS.Workbook();
+function workbookBuffer(sheets: Record<string, Array<Record<string, unknown>>>): Buffer {
+  const workbook = XLSX.utils.book_new();
   for (const [name, rows] of Object.entries(sheets)) {
-    const worksheet = workbook.addWorksheet(name);
-    const headers = [...new Set(rows.flatMap((row) => Object.keys(row)))];
-    worksheet.columns = headers.map((header) => ({ header, key: header }));
-    worksheet.addRows(rows);
+    XLSX.utils.book_append_sheet(workbook, XLSX.utils.json_to_sheet(rows), name);
   }
-  return Buffer.from(await workbook.xlsx.writeBuffer());
+  return Buffer.from(XLSX.write(workbook, { type: "buffer", bookType: "xlsx" }));
 }
 
-test("preserves duplicate lookup rows with stable source provenance", async () => {
-  const parsed = await parseAbbottWorkbookCatalog(await workbookBuffer({
+test("preserves duplicate lookup rows with stable source provenance", () => {
+  const parsed = parseAbbottWorkbookCatalog(workbookBuffer({
     pages: [
       { "Название": "Shared title", "Символьный код": "shared-slug", "Тип материала": "Статьи" },
     ],
@@ -34,7 +31,7 @@ test("preserves duplicate lookup rows with stable source provenance", async () =
   ]);
   assert.notEqual(parsed.rows[0]?.targetKeyFingerprint, parsed.rows[1]?.targetKeyFingerprint);
 
-  const repeatedOnOneSheet = await parseAbbottWorkbookCatalog(await workbookBuffer({
+  const repeatedOnOneSheet = parseAbbottWorkbookCatalog(workbookBuffer({
     pages: [
       { "Название": "Same row", "Символьный код": "same-slug", "Тип материала": "Статьи" },
       { "Название": "Same row", "Символьный код": "same-slug", "Тип материала": "Статьи" },
@@ -47,8 +44,8 @@ test("preserves duplicate lookup rows with stable source provenance", async () =
   );
 });
 
-test("skips only truly empty relevant rows and rejects populated metadata without an identity", async () => {
-  const skipped = await parseAbbottWorkbookCatalog(await workbookBuffer({
+test("skips only truly empty relevant rows and rejects populated metadata without an identity", () => {
+  const skipped = parseAbbottWorkbookCatalog(workbookBuffer({
     pages: [
       { "Unrelated workbook note": "not catalog metadata" },
       { "Название": "Valid row", "Символьный код": "valid-row" },
@@ -62,15 +59,15 @@ test("skips only truly empty relevant rows and rejects populated metadata withou
     { "Тип материала": "article" },
     { "Активность": "Да" },
   ]) {
-    await assert.rejects(
-      async () => parseAbbottWorkbookCatalog(await workbookBuffer({ "Помощник фармацевта": [populatedMetadata] })),
+    assert.throws(
+      () => parseAbbottWorkbookCatalog(workbookBuffer({ "Помощник фармацевта": [populatedMetadata] })),
       (error: unknown) => error instanceof Error && error.message === "Workbook content identity is blank",
     );
   }
 });
 
-test("reports aggregate lookup conflicts with sorted hashes and no row-level keys", async () => {
-  const parsed = await parseAbbottWorkbookCatalog(await workbookBuffer({
+test("reports aggregate lookup conflicts with sorted hashes and no row-level keys", () => {
+  const parsed = parseAbbottWorkbookCatalog(workbookBuffer({
     pages: [
       {
         "Название": "Shared title",
@@ -123,7 +120,7 @@ test("reports aggregate lookup conflicts with sorted hashes and no row-level key
   assert.doesNotMatch(JSON.stringify(audit), /Shared title|shared-slug|video-slug|cardiology/);
 });
 
-test("audit CLI accepts only private input/output flags and writes aggregate evidence atomically with mode 0600", async () => {
+test("audit CLI accepts only private input/output flags and writes aggregate evidence atomically with mode 0600", () => {
   const root = mkdtempSync(path.join(tmpdir(), "abbott-workbook-audit-"));
   try {
     const inputDir = path.join(root, "inputs");
@@ -132,7 +129,7 @@ test("audit CLI accepts only private input/output flags and writes aggregate evi
     mkdirSync(inputDir);
     mkdirSync(outputDir);
     mkdirSync(publicDir);
-    const workbook = await workbookBuffer({ "Статьи": [{ "Название": "Private source", "Символьный код": "private-slug" }] });
+    const workbook = workbookBuffer({ "Статьи": [{ "Название": "Private source", "Символьный код": "private-slug" }] });
     const input = path.join(inputDir, "workbook.xlsx");
     const publicInput = path.join(publicDir, "workbook.xlsx");
     const output = path.join(outputDir, "audit.json");
@@ -151,7 +148,7 @@ test("audit CLI accepts only private input/output flags and writes aggregate evi
     assert.equal(statSync(output).mode & 0o777, 0o600);
     assert.deepEqual(readdirSync(outputDir), ["audit.json"]);
     const evidence = readFileSync(output, "utf8");
-    assert.deepEqual(JSON.parse(evidence), buildAbbottCatalogAudit((await parseAbbottWorkbookCatalog(workbook)).rows));
+    assert.deepEqual(JSON.parse(evidence), buildAbbottCatalogAudit(parseAbbottWorkbookCatalog(workbook).rows));
     assert.doesNotMatch(evidence, /Private source|private-slug/);
 
     const publicAttempt = spawnSync(process.execPath, [
@@ -177,14 +174,14 @@ test("audit CLI accepts only private input/output flags and writes aggregate evi
   }
 });
 
-test("audit CLI rejects Git, worktree, web, and release roots after resolving symlinks", async () => {
+test("audit CLI rejects Git, worktree, web, and release roots after resolving symlinks", () => {
   const root = mkdtempSync(path.join(tmpdir(), "abbott-workbook-audit-roots-"));
   try {
     const safeInputDir = path.join(root, "inputs");
     const safeOutputDir = path.join(root, "evidence");
     mkdirSync(safeInputDir);
     mkdirSync(safeOutputDir);
-    const workbook = await workbookBuffer({ "Статьи": [{ "Название": "Safe fixture", "Символьный код": "safe-fixture" }] });
+    const workbook = workbookBuffer({ "Статьи": [{ "Название": "Safe fixture", "Символьный код": "safe-fixture" }] });
     const safeInput = path.join(safeInputDir, "workbook.xlsx");
     writeFileSync(safeInput, workbook, { mode: 0o600 });
     const script = path.resolve("scripts/audit-abbott-workbook.ts");

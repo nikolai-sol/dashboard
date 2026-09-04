@@ -1,7 +1,8 @@
 import { createHash } from "node:crypto";
 import { readFile, stat } from "node:fs/promises";
-import ExcelJS from "exceljs";
-import { loadExcelWorkbook } from "./exceljs-tabular";
+import type ExcelJS from "exceljs";
+import ExcelJSWorkbook from "exceljs/lib/doc/workbook";
+import { assertBoundedXlsxZip } from "./xlsx-zip-preflight";
 
 export const MAX_ALICE_WORKBOOK_BYTES = 5 * 1024 * 1024;
 export const MAX_ALICE_QUERY_ROWS = 5_000;
@@ -43,6 +44,16 @@ export type ParsedAliceVisibilitySource = {
   sourceDomain: string;
   isPortal: boolean;
 };
+
+export type AliceWorkbookLoader = (buffer: Buffer) => Promise<ExcelJS.Workbook>;
+
+async function loadAliceWorkbook(buffer: Buffer): Promise<ExcelJS.Workbook> {
+  const workbook = new ExcelJSWorkbook();
+  const copy = new Uint8Array(buffer.byteLength);
+  copy.set(buffer);
+  await workbook.xlsx.load(copy.buffer);
+  return workbook;
+}
 
 export type ParsedAliceVisibilitySnapshot = AliceVisibilityImportInput & {
   sourceSha256: string;
@@ -87,6 +98,7 @@ function hasNonEmptyExtraCell(row: ExcelJS.Row): boolean {
 export async function parseAliceVisibilityWorkbook(
   buffer: Buffer,
   input: AliceVisibilityImportInput,
+  dependencies: { loadWorkbook?: AliceWorkbookLoader } = {},
 ): Promise<ParsedAliceVisibilitySnapshot> {
   if (!/^\d{4}-\d{2}$/.test(input.period)) throw new Error("Период должен иметь формат YYYY-MM");
   if (!Number.isFinite(input.officialSovPct) || input.officialSovPct < 0 || input.officialSovPct > 100) {
@@ -96,8 +108,9 @@ export async function parseAliceVisibilityWorkbook(
     throw new Error("Допускается не более 100 отмеченных сайтов");
   }
   assertWorkbookSize(buffer.byteLength);
+  assertBoundedXlsxZip(buffer);
 
-  const workbook = await loadExcelWorkbook(buffer);
+  const workbook = await (dependencies.loadWorkbook ?? loadAliceWorkbook)(buffer);
   if (workbook.worksheets.length !== 1) {
     throw new Error("XLSX должен содержать ровно один рабочий лист");
   }

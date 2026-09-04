@@ -3,7 +3,7 @@ import { mkdtempSync, mkdirSync, rmSync, symlinkSync, writeFileSync } from "node
 import { tmpdir } from "node:os";
 import path from "node:path";
 import test from "node:test";
-import ExcelJS from "exceljs";
+import * as XLSX from "xlsx";
 import {
   assertPrivateImportPath,
   buildAbbottContentLookupProjection,
@@ -128,19 +128,16 @@ test("canonical persisted fingerprints type-frame null, empty, scalar, date, and
   assert.notEqual(fingerprints[0], fingerprints[1]);
 });
 
-async function workbookBuffer(sheets: Record<string, Array<Record<string, unknown>>>): Promise<Buffer> {
-  const workbook = new ExcelJS.Workbook();
+function workbookBuffer(sheets: Record<string, Array<Record<string, unknown>>>): Buffer {
+  const workbook = XLSX.utils.book_new();
   for (const [name, rows] of Object.entries(sheets)) {
-    const worksheet = workbook.addWorksheet(name);
-    const headers = [...new Set(rows.flatMap((row) => Object.keys(row)))];
-    worksheet.columns = headers.map((header) => ({ header, key: header }));
-    worksheet.addRows(rows);
+    XLSX.utils.book_append_sheet(workbook, XLSX.utils.json_to_sheet(rows), name);
   }
-  return Buffer.from(await workbook.xlsx.writeBuffer());
+  return Buffer.from(XLSX.write(workbook, { type: "buffer", bookType: "xlsx" }));
 }
 
-test("Workbook XLSX preserves access, active state, and repeated lookup rows", async () => {
-  const parsed = await parseWorkbookXlsx(await workbookBuffer({
+test("Workbook XLSX preserves access, active state, and repeated lookup rows", () => {
+  const parsed = parseWorkbookXlsx(workbookBuffer({
     "Статьи": [
       { "Название": "Active guide", "Символьный код": "active-guide", "Доступ": "Врачи", "Активность": "Да" },
       { "Название": "Archived guide", "Символьный код": "archived-guide", "Доступ": "Все", "Активность": "Нет" },
@@ -151,7 +148,7 @@ test("Workbook XLSX preserves access, active state, and repeated lookup rows", a
     [{ access: "Врачи", isActive: true }, { access: "Все", isActive: false }],
   );
 
-  const repeated = await parseWorkbookXlsx(await workbookBuffer({
+  const repeated = parseWorkbookXlsx(workbookBuffer({
     "Статьи": [{ "Название": "Shared title", "Символьный код": "shared-slug" }],
     "Видео": [{ "Название": "Shared title", "Символьный код": "shared-slug" }],
   }));
@@ -234,7 +231,7 @@ test("prepared sources use store source kinds and persist XLSX metadata plus bot
       general_materials: [{ name: "General", url: "/general", material_type: "guide", direction: "cardiology" }],
       events: [{ title: "Event", registration_url: "/event", direction: "cardiology", access: "Врачи" }],
     }));
-    writeFileSync(workbookXlsxPath, await workbookBuffer({
+    writeFileSync(workbookXlsxPath, workbookBuffer({
       "Статьи": [{ "Название": "Guide", "Символьный код": "guide", "Доступ": "Врачи", "Активность": "Нет" }],
     }));
     writeFileSync(bitrixPagesPath, JSON.stringify({

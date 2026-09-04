@@ -1266,7 +1266,7 @@ function workbookJsonSource(parsed: ReturnType<typeof parseWorkbookJson>, source
   });
 }
 
-function workbookXlsxSource(parsed: Awaited<ReturnType<typeof parseWorkbookXlsx>>, sourcePath: string, bytes: Buffer, archiveLocator: string, options: CliOptions) {
+function workbookXlsxSource(parsed: ReturnType<typeof parseWorkbookXlsx>, sourcePath: string, bytes: Buffer, archiveLocator: string, options: CliOptions) {
   const rows = parsed.rows.map((row) => {
     const persistedFields = [
       null, null, null, row.pageTitle, null, row.materialType, row.sourceSlug,
@@ -1421,12 +1421,12 @@ export async function prepareAbbottSources(options: CliOptions): Promise<Prepare
     if ((await stat(specification.sourcePath)).isDirectory()) throw new Error("Source path must be a file");
     let parsed: unknown;
     if (specification.kind === "abbott_workbook_json") parsed = parseWorkbookJson(JSON.parse(bytes.toString("utf8")));
-    else if (specification.kind === "abbott_workbook_catalog") parsed = await parseWorkbookXlsx(bytes);
+    else if (specification.kind === "abbott_workbook_catalog") parsed = parseWorkbookXlsx(bytes);
     else if (specification.kind === "abbott_bitrix_pages") parsed = parseBitrixPagePayload(JSON.parse(bytes.toString("utf8")));
     else parsed = parseBitrixJourneyPayload(JSON.parse(bytes.toString("utf8")));
     const archive = await archiveSource(specification.sourcePath, specification.kind, options.archiveDir, bytes);
     if (specification.kind === "abbott_workbook_json") prepared.push(workbookJsonSource(parsed as ReturnType<typeof parseWorkbookJson>, specification.sourcePath, bytes, archive.destination, options));
-    else if (specification.kind === "abbott_workbook_catalog") prepared.push(workbookXlsxSource(parsed as Awaited<ReturnType<typeof parseWorkbookXlsx>>, specification.sourcePath, bytes, archive.destination, options));
+    else if (specification.kind === "abbott_workbook_catalog") prepared.push(workbookXlsxSource(parsed as ReturnType<typeof parseWorkbookXlsx>, specification.sourcePath, bytes, archive.destination, options));
     else if (specification.kind === "abbott_bitrix_pages") {
       prepared.push(bitrixPageSource(parsed as ReturnType<typeof parseBitrixPagePayload>, specification.sourcePath, bytes, archive.destination, options, JSON.parse(bytes.toString("utf8")) as Record<string, unknown>));
     } else {

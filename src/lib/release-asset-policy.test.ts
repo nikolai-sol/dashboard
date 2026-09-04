@@ -5,7 +5,7 @@ import path from "node:path";
 import { spawnSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
 import test from "node:test";
-import ExcelJS from "exceljs";
+import * as XLSX from "xlsx";
 
 import { findForbiddenPublicAssets, findPrivateReleaseAssets } from "./release-asset-policy";
 import { parseWorkbookJson } from "../../scripts/import-abbott-private-data";
@@ -404,11 +404,13 @@ test("release scans allow ordinary JSON objects with ID fields outside the Abbot
 test("release scans detect neutral spreadsheet journey and Bitrix export signatures", async () => {
   const releaseRoot = await mkdtemp(path.join(tmpdir(), "release-asset-policy-sheet-"));
   try {
-    const workbook = new ExcelJS.Workbook();
-    const worksheet = workbook.addWorksheet("Export");
-    worksheet.columns = ["SESSION_ID", "USER_ID", "PAGE_URL"].map((header) => ({ header, key: header }));
-    worksheet.addRow({ SESSION_ID: "session-secret", USER_ID: "doctor-001", PAGE_URL: "/private" });
-    await workbook.xlsx.writeFile(path.join(releaseRoot, "activity.xlsx"));
+    const workbook = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(
+      workbook,
+      XLSX.utils.json_to_sheet([{ SESSION_ID: "session-secret", USER_ID: "doctor-001", PAGE_URL: "/private" }]),
+      "Export",
+    );
+    XLSX.writeFile(workbook, path.join(releaseRoot, "activity.xlsx"));
 
     assert.deepEqual(findPrivateReleaseAssets(releaseRoot), ["activity.xlsx"]);
   } finally {

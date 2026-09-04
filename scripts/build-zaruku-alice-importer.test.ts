@@ -106,3 +106,27 @@ test("release packaging builds only the bundled importer while local development
   }
   assert.match(readme, /does not load the application \.env/i);
 });
+
+test("Alice bundle inspection rejects SheetJS code paths and markers", async () => {
+  const modulePath = "./build-zaruku-alice-importer.mjs";
+  const loaded = await import(modulePath) as {
+    assertAliceBundleIsolation?: (artifact: string, inputPaths: string[]) => void;
+  };
+  assert.equal(typeof loaded.assertAliceBundleIsolation, "function");
+  assert.doesNotThrow(() => loaded.assertAliceBundleIsolation!(
+    "exceljs/lib/xlsx/xlsx.js uses bounded XLSX processing",
+    ["node_modules/exceljs/lib/xlsx/xlsx.js", "src/lib/xlsx-zip-preflight.ts"],
+  ));
+  assert.throws(
+    () => loaded.assertAliceBundleIsolation!("SheetJS js-xlsx runtime", []),
+    /SheetJS|isolation/i,
+  );
+  assert.throws(
+    () => loaded.assertAliceBundleIsolation!("clean output", ["node_modules/xlsx/xlsx.js"]),
+    /SheetJS|isolation/i,
+  );
+  assert.throws(
+    () => loaded.assertAliceBundleIsolation!('const parser = require("xlsx");', []),
+    /SheetJS|isolation/i,
+  );
+});

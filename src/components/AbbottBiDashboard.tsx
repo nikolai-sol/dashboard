@@ -2,6 +2,7 @@
 
 import { useEffect, useMemo, useRef, useState } from "react";
 import { Check, ChevronDown, Download, Search, X } from "lucide-react";
+import * as XLSX from "xlsx";
 import {
   Bar,
   BarChart,
@@ -15,7 +16,6 @@ import {
   YAxis,
 } from "recharts";
 import type { AbbottBiData } from "@/lib/types";
-import { createExcelRecordsBlob } from "@/lib/excel-export";
 import {
   ABBOTT_UNMAPPED_LABEL,
   buildAbbottMnnOptions,
@@ -1413,21 +1413,29 @@ export default function AbbottBiDashboard({
         ? sessionJourneysDescription
         : currentTab.description;
 
-  const exportPageStats = async () => {
-    const rows = buildAbbottPageStatsExportRows(pageStatRows);
-    const widths = [52, 48, 28, 24, 18, 18, 28, 18, 16, 16, 20, 20, 28];
-    const blob = await createExcelRecordsBlob(rows, {
-      sheetName: "Статистика страниц",
-      columns: Object.keys(rows[0] ?? {}).map((header, index) => ({ header, width: widths[index] })),
-    });
-    const url = URL.createObjectURL(blob);
-    const anchor = document.createElement("a");
-    anchor.href = url;
-    anchor.download = `abbott-page-stats-${exportDatePart(periodFrom)}-${exportDatePart(periodTo)}.xlsx`;
-    document.body.appendChild(anchor);
-    anchor.click();
-    anchor.remove();
-    URL.revokeObjectURL(url);
+  const exportPageStats = () => {
+    const worksheet = XLSX.utils.json_to_sheet(buildAbbottPageStatsExportRows(pageStatRows));
+    worksheet["!cols"] = [
+      { wch: 52 },
+      { wch: 48 },
+      { wch: 28 },
+      { wch: 24 },
+      { wch: 18 },
+      { wch: 18 },
+      { wch: 28 },
+      { wch: 18 },
+      { wch: 16 },
+      { wch: 16 },
+      { wch: 20 },
+      { wch: 20 },
+      { wch: 28 },
+    ];
+    const workbook = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(workbook, worksheet, "Статистика страниц");
+    XLSX.writeFile(
+      workbook,
+      `abbott-page-stats-${exportDatePart(periodFrom)}-${exportDatePart(periodTo)}.xlsx`,
+    );
   };
 
   const usersSummaryPage = sliceRows(usersSummaryRows, pageByTab.users_summary);

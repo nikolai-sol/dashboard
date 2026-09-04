@@ -1,6 +1,7 @@
 import { lstatSync, readFileSync, readdirSync, readlinkSync, statSync } from "node:fs";
 import path from "node:path";
 import Papa from "papaparse";
+import * as XLSX from "xlsx";
 
 const PROHIBITED_SOURCE_SUFFIXES = [
   ".json",
@@ -163,9 +164,14 @@ function inspectSpreadsheet(extension: string, bytes: Buffer): boolean {
   if (extension === ".xls" && !bytes.subarray(0, 8).equals(Buffer.from([0xd0, 0xcf, 0x11, 0xe0, 0xa1, 0xb1, 0x1a, 0xe1]))) {
     throw new Error("malformed workbook");
   }
-  // Release artifacts are workbook-free. Rejecting every valid spreadsheet is
-  // safer than parsing an untrusted workbook inside the release scanner.
-  return true;
+  const workbook = XLSX.read(bytes, { type: "buffer", sheetRows: 10_000 });
+  if (workbook.SheetNames.length === 0) throw new Error("workbook has no sheets");
+  return workbook.SheetNames.some((sheetName) => {
+    const sheet = workbook.Sheets[sheetName];
+    if (!sheet) throw new Error("workbook sheet is missing");
+    const rows = XLSX.utils.sheet_to_json<Record<string, unknown>>(sheet, { defval: null });
+    return rows.some((row) => hasPrivateKeys(Object.keys(row)));
+  });
 }
 
 function hasPrivateDataSignature(absolutePath: string, relativePath: string): boolean {
