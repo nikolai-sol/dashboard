@@ -199,3 +199,38 @@
 ### Concerns
 
 - The public read model deliberately does not read XLSX files or external APIs. It exposes only canonical, published snapshot data; superseded rows are retained solely as version metadata.
+
+## Canonical Alice Visibility Review Fix (2026-09-04)
+
+### Change
+
+- Kept `alice_visibility` fail-closed when migration 046 is absent, but restored legacy `seo_intelligence.ai` as the source-status and `data_through` fallback in that case only. Canonical Alice remains authoritative for `available` and `partial` results.
+- Added a regression that simulates absent canonical Alice tables alongside an available legacy AI snapshot and verifies the legacy connected status and capture timestamp remain visible.
+
+### Commands and results
+
+1. RED:
+
+   ```sh
+   node --import tsx --test src/lib/zaruku-seo.test.ts
+   ```
+
+   Result before the fix: 52 passed, 1 failed; source status was `unavailable` instead of legacy `connected`.
+
+2. GREEN:
+
+   ```sh
+   node --import tsx --test src/lib/zaruku-seo.test.ts
+   ```
+
+   Result: 53 passed, 0 failed.
+
+3. Focused verification:
+
+   ```sh
+   node --import tsx --test src/lib/zaruku-alice-visibility.test.ts src/lib/zaruku-seo.test.ts
+   npm run typecheck
+   npx eslint src/lib/zaruku-alice-visibility.ts src/lib/zaruku-alice-visibility.test.ts src/lib/zaruku-seo.ts src/lib/zaruku-seo.test.ts
+   ```
+
+   Result: 55 focused tests passed; typecheck and targeted lint passed.

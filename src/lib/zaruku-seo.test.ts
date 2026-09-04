@@ -167,6 +167,43 @@ test("July Alice snapshot remains visible when query detail is unavailable", asy
   assert.equal(aliceSource?.data_through, "2026-07");
 });
 
+test("legacy AI source metadata remains available when canonical Alice tables are absent", async (t) => {
+  t.mock.method(
+    pool as unknown as {
+      execute: (sql: string, params?: unknown[]) => Promise<[unknown[], unknown[]]>;
+    },
+    "execute",
+    async (sql: string) => {
+      if (sql.includes("canonical_alice_visibility_")) throw new Error("Alice migration is absent");
+      if (sql.includes("FROM seo_ai_visibility")) {
+        return [[{
+          engine: "alisa_ai",
+          period: "2026-07",
+          mentions: 89,
+          citations: 155,
+          presence_rate: 44,
+          provenance: "wm_alisa_manual",
+          captured_at: "2026-07-13 14:30:00",
+          ingestion_run_id: "seo_os_ai_visibility_2026-07_alisa_ai",
+        }], []];
+      }
+      return [[], []];
+    },
+  );
+
+  const data = await loadZarukuSeoData(
+    ["66624469"],
+    "2026-07-01",
+    "2026-07-31",
+    { today: "2026-08-03" },
+  );
+
+  assert.equal(data.alice_visibility.status, "unavailable");
+  const aliceSource = data.sources.find((source) => source.id === "yandex_gen_search");
+  assert.equal(aliceSource?.status, "connected");
+  assert.equal(aliceSource?.data_through, "2026-07-13 14:30:00");
+});
+
 test("organic landing read model joins canonical titles and collapses search engines by normalized URL", async (t) => {
   const canonicalUrl = "https://zaruku.ru/rak-molochnoj-zhelezy/invalidnost-pri-rake-molochnoj-zhelezy-kak-poluchit-i-kakie-preimushestva-ona-daet/";
   const pageTitle = "Инвалидность при раке молочной железы. Как получить и какие преимущества она дает";

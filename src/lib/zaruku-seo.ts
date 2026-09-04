@@ -1297,7 +1297,8 @@ export function buildSources({
 }): ZarukuSeoSource[] {
   const webmasterStatus = sourceStatusFromData(webmaster.status);
   const gscStatus = sourceStatusFromData(gsc.status);
-  const aiStatus = aliceVisibility
+  const canonicalAliceAvailable = aliceVisibility != null && aliceVisibility.status !== "unavailable";
+  const aiStatus = canonicalAliceAvailable
     ? sourceStatusFromData(aliceVisibility.status)
     : seoIntelligence.ai.rows.length > 0 ? sourceStatusFromData(seoIntelligence.status) : "pending";
   const wordstatStatus: ZarukuSeoSourceStatus = !wordstat || wordstat.status === "unavailable"
@@ -1340,9 +1341,13 @@ export function buildSources({
           data_through: dataThrough.yandex_gen_search,
           note:
             aiStatus === "connected"
-              ? "AI-видимость из канонических ежемесячных снимков Алисы."
+              ? canonicalAliceAvailable
+                ? "AI-видимость из канонических ежемесячных снимков Алисы."
+                : "AI-видимость из прежних ежемесячных снимков: присутствие, упоминания и цитаты."
               : aiStatus === "partial"
-                ? "Доступна сводка канонического снимка Алисы, но часть деталей временно недоступна."
+                ? canonicalAliceAvailable
+                  ? "Доступна сводка канонического снимка Алисы, но часть деталей временно недоступна."
+                  : "Часть прежних данных AI-видимости временно недоступна."
                 : "Канонические снимки AI-видимости пока недоступны.",
         };
       }
@@ -1661,7 +1666,7 @@ export async function loadZarukuSeoData(
         seoOsLatestWeek: seoOs.latest_week,
         aiLatestPeriod: seoIntelligence.ai.latest_period,
         aiRows: seoIntelligence.ai.rows,
-        aliceLatestMonth: aliceVisibility.latestMonth,
+        aliceLatestMonth: aliceVisibility.status === "unavailable" ? undefined : aliceVisibility.latestMonth,
         wordstat,
       }),
       wordstat,
