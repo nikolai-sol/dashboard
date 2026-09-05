@@ -22,6 +22,68 @@ fail() {
 
 [[ -x "$VERIFY_SCRIPT" ]] || fail "shadow verifier does not exist or is not executable"
 
+EXPORT_FIXTURES="$TMP_DIR/export-fixtures"
+mkdir -p "$EXPORT_FIXTURES"
+node - "$EXPORT_FIXTURES" <<'NODE'
+const fs = require("node:fs");
+const path = require("node:path");
+const ExcelJS = require("exceljs");
+
+const root = process.argv[2];
+
+function pdfBytes(created, text, pageCreation = "VISIBLE-CONTENT-ONE") {
+  const objects = [
+    "<< /Type /Catalog /Pages 2 0 R >>",
+    "<< /Type /Pages /Kids [3 0 R] /Count 1 >>",
+    `<< /Type /Page /Parent 2 0 R /CreationDate (${pageCreation}) /MediaBox [0 0 300 144] /Resources << /Font << /F1 5 0 R >> >> /Contents 4 0 R >>`,
+    null,
+    "<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>",
+    `<< /Producer (Zaruku fixture) /CreationDate (${created}) /ModDate (${created}) >>`,
+  ];
+  const escaped = text.replace(/([\\()])/g, "\\$1");
+  const stream = `BT /F1 18 Tf 40 72 Td (${escaped}) Tj ET`;
+  objects[3] = `<< /Length ${Buffer.byteLength(stream, "latin1")} >>\nstream\n${stream}\nendstream`;
+  let output = "%PDF-1.4\n%\xE2\xE3\xCF\xD3\n";
+  const offsets = [0];
+  for (let index = 0; index < objects.length; index += 1) {
+    offsets.push(Buffer.byteLength(output, "latin1"));
+    output += `${index + 1} 0 obj\n${objects[index]}\nendobj\n`;
+  }
+  const xref = Buffer.byteLength(output, "latin1");
+  output += `xref\n0 ${objects.length + 1}\n0000000000 65535 f \n`;
+  for (const offset of offsets.slice(1)) output += `${String(offset).padStart(10, "0")} 00000 n \n`;
+  const generatedId = created.endsWith("01Z") ? "a".repeat(32) : "b".repeat(32);
+  output += `trailer\n<< /Size ${objects.length + 1} /Root 1 0 R /Info 6 0 R /ID [<0123456789abcdef0123456789abcdef> <${generatedId}>] >>\nstartxref\n${xref}\n%%EOF\n`;
+  return Buffer.from(output, "latin1");
+}
+
+async function workbookBytes(created, value) {
+  const workbook = new ExcelJS.Workbook();
+  workbook.creator = "Zaruku fixture";
+  workbook.created = created;
+  workbook.modified = created;
+  const sheet = workbook.addWorksheet("Итоги");
+  sheet.addRow(["Показатель", "Значение"]);
+  sheet.addRow(["Визиты", value]);
+  return Buffer.from(await workbook.xlsx.writeBuffer());
+}
+
+(async () => {
+  fs.writeFileSync(path.join(root, "combined.pdf"), pdfBytes("D:20260905120001Z", "Zaruku visits 127"));
+  fs.writeFileSync(path.join(root, "isolated.pdf"), pdfBytes("D:20260905120059Z", "Zaruku visits 127"));
+  fs.writeFileSync(path.join(root, "different.pdf"), pdfBytes("D:20260905120059Z", "Zaruku visits 128"));
+  fs.writeFileSync(path.join(root, "noninfo-metadata.pdf"), pdfBytes("D:20260905120059Z", "Zaruku visits 127", "VISIBLE-CONTENT-TWO"));
+  fs.writeFileSync(path.join(root, "combined.xlsx"), await workbookBytes(new Date("2026-09-05T12:00:01Z"), 127));
+  fs.writeFileSync(path.join(root, "isolated.xlsx"), await workbookBytes(new Date("2026-09-05T12:00:59Z"), 127));
+  fs.writeFileSync(path.join(root, "different.xlsx"), await workbookBytes(new Date("2026-09-05T12:00:59Z"), 128));
+  if (fs.readFileSync(path.join(root, "combined.pdf")).equals(fs.readFileSync(path.join(root, "isolated.pdf")))) throw new Error("PDF timestamps did not change raw fixture bytes");
+  if (fs.readFileSync(path.join(root, "combined.xlsx")).equals(fs.readFileSync(path.join(root, "isolated.xlsx")))) throw new Error("XLSX timestamps did not change raw fixture bytes");
+})().catch((error) => {
+  console.error(error);
+  process.exit(1);
+});
+NODE
+
 cat > "$TMP_DIR/fixture-server.mjs" <<'JS'
 import http from "node:http";
 import fs from "node:fs";
@@ -30,6 +92,7 @@ const fault = process.env.FIXTURE_FAULT || "";
 const role = process.env.FIXTURE_ROLE;
 const requestLog = process.env.FIXTURE_REQUEST_LOG;
 const mutateSha = process.env.FIXTURE_MUTATE_SHA;
+const exportFixtures = process.env.FIXTURE_EXPORTS;
 const payload = {
   dashboard: {
     id: 28, client_id: "zaruku", client_name: "Zaruku", dashboard_name: "Dashboard",
@@ -64,6 +127,7 @@ function managerPayload() {
   if (fault === "wordstat-coverage") value.zaruku_seo.wordstat.current.coverage.rows -= 1;
   if (fault === "canonical-coverage") value.zaruku_seo.canonical_coverage.metrika_breakdowns.complete_days -= 1;
   if (fault === "source-health") value.zaruku_seo.source_freshness[1].status = "connected";
+  if (fault === "private-json") value.private_diagnostic = "PRIVATE_JSON_SENTINEL";
   return value;
 }
 
@@ -91,12 +155,28 @@ const server = http.createServer((req, res) => {
       const next = fault === "sha-rewrite" ? fs.readFileSync(mutateSha) : `${"e".repeat(40)}\n`;
       fs.writeFileSync(mutateSha, next);
     }
-    return json(res, 200, managerPayload(), { "server-timing": role === "combined" ? "total;dur=12" : "total;dur=3" });
+    if (role === "isolated" && fault === "slow-body") {
+      res.writeHead(200, { "content-type": "application/json", "cache-control": "private, no-store" });
+      res.flushHeaders();
+      return setTimeout(() => res.end(JSON.stringify(managerPayload())), 3000);
+    }
+    return json(res, 200, managerPayload(), {
+      "server-timing": role === "combined" ? "total;dur=12" : "total;dur=3",
+      ...(role === "isolated" && fault === "private-header" ? { "x-private-diagnostic": "PRIVATE_HEADER_SENTINEL" } : {}),
+    });
   }
   if (url.pathname === "/api/dashboard/zaruku/pdf" || url.pathname === "/api/dashboard/zaruku/excel") {
     if (!authorized) return json(res, 401, { error: "Authentication required" });
     const kind = url.pathname.endsWith("pdf") ? "pdf" : "excel";
-    const body = Buffer.from(role === "isolated" && fault === `${kind}-export` ? `${kind}-different` : `${kind}-fixture-identical`);
+    const suffix = kind === "excel" ? "xlsx" : "pdf";
+    const fixture = role === "combined"
+      ? `combined.${suffix}`
+      : fault === `${kind}-export`
+        ? `different.${suffix}`
+        : kind === "pdf" && fault === "pdf-non-generation-metadata"
+          ? "noninfo-metadata.pdf"
+          : `isolated.${suffix}`;
+    const body = fs.readFileSync(`${exportFixtures}/${fixture}`);
     res.writeHead(200, {
       "cache-control": "private, no-store",
       "content-type": kind === "pdf" ? "application/pdf" : "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
@@ -116,7 +196,7 @@ start_server() {
   local request_log="$4"
   local mutate_sha="${5:-}"
   FIXTURE_ROLE="$role" FIXTURE_FAULT="$fault" FIXTURE_PORT_FILE="$port_file" \
-    FIXTURE_REQUEST_LOG="$request_log" FIXTURE_MUTATE_SHA="$mutate_sha" \
+    FIXTURE_REQUEST_LOG="$request_log" FIXTURE_MUTATE_SHA="$mutate_sha" FIXTURE_EXPORTS="$EXPORT_FIXTURES" \
     node "$TMP_DIR/fixture-server.mjs" &
   SERVER_PIDS+=("$!")
   for _ in {1..100}; do
@@ -153,7 +233,11 @@ run_case() {
   printf '%s\n' "$(printf 'c%.0s' {1..40})" > "$combined_sha"
   printf '%s\n' "$(printf 'd%.0s' {1..40})" > "$abbott_sha"
   printf 'combined\t%s\nabbott\t%s\n' "$combined_sha" "$abbott_sha" > "$case_dir/other-runtimes.tsv"
-  printf '{"headers":{"x-shadow-fixture-auth":"manager-secret"}}\n' > "$case_dir/auth.json"
+  if [[ "$fault" == "malformed-auth" ]]; then
+    printf 'DESCRIPTOR_SECRET_SENTINEL\n' > "$case_dir/auth.json"
+  else
+    printf '{"headers":{"x-shadow-fixture-auth":"manager-secret"}}\n' > "$case_dir/auth.json"
+  fi
   chmod 600 "$case_dir/auth.json"
   if [[ "$fault" == "abbott-artifact" ]]; then
     printf '%s\n' 'compiled marker /dashboard/abbott' > "$artifact/apps/zaruku/.next-zaruku/server/chunks/foreign.js"
@@ -164,23 +248,39 @@ run_case() {
   start_server isolated "$fault" "$case_dir/isolated.port" "$request_log" "$mutate_path"
   local combined_url="http://127.0.0.1:$(<"$case_dir/combined.port")"
   local isolated_url="http://127.0.0.1:$(<"$case_dir/isolated.port")"
+  local request_timeout=""
+  [[ "$fault" == "slow-body" ]] && request_timeout="200"
+  local started_seconds=$SECONDS
   set +e
   ZARUKU_SHADOW_AUTH_FD=9 \
+    ZARUKU_SHADOW_HTTP_TIMEOUT_MS="$request_timeout" \
     ZARUKU_SHADOW_ARTIFACT_ROOT="$artifact" \
     ZARUKU_SHADOW_OTHER_RUNTIME_SHAS_FILE="$case_dir/other-runtimes.tsv" \
     ZARUKU_SHADOW_CANONICAL_SNAPSHOT="fixture-2026-07" \
     ZARUKU_SHADOW_FROM="2026-01-01" ZARUKU_SHADOW_TO="2026-07-31" \
     bash "$VERIFY_SCRIPT" "$combined_url" "$isolated_url" "$evidence" \
-    9<"$case_dir/auth.json" >"$case_dir/output.log" 2>&1
+    9<"$case_dir/auth.json" >"$case_dir/stdout.log" 2>"$case_dir/stderr.log"
   local status=$?
   set -e
+  local elapsed_seconds=$((SECONDS - started_seconds))
+  if [[ "$fault" == "slow-body" && $elapsed_seconds -ge 2 ]]; then
+    fail "$name exceeded the bounded request-and-body deadline"
+  fi
   if [[ "$expected" == "pass" && $status -ne 0 ]]; then
-    cat "$case_dir/output.log" >&2
+    cat "$case_dir/stdout.log" "$case_dir/stderr.log" >&2
     fail "$name unexpectedly failed"
   fi
   if [[ "$expected" == "fail" && $status -eq 0 ]]; then
     fail "$name unexpectedly passed"
   fi
+  for marker in manager-secret PRIVATE_JSON_SENTINEL PRIVATE_HEADER_SENTINEL DESCRIPTOR_SECRET_SENTINEL; do
+    if grep -Fq "$marker" "$case_dir/stdout.log" "$case_dir/stderr.log"; then
+      fail "$name leaked sensitive material into process output"
+    fi
+    if [[ -d "$evidence" ]] && grep -R -Fq "$marker" "$evidence"; then
+      fail "$name leaked sensitive material into evidence"
+    fi
+  done
   if [[ "$expected" == "pass" ]]; then
     for filename in summary.json endpoint-parity.json artifact-attestation.json zaruku-routes.txt runtime-shas.before.tsv runtime-shas.after.tsv; do
       [[ -s "$evidence/$filename" ]] || fail "$name omitted $filename"
@@ -196,8 +296,8 @@ NODE
 }
 
 run_case matching "" pass
-for fault in historical-total direct-addition alice-month wordstat-coverage canonical-coverage source-health auth pdf-export excel-export health-header sha-mutation sha-rewrite abbott-artifact; do
+for fault in historical-total direct-addition alice-month wordstat-coverage canonical-coverage source-health auth pdf-export excel-export pdf-non-generation-metadata health-header sha-mutation sha-rewrite abbott-artifact private-json private-header malformed-auth slow-body; do
   run_case "$fault" "$fault" fail
 done
 
-echo "zaruku shadow verification fixture tests passed (1 positive, 13 negative)"
+echo "zaruku shadow verification fixture tests passed (1 positive, 18 negative)"

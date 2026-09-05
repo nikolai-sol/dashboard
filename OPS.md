@@ -182,6 +182,8 @@ export ZARUKU_SHADOW_OTHER_RUNTIME_SHAS_FILE=/private/path/other-runtime-shas.ts
 export ZARUKU_SHADOW_CANONICAL_SNAPSHOT=reviewed-snapshot-label
 export ZARUKU_SHADOW_FROM=2026-01-01
 export ZARUKU_SHADOW_TO=2026-07-31
+# Optional; default 15000, allowed range 100..30000. Covers headers and the complete body.
+export ZARUKU_SHADOW_HTTP_TIMEOUT_MS=15000
 bash scripts/verify-zaruku-shadow.sh \
   http://127.0.0.1:3001 \
   http://127.0.0.1:3002 \
@@ -193,10 +195,17 @@ The verifier performs only HTTP `GET` requests. It compares the combined and iso
 authentication challenge metadata, PDF, and Excel responses; validates the distinct combined and
 isolated health contracts; records SHA/scope/routes; scans the isolated artifact for cross-runtime
 markers; and proves that every listed other-runtime SHA is unchanged before/after. It compares
-semantic JSON exactly and binary exports byte-for-byte. The only ignored response headers are
+semantic JSON exactly. PDF comparison masks only `CreationDate` and `ModDate` in the referenced
+PDF Info object plus the generated trailer/XRef document ID; every other PDF byte remains part of
+the comparison. XLSX comparison expands the package, compares every sorted entry by content, and
+ignores only ZIP container order/compression/timestamps plus `created` and `modified` values in
+`docProps/core.xml`. The only ignored response headers are
 `connection`, `content-length`, `date`, `keep-alive`, `server-timing`, `transfer-encoding`, and
 `x-response-time`; only combined-health `db_latency_ms`, `timestamp`, and `uptime_seconds` are
-treated as volatile.
+treated as volatile. Every request has one bounded deadline covering response headers and the full
+body. Parser, assertion, HTTP, and descriptor failures emit only a fixed sanitized error; response
+bodies, response headers, and authentication values are never written to stdout, stderr, or
+evidence.
 
 Before any production shadow start, all of these separate prerequisites are mandatory:
 

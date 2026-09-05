@@ -18,6 +18,7 @@ OTHER_SHAS_FILE="${ZARUKU_SHADOW_OTHER_RUNTIME_SHAS_FILE:-}"
 SNAPSHOT="${ZARUKU_SHADOW_CANONICAL_SNAPSHOT:-}"
 FROM_DATE="${ZARUKU_SHADOW_FROM:-}"
 TO_DATE="${ZARUKU_SHADOW_TO:-}"
+HTTP_TIMEOUT_MS="${ZARUKU_SHADOW_HTTP_TIMEOUT_MS:-15000}"
 
 [[ "$AUTH_FD" =~ ^[0-9]+$ ]] || fail "ZARUKU_SHADOW_AUTH_FD must name an open descriptor containing auth JSON"
 [[ -n "$ARTIFACT_ROOT" ]] || fail "ZARUKU_SHADOW_ARTIFACT_ROOT is required"
@@ -25,6 +26,8 @@ TO_DATE="${ZARUKU_SHADOW_TO:-}"
 [[ "$SNAPSHOT" =~ ^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$ ]] || fail "invalid or missing canonical snapshot label"
 [[ "$FROM_DATE" =~ ^[0-9]{4}-[0-9]{2}-[0-9]{2}$ ]] || fail "ZARUKU_SHADOW_FROM must be YYYY-MM-DD"
 [[ "$TO_DATE" =~ ^[0-9]{4}-[0-9]{2}-[0-9]{2}$ ]] || fail "ZARUKU_SHADOW_TO must be YYYY-MM-DD"
+[[ "$HTTP_TIMEOUT_MS" =~ ^[0-9]+$ && "$HTTP_TIMEOUT_MS" -ge 100 && "$HTTP_TIMEOUT_MS" -le 30000 ]] \
+  || fail "ZARUKU_SHADOW_HTTP_TIMEOUT_MS must be an integer from 100 through 30000"
 
 if [[ -e "$EVIDENCE_DIR" ]]; then
   [[ -d "$EVIDENCE_DIR" && -z "$(find "$EVIDENCE_DIR" -mindepth 1 -maxdepth 1 -print -quit)" ]] \
@@ -47,13 +50,24 @@ chmod 600 "$AUTH_FILE"
 
 node --input-type=module - \
   "$COMBINED_URL" "$ISOLATED_URL" "$EVIDENCE_DIR" "$AUTH_FILE" "$ARTIFACT_ROOT" \
-  "$OTHER_SHAS_FILE" "$SNAPSHOT" "$FROM_DATE" "$TO_DATE" <<'NODE'
+  "$OTHER_SHAS_FILE" "$SNAPSHOT" "$FROM_DATE" "$TO_DATE" "$HTTP_TIMEOUT_MS" <<'NODE'
 import assert from "node:assert/strict";
 import crypto from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
+import JSZip from "jszip";
 
-const [combinedArgument, isolatedArgument, evidenceArgument, authFile, artifactArgument, shaListArgument, snapshot, from, to] = process.argv.slice(2);
+let failureReported = false;
+function reportSanitizedFailure() {
+  if (!failureReported) process.stderr.write("Zaruku shadow verification failed: inputs, runtime response, or parity check did not pass\n");
+  failureReported = true;
+  process.exit(1);
+}
+process.on("uncaughtException", reportSanitizedFailure);
+process.on("unhandledRejection", reportSanitizedFailure);
+
+const [combinedArgument, isolatedArgument, evidenceArgument, authFile, artifactArgument, shaListArgument, snapshot, from, to, httpTimeoutArgument] = process.argv.slice(2);
+const httpTimeoutMs = Number(httpTimeoutArgument);
 const EXPECTED_ROUTES = [
   "/_not-found",
   "/api/dashboard/zaruku",
@@ -65,6 +79,8 @@ const EXPECTED_ROUTES = [
 const VOLATILE_HEADERS = new Set(["connection", "content-length", "date", "keep-alive", "server-timing", "transfer-encoding", "x-response-time"]);
 const VOLATILE_COMBINED_HEALTH_FIELDS = new Set(["db_latency_ms", "timestamp", "uptime_seconds"]);
 const FORBIDDEN_ARTIFACT_MARKERS = ["/dashboard/abbott", "/api/dashboard/abbott", "abbott-private", "abbott_private", "report_bd_private"];
+const MAX_EXPORT_BYTES = 64 * 1024 * 1024;
+const MAX_XLSX_ENTRIES = 4096;
 
 function fail(message) {
   throw new Error(message);
@@ -84,6 +100,78 @@ function stableJson(value) {
 
 function digest(data) {
   return crypto.createHash("sha256").update(data).digest("hex");
+}
+
+function normalizePdf(data, label) {
+  if (data.length === 0 || data.length > MAX_EXPORT_BYTES) fail(`${label} is outside PDF size bounds`);
+  let source = data.toString("latin1");
+  if (!source.startsWith("%PDF-") || !/%%EOF\s*$/.test(source) || !/\d+\s+\d+\s+obj\b/.test(source)) fail(`${label} is not a structurally recognizable PDF`);
+  const mask = (value) => "0".repeat(value.length);
+  const objectPattern = /(\d+)\s+(\d+)\s+obj\b[\s\S]*?\bendobj\b/g;
+  const trailerPattern = /\btrailer\s*<<(?:[^>]|>(?!>))*>>/g;
+  const infoReferences = new Set();
+  const recordInfoReference = (segment) => {
+    const match = segment.match(/\/Info\s+(\d+)\s+(\d+)\s+R\b/);
+    if (match) infoReferences.add(`${match[1]} ${match[2]}`);
+  };
+  for (const match of source.matchAll(trailerPattern)) recordInfoReference(match[0]);
+  for (const match of source.matchAll(objectPattern)) {
+    if (/\/Type\s*\/XRef\b/.test(match[0])) recordInfoReference(match[0]);
+  }
+  const normalizeDates = (segment) => segment
+    .replace(/(\/CreationDate\s*\()((?:\\.|[^\\)])*)(\))/g, (_match, prefix, value, suffix) => `${prefix}${mask(value)}${suffix}`)
+    .replace(/(\/ModDate\s*\()((?:\\.|[^\\)])*)(\))/g, (_match, prefix, value, suffix) => `${prefix}${mask(value)}${suffix}`);
+  const normalizeId = (segment) => segment.replace(
+    /(\/ID\s*\[\s*<)([A-Fa-f0-9]+)(>\s*<)([A-Fa-f0-9]+)(>\s*\])/g,
+    (_match, prefix, first, middle, second, suffix) => `${prefix}${mask(first)}${middle}${mask(second)}${suffix}`,
+  );
+  source = source.replace(objectPattern, (object) => {
+    const reference = object.match(/^(\d+)\s+(\d+)\s+obj\b/);
+    let normalized = reference && infoReferences.has(`${reference[1]} ${reference[2]}`) ? normalizeDates(object) : object;
+    if (/\/Type\s*\/XRef\b/.test(normalized)) normalized = normalizeId(normalized);
+    return normalized;
+  });
+  source = source.replace(trailerPattern, normalizeId);
+  return Buffer.from(source, "latin1");
+}
+
+function normalizeCoreProperties(data) {
+  const source = data.toString("utf8");
+  const normalizeElement = (name, input) => input.replace(
+    new RegExp(`(<(?:[A-Za-z_][\\w.-]*:)?${name}\\b[^>]*>)[\\s\\S]*?(</(?:[A-Za-z_][\\w.-]*:)?${name}\\s*>)`, "g"),
+    "$1__GENERATION_TIMESTAMP__$2",
+  );
+  return Buffer.from(normalizeElement("modified", normalizeElement("created", source)), "utf8");
+}
+
+async function normalizeXlsx(data, label) {
+  if (data.length === 0 || data.length > MAX_EXPORT_BYTES || data[0] !== 0x50 || data[1] !== 0x4b) fail(`${label} is outside XLSX package bounds`);
+  let archive;
+  try {
+    archive = await JSZip.loadAsync(data, { checkCRC32: true, createFolders: false });
+  } catch {
+    fail(`${label} is not a valid XLSX ZIP package`);
+  }
+  const names = Object.keys(archive.files).filter((name) => !archive.files[name].dir).sort((a, b) => a.localeCompare(b, "en"));
+  if (names.length === 0 || names.length > MAX_XLSX_ENTRIES || !names.includes("[Content_Types].xml") || !names.includes("xl/workbook.xml")) fail(`${label} does not have the required XLSX package surface`);
+  let expandedBytes = 0;
+  const entries = [];
+  for (const name of names) {
+    if (name.startsWith("/") || name.includes("\\") || name.split("/").includes("..")) fail(`${label} contains an invalid XLSX entry name`);
+    const original = await archive.files[name].async("nodebuffer");
+    expandedBytes += original.length;
+    if (expandedBytes > MAX_EXPORT_BYTES) fail(`${label} exceeds expanded XLSX bounds`);
+    const normalized = name === "docProps/core.xml" ? normalizeCoreProperties(original) : original;
+    entries.push({ name, bytes: normalized.length, sha256: digest(normalized) });
+  }
+  return Buffer.from(stableJson(entries));
+}
+
+async function normalizedBody(response, label, bodyType) {
+  if (bodyType === "json") return Buffer.from(stableJson(parseJson(response, label)));
+  if (bodyType === "pdf") return normalizePdf(response.body, label);
+  if (bodyType === "xlsx") return normalizeXlsx(response.body, label);
+  fail(`unsupported response body type for ${label}`);
 }
 
 function regularFile(filename, label) {
@@ -198,9 +286,15 @@ async function request(base, pathname, headers = {}) {
   const url = new URL(base);
   url.pathname = `${base.pathname}${relative.pathname}`.replace(/\/{2,}/g, "/");
   url.search = relative.search;
-  const response = await fetch(url, { method: "GET", headers, redirect: "manual", cache: "no-store" });
-  const body = Buffer.from(await response.arrayBuffer());
-  return { status: response.status, headers: normalizedHeaders(response.headers), body };
+  const controller = new AbortController();
+  const deadline = setTimeout(() => controller.abort(), httpTimeoutMs);
+  try {
+    const response = await fetch(url, { method: "GET", headers, redirect: "manual", cache: "no-store", signal: controller.signal });
+    const body = Buffer.from(await response.arrayBuffer());
+    return { status: response.status, headers: normalizedHeaders(response.headers), body };
+  } finally {
+    clearTimeout(deadline);
+  }
 }
 
 function parseJson(response, label) {
@@ -208,16 +302,21 @@ function parseJson(response, label) {
   catch { fail(`${label} did not return JSON`); }
 }
 
-function compareResponses(left, right, label, bodyType) {
+async function compareResponses(left, right, label, bodyType) {
   assert.equal(right.status, left.status, `${label} status differs`);
   assert.deepEqual(right.headers, left.headers, `${label} semantic headers differ`);
-  if (bodyType === "json") assert.equal(stableJson(parseJson(right, label)), stableJson(parseJson(left, label)), `${label} JSON semantics differ`);
-  else assert.equal(digest(right.body), digest(left.body), `${label} body differs`);
+  const [normalizedLeft, normalizedRight] = await Promise.all([
+    normalizedBody(left, label, bodyType),
+    normalizedBody(right, label, bodyType),
+  ]);
+  assert.equal(digest(normalizedRight), digest(normalizedLeft), `${label} body semantics differ`);
 }
 
-function summarize(left, right, bodyType) {
-  const normalizedLeft = bodyType === "json" ? Buffer.from(stableJson(parseJson(left, "evidence"))) : left.body;
-  const normalizedRight = bodyType === "json" ? Buffer.from(stableJson(parseJson(right, "evidence"))) : right.body;
+async function summarize(left, right, bodyType) {
+  const [normalizedLeft, normalizedRight] = await Promise.all([
+    normalizedBody(left, "evidence", bodyType),
+    normalizedBody(right, "evidence", bodyType),
+  ]);
   return {
     status: left.status,
     semanticHeadersSha256: digest(stableJson(left.headers)),
@@ -258,23 +357,24 @@ const stableCombinedHealth = Object.fromEntries(Object.entries(combinedHealthBod
 endpoints.health = { combined: stableCombinedHealth, isolated: isolatedHealthBody, result: "pass" };
 
 const [combinedUnauthorized, isolatedUnauthorized] = await Promise.all([request(combined, `/api/dashboard/zaruku${query}`), request(isolated, `/api/dashboard/zaruku${query}`)]);
-compareResponses(combinedUnauthorized, isolatedUnauthorized, "unauthorized metadata", "json");
+await compareResponses(combinedUnauthorized, isolatedUnauthorized, "unauthorized metadata", "json");
 const unauthorized = parseJson(combinedUnauthorized, "unauthorized metadata");
 assert.equal(combinedUnauthorized.status, 401, "unauthorized request did not return 401");
 assert.equal(unauthorized.auth_required, true, "unauthorized response omitted auth_required");
 assert.equal(unauthorized.dashboard?.client_id, "zaruku", "unauthorized response omitted Zaruku metadata");
-endpoints.unauthorized = summarize(combinedUnauthorized, isolatedUnauthorized, "json");
+endpoints.unauthorized = await summarize(combinedUnauthorized, isolatedUnauthorized, "json");
 
 const [combinedManager, isolatedManager] = await Promise.all([request(combined, `/api/dashboard/zaruku${query}`, authHeaders), request(isolated, `/api/dashboard/zaruku${query}`, authHeaders)]);
-compareResponses(combinedManager, isolatedManager, "manager canonical payload", "json");
+await compareResponses(combinedManager, isolatedManager, "manager canonical payload", "json");
 assert.equal(combinedManager.status, 200, "manager request did not return 200");
-endpoints.manager = summarize(combinedManager, isolatedManager, "json");
+endpoints.manager = await summarize(combinedManager, isolatedManager, "json");
 
 for (const kind of ["pdf", "excel"]) {
   const [left, right] = await Promise.all([request(combined, `/api/dashboard/zaruku/${kind}${query}`, authHeaders), request(isolated, `/api/dashboard/zaruku/${kind}${query}`, authHeaders)]);
-  compareResponses(left, right, `${kind.toUpperCase()} export`, "binary");
+  const bodyType = kind === "pdf" ? "pdf" : "xlsx";
+  await compareResponses(left, right, `${kind.toUpperCase()} export`, bodyType);
   assert.equal(left.status, 200, `${kind.toUpperCase()} export did not return 200`);
-  endpoints[kind] = summarize(left, right, "binary");
+  endpoints[kind] = await summarize(left, right, bodyType);
 }
 
 const after = snapshotShas(inventory);
@@ -291,9 +391,12 @@ const summary = {
   isolatedSourceSha: artifact.sourceSha,
   isolatedScope: artifact.scope,
   otherRuntimeShasUnchanged: true,
+  requestAndBodyDeadlineMs: httpTimeoutMs,
   normalizedVolatileValues: {
     headers: [...VOLATILE_HEADERS].sort(),
     combinedHealthFields: [...VOLATILE_COMBINED_HEALTH_FIELDS].sort(),
+    pdfGenerationMetadata: ["Info.CreationDate", "Info.ModDate", "trailerOrXref.ID"],
+    xlsxGenerationMetadata: ["ZIP entry order/compression/timestamps", "docProps/core.xml:created", "docProps/core.xml:modified"],
   },
 };
 fs.writeFileSync(path.join(evidence, "summary.json"), `${JSON.stringify(summary, null, 2)}\n`, { mode: 0o600 });
