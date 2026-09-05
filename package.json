@@ -20,7 +20,7 @@
     "test:abbott-contract": "node --import tsx --test src/lib/abbott-dashboard-contract.test.ts src/components/AbbottBiDashboard.ui.test.ts src/components/abbott-page-stats.test.ts src/components/abbott-summary.test.ts src/components/abbott/abbott-admin-user-filter.test.ts src/components/abbott/abbott-user-action-filters.test.ts src/lib/abbott-bi-loader.test.ts src/lib/abbott-private-store.test.ts src/lib/abbott-admin-users.test.ts src/lib/abbott-data-projection.test.ts",
     "test:abbott-contract-wiring": "bash scripts/verify-abbott-dashboard-contract.test.sh",
     "test:deploy-source": "bash scripts/verify-deploy-source.test.sh && bash scripts/dashboard-deploy-lock.test.sh && bash scripts/dashboard-deploy-integration.test.sh && bash scripts/bootstrap-release-source-metadata.test.sh && bash scripts/predeploy-verify.test.sh",
-    "test:release-runtime": "bash scripts/normalize-standalone-runtime-links.test.sh && bash scripts/validate-production-release.test.sh && bash scripts/release-rollback.test.sh && bash scripts/rollback-authority.test.sh",
+    "test:release-runtime": "bash scripts/normalize-standalone-runtime-links.test.sh && bash scripts/validate-production-release.test.sh && bash scripts/release-rollback.test.sh && bash scripts/rollback-authority.test.sh && npm --workspace apps/zaruku run build && bash scripts/deploy-zaruku.test.sh",
     "lint": "eslint .",
     "typecheck": "tsc --noEmit",
     "security:public-assets": "tsx scripts/assert-no-private-public-assets.ts",
@@ -33,7 +33,9 @@
     "db:migrate": "tsx src/db/run-migration.ts",
     "import:zaruku-alice": "tsx scripts/import-zaruku-alice-visibility.ts",
     "deploy": "bash scripts/deploy.sh",
-    "deploy:rollback": "bash scripts/rollback-release.sh"
+    "deploy:rollback": "bash scripts/rollback-release.sh",
+    "deploy:zaruku": "bash scripts/deploy-zaruku.sh",
+    "deploy:zaruku:rollback": "bash scripts/rollback-zaruku.sh"
   },
   "dependencies": {
     "@base-ui/react": "^1.2.0",
