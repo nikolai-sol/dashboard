@@ -72,7 +72,94 @@ test('clean named branch must contain refreshed release/zaruku and current Zaruk
     fs.writeFileSync(path.join(temp, 'fact'), 'sibling'); git('commit', '-qam', 'sibling'); const sibling = git('rev-parse', 'HEAD');
     git('checkout', '-q', 'candidate'); assert.throws(() => api.verifySource(temp, sibling), /active Zaruku/);
     git('update-ref', 'refs/remotes/origin/release/zaruku', sibling); assert.throws(() => api.verifySource(temp, base), /release\/zaruku/);
+    git('replace', '--graft', candidate, sibling);
+    assert.equal(spawnSync('git', ['--no-replace-objects', '-C', temp, 'merge-base', '--is-ancestor', sibling, candidate]).status, 1);
+    assert.throws(() => api.verifySource(temp, sibling), /release\/zaruku|active Zaruku/);
+    git('update-ref', 'refs/remotes/origin/release/zaruku', base);
+    assert.throws(() => api.verifySource(temp, sibling), /active Zaruku/);
+    assert.equal(api.verifySource(temp, base), candidate);
+    git('replace', '-d', candidate);
+    fs.writeFileSync(path.join(temp, '.git/info/grafts'), `${candidate} ${sibling}\n`);
+    assert.throws(() => api.verifySource(temp, sibling), /active Zaruku/);
+    assert.equal(api.verifySource(temp, base), candidate);
   } finally { fs.rmSync(temp, { recursive: true }); }
+});
+
+test('graph substitution environment is rejected by authoritative Git helpers', () => {
+  for (const key of ['GIT_REPLACE_REF_BASE', 'GIT_OBJECT_DIRECTORY', 'GIT_ALTERNATE_OBJECT_DIRECTORIES', 'GIT_DIR', 'GIT_WORK_TREE', 'GIT_COMMON_DIR', 'GIT_SHALLOW_FILE', 'GIT_GRAFT_FILE', 'GIT_NO_REPLACE_OBJECTS', 'GIT_CONFIG_COUNT', 'GIT_CONFIG_PARAMETERS', 'GIT_CONFIG_GLOBAL', 'GIT_CONFIG_SYSTEM']) {
+    const before = process.env[key];
+    try { process.env[key] = '0'; assert.throws(() => api.verifySource(root, sha), /authority override/); }
+    finally { if (before === undefined) delete process.env[key]; else process.env[key] = before; }
+  }
+});
+
+test('a transient manual rollback failure preserves its authoritative backup and supports retry', async () => {
+  const f = await fixture();
+  try {
+    const previous = await f.mod.transact({ action: 'deploy', expectedActiveSha: null, payload: f.payload(previousSha) }, f.platform);
+    const active = await f.mod.transact({ action: 'deploy', expectedActiveSha: previousSha, payload: f.payload(sha) }, f.platform);
+    let attempts = 0;
+    await assert.rejects(f.mod.transact({ action: 'rollback', expectedActiveSha: sha }, { ...f.platform, health: async () => { if (++attempts === 1) throw new Error('transient'); } }), /restored/);
+    assert.equal(attempts, 2);
+    const state = JSON.parse(fs.readFileSync(path.join(f.temp, '.dashboard-zaruku-control/current.json')));
+    assert.deepEqual(state, active);
+    const backup = path.join(f.temp, 'dashboard-zaruku-backups', state.previousId);
+    assert.equal(fs.readFileSync(path.join(backup, '.release-source-sha'), 'utf8'), previousSha + '\n');
+    assert.equal((await f.mod.transact({ action: 'rollback', expectedActiveSha: sha }, f.platform)).id, previous.id);
+    assert.equal(fs.readFileSync(path.join(f.temp, 'dashboard-zaruku/.release-source-sha'), 'utf8'), previousSha + '\n');
+  } finally { f.close(); }
+});
+
+test('boot cannot proceed without an enforceable fixed service-account mechanism', async () => {
+  assert.equal(typeof worker.bootRuntimeAsService, 'function');
+  if (process.platform !== 'linux' || process.getuid() !== 0) await assert.rejects(worker.bootRuntimeAsService('/not-an-artifact'), /Linux.*privileged|privileged.*Linux/);
+});
+
+test('real remote verification inspects authority but refuses app boot without Linux privilege isolation', async () => {
+  if (process.platform === 'linux' && process.getuid() === 0) return;
+  const payload = api.preparePayload(execFileSync('git', ['rev-parse', 'HEAD'], { cwd: root, encoding: 'utf8' }).trim());
+  const f = await fixture();
+  try {
+    assert.equal(typeof f.mod.verifyStagedArtifact, 'function');
+    await assert.rejects(f.mod.transact({ action: 'deploy', expectedActiveSha: null, payload }, { ...f.platform, verify: f.mod.verifyStagedArtifact }), /privileged Linux verifier/);
+    assert.ok(!fs.existsSync(path.join(f.temp, 'dashboard-zaruku')));
+  } finally { f.close(); }
+});
+
+test('rollback recovery guards a reoccupied backup slot and preserves the current release', async () => {
+  for (const collision of ['directory', 'symlink']) {
+    const f = await fixture();
+    try {
+      const previous = await f.mod.transact({ action: 'deploy', expectedActiveSha: null, payload: f.payload(previousSha) }, f.platform);
+      await f.mod.transact({ action: 'deploy', expectedActiveSha: previousSha, payload: f.payload(sha) }, f.platform);
+      const target = path.join(f.temp, 'dashboard-zaruku-backups', previous.id);
+      let attempts = 0;
+      await assert.rejects(f.mod.transact({ action: 'rollback', expectedActiveSha: sha }, { ...f.platform, health: async () => {
+        if (++attempts !== 1) return;
+        if (collision === 'directory') fs.mkdirSync(target);
+        else fs.symlinkSync(path.join(f.temp, 'unrelated'), target);
+        throw new Error('transient with occupied recovery slot');
+      } }), /backup collision.*requires recovery/);
+      assert.equal(fs.readFileSync(path.join(f.temp, 'dashboard-zaruku/.release-source-sha'), 'utf8'), sha + '\n');
+      assert.equal(fs.lstatSync(target).isSymbolicLink(), collision === 'symlink');
+      assert.ok(fs.readdirSync(path.join(f.temp, 'dashboard-zaruku-releases')).some(name => name.includes('-failed-')));
+    } finally { f.close(); }
+  }
+});
+
+test('a failed second directory move leaves the manual rollback candidate available for retry', async () => {
+  const f = await fixture();
+  const rename = fs.renameSync;
+  try {
+    const previous = await f.mod.transact({ action: 'deploy', expectedActiveSha: null, payload: f.payload(previousSha) }, f.platform);
+    await f.mod.transact({ action: 'deploy', expectedActiveSha: previousSha, payload: f.payload(sha) }, f.platform);
+    const target = path.join(f.temp, 'dashboard-zaruku-backups', previous.id);
+    fs.renameSync = (source, destination) => { if (source === target) throw new Error('fixture move failure'); return rename(source, destination); };
+    await assert.rejects(f.mod.transact({ action: 'rollback', expectedActiveSha: sha }, f.platform), /restored/);
+    fs.renameSync = rename;
+    assert.equal(fs.readFileSync(path.join(target, '.release-source-sha'), 'utf8'), previousSha + '\n');
+    assert.equal((await f.mod.transact({ action: 'rollback', expectedActiveSha: sha }, f.platform)).id, previous.id);
+  } finally { fs.renameSync = rename; f.close(); }
 });
 
 test('environment rendering is scoped, fixed, redacted and cannot evaluate shell input', () => {
@@ -333,5 +420,10 @@ test('deploy runs locked dependency installation and full predeploy verification
     const result = spawnSync(process.execPath, ['--import', 'tsx', '--input-type=module', '-e', `import { buildVerifiedRelease } from ${JSON.stringify(moduleUrl)}; buildVerifiedRelease();`], { cwd: root, env: { ...process.env, PATH: `${temp}:${process.env.PATH}` }, encoding: 'utf8' });
     assert.equal(result.status, 0, result.stderr);
     assert.equal(fs.readFileSync(log, 'utf8'), 'ci\nrun predeploy:verify\n');
+    fs.unlinkSync(log);
+    const privileged = spawnSync(process.execPath, ['--import', 'tsx', '--input-type=module', '-e', `import { buildVerifiedRelease } from ${JSON.stringify(moduleUrl)}; process.getuid = () => 0; buildVerifiedRelease();`], { cwd: root, env: { ...process.env, PATH: `${temp}:${process.env.PATH}` }, encoding: 'utf8' });
+    assert.notEqual(privileged.status, 0);
+    assert.match(privileged.stderr, /unprivileged/);
+    assert.ok(!fs.existsSync(log));
   } finally { fs.rmSync(temp, { recursive: true }); }
 });

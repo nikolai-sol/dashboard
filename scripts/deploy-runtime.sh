@@ -10,6 +10,12 @@ for forbidden in RUNTIME_SCOPE APP_NAME APP_PORT APP_DIR RELEASE_BRANCH DEPLOY_L
     exit 1
   fi
 done
+while IFS= read -r forbidden; do
+  if [[ "$forbidden" == GIT_* && "$forbidden" != GIT_PAGER ]]; then
+    echo 'Refusing Zaruku operation: Git authority override variables are not accepted.' >&2
+    exit 1
+  fi
+done < <(compgen -e)
 [[ "$#" -eq 2 && ( "$2" == deploy || "$2" == rollback ) ]] || { echo 'Invalid fixed release authority invocation.' >&2; exit 1; }
 SCRIPT_DIR="$(cd -P -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 exec node --import tsx "$SCRIPT_DIR/deploy-runtime.mjs" "$1" "$2"

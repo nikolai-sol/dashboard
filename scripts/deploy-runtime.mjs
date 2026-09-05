@@ -20,6 +20,9 @@ export const FORBIDDEN_ENV = Object.freeze([
   'DEPLOY_REMOTE', 'DEPLOY_BASE_BRANCH', 'DEPLOY_ACTIVE_RELEASE_READER', 'DASHBOARD_DEPLOY_LOCK_DIR',
   'SSH_BIN', 'DEPLOY_SSH_BIN', 'GIT_SSH', 'GIT_SSH_COMMAND', 'RSYNC_RSH', 'REMOTE_ENV_PATH',
   'TRUSTED_MANIFEST', 'TRUSTED_MANIFEST_PATH', 'NODE_OPTIONS', 'NODE_PATH', 'BASH_ENV', 'ENV',
+  'GIT_REPLACE_REF_BASE', 'GIT_OBJECT_DIRECTORY', 'GIT_ALTERNATE_OBJECT_DIRECTORIES',
+  'GIT_DIR', 'GIT_WORK_TREE', 'GIT_COMMON_DIR', 'GIT_SHALLOW_FILE', 'GIT_GRAFT_FILE',
+  'GIT_NO_REPLACE_OBJECTS', 'GIT_CONFIG_COUNT', 'GIT_CONFIG_PARAMETERS', 'GIT_CONFIG_GLOBAL', 'GIT_CONFIG_SYSTEM',
 ]);
 const fail = message => { throw new Error(message); };
 
@@ -31,7 +34,11 @@ export function validateAuthority(filename) {
 }
 
 function git(repo, ...args) {
-  return execFileSync('git', ['-C', repo, ...args], { encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] }).trim();
+  if (Object.keys(process.env).some(key => key.startsWith('GIT_') && key !== 'GIT_PAGER')) fail('Fixed Git authority override rejected');
+  return execFileSync('git', ['--no-replace-objects', '-C', repo, ...args], {
+    encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'],
+    env: { ...process.env, GIT_NO_REPLACE_OBJECTS: '1', GIT_GRAFT_FILE: '/dev/null', GIT_PAGER: '/bin/cat' },
+  }).trim();
 }
 
 export function verifySource(repo, activeSha) {
@@ -93,6 +100,7 @@ export function preparePayload(sourceSha) {
 }
 
 export function buildVerifiedRelease() {
+  if (process.getuid() === 0 || process.geteuid() === 0) fail('Local release build and boot verification must run as an unprivileged user');
   execFileSync('npm', ['ci'], { cwd: ROOT, stdio: 'inherit' });
   // test:release-runtime builds the isolated workspace before its real packaging
   // fixture; the remainder of the existing gate also verifies the combined app.
@@ -100,9 +108,10 @@ export function buildVerifiedRelease() {
 }
 
 async function main() {
-  for (const key of Object.keys(process.env)) if (FORBIDDEN_ENV.includes(key) || /^GIT_(?:CONFIG|DIR|WORK_TREE|INDEX|OBJECT)/.test(key)) fail('Fixed release authority override rejected');
+  for (const key of Object.keys(process.env)) if (FORBIDDEN_ENV.includes(key) || key.startsWith('GIT_') && key !== 'GIT_PAGER') fail('Fixed release authority override rejected');
   const [filename, action, ...extra] = process.argv.slice(2);
   if (!filename || extra.length || !['deploy', 'rollback'].includes(action)) fail('Invalid fixed authority invocation');
+  if (process.getuid() === 0 || process.geteuid() === 0) fail('Local release authority must run as an unprivileged user');
   validateAuthority(filename);
   // Clean tracked helpers are the deploy authority, including rollback invocations.
   if (git(ROOT, 'status', '--porcelain', '--untracked-files=normal') || !git(ROOT, 'branch', '--show-current')) fail('Release authority must be a clean named checkout');

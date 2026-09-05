@@ -1,6 +1,6 @@
 # Task 6 — Fixed Zaruku release lifecycle
 
-Status: implemented and locally verified; independent parent review/acceptance is pending.
+Status: implemented and locally verified, including the three Important review fixes below; independent parent review/acceptance is pending. Real Linux service-identity execution remains a cutover prerequisite (DONE_WITH_CONCERNS).
 
 Base: `13bbed5` (`fix(zaruku): bind artifacts to external build authority`).
 Implementation commit: `feat(zaruku): add independent release lifecycle`; the exact commit ID is returned in the completion handoff and can be read with `git log -- .superpowers/sdd/runtime-isolation-task-6-report.md`.
@@ -127,3 +127,65 @@ Remaining operational prerequisites/limits:
 - No actual production deployment or account/permission/PM2 integration has been proven by these local fixtures. Proxy routing, account provisioning and live cutover remain outside Task 6.
 
 Done: Task 6 implementation and local verification complete. Accepted: pending independent parent review. Reusable learning: none captured before acceptance. Skill action: TDD and verification-before-completion instructions applied; no durable skill edit. Evidence: exact RED/GREEN and verification results above. Budget stop: none.
+
+## Important review fixes — 2026-09-05
+
+This section supersedes the original remote boot, Git ancestry, and failed-manual-rollback descriptions above. The original implementation and its historical verification results remain recorded without rewriting a failed command as successful.
+
+Implementation baseline: `3f275e1bbcfb9bc5b5828199ea9018a1447ccbdb`. Fix commit: `fix(zaruku): harden boot identity and rollback authority`; its exact ID is supplied in the completion handoff.
+
+### 1. Fixed unprivileged preactivation and rollback boot
+
+The root-owned verifier now calls the separately transported Task 5 policy **without** `--boot`, passing the explicit protected external manifest path. Application startup is delegated to `bootRuntimeAsService`; the policy is run again afterward with the same explicit authority. The transaction retains its existing in-memory manifest/environment pins and artifact attestation through activation. The runtime receives neither the manifest path nor private control access.
+
+The reviewed mechanism is the literal `/usr/bin/setpriv`, with no caller override. Linux UID/EUID 0 is required for the verifier, but the fixed `dashboard-zaruku` account/group must resolve to positive non-root IDs before spawning. Ownership, link count, modes, ancestry and runtime file readability are checked. The spawn uses `--reuid`, `--regid`, `--clear-groups`, `--no-new-privs`, and clears inheritable, ambient and bounding capabilities. Its environment is exactly `NODE_ENV`, `HOSTNAME`, and the reserved ephemeral loopback `PORT`; no inherited PATH, HOME, NODE_OPTIONS, database credentials, tokens or authority path reaches the boot child.
+
+A trusted bootstrap executes after the OS privilege drop and before `require(server)`. It attests real/effective UID/GID, empty kernel supplementary groups, zero Linux capability sets, `NoNewPrivs=1`, and exact canonical application cwd. It sends a bounded identity record over a dedicated descriptor which it closes before application code. The privileged parent independently checks `/proc/<pid>/status` and cwd before and after the exact HTTP health response. A missing mechanism, identity mismatch, unsupported platform, wrong permissions, unexpected groups/capabilities/cwd, startup failure or timeout fails closed. The child is terminated and reaped. Local build/boot entrypoints now reject UID or EUID 0, so the Task 5 local loopback path cannot accidentally execute application code as root either.
+
+The new disposable Linux fixture `scripts/boot-zaruku-service.linux.test.mjs` executes this actual function with a synthetic HTTP server, records UID/GID/groups/cwd/env/kernel status from application code, and proves denied writes to protected control authority, a sibling directory and its own artifact. It also tests missing and impersonating `setpriv`: a root-preserving replacement must be rejected before the app writes its proof. This is not a source-regex assertion. It deliberately requires Linux root inside a disposable Docker container, creates only a container-local fixture service identity, uses temporary artifact/control/sibling files, and never accesses `/var/www` or production. The container needs SYS_PTRACE for the privileged parent to independently inspect the different-UID child's cwd; all application capability sets are still cleared.
+
+**Execution limitation:** this host is macOS UID 501. Local sudo requires a password. Docker Desktop's server API returned HTTP 500 for the probed API versions; no container or Linux privilege-drop run was possible. At the parent's explicit direction Docker was not restarted, no production identity was inspected/provisioned, and this is a later cutover prerequisite rather than a Task 6 blocker. The fixture passed syntax/lint checks only; no executed Linux UID separation is claimed. In a disposable Linux test environment with a reviewed Node + util-linux image already available, run:
+
+```sh
+docker run --rm --network none --cap-add SYS_PTRACE \
+  --mount type=bind,source=/Users/nafanya/ReportingDash/dashboard-next/.worktrees/three-dashboard-runtime-isolation,target=/src,readonly \
+  --workdir /src REVIEWED_NODE_UTIL_LINUX_IMAGE \
+  node --test scripts/boot-zaruku-service.linux.test.mjs
+```
+
+`REVIEWED_NODE_UTIL_LINUX_IMAGE` is intentionally a prerequisite placeholder, not a guessed image/digest or an executed command. The disposable image must supply Node, `/usr/bin/setpriv`, `/usr/bin/id`, `/usr/sbin/groupadd`, and `/usr/sbin/useradd`, and have no pre-existing fixture account/group. The future real Linux gate must pass both cases before shadow/cutover; production service-account/filesystem/PM2 prerequisites remain separate.
+
+### 2. Authoritative ancestry ignores replacement graphs
+
+Every authoritative Git subprocess now uses both `git --no-replace-objects` and fixed `GIT_NO_REPLACE_OBJECTS=1`. It also fixes `GIT_GRAFT_FILE=/dev/null`, so legacy `.git/info/grafts` cannot substitute parentage. Supported entrypoints and the Git helper itself reject inherited `GIT_*` variables, including replacement-ref base, object/alternate-object directories, repository/worktree/common directories, shallow/graft files, index/config injection and SSH graph transport overrides. The only harmless permitted inherited key is `GIT_PAGER`, replaced inside the subprocess by `/bin/cat`. Rejections reveal no values.
+
+The real temporary-Git test constructs divergent commits, demonstrates that the replacement-free ancestry command rejects the divergent SHA, installs `git replace --graft`, and proves the deploy guard still rejects that SHA while accepting the actual ancestor. It repeats the rejection with legacy `info/grafts`. A separate helper test attempts all listed graph/object environment overrides and confirms rejection before repository traversal. No combined Git guard was edited.
+
+### 3. Failed manual rollback remains retryable
+
+Manual rollback temporarily borrows the exact predecessor from its protected BACKUPS location. If candidate activation/start/health fails, the worker now checks its original in-memory authority and environment pin and atomically returns the candidate to that same backup path before restoring the current release. The unchanged current record's `previousId` therefore remains usable, and a transient failure followed by retry succeeds.
+
+The recovery path refuses an occupied/symlink destination and never overwrites it. In such a collision or candidate-integrity failure it retains the candidate under a unique failed-release location, restores the current active release if possible, and reports an explicit recovery-needed error rather than promising retryability. A failed second activation rename leaves the candidate at its original backup and restores the current active release. Every active recovery destination is checked before rename. No unknown backup, collision or evidence is deleted; uncatchable process/host failure remains the previously documented manual-recovery limitation.
+
+### Review-fix RED/GREEN
+
+1. `node /private/tmp/task6-review-repro.mjs` reproduced the original findings: a replaced divergent graph was accepted even though true ancestry exited 1; transient manual rollback moved its predecessor out of BACKUPS and retry failed with ENOENT.
+2. `node --import tsx --test --test-name-pattern='clean named|graph substitution|transient manual|enforceable fixed' scripts/deploy-zaruku.test.mjs` — **RED, 0/4 passed**, before the fixes: accepted substituted ancestry, missing graph-env rejection, missing original rollback backup, and missing enforceable boot function. Log `/private/tmp/task6-review-red.log`. The first implementation exposed this host's harmless inherited GIT_PAGER; permitting only that key while fixing its subprocess value produced **GREEN, 4/4**. Log `/private/tmp/task6-review-first-green.log`.
+3. `node --import tsx --test --test-name-pattern='real remote verification' scripts/deploy-zaruku.test.mjs` — **RED**, missing the actual exported remote verification call chain, before adding it. Log `/private/tmp/task6-review-callchain-red.log`. **GREEN** uses real packaged bytes and separately transported policy/authority: inspection succeeds, then the real boot path refuses this non-Linux/nonprivileged environment before activation. It does not replace the verifier with a source-regex check.
+4. `node --import tsx --test --test-name-pattern='locked dependency' scripts/deploy-zaruku.test.mjs` — **RED**, the local build gate accepted simulated UID 0 and ran the fake npm executable. Log `/private/tmp/task6-review-local-root-red.log`. **GREEN** rejects before any build command while preserving ordinary unprivileged `npm ci` → full predeploy ordering.
+5. Added behavioral regressions cover transient rollback failure followed by successful retry, exact unchanged current/predecessor metadata, reoccupied directory and symlink backup slots, preserved recovery evidence, and failure of the second directory rename followed by successful retry. Existing authority, cross-scope, lock, stale SHA, env-redaction, manifest-replacement and foreign-artifact cases remain present.
+6. `bash scripts/deploy-zaruku.test.sh` and the full release gate — **GREEN, 28/28**, no failures/skips. Focused log `/private/tmp/task6-review-focused.log`; the full gate additionally includes the final legacy-graft assertions. There is no claimed Linux-fixture RED/GREEN execution; only its local syntax/lint validation and the executed fail-closed/real-policy-call-chain tests are evidence here.
+
+### Complete verification after review fixes
+
+- `npm run predeploy:verify` ran **once, uninterrupted, exit 0**. Log `/private/tmp/task6-review-predeploy.log`. It passed all 956 Node tests discovered (946 pass, 10 existing skips, zero failures), 13 Python tests, all existing combined deploy/source/lock/bootstrap/predeploy-contract suites, all original combined release/rollback suites, the isolated Zaruku build and 28 Task 6 tests, Abbott contract wiring and 111 Abbott tests, public-assets security, root typecheck, full lint, the combined build, and preview-builder Python 7 + shell tests. Unlike the original implementation's historical run, no resume or failed stage was necessary.
+- `node --test scripts/runtime-artifact-policy.test.mjs` — **144/144**, zero failures/skips; `/private/tmp/task6-review-policy.log`.
+- `npm --workspace apps/zaruku run verify:artifact && npm --workspace apps/zaruku run verify:boot && npm run typecheck && npx tsc --noEmit -p apps/zaruku/tsconfig.json && git diff --check` — exit 0. The executed Task 5 loopback boot ran under this host's unprivileged local user, with the explicit external authority path; it is distinct from the unexecuted Linux service-account fixture.
+- Focused ESLint on `scripts/deploy-runtime.mjs`, `scripts/runtime-release-remote.mjs`, `scripts/deploy-zaruku.test.mjs`, and `scripts/boot-zaruku-service.linux.test.mjs` — exit 0. Full lint retained the same 12 unrelated warnings, zero errors.
+- `node --check scripts/boot-zaruku-service.linux.test.mjs`, `npm ci --offline --dry-run --ignore-scripts`, `bash -n scripts/deploy-zaruku.sh scripts/deploy-runtime.sh scripts/rollback-zaruku.sh scripts/deploy-zaruku.test.sh`, and `git diff --check` — exit 0. No dependency or lockfile change.
+
+Review-fix files are limited to `scripts/deploy-runtime.mjs`, `scripts/deploy-runtime.sh`, `scripts/runtime-release-remote.mjs`, `scripts/deploy-zaruku.test.mjs`, the new `scripts/boot-zaruku-service.linux.test.mjs`, and this report. No combined guard, application, collector, data-plane, schema, dependency or operational state was changed. The scoped renderer/launcher redaction evidence above remains covered by the green 28-case suite; the new boot env has exactly three non-secret fixed keys.
+
+Self-review rechecked the real policy → fixed setpriv/bootstrap → kernel attestation → policy call chain, the Git helper used by every authoritative command, and both rollback rename failure positions. Privileged inspection never loads packaged application code, and candidate code cannot replace control authority before activation. No environment override was introduced for testability. Independent parent review remains pending; Linux account/permission/mechanism execution is the explicit outstanding integration concern, not a performed deployment.
+
+Done: all three Important review fixes and locally executable gates. Accepted: pending independent parent review. Reusable learning: none captured before acceptance. Skill action: receiving-code-review, strict TDD and verification-before-completion informed reproduction, separate evidence and fail-closed checks; no durable skill edit. Evidence: RED/GREEN and exact commands above. Budget stop: none.

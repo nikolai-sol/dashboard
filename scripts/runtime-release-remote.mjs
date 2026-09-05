@@ -3,7 +3,8 @@ import fs from 'node:fs';
 import path from 'node:path';
 import os from 'node:os';
 import { createHash, randomUUID } from 'node:crypto';
-import { execFileSync } from 'node:child_process';
+import { execFileSync, spawn } from 'node:child_process';
+import { createServer } from 'node:net';
 import { pathToFileURL } from 'node:url';
 import { createRequire } from 'node:module';
 
@@ -180,6 +181,111 @@ export function assertRuntimeProcess(processes, account, readStatus = filename =
   if (readCwd(`/proc/${matches[0].pid}/cwd`) !== `${APP}/apps/zaruku`) fail('Runtime process is not in the active directory');
 }
 
+// Application code is reached only after the fixed OS privilege drop and this
+// trusted bootstrap attest the kernel identity. The privileged parent retains
+// private manifest access; none of its credentials or authority paths are passed.
+const BOOT_IDENTITY_BOOTSTRAP = String.raw`
+const fs = require('node:fs');
+const path = require('node:path');
+const [uidText, gidText, server] = process.argv.slice(1);
+const uid = Number(uidText), gid = Number(gidText);
+const status = fs.readFileSync('/proc/self/status', 'utf8');
+const groups = /^Groups:[\t ]*([^\r\n]*)$/m.exec(status)?.[1].trim();
+for (const name of ['CapInh','CapPrm','CapEff','CapBnd','CapAmb']) {
+  if (!new RegExp('^' + name + ':[\\t ]*0+$', 'm').test(status)) throw new Error('Zaruku boot capabilities were retained');
+}
+if (!Number.isInteger(uid) || uid <= 0 || !Number.isInteger(gid) || gid <= 0 ||
+    process.getuid() !== uid || process.geteuid() !== uid || process.getgid() !== gid || process.getegid() !== gid ||
+    groups !== '' || !/^NoNewPrivs:[\t ]*1$/m.test(status) ||
+    process.getgroups().some(group => group !== gid) || fs.realpathSync(process.cwd()) !== path.dirname(server)) {
+  throw new Error('Zaruku boot privilege identity mismatch');
+}
+fs.writeSync(3, JSON.stringify({uid,gid,euid:process.geteuid(),egid:process.getegid(),supplementaryGroups:[],cwd:fs.realpathSync(process.cwd())}) + '\n');
+fs.closeSync(3);
+require(server);
+`;
+
+function attestBootProcess(pid, account, cwd) {
+  const status = fs.readFileSync(`/proc/${pid}/status`, 'utf8');
+  for (const [key, expected] of [['Uid', account.uid], ['Gid', account.gid]]) {
+    const values = new RegExp(`^${key}:[\\t ]*(\\d+)[\\t ]+(\\d+)[\\t ]+(\\d+)[\\t ]+(\\d+)$`, 'm').exec(status);
+    if (!values || values.slice(1).some(value => Number(value) !== expected)) fail('Zaruku boot kernel identity mismatch');
+  }
+  if (!/^Groups:[\t ]*$/m.test(status) || !/^NoNewPrivs:[\t ]*1$/m.test(status) || fs.realpathSync(`/proc/${pid}/cwd`) !== cwd) fail('Zaruku boot kernel groups/cwd mismatch');
+  for (const name of ['CapInh', 'CapPrm', 'CapEff', 'CapBnd', 'CapAmb']) if (!new RegExp(`^${name}:[\\t ]*0+$`, 'm').test(status)) fail('Zaruku boot kernel capabilities mismatch');
+}
+
+export async function bootRuntimeAsService(artifact) {
+  if (process.platform !== 'linux' || process.getuid() !== 0 || process.geteuid() !== 0) fail('Zaruku service boot requires a privileged Linux verifier');
+  const account = realPlatform.account();
+  if (!Number.isInteger(account.uid) || account.uid <= 0 || !Number.isInteger(account.gid) || account.gid <= 0) fail('Invalid fixed service-account identity');
+  // No environment or positional argument can replace the reviewed mechanism.
+  const mechanism = '/usr/bin/setpriv';
+  owned(mechanism); owned(process.execPath);
+  const cwd = `${artifact}/apps/zaruku`, server = `${cwd}/server.js`;
+  owned(artifact, true); owned(cwd, true); owned(server);
+  const port = await new Promise((resolve, reject) => {
+    const reservation = createServer();
+    reservation.once('error', reject);
+    reservation.listen(0, '127.0.0.1', () => {
+      const port = reservation.address().port;
+      reservation.close(error => error ? reject(error) : resolve(port));
+    });
+  });
+  const child = spawn(mechanism, [
+    `--reuid=${account.uid}`, `--regid=${account.gid}`, '--clear-groups', '--no-new-privs',
+    '--inh-caps=-all', '--ambient-caps=-all', '--bounding-set=-all', '--',
+    process.execPath, '--input-type=commonjs', '-e', BOOT_IDENTITY_BOOTSTRAP, String(account.uid), String(account.gid), server,
+  ], { cwd, env: { NODE_ENV: 'production', HOSTNAME: '127.0.0.1', PORT: String(port) }, stdio: ['ignore', 'ignore', 'ignore', 'pipe'] });
+  let childError = false, message = '', identity;
+  child.once('error', () => { childError = true; });
+  const closed = new Promise(resolve => child.once('close', resolve));
+  child.stdio[3].on('data', chunk => {
+    message += chunk.toString('utf8');
+    if (message.length > 4096) { childError = true; return; }
+    if (!message.endsWith('\n')) return;
+    try {
+      const value = JSON.parse(message);
+      if (value.uid !== account.uid || value.euid !== account.uid || value.gid !== account.gid || value.egid !== account.gid ||
+          !Array.isArray(value.supplementaryGroups) || value.supplementaryGroups.length || value.cwd !== cwd) fail('Boot identity mismatch');
+      identity = value;
+    } catch { childError = true; }
+  });
+  try {
+    const deadline = Date.now() + 15000;
+    while (Date.now() < deadline && child.exitCode === null && !childError) {
+      if (identity) {
+        attestBootProcess(child.pid, account, cwd);
+        try {
+          const response = await fetch(`http://127.0.0.1:${port}/api/health`, { redirect: 'error', signal: AbortSignal.timeout(500) });
+          const body = await response.text();
+          if (response.status === 200 && body.length < 1024 && JSON.stringify(JSON.parse(body)) === '{"ok":true,"scope":"zaruku"}') {
+            attestBootProcess(child.pid, account, cwd);
+            return identity;
+          }
+        } catch { /* A bounded startup retry; never display child output. */ }
+      }
+      await new Promise(resolve => setTimeout(resolve, 100));
+    }
+    fail('Zaruku unprivileged boot identity/health check failed');
+  } finally {
+    child.kill('SIGTERM');
+    const force = setTimeout(() => child.kill('SIGKILL'), 1000);
+    await closed;
+    clearTimeout(force);
+  }
+}
+
+export async function verifyStagedArtifact(artifact, manifest, boot) {
+  const code = `${path.dirname(manifest)}/scripts/runtime-artifact-policy.mjs`;
+  const args = [code, 'zaruku', artifact, '--trusted-manifest', manifest];
+  command(process.execPath, args);
+  if (boot) {
+    await bootRuntimeAsService(artifact);
+    command(process.execPath, args);
+  }
+}
+
 const realPlatform = {
   account() {
     const uid = Number(command('/usr/bin/id', ['-u', 'dashboard-zaruku']).trim());
@@ -190,10 +296,7 @@ const realPlatform = {
     return { uid, gid };
   },
   chown: (filename, uid, gid) => fs.chownSync(filename, uid, gid),
-  async verify(artifact, manifest, boot) {
-    const code = `${path.dirname(manifest)}/scripts/runtime-artifact-policy.mjs`;
-    command(process.execPath, [code, ...(boot ? ['--boot'] : []), 'zaruku', artifact, '--trusted-manifest', manifest]);
-  },
+  verify: verifyStagedArtifact,
   secrets(control) {
     // Existing reviewed secret location; values never leave this remote process.
     const filename = '/var/www/www-root/data/.production.env';
@@ -308,13 +411,32 @@ export async function transact(request, platform = realPlatform) {
       publishPointer(record);
       return record;
     } catch {
+      let rollbackCandidateNeedsRecovery = false;
       try {
-        if (candidateMoved) fs.renameSync(APP, `${RELEASES}/${record.id}-failed-${randomUUID()}`);
+        if (candidateMoved) {
+          // A manual rollback borrows its predecessor from BACKUPS. Return that
+          // exact artifact to its authoritative slot so current.previousId stays
+          // usable after transient startup/health failures and a retry is safe.
+          let destination = `${RELEASES}/${record.id}-failed-${randomUUID()}`;
+          if (request.action === 'rollback') {
+            try {
+              attestTree(APP, record);
+              if (hash(stableRead(`${APP}/.env`)) !== envDigest || fs.lstatSync(stage, { throwIfNoEntry: false })) fail('Rollback backup slot is unavailable');
+              destination = stage;
+            } catch { rollbackCandidateNeedsRecovery = true; }
+          }
+          owned(APP, true);
+          if (fs.lstatSync(destination, { throwIfNoEntry: false })) fail('Recovery destination collision');
+          fs.renameSync(APP, destination);
+        }
         if (oldMoved) {
-          attestTree(oldBackup, old); fs.renameSync(oldBackup, APP);
+          attestTree(oldBackup, old);
+          if (fs.lstatSync(APP, { throwIfNoEntry: false })) fail('Active recovery path is occupied');
+          fs.renameSync(oldBackup, APP);
           await platform.start(`${CONTROL}/${old.id}`); await platform.health(); attestTree(APP, old); publishPointer(old);
         } else if (!old) await platform.stop();
       } catch { try { await platform.stop(); } catch { /* Preserve evidence, fail closed. */ } fail('Zaruku activation and predecessor restoration failed; service stop requested'); }
+      if (rollbackCandidateNeedsRecovery) fail('Current Zaruku release restored; rollback backup collision or integrity failure requires recovery');
       fail(old ? 'Zaruku activation failed; attested predecessor restored' : 'Zaruku activation failed; service stopped');
     }
   } finally {
