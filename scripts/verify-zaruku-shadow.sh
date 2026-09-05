@@ -102,37 +102,255 @@ function digest(data) {
   return crypto.createHash("sha256").update(data).digest("hex");
 }
 
+function pdfDelimiter(character) {
+  return character === "(" || character === ")" || character === "<" || character === ">" ||
+    character === "[" || character === "]" || character === "{" || character === "}" ||
+    character === "/" || character === "%";
+}
+
+function pdfWhitespace(character) {
+  return character === "\0" || character === "\t" || character === "\n" ||
+    character === "\f" || character === "\r" || character === " ";
+}
+
+function matchingPdfToken(tokens, start, openKind, closeKind, label) {
+  let depth = 0;
+  for (let index = start; index < tokens.length; index += 1) {
+    if (tokens[index].kind === openKind) depth += 1;
+    if (tokens[index].kind === closeKind) depth -= 1;
+    if (depth === 0) return index;
+  }
+  fail(`${label} contains an unterminated PDF container`);
+}
+
+function skipPdfValue(tokens, start, limit, label) {
+  const token = tokens[start];
+  if (!token || start >= limit) fail(`${label} contains a PDF dictionary key without a value`);
+  if (token.kind === "dict-start") return matchingPdfToken(tokens, start, "dict-start", "dict-end", label) + 1;
+  if (token.kind === "array-start") return matchingPdfToken(tokens, start, "array-start", "array-end", label) + 1;
+  if (
+    token.kind === "number" && tokens[start + 1]?.kind === "number" &&
+    tokens[start + 2]?.kind === "keyword" && tokens[start + 2]?.value === "R" && start + 2 < limit
+  ) return start + 3;
+  return start + 1;
+}
+
+function pdfDictionaryEntries(tokens, dictionaryStart, dictionaryEnd, label) {
+  const entries = [];
+  let index = dictionaryStart + 1;
+  while (index < dictionaryEnd) {
+    const key = tokens[index];
+    if (key.kind !== "name") fail(`${label} contains a malformed PDF dictionary`);
+    const valueStart = index + 1;
+    const valueEnd = skipPdfValue(tokens, valueStart, dictionaryEnd, label);
+    entries.push({ name: key.value, valueStart, valueEnd });
+    index = valueEnd;
+  }
+  return entries;
+}
+
+function decodePdfName(value) {
+  return value.replace(/#([A-Fa-f0-9]{2})/g, (_match, pair) => String.fromCharCode(Number.parseInt(pair, 16)));
+}
+
+function scanPdfTokens(source, label) {
+  const tokens = [];
+  let index = 0;
+  let insideObject = false;
+  let objectTokenStart = -1;
+  const push = (kind, start, end, value = "") => tokens.push({ kind, start, end, value, insideObject });
+
+  while (index < source.length) {
+    const character = source[index];
+    if (pdfWhitespace(character)) { index += 1; continue; }
+    if (character === "%") {
+      while (index < source.length && source[index] !== "\n" && source[index] !== "\r") index += 1;
+      continue;
+    }
+    if (character === "(") {
+      const start = index;
+      let depth = 1;
+      index += 1;
+      while (index < source.length && depth > 0) {
+        if (source[index] === "\\") {
+          index += source[index + 1] === "\r" && source[index + 2] === "\n" ? 3 : 2;
+        } else {
+          if (source[index] === "(") depth += 1;
+          if (source[index] === ")") depth -= 1;
+          index += 1;
+        }
+      }
+      if (depth !== 0) fail(`${label} contains an unterminated PDF literal string`);
+      push("literal", start, index);
+      continue;
+    }
+    if (character === "<") {
+      const start = index;
+      if (source[index + 1] === "<") {
+        index += 2;
+        push("dict-start", start, index);
+      } else {
+        index += 1;
+        while (index < source.length && source[index] !== ">") index += 1;
+        if (index >= source.length) fail(`${label} contains an unterminated PDF hexadecimal string`);
+        index += 1;
+        push("hex", start, index);
+      }
+      continue;
+    }
+    if (character === ">" && source[index + 1] === ">") {
+      push("dict-end", index, index + 2);
+      index += 2;
+      continue;
+    }
+    if (character === "[") { push("array-start", index, index + 1); index += 1; continue; }
+    if (character === "]") { push("array-end", index, index + 1); index += 1; continue; }
+    if (character === "/") {
+      const start = index;
+      index += 1;
+      const valueStart = index;
+      while (index < source.length && !pdfWhitespace(source[index]) && !pdfDelimiter(source[index])) index += 1;
+      push("name", start, index, decodePdfName(source.slice(valueStart, index)));
+      continue;
+    }
+    if (pdfDelimiter(character)) {
+      push("delimiter", index, index + 1, character);
+      index += 1;
+      continue;
+    }
+
+    const start = index;
+    while (index < source.length && !pdfWhitespace(source[index]) && !pdfDelimiter(source[index])) index += 1;
+    const value = source.slice(start, index);
+    const kind = /^[+-]?\d+$/.test(value) ? "number" : "keyword";
+    push(kind, start, index, value);
+
+    if (kind === "keyword" && value === "obj") {
+      if (insideObject || tokens.length < 3 || tokens[tokens.length - 2].kind !== "number" || tokens[tokens.length - 3].kind !== "number") fail(`${label} contains malformed PDF object boundaries`);
+      insideObject = true;
+      objectTokenStart = tokens.length - 1;
+      continue;
+    }
+    if (kind === "keyword" && value === "endobj") {
+      if (!insideObject) fail(`${label} contains an unmatched PDF endobj`);
+      insideObject = false;
+      objectTokenStart = -1;
+      continue;
+    }
+    if (kind === "keyword" && value === "stream") {
+      if (!insideObject || objectTokenStart < 0) fail(`${label} contains a PDF stream outside an object`);
+      let dictionaryStart = -1;
+      for (let tokenIndex = objectTokenStart + 1; tokenIndex < tokens.length; tokenIndex += 1) {
+        if (tokens[tokenIndex].kind === "dict-start") { dictionaryStart = tokenIndex; break; }
+      }
+      if (dictionaryStart < 0) fail(`${label} contains a PDF stream without a dictionary`);
+      const dictionaryEnd = matchingPdfToken(tokens, dictionaryStart, "dict-start", "dict-end", label);
+      const lengths = pdfDictionaryEntries(tokens, dictionaryStart, dictionaryEnd, label).filter((entry) => entry.name === "Length");
+      const lengthToken = lengths.length === 1 && lengths[0].valueEnd === lengths[0].valueStart + 1 ? tokens[lengths[0].valueStart] : null;
+      if (!lengthToken || lengthToken.kind !== "number") fail(`${label} uses an unsupported indirect PDF stream length`);
+      const streamLength = Number(lengthToken.value);
+      if (!Number.isSafeInteger(streamLength) || streamLength < 0) fail(`${label} contains an invalid PDF stream length`);
+      if (source[index] === "\r" && source[index + 1] === "\n") index += 2;
+      else if (source[index] === "\n" || source[index] === "\r") index += 1;
+      else fail(`${label} contains a PDF stream without an EOL marker`);
+      const streamEnd = index + streamLength;
+      if (streamEnd > source.length) fail(`${label} contains a truncated PDF stream`);
+      index = streamEnd;
+      while (source[index] === "\r" || source[index] === "\n") index += 1;
+      if (source.slice(index, index + 9) !== "endstream" || (!pdfWhitespace(source[index + 9]) && !pdfDelimiter(source[index + 9]))) fail(`${label} contains a PDF stream with an invalid boundary`);
+      push("keyword", index, index + 9, "endstream");
+      index += 9;
+    }
+  }
+  if (insideObject) fail(`${label} contains an unterminated PDF object`);
+  return tokens;
+}
+
 function normalizePdf(data, label) {
   if (data.length === 0 || data.length > MAX_EXPORT_BYTES) fail(`${label} is outside PDF size bounds`);
-  let source = data.toString("latin1");
-  if (!source.startsWith("%PDF-") || !/%%EOF\s*$/.test(source) || !/\d+\s+\d+\s+obj\b/.test(source)) fail(`${label} is not a structurally recognizable PDF`);
-  const mask = (value) => "0".repeat(value.length);
-  const objectPattern = /(\d+)\s+(\d+)\s+obj\b[\s\S]*?\bendobj\b/g;
-  const trailerPattern = /\btrailer\s*<<(?:[^>]|>(?!>))*>>/g;
-  const infoReferences = new Set();
-  const recordInfoReference = (segment) => {
-    const match = segment.match(/\/Info\s+(\d+)\s+(\d+)\s+R\b/);
-    if (match) infoReferences.add(`${match[1]} ${match[2]}`);
-  };
-  for (const match of source.matchAll(trailerPattern)) recordInfoReference(match[0]);
-  for (const match of source.matchAll(objectPattern)) {
-    if (/\/Type\s*\/XRef\b/.test(match[0])) recordInfoReference(match[0]);
+  const source = data.toString("latin1");
+  if (!source.startsWith("%PDF-") || !/%%EOF\s*$/.test(source)) fail(`${label} is not a structurally recognizable PDF`);
+  const tokens = scanPdfTokens(source, label);
+  const objects = new Map();
+  const structuralDictionaries = [];
+
+  for (let index = 2; index < tokens.length; index += 1) {
+    if (tokens[index].kind !== "keyword" || tokens[index].value !== "obj") continue;
+    const number = tokens[index - 2];
+    const generation = tokens[index - 1];
+    if (number.kind !== "number" || generation.kind !== "number") fail(`${label} contains malformed PDF object identity`);
+    let end = index + 1;
+    while (end < tokens.length && !(tokens[end].kind === "keyword" && tokens[end].value === "endobj")) end += 1;
+    if (end >= tokens.length) fail(`${label} contains an unterminated PDF object`);
+    let dictionaryStart = -1;
+    for (let tokenIndex = index + 1; tokenIndex < end; tokenIndex += 1) {
+      if (tokens[tokenIndex].kind === "dict-start") { dictionaryStart = tokenIndex; break; }
+    }
+    if (dictionaryStart >= 0) {
+      const dictionaryEnd = matchingPdfToken(tokens, dictionaryStart, "dict-start", "dict-end", label);
+      if (dictionaryEnd >= end) fail(`${label} contains a PDF dictionary beyond its object`);
+      objects.set(`${number.value} ${generation.value}`, { dictionaryStart, dictionaryEnd });
+    }
+    index = end;
   }
-  const normalizeDates = (segment) => segment
-    .replace(/(\/CreationDate\s*\()((?:\\.|[^\\)])*)(\))/g, (_match, prefix, value, suffix) => `${prefix}${mask(value)}${suffix}`)
-    .replace(/(\/ModDate\s*\()((?:\\.|[^\\)])*)(\))/g, (_match, prefix, value, suffix) => `${prefix}${mask(value)}${suffix}`);
-  const normalizeId = (segment) => segment.replace(
-    /(\/ID\s*\[\s*<)([A-Fa-f0-9]+)(>\s*<)([A-Fa-f0-9]+)(>\s*\])/g,
-    (_match, prefix, first, middle, second, suffix) => `${prefix}${mask(first)}${middle}${mask(second)}${suffix}`,
-  );
-  source = source.replace(objectPattern, (object) => {
-    const reference = object.match(/^(\d+)\s+(\d+)\s+obj\b/);
-    let normalized = reference && infoReferences.has(`${reference[1]} ${reference[2]}`) ? normalizeDates(object) : object;
-    if (/\/Type\s*\/XRef\b/.test(normalized)) normalized = normalizeId(normalized);
-    return normalized;
-  });
-  source = source.replace(trailerPattern, normalizeId);
-  return Buffer.from(source, "latin1");
+
+  for (let index = 0; index < tokens.length; index += 1) {
+    if (tokens[index].insideObject || tokens[index].kind !== "keyword" || tokens[index].value !== "trailer") continue;
+    const dictionaryStart = index + 1;
+    if (tokens[dictionaryStart]?.kind !== "dict-start") fail(`${label} contains a trailer without a dictionary`);
+    structuralDictionaries.push({
+      dictionaryStart,
+      dictionaryEnd: matchingPdfToken(tokens, dictionaryStart, "dict-start", "dict-end", label),
+    });
+  }
+
+  for (const object of objects.values()) {
+    const entries = pdfDictionaryEntries(tokens, object.dictionaryStart, object.dictionaryEnd, label);
+    const type = entries.find((entry) => entry.name === "Type");
+    if (type && type.valueEnd === type.valueStart + 1 && tokens[type.valueStart].kind === "name" && tokens[type.valueStart].value === "XRef") structuralDictionaries.push(object);
+  }
+  if (objects.size === 0 || structuralDictionaries.length === 0) fail(`${label} has no structural PDF objects or trailer/XRef dictionary`);
+
+  const normalized = Buffer.from(data);
+  const maskedTokens = new Set();
+  const maskString = (token) => {
+    if (!token || (token.kind !== "literal" && token.kind !== "hex")) fail(`${label} contains generation metadata in an unsupported PDF value`);
+    const key = `${token.start}:${token.end}`;
+    if (maskedTokens.has(key)) return;
+    maskedTokens.add(key);
+    for (let offset = token.start + 1; offset < token.end - 1; offset += 1) {
+      if (token.kind === "literal" || !pdfWhitespace(source[offset])) normalized[offset] = 0x30;
+    }
+  };
+  const infoReferences = new Set();
+
+  for (const dictionary of structuralDictionaries) {
+    const entries = pdfDictionaryEntries(tokens, dictionary.dictionaryStart, dictionary.dictionaryEnd, label);
+    for (const entry of entries) {
+      if (entry.name === "Info") {
+        const value = tokens.slice(entry.valueStart, entry.valueEnd);
+        if (value.length !== 3 || value[0].kind !== "number" || value[1].kind !== "number" || value[2].kind !== "keyword" || value[2].value !== "R") fail(`${label} contains an invalid structural PDF Info reference`);
+        infoReferences.add(`${value[0].value} ${value[1].value}`);
+      }
+      if (entry.name === "ID") {
+        const value = tokens.slice(entry.valueStart, entry.valueEnd);
+        if (value.length !== 4 || value[0].kind !== "array-start" || value[3].kind !== "array-end") fail(`${label} contains an invalid structural PDF ID`);
+        maskString(value[1]);
+        maskString(value[2]);
+      }
+    }
+  }
+
+  for (const reference of infoReferences) {
+    const object = objects.get(reference);
+    if (!object) fail(`${label} references a missing PDF Info object`);
+    for (const entry of pdfDictionaryEntries(tokens, object.dictionaryStart, object.dictionaryEnd, label)) {
+      if (entry.name !== "CreationDate" && entry.name !== "ModDate") continue;
+      if (entry.valueEnd !== entry.valueStart + 1) fail(`${label} contains an invalid PDF Info date`);
+      maskString(tokens[entry.valueStart]);
+    }
+  }
+  return normalized;
 }
 
 function normalizeCoreProperties(data) {

@@ -69,10 +69,12 @@ async function workbookBytes(created, value) {
 }
 
 (async () => {
-  fs.writeFileSync(path.join(root, "combined.pdf"), pdfBytes("D:20260905120001Z", "Zaruku visits 127"));
-  fs.writeFileSync(path.join(root, "isolated.pdf"), pdfBytes("D:20260905120059Z", "Zaruku visits 127"));
-  fs.writeFileSync(path.join(root, "different.pdf"), pdfBytes("D:20260905120059Z", "Zaruku visits 128"));
-  fs.writeFileSync(path.join(root, "noninfo-metadata.pdf"), pdfBytes("D:20260905120059Z", "Zaruku visits 127", "VISIBLE-CONTENT-TWO"));
+  const visibleTrailer = "trailer << /ID [<1111> <2222>] /Info 3 0 R >>";
+  fs.writeFileSync(path.join(root, "combined.pdf"), pdfBytes("D:20260905120001Z", `Zaruku visits 127 ${visibleTrailer}`));
+  fs.writeFileSync(path.join(root, "isolated.pdf"), pdfBytes("D:20260905120059Z", `Zaruku visits 127 ${visibleTrailer}`));
+  fs.writeFileSync(path.join(root, "different.pdf"), pdfBytes("D:20260905120059Z", `Zaruku visits 128 ${visibleTrailer}`));
+  fs.writeFileSync(path.join(root, "noninfo-metadata.pdf"), pdfBytes("D:20260905120059Z", `Zaruku visits 127 ${visibleTrailer}`, "VISIBLE-CONTENT-TWO"));
+  fs.writeFileSync(path.join(root, "visible-trailer-id.pdf"), pdfBytes("D:20260905120059Z", "Zaruku visits 127 trailer << /ID [<1111> <3333>] /Info 3 0 R >>"));
   fs.writeFileSync(path.join(root, "combined.xlsx"), await workbookBytes(new Date("2026-09-05T12:00:01Z"), 127));
   fs.writeFileSync(path.join(root, "isolated.xlsx"), await workbookBytes(new Date("2026-09-05T12:00:59Z"), 127));
   fs.writeFileSync(path.join(root, "different.xlsx"), await workbookBytes(new Date("2026-09-05T12:00:59Z"), 128));
@@ -173,6 +175,8 @@ const server = http.createServer((req, res) => {
       ? `combined.${suffix}`
       : fault === `${kind}-export`
         ? `different.${suffix}`
+        : kind === "pdf" && fault === "pdf-visible-trailer-id"
+          ? "visible-trailer-id.pdf"
         : kind === "pdf" && fault === "pdf-non-generation-metadata"
           ? "noninfo-metadata.pdf"
           : `isolated.${suffix}`;
@@ -296,8 +300,8 @@ NODE
 }
 
 run_case matching "" pass
-for fault in historical-total direct-addition alice-month wordstat-coverage canonical-coverage source-health auth pdf-export excel-export pdf-non-generation-metadata health-header sha-mutation sha-rewrite abbott-artifact private-json private-header malformed-auth slow-body; do
+for fault in historical-total direct-addition alice-month wordstat-coverage canonical-coverage source-health auth pdf-export excel-export pdf-non-generation-metadata pdf-visible-trailer-id health-header sha-mutation sha-rewrite abbott-artifact private-json private-header malformed-auth slow-body; do
   run_case "$fault" "$fault" fail
 done
 
-echo "zaruku shadow verification fixture tests passed (1 positive, 18 negative)"
+echo "zaruku shadow verification fixture tests passed (1 positive, 19 negative)"

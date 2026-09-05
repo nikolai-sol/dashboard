@@ -197,7 +197,9 @@ isolated health contracts; records SHA/scope/routes; scans the isolated artifact
 markers; and proves that every listed other-runtime SHA is unchanged before/after. It compares
 semantic JSON exactly. PDF comparison masks only `CreationDate` and `ModDate` in the referenced
 PDF Info object plus the generated trailer/XRef document ID; every other PDF byte remains part of
-the comparison. XLSX comparison expands the package, compares every sorted entry by content, and
+the comparison. A structural PDF token scan identifies those dictionaries and never treats text in
+literal strings, comments, or content streams as a trailer, XRef, or Info reference. XLSX
+comparison expands the package, compares every sorted entry by content, and
 ignores only ZIP container order/compression/timestamps plus `created` and `modified` values in
 `docProps/core.xml`. The only ignored response headers are
 `connection`, `content-length`, `date`, `keep-alive`, `server-timing`, `transfer-encoding`, and

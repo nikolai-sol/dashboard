@@ -32,7 +32,9 @@ For both runtimes the verifier performs only HTTP `GET` requests. It:
 - compares the full unauthorized response, including Zaruku dashboard metadata and auth mode;
 - compares the complete manager JSON as canonicalized JSON, with no field-value exclusions;
 - compares PDF status, semantic headers, and all bytes after masking only Info-object
-  `CreationDate`/`ModDate` plus generated trailer/XRef document IDs;
+  `CreationDate`/`ModDate` plus generated trailer/XRef document IDs; structural tokens identify
+  these dictionaries, so lookalike text in comments, literal strings, or content streams is never
+  normalized;
 - compares Excel status, semantic headers, and every expanded XLSX package entry while ignoring
   only ZIP order/compression/timestamps and core-properties `created`/`modified` values;
 - ignores only response headers `connection`, `content-length`, `date`, `keep-alive`,
@@ -52,10 +54,12 @@ than exception values, private JSON, response headers, or descriptor contents. T
 
 The fixture suite exercises real loopback HTTP behavior and real temporary artifact/SHA files. Its
 positive case covers health, unauthorized metadata, manager JSON, actual PDF, and actual XLSX files;
-the matching export fixtures have different creation timestamps and different raw bytes. Eighteen
-negative cases prove nonzero exit for a historical total change, missing direct owner addition, missing Alice
+the matching export fixtures have different creation timestamps and different raw bytes. Nineteen
+negative cases prove nonzero exit for a historical total change, missing direct owner addition,
+missing Alice
 month, Wordstat coverage change, canonical coverage change, source-health change, auth metadata
 change, PDF content difference, Excel content difference, a non-Info PDF metadata difference,
+visible PDF text that resembles a trailer/ID and a trailer/Info reference,
 semantic health-header difference, another-runtime SHA mutation, a same-value SHA-file rewrite
 detected by file identity, an Abbott route marker in a compiled Zaruku artifact file, private JSON
 and private-header mismatch redaction, malformed auth-descriptor redaction, and a stalled response
@@ -82,7 +86,7 @@ builder tests. The complete root suite ran once in that successful gate.
 - `npm run build` and `npm --workspace apps/zaruku run build`: exit 0.
 - `npm ci --offline --dry-run --ignore-scripts --no-audit`, Bash syntax, and `git diff --check`: exit 0.
 
-After review findings were fixed, the focused shadow verifier passed 1 positive + 18 negative
+After review findings were fixed, the focused shadow verifier passed 1 positive + 19 negative
 fixtures, `npm run test:deploy-source` passed, the predeploy ordering contract passed, and
 `npm ci --offline --dry-run --ignore-scripts --no-audit`, Bash syntax, and `git diff --check`
 remained clean. The parent completion pass owns a fresh branch-wide predeploy gate for the amended
