@@ -6,7 +6,6 @@ import { createHash, randomUUID } from 'node:crypto';
 import { execFileSync, spawn } from 'node:child_process';
 import { createServer } from 'node:net';
 import { pathToFileURL } from 'node:url';
-import { createRequire } from 'node:module';
 
 const BASE = '/var/www';
 const DEPLOY_UID = 0;
@@ -26,6 +25,10 @@ export const ENV_KEYS = Object.freeze([
   'MYSQL_HOST', 'MYSQL_PORT', 'MYSQL_USER', 'MYSQL_PASSWORD', 'MYSQL_DB',
   'NODE_ENV', 'HOSTNAME', 'PORT', 'NEXT_PUBLIC_BASE_URL', 'DASHBOARD_AUTH_SECRET',
   'INTERNAL_BASE_URL', 'PUPPETEER_EXECUTABLE_PATH',
+]);
+export const SECRET_INPUT_KEYS = Object.freeze([
+  'ZARUKU_DB_HOST', 'ZARUKU_DB_PORT', 'ZARUKU_DB_USER', 'ZARUKU_DB_PASSWORD', 'ZARUKU_DB_NAME',
+  'DASHBOARD_AUTH_SECRET', 'NEXT_PUBLIC_BASE_URL', 'PUPPETEER_EXECUTABLE_PATH',
 ]);
 
 export function safeRelative(name) {
@@ -145,13 +148,14 @@ function current() {
 }
 
 export function renderEnvironment(source) {
+  if (!source || typeof source !== 'object' || Object.keys(source).some(key => !SECRET_INPUT_KEYS.includes(key))) fail('Invalid Zaruku credential input keys');
   const get = (key, fallback) => {
     const value = source[key] ?? fallback;
     if (typeof value !== 'string' || !value.trim() || /[\u0000-\u001f\u007f'"\\`]/.test(value)) fail(`Missing required or invalid Zaruku environment key: ${key}`);
     return value;
   };
-  const host = get('MYSQL_HOST', 'localhost'), port = get('MYSQL_PORT', '3306');
-  const user = get('MYSQL_USER'), password = get('MYSQL_PASSWORD'), db = get('MYSQL_DB');
+  const host = get('ZARUKU_DB_HOST'), port = get('ZARUKU_DB_PORT');
+  const user = get('ZARUKU_DB_USER'), password = get('ZARUKU_DB_PASSWORD'), db = get('ZARUKU_DB_NAME');
   if (!/^\d+$/.test(port) || +port < 1 || +port > 65535) fail('Invalid database port');
   const result = {
     DB_HOST: host, DB_PORT: port, DB_USER: user, DB_PASSWORD: password, DB_NAME: db,
@@ -162,6 +166,29 @@ export function renderEnvironment(source) {
   };
   if (source.PUPPETEER_EXECUTABLE_PATH) result.PUPPETEER_EXECUTABLE_PATH = get('PUPPETEER_EXECUTABLE_PATH');
   return result;
+}
+
+export function readZarukuSecrets() {
+  try {
+    const filename = `${BASE}/.dashboard-zaruku-secrets/runtime.env`;
+    owned(path.dirname(filename), true);
+    if (fs.lstatSync(path.dirname(filename)).mode & 0o077) fail('Unsafe credential directory');
+    owned(filename);
+    if (fs.lstatSync(filename).size > 65536) fail('Oversized credential file');
+    const bytes = stableRead(filename, true);
+    if (bytes.length > 65536) fail('Oversized credential file');
+    const text = new TextDecoder('utf-8', { fatal: true }).decode(bytes);
+    if (!text.endsWith('\n')) fail('Invalid credential file');
+    const source = {};
+    for (const line of text.slice(0, -1).split('\n')) {
+      if (!line || line.startsWith('#')) continue;
+      const match = /^([A-Z][A-Z0-9_]*)='([^'\r\n\u0000-\u001f\u007f]*)'$/.exec(line);
+      if (!match || !SECRET_INPUT_KEYS.includes(match[1]) || Object.hasOwn(source, match[1])) fail('Invalid credential file');
+      source[match[1]] = match[2];
+    }
+    renderEnvironment(source);
+    return source;
+  } catch { fail('Missing or unsafe dedicated Zaruku credential file'); }
 }
 
 const commandEnv = () => ({ PATH: '/usr/local/bin:/usr/bin:/bin', HOME: os.homedir(), PM2_HOME: path.join(os.homedir(), '.pm2') });
@@ -297,16 +324,7 @@ const realPlatform = {
   },
   chown: (filename, uid, gid) => fs.chownSync(filename, uid, gid),
   verify: verifyStagedArtifact,
-  secrets(control) {
-    // Existing reviewed secret location; values never leave this remote process.
-    const filename = '/var/www/www-root/data/.production.env';
-    owned(filename);
-    // The parser is transported separately from the clean installation and loaded
-    // from the private control tree, never from unverified artifact contents.
-    const require = createRequire(`${control}/package.json`);
-    const { parse } = require(`${control}/node_modules/dotenv/lib/main.js`);
-    return parse(stableRead(filename, true));
-  },
+  secrets: readZarukuSecrets,
   async start(control) {
     const launcher = `${BASE}/.dashboard-zaruku-launcher.cjs`;
     const source = `${control}/deploy/zaruku/start.cjs`;

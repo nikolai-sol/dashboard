@@ -1,16 +1,19 @@
 import type { Metadata } from "next";
-import { RUNTIME_MANIFESTS } from "@reportingdash/runtime-contract";
+import { Inter, JetBrains_Mono } from "next/font/google";
 import "./globals.css";
 
+const inter = Inter({ variable: "--font-inter", subsets: ["latin"] });
+const jetbrainsMono = JetBrains_Mono({ variable: "--font-mono", subsets: ["latin"] });
+
 export const metadata: Metadata = {
-  title: RUNTIME_MANIFESTS.zaruku.appName,
-  description: "Zaruku reporting dashboard",
+  title: "ReportingDash",
+  description: "Client reporting dashboards",
 };
 
 export default function RootLayout({ children }: Readonly<{ children: React.ReactNode }>) {
   return (
     <html lang="ru">
-      <body>{children}</body>
+      <body className={`${inter.variable} ${jetbrainsMono.variable} antialiased`}>{children}</body>
     </html>
   );
 }

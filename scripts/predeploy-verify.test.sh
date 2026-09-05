@@ -8,6 +8,8 @@ TMP_DIR="$(mktemp -d)"
 FAKE_BIN="$TMP_DIR/bin"
 COMMAND_LOG="$TMP_DIR/commands.log"
 export COMMAND_LOG
+FRESH_BUILD_FIXTURE="$TMP_DIR/fresh-build"
+export FRESH_BUILD_FIXTURE
 REAL_NODE="$(command -v node)"
 REAL_BASH="$(command -v bash)"
 export REAL_NODE REAL_BASH
@@ -29,6 +31,10 @@ printf '%s\n' "$*" >> "$COMMAND_LOG"
 if [[ -n "${FAIL_COMMAND:-}" && "$*" == "$FAIL_COMMAND" ]]; then
   exit 73
 fi
+if [[ "$*" == 'run test:release-runtime' ]]; then
+  mkdir -p "$FRESH_BUILD_FIXTURE/server"
+  printf '%s\n' '{"middleware":{},"functions":{},"sortedMiddleware":[]}' > "$FRESH_BUILD_FIXTURE/server/middleware-manifest.json"
+fi
 SH
 chmod +x "$FAKE_BIN/npm"
 cat > "$FAKE_BIN/node" <<'SH'
@@ -36,6 +42,10 @@ cat > "$FAKE_BIN/node" <<'SH'
 if [[ "$*" == "--import tsx --test packages/runtime-contract/src/index.test.ts" || \
       "$*" == "--import tsx --test apps/zaruku/src/**/*.test.ts" || \
       "$*" == "--test scripts/runtime-artifact-policy.test.mjs" ]]; then
+  if [[ "$*" == '--import tsx --test apps/zaruku/src/**/*.test.ts' && ! -f "$FRESH_BUILD_FIXTURE/server/middleware-manifest.json" ]]; then
+    echo 'Isolated tests ran before the fresh build emitted middleware-manifest.json' >&2
+    exit 74
+  fi
   printf 'node %s\n' "$*" >> "$COMMAND_LOG"
   [[ -z "${FAIL_COMMAND:-}" || "node $*" != "$FAIL_COMMAND" ]]
   exit
@@ -58,9 +68,9 @@ PATH="$FAKE_BIN:$PATH" /bin/bash "$VERIFY_SCRIPT"
 cat > "$TMP_DIR/expected.log" <<'EOF'
 test
 node --import tsx --test packages/runtime-contract/src/index.test.ts
-node --import tsx --test apps/zaruku/src/**/*.test.ts
 run test:deploy-source
 run test:release-runtime
+node --import tsx --test apps/zaruku/src/**/*.test.ts
 node --test scripts/runtime-artifact-policy.test.mjs
 --workspace apps/zaruku run verify:artifact
 --workspace apps/zaruku run verify:boot
@@ -150,6 +160,7 @@ if (isolatedBuild < 0 || deployFixtures <= isolatedBuild) {
 }
 const releaseGate = verify.indexOf("npm run test:release-runtime");
 for (const command of [
+  "node --import tsx --test 'apps/zaruku/src/**/*.test.ts'",
   "node --test scripts/runtime-artifact-policy.test.mjs",
   "npm --workspace apps/zaruku run verify:artifact",
   "npm --workspace apps/zaruku run verify:boot",

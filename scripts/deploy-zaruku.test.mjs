@@ -17,6 +17,7 @@ const read = name => fs.readFileSync(path.join(root, name), 'utf8');
 const run = (script, args = [], env = {}) => spawnSync('/bin/bash', [path.join(root, 'scripts', script), ...args], { env: { ...process.env, ...env }, encoding: 'utf8' });
 const api = await import('./deploy-runtime.mjs');
 const worker = await import('./runtime-release-remote.mjs');
+const dedicatedInput = { ZARUKU_DB_HOST: 'localhost', ZARUKU_DB_PORT: '3306', ZARUKU_DB_USER: 'zaruku_fixture', ZARUKU_DB_PASSWORD: 'fixture-password', ZARUKU_DB_NAME: 'report_bd', DASHBOARD_AUTH_SECRET: 'fixture-auth' };
 
 test('release authority exactly matches compiled contract and fixed process config', () => {
   assert.deepEqual(JSON.parse(read('deploy/zaruku/release.json')), RUNTIME_MANIFESTS.zaruku);
@@ -164,16 +165,48 @@ test('a failed second directory move leaves the manual rollback candidate availa
 
 test('environment rendering is scoped, fixed, redacted and cannot evaluate shell input', () => {
   const secret = 'fixture-only-password;$(touch nope)';
-  const input = { MYSQL_HOST: 'localhost', MYSQL_PORT: '3306', MYSQL_USER: 'fixture', MYSQL_PASSWORD: secret, MYSQL_DB: 'report_bd', DASHBOARD_AUTH_SECRET: 'fixture-auth',
-    MYSQL_DB_STAT: 'private_wrong', METRIKA_TOKEN: 'private-token', GOOGLE_ADS_REFRESH_TOKEN: 'private-google', ABBOTT_PRIVATE_DB_PASSWORD: 'private-abbott', DASHBOARD_ADMIN_PASSWORD: 'private-admin', AI_SUMMARY_API_KEY: 'private-ai', HOSTNAME: '0.0.0.0', PORT: '3001' };
+  const input = { ...dedicatedInput, ZARUKU_DB_PASSWORD: secret };
   const output = worker.renderEnvironment(input);
   assert.deepEqual(Object.keys(output).sort(), worker.ENV_KEYS.filter(k => k !== 'PUPPETEER_EXECUTABLE_PATH').sort());
   assert.equal(output.MYSQL_DB, 'report_bd'); assert.equal(output.DB_NAME, 'report_bd');
   assert.equal(output.DB_PASSWORD, secret); assert.equal(output.HOSTNAME, '127.0.0.1'); assert.equal(output.PORT, '3002');
   assert.equal(output.INTERNAL_BASE_URL, 'http://127.0.0.1:3002');
-  for (const marker of ['private_wrong', 'private-token', 'private-google', 'private-abbott', 'private-admin', 'private-ai']) assert.ok(!JSON.stringify(output).includes(marker));
-  assert.throws(() => worker.renderEnvironment({ ...input, MYSQL_PASSWORD: 'private-secret\nBAD=1' }), error => !error.message.includes('private-secret'));
-  assert.throws(() => worker.renderEnvironment({ ...input, MYSQL_USER: '' }), /required/);
+  assert.throws(() => worker.renderEnvironment({ ...input, ZARUKU_DB_PASSWORD: 'private-secret\nBAD=1' }), error => !error.message.includes('private-secret'));
+  assert.throws(() => worker.renderEnvironment({ ...input, ZARUKU_DB_USER: '' }), /required/);
+});
+
+test('dedicated Zaruku credentials are mandatory and combined or unknown inputs fail closed', () => {
+  const combined = { MYSQL_USER: 'combined-user', MYSQL_PASSWORD: 'combined-secret', MYSQL_DB: 'report_bd', DASHBOARD_AUTH_SECRET: 'fixture-auth' };
+  assert.throws(() => worker.renderEnvironment(combined), error => /Zaruku/.test(error.message) && !/combined-user|combined-secret/.test(error.message));
+  for (const key of ['ZARUKU_DB_HOST', 'ZARUKU_DB_PORT', 'ZARUKU_DB_USER', 'ZARUKU_DB_PASSWORD', 'ZARUKU_DB_NAME']) {
+    const missing = { ...dedicatedInput }; delete missing[key];
+    assert.throws(() => worker.renderEnvironment(missing), /required/);
+  }
+  for (const key of ['MYSQL_PASSWORD', 'DB_USER', 'MYSQL_DB_STAT', 'METRIKA_TOKEN', 'GOOGLE_ADS_REFRESH_TOKEN', 'ABBOTT_PRIVATE_DB_PASSWORD', 'DASHBOARD_ADMIN_PASSWORD', 'AI_SUMMARY_API_KEY', 'HOSTNAME', 'PORT', 'secret-in-key']) {
+    assert.throws(() => worker.renderEnvironment({ ...dedicatedInput, [key]: 'never-echo-value' }), error => /Zaruku/.test(error.message) && !/never-echo-value|secret-in-key/.test(error.message));
+  }
+});
+
+test('fixed dedicated secret file is bounded, exact, private and never falls back to combined secrets', async () => {
+  const f = await fixture();
+  try {
+    const directory = path.join(f.temp, '.dashboard-zaruku-secrets');
+    fs.mkdirSync(directory, { mode: 0o700 });
+    const filename = path.join(directory, 'runtime.env');
+    assert.throws(() => f.mod.readZarukuSecrets(), /Zaruku credential file/);
+    const valid = Object.entries(dedicatedInput).map(([key, value]) => `${key}='${value}'\n`).join('');
+    fs.writeFileSync(filename, valid, { mode: 0o600 });
+    assert.deepEqual(f.mod.readZarukuSecrets(), dedicatedInput);
+    for (const invalid of [valid + "MYSQL_USER='combined-secret'\n", valid + "ZARUKU_DB_USER='duplicate-secret'\n", "BAD='private-secret\n", 'x'.repeat(65537)]) {
+      fs.writeFileSync(filename, invalid);
+      assert.throws(() => f.mod.readZarukuSecrets(), error => /Zaruku credential file/.test(error.message) && !/combined-secret|duplicate-secret|private-secret/.test(error.message));
+    }
+    fs.writeFileSync(filename, valid); fs.chmodSync(filename, 0o644);
+    assert.throws(() => f.mod.readZarukuSecrets(), /Zaruku credential file/);
+    fs.chmodSync(filename, 0o600); fs.linkSync(filename, path.join(directory, 'alias'));
+    assert.throws(() => f.mod.readZarukuSecrets(), /Zaruku credential file/);
+    assert.doesNotMatch(read('scripts/runtime-release-remote.mjs'), /\.production\.env/);
+  } finally { f.close(); }
 });
 
 test('trusted authority pins source/scope and rejects replacement, traversal, links and writable ancestry', () => {
@@ -220,7 +253,7 @@ async function fixture() {
     chown: () => {},
     verify: async (artifact, manifest, boot) => { calls.push({ artifact, manifest, boot }); },
     start: async () => {}, health: async () => {}, stop: async () => {},
-    secrets: () => ({ MYSQL_USER: 'fixture', MYSQL_PASSWORD: 'fixture-password', MYSQL_DB: 'report_bd', DASHBOARD_AUTH_SECRET: 'fixture-auth' }),
+    secrets: () => ({ ...dedicatedInput }),
   };
   function payload(sourceSha, scope = 'zaruku') {
     const files = [{ path: '.release-source-sha', data: Buffer.from(`${sourceSha}\n`).toString('base64'), mode: 0o644 }, { path: '.release-runtime-scope', data: Buffer.from(`${scope}\n`).toString('base64'), mode: 0o644 }];
@@ -314,7 +347,7 @@ test('PM2 clears inherited Node options before Node starts, then launcher suppli
   assert.equal(app.script, '/usr/bin/env');
   assert.equal(app.interpreter, 'none');
   assert.deepEqual(app.args, ['-i', 'PATH=/usr/local/bin:/usr/bin:/bin', 'node', '/var/www/.dashboard-zaruku-launcher.cjs']);
-  const runtimeEnv = { ...worker.renderEnvironment({ MYSQL_USER: 'fixture', MYSQL_PASSWORD: 'fixture', MYSQL_DB: 'report_bd', DASHBOARD_AUTH_SECRET: 'fixture' }) };
+  const runtimeEnv = { ...worker.renderEnvironment(dedicatedInput) };
   const inherited = { METRIKA_TOKEN: 'never-runtime', NODE_OPTIONS: '--require evil', MYSQL_DB_STAT: 'never-runtime', ...process.env };
   const processStub = { env: inherited };
   let started = false;

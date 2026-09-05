@@ -153,6 +153,39 @@ The isolated Zaruku runtime is a local/review artifact only. The public domain a
 routes still point to the combined runtime. Do not start a production shadow, add a PM2 process,
 or edit the proxy from these commands.
 
+Local build stamping requires Python 3 on macOS or Linux, including `dir_fd` support for
+`open`, `stat`, `link`, and `replace`, plus descriptor-based directory listing. The build-only
+`scripts/stamp-runtime-artifact.py` validates the whole tree and all output destinations before
+writing, pins ancestor/destination directories without following links, and publishes new file
+inodes without truncating an existing package inode. Run
+`python3 -I -B scripts/stamp-runtime-artifact.test.py` for disposable publication/read-race checks;
+the artifact-policy suite runs these too. Python is not required by deployed verification or the
+runtime launcher. Direct `verify:boot` refuses UID or EUID 0; remote verification retains the
+separate reviewed Linux `setpriv` path.
+
+The isolated release worker accepts credentials only from the fixed
+`/var/www/.dashboard-zaruku-secrets/runtime.env` file. Its directory and file must be root-owned
+with no group/other permissions (provision as `0700` and `0600` respectively). The file must be
+single-link, UTF-8, at most 65,536 bytes, and end
+with a newline. Each nonempty/noncomment line is exactly `KEY='value'`; duplicates, unknown keys,
+control characters, embedded quotes, backslashes, and backticks fail closed. Values are never
+evaluated by a shell. There is no path override or fallback to the combined `.production.env`.
+
+| Input key | Requirement |
+| --- | --- |
+| `ZARUKU_DB_HOST`, `ZARUKU_DB_PORT` | Required dedicated connection endpoint; port 1–65535 |
+| `ZARUKU_DB_USER`, `ZARUKU_DB_PASSWORD`, `ZARUKU_DB_NAME` | Required dedicated Zaruku account/database; no generic `MYSQL_*` or `DB_*` input accepted |
+| `DASHBOARD_AUTH_SECRET` | Required reviewed signed-session authority; must preserve session compatibility during shadow comparison |
+| `NEXT_PUBLIC_BASE_URL` | Optional; defaults to `https://dashboards.adreports.ru` |
+| `PUPPETEER_EXECUTABLE_PATH` | Optional Chromium executable path |
+
+This is the complete input allowlist. The renderer maps only the dedicated DB values to runtime
+`DB_*` and `MYSQL_*` aliases needed by existing canonical readers and sets the fixed loopback
+host/port and internal export URL. Missing/unsafe files and invalid input errors contain no secret
+values. Provisioning the dedicated account, verifying only the required canonical/shared-auth
+read grants, installing this file, and validating the target filesystem/service permissions remain
+cutover prerequisites; none is performed by these source changes.
+
 Local comparison requires two already-running loopback runtimes backed by the same canonical
 MySQL snapshot and the same explicit historical range. Build the combined runtime and the isolated
 artifact first, then start them in separate terminals with credentials loaded from private files or
@@ -216,6 +249,8 @@ Before any production shadow start, all of these separate prerequisites are mand
 - provision and verify the fixed `dashboard-zaruku` service account/group, root-owned ancestry,
   release/control/environment permissions, `/usr/bin/setpriv`, `/proc`, `ss`, and PM2 UID/GID/cwd
   attestation on the target host;
+- provision a separate Zaruku DB account with reviewed least-privilege grants and install/validate
+  the fixed dedicated credential file above; record only key names and permission/grant outcomes;
 - review the live loopback port/process plan, immutable runtime SHA inventory, canonical snapshot
   window, evidence retention path, and rollback/recovery procedure.
 

@@ -244,6 +244,17 @@ filesystem with about 49 GiB available. The open-file limit is 1024.
 
 ### Zaruku canonical source truth
 
+Isolated-runtime branch target (not deployed): the release worker reads only
+`/var/www/.dashboard-zaruku-secrets/runtime.env`, in a root-owned `0700` directory
+with a root-owned single-link `0600` file. Required DB inputs are
+`ZARUKU_DB_HOST`, `ZARUKU_DB_PORT`, `ZARUKU_DB_USER`, `ZARUKU_DB_PASSWORD`, and
+`ZARUKU_DB_NAME`; generic combined `MYSQL_*`/`DB_*` inputs never provide a fallback.
+The exact file format/allowlist is in `OPS.md`. A dedicated least-privilege DB
+account, its grants, and secret installation remain reviewed cutover prerequisites.
+Local build stamping requires Python 3 descriptor-relative filesystem support;
+direct sealed boot requires a non-root UID and EUID. Remote boot retains its
+dedicated Linux service-account privilege-drop path.
+
 Current Zaruku source truth:
 - Yandex Metrika: collect only counter `66624469`; counters `29137835`, `105559308`, and `99078698` are on hold/inactive in `canonical_source_account_collection_settings`. The generic collector's `COLLECTION_FLOOR_DAYS=1` / `RECOLLECT_SPAN_DAYS=2` change is committed but not deployed: its active file is shared with the attested Abbott runtime and must move only through a committed private-runtime revision and matching manifest.
 - Yandex Webmaster: Zaruku host `https:zaruku.ru:443` is connected for canonical daily summary, query, and URL/page facts. URL/page rows live in `canonical_fact_webmaster_pages_daily`; the dashboard read model should expose `zaruku_seo.webmaster.data_availability.pages = true`. The restored page writer and `COLLECTION_FLOOR_DAYS=2` / `RECOLLECT_SPAN_DAYS=3` were deployed atomically on 2026-07-28 under tag `20260728T171112Z`; do not call RD-10 operationally complete until the scheduled 2026-07-29 run advances query and page maxima together.

@@ -5,7 +5,6 @@ import { isDeepStrictEqual } from "node:util";
 import { createHash } from "node:crypto";
 import {
   lstatSync,
-  mkdirSync,
   readFileSync,
   writeFileSync,
 } from "node:fs";
@@ -123,14 +122,6 @@ startServer({
 
 function normalizedPath(root, absolutePath) {
   return path.relative(root, absolutePath).split(path.sep).join("/");
-}
-
-function isRegularFile(absolutePath) {
-  try {
-    return lstatSync(absolutePath).isFile();
-  } catch {
-    return false;
-  }
 }
 
 function normalizeKey(value) {
@@ -670,6 +661,7 @@ export function assertRuntimeArtifact(artifactRoot, scope, trustedManifestPath) 
 }
 
 export async function verifyRuntimeArtifactBoot(artifactRoot, scope, { timeoutMs = 15000, trustedManifestPath } = {}) {
+  if (process.getuid?.() === 0 || process.geteuid?.() === 0) throw new Error("Direct runtime boot verification requires an unprivileged identity");
   const root = path.resolve(artifactRoot);
   const before = assertRuntimeArtifact(root, scope, trustedManifestPath);
   const authorityDigest = loadTrustedManifest(root, trustedManifestPath).manifestDigest;
@@ -723,17 +715,6 @@ export async function verifyRuntimeArtifactBoot(artifactRoot, scope, { timeoutMs
   }
 }
 
-function removeMonorepoPackageMetadata(root) {
-  const packagePath = path.join(root, "package.json");
-  if (!isRegularFile(packagePath)) return;
-  const packageJson = JSON.parse(readFileSync(packagePath, "utf8"));
-  const runtimePackageJson = { ...packageJson };
-  delete runtimePackageJson.scripts;
-  delete runtimePackageJson.workspaces;
-  delete runtimePackageJson.devDependencies;
-  writeFileSync(packagePath, `${JSON.stringify(runtimePackageJson, null, 2)}\n`);
-}
-
 export function stampRuntimeArtifact(artifactRoot, scope, sourceSha, trustedManifestPath) {
   if (scope !== "zaruku") throw new Error(`unsupported runtime scope ${scope}`);
   if (!SOURCE_SHA_PATTERN.test(sourceSha)) throw new Error("source SHA must be exactly 40 lowercase hex characters");
@@ -742,17 +723,12 @@ export function stampRuntimeArtifact(artifactRoot, scope, sourceSha, trustedMani
   if (rootStat.isSymbolicLink() || !rootStat.isDirectory()) throw new Error("artifact root must be a real directory");
   const trusted = loadTrustedManifest(root, trustedManifestPath);
   if (trusted.sourceSha !== sourceSha || trusted.scope !== scope) throw new Error("trusted release authority mismatch");
-  if (!isRegularFile(path.join(root, ZARUKU_SERVER))) throw new Error(`missing ${ZARUKU_SERVER}`);
-  const sourceTrace = path.join(path.dirname(root), "next-server.js.nft.json");
-  const sourceStat = lstatSync(sourceTrace);
-  if (!sourceStat.isFile() || sourceStat.nlink !== 1 || sourceStat.size > MAX_FILE_BYTES) throw new Error("invalid standalone server trace");
-  const fd = fs.openSync(sourceTrace, fs.constants.O_RDONLY | fs.constants.O_NOFOLLOW);
-  try { writeFileSync(path.join(root, ZARUKU_NEXT, "next-server.js.nft.json"), readFileSync(fd), { flag: "wx" }); }
-  finally { fs.closeSync(fd); }
-  removeMonorepoPackageMetadata(root);
-  mkdirSync(root, { recursive: true });
-  writeFileSync(path.join(root, ".release-source-sha"), `${sourceSha}\n`, { flag: "wx" });
-  writeFileSync(path.join(root, ".release-runtime-scope"), `${scope}\n`, { flag: "wx" });
+  // Node has no portable openat/renameat API. The trusted local-build helper
+  // pins directory descriptors on macOS/Linux; deployed read/boot policy is JS-only.
+  try {
+    execFileSync("python3", ["-I", "-B", path.join(REPOSITORY_ROOT, "scripts/stamp-runtime-artifact.py"), root, sourceSha],
+      { stdio: ["ignore", "ignore", "pipe"], timeout: 30000 });
+  } catch { throw new Error("Unsafe runtime stamping input or destination (Python 3 required)"); }
 }
 
 function usage() {

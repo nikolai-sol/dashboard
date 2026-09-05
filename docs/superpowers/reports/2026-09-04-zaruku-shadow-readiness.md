@@ -10,7 +10,7 @@ not start a live or production shadow and did not inspect or change a production
 database, migration, cron, secret, service account, filesystem ownership, PM2 state, or public route.
 The existing public domain remains on the combined runtime.
 
-Task 1–6 base and the source SHA stamped into the verified local artifact:
+Historical Task 1–6 base and the source SHA stamped into the pre-review local artifact:
 `db576a2c83eb26ca87f81174e8fd5ec1c9471a4c`. The Task 7 commit that tracks this report is the
 result of `git log -1 --format=%H -- docs/superpowers/reports/2026-09-04-zaruku-shadow-readiness.md`
 and is supplied in the handoff; a Git commit cannot contain its own content-addressed SHA.
@@ -74,6 +74,7 @@ combined deployment gates, the existing release gate (which builds Zaruku before
 artifact-policy fixtures, artifact validation, local sealed boot, shadow fixtures, the existing
 Abbott gates, public-asset security, root and isolated typechecks, lint, combined build, and preview
 builder tests. The complete root suite ran once in that successful gate.
+That run had a pre-existing isolated build; it did not establish clean-checkout ordering.
 
 - Root tests: 956 Node discovered; 946 passed, 10 existing skipped, 0 failed. Python: 13/13.
 - Runtime ownership contract: 4/4. Isolated Zaruku application: 39/39.
@@ -92,9 +93,9 @@ fixtures, `npm run test:deploy-source` passed, the predeploy ordering contract p
 remained clean. The parent completion pass owns a fresh branch-wide predeploy gate for the amended
 commit.
 
-The successful fresh isolated artifact is at
+The pre-review isolated artifact was at
 `apps/zaruku/.next-zaruku/standalone`; its external authority is
-`apps/zaruku/.next-zaruku/trusted-runtime-manifest.json`. Observed artifact inventory: 75,048 KiB,
+`apps/zaruku/.next-zaruku/trusted-runtime-manifest.json`. Its historical inventory was 75,048 KiB,
 2,861 regular files, 0 symlinks, exact scope `zaruku`, zero policy violations, and no forbidden
 cross-runtime marker. The framework manifest also contains `/_global-error`; the public routes are:
 
@@ -112,7 +113,41 @@ An earlier long-running tool invocation lost its visible process handle; its com
 not used as evidence, and a diagnostic isolated rebuild may have overlapped it. The final gate above
 was started with an explicit handle, observed through every stage, and completed without overlap.
 
-## What remains unverified and blocks production shadow
+## Final architecture review verification — 2026-09-05
+
+All five final findings have failing-first regression evidence and local fixes:
+
+- Predeploy now builds Zaruku in the release-runtime gate before any isolated app test. The
+  ordering fixture starts without a middleware manifest, fails on the former ordering, and passes
+  on the corrected ordering without deleting or renaming the working build.
+- The isolated document preserves Inter/JetBrains Mono configuration, CSS variables, body classes,
+  antialiasing, Russian language and combined ReportingDash title/description. Component and real
+  build regressions both pass. A headless-Chrome synthetic typography fixture loaded the actual
+  combined/isolated build CSS and document classes: its screenshots matched exactly and its PDFs
+  matched with the existing `normalizePdf` implementation taken unchanged from the shadow verifier.
+  Screenshot SHA-256: `5847f5511f15f220318a5025a82777264cbe053300fe56792afada1203384fff`;
+  normalized PDF SHA-256: `f3ab3d119c7ba742248d9e35d9380ca2c8b27d819b94d6402c67138b9d97f732`.
+  This synthetic typography check is not production data or manager-export parity evidence.
+- Stamping validates the entire tree and every destination before its first write. The local
+  Python 3 helper uses no-follow directory descriptors, stable input reads and exclusive new
+  inodes/replacement. Seven static destination/link cases and four publication/read-race fixtures
+  preserve outside sentinel bytes; parent swaps fail closed without redirected writes. The Python
+  helper has run on macOS; its Linux execution remains a build-host validation prerequisite.
+- Direct exported boot and CLI `--boot` checks reject UID/EUID `0/501`, `501/0`, and `0/0` before
+  inspecting or executing the app. The dedicated remote Linux privilege-drop path remains separate.
+- The remote renderer requires the fixed dedicated credential file and exact scoped input allowlist
+  in `OPS.md`. Missing DB fields, generic/unknown keys, duplicate fields, unsafe files and malformed
+  input fail closed without secret values in errors. Dedicated account/grant provisioning is pending.
+
+The complete local `npm run predeploy:verify` exited zero after these implementation changes:
+isolated app 41/41; release/deploy fixtures 30/30; artifact-policy fixtures 157/157 (including the
+four Python races); Abbott contract 111/111; shadow positive/negative fixtures, artifact validation,
+non-root sealed boot, both typechecks, public-asset checks, both builds and preview builders passed.
+Lint has 0 errors and the same 12 existing warnings; the combined build retains its pre-existing
+multiple-lockfile workspace-root warning. The additional direct CLI identity assertions passed in a
+focused run after the full gate. `git diff --check` passed. No normalized comparison was weakened.
+
+## Remaining production prerequisites
 
 - The real `scripts/boot-zaruku-service.linux.test.mjs` fixture has **not** run. It must pass both
   privilege-drop cases in a reviewed network-disabled Linux Node + util-linux image with the
@@ -121,6 +156,10 @@ was started with an explicit handle, observed through every stage, and completed
   ancestry, release/control/environment modes, runtime readability, PM2 UID/GID handling, process
   cwd attestation, port `127.0.0.1:3002`, and secret availability have **not** been inspected or
   provisioned on production.
+- The dedicated Zaruku DB account/grants and fixed
+  `/var/www/.dashboard-zaruku-secrets/runtime.env` have not been provisioned or validated. The worker
+  now rejects combined `MYSQL_*` credentials and requires the exact `ZARUKU_DB_*` input contract in
+  `OPS.md`; missing dedicated inputs fail closed.
 - No production combined/isolated comparison has run, so there is no live canonical-snapshot parity
   claim and no evidence yet for production manager JSON, direct additions, history, coverage,
   source health, Alice, Wordstat, PDF, Excel, or auth parity.
@@ -133,7 +172,9 @@ second explicit review of that evidence and is outside this task. Abbott extract
 
 ## Change boundary
 
-Task 7 changes only the shadow verifier and its tests, its declared ZIP parser dependency, predeploy
-gate and contract test, `OPS.md`, and this report. There were no source API/OAuth calls, database reads or writes, migration actions,
+Task 7 introduced the shadow verifier, fixture suite, ZIP parser dependency and verification gates.
+Final review additionally corrected build/test ordering, the isolated root document, local artifact
+stamping, direct boot identity checks, and dedicated Zaruku credential input. These fixes include
+their regression suites and update the operational memory/runbook. There were no source API/OAuth calls, database reads or writes, migration actions,
 collector/backfill actions, deployments, proxy edits, PM2 actions, cron edits, secret
 installation/rotation, Telegram sends, or Hermes schedules.

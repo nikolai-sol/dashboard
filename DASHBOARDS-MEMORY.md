@@ -37,6 +37,13 @@ ssh beget 'cd /root/reportingdash-rollout/dashboard-next && PUBLIC_APP_HOST=5.35
 
 ## Current dashboard architecture
 
+Isolated Zaruku remains a branch target. Its root document preserves the combined
+Inter and JetBrains Mono font setup, CSS variables, antialiasing, Russian language,
+and ReportingDash metadata. The release worker requires the dedicated credential
+file and `ZARUKU_DB_*` input contract documented in `OPS.md` and `AGENTS.md`;
+it does not reuse combined MySQL credentials. No production cutover or credential
+provisioning is implied by these local changes.
+
 ### Abbott canonical/private release boundary
 
 - The Abbott canonical/private operator procedure is

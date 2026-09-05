@@ -3,9 +3,9 @@ set -euo pipefail
 
 npm test
 node --import tsx --test packages/runtime-contract/src/index.test.ts
-node --import tsx --test 'apps/zaruku/src/**/*.test.ts'
 npm run test:deploy-source
 npm run test:release-runtime
+node --import tsx --test 'apps/zaruku/src/**/*.test.ts'
 node --test scripts/runtime-artifact-policy.test.mjs
 npm --workspace apps/zaruku run verify:artifact
 npm --workspace apps/zaruku run verify:boot

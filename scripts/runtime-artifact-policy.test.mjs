@@ -688,6 +688,60 @@ test("stamps immutable scope and source metadata for a fresh build", () => {
   }
 });
 
+test("stamping rejects linked trees and occupied outputs before modifying any destination", async t => {
+  for (const attack of ["package-hardlink", "unrelated-hardlink", "package-symlink", "nested-parent-symlink", "root-parent-symlink", "existing-trace", "scope-symlink"]) await t.test(attack, () => {
+    const temp = mkdtempSync(path.join(tmpdir(), "zaruku-stamp-unsafe-"));
+    const root = path.join(temp, "build/standalone"), outside = path.join(temp, "outside");
+    try {
+      write(root, "apps/zaruku/server.js", "// standalone\n");
+      mkdirSync(path.join(root, NEXT_ROOT), { recursive: true });
+      write(path.dirname(root), "next-server.js.nft.json", '{"version":1,"files":[]}');
+      const packageBytes = '{"name":"fixture","scripts":{"build":"fixture"}}\n';
+      write(root, "package.json", packageBytes);
+      write(outside, "package.json", packageBytes);
+      const authority = fixtureAuthority(root);
+      const pkg = path.join(root, "package.json");
+      let invocationRoot = root;
+      if (attack === "package-hardlink" || attack === "package-symlink") {
+        rmSync(pkg);
+        (attack === "package-hardlink" ? fs.linkSync : symlinkSync)(path.join(outside, "package.json"), pkg);
+      } else if (attack === "unrelated-hardlink") fs.linkSync(path.join(outside, "package.json"), path.join(root, "linked.json"));
+      else if (attack === "nested-parent-symlink") {
+        fs.renameSync(path.join(root, "apps"), path.join(outside, "apps"));
+        symlinkSync(path.join(outside, "apps"), path.join(root, "apps"));
+      } else if (attack === "root-parent-symlink") {
+        symlinkSync(path.dirname(root), path.join(temp, "alias"));
+        invocationRoot = path.join(temp, "alias/standalone");
+      } else if (attack === "existing-trace") write(root, `${NEXT_ROOT}/next-server.js.nft.json`, "existing");
+      else symlinkSync(path.join(outside, "package.json"), path.join(root, ".release-runtime-scope"));
+      assert.throws(() => stampRuntimeArtifact(invocationRoot, "zaruku", SOURCE_SHA, authority), /unsafe|stamp|exist|link|directory/i);
+      assert.equal(readFileSync(path.join(outside, "package.json"), "utf8"), packageBytes);
+      assert.equal(readFileSync(pkg, "utf8"), packageBytes, "no earlier output may be rewritten before all destinations are validated");
+      assert.equal(fs.existsSync(path.join(outside, NEXT_ROOT, "next-server.js.nft.json")), false);
+      assert.equal(fs.existsSync(path.join(root, ".release-source-sha")), false);
+    } finally { rmSync(temp, { recursive: true, force: true }); }
+  });
+});
+
+test("direct boot rejects real or effective root identity before inspecting or executing app code", async t => {
+  for (const [uid, euid] of [[0, 501], [501, 0], [0, 0]]) await t.test(`${uid}/${euid}`, async () => {
+    const getuid = mock.method(process, "getuid", () => uid);
+    const geteuid = mock.method(process, "geteuid", () => euid);
+    try { await assert.rejects(runtimePolicy.verifyRuntimeArtifactBoot("/missing-root-identity-fixture", "zaruku"), /unprivileged|root identity/i); }
+    finally { getuid.mock.restore(); geteuid.mock.restore(); }
+    const identity = `data:text/javascript,${encodeURIComponent(`process.getuid=()=>${uid};process.geteuid=()=>${euid};`)}`;
+    const cli = spawnSync(process.execPath, ["--import", identity, "scripts/runtime-artifact-policy.mjs", "--boot", "zaruku", "/missing-root-identity-fixture", "--trusted-manifest", "/missing-root-authority"],
+      { cwd: REPOSITORY_ROOT, env: {}, encoding: "utf8" });
+    assert.notEqual(cli.status, 0);
+    assert.match(cli.stderr, /unprivileged|root identity/i);
+  });
+});
+
+test("descriptor-relative stamping survives adversarial publication and read races", () => {
+  const result = spawnSync("python3", ["-I", "-B", "scripts/stamp-runtime-artifact.test.py"], { cwd: REPOSITORY_ROOT, encoding: "utf8" });
+  assert.equal(result.status, 0, result.stderr);
+});
+
 test("stamping removes monorepo-only package metadata from the standalone root", () => {
   const buildRoot = mkdtempSync(path.join(tmpdir(), "zaruku-stamp-package-"));
   const root = path.join(buildRoot, "standalone");
