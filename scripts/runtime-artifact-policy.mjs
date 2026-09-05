@@ -10,12 +10,20 @@ import {
   writeFileSync,
 } from "node:fs";
 import path from "node:path";
-import { pathToFileURL } from "node:url";
+import { fileURLToPath, pathToFileURL } from "node:url";
 
 const ZARUKU_APP_ROOT = "apps/zaruku";
 const ZARUKU_SERVER = `${ZARUKU_APP_ROOT}/server.js`;
 const ZARUKU_NEXT = `${ZARUKU_APP_ROOT}/.next-zaruku`;
 const ZARUKU_NEXT_SERVER = `${ZARUKU_APP_ROOT}/.next-zaruku/server`;
+const REPOSITORY_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
+const NEXT_AUTHORITY_FILES = [
+  "routes-manifest.json", "server/pages-manifest.json", "build-manifest.json", "prerender-manifest.json",
+  "server/functions-config-manifest.json", "server/middleware-manifest.json", "server/middleware-build-manifest.js",
+  "server/middleware-react-loadable-manifest.js", "react-loadable-manifest.json", "server/app-paths-manifest.json",
+  "app-path-routes-manifest.json", "server/server-reference-manifest.js", "server/server-reference-manifest.json",
+  "BUILD_ID", "server/next-font-manifest.js", "server/next-font-manifest.json", "required-server-files.json",
+];
 
 const ZARUKU_ROUTES = new Map([
   ["/_global-error/page", "app/_global-error/page.js"],
@@ -243,6 +251,114 @@ function inspectZarukuRoutes(files, violations) {
   } catch { violations.push(`invalid standalone server ${ZARUKU_SERVER}`); }
 }
 
+function inspectFileClosure(files, violations) {
+  const allowed = new Set();
+  const visiting = new Set();
+  const visited = new Set();
+  let references = 0;
+  const include = (name, depth = 0) => {
+    if (!files.has(name)) { violations.push(`missing traced file ${name}`); return; }
+    allowed.add(name);
+    if (!name.endsWith(".nft.json")) {
+      if (files.has(`${name}.nft.json`)) include(`${name}.nft.json`, depth + 1);
+      return;
+    }
+    if (visiting.has(name)) { violations.push(`cyclic trace ${name}`); return; }
+    if (visited.has(name)) return;
+    try {
+      if (depth > 32) throw new Error();
+      const trace = JSON.parse(files.get(name).text);
+      if (!isDeepStrictEqual(Object.keys(trace).sort(), ["files", "version"]) || trace.version !== 1 ||
+        !Array.isArray(trace.files) || trace.files.length > 10000 || new Set(trace.files).size !== trace.files.length) throw new Error();
+      visiting.add(name);
+      for (const entry of trace.files) {
+        if (++references > 20000 || typeof entry !== "string" || !entry || /[\\\u0000-\u001f:]/.test(entry) || path.posix.isAbsolute(entry)) throw new Error();
+        const target = path.posix.normalize(path.posix.join(path.posix.dirname(name), entry));
+        if (target === ".." || target.startsWith("../") || target === ".") throw new Error();
+        include(target, depth + 1);
+      }
+      visited.add(name);
+    } catch { violations.push(`invalid or excessive trace ${name}`); }
+    finally { visiting.delete(name); }
+  };
+  for (const name of [".release-source-sha", ".release-runtime-scope", "package.json", ZARUKU_SERVER,
+    `${ZARUKU_APP_ROOT}/package.json`, `${ZARUKU_NEXT}/package.json`, `${ZARUKU_NEXT}/next-server.js.nft.json`,
+    ...NEXT_AUTHORITY_FILES.map((name) => `${ZARUKU_NEXT}/${name}`)]) include(name);
+  if (files.has(".env")) include(".env");
+  for (const target of ZARUKU_COMPILED_ROUTES) {
+    include(`${ZARUKU_NEXT_SERVER}/${target}`);
+    include(`${ZARUKU_NEXT_SERVER}/${target}.nft.json`);
+  }
+
+  // These inert framework outputs have exact names and cannot authorize helpers.
+  for (const route of ["_global-error", "_not-found"]) {
+    const stem = `${ZARUKU_NEXT_SERVER}/app/${route}`;
+    for (const ext of ["html", "meta", "rsc"]) if (files.has(`${stem}.${ext}`)) include(`${stem}.${ext}`);
+    for (const segment of ["_tree", "_full", `${route}/__PAGE__`, route, "_index", "_head"]) {
+      const filename = `${stem}.segments/${segment}.segment.rsc`;
+      if (files.has(filename)) include(filename);
+    }
+  }
+  for (const code of [404, 500]) {
+    const filename = `${ZARUKU_NEXT_SERVER}/pages/${code}.html`;
+    if (files.has(filename)) include(filename);
+  }
+
+  // Optional browser output may be copied into standalone later. Only concrete
+  // assets named by the owned build/client/font manifests enter the closure.
+  const buildId = files.get(`${ZARUKU_NEXT}/BUILD_ID`)?.text;
+  const staticName = (name) => /^static\/(?:chunks\/(?:[\w-]+\/)*[\w.-]+\.js|css\/[\w.-]+\.css|media\/[\w.-]+\.(?:woff2?|ttf|otf|png|jpe?g|gif|webp|avif|ico|svg))$/.test(name) ||
+    name === `static/${buildId}/_buildManifest.js` || name === `static/${buildId}/_ssgManifest.js`;
+  const addAssets = (value) => {
+    if (typeof value === "string" && value.startsWith("static/")) {
+      if (!staticName(value)) throw new Error();
+      if (files.has(`${ZARUKU_NEXT}/${value}`)) include(`${ZARUKU_NEXT}/${value}`);
+    } else if (Array.isArray(value)) value.forEach(addAssets);
+    else if (value && typeof value === "object") Object.values(value).forEach(addAssets);
+  };
+  for (const name of ["build-manifest.json", "react-loadable-manifest.json", "server/next-font-manifest.json"]) {
+    try { addAssets(JSON.parse(files.get(`${ZARUKU_NEXT}/${name}`).text)); }
+    catch { violations.push(`invalid asset authority ${ZARUKU_NEXT}/${name}`); }
+  }
+  for (const [route, target] of ZARUKU_ROUTES) {
+    const name = `${ZARUKU_NEXT_SERVER}/${target.replace(/\.js$/, "_client-reference-manifest.js")}`;
+    if (!allowed.has(name)) continue;
+    try {
+      const prefix = `globalThis.__RSC_MANIFEST=(globalThis.__RSC_MANIFEST||{});globalThis.__RSC_MANIFEST[${JSON.stringify(route)}]=`;
+      const text = files.get(name).text.trim();
+      if (!text.startsWith(prefix)) throw new Error();
+      addAssets(JSON.parse(text.slice(prefix.length).replace(/;$/, "")));
+    } catch { violations.push(`invalid client asset authority ${name}`); }
+  }
+
+  let lock;
+  try { lock = JSON.parse(readFileSync(path.join(REPOSITORY_ROOT, "package-lock.json"), "utf8")).packages; }
+  catch { violations.push("missing reviewed package lock authority"); }
+  for (const name of allowed) {
+    if (name.startsWith("node_modules/")) {
+      const match = /^(.*node_modules\/(?:@[^/]+\/)?[^/]+)/.exec(name);
+      if (!allowed.has(`${match[1]}/package.json`)) violations.push(`missing traced package identity ${match[1]}/package.json`);
+    }
+    if (name.startsWith("packages/runtime-contract/") && !allowed.has("packages/runtime-contract/package.json")) violations.push("missing traced package identity packages/runtime-contract/package.json");
+    if (path.posix.basename(name) !== "package.json") continue;
+    try {
+      const actual = JSON.parse(files.get(name).text);
+      let expected;
+      if (name === `${ZARUKU_NEXT}/package.json`) expected = { type: "commonjs" };
+      else {
+        expected = JSON.parse(readFileSync(path.join(REPOSITORY_ROOT, name), "utf8"));
+        if (name === "package.json") for (const key of ["scripts", "workspaces", "devDependencies"]) delete expected[key];
+      }
+      if (!isDeepStrictEqual(actual, expected)) throw new Error();
+      const entry = lock?.[path.posix.dirname(name)];
+      if (entry?.version && actual.version !== entry.version) throw new Error();
+      if (name === "node_modules/next/package.json" && (actual.name !== "next" || actual.version !== "16.1.6")) throw new Error();
+      if (name === "packages/runtime-contract/package.json" && (actual.name !== "@reportingdash/runtime-contract" || actual.version !== "0.1.0")) throw new Error();
+    } catch { violations.push(`invalid traced package identity ${name}`); }
+  }
+  for (const name of files.keys()) if (!allowed.has(name)) violations.push(`untraced artifact file ${name}`);
+}
+
 function inspectPath(relativePath, violations) {
   const lower = relativePath.toLowerCase();
   const basename = path.posix.basename(lower);
@@ -380,6 +496,7 @@ function inspectRuntimeArtifactState(artifactRoot, scope) {
   const files = inspectTree(root, violations);
   inspectMetadata(files, scope, violations);
   inspectZarukuRoutes(files, violations);
+  inspectFileClosure(files, violations);
   return { files, violations: [...new Set(violations)].sort((left, right) => left.localeCompare(right, "en")) };
 }
 
@@ -465,6 +582,12 @@ export function stampRuntimeArtifact(artifactRoot, scope, sourceSha) {
   const rootStat = lstatSync(root);
   if (rootStat.isSymbolicLink() || !rootStat.isDirectory()) throw new Error("artifact root must be a real directory");
   if (!isRegularFile(path.join(root, ZARUKU_SERVER))) throw new Error(`missing ${ZARUKU_SERVER}`);
+  const sourceTrace = path.join(path.dirname(root), "next-server.js.nft.json");
+  const sourceStat = lstatSync(sourceTrace);
+  if (!sourceStat.isFile() || sourceStat.nlink !== 1 || sourceStat.size > MAX_FILE_BYTES) throw new Error("invalid standalone server trace");
+  const fd = fs.openSync(sourceTrace, fs.constants.O_RDONLY | fs.constants.O_NOFOLLOW);
+  try { writeFileSync(path.join(root, ZARUKU_NEXT, "next-server.js.nft.json"), readFileSync(fd), { flag: "wx" }); }
+  finally { fs.closeSync(fd); }
   removeMonorepoPackageMetadata(root);
   mkdirSync(root, { recursive: true });
   writeFileSync(path.join(root, ".release-source-sha"), `${sourceSha}\n`, { flag: "wx" });

@@ -3,10 +3,15 @@
 Status: implemented, committed, and locally verified. Parent review/acceptance is pending.
 
 - Base: `c9ec43b3c42ce4c5fc312b64ee72c1a448a98dae`
-- Commit: `1c8ac36dd465998a5257e3fe3171fca5429cbfa6` — `test(zaruku): enforce isolated release artifact`
+- Task commit sequence:
+  1. `1c8ac36dd465998a5257e3fe3171fca5429cbfa6` — `test(zaruku): enforce isolated release artifact` (initial implementation).
+  2. `2581189afab9a6f8e2e850ad588a2148ae97c06f` — `fix(zaruku): close runtime artifact policy bypasses` (first review fix; first commit tracking this report).
+  3. `fix(zaruku): enforce traced artifact file closure` — the final closure-fix commit containing this report revision; its hash is supplied in the completion handoff and `git log -- .superpowers/sdd/runtime-isolation-task-5-report.md`.
 - Worktree: `/Users/nafanya/ReportingDash/dashboard-next/.worktrees/three-dashboard-runtime-isolation`
-- Worktree state after the task-only commit and post-commit rebuild: clean (`git status --short` produced no output).
-- This report is in the existing ignored `.superpowers/sdd` evidence area and is not part of the task commit.
+- Worktree state after the initial and first review-fix commits and their post-commit rebuilds: clean (`git status --short` produced no output).
+- This report is tracked: it was force-added from the otherwise ignored `.superpowers/sdd` evidence area in `2581189`, and its latest evidence is included in the final closure-fix commit.
+
+The original Outcome through Concerns sections below preserve the evidence and claims recorded for `1c8ac36`; subsequent review found gaps in that implementation. The later review-fix sections describe corrections and supersede those historical policy descriptions. No earlier failed gate or review finding has been removed from the history.
 
 ## Outcome
 
@@ -192,3 +197,43 @@ The legacy Abbott/combined asset policy and `assert-no-private-public-assets.ts`
 - No production operation, proxy edit, database access/write, migration, cron edit, source API call, secret installation/rotation, Telegram send or Hermes schedule occurred. Build-only Google Fonts downloads and local loopback health probes are the only network-related verification actions.
 
 Done: Task 5 review fixes and requested local verification complete. Accepted: pending independent parent review. Reusable learning: none captured before acceptance. Skill action: review reception, TDD and verification instructions used; no durable skill edit. Evidence: the commands and results above. Budget stop: none.
+
+## Task 5 final review fix — traced file closure
+
+Review of `2581189` found that directory-level allowances still admitted untraced support executables. This final fix replaces directory eligibility with a complete file closure. The historical findings and evidence above remain intact; the report header now records the complete task commit sequence and accurately states that the report is tracked.
+
+### Final policy
+
+- Sealing preserves the generated `next-server.js.nft.json` inside `apps/zaruku/.next-zaruku/`, because Next copies its dependencies but omits that trace from standalone output. The source trace must be a bounded regular file with one link, and it is opened with `O_NOFOLLOW`.
+- The inspector seeds the generated standalone server, package/config/release metadata, the exact Next authority files and all seven owned route executables and their `.nft.json` sidecars. It recursively resolves every reachable trace and executable sidecar inside the same previously captured artifact snapshot. Each trace must have version 1, the exact `files`/`version` structure, unique relative entries, at most 10,000 entries, at most 20,000 total references and at most 32 trace levels. Missing files, escapes, absolute/Windows paths, cycles, excessive traces, symlink targets and hardlink targets fail closed. The existing inode/no-follow checks supply the trace graph with regular single-link files only.
+- Every regular artifact file must belong to that closure. No `node_modules/`, runtime-contract, app support or server chunk directory grants executable eligibility on its own. The only additional inert server outputs are individually enumerated framework error-page HTML/meta/RSC files and segment names. There is no public-directory exception.
+- Optional browser chunks/CSS/media must be named by the owned build, client-reference, loadable or font manifests and pass the strict static-path rule. Arbitrary adjacent browser JavaScript is rejected. Client-reference manifests are parsed as the exact generated assignment plus JSON, without evaluating JavaScript. Optional static files are not required in the server-only standalone output; a later packaging step must select eligible manifested assets rather than bulk-copy unreferenced build files.
+- All traced package manifests are checked against canonical manifests from the reviewed checkout, with installed package versions also compared to its lockfile. A dependency file requires its traced owning package manifest. Next is pinned to `next@16.1.6`; any traced runtime-contract package must match canonical `@reportingdash/runtime-contract@0.1.0`. Bundled/subpath manifests that intentionally omit versions must still match their exact canonical package metadata. This check consumes trusted checkout/installation authority, not a new artifact-owned dependency allow-list.
+
+### Closure RED/GREEN evidence
+
+1. Before changing policy, copied the existing real sealed standalone artifact four times, verified each copy was initially clean, then separately added `node_modules/google-ads-admin/index.js`, `apps/zaruku/.next-zaruku/server/app/foreign-helper.js`, `packages/runtime-contract/advertising-admin.js` and an untraced top-level server chunk. `node --test --test-name-pattern='closure:' scripts/runtime-artifact-policy.test.mjs` returned **0/5 passed, 5 failed**, including the containing test: every injected executable was falsely accepted. Evidence: `/private/tmp/task5-closure-red.log`.
+2. Added missing/outside/absolute/Windows/cyclic/excessive/missing-route trace cases, incorrect Next name/version, incorrect runtime-contract identity, and an adjacent unmanifested browser chunk. Before implementation, the expanded same command returned **0/18 passed, 18 failed**. Evidence: `/private/tmp/task5-closure-expanded-red.log`.
+3. The first closure implementation passed 118/125 tests. The remaining failures identified legitimate nested client chunk paths plus the two older stamp fixtures that lacked the newly required generated server trace. The path grammar was corrected for concrete nested manifest entries and the stamp fixtures now model the real build/standalone layout; no executable-directory allowance was restored.
+4. Complete final policy suite: `node --test scripts/runtime-artifact-policy.test.mjs` — **125/125 passed**, no failures or skips, including all four injections into copies of the fresh real artifact. Evidence: `/private/tmp/task5-closure-final-fixtures.log`.
+
+The real-artifact fixture group intentionally requires the isolated build output. Run `npm --workspace apps/zaruku run build` before the complete fixture suite in a clean checkout. The ordinary synthetic fixtures also model the trace/package metadata contract.
+
+### Final verification
+
+- Fresh `npm --workspace apps/zaruku run build` and `npm --workspace apps/zaruku run verify:artifact` — exit 0; the real server trace is preserved, all runtime files belong to the closure, and the exact isolated route inventory remains unchanged. Build log: `/private/tmp/task5-closure-zaruku-build.log`.
+- `npm --workspace apps/zaruku run verify:boot` — exit 0 with the exact loopback health contract and child cleanup; the artifact remained unchanged after boot.
+- `node --import tsx --test src/lib/release-asset-policy.test.ts` — **22/22 passed**; `/private/tmp/task5-closure-legacy.log`.
+- `npm test` — one approved full run after this broad closure change, exit 0: **956 Node tests discovered, 946 passed, 10 existing skips, zero failures; 13 Python tests passed**; `/private/tmp/task5-closure-full-tests.log`.
+- `npm run typecheck` and `npx tsc --noEmit -p apps/zaruku/tsconfig.json` — exit 0.
+- `npm run build` — exit 0, preserving the combined app and its proxy middleware; `/private/tmp/task5-closure-combined-build.log`.
+- `npm run lint` — zero errors, the same 12 existing unrelated warnings; focused policy/test ESLint clean. Log: `/private/tmp/task5-closure-lint.log`.
+- `npm run security:public-assets` — exit 0; no change to the legacy Abbott/public policy.
+- `npm ci --offline --dry-run --ignore-scripts` — exit 0, up to date, no installation or lockfile modification; `/private/tmp/task5-closure-npm.log`.
+- `git diff --check` — exit 0.
+
+The approved local runs reused the previously established requirements for tsx IPC, a temporary loopback listener and build-only Google Fonts downloads. No production operation, proxy edit, database access, schema/migration, collector/source API, cron, secret, Telegram or Hermes action occurred.
+
+Remaining integration constraints: the policy still pins reviewed Next output and must run alongside the trusted checkout's lockfile/canonical package manifests. Release staging must remain exclusively owned through activation, and Task 6 must package only eligible assets and render the scoped environment. Neither trace metadata nor an inspection result is a cryptographic signature against an actor able to rewrite the complete artifact and all its authority files later.
+
+Done: final Task 5 closure fix and local verification complete. Accepted: pending parent review. Reusable learning: not captured before acceptance. Skill action: review/TDD/verification instructions applied; no skill update. Evidence: commands above. Budget stop: none.

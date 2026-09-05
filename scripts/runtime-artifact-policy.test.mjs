@@ -69,6 +69,13 @@ function createArtifact() {
   write(root, ".release-runtime-scope", "zaruku\n");
   write(root, ".env", "DB_HOST=127.0.0.1\n");
   write(root, "apps/zaruku/server.js", FIXTURE_SERVER);
+  const rootPackage = JSON.parse(readFileSync(path.join(REPOSITORY_ROOT, "package.json")));
+  for (const key of ["scripts", "workspaces", "devDependencies"]) delete rootPackage[key];
+  write(root, "package.json", JSON.stringify(rootPackage));
+  for (const filename of ["apps/zaruku/package.json", "node_modules/next/package.json"]) {
+    write(root, filename, readFileSync(path.join(REPOSITORY_ROOT, filename)));
+  }
+  write(root, `${NEXT_ROOT}/package.json`, '{"type":"commonjs"}');
   const routes = Object.keys(EXPECTED_ROUTES).map((route) => route.replace(/\/(page|route)$/, ""));
   const authorities = {
     "build-manifest.json": { pages: { "/_app": [] }, rootMainFilesTree: {}, devFiles: [] },
@@ -76,6 +83,8 @@ function createArtifact() {
     "server/pages-manifest.json": { "/404": "pages/404.html", "/500": "pages/500.html" },
     "server/functions-config-manifest.json": { version: 1, functions: {} },
     "server/server-reference-manifest.json": { node: {}, edge: {} },
+    "react-loadable-manifest.json": {},
+    "server/next-font-manifest.json": { pages: {}, app: {}, appUsingSizeAdjust: false, pagesUsingSizeAdjust: false },
     "app-path-routes-manifest.json": Object.fromEntries(Object.keys(EXPECTED_ROUTES).map((route, i) => [route, routes[i]])),
     "routes-manifest.json": { version: 3, appType: "app", basePath: "", headers: [], dynamicRoutes: [], dataRoutes: [],
       redirects: [{ source: "/:path+/", destination: "/:path+", internal: true, priority: true, statusCode: 308, regex: "^(?:/((?:[^/]+?)(?:/(?:[^/]+?))*))/$" }],
@@ -86,6 +95,9 @@ function createArtifact() {
     "required-server-files.json": { version: 1, relativeAppDir: "apps/zaruku", config: FIXTURE_CONFIG, files: [".next-zaruku/server/app-paths-manifest.json"] },
   };
   for (const [filename, content] of Object.entries(authorities)) write(root, `${NEXT_ROOT}/${filename}`, JSON.stringify(content));
+  for (const name of ["middleware-build-manifest", "middleware-react-loadable-manifest", "next-font-manifest", "server-reference-manifest"]) {
+    write(root, `${NEXT_ROOT}/server/${name}.js`, "// generated manifest\n");
+  }
   write(root, `${NEXT_ROOT}/BUILD_ID`, "fixture-build");
   write(
     root,
@@ -94,7 +106,10 @@ function createArtifact() {
   );
   for (const target of Object.values(EXPECTED_ROUTES)) {
     write(root, `apps/zaruku/.next-zaruku/server/${target}`, "// safe compiled route\n");
+    const trace = `${NEXT_ROOT}/server/${target}.nft.json`;
+    write(root, trace, JSON.stringify({ version: 1, files: [path.posix.relative(path.posix.dirname(trace), `${NEXT_ROOT}/server/chunks/safe.js`)] }));
   }
+  write(root, `${NEXT_ROOT}/next-server.js.nft.json`, JSON.stringify({ version: 1, files: ["../../../node_modules/next/package.json"] }));
   write(
     root,
     "apps/zaruku/.next-zaruku/server/chunks/safe.js",
@@ -111,6 +126,70 @@ function withArtifact(run) {
     rmSync(root, { recursive: true, force: true });
   }
 }
+
+test("closure: realistic sealed build rejects untraced executable additions", async (t) => {
+  const realRoot = path.join(REPOSITORY_ROOT, "apps/zaruku/.next-zaruku/standalone");
+  assert.ok(fs.existsSync(realRoot), "build the Zaruku workspace before its real-artifact closure fixtures");
+  for (const name of ["node_modules/google-ads-admin/index.js", `${NEXT_ROOT}/server/app/foreign-helper.js`,
+    "packages/runtime-contract/advertising-admin.js", `${NEXT_ROOT}/server/chunks/untraced.js`]) {
+    await t.test(name, () => {
+      const root = mkdtempSync(path.join(tmpdir(), "zaruku-real-closure-"));
+      try {
+        fs.cpSync(realRoot, root, { recursive: true, dereference: false });
+        // Next omits its server trace from standalone; the revised seal preserves it.
+        write(root, `${NEXT_ROOT}/next-server.js.nft.json`, readFileSync(path.join(REPOSITORY_ROOT, "apps/zaruku/.next-zaruku/next-server.js.nft.json")));
+        assert.deepEqual(inspectRuntimeArtifact(root, "zaruku"), []);
+        write(root, name, "module.exports = {};\n");
+        assert.ok(inspectRuntimeArtifact(root, "zaruku").some((item) => item.includes(name)), name);
+      } finally { rmSync(root, { recursive: true, force: true }); }
+    });
+  }
+});
+
+test("closure: rejects missing, escaping, cyclic and oversized traces", async (t) => {
+  for (const [name, entry] of [
+    ["missing", "missing.js"], ["outside", "../../../../outside.js"],
+    ["absolute", "/private/tmp/outside.js"], ["windows", "C:\\outside.js"],
+    ["cycle", "next-server.js.nft.json"],
+  ]) await t.test(name, () => withArtifact((root) => {
+    write(root, `${NEXT_ROOT}/next-server.js.nft.json`, JSON.stringify({ version: 1, files: [entry] }));
+    assert.ok(inspectRuntimeArtifact(root, "zaruku").some((item) => /trace/.test(item)), name);
+  }));
+  await t.test("excessive trace entries", () => withArtifact((root) => {
+    write(root, `${NEXT_ROOT}/next-server.js.nft.json`, JSON.stringify({ version: 1, files: Array(20001).fill("../../../package.json") }));
+    assert.ok(inspectRuntimeArtifact(root, "zaruku").some((item) => /trace/.test(item)));
+  }));
+  await t.test("missing route trace", () => withArtifact((root) => {
+    rmSync(path.join(root, `${NEXT_ROOT}/server/app/api/health/route.js.nft.json`));
+    assert.ok(inspectRuntimeArtifact(root, "zaruku").some((item) => item.includes("route.js.nft.json")));
+  }));
+});
+
+test("closure: package identity and version must match reviewed dependencies", async (t) => {
+  for (const [key, value] of [["version", "99.0.0"], ["name", "foreign-runtime"]]) await t.test(`Next ${key}`, () => withArtifact((root) => {
+    const filename = "node_modules/next/package.json";
+    const pkg = JSON.parse(readFileSync(path.join(root, filename)));
+    pkg[key] = value;
+    write(root, filename, JSON.stringify(pkg));
+    assert.ok(inspectRuntimeArtifact(root, "zaruku").some((item) => /package identity/.test(item)));
+  }));
+  await t.test("runtime contract", () => withArtifact((root) => {
+    const filename = "packages/runtime-contract/package.json";
+    write(root, filename, JSON.stringify({ name: "foreign-contract", version: "0.1.0" }));
+    write(root, `${NEXT_ROOT}/next-server.js.nft.json`, JSON.stringify({ version: 1, files: ["../../../node_modules/next/package.json", `../../../${filename}`] }));
+    assert.ok(inspectRuntimeArtifact(root, "zaruku").some((item) => /package identity/.test(item)));
+  }));
+});
+
+test("closure: only manifested browser assets may supplement the traced files", () => withArtifact((root) => {
+  const manifest = JSON.parse(readFileSync(path.join(root, `${NEXT_ROOT}/build-manifest.json`)));
+  manifest.rootMainFiles = ["static/chunks/owned.js"];
+  write(root, `${NEXT_ROOT}/build-manifest.json`, JSON.stringify(manifest));
+  write(root, `${NEXT_ROOT}/static/chunks/owned.js`, "// traced browser chunk\n");
+  assert.deepEqual(inspectRuntimeArtifact(root, "zaruku"), []);
+  write(root, `${NEXT_ROOT}/static/chunks/foreign.js`, "// unowned browser chunk\n");
+  assert.ok(inspectRuntimeArtifact(root, "zaruku").some((item) => item.includes("static/chunks/foreign.js")));
+}));
 
 test("accepts the complete Zaruku standalone route set and root runtime .env", () => {
   withArtifact((root) => {
@@ -467,21 +546,27 @@ test("review: workspace provides an explicit post-seal loopback boot gate", () =
 });
 
 test("stamps immutable scope and source metadata for a fresh build", () => {
-  const root = mkdtempSync(path.join(tmpdir(), "zaruku-stamp-"));
+  const buildRoot = mkdtempSync(path.join(tmpdir(), "zaruku-stamp-"));
+  const root = path.join(buildRoot, "standalone");
   try {
     write(root, "apps/zaruku/server.js", "// standalone\n");
+    mkdirSync(path.join(root, NEXT_ROOT), { recursive: true });
+    write(buildRoot, "next-server.js.nft.json", '{"version":1,"files":[]}');
     stampRuntimeArtifact(root, "zaruku", SOURCE_SHA);
     assert.equal(readFileSync(path.join(root, ".release-source-sha"), "utf8"), `${SOURCE_SHA}\n`);
     assert.equal(readFileSync(path.join(root, ".release-runtime-scope"), "utf8"), "zaruku\n");
   } finally {
-    rmSync(root, { recursive: true, force: true });
+    rmSync(buildRoot, { recursive: true, force: true });
   }
 });
 
 test("stamping removes monorepo-only package metadata from the standalone root", () => {
-  const root = mkdtempSync(path.join(tmpdir(), "zaruku-stamp-package-"));
+  const buildRoot = mkdtempSync(path.join(tmpdir(), "zaruku-stamp-package-"));
+  const root = path.join(buildRoot, "standalone");
   try {
     write(root, "apps/zaruku/server.js", "// standalone\n");
+    mkdirSync(path.join(root, NEXT_ROOT), { recursive: true });
+    write(buildRoot, "next-server.js.nft.json", '{"version":1,"files":[]}');
     write(
       root,
       "package.json",
@@ -503,7 +588,7 @@ test("stamping removes monorepo-only package metadata from the standalone root",
       dependencies: { next: "16.1.6" },
     });
   } finally {
-    rmSync(root, { recursive: true, force: true });
+    rmSync(buildRoot, { recursive: true, force: true });
   }
 });
 
