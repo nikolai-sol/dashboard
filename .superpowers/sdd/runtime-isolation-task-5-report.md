@@ -6,10 +6,11 @@ Status: implemented, committed, and locally verified. Parent review/acceptance i
 - Task commit sequence:
   1. `1c8ac36dd465998a5257e3fe3171fca5429cbfa6` — `test(zaruku): enforce isolated release artifact` (initial implementation).
   2. `2581189afab9a6f8e2e850ad588a2148ae97c06f` — `fix(zaruku): close runtime artifact policy bypasses` (first review fix; first commit tracking this report).
-  3. `fix(zaruku): enforce traced artifact file closure` — the final closure-fix commit containing this report revision; its hash is supplied in the completion handoff and `git log -- .superpowers/sdd/runtime-isolation-task-5-report.md`.
+  3. `b32ffce81ed4b058df483e9ab80a99ec367e8483` — `fix(zaruku): enforce traced artifact file closure` (second review fix).
+  4. `fix(zaruku): bind artifacts to external build authority` — the final external-authority fix commit containing this report revision; its hash is supplied in the completion handoff and `git log -- .superpowers/sdd/runtime-isolation-task-5-report.md`.
 - Worktree: `/Users/nafanya/ReportingDash/dashboard-next/.worktrees/three-dashboard-runtime-isolation`
 - Worktree state after the initial and first review-fix commits and their post-commit rebuilds: clean (`git status --short` produced no output).
-- This report is tracked: it was force-added from the otherwise ignored `.superpowers/sdd` evidence area in `2581189`, and its latest evidence is included in the final closure-fix commit.
+- This report is tracked: it was force-added from the otherwise ignored `.superpowers/sdd` evidence area in `2581189`, and its latest evidence is included in the final external-authority fix commit.
 
 The original Outcome through Concerns sections below preserve the evidence and claims recorded for `1c8ac36`; subsequent review found gaps in that implementation. The later review-fix sections describe corrections and supersede those historical policy descriptions. No earlier failed gate or review finding has been removed from the history.
 
@@ -237,3 +238,60 @@ The approved local runs reused the previously established requirements for tsx I
 Remaining integration constraints: the policy still pins reviewed Next output and must run alongside the trusted checkout's lockfile/canonical package manifests. Release staging must remain exclusively owned through activation, and Task 6 must package only eligible assets and render the scoped environment. Neither trace metadata nor an inspection result is a cryptographic signature against an actor able to rewrite the complete artifact and all its authority files later.
 
 Done: final Task 5 closure fix and local verification complete. Accepted: pending parent review. Reusable learning: not captured before acceptance. Skill action: review/TDD/verification instructions applied; no skill update. Evidence: commands above. Budget stop: none.
+
+## Task 5 final re-review fix — external build authority
+
+Re-review of `b32ffce` demonstrated that changing an artifact trace or asset manifest together with an added executable could authorize that executable. Modifying a traced dependency without changing its package identity also passed. Those claims of closure were therefore insufficient as a trust boundary. This section supersedes the preceding artifact-owned authority description while retaining the original evidence.
+
+### External trust contract
+
+- Fresh workspace build now runs Next, prepares `.next-zaruku/trusted-runtime-manifest.json` **outside** `.next-zaruku/standalone`, then seals and verifies standalone. Preparation reads build-side output, canonical workspace/package metadata and installed traced dependency bytes, never the packaged artifact. Generated server/release/root-package files are reconstructed from the pinned Next template, build configuration and reviewed metadata. The builder rejects any traced environment input before reading it and bounds source size, entries and recursion.
+- The external manifest binds version 1, runtime scope `zaruku`, the source commit SHA, `next@16.1.6` and `@reportingdash/runtime-contract@0.1.0`. Every authorized file has a normalized relative path, regular-file type, exact permission mode, byte size and SHA-256. The current fresh output has **2,873 entries: 2,861 required server/dependency/authority files and 12 optional, explicitly manifested browser assets**. Artifact files cannot authorize additional files merely by naming them in a trace.
+- Policy and boot require an explicit `--trusted-manifest <external-path>`. The manifest and its `.sha256` digest sidecar must be outside the canonical artifact root, regular single-link owner-only files, with safe directory ancestry. Symlinks, hardlinks, group/other permissions, unsupported encoding, invalid schema/paths and digest mismatch fail closed. The only accepted symlink ancestors are the exact macOS system `/var` and `/tmp` aliases to their `/private` locations. Metadata reads use no-follow, stable descriptors and bounded reads.
+- Every artifact file must match the external path/mode/size/hash **before** its bytes enter trace, package, route or asset-authority parsing. Required external files must exist. Release source/scope files must match the external source/scope. Boot also rechecks the external authority digest and all artifact file digests after the loopback health probe.
+- Root `.env` is represented only as `{path:".env",type:"dynamic",policy:"zaruku-env-v1",required:false}`. Its values and value hashes are absent from the trusted manifest; changes remain subject to the strict allow-list/parser. No credential values were printed in diagnostics or verification output.
+- Legitimate manifested PNG/WOFF/other narrowly named font/image files are validated by external path, size and hash without fatal UTF-8 decoding. JavaScript, CSS, SVG and other text still receive the encoding/content checks. Binary paths do not bypass closure, archive checks or external hashes. Adjacent files and byte tampering fail.
+
+Workspace commands now pass the external path automatically:
+
+```bash
+npm --workspace apps/zaruku run build
+npm --workspace apps/zaruku run verify:artifact
+npm --workspace apps/zaruku run verify:boot
+```
+
+The explicit low-level equivalents (from the repository root) are:
+
+```bash
+node scripts/runtime-artifact-policy.mjs --prepare zaruku apps/zaruku/.next-zaruku/standalone --trusted-manifest apps/zaruku/.next-zaruku/trusted-runtime-manifest.json
+node scripts/runtime-artifact-policy.mjs --stamp zaruku apps/zaruku/.next-zaruku/standalone --trusted-manifest apps/zaruku/.next-zaruku/trusted-runtime-manifest.json
+node --import tsx scripts/assert-no-private-public-assets.ts --release --scope zaruku apps/zaruku/.next-zaruku/standalone --trusted-manifest apps/zaruku/.next-zaruku/trusted-runtime-manifest.json
+node scripts/runtime-artifact-policy.mjs --boot zaruku apps/zaruku/.next-zaruku/standalone --trusted-manifest apps/zaruku/.next-zaruku/trusted-runtime-manifest.json
+```
+
+Preparation uses exclusive creation of both external files; rerun the fresh workspace build before preparing again. Do not regenerate authority from a packaged or modified artifact. Task 6 must transport this authority separately from writable release contents or pin its digest in independently protected deploy authority, bind it to the reviewed clean source SHA and retain exclusive staging ownership. The adjacent digest detects a changed manifest, but is not a signature: an actor able to replace both external files has crossed the trusted build/deploy boundary. This task does not establish remote deployment trust or perform deployment.
+
+### External-authority RED/GREEN
+
+1. Before changing production code, copied the real sealed artifact and captured a fixed external fixture authority. Added `server/app/foreign-helper.js` plus a health-route trace entry; added `static/chunks/foreign-owned.js` plus a build-manifest entry; modified traced `node_modules/next/dist/shared/lib/constants.js` with its package identity unchanged. `node --test --test-name-pattern='trust root:' scripts/runtime-artifact-policy.test.mjs` returned **0/4 passed, 4 failed**, including the parent test: all three self-authorization cases remained false-clean. Evidence: `/private/tmp/task5-trust-root-red.log`.
+2. Expanded fixtures for missing/tampered/stale/internal/wrong-scope/SHA/Next/runtime-contract authority, unsafe metadata and genuine PNG/WOFF2. Before implementation the focused run returned **15 tests: 1 passed, 14 failed**; inside-artifact metadata was already rejected by the earlier artifact path policy, while the other authority checks and binary acceptance were absent. Evidence: `/private/tmp/task5-trust-expanded-red.log`.
+3. A separately added symlinked metadata-parent fixture returned **0/1 passed, 1 failed** before adding the ancestry check, then passed. No arbitrary parent symlink is accepted.
+4. The first full run after external hashing passed **138/140**. The two failures were older oversized-file tests whose synthetic external authority itself exceeded the new descriptor limit; the test-authority helper now omits such oversized entries so the artifact size rejection remains the exercised gate. Production limits were not weakened.
+5. Final complete command `node --test scripts/runtime-artifact-policy.test.mjs` returned **144/144 passed**, no skips/failures. Coverage includes the three real-copy attacks, invalid authority variants, dynamic environment changes, real PNG and WOFF2 acceptance, a same-size PNG byte change and a font-size/content change. Evidence: `/private/tmp/task5-trust-verified-fixtures.log`. One focused attempt overlapped Next rebuilding/removing standalone and encountered `ENOENT`; it was rerun after build completion with the final clean result above.
+
+### External-authority verification
+
+- Fresh `npm --workspace apps/zaruku run build` — exit 0 through build → external authority → seal → policy; `/private/tmp/task5-trust-build.log`.
+- `npm --workspace apps/zaruku run verify:artifact` and approved local `npm --workspace apps/zaruku run verify:boot` — exit 0. Boot binds only ephemeral `127.0.0.1`, requires exact HTTP 200 `{ok:true,scope:"zaruku"}`, then stops the child and revalidates file and authority digests.
+- `node --import tsx --test src/lib/release-asset-policy.test.ts` — **22/22 passed**, unchanged Abbott/legacy behavior; `/private/tmp/task5-trust-legacy.log`.
+- One approved `npm test` run after the broad authority change — exit 0, **956 Node tests discovered, 946 passed, 10 existing skips, zero failures; 13 Python tests passed**; `/private/tmp/task5-trust-full-tests.log`.
+- `npm run typecheck` and `npx tsc --noEmit -p apps/zaruku/tsconfig.json` — exit 0.
+- `npm run build` — exit 0 with the combined app/proxy unchanged; `/private/tmp/task5-trust-combined-build.log`.
+- `npm run lint` — exit 0, zero errors and the same 12 pre-existing unrelated warnings; `/private/tmp/task5-trust-lint.log`. Focused ESLint on both policy files and the shared entrypoint also passed after the final test edits.
+- `npm run security:public-assets` — exit 0, unchanged legacy gate.
+- `npm ci --offline --dry-run --ignore-scripts` — exit 0, up to date, no installation or lockfile change; `/private/tmp/task5-trust-npm.log`.
+- `git diff --check` — exit 0.
+
+Only Task 5 policy/tests, workspace command wiring, targeted plan guidance and this tracked report changed. No production process, proxy, database, schema, migration, collector/source API, cron, secret, Telegram or Hermes operation occurred. The existing approved local verification requirements remained tsx IPC, loopback health and build-only font downloads.
+
+Done: external-authority and binary-static fixes locally verified. Accepted: pending independent full-range re-review. Reusable learning: none captured before acceptance. Skill action: review reception, TDD and verification instructions used; no durable skill edit. Evidence: exact commands/results above. Budget stop: none.

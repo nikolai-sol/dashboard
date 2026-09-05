@@ -4,9 +4,9 @@
   "private": true,
   "scripts": {
     "dev": "next dev --webpack",
-    "build": "next build --webpack && node ../../scripts/runtime-artifact-policy.mjs --stamp zaruku .next-zaruku/standalone",
-    "verify:artifact": "node --import tsx ../../scripts/assert-no-private-public-assets.ts --release --scope zaruku .next-zaruku/standalone",
-    "verify:boot": "node ../../scripts/runtime-artifact-policy.mjs --boot zaruku .next-zaruku/standalone",
+    "build": "next build --webpack && node ../../scripts/runtime-artifact-policy.mjs --prepare zaruku .next-zaruku/standalone --trusted-manifest .next-zaruku/trusted-runtime-manifest.json && node ../../scripts/runtime-artifact-policy.mjs --stamp zaruku .next-zaruku/standalone --trusted-manifest .next-zaruku/trusted-runtime-manifest.json",
+    "verify:artifact": "node --import tsx ../../scripts/assert-no-private-public-assets.ts --release --scope zaruku .next-zaruku/standalone --trusted-manifest .next-zaruku/trusted-runtime-manifest.json",
+    "verify:boot": "node ../../scripts/runtime-artifact-policy.mjs --boot zaruku .next-zaruku/standalone --trusted-manifest .next-zaruku/trusted-runtime-manifest.json",
     "start": "next start -p 3002"
   },
   "dependencies": {

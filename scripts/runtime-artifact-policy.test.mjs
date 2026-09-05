@@ -5,10 +5,10 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import test, { mock } from "node:test";
 import { fileURLToPath } from "node:url";
+import { createHash } from "node:crypto";
 
 import {
-  assertRuntimeArtifact,
-  inspectRuntimeArtifact,
+  assertRuntimeArtifact as assertSealedArtifact,
   stampRuntimeArtifact,
 } from "./runtime-artifact-policy.mjs";
 import * as runtimePolicy from "./runtime-artifact-policy.mjs";
@@ -16,6 +16,35 @@ import * as runtimePolicy from "./runtime-artifact-policy.mjs";
 const SOURCE_SHA = "0123456789abcdef0123456789abcdef01234567";
 const REPOSITORY_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const NEXT_ROOT = "apps/zaruku/.next-zaruku";
+function fixtureAuthority(root) {
+  const entries = [];
+  const visit = (directory) => {
+    for (const name of fs.readdirSync(directory)) {
+      const absolute = path.join(directory, name), stat = fs.lstatSync(absolute);
+      if (stat.isDirectory()) visit(absolute);
+      else if (stat.isFile()) {
+        const relative = path.relative(root, absolute).split(path.sep).join("/");
+        if (relative === ".env" || stat.size > 32 * 1024 * 1024) continue;
+        const bytes = readFileSync(absolute);
+        entries.push({ path: relative, type: "file", mode: stat.mode & 0o777, size: bytes.length,
+          sha256: createHash("sha256").update(bytes).digest("hex"), required: !relative.startsWith(`${NEXT_ROOT}/static/`) });
+      }
+    }
+  };
+  visit(root);
+  const sha = fs.existsSync(path.join(root, ".release-source-sha")) ? readFileSync(path.join(root, ".release-source-sha"), "utf8").trim() : SOURCE_SHA;
+  const manifest = { version: 1, scope: "zaruku", sourceSha: /^[a-f0-9]{40}$/.test(sha) ? sha : SOURCE_SHA,
+    next: { name: "next", version: "16.1.6" }, runtimeContract: { name: "@reportingdash/runtime-contract", version: "0.1.0" },
+    dynamic: [{ path: ".env", type: "dynamic", policy: "zaruku-env-v1", required: false }], files: entries.sort((a,b) => a.path.localeCompare(b.path, "en")) };
+  const file = `${root}.trusted.json`, data = `${JSON.stringify(manifest)}\n`;
+  fs.writeFileSync(file, data, { mode: 0o600 });
+  fs.writeFileSync(`${file}.sha256`, `${createHash("sha256").update(data).digest("hex")}\n`, { mode: 0o600 });
+  return file;
+}
+// Older scope fixtures deliberately trust their synthetic inputs to exercise the
+// content policy. Trust-root cases below hold the external baseline immutable.
+function inspectRuntimeArtifact(root, scope) { return runtimePolicy.inspectRuntimeArtifact(root, scope, fixtureAuthority(root)); }
+function assertRuntimeArtifact(root, scope) { return assertSealedArtifact(root, scope, fixtureAuthority(root)); }
 const EXPECTED_ROUTES = {
   "/_global-error/page": "app/_global-error/page.js",
   "/_not-found/page": "app/_not-found/page.js",
@@ -145,6 +174,105 @@ test("closure: realistic sealed build rejects untraced executable additions", as
     });
   }
 });
+
+test("trust root: artifact cannot authorize its own new or modified files", async (t) => {
+  for (const kind of ["trace", "static", "package"]) await t.test(kind, () => {
+    const root = mkdtempSync(path.join(tmpdir(), "zaruku-trust-red-"));
+    try {
+      fs.cpSync(path.join(REPOSITORY_ROOT, "apps/zaruku/.next-zaruku/standalone"), root, { recursive: true });
+      const authority = fixtureAuthority(root);
+      // The fixed verifier will consume this external baseline, never restamp it.
+      assert.deepEqual(runtimePolicy.inspectRuntimeArtifact(root, "zaruku", authority), []);
+      if (kind === "trace") {
+        const trace = `${NEXT_ROOT}/server/app/api/health/route.js.nft.json`;
+        const value = JSON.parse(readFileSync(path.join(root, trace)));
+        value.files.push("../../foreign-helper.js");
+        write(root, trace, JSON.stringify(value));
+        write(root, `${NEXT_ROOT}/server/app/foreign-helper.js`, "module.exports = {};\n");
+      } else if (kind === "static") {
+        const manifest = `${NEXT_ROOT}/build-manifest.json`;
+        const value = JSON.parse(readFileSync(path.join(root, manifest)));
+        value.rootMainFiles.push("static/chunks/foreign-owned.js");
+        write(root, manifest, JSON.stringify(value));
+        write(root, `${NEXT_ROOT}/static/chunks/foreign-owned.js`, "module.exports = {};\n");
+      } else {
+        const name = "node_modules/next/dist/shared/lib/constants.js";
+        fs.appendFileSync(path.join(root, name), "\n// modified dependency bytes\n");
+      }
+      assert.notDeepEqual(runtimePolicy.inspectRuntimeArtifact(root, "zaruku", authority), []);
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+      rmSync(`${root}.trusted.json`, { force: true });
+      rmSync(`${root}.trusted.json.sha256`, { force: true });
+    }
+  });
+});
+
+test("trust root: manifested binary PNG and WOFF2 use hashes, not UTF-8 decoding", () => withArtifact((root) => {
+  const font = "static/media/test.woff2", png = "static/media/test.png";
+  const manifest = JSON.parse(readFileSync(path.join(root, `${NEXT_ROOT}/server/next-font-manifest.json`)));
+  manifest.app = { "/dashboard/zaruku": [font, png] };
+  write(root, `${NEXT_ROOT}/server/next-font-manifest.json`, JSON.stringify(manifest));
+  write(root, `${NEXT_ROOT}/${font}`, readFileSync(path.join(REPOSITORY_ROOT, "node_modules/next/dist/next-devtools/server/font/geist-latin.woff2")));
+  write(root, `${NEXT_ROOT}/${png}`, Buffer.from("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+jF2kAAAAASUVORK5CYII=", "base64"));
+  const authority = fixtureAuthority(root);
+  assert.deepEqual(runtimePolicy.inspectRuntimeArtifact(root, "zaruku", authority), []);
+  fs.appendFileSync(path.join(root, `${NEXT_ROOT}/${font}`), "tamper");
+  assert.ok(runtimePolicy.inspectRuntimeArtifact(root, "zaruku", authority).some((item) => item.includes(font)));
+  const image = readFileSync(path.join(root, `${NEXT_ROOT}/${png}`));
+  image[image.length - 1] ^= 1;
+  write(root, `${NEXT_ROOT}/${png}`, image);
+  assert.ok(runtimePolicy.inspectRuntimeArtifact(root, "zaruku", authority).some((item) => item.includes(png)));
+}));
+
+test("trust root: rejects absent, internal, altered or incorrectly bound authority", async (t) => {
+  for (const kind of ["missing", "inside", "tampered", "stale", "scope", "sha", "version", "contract", "symlink", "hardlink", "mode"]) {
+    await t.test(kind, () => withArtifact((root) => {
+      let authority = fixtureAuthority(root);
+      if (kind === "missing") authority = undefined;
+      else if (kind === "inside") {
+        write(root, "trusted.json", readFileSync(authority));
+        write(root, "trusted.json.sha256", readFileSync(`${authority}.sha256`));
+        authority = path.join(root, "trusted.json");
+      } else if (kind === "tampered") fs.appendFileSync(authority, " ");
+      else if (kind === "symlink") { fs.renameSync(authority, `${authority}.original`); symlinkSync(`${authority}.original`, authority); }
+      else if (kind === "hardlink") fs.linkSync(authority, `${authority}.link`);
+      else if (kind === "mode") fs.chmodSync(authority, 0o666);
+      else {
+        const value = JSON.parse(readFileSync(authority));
+        if (kind === "scope") value.scope = "abbott";
+        if (kind === "sha") value.sourceSha = "a".repeat(40);
+        if (kind === "version") value.next.version = "99.0.0";
+        if (kind === "contract") value.runtimeContract.version = "99.0.0";
+        if (kind === "stale") value.files.find((entry) => entry.path.endsWith("/BUILD_ID")).sha256 = "a".repeat(64);
+        const data = JSON.stringify(value);
+        fs.writeFileSync(authority, data);
+        fs.writeFileSync(`${authority}.sha256`, `${createHash("sha256").update(data).digest("hex")}\n`);
+      }
+      assert.notDeepEqual(runtimePolicy.inspectRuntimeArtifact(root, "zaruku", authority), [], kind);
+    }));
+  }
+});
+
+test("trust root: a symlinked external metadata directory is rejected", () => withArtifact((root) => {
+  const authority = fixtureAuthority(root), directory = `${root}.authority-dir`, alias = `${root}.authority-link`;
+  fs.mkdirSync(directory);
+  fs.renameSync(authority, path.join(directory, "manifest.json"));
+  fs.renameSync(`${authority}.sha256`, path.join(directory, "manifest.json.sha256"));
+  symlinkSync(directory, alias);
+  try { assert.notDeepEqual(runtimePolicy.inspectRuntimeArtifact(root, "zaruku", path.join(alias, "manifest.json")), []); }
+  finally { rmSync(alias); rmSync(directory, { recursive: true, force: true }); }
+}));
+
+test("trust root: dynamic environment changes retain the external authority", () => withArtifact((root) => {
+  const authority = fixtureAuthority(root);
+  const manifest = JSON.parse(readFileSync(authority));
+  assert.equal(manifest.files.some((entry) => entry.path === ".env"), false);
+  write(root, ".env", "DB_HOST=127.0.0.1\nDB_PASSWORD=test-value\n");
+  assert.deepEqual(runtimePolicy.inspectRuntimeArtifact(root, "zaruku", authority), []);
+  write(root, ".env", "COLLECTOR_TOKEN=test-value\n");
+  assert.ok(runtimePolicy.inspectRuntimeArtifact(root, "zaruku", authority).some((entry) => entry.includes(".env")));
+}));
 
 test("closure: rejects missing, escaping, cyclic and oversized traces", async (t) => {
   for (const [name, entry] of [
@@ -536,13 +664,13 @@ test("review: build manifest cannot declare an extra page", () => withArtifact((
 test("review: boot checker validates health and cannot accept a non-server fixture", async () => {
   assert.equal(typeof runtimePolicy.verifyRuntimeArtifactBoot, "function");
   const root = createArtifact();
-  try { await assert.rejects(runtimePolicy.verifyRuntimeArtifactBoot(root, "zaruku", { timeoutMs: 1000 }), /boot|health/); }
+  try { await assert.rejects(runtimePolicy.verifyRuntimeArtifactBoot(root, "zaruku", { timeoutMs: 1000, trustedManifestPath: fixtureAuthority(root) }), /boot|health/); }
   finally { rmSync(root, { recursive: true, force: true }); }
 });
 
 test("review: workspace provides an explicit post-seal loopback boot gate", () => {
   const pkg = JSON.parse(readFileSync(path.join(REPOSITORY_ROOT, "apps/zaruku/package.json")));
-  assert.equal(pkg.scripts["verify:boot"], "node ../../scripts/runtime-artifact-policy.mjs --boot zaruku .next-zaruku/standalone");
+  assert.equal(pkg.scripts["verify:boot"], "node ../../scripts/runtime-artifact-policy.mjs --boot zaruku .next-zaruku/standalone --trusted-manifest .next-zaruku/trusted-runtime-manifest.json");
 });
 
 test("stamps immutable scope and source metadata for a fresh build", () => {
@@ -552,7 +680,7 @@ test("stamps immutable scope and source metadata for a fresh build", () => {
     write(root, "apps/zaruku/server.js", "// standalone\n");
     mkdirSync(path.join(root, NEXT_ROOT), { recursive: true });
     write(buildRoot, "next-server.js.nft.json", '{"version":1,"files":[]}');
-    stampRuntimeArtifact(root, "zaruku", SOURCE_SHA);
+    stampRuntimeArtifact(root, "zaruku", SOURCE_SHA, fixtureAuthority(root));
     assert.equal(readFileSync(path.join(root, ".release-source-sha"), "utf8"), `${SOURCE_SHA}\n`);
     assert.equal(readFileSync(path.join(root, ".release-runtime-scope"), "utf8"), "zaruku\n");
   } finally {
@@ -580,7 +708,7 @@ test("stamping removes monorepo-only package metadata from the standalone root",
         devDependencies: { typescript: "^5" },
       })}\n`,
     );
-    stampRuntimeArtifact(root, "zaruku", SOURCE_SHA);
+    stampRuntimeArtifact(root, "zaruku", SOURCE_SHA, fixtureAuthority(root));
     assert.deepEqual(JSON.parse(readFileSync(path.join(root, "package.json"), "utf8")), {
       name: "dashboard-next",
       version: "0.1.0",
@@ -605,6 +733,8 @@ test("the existing release asset entry point enforces the scoped runtime policy"
         "--scope",
         "zaruku",
         root,
+        "--trusted-manifest",
+        fixtureAuthority(root),
       ],
       { cwd: REPOSITORY_ROOT, encoding: "utf8" },
     );
@@ -617,10 +747,10 @@ test("the Zaruku workspace stamps then verifies its standalone artifact", () => 
   const packageJson = JSON.parse(readFileSync(path.join(REPOSITORY_ROOT, "apps/zaruku/package.json"), "utf8"));
   assert.equal(
     packageJson.scripts.build,
-    "next build --webpack && node ../../scripts/runtime-artifact-policy.mjs --stamp zaruku .next-zaruku/standalone",
+    "next build --webpack && node ../../scripts/runtime-artifact-policy.mjs --prepare zaruku .next-zaruku/standalone --trusted-manifest .next-zaruku/trusted-runtime-manifest.json && node ../../scripts/runtime-artifact-policy.mjs --stamp zaruku .next-zaruku/standalone --trusted-manifest .next-zaruku/trusted-runtime-manifest.json",
   );
   assert.equal(
     packageJson.scripts["verify:artifact"],
-    "node --import tsx ../../scripts/assert-no-private-public-assets.ts --release --scope zaruku .next-zaruku/standalone",
+    "node --import tsx ../../scripts/assert-no-private-public-assets.ts --release --scope zaruku .next-zaruku/standalone --trusted-manifest .next-zaruku/trusted-runtime-manifest.json",
   );
 });

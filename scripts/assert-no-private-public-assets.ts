@@ -8,15 +8,19 @@ const argumentsList = process.argv.slice(2);
 const releaseMode = argumentsList.includes("--release");
 const scopeIndex = argumentsList.indexOf("--scope");
 const runtimeScope = scopeIndex >= 0 ? argumentsList[scopeIndex + 1] : undefined;
+const trustedIndex = argumentsList.indexOf("--trusted-manifest");
+const trustedManifestPath = trustedIndex >= 0 ? argumentsList[trustedIndex + 1] : undefined;
 const rootArgument = argumentsList.find(
   (argument, index) =>
     argument !== "--release" &&
     argument !== "--scope" &&
+    argument !== "--trusted-manifest" &&
+    (trustedIndex < 0 || index !== trustedIndex + 1) &&
     (scopeIndex < 0 || index !== scopeIndex + 1),
 );
 const scanRoot = path.resolve(process.cwd(), rootArgument || "public");
-if (scopeIndex >= 0 && (!releaseMode || runtimeScope !== "zaruku" || !rootArgument)) {
-  console.error("Scoped artifact inspection requires --release --scope zaruku <artifact-root>");
+if (scopeIndex >= 0 && (!releaseMode || runtimeScope !== "zaruku" || !rootArgument || !trustedManifestPath)) {
+  console.error("Scoped artifact inspection requires --release --scope zaruku <artifact-root> --trusted-manifest <external-path>");
   process.exit(1);
 }
 let prohibitedAssets: string[];
@@ -36,7 +40,7 @@ if (prohibitedAssets.length > 0) {
 
 if (runtimeScope) {
   const policyScript = fileURLToPath(new URL("./runtime-artifact-policy.mjs", import.meta.url));
-  const result = spawnSync(process.execPath, [policyScript, runtimeScope, scanRoot], {
+  const result = spawnSync(process.execPath, [policyScript, runtimeScope, scanRoot, "--trusted-manifest", trustedManifestPath!], {
     encoding: "utf8",
   });
   if (result.stdout) process.stdout.write(result.stdout);

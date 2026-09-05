@@ -251,7 +251,7 @@ function inspectZarukuRoutes(files, violations) {
   } catch { violations.push(`invalid standalone server ${ZARUKU_SERVER}`); }
 }
 
-function inspectFileClosure(files, violations) {
+function inspectFileClosure(files, violations, { rejectUntraced = true } = {}) {
   const allowed = new Set();
   const visiting = new Set();
   const visited = new Set();
@@ -356,7 +356,153 @@ function inspectFileClosure(files, violations) {
       if (name === "packages/runtime-contract/package.json" && (actual.name !== "@reportingdash/runtime-contract" || actual.version !== "0.1.0")) throw new Error();
     } catch { violations.push(`invalid traced package identity ${name}`); }
   }
-  for (const name of files.keys()) if (!allowed.has(name)) violations.push(`untraced artifact file ${name}`);
+  if (rejectUntraced) for (const name of files.keys()) if (!allowed.has(name)) violations.push(`untraced artifact file ${name}`);
+  return allowed;
+}
+
+function readStableFile(filename, { metadata = false } = {}) {
+  const before = fs.lstatSync(filename, { bigint: true });
+  if (!before.isFile() || before.nlink !== 1n || before.size > BigInt(metadata ? 8 * 1024 * 1024 : MAX_FILE_BYTES) ||
+    metadata && (Number(before.mode) & 0o077 || Number(before.uid) !== process.getuid())) throw new Error("unsafe regular file");
+  const fd = fs.openSync(filename, fs.constants.O_RDONLY | fs.constants.O_NOFOLLOW | fs.constants.O_NONBLOCK);
+  try {
+    if (!sameEntry(before, fs.fstatSync(fd, { bigint: true }))) throw new Error("file changed");
+    const buffer = Buffer.alloc(Number(before.size));
+    let offset = 0;
+    while (offset < buffer.length) {
+      const n = fs.readSync(fd, buffer, offset, buffer.length - offset, offset);
+      if (!n) throw new Error("file shortened");
+      offset += n;
+    }
+    if (!sameEntry(before, fs.fstatSync(fd, { bigint: true })) || !sameEntry(before, fs.lstatSync(filename, { bigint: true }))) throw new Error("file changed");
+    return { buffer, mode: Number(before.mode) & 0o777 };
+  } finally { fs.closeSync(fd); }
+}
+
+function loadTrustedManifest(root, filename) {
+  if (typeof filename !== "string" || !filename) throw new Error("explicit trusted manifest path is required");
+  const canonicalRoot = fs.realpathSync(root);
+  const manifestPath = path.resolve(filename);
+  for (const candidate of [manifestPath, `${manifestPath}.sha256`]) {
+    for (let parent = path.dirname(candidate); parent !== path.dirname(parent); parent = path.dirname(parent)) {
+      const stat = fs.lstatSync(parent);
+      const systemAlias = ["/var", "/tmp"].includes(parent) && fs.realpathSync(parent) === `/private${parent}`;
+      if (!stat.isDirectory() && !(stat.isSymbolicLink() && systemAlias)) throw new Error("unsafe trusted metadata directory");
+    }
+    const real = fs.realpathSync(candidate);
+    const relative = path.relative(canonicalRoot, real);
+    if (!relative || !relative.startsWith(`..${path.sep}`) && relative !== ".." && !path.isAbsolute(relative)) throw new Error("trusted manifest must be outside artifact");
+  }
+  const bytes = readStableFile(manifestPath, { metadata: true }).buffer;
+  const expected = decodeUtf8(readStableFile(`${manifestPath}.sha256`, { metadata: true }).buffer);
+  if (!/^[a-f0-9]{64}\n$/.test(expected) || createHash("sha256").update(bytes).digest("hex") !== expected.trim()) throw new Error("trusted manifest digest mismatch");
+  const value = JSON.parse(decodeUtf8(bytes));
+  if (value.version !== 1 || value.scope !== "zaruku" || !SOURCE_SHA_PATTERN.test(value.sourceSha) ||
+    !isDeepStrictEqual(value.next, { name: "next", version: "16.1.6" }) ||
+    !isDeepStrictEqual(value.runtimeContract, { name: "@reportingdash/runtime-contract", version: "0.1.0" }) ||
+    !isDeepStrictEqual(value.dynamic, [{ path: ".env", type: "dynamic", policy: "zaruku-env-v1", required: false }]) ||
+    !Array.isArray(value.files) || !value.files.length || value.files.length > 20000) throw new Error("invalid trusted manifest authority");
+  const entries = new Map();
+  for (const entry of value.files) {
+    if (!entry || typeof entry.path !== "string" || !entry.path || entry.path === ".env" ||
+      path.posix.normalize(entry.path) !== entry.path || entry.path.startsWith("../") || entry.path.startsWith("/") || /[\\\u0000-\u001f:]/.test(entry.path) ||
+      entries.has(entry.path) || entry.type !== "file" || !Number.isInteger(entry.mode) || entry.mode < 0 || entry.mode > 0o777 ||
+      !Number.isInteger(entry.size) || entry.size < 0 || entry.size > MAX_FILE_BYTES || !/^[a-f0-9]{64}$/.test(entry.sha256) || typeof entry.required !== "boolean" ||
+      !entry.required && !entry.path.startsWith(`${ZARUKU_NEXT}/static/`)) throw new Error("invalid trusted file entry");
+    entries.set(entry.path, entry);
+  }
+  return { ...value, entries, manifestDigest: expected.trim() };
+}
+
+function verifyTrustedFiles(files, trusted, violations) {
+  for (const [name, file] of files) {
+    if (name === ".env") continue;
+    const expected = trusted.entries.get(name);
+    if (!expected || expected.sha256 !== file.digest || expected.size !== file.size || expected.mode !== file.mode) violations.push(`trusted file mismatch ${name}`);
+  }
+  for (const [name, entry] of trusted.entries) if (entry.required && !files.has(name)) violations.push(`missing trusted file ${name}`);
+  if (files.get(".release-source-sha")?.text !== `${trusted.sourceSha}\n`) violations.push("trusted source SHA mismatch .release-source-sha");
+  if (files.get(".release-runtime-scope")?.text !== `${trusted.scope}\n`) violations.push("trusted scope mismatch .release-runtime-scope");
+}
+
+const BINARY_STATIC = /\/static\/media\/[\w.-]+\.(?:woff2?|ttf|otf|png|jpe?g|gif|webp|avif|ico)$/;
+
+export function createTrustedRuntimeManifest(artifactRoot, scope, sourceSha, manifestPath) {
+  const root = path.resolve(artifactRoot);
+  const buildRoot = path.dirname(root);
+  if (scope !== "zaruku" || !SOURCE_SHA_PATTERN.test(sourceSha) || buildRoot !== path.join(REPOSITORY_ROOT, ZARUKU_NEXT)) throw new Error("invalid trusted build source");
+  if (path.resolve(manifestPath).startsWith(`${root}${path.sep}`)) throw new Error("trusted manifest must be outside artifact");
+  const files = new Map();
+  let totalBytes = 0;
+  const put = (name, buffer, mode = 0o644) => {
+    totalBytes += buffer.length - (files.get(name)?.size ?? 0);
+    if (totalBytes > MAX_ARTIFACT_BYTES) throw new Error("trusted build exceeds size limit");
+    const binary = BINARY_STATIC.test(name) || name.startsWith("node_modules/") && /\.(?:node|dylib|so(?:\.\d+)*)$/.test(name);
+    const text = binary ? buffer.toString("latin1") : decodeUtf8(buffer);
+    files.set(name, { text, size: buffer.length, mode, digest: createHash("sha256").update(buffer).digest("hex") });
+  };
+  const load = (name, optional = false, depth = 0) => {
+    if (files.has(name)) return;
+    if (depth > 32 || files.size >= 20000 || path.posix.normalize(name) !== name || name.startsWith("../") || path.isAbsolute(name) || /[\\\u0000-\u001f:]/.test(name)) throw new Error("unsafe build trace path");
+    if (path.posix.basename(name).startsWith(".env")) throw new Error("runtime environment must not be a traced build input");
+    const absolute = path.join(REPOSITORY_ROOT, name);
+    if (optional && !fs.existsSync(absolute)) return;
+    const actual = fs.realpathSync(absolute);
+    const artifact = fs.realpathSync(root);
+    if (actual === artifact || actual.startsWith(`${artifact}${path.sep}`)) throw new Error("artifact cannot supply trusted build bytes");
+    const { buffer, mode } = readStableFile(absolute);
+    put(name, buffer, mode);
+    if (name.endsWith(".nft.json")) {
+      const trace = JSON.parse(files.get(name).text);
+      if (trace.version !== 1 || !Array.isArray(trace.files) || trace.files.length > 10000) throw new Error("invalid build trace");
+      for (const entry of trace.files) {
+        if (typeof entry !== "string" || path.posix.isAbsolute(entry) || /[\\\u0000-\u001f:]/.test(entry)) throw new Error("unsafe build trace");
+        load(path.posix.normalize(path.posix.join(path.posix.dirname(name), entry)), false, depth + 1);
+      }
+    } else if (fs.existsSync(`${absolute}.nft.json`)) load(`${name}.nft.json`, false, depth + 1);
+  };
+  for (const name of ["package.json", `${ZARUKU_APP_ROOT}/package.json`, `${ZARUKU_NEXT}/package.json`,
+    `${ZARUKU_NEXT}/next-server.js.nft.json`, ...NEXT_AUTHORITY_FILES.map((name) => `${ZARUKU_NEXT}/${name}`)]) load(name);
+  const rootPackage = JSON.parse(files.get("package.json").text);
+  for (const key of ["scripts", "workspaces", "devDependencies"]) delete rootPackage[key];
+  put("package.json", Buffer.from(`${JSON.stringify(rootPackage, null, 2)}\n`));
+  const config = JSON.parse(files.get(`${ZARUKU_NEXT}/required-server-files.json`).text).config;
+  const starts = ["const dir", "process.env.NODE_ENV", "const currentPort", "let keepAliveTimeout", "process.env.__NEXT", "require('next')", "if (", "startServer("];
+  const server = STANDALONE_TEMPLATE.split("\n").map((line) => starts.some((start) => line.startsWith(start)) ? `\n${line}` : line).join("\n")
+    .replace("const nextConfig = {}", `const nextConfig = ${JSON.stringify({ ...config, distDir: "./.next-zaruku" })}`);
+  put(ZARUKU_SERVER, Buffer.from(server));
+  put(".release-source-sha", Buffer.from(`${sourceSha}\n`));
+  put(".release-runtime-scope", Buffer.from(`${scope}\n`));
+  for (const target of ZARUKU_COMPILED_ROUTES) { load(`${ZARUKU_NEXT_SERVER}/${target}`); load(`${ZARUKU_NEXT_SERVER}/${target}.nft.json`); }
+  for (const route of ["_global-error", "_not-found"]) {
+    const stem = `${ZARUKU_NEXT_SERVER}/app/${route}`;
+    for (const ext of ["html", "meta", "rsc"]) load(`${stem}.${ext}`, true);
+    for (const segment of ["_tree", "_full", `${route}/__PAGE__`, route, "_index", "_head"]) load(`${stem}.segments/${segment}.segment.rsc`, true);
+  }
+  for (const code of [404, 500]) load(`${ZARUKU_NEXT_SERVER}/pages/${code}.html`, true);
+  const loadStatic = (directory, depth = 0) => {
+    if (depth > 64) throw new Error("excessive static directory depth");
+    for (const name of fs.readdirSync(directory)) {
+      const absolute = path.join(directory, name), stat = fs.lstatSync(absolute);
+      if (stat.isDirectory()) loadStatic(absolute, depth + 1);
+      else load(normalizedPath(REPOSITORY_ROOT, absolute));
+    }
+  };
+  loadStatic(path.join(buildRoot, "static"));
+  const violations = [];
+  inspectMetadata(files, scope, violations);
+  inspectZarukuRoutes(files, violations);
+  const allowed = inspectFileClosure(files, violations, { rejectUntraced: false });
+  if (violations.length) throw new Error(`invalid trusted build closure:\n${violations.join("\n")}`);
+  const manifest = { version: 1, scope, sourceSha, next: { name: "next", version: "16.1.6" },
+    runtimeContract: { name: "@reportingdash/runtime-contract", version: "0.1.0" },
+    dynamic: [{ path: ".env", type: "dynamic", policy: "zaruku-env-v1", required: false }],
+    files: [...allowed].sort().map((name) => { const file = files.get(name); return { path: name, type: "file", mode: file.mode, size: file.size,
+      sha256: file.digest, required: !name.startsWith(`${ZARUKU_NEXT}/static/`) }; }),
+  };
+  const bytes = Buffer.from(`${JSON.stringify(manifest, null, 2)}\n`);
+  writeFileSync(manifestPath, bytes, { mode: 0o600, flag: "wx" });
+  writeFileSync(`${manifestPath}.sha256`, `${createHash("sha256").update(bytes).digest("hex")}\n`, { mode: 0o600, flag: "wx" });
 }
 
 function inspectPath(relativePath, violations) {
@@ -420,7 +566,7 @@ function archiveMagic(buffer) {
 // Capture each file once through O_NOFOLLOW and an identity-checked descriptor.
 // Authority checks consume these same bytes, then the complete tree identities
 // are rechecked. Swaps, writes and parent-directory changes fail closed.
-function inspectTree(root, violations) {
+function inspectTree(root, violations, trusted) {
   const files = new Map();
   const identities = new Map();
   let totalBytes = 0;
@@ -457,15 +603,22 @@ function inspectTree(root, violations) {
         }
         if (!sameEntry(before, fs.fstatSync(fd, { bigint: true }))) throw new Error("entry changed during read");
       } finally { fs.closeSync(fd); }
+      const digest = createHash("sha256").update(buffer).digest("hex");
+      const mode = Number(before.mode) & 0o777;
+      const expected = trusted?.entries.get(relativePath);
+      if (trusted && relativePath !== ".env" && (!expected || expected.sha256 !== digest || expected.mode !== mode || expected.size !== size)) {
+        violations.push(`trusted file mismatch ${relativePath}`);
+        return;
+      }
       if (archiveMagic(buffer)) throw new Error("opaque container");
-      // Native runtime dependencies are the sole binary exception in current tracing.
-      const binary = relativePath.startsWith("node_modules/") && /\.(?:node|dylib|so(?:\.\d+)*)$/.test(relativePath);
+      // Binary browser assets are decoded only after their external hash matches.
+      const binary = BINARY_STATIC.test(relativePath) || relativePath.startsWith("node_modules/") && /\.(?:node|dylib|so(?:\.\d+)*)$/.test(relativePath);
       const text = binary ? buffer.toString("latin1") : decodeUtf8(buffer);
       const contentMarker = FORBIDDEN_CONTENT_MARKERS.find((marker) => text.toLowerCase().includes(marker));
       if (contentMarker) violations.push(`forbidden content marker ${contentMarker}: ${relativePath}`);
       if (relativePath === ".env") inspectEnvironment(text);
       if (!binary && hasPrivateSourceExport(text, relativePath)) violations.push(`private source export ${relativePath}`);
-      files.set(relativePath, { text, digest: createHash("sha256").update(buffer).digest("hex") });
+      files.set(relativePath, { text, digest, size, mode });
     } catch { violations.push(`uninspectable artifact entry ${relativePath || "."}`); }
   }
   visit(root);
@@ -477,7 +630,7 @@ function inspectTree(root, violations) {
   return files;
 }
 
-function inspectRuntimeArtifactState(artifactRoot, scope) {
+function inspectRuntimeArtifactState(artifactRoot, scope, trustedManifestPath) {
   const root = path.resolve(artifactRoot);
   const violations = [];
   const rejected = (message) => ({ files: new Map(), violations: [message] });
@@ -493,28 +646,33 @@ function inspectRuntimeArtifactState(artifactRoot, scope) {
     return rejected(`artifact root must be a real directory: ${root}`);
   }
 
-  const files = inspectTree(root, violations);
+  let trusted;
+  try { trusted = loadTrustedManifest(root, trustedManifestPath); }
+  catch { return rejected("missing, unsafe or invalid external trusted manifest authority"); }
+  const files = inspectTree(root, violations, trusted);
+  verifyTrustedFiles(files, trusted, violations);
   inspectMetadata(files, scope, violations);
   inspectZarukuRoutes(files, violations);
   inspectFileClosure(files, violations);
   return { files, violations: [...new Set(violations)].sort((left, right) => left.localeCompare(right, "en")) };
 }
 
-export function inspectRuntimeArtifact(artifactRoot, scope) {
-  return inspectRuntimeArtifactState(artifactRoot, scope).violations;
+export function inspectRuntimeArtifact(artifactRoot, scope, trustedManifestPath) {
+  return inspectRuntimeArtifactState(artifactRoot, scope, trustedManifestPath).violations;
 }
 
-export function assertRuntimeArtifact(artifactRoot, scope) {
-  const { files, violations } = inspectRuntimeArtifactState(artifactRoot, scope);
+export function assertRuntimeArtifact(artifactRoot, scope, trustedManifestPath) {
+  const { files, violations } = inspectRuntimeArtifactState(artifactRoot, scope, trustedManifestPath);
   if (violations.length > 0) {
     throw new Error(`Rejected ${scope} runtime artifact:\n${violations.map((item) => `- ${item}`).join("\n")}`);
   }
   return files;
 }
 
-export async function verifyRuntimeArtifactBoot(artifactRoot, scope, { timeoutMs = 15000 } = {}) {
+export async function verifyRuntimeArtifactBoot(artifactRoot, scope, { timeoutMs = 15000, trustedManifestPath } = {}) {
   const root = path.resolve(artifactRoot);
-  const before = assertRuntimeArtifact(root, scope);
+  const before = assertRuntimeArtifact(root, scope, trustedManifestPath);
+  const authorityDigest = loadTrustedManifest(root, trustedManifestPath).manifestDigest;
   let child;
   let closed;
   try {
@@ -558,7 +716,8 @@ export async function verifyRuntimeArtifactBoot(artifactRoot, scope, { timeoutMs
       clearTimeout(force);
     }
   }
-  const after = assertRuntimeArtifact(root, scope);
+  const after = assertRuntimeArtifact(root, scope, trustedManifestPath);
+  if (loadTrustedManifest(root, trustedManifestPath).manifestDigest !== authorityDigest) throw new Error("trusted authority changed during boot");
   if (!isDeepStrictEqual([...before].map(([name, file]) => [name, file.digest]), [...after].map(([name, file]) => [name, file.digest]))) {
     throw new Error("artifact changed during boot/health check");
   }
@@ -575,12 +734,14 @@ function removeMonorepoPackageMetadata(root) {
   writeFileSync(packagePath, `${JSON.stringify(runtimePackageJson, null, 2)}\n`);
 }
 
-export function stampRuntimeArtifact(artifactRoot, scope, sourceSha) {
+export function stampRuntimeArtifact(artifactRoot, scope, sourceSha, trustedManifestPath) {
   if (scope !== "zaruku") throw new Error(`unsupported runtime scope ${scope}`);
   if (!SOURCE_SHA_PATTERN.test(sourceSha)) throw new Error("source SHA must be exactly 40 lowercase hex characters");
   const root = path.resolve(artifactRoot);
   const rootStat = lstatSync(root);
   if (rootStat.isSymbolicLink() || !rootStat.isDirectory()) throw new Error("artifact root must be a real directory");
+  const trusted = loadTrustedManifest(root, trustedManifestPath);
+  if (trusted.sourceSha !== sourceSha || trusted.scope !== scope) throw new Error("trusted release authority mismatch");
   if (!isRegularFile(path.join(root, ZARUKU_SERVER))) throw new Error(`missing ${ZARUKU_SERVER}`);
   const sourceTrace = path.join(path.dirname(root), "next-server.js.nft.json");
   const sourceStat = lstatSync(sourceTrace);
@@ -595,24 +756,33 @@ export function stampRuntimeArtifact(artifactRoot, scope, sourceSha) {
 }
 
 function usage() {
-  return "usage: runtime-artifact-policy.mjs [--stamp|--boot] zaruku <artifact-root>";
+  return "usage: runtime-artifact-policy.mjs [--prepare|--stamp|--boot] zaruku <artifact-root> --trusted-manifest <external-path>";
 }
 
 async function main() {
   const args = process.argv.slice(2);
+  const manifestIndex = args.indexOf("--trusted-manifest");
+  const trustedManifestPath = manifestIndex >= 0 ? args[manifestIndex + 1] : undefined;
+  if (!trustedManifestPath || manifestIndex !== args.length - 2) throw new Error(usage());
+  args.splice(manifestIndex, 2);
+  const prepare = args[0] === "--prepare";
   const stamp = args[0] === "--stamp";
   const boot = args[0] === "--boot";
-  const positional = stamp || boot ? args.slice(1) : args;
+  const positional = prepare || stamp || boot ? args.slice(1) : args;
   if (positional.length !== 2) throw new Error(usage());
   const [scope, artifactRoot] = positional;
-  if (stamp) {
+  if (prepare || stamp) {
     const sourceSha = execFileSync("git", ["rev-parse", "HEAD"], { encoding: "utf8" }).trim();
-    stampRuntimeArtifact(artifactRoot, scope, sourceSha);
+    if (prepare) createTrustedRuntimeManifest(artifactRoot, scope, sourceSha, trustedManifestPath);
+    else {
+      stampRuntimeArtifact(artifactRoot, scope, sourceSha, trustedManifestPath);
+      assertRuntimeArtifact(artifactRoot, scope, trustedManifestPath);
+    }
   } else if (boot) {
-    await verifyRuntimeArtifactBoot(artifactRoot, scope);
+    await verifyRuntimeArtifactBoot(artifactRoot, scope, { trustedManifestPath });
     console.log("Zaruku standalone loopback boot/health passed");
   } else {
-    assertRuntimeArtifact(artifactRoot, scope);
+    assertRuntimeArtifact(artifactRoot, scope, trustedManifestPath);
   }
 }
 

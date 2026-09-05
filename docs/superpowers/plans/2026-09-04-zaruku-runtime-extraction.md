@@ -430,9 +430,9 @@ Reject symlinks escaping the artifact, prohibited paths/text markers, unexpected
 
 - [ ] **Step 4: Test fixtures and real build**
 
-Run: `node --test scripts/runtime-artifact-policy.test.mjs && npm --workspace apps/zaruku run build && npm --workspace apps/zaruku run verify:artifact`
+Run: `npm --workspace apps/zaruku run build && node --test scripts/runtime-artifact-policy.test.mjs && npm --workspace apps/zaruku run verify:artifact && npm --workspace apps/zaruku run verify:boot`
 
-Expected: fixture suite and real artifact inspection pass.
+Expected: fixture suite and real artifact inspection/loopback health pass. The expanded review fixtures require a fresh real isolated build first. Build prepares `.next-zaruku/trusted-runtime-manifest.json` and its digest sidecar outside `standalone` from build-side output and reviewed dependencies, then seals/verifies. Both workspace verification commands pass this explicit external authority path. Artifact-owned traces and asset manifests are reachable-file metadata only; their bytes and every authorized file must first match the external manifest. Runtime `.env` uses a dynamic strict policy, never a secret-value digest. See the tracked Task 5 report for the reviewed contract and RED/GREEN history.
 
 - [ ] **Step 5: Commit**
 
@@ -455,6 +455,8 @@ git commit -m "test(zaruku): enforce isolated release artifact"
 **Interfaces:**
 - Consumes: clean named branch containing active Zaruku SHA and verified Zaruku standalone artifact.
 - Produces: Zaruku-only stage/activate/attest/rollback targeting port `3002` and `/var/www/dashboard-zaruku`.
+
+Transport the Task 5 trusted manifest separately from writable artifact contents, or pin its digest in independently protected deploy authority, and pass its explicit external path to policy and boot verification. Bind source/scope to that authority and retain exclusive staging ownership. Never recreate authority from a packaged artifact; the adjacent digest sidecar alone is not a signature against replacement of both trusted files. Render only the Zaruku environment allow-list recorded in the Task 5 report.
 
 - [ ] **Step 1: Write failing immutable-authority tests**
 
