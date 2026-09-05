@@ -8,6 +8,9 @@ TMP_DIR="$(mktemp -d)"
 FAKE_BIN="$TMP_DIR/bin"
 COMMAND_LOG="$TMP_DIR/commands.log"
 export COMMAND_LOG
+REAL_NODE="$(command -v node)"
+REAL_BASH="$(command -v bash)"
+export REAL_NODE REAL_BASH
 
 cleanup() {
   rm -rf "$TMP_DIR"
@@ -28,17 +31,45 @@ if [[ -n "${FAIL_COMMAND:-}" && "$*" == "$FAIL_COMMAND" ]]; then
 fi
 SH
 chmod +x "$FAKE_BIN/npm"
+cat > "$FAKE_BIN/node" <<'SH'
+#!/bin/bash
+if [[ "$*" == "--import tsx --test packages/runtime-contract/src/index.test.ts" || \
+      "$*" == "--import tsx --test apps/zaruku/src/**/*.test.ts" || \
+      "$*" == "--test scripts/runtime-artifact-policy.test.mjs" ]]; then
+  printf 'node %s\n' "$*" >> "$COMMAND_LOG"
+  [[ -z "${FAIL_COMMAND:-}" || "node $*" != "$FAIL_COMMAND" ]]
+  exit
+fi
+exec "$REAL_NODE" "$@"
+SH
+cat > "$FAKE_BIN/bash" <<'SH'
+#!/bin/bash
+if [[ "$*" == "scripts/verify-zaruku-shadow.test.sh" ]]; then
+  printf 'bash %s\n' "$*" >> "$COMMAND_LOG"
+  [[ -z "${FAIL_COMMAND:-}" || "bash $*" != "$FAIL_COMMAND" ]]
+  exit
+fi
+exec "$REAL_BASH" "$@"
+SH
+chmod +x "$FAKE_BIN/node" "$FAKE_BIN/bash"
 
 : > "$COMMAND_LOG"
-PATH="$FAKE_BIN:$PATH" bash "$VERIFY_SCRIPT"
+PATH="$FAKE_BIN:$PATH" /bin/bash "$VERIFY_SCRIPT"
 cat > "$TMP_DIR/expected.log" <<'EOF'
 test
+node --import tsx --test packages/runtime-contract/src/index.test.ts
+node --import tsx --test apps/zaruku/src/**/*.test.ts
 run test:deploy-source
 run test:release-runtime
+node --test scripts/runtime-artifact-policy.test.mjs
+--workspace apps/zaruku run verify:artifact
+--workspace apps/zaruku run verify:boot
+bash scripts/verify-zaruku-shadow.test.sh
 run test:abbott-contract-wiring
 run test:abbott-contract
 run security:public-assets
 run typecheck
+exec -- tsc --noEmit -p apps/zaruku/tsconfig.json
 run lint
 run build
 run preview-builder:test
@@ -52,7 +83,7 @@ cmp -s "$TMP_DIR/expected.log" "$COMMAND_LOG" || {
 }
 
 : > "$COMMAND_LOG"
-if FAIL_COMMAND='run test:release-runtime' PATH="$FAKE_BIN:$PATH" bash "$VERIFY_SCRIPT" \
+if FAIL_COMMAND='run test:release-runtime' PATH="$FAKE_BIN:$PATH" /bin/bash "$VERIFY_SCRIPT" \
   > "$TMP_DIR/failure.log" 2>&1; then
   fail "predeploy verification ignored a failed required command"
 fi
@@ -80,12 +111,19 @@ if ((deploy.match(/npm run predeploy:verify/g) || []).length !== 1) {
 
 const required = [
   "npm test",
+  "node --import tsx --test 'apps/zaruku/src/**/*.test.ts'",
+  "node --import tsx --test packages/runtime-contract/src/index.test.ts",
   "npm run test:deploy-source",
   "npm run test:release-runtime",
+  "node --test scripts/runtime-artifact-policy.test.mjs",
+  "npm --workspace apps/zaruku run verify:artifact",
+  "npm --workspace apps/zaruku run verify:boot",
+  "bash scripts/verify-zaruku-shadow.test.sh",
   "npm run test:abbott-contract-wiring",
   "npm run test:abbott-contract",
   "npm run security:public-assets",
   "npm run typecheck",
+  "npm exec -- tsc --noEmit -p apps/zaruku/tsconfig.json",
   "npm run lint",
   "npm run build",
   "npm run preview-builder:test",
@@ -103,6 +141,21 @@ if (pkg.scripts["predeploy:verify"] !== "bash scripts/predeploy-verify.sh") {
 }
 if (pkg.scripts["ci:verify"] !== "npm run predeploy:verify") {
   throw new Error("CI and production deploy do not share the same complete gate");
+}
+const releaseRuntime = pkg.scripts["test:release-runtime"] || "";
+const isolatedBuild = releaseRuntime.indexOf("npm --workspace apps/zaruku run build");
+const deployFixtures = releaseRuntime.indexOf("bash scripts/deploy-zaruku.test.sh");
+if (isolatedBuild < 0 || deployFixtures <= isolatedBuild) {
+  throw new Error("release runtime gate must build Zaruku before its deploy fixtures");
+}
+const releaseGate = verify.indexOf("npm run test:release-runtime");
+for (const command of [
+  "node --test scripts/runtime-artifact-policy.test.mjs",
+  "npm --workspace apps/zaruku run verify:artifact",
+  "npm --workspace apps/zaruku run verify:boot",
+  "bash scripts/verify-zaruku-shadow.test.sh",
+]) {
+  if (verify.indexOf(command) <= releaseGate) throw new Error(`build-backed policy gate is out of order: ${command}`);
 }
 NODE
 

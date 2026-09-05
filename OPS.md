@@ -147,6 +147,70 @@ systemctl reload nginx
 /var/www/dashboard
 ```
 
+## Zaruku: read-only shadow verification (no cutover)
+
+The isolated Zaruku runtime is a local/review artifact only. The public domain and all existing
+routes still point to the combined runtime. Do not start a production shadow, add a PM2 process,
+or edit the proxy from these commands.
+
+Local comparison requires two already-running loopback runtimes backed by the same canonical
+MySQL snapshot and the same explicit historical range. Build the combined runtime and the isolated
+artifact first, then start them in separate terminals with credentials loaded from private files or
+the existing local environment. Never place passwords or tokens in command arguments.
+
+```bash
+npm run build
+npm --workspace apps/zaruku run build
+
+# terminal 1, after loading the existing private local runtime environment
+npm start
+
+# terminal 2, after loading the same canonical read-only environment
+npm --workspace apps/zaruku start
+```
+
+Prepare a mode-`0600` JSON auth descriptor containing only the manager request headers and a TSV
+inventory of the other runtimes' authoritative SHA files. Neither file belongs in Git or in the
+evidence directory. Open the auth descriptor on a file descriptor so credential values never
+appear in argv, logs, or evidence:
+
+```bash
+exec 9</private/path/zaruku-shadow-auth.json
+export ZARUKU_SHADOW_AUTH_FD=9
+export ZARUKU_SHADOW_ARTIFACT_ROOT="$PWD/apps/zaruku/.next-zaruku/standalone"
+export ZARUKU_SHADOW_OTHER_RUNTIME_SHAS_FILE=/private/path/other-runtime-shas.tsv
+export ZARUKU_SHADOW_CANONICAL_SNAPSHOT=reviewed-snapshot-label
+export ZARUKU_SHADOW_FROM=2026-01-01
+export ZARUKU_SHADOW_TO=2026-07-31
+bash scripts/verify-zaruku-shadow.sh \
+  http://127.0.0.1:3001 \
+  http://127.0.0.1:3002 \
+  /private/path/new-zaruku-shadow-evidence
+exec 9<&-
+```
+
+The verifier performs only HTTP `GET` requests. It compares the combined and isolated manager JSON,
+authentication challenge metadata, PDF, and Excel responses; validates the distinct combined and
+isolated health contracts; records SHA/scope/routes; scans the isolated artifact for cross-runtime
+markers; and proves that every listed other-runtime SHA is unchanged before/after. It compares
+semantic JSON exactly and binary exports byte-for-byte. The only ignored response headers are
+`connection`, `content-length`, `date`, `keep-alive`, `server-timing`, `transfer-encoding`, and
+`x-response-time`; only combined-health `db_latency_ms`, `timestamp`, and `uptime_seconds` are
+treated as volatile.
+
+Before any production shadow start, all of these separate prerequisites are mandatory:
+
+- execute `scripts/boot-zaruku-service.linux.test.mjs` in a reviewed, network-disabled Linux
+  Node + util-linux image with the documented `SYS_PTRACE` fixture capability;
+- provision and verify the fixed `dashboard-zaruku` service account/group, root-owned ancestry,
+  release/control/environment permissions, `/usr/bin/setpriv`, `/proc`, `ss`, and PM2 UID/GID/cwd
+  attestation on the target host;
+- review the live loopback port/process plan, immutable runtime SHA inventory, canonical snapshot
+  window, evidence retention path, and rollback/recovery procedure.
+
+A public exact-path Zaruku route cutover requires a separate reviewed production plan after a real
+production shadow passes. This runbook section does not authorize or perform that cutover.
+
 ## Deploy
 
 ### Одноразовый bootstrap метаданных для первого guarded rollout
