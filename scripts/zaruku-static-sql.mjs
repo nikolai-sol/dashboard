@@ -328,6 +328,10 @@ export function extractStaticSql(source, filename) {
       }
       return;
     }
+    if (ts.isTemplateExpression(current)) {
+      add(current);
+      return;
+    }
     if (ts.isObjectLiteralExpression(current)) {
       for (const property of current.properties) {
         if (ts.isPropertyAssignment(property)) {
