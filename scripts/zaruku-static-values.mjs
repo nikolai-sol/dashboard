@@ -1343,10 +1343,84 @@ export function createStaticEvaluator(sourceFile) {
         return null;
       }
 
-      function selectedBranches(value) {
+      function primitiveFromFrames(value, frames, seen = new Set(), depth = 0) {
+        if (!preprocessStep() || depth > MAX_DEPTH) {
+          if (depth > MAX_DEPTH) preprocessingExceeded = true;
+          return { known: false };
+        }
+        const current = unwrapExpression(value);
+        if (ts.isIdentifier(current)) {
+          const binding = declaration(current, current.text);
+          if (!binding && current.text === 'undefined') return { known: true, value: undefined };
+          if (!binding || seen.has(binding)) return { known: false };
+          for (let index = frames.length - 1; index >= 0; index -= 1) {
+            const frame = frames[index];
+            const parameterIndex = frame.fn.parameters.indexOf(binding);
+            if (parameterIndex < 0) continue;
+            const expressions = parameterExpressions(binding, parameterIndex, frame.call);
+            if (expressions.length !== 1) return { known: false };
+            return primitiveFromFrames(
+              expressions[0], frames, new Set(seen).add(binding), depth + 1,
+            );
+          }
+          if (ts.isVariableDeclaration(binding) && binding.initializer &&
+              (binding.parent.flags & ts.NodeFlags.Const)) {
+            return primitiveFromFrames(
+              binding.initializer, frames, new Set(seen).add(binding), depth + 1,
+            );
+          }
+          return { known: false };
+        }
+        if (ts.isPrefixUnaryExpression(current)) {
+          const operand = primitiveFromFrames(current.operand, frames, seen, depth + 1);
+          if (!operand.known) return operand;
+          if (current.operator === ts.SyntaxKind.ExclamationToken) {
+            return { known: true, value: !operand.value };
+          }
+          if (current.operator === ts.SyntaxKind.MinusToken && typeof operand.value === 'number') {
+            return { known: true, value: -operand.value };
+          }
+          return { known: false };
+        }
+        if (ts.isBinaryExpression(current)) {
+          const left = primitiveFromFrames(current.left, frames, seen, depth + 1);
+          if (!left.known) return { known: false };
+          if (current.operatorToken.kind === ts.SyntaxKind.AmpersandAmpersandToken && !left.value) {
+            return left;
+          }
+          if (current.operatorToken.kind === ts.SyntaxKind.BarBarToken && left.value) return left;
+          if (current.operatorToken.kind === ts.SyntaxKind.QuestionQuestionToken &&
+              left.value !== null && left.value !== undefined) return left;
+          const right = primitiveFromFrames(current.right, frames, seen, depth + 1);
+          if (!right.known) return { known: false };
+          const operations = new Map([
+            [ts.SyntaxKind.PlusToken, (a, b) => a + b],
+            [ts.SyntaxKind.MinusToken, (a, b) => a - b],
+            [ts.SyntaxKind.AsteriskToken, (a, b) => a * b],
+            [ts.SyntaxKind.SlashToken, (a, b) => a / b],
+            [ts.SyntaxKind.EqualsEqualsEqualsToken, (a, b) => a === b],
+            [ts.SyntaxKind.ExclamationEqualsEqualsToken, (a, b) => a !== b],
+            [ts.SyntaxKind.EqualsEqualsToken, (a, b) => a == b],
+            [ts.SyntaxKind.ExclamationEqualsToken, (a, b) => a != b],
+            [ts.SyntaxKind.LessThanToken, (a, b) => a < b],
+            [ts.SyntaxKind.LessThanEqualsToken, (a, b) => a <= b],
+            [ts.SyntaxKind.GreaterThanToken, (a, b) => a > b],
+            [ts.SyntaxKind.GreaterThanEqualsToken, (a, b) => a >= b],
+            [ts.SyntaxKind.AmpersandAmpersandToken, (a, b) => a && b],
+            [ts.SyntaxKind.BarBarToken, (a, b) => a || b],
+            [ts.SyntaxKind.QuestionQuestionToken, (a, b) => a ?? b],
+          ]);
+          return operations.has(current.operatorToken.kind)
+            ? { known: true, value: operations.get(current.operatorToken.kind)(left.value, right.value) }
+            : { known: false };
+        }
+        return staticPrimitiveValue(current);
+      }
+
+      function selectedBranches(value, state) {
         const current = unwrapExpression(value);
         if (ts.isConditionalExpression(current)) {
-          const condition = concretePrimitive(fn, call, current.condition);
+          const condition = primitiveFromFrames(current.condition, state.frames);
           return condition.known
             ? [condition.value ? current.whenTrue : current.whenFalse]
             : [current.whenTrue, current.whenFalse];
@@ -1356,7 +1430,7 @@ export function createStaticEvaluator(sourceFile) {
           ts.SyntaxKind.BarBarToken,
           ts.SyntaxKind.QuestionQuestionToken,
         ].includes(current.operatorToken.kind)) {
-          const left = concretePrimitive(fn, call, current.left);
+          const left = primitiveFromFrames(current.left, state.frames);
           if (!left.known) return [current.left, current.right];
           if (current.operatorToken.kind === ts.SyntaxKind.AmpersandAmpersandToken) {
             return [left.value ? current.right : current.left];
@@ -1368,6 +1442,75 @@ export function createStaticEvaluator(sourceFile) {
             ? current.left : current.right];
         }
         return null;
+      }
+
+      function expressionsAtPath(value, path) {
+        if (path.length === 0) return [value];
+        const [key, ...rest] = path;
+        const expressions = [];
+        for (const container of valueExpressions(value)) {
+          const resolved = unwrapExpression(container);
+          let member = null;
+          if (ts.isArrayLiteralExpression(resolved)) {
+            member = resolved.elements[Number(key)] ?? null;
+          } else if (ts.isObjectLiteralExpression(resolved)) {
+            const property = resolved.properties.find(item =>
+              (ts.isPropertyAssignment(item) || ts.isShorthandPropertyAssignment(item)) &&
+              (ts.isIdentifier(item.name) || ts.isStringLiteral(item.name) ||
+               ts.isNumericLiteral(item.name)) && item.name.text === key);
+            member = property && ts.isPropertyAssignment(property)
+              ? property.initializer
+              : property && ts.isShorthandPropertyAssignment(property) ? property.name : null;
+          }
+          if (member) expressions.push(...expressionsAtPath(member, rest));
+        }
+        return expressions;
+      }
+
+      function provenanceUndefinedState(value, state) {
+        const current = unwrapExpression(value);
+        if (ts.isIdentifier(current)) {
+          const binding = declaration(current, current.text);
+          if (binding && state.parameterStates.has(binding)) {
+            return state.parameterStates.get(binding);
+          }
+        }
+        const branches = selectedBranches(current, state);
+        if (branches) {
+          const variants = branches.map(branch => provenanceUndefinedState(branch, state));
+          return {
+            mayBeUndefined: variants.some(item => item.mayBeUndefined),
+            mayBeDefined: variants.some(item => item.mayBeDefined),
+          };
+        }
+        return undefinedState(current);
+      }
+
+      function addParameterFrames(callee, invocation, state) {
+        const parameterValues = new Map(state.parameterValues);
+        const parameterStates = new Map(state.parameterStates);
+        callee.parameters.forEach((calleeParameter, index) => {
+          const argument = invocation.arguments[index];
+          const argumentState = argument
+            ? provenanceUndefinedState(argument, state)
+            : { mayBeUndefined: true, mayBeDefined: false };
+          let runtimeState = argumentState;
+          if (calleeParameter.initializer) {
+            const initializerState = provenanceUndefinedState(calleeParameter.initializer, {
+              ...state, parameterValues, parameterStates,
+            });
+            runtimeState = {
+              mayBeUndefined: argumentState.mayBeUndefined && initializerState.mayBeUndefined,
+              mayBeDefined: argumentState.mayBeDefined ||
+                (argumentState.mayBeUndefined && initializerState.mayBeDefined),
+            };
+          }
+          parameterValues.set(
+            calleeParameter, parameterExpressions(calleeParameter, index, invocation),
+          );
+          parameterStates.set(calleeParameter, runtimeState);
+        });
+        return { parameterValues, parameterStates };
       }
 
       function resolve(value, path, state) {
@@ -1389,7 +1532,7 @@ export function createStaticEvaluator(sourceFile) {
           }
           current = unwrapExpression(current.expression);
         }
-        const branches = selectedBranches(current);
+        const branches = selectedBranches(current, state);
         if (branches) {
           return branches.flatMap(branch => resolve(branch, resolvedPath, {
             ...state, depth: depth + 1,
@@ -1397,14 +1540,19 @@ export function createStaticEvaluator(sourceFile) {
         }
         if (ts.isCallExpression(current)) {
           if (seenCalls.has(current)) return [];
-          const values = valueExpressions(current);
-          return values.flatMap(result => unwrapExpression(result) === current ? [] : resolve(
-            result, resolvedPath, {
-              ...state,
-              seenCalls: new Set(seenCalls).add(current),
-              depth: depth + 1,
-            },
-          ));
+          const callee = localFunction(current);
+          if (!callee) return [];
+          const { parameterValues, parameterStates } = addParameterFrames(callee, current, state);
+          const callState = {
+            ...state,
+            seenCalls: new Set(seenCalls).add(current),
+            parameterValues,
+            parameterStates,
+            frames: [...state.frames, { fn: callee, call: current }],
+            depth: depth + 1,
+          };
+          return selectedReturnExpressions(callee, current).flatMap(result =>
+            resolve(result, resolvedPath, callState));
         }
         if (ts.isArrayLiteralExpression(current) || ts.isObjectLiteralExpression(current)) {
           if (resolvedPath.length === 0) return [];
@@ -1427,6 +1575,15 @@ export function createStaticEvaluator(sourceFile) {
         const binding = declaration(current, current.text);
         if (binding === parameter) return [resolvedPath];
         if (!binding || seenBindings.has(binding)) return [];
+        if (state.parameterValues.has(binding)) {
+          return state.parameterValues.get(binding).flatMap(parameterValue => resolve(
+            parameterValue, resolvedPath, {
+              ...state,
+              seenBindings: new Set(seenBindings).add(binding),
+              depth: depth + 1,
+            },
+          ));
+        }
         let initializer = null;
         let sourcePath = [];
         if (ts.isVariableDeclaration(binding) && binding.initializer &&
@@ -1436,8 +1593,34 @@ export function createStaticEvaluator(sourceFile) {
           let variable = binding.parent;
           while (variable && !ts.isVariableDeclaration(variable)) variable = variable.parent;
           if (variable?.initializer && (variable.parent.flags & ts.NodeFlags.Const)) {
-            initializer = variable.initializer;
             sourcePath = pathInBindingPattern(variable.name, binding) ?? [];
+            const sources = expressionsAtPath(variable.initializer, sourcePath);
+            const paths = [];
+            for (const source of sources) {
+              const sourceState = provenanceUndefinedState(source, state);
+              if (sourceState.mayBeDefined) {
+                paths.push(...resolve(source, resolvedPath, {
+                  ...state,
+                  seenBindings: new Set(seenBindings).add(binding),
+                  depth: depth + 1,
+                }));
+              }
+              if (sourceState.mayBeUndefined && binding.initializer) {
+                paths.push(...resolve(binding.initializer, resolvedPath, {
+                  ...state,
+                  seenBindings: new Set(seenBindings).add(binding),
+                  depth: depth + 1,
+                }));
+              }
+            }
+            if (sources.length === 0 && binding.initializer) {
+              paths.push(...resolve(binding.initializer, resolvedPath, {
+                ...state,
+                seenBindings: new Set(seenBindings).add(binding),
+                depth: depth + 1,
+              }));
+            }
+            return paths;
           }
         }
         if (!initializer) return [];
@@ -1447,8 +1630,18 @@ export function createStaticEvaluator(sourceFile) {
           depth: depth + 1,
         });
       }
+      const initialState = {
+        seenBindings: new Set(),
+        seenCalls: new Set(),
+        parameterValues: new Map(),
+        parameterStates: new Map(),
+        frames: [{ fn, call }],
+        depth: 0,
+      };
+      const initialParameters = addParameterFrames(fn, call, initialState);
       const paths = resolve(expression, [], {
-        seenBindings: new Set(), seenCalls: new Set(), depth: 0,
+        ...initialState,
+        ...initialParameters,
       });
       const unique = new Map(paths.map(path => [JSON.stringify(path), path]));
       return [...unique.values()];
