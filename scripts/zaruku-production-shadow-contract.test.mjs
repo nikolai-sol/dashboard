@@ -139,6 +139,37 @@ test('transitive SQL owner scan reconstructs concatenated SQL literals', () => {
   }
 });
 
+test('transitive SQL owner scan recognizes lowercase and mixed-case SQL keywords', () => {
+  const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'zaruku-sql-case-'));
+  try {
+    fs.mkdirSync(path.join(directory, 'apps/zaruku/src'), { recursive: true });
+    fs.writeFileSync(path.join(directory, 'apps/zaruku/src/entry.ts'), `
+      export const lowerSql = "select * from lowercase_table";
+      export const mixedSql = "SeLeCt * FrOm mixed_case_table";
+    `);
+    assert.deepEqual(scanZarukuRuntimeMysqlTables(directory), [
+      'lowercase_table',
+      'mixed_case_table',
+    ]);
+  } finally {
+    fs.rmSync(directory, { recursive: true });
+  }
+});
+
+test('transitive SQL owner scan rejects lowercase foreign-schema reads', () => {
+  const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'zaruku-sql-lower-foreign-'));
+  try {
+    fs.mkdirSync(path.join(directory, 'apps/zaruku/src'), { recursive: true });
+    fs.writeFileSync(
+      path.join(directory, 'apps/zaruku/src/entry.ts'),
+      'export const sql = "select * from report_bd_private.canonical_fact_metrika_visits";\n',
+    );
+    assert.throws(() => scanZarukuRuntimeMysqlTables(directory), /foreign|schema|SQL owner|authority/i);
+  } finally {
+    fs.rmSync(directory, { recursive: true });
+  }
+});
+
 test('transitive SQL owner scan fails closed on dynamic table-position SQL composition', () => {
   const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'zaruku-sql-dynamic-'));
   try {
@@ -178,6 +209,36 @@ test('transitive SQL owner scan scopes CTE aliases to one composed statement', (
       \`;
       export const physicalSql = "SELECT * FROM shared_rows";
     `);
+    assert.deepEqual(scanZarukuRuntimeMysqlTables(directory), ['dashboards', 'shared_rows']);
+  } finally {
+    fs.rmSync(directory, { recursive: true });
+  }
+});
+
+test('transitive SQL owner scan keeps conditional SQL alternatives in separate CTE scopes', () => {
+  const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'zaruku-sql-conditional-cte-'));
+  try {
+    fs.mkdirSync(path.join(directory, 'apps/zaruku/src'), { recursive: true });
+    fs.writeFileSync(path.join(directory, 'apps/zaruku/src/entry.ts'), `
+      declare const flag: boolean;
+      export const sql = flag
+        ? "WITH shared_rows AS (SELECT id FROM dashboards) SELECT * FROM shared_rows"
+        : "SELECT * FROM shared_rows";
+    `);
+    assert.deepEqual(scanZarukuRuntimeMysqlTables(directory), ['dashboards', 'shared_rows']);
+  } finally {
+    fs.rmSync(directory, { recursive: true });
+  }
+});
+
+test('transitive SQL owner scan never treats a schema-qualified physical table as a CTE alias', () => {
+  const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'zaruku-sql-qualified-cte-'));
+  try {
+    fs.mkdirSync(path.join(directory, 'apps/zaruku/src'), { recursive: true });
+    fs.writeFileSync(
+      path.join(directory, 'apps/zaruku/src/entry.ts'),
+      'export const sql = "WITH shared_rows AS (SELECT id FROM dashboards) SELECT * FROM report_bd.shared_rows";\n',
+    );
     assert.deepEqual(scanZarukuRuntimeMysqlTables(directory), ['dashboards', 'shared_rows']);
   } finally {
     fs.rmSync(directory, { recursive: true });

@@ -215,28 +215,30 @@ function collectStaticSqlExpressions(source, filename) {
 
   function evaluate(expression, resolving = new Set()) {
     const node = unwrapExpression(expression);
-    if (ts.isStringLiteral(node) || ts.isNoSubstitutionTemplateLiteral(node)) return node.text;
-    if (ts.isNumericLiteral(node)) return node.text;
+    if (ts.isStringLiteral(node) || ts.isNoSubstitutionTemplateLiteral(node)) return [node.text];
+    if (ts.isNumericLiteral(node)) return [node.text];
     if (ts.isTemplateExpression(node)) {
-      let text = node.head.text;
+      let alternatives = [node.head.text];
       for (const span of node.templateSpans) {
-        text += evaluate(span.expression, resolving) ?? DYNAMIC_SQL;
-        text += span.literal.text;
+        const values = evaluate(span.expression, resolving) ?? [DYNAMIC_SQL];
+        alternatives = alternatives.flatMap(prefix =>
+          values.map(value => `${prefix}${value}${span.literal.text}`));
       }
-      return text;
+      return alternatives;
     }
     if (ts.isTaggedTemplateExpression(node)) return evaluate(node.template, resolving);
     if (ts.isBinaryExpression(node) && node.operatorToken.kind === ts.SyntaxKind.PlusToken) {
       const left = evaluate(node.left, resolving);
       const right = evaluate(node.right, resolving);
       if (left === null && right === null) return null;
-      return `${left ?? DYNAMIC_SQL}${right ?? DYNAMIC_SQL}`;
+      return (left ?? [DYNAMIC_SQL]).flatMap(prefix =>
+        (right ?? [DYNAMIC_SQL]).map(suffix => `${prefix}${suffix}`));
     }
     if (ts.isConditionalExpression(node)) {
       const whenTrue = evaluate(node.whenTrue, resolving);
       const whenFalse = evaluate(node.whenFalse, resolving);
       if (whenTrue === null && whenFalse === null) return null;
-      return `${whenTrue ?? DYNAMIC_SQL};\n${whenFalse ?? DYNAMIC_SQL}`;
+      return [...(whenTrue ?? [DYNAMIC_SQL]), ...(whenFalse ?? [DYNAMIC_SQL])];
     }
     if (ts.isIdentifier(node)) {
       const key = `binding:${node.text}`;
@@ -249,17 +251,17 @@ function collectStaticSqlExpressions(source, filename) {
       if (resolving.has(key)) return null;
       const next = new Set(resolving).add(key);
       const values = functionReturns(functions.get(node.expression.text))
-        .map(result => evaluate(result, next))
-        .filter(value => value !== null);
-      return values.length ? values.join(';\n') : null;
+        .flatMap(result => evaluate(result, next) ?? []);
+      return values.length ? values : null;
     }
     return null;
   }
 
   const statements = new Set();
   function add(expression) {
-    const text = evaluate(expression);
-    if (text !== null && /\b(?:SELECT|WITH|FROM|JOIN)\b/.test(text)) statements.add(text);
+    for (const text of evaluate(expression) ?? []) {
+      if (/\b(?:SELECT|WITH|FROM|JOIN)\b/i.test(text)) statements.add(text);
+    }
   }
   function collectCandidates(node) {
     if (ts.isVariableDeclaration(node) && node.initializer) add(node.initializer);
@@ -293,7 +295,7 @@ function statementTableReferences(statement) {
     const qualifiedTable = match[2]?.toLowerCase();
     if (qualifiedTable && schemaOrTable !== 'report_bd') fail('Zaruku runtime foreign-schema SQL owner');
     const table = qualifiedTable ?? schemaOrTable;
-    if (!ctes.has(table)) tables.add(table);
+    if (qualifiedTable || !ctes.has(table)) tables.add(table);
   }
   return tables;
 }
