@@ -1,6 +1,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { isDeepStrictEqual } from 'node:util';
+import ts from 'typescript';
 
 import { RUNTIME_MANIFESTS } from '../packages/runtime-contract/src/index.ts';
 
@@ -165,33 +166,142 @@ function resolveRuntimeImport(rootDirectory, importer, specifier) {
   }) ?? null;
 }
 
-function sqlTableReferences(source) {
-  const tables = new Set();
-  const literals = [];
-  const literalPatterns = [
-    /`(?:\\[\s\S]|[^`])*`/g,
-    /"(?:\\.|[^"\\\r\n])*"/g,
-    /'(?:\\.|[^'\\\r\n])*'/g,
-  ];
-  for (const pattern of literalPatterns) {
-    for (const literalMatch of source.matchAll(pattern)) {
-      const literal = literalMatch[0].slice(1, -1);
-      if (!/\b(?:SELECT|WITH)\b/i.test(literal)) continue;
-      literals.push(literal);
-    }
+const DYNAMIC_SQL = '__ZARUKU_DYNAMIC_SQL__';
+
+function unwrapExpression(expression) {
+  let current = expression;
+  while (ts.isParenthesizedExpression(current) || ts.isAsExpression(current) ||
+         ts.isTypeAssertionExpression(current) || ts.isNonNullExpression(current) ||
+         ts.isSatisfiesExpression(current)) {
+    current = current.expression;
   }
-  const ctes = new Set(literals.flatMap(literal =>
-    [...literal.matchAll(/\b([a-z][a-z0-9_]*)\s+AS\s*\(/gi)].map(match => match[1].toLowerCase()),
-  ));
-  const reference = /\b(?:FROM|JOIN)\s+`?([a-z][a-z0-9_]*)`?(?:\s*\.\s*`?([a-z][a-z0-9_]*)`?)?/gi;
-  for (const literal of literals) {
-    for (const match of literal.matchAll(reference)) {
-      const schemaOrTable = match[1].toLowerCase();
-      const qualifiedTable = match[2]?.toLowerCase();
-      if (qualifiedTable && schemaOrTable !== 'report_bd') continue;
-      const table = qualifiedTable ?? schemaOrTable;
-      if (!ctes.has(table)) tables.add(table);
+  return current;
+}
+
+function collectStaticSqlExpressions(source, filename) {
+  const extension = path.extname(filename);
+  const scriptKind = extension === '.tsx' ? ts.ScriptKind.TSX
+    : extension === '.jsx' ? ts.ScriptKind.JSX
+      : ['.js', '.mjs', '.cjs'].includes(extension) ? ts.ScriptKind.JS : ts.ScriptKind.TS;
+  const sourceFile = ts.createSourceFile(filename, source, ts.ScriptTarget.Latest, true, scriptKind);
+  if (sourceFile.parseDiagnostics.length) fail('Zaruku runtime SQL parse');
+  const bindings = new Map();
+  const functions = new Map();
+
+  function collectDefinitions(node) {
+    if (ts.isVariableDeclaration(node) && ts.isIdentifier(node.name) && node.initializer) {
+      bindings.set(node.name.text, node.initializer);
+      if (ts.isArrowFunction(node.initializer) || ts.isFunctionExpression(node.initializer)) {
+        functions.set(node.name.text, node.initializer);
+      }
+    } else if (ts.isFunctionDeclaration(node) && node.name && node.body) {
+      functions.set(node.name.text, node);
     }
+    ts.forEachChild(node, collectDefinitions);
+  }
+  collectDefinitions(sourceFile);
+
+  function functionReturns(fn) {
+    if (ts.isArrowFunction(fn) && !ts.isBlock(fn.body)) return [fn.body];
+    const returns = [];
+    function visit(node) {
+      if (node !== fn && (ts.isFunctionDeclaration(node) || ts.isFunctionExpression(node) || ts.isArrowFunction(node))) return;
+      if (ts.isReturnStatement(node) && node.expression) returns.push(node.expression);
+      ts.forEachChild(node, visit);
+    }
+    if (fn.body) visit(fn.body);
+    return returns;
+  }
+
+  function evaluate(expression, resolving = new Set()) {
+    const node = unwrapExpression(expression);
+    if (ts.isStringLiteral(node) || ts.isNoSubstitutionTemplateLiteral(node)) return node.text;
+    if (ts.isNumericLiteral(node)) return node.text;
+    if (ts.isTemplateExpression(node)) {
+      let text = node.head.text;
+      for (const span of node.templateSpans) {
+        text += evaluate(span.expression, resolving) ?? DYNAMIC_SQL;
+        text += span.literal.text;
+      }
+      return text;
+    }
+    if (ts.isTaggedTemplateExpression(node)) return evaluate(node.template, resolving);
+    if (ts.isBinaryExpression(node) && node.operatorToken.kind === ts.SyntaxKind.PlusToken) {
+      const left = evaluate(node.left, resolving);
+      const right = evaluate(node.right, resolving);
+      if (left === null && right === null) return null;
+      return `${left ?? DYNAMIC_SQL}${right ?? DYNAMIC_SQL}`;
+    }
+    if (ts.isConditionalExpression(node)) {
+      const whenTrue = evaluate(node.whenTrue, resolving);
+      const whenFalse = evaluate(node.whenFalse, resolving);
+      if (whenTrue === null && whenFalse === null) return null;
+      return `${whenTrue ?? DYNAMIC_SQL};\n${whenFalse ?? DYNAMIC_SQL}`;
+    }
+    if (ts.isIdentifier(node)) {
+      const key = `binding:${node.text}`;
+      if (resolving.has(key) || !bindings.has(node.text)) return null;
+      const next = new Set(resolving).add(key);
+      return evaluate(bindings.get(node.text), next);
+    }
+    if (ts.isCallExpression(node) && ts.isIdentifier(node.expression) && functions.has(node.expression.text)) {
+      const key = `function:${node.expression.text}`;
+      if (resolving.has(key)) return null;
+      const next = new Set(resolving).add(key);
+      const values = functionReturns(functions.get(node.expression.text))
+        .map(result => evaluate(result, next))
+        .filter(value => value !== null);
+      return values.length ? values.join(';\n') : null;
+    }
+    return null;
+  }
+
+  const statements = new Set();
+  function add(expression) {
+    const text = evaluate(expression);
+    if (text !== null && /\b(?:SELECT|WITH|FROM|JOIN)\b/.test(text)) statements.add(text);
+  }
+  function collectCandidates(node) {
+    if (ts.isVariableDeclaration(node) && node.initializer) add(node.initializer);
+    if (ts.isPropertyAssignment(node) &&
+        ((ts.isIdentifier(node.name) && node.name.text === 'sql') ||
+         (ts.isStringLiteral(node.name) && node.name.text === 'sql'))) {
+      add(node.initializer);
+    }
+    if (ts.isReturnStatement(node) && node.expression) add(node.expression);
+    if (ts.isCallExpression(node) && ts.isPropertyAccessExpression(node.expression) &&
+        ['execute', 'query'].includes(node.expression.name.text) && node.arguments[0]) {
+      add(node.arguments[0]);
+    }
+    ts.forEachChild(node, collectCandidates);
+  }
+  collectCandidates(sourceFile);
+  return statements;
+}
+
+function statementTableReferences(statement) {
+  if (new RegExp(`\\b(?:FROM|JOIN)\\s+(?:${DYNAMIC_SQL}|(?:\`?report_bd\`?\\s*\\.\\s*)?${DYNAMIC_SQL})`, 'i').test(statement)) {
+    fail('Zaruku runtime dynamic SQL owner');
+  }
+  const ctes = new Set(
+    [...statement.matchAll(/\b([a-z][a-z0-9_]*)\s+AS\s*\(/gi)].map(match => match[1].toLowerCase()),
+  );
+  const tables = new Set();
+  const reference = /\b(?:FROM|JOIN)\s+`?([a-z][a-z0-9_]*)`?(?:\s*\.\s*`?([a-z][a-z0-9_]*)`?)?/gi;
+  for (const match of statement.matchAll(reference)) {
+    const schemaOrTable = match[1].toLowerCase();
+    const qualifiedTable = match[2]?.toLowerCase();
+    if (qualifiedTable && schemaOrTable !== 'report_bd') fail('Zaruku runtime foreign-schema SQL owner');
+    const table = qualifiedTable ?? schemaOrTable;
+    if (!ctes.has(table)) tables.add(table);
+  }
+  return tables;
+}
+
+function sqlTableReferences(source, filename) {
+  const tables = new Set();
+  for (const statement of collectStaticSqlExpressions(source, filename)) {
+    for (const table of statementTableReferences(statement)) tables.add(table);
   }
   return tables;
 }
@@ -215,7 +325,7 @@ export function scanZarukuRuntimeMysqlTables(rootDirectory = ROOT) {
     if (visited.has(filename)) continue;
     visited.add(filename);
     const source = fs.readFileSync(filename, 'utf8');
-    for (const table of sqlTableReferences(source)) tables.add(table);
+    for (const table of sqlTableReferences(source, filename)) tables.add(table);
     for (const specifier of importSpecifiers(source)) {
       const dependency = resolveRuntimeImport(resolvedRoot, filename, specifier);
       if (dependency && !visited.has(dependency)) pending.push(dependency);

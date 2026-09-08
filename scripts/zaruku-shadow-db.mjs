@@ -11,6 +11,8 @@ const ACCOUNT = 'dashboard_zaruku_reader@127.0.0.1';
 const ACCOUNT_USER = 'dashboard_zaruku_reader';
 const ACCOUNT_HOST = '127.0.0.1';
 const ACCOUNT_SQL = "'dashboard_zaruku_reader'@'127.0.0.1'";
+const CREATION_LOCK = 'reportingdash:zaruku-reader-boundary:v1';
+const CREATION_LOCK_TIMEOUT_SECONDS = 30;
 const AUTHORITY_KEYS = Object.freeze(['account', 'database', 'scope', 'tables']);
 const CONTEXT_KEYS = Object.freeze(['currentUser', 'effectiveUid', 'platform', 'protocol']);
 const ACCESS_DENIED_CODES = new Set([
@@ -130,13 +132,18 @@ async function expectWriteDenied(readerAdapter) {
 
 function assertGrantStatements(rows) {
   const expectedTables = new Set(AUTHORITY.tables);
+  const exactGrantees = new Set([
+    "'dashboard_zaruku_reader'@'127.0.0.1'",
+    '`dashboard_zaruku_reader`@`127.0.0.1`',
+  ]);
   for (const row of rows) {
     if (!row || typeof row !== 'object' || Array.isArray(row) || Object.keys(row).length !== 1) invalidBoundary();
     const grant = Object.values(row)[0];
     if (typeof grant !== 'string') invalidBoundary();
-    if (/^GRANT USAGE ON \*\.\* TO\s/i.test(grant)) continue;
-    const tableGrant = grant.match(/^GRANT SELECT ON `?report_bd`?\.`?([a-z][a-z0-9_]*)`? TO\s/i);
-    if (!tableGrant || !expectedTables.has(tableGrant[1])) invalidBoundary();
+    const usageGrant = grant.match(/^GRANT USAGE ON \*\.\* TO\s+(.+)$/i);
+    if (usageGrant && exactGrantees.has(usageGrant[1])) continue;
+    const tableGrant = grant.match(/^GRANT SELECT ON `?report_bd`?\.`?([a-z][a-z0-9_]*)`? TO\s+(.+)$/i);
+    if (!tableGrant || !expectedTables.has(tableGrant[1]) || !exactGrantees.has(tableGrant[2])) invalidBoundary();
   }
 }
 
@@ -176,6 +183,11 @@ export async function verifyReaderBoundary(adminAdapter, readerAdapter) {
   try {
     assertAdapter(adminAdapter, ['query']);
     assertAdapter(readerAdapter, ['query']);
+    const readerIdentityRows = assertRows(await readerAdapter.query(
+      'SELECT CURRENT_USER() AS currentUser',
+    ), ['currentUser']);
+    if (!isDeepStrictEqual(readerIdentityRows, [{ currentUser: ACCOUNT }])) invalidBoundary();
+
     const accountRows = assertRows(await adminAdapter.query(
       'SELECT User AS user, Host AS host FROM mysql.user WHERE User = ?',
       [ACCOUNT_USER],
@@ -193,13 +205,14 @@ export async function verifyReaderBoundary(adminAdapter, readerAdapter) {
     if (globalRows.length || schemaRows.length) invalidBoundary();
 
     const tableRows = assertRows(await adminAdapter.query(
-      'SELECT TABLE_SCHEMA AS tableSchema, TABLE_NAME AS tableName, PRIVILEGE_TYPE AS privilegeType FROM information_schema.TABLE_PRIVILEGES WHERE GRANTEE = ?',
+      'SELECT TABLE_SCHEMA AS tableSchema, TABLE_NAME AS tableName, PRIVILEGE_TYPE AS privilegeType, IS_GRANTABLE AS isGrantable FROM information_schema.TABLE_PRIVILEGES WHERE GRANTEE = ?',
       [ACCOUNT_SQL],
-    ), ['privilegeType', 'tableName', 'tableSchema']);
+    ), ['isGrantable', 'privilegeType', 'tableName', 'tableSchema']);
     const expectedTableRows = AUTHORITY.tables.map(tableName => ({
       tableSchema: AUTHORITY.database,
       tableName,
       privilegeType: 'SELECT',
+      isGrantable: 'NO',
     }));
     const sortedTableRows = [...tableRows].sort((left, right) => left.tableName.localeCompare(right.tableName));
     if (!isDeepStrictEqual(sortedTableRows, expectedTableRows)) invalidBoundary();
@@ -248,19 +261,41 @@ function readPassword(passwordFd) {
   }
 }
 
+async function acquireCreationLock(adapter) {
+  const rows = assertRows(await adapter.query(
+    'SELECT GET_LOCK(?, ?) AS acquired',
+    [CREATION_LOCK, CREATION_LOCK_TIMEOUT_SECONDS],
+  ), ['acquired']);
+  if (rows.length !== 1 || Number(rows[0].acquired) !== 1) invalidBoundary();
+}
+
+async function releaseCreationLock(adapter) {
+  const rows = assertRows(await adapter.query(
+    'SELECT RELEASE_LOCK(?) AS released',
+    [CREATION_LOCK],
+  ), ['released']);
+  if (rows.length !== 1 || Number(rows[0].released) !== 1) invalidBoundary();
+}
+
 /**
  * First-create, grant, and verify the reader. The adapter is the injected local-socket boundary.
  * @returns {Promise<DbBoundaryEvidence>}
  */
 export async function applyReaderBoundary(adapter, passwordFd) {
-  let cleanupRequired = false;
+  let cleanupOwnedAccount = false;
+  let lockHeld = false;
   let readerAdapter;
+  let evidence;
+  let failed = false;
   try {
     assertAdapter(adapter, ['context', 'openReader', 'query']);
     const context = await adapter.context();
     if (!exactKeys(context, CONTEXT_KEYS) || context.platform !== 'linux' ||
         context.effectiveUid !== 0 || context.protocol !== 'socket' ||
         context.currentUser !== 'root@localhost') invalidBoundary();
+
+    await acquireCreationLock(adapter);
+    lockHeld = true;
 
     const existing = assertRows(await adapter.query(
       'SELECT User AS user, Host AS host FROM mysql.user WHERE User = ?',
@@ -270,21 +305,21 @@ export async function applyReaderBoundary(adapter, passwordFd) {
 
     const password = readPassword(passwordFd);
     const operations = buildReaderSql(AUTHORITY, password);
-    cleanupRequired = true;
-    for (const operation of operations) await adapter.query(operation.sql, operation.params);
+    await adapter.query(operations[0].sql, operations[0].params);
+    cleanupOwnedAccount = true;
+    for (const operation of operations.slice(1)) await adapter.query(operation.sql, operation.params);
     readerAdapter = await adapter.openReader(password);
-    const evidence = await verifyReaderBoundary(adapter, readerAdapter);
-    cleanupRequired = false;
-    return evidence;
+    evidence = await verifyReaderBoundary(adapter, readerAdapter);
+    cleanupOwnedAccount = false;
   } catch {
-    if (cleanupRequired) {
+    failed = true;
+    if (cleanupOwnedAccount) {
       try {
         await adapter.query(`DROP USER IF EXISTS ${ACCOUNT_SQL}`);
       } catch {
         // The public error remains sanitized even if cleanup also fails.
       }
     }
-    throw new Error('Failed to apply Zaruku MySQL reader boundary');
   } finally {
     if (readerAdapter && typeof readerAdapter.close === 'function') {
       try {
@@ -293,5 +328,14 @@ export async function applyReaderBoundary(adapter, passwordFd) {
         // Connection close does not change the already verified privilege boundary.
       }
     }
+    if (lockHeld) {
+      try {
+        await releaseCreationLock(adapter);
+      } catch {
+        failed = true;
+      }
+    }
   }
+  if (failed || !evidence) throw new Error('Failed to apply Zaruku MySQL reader boundary');
+  return evidence;
 }

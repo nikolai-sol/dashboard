@@ -125,6 +125,65 @@ test('transitive SQL owner scan follows runtime imports and excludes CTE aliases
   }
 });
 
+test('transitive SQL owner scan reconstructs concatenated SQL literals', () => {
+  const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'zaruku-sql-concat-'));
+  try {
+    fs.mkdirSync(path.join(directory, 'apps/zaruku/src'), { recursive: true });
+    fs.writeFileSync(
+      path.join(directory, 'apps/zaruku/src/entry.ts'),
+      'export const sql = "SELECT * " + "FROM newly_imported_table";\n',
+    );
+    assert.deepEqual(scanZarukuRuntimeMysqlTables(directory), ['newly_imported_table']);
+  } finally {
+    fs.rmSync(directory, { recursive: true });
+  }
+});
+
+test('transitive SQL owner scan fails closed on dynamic table-position SQL composition', () => {
+  const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'zaruku-sql-dynamic-'));
+  try {
+    fs.mkdirSync(path.join(directory, 'apps/zaruku/src'), { recursive: true });
+    fs.writeFileSync(
+      path.join(directory, 'apps/zaruku/src/entry.ts'),
+      'declare function runtimeTable(): string;\nexport const sql = `SELECT * FROM ${runtimeTable()}`;\n',
+    );
+    assert.throws(() => scanZarukuRuntimeMysqlTables(directory), /dynamic|composition|SQL owner|authority/i);
+  } finally {
+    fs.rmSync(directory, { recursive: true });
+  }
+});
+
+test('transitive SQL owner scan rejects every foreign-schema table reference', () => {
+  const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'zaruku-sql-foreign-'));
+  try {
+    fs.mkdirSync(path.join(directory, 'apps/zaruku/src'), { recursive: true });
+    fs.writeFileSync(
+      path.join(directory, 'apps/zaruku/src/entry.ts'),
+      'export const sql = "SELECT * FROM report_bd_private.canonical_fact_metrika_visits";\n',
+    );
+    assert.throws(() => scanZarukuRuntimeMysqlTables(directory), /foreign|schema|SQL owner|authority/i);
+  } finally {
+    fs.rmSync(directory, { recursive: true });
+  }
+});
+
+test('transitive SQL owner scan scopes CTE aliases to one composed statement', () => {
+  const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'zaruku-sql-cte-scope-'));
+  try {
+    fs.mkdirSync(path.join(directory, 'apps/zaruku/src'), { recursive: true });
+    fs.writeFileSync(path.join(directory, 'apps/zaruku/src/entry.ts'), `
+      export const cteSql = \`
+        WITH shared_rows AS (SELECT id FROM dashboards)
+        SELECT * FROM shared_rows
+      \`;
+      export const physicalSql = "SELECT * FROM shared_rows";
+    `);
+    assert.deepEqual(scanZarukuRuntimeMysqlTables(directory), ['dashboards', 'shared_rows']);
+  } finally {
+    fs.rmSync(directory, { recursive: true });
+  }
+});
+
 test('source-only shadow tests are a dedicated predeploy gate with no apply mode', () => {
   const pkg = JSON.parse(fs.readFileSync(path.join(root, 'package.json'), 'utf8'));
   assert.equal(

@@ -25,6 +25,7 @@ function expectedTableRows(overrides = {}) {
     tableSchema: 'report_bd',
     tableName,
     privilegeType: 'SELECT',
+    isGrantable: 'NO',
     ...overrides[tableName],
   }));
 }
@@ -62,6 +63,9 @@ function boundaryFixture(options = {}) {
   const reader = {
     async query(sql) {
       calls.push({ actor: 'reader', sql });
+      if (/^SELECT CURRENT_USER\(\) AS currentUser$/i.test(sql)) {
+        return [{ currentUser: options.readerCurrentUser ?? account }];
+      }
       if (/^START TRANSACTION$/i.test(sql) || /^ROLLBACK$/i.test(sql)) return [];
       if (/^UPDATE\s+/i.test(sql)) {
         if (options.writeSucceeds) return { affectedRows: 0 };
@@ -100,6 +104,12 @@ function boundaryFixture(options = {}) {
         sql,
         params: params.map(value => value === secret ? '<credential>' : String(value)),
       });
+      if (/^SELECT GET_LOCK\(/i.test(sql)) {
+        return [{ acquired: options.lockAcquired ?? 1 }];
+      }
+      if (/^SELECT RELEASE_LOCK\(/i.test(sql)) {
+        return [{ released: options.lockReleased ?? 1 }];
+      }
       if (/^CREATE USER /i.test(sql)) {
         created = true;
         if (options.createError) throw options.createError;
@@ -190,6 +200,15 @@ test('verification accepts the exact physical-table SELECT boundary and returns 
   assert.doesNotMatch(JSON.stringify(evidence), /rowCount|fixture-secret-marker/);
 });
 
+test('verification rejects a reader adapter authenticated as any other MySQL account', async () => {
+  const fixture = boundaryFixture({
+    verifyExisting: true,
+    readerCurrentUser: 'report_bd@localhost',
+  });
+  await assert.rejects(() => verifyReaderBoundary(fixture.admin, fixture.reader), /boundary|reader|account/i);
+  assert.ok(!fixture.calls.some(call => /^SELECT COUNT\(\*\)/i.test(call.sql ?? '')));
+});
+
 test('verification fails closed for a missing grant table or a view substitution', async () => {
   const missing = boundaryFixture({
     verifyExisting: true,
@@ -228,6 +247,22 @@ test('verification rejects wildcard, global, and schema privileges', async () =>
     schemaRows: [{ tableSchema: 'report_bd', privilegeType: 'SELECT' }],
   });
   await assert.rejects(() => verifyReaderBoundary(schema.admin, schema.reader), /boundary|schema|privilege/i);
+});
+
+test('verification rejects grantable table privileges and complete grant-option statements', async () => {
+  const grantable = boundaryFixture({
+    verifyExisting: true,
+    tableRows: expectedTableRows({ dashboards: { isGrantable: 'YES' } }),
+  });
+  await assert.rejects(() => verifyReaderBoundary(grantable.admin, grantable.reader), /boundary|grant|privilege/i);
+
+  const grantOption = boundaryFixture({
+    verifyExisting: true,
+    grants: grantRows([
+      "GRANT SELECT ON `report_bd`.`dashboards` TO 'dashboard_zaruku_reader'@'127.0.0.1' WITH GRANT OPTION",
+    ]),
+  });
+  await assert.rejects(() => verifyReaderBoundary(grantOption.admin, grantOption.reader), /boundary|grant|privilege/i);
 });
 
 test('verification requires denied writes, private-schema reads, and advertising-only reads', async () => {
@@ -290,6 +325,30 @@ test('apply drops the fixed account when post-grant verification fails', async (
   assert.deepEqual(drops.map(drop => drop.sql), [
     "DROP USER IF EXISTS 'dashboard_zaruku_reader'@'127.0.0.1'",
   ]);
+});
+
+test('apply serializes first creation with one fixed MySQL advisory lock', async () => {
+  const fixture = boundaryFixture();
+  await withPasswordFd(fixture.secret, fd => applyReaderBoundary(fixture.admin, fd));
+  const acquiredAt = fixture.calls.findIndex(call => /^SELECT GET_LOCK\(/i.test(call.sql ?? ''));
+  const absenceCheckAt = fixture.calls.findIndex(call => /FROM mysql\.user/i.test(call.sql ?? ''));
+  const createAt = fixture.calls.findIndex(call => /^CREATE USER /i.test(call.sql ?? ''));
+  const releaseAt = fixture.calls.findIndex(call => /^SELECT RELEASE_LOCK\(/i.test(call.sql ?? ''));
+  assert.ok(acquiredAt >= 0 && acquiredAt < absenceCheckAt);
+  assert.ok(absenceCheckAt < createAt && createAt < releaseAt);
+});
+
+test('create failure after a concurrent account appears never drops the unowned account', async () => {
+  const duplicate = Object.assign(new Error('fixture concurrent create'), {
+    code: 'ER_CANNOT_USER',
+    errno: 1396,
+  });
+  const fixture = boundaryFixture({ createError: duplicate });
+  await withPasswordFd(fixture.secret, async fd => {
+    await assert.rejects(() => applyReaderBoundary(fixture.admin, fd), /boundary|apply/i);
+  });
+  assert.equal(fixture.calls.filter(call => /^CREATE USER /i.test(call.sql ?? '')).length, 1);
+  assert.equal(fixture.calls.filter(call => /^DROP USER /i.test(call.sql ?? '')).length, 0);
 });
 
 test('apply rejects non-root, non-socket, non-production-admin, and unknown context input', async () => {
