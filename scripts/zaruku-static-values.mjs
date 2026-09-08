@@ -1092,7 +1092,7 @@ export function createStaticEvaluator(sourceFile) {
     }
 
     function callAwareSourceBindings(expression, state = {
-      calls: new Set(), bindings: new Set(), depth: 0,
+      calls: new Set(), bindings: new Set(), fn: null, call: null, depth: 0,
     }) {
       if (!expression || !preprocessStep()) return [];
       if (state.depth > MAX_DEPTH) {
@@ -1112,13 +1112,38 @@ export function createStaticEvaluator(sourceFile) {
         }
         return [...direct];
       }
-      if (ts.isConditionalExpression(current) ||
-          (ts.isBinaryExpression(current) && [
-            ts.SyntaxKind.AmpersandAmpersandToken,
-            ts.SyntaxKind.BarBarToken,
-            ts.SyntaxKind.QuestionQuestionToken,
-          ].includes(current.operatorToken.kind))) {
-        for (const branch of selectedAliasExpressions(current)) {
+      if (ts.isConditionalExpression(current)) {
+        const condition = state.fn && state.call
+          ? concretePrimitive(state.fn, state.call, current.condition)
+          : staticPrimitiveValue(current.condition);
+        const branches = condition.known
+          ? [condition.value ? current.whenTrue : current.whenFalse]
+          : [current.whenTrue, current.whenFalse];
+        for (const branch of branches) {
+          for (const binding of callAwareSourceBindings(branch, next({}))) direct.add(binding);
+        }
+        return [...direct];
+      }
+      if (ts.isBinaryExpression(current) && [
+        ts.SyntaxKind.AmpersandAmpersandToken,
+        ts.SyntaxKind.BarBarToken,
+        ts.SyntaxKind.QuestionQuestionToken,
+      ].includes(current.operatorToken.kind)) {
+        const left = state.fn && state.call
+          ? concretePrimitive(state.fn, state.call, current.left)
+          : staticPrimitiveValue(current.left);
+        let branches;
+        if (!left.known) {
+          branches = [current.left, current.right];
+        } else if (current.operatorToken.kind === ts.SyntaxKind.AmpersandAmpersandToken) {
+          branches = [left.value ? current.right : current.left];
+        } else if (current.operatorToken.kind === ts.SyntaxKind.BarBarToken) {
+          branches = [left.value ? current.left : current.right];
+        } else {
+          branches = [left.value !== null && left.value !== undefined
+            ? current.left : current.right];
+        }
+        for (const branch of branches) {
           for (const binding of callAwareSourceBindings(branch, next({}))) direct.add(binding);
         }
         return [...direct];
@@ -1169,7 +1194,11 @@ export function createStaticEvaluator(sourceFile) {
       if (!ts.isCallExpression(current) || state.calls.has(current)) return [...direct];
       const fn = localFunction(current);
       if (!fn) return [...direct];
-      const callState = next({ calls: new Set(state.calls).add(current) });
+      const callState = next({
+        calls: new Set(state.calls).add(current),
+        fn,
+        call: current,
+      });
       for (const returned of selectedReturnExpressions(fn, current)) {
         for (const returnedSource of callAwareSourceBindings(returned, callState)) {
           const closure = aliasClosure(returnedSource);
