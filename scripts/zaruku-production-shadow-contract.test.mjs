@@ -4,10 +4,15 @@ import os from 'node:os';
 import path from 'node:path';
 import { test } from 'node:test';
 
-import { loadMysqlTableAuthority, loadShadowAuthority } from './zaruku-production-shadow-contract.mjs';
+import {
+  loadMysqlTableAuthority,
+  loadShadowAuthority,
+  scanZarukuRuntimeMysqlTables,
+} from './zaruku-production-shadow-contract.mjs';
 
 const root = path.resolve(import.meta.dirname, '..');
 const authorityPath = path.join(root, 'deploy/zaruku/production-shadow.json');
+const mysqlAuthorityPath = path.join(root, 'deploy/zaruku/mysql-read-tables.json');
 
 function withJson(value, callback) {
   const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'zaruku-shadow-authority-'));
@@ -68,6 +73,56 @@ test('mysql table authority loader accepts only a frozen sorted exact-key bounda
     assert.throws(() => loadMysqlTableAuthority(filename), error =>
       /authority/i.test(error.message) && !error.message.includes('must-never-be-accepted'));
   });
+});
+
+test('grant authority contains every physical Zaruku read table and no advertising/private table', () => {
+  const tables = loadMysqlTableAuthority(mysqlAuthorityPath).tables;
+  assert.ok(tables.includes('canonical_fact_site_analytics_daily'));
+  assert.ok(tables.includes('canonical_fact_wordstat_requests_snapshot'));
+  assert.ok(tables.includes('canonical_alice_visibility_snapshots'));
+  assert.ok(tables.includes('seo_positions_weekly'));
+  assert.ok(tables.includes('dashboard_sources'));
+  assert.ok(tables.includes('dashboard_access_users'));
+  assert.ok(tables.includes('dashboard_shared_access_settings'));
+  assert.ok(!tables.includes('source_catalog'));
+  assert.ok(!tables.includes('canonical_fact_gsc_pages_daily'));
+  assert.ok(!tables.includes('canonical_fact_gsc_countries_daily'));
+  assert.ok(!tables.includes('canonical_fact_gsc_summary_daily'));
+  assert.ok(!tables.some(name => /abbott|advertising|ads_daily|report_bd_private/.test(name)));
+  assert.deepEqual(tables, [...tables].sort());
+});
+
+test('grant authority exactly matches the complete transitive Zaruku SQL owner graph', () => {
+  const tables = loadMysqlTableAuthority(mysqlAuthorityPath).tables;
+  assert.deepEqual(scanZarukuRuntimeMysqlTables(root), tables);
+});
+
+test('transitive SQL owner scan follows runtime imports and excludes CTE aliases', () => {
+  const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'zaruku-sql-owner-'));
+  try {
+    fs.mkdirSync(path.join(directory, 'apps/zaruku/src'), { recursive: true });
+    fs.mkdirSync(path.join(directory, 'src/lib'), { recursive: true });
+    fs.writeFileSync(path.join(directory, 'apps/zaruku/src/entry.ts'), 'import "@/lib/query";\n');
+    fs.writeFileSync(path.join(directory, 'src/lib/query.ts'), `
+      export const sql = \`
+        WITH scoped_rows AS (
+          SELECT id FROM dashboards
+        ), latest_rows AS (
+          SELECT dashboard_id FROM dashboard_sources
+          JOIN scoped_rows ON scoped_rows.id = dashboard_sources.dashboard_id
+        )
+        SELECT * FROM latest_rows
+        JOIN dashboard_access_users ON dashboard_access_users.dashboard_id = latest_rows.dashboard_id
+      \`;
+    `);
+    assert.deepEqual(scanZarukuRuntimeMysqlTables(directory), [
+      'dashboard_access_users',
+      'dashboard_sources',
+      'dashboards',
+    ]);
+  } finally {
+    fs.rmSync(directory, { recursive: true });
+  }
 });
 
 test('source-only shadow tests are a dedicated predeploy gate with no apply mode', () => {
