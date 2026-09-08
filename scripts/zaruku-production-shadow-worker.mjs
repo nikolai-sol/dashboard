@@ -8,7 +8,7 @@ import { attestStagedControl } from './zaruku-shadow-dispatch.mjs';
 import { createReadOnlyPreflightAdapter, inspectShadowPrerequisites, assertShadowPrerequisites } from './zaruku-production-shadow-preflight.mjs';
 import { createHostAdapter, inspectHostBoundary } from './zaruku-shadow-host.mjs';
 import { validateAuthDescriptor } from './install-zaruku-shadow-auth.mjs';
-import { readZarukuSecrets, inspectActiveRuntime } from './runtime-release-remote.mjs';
+import { readZarukuSecrets, inspectActiveRuntime, transact } from './runtime-release-remote.mjs';
 import { verifyReaderBoundary } from './zaruku-shadow-db.mjs';
 import { observeCanonicalCoverage } from './zaruku-shadow-coverage.mjs';
 
@@ -340,7 +340,7 @@ function createWorkerAdapter() {
     parity:pairedParity,
     recheck(request){contextCheck(request);return baseline();},
     cleanup:cleanupEvidence,
-    stop(){command('/usr/bin/env',['-i','PATH=/usr/local/bin:/usr/bin:/bin','HOME=/root','PM2_HOME=/root/.pm2','pm2','stop','dashboard-zaruku']);const listeners=createReadOnlyPreflightAdapter().listeners();return {passed:!listeners.some(row=>row.port===3002)};},
+    stop(request){return transact({action:'stop-owned',binding:{sourceSha:request.sourceSha,runId:request.runId}},undefined,()=>{if(attestStagedControl()!==request.sourceSha)refuse();});},
     writeDecision:publishDecision,
   };
 }

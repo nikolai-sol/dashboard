@@ -268,11 +268,13 @@ async function fixture() {
   const name = path.join(temp, 'worker.mjs'); fs.writeFileSync(name, source);
   const mod = await import(pathToFileURL(name).href);
   const calls = [];
+  let processState=null, sequence=100;
   const platform = {
     account: () => ({ uid: process.getuid() + 1, gid: process.getgid() + 1 }),
     chown: () => {},
     verify: async (artifact, manifest, boot) => { calls.push({ artifact, manifest, boot }); },
-    start: async () => {}, health: async () => {}, stop: async () => {},
+    snapshot: () => processState && structuredClone(processState),
+    start: async () => { processState={pid:++sequence,pmId:7,startTime:String(sequence),bootId:'00000000-0000-4000-8000-000000000000',uid:process.getuid()+1,gid:process.getgid()+1,cwd:`${temp}/dashboard-zaruku/apps/zaruku`,listener:'127.0.0.1:3002'}; }, health: async () => {}, stop: async () => { processState=null; },
     secrets: () => ({ ...dedicatedInput }),
   };
   function payload(sourceSha, scope = 'zaruku') {
@@ -282,6 +284,32 @@ async function fixture() {
   }
   return { temp, mod, platform, calls, payload, close: () => fs.rmSync(temp, { recursive: true }) };
 }
+
+test('deployment cleanup requires durable run ownership and rejects successors and PID reuse',async()=>{
+  const binding={sourceSha:sha,runId:'00000000-0000-4000-8000-000000000001'};
+  const f=await fixture();let stops=0;
+  const platform={...f.platform,stop:async id=>{assert.equal(id,7);stops++;}};
+  try {
+    assert.deepEqual(await f.mod.transact({action:'stop-owned',binding},platform),{passed:true,stopped:false});
+    await assert.rejects(f.mod.transact({action:'deploy',expectedActiveSha:null,binding,payload:f.payload(sha)},{...platform,verify:async()=>{throw new Error();}}));
+    assert.deepEqual(await f.mod.transact({action:'stop-owned',binding},platform),{passed:true,stopped:false});
+    await f.mod.transact({action:'deploy',expectedActiveSha:null,binding,payload:f.payload(sha)},platform);
+    const receipt=path.join(f.temp,'.dashboard-zaruku-control',`ownership-${binding.runId}.json`);
+    assert.equal(fs.statSync(receipt).mode&0o777,0o600);
+    assert.equal(JSON.parse(fs.readFileSync(receipt)).binding.runId,binding.runId);
+    for(const change of [{pid:999},{startTime:'reused'},{uid:9},{gid:9},{cwd:'/foreign'},{listener:'0.0.0.0:3002'},{bootId:'other'},{pmId:8}]) {
+      await assert.rejects(f.mod.transact({action:'stop-owned',binding},{...platform,snapshot:()=>({...platform.snapshot(),...change})}));
+      assert.equal(stops,0);
+    }
+    assert.deepEqual(await f.mod.transact({action:'stop-owned',binding},platform),{passed:true,stopped:true});
+    assert.equal(stops,1);
+    const successor={sourceSha:previousSha,runId:'00000000-0000-4000-8000-000000000002'};
+    await f.mod.transact({action:'deploy',expectedActiveSha:sha,binding:successor,payload:f.payload(previousSha)},platform);
+    await assert.rejects(f.mod.transact({action:'stop-owned',binding},platform));assert.equal(stops,1);
+    fs.mkdirSync(path.join(f.temp,'.dashboard-zaruku-deploy.lock'));
+    await assert.rejects(f.mod.transact({action:'stop-owned',binding:successor},platform),/lock/);assert.equal(stops,1);
+  } finally {f.close();}
+});
 
 test('deploy serializes same-scope operations and leaves foreign locks and active metadata untouched', async () => {
   const f = await fixture();
@@ -450,18 +478,29 @@ test('transport refuses a substituted request before any OS precondition or acti
   } finally { f.close(); }
 });
 
-test('active app and both immutable rollout records survive failed PM2 start and failed recovery', async () => {
+test('failed PM2 start preserves the unchanged owned predecessor without guessed stop or restart', async () => {
   const f = await fixture();
   try {
     await f.mod.transact({ action: 'deploy', expectedActiveSha: null, payload: f.payload(previousSha) }, f.platform);
     let stopped = false;
-    await assert.rejects(f.mod.transact({ action: 'deploy', expectedActiveSha: previousSha, payload: f.payload(sha) }, { ...f.platform, start: async () => { throw new Error('fixture start failed'); }, stop: async () => { stopped = true; } }), /restoration failed/);
-    assert.ok(stopped);
+    await assert.rejects(f.mod.transact({ action: 'deploy', expectedActiveSha: previousSha, payload: f.payload(sha) }, { ...f.platform, start: async () => { throw new Error('fixture start failed'); }, stop: async () => { stopped = true; } }), /predecessor restored/);
+    assert.equal(stopped,false);
     assert.equal(fs.readFileSync(path.join(f.temp, 'dashboard-zaruku/.release-source-sha'), 'utf8'), `${previousSha}\n`);
     const records = fs.readdirSync(path.join(f.temp, '.dashboard-zaruku-control')).filter(name => /^[a-f0-9]{32}$/.test(name));
     assert.equal(records.length, 2);
     assert.ok(fs.readdirSync(path.join(f.temp, 'dashboard-zaruku-releases')).some(name => name.includes('-failed-')));
   } finally { f.close(); }
+});
+
+test('ambiguous startup and unchanged process identity never grant cleanup ownership',async()=>{
+  for(const reply of ['lost','unchanged']) {
+    const f=await fixture();let stops=0;
+    try {
+      if(reply==='unchanged')await f.mod.transact({action:'deploy',expectedActiveSha:null,payload:f.payload(previousSha)},f.platform);
+      await assert.rejects(f.mod.transact({action:'deploy',expectedActiveSha:reply==='unchanged'?previousSha:null,payload:f.payload(sha)},{...f.platform,stop:async()=>{stops++;},start:async()=>{if(reply==='lost'){await f.platform.start();throw new Error('lost reply');}}}),/ownership|restoration/);
+      assert.equal(stops,0);
+    } finally {f.close();}
+  }
 });
 
 test('deploy runs locked dependency installation and full predeploy verification before preparing a request', () => {

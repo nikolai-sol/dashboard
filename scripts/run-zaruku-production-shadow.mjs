@@ -28,7 +28,7 @@ function baseline(value) {
 /** Only the fixed state machine owns deployment/stop ordering. Adapters own OS boundaries. */
 export async function runProductionShadow(adapter) {
   const steps = [], checks = {};
-  let source, deployed = false, stopped = false, failure = null, before, after=null, parity, processEvidence=null;
+  let source, deploymentAttempted = false, stopped = false, failure = null, before, after=null, parity, processEvidence=null;
   const stop = async () => {
     if (stopped) return;
     stopped = true;
@@ -60,8 +60,9 @@ export async function runProductionShadow(adapter) {
     // Losing this response is a pre-deploy refusal, never guessed inode recovery.
     try { if ((await adapter.allocateEvidence())?.passed !== true) fail('evidence allocation'); }
     catch { fail('evidence allocation'); }
-    // Once deployment starts, failure is conservatively treated as a possible live process.
-    deployed = true;
+    // An attempt is not ownership. On any ambiguous response the remote cleanup
+    // reads its durable run receipt and refuses to touch an unowned process.
+    deploymentAttempted = true;
     if ((await check('deploy', 'deploy Zaruku', 9)).sourceSha !== source.sha) fail('deployed source authority');
     const process = await check('attest', 'process and listener attestation', 10);
     if (process.sourceSha !== source.sha || process.process !== 'dashboard-zaruku' || process.port !== 3002 || !process.loopbackOnly || !Number.isSafeInteger(process.uid) || process.uid <= 0 || !Number.isSafeInteger(process.gid) || process.gid <= 0 || !isDeepStrictEqual(process.groups, []) || process.capabilities !== '0') fail('process and listener attestation');
@@ -74,16 +75,16 @@ export async function runProductionShadow(adapter) {
     // Only errors created by this state machine are exposed. Adapters may throw raw data.
     failure = error instanceof ShadowFailure ? error.label : 'prerequisite operation';
   } finally {
-    if (deployed) {
+    if (deploymentAttempted) {
       try {
         after = baseline(await check('recheck', 'foreign SHA and Nginx recheck', 12));
         if (!isDeepStrictEqual(after, before)) failure = 'foreign runtime or Nginx changed';
       } catch { failure ??= 'foreign SHA and Nginx recheck'; }
     }
     try { if ((await adapter.cleanup())?.passed !== true) failure = 'cleanup failed'; } catch { failure = 'cleanup failed'; }
-    if (failure && deployed) await stop();
+    if (failure && deploymentAttempted) await stop();
   }
-  if (failure && !deployed) fail(failure);
+  if (failure && !deploymentAttempted) fail(failure);
   const evidence = { decision: failure ? 'NO-GO' : 'GO', publicCutover: false, sourceSha: source.sha, steps: [...steps, PRODUCTION_STEPS[13]], checks, parity: parity ?? { pairedReadAttempts: 1, coverageAdvancedDuringFirstPair: false, stableCanonicalComparison: false }, failure,baselines:{before,after},processAttestation:processEvidence };
   try {
     const directory = await adapter.writeDecision(evidence);

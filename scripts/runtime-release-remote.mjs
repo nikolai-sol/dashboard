@@ -6,6 +6,7 @@ import { createHash, randomUUID } from 'node:crypto';
 import { execFileSync, spawn } from 'node:child_process';
 import { createServer } from 'node:net';
 import { pathToFileURL } from 'node:url';
+import { isDeepStrictEqual } from 'node:util';
 
 const BASE = '/var/www';
 const DEPLOY_UID = 0;
@@ -27,6 +28,7 @@ export const HOST_DIRECTORY_MODES = Object.freeze({
 const SHA = /^[a-f0-9]{40}$/;
 const DIGEST = /^[a-f0-9]{64}$/;
 const ID = /^[a-f0-9]{32}$/;
+const UUID = /^[a-f0-9]{8}-[a-f0-9]{4}-4[a-f0-9]{3}-[89ab][a-f0-9]{3}-[a-f0-9]{12}$/;
 const hash = value => createHash('sha256').update(value).digest('hex');
 const fail = message => { throw new Error(message); };
 export const ENV_KEYS = Object.freeze([
@@ -375,7 +377,18 @@ const realPlatform = {
     command('pm2', ['startOrReload', `${control}/deploy/zaruku/ecosystem.config.cjs`, '--only', 'dashboard-zaruku', '--update-env']);
     command('pm2', ['save']);
   },
-  async stop() { command('pm2', ['stop', 'dashboard-zaruku']); command('pm2', ['save']); },
+  snapshot() {
+    const matches = JSON.parse(command('pm2',['jlist'])).filter(row=>row.name==='dashboard-zaruku');
+    if (!matches.length || matches.length===1 && matches[0].pid===0 && matches[0].pm2_env?.status==='stopped') return null;
+    const proof=captureRuntimeIdentity(matches,realPlatform.account(),filename=>fs.readFileSync(filename,'utf8'),filename=>fs.realpathSync(filename),command('ss',['-ltnpH','( sport = :3002 )']));
+    const second=JSON.parse(command('pm2',['jlist'])).filter(row=>row.name==='dashboard-zaruku');
+    if(second.length!==1||second[0].pid!==proof.pid||second[0].pm_id!==proof.pmId)fail('Runtime identity changed');
+    return proof;
+  },
+  async stop(pmId) {
+    if(!Number.isSafeInteger(pmId)||pmId<0)fail('Owned PM2 identity required');
+    command('pm2', ['stop', String(pmId)]); command('pm2', ['save']);
+  },
   async health() {
     let healthy = false;
     for (let attempt = 0; attempt < 20; attempt++) {
@@ -392,6 +405,54 @@ const realPlatform = {
     if (!rows.length || rows.some(row => row.trim().split(/\s+/)[3] !== '127.0.0.1:3002')) fail('Zaruku listener is not exclusively loopback');
   },
 };
+
+export function captureRuntimeIdentity(processes,account,readText,readCwd,listeners) {
+  assertRuntimeProcess(processes,account,readText,readCwd);
+  const process=processes[0];
+  if(!Number.isSafeInteger(process.pm_id)||process.pm_id<0)fail('Runtime identity mismatch');
+  const stat=()=>{const text=readText(`/proc/${process.pid}/stat`),close=text.lastIndexOf(')');const fields=text.slice(close+2).trim().split(/\s+/);if(close<0||!/^\d+$/.test(fields[19]??''))fail('Runtime start identity mismatch');return fields[19];};
+  const startTime=stat(),bootId=readText('/proc/sys/kernel/random/boot_id').trim();
+  if(!/^[a-f0-9-]{36}$/.test(bootId))fail('Runtime boot identity mismatch');
+  const rows=listeners.trim().split('\n');
+  if(rows.length!==1||rows[0].trim().split(/\s+/)[3]!=='127.0.0.1:3002'||[...rows[0].matchAll(/pid=(\d+)/g)].map(match=>Number(match[1])).some(pid=>pid!==process.pid)||!rows[0].includes(`pid=${process.pid},`))fail('Runtime listener ownership mismatch');
+  assertRuntimeProcess(processes,account,readText,readCwd);
+  if(stat()!==startTime)fail('Runtime PID reused');
+  return {pid:process.pid,pmId:process.pm_id,startTime,bootId,uid:account.uid,gid:account.gid,cwd:readCwd(`/proc/${process.pid}/cwd`),listener:'127.0.0.1:3002'};
+}
+
+function bindingValid(binding) {
+  if(!binding||Object.keys(binding).sort().join(',')!=='runId,sourceSha'||!SHA.test(binding.sourceSha)||!UUID.test(binding.runId))fail('Invalid deployment ownership binding');
+}
+function processProof(platform,account) {
+  const value=platform.snapshot();
+  if(value===null)return null;
+  if(!value||Object.keys(value).sort().join(',')!=='bootId,cwd,gid,listener,pid,pmId,startTime,uid'||!Number.isSafeInteger(value.pid)||value.pid<=0||!Number.isSafeInteger(value.pmId)||value.pmId<0||!/^\d+$/.test(value.startTime)||!/^[a-f0-9-]{36}$/.test(value.bootId)||value.uid!==account.uid||value.gid!==account.gid||value.cwd!==`${APP}/apps/zaruku`||value.listener!=='127.0.0.1:3002')fail('Invalid deployment process ownership');
+  return value;
+}
+const directoryIdentity=()=>{owned(APP,true);const stat=fs.lstatSync(APP);return {dev:String(stat.dev),ino:String(stat.ino)};};
+function durableFile(filename,value) {
+  createFile(filename,JSON.stringify(value)+'\n');
+  const fd=fs.openSync(filename,fs.constants.O_RDONLY|fs.constants.O_NOFOLLOW);try{fs.fsyncSync(fd);}finally{fs.closeSync(fd);}
+  const directory=fs.openSync(path.dirname(filename),fs.constants.O_RDONLY|fs.constants.O_DIRECTORY|fs.constants.O_NOFOLLOW);try{fs.fsyncSync(directory);}finally{fs.closeSync(directory);}
+}
+async function stopProof(proof,platform,account,guard) {
+  if(!proof)fail('No owned deployment process');
+  guard();
+  if(!isDeepStrictEqual(processProof(platform,account),proof))fail('Deployment ownership changed; no stop');
+  await platform.stop(proof.pmId);
+}
+async function stopOwned(binding,platform,account,guard) {
+  bindingValid(binding);
+  const filename=`${CONTROL}/ownership-${binding.runId}.json`;
+  if(!fs.lstatSync(filename,{throwIfNoEntry:false}))return {passed:true,stopped:false};
+  owned(filename);const stat=fs.lstatSync(filename);
+  if(stat.gid!==DEPLOY_GID||(stat.mode&0o7777)!==0o600||stat.size>8192)fail('Unsafe deployment receipt');
+  const receipt=JSON.parse(stableRead(filename,true));
+  if(Object.keys(receipt).sort().join(',')!=='binding,directory,process,record,transaction,version'||receipt.version!==1||!UUID.test(receipt.transaction)||!isDeepStrictEqual(receipt.binding,binding)||receipt.record?.sourceSha!==binding.sourceSha||!isDeepStrictEqual(current(),receipt.record)||!isDeepStrictEqual(directoryIdentity(),receipt.directory))fail('Deployment receipt no longer owns active release');
+  attestTree(APP,receipt.record);
+  await stopProof(receipt.process,platform,account,guard);
+  return {passed:true,stopped:true};
+}
 
 function publishPointer(record) {
   const temporary = `${CONTROL}/current-${randomUUID()}.json`;
@@ -438,10 +499,15 @@ export async function transact(request, platform = realPlatform, stagedGuard) {
   createFile(`${LOCK}/owner`, owner);
   try {
     for (const dir of [RELEASES, BACKUPS, CONTROL]) ensureDirectory(dir, HOST_DIRECTORY_MODES[dir]);
+    if(request.action==='stop-owned')return await stopOwned(request.binding,platform,account,guard);
     const old = current();
     if (request.action === 'inspect') return old;
     if ((old?.sourceSha ?? null) !== request.expectedActiveSha) fail('Active Zaruku SHA changed; recheck source ancestry');
     if (request.action !== 'deploy' && request.action !== 'rollback') fail('Invalid fixed release action');
+    if(platform===realPlatform&&request.action==='deploy')bindingValid(request.binding);
+    if(request.binding){bindingValid(request.binding);if(request.payload?.sourceSha!==request.binding.sourceSha||fs.lstatSync(`${CONTROL}/ownership-${request.binding.runId}.json`,{throwIfNoEntry:false}))fail('Deployment binding source or run reuse mismatch');}
+    const beforeProcess=processProof(platform,account);
+    if(!old&&beforeProcess)fail('Unowned process exists before deployment');
     let record, stage;
     if (request.action === 'deploy') ({ record, stage } = materialize(request.payload, randomUUID().replaceAll('-', ''), old, platform, account));
     else {
@@ -460,7 +526,7 @@ export async function transact(request, platform = realPlatform, stagedGuard) {
     if (old) attestTree(APP, old);
     const oldBackup = old ? `${BACKUPS}/${old.id}` : null;
     if (oldBackup && fs.lstatSync(oldBackup, { throwIfNoEntry: false })) fail('Predecessor backup collision');
-    let oldMoved = false, candidateMoved = false;
+    let oldMoved = false, candidateMoved = false, started = false, ownedProcess=null;
     try {
       if (old) { fs.renameSync(APP, oldBackup); oldMoved = true; }
       fs.renameSync(stage, APP); candidateMoved = true;
@@ -468,14 +534,24 @@ export async function transact(request, platform = realPlatform, stagedGuard) {
       attestTree(APP, record);
       if (hash(stableRead(`${APP}/.env`)) !== envDigest) fail('Runtime environment changed during activation');
       await platform.start(`${CONTROL}/${record.id}`);
+      started=true;
+      const candidateProcess=processProof(platform,account);
+      if(!candidateProcess||isDeepStrictEqual(candidateProcess,beforeProcess))fail('New deployment process was not established');
+      ownedProcess=candidateProcess;
       await platform.health();
       attestTree(APP, record);
       if (hash(stableRead(`${APP}/.env`)) !== envDigest) fail('Runtime environment changed during health verification');
       publishPointer(record);
+      if(request.binding) {
+        if(!isDeepStrictEqual(processProof(platform,account),ownedProcess))fail('Deployment ownership changed after health');
+        durableFile(`${CONTROL}/ownership-${request.binding.runId}.json`,{version:1,binding:request.binding,transaction:owner,record,directory:directoryIdentity(),process:ownedProcess});
+      }
       return record;
     } catch {
       let rollbackCandidateNeedsRecovery = false;
       try {
+        if(candidateMoved&&started)await stopProof(ownedProcess,platform,account,guard);
+        if(candidateMoved&&!started&&beforeProcess===null&&processProof(platform,account)!==null)fail('Ambiguous startup ownership; no stop');
         if (candidateMoved) {
           // A manual rollback borrows its predecessor from BACKUPS. Return that
           // exact artifact to its authoritative slot so current.previousId stays
@@ -496,9 +572,13 @@ export async function transact(request, platform = realPlatform, stagedGuard) {
           attestTree(oldBackup, old);
           if (fs.lstatSync(APP, { throwIfNoEntry: false })) fail('Active recovery path is occupied');
           fs.renameSync(oldBackup, APP);
-          await platform.start(`${CONTROL}/${old.id}`); await platform.health(); attestTree(APP, old); publishPointer(old);
-        } else if (!old) await platform.stop();
-      } catch { try { await platform.stop(); } catch { /* Preserve evidence, fail closed. */ } fail('Zaruku activation and predecessor restoration failed; service stop requested'); }
+          // A failed start reply cannot authorize stopping/replacing an unknown
+          // process. Preserve the exact predecessor only if still provably ours.
+          if(!started&&beforeProcess&&!isDeepStrictEqual(processProof(platform,account),beforeProcess))fail('Ambiguous predecessor identity');
+          if(started||!beforeProcess)await platform.start(`${CONTROL}/${old.id}`);
+          await platform.health(); attestTree(APP, old); publishPointer(old);
+        }
+      } catch { fail('Zaruku activation and predecessor restoration failed; ownership requires review'); }
       if (rollbackCandidateNeedsRecovery) fail('Current Zaruku release restored; rollback backup collision or integrity failure requires recovery');
       fail(old ? 'Zaruku activation failed; attested predecessor restored' : 'Zaruku activation failed; service stopped');
     }
