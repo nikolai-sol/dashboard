@@ -92,6 +92,26 @@ test('replaced existing file inode fails even when byte-identical', async t => {
   await assert.rejects(() => stageReviewedShadowControl(f.adapter, sha), /control/i);
 });
 
+test('staged predecessor rejects replaced directory inodes with unchanged child files', async t => {
+  for (const suffix of ['scripts', 'deploy/zaruku', '']) {
+    const f = fixture(t); await stageReviewedShadowControl(f.adapter, sha);
+    const filename = path.join(f.root, destination, suffix), old = filename + '-old';
+    fs.chmodSync(path.dirname(filename), 0o700);
+    fs.chmodSync(filename, 0o700);
+    fs.renameSync(filename, old); fs.mkdirSync(filename, { mode: 0o700 });
+    fs.chmodSync(old, 0o700);
+    for (const name of fs.readdirSync(old)) {
+      const child = path.join(old, name), mode = fs.statSync(child).mode & 0o777;
+      if (fs.statSync(child).isDirectory()) fs.chmodSync(child, 0o700);
+      fs.renameSync(child, path.join(filename, name));
+      fs.chmodSync(path.join(filename, name), mode);
+    }
+    fs.rmdirSync(old); fs.chmodSync(filename, 0o500);
+    fs.chmodSync(path.dirname(filename), suffix ? 0o500 : 0o700);
+    await assert.rejects(() => receiveControlPayload(f.payload(), f.digest(), f.runtime, true), /control/i);
+  }
+});
+
 test('outer payload digest and exact inventory are verified before any directory creation', async t => {
   const f = fixture(t); await stageReviewedShadowControl(f.adapter, sha);
   const original = JSON.parse(f.payload());

@@ -145,6 +145,17 @@ function validateCreatedIdentity(adapter, step, value) {
   } else if (step.kind === 'user') validateIdentity(value, adapter.serviceGroupIdentity());
 }
 
+async function stagedPredecessor(adapter, expected = null, pristine = false) {
+  if (typeof adapter.stagedPredecessor !== 'function') fail();
+  const value = await adapter.stagedPredecessor();
+  if (!value || Object.keys(value).sort().join(',') !== 'dev,ino,manifestDigest,sourceSha' || !/^[a-f0-9]{40}$/.test(value.sourceSha) || !/^[a-f0-9]{64}$/.test(value.manifestDigest) || !Number.isSafeInteger(value.dev) || !Number.isSafeInteger(value.ino)) fail();
+  const shadow = statDirectory(adapter, ROOTS.at(-2));
+  if (!shadow || shadow.dev !== value.dev || shadow.ino !== value.ino || expected && !same(value, expected)) fail();
+  if (pristine && !same(adapter.fs.readdirSync(ROOTS.at(-2)), ['control'])) fail();
+  if (!same(adapter.fs.readdirSync(`${ROOTS.at(-2)}/control`), [value.sourceSha])) fail();
+  return value;
+}
+
 export async function inspectHostBoundary(adapter) {
   try {
     if (adapter.platform !== 'linux') fail();
@@ -152,10 +163,12 @@ export async function inspectHostBoundary(adapter) {
     validateIdentity(user, group);
     const directories = ROOTS.map(target => ({ target, metadata: statDirectory(adapter, target) }));
     const present = [user, group, ...directories.map(item => item.metadata)].filter(Boolean).length;
-    if (present !== 0 && present !== PLAN.length) fail();
+    let predecessor = null;
+    if (present === 1 && directories.at(-2).metadata) predecessor = await stagedPredecessor(adapter, null, true);
+    else if (present !== 0 && present !== PLAN.length) fail();
     const port3002Free = adapter.port3002Free();
     if (port3002Free !== true) fail();
-    return { state: present ? 'compliant' : 'absent', user, group, directories, listener: { port3002Free } };
+    return { state: predecessor ? 'staged' : present ? 'compliant' : 'absent', user, group, directories, listener: { port3002Free }, predecessor };
   } catch { fail(); }
 }
 
@@ -171,9 +184,10 @@ function saveRecord(adapter, record, exclusive = false) {
 
 function loadRecord(adapter) {
   const record = JSON.parse(stablePrivateRead(adapter, JOURNAL));
-  if (!same(Object.keys(record).sort(), ['runId', 'scope', 'status', 'steps', 'version']) || record.scope !== 'zaruku' || record.version !== 1 || !/^[a-f0-9-]{36}$/.test(record.runId) || !['creating', 'complete', 'rolled-back'].includes(record.status) || !Array.isArray(record.steps) || record.steps.length > PLAN.length) fail();
+  if (!same(Object.keys(record).sort(), ['predecessor', 'runId', 'scope', 'status', 'steps', 'version']) || record.scope !== 'zaruku' || record.version !== 2 || !/^[a-f0-9-]{36}$/.test(record.runId) || !['creating', 'complete', 'rolled-back'].includes(record.status) || !Array.isArray(record.steps) || record.steps.length > PLAN.length) fail();
+  const plan = PLAN.filter(step => !record.predecessor || step.target !== ROOTS.at(-2));
   for (const [index, step] of record.steps.entries()) {
-    if (!same(Object.keys(step).sort(), ['after', 'before', 'kind', 'target']) || step.kind !== PLAN[index].kind || step.target !== PLAN[index].target || step.before !== null) fail();
+    if (!same(Object.keys(step).sort(), ['after', 'before', 'kind', 'target']) || step.kind !== plan[index]?.kind || step.target !== plan[index].target || step.before !== null) fail();
   }
   return record;
 }
@@ -183,9 +197,13 @@ export async function applyHostBoundary(adapter) {
     root(adapter);
     const before = await inspectHostBoundary(adapter);
     if (before.state === 'compliant') return before;
-    const record = { version: 1, scope: 'zaruku', runId: randomUUID(), status: 'creating', steps: [] };
+    const record = { version: 2, scope: 'zaruku', runId: randomUUID(), status: 'creating', predecessor: before.predecessor, steps: [] };
     saveRecord(adapter, record, true);
     for (const step of PLAN) {
+      if (record.predecessor) {
+        await stagedPredecessor(adapter, record.predecessor);
+        if (step.target === ROOTS.at(-2)) continue;
+      }
       if (stepState(adapter, step) !== null) fail();
       const entry = { ...step, before: null, after: null };
       record.steps.push(entry); saveRecord(adapter, record);
@@ -205,6 +223,7 @@ export async function applyHostBoundary(adapter) {
       saveRecord(adapter, record);
     }
     const evidence = await inspectHostBoundary(adapter);
+    if (record.predecessor) await stagedPredecessor(adapter, record.predecessor);
     record.status = 'complete'; saveRecord(adapter, record);
     return evidence;
   } catch { fail(); }
@@ -215,6 +234,7 @@ export async function rollbackNewHostBoundary(adapter, creationRecord) {
     root(adapter);
     const record = loadRecord(adapter);
     if (!same(record, creationRecord) || record.status === 'rolled-back' || !record.steps.length || adapter.port3002Free() !== true) fail();
+    if (record.predecessor) await stagedPredecessor(adapter, record.predecessor);
     // Preflight every removal before removing anything. Incomplete post-step evidence is
     // deliberately not inferred: recovery requires operator review after a crashed command.
     for (const step of record.steps) {
@@ -226,6 +246,7 @@ export async function rollbackNewHostBoundary(adapter, creationRecord) {
     }
     let userRemoved = false;
     for (const step of [...record.steps].reverse()) {
+      if (record.predecessor) await stagedPredecessor(adapter, record.predecessor);
       // Linux userdel may also remove this user's same-named empty primary group.
       // It was attested before userdel; no separate deletion is needed if now absent.
       if (step.kind === 'group' && userRemoved && stepState(adapter, step) === null) continue;
@@ -335,6 +356,10 @@ export function createHostAdapter(options = {}) {
   adapter.createUser = () => execute('/usr/sbin/useradd', ['--system', '--gid', NAME, '--shell', '/usr/sbin/nologin', '--home-dir', '/nonexistent', '--no-create-home', '--no-user-group', NAME]);
   adapter.deleteUser = () => execute('/usr/sbin/userdel', [NAME]);
   adapter.deleteGroup = () => execute('/usr/sbin/groupdel', [NAME]);
+  adapter.stagedPredecessor = async () => {
+    const { attestStagedPredecessor } = await import('./zaruku-production-shadow-worker.mjs');
+    return attestStagedPredecessor();
+  };
   adapter.publishDescriptor = bytes => {
     root(adapter);
     publishPrivate(adapter, AUTH, bytes, { emptyOnly: true });

@@ -65,11 +65,35 @@ export function attestStagedControl() {
   const manifest=JSON.parse(readProtected(path.join(ROOT,'.manifest.json'),0o400).bytes);
   const inodes=JSON.parse(readProtected(path.join(ROOT,'.inodes.json'),0o400).bytes);
   if(manifest.sourceSha!==match[1]||!same(manifest.files?.map(row=>row.path),SHADOW_CONTROL_FILES))refuse();
+  if (!same(Object.keys(inodes).sort(), [...SHADOW_CONTROL_FILES, '.manifest.json', '.inodes.json', 'directories'].sort())) refuse();
+  for (const name of ['.manifest.json', '.inodes.json']) {
+    const file = readProtected(path.join(ROOT, name), 0o400), pin = inodes[name];
+    if (!pin || pin.dev !== file.identity.dev || pin.ino !== file.identity.ino || pin.uid !== 0 || pin.gid !== 0 || pin.mode !== 0o400 || pin.links !== 1) refuse();
+  }
   for(const row of manifest.files){
     const file=readProtected(path.join(ROOT,row.path),0o400,1048576),pin=inodes[row.path];
     if(row.mode!==0o400||file.bytes.length!==row.size||file.sha256!==row.sha256||!pin||pin.dev!==file.identity.dev||pin.ino!==file.identity.ino||pin.uid!==0||pin.gid!==0||pin.mode!==0o400||pin.links!==1)refuse();
   }
+  const directories = [['shadow', '/var/www/.dashboard-zaruku-shadow', 0o700], ['control', '/var/www/.dashboard-zaruku-shadow/control', 0o700], ...['', 'deploy', 'deploy/zaruku', 'scripts'].map(name => [`bundle/${name}`, path.join(ROOT, name), 0o500])];
+  if (!same(Object.keys(inodes.directories ?? {}).sort(), directories.map(([name]) => name).sort())) refuse();
+  for (const [name, directory, mode] of directories) {
+    const stat = fs.lstatSync(directory);
+    if (!stat.isDirectory() || !same(inodes.directories[name], {dev:String(stat.dev),ino:String(stat.ino),uid:stat.uid,gid:stat.gid,mode:stat.mode & 0o777}) || stat.uid !== 0 || stat.gid !== 0 || (stat.mode & 0o7777) !== mode) refuse();
+    if (name.startsWith('bundle/')) {
+      const relative = name.slice('bundle/'.length);
+      const expected = relative === '' ? ['.inodes.json','.manifest.json','deploy','scripts'] : relative === 'deploy' ? ['zaruku'] : SHADOW_CONTROL_FILES.filter(file => path.posix.dirname(file) === relative).map(file => path.posix.basename(file));
+      if (!same(fs.readdirSync(directory).sort(), expected.sort())) refuse();
+    }
+  }
   return match[1];
+}
+
+export function attestStagedPredecessor() {
+  const sourceSha = attestStagedControl();
+  const manifest = readProtected(path.join(ROOT, '.manifest.json'), 0o400);
+  const shadow = fs.lstatSync('/var/www/.dashboard-zaruku-shadow');
+  if (!shadow.isDirectory() || shadow.uid !== 0 || shadow.gid !== 0 || (shadow.mode & 0o7777) !== 0o700) refuse();
+  return { sourceSha, manifestDigest: manifest.sha256, dev: Number(shadow.dev), ino: Number(shadow.ino) };
 }
 
 export function validateInventory(bytes,authority=AUTHORITY) {

@@ -63,6 +63,12 @@ export async function receiveControlPayload(bytes, expectedDigest, runtime, insp
       pins.set(name, directory(base, pins.get(parent), !exists, exists ? 0o500 : 0o700).fd);
     }
     const records = {};
+    const directoryPins = () => Object.fromEntries([
+      ['shadow', shadow], ['control', control], ...[...pins].map(([name, fd]) => [`bundle/${name}`, fd]),
+    ].map(([name, fd]) => {
+      const stat = io.fstatSync(fd);
+      return [name, { dev: String(stat.dev), ino: String(stat.ino), uid: stat.uid, gid: stat.gid, mode: name === 'shadow' || name === 'control' ? 0o700 : 0o500 }];
+    }));
     const targetFor = name => { const split = name.lastIndexOf('/'); return anchor(pins.get(split < 0 ? '' : name.slice(0, split)), name.slice(split + 1)); };
     const read = name => {
       const fd = io.openSync(targetFor(name), io.constants.O_RDONLY | io.constants.O_NOFOLLOW);
@@ -87,7 +93,7 @@ export async function receiveControlPayload(bytes, expectedDigest, runtime, insp
       try {
         io.fchownSync(fd, 0, 0); io.fchmodSync(fd, 0o400);
         records['.inodes.json'] = snapshot(io.fstatSync(fd));
-        io.writeFileSync(fd, JSON.stringify(records)); io.fsyncSync(fd);
+        io.writeFileSync(fd, JSON.stringify({ ...records, directories: directoryPins() })); io.fsyncSync(fd);
       } finally { io.closeSync(fd); }
       for (const fd of [...pins.values()].reverse()) { io.fchmodSync(fd, 0o500); io.fsyncSync(fd); }
       io.fsyncSync(control);
@@ -95,6 +101,8 @@ export async function receiveControlPayload(bytes, expectedDigest, runtime, insp
     if (!read('.manifest.json').equals(manifestBytes)) refuse();
     for (const file of files) if (!read(file.path).equals(Buffer.from(file.data, 'base64'))) refuse();
     const expectedInodes = JSON.parse(read('.inodes.json'));
+    if (!same(expectedInodes.directories, directoryPins())) refuse();
+    delete expectedInodes.directories;
     if (!same(Object.keys(expectedInodes).sort(), Object.keys(records).sort())) refuse();
     for (const [name, value] of Object.entries(records)) if (!same(expectedInodes[name], value)) refuse();
     for (const [name, fd] of pins) {

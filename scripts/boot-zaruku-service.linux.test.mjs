@@ -9,7 +9,7 @@ import path from 'node:path';
 import { test } from 'node:test';
 import { execFileSync, spawnSync } from 'node:child_process';
 import { bootRuntimeAsService } from './runtime-release-remote.mjs';
-import { applyHostBoundary, createHostAdapter, rollbackNewHostBoundary } from './zaruku-shadow-host.mjs';
+import { prepareReviewedControl, receiveControlPayload, readControlSource } from './stage-zaruku-shadow-control.mjs';
 
 if (process.platform !== 'linux' || process.getuid() !== 0 || !fs.existsSync('/.dockerenv')) throw new Error('This behavioral fixture requires a disposable Linux root container');
 const base = fs.mkdtempSync('/tmp/zaruku-privilege-');
@@ -18,12 +18,18 @@ const artifact = path.join(base, 'artifact');
 const control = path.join(base, 'control');
 const sibling = path.join(base, 'sibling');
 const proof = path.join('/tmp', path.basename(base) + '-proof.json');
-const host = createHostAdapter({ commandRunner(bin, args, options) {
+const stagedSha = 'a'.repeat(40);
+const prepared = await prepareReviewedControl({ source: () => ({ sha: stagedSha, clean: true, branch: 'codex/linux-fixture' }), readFile: readControlSource }, stagedSha);
+await receiveControlPayload(prepared.bytes, prepared.digest);
+const stagedHost = await import(`/var/www/.dashboard-zaruku-shadow/control/${stagedSha}/scripts/zaruku-shadow-host.mjs`);
+const host = stagedHost.createHostAdapter({ commandRunner(bin, args, options) {
   // The locked test image has no iproute2; no fixed runtime is listening in this container.
   if (bin === '/usr/bin/ss') return { status: 0, stdout: '', stderr: '' };
   return spawnSync(bin, args, options);
 } });
-const boundary = await applyHostBoundary(host);
+const beforeStage = fs.statSync('/var/www/.dashboard-zaruku-shadow');
+assert.equal((await stagedHost.inspectHostBoundary(host)).state, 'staged');
+const boundary = await stagedHost.applyHostBoundary(host);
 const { uid, gid } = boundary.user;
 fs.mkdirSync(path.join(artifact, 'apps/zaruku'), { recursive: true, mode: 0o755 });
 fs.mkdirSync(control, { mode: 0o700 }); fs.mkdirSync(sibling, { mode: 0o755 });
@@ -95,8 +101,11 @@ test('missing or impersonating setpriv fails before application execution', asyn
 
 test('owned host rollback removes the production-mode roots and actual created account', async () => {
   const record = JSON.parse(fs.readFileSync('/var/www/.dashboard-zaruku-host-creation.json'));
-  await rollbackNewHostBoundary(host, record);
+  await stagedHost.rollbackNewHostBoundary(host, record);
   assert.equal(host.serviceIdentity(), null);
+  assert.equal(fs.statSync('/var/www/.dashboard-zaruku-shadow').ino, beforeStage.ino);
+  assert.deepEqual(fs.readdirSync('/var/www/.dashboard-zaruku-shadow'), ['control']);
+  fs.rmSync('/var/www/.dashboard-zaruku-shadow', { recursive: true });
 });
 
 process.on('exit', () => { fs.rmSync(base, { recursive: true, force: true }); fs.rmSync(proof, { force: true }); });

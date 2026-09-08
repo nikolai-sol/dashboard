@@ -6,6 +6,7 @@ import path from 'node:path';
 import { spawnSync } from 'node:child_process';
 import { applyHostBoundary, inspectHostBoundary, rollbackNewHostBoundary, installRuntimeSecrets, createHostAdapter } from './zaruku-shadow-host.mjs';
 import { installShadowAuth } from './install-zaruku-shadow-auth.mjs';
+import { prepareReviewedControl, receiveControlPayload, readControlSource } from './stage-zaruku-shadow-control.mjs';
 
 const roots = ['/var/www/dashboard-zaruku-releases', '/var/www/dashboard-zaruku-backups', '/var/www/.dashboard-zaruku-control', '/var/www/.dashboard-zaruku-secrets', '/var/www/.dashboard-zaruku-shadow', '/var/www/.dashboard-zaruku-shadow/evidence'];
 const source = '/var/www/www-root/data/.production.env';
@@ -109,6 +110,62 @@ test('host check is read-only; apply creates exact no-login identity and six pri
     await applyHostBoundary(f.adapter);
     assert.equal(f.calls.filter(call => call.bin.startsWith('/usr/sbin/')).length, beforeCalls);
   } finally { f.close(); }
+});
+
+test('exact staged control predecessor survives host apply check and owned rollback', async () => {
+  const f = fixture(), sha = 'a'.repeat(40);
+  try {
+    const prepared = await prepareReviewedControl({ source: () => ({ sha, clean: true, branch: 'codex/fixture' }), readFile: readControlSource }, sha);
+    await receiveControlPayload(prepared.bytes, prepared.digest, { fs: f.io, identity: { uid: 0, euid: 0 }, anchor: f.adapter.anchoredPath });
+    const before = fs.statSync(f.resolve('/var/www/.dashboard-zaruku-shadow'));
+    f.adapter.stagedPredecessor = async () => {
+      const attested = await receiveControlPayload(prepared.bytes, prepared.digest, { fs: f.io, identity: { uid: 0, euid: 0 }, anchor: f.adapter.anchoredPath }, true);
+      return { sourceSha: sha, manifestDigest: attested.manifestDigest, dev: before.dev, ino: before.ino };
+    };
+    assert.equal((await inspectHostBoundary(f.adapter)).state, 'staged');
+    await applyHostBoundary(f.adapter);
+    assert.equal((await inspectHostBoundary(f.adapter)).state, 'compliant');
+    const record = JSON.parse(fs.readFileSync(f.resolve(recordPath)));
+    assert.ok(!record.steps.some(step => step.target === '/var/www/.dashboard-zaruku-shadow'));
+    await rollbackNewHostBoundary(f.adapter, record);
+    assert.equal(fs.statSync(f.resolve('/var/www/.dashboard-zaruku-shadow')).ino, before.ino);
+    assert.deepEqual(fs.readdirSync(f.resolve('/var/www/.dashboard-zaruku-shadow')), ['control']);
+  } finally {
+    for (const directory of ['scripts', 'deploy/zaruku', 'deploy', '']) {
+      const filename = f.resolve(`/var/www/.dashboard-zaruku-shadow/control/${sha}/${directory}`);
+      if (fs.existsSync(filename)) fs.chmodSync(filename, 0o700);
+    }
+    f.close();
+  }
+});
+
+test('host rejects every incomplete or changed staged predecessor before mutation', async () => {
+  for (const fault of ['empty', 'extra-shadow', 'extra-sha', 'changed-file', 'wrong-sha', 'wrong-inode']) {
+    const f = fixture(), sha = 'a'.repeat(40);
+    try {
+      const prepared = await prepareReviewedControl({ source: () => ({ sha, clean: true, branch: 'codex/fixture' }), readFile: readControlSource }, sha);
+      const runtime = { fs: f.io, identity: { uid: 0, euid: 0 }, anchor: f.adapter.anchoredPath };
+      if (fault === 'empty') fs.mkdirSync(f.resolve('/var/www/.dashboard-zaruku-shadow'), { mode: 0o700 });
+      else await receiveControlPayload(prepared.bytes, prepared.digest, runtime);
+      const before = fs.statSync(f.resolve('/var/www/.dashboard-zaruku-shadow'));
+      f.adapter.stagedPredecessor = async () => {
+        const attested = await receiveControlPayload(prepared.bytes, prepared.digest, runtime, true);
+        return { sourceSha: fault === 'wrong-sha' ? 'b'.repeat(40) : sha, manifestDigest: attested.manifestDigest, dev: before.dev, ino: before.ino + (fault === 'wrong-inode' ? 1 : 0) };
+      };
+      if (fault === 'extra-shadow') f.write('/var/www/.dashboard-zaruku-shadow/extra', 'x');
+      if (fault === 'extra-sha') fs.mkdirSync(f.resolve('/var/www/.dashboard-zaruku-shadow/control/' + 'b'.repeat(40)), { mode: 0o500 });
+      if (fault === 'changed-file') {
+        const name = f.resolve(`/var/www/.dashboard-zaruku-shadow/control/${sha}/scripts/zaruku-shadow-host.mjs`);
+        fs.chmodSync(name, 0o600); fs.writeFileSync(name, 'changed'); fs.chmodSync(name, 0o400);
+      }
+      await assert.rejects(applyHostBoundary(f.adapter), /Zaruku host boundary/);
+      assert.equal(f.calls.some(call => call.bin.startsWith('/usr/sbin/')), false);
+      assert.equal(fs.existsSync(f.resolve(recordPath)), false);
+    } finally {
+      const writable = directory => { if (!fs.existsSync(directory)) return; fs.chmodSync(directory, 0o700); for (const entry of fs.readdirSync(directory, { withFileTypes: true })) if (entry.isDirectory()) writable(path.join(directory, entry.name)); };
+      writable(f.resolve('/var/www/.dashboard-zaruku-shadow')); f.close();
+    }
+  }
 });
 
 test('host rejects partial identities, memberships, unsafe ancestry, roots and occupied listener before mutation', async () => {
