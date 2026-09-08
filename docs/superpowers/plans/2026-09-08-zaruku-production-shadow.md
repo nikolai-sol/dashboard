@@ -692,6 +692,13 @@ Expected: exit `0`, clean worktree, no new warnings, and a clean re-review.
 Only after independent acceptance and explicit release-ref authorization, use the
 fixed interface from the clean reviewed named checkout. It verifies the fixed base,
 exact source, and one exact remote ref; ancestor/descendant/unrelated refs all fail.
+`deploy/zaruku/repository.json` pins the destination to
+`git@github.com:nikolai-sol/dashboard.git`. Check, push and readback use this literal
+authority in one ownership-known clean temporary bare Git repository, never the
+`origin` remote name. Only the exact candidate's reachable object closure is
+imported; source refs, tags, hooks and configuration are not copied. Alternate or
+multiple origin URLs, any push URL, and URL/include rewrites reject. System/global
+Git config is disabled; fixed SSH still permits the owner's existing authentication.
 
 ```bash
 node scripts/freeze-zaruku-shadow-release.mjs check
@@ -704,7 +711,10 @@ the sole creation interface is:
 node scripts/freeze-zaruku-shadow-release.mjs create-if-absent
 ```
 
-It uses `--atomic --force-with-lease=refs/heads/release/zaruku:` and exact readback.
+It uses `--atomic --force-with-lease=refs/heads/release/zaruku:`, no hooks/follow-tags/
+submodule recursion, one explicit refspec and exact readback from that same literal
+destination. Child deployment checks use this identical clean-bare authority and
+the exact inherited SHA binding, without fetching through checkout remote config.
 A different ref appearing after observation cannot be updated. No ordinary push,
 force update, or ancestry-only acceptance is allowed. These commands were not run
 against the real origin during Task 5 implementation.

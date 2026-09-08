@@ -74,7 +74,7 @@ test('internal manifest substitution and shell/path arguments are refused before
   } finally { fs.rmSync(temp, { recursive: true }); }
 });
 
-test('clean named branch must equal refreshed release/zaruku and contain current Zaruku SHA', () => {
+test('clean named branch must equal exact frozen binding and contain current Zaruku SHA', () => {
   const temp = fs.mkdtempSync(path.join(os.tmpdir(), 'zaruku-git-'));
   const git = (...args) => execFileSync('git', ['-C', temp, ...args], { encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] }).trim();
   try {
@@ -83,25 +83,26 @@ test('clean named branch must equal refreshed release/zaruku and contain current
     const base = git('rev-parse', 'HEAD'); git('update-ref', 'refs/remotes/origin/release/zaruku', base);
     git('checkout', '-qb', 'candidate'); fs.writeFileSync(path.join(temp, 'fact'), 'next'); git('commit', '-qam', 'next');
     const candidate = git('rev-parse', 'HEAD');
-    assert.throws(() => api.verifySource(temp, base), /release\/zaruku/);
     git('update-ref', 'refs/remotes/origin/release/zaruku', candidate);
-    assert.equal(api.verifySource(temp, base), candidate);
-    fs.writeFileSync(path.join(temp, 'dirty'), 'x'); assert.throws(() => api.verifySource(temp, base), /clean/); fs.unlinkSync(path.join(temp, 'dirty'));
-    git('checkout', '--detach', '-q'); assert.throws(() => api.verifySource(temp, base), /named branch/);
+    assert.throws(() => api.verifySource(temp, base, base), /frozen/);
+    assert.equal(api.verifySource(temp, base, candidate), candidate);
+    assert.throws(() => api.verifySource(temp, base), /frozen/);
+    fs.writeFileSync(path.join(temp, 'dirty'), 'x'); assert.throws(() => api.verifySource(temp, base, candidate), /clean/); fs.unlinkSync(path.join(temp, 'dirty'));
+    git('checkout', '--detach', '-q'); assert.throws(() => api.verifySource(temp, base, candidate), /named branch/);
     git('checkout', '-q', 'candidate'); git('checkout', '-qb', 'sibling', base);
     fs.writeFileSync(path.join(temp, 'fact'), 'sibling'); git('commit', '-qam', 'sibling'); const sibling = git('rev-parse', 'HEAD');
-    git('checkout', '-q', 'candidate'); assert.throws(() => api.verifySource(temp, sibling), /active Zaruku/);
-    git('update-ref', 'refs/remotes/origin/release/zaruku', sibling); assert.throws(() => api.verifySource(temp, base), /release\/zaruku/);
+    git('checkout', '-q', 'candidate'); assert.throws(() => api.verifySource(temp, sibling, candidate), /active Zaruku/);
+    git('update-ref', 'refs/remotes/origin/release/zaruku', sibling); assert.equal(api.verifySource(temp, base, candidate),candidate);
     git('replace', '--graft', candidate, sibling);
     assert.equal(spawnSync('git', ['--no-replace-objects', '-C', temp, 'merge-base', '--is-ancestor', sibling, candidate]).status, 1);
-    assert.throws(() => api.verifySource(temp, sibling), /release\/zaruku|active Zaruku/);
+    assert.throws(() => api.verifySource(temp, sibling, candidate), /active Zaruku/);
     git('update-ref', 'refs/remotes/origin/release/zaruku', candidate);
-    assert.throws(() => api.verifySource(temp, sibling), /active Zaruku/);
-    assert.equal(api.verifySource(temp, base), candidate);
+    assert.throws(() => api.verifySource(temp, sibling, candidate), /active Zaruku/);
+    assert.equal(api.verifySource(temp, base, candidate), candidate);
     git('replace', '-d', candidate);
     fs.writeFileSync(path.join(temp, '.git/info/grafts'), `${candidate} ${sibling}\n`);
-    assert.throws(() => api.verifySource(temp, sibling), /active Zaruku/);
-    assert.equal(api.verifySource(temp, base), candidate);
+    assert.throws(() => api.verifySource(temp, sibling, candidate), /active Zaruku/);
+    assert.equal(api.verifySource(temp, base, candidate), candidate);
   } finally { fs.rmSync(temp, { recursive: true }); }
 });
 

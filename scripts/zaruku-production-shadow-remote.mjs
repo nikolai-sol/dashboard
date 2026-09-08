@@ -3,7 +3,7 @@ import { randomUUID } from 'node:crypto';
 import { spawnSync } from 'node:child_process';
 import { loadShadowAuthority,loadMysqlTableAuthority } from './zaruku-production-shadow-contract.mjs';
 import { CONTROL_FILES,prepareReviewedControl,readControlSource,receiveControlPayload,reviewedSource } from './stage-zaruku-shadow-control.mjs';
-import { requireExactShadowRelease } from './freeze-zaruku-shadow-release.mjs';
+import { requireExactShadowRelease, createReleaseAuthorityAdapter, REPOSITORY_AUTHORITY } from './freeze-zaruku-shadow-release.mjs';
 
 const ROOT=path.resolve(import.meta.dirname,'..');
 const ACTIONS=['preflight','hostBoundary','dbBoundary','runtimeSecrets','managerAuth','allocateEvidence','attest','parity','recheck','cleanup','stop','writeDecision'];
@@ -42,7 +42,10 @@ export function createProductionAdapter(options={}) {
     async linuxPrivilegeFixture(){return {passed:linuxProof};},
     async fullPredeploy(){command('npm',['run','predeploy:verify']);return {passed:true};},
     async releaseAuthority(){
-      return requireExactShadowRelease({source,command:args=>runner('/usr/bin/git',['--no-replace-objects','-C',ROOT,...args],{cwd:ROOT,env:{PATH:'/usr/bin:/bin'},stdio:['ignore','pipe','pipe'],encoding:'utf8',timeout:30000,maxBuffer:65536})},sourceSha);
+      // Unit command injection models the isolated Git process; the production
+      // path always constructs the fixed clean-bare repository authority.
+      const authority=options.commandRunner?{source,destination:REPOSITORY_AUTHORITY.url,command:args=>runner('/usr/bin/git',args,{cwd:ROOT,env:{PATH:'/usr/bin:/bin'},stdio:['ignore','pipe','pipe'],encoding:'utf8',timeout:30000,maxBuffer:65536})}:createReleaseAuthorityAdapter();
+      return requireExactShadowRelease(authority,sourceSha);
     },
     async allocateEvidence(){
       if(context.evidenceIdentity)fail();

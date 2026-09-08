@@ -8,7 +8,7 @@ import { RUNTIME_MANIFESTS } from '../packages/runtime-contract/src/index.ts';
 import { assertRuntimeArtifact, verifyRuntimeArtifactBoot } from './runtime-artifact-policy.mjs';
 import { readPinned, safeRelative } from './runtime-release-remote.mjs';
 import { CONTROL_FILES, prepareReviewedControl, readControlSource, receiveControlPayload, reviewedSource } from './stage-zaruku-shadow-control.mjs';
-import { requireExactShadowRelease } from './freeze-zaruku-shadow-release.mjs';
+import { requireExactShadowRelease, createReleaseAuthorityAdapter } from './freeze-zaruku-shadow-release.mjs';
 
 const ROOT = path.resolve(import.meta.dirname, '..');
 const AUTHORITY = path.join(ROOT, 'deploy/zaruku/release.json');
@@ -37,17 +37,17 @@ export function validateAuthority(filename) {
 
 function git(repo, ...args) {
   if (Object.keys(process.env).some(key => key.startsWith('GIT_') && key !== 'GIT_PAGER')) fail('Fixed Git authority override rejected');
-  return execFileSync('git', ['--no-replace-objects', '-C', repo, ...args], {
+  return execFileSync('/usr/bin/git', ['--no-replace-objects', '-C', repo, '-c', 'core.fsmonitor=false', '-c', 'core.hooksPath=/dev/null', ...args], {
     encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'],
-    env: { ...process.env, GIT_NO_REPLACE_OBJECTS: '1', GIT_GRAFT_FILE: '/dev/null', GIT_PAGER: '/bin/cat' },
+    env: { PATH:'/usr/bin:/bin', GIT_CONFIG_NOSYSTEM:'1', GIT_CONFIG_SYSTEM:'/dev/null', GIT_CONFIG_GLOBAL:'/dev/null', GIT_OPTIONAL_LOCKS:'0', GIT_NO_REPLACE_OBJECTS: '1', GIT_GRAFT_FILE: '/dev/null', GIT_PAGER: '/bin/cat' },
   }).trim();
 }
 
-export function verifySource(repo, activeSha) {
+export function verifySource(repo, activeSha, frozenSha) {
   if (git(repo, 'status', '--porcelain', '--untracked-files=normal')) fail('Zaruku source must be clean');
   if (!git(repo, 'branch', '--show-current')) fail('Zaruku source must be on a named branch');
   const sha = git(repo, 'rev-parse', 'HEAD');
-  if (git(repo, 'rev-parse', '--verify', 'refs/remotes/origin/release/zaruku^{commit}') !== sha) fail('Candidate must exactly equal origin/release/zaruku');
+  if (!/^[a-f0-9]{40}$/.test(frozenSha) || sha !== frozenSha) fail('Candidate must exactly equal frozen source binding');
   for (const [ref, label] of (activeSha ? [[activeSha, 'active Zaruku SHA']] : [])) {
     if (activeSha && !/^[a-f0-9]{40}$/.test(activeSha)) fail('Invalid active Zaruku SHA');
     try { git(repo, 'rev-parse', '--verify', `${ref}^{commit}`); git(repo, 'merge-base', '--is-ancestor', ref, sha); }
@@ -66,7 +66,7 @@ export function parseDeploymentBinding(bytes) {
 }
 
 async function frozenSource(sourceSha) {
-  return requireExactShadowRelease({ source: reviewedSource, command: args => spawnSync('/usr/bin/git', ['--no-replace-objects','-C',ROOT,...args], {encoding:'utf8',env:{PATH:'/usr/bin:/bin'},timeout:30000,maxBuffer:65536}) }, sourceSha);
+  return requireExactShadowRelease(createReleaseAuthorityAdapter(), sourceSha);
 }
 
 async function transfer(request) {
@@ -145,8 +145,7 @@ async function main() {
     const result = await transfer({ action, expectedActiveSha: active?.sourceSha ?? null });
     process.stdout.write(`Zaruku rollback attested: ${result.sourceSha}\n`); return;
   }
-  git(ROOT, 'fetch', '--quiet', 'origin', '+refs/heads/release/zaruku:refs/remotes/origin/release/zaruku');
-  const sourceSha = verifySource(ROOT, active?.sourceSha ?? null);
+  const sourceSha = verifySource(ROOT, active?.sourceSha ?? null, binding.sourceSha);
   if (sourceSha !== binding.sourceSha) fail('Child source substitution rejected');
   // Build itself prepares external authority from clean build inputs; packaging
   // never calls --prepare or trusts a replacement artifact-generated allow-list.
@@ -157,8 +156,7 @@ async function main() {
     // Snapshot selected bytes and the external authority in memory before remote
     // staging; a second source check binds this immutable request to the checkout.
     const latest = await transfer({ action: 'inspect' });
-    git(ROOT, 'fetch', '--quiet', 'origin', '+refs/heads/release/zaruku:refs/remotes/origin/release/zaruku');
-    if (verifySource(ROOT, latest?.sourceSha ?? null) !== sourceSha) fail('Clean source changed after build');
+    if (verifySource(ROOT, latest?.sourceSha ?? null, binding.sourceSha) !== sourceSha) fail('Clean source changed after build');
     validateAuthority(filename);
     await frozenSource(binding.sourceSha);
     const result = await transfer({ action, expectedActiveSha: latest?.sourceSha ?? null, payload, binding });

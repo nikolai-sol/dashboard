@@ -155,7 +155,7 @@ export function rejectShadowOverrides(args = [], env = process.env) {
 
 export function reviewedSource() {
   const git = args => {
-    const result = spawnSync('/usr/bin/git', ['--no-replace-objects', '-C', ROOT, ...args], { encoding: 'utf8', env: { PATH: '/usr/bin:/bin', GIT_NO_REPLACE_OBJECTS: '1', GIT_GRAFT_FILE: '/dev/null', GIT_PAGER: '/bin/cat' } });
+    const result = spawnSync('/usr/bin/git', ['--no-replace-objects', '-C', ROOT, '-c', 'core.fsmonitor=false', '-c', 'core.hooksPath=/dev/null', ...args], { encoding: 'utf8', env: { PATH: '/usr/bin:/bin', GIT_CONFIG_NOSYSTEM:'1', GIT_CONFIG_SYSTEM:'/dev/null', GIT_CONFIG_GLOBAL:'/dev/null', GIT_OPTIONAL_LOCKS:'0', GIT_NO_REPLACE_OBJECTS: '1', GIT_GRAFT_FILE: '/dev/null', GIT_PAGER: '/bin/cat' } });
     if (result.status !== 0 || result.error || result.signal) fail(); return result.stdout.trim();
   };
   return { sha: git(['rev-parse', 'HEAD']), branch: git(['branch', '--show-current']), clean: git(['status', '--porcelain', '--untracked-files=normal']) === '' };

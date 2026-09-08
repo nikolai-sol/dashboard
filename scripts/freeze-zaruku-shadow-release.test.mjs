@@ -4,7 +4,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { spawnSync } from 'node:child_process';
 import { test } from 'node:test';
-import { freezeShadowRelease, requireExactShadowRelease } from './freeze-zaruku-shadow-release.mjs';
+import { freezeShadowRelease, requireExactShadowRelease, createFixtureReleaseAuthorityAdapter, createReleaseAuthorityAdapter, REPOSITORY_AUTHORITY } from './freeze-zaruku-shadow-release.mjs';
 
 const sha = 'a'.repeat(40), ref = 'refs/heads/release/zaruku';
 function fixture(change = {}) {
@@ -39,7 +39,7 @@ test('freeze uses an expected-absent atomic lease and exact readback', async () 
     return {status:exists?0:2,stdout:exists?`${sha}\t${ref}\n`:'',stderr:''};
   }});
   assert.deepEqual(await freezeShadowRelease(f.adapter, true), {sourceSha:sha,ref,created:true});
-  assert.deepEqual(commands.find(args=>args[0]==='push'), ['push','--atomic',`--force-with-lease=${ref}:`,'origin',`${sha}:${ref}`]);
+  assert.deepEqual(commands.find(args=>args[0]==='push'), ['push','--no-verify','--no-follow-tags','--recurse-submodules=no','--atomic',`--force-with-lease=${ref}:`,'--',REPOSITORY_AUTHORITY.url,`${sha}:${ref}`]);
   assert.equal(commands.filter(args=>args[0]==='ls-remote').length,2);
 });
 
@@ -58,7 +58,7 @@ test('actual Git expected-absent lease refuses a ref that appears after observat
     assert.equal(git(repo,['remote','get-url','origin']).stdout.trim(), remote);
     assert.equal(fs.realpathSync(remote), fs.realpathSync(directory) + '/origin.git');
     let raced=false;
-    const adapter={source:()=>({sha:candidate,branch:'candidate',clean:true}),verifyBase:()=>{},command:args=>{
+    const adapter={destination:remote,source:()=>({sha:candidate,branch:'candidate',clean:true}),verifyBase:()=>{},command:args=>{
       if(args[0]==='push'&&!raced){raced=true;assert.equal(git(repo,['push','origin',`${successor}:${ref}`]).status,0);}
       return git(repo,args);
     }};
@@ -69,4 +69,52 @@ test('actual Git expected-absent lease refuses a ref that appears after observat
     assert.equal((await freezeShadowRelease(adapter,true)).created,true);
     assert.equal((await freezeShadowRelease(adapter,true)).created,false);
   } finally { fs.rmSync(directory,{recursive:true}); }
+});
+
+test('actual freeze binds one explicit destination despite pushurl and never follows annotated tags', async () => {
+  const directory=fs.mkdtempSync(path.join(os.tmpdir(),'zaruku-freeze-destination-'));
+  const remote=path.join(directory,'authority.git'),wrong=path.join(directory,'wrong.git'),repo=path.join(directory,'candidate');
+  const env={PATH:'/usr/bin:/bin',GIT_CONFIG_GLOBAL:'/dev/null',GIT_CONFIG_SYSTEM:'/dev/null',GIT_ALLOW_PROTOCOL:'file'};
+  const git=(cwd,args)=>spawnSync('/usr/bin/git',['-C',cwd,...args],{encoding:'utf8',env});
+  try {
+    for(const target of [remote,wrong])assert.equal(spawnSync('/usr/bin/git',['init','--bare','-q',target],{env}).status,0);
+    assert.equal(spawnSync('/usr/bin/git',['init','-q',repo],{env}).status,0);
+    for(const args of [['config','user.name','Fixture'],['config','user.email','fixture@example.invalid'],['checkout','-qb','candidate'],['commit','--allow-empty','-qm','candidate'],['remote','add','origin',remote],['config','remote.origin.pushurl',wrong],['config','push.followTags','true'],['tag','-am','fixture side ref','private-side-tag']])assert.equal(git(repo,args).status,0);
+    for(const target of [remote,wrong])assert.equal(fs.realpathSync(target),fs.realpathSync(directory)+'/'+path.basename(target));
+    const candidate=git(repo,['rev-parse','HEAD']).stdout.trim();
+    const adapter={destination:remote,source:()=>({sha:candidate,branch:'candidate',clean:true}),verifyBase:()=>{},command:args=>git(repo,args)};
+    let failure;try{await freezeShadowRelease(adapter,true);}catch(error){failure=error;}
+    assert.equal(git(wrong,['for-each-ref','--format=%(refname)']).stdout,'','the alternate pushurl repository must remain untouched');
+    assert.equal(failure,undefined);
+    assert.equal(git(remote,['for-each-ref','--format=%(refname)']).stdout,ref+'\n','only the explicit release ref may be published');
+  } finally {fs.rmSync(directory,{recursive:true});}
+});
+
+test('isolated Git rejects destination aliases and ignores source side-ref and hook configuration', async () => {
+  const directory=fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(),'zaruku-freeze-isolated-')));
+  const remote=path.join(directory,'authority.git'),wrong=path.join(directory,'wrong.git'),repo=path.join(directory,'candidate'),hooks=path.join(directory,'hooks'),marker=path.join(directory,'hook-ran');
+  const env={PATH:'/usr/bin:/bin',GIT_CONFIG_GLOBAL:'/dev/null',GIT_CONFIG_SYSTEM:'/dev/null',GIT_ALLOW_PROTOCOL:'file'};
+  const git=(cwd,args)=>spawnSync('/usr/bin/git',['-C',cwd,...args],{encoding:'utf8',env});
+  try {
+    for(const target of [remote,wrong])assert.equal(spawnSync('/usr/bin/git',['init','--bare','-q',target],{env}).status,0);
+    assert.equal(spawnSync('/usr/bin/git',['init','-q',repo],{env}).status,0);
+    for(const args of [['config','user.name','Fixture'],['config','user.email','fixture@example.invalid'],['checkout','-qb','candidate'],['commit','--allow-empty','-qm','candidate'],['remote','add','origin',remote],['config','push.followTags','true'],['tag','-am','side ref','private-side-tag']])assert.equal(git(repo,args).status,0);
+    fs.mkdirSync(hooks);fs.writeFileSync(path.join(hooks,'pre-push'),`#!/bin/sh\n: > '${marker}'\nexit 1\n`,{mode:0o700});
+    assert.equal(git(repo,['config','core.hooksPath',hooks]).status,0);
+    const adapter=createFixtureReleaseAuthorityAdapter(directory);
+    for(const [key,value] of [['remote.origin.pushurl',wrong],['remote.origin.url',wrong],[`url.${wrong}.insteadOf`,remote],[`url.${wrong}.pushInsteadOf`,remote]]) {
+      assert.equal(git(repo,['config','--add',key,value]).status,0);
+      await assert.rejects(freezeShadowRelease(adapter,true),/release authority/);
+      assert.equal(git(repo,['config','--unset-all',key]).status,0);
+      if(key==='remote.origin.url')assert.equal(git(repo,['config',key,remote]).status,0);
+      assert.equal(git(remote,['for-each-ref']).stdout,'');assert.equal(git(wrong,['for-each-ref']).stdout,'');
+    }
+    const refs=git(repo,['for-each-ref']).stdout,config=fs.readFileSync(path.join(repo,'.git/config'));
+    assert.equal((await freezeShadowRelease(adapter,true)).created,true);
+    assert.equal((await freezeShadowRelease(adapter,false)).created,false);
+    assert.equal(git(remote,['for-each-ref','--format=%(refname)']).stdout,ref+'\n');
+    assert.equal(git(wrong,['for-each-ref']).stdout,'');assert.equal(fs.existsSync(marker),false);
+    assert.equal(git(repo,['for-each-ref']).stdout,refs);assert.deepEqual(fs.readFileSync(path.join(repo,'.git/config')),config);
+    assert.throws(()=>createReleaseAuthorityAdapter(remote),/release authority/);
+  } finally {fs.rmSync(directory,{recursive:true});}
 });

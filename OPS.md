@@ -365,6 +365,14 @@ Predeploy runs source tests only; it never builds or runs Docker.
 
 After independent acceptance and explicit release-ref authorization, use
 `node scripts/freeze-zaruku-shadow-release.mjs check`; only an explicitly approved
+creation may use `create-if-absent`. `deploy/zaruku/repository.json` pins the literal
+`git@github.com:nikolai-sol/dashboard.git` destination for check/push/readback and
+child checks. Remote operations use a clean ownership-known temporary bare Git
+repository, no checkout config/refs/tags/hooks, disabled system/global config,
+one explicit refspec, no follow-tags/hooks/submodule recursion, and an atomic
+expected-absent lease. Alternate/multiple URLs, pushurl and rewrite/include config
+reject; the real CLI accepts no destination override. Only candidate-reachable
+objects are imported; source config/refs remain unchanged. An explicitly approved
 absent ref may be created with `create-if-absent`. It uses an atomic expected-absent
 lease and exact readback; no unknown/different existing ref can be overwritten.
 Before each provisioning or child-deploy action the live ref must still equal HEAD.
