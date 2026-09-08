@@ -222,3 +222,62 @@ Result: exit 0 with no lint errors/warnings and no whitespace errors.
 ### Concerns
 
 None remaining for the symlinked-directory glob finding. No production operation or later-task behavior was performed.
+
+## POSIX bracket-glob remediation — 2026-09-08
+
+Implementation commit: `3362b8b` (`fix(zaruku): reject unsupported nginx globs`)
+
+### Change
+
+- Nginx include resolution now rejects every bracket expression before glob compilation and attestation.
+- This intentionally fail-closed behavior prevents POSIX bracket syntax such as `[!a]` from being interpreted with incompatible JavaScript regular-expression semantics.
+- Added the exact regression: `a.conf` contains the safe port-3001 route, `b.conf` contains a port-3002 route, and the active include is `routes/[!a]*.conf`.
+
+### RED evidence
+
+Command:
+
+```text
+node --test scripts/zaruku-production-shadow-preflight.test.mjs
+```
+
+Result: exit 1; 13 passed and 1 failed. The exact `[!a]*.conf` regression failed with `Missing expected exception`, proving the incompatible expression was accepted.
+
+### GREEN evidence
+
+Review-specific suite:
+
+```text
+node --test scripts/zaruku-production-shadow-preflight.test.mjs
+```
+
+Result: exit 0; 14 passed, 0 failed.
+
+Full focused shadow suite:
+
+```text
+node --test scripts/zaruku-production-shadow-contract.test.mjs scripts/zaruku-production-shadow-preflight.test.mjs
+```
+
+Result: exit 0; 18 passed, 0 failed.
+
+Source-deploy integration suite:
+
+```text
+npm run test:deploy-source
+```
+
+Result: exit 0. Deploy source guards, deploy lock/integration fixtures, release-source metadata fixtures, and the predeploy command contract all passed.
+
+Static verification:
+
+```text
+npm exec -- eslint scripts/zaruku-production-shadow-preflight.mjs scripts/zaruku-production-shadow-preflight.test.mjs
+git diff --check
+```
+
+Result: exit 0 with no lint errors/warnings and no whitespace errors.
+
+### Concerns
+
+None remaining for the POSIX bracket-expression finding. Bracket expressions are deliberately unsupported until a separately reviewed POSIX-compatible matcher exists. No production operation or later-task behavior was performed.
