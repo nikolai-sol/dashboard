@@ -270,7 +270,7 @@ export function createStaticEvaluator(sourceFile) {
           return value(binding.initializer, frame, depth + 1);
         }
         if (!binding.initializer) return unknownValue('UNSUPPORTED_EXPRESSION', binding);
-        if (binding && ts.isVariableDeclaration(binding) &&
+        if (binding && ts.isVariableDeclaration(binding) && binding.initializer &&
             !(binding.parent.flags & ts.NodeFlags.Const)) {
           return unknownValue('UNSUPPORTED_EXPRESSION', binding);
         }
@@ -425,7 +425,7 @@ export function createStaticEvaluator(sourceFile) {
       if (ts.isCallExpression(node) && ts.isIdentifier(node.expression)) {
         const binding = declaration(node.expression, node.expression.text);
         let fn = binding;
-        if (binding && ts.isVariableDeclaration(binding) &&
+        if (binding && ts.isVariableDeclaration(binding) && binding.initializer &&
             (ts.isArrowFunction(binding.initializer) || ts.isFunctionExpression(binding.initializer))) {
           fn = binding.initializer;
         }

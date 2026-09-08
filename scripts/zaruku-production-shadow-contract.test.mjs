@@ -9,6 +9,7 @@ import {
   loadShadowAuthority,
   scanZarukuRuntimeMysqlTables,
 } from './zaruku-production-shadow-contract.mjs';
+import { SHADOW_CONTROL_FILES } from './zaruku-shadow-dispatch.mjs';
 
 const root = path.resolve(import.meta.dirname, '..');
 const authorityPath = path.join(root, 'deploy/zaruku/production-shadow.json');
@@ -393,9 +394,61 @@ test('standalone mapped SQL remains visible to the Zaruku owner scan', () => {
   }
 });
 
+test('Zaruku SQL graph excludes unrelated Abbott source until Zaruku imports it', () => {
+  const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'zaruku-sql-abbott-isolation-'));
+  const entry = path.join(directory, 'apps/zaruku/entry.ts');
+  const unrelated = path.join(directory, 'src/lib/abbott-unrelated.ts');
+  fs.mkdirSync(path.dirname(entry), { recursive: true });
+  fs.mkdirSync(path.dirname(unrelated), { recursive: true });
+  try {
+    fs.writeFileSync(entry, 'export const sql="SELECT * FROM dashboards";');
+    fs.writeFileSync(
+      unrelated,
+      'export const sql="SELECT * FROM report_bd_private.canonical_fact_metrika_visits";',
+    );
+    assert.deepEqual(scanZarukuRuntimeMysqlTables(directory), ['dashboards']);
+
+    fs.writeFileSync(entry, 'import "@/lib/abbott-unrelated"; export const sql="SELECT * FROM dashboards";');
+    assert.throws(
+      () => scanZarukuRuntimeMysqlTables(directory),
+      /foreign|schema|SQL owner|authority/i,
+    );
+  } finally {
+    fs.rmSync(directory, { recursive: true });
+  }
+});
+
+test('private SQL is rejected in every supported representation', () => {
+  const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'zaruku-sql-representation-'));
+  const entry = path.join(directory, 'apps/zaruku/entry.ts');
+  fs.mkdirSync(path.dirname(entry), { recursive: true });
+  const privateSql = 'SELECT * FROM report_bd_private.canonical_fact_metrika_visits';
+  const sources = [
+    `export const sql=${JSON.stringify(privateSql)};`,
+    `const query=${JSON.stringify(privateSql)}; export const sql=query;`,
+    `function make(){return [${JSON.stringify(privateSql)}];} export const queries=make();`,
+    `export const queries=[${JSON.stringify(privateSql)}];`,
+    `const rows=[0]; export const queries=rows.map(()=>${JSON.stringify(privateSql)});`,
+    `export const query={sql:${JSON.stringify(privateSql)}};`,
+  ];
+  try {
+    for (const source of sources) {
+      fs.writeFileSync(entry, source);
+      assert.throws(
+        () => scanZarukuRuntimeMysqlTables(directory),
+        /foreign|schema|SQL owner|authority/i,
+        source,
+      );
+    }
+  } finally {
+    fs.rmSync(directory, { recursive: true });
+  }
+});
+
 test('source-only shadow tests are a dedicated predeploy gate with no apply mode', () => {
   const pkg = JSON.parse(fs.readFileSync(path.join(root, 'package.json'), 'utf8'));
   const gate=pkg.scripts['test:zaruku-production-shadow'];
+  assert.ok(gate.includes('scripts/zaruku-static-sql.test.mjs'));
   for(const name of ['zaruku-production-shadow-contract','zaruku-production-shadow-preflight','zaruku-shadow-db','zaruku-shadow-host','install-zaruku-shadow-auth','install-zaruku-shadow-inventory','stage-zaruku-shadow-control','run-zaruku-production-shadow','zaruku-production-shadow-worker','zaruku-production-shadow-remote','zaruku-shadow-coverage','zaruku-shadow-evidence','runtime-boot-environment'])assert.ok(gate.includes(`scripts/${name}.test.mjs`));
   for(const name of ['zaruku-shadow-mysql','zaruku-xlsx-semantic','zaruku-shadow-evidence-lock'])assert.ok(gate.includes(`python3 -I -B scripts/${name}.test.py`));
   assert.ok(gate.includes('bash scripts/run-zaruku-linux-fixtures.test.sh'));
@@ -403,4 +456,19 @@ test('source-only shadow tests are a dedicated predeploy gate with no apply mode
   const predeploy = fs.readFileSync(path.join(root, 'scripts/predeploy-verify.sh'), 'utf8');
   assert.equal(predeploy.split(/\r?\n/).filter(line => line.trim() === 'npm run test:zaruku-production-shadow').length, 1);
   assert.doesNotMatch(predeploy, /zaruku-production-shadow[^\n]*--apply/);
+  assert.ok(!SHADOW_CONTROL_FILES.some(filename => /zaruku-static-(?:sql|values)/.test(filename)));
+  for (const directory of ['apps', 'src', 'packages', 'deploy']) {
+    const pending = [path.join(root, directory)];
+    while (pending.length > 0) {
+      const current = pending.pop();
+      for (const entry of fs.readdirSync(current, { withFileTypes: true })) {
+        if (entry.name === 'node_modules' || entry.name.startsWith('.next')) continue;
+        const filename = path.join(current, entry.name);
+        if (entry.isDirectory()) pending.push(filename);
+        else if (entry.isFile()) {
+          assert.doesNotMatch(fs.readFileSync(filename, 'utf8'), /zaruku-static-(?:sql|values)/, filename);
+        }
+      }
+    }
+  }
 });

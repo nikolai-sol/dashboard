@@ -28,4 +28,7 @@ The pre-change implementation has two evaluators with different value models. It
 
 - Baseline before test change: `node --test scripts/zaruku-production-shadow-contract.test.mjs` — 21/21 passed.
 - Original RED: `node --test --test-name-pattern='standalone mapped' scripts/zaruku-production-shadow-contract.test.mjs` — 0/1 passed. The expected private-schema exception was missing at the first assertion, proving the standalone mapped SQL array was dropped.
-- Focused GREEN, full Zaruku gate and general predeploy verification remain pending.
+- First focused GREEN after the unified evaluator integration: `node --test scripts/zaruku-static-sql.test.mjs scripts/zaruku-production-shadow-contract.test.mjs` — 29/29 passed.
+- Regression matrix GREEN: the same two files — 36/36 passed. It covers literal/alias/helper/array/map/record equivalence, exact join boundaries, captured-condition correlation, private SQL in every supported representation, unknown members, recursion, async maps, mutable inputs, fixed limits, sanitized diagnostics and unrelated Abbott-source isolation.
+- The real graph equals the full sorted authority list and the authority remains exactly 35 tables.
+- Full Zaruku gate and general predeploy verification remain pending.

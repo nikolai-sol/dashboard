@@ -120,7 +120,7 @@ export function extractStaticSql(source, filename) {
     if (ts.isCallExpression(node) && ts.isIdentifier(node.expression)) {
       const binding = declaration(node.expression, node.expression.text);
       if (binding && (ts.isFunctionDeclaration(binding) ||
-          (ts.isVariableDeclaration(binding) &&
+          (ts.isVariableDeclaration(binding) && binding.initializer &&
            (ts.isArrowFunction(binding.initializer) || ts.isFunctionExpression(binding.initializer))))) {
         calledFunctions.add(binding);
       }
@@ -172,7 +172,7 @@ export function extractStaticSql(source, filename) {
         if (!ts.isIdentifier(initializer)) continue;
         const binding = declaration(initializer, initializer.text);
         let fn = binding;
-        if (binding && ts.isVariableDeclaration(binding) &&
+        if (binding && ts.isVariableDeclaration(binding) && binding.initializer &&
             (ts.isArrowFunction(binding.initializer) || ts.isFunctionExpression(binding.initializer))) {
           fn = binding.initializer;
         }
@@ -188,7 +188,7 @@ export function extractStaticSql(source, filename) {
       const binding = declaration(node.expression, node.expression.text);
       let executor = executorParameters.get(binding);
       let fn = binding;
-      if (binding && ts.isVariableDeclaration(binding) &&
+      if (binding && ts.isVariableDeclaration(binding) && binding.initializer &&
           (ts.isArrowFunction(binding.initializer) || ts.isFunctionExpression(binding.initializer))) {
         fn = binding.initializer;
       }
