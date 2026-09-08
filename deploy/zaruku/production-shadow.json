@@ -1,0 +1,15 @@
+{
+  "scope": "zaruku",
+  "combinedUrl": "http://127.0.0.1:3001",
+  "isolatedUrl": "http://127.0.0.1:3002",
+  "serviceAccount": "dashboard-zaruku",
+  "mysqlAccount": "dashboard_zaruku_reader@127.0.0.1",
+  "mysqlDatabase": "report_bd",
+  "secretFile": "/var/www/.dashboard-zaruku-secrets/runtime.env",
+  "authDescriptor": "/var/www/.dashboard-zaruku-shadow/auth.json",
+  "otherRuntimeShas": "/var/www/.dashboard-zaruku-shadow/other-runtime-shas.tsv",
+  "evidenceRoot": "/var/www/.dashboard-zaruku-shadow/evidence",
+  "period": { "from": "2026-01-01", "to": "2026-08-31" },
+  "httpTimeoutMs": 15000,
+  "publicCutover": false
+}

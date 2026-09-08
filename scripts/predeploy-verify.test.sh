@@ -69,6 +69,7 @@ cat > "$TMP_DIR/expected.log" <<'EOF'
 test
 node --import tsx --test packages/runtime-contract/src/index.test.ts
 run test:deploy-source
+run test:zaruku-production-shadow
 run test:release-runtime
 node --import tsx --test apps/zaruku/src/**/*.test.ts
 node --test scripts/runtime-artifact-policy.test.mjs
@@ -124,6 +125,7 @@ const required = [
   "node --import tsx --test 'apps/zaruku/src/**/*.test.ts'",
   "node --import tsx --test packages/runtime-contract/src/index.test.ts",
   "npm run test:deploy-source",
+  "npm run test:zaruku-production-shadow",
   "npm run test:release-runtime",
   "node --test scripts/runtime-artifact-policy.test.mjs",
   "npm --workspace apps/zaruku run verify:artifact",

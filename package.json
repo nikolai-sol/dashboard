@@ -20,6 +20,7 @@
     "test:abbott-contract": "node --import tsx --test src/lib/abbott-dashboard-contract.test.ts src/components/AbbottBiDashboard.ui.test.ts src/components/abbott-page-stats.test.ts src/components/abbott-summary.test.ts src/components/abbott/abbott-admin-user-filter.test.ts src/components/abbott/abbott-user-action-filters.test.ts src/lib/abbott-bi-loader.test.ts src/lib/abbott-private-store.test.ts src/lib/abbott-admin-users.test.ts src/lib/abbott-data-projection.test.ts",
     "test:abbott-contract-wiring": "bash scripts/verify-abbott-dashboard-contract.test.sh",
     "test:deploy-source": "bash scripts/verify-deploy-source.test.sh && bash scripts/dashboard-deploy-lock.test.sh && bash scripts/dashboard-deploy-integration.test.sh && bash scripts/bootstrap-release-source-metadata.test.sh && bash scripts/predeploy-verify.test.sh",
+    "test:zaruku-production-shadow": "node --test scripts/zaruku-production-shadow-contract.test.mjs scripts/zaruku-production-shadow-preflight.test.mjs",
     "test:release-runtime": "bash scripts/normalize-standalone-runtime-links.test.sh && bash scripts/validate-production-release.test.sh && bash scripts/release-rollback.test.sh && bash scripts/rollback-authority.test.sh && npm --workspace apps/zaruku run build && bash scripts/deploy-zaruku.test.sh",
     "lint": "eslint .",
     "typecheck": "tsc --noEmit",
