@@ -326,6 +326,12 @@ test('SQL extraction refuses unknown members, recursion, async maps and mutable 
     'declare function runtimeSql():string; const queries:string[]=[]; const {alias=queries}={}; alias.push(runtimeSql()); export const sql=queries.join("");',
     'declare function runtimeSql():string; declare const maybe:string[]|undefined; const queries:string[]=[]; const [alias=queries]=[maybe]; alias.push(runtimeSql()); export const sql=queries.join("");',
     'declare function runtimeSql():string; declare const maybe:string[]|undefined; const queries:string[]=[]; const {alias=queries}={alias:maybe}; alias.push(runtimeSql()); export const sql=queries.join("");',
+    'declare function runtimeSql():string; const queries:string[]=[]; function identity(value=queries){return value;} const alias=identity(); alias.push(runtimeSql()); export const sql=queries.join("");',
+    'declare function runtimeSql():string; const queries:string[]=[]; function identity(value=queries){return value;} const alias=identity(undefined); alias.push(runtimeSql()); export const sql=queries.join("");',
+    'declare function runtimeSql():string; declare const maybe:string[]|undefined; const queries:string[]=[]; function identity(value=queries){return value;} const alias=identity(maybe); alias.push(runtimeSql()); export const sql=queries.join("");',
+    'declare function runtimeSql():string; const queries:string[]=[]; function append(value=queries){value.push(runtimeSql());} append(); export const sql=queries.join("");',
+    'declare function runtimeSql():string; const queries:string[]=[]; function append(value=queries){value.push(runtimeSql());} append(undefined); export const sql=queries.join("");',
+    'declare function runtimeSql():string; declare const maybe:string[]|undefined; const queries:string[]=[]; function append(value=queries){value.push(runtimeSql());} append(maybe); export const sql=queries.join("");',
     'declare const flag:boolean; const queries:string[]=[]; const alias=flag?queries:[]; alias.push("SELECT * FROM report_bd_private.canonical_fact_metrika_visits"); export const sql=queries.join("");',
     'declare function runtimeSql():string; const queries:string[]=[]; const ui:string[]=[]; const alias=true?queries:ui; alias.push(runtimeSql()); export const sql=queries.join("");',
     'declare const flag:boolean; declare function runtimeSql():string; const queries:string[]=[]; const alias=flag?queries:[]; alias.push(runtimeSql()); export const sql=queries.join("");',
@@ -479,16 +485,26 @@ test('SQL extraction refuses unknown members, recursion, async maps and mutable 
   for (const destructuring of [
     'const [alias=safe]=[identity(ui)];',
     'const {alias=safe}={alias:identity(ui)};',
+    'const [alias=safe]=[identity()];',
+    'const {alias=safe}={alias:identity(undefined)};',
   ]) {
     assert.deepEqual(extractStaticSql(`
       const safe=["SELECT * FROM dashboards"];
       const ui:string[]=[];
-      function identity(value:string[]){return value;}
+      function identity(value:string[]=ui){return value;}
       ${destructuring}
       alias.push("label");
       export const sql=safe.join("");
     `, 'fixture.ts').statements, ['SELECT * FROM dashboards']);
   }
+
+  assert.deepEqual(extractStaticSql(`
+    const safe=["SELECT * FROM dashboards"];
+    const ui:string[]=[];
+    function append(value:string[]=safe){value.push("label");}
+    append(ui);
+    export const sql=safe.join("");
+  `, 'fixture.ts').statements, ['SELECT * FROM dashboards']);
 });
 
 test('SQL extraction exposes keyword, schema, comment and separator boundary attacks', () => {

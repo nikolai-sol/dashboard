@@ -550,17 +550,53 @@ export function createStaticEvaluator(sourceFile) {
       }
     }
 
+    const definednessInProgress = new Set();
+    function undefinedState(expression) {
+      if (definednessInProgress.has(expression)) {
+        return { mayBeUndefined: true, mayBeDefined: true };
+      }
+      definednessInProgress.add(expression);
+      try {
+        const candidates = valueExpressions(expression);
+        if (candidates.length === 0) return { mayBeUndefined: true, mayBeDefined: true };
+        let mayBeUndefined = false;
+        let mayBeDefined = false;
+        for (const candidate of candidates) {
+          const current = unwrapExpression(candidate);
+          if (ts.isArrayLiteralExpression(current) || ts.isObjectLiteralExpression(current) ||
+              ts.isArrowFunction(current) || ts.isFunctionExpression(current) ||
+              ts.isClassExpression(current) || ts.isNewExpression(current)) {
+            mayBeDefined = true;
+            continue;
+          }
+          const value = staticPrimitiveValue(current);
+          if (!value.known) {
+            mayBeUndefined = true;
+            mayBeDefined = true;
+          } else if (value.value === undefined) {
+            mayBeUndefined = true;
+          } else {
+            mayBeDefined = true;
+          }
+        }
+        return { mayBeUndefined, mayBeDefined };
+      } finally {
+        definednessInProgress.delete(expression);
+      }
+    }
+
     function mayBeUndefined(expression) {
-      const candidates = valueExpressions(expression);
-      if (candidates.length === 0) return true;
-      return candidates.some(candidate => {
-        const current = unwrapExpression(candidate);
-        if (ts.isArrayLiteralExpression(current) || ts.isObjectLiteralExpression(current) ||
-            ts.isArrowFunction(current) || ts.isFunctionExpression(current) ||
-            ts.isClassExpression(current) || ts.isNewExpression(current)) return false;
-        const value = staticPrimitiveValue(current);
-        return !value.known || value.value === undefined;
-      });
+      return undefinedState(expression).mayBeUndefined;
+    }
+
+    function parameterExpressions(parameter, index, call) {
+      const argument = call.arguments[index];
+      if (!argument) return parameter.initializer ? [parameter.initializer] : [];
+      if (!parameter.initializer) return [argument];
+      const state = undefinedState(argument);
+      if (state.mayBeUndefined && !state.mayBeDefined) return [parameter.initializer];
+      if (state.mayBeUndefined) return [argument, parameter.initializer];
+      return [argument];
     }
 
     function staticKey(expression, seen = new Set()) {
@@ -584,9 +620,10 @@ export function createStaticEvaluator(sourceFile) {
         const binding = declaration(current, current.text);
         if (!binding || state.bindings.has(binding)) return [current];
         if (state.parameters.has(binding)) {
-          return valueExpressions(state.parameters.get(binding), next({
-            bindings: new Set(state.bindings).add(binding),
-          }));
+          return state.parameters.get(binding).flatMap(parameterValue =>
+            valueExpressions(parameterValue, next({
+              bindings: new Set(state.bindings).add(binding),
+            })));
         }
         if (!ts.isVariableDeclaration(binding) ||
             !binding.initializer || !(binding.parent.flags & ts.NodeFlags.Const)) return [current];
@@ -626,7 +663,8 @@ export function createStaticEvaluator(sourceFile) {
         if (!fn) return [current];
         const parameters = new Map(state.parameters);
         fn.parameters.forEach((parameter, index) => {
-          if (current.arguments[index]) parameters.set(parameter, current.arguments[index]);
+          const values = parameterExpressions(parameter, index, current);
+          if (values.length > 0) parameters.set(parameter, values);
         });
         const callState = next({
           calls: new Set(state.calls).add(current),
@@ -991,17 +1029,19 @@ export function createStaticEvaluator(sourceFile) {
           continue;
         }
         for (const index of parameterIndexes) {
-          if (!call.arguments[index]) continue;
-          for (const actual of sourceBindings(call.arguments[index])) linkBindings(target, actual);
+          for (const expression of parameterExpressions(fn.parameters[index], index, call)) {
+            for (const actual of sourceBindings(expression)) linkBindings(target, actual);
+          }
         }
       }
     }
 
     for (const { fn, call } of pendingCalls) {
       fn.parameters.forEach((parameter, index) => {
-        if (!call.arguments[index]) return;
-        for (const actual of sourceBindings(call.arguments[index])) {
-          linkDirected(parameter, actual);
+        for (const expression of parameterExpressions(parameter, index, call)) {
+          for (const actual of sourceBindings(expression)) {
+            linkDirected(parameter, actual);
+          }
         }
       });
     }
