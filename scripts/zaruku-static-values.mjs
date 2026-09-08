@@ -143,6 +143,7 @@ export function createStaticEvaluator(sourceFile) {
   const mutatedBindings = new Set();
   const mutationTexts = new Map();
   const aliasEdges = new Map();
+  const directedTaintEdges = new Map();
   const mutationMethods = new Set([
     'copyWithin', 'delete', 'fill', 'pop', 'push', 'reverse', 'set', 'shift',
     'sort', 'splice', 'unshift', 'clear',
@@ -272,7 +273,34 @@ export function createStaticEvaluator(sourceFile) {
     return null;
   }
 
+  function functionExpressions(expression, seen = new Set()) {
+    const current = unwrapExpression(expression);
+    if (ts.isArrowFunction(current) || ts.isFunctionExpression(current)) return [current];
+    if (ts.isConditionalExpression(current) ||
+        (ts.isBinaryExpression(current) && [
+          ts.SyntaxKind.AmpersandAmpersandToken,
+          ts.SyntaxKind.BarBarToken,
+          ts.SyntaxKind.QuestionQuestionToken,
+        ].includes(current.operatorToken.kind))) {
+      const branches = ts.isConditionalExpression(current)
+        ? [current.whenTrue, current.whenFalse] : [current.left, current.right];
+      return [...new Set(branches.flatMap(branch => functionExpressions(branch, seen)))];
+    }
+    if (!ts.isIdentifier(current)) return [];
+    const binding = declaration(current, current.text);
+    if (!binding || seen.has(binding)) return [];
+    if (ts.isFunctionDeclaration(binding)) return [binding];
+    if (ts.isVariableDeclaration(binding) && binding.initializer) {
+      return functionExpressions(binding.initializer, new Set(seen).add(binding));
+    }
+    return [];
+  }
+
   function propagateMutatedArguments(node) {
+    const pendingCalls = [];
+    const pendingReturnLinks = [];
+    const pendingMapCalls = [];
+
     function linkBindings(left, right) {
       if (!left || !right || left === right) return;
       if (!aliasEdges.has(left)) aliasEdges.set(left, new Set());
@@ -281,12 +309,20 @@ export function createStaticEvaluator(sourceFile) {
       aliasEdges.get(right).add(left);
     }
 
+    function linkDirected(left, right) {
+      if (!left || !right || left === right) return;
+      if (!directedTaintEdges.has(left)) directedTaintEdges.set(left, new Set());
+      directedTaintEdges.get(left).add(right);
+    }
+
     function linkPattern(pattern, expression) {
       if (!preprocessStep()) return;
       const value = unwrapExpression(expression);
       if (ts.isIdentifier(pattern)) {
         const target = declaration(pattern, pattern.text);
-        for (const source of sourceBindings(value)) linkBindings(target, source);
+        for (const source of actualizeSources(value, sourceBindings(value))) {
+          linkBindings(target, source);
+        }
         return;
       }
       const patternItems = ts.isArrayBindingPattern(pattern) || ts.isArrayLiteralExpression(pattern)
@@ -333,26 +369,35 @@ export function createStaticEvaluator(sourceFile) {
       }
     }
 
-    function resolvedContainer(expression) {
+    function staticKey(expression, seen = new Set()) {
+      if (!preprocessStep() || seen.size > MAX_DEPTH) return null;
       const current = unwrapExpression(expression);
-      if (ts.isCallExpression(current)) return current;
-      if (!ts.isIdentifier(current)) return current;
+      if (ts.isStringLiteral(current) || ts.isNumericLiteral(current)) return current.text;
+      if (!ts.isIdentifier(current)) return null;
       const binding = declaration(current, current.text);
-      return binding && ts.isVariableDeclaration(binding) && binding.initializer
-        ? unwrapExpression(binding.initializer) : current;
+      if (!binding || seen.has(binding) || !ts.isVariableDeclaration(binding) ||
+          !binding.initializer || !(binding.parent.flags & ts.NodeFlags.Const)) return null;
+      return staticKey(binding.initializer, new Set(seen).add(binding));
     }
 
-    function sourceBindings(expression, seen = new Set()) {
-      if (!preprocessStep()) return [];
+    function valueExpressions(expression, state = {
+      bindings: new Set(), calls: new Set(), depth: 0,
+    }) {
+      if (!expression || !preprocessStep() || state.depth > MAX_DEPTH) return [];
       const current = unwrapExpression(expression);
+      const next = overrides => ({ ...state, ...overrides, depth: state.depth + 1 });
       if (ts.isIdentifier(current)) {
         const binding = declaration(current, current.text);
-        return binding ? [binding] : [];
+        if (!binding || state.bindings.has(binding) || !ts.isVariableDeclaration(binding) ||
+            !binding.initializer || !(binding.parent.flags & ts.NodeFlags.Const)) return [current];
+        return valueExpressions(binding.initializer, next({
+          bindings: new Set(state.bindings).add(binding),
+        }));
       }
       if (ts.isConditionalExpression(current)) {
         return [
-          ...sourceBindings(current.whenTrue, seen),
-          ...sourceBindings(current.whenFalse, seen),
+          ...valueExpressions(current.whenTrue, next({})),
+          ...valueExpressions(current.whenFalse, next({})),
         ];
       }
       if (ts.isBinaryExpression(current) && [
@@ -360,62 +405,147 @@ export function createStaticEvaluator(sourceFile) {
         ts.SyntaxKind.BarBarToken,
         ts.SyntaxKind.QuestionQuestionToken,
       ].includes(current.operatorToken.kind)) {
-        return [...sourceBindings(current.left, seen), ...sourceBindings(current.right, seen)];
+        return [
+          ...valueExpressions(current.left, next({})),
+          ...valueExpressions(current.right, next({})),
+        ];
+      }
+      if (ts.isCallExpression(current)) {
+        if (state.calls.has(current)) return [];
+        const fn = localFunction(current);
+        if (!fn) return [current];
+        const callState = next({ calls: new Set(state.calls).add(current) });
+        return selectedReturnExpressions(fn, current).flatMap(returned =>
+          valueExpressions(returned, callState));
       }
       if (ts.isElementAccessExpression(current) && current.argumentExpression) {
-        const container = resolvedContainer(current.expression);
-        const key = unwrapExpression(current.argumentExpression);
-        if (ts.isCallExpression(container)) {
-          const fn = localFunction(container);
-          return fn ? selectedReturnExpressions(fn, container).flatMap(returned =>
-            sourceBindings(ts.factory.createElementAccessExpression(returned, key), seen)) : [];
-        }
-        if (ts.isArrayLiteralExpression(container) && ts.isNumericLiteral(key)) {
-          const element = container.elements[Number(key.text)];
-          return element ? sourceBindings(element, seen) : [];
-        }
-        if (ts.isObjectLiteralExpression(container) &&
-            (ts.isStringLiteral(key) || ts.isNumericLiteral(key))) {
-          const property = container.properties.find(item =>
-            ts.isPropertyAssignment(item) &&
-            (ts.isIdentifier(item.name) || ts.isStringLiteral(item.name) ||
-             ts.isNumericLiteral(item.name)) && item.name.text === key.text);
-          return property && ts.isPropertyAssignment(property)
-            ? sourceBindings(property.initializer, seen) : [];
-        }
-        return [];
-      }
-      if (ts.isPropertyAccessExpression(current)) {
-        const container = resolvedContainer(current.expression);
-        if (ts.isCallExpression(container)) {
-          const fn = localFunction(container);
-          return fn ? selectedReturnExpressions(fn, container).flatMap(returned => {
-            const resolved = resolvedContainer(returned);
-            if (!ts.isObjectLiteralExpression(resolved)) return [];
+        const key = staticKey(current.argumentExpression);
+        if (key === null) return [];
+        return valueExpressions(current.expression, next({})).flatMap(container => {
+          const resolved = unwrapExpression(container);
+          if (ts.isArrayLiteralExpression(resolved)) {
+            const element = resolved.elements[Number(key)];
+            return element ? valueExpressions(element, next({})) : [];
+          }
+          if (ts.isObjectLiteralExpression(resolved)) {
             const property = resolved.properties.find(item =>
               (ts.isPropertyAssignment(item) || ts.isShorthandPropertyAssignment(item)) &&
-              (ts.isIdentifier(item.name) || ts.isStringLiteral(item.name)) &&
-              item.name.text === current.name.text);
+              (ts.isIdentifier(item.name) || ts.isStringLiteral(item.name) ||
+               ts.isNumericLiteral(item.name)) && item.name.text === key);
             if (property && ts.isPropertyAssignment(property)) {
-              return sourceBindings(property.initializer, seen);
+              return valueExpressions(property.initializer, next({}));
             }
             if (property && ts.isShorthandPropertyAssignment(property)) {
-              return sourceBindings(property.name, seen);
+              return valueExpressions(property.name, next({}));
             }
-            return [];
-          }) : [];
-        }
-        if (ts.isObjectLiteralExpression(container)) {
-          const property = container.properties.find(item =>
-            ts.isPropertyAssignment(item) &&
+          }
+          return [];
+        });
+      }
+      if (ts.isPropertyAccessExpression(current)) {
+        return valueExpressions(current.expression, next({})).flatMap(container => {
+          const resolved = unwrapExpression(container);
+          if (!ts.isObjectLiteralExpression(resolved)) return [];
+          const property = resolved.properties.find(item =>
+            (ts.isPropertyAssignment(item) || ts.isShorthandPropertyAssignment(item)) &&
             (ts.isIdentifier(item.name) || ts.isStringLiteral(item.name)) &&
             item.name.text === current.name.text);
-          return property && ts.isPropertyAssignment(property)
-            ? sourceBindings(property.initializer, seen) : [];
-        }
-        return [];
+          if (property && ts.isPropertyAssignment(property)) {
+            return valueExpressions(property.initializer, next({}));
+          }
+          if (property && ts.isShorthandPropertyAssignment(property)) {
+            return valueExpressions(property.name, next({}));
+          }
+          return [];
+        });
+      }
+      return [current];
+    }
+
+    function sourceBindings(expression) {
+      if (!preprocessStep()) return [];
+      const current = unwrapExpression(expression);
+      if (ts.isIdentifier(current)) {
+        const binding = declaration(current, current.text);
+        return binding ? [binding] : [];
+      }
+      if (ts.isElementAccessExpression(current) && current.argumentExpression) {
+        const key = staticKey(current.argumentExpression);
+        if (key === null) return [];
+        return [...new Set(valueExpressions(current.expression).flatMap(container => {
+          const resolved = unwrapExpression(container);
+          if (ts.isArrayLiteralExpression(resolved)) {
+            const element = resolved.elements[Number(key)];
+            return element ? sourceBindings(element) : [];
+          }
+          if (!ts.isObjectLiteralExpression(resolved)) return [];
+          const property = resolved.properties.find(item =>
+            (ts.isPropertyAssignment(item) || ts.isShorthandPropertyAssignment(item)) &&
+            (ts.isIdentifier(item.name) || ts.isStringLiteral(item.name) ||
+             ts.isNumericLiteral(item.name)) && item.name.text === key);
+          if (property && ts.isPropertyAssignment(property)) {
+            return sourceBindings(property.initializer);
+          }
+          if (property && ts.isShorthandPropertyAssignment(property)) {
+            return sourceBindings(property.name);
+          }
+          return [];
+        }))];
+      }
+      if (ts.isPropertyAccessExpression(current)) {
+        return [...new Set(valueExpressions(current.expression).flatMap(container => {
+          const resolved = unwrapExpression(container);
+          if (!ts.isObjectLiteralExpression(resolved)) return [];
+          const property = resolved.properties.find(item =>
+            (ts.isPropertyAssignment(item) || ts.isShorthandPropertyAssignment(item)) &&
+            (ts.isIdentifier(item.name) || ts.isStringLiteral(item.name)) &&
+            item.name.text === current.name.text);
+          if (property && ts.isPropertyAssignment(property)) {
+            return sourceBindings(property.initializer);
+          }
+          if (property && ts.isShorthandPropertyAssignment(property)) {
+            return sourceBindings(property.name);
+          }
+          return [];
+        }))];
+      }
+      if (ts.isConditionalExpression(current) ||
+          (ts.isBinaryExpression(current) && [
+            ts.SyntaxKind.AmpersandAmpersandToken,
+            ts.SyntaxKind.BarBarToken,
+            ts.SyntaxKind.QuestionQuestionToken,
+          ].includes(current.operatorToken.kind))) {
+        return [...new Set(valueExpressions(current).flatMap(value => {
+          const resolved = unwrapExpression(value);
+          if (resolved === current) return [];
+          return sourceBindings(resolved);
+        }))];
       }
       return [];
+    }
+
+    function actualizeSources(expression, sources) {
+      const calls = [];
+      function inspect(current) {
+        if (!preprocessStep()) return;
+        if (ts.isCallExpression(current) && localFunction(current)) calls.push(current);
+        ts.forEachChild(current, inspect);
+      }
+      inspect(expression);
+      const actual = new Set();
+      for (const source of sources) {
+        let replaced = false;
+        for (const call of calls) {
+          const fn = localFunction(call);
+          const index = fn?.parameters.indexOf(source) ?? -1;
+          if (index >= 0 && call.arguments[index]) {
+            sourceBindings(call.arguments[index]).forEach(binding => actual.add(binding));
+            replaced = true;
+          }
+        }
+        if (!replaced) actual.add(source);
+      }
+      return [...actual];
     }
 
     const returnBindingCache = new Map();
@@ -459,13 +589,28 @@ export function createStaticEvaluator(sourceFile) {
       }
       if (ts.isBinaryExpression(current)) {
         const left = concretePrimitive(fn, call, current.left, resolveParameters, seen);
+        if (!left.known) return { known: false };
+        if (current.operatorToken.kind === ts.SyntaxKind.AmpersandAmpersandToken && !left.value) {
+          return left;
+        }
+        if (current.operatorToken.kind === ts.SyntaxKind.BarBarToken && left.value) return left;
+        if (current.operatorToken.kind === ts.SyntaxKind.QuestionQuestionToken &&
+            left.value !== null && left.value !== undefined) return left;
         const right = concretePrimitive(fn, call, current.right, resolveParameters, seen);
-        if (!left.known || !right.known) return { known: false };
+        if (!right.known) return { known: false };
         const operations = new Map([
+          [ts.SyntaxKind.PlusToken, (a, b) => a + b],
+          [ts.SyntaxKind.MinusToken, (a, b) => a - b],
+          [ts.SyntaxKind.AsteriskToken, (a, b) => a * b],
+          [ts.SyntaxKind.SlashToken, (a, b) => a / b],
           [ts.SyntaxKind.EqualsEqualsEqualsToken, (a, b) => a === b],
           [ts.SyntaxKind.ExclamationEqualsEqualsToken, (a, b) => a !== b],
           [ts.SyntaxKind.EqualsEqualsToken, (a, b) => a == b],
           [ts.SyntaxKind.ExclamationEqualsToken, (a, b) => a != b],
+          [ts.SyntaxKind.LessThanToken, (a, b) => a < b],
+          [ts.SyntaxKind.LessThanEqualsToken, (a, b) => a <= b],
+          [ts.SyntaxKind.GreaterThanToken, (a, b) => a > b],
+          [ts.SyntaxKind.GreaterThanEqualsToken, (a, b) => a >= b],
           [ts.SyntaxKind.AmpersandAmpersandToken, (a, b) => a && b],
           [ts.SyntaxKind.BarBarToken, (a, b) => a || b],
           [ts.SyntaxKind.QuestionQuestionToken, (a, b) => a ?? b],
@@ -581,11 +726,7 @@ export function createStaticEvaluator(sourceFile) {
         linkPattern(current.name, current.initializer);
         if (ts.isIdentifier(current.name) && ts.isCallExpression(current.initializer)) {
           const fn = localFunction(current.initializer);
-          if (fn) {
-            for (const binding of returnedBindings(fn, current.initializer)) {
-              linkBindings(current, binding);
-            }
-          }
+          if (fn) pendingReturnLinks.push({ target: current, fn, call: current.initializer });
         }
       } else if (ts.isBinaryExpression(current) &&
           current.operatorToken.kind === ts.SyntaxKind.EqualsToken) {
@@ -593,54 +734,88 @@ export function createStaticEvaluator(sourceFile) {
         if (ts.isCallExpression(current.right)) {
           const fn = localFunction(current.right);
           const target = rootBinding(current.left);
-          if (fn) {
-            for (const binding of returnedBindings(fn, current.right)) linkBindings(target, binding);
-          }
+          if (fn) pendingReturnLinks.push({ target, fn, call: current.right });
         }
       } else if (ts.isCallExpression(current)) {
         const fn = localFunction(current);
-        if (fn) {
-          fn.parameters.forEach((parameter, index) => {
-            if (!current.arguments[index]) return;
-            const binding = rootBinding(current.arguments[index]);
-            linkBindings(parameter, binding);
-          });
-        }
+        if (fn) pendingCalls.push({ fn, call: current });
         if (ts.isPropertyAccessExpression(current.expression) &&
             current.expression.name.text === 'map' && current.arguments[0]) {
-          const callback = functionExpression(current.arguments[0]);
-          const parameter = callback?.parameters[0];
-          if (callback && parameter && ts.isIdentifier(parameter.name)) {
-            for (const binding of containedBindings(current.expression.expression)) {
-              linkBindings(parameter, binding);
-            }
-          }
+          pendingMapCalls.push({
+            callbacks: functionExpressions(current.arguments[0]),
+            receiver: current.expression.expression,
+          });
         }
       }
       ts.forEachChild(current, visit);
     }
     visit(node);
+
+    function aliasClosure(start) {
+      const closure = new Set();
+      const pending = [start];
+      while (pending.length > 0) {
+        if (!preprocessStep()) break;
+        const binding = pending.pop();
+        if (!binding || closure.has(binding)) continue;
+        closure.add(binding);
+        for (const adjacent of aliasEdges.get(binding) ?? []) pending.push(adjacent);
+      }
+      return closure;
+    }
+
+    for (const { target, fn, call } of pendingReturnLinks) {
+      for (const returned of returnedBindings(fn, call)) {
+        const closure = aliasClosure(returned);
+        const parameterIndexes = fn.parameters.flatMap((parameter, index) =>
+          closure.has(parameter) ? [index] : []);
+        if (parameterIndexes.length === 0) {
+          linkBindings(target, returned);
+          continue;
+        }
+        for (const index of parameterIndexes) {
+          if (!call.arguments[index]) continue;
+          for (const actual of sourceBindings(call.arguments[index])) linkBindings(target, actual);
+        }
+      }
+    }
+
+    for (const { fn, call } of pendingCalls) {
+      fn.parameters.forEach((parameter, index) => {
+        if (!call.arguments[index]) return;
+        for (const actual of sourceBindings(call.arguments[index])) {
+          linkDirected(parameter, actual);
+        }
+      });
+    }
+
+    for (const { callbacks, receiver } of pendingMapCalls) {
+      const receiverBindings = containedBindings(receiver);
+      for (const callback of callbacks) {
+        const parameter = callback.parameters[0];
+        if (!parameter || !ts.isIdentifier(parameter.name)) continue;
+        for (const binding of receiverBindings) linkDirected(parameter, binding);
+      }
+    }
   }
   propagateMutatedArguments(sourceFile);
 
-  const visitedAliasBindings = new Set();
-  for (const start of new Set([...aliasEdges.keys(), ...mutatedBindings])) {
-    if (visitedAliasBindings.has(start)) continue;
-    const component = [];
-    const pendingBindings = [start];
-    while (pendingBindings.length > 0) {
-      if (!preprocessStep()) break;
-      const binding = pendingBindings.pop();
-      if (visitedAliasBindings.has(binding)) continue;
-      visitedAliasBindings.add(binding);
-      component.push(binding);
-      for (const adjacent of aliasEdges.get(binding) ?? []) pendingBindings.push(adjacent);
-    }
-    if (!component.some(binding => mutatedBindings.has(binding))) continue;
-    const texts = new Set(component.flatMap(binding => [...(mutationTexts.get(binding) ?? [])]));
-    for (const binding of component) {
-      mutatedBindings.add(binding);
-      mutationTexts.set(binding, new Set(texts));
+  const pendingTaint = [...mutatedBindings];
+  while (pendingTaint.length > 0) {
+    if (!preprocessStep()) break;
+    const source = pendingTaint.pop();
+    const sourceTexts = mutationTexts.get(source) ?? new Set();
+    const targets = new Set([
+      ...(aliasEdges.get(source) ?? []),
+      ...(directedTaintEdges.get(source) ?? []),
+    ]);
+    for (const target of targets) {
+      const targetTexts = mutationTexts.get(target) ?? new Set();
+      const nextTexts = new Set([...targetTexts, ...sourceTexts]);
+      const changed = !mutatedBindings.has(target) || nextTexts.size !== targetTexts.size;
+      mutatedBindings.add(target);
+      mutationTexts.set(target, nextTexts);
+      if (changed) pendingTaint.push(target);
     }
   }
 
