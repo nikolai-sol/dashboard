@@ -273,18 +273,105 @@ export function createStaticEvaluator(sourceFile) {
     return null;
   }
 
+  function staticPrimitiveValue(expression, seen = new Set(), depth = 0) {
+    if (!preprocessStep() || depth > MAX_DEPTH) return { known: false };
+    const current = unwrapExpression(expression);
+    if (current.kind === ts.SyntaxKind.TrueKeyword) return { known: true, value: true };
+    if (current.kind === ts.SyntaxKind.FalseKeyword) return { known: true, value: false };
+    if (current.kind === ts.SyntaxKind.NullKeyword) return { known: true, value: null };
+    if (ts.isStringLiteral(current) || ts.isNoSubstitutionTemplateLiteral(current)) {
+      return { known: true, value: current.text };
+    }
+    if (ts.isNumericLiteral(current)) return { known: true, value: Number(current.text) };
+    if (ts.isIdentifier(current)) {
+      const binding = declaration(current, current.text);
+      if (!binding || seen.has(binding) || !ts.isVariableDeclaration(binding) ||
+          !binding.initializer || !(binding.parent.flags & ts.NodeFlags.Const)) {
+        return { known: false };
+      }
+      return staticPrimitiveValue(
+        binding.initializer, new Set(seen).add(binding), depth + 1,
+      );
+    }
+    if (ts.isPrefixUnaryExpression(current)) {
+      const operand = staticPrimitiveValue(current.operand, seen, depth + 1);
+      if (!operand.known) return operand;
+      if (current.operator === ts.SyntaxKind.ExclamationToken) {
+        return { known: true, value: !operand.value };
+      }
+      if (current.operator === ts.SyntaxKind.MinusToken && typeof operand.value === 'number') {
+        return { known: true, value: -operand.value };
+      }
+      return { known: false };
+    }
+    if (!ts.isBinaryExpression(current)) return { known: false };
+    const left = staticPrimitiveValue(current.left, seen, depth + 1);
+    if (!left.known) return { known: false };
+    if (current.operatorToken.kind === ts.SyntaxKind.AmpersandAmpersandToken && !left.value) {
+      return left;
+    }
+    if (current.operatorToken.kind === ts.SyntaxKind.BarBarToken && left.value) return left;
+    if (current.operatorToken.kind === ts.SyntaxKind.QuestionQuestionToken &&
+        left.value !== null && left.value !== undefined) return left;
+    const right = staticPrimitiveValue(current.right, seen, depth + 1);
+    if (!right.known) return { known: false };
+    const operations = new Map([
+      [ts.SyntaxKind.PlusToken, (a, b) => a + b],
+      [ts.SyntaxKind.MinusToken, (a, b) => a - b],
+      [ts.SyntaxKind.AsteriskToken, (a, b) => a * b],
+      [ts.SyntaxKind.SlashToken, (a, b) => a / b],
+      [ts.SyntaxKind.EqualsEqualsEqualsToken, (a, b) => a === b],
+      [ts.SyntaxKind.ExclamationEqualsEqualsToken, (a, b) => a !== b],
+      [ts.SyntaxKind.EqualsEqualsToken, (a, b) => a == b],
+      [ts.SyntaxKind.ExclamationEqualsToken, (a, b) => a != b],
+      [ts.SyntaxKind.LessThanToken, (a, b) => a < b],
+      [ts.SyntaxKind.LessThanEqualsToken, (a, b) => a <= b],
+      [ts.SyntaxKind.GreaterThanToken, (a, b) => a > b],
+      [ts.SyntaxKind.GreaterThanEqualsToken, (a, b) => a >= b],
+      [ts.SyntaxKind.AmpersandAmpersandToken, (a, b) => a && b],
+      [ts.SyntaxKind.BarBarToken, (a, b) => a || b],
+      [ts.SyntaxKind.QuestionQuestionToken, (a, b) => a ?? b],
+    ]);
+    return operations.has(current.operatorToken.kind)
+      ? { known: true, value: operations.get(current.operatorToken.kind)(left.value, right.value) }
+      : { known: false };
+  }
+
   function functionExpressions(expression, seen = new Set()) {
     const current = unwrapExpression(expression);
     if (ts.isArrowFunction(current) || ts.isFunctionExpression(current)) return [current];
-    if (ts.isConditionalExpression(current) ||
-        (ts.isBinaryExpression(current) && [
+    if (ts.isConditionalExpression(current)) {
+      const condition = staticPrimitiveValue(current.condition);
+      if (condition.known) {
+        return functionExpressions(condition.value ? current.whenTrue : current.whenFalse, seen);
+      }
+      return [...new Set([
+        ...functionExpressions(current.whenTrue, seen),
+        ...functionExpressions(current.whenFalse, seen),
+      ])];
+    }
+    if (ts.isBinaryExpression(current) && [
           ts.SyntaxKind.AmpersandAmpersandToken,
           ts.SyntaxKind.BarBarToken,
           ts.SyntaxKind.QuestionQuestionToken,
-        ].includes(current.operatorToken.kind))) {
-      const branches = ts.isConditionalExpression(current)
-        ? [current.whenTrue, current.whenFalse] : [current.left, current.right];
-      return [...new Set(branches.flatMap(branch => functionExpressions(branch, seen)))];
+        ].includes(current.operatorToken.kind)) {
+      const left = staticPrimitiveValue(current.left);
+      if (left.known) {
+        if (current.operatorToken.kind === ts.SyntaxKind.AmpersandAmpersandToken) {
+          return functionExpressions(left.value ? current.right : current.left, seen);
+        }
+        if (current.operatorToken.kind === ts.SyntaxKind.BarBarToken) {
+          return functionExpressions(left.value ? current.left : current.right, seen);
+        }
+        if (left.value !== null && left.value !== undefined) {
+          return functionExpressions(current.left, seen);
+        }
+        return functionExpressions(current.right, seen);
+      }
+      return [...new Set([
+        ...functionExpressions(current.left, seen),
+        ...functionExpressions(current.right, seen),
+      ])];
     }
     if (!ts.isIdentifier(current)) return [];
     const binding = declaration(current, current.text);
@@ -315,13 +402,59 @@ export function createStaticEvaluator(sourceFile) {
       directedTaintEdges.get(left).add(right);
     }
 
+    function selectedAliasExpressions(expression) {
+      if (!preprocessStep()) return [];
+      const current = unwrapExpression(expression);
+      if (ts.isConditionalExpression(current)) {
+        const condition = staticPrimitiveValue(current.condition);
+        if (condition.known) {
+          return selectedAliasExpressions(condition.value ? current.whenTrue : current.whenFalse);
+        }
+        return [
+          ...selectedAliasExpressions(current.whenTrue),
+          ...selectedAliasExpressions(current.whenFalse),
+        ];
+      }
+      if (ts.isBinaryExpression(current) && [
+        ts.SyntaxKind.AmpersandAmpersandToken,
+        ts.SyntaxKind.BarBarToken,
+        ts.SyntaxKind.QuestionQuestionToken,
+      ].includes(current.operatorToken.kind)) {
+        const left = staticPrimitiveValue(current.left);
+        if (left.known) {
+          if (current.operatorToken.kind === ts.SyntaxKind.AmpersandAmpersandToken) {
+            return selectedAliasExpressions(left.value ? current.right : current.left);
+          }
+          if (current.operatorToken.kind === ts.SyntaxKind.BarBarToken) {
+            return selectedAliasExpressions(left.value ? current.left : current.right);
+          }
+          return selectedAliasExpressions(left.value !== null && left.value !== undefined
+            ? current.left : current.right);
+        }
+        return [
+          ...selectedAliasExpressions(current.left),
+          ...selectedAliasExpressions(current.right),
+        ];
+      }
+      return [current];
+    }
+
     function linkPattern(pattern, expression) {
       if (!preprocessStep()) return;
       const value = unwrapExpression(expression);
       if (ts.isIdentifier(pattern)) {
         const target = declaration(pattern, pattern.text);
-        for (const source of actualizeSources(value, sourceBindings(value))) {
-          linkBindings(target, source);
+        for (const candidate of selectedAliasExpressions(value)) {
+          if (ts.isCallExpression(candidate)) {
+            const fn = localFunction(candidate);
+            if (fn) {
+              pendingReturnLinks.push({ target, fn, call: candidate });
+              continue;
+            }
+          }
+          for (const source of actualizeSources(candidate, sourceBindings(candidate))) {
+            linkBindings(target, source);
+          }
         }
         return;
       }
@@ -515,7 +648,7 @@ export function createStaticEvaluator(sourceFile) {
             ts.SyntaxKind.BarBarToken,
             ts.SyntaxKind.QuestionQuestionToken,
           ].includes(current.operatorToken.kind))) {
-        return [...new Set(valueExpressions(current).flatMap(value => {
+        return [...new Set(selectedAliasExpressions(current).flatMap(value => {
           const resolved = unwrapExpression(value);
           if (resolved === current) return [];
           return sourceBindings(resolved);
