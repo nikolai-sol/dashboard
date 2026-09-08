@@ -64,7 +64,7 @@ function collectStrings(value, strings, unknowns) {
     return;
   }
   if (value.kind === 'unknown') {
-    if (value.reason !== 'INAPPLICABLE_VARIANT') unknowns.push(value);
+    unknowns.push(value);
     return;
   }
   if (value.kind === 'array') {
@@ -95,6 +95,17 @@ export function extractStaticSql(source, filename) {
   const joinedDeclarations = new Set();
   const forwardedSinkCalls = new Set();
   const forwardedSqlCalls = new Map();
+  const explicitlyExportedNames = new Set();
+  for (const statement of sourceFile.statements) {
+    if (ts.isExportDeclaration(statement) && !statement.moduleSpecifier &&
+        statement.exportClause && ts.isNamedExports(statement.exportClause)) {
+      for (const element of statement.exportClause.elements) {
+        explicitlyExportedNames.add((element.propertyName ?? element.name).text);
+      }
+    } else if (ts.isExportAssignment(statement) && ts.isIdentifier(statement.expression)) {
+      explicitlyExportedNames.add(statement.expression.text);
+    }
+  }
 
   function declaration(node, name) {
     for (let scope = node.parent; scope; scope = scope.parent) {
@@ -207,8 +218,13 @@ export function extractStaticSql(source, filename) {
     const strings = [];
     const unknowns = [];
     analysis.variants.forEach(variant => collectStrings(variant.value, strings, unknowns));
-    if (unknowns.length > 0 && (sqlSink || hasSqlRelevance(expression))) {
-      const first = unknowns[0];
+    const blockingUnknowns = unknowns.filter(value =>
+      value.reason !== 'INAPPLICABLE_VARIANT' || strings.length === 0);
+    const unresolvedSqlRelevance = blockingUnknowns.some(value =>
+      value.staticText && SQL_RELEVANCE.test(value.staticText));
+    if (blockingUnknowns.length > 0 &&
+        (sqlSink || unresolvedSqlRelevance || hasSqlRelevance(expression))) {
+      const first = blockingUnknowns[0];
       const reason = first.reason === 'ANALYSIS_LIMIT'
         ? 'ANALYSIS_LIMIT'
         : sqlSink ? 'UNRESOLVED_SQL' : 'UNSUPPORTED_EXPRESSION';
@@ -222,13 +238,81 @@ export function extractStaticSql(source, filename) {
     strings.forEach(statement => statements.add(statement));
   }
 
+  function forwardedMapReceiver(call, argument) {
+    const unwrapped = unwrapExpression(argument);
+    if (!ts.isIdentifier(unwrapped)) return null;
+    for (let parent = call.parent; parent; parent = parent.parent) {
+      if (!ts.isFunctionLike(parent)) continue;
+      const parameterIndex = parent.parameters.findIndex(parameter =>
+        ts.isIdentifier(parameter.name) && parameter.name.text === unwrapped.text);
+      const mapCall = parent.parent;
+      if (parameterIndex === 0 && ts.isCallExpression(mapCall) &&
+          mapCall.arguments[0] === parent && ts.isPropertyAccessExpression(mapCall.expression) &&
+          mapCall.expression.name.text === 'map') {
+        return mapCall.expression.expression;
+      }
+      return null;
+    }
+    return null;
+  }
+
+  function forwardedSqlExpression(call) {
+    const argument = forwardedSqlCalls.get(call);
+    return forwardedMapReceiver(call, argument) ?? argument;
+  }
+
+  function collectExplicitSinks(node) {
+    if (forwardedSqlCalls.has(node)) {
+      add(forwardedSqlExpression(node), true);
+    } else if (ts.isCallExpression(node) && ts.isPropertyAccessExpression(node.expression) &&
+        ['execute', 'query'].includes(node.expression.name.text) && node.arguments[0] &&
+        !forwardedSinkCalls.has(node)) {
+      add(node.arguments[0], true);
+    }
+    ts.forEachChild(node, collectExplicitSinks);
+  }
+  collectExplicitSinks(sourceFile);
+
+  function containsExplicitSink(node) {
+    let found = false;
+    function visit(current) {
+      if (found) return;
+      if (ts.isCallExpression(current) && ts.isPropertyAccessExpression(current.expression) &&
+          ['execute', 'query'].includes(current.expression.name.text)) {
+        found = true;
+        return;
+      }
+      ts.forEachChild(current, visit);
+    }
+    visit(node);
+    return found;
+  }
+
+  function isExported(binding) {
+    if (binding.modifiers?.some(modifier => modifier.kind === ts.SyntaxKind.ExportKeyword)) {
+      return true;
+    }
+    if (ts.isVariableDeclaration(binding)) {
+      if (ts.isIdentifier(binding.name) && explicitlyExportedNames.has(binding.name.text)) {
+        return true;
+      }
+      const statement = binding.parent?.parent;
+      return Boolean(statement?.modifiers?.some(
+        modifier => modifier.kind === ts.SyntaxKind.ExportKeyword,
+      ));
+    }
+    if (ts.isFunctionDeclaration(binding) && binding.name &&
+        explicitlyExportedNames.has(binding.name.text)) return true;
+    return false;
+  }
+
   function collectCandidates(node, skipReturns = false) {
     if (forwardedSqlCalls.has(node)) {
-      add(forwardedSqlCalls.get(node), true);
+      add(forwardedSqlExpression(node), true);
       return;
     }
     if (ts.isFunctionDeclaration(node) && node.body) {
-      collectCandidates(node.body, calledFunctions.has(node));
+      collectCandidates(node.body, calledFunctions.has(node) && !isExported(node));
       return;
     }
     if (ts.isVariableDeclaration(node) && node.initializer) {
@@ -239,11 +323,11 @@ export function extractStaticSql(source, filename) {
         return;
       }
       if (!ts.isIdentifier(node.name)) {
-        collectCandidates(initializer, skipReturns);
+        if (!containsExplicitSink(initializer)) add(initializer);
         return;
       }
       if (ts.isArrowFunction(initializer) || ts.isFunctionExpression(initializer)) {
-        const consumed = calledFunctions.has(node);
+        const consumed = calledFunctions.has(node) && !isExported(node);
         if (ts.isBlock(initializer.body)) collectCandidates(initializer.body, consumed);
         else if (!consumed) add(initializer.body);
       } else {

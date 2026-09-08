@@ -430,6 +430,7 @@ test('private SQL is rejected in every supported representation', () => {
     `export const queries=[${JSON.stringify(privateSql)}];`,
     `const rows=[0]; export const queries=rows.map(()=>${JSON.stringify(privateSql)});`,
     `export const query={sql:${JSON.stringify(privateSql)}};`,
+    `const [queries]=[[${JSON.stringify(privateSql)}]];`,
   ];
   try {
     for (const source of sources) {

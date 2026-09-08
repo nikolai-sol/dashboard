@@ -36,16 +36,31 @@ function stringValue(text, node) {
   return { kind: 'string', text };
 }
 
+function concatenateTexts(parts, node, separator = '') {
+  let total = separator.length * Math.max(0, parts.length - 1);
+  for (const part of parts) {
+    if (part.length > MAX_STRING_LENGTH - total) {
+      throw new StaticFailure('ANALYSIS_LIMIT', node);
+    }
+    total += part.length;
+  }
+  return parts.join(separator);
+}
+
 function scalarValue(value) {
   return { kind: 'scalar', value };
 }
 
-function unknownValue(reason, node) {
-  return {
+function unknownValue(reason, node, decisionKey = null, staticText = '') {
+  if (staticText.length > MAX_STRING_LENGTH) throw new StaticFailure('ANALYSIS_LIMIT', node);
+  const value = {
     kind: 'unknown',
     reason,
     nodeStart: Math.max(0, node?.getStart?.() ?? node?.pos ?? 0),
   };
+  if (decisionKey !== null) value.decisionKey = decisionKey;
+  if (staticText.length > 0) value.staticText = staticText;
+  return value;
 }
 
 function primitive(value, node) {
@@ -55,7 +70,14 @@ function primitive(value, node) {
 }
 
 function choiceKey(value) {
-  return `${value.reason}:${value.nodeStart}`;
+  return value.decisionKey ?? `${value.reason}:${value.nodeStart}`;
+}
+
+function staticText(value) {
+  if (value.kind === 'string') return value.text;
+  if (value.kind === 'scalar') return String(value.value);
+  if (value.kind === 'unknown') return value.staticText ?? '';
+  return '';
 }
 
 /**
@@ -91,6 +113,95 @@ export function createStaticEvaluator(sourceFile) {
       if (parent === ancestor) return true;
     }
     return false;
+  }
+
+  const mutatedBindings = new Set();
+  const mutationMethods = new Set([
+    'copyWithin', 'delete', 'fill', 'pop', 'push', 'reverse', 'set', 'shift',
+    'sort', 'splice', 'unshift', 'clear',
+  ]);
+  const assignmentOperators = new Set([
+    ts.SyntaxKind.EqualsToken,
+    ts.SyntaxKind.PlusEqualsToken,
+    ts.SyntaxKind.MinusEqualsToken,
+    ts.SyntaxKind.AsteriskEqualsToken,
+    ts.SyntaxKind.AsteriskAsteriskEqualsToken,
+    ts.SyntaxKind.SlashEqualsToken,
+    ts.SyntaxKind.PercentEqualsToken,
+    ts.SyntaxKind.LessThanLessThanEqualsToken,
+    ts.SyntaxKind.GreaterThanGreaterThanEqualsToken,
+    ts.SyntaxKind.GreaterThanGreaterThanGreaterThanEqualsToken,
+    ts.SyntaxKind.AmpersandEqualsToken,
+    ts.SyntaxKind.BarEqualsToken,
+    ts.SyntaxKind.CaretEqualsToken,
+    ts.SyntaxKind.AmpersandAmpersandEqualsToken,
+    ts.SyntaxKind.BarBarEqualsToken,
+    ts.SyntaxKind.QuestionQuestionEqualsToken,
+  ]);
+
+  function rootBinding(expression) {
+    const node = unwrapExpression(expression);
+    if (ts.isIdentifier(node)) return declaration(node, node.text);
+    if (ts.isPropertyAccessExpression(node) || ts.isElementAccessExpression(node)) {
+      return rootBinding(node.expression);
+    }
+    return null;
+  }
+
+  function collectDirectMutations(node) {
+    if (ts.isCallExpression(node) && ts.isPropertyAccessExpression(node.expression) &&
+        mutationMethods.has(node.expression.name.text)) {
+      const binding = rootBinding(node.expression.expression);
+      if (binding) mutatedBindings.add(binding);
+    } else if (ts.isBinaryExpression(node) && assignmentOperators.has(node.operatorToken.kind)) {
+      const binding = rootBinding(node.left);
+      if (binding) mutatedBindings.add(binding);
+    } else if ((ts.isPrefixUnaryExpression(node) || ts.isPostfixUnaryExpression(node)) &&
+        [ts.SyntaxKind.PlusPlusToken, ts.SyntaxKind.MinusMinusToken].includes(node.operator)) {
+      const binding = rootBinding(node.operand);
+      if (binding) mutatedBindings.add(binding);
+    } else if (ts.isDeleteExpression(node)) {
+      const binding = rootBinding(node.expression);
+      if (binding) mutatedBindings.add(binding);
+    }
+    ts.forEachChild(node, collectDirectMutations);
+  }
+  collectDirectMutations(sourceFile);
+
+  function localFunction(call) {
+    if (!ts.isIdentifier(call.expression)) return null;
+    const binding = declaration(call.expression, call.expression.text);
+    if (binding && ts.isFunctionDeclaration(binding)) return binding;
+    if (binding && ts.isVariableDeclaration(binding) && binding.initializer &&
+        (ts.isArrowFunction(binding.initializer) || ts.isFunctionExpression(binding.initializer))) {
+      return binding.initializer;
+    }
+    return null;
+  }
+
+  function propagateMutatedArguments(node) {
+    let changed = false;
+    function visit(current) {
+      if (ts.isCallExpression(current)) {
+        const fn = localFunction(current);
+        if (fn) {
+          fn.parameters.forEach((parameter, index) => {
+            if (!mutatedBindings.has(parameter) || !current.arguments[index]) return;
+            const binding = rootBinding(current.arguments[index]);
+            if (binding && !mutatedBindings.has(binding)) {
+              mutatedBindings.add(binding);
+              changed = true;
+            }
+          });
+        }
+      }
+      ts.forEachChild(current, visit);
+    }
+    visit(node);
+    return changed;
+  }
+  while (propagateMutatedArguments(sourceFile)) {
+    // Reach a fixed point for helpers that forward a mutable container.
   }
 
   function evaluate(expression) {
@@ -197,10 +308,10 @@ export function createStaticEvaluator(sourceFile) {
           return Boolean(parameter) && !returnReferences(receiver.text);
         }
 
-        function statements(block) {
-          count(block, depth + 1);
+        function statements(block, statementDepth) {
+          count(block, statementDepth);
           for (const statement of block.statements) {
-            count(statement, depth + 1);
+            count(statement, statementDepth);
             if (ts.isVariableStatement(statement) &&
                 (statement.declarationList.flags & ts.NodeFlags.Const)) {
               for (const item of statement.declarationList.declarations) {
@@ -208,7 +319,7 @@ export function createStaticEvaluator(sourceFile) {
                   throw new StaticFailure('UNSUPPORTED_EXPRESSION', item);
                 }
                 try {
-                  local.set(item, value(item.initializer, local, depth + 1));
+                  local.set(item, value(item.initializer, local, statementDepth + 1));
                 } catch (error) {
                   if (!(error instanceof StaticFailure)) throw error;
                   local.set(item, unknownValue(error.reason, item.initializer));
@@ -219,18 +330,20 @@ export function createStaticEvaluator(sourceFile) {
             } else if (ignorableParameterPush(statement)) {
               continue;
             } else if (ts.isReturnStatement(statement) && statement.expression) {
-              return { returned: value(statement.expression, local, depth + 1) };
+              return { returned: value(statement.expression, local, statementDepth + 1) };
             } else if (ts.isThrowStatement(statement)) {
               throw new StaticFailure('INAPPLICABLE_VARIANT', statement);
             } else if (ts.isIfStatement(statement)) {
-              const branch = condition(value(statement.expression, local, depth + 1), statement.expression)
+              const branch = condition(
+                value(statement.expression, local, statementDepth + 1), statement.expression,
+              )
                 ? statement.thenStatement : statement.elseStatement;
               if (!branch) continue;
               let result;
               if (ts.isBlock(branch)) {
-                result = statements(branch);
+                result = statements(branch, statementDepth + 1);
               } else if (ts.isReturnStatement(branch) && branch.expression) {
-                result = { returned: value(branch.expression, local, depth + 1) };
+                result = { returned: value(branch.expression, local, statementDepth + 1) };
               } else if (ts.isThrowStatement(branch)) {
                 throw new StaticFailure('INAPPLICABLE_VARIANT', branch);
               } else {
@@ -244,7 +357,7 @@ export function createStaticEvaluator(sourceFile) {
           return null;
         }
 
-        const result = statements(fn.body);
+        const result = statements(fn.body, depth + 1);
         if (!result) throw new StaticFailure('UNSUPPORTED_EXPRESSION', fn.body);
         return result.returned;
       } finally {
@@ -267,6 +380,7 @@ export function createStaticEvaluator(sourceFile) {
         const binding = declaration(node, node.text);
         if (!binding) return unknownValue('UNSUPPORTED_EXPRESSION', node);
         if (frame.has(binding)) return frame.get(binding);
+        if (mutatedBindings.has(binding)) return unknownValue('UNSUPPORTED_EXPRESSION', binding);
         if (ts.isParameter(binding) && binding.initializer) {
           return value(binding.initializer, frame, depth + 1);
         }
@@ -322,7 +436,9 @@ export function createStaticEvaluator(sourceFile) {
 
       if (ts.isPropertyAccessExpression(node)) {
         const object = value(node.expression, frame, depth + 1);
-        if (object.kind === 'unknown') return unknownValue(object.reason, node);
+        if (object.kind === 'unknown') {
+          return unknownValue(object.reason, node, `${choiceKey(object)}.${node.name.text}`);
+        }
         if (object.kind === 'array' && node.name.text === 'length') {
           return scalarValue(object.items.length);
         }
@@ -338,10 +454,20 @@ export function createStaticEvaluator(sourceFile) {
       if (ts.isElementAccessExpression(node) && node.argumentExpression) {
         const object = value(node.expression, frame, depth + 1);
         const key = value(node.argumentExpression, frame, depth + 1);
-        if (object.kind === 'unknown' || key.kind === 'unknown') {
-          return unknownValue('UNSUPPORTED_EXPRESSION', node);
+        if (key.kind === 'unknown') {
+          const objectKey = object.kind === 'unknown' ? choiceKey(object) : `node:${node.expression.pos}`;
+          return unknownValue(
+            'UNSUPPORTED_EXPRESSION', node, `${objectKey}[${choiceKey(key)}]`,
+          );
         }
         const rawKey = primitive(key, node.argumentExpression);
+        if (object.kind === 'unknown') {
+          return unknownValue(
+            object.reason,
+            node,
+            `${choiceKey(object)}[${typeof rawKey}:${String(rawKey)}]`,
+          );
+        }
         if (object.kind === 'array' && Number.isInteger(rawKey) && object.items[rawKey]) {
           return object.items[rawKey];
         }
@@ -355,14 +481,22 @@ export function createStaticEvaluator(sourceFile) {
       }
 
       if (ts.isTemplateExpression(node)) {
-        let text = node.head.text;
+        const parts = [node.head.text];
+        let unresolved = null;
         for (const span of node.templateSpans) {
           const evaluated = value(span.expression, frame, depth + 1);
-          if (evaluated.kind === 'unknown') return evaluated;
-          text += String(primitive(evaluated, span.expression)) + span.literal.text;
-          if (text.length > MAX_STRING_LENGTH) throw new StaticFailure('ANALYSIS_LIMIT', node);
+          if (evaluated.kind === 'unknown') {
+            unresolved ??= evaluated;
+            parts.push(staticText(evaluated));
+          } else {
+            parts.push(String(primitive(evaluated, span.expression)));
+          }
+          parts.push(span.literal.text);
         }
-        return stringValue(text, node);
+        const text = concatenateTexts(parts, node);
+        return unresolved
+          ? unknownValue(unresolved.reason, node, unresolved.decisionKey ?? null, text)
+          : stringValue(text, node);
       }
 
       if (ts.isTaggedTemplateExpression(node)) return value(node.template, frame, depth + 1);
@@ -399,13 +533,18 @@ export function createStaticEvaluator(sourceFile) {
             Boolean(primitive(left, node.left))) return left;
         const right = value(node.right, frame, depth + 1);
         if (left.kind === 'unknown' || right.kind === 'unknown') {
-          return unknownValue('UNSUPPORTED_EXPRESSION', node);
+          const reason = [left, right].some(item =>
+            item.kind === 'unknown' && item.reason === 'ANALYSIS_LIMIT')
+            ? 'ANALYSIS_LIMIT' : 'UNSUPPORTED_EXPRESSION';
+          const partial = operator === ts.SyntaxKind.PlusToken
+            ? concatenateTexts([staticText(left), staticText(right)], node) : '';
+          return unknownValue(reason, node, null, partial);
         }
         const a = primitive(left, node.left);
         const b = primitive(right, node.right);
         if (operator === ts.SyntaxKind.PlusToken &&
             (typeof a === 'string' || typeof b === 'string')) {
-          return stringValue(String(a) + String(b), node);
+          return stringValue(concatenateTexts([String(a), String(b)], node), node);
         }
         const operators = new Map([
           [ts.SyntaxKind.PlusToken, (x, y) => x + y],
@@ -440,7 +579,12 @@ export function createStaticEvaluator(sourceFile) {
           return unknownValue('UNSUPPORTED_EXPRESSION', node);
         }
         const args = node.arguments.map(argument => value(argument, frame, depth + 1));
-        return invoke(fn, args, frame, depth + 1);
+        try {
+          return invoke(fn, args, frame, depth + 1);
+        } catch (error) {
+          if (error instanceof StaticFailure) return unknownValue(error.reason, node);
+          throw error;
+        }
       }
 
       if (ts.isCallExpression(node) && ts.isPropertyAccessExpression(node.expression)) {
@@ -454,10 +598,16 @@ export function createStaticEvaluator(sourceFile) {
           if (ts.isCallExpression(receiver) && ts.isPropertyAccessExpression(receiver.expression) &&
               receiver.expression.name.text === 'map' && receiver.arguments.length === 1) {
             const callback = receiver.arguments[0];
+            const placeholderInput = unwrapExpression(receiver.expression.expression);
+            const placeholderBinding = ts.isIdentifier(placeholderInput)
+              ? declaration(placeholderInput, placeholderInput.text) : null;
+            const unknownCardinalityBinding = Boolean(placeholderBinding) &&
+              (ts.isParameter(placeholderBinding) ||
+               ts.isVariableDeclaration(placeholderBinding));
             if (ts.isArrowFunction(callback) &&
                 !callback.modifiers?.some(modifier => modifier.kind === ts.SyntaxKind.AsyncKeyword) &&
                 callback.parameters.length === 0 && ts.isStringLiteral(callback.body) &&
-                callback.body.text === '?' && separator === ', ') {
+                callback.body.text === '?' && separator === ', ' && unknownCardinalityBinding) {
               const receiverValue = value(receiver.expression.expression, frame, depth + 1);
               if (receiverValue.kind === 'unknown') return stringValue('?', node);
             }
@@ -474,7 +624,7 @@ export function createStaticEvaluator(sourceFile) {
             }
             parts.push(String(primitive(member, node)));
           }
-          return stringValue(parts.join(separator), node);
+          return stringValue(concatenateTexts(parts, node, separator), node);
         }
 
         if (method === 'map' && node.arguments.length === 1 &&
