@@ -3,6 +3,7 @@ import { randomUUID } from 'node:crypto';
 import { spawnSync } from 'node:child_process';
 import { loadShadowAuthority,loadMysqlTableAuthority } from './zaruku-production-shadow-contract.mjs';
 import { CONTROL_FILES,prepareReviewedControl,readControlSource,receiveControlPayload,reviewedSource } from './stage-zaruku-shadow-control.mjs';
+import { requireExactShadowRelease } from './freeze-zaruku-shadow-release.mjs';
 
 const ROOT=path.resolve(import.meta.dirname,'..');
 const ACTIONS=['preflight','hostBoundary','dbBoundary','runtimeSecrets','managerAuth','allocateEvidence','attest','parity','recheck','cleanup','stop','writeDecision'];
@@ -25,8 +26,8 @@ export function createProductionAdapter(options={}) {
   if(Object.keys(options).some(key=>!['source','readFile','commandRunner','remoteRunner'].includes(key))||Object.values(options).some(value=>typeof value!=='function'))fail();
   const source=options.source??reviewedSource,readFile=options.readFile??readControlSource,runner=options.commandRunner??spawnSync,remoteRunner=options.remoteRunner??remote;
   const runId=randomUUID();let prepared,sourceSha,context={},linuxProof=false;
-  const command=(bin,args)=>{
-    const result=runner(bin,args,{cwd:ROOT,env:{PATH:path.dirname(process.execPath)+':/usr/local/bin:/opt/homebrew/bin:/usr/bin:/bin',HOME:process.env.HOME,GIT_PAGER:'/bin/cat'},stdio:['ignore','pipe','pipe'],encoding:'utf8',timeout:1800000,maxBuffer:16777216});
+  const command=(bin,args,input)=>{
+    const result=runner(bin,args,{cwd:ROOT,env:{PATH:path.dirname(process.execPath)+':/usr/local/bin:/opt/homebrew/bin:/usr/bin:/bin',HOME:process.env.HOME,GIT_PAGER:'/bin/cat'},stdio:[input?'pipe':'ignore','pipe','pipe'],input,encoding:'utf8',timeout:1800000,maxBuffer:16777216});
     if(result.error||result.signal||result.status!==0)fail();return result.stdout.trim();
   };
   const call=async(action,decision)=>{
@@ -41,11 +42,7 @@ export function createProductionAdapter(options={}) {
     async linuxPrivilegeFixture(){return {passed:linuxProof};},
     async fullPredeploy(){command('npm',['run','predeploy:verify']);return {passed:true};},
     async releaseAuthority(){
-      const output=command('/usr/bin/git',['--no-replace-objects','-C',ROOT,'ls-remote','--exit-code','origin','refs/heads/release/zaruku']);
-      const match=/^([a-f0-9]{40})\trefs\/heads\/release\/zaruku$/.exec(output);if(!match)fail();
-      command('/usr/bin/git',['--no-replace-objects','-C',ROOT,'cat-file','-e',match[1]+'^{commit}']);
-      command('/usr/bin/git',['--no-replace-objects','-C',ROOT,'merge-base','--is-ancestor',match[1],sourceSha]);
-      return {passed:true,sourceSha};
+      return requireExactShadowRelease({source,command:args=>runner('/usr/bin/git',['--no-replace-objects','-C',ROOT,...args],{cwd:ROOT,env:{PATH:'/usr/bin:/bin'},stdio:['ignore','pipe','pipe'],encoding:'utf8',timeout:30000,maxBuffer:65536})},sourceSha);
     },
     async allocateEvidence(){
       if(context.evidenceIdentity)fail();
@@ -54,7 +51,13 @@ export function createProductionAdapter(options={}) {
       context={...context,evidenceIdentity:Object.freeze({dev:receipt.evidenceIdentity.dev,ino:receipt.evidenceIdentity.ino})};
       return {passed:true};
     },
-    async deploy(){command('/bin/bash',[path.join(ROOT,'scripts/deploy-zaruku.sh')]);return {passed:true,sourceSha};},
+    async deploy(){
+      await adapter.releaseAuthority();
+      const binding={sourceSha,runId};
+      const result=JSON.parse(command('/bin/bash',[path.join(ROOT,'scripts/deploy-zaruku.sh')],JSON.stringify(binding)));
+      if(result.sourceSha!==sourceSha||result.runId!==runId)fail();
+      return {passed:true,sourceSha};
+    },
     async stop(name){if(name!=='dashboard-zaruku')fail();return call('stop');},
     async cleanup(){return prepared?call('cleanup'):{passed:true};},
     async writeDecision(evidence){return call('writeDecision',evidence);},

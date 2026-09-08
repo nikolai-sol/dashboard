@@ -19,6 +19,13 @@ const api = await import('./deploy-runtime.mjs');
 const worker = await import('./runtime-release-remote.mjs');
 const dedicatedInput = { ZARUKU_DB_HOST: 'localhost', ZARUKU_DB_PORT: '3306', ZARUKU_DB_USER: 'zaruku_fixture', ZARUKU_DB_PASSWORD: 'fixture-password', ZARUKU_DB_NAME: 'report_bd', DASHBOARD_AUTH_SECRET: 'fixture-auth' };
 
+test('child deploy binding requires an exact SHA and run ID with no substitutions', () => {
+  const binding={sourceSha:sha,runId:'00000000-0000-4000-8000-000000000000'};
+  assert.deepEqual(api.parseDeploymentBinding(Buffer.from(JSON.stringify(binding))),binding);
+  for (const value of [{}, {...binding,runId:'wrong'}, {...binding,sourceSha:'wrong'}, {...binding,pid:12}]) assert.throws(()=>api.parseDeploymentBinding(Buffer.from(JSON.stringify(value))));
+  assert.throws(()=>api.parseDeploymentBinding(Buffer.alloc(513)));
+});
+
 test('shared dedicated serializer round-trips exact reader grammar and sanitizes rejected values', () => {
   const bytes = worker.serializeZarukuSecrets(dedicatedInput);
   assert.deepEqual(worker.parseZarukuSecrets(bytes), dedicatedInput);
@@ -67,7 +74,7 @@ test('internal manifest substitution and shell/path arguments are refused before
   } finally { fs.rmSync(temp, { recursive: true }); }
 });
 
-test('clean named branch must contain refreshed release/zaruku and current Zaruku SHA', () => {
+test('clean named branch must equal refreshed release/zaruku and contain current Zaruku SHA', () => {
   const temp = fs.mkdtempSync(path.join(os.tmpdir(), 'zaruku-git-'));
   const git = (...args) => execFileSync('git', ['-C', temp, ...args], { encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] }).trim();
   try {
@@ -76,6 +83,8 @@ test('clean named branch must contain refreshed release/zaruku and current Zaruk
     const base = git('rev-parse', 'HEAD'); git('update-ref', 'refs/remotes/origin/release/zaruku', base);
     git('checkout', '-qb', 'candidate'); fs.writeFileSync(path.join(temp, 'fact'), 'next'); git('commit', '-qam', 'next');
     const candidate = git('rev-parse', 'HEAD');
+    assert.throws(() => api.verifySource(temp, base), /release\/zaruku/);
+    git('update-ref', 'refs/remotes/origin/release/zaruku', candidate);
     assert.equal(api.verifySource(temp, base), candidate);
     fs.writeFileSync(path.join(temp, 'dirty'), 'x'); assert.throws(() => api.verifySource(temp, base), /clean/); fs.unlinkSync(path.join(temp, 'dirty'));
     git('checkout', '--detach', '-q'); assert.throws(() => api.verifySource(temp, base), /named branch/);
@@ -86,7 +95,7 @@ test('clean named branch must contain refreshed release/zaruku and current Zaruk
     git('replace', '--graft', candidate, sibling);
     assert.equal(spawnSync('git', ['--no-replace-objects', '-C', temp, 'merge-base', '--is-ancestor', sibling, candidate]).status, 1);
     assert.throws(() => api.verifySource(temp, sibling), /release\/zaruku|active Zaruku/);
-    git('update-ref', 'refs/remotes/origin/release/zaruku', base);
+    git('update-ref', 'refs/remotes/origin/release/zaruku', candidate);
     assert.throws(() => api.verifySource(temp, sibling), /active Zaruku/);
     assert.equal(api.verifySource(temp, base), candidate);
     git('replace', '-d', candidate);

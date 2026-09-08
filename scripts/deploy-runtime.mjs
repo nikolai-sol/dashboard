@@ -8,6 +8,7 @@ import { RUNTIME_MANIFESTS } from '../packages/runtime-contract/src/index.ts';
 import { assertRuntimeArtifact, verifyRuntimeArtifactBoot } from './runtime-artifact-policy.mjs';
 import { readPinned, safeRelative } from './runtime-release-remote.mjs';
 import { CONTROL_FILES, prepareReviewedControl, readControlSource, receiveControlPayload, reviewedSource } from './stage-zaruku-shadow-control.mjs';
+import { requireExactShadowRelease } from './freeze-zaruku-shadow-release.mjs';
 
 const ROOT = path.resolve(import.meta.dirname, '..');
 const AUTHORITY = path.join(ROOT, 'deploy/zaruku/release.json');
@@ -46,12 +47,26 @@ export function verifySource(repo, activeSha) {
   if (git(repo, 'status', '--porcelain', '--untracked-files=normal')) fail('Zaruku source must be clean');
   if (!git(repo, 'branch', '--show-current')) fail('Zaruku source must be on a named branch');
   const sha = git(repo, 'rev-parse', 'HEAD');
-  for (const [ref, label] of [['refs/remotes/origin/release/zaruku', 'origin/release/zaruku'], ...(activeSha ? [[activeSha, 'active Zaruku SHA']] : [])]) {
+  if (git(repo, 'rev-parse', '--verify', 'refs/remotes/origin/release/zaruku^{commit}') !== sha) fail('Candidate must exactly equal origin/release/zaruku');
+  for (const [ref, label] of (activeSha ? [[activeSha, 'active Zaruku SHA']] : [])) {
     if (activeSha && !/^[a-f0-9]{40}$/.test(activeSha)) fail('Invalid active Zaruku SHA');
     try { git(repo, 'rev-parse', '--verify', `${ref}^{commit}`); git(repo, 'merge-base', '--is-ancestor', ref, sha); }
     catch { fail(`Candidate does not contain ${label}`); }
   }
   return sha;
+}
+
+export function parseDeploymentBinding(bytes) {
+  try {
+    if (!Buffer.isBuffer(bytes) || bytes.length > 512) fail('Invalid deploy binding');
+    const value = JSON.parse(bytes);
+    if (Object.keys(value).sort().join(',') !== 'runId,sourceSha' || !/^[a-f0-9]{40}$/.test(value.sourceSha) || !/^[a-f0-9]{8}-[a-f0-9]{4}-4[a-f0-9]{3}-[89ab][a-f0-9]{3}-[a-f0-9]{12}$/.test(value.runId)) fail('Invalid deploy binding');
+    return value;
+  } catch { fail('Invalid deploy binding'); }
+}
+
+async function frozenSource(sourceSha) {
+  return requireExactShadowRelease({ source: reviewedSource, command: args => spawnSync('/usr/bin/git', ['--no-replace-objects','-C',ROOT,...args], {encoding:'utf8',env:{PATH:'/usr/bin:/bin'},timeout:30000,maxBuffer:65536}) }, sourceSha);
 }
 
 async function transfer(request) {
@@ -103,10 +118,10 @@ export function preparePayload(sourceSha) {
 
 export function buildVerifiedRelease() {
   if (process.getuid() === 0 || process.geteuid() === 0) fail('Local release build and boot verification must run as an unprivileged user');
-  execFileSync('npm', ['ci'], { cwd: ROOT, stdio: 'inherit' });
+  execFileSync('npm', ['ci'], { cwd: ROOT, stdio: ['ignore','ignore','pipe'] });
   // test:release-runtime builds the isolated workspace before its real packaging
   // fixture; the remainder of the existing gate also verifies the combined app.
-  execFileSync('npm', ['run', 'predeploy:verify'], { cwd: ROOT, stdio: 'inherit' });
+  execFileSync('npm', ['run', 'predeploy:verify'], { cwd: ROOT, stdio: ['ignore','ignore','pipe'] });
 }
 
 async function main() {
@@ -115,6 +130,12 @@ async function main() {
   if (!filename || extra.length || !['deploy', 'rollback'].includes(action)) fail('Invalid fixed authority invocation');
   if (process.getuid() === 0 || process.geteuid() === 0) fail('Local release authority must run as an unprivileged user');
   validateAuthority(filename);
+  let binding;
+  if (action === 'deploy') {
+    const bytes = Buffer.alloc(513); const length = fs.readSync(0, bytes, 0, bytes.length, null);
+    binding = parseDeploymentBinding(bytes.subarray(0,length));
+  }
+  await frozenSource(binding?.sourceSha ?? reviewedSource().sha);
   // Clean tracked helpers are the deploy authority, including rollback invocations.
   if (git(ROOT, 'status', '--porcelain', '--untracked-files=normal') || !git(ROOT, 'branch', '--show-current')) fail('Release authority must be a clean named checkout');
   const active = await transfer({ action: 'inspect' });
@@ -124,6 +145,7 @@ async function main() {
   }
   git(ROOT, 'fetch', '--quiet', 'origin', '+refs/heads/release/zaruku:refs/remotes/origin/release/zaruku');
   const sourceSha = verifySource(ROOT, active?.sourceSha ?? null);
+  if (sourceSha !== binding.sourceSha) fail('Child source substitution rejected');
   // Build itself prepares external authority from clean build inputs; packaging
   // never calls --prepare or trusts a replacement artifact-generated allow-list.
   buildVerifiedRelease();
@@ -136,12 +158,13 @@ async function main() {
     git(ROOT, 'fetch', '--quiet', 'origin', '+refs/heads/release/zaruku:refs/remotes/origin/release/zaruku');
     if (verifySource(ROOT, latest?.sourceSha ?? null) !== sourceSha) fail('Clean source changed after build');
     validateAuthority(filename);
-    const result = await transfer({ action, expectedActiveSha: latest?.sourceSha ?? null, payload });
+    await frozenSource(binding.sourceSha);
+    const result = await transfer({ action, expectedActiveSha: latest?.sourceSha ?? null, payload, binding });
     if (result.sourceSha !== sourceSha || result.scope !== 'zaruku' || result.manifestDigest !== payload.manifestDigest) fail('Active Zaruku attestation mismatch');
-    process.stdout.write(`Zaruku release attested: ${sourceSha}\n`);
+    process.stdout.write(JSON.stringify(binding) + '\n');
   }
 }
 
 if (process.argv[1] && import.meta.url === pathToFileURL(path.resolve(process.argv[1])).href) {
-  main().catch(error => { process.stderr.write(`Refusing Zaruku operation: ${error.message}\n`); process.exitCode = 1; });
+  main().catch(() => { process.stderr.write('Refusing Zaruku fixed operation\n'); process.exitCode = 1; });
 }

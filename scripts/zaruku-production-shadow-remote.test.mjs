@@ -5,10 +5,10 @@ const sha='a'.repeat(40),digest='b'.repeat(64);
 
 function fixture(allocationTransform=value=>value){
   const calls=[],remote=[];
-  const adapter=createProductionAdapter({source:()=>({sha,branch:'codex/reviewed',clean:true}),readFile:name=>({bytes:Buffer.from(name),mode:0o644,regular:true,singleLink:true,safeAncestors:true}),commandRunner:(bin,args)=>{
+  const adapter=createProductionAdapter({source:()=>({sha,branch:'codex/reviewed',clean:true}),readFile:name=>({bytes:Buffer.from(name),mode:0o644,regular:true,singleLink:true,safeAncestors:true}),commandRunner:(bin,args,options)=>{
     calls.push({bin,args});
     if(args.includes('ls-remote'))return {status:0,signal:null,stdout:sha+'\trefs/heads/release/zaruku\n',stderr:''};
-    return {status:0,signal:null,stdout:args.some(arg=>arg.endsWith('run-zaruku-linux-fixtures.sh'))?'linux-build-helper-fixture passed\nlinux-privilege-drop-fixture passed\nlinux-mysql-descriptor-fixture passed\nlinux-evidence-writer-fixture passed\n':'',stderr:''};
+    return {status:0,signal:null,stdout:args.some(arg=>arg.endsWith('run-zaruku-linux-fixtures.sh'))?'linux-build-helper-fixture passed\nlinux-privilege-drop-fixture passed\nlinux-mysql-descriptor-fixture passed\nlinux-evidence-writer-fixture passed\n':args.some(arg=>arg.endsWith('deploy-zaruku.sh'))?options.input:'',stderr:''};
   },remoteRunner:async(action,request,prepared)=>{remote.push({action,request,prepared});if(action==='allocateEvidence')return allocationTransform({passed:true,sourceSha:request.sourceSha,runId:request.runId,evidenceIdentity:{dev:'5',ino:'6'}});return {passed:true,mysqlIdentity:{dev:'1',ino:'2',sha256:digest},timeoutIdentity:{dev:'7',ino:'8',sha256:digest},inventoryIdentity:{dev:'3',ino:'4'},inventorySha256:digest,evidenceIdentity:{dev:'99',ino:'99'}};}});
   return {adapter,calls,remote};
 }
@@ -52,4 +52,30 @@ test('failed local tools and remote diagnostics cannot disclose any data',async(
   const f=fixture();await f.adapter.preflight();
   const adapter=createProductionAdapter({source:()=>({sha,branch:'codex/reviewed',clean:true}),commandRunner:()=>({status:1,stdout:'PRIVATE_SENTINEL',stderr:'PRIVATE_SENTINEL'})});
   await assert.rejects(()=>adapter.fullPredeploy(),error=>!error.message.includes('PRIVATE_SENTINEL'));
+});
+
+test('production adapter rejects an ancestor release ref and binds child source through inherited input', async () => {
+  const calls=[]; let remoteSha='b'.repeat(40);
+  const adapter=createProductionAdapter({source:()=>({sha,branch:'codex/reviewed',clean:true}),readFile:name=>({bytes:Buffer.from(name),mode:0o644,regular:true,singleLink:true,safeAncestors:true}),remoteRunner:()=>({passed:true}),commandRunner:(bin,args,options)=>{
+    calls.push({bin,args,options});
+    return {status:0,stdout:args.includes('ls-remote')?`${remoteSha}\trefs/heads/release/zaruku\n`:JSON.stringify({sourceSha:sha,runId:JSON.parse(options.input??'{}').runId}),stderr:''};
+  }});
+  await adapter.preflight();
+  await assert.rejects(adapter.releaseAuthority(),/adapter|release authority/);
+  remoteSha=sha;
+  await adapter.releaseAuthority();
+  await adapter.deploy();
+  const child=calls.find(call=>call.args.some(arg=>arg.endsWith('deploy-zaruku.sh')));
+  assert.equal(JSON.parse(child.options.input).sourceSha,sha);
+  assert.match(JSON.parse(child.options.input).runId,/^[a-f0-9-]{36}$/);
+});
+
+test('child response substitution and a ref changed before child launch fail closed',async()=>{
+  for(const changed of ['sha','run','ref']) {
+    let refs=0;const adapter=createProductionAdapter({source:()=>({sha,branch:'codex/reviewed',clean:true}),readFile:name=>({bytes:Buffer.from(name),mode:0o644,regular:true,singleLink:true,safeAncestors:true}),remoteRunner:()=>({passed:true}),commandRunner:(bin,args,options)=>{
+      if(args.includes('ls-remote'))return {status:0,stdout:`${changed==='ref'&&refs++?'b'.repeat(40):sha}\trefs/heads/release/zaruku\n`,stderr:''};
+      const input=JSON.parse(options.input);return {status:0,stdout:JSON.stringify({...input,...(changed==='sha'?{sourceSha:'b'.repeat(40)}:{runId:'wrong'})}),stderr:''};
+    }});
+    await adapter.preflight();await adapter.releaseAuthority();await assert.rejects(adapter.deploy());
+  }
 });
