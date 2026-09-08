@@ -299,6 +299,52 @@ export async function installRuntimeSecrets(adapter, databasePasswordFd) {
   } catch { throw new Error('Failed to install Zaruku runtime secrets'); }
 }
 
+export function runtimeSecretBytes(adapter,password) {
+  root(adapter);
+  if(typeof password!=='string'||!/^[a-f0-9]{96}$/.test(password))fail();
+  const source=stablePrivateRead(adapter,SOURCE);
+  try {
+    const combined=parseCombined(source);
+    return serializeZarukuSecrets({ZARUKU_DB_HOST:'127.0.0.1',ZARUKU_DB_PORT:'3306',ZARUKU_DB_USER:'dashboard_zaruku_reader',ZARUKU_DB_PASSWORD:password,ZARUKU_DB_NAME:'report_bd',DASHBOARD_AUTH_SECRET:combined.DASHBOARD_AUTH_SECRET,NEXT_PUBLIC_BASE_URL:'https://dashboards.adreports.ru',...(combined.PUPPETEER_EXECUTABLE_PATH?{PUPPETEER_EXECUTABLE_PATH:combined.PUPPETEER_EXECUTABLE_PATH}:{})});
+  }finally{source.fill(0);}
+}
+
+export function removeOwnedRuntimeSecret(adapter,identity) {
+  root(adapter);
+  return withParent(adapter,SECRET,(addressed,parent,verify)=>{
+    const stat=adapter.fs.lstatSync(addressed,{throwIfNoEntry:false});
+    if(!stat)return;
+    if(!same(privateFile(stat),identity))fail();
+    verify();adapter.fs.unlinkSync(addressed);adapter.fs.fsyncSync(parent);
+  });
+}
+
+export function publishAnonymousRuntimeSecret(adapter,bytes,publish,onAllocated) {
+  root(adapter);parseZarukuSecrets(bytes);
+  return withParent(adapter,SECRET,(addressed,parent,verify)=>{
+    const io=adapter.fs;directory(io.fstatSync(parent),0o700);
+    if(io.lstatSync(addressed,{throwIfNoEntry:false}))fail();
+    // Linux O_TMPFILE includes O_DIRECTORY: this inode has no filesystem name.
+    const fd=io.openSync(adapter.anchoredPath(parent,'.'),0x410000|fs.constants.O_RDWR,0o600);
+    let identity;
+    try {
+      io.fchmodSync(fd,0o600);io.fchownSync(fd,0,0);
+      const stat=io.fstatSync(fd);if(!stat.isFile()||stat.nlink!==0)fail();
+      identity={...metadata(stat),nlink:1};onAllocated(identity);
+      io.writeFileSync(fd,bytes);io.fsyncSync(fd);verify();
+      publish(fd,parent);verify();
+      if(!same(privateFile(io.fstatSync(fd)),identity)||!same(privateFile(io.lstatSync(addressed)),identity))fail();
+      io.fsyncSync(parent);
+      const installed=stablePrivateRead(adapter,SECRET);try{if(!installed.equals(bytes))fail();}finally{installed.fill(0);}
+      return identity;
+    }catch(error){
+      const stat=io.lstatSync(addressed,{throwIfNoEntry:false});
+      if(stat&&identity&&same(metadata(stat),identity)){verify();io.unlinkSync(addressed);io.fsyncSync(parent);}
+      throw error;
+    }finally{io.closeSync(fd);}
+  });
+}
+
 /** Inject OS boundaries for disposable tests; the CLI constructs this with no overrides. */
 export function createHostAdapter(options = {}) {
   const adapter = {

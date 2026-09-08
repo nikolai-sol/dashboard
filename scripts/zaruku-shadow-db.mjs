@@ -281,7 +281,7 @@ async function releaseCreationLock(adapter) {
  * First-create, grant, and verify the reader. The adapter is the injected local-socket boundary.
  * @returns {Promise<DbBoundaryEvidence>}
  */
-export async function applyReaderBoundary(adapter, passwordFd) {
+export async function applyReaderBoundary(adapter, passwordFd, hooks = {}) {
   let cleanupOwnedAccount = false;
   let lockHeld = false;
   let readerAdapter;
@@ -303,19 +303,22 @@ export async function applyReaderBoundary(adapter, passwordFd) {
     ), ['host', 'user']);
     if (existing.length) invalidBoundary();
 
-    const password = readPassword(passwordFd);
+    const password = Buffer.isBuffer(passwordFd) ? passwordFd.toString('utf8') : readPassword(passwordFd);
     const operations = buildReaderSql(AUTHORITY, password);
     await adapter.query(operations[0].sql, operations[0].params);
     cleanupOwnedAccount = true;
+    await hooks.created?.();
     for (const operation of operations.slice(1)) await adapter.query(operation.sql, operation.params);
     readerAdapter = await adapter.openReader(password);
     evidence = await verifyReaderBoundary(adapter, readerAdapter);
+    await hooks.verified?.(password, evidence);
     cleanupOwnedAccount = false;
   } catch {
     failed = true;
     if (cleanupOwnedAccount) {
       try {
         await adapter.query(`DROP USER IF EXISTS ${ACCOUNT_SQL}`);
+        await hooks.dropped?.();
       } catch {
         // The public error remains sanitized even if cleanup also fails.
       }

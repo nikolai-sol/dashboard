@@ -8,6 +8,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { test } from 'node:test';
 import { execFileSync, spawnSync } from 'node:child_process';
+import { randomBytes } from 'node:crypto';
 import { bootRuntimeAsService } from './runtime-release-remote.mjs';
 import { prepareReviewedControl, receiveControlPayload, readControlSource } from './stage-zaruku-shadow-control.mjs';
 
@@ -100,6 +101,35 @@ test('real boot drops all privilege before app code and cannot mutate authority,
   assert.equal(fs.readFileSync(path.join(control, 'manifest'), 'utf8'), 'protected');
 });
 
+test('actual anonymous runtime-secret publication has no temporary pathname and rolls back only its own inode', () => {
+  const source='/var/www/www-root/data/.production.env',destination='/var/www/.dashboard-zaruku-secrets/runtime.env';
+  assert.equal(fs.existsSync('/var/www/www-root'),false);
+  fs.mkdirSync('/var/www/www-root/data',{recursive:true,mode:0o755});
+  fs.writeFileSync(source,`DASHBOARD_AUTH_SECRET='${randomBytes(32).toString('hex')}'\n`,{mode:0o600});
+  const bytes=stagedHost.runtimeSecretBytes(host,randomBytes(48).toString('hex'));
+  let allocated;
+  const publish=(fd,parent)=>{
+    assert.equal(fs.fstatSync(fd).nlink,0);
+    assert.deepEqual(fs.readdirSync('/var/www/.dashboard-zaruku-secrets'),[]);
+    const result=spawnSync('/usr/bin/python3',['-I','-B',`/var/www/.dashboard-zaruku-shadow/control/${stagedSha}/scripts/zaruku-shadow-mysql-session.py`,'publish-secret'],{env:{},stdio:['ignore','pipe','pipe',fd,parent]});
+    assert.equal(result.status,0,result.stderr.toString());
+    assert.equal(result.stdout.length,0);
+  };
+  try {
+    const identity=stagedHost.publishAnonymousRuntimeSecret(host,bytes,publish,value=>{allocated=value;});
+    assert.deepEqual(identity,allocated);assert.deepEqual(fs.readFileSync(destination),bytes);
+    assert.deepEqual(fs.readdirSync('/var/www/.dashboard-zaruku-secrets'),['runtime.env']);
+    assert.throws(()=>stagedHost.publishAnonymousRuntimeSecret(host,bytes,publish,()=>{}));
+    fs.renameSync(destination,destination+'.owned');fs.writeFileSync(destination,'foreign',{mode:0o600});
+    assert.throws(()=>stagedHost.removeOwnedRuntimeSecret(host,identity));
+    assert.equal(fs.readFileSync(destination,'utf8'),'foreign');
+    fs.unlinkSync(destination);fs.renameSync(destination+'.owned',destination);
+    stagedHost.removeOwnedRuntimeSecret(host,identity);assert.equal(fs.existsSync(destination),false);
+    assert.throws(()=>stagedHost.publishAnonymousRuntimeSecret(host,bytes,(fd,parent)=>{publish(fd,parent);throw new Error('lost response');},()=>{}));
+    assert.deepEqual(fs.readdirSync('/var/www/.dashboard-zaruku-secrets'),[]);
+  } finally {bytes.fill(0);fs.unlinkSync(source);fs.rmdirSync('/var/www/www-root/data');fs.rmdirSync('/var/www/www-root');}
+});
+
 test('real staged and rollback boots traverse the actual provisioned roots without listing or writing them', async () => {
   for (const root of ['/var/www/dashboard-zaruku-releases', '/var/www/dashboard-zaruku-backups']) {
     const target = path.join(root, 'a'.repeat(32));
@@ -136,6 +166,38 @@ test('missing or impersonating setpriv fails before application execution', asyn
     await assert.rejects(bootRuntimeAsService(artifact), /identity|boot/i);
     assert.ok(!fs.existsSync(proof));
   } finally { fs.rmSync(original, { force: true }); fs.renameSync(saved, original); }
+});
+
+test('staged joint coordinator uses persistent fenced admin, sealed reader transport and anonymous secret publication', async () => {
+  const staged=`/var/www/.dashboard-zaruku-shadow/control/${stagedSha}`;
+  assert.equal(fs.existsSync('/usr/bin/mysql'),false);assert.equal(fs.existsSync('/var/www/www-root'),false);
+  fs.copyFileSync('/src/scripts/zaruku-shadow-mysql-protocol.fixture.py','/usr/bin/mysql');fs.chmodSync('/usr/bin/mysql',0o755);
+  fs.mkdirSync('/var/www/www-root/data',{recursive:true,mode:0o755});
+  const shared=randomBytes(32).toString('hex');fs.writeFileSync('/var/www/www-root/data/.production.env',`DASHBOARD_AUTH_SECRET='${shared}'\n`,{mode:0o600});
+  try {
+    const result=spawnSync(process.execPath,[`${staged}/scripts/zaruku-shadow-dispatch.mjs`,'db-provision'],{env:{},encoding:'utf8',timeout:60000});
+    assert.equal(result.status,0,result.stderr+' '+fs.readFileSync('/var/www/.dashboard-zaruku-shadow/db-provision.json','utf8')+' '+fs.readFileSync('/tmp/zaruku-protocol-events','utf8'));assert.equal(JSON.parse(result.stdout).tableSelectCount,35);
+    assert.doesNotMatch(result.stdout+result.stderr,new RegExp(shared));
+    const record=JSON.parse(fs.readFileSync('/var/www/.dashboard-zaruku-shadow/db-provision.json'));
+    assert.equal(record.status,'complete');assert.equal(record.sessionId,'42');assert.equal(record.accountCreated,true);
+    assert.deepEqual(fs.readdirSync('/var/www/.dashboard-zaruku-secrets'),['runtime.env']);
+    stagedHost.removeOwnedRuntimeSecret(host,record.secretIdentity);
+    fs.unlinkSync('/var/www/.dashboard-zaruku-shadow/db-provision.json');
+    const {openAdminSession}=await import(`${staged}/scripts/zaruku-shadow-mysql-session.mjs`);
+    for(const fault of ['fixture_connection_change','fixture_disconnect']) {
+      const admin=await openAdminSession(()=>{});
+      assert.deepEqual(await admin.query('SELECT GET_LOCK(?, ?) AS acquired',['reportingdash:zaruku-reader-boundary:v1',30]),[{acquired:'1'}]);
+      assert.equal(admin.sessionId,'42');
+      fs.writeFileSync('/tmp/zaruku-session-fault',fault,{mode:0o600});
+      await assert.rejects(admin.query('SELECT CURRENT_USER() AS currentUser'));
+      fs.unlinkSync('/tmp/zaruku-session-fault');
+      await assert.rejects(admin.query("DROP USER IF EXISTS 'dashboard_zaruku_reader'@'127.0.0.1'"));
+      await admin.close();
+    }
+    fs.unlinkSync('/tmp/zaruku-protocol-events');
+  } finally {
+    fs.unlinkSync('/usr/bin/mysql');fs.unlinkSync('/var/www/www-root/data/.production.env');fs.rmdirSync('/var/www/www-root/data');fs.rmdirSync('/var/www/www-root');
+  }
 });
 
 test('owned host rollback removes the production-mode roots and actual created account', async () => {

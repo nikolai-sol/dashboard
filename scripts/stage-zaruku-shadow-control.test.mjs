@@ -41,7 +41,7 @@ test('fixed inventory is dependency-free authority and provisioning closure only
     'scripts/install-zaruku-shadow-auth.mjs', 'scripts/install-zaruku-shadow-inventory.mjs', 'scripts/runtime-release-remote.mjs', 'scripts/verify-zaruku-shadow.sh',
     'scripts/zaruku-production-shadow-authority.mjs', 'scripts/zaruku-production-shadow-preflight.mjs',
     'scripts/zaruku-production-shadow-worker.mjs', 'scripts/zaruku-shadow-coverage.mjs', 'scripts/zaruku-shadow-db.mjs', 'scripts/zaruku-shadow-dispatch.mjs', 'scripts/zaruku-shadow-evidence-lock.py', 'scripts/zaruku-shadow-host.mjs',
-    'scripts/zaruku-shadow-mysql.py', 'scripts/zaruku-xlsx-semantic.py',
+    'scripts/zaruku-shadow-mysql-session.mjs', 'scripts/zaruku-shadow-mysql-session.py', 'scripts/zaruku-shadow-mysql.py', 'scripts/zaruku-shadow-provision.mjs', 'scripts/zaruku-xlsx-semantic.py',
   ]);
 });
 

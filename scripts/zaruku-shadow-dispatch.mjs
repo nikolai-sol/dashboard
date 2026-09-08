@@ -8,7 +8,7 @@ export const SHADOW_CONTROL_FILES=Object.freeze([
   'deploy/zaruku/mysql-read-tables.json','deploy/zaruku/production-shadow.json','deploy/zaruku/release.json',
   'scripts/install-zaruku-shadow-auth.mjs','scripts/install-zaruku-shadow-inventory.mjs','scripts/runtime-release-remote.mjs','scripts/verify-zaruku-shadow.sh',
   'scripts/zaruku-production-shadow-authority.mjs','scripts/zaruku-production-shadow-preflight.mjs','scripts/zaruku-production-shadow-worker.mjs',
-  'scripts/zaruku-shadow-coverage.mjs','scripts/zaruku-shadow-db.mjs','scripts/zaruku-shadow-dispatch.mjs','scripts/zaruku-shadow-evidence-lock.py','scripts/zaruku-shadow-host.mjs','scripts/zaruku-shadow-mysql.py','scripts/zaruku-xlsx-semantic.py',
+  'scripts/zaruku-shadow-coverage.mjs','scripts/zaruku-shadow-db.mjs','scripts/zaruku-shadow-dispatch.mjs','scripts/zaruku-shadow-evidence-lock.py','scripts/zaruku-shadow-host.mjs','scripts/zaruku-shadow-mysql-session.mjs','scripts/zaruku-shadow-mysql-session.py','scripts/zaruku-shadow-mysql.py','scripts/zaruku-shadow-provision.mjs','scripts/zaruku-xlsx-semantic.py',
 ]);
 
 const ROOT = path.resolve(import.meta.dirname, '..');
@@ -103,6 +103,10 @@ export async function dispatchStaged(action, payload = null) {
     adapter.publishDescriptor = bytes => { guard(); return publish(bytes); };
     return auth.installShadowAuth(adapter);
   }
+  if (action === 'db-provision' && payload === null) {
+    const provision = await import('./zaruku-shadow-provision.mjs'); guard();
+    return provision.provisionReaderAndSecrets(sourceSha,guard);
+  }
   if (['inventory-check', 'inventory-install'].includes(action) && payload === null) {
     const worker = await import('./zaruku-production-shadow-worker.mjs'); guard();
     const value = action === 'inventory-check' ? worker.inspectFixedInventory() : worker.installFixedInventory();
@@ -120,9 +124,12 @@ export async function dispatchStaged(action, payload = null) {
   refuse();
 }
 
-if (process.argv[1] && import.meta.url === pathToFileURL(path.resolve(process.argv[1])).href) {
+async function dispatchMain() {
   try {
     if (process.argv.length !== 3) refuse();
     process.stdout.write(JSON.stringify(await dispatchStaged(process.argv[2])) + '\n');
   } catch { process.stderr.write('Zaruku staged dispatcher refused\n'); process.exitCode = 1; }
 }
+// Complete module evaluation before an action imports the authority re-export.
+// Awaiting this at top level would deadlock those reviewed dependency cycles.
+if (process.argv[1] && import.meta.url === pathToFileURL(path.resolve(process.argv[1])).href) dispatchMain();

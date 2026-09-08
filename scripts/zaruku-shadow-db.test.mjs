@@ -20,6 +20,25 @@ const accessDenied = () => Object.assign(new Error('fixture access denied'), {
   errno: 1142,
 });
 
+test('joint DB and anonymous secret transaction holds creation ownership through install and rolls back only acknowledgements',async()=>{
+  const {provisionReaderAndSecrets}=await import('./zaruku-shadow-provision.mjs');
+  for(const fault of ['none','secret','create','grant','drop','release']) {
+    const password=Buffer.alloc(48,0x1a),secret=password.toString('hex');
+    const f=boundaryFixture({secret,...(fault==='create'?{createError:new Error('ambiguous')}:{}),...(['grant','drop'].includes(fault)?{grantError:new Error('denied')}: {}),...(fault==='drop'?{dropError:new Error('ambiguous cleanup')}:{}),...(fault==='release'?{lockReleased:0}:{})});
+    const receipts=[],events=[];f.admin.close=async()=>events.push('close');f.admin.sessionId='42';
+    const adapters={random:size=>{assert.equal(size,48);return password;},openAdmin:async()=>f.admin,receipt:()=>({save:value=>receipts.push(structuredClone(value))}),publish:async(value,onAllocated)=>{assert.equal(value,secret);events.push('install');onAllocated({dev:1,ino:2});if(fault==='secret')throw new Error('PRIVATE_SENTINEL');},remove:async identity=>{assert.deepEqual(identity,{dev:1,ino:2});events.push('remove');}};
+    const operation=provisionReaderAndSecrets('a'.repeat(40),()=>events.push('guard'),adapters);
+    if(fault==='none')assert.equal((await operation).tableSelectCount,35);else await assert.rejects(operation,error=>!error.message.includes('PRIVATE_SENTINEL'));
+    const drops=f.calls.filter(row=>row.sql?.startsWith('DROP USER'));
+    assert.equal(drops.length,['secret','grant','drop'].includes(fault)?1:0);
+    assert.equal(events.includes('remove'),['secret','release'].includes(fault));
+    if(['create','drop','release'].includes(fault))assert.equal(receipts.at(-1).status,'requires-review');
+    assert.ok(password.every(value=>value===0));
+    assert.ok(!JSON.stringify(receipts).includes(secret));
+    assert.equal(events.at(-1),'close');
+  }
+});
+
 function expectedTableRows(overrides = {}) {
   return authority.tables.map(tableName => ({
     tableSchema: 'report_bd',
