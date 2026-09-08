@@ -200,22 +200,80 @@ function collectStaticSqlExpressions(source, filename) {
   return statements;
 }
 
+function sqlTokens(statement) {
+  const tokens = [];
+  for (let index = 0; index < statement.length;) {
+    const rest = statement.slice(index);
+    const space = /^\s+/.exec(rest);
+    if (space) { index += space[0].length; continue; }
+    if (rest.startsWith('/*')) {
+      const end = statement.indexOf('*/', index + 2);
+      if (end < 0 || rest.startsWith('/*!') || rest.startsWith('/*+')) fail('Zaruku runtime unsupported SQL comment');
+      index = end + 2; continue;
+    }
+    if (/^--\s/.test(rest) || rest.startsWith('#')) {
+      const end = statement.indexOf('\n', index);
+      index = end < 0 ? statement.length : end + 1; continue;
+    }
+    if (rest[0] === "'" || rest[0] === '"' || rest[0] === '`') {
+      const quote = rest[0]; let value = '', closed = false;
+      for (index++; index < statement.length; index++) {
+        const char = statement[index];
+        if (char === '\\') fail('Zaruku runtime unsupported SQL escape');
+        if (char !== quote) { value += char; continue; }
+        if (statement[index + 1] === quote) { value += char; index++; continue; }
+        index++; closed = true; break;
+      }
+      if (!closed) fail('Zaruku runtime unterminated SQL token');
+      tokens.push({ value: quote === '`' ? value.toLowerCase() : '', identifier: quote === '`', quoted: true });
+      continue;
+    }
+    const identifier = /^[a-z_][a-z0-9_$]*/i.exec(rest);
+    if (identifier) { tokens.push({ value: identifier[0].toLowerCase(), identifier: true }); index += identifier[0].length; }
+    else { tokens.push({ value: rest[0], identifier: false }); index++; }
+  }
+  return tokens;
+}
+
 function statementTableReferences(statement) {
-  if (new RegExp(`\\b(?:FROM|JOIN)\\s+(?:${DYNAMIC_SQL}|(?:\`?report_bd\`?\\s*\\.\\s*)?${DYNAMIC_SQL})`, 'i').test(statement)) {
-    fail('Zaruku runtime dynamic SQL owner');
+  const tokens = sqlTokens(statement), tables = new Set(), ctes = new Set();
+  const keyword = (token, value) => token?.value === value && !token.quoted;
+  // CTEs are declared only after WITH or the closing parenthesis of a preceding CTE.
+  for (let index = 0; index < tokens.length; index++) {
+    if (!keyword(tokens[index], 'with')) continue;
+    let cursor = index + 1;
+    if (keyword(tokens[cursor], 'recursive')) cursor++;
+    while (tokens[cursor]?.identifier && keyword(tokens[cursor + 1], 'as') && tokens[cursor + 2]?.value === '(') {
+      ctes.add(tokens[cursor].value);
+      cursor += 3; let depth = 1;
+      while (cursor < tokens.length && depth) { if (tokens[cursor].value === '(') depth++; if (tokens[cursor].value === ')') depth--; cursor++; }
+      if (tokens[cursor]?.value !== ',') break;
+      cursor++;
+    }
   }
-  const ctes = new Set(
-    [...statement.matchAll(/\b([a-z][a-z0-9_]*)\s+AS\s*\(/gi)].map(match => match[1].toLowerCase()),
-  );
-  const tables = new Set();
-  const reference = /\b(?:FROM|JOIN)\s+`?([a-z][a-z0-9_]*)`?(?:\s*\.\s*`?([a-z][a-z0-9_]*)`?)?/gi;
-  for (const match of statement.matchAll(reference)) {
-    const schemaOrTable = match[1].toLowerCase();
-    const qualifiedTable = match[2]?.toLowerCase();
-    if (qualifiedTable && schemaOrTable !== 'report_bd') fail('Zaruku runtime foreign-schema SQL owner');
-    const table = qualifiedTable ?? schemaOrTable;
-    if (qualifiedTable || !ctes.has(table)) tables.add(table);
+  const scopes = [{ from: false, expected: false }];
+  for (let index = 0; index < tokens.length; index++) {
+    const token = tokens[index], scope = scopes.at(-1);
+    if (token.value === '(') { scope.expected = false; scopes.push({ from: false, expected: false }); continue; }
+    if (token.value === ')') { if (scopes.length > 1) scopes.pop(); continue; }
+    if (token.value === ';') { scope.from = false; scope.expected = false; continue; }
+    if (keyword(token, 'from') || keyword(token, 'join')) { scope.from = true; scope.expected = true; continue; }
+    if (!token.quoted && ['where', 'group', 'having', 'order', 'limit', 'union', 'except', 'intersect', 'window', 'for', 'into', 'set', 'values'].includes(token.value)) { scope.from = false; scope.expected = false; continue; }
+    if (token.value === ',' && scope.from) { scope.expected = true; continue; }
+    if (!scope.expected) continue;
+    scope.expected = false;
+    if (!token.identifier || token.value === DYNAMIC_SQL.toLowerCase()) fail('Zaruku runtime dynamic SQL owner');
+    let table = token.value, qualified = false;
+    if (tokens[index + 1]?.value === '.') {
+      if (table !== 'report_bd') fail('Zaruku runtime foreign-schema SQL owner');
+      const next = tokens[index + 2];
+      if (!next?.identifier || next.value === DYNAMIC_SQL.toLowerCase()) fail('Zaruku runtime dynamic SQL owner');
+      table = next.value; qualified = true; index += 2;
+      if (tokens[index + 1]?.value === '.') fail('Zaruku runtime unsupported SQL owner');
+    }
+    if (qualified || !ctes.has(table)) tables.add(table);
   }
+  if (scopes.at(-1).expected) fail('Zaruku runtime incomplete SQL owner');
   return tables;
 }
 

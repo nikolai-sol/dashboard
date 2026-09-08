@@ -261,6 +261,29 @@ test('transitive SQL owner scan never treats a schema-qualified physical table a
   }
 });
 
+test('SQL owner scanner detects comma joins and comments in every table position', () => {
+  const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'zaruku-sql-token-'));
+  const filename = path.join(directory, 'apps/zaruku/entry.ts');
+  fs.mkdirSync(path.dirname(filename), { recursive: true });
+  try {
+    for (const sql of [
+      'SELECT * FROM dashboards, report_bd_private.canonical_fact_metrika_visits',
+      'SELECT * FROM /* gap */ report_bd_private.canonical_fact_metrika_visits',
+      'SELECT * FROM dashboards d, /* gap */ `report_bd_private` . `canonical_fact_metrika_visits` v',
+      'SELECT * FROM dashboards JOIN -- gap\n report_bd_private.canonical_fact_metrika_visits USING (id)',
+    ]) {
+      fs.writeFileSync(filename, `export const sql = ${JSON.stringify(sql)};`);
+      assert.throws(() => scanZarukuRuntimeMysqlTables(directory), /foreign|schema|SQL owner|authority/i, sql);
+    }
+    fs.writeFileSync(filename, 'export const sql = "WITH `rows` AS (SELECT id FROM /* gap */ dashboards) SELECT * FROM `rows` r, `report_bd`.`dashboard_sources` s JOIN dashboard_access_users a ON a.id=s.id WHERE s.id IN (SELECT id FROM dashboards)";');
+    assert.deepEqual(scanZarukuRuntimeMysqlTables(directory), ['dashboard_access_users', 'dashboard_sources', 'dashboards']);
+    for (const sql of ['SELECT * FROM dashboards, __ZARUKU_DYNAMIC_SQL__', 'SELECT * FROM /*!50000 report_bd_private.canonical_fact_metrika_visits */ dashboards', 'SELECT * FROM /* unclosed']) {
+      fs.writeFileSync(filename, `export const sql = ${JSON.stringify(sql)};`);
+      assert.throws(() => scanZarukuRuntimeMysqlTables(directory), /SQL|authority/i, sql);
+    }
+  } finally { fs.rmSync(directory, { recursive: true }); }
+});
+
 test('source-only shadow tests are a dedicated predeploy gate with no apply mode', () => {
   const pkg = JSON.parse(fs.readFileSync(path.join(root, 'package.json'), 'utf8'));
   const gate=pkg.scripts['test:zaruku-production-shadow'];
