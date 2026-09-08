@@ -1323,21 +1323,34 @@ export function createStaticEvaluator(sourceFile) {
     }
 
     function memberPathFromParameter(expression, parameter) {
-      const path = [];
-      let current = unwrapExpression(expression);
-      while (ts.isPropertyAccessExpression(current) || ts.isElementAccessExpression(current)) {
-        if (ts.isPropertyAccessExpression(current)) {
-          path.unshift(current.name.text);
-        } else {
-          if (!current.argumentExpression) return null;
-          const key = staticKey(current.argumentExpression);
-          if (key === null) return null;
-          path.unshift(key);
+      function resolve(value, path, seen, depth) {
+        if (!preprocessStep() || depth > MAX_DEPTH) {
+          if (depth > MAX_DEPTH) preprocessingExceeded = true;
+          return null;
         }
-        current = unwrapExpression(current.expression);
+        let current = unwrapExpression(value);
+        const resolvedPath = [...path];
+        while (ts.isPropertyAccessExpression(current) || ts.isElementAccessExpression(current)) {
+          if (ts.isPropertyAccessExpression(current)) {
+            resolvedPath.unshift(current.name.text);
+          } else {
+            if (!current.argumentExpression) return null;
+            const key = staticKey(current.argumentExpression);
+            if (key === null) return null;
+            resolvedPath.unshift(key);
+          }
+          current = unwrapExpression(current.expression);
+        }
+        if (!ts.isIdentifier(current)) return null;
+        const binding = declaration(current, current.text);
+        if (binding === parameter) return resolvedPath;
+        if (!binding || seen.has(binding) || !ts.isVariableDeclaration(binding) ||
+            !binding.initializer || !(binding.parent.flags & ts.NodeFlags.Const)) return null;
+        return resolve(
+          binding.initializer, resolvedPath, new Set(seen).add(binding), depth + 1,
+        );
       }
-      if (!ts.isIdentifier(current) || declaration(current, current.text) !== parameter) return null;
-      return path;
+      return resolve(expression, [], new Set(), 0);
     }
 
     function bindingsAtMemberPath(expression, path, depth = 0) {
