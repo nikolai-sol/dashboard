@@ -359,6 +359,9 @@ test('SQL extraction refuses unknown members, recursion, async maps and mutable 
     'declare function runtimeSql():string; declare const flag:boolean; const queries:string[]=[]; const ui:string[]=[]; function choose(value:boolean,a:string[][],b:string[][]){return value?a:b;} function mutate(box:string[][],other:string[][]){const alias=choose(flag,box,other);alias[0].push(runtimeSql());} mutate([queries],[ui]); export const sql=queries.join("");',
     'declare function runtimeSql():string; const queries:string[]=[]; function mutate(box:string[][]){const [alias]=box;alias.push(runtimeSql());} mutate([queries]); export const sql=queries.join("");',
     'declare function runtimeSql():string; const queries:string[]=[]; function mutate(box:{value:string[]}){const {value}=box;value.push(runtimeSql());} mutate({value:queries}); export const sql=queries.join("");',
+    'declare function runtimeSql():string; const queries:string[]=[]; const ui:string[]=[]; const alias=[]!==[]?queries:ui; alias.push(runtimeSql()); export const sql=queries.join("");',
+    'declare function runtimeSql():string; const queries:string[]=[]; const ui:string[]=[]; const alias={}!=={}?queries:ui; alias.push(runtimeSql()); export const sql=queries.join("");',
+    'declare function runtimeSql():string; const queries:string[]=[]; const ui:string[]=[]; const alias=[]+1==="1"?queries:ui; alias.push(runtimeSql()); export const sql=queries.join("");',
     'declare function runtimeSql():string; declare const outerFlag:boolean; const queries:string[]=[]; const ui:string[]=[]; function pass(value:string[]){return value;} function outer(flag:boolean){function inner(innerFlag:boolean){return pass(innerFlag&&flag?queries:ui);} return inner(true);} const alias=outer(outerFlag); alias.push(runtimeSql()); export const sql=queries.join("");',
     'declare const flag:boolean; const queries:string[]=[]; const alias=flag?queries:[]; alias.push("SELECT * FROM report_bd_private.canonical_fact_metrika_visits"); export const sql=queries.join("");',
     'declare function runtimeSql():string; const queries:string[]=[]; const ui:string[]=[]; const alias=true?queries:ui; alias.push(runtimeSql()); export const sql=queries.join("");',
@@ -402,6 +405,18 @@ test('SQL extraction refuses unknown members, recursion, async maps and mutable 
     function maybe(flag:boolean,queries:string[]){return flag?queries:[];}
     const ui=maybe(false,safe);
     ui.push("label");
+    export const sql=safe.join("");
+  `, 'fixture.ts').statements, ['SELECT * FROM dashboards']);
+
+  assert.deepEqual(extractStaticSql(`
+    const safe=["SELECT * FROM dashboards"];
+    const ui=["label"];
+    function mutate(box:string[][],other:string[][]){
+      function pass(value=box){return value;}
+      const [alias]=[pass(other)];
+      alias[0].push("label");
+    }
+    mutate([safe],[ui]);
     export const sql=safe.join("");
   `, 'fixture.ts').statements, ['SELECT * FROM dashboards']);
 

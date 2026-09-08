@@ -303,13 +303,13 @@ export function createStaticEvaluator(sourceFile) {
     if (ts.isArrayLiteralExpression(current) || ts.isObjectLiteralExpression(current) ||
         ts.isArrowFunction(current) || ts.isFunctionExpression(current) ||
         ts.isClassExpression(current) || ts.isNewExpression(current)) {
-      return { known: true, value: true };
+      return { known: true, value: true, truthinessOnly: true };
     }
     if (ts.isTemplateExpression(current)) {
       const parts = [current.head.text];
       for (const span of current.templateSpans) {
         const value = staticPrimitiveValue(span.expression, seen, depth + 1);
-        if (!value.known) return value;
+        if (!value.known || value.truthinessOnly) return { known: false };
         parts.push(String(value.value), span.literal.text);
       }
       try {
@@ -355,6 +355,10 @@ export function createStaticEvaluator(sourceFile) {
         left.value !== null && left.value !== undefined) return left;
     const right = staticPrimitiveValue(current.right, seen, depth + 1);
     if (!right.known) return { known: false };
+    if (current.operatorToken.kind === ts.SyntaxKind.AmpersandAmpersandToken ||
+        current.operatorToken.kind === ts.SyntaxKind.BarBarToken ||
+        current.operatorToken.kind === ts.SyntaxKind.QuestionQuestionToken) return right;
+    if (left.truthinessOnly || right.truthinessOnly) return { known: false };
     const operations = new Map([
       [ts.SyntaxKind.PlusToken, (a, b) => a + b],
       [ts.SyntaxKind.MinusToken, (a, b) => a - b],
@@ -1137,7 +1141,9 @@ export function createStaticEvaluator(sourceFile) {
         if (ts.isNumericLiteral(node)) return known(Number(node.text));
         if (ts.isArrayLiteralExpression(node) || ts.isObjectLiteralExpression(node) ||
             ts.isArrowFunction(node) || ts.isFunctionExpression(node) ||
-            ts.isClassExpression(node) || ts.isNewExpression(node)) return known(true);
+            ts.isClassExpression(node) || ts.isNewExpression(node)) {
+          return { known: true, value: true, truthinessOnly: true };
+        }
         if (ts.isIdentifier(node)) {
           const binding = declaration(node, node.text);
           if (!binding && node.text === 'undefined') return known(undefined);
@@ -1164,7 +1170,7 @@ export function createStaticEvaluator(sourceFile) {
           const parts = [node.head.text];
           for (const span of node.templateSpans) {
             const expressionValue = contextualPrimitive(span.expression, seen, depth + 1, frames);
-            if (!expressionValue.known) return expressionValue;
+            if (!expressionValue.known || expressionValue.truthinessOnly) return { known: false };
             parts.push(String(expressionValue.value), span.literal.text);
           }
           try {
@@ -1197,6 +1203,10 @@ export function createStaticEvaluator(sourceFile) {
             left.value !== null && left.value !== undefined) return left;
         const right = contextualPrimitive(node.right, seen, depth + 1, frames);
         if (!right.known) return { known: false };
+        if (node.operatorToken.kind === ts.SyntaxKind.AmpersandAmpersandToken ||
+            node.operatorToken.kind === ts.SyntaxKind.BarBarToken ||
+            node.operatorToken.kind === ts.SyntaxKind.QuestionQuestionToken) return right;
+        if (left.truthinessOnly || right.truthinessOnly) return { known: false };
         const operations = new Map([
           [ts.SyntaxKind.PlusToken, (a, b) => a + b],
           [ts.SyntaxKind.MinusToken, (a, b) => a - b],
@@ -1405,6 +1415,10 @@ export function createStaticEvaluator(sourceFile) {
               left.value !== null && left.value !== undefined) return left;
           const right = primitiveFromFrames(current.right, frames, seen, depth + 1);
           if (!right.known) return { known: false };
+          if (current.operatorToken.kind === ts.SyntaxKind.AmpersandAmpersandToken ||
+              current.operatorToken.kind === ts.SyntaxKind.BarBarToken ||
+              current.operatorToken.kind === ts.SyntaxKind.QuestionQuestionToken) return right;
+          if (left.truthinessOnly || right.truthinessOnly) return { known: false };
           const operations = new Map([
             [ts.SyntaxKind.PlusToken, (a, b) => a + b],
             [ts.SyntaxKind.MinusToken, (a, b) => a - b],
@@ -1575,9 +1589,19 @@ export function createStaticEvaluator(sourceFile) {
                 (argumentState.mayBeUndefined && initializerState.mayBeDefined),
             };
           }
-          parameterValues.set(
-            calleeParameter, parameterExpressions(calleeParameter, index, invocation),
-          );
+          let runtimeValues;
+          if (!argument) {
+            runtimeValues = calleeParameter.initializer ? [calleeParameter.initializer] : [];
+          } else if (!calleeParameter.initializer) {
+            runtimeValues = [argument];
+          } else if (argumentState.mayBeUndefined && !argumentState.mayBeDefined) {
+            runtimeValues = [calleeParameter.initializer];
+          } else if (argumentState.mayBeUndefined) {
+            runtimeValues = [argument, calleeParameter.initializer];
+          } else {
+            runtimeValues = [argument];
+          }
+          parameterValues.set(calleeParameter, runtimeValues);
           parameterStates.set(calleeParameter, runtimeState);
         });
         return { parameterValues, parameterStates };
