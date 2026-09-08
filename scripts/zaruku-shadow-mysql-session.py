@@ -130,6 +130,7 @@ class Session:
         if not lines:
             if create:self.owned=True
             if sql==self.drop:self.owned=False
+            if sql==self.lookup:self.absent=True
             return {'rows':[]}
         headers=lines[0].split('\t')
         if len(headers)>8 or len(set(headers))!=len(headers) or any(not re.fullmatch(r'[A-Za-z][A-Za-z0-9_ @().-]{0,127}',key) for key in headers): raise ValueError()

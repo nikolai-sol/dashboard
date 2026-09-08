@@ -8,6 +8,16 @@
 
 **Tech Stack:** Node.js ESM, TypeScript test runner, Bash, MySQL 8, PM2, Linux `setpriv`/`procfs`/`ss`, Python 3 descriptor-safe artifact stamper, SSH, Next.js 16 standalone runtime.
 
+**Task 5 audit-fix status (source implementation only):** The nine audit groups have
+regression-backed fixes. The current interfaces below supersede earlier Task 1–4
+design examples: a 20-file core-only staged dispatcher owns mutation entrypoints;
+release/backup parents are root:root `0711`; host apply recognizes only the exact
+staged predecessor and pins numeric UID/GID uniqueness; DB and anonymous runtime
+secret publication are one session-bound transaction; cleanup requires a durable
+deployment receipt under the existing deploy lock. Source-side freeze/provision/
+child-deploy checks require exact live remote SHA equality. Independent acceptance,
+real release-ref creation, and all Task 6–7 production actions remain pending.
+
 ## Global Constraints
 
 - Public URLs remain unchanged and continue to resolve through `127.0.0.1:3001` for the entire plan.
@@ -679,30 +689,25 @@ Expected: exit `0`, clean worktree, no new warnings, and a clean re-review.
 
 - [ ] **Step 5: Freeze the release authority without overwriting an unknown ref**
 
-Mandatory cross-task follow-up from Task 4 review: enforce exact equality of remote
-`refs/heads/release/zaruku` to the frozen candidate SHA before production provisioning/orchestration.
-The current Task 4 ancestry check is insufficient to prove frozen authority: a different ancestor
-must fail this Task 5 gate. Add a regression for that case and retain refusal to overwrite an
-unknown/different existing ref. This is a Task 5 acceptance requirement, not a Task 4 blocker; Task 4
-does not update the release ref or broaden its current source-only change scope.
+Only after independent acceptance and explicit release-ref authorization, use the
+fixed interface from the clean reviewed named checkout. It verifies the fixed base,
+exact source, and one exact remote ref; ancestor/descendant/unrelated refs all fail.
 
 ```bash
-git fetch origin
-ZARUKU_SHADOW_SHA="$(git rev-parse HEAD)"
-test -z "$(git status --porcelain)"
-git merge-base --is-ancestor ee950f3917d0f8616b6229d4049410a0afb7e380 "$ZARUKU_SHADOW_SHA"
-git ls-remote --exit-code --heads origin release/zaruku
+node scripts/freeze-zaruku-shadow-release.mjs check
 ```
 
-Expected for the first shadow: the final command exits `2` because the release ref is absent. If it
-returns a SHA, stop and review that authority; do not overwrite it automatically. When absent, run:
+An absent ref fails `check`. After confirming absence and receiving explicit approval,
+the sole creation interface is:
 
 ```bash
-git push origin "$ZARUKU_SHADOW_SHA":refs/heads/release/zaruku
-git ls-remote --heads origin release/zaruku
+node scripts/freeze-zaruku-shadow-release.mjs create-if-absent
 ```
 
-Expected: the remote release SHA equals `ZARUKU_SHADOW_SHA` exactly.
+It uses `--atomic --force-with-lease=refs/heads/release/zaruku:` and exact readback.
+A different ref appearing after observation cannot be updated. No ordinary push,
+force update, or ancestry-only acceptance is allowed. These commands were not run
+against the real origin during Task 5 implementation.
 
 ---
 
@@ -732,7 +737,7 @@ Run:
 bash scripts/run-zaruku-linux-fixtures.sh
 ```
 
-Expected: both pass in the reviewed, digest-pinned, network-disabled disposable Linux container. The
+Expected: all four fixture groups pass in the reviewed, digest-pinned, network-disabled disposable Linux container. The
 second fixture must prove real/effective identity drop, cleared groups/capabilities, `no_new_privs`,
 cwd, and loopback health. A failure is `NO-GO`; do not provision or stage production files.
 
@@ -754,27 +759,41 @@ host boundary creates the evidence directory.
 
 - [ ] **Step 4: Apply and attest the fixed host boundary**
 
-Run the attested SHA-addressed host CLI in `check`, `apply`, and `check` order. Verify
+From the clean frozen checkout, run the exact-ref-guarded source interface:
+
+```bash
+node scripts/provision-zaruku-shadow.mjs host-check
+node scripts/provision-zaruku-shadow.mjs host-apply
+node scripts/provision-zaruku-shadow.mjs host-check
+```
+
+It verifies the complete staged closure before importing its dispatcher. Verify
 `dashboard-zaruku` has exactly one dedicated group, no login shell, and no root/foreign group
-membership. Verify every fixed directory owner and mode. Do not start PM2 yet. The CLI must compare
-its own bytes with the staged canonical manifest before every apply operation.
+membership, unique numeric reverse/full NSS lookup for both UID and GID. Release
+and backup parents are root:root `0711` (traverse only); other fixed private roots
+are `0700`. The exact staged predecessor is retained and never journaled as newly
+created. Owned host rollback is `node scripts/provision-zaruku-shadow.mjs host-rollback`.
+Do not start PM2 yet; direct host/auth/inventory mutation CLIs refuse.
 
 - [ ] **Step 5: Generate and apply the dedicated DB credential privately**
 
-On the server, generate 48 random bytes with the Node cryptographic RNG inside the privileged DB
-provisioning process. Keep the value in memory and an inherited pipe only. Create
+Run `node scripts/provision-zaruku-shadow.mjs db-provision`. The attested server
+coordinator generates 48 random bytes in memory and uses one persistent admin
+session/creation lock, with reconnect disabled and CONNECTION_ID-fenced replies. Create
 `'dashboard_zaruku_reader'@'127.0.0.1'`, grant the exact table list, run positive and negative
 permission probes, then atomically install `/var/www/.dashboard-zaruku-secrets/runtime.env` using the
-same in-memory password and the stably copied shared auth secret. If any verification fails, remove
-only the newly created DB account and staged secret inode.
+same in-memory password and the stably copied shared auth secret. Reader credentials
+use a sealed memfd; runtime publication uses an anonymous O_TMPFILE inode, not a
+credential temp pathname. The private `db-provision.json` receipt records acknowledged
+account/session and secret-inode ownership. Failures remove only acknowledged creations
+under the same live session; ambiguous replies never reconnect or guess ownership.
 
 - [ ] **Step 6: Install the existing manager cookie descriptor through a hidden prompt**
 
 Run:
 
 ```bash
-ZARUKU_SHADOW_SHA="$(git rev-parse HEAD)"
-ssh -t beget "/usr/bin/node /var/www/.dashboard-zaruku-shadow/control/$ZARUKU_SHADOW_SHA/scripts/install-zaruku-shadow-auth.mjs"
+node scripts/provision-zaruku-shadow.mjs auth-install
 ```
 
 At the hidden prompt, the owner supplies one existing valid Zaruku manager cookie descriptor in the
@@ -800,27 +819,27 @@ commit no production-derived file to Git.
 - Consumes: reviewed release ref, provisioned prerequisites, manager auth descriptor
 - Produces: loopback shadow process and sanitized readiness report
 
-- [ ] **Step 1: Deploy the sealed Zaruku candidate**
+- [ ] **Step 1: Run the sole deploy-and-compare orchestrator**
 
-From the clean reviewed candidate checkout:
+From the clean reviewed candidate checkout, with port `3002` still free:
 
 ```bash
-npm run deploy:zaruku
+npm run shadow:zaruku:run
 ```
 
-Expected: the existing isolated lock, release, manifest, service-account, boot, health, and active
-attestation gates pass. `dashboard-zaruku` becomes online on `127.0.0.1:3002`. `dashboard-next` keeps
-the same PID and remains healthy on `127.0.0.1:3001`.
+Do not manually deploy beforehand: free-port preflight precedes exactly one child
+deployment. The child receives the exact SHA/run ID through stdin and rechecks the
+live frozen ref before activation. The orchestrator owns deployment, process/route
+attestation, parity, cleanup and decision publication as a single workflow.
 
-- [ ] **Step 2: Prove no public route changed before parity**
+- [ ] **Step 2: Inspect the orchestrator's no-route-change evidence**
 
-Re-hash `/etc/nginx/conf.d/dashboard-next.conf`, confirm no loaded Nginx configuration references
-port `3002`, and confirm the public Zaruku URL still reaches the combined runtime SHA. Do not reload
-Nginx.
+The workflow re-hashes the loaded Nginx configuration, confirms no public port `3002`
+route and unchanged combined PID/SHA on `3001`. Do not reload Nginx.
 
-- [ ] **Step 3: Run the fixed production-shadow orchestrator**
+- [ ] **Step 3: Inspect the completed parity evidence (do not deploy again)**
 
-Run the orchestrator with no authority overrides. It opens the fixed auth descriptor on an inherited
+The same orchestrator opens the fixed auth descriptor on an inherited
 FD and calls the existing verifier for `2026-01-01..2026-08-31`. Expected checks include manager JSON,
 historical direct additions, January–August totals, July Wordstat, August Alice visibility and
 competitors, SEO OS, medical/noise classification, source health, unauthorized metadata, PDF, Excel,
@@ -829,8 +848,12 @@ routes, artifact SHA, and foreign-runtime SHA stability.
 - [ ] **Step 4: Handle the result exactly**
 
 If every stable comparison passes, leave the loopback-only process online and record `GO for later
-cutover planning`. If any check fails, record `NO-GO`, stop only `dashboard-zaruku`, save sanitized
-mismatch evidence, and leave all public routing and combined processes unchanged.
+cutover planning`. On failure, the workflow records `NO-GO` and conditionally stops
+only its receipt-owned Zaruku process. The protected receipt binds source/run,
+transaction UUID, active release/directory, PID/start/boot identity, numeric PM2 ID,
+UID/GID/cwd/listener; it is revalidated under the same deploy lock immediately before
+stop. Missing receipt means no stop. Changed/unowned/successor identity requires
+operator review, never a name-only cleanup. Public routing/combined remain unchanged.
 
 - [ ] **Step 5: Write and review the readiness report**
 
@@ -870,6 +893,7 @@ verdict. Even a clean `GO` ends this plan; it does not begin cutover.
 ## Completion Boundary
 
 This plan is complete when the shadow process has either passed and remains loopback-only, or failed
-and has been stopped; the sanitized report is independently reviewed; and the public combined
+and its exact receipt-owned process has been stopped. Ambiguous/unowned state requires
+review and is not completion. The sanitized report must be independently reviewed and the public combined
 runtime remains unchanged. Exact-path Nginx cutover, compatibility-adapter removal, Abbott extraction,
 and advertising-runtime extraction each require later approved specs and plans.

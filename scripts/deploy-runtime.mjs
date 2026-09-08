@@ -60,7 +60,7 @@ export function parseDeploymentBinding(bytes) {
   try {
     if (!Buffer.isBuffer(bytes) || bytes.length > 512) fail('Invalid deploy binding');
     const value = JSON.parse(bytes);
-    if (Object.keys(value).sort().join(',') !== 'runId,sourceSha' || !/^[a-f0-9]{40}$/.test(value.sourceSha) || !/^[a-f0-9]{8}-[a-f0-9]{4}-4[a-f0-9]{3}-[89ab][a-f0-9]{3}-[a-f0-9]{12}$/.test(value.runId)) fail('Invalid deploy binding');
+    if (JSON.stringify(value)!==bytes.toString('utf8') || Object.keys(value).sort().join(',') !== 'runId,sourceSha' || !/^[a-f0-9]{40}$/.test(value.sourceSha) || !/^[a-f0-9]{8}-[a-f0-9]{4}-4[a-f0-9]{3}-[89ab][a-f0-9]{3}-[a-f0-9]{12}$/.test(value.runId)) fail('Invalid deploy binding');
     return value;
   } catch { fail('Invalid deploy binding'); }
 }
@@ -132,7 +132,9 @@ async function main() {
   validateAuthority(filename);
   let binding;
   if (action === 'deploy') {
-    const bytes = Buffer.alloc(513); const length = fs.readSync(0, bytes, 0, bytes.length, null);
+    if(process.stdin.isTTY)fail('Orchestrator binding required');
+    const bytes = Buffer.alloc(513); let length=0;
+    while(length<bytes.length){const count=fs.readSync(0,bytes,length,bytes.length-length,null);if(!count)break;length+=count;}
     binding = parseDeploymentBinding(bytes.subarray(0,length));
   }
   await frozenSource(binding?.sourceSha ?? reviewedSource().sha);

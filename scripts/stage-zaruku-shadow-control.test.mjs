@@ -154,3 +154,13 @@ test('pure runtime authority loads without TS or any node_modules dependency', (
   assert.doesNotMatch(script, /from ['"](?:typescript|.*\.ts)['"]/);
   for (const name of ['zaruku-shadow-host.mjs', 'zaruku-shadow-db.mjs', 'zaruku-shadow-dispatch.mjs']) assert.doesNotMatch(fs.readFileSync(path.join(import.meta.dirname, name), 'utf8'), /from ['"](?:typescript|.*\.ts)['"]/);
 });
+
+test('production control staging requires fresh exact frozen authority before transfer',async t=>{
+  const {stageFrozenShadowControl}=await import('./stage-zaruku-shadow-control.mjs');
+  const f=fixture(t);let remoteSha='b'.repeat(40),checks=0;
+  f.adapter.command=()=>{checks++;return {status:0,stdout:`${remoteSha}\trefs/heads/release/zaruku\n`,stderr:''};};
+  await assert.rejects(()=>stageFrozenShadowControl(f.adapter));
+  assert.deepEqual(fs.readdirSync(path.join(f.root,'var/www')),[]);
+  remoteSha=sha;assert.equal((await stageFrozenShadowControl(f.adapter)).sourceSha,sha);
+  assert.equal(checks,3);
+});

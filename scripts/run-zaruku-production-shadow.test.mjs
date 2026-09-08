@@ -60,6 +60,24 @@ test('fixed successful state machine attests immutable evidence without cutover'
   assert.match(result.evidenceDirectory, /^\/var\/www\/\.dashboard-zaruku-shadow\/evidence\/[a-f0-9-]+$/);
 });
 
+test('documented free-port sequence deploys once and cleans only an owned failed run',async()=>{
+  const plan=fs.readFileSync(path.join(import.meta.dirname,'../docs/superpowers/plans/2026-09-08-zaruku-production-shadow.md'),'utf8');
+  const task7=plan.split('### Task 7:')[1].split('## Completion Boundary')[0];
+  assert.doesNotMatch(task7,/npm run deploy:zaruku/);
+  assert.equal(task7.match(/npm run shadow:zaruku:run/g)?.length,1);
+  assert.match(task7,/3002.*free|free.*3002/);
+  for(const fault of ['none','parity','lost-response','before-activation']) {
+    const adapter=fixture();let listening=false,receipt=false,deployed=0,stops=0;
+    const preflight=adapter.preflight;adapter.preflight=async()=>{assert.equal(listening,false);return preflight();};
+    adapter.deploy=async()=>{deployed++;assert.equal(listening,false);if(fault==='before-activation')throw new Error();listening=true;receipt=true;if(fault==='lost-response')throw new Error();return {passed:true,sourceSha:sha};};
+    if(fault==='parity')adapter.parity=async()=>({passed:false});
+    adapter.stop=async()=>{if(receipt){listening=false;stops++;}return {passed:true,stopped:receipt};};
+    const result=await runProductionShadow(adapter);
+    assert.equal(deployed,1);assert.equal(result.decision,fault==='none'?'GO':'NO-GO');
+    assert.equal(listening,fault==='none');assert.equal(stops,['parity','lost-response'].includes(fault)?1:0);
+  }
+});
+
 test('failed second pair retains the exact retry history in immutable NO-GO evidence',async()=>{
   const adapter=fixture();adapter.parity=async()=>({passed:false,pairedReadAttempts:2,coverageAdvancedDuringFirstPair:true,stableCanonicalComparison:false});
   const result=await runProductionShadow(adapter);assert.equal(result.decision,'NO-GO');

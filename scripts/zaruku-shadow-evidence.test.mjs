@@ -67,9 +67,9 @@ for(const fault of ['credential-read','final-context-recheck','lost-parity-respo
   const adapter=createProductionAdapter({
     source:()=>({sha,branch:'codex/reviewed',clean:true}),
     readFile:name=>({bytes:Buffer.from(name),mode:0o644,regular:true,singleLink:true,safeAncestors:true}),
-    commandRunner:(bin,args)=>{
+    commandRunner:(bin,args,options)=>{
       if(args.some(arg=>arg.endsWith('deploy-zaruku.sh')))calls.push('deploy');
-      return {status:0,signal:null,stderr:'',stdout:args.includes('ls-remote')?sha+'\trefs/heads/release/zaruku\n':args.some(arg=>arg.endsWith('run-zaruku-linux-fixtures.sh'))?'linux-build-helper-fixture passed\nlinux-privilege-drop-fixture passed\nlinux-mysql-descriptor-fixture passed\nlinux-evidence-writer-fixture passed\n':''};
+      return {status:0,signal:null,stderr:'',stdout:args.includes('ls-remote')?sha+'\trefs/heads/release/zaruku\n':args.some(arg=>arg.endsWith('run-zaruku-linux-fixtures.sh'))?'linux-build-helper-fixture passed\nlinux-privilege-drop-fixture passed\nlinux-mysql-descriptor-fixture passed\nlinux-evidence-writer-fixture passed\n':args.some(arg=>arg.endsWith('deploy-zaruku.sh'))?options.input:''};
     },
     remoteRunner:async(action,request)=>{
       calls.push(action);requests.push({action,request:structuredClone(request)});

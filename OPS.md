@@ -186,28 +186,33 @@ values. Provisioning the dedicated account, verifying only the required canonica
 read grants, installing this file, and validating the target filesystem/service permissions remain
 cutover prerequisites; none is performed by these source changes.
 
-Fixed shadow provisioning is implemented by `scripts/zaruku-shadow-host.mjs`. Its CLI accepts
-exactly `check`, `apply`, or `rollback-created`, followed by the absolute path to this reviewed
-checkout's `deploy/zaruku/production-shadow.json`; there are no account, directory, credential,
-or journal path overrides. `check` is read-only. Mutation requires Linux with real and effective
-UID `0`. Run only within the separately reviewed production-shadow procedure.
+Fixed provisioning uses `node scripts/provision-zaruku-shadow.mjs` with exactly one
+fixed action: `host-check`, `host-apply`, `host-rollback`, `db-provision`, `auth-install`,
+`inventory-check` or `inventory-install`. It requires clean named source and exact live
+release-ref equality, then verifies the whole SHA-addressed staged closure before
+entering the core-only dispatcher with an empty environment. Direct host/auth/inventory
+mutation CLIs refuse. No host, path, identity, credential or journal override exists.
+Production authorization remains separate; host/DB mutation requires real/effective root.
 
 `apply` creates the `dashboard-zaruku` system group and user, with only that group, shell
 `/usr/sbin/nologin`, home `/nonexistent`, and no home creation. Numeric GID lookup must resolve
 back to `dashboard-zaruku`, and the NSS group listing must contain exactly one entry with that
-GID; a foreign alias or incomplete lookup fails closed before accepting or recording identity.
-It creates these root:root `0700`
-directories: `/var/www/dashboard-zaruku-releases`, `/var/www/dashboard-zaruku-backups`,
+GID. Numeric UID reverse lookup and full passwd enumeration enforce the same uniqueness;
+aliases, malformed/incomplete/inconsistent NSS results fail before recording identity.
+The release and backup roots `/var/www/dashboard-zaruku-releases` and
+`/var/www/dashboard-zaruku-backups` are root:root `0711`: service traversal only,
+no listing or writes. These roots are root:root `0700`:
 `/var/www/.dashboard-zaruku-control`, `/var/www/.dashboard-zaruku-secrets`,
 `/var/www/.dashboard-zaruku-shadow`, and its `evidence` child. Compliant complete state is an
-idempotent no-op; partial or foreign state, unsafe ancestry, and an occupied port `3002` fail
+idempotent no-op; only the exact immutable staged predecessor is an allowed partial state.
+Other partial/foreign state, unsafe ancestry, and an occupied port `3002` fail
 before mutation. The active app path and deploy lock are not created by provisioning.
 
 Before its first host mutation, apply exclusively creates the root-owned, single-link `0600`
 creation journal `/var/www/.dashboard-zaruku-host-creation.json`. It records the run identity,
-absent predecessor, and verified post-step account or device/inode/owner/group/mode metadata,
+absent or exact staged predecessor, and verified post-step account or device/inode/owner/group/mode metadata,
 persisting each step atomically. The journal contains no credential values and remains after
-success. `rollback-created` consumes only that fixed journal and validates every removal before
+success. `host-rollback` consumes only that fixed journal and validates every removal before
 starting. Changed identities/inodes, foreign directory contents, and incomplete post-step
 evidence stop rollback. A process crash between a mutation and recording its resulting identity
 requires operator review; rollback never guesses ownership from a path name. Rollback preserves
@@ -215,11 +220,14 @@ the journal, marked `rolled-back`, and never removes a nonempty secret, auth, re
 directory. A subsequent fresh provisioning run therefore requires a separately reviewed journal
 retention/recovery decision.
 
-The exported `installRuntimeSecrets(adapter, databasePasswordFd)` is called by the reviewed
-provisioning coordinator with an inherited descriptor numbered at least `3`; it has no password
-argument or environment fallback. The caller owns and closes that inherited descriptor. Password
-bytes are strict UTF-8, at most 4096 bytes, without a trailing newline, and must satisfy the existing
-renderer restrictions. It reads only `/var/www/www-root/data/.production.env`, requiring root:root
+`db-provision` generates 48 cryptographic random bytes in memory, keeps one admin
+MySQL process/session and fixed creation lock through account creation, all 35 grants,
+permission probes and atomic runtime-secret installation. Reconnect is disabled;
+every reply is fenced by random marker and unchanged CONNECTION_ID. The helper accepts
+only exact account/table/query operations, with acknowledged CREATE ownership required
+for grants/rollback. Reader credentials use an anonymous sealed memfd, never argv/env.
+The runtime secret uses the same 96-hex password and reads only
+`/var/www/www-root/data/.production.env`, requiring root:root
 `0600`, a single regular-file link, safe root-owned ancestry, and a stable read of at most 65,536
 bytes. Source syntax allows blank lines, full-line comments, and `KEY=value`, `KEY='value'`, or
 `KEY="value"`. Duplicate names anywhere, controls, malformed UTF-8, `export`, interpolation,
@@ -229,13 +237,19 @@ are fixed to `127.0.0.1:3306`, `dashboard_zaruku_reader`, and `report_bd`; the p
 `https://dashboards.adreports.ru`. The shared serializer preserves the existing exact single-quoted
 reader grammar and rejects unsupported characters instead of escaping them.
 
-Secret publication writes and fsyncs a new `0600` inode, publishes atomically, fsyncs its directory,
+Secret publication writes and fsyncs an anonymous Linux O_TMPFILE `0600` inode, links
+its fixed inherited proc-FD directly to the final name, and fsyncs its directory,
 then reopens without following links and validates through the release reader and renderer.
-Existing unsafe destinations are rejected. Output contains only installation and permission
-results and key names; no credential value or credential digest is returned.
+Every existing destination is rejected without replacement. The durable private
+`/var/www/.dashboard-zaruku-shadow/db-provision.json` receipt records source/run/session,
+acknowledged account creation and the exact secret inode. Failure removes only its
+acknowledged DB account under the same live creation lock and its exact owned inode.
+Unknown CREATE/session/DROP/release replies require review; never reconnect to guess
+cleanup. No credential temp pathname, value or credential digest reaches diagnostics.
 
-`node scripts/install-zaruku-shadow-auth.mjs` accepts descriptor bytes only from stdin, with no
-arguments. It accepts exactly `{"headers":{"cookie":"..."}}`, with a nonempty cookie of at most
+`node scripts/provision-zaruku-shadow.mjs auth-install` uses the exact-ref/closure
+guard before the staged installer reads stdin. It accepts exactly
+`{"headers":{"cookie":"..."}}`, with a nonempty cookie of at most
 4096 characters and total input at most 65,536 bytes. Extra/duplicate keys, other headers
 (including `authorization` and `host`), malformed UTF-8, and control characters fail closed.
 Interactive input has terminal echo disabled before reading and restored in `finally`. It
@@ -243,7 +257,7 @@ atomically publishes root-owned single-link `0600`
 `/var/www/.dashboard-zaruku-shadow/auth.json`; a preexisting nonempty descriptor is never replaced.
 It prints only `status` and the SHA-256 of the exact descriptor bytes. The cookie-only contract is
 a strict subset of the read-only verifier's accepted header descriptor. These tools have been
-tested only with injected identities and disposable local files; this source change performs no
+tested with injected identities and real locked Linux production-mode fixtures; this source change performs no
 production provisioning, deployment, MySQL operation, proxy edit, or runtime start.
 
 Local comparison requires two already-running loopback runtimes backed by the same canonical
@@ -326,8 +340,8 @@ production shadow passes. This runbook section does not authorize or perform tha
 
 ### Fixed production-shadow tooling (separate authorization required)
 
-Task 4 adds source/control tooling only. No production command in this section was executed as
-part of its implementation. Public routing remains combined on `127.0.0.1:3001`.
+Tasks 4–5 add source/control tooling only. No production command in this section was
+executed during implementation. Public routing remains combined on `127.0.0.1:3001`.
 
 Local preparation is explicit:
 
@@ -349,23 +363,31 @@ fixtures and the real receipt-bound evidence-writer lifecycle fixture must all p
 manifest explicitly requires `/usr/bin/timeout`; its pinned image/package hashes are unchanged.
 Predeploy runs source tests only; it never builds or runs Docker.
 
+After independent acceptance and explicit release-ref authorization, use
+`node scripts/freeze-zaruku-shadow-release.mjs check`; only an explicitly approved
+absent ref may be created with `create-if-absent`. It uses an atomic expected-absent
+lease and exact readback; no unknown/different existing ref can be overwritten.
+Before each provisioning or child-deploy action the live ref must still equal HEAD.
+
 After separately reviewed production authorization, `npm run shadow:zaruku:stage-control` stages
-only the fixed 16-file manifest-covered bundle under
+only the fixed 20-file manifest-covered bundle under
 `/var/www/.dashboard-zaruku-shadow/control/<reviewed-40hex-SHA>`. It accepts no path/host/file-list
 override and cannot provision accounts, secrets, DB grants, release refs, application files, PM2
 or Nginx. Existing bundles must match bytes and pinned inodes exactly.
 
 The authority now includes exactly one foreign SHA entry: `combined-dashboard` at
-`/var/www/dashboard/.release-source-sha`. Run the SHA-addressed
-`scripts/install-zaruku-shadow-inventory.mjs check` or its explicit `install` action only in the
+`/var/www/dashboard/.release-source-sha`. Run the source interface
+`node scripts/provision-zaruku-shadow.mjs inventory-check` or `inventory-install` only in the
 approved preparation step. It never overwrites a different inventory. Host/DB/secret/auth
 provisioning and release-ref changes remain separate explicit operations.
 
 With every prerequisite already provisioned, the sole production orchestration entrypoint is
 `npm run shadow:zaruku:run` with no arguments or authority environment overrides. It reattests the
 staged bundle read-only before every remote worker action, runs the fixed prerequisites and full
-local gate, checks release authority without fetching/updating it, then invokes the existing sealed
-Zaruku deployer. It verifies the active artifact and exact process/kernel identity and loopback
+local gate, checks exact release authority, then invokes the sealed Zaruku deployer
+once. Port `3002` must still be free: never manually deploy before orchestration.
+The child receives the SHA/run ID through stdin and independently rechecks the live
+ref before activation. It verifies the active artifact and exact process/kernel identity and loopback
 listener, performs paired January–August manager/PDF/XLSX comparison, and rechecks the combined PID,
 complete loaded Nginx hash and fixed foreign SHA/inode. No Nginx command or cutover branch exists.
 
@@ -378,8 +400,14 @@ hashes and fixed labels only. XLSX parsing uses the attested bounded Python stdl
 dependency borrowed from any runtime.
 
 Every completed run publishes a new root-owned immutable `<SHA>-<UUID>` evidence directory.
-Failures after deployment request only `pm2 stop dashboard-zaruku`, preserve public routing and
-record `NO-GO`. `GO` authorizes only later cutover planning. The sealed boot fixture proves the full
+Failures request conditional receipt-owned cleanup and record `NO-GO`. A root-only
+fsynced deployment receipt binds source/run, deployment-lock transaction UUID, exact
+release/directory dev+ino, PID/kernel start ticks/boot ID, numeric PM2 ID, UID/GID/cwd
+and listener. The existing Zaruku deploy lock serializes cleanup and deployment;
+the receipt/current/process are revalidated immediately before stopping that numeric
+PM2 ID. No receipt means no stop; a successor, PID reuse, or foreign identity requires
+review and is never stopped by name. `GO` authorizes only later cutover planning.
+The sealed boot fixture proves the full
 setpriv/no-new-privileges contract; live PM2 checks do not claim an unimplemented bounding-capability
 or `NoNewPrivs` guarantee. The exact amd64 `UV_USE_IO_URING=0` translation marker is normalized only
 immediately before fixture application code; all other unexpected environment values still fail.
@@ -388,9 +416,8 @@ Before deployment, the orchestrator separately allocates and fsyncs its exact ev
 and confirms the source-SHA/run-ID/device/inode receipt. Parity cannot create or recover a directory
 and cannot replace this stored receipt. A later credential/context failure or lost parity response
 therefore still permits sanitized immutable `NO-GO` publication. Missing or replaced allocation
-identity fails closed; a lost allocation response aborts before deployment. Task 5 must additionally
-freeze and verify exact equality of remote `refs/heads/release/zaruku` to the reviewed candidate;
-an ancestry-only check does not establish that freeze.
+identity fails closed; a lost allocation response aborts before deployment. Exact
+remote `refs/heads/release/zaruku` equality is now enforced; ancestry is insufficient.
 
 Evidence writers, cleanup and publication share a Linux `flock` on the exact receipt-bound directory
 FD. Cleanup/publication wait at most 210 seconds, recheck inode/owner/ancestry/mode and terminal

@@ -176,15 +176,24 @@ export function readControlSource(name) {
 export function controlTransport(bytes, digest) {
   const quote = value => `'${value.replaceAll("'", "'\\''")}'`;
   const code = `const CONTROL_FILES=${JSON.stringify(CONTROL_FILES)};const worker=(${receiveControlPayload.toString()}); const chunks=[];for await(const b of process.stdin) chunks.push(b);try{process.stdout.write(JSON.stringify(await worker(Buffer.concat(chunks),${JSON.stringify(digest)}))+'\\n')}catch{process.stderr.write('Refusing Zaruku reviewed control operation\\n');process.exitCode=1}`;
-  const result = spawnSync('/usr/bin/ssh', ['-o', 'BatchMode=yes', '-o', 'StrictHostKeyChecking=yes', '--', 'beget', `/usr/bin/env -i /usr/bin/node --input-type=module -e ${quote(code)}`], { input: bytes, encoding: 'utf8', maxBuffer: 2097152 });
+  const result = spawnSync('/usr/bin/ssh', ['-o', 'BatchMode=yes', '-o', 'StrictHostKeyChecking=yes', '--', 'beget', `/usr/bin/env -i /usr/bin/node --input-type=module -e ${quote(code)}`], { input: bytes, encoding: 'utf8', maxBuffer: 2097152,env:{PATH:'/usr/bin:/bin'},timeout:30000 });
   if (result.status !== 0 || result.error || result.signal || result.stderr) fail();
   return JSON.parse(result.stdout);
 }
 
-if (process.argv[1] && import.meta.url === pathToFileURL(path.resolve(process.argv[1])).href) {
+export async function stageFrozenShadowControl(adapter) {
+  const {requireExactShadowRelease}=await import('./freeze-zaruku-shadow-release.mjs');
+  const source=await adapter.source();
+  await requireExactShadowRelease(adapter,source.sha);
+  return stageReviewedShadowControl({...adapter,transfer:async(bytes,digest)=>{await requireExactShadowRelease(adapter,source.sha);return adapter.transfer(bytes,digest);}},source.sha);
+}
+
+async function stageMain() {
   try {
     rejectShadowOverrides(process.argv.slice(2));
-    const adapter = { source: reviewedSource, readFile: readControlSource, transfer: controlTransport };
-    process.stdout.write(JSON.stringify(await stageReviewedShadowControl(adapter, reviewedSource().sha)) + '\n');
+    const {createReleaseAuthorityAdapter}=await import('./freeze-zaruku-shadow-release.mjs');
+    const adapter = {...createReleaseAuthorityAdapter(),readFile: readControlSource, transfer: controlTransport };
+    process.stdout.write(JSON.stringify(await stageFrozenShadowControl(adapter)) + '\n');
   } catch { process.stderr.write('Refusing Zaruku reviewed control operation\n'); process.exitCode = 1; }
 }
+if (process.argv[1] && import.meta.url === pathToFileURL(path.resolve(process.argv[1])).href) stageMain();
