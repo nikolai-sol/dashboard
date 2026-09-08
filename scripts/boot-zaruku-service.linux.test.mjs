@@ -61,12 +61,15 @@ test('direct mutation CLIs reject before auth input or host inspection even insi
     ['zaruku-shadow-auth-implementation.mjs','zaruku-shadow-host-implementation.mjs','export const createHostAdapter=()=>({});'],
     ['zaruku-shadow-host-implementation.mjs','runtime-release-remote.mjs','export const parseZarukuSecrets=()=>{},serializeZarukuSecrets=()=>{},renderEnvironment=()=>{},HOST_DIRECTORY_MODES={};'],
   ]) {
-    const filename=`${staged}/scripts/${dependency}`,saved=fs.readFileSync(filename);
+    const filename=`${staged}/scripts/${dependency}`,saved=fs.readFileSync(filename),alias=`${staged}/scripts/direct-entry-alias.mjs`;
+    fs.symlinkSync(`${staged}/scripts/${entry}`,alias);
     fs.chmodSync(filename,0o600);fs.writeFileSync(filename,`import fs from 'node:fs';fs.writeFileSync(${JSON.stringify(marker)},'executed');${exports}`);fs.chmodSync(filename,0o400);
     try {
-      const result=spawnSync(process.execPath,[`${staged}/scripts/${entry}`,'apply'],{env:{},encoding:'utf8',input:'opaque-unused-descriptor',timeout:5000});
-      assert.equal(fs.existsSync(marker),false);assert.notEqual(result.status,0);assert.match(result.stderr,/staged dispatcher/);assert.equal(result.stdout,'');
-    }finally{fs.chmodSync(filename,0o600);fs.writeFileSync(filename,saved);fs.chmodSync(filename,0o400);}
+      for(const flags of [[],['--preserve-symlinks-main']])for(const target of [`${staged}/scripts/${entry}`,alias]) {
+        const result=spawnSync(process.execPath,[...flags,target,'apply'],{env:{},encoding:'utf8',input:'opaque-unused-descriptor',timeout:5000});
+        assert.equal(fs.existsSync(marker),false);assert.notEqual(result.status,0);assert.match(result.stderr,/staged dispatcher/);assert.equal(result.stdout,'');
+      }
+    }finally{fs.unlinkSync(alias);fs.chmodSync(filename,0o600);fs.writeFileSync(filename,saved);fs.chmodSync(filename,0o400);}
   }
 });
 

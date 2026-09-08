@@ -19,6 +19,10 @@ child checks now pin the committed literal Git repository authority and isolate
 remote Git in a clean temporary bare repository. Deprecated host/auth paths are
 core-only refusal facades; only the attested dispatcher loads implementation
 libraries, whose own direct invocation refuses before non-core dependencies.
+Both argv and module paths are canonicalized before the direct-entry comparison;
+`--preserve-symlinks-main` aliases and either realpath failure also refuse before
+dependency evaluation. All four facade/implementation paths have side-effect
+sentinels, including production-mode staged Linux aliases.
 Every child-deploy check requires exact live remote SHA equality. Independent acceptance,
 real release-ref creation, and all Task 6–7 production actions remain pending.
 

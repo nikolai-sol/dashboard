@@ -7,4 +7,9 @@ export function hostMain() {
   process.stderr.write('Refusing Zaruku host boundary operation; use the staged dispatcher\n');
   process.exitCode = 1;
 }
-if (process.argv[1] && fs.realpathSync(path.resolve(process.argv[1])) === fileURLToPath(import.meta.url)) hostMain();
+let refuseDirect = false;
+try {
+  const modulePath = fs.realpathSync(fileURLToPath(import.meta.url));
+  refuseDirect = Boolean(process.argv[1]) && fs.realpathSync(path.resolve(process.argv[1])) === modulePath;
+} catch { refuseDirect = true; }
+if (refuseDirect) hostMain();

@@ -75,10 +75,17 @@ test('deprecated direct CLI paths refuse before any changed dependency side effe
       fs.copyFileSync(path.join(import.meta.dirname,entry),path.join(directory,entry));
       fs.writeFileSync(path.join(directory,dependency),`import fs from 'node:fs';fs.writeFileSync(${JSON.stringify(marker)},'executed');${exports}`);
       const alias=path.join(directory,'entry-alias.mjs');fs.symlinkSync(path.join(directory,entry),alias);
-      for(const filename of [path.join(directory,entry),alias]) {
-        const result=spawnSync(process.execPath,[filename,'apply'],{input:bytes,encoding:'utf8',env:{},timeout:5000});
+      for(const flags of [[],['--preserve-symlinks-main']])for(const filename of [path.join(directory,entry),alias]) {
+        const result=spawnSync(process.execPath,[...flags,filename,'apply'],{input:bytes,encoding:'utf8',env:{},timeout:5000});
         assert.equal(fs.existsSync(marker),false,'changed dependency must not execute before direct refusal');
         assert.notEqual(result.status,0);assert.match(result.stderr,/staged dispatcher/);assert.equal(result.stdout,'');
+      }
+      for(const broken of ['argv','module']) {
+        const target=path.join(directory,entry),unrelated=path.join(directory,dependency);
+        const script=`import fs from 'node:fs';import {pathToFileURL} from 'node:url';const target=${JSON.stringify(target)};process.argv[1]=${JSON.stringify(broken==='argv'?path.join(directory,'missing-PRIVATE_SENTINEL'):unrelated)};const original=fs.realpathSync;if(${JSON.stringify(broken)}==='module')fs.realpathSync=(filename,...args)=>{if(filename===target)throw new Error('PRIVATE_SENTINEL');return original(filename,...args);};await import(pathToFileURL(target));`;
+        const result=spawnSync(process.execPath,['--input-type=module','-e',script],{input:bytes,encoding:'utf8',env:{},timeout:5000});
+        assert.equal(fs.existsSync(marker),false,'realpath uncertainty must refuse before dependency evaluation');
+        assert.notEqual(result.status,0);assert.match(result.stderr,/staged dispatcher/);assert.doesNotMatch(result.stderr,/PRIVATE_SENTINEL/);assert.equal(result.stdout,'');
       }
     } finally {fs.rmSync(directory,{recursive:true});}
   });

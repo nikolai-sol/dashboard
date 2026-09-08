@@ -7,7 +7,12 @@ import { fileURLToPath } from 'node:url';
 
 // This internal library is loaded by the attested dispatcher. Direct execution,
 // including a symlink alias, refuses before any non-core module can evaluate.
-if (process.argv[1] && fs.realpathSync(path.resolve(process.argv[1])) === fileURLToPath(import.meta.url)) throw new Error('Refusing Zaruku host implementation; use the staged dispatcher');
+let refuseDirect = false;
+try {
+  const modulePath = fs.realpathSync(fileURLToPath(import.meta.url));
+  refuseDirect = Boolean(process.argv[1]) && fs.realpathSync(path.resolve(process.argv[1])) === modulePath;
+} catch { refuseDirect = true; }
+if (refuseDirect) throw new Error('Refusing Zaruku host implementation; use the staged dispatcher');
 const { parseZarukuSecrets, serializeZarukuSecrets, renderEnvironment, HOST_DIRECTORY_MODES } = await import('./runtime-release-remote.mjs');
 
 const NAME = 'dashboard-zaruku';

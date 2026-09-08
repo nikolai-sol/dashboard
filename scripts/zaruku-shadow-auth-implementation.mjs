@@ -6,7 +6,12 @@ import { isatty } from 'node:tty';
 import { fileURLToPath } from 'node:url';
 
 // No dependency evaluation is permitted when this library is invoked as a CLI.
-if (process.argv[1] && fs.realpathSync(path.resolve(process.argv[1])) === fileURLToPath(import.meta.url)) throw new Error('Refusing Zaruku auth implementation; use the staged dispatcher');
+let refuseDirect = false;
+try {
+  const modulePath = fs.realpathSync(fileURLToPath(import.meta.url));
+  refuseDirect = Boolean(process.argv[1]) && fs.realpathSync(path.resolve(process.argv[1])) === modulePath;
+} catch { refuseDirect = true; }
+if (refuseDirect) throw new Error('Refusing Zaruku auth implementation; use the staged dispatcher');
 const { createHostAdapter } = await import('./zaruku-shadow-host-implementation.mjs');
 
 export function validateAuthDescriptor(bytes) {
