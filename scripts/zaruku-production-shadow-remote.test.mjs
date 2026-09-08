@@ -38,7 +38,7 @@ test('allocation receipt is strictly bound to the fixed run and cannot be replac
 test('remote transport uses fixed SSH/host, empty environment, outer digest and inspect-only staged worker',()=>{
   const args=shadowTransportArguments('preflight',{sourceSha:sha,runId:'00000000-0000-4000-8000-000000000000',context:{}},digest);
   assert.ok(args.includes('beget'));assert.match(args.at(-1),/^\/usr\/bin\/env -i \/usr\/bin\/node/);
-  assert.match(args.at(-1),/undefined,true/);assert.match(args.at(-1),/zaruku-production-shadow-worker\.mjs/);
+  assert.match(args.at(-1),/undefined,true/);assert.match(args.at(-1),/zaruku-shadow-dispatch\.mjs/);assert.match(args.at(-1),/dispatchStaged/);
   assert.doesNotMatch(args.at(-1),/npm|node_modules|esbuild/);
   assert.throws(()=>shadowTransportArguments('apply',{},digest));
 });

@@ -7,6 +7,7 @@ import { pathToFileURL } from 'node:url';
 import { RUNTIME_MANIFESTS } from '../packages/runtime-contract/src/index.ts';
 import { assertRuntimeArtifact, verifyRuntimeArtifactBoot } from './runtime-artifact-policy.mjs';
 import { readPinned, safeRelative } from './runtime-release-remote.mjs';
+import { CONTROL_FILES, prepareReviewedControl, readControlSource, receiveControlPayload, reviewedSource } from './stage-zaruku-shadow-control.mjs';
 
 const ROOT = path.resolve(import.meta.dirname, '..');
 const AUTHORITY = path.join(ROOT, 'deploy/zaruku/release.json');
@@ -53,17 +54,18 @@ export function verifySource(repo, activeSha) {
   return sha;
 }
 
-function transfer(request) {
-  const input = Buffer.from(JSON.stringify(request));
+async function transfer(request) {
+  const source = reviewedSource();
+  const prepared = await prepareReviewedControl({ source: reviewedSource, readFile: readControlSource }, source.sha);
+  const input = Buffer.from(JSON.stringify({ control: prepared.bytes.toString('base64'), controlDigest: prepared.digest, request }));
   const digest = hash(input);
-  // No remotely evaluated value comes from an environment override. Payload bytes
-  // travel on stdin; the immutable digest and reviewed worker travel in SSH argv.
-  const worker = fs.readFileSync(path.join(ROOT, 'scripts/runtime-release-remote.mjs'), 'utf8');
-  const code = `${worker}\nawait remoteMain(${JSON.stringify(digest)});`;
+  // Inspect the exact already-staged closure before importing its fixed dispatcher.
+  // This transport cannot stage or replace a control file.
+  const code = `const CONTROL_FILES=${JSON.stringify(CONTROL_FILES)};const inspect=(${receiveControlPayload.toString()});try{const fs=await import('node:fs');const crypto=await import('node:crypto');const bytes=fs.readFileSync(0);if(bytes.length>536870912||crypto.createHash('sha256').update(bytes).digest('hex')!==${JSON.stringify(digest)})throw new Error();const input=JSON.parse(bytes);const control=await inspect(Buffer.from(input.control,'base64'),input.controlDigest,undefined,true);const dispatcher=await import('file://'+control.destination.path+'/scripts/zaruku-shadow-dispatch.mjs');process.stdout.write(JSON.stringify(await dispatcher.dispatchStaged('release',input.request))+'\\n');}catch{process.stderr.write('Zaruku staged release refused\\n');process.exitCode=1;}`;
   const quote = value => `'${value.replaceAll("'", "'\\''")}'`;
-  const command = `/usr/bin/env -i PATH=/usr/local/bin:/usr/bin:/bin node --input-type=module -e ${quote(code)}`;
-  const result = spawnSync(SSH, ['-o', 'BatchMode=yes', '-o', 'StrictHostKeyChecking=yes', '--', 'beget', command], { input, encoding: 'utf8', maxBuffer: 1048576 });
-  if (result.status !== 0) fail(`Zaruku remote operation failed${result.stderr?.trim() ? `: ${result.stderr.trim().slice(0, 2000)}` : ''}`);
+  const command = `/usr/bin/env -i /usr/bin/node --input-type=module -e ${quote(code)}`;
+  const result = spawnSync(SSH, ['-o', 'BatchMode=yes', '-o', 'StrictHostKeyChecking=yes', '--', 'beget', command], { input, env: { PATH: '/usr/bin:/bin' }, encoding: 'utf8', maxBuffer: 1048576, timeout: 300000 });
+  if (result.status !== 0 || result.signal || result.error || result.stderr) fail('Zaruku remote operation failed');
   return JSON.parse(result.stdout);
 }
 
@@ -115,9 +117,9 @@ async function main() {
   validateAuthority(filename);
   // Clean tracked helpers are the deploy authority, including rollback invocations.
   if (git(ROOT, 'status', '--porcelain', '--untracked-files=normal') || !git(ROOT, 'branch', '--show-current')) fail('Release authority must be a clean named checkout');
-  const active = transfer({ action: 'inspect' });
+  const active = await transfer({ action: 'inspect' });
   if (action === 'rollback') {
-    const result = transfer({ action, expectedActiveSha: active?.sourceSha ?? null });
+    const result = await transfer({ action, expectedActiveSha: active?.sourceSha ?? null });
     process.stdout.write(`Zaruku rollback attested: ${result.sourceSha}\n`); return;
   }
   git(ROOT, 'fetch', '--quiet', 'origin', '+refs/heads/release/zaruku:refs/remotes/origin/release/zaruku');
@@ -130,11 +132,11 @@ async function main() {
   {
     // Snapshot selected bytes and the external authority in memory before remote
     // staging; a second source check binds this immutable request to the checkout.
-    const latest = transfer({ action: 'inspect' });
+    const latest = await transfer({ action: 'inspect' });
     git(ROOT, 'fetch', '--quiet', 'origin', '+refs/heads/release/zaruku:refs/remotes/origin/release/zaruku');
     if (verifySource(ROOT, latest?.sourceSha ?? null) !== sourceSha) fail('Clean source changed after build');
     validateAuthority(filename);
-    const result = transfer({ action, expectedActiveSha: latest?.sourceSha ?? null, payload });
+    const result = await transfer({ action, expectedActiveSha: latest?.sourceSha ?? null, payload });
     if (result.sourceSha !== sourceSha || result.scope !== 'zaruku' || result.manifestDigest !== payload.manifestDigest) fail('Active Zaruku attestation mismatch');
     process.stdout.write(`Zaruku release attested: ${sourceSha}\n`);
   }

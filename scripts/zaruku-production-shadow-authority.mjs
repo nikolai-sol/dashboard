@@ -2,12 +2,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { isDeepStrictEqual } from 'node:util';
 
-export const SHADOW_CONTROL_FILES=Object.freeze([
-  'deploy/zaruku/mysql-read-tables.json','deploy/zaruku/production-shadow.json','deploy/zaruku/release.json',
-  'scripts/install-zaruku-shadow-auth.mjs','scripts/install-zaruku-shadow-inventory.mjs','scripts/runtime-release-remote.mjs','scripts/verify-zaruku-shadow.sh',
-  'scripts/zaruku-production-shadow-authority.mjs','scripts/zaruku-production-shadow-preflight.mjs','scripts/zaruku-production-shadow-worker.mjs',
-  'scripts/zaruku-shadow-coverage.mjs','scripts/zaruku-shadow-db.mjs','scripts/zaruku-shadow-evidence-lock.py','scripts/zaruku-shadow-host.mjs','scripts/zaruku-shadow-mysql.py','scripts/zaruku-xlsx-semantic.py',
-]);
+export { SHADOW_CONTROL_FILES } from './zaruku-shadow-dispatch.mjs';
 
 const SHADOW_AUTHORITY = Object.freeze({
   scope: 'zaruku', combinedUrl: 'http://127.0.0.1:3001', isolatedUrl: 'http://127.0.0.1:3002',

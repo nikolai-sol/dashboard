@@ -41,6 +41,45 @@ http.createServer((req,res) => {res.setHeader('content-type','application/json')
 `;
 fs.writeFileSync(path.join(artifact, 'apps/zaruku/server.js'), server, { mode: 0o644 });
 
+test('direct mutation CLIs reject before auth input or host inspection even inside the staged bundle', () => {
+  const staged = `/var/www/.dashboard-zaruku-shadow/control/${stagedSha}`;
+  for (const [script, args] of [
+    ['zaruku-shadow-host.mjs', ['apply', `${staged}/deploy/zaruku/production-shadow.json`]],
+    ['install-zaruku-shadow-auth.mjs', []],
+  ]) {
+    const result = spawnSync(process.execPath, [`${staged}/scripts/${script}`, ...args], { encoding: 'utf8', env: {}, input: '{"headers":{"cookie":"opaque-test-descriptor"}}', timeout: 5000 });
+    assert.notEqual(result.status, 0);
+    assert.match(result.stderr, /staged dispatcher/);
+    assert.equal(result.stdout, '');
+  }
+  assert.equal(fs.existsSync('/var/www/.dashboard-zaruku-shadow/auth.json'), false);
+});
+
+test('staged dispatcher checks its entire closure and rejects tampering before loading mutation dependencies', () => {
+  const staged = `/var/www/.dashboard-zaruku-shadow/control/${stagedSha}`;
+  const dispatcher = `${staged}/scripts/zaruku-shadow-dispatch.mjs`;
+  const invoke = (action = 'attest', env = {}) => spawnSync(process.execPath, [dispatcher, action], { encoding: 'utf8', env, input: '{"headers":{"cookie":"opaque-test-descriptor"}}', timeout: 5000 });
+  const valid = invoke(); assert.equal(valid.status, 0); assert.equal(JSON.parse(valid.stdout).sourceSha, stagedSha);
+  assert.notEqual(invoke('attest', { NODE_OPTIONS: '--trace-warnings' }).status, 0);
+  for (const name of ['scripts/zaruku-shadow-host.mjs', '.manifest.json', '.inodes.json']) {
+    const file = path.join(staged, name), saved = file + '-original';
+    fs.renameSync(file, saved);
+    fs.copyFileSync(saved, file); fs.chmodSync(file, 0o400);
+    try { const result = invoke('auth-install'); assert.notEqual(result.status, 0); assert.equal(result.stdout, ''); }
+    finally { fs.unlinkSync(file); fs.renameSync(saved, file); }
+  }
+  const extra = `${staged}/scripts/extra.mjs`; fs.writeFileSync(extra, 'throw new Error("PRIVATE_SENTINEL")', { mode: 0o400 });
+  try { assert.notEqual(invoke().status, 0); } finally { fs.unlinkSync(extra); }
+  const dependency = `${staged}/scripts/zaruku-shadow-host.mjs`, bytes = fs.readFileSync(dependency);
+  fs.chmodSync(dependency, 0o600); fs.writeFileSync(dependency, 'throw new Error("PRIVATE_SENTINEL")'); fs.chmodSync(dependency, 0o400);
+  try { const result = invoke('auth-install'); assert.notEqual(result.status, 0); assert.doesNotMatch(result.stderr, /PRIVATE_SENTINEL/); }
+  finally { fs.chmodSync(dependency, 0o600); fs.writeFileSync(dependency, bytes); fs.chmodSync(dependency, 0o400); }
+  const copied = path.join(base, 'copied-dispatch.mjs'); fs.copyFileSync(dispatcher, copied);
+  assert.notEqual(spawnSync(process.execPath, [copied, 'auth-install'], { env: {}, input: '{}', timeout: 5000 }).status, 0);
+  const installed = invoke('auth-install'); assert.equal(installed.status, 0); assert.equal(JSON.parse(installed.stdout).status, 'installed');
+  fs.unlinkSync('/var/www/.dashboard-zaruku-shadow/auth.json');
+});
+
 test('real boot drops all privilege before app code and cannot mutate authority, sibling or artifact', async () => {
   process.env.PARENT_SENTINEL = 'PRIVATE_PARENT_ONLY';
   process.env.UV_USE_IO_URING = 'PARENT_ONLY_VALUE';

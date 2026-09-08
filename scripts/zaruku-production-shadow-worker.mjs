@@ -3,7 +3,8 @@ import path from 'node:path';
 import { createHash } from 'node:crypto';
 import { spawn, spawnSync } from 'node:child_process';
 import { isDeepStrictEqual } from 'node:util';
-import { loadShadowAuthority,SHADOW_CONTROL_FILES } from './zaruku-production-shadow-authority.mjs';
+import { loadShadowAuthority } from './zaruku-production-shadow-authority.mjs';
+import { attestStagedControl } from './zaruku-shadow-dispatch.mjs';
 import { createReadOnlyPreflightAdapter, inspectShadowPrerequisites, assertShadowPrerequisites } from './zaruku-production-shadow-preflight.mjs';
 import { createHostAdapter, inspectHostBoundary } from './zaruku-shadow-host.mjs';
 import { validateAuthDescriptor } from './install-zaruku-shadow-auth.mjs';
@@ -59,42 +60,7 @@ export function verifierCommand(request,io=fs) {
   return {bin:binary,args:[`--kill-after=${killAfterSeconds}s`,`${seconds}s`,'/usr/bin/python3','-I','-B',path.join(import.meta.dirname,'zaruku-shadow-evidence-lock.py'),'verify']};
 }
 
-export function attestStagedControl() {
-  const match=/^\/var\/www\/\.dashboard-zaruku-shadow\/control\/([a-f0-9]{40})$/.exec(ROOT);
-  if(process.platform!=='linux'||process.getuid()!==0||process.geteuid()!==0||!match)refuse();
-  const manifest=JSON.parse(readProtected(path.join(ROOT,'.manifest.json'),0o400).bytes);
-  const inodes=JSON.parse(readProtected(path.join(ROOT,'.inodes.json'),0o400).bytes);
-  if(manifest.sourceSha!==match[1]||!same(manifest.files?.map(row=>row.path),SHADOW_CONTROL_FILES))refuse();
-  if (!same(Object.keys(inodes).sort(), [...SHADOW_CONTROL_FILES, '.manifest.json', '.inodes.json', 'directories'].sort())) refuse();
-  for (const name of ['.manifest.json', '.inodes.json']) {
-    const file = readProtected(path.join(ROOT, name), 0o400), pin = inodes[name];
-    if (!pin || pin.dev !== file.identity.dev || pin.ino !== file.identity.ino || pin.uid !== 0 || pin.gid !== 0 || pin.mode !== 0o400 || pin.links !== 1) refuse();
-  }
-  for(const row of manifest.files){
-    const file=readProtected(path.join(ROOT,row.path),0o400,1048576),pin=inodes[row.path];
-    if(row.mode!==0o400||file.bytes.length!==row.size||file.sha256!==row.sha256||!pin||pin.dev!==file.identity.dev||pin.ino!==file.identity.ino||pin.uid!==0||pin.gid!==0||pin.mode!==0o400||pin.links!==1)refuse();
-  }
-  const directories = [['shadow', '/var/www/.dashboard-zaruku-shadow', 0o700], ['control', '/var/www/.dashboard-zaruku-shadow/control', 0o700], ...['', 'deploy', 'deploy/zaruku', 'scripts'].map(name => [`bundle/${name}`, path.join(ROOT, name), 0o500])];
-  if (!same(Object.keys(inodes.directories ?? {}).sort(), directories.map(([name]) => name).sort())) refuse();
-  for (const [name, directory, mode] of directories) {
-    const stat = fs.lstatSync(directory);
-    if (!stat.isDirectory() || !same(inodes.directories[name], {dev:String(stat.dev),ino:String(stat.ino),uid:stat.uid,gid:stat.gid,mode:stat.mode & 0o777}) || stat.uid !== 0 || stat.gid !== 0 || (stat.mode & 0o7777) !== mode) refuse();
-    if (name.startsWith('bundle/')) {
-      const relative = name.slice('bundle/'.length);
-      const expected = relative === '' ? ['.inodes.json','.manifest.json','deploy','scripts'] : relative === 'deploy' ? ['zaruku'] : SHADOW_CONTROL_FILES.filter(file => path.posix.dirname(file) === relative).map(file => path.posix.basename(file));
-      if (!same(fs.readdirSync(directory).sort(), expected.sort())) refuse();
-    }
-  }
-  return match[1];
-}
-
-export function attestStagedPredecessor() {
-  const sourceSha = attestStagedControl();
-  const manifest = readProtected(path.join(ROOT, '.manifest.json'), 0o400);
-  const shadow = fs.lstatSync('/var/www/.dashboard-zaruku-shadow');
-  if (!shadow.isDirectory() || shadow.uid !== 0 || shadow.gid !== 0 || (shadow.mode & 0o7777) !== 0o700) refuse();
-  return { sourceSha, manifestDigest: manifest.sha256, dev: Number(shadow.dev), ino: Number(shadow.ino) };
-}
+export { attestStagedControl, attestStagedPredecessor } from './zaruku-shadow-dispatch.mjs';
 
 export function validateInventory(bytes,authority=AUTHORITY) {
   const expected=authority.otherRuntimeShaEntries.map(row=>`${row.name}\t${row.path}\n`).join('');
@@ -383,6 +349,7 @@ export async function runShadowWorker(action,request,adapter) {
   try{
     if(!ACTIONS.includes(action)||!request||!/^[a-f0-9]{40}$/.test(request.sourceSha)||!/^[a-f0-9]{8}-[a-f0-9]{4}-4[a-f0-9]{3}-[89ab][a-f0-9]{3}-[a-f0-9]{12}$/.test(request.runId)||!same(Object.keys(request).sort(),['context',...(action==='writeDecision'?['decision']:[]),'runId','sourceSha'])||!request.context)refuse();
     if(!adapter&&(process.platform!=='linux'||process.getuid()!==0||process.geteuid()!==0||ROOT!==`/var/www/.dashboard-zaruku-shadow/control/${request.sourceSha}`))refuse();
+    if (!adapter && attestStagedControl() !== request.sourceSha) refuse();
     return await (adapter??createWorkerAdapter())[action](request);
   }catch{refuse();}
 }

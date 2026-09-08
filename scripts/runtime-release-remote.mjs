@@ -425,7 +425,10 @@ function materialize(payload, id, old, platform, account) {
   return { record, stage };
 }
 
-export async function transact(request, platform = realPlatform) {
+export async function transact(request, platform = realPlatform, stagedGuard) {
+  if (platform === realPlatform && typeof stagedGuard !== 'function') fail('Use the staged dispatcher');
+  const guard = stagedGuard ?? (() => {});
+  guard();
   if (process.getuid() !== DEPLOY_UID) fail('Privileged deploy account required');
   const account = platform.account();
   if (!Number.isInteger(account.uid) || account.uid <= 0 || account.uid === DEPLOY_UID || !Number.isInteger(account.gid) || account.gid <= 0) fail('Dedicated runtime account and write separation required');
@@ -449,6 +452,7 @@ export async function transact(request, platform = realPlatform) {
     const envDigest = hash(stableRead(`${stage}/.env`));
     await platform.verify(stage, manifest, false);
     await platform.verify(stage, manifest, true);
+    guard();
     // Pin is retained in memory from transport (deploy) or protected record (rollback).
     // Replacing both manifest and its sidecar cannot change this activation authority.
     attestTree(stage, record);
@@ -460,6 +464,7 @@ export async function transact(request, platform = realPlatform) {
     try {
       if (old) { fs.renameSync(APP, oldBackup); oldMoved = true; }
       fs.renameSync(stage, APP); candidateMoved = true;
+      guard();
       attestTree(APP, record);
       if (hash(stableRead(`${APP}/.env`)) !== envDigest) fail('Runtime environment changed during activation');
       await platform.start(`${CONTROL}/${record.id}`);

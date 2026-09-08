@@ -4,11 +4,9 @@ import { randomUUID } from 'node:crypto';
 import { spawnSync } from 'node:child_process';
 import { isDeepStrictEqual } from 'node:util';
 import { pathToFileURL } from 'node:url';
-import { loadShadowAuthority } from './zaruku-production-shadow-authority.mjs';
 import { parseZarukuSecrets, serializeZarukuSecrets, renderEnvironment, HOST_DIRECTORY_MODES } from './runtime-release-remote.mjs';
 
 const NAME = 'dashboard-zaruku';
-const AUTHORITY = path.resolve(import.meta.dirname, '../deploy/zaruku/production-shadow.json');
 const JOURNAL = '/var/www/.dashboard-zaruku-host-creation.json';
 const SOURCE = '/var/www/www-root/data/.production.env';
 const SECRET = '/var/www/.dashboard-zaruku-secrets/runtime.env';
@@ -357,7 +355,7 @@ export function createHostAdapter(options = {}) {
   adapter.deleteUser = () => execute('/usr/sbin/userdel', [NAME]);
   adapter.deleteGroup = () => execute('/usr/sbin/groupdel', [NAME]);
   adapter.stagedPredecessor = async () => {
-    const { attestStagedPredecessor } = await import('./zaruku-production-shadow-worker.mjs');
+    const { attestStagedPredecessor } = await import('./zaruku-shadow-dispatch.mjs');
     return attestStagedPredecessor();
   };
   adapter.publishDescriptor = bytes => {
@@ -368,16 +366,8 @@ export function createHostAdapter(options = {}) {
   return adapter;
 }
 
-export async function hostMain(args = process.argv.slice(2)) {
-  try {
-    if (args.length !== 2 || !['check', 'apply', 'rollback-created'].includes(args[0]) || args[1] !== AUTHORITY) fail();
-    loadShadowAuthority(AUTHORITY);
-    const adapter = createHostAdapter();
-    if (args[0] === 'rollback-created') {
-      await rollbackNewHostBoundary(adapter, loadRecord(adapter));
-      process.stdout.write('{"status":"rolled-back"}\n');
-    } else process.stdout.write(JSON.stringify(await (args[0] === 'check' ? inspectHostBoundary : applyHostBoundary)(adapter)) + '\n');
-  } catch { process.stderr.write('Refusing Zaruku host boundary operation\n'); process.exitCode = 1; }
+export async function hostMain() {
+  process.stderr.write('Refusing Zaruku host boundary operation; use the staged dispatcher\n'); process.exitCode = 1;
 }
 
 if (process.argv[1] && import.meta.url === pathToFileURL(path.resolve(process.argv[1])).href) await hostMain();

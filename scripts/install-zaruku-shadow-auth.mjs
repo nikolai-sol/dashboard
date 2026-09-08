@@ -72,11 +72,8 @@ export function createAuthAdapter(options = {}) {
   return adapter;
 }
 
-export async function authMain(args = process.argv.slice(2)) {
-  try {
-    if (args.length) throw new Error();
-    process.stdout.write(JSON.stringify(await installShadowAuth(createAuthAdapter())) + '\n');
-  } catch { process.stderr.write('Failed to install Zaruku auth descriptor\n'); process.exitCode = 1; }
+export async function authMain() {
+  process.stderr.write('Failed to install Zaruku auth descriptor; use the staged dispatcher\n'); process.exitCode = 1;
 }
 
 if (process.argv[1] && import.meta.url === pathToFileURL(path.resolve(process.argv[1])).href) await authMain();
