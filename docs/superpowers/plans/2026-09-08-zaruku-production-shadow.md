@@ -195,6 +195,7 @@ test('grant authority contains every physical Zaruku read table and no advertisi
   assert.ok(tables.includes('seo_positions_weekly'));
   assert.ok(tables.includes('dashboard_sources'));
   assert.ok(tables.includes('dashboard_access_users'));
+  assert.ok(tables.includes('dashboard_shared_access_settings'));
   assert.ok(!tables.some(name => /abbott|advertising|ads_daily|report_bd_private/.test(name)));
   assert.deepEqual(tables, [...tables].sort());
 });
@@ -227,12 +228,9 @@ canonical_alice_visibility_snapshots
 canonical_alice_visibility_sources
 canonical_collector_runs
 canonical_dim_wordstat_regions
-canonical_fact_gsc_countries_daily
-canonical_fact_gsc_pages_daily
 canonical_fact_gsc_queries_daily
 canonical_fact_gsc_search_appearance_daily
 canonical_fact_gsc_search_type_daily
-canonical_fact_gsc_summary_daily
 canonical_fact_metrika_breakdowns_daily
 canonical_fact_metrika_returning_pages_daily
 canonical_fact_site_analytics_daily
@@ -249,6 +247,7 @@ canonical_wordstat_query_classifications
 canonical_wordstat_seed_registry
 dashboard_access_users
 dashboard_campaign_filters
+dashboard_shared_access_settings
 dashboard_sources
 dashboards
 seo_ai_visibility
@@ -258,13 +257,15 @@ seo_section_patterns
 seo_sov_weekly
 seo_tasks
 seo_weekly_runs
-source_catalog
 ```
 
 Add a static SQL-owner scan over the complete transitive Zaruku runtime dependency graph rooted at
 `apps/zaruku`. Extract CTE names before comparing `FROM`/`JOIN` references so CTE aliases do not
 become grants. The test must fail if a later code change introduces a physical table missing from the
-authority or if the authority contains a table that the reviewed runtime no longer reads.
+authority or if the authority contains a table that the reviewed runtime no longer reads. In
+particular, `source_catalog` is a CTE and is never a grant target; the unused legacy
+`zaruku-google-search-console.ts` module does not add its pages, countries, or summary tables to the
+runtime authority.
 
 - [ ] **Step 4: Implement fail-closed DB apply/verify operations**
 
