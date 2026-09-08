@@ -92,6 +92,7 @@ export function extractStaticSql(source, filename) {
   const evaluator = createStaticEvaluator(sourceFile);
   const statements = new Set();
   const calledFunctions = new Set();
+  const escapedFunctions = new Set();
   const joinedDeclarations = new Set();
   const forwardedSinkCalls = new Set();
   const forwardedSqlCalls = new Map();
@@ -128,6 +129,20 @@ export function extractStaticSql(source, filename) {
   }
 
   function collectConsumers(node) {
+    if (ts.isIdentifier(node)) {
+      const binding = declaration(node, node.text);
+      const functionBinding = binding && (ts.isFunctionDeclaration(binding) ||
+        (ts.isVariableDeclaration(binding) && binding.initializer &&
+         (ts.isArrowFunction(binding.initializer) || ts.isFunctionExpression(binding.initializer))))
+        ? binding : null;
+      const declarationName = node.parent?.name === node &&
+        !ts.isShorthandPropertyAssignment(node.parent) && !ts.isExportSpecifier(node.parent);
+      const directCall = ts.isCallExpression(node.parent) && node.parent.expression === node;
+      const propertyName = ts.isPropertyAccessExpression(node.parent) && node.parent.name === node;
+      if (functionBinding && !declarationName && !directCall && !propertyName) {
+        escapedFunctions.add(functionBinding);
+      }
+    }
     if (ts.isCallExpression(node) && ts.isIdentifier(node.expression)) {
       const binding = declaration(node.expression, node.expression.text);
       if (binding && (ts.isFunctionDeclaration(binding) ||
@@ -215,11 +230,16 @@ export function extractStaticSql(source, filename) {
 
   function add(expression, sqlSink = false) {
     const analysis = evaluator.evaluate(expression);
-    const strings = [];
-    const unknowns = [];
-    analysis.variants.forEach(variant => collectStrings(variant.value, strings, unknowns));
-    const blockingUnknowns = unknowns.filter(value =>
-      value.reason !== 'INAPPLICABLE_VARIANT' || strings.length === 0);
+    const variantResults = analysis.variants.map(variant => {
+      const strings = [];
+      const unknowns = [];
+      collectStrings(variant.value, strings, unknowns);
+      return { strings, unknowns };
+    });
+    const strings = variantResults.flatMap(result => result.strings);
+    const blockingUnknowns = variantResults.flatMap(result =>
+      result.unknowns.filter(value => value.reason !== 'INAPPLICABLE_VARIANT' ||
+        result.strings.length > 0 || strings.length === 0));
     const unresolvedSqlRelevance = blockingUnknowns.some(value =>
       value.staticText && SQL_RELEVANCE.test(value.staticText));
     if (blockingUnknowns.length > 0 &&
@@ -288,7 +308,34 @@ export function extractStaticSql(source, filename) {
     return found;
   }
 
+  function collectContainerMembers(node) {
+    const current = unwrapExpression(node);
+    if (ts.isCallExpression(current) && ts.isPropertyAccessExpression(current.expression) &&
+        ['execute', 'query'].includes(current.expression.name.text)) return;
+    if (ts.isArrayLiteralExpression(current)) {
+      for (const element of current.elements) {
+        if (containsExplicitSink(element)) collectContainerMembers(element);
+        else add(element);
+      }
+      return;
+    }
+    if (ts.isObjectLiteralExpression(current)) {
+      for (const property of current.properties) {
+        if (ts.isPropertyAssignment(property)) {
+          if (containsExplicitSink(property.initializer)) {
+            collectContainerMembers(property.initializer);
+          } else {
+            add(property.initializer);
+          }
+        }
+      }
+      return;
+    }
+    ts.forEachChild(current, collectContainerMembers);
+  }
+
   function isExported(binding) {
+    if (escapedFunctions.has(binding)) return true;
     if (binding.modifiers?.some(modifier => modifier.kind === ts.SyntaxKind.ExportKeyword)) {
       return true;
     }
@@ -323,7 +370,8 @@ export function extractStaticSql(source, filename) {
         return;
       }
       if (!ts.isIdentifier(node.name)) {
-        if (!containsExplicitSink(initializer)) add(initializer);
+        if (containsExplicitSink(initializer)) collectContainerMembers(initializer);
+        else add(initializer);
         return;
       }
       if (ts.isArrowFunction(initializer) || ts.isFunctionExpression(initializer)) {

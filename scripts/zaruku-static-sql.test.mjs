@@ -112,6 +112,18 @@ test('SQL extraction checks explicit sinks nested inside candidate containers', 
   assert.ok(forwarded.includes(
     'SELECT * FROM report_bd_private.canonical_fact_metrika_visits',
   ));
+
+  const destructured = extractStaticSql(`
+    declare const db:{query(value:string):unknown};
+    const [rows, hidden]=[
+      db.query("SELECT * FROM dashboards"),
+      "SELECT * FROM report_bd_private.canonical_fact_metrika_visits",
+    ];
+  `, 'fixture.ts').statements;
+  assert.ok(destructured.includes('SELECT * FROM dashboards'));
+  assert.ok(destructured.includes(
+    'SELECT * FROM report_bd_private.canonical_fact_metrika_visits',
+  ));
 });
 
 test('SQL extraction ignores a concrete non-query branch while retaining the query branch', () => {
@@ -215,6 +227,26 @@ test('SQL extraction checks helper return variants beyond one concrete call', ()
   assert.ok(namedExport.includes(
     'SELECT * FROM report_bd_private.canonical_fact_metrika_visits',
   ));
+
+  for (const [source, filename] of [[`
+    function makeQuery(usePrivate:boolean) {
+      return usePrivate ? "SELECT * FROM report_bd_private.canonical_fact_metrika_visits" :
+        "SELECT * FROM dashboards";
+    }
+    const localQuery=makeQuery(false);
+    export const api={makeQuery};
+  `, 'fixture.ts'], [`
+    function makeQuery(usePrivate) {
+      return usePrivate ? "SELECT * FROM report_bd_private.canonical_fact_metrika_visits" :
+        "SELECT * FROM dashboards";
+    }
+    const localQuery=makeQuery(false);
+    module.exports={makeQuery};
+  `, 'fixture.js']]) {
+    assert.ok(extractStaticSql(source, filename).statements.includes(
+      'SELECT * FROM report_bd_private.canonical_fact_metrika_visits',
+    ));
+  }
 });
 
 test('SQL extraction refuses unknown members, recursion, async maps and mutable inputs', () => {
@@ -224,9 +256,14 @@ test('SQL extraction refuses unknown members, recursion, async maps and mutable 
     'declare function runtimeSql():string; export const queries=["SELECT * FROM dashboards",runtimeSql(),"SELECT * FROM dashboard_sources"];',
     'declare const pool:{execute(value:string):unknown}; const query={safe:"SELECT * FROM dashboards"}; pool.execute(query.missing);',
     'declare const pool:{query(value:string):unknown}; pool.query(("SELECT * FROM report_bd_private.canonical_fact_metrika_visits" as unknown as {sql:string}).sql);',
+    'export const queries=["SELECT * FROM dashboards",(null as unknown as {sql:string}).sql];',
     'const queries=[]; queries.push("SELECT * FROM report_bd_private.canonical_fact_metrika_visits"); export const sql=queries.join("");',
     'function append(queries:string[]){queries.push("SELECT * FROM report_bd_private.canonical_fact_metrika_visits");} const queries:string[]=[]; append(queries); export const sql=queries.join("");',
+    'const queries=[]; const alias=queries; alias.push("SELECT * FROM report_bd_private.canonical_fact_metrika_visits"); export const sql=queries.join("");',
+    'function append(queries:string[]){const alias=queries;alias.push("SELECT * FROM report_bd_private.canonical_fact_metrika_visits");} const queries:string[]=[]; append(queries); export const sql=queries.join("");',
+    'const queries:string[]=[]; Object.assign(queries,{0:"SELECT * FROM report_bd_private.canonical_fact_metrika_visits",length:1}); export const sql=queries.join("");',
     'function query(){return query();} export const sql=query();',
+    'declare const rewrite:(parts:TemplateStringsArray)=>string; export const sql=rewrite`SELECT * FROM dashboards`;',
     'const rows=[0]; export const sql=rows.map(async()=>"SELECT * FROM dashboards").join("");',
     'let rows=[0]; export const queries=rows.map(()=>"SELECT * FROM dashboards");',
   ];
@@ -251,6 +288,25 @@ test('SQL extraction exposes keyword, schema, comment and separator boundary att
     export const queries=piece()+"SEL"+"ECT * FR"+"OM repo"+
       "rt_bd_pri"+"vate.can"+"onical_fact_metrika_visits";
   `, 'fixture.ts'), /UNRESOLVED_SQL|UNSUPPORTED_EXPRESSION/);
+  assert.throws(() => extractStaticSql(`
+    declare function piece():string;
+    export const queries=[piece(),"SEL","ECT * FR","OM repo","rt_bd_pri",
+      "vate.can","onical_fact_metrika_visits"].join("");
+  `, 'fixture.ts'), /UNRESOLVED_SQL|UNSUPPORTED_EXPRESSION/);
+
+  assert.deepEqual(extractStaticSql(`
+    export const queries=["SEL",null,
+      "ECT * FROM report_bd_private.canonical_fact_metrika_visits"].join("");
+  `, 'fixture.ts').statements, [
+    'SELECT * FROM report_bd_private.canonical_fact_metrika_visits',
+  ]);
+  assert.deepEqual(extractStaticSql(`
+    const rows=[0,1,2];
+    export const queries=rows.map(index=>index===0 ? "SEL" : index===1 ? null :
+      "ECT * FROM report_bd_private.canonical_fact_metrika_visits").join("");
+  `, 'fixture.ts').statements, [
+    'SELECT * FROM report_bd_private.canonical_fact_metrika_visits',
+  ]);
 });
 
 test('typed evaluator enforces fixed variant, array, depth and string limits', () => {
@@ -318,4 +374,10 @@ test('typed evaluator enforces fixed variant, array, depth and string limits', (
     .declarationList.declarations[0].initializer;
   assert.ok(createStaticEvaluator(workSource).evaluate(workExpression).variants
     .some(variant => variant.value.kind === 'unknown' && variant.value.reason === 'ANALYSIS_LIMIT'));
+
+  const preprocessingSource = `${';'.repeat(100001)}export const sql="SELECT * FROM dashboards";`;
+  assert.throws(
+    () => extractStaticSql(preprocessingSource, 'fixture.ts'),
+    /ANALYSIS_LIMIT/,
+  );
 });

@@ -87,6 +87,8 @@ function staticText(value) {
 export function createStaticEvaluator(sourceFile) {
   if (!ts.isSourceFile(sourceFile)) throw new TypeError('TypeScript SourceFile required');
   let work = 0;
+  let preprocessingWork = 0;
+  let preprocessingExceeded = false;
 
   function declaration(node, name) {
     for (let scope = node.parent; scope; scope = scope.parent) {
@@ -149,7 +151,19 @@ export function createStaticEvaluator(sourceFile) {
   }
 
   function collectDirectMutations(node) {
+    preprocessingWork += 1;
+    if (preprocessingWork > MAX_WORK) {
+      preprocessingExceeded = true;
+      return;
+    }
     if (ts.isCallExpression(node) && ts.isPropertyAccessExpression(node.expression) &&
+        ts.isIdentifier(node.expression.expression) && node.expression.expression.text === 'Object' &&
+        ['assign', 'defineProperties', 'defineProperty', 'setPrototypeOf'].includes(
+          node.expression.name.text,
+        ) && node.arguments[0]) {
+      const binding = rootBinding(node.arguments[0]);
+      if (binding) mutatedBindings.add(binding);
+    } else if (ts.isCallExpression(node) && ts.isPropertyAccessExpression(node.expression) &&
         mutationMethods.has(node.expression.name.text)) {
       const binding = rootBinding(node.expression.expression);
       if (binding) mutatedBindings.add(binding);
@@ -182,7 +196,23 @@ export function createStaticEvaluator(sourceFile) {
   function propagateMutatedArguments(node) {
     let changed = false;
     function visit(current) {
-      if (ts.isCallExpression(current)) {
+      preprocessingWork += 1;
+      if (preprocessingWork > MAX_WORK) {
+        preprocessingExceeded = true;
+        return;
+      }
+      if (ts.isVariableDeclaration(current) && ts.isIdentifier(current.name) && current.initializer) {
+        const target = current;
+        const source = rootBinding(current.initializer);
+        if (source && (mutatedBindings.has(target) || mutatedBindings.has(source))) {
+          for (const binding of [target, source]) {
+            if (!mutatedBindings.has(binding)) {
+              mutatedBindings.add(binding);
+              changed = true;
+            }
+          }
+        }
+      } else if (ts.isCallExpression(current)) {
         const fn = localFunction(current);
         if (fn) {
           fn.parameters.forEach((parameter, index) => {
@@ -200,12 +230,20 @@ export function createStaticEvaluator(sourceFile) {
     visit(node);
     return changed;
   }
-  while (propagateMutatedArguments(sourceFile)) {
+  while (!preprocessingExceeded && propagateMutatedArguments(sourceFile)) {
     // Reach a fixed point for helpers that forward a mutable container.
   }
 
   function evaluate(expression) {
-    work = 0;
+    work = preprocessingWork;
+    if (preprocessingExceeded || work > MAX_WORK) {
+      return {
+        variants: [{
+          value: unknownValue('ANALYSIS_LIMIT', expression),
+          decisions: new Map(),
+        }],
+      };
+    }
     const pending = [new Map()];
     const variants = [];
 
@@ -499,7 +537,10 @@ export function createStaticEvaluator(sourceFile) {
           : stringValue(text, node);
       }
 
-      if (ts.isTaggedTemplateExpression(node)) return value(node.template, frame, depth + 1);
+      if (ts.isTaggedTemplateExpression(node)) {
+        const template = value(node.template, frame, depth + 1);
+        return unknownValue('UNSUPPORTED_EXPRESSION', node, null, staticText(template));
+      }
 
       if (ts.isConditionalExpression(node)) {
         return value(
@@ -617,14 +658,23 @@ export function createStaticEvaluator(sourceFile) {
             return unknownValue('UNSUPPORTED_EXPRESSION', node);
           }
           const parts = [];
+          let unresolved = null;
           for (const member of members.items) {
-            if (member.kind === 'unknown') return member;
+            if (member.kind === 'unknown') {
+              unresolved ??= member;
+              parts.push(staticText(member));
+              continue;
+            }
             if (member.kind !== 'string' && member.kind !== 'scalar') {
               return unknownValue('UNSUPPORTED_EXPRESSION', node);
             }
-            parts.push(String(primitive(member, node)));
+            const raw = primitive(member, node);
+            parts.push(raw === null ? '' : String(raw));
           }
-          return stringValue(concatenateTexts(parts, node, separator), node);
+          const text = concatenateTexts(parts, node, separator);
+          return unresolved
+            ? unknownValue(unresolved.reason, node, unresolved.decisionKey ?? null, text)
+            : stringValue(text, node);
         }
 
         if (method === 'map' && node.arguments.length === 1 &&
