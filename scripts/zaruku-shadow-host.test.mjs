@@ -18,7 +18,7 @@ function fixture() {
   const temp = fs.mkdtempSync(path.join(os.tmpdir(), 'zaruku-host-'));
   const resolve = name => path.join(temp, name);
   for (const name of ['/var/www/www-root/data']) fs.mkdirSync(resolve(name), { recursive: true, mode: 0o755 });
-  let user = null, group = null, resolution = {};
+  let user = null, group = null, resolution = {}, userResolution = {};
   const calls = [], descriptors = new Map(), overrides = new Map();
   const io = new Proxy(fs, { get(target, key) {
     if (key === 'lstatSync') return (name, options) => {
@@ -42,7 +42,20 @@ function fixture() {
     calls.push({ bin, args });
     let stdout = '', status = 0;
     if (bin === '/usr/bin/getent') {
-      if (args[0] === 'passwd') { if (user) stdout = `dashboard-zaruku:x:${user.uid}:${user.gid}::${user.home}:${user.shell}\n`; else status = 2; }
+      if (args[0] === 'passwd') {
+        if (!user) status = 2;
+        else {
+          stdout = `dashboard-zaruku:x:${user.uid}:${user.gid}::${user.home}:${user.shell}\n`;
+          if (args.length === 1) {
+            stdout += (userResolution.aliases ?? []).map(name => `${name}:x:${user.uid}:0::/root:/bin/bash\n`).join('');
+            if (userResolution.enumeration !== undefined) stdout = userResolution.enumeration;
+            if (userResolution.enumerationStatus !== undefined) status = userResolution.enumerationStatus;
+          } else if (args[1] !== 'dashboard-zaruku') {
+            if (userResolution.reverseName) stdout = stdout.replace('dashboard-zaruku:', `${userResolution.reverseName}:`);
+            if (userResolution.reverseStatus !== undefined) { status = userResolution.reverseStatus; stdout = ''; }
+          }
+        }
+      }
       else if (!group) status = 2;
       else {
         stdout = `dashboard-zaruku:x:${group.gid}:${group.members.join(',')}\n`;
@@ -68,6 +81,7 @@ function fixture() {
   return { adapter, io, calls, descriptors, overrides, resolve,
     setUser(value) { user = value; }, setGroup(value) { group = value; },
     setGroupResolution(value) { resolution = value; },
+    setUserResolution(value) { userResolution = value; },
     write(name, bytes, mode = 0o600) { fs.writeFileSync(resolve(name), bytes, { mode }); },
     close() { for (const fd of descriptors.keys()) fs.closeSync(fd); fs.rmSync(temp, { recursive: true, force: true }); },
   };
@@ -151,6 +165,41 @@ test('host rejects a newly created GID alias before recording identity or creati
     const record = JSON.parse(fs.readFileSync(f.resolve(recordPath), 'utf8'));
     assert.equal(record.steps.length, 1);
     assert.equal(record.steps[0].after, null);
+  } finally { f.close(); }
+});
+
+test('host rejects UID aliases and incomplete NSS passwd resolution during check apply and rollback', async () => {
+  for (const resolution of [
+    { reverseName: 'foreign-user' }, { aliases: ['foreign-user'] },
+    { aliases: ['dashboard-zaruku'] }, { enumeration: '' }, { enumeration: 'malformed' },
+    { enumeration: 'dashboard-zaruku:x:901:901::/root:/bin/bash\n' },
+    { enumeration: 'dashboard-zaruku:x:901:901::/nonexistent:/usr/sbin/nologin\nbad:x:nope:0::/:/bin/sh\n' },
+    { enumerationStatus: 3 }, { reverseStatus: 2 },
+  ]) {
+    const f = fixture();
+    try {
+      await applyHostBoundary(f.adapter);
+      const record = JSON.parse(fs.readFileSync(f.resolve(recordPath)));
+      f.setUserResolution(resolution);
+      const mutations = f.calls.filter(call => call.bin.startsWith('/usr/sbin/')).length;
+      await assert.rejects(inspectHostBoundary(f.adapter), /Zaruku host boundary/);
+      await assert.rejects(applyHostBoundary(f.adapter), /Zaruku host boundary/);
+      await assert.rejects(rollbackNewHostBoundary(f.adapter, record), /Zaruku host boundary/);
+      assert.equal(f.calls.filter(call => call.bin.startsWith('/usr/sbin/')).length, mutations);
+    } finally { f.close(); }
+  }
+});
+
+test('host refuses an alias appearing after user creation and cannot guess rollback ownership', async () => {
+  const f = fixture();
+  try {
+    f.setUserResolution({ aliases: ['foreign-user'] });
+    await assert.rejects(applyHostBoundary(f.adapter), /Zaruku host boundary/);
+    const record = JSON.parse(fs.readFileSync(f.resolve(recordPath)));
+    assert.equal(record.steps.length, 2);
+    assert.equal(record.steps[1].after, null);
+    await assert.rejects(rollbackNewHostBoundary(f.adapter, record), /Zaruku host boundary/);
+    assert.equal(f.calls.some(call => call.bin.endsWith('del')), false);
   } finally { f.close(); }
 });
 

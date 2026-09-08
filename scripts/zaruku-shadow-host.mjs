@@ -313,8 +313,18 @@ export function createHostAdapter(options = {}) {
   adapter.serviceIdentity = () => {
     const result = execute('/usr/bin/getent', ['passwd', NAME], true);
     if (result === null) return null;
-    const fields = result.split(':');
-    if (fields.length !== 7 || !/^\d+$/.test(fields[2]) || !/^\d+$/.test(fields[3])) fail();
+    const parsePasswd = text => {
+      const fields = text.split(':');
+      if (fields.length !== 7 || !/^[a-z_][a-z0-9_-]*[$]?$/i.test(fields[0]) || fields.some(field => /[\u0000-\u001f\u007f]/.test(field)) || !/^(?:0|[1-9]\d*)$/.test(fields[2]) || !/^(?:0|[1-9]\d*)$/.test(fields[3]) || !Number.isSafeInteger(Number(fields[2])) || !Number.isSafeInteger(Number(fields[3]))) fail();
+      return fields;
+    };
+    const fields = parsePasswd(result);
+    if (fields[0] !== NAME || Number(fields[2]) <= 0) fail();
+    if (!same(parsePasswd(execute('/usr/bin/getent', ['passwd', fields[2]])), fields)) fail();
+    const entries = execute('/usr/bin/getent', ['passwd']).split('\n').map(parsePasswd);
+    if (new Set(entries.map(entry => entry[0])).size !== entries.length) fail();
+    const matching = entries.filter(entry => entry[2] === fields[2]);
+    if (matching.length !== 1 || !same(matching[0], fields)) fail();
     const groups = execute('/usr/bin/id', ['-G', NAME]);
     if (!/^\d+( \d+)*$/.test(groups)) fail();
     return { name: fields[0], uid: Number(fields[2]), gid: Number(fields[3]), home: fields[5], shell: fields[6], groups: groups.split(' ').map(Number) };
