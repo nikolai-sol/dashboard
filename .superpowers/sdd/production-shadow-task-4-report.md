@@ -211,3 +211,65 @@ Task 4 Important finding: allocation-receipt loss is fixed by confirmed pre-depl
 **Task 5 must enforce exact equality of remote `refs/heads/release/zaruku` to the frozen candidate SHA.** The existing Task 4 ancestry check is not proof of equality and must not be treated as frozen release authority. Task 5 needs a regression rejecting a different ancestor SHA and must continue refusing implicit overwrite of an unknown/different ref. This follow-up is recorded in the authoritative plan and is not a Task 4 blocker; this fix changes no release ref or release-authority behavior.
 
 Review-fix files: `scripts/run-zaruku-production-shadow.mjs` and its test; `scripts/zaruku-production-shadow-remote.mjs` and its test; `scripts/zaruku-production-shadow-worker.mjs`; `scripts/zaruku-shadow-evidence.test.mjs`; `OPS.md`; the production-shadow plan; this report. The staged control inventory and image authority are unchanged.
+
+## Second independent-review correction: writer-lifetime fence
+
+Implementation commit: `2aa3abc15e8d31d60b16d9a8e1ab7ca7e14bb68a` (`fix(zaruku): fence evidence writers across transport loss`). This section supersedes the preceding revision's absence-of-known-blockers statement. Independent re-review is requested; this remains source/control implementation, not production GO.
+
+### Verified cause and approved correction
+
+Review of `c8a30c511ae248053fe10cb97a51013ada04251c` found that retaining the correct allocation receipt still did not serialize publication with a detached verifier surviving SSH/worker death. The publisher could hash/chmod evidence while a surviving root writer retained an open file descriptor and subsequently rewrote the file or added another file. Reproduction/inspection preceded implementation; the first Linux regression failed on the actual published-hash mismatch.
+
+The approved narrow boundary is now implemented:
+
+- `zaruku-shadow-evidence-lock.py` is staged byte-for-byte in the exact control closure, which grows from the initial 15 files to **16**. It accepts only fixed `acquire`/`verify` modes and a bounded source-SHA/run-ID/inode receipt. Linux/root, safe root-owned ancestors, exact path, device/inode, directory type and `0700` mode are revalidated, including after lock acquisition. It never recovers a receipt or accepts a caller PID/PGID/start-time.
+- Linux `flock` attaches to inherited directory FD 5. The worker transfers its lock copy to the independently bounded verifier supervisor before potentially slow coverage reads. Bash, Node and the XLSX Python child retain that same lock; XLSX still receives no auth/coverage descriptors or secret argv/environment. Final context/comparison reads reacquire the lock.
+- A distinct inherited writer-lifetime pipe (FD 6) keeps the supervisor alive until **all** writing descendants close their copies. Verifier-leader or SSH-worker exit is not completion. The supervisor catches TERM without making children inherit an ignored TERM, so an ignoring survivor remains bounded by timeout's subsequent group KILL. Unexpected lifetime-pipe bytes are discarded in bounded chunks, mark failure and do not release the fence early or appear in diagnostics.
+- Strict shadow authority fixes `/usr/bin/timeout`, `180s`, `--kill-after=5s` and a `210s` lock wait. Preflight attests that exact root-owned regular, single-link, executable non-symlink and its safe ancestry, captures device/inode/hash in context, and checks the identity immediately before absolute-path execution. No PATH substitution, process search, persisted/caller process identity, or recovery kill exists. The fixed remote transport remains bounded at 240 seconds.
+- Cleanup and publication acquire the same lock, then recheck receipt, ancestry, owner, mode and terminal inventory while holding it. Publication holds it through evidence hashing, fsync, chmod, exclusive temporary decision creation, atomic `decision.json` rename and final directory/parent fsync. Final files are `0400`, directory `0500`; queued/reused writers and replaced inodes fail closed. The production evidence prefix requires writer-fence descriptors in the verifier.
+- The existing immutable amd64 image already contains timeout. Its Dockerfile/base/package/image hashes are unchanged; `linux-fixture.json` now explicitly lists the exact required executable inventory, including `/usr/bin/timeout`. The observed timeout SHA-256 in that image is `5ef0eaaaa4220593add7716aad74da927ca3bb10605e964330de64fecc3ef15e`. No image rebuild, pull, push, production connection or production operation occurred during this review fix. The runner adds only a disposable `/var/www` tmpfs, never a host `/var/www` mount.
+
+### Exact RED → GREEN evidence
+
+Initial real Linux RED command (same pinned image/runtime constraints used for subsequent direct runs):
+
+```bash
+docker --config /var/empty run --rm --pull never --platform linux/amd64 --network none --read-only --cap-add SYS_PTRACE --mount type=bind,src=/Users/nafanya/ReportingDash/dashboard-next/.worktrees/three-dashboard-runtime-isolation,dst=/src,readonly --tmpfs /tmp:rw,nosuid,nodev,mode=1777,size=268435456 --tmpfs /var/www:rw,nosuid,nodev,mode=0755,size=33554432 --entrypoint /usr/local/bin/node sha256:510ace0a42c62640b67a09af9783e3fae03325e1b277794082ea9634ed0eebd6 /src/scripts/zaruku-shadow-evidence.linux.test.mjs
+```
+
+RED: exit 1, **0/1**, specifically `published hash changed after survivor write`. The fixture's worker exited while a detached descendant retained the directory lock/open evidence FD, rewrote a previously hashed file and added another evidence file. GREEN after directory fencing: exit 0, **1/1**, final recorded hash and inventory match the completed descendant writes.
+
+```bash
+node --import tsx --test scripts/zaruku-shadow-evidence.test.mjs
+```
+
+RED: exit 1, **7/9**, `inventory read before writer fence` and absent timeout attestation/launch boundary. GREEN coverage now includes locking before cleanup/publication inventory, post-wait inode replacement rejection, and timeout missing/link/hardlink/owner/mode/ancestry/non-executable/hash-replacement rejection before launch.
+
+The expanded Linux fixture uses the actual fixed state machine with injected deployment/stop adapters, the staged worker/helper and real subprocesses. It kills its own source-fixture worker, leaves the verifier leader gone and a writing Python descendant alive, then invokes real cleanup/publication. Both cases assert exactly `dashboard-zaruku` in the stop list, immutable sanitized NO-GO, stable evidence hashes/inventory, no sentinel values and rejection of later writer reuse.
+
+- One **full real 180s/5s** disposable proof passed **4/4**, total 191.647 seconds; the deadline case took 188.477 seconds including post-publication observation. Read-only container process inspection while it waited showed timeout/supervisor/surviving writer in the same process group and the cleanup lock waiter outside it. This was a bounded wait, not a hang.
+- At the controller's request, repeatable source fixtures now first assert exact production `/usr/bin/timeout` + `--kill-after=5s` + `180s`, then change **only their local test invocation** to `2s` (retaining 5s kill-after). No production argument/environment override was added. The child schedules a write after the resulting 7-second deadline; publication is observed beyond that scheduled attempt and remains unchanged.
+- Self-review added malformed lifetime-pipe data to that ignoring survivor: RED **3/4**, premature supervisor failure before descendant completion; GREEN after drain-to-EOF: **4/4**, 12.952 seconds total. Data is never printed. Foreign/replaced receipts and foreign/reused caller process-identity fields also fail closed. Two earlier fixture-harness errors (an incomplete injected attestation and JSON accidentally occupying Node's entrypoint argv slot) were corrected in tests only before the successful lifecycle proofs; they did not require runtime/interface changes.
+
+Final focused commands:
+
+```bash
+node --test scripts/zaruku-production-shadow-remote.test.mjs scripts/zaruku-shadow-evidence.test.mjs scripts/run-zaruku-production-shadow.test.mjs scripts/zaruku-production-shadow-worker.test.mjs scripts/stage-zaruku-shadow-control.test.mjs scripts/zaruku-linux-fixture-policy.test.mjs
+python3 -I -B scripts/zaruku-shadow-evidence-lock.test.py
+bash scripts/verify-zaruku-shadow.test.sh
+npm run test:zaruku-production-shadow
+bash scripts/run-zaruku-linux-fixtures.sh
+npm run predeploy:verify
+```
+
+Results: focused **64/64 Node + 4/4 Python**, verifier **3 positive / 22 negative**, source shadow **126 Node + 8 image-policy + 5 MySQL Python + 5 XLSX Python + 4 fence Python**. After the code/authority commit made the executable manifest clean, the **fixed** Linux runner exited 0 and printed all four required fixture-group pass lines; it verified the unchanged immutable image ID/platform/full package hash before running.
+
+The fresh **committed-state `npm run predeploy:verify` exited 0**: main **946/956** with 10 existing skips, Python 13, shared runtime 4, the complete shadow counts above, sealed deploy 31, isolated contracts 41, artifact 157, Abbott 111, both builds/typechecks, public-asset/standalone boot checks and preview 7 + shell fixture passed. Lint: **0 errors / 12 existing warnings**. The existing Next multiple-lockfile warning remains. A prior full gate in this iteration also exited 0; this final committed-state run is the completion evidence. Focused ESLint and `git diff --check` exited 0.
+
+### Files, self-review and ledger-ready concerns
+
+Changed implementation: `deploy/zaruku/production-shadow.json`, `deploy/zaruku/linux-fixture.json`, `scripts/zaruku-production-shadow-authority.mjs`, `scripts/zaruku-production-shadow-worker.mjs`, `scripts/zaruku-production-shadow-remote.mjs`, `scripts/zaruku-shadow-evidence-lock.py`, `scripts/verify-zaruku-shadow.sh`, `scripts/zaruku-linux-fixture-policy.mjs`. Changed/added tests: their existing worker/remote/authority/stager/image-policy tests, `scripts/zaruku-shadow-evidence.test.mjs`, `scripts/zaruku-shadow-evidence-lock.test.py`, `scripts/zaruku-shadow-evidence.linux.test.mjs`. Gate/docs: `package.json`, `OPS.md`, authoritative plan and this report. No application/read-model/other-dashboard behavior changed.
+
+Self-review checked lock ownership transfer, descriptor inheritance and closing, leader-death/TERM/KILL ordering, malformed-pipe failure lifetime, bounded waits, immediate timeout reattestation, final-state checks under lock, atomic publication, fixed staged dependency closure, unchanged image identity and rejection of authority/PID/path substitution. The guarantee covers the fixed reviewed writer tree; it does not claim protection from an unrelated malicious root process. No known in-scope blocker remains, but independent re-review is required.
+
+Ledger-ready: the second Important finding (publication racing a surviving evidence writer) is fixed with failing-first real Linux races and immutable NO-GO assertions. No production action or cutover occurred. **Task 5 still must enforce exact equality of remote `refs/heads/release/zaruku` to the frozen candidate**; the existing ancestry check is insufficient and remains an explicit Task 5 acceptance item, not a Task 4 blocker. No release-ref behavior was changed here.
