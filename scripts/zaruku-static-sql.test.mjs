@@ -124,6 +124,36 @@ test('SQL extraction checks explicit sinks nested inside candidate containers', 
   assert.ok(destructured.includes(
     'SELECT * FROM report_bd_private.canonical_fact_metrika_visits',
   ));
+
+  const conditionalSibling = extractStaticSql(`
+    declare const db:{query(value:string):unknown};
+    declare const chooseSafe:boolean;
+    const [row]=[
+      chooseSafe
+        ? db.query("SELECT * FROM dashboards")
+        : "SELECT * FROM report_bd_private.canonical_fact_metrika_visits",
+    ];
+  `, 'fixture.ts').statements;
+  assert.ok(conditionalSibling.includes('SELECT * FROM dashboards'));
+  assert.ok(conditionalSibling.includes(
+    'SELECT * FROM report_bd_private.canonical_fact_metrika_visits',
+  ));
+
+  for (const member of [
+    'hidden',
+    '...{sql:hidden}',
+    'method(){return hidden}',
+  ]) {
+    const objectSibling = extractStaticSql(`
+      declare const db:{query(value:string):unknown};
+      const hidden="SELECT * FROM report_bd_private.canonical_fact_metrika_visits";
+      const {safe}={safe:db.query("SELECT * FROM dashboards"),${member}};
+    `, 'fixture.ts').statements;
+    assert.ok(objectSibling.includes('SELECT * FROM dashboards'));
+    assert.ok(objectSibling.includes(
+      'SELECT * FROM report_bd_private.canonical_fact_metrika_visits',
+    ));
+  }
 });
 
 test('SQL extraction ignores a concrete non-query branch while retaining the query branch', () => {
@@ -261,6 +291,14 @@ test('SQL extraction refuses unknown members, recursion, async maps and mutable 
     'function append(queries:string[]){queries.push("SELECT * FROM report_bd_private.canonical_fact_metrika_visits");} const queries:string[]=[]; append(queries); export const sql=queries.join("");',
     'const queries=[]; const alias=queries; alias.push("SELECT * FROM report_bd_private.canonical_fact_metrika_visits"); export const sql=queries.join("");',
     'function append(queries:string[]){const alias=queries;alias.push("SELECT * FROM report_bd_private.canonical_fact_metrika_visits");} const queries:string[]=[]; append(queries); export const sql=queries.join("");',
+    'const queries:string[]=[]; let alias:string[]=[]; alias=queries; alias.push("SELECT * FROM report_bd_private.canonical_fact_metrika_visits"); export const sql=queries.join("");',
+    'const queries:string[]=[]; const [alias]=[queries]; alias.push("SELECT * FROM report_bd_private.canonical_fact_metrika_visits"); export const sql=queries.join("");',
+    'const queries:string[]=[]; const {alias}={alias:queries}; alias.push("SELECT * FROM report_bd_private.canonical_fact_metrika_visits"); export const sql=queries.join("");',
+    'function identity(value:string[]){const alias=value;return alias;} const queries:string[]=[]; const alias=identity(queries); alias.push("SELECT * FROM report_bd_private.canonical_fact_metrika_visits"); export const sql=queries.join("");',
+    'function identity(value:string[]){const alias=value;return alias;} const queries:string[]=[]; let alias:string[]=[]; alias=identity(queries); alias.push("SELECT * FROM report_bd_private.canonical_fact_metrika_visits"); export const sql=queries.join("");',
+    'const queries:string[]=[]; [queries].map(alias=>alias.push("SELECT * FROM report_bd_private.canonical_fact_metrika_visits")); export const sql=queries.join("");',
+    'const queries:string[]=[]; [queries].map(alias=>{alias.push("SELECT * FROM report_bd_private.canonical_fact_metrika_visits");return 0;}); export const sql=queries.join("");',
+    'const queries:string[]=[]; const alias=queries; alias.push("SELECT * FROM report_bd_private.canonical_fact_metrika_visits"); export {queries};',
     'const queries:string[]=[]; Object.assign(queries,{0:"SELECT * FROM report_bd_private.canonical_fact_metrika_visits",length:1}); export const sql=queries.join("");',
     'function query(){return query();} export const sql=query();',
     'declare const rewrite:(parts:TemplateStringsArray)=>string; export const sql=rewrite`SELECT * FROM dashboards`;',

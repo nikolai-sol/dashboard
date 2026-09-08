@@ -90,6 +90,28 @@ export function createStaticEvaluator(sourceFile) {
   let preprocessingWork = 0;
   let preprocessingExceeded = false;
 
+  function preprocessStep() {
+    preprocessingWork += 1;
+    if (preprocessingWork > MAX_WORK) preprocessingExceeded = true;
+    return !preprocessingExceeded;
+  }
+
+  function bindingInPattern(declarationNode, name) {
+    function find(pattern) {
+      if (ts.isIdentifier(pattern)) {
+        if (pattern.text !== name) return null;
+        return pattern === declarationNode.name ? declarationNode : pattern.parent;
+      }
+      for (const element of pattern.elements) {
+        if (!ts.isBindingElement(element)) continue;
+        const found = find(element.name);
+        if (found) return found;
+      }
+      return null;
+    }
+    return find(declarationNode.name);
+  }
+
   function declaration(node, name) {
     for (let scope = node.parent; scope; scope = scope.parent) {
       if (ts.isFunctionLike(scope)) {
@@ -102,7 +124,8 @@ export function createStaticEvaluator(sourceFile) {
           if (ts.isFunctionDeclaration(statement) && statement.name?.text === name) return statement;
           if (!ts.isVariableStatement(statement)) continue;
           for (const item of statement.declarationList.declarations) {
-            if (ts.isIdentifier(item.name) && item.name.text === name) return item;
+            const binding = bindingInPattern(item, name);
+            if (binding) return binding;
           }
         }
       }
@@ -118,6 +141,7 @@ export function createStaticEvaluator(sourceFile) {
   }
 
   const mutatedBindings = new Set();
+  const mutationTexts = new Map();
   const mutationMethods = new Set([
     'copyWithin', 'delete', 'fill', 'pop', 'push', 'reverse', 'set', 'shift',
     'sort', 'splice', 'unshift', 'clear',
@@ -150,33 +174,54 @@ export function createStaticEvaluator(sourceFile) {
     return null;
   }
 
-  function collectDirectMutations(node) {
-    preprocessingWork += 1;
-    if (preprocessingWork > MAX_WORK) {
-      preprocessingExceeded = true;
-      return;
+  function mutationText(nodeOrNodes) {
+    const parts = [];
+    function visit(current) {
+      if (!preprocessStep()) return;
+      if (ts.isStringLiteral(current) || ts.isNoSubstitutionTemplateLiteral(current) ||
+          ts.isTemplateHead(current) || ts.isTemplateMiddle(current) || ts.isTemplateTail(current)) {
+        parts.push(current.text);
+        return;
+      }
+      ts.forEachChild(current, visit);
     }
+    const nodes = Array.isArray(nodeOrNodes) ? nodeOrNodes : [nodeOrNodes];
+    nodes.forEach(visit);
+    return concatenateTexts(parts, nodes[0] ?? sourceFile);
+  }
+
+  function markMutated(binding, evidence) {
+    if (!binding) return;
+    mutatedBindings.add(binding);
+    const text = mutationText(evidence);
+    if (text.length === 0) return;
+    const texts = mutationTexts.get(binding) ?? new Set();
+    texts.add(text);
+    mutationTexts.set(binding, texts);
+  }
+
+  function collectDirectMutations(node) {
+    if (!preprocessStep()) return;
     if (ts.isCallExpression(node) && ts.isPropertyAccessExpression(node.expression) &&
         ts.isIdentifier(node.expression.expression) && node.expression.expression.text === 'Object' &&
         ['assign', 'defineProperties', 'defineProperty', 'setPrototypeOf'].includes(
           node.expression.name.text,
         ) && node.arguments[0]) {
-      const binding = rootBinding(node.arguments[0]);
-      if (binding) mutatedBindings.add(binding);
+      markMutated(rootBinding(node.arguments[0]), node.arguments.slice(1));
     } else if (ts.isCallExpression(node) && ts.isPropertyAccessExpression(node.expression) &&
         mutationMethods.has(node.expression.name.text)) {
-      const binding = rootBinding(node.expression.expression);
-      if (binding) mutatedBindings.add(binding);
+      markMutated(rootBinding(node.expression.expression), node.arguments);
     } else if (ts.isBinaryExpression(node) && assignmentOperators.has(node.operatorToken.kind)) {
-      const binding = rootBinding(node.left);
-      if (binding) mutatedBindings.add(binding);
+      if (node.operatorToken.kind !== ts.SyntaxKind.EqualsToken ||
+          ts.isPropertyAccessExpression(unwrapExpression(node.left)) ||
+          ts.isElementAccessExpression(unwrapExpression(node.left))) {
+        markMutated(rootBinding(node.left), node.right);
+      }
     } else if ((ts.isPrefixUnaryExpression(node) || ts.isPostfixUnaryExpression(node)) &&
         [ts.SyntaxKind.PlusPlusToken, ts.SyntaxKind.MinusMinusToken].includes(node.operator)) {
-      const binding = rootBinding(node.operand);
-      if (binding) mutatedBindings.add(binding);
+      markMutated(rootBinding(node.operand), node.operand);
     } else if (ts.isDeleteExpression(node)) {
-      const binding = rootBinding(node.expression);
-      if (binding) mutatedBindings.add(binding);
+      markMutated(rootBinding(node.expression), node.expression);
     }
     ts.forEachChild(node, collectDirectMutations);
   }
@@ -195,34 +240,173 @@ export function createStaticEvaluator(sourceFile) {
 
   function propagateMutatedArguments(node) {
     let changed = false;
-    function visit(current) {
-      preprocessingWork += 1;
-      if (preprocessingWork > MAX_WORK) {
-        preprocessingExceeded = true;
+
+    function linkBindings(left, right) {
+      if (!left || !right || left === right ||
+          (!mutatedBindings.has(left) && !mutatedBindings.has(right))) return;
+      for (const binding of [left, right]) {
+        if (!mutatedBindings.has(binding)) {
+          mutatedBindings.add(binding);
+          changed = true;
+        }
+      }
+      const mergedTexts = new Set([
+        ...(mutationTexts.get(left) ?? []),
+        ...(mutationTexts.get(right) ?? []),
+      ]);
+      for (const binding of [left, right]) {
+        const existing = mutationTexts.get(binding) ?? new Set();
+        if ([...mergedTexts].some(text => !existing.has(text))) changed = true;
+        mutationTexts.set(binding, new Set(mergedTexts));
+      }
+    }
+
+    function linkPattern(pattern, expression) {
+      if (!preprocessStep()) return;
+      const value = unwrapExpression(expression);
+      if (ts.isIdentifier(pattern)) {
+        linkBindings(declaration(pattern, pattern.text), rootBinding(value));
         return;
       }
-      if (ts.isVariableDeclaration(current) && ts.isIdentifier(current.name) && current.initializer) {
-        const target = current;
-        const source = rootBinding(current.initializer);
-        if (source && (mutatedBindings.has(target) || mutatedBindings.has(source))) {
-          for (const binding of [target, source]) {
-            if (!mutatedBindings.has(binding)) {
-              mutatedBindings.add(binding);
-              changed = true;
+      const patternItems = ts.isArrayBindingPattern(pattern) || ts.isArrayLiteralExpression(pattern)
+        ? pattern.elements : null;
+      if (patternItems && ts.isArrayLiteralExpression(value)) {
+        patternItems.forEach((item, index) => {
+          if (!item || ts.isOmittedExpression(item) || !value.elements[index]) return;
+          const target = ts.isBindingElement(item) ? item.name : item;
+          linkPattern(target, value.elements[index]);
+        });
+        return;
+      }
+      const patternItemsByKey = ts.isObjectBindingPattern(pattern) || ts.isObjectLiteralExpression(pattern)
+        ? pattern.elements ?? pattern.properties : null;
+      if (patternItemsByKey && ts.isObjectLiteralExpression(value)) {
+        const sourceByKey = new Map();
+        for (const property of value.properties) {
+          if (ts.isPropertyAssignment(property) &&
+              (ts.isIdentifier(property.name) || ts.isStringLiteral(property.name))) {
+            sourceByKey.set(property.name.text, property.initializer);
+          } else if (ts.isShorthandPropertyAssignment(property)) {
+            sourceByKey.set(property.name.text, property.name);
+          }
+        }
+        for (const item of patternItemsByKey) {
+          if (ts.isBindingElement(item)) {
+            if (item.dotDotDotToken) {
+              for (const source of sourceByKey.values()) linkPattern(item.name, source);
+              continue;
             }
+            const keyNode = item.propertyName ?? item.name;
+            if ((ts.isIdentifier(keyNode) || ts.isStringLiteral(keyNode)) &&
+                sourceByKey.has(keyNode.text)) {
+              linkPattern(item.name, sourceByKey.get(keyNode.text));
+            }
+          } else if (ts.isShorthandPropertyAssignment(item) && sourceByKey.has(item.name.text)) {
+            linkPattern(item.name, sourceByKey.get(item.name.text));
+          } else if (ts.isPropertyAssignment(item) &&
+              (ts.isIdentifier(item.name) || ts.isStringLiteral(item.name)) &&
+              sourceByKey.has(item.name.text)) {
+            linkPattern(item.initializer, sourceByKey.get(item.name.text));
+          }
+        }
+      }
+    }
+
+    const returnBindingCache = new Map();
+    function returnedBindings(fn) {
+      if (returnBindingCache.has(fn)) return returnBindingCache.get(fn);
+      const bindings = new Set();
+      function collectExpression(expression) {
+        if (!preprocessStep()) return;
+        const current = unwrapExpression(expression);
+        const binding = rootBinding(current);
+        if (binding) bindings.add(binding);
+        if (ts.isConditionalExpression(current)) {
+          collectExpression(current.whenTrue);
+          collectExpression(current.whenFalse);
+        }
+      }
+      function inspect(current) {
+        if (!preprocessStep()) return;
+        if (current !== fn && ts.isFunctionLike(current)) return;
+        if (ts.isReturnStatement(current) && current.expression) {
+          collectExpression(current.expression);
+          return;
+        }
+        ts.forEachChild(current, inspect);
+      }
+      if (fn.body) {
+        if (ts.isBlock(fn.body)) inspect(fn.body);
+        else collectExpression(fn.body);
+      }
+      returnBindingCache.set(fn, bindings);
+      return bindings;
+    }
+
+    function containedBindings(expression, seen = new Set()) {
+      if (!preprocessStep()) return [];
+      const current = unwrapExpression(expression);
+      if (ts.isIdentifier(current)) {
+        const binding = declaration(current, current.text);
+        if (!binding || seen.has(binding)) return binding ? [binding] : [];
+        seen.add(binding);
+        if (ts.isVariableDeclaration(binding) && binding.initializer) {
+          return [binding, ...containedBindings(binding.initializer, seen)];
+        }
+        return [binding];
+      }
+      if (ts.isArrayLiteralExpression(current)) {
+        return current.elements.flatMap(element => containedBindings(element, seen));
+      }
+      if (ts.isConditionalExpression(current)) {
+        return [
+          ...containedBindings(current.whenTrue, seen),
+          ...containedBindings(current.whenFalse, seen),
+        ];
+      }
+      return [];
+    }
+
+    function visit(current) {
+      if (!preprocessStep()) return;
+      if (ts.isVariableDeclaration(current) && current.initializer) {
+        linkPattern(current.name, current.initializer);
+        if (ts.isIdentifier(current.name) && ts.isCallExpression(current.initializer)) {
+          const fn = localFunction(current.initializer);
+          if (fn) {
+            for (const binding of returnedBindings(fn)) linkBindings(current, binding);
+          }
+        }
+      } else if (ts.isBinaryExpression(current) &&
+          current.operatorToken.kind === ts.SyntaxKind.EqualsToken) {
+        linkPattern(current.left, current.right);
+        if (ts.isCallExpression(current.right)) {
+          const fn = localFunction(current.right);
+          const target = rootBinding(current.left);
+          if (fn) {
+            for (const binding of returnedBindings(fn)) linkBindings(target, binding);
           }
         }
       } else if (ts.isCallExpression(current)) {
         const fn = localFunction(current);
         if (fn) {
           fn.parameters.forEach((parameter, index) => {
-            if (!mutatedBindings.has(parameter) || !current.arguments[index]) return;
+            if (!current.arguments[index]) return;
             const binding = rootBinding(current.arguments[index]);
-            if (binding && !mutatedBindings.has(binding)) {
-              mutatedBindings.add(binding);
-              changed = true;
-            }
+            linkBindings(parameter, binding);
           });
+        }
+        if (ts.isPropertyAccessExpression(current.expression) &&
+            current.expression.name.text === 'map' && current.arguments[0] &&
+            (ts.isArrowFunction(current.arguments[0]) ||
+             ts.isFunctionExpression(current.arguments[0]))) {
+          const callback = current.arguments[0];
+          const parameter = callback.parameters[0];
+          if (parameter && ts.isIdentifier(parameter.name)) {
+            for (const binding of containedBindings(current.expression.expression)) {
+              linkBindings(parameter, binding);
+            }
+          }
         }
       }
       ts.forEachChild(current, visit);
@@ -418,7 +602,10 @@ export function createStaticEvaluator(sourceFile) {
         const binding = declaration(node, node.text);
         if (!binding) return unknownValue('UNSUPPORTED_EXPRESSION', node);
         if (frame.has(binding)) return frame.get(binding);
-        if (mutatedBindings.has(binding)) return unknownValue('UNSUPPORTED_EXPRESSION', binding);
+        if (mutatedBindings.has(binding)) {
+          const text = concatenateTexts([...(mutationTexts.get(binding) ?? [])], binding);
+          return unknownValue('UNSUPPORTED_EXPRESSION', binding, null, text);
+        }
         if (ts.isParameter(binding) && binding.initializer) {
           return value(binding.initializer, frame, depth + 1);
         }

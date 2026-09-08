@@ -319,6 +319,13 @@ export function extractStaticSql(source, filename) {
       }
       return;
     }
+    if (ts.isConditionalExpression(current)) {
+      for (const branch of [current.whenTrue, current.whenFalse]) {
+        if (containsExplicitSink(branch)) collectContainerMembers(branch);
+        else add(branch);
+      }
+      return;
+    }
     if (ts.isObjectLiteralExpression(current)) {
       for (const property of current.properties) {
         if (ts.isPropertyAssignment(property)) {
@@ -327,6 +334,22 @@ export function extractStaticSql(source, filename) {
           } else {
             add(property.initializer);
           }
+        } else if (ts.isShorthandPropertyAssignment(property)) {
+          if (property.objectAssignmentInitializer &&
+              containsExplicitSink(property.objectAssignmentInitializer)) {
+            collectContainerMembers(property.objectAssignmentInitializer);
+          } else {
+            add(property.name);
+          }
+        } else if (ts.isSpreadAssignment(property)) {
+          if (containsExplicitSink(property.expression)) {
+            collectContainerMembers(property.expression);
+          } else {
+            add(property.expression);
+          }
+        } else if (ts.isMethodDeclaration(property) || ts.isGetAccessorDeclaration(property) ||
+            ts.isSetAccessorDeclaration(property)) {
+          collectCandidates(property);
         }
       }
       return;
